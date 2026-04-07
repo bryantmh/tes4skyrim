@@ -21,7 +21,9 @@ Skip reason codes (printed in skip list at end of batch_convert):
   WR    — Write failed (version-incompatible blocks like NiGeomMorpherController)
 """
 
+import collections as _collections
 import io as _io
+import logging as _logging
 import os
 import shutil
 import struct
@@ -67,6 +69,116 @@ try:
         _TANGENT_SPELL = False
 except ImportError:
     _PYFFI = False
+
+# ---------------------------------------------------------------------------
+# PyFFI warning capture (suppresses verbose output; counts by category)
+# ---------------------------------------------------------------------------
+
+# Per-worker warning message accumulator (reset at the start of each file).
+# Each worker process has its own copy of this list.
+_worker_warn_log: list = []
+
+
+class _PyFFICapture(_logging.Handler):
+    """Capture PyFFI log messages at WARNING+ without printing them."""
+
+    def emit(self, record: _logging.LogRecord) -> None:  # type: ignore[override]
+        _worker_warn_log.append(record.getMessage())
+
+
+def _pyffi_capture_init() -> None:
+    """Install silent PyFFI log capture.
+
+    Called as a multiprocessing.Pool initializer (once per worker) and
+    directly before single-worker processing.
+    """
+    global _worker_warn_log
+    _worker_warn_log = []
+    pyffi_log = _logging.getLogger('pyffi')
+    pyffi_log.propagate = False
+    pyffi_log.setLevel(_logging.WARNING)
+    pyffi_log.handlers = []
+    pyffi_log.addHandler(_PyFFICapture())
+
+
+_WARN_CATEGORIES = {
+    # SpellAddTangentSpace / NifToaster progress markers (INFO logged at WARNING)
+    'spell_marker_tilde':          lambda m: m.startswith('~~~'),
+    'spell_marker_dash':           lambda m: m.startswith('---'),
+    'tangent_space_added':         lambda m: m.startswith('adding'),
+    # Skin partition progress messages (from update_skin_partition)
+    'skin_part_optimizing':        lambda m: m.startswith('optimizing'),
+    'skin_part_imposing':          lambda m: m.startswith('imposing'),
+    'skin_part_counted':           lambda m: m.startswith('counted'),
+    'skin_part_creating':          lambda m: m.startswith('creating'),
+    'skin_part_created':           lambda m: m.startswith('created'),
+    'skin_part_merging':           lambda m: m.startswith('merging'),
+    'skin_part_progress':          lambda m: m.startswith('skin '),
+    # Geometry issues
+    'improper_geometry':           lambda m: m.startswith('improper'),
+    # Actual geometry/data errors
+    'block_size_check':            lambda m: 'block size check' in m,
+    'nan_in_vertices':             lambda m: 'nan' in m and 'vert' in m,
+    'nan_generic':                 lambda m: 'nan' in m,
+    # Collision / Havok
+    'mopp_read_fail':              lambda m: 'bhkmoppbvtreeshape' in m or ('mopp' in m and ('fail' in m or 'error' in m)),
+    'havok_block_invalid':         lambda m: 'bhk' in m and ('invalid' in m or 'not in nif' in m),
+    'havok_shape':                 lambda m: 'bhkconvex' in m or 'bhkbox' in m or 'bhkcapsule' in m or 'bhksphere' in m,
+    'havok_rigidbody':             lambda m: 'bhkrigid' in m,
+    # Shader / texture
+    'invalid_enum_extravectors':   lambda m: 'extravectorsflag' in m,
+    'invalid_enum_shader':         lambda m: 'slsf' in m or ('shader_flags' in m and 'invalid' in m),
+    'texture_path_issue':          lambda m: 'texture' in m and ('not found' in m or 'missing' in m or 'invalid' in m),
+    # Skin / bones
+    'skin_partition':              lambda m: 'niskinpartition' in m or 'skin partition' in m,
+    'skin_data':                   lambda m: 'niskindata' in m or 'skin data' in m,
+    'bone_invalid':                lambda m: 'bone' in m and ('invalid' in m or 'not found' in m or 'missing' in m),
+    # Particle system
+    'particle_system':             lambda m: 'nipsys' in m or 'particle system' in m,
+    # Animation / controllers
+    'controller_invalid':          lambda m: 'nicontroller' in m and ('invalid' in m or 'not in nif' in m),
+    'controller_target':           lambda m: 'controller' in m and 'target' in m,
+    'string_palette':              lambda m: 'nistringpalette' in m or 'string palette' in m or 'stringpalette' in m,
+    'keyframe_data':               lambda m: 'nikeyframedata' in m or 'nitransformdata' in m or 'keyframe' in m,
+    # Geometry block types
+    'tristrips_data':              lambda m: 'nitristripsdata' in m,
+    'trishape_data':               lambda m: 'nitrishapedata' in m,
+    'geometry_morphdata':          lambda m: 'nimorphdata' in m or 'geommorph' in m,
+    # Object palette / references
+    'av_object_palette':           lambda m: 'avobject' in m or 'objectpalette' in m,
+    'linked_block_invalid':        lambda m: 'linked block' in m,
+    # Object tree
+    'missing_from_nif_tree':       lambda m: 'missing from the nif tree' in m or 'not in nif tree' in m,
+    # General value errors
+    'value_out_of_range':          lambda m: 'out of range' in m,
+    'invalid_nif_value':           lambda m: 'invalid' in m and ('nif' in m or 'value' in m),
+    # Stream / parsing
+    'unexpected_end_stream':       lambda m: 'unexpected end' in m or 'end of stream' in m,
+    'unknown_block_type':          lambda m: 'unknown block type' in m or 'unrecognised block' in m,
+}
+
+
+def _categorize_pyffi_warnings(messages: list) -> dict:
+    """Convert raw PyFFI WARNING messages to a {category: count} dict.
+
+    Unrecognised messages are grouped by their leading block-type name so the
+    summary shows detailed breakdowns rather than a single huge 'other' bucket.
+    """
+    c: _collections.Counter = _collections.Counter()
+    for msg in messages:
+        m = msg.lower()
+        matched = False
+        for cat, test in _WARN_CATEGORIES.items():
+            if test(m):
+                c[cat] += 1
+                matched = True
+                break
+        if not matched:
+            # Group by leading word (typically the NIF block type name)
+            first_word = msg.split()[0].rstrip(':').lower() if msg.split() else 'unknown'
+            c[f'type_{first_word}'] += 1
+    return dict(c)
+
 
 # ---------------------------------------------------------------------------
 # CONSTANTS — edit these to change conversion behaviour
@@ -1721,8 +1833,7 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         with open(src_path, 'rb') as f:
             data.inspect(f)
     except Exception:
-        result['skipped'] = True
-        result['skip_reason'] = 'RD'
+        result['error'] = 'RD'
         return result
 
     if data.version in _SKYRIM_VERSIONS:
@@ -1736,8 +1847,7 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
 
     if data.version not in _SUPPORTED_VERSIONS:
         # Too old or unrecognised — skip, do not copy
-        result['skipped'] = True
-        result['skip_reason'] = 'VER'
+        result['error'] = 'VER'
         return result
 
     # Full read (fresh Data object so inspect state is clean)
@@ -1747,8 +1857,7 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
             data.inspect(f)
             data.read(f)
     except Exception:
-        result['skipped'] = True
-        result['skip_reason'] = 'RD'
+        result['error'] = 'RD'
         return result
 
     stats = _convert_nif(data, fix_textures=fix_textures, src_path=str(src_path))
@@ -1780,8 +1889,7 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
     try:
         data.write(buf)
     except Exception:
-        result['skipped'] = True
-        result['skip_reason'] = 'WR'
+        result['error'] = 'WR'
         return result
 
     dst_dir = os.path.dirname(dst_path)
@@ -1837,6 +1945,7 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
         'properties': 0,
         'roots': 0,
         'rotations': 0,
+        'warn_counts': _collections.Counter(),
     }
 
     # Collect (rel_path, reason) for every skipped file
@@ -1857,8 +1966,11 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
     ]
 
     def _update(nif_str, r):
+        stats['warn_counts'].update(r.get('warn_counts', {}))
         if r.get('error'):
             stats['errors'] += 1
+            rel = str(Path(nif_str).relative_to(mesh_path))
+            skipped_list.append((rel, str(r['error'])))
         elif r.get('converted'):
             stats['converted'] += 1
             if r['strips_fixed']:         stats['strips'] += 1
@@ -1875,51 +1987,82 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
     if workers > 1:
         import multiprocessing as mp
         done = 0
-        with mp.Pool(processes=workers) as pool:
+        with mp.Pool(processes=workers, initializer=_pyffi_capture_init) as pool:
             for status, nif_str, payload in pool.imap_unordered(_batch_worker, work_args):
                 done += 1
-                if done % 500 == 0 or done == total:
-                    print(f'  {done}/{total} -- converted={stats["converted"]} '
-                          f'copied={stats["copied"]} errors={stats["errors"]}')
                 if status == 'ok':
                     _update(nif_str, payload)
                 else:
                     stats['errors'] += 1
+                    rel = str(Path(nif_str).relative_to(mesh_path))
+                    skipped_list.append((rel, 'EXC'))
                     if stats['errors'] <= 20:
                         print(f'  ERROR: {Path(nif_str).name}: {payload}')
+                if done % 500 == 0 or done == total:
+                    try:
+                        rel_parts = Path(nif_str).relative_to(mesh_path).parts
+                        folder = rel_parts[0] if len(rel_parts) > 1 else '.'
+                    except ValueError:
+                        folder = Path(nif_str).parent.name
+                    print(f'  {done}/{total} [{folder}] -- converted={stats["converted"]} '
+                          f'copied={stats["copied"]} errors={stats["errors"]}')
     else:
+        _pyffi_capture_init()
         for i, args in enumerate(work_args):
-            if (i + 1) % 200 == 0 or i == 0:
-                print(f'  {i + 1}/{total} -- converted={stats["converted"]} '
-                      f'copied={stats["copied"]} errors={stats["errors"]}')
             status, nif_str, payload = _batch_worker(args)
             if status == 'ok':
                 _update(nif_str, payload)
             else:
                 stats['errors'] += 1
+                rel = str(Path(nif_str).relative_to(mesh_path))
+                skipped_list.append((rel, 'EXC'))
                 if stats['errors'] <= 20:
-                    print(f'  ERROR: {Path(work_args[i][0]).name}: {payload}')
+                    print(f'  ERROR: {Path(nif_str).name}: {payload}')
+            if (i + 1) % 200 == 0 or i == 0:
+                try:
+                    rel_parts = Path(nif_str).relative_to(mesh_path).parts
+                    folder = rel_parts[0] if len(rel_parts) > 1 else '.'
+                except ValueError:
+                    folder = Path(nif_str).parent.name
+                print(f'  {i + 1}/{total} [{folder}] -- converted={stats["converted"]} '
+                      f'copied={stats["copied"]} errors={stats["errors"]}')
 
-    print(f'\nResults: {stats["converted"]} converted, {stats["copied"]} copied (Skyrim), '
+    print(f'\nResults: {stats["converted"]} converted, {stats["copied"]} copied, '
           f'{stats["skipped"]} skipped, {stats["errors"]} errors / {total} total')
-    print(f'  Strips->Shape: {stats["strips"]}, Properties: {stats["properties"]}, '
-          f'Roots: {stats["roots"]}, Root rotations baked: {stats["rotations"]}')
 
     if skipped_list:
-        print(f'\nSkipped files ({len(skipped_list)}) — reason codes: '
-              f'VER=unsupported version, RD=read failure, WR=write failure')
+        print(f'\nFailed/Skipped ({len(skipped_list)}) — '
+              f'RD=read fail, WR=write fail, EXC=exception:')
         for rel, reason in sorted(skipped_list):
             print(f'  [{reason}] {rel}')
+
+    if stats['warn_counts']:
+        total_suppressed = sum(stats['warn_counts'].values())
+        top_cats = sorted(stats['warn_counts'].items(), key=lambda x: -x[1])[:30]
+        shown = sum(c for _, c in top_cats)
+        print(f'\nPyFFI warnings suppressed ({total_suppressed} total):')
+        for cat, cnt in top_cats:
+            print(f'  {cat}: {cnt}')
+        if shown < total_suppressed:
+            remaining = len(stats['warn_counts']) - len(top_cats)
+            print(f'  ... ({total_suppressed - shown} more in {remaining} other categories)')
+
+    print(f'\nDetailed stats: Strips→Shape={stats["strips"]}, '
+          f'Properties={stats["properties"]}, '
+          f'Roots={stats["roots"]}, Rotations baked={stats["rotations"]}')
 
     return stats
 
 
 def _batch_worker(args):
     nif_str, out_path, fix_textures, remap_skeleton, src_meshes_dir = args
+    global _worker_warn_log
+    _worker_warn_log = []
     try:
         r = convert_nif(nif_str, out_path,
                         fix_textures=fix_textures, remap_skeleton=remap_skeleton,
                         src_meshes_dir=src_meshes_dir)
+        r['warn_counts'] = _categorize_pyffi_warnings(_worker_warn_log)
         return ('ok', nif_str, r)
     except Exception as e:
         return ('error', nif_str, str(e))

@@ -29,9 +29,11 @@ STEPS = [
      "Pull assets from BSA archives",            True,  True),
     ("assets",             "--assets-only",        "4. Assets",
      "Convert NIFs/SPTs, copy textures",         True,  True),
-    ("lod",                "--lod-only",           "5. LOD",
-     "Generate LOD meshes (slow)",               False, True),
-    ("modify_body_meshes", "--modify-body-meshes", "6. Body Meshes",
+    ("sounds",             "--sounds-only",        "5. Sounds",
+     "Convert sound files to XWM",               True,  True),
+    ("lod",                "--lod-only",           "6. LOD",
+     "Generate LOD meshes",               False, True),
+    ("modify_body_meshes", "--modify-body-meshes", "7. Body Meshes",
      "Add greaves partition to body NIFs",       False, False),
 ]
 
@@ -492,7 +494,7 @@ def gui_main():
         l = line.lower()
         if line.startswith("===") or "phase" in l[:20]:
             return "head"
-        if "error" in l:
+        if "error" in l and "errors" not in l:
             return "err"
         if "warning" in l or "warn" in l:
             return "warn"

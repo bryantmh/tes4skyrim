@@ -265,7 +265,7 @@ def phase_extract(file_name: str, tes4_data: str, config: dict,
 # ===========================================================================
 
 def phase_assets(file_name: str, config: dict, output_dir: str = None):
-    """Convert extracted NIF/SPT assets and copy textures/sounds to output."""
+    """Convert extracted NIF/SPT assets and copy textures to output."""
     from asset_convert.asset_pipeline import convert_assets
 
     extract_dir = str(SCRIPT_DIR / "export")
@@ -283,7 +283,32 @@ def phase_assets(file_name: str, config: dict, output_dir: str = None):
 
 
 # ===========================================================================
-# Phase 5: LOD generation
+# Phase 5: Sound copy
+# ===========================================================================
+
+def phase_sounds(file_name: str, config: dict, output_dir: str = None):
+    """Convert extracted sound files from BSA to XWM format in output."""
+    from asset_convert.asset_pipeline import convert_sounds
+
+    extract_dir = str(SCRIPT_DIR / "export")
+    out_dir     = output_dir or str(SCRIPT_DIR / "output")
+
+    print(f"[{file_name}] Converting sounds to XWM...")
+    stats = convert_sounds(
+        source_file=file_name,
+        extract_dir=extract_dir,
+        output_dir=out_dir,
+    )
+    converted = stats.get('converted', 0)
+    copied    = stats.get('copied', 0)
+    failed    = stats.get('failed', 0)
+    print(f"[{file_name}] Sounds complete "
+          f"({converted} converted to XWM, {copied} copied, {failed} failed)")
+    return True
+
+
+# ===========================================================================
+# Phase 6: LOD generation
 # ===========================================================================
 
 def phase_lod(file_name: str, tes5_data: str, config: dict,
@@ -366,7 +391,9 @@ def main():
     parser.add_argument("--extract-only",        action="store_true",
                         help="Extract BSA archives into export/<name>/")
     parser.add_argument("--assets-only",         action="store_true",
-                        help="Convert NIFs/SPTs, copy textures/sounds to output")
+                        help="Convert NIFs/SPTs, copy textures to output")
+    parser.add_argument("--sounds-only",         action="store_true",
+                        help="Copy extracted sound files to output")
     parser.add_argument("--lod-only",            action="store_true",
                         help="Generate object & terrain LOD meshes")
     parser.add_argument("--modify-body-meshes",  action="store_true",
@@ -404,18 +431,19 @@ def main():
     # ── Determine which steps to run ──────────────────────────────────────
     _any_only = any([
         args.export_only, args.import_only, args.extract_only, args.assets_only,
-        args.lod_only, args.modify_body_meshes,
+        args.sounds_only, args.lod_only, args.modify_body_meshes,
     ])
     if _any_only:
         do_export   = args.export_only
         do_import   = args.import_only
         do_extract  = args.extract_only
         do_assets   = args.assets_only
+        do_sounds   = args.sounds_only
         do_lod      = args.lod_only
         do_body     = args.modify_body_meshes
     else:
-        # Default: export + import + extract + assets (LOD is expensive; explicit only)
-        do_export = do_import = do_extract = do_assets = True
+        # Default: export + import + extract + assets + sounds (LOD is expensive; explicit only)
+        do_export = do_import = do_extract = do_assets = do_sounds = True
         do_lod = do_body = False
 
     success = True
@@ -457,9 +485,18 @@ def main():
                 success = False
         print()
 
+    if do_sounds:
+        print("=" * 54)
+        print("  Phase 5: SOUND CONVERSION")
+        print("=" * 54)
+        for fn in order:
+            if not phase_sounds(fn, config, output_dir=output_dir):
+                success = False
+        print()
+
     if do_lod:
         print("=" * 54)
-        print("  Phase 5: LOD GENERATION")
+        print("  Phase 6: LOD GENERATION")
         print("=" * 54)
         for fn in order:
             phase_lod(fn, tes5_data, config, output_dir=output_dir)
@@ -467,7 +504,7 @@ def main():
 
     if do_body:
         print("=" * 54)
-        print("  Phase 6: MODIFY BODY MESHES")
+        print("  Phase 7: MODIFY BODY MESHES")
         print("=" * 54)
         if not phase_modify_body_meshes():
             success = False

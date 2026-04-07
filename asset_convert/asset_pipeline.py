@@ -1,14 +1,17 @@
 """Asset conversion pipeline: BSA extraction → mesh/texture conversion → output.
 
-Two separate callable steps:
+Four separate callable steps:
 
   extract_bsas(source_file, data_path, extract_dir, force)
       Pull all assets from BSA archives into extract_dir/<source_name>/.
 
   convert_assets(source_file, extract_dir, output_dir)
-      Convert NIFs, copy textures/sounds/misc, convert SpeedTree files.
+      Convert NIFs, copy textures, convert SpeedTree files.
       Assumes extract_bsas has already been run.
-"""
+
+  convert_sounds(source_file, extract_dir, output_dir)
+      Convert sound files from extracted BSA into XWM and move into output_dir/<source_name>/sound/tes4/.
+      Assumes extract_bsas has already been run."""
 import os
 import shutil
 from pathlib import Path
@@ -58,7 +61,6 @@ def convert_assets(source_file, extract_dir='export', output_dir='output'):
         'mesh_conversion': {},
         'spt_conversion':  {},
         'textures_copied': 0,
-        'sounds_copied':   0,
         'other_copied':    0,
     }
 
@@ -82,7 +84,7 @@ def convert_assets(source_file, extract_dir='export', output_dir='output'):
         stats['mesh_conversion'] = {'converted': 0, 'skipped': 0, 'errors': 0}
 
     # -----------------------------------------------------------------------
-    # Copy Textures / Sounds / Misc
+    # Copy Textures
     # -----------------------------------------------------------------------
     print("\n" + "=" * 60)
     print("Copy Assets to Output")
@@ -94,17 +96,6 @@ def convert_assets(source_file, extract_dir='export', output_dir='output'):
         stats['textures_copied'] = _copy_tree(tex_src, tex_dst)
         print(f"  Textures: {stats['textures_copied']} files -> {tex_dst}")
 
-    snd_src = extract_dir / source_name / 'sound'
-    if snd_src.exists():
-        snd_dst = plugin_dir / 'sound' / 'tes4'
-        stats['sounds_copied'] = _copy_tree(snd_src, snd_dst)
-        print(f"  Sounds: {stats['sounds_copied']} files -> {snd_dst}")
-
-    misc_src = extract_dir / source_name / 'misc'
-    if misc_src.exists():
-        misc_dst = plugin_dir / 'misc' / 'tes4'
-        stats['other_copied'] = _copy_tree(misc_src, misc_dst)
-        print(f"  Other: {stats['other_copied']} files -> {misc_dst}")
 
     # -----------------------------------------------------------------------
     # SpeedTree Conversion
@@ -126,6 +117,24 @@ def convert_assets(source_file, extract_dir='export', output_dir='output'):
     print("=" * 60)
 
     return stats
+
+
+def convert_sounds(source_file, extract_dir='export', output_dir='output',
+                   ffmpeg_path='ffmpeg'):
+    """Convert extracted sound files to XWM format.  Delegates to audio_converter.
+
+    Args:
+        source_file: Plugin filename (e.g. 'Oblivion.esm').
+        extract_dir: Root extraction directory (default: export).
+        output_dir:  Final output root.
+        ffmpeg_path: Path to ffmpeg executable (default: 'ffmpeg' from PATH).
+
+    Returns:
+        dict with keys: converted, copied, failed, total.
+    """
+    from .audio_converter import convert_sounds as _ac_convert
+    return _ac_convert(source_file, extract_dir=extract_dir,
+                       output_dir=output_dir, ffmpeg_path=ffmpeg_path)
 
 
 def _copy_tree(src, dst):
@@ -159,6 +168,11 @@ if __name__ == '__main__':
     p_convert.add_argument('--extract-dir', default='export')
     p_convert.add_argument('--output-dir', default='output')
 
+    p_sounds = sub.add_parser('sounds', help='Copy sound files to output')
+    p_sounds.add_argument('source_file')
+    p_sounds.add_argument('--extract-dir', default='export')
+    p_sounds.add_argument('--output-dir', default='output')
+
     args = parser.parse_args()
     if args.cmd == 'extract':
         extract_bsas(args.source_file, args.data_path,
@@ -166,6 +180,9 @@ if __name__ == '__main__':
     elif args.cmd == 'convert':
         convert_assets(args.source_file,
                        extract_dir=args.extract_dir, output_dir=args.output_dir)
+    elif args.cmd == 'sounds':
+        convert_sounds(args.source_file,
+                    extract_dir=args.extract_dir, output_dir=args.output_dir)
     else:
         parser.print_help()
 
