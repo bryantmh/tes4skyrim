@@ -1,0 +1,30 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"ForEach-Object": true,
+			"Group-Object": true,
+			"Test-Path": true,
+			"&": true,
+			"Get-Process": true,
+			"/^powershell -NoProfile -Command \"Set-Location 'c:\\\\Users\\\\Bryant\\\\Documents\\\\Code\\\\TESConversion'; & \\.\\\\test_knights\\.ps1 -ImportOnly 2>&1\" \\| Out-String$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			".\\test_knights.ps1": true,
+			"more": true,
+			"/^cmd /c \"findstr /n /c:\"\"LayerCount=\"\" /c:\"\"Layer\\[0\\]\\.BTXT\"\" /c:\"\"Layer\\[0\\]\\.AlphaCount\"\" /c:\"\"Layer\\[0\\]\\.ATXT\"\" /c:\"\"VTEXCount=\"\" \"\"C:\\\\Users\\\\Bryant\\\\Documents\\\\Code\\\\TESConversion\\\\export\\\\Oblivion\\.esm\\.txt\"\" 2>nul\" \\| Select-Object -First 20$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^# Extract lines 615986 to 616021 using a faster method\ncmd /c \"findstr /n /c:\"\" \"\"C:\\\\Users\\\\Bryant\\\\Documents\\\\Code\\\\TESConversion\\\\export\\\\Oblivion\\.esm\\.txt\"\" 2>nul\" \\| Where-Object \\{ \\$_ -match \"\\^\\(\\\\d\\+\\):\" ; \\[int\\]\\$matches\\[1\\] -ge 615986 -and \\[int\\]\\$matches\\[1\\] -le 616020 \\}$/": {
+				"approve": true,
+				"matchCommandLine": true
+			}
+		}
+	}
+}

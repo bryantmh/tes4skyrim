@@ -1,0 +1,8 @@
+{
+    "explorer.excludeGitIgnore": false,
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+    },
+    "diff.exclude": ["**/*.exe"]
+}

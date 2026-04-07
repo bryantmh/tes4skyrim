@@ -1,0 +1,10 @@
+{
+  "// INSTRUCTIONS": "List files to convert. Masters are auto-detected from binary headers. Data paths are auto-detected from registry.",
+  "// SKIP_TYPES": "Skip types are managed in tes5_import/constants.py SKIP_TYPES set.",
+  "tes4DataPath": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Oblivion\\Data",
+  "tes5DataPath": "",
+  "files": [
+    "Oblivion.esm",
+    "Knights.esp"
+  ]
+}

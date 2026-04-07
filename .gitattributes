@@ -1,0 +1,31 @@
+# Local attributes: disable textual diffs for common binary file types
+# This prevents git (and VS Code) from generating expensive text diffs while
+# leaving files tracked so they can still be committed.
+
+# Common libraries / executables
+*.dll -diff
+*.exe -diff
+*.pyd -diff
+*.so -diff
+*.lib -diff
+*.bin -diff
+
+# Game/asset formats
+*.nif -diff
+*.bsa -diff
+*.dds -diff
+*.tga -diff
+*.png -diff
+*.jpg -diff
+*.jpeg -diff
+
+# Plugin files
+*.esp -diff
+*.esm -diff
+
+# Archives
+*.zip -diff
+*.7z -diff
+*.tar -diff
+*.gz -diff
+*.jar -diff

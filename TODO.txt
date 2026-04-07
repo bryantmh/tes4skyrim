@@ -1,0 +1,181 @@
+Major Issues:
+
+	1 - Havok feels off. Items don't move like they should do a comparison with skyrim esm / collision values and create skyrim_overrides for any data that can't be gleaned from the original model / esm
+		Specifically, there seems to be too much inertia on small items, and occasionally the items will hang in the air.
+
+	2 - Book using default cover and no text visible
+
+	3 - Animated signs such as the fighters guild sign are improperly positioned. (Doors are now correct)
+		signthecountsarms.nif
+		signfightersguild.nif
+
+	4 - Hit detection (how close my cursor needs to be to an item till the game shows its information on my hud) is way too big.
+		I am able to select it 3-4x the visual mesh's size always
+			Model Examples:
+				uppersilverpitcher01.nif
+				uppergobletceramic01.nif
+
+	5 - NiParticleSystem isn't correctly converted. For instances flames aren't animated. Crash is fixed
+		Model Examples:
+			fireopensmall.nif
+			middlecandlestickfloor01fake.nif appears but has no flame on the candle
+
+	6 - NiDynamicEffect isn't correctly converted.
+
+	7 - Fix furniture markers. They are mispositioned vertically in the air and backwards. I should be able to sit down in chairs for example.
+
+	8 - Remaining armor bugs:
+		6) Guard Helmet not properly attaching to head, so should be easy to properly attach to skyrim head.
+		8) Shields attach much better now, but not perfect
+		Add _1 body type
+		sack cloth pants missing ankle / clipping with new body mesh
+		Long Sleeves misalign
+		Should have another option just for armor pieces with lower arm (needs to be moved forward)
+		And an option for exposed foot (increase size)
+		lowerclass shirt 7 completely messed up (stretched wide)
+		For example, the lowerleg/calf area on the sack cloth pants (lowerclass/05/m) are completely missing ingame even though they appear in nifskope
+		inward pull broken
+		lower half of arms should be stretched forward and inward slightly
+
+	Cleanup convert.py. Has a bunch of old stuff
+
+	9 - Attempt to create a working speed tree (.spt) to NIF converter. oblivion speed tree files are located in export\Oblivion.esm\trees. It is not in a nif format so we will need to read the format directly and convert into nif using billboards for the leaf nodes if possible.
+		Else just add static leaf nodes that approximate the tree look. Much of the spt format is actually readable in plain text so it should be relatively easy to understand what is happenging.
+		Speed tree docs: https://nwn2.fandom.com/wiki/Speed_Tree_Format I've also included spttools-master inside the external folder. As well as a manually converted version of the trees in external\Speed Tree Conversion that uses static leaf nodes for you to reference.
+
+	10 - Crash related to updated collision objects
+		It seems to happen when walking over castleint2way.nif inside of the anvilcastlegreathall interior cell around half of the time.
+		When examining those nifs in nifskope this stands out but I'm unsure if it matters. The skyrim version has 2 ninodes with the value of new2way underneath the collision object, whereas the original only had one
+		Additional Full crash in project root crash-2026-03-31-22-12-43.log, crash-2026-03-31-23-53-12.log
+		STOP LOOKING AT UNKNOWN_6_SHORTS You've gone over it a thousand times!
+		Crash Log:
+			RSP+0: (hkpCollisionDispatcher*)
+			RSP+18: (bhkCollisionFilter*)
+			RSP+20: (hkpDefaultConvexListFilter*)
+			RSP+60: (bhkWorld*)
+			RSP+80: (ahkpWorld*)
+			RSP+A8: (NiPick::Results*)
+			RSP+B0: (hkpAllCdPointTempCollector*)
+			RSP+B8: (NiNode*) "Box03" ("tes4\Clutter\CastleInterior\AnvilCastleInterior\AnvilCurtain02.NIF")
+			RSP+C0: (BSTriShape*) "StackLroomLeftB:34" ("tes4\Architecture\CastleInterior\CastleStackLLeftBottom.NIF")
+		2nd Instance
+			RSP+0: (hkpCollisionDispatcher*)
+			RSP+18: (bhkCollisionFilter*)
+			RSP+20: (hkpDefaultConvexListFilter*)
+			RSP+60: (bhkWorld*)
+			RSP+80: (ahkpWorld*)
+			RSP+A8: (NiPick::Results*)
+			RSP+B0: (hkpAllCdPointTempCollector*)
+			RSP+E0: (BSGeometryListCullingProcess*)
+			RSP+108: (BSTriShape*) "UpperBench02:2" ("tes4\Furniture\upperclass\UpperBench02.NIF")
+			RSP+188: (bhkCharProxyController*)
+
+	11 - Nif converter fix errors in output. Read errors should be supressed in output and counted (by type) and output at the end.
+		Write errors should also be counted and output by type at the end. Current error count is 0 which is obviously wrong.
+		Fix write warnings.
+		Example Logs:
+			NaN files (2) — These are PyFFI read-time warnings from corrupt source data in Oblivion NIFs. Not our output issue.
+			invalid enum value for ExtraVectorsFlags — PyFFI read-time warnings from Oblivion files. Not our output.
+			Reading bhkMoppBvTreeShape failed — Corrupt MOPP data in source file. Not our output.
+			Still a problem: NiTexturingProperty block is missing from the nif tree: omitting reference
+			Still a problem: NiNode block is missing from the nif tree: omitting reference
+			Still a problem: NiMaterialProperty block is missing from the nif tree: omitting reference
+		Check if any of these will help fix lingering errors
+		import pyffi.spells.nif.fix
+		import pyffi.spells.nif.optimize
+		import pyffi.spells.nif.check
+			
+	12 - Nif converter fix broken conversion
+		Files:
+			[RD] architecture\basementsections\ungrdltraphingedoor.nif
+			[RD] architecture\castle\kvatch\kvatch  castle int hallway01.nif
+			[WR] architecture\ships\mainmast02.nif
+			[WR] architecture\statue\nightmotherstatue.nif
+			[WR] architecture\statue\nightmotherstatuebase.nif
+			[RD] clutter\farm\handscythe01.nif
+			[RD] clutter\farm\oar01.nif
+			[RD] clutter\floorplane01.nif
+			[RD] clutter\stonepedastellarge01.nif
+			[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
+			[WR] dungeons\caves\triggers\ctrigtripwire01.nif
+			[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
+			[WR] oblivion\gate\obgatemini01.nif
+			[WR] oblivion\gate\obliviongate_forming.nif
+			[WR] oblivion\plants\harradagroundattack.nif
+			[WR] oblivion\plants\harradauprightattack.nif
+			[WR] oblivion\sigil\sigillighttowerbase.nif
+			[WR] weapons\daedric\bow.nif
+			[WR] weapons\dwarven\bow.nif
+			[WR] weapons\ebony\bow.nif
+			[WR] weapons\elven\bow.nif
+			[WR] weapons\glass\bow.nif
+			[WR] weapons\iron\bow.nif
+			[WR] weapons\silver\bow.nif
+			[WR] weapons\steel\bow.nif
+
+
+Minor Issues:
+
+	1 - Fix face and body bug
+
+	2 - Update OBND based on meshes instead of guessing
+
+	3 - Quest Records: Causes game to crash on startup. Will ignore and skip for now and create more advanced conversion algorithm later
+
+	4 - Pathgrid Records: Ignore and skip for now. Will create advanced conversion to navmesh algorithm later
+
+	5 - Package Records: Ignore and skip for now. Will create advanced conversion algorithm later
+
+	6 - Every class teaches 1 handed this is obviously not correct in in accordance with the original data
+
+	7 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
+
+	9 - Weapons have an attack animation of unknown instead of default
+
+	10 - Improve landscape layer blending
+
+	11 - Remove skin portions of the armor meshes and just overlay the skyrim body?
+
+	12 - Fix default skyrim body to work with greaves
+	
+	13 - Should properly position inventory items. The side that allows the largest view should face out.
+	
+	14 - Properly convert creatures including animations. This is a major task, so just use skyrim_overrides to find suitable replacements. Also add other bethesda + beyond skyrim esm files to locate additioal replacements.
+
+
+Refactoring:
+
+	2 - Instead of using external, use the mopp exe inside of asset_convert.
+	You should copy the 2 template meshes there as well. If they will work. template.nif may be hardcoded to use the C: root directory. If that is the case, see if you can just fool it.
+	And instead of using a custom temp directory when building meshes, use the temp folder in the project root
+
+	4 - Standardize and simplify the way functions are called. Update readme
+
+	5 - Update and simplify GUI
+
+	6 - Sometimes BSAs will fail to extract because they use zlib compression which may not work well with the bethesda structs library. You will need to decompress it first. Here is one such project that can decompress: https://github.com/maboroshinokiseki/Oblivion-BSA-Uncompressor/tree/master/OblivionBSAUncompressor
+
+	7 - Should have an option to move everything back into a BSA after conversion
+
+	8 - Fix tests and make more comprehensive
+	
+	9 - Add texture_overrides folder to export
+
+	10 - Upgrade pyffi to 2.2.4?
+
+	11 - ESM Output shouldn't copy to game directory
+
+
+
+Unknown Issues (ESM or Mesh)
+
+	Grass does not appear ingame
+
+	Nirnroot sound really load and doesn't properly loop
+
+	Items don't sound material hits. If no such thing exists in Oblivion, map Skyrim sounds and materials
+
+	Land textures have weird specular
+
+	Harvested plants don't make a sound
+

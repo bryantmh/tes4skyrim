@@ -1,0 +1,31 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long — handled by formatter
+    "E701",  # multiple statements on one line (colon) — used in binary parsers
+    "E702",  # multiple statements on one line (semicolon) — used in binary parsers
+    "E741",  # ambiguous variable name (we use l, O, I in binary parsing)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# tes5_import uses re-export pattern that ruff F401 would incorrectly remove
+"tes5_import/__init__.py" = ["F401"]
+"tes5_import/constants.py" = ["F401"]
+"tes5_import/record_types/common.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tes4_export", "tes5_import", "asset_convert", "run"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
