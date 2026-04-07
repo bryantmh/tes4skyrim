@@ -8,6 +8,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -16,76 +17,130 @@ from pathlib import Path
 SCRIPT_DIR  = Path(__file__).parent.resolve()
 CONFIG_FILE = SCRIPT_DIR / "conversion_config.json"
 
-# ── Pipeline steps ordered for display ────────────────────────────────────────
+# ── Pipeline steps ─────────────────────────────────────────────────────────
+# (key, cli_flag, label, description, default_on, needs_file)
 STEPS = [
-    ("export",             "Export",             "Parse TES4 binary → key/value text cache"),
-    ("import",             "Import",             "Build TES5 binary ESM/ESP from text cache"),
-    ("assets",             "Assets",             "Extract BSAs, convert NIFs/SPTs, copy textures"),
-    ("lod",                "LOD",                "Generate object & terrain LOD meshes"),
-    ("modify_body_meshes", "Body Meshes",        "Add greaves partition to character body NIFs"),
-    ("verify_plugin",      "Verify",             "Run integrity checks on output plugin(s)"),
+    ("export",             "--export-only",        "1. Export",
+     "Parse TES4 binary -> text cache",          True,  True),
+    ("import_",            "--import-only",        "2. Import",
+     "Build TES5 ESM/ESP from text cache",       True,  True),
+    ("extract",            "--extract-only",       "3. Extract",
+     "Pull assets from BSA archives",            True,  True),
+    ("assets",             "--assets-only",        "4. Assets",
+     "Convert NIFs/SPTs, copy textures",         True,  True),
+    ("lod",                "--lod-only",           "5. LOD",
+     "Generate LOD meshes (slow)",               False, True),
+    ("modify_body_meshes", "--modify-body-meshes", "6. Body Meshes",
+     "Add greaves partition to body NIFs",       False, False),
 ]
 
-# CLI flag name for each step key
-_STEP_FLAGS = {
-    "export":             "--export-only",
-    "import":             "--import-only",
-    "assets":             "--assets-only",
-    "lod":                "--lod-only",
-    "modify_body_meshes": "--modify-body-meshes",
-    "verify_plugin":      "--verify-plugin",
-}
-
-# Steps enabled by default
-_DEFAULT_ON = {"export", "import", "assets"}
-
-# Steps that take a -f FILE argument
-_STEPS_NEED_FILE = {"export", "import", "assets", "lod", "verify_plugin"}
+_DEFAULT_ON = {k for k, *_ in STEPS if _[3]}  # keys where default_on=True
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 CLR = {
-    "bg":          "#1e1e2e",   # main background
-    "panel":       "#2a2a3d",   # card / panel background
-    "border":      "#44475a",   # border / separator
-    "accent":      "#7c6af7",   # purple accent
-    "accent_hover":"#9a8cf8",
-    "btn":         "#313244",   # button bg
-    "btn_hover":   "#45475a",
-    "green":       "#a6e3a1",
-    "red":         "#f38ba8",
-    "yellow":      "#f9e2af",
-    "blue":        "#89dceb",
-    "text":        "#cdd6f4",   # primary text
-    "subtext":     "#6c7086",   # secondary / label text
-    "log_bg":      "#141420",   # log pane background
-    "log_fg":      "#cdd6f4",
-    "log_info":    "#89b4fa",
-    "log_ok":      "#a6e3a1",
-    "log_err":     "#f38ba8",
-    "log_warn":    "#f9e2af",
-    "check_on":    "#7c6af7",
-    "check_off":   "#44475a",
+    "bg":           "#1e1e2e",
+    "panel":        "#2a2a3d",
+    "border":       "#44475a",
+    "accent":       "#7c6af7",
+    "accent_hover": "#9a8cf8",
+    "btn":          "#313244",
+    "btn_hover":    "#45475a",
+    "green":        "#a6e3a1",
+    "red":          "#f38ba8",
+    "yellow":       "#f9e2af",
+    "blue":         "#89dceb",
+    "text":         "#cdd6f4",
+    "subtext":      "#6c7086",
+    "log_bg":       "#141420",
+    "log_fg":       "#cdd6f4",
+    "log_info":     "#89b4fa",
+    "log_ok":       "#a6e3a1",
+    "log_err":      "#f38ba8",
+    "log_warn":     "#f9e2af",
+    "check_on":     "#7c6af7",
+    "check_off":    "#44475a",
 }
 
 
-def load_config():
-    if not CONFIG_FILE.exists():
-        return None
-    with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
-        cfg = json.load(fh)
-    files = cfg.get("files", [])
-    cfg["_files"] = [f if isinstance(f, str) else f["name"] for f in files]
-    return cfg
+# ── Config helpers ────────────────────────────────────────────────────────────
 
-
-def _run_process(cmd, log_cb):
-    """Run a subprocess, streaming output line-by-line to log_cb."""
+def _find_game_path(game: str) -> str:
+    """Auto-detect game data path from the Windows registry."""
     try:
+        import winreg
+        keys = {
+            "oblivion": [
+                (winreg.HKEY_LOCAL_MACHINE,
+                 r"SOFTWARE\WOW6432Node\Bethesda Softworks\Oblivion"),
+                (winreg.HKEY_LOCAL_MACHINE,
+                 r"SOFTWARE\Bethesda Softworks\Oblivion"),
+            ],
+            "skyrimse": [
+                (winreg.HKEY_LOCAL_MACHINE,
+                 r"SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition"),
+                (winreg.HKEY_LOCAL_MACHINE,
+                 r"SOFTWARE\Bethesda Softworks\Skyrim Special Edition"),
+            ],
+        }
+        for hkey, subkey in keys.get(game, []):
+            try:
+                with winreg.OpenKey(hkey, subkey) as key:
+                    path, _ = winreg.QueryValueEx(key, "Installed Path")
+                    data = os.path.join(path, "Data")
+                    if os.path.isdir(data):
+                        return data
+            except (FileNotFoundError, OSError):
+                continue
+    except ImportError:
+        pass
+    return ""
+
+
+def load_config() -> dict:
+    if not CONFIG_FILE.exists():
+        return {}
+    with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def save_config(cfg: dict):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
+
+
+def scan_plugins(data_path: str) -> list:
+    """Return sorted list of .esm/.esp files in data_path."""
+    if not data_path or not os.path.isdir(data_path):
+        return []
+    plugins = []
+    for name in sorted(os.listdir(data_path)):
+        if name.lower().endswith(('.esm', '.esp')):
+            plugins.append(name)
+    return plugins
+
+
+def _run_process(cmd, log_cb, env=None):
+    """Run cmd as subprocess, streaming each line to log_cb immediately."""
+    try:
+        full_env = os.environ.copy()
+        full_env["PYTHONUNBUFFERED"] = "1"
+        if env:
+            full_env.update(env)
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, cwd=str(SCRIPT_DIR), encoding="utf-8", errors="replace",
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(SCRIPT_DIR),
+            env=full_env,
+            bufsize=1,          # line-buffered
         )
-        for line in proc.stdout:
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                break
             log_cb(line.rstrip())
         proc.wait()
         return proc.returncode
@@ -101,216 +156,288 @@ def _run_process(cmd, log_cb):
 def gui_main():
     try:
         import tkinter as tk
-        from tkinter import ttk, scrolledtext, messagebox, font as tkfont
+        from tkinter import ttk, filedialog, messagebox
     except ImportError:
         print("ERROR: tkinter not available")
         return 1
 
+    # ── Load / init config ────────────────────────────────────────────────────
     cfg = load_config()
-    if not cfg:
-        tk.Tk().withdraw()
-        messagebox.showerror("Error", f"Not found: {CONFIG_FILE}")
-        return 1
-
-    available = cfg.get("_files", [])
+    tes4_path    = cfg.get("tes4DataPath", "") or _find_game_path("oblivion")
+    output_path  = cfg.get("outputDir", "")  or str(SCRIPT_DIR / "output")
 
     # ── Root window ───────────────────────────────────────────────────────────
     root = tk.Tk()
-    root.title("TES4 → TES5 Converter")
-    root.geometry("1000x760")
-    root.minsize(820, 600)
+    root.title("TES4 -> TES5 Converter")
+    root.geometry("1060x800")
+    root.minsize(860, 620)
     root.configure(bg=CLR["bg"])
-
-    # Prevent tk default grey leaking through
-    root.option_add("*Background",       CLR["bg"])
-    root.option_add("*Foreground",       CLR["text"])
-    root.option_add("*Font",             "Segoe\\ UI 10")
+    root.option_add("*Background", CLR["bg"])
+    root.option_add("*Foreground", CLR["text"])
 
     style = ttk.Style(root)
     style.theme_use("clam")
 
-    # ── ttk style overrides ───────────────────────────────────────────────────
-    def S(*args, **kw):
-        style.configure(*args, **kw)
+    def S(*a, **kw):
+        style.configure(*a, **kw)
 
-    S(".",                    background=CLR["bg"], foreground=CLR["text"],
-                              troughcolor=CLR["panel"], borderwidth=0, relief="flat")
-    S("TFrame",               background=CLR["bg"])
-    S("Panel.TFrame",         background=CLR["panel"])
-    S("TLabel",               background=CLR["bg"], foreground=CLR["text"])
-    S("Sub.TLabel",           background=CLR["bg"], foreground=CLR["subtext"],
-                              font="Segoe\\ UI 9")
-    S("Head.TLabel",          background=CLR["bg"], foreground=CLR["text"],
-                              font="Segoe\\ UI 11 bold")
-    S("Panel.TLabel",         background=CLR["panel"], foreground=CLR["text"])
-    S("PanelSub.TLabel",      background=CLR["panel"], foreground=CLR["subtext"],
-                              font="Segoe\\ UI 9")
+    S(".",             background=CLR["bg"], foreground=CLR["text"],
+                       troughcolor=CLR["panel"], borderwidth=0, relief="flat")
+    S("TFrame",        background=CLR["bg"])
+    S("Panel.TFrame",  background=CLR["panel"])
 
-    S("TCombobox",            fieldbackground=CLR["btn"], background=CLR["btn"],
-                              foreground=CLR["text"], arrowcolor=CLR["text"],
-                              selectbackground=CLR["accent"],
-                              selectforeground=CLR["text"], borderwidth=1,
-                              relief="flat")
-    style.map("TCombobox",    fieldbackground=[("readonly", CLR["btn"])],
-                              foreground=[("readonly", CLR["text"])])
+    S("TLabel",        background=CLR["bg"],    foreground=CLR["text"])
+    S("Sub.TLabel",    background=CLR["bg"],    foreground=CLR["subtext"],
+                       font="Segoe\\ UI 9")
+    S("Panel.TLabel",  background=CLR["panel"], foreground=CLR["text"])
+    S("PanelSub.TLabel", background=CLR["panel"], foreground=CLR["subtext"],
+                       font="Segoe\\ UI 9")
+    S("Head.TLabel",   background=CLR["panel"], foreground=CLR["accent"],
+                       font=("Segoe UI", 15, "bold"))
+    S("Entry.TLabel",  background=CLR["panel"], foreground=CLR["subtext"],
+                       font="Segoe\\ UI 9")
 
-    S("TButton",              background=CLR["btn"], foreground=CLR["text"],
-                              borderwidth=1, relief="flat", padding=(10, 5),
-                              font="Segoe\\ UI 10")
-    style.map("TButton",      background=[("active", CLR["btn_hover"])],
-                              foreground=[("active", CLR["text"])])
+    S("TEntry",        fieldbackground=CLR["btn"], foreground=CLR["text"],
+                       insertcolor=CLR["text"], borderwidth=1, relief="flat")
 
-    S("Accent.TButton",       background=CLR["accent"], foreground="#ffffff",
-                              borderwidth=0, relief="flat", padding=(14, 6),
-                              font="Segoe\\ UI 10 bold")
-    style.map("Accent.TButton", background=[("active", CLR["accent_hover"]),
-                                             ("disabled", CLR["btn"])],
-                              foreground=[("disabled", CLR["subtext"])])
+    S("TCombobox",     fieldbackground=CLR["btn"], background=CLR["btn"],
+                       foreground=CLR["text"], arrowcolor=CLR["text"],
+                       selectbackground=CLR["accent"],
+                       selectforeground=CLR["text"], borderwidth=1, relief="flat")
+    style.map("TCombobox",
+              fieldbackground=[("readonly", CLR["btn"])],
+              foreground=[("readonly", CLR["text"])])
 
-    S("Danger.TButton",       background="#453030", foreground=CLR["red"],
-                              borderwidth=0, relief="flat", padding=(10, 5))
+    S("TButton",       background=CLR["btn"], foreground=CLR["text"],
+                       borderwidth=1, relief="flat", padding=(8, 4),
+                       font="Segoe\\ UI 10")
+    style.map("TButton",
+              background=[("active", CLR["btn_hover"]), ("disabled", CLR["border"])],
+              foreground=[("disabled", CLR["subtext"])])
+
+    S("Accent.TButton", background=CLR["accent"], foreground="#ffffff",
+                        borderwidth=0, relief="flat", padding=(14, 6),
+                        font="Segoe\\ UI 10 bold")
+    style.map("Accent.TButton",
+              background=[("active", CLR["accent_hover"]),
+                          ("disabled", CLR["btn"])],
+              foreground=[("disabled", CLR["subtext"])])
+
+    S("Danger.TButton", background="#453030", foreground=CLR["red"],
+                        borderwidth=0, relief="flat", padding=(8, 4))
     style.map("Danger.TButton", background=[("active", "#5a3030")])
 
-    S("TSeparator",           background=CLR["border"])
+    S("TSeparator",    background=CLR["border"])
+    S("TScrollbar",    background=CLR["btn"], troughcolor=CLR["bg"],
+                       borderwidth=0, arrowcolor=CLR["subtext"], relief="flat")
+    style.map("TScrollbar", background=[("active", CLR["btn_hover"])])
 
-    S("TScrollbar",           background=CLR["btn"], troughcolor=CLR["bg"],
-                              borderwidth=0, arrowcolor=CLR["subtext"],
-                              relief="flat")
-    style.map("TScrollbar",   background=[("active", CLR["btn_hover"])])
+    S("TCheckbutton",  background=CLR["panel"], foreground=CLR["text"],
+                       indicatorcolor=CLR["check_off"],
+                       indicatorrelief="flat", focuscolor="")
+    style.map("TCheckbutton",
+              indicatorcolor=[("selected", CLR["check_on"])],
+              background=[("active", CLR["panel"])])
 
-    S("TCheckbutton",         background=CLR["panel"], foreground=CLR["text"],
-                              indicatorcolor=CLR["check_off"],
-                              indicatorrelief="flat", focuscolor="")
-    style.map("TCheckbutton", indicatorcolor=[("selected", CLR["check_on"])],
-                              background=[("active", CLR["panel"])])
-
-    S("TProgressbar",         troughcolor=CLR["panel"], background=CLR["accent"],
-                              borderwidth=0, thickness=4)
+    S("TProgressbar",  troughcolor=CLR["panel"], background=CLR["accent"],
+                       borderwidth=0, thickness=4)
 
     # ── State vars ────────────────────────────────────────────────────────────
-    file_var    = tk.StringVar(value=available[0] if available else "")
-    no_cache_var = tk.BooleanVar(value=False)
+    tes4_var    = tk.StringVar(value=tes4_path)
+    output_var  = tk.StringVar(value=output_path)
+    file_var    = tk.StringVar()
     step_vars   = {key: tk.BooleanVar(value=(key in _DEFAULT_ON))
                    for key, *_ in STEPS}
     running     = threading.Event()
 
-    # ── Layout ────────────────────────────────────────────────────────────────
-    # Left sidebar (controls) + right log pane
+    # ── Layout: sidebar + log pane ────────────────────────────────────────────
     outer = ttk.Frame(root)
-    outer.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
-    outer.columnconfigure(0, weight=0, minsize=310)
+    outer.pack(fill=tk.BOTH, expand=True)
+    outer.columnconfigure(0, weight=0, minsize=330)
     outer.columnconfigure(1, weight=1)
     outer.rowconfigure(0, weight=1)
 
-    sidebar = ttk.Frame(outer, style="Panel.TFrame")
+    sidebar  = ttk.Frame(outer, style="Panel.TFrame")
     sidebar.grid(row=0, column=0, sticky="nsew")
 
     log_pane = tk.Frame(outer, bg=CLR["log_bg"])
     log_pane.grid(row=0, column=1, sticky="nsew")
 
-    # ── Sidebar: title ────────────────────────────────────────────────────────
-    title_frame = ttk.Frame(sidebar, style="Panel.TFrame")
-    title_frame.pack(fill=tk.X, padx=16, pady=(18, 6))
-    ttk.Label(title_frame, text="TES4  →  TES5", style="Head.TLabel",
-              background=CLR["panel"],
-              font=("Segoe UI", 15, "bold"), foreground=CLR["accent"]).pack(anchor="w")
-    ttk.Label(title_frame, text="Oblivion to Skyrim SE converter",
+    # ── Sidebar helpers ───────────────────────────────────────────────────────
+    def _sep():
+        ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(
+            fill=tk.X, padx=14, pady=6)
+
+    def _section(text: str):
+        f = ttk.Frame(sidebar, style="Panel.TFrame")
+        f.pack(fill=tk.X, padx=14, pady=(6, 2))
+        ttk.Label(f, text=text, style="PanelSub.TLabel").pack(anchor="w")
+        return f
+
+    def _path_row(parent, label_text: str, var: tk.StringVar,
+                  browse_dir=True, on_change=None):
+        """A labelled Entry + Browse button row."""
+        ttk.Label(parent, text=label_text, style="PanelSub.TLabel").pack(
+            anchor="w", pady=(4, 0))
+        row = ttk.Frame(parent, style="Panel.TFrame")
+        row.pack(fill=tk.X)
+        row.columnconfigure(0, weight=1)
+        entry = ttk.Entry(row, textvariable=var, width=26)
+        entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+        def _browse():
+            if browse_dir:
+                path = filedialog.askdirectory(
+                    initialdir=var.get() or str(SCRIPT_DIR),
+                    title=f"Select {label_text}")
+            else:
+                path = filedialog.askopenfilename(
+                    initialdir=var.get() or str(SCRIPT_DIR),
+                    title=f"Select {label_text}")
+            if path:
+                var.set(path)
+                if on_change:
+                    on_change(path)
+
+        ttk.Button(row, text="...", command=_browse, width=3).grid(
+            row=0, column=1)
+        return entry
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    tf = ttk.Frame(sidebar, style="Panel.TFrame")
+    tf.pack(fill=tk.X, padx=14, pady=(16, 4))
+    ttk.Label(tf, text="TES4  ->  TES5", style="Head.TLabel").pack(anchor="w")
+    ttk.Label(tf, text="Oblivion to Skyrim SE converter",
               style="PanelSub.TLabel").pack(anchor="w")
 
-    ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=16, pady=6)
+    _sep()
 
-    # ── Sidebar: file selector ────────────────────────────────────────────────
-    f_frame = ttk.Frame(sidebar, style="Panel.TFrame")
-    f_frame.pack(fill=tk.X, padx=16, pady=(6, 2))
-    ttk.Label(f_frame, text="Plugin File", style="PanelSub.TLabel").pack(anchor="w")
-    file_combo = ttk.Combobox(f_frame, textvariable=file_var, values=available,
-                               state="readonly", width=30)
-    file_combo.pack(fill=tk.X, pady=(3, 0))
+    # ── Oblivion data directory ───────────────────────────────────────────────
+    dir_frame = ttk.Frame(sidebar, style="Panel.TFrame")
+    dir_frame.pack(fill=tk.X, padx=14, pady=(0, 4))
 
-    # No-cache checkbox
-    nc_frame = ttk.Frame(sidebar, style="Panel.TFrame")
-    nc_frame.pack(fill=tk.X, padx=16, pady=(6, 2))
-    ttk.Checkbutton(nc_frame, text="Force re-export (no cache)",
-                    variable=no_cache_var).pack(anchor="w")
+    def _on_tes4_change(path):
+        """Refresh plugin list when Oblivion data dir changes."""
+        plugins = scan_plugins(path)
+        file_combo["values"] = plugins
+        if plugins:
+            # Prefer Oblivion.esm if present
+            preferred = None
+            for p in plugins:
+                if p.lower() == 'oblivion.esm':
+                    preferred = p
+                    break
+            file_var.set(preferred if preferred else plugins[0])
+        else:
+            file_var.set("")
+        _save_dir_to_config()
 
-    ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=16, pady=10)
+    _path_row(dir_frame, "Oblivion Data Directory", tes4_var,
+              browse_dir=True, on_change=_on_tes4_change)
 
-    # ── Sidebar: pipeline steps ───────────────────────────────────────────────
-    steps_header = ttk.Frame(sidebar, style="Panel.TFrame")
-    steps_header.pack(fill=tk.X, padx=16, pady=(0, 4))
-    ttk.Label(steps_header, text="Pipeline Steps", style="PanelSub.TLabel").pack(side=tk.LEFT)
+    # ── Plugin selector ───────────────────────────────────────────────────────
+    pf = ttk.Frame(sidebar, style="Panel.TFrame")
+    pf.pack(fill=tk.X, padx=14, pady=(6, 0))
+    ttk.Label(pf, text="Plugin File", style="PanelSub.TLabel").pack(anchor="w")
+    initial_plugins = scan_plugins(tes4_path)
+    file_combo = ttk.Combobox(pf, textvariable=file_var,
+                               values=initial_plugins, state="readonly", width=30)
+    file_combo.pack(fill=tk.X, pady=(2, 0))
+    if initial_plugins and not file_var.get():
+        # Prefer Oblivion.esm if present, otherwise pick the first plugin
+        preferred = None
+        for p in initial_plugins:
+            if p.lower() == 'oblivion.esm':
+                preferred = p
+                break
+        file_var.set(preferred if preferred else initial_plugins[0])
 
-    def _select_all_steps():
+    _sep()
+
+    # ── Output directory ──────────────────────────────────────────────────────
+    out_frame = ttk.Frame(sidebar, style="Panel.TFrame")
+    out_frame.pack(fill=tk.X, padx=14, pady=(0, 4))
+
+    def _on_output_change(path):
+        _save_dir_to_config()
+
+    _path_row(out_frame, "Output Directory", output_var,
+              browse_dir=True, on_change=_on_output_change)
+
+    def _save_dir_to_config(*_):
+        updated = load_config()
+        updated["tes4DataPath"] = tes4_var.get()
+        updated["outputDir"]    = output_var.get()
+        save_config(updated)
+
+    # Also save on focusout of entries
+    tes4_var.trace_add("write", lambda *_: None)  # live binding via on_change
+
+    _sep()
+
+    # ── Pipeline steps ────────────────────────────────────────────────────────
+    sh = ttk.Frame(sidebar, style="Panel.TFrame")
+    sh.pack(fill=tk.X, padx=14, pady=(0, 4))
+    ttk.Label(sh, text="Pipeline Steps", style="PanelSub.TLabel").pack(side=tk.LEFT)
+
+    def _set_all():
         for v in step_vars.values():
             v.set(True)
         _update_run_btn()
 
-    def _select_default_steps():
+    def _set_default():
         for key, v in step_vars.items():
             v.set(key in _DEFAULT_ON)
         _update_run_btn()
 
-    sa_btn = ttk.Button(steps_header, text="All",     command=_select_all_steps,    width=4)
-    sd_btn = ttk.Button(steps_header, text="Default", command=_select_default_steps, width=7)
-    sd_btn.pack(side=tk.RIGHT, padx=(2, 0))
-    sa_btn.pack(side=tk.RIGHT, padx=(2, 0))
+    ttk.Button(sh, text="Default", command=_set_default, width=7).pack(
+        side=tk.RIGHT, padx=(2, 0))
+    ttk.Button(sh, text="All", command=_set_all, width=4).pack(
+        side=tk.RIGHT, padx=(2, 0))
 
     def _update_run_btn(*_):
         has = any(v.get() for v in step_vars.values())
-        run_btn.configure(state="normal" if has and not running.is_set() else "disabled")
+        st  = "normal" if has and not running.is_set() else "disabled"
+        run_btn.configure(state=st)
 
-    for key, label, tip in STEPS:
+    for key, flag, label, tip, default_on, needs_file in STEPS:
         row = ttk.Frame(sidebar, style="Panel.TFrame")
-        row.pack(fill=tk.X, padx=16, pady=1)
-        cb = ttk.Checkbutton(row, text=label, variable=step_vars[key],
-                              command=_update_run_btn)
-        cb.pack(side=tk.LEFT)
-        ttk.Label(row, text=tip, style="PanelSub.TLabel").pack(side=tk.LEFT, padx=(8, 0))
+        row.pack(fill=tk.X, padx=14, pady=1)
+        ttk.Checkbutton(row, text=label, variable=step_vars[key],
+                         command=_update_run_btn).pack(side=tk.LEFT)
+        ttk.Label(row, text=tip, style="PanelSub.TLabel").pack(
+            side=tk.LEFT, padx=(6, 0))
 
-    ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=16, pady=10)
+    _sep()
 
-    # ── Sidebar: action buttons ───────────────────────────────────────────────
-    btn_frame = ttk.Frame(sidebar, style="Panel.TFrame")
-    btn_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+    # ── Action buttons ────────────────────────────────────────────────────────
+    bf = ttk.Frame(sidebar, style="Panel.TFrame")
+    bf.pack(fill=tk.X, padx=14, pady=(0, 6))
 
-    run_btn = ttk.Button(btn_frame, text="▶   Run Selected Steps",
+    run_btn = ttk.Button(bf, text="  Run Selected Steps",
                          style="Accent.TButton", command=lambda: _run_clicked())
     run_btn.pack(fill=tk.X, pady=(0, 6))
 
-    row2 = ttk.Frame(btn_frame, style="Panel.TFrame")
-    row2.pack(fill=tk.X)
-    row2.columnconfigure(0, weight=1)
-    row2.columnconfigure(1, weight=1)
-
-    test_btn = ttk.Button(row2, text="Run Tests",
-                          command=lambda: _run_single("test"))
-    test_btn.grid(row=0, column=0, sticky="ew", padx=(0, 3))
-
-    clear_btn = ttk.Button(row2, text="Clear Log", command=lambda: _clear_log(),
+    clear_btn = ttk.Button(bf, text="Clear Log", command=lambda: _clear_log(),
                            style="Danger.TButton")
-    clear_btn.grid(row=0, column=1, sticky="ew", padx=(3, 0))
+    clear_btn.pack(fill=tk.X)
 
-    # Progress bar (hidden until running)
-    prog_var = tk.DoubleVar(value=0)
-    prog_bar = ttk.Progressbar(sidebar, variable=prog_var, mode="indeterminate",
-                                length=200)
-    prog_bar.pack(fill=tk.X, padx=16, pady=(4, 0))
-    prog_bar.pack_forget()  # hidden initially
+    # Progress bar + status
+    prog_bar = ttk.Progressbar(sidebar, mode="indeterminate", length=200)
+    prog_bar.pack(fill=tk.X, padx=14, pady=(4, 0))
+    prog_bar.pack_forget()
 
-    # status label at bottom of sidebar
     status_var = tk.StringVar(value="Ready")
-    status_lbl = ttk.Label(sidebar, textvariable=status_var,
-                           style="PanelSub.TLabel")
-    status_lbl.pack(side=tk.BOTTOM, fill=tk.X, padx=16, pady=(0, 12))
+    ttk.Label(sidebar, textvariable=status_var, style="PanelSub.TLabel").pack(
+        side=tk.BOTTOM, fill=tk.X, padx=14, pady=(0, 10))
 
     # ── Log pane ──────────────────────────────────────────────────────────────
-    log_header = tk.Frame(log_pane, bg=CLR["panel"], height=36)
-    log_header.pack(fill=tk.X)
-    log_header.pack_propagate(False)
-
-    tk.Label(log_header, text="Output Log", bg=CLR["panel"],
-             fg=CLR["subtext"], font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=14,
-                                                            pady=9)
+    log_hdr = tk.Frame(log_pane, bg=CLR["panel"], height=34)
+    log_hdr.pack(fill=tk.X)
+    log_hdr.pack_propagate(False)
+    tk.Label(log_hdr, text="Output Log", bg=CLR["panel"],
+             fg=CLR["subtext"], font=("Segoe UI", 9)).pack(
+        side=tk.LEFT, padx=12, pady=8)
 
     log_text = tk.Text(
         log_pane, wrap=tk.WORD,
@@ -326,28 +453,26 @@ def gui_main():
     log_sb.pack(side=tk.RIGHT, fill=tk.Y)
     log_text.pack(fill=tk.BOTH, expand=True)
 
-    # Coloured text tags
-    log_text.tag_configure("info",  foreground=CLR["log_info"])
-    log_text.tag_configure("ok",    foreground=CLR["log_ok"])
-    log_text.tag_configure("err",   foreground=CLR["log_err"])
-    log_text.tag_configure("warn",  foreground=CLR["log_warn"])
-    log_text.tag_configure("head",  foreground=CLR["accent"],
-                                    font=("Consolas", 9, "bold"))
-    log_text.tag_configure("dim",   foreground=CLR["subtext"])
-    log_text.tag_configure("cmd",   foreground=CLR["blue"],
-                                    font=("Consolas", 9, "bold"))
+    log_text.tag_configure("head", foreground=CLR["accent"],
+                                   font=("Consolas", 9, "bold"))
+    log_text.tag_configure("ok",   foreground=CLR["log_ok"])
+    log_text.tag_configure("err",  foreground=CLR["log_err"])
+    log_text.tag_configure("warn", foreground=CLR["log_warn"])
+    log_text.tag_configure("cmd",  foreground=CLR["blue"],
+                                   font=("Consolas", 9, "bold"))
+    log_text.tag_configure("dim",  foreground=CLR["subtext"])
 
     def _classify(line: str) -> str:
         l = line.lower()
-        if line.startswith("===") or line.startswith("  Phase"):
+        if line.startswith("===") or "phase" in l[:20]:
             return "head"
         if "error" in l:
             return "err"
         if "warning" in l or "warn" in l:
             return "warn"
-        if "complete" in l or "done" in l or "ok" in l or "success" in l:
+        if line.strip() in ("done", "ok") or "complete" in l or "success" in l:
             return "ok"
-        if line.startswith("Running:"):
+        if line.startswith("Running:") or line.startswith("["):
             return "cmd"
         return None
 
@@ -369,115 +494,70 @@ def gui_main():
     def _set_running(state: bool):
         running.set() if state else running.clear()
         run_btn.configure(state="disabled" if state else "normal")
-        test_btn.configure(state="disabled" if state else "normal")
         file_combo.configure(state="disabled" if state else "readonly")
         if state:
-            prog_bar.pack(fill=tk.X, padx=16, pady=(4, 0))
+            prog_bar.pack(fill=tk.X, padx=14, pady=(4, 0))
             prog_bar.start(12)
-            status_var.set("Running…")
+            status_var.set("Running...")
         else:
             prog_bar.stop()
             prog_bar.pack_forget()
             status_var.set("Ready")
         _update_run_btn()
 
-    # ── Actions ───────────────────────────────────────────────────────────────
+    # ── Run logic ─────────────────────────────────────────────────────────────
+    def _build_cmd(step_key: str, fname: str, out_dir: str) -> list:
+        """Build the convert.py command for a single step."""
+        _, flag, _, _, _, needs_file = next(
+            s for s in STEPS if s[0] == step_key)
+        cmd = [sys.executable, "-u", str(SCRIPT_DIR / "convert.py"), flag]
+        if needs_file and fname:
+            cmd += ["-f", fname]
+        if out_dir:
+            cmd += ["--output-dir", out_dir]
+        return cmd
+
     def _run_clicked():
         if running.is_set():
             return
-        fname  = file_var.get()
-        if not fname:
-            from tkinter import messagebox
-            messagebox.showwarning("No File", "Select a plugin file first.", parent=root)
-            return
-        steps = [key for key, *_ in STEPS if step_vars[key].get()]
+        fname   = file_var.get()
+        out_dir = output_var.get().strip()
+        steps   = [key for key, *_ in STEPS if step_vars[key].get()]
         if not steps:
-            from tkinter import messagebox
-            messagebox.showwarning("No Steps", "Select at least one pipeline step.", parent=root)
+            messagebox.showwarning("No Steps",
+                                   "Select at least one pipeline step.", parent=root)
             return
         _clear_log()
-        _log(f"File: {fname}")
+        _log(f"File: {fname or '(none)'}")
         _log(f"Steps: {', '.join(steps)}")
+        _log(f"Output: {out_dir}")
         _log("")
 
         def _worker():
             _set_running(True)
             try:
-                if len(steps) == 1:
-                    flag = _STEP_FLAGS[steps[0]]
-                    needs_file = steps[0] in _STEPS_NEED_FILE
-                    cmd = [sys.executable, str(SCRIPT_DIR / "convert.py"), flag]
-                    if needs_file:
-                        cmd += ["-f", fname]
-                    if no_cache_var.get() and steps[0] == "export":
-                        cmd.append("--no-cache")
+                default_set = {k for k, *rest in STEPS if rest[3]}
+                active_set  = set(steps)
+                # If selection == default set and a file is specified,
+                # run the pipeline without --*-only flags (uses convert.py defaults)
+                if active_set == default_set and fname:
+                    cmd = [sys.executable, "-u", str(SCRIPT_DIR / "convert.py"),
+                           "-f", fname]
+                    if out_dir:
+                        cmd += ["--output-dir", out_dir]
                     root.after(0, _log, f"Running: {' '.join(cmd)}")
                     ret = _run_process(cmd, lambda m: root.after(0, _log, m))
                 else:
-                    # Multiple steps: run one convert.py call for standard steps,
-                    # then separately for special ones.
-                    std    = [s for s in steps if s in ("export","import","assets","lod")]
-                    extras = [s for s in steps if s not in ("export","import","assets","lod")]
                     ret = 0
-                    if std:
-                        cmd = [sys.executable, str(SCRIPT_DIR / "convert.py"),
-                               "-f", fname]
-                        if no_cache_var.get():
-                            cmd.append("--no-cache")
-                        # Only add --*-only flags for a known subset — omitting all
-                        # flags means the default pipeline, but we may have a custom
-                        # subset. Build explicit args:
-                        # We map subset to explicit flags to avoid triggering unselected
-                        # default steps (assets is default; if only export+import wanted,
-                        # we must pass those two --only flags... which would only work one
-                        # at a time).  Solution: if subset == full default, omit flags;
-                        # otherwise run each individually in sequence.
-                        default_set = {"export", "import", "assets"}
-                        if set(std) == default_set:
-                            # full default, no flags needed
-                            root.after(0, _log, f"Running: {' '.join(cmd)}")
-                            ret = _run_process(cmd, lambda m: root.after(0, _log, m))
-                        else:
-                            for step in std:
-                                c = cmd + [_STEP_FLAGS[step]]
-                                root.after(0, _log, f"Running: {' '.join(c)}")
-                                r = _run_process(c, lambda m: root.after(0, _log, m))
-                                if r != 0:
-                                    ret = r
-                    for step in extras:
-                        flag = _STEP_FLAGS[step]
-                        needs_file = step in _STEPS_NEED_FILE
-                        cmd = [sys.executable, str(SCRIPT_DIR / "convert.py"), flag]
-                        if needs_file:
-                            cmd += ["-f", fname]
+                    for step in steps:
+                        cmd = _build_cmd(step, fname, out_dir)
                         root.after(0, _log, f"Running: {' '.join(cmd)}")
                         r = _run_process(cmd, lambda m: root.after(0, _log, m))
                         if r != 0:
                             ret = r
                 root.after(0, _log, "")
-                root.after(0, _log, "✓ DONE" if ret == 0 else "✗ FAILED")
-            finally:
-                root.after(0, _set_running, False)
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _run_single(mode: str):
-        """Run a non-file task (tests)."""
-        if running.is_set():
-            return
-        _clear_log()
-        if mode == "test":
-            cmd = [sys.executable, str(SCRIPT_DIR / "convert.py"), "--test"]
-            root.after(0, _log, f"Running: {' '.join(cmd)}")
-        else:
-            return
-
-        def _worker():
-            _set_running(True)
-            try:
-                ret = _run_process(cmd, lambda m: root.after(0, _log, m))
-                root.after(0, _log, "")
-                root.after(0, _log, "✓ DONE" if ret == 0 else "✗ FAILED")
+                root.after(0, _log,
+                           "  DONE" if ret == 0 else "  FAILED")
             finally:
                 root.after(0, _set_running, False)
 
@@ -493,21 +573,13 @@ def gui_main():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    parser = argparse.ArgumentParser(description="TES4→TES5 Converter GUI")
+    parser = argparse.ArgumentParser(description="TES4->TES5 Converter GUI")
     parser.add_argument("--cli", action="store_true",
-                        help="Headless mode: forward args to convert.py")
-    parser.add_argument("-f", "--file", help="Plugin file to process")
-    parser.add_argument("--no-cache", action="store_true")
+                        help="Headless: forward remaining args to convert.py")
     args, extra = parser.parse_known_args()
 
     if args.cli:
-        cmd = [sys.executable, str(SCRIPT_DIR / "convert.py")]
-        if args.file:
-            cmd += ["-f", args.file]
-        if args.no_cache:
-            cmd.append("--no-cache")
-        cmd.extend(extra)
-        import subprocess
+        cmd = [sys.executable, "-u", str(SCRIPT_DIR / "convert.py")] + extra
         ret = subprocess.run(cmd, cwd=str(SCRIPT_DIR))
         return ret.returncode
 
@@ -516,4 +588,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

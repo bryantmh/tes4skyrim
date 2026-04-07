@@ -7,6 +7,9 @@ Lines starting with # are comments. Values are unescaped.
 
 import os
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+_WORKER_COUNT = max(1, (os.cpu_count() or 4) - 2)
 
 
 def unescape_value(value: str) -> str:
@@ -89,7 +92,7 @@ def parse_export_file(filepath: str) -> list:
 
 
 def parse_export_directory(export_dir: str, type_filter: set = None) -> list:
-    """Parse all per-type export files from a directory.
+    """Parse all per-type export files from a directory in parallel.
 
     Returns a list of record dicts, optionally filtered by type.
     Deduplicates records by FormID (keeps the last occurrence).
@@ -98,15 +101,27 @@ def parse_export_directory(export_dir: str, type_filter: set = None) -> list:
     if not os.path.isdir(export_dir):
         return all_records
 
+    # Collect files to parse
+    tasks = []
     for txt_file in sorted(os.listdir(export_dir)):
         if not txt_file.endswith('.txt') or txt_file == '_HEADER.txt':
             continue
         sig = txt_file.replace('.txt', '').replace('_SKIP', '')
         if type_filter and sig not in type_filter:
             continue
-        filepath = os.path.join(export_dir, txt_file)
-        records = parse_export_file(filepath)
-        all_records.extend(records)
+        tasks.append(os.path.join(export_dir, txt_file))
+
+    # Parse files in parallel (I/O + parsing is the bottleneck)
+    results_by_task = {}
+    with ThreadPoolExecutor(max_workers=_WORKER_COUNT) as ex:
+        future_map = {ex.submit(parse_export_file, fp): fp for fp in tasks}
+        for future in as_completed(future_map):
+            fp = future_map[future]
+            results_by_task[fp] = future.result()
+
+    # Preserve sorted order for deterministic output
+    for fp in tasks:
+        all_records.extend(results_by_task.get(fp, []))
 
     # Deduplicate by FormID (keep last occurrence)
     seen = {}

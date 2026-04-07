@@ -35,12 +35,18 @@ python convert.py -f Oblivion.esm
 ### Run only a specific step
 
 ```bash
-python convert.py -f Oblivion.esm --export-only         # Export only
-python convert.py -f Oblivion.esm --import-only         # Import only
-python convert.py -f Oblivion.esm --lod-only            # LOD generation only
-python convert.py --assets-only                         # Asset conversion only
-python convert.py --modify-body-meshes                  # Run modify_body_meshes script only
-python convert.py --verify-plugin                       # Run verify_plugin.py on output plugins only
+python convert.py -f Oblivion.esm --export-only         # Export TES4 binary → text cache
+python convert.py -f Oblivion.esm --import-only         # Build TES5 ESM/ESP from text cache
+python convert.py -f Oblivion.esm --extract-only        # Pull assets from BSA archives
+python convert.py -f Oblivion.esm --assets-only         # Convert NIFs/SPTs, copy textures & sounds
+python convert.py -f Oblivion.esm --lod-only            # LOD mesh generation (slow)
+python convert.py --modify-body-meshes                  # Add greaves partition to character body NIFs
+```
+
+### Custom output directory
+
+```bash
+python convert.py -f Oblivion.esm --output-dir C:/MyMods/Oblivion
 ```
 
 ### Mesh conversion only
@@ -77,22 +83,26 @@ TESConversion/
     MOPP_RL.exe         # Havok MOPP generation tool (self-contained)
     template.nif        # Template NIF required by MOPP_RL.exe
   tools/                # Debug/analysis utilities
-  verify_plugin.py      # Plugin validation and integrity checker
   gui.py                # GUI frontend for the pipeline
   ...
 ```
 
 ## Pipeline Phases and CLI Arguments
 
-- `--export-only`         Run only the export phase (TES4 binary → text)
-- `--import-only`         Run only the import phase (text → TES5 binary)
-- `--lod-only`            Run only the LOD generation phase
-- `--assets-only`         Run only the asset conversion phase
-- `--modify-body-meshes`  Run the modify_body_meshes script only
-- `--verify-plugin`       Run verify_plugin.py on output plugins only
-- `--workers N`           Number of worker processes for parallel steps
+| Flag | Phase | Description |
+|------|-------|-------------|
+| `--export-only` | 1. Export | Parse TES4 binary → per-type text cache |
+| `--import-only` | 2. Import | Build TES5 ESM/ESP from text cache |
+| `--extract-only` | 3. Extract | Pull meshes/textures/sounds from BSA archives |
+| `--assets-only` | 4. Assets | Convert NIFs/SPTs, copy textures & sounds |
+| `--lod-only` | 5. LOD | Generate object & terrain LOD meshes |
+| `--modify-body-meshes` | 6. Body | Add greaves partition to character body NIFs |
 
-If no `--*-only` argument is given, the full pipeline is run.
+Other flags:
+- `-f PLUGIN`            Plugin filename (e.g. `Oblivion.esm`, `Knights.esp`)
+- `--output-dir PATH`    Override the output directory (default: `output/`)
+
+If no `--*-only` argument is given, the default pipeline runs: **Export → Import → Extract → Assets**.
 
 ## Tools and Scripts
 
@@ -100,7 +110,6 @@ If no `--*-only` argument is given, the full pipeline is run.
 - `asset_convert/bsa_extract.py`        BSA archive extraction
 - `asset_convert/skin_retarget.py`      Skeleton retargeting for armor/clothes
 - `asset_convert/modify_body_meshes.py` Add greaves partition to body mesh
-- `verify_plugin.py`                    Plugin validation and integrity checker
 - `tools/tes4_nif_analyzer.py`          NIF structure dump (Oblivion)
 - `tools/tes5_nif_analyzer.py`          NIF structure dump (Skyrim)
 - `tools/tes5_esm_reader.py`            TES5 ESM/ESP reader and dumper
@@ -113,15 +122,22 @@ Run the GUI with:
 python gui.py
 ```
 
-The GUI allows you to select files, phases, and options interactively.
+Features:
+- Auto-detects Oblivion data directory from the Windows registry
+- Scans the configured data directory for all `.esm` / `.esp` plugins
+- Configurable output directory (saved to `conversion_config.json`)
+- Per-step checkboxes with **All** / **Default** shortcuts
+- Real-time streaming log output
 
-    tes4_nif_analyzer.py  # Dump NIF structure to text (python tools/tes4_nif_analyzer.py <nif_or_dir>)
-    tes5_nif_analyzer.py  # Same for Skyrim NIFs
-    tes5_esm_reader.py    # TES5 ESM/ESP reader and KEY=VALUE dumper
-  tests/                # Test suite (pytest)
-  export/               # Cached exports (gitignored)
-  output/               # Final converted files (gitignored)
+## Packaging (Standalone Executable)
+
+Build a single self-contained executable with:
+
+```bash
+python compile.py
 ```
+
+Outputs `dist/TESConverter/TESConverter.exe` (plus bundled dependencies). Requires [PyInstaller](https://pyinstaller.org) (`pip install pyinstaller`).
 
 ## What the mesh converter does
 
@@ -142,4 +158,4 @@ The `SKIP_PATHS` set in `asset_convert/nif_converter.py` controls which path seg
 
 ## BSA extraction caching
 
-Extracted BSAs are tracked via a manifest file (`.bsa_extract_manifest.json`). Rerunning the pipeline skips already-extracted archives unless `--force-extract` is used.
+Extracted BSAs are tracked via a manifest file (`.bsa_extract_manifest.json`). Rerunning the pipeline skips already-extracted archives unless the extract step is forced by deleting the manifest.

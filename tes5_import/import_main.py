@@ -18,6 +18,7 @@ import struct
 import sys
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .constants import IMPORT_DISPATCH, SKIP_TYPES, TYPE_MAP
 from .record_types.dialog_misc import convert_DIAL, convert_INFO, convert_SOUN
@@ -149,16 +150,31 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     converted = 0
     errors = 0
+
+    # Build work items: list of (sig, target_sig, rec) tuples
+    work_items = []
     for sig in sorted(simple_types):
-        records = by_type[sig]
         target_sig = TYPE_MAP.get(sig, sig)
-        for rec in records:
+        for rec in by_type[sig]:
+            work_items.append((sig, target_sig, rec))
+
+    _worker_count = max(1, (os.cpu_count() or 4) - 1)
+
+    def _convert_one(item):
+        sig, target_sig, rec = item
+        converter = IMPORT_DISPATCH[sig]
+        if sig in _WRITER_TYPES:
+            record_bytes = converter(rec, writer=writer)
+        else:
+            record_bytes = converter(rec)
+        return sig, target_sig, record_bytes, None, None
+
+    with ThreadPoolExecutor(max_workers=_worker_count) as ex:
+        future_map = {ex.submit(_convert_one, item): item for item in work_items}
+        for future in as_completed(future_map):
+            sig, target_sig, rec = future_map[future]
             try:
-                converter = IMPORT_DISPATCH[sig]
-                if sig in _WRITER_TYPES:
-                    record_bytes = converter(rec, writer=writer)
-                else:
-                    record_bytes = converter(rec)
+                _, target_sig, record_bytes, _, _ = future.result()
                 writer.add_record(target_sig, record_bytes)
                 converted += 1
             except Exception as e:

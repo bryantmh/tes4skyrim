@@ -25,19 +25,15 @@ Major Issues:
 	7 - Fix furniture markers. They are mispositioned vertically in the air and backwards. I should be able to sit down in chairs for example.
 
 	8 - Remaining armor bugs:
-		6) Guard Helmet not properly attaching to head, so should be easy to properly attach to skyrim head.
-		8) Shields attach much better now, but not perfect
+		Guard Helmet showing hair
+		Iron helmet not showing at all
+		Shields attach much better now, but not perfect
 		Add _1 body type
-		sack cloth pants missing ankle / clipping with new body mesh
-		Long Sleeves misalign
-		Should have another option just for armor pieces with lower arm (needs to be moved forward)
-		And an option for exposed foot (increase size)
+		Need new body mesh to work to allow leg skin to appear
+		Should have another option just for armor pieces with lower arm so long sleeves don't misalign (the lower half of the arms needs to be moved forward slightly)
 		lowerclass shirt 7 completely messed up (stretched wide)
-		For example, the lowerleg/calf area on the sack cloth pants (lowerclass/05/m) are completely missing ingame even though they appear in nifskope
-		inward pull broken
-		lower half of arms should be stretched forward and inward slightly
-
-	Cleanup convert.py. Has a bunch of old stuff
+		lowerclass female shirt 3 has a gap all along the center
+		Inward pull broken for shoes
 
 	9 - Attempt to create a working speed tree (.spt) to NIF converter. oblivion speed tree files are located in export\Oblivion.esm\trees. It is not in a nif format so we will need to read the format directly and convert into nif using billboards for the leaf nodes if possible.
 		Else just add static leaf nodes that approximate the tree look. Much of the spt format is actually readable in plain text so it should be relatively easy to understand what is happenging.
@@ -120,9 +116,9 @@ Minor Issues:
 
 	2 - Update OBND based on meshes instead of guessing
 
-	3 - Quest Records: Causes game to crash on startup. Will ignore and skip for now and create more advanced conversion algorithm later
+	3 - Complete Quest Conversion
 
-	4 - Pathgrid Records: Ignore and skip for now. Will create advanced conversion to navmesh algorithm later
+	4 - Refined pathgrid conversion
 
 	5 - Package Records: Ignore and skip for now. Will create advanced conversion algorithm later
 
@@ -133,10 +129,6 @@ Minor Issues:
 	9 - Weapons have an attack animation of unknown instead of default
 
 	10 - Improve landscape layer blending
-
-	11 - Remove skin portions of the armor meshes and just overlay the skyrim body?
-
-	12 - Fix default skyrim body to work with greaves
 	
 	13 - Should properly position inventory items. The side that allows the largest view should face out.
 	
@@ -151,10 +143,6 @@ Refactoring:
 
 	4 - Standardize and simplify the way functions are called. Update readme
 
-	5 - Update and simplify GUI
-
-	6 - Sometimes BSAs will fail to extract because they use zlib compression which may not work well with the bethesda structs library. You will need to decompress it first. Here is one such project that can decompress: https://github.com/maboroshinokiseki/Oblivion-BSA-Uncompressor/tree/master/OblivionBSAUncompressor
-
 	7 - Should have an option to move everything back into a BSA after conversion
 
 	8 - Fix tests and make more comprehensive
@@ -162,8 +150,6 @@ Refactoring:
 	9 - Add texture_overrides folder to export
 
 	10 - Upgrade pyffi to 2.2.4?
-
-	11 - ESM Output shouldn't copy to game directory
 
 
 

@@ -2,23 +2,23 @@
 TES4-to-TES5 Conversion Pipeline
 
 Pipeline steps (each runnable via --<step>-only):
-  export          Parse TES4 binary → key/value text cache
+  export          Parse TES4 binary -> key/value text cache
   import          Build TES5 binary ESM/ESP from text cache
-  assets          Extract BSAs, convert NIFs/SPTs, copy textures
+  extract         Pull assets from BSA archives into export/<name>/
+  assets          Convert NIFs/SPTs, copy textures/sounds to output
   lod             Generate object & terrain LOD meshes
   modify-body-meshes  Add greaves partition to character body NIFs
-  verify-plugin   Run integrity checks on output plugin(s)
 
 Usage:
-  python convert.py                          # full pipeline (export + import + assets)
-  python convert.py -f Oblivion.esm          # single file, full pipeline
+  python convert.py                               # full pipeline (export+import+extract+assets)
+  python convert.py -f Oblivion.esm               # single file, full pipeline
   python convert.py -f Oblivion.esm --export-only
   python convert.py -f Oblivion.esm --import-only
+  python convert.py -f Oblivion.esm --extract-only
   python convert.py -f Oblivion.esm --assets-only
   python convert.py -f Oblivion.esm --lod-only
   python convert.py --modify-body-meshes
-  python convert.py -f Oblivion.esm --verify-plugin
-  python convert.py --test
+  python convert.py --output-dir /path/to/output -f Oblivion.esm
 """
 
 import argparse
@@ -194,7 +194,7 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
 # ===========================================================================
 
 def phase_import(file_name: str, tes4_data: str, tes5_data: str,
-                        export_dir: str, config: dict):
+                 export_dir: str, config: dict, output_dir: str = None):
     """Import using the Python tes5_import package."""
     from tes5_import.import_main import import_plugin
 
@@ -203,9 +203,9 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
         print(f"[{file_name}] No export directory, skipping import")
         return False
 
-    output_dir = str(SCRIPT_DIR / "output")
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, file_name)
+    out_root = output_dir or str(SCRIPT_DIR / "output")
+    os.makedirs(out_root, exist_ok=True)
+    output_path = os.path.join(out_root, file_name)
     # If a directory with the same name exists (e.g. from mesh pipeline output),
     # write the .esm inside it rather than conflicting with the directory.
     if os.path.isdir(output_path):
@@ -231,22 +231,41 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
 
 
 # ===========================================================================
-# Phase 3: Assets
+# Phase 3: Extract BSA assets
 # ===========================================================================
 
-def phase_assets(file_name: str, tes4_data: str, config: dict):
-    """Extract BSA archives and convert NIF/SPT assets for a plugin."""
+def phase_extract(file_name: str, tes4_data: str, config: dict,
+                  output_dir: str = None):
+    """Extract BSA archives for a plugin into export/<name>/."""
+    from asset_convert.asset_pipeline import extract_bsas
+
+    extract_dir = str(SCRIPT_DIR / "export")
+
+    print(f"[{file_name}] Extracting BSA archives...")
+    extract_bsas(
+        source_file=file_name,
+        data_path=tes4_data,
+        extract_dir=extract_dir,
+    )
+    return True
+
+
+# ===========================================================================
+# Phase 4: Convert assets
+# ===========================================================================
+
+def phase_assets(file_name: str, config: dict, output_dir: str = None):
+    """Convert extracted NIF/SPT assets and copy textures/sounds to output."""
     from asset_convert.asset_pipeline import convert_assets
 
     extract_dir = str(SCRIPT_DIR / "export")
-    output_dir  = str(SCRIPT_DIR / "output")
+    out_dir     = output_dir or str(SCRIPT_DIR / "output")
 
     print(f"[{file_name}] Converting assets...")
     stats = convert_assets(
         source_file=file_name,
-        data_path=tes4_data,
         extract_dir=extract_dir,
-        output_dir=output_dir,
+        output_dir=out_dir,
     )
     total = sum(v for v in stats.values() if isinstance(v, int))
     print(f"[{file_name}] Assets complete ({total} items processed)")
@@ -254,16 +273,17 @@ def phase_assets(file_name: str, tes4_data: str, config: dict):
 
 
 # ===========================================================================
-# Phase 4: LOD generation
+# Phase 5: LOD generation
 # ===========================================================================
 
-def phase_lod(file_name: str, tes5_data: str, config: dict):
+def phase_lod(file_name: str, tes5_data: str, config: dict,
+              output_dir: str = None):
     """Generate object LOD and terrain LOD for the converted plugin."""
     from asset_convert.lod_gen import generate_lod
     from asset_convert.terrain_lod import generate_terrain_lod
 
-    output_root = SCRIPT_DIR / "output"
-    output_dir  = output_root / file_name
+    out_root   = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    output_dir = out_root / file_name
     if not output_dir.is_dir():
         print(f"[{file_name}] No output directory found, skipping LOD")
         return False
@@ -297,7 +317,7 @@ def phase_lod(file_name: str, tes5_data: str, config: dict):
 
 
 # ===========================================================================
-# Phase 5: Modify body meshes
+# Phase 6: Modify body meshes
 # ===========================================================================
 
 def phase_modify_body_meshes():
@@ -311,31 +331,6 @@ def phase_modify_body_meshes():
 
 
 # ===========================================================================
-# Utility: verify output plugin
-# ===========================================================================
-
-def phase_verify(file_name: str):
-    """Run verify_plugin.py integrity checks on an output plugin."""
-    verify = SCRIPT_DIR / "tools" / "verify_plugin.py"
-    if not verify.exists():
-        print("  verify_plugin.py not found")
-        return False
-
-    # Output may be nested: output/Oblivion.esm/Oblivion.esm (alongside assets)
-    nested = SCRIPT_DIR / "output" / file_name / file_name
-    simple = SCRIPT_DIR / "output" / file_name
-    plugin = nested if nested.exists() else simple
-    if not plugin.exists():
-        print(f"  [{file_name}] Output plugin not found — skipping verify")
-        return False
-
-    print(f"[{file_name}] Verifying: {plugin}")
-    ret = subprocess.run([sys.executable, str(verify), str(plugin), "--check"],
-                         cwd=str(SCRIPT_DIR))
-    return ret.returncode == 0
-
-
-# ===========================================================================
 # Main
 # ===========================================================================
 
@@ -344,7 +339,7 @@ def main():
         description="TES4-to-TES5 Conversion Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Default pipeline (no --*-only): export + import + assets\n"
+            "Default pipeline (no --*-only): export + import + extract + assets\n"
             "Each --*-only flag runs exactly that step and nothing else."
         ),
     )
@@ -352,40 +347,38 @@ def main():
                         help="Plugin filename(s) to process (default: all from config)")
     parser.add_argument("--config", metavar="PATH",
                         help="Path to conversion_config.json")
-    parser.add_argument("--export-only",        action="store_true",
-                        help="Export TES4 binary → key/value text cache")
-    parser.add_argument("--import-only",        action="store_true",
-                        help="Convert text cache → TES5 binary ESM/ESP")
-    parser.add_argument("--assets-only",        action="store_true",
-                        help="Extract BSAs, convert NIFs/SPTs, copy textures")
-    parser.add_argument("--lod-only",           action="store_true",
+    parser.add_argument("--output-dir", metavar="PATH",
+                        help="Output directory (default: output/ in project root)")
+    parser.add_argument("--export-only",         action="store_true",
+                        help="Parse TES4 binary -> key/value text cache")
+    parser.add_argument("--import-only",         action="store_true",
+                        help="Convert text cache -> TES5 binary ESM/ESP")
+    parser.add_argument("--extract-only",        action="store_true",
+                        help="Extract BSA archives into export/<name>/")
+    parser.add_argument("--assets-only",         action="store_true",
+                        help="Convert NIFs/SPTs, copy textures/sounds to output")
+    parser.add_argument("--lod-only",            action="store_true",
                         help="Generate object & terrain LOD meshes")
-    parser.add_argument("--modify-body-meshes", action="store_true",
+    parser.add_argument("--modify-body-meshes",  action="store_true",
                         help="Add greaves partition to character body NIFs")
-    parser.add_argument("--verify-plugin",      action="store_true",
-                        help="Run integrity checks on output plugin(s)")
-    parser.add_argument("--test",               action="store_true",
-                        help="Run pytest test suite")
 
     args = parser.parse_args()
 
-    if args.test:
-        ret = subprocess.run([sys.executable, "-m", "pytest", "tests/", "-v"],
-                             cwd=str(SCRIPT_DIR))
-        return ret.returncode
-
-    config    = load_config(args.config)
+    config       = load_config(args.config)
     tes4_data, tes5_data = get_paths(config)
+    output_dir   = args.output_dir or config.get("outputDir") or str(SCRIPT_DIR / "output")
+    export_dir   = str(SCRIPT_DIR / "export")
 
-    export_dir = str(SCRIPT_DIR / "export")
     os.makedirs(export_dir, exist_ok=True)
     os.makedirs(os.path.join(export_dir, "mappings"), exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
     print("=" * 54)
-    print("  TES4 → TES5 Conversion Pipeline")
+    print("  TES4 -> TES5 Conversion Pipeline")
     print("=" * 54)
     print(f"  Oblivion data : {tes4_data or '(not found)'}")
     print(f"  Skyrim SE data: {tes5_data or '(not found)'}")
+    print(f"  Output dir    : {output_dir}")
     print()
 
     order = topological_order(config.get("files", []), tes4_data)
@@ -400,20 +393,20 @@ def main():
 
     # ── Determine which steps to run ──────────────────────────────────────
     _any_only = any([
-        args.export_only, args.import_only, args.assets_only,
-        args.lod_only, args.modify_body_meshes, args.verify_plugin,
+        args.export_only, args.import_only, args.extract_only, args.assets_only,
+        args.lod_only, args.modify_body_meshes,
     ])
     if _any_only:
-        do_export = args.export_only
-        do_import = args.import_only
-        do_assets = args.assets_only
-        do_lod    = args.lod_only
-        do_body   = args.modify_body_meshes
-        do_verify = args.verify_plugin
+        do_export   = args.export_only
+        do_import   = args.import_only
+        do_extract  = args.extract_only
+        do_assets   = args.assets_only
+        do_lod      = args.lod_only
+        do_body     = args.modify_body_meshes
     else:
-        # Default: export + import + assets (LOD is expensive; must be explicit)
-        do_export = do_import = do_assets = True
-        do_lod = do_body = do_verify = False
+        # Default: export + import + extract + assets (LOD is expensive; explicit only)
+        do_export = do_import = do_extract = do_assets = True
+        do_lod = do_body = False
 
     success = True
 
@@ -431,41 +424,43 @@ def main():
         print("  Phase 2: IMPORT")
         print("=" * 54)
         for fn in order:
-            if not phase_import(fn, tes4_data, tes5_data, export_dir, config):
+            if not phase_import(fn, tes4_data, tes5_data, export_dir, config,
+                                output_dir=output_dir):
+                success = False
+        print()
+
+    if do_extract:
+        print("=" * 54)
+        print("  Phase 3: EXTRACT BSA ARCHIVES")
+        print("=" * 54)
+        for fn in order:
+            if not phase_extract(fn, tes4_data, config):
                 success = False
         print()
 
     if do_assets:
         print("=" * 54)
-        print("  Phase 3: ASSETS")
+        print("  Phase 4: ASSET CONVERSION")
         print("=" * 54)
         for fn in order:
-            if not phase_assets(fn, tes4_data, config):
+            if not phase_assets(fn, config, output_dir=output_dir):
                 success = False
         print()
 
     if do_lod:
         print("=" * 54)
-        print("  Phase 4: LOD GENERATION")
+        print("  Phase 5: LOD GENERATION")
         print("=" * 54)
         for fn in order:
-            phase_lod(fn, tes5_data, config)
+            phase_lod(fn, tes5_data, config, output_dir=output_dir)
         print()
 
     if do_body:
         print("=" * 54)
-        print("  Phase 5: MODIFY BODY MESHES")
+        print("  Phase 6: MODIFY BODY MESHES")
         print("=" * 54)
         if not phase_modify_body_meshes():
             success = False
-        print()
-
-    if do_verify:
-        print("=" * 54)
-        print("  Verify Output Plugins")
-        print("=" * 54)
-        for fn in order:
-            phase_verify(fn)
         print()
 
     print("Pipeline complete." if success else "Pipeline completed with errors.")

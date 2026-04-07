@@ -13,6 +13,7 @@ Subrecord header: 6 bytes
 """
 
 import struct
+import threading
 
 RECORD_HEADER_SIZE = 24
 GROUP_HEADER_SIZE = 24
@@ -155,6 +156,7 @@ class PluginWriter:
         self._top_groups = {}
         self._record_count = 0
         self._next_object_id = 0x800
+        self._lock = threading.Lock()  # guards alloc_formid and add_record
 
     @property
     def next_object_id(self):
@@ -165,23 +167,26 @@ class PluginWriter:
         self._next_object_id = val
 
     def alloc_formid(self) -> int:
-        """Allocate a new FormID for generated records (ARMA, TXST, etc.)."""
-        fid = self._next_object_id
-        self._next_object_id += 1
+        """Allocate a new FormID for generated records (ARMA, TXST, etc.). Thread-safe."""
+        with self._lock:
+            fid = self._next_object_id
+            self._next_object_id += 1
         return fid
 
     def add_record(self, group_sig: str, record_bytes: bytes):
-        """Add a packed record to a top-level group."""
-        if group_sig not in self._top_groups:
-            self._top_groups[group_sig] = []
-        self._top_groups[group_sig].append(record_bytes)
-        self._record_count += 1
+        """Add a packed record to a top-level group. Thread-safe."""
+        with self._lock:
+            if group_sig not in self._top_groups:
+                self._top_groups[group_sig] = []
+            self._top_groups[group_sig].append(record_bytes)
+            self._record_count += 1
 
     def add_raw_group(self, group_sig: str, group_bytes: bytes):
         """Add pre-built group bytes (for CELL/WRLD/DIAL hierarchies)."""
-        if group_sig not in self._top_groups:
-            self._top_groups[group_sig] = []
-        self._top_groups[group_sig].append(group_bytes)
+        with self._lock:
+            if group_sig not in self._top_groups:
+                self._top_groups[group_sig] = []
+            self._top_groups[group_sig].append(group_bytes)
 
     def write(self, filepath: str):
         """Write the complete plugin file using an atomic temp-then-rename approach.
