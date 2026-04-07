@@ -31,10 +31,20 @@ import time
 from pathlib import Path
 
 # Ensure stdout/stderr can handle Unicode on Windows consoles (cp1252 → utf-8)
+# Ensure stdout/stderr can handle Unicode on Windows consoles (cp1252 → utf-8)
+# and make sure they are line-buffered so output flushes promptly when
+# the process is not attached to a TTY (important for GUI piping).
 if sys.stdout and hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    try:
+        # Preferred: reconfigure existing TextIOWrapper (Python 3.7+)
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
 if sys.stderr and hasattr(sys.stderr, "buffer"):
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
 
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 

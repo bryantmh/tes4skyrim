@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import threading
+import queue
 from pathlib import Path
 
 SCRIPT_DIR  = Path(__file__).parent.resolve()
@@ -120,32 +121,57 @@ def scan_plugins(data_path: str) -> list:
 
 
 def _run_process(cmd, log_cb, env=None):
-    """Run cmd as subprocess, streaming each line to log_cb immediately."""
+    """Run cmd as subprocess, streaming output to `log_cb` as bytes arrive.
+
+    Uses binary reads to avoid stdio buffering issues on Windows and with
+    child processes; decodes to UTF-8 with replacement on the fly and
+    emits complete lines immediately.
+    """
     try:
         full_env = os.environ.copy()
         full_env["PYTHONUNBUFFERED"] = "1"
         if env:
             full_env.update(env)
+
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            bufsize=0,  # unbuffered binary mode
             cwd=str(SCRIPT_DIR),
             env=full_env,
-            bufsize=1,          # line-buffered
         )
+
+        out = proc.stdout
+        buf = bytearray()
         while True:
-            line = proc.stdout.readline()
-            if not line:
+            chunk = out.read(1024)
+            if not chunk:
                 break
-            log_cb(line.rstrip())
+            buf.extend(chunk)
+            # Emit complete lines
+            while True:
+                nl = buf.find(b"\n")
+                if nl == -1:
+                    break
+                line = bytes(buf[:nl + 1])
+                del buf[:nl + 1]
+                text = line.decode("utf-8", errors="replace").rstrip("\r\n")
+                log_cb(text)
+
+        # flush any trailing data
+        if buf:
+            text = bytes(buf).decode("utf-8", errors="replace").rstrip("\r\n")
+            if text:
+                log_cb(text)
+
         proc.wait()
         return proc.returncode
     except Exception as exc:
-        log_cb(f"ERROR: {exc}")
+        try:
+            log_cb(f"ERROR: {exc}")
+        except Exception:
+            pass
         return -1
 
 
@@ -533,35 +559,49 @@ def gui_main():
         _log(f"Output: {out_dir}")
         _log("")
 
+        q = queue.Queue()
+
+        def _drain_queue():
+            try:
+                while True:
+                    line = q.get_nowait()
+                    _log(line)
+            except queue.Empty:
+                pass
+            # Continue draining while running
+            if running.is_set():
+                root.after(50, _drain_queue)
+
         def _worker():
             _set_running(True)
             try:
                 default_set = {k for k, *rest in STEPS if rest[3]}
                 active_set  = set(steps)
+                ret = 0
                 # If selection == default set and a file is specified,
-                # run the pipeline without --*-only flags (uses convert.py defaults)
+                # run the pipeline once (convert.py default behaviour)
                 if active_set == default_set and fname:
                     cmd = [sys.executable, "-u", str(SCRIPT_DIR / "convert.py"),
                            "-f", fname]
                     if out_dir:
                         cmd += ["--output-dir", out_dir]
-                    root.after(0, _log, f"Running: {' '.join(cmd)}")
-                    ret = _run_process(cmd, lambda m: root.after(0, _log, m))
+                    q.put(f"Running: {' '.join(cmd)}")
+                    ret = _run_process(cmd, q.put)
                 else:
-                    ret = 0
                     for step in steps:
                         cmd = _build_cmd(step, fname, out_dir)
-                        root.after(0, _log, f"Running: {' '.join(cmd)}")
-                        r = _run_process(cmd, lambda m: root.after(0, _log, m))
+                        q.put(f"Running: {' '.join(cmd)}")
+                        r = _run_process(cmd, q.put)
                         if r != 0:
                             ret = r
-                root.after(0, _log, "")
-                root.after(0, _log,
-                           "  DONE" if ret == 0 else "  FAILED")
+                q.put("")
+                q.put("  DONE" if ret == 0 else "  FAILED")
             finally:
-                root.after(0, _set_running, False)
+                _set_running(False)
 
         threading.Thread(target=_worker, daemon=True).start()
+        # Start draining the queue in the UI thread
+        root.after(50, _drain_queue)
 
     _update_run_btn()
     root.mainloop()
