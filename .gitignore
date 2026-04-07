@@ -8,7 +8,6 @@ output/
 external/
 logs/
 temp/
-_mopp_tmp/
 references/
 
 *_log.txt

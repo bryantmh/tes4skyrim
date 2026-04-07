@@ -12,10 +12,10 @@ Converts TES4 (Oblivion) master/plugin files to TES5 (Skyrim SE) format, includi
 ## Additional Credits
 
 xEdit and all its contributors for esm record definitions
-Nifscope for its information on nif formats
+Nifscope and its contributors for its information on nif formats
 Zilav's Oblivion -> Skyrim xEdit conversion scripts for the original inspiration and lots of useful information
-https://github.com/Ormin/skyblivion-NIFConverter for useful information and mopp_rl.exe
-Sjors Boomschors for manual speed tree conversion models https://w.morroblivion.com/forums/conversion-to-skyrim/conversion-to-skyrim/2617
+Ormin for useful mesh conversion information and mopp_rl.exe https://github.com/Ormin/skyblivion-NIFConverter 
+Sjors Boomschors for manual speed tree conversion models https://morroblivion.com/forums/conversion-to-skyrim/conversion-to-skyrim/2617 
 All the wonderful people I used to know on the Morroblivion forum, and those still working hard on Skyblivion and Skywind all these years later. You are an inspiration.
 
 ### Install all dependencies

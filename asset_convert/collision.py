@@ -10,25 +10,15 @@ from . import pyffi_monkey_patch as _patch  # noqa: F401
 
 from pyffi.formats.nif import NifFormat
 
-# Path to MOPP_RL.exe (for collision regeneration)
-# MOPP_RL.exe and template.nif must be in the same directory.
-_MOPP_RL = str(
-    Path(__file__).parent / 'MOPP_RL.exe'
-)
-_MOPP_RL_CWD = str(
-    Path(__file__).parent
-)
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
+_ASSET_DIR  = Path(__file__).parent
+_MOPP_RL    = str(_ASSET_DIR / 'MOPP_RL.exe')
+_MOPP_RL_CWD = str(_ASSET_DIR)
 _HAVOK_SCALE = 0.1
-
 NIF_FLAGS = 14  # Standard Skyrim NiAVObject flags (SelectiveUpdate bits 1-3)
-
-
-
 
 # ---------------------------------------------------------------------------
 # Triangle extraction from NiTriStripsData
@@ -170,14 +160,12 @@ def _run_mopp_rl(input_nif_data):
     """
     if not os.path.exists(_MOPP_RL):
         return None
-    # MOPP_RL.exe crashes with ACCESS_VIOLATION when given paths under
-    # %APPDATA%\Local\Temp — use the converter's own temp directory instead.
-    _mopp_tmp_dir = os.path.join(_MOPP_RL_CWD, '_mopp_tmp')
-    os.makedirs(_mopp_tmp_dir, exist_ok=True)
     import uuid
     uid = uuid.uuid4().hex
-    tmp_in = os.path.join(_mopp_tmp_dir, f'mopp_{uid}.nif')
-    tmp_out = os.path.join(_mopp_tmp_dir, f'mopp_{uid}_out.nif')
+    temp_dir = os.path.join(_ASSET_DIR.parent, 'temp')
+    os.makedirs(temp_dir, exist_ok=True)
+    tmp_in  = os.path.join(temp_dir, f'mopp_{uid}.nif')
+    tmp_out = os.path.join(temp_dir, f'mopp_{uid}_out.nif')
     try:
         buf = _io.BytesIO()
         input_nif_data.write(buf)
@@ -187,7 +175,7 @@ def _run_mopp_rl(input_nif_data):
         result = subprocess.run(
             [_MOPP_RL, tmp_in, tmp_out],
             capture_output=True,
-            cwd=_MOPP_RL_CWD,
+            cwd=_MOPP_RL_CWD,  # asset_convert/ — where template.nif lives
         )
         if result.returncode != 0 or not os.path.exists(tmp_out):
             return None

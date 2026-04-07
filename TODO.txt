@@ -65,21 +65,6 @@ Major Issues:
 			RSP+E0: (BSGeometryListCullingProcess*)
 			RSP+108: (BSTriShape*) "UpperBench02:2" ("tes4\Furniture\upperclass\UpperBench02.NIF")
 			RSP+188: (bhkCharProxyController*)
-
-	11 - Nif converter fix errors in output. Read errors should be supressed in output and counted (by type) and output at the end.
-		Write errors should also be counted and output by type at the end. Current error count is 0 which is obviously wrong.
-		Fix write warnings.
-		Example Logs:
-			NaN files (2) — These are PyFFI read-time warnings from corrupt source data in Oblivion NIFs. Not our output issue.
-			invalid enum value for ExtraVectorsFlags — PyFFI read-time warnings from Oblivion files. Not our output.
-			Reading bhkMoppBvTreeShape failed — Corrupt MOPP data in source file. Not our output.
-			Still a problem: NiTexturingProperty block is missing from the nif tree: omitting reference
-			Still a problem: NiNode block is missing from the nif tree: omitting reference
-			Still a problem: NiMaterialProperty block is missing from the nif tree: omitting reference
-		Check if any of these will help fix lingering errors
-		import pyffi.spells.nif.fix
-		import pyffi.spells.nif.optimize
-		import pyffi.spells.nif.check
 			
 	12 - Nif converter fix broken conversion
 		Files:
@@ -136,10 +121,6 @@ Minor Issues:
 
 
 Refactoring:
-
-	2 - Instead of using external, use the mopp exe inside of asset_convert.
-	You should copy the 2 template meshes there as well. If they will work. template.nif may be hardcoded to use the C: root directory. If that is the case, see if you can just fool it.
-	And instead of using a custom temp directory when building meshes, use the temp folder in the project root
 
 	4 - Standardize and simplify the way functions are called. Update readme
 

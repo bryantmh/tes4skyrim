@@ -715,16 +715,6 @@ Options:
 
 ---
 
-### R2 - Use MOPP_RL.exe from asset_convert; use temp/ for build temp files
-
-`MOPP_RL.exe` is already in `asset_convert/` and `_MOPP_RL_CWD` points to it. The MOPP temp dir is currently `asset_convert/_mopp_tmp/` — should be `temp/_mopp_tmp/`.
-
-Check if `template.nif` is hardcoded to `C:\` — if so, copy to a temp location or use a symlink trick.
-
-**File:** `asset_convert/collision.py` lines 176–178.
-
----
-
 ### R4 - Standardize and simplify function call conventions; update README
 
 Entry points are inconsistent: some use `python -m module`, some use direct script paths. Document all entry points in `README` with copy-paste examples.
