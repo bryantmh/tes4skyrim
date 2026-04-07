@@ -69,7 +69,6 @@ def _create_vtyp_records(writer: PluginWriter):
         subs += pack_subrecord('DNAM', struct.pack('<I', dnam))
         writer.add_record('VTYP', pack_record('VTYP', fid, 0, subs))
         set_voice_type(race_edid, gender, fid)
-        print(f"  Created VTYP {vtyp_edid} (FormID {fid:08X})")
 
 
 def import_plugin(export_dir: str, output_path: str, masters: list = None,

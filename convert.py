@@ -22,12 +22,19 @@ Usage:
 """
 
 import argparse
+import io
 import json
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Ensure stdout/stderr can handle Unicode on Windows consoles (cp1252 → utf-8)
+if sys.stdout and hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
