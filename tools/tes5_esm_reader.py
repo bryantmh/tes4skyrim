@@ -3,7 +3,7 @@
 TES5 (Skyrim SE) ESM/ESP reader and per-type KEY=VALUE exporter for debugging.
 
 Reads a TES5 binary file and produces one .txt per record type in
-    temp/<basename>/
+    references/<basename>/
 using the same ---RECORD_BEGIN--- / KEY=VALUE / ---RECORD_END--- format as
 the project's tes4_export package.
 
@@ -17,7 +17,7 @@ TES5 vs TES4 header differences:
 Usage:
     python tools/tes5_esm_reader.py
     python tools/tes5_esm_reader.py "C:/path/to/Skyrim.esm"
-    python tools/tes5_esm_reader.py "C:/path/to/Skyrim.esm" --outdir temp/Skyrim.esm
+    python tools/tes5_esm_reader.py "C:/path/to/Skyrim.esm" --outdir references/Skyrim.esm
     python tools/tes5_esm_reader.py "C:/path/to/Skyrim.esm" --types WEAP NPC_ HDPT CLFM
     python tools/tes5_esm_reader.py "C:/path/to/Skyrim.esm" --list-types
 """
@@ -1107,7 +1107,7 @@ def main():
     parser.add_argument('esm', nargs='?', default=DEFAULT_ESM,
                         help='Path to TES5 ESM/ESP (default: Skyrim SE Skyrim.esm)')
     parser.add_argument('--outdir', default=None,
-                        help='Output directory (default: temp/<basename>)')
+                        help='Output directory (default: references/<basename>)')
     parser.add_argument('--types', nargs='+', metavar='SIG',
                         help='Only export these record types (e.g. WEAP NPC_ HDPT)')
     parser.add_argument('--list-types', action='store_true',
@@ -1120,7 +1120,7 @@ def main():
         sys.exit(1)
 
     basename    = os.path.basename(esm_path)
-    output_dir  = args.outdir or os.path.join('temp', basename)
+    output_dir  = args.outdir or os.path.join('references', basename)
     type_filter = set(args.types) if args.types else None
 
     print(f'Reading {esm_path} ...')

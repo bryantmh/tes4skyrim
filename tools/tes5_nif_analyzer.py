@@ -2,7 +2,7 @@
 """Dump Skyrim (TES5) NIF files to a human-readable text representation.
 
 Usage:
-    python tools/tes5_nif_analyzer.py <nif_or_dir> [--outdir temp/skyrim_meshes] [--max N]
+    python tools/tes5_nif_analyzer.py <nif_or_dir> [--outdir references/skyrim_meshes] [--max N]
 
 Identical format to tes4_nif_analyzer.py so diffs between Oblivion source,
 converted output, and Skyrim reference meshes are easy to compare.

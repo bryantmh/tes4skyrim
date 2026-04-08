@@ -19,8 +19,32 @@ from .common import (
 )
 
 
-def _convert_ctda_tes4_to_tes5(raw: bytes) -> bytes:
+# TES4 condition function indices that do NOT exist in TES5.
+# These must be dropped (not forwarded) to avoid false-failing or crashing.
+#
+# Special case — GetDisposition (76):
+#   In Oblivion, NPC dialog uses GetDisposition >= N to gate friendly lines.
+#   TES5 has no disposition system; dropping this check lets dialog fire freely,
+#   which is the correct conversion behaviour (NPCs should talk without
+#   requiring a disposition score that can never be set).
+#
+# The other TES4-only functions (vampire check, IsYielding, etc.) are rare
+# in dialog and safe to drop — if the condition is AND, dropping it means it
+# always passes (correct for dialog); if OR, dropping it has no effect either.
+_TES4_ONLY_FUNCS = frozenset({
+    76,   # GetDisposition  — disposition system removed in TES5
+    40,   # GetVampire      — replaced by keyword checks in TES5
+    104,  # IsYielding      — not in TES5
+    171,  # IsPlayerInJail  — not in TES5
+    251,  # GetPCInfamy     — not in TES5 (replaced by Skyrim's crime system)
+})
+
+
+def _convert_ctda_tes4_to_tes5(raw: bytes) -> 'bytes | None':
     """Convert a 24-byte TES4 CTDA to 32-byte TES5 CTDA.
+
+    Returns None for TES4-only functions that have no TES5 equivalent (caller
+    must skip the subrecord entirely so it doesn't block otherwise valid dialog).
 
     Structural change: TES4=24B, TES5=32B — 8 extra bytes appended:
         [24-27] Reference FormID (for RunOn=2/Reference, otherwise 0)
@@ -43,6 +67,11 @@ def _convert_ctda_tes4_to_tes5(raw: bytes) -> bytes:
     param1 = struct.unpack_from('<I', data, 12)[0]
     param2 = struct.unpack_from('<I', data, 16)[0]
     run_on = struct.unpack_from('<I', data, 20)[0]
+
+    # Drop TES4-only functions — they have no TES5 equivalent and would
+    # evaluate to 0.0, causing valid dialog lines to fail their conditions.
+    if func_idx in _TES4_ONLY_FUNCS:
+        return None
 
     def _remap(v: int) -> int:
         if offset and (v >> 24) == 0x00 and (v & 0x00FFFFFF) >= 0x100:
@@ -140,7 +169,7 @@ def convert_DIAL(rec: dict, info_count: int = 0) -> bytes:
 
     TES5 order: EDID FULL PNAM BNAM QNAM DATA SNAM TIFC
     DATA = TopicFlags(U8) + Category(U8) + Subtype(U16 LE) = 4 bytes
-    SNAM = 4-char subtype name stored as U32 big-endian-in-LE ('CUST' = Custom)
+    SNAM = 4-char subtype name stored as 4 raw ASCII bytes (must match DATA.Subtype)
     PNAM = priority float (default 50.0) — REQUIRED, missing causes CK sort issues
     BNAM = branch FormID (NULL = no specific branch)
     TIFC = info count U32 — must match actual INFO count or engine crashes on topic iteration
@@ -153,8 +182,55 @@ def convert_DIAL(rec: dict, info_count: int = 0) -> bytes:
       4 Detection    → Category 5 (Detection)
       5 Service      → Category 6 (Service)
       6 Miscellaneous → Category 7 (Miscellaneous)
+
+    TES4 special EditorIDs → TES5 DATA.Subtype + SNAM subtype code:
+      GREETING, HELLO → 79/HELO  (Hello — fires when NPC is activated)
+      GOODBYE         → 78/GBYE  (GoodBye)
+      IdleChatter, Idle → 94/IDLE
+      Attack          → 26/ATCK
+      Hit             → 29/HIT_
+      Flee            → 30/FLEE
+      Steal           → 38/STEA
+      Trespass        → 49/TRES
+      ServiceRefusal  → 66/SERU
+      Travel          → 68/TRAV
+      ObserveCombat   → 75/OBCO
+      Corpse,
+      NoticeCorpse    → 76/NOTI
+      TimeToGo        → 77/TITG
+      Barter, BarterFail → 70/BAEX (BarterExit)
     """
     _TES4_TO_CATEGORY = {0: 0, 1: 0, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7}
+
+    # Map TES4 EditorID → (TES5 DATA.Subtype int, TES5 SNAM 4-char code)
+    # These are well-known Oblivion dialog topic EditorIDs; all others get CUST.
+    _EDID_TO_SUBTYPE: dict[str, tuple[int, bytes]] = {
+        'GREETING':       (79, b'HELO'),
+        'HELLO':          (79, b'HELO'),
+        'GOODBYE':        (78, b'GBYE'),
+        'IdleChatter':    (94, b'IDLE'),
+        'Idle':           (94, b'IDLE'),
+        'IDLE':           (94, b'IDLE'),
+        'Attack':         (26, b'ATCK'),
+        'Hit':            (29, b'HIT_'),
+        'Flee':           (30, b'FLEE'),
+        'Steal':          (38, b'STEA'),
+        'Trespass':       (49, b'TRES'),
+        'ServiceRefusal': (66, b'SERU'),
+        'Barter':         (70, b'BAEX'),
+        'BarterFail':     (70, b'BAEX'),
+        'Repair':         (67, b'REPA'),
+        'Travel':         (68, b'TRAV'),
+        'ObserveCombat':  (75, b'OBCO'),
+        'Corpse':         (76, b'NOTI'),
+        'NoticeCorpse':   (76, b'NOTI'),
+        'TimeToGo':       (77, b'TITG'),
+        'InfoRefusal':    (17, b'REFU'),
+        'Noticed':        (57, b'NOTA'),
+        'Seen':           (57, b'NOTA'),
+        'Unseen':         (63, b'LOTN'),
+        'Lost':           (63, b'LOTN'),
+    }
 
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -177,15 +253,17 @@ def convert_DIAL(rec: dict, info_count: int = 0) -> bytes:
         if qfid:
             subs += pack_formid_subrecord('QNAM', qfid)
 
-    # DATA — TopicFlags(U8) + Category(U8) + Subtype(U16 LE) = 4 bytes
+    # Resolve subtype from EditorID, falling back to type-based defaults
     dtype = get_int(rec, 'DATA.Type')
     category = _TES4_TO_CATEGORY.get(dtype, 0)
-    # TopicFlags bit 0 = "Do All Before Repeating" — not applicable from TES4
-    subs += pack_subrecord('DATA', struct.pack('<BBH', 0, category, 0))
+    subtype_int, snam_code = _EDID_TO_SUBTYPE.get(edid or '', (0, b'CUST'))
 
-    # SNAM — subtype name stored as 4 raw ASCII bytes (not byte-swapped)
-    # File stores the characters in order: b'CUST' = 43 55 53 54
-    subs += pack_subrecord('SNAM', b'CUST')
+    # DATA — TopicFlags(U8) + Category(U8) + Subtype(U16 LE) = 4 bytes
+    # TopicFlags bit 0 = "Do All Before Repeating" — not applicable from TES4
+    subs += pack_subrecord('DATA', struct.pack('<BBH', 0, category, subtype_int))
+
+    # SNAM — subtype name as 4 raw ASCII bytes (must be consistent with DATA.Subtype)
+    subs += pack_subrecord('SNAM', snam_code)
 
     # TIFC — info count (U32) — must match actual child INFO count
     subs += pack_uint32_subrecord('TIFC', info_count)
@@ -283,13 +361,17 @@ def convert_INFO(rec: dict) -> bytes:
         subs += pack_string_subrecord('NAM3', '')
 
     # CTDAs — conditions (convert from TES4 24-byte to TES5 32-byte format)
+    # _convert_ctda_tes4_to_tes5 returns None for TES4-only functions (e.g.
+    # GetDisposition) that would always fail in TES5 — skip those entirely.
     cc = get_int(rec, 'ConditionCount')
     for i in range(cc):
         raw_hex = rec.get(f'Condition[{i}].Raw', '')
         if raw_hex:
             try:
                 raw = bytes.fromhex(raw_hex)
-                subs += pack_subrecord('CTDA', _convert_ctda_tes4_to_tes5(raw))
+                ctda = _convert_ctda_tes4_to_tes5(raw)
+                if ctda is not None:
+                    subs += pack_subrecord('CTDA', ctda)
             except (ValueError, struct.error):
                 pass  # skip malformed conditions
 

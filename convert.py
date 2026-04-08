@@ -5,7 +5,8 @@ Pipeline steps (each runnable via --<step>-only):
   export          Parse TES4 binary -> key/value text cache
   import          Build TES5 binary ESM/ESP from text cache
   extract         Pull assets from BSA archives into export/<name>/
-  assets          Convert NIFs/SPTs, copy textures/sounds to output
+  meshes          Convert NIFs and copy textures
+  speedtrees      Convert SPT files
   lod             Generate object & terrain LOD meshes
   modify-body-meshes  Add greaves partition to character body NIFs
 
@@ -15,7 +16,8 @@ Usage:
   python convert.py -f Oblivion.esm --export-only
   python convert.py -f Oblivion.esm --import-only
   python convert.py -f Oblivion.esm --extract-only
-  python convert.py -f Oblivion.esm --assets-only
+  python convert.py -f Oblivion.esm --meshes-only
+  python convert.py -f Oblivion.esm --speedtrees-only
   python convert.py -f Oblivion.esm --lod-only
   python convert.py --modify-body-meshes
   python convert.py --output-dir /path/to/output -f Oblivion.esm
@@ -265,20 +267,38 @@ def phase_extract(file_name: str, tes4_data: str, config: dict,
 # ===========================================================================
 
 def phase_assets(file_name: str, config: dict, output_dir: str = None):
-    """Convert extracted NIF/SPT assets and copy textures to output."""
-    from asset_convert.asset_pipeline import convert_assets
+    """Convert extracted NIF assets and copy textures to output (meshes only)."""
+    from asset_convert.asset_pipeline import convert_meshes
 
     extract_dir = str(SCRIPT_DIR / "export")
     out_dir     = output_dir or str(SCRIPT_DIR / "output")
 
-    print(f"[{file_name}] Converting assets...")
-    stats = convert_assets(
+    print(f"[{file_name}] Converting meshes (NIFs + textures)...")
+    stats = convert_meshes(
         source_file=file_name,
         extract_dir=extract_dir,
         output_dir=out_dir,
     )
     total = sum(v for v in stats.values() if isinstance(v, int))
-    print(f"[{file_name}] Assets complete ({total} items processed)")
+    print(f"[{file_name}] Meshes complete ({total} items processed)")
+    return True
+
+
+def phase_speedtrees(file_name: str, config: dict, output_dir: str = None):
+    """Convert SpeedTree `.spt` files into NIFs (separate step)."""
+    from asset_convert.asset_pipeline import convert_speedtrees
+
+    extract_dir = str(SCRIPT_DIR / "export")
+    out_dir     = output_dir or str(SCRIPT_DIR / "output")
+
+    print(f"[{file_name}] Converting SpeedTrees (SPTs)...")
+    stats = convert_speedtrees(
+        source_file=file_name,
+        extract_dir=extract_dir,
+        output_dir=out_dir,
+    )
+    s = stats.get('spt_conversion', {})
+    print(f"[{file_name}] SpeedTrees complete: ok={s.get('ok',0)} fail={s.get('fail',0)} skip={s.get('skip',0)}")
     return True
 
 
@@ -390,8 +410,10 @@ def main():
                         help="Convert text cache -> TES5 binary ESM/ESP")
     parser.add_argument("--extract-only",        action="store_true",
                         help="Extract BSA archives into export/<name>/")
-    parser.add_argument("--assets-only",         action="store_true",
-                        help="Convert NIFs/SPTs, copy textures to output")
+    parser.add_argument("--meshes-only",         action="store_true",
+                        help="Convert NIFs and copy textures only")
+    parser.add_argument("--speedtrees-only",     action="store_true",
+                        help="Convert SPT (SpeedTree) files only")
     parser.add_argument("--sounds-only",         action="store_true",
                         help="Copy extracted sound files to output")
     parser.add_argument("--lod-only",            action="store_true",
@@ -430,20 +452,23 @@ def main():
 
     # ── Determine which steps to run ──────────────────────────────────────
     _any_only = any([
-        args.export_only, args.import_only, args.extract_only, args.assets_only,
-        args.sounds_only, args.lod_only, args.modify_body_meshes,
+        args.export_only, args.import_only, args.extract_only,
+        args.meshes_only, args.speedtrees_only, args.sounds_only,
+        args.lod_only, args.modify_body_meshes,
     ])
     if _any_only:
-        do_export   = args.export_only
-        do_import   = args.import_only
-        do_extract  = args.extract_only
-        do_assets   = args.assets_only
-        do_sounds   = args.sounds_only
-        do_lod      = args.lod_only
-        do_body     = args.modify_body_meshes
+        do_export     = args.export_only
+        do_import     = args.import_only
+        do_extract    = args.extract_only
+        do_meshes     = args.meshes_only
+        do_speedtrees = args.speedtrees_only
+        do_sounds     = args.sounds_only
+        do_lod        = args.lod_only
+        do_body       = args.modify_body_meshes
     else:
-        # Default: export + import + extract + assets + sounds (LOD is expensive; explicit only)
-        do_export = do_import = do_extract = do_assets = do_sounds = True
+        # Default: export + import + extract + meshes + speedtrees + sounds
+        do_export = do_import = do_extract = True
+        do_meshes = do_speedtrees = do_sounds = True
         do_lod = do_body = False
 
     success = True
@@ -476,18 +501,27 @@ def main():
                 success = False
         print()
 
-    if do_assets:
+    if do_meshes:
         print("=" * 54)
-        print("  Phase 4: ASSET CONVERSION")
+        print("  Phase 4: MESH & TEXTURE CONVERSION")
         print("=" * 54)
         for fn in order:
             if not phase_assets(fn, config, output_dir=output_dir):
                 success = False
         print()
 
+    if do_speedtrees:
+        print("=" * 54)
+        print("  Phase 5: SPEEDTREE CONVERSION")
+        print("=" * 54)
+        for fn in order:
+            if not phase_speedtrees(fn, config, output_dir=output_dir):
+                success = False
+        print()
+
     if do_sounds:
         print("=" * 54)
-        print("  Phase 5: SOUND CONVERSION")
+        print("  Phase 6: SOUND CONVERSION")
         print("=" * 54)
         for fn in order:
             if not phase_sounds(fn, config, output_dir=output_dir):
@@ -496,7 +530,7 @@ def main():
 
     if do_lod:
         print("=" * 54)
-        print("  Phase 6: LOD GENERATION")
+        print("  Phase 7: LOD GENERATION")
         print("=" * 54)
         for fn in order:
             phase_lod(fn, tes5_data, config, output_dir=output_dir)
@@ -504,7 +538,7 @@ def main():
 
     if do_body:
         print("=" * 54)
-        print("  Phase 7: MODIFY BODY MESHES")
+        print("  Phase 8: MODIFY BODY MESHES")
         print("=" * 54)
         if not phase_modify_body_meshes():
             success = False

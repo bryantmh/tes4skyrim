@@ -2,7 +2,7 @@
 """Dump Oblivion (TES4) NIF files to a human-readable text representation.
 
 Usage:
-    python tools/tes4_nif_analyzer.py <nif_or_dir> [--outdir temp/export] [--max N]
+    python tools/tes4_nif_analyzer.py <nif_or_dir> [--outdir references/export] [--max N]
 
 Each NIF is written as a .txt file in the output directory preserving the
 relative path structure.  The text format shows block hierarchy, types, flags,
@@ -333,7 +333,7 @@ def analyze_nif(nif_path):
 def main():
     parser = argparse.ArgumentParser(description='Dump Oblivion NIF files to text')
     parser.add_argument('src', help='NIF file or directory to analyze')
-    parser.add_argument('--outdir', default='temp/export', help='Output directory for text dumps')
+    parser.add_argument('--outdir', default='references/export', help='Output directory for text dumps')
     parser.add_argument('--max', type=int, default=0, help='Max files to process (0=all)')
     args = parser.parse_args()
 

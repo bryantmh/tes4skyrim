@@ -83,17 +83,25 @@ def convert_sounds(
     extract_dir: str = 'export',
     output_dir: str = 'output',
     ffmpeg_path: str = 'ffmpeg',
+    formid_index: int = 1,
 ) -> dict:
     """Convert all extracted sounds (MP3/WAV → XWM) with multi-threaded ffmpeg.
 
-    Walks ``extract_dir/<source_name>/sound/``, converts .mp3/.wav to .xwm,
-    copies all other files (including already-XWM) directly.
+    Handles two distinct subtrees under ``extract_dir/<source_name>/sound/``:
+
+    * ``sound/Voice/`` — reorganised into TES5 voice layout via
+      :func:`organize_voice_files` (race/gender folders → VoiceType folders,
+      FormIDs shifted by *formid_index*).
+    * Everything else — copied as-is to ``output/<source_name>/sound/tes4/``
+      (Skyrim SE plays MP3/WAV/XWM natively; no conversion needed).
 
     Args:
-        source_file:  Plugin filename (e.g. 'Oblivion.esm').
-        extract_dir:  Root extraction directory (default: export).
-        output_dir:   Final output root (default: output).
-        ffmpeg_path:  Path to ffmpeg executable (default: 'ffmpeg' from PATH).
+        source_file:   Plugin filename (e.g. 'Oblivion.esm').
+        extract_dir:   Root extraction directory (default: export).
+        output_dir:    Final output root (default: output).
+        ffmpeg_path:   Path to ffmpeg executable (default: 'ffmpeg' from PATH).
+        formid_index:  Load-order index byte for this plugin (default 1 —
+                       Oblivion.esm is index 1 when Skyrim.esm is master 0).
 
     Returns:
         dict with keys: converted, copied, failed, total.
@@ -112,79 +120,48 @@ def convert_sounds(
         return {'converted': 0, 'copied': 0, 'failed': 0, 'total': 0}
 
     snd_dst = output_dir / source_name / 'sound' / 'tes4'
-    ffmpeg = find_ffmpeg(ffmpeg_path)
+    ffmpeg    = find_ffmpeg(ffmpeg_path)
 
-    if ffmpeg is None:
-        print('  WARNING: ffmpeg not found — copying sound files as-is (no XWM conversion).')
-        print('  Install ffmpeg and add it to PATH to enable XWM conversion.')
-        count = 0
-        for root_dir, _, files in os.walk(snd_src):
-            for fname in files:
-                src = Path(root_dir) / fname
-                dst = snd_dst / src.relative_to(snd_src)
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
-                count += 1
-        print(f'  Copied {count} files (no conversion) → {snd_dst}')
-        return {'converted': 0, 'copied': count, 'failed': 0, 'total': count}
+    # ── Voice files: reorganise into TES5 layout ────────────────────────────
+    print('\n  [Voice files]')
+    voice_stats = organize_voice_files(
+        source_dir=extract_dir / source_name,
+        dest_dir=output_dir / source_name,
+        plugin_name=source_name,
+        copy=True,
+        convert_audio=(ffmpeg is not None),
+        ffmpeg_path=ffmpeg_path,
+        formid_index=formid_index,
+    )
 
-    print(f'  ffmpeg: {ffmpeg}  |  workers: {_WORKER_COUNT}')
-
-    # Collect all jobs: (src_path, dst_path, needs_conversion)
-    jobs: list[tuple] = []
-    for root_dir, _, files in os.walk(snd_src):
+    # ── Non-voice sounds: copy as-is (Skyrim SE plays MP3/WAV/XWM natively) ──
+    print('\n  [Non-voice sounds]')
+    count = 0
+    for root_dir, dirs, files in os.walk(snd_src):
+        # Skip the Voice subtree — already handled by organize_voice_files above
+        if Path(root_dir).resolve() == snd_src.resolve():
+            dirs[:] = [d for d in dirs if d.lower() != 'voice']
         for fname in files:
             src = Path(root_dir) / fname
-            rel = src.relative_to(snd_src)
-            if src.suffix.lower() in ('.mp3', '.wav'):
-                jobs.append((src, snd_dst / rel.with_suffix('.xwm'), True))
-            else:
-                jobs.append((src, snd_dst / rel, False))
-
-    if not jobs:
-        print('  No sound files found.')
-        return {'converted': 0, 'copied': 0, 'failed': 0, 'total': 0}
-
-    total_jobs = len(jobs)
-    stats: dict[str, int] = {'converted': 0, 'copied': 0, 'failed': 0}
-    failed_names: list[str] = []
-
-    def _do_job(job):
-        src, dst, needs_conv = job
-        if not needs_conv:
+            dst = snd_dst / src.relative_to(snd_src)
+            if dst.exists():
+                continue
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
-            return 'copied'
-        return 'converted' if convert_file_to_xwm(src, dst, ffmpeg) else 'failed'
+            count += 1
+    if count:
+        print(f'  Copied {count} files → {snd_dst}')
+    else:
+        print('  No non-voice sound files to copy (all already present or none found).')
 
-    done = 0
-    with ThreadPoolExecutor(max_workers=_WORKER_COUNT) as pool:
-        futures = {pool.submit(_do_job, job): job for job in jobs}
-        for fut in as_completed(futures):
-            outcome = fut.result()
-            stats[outcome] += 1
-            done += 1
-            if outcome == 'failed':
-                src_path = futures[fut][0]
-                failed_names.append(src_path.name)
-                if len(failed_names) <= 5:
-                    print(f'    FAILED: {src_path.name}')
-            if done % 500 == 0 or done == total_jobs:
-                print(
-                    f'  {done}/{total_jobs} — '
-                    f'converted={stats["converted"]} '
-                    f'copied={stats["copied"]} '
-                    f'failed={stats["failed"]}'
-                )
-
-    total = sum(stats.values())
+    total = voice_stats.get('organized', 0) + count
     print(
         f'\n  Sound conversion complete: '
-        f'{stats["converted"]} XWM, {stats["copied"]} copied, '
-        f'{stats["failed"]} failed / {total} total'
+        f'{count} non-voice copied | '
+        f'{voice_stats.get("organized", 0)} voice organised to TES5 layout'
     )
-    print(f'  Output: {snd_dst}')
-    return {**stats, 'total': total}
+    return {'converted': 0, 'copied': total, 'failed': voice_stats.get('errors', 0),
+            'total': total}
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +233,7 @@ def organize_voice_files(
     """Reorganise extracted TES4 voice files into TES5 directory layout.
 
     TES4 layout: <source_dir>/sound/Voice/<plugin>/<Race>/<Gender>/<topic>_<infoFID>_<idx>.mp3
-    TES5 layout: <dest_dir>/Sound/Voice/<plugin>/<VoiceType>/<infoFID_shifted>_0.xwm
+    TES5 layout: <dest_dir>/Sound/Voice/<plugin>/<VoiceType>/<infoFID_shifted>_<idx>.xwm
 
     When ``convert_audio=True`` (default) each MP3/WAV is converted to XWM
     using ffmpeg in parallel.  Raises RuntimeError if ffmpeg is unavailable
@@ -336,11 +313,12 @@ def organize_voice_files(
                     info_fid_int     = int(m.group(1), 16)
                     info_fid_shifted = (info_fid_int & 0x00FFFFFF) | (formid_index << 24)
                     info_fid         = f'{info_fid_shifted:08X}'
+                    resp_idx         = m.group(2)   # 1-based index from source filename
                     src_ext          = m.group(3).lower()
 
-                    dst_name = (f'{info_fid}_0.xwm'
+                    dst_name = (f'{info_fid}_{resp_idx}.xwm'
                                 if ffmpeg and src_ext in ('mp3', 'wav')
-                                else f'{info_fid}_0.{src_ext}')
+                                else f'{info_fid}_{resp_idx}.{src_ext}')
                     dst_path = out_dir / dst_name
 
                     if dst_path.exists():

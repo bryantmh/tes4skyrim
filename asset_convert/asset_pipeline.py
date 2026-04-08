@@ -1,13 +1,16 @@
 """Asset conversion pipeline: BSA extraction → mesh/texture conversion → output.
 
-Four separate callable steps:
+Three separate callable steps:
 
   extract_bsas(source_file, data_path, extract_dir, force)
-      Pull all assets from BSA archives into extract_dir/<source_name>/.
+      Pull all assets from BSA archives into extract_dir/<source_name>./
 
-  convert_assets(source_file, extract_dir, output_dir)
-      Convert NIFs, copy textures, convert SpeedTree files.
-      Assumes extract_bsas has already been run.
+  convert_meshes(source_file, extract_dir, output_dir)
+      Convert NIFs and copy textures into output/<source_name>/.
+
+  convert_speedtrees(source_file, extract_dir, output_dir)
+      Convert SpeedTree `.spt` files into NIFs under
+      `output/<source_name>/meshes/tes4/speedtrees`.
 
   convert_sounds(source_file, extract_dir, output_dir)
       Convert sound files from extracted BSA into XWM and move into output_dir/<source_name>/sound/tes4/.
@@ -40,9 +43,8 @@ def extract_bsas(source_file, data_path, extract_dir='export', force=False):
     return result
 
 
-def convert_assets(source_file, extract_dir='export', output_dir='output'):
-    """Convert extracted assets and copy them to output_dir.
-
+def convert_meshes(source_file, extract_dir='export', output_dir='output'):
+    """Convert extracted NIFs and copy textures into `output_dir/<source_name>/`.
     Assumes BSA extraction has already been run (extract_bsas).
 
     Args:
@@ -50,18 +52,16 @@ def convert_assets(source_file, extract_dir='export', output_dir='output'):
         extract_dir: Root extraction directory (default: export).
         output_dir:  Final output root (files placed under output_dir/<source_name>/).
 
-    Returns:
-        dict with pipeline stats.
+    Returns a dict with keys: 'mesh_conversion', 'textures_copied', 'other_copied'.
     """
     extract_dir = Path(extract_dir)
-    output_dir  = Path(output_dir)
+    output_dir = Path(output_dir)
     source_name = Path(source_file).name
 
     stats = {
         'mesh_conversion': {},
-        'spt_conversion':  {},
         'textures_copied': 0,
-        'other_copied':    0,
+        'other_copied': 0,
     }
 
     plugin_dir = output_dir / source_name
@@ -96,27 +96,27 @@ def convert_assets(source_file, extract_dir='export', output_dir='output'):
         stats['textures_copied'] = _copy_tree(tex_src, tex_dst)
         print(f"  Textures: {stats['textures_copied']} files -> {tex_dst}")
 
+    return stats
 
-    # -----------------------------------------------------------------------
-    # SpeedTree Conversion
-    # -----------------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("SpeedTree Conversion")
-    print("=" * 60)
+def convert_speedtrees(source_file, extract_dir='export', output_dir='output'):
+    """Convert SpeedTree `.spt` files into NIFs and place them under
+    `output_dir/<source_name>/meshes/tes4/speedtrees`.
+    """
+    extract_dir = Path(extract_dir)
+    output_dir = Path(output_dir)
+    source_name = Path(source_file).name
 
+    plugin_dir = output_dir / source_name
+
+    spt_stats = {'spt_conversion': {'ok': 0, 'fail': 0, 'skip': 0}}
     spt_src = extract_dir / source_name / 'trees'
     if spt_src.exists():
         spt_dst = plugin_dir / 'meshes' / 'tes4' / 'speedtrees'
-        stats['spt_conversion'] = spt_converter.convert_spt_directory(spt_src, spt_dst)
+        spt_stats['spt_conversion'] = spt_converter.convert_spt_directory(spt_src, spt_dst)
     else:
         print(f"  No trees/ directory found at {spt_src}")
-        stats['spt_conversion'] = {'ok': 0, 'fail': 0, 'skip': 0}
 
-    print("\n" + "=" * 60)
-    print("Asset Conversion Complete")
-    print("=" * 60)
-
-    return stats
+    return spt_stats
 
 
 def convert_sounds(source_file, extract_dir='export', output_dir='output',
@@ -163,7 +163,7 @@ if __name__ == '__main__':
     p_extract.add_argument('--extract-dir', default='export')
     p_extract.add_argument('--force', action='store_true')
 
-    p_convert = sub.add_parser('convert', help='Convert extracted assets only')
+    p_convert = sub.add_parser('convert', help='Convert extracted assets (meshes + speedtrees)')
     p_convert.add_argument('source_file')
     p_convert.add_argument('--extract-dir', default='export')
     p_convert.add_argument('--output-dir', default='output')
@@ -178,8 +178,10 @@ if __name__ == '__main__':
         extract_bsas(args.source_file, args.data_path,
                      extract_dir=args.extract_dir, force=args.force)
     elif args.cmd == 'convert':
-        convert_assets(args.source_file,
+        convert_meshes(args.source_file,
                        extract_dir=args.extract_dir, output_dir=args.output_dir)
+        convert_speedtrees(args.source_file,
+                           extract_dir=args.extract_dir, output_dir=args.output_dir)
     elif args.cmd == 'sounds':
         convert_sounds(args.source_file,
                     extract_dir=args.extract_dir, output_dir=args.output_dir)
