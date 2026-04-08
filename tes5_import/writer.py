@@ -248,7 +248,7 @@ class PluginWriter:
             'ARMA', 'BOOK', 'AMMO', 'ENCH', 'SPEL', 'ALCH', 'INGR', 'SCRL',
             'SLGM', 'NPC_', 'LVLN', 'LVLI', 'LVSP', 'WTHR', 'CLMT', 'REGN',
             'QUST', 'IDLE', 'PACK', 'EFSH', 'LSCR', 'ANIO', 'WEAP',
-            'CELL', 'WRLD', 'DIAL',
+            'CELL', 'WRLD', 'DIAL', 'DLBR', 'DLVW',
         ]
         # Append any groups not in the canonical order
         for sig in self._top_groups:

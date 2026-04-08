@@ -284,6 +284,22 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     crea_race_fid, _src, _alt = resolve_creature_race(edid, full)
     subs += pack_formid_subrecord('RNAM', crea_race_fid)
 
+    # VTCK — Voice type (same logic as NPC_: race → VTYP map)
+    # Creatures get CREA race patterns, resolve to race EditorID, then map
+    tes4_flags = get_int(rec, 'ACBS.Flags')
+    gender = 'Female' if (tes4_flags & 1) else 'Male'
+    # resolve_creature_race returns a Skyrim race FormID; we need the EditorID
+    # for VOICE_TYPE_MAP lookup. Use the original TES4 RNAM to get race EditorID.
+    tes4_race_fid = get_formid(rec, 'RNAM.Race')
+    race_edid = TES4_RACE_FID_TO_EDID.get(tes4_race_fid & 0x00FFFFFF, '')
+    if not race_edid:
+        # Fallback: use the creature race source for voice mapping
+        race_edid = _src if _src else 'Imperial'
+    voice = (VOICE_TYPE_MAP.get((race_edid, gender))
+             or VOICE_TYPE_MAP.get(('Imperial', gender), 0))
+    if voice:
+        subs += pack_formid_subrecord('VTCK', voice)
+
     # Items
     item_fids = []
     ic = get_int(rec, 'ItemCount')

@@ -21,8 +21,22 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .constants import IMPORT_DISPATCH, SKIP_TYPES, TYPE_MAP
-from .record_types.dialog_misc import convert_DIAL, convert_INFO, convert_SOUN
-from .skyrim_overrides import CUSTOM_VTYP_EDIDS, set_voice_type
+from .record_types.dialog_misc import (
+    build_voice_type_ctdas_for_info,
+    convert_DIAL,
+    convert_INFO,
+    convert_QUST,
+    convert_SOUN,
+    is_bark_topic,
+    make_dlbr,
+    make_dlvw,
+)
+from .skyrim_overrides import (
+    CUSTOM_VTYP_EDIDS,
+    TES4_RACE_FID_TO_EDID,
+    VOICE_TYPE_MAP,
+    set_voice_type,
+)
 from .record_types.world import (
     convert_ACHR,
     convert_CELL,
@@ -67,7 +81,7 @@ def _create_vtyp_records(writer: PluginWriter):
         fid = writer.alloc_formid()
         dnam = 3 if gender == 'Female' else 1
         subs = pack_string_subrecord('EDID', vtyp_edid)
-        subs += pack_subrecord('DNAM', struct.pack('<I', dnam))
+        subs += pack_subrecord('DNAM', struct.pack('<B', dnam))
         writer.add_record('VTYP', pack_record('VTYP', fid, 0, subs))
         set_voice_type(race_edid, gender, fid)
 
@@ -130,6 +144,12 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # --- Phase 0: Create custom VTYP records for voice types not in Skyrim.esm ---
     _create_vtyp_records(writer)
 
+    # --- Phase 0b: Pre-scan for dialogue conversion ---
+    # 1) Collect QUSTs that own DIAL records → force dialogue flags
+    # 2) Build NPC FormID → VTYP FormID mapping for voice type injection
+    dialogue_quest_fids = _collect_dialogue_quest_fids(by_type)
+    npc_to_vtyp = _build_npc_to_vtyp_map(by_type, num_new_masters)
+
     # --- Phase 1: Simple record types (flat top-level groups) ---
     print("\nConverting records...")
     t2 = time.time()
@@ -139,7 +159,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         if sig in all_skip:
             continue
         if sig in ('CELL', 'WRLD', 'DIAL', 'INFO', 'REFR', 'ACHR', 'ACRE', 'LAND',
-                    'LTEX', 'SOUN', 'PGRD'):
+                    'LTEX', 'SOUN', 'PGRD', 'QUST'):
             continue  # Handled separately
         if sig not in IMPORT_DISPATCH:
             continue
@@ -212,12 +232,25 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                 print(f"  ERROR converting SOUN '{get_str(rec, 'EditorID', '?')}': {e}")
                 errors += 1
 
+    # --- Phase 3b: QUST (needs dialogue_quest_fids from pre-scan) ---
+    qust_records = by_type.get('QUST', [])
+    if qust_records and 'QUST' not in all_skip:
+        print(f"  Converting {len(qust_records)} QUST records ({len(dialogue_quest_fids)} are dialogue quests)...")
+        for rec in qust_records:
+            try:
+                qust_bytes = convert_QUST(rec, dialogue_quest_fids=dialogue_quest_fids)
+                writer.add_record('QUST', qust_bytes)
+                converted += 1
+            except Exception as e:
+                print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
+                errors += 1
+
     # --- Phase 4: CELL/WRLD hierarchy ---
     _build_cell_groups(by_type, writer)
     _build_world_groups(by_type, writer)
 
     # --- Phase 5: DIAL/INFO hierarchy ---
-    _build_dialog_groups(by_type, writer)
+    _build_dialog_groups(by_type, writer, npc_to_vtyp)
 
     t3 = time.time()
     print(f"\nConverted {converted} records ({errors} errors) in {t3-t2:.2f}s")
@@ -517,13 +550,90 @@ def _build_world_groups(by_type: dict, writer: PluginWriter):
     print(f"    Worldspaces: {len(worlds)}, children: {converted}")
 
 
-def _build_dialog_groups(by_type: dict, writer: PluginWriter):
-    """Build DIAL/INFO group hierarchy."""
+def _collect_dialogue_quest_fids(by_type: dict) -> set:
+    """Pre-scan DIAL records and collect all quest FormIDs that own dialogue.
+
+    These QUSTs need StartGameEnabled + StartsEnabled + HasDialogueData flags.
+    Must run BEFORE Phase 1 so QUST conversion can use the result.
+    """
+    dialogue_quest_fids = set()
+    for rec in by_type.get('DIAL', []):
+        qcount = get_int(rec, 'QuestCount')
+        for i in range(qcount):
+            quest_fid = get_formid(rec, f'Quest[{i}]')
+            if quest_fid:
+                dialogue_quest_fids.add(quest_fid)
+    return dialogue_quest_fids
+
+
+def _build_npc_to_vtyp_map(by_type: dict, num_new_masters: int) -> dict:
+    """Build NPC FormID → VTYP FormID mapping from NPC_ + CREA export data.
+
+    Used to derive GetIsVoiceType conditions for INFO records:
+    - INFO conditions contain GetIsID(npc_formid) → we look up the NPC's
+      voice type via this mapping
+    - For generic INFOs (no GetIsID) → all voice types are added
+
+    FormIDs are stored in remapped form (with load-order offset applied).
+    """
+    npc_to_vtyp = {}
+    offset = num_new_masters
+
+    for sig in ('NPC_', 'CREA'):
+        for rec in by_type.get(sig, []):
+            raw_fid = int(rec.get('FormID', '0'), 16)
+            # Apply same load-order remapping as text_reader
+            if (raw_fid >> 24) == 0x00 and (raw_fid & 0x00FFFFFF) >= 0x100:
+                remapped_fid = (raw_fid & 0x00FFFFFF) | (offset << 24)
+            else:
+                remapped_fid = raw_fid
+
+            # Resolve race → voice type
+            tes4_race_fid = get_formid(rec, 'RNAM.Race')
+            race_edid = TES4_RACE_FID_TO_EDID.get(
+                tes4_race_fid & 0x00FFFFFF, 'Imperial')
+            tes4_flags = get_int(rec, 'ACBS.Flags')
+            gender = 'Female' if (tes4_flags & 1) else 'Male'
+
+            vtyp = VOICE_TYPE_MAP.get((race_edid, gender))
+            if not vtyp:
+                vtyp = VOICE_TYPE_MAP.get(('Imperial', gender), 0)
+            if vtyp:
+                npc_to_vtyp[remapped_fid] = vtyp
+
+    return npc_to_vtyp
+
+
+def _build_dialog_groups(by_type: dict, writer: PluginWriter,
+                         npc_to_vtyp: dict):
+    """Build DIAL/INFO/DLBR/DLVW group hierarchy.
+
+    This is the core of Skyrim dialogue conversion.  For each DIAL topic:
+
+    1. Determine bark vs conversation:
+       - Barks (greetings, combat, detection, idle): Category 3/5/7, NO DLBR
+       - Conversation topics: Category 0, needs DLBR branch
+
+    2. For conversation topics, allocate and create a DLBR record:
+       - DLBR links QNAM→quest, SNAM→dial, DNAM=TopLevel
+       - DIAL gets BNAM→DLBR FormID
+
+    3. For each INFO, build GetIsVoiceType CTDA conditions:
+       - Extract GetIsID(npc_fid) from existing conditions → map to VTYP
+       - If no GetIsID (generic line) → add ALL voice types
+       - Conditions are OR'd (any matching voice type fires)
+
+    4. Optionally create DLVW records (CK UI metadata, not strictly required
+       for runtime but helps if the plugin is opened in the Creation Kit).
+    """
     dials = by_type.get('DIAL', [])
     infos = by_type.get('INFO', [])
 
     if not dials:
         return
+
+    # Collect all voice type FormIDs for generic lines
+    all_vtyp_fids = sorted(set(VOICE_TYPE_MAP.values()))
 
     # Group INFOs by parent DIAL
     info_by_dial = defaultdict(list)
@@ -531,41 +641,120 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter):
         dial_fid = get_formid(rec, 'ParentDIAL')
         info_by_dial[dial_fid].append(rec)
 
-    print(f"  Building DIAL hierarchy ({len(dials)} topics, {len(infos)} infos)...")
+    print(f"  Building DIAL hierarchy ({len(dials)} topics, {len(infos)} infos, "
+          f"{len(npc_to_vtyp)} NPC→VTYP mappings, {len(all_vtyp_fids)} voice types)...")
+
+    # Create a catch-all dialogue quest for orphan DIALs (no TES4 quest).
+    # ALL Skyrim DIALs MUST have QNAM — engine ignores topics without one.
+    # Matches Skyrim's DialogueGeneric pattern: StartGameEnabled + StartsEnabled.
+    catchall_quest_fid = writer.alloc_formid()
+    catchall_subs = pack_string_subrecord('EDID', 'TES4DialogueGeneric')
+    catchall_subs += pack_string_subrecord('FULL', 'TES4 Dialogue Generic')
+    catchall_subs += pack_subrecord('DNAM', struct.pack('<HBBII', 0x0011, 0, 0, 0, 0))
+    catchall_subs += pack_subrecord('NEXT', b'')
+    catchall_subs += pack_uint32_subrecord('ANAM', 0)
+    writer.add_record('QUST', pack_record('QUST', catchall_quest_fid, 0, catchall_subs))
+    orphan_count = 0
+
     dial_converted = 0
     info_converted = 0
+    dlbr_created = 0
+    dlvw_created = 0
     all_dial_content = b''
+    all_dlbr_records = b''
+    all_dlvw_records = b''
+
+    # Per-quest DLBR tracking (for DLVW creation)
+    quest_branches: dict[int, list] = defaultdict(list)  # quest_fid → [dlbr_fid, ...]
+    quest_topics: dict[int, list] = defaultdict(list)    # quest_fid → [dial_fid, ...]
 
     for dial_rec in dials:
         dial_fid = get_formid(dial_rec, 'FormID')
+        dial_edid = get_str(dial_rec, 'EditorID', '')
+        quest_fid = get_formid(dial_rec, 'Quest[0]')
+
+        # Assign orphan DIALs (no quest) to the catch-all quest
+        if not quest_fid:
+            quest_fid = catchall_quest_fid
+            orphan_count += 1
+
         try:
-            # Topic children (type 7) — must be converted first to get count for TIFC
+            # Determine if this is a bark or conversation topic
+            bark = is_bark_topic(dial_edid)
+            dlbr_fid = 0
+
+            if not bark and quest_fid:
+                # Conversation topic — create a DLBR
+                dlbr_fid = writer.alloc_formid()
+                dlbr_edid = f'TES4_{dial_edid}_Branch' if dial_edid else f'TES4_DLBR_{dlbr_fid:08X}'
+                dlbr_bytes = make_dlbr(dlbr_fid, dlbr_edid, quest_fid, dial_fid,
+                                       top_level=True)
+                all_dlbr_records += dlbr_bytes
+                dlbr_created += 1
+                quest_branches[quest_fid].append(dlbr_fid)
+
+            quest_topics[quest_fid].append(dial_fid)
+
+            # Convert child INFOs with voice type injection
             topic_children = b''
             child_info_count = 0
             for info_rec in info_by_dial.get(dial_fid, []):
                 try:
-                    info_bytes = convert_INFO(info_rec)
+                    voice_ctdas = build_voice_type_ctdas_for_info(
+                        info_rec, npc_to_vtyp, all_vtyp_fids)
+                    info_bytes = convert_INFO(info_rec, voice_type_ctdas=voice_ctdas,
+                                              is_bark=bark)
                     topic_children += info_bytes
                     child_info_count += 1
                     info_converted += 1
                 except Exception as e:
                     print(f"  ERROR converting INFO: {e}")
 
-            dial_bytes = convert_DIAL(dial_rec, info_count=child_info_count)
+            # Convert DIAL with DLBR linkage and correct category
+            # Pass quest_fid_override for orphan DIALs so QNAM is always set
+            orig_quest = get_formid(dial_rec, 'Quest[0]')
+            override_fid = quest_fid if not orig_quest else 0
+            dial_bytes = convert_DIAL(dial_rec, info_count=child_info_count,
+                                      dlbr_fid=dlbr_fid,
+                                      quest_fid_override=override_fid)
             dial_group_content = dial_bytes
 
             if topic_children:
-                dial_group_content += pack_group(7, struct.pack('<I', dial_fid), topic_children)
+                dial_group_content += pack_group(
+                    7, struct.pack('<I', dial_fid), topic_children)
 
             all_dial_content += dial_group_content
             dial_converted += 1
-        except Exception as e:
-            print(f"  ERROR building DIAL group for {get_str(dial_rec, 'EditorID', '?')}: {e}")
 
+        except Exception as e:
+            print(f"  ERROR building DIAL group for {dial_edid or '?'}: {e}")
+
+    # Create DLVW records (one per quest that has branches)
+    for qfid, branch_list in quest_branches.items():
+        try:
+            dlvw_fid = writer.alloc_formid()
+            dlvw_edid = f'TES4_DLVW_{qfid:08X}'
+            topic_list = quest_topics.get(qfid, [])
+            dlvw_bytes = make_dlvw(dlvw_fid, dlvw_edid, qfid,
+                                   branch_list, topic_list)
+            all_dlvw_records += dlvw_bytes
+            dlvw_created += 1
+        except Exception as e:
+            print(f"  ERROR creating DLVW for quest {qfid:08X}: {e}")
+
+    # Write all groups
     if all_dial_content:
         writer.add_raw_group('DIAL', all_dial_content)
 
-    print(f"    Topics: {dial_converted}, infos: {info_converted}")
+    if all_dlbr_records:
+        writer.add_raw_group('DLBR', all_dlbr_records)
+
+    if all_dlvw_records:
+        writer.add_raw_group('DLVW', all_dlvw_records)
+
+    print(f"    Topics: {dial_converted}, infos: {info_converted}, "
+          f"branches: {dlbr_created}, views: {dlvw_created}, "
+          f"orphan DIALs assigned to catch-all quest: {orphan_count}")
 
 
 def main():

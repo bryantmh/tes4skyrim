@@ -65,6 +65,10 @@ Major Issues:
 			RSP+E0: (BSGeometryListCullingProcess*)
 			RSP+108: (BSTriShape*) "UpperBench02:2" ("tes4\Furniture\upperclass\UpperBench02.NIF")
 			RSP+188: (bhkCharProxyController*)
+
+			bigverts w of 999.9999 seems too high
+	
+	Looping sounds fail to loop
 			
 	12 - Nif converter fix broken conversion
 		Files:

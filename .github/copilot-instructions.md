@@ -598,12 +598,26 @@ VTEX[i]=FormID
 - TX01 = normal map (`tes4\landscape\<icon>_n.dds`)
 - LTEX SNAM specular exponent: **pass through the TES4 value**. SNAM is a Phong exponent used directly by the landscape shader. Setting SNAM=0 gives `pow(NdotH, 0) = 1.0` everywhere → whole landscape appears blindingly bright white. TES4 landscape textures use ~30 (moderate gloss). Do NOT write SNAM=0.
 
-### Dialogue conversion notes (DIAL / INFO / QUST)
-- **TES5 DIAL subrecord order**: EDID FULL PNAM(float priority=50.0) BNAM(null branch) QNAM(quest) DATA(4B) SNAM(4-char code U32) TIFC(info count U32)
+### Dialogue conversion notes (DIAL / INFO / QUST / DLBR / DLVW)
+- **Skyrim dialogue architecture**: QUST owns DIAL topics → DLBR branches link DIAL to QUST → INFO records have GetIsVoiceType conditions → engine routes dialogue by voice type
+- **TES5 DIAL subrecord order**: EDID FULL PNAM(float priority=50.0) [BNAM(branch FID)] QNAM(quest) DATA(4B) SNAM(4-char code U32) TIFC(info count U32)
 - **DIAL DATA** = TopicFlags(U8) + Category(U8) + Subtype(U16 LE) = 4 bytes total
-- **DIAL SNAM** = 4-char subtype code stored as big-endian int in LE U32: `struct.pack('<I', int.from_bytes(b'CUST', 'big'))` for "Custom"
-- **TES4 Type → TES5 Category**: 0/1→0(Topic), 2→3(Combat), 3→4(Favors), 4→5(Detection), 5→6(Service), 6→7(Miscellaneous)
-- **TES5 INFO subrecord order**: EDID ENAM TPIC PNAM CNAM TCLT[] Responses([TRDT NAM1 NAM2]*) CTDAs
+- **DIAL SNAM** = 4-char subtype code stored as raw ASCII bytes (e.g. b'HELO', b'CUST')
+- **DIAL Category**: Bark topics → 7(Misc) or 3(Combat) or 5(Detection); all conversation topics → 0(Topic). Old TES4 type-based mapping removed.
+- **DIAL BNAM**: ONLY present on conversation topics (links to DLBR). Bark topics (GREETING, Attack, Hit, Flee, Idle, etc.) must NOT have BNAM — they fire automatically.
+- **DLBR (Dialog Branch)**: EDID + QNAM(quest FID) + TNAM(0=Player) + DNAM(1=TopLevel) + SNAM(starting DIAL FID). Created for each non-bark DIAL topic.
+- **DLVW (Dialog View)**: EDID + QNAM(quest) + BNAM[](branch FIDs) + TNAM[](topic FIDs) + ENAM(view type) + DNAM(show all text). CK UI metadata, one per quest.
+- **GetIsVoiceType (func 426)**: Every Skyrim INFO must have this condition. Routes dialogue to the correct voice type. OR'd for multiple voice types. NPC-specific INFOs use GetIsID(npc_fid) from TES4 + GetIsVoiceType for the NPC's voice type. Generic INFOs get ALL 27 custom voice types.
+- **CTDA OR flag**: bit 0 of type byte. Voice type chain: VT1(OR)|VT2(OR)|...|VTn(AND) → evaluates as (any voice type matches) AND (remaining TES4 conditions). LAST voice type CTDA must NOT have OR flag.
+- **Voice type injection order**: Voice type CTDAs are injected BEFORE TES4-converted conditions in INFO. This isolates the OR chain from any trailing OR flags in TES4 data.
+- **QUST dialogue flags**: QUSTs that own DIAL topics get: 0x0001(StartGameEnabled) + 0x0010(StartsEnabled) = 0x0011. **NEVER set HasDialogueData (0x8000)** — Skyrim does not use this flag and it blocks dialogue processing.
+- **QUST DNAM format**: 12 bytes: Flags(U16) + Priority(U8) + FormVer(U8=**0 always**) + Unknown(4B) + Type(U32). FormVer must be 0 (not 44). Dialogue quest priority capped at 50.
+- **Orphan DIALs**: DIALs without quest association get assigned to a catch-all quest `TES4DialogueGeneric` (Flags=0x0011, Priority=0, FormVer=0). ALL DIALs MUST have QNAM or the engine ignores them.
+- **NPC→VTYP mapping**: Built from NPC_+CREA records using TES4_RACE_FID_TO_EDID → VOICE_TYPE_MAP[(race_edid, gender)]. 3396 NPCs mapped to 27 voice types. ALL speakable NPCs (including CREA→NPC_) MUST have VTCK.
+- **TES4-only condition functions dropped**: GetDisposition(76), GetVampire(40), IsYielding(104), IsPlayerInJail(171), GetPCInfamy(251) — these would always fail in TES5 and block valid dialogue.
+- **Quest-dependent conditions on barks**: Functions {56(GetQuestRunning), 58(GetStage), 59(GetStageDone), 99(GetIsPlayableRace), 79(GetFactionRank), 71(GetFactionReaction), 67(GetCurrentAIPackage)} stripped from bark INFOs — barks fire automatically without quest context.
+- **CTDA Use Global flag**: bit 2 (0x04), NOT bit 5 (0x20). Wrong bit causes all global-based conditions to fail.
+- **TES5 INFO subrecord order**: EDID ENAM CNAM [TCLT[]] [TRDT NAM1 NAM2 NAM3]* CTDAs
 - **INFO ENAM** = Flags(U16) + ResetHours(U16) = 4 bytes. Flags map from TES4 DATA.Flags with compatible mask 0x37 (bits 0=Goodbye, 1=Random, 2=SayOnce, 4=InfoRefusal, 5=RandomEnd — same bit positions)
 - **INFO TRDT** = 24 bytes: EmotionType(U32) + EmotionValue(U32) + Unused(4) + ResponseNumber(U8) + Unused(3) + Sound(FormID=0 U32) + Flags(U8) + Unused(3)
 - **INFO CNAM** = Favor Level U8 (0=None, required)
@@ -612,6 +626,7 @@ VTEX[i]=FormID
 - **QUST stage log entries**: exported as `Stage[i].LogCount + Stage[i].Log[j].{Flags,Text}`; imported with one QSDT (U8) + optional CNAM (string) per log entry
 - **Voice files**: TES4 path `Sound\Voice\<plugin>\<Race>\<Gender>\<dialFID>_<infoFID>.mp3`; TES5 path `Sound\Voice\<plugin>\<VoiceType>\<infoFID>_0.mp3`. Use `asset_convert.bsa_extract.organize_voice_files()` to reorganize after extraction. Audio format conversion (MP3→XWM/FUZ) required for actual playback — not automated.
 - **Race→VoiceType mapping** is in `_TES4_VOICE_TYPE_MAP` in bsa_extract.py; includes all Oblivion playable races + Shivering Isles races
+- **Conversion stats**: 3817 DIAL topics (851 barks, 2966 conversation), 19278 INFOs, 2966 DLBR branches, 275 DLVW views, 345 dialogue quests
 
 ### DOOR conversion notes
 - TES4 FNAM bit 0 = "Oblivion gate" — **clear this bit** when writing TES5 FNAM (no TES5 equivalent, may corrupt flags)

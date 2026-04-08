@@ -647,5 +647,544 @@ class TestIntegration:
             os.unlink(tmp)
 
 
+# ---------------------------------------------------------------------------
+# Dialogue conversion tests
+# ---------------------------------------------------------------------------
+
+from tes5_import.record_types.dialog_misc import (
+    _convert_ctda_tes4_to_tes5,
+    _QUEST_DEPENDENT_FUNCS,
+    _TES4_ONLY_FUNCS,
+    build_voice_type_ctda,
+    build_voice_type_ctdas_for_info,
+    convert_DIAL,
+    convert_INFO,
+    convert_QUST,
+    is_bark_topic,
+    make_dlbr,
+    make_dlvw,
+)
+from tes5_import.text_reader import set_formid_index_offset
+
+
+class TestDialogueConversion:
+    """Tests for dialogue record conversion (DIAL, INFO, QUST, DLBR, DLVW)."""
+
+    # -- CTDA conversion --
+
+    def test_ctda_tes4_to_tes5_size(self):
+        """TES4 CTDA (24B) → TES5 CTDA (32B)."""
+        tes4_ctda = struct.pack('<B3x I HH II',
+                                0x00,        # type: Equal
+                                0x3F800000,  # CompValue = 1.0f
+                                72, 0,       # GetIsID (func 72)
+                                0x00001234,  # Param1
+                                0)           # Param2
+        result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+        assert result is not None
+        assert len(result) == 32
+
+    def test_ctda_drops_tes4_only_funcs(self):
+        """TES4-only functions (GetDisposition etc) should return None."""
+        for func_idx in _TES4_ONLY_FUNCS:
+            tes4_ctda = struct.pack('<B3x I HH II',
+                                    0x00, 0x3F800000, func_idx, 0, 0, 0)
+            result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+            assert result is None, f"func {func_idx} should be dropped"
+
+    def test_ctda_use_global_flag(self):
+        """CTDA Use Global flag is bit 2 (0x04), not bit 5 (0x20)."""
+        set_formid_index_offset(1)  # offset=1 → remap 0x00XXXX to 0x01XXXX
+        try:
+            # type=0x04 (Equal + UseGlobal): CompValue is a Global FormID
+            tes4_ctda = struct.pack('<B3x I HH II',
+                                    0x04,        # UseGlobal flag
+                                    0x00001234,  # CompValue = Global FormID
+                                    58, 0,       # GetStage
+                                    0x00005678,  # Param1 = Quest FormID
+                                    0)
+            result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+            assert result is not None
+            # CompValue should be remapped: 0x00001234 → 0x01001234
+            comp = struct.unpack_from('<I', result, 4)[0]
+            assert comp == 0x01001234
+        finally:
+            set_formid_index_offset(0)
+
+    def test_ctda_not_equal_not_treated_as_use_global(self):
+        """type=0x20 (NotEqual) must NOT remap CompValue as a FormID."""
+        set_formid_index_offset(1)
+        try:
+            # type=0x20 (NotEqual): CompValue is a float, NOT a FormID
+            tes4_ctda = struct.pack('<B3x I HH II',
+                                    0x20,        # NotEqual operator
+                                    0x3F800000,  # CompValue = 1.0f
+                                    72, 0,       # GetIsID
+                                    0x00001234, 0)
+            result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+            assert result is not None
+            # CompValue should NOT be remapped (it's a float literal)
+            comp = struct.unpack_from('<I', result, 4)[0]
+            assert comp == 0x3F800000  # unchanged
+        finally:
+            set_formid_index_offset(0)
+
+    def test_ctda_unknown_field_is_ffffffff(self):
+        """TES5 CTDA bytes 28-31 must be 0xFFFFFFFF (vanilla convention)."""
+        tes4_ctda = struct.pack('<B3x I HH II', 0, 0x3F800000, 72, 0, 0, 0)
+        result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+        unknown = struct.unpack_from('<I', result, 28)[0]
+        assert unknown == 0xFFFFFFFF
+
+    # -- Voice type CTDA building --
+
+    def test_build_voice_type_ctda_or(self):
+        """Voice type CTDA with OR flag."""
+        ctda = build_voice_type_ctda(0x01234567, is_or=True)
+        assert len(ctda) == 32
+        type_byte = ctda[0]
+        assert type_byte & 0x01  # OR flag
+        func_idx = struct.unpack_from('<H', ctda, 8)[0]
+        assert func_idx == 426  # GetIsVoiceType
+        param1 = struct.unpack_from('<I', ctda, 12)[0]
+        assert param1 == 0x01234567
+        comp = struct.unpack_from('<I', ctda, 4)[0]
+        assert comp == 0x3F800000  # 1.0
+
+    def test_build_voice_type_ctda_and(self):
+        """Voice type CTDA without OR flag (last in chain)."""
+        ctda = build_voice_type_ctda(0x01234567, is_or=False)
+        type_byte = ctda[0]
+        assert not (type_byte & 0x01)  # no OR flag
+
+    def test_voice_type_ctdas_generic_info(self):
+        """Generic INFO (no GetIsID) gets ALL voice types."""
+        all_vtyps = [0x01000001, 0x01000002, 0x01000003]
+        rec = {'ConditionCount': '0'}
+        result = build_voice_type_ctdas_for_info(rec, {}, all_vtyps)
+        # Should have 3 CTDA subrecords (6-byte header each + 32 data)
+        assert len(result) == 3 * (6 + 32)
+        # First two have OR, last has AND
+        assert result[6] & 0x01  # first CTDA type byte: OR
+        assert result[6 + 38] & 0x01  # second CTDA type byte: OR
+        assert not (result[6 + 38 + 38] & 0x01)  # third: AND
+
+    def test_voice_type_ctdas_npc_specific_info(self):
+        """NPC-specific INFO (has GetIsID) gets only that NPC's voice type."""
+        npc_fid = 0x01001234
+        npc_vtyp = 0x01000099
+        npc_to_vtyp = {npc_fid: npc_vtyp}
+        all_vtyps = [0x01000001, 0x01000002, 0x01000099]
+        # Build condition with GetIsID pointing to the NPC
+        raw_ctda = struct.pack('<B3x I HH II',
+                               0x00, 0x3F800000,
+                               72, 0,  # GetIsID
+                               0x00001234, 0)  # NPC FormID (pre-remap)
+        set_formid_index_offset(1)
+        try:
+            rec = {'ConditionCount': '1', 'Condition[0].Raw': raw_ctda.hex()}
+            result = build_voice_type_ctdas_for_info(rec, npc_to_vtyp, all_vtyps)
+            # Should have exactly 1 CTDA (for the NPC's voice type)
+            assert len(result) == 6 + 32
+            # Extract the VTYP FormID from the single CTDA
+            param1 = struct.unpack_from('<I', result, 6 + 12)[0]
+            assert param1 == npc_vtyp
+        finally:
+            set_formid_index_offset(0)
+
+    # -- QUST conversion --
+
+    def test_qust_dnam_formver_zero(self):
+        """QUST DNAM must have FormVer=0 (matching all Skyrim.esm quests)."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'TestQuest', 'FULL': 'Test',
+               'DATA.Flags': '1', 'DATA.Priority': '100',
+               'StageCount': '0'}
+        result = convert_QUST(rec)
+        # Find DNAM subrecord
+        dnam_data = _find_subrecord(result, b'DNAM')
+        assert dnam_data is not None
+        assert len(dnam_data) == 12
+        formver = dnam_data[3]
+        assert formver == 0, f"DNAM FormVer should be 0, got {formver}"
+
+    def test_qust_no_has_dialogue_data_flag(self):
+        """QUST DNAM must NOT have HasDialogueData (0x8000) even for dialogue quests."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'TestDialogueQuest', 'FULL': 'Test',
+               'DATA.Flags': '0', 'DATA.Priority': '50',
+               'StageCount': '0'}
+        dialogue_quests = {0x00012345}
+        result = convert_QUST(rec, dialogue_quest_fids=dialogue_quests)
+        dnam_data = _find_subrecord(result, b'DNAM')
+        flags = struct.unpack_from('<H', dnam_data, 0)[0]
+        assert not (flags & 0x8000), "HasDialogueData must NOT be set"
+        assert flags & 0x0001, "StartGameEnabled must be set"
+        assert flags & 0x0010, "StartsEnabled must be set"
+
+    def test_qust_dialogue_priority_capped(self):
+        """Dialogue quest priority should be capped at 50."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'TestQ', 'FULL': 'T',
+               'DATA.Flags': '0', 'DATA.Priority': '100',
+               'StageCount': '0'}
+        result = convert_QUST(rec, dialogue_quest_fids={0x00012345})
+        dnam_data = _find_subrecord(result, b'DNAM')
+        priority = dnam_data[2]
+        assert priority <= 50, f"Priority should be capped at 50, got {priority}"
+
+    def test_qust_has_next_and_anam(self):
+        """QUST must have NEXT (empty marker) and ANAM subrecords."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'TestQ', 'FULL': 'T',
+               'DATA.Flags': '0', 'DATA.Priority': '0',
+               'StageCount': '0'}
+        result = convert_QUST(rec)
+        assert _find_subrecord(result, b'NEXT') is not None
+        assert _find_subrecord(result, b'ANAM') is not None
+
+    # -- DIAL conversion --
+
+    def test_dial_has_qnam(self):
+        """DIAL must always have QNAM when quest_fid_override is provided."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'TestTopic', 'QuestCount': '0',
+               'DATA.Type': '0'}
+        result = convert_DIAL(rec, info_count=5, quest_fid_override=0x01999999)
+        qnam = _find_subrecord(result, b'QNAM')
+        assert qnam is not None
+        assert struct.unpack_from('<I', qnam, 0)[0] == 0x01999999
+
+    def test_dial_bark_no_bnam(self):
+        """Bark topics (GREETING) must NOT have BNAM (no branch link)."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'GREETING', 'QuestCount': '1',
+               'Quest[0]': '01000001', 'DATA.Type': '2'}
+        result = convert_DIAL(rec, info_count=10)
+        bnam = _find_subrecord(result, b'BNAM')
+        assert bnam is None, "Bark topics must not have BNAM"
+
+    def test_dial_conversation_has_bnam(self):
+        """Conversation topics get BNAM when dlbr_fid is provided."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'SomeConversation', 'QuestCount': '1',
+               'Quest[0]': '01000001', 'DATA.Type': '0'}
+        result = convert_DIAL(rec, info_count=3, dlbr_fid=0x01AABBCC)
+        bnam = _find_subrecord(result, b'BNAM')
+        assert bnam is not None
+        assert struct.unpack_from('<I', bnam, 0)[0] == 0x01AABBCC
+
+    def test_dial_greeting_category_misc(self):
+        """GREETING topic should have Category=7 (Misc)."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'GREETING', 'QuestCount': '1',
+               'Quest[0]': '01000001', 'DATA.Type': '2'}
+        result = convert_DIAL(rec, info_count=5)
+        data_sub = _find_subrecord(result, b'DATA')
+        assert data_sub is not None
+        category = data_sub[1]
+        assert category == 7, f"GREETING category should be 7 (Misc), got {category}"
+
+    def test_dial_attack_category_combat(self):
+        """Attack topic should have Category=3 (Combat)."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'Attack', 'QuestCount': '1',
+               'Quest[0]': '01000001', 'DATA.Type': '0'}
+        result = convert_DIAL(rec, info_count=5)
+        data_sub = _find_subrecord(result, b'DATA')
+        category = data_sub[1]
+        assert category == 3, f"Attack category should be 3 (Combat), got {category}"
+
+    def test_dial_snam_four_bytes(self):
+        """SNAM must be exactly 4 bytes (ASCII subtype code)."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'GREETING', 'QuestCount': '1',
+               'Quest[0]': '01000001', 'DATA.Type': '0'}
+        result = convert_DIAL(rec, info_count=1)
+        snam = _find_subrecord(result, b'SNAM')
+        assert snam is not None
+        assert len(snam) == 4
+        assert snam == b'HELO'
+
+    def test_dial_tifc_matches_info_count(self):
+        """TIFC must match the actual child INFO count."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'TestTopic', 'QuestCount': '1',
+               'Quest[0]': '01000001', 'DATA.Type': '0'}
+        result = convert_DIAL(rec, info_count=42)
+        tifc = _find_subrecord(result, b'TIFC')
+        assert struct.unpack_from('<I', tifc, 0)[0] == 42
+
+    # -- INFO conversion --
+
+    def test_info_enam_flags(self):
+        """INFO ENAM must preserve compatible TES4 flags."""
+        rec = _make_info_rec(data_flags=0x37)  # all compatible bits
+        result = convert_INFO(rec)
+        enam = _find_subrecord(result, b'ENAM')
+        assert enam is not None
+        flags = struct.unpack_from('<H', enam, 0)[0]
+        assert flags == 0x37
+
+    def test_info_has_cnam(self):
+        """INFO must have CNAM (Favor Level = 0)."""
+        rec = _make_info_rec()
+        result = convert_INFO(rec)
+        cnam = _find_subrecord(result, b'CNAM')
+        assert cnam is not None
+        assert cnam[0] == 0
+
+    def test_info_voice_ctdas_injected_before_tes4_conditions(self):
+        """Voice type CTDAs must appear BEFORE TES4-converted conditions."""
+        # Build a TES4 condition (GetIsRace)
+        tes4_ctda = struct.pack('<B3x I HH II', 0, 0x3F800000, 66, 0, 0, 0)
+        rec = _make_info_rec(conditions=[(tes4_ctda.hex(),)])
+        vt_ctda = pack_subrecord('CTDA', build_voice_type_ctda(0x01000001))
+        result = convert_INFO(rec, voice_type_ctdas=vt_ctda)
+        # Find all CTDA subrecords
+        ctdas = _find_all_subrecords(result, b'CTDA')
+        assert len(ctdas) >= 2
+        # First CTDA should be voice type (func 426)
+        func0 = struct.unpack_from('<H', ctdas[0], 8)[0]
+        assert func0 == 426, "First CTDA should be GetIsVoiceType"
+        # Last CTDA should be TES4 condition (func 66)
+        func_last = struct.unpack_from('<H', ctdas[-1], 8)[0]
+        assert func_last == 66
+
+    def test_info_bark_strips_quest_conditions(self):
+        """Bark INFOs must strip quest-dependent conditions."""
+        conditions = []
+        for func in [56, 58, 59, 99]:  # Quest-dependent functions
+            raw = struct.pack('<B3x I HH II', 0, 0x3F800000, func, 0, 0x1234, 0)
+            conditions.append((raw.hex(),))
+        # Add one non-quest condition (GetDead)
+        non_quest = struct.pack('<B3x I HH II', 0, 0x3F800000, 77, 0, 0, 0)
+        conditions.append((non_quest.hex(),))
+        rec = _make_info_rec(conditions=conditions)
+        result = convert_INFO(rec, is_bark=True)
+        ctdas = _find_all_subrecords(result, b'CTDA')
+        # Only GetDead (77) should remain
+        for ctda in ctdas:
+            func = struct.unpack_from('<H', ctda, 8)[0]
+            assert func not in _QUEST_DEPENDENT_FUNCS, \
+                f"Quest-dependent func {func} should be stripped from bark INFOs"
+
+    def test_info_conversation_keeps_quest_conditions(self):
+        """Conversation INFOs (is_bark=False) keep quest conditions."""
+        raw = struct.pack('<B3x I HH II', 0, 0x3F800000, 58, 0, 0x1234, 0)
+        rec = _make_info_rec(conditions=[(raw.hex(),)])
+        result = convert_INFO(rec, is_bark=False)
+        ctdas = _find_all_subrecords(result, b'CTDA')
+        funcs = [struct.unpack_from('<H', c, 8)[0] for c in ctdas]
+        assert 58 in funcs, "GetStage should be kept for conversation INFOs"
+
+    def test_info_response_structure(self):
+        """INFO responses must have TRDT + NAM1 + NAM2 + NAM3."""
+        rec = _make_info_rec(responses=[('Happy dialogue text', 5, 100)])
+        result = convert_INFO(rec)
+        trdt = _find_subrecord(result, b'TRDT')
+        assert trdt is not None
+        assert len(trdt) == 24
+        # Emotion type
+        emotion = struct.unpack_from('<I', trdt, 0)[0]
+        assert emotion == 5  # happy
+        nam1 = _find_subrecord(result, b'NAM1')
+        assert nam1 is not None
+        assert b'Happy dialogue text' in nam1
+        # NAM2 and NAM3 must always be present
+        assert _find_subrecord(result, b'NAM2') is not None
+        assert _find_subrecord(result, b'NAM3') is not None
+
+    # -- Bark topic detection --
+
+    def test_is_bark_topic(self):
+        """Known bark topic EditorIDs are correctly detected."""
+        assert is_bark_topic('GREETING')
+        assert is_bark_topic('HELLO')
+        assert is_bark_topic('Attack')
+        assert is_bark_topic('Hit')
+        assert is_bark_topic('Flee')
+        assert is_bark_topic('GOODBYE')
+        assert is_bark_topic('IdleChatter')
+        assert not is_bark_topic('SomeConversation')
+        assert not is_bark_topic('MQ01Topic')
+        assert not is_bark_topic('')
+
+    # -- DLBR / DLVW --
+
+    def test_dlbr_structure(self):
+        """DLBR must have EDID, QNAM, TNAM, DNAM, SNAM."""
+        result = make_dlbr(0x01AABB, 'TestBranch', 0x01CCDD, 0x01EEFF, top_level=True)
+        assert result[:4] == b'DLBR'
+        assert _find_subrecord(result, b'EDID') is not None
+        qnam = _find_subrecord(result, b'QNAM')
+        assert struct.unpack_from('<I', qnam, 0)[0] == 0x01CCDD
+        snam = _find_subrecord(result, b'SNAM')
+        assert struct.unpack_from('<I', snam, 0)[0] == 0x01EEFF
+        dnam = _find_subrecord(result, b'DNAM')
+        assert struct.unpack_from('<I', dnam, 0)[0] == 1  # Top Level
+
+    def test_dlvw_structure(self):
+        """DLVW must have EDID, QNAM, BNAM[], TNAM[], ENAM, DNAM."""
+        result = make_dlvw(0x01AABB, 'TestView', 0x01CCDD,
+                           [0x01EE01, 0x01EE02], [0x01FF01])
+        assert result[:4] == b'DLVW'
+        assert _find_subrecord(result, b'QNAM') is not None
+        bnam_list = _find_all_subrecords(result, b'BNAM')
+        assert len(bnam_list) == 2
+        tnam_list = _find_all_subrecords(result, b'TNAM')
+        assert len(tnam_list) == 1
+
+    # -- CREA VTCK --
+
+    def test_crea_has_vtck(self):
+        """Converted CREA (→NPC_) must have VTCK subrecord."""
+        from tes5_import.skyrim_overrides import VOICE_TYPE_MAP, set_voice_type
+        # Ensure at least one voice type is registered
+        set_voice_type('Imperial', 'Male', 0x01AABB01)
+        try:
+            rec = {'Signature': 'CREA', 'FormID': '00055555', 'RecordFlags': '0',
+                   'EditorID': 'TestDeer', 'FULL': 'Deer',
+                   'ACBS.Flags': '0', 'ACBS.Level': '5',
+                   'ACBS.CalcMin': '1', 'ACBS.CalcMax': '50',
+                   'FactionCount': '0', 'ItemCount': '0',
+                   'AIDT.Aggression': '0', 'AIDT.Confidence': '50',
+                   'AIDT.Services': '0', 'AIPackageCount': '0',
+                   'RNAM.Race': '00000000',
+                   'DATA.CombatSkill': '30', 'DATA.MagicSkill': '30',
+                   'DATA.StealthSkill': '30',
+                   'DATA.Health': '50', 'DATA.Intelligence': '50',
+                   'DATA.Strength': '50', 'SpellCount': '0'}
+            result = convert_CREA(rec)
+            vtck = _find_subrecord(result, b'VTCK')
+            assert vtck is not None, "CREA→NPC_ must have VTCK"
+            vtyp_fid = struct.unpack_from('<I', vtck, 0)[0]
+            assert vtyp_fid != 0, "VTCK FormID must not be zero"
+        finally:
+            # Restore original voice type map entry
+            set_voice_type('Imperial', 'Male', 0x01AABB01)
+
+
+# ---------------------------------------------------------------------------
+# Reverse-engineering tests (verify against known Skyrim records)
+# ---------------------------------------------------------------------------
+
+class TestSkyrimRecordFormat:
+    """Tests that verify our understanding of Skyrim's record format
+    by looking at actual Skyrim.esm data (if available)."""
+
+    SKYRIM_ESM = r"C:\Program Files (x86)\Steam\steamapps\common\Skyrim Special Edition\Data\Skyrim.esm"
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_skyrim(self):
+        if not os.path.exists(self.SKYRIM_ESM):
+            pytest.skip("Skyrim.esm not found")
+
+    def _read_record(self, fid):
+        """Read a record by FormID from Skyrim.esm."""
+        import mmap
+        with open(self.SKYRIM_ESM, 'rb') as f:
+            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            pos = 0
+            while pos < len(mm) - 24:
+                sig = mm[pos:pos+4]
+                if sig == b'GRUP':
+                    pos += 24
+                    continue
+                sz = struct.unpack_from('<I', mm, pos+4)[0]
+                rec_fid = struct.unpack_from('<I', mm, pos+12)[0]
+                if rec_fid == fid:
+                    rec = bytes(mm[pos:pos+24+sz])
+                    mm.close()
+                    return rec
+                pos += 24 + sz
+            mm.close()
+        return None
+
+    def test_skyrim_dialogue_generic_qust(self):
+        """Skyrim's DialogueGeneric (0x00013EB3) must NOT have HasDialogueData."""
+        rec = self._read_record(0x00013EB3)
+        assert rec is not None, "DialogueGeneric not found"
+        dnam = _find_subrecord(rec, b'DNAM')
+        assert dnam is not None
+        flags = struct.unpack_from('<H', dnam, 0)[0]
+        assert not (flags & 0x8000), "Skyrim DialogueGeneric must not have HasDialogueData"
+        assert flags & 0x0001, "Must have StartGameEnabled"
+        assert flags & 0x0010, "Must have StartsEnabled"
+        formver = dnam[3]
+        assert formver == 0, "Skyrim QUST DNAM FormVer must be 0"
+
+    def test_skyrim_vtyp_has_allow_default(self):
+        """Skyrim MaleNord VTYP (0x00013AE6) should have AllowDefaultDialogue."""
+        rec = self._read_record(0x00013AE6)
+        if rec is None:
+            pytest.skip("MaleNord VTYP not found")
+        dnam = _find_subrecord(rec, b'DNAM')
+        assert dnam is not None
+        assert dnam[0] & 0x01, "AllowDefaultDialogue flag must be set"
+
+    def test_skyrim_ctda_32_bytes(self):
+        """Skyrim INFO conditions must be 32 bytes."""
+        # We'll check DialogueGeneric's quest-level conditions
+        rec = self._read_record(0x00013EB3)
+        if rec is None:
+            pytest.skip("DialogueGeneric not found")
+        ctdas = _find_all_subrecords(rec, b'CTDA')
+        for ctda in ctdas:
+            assert len(ctda) == 32, f"CTDA should be 32 bytes, got {len(ctda)}"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _find_subrecord(record_bytes: bytes, sig: bytes) -> bytes | None:
+    """Find the first subrecord with the given signature in a record."""
+    # Skip the 24-byte record header
+    pos = 24
+    while pos < len(record_bytes) - 6:
+        sub_sig = record_bytes[pos:pos+4]
+        sub_size = struct.unpack_from('<H', record_bytes, pos+4)[0]
+        if sub_sig == sig:
+            return record_bytes[pos+6:pos+6+sub_size]
+        pos += 6 + sub_size
+    return None
+
+
+def _find_all_subrecords(record_bytes: bytes, sig: bytes) -> list[bytes]:
+    """Find all subrecords with the given signature in a record."""
+    results = []
+    pos = 24
+    while pos < len(record_bytes) - 6:
+        sub_sig = record_bytes[pos:pos+4]
+        sub_size = struct.unpack_from('<H', record_bytes, pos+4)[0]
+        if sub_sig == sig:
+            results.append(record_bytes[pos+6:pos+6+sub_size])
+        pos += 6 + sub_size
+    return results
+
+
+def _make_info_rec(data_flags=0, conditions=None, responses=None):
+    """Create a minimal INFO test record dict."""
+    rec = {
+        'Signature': 'INFO', 'FormID': '00012345', 'RecordFlags': '0',
+        'EditorID': 'TestInfo', 'DATA.Flags': str(data_flags),
+        'ConditionCount': '0', 'ResponseCount': '0',
+        'ChoiceCount': '0',
+    }
+    if conditions:
+        rec['ConditionCount'] = str(len(conditions))
+        for i, (raw_hex,) in enumerate(conditions):
+            rec[f'Condition[{i}].Raw'] = raw_hex
+    if responses:
+        rec['ResponseCount'] = str(len(responses))
+        for i, (text, emotion, value) in enumerate(responses):
+            rec[f'Response[{i}].ResponseText'] = text
+            rec[f'Response[{i}].EmotionType'] = str(emotion)
+            rec[f'Response[{i}].EmotionValue'] = str(value)
+            rec[f'Response[{i}].ResponseNumber'] = str(i + 1)
+    return rec
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])

@@ -1,4 +1,4 @@
-"""Dialog/misc converters: QUST, DIAL, INFO, SOUN."""
+"""Dialog/misc converters: QUST, DIAL, INFO, SOUN, DLBR, DLVW."""
 
 import struct
 
@@ -17,6 +17,10 @@ from .common import (
     pack_uint8_subrecord,
     pack_uint32_subrecord,
 )
+
+# ---- Function indices (same in TES4 and TES5) ----------------------------
+_FUNC_GET_IS_ID = 72          # GetIsID(npc_formid) — NPC identity check
+_FUNC_GET_IS_VOICE_TYPE = 426  # GetIsVoiceType(vtyp_formid) — TES5 voice routing
 
 
 # TES4 condition function indices that do NOT exist in TES5.
@@ -37,6 +41,21 @@ _TES4_ONLY_FUNCS = frozenset({
     104,  # IsYielding      — not in TES5
     171,  # IsPlayerInJail  — not in TES5
     251,  # GetPCInfamy     — not in TES5 (replaced by Skyrim's crime system)
+})
+
+
+# Condition functions that depend on quest state.  TES4 quests have no
+# Papyrus scripts, so quest variables/stages are never set at runtime.
+# For bark INFOs these conditions would ALWAYS fail, blocking dialogue.
+# Strip them from bark topics to let the lines fire naturally.
+_QUEST_DEPENDENT_FUNCS = frozenset({
+    56,   # GetQuestRunning — quest scripts not running
+    58,   # GetStage        — quest stage never set
+    59,   # GetStageDone    — quest stage never marked done
+    99,   # GetQuestCompleted — quest never completed
+    79,   # GetIsPlayerBirthsign — no birthsigns in TES5
+    71,   # GetInCell       — TES4 cell FormIDs may not map correctly
+    67,   # GetCurrentAIProcedure — AI package system completely different
 })
 
 
@@ -78,9 +97,9 @@ def _convert_ctda_tes4_to_tes5(raw: bytes) -> 'bytes | None':
             return (v & 0x00FFFFFF) | (offset << 24)
         return v
 
-    # Use Global flag: bit 5 (0x20) in TES4/TES5 — comparison value is a
+    # Use Global flag: bit 2 (0x04) in TES4/TES5 — comparison value is a
     # Global FormID rather than a float literal.
-    if type_byte & 0x20:
+    if type_byte & 0x04:
         comp_raw = _remap(comp_raw)
     param1 = _remap(param1)
     param2 = _remap(param2)
@@ -97,7 +116,7 @@ def _convert_ctda_tes4_to_tes5(raw: bytes) -> 'bytes | None':
                        0xFFFFFFFF) # Unknown — vanilla Skyrim uses FFFFFFFF
 
 
-def convert_QUST(rec: dict) -> bytes:
+def convert_QUST(rec: dict, dialogue_quest_fids: set = None) -> bytes:
     """QUST — Quest conversion.
 
     TES5 order: EDID VMAD FULL DNAM ENAM FLTR [conditions] NEXT [conditions]
@@ -107,8 +126,13 @@ def convert_QUST(rec: dict) -> bytes:
     NEXT is a required empty marker.
     ANAM is required (next alias ID, U32).
 
-    StartGameEnabled (0x01) is preserved — dialog quests must auto-start for
-    topics to appear. AllowRepeatedStages (0x08) is also preserved.
+    Dialogue quests get additional flags:
+      0x0001 StartGameEnabled — required so topics appear at game start
+      0x0010 StartsEnabled   — quest is active immediately
+
+    NOTE: HasDialogueData (0x8000) is NEVER set by Skyrim.esm quests — setting
+    it causes the engine to mishandle dialogue.  DNAM FormVer must be 0 (not 44)
+    matching all vanilla Skyrim quests.
     """
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -121,28 +145,36 @@ def convert_QUST(rec: dict) -> bytes:
     # DNAM — 12 bytes: Flags(U16) + Priority(U8) + FormVersion(U8) + Unknown(4) + Type(U32)
     flags = get_int(rec, 'DATA.Flags')
     priority = get_int(rec, 'DATA.Priority')
-    # TES4 flag → TES5 flag mapping (bit positions are the same):
-    #   0x01 Start Game Enabled  → TES5 0x0001 (keep — required for dialog quests)
-    #   0x04 Allow Repeated Conv → no TES5 equivalent (drop)
+
+    # TES4 flag → TES5 flag mapping:
+    #   0x01 Start Game Enabled  → TES5 0x0001 (keep)
     #   0x08 Allow Repeated Stages → TES5 0x0008 (keep)
-    safe_flags = flags & 0x0009  # keep bits 0x01 (StartGameEnabled) + 0x08 (AllowRepeatedStages)
-    dnam = struct.pack('<HBBII', safe_flags, priority, 44, 0, 0)
+    safe_flags = flags & 0x0009
+
+    # If this quest owns dialogue topics, force dialogue flags
+    fid = get_formid(rec, 'FormID')
+    is_dialogue_quest = dialogue_quest_fids and fid in dialogue_quest_fids
+    if is_dialogue_quest:
+        safe_flags |= 0x0001  # StartGameEnabled
+        safe_flags |= 0x0010  # StartsEnabled
+        # Do NOT set HasDialogueData (0x8000) — Skyrim.esm never uses it
+        # Cap priority for dialogue quests (Skyrim uses 0-5)
+        priority = min(priority, 50)
+
+    # DNAM FormVer: ALL vanilla Skyrim QUSTs have 0 in DNAM, not 44.
+    dnam = struct.pack('<HBBII', safe_flags, priority, 0, 0, 0)
     subs += pack_subrecord('DNAM', dnam)
 
     # NEXT — required empty marker
     subs += pack_subrecord('NEXT', b'')
 
     # Stages — each stage has INDX(4B) + one or more (QSDT + optional CNAM) entries
-    # New export format:  Stage[i].LogCount + Stage[i].Log[j].{Flags,Text}
-    # Old export format:  Stage[i].LogEntry + Stage[i].CompleteQuest (single log entry)
     stage_count = get_int(rec, 'StageCount')
     for i in range(stage_count):
         stage_idx = get_int(rec, f'Stage[{i}].Index')
-        # INDX: StageIndex(U16) + StageFlags(U8) + Unknown(U8) = 4 bytes
         subs += pack_subrecord('INDX', struct.pack('<HBB', stage_idx, 0, 0))
         log_count = get_int(rec, f'Stage[{i}].LogCount')
         if log_count > 0:
-            # New format: multiple log entries per stage
             for j in range(log_count):
                 log_flags = get_int(rec, f'Stage[{i}].Log[{j}].Flags')
                 log_text = get_str(rec, f'Stage[{i}].Log[{j}].Text')
@@ -150,7 +182,6 @@ def convert_QUST(rec: dict) -> bytes:
                 if log_text:
                     subs += pack_string_subrecord('CNAM', log_text)
         else:
-            # Backward compat / no log data — emit a blank QSDT so stage is valid
             log_text = get_str(rec, f'Stage[{i}].LogEntry')
             complete_flag = get_int(rec, f'Stage[{i}].CompleteQuest')
             stage_flags = 0x01 if complete_flag else 0
@@ -161,49 +192,28 @@ def convert_QUST(rec: dict) -> bytes:
     # ANAM — required next alias ID (U32)
     subs += pack_uint32_subrecord('ANAM', 0)
 
-    return pack_record('QUST', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
+    return pack_record('QUST', fid, get_int(rec, 'RecordFlags'), subs)
 
 
-def convert_DIAL(rec: dict, info_count: int = 0) -> bytes:
+def convert_DIAL(rec: dict, info_count: int = 0, dlbr_fid: int = 0,
+                 quest_fid_override: int = 0) -> bytes:
     """DIAL — Dialog Topic conversion.
 
     TES5 order: EDID FULL PNAM BNAM QNAM DATA SNAM TIFC
     DATA = TopicFlags(U8) + Category(U8) + Subtype(U16 LE) = 4 bytes
-    SNAM = 4-char subtype name stored as 4 raw ASCII bytes (must match DATA.Subtype)
-    PNAM = priority float (default 50.0) — REQUIRED, missing causes CK sort issues
-    BNAM = branch FormID (NULL = no specific branch)
-    TIFC = info count U32 — must match actual INFO count or engine crashes on topic iteration
 
-    TES4 Type → TES5 Category:
-      0 Topic       → Category 0 (Topic)
-      1 Conversation → Category 0 (Topic)
-      2 Combat       → Category 3 (Combat)
-      3 Persuasion   → Category 4 (Favors)
-      4 Detection    → Category 5 (Detection)
-      5 Service      → Category 6 (Service)
-      6 Miscellaneous → Category 7 (Miscellaneous)
+    Bark topics (greetings, combat barks, idle chatter):
+      - Category 7 (Misc) or 3 (Combat) or 5 (Detection) depending on subtype
+      - NO BNAM — bark topics fire automatically without branches
+    Conversation topics:
+      - Category 0 (Topic)
+      - BNAM → DLBR FormID (required for topics to appear in dialogue menu)
 
-    TES4 special EditorIDs → TES5 DATA.Subtype + SNAM subtype code:
-      GREETING, HELLO → 79/HELO  (Hello — fires when NPC is activated)
-      GOODBYE         → 78/GBYE  (GoodBye)
-      IdleChatter, Idle → 94/IDLE
-      Attack          → 26/ATCK
-      Hit             → 29/HIT_
-      Flee            → 30/FLEE
-      Steal           → 38/STEA
-      Trespass        → 49/TRES
-      ServiceRefusal  → 66/SERU
-      Travel          → 68/TRAV
-      ObserveCombat   → 75/OBCO
-      Corpse,
-      NoticeCorpse    → 76/NOTI
-      TimeToGo        → 77/TITG
-      Barter, BarterFail → 70/BAEX (BarterExit)
+    quest_fid_override: If provided, forces QNAM to this quest (for orphan DIALs).
     """
-    _TES4_TO_CATEGORY = {0: 0, 1: 0, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7}
+    # ---- Subtype/category resolution tables --------------------------------
 
-    # Map TES4 EditorID → (TES5 DATA.Subtype int, TES5 SNAM 4-char code)
-    # These are well-known Oblivion dialog topic EditorIDs; all others get CUST.
+    # Known Oblivion EditorIDs → (TES5 DATA.Subtype enum, SNAM 4-char code)
     _EDID_TO_SUBTYPE: dict[str, tuple[int, bytes]] = {
         'GREETING':       (79, b'HELO'),
         'HELLO':          (79, b'HELO'),
@@ -232,6 +242,32 @@ def convert_DIAL(rec: dict, info_count: int = 0) -> bytes:
         'Lost':           (63, b'LOTN'),
     }
 
+    # Override category for known bark/combat subtypes.
+    # These MUST be correct or the engine ignores the topic entirely.
+    _SUBTYPE_CATEGORY_OVERRIDE = {
+        # Miscellaneous (7) — automatic NPC barks
+        79: 7,  # Hello        (HELO)
+        78: 7,  # Goodbye      (GBYE)
+        94: 7,  # Idle         (IDLE)
+        77: 7,  # TimeToGo     (TITG)
+        76: 7,  # NoticeCorpse (NOTI)
+        75: 7,  # ObserveCombat(OBCO)
+        68: 7,  # Travel       (TRAV)
+        67: 7,  # Repair       (REPA)
+        66: 7,  # ServiceRefusal(SERU)
+        70: 7,  # BarterExit   (BAEX)
+        17: 7,  # InfoRefusal  (REFU)
+        # Combat (3) — combat barks
+        26: 3,  # Attack       (ATCK)
+        29: 3,  # Hit          (HIT_)
+        30: 3,  # Flee         (FLEE)
+        38: 3,  # Steal        (STEA)
+        49: 3,  # Trespass     (TRES)
+        # Detection (5)
+        57: 5,  # NormalToAlert(NOTA)
+        63: 5,  # LostToNormal (LOTN)
+    }
+
     subs = b''
     edid = get_str(rec, 'EditorID')
     if edid:
@@ -240,29 +276,37 @@ def convert_DIAL(rec: dict, info_count: int = 0) -> bytes:
     if full:
         subs += pack_string_subrecord('FULL', full)
 
-    # PNAM — priority (float, default 50.0) — required for proper CK display order
+    # PNAM — priority (float, default 50.0)
     subs += pack_subrecord('PNAM', struct.pack('<f', 50.0))
 
-    # BNAM — branch (null FormID = no specific branch)
-    subs += pack_formid_subrecord('BNAM', 0)
+    # BNAM — branch link (only for conversation topics, not barks)
+    if dlbr_fid:
+        subs += pack_formid_subrecord('BNAM', dlbr_fid)
 
-    # QNAM — quest link (use first associated quest)
-    qcount = get_int(rec, 'QuestCount')
-    if qcount > 0:
-        qfid = get_formid(rec, 'Quest[0]')
-        if qfid:
-            subs += pack_formid_subrecord('QNAM', qfid)
+    # QNAM — quest link (required — Skyrim ignores DIALs without QNAM)
+    qfid = quest_fid_override
+    if not qfid:
+        qcount = get_int(rec, 'QuestCount')
+        if qcount > 0:
+            qfid = get_formid(rec, 'Quest[0]')
+    if qfid:
+        subs += pack_formid_subrecord('QNAM', qfid)
 
     # Resolve subtype from EditorID, falling back to type-based defaults
     dtype = get_int(rec, 'DATA.Type')
-    category = _TES4_TO_CATEGORY.get(dtype, 0)
     subtype_int, snam_code = _EDID_TO_SUBTYPE.get(edid or '', (0, b'CUST'))
 
+    # Category: bark topics get overridden to Combat/Detection/Misc;
+    # all other conversation topics default to Category 0 (Topic).
+    if subtype_int in _SUBTYPE_CATEGORY_OVERRIDE:
+        category = _SUBTYPE_CATEGORY_OVERRIDE[subtype_int]
+    else:
+        category = 0  # Topic — conversation topics
+
     # DATA — TopicFlags(U8) + Category(U8) + Subtype(U16 LE) = 4 bytes
-    # TopicFlags bit 0 = "Do All Before Repeating" — not applicable from TES4
     subs += pack_subrecord('DATA', struct.pack('<BBH', 0, category, subtype_int))
 
-    # SNAM — subtype name as 4 raw ASCII bytes (must be consistent with DATA.Subtype)
+    # SNAM — subtype name as 4 raw ASCII bytes
     subs += pack_subrecord('SNAM', snam_code)
 
     # TIFC — info count (U32) — must match actual child INFO count
@@ -271,27 +315,19 @@ def convert_DIAL(rec: dict, info_count: int = 0) -> bytes:
     return pack_record('DIAL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
-def convert_INFO(rec: dict) -> bytes:
+def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
+                 is_bark: bool = False) -> bytes:
     """INFO — Dialog response. Major restructuring from TES4.
 
-    TES5 order: EDID [VMAD] DATA ENAM TPIC PNAM CNAM TCLT[] DNAM
-                Responses([TRDT NAM1 NAM2 NAM3 SNAM LNAM]*)
-                CTDAs RNAM ANAM TWAT ONAM
+    TES5 order: EDID [VMAD] ENAM CNAM [TCLT[]] [TRDT NAM1 NAM2 NAM3]* CTDAs
 
-    ENAM = Flags(U16) + ResetHours(U16) = 4 bytes
-    TRDT = EmotionType(U32) + EmotionValue(U32) + Unused(4) +
-           ResponseNumber(U8) + Unused(3) + Sound(FormID U32) +
-           Flags(U8) + Unused(3) = 24 bytes
+    voice_type_ctdas: Pre-built CTDA subrecords for GetIsVoiceType conditions.
+    These are injected BEFORE the TES4-converted conditions so the engine can
+    filter by voice type first (matching Skyrim's standard pattern).
 
-    TES4 DATA.Flags → TES5 ENAM.Flags bit mapping (same bit positions):
-      Bit 0 (0x01) Goodbye        → TES5 0x0001 Goodbye
-      Bit 1 (0x02) Random         → TES5 0x0002 Random
-      Bit 2 (0x04) Say Once       → TES5 0x0004 Say Once
-      Bit 3 (0x08) Run Immediately → no TES5 equiv (clear)
-      Bit 4 (0x10) Info Refusal   → TES5 0x0010 Info Refusal
-      Bit 5 (0x20) Random End     → TES5 0x0020 Random End
-      Bit 6 (0x40) Run for Rumors → no TES5 equiv (clear)
-    Compatible mask = 0x37
+    is_bark: If True, strip quest-dependent conditions that would always fail
+    because TES4 quest scripts aren't running.  Keeps identity/race/faction
+    conditions intact so NPC-specific lines still gate correctly.
     """
     # TES4 emotion type names → TES5 wbEmotionTypeEnum values
     # Both use the same 0-6 range (Neutral/Anger/Disgust/Fear/Sad/Happy/Surprise)
@@ -306,15 +342,6 @@ def convert_INFO(rec: dict) -> bytes:
     tes4_flags = get_int(rec, 'DATA.Flags')
     tes5_flags = tes4_flags & 0x37   # keep only compatible bits
     subs += pack_subrecord('ENAM', struct.pack('<HH', tes5_flags, 0))
-
-    # TPIC — Topic link (the DIAL topic this INFO belongs to / was called from)
-    tpic = get_formid(rec, 'TPIC.Topic')
-    if tpic:
-        subs += pack_formid_subrecord('TPIC', tpic)
-
-    # PNAM — Previous INFO (for chained responses)
-    pnam = get_formid(rec, 'PNAM.PrevInfo')
-    subs += pack_formid_subrecord('PNAM', pnam)
 
     # CNAM — Favor Level (U8): None=0, Small=1, Medium=2, Large=3
     subs += pack_subrecord('CNAM', struct.pack('<B', 0))
@@ -349,10 +376,11 @@ def convert_INFO(rec: dict) -> bytes:
         if resp_num == 0:
             resp_num = i + 1
         # TRDT: EmotionType(U32) EmotionValue(U32) Unused(4B)
-        #       ResponseNumber(U8) Unused(3B) Sound(FormID=0) Flags(U8=0) Unused(3B)
+        #       ResponseNumber(U8) Unused(3B) Sound(FormID=0) Flags(U8=1) Unused(3B)
+        # Flags=1 = "Use Emotions" — required by engine for voiced responses
         subs += pack_subrecord('TRDT', struct.pack('<IiI B3x I B3x',
                                                     emotion, emotion_val, 0,
-                                                    resp_num, 0, 0))
+                                                    resp_num, 0, 1))
         if text:
             subs += pack_string_subrecord('NAM1', text)
         # NAM2 (Script Notes) — always emit even if empty
@@ -360,15 +388,29 @@ def convert_INFO(rec: dict) -> bytes:
         # NAM3 (Edits) — always emit as empty
         subs += pack_string_subrecord('NAM3', '')
 
+    # Inject voice type conditions FIRST — Skyrim evaluates these to route
+    # dialogue to the correct voice type.  Placed before TES4 conditions so
+    # the voice-type OR chain is self-contained and can't merge with any
+    # trailing OR flag from TES4 condition data.
+    if voice_type_ctdas:
+        subs += voice_type_ctdas
+
     # CTDAs — conditions (convert from TES4 24-byte to TES5 32-byte format)
     # _convert_ctda_tes4_to_tes5 returns None for TES4-only functions (e.g.
     # GetDisposition) that would always fail in TES5 — skip those entirely.
+    # For bark topics, additionally strip quest-dependent conditions that
+    # reference quest state (stages/variables) which will never be set.
     cc = get_int(rec, 'ConditionCount')
     for i in range(cc):
         raw_hex = rec.get(f'Condition[{i}].Raw', '')
         if raw_hex:
             try:
                 raw = bytes.fromhex(raw_hex)
+                # For bark INFOs, strip quest-dependent conditions
+                if is_bark and len(raw) >= 10:
+                    func_idx = struct.unpack_from('<H', raw, 8)[0]
+                    if func_idx in _QUEST_DEPENDENT_FUNCS:
+                        continue
                 ctda = _convert_ctda_tes4_to_tes5(raw)
                 if ctda is not None:
                     subs += pack_subrecord('CTDA', ctda)
@@ -376,6 +418,164 @@ def convert_INFO(rec: dict) -> bytes:
                 pass  # skip malformed conditions
 
     return pack_record('INFO', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
+
+
+# ---------------------------------------------------------------------------
+# DLBR / DLVW / Voice-type helpers
+# ---------------------------------------------------------------------------
+
+# Subtypes that are "barks" — fire automatically, no DLBR needed
+BARK_SUBTYPES = frozenset({
+    79,  # Hello  (HELO)
+    78,  # Goodbye(GBYE)
+    94,  # Idle   (IDLE)
+    77,  # TimeToGo
+    76,  # NoticeCorpse
+    75,  # ObserveCombat
+    68,  # Travel
+    67,  # Repair
+    66,  # ServiceRefusal
+    70,  # BarterExit
+    17,  # InfoRefusal
+    26,  # Attack
+    29,  # Hit
+    30,  # Flee
+    38,  # Steal
+    49,  # Trespass
+    57,  # NormalToAlert
+    63,  # LostToNormal
+})
+
+# Map known TES4 EDID → subtype int (used by is_bark_topic)
+_EDID_TO_SUBTYPE_INT: dict[str, int] = {
+    'GREETING': 79, 'HELLO': 79, 'GOODBYE': 78,
+    'IdleChatter': 94, 'Idle': 94, 'IDLE': 94,
+    'Attack': 26, 'Hit': 29, 'Flee': 30,
+    'Steal': 38, 'Trespass': 49, 'ServiceRefusal': 66,
+    'Barter': 70, 'BarterFail': 70, 'Repair': 67,
+    'Travel': 68, 'ObserveCombat': 75,
+    'Corpse': 76, 'NoticeCorpse': 76, 'TimeToGo': 77,
+    'InfoRefusal': 17, 'Noticed': 57, 'Seen': 57,
+    'Unseen': 63, 'Lost': 63,
+}
+
+
+def is_bark_topic(edid: str) -> bool:
+    """Return True if this DIAL EditorID represents a bark (non-interactive) topic."""
+    return _EDID_TO_SUBTYPE_INT.get(edid or '', -1) in BARK_SUBTYPES
+
+
+def make_dlbr(fid: int, edid: str, quest_fid: int, dial_fid: int,
+              top_level: bool = True) -> bytes:
+    """Create a DLBR (Dialog Branch) record.
+
+    TES5 DLBR order: EDID QNAM TNAM DNAM SNAM
+      QNAM = quest owner (FormID)
+      TNAM = category: 0=Player, 1=Command
+      DNAM = flags: 0x01=Top-Level, 0x02=Blocking, 0x04=Exclusive
+      SNAM = starting topic (DIAL FormID)
+    """
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_formid_subrecord('QNAM', quest_fid)
+    subs += pack_uint32_subrecord('TNAM', 0)   # Player
+    subs += pack_uint32_subrecord('DNAM', 1 if top_level else 0)
+    subs += pack_formid_subrecord('SNAM', dial_fid)
+    return pack_record('DLBR', fid, 0, subs)
+
+
+def make_dlvw(fid: int, edid: str, quest_fid: int,
+              branch_fids: list, topic_fids: list) -> bytes:
+    """Create a DLVW (Dialog View) record.
+
+    DLVW order: EDID QNAM [BNAM...] [TNAM...] ENAM DNAM
+    """
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_formid_subrecord('QNAM', quest_fid)
+    for bfid in branch_fids:
+        subs += pack_formid_subrecord('BNAM', bfid)
+    for tfid in topic_fids:
+        subs += pack_formid_subrecord('TNAM', tfid)
+    subs += pack_uint32_subrecord('ENAM', 0)  # Dialogue Branches view
+    subs += pack_uint8_subrecord('DNAM', 0)   # Don't show all text
+    return pack_record('DLVW', fid, 0, subs)
+
+
+def build_voice_type_ctda(vtyp_fid: int, is_or: bool = False) -> bytes:
+    """Build a single 32-byte GetIsVoiceType CTDA for a voice type FormID.
+
+    type_byte: bits 5-7 = comparison (0=Equal), bit 0 = OR flag
+    """
+    type_byte = 0x01 if is_or else 0x00  # Equal + OR flag
+    return struct.pack('<B3xIHHIIIII',
+                       type_byte,
+                       0x3F800000,          # CompValue = 1.0
+                       _FUNC_GET_IS_VOICE_TYPE, 0,
+                       vtyp_fid,            # Param1 = VTYP FormID
+                       0,                   # Param2
+                       0,                   # RunOn = Subject
+                       0,                   # Reference
+                       0xFFFFFFFF)          # Unknown
+
+
+def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict,
+                                     all_vtyp_fids: list) -> bytes:
+    """Build packed GetIsVoiceType CTDA subrecords for an INFO record.
+
+    Strategy:
+    1. Scan existing conditions for GetIsID (func 72) — extract target NPC FormIDs
+    2. Map each NPC to its voice type
+    3. If NPC-specific: emit GetIsVoiceType for those voice types (OR'd)
+    4. If generic (no GetIsID): emit GetIsVoiceType for ALL voice types (OR'd)
+
+    All voice type conditions are OR'd with each other (any matching voice type
+    is acceptable) but AND'd with the rest of the condition set.
+    """
+    offset = get_formid_index_offset()
+
+    # Extract NPC FormIDs from GetIsID conditions
+    npc_fids = set()
+    cc = get_int(rec, 'ConditionCount')
+    for i in range(cc):
+        raw_hex = rec.get(f'Condition[{i}].Raw', '')
+        if not raw_hex or len(raw_hex) < 20:
+            continue
+        try:
+            raw = bytes.fromhex(raw_hex)
+            func_idx = struct.unpack_from('<H', raw, 8)[0]
+            if func_idx == _FUNC_GET_IS_ID:
+                param1 = struct.unpack_from('<I', raw, 12)[0]
+                npc_fids.add(param1)
+        except (ValueError, struct.error):
+            continue
+
+    # Resolve NPC FormIDs to voice types
+    vtyp_fids = set()
+    for npc_fid in npc_fids:
+        # Try with load-order remapping (the npc_to_vtyp uses remapped FormIDs)
+        remapped = npc_fid
+        if offset and (npc_fid >> 24) == 0x00 and (npc_fid & 0x00FFFFFF) >= 0x100:
+            remapped = (npc_fid & 0x00FFFFFF) | (offset << 24)
+        vtyp = npc_to_vtyp.get(remapped, 0) or npc_to_vtyp.get(npc_fid, 0)
+        if vtyp:
+            vtyp_fids.add(vtyp)
+
+    # If no NPC-specific voice types found, use ALL voice types (generic line)
+    if not vtyp_fids:
+        vtyp_fids = set(all_vtyp_fids)
+
+    if not vtyp_fids:
+        return b''
+
+    # Build CTDA subrecords — OR'd with each other, last one is AND
+    # Pattern: VT1(OR) VT2(OR) ... VTn(AND) → (VT1 or VT2 or ... or VTn) AND rest
+    result = b''
+    vtyp_list = sorted(vtyp_fids)
+    for idx, vfid in enumerate(vtyp_list):
+        is_last = (idx == len(vtyp_list) - 1)
+        ctda_data = build_voice_type_ctda(vfid, is_or=not is_last)
+        result += pack_subrecord('CTDA', ctda_data)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
