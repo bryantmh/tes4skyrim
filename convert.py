@@ -7,6 +7,8 @@ Pipeline steps (each runnable via --<step>-only):
   extract         Pull assets from BSA archives into export/<name>/
   meshes          Convert NIFs and copy textures
   speedtrees      Convert SPT files
+  sounds          Convert sound files to XWM
+  scripts         Convert TES4 scripts to Papyrus .psc source
   lod             Generate object & terrain LOD meshes
   modify-body-meshes  Add greaves partition to character body NIFs
 
@@ -18,6 +20,8 @@ Usage:
   python convert.py -f Oblivion.esm --extract-only
   python convert.py -f Oblivion.esm --meshes-only
   python convert.py -f Oblivion.esm --speedtrees-only
+  python convert.py -f Oblivion.esm --sounds-only
+  python convert.py -f Oblivion.esm --scripts-only
   python convert.py -f Oblivion.esm --lod-only
   python convert.py --modify-body-meshes
   python convert.py --output-dir /path/to/output -f Oblivion.esm
@@ -328,7 +332,29 @@ def phase_sounds(file_name: str, config: dict, output_dir: str = None):
 
 
 # ===========================================================================
-# Phase 6: LOD generation
+# Phase 7: Script conversion
+# ===========================================================================
+
+def phase_scripts(file_name: str, config: dict, output_dir: str = None):
+    """Convert TES4 scripts to Papyrus .psc source files."""
+    from tools.oblivion_to_papyrus import convert_all_scripts
+
+    export_subdir = str(SCRIPT_DIR / "export" / file_name)
+    if not os.path.isdir(export_subdir):
+        print(f"[{file_name}] No export directory, skipping scripts")
+        return False
+
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    script_dir = out_root / file_name / "scripts" / "source"
+
+    print(f"[{file_name}] Converting scripts to Papyrus...")
+    stats = convert_all_scripts(export_subdir, str(script_dir))
+    errs = stats['scpt_err'] + stats['info_err'] + stats['qust_err']
+    return errs == 0
+
+
+# ===========================================================================
+# Phase 8: LOD generation
 # ===========================================================================
 
 def phase_lod(file_name: str, tes5_data: str, config: dict,
@@ -372,7 +398,7 @@ def phase_lod(file_name: str, tes5_data: str, config: dict,
 
 
 # ===========================================================================
-# Phase 6: Modify body meshes
+# Phase 9: Modify body meshes
 # ===========================================================================
 
 def phase_modify_body_meshes():
@@ -420,6 +446,8 @@ def main():
                         help="Generate object & terrain LOD meshes")
     parser.add_argument("--modify-body-meshes",  action="store_true",
                         help="Add greaves partition to character body NIFs")
+    parser.add_argument("--scripts-only",        action="store_true",
+                        help="Convert TES4 scripts to Papyrus .psc source")
 
     args = parser.parse_args()
 
@@ -454,7 +482,7 @@ def main():
     _any_only = any([
         args.export_only, args.import_only, args.extract_only,
         args.meshes_only, args.speedtrees_only, args.sounds_only,
-        args.lod_only, args.modify_body_meshes,
+        args.lod_only, args.modify_body_meshes, args.scripts_only,
     ])
     if _any_only:
         do_export     = args.export_only
@@ -465,10 +493,11 @@ def main():
         do_sounds     = args.sounds_only
         do_lod        = args.lod_only
         do_body       = args.modify_body_meshes
+        do_scripts    = args.scripts_only
     else:
-        # Default: export + import + extract + meshes + speedtrees + sounds
+        # Default: export + import + extract + meshes + speedtrees + sounds + scripts
         do_export = do_import = do_extract = True
-        do_meshes = do_speedtrees = do_sounds = True
+        do_meshes = do_speedtrees = do_sounds = do_scripts = True
         do_lod = do_body = False
 
     success = True
@@ -528,9 +557,18 @@ def main():
                 success = False
         print()
 
+    if do_scripts:
+        print("=" * 54)
+        print("  Phase 7: SCRIPT CONVERSION")
+        print("=" * 54)
+        for fn in order:
+            if not phase_scripts(fn, config, output_dir=output_dir):
+                success = False
+        print()
+
     if do_lod:
         print("=" * 54)
-        print("  Phase 7: LOD GENERATION")
+        print("  Phase 8: LOD GENERATION")
         print("=" * 54)
         for fn in order:
             phase_lod(fn, tes5_data, config, output_dir=output_dir)
@@ -538,7 +576,7 @@ def main():
 
     if do_body:
         print("=" * 54)
-        print("  Phase 8: MODIFY BODY MESHES")
+        print("  Phase 9: MODIFY BODY MESHES")
         print("=" * 54)
         if not phase_modify_body_meshes():
             success = False

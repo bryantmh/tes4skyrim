@@ -30,6 +30,7 @@ from .record_types.dialog_misc import (
     is_bark_topic,
     make_dlbr,
     make_dlvw,
+    should_skip_dial,
 )
 from .skyrim_overrides import (
     CUSTOM_VTYP_EDIDS,
@@ -553,11 +554,18 @@ def _build_world_groups(by_type: dict, writer: PluginWriter):
 def _collect_dialogue_quest_fids(by_type: dict) -> set:
     """Pre-scan DIAL records and collect all quest FormIDs that own dialogue.
 
-    These QUSTs need StartGameEnabled + StartsEnabled + HasDialogueData flags.
+    These QUSTs need StartGameEnabled + StartsEnabled flags.
     Must run BEFORE Phase 1 so QUST conversion can use the result.
+
+    Only includes quests from non-skipped DIAL topics — persuasion,
+    service UI, creature responses etc. are excluded so their quests
+    don't get forced StartGameEnabled.
     """
     dialogue_quest_fids = set()
     for rec in by_type.get('DIAL', []):
+        # No Dialog topics show up for some reason if this is enabled
+        # if should_skip_dial(rec):
+        #     continue
         qcount = get_int(rec, 'QuestCount')
         for i in range(qcount):
             quest_fid = get_formid(rec, f'Quest[{i}]')
@@ -642,7 +650,7 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
         info_by_dial[dial_fid].append(rec)
 
     print(f"  Building DIAL hierarchy ({len(dials)} topics, {len(infos)} infos, "
-          f"{len(npc_to_vtyp)} NPC→VTYP mappings, {len(all_vtyp_fids)} voice types)...")
+          f"{len(npc_to_vtyp)} NPC->VTYP mappings, {len(all_vtyp_fids)} voice types)...")
 
     # Create a catch-all dialogue quest for orphan DIALs (no TES4 quest).
     # ALL Skyrim DIALs MUST have QNAM — engine ignores topics without one.
@@ -660,6 +668,7 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
     info_converted = 0
     dlbr_created = 0
     dlvw_created = 0
+    skipped_count = 0
     all_dial_content = b''
     all_dlbr_records = b''
     all_dlvw_records = b''
@@ -672,6 +681,14 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
         dial_fid = get_formid(dial_rec, 'FormID')
         dial_edid = get_str(dial_rec, 'EditorID', '')
         quest_fid = get_formid(dial_rec, 'Quest[0]')
+        dtype = get_int(dial_rec, 'DATA.Type')
+
+        # No Dialog topics show up for some reason if this is enabled
+        # Skip topics that have no TES5 equivalent (persuasion, service UI,
+        # creature responses, test/debug dialogue)
+        # if should_skip_dial(dial_rec):
+        #     skipped_count += 1
+        #     continue
 
         # Assign orphan DIALs (no quest) to the catch-all quest
         if not quest_fid:
@@ -680,7 +697,7 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
 
         try:
             # Determine if this is a bark or conversation topic
-            bark = is_bark_topic(dial_edid)
+            bark = is_bark_topic(dial_edid, dtype=dtype)
             dlbr_fid = 0
 
             if not bark and quest_fid:
@@ -754,6 +771,7 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
 
     print(f"    Topics: {dial_converted}, infos: {info_converted}, "
           f"branches: {dlbr_created}, views: {dlvw_created}, "
+          f"skipped: {skipped_count}, "
           f"orphan DIALs assigned to catch-all quest: {orphan_count}")
 
 

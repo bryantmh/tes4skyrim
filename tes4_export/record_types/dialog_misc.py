@@ -116,8 +116,8 @@ def export_QUST(rec: Record) -> list:
 
     emit_conditions(lines, rec)
 
-    # Stages — iterate subrecords in order to capture QSDT + CNAM per log entry
-    stages = []  # list of (index, [{'flags': int, 'text': str}, ...])
+    # Stages — iterate subrecords in order to capture QSDT + CNAM + SCTX/SCRO per log entry
+    stages = []  # list of (index, [{'flags': int, 'text': str, 'script': str, 'refs': [str]}, ...])
     current_idx = None
     current_logs = []
     for sub in rec.subrecords:
@@ -128,9 +128,14 @@ def export_QUST(rec: Record) -> list:
             current_logs = []
         elif sub.type == "QSDT" and current_idx is not None:
             qsdt_flags = sub.data[0] if sub.data else 0
-            current_logs.append({'flags': qsdt_flags, 'text': ''})
+            current_logs.append({'flags': qsdt_flags, 'text': '', 'script': '', 'refs': []})
         elif sub.type == "CNAM" and current_idx is not None and current_logs:
             current_logs[-1]['text'] = get_string(sub)
+        elif sub.type == "SCTX" and current_idx is not None and current_logs:
+            current_logs[-1]['script'] = get_string(sub)
+        elif sub.type == "SCRO" and current_idx is not None and current_logs:
+            if len(sub.data) >= 4:
+                current_logs[-1]['refs'].append(get_formid_str(struct.unpack_from('<I', sub.data, 0)[0]))
     if current_idx is not None:
         stages.append((current_idx, current_logs))
 
@@ -138,12 +143,16 @@ def export_QUST(rec: Record) -> list:
         lines.append(f"StageCount={len(stages)}")
         for i, (stage_idx, log_entries) in enumerate(stages):
             lines.append(f"Stage[{i}].Index={stage_idx}")
-            log_entries = log_entries or [{'flags': 0, 'text': ''}]
+            log_entries = log_entries or [{'flags': 0, 'text': '', 'script': '', 'refs': []}]
             lines.append(f"Stage[{i}].LogCount={len(log_entries)}")
             for j, entry in enumerate(log_entries):
                 lines.append(f"Stage[{i}].Log[{j}].Flags={entry['flags']}")
-                if entry['text']:
+                if entry.get('text'):
                     lines.append(f"Stage[{i}].Log[{j}].Text={escape_value(entry['text'])}")
+                if entry.get('script'):
+                    lines.append(f"Stage[{i}].Log[{j}].ResultScript={escape_value(entry['script'])}")
+                for k, ref in enumerate(entry.get('refs', [])):
+                    lines.append(f"Stage[{i}].Log[{j}].SCRO[{k}]={ref}")
 
     # Targets (QSTA)
     qstas = get_all_subrecords(rec, "QSTA")
@@ -241,6 +250,11 @@ def export_SCPT(rec: Record) -> list:
     sctx = get_subrecord(rec, "SCTX")
     if sctx:
         lines.append(f"SCTX={escape_value(get_string(sctx))}")
+    # Script references (FormIDs referenced in the compiled script)
+    scros = get_all_subrecords(rec, "SCRO")
+    for i, scro in enumerate(scros):
+        if len(scro.data) >= 4:
+            lines.append(f"SCRO[{i}]={get_formid_str(struct.unpack_from('<I', scro.data, 0)[0])}")
     return lines
 
 

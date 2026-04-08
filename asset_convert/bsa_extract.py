@@ -8,10 +8,10 @@ Uses a native BSA reader (no external dependencies) that handles both
 uncompressed and zlib-compressed Oblivion BSAs.
 
 Voice file organization:
-  TES4 voice path: Sound\\Voice\\<plugin>\\<Race>\\<Gender>\\<dialFID>_<infoFID>.mp3
-  TES5 voice path: Sound\\Voice\\<plugin>\\<VoiceType>\\<infoFID>_0.mp3
+  TES4 voice path: Sound\\Voice\\<plugin>\\<Race>\\<Gender>\\<quest>_<topic>_<infoFID>_<resp>.mp3
+  TES5 voice path: Sound\\Voice\\<plugin>\\<VoiceType>\\<quest>_<topic>_<infoFID>_<resp>.xwm
   Use organize_voice_files() to rename/move extracted voice files to TES5 layout.
-  Note: audio format conversion (MP3 → XWM/FUZ) is a separate step not automated here.
+  Note: audio format conversion (MP3 → XWM) is handled by ffmpeg (wmav2 96kbps mono).
 """
 import json
 import os

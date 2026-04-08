@@ -653,8 +653,19 @@ class TestIntegration:
 
 from tes5_import.record_types.dialog_misc import (
     _convert_ctda_tes4_to_tes5,
+    _DIAL_SKIP_EDIDS,
+    _DIAL_SKIP_TYPES,
+    _DIAL_TYPE_COMBAT,
+    _DIAL_TYPE_CONVERSATION,
+    _DIAL_TYPE_DETECTION,
+    _DIAL_TYPE_MISC,
+    _DIAL_TYPE_PERSUASION,
+    _DIAL_TYPE_SERVICE,
+    _DIAL_TYPE_TOPIC,
+    _EDID_TO_SUBTYPE_INT,
     _QUEST_DEPENDENT_FUNCS,
     _TES4_ONLY_FUNCS,
+    BARK_SUBTYPES,
     build_voice_type_ctda,
     build_voice_type_ctdas_for_info,
     convert_DIAL,
@@ -663,6 +674,7 @@ from tes5_import.record_types.dialog_misc import (
     is_bark_topic,
     make_dlbr,
     make_dlvw,
+    should_skip_dial,
 )
 from tes5_import.text_reader import set_formid_index_offset
 
@@ -1010,6 +1022,97 @@ class TestDialogueConversion:
         assert not is_bark_topic('MQ01Topic')
         assert not is_bark_topic('')
 
+    def test_is_bark_topic_by_dtype(self):
+        """is_bark_topic returns True for combat/detection/misc DATA.Type."""
+        assert is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_COMBAT)
+        assert is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_DETECTION)
+        assert is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_MISC)
+        # Topic/Conversation types are NOT bark by dtype alone
+        assert not is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_TOPIC)
+        assert not is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_CONVERSATION)
+        # dtype=-1 (unknown) does not make it a bark
+        assert not is_bark_topic('UnknownEdid', dtype=-1)
+
+    def test_is_bark_topic_edid_overrides_dtype(self):
+        """Known bark EditorID is bark even if dtype=Topic."""
+        assert is_bark_topic('INFOGENERAL', dtype=_DIAL_TYPE_CONVERSATION)
+        assert is_bark_topic('AnswerStatus', dtype=_DIAL_TYPE_CONVERSATION)
+        assert is_bark_topic('TRANSITION', dtype=_DIAL_TYPE_CONVERSATION)
+
+    # -- should_skip_dial --
+
+    def test_should_skip_dial_persuasion(self):
+        """Persuasion topics (Type=3) are skipped."""
+        rec = {'EditorID': 'ADMIREHATE', 'DATA.Type': '3'}
+        assert should_skip_dial(rec)
+
+    def test_should_skip_dial_service(self):
+        """Service topics (Type=5) are skipped."""
+        rec = {'EditorID': 'BarterBuyItem', 'DATA.Type': '5'}
+        assert should_skip_dial(rec)
+
+    def test_should_skip_dial_creature_responses(self):
+        """Creature response topics are skipped by EditorID."""
+        for edid in ('CreatureResponses', 'SECreatureResponses',
+                     'TamrielGateResponses', 'ANY'):
+            rec = {'EditorID': edid, 'DATA.Type': '1'}
+            assert should_skip_dial(rec), f"{edid} should be skipped"
+
+    def test_should_skip_dial_test_topics(self):
+        """Test/debug topics (Test* prefix) are skipped."""
+        for edid in ('TestDoggy', 'TestWolf', 'TestDialogue'):
+            rec = {'EditorID': edid, 'DATA.Type': '0'}
+            assert should_skip_dial(rec), f"{edid} should be skipped"
+
+    def test_should_skip_dial_markn_test(self):
+        """MarkNTest* topics are skipped."""
+        rec = {'EditorID': 'MarkNTestQuest', 'DATA.Type': '0'}
+        assert should_skip_dial(rec)
+
+    def test_should_skip_dial_normal_topic_not_skipped(self):
+        """Normal conversation topics are NOT skipped."""
+        rec = {'EditorID': 'MQ01Topic', 'DATA.Type': '0'}
+        assert not should_skip_dial(rec)
+
+    def test_should_skip_dial_combat_not_skipped(self):
+        """Combat topics (Type=2) are NOT skipped — they become barks."""
+        rec = {'EditorID': 'Attack', 'DATA.Type': '2'}
+        assert not should_skip_dial(rec)
+
+    def test_should_skip_dial_detection_not_skipped(self):
+        """Detection topics (Type=4) are NOT skipped — they become barks."""
+        rec = {'EditorID': 'Noticed', 'DATA.Type': '4'}
+        assert not should_skip_dial(rec)
+
+    # -- _EDID_TO_SUBTYPE_INT expanded mappings --
+
+    def test_edid_subtype_combat_barks(self):
+        """Combat-related EditorIDs map to bark subtypes."""
+        combat_edids = ['Yield', 'AcceptYield', 'Pickpocket', 'Assault',
+                        'Murder', 'PowerAttack', 'AssaultNoCrime',
+                        'MurderNoCrime', 'PickpocketNoCrime', 'StealNoCrime',
+                        'TrespassNoCrime']
+        for edid in combat_edids:
+            assert edid in _EDID_TO_SUBTYPE_INT, f"{edid} missing from subtype map"
+            assert _EDID_TO_SUBTYPE_INT[edid] in BARK_SUBTYPES, \
+                f"{edid} subtype {_EDID_TO_SUBTYPE_INT[edid]} not in BARK_SUBTYPES"
+
+    def test_edid_subtype_service_barks(self):
+        """Service-related EditorIDs map to bark subtypes."""
+        service_edids = ['BarterBuyItem', 'BarterSellItem', 'BarterExit',
+                         'BarterStolen', 'Training', 'RepairExit',
+                         'Recharge', 'RechargeExit', 'TrainingExit']
+        for edid in service_edids:
+            assert edid in _EDID_TO_SUBTYPE_INT, f"{edid} missing from subtype map"
+            assert _EDID_TO_SUBTYPE_INT[edid] in BARK_SUBTYPES, \
+                f"{edid} subtype {_EDID_TO_SUBTYPE_INT[edid]} not in BARK_SUBTYPES"
+
+    def test_edid_subtype_system_barks(self):
+        """System/transition EditorIDs map to Idle bark subtype."""
+        for edid in ('INFOGENERAL', 'AnswerStatus', 'TRANSITION'):
+            assert _EDID_TO_SUBTYPE_INT[edid] == 94  # Idle
+            assert 94 in BARK_SUBTYPES
+
     # -- DLBR / DLVW --
 
     def test_dlbr_structure(self):
@@ -1063,6 +1166,64 @@ class TestDialogueConversion:
         finally:
             # Restore original voice type map entry
             set_voice_type('Imperial', 'Male', 0x01AABB01)
+
+    # -- VMAD injection --
+
+    def test_qust_vmad_injected_when_stage_has_script(self):
+        """QUST with stage ResultScript should have VMAD subrecord."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'TestQuest', 'FULL': 'Test',
+               'DATA.Flags': '0', 'DATA.Priority': '0',
+               'StageCount': '1',
+               'Stage[0].Index': '10',
+               'Stage[0].LogCount': '1',
+               'Stage[0].Log[0].Flags': '0',
+               'Stage[0].Log[0].Text': 'Done',
+               'Stage[0].Log[0].ResultScript': 'set x to 1'}
+        result = convert_QUST(rec)
+        vmad = _find_subrecord(result, b'VMAD')
+        assert vmad is not None, "QUST with stage script must have VMAD"
+        # Check VMAD structure: version=5, objectFormat=2
+        assert struct.unpack_from('<HH', vmad, 0) == (5, 2)
+        # Script name should contain the quest EditorID
+        assert b'TES4_QF_TestQuest' in vmad
+
+    def test_qust_no_vmad_when_no_scripts(self):
+        """QUST without stage ResultScript should NOT have VMAD."""
+        rec = {'FormID': '00012345', 'RecordFlags': '0',
+               'EditorID': 'TestQuest', 'FULL': 'Test',
+               'DATA.Flags': '0', 'DATA.Priority': '0',
+               'StageCount': '1',
+               'Stage[0].Index': '10',
+               'Stage[0].LogCount': '1',
+               'Stage[0].Log[0].Flags': '0',
+               'Stage[0].Log[0].Text': 'Done'}
+        result = convert_QUST(rec)
+        vmad = _find_subrecord(result, b'VMAD')
+        assert vmad is None, "QUST without scripts must NOT have VMAD"
+
+    def test_info_vmad_injected_when_has_result_script(self):
+        """INFO with ResultScript should have VMAD subrecord."""
+        rec = {'FormID': '0000ABCD', 'RecordFlags': '0',
+               'EditorID': 'TestInfo',
+               'DATA.Flags': '0', 'ResponseCount': '0',
+               'ConditionCount': '0', 'ChoiceCount': '0',
+               'ResultScript': 'player.additem gold001 100'}
+        result = convert_INFO(rec)
+        vmad = _find_subrecord(result, b'VMAD')
+        assert vmad is not None, "INFO with ResultScript must have VMAD"
+        assert struct.unpack_from('<HH', vmad, 0) == (5, 2)
+        assert b'TES4_TIF__0000ABCD' in vmad
+
+    def test_info_no_vmad_when_no_result_script(self):
+        """INFO without ResultScript should NOT have VMAD."""
+        rec = {'FormID': '0000ABCD', 'RecordFlags': '0',
+               'EditorID': 'TestInfo',
+               'DATA.Flags': '0', 'ResponseCount': '0',
+               'ConditionCount': '0', 'ChoiceCount': '0'}
+        result = convert_INFO(rec)
+        vmad = _find_subrecord(result, b'VMAD')
+        assert vmad is None, "INFO without ResultScript must NOT have VMAD"
 
 
 # ---------------------------------------------------------------------------
@@ -1132,6 +1293,79 @@ class TestSkyrimRecordFormat:
         ctdas = _find_all_subrecords(rec, b'CTDA')
         for ctda in ctdas:
             assert len(ctda) == 32, f"CTDA should be 32 bytes, got {len(ctda)}"
+
+
+# ---------------------------------------------------------------------------
+# Voice file naming tests
+# ---------------------------------------------------------------------------
+
+import re
+from asset_convert.audio_converter import _VOICE_FILENAME_RE, _TES4_VOICE_TYPE_MAP
+
+
+class TestVoiceFileNaming:
+    """Tests for the voice file regex and naming conventions."""
+
+    def test_regex_captures_prefix(self):
+        """Regex must capture quest_topic prefix as group(1)."""
+        m = _VOICE_FILENAME_RE.match('arenaannouncer_announcer_0004216e_1.mp3')
+        assert m is not None
+        assert m.group(1) == 'arenaannouncer_announcer'
+        assert m.group(2) == '0004216e'
+        assert m.group(3) == '1'
+        assert m.group(4) == 'mp3'
+
+    def test_regex_complex_prefix(self):
+        """Regex handles multi-underscore prefixes correctly."""
+        m = _VOICE_FILENAME_RE.match('ms45_dar_ma_00012345_2.wav')
+        assert m is not None
+        assert m.group(1) == 'ms45_dar_ma'
+        assert m.group(2) == '00012345'
+        assert m.group(3) == '2'
+
+    def test_regex_uppercase_formid(self):
+        """Regex is case-insensitive for FormID hex digits."""
+        m = _VOICE_FILENAME_RE.match('questname_topicname_0004ABCD_1.xwm')
+        assert m is not None
+        assert m.group(2) == '0004ABCD'
+
+    def test_regex_fuz_extension(self):
+        """Regex matches .fuz files."""
+        m = _VOICE_FILENAME_RE.match('quest_topic_00001234_1.fuz')
+        assert m is not None
+        assert m.group(4) == 'fuz'
+
+    def test_regex_rejects_short_formid(self):
+        """Regex requires exactly 8 hex chars for FormID."""
+        m = _VOICE_FILENAME_RE.match('quest_topic_01234_1.mp3')
+        assert m is None
+
+    def test_regex_rejects_no_prefix(self):
+        """Regex requires at least one underscore-separated prefix."""
+        m = _VOICE_FILENAME_RE.match('00012345_1.mp3')
+        assert m is None
+
+    def test_voice_type_map_coverage(self):
+        """Voice type map covers all 10 playable races × 2 genders."""
+        playable_races = [
+            'Argonian', 'Breton', 'DarkElf', 'HighElf', 'Imperial',
+            'Khajiit', 'Nord', 'Orc', 'Redguard', 'WoodElf',
+        ]
+        for race in playable_races:
+            for gender in ('M', 'F'):
+                assert (race, gender) in _TES4_VOICE_TYPE_MAP, \
+                    f"Missing voice type for ({race}, {gender})"
+
+    def test_voice_type_map_sheogorath(self):
+        """Sheogorath has Male voice type only."""
+        assert ('Sheogorath', 'M') in _TES4_VOICE_TYPE_MAP
+
+    def test_voice_type_naming_convention(self):
+        """All voice types follow TES4{Male|Female}Race naming."""
+        for (race, gender), vtype in _TES4_VOICE_TYPE_MAP.items():
+            sex = 'Male' if gender == 'M' else 'Female'
+            assert vtype.startswith(f'TES4{sex}'), \
+                f"Voice type {vtype} for ({race}, {gender}) has wrong prefix"
 
 
 # ---------------------------------------------------------------------------

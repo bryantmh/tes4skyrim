@@ -1,6 +1,14 @@
 """Dialog/misc converters: QUST, DIAL, INFO, SOUN, DLBR, DLVW."""
 
 import struct
+import sys
+from pathlib import Path
+
+# Import VMAD builders from the script converter
+_TOOLS_DIR = str(Path(__file__).resolve().parent.parent.parent / 'tools')
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+from oblivion_to_papyrus import build_vmad_quest_fragments, build_vmad_info_fragment
 
 from ..text_reader import get_formid_index_offset
 from .common import (
@@ -138,6 +146,24 @@ def convert_QUST(rec: dict, dialogue_quest_fids: set = None) -> bytes:
     edid = get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
+
+    # VMAD — quest stage script fragments
+    stage_count = get_int(rec, 'StageCount')
+    stage_frags = []
+    for i in range(stage_count):
+        log_count = get_int(rec, f'Stage[{i}].LogCount')
+        stage_idx = get_int(rec, f'Stage[{i}].Index')
+        if log_count > 0:
+            for j in range(log_count):
+                if get_str(rec, f'Stage[{i}].Log[{j}].ResultScript'):
+                    stage_frags.append((stage_idx, j))
+        else:
+            if get_str(rec, f'Stage[{i}].ResultScript'):
+                stage_frags.append((stage_idx, 0))
+    if stage_frags and edid:
+        vmad = build_vmad_quest_fragments(edid, stage_frags)
+        subs += pack_subrecord('VMAD', vmad)
+
     full = get_str(rec, 'FULL')
     if full:
         subs += pack_string_subrecord('FULL', full)
@@ -296,6 +322,14 @@ def convert_DIAL(rec: dict, info_count: int = 0, dlbr_fid: int = 0,
     dtype = get_int(rec, 'DATA.Type')
     subtype_int, snam_code = _EDID_TO_SUBTYPE.get(edid or '', (0, b'CUST'))
 
+    # If no EditorID→subtype mapping, derive from DATA.Type
+    if subtype_int == 0 and dtype == _DIAL_TYPE_COMBAT:
+        subtype_int, snam_code = 26, b'ATCK'  # Generic combat bark
+    elif subtype_int == 0 and dtype == _DIAL_TYPE_DETECTION:
+        subtype_int, snam_code = 57, b'NOTA'  # Generic detection bark
+    elif subtype_int == 0 and dtype == _DIAL_TYPE_MISC:
+        subtype_int, snam_code = 94, b'IDLE'  # Generic misc bark
+
     # Category: bark topics get overridden to Combat/Detection/Misc;
     # all other conversation topics default to Category 0 (Topic).
     if subtype_int in _SUBTYPE_CATEGORY_OVERRIDE:
@@ -337,6 +371,13 @@ def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
     edid = get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
+
+    # VMAD — topic info result script fragment
+    info_fid = get_str(rec, 'FormID') or ''
+    result_script = get_str(rec, 'ResultScript')
+    if result_script and result_script.strip() and info_fid:
+        vmad = build_vmad_info_fragment(info_fid)
+        subs += pack_subrecord('VMAD', vmad)
 
     # ENAM — Response flags: Flags(U16) + ResetHours(U16)
     tes4_flags = get_int(rec, 'DATA.Flags')
@@ -457,12 +498,83 @@ _EDID_TO_SUBTYPE_INT: dict[str, int] = {
     'Corpse': 76, 'NoticeCorpse': 76, 'TimeToGo': 77,
     'InfoRefusal': 17, 'Noticed': 57, 'Seen': 57,
     'Unseen': 63, 'Lost': 63,
+    # Additional combat barks (Type=2 in TES4)
+    'Yield': 26, 'AcceptYield': 26,
+    'Pickpocket': 38, 'Assault': 26, 'Murder': 26,
+    'PowerAttack': 26, 'AssaultNoCrime': 26, 'MurderNoCrime': 26,
+    'PickpocketNoCrime': 38, 'StealNoCrime': 38, 'TrespassNoCrime': 49,
+    # Additional service barks (Type=5 in TES4)
+    'BarterBuyItem': 70, 'BarterSellItem': 70, 'BarterExit': 70,
+    'BarterStolen': 70, 'Training': 67, 'RepairExit': 67,
+    'Recharge': 67, 'RechargeExit': 67, 'TrainingExit': 67,
+    # Type=1 system topics that are barks
+    'INFOGENERAL': 94,   # Rumors → Idle bark (not a conversation topic)
+    'AnswerStatus': 94,  # Disposition status → Idle bark
+    'TRANSITION': 94,    # Scene transitions → Idle bark
 }
 
+# TES4 DATA.Type values
+_DIAL_TYPE_TOPIC = 0
+_DIAL_TYPE_CONVERSATION = 1
+_DIAL_TYPE_COMBAT = 2
+_DIAL_TYPE_PERSUASION = 3
+_DIAL_TYPE_DETECTION = 4
+_DIAL_TYPE_SERVICE = 5
+_DIAL_TYPE_MISC = 6
 
-def is_bark_topic(edid: str) -> bool:
-    """Return True if this DIAL EditorID represents a bark (non-interactive) topic."""
-    return _EDID_TO_SUBTYPE_INT.get(edid or '', -1) in BARK_SUBTYPES
+# TES4 DATA.Type values that should be skipped entirely (no TES5 equivalent)
+_DIAL_SKIP_TYPES = frozenset({
+    _DIAL_TYPE_PERSUASION,  # Oblivion persuasion minigame — no TES5 equivalent
+    _DIAL_TYPE_SERVICE,     # Barter/repair/training UI — handled by engine, not dialogue
+})
+
+# Specific EditorIDs to skip regardless of DATA.Type
+_DIAL_SKIP_EDIDS = frozenset({
+    'CreatureResponses',     # TES4 creature ambient sounds — no creatures in TES5
+    'SECreatureResponses',   # Shivering Isles creature sounds
+    'TamrielGateResponses',  # Oblivion Gate commentary — no gates in TES5
+    'ANY',                   # Empty catch-all container
+})
+
+
+def should_skip_dial(rec: dict) -> bool:
+    """Return True if this DIAL topic should be skipped entirely.
+
+    Skips persuasion system topics, service UI barks, creature responses,
+    Oblivion-gate responses, and test/debug dialogue.
+    """
+    dtype = get_int(rec, 'DATA.Type')
+    if dtype in _DIAL_SKIP_TYPES:
+        return True
+
+    edid = get_str(rec, 'EditorID', '')
+    if edid in _DIAL_SKIP_EDIDS:
+        return True
+
+    # Skip test/debug topics (Type=0 with Test* EditorID prefix)
+    if edid.startswith('Test') or edid.startswith('MarkNTest'):
+        return True
+
+    return False
+
+
+def is_bark_topic(edid: str, dtype: int = -1) -> bool:
+    """Return True if this DIAL topic is a bark (non-interactive).
+
+    Uses both EditorID mapping AND TES4 DATA.Type for classification:
+    - Type 2 (Combat), 4 (Detection), 6 (Misc) → always bark
+    - EditorID in _EDID_TO_SUBTYPE_INT → bark if subtype in BARK_SUBTYPES
+    - Type 1 (Conversation) → bark unless a known conversation EditorID
+    """
+    # Type-based: all combat/detection/misc are barks
+    if dtype in (_DIAL_TYPE_COMBAT, _DIAL_TYPE_DETECTION, _DIAL_TYPE_MISC):
+        return True
+
+    # EditorID-based: known bark topics
+    if _EDID_TO_SUBTYPE_INT.get(edid or '', -1) in BARK_SUBTYPES:
+        return True
+
+    return False
 
 
 def make_dlbr(fid: int, edid: str, quest_fid: int, dial_fid: int,

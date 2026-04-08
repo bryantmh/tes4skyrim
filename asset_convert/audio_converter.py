@@ -150,7 +150,7 @@ def convert_sounds(
             shutil.copy2(src, dst)
             count += 1
     if count:
-        print(f'  Copied {count} files → {snd_dst}')
+        print(f'  Copied {count} files -> {snd_dst}')
     else:
         print('  No non-voice sound files to copy (all already present or none found).')
 
@@ -214,9 +214,13 @@ _TES4_VOICE_TYPE_MAP = {
     ('dremora',      'F'): 'TES4FemaleDremora',
 }
 
-# Oblivion voice filename: <topic>_<infoFID8hex>_<idx>.<ext>
+# Oblivion voice filename: <quest>_<topic>_<infoFID8hex>_<idx>.<ext>
+# We need to PRESERVE the quest_topic_ prefix — Skyrim constructs the expected
+# filename as QuestEDID_TopicEDID_InfoFormID(masked)_RespNum at runtime.
+# The InfoFormID in the filename uses the 24-bit value (load-order byte stripped,
+# padded to 8 hex).  We must NOT shift the FormID.
 _VOICE_FILENAME_RE = re.compile(
-    r'^.+_([0-9a-fA-F]{8})_(\d+)\.(mp3|wav|xwm|fuz)$',
+    r'^(.+)_([0-9a-fA-F]{8})_(\d+)\.(mp3|wav|xwm|fuz)$',
     re.IGNORECASE,
 )
 
@@ -268,7 +272,7 @@ def organize_voice_files(
                 'ffmpeg not found but convert_audio=True.  '
                 'Install ffmpeg and make sure it is on PATH, or pass ffmpeg_path= explicitly.'
             )
-        print('  ffmpeg found — converting MP3 → XWM (wmav2 96 kbps mono 44100 Hz)')
+        print('  ffmpeg found -- converting MP3 -> XWM (wmav2 96 kbps mono 44100 Hz)')
 
     stats = {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0}
     unmapped_races: set = set()
@@ -310,15 +314,18 @@ def organize_voice_files(
                         stats['no_match'] += 1
                         continue
 
-                    info_fid_int     = int(m.group(1), 16)
-                    info_fid_shifted = (info_fid_int & 0x00FFFFFF) | (formid_index << 24)
-                    info_fid         = f'{info_fid_shifted:08X}'
-                    resp_idx         = m.group(2)   # 1-based index from source filename
-                    src_ext          = m.group(3).lower()
+                    prefix           = m.group(1)   # quest_topic prefix
+                    info_fid_hex     = m.group(2)    # original 8-hex FormID
+                    resp_idx         = m.group(3)   # 1-based index from source filename
+                    src_ext          = m.group(4).lower()
 
-                    dst_name = (f'{info_fid}_{resp_idx}.xwm'
+                    # Skyrim voice filename: QuestEDID_TopicEDID_InfoFormID_RespNum
+                    # InfoFormID = original 24-bit value padded to 8 hex (NO load-order shift).
+                    # The prefix from the source filename already contains Quest_Topic.
+                    # We keep the FormID as-is from the source (it's already the 24-bit value).
+                    dst_name = (f'{prefix}_{info_fid_hex}_{resp_idx}.xwm'
                                 if ffmpeg and src_ext in ('mp3', 'wav')
-                                else f'{info_fid}_{resp_idx}.{src_ext}')
+                                else f'{prefix}_{info_fid_hex}_{resp_idx}.{src_ext}')
                     dst_path = out_dir / dst_name
 
                     if dst_path.exists():

@@ -69,6 +69,12 @@ Major Issues:
 			bigverts w of 999.9999 seems too high
 	
 	Looping sounds fail to loop
+	should_skip_dial causes ALL dialog topics to disappear from the NPC when enabled in import_main
+	NPCs should have barter/training
+	automatically compile papyrus with the papyrus compiler
+	https://github.com/russo-2025/papyrus-compiler/releases/tag/2026.03.15 or
+	the original compiler. Both found in tools\papyrus-compiler
+	GUI needs a script conversion box
 			
 	12 - Nif converter fix broken conversion
 		Files:
