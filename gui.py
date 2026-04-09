@@ -33,9 +33,11 @@ STEPS = [
      "Convert SPT files",           True,  True),
     ("sounds",             "--sounds-only",        "6. Sounds",
      "Convert sound files to XWM",               True,  True),
-    ("lod",                "--lod-only",           "7. LOD",
+    ("scripts",            "--scripts-only",       "7. Scripts",
+     "Convert Oblivion scripts to Papyrus",      True,  True),
+    ("lod",                "--lod-only",           "8. LOD",
      "Generate LOD meshes",               False, True),
-    ("modify_body_meshes", "--modify-body-meshes", "8. Body Meshes",
+    ("modify_body_meshes", "--modify-body-meshes", "9. Body Meshes",
      "Add greaves partition to body NIFs",       False, False),
 ]
 

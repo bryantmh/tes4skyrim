@@ -8,14 +8,24 @@ Converts TES4 (Oblivion) master/plugin files to TES5 (Skyrim SE) format, includi
 - **PyFFI** — NIF mesh reading/writing (`pip install PyFFI`)
 - **numpy** — Numerical operations for skin retargeting (`pip install numpy`)
 - **pytest** — Test runner (`pip install pytest`)
+- **ffmpeg** - Used for voice conversion
+- **xWMAEncode.exe** - Also used for voice conversion
+
+Some of the game's audio files need to be compressed using xWMA. In order to convert these, we need to make use of a utility known as "xWMAEncode.exe." The catch behind this is that the utility is included with Microsoft's DirectX SDK and cannot be legally redistributed on its own.
+
+To obtain xWMAEncode.exe, you will need to download the June 2010 Microsoft DirectX SDK. A free download is available from microsoft.com here: http://www.microsoft.com/en-us/download/details.aspx?id=6812.
+
+After downloading and installing the SDK, the program can be found in the Utilities\bin\x86 folder. If you do not wish to install the SDK, you can also just open the downloaded EXE in an archiving tool such as 7-zip and manually extract the program. Place the xWMAEncode.exe file in the project root directory.
 
 ## Additional Credits
 
 xEdit and all its contributors for esm record definitions
 Nifscope and its contributors for its information on nif formats
 Zilav's Oblivion -> Skyrim xEdit conversion scripts for the original inspiration and lots of useful information
-Ormin for useful mesh conversion information and mopp_rl.exe https://github.com/Ormin/skyblivion-NIFConverter 
-Sjors Boomschors for manual speed tree conversion models https://morroblivion.com/forums/conversion-to-skyrim/conversion-to-skyrim/2617 
+Ormin for useful mesh conversion information and mopp_rl.exe for collision generation https://github.com/Ormin/skyblivion-NIFConverter
+Ormin again for useful script conversion information https://github.com/Ormin/skyblivion-ScriptConverter
+Sjors Boomschors for manually converted speed tree models https://morroblivion.com/forums/conversion-to-skyrim/conversion-to-skyrim/2617
+The Papyrus Compiler project for its... papyrus compiler https://github.com/russo-2025/papyrus-compiler
 All the wonderful people I used to know on the Morroblivion forum, and those still working hard on Skyblivion and Skywind all these years later. You are an inspiration.
 
 ### Install all dependencies

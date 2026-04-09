@@ -1,19 +1,23 @@
-"""Audio conversion: MP3/WAV → XWM (Skyrim xWMA format) using ffmpeg.
+"""Audio conversion: MP3/WAV → XWM (Skyrim xWMA format).
+
+Two-stage pipeline:
+  1. ffmpeg: MP3 → WAV (PCM, mono, 44100 Hz)
+  2. xWMAEncode.exe: WAV → XWM (proper Microsoft xWMA format)
 
 Handles two operations:
   convert_sounds()       – Parallel batch conversion of all extracted sounds.
   organize_voice_files() – Reorganise TES4 voice files to TES5 directory layout.
 
-XWM format: ASF container + wmav2 audio, 96 kbps, mono, 44100 Hz.
-Skyrim reads files with the .xwm extension as xWMA natively.
+xWMAEncode.exe is a Microsoft DirectX SDK utility. It must be placed in the
+project root directory or on PATH. See README for download instructions.
 
-All conversion is multithreaded: one ffmpeg process per ThreadPoolExecutor
-worker, giving near-linear speedup since wmav2 is single-threaded per file.
+All conversion is multithreaded: one worker per file in ThreadPoolExecutor.
 """
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -21,7 +25,7 @@ from pathlib import Path
 _WORKER_COUNT = max(1, (os.cpu_count() or 4) - 1)
 
 # ---------------------------------------------------------------------------
-# ffmpeg detection + single-file conversion
+# Tool detection + single-file conversion
 # ---------------------------------------------------------------------------
 
 def find_ffmpeg(ffmpeg_path: str = 'ffmpeg') -> 'str | None':
@@ -39,13 +43,55 @@ def find_ffmpeg(ffmpeg_path: str = 'ffmpeg') -> 'str | None':
     return None
 
 
-def convert_file_to_xwm(src_path, dst_path, ffmpeg: str) -> bool:
-    """Convert a single audio file to XWM using ffmpeg.
+def find_xwmaencode(search_dir: 'str | None' = None) -> 'str | None':
+    """Return the xWMAEncode.exe path if found, else None.
+
+    Search order:
+      1. Explicit search_dir (if provided)
+      2. Project root (parent of asset_convert/)
+      3. System PATH
+    """
+    candidates = []
+    if search_dir:
+        candidates.append(Path(search_dir) / 'xWMAEncode.exe')
+    # Project root = parent of this file's directory
+    project_root = Path(__file__).resolve().parent.parent
+    candidates.append(project_root / 'xWMAEncode.exe')
+
+    for cand in candidates:
+        if cand.is_file():
+            return str(cand)
+
+    # Try PATH
+    try:
+        r = subprocess.run(
+            ['xWMAEncode'],
+            capture_output=True,
+            timeout=5,
+        )
+        if b'xWMA Encoding Tool' in r.stdout or b'xWMA Encoding Tool' in r.stderr:
+            return 'xWMAEncode'
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def convert_file_to_xwm(src_path, dst_path, ffmpeg: str,
+                         xwmaencode: 'str | None' = None) -> bool:
+    """Convert a single audio file to XWM.
+
+    Two-stage process (when xWMAEncode is available):
+      1. ffmpeg: source → WAV (PCM mono 44100 Hz)
+      2. xWMAEncode: WAV → XWM (proper Microsoft xWMA format)
+
+    Fallback (xWMAEncode missing): ffmpeg wmav2 ASF container (may not play
+    correctly in all Skyrim versions).
 
     Args:
-        src_path: Source audio file (.mp3, .wav, or any ffmpeg-readable format).
-        dst_path: Destination path; the .xwm extension is expected but not enforced.
-        ffmpeg:   Path to the ffmpeg executable (from find_ffmpeg).
+        src_path:     Source audio file (.mp3, .wav, or any ffmpeg-readable format).
+        dst_path:     Destination path (.xwm extension expected).
+        ffmpeg:       Path to the ffmpeg executable.
+        xwmaencode:   Path to xWMAEncode.exe (None = fallback to ffmpeg-only).
 
     Returns:
         True if conversion produced a non-empty .xwm file, False on any failure.
@@ -54,23 +100,45 @@ def convert_file_to_xwm(src_path, dst_path, ffmpeg: str) -> bool:
     dst_path = Path(dst_path)
     dst_path.parent.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
-        ffmpeg,
-        '-y',                   # overwrite without prompt
-        '-i', str(src_path),
-        '-c:a', 'wmav2',
-        '-b:a', '96k',
-        '-ac', '1',             # mono  — all Oblivion/Skyrim voice files are mono
-        '-ar', '44100',         # standard Skyrim sample rate
-        '-f', 'asf',            # ASF container (Skyrim reads as xWMA)
-        str(dst_path),
-    ]
-    try:
-        r = subprocess.run(cmd, capture_output=True, timeout=60)
-        return (r.returncode == 0
-                and dst_path.is_file()
-                and dst_path.stat().st_size > 0)
-    except (subprocess.TimeoutExpired, OSError):
+    if xwmaencode:
+        # Two-stage: ffmpeg → WAV → xWMAEncode → XWM
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+            wav_path = tmp.name
+        try:
+            # Stage 1: ffmpeg → WAV
+            cmd_wav = [
+                ffmpeg,
+                '-y',
+                '-i', str(src_path),
+                '-ac', '1',             # mono
+                '-ar', '44100',         # 44.1 kHz
+                '-c:a', 'pcm_s16le',   # 16-bit PCM
+                str(wav_path),
+            ]
+            r1 = subprocess.run(cmd_wav, capture_output=True, timeout=60)
+            if r1.returncode != 0 or not os.path.isfile(wav_path):
+                return False
+
+            # Stage 2: xWMAEncode → XWM
+            cmd_xwm = [
+                xwmaencode,
+                '-b', '48000',          # 48 kbps (good balance for voice)
+                str(wav_path),
+                str(dst_path),
+            ]
+            r2 = subprocess.run(cmd_xwm, capture_output=True, timeout=60)
+            return (r2.returncode == 0
+                    and dst_path.is_file()
+                    and dst_path.stat().st_size > 0)
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+        finally:
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass
+    else:
+        # xWMAEncode not available — cannot produce proper xWMA
         return False
 
 
@@ -233,6 +301,7 @@ def organize_voice_files(
     convert_audio=True,
     ffmpeg_path='ffmpeg',
     formid_index: int = 1,
+    xwmaencode_path: 'str | None' = None,
 ) -> dict:
     """Reorganise extracted TES4 voice files into TES5 directory layout.
 
@@ -240,17 +309,18 @@ def organize_voice_files(
     TES5 layout: <dest_dir>/Sound/Voice/<plugin>/<VoiceType>/<infoFID_shifted>_<idx>.xwm
 
     When ``convert_audio=True`` (default) each MP3/WAV is converted to XWM
-    using ffmpeg in parallel.  Raises RuntimeError if ffmpeg is unavailable
-    and convert_audio=True.
+    using a 2-stage pipeline: ffmpeg → WAV → xWMAEncode → XWM.
+    Falls back to ffmpeg-only ASF if xWMAEncode is not available.
 
     Args:
-        source_dir:    Root extracted asset directory (contains 'sound/' subfolder).
-        dest_dir:      Root output directory for organised files.
-        plugin_name:   Override the plugin folder name (auto-detected from BSA path).
-        copy:          If True (default), copy files; if False, move source files.
-        convert_audio: Convert MP3/WAV → XWM via ffmpeg (default True).
-        ffmpeg_path:   Path to ffmpeg executable (default 'ffmpeg').
-        formid_index:  Load-order index byte for the plugin (default 1).
+        source_dir:       Root extracted asset directory (contains 'sound/' subfolder).
+        dest_dir:         Root output directory for organised files.
+        plugin_name:      Override the plugin folder name (auto-detected from BSA path).
+        copy:             If True (default), copy files; if False, move source files.
+        convert_audio:    Convert MP3/WAV → XWM (default True).
+        ffmpeg_path:      Path to ffmpeg executable (default 'ffmpeg').
+        formid_index:     Load-order index byte for the plugin (default 1).
+        xwmaencode_path:  Path to xWMAEncode.exe (auto-detected if None).
 
     Returns:
         dict with keys: organized, skipped, no_match, errors, unmapped_races.
@@ -265,6 +335,7 @@ def organize_voice_files(
                 'unmapped_races': set()}
 
     ffmpeg = None
+    xwmaencode = None
     if convert_audio:
         ffmpeg = find_ffmpeg(ffmpeg_path)
         if not ffmpeg:
@@ -272,7 +343,12 @@ def organize_voice_files(
                 'ffmpeg not found but convert_audio=True.  '
                 'Install ffmpeg and make sure it is on PATH, or pass ffmpeg_path= explicitly.'
             )
-        print('  ffmpeg found -- converting MP3 -> XWM (wmav2 96 kbps mono 44100 Hz)')
+        xwmaencode = xwmaencode_path or find_xwmaencode()
+        if xwmaencode:
+            print('  ffmpeg + xWMAEncode found -- converting MP3 -> WAV -> XWM (proper xWMA)')
+        else:
+            print('  WARNING: xWMAEncode.exe not found -- falling back to ffmpeg ASF container')
+            print('           Voice audio may not play in Skyrim! See README for xWMAEncode setup.')
 
     stats = {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0}
     unmapped_races: set = set()
@@ -349,7 +425,8 @@ def organize_voice_files(
         src_path, dst_path = job
         try:
             if ffmpeg and dst_path.suffix == '.xwm':
-                return 'ok' if convert_file_to_xwm(src_path, dst_path, ffmpeg) else 'error'
+                return 'ok' if convert_file_to_xwm(src_path, dst_path, ffmpeg,
+                                                    xwmaencode=xwmaencode) else 'error'
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             if copy:
                 shutil.copy2(src_path, dst_path)

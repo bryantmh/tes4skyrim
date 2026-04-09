@@ -151,6 +151,10 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     dialogue_quest_fids = _collect_dialogue_quest_fids(by_type)
     npc_to_vtyp = _build_npc_to_vtyp_map(by_type, num_new_masters)
 
+    # --- Phase 0c: Create vendor factions for merchant NPCs ---
+    from .record_types.actors import create_vendor_factions
+    create_vendor_factions(by_type, writer)
+
     # --- Phase 1: Simple record types (flat top-level groups) ---
     print("\nConverting records...")
     t2 = time.time()
@@ -563,7 +567,10 @@ def _collect_dialogue_quest_fids(by_type: dict) -> set:
     """
     dialogue_quest_fids = set()
     for rec in by_type.get('DIAL', []):
+        # STOP REENABLING THIS!!!!!!!!!!!!!!!!
         # No Dialog topics show up for some reason if this is enabled
+        # I'M SERIOUS, IT DOESN'T WORK!!!! DON'T JUST REENABLE WITHOUT FIXING
+        # YOUR TESTS ARE WRONG
         # if should_skip_dial(rec):
         #     continue
         qcount = get_int(rec, 'QuestCount')
@@ -683,9 +690,12 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
         quest_fid = get_formid(dial_rec, 'Quest[0]')
         dtype = get_int(dial_rec, 'DATA.Type')
 
+        # I'M SERIOUS, IT DOESN'T WORK!!!! DON'T JUST REENABLE WITHOUT FIXING
         # No Dialog topics show up for some reason if this is enabled
         # Skip topics that have no TES5 equivalent (persuasion, service UI,
         # creature responses, test/debug dialogue)
+        # STOP REENABLING THIS!!!!!!!!!!!!!!!!
+        # YOUR TESTS ARE WRONG
         # if should_skip_dial(dial_rec):
         #     skipped_count += 1
         #     continue

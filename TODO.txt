@@ -75,6 +75,7 @@ Major Issues:
 	https://github.com/russo-2025/papyrus-compiler/releases/tag/2026.03.15 or
 	the original compiler. Both found in tools\papyrus-compiler
 	GUI needs a script conversion box
+	override gold
 			
 	12 - Nif converter fix broken conversion
 		Files:

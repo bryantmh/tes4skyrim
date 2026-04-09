@@ -3,6 +3,15 @@
     "files.exclude": {
         "**/__pycache__": true,
         "**/.pytest_cache": true,
+        "**/.papyrus": true,
+        "**/.ruff_cache": true,
+        "**/.claude": true
     },
-    "diff.exclude": ["**/*.exe"]
+    "files.watcherExclude": {
+        "**/output/**": true,
+        "**/export/**": true,
+        "**/temp/**": true,
+        "**/references/**": true,
+    },
+    "diffEditor.diffAlgorithm": "legacy",
 }
