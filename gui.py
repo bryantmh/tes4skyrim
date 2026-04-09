@@ -422,6 +422,13 @@ def gui_main():
             v.set(key in _DEFAULT_ON)
         _update_run_btn()
 
+    def _set_none():
+        for v in step_vars.values():
+            v.set(False)
+        _update_run_btn()
+
+    ttk.Button(sh, text="None", command=_set_none, width=5).pack(
+        side=tk.RIGHT, padx=(2, 0))
     ttk.Button(sh, text="Default", command=_set_default, width=7).pack(
         side=tk.RIGHT, padx=(2, 0))
     ttk.Button(sh, text="All", command=_set_all, width=4).pack(

@@ -67,17 +67,145 @@ def _npc_skills_dnam(rec: dict) -> bytes:
 
 
 def _npc_aidt(rec: dict) -> bytes:
-    """Build TES5 AIDT subrecord (12 bytes)."""
+    """Build TES5 AIDT subrecord (20 bytes).
+
+    TES5 layout:
+      00: Aggression U8  (0=Unaggressive,1=Aggressive,2=VeryAggressive,3=Frenzied)
+      01: Confidence U8  (0=Cowardly,1=Cautious,2=Average,3=Brave,4=Foolhardy)
+      02: Energy U8
+      03: Morality U8    (0=AnyCrime,1=ViolenceAgainstEnemies,2=PropertyCrimeOnly,3=NoCrime)
+      04: Mood U8        (0=Neutral)
+      05: Assistance U8  (0=HelpsNobody,1=HelpsAllies,2=HelpsFriendsAndAllies)
+      06: AggroRadiusBehavior U8
+      07: Unused U8
+      08: Warn U32
+      0C: Warn/Attack U32
+      10: Attack U32
+    """
     aggr = get_int(rec, 'AIDT.Aggression')
     conf = get_int(rec, 'AIDT.Confidence')
     energy = get_int(rec, 'AIDT.EnergyLevel', 50)
     resp = get_int(rec, 'AIDT.Responsibility')
+    # TES4 aggression → TES5 tier
     tes5_aggr = 2 if aggr >= 70 else (1 if aggr >= 40 else 0)
+    # TES4 confidence → TES5 tier
     tes5_conf = 0 if conf < 30 else (3 if conf >= 70 else 2)
+    # TES4 responsibility → TES5 morality (inverted: high resp = no crime)
+    tes5_moral = 3 if resp >= 80 else (2 if resp >= 50 else (1 if resp >= 30 else 0))
+    # Assistance: low responsibility → helps nobody
     tes5_assist = 1 if resp >= 30 else 0
-    services = get_int(rec, 'AIDT.Services')
-    return struct.pack('<BBBBBBHI', tes5_aggr, tes5_conf, energy,
-                       0, 4, tes5_assist, 0, services)
+
+    return struct.pack('<BBBBBB BB III',
+                       tes5_aggr, tes5_conf, energy,
+                       tes5_moral, 0, tes5_assist,  # mood=0 (Neutral)
+                       0, 0,                          # aggro radius, unused
+                       0, 0, 0)                       # warn, warn/attack, attack
+
+
+# ---------------------------------------------------------------------------
+#   Vendor Faction System
+# ---------------------------------------------------------------------------
+
+# TES4 AIDT.Services bitmask → Skyrim VendorItem KYWD FormIDs.
+# Training (bit 14), Recharge (bit 16), Repair (bit 17) have no vendor keyword
+# equivalent — Training is handled by CLAS, the others are TES4-only.
+_TES4_SERVICE_BIT_TO_SKYRIM_KEYWORDS = {
+    0:  [0x0008F958],                         # Weapons → VendorItemWeapon
+    1:  [0x0008F959],                         # Armor   → VendorItemArmor
+    2:  [0x0008F95B, 0x0008F95A],             # Clothing → VendorItemClothing + Jewelry
+    3:  [0x000937A2],                         # Books → VendorItemBook
+    4:  [0x0008CDEB, 0x000A0E56],             # Ingredients → VendorItemIngredient + FoodRaw
+    7:  [0x000914E9],                         # Lights → VendorItemClutter
+    8:  [0x000914E9],                         # Apparatus → VendorItemClutter (no TES5 apparatus)
+    10: [0x000914ED, 0x000914EA, 0x000914EC,
+         0x000914EE],                         # Misc → Gem + AnimalHide + OreIngot + Tool
+    11: [0x000937A5, 0x000A0E57,
+         0x000937A4],                         # Spells → SpellTome + Scroll + Staff
+    12: [0x000937A3, 0x000937A4],             # MagicItems → SoulGem + Staff
+    13: [0x0008CDEC, 0x0008CDED,
+         0x0008CDEA],                         # Potions → Potion + Poison + Food
+}
+
+# Module-level cache: service_bitmask → vendor FACT FormID (populated by Phase 0c)
+_vendor_faction_cache: dict[int, int] = {}
+
+
+def _keywords_for_services(services: int) -> list[int]:
+    """Return unique sorted Skyrim KYWD FormIDs for a TES4 services bitmask."""
+    kw_set = set()
+    for bit, kwds in _TES4_SERVICE_BIT_TO_SKYRIM_KEYWORDS.items():
+        if services & (1 << bit):
+            kw_set.update(kwds)
+    return sorted(kw_set)
+
+
+def create_vendor_factions(by_type: dict, writer) -> None:
+    """Phase 0c: Pre-scan NPC_/CREA for services and create vendor FACTs + FLSTs.
+
+    For each unique TES4 services bitmask combination:
+    1. Create an FLST containing the mapped Skyrim VendorItem keywords
+    2. Create a FACT with Vendor flag (0x4000) and VEND → that FLST
+
+    The NPC/CREA converters look up _vendor_faction_cache[services] to inject
+    a faction membership SNAM when writing the record.
+    """
+    _vendor_faction_cache.clear()
+
+    # Collect unique non-zero, non-training-only service bitmasks
+    # (Training alone = bit 14 has no vendor keyword, handled by CLAS)
+    unique_services = set()
+    for sig in ('NPC_', 'CREA'):
+        for rec in by_type.get(sig, []):
+            svc = get_int(rec, 'AIDT.Services')
+            # Mask out training/recharge/repair bits for vendor list purposes
+            vendor_bits = svc & ~((1 << 14) | (1 << 16) | (1 << 17))
+            if vendor_bits:
+                unique_services.add(vendor_bits)
+
+    if not unique_services:
+        return
+
+    print(f"  Creating vendor factions for {len(unique_services)} service combos...")
+
+    for svc_mask in sorted(unique_services):
+        kwds = _keywords_for_services(svc_mask)
+        if not kwds:
+            continue
+
+        # Also always include VendorNoSale (0x000FF9FB) — prevents selling quest items
+        kwds.append(0x000FF9FB)
+
+        # Create FLST
+        flst_fid = writer.alloc_formid()
+        flst_subs = pack_string_subrecord('EDID', f'TES4VendorList_{svc_mask:06X}')
+        for kw_fid in kwds:
+            flst_subs += pack_formid_subrecord('LNAM', kw_fid)
+        writer.add_record('FLST', pack_record('FLST', flst_fid, 0, flst_subs))
+
+        # Create FACT with vendor data
+        fact_fid = writer.alloc_formid()
+        fact_subs = pack_string_subrecord('EDID', f'TES4VendorFaction_{svc_mask:06X}')
+        fact_subs += pack_string_subrecord('FULL', f'TES4 Vendor ({svc_mask:06X})')
+        # DATA: Vendor (0x4000) + CanBeOwner (0x8000)
+        fact_subs += pack_subrecord('DATA', struct.pack('<I', 0xC000))
+        # CRVA — Crime values (20 bytes of mostly zeros, like vanilla)
+        fact_subs += pack_subrecord('CRVA', b'\x01\x01' + b'\x00' * 18)
+        # VEND — Vendor buy/sell list → FLST
+        fact_subs += pack_formid_subrecord('VEND', flst_fid)
+        # VENV — Vendor values: 24h availability, no stolen-only, not sell-buy-only
+        # StartHour(U16) + EndHour(U16) + Radius(U16) + Unused(2B) +
+        # OnlyBuyStolenItems(U8) + NotSellBuy(U8) + Unused(2B) = 12 bytes
+        fact_subs += pack_subrecord('VENV', struct.pack('<HHH BB BB BB',
+                                                        0, 24, 0, 0, 0, 0, 0, 0, 0))
+        writer.add_record('FACT', pack_record('FACT', fact_fid, 0, fact_subs))
+
+        _vendor_faction_cache[svc_mask] = fact_fid
+
+
+def get_vendor_faction_fid(services: int) -> int:
+    """Return the vendor FACT FormID for a TES4 services bitmask, or 0."""
+    vendor_bits = services & ~((1 << 14) | (1 << 16) | (1 << 17))
+    return _vendor_faction_cache.get(vendor_bits, 0)
 
 
 def _resolve_npc_race(rec: dict):
@@ -136,7 +264,13 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     for i in range(fc):
         fid = get_formid(rec, f'Faction[{i}].FormID')
         rank = get_int(rec, f'Faction[{i}].Rank')
-        subs += pack_subrecord('SNAM', struct.pack('<Ib', fid, rank))
+        subs += pack_subrecord('SNAM', struct.pack('<IbBBB', fid, rank, 0, 0, 0))
+
+    # SNAM — Vendor faction (if this NPC sells anything)
+    services = get_int(rec, 'AIDT.Services')
+    vendor_fid = get_vendor_faction_fid(services)
+    if vendor_fid:
+        subs += pack_subrecord('SNAM', struct.pack('<IbBBB', vendor_fid, 0, 0, 0, 0))
 
     # INAM — Death item
     inam = get_formid(rec, 'INAM.DeathItem')
@@ -272,33 +406,35 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     for i in range(fc):
         fid = get_formid(rec, f'Faction[{i}].FormID')
         rank = get_int(rec, f'Faction[{i}].Rank')
-        subs += pack_subrecord('SNAM', struct.pack('<Ib', fid, rank))
+        subs += pack_subrecord('SNAM', struct.pack('<IbBBB', fid, rank, 0, 0, 0))
+
+    # Vendor faction (if this creature sells anything)
+    crea_services = get_int(rec, 'AIDT.Services')
+    crea_vendor_fid = get_vendor_faction_fid(crea_services)
+    if crea_vendor_fid:
+        subs += pack_subrecord('SNAM', struct.pack('<IbBBB', crea_vendor_fid, 0, 0, 0, 0))
 
     # Death item
     inam = get_formid(rec, 'INAM.DeathItem')
     if inam:
         subs += pack_formid_subrecord('INAM', inam)
 
-    # Race — resolved from creature EditorID/name via CREA_RACE_PATTERNS
+    # VTCK — Voice type (must come before RNAM per TES5 NPC_ definition)
     full = get_str(rec, 'FULL')
     crea_race_fid, _src, _alt = resolve_creature_race(edid, full)
-    subs += pack_formid_subrecord('RNAM', crea_race_fid)
-
-    # VTCK — Voice type (same logic as NPC_: race → VTYP map)
-    # Creatures get CREA race patterns, resolve to race EditorID, then map
     tes4_flags = get_int(rec, 'ACBS.Flags')
     gender = 'Female' if (tes4_flags & 1) else 'Male'
-    # resolve_creature_race returns a Skyrim race FormID; we need the EditorID
-    # for VOICE_TYPE_MAP lookup. Use the original TES4 RNAM to get race EditorID.
     tes4_race_fid = get_formid(rec, 'RNAM.Race')
     race_edid = TES4_RACE_FID_TO_EDID.get(tes4_race_fid & 0x00FFFFFF, '')
     if not race_edid:
-        # Fallback: use the creature race source for voice mapping
         race_edid = _src if _src else 'Imperial'
     voice = (VOICE_TYPE_MAP.get((race_edid, gender))
              or VOICE_TYPE_MAP.get(('Imperial', gender), 0))
     if voice:
         subs += pack_formid_subrecord('VTCK', voice)
+
+    # RNAM — Race (after VTCK per TES5 NPC_ definition)
+    subs += pack_formid_subrecord('RNAM', crea_race_fid)
 
     # Items
     item_fids = []
@@ -317,13 +453,18 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
             subs += pack_uint32_subrecord('COCT', coct)
             subs += item_data
 
-    # AIDT
+    # AIDT — 20 bytes (TES5 format)
     aggr = get_int(rec, 'AIDT.Aggression')
     conf = get_int(rec, 'AIDT.Confidence')
-    services = get_int(rec, 'AIDT.Services')
+    resp = get_int(rec, 'AIDT.Responsibility')
     tes5_aggr = 2 if aggr >= 70 else (1 if aggr >= 40 else 0)
     tes5_conf = 0 if conf < 30 else (3 if conf >= 70 else 2)
-    aidt = struct.pack('<BBBBBBHI', tes5_aggr, tes5_conf, 50, 0, 4, 0, 0, services)
+    tes5_moral = 3 if resp >= 80 else (2 if resp >= 50 else (1 if resp >= 30 else 0))
+    tes5_assist = 1 if resp >= 30 else 0
+    aidt = struct.pack('<BBBBBB BB III',
+                       tes5_aggr, tes5_conf, 50,
+                       tes5_moral, 0, tes5_assist,
+                       0, 0, 0, 0, 0)
     subs += pack_subrecord('AIDT', aidt)
 
     # AI packages

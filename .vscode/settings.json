@@ -13,5 +13,5 @@
         "**/temp/**": true,
         "**/references/**": true,
     },
-    "diffEditor.diffAlgorithm": "legacy",
+    "diffEditor.diffAlgorithm": "legacy"
 }

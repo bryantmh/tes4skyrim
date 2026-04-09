@@ -547,13 +547,16 @@ def should_skip_dial(rec: dict) -> bool:
     if dtype in _DIAL_SKIP_TYPES:
         return True
 
-    edid = get_str(rec, 'EditorID', '')
-    if edid in _DIAL_SKIP_EDIDS:
-        return True
 
-    # Skip test/debug topics (Type=0 with Test* EditorID prefix)
-    if edid.startswith('Test') or edid.startswith('MarkNTest'):
-        return True
+    # Something about skipping the dialog at this stage causes infinite loading screens ingame
+    # Do NOT enable this without first discovering the cause
+    # edid = get_str(rec, 'EditorID', '')
+    # if edid in _DIAL_SKIP_EDIDS:
+    #     return True
+
+    # # Skip test/debug topics
+    # if edid.startswith('Test') or edid.startswith('MarkNTest'):
+    #     return True
 
     return False
 
@@ -629,8 +632,7 @@ def build_voice_type_ctda(vtyp_fid: int, is_or: bool = False) -> bytes:
                        0xFFFFFFFF)          # Unknown
 
 
-def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict,
-                                     all_vtyp_fids: list) -> bytes:
+def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict) -> bytes:
     """Build packed GetIsVoiceType CTDA subrecords for an INFO record.
 
     Strategy:
@@ -660,6 +662,14 @@ def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict,
         except (ValueError, struct.error):
             continue
 
+    # No NPC-specific targets → generic line, no voice type injection.
+    # Generic lines have no GetIsID so they fire for any NPC — adding
+    # GetIsVoiceType for ALL voice types would add 20+ conditions per INFO,
+    # bloat the ESM, and still block NPCs with unrecognised voice types.
+    # Skyrim's bark/dialogue engine handles generic lines without conditions.
+    if not npc_fids:
+        return b''
+
     # Resolve NPC FormIDs to voice types
     vtyp_fids = set()
     for npc_fid in npc_fids:
@@ -670,10 +680,6 @@ def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict,
         vtyp = npc_to_vtyp.get(remapped, 0) or npc_to_vtyp.get(npc_fid, 0)
         if vtyp:
             vtyp_fids.add(vtyp)
-
-    # If no NPC-specific voice types found, use ALL voice types (generic line)
-    if not vtyp_fids:
-        vtyp_fids = set(all_vtyp_fids)
 
     if not vtyp_fids:
         return b''

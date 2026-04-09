@@ -567,12 +567,8 @@ def _collect_dialogue_quest_fids(by_type: dict) -> set:
     """
     dialogue_quest_fids = set()
     for rec in by_type.get('DIAL', []):
-        # STOP REENABLING THIS!!!!!!!!!!!!!!!!
-        # No Dialog topics show up for some reason if this is enabled
-        # I'M SERIOUS, IT DOESN'T WORK!!!! DON'T JUST REENABLE WITHOUT FIXING
-        # YOUR TESTS ARE WRONG
-        # if should_skip_dial(rec):
-        #     continue
+        if should_skip_dial(rec):
+            continue
         qcount = get_int(rec, 'QuestCount')
         for i in range(qcount):
             quest_fid = get_formid(rec, f'Quest[{i}]')
@@ -647,9 +643,6 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
     if not dials:
         return
 
-    # Collect all voice type FormIDs for generic lines
-    all_vtyp_fids = sorted(set(VOICE_TYPE_MAP.values()))
-
     # Group INFOs by parent DIAL
     info_by_dial = defaultdict(list)
     for rec in infos:
@@ -657,7 +650,7 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
         info_by_dial[dial_fid].append(rec)
 
     print(f"  Building DIAL hierarchy ({len(dials)} topics, {len(infos)} infos, "
-          f"{len(npc_to_vtyp)} NPC->VTYP mappings, {len(all_vtyp_fids)} voice types)...")
+          f"{len(npc_to_vtyp)} NPC->VTYP mappings)...")
 
     # Create a catch-all dialogue quest for orphan DIALs (no TES4 quest).
     # ALL Skyrim DIALs MUST have QNAM — engine ignores topics without one.
@@ -690,15 +683,9 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
         quest_fid = get_formid(dial_rec, 'Quest[0]')
         dtype = get_int(dial_rec, 'DATA.Type')
 
-        # I'M SERIOUS, IT DOESN'T WORK!!!! DON'T JUST REENABLE WITHOUT FIXING
-        # No Dialog topics show up for some reason if this is enabled
-        # Skip topics that have no TES5 equivalent (persuasion, service UI,
-        # creature responses, test/debug dialogue)
-        # STOP REENABLING THIS!!!!!!!!!!!!!!!!
-        # YOUR TESTS ARE WRONG
-        # if should_skip_dial(dial_rec):
-        #     skipped_count += 1
-        #     continue
+        if should_skip_dial(dial_rec):
+            skipped_count += 1
+            continue
 
         # Assign orphan DIALs (no quest) to the catch-all quest
         if not quest_fid:
@@ -728,7 +715,7 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
             for info_rec in info_by_dial.get(dial_fid, []):
                 try:
                     voice_ctdas = build_voice_type_ctdas_for_info(
-                        info_rec, npc_to_vtyp, all_vtyp_fids)
+                        info_rec, npc_to_vtyp)
                     info_bytes = convert_INFO(info_rec, voice_type_ctdas=voice_ctdas,
                                               is_bark=bark)
                     topic_children += info_bytes

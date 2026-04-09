@@ -108,6 +108,8 @@ Major Issues:
 
 Minor Issues:
 
+		Add cancel button to gui
+
 	1 - Fix face and body bug
 
 	2 - Update OBND based on meshes instead of guessing

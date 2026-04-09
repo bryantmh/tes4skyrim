@@ -8,7 +8,7 @@ Pipeline steps (each runnable via --<step>-only):
   meshes          Convert NIFs and copy textures
   speedtrees      Convert SPT files
   sounds          Convert sound files to XWM
-  scripts         Convert TES4 scripts to Papyrus .psc source
+  scripts         Convert TES4 scripts to Papyrus .psc and compile to .pex
   lod             Generate object & terrain LOD meshes
   modify-body-meshes  Add greaves partition to character body NIFs
 
@@ -352,6 +352,101 @@ def phase_scripts(file_name: str, config: dict, output_dir: str = None):
     errs = stats['scpt_err'] + stats['info_err'] + stats['qust_err']
     return errs == 0
 
+def phase_compile(file_name: str, config: dict, output_dir: str = None):
+    """Compile converted Papyrus .psc scripts to .pex using papyrus compiler.
+
+    Attempts batch compilation first.  If the batch fails (e.g. parser error
+    in one script stops the whole run), falls back to per-file compilation so
+    valid scripts still produce .pex output.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    script_src = out_root / file_name / "scripts" / "source"
+    script_out = out_root / file_name / "scripts"
+
+    if not script_src.is_dir() or not any(script_src.glob("*.psc")):
+        print(f"[{file_name}] No .psc scripts found, skipping compile")
+        return False
+
+    # Find the compiler
+    compiler = SCRIPT_DIR / "tools" / "papyrus-compiler" / "papyrus.exe"
+    if not compiler.is_file():
+        print(f"[{file_name}] ERROR: papyrus compiler not found at {compiler}")
+        return False
+
+    # Find Skyrim source headers (Data\Source\Scripts has native type defs)
+    skyrim_headers = _find_skyrim_source_scripts()
+    if not skyrim_headers:
+        print(f"[{file_name}] ERROR: Skyrim Papyrus source headers not found")
+        print("  Expected at: <Skyrim SE>\\Data\\Source\\Scripts\\")
+        return False
+
+    script_out.mkdir(parents=True, exist_ok=True)
+
+    psc_files = sorted(script_src.glob("*.psc"))
+    psc_count = len(psc_files)
+    print(f"[{file_name}] Compiling {psc_count} Papyrus scripts...")
+
+    workers = max(1, (os.cpu_count() or 4) - 1)
+    ok_count = 0
+    err_count = 0
+    err_samples: list = []
+
+    def _compile_one(psc: Path) -> tuple:
+        pex_name = psc.stem + ".pex"
+        pex_path = script_out / pex_name
+        c = [
+            str(compiler), "compile",
+            "-i", str(psc),
+            "-o", str(script_out),
+            "-h", str(skyrim_headers),
+            "-h", str(script_src),   # other scripts as headers
+        ]
+        try:
+            r = subprocess.run(c, capture_output=True, text=True,
+                               timeout=60, cwd=str(SCRIPT_DIR))
+            if r.returncode == 0 and pex_path.is_file():
+                return (True, "")
+            # Extract first error line
+            combined = (r.stdout or "") + (r.stderr or "")
+            for line in combined.splitlines():
+                if "error" in line.lower():
+                    return (False, line.strip())
+            return (False, f"exit code {r.returncode}")
+        except Exception as e:
+            return (False, str(e))
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_compile_one, psc): psc for psc in psc_files}
+        for fut in as_completed(futures):
+            success_f, msg = fut.result()
+            if success_f:
+                ok_count += 1
+            else:
+                err_count += 1
+                if len(err_samples) < 10:
+                    err_samples.append(f"  {futures[fut].name}: {msg}")
+
+    print(f"[{file_name}] Compilation: {ok_count}/{psc_count} succeeded, "
+          f"{err_count} failed")
+    for sample in err_samples:
+        print(sample)
+    if err_count > 10:
+        print(f"  ... and {err_count - 10} more failures")
+    return ok_count > 0
+
+
+def _find_skyrim_source_scripts() -> str:
+    """Find Skyrim Papyrus source scripts directory (contains Debug.psc etc.)."""
+    # Try from game path
+    sse_data = find_game_path("skyrimse")
+    if sse_data:
+        source_dir = Path(sse_data) / "Source" / "Scripts"
+        if source_dir.is_dir() and (source_dir / "Debug.psc").is_file():
+            return str(source_dir)
+    return ""
+
 
 # ===========================================================================
 # Phase 8: LOD generation
@@ -563,6 +658,8 @@ def main():
         print("=" * 54)
         for fn in order:
             if not phase_scripts(fn, config, output_dir=output_dir):
+                success = False
+            if success and not phase_compile(fn, config, output_dir=output_dir):
                 success = False
         print()
 
