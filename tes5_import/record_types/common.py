@@ -29,14 +29,6 @@ def _prefix_path(path: str) -> str:
     return p
 
 
-def _add_model(subs_list: list, rec: dict, key: str = 'Model.MODL'):
-    """Add model subrecords (MODL + MODT)."""
-    path = get_str(rec, key)
-    if path:
-        path = _prefix_path(path)
-        subs_list.append(pack_string_subrecord('MODL', path))
-
-
 def _common_header_subs(rec: dict, need_obnd: bool = True, need_full: bool = True,
                         obnd_sig: str = '') -> bytes:
     """Build common leading subrecords: EDID, OBND, FULL.

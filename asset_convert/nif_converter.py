@@ -27,7 +27,6 @@ import logging as _logging
 import os
 import shutil
 import struct
-import time
 import math
 from pathlib import Path
 
@@ -41,7 +40,6 @@ from .skyrim_overrides import (
     ARMOR_GND_INV_MARKER_ROT_Z,
     ARMOR_GND_INV_MARKER_ZOOM,
     ARMOR_PIECE_OFFSETS,
-    ArmorOffsetConfig,
     BSX_FLAGS_ANIMATED,
     BSX_FLAGS_STATIC,
     OBLIVION_TO_SKYRIM_BONE_MAP,
@@ -1428,18 +1426,28 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
                     for pi in range(ed.num_positions):
                         src_pos = ed.positions[pi]
                         dst_pos = frn.positions[pi]
-                        dst_pos.offset.x = src_pos.offset.x
-                        dst_pos.offset.y = src_pos.offset.y
-                        # Oblivion furniture marker Z is stored relative to the
-                        # marker's own frame (top-of-chair origin → negative = below
-                        # origin).  Skyrim expects Z measured upward from floor.
-                        # Negating matches empirical data: |OB Z| ≈ Skyrim Z ≈ 33-34.
+                        # --- Sitting position from approach position ---
+                        # Oblivion BSFurnitureMarker stores the APPROACH position:
+                        # where the NPC stands ~50 units away before the sit animation.
+                        # Skyrim BSFurnitureMarkerNode stores the actual SITTING position.
+                        # The approach is always offset in the direction BEHIND the NPC
+                        # (opposite to their facing direction).
+                        # Facing direction in OB: ori=0→+Y, ori=π/2→+X (sin/cos of ori).
+                        # To recover seat: project out the component in the facing direction.
+                        theta = src_pos.orientation / 1000.0  # milliradians → radians
+                        fx = math.sin(theta)  # facing X component
+                        fy = math.cos(theta)  # facing Y component
+                        ax = src_pos.offset.x
+                        ay = src_pos.offset.y
+                        # parallel component of approach in facing direction = approach offset
+                        parallel = ax * fx + ay * fy
+                        dst_pos.offset.x = ax - parallel * fx  # remove offset, keep perp
+                        dst_pos.offset.y = ay - parallel * fy
+                        # Z: negate (OB stores negative = below origin; SK = seat height above origin)
                         dst_pos.offset.z = -src_pos.offset.z
-                        # should be slightly lower and further back
-                        # Oblivion orientation is the direction the furniture "faces";
-                        # in Skyrim the heading is the direction the NPC FACES when
-                        # seated, which is 180° (~π rad) offset from the Oblivion value.
-                        dst_pos.heading = src_pos.orientation / 1000.0 + math.pi
+                        # Heading: ori is the approach direction (NPC faces away, so +π).
+                        # Empirically confirmed: ori/1000 + π gives correct NPC orientation.
+                        dst_pos.heading = theta + math.pi
                         # position_ref → animation_type + entry_properties
                         ref = src_pos.position_ref_1
                         if 1 <= ref <= 10:

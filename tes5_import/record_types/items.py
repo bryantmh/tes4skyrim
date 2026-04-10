@@ -1,9 +1,15 @@
 """Item/object converters: STAT, ACTI, MISC, KEYM, DOOR, FLOR, FURN, GRAS, TREE, LIGH, SLGM, ANIO, CONT."""
 
 import struct
+from typing import Set
+
+# Populated by import_main before Phase 1: base FormIDs (8-char hex) that are
+# referenced only by VWD (Visible When Distant) REFRs in Oblivion.
+# In TES4, VWD is indicated by REFR group membership (group_type=10).
+# In TES5, VWD must be a flag on the base STAT record (0x8000).
+VWD_STAT_FIDS: Set[str] = set()
 
 from .common import (
-    _add_model,
     _common_header_subs,
     _prefix_path,
     _simple_object,
@@ -23,20 +29,14 @@ from .common import (
 
 
 def convert_STAT(rec: dict) -> bytes:
-    """STAT → STAT (add OBND)."""
+    flags = get_int(rec, 'RecordFlags')
+    if rec.get('FormID', '') in VWD_STAT_FIDS:
+        flags |= 0x8000  # IsVisibleWhenDistant
     subs = _common_header_subs(rec, need_full=False, obnd_sig='STAT')
-    _add_model([subs], rec)
-    # Collect model as bytes
-    model_path = get_str(rec, 'Model.MODL')
-    model_subs = b''
-    if model_path:
-        model_subs = pack_string_subrecord('MODL', _prefix_path(model_path))
-    return pack_record('STAT', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'),
-                       subs + model_subs)
-
-
-def convert_STAT_v2(rec: dict) -> bytes:
-    return _simple_object(rec, 'STAT', has_full=False)
+    path = get_str(rec, 'Model.MODL')
+    if path:
+        subs += pack_string_subrecord('MODL', _prefix_path(path))
+    return pack_record('STAT', get_formid(rec, 'FormID'), flags, subs)
 
 
 def convert_ACTI(rec: dict) -> bytes:

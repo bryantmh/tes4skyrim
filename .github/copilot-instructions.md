@@ -759,6 +759,21 @@ VTEX[i]=FormID
   - ARMO=(-15,-10,0,15,10,30), NPC_/CREA=(-12,-12,0,12,12,60), LIGH=(-6,-6,0,6,6,20)
   - Other types get (-5,-5,0,5,5,5) as fallback
 
+### WRLD World Bounds (NAM0/NAM9)
+- NAM0 (bounds min) and NAM9 (bounds max) store X, Y as raw float world-unit values (same scale as TES4)
+- xEdit **displays** them scaled by `1/4096` (cell units) but the raw file value is NOT divided
+- TES4 exports `NAM0.MinX=-262144.0` → write exactly -262144.0 to TES5 file (do NOT divide by 4096)
+- If divided: NAM0=-64.0 looks like valid cell coords but is actually 64 times smaller than needed → SSELodGen won't generate world map correctly
+
+### Terrain LOD (SSELodGen) — data chain
+- LAND BTXT/ATXT subrecords contain direct LTEX FormIDs (NOT indices into VTEX array)
+- SSELodGen uses: BTXT.Texture(LTEX) → LTEX.TNAM(TXST) → TXST.TX00(path) → Data\Textures\{path}
+- VTEX subrecord is a supplementary lookup array; most Oblivion LAND records don't have it (29/31823)
+  - TES5 LAND VTEX format: packed array of uint32 LTEX FormIDs, one subrecord total (not per-quadrant)
+  - Null slots (zero FormID) are valid and common — NOT a bug
+- Landscape textures extracted from BSA are DXT1 BC1 512x512 — fully supported by SSELodGen
+- If terrain LOD appears purple after correct data install: ensure OLD LOD tiles are deleted before regenerating
+
 ## Skyblivion Analysis — Conversion Best Practices
 
 Analysis of ~140 Skyblivion/Skywind conversion scripts in `external/Skyblivion Conversion Edit Scripts/`. These findings are incorporated into our import script.

@@ -30,7 +30,7 @@ from tes5_import.record_types.items import (
     convert_DOOR,
     convert_LIGH,
     convert_MISC,
-    convert_STAT_v2,
+    convert_STAT,
 )
 from tes5_import.record_types.world import (
     convert_CELL,
@@ -233,7 +233,7 @@ class TestConverters:
     def test_stat(self):
         rec = {'Signature': 'STAT', 'FormID': '00012345', 'RecordFlags': '0',
                'EditorID': 'TestRock', 'Model.MODL': 'Rocks\\Rock01.nif'}
-        result = convert_STAT_v2(rec)
+        result = convert_STAT(rec)
         self._check_record(result, 'STAT')
         assert self._has_subrecord(result, 'EDID')
         assert self._has_subrecord(result, 'OBND')
@@ -620,8 +620,8 @@ class TestIntegration:
         # Add a STAT
         stat_rec = {'Signature': 'STAT', 'FormID': '00012345', 'RecordFlags': '0',
                     'EditorID': 'TestRock'}
-        from tes5_import.record_types.items import convert_STAT_v2
-        stat_bytes = convert_STAT_v2(stat_rec)
+        from tes5_import.record_types.items import convert_STAT
+        stat_bytes = convert_STAT(stat_rec)
         w.add_record('STAT', stat_bytes)
 
         # Add a GLOB

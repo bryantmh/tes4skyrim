@@ -186,7 +186,9 @@ def convert_WRLD(rec: dict) -> bytes:
     # DNAM — land/water defaults
     subs += pack_subrecord('DNAM', struct.pack('<ff', -2048.0, 0.0))
 
-    # Map dimensions (MNAM) — after DNAM per xEdit order
+    # Map dimensions (MNAM) — after DNAM per xEdit order.
+    # TES5 MNAM = 28 bytes: UsableDimX(i) + UsableDimY(i) + NWCellX(h) + NWCellY(h)
+    # + SECellX(h) + SECellY(h) + CameraMinHeight(f) + CameraMaxHeight(f) + InitialPitch(f)
     mnam_str = get_str(rec, 'MNAM.UsableDimX')
     if mnam_str:
         dx = get_int(rec, 'MNAM.UsableDimX')
@@ -213,16 +215,16 @@ def convert_WRLD(rec: dict) -> bytes:
         data_flags = (data_flags & ~0x10) | 0x08
     subs += pack_uint8_subrecord('DATA', data_flags)
 
-    # NAM0 — World Object Bounds Min (X, Y as floats scaled by 1/wbCellSizeFactor=1/4096)
+    # NAM0 — World Object Bounds Min (X, Y as raw world-unit floats).
     # NAM9 — World Object Bounds Max. Required by SSELodGen for world map generation.
-    # TES4 exports raw coordinates — divide by 4096 to get Skyrim's cell-unit scale.
+    # xEdit displays these values scaled by 1/4096 (cells), but the file stores raw
+    # world units directly. TES4 and TES5 use the same world-unit scale, so write as-is.
     n0x_raw = get_float(rec, 'NAM0.MinX')
     n0y_raw = get_float(rec, 'NAM0.MinY')
     n9x_raw = get_float(rec, 'NAM9.MaxX')
     n9y_raw = get_float(rec, 'NAM9.MaxY')
-    CELL_SCALE = 4096.0
-    subs += pack_subrecord('NAM0', struct.pack('<ff', n0x_raw / CELL_SCALE, n0y_raw / CELL_SCALE))
-    subs += pack_subrecord('NAM9', struct.pack('<ff', n9x_raw / CELL_SCALE, n9y_raw / CELL_SCALE))
+    subs += pack_subrecord('NAM0', struct.pack('<ff', n0x_raw, n0y_raw))
+    subs += pack_subrecord('NAM9', struct.pack('<ff', n9x_raw, n9y_raw))
 
     return pack_record('WRLD', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
@@ -310,8 +312,6 @@ def convert_REFR(rec: dict) -> bytes:
     subs += pack_subrecord('DATA', struct.pack('<ffffff', px, py, pz, rx, ry, rz))
 
     flags = get_int(rec, 'RecordFlags')
-    if get_int(rec, 'VWD') == 1:
-        flags |= 0x8000  # Visible When Distant — required for SSELodGen object LOD
     return pack_record('REFR', get_formid(rec, 'FormID'), flags, subs)
 
 
@@ -440,7 +440,16 @@ def convert_LAND(rec: dict) -> bytes:
                     vtxt_data += struct.pack('<HHf', vpos, 0, opacity)
                 subs += pack_subrecord('VTXT', bytes(vtxt_data))
 
-    # VTEX does NOT exist in TES5 — skip it entirely
+    # VTEX — array of LTEX FormIDs used by this cell's landscape layers.
+    # Required by SSELodGen for terrain LOD texture blending.
+    # Format: packed array of uint32 FormIDs (same as TES4).
+    vtex_count = get_int(rec, 'VTEXCount')
+    if vtex_count:
+        vtex_data = bytearray()
+        for vi in range(vtex_count):
+            fid = get_formid(rec, f'VTEX[{vi}]')
+            vtex_data += struct.pack('<I', fid)
+        subs += pack_subrecord('VTEX', bytes(vtex_data))
 
     flags = get_int(rec, 'RecordFlags')
     return pack_record('LAND', get_formid(rec, 'FormID'), flags, subs)

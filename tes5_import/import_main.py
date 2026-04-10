@@ -155,6 +155,19 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     from .record_types.actors import create_vendor_factions
     create_vendor_factions(by_type, writer)
 
+    # --- Phase 0d: Pre-scan REFRs to find VWD base objects ---
+    # In TES4, VWD is indicated by REFR placement in group_type=10 (VWD child group),
+    # which the exporter records as RecordFlags=0x8000 on the REFR.
+    # In TES5, VWD must be a flag on the base STAT record itself.
+    from .record_types.items import VWD_STAT_FIDS
+    _refr_vwd_flag = 0x8000
+    for _refr in by_type.get('REFR', []):
+        if get_int(_refr, 'RecordFlags') & _refr_vwd_flag:
+            _base_fid = _refr.get('NAME', '')
+            if _base_fid:
+                VWD_STAT_FIDS.add(_base_fid)
+    print(f"  VWD base objects found: {len(VWD_STAT_FIDS)}")
+
     # --- Phase 1: Simple record types (flat top-level groups) ---
     print("\nConverting records...")
     t2 = time.time()

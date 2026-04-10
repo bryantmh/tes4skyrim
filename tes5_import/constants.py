@@ -190,7 +190,6 @@ def _init_dispatch():
         convert_INFO,
         convert_PACK,
         convert_QUST,
-        convert_SOUN,
         convert_WTHR,
     )
     from .record_types.equipment import (
@@ -218,7 +217,7 @@ def _init_dispatch():
         convert_LIGH,
         convert_MISC,
         convert_SLGM,
-        convert_STAT_v2,
+        convert_STAT,
         convert_TREE,
     )
     from .record_types.world import (
@@ -228,7 +227,6 @@ def _init_dispatch():
         convert_EFSH,
         convert_LAND,
         convert_LSCR,
-        convert_LTEX,
         convert_REFR,
         convert_REGN,
         convert_WATR,
@@ -238,7 +236,7 @@ def _init_dispatch():
 
     IMPORT_DISPATCH.update({
         # Simple objects
-        'STAT': convert_STAT_v2,
+        'STAT': convert_STAT,
         'ACTI': convert_ACTI,
         'MISC': convert_MISC,
         'KEYM': convert_KEYM,
@@ -251,7 +249,7 @@ def _init_dispatch():
         'SLGM': convert_SLGM,
         'ANIO': convert_ANIO,
         'CONT': convert_CONT,
-        'SBSP': convert_STAT_v2,
+        'SBSP': convert_STAT,
         # Equipment
         'WEAP': convert_WEAP,
         'ARMO': convert_ARMO,
@@ -324,7 +322,6 @@ def _init_dispatch():
         'REGN',   # Region system differs
         'EYES',   # Do not convert — NPCs map to Skyrim head parts
         'HAIR',   # Do not convert — NPCs map to Skyrim head parts
-        #'QUST',   # Crashes on startup. Will implement later, Check to see if still crashes
         'PACK',   # Causes startup to not finish. Will implement later.
     })
 
