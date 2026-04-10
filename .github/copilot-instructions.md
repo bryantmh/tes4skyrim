@@ -32,7 +32,8 @@ Convert TES4 (Oblivion) master/plugin files to TES5 (Skyrim SE) format. The pipe
   Avoid making temp files with targeted outputs, and instead make and use reusable and  tools/ scripts with general outputs and arguments. This way you can reuse the same tools for future investigations and avoid cluttering the temp folder with files that are only useful for a single test.
   Utilize Multi-threading where possible!
   DON'T worry about backwards compatibility. Remove old code if it is no longer going to be used.
-  ENSURE that files do NOT go over approximately 1000 lines. If a file is getting too long, break it up into multiple files with clear responsibilities.
+  Attempt to ensure that files do NOT go over approximately 1000 lines if at all possible. If a file is getting too long, break it up into multiple files with clear responsibilities.
+  If I ask you to perform a task, and you don't see the problem, it is NOT because my test data is stale. There is always a REAL problem you need to solve.
 
 **Assistant Constraint — No Git Stash**:
 - The assistant MUST NOT run `git stash` or `git stash pop` in this repository.

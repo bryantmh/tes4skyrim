@@ -339,7 +339,7 @@ def phase_sounds(file_name: str, config: dict, output_dir: str = None):
 
 def phase_scripts(file_name: str, config: dict, output_dir: str = None):
     """Convert TES4 scripts to Papyrus .psc source files."""
-    from tools.oblivion_to_papyrus import convert_all_scripts
+    from script_convert.pipeline import convert_all_scripts
 
     export_subdir = str(SCRIPT_DIR / "export" / file_name)
     if not os.path.isdir(export_subdir):

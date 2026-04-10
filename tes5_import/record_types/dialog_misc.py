@@ -1,14 +1,9 @@
 """Dialog/misc converters: QUST, DIAL, INFO, SOUN, DLBR, DLVW."""
 
 import struct
-import sys
-from pathlib import Path
 
-# Import VMAD builders from the script converter
-_TOOLS_DIR = str(Path(__file__).resolve().parent.parent.parent / 'tools')
-if _TOOLS_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_DIR)
-from oblivion_to_papyrus import build_vmad_quest_fragments, build_vmad_info_fragment
+# VMAD builders imported lazily to avoid circular import
+# (script_convert → tes5_import.text_reader → tes5_import.constants → here)
 
 from ..text_reader import get_formid_index_offset
 from .common import (
@@ -161,6 +156,7 @@ def convert_QUST(rec: dict, dialogue_quest_fids: set = None) -> bytes:
             if get_str(rec, f'Stage[{i}].ResultScript'):
                 stage_frags.append((stage_idx, 0))
     if stage_frags and edid:
+        from script_convert.pipeline import build_vmad_quest_fragments
         vmad = build_vmad_quest_fragments(edid, stage_frags)
         subs += pack_subrecord('VMAD', vmad)
 
@@ -376,6 +372,7 @@ def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
     info_fid = get_str(rec, 'FormID') or ''
     result_script = get_str(rec, 'ResultScript')
     if result_script and result_script.strip() and info_fid:
+        from script_convert.pipeline import build_vmad_info_fragment
         vmad = build_vmad_info_fragment(info_fid)
         subs += pack_subrecord('VMAD', vmad)
 

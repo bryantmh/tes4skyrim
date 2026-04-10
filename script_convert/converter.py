@@ -1,1004 +1,16 @@
-#!/usr/bin/env python3
-"""
-Oblivion Script -> Papyrus Converter
+"""ScriptConverter class — core TES4→Papyrus line-by-line conversion."""
 
-Converts all TES4 scripts (SCPT, INFO ResultScript, QUST stage scripts) to
-compilable Papyrus .psc source files.
-
-Usage:
-    python tools/oblivion_to_papyrus.py export/Oblivion.esm -o output/oblivion.esm/scripts/source
-
-Pipeline integration:
-    Called from tes5_import or convert.py after export phase.
-"""
-
-import argparse
-import os
 import re
-import struct
-import sys
-from pathlib import Path
 from typing import Optional
 
-# ---------------------------------------------------------------------------
-# Add project root to path for imports
-# ---------------------------------------------------------------------------
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+from script_convert.constants import (
+    BLOCK_MAP, TYPE_MAP, ACTOR_VALUE_MAP, KNOWN_GLOBALS,
+    _PAPYRUS_RESERVED, FUNCTION_MAP, _BARE_BOOL_FUNCTIONS,
+    _ACTOR_ONLY_FUNCTIONS, _OBJREF_SHARED_FUNCTIONS,
+    _safe_property_name, _canonical_global, _record_type_to_papyrus,
+)
+from script_convert.cross_ref import CrossRefGraph
 
-from tes5_import.text_reader import parse_export_file, unescape_value
-
-# ===========================================================================
-# Constants
-# ===========================================================================
-
-# Oblivion block type -> Papyrus event mapping
-# (event_signature, end_keyword)
-BLOCK_MAP = {
-    'gamemode':           ('Event OnUpdate()', 'EndEvent'),
-    'menumode':           ('Event OnUpdate()', 'EndEvent'),
-    'onactivate':         ('Event OnActivate(ObjectReference akActionRef)', 'EndEvent'),
-    'onadd':              ('Event OnContainerChanged(ObjectReference akNewContainer, ObjectReference akOldContainer)', 'EndEvent'),
-    'ondrop':             ('Event OnContainerChanged(ObjectReference akNewContainer, ObjectReference akOldContainer)', 'EndEvent'),
-    'onequip':            ('Event OnEquipped(Actor akActor)', 'EndEvent'),
-    'onunequip':          ('Event OnUnequipped(Actor akActor)', 'EndEvent'),
-    'ondeath':            ('Event OnDeath(Actor akKiller)', 'EndEvent'),
-    'onhit':              ('Event OnHit(ObjectReference akAggressor, Form akSource, Projectile akProjectile, bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)', 'EndEvent'),
-    'onhitwith':          ('Event OnHit(ObjectReference akAggressor, Form akSource, Projectile akProjectile, bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)', 'EndEvent'),
-    'onload':             ('Event OnLoad()', 'EndEvent'),
-    'onreset':            ('Event OnReset()', 'EndEvent'),
-    'onsell':             ('Event OnSell(Actor akSeller)', 'EndEvent'),
-    'ontrigger':          ('Event OnTriggerEnter(ObjectReference akActionRef)', 'EndEvent'),
-    'ontriggerenter':     ('Event OnTriggerEnter(ObjectReference akActionRef)', 'EndEvent'),
-    'ontriggerleave':     ('Event OnTriggerLeave(ObjectReference akActionRef)', 'EndEvent'),
-    'onmagiceffectapply': ('Event OnMagicEffectApply(ObjectReference akCaster, MagicEffect akEffect)', 'EndEvent'),
-    'oninit':             ('Event OnInit()', 'EndEvent'),
-    'onpackagestart':     ('Event OnPackageStart(Package akNewPackage)', 'EndEvent'),
-    'onpackagedone':      ('Event OnPackageEnd(Package akOldPackage)', 'EndEvent'),
-    'onpackageend':       ('Event OnPackageEnd(Package akOldPackage)', 'EndEvent'),
-    'onpackagechange':    ('Event OnPackageChange(Package akOldPackage)', 'EndEvent'),
-    'ontriggeractor':     ('Event OnTriggerEnter(ObjectReference akActionRef)', 'EndEvent'),
-    'ontriggermob':       ('Event OnTriggerEnter(ObjectReference akActionRef)', 'EndEvent'),
-    'onmagiceffecthit':   ('Event OnMagicEffectApply(ObjectReference akCaster, MagicEffect akEffect)', 'EndEvent'),
-    'onactorequip':       ('Event OnEquipped(Actor akActor)', 'EndEvent'),
-    'onalarm':            (';TODO: No Papyrus equivalent for OnAlarm', ''),
-    'onstartcombat':      ('Event OnCombatStateChanged(Actor akTarget, int aeCombatState)', 'EndEvent'),
-    'scripteffectstart':  ('Event OnEffectStart(MagicEffect akBaseEffect, Float afMagnitude, Float afDuration)', 'EndEvent'),
-    'scripteffectfinish': ('Event OnEffectFinish(MagicEffect akBaseEffect)', 'EndEvent'),
-    'scripteffectupdate': ('Event OnUpdate()', 'EndEvent'),
-}
-
-# Oblivion type -> Papyrus type mapping
-TYPE_MAP = {
-    'short': 'Int',
-    'long':  'Int',
-    'int':   'Int',
-    'float': 'Float',
-    'ref':   'ObjectReference',
-    'reference': 'ObjectReference',
-}
-
-# Actor value name mapping (TES4 -> TES5)
-ACTOR_VALUE_MAP = {
-    'strength':     'UnarmedDamage',
-    'intelligence': 'Magicka',
-    'willpower':    'MagickaRate',
-    'agility':      'SpeedMult',
-    'speed':        'SpeedMult',
-    'endurance':    'HealRate',
-    'personality':  'Speechcraft',
-    'luck':         'LuckModifier',
-    'armorer':      'Smithing',
-    'athletics':    'Stamina',
-    'blade':        'OneHanded',
-    'block':        'Block',
-    'blunt':        'TwoHanded',
-    'handtohand':   'UnarmedDamage',
-    'heavyarmor':   'HeavyArmor',
-    'alchemy':      'Alchemy',
-    'alteration':   'Alteration',
-    'conjuration':  'Conjuration',
-    'destruction':  'Destruction',
-    'illusion':     'Illusion',
-    'mysticism':    'Alteration',
-    'restoration':  'Restoration',
-    'acrobatics':   'SpeedMult',
-    'lightarmor':   'LightArmor',
-    'marksman':     'Marksman',
-    'mercantile':   'Speechcraft',
-    'security':     'Lockpicking',
-    'sneak':        'Sneak',
-    'speechcraft':  'Speechcraft',
-    'health':       'Health',
-    'magicka':      'Magicka',
-    'fatigue':      'Stamina',
-    'encumbrance':  'CarryWeight',
-    'invisibility': 'Invisibility',
-    'chameleon':    'Invisibility',
-    'nighteye':     'NightEye',
-    'waterbreathing': 'WaterBreathing',
-    'waterwalking': 'WaterWalking',
-    'paralysis':    'Paralysis',
-    'detectlife':   'DetectLifeRange',
-    'silencearea':  'MuteModifier',
-    'resistfire':   'FireResist',
-    'resistfrost':  'FrostResist',
-    'resistshock':  'ElectricResist',
-    'resistmagic':  'MagicResist',
-    'resistdisease':'DiseaseResist',
-    'resistpoison': 'PoisonResist',
-    'resistnormalweapons': 'DamageResist',
-    'aggression':   'Aggression',
-    'confidence':   'Confidence',
-    'energy':       'Magicka',
-    'responsibility': 'Morality',
-}
-
-# TES4 global variables that exist in Skyrim — these need GlobalVariable property access
-KNOWN_GLOBALS = {
-    'gamehour', 'gamedayspassed', 'gameday', 'gamemonth', 'gameyear',
-    'timescale',
-}
-
-# Papyrus reserved words — cannot be used as property names
-_PAPYRUS_RESERVED = {
-    'self', 'parent', 'as', 'is', 'new', 'return', 'if', 'else', 'elseif',
-    'endif', 'while', 'endwhile', 'function', 'endfunction', 'event',
-    'endevent', 'property', 'endproperty', 'state', 'endstate', 'auto',
-    'autoreadonly', 'import', 'extends', 'native', 'global', 'hidden',
-    'conditional', 'int', 'float', 'bool', 'string', 'none', 'true', 'false',
-    'length', 'scriptname', 'next',
-    # Built-in class names that shouldn't be used as variable/property names
-    'debug', 'game', 'math', 'utility', 'weather', 'sound',
-}
-
-# Comprehensive function mapping
-# key: lowercased oblivion function name
-# value: (papyrus_expression, needs_self, note_or_none)
-FUNCTION_MAP = {
-    # --- Actor Values ---
-    'getactorvalue':     ('GetActorValue',     True,  None),
-    'setactorvalue':     ('SetActorValue',     True,  None),
-    'modactorvalue':     ('ModActorValue',     True,  None),
-    'forceactorvalue':   ('ForceActorValue',   True,  None),
-    'getav':             ('GetActorValue',     True,  None),
-    'setav':             ('SetActorValue',     True,  None),
-    'modav':             ('ModActorValue',     True,  None),
-    'forceav':           ('ForceActorValue',   True,  None),
-    'getbaseactorvalue': ('GetBaseActorValue', True,  None),
-    'getbaseav':         ('GetBaseActorValue', True,  None),
-
-    # --- Items / Inventory ---
-    'additem':           ('AddItem',           True,  None),
-    'removeitem':        ('RemoveItem',        True,  None),
-    'getitemcount':      ('GetItemCount',      True,  None),
-    'equipitem':         ('EquipItem',         True,  None),
-    'unequipitem':       ('UnequipItem',       True,  None),
-    'removeallitems':    ('RemoveAllItems',    True,  None),
-    'getnumitems':       ('GetNumItems',       True,  None),
-    'getinventoryobject':('GetNthForm',        True,  ';TODO: GetInventoryObject->GetNthForm may need Container.Find'),
-    'drop':              ('DropObject',        True,  None),
-
-    # --- Spells ---
-    'addspell':          ('AddSpell',          True,  None),
-    'removespell':       ('RemoveSpell',       True,  None),
-    'hasspell':          ('HasSpell',          True,  None),
-    'cast':              ('Cast',              True,  None),
-    'dispel':            ('DispelSpell',       True,  None),
-    'dispelspell':       ('DispelSpell',       True,  None),
-    'dispelallspells':   ('DispelAllSpells',   True,  None),
-    'getspellcount':     (None,                True,  ';TODO: No Papyrus equivalent for GetSpellCount'),
-    'getnthspell':       (None,                True,  ';TODO: No Papyrus equivalent for GetNthSpell'),
-
-    # --- Movement / Position ---
-    'moveto':            ('MoveTo',            True,  None),
-    'getdistance':       ('GetDistance',       True,  None),
-    'getparentcell':     ('GetParentCell',     True,  None),
-    'setposition':       ('SetPosition',       True,  None),
-    'getlinkedref':      ('GetLinkedRef',      True,  None),
-    'getheadingangle':   ('GetHeadingAngle',   True,  None),
-    'pathtoref':         (None,                True,  ';TODO: No Papyrus equivalent for PathToRef'),
-
-    # --- Enable / Disable ---
-    'enable':            ('Enable',            True,  None),
-    'disable':           ('Disable',           True,  None),
-    'isenabled':         ('IsEnabled',         True,  None),
-    'activate':          ('Activate',          True,  None),
-    'delete':            ('Delete',            True,  None),
-    'markfordelete':     ('Delete',            True,  None),
-    'placeatme':         ('PlaceAtMe',         True,  None),
-    'setdestroyed':      (None,                True,  ';TODO: No Papyrus SetDestroyed'),
-
-    # --- Actor State ---
-    'kill':              ('Kill',              True,  None),
-    'killandresurrect':  ('Kill',              True,  ';TODO: Kill then Resurrect'),
-    'resurrect':         ('Resurrect',         True,  None),
-    'getdead':           ('IsDead',            True,  None),
-    'isdead':            ('IsDead',            True,  None),
-    'isincombat':        ('IsInCombat',        True,  None),
-    'startcombat':       ('StartCombat',       True,  None),
-    'stopcombat':        ('StopCombat',        True,  None),
-    'getisid':           (None,                True,  ';TODO: GetIsID -> compare against base form'),
-    'getisrace':         (None,                True,  ';TODO: Use ref.GetRace() == raceForm'),
-    'isactordetected':   ('IsDetectedBy',      True,  None),
-    'getdetected':       ('IsDetectedBy',      True,  None),
-    'getincell':         (None,                True,  ';TODO: GetInCell -> compare GetParentCell()'),
-    'getinsamecell':     (None,                True,  ';TODO: Compare GetParentCell() on both refs'),
-    'getissex':          ('GetActorBase',      True,  ';TODO: GetIsSex -> GetActorBase().GetSex()'),
-    'issneaking':        ('IsSneaking',        True,  None),
-    'isweaponout':       ('IsWeaponDrawn',     True,  None),
-    'isswimming':        (None,                True,  ';TODO: No IsSwimming in Papyrus'),
-    'getsitting':        ('GetSitState',       True,  None),
-    'getsleeping':       ('GetSleepState',     True,  None),
-    'getequipped':       ('IsEquipped',        True,  None),
-    'getweaponanimtype': ('GetEquippedItemType', True, ';TODO: Needs hand param: 1=right'),
-    'clearlookat':       ('ClearLookAt',       True,  None),
-    'getisalerted':      (None,                True,  ';TODO: No Papyrus equivalent for GetIsAlerted'),
-    'setessential':      (None,                False, ';TODO: ActorBase.SetEssential() needed'),
-    'getisplayablerace': (None,                True,  ';TODO: Check Race.IsPlayable()'),
-    'istalking':         ('IsInDialogueWithPlayer', True, None),
-    'setunconscious':    ('SetUnconscious',    True,  None),
-    'setghost':          ('SetGhost',          True,  None),
-    'isghost':           ('IsGhost',           True,  None),
-    'setcrimegold':      (None,                False, ';TODO: Needs faction.SetCrimeGold()'),
-    'getcrimegold':      (None,                False, ';TODO: Needs faction.GetCrimeGold()'),
-    'modcrimegold':      (None,                False, ';TODO: Needs faction.ModCrimeGold()'),
-    'setalert':          (None,                True,  ';TODO: No Papyrus equivalent for SetAlert'),
-    'resetai':           ('ResetAI',           True,  None),
-
-    # --- Factions ---
-    'getinfaction':      ('IsInFaction',       True,  None),
-    'getfactionrank':    ('GetFactionRank',    True,  None),
-    'setfactionrank':    ('SetFactionRank',    True,  None),
-    'modfactionrank':    ('ModFactionRank',    True,  None),
-    'addfaction':        ('AddToFaction',      True,  None),
-    'removefaction':     ('RemoveFromFaction',  True,  None),
-    'removefromfaction': ('RemoveFromFaction',  True,  None),
-
-    # --- AI ---
-    'evp':               ('EvaluatePackage',   True,  None),
-    'evaluatepackage':   ('EvaluatePackage',   True,  None),
-    'setforcerun':       ('SetDontMove',       True,  ';TODO: ForceRun not direct equivalent'),
-    'setforcewalk':      (None,                True,  ';TODO: No Papyrus equivalent for SetForceWalk'),
-    'wait':              (None,                False, ';TODO: Wait (script package) has no Papyrus equivalent'),
-
-    # --- Quest ---
-    'setstage':          ('SetStage',          False, None),
-    'getstage':          ('GetStage',          False, None),
-    'getstagedone':      ('GetStageDone',      False, None),
-    'startquest':        ('Start',             False, None),
-    'stopquest':         ('Stop',              False, None),
-    'getquestrunning':   ('IsRunning',         False, None),
-    'setquestobject':    (None,                False, ';TODO: No Papyrus equivalent for SetQuestObject'),
-    'isquestcompleted':  ('IsCompleted',       False, None),
-    'completequest':     ('CompleteQuest',      False, None),
-
-    # --- UI / Messages ---
-    'message':           ('Debug.Notification', False, None),
-    'messagebox':        ('Debug.MessageBox',   False, None),
-    'showmessage':       ('Debug.MessageBox',   False, None),
-    'getbuttonpressed':  (None,                False, ';TODO: Use Message.Show() return value'),
-
-    # --- Game State ---
-    'getgamesetting':    ('Game.GetGameSettingFloat', False, None),
-    'getgs':             ('Game.GetGameSettingFloat', False, None),
-    'getpcissex':        (None,                False, ';TODO: Game.GetPlayer().GetActorBase().GetSex()'),
-    'getpcinfaction':    (None,                False, ';TODO: Game.GetPlayer().IsInFaction()'),
-    'ispcrace':          (None,                False, ';TODO: Game.GetPlayer().GetRace()'),
-    'getrandompercent':  ('Utility.RandomInt',  False, None),
-    'getamountsoldstolen': ('Game.QueryStat',  False, ';TODO: Game.QueryStat("Items Stolen")'),
-    'showracemenu':      ('Game.ShowRaceMenu', False, None),
-    'showdialogsubtitles':(None,               False, ';TODO: INI setting, not scriptable'),
-    'getlevel':          ('GetLevel',           True,  None),
-    # 'isininterior' handled by special handler in _emit_function
-    'getcurrentgametime':('Utility.GetCurrentGameTime', False, None),
-    'getdayofweek':      (None,                False, ';TODO: Math.Floor(GameDaysPassed % 7)'),
-    'getcurrenttime':    (None,                False, ';TODO: GameHour global value'),
-    'getsecondspassed':  (None,                False, None),  # Special: replaced inline
-    'isplayerinprison':  (None,                False, ';TODO: No direct equivalent'),
-    'getplayerinjail':   (None,                False, ';TODO: No direct equivalent'),
-    'getgameloaded':     (None,                False, ';TODO: Use OnPlayerLoadGame event'),
-
-    # --- Sound ---
-    'playsound':         (None,                False, ';TODO: Needs Sound form Play()'),
-    'playsound3d':       (None,                False, ';TODO: Needs Sound form Play()'),
-    'stopsound':         (None,                False, ';TODO: No direct StopSound'),
-
-    # --- Animation ---
-    'playgroup':         (None,                True,  ';TODO: Use Debug.SendAnimationEvent()'),
-    'lookismile':        (None,                True,  ';TODO: No equivalent'),
-    'lookat':            ('SetLookAt',         True,  None),
-    'stoplook':          ('ClearLookAt',       True,  None),
-
-    # --- Misc ---
-    'getself':           (None,                False, None),  # Special: replaced with Self
-    'getcontainer':      ('GetContainer',      True,  None),
-    'getparentref':      ('GetLinkedRef',      True,  ';TODO: GetParentRef -> GetLinkedRef may differ'),
-    'showmap':           (None,                False, ';TODO: No Papyrus equivalent for ShowMap'),
-    'lock':              ('Lock',              True,  None),
-    'unlock':            ('Lock',              True,  None),  # handled by special handler below
-    'getlocked':         ('IsLocked',          True,  None),
-    'getlocklevel':      ('GetLockLevel',      True,  None),
-    'setownership':      ('SetActorOwner',     True,  None),  # handled by special handler above
-    'getownership':      (None,                False, ';TODO: No direct equivalent'),
-    'setscale':          ('SetScale',          True,  None),
-    'getscale':          ('GetScale',          True,  None),
-    'purgecellbuffers':  (None,                False, ';TODO: No Papyrus equivalent for PurgeCellBuffers'),
-    'pcb':               (None,                False, ';TODO: No Papyrus equivalent for PCB'),
-    'closeobliviongate': (None,                False, ';TODO: Oblivion-specific: CloseOblivionGate'),
-    'say':               ('Say',               True,  ';TODO: Say() needs Topic form'),
-    'reset3dstate':      (None,                False, ';TODO: No Papyrus equivalent'),
-    'setactorsai':       (None,                True,  ';TODO: No Papyrus equivalent for SetActorsAI'),
-    'addtopic':          (None,                False, ';TODO: No Papyrus equivalent for AddTopic'),
-    'setcellpublicflag': (None,                True,  ';TODO: No Papyrus equivalent'),
-    'moddisposition':    (None,                True,  ';TODO: Disposition system removed in Skyrim'),
-    'getdisposition':    (None,                True,  ';TODO: Disposition system removed'),
-    'setfactionreaction':('SetReaction',       False, ';TODO: faction1.SetReaction(faction2, val)'),
-    'modfactionreaction':('ModReaction',       False, ';TODO: faction1.ModReaction(faction2, val)'),
-    'isactionref':       (None,                False, None),  # Special: compare akActionRef
-    'getactionref':      (None,                False, None),  # Special: returns akActionRef
-    'iscurrentfurnitureref': (None,            True,  ';TODO: No direct equivalent'),
-    'iscurrentfurnitureobj': (None,            True,  ';TODO: No direct equivalent'),
-    'showenchantment':   (None,                False, ';TODO: No Papyrus equivalent'),
-    'triggerscreenblood':(None,                False, ';TODO: Use Game.TriggerScreenBlood()'),
-    'isonguard':         (None,                True,  ';TODO: No direct equivalent'),
-    'setactorfullname':  (None,                True,  ';TODO: SKSE required - SetDisplayName'),
-    'setcellfullname':   (None,                True,  ';TODO: No Papyrus equivalent'),
-    'respawnhorse':      (None,                True,  ';TODO: No direct equivalent'),
-    'setdoordisabletakeoff':(None,             True,  ';TODO: No equivalent'),
-    'setdoordefaultopen':('SetOpen',           True,  None),
-    'opendoor':          ('SetOpen',           True,  None),
-    'closedoor':         ('SetOpen',           True,  ';TODO: SetOpen(false)'),
-    'setweather':        (None,                False, ';TODO: Weather.ForceActive()'),
-    'sw':                (None,                False, ';TODO: SetWeather -> Weather.ForceActive()'),
-    'forceweather':      (None,                False, ';TODO: Weather.ForceActive()'),
-    'fw':                (None,                False, ';TODO: ForceWeather -> Weather.ForceActive()'),
-    'releaseweatheroverride':(None,            False, ';TODO: Weather.ReleaseOverride()'),
-    'getbookread':       (None,                True,  ';TODO: No direct equivalent for GetBookRead'),
-    'removeme':          ('Delete',            True,  ';TODO: RemoveMe->Delete (item from container)'),
-
-    # --- Object state ---
-    'getisref':          (None,                True,  ';TODO: Compare references directly'),
-    'hasvariable':       (None,                False, ';TODO: No Papyrus equivalent'),
-    'setdisabled':       ('Disable',           True,  None),
-    'setenabled':        ('Enable',            True,  None),
-    'getis3dloaded':     ('Is3DLoaded',        True,  None),
-    'hasbeenpickedup':   (None,                True,  ';TODO: No direct equivalent'),
-
-    # --- Weather ---
-    'getweatherpercent': (None,                False, ';TODO: Weather.GetClassification()'),
-    'forceweather':      (None,                False, ';TODO: Weather.ForceActive()'),
-    'releaseweatheroverride': (None,           False, ';TODO: Weather.ReleaseOverride()'),
-
-    # --- Special compound player.X ---
-    'player.additem':    ('Game.GetPlayer().AddItem', False, None),
-    'player.removeitem': ('Game.GetPlayer().RemoveItem', False, None),
-    'player.getitemcount': ('Game.GetPlayer().GetItemCount', False, None),
-    'player.addspell':   ('Game.GetPlayer().AddSpell', False, None),
-    'player.removespell':('Game.GetPlayer().RemoveSpell', False, None),
-    'player.moveto':     ('Game.GetPlayer().MoveTo', False, None),
-    'player.placeatme':  ('Game.GetPlayer().PlaceAtMe', False, None),
-
-    # --- Additional Actor/Combat ---
-    'addscriptpackage':  ('EvaluatePackage',   True,  ';TODO: AddScriptPackage->EvaluatePackage (package arg dropped)'),
-    'removescriptpackage': ('EvaluatePackage', True,  ';TODO: RemoveScriptPackage->EvaluatePackage'),
-    'startconversation': (None,                True,  ';TODO: No Papyrus equivalent for StartConversation'),
-    'getiscurrentpackage': (None,              True,  ';TODO: No direct equivalent for GetIsCurrentPackage'),
-    'pickidle':          (None,                True,  ';TODO: Use Debug.SendAnimationEvent()'),
-    'playidle':          (None,                True,  ';TODO: Use Debug.SendAnimationEvent()'),
-    'isanimplaying':     (None,                True,  ';TODO: No direct equivalent'),
-    'getcombattarget':   ('GetCombatTarget',   True,  None),
-    'isdisabled':        ('IsDisabled',        True,  None),
-    'getparentcellowner':('GetParentCell',     True,  ';TODO: GetParentCellOwner->need cell ownership check'),
-    'hasmagiceffect':    ('HasMagicEffect',    True,  ';TODO: Needs MagicEffect form instead of 4-char code'),
-    'isexpelled':        (None,                False, None),  # Special handler (ispcexpelled)
-    'getdeadcount':      ('GetDeadCount',      True,  ';TODO: Call on ActorBase form'),
-    'getcurrentpackage': (None,                True,  ';TODO: No direct equivalent for GetCurrentPackage'),
-    'setopendoor':       ('SetOpen',           True,  None),
-
-    # --- Player state ---
-    'getplayerinseworld': (None,               False, ';TODO: Use Game.GetPlayer().GetWorldSpace()'),
-    'getpcfactionmurder':(None,                False, ';TODO: faction.GetCrimeGoldViolent()'),
-    'setpcfactionmurder':(None,                False, ';TODO: faction.SetCrimeGoldViolent()'),
-    'getpcfactionattack':(None,                False, ';TODO: faction.GetCrimeGoldViolent()'),
-    'setpcfactionattack':(None,                False, ';TODO: faction.SetCrimeGoldViolent()'),
-    'getpcfactionsteal': (None,                False, ';TODO: faction.GetCrimeGoldNonViolent()'),
-    'setpcfactionsteal': (None,                False, ';TODO: faction.SetCrimeGold()'),
-    'getinworldspace':   (None,                False, ';TODO: ref.GetWorldSpace() == worldspace'),
-    'getiscurrentweather':(None,               False, ';TODO: Weather.GetCurrentWeather() == weather'),
-    'getisreference':    (None,                False, ';TODO: ref == otherRef'),
-    'senttojail':        (None,                False, ';TODO: No SendToJail in Papyrus - use quest stage to trigger jail'),
-    'isplayersleeping':  (None,                False, ';TODO: Game.GetPlayer().GetSleepState()'),
-    'disableplayercontrols': ('Game.DisablePlayerControls', False, None),
-    'enableplayercontrols': ('Game.EnablePlayerControls', False, None),
-    'enablefasttravel':  (None,                False, ';TODO: Game.EnableFastTravel()'),
-    'playbink':          (None,                False, ';TODO: PlayBink - video playback has no Papyrus equivalent'),
-    'sendtrespassalarm': (None,               True,  ';TODO: No Papyrus equivalent for SendTrespassAlarm'),
-    'getpcisrace':       (None,                False, ';TODO: Game.GetPlayer().GetRace()'),
-    'getinfame':         (None,                False, ';TODO: No infamy in Skyrim'),
-    'getpcinfamy':       (None,                False, ';TODO: No infamy in Skyrim'),
-    'getpcfame':         (None,                False, ';TODO: No fame in Skyrim'),
-
-    # --- AI/Package ---
-    'setforcesneak':     ('SetPlayerControls', True,  ';TODO: ForceSneak->no precise equivalent'),
-    'getisalerted':      (None,                True,  ';TODO: No Papyrus equivalent for GetIsAlerted'),
-    'setalert':          (None,                True,  ';TODO: No Papyrus equivalent for SetAlert'),
-
-    # --- Object Interaction ---
-    'getcontainer':      ('GetContainer',      True,  None),
-    'opencurrentcontainer': (None,             True,  ';TODO: No direct equivalent'),
-    'removeallitems':    ('RemoveAllItems',    True,  None),
-    'getdisabled':       ('IsDisabled',        True,  None),
-    'attachashpile':     (None,                True,  ';TODO: No Papyrus equivalent for AttachAshPile'),
-    'setsize':           ('SetScale',          True,  None),
-    'getsize':           ('GetScale',          True,  None),
-
-    # --- Cell/Location ---
-    'getincell':         (None,                True,  ';TODO: Use GetParentCell() == target'),
-    # 'isininterior' handled by special handler in _emit_function
-    'getinsamecellas':   (None,                True,  ';TODO: Use GetParentCell() comparison'),
-
-    # --- Faction/Crime ---
-    'ispcexpelled':      (None,                False, None),  # Special handler in _emit_function
-    'getpcexpelled':     (None,                False, None),  # Special handler in _emit_function
-    'setpcexpelled':     (None,                False, None),  # Special handler in _emit_function
-    'payfinethief':      (None,                False, ';TODO: No direct equivalent'),
-    'payfine':           (None,                False, ';TODO: No direct equivalent'),
-    'gotojail':          (None,                False, None),  # Special handler in _emit_function
-    'addachievement':    (None,                False, ';TODO: Achievements not in Skyrim'),
-    'modpcfame':         (None,                False, ';TODO: No fame system in Skyrim'),
-    'modpcinfamy':       (None,                False, ';TODO: No infamy system in Skyrim'),
-    'getpcfame':         (None,                False, ';TODO: No fame system in Skyrim'),
-    'getpcinfamy':       (None,                False, ';TODO: No infamy system in Skyrim'),
-    'getinfame':         (None,                True,  ';TODO: No infamy system in Skyrim'),
-    'setcrimegold':      (None,                False, ';TODO: Needs faction.SetCrimeGold()'),
-    'getcrimegold':      (None,                False, ';TODO: Needs faction.GetCrimeGold()'),
-    'modcrimegold':      (None,                False, ';TODO: Needs faction.ModCrimeGold()'),
-
-    # --- Dialog/Topic ---
-    'refreshtopiclist':  (None,                False, ';TODO: No equivalent (topic lists auto-refresh)'),
-    'saycustom':         ('Say',               True,  ';TODO: SayCustom->Say (topic reference needed)'),
-
-    # --- Look/Perception ---
-    'look':              ('SetLookAt',         True,  None),
-    'stoplooking':       ('ClearLookAt',       True,  None),
-
-    # --- Display/Name ---
-    'getdisplayname':    ('GetDisplayName',    True,  None),
-    'getname':           ('GetDisplayName',    True,  None),
-
-    # --- Travel ---
-    'movetomyeditorlocation': ('MoveToMyEditorLocation', True, None),
-    'moveto':            ('MoveTo',            True,  None),
-    'movetomarker':      ('MoveTo',            True,  ';TODO: MoveToMarker->MoveTo'),
-
-    # --- Path/Linked Points ---
-    'enablelinkedpathpoints':  (None,          True,  ';TODO: No Papyrus path point system'),
-    'disablelinkedpathpoints': (None,          True,  ';TODO: No Papyrus path point system'),
-
-    # --- Shader/Visual Effects ---
-    'pms':               (None,                True,  ';TODO: PlayMagicShaderVisuals->no direct equivalent'),
-    'sms':               (None,                True,  ';TODO: StopMagicShaderVisuals->no direct equivalent'),
-    'playmagicshadervisuals':  (None,          True,  ';TODO: No direct equivalent'),
-    'stopmagicshadervisuals':  (None,          True,  ';TODO: No direct equivalent'),
-    'playmagiceffectvisuals':  (None,          True,  ';TODO: No direct equivalent'),
-    'stopmagiceffectvisuals':  (None,          True,  ';TODO: No direct equivalent'),
-    'pme':               (None,                True,  ';TODO: PlayMagicEffectVisuals->no direct equivalent'),
-    'sme':               (None,                True,  ';TODO: StopMagicEffectVisuals->no direct equivalent'),
-    'triggerhitshader':  (None,                True,  ';TODO: No Papyrus equivalent for TriggerHitShader'),
-    'scaonactor':        (None,                True,  ';TODO: SetCombatAlarmOnActor->no direct equivalent'),
-    'sca':               (None,                True,  ';TODO: SetCombatAlarm->no direct equivalent'),
-
-    # --- AI/Wait ---
-    'stopwaiting':       ('EvaluatePackage',   True,  ';TODO: StopWaiting->EvaluatePackage'),
-    'setcombatstyle':    (None,                True,  ';TODO: Needs CombatStyle form reference'),
-    'setignorefriendlyhits': (None,            True,  ';TODO: No direct equivalent'),
-    'sayto':             ('Say',               True,  ';TODO: SayTo->Say (needs topic form)'),
-
-    # --- Detection ---
-    'getdetectionlevel': (None,                True,  ';TODO: Use IsDetectedBy() instead'),
-
-    # --- Door/Object State ---
-    'setopenstate':      ('SetOpen',           True,  None),
-    'resetinterior':     (None,                True,  ';TODO: cellRef.Reset() -- ResetInterior needs target cell'),
-
-    # --- Player Skill/Misc ---
-    'modpcskill':        (None,                False, ';TODO: Game.AdvanceSkill()'),
-    'modpcmiscstat':     (None,                False, ';TODO: Game.IncrementStat()'),
-    'getpcmiscstat':     (None,                False, ';TODO: Game.QueryStat()'),
-
-    # --- Trap/Custom functions that are quest-specific ---
-    'trapupdate':        (None,                True,  ';TODO: Quest-specific trap function'),
-
-    # --- Gold ---
-    'getgold':           ('GetGoldAmount',     True,  None),
-
-    # --- Alpha ---
-    'saa':               ('SetAlpha',          True,  None),
-    'setactoralpha':     ('SetAlpha',          True,  None),
-    'gaa':               ('GetAlpha',          True,  None),
-    'getactoralpha':     ('GetAlpha',          True,  None),
-
-    # --- Interior ---
-    # 'isininterior' handled by special handler in _emit_function
-
-    # --- Save ---
-    'autosave':          ('Game.RequestAutoSave', False, None),
-
-    # --- Misc unmapped ---
-    'modamountsoldstolen':(None,               False, ';TODO: No Papyrus equivalent for ModAmountSoldStolen'),
-    'setcellownership':  (None,                False, ';TODO: No Papyrus equivalent (use cell.SetActorOwner in CK)'),
-    'setpublic':         (None,                False, ';TODO: No Papyrus equivalent for SetPublic (cell ownership)'),
-    'closeCurrentOblivionGate': (None,         False, ';TODO: Oblivion-specific'),
-    'setshowquestitems': (None,                False, ';TODO: No Papyrus equivalent'),
-    'setnorumors':       (None,                False, ';TODO: No Papyrus equivalent'),
-    'setsceneiscomplex': (None,                False, ';TODO: No Papyrus equivalent'),
-    'setdisplayname':    ('SetDisplayName',    True,  None),
-    'setpackduration':   (None,                False, ';TODO: No Papyrus equivalent'),
-    'showbirthsignmenu': (None,                False, ';TODO: No birthsigns in Skyrim'),
-    'isspelltarget':     (None,                True,  ';TODO: No direct equivalent'),
-    'getarmorrating':    (None,                True,  ';TODO: GetArmorRating - SKSE required'),
-    'isidleplaying':     (None,                True,  ';TODO: No direct equivalent'),
-    'getopenstate':      ('GetOpenState',      True,  None),
-    'getstartingpos':    (None,                True,  ';TODO: No Papyrus equivalent'),
-    'getcurrentaiprocedure': (None,            True,  ';TODO: No direct equivalent'),
-    'getcurrentaipackage': (None,              True,  ';TODO: No direct equivalent'),
-    'isessential':       ('IsEssential',       True,  None),
-    'getlos':            ('HasLOS',            True,  None),
-    'isactor':           (None,                True,  ';TODO: Use (ref as Actor) != None'),
-    'israining':         (None,                False, ';TODO: Weather.GetClassification()'),
-    'isindangerouswater':(None,                True,  ';TODO: No direct equivalent'),
-    'getplayercontrolsdisabled': (None,        False, ';TODO: No direct equivalent'),
-    'getisplayerbirthsign': (None,             False, ';TODO: No birthsigns in Skyrim'),
-    'isplayerinjail':    (None,                False, ';TODO: No direct equivalent'),
-    'getpcfactionattack':(None,                False, ';TODO: faction.GetCrimeGoldViolent()'),
-    'getpcfactionsteal': (None,                False, ';TODO: faction.GetCrimeGold()'),
-    'ispcanmurderer':    (None,                False, ';TODO: No direct equivalent'),
-    'ispcamurderer':     (None,                False, ';TODO: No direct equivalent'),
-    'getpcismurderer':   (None,                False, ';TODO: No direct equivalent'),
-    'isowner':           ('IsInFaction',        True,  ';TODO: IsOwner->IsInFaction (approximate)'),
-    'gettalkedtopc':     (None,                False, ';TODO: No Papyrus equivalent for GetTalkedToPC'),
-    'gettalkedtopcp':    (None,                False, ';TODO: No Papyrus equivalent for GetTalkedToPCParam'),
-    'menumode':          (None,                False, ';TODO: No Papyrus equivalent for MenuMode check'),
-    'istimepassing':     (None,                False, ';TODO: No Papyrus equivalent for IsTimePassing'),
-    'expel':             (None,                True,  ';TODO: No Papyrus equivalent for Expel'),
-    'setitemvalue':      (None,                True,  ';TODO: No Papyrus equivalent for SetItemValue'),
-    'setnoavoidance':    (None,                True,  ';TODO: No Papyrus equivalent for SetNoAvoidance'),
-    'offerhorse':        (None,                True,  ';TODO: No Papyrus equivalent for OfferHorse'),
-    'setactorrefraction':(None,                True,  ';TODO: SKSE required - SetActorRefraction'),
-    'setdisplayname':    (None,                True,  ';TODO: SKSE required - SetDisplayName'),
-    'getcontainer':      (None,                True,  ';TODO: SKSE required - GetContainer'),
-    'stopcombatalarmonactor': ('StopCombat',   True,  None),
-    'essentialdeathreload': (None,             False, ';TODO: No Papyrus equivalent - use quest failure stage'),
-    'setallreachable':   (None,                True,  ';TODO: No Papyrus equivalent for SetAllReachable'),
-    'getdestroyed':      (None,                True,  ';TODO: No Papyrus equivalent for GetDestroyed'),
-    'setclass':          (None,                True,  ';TODO: No Papyrus equivalent for SetClass'),
-    'setdoordefaultopen':(None,                True,  ';TODO: No Papyrus equivalent'),
-    'setrestrained':     (None,                True,  ';TODO: No Papyrus equivalent'),
-    'getrestrained':     (None,                True,  ';TODO: No Papyrus equivalent'),
-    'rotate':            (None,                True,  ';TODO: Use SetAngle(GetAngleX()+dx, GetAngleY()+dy, GetAngleZ()+dz)'),
-    'clearownership':    (None,                True,  ';TODO: No Papyrus equivalent for ClearOwnership'),
-    'setlevel':          (None,                True,  ';TODO: No Papyrus equivalent for SetLevel'),
-    'showspellmaking':   (None,                False, ';TODO: No Papyrus equivalent for ShowSpellmaking'),
-    'setrigidbodymass':  (None,                True,  ';TODO: No Papyrus equivalent'),
-    'resetfalldamagetimer': (None,             True,  ';TODO: No Papyrus equivalent'),
-    'setpcfame':         (None,                False, ';TODO: No Papyrus equivalent for SetPCFame'),
-    'setpcinfamy':       (None,                False, ';TODO: No Papyrus equivalent for SetPCInfamy'),
-    'forceflee':         (None,                True,  ';TODO: Use package system instead'),
-    'setinvestmentgold': (None,                True,  ';TODO: No Papyrus equivalent'),
-    'setallvisible':     (None,                True,  ';TODO: No Papyrus equivalent'),
-    'getpcfame':         (None,                False, ';TODO: No Papyrus equivalent for GetPCFame'),
-    'getpcinfamy':       (None,                False, ';TODO: No Papyrus equivalent for GetPCInfamy'),
-    'setlookat':         ('SetLookAt',         True,  None),
-}
-
-
-# TES4 functions that are boolean (return 0/1) and can be used as bare checks
-_BARE_BOOL_FUNCTIONS = {
-    'getdead', 'isdead', 'isincombat', 'issneaking', 'isweaponout',
-    'isswimming', 'isghost', 'isenabled', 'isdisabled', 'islocked',
-    'getlocked', 'is3dloaded', 'getis3dloaded', 'isininterior',
-}
-
-# Functions that can ONLY be called on Actor (not ObjectReference)
-# Used to infer correct property type for callers
-_ACTOR_ONLY_FUNCTIONS = {
-    'startcombat', 'stopcombat', 'getincombat', 'isincombat',
-    'getdead', 'isdead', 'kill', 'resurrect',
-    'addspell', 'removespell', 'hasspell', 'dispelallspells',
-    'additem', 'removeitem', 'getitemcount', 'removeallitems',
-    'equipitem', 'unequipitem',
-    'getactorvalue', 'setactorvalue', 'modactorvalue', 'forceactorvalue',
-    'getav', 'setav', 'modav', 'forceav', 'getbaseactorvalue', 'getbaseav',
-    'startconversation', 'setrelationshiprank',
-    'getinfaction', 'setfactionrank', 'getfactionrank',
-    'modcrimegold', 'setcrimegold', 'getcrimegold',
-    'evaluatepackage', 'evp', 'addscriptpackage', 'removescriptpackage', 'stopwaiting',
-    'setessential', 'setghost', 'setunconscious',
-    'setscale', 'getscale',
-    'setforcerun', 'setforcesneak',
-    'setrace', 'getrace',
-    'getlevel', 'getclass',
-    'setplayerteammate', 'pathtoref',
-    'getweapondrawn', 'isweaponout',
-    'setactoralpha', 'setopacity',
-    'issneaking', 'isswimming', 'isghost',
-    'say', 'saycustom', 'sayto',
-    'getdistance', 'setcell',
-    'getsitting', 'getsitstate', 'getsleeping', 'getsleepstate',
-    'getequipped', 'isequipped', 'hasmagiceffect',
-    'clearlookat', 'stoplook', 'stoplooking', 'setlookat', 'lookat', 'look',
-    'getweaponanimtype', 'getdeadcount',
-    'getgold', 'getgoldamount', 'saa', 'gaa', 'getactoralpha',
-    'resethealth', 'setalpha', 'getalpha', 'getarmorrating',
-    'isessential', 'getlos', 'haslos',
-    'dispel', 'dispelspell', 'placeatme',
-}
-
-
-# ===========================================================================
-# Cross-reference graph builder
-# ===========================================================================
-
-class CrossRefGraph:
-    """Builds FormID->EditorID and EditorID->ScriptName lookup tables."""
-
-    def __init__(self):
-        self.formid_to_edid: dict[str, str] = {}
-        self.edid_to_formid: dict[str, str] = {}
-        self.script_formid_to_edid: dict[str, str] = {}
-        self.script_formid_to_type: dict[str, int] = {}
-        self.record_scri: dict[str, str] = {}  # record FormID -> SCRI FormID
-        self.record_type: dict[str, str] = {}  # record FormID -> record Signature
-        self.record_base: dict[str, str] = {}  # placed ref FormID -> base record FormID (NAME)
-        self.quest_edids: set[str] = set()
-        self.npc_formids: set[str] = set()
-        # Cross-script ref-as-int analysis: set of (script_name_lower, var_name_lower)
-        # where the TES4 `ref` variable is only ever assigned/compared with integers
-        self.ref_as_int: set[tuple[str, str]] = set()
-        # Per-script ref-typed variable names (populated by build_ref_as_int_map)
-        self.script_ref_vars: dict[str, set[str]] = {}
-        # Cross-script variable accesses: script_name_lower -> set of var_name_lower
-        # Variables that are accessed from OTHER scripts (need to be Properties)
-        self.cross_script_vars: dict[str, set[str]] = {}
-        # Per-script ALL variable declarations: script_name_lower -> dict(var_low -> type_str)
-        self.script_all_vars: dict[str, dict[str, str]] = {}
-    def load_from_export(self, export_dir: str):
-        """Load cross-reference data from all export .txt files."""
-        if not os.path.isdir(export_dir):
-            return
-        for fname in os.listdir(export_dir):
-            if fname.endswith('.txt'):
-                sig = fname[:-4]
-                self._scan_file(os.path.join(export_dir, fname), sig)
-
-    def _scan_file(self, fpath: str, sig: str):
-        """Scan a single export file for cross-reference data."""
-        try:
-            with open(fpath, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except Exception:
-            return
-
-        in_record = False
-        formid = edid = scri = name_fid = None
-        schr_type = None
-
-        for line in content.split('\n'):
-            line = line.rstrip()
-            if line == '---RECORD_BEGIN---':
-                in_record = True
-                formid = edid = scri = name_fid = None
-                schr_type = None
-                continue
-            if line == '---RECORD_END---':
-                if in_record and formid:
-                    if edid:
-                        self.formid_to_edid[formid] = edid
-                        self.edid_to_formid[edid.lower()] = formid
-                    if sig == 'SCPT':
-                        if edid:
-                            self.script_formid_to_edid[formid] = edid
-                        if schr_type is not None:
-                            self.script_formid_to_type[formid] = schr_type
-                    if scri:
-                        self.record_scri[formid] = scri
-                    if name_fid and sig in ('ACHR', 'ACRE', 'REFR'):
-                        self.record_base[formid] = name_fid
-                    self.record_type[formid] = sig
-                    if sig == 'QUST' and edid:
-                        self.quest_edids.add(edid.lower())
-                    if sig in ('NPC_', 'CREA'):
-                        self.npc_formids.add(formid)
-                in_record = False
-                continue
-            if not in_record:
-                continue
-            if line.startswith('FormID='):
-                formid = line[7:]
-            elif line.startswith('EditorID='):
-                edid = line[9:]
-            elif line.startswith('SCRI='):
-                scri = line[5:]
-            elif line.startswith('NAME='):
-                name_fid = line[5:]
-            elif line.startswith('SCHR.Type='):
-                try:
-                    schr_type = int(line[10:])
-                except ValueError:
-                    pass
-
-    def get_extends_class(self, script_formid: str) -> str:
-        """Determine the Papyrus extends class for a script."""
-        schr_type = self.script_formid_to_type.get(script_formid, 0)
-
-        if schr_type == 1:
-            return 'Quest'
-        if schr_type == 256:
-            return 'ActiveMagicEffect'
-
-        # Type 0: check if attached to NPC_/CREA -> Actor
-        for rec_fid, scri_fid in self.record_scri.items():
-            if scri_fid == script_formid:
-                rec_sig = self.record_type.get(rec_fid, '')
-                if rec_sig in ('NPC_', 'CREA'):
-                    return 'Actor'
-                if rec_sig == 'QUST':
-                    return 'Quest'
-
-        return 'ObjectReference'
-
-    def is_quest_ref(self, name: str) -> bool:
-        """Check if a name refers to a known quest."""
-        return name.lower() in self.quest_edids
-
-    def get_quest_script_type(self, quest_name: str) -> str:
-        """Get the Papyrus script class name for a quest, e.g. 'TES4_MyQuestScript'.
-        Returns 'Quest' if no attached script is found."""
-        low = quest_name.lower()
-        fid = self.edid_to_formid.get(low, '')
-        if not fid:
-            return 'Quest'
-        scri_fid = self.record_scri.get(fid, '')
-        if not scri_fid:
-            return 'Quest'
-        script_edid = self.script_formid_to_edid.get(scri_fid, '')
-        if not script_edid:
-            return 'Quest'
-        return f'TES4_{script_edid}'
-
-    def get_record_script_type(self, name: str) -> str:
-        """Get the Papyrus script class name for any record with an attached script.
-        For placed references (ACHR/ACRE/REFR), follows the NAME chain to the
-        base record to find the attached script.
-        Returns '' if the record has no attached script."""
-        low = name.lower()
-        fid = self.edid_to_formid.get(low, '')
-        if not fid:
-            return ''
-        scri_fid = self.record_scri.get(fid, '')
-        # For placed refs without own SCRI, follow base form chain
-        if not scri_fid:
-            base_fid = self.record_base.get(fid, '')
-            if base_fid:
-                scri_fid = self.record_scri.get(base_fid, '')
-        if not scri_fid:
-            return ''
-        script_edid = self.script_formid_to_edid.get(scri_fid, '')
-        if not script_edid:
-            return ''
-        return f'TES4_{script_edid}'
-
-    def build_ref_as_int_map(self, scpt_path: str):
-        """Scan all SCPT SCTX sources to find ref variables used only as integers.
-
-        TES4 'ref' type can hold both references and integers.  When a ref
-        variable is only ever assigned/compared with numeric literals across
-        ALL scripts that touch it, it should be typed Int in Papyrus.
-        """
-        records = parse_export_file(scpt_path)
-
-        # Phase A: collect variable declarations per script
-        _decl_re = re.compile(r'^\s*ref\s+(\w+)', re.IGNORECASE)
-        _all_decl_re = re.compile(r'^\s*(short|long|float|ref)\s+(\w+)', re.IGNORECASE)
-        _TES4_TO_PAPYRUS_TYPE = {'short': 'Int', 'long': 'Int', 'float': 'Float', 'ref': 'ObjectReference'}
-        script_ref_vars: dict[str, set[str]] = {}
-        script_all_vars: dict[str, dict[str, str]] = {}
-        script_sources: dict[str, str] = {}
-
-        for rec in records:
-            edid = rec.get('EditorID', '')
-            sctx = rec.get('SCTX', '')
-            if not edid or not sctx:
-                continue
-            scn_low = edid.lower()
-            script_sources[scn_low] = sctx
-            ref_vars = set()
-            all_vars: dict[str, str] = {}
-            for line in sctx.split('\n'):
-                stripped = line.strip()
-                m = _decl_re.match(stripped)
-                if m:
-                    ref_vars.add(m.group(1).lower())
-                am = _all_decl_re.match(stripped)
-                if am:
-                    vtype = am.group(1).lower()
-                    vname = am.group(2).lower()
-                    all_vars[vname] = _TES4_TO_PAPYRUS_TYPE.get(vtype, 'Int')
-            if ref_vars:
-                script_ref_vars[scn_low] = ref_vars
-            if all_vars:
-                script_all_vars[scn_low] = all_vars
-
-        # Persist for cross-script type lookups
-        self.script_ref_vars = script_ref_vars
-        self.script_all_vars = script_all_vars
-
-        if not script_ref_vars:
-            return
-
-        # Phase B: scan ALL scripts for usage of ref vars
-        _set_re = re.compile(
-            r'\bset\s+(?:(\w+)\.)?(\w+)\s+to\s+(.+)',
-            re.IGNORECASE
-        )
-        # (script_lower, var_lower) -> {'zero', 'int', 'ref'}
-        usage: dict[tuple[str, str], set[str]] = {}
-
-        for scn_low, sctx in script_sources.items():
-            for raw_line in sctx.split('\n'):
-                line = raw_line.strip()
-                if not line or line.startswith(';'):
-                    continue
-
-                # Detect ref usage: var.method() patterns on local ref variables
-                if scn_low in script_ref_vars:
-                    for ref_var in script_ref_vars[scn_low]:
-                        if re.search(r'\b' + re.escape(ref_var) + r'\.\w+',
-                                     line, re.IGNORECASE):
-                            key = (scn_low, ref_var)
-                            if key not in usage:
-                                usage[key] = set()
-                            usage[key].add('ref')
-
-                # Check 'set [obj.]var to value' patterns
-                sm = _set_re.match(line)
-                if sm:
-                    target_obj = (sm.group(1) or '').lower()
-                    var_name = sm.group(2).lower()
-                    value = sm.group(3).strip()
-                    # Strip TES4 inline comments ("; comment text")
-                    semi_idx = value.find(';')
-                    if semi_idx >= 0:
-                        value = value[:semi_idx].strip()
-                    if target_obj:
-                        owner = target_obj
-                    else:
-                        owner = scn_low
-                    # Resolve owner to its script name
-                    owner_script = None
-                    if owner in script_ref_vars and var_name in script_ref_vars[owner]:
-                        owner_script = owner
-                    elif owner != scn_low:
-                        base_fid = self.edid_to_formid.get(owner, '')
-                        if base_fid:
-                            scri_fid = self.record_scri.get(base_fid, '')
-                            if scri_fid:
-                                se = self.script_formid_to_edid.get(scri_fid, '')
-                                if se:
-                                    se_low = se.lower()
-                                    if se_low in script_ref_vars and var_name in script_ref_vars[se_low]:
-                                        owner_script = se_low
-
-                    if owner_script:
-                        key = (owner_script, var_name)
-                        if key not in usage:
-                            usage[key] = set()
-                        if re.match(r'^-?\d+(\.\d+)?$', value):
-                            if value.strip() == '0':
-                                usage[key].add('zero')
-                            else:
-                                usage[key].add('int')
-                        else:
-                            usage[key].add('ref')
-
-        # Phase C: ref vars with ONLY non-zero integer usage -> retype to Int
-        for (script_low, var_low), types in usage.items():
-            if 'ref' not in types and 'int' in types:
-                self.ref_as_int.add((script_low, var_low))
-
-        # Phase D: detect cross-script variable access (Owner.VarName patterns)
-        # These variables must be Properties on the owning script so other scripts
-        # can access them. Scans SCPT sources, INFO result scripts, and QUST stage scripts.
-        _owner_var_re = re.compile(r'\b(\w+)\.(\w+)\b')
-        cross_script_vars: dict[str, set[str]] = {}
-
-        def _scan_text_for_cross_access(text):
-            for raw_line in text.split('\n'):
-                line = raw_line.strip()
-                if not line or line.startswith(';'):
-                    continue
-                semi = line.find(';')
-                if semi >= 0:
-                    line = line[:semi]
-                for match in _owner_var_re.finditer(line):
-                    owner = match.group(1).lower()
-                    var = match.group(2).lower()
-                    target_script = None
-                    if owner in script_all_vars and var in script_all_vars[owner]:
-                        target_script = owner
-                    else:
-                        fid = self.edid_to_formid.get(owner, '')
-                        if fid:
-                            scri_fid = self.record_scri.get(fid, '')
-                            if scri_fid:
-                                se = self.script_formid_to_edid.get(scri_fid, '')
-                                if se:
-                                    se_low = se.lower()
-                                    if se_low in script_all_vars and var in script_all_vars[se_low]:
-                                        target_script = se_low
-                    if target_script:
-                        if target_script not in cross_script_vars:
-                            cross_script_vars[target_script] = set()
-                        cross_script_vars[target_script].add(var)
-
-        # Scan all SCPT sources
-        for scn_low, sctx in script_sources.items():
-            _scan_text_for_cross_access(sctx)
-
-        # Scan INFO result scripts and QUST stage scripts for cross-script access
-        export_dir = os.path.dirname(scpt_path)
-        for extra_file, field_name in [('INFO.txt', 'ResultScript'), ('QUST.txt', 'SCTX')]:
-            extra_path = os.path.join(export_dir, extra_file)
-            if not os.path.isfile(extra_path):
-                continue
-            try:
-                with open(extra_path, 'r', encoding='utf-8') as f:
-                    for raw_line in f:
-                        if raw_line.startswith(field_name + '='):
-                            text = raw_line[len(field_name) + 1:].strip()
-                            text = text.replace('\\r\\n', '\n').replace('\\n', '\n')
-                            _scan_text_for_cross_access(text)
-            except Exception:
-                pass
-
-        self.cross_script_vars = cross_script_vars
-    def is_remote_ref_var(self, owner_edid: str, var_name: str) -> bool:
-        """Check if a variable on a remote record's script is ref-typed in TES4.
-
-        *owner_edid* is the EditorID of the quest/NPC/object (e.g. 'MQ00').
-        *var_name* is the property name (e.g. 'nearOblivionGate').
-        Returns True if the remote script declares that variable as 'ref'
-        AND it is not a ref-as-int variable (used only as integers).
-        """
-        var_low = var_name.lower()
-        owner_low = owner_edid.lower()
-        # Direct script name match
-        if owner_low in self.script_ref_vars:
-            if var_low in self.script_ref_vars[owner_low]:
-                return (owner_low, var_low) not in self.ref_as_int
-            return False
-        # Resolve owner EditorID -> script name
-        fid = self.edid_to_formid.get(owner_low, '')
-        if not fid:
-            return False
-        scri_fid = self.record_scri.get(fid, '')
-        if not scri_fid:
-            return False
-        se = self.script_formid_to_edid.get(scri_fid, '')
-        if not se:
-            return False
-        se_low = se.lower()
-        if se_low in self.script_ref_vars:
-            if var_low in self.script_ref_vars[se_low]:
-                return (se_low, var_low) not in self.ref_as_int
-        return False
-
-
-# ===========================================================================
-# Script converter
-# ===========================================================================
 
 class ScriptConverter:
     """Converts Oblivion script source to Papyrus .psc source."""
@@ -1015,6 +27,7 @@ class ScriptConverter:
         self._var_renames: dict[str, str] = {}  # orig_lower -> safe_name
         self._var_types: dict[str, str] = {}  # lower_name -> papyrus_type
         self._current_event: str = ''  # Current event header for context-aware conversion
+        self._line_comments: list[str] = []  # Comments accumulated during expression conversion
 
     def _is_ref_typed_access(self, dotted_expr: str) -> bool:
         """Check if a dotted expression (e.g. 'SEHerdirRef.TargetRef') accesses a ref-typed variable.
@@ -1036,6 +49,34 @@ class ScriptConverter:
                     script_name = ptype[5:].lower()
                     all_vars = self.xref.script_all_vars.get(script_name, {})
                     if all_vars.get(var_low) in ('ObjectReference', 'Actor'):
+                        if (script_name, var_low) not in self.xref.ref_as_int:
+                            return True
+        return False
+
+    def _ref_has_script_var(self, ref_name: str, var_name: str) -> bool:
+        """Check if ref_name resolves to a script that declares var_name as a variable.
+
+        Used to disambiguate Quest.variable vs Quest.function().
+        """
+        if not self.xref:
+            return False
+        var_low = var_name.lower()
+        # Method 1: direct script name or via property type
+        for pname, ptype in self._property_refs.items():
+            if pname.lower() == ref_name.lower() and ptype.startswith('TES4_'):
+                script_name = ptype[5:].lower()
+                all_vars = self.xref.script_all_vars.get(script_name, {})
+                if var_low in all_vars:
+                    return True
+        # Method 2: look up via EditorID → SCRI → script vars
+        fid = self.xref.edid_to_formid.get(ref_name.lower(), '')
+        if fid:
+            scri_fid = self.xref.record_scri.get(fid, '')
+            if scri_fid:
+                se = self.xref.script_formid_to_edid.get(scri_fid, '')
+                if se:
+                    all_vars = self.xref.script_all_vars.get(se.lower(), {})
+                    if var_low in all_vars:
                         return True
         return False
 
@@ -1289,7 +330,7 @@ class ScriptConverter:
                                 if none_re.match(out[bidx]):
                                     out[bidx] = none_re.sub(r'\g<1>0', out[bidx])
 
-        # Post-process: upgrade ObjectReference variables to more specific types
+        # Post-process: upgrade ObjectReference/Actor variables to more specific types
         # based on usage (Actor from actor-only functions, or script type from SCRO/xref)
         if _var_info and self._property_refs:
             # Build case-insensitive lookup for type upgrades
@@ -1298,18 +339,26 @@ class ScriptConverter:
                 if idx >= len(out):
                     break
                 line = out[idx]
-                if 'ObjectReference Property ' not in line:
-                    continue
-                parts = line.split('Property ', 1)
-                if len(parts) < 2:
-                    continue
-                prop_name = parts[1].split()[0]
-                new_type = _ci_refs.get(prop_name.lower(), '')
-                if new_type and new_type != 'ObjectReference':
-                    out[idx] = line.replace('ObjectReference Property ',
-                                            f'{new_type} Property ', 1)
-                    # Also update _var_types so downstream logic knows the new type
-                    self._var_types[prop_name.lower()] = new_type
+                # Upgrade ObjectReference → script type or Actor
+                if 'ObjectReference Property ' in line:
+                    parts = line.split('Property ', 1)
+                    if len(parts) >= 2:
+                        prop_name = parts[1].split()[0]
+                        new_type = _ci_refs.get(prop_name.lower(), '')
+                        if new_type and new_type != 'ObjectReference':
+                            out[idx] = line.replace('ObjectReference Property ',
+                                                    f'{new_type} Property ', 1)
+                            self._var_types[prop_name.lower()] = new_type
+                # Upgrade Actor → TES4_ script type when cross-script property access needed
+                elif 'Actor Property ' in line:
+                    parts = line.split('Property ', 1)
+                    if len(parts) >= 2:
+                        prop_name = parts[1].split()[0]
+                        new_type = _ci_refs.get(prop_name.lower(), '')
+                        if new_type and new_type.startswith('TES4_'):
+                            out[idx] = line.replace('Actor Property ',
+                                                    f'{new_type} Property ', 1)
+                            self._var_types[prop_name.lower()] = new_type
 
         # Post-process: add 'as Actor' casts for ObjRef-returning assignments to Actor vars
         _actor_vars = {k.lower() for k, v in self._property_refs.items() if v == 'Actor'}
@@ -1341,6 +390,10 @@ class ScriptConverter:
                 elif val_check.lower().strip('() ') in _objref_params:
                     needs_cast = True
                 elif val_check.lower() in _objref_vars:
+                    needs_cast = True
+                elif val_check == 'Self' and extends != 'Actor':
+                    needs_cast = True
+                elif '.' in val_check and self._is_ref_typed_access(val_check):
                     needs_cast = True
                 if needs_cast:
                     indent = line[:len(line) - len(s)]
@@ -1411,15 +464,31 @@ class ScriptConverter:
             if m and ' as Int' not in m.group(3):
                 out[idx] = out[idx][:m.start(3)] + m.group(3) + ' as Int' + out[idx][m.end(3):]
 
-        # Post-process: fix comparisons where RHS is entirely a TODO comment
-        # e.g. "If expr >= ;TODO: something" → "If True  ;TODO: expr >= something"
-        _broken_cmp_re = re.compile(
-            r'^(\s*(?:If|ElseIf)\s+)(.+?)\s*(==|!=|>=|<=|>|<)\s*(;TODO:.*)$',
+        # Post-process: fix conditions containing embedded comments that break parsing
+        # e.g. "If (False  ;comment == 0)" → the ; eats the ==0 part
+        # Only fix if the ; appears BEFORE operators/comparands (not trailing comments)
+        _cond_with_embedded_comment = re.compile(
+            r'^(\s*(?:If|ElseIf)\s+)(.*);(.+(?:==|!=|>=|<=|>|<|&&|\|\||\)).*)$',
             re.IGNORECASE)
         for idx in range(len(out)):
-            m = _broken_cmp_re.match(out[idx])
+            m = _cond_with_embedded_comment.match(out[idx])
             if m:
-                out[idx] = f'{m.group(1)}True  ;TODO: {m.group(2)} {m.group(3)} {m.group(4)}'
+                full_cond = m.group(2) + ';' + m.group(3)
+                out[idx] = f'{m.group(1)}True  ;{full_cond.strip()}'
+
+        # Post-process: fix assignments where RHS contains embedded comment that eats operators
+        # e.g. "temp = (False  ;comment == 0)" → just the comment
+        for idx in range(len(out)):
+            line = out[idx]
+            assign_m = re.match(r'^(\s*)(\w[\w.]*)\s*=\s*(.*)$', line)
+            if assign_m:
+                rhs = assign_m.group(3)
+                semi_pos = rhs.find(';')
+                if semi_pos >= 0:
+                    # Check if there's meaningful code after the comment that was eaten
+                    after_semi = rhs[semi_pos+1:]
+                    if re.search(r'==|!=|>=|<=|>|<|&&|\|\||\)', after_semi):
+                        out[idx] = f'{assign_m.group(1)}{rhs[semi_pos:]}'
 
         # Post-process: remove spurious commas from conditions
         # e.g. "if((, expr, == , 1, ))" → "if(expr == 1)"
@@ -1591,14 +660,32 @@ class ScriptConverter:
             m = _item_count_re.search(lines[idx])
             if m and ' as Int' not in m.group(3):
                 lines[idx] = lines[idx][:m.start(3)] + m.group(3) + ' as Int' + lines[idx][m.end(3):]
-        # Fix incomplete comparisons where RHS is a TODO
-        _broken_cmp_re = re.compile(
-            r'^(\s*(?:If|ElseIf)\s+)(.+?)\s*(==|!=|>=|<=|>|<)\s*(;TODO:.*)$',
+        # Fix conditions containing embedded comments that break parsing
+        _cond_with_embedded_comment = re.compile(
+            r'^(\s*(?:If|ElseIf)\s+)(.*);(.+(?:==|!=|>=|<=|>|<|&&|\|\||\)).*)$',
             re.IGNORECASE)
         for idx in range(len(lines)):
-            m = _broken_cmp_re.match(lines[idx])
+            m = _cond_with_embedded_comment.match(lines[idx])
             if m:
-                lines[idx] = f'{m.group(1)}True  ;TODO: {m.group(2)} {m.group(3)} {m.group(4)}'
+                full_cond = m.group(2) + ';' + m.group(3)
+                lines[idx] = f'{m.group(1)}True  ;{full_cond.strip()}'
+        # Fix assignments where RHS contains embedded comment that eats operators
+        for idx in range(len(lines)):
+            line = lines[idx]
+            assign_m = re.match(r'^(\s*)(\w[\w.]*)\s*=\s*(.*)$', line)
+            if assign_m:
+                rhs = assign_m.group(3)
+                semi_pos = rhs.find(';')
+                if semi_pos >= 0:
+                    after_semi = rhs[semi_pos+1:]
+                    if re.search(r'==|!=|>=|<=|>|<|&&|\|\||\)', after_semi):
+                        lines[idx] = f'{assign_m.group(1)}{rhs[semi_pos:]}'
+        # Fix standalone no-op results (bare "0  ;comment" statements)
+        _standalone_noop_re = re.compile(r'^(\s*)0\s+(;.*)$')
+        for idx in range(len(lines)):
+            m = _standalone_noop_re.match(lines[idx])
+            if m:
+                lines[idx] = f'{m.group(1)}{m.group(2)}'
         # Fix None as Int/Float
         for idx in range(len(lines)):
             line = lines[idx]
@@ -1670,7 +757,7 @@ class ScriptConverter:
                         lines[idx] = f'{indent}UnregisterForUpdate()  ;fQuestDelayTime = 0'
                     continue
                 if '.' in tgt:
-                    if self._is_ref_typed_access(tgt):
+                    if self._is_ref_typed_access(tgt) and not self._is_ref_as_int_crossscript(tgt):
                         lines[idx] = f'{m.group(1)}{tgt} = None  {m.group(4) or ""}'.rstrip()
         # Fix TODO comments inside function call arguments
         # e.g. "RemoveItem(Gold001, ;TODO: ...)" -> "RemoveItem(Gold001)  ;TODO: ..."
@@ -1845,6 +932,7 @@ class ScriptConverter:
         blocks = []
         current_block = None
         current_lines = []
+        _seen_vars = set()
 
         for raw_line in lines:
             stripped = raw_line.strip()
@@ -1858,12 +946,15 @@ class ScriptConverter:
             if low.startswith('scriptname ') or low.startswith('scn '):
                 continue
 
-            # Variable declarations (top-level only)
-            if current_block is None:
-                m = re.match(r'^(short|long|int|float|ref|reference)\s+(\w+)', stripped, re.IGNORECASE)
-                if m:
+            # Variable declarations — TES4 vars are ALWAYS script-global,
+            # even if declared inside a begin/end block
+            m = re.match(r'^(short|long|int|float|ref|reference)\s+(\w+)', stripped, re.IGNORECASE)
+            if m:
+                vname_low = m.group(2).lower()
+                if vname_low not in _seen_vars:
                     variables.append((m.group(1).lower(), m.group(2)))
-                    continue
+                    _seen_vars.add(vname_low)
+                continue  # Don't add var decls to block lines
 
             begin_m = re.match(r'^begin\s+(\w+)(.*)', stripped, re.IGNORECASE)
             if begin_m:
@@ -1906,7 +997,21 @@ class ScriptConverter:
         if not stripped:
             return inline_comment.strip() if inline_comment else ''
 
+        # Clear accumulated expression-level comments before conversion
+        self._line_comments.clear()
+
         result = self._convert_line_inner(stripped, extends)
+
+        # Append any accumulated expression-level comments (from no-op functions)
+        if self._line_comments:
+            comments = '  '.join(self._line_comments)
+            self._line_comments.clear()
+            # If result is just '0' (standalone no-op), replace with comment
+            if result.strip() == '0':
+                result = comments
+            elif not result.lstrip().startswith(';'):
+                result = f'{result}  {comments}'
+
         if inline_comment and not result.lstrip().startswith(';'):
             return result + inline_comment
         return result
@@ -1915,28 +1020,20 @@ class ScriptConverter:
         """Core line conversion logic (no inline-comment handling)."""
         low = stripped.lower()
 
-        # Variable declarations inside blocks -> local vars
+        # Variable declarations inside blocks — already declared as Properties by _parse_source
         var_m = re.match(r'^(short|long|int|float|ref|reference)\s+(\w+)', stripped, re.IGNORECASE)
         if var_m:
-            ptype = TYPE_MAP.get(var_m.group(1).lower(), 'Int')
-            vname = var_m.group(2)
-            # Track local variable types for type-aware assignment
-            self._var_types[vname.lower()] = ptype
-            self._local_vars.add(vname.lower())
-            if ptype == 'ObjectReference':
-                return f'{ptype} {vname} = None'
-            if ptype == 'Float':
-                return f'{ptype} {vname} = 0.0'
-            return f'{ptype} {vname} = 0'
+            # Variable already declared as a Property; skip the inline declaration
+            return ''
 
         # set X to Y
         set_m = re.match(r'^set\s+(\S+)\s+to\s+(.*)', stripped, re.IGNORECASE)
         if set_m:
             target = self._convert_ref(set_m.group(1), extends)
             value = self._convert_expression(set_m.group(2), extends)
-            # Can't assign to Self in Papyrus
-            if target == 'Self':
-                return f';Self = {value}  ;cannot assign to Self in Papyrus'
+            # Can't assign to Self/GetTargetActor()/akSpeakerRef in Papyrus
+            if target in ('Self', 'GetTargetActor()', 'akSpeakerRef'):
+                return f';{target} = {value}  ;cannot assign to Self in Papyrus'
             # In AME/TopicInfo scripts, Self refers to the target actor, not the script
             if value == 'Self':
                 if extends == 'ActiveMagicEffect':
@@ -1960,8 +1057,7 @@ class ScriptConverter:
                 if say_idx < 0:
                     say_idx = value.find('Say(')
                 if say_idx >= 0:
-                    # Find the start of the Say expression (back up to find ref or outer paren)
-                    # The Say call starts at say_idx (for .Say) or the ref before it
+                    # Find the closing paren of the Say call args
                     paren_start = value.index('(', say_idx)
                     depth = 0
                     paren_end = paren_start
@@ -1973,19 +1069,26 @@ class ScriptConverter:
                             if depth == 0:
                                 paren_end = ci
                                 break
-                    # say_call is everything from expression start to closing paren
-                    # Find start: go back from say_idx to find the ref or opening paren
+                    # Find the start of the Say expression: scan backward with paren depth
                     expr_start = 0
+                    bk_depth = 0
                     for ci in range(say_idx - 1, -1, -1):
                         ch = value[ci]
-                        if ch in ' \t(' and ci < say_idx - 1:
+                        if ch == ')':
+                            bk_depth += 1
+                        elif ch == '(':
+                            if bk_depth > 0:
+                                bk_depth -= 1
+                            else:
+                                expr_start = ci + 1
+                                break
+                        elif ch in ' \t' and bk_depth == 0:
                             expr_start = ci + 1
                             break
                     say_call = value[expr_start:paren_end + 1]
                     # Strip balanced outer wrapping parens: "(ref.Say(topic))" → "ref.Say(topic)"
                     if say_call.startswith('(') and say_call.endswith(')'):
                         inner = say_call[1:-1]
-                        # Only strip if inner parens are balanced (i.e. outer were wrapping)
                         d = 0
                         balanced = True
                         for ch in inner:
@@ -2011,10 +1114,32 @@ class ScriptConverter:
                 val_clean = value.split(';TODO')[0].rstrip() if ';TODO' in value else value
                 todo_part = '  ;TODO' + value.split(';TODO', 1)[1] if ';TODO' in value else ''
                 return f'{target}.SetValue({val_clean}){todo_part}'
+            # fQuestDelayTime cross-script access → RegisterForUpdate
+            if target.endswith('.fQuestDelayTime'):
+                quest_ref = target.rsplit('.', 1)[0]
+                return f'{quest_ref}.RegisterForUpdate({value})'
             # Float→Int coercion: if target is Int and value is from a Float-returning function, cast
             value = self._coerce_float_to_int(target, value)
             # ObjectReference→Actor coercion: if target is Actor and value is ObjectReference param, cast
             value = self._coerce_ref_to_actor(target, value)
+            # Cross-script ref→Int mismatch: TES4 allowed storing refs in short variables
+            if '.' in target:
+                parts = target.split('.', 1)
+                owner_type = self._property_refs.get(parts[0], self._property_refs.get(parts[0].lower(), ''))
+                if owner_type and owner_type.startswith('TES4_'):
+                    remote_script = owner_type[5:].lower()
+                    remote_vars = self.xref.script_all_vars.get(remote_script, {})
+                    remote_type = remote_vars.get(parts[1].lower(), '')
+                    val_low = value.strip().lower()
+                    is_ref_value = (
+                        'gettargetactor()' in val_low or
+                        'getself' in val_low or
+                        val_low == 'self' or
+                        val_low == 'akspeakerref' or
+                        self._OBJREF_RETURNING.search(value.strip()) is not None
+                    )
+                    if remote_type == 'Int' and is_ref_value:
+                        return f';{target} = {value}  ;TES4 stored ref in short'
             return f'{target} = {value}'
 
         # let X := Y (OBSE)
@@ -2112,15 +1237,28 @@ class ScriptConverter:
         r'(?:GetBaseActorValue|GetActorValue|GetAV|GetSecondsPassed|GetDistance|'
         r'GetPosition[XYZ]|GetAngle[XYZ]|GetHeadingAngle|GetScale|GetLevel|'
         r'GetPos[XYZ]|GetWalkSpeed|GetCurrentTime|RandomFloat|Utility\.RandomFloat|'
-        r'GetHeight|GetWidth|GetLength)\s*\(', re.IGNORECASE)
+        r'GetHeight|GetWidth|GetLength|GetValue)\s*\(', re.IGNORECASE)
 
     def _coerce_float_to_int(self, target: str, value: str) -> str:
         """Add 'as Int' cast when assigning Float-returning function to Int variable."""
         tgt_low = target.lower().split('.')[-1]
         vtype = self._var_types.get(tgt_low, '')
+        if not vtype:
+            vtype = self._property_refs.get(target, self._property_refs.get(tgt_low, ''))
+        # Cross-script type resolution: Owner.Var → look up var type on remote script
+        if not vtype and '.' in target and self.xref:
+            parts = target.split('.', 1)
+            owner_type = self._property_refs.get(parts[0], self._property_refs.get(parts[0].lower(), ''))
+            if owner_type and owner_type.startswith('TES4_'):
+                remote_script = owner_type[5:].lower()
+                remote_vars = self.xref.script_all_vars.get(remote_script, {})
+                vtype = remote_vars.get(parts[1].lower(), '')
         if vtype != 'Int':
             return value
         if self._FLOAT_RETURNING_FUNCS.search(value):
+            # Wrap in parens if expression contains arithmetic to prevent binding issues
+            if re.search(r'[+\-*/]', value):
+                return f'({value}) as Int'
             return f'{value} as Int'
         # Also detect float literals in arithmetic (e.g. X * 0.8, -50 * 0.5)
         if re.search(r'\d+\.\d+', value):
@@ -2160,9 +1298,23 @@ class ScriptConverter:
             or self._OBJREF_RETURNING.search(val_stripped)
             or val_low == 'akactionref'
         )
+        # Check if value is a known ObjectReference variable/property
+        if not is_objref_value and '.' not in val_stripped:
+            val_type = self._var_types.get(val_low, '')
+            if not val_type:
+                val_type = self._property_refs.get(val_stripped, self._property_refs.get(val_low, ''))
+            if val_type == 'ObjectReference':
+                is_objref_value = True
         # Also check cross-script property access returning ObjectReference
         if not is_objref_value and '.' in val_stripped:
             is_objref_value = self._is_ref_typed_access(val_stripped)
+            # Even if _is_ref_typed_access returns False (e.g. ref_as_int),
+            # cross-script dot access to a ref variable still resolves as ObjectReference
+            if not is_objref_value:
+                parts = val_stripped.split('.', 1)
+                ref_part = parts[0].strip()
+                if self.xref.is_quest_ref(ref_part) or ref_part in self._property_refs:
+                    is_objref_value = True
         if not is_objref_value:
             return value
         tgt_low = target.lower().split('.')[-1]
@@ -2173,6 +1325,18 @@ class ScriptConverter:
         ptype = self._property_refs.get(target, self._property_refs.get(tgt_low, ''))
         if ptype in ('Actor', 'ActorBase') or (ptype and ptype.startswith('TES4_')):
             return f'{value} as Actor'
+        # Cross-script target: resolve remote property type
+        if '.' in target and self.xref:
+            parts = target.split('.', 1)
+            owner_type = self._property_refs.get(parts[0], self._property_refs.get(parts[0].lower(), ''))
+            if owner_type and owner_type.startswith('TES4_'):
+                remote_script = owner_type[5:].lower()
+                remote_vars = self.xref.script_all_vars.get(remote_script, {})
+                remote_type = remote_vars.get(parts[1].lower(), '')
+                # Remote ref vars may be upgraded to Actor by post-processing
+                # on the target script. Add cast preemptively for safety.
+                if remote_type == 'ObjectReference':
+                    return f'{value} as Actor'
         return value
 
         # Direct assignment: X.Y = Z or X = Z (OBSE-style, no 'set' prefix)
@@ -2301,6 +1465,16 @@ class ScriptConverter:
                 return f'!({converted_call})'
             return converted_call
 
+        # Pre-split: strip trailing TES4 truth test "== 1" / "== 0"
+        # TES4 comparisons return 0/1, so "a == b == 1" means "(a == b) is true"
+        trail_m = re.match(r'^(.+\S)\s*==\s*([01])\s*$', expr)
+        if trail_m and re.search(r'\s[=!<>]{1,2}\s', trail_m.group(1)):
+            inner = trail_m.group(1)
+            converted = self._convert_expression(inner, extends)
+            if trail_m.group(2) == '1':
+                return converted
+            return f'!({converted})'
+
         # Handle comparison operators: split into LHS op RHS (depth-aware)
         # Scan left-to-right for comparison operators at paren depth 0
         comp_m = None
@@ -2337,10 +1511,14 @@ class ScriptConverter:
             # Fix ref == 0 / ref != 0 → ref == None / ref != None
             if rhs.strip() == '0' and op in ('==', '!='):
                 lhs_var = lhs.strip().lower().split('.')[-1]
-                lhs_type = self._var_types.get(lhs_var, '') or self._property_refs.get(lhs_var, '')
+                lhs_raw = lhs.strip().split('.')[-1]
+                lhs_type = self._var_types.get(lhs_var, '') or self._property_refs.get(lhs_raw, self._property_refs.get(lhs_var, ''))
                 is_ref = lhs_type in ('ObjectReference', 'Actor', 'ActorBase') or lhs_type.startswith('TES4_')
                 # Self is always a ref type
                 if not is_ref and lhs.strip() == 'Self':
+                    is_ref = True
+                # Ref-returning function calls: GetContainer(), GetLinkedRef(), etc.
+                if not is_ref and re.search(r'\.Get(?:Container|LinkedRef|ParentRef)\(\)', lhs.strip(), re.IGNORECASE):
                     is_ref = True
                 # Also check cross-script ref type (e.g. MQ00.nearOblivionGate == 0)
                 if not is_ref and '.' in lhs.strip():
@@ -2350,7 +1528,8 @@ class ScriptConverter:
             # Reversed: 0 == ref / 0 != ref → None == ref / None != ref
             if lhs.strip() == '0' and op in ('==', '!='):
                 rhs_var = rhs.strip().lower().split('.')[-1]
-                rhs_type = self._var_types.get(rhs_var, '') or self._property_refs.get(rhs_var, '')
+                rhs_raw = rhs.strip().split('.')[-1]
+                rhs_type = self._var_types.get(rhs_var, '') or self._property_refs.get(rhs_raw, self._property_refs.get(rhs_var, ''))
                 is_ref = rhs_type in ('ObjectReference', 'Actor', 'ActorBase') or rhs_type.startswith('TES4_')
                 if not is_ref and rhs.strip() == 'Self':
                     is_ref = True
@@ -2358,10 +1537,19 @@ class ScriptConverter:
                     is_ref = self._is_ref_typed_access(rhs.strip())
                 if is_ref:
                     lhs = 'None'
+            # ObjectReference variable in numeric comparison (<, <=, >, >=) with a number:
+            # TES4 undeclared variables default to 0; name collision with a form reference
+            if op in ('<', '<=', '>', '>=') and re.match(r'^-?\d+(\.\d+)?$', rhs.strip()):
+                lhs_var = lhs.strip().lower().split('.')[-1]
+                lhs_raw = lhs.strip().split('.')[-1]
+                lhs_type = self._var_types.get(lhs_var, '') or self._property_refs.get(lhs_raw, self._property_refs.get(lhs_var, ''))
+                if lhs_type == 'ObjectReference':
+                    lhs = '0  ;undeclared TES4 var'
             # ref > 0 / ref >= 1 → ref != None (null check pattern for ref types)
             if rhs.strip() in ('0', '1') and op in ('>', '>='):
                 lhs_var = lhs.strip().lower().split('.')[-1]
-                lhs_type = self._var_types.get(lhs_var, '') or self._property_refs.get(lhs_var, '')
+                lhs_raw = lhs.strip().split('.')[-1]
+                lhs_type = self._var_types.get(lhs_var, '') or self._property_refs.get(lhs_raw, self._property_refs.get(lhs_var, ''))
                 is_ref = lhs_type in ('ObjectReference', 'Actor', 'ActorBase') or lhs_type.startswith('TES4_')
                 if not is_ref and '.' in lhs.strip():
                     is_ref = self._is_ref_typed_access(lhs.strip())
@@ -2449,6 +1637,7 @@ class ScriptConverter:
                     'getincell', 'getinsamecell', 'getissex', 'getcrimeknown',
                     'sme', 'pme', 'setdisplayname', 'placeatme',
                     'createfullactorcopy', 'wakeuppc', 'isexpelled',
+                    'sayto', 'say', 'saycustom', 'getpcissex',
                     'getcontainer', 'getbookread', 'bookread', 'showclassmenu',
                     'showbirthsignmenu', 'showracemenu', 'setinchargen',
                     'setplayerinseworld', 'forcecloseobliviongate',
@@ -2495,6 +1684,13 @@ class ScriptConverter:
                 ref = self._convert_ref(ref_name, extends)
                 rest = self._convert_expression(args_rest, extends)
                 return f'{ref}.{safe_prop} {rest}'
+            # Cross-script variable access: if ref's script declares this variable, always property
+            if self._ref_has_script_var(ref_name, prop_name):
+                ref = self._convert_ref(ref_name, extends)
+                if args_rest:
+                    rest = self._convert_expression(args_rest, extends)
+                    return f'{ref}.{safe_prop} {rest}'
+                return f'{ref}.{safe_prop}'
             # If ref is a known quest and prop is NOT a known function, treat as property access
             if self.xref.is_quest_ref(ref_name) and prop_low not in FUNCTION_MAP and prop_low not in (
                     'getstage', 'setstage', 'getstagedone', 'start', 'stop', 'isrunning',
@@ -2522,11 +1718,16 @@ class ScriptConverter:
         # e.g. "getParentRef" -> "GetLinkedRef()", "GetActionRef" -> "akActionRef"
         if re.match(r'^[a-zA-Z_]\w*$', expr):
             bare_low = expr.lower()
+            # Local variables ALWAYS take priority over function name matching
+            if bare_low in self._local_vars:
+                safe = self._var_renames.get(bare_low, expr)
+                return safe
             # Special bare identifiers
             if bare_low in ('getactionref', 'isactionref'):
                 return self._get_action_ref_param()
             if bare_low == 'isanimplaying':
-                return 'False  ;TODO: IsAnimPlaying has no Papyrus equivalent'
+                self._line_comments.append(';IsAnimPlaying has no Papyrus equivalent')
+                return 'False'
             if bare_low == 'isxbox':
                 return 'False'
             if bare_low in ('getdayofweek', 'getdayoftheweek'):
@@ -2538,26 +1739,59 @@ class ScriptConverter:
                 self._property_refs['GameHour'] = 'GlobalVariable'
                 return 'GameHour.GetValue() as Int'
             if bare_low == 'getpcfame':
-                return '0  ;TODO: No fame system in Skyrim'
+                self._property_refs['TES4Fame'] = 'GlobalVariable'
+                return 'TES4Fame.GetValueInt()'
             if bare_low in ('getpcinfamy', 'getinfame'):
-                return '0  ;TODO: No infamy system in Skyrim'
-            if bare_low == 'isplayerinprison':
-                return 'False  ;TODO: No direct equivalent'
-            if bare_low in ('getpcissleeping', 'ispcsleeping'):
-                return 'False  ;TODO: Game.GetPlayer().GetSleepState()'
+                self._property_refs['TES4Infamy'] = 'GlobalVariable'
+                return 'TES4Infamy.GetValueInt()'
+            if bare_low in ('isplayerinprison', 'getplayerinjail', 'isplayerinjail'):
+                self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+                return 'TES4CyrodiilCrimeFaction.IsPlayerExpelled()'
+            if bare_low in ('getpcissleeping', 'ispcsleeping', 'isplayersleeping'):
+                return 'Game.GetPlayer().GetSleepState()'
             if bare_low == 'isininterior':
                 if extends == 'ActiveMagicEffect':
                     return 'GetTargetActor().GetParentCell().IsInterior()'
                 return 'Self.GetParentCell().IsInterior()'
             if bare_low == 'getdestroyed':
-                return 'IsDisabled()  ;TODO: GetDestroyed->IsDisabled approximate'
+                return 'IsDisabled()'
+            # Handle bare function references that need special handling
+            if bare_low == 'getbuttonpressed':
+                return '-1'
+            if bare_low in ('getcrimegold',):
+                self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+                return 'TES4CyrodiilCrimeFaction.GetCrimeGold()'
+            if bare_low in ('getdisposition',):
+                return '50'
+            if bare_low == 'getdetectionlevel':
+                return '0'
+            if bare_low in ('getisalerted', 'israining', 'menumode',
+                            'istimepassing', 'getplayerinseworld',
+                            'getcurrentaiprocedure', 'getcurrentaipackage',
+                            'getiscurrentpackage', 'isidleplaying',
+                            'getcontainer', 'getbookread', 'gettalkedtopc',
+                            'getcrimeknown', 'getstartingpos',
+                            'getplayercontrolsdisabled', 'getisplayerbirthsign',
+                            'hasbeenpickedup', 'getweatherpercent',
+                            'getgameloaded', 'hasvariable', 'getownership',
+                            'isonguard', 'isindangerouswater',
+                            'getarmorrating', 'isspelltarget', 'isswimming',
+                            'isactor', 'getspellcount',
+                            'getrestrained', 'ispcamurderer', 'getpcismurderer',
+                            'getpcfactionattack', 'getpcfactionsteal',
+                            'getpcfactionmurder'):
+                return '0'
+            if bare_low == 'reset':
+                if extends == 'ActiveMagicEffect':
+                    return 'GetTargetActor().Reset()'
+                if extends == 'TopicInfo':
+                    return 'akSpeakerRef.Reset()'
+                return 'Self.Reset()'
             # Only check FUNCTION_MAP if NOT a declared local variable
             if bare_low not in self._local_vars:
                 entry = FUNCTION_MAP.get(bare_low)
                 if entry and entry[0] is not None:
                     return self._emit_function(None, expr, '', extends)
-                if entry and entry[0] is None and entry[2]:
-                    return f'0  {entry[2]}'
             # Check if it's a known EditorID -> property ref
             fid = self.xref.edid_to_formid.get(bare_low, '')
             if fid:
@@ -2579,9 +1813,13 @@ class ScriptConverter:
         if extends == 'ActiveMagicEffect':
             expr = re.sub(r'\bgetSelf\b', 'GetTargetActor()', expr, flags=re.IGNORECASE)
             expr = re.sub(r'\bthis\b', 'GetTargetActor()', expr, flags=re.IGNORECASE)
+            # Replace bare Self (not followed by '.') with GetTargetActor() for comparisons
+            expr = re.sub(r'\bSelf\b(?!\.)', 'GetTargetActor()', expr)
         elif extends == 'TopicInfo':
             expr = re.sub(r'\bgetSelf\b', 'akSpeakerRef', expr, flags=re.IGNORECASE)
             expr = re.sub(r'\bthis\b', 'akSpeakerRef', expr, flags=re.IGNORECASE)
+            # Replace bare Self (not followed by '.') with akSpeakerRef for comparisons
+            expr = re.sub(r'\bSelf\b(?!\.)', 'akSpeakerRef', expr)
         else:
             expr = re.sub(r'\bgetSelf\b', 'Self', expr, flags=re.IGNORECASE)
             expr = re.sub(r'\bthis\b', 'Self', expr, flags=re.IGNORECASE)
@@ -2610,9 +1848,13 @@ class ScriptConverter:
     def _convert_ref(self, name: str, extends: str) -> str:
         """Convert an Oblivion reference name to Papyrus."""
         low = name.lower()
-        if low == 'player':
+        if low in ('player', 'playerref'):
             return 'Game.GetPlayer()'
         if low in ('getself', 'myself', 'self'):
+            if extends == 'ActiveMagicEffect':
+                return 'GetTargetActor()'
+            if extends == 'TopicInfo':
+                return 'akSpeakerRef'
             return 'Self'
 
         # Known TES4 globals -> property
@@ -2629,6 +1871,10 @@ class ScriptConverter:
         if self.xref.is_quest_ref(name):
             self._property_refs[name] = self.xref.get_quest_script_type(name)
             return name
+
+        # Local variables take precedence over game form EditorIDs (name collision)
+        if low in self._local_vars or low in self._var_types:
+            return _safe_property_name(name)
 
         # Check if this is any known EditorID from the export
         fid = self.xref.edid_to_formid.get(low, '')
@@ -2658,7 +1904,8 @@ class ScriptConverter:
 
         # Actor value functions: first arg is AV name -> quoted string
         av_funcs = {'getactorvalue', 'setactorvalue', 'modactorvalue', 'forceactorvalue',
-                     'getav', 'setav', 'modav', 'forceav', 'getbaseactorvalue', 'getbaseav'}
+                     'getav', 'setav', 'modav', 'forceav', 'getbaseactorvalue', 'getbaseav',
+                     'modpcskill', 'advancepcskill'}
         if func_name in av_funcs:
             parts = args_str.split(None, 1)
             av_name = parts[0].rstrip(',').strip('"\'')
@@ -2682,6 +1929,8 @@ class ScriptConverter:
     def _convert_function_call(self, line: str, extends: str) -> str:
         """Convert an Oblivion function call line to Papyrus."""
         stripped = line.strip()
+        # Fix space after dot in ref. function patterns (TES4 typo)
+        stripped = re.sub(r'(\w)\.\s+(\w)', r'\1.\2', stripped)
 
         # ref.function pattern
         ref_m = re.match(r'^(\w+)\.(\w+)\s*(.*)', stripped, re.IGNORECASE)
@@ -2714,9 +1963,9 @@ class ScriptConverter:
             return 'akNewContainer'
         if 'oncombatstate' in ev:
             return 'akTarget'
-        # OnUpdate/OnInit/other events have no action ref - use Self as fallback
+        # OnUpdate/OnInit/other events have no action ref - use None as fallback
         if 'onupdate' in ev or 'oninit' in ev:
-            return 'Self'
+            return 'None'
         # Fallback: akActionRef (may be undefined, but most common case)
         return 'akActionRef'
 
@@ -2730,7 +1979,7 @@ class ScriptConverter:
         if ref_name:
             ref_low = ref_name.lower()
             # Self in ActiveMagicEffect/TopicInfo should redirect actor functions
-            if actor_func and ref_low == 'self':
+            if actor_func and ref_low in ('self', 'myself', 'getself'):
                 if extends == 'ActiveMagicEffect':
                     return 'GetTargetActor()'
                 if extends == 'TopicInfo':
@@ -2756,7 +2005,16 @@ class ScriptConverter:
         # --- Special case functions ---
 
         if fname_low == 'getself':
+            if extends == 'ActiveMagicEffect':
+                return 'GetTargetActor()'
+            if extends == 'TopicInfo':
+                return 'akSpeakerRef'
             return 'Self'
+
+        if fname_low == 'getpcissex':
+            arg = args_str.strip().lower() if args_str else 'male'
+            sex_val = '1' if 'female' in arg else '0'
+            return f'Game.GetPlayer().GetActorBase().GetSex() == {sex_val}'
 
         if fname_low == 'getactionref':
             return self._get_action_ref_param()
@@ -2866,12 +2124,444 @@ class ScriptConverter:
                 self._property_refs[parts[0].strip()] = 'Faction'
             val = parts[1].strip() if len(parts) > 1 else '1'
             if val == '0':
-                return f'Game.GetPlayer().SetFactionRank({faction}, 0)  ;TODO: un-expel (was SetPCExpelled 0)'
-            return f'Game.GetPlayer().SetFactionRank({faction}, -1)  ;TODO: Expel via faction rank'
+                return f'{faction}.SetPlayerExpelled(false)'
+            return f'{faction}.SetPlayerExpelled(true)'
 
-        # GotoJail
+        # GotoJail → faction.SendPlayerToJail()
         if fname_low == 'gotojail':
-            return ';TODO: GotoJail - No direct Papyrus equivalent, use quest stage'
+            self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+            return 'TES4CyrodiilCrimeFaction.SendPlayerToJail()'
+
+        # Crime gold functions → TES4CyrodiilCrimeFaction proxy
+        if fname_low == 'getcrimegold':
+            self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+            return 'TES4CyrodiilCrimeFaction.GetCrimeGold()'
+        if fname_low == 'setcrimegold':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
+            self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+            # SetCrimeGold takes Int; TES4 float vars need cast
+            arg_type = self._var_types.get(arg.lower(), '') or self._property_refs.get(arg, self._property_refs.get(arg.lower(), ''))
+            if arg_type == 'Float':
+                arg = f'{arg} as Int'
+            return f'TES4CyrodiilCrimeFaction.SetCrimeGold({arg})'
+        if fname_low == 'modcrimegold':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
+            self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+            return f'TES4CyrodiilCrimeFaction.ModCrimeGold({arg} as Int, false)'
+        if fname_low in ('payfine', 'payfinethief'):
+            self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+            return 'TES4CyrodiilCrimeFaction.PlayerPayCrimeGold(false, false)'
+        if fname_low in ('isplayerinjail', 'getplayerinjail', 'isplayerinprison'):
+            self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+            return 'TES4CyrodiilCrimeFaction.IsPlayerExpelled()'
+        if fname_low in ('senttojail',):
+            self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+            return 'TES4CyrodiilCrimeFaction.IsPlayerExpelled()'
+
+        # Fame/Infamy → GlobalVariable
+        if fname_low in ('getpcfame',):
+            self._property_refs['TES4Fame'] = 'GlobalVariable'
+            return 'TES4Fame.GetValueInt()'
+        if fname_low in ('getpcinfamy', 'getinfame'):
+            self._property_refs['TES4Infamy'] = 'GlobalVariable'
+            return 'TES4Infamy.GetValueInt()'
+        if fname_low == 'modpcfame':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
+            self._property_refs['TES4Fame'] = 'GlobalVariable'
+            return f'TES4Fame.Mod({arg} as Float)'
+        if fname_low == 'modpcinfamy':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
+            self._property_refs['TES4Infamy'] = 'GlobalVariable'
+            return f'TES4Infamy.Mod({arg} as Float)'
+        if fname_low == 'setpcfame':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
+            self._property_refs['TES4Fame'] = 'GlobalVariable'
+            arg_type = self._var_types.get(arg.lower(), '') or self._property_refs.get(arg, self._property_refs.get(arg.lower(), ''))
+            if arg_type == 'Float':
+                arg = f'{arg} as Int'
+            return f'TES4Fame.SetValueInt({arg})'
+        if fname_low == 'setpcinfamy':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
+            self._property_refs['TES4Infamy'] = 'GlobalVariable'
+            arg_type = self._var_types.get(arg.lower(), '') or self._property_refs.get(arg, self._property_refs.get(arg.lower(), ''))
+            if arg_type == 'Float':
+                arg = f'{arg} as Int'
+            return f'TES4Infamy.SetValueInt({arg})'
+
+        # Weather functions
+        if fname_low in ('forceweather', 'fw'):
+            parts = [p.strip() for p in (args_str.replace(',', ' ').split() if args_str else ['None'])]
+            weather = self._convert_expression(parts[0], extends) if parts else 'None'
+            if parts and parts[0].strip():
+                self._property_refs[parts[0].strip()] = 'Weather'
+            flag = 'true' if (len(parts) <= 1 or parts[1] in ('1', 'true')) else 'false'
+            return f'{weather}.ForceActive({flag})'
+        if fname_low in ('setweather', 'sw'):
+            parts = [p.strip() for p in (args_str.replace(',', ' ').split() if args_str else ['None'])]
+            weather = self._convert_expression(parts[0], extends) if parts else 'None'
+            if parts and parts[0].strip():
+                self._property_refs[parts[0].strip()] = 'Weather'
+            flag = 'true' if (len(parts) > 1 and parts[1] in ('1', 'true')) else 'false'
+            return f'{weather}.SetActive({flag}, false)'
+        if fname_low == 'releaseweatheroverride':
+            return 'Weather.ReleaseOverride()'
+        if fname_low in ('getiscurrentweather', 'getweatherpercent'):
+            if fname_low == 'getweatherpercent':
+                self._line_comments.append(';NE: GetWeatherPercent approximated')
+                return '50'
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            if args_str and args_str.strip():
+                self._property_refs[args_str.strip()] = 'Weather'
+            return f'(Weather.GetCurrentWeather() == {arg})'
+
+        # Sound functions
+        if fname_low == 'playsound':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            if args_str and args_str.strip():
+                self._property_refs[args_str.strip()] = 'Sound'
+            return f'{arg}.Play(Game.GetPlayer())'
+        if fname_low == 'playsound3d':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            if args_str and args_str.strip():
+                self._property_refs[args_str.strip()] = 'Sound'
+            ref = self._resolve_self_ref(ref_name, extends) if ref_name else 'Self'
+            return f'{arg}.Play({ref})'
+        if fname_low == 'stopsound':
+            self._line_comments.append(';NE: StopSound has no Papyrus equivalent')
+            return '0'
+
+        # Magic shader/effect functions
+        if fname_low in ('pms', 'playmagicshadervisuals'):
+            parts = args_str.strip().split() if args_str else []
+            shader_name = parts[0] if parts else None
+            duration = parts[1] if len(parts) > 1 else '-1.0'
+            if shader_name:
+                safe = _safe_property_name(shader_name)
+                self._property_refs[safe] = 'EffectShader'
+                ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+                dur = self._convert_expression(duration, extends)
+                return f'{safe}.Play({ref}, {dur})'
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return f'Self.Play({ref})'
+        if fname_low in ('sms', 'stopmagicshadervisuals'):
+            parts = args_str.strip().split() if args_str else []
+            shader_name = parts[0] if parts else None
+            if shader_name:
+                safe = _safe_property_name(shader_name)
+                self._property_refs[safe] = 'EffectShader'
+                ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+                return f'{safe}.Stop({ref})'
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return f'Self.Stop({ref})'
+        if fname_low == 'triggerhitshader':
+            return 'Game.TriggerScreenBlood(3)'
+
+        # StopCombatAlarmOnActor / SCAOnActor / SCA
+        if fname_low in ('scaonactor', 'sca', 'stopcombatalarmonactor'):
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return f'{ref}.StopCombat()'
+
+        # ShowMap → marker.AddToMap(true)
+        if fname_low == 'showmap':
+            parts = args_str.strip().split() if args_str else []
+            marker_name = parts[0] if parts else 'None'
+            if marker_name != 'None':
+                safe = _safe_property_name(marker_name)
+                self._property_refs[safe] = 'ObjectReference'
+                return f'{safe}.AddToMap(true)'
+            return 'Self.AddToMap(true)'
+
+        # Disposition (removed in Skyrim)
+        if fname_low == 'moddisposition':
+            parts = [p.strip() for p in (args_str.replace(',', ' ').split() if args_str else [])]
+            if len(parts) >= 2:
+                try:
+                    val = int(parts[-1])
+                    if val <= -100:
+                        target = self._convert_expression(parts[0], extends)
+                        tgt_key = parts[0].strip()
+                        cur = self._property_refs.get(tgt_key, '')
+                        if cur in ('', 'ObjectReference'):
+                            self._property_refs[tgt_key] = 'Actor'
+                        ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+                        return f'{target}.StartCombat({ref})'
+                except (ValueError, IndexError):
+                    pass
+            self._line_comments.append(f';NE: ModDisposition')
+            return '0'
+        if fname_low == 'getdisposition':
+            return '50'
+
+        # SetAlert → DrawWeapon / no-op
+        if fname_low == 'setalert':
+            arg = args_str.strip() if args_str else '0'
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            if arg in ('1', 'true'):
+                # DrawWeapon is Actor-only; cast if ref is ObjectReference
+                if ref == 'Self' and extends not in ('Actor',):
+                    ref = '(Self as Actor)'
+                return f'{ref}.DrawWeapon()'
+            self._line_comments.append(';NE: SetAlert 0')
+            return '0'
+
+        # StartConversation → Say(None)
+        if fname_low == 'startconversation':
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return f'{ref}.Say(None)'
+
+        # Wait → no-op (TES4 Wait is a package instruction, not a time delay)
+        if fname_low == 'wait':
+            self._line_comments.append(';NE: Wait is a package instruction')
+            return '0'
+
+        # Reset3DState → MoveTo self (reloads 3D)
+        if fname_low == 'reset3dstate':
+            ref = self._resolve_self_ref(ref_name, extends)
+            return f'{ref}.MoveTo({ref})'
+
+        # ClearOwnership
+        if fname_low == 'clearownership':
+            ref = self._resolve_self_ref(ref_name, extends)
+            return f'{ref}.SetActorOwner(Game.GetPlayer().GetActorBase())'
+
+        # SetRestrained → SetDontMove
+        if fname_low == 'setrestrained':
+            arg = args_str.strip() if args_str else '0'
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            val = 'true' if arg in ('1', 'true') else 'false'
+            return f'{ref}.SetDontMove({val})'
+        if fname_low == 'getrestrained':
+            self._line_comments.append(';NE: GetRestrained')
+            return '0'
+
+        # SetForceRun → SpeedMult
+        if fname_low == 'setforcerun':
+            arg = args_str.strip() if args_str else '0'
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            if arg in ('1', 'true'):
+                return f'{ref}.SetActorValue("SpeedMult", 150.0)'
+            return f'{ref}.SetActorValue("SpeedMult", 100.0)'
+
+        # Faction crime tracking
+        if fname_low in ('setpcfactionmurder', 'setpcfactionattack'):
+            parts = [p.strip() for p in (args_str.replace(',', ' ').split() if args_str else [])]
+            if parts:
+                faction = self._convert_expression(parts[0], extends)
+                self._property_refs[parts[0].strip()] = 'Faction'
+                val = parts[1] if len(parts) > 1 else '1'
+                if val in ('0', '0.0'):
+                    return f'{faction}.SetCrimeGoldViolent(0)'
+                return f'{faction}.SetCrimeGoldViolent(1000)'
+            return ';NE: SetPCFactionMurder missing faction arg'
+        if fname_low == 'setpcfactionsteal':
+            parts = [p.strip() for p in (args_str.replace(',', ' ').split() if args_str else [])]
+            if parts:
+                faction = self._convert_expression(parts[0], extends)
+                self._property_refs[parts[0].strip()] = 'Faction'
+                val = parts[1] if len(parts) > 1 else '1'
+                if val in ('0', '0.0'):
+                    return f'{faction}.SetCrimeGold(0)'
+                return f'{faction}.SetCrimeGold(100)'
+            return ';NE: SetPCFactionSteal missing faction arg'
+        if fname_low in ('getpcfactionmurder', 'getpcfactionattack'):
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            if args_str and args_str.strip():
+                self._property_refs[args_str.strip()] = 'Faction'
+            return f'{arg}.GetCrimeGoldViolent()'
+        if fname_low == 'getpcfactionsteal':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            if args_str and args_str.strip():
+                self._property_refs[args_str.strip()] = 'Faction'
+            return f'{arg}.GetCrimeGoldNonViolent()'
+
+        # GetIsReference → equality check
+        if fname_low == 'getisreference':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return f'{ref} == {arg}'
+
+        # GetInWorldSpace → WorldSpace comparison
+        if fname_low in ('getinworldspace', 'getplayerinseworld'):
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            if args_str and args_str.strip():
+                self._property_refs[args_str.strip()] = 'WorldSpace'
+            if ref_name:
+                ref = self._resolve_self_ref(ref_name, extends)
+                return f'{ref}.GetWorldSpace() == {arg}'
+            return f'Game.GetPlayer().GetWorldSpace() == {arg}'
+
+        # ModAmountSoldStolen
+        if fname_low == 'modamountsoldstolen':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else '1'
+            return f'Game.IncrementStat("Items Stolen", {arg})'
+
+        # Reset → ref.Reset()
+        if fname_low == 'reset':
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return f'{ref}.Reset()'
+
+        # GetDetectionLevel → approximate
+        if fname_low == 'getdetectionlevel':
+            self._line_comments.append(';NE: GetDetectionLevel')
+            return '0'
+
+        # SetActorFullName → no-op (SKSE required for SetDisplayName)
+        if fname_low == 'setactorfullname':
+            self._line_comments.append(';NE: SetActorFullName')
+            return '0'
+        if fname_low == 'setdisplayname':
+            self._line_comments.append(';NE: SetDisplayName')
+            return '0'
+
+        # SetCellFullName no-op
+        if fname_low in ('setcellfullname', 'setcellownership'):
+            self._line_comments.append(f';NE: {func_name}')
+            return '0'
+
+        # SetCombatStyle → no-op (managed by CK/race)
+        if fname_low == 'setcombatstyle':
+            self._line_comments.append(';NE: SetCombatStyle')
+            return '0'
+
+        # ForceFlee → StartCombat avoidance (approximate)
+        if fname_low == 'forceflee':
+            self._line_comments.append(';NE: ForceFlee')
+            return '0'
+
+        # SetActorsAI → no-op
+        if fname_low == 'setactorsai':
+            self._line_comments.append(';NE: SetActorsAI')
+            return '0'
+
+        # GetDayOfWeek → GameDaysPassed % 7
+        if fname_low == 'getdayofweek':
+            self._property_refs['GameDaysPassed'] = 'GlobalVariable'
+            return '(GameDaysPassed.GetValueInt() % 7)'
+
+        # IsPlayerSleeping
+        if fname_low == 'isplayersleeping':
+            return 'Game.GetPlayer().GetSleepState()'
+
+        # GetIsPlayableRace
+        if fname_low == 'getisplayablerace':
+            return 'true'
+
+        # DeleteFullActorCopy
+        if fname_low == 'deletefullactorcopy':
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return f'{ref}.Delete()'
+
+        # ResetInterior → cell.Reset()
+        if fname_low == 'resetinterior':
+            if args_str and args_str.strip():
+                cell_name = _safe_property_name(args_str.strip().split()[0])
+                self._property_refs[cell_name] = 'Cell'
+                return f'{cell_name}.Reset()'
+            ref = self._resolve_self_ref(ref_name, extends)
+            return f'{ref}.Reset()'
+
+        # IsPCRace → Game.GetPlayer().GetRace() == arg
+        if fname_low in ('ispcrace', 'getpcisrace'):
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            if args_str and args_str.strip():
+                self._property_refs[args_str.strip()] = 'Race'
+            return f'Game.GetPlayer().GetRace() == {arg}'
+
+        # IsSwimming → no vanilla equivalent, approximate with submerged check
+        if fname_low == 'isswimming':
+            self._line_comments.append(';NE: IsSwimming')
+            return '0'
+
+        # GetTalkedToPC
+        if fname_low in ('gettalkedtopc', 'gettalkedtopcp'):
+            self._line_comments.append(';NE: GetTalkedToPC')
+            return '0'
+
+        # SetItemValue → no-op
+        if fname_low == 'setitemvalue':
+            self._line_comments.append(';NE: SetItemValue')
+            return '0'
+
+        # SetLevel → no-op
+        if fname_low == 'setlevel':
+            self._line_comments.append(';NE: SetLevel')
+            return '0'
+
+        # IsPCAMurderer / GetPCIsMurderer
+        if fname_low in ('ispcamurderer', 'ispcanmurderer', 'getpcismurderer'):
+            self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
+            return '(TES4CyrodiilCrimeFaction.GetCrimeGoldViolent() > 0)'
+
+        # SetForceSneaking
+        if fname_low in ('setforcesneak',):
+            self._line_comments.append(';NE: SetForceSneak')
+            return '0'
+
+        # Expel → faction.SetPlayerExpelled(true)
+        if fname_low == 'expel':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            if args_str and args_str.strip():
+                self._property_refs[args_str.strip()] = 'Faction'
+            return f'{arg}.SetPlayerExpelled(true)'
+
+        # SetDoorDefaultOpen → SetOpen
+        if fname_low in ('setdoordefaultopen', 'opendoor'):
+            ref = self._resolve_self_ref(ref_name, extends)
+            return f'{ref}.SetOpen(true)'
+        if fname_low == 'closedoor':
+            ref = self._resolve_self_ref(ref_name, extends)
+            return f'{ref}.SetOpen(false)'
+
+        # SetScale / SetSize
+        if fname_low in ('setsize',):
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else '1.0'
+            ref = self._resolve_self_ref(ref_name, extends)
+            return f'{ref}.SetScale({arg})'
+        if fname_low in ('getsize',):
+            ref = self._resolve_self_ref(ref_name, extends)
+            return f'{ref}.GetScale()'
+
+        # Rotate → no-op
+        if fname_low == 'rotate':
+            self._line_comments.append(';NE: Rotate')
+            return '0'
+
+        # SetRigidBodyMass → no-op
+        if fname_low == 'setrigidbodymass':
+            self._line_comments.append(';NE: SetRigidBodyMass')
+            return '0'
+
+        # ResetFallDamageTimer → no-op
+        if fname_low == 'resetfalldamagetimer':
+            self._line_comments.append(';NE: ResetFallDamageTimer')
+            return '0'
+
+        # Comprehensive no-ops (functions with no meaningful Skyrim equivalent)
+        _NO_OP_FUNCS = {
+            'addtopic', 'removetopic', 'refreshtopiclist', 'setquestobject',
+            'setcellpublicflag', 'disablelinkedpathpoints', 'enablelinkedpathpoints',
+            'addachievement', 'closecurrentobliviongate', 'forcecloseobliviongate',
+            'closeobliviongate', 'setignorefriendlyhits', 'setsceneiscomplex',
+            'setnorumors', 'trapupdate', 'setdoordisabletakeoff',
+            'setinvestmentgold', 'setpackduration', 'purgecellbuffers', 'pcb',
+            'showdialogsubtitles', 'setpublic', 'essentialdeathreload',
+            'showenchantment', 'playbink', 'showspellmaking',
+            'showbirthsignmenu', 'setallreachable', 'setallvisible',
+            'setshowquestitems', 'opencurrentcontainer', 'sendtrespassalarm',
+            'setnoavoidance', 'respawnhorse', 'offerhorse', 'getisplayerbirthsign',
+            'attachashpile', 'menumode', 'istimepassing',
+            'getisalerted', 'getcrimeknown', 'isidleplaying',
+            'iscurrentfurnitureref', 'iscurrentfurnitureobj',
+            'getbookread', 'isonguard', 'isindangerouswater',
+            'getplayercontrolsdisabled', 'getstartingpos',
+            'getcurrentaiprocedure', 'getcurrentaipackage', 'getcurrentpackage',
+            'getiscurrentpackage', 'hasvariable', 'hasbeenpickedup',
+            'ispcanmurderer', 'gettalkedtopc', 'gettalkedtopcp',
+            'setclass', 'setcellfullname', 'modamountsoldstolen',
+        }
+        if fname_low in _NO_OP_FUNCS:
+            self._line_comments.append(f';NE: {func_name}')
+            return '0'
 
         # Say: ref.Say topic [force] [headRef] -> ref.Say(topic)
         # SayTo: ref.SayTo target topic [force] -> ref.Say(topic)
@@ -3057,30 +2747,63 @@ class ScriptConverter:
             sex_val = '1' if 'female' in arg else '0'
             return f'({ref} as Actor).GetActorBase().GetSex() == {sex_val}'
 
-        # sme (StopMagicEffectVisuals) / pme (PlayMagicEffectVisuals)
-        if fname_low in ('sme', 'stopmage', 'stopmagiceffectvisuals'):
-            return f';TODO: StopMagicEffectVisuals {args_str or ""}  ;no direct equivalent'
-        if fname_low in ('pme', 'playmage', 'playmagiceffectvisuals'):
-            return f';TODO: PlayMagicEffectVisuals {args_str or ""}  ;no direct equivalent'
-
-        # GetCrimeKnown: complex TES4 condition, no direct equivalent
-        if fname_low == 'getcrimeknown':
-            return f';TODO: GetCrimeKnown {args_str or ""}  ;no Papyrus equivalent'
-
-        # SetDisplayName: ref.SetDisplayName "name" -> ref.SetDisplayName("name")
-        if fname_low == 'setdisplayname':
-            arg = self._convert_expression(args_str, extends) if args_str else '""'
+        # PlayGroup: PlayGroup Forward 0 -> Debug.SendAnimationEvent(ref, "Forward")
+        if fname_low == 'playgroup':
+            parts = args_str.strip().split() if args_str else ['Idle']
+            anim_name = parts[0].rstrip(',').strip('"').strip("'") if parts else 'Idle'
+            # Map common Oblivion animation groups to Skyrim events
+            _anim_map = {
+                'forward': 'moveStart', 'backward': 'moveStartBackward',
+                'left': 'moveStartStrafeLeft', 'right': 'moveStartStrafeRight',
+                'idle': 'IdleForceDefaultState', 'specialidle': 'SpecialIdle',
+                'unequip': 'Unequip', 'equip': 'Equip',
+                'torchidle': 'IdleForceDefaultState',
+                'castself': 'MagicCastSelf', 'casttouch': 'attackStart',
+                'casttarget': 'attackStart',
+                'jumpstart': 'JumpStandingStart', 'jumpland': 'JumpLand',
+                'handstohandsattack': 'attackStart',
+            }
+            event = _anim_map.get(anim_name.lower(), anim_name)
             ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
-            return f';TODO: {ref}.SetDisplayName({arg})  ;SKSE required'
+            return f'Debug.SendAnimationEvent({ref}, "{event}")'
 
-        # SetOwnership: determines Actor vs Faction from argument type
+        # PickIdle / PlayIdle: -> Debug.SendAnimationEvent(ref, "IdleForceDefaultState")
+        if fname_low in ('pickidle', 'playidle'):
+            idle_name = args_str.strip() if args_str else 'IdleForceDefaultState'
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return f'Debug.SendAnimationEvent({ref}, "{idle_name}")'
+
+        # SetEssential: SetEssential ref 1/0 -> ref.GetActorBase().SetEssential(true/false)
+        if fname_low == 'setessential':
+            normalized = args_str.replace(',', ' ').strip() if args_str else ''
+            parts = normalized.split() if normalized else []
+            if len(parts) >= 2:
+                target = self._convert_expression(parts[0], extends)
+                val = 'true' if parts[1].strip() in ('1', 'true') else 'false'
+                self._property_refs[parts[0]] = 'Actor'
+                return f'({target} as Actor).GetActorBase().SetEssential({val})'
+            elif ref_name:
+                ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+                val = 'true' if args_str and args_str.strip() in ('1', 'true') else 'false'
+                return f'({ref} as Actor).GetActorBase().SetEssential({val})'
+            return f'; SetEssential {args_str or ""}  ;could not parse'
+
+        # GetIsID: ref.GetIsID baseForm -> ref.GetBaseObject() == baseForm
+        if fname_low == 'getisid':
+            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
+            if args_str:
+                self._property_refs[args_str.strip()] = 'ActorBase'
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return f'{ref}.GetActorBase() == {arg}'
+
+        # SetOwnership: ref.SetOwnership owner -> ref.SetActorOwner/SetFactionOwner
         if fname_low == 'setownership':
             ref = self._resolve_self_ref(ref_name, extends)
             if args_str:
                 arg = self._convert_expression(args_str.strip(), extends)
                 arg_low = args_str.strip().lower()
                 # Check if arg is a faction
-                arg_fid = self.xref.edid_to_formid.get(arg_low, '')
+                arg_fid = self.xref.edid_to_formid.get(arg_low, '') if self.xref else ''
                 arg_rtype = self.xref.record_type.get(arg_fid, '') if arg_fid else ''
                 pref_type = self._property_refs.get(arg, self._property_refs.get(_safe_property_name(args_str.strip()), ''))
                 if arg_rtype == 'FACT' or pref_type == 'Faction':
@@ -3107,48 +2830,59 @@ class ScriptConverter:
             parts = [p.strip() for p in normalized.split() if p.strip()]
             base = self._convert_expression(parts[0], extends) if parts else 'None'
             count = parts[1] if len(parts) > 1 else '1'
-            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            # PlaceAtMe is on ObjectReference — don't promote type to Actor
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=False)
+            if ref == 'Self' and extends == 'ActiveMagicEffect':
+                ref = 'GetTargetActor()'
+            elif ref == 'Self' and extends == 'TopicInfo':
+                ref = 'akSpeakerRef'
             return f'{ref}.PlaceAtMe({base}, {count})'
 
-        # CreateFullActorCopy: TES4 function, no direct Papyrus equivalent
+        # CreateFullActorCopy: approximate with PlaceAtMe
         if fname_low == 'createfullactorcopy':
             ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
-            return f';TODO: {ref}.CreateFullActorCopy()  ;no direct equivalent'
+            return f'{ref}.PlaceAtMe({ref}.GetActorBase())'
 
-        # WakeUpPC -> Game.GetPlayer() wake up
+        # WakeUpPC -> Game.GetPlayer().RestoreActorValue("Health", 0)
         if fname_low == 'wakeuppc':
-            return 'Game.GetPlayer().RestoreActorValue("Health", 0)  ;TODO: WakeUpPC approximate'
+            return 'Game.ForceThirdPerson()'
 
-        # IsExpelled: faction arg -> Game.GetPlayer().IsExpelled(faction) - TES4 condition  
+        # IsExpelled: faction arg -> faction rank check
         if fname_low == 'isexpelled':
             arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
-            ref = self._convert_ref(ref_name, extends) if ref_name else 'Game.GetPlayer()'
-            return f';TODO: {ref}.IsExpelled({arg})  ;no direct equivalent, use faction rank check'
+            if args_str and args_str.strip():
+                self._property_refs[args_str.strip()] = 'Faction'
+            return f'({arg}.IsPlayerExpelled())'
 
-        # GetContainer: item.GetContainer -> item.GetContainer() (valid ObjectReference method)
+        # GetContainer: item.GetContainer -> item.GetContainer()
         if fname_low == 'getcontainer':
-            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
-            return f';TODO: {ref}.GetContainer()  ;SKSE required'
+            ref = self._resolve_self_ref(ref_name, extends)
+            return f'{ref}.GetContainer()'
 
-        # GetBookRead -> no direct equivalent
+        # GetBookRead -> no direct equivalent, return 0
         if fname_low in ('getbookread', 'bookread'):
-            return f';TODO: GetBookRead  ;no direct equivalent'
+            self._line_comments.append(';NE: GetBookRead')
+            return '0'
 
-        # ShowClassMenu, ShowBirthSignMenu etc - character gen functions
+        # ShowClassMenu, ShowBirthSignMenu etc - no-ops
         if fname_low in ('showclassmenu', 'showbirthsignmenu', 'showracemenu'):
-            return f';TODO: {func_name}  ;character generation menus not available in Papyrus'
+            self._line_comments.append(f';NE: {func_name}')
+            return '0'
 
-        # SetInCharGen: TES4 command to mark character generation state
+        # SetInCharGen: no-op
         if fname_low == 'setinchargen':
-            return f';TODO: SetInCharGen {args_str or ""}  ;no Papyrus equivalent'
+            self._line_comments.append(';NE: SetInCharGen')
+            return '0'
 
-        # SetPlayerInSEWorld: Shivering Isles specific
+        # SetPlayerInSEWorld: no-op
         if fname_low == 'setplayerinseworld':
-            return f';TODO: SetPlayerInSEWorld  ;Shivering Isles specific'
+            self._line_comments.append(';NE: SetPlayerInSEWorld')
+            return '0'
 
-        # ForceCloseOblivionGate / CloseCurrentOblivionGate: Oblivion-specific
+        # ForceCloseOblivionGate / CloseCurrentOblivionGate: no-op
         if fname_low in ('forcecloseobliviongate', 'closecurrentobliviongate'):
-            return f';TODO: {func_name}  ;Oblivion gate specific, no equivalent'
+            self._line_comments.append(f';NE: {func_name}')
+            return '0'
 
         # IsInFaction: ref.IsInFaction faction -> ref.IsInFaction(faction)  
         if fname_low == 'isinfaction':
@@ -3177,6 +2911,13 @@ class ScriptConverter:
             papyrus_func, needs_self, note = entry
             if papyrus_func is None:
                 orig = f'{ref_name}.{func_name} {args_str}'.strip() if ref_name else f'{func_name} {args_str}'.strip()
+                if note and not note.startswith(';TODO'):
+                    # No-op: function has no Skyrim equivalent
+                    # Return clean value (0) for expression contexts,
+                    # store comment for line-level append
+                    comment = f';NE: {orig}  {note}'
+                    self._line_comments.append(comment)
+                    return '0'
                 return f';TODO: {orig}' + (f'  {note}' if note else '')
             if not args_str and fname_low in _DEFAULT_ARGS:
                 args = _DEFAULT_ARGS[fname_low]
@@ -3184,15 +2925,20 @@ class ScriptConverter:
                 args = self._convert_args(args_str, fname_low, extends) if args_str else ''
             if ref_name:
                 ref = self._convert_ref(ref_name, extends)
+                papyrus_low = papyrus_func.lower() if papyrus_func else ''
+                is_actor_func = fname_low in _ACTOR_ONLY_FUNCTIONS or papyrus_low in _ACTOR_ONLY_FUNCTIONS
                 # ActiveMagicEffect Self doesn't have actor/objref methods
                 if ref == 'Self' and extends == 'ActiveMagicEffect':
                     ref = 'GetTargetActor()'
-                elif ref == 'Self' and extends == 'TopicInfo' and fname_low in _ACTOR_ONLY_FUNCTIONS:
+                elif ref == 'Self' and extends == 'TopicInfo' and is_actor_func:
                     ref = 'akSpeakerRef'
-                # Infer Actor type from function usage (don't overwrite script types)
-                if fname_low in _ACTOR_ONLY_FUNCTIONS:
+                # Cast ObjectReference refs to Actor for truly actor-only functions
+                # (skip ObjectReference-shared methods like PlaceAtMe, AddItem, etc.)
+                if is_actor_func and fname_low not in _OBJREF_SHARED_FUNCTIONS:
                     cur = self._property_refs.get(ref_name, '')
-                    if cur in ('', 'ObjectReference'):
+                    if cur == 'ObjectReference':
+                        ref = f'({ref} as Actor)'
+                    elif cur in ('',):
                         self._property_refs[ref_name] = 'Actor'
                 result = f'{ref}.{papyrus_func}({args})'
             else:
@@ -3202,6 +2948,8 @@ class ScriptConverter:
                         result = f'akSpeakerRef.{papyrus_func}({args})'
                     elif extends == 'ActiveMagicEffect':
                         result = f'GetTargetActor().{papyrus_func}({args})'
+                    elif extends not in ('Actor',):
+                        result = f'(Self as Actor).{papyrus_func}({args})'
                     else:
                         result = f'{papyrus_func}({args})'
                 else:
@@ -3214,7 +2962,9 @@ class ScriptConverter:
             ref = self._convert_ref(ref_name, extends)
             if fname_low in _ACTOR_ONLY_FUNCTIONS:
                 cur = self._property_refs.get(ref_name, '')
-                if cur in ('', 'ObjectReference'):
+                if cur == 'ObjectReference':
+                    ref = f'({ref} as Actor)'
+                elif cur in ('',):
                     self._property_refs[ref_name] = 'Actor'
             return f'{ref}.{func_name}({args})  ;TODO: Verify'
         if fname_low in _ACTOR_ONLY_FUNCTIONS:
@@ -3237,463 +2987,3 @@ class ScriptConverter:
         return f'"{s}"'
 
 
-# ===========================================================================
-# High-level conversion functions
-# ===========================================================================
-
-def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -> dict:
-    """Convert all TES4 scripts from export directory to Papyrus .psc files.
-
-    Args:
-        export_dir: Path to export/Oblivion.esm (contains .txt files)
-        output_dir: Path to write .psc files
-        workers: Number of worker threads (default: cpu_count-1)
-
-    Returns dict with conversion statistics.
-    """
-    if workers is None:
-        workers = max(1, (os.cpu_count() or 4) - 1)
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Phase 1: Build cross-reference graph
-    print('  Building cross-reference graph...')
-    xref = CrossRefGraph()
-    xref.load_from_export(export_dir)
-    print(f'    {len(xref.formid_to_edid)} FormID->EditorID mappings')
-    print(f'    {len(xref.script_formid_to_edid)} scripts, {len(xref.quest_edids)} quests')
-
-    # Phase 1.5: Analyze cross-script ref-as-int patterns
-    scpt_path = os.path.join(export_dir, 'SCPT.txt')
-    if os.path.exists(scpt_path):
-        xref.build_ref_as_int_map(scpt_path)
-        if xref.ref_as_int:
-            print(f'    {len(xref.ref_as_int)} ref variables detected as integer-only (cross-script)')
-
-    stats = {
-        'scpt_total': 0, 'scpt_ok': 0, 'scpt_err': 0,
-        'info_total': 0, 'info_ok': 0, 'info_err': 0,
-        'qust_total': 0, 'qust_ok': 0, 'qust_err': 0,
-        'todo_count': 0, 'errors': [],
-    }
-
-    # Phase 2: Convert SCPT records
-    scpt_path = os.path.join(export_dir, 'SCPT.txt')
-    if os.path.exists(scpt_path):
-        print('  Converting SCPT records...')
-        _convert_scpt_records(scpt_path, output_dir, xref, stats)
-
-    # Phase 3: Convert INFO result scripts
-    info_path = os.path.join(export_dir, 'INFO.txt')
-    if os.path.exists(info_path):
-        print('  Converting INFO result scripts...')
-        _convert_info_scripts(info_path, output_dir, xref, stats)
-
-    # Phase 4: Convert QUST stage scripts
-    qust_path = os.path.join(export_dir, 'QUST.txt')
-    if os.path.exists(qust_path):
-        print('  Converting QUST stage scripts...')
-        _convert_qust_scripts(qust_path, output_dir, xref, stats)
-
-    total = stats['scpt_ok'] + stats['info_ok'] + stats['qust_ok']
-    errs = stats['scpt_err'] + stats['info_err'] + stats['qust_err']
-    print(f'\n  Script conversion complete:')
-    print(f'    SCPT: {stats["scpt_ok"]}/{stats["scpt_total"]} converted')
-    print(f'    INFO: {stats["info_ok"]}/{stats["info_total"]} fragments')
-    print(f'    QUST: {stats["qust_ok"]}/{stats["qust_total"]} stage scripts')
-    print(f'    Total: {total} converted, {errs} errors, {stats["todo_count"]} TODOs')
-
-    _write_report(output_dir, stats)
-    return stats
-
-
-def _convert_scpt_records(scpt_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
-    """Convert all SCPT records from the export file."""
-    records = parse_export_file(scpt_path)
-    stats['scpt_total'] = len(records)
-
-    for rec in records:
-        formid = rec.get('FormID', '')
-        edid = rec.get('EditorID', '')
-        sctx = rec.get('SCTX', '')
-        if not sctx or not sctx.strip():
-            continue
-
-        try:
-            extends = xref.get_extends_class(formid)
-            conv = ScriptConverter(xref)
-            # Pre-populate external references from SCRO entries
-            _preload_scro_refs(conv, rec, xref)
-            name = _sanitize_name(edid or f'Script_{formid}')
-            papyrus = conv.convert_standalone(name, sctx, extends, edid)
-
-            out_path = os.path.join(output_dir, f'TES4_{name}.psc')
-            with open(out_path, 'w', encoding='utf-8') as f:
-                f.write(papyrus)
-            stats['scpt_ok'] += 1
-            stats['todo_count'] += papyrus.count(';TODO')
-        except Exception as e:
-            stats['scpt_err'] += 1
-            stats['errors'].append(f'SCPT {edid} ({formid}): {e}')
-
-
-def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
-    """Convert INFO result scripts to TopicInfo fragment .psc files."""
-    records = parse_export_file(info_path)
-
-    for rec in records:
-        result_script = rec.get('ResultScript', '')
-        if not result_script or not result_script.strip():
-            continue
-
-        formid = rec.get('FormID', '')
-        stats['info_total'] += 1
-
-        try:
-            conv = ScriptConverter(xref)
-            _preload_scro_refs(conv, rec, xref)
-            body_lines = conv.convert_fragment(result_script, 'TopicInfo')
-
-            script_name = f'TES4_TIF__{formid}'
-            prop_refs = dict(conv._property_refs)
-            out_lines = [
-                f'ScriptName {script_name} extends TopicInfo Hidden',
-                '',
-            ]
-            if prop_refs:
-                declared = set()
-                for pname, ptype in sorted(prop_refs.items()):
-                    safe = _safe_property_name(pname)
-                    if safe.lower() in declared:
-                        continue
-                    declared.add(safe.lower())
-                    out_lines.append(f'{ptype} Property {safe} Auto')
-                out_lines.append('')
-            out_lines.append('Function Fragment_0(Actor akSpeakerRef)')
-            out_lines.extend(body_lines)
-            out_lines.append('EndFunction')
-            out_lines.append('')
-
-            papyrus = '\n'.join(out_lines)
-            out_path = os.path.join(output_dir, f'{script_name}.psc')
-            with open(out_path, 'w', encoding='utf-8') as f:
-                f.write(papyrus)
-            stats['info_ok'] += 1
-            stats['todo_count'] += papyrus.count(';TODO')
-        except Exception as e:
-            stats['info_err'] += 1
-            stats['errors'].append(f'INFO {formid}: {e}')
-
-
-def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
-    """Convert QUST stage scripts to Quest fragment .psc files."""
-    records = parse_export_file(qust_path)
-
-    for rec in records:
-        edid = rec.get('EditorID', '')
-        if not edid:
-            continue
-
-        stage_count_str = rec.get('StageCount', '0')
-        try:
-            stage_count = int(stage_count_str)
-        except ValueError:
-            continue
-
-        fragments = []  # (stage_index, log_idx, script_source, stage_arr_idx, log_arr_idx)
-        for i in range(stage_count):
-            stage_idx_str = rec.get(f'Stage[{i}].Index', '0')
-            try:
-                stage_idx = int(stage_idx_str)
-            except ValueError:
-                continue
-
-            log_count_str = rec.get(f'Stage[{i}].LogCount', '0')
-            try:
-                log_count = int(log_count_str)
-            except ValueError:
-                continue
-
-            for j in range(log_count):
-                script = rec.get(f'Stage[{i}].Log[{j}].ResultScript', '')
-                if script and script.strip():
-                    fragments.append((stage_idx, j, script, i, j))
-
-        if not fragments:
-            continue
-
-        stats['qust_total'] += len(fragments)
-
-        try:
-            conv = ScriptConverter(xref)
-            # Pre-populate external references from SCRO entries
-            _preload_scro_refs(conv, rec, xref)
-            script_name = f'TES4_QF_{_sanitize_name(edid)}'
-            out_lines = [
-                f'ScriptName {script_name} extends Quest Hidden',
-                '',
-            ]
-
-            for stage_idx, log_idx, script_src, stage_arr_idx, log_arr_idx in fragments:
-                # Load per-stage SCROs for this fragment
-                _preload_stage_scro_refs(conv, rec, xref, stage_arr_idx, log_arr_idx)
-                func_name = f'Fragment_Stage_{stage_idx:04d}_Item_{log_idx}'
-                out_lines.append(f'Function {func_name}()')
-                body_lines = conv.convert_fragment(script_src, 'Quest')
-                out_lines.extend(body_lines)
-                out_lines.append('EndFunction')
-                out_lines.append('')
-
-            # Insert property declarations after ScriptName line
-            prop_refs = conv.get_property_refs()
-            if prop_refs:
-                insert_idx = 2  # After ScriptName + blank line
-                declared = set()
-                count = 0
-                for pname, ptype in sorted(prop_refs.items()):
-                    safe = _safe_property_name(pname)
-                    if safe.lower() in declared:
-                        continue
-                    declared.add(safe.lower())
-                    out_lines.insert(insert_idx + count, f'{ptype} Property {safe} Auto')
-                    count += 1
-                out_lines.insert(insert_idx + count, '')
-
-            papyrus = '\n'.join(out_lines)
-            out_path = os.path.join(output_dir, f'{script_name}.psc')
-            with open(out_path, 'w', encoding='utf-8') as f:
-                f.write(papyrus)
-            stats['qust_ok'] += len(fragments)
-            stats['todo_count'] += papyrus.count(';TODO')
-        except Exception as e:
-            stats['qust_err'] += len(fragments)
-            stats['errors'].append(f'QUST {edid}: {e}')
-
-
-def _write_report(output_dir: str, stats: dict):
-    """Write a conversion summary report."""
-    report_path = os.path.join(output_dir, '_CONVERSION_REPORT.txt')
-    with open(report_path, 'w', encoding='utf-8') as f:
-        f.write('TES4 Script -> Papyrus Conversion Report\n')
-        f.write('=' * 50 + '\n\n')
-        f.write(f'SCPT records: {stats["scpt_ok"]}/{stats["scpt_total"]} converted\n')
-        f.write(f'INFO fragments: {stats["info_ok"]}/{stats["info_total"]} converted\n')
-        f.write(f'QUST stage scripts: {stats["qust_ok"]}/{stats["qust_total"]} converted\n')
-        total = stats['scpt_ok'] + stats['info_ok'] + stats['qust_ok']
-        errs = stats['scpt_err'] + stats['info_err'] + stats['qust_err']
-        f.write(f'\nTotal: {total} converted, {errs} errors\n')
-        f.write(f';TODO markers: {stats["todo_count"]}\n\n')
-
-        if stats['errors']:
-            f.write('Errors:\n')
-            for err in stats['errors'][:100]:
-                f.write(f'  {err}\n')
-            if len(stats['errors']) > 100:
-                f.write(f'  ... and {len(stats["errors"]) - 100} more\n')
-
-
-def _sanitize_name(name: str) -> str:
-    """Sanitize a script name for use as a filename."""
-    return re.sub(r'[^\w]', '_', name)
-
-
-def _safe_property_name(name: str) -> str:
-    """Return a Papyrus-safe property name, renaming reserved words."""
-    # Replace non-word characters with underscore
-    safe = re.sub(r'[^\w]', '_', name)
-    # Strip leading digits
-    safe = re.sub(r'^\d+', '', safe)
-    if not safe:
-        safe = 'var_' + name.replace(' ', '_')
-    low = safe.lower()
-    if low in _PAPYRUS_RESERVED:
-        return f'my{safe.capitalize()}'
-    return safe
-
-
-# Canonical names for known TES4 globals
-_GLOBAL_CANONICAL = {
-    'gamehour': 'GameHour', 'gamedayspassed': 'GameDaysPassed',
-    'gameday': 'GameDay', 'gamemonth': 'GameMonth', 'gameyear': 'GameYear',
-    'timescale': 'TimeScale',
-}
-
-
-def _canonical_global(name: str) -> str:
-    """Return the canonical property name for a known global."""
-    return _GLOBAL_CANONICAL.get(name.lower(), name)
-
-
-_RECORD_TYPE_PAPYRUS = {
-    'QUST': 'Quest', 'NPC_': 'Actor', 'CREA': 'Actor',
-    'FACT': 'Faction', 'GLOB': 'GlobalVariable',
-    'SPEL': 'Spell', 'ENCH': 'Enchantment', 'MGEF': 'MagicEffect',
-    'CELL': 'Cell', 'WRLD': 'WorldSpace', 'PACK': 'Package',
-    'SOUN': 'Sound', 'DIAL': 'Topic', 'RACE': 'Race',
-    'FLST': 'FormList', 'KYWD': 'Keyword', 'LVLI': 'LeveledItem',
-    'LVLN': 'LeveledActor', 'LVSP': 'LeveledSpell',
-    'WEAP': 'Weapon', 'ARMO': 'Armor', 'BOOK': 'Book',
-    'ALCH': 'Potion', 'INGR': 'Ingredient', 'LIGH': 'Light',
-    'MISC': 'MiscObject', 'KEYM': 'Key', 'AMMO': 'Ammo',
-    'ACTI': 'Activator', 'DOOR': 'ObjectReference',
-    'CONT': 'ObjectReference', 'STAT': 'ObjectReference',
-    'FURN': 'ObjectReference', 'FLOR': 'ObjectReference',
-    'ACHR': 'Actor', 'ACRE': 'Actor',
-    'REFR': 'ObjectReference',
-}
-
-
-def _record_type_to_papyrus(rtype: str) -> str:
-    """Map a TES4 record type to a Papyrus property type."""
-    return _RECORD_TYPE_PAPYRUS.get(rtype, 'ObjectReference')
-
-
-# Player FormID — skip when pre-loading SCRO refs
-_PLAYER_FORMID = '00000014'
-
-
-def _preload_scro_refs(conv: 'ScriptConverter', rec: dict, xref: CrossRefGraph):
-    """Pre-populate converter property_refs from SCRO entries in a record."""
-    i = 0
-    while True:
-        key = f'SCRO[{i}]'
-        fid = rec.get(key)
-        if fid is None:
-            break
-        i += 1
-        _add_scro_ref(conv, fid, xref)
-
-
-def _preload_stage_scro_refs(conv: 'ScriptConverter', rec: dict, xref: CrossRefGraph,
-                              stage_arr_idx: int, log_arr_idx: int):
-    """Pre-populate converter property_refs from per-stage/log SCRO entries."""
-    k = 0
-    while True:
-        key = f'Stage[{stage_arr_idx}].Log[{log_arr_idx}].SCRO[{k}]'
-        fid = rec.get(key)
-        if fid is None:
-            break
-        k += 1
-        _add_scro_ref(conv, fid, xref)
-
-
-def _add_scro_ref(conv: 'ScriptConverter', fid: str, xref: CrossRefGraph):
-    """Add a single SCRO FormID as a property ref on the converter."""
-    if fid == _PLAYER_FORMID:
-        return
-    edid = xref.formid_to_edid.get(fid)
-    if not edid:
-        return
-    rtype = xref.record_type.get(fid, '')
-    ptype = _record_type_to_papyrus(rtype)
-    # Prefer attached script type for cross-script property access
-    script_type = xref.get_record_script_type(edid)
-    if script_type:
-        ptype = script_type
-    conv._property_refs[edid] = ptype
-
-
-# ===========================================================================
-# VMAD binary helpers (for tes5_import integration)
-# ===========================================================================
-
-def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int, int]]) -> bytes:
-    """Build VMAD binary for a QUST record with stage script fragments.
-
-    Args:
-        quest_edid: Quest EditorID
-        stage_fragments: list of (stage_index, log_index) tuples
-
-    Returns VMAD binary data.
-    """
-    script_name = f'TES4_QF_{_sanitize_name(quest_edid)}'
-    buf = bytearray()
-
-    # VMAD header
-    buf += struct.pack('<HH', 5, 2)  # version=5, objectFormat=2
-
-    # Scripts array: 1 script
-    buf += struct.pack('<H', 1)
-    buf += _pack_wstring(script_name)
-    buf += struct.pack('<B', 0)   # flags=0
-    buf += struct.pack('<H', 0)   # propertyCount=0
-
-    # Script fragments (quest type, wbScriptFragmentsQuest):
-    #   S8  Extra bind data version = 2
-    #   U16 FragmentCount
-    #   LenString(U16) FileName
-    buf += struct.pack('<b', 2)                  # Extra bind data version = 2
-    buf += struct.pack('<H', len(stage_fragments))  # FragmentCount
-    buf += _pack_wstring(script_name)            # FileName
-    for stage_idx, log_idx in stage_fragments:
-        frag_name = f'Fragment_Stage_{stage_idx:04d}_Item_{log_idx}'
-        buf += struct.pack('<H', stage_idx)   # stageIndex
-        buf += struct.pack('<H', 0)           # unknown
-        buf += struct.pack('<I', stage_idx)   # stageIndex (I32)
-        buf += struct.pack('<B', 0)           # unknown
-        buf += _pack_wstring(script_name)
-        buf += _pack_wstring(frag_name)
-
-    return bytes(buf)
-
-
-def build_vmad_info_fragment(info_formid: str) -> bytes:
-    """Build VMAD binary for an INFO record with a result script fragment.
-
-    Args:
-        info_formid: INFO FormID string (e.g. "00012345")
-
-    Returns VMAD binary data.
-    """
-    script_name = f'TES4_TIF__{info_formid}'
-    buf = bytearray()
-
-    # VMAD header
-    buf += struct.pack('<HH', 5, 2)   # version=5, objectFormat=2
-    buf += struct.pack('<H', 0)       # 0 attached scripts
-
-    # Script fragments for INFO (wbScriptFragmentsInfo):
-    #   S8  Extra bind data version = 2
-    #   U8  Flags: bit0=OnBegin, bit1=OnEnd (no other bits defined for INFO)
-    #   LenString(U16) FileName
-    #   For each set bit in Flags, one fragment: S8 Unknown + LenString ScriptName + LenString FragmentName
-    # Fragment count is implicit (popcount of Flags bits 0-1).
-    buf += struct.pack('<b', 2)        # Extra bind data version = 2
-    buf += struct.pack('<B', 0x01)     # Flags = OnBegin (1 fragment)
-    buf += _pack_wstring(script_name)  # FileName
-
-    # Fragment 0 — OnBegin
-    buf += struct.pack('<b', 0)        # Unknown
-    buf += _pack_wstring(script_name)  # ScriptName
-    buf += _pack_wstring('Fragment_0') # FragmentName
-
-    return bytes(buf)
-
-
-def _pack_wstring(s: str) -> bytes:
-    """Pack a VMAD wstring: U16 length + UTF-8 bytes."""
-    encoded = s.encode('utf-8')
-    return struct.pack('<H', len(encoded)) + encoded
-
-
-# ===========================================================================
-# CLI
-# ===========================================================================
-
-def main():
-    parser = argparse.ArgumentParser(description='Convert TES4 scripts to Papyrus')
-    parser.add_argument('export_dir', help='Path to export directory (e.g. export/Oblivion.esm)')
-    parser.add_argument('-o', '--output', default=None,
-                        help='Output dir for .psc files (default: output/oblivion.esm/scripts/source)')
-    parser.add_argument('--workers', type=int, default=None, help='Worker threads')
-    args = parser.parse_args()
-
-    output_dir = args.output
-    if output_dir is None:
-        output_dir = os.path.join('output', 'oblivion.esm', 'scripts', 'source')
-
-    convert_all_scripts(args.export_dir, output_dir, args.workers)
-
-
-if __name__ == '__main__':
-    main()

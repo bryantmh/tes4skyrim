@@ -110,6 +110,14 @@ Minor Issues:
 
 		Add cancel button to gui
 
+		Collision for trees
+
+		Better tree selection
+
+		Purple LOD
+
+		Remove unnecessary post-processing from converter
+
 	1 - Fix face and body bug
 
 	2 - Update OBND based on meshes instead of guessing

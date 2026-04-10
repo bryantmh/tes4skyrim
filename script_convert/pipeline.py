@@ -1,0 +1,420 @@
+"""Pipeline orchestration — convert all scripts, VMAD helpers, CLI."""
+
+import argparse
+import os
+import re
+import struct
+
+from tes5_import.text_reader import parse_export_file
+
+from script_convert.constants import (_PAPYRUS_RESERVED, _RECORD_TYPE_PAPYRUS, _GLOBAL_CANONICAL,
+                                     _sanitize_name, _safe_property_name, _canonical_global,
+                                     _record_type_to_papyrus)
+from script_convert.cross_ref import CrossRefGraph
+from script_convert.converter import ScriptConverter
+
+
+# ===========================================================================
+# High-level conversion functions
+# ===========================================================================
+
+def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -> dict:
+    """Convert all TES4 scripts from export directory to Papyrus .psc files.
+
+    Args:
+        export_dir: Path to export/Oblivion.esm (contains .txt files)
+        output_dir: Path to write .psc files
+        workers: Number of worker threads (default: cpu_count-1)
+
+    Returns dict with conversion statistics.
+    """
+    if workers is None:
+        workers = max(1, (os.cpu_count() or 4) - 1)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Phase 1: Build cross-reference graph
+    print('  Building cross-reference graph...')
+    xref = CrossRefGraph()
+    xref.load_from_export(export_dir)
+    print(f'    {len(xref.formid_to_edid)} FormID->EditorID mappings')
+    print(f'    {len(xref.script_formid_to_edid)} scripts, {len(xref.quest_edids)} quests')
+
+    # Phase 1.5: Analyze cross-script ref-as-int patterns
+    scpt_path = os.path.join(export_dir, 'SCPT.txt')
+    if os.path.exists(scpt_path):
+        xref.build_ref_as_int_map(scpt_path)
+        if xref.ref_as_int:
+            print(f'    {len(xref.ref_as_int)} ref variables detected as integer-only (cross-script)')
+
+    stats = {
+        'scpt_total': 0, 'scpt_ok': 0, 'scpt_err': 0,
+        'info_total': 0, 'info_ok': 0, 'info_err': 0,
+        'qust_total': 0, 'qust_ok': 0, 'qust_err': 0,
+        'todo_count': 0, 'errors': [],
+    }
+
+    # Phase 2: Convert SCPT records
+    scpt_path = os.path.join(export_dir, 'SCPT.txt')
+    if os.path.exists(scpt_path):
+        print('  Converting SCPT records...')
+        _convert_scpt_records(scpt_path, output_dir, xref, stats)
+
+    # Phase 3: Convert INFO result scripts
+    info_path = os.path.join(export_dir, 'INFO.txt')
+    if os.path.exists(info_path):
+        print('  Converting INFO result scripts...')
+        _convert_info_scripts(info_path, output_dir, xref, stats)
+
+    # Phase 4: Convert QUST stage scripts
+    qust_path = os.path.join(export_dir, 'QUST.txt')
+    if os.path.exists(qust_path):
+        print('  Converting QUST stage scripts...')
+        _convert_qust_scripts(qust_path, output_dir, xref, stats)
+
+    total = stats['scpt_ok'] + stats['info_ok'] + stats['qust_ok']
+    errs = stats['scpt_err'] + stats['info_err'] + stats['qust_err']
+    print(f'\n  Script conversion complete:')
+    print(f'    SCPT: {stats["scpt_ok"]}/{stats["scpt_total"]} converted')
+    print(f'    INFO: {stats["info_ok"]}/{stats["info_total"]} fragments')
+    print(f'    QUST: {stats["qust_ok"]}/{stats["qust_total"]} stage scripts')
+    print(f'    Total: {total} converted, {errs} errors, {stats["todo_count"]} TODOs')
+
+    _write_report(output_dir, stats)
+    return stats
+
+
+def _convert_scpt_records(scpt_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
+    """Convert all SCPT records from the export file."""
+    records = parse_export_file(scpt_path)
+    stats['scpt_total'] = len(records)
+
+    for rec in records:
+        formid = rec.get('FormID', '')
+        edid = rec.get('EditorID', '')
+        sctx = rec.get('SCTX', '')
+        if not sctx or not sctx.strip():
+            continue
+
+        try:
+            extends = xref.get_extends_class(formid)
+            conv = ScriptConverter(xref)
+            # Pre-populate external references from SCRO entries
+            _preload_scro_refs(conv, rec, xref)
+            name = _sanitize_name(edid or f'Script_{formid}')
+            papyrus = conv.convert_standalone(name, sctx, extends, edid)
+
+            out_path = os.path.join(output_dir, f'TES4_{name}.psc')
+            with open(out_path, 'w', encoding='utf-8') as f:
+                f.write(papyrus)
+            stats['scpt_ok'] += 1
+            stats['todo_count'] += papyrus.count(';TODO')
+        except Exception as e:
+            stats['scpt_err'] += 1
+            stats['errors'].append(f'SCPT {edid} ({formid}): {e}')
+
+
+def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
+    """Convert INFO result scripts to TopicInfo fragment .psc files."""
+    records = parse_export_file(info_path)
+
+    for rec in records:
+        result_script = rec.get('ResultScript', '')
+        if not result_script or not result_script.strip():
+            continue
+
+        formid = rec.get('FormID', '')
+        stats['info_total'] += 1
+
+        try:
+            conv = ScriptConverter(xref)
+            _preload_scro_refs(conv, rec, xref)
+            body_lines = conv.convert_fragment(result_script, 'TopicInfo')
+
+            script_name = f'TES4_TIF__{formid}'
+            prop_refs = dict(conv._property_refs)
+            out_lines = [
+                f'ScriptName {script_name} extends TopicInfo Hidden',
+                '',
+            ]
+            if prop_refs:
+                declared = set()
+                for pname, ptype in sorted(prop_refs.items()):
+                    safe = _safe_property_name(pname)
+                    if safe.lower() in declared:
+                        continue
+                    declared.add(safe.lower())
+                    out_lines.append(f'{ptype} Property {safe} Auto')
+                out_lines.append('')
+            out_lines.append('Function Fragment_0(Actor akSpeakerRef)')
+            out_lines.extend(body_lines)
+            out_lines.append('EndFunction')
+            out_lines.append('')
+
+            papyrus = '\n'.join(out_lines)
+            out_path = os.path.join(output_dir, f'{script_name}.psc')
+            with open(out_path, 'w', encoding='utf-8') as f:
+                f.write(papyrus)
+            stats['info_ok'] += 1
+            stats['todo_count'] += papyrus.count(';TODO')
+        except Exception as e:
+            stats['info_err'] += 1
+            stats['errors'].append(f'INFO {formid}: {e}')
+
+
+def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
+    """Convert QUST stage scripts to Quest fragment .psc files."""
+    records = parse_export_file(qust_path)
+
+    for rec in records:
+        edid = rec.get('EditorID', '')
+        if not edid:
+            continue
+
+        stage_count_str = rec.get('StageCount', '0')
+        try:
+            stage_count = int(stage_count_str)
+        except ValueError:
+            continue
+
+        fragments = []  # (stage_index, log_idx, script_source, stage_arr_idx, log_arr_idx)
+        for i in range(stage_count):
+            stage_idx_str = rec.get(f'Stage[{i}].Index', '0')
+            try:
+                stage_idx = int(stage_idx_str)
+            except ValueError:
+                continue
+
+            log_count_str = rec.get(f'Stage[{i}].LogCount', '0')
+            try:
+                log_count = int(log_count_str)
+            except ValueError:
+                continue
+
+            for j in range(log_count):
+                script = rec.get(f'Stage[{i}].Log[{j}].ResultScript', '')
+                if script and script.strip():
+                    fragments.append((stage_idx, j, script, i, j))
+
+        if not fragments:
+            continue
+
+        stats['qust_total'] += len(fragments)
+
+        try:
+            conv = ScriptConverter(xref)
+            # Pre-populate external references from SCRO entries
+            _preload_scro_refs(conv, rec, xref)
+            script_name = f'TES4_QF_{_sanitize_name(edid)}'
+            out_lines = [
+                f'ScriptName {script_name} extends Quest Hidden',
+                '',
+            ]
+
+            for stage_idx, log_idx, script_src, stage_arr_idx, log_arr_idx in fragments:
+                # Load per-stage SCROs for this fragment
+                _preload_stage_scro_refs(conv, rec, xref, stage_arr_idx, log_arr_idx)
+                func_name = f'Fragment_Stage_{stage_idx:04d}_Item_{log_idx}'
+                out_lines.append(f'Function {func_name}()')
+                body_lines = conv.convert_fragment(script_src, 'Quest')
+                out_lines.extend(body_lines)
+                out_lines.append('EndFunction')
+                out_lines.append('')
+
+            # Insert property declarations after ScriptName line
+            prop_refs = conv.get_property_refs()
+            if prop_refs:
+                insert_idx = 2  # After ScriptName + blank line
+                declared = set()
+                count = 0
+                for pname, ptype in sorted(prop_refs.items()):
+                    safe = _safe_property_name(pname)
+                    if safe.lower() in declared:
+                        continue
+                    declared.add(safe.lower())
+                    out_lines.insert(insert_idx + count, f'{ptype} Property {safe} Auto')
+                    count += 1
+                out_lines.insert(insert_idx + count, '')
+
+            papyrus = '\n'.join(out_lines)
+            out_path = os.path.join(output_dir, f'{script_name}.psc')
+            with open(out_path, 'w', encoding='utf-8') as f:
+                f.write(papyrus)
+            stats['qust_ok'] += len(fragments)
+            stats['todo_count'] += papyrus.count(';TODO')
+        except Exception as e:
+            stats['qust_err'] += len(fragments)
+            stats['errors'].append(f'QUST {edid}: {e}')
+
+
+def _write_report(output_dir: str, stats: dict):
+    """Write a conversion summary report."""
+    report_path = os.path.join(output_dir, '_CONVERSION_REPORT.txt')
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write('TES4 Script -> Papyrus Conversion Report\n')
+        f.write('=' * 50 + '\n\n')
+        f.write(f'SCPT records: {stats["scpt_ok"]}/{stats["scpt_total"]} converted\n')
+        f.write(f'INFO fragments: {stats["info_ok"]}/{stats["info_total"]} converted\n')
+        f.write(f'QUST stage scripts: {stats["qust_ok"]}/{stats["qust_total"]} converted\n')
+        total = stats['scpt_ok'] + stats['info_ok'] + stats['qust_ok']
+        errs = stats['scpt_err'] + stats['info_err'] + stats['qust_err']
+        f.write(f'\nTotal: {total} converted, {errs} errors\n')
+        f.write(f';TODO markers: {stats["todo_count"]}\n\n')
+
+        if stats['errors']:
+            f.write('Errors:\n')
+            for err in stats['errors'][:100]:
+                f.write(f'  {err}\n')
+            if len(stats['errors']) > 100:
+                f.write(f'  ... and {len(stats["errors"]) - 100} more\n')
+
+
+# Player FormID — skip when pre-loading SCRO refs
+_PLAYER_FORMID = '00000014'
+
+
+def _preload_scro_refs(conv: 'ScriptConverter', rec: dict, xref: CrossRefGraph):
+    """Pre-populate converter property_refs from SCRO entries in a record."""
+    i = 0
+    while True:
+        key = f'SCRO[{i}]'
+        fid = rec.get(key)
+        if fid is None:
+            break
+        i += 1
+        _add_scro_ref(conv, fid, xref)
+
+
+def _preload_stage_scro_refs(conv: 'ScriptConverter', rec: dict, xref: CrossRefGraph,
+                              stage_arr_idx: int, log_arr_idx: int):
+    """Pre-populate converter property_refs from per-stage/log SCRO entries."""
+    k = 0
+    while True:
+        key = f'Stage[{stage_arr_idx}].Log[{log_arr_idx}].SCRO[{k}]'
+        fid = rec.get(key)
+        if fid is None:
+            break
+        k += 1
+        _add_scro_ref(conv, fid, xref)
+
+
+def _add_scro_ref(conv: 'ScriptConverter', fid: str, xref: CrossRefGraph):
+    """Add a single SCRO FormID as a property ref on the converter."""
+    if fid == _PLAYER_FORMID:
+        return
+    edid = xref.formid_to_edid.get(fid)
+    if not edid:
+        return
+    rtype = xref.record_type.get(fid, '')
+    ptype = _record_type_to_papyrus(rtype)
+    # Prefer attached script type for cross-script property access
+    script_type = xref.get_record_script_type(edid)
+    if script_type:
+        ptype = script_type
+    conv._property_refs[edid] = ptype
+
+
+# ===========================================================================
+# VMAD binary helpers (for tes5_import integration)
+# ===========================================================================
+
+def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int, int]]) -> bytes:
+    """Build VMAD binary for a QUST record with stage script fragments.
+
+    Args:
+        quest_edid: Quest EditorID
+        stage_fragments: list of (stage_index, log_index) tuples
+
+    Returns VMAD binary data.
+    """
+    script_name = f'TES4_QF_{_sanitize_name(quest_edid)}'
+    buf = bytearray()
+
+    # VMAD header
+    buf += struct.pack('<HH', 5, 2)  # version=5, objectFormat=2
+
+    # Scripts array: 1 script
+    buf += struct.pack('<H', 1)
+    buf += _pack_wstring(script_name)
+    buf += struct.pack('<B', 0)   # flags=0
+    buf += struct.pack('<H', 0)   # propertyCount=0
+
+    # Script fragments (quest type, wbScriptFragmentsQuest):
+    #   S8  Extra bind data version = 2
+    #   U16 FragmentCount
+    #   LenString(U16) FileName
+    buf += struct.pack('<b', 2)                  # Extra bind data version = 2
+    buf += struct.pack('<H', len(stage_fragments))  # FragmentCount
+    buf += _pack_wstring(script_name)            # FileName
+    for stage_idx, log_idx in stage_fragments:
+        frag_name = f'Fragment_Stage_{stage_idx:04d}_Item_{log_idx}'
+        buf += struct.pack('<H', stage_idx)   # stageIndex
+        buf += struct.pack('<H', 0)           # unknown
+        buf += struct.pack('<I', stage_idx)   # stageIndex (I32)
+        buf += struct.pack('<B', 0)           # unknown
+        buf += _pack_wstring(script_name)
+        buf += _pack_wstring(frag_name)
+
+    return bytes(buf)
+
+
+def build_vmad_info_fragment(info_formid: str) -> bytes:
+    """Build VMAD binary for an INFO record with a result script fragment.
+
+    Args:
+        info_formid: INFO FormID string (e.g. "00012345")
+
+    Returns VMAD binary data.
+    """
+    script_name = f'TES4_TIF__{info_formid}'
+    buf = bytearray()
+
+    # VMAD header
+    buf += struct.pack('<HH', 5, 2)   # version=5, objectFormat=2
+    buf += struct.pack('<H', 0)       # 0 attached scripts
+
+    # Script fragments for INFO (wbScriptFragmentsInfo):
+    #   S8  Extra bind data version = 2
+    #   U8  Flags: bit0=OnBegin, bit1=OnEnd (no other bits defined for INFO)
+    #   LenString(U16) FileName
+    #   For each set bit in Flags, one fragment: S8 Unknown + LenString ScriptName + LenString FragmentName
+    # Fragment count is implicit (popcount of Flags bits 0-1).
+    buf += struct.pack('<b', 2)        # Extra bind data version = 2
+    buf += struct.pack('<B', 0x01)     # Flags = OnBegin (1 fragment)
+    buf += _pack_wstring(script_name)  # FileName
+
+    # Fragment 0 — OnBegin
+    buf += struct.pack('<b', 0)        # Unknown
+    buf += _pack_wstring(script_name)  # ScriptName
+    buf += _pack_wstring('Fragment_0') # FragmentName
+
+    return bytes(buf)
+
+
+def _pack_wstring(s: str) -> bytes:
+    """Pack a VMAD wstring: U16 length + UTF-8 bytes."""
+    encoded = s.encode('utf-8')
+    return struct.pack('<H', len(encoded)) + encoded
+
+
+# ===========================================================================
+# CLI
+# ===========================================================================
+
+def main():
+    parser = argparse.ArgumentParser(description='Convert TES4 scripts to Papyrus')
+    parser.add_argument('export_dir', help='Path to export directory (e.g. export/Oblivion.esm)')
+    parser.add_argument('-o', '--output', default=None,
+                        help='Output dir for .psc files (default: output/oblivion.esm/scripts/source)')
+    parser.add_argument('--workers', type=int, default=None, help='Worker threads')
+    args = parser.parse_args()
+
+    output_dir = args.output
+    if output_dir is None:
+        output_dir = os.path.join('output', 'oblivion.esm', 'scripts', 'source')
+
+    convert_all_scripts(args.export_dir, output_dir, args.workers)
+
+
+if __name__ == '__main__':
+    main()

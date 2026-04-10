@@ -11,13 +11,15 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from tools.oblivion_to_papyrus import (
-    CrossRefGraph,
-    ScriptConverter,
+from script_convert.cross_ref import CrossRefGraph
+from script_convert.converter import ScriptConverter
+from script_convert.constants import (
     BLOCK_MAP,
     TYPE_MAP,
     ACTOR_VALUE_MAP,
     FUNCTION_MAP,
+)
+from script_convert.pipeline import (
     _sanitize_name,
     _pack_wstring,
     build_vmad_quest_fragments,
@@ -218,14 +220,14 @@ class TestLineConversion:
         assert result == ''
 
     def test_variable_declaration(self, converter):
+        # Variable declarations are handled at script level (_parse_source),
+        # _convert_line skips them (returns empty)
         result = converter._convert_line('short myCount', 'ObjectReference')
-        assert 'Int' in result
-        assert 'myCount' in result
+        assert result == ''
 
     def test_float_declaration(self, converter):
         result = converter._convert_line('float timer', 'ObjectReference')
-        assert 'Float' in result
-        assert 'timer' in result
+        assert result == ''
 
 
 # ===========================================================================
