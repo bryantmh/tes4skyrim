@@ -10,6 +10,7 @@ Pipeline steps (each runnable via --<step>-only):
   sounds          Convert sound files to XWM
   scripts         Convert TES4 scripts to Papyrus .psc and compile to .pex
   lod             Generate object & terrain LOD meshes
+  pack            Pack assets into Skyrim SE BSA archives
   modify-body-meshes  Add greaves partition to character body NIFs
 
 Usage:
@@ -23,6 +24,7 @@ Usage:
   python convert.py -f Oblivion.esm --sounds-only
   python convert.py -f Oblivion.esm --scripts-only
   python convert.py -f Oblivion.esm --lod-only
+  python convert.py -f Oblivion.esm --pack-only
   python convert.py --modify-body-meshes
   python convert.py --output-dir /path/to/output -f Oblivion.esm
 """
@@ -493,7 +495,31 @@ def phase_lod(file_name: str, tes5_data: str, config: dict,
 
 
 # ===========================================================================
-# Phase 9: Modify body meshes
+# Phase 9: Pack BSA archives
+# ===========================================================================
+
+def phase_pack(file_name: str, config: dict, output_dir: str = None):
+    """Pack converted output assets into Skyrim SE BSA archives."""
+    from asset_convert.bsa_pack import pack_bsas
+
+    out_dir = output_dir or str(SCRIPT_DIR / "output")
+    bsarch  = config.get("bsarchPath") or None
+
+    print(f"[{file_name}] Packing BSAs...")
+    results = pack_bsas(
+        source_file=file_name,
+        output_dir=out_dir,
+        bsarch_path=bsarch,
+    )
+    packed  = len(results['packed'])
+    skipped = len(results['skipped'])
+    errors  = len(results['errors'])
+    print(f"[{file_name}] BSA pack complete: {packed} packed, {skipped} skipped, {errors} errors")
+    return errors == 0
+
+
+# ===========================================================================
+# Phase 10: Modify body meshes
 # ===========================================================================
 
 def phase_modify_body_meshes():
@@ -543,6 +569,8 @@ def main():
                         help="Add greaves partition to character body NIFs")
     parser.add_argument("--scripts-only",        action="store_true",
                         help="Convert TES4 scripts to Papyrus .psc source")
+    parser.add_argument("--pack-only",           action="store_true",
+                        help="Pack output assets into Skyrim SE BSA archives")
 
     args = parser.parse_args()
 
@@ -578,6 +606,7 @@ def main():
         args.export_only, args.import_only, args.extract_only,
         args.meshes_only, args.speedtrees_only, args.sounds_only,
         args.lod_only, args.modify_body_meshes, args.scripts_only,
+        args.pack_only,
     ])
     if _any_only:
         do_export     = args.export_only
@@ -589,11 +618,12 @@ def main():
         do_lod        = args.lod_only
         do_body       = args.modify_body_meshes
         do_scripts    = args.scripts_only
+        do_pack       = args.pack_only
     else:
         # Default: export + import + extract + meshes + speedtrees + sounds + scripts
         do_export = do_import = do_extract = True
         do_meshes = do_speedtrees = do_sounds = do_scripts = True
-        do_lod = do_body = False
+        do_lod = do_body = do_pack = False
 
     success = True
 
@@ -671,9 +701,18 @@ def main():
             phase_lod(fn, tes5_data, config, output_dir=output_dir)
         print()
 
+    if do_pack:
+        print("=" * 54)
+        print("  Phase 9: PACK BSA ARCHIVES")
+        print("=" * 54)
+        for fn in order:
+            if not phase_pack(fn, config, output_dir=output_dir):
+                success = False
+        print()
+
     if do_body:
         print("=" * 54)
-        print("  Phase 9: MODIFY BODY MESHES")
+        print("  Phase 10: MODIFY BODY MESHES")
         print("=" * 54)
         if not phase_modify_body_meshes():
             success = False

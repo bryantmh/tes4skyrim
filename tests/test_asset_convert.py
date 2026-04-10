@@ -297,7 +297,7 @@ class TestBsaExtract:
 # ---------------------------------------------------------------------------
 
 EXPORT_MESHES = Path('export/Oblivion.esm/meshes')
-SKYRIM_LE_REF = Path('temp/Skyrim Meshes/meshes')
+SKYRIM_LE_REF = Path('references/Skyrim Meshes/meshes')
 
 # Sample exported Oblivion meshes (known to exist)
 _SAMPLE_ROCKS = [

@@ -19,7 +19,7 @@ After downloading and installing the SDK, the program can be found in the Utilit
 
 ## Additional Credits
 
-xEdit and all its contributors for esm record definitions
+xEdit and all its contributors for esm record definitions and BSArch.exe for BSA packing
 Nifscope and its contributors for its information on nif formats
 Zilav's Oblivion -> Skyrim xEdit conversion scripts for the original inspiration and lots of useful information
 Ormin for useful mesh conversion information and mopp_rl.exe for collision generation https://github.com/Ormin/skyblivion-NIFConverter

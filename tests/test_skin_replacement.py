@@ -56,7 +56,7 @@ from asset_convert.nif_converter import (
 
 EXPORT_ARMOR = os.path.join(BASE, "export", "Oblivion.esm", "meshes", "armor")
 SKYRIM_BODY_DIR = os.path.join(
-    BASE, "temp", "Skyrim Meshes", "meshes", "actors", "character", "character assets"
+    BASE, "references", "Skyrim Meshes", "meshes", "actors", "character", "character assets"
 )
 TMP_DIR = os.path.join(BASE, "temp")
 

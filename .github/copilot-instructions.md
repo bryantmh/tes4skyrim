@@ -32,6 +32,7 @@ Convert TES4 (Oblivion) master/plugin files to TES5 (Skyrim SE) format. The pipe
   Avoid making temp files with targeted outputs, and instead make and use reusable and  tools/ scripts with general outputs and arguments. This way you can reuse the same tools for future investigations and avoid cluttering the temp folder with files that are only useful for a single test.
   Utilize Multi-threading where possible!
   DON'T worry about backwards compatibility. Remove old code if it is no longer going to be used.
+  ENSURE that files do NOT go over approximately 1000 lines. If a file is getting too long, break it up into multiple files with clear responsibilities.
 
 **Assistant Constraint — No Git Stash**:
 - The assistant MUST NOT run `git stash` or `git stash pop` in this repository.
@@ -149,6 +150,7 @@ TESConversion/
     skyrim_overrides.py   # Bone mapping, BSX flags, biped slot tables
     bsa_extract.py        # BSA extraction with manifest caching
     asset_pipeline.py     # 3-phase orchestrator: extract→convert→output
+    spt_converter.py      # SpeedTree .spt → Skyrim NIF (asset-matching from assets/speedtrees/)
     MOPP_RL.exe           # Havok MOPP generation tool (self-contained)
     template.nif          # Template NIF required by MOPP_RL.exe
   tests/                  # Root-level test directory
@@ -397,7 +399,7 @@ TES5 NPC_ DNAM stores skills as arrays. The correct xEdit paths are:
   - bhkMoppBvTreeShape.build_type: MOPP_RL.exe writes 0xCD (uninit memory) for build_type. Must set build_type=1 (BUILT_WITHOUT_CHUNK_SUBDIVISION) in `_extract_mopp_result()` immediately after reading MOPP_RL output.
   - MOPP_RL.exe hardcodes `template.nif` in its binary.
   - `bhkCompressedMeshShape.target` must point to the BSFadeNode root (identity transform). The body orientation is encoded in `bhkRigidBodyT.rotation` instead. Static collision MUST be on the root BSFadeNode — having bhkCollisionObject on a child NiNode causes STACK_OVERFLOW in Skyrim's `hkpCollisionDispatcher`.
-  - When root rotation baking wraps geometry in an inner NiNode, the collision STAYS on the root BSFadeNode. The root NiNode's rotation matrix is composed into `bhkRigidBodyT.rotation` (multiply left: `R_quat × old_rb_rotation`). Helpers `_mat3_to_quat` and `_quat_mul` are in nif_converter.py.
+  - When root rotation baking wraps geometry in an inner NiNode, the collision STAYS on the root BSFadeNode. The bhkRigidBodyT data is already in Havok world-space coordinates — the target node's transform does NOT additionally rotate/translate the rigid body. **Do NOT modify bhkRigidBodyT.rotation or .translation when zeroing the root transform.** The original Oblivion bhk values are already correct for Skyrim.
   - NiParticleSystem: NiGeometry body needs format conversion (MaterialData→NumMaterials, Properties removed for UV2>34, FarBegin/End added for UV2≥83). IMPLEMENTED — `_convert_particle_system()` creates fresh NiPSysData with `bs_max_vertices = max(old_num_vertices, 75)`, keeps all modifiers, sets `base_scale=1.0` on NiPSysGrowFadeModifier.
 - **PyFFI 2.2.3 version-condition bugs**: PyFFI's nif.xml has WRONG version conditions for some fields. Must monkey-patch at import time:
   - `NiPSysGrowFadeModifier.base_scale`: PyFFI has `userver="11"` (exact match on user_version=11). Correct condition per newer nif.xml: `User Version 2 >= 34`. Since we write `user_version=12` (Skyrim), PyFFI silently skips the field. Fix: set `_attrs[base_scale].userver = None` in monkey-patch.
@@ -697,7 +699,7 @@ VTEX[i]=FormID
   9. Phase C+D: recomputes bind matrices (`_manual_update_bind_position`) and skin partitions
   10. **FK+Gaussian double-deformation MUST be avoided** — Gaussian spatial blend only runs when FK was NOT applied.
 - **FK results**: Post-mirror RMSD 9.64 (was 9.73 corpus-only). Legs: 2.8/1.8→1.08/1.08 (62% improvement). Arms: 4.4→4.0 (10%). 37/37 tests pass, 396 armor NIFs 0 errors.
-- **DQS FK (Session 27)**: `_deform_vertices_animation_fk` now uses Dual Quaternion Skinning instead of LBS. DQS avoids candy-wrapper collapse at joint weight boundaries. **Critical row-vector convention**: `_mat3_to_quat` expects column-convention input, so MUST pass `delta[:3,:3].T` (transposed). Without transpose, DQS rotation goes the wrong direction. Translation encoded as `qd = 0.5 * pure_quat(t) * qr`. Translation extracted as `t = 2*(xyz_d*w_r - xyz_r*w_d + cross(xyz_r,xyz_d))`. Antipodal alignment uses slot-0 (highest-weight bone) as reference hemisphere.
+  - **`_mat3_to_quat` NIF convention**: This function expects a column-vector convention matrix. PyFFI Matrix33 / NIF matrices use row-vector convention so `_mat3_to_quat(NIF_Matrix)` returns the CONJUGATE. In `skin_retarget.py` the delta matrices are numpy column-convention, so pass `_mat3_to_quat(delta[:3,:3].T)` (transpose, no sign flip). For collision baking this is moot — **do not apply _mat3_to_quat to bhkRigidBodyT at all**.
 - **Spatial blend residual was wrong direction**: `v_spatial` (spatial blend from OB rest ≈ 50% to SK) minus `v_fk` (FK ≈ 90% to SK) = vector pointing BACKWARD toward the LESS-transformed position. DQS inherently handles joint boundaries — no separate residual needed.
 - **ProcessPoolExecutor causes issues on Windows**: Exit code 1 + slightly worse results. Reverted to sequential `for` loop for L-BFGS-B multi-start. Module-level `_lbfgsb_trial_worker` kept (clean, no harm). ThreadPoolExecutor for first kf-parsing step is fine (I/O-bound).
 - **Geometric limit**: Arm RMSD ~4.0 is the minimum achievable with rotation-only optimization. UpperArmTwist (err=13.4) and ForearmTwist (err=9.4) contribute 56% of arm cost from bone LENGTH differences between OB/SK skeletons. Excluding twist bones from cost made mesh quality WORSE (larger main-bone rotations).
@@ -740,7 +742,9 @@ VTEX[i]=FormID
 ### NIF furniture marker conversion
 - Oblivion: `BSFurnitureMarker` (NiExtraData) with FurniturePosition using `orientation` (ushort, milliradians), `position_ref_1`/`position_ref_2` (byte)
 - Skyrim: `BSFurnitureMarkerNode` (inherits BSFurnitureMarker) with FurniturePosition using `heading` (float, radians), `animation_type` (ushort: 1=Sit, 2=Sleep, 4=Lean), `entry_properties` (bitflags: front, behind, right, left, up)
-- Conversion: heading = orientation/1000.0; ref 1-10→Sleep(2), ref 11-19→Sit(1); ref 1/11→left, ref 2/12→right, ref 13→front, ref 14→behind
+- Conversion: `heading = orientation/1000.0 + math.pi` (**+π offset required** — Oblivion orientation is the direction the furniture faces; Skyrim heading is the direction the occupant faces, which is opposite); ref 1-10→Sleep(2), ref 11-19→Sit(1); ref 1/11→left, ref 2/12→right, ref 13→front, ref 14→behind
+- **Z offset must be negated**: `dst_pos.offset.z = -src_pos.offset.z`. Oblivion stores Z as negative (seat below mesh origin). Skyrim expects positive Z (seat above floor origin). Skyrim reference bench Z = +33.84; Oblivion chair Z = -33.91. Without negation, NPCs sit in the air.
+- **Vanilla reference** (sovbench01.nif, wrtemplebench01.nif): Z ≈ +33.84, heading = π, entry = front
 - BSFurnitureMarker lives in root NiNode's extra_data_list. During NiNode→BSFadeNode conversion, it must be explicitly converted and transferred (bulk extra_data_list copy breaks animated objects)
 
 ### NIF analyzer tools
@@ -825,6 +829,7 @@ Playable Oblivion races map directly to Skyrim equivalents by EditorID:
 
 ### SOUN Conversion
 - **Create SNDR**: Each SOUN needs a companion SNDR (Sound Descriptor) with the actual sound file path linked via SDSC
+- **Loop flag**: TES4 `SNDD.Flags` bit 4 (`0x10`) = "Is Looping". When set, write `LNAM = 0x00000800` (loop) in the SNDR record. `LNAM` is a 4-byte struct: byte[0]=Unknown, byte[1]=Looping enum (0x00=None, 0x08=Loop, 0x10=Envelope Fast, 0x20=Envelope Slow), byte[2]=Unknown, byte[3]=Rumble. `0x00000800` in little-endian = bytes [0x00, 0x08, 0x00, 0x00] = Loop. Default (`LNAM = 0`) = no loop / plays once. `0xFFFFFFFF` is INVALID and causes no sound to play.
 
 ### CLAS Conversion
 - **Skill Weight Algorithm** (from Skyblivion):
@@ -849,8 +854,9 @@ Playable Oblivion races map directly to Skyrim equivalents by EditorID:
 
 ### asset_convert (asset pipeline)
 - **NIF conversion**: `python -m asset_convert.nif_converter <src_dir> <dst_dir> [--workers N]` — Full Oblivion→Skyrim NIF conversion (strips, textures, bones, collision, skin retarget)
-- **SKIP_PATHS**: `asset_convert/nif_converter.py::SKIP_PATHS` — frozenset of path segments to skip during batch conversion (default: `menus`, `creatures`)
+- **SKIP_PATHS**: `asset_convert/nif_converter.py::SKIP_PATHS` — frozenset of path segments to skip during batch conversion (default: `menus`, `creatures`, `trees`). Trees are skipped because TREE records map model paths to `speedtrees/` via spt_converter — the original `trees/` geometry NIFs are not referenced at all.
 - NIF conversion stats: 8032 source NIFs from Oblivion BSAs. 7380 v20 files converted (91.9%). 650 v10/v4 files copied as-is.
+- **SpeedTree (.spt) conversion**: `asset_convert/spt_converter.py` — Converts Oblivion `.spt` files to Skyrim NIFs by matching pre-converted assets in `assets/speedtrees/`. Uses `_spt_to_skyblivion()` name mapping first (e.g. `TreeAsh01SU` → `treeaspen01summer`), then difflib fuzzy match on species stem as fallback. 328 NIFs indexed from `assets/speedtrees/Meshes/Oblivion/Landscape/Trees/`. Textures are bulk-copied from `assets/speedtrees/Textures/`. Wired into `asset_pipeline.py` Phase 4. Do NOT use procedural SPT generation — asset matching produces far better results.
 
 ### tools/ (debug/analysis. NOT meant for one-off tools. Only multi-use tools that take args. Should also have multiple functions per file, not one-off scripts.)
 - **NIF analyzer**: `python tools/tes4_nif_analyzer.py <nif_or_dir> [--outdir dir] [--max N]` — Dump NIF structure to text

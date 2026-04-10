@@ -3,17 +3,22 @@
 Reads Oblivion/SpeedTree v2 .spt binary files and generates Skyrim-compatible
 NIF meshes with procedural trunk, branches, and leaf-billboard geometry.
 
-Output NIF structure (matches Skyblivion reference pattern):
+Output NIF structure:
   BSLeafAnimNode  "TES5 Skyrim Tree"  flags=14  BSXFlags=130
-    NiTriShape  "TES5 Skyrim Tree - Branches"   bark texture + vertex colors
-    NiTriShape  "TES5 Skyrim Tree - Leaves"      leaf texture + alpha + vertex colors
+    bhkCollisionObject (bhkRigidBodyT → bhkCapsuleShape trunk collision)
+    NiTriShape  "TES5 Skyrim Tree - Branches"   bark texture + vertex colors  ExtraVectorsFlags=16
+    NiTriShape  "TES5 Skyrim Tree - Leaves"      leaf texture + alpha + vertex colors  ExtraVectorsFlags=16
+    NiTriShape  "TES5 Skyrim Tree - Caps"        caps texture + vertex colors  ExtraVectorsFlags=16
+
+Scale: SPT tree_size is the tree height in game units (Oblivion/Skyrim inches).
+All geometry is generated proportionally:
+  - Trunk height = tree_size * TRUNK_HEIGHT_FRAC
+  - Trunk base radius = tree_size * TRUNK_RADIUS_FRAC
+  - Branches spread to ~tree_size * 0.6 radius
+  - Leaves fill a sphere at canopy zone (upper 40% of total height)
 
 Usage (CLI):
     python -m asset_convert.spt_converter <src_dir> <dst_dir>
-    python -m asset_convert.spt_converter <src_dir> <dst_dir> --use-skyblivion
-
-The --use-skyblivion flag copies high-quality Skyblivion reference NIFs when
-available (disabled by default).
 """
 
 import io
@@ -47,9 +52,9 @@ except ImportError:
 NIF_FLAGS = 14
 BSX_FLAGS = 130   # 0x82 = Complex + DYNAMIC
 
-# Texture folders under output/oblivion.esm/textures/tes4/trees/
-BARK_TEX_DIR = 'textures\\tes4\\trees\\branches\\'
-LEAF_TEX_DIR = 'textures\\tes4\\trees\\leaves\\'
+# Texture folders under output/oblivion.esm/textures/tes4/speedtrees/
+BARK_TEX_DIR = 'textures\\tes4\\speedtrees\\branches\\'
+LEAF_TEX_DIR = 'textures\\tes4\\speedtrees\\leaves\\'
 
 # Procedural generation defaults
 MIN_TREE_HEIGHT    = 50.0
@@ -57,62 +62,11 @@ TRUNK_AZ_SEGMENTS  = 10     # sides of trunk cylinder
 TRUNK_Z_SEGMENTS   = 8      # vertical subdivisions
 BRANCH_AZ_SEGMENTS = 6      # sides of branch tubes
 BRANCH_Z_SEGMENTS  = 4      # length subdivisions per branch
-LEAVES_PER_BRANCH  = 14     # leaf billboards per branch tip
-LEAF_QUAD_SIZE_FRAC = 0.12  # leaf size as fraction of tree height
-
-# ---------------------------------------------------------------------------
-# Skyblivion reference tree lookup (used only with --use-skyblivion)
-# ---------------------------------------------------------------------------
-_SKYBLIVION_REF_DIR = (
-    Path(__file__).parent.parent
-    / 'external' / 'Speed Tree Conversion'
-    / 'Data' / 'Meshes' / 'Oblivion' / 'Landscape' / 'Trees'
-)
-_SEASON_CODE_MAP = {'su': 'summer', 'fa': 'fall', 'wi': 'winter', 'sp': 'spring'}
-_SEASONS = ('summer', 'fall', 'winter', 'spring')
-
-
-def _spt_to_skyblivion(spt_stem: str) -> tuple:
-    """Map a SPT stem to (skyblivion_stem_without_season, season_or_None).
-
-    Returns (None, None) if no Skyblivion reference is expected.
-    """
-    s = spt_stem
-
-    m = re.match(r'^D(Bush|Tree)(\d+)(?:Leaves)?$', s, re.IGNORECASE)
-    if m:
-        return f'dementia{m.group(1).lower()}{m.group(2)}', None
-
-    m = re.match(r'^Mania(Bush|Tree)(\d+)$', s, re.IGNORECASE)
-    if m:
-        return f'mania{m.group(1).lower()}{m.group(2)}', None
-
-    if s.lower().startswith('tree'):
-        core = s[4:]
-        season = None
-        m = re.search(r'(SU|FA|WI|SP)$', core, re.IGNORECASE)
-        if m:
-            season = _SEASON_CODE_MAP[m.group(1).lower()]
-            core = core[:m.start()]
-        if core.lower().endswith('snow'):
-            if season is None:
-                season = 'winter'
-            core = core[:-4]
-        m2 = re.match(r'^(.*?)(\d+)$', core)
-        if m2:
-            base, num = m2.group(1), m2.group(2).zfill(2)
-        else:
-            base, num = core, '01'
-        return 'tree' + base.lower() + num, season
-
-    return None, None
-
-
-def _find_season_nif(skyblivion_stem: str, season: str):
-    if not _SKYBLIVION_REF_DIR.exists():
-        return None
-    p = _SKYBLIVION_REF_DIR / f'{skyblivion_stem}{season}.nif'
-    return p if p.exists() else None
+LEAVES_PER_BRANCH  = 20     # leaf billboards per branch tip
+LEAF_QUAD_SIZE_FRAC = 0.10  # leaf size as fraction of tree height
+TRUNK_HEIGHT_FRAC  = 0.55   # trunk makes up this fraction of total tree height
+TRUNK_RADIUS_FRAC  = 0.055  # trunk base radius as fraction of tree height
+CANOPY_SPREAD_FRAC = 0.55   # canopy/branch spread radius as fraction of tree height
 
 
 def _copy_nif_remap_textures(src: Path, dst: Path) -> bool:
@@ -122,7 +76,7 @@ def _copy_nif_remap_textures(src: Path, dst: Path) -> bool:
     with open(src, 'rb') as f:
         data.read(f)
     _SKY_PFX = 'textures\\oblivion\\landscape\\trees\\'
-    _OUR_PFX = 'tes4\\landscape\\trees\\'
+    _OUR_PFX = 'tes4\\speedtrees\\'
     _OB_PFX = 'textures\\oblivion\\'
     for root in data.roots:
         for block in root.tree():
@@ -719,34 +673,106 @@ def _generate_leaf_cluster(center, cluster_radius, leaf_size, n_leaves,
             np.array(all_col, dtype=np.uint8))
 
 
+def _generate_caps_mesh(center, radius, quad_size: float, rng: np.random.Generator):
+    """Generate a ring of billboard quads at the top of the canopy (Caps mesh).
+
+    The Caps mesh in Skyrim trees covers the top/exterior of the canopy crown
+    with upward-facing billboard quads tiling the outer sphere surface.
+    Returns (verts Nx3, normals Nx3, uvs Nx2, tris Mx3, colors Nx4 uint8).
+    """
+    cx, cy, cz = center
+    n_caps = max(8, int(radius / quad_size * 2))
+    n_caps = min(n_caps, 24)  # cap polygon count to stay within reference (24 verts)
+
+    all_v = []
+    all_n = []
+    all_uv = []
+    all_tri = []
+    all_col = []
+
+    half = quad_size * 0.5
+
+    for i in range(n_caps):
+        # Distribute quads on a hemisphere cap
+        # Use Fibonacci-sphere-like distribution for outer caps
+        frac = (i + 0.5) / n_caps
+        phi = math.acos(1.0 - frac * 0.6)  # top 60% of sphere
+        theta = 2.0 * math.pi * i / (1.618033988)  # golden angle
+
+        # Position on canopy sphere
+        r_off = radius * math.sin(phi) * rng.uniform(0.6, 1.0)
+        px = cx + r_off * math.cos(theta)
+        py = cy + r_off * math.sin(theta)
+        pz = cz + radius * math.cos(phi) * 0.5 + rng.uniform(-quad_size * 0.3, quad_size * 0.3)
+
+        # Caps face mostly upward/outward
+        outward = np.array([px - cx, py - cy, pz - cz + radius * 0.5])
+        outward /= (np.linalg.norm(outward) + 1e-9)
+        face_norm = outward
+
+        # Build quad
+        if abs(face_norm[2]) < 0.9:
+            world_up = np.array([0.0, 0.0, 1.0])
+        else:
+            world_up = np.array([1.0, 0.0, 0.0])
+        right = np.cross(face_norm, world_up)
+        right /= (np.linalg.norm(right) + 1e-9)
+        up = np.cross(right, face_norm)
+        up /= (np.linalg.norm(up) + 1e-9)
+
+        s = half * rng.uniform(0.8, 1.2)
+        base_idx = len(all_v)
+        pos = np.array([px, py, pz])
+        corners = [
+            pos - right * s - up * s,
+            pos + right * s - up * s,
+            pos + right * s + up * s,
+            pos - right * s + up * s,
+        ]
+        for c in corners:
+            all_v.append((float(c[0]), float(c[1]), float(c[2])))
+            all_n.append((float(face_norm[0]), float(face_norm[1]), float(face_norm[2])))
+        all_uv.extend([(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)])
+
+        all_tri.append((base_idx, base_idx + 1, base_idx + 2))
+        all_tri.append((base_idx, base_idx + 2, base_idx + 3))
+        # Backface
+        all_tri.append((base_idx, base_idx + 2, base_idx + 1))
+        all_tri.append((base_idx, base_idx + 3, base_idx + 2))
+
+        g_var = rng.integers(180, 255)
+        r_var = rng.integers(160, 230)
+        for _ in range(4):
+            all_col.append((r_var, g_var, rng.integers(140, 180), 255))
+
+    return (np.array(all_v, dtype=np.float32),
+            np.array(all_n, dtype=np.float32),
+            np.array(all_uv, dtype=np.float32),
+            np.array(all_tri, dtype=np.int32),
+            np.array(all_col, dtype=np.uint8))
+
+
 def _generate_tree_geometry(spt_data: dict, spt_name: str):
     """Generate complete tree geometry from SPT parameters.
 
-    Returns dict with 'trunk' and 'leaves' entries, each containing
-    (verts, normals, uvs, tris) numpy arrays, plus 'leaf_colors'.
+    Returns dict with 'branch_*', 'leaf_*', and 'caps_*' numpy arrays.
+
+    Scale notes:
+      SPT tree_size is the total tree height in game units (Oblivion inches).
+      All other SPT parameters are LOD/lighting metadata — NOT usable for geometry.
+      We derive all proportions from tree_size alone.
     """
     rng = np.random.default_rng(_seed_from_name(spt_name))
 
     tree_size = max(spt_data.get('tree_size', 200.0), MIN_TREE_HEIGHT)
-    trunk_length_frac = spt_data.get('trunk_length', 0.0)
-    if trunk_length_frac <= 0 or trunk_length_frac > 5.0:
-        trunk_length_frac = 1.0
-    trunk_height = tree_size * trunk_length_frac
+    is_shrub = spt_name.lower().startswith('shrub') or tree_size < 80
 
-    # Trunk radius from SPT or derived from tree size
-    r_start = spt_data.get('trunk_radius_start', 0.0)
-    r_end = spt_data.get('trunk_radius_end', 0.0)
-    if r_start <= 0:
-        r_start = tree_size * 0.04  # ~4% of height
-    if r_end <= 0:
-        r_end = r_start * 0.25
-    # SPT radii are in SPT units; scale to game units relative to tree_size
-    if r_start < 1.0:
-        r_start *= tree_size
-    if r_end < 1.0:
-        r_end *= tree_size
+    # Trunk geometry proportions
+    trunk_height = tree_size * (0.40 if is_shrub else TRUNK_HEIGHT_FRAC)
+    r_start = tree_size * TRUNK_RADIUS_FRAC
+    r_end = r_start * (0.5 if is_shrub else 0.2)
 
-    gravity = spt_data.get('trunk_gravity', 0.0)
+    gravity = 0.0   # SPT gravity fields are LOD metadata, not actual lean
 
     # ---- Generate trunk ----
     tv, tn, tuv, tt, rings = _generate_trunk(
@@ -762,26 +788,20 @@ def _generate_tree_geometry(spt_data: dict, spt_name: str):
         trunk_colors[i] = [brightness, int(brightness * 0.85),
                            int(brightness * 0.65), 255]
 
-    # ---- Generate branches ----
-    branch_count_spt = spt_data.get('branch_count', 0)
-    is_shrub = spt_name.lower().startswith('shrub') or tree_size < 80
+    # ---- Branch parameters derived from tree_size ----
     if is_shrub:
-        n_branches = max(3, min(branch_count_spt, 8)) if branch_count_spt > 0 else 5
+        n_branches = 6
+        branch_start_h = 0.10   # shrubs branch from near the base
     else:
-        n_branches = max(4, min(branch_count_spt, 10)) if branch_count_spt > 0 else 6
+        n_branches = 8
+        branch_start_h = 0.40   # trees branch from mid-trunk
 
-    branch_angle_deg = spt_data.get('branch_angle', 45.0)
-    if branch_angle_deg <= 0 or branch_angle_deg > 90:
-        branch_angle_deg = 50.0
-    branch_angle_rad = math.radians(branch_angle_deg)
+    # Branch length: extend well into the canopy
+    canopy_spread = tree_size * CANOPY_SPREAD_FRAC
+    branch_len_base = canopy_spread * 0.9
 
-    branch_len_frac = spt_data.get('branch_length', 0.0)
-    if branch_len_frac <= 0 or branch_len_frac > 5.0:
-        branch_len_frac = 0.4
-
-    start_height_frac = spt_data.get('branch_start_height', 0.5)
-    if start_height_frac <= 0 or start_height_frac > 1.0:
-        start_height_frac = 0.4 if is_shrub else 0.5
+    # Branch elevation: roughly 30-50 deg above horizontal for nice spread
+    branch_elevation_deg = 35.0 if is_shrub else 28.0
 
     all_branch_v = [tv]
     all_branch_n = [tn]
@@ -795,20 +815,24 @@ def _generate_tree_geometry(spt_data: dict, spt_name: str):
     all_leaf_tri = []
     all_leaf_col = []
 
-    # Leaf size
+    # Leaf size: use SPT leaf_sizes if available (they are X/100 of tree unit).
+    # Multiply by tree_size to get game-unit leaf quad size.
     leaf_sizes = spt_data.get('leaf_sizes', [])
     if leaf_sizes:
         raw_w, raw_h = leaf_sizes[0]
-        leaf_size = max(raw_w * 800.0, raw_h * 800.0, tree_size * 0.06)
-        leaf_size = min(leaf_size, tree_size * LEAF_QUAD_SIZE_FRAC)
+        # raw values are fraction / 100.0 per sptparser description "Size/100.0"
+        # So actual leaf size = raw * 100 * scale_to_game_units
+        # For tree_size=255, typical leaf 0.14*100 = 14 game units (reasonable)
+        leaf_size = max(raw_w, raw_h) * 100.0
+        # Clamp to sensible range: min 5% of tree height, max 20%
+        leaf_size = max(tree_size * 0.05, min(leaf_size, tree_size * 0.20))
     else:
         leaf_size = tree_size * LEAF_QUAD_SIZE_FRAC
 
     for bi in range(n_branches):
-        # Attachment height: distribute between start_height and 95% of trunk
-        t_frac = start_height_frac + (0.95 - start_height_frac) * bi / max(n_branches - 1, 1)
-        # Add slight randomness to attachment height
-        t_frac = max(0.1, min(0.95, t_frac + rng.uniform(-0.05, 0.05)))
+        # Distribute branches evenly between branch_start and 95% of trunk height
+        t_frac = branch_start_h + (0.95 - branch_start_h) * bi / max(n_branches - 1, 1)
+        t_frac = max(0.05, min(0.95, t_frac + rng.uniform(-0.04, 0.04)))
 
         ring_idx = int(t_frac * (len(rings) - 1))
         ring_idx = min(ring_idx, len(rings) - 1)
@@ -816,17 +840,14 @@ def _generate_tree_geometry(spt_data: dict, spt_name: str):
         attach_pos = (rc[0], rc[1], rc[2])
         attach_r = rc[3]
 
-        # Branch direction: outward from trunk at angle
-        azimuth = 2.0 * math.pi * bi / n_branches + rng.uniform(-0.3, 0.3)
-        # Elevation angle from horizontal
-        elevation = math.pi / 2.0 - branch_angle_rad + rng.uniform(-0.15, 0.15)
-        dx = math.cos(azimuth) * math.cos(elevation)
-        dy = math.sin(azimuth) * math.cos(elevation)
-        dz = math.sin(elevation)
+        # Branch direction: spread outward with slight upward elevation
+        azimuth = 2.0 * math.pi * bi / n_branches + rng.uniform(-0.2, 0.2)
+        elevation_rad = math.radians(branch_elevation_deg + rng.uniform(-10, 10))
+        dx = math.cos(azimuth) * math.cos(elevation_rad)
+        dy = math.sin(azimuth) * math.cos(elevation_rad)
+        dz = math.sin(elevation_rad)
 
-        remaining_height = trunk_height - rc[2]
-        branch_len = max(remaining_height * branch_len_frac, tree_size * 0.1)
-        branch_len *= rng.uniform(0.75, 1.25)
+        branch_len = branch_len_base * rng.uniform(0.80, 1.20)
 
         bv, bn, buv, bt, tip = _generate_branch(
             attach_pos, attach_r, (dx, dy, dz), branch_len,
@@ -848,10 +869,10 @@ def _generate_tree_geometry(spt_data: dict, spt_name: str):
                              rng.integers(50, 90), 255]
         all_branch_col.append(branch_col)
 
-        # Generate leaves at branch tip
-        cluster_radius = branch_len * 0.5
-        n_leaves = LEAVES_PER_BRANCH + rng.integers(-3, 4)
-        n_leaves = max(4, n_leaves)
+        # Generate leaves at branch tip — cluster radius proportional to canopy
+        cluster_radius = leaf_size * 3.0
+        n_leaves = LEAVES_PER_BRANCH + rng.integers(-4, 6)
+        n_leaves = max(8, n_leaves)
 
         lv, ln, luv, lt, lc = _generate_leaf_cluster(
             tip, cluster_radius, leaf_size, n_leaves, rng
@@ -865,20 +886,34 @@ def _generate_tree_geometry(spt_data: dict, spt_name: str):
         all_leaf_tri.append(lt_offset)
         all_leaf_col.append(lc)
 
-    # Also add leaves at the crown (top of trunk) for fuller canopy
-    crown_center = rings[-1][:3]
-    crown_radius = tree_size * 0.15
-    crown_leaves = LEAVES_PER_BRANCH * 2
-    lv, ln, luv, lt, lc = _generate_leaf_cluster(
-        crown_center, crown_radius, leaf_size, crown_leaves, rng
-    )
-    leaf_offset = sum(len(v) for v in all_leaf_v)
-    lt_offset = lt + leaf_offset
-    all_leaf_v.append(lv)
-    all_leaf_n.append(ln)
-    all_leaf_uv.append(luv)
-    all_leaf_tri.append(lt_offset)
-    all_leaf_col.append(lc)
+    # Dense leaf fill in the canopy sphere (upper canopy zone)
+    # This fills the inner canopy with leaves between branch tips
+    canopy_center_z = trunk_height + (tree_size - trunk_height) * 0.35
+    canopy_sphere_r  = canopy_spread * 0.7
+    canopy_center = (rings[-1][0], rings[-1][1], canopy_center_z)
+    n_canopy_clusters = 4 if is_shrub else 6
+    for ci in range(n_canopy_clusters):
+        # Distribute fill clusters around canopy
+        a = 2.0 * math.pi * ci / n_canopy_clusters + rng.uniform(-0.4, 0.4)
+        e = rng.uniform(0.0, math.pi * 0.5)
+        r_off = canopy_sphere_r * rng.uniform(0.3, 0.8)
+        cx = canopy_center[0] + r_off * math.cos(a) * math.sin(e)
+        cy = canopy_center[1] + r_off * math.sin(a) * math.sin(e)
+        cz = canopy_center[2] + r_off * math.cos(e) * 0.6
+        fill_center = (cx, cy, cz)
+        fill_r = leaf_size * 2.5
+        n_leaves = LEAVES_PER_BRANCH * 2 + rng.integers(0, 8)
+
+        lv, ln, luv, lt, lc = _generate_leaf_cluster(
+            fill_center, fill_r, leaf_size, n_leaves, rng
+        )
+        leaf_offset = sum(len(v) for v in all_leaf_v)
+        lt_offset = lt + leaf_offset
+        all_leaf_v.append(lv)
+        all_leaf_n.append(ln)
+        all_leaf_uv.append(luv)
+        all_leaf_tri.append(lt_offset)
+        all_leaf_col.append(lc)
 
     # Merge everything
     branch_verts = np.concatenate(all_branch_v)
@@ -893,6 +928,11 @@ def _generate_tree_geometry(spt_data: dict, spt_name: str):
     leaf_tris = np.concatenate(all_leaf_tri) if all_leaf_tri else np.zeros((0, 3), dtype=np.int32)
     leaf_colors = np.concatenate(all_leaf_col) if all_leaf_col else np.zeros((0, 4), dtype=np.uint8)
 
+    # ---- Generate caps mesh (top-canopy billboard ring) ----
+    caps_verts, caps_norms, caps_uvs, caps_tris, caps_colors = _generate_caps_mesh(
+        canopy_center, canopy_spread * 0.6, leaf_size, rng
+    )
+
     return {
         'branch_verts': branch_verts,
         'branch_normals': branch_norms,
@@ -904,6 +944,15 @@ def _generate_tree_geometry(spt_data: dict, spt_name: str):
         'leaf_uvs': leaf_uvs,
         'leaf_tris': leaf_tris,
         'leaf_colors': leaf_colors,
+        'caps_verts': caps_verts,
+        'caps_normals': caps_norms,
+        'caps_uvs': caps_uvs,
+        'caps_tris': caps_tris,
+        'caps_colors': caps_colors,
+        # Save trunk parameters for collision generation
+        'trunk_height': trunk_height,
+        'trunk_radius_base': r_start,
+        'trunk_radius_top': r_end,
     }
 
 
@@ -921,9 +970,14 @@ def _make_shape(name_bytes: bytes, verts, norms, uvs, tris, colors,
     tsd.has_uv = True
     tsd.num_uv_sets = 1
     tsd.has_vertex_colors = (colors is not None and len(colors) > 0)
+    # ExtraVectorsFlags = 16: tangent space vectors (cond: has_normals && extra_vectors_flags & 16)
+    # Must be set BEFORE update_size() calls so tangents/bitangents arrays are sized correctly
+    tsd.extra_vectors_flags = 16
     tsd.num_vertices = len(verts)
     tsd.vertices.update_size()
     tsd.normals.update_size()
+    tsd.tangents.update_size()
+    tsd.bitangents.update_size()
     tsd.uv_sets.update_size()
     if tsd.has_vertex_colors:
         tsd.vertex_colors.update_size()
@@ -1024,6 +1078,87 @@ def _resolve_normal(spt_fname: str, tex_dir: str) -> str:
     return tex_dir + stem + '_n.dds'
 
 
+def _make_tree_collision(root_node: 'NifFormat.NiAVObject',
+                         trunk_height: float, r_base: float, r_top: float):
+    """Build a bhkCapsuleShape collision for the tree trunk.
+
+    Uses a capsule (two-point cylinder with hemispherical caps) matching
+    the trunk dimensions.  Scaled by HAVOK_SCALE (0.1) for Skyrim Havok units.
+
+    Returns a bhkCollisionObject attached to root_node, or None on failure.
+    """
+    HAVOK = 0.1
+
+    # Capsule points: bottom-center and top-center of trunk cylinder
+    # The capsule radius covers the base of the trunk
+    r_cap = max(r_base, r_top) * HAVOK
+    # Extend points inward by radius so the capsule ends are flush with trunk ends
+    r_inset = r_cap
+    z_bot = r_inset         # bottom hemisphere center
+    z_top = trunk_height * HAVOK - r_inset  # top hemisphere center
+    # If trunk is too short for two separate hemisphere centers, use sphere
+    if z_top <= z_bot:
+        z_bot = trunk_height * HAVOK * 0.5
+        z_top = z_bot
+
+    cap_shape = NifFormat.bhkCapsuleShape()
+    cap_shape.radius   = r_cap
+    cap_shape.radius_1 = r_cap
+    cap_shape.radius_2 = r_cap
+    cap_shape.first_point.x  = 0.0
+    cap_shape.first_point.y  = 0.0
+    cap_shape.first_point.z  = z_bot
+    cap_shape.second_point.x = 0.0
+    cap_shape.second_point.y = 0.0
+    cap_shape.second_point.z = z_top
+
+    rb = NifFormat.bhkRigidBody()
+    rb.shape = cap_shape
+    # Static body (STATIC motion type, fixed quality)
+    rb.mass                = 0.0
+    rb.friction            = 0.5
+    rb.restitution         = 0.4
+    rb.linear_damping      = 0.0996
+    rb.angular_damping     = 0.0498
+    rb.max_linear_velocity  = 104.4
+    rb.max_angular_velocity = 31.57
+    rb.motion_system       = 5   # MO_SYS_BOX_STABILIZED (static)
+    rb.quality_type        = 0   # MO_QUAL_INVALID → static
+    rb.deactivator_type    = 1   # DEACTIVATOR_NEVER (static objects never deactivate)
+    rb.havok_col_filter_copy.layer = 2   # LAYER_STATIC
+    rb.havok_col_filter.layer      = 2
+
+    # Standard Skyrim RB padding fields:
+    rb.unknown_int_1 = 0
+    rb.unknown_int_2 = 1          # BroadPhaseType=1 (BROAD_PHASE_ENTITY)
+    rb.unknown_3_ints[0] = 0
+    rb.unknown_3_ints[1] = 0
+    rb.unknown_3_ints[2] = -2147483648  # 0x80000000
+    rb.unknown_byte = 116
+    rb.unknown_time_factor_or_gravity_factor_1 = 1.0
+    rb.unknown_time_factor_or_gravity_factor_2 = 1.0
+    rb.unknown_int_6  = 196608
+    rb.unknown_int_7  = 0
+    rb.unknown_int_8  = 0
+    rb.unknown_int_81 = 0
+    rb.unknown_int_91 = 0
+    # Reference tree values for unknown_6_shorts from treeblacklocust01summer.nif
+    rb.unknown_6_shorts[0] = 23888
+    rb.unknown_6_shorts[1] = 9525
+    rb.unknown_6_shorts[2] = 0      # MUST be 0
+    rb.unknown_6_shorts[3] = 0      # MUST be 0
+    rb.unknown_6_shorts[4] = 3841
+    rb.unknown_6_shorts[5] = 65535
+    rb.unknown_2_shorts[0] = 7392
+    rb.unknown_2_shorts[1] = 13917
+
+    co = NifFormat.bhkCollisionObject()
+    co.flags  = 129   # CO_FLAGS_ACTIVE | CO_FLAGS_SYNC
+    co.target = root_node
+    co.body   = rb
+    return co
+
+
 def build_tree_nif(spt_data: dict, spt_name: str) -> bytes:
     """Build a Skyrim NIF from parsed SPT data. Returns raw NIF bytes."""
     if not _PYFFI:
@@ -1042,6 +1177,10 @@ def build_tree_nif(spt_data: dict, spt_name: str) -> bytes:
     leaf_diffuse = _resolve_texture(leaf_tex, LEAF_TEX_DIR, LEAF_TEX_DIR + 'treeleaf.dds')
     leaf_normal = _resolve_normal(leaf_tex, LEAF_TEX_DIR)
 
+    # Caps use same bark texture as branches (standard Skyrim tree convention)
+    caps_diffuse = bark_diffuse
+    caps_normal = bark_normal
+
     # Build shapes
     bark_shape = _make_shape(
         b'TES5 Skyrim Tree - Branches',
@@ -1054,6 +1193,13 @@ def build_tree_nif(spt_data: dict, spt_name: str) -> bytes:
         geo['leaf_verts'], geo['leaf_normals'],
         geo['leaf_uvs'], geo['leaf_tris'], geo['leaf_colors'],
         tex0_path=leaf_diffuse, tex1_path=leaf_normal,
+        has_alpha=True,
+    )
+    caps_shape = _make_shape(
+        b'TES5 Skyrim Tree - Caps',
+        geo['caps_verts'], geo['caps_normals'],
+        geo['caps_uvs'], geo['caps_tris'], geo['caps_colors'],
+        tex0_path=caps_diffuse, tex1_path=caps_normal,
         has_alpha=True,
     )
 
@@ -1071,10 +1217,20 @@ def build_tree_nif(spt_data: dict, spt_name: str) -> bytes:
     root.extra_data_list.update_size()
     root.extra_data_list[0] = bsx
 
-    root.num_children = 2
+    # Build trunk collision
+    co = _make_tree_collision(
+        root,
+        geo['trunk_height'],
+        geo['trunk_radius_base'],
+        geo['trunk_radius_top'],
+    )
+    root.collision_object = co
+
+    root.num_children = 3
     root.children.update_size()
     root.children[0] = bark_shape
     root.children[1] = leaf_shape
+    root.children[2] = caps_shape
 
     # NIF data
     nif_data = NifFormat.Data()
@@ -1107,17 +1263,112 @@ def convert_spt(src: Path, dst: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Project asset matching (assets/speedtrees/ directory)
+# ---------------------------------------------------------------------------
+
+# Root of our bundled pre-converted tree assets
+_PROJECT_ASSET_MESH_DIR = (
+    Path(__file__).parent.parent
+    / 'assets' / 'speedtrees' / 'Meshes' / 'Oblivion' / 'Landscape' / 'Trees'
+)
+_PROJECT_ASSET_TEX_DIR = (
+    Path(__file__).parent.parent
+    / 'assets' / 'speedtrees' / 'Textures' / 'Oblivion' / 'Landscape' / 'Trees'
+)
+
+# Lazy index: lowercase stem → Path for all non-_col NIFs in project assets
+_asset_nif_index: dict | None = None
+
+
+def _get_asset_nif_index() -> dict:
+    """Return a {lowercase_stem: path} dict for all project asset NIFs."""
+    global _asset_nif_index
+    if _asset_nif_index is not None:
+        return _asset_nif_index
+    idx: dict = {}
+    if _PROJECT_ASSET_MESH_DIR.exists():
+        for p in _PROJECT_ASSET_MESH_DIR.rglob('*.nif'):
+            if p.stem.lower().endswith('_col'):
+                continue
+            idx[p.stem.lower()] = p
+    _asset_nif_index = idx
+    return idx
+
+
+def _find_closest_project_asset(spt_stem: str) -> Path | None:
+    """Return the best matching project-asset NIF for a given SPT stem.
+    """
+    import difflib
+
+    idx = _get_asset_nif_index()
+    if not idx:
+        return None
+
+    # difflib fuzzy match over all stems
+    query = spt_stem.lower()
+    best_ratio = 0.0
+    best_path: Path | None = None
+    for stem_lc, path in idx.items():
+        ratio = difflib.SequenceMatcher(None, query, stem_lc).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_path = path
+
+    return best_path if best_ratio > 0.4 else None
+
+
+def _copy_project_asset(src_nif: Path, dst_nif: Path) -> bool:
+    """Copy a project-asset NIF to dst, remapping internal texture paths.
+
+    Textures are referenced as  textures\\oblivion\\landscape\\trees\\*  inside
+    the NIF; we remap them to  tes4\\landscape\\trees\\*  so they sit under the
+    tes4\\ namespace in the output archive.
+    """
+    if not _PYFFI:
+        dst_nif.parent.mkdir(parents=True, exist_ok=True)
+        import shutil as _sh
+        _sh.copy2(src_nif, dst_nif)
+        return True
+    return _copy_nif_remap_textures(src_nif, dst_nif)
+
+
+def _copy_project_textures(tex_output_dir: Path) -> int:
+    """Copy all bundled speedtree textures to tex_output_dir.
+
+    Source:  assets/speedtrees/Textures/Oblivion/Landscape/Trees/*.dds
+    Dest:    tex_output_dir/*.dds  (caller sets this to textures/tes4/speedtrees/)
+    """
+    import shutil as _sh
+    if not _PROJECT_ASSET_TEX_DIR.exists():
+        return 0
+    tex_output_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for src in _PROJECT_ASSET_TEX_DIR.iterdir():
+        if not src.is_file():
+            continue
+        dst = tex_output_dir / src.name
+        # Always copy/overwrite bundled textures for speedtrees
+        _sh.copy2(src, dst)
+        count += 1
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Batch conversion
 # ---------------------------------------------------------------------------
 
 def convert_spt_directory(src_dir: Path, dst_dir: Path,
-                          use_skyblivion: bool = False) -> dict:
+                          tex_output_dir: Path | None = None) -> dict:
     """Convert all .spt files under src_dir into .nif in dst_dir.
+
+    Uses bundled project assets (assets/speedtrees/) to find the closest
+    matching pre-converted NIF for each SPT file by name similarity.  The
+    procedural SPT converter is kept but disabled.
 
     Args:
         src_dir:         source directory (e.g. export/Oblivion.esm/trees/)
         dst_dir:         destination directory for NIF output
-        use_skyblivion:  if True, copy Skyblivion reference NIFs when available
+        tex_output_dir:  if provided, copy bundled tree textures here
 
     Returns dict with 'ok', 'fail', 'skip' counts.
     """
@@ -1126,48 +1377,37 @@ def convert_spt_directory(src_dir: Path, dst_dir: Path,
         print(f'  [SPT] No .spt files found in {src_dir}')
         return {'ok': 0, 'fail': 0, 'skip': 0}
 
-    mode = "Skyblivion-first" if use_skyblivion else "procedural"
-    print(f'  [SPT] Converting {len(spt_files)} files ({mode}) with {_WORKER_COUNT} workers...')
+    # Eagerly build asset index (single-threaded, fast)
+    idx = _get_asset_nif_index()
+    index_size = len(idx)
+    print(f'  [SPT] {len(spt_files)} SPT files → asset-match mode '
+          f'({index_size} project assets) with {_WORKER_COUNT} workers...')
+
+    # Copy bundled textures once before parallel NIF copying
+    if tex_output_dir is not None:
+        n_tex = _copy_project_textures(tex_output_dir)
+        if n_tex:
+            print(f'  [SPT] Copied {n_tex} bundled tree textures to {tex_output_dir}')
+
     counts = {'ok': 0, 'fail': 0, 'skip': 0}
 
-    def _task(spt_path: Path) -> bool:
+    def _task(spt_path: Path) -> bool | None:
         rel = spt_path.relative_to(src_dir)
         stem = rel.stem
         dst_main = dst_dir / rel.with_suffix('.nif')
+        src_nif = _find_closest_project_asset(stem)
+        if src_nif is None:
+            # No matching asset found — fall back to procedural converter (disabled)
+            # return convert_spt(spt_path, dst_main)
+            return False
 
-        if use_skyblivion:
-            sk_stem, season_hint = _spt_to_skyblivion(stem)
-            if sk_stem:
-                seasons_to_try = [season_hint] if season_hint else list(_SEASONS)
-                main_done = dst_main.exists()
-                any_ok = False
-                for season in seasons_to_try:
-                    src_nif = _find_season_nif(sk_stem, season)
-                    if src_nif is None:
-                        continue
-                    dst_seasonal = dst_dir / f'{sk_stem}{season}.nif'
-                    if not dst_seasonal.exists():
-                        _copy_nif_remap_textures(src_nif, dst_seasonal)
-                        any_ok = True
-                    if not main_done and season == seasons_to_try[0]:
-                        _copy_nif_remap_textures(src_nif, dst_main)
-                        main_done = True
-                        any_ok = True
-                if any_ok:
-                    return True
-
-        # Procedural generation
-        if dst_main.exists():
-            return None  # skip existing
-        return convert_spt(spt_path, dst_main)
+        return _copy_project_asset(src_nif, dst_main)
 
     with ThreadPoolExecutor(max_workers=_WORKER_COUNT) as pool:
         futures = {pool.submit(_task, p): p for p in spt_files}
         for fut in as_completed(futures):
             result = fut.result()
-            if result is None:
-                counts['skip'] += 1
-            elif result:
+            if result:
                 counts['ok'] += 1
             else:
                 counts['fail'] += 1
@@ -1188,9 +1428,6 @@ if __name__ == '__main__':
         description='Convert Oblivion SpeedTree (.spt) files to Skyrim NIFs')
     parser.add_argument('src_dir', help='Source directory with .spt files')
     parser.add_argument('dst_dir', help='Destination directory for .nif output')
-    parser.add_argument('--use-skyblivion', action='store_true',
-                        help='Copy Skyblivion reference NIFs when available '
-                             '(disabled by default)')
     args = parser.parse_args()
 
     if not _PYFFI:
@@ -1198,7 +1435,6 @@ if __name__ == '__main__':
         raise SystemExit(1)
 
     counts = convert_spt_directory(
-        Path(args.src_dir), Path(args.dst_dir),
-        use_skyblivion=args.use_skyblivion,
+        Path(args.src_dir), Path(args.dst_dir)
     )
     raise SystemExit(0 if counts['fail'] == 0 else 1)

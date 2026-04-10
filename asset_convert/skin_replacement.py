@@ -31,7 +31,7 @@ NIF_FLAGS = 14  # Standard Skyrim NiAVObject flags
 
 # Skyrim body-NIF source directory
 _SKYRIM_BODY_DIR = (Path(__file__).parent.parent /
-                    'temp' / 'Skyrim Meshes' / 'meshes' /
+                    'references' / 'Skyrim Meshes' / 'meshes' /
                     'actors' / 'character' / 'character assets')
 
 # Cache: (filepath) → list of NiTriShape blocks (cloned once, reused per NIF)

@@ -379,7 +379,7 @@ def organize_voice_files(
                     unmapped_races.add((race, gender))
                     voice_type = f'TES4{"Male" if gender == "M" else "Female"}{race}'
 
-                out_dir = dest_dir / 'Sound' / 'Voice' / effective_plugin / voice_type
+                out_dir = dest_dir / 'sound' / 'Voice' / effective_plugin / voice_type
                 out_dir.mkdir(parents=True, exist_ok=True)
 
                 for audio_file in gender_dir.iterdir():

@@ -24,7 +24,7 @@ SCRIPT_DIR = Path(__file__).parent.parent.resolve()
 LODGEN_EXE = (
     SCRIPT_DIR / "external" / "xEdit" / "Build" / "Edit Scripts" / "LODGenx64.exe"
 )
-SSELODGEN_EXE = SCRIPT_DIR / "external" / "sseLodGen.exe"
+SSELODGEN_EXE = SCRIPT_DIR / "tools" / "sseLodGen.exe"
 
 
 # ---------------------------------------------------------------------------
@@ -364,8 +364,6 @@ def _lod_meshes_for(stat: dict, output_meshes_dir: Path):
 # ---------------------------------------------------------------------------
 # 3. Build the LODGen input text file
 # ---------------------------------------------------------------------------
-
-_LOD_BASE_TYPES = {'STAT', 'ACTI', 'MSTT', 'TREE'}
 
 
 def write_lodgen_input(esm_path: Path, output_dir: Path,

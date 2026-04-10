@@ -732,8 +732,12 @@ def convert_SOUN(rec: dict, writer=None) -> tuple:
         # ONAM = Sound Output Model: SOMMono03000 (0x000ABEF3 in Skyrim.esm)
         # Required — CK reports 'Sound Output Model missing' if absent
         sndr_subs += pack_formid_subrecord('ONAM', 0x000ABEF3)
-        # LNAM = Looping flag (0 = not looping)
-        sndr_subs += pack_subrecord('LNAM', struct.pack('<I', 0))
+        # LNAM = Loop Data struct (4 bytes): byte[0]=Unknown, byte[1]=Looping enum,
+        # byte[2]=Unknown, byte[3]=Rumble.  Looping enum: 0x00=None, 0x08=Loop.
+        # TES4 SNDD/SNDX bit 4 (0x10) = "Is Looping" flag.
+        tes4_flags = get_int(rec, 'SNDD.Flags') or get_int(rec, 'SNDX.Flags') or 0
+        lnam_value = 0x00000800 if (tes4_flags & 0x10) else 0  # 0x800 = bytes[0,8,0,0] = Loop
+        sndr_subs += pack_subrecord('LNAM', struct.pack('<I', lnam_value))
         # BNAM = Values: FreqShift(S8) FreqVariance(S8) Priority(U8) dbVariance(U8) StaticAttenuation(U16)
         sndr_subs += pack_subrecord('BNAM', struct.pack('<bbBBH', 0, 0, 128, 0, 0))
         sndr_bytes = pack_record('SNDR', sndr_fid, 0, sndr_subs)

@@ -277,8 +277,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--skyrim-mesh-root',
                         default=os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                             'temp', 'Skyrim Meshes'),
-                        help='Path to extracted Skyrim meshes (default: temp/Skyrim Meshes)')
+                                             'references', 'Skyrim Meshes'),
+                        help='Path to extracted Skyrim meshes (default: references/Skyrim Meshes)')
     parser.add_argument('--output-dir',
                         default=os.path.join(os.path.dirname(os.path.dirname(__file__)),
                                              'output', 'oblivion.esm', 'meshes',

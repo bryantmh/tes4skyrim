@@ -29,10 +29,10 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 OBLIVION_SKELETON = os.path.join(BASE, 'export', 'Oblivion.esm', 'meshes',
                                  'characters', '_male', 'skeleton.nif')
-SKYRIM_SKELETON_MALE = os.path.join(BASE, 'temp', 'Skyrim Meshes', 'meshes',
+SKYRIM_SKELETON_MALE = os.path.join(BASE, 'references', 'Skyrim Meshes', 'meshes',
                                     'actors', 'character', 'character assets',
                                     'skeleton.nif')
-SKYRIM_SKELETON_FEMALE = os.path.join(BASE, 'temp', 'Skyrim Meshes', 'meshes',
+SKYRIM_SKELETON_FEMALE = os.path.join(BASE, 'references', 'Skyrim Meshes', 'meshes',
                                       'actors', 'character',
                                       'character assets female',
                                       'skeleton_female.nif')

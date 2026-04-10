@@ -37,7 +37,9 @@ STEPS = [
      "Convert Oblivion scripts to Papyrus",      True,  True),
     ("lod",                "--lod-only",           "8. LOD",
      "Generate LOD meshes",               False, True),
-    ("modify_body_meshes", "--modify-body-meshes", "9. Body Meshes",
+    ("pack",               "--pack-only",          "9. Pack BSAs",
+     "Pack assets into BSA archives",             False, True),
+    ("modify_body_meshes", "--modify-body-meshes", "10. Body Meshes",
      "Add greaves partition to body NIFs",       False, False),
 ]
 
