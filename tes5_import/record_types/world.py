@@ -195,8 +195,8 @@ def convert_WRLD(rec: dict) -> bytes:
         nwy = get_int(rec, 'MNAM.NWCellY')
         sex = get_int(rec, 'MNAM.SECellX')
         sey = get_int(rec, 'MNAM.SECellY')
-        # TES5 MNAM is 28 bytes
-        mnam = struct.pack('<iihhhhffi', dx, dy, nwx, nwy, sex, sey, 0.0, 0.0, 0)
+        # Camera defaults from Skyrim's Tamriel worldspace
+        mnam = struct.pack('<iihhhhfff', dx, dy, nwx, nwy, sex, sey, 50000.0, 80000.0, 50.0)
         subs += pack_subrecord('MNAM', mnam)
 
     # ONAM — World Map Offset Data (after MNAM per xEdit order)
@@ -212,6 +212,17 @@ def convert_WRLD(rec: dict) -> bytes:
     if data_flags & 0x10:
         data_flags = (data_flags & ~0x10) | 0x08
     subs += pack_uint8_subrecord('DATA', data_flags)
+
+    # NAM0 — World Object Bounds Min (X, Y as floats scaled by 1/wbCellSizeFactor=1/4096)
+    # NAM9 — World Object Bounds Max. Required by SSELodGen for world map generation.
+    # TES4 exports raw coordinates — divide by 4096 to get Skyrim's cell-unit scale.
+    n0x_raw = get_float(rec, 'NAM0.MinX')
+    n0y_raw = get_float(rec, 'NAM0.MinY')
+    n9x_raw = get_float(rec, 'NAM9.MaxX')
+    n9y_raw = get_float(rec, 'NAM9.MaxY')
+    CELL_SCALE = 4096.0
+    subs += pack_subrecord('NAM0', struct.pack('<ff', n0x_raw / CELL_SCALE, n0y_raw / CELL_SCALE))
+    subs += pack_subrecord('NAM9', struct.pack('<ff', n9x_raw / CELL_SCALE, n9y_raw / CELL_SCALE))
 
     return pack_record('WRLD', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
@@ -299,6 +310,8 @@ def convert_REFR(rec: dict) -> bytes:
     subs += pack_subrecord('DATA', struct.pack('<ffffff', px, py, pz, rx, ry, rz))
 
     flags = get_int(rec, 'RecordFlags')
+    if get_int(rec, 'VWD') == 1:
+        flags |= 0x8000  # Visible When Distant — required for SSELodGen object LOD
     return pack_record('REFR', get_formid(rec, 'FormID'), flags, subs)
 
 

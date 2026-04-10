@@ -130,6 +130,9 @@ def _emit_placement(lines: list, rec: Record):
 
 def export_REFR(rec: Record) -> list:
     lines = []
+    # VWD (Visible When Distant) flag — used for LOD
+    if getattr(rec, 'is_vwd', False):
+        lines.append("VWD=1")
     emit_string(lines, "EditorID", get_subrecord(rec, "EDID"))
     emit_formid(lines, "NAME", get_subrecord(rec, "NAME"))
 
@@ -186,6 +189,9 @@ def export_REFR(rec: Record) -> list:
 
 def export_ACHR(rec: Record) -> list:
     lines = []
+    # VWD (Visible When Distant) flag — used for LOD
+    if getattr(rec, 'is_vwd', False):
+        lines.append("VWD=1")
     emit_string(lines, "EditorID", get_subrecord(rec, "EDID"))
     emit_formid(lines, "NAME", get_subrecord(rec, "NAME"))
 

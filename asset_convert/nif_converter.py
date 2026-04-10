@@ -28,6 +28,7 @@ import os
 import shutil
 import struct
 import time
+import math
 from pathlib import Path
 
 import numpy as np
@@ -1429,9 +1430,16 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
                         dst_pos = frn.positions[pi]
                         dst_pos.offset.x = src_pos.offset.x
                         dst_pos.offset.y = src_pos.offset.y
-                        dst_pos.offset.z = src_pos.offset.z
-                        # orientation: milliradians (ushort) → radians (float)
-                        dst_pos.heading = src_pos.orientation / 1000.0
+                        # Oblivion furniture marker Z is stored relative to the
+                        # marker's own frame (top-of-chair origin → negative = below
+                        # origin).  Skyrim expects Z measured upward from floor.
+                        # Negating matches empirical data: |OB Z| ≈ Skyrim Z ≈ 33-34.
+                        dst_pos.offset.z = -src_pos.offset.z
+                        # should be slightly lower and further back
+                        # Oblivion orientation is the direction the furniture "faces";
+                        # in Skyrim the heading is the direction the NPC FACES when
+                        # seated, which is 180° (~π rad) offset from the Oblivion value.
+                        dst_pos.heading = src_pos.orientation / 1000.0 + math.pi
                         # position_ref → animation_type + entry_properties
                         ref = src_pos.position_ref_1
                         if 1 <= ref <= 10:
@@ -1677,6 +1685,7 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
             inner.translation.z = root.translation.z
             inner.scale = root.scale
             # Move collision to inner node so Havok uses the correct NiNode world transform
+            # Note: this likely causes crashes due to the collision not being on the root node
             if hasattr(root, 'collision_object') and root.collision_object is not None:
                 inner.collision_object = root.collision_object
                 inner.collision_object.target = inner

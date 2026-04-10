@@ -37,6 +37,7 @@ class Record:
     parent_cell: int = 0
     parent_wrld: int = 0
     parent_dial: int = 0
+    is_vwd: bool = False  # True if in VWD group (group type 10)
 
 
 @dataclass
@@ -119,7 +120,7 @@ def _parse_file(mm) -> tuple:
 
 def _parse_group(mm, start: int, end: int, file_size: int,
                  records: list, current_wrld: int, current_cell: int,
-                 current_dial: int):
+                 current_dial: int, is_vwd: bool = False):
     """Recursively parse records and sub-groups within a GRUP."""
     pos = start + GROUP_HEADER_SIZE
     group_type = struct.unpack_from("<I", mm, start + 12)[0]
@@ -134,6 +135,7 @@ def _parse_group(mm, start: int, end: int, file_size: int,
         pass
     elif group_type in (6, 8, 9, 10):  # Cell children / persistent / temporary / VWD
         current_cell = struct.unpack_from("<I", label_bytes, 0)[0]
+        is_vwd = (group_type == 10)  # VWD if group type is 10
     elif group_type == 7:  # Topic children
         current_dial = struct.unpack_from("<I", label_bytes, 0)[0]
 
@@ -148,7 +150,7 @@ def _parse_group(mm, start: int, end: int, file_size: int,
             sub_size = struct.unpack_from("<I", mm, pos + 4)[0]
             sub_end = pos + sub_size
             _parse_group(mm, pos, sub_end, file_size, records,
-                         current_wrld, current_cell, current_dial)
+                         current_wrld, current_cell, current_dial, is_vwd)
             pos = sub_end
         else:
             rec = _read_record(mm, pos, file_size)
@@ -159,6 +161,7 @@ def _parse_group(mm, start: int, end: int, file_size: int,
             rec.parent_wrld = current_wrld
             rec.parent_cell = current_cell
             rec.parent_dial = current_dial
+            rec.is_vwd = is_vwd
 
             # If this is a CELL, update current_cell for children
             if rec.type == "CELL":
