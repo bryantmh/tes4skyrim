@@ -149,8 +149,10 @@ ARMOR_DEFAULT_BODY_PART = SBP_32_BODY  # fallback for unrecognised geometry name
 # Vanilla Skyrim weapon NIFs use 0xC2 = COMPLEX(0x80) | ANIMATED(0x40) | HAVOK(0x02).
 # Static/environment meshes use 0x82 (no ANIMATED).
 # Animated doors/activators use 0x8B = ARTICULATED(0x80) | COMPLEX(0x08) | HAVOK(0x02) | ANIMATED(0x01).
-BSX_FLAGS_STATIC   = 0x82   # 130 — static objects with collision
-BSX_FLAGS_ANIMATED = 0x8B   # 139 — animated objects (doors, display cases, activators)
+# Constrained dynamic objects (swinging signs) use 0xCA = ARTICULATED(0x80) | DYNAMIC(0x40) | COMPLEX(0x08) | HAVOK(0x02).
+BSX_FLAGS_STATIC      = 0x82   # 130 — static objects with collision
+BSX_FLAGS_ANIMATED    = 0x8B   # 139 — animated objects (doors, display cases, activators)
+BSX_FLAGS_CONSTRAINED = 0xCA   # 202 — dynamic constrained objects (swinging signs)
 
 # ---------------------------------------------------------------------------
 # Weapon blood textures (BSEffectShaderProperty.source_texture)

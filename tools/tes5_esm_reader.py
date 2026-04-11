@@ -70,6 +70,8 @@ _FORMID4_SUBS = frozenset({
     'LCSR', 'XLKR', 'XCAS', 'XCMO', 'XCIM', 'LTMP', 'XLRM', 'XCCM', 'XNDP',
     'XLOD', 'XLRL', 'XCLR', 'XCLL', 'LNAM', 'XLOC', 'ZCNA', 'XPRD',
     'SCDA', 'SCRV', 'SDSC', 'SNDD', 'SNDC', 'VMAD',
+    # Dialog: FormID references
+    'TCLT', 'TCLF', 'QNAM', 'TIFC',
 })
 # Note: many of these are more complex than 4 bytes in reality, but for display
 # purposes we format 4-byte subrecords as FormIDs.
@@ -713,6 +715,275 @@ def _dec_ligh_data(data: bytes) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Condition (CTDA) function name map — most common TES5 condition functions
+# ---------------------------------------------------------------------------
+
+_CTDA_FUNC_NAMES: dict = {
+    1: 'GetDistance', 6: 'GetPos', 8: 'GetMovementDirection',
+    14: 'GetActorValue', 24: 'GetBaseActorValue', 25: 'IsMoving',
+    27: 'GetSecondsPassed', 35: 'GetAtStage', 36: 'GetPlayerControlsDisabled',
+    39: 'GetClothingValue', 40: 'SameFaction', 41: 'SameRace', 42: 'SameSex',
+    43: 'GetDetected', 44: 'GetDead', 45: 'GetItemCount', 46: 'GetGold',
+    47: 'GetSleeping', 48: 'GetTalkedToPCParam', 49: 'GetScriptVariable',
+    50: 'GetQuestRunning', 53: 'GetDead', 56: 'GetQuestRunning',
+    58: 'GetStage', 59: 'GetStageDone', 66: 'GetIsRace',
+    67: 'GetCurrentAIProcedure', 68: 'GetTrespassWarningLevel',
+    69: 'IsSwimming', 70: 'IsFlying', 71: 'GetInCell', 72: 'GetIsID',
+    73: 'GetFactionRelation', 74: 'GetIsObjectType', 75: 'GetIsVoiceType',
+    76: 'GetPlantedExplosive', 77: 'GetDead', 78: 'IsResponding',
+    79: 'GetFactionRank', 80: 'GetFactionRankDifference',
+    84: 'GetIsCreature', 99: 'GetQuestCompleted',
+    104: 'IsYielding', 109: 'HasFlames', 125: 'GetOpenState',
+    127: 'GetSitting', 128: 'GetFurnitureMarkerID',
+    129: 'GetIsCurrentPackage', 130: 'IsCurrentFurnitureRef',
+    131: 'IsCurrentFurnitureObj', 132: 'GetDayOfWeek',
+    141: 'GetTalkedToPC', 142: 'GetAlarmed',
+    148: 'IsContinuingPackagePCNear', 149: 'CanHaveFlames',
+    150: 'HasBeenEaten', 154: 'GetShouldAttack',
+    161: 'GetInCurrentLoc', 170: 'GetDayOfWeek', 172: 'GetInFaction',
+    175: 'HasBeenEaten', 176: 'GetIsReference',
+    180: 'GetInWorldspace', 182: 'GetPCSleepHours',
+    193: 'GetIsActor', 195: 'IsInDialogueWithPlayer',
+    203: 'GetHealthPercentage',
+    214: 'HasBoundWeaponEquipped',
+    226: 'GetVATSMode', 230: 'GetIsGhost', 233: 'GetUnconscious',
+    246: 'IsPlayerMovingIntoNewSpace',
+    247: 'GetInCurrentLocFormList', 248: 'GetInZone',
+    250: 'GetVelocity', 254: 'IsInCriticalStage',
+    258: 'GetInCurrentLocAlias', 259: 'GetInAliasLocation',
+    261: 'IsSprinting', 264: 'IsBlocking',
+    267: 'HasEquippedSpell', 277: 'IsInCombat', 278: 'GetCombatState',
+    280: 'HasShout', 282: 'GetEquippedShout',
+    285: 'IsAttacking', 286: 'GetMovementSpeed',
+    288: 'HasPerk', 310: 'GetActorValuePercent',
+    312: 'GetDialogueEmotion', 313: 'GetDialogueEmotionValue',
+    325: 'IsMovementType', 338: 'CanPayCrimeGold',
+    353: 'IsOnFlyingMount', 359: 'GetIsVoiceType',
+    362: 'IsInList',
+    372: 'GetWalkSpeed', 373: 'GetCurrentSpeed',
+    379: 'IsDualCasting', 391: 'GetKeywordItemCount',
+    396: 'ShouldAttackKill', 398: 'GetIgnoreFriendlyHits',
+    403: 'GetWithinDistance', 408: 'GetInContainer',
+    410: 'IsLocationLoaded',
+    414: 'HasAssociationType', 426: 'GetIsVoiceType',
+    432: 'GetIsEditorLocation', 437: 'GetLocationCleared',
+    444: 'GetIsAlias', 445: 'GetIsEditorLocAlias',
+    446: 'IsSprinting', 449: 'HasPerk',
+    459: 'GetVMQuestVariable', 465: 'IsAttacking',
+    473: 'GetEquippedItemType',
+    497: 'IsInFurnitureState', 501: 'GetActorValuePercent',
+    503: 'CanFlyHere', 508: 'EPModSkillUsage_IsAdvanceSkill',
+    513: 'EPMagic_SpellHasKeyword',
+    515: 'GetNoBleedoutRecovery',
+    519: 'EPTemperingItemHasKeyword',
+    522: 'GetCombatTargetHasKeyword',
+    543: 'GetLocAliasRefTypeDeadCount',
+    547: 'IsOnMount', 554: 'GetCurrentShoutVariation',
+    555: 'GetActivationHeight',
+    560: 'EPAlchemyGetMakingPoison',
+    566: 'GetDialogueEmotion',
+    579: 'GetRelationshipRank', 584: 'GetActorCrimePlayerEnemy',
+    591: 'GetCrime', 592: 'GetCrimeGold',
+    594: 'IsFurnitureAnimType', 595: 'IsFurnitureEntryType',
+    600: 'GetHealthPercentage',
+    606: 'GetVATSRightAreaFree', 607: 'GetVATSLeftAreaFree',
+    609: 'GetVATSBackAreaFree', 610: 'GetVATSFrontAreaFree',
+    612: 'GetVATSRightTargetVisible',
+    617: 'IsPlayerGrabbingItem',
+    619: 'GetVATSCurrentTargetHasLOS',
+    621: 'GetVATSCurrentTargetHasLOS',
+    624: 'IsInSameCurrentLocAsRef',
+    625: 'IsInSameCurrentLocAsRefAlias',
+    626: 'GetKeywordDataForCurrentLocation',
+    627: 'GetKeywordDataForAlias',
+    629: 'GetVMScriptVariable',
+    632: 'GetShouldHelp',
+    664: 'GetBribeSuccess',
+    672: 'GetIntimidateSuccess',
+    675: 'GetArrestingActor',
+    681: 'HasVMScript',
+    682: 'GetVMScriptVariable',
+    691: 'GetCrimeGoldViolent', 692: 'GetCrimeGoldNonviolent',
+}
+
+# Run-on types
+_CTDA_RUNON_NAMES = {
+    0: 'Subject', 1: 'Target', 2: 'Reference', 3: 'CombatTarget',
+    4: 'LinkedRef', 5: 'QuestAlias', 6: 'PackageData', 7: 'EventData',
+}
+
+
+# ---------------------------------------------------------------------------
+# Dialog / Quest / Condition decoders
+# ---------------------------------------------------------------------------
+
+def _dec_ctda(data: bytes) -> list:
+    """Decode a 32-byte CTDA (condition data)."""
+    if len(data) < 32:
+        return [f'CTDA.hex={data.hex()}']
+    type_byte = data[0]
+    comp_type = (type_byte >> 5) & 0x07
+    is_or = bool(type_byte & 0x01)
+    use_global = bool(type_byte & 0x04)
+    comp_names = {0: '==', 1: '!=', 2: '>', 3: '>=', 4: '<', 5: '<='}
+    comp_str = comp_names.get(comp_type, f'?{comp_type}')
+
+    comp_val = struct.unpack_from('<f', data, 4)[0]
+    func_idx = struct.unpack_from('<H', data, 8)[0]
+    _pad = struct.unpack_from('<H', data, 10)[0]
+    param1 = struct.unpack_from('<I', data, 12)[0]
+    param2 = struct.unpack_from('<I', data, 16)[0]
+    run_on = struct.unpack_from('<I', data, 20)[0]
+    ref = struct.unpack_from('<I', data, 24)[0]
+    _unk = struct.unpack_from('<I', data, 28)[0]
+
+    func_name = _CTDA_FUNC_NAMES.get(func_idx, f'Func{func_idx}')
+    run_on_str = _CTDA_RUNON_NAMES.get(run_on, f'RunOn{run_on}')
+
+    parts = [f'CTDA: {func_name}({param1:08X}']
+    if param2:
+        parts[0] += f',{param2:08X}'
+    parts[0] += f') {comp_str} {comp_val}'
+
+    flags = []
+    if is_or:
+        flags.append('OR')
+    if use_global:
+        flags.append('UseGlobal')
+    if run_on != 0:
+        flags.append(f'[{run_on_str}]')
+    if ref:
+        flags.append(f'ref={ref:08X}')
+    if flags:
+        parts[0] += ' ' + ' '.join(flags)
+
+    return parts
+
+
+def _dec_dial_data(data: bytes) -> list:
+    """DIAL DATA: TopicFlags(U8) + Category(U8) + Subtype(U16)."""
+    if len(data) < 4:
+        return [f'DATA.hex={data.hex()}']
+    flags, cat, subtype = struct.unpack_from('<BBH', data, 0)
+    cat_names = {0: 'Topic', 1: 'Favor', 2: 'Scene', 3: 'Combat',
+                 4: 'Favors', 5: 'Detection', 6: 'Service', 7: 'Misc'}
+    return [
+        f'DATA.TopicFlags=0x{flags:02X}', f'DATA.Category={cat} ({cat_names.get(cat, "?")})',
+        f'DATA.Subtype={subtype}',
+    ]
+
+
+def _dec_dial_snam(data: bytes) -> list:
+    """DIAL SNAM: 4-char subtype code."""
+    if len(data) < 4:
+        return [f'SNAM.hex={data.hex()}']
+    code = data[:4].decode('ascii', errors='replace')
+    return [f'SNAM={code} ({data.hex().upper()})']
+
+
+def _dec_dial_pnam(data: bytes) -> list:
+    """DIAL PNAM: float priority."""
+    if len(data) < 4:
+        return [f'PNAM.hex={data.hex()}']
+    val = struct.unpack_from('<f', data, 0)[0]
+    return [f'PNAM.Priority={val}']
+
+
+def _dec_info_enam(data: bytes) -> list:
+    """INFO ENAM: Flags(U16) + ResetHours(U16)."""
+    if len(data) < 4:
+        return [f'ENAM.hex={data.hex()}']
+    flags, reset = struct.unpack_from('<HH', data, 0)
+    flag_names = []
+    if flags & 0x01: flag_names.append('Goodbye')
+    if flags & 0x02: flag_names.append('Random')
+    if flags & 0x04: flag_names.append('SayOnce')
+    if flags & 0x10: flag_names.append('InfoRefusal')
+    if flags & 0x20: flag_names.append('RandomEnd')
+    flag_str = '|'.join(flag_names) if flag_names else 'None'
+    return [f'ENAM.Flags=0x{flags:04X} ({flag_str})', f'ENAM.ResetHours={reset}']
+
+
+def _dec_info_trdt(data: bytes) -> list:
+    """INFO TRDT: 24-byte response data."""
+    if len(data) < 24:
+        return [f'TRDT.hex={data.hex()}']
+    emo_type, emo_val = struct.unpack_from('<II', data, 0)
+    resp_num = data[12]
+    sound_fid = struct.unpack_from('<I', data, 16)[0]
+    resp_flags = data[20]
+    emo_names = {0: 'Neutral', 1: 'Anger', 2: 'Disgust', 3: 'Fear',
+                 4: 'Sad', 5: 'Happy', 6: 'Surprise', 7: 'Puzzled'}
+    return [
+        f'TRDT.Emotion={emo_type} ({emo_names.get(emo_type, "?")})',
+        f'TRDT.EmotionValue={emo_val}', f'TRDT.ResponseNum={resp_num}',
+        f'TRDT.Sound={sound_fid:08X}', f'TRDT.Flags=0x{resp_flags:02X}',
+    ]
+
+
+def _dec_qust_dnam(data: bytes) -> list:
+    """QUST DNAM: 12 bytes — Flags(U16) + Priority(U8) + FormVer(U8) + Unknown(4B) + Type(U32)."""
+    if len(data) < 12:
+        return [f'DNAM.hex={data.hex()}']
+    flags, priority, formver = struct.unpack_from('<HBB', data, 0)
+    qtype = struct.unpack_from('<I', data, 8)[0]
+    flag_names = []
+    if flags & 0x0001: flag_names.append('StartGameEnabled')
+    if flags & 0x0002: flag_names.append('Completed')
+    if flags & 0x0004: flag_names.append('AddIdleToHello')
+    if flags & 0x0008: flag_names.append('AllowRepeatStages')
+    if flags & 0x0010: flag_names.append('StartsEnabled')
+    if flags & 0x0020: flag_names.append('DisplayedInHUD')
+    if flags & 0x0040: flag_names.append('Failed')
+    if flags & 0x0100: flag_names.append('RunOnce')
+    if flags & 0x0200: flag_names.append('ExcludeFromDialogExport')
+    if flags & 0x0400: flag_names.append('WarnOnAliasFillFailure')
+    if flags & 0x8000: flag_names.append('HasDialogueData')
+    flag_str = '|'.join(flag_names) if flag_names else 'None'
+    type_names = {0: 'None', 1: 'MainQuest', 2: 'MagesGuild', 3: 'ThievesGuild',
+                  4: 'DarkBrotherhood', 5: 'CompanionsQuest', 6: 'Miscellaneous',
+                  7: 'Daedric', 8: 'SideQuest', 9: 'CivilWar', 10: 'DLC01Vampire',
+                  11: 'DLC02Dragonborn'}
+    return [
+        f'DNAM.Flags=0x{flags:04X} ({flag_str})',
+        f'DNAM.Priority={priority}', f'DNAM.FormVer={formver}',
+        f'DNAM.Type={qtype} ({type_names.get(qtype, "?")})',
+    ]
+
+
+def _dec_qust_indx(data: bytes) -> list:
+    """QUST INDX: StageIndex(U16) + StageFlags(U8) + Unknown(U8)."""
+    if len(data) < 4:
+        return [f'INDX.hex={data.hex()}']
+    idx, flags, unk = struct.unpack_from('<HBB', data, 0)
+    flag_names = []
+    if flags & 0x01: flag_names.append('Unknown')
+    if flags & 0x02: flag_names.append('StartUpStage')
+    if flags & 0x04: flag_names.append('ShutDownStage')
+    if flags & 0x08: flag_names.append('KeepInstanceDataFromHereOn')
+    flag_str = '|'.join(flag_names) if flag_names else 'None'
+    return [f'INDX.StageIndex={idx}', f'INDX.Flags=0x{flags:02X} ({flag_str})']
+
+
+def _dec_dlbr_dnam(data: bytes) -> list:
+    """DLBR DNAM: branch flags."""
+    if len(data) < 4:
+        return [f'DNAM.hex={data.hex()}']
+    val = struct.unpack_from('<I', data, 0)[0]
+    names = {0: 'Normal', 1: 'TopLevel', 2: 'Blocking', 4: 'Exclusive'}
+    return [f'DNAM={val} ({names.get(val, "?")})']
+
+
+def _dec_dlbr_tnam(data: bytes) -> list:
+    """DLBR TNAM: category (0=Player, 1=Command)."""
+    if len(data) < 4:
+        return [f'TNAM.hex={data.hex()}']
+    val = struct.unpack_from('<I', data, 0)[0]
+    names = {0: 'Player', 1: 'Command'}
+    return [f'TNAM={val} ({names.get(val, "?")})']
+
+
+# ---------------------------------------------------------------------------
 # Dispatch: (rec_type, sub_type) -> decode_fn(data) -> list[str]
 # ---------------------------------------------------------------------------
 
@@ -780,6 +1051,23 @@ _TYPED_DECODERS: dict = {
 
     # Lights
     ('LIGH', 'DATA'): _dec_ligh_data,
+
+    # Dialog topics (DIAL)
+    ('DIAL', 'DATA'): _dec_dial_data,
+    ('DIAL', 'SNAM'): _dec_dial_snam,
+    ('DIAL', 'PNAM'): _dec_dial_pnam,
+
+    # Dialog responses (INFO)
+    ('INFO', 'ENAM'): _dec_info_enam,
+    ('INFO', 'TRDT'): _dec_info_trdt,
+
+    # Quests (QUST)
+    ('QUST', 'DNAM'): _dec_qust_dnam,
+    ('QUST', 'INDX'): _dec_qust_indx,
+
+    # Dialog branches (DLBR)
+    ('DLBR', 'DNAM'): _dec_dlbr_dnam,
+    ('DLBR', 'TNAM'): _dec_dlbr_tnam,
 }
 
 
@@ -801,6 +1089,10 @@ def decode_subrecord(rec_type: str, sub: Sub, is_localized: bool,
     fn = _TYPED_DECODERS.get((rec_type, sig))
     if fn:
         return fn(data)
+
+    # 1b. CTDA — universal condition decoder (applies to all record types)
+    if sig == 'CTDA':
+        return _dec_ctda(data)
 
     # 2. OBND (universal)
     if sig == 'OBND':

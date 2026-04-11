@@ -580,7 +580,7 @@ class ScriptConverter:
                     prop_lines.append(f'{ptype} Property {pname} Auto')
                     declared.add(pname.lower())
             if self._property_refs:
-                prop_lines.append('; --- External references (fill in CK) ---')
+                prop_lines.append('; --- External references (auto-linked via VMAD) ---')
                 for pname, ptype in sorted(self._property_refs.items()):
                     safe_name = _safe_property_name(pname)
                     if safe_name.lower() in declared:

@@ -51,14 +51,18 @@ _TES4_ONLY_FUNCS = frozenset({
 # Papyrus scripts, so quest variables/stages are never set at runtime.
 # For bark INFOs these conditions would ALWAYS fail, blocking dialogue.
 # Strip them from bark topics to let the lines fire naturally.
+#
+# NOTE: GetInCell (71) and GetCurrentAIProcedure (67) are NOT in this set.
+# GetInCell provides important location-based filtering (FormIDs are remapped
+# correctly) and GetCurrentAIProcedure exists in TES5 (function 67).  Keeping
+# them lets bark topics retain location/AI gating that prevents inappropriate
+# lines from firing (e.g. city-specific greetings staying city-specific).
 _QUEST_DEPENDENT_FUNCS = frozenset({
     56,   # GetQuestRunning — quest scripts not running
     58,   # GetStage        — quest stage never set
     59,   # GetStageDone    — quest stage never marked done
     99,   # GetQuestCompleted — quest never completed
     79,   # GetIsPlayerBirthsign — no birthsigns in TES5
-    71,   # GetInCell       — TES4 cell FormIDs may not map correctly
-    67,   # GetCurrentAIProcedure — AI package system completely different
 })
 
 
@@ -119,7 +123,84 @@ def _convert_ctda_tes4_to_tes5(raw: bytes) -> 'bytes | None':
                        0xFFFFFFFF) # Unknown — vanilla Skyrim uses FFFFFFFF
 
 
-def convert_QUST(rec: dict, dialogue_quest_fids: set = None) -> bytes:
+# Player FormID — skip as VMAD property (Papyrus has Game.GetPlayer())
+_PLAYER_FORMID = 0x14
+
+
+def _collect_scro_properties(rec: dict, fid_to_edid: dict) -> dict:
+    """Extract SCRO FormID references from a record and build VMAD property dict.
+
+    Returns {sanitized_property_name: remapped_tes5_formid}.
+    Skips player FormID and unresolvable references.
+    """
+    from script_convert.constants import _safe_property_name
+
+    props = {}
+    seen_lower = set()
+    i = 0
+    while True:
+        key = f'SCRO[{i}]'
+        fid_str = rec.get(key)
+        if fid_str is None:
+            break
+        i += 1
+        try:
+            raw_fid = int(fid_str, 16)
+        except (ValueError, TypeError):
+            continue
+        if raw_fid == _PLAYER_FORMID or raw_fid == 0:
+            continue
+        edid = fid_to_edid.get(raw_fid)
+        if not edid:
+            continue
+        safe = _safe_property_name(edid)
+        low = safe.lower()
+        if low in seen_lower:
+            continue
+        seen_lower.add(low)
+        remapped = get_formid(rec, key)
+        if remapped:
+            props[safe] = remapped
+    return props
+
+
+def _collect_all_scro_properties(rec: dict, fid_to_edid: dict) -> dict:
+    """Collect SCRO properties from record-level and all stage/log levels."""
+    props = _collect_scro_properties(rec, fid_to_edid)
+
+    # QUST stage-level SCRO entries
+    stage_count = get_int(rec, 'StageCount')
+    for i in range(stage_count):
+        log_count = get_int(rec, f'Stage[{i}].LogCount')
+        for j in range(log_count):
+            prefix = f'Stage[{i}].Log[{j}].'
+            k = 0
+            while True:
+                key = f'{prefix}SCRO[{k}]'
+                if rec.get(key) is None:
+                    break
+                fid_str = rec[key]
+                try:
+                    raw_fid = int(fid_str, 16)
+                except (ValueError, TypeError):
+                    k += 1
+                    continue
+                if raw_fid != _PLAYER_FORMID and raw_fid != 0:
+                    edid = fid_to_edid.get(raw_fid)
+                    if edid:
+                        from script_convert.constants import _safe_property_name
+                        safe = _safe_property_name(edid)
+                        if safe.lower() not in {k2.lower() for k2 in props}:
+                            remapped = get_formid(rec, key)
+                            if remapped:
+                                props[safe] = remapped
+                k += 1
+    return props
+
+
+def convert_QUST(rec: dict, dialogue_quest_fids: set = None,
+                 fid_to_edid: dict = None,
+                 well_known_props: dict = None) -> bytes:
     """QUST — Quest conversion.
 
     TES5 order: EDID VMAD FULL DNAM ENAM FLTR [conditions] NEXT [conditions]
@@ -157,7 +238,11 @@ def convert_QUST(rec: dict, dialogue_quest_fids: set = None) -> bytes:
                 stage_frags.append((stage_idx, 0))
     if stage_frags and edid:
         from script_convert.pipeline import build_vmad_quest_fragments
-        vmad = build_vmad_quest_fragments(edid, stage_frags)
+        prop_vals = _collect_all_scro_properties(rec, fid_to_edid) if fid_to_edid else {}
+        if well_known_props:
+            prop_vals.update(well_known_props)
+        vmad = build_vmad_quest_fragments(edid, stage_frags,
+                                          property_values=prop_vals or None)
         subs += pack_subrecord('VMAD', vmad)
 
     full = get_str(rec, 'FULL')
@@ -346,7 +431,9 @@ def convert_DIAL(rec: dict, info_count: int = 0, dlbr_fid: int = 0,
 
 
 def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
-                 is_bark: bool = False) -> bytes:
+                 is_bark: bool = False,
+                 fid_to_edid: dict = None,
+                 well_known_props: dict = None) -> bytes:
     """INFO — Dialog response. Major restructuring from TES4.
 
     TES5 order: EDID [VMAD] ENAM CNAM [TCLT[]] [TRDT NAM1 NAM2 NAM3]* CTDAs
@@ -373,7 +460,10 @@ def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
     result_script = get_str(rec, 'ResultScript')
     if result_script and result_script.strip() and info_fid:
         from script_convert.pipeline import build_vmad_info_fragment
-        vmad = build_vmad_info_fragment(info_fid)
+        prop_vals = _collect_scro_properties(rec, fid_to_edid) if fid_to_edid else {}
+        if well_known_props:
+            prop_vals.update(well_known_props)
+        vmad = build_vmad_info_fragment(info_fid, property_values=prop_vals or None)
         subs += pack_subrecord('VMAD', vmad)
 
     # ENAM — Response flags: Flags(U16) + ResetHours(U16)
@@ -539,21 +629,24 @@ def should_skip_dial(rec: dict) -> bool:
 
     Skips persuasion system topics, service UI barks, creature responses,
     Oblivion-gate responses, and test/debug dialogue.
+
+    NOTE (loading screen bug fix): Skipping DIALs by EditorID previously caused
+    infinite loading screens because other INFOs had TCLT (choice links) pointing
+    to skipped DIAL FormIDs → dangling references.  The fix is in
+    _build_dialog_groups: before converting INFOs, it strips TCLT/LinkFrom
+    references to skipped DIAL FormIDs so no dangling references remain.
     """
     dtype = get_int(rec, 'DATA.Type')
     if dtype in _DIAL_SKIP_TYPES:
         return True
 
+    edid = get_str(rec, 'EditorID', '')
+    if edid in _DIAL_SKIP_EDIDS:
+        return True
 
-    # Something about skipping the dialog at this stage causes infinite loading screens ingame
-    # Do NOT enable this without first discovering the cause
-    # edid = get_str(rec, 'EditorID', '')
-    # if edid in _DIAL_SKIP_EDIDS:
-    #     return True
-
-    # # Skip test/debug topics
-    # if edid.startswith('Test') or edid.startswith('MarkNTest'):
-    #     return True
+    # Skip test/debug topics
+    if edid.startswith('Test') or edid.startswith('MarkNTest'):
+        return True
 
     return False
 
@@ -612,31 +705,44 @@ def make_dlvw(fid: int, edid: str, quest_fid: int,
     return pack_record('DLVW', fid, 0, subs)
 
 
-def build_voice_type_ctda(vtyp_fid: int, is_or: bool = False) -> bytes:
-    """Build a single 32-byte GetIsVoiceType CTDA for a voice type FormID.
-
-    type_byte: bits 5-7 = comparison (0=Equal), bit 0 = OR flag
-    """
+def _build_ctda_equal_1(func_idx: int, param1_fid: int,
+                        is_or: bool = False) -> bytes:
+    """Build a 32-byte CTDA: func(param1) == 1.0, with optional OR flag."""
     type_byte = 0x01 if is_or else 0x00  # Equal + OR flag
     return struct.pack('<B3xIHHIIIII',
                        type_byte,
                        0x3F800000,          # CompValue = 1.0
-                       _FUNC_GET_IS_VOICE_TYPE, 0,
-                       vtyp_fid,            # Param1 = VTYP FormID
+                       func_idx, 0,
+                       param1_fid,          # Param1
                        0,                   # Param2
                        0,                   # RunOn = Subject
                        0,                   # Reference
                        0xFFFFFFFF)          # Unknown
 
 
-def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict) -> bytes:
+def build_voice_type_ctda(vtyp_fid: int, is_or: bool = False) -> bytes:
+    """Build a single 32-byte GetIsVoiceType CTDA for a voice type FormID."""
+    return _build_ctda_equal_1(_FUNC_GET_IS_VOICE_TYPE, vtyp_fid, is_or)
+
+
+def build_getisid_ctda(npc_fid: int, is_or: bool = False) -> bytes:
+    """Build a single 32-byte GetIsID CTDA for an NPC FormID."""
+    return _build_ctda_equal_1(_FUNC_GET_IS_ID, npc_fid, is_or)
+
+
+def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict,
+                                     topic_vtyps: set = None) -> bytes:
     """Build packed GetIsVoiceType CTDA subrecords for an INFO record.
 
     Strategy:
     1. Scan existing conditions for GetIsID (func 72) — extract target NPC FormIDs
     2. Map each NPC to its voice type
     3. If NPC-specific: emit GetIsVoiceType for those voice types (OR'd)
-    4. If generic (no GetIsID): emit GetIsVoiceType for ALL voice types (OR'd)
+    4. If generic (no GetIsID) AND topic has NPC-specific siblings:
+       emit GetIsVoiceType for the topic-level voice types (restricts the
+       generic fallback to only NPCs whose voice types have specific responses
+       in this topic — prevents the topic from appearing for ALL NPCs).
+    5. If generic AND no NPC-specific siblings: return empty (truly generic).
 
     All voice type conditions are OR'd with each other (any matching voice type
     is acceptable) but AND'd with the rest of the condition set.
@@ -659,24 +765,26 @@ def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict) -> bytes:
         except (ValueError, struct.error):
             continue
 
-    # No NPC-specific targets → generic line, no voice type injection.
-    # Generic lines have no GetIsID so they fire for any NPC — adding
-    # GetIsVoiceType for ALL voice types would add 20+ conditions per INFO,
-    # bloat the ESM, and still block NPCs with unrecognised voice types.
-    # Skyrim's bark/dialogue engine handles generic lines without conditions.
     if not npc_fids:
-        return b''
-
-    # Resolve NPC FormIDs to voice types
-    vtyp_fids = set()
-    for npc_fid in npc_fids:
-        # Try with load-order remapping (the npc_to_vtyp uses remapped FormIDs)
-        remapped = npc_fid
-        if offset and (npc_fid >> 24) == 0x00 and (npc_fid & 0x00FFFFFF) >= 0x100:
-            remapped = (npc_fid & 0x00FFFFFF) | (offset << 24)
-        vtyp = npc_to_vtyp.get(remapped, 0) or npc_to_vtyp.get(npc_fid, 0)
-        if vtyp:
-            vtyp_fids.add(vtyp)
+        # Generic line — use topic-level voice types from NPC-specific siblings.
+        # This restricts the generic fallback to only NPCs whose voice types
+        # appear in the topic, preventing the topic from showing for ALL NPCs.
+        # If no NPC-specific siblings exist, the topic is truly generic and we
+        # don't inject voice types (same as having no filter).
+        vtyp_fids = topic_vtyps if topic_vtyps else set()
+        if not vtyp_fids:
+            return b''
+    else:
+        # Resolve NPC FormIDs to voice types
+        vtyp_fids = set()
+        for npc_fid in npc_fids:
+            # Try with load-order remapping (the npc_to_vtyp uses remapped FormIDs)
+            remapped = npc_fid
+            if offset and (npc_fid >> 24) == 0x00 and (npc_fid & 0x00FFFFFF) >= 0x100:
+                remapped = (npc_fid & 0x00FFFFFF) | (offset << 24)
+            vtyp = npc_to_vtyp.get(remapped, 0) or npc_to_vtyp.get(npc_fid, 0)
+            if vtyp:
+                vtyp_fids.add(vtyp)
 
     if not vtyp_fids:
         return b''
@@ -691,6 +799,88 @@ def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict) -> bytes:
         result += pack_subrecord('CTDA', ctda_data)
 
     return result
+
+
+def build_topic_npc_ctdas(npc_fids: set) -> bytes:
+    """Build packed GetIsID CTDA subrecords for a set of topic NPC FormIDs.
+
+    Creates an OR chain: GetIsID(NPC_A) OR | ... | GetIsID(NPC_N) AND
+    so the condition passes if the speaker is ANY of the topic's NPCs.
+    Last condition has AND (no OR flag) to chain with remaining conditions.
+
+    npc_fids must already be remapped to TES5 load-order.
+    """
+    if not npc_fids:
+        return b''
+    result = b''
+    npc_list = sorted(npc_fids)
+    for idx, nfid in enumerate(npc_list):
+        is_last = (idx == len(npc_list) - 1)
+        ctda_data = build_getisid_ctda(nfid, is_or=not is_last)
+        result += pack_subrecord('CTDA', ctda_data)
+    return result
+
+
+def info_has_positive_getisid(rec: dict) -> bool:
+    """Return True if this INFO has at least one GetIsID(X)==1.0 condition.
+
+    Used to detect INFOs that already target specific NPCs.  INFOs with only
+    negative GetIsID (==0.0, i.e. NOT this NPC) return False because they
+    effectively match everyone except the excluded NPCs.
+    """
+    cc = get_int(rec, 'ConditionCount')
+    for i in range(cc):
+        raw_hex = rec.get(f'Condition[{i}].Raw', '')
+        if not raw_hex or len(raw_hex) < 24:
+            continue
+        try:
+            raw = bytes.fromhex(raw_hex)
+            func_idx = struct.unpack_from('<H', raw, 8)[0]
+            if func_idx != _FUNC_GET_IS_ID:
+                continue
+            comp_type = (raw[0] >> 5) & 0x07  # bits 5-7 = comparison
+            comp_val = struct.unpack_from('<f', raw, 4)[0]
+            if comp_type == 0 and comp_val == 1.0:
+                return True
+        except (ValueError, struct.error):
+            continue
+    return False
+
+
+def collect_topic_npc_fids(child_infos: list, offset: int) -> set:
+    """Collect remapped NPC FormIDs from positive GetIsID conditions in a topic.
+
+    Scans all INFOs in a topic and returns the set of NPC FormIDs that appear
+    in GetIsID(X)==1.0 conditions.  These are the NPCs that Oblivion's AddTopic
+    system would have restricted the topic to.
+
+    Returns FormIDs already remapped to the TES5 load-order.
+    """
+    npc_fids = set()
+    for info_rec in child_infos:
+        cc = get_int(info_rec, 'ConditionCount')
+        for i in range(cc):
+            raw_hex = info_rec.get(f'Condition[{i}].Raw', '')
+            if not raw_hex or len(raw_hex) < 24:
+                continue
+            try:
+                raw = bytes.fromhex(raw_hex)
+                func_idx = struct.unpack_from('<H', raw, 8)[0]
+                if func_idx != _FUNC_GET_IS_ID:
+                    continue
+                comp_type = (raw[0] >> 5) & 0x07
+                comp_val = struct.unpack_from('<f', raw, 4)[0]
+                if comp_type != 0 or comp_val != 1.0:
+                    continue
+                # Positive GetIsID — remap FormID to TES5
+                param1 = struct.unpack_from('<I', raw, 12)[0]
+                remapped = param1
+                if offset and (param1 >> 24) == 0x00 and (param1 & 0x00FFFFFF) >= 0x100:
+                    remapped = (param1 & 0x00FFFFFF) | (offset << 24)
+                npc_fids.add(remapped)
+            except (ValueError, struct.error):
+                continue
+    return npc_fids
 
 
 # ---------------------------------------------------------------------------

@@ -483,9 +483,9 @@ class TestVMADBuilders:
 
     def test_vmad_info_fragment_no_persistent_scripts(self):
         result = build_vmad_info_fragment('00012345')
-        # After header (4), 0 persistent scripts
+        # After header (4), 1 persistent script (holds properties)
         persistent_count = struct.unpack_from('<H', result, 4)[0]
-        assert persistent_count == 0
+        assert persistent_count == 1
 
     def test_vmad_info_script_name(self):
         result = build_vmad_info_fragment('AABBCCDD')

@@ -607,10 +607,11 @@ VTEX[i]=FormID
 - **DIAL DATA** = TopicFlags(U8) + Category(U8) + Subtype(U16 LE) = 4 bytes total
 - **DIAL SNAM** = 4-char subtype code stored as raw ASCII bytes (e.g. b'HELO', b'CUST')
 - **DIAL Category**: Bark topics → 7(Misc) or 3(Combat) or 5(Detection); all conversation topics → 0(Topic). Old TES4 type-based mapping removed.
-- **DIAL BNAM**: ONLY present on conversation topics (links to DLBR). Bark topics (GREETING, Attack, Hit, Flee, Idle, etc.) must NOT have BNAM — they fire automatically.
-- **DLBR (Dialog Branch)**: EDID + QNAM(quest FID) + TNAM(0=Player) + DNAM(1=TopLevel) + SNAM(starting DIAL FID). Created for each non-bark DIAL topic.
+- **DIAL BNAM**: ONLY present on top-level conversation topics (links to DLBR). Bark topics and chain topics (Type 1) must NOT have BNAM.
+- **TES4 DIAL DATA.Type classification**: Type 0=Topic (top-level, gets DLBR), Type 1=Conversation (chain topic, ONLY reachable via TCLT links, NO DLBR), Type 2=Combat (bark), Type 3=Persuasion (skipped), Type 4=Detection (bark), Type 5=Service (skipped), Type 6=Misc (bark). Type 1 is critical — 555 topics that must NOT get DLBR or they appear as spurious top-level dialog.
+- **DLBR (Dialog Branch)**: EDID + QNAM(quest FID) + TNAM(0=Player) + DNAM(1=TopLevel) + SNAM(starting DIAL FID). Created ONLY for non-bark, non-chain (Type!=1) DIAL topics.
 - **DLVW (Dialog View)**: EDID + QNAM(quest) + BNAM[](branch FIDs) + TNAM[](topic FIDs) + ENAM(view type) + DNAM(show all text). CK UI metadata, one per quest.
-- **GetIsVoiceType (func 426)**: Every Skyrim INFO must have this condition. Routes dialogue to the correct voice type. OR'd for multiple voice types. NPC-specific INFOs use GetIsID(npc_fid) from TES4 + GetIsVoiceType for the NPC's voice type. Generic INFOs get ALL 27 custom voice types.
+- **GetIsVoiceType (func 426)**: Every Skyrim INFO must have this condition. Routes dialogue to the correct voice type. OR'd for multiple voice types. NPC-specific INFOs use GetIsID(npc_fid) from TES4 + GetIsVoiceType for the NPC's voice type. Generic fallback INFOs (no GetIsID) inherit voice types from NPC-specific siblings in the same topic — this prevents conditionless INFOs from making topics appear for ALL NPCs.
 - **CTDA OR flag**: bit 0 of type byte. Voice type chain: VT1(OR)|VT2(OR)|...|VTn(AND) → evaluates as (any voice type matches) AND (remaining TES4 conditions). LAST voice type CTDA must NOT have OR flag.
 - **Voice type injection order**: Voice type CTDAs are injected BEFORE TES4-converted conditions in INFO. This isolates the OR chain from any trailing OR flags in TES4 data.
 - **QUST dialogue flags**: QUSTs that own DIAL topics get: 0x0001(StartGameEnabled) + 0x0010(StartsEnabled) = 0x0011. **NEVER set HasDialogueData (0x8000)** — Skyrim does not use this flag and it blocks dialogue processing.
@@ -618,7 +619,8 @@ VTEX[i]=FormID
 - **Orphan DIALs**: DIALs without quest association get assigned to a catch-all quest `TES4DialogueGeneric` (Flags=0x0011, Priority=0, FormVer=0). ALL DIALs MUST have QNAM or the engine ignores them.
 - **NPC→VTYP mapping**: Built from NPC_+CREA records using TES4_RACE_FID_TO_EDID → VOICE_TYPE_MAP[(race_edid, gender)]. 3396 NPCs mapped to 27 voice types. ALL speakable NPCs (including CREA→NPC_) MUST have VTCK.
 - **TES4-only condition functions dropped**: GetDisposition(76), GetVampire(40), IsYielding(104), IsPlayerInJail(171), GetPCInfamy(251) — these would always fail in TES5 and block valid dialogue.
-- **Quest-dependent conditions on barks**: Functions {56(GetQuestRunning), 58(GetStage), 59(GetStageDone), 99(GetIsPlayableRace), 79(GetFactionRank), 71(GetFactionReaction), 67(GetCurrentAIPackage)} stripped from bark INFOs — barks fire automatically without quest context.
+- **Quest-dependent conditions on barks**: Functions {56(GetQuestRunning), 58(GetStage), 59(GetStageDone), 99(GetQuestCompleted), 79(GetIsPlayerBirthsign)} stripped from bark INFOs — barks fire automatically without quest context.
+- **Location/AI conditions on barks**: GetInCell(71) and GetCurrentAIProcedure(67) are PRESERVED on bark INFOs — they provide critical location and AI-state filtering. FormIDs are properly remapped, so these conditions work in TES5. Stripping them causes city-specific greetings to fire everywhere.
 - **CTDA Use Global flag**: bit 2 (0x04), NOT bit 5 (0x20). Wrong bit causes all global-based conditions to fail.
 - **TES5 INFO subrecord order**: EDID ENAM CNAM [TCLT[]] [TRDT NAM1 NAM2 NAM3]* CTDAs
 - **INFO ENAM** = Flags(U16) + ResetHours(U16) = 4 bytes. Flags map from TES4 DATA.Flags with compatible mask 0x37 (bits 0=Goodbye, 1=Random, 2=SayOnce, 4=InfoRefusal, 5=RandomEnd — same bit positions)
@@ -630,6 +632,15 @@ VTEX[i]=FormID
 - **Voice files**: TES4 path `Sound\Voice\<plugin>\<Race>\<Gender>\<dialFID>_<infoFID>.mp3`; TES5 path `Sound\Voice\<plugin>\<VoiceType>\<infoFID>_0.mp3`. Use `asset_convert.bsa_extract.organize_voice_files()` to reorganize after extraction. Audio format conversion (MP3→XWM/FUZ) required for actual playback — not automated.
 - **Race→VoiceType mapping** is in `_TES4_VOICE_TYPE_MAP` in bsa_extract.py; includes all Oblivion playable races + Shivering Isles races
 - **Conversion stats**: 3817 DIAL topics (851 barks, 2966 conversation), 19278 INFOs, 2966 DLBR branches, 275 DLVW views, 345 dialogue quests
+- **Dialog filtering stats**: 18,761 INFOs with conditions, 20 conditionless (down from 958 before voice type fallback fix). 17,784 INFOs with GetIsVoiceType. 3,704 GetInCell CTDAs (preserved for location gating). 3,169 DLBR branches (555 Type 1 chain topics excluded).
+- **GetIsID injection (conversation topic NPC restriction)**: Oblivion uses `AddTopic` script command to control which NPCs show conversation topics. Skyrim has NO AddTopic — topics appear if quest is running and conditions match. Since all dialogue quests are StartGameEnabled, conversation topics without NPC-specific conditions appear on ALL NPCs. Fix: inject `GetIsID(npc_fid)==1.0` OR chains into INFOs lacking positive GetIsID, using sibling INFOs in the same topic as donor. Two-tier approach:
+  1. **Topic-level**: `collect_topic_npc_fids()` gathers NPC FormIDs from positive `GetIsID(X)==1.0` conditions in sibling INFOs within the same DIAL topic. Injected into INFOs that lack positive GetIsID via `build_topic_npc_ctdas()`.
+  2. **Quest-level fallback**: For ALL_CONDITIONLESS topics (every INFO in the topic lacks GetIsID), collect NPCs from ALL topics in the same quest. Handles cases like "Mother" topic in MS45 where the topic itself has no GetIsID but other MS45 topics identify the relevant NPC (Seed-Neeus).
+  - OR chain pattern: `GetIsID(A) OR | GetIsID(B) OR | ... | GetIsID(N) AND` — injected BEFORE voice type and TES4-converted conditions.
+  - Only conversation topics (non-bark) get injection. Bark topics use voice type conditions only.
+  - 1,415 INFOs injected. Reduced wrong-NPC dialog from 3,775 to 208 across 100 NPCs (94.5%). Remaining 208 are 2 city-gossip topics using GetInCell (correct at runtime).
+  - Key functions: `build_getisid_ctda()` (func 72), `build_topic_npc_ctdas()`, `info_has_positive_getisid()`, `collect_topic_npc_fids()` in `dialog_misc.py`
+- **Dialog emulator**: `tools/dialog_emulator.py` — Simulates Skyrim dialog engine for validation. Modes: `--npc <edid>` (single NPC), `--batch --max-npcs N` (batch test), `--quest <edid>`, `--collisions`. Parses converted ESM, evaluates conditions, reports wrong-NPC matches.
 
 ### DOOR conversion notes
 - TES4 FNAM bit 0 = "Oblivion gate" — **clear this bit** when writing TES5 FNAM (no TES5 equivalent, may corrupt flags)

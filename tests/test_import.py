@@ -663,14 +663,19 @@ from tes5_import.record_types.dialog_misc import (
     _DIAL_TYPE_SERVICE,
     _DIAL_TYPE_TOPIC,
     _EDID_TO_SUBTYPE_INT,
+    _FUNC_GET_IS_ID,
     _QUEST_DEPENDENT_FUNCS,
     _TES4_ONLY_FUNCS,
     BARK_SUBTYPES,
+    build_getisid_ctda,
+    build_topic_npc_ctdas,
     build_voice_type_ctda,
     build_voice_type_ctdas_for_info,
+    collect_topic_npc_fids,
     convert_DIAL,
     convert_INFO,
     convert_QUST,
+    info_has_positive_getisid,
     is_bark_topic,
     make_dlbr,
     make_dlvw,
@@ -770,23 +775,20 @@ class TestDialogueConversion:
         assert not (type_byte & 0x01)  # no OR flag
 
     def test_voice_type_ctdas_generic_info(self):
-        """Generic INFO (no GetIsID) gets ALL voice types."""
-        all_vtyps = [0x01000001, 0x01000002, 0x01000003]
+        """Generic INFO (no GetIsID) gets NO voice type injection.
+
+        Generic lines fire for any NPC — adding GetIsVoiceType for ALL voice
+        types would bloat the ESM and block NPCs with unrecognised voice types.
+        """
         rec = {'ConditionCount': '0'}
-        result = build_voice_type_ctdas_for_info(rec, {}, all_vtyps)
-        # Should have 3 CTDA subrecords (6-byte header each + 32 data)
-        assert len(result) == 3 * (6 + 32)
-        # First two have OR, last has AND
-        assert result[6] & 0x01  # first CTDA type byte: OR
-        assert result[6 + 38] & 0x01  # second CTDA type byte: OR
-        assert not (result[6 + 38 + 38] & 0x01)  # third: AND
+        result = build_voice_type_ctdas_for_info(rec, {})
+        assert result == b''
 
     def test_voice_type_ctdas_npc_specific_info(self):
         """NPC-specific INFO (has GetIsID) gets only that NPC's voice type."""
         npc_fid = 0x01001234
         npc_vtyp = 0x01000099
         npc_to_vtyp = {npc_fid: npc_vtyp}
-        all_vtyps = [0x01000001, 0x01000002, 0x01000099]
         # Build condition with GetIsID pointing to the NPC
         raw_ctda = struct.pack('<B3x I HH II',
                                0x00, 0x3F800000,
@@ -795,7 +797,7 @@ class TestDialogueConversion:
         set_formid_index_offset(1)
         try:
             rec = {'ConditionCount': '1', 'Condition[0].Raw': raw_ctda.hex()}
-            result = build_voice_type_ctdas_for_info(rec, npc_to_vtyp, all_vtyps)
+            result = build_voice_type_ctdas_for_info(rec, npc_to_vtyp)
             # Should have exactly 1 CTDA (for the NPC's voice type)
             assert len(result) == 6 + 32
             # Extract the VTYP FormID from the single CTDA
@@ -1224,6 +1226,110 @@ class TestDialogueConversion:
         result = convert_INFO(rec)
         vmad = _find_subrecord(result, b'VMAD')
         assert vmad is None, "INFO without ResultScript must NOT have VMAD"
+
+    # -- GetIsID injection (conversation topic NPC restriction) --
+
+    def test_build_getisid_ctda_structure(self):
+        """GetIsID CTDA must be 32 bytes with correct function index."""
+        ctda = build_getisid_ctda(0x01001234, is_or=False)
+        assert len(ctda) == 32
+        func_idx = struct.unpack_from('<H', ctda, 8)[0]
+        assert func_idx == _FUNC_GET_IS_ID
+        param1 = struct.unpack_from('<I', ctda, 12)[0]
+        assert param1 == 0x01001234
+        # type_byte should have no OR flag
+        assert ctda[0] & 0x01 == 0
+
+    def test_build_getisid_ctda_or_flag(self):
+        """GetIsID CTDA with is_or=True has OR flag set."""
+        ctda = build_getisid_ctda(0x01001234, is_or=True)
+        assert ctda[0] & 0x01 == 1
+
+    def test_build_topic_npc_ctdas_or_chain(self):
+        """Topic NPC CTDAs form an OR chain: NPC1(OR) | NPC2(AND)."""
+        result = build_topic_npc_ctdas({0x01001000, 0x01002000})
+        # Should contain 2 CTDA subrecords (each 6 header + 32 data = 38 bytes)
+        assert len(result) == 2 * (6 + 32)
+        # First CTDA header: 'CTDA' + U16 size(32)
+        assert result[:4] == b'CTDA'
+        # Parse both CTDAs
+        ctda1 = result[6:38]     # first CTDA data
+        ctda2 = result[44:76]    # second CTDA data
+        # First should have OR flag
+        assert ctda1[0] & 0x01 == 1, "First CTDA in chain must have OR flag"
+        # Last should NOT have OR flag
+        assert ctda2[0] & 0x01 == 0, "Last CTDA in chain must NOT have OR flag"
+
+    def test_build_topic_npc_ctdas_empty(self):
+        """Empty NPC set returns empty bytes."""
+        assert build_topic_npc_ctdas(set()) == b''
+
+    def test_build_topic_npc_ctdas_single(self):
+        """Single NPC gets no OR flag."""
+        result = build_topic_npc_ctdas({0x01001234})
+        assert len(result) == 6 + 32
+        ctda = result[6:38]
+        assert ctda[0] & 0x01 == 0, "Single NPC CTDA must NOT have OR flag"
+
+    def test_info_has_positive_getisid_true(self):
+        """INFO with GetIsID(X)==1.0 returns True."""
+        # Build a raw 24-byte TES4 CTDA: Equal + 1.0 + GetIsID + NPC FormID
+        raw = struct.pack('<B3xfHHII', 0x00, 1.0, 72, 0, 0x00001234, 0)
+        rec = {'ConditionCount': '1', 'Condition[0].Raw': raw.hex()}
+        assert info_has_positive_getisid(rec) is True
+
+    def test_info_has_positive_getisid_negative(self):
+        """INFO with GetIsID(X)==0.0 (NOT check) returns False."""
+        raw = struct.pack('<B3xfHHII', 0x00, 0.0, 72, 0, 0x00001234, 0)
+        rec = {'ConditionCount': '1', 'Condition[0].Raw': raw.hex()}
+        assert info_has_positive_getisid(rec) is False
+
+    def test_info_has_positive_getisid_no_conditions(self):
+        """INFO with no conditions returns False."""
+        rec = {'ConditionCount': '0'}
+        assert info_has_positive_getisid(rec) is False
+
+    def test_info_has_positive_getisid_other_func(self):
+        """INFO with GetInCell (func 71) returns False."""
+        raw = struct.pack('<B3xfHHII', 0x00, 1.0, 71, 0, 0x00001234, 0)
+        rec = {'ConditionCount': '1', 'Condition[0].Raw': raw.hex()}
+        assert info_has_positive_getisid(rec) is False
+
+    def test_collect_topic_npc_fids_positive_only(self):
+        """collect_topic_npc_fids only returns NPCs from positive GetIsID."""
+        # INFO with GetIsID(NPC_A)==1.0
+        raw_pos = struct.pack('<B3xfHHII', 0x00, 1.0, 72, 0, 0x00001234, 0)
+        # INFO with GetIsID(NPC_B)==0.0 (negative)
+        raw_neg = struct.pack('<B3xfHHII', 0x00, 0.0, 72, 0, 0x00005678, 0)
+        infos = [
+            {'ConditionCount': '1', 'Condition[0].Raw': raw_pos.hex()},
+            {'ConditionCount': '1', 'Condition[0].Raw': raw_neg.hex()},
+        ]
+        result = collect_topic_npc_fids(infos, offset=0)
+        assert 0x00001234 in result
+        assert 0x00005678 not in result
+
+    def test_collect_topic_npc_fids_with_offset(self):
+        """collect_topic_npc_fids remaps FormIDs with load-order offset."""
+        raw = struct.pack('<B3xfHHII', 0x00, 1.0, 72, 0, 0x00001234, 0)
+        infos = [{'ConditionCount': '1', 'Condition[0].Raw': raw.hex()}]
+        result = collect_topic_npc_fids(infos, offset=1)
+        assert 0x01001234 in result
+        assert 0x00001234 not in result
+
+    def test_getisid_injected_into_conditionless_info(self):
+        """Conditionless INFO gets GetIsID when topic has NPC-specific siblings."""
+        # Build injection CTDAs
+        npc_ctdas = build_topic_npc_ctdas({0x01001234})
+        rec = {'FormID': '0000ABCD', 'RecordFlags': '0',
+               'EditorID': 'TestInfo', 'DATA.Flags': '0',
+               'ResponseCount': '0', 'ConditionCount': '0', 'ChoiceCount': '0'}
+        result = convert_INFO(rec, voice_type_ctdas=npc_ctdas)
+        # Find CTDA subrecords in output
+        ctdas = _find_all_subrecords(result, b'CTDA')
+        assert len(ctdas) == 1, "Should have exactly 1 injected CTDA"
+        func_idx = struct.unpack_from('<H', ctdas[0], 8)[0]
+        assert func_idx == _FUNC_GET_IS_ID
 
 
 # ---------------------------------------------------------------------------

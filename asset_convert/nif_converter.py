@@ -41,6 +41,7 @@ from .skyrim_overrides import (
     ARMOR_GND_INV_MARKER_ZOOM,
     ARMOR_PIECE_OFFSETS,
     BSX_FLAGS_ANIMATED,
+    BSX_FLAGS_CONSTRAINED,
     BSX_FLAGS_STATIC,
     OBLIVION_TO_SKYRIM_BONE_MAP,
     SHIELD_INV_MARKER_ROT_X,
@@ -52,7 +53,8 @@ from .skyrim_overrides import (
     WEAPON_INV_MARKER_ROT_Z,
     WEAPON_INV_MARKER_ZOOM,
 )
-from .collision import (convert_all_collisions, hoist_collision, remove_empty_collision_nodes)
+from .collision import (convert_all_collisions, hoist_collision, remove_empty_collision_nodes,
+                        scale_constraint_pivots)
 
 # Apply all PyFFI patches (time.clock fix, nif.xml condition fixes) before import
 from . import pyffi_monkey_patch as _patch  # noqa: F401
@@ -909,13 +911,14 @@ def _walk_node(parent, node, fix_textures, stats):
 
 
 
-def _add_bsx_flags(root):
+def _add_bsx_flags(root, has_constraints=False):
     """Add BSXFlags extra data to root if collision is present anywhere in the tree.
 
-    Static meshes use value 130 (COMPLEX=0x80 | HAVOK=0x02).
-    Weapon/equipment meshes use value 194 (COMPLEX=0x80 | ANIMATED=0x40 | HAVOK=0x02).
-    The ANIMATED flag is required for Skyrim to set up weapon animation bindings;
-    without it the engine leaves the model pointer null and crashes on equip.
+    Static meshes use value 130 = ARTICULATED(0x80) | HAVOK(0x02).
+    Animated doors/activators use 139 = ARTICULATED(0x80) | COMPLEX(0x08) | HAVOK(0x02) | ANIMATED(0x01).
+    Dynamic constrained objects (swinging signs) use 202 = ARTICULATED(0x80) | DYNAMIC(0x40) | COMPLEX(0x08) | HAVOK(0x02).
+    The DYNAMIC(0x40) bit is required for Skyrim to simulate constrained bodies;
+    without it the engine treats them as static and they stop at a gravity-defying angle.
 
     BSInvMarker (if present) must remain first — BSXFlags goes immediately after it.
     """
@@ -937,13 +940,17 @@ def _add_bsx_flags(root):
             if isinstance(ed, NifFormat.BSXFlags):
                 return  # Already present
 
-    # Animated objects (NiControllerManager on root) need ANIMATED + COMPLEX bits
-    # so Skyrim sets up animation bindings and collision sync.
+    # Priority: constrained dynamic > animated > static
     root_is_animated = (
         root.controller is not None and
         isinstance(root.controller, NifFormat.NiControllerManager)
     )
-    bsx_value = BSX_FLAGS_ANIMATED if root_is_animated else BSX_FLAGS_STATIC
+    if has_constraints:
+        bsx_value = BSX_FLAGS_CONSTRAINED
+    elif root_is_animated:
+        bsx_value = BSX_FLAGS_ANIMATED
+    else:
+        bsx_value = BSX_FLAGS_STATIC
 
     bsx = NifFormat.BSXFlags()
     bsx.name = b'BSX'
@@ -1766,8 +1773,15 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         # Skyrim-format unknown_6_shorts; leaving them unconverted causes crashes.
         convert_all_collisions(root)
 
+        # Scale Havok constraint pivot points (Oblivion → Skyrim Havok scale).
+        # Constraint pivots are stored in Havok-space positions and must be scaled
+        # by _HAVOK_SCALE (0.1) just like rigid body translations and shape dims.
+        # Also sets broadphaseType=10 for dynamic constrained bodies (swinging signs).
+        if has_constraints:
+            scale_constraint_pivots(data)
+
         # Skyrim requires BSXFlags extra data when collision is present
-        _add_bsx_flags(root)
+        _add_bsx_flags(root, has_constraints=has_constraints)
 
     # Retarget worn armor/clothing skins to Skyrim skeleton bind poses and
     # regenerate NiSkinPartition in Skyrim triangle format.  Must run AFTER

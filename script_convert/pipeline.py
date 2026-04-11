@@ -318,12 +318,14 @@ def _add_scro_ref(conv: 'ScriptConverter', fid: str, xref: CrossRefGraph):
 # VMAD binary helpers (for tes5_import integration)
 # ===========================================================================
 
-def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int, int]]) -> bytes:
+def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int, int]],
+                               property_values: dict = None) -> bytes:
     """Build VMAD binary for a QUST record with stage script fragments.
 
     Args:
         quest_edid: Quest EditorID
         stage_fragments: list of (stage_index, log_index) tuples
+        property_values: optional dict {property_name: formid} for script properties
 
     Returns VMAD binary data.
     """
@@ -337,7 +339,15 @@ def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int,
     buf += struct.pack('<H', 1)
     buf += _pack_wstring(script_name)
     buf += struct.pack('<B', 0)   # flags=0
-    buf += struct.pack('<H', 0)   # propertyCount=0
+    # Properties
+    if property_values:
+        buf += struct.pack('<H', len(property_values))
+        for pname, fid in property_values.items():
+            buf += _pack_wstring(pname)
+            buf += struct.pack('<BB', 1, 1)       # type=Object, status=Edited
+            buf += struct.pack('<HhI', 0, -1, fid) # unused=0, alias=-1, FormID
+    else:
+        buf += struct.pack('<H', 0)   # propertyCount=0
 
     # Script fragments (quest type, wbScriptFragmentsQuest):
     #   S8  Extra bind data version = 2
@@ -358,11 +368,12 @@ def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int,
     return bytes(buf)
 
 
-def build_vmad_info_fragment(info_formid: str) -> bytes:
+def build_vmad_info_fragment(info_formid: str, property_values: dict = None) -> bytes:
     """Build VMAD binary for an INFO record with a result script fragment.
 
     Args:
         info_formid: INFO FormID string (e.g. "00012345")
+        property_values: optional dict {property_name: formid} for script properties
 
     Returns VMAD binary data.
     """
@@ -371,7 +382,20 @@ def build_vmad_info_fragment(info_formid: str) -> bytes:
 
     # VMAD header
     buf += struct.pack('<HH', 5, 2)   # version=5, objectFormat=2
-    buf += struct.pack('<H', 0)       # 0 attached scripts
+
+    # Attached scripts: 1 script with properties
+    buf += struct.pack('<H', 1)       # 1 attached script
+    buf += _pack_wstring(script_name)
+    buf += struct.pack('<B', 0)       # flags=0
+    # Properties
+    if property_values:
+        buf += struct.pack('<H', len(property_values))
+        for pname, fid in property_values.items():
+            buf += _pack_wstring(pname)
+            buf += struct.pack('<BB', 1, 1)       # type=Object, status=Edited
+            buf += struct.pack('<HhI', 0, -1, fid) # unused=0, alias=-1, FormID
+    else:
+        buf += struct.pack('<H', 0)   # propertyCount=0
 
     # Script fragments for INFO (wbScriptFragmentsInfo):
     #   S8  Extra bind data version = 2

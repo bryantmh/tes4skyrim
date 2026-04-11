@@ -590,6 +590,77 @@ def convert_all_collisions(node, actual_root=None):
             convert_all_collisions(child, actual_root)
 
 
+
+def scale_constraint_pivots(data):
+    """Fix Havok constraint data for Oblivion → Skyrim conversion.
+
+    Two things need fixing for swinging signs (bhkLimitedHingeConstraint):
+
+    1. Pivot scale: pivot_a/pivot_b are in Oblivion Havok-space positions and
+       must be scaled by _HAVOK_SCALE (0.1).  Axis vectors are unit vectors
+       and must NOT be scaled.
+
+    2. Missing perp_2_axle_in_b_1: Oblivion's LimitedHingeDescriptor does not
+       have perp_2_axle_in_b_1; Skyrim does.  Leaving it zero causes the sign
+       to spawn at a wrong tilt.  Derived as: perp_b2 × axle_b (normalised).
+
+    3. broadphaseType=10 for dynamic constrained bodies.
+
+    bhkRigidBodyT is kept as-is: Skyrim uses bhkRigidBodyT for constrained
+    sign bodies (confirmed in vanilla signfourshieldstavern01.nif).  The T
+    offset is body-local relative to the owning NiNode, which is already
+    correct after _convert_collision scales it by _HAVOK_SCALE.
+    """
+    for block in data.blocks:
+        if not isinstance(block, NifFormat.bhkLimitedHingeConstraint):
+            continue
+        d = block.limited_hinge
+
+        # 1. Scale pivot positions (xyz only; w is unused padding).
+        for pivot_attr in ('pivot_a', 'pivot_b'):
+            pivot = getattr(d, pivot_attr, None)
+            if pivot is not None:
+                pivot.x *= _HAVOK_SCALE
+                pivot.y *= _HAVOK_SCALE
+                pivot.z *= _HAVOK_SCALE
+
+        # 2. Compute missing perp_2_axle_in_b_1 for Skyrim format.
+        #    axle_b, perp_2_axle_in_b_1, perp_2_axle_in_b_2 form a right-handed
+        #    orthonormal frame.  Recover perp_2_axle_in_b_1 = perp_b2 × axle_b.
+        #    Vanilla Skyrim stores w=-1 on perp_2_axle_in_a_1 and perp_2_axle_in_b_1.
+        perp_b1 = getattr(d, 'perp_2_axle_in_b_1', None)
+        if perp_b1 is not None:
+            axle_b  = d.axle_b
+            perp_b2 = d.perp_2_axle_in_b_2
+            cx = perp_b2.y * axle_b.z - perp_b2.z * axle_b.y
+            cy = perp_b2.z * axle_b.x - perp_b2.x * axle_b.z
+            cz = perp_b2.x * axle_b.y - perp_b2.y * axle_b.x
+            mag = math.sqrt(cx*cx + cy*cy + cz*cz)
+            if mag > 1e-6:
+                cx /= mag; cy /= mag; cz /= mag
+            perp_b1.x = cx
+            perp_b1.y = cy
+            perp_b1.z = cz
+            perp_b1.w = -1.0
+
+        perp_a1 = getattr(d, 'perp_2_axle_in_a_1', None)
+        if perp_a1 is not None:
+            perp_a1.w = -1.0
+
+        # 3. Clamp max_friction to Skyrim range.
+        #    Oblivion stores max_friction=3.0; Skyrim signs use 0.01.
+        #    At 3.0 the hinge has enough rotational friction to lock the sign
+        #    at any angle against gravity, so it stops at a wrong tilt instead
+        #    of swinging freely back to vertical.
+        if d.max_friction > 0.5:
+            d.max_friction = 0.01
+
+        # 4. broadphaseType=10 for dynamic constrained bodies.
+        for e in block.entities:
+            if e is not None and e.mass > 0.0:
+                e.unknown_byte = 10
+
+
 # ---------------------------------------------------------------------------
 # Collision hoisting (child → root)
 # ---------------------------------------------------------------------------
