@@ -1,17 +1,12 @@
 """Item/object converters: STAT, ACTI, MISC, KEYM, DOOR, FLOR, FURN, GRAS, TREE, LIGH, SLGM, ANIO, CONT."""
 
 import struct
-from typing import Set
 
-# Populated by import_main before Phase 1: base FormIDs (8-char hex) that are
-# referenced only by VWD (Visible When Distant) REFRs in Oblivion.
-# In TES4, VWD is indicated by REFR group membership (group_type=10).
-# In TES5, VWD must be a flag on the base STAT record (0x8000).
-VWD_STAT_FIDS: Set[str] = set()
-
+from ..constants import LOD_SIZE_THRESHOLD, WORLD_MAP_SIZE_THRESHOLD
 from .common import (
     _common_header_subs,
     _prefix_path,
+    _resolve_obnd,
     _simple_object,
     get_float,
     get_formid,
@@ -29,10 +24,17 @@ from .common import (
 
 
 def convert_STAT(rec: dict) -> bytes:
+    """Convert STAT record, deriving LOD/world-map flags from mesh bounding box size."""
     flags = get_int(rec, 'RecordFlags')
-    if rec.get('FormID', '') in VWD_STAT_FIDS:
-        flags |= 0x8000  # IsVisibleWhenDistant
-    subs = _common_header_subs(rec, need_full=False, obnd_sig='STAT')
+    # Resolve OBND from converted mesh bounds (or type default as fallback).
+    bounds = _resolve_obnd(rec, 'STAT')
+    x1, y1, z1, x2, y2, z2 = bounds
+    max_dim = max(x2 - x1, y2 - y1, z2 - z1)
+    if max_dim >= LOD_SIZE_THRESHOLD:
+        flags |= 0x8000       # Has Distant LOD — SSELodGen will build LOD for this object
+    if max_dim >= WORLD_MAP_SIZE_THRESHOLD:
+        flags |= 0x10000000   # Show in World Map
+    subs = _common_header_subs(rec, need_full=False, obnd_override=bounds)
     path = get_str(rec, 'Model.MODL')
     if path:
         subs += pack_string_subrecord('MODL', _prefix_path(path))
@@ -171,6 +173,7 @@ def convert_GRAS(rec: dict) -> bytes:
 def convert_TREE(rec: dict) -> bytes:
     """TREE — Tree. Convert SPT model path → tes4\speedtrees\{stem}.nif"""
     subs = _common_header_subs(rec, need_full=False, obnd_sig='TREE')
+    subs += pack_obnd(*_resolve_obnd(rec, 'TREE'))  # use resolved OBND for bounds-based LOD/world-map flags
     model = get_str(rec, 'Model.MODL')
     if model:
         # TES4 TREE MODL is like "\\DBush03.spt" — remap to our NIF output path
@@ -187,7 +190,7 @@ def convert_LIGH(rec: dict) -> bytes:
     edid = get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
-    subs += pack_obnd(-6, -6, 0, 6, 6, 20)  # LIGH default bounds
+    subs += pack_obnd(*_resolve_obnd(rec, 'LIGH'))
     model = get_str(rec, 'Model.MODL')
     if model:
         subs += pack_string_subrecord('MODL', _prefix_path(model))

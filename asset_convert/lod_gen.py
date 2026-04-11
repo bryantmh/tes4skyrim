@@ -22,9 +22,8 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent.parent.resolve()
 LODGEN_EXE = (
-    SCRIPT_DIR / "external" / "xEdit" / "Build" / "Edit Scripts" / "LODGenx64.exe"
+    SCRIPT_DIR / "tools" / "LODGenx64.exe"
 )
-SSELODGEN_EXE = SCRIPT_DIR / "tools" / "sseLodGen.exe"
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +101,9 @@ def write_lod_settings(worldspace_edid: str, sw_x: int, sw_y: int,
 _REC_HDR   = 24
 _GRP_HDR   = 24
 _SUB_HDR   = 6
-_FLAG_COMP = 0x00040000
-_FLAG_VWD  = 0x00008000   # Visible When Distant on STAT record
+_FLAG_COMP       = 0x00040000
+_FLAG_DISTANT_LOD  = 0x00008000   # Has Distant LOD — SSELodGen bakes LOD for this object
+_FLAG_WORLD_MAP    = 0x10000000   # Show in World Map — object appears on the world map
 _FLAG_PERSISTENT = 0x00000400  # on REFR
 
 
@@ -321,10 +321,9 @@ def _far_nif_path(model_path: str) -> str:
 def _normalize(path: str) -> str:
     """Normalize mesh path to lowercase backslash form with meshes\\ prefix.
 
-    Paths in the converted ESM are stored without the leading 'meshes\\' folder
-    (e.g. 'tes4\\Architecture\\foo.nif').  LODGen expects paths relative to the
-    Data folder (e.g. 'meshes\\tes4\\architecture\\foo.nif'), so we add the
-    prefix here if it is not already present.
+    Paths in the converted ESM are stored without the 'meshes\\' prefix
+    (e.g. 'tes4\\Architecture\\foo.nif').  LODGen expects paths relative to
+    the Data folder (e.g. 'meshes\\tes4\\architecture\\foo.nif').
     """
     p = path.lower().replace('/', '\\').strip('\\')
     if p and not p.startswith('meshes\\'):
@@ -332,14 +331,25 @@ def _normalize(path: str) -> str:
     return p
 
 
+def _mesh_exists(path: str, output_meshes_dir: Path) -> bool:
+    """Return True if a mesh file exists in the tes4 output meshes directory."""
+    if not path:
+        return False
+    # Strip leading 'meshes\\' if present — output_meshes_dir IS the meshes root
+    rel = path.lower().replace('/', '\\').lstrip('\\')
+    if rel.startswith('meshes\\'):
+        rel = rel[len('meshes\\'):]
+    return (output_meshes_dir / rel).exists()
+
+
 def _lod_meshes_for(stat: dict, output_meshes_dir: Path):
     """
     Return (lod4, lod8, lod16) mesh paths for a stat record.
 
-    Priority:
-      1. Explicit MNAM LOD entries from the STAT record
-      2. _far.nif variant of the full model (if the file exists on disk)
-      3. Full model as fallback (LODGen will use it directly)
+    - Normal LOD objects (0x8000) get lod4 only.
+    - World-map objects (0x10000000) get lod4 + lod16 (same _far.nif)
+      so LODGenx64 bakes tiles for both distance and world-map view.
+    - lod8 is always empty.
     """
     lod4  = stat.get('lod4', '')
     lod8  = stat.get('lod8', '')
@@ -353,12 +363,13 @@ def _lod_meshes_for(stat: dict, output_meshes_dir: Path):
         return '', '', ''
 
     far = _far_nif_path(model)
-    far_on_disk = output_meshes_dir / far
-    if far_on_disk.exists():
-        return far, far, far
+    if not _mesh_exists(far, output_meshes_dir):
+        return '', '', ''
 
-    # Use full model as LOD — LODGen will just place it unchanged
-    return model, model, model
+    # World-map flagged objects (0x10000000) get lod16 for map-view LOD
+    flags = stat.get('flags', 0)
+    lod16_mesh = far if (flags & 0x10000000) else ''
+    return far, '', lod16_mesh
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +430,6 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
     for ref in refs:
         # Must be in our worldspace
         if ref['parent_wrld'] != wrld_fid:
-            # Also accept refs whose parent_cell is in this worldspace
             pc = ref['parent_cell']
             if cell_wrld.get(pc, 0) != wrld_fid:
                 continue
@@ -433,30 +443,19 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
         if not model:
             continue
 
+        stat_flags_val = stat.get('flags', 0)
+        stat_is_lod = bool(stat_flags_val & (_FLAG_DISTANT_LOD | _FLAG_WORLD_MAP))
+        if not stat_is_lod:
+            continue
+
         lod4, lod8, lod16 = _lod_meshes_for(stat, output_meshes_dir)
         if not (lod4 or lod8 or lod16):
             continue
 
-        # Include refs that have:
-        #   a) an explicit MNAM LOD mesh,
-        #   b) a _far.nif companion on disk, OR
-        #   c) the VWD (IsVisibleWhenDistant) flag on the base STAT record —
-        #      xEdit includes all VWD statics even if they only have the full model.
-        # Skip refs with no LOD mesh AND no VWD flag to avoid feeding LODGen the
-        # entire full-res world geometry.
-        model_norm = _normalize(model)
-        has_dedicated_lod = (
-            stat.get('lod4') or stat.get('lod8') or stat.get('lod16')
-            or (lod4 and _normalize(lod4) != model_norm)
-        )
-        stat_is_vwd = bool(stat.get('flags', 0) & _FLAG_VWD)
-        if not has_dedicated_lod and not stat_is_vwd:
-            continue
-
-        # Build the base-object cache entry (tab-separated)
+        # Base-object cache entry (tab-separated)
         mat = ''
         stat_edid   = stat.get('edid', f'{base_fid:08X}')
-        stat_flags  = f"{stat.get('flags', 0):08X}"
+        stat_flags  = f"{stat_flags_val:08X}"
         base_entry  = f"{stat_edid}\t{stat_flags}\t{mat}\t{_normalize(model)}\t{_normalize(lod4)}\t{_normalize(lod8)}\t{_normalize(lod16)}"
 
         # Reference line
@@ -501,10 +500,6 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
     return out_txt
 
 
-# ---------------------------------------------------------------------------
-# 4. Run LODGenx64.exe
-# ---------------------------------------------------------------------------
-
 def run_lodgen(lodgen_input: Path, output_dir: Path) -> bool:
     """Invoke LODGenx64.exe on the prepared input file."""
     if not LODGEN_EXE.exists():
@@ -519,7 +514,8 @@ def run_lodgen(lodgen_input: Path, output_dir: Path) -> bool:
         str(lodgen_input),
         "--dontFixTangents",
         "--removeUnseenFaces",
-        "--skyblivionTexPath",   # rewrite 'textures\' → 'textures\tes4\' in LOD nifs
+        # --skyblivionTexPath is NOT used: it prepends an extra 'tes4\\' to texture paths
+        # already under textures\\tes4\\, doubling the prefix and causing null-ptr crashes.
     ]
     print(f"  Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=str(LODGEN_EXE.parent))
@@ -554,13 +550,15 @@ def generate_lod(esm_path: Path, output_dir: Path,
     print(f"  Parsing ESM: {esm_path.name}")
     worldspaces, cells, stats, refs = _parse_esm(esm_path)
 
+    wrld_fid  = None
     wrld_info = None
     for fid, w in worldspaces.items():
         if w['edid'].lower() == worldspace_edid.lower():
+            wrld_fid  = fid
             wrld_info = w
             break
     if wrld_info is None and worldspaces:
-        wrld_info = next(iter(worldspaces.values()))
+        wrld_fid, wrld_info = next(iter(worldspaces.items()))
     if wrld_info is None:
         print("  ERROR: no worldspaces found, skipping LOD generation")
         return False
@@ -577,24 +575,38 @@ def generate_lod(esm_path: Path, output_dir: Path,
     objects_dir = output_dir / 'meshes' / 'terrain' / edid / 'Objects'
     objects_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write LODGen input (reuse already-parsed data).
-    # Pass the effective SW so CellSW= matches the .lod file.
+    # Generate _far.nif LOD meshes for any LOD-flagged objects that don't have one.
+    # Only process models that are actually placed in this worldspace.
+    # Must happen before writing the LODGen input so the new files are found.
+    cell_wrld_map = {fid: c['parent_wrld'] for fid, c in cells.items()}
+    referenced_models = set()
+    for ref in refs:
+        pw = ref['parent_wrld']
+        if pw != wrld_fid and cell_wrld_map.get(ref['parent_cell'], 0) != wrld_fid:
+            continue
+        base_fid = ref['base_fid']
+        if base_fid in stats:
+            m = stats[base_fid].get('model', '')
+            if m:
+                referenced_models.add(m)
+
+    from .lod_far_gen import generate_missing_far_nifs
+    generate_missing_far_nifs(stats, output_dir / 'meshes',
+                               referenced_models=referenced_models,
+                               force_regen_generated=True)
+
+    # Write LOD input (all LOD-flagged objects) and run LODGenx64 once
     lodgen_txt = write_lodgen_input(esm_path, output_dir, edid,
                                     _parsed=(worldspaces, cells, stats, refs),
                                     cell_sw=(eff_sw_x, eff_sw_y))
-    if lodgen_txt is None:
-        return False  # No references — not an error per se, just nothing to do
+    ok = False
+    if lodgen_txt:
+        ok = run_lodgen(lodgen_txt, output_dir)
 
-    # Run LODGen
-    ok = run_lodgen(lodgen_txt, output_dir)
-
-    # LOD object textures are referenced by bare filename in the .bto files
-    # (e.g. 'CastleWallLOD01.dds'), so Skyrim looks them up as textures\<name>.dds.
-    # The extraction pipeline puts them in subdirectories; promote them to the root.
-    # LOD textures are referenced by bare filename in .bto files (e.g. 'CastleWallLOD01.dds').
-    # They live in output/.../textures/tes4/<subdir>/ after asset_pipeline copies them.
-    # Skyrim looks them up as textures\<basename>.dds, so copy them to the textures root.
-    _promote_lod_textures(objects_dir, output_dir / 'textures', output_dir / 'textures' / 'tes4')
+    # Promote LOD object textures from meshes/tes4/ subdirectories to the
+    # textures root so .bto files can find them by bare filename.
+    _promote_lod_textures(objects_dir, output_dir / 'textures',
+                          output_dir / 'meshes' / 'tes4')
 
     if ok:
         print(f"[LOD] Object LOD generation complete.")
@@ -603,122 +615,15 @@ def generate_lod(esm_path: Path, output_dir: Path,
     return ok
 
 
-def generate_terrain_lod(esm_path: Path, output_dir: Path,
-                         worldspace_edid: str = 'TES4Tamriel') -> bool:
-    """Launch sseLodGen.exe to generate terrain LOD (.btr files).
-
-    sseLodGen is an xEdit fork that generates terrain LOD from the LAND records
-    in the plugin.  It requires a GUI click to confirm options, but this function
-    pre-populates its settings INI so everything is ready to go — the user only
-    needs to click OK.
-
-    The LODSettings/<worldspace>.lod file must already exist (written by
-    generate_lod / write_lod_settings) before calling this.
-
-    Args:
-        esm_path:        Path to the converted .esm/.esp in output_dir.
-        output_dir:      Per-plugin output directory (output/Oblivion.esm/).
-        worldspace_edid: Editor ID of the worldspace to generate terrain LOD for.
-
-    Returns True if sseLodGen was launched successfully, False otherwise.
-    """
-    if not SSELODGEN_EXE.exists():
-        print(f"  ERROR: sseLodGen.exe not found at {SSELODGEN_EXE}")
-        return False
-
-    lod_file = output_dir / 'LODSettings' / f'{worldspace_edid}.lod'
-    if not lod_file.exists():
-        print(f"  ERROR: LODSettings/{worldspace_edid}.lod not found — run generate_lod first")
-        return False
-
-    # -----------------------------------------------------------------------
-    # Pre-populate the sseLodGen settings INI.
-    # Settings file lives next to the exe: sseLodGenLODGen.ini
-    # (wbAppName=SSE from exe name, wbToolName=LODGen)
-    # -----------------------------------------------------------------------
-    ini_path = SSELODGEN_EXE.parent / 'sseLodGenLODGen.ini'
-    section = 'SSE LOD Options'
-    _write_sselodgen_ini(ini_path, section, worldspace_edid)
-
-    # -----------------------------------------------------------------------
-    # Build command line.
-    # -sse       — game mode (also detected from exe name, but be explicit)
-    # -lodgen    — tool mode (also detected from exe name)
-    # -D:<path>  — data path (our output_dir, so it finds the LODSettings file
-    #              and the plugin)
-    # -O:<path>  — output path (same: write .btr files here)
-    # -autoload  — skip the plugin selection dialog, load all in data path
-    # plugin     — positional: the file to load
-    # -----------------------------------------------------------------------
-    cmd = [
-        str(SSELODGEN_EXE),
-        f'-D:{output_dir}',
-        f'-O:{output_dir}',
-        '-autoload',
-        esm_path.name,
-    ]
-
-    print(f"\n[TerrainLOD] Launching sseLodGen for terrain LOD generation.")
-    print(f"  Settings pre-populated in: {ini_path}")
-    print(f"  Data/output dir: {output_dir}")
-    print(f"  Worldspace: {worldspace_edid} (pre-selected, click OK to generate)")
-    print(f"  Running: {' '.join(cmd)}")
-
-    result = subprocess.run(cmd, cwd=str(SSELODGEN_EXE.parent))
-    if result.returncode != 0:
-        print(f"  WARNING: sseLodGen exited with code {result.returncode}")
-        return False
-
-    # Check that .btr files were actually produced
-    btr_dir = output_dir / 'meshes' / 'terrain' / worldspace_edid
-    btr_files = list(btr_dir.glob('*.btr'))
-    if btr_files:
-        print(f"[TerrainLOD] Generated {len(btr_files)} .btr files.")
-    else:
-        print(f"[TerrainLOD] WARNING: no .btr files found in {btr_dir}")
-
-    return True
-
-
-def _write_sselodgen_ini(ini_path: Path, section: str, worldspace_edid: str):
-    """Write sseLodGen settings INI with terrain LOD options pre-set."""
-    import configparser
-
-    cfg = configparser.ConfigParser()
-    if ini_path.exists():
-        cfg.read(ini_path, encoding='utf-8')
-
-    if not cfg.has_section(section):
-        cfg.add_section(section)
-
-    # Terrain LOD on, objects/trees off (we handle objects separately)
-    cfg.set(section, 'ObjectsLOD', '0')
-    cfg.set(section, 'TreesLOD', '0')
-    cfg.set(section, 'TerrainLOD', '1')
-
-    # Standard terrain LOD quality settings
-    cfg.set(section, 'TerrainLODResolution', '32')   # vertices per side per tile
-    cfg.set(section, 'TerrainLODQuality', '2')        # medium
-    cfg.set(section, 'TerrainLOD4', '1')
-    cfg.set(section, 'TerrainLOD8', '1')
-    cfg.set(section, 'TerrainLOD16', '1')
-    cfg.set(section, 'TerrainLOD32', '0')
-    cfg.set(section, 'TerrainUnderWater', '1')
-    cfg.set(section, 'TerrainLODDiffuseFormat', 'DXT1')
-    cfg.set(section, 'TerrainLODNormalFormat', 'BC5')
-
-    ini_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(ini_path, 'w', encoding='utf-8') as f:
-        cfg.write(f)
-
-
 def _promote_lod_textures(bto_dir: Path, tex_root: Path, search_dir: Path):
-    """Copy LOD textures from search_dir to tex_root/<basename>.dds.
+    """Copy LOD textures referenced by .bto files up to the textures root.
 
     .bto files reference LOD textures by bare filename (e.g. 'CastleWallLOD01.dds').
-    Skyrim resolves these from the textures root (textures/<basename>.dds).
-    The converted textures live under search_dir (output/.../textures/tes4/) in
-    subdirectories matching the BSA folder structure, so we copy them up to tex_root.
+    Skyrim resolves these from the textures root (textures\\<basename>.dds).
+    Converted textures live in subdirectories under *search_dir* (e.g.
+    output/.../meshes/tes4/ or output/.../textures/tes4/), so we recursively
+    search both and copy missing textures to *tex_root*.
+    Also searches *tex_root* itself recursively if a texture lives in a subdir there.
     """
     import re as _re
     import shutil
@@ -731,9 +636,14 @@ def _promote_lod_textures(bto_dir: Path, tex_root: Path, search_dir: Path):
     if not needed:
         return
 
-    if not search_dir.exists():
-        print(f"  WARNING: textures/tes4/ not found — run asset_pipeline before LOD generation")
-        return
+    # Build a name → path index from both search_dir and tex_root subdirs
+    index: dict = {}
+    for sd in [search_dir, tex_root]:
+        if sd.exists():
+            for dds in sd.rglob('*.dds'):
+                key = dds.name.lower()
+                if key not in index:
+                    index[key] = dds
 
     copied = 0
     missing = set()
@@ -741,10 +651,10 @@ def _promote_lod_textures(bto_dir: Path, tex_root: Path, search_dir: Path):
         dest = tex_root / name
         if dest.exists():
             continue
-        found = next(search_dir.rglob(name), None)
-        if found:
+        src = index.get(name)
+        if src:
             tex_root.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(found, dest)
+            shutil.copy2(src, dest)
             copied += 1
         else:
             missing.add(name)
@@ -752,7 +662,7 @@ def _promote_lod_textures(bto_dir: Path, tex_root: Path, search_dir: Path):
     if copied:
         print(f"  Promoted {copied} LOD textures to textures root.")
     if missing:
-        print(f"  WARNING: {len(missing)} LOD textures not found in textures/tes4/: "
+        print(f"  WARNING: {len(missing)} LOD textures not found: "
               + ", ".join(sorted(missing)[:5]) + ("..." if len(missing) > 5 else ""))
 
 

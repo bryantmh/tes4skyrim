@@ -2,6 +2,7 @@
 Shared helper functions for TES5 record converters.
 """
 
+from ..mesh_bounds import get_mesh_obnd
 from ..text_reader import get_float, get_formid, get_int, get_str
 from ..writer import (
     pack_float_subrecord,
@@ -30,17 +31,18 @@ def _prefix_path(path: str) -> str:
 
 
 def _common_header_subs(rec: dict, need_obnd: bool = True, need_full: bool = True,
-                        obnd_sig: str = '') -> bytes:
+                        obnd_sig: str = '', obnd_override: tuple = None) -> bytes:
     """Build common leading subrecords: EDID, OBND, FULL.
 
     obnd_sig: record type signature for type-aware OBND defaults.
+    obnd_override: explicit (x1,y1,z1,x2,y2,z2) tuple; skips mesh lookup.
     """
     subs = b''
     edid = get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
     if need_obnd:
-        bounds = _OBND_DEFAULTS.get(obnd_sig, _OBND_DEFAULT)
+        bounds = obnd_override if obnd_override is not None else _resolve_obnd(rec, obnd_sig)
         subs += pack_obnd(*bounds)
     if need_full:
         full = get_str(rec, 'FULL')
@@ -83,6 +85,23 @@ _OBND_DEFAULTS = {
     'ENCH': (-5, -5, 0, 5, 5, 5),
     'SPEL': (-5, -5, 0, 5, 5, 5),
 }
+
+
+def _resolve_obnd(rec: dict, obnd_sig: str) -> tuple:
+    """Resolve OBND bounds for a record.
+
+    Tries mesh bounds (from pre-scanned converted NIFs) first; falls back to
+    per-type defaults, then the global default.
+
+    Returns a (x1, y1, z1, x2, y2, z2) int tuple.
+    """
+    path = get_str(rec, 'Model.MODL')
+    if path:
+        key = _prefix_path(path).lower().replace('\\', '/')
+        bounds = get_mesh_obnd(key)
+        if bounds is not None:
+            return bounds
+    return _OBND_DEFAULTS.get(obnd_sig, _OBND_DEFAULT)
 
 
 def _simple_object(rec: dict, sig: str, has_full: bool = True,

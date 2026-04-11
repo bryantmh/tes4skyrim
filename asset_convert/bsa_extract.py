@@ -86,10 +86,7 @@ def _should_extract_file(filepath):
     if fp.endswith('.lip'):
         return False
 
-    # Accept these extensions
-    ext = os.path.splitext(fp)[1]
-    return ext in {'.nif', '.dds', '.wav', '.mp3', '.kf', '.tri', '.egt',
-                   '.hkx', '.txt', '.xml'}
+    return True
 
 
 # Manifest file tracks what BSAs have been extracted
@@ -237,6 +234,8 @@ def extract_bsa(bsa_path, extract_dir, force=False, source_name=None):
         fp_lower = filepath.lower().replace('/', '\\')
         if fp_lower.startswith('meshes\\'):
             out_rel = 'meshes/' + filepath[len('meshes\\'):]
+        elif fp_lower.startswith('trees\\'):
+            out_rel = 'trees/' + filepath[len('trees\\'):]
         elif fp_lower.startswith('textures\\'):
             out_rel = 'textures/' + filepath[len('textures\\'):]
         elif fp_lower.startswith('sound\\'):

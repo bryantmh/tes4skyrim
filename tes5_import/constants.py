@@ -147,6 +147,19 @@ TES5_SKILL_ORDER = [
 # Lock level mapping
 # ---------------------------------------------------------------------------
 
+# Minimum bounding box dimension (in game units) that qualifies a STAT for the
+# Visible-When-Distant LOD flag (RecordFlags |= 0x8000).  Any STAT whose OBND
+# spans >= this value in any single axis (width, depth, or height) will receive
+# the flag so SSELodGen generates distant LOD meshes for it.
+#
+# 1 Skyrim unit ≈ 1.4 cm; 512 units ≈ ~7 m — large architecture/terrain pieces.
+# Tune upward to reduce LOD count, downward to include more mid-size objects.
+LOD_SIZE_THRESHOLD = 256
+# Minimum bounding box dimension (in game units) for the Show-in-World-Map flag
+# (RecordFlags |= 0x10000000).  Only very large landmarks warrant a world map
+# marker — castle walls, large towers, major ruins.
+WORLD_MAP_SIZE_THRESHOLD = 1024
+
 def map_lock_level(tes4_level: int) -> int:
     if tes4_level <= 20:
         return 1   # Novice

@@ -25,6 +25,7 @@ Usage:
   python convert.py -f Oblivion.esm --scripts-only
   python convert.py -f Oblivion.esm --lod-only
   python convert.py -f Oblivion.esm --pack-only
+  python convert.py -f Oblivion.esm --mesh-bounds-only
   python convert.py --modify-body-meshes
   python convert.py --output-dir /path/to/output -f Oblivion.esm
 """
@@ -484,12 +485,13 @@ def phase_lod(file_name: str, tes5_data: str, config: dict,
         worldspace_edid=worldspace_edid,
     )
 
-    print(f"[{file_name}] Generating terrain LOD...")
-    generate_terrain_lod(
-        esm_path=esm_path,
-        output_dir=output_dir,
-        worldspace_edid=worldspace_edid,
-    )
+    # Terrain LOD generation is broken, use xlodgen for now 
+    # print(f"[{file_name}] Generating terrain LOD...")
+    # generate_terrain_lod(
+    #     esm_path=esm_path,
+    #     output_dir=output_dir,
+    #     worldspace_edid=worldspace_edid,
+    # )
 
     return ok
 
@@ -521,6 +523,26 @@ def phase_pack(file_name: str, config: dict, output_dir: str = None):
 # ===========================================================================
 # Phase 10: Modify body meshes
 # ===========================================================================
+
+# ===========================================================================
+# Phase: Mesh Bounds scan
+# ===========================================================================
+
+def phase_mesh_bounds(file_name: str, config: dict, output_dir: str = None,
+                      export_dir: str = None) -> bool:
+    """Scan converted NIF meshes and write OBND bounds cache."""
+    from tes5_import.mesh_bounds import scan_mesh_bounds
+    _export_dir = export_dir or str(SCRIPT_DIR / "export")
+    _out_dir    = output_dir or str(SCRIPT_DIR / "output")
+    mesh_out_dir = str(Path(_out_dir) / file_name / 'meshes')
+    cache_path   = str(Path(_export_dir) / file_name / 'mesh_bounds_cache.json')
+    if not os.path.isdir(mesh_out_dir):
+        print(f"[{file_name}] No meshes directory found, skipping bounds scan")
+        return False
+    print(f"[{file_name}] Scanning mesh bounds...")
+    scan_mesh_bounds(mesh_out_dir, cache_path)
+    return True
+
 
 def phase_modify_body_meshes():
     """Add greaves partition to vanilla Skyrim character body NIFs."""
@@ -571,6 +593,8 @@ def main():
                         help="Convert TES4 scripts to Papyrus .psc source")
     parser.add_argument("--pack-only",           action="store_true",
                         help="Pack output assets into Skyrim SE BSA archives")
+    parser.add_argument("--mesh-bounds-only",    action="store_true",
+                        help="Scan mesh NIF bounds and update OBND cache")
 
     args = parser.parse_args()
 
@@ -606,24 +630,25 @@ def main():
         args.export_only, args.import_only, args.extract_only,
         args.meshes_only, args.speedtrees_only, args.sounds_only,
         args.lod_only, args.modify_body_meshes, args.scripts_only,
-        args.pack_only,
+        args.pack_only, args.mesh_bounds_only,
     ])
     if _any_only:
-        do_export     = args.export_only
-        do_import     = args.import_only
-        do_extract    = args.extract_only
-        do_meshes     = args.meshes_only
-        do_speedtrees = args.speedtrees_only
-        do_sounds     = args.sounds_only
-        do_lod        = args.lod_only
-        do_body       = args.modify_body_meshes
-        do_scripts    = args.scripts_only
-        do_pack       = args.pack_only
+        do_export       = args.export_only
+        do_import       = args.import_only
+        do_extract      = args.extract_only
+        do_meshes       = args.meshes_only
+        do_speedtrees   = args.speedtrees_only
+        do_sounds       = args.sounds_only
+        do_lod          = args.lod_only
+        do_body         = args.modify_body_meshes
+        do_scripts      = args.scripts_only
+        do_pack         = args.pack_only
+        do_mesh_bounds  = args.mesh_bounds_only
     else:
-        # Default: export + import + extract + meshes + speedtrees + sounds + scripts
-        do_export = do_import = do_extract = True
-        do_meshes = do_speedtrees = do_sounds = do_scripts = True
-        do_lod = do_body = do_pack = False
+        # Default: export -> extract -> meshes -> speedtrees -> import -> sounds -> scripts
+        do_export = do_extract = do_meshes = do_speedtrees = do_import = True
+        do_sounds = do_scripts = True
+        do_lod = do_body = do_pack = do_mesh_bounds = False
 
     success = True
 
@@ -636,19 +661,9 @@ def main():
                 success = False
         print()
 
-    if do_import:
-        print("=" * 54)
-        print("  Phase 2: IMPORT")
-        print("=" * 54)
-        for fn in order:
-            if not phase_import(fn, tes4_data, tes5_data, export_dir, config,
-                                output_dir=output_dir):
-                success = False
-        print()
-
     if do_extract:
         print("=" * 54)
-        print("  Phase 3: EXTRACT BSA ARCHIVES")
+        print("  Phase 2: EXTRACT BSA ARCHIVES")
         print("=" * 54)
         for fn in order:
             if not phase_extract(fn, tes4_data, config):
@@ -657,7 +672,7 @@ def main():
 
     if do_meshes:
         print("=" * 54)
-        print("  Phase 4: MESH & TEXTURE CONVERSION")
+        print("  Phase 3: MESH & TEXTURE CONVERSION")
         print("=" * 54)
         for fn in order:
             if not phase_assets(fn, config, output_dir=output_dir):
@@ -666,10 +681,29 @@ def main():
 
     if do_speedtrees:
         print("=" * 54)
-        print("  Phase 5: SPEEDTREE CONVERSION")
+        print("  Phase 4: SPEEDTREE CONVERSION")
         print("=" * 54)
         for fn in order:
             if not phase_speedtrees(fn, config, output_dir=output_dir):
+                success = False
+        print()
+
+    if do_mesh_bounds:
+        print("=" * 54)
+        print("  Phase: MESH BOUNDS SCAN")
+        print("=" * 54)
+        for fn in order:
+            phase_mesh_bounds(fn, config, output_dir=output_dir,
+                              export_dir=export_dir)
+        print()
+
+    if do_import:
+        print("=" * 54)
+        print("  Phase 5: IMPORT")
+        print("=" * 54)
+        for fn in order:
+            if not phase_import(fn, tes4_data, tes5_data, export_dir, config,
+                                output_dir=output_dir):
                 success = False
         print()
 
