@@ -36,24 +36,35 @@ from tools.tes5_esm_reader import read_tes5_file, TES5Record, _get, _all, _zstri
 # ---------------------------------------------------------------------------
 # Condition function IDs
 # ---------------------------------------------------------------------------
-FUNC_GETISID = 72
-FUNC_GETISVOICETYPE = 426
+FUNC_GETACTORVALUE = 14
+FUNC_GETDISEASE = 39
+FUNC_GETDETECTED = 45
+FUNC_GETTALKEDTOPC = 50
+FUNC_GETQUESTRUNNING = 56
 FUNC_GETSTAGE = 58
 FUNC_GETSTAGEDONE = 59
-FUNC_GETQUESTRUNNING = 56
-FUNC_GETQUESTCOMPLETED = 99
-FUNC_GETINFACTION = 71  # Actually GetInCell, GetInFaction is 73
-FUNC_GETINCELL = 71
-FUNC_GETINFACTION = 73
-FUNC_GETFACTIONRANK = 74
+FUNC_GETCURRENTAIPROCEDURE = 67
+FUNC_GETISCLASS = 68
 FUNC_GETISRACE = 69
 FUNC_GETISSEX = 70
-FUNC_GETDEAD = 84
-FUNC_GETPCISRACE = 77
+FUNC_GETINCELL = 71
+FUNC_GETISID = 72
+FUNC_GETINFACTION = 73
+FUNC_GETFACTIONRANK = 74
+FUNC_GETRANDOMPERC = 77
 FUNC_GETISPLAYERBIRTHSIGN = 79
-FUNC_GETCURRENTAIPROCEDURE = 67
-FUNC_GETLEVEL = 47
-FUNC_GETACTORVALUE = 50
+FUNC_GETLEVEL = 80
+FUNC_GETDEAD = 84
+FUNC_GETQUESTCOMPLETED = 99
+FUNC_ISGUARD = 125
+FUNC_GETPCISRACE = 130
+FUNC_GETTRESPASSWARNINGLEVEL = 144
+FUNC_ISTRESPASSING = 145
+FUNC_ISINMYOWNEDCELL = 146
+FUNC_GETISCURRENTPACKAGE = 161
+FUNC_GETISPLAYABLERACE = 254
+FUNC_ISSNEAKING = 286
+FUNC_GETISVOICETYPE = 426
 
 # Category names
 CAT_NAMES = {0: 'Topic', 1: 'Favor', 2: 'Scene', 3: 'Combat',
@@ -106,6 +117,7 @@ class NPCData:
     voice_type: int      # VTCK FormID
     race: int            # RACE FormID
     is_female: bool      # from ACBS flags
+    is_guard: bool       # from ACBS flags bit 5
     factions: dict       # faction_fid → rank
     level: int
     name: str            # FULL
@@ -231,13 +243,15 @@ class DialogDB:
         race_sub = _get(rec, 'RACE')
         race = struct.unpack_from('<I', race_sub.data, 0)[0] if race_sub and len(race_sub.data) >= 4 else 0
 
-        # ACBS flags (female = bit 0)
+        # ACBS flags (female = bit 0, guard = bit 5)
         acbs_sub = _get(rec, 'ACBS')
         is_female = False
+        is_guard = False
         level = 1
         if acbs_sub and len(acbs_sub.data) >= 24:
             flags = struct.unpack_from('<I', acbs_sub.data, 0)[0]
             is_female = bool(flags & 0x01)
+            is_guard = bool(flags & 0x20)  # Bit 5 = IsGuard
             level = struct.unpack_from('<H', acbs_sub.data, 4)[0]
 
         # Factions
@@ -260,8 +274,8 @@ class DialogDB:
 
         self.npcs[rec.form_id] = NPCData(
             form_id=rec.form_id, editor_id=edid, voice_type=vtck,
-            race=race, is_female=is_female, factions=factions,
-            level=level, name=name,
+            race=race, is_female=is_female, is_guard=is_guard,
+            factions=factions, level=level, name=name,
         )
 
     def _parse_dial(self, rec: TES5Record, is_localized: bool):
@@ -447,8 +461,36 @@ class ConditionEvaluator:
         if cond.run_on == 0:  # Subject = NPC being talked to
             subject = self.npc
         elif cond.run_on == 1:  # Target = Player
-            subject = None  # We can't evaluate player conditions
-            return None
+            # Player-specific conditions with sensible defaults
+            if func == FUNC_GETISID:
+                # Player is never an NPC — always false
+                return self._compare(0.0, comp, cv)
+            elif func == FUNC_GETISVOICETYPE:
+                return self._compare(0.0, comp, cv)
+            elif func == FUNC_GETISRACE:
+                return None  # Player race unknown
+            elif func == FUNC_GETPCISRACE:
+                return None  # Player race unknown
+            elif func == FUNC_GETISPLAYERBIRTHSIGN:
+                return self._compare(0.0, comp, cv)  # No birthsigns in TES5
+            elif func == FUNC_GETRANDOMPERC:
+                return None  # Random
+            elif func == FUNC_GETINFACTION:
+                return self._compare(0.0, comp, cv)  # Player not in NPC factions
+            elif func == FUNC_GETFACTIONRANK:
+                return self._compare(-1.0, comp, cv)  # Not in faction
+            elif func == FUNC_GETDEAD:
+                return self._compare(0.0, comp, cv)  # Player alive
+            elif func == FUNC_GETLEVEL:
+                return self._compare(1.0, comp, cv)  # Player level 1 at start
+            elif func == FUNC_GETISSEX:
+                return None  # Player sex unknown
+            # For quest functions, subject doesn't matter
+            elif func in (FUNC_GETSTAGE, FUNC_GETQUESTRUNNING,
+                          FUNC_GETQUESTCOMPLETED, FUNC_GETSTAGEDONE):
+                subject = self.npc  # dummy, quest funcs don't use subject
+            else:
+                return None  # Unknown player condition
         elif cond.run_on == 2:  # Reference
             # Look up the reference NPC
             ref_npc = self.db.npcs.get(cond.reference)
@@ -493,14 +535,41 @@ class ConditionEvaluator:
         elif func == FUNC_GETSTAGEDONE:
             done = self.game_state.get(f'stagedone_{p1}_{int(cv)}', False)
             actual = 1.0 if done else 0.0
+        elif func == FUNC_GETTALKEDTOPC:
+            actual = 0.0  # NPC hasn't talked to player yet
+        elif func == FUNC_GETDISEASE:
+            actual = 0.0  # No disease
+        elif func == FUNC_GETISCLASS:
+            return None  # Would need class data
+        elif func == FUNC_ISGUARD:
+            # Check if NPC is a guard — in TES4 this was ACBS bit 20, in TES5 
+            # it's faction-based. Check both ACBS flag and guard faction names.
+            is_guard = subject.is_guard
+            if not is_guard:
+                for fid in subject.factions:
+                    fname = self.db.facts.get(fid, '')
+                    if 'guard' in fname.lower():
+                        is_guard = True
+                        break
+            actual = 1.0 if is_guard else 0.0
+        elif func == FUNC_GETTRESPASSWARNINGLEVEL:
+            actual = 0.0  # Default: no warning
+        elif func == FUNC_ISTRESPASSING:
+            actual = 0.0  # Not trespassing
+        elif func == FUNC_ISINMYOWNEDCELL:
+            actual = 0.0  # Can't determine
+        elif func == FUNC_GETISCURRENTPACKAGE:
+            actual = 0.0  # No current package
+        elif func == FUNC_GETISPLAYABLERACE:
+            actual = 1.0  # Most NPCs are playable races
+        elif func == FUNC_ISSNEAKING:
+            actual = 0.0  # Not sneaking
         elif func == FUNC_GETINCELL:
             return None  # Can't evaluate location
         elif func == FUNC_GETCURRENTAIPROCEDURE:
-            return None
-        elif func == FUNC_GETPCISRACE:
-            return None  # Player race
-        elif func == FUNC_GETISPLAYERBIRTHSIGN:
-            return None
+            return None  # Can't determine
+        elif func == FUNC_GETRANDOMPERC:
+            return None  # Random
         else:
             return None  # Unknown function
 
@@ -842,17 +911,17 @@ def walk_quest(db: DialogDB, quest_edid: str):
             for c in info.conditions:
                 if c.func_idx == FUNC_GETISID:
                     npc = db.npcs.get(c.param1)
-                    conds_summary.append(f"GetIsID({npc.editor_id if npc else c.param1:08X})")
+                    conds_summary.append(f"GetIsID({npc.editor_id if npc else f'{c.param1:08X}'})")
                 elif c.func_idx == FUNC_GETISVOICETYPE:
                     vtyp = db.vtyps.get(c.param1)
-                    conds_summary.append(f"GetIsVoiceType({vtyp or c.param1:08X})")
+                    conds_summary.append(f"GetIsVoiceType({vtyp or f'{c.param1:08X}'})")
                 elif c.func_idx == FUNC_GETSTAGE:
                     q = db.qusts.get(c.param1)
                     COMP = {0: '==', 1: '!=', 2: '>', 3: '>=', 4: '<', 5: '<='}
-                    conds_summary.append(f"GetStage({q.editor_id if q else c.param1:08X}){COMP.get(c.comp_type,'?')}{c.comp_value:.0f}")
+                    conds_summary.append(f"GetStage({q.editor_id if q else f'{c.param1:08X}'}){COMP.get(c.comp_type,'?')}{c.comp_value:.0f}")
                 elif c.func_idx == FUNC_GETQUESTRUNNING:
                     q = db.qusts.get(c.param1)
-                    conds_summary.append(f"GetQuestRunning({q.editor_id if q else c.param1:08X})")
+                    conds_summary.append(f"GetQuestRunning({q.editor_id if q else f'{c.param1:08X}'})")
                 else:
                     conds_summary.append(f"Func{c.func_idx}(0x{c.param1:08X})")
 
@@ -862,7 +931,7 @@ def walk_quest(db: DialogDB, quest_edid: str):
                 for t in info.tclt_targets:
                     td = db.dials.get(t)
                     tclt_names.append(td.full_name if td else f'{t:08X}')
-                tclt_str = f" → [{', '.join(tclt_names)}]"
+                tclt_str = f" -> [{', '.join(tclt_names)}]"
 
             conds_str = ' | '.join(conds_summary[:5]) if conds_summary else 'NO CONDITIONS'
             print(f"      [{info.form_id:08X}] {resp}")

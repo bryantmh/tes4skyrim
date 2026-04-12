@@ -146,11 +146,15 @@ ARMOR_DEFAULT_BODY_PART = SBP_32_BODY  # fallback for unrecognised geometry name
 # ---------------------------------------------------------------------------
 # BSXFlags
 # ---------------------------------------------------------------------------
-# Vanilla Skyrim weapon NIFs use 0xC2 = COMPLEX(0x80) | ANIMATED(0x40) | HAVOK(0x02).
-# Static/environment meshes use 0x82 (no ANIMATED).
-# Animated doors/activators use 0x8B = ARTICULATED(0x80) | COMPLEX(0x08) | HAVOK(0x02) | ANIMATED(0x01).
-# Constrained dynamic objects (swinging signs) use 0xCA = ARTICULATED(0x80) | DYNAMIC(0x40) | COMPLEX(0x08) | HAVOK(0x02).
+# Bit meanings: HAVOK=0x02, DYNAMIC=0x40, COMPLEX=0x80, ANIMATED=0x08, ARTICULATED=0x01
+# Dynamic clutter (mass > 0):   0xC2 = COMPLEX(0x80) | DYNAMIC(0x40) | HAVOK(0x02)
+#   Without DYNAMIC bit, Skyrim treats the object as static — activation shell
+#   falls back to a coarse bounding sphere and grab physics apply extra drag.
+# Static/environment meshes:    0x82 = COMPLEX(0x80) | HAVOK(0x02)
+# Animated doors/activators:    0x8B = COMPLEX(0x80) | ANIMATED(0x08) | HAVOK(0x02) | ARTICULATED(0x01)
+# Constrained dynamic (signs):  0xCA = COMPLEX(0x80) | DYNAMIC(0x40) | ANIMATED(0x08) | HAVOK(0x02)
 BSX_FLAGS_STATIC      = 0x82   # 130 — static objects with collision
+BSX_FLAGS_DYNAMIC     = 0xC2   # 194 — dynamic clutter (mass > 0)
 BSX_FLAGS_ANIMATED    = 0x8B   # 139 — animated objects (doors, display cases, activators)
 BSX_FLAGS_CONSTRAINED = 0xCA   # 202 — dynamic constrained objects (swinging signs)
 

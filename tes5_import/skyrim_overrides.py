@@ -84,7 +84,7 @@ _SKY_MAMMOTH         = 0x0001320A  # MammothRace (Skyrim.esm)
 _SKY_RABBIT          = 0x00059339  # RabbitRace (Skyrim.esm)
 _SKY_FOX             = 0x000A0EB2  # FoxRace (Skyrim.esm)
 _SKY_DEER            = 0x000131ED  # ElkRace (closest for deer)
-_SKY_DEFAULT         = 0x00013746  # Nord (last-resort fallback)
+_SKY_DEFAULT         = 0x000B7998  # Nord (last-resort fallback)
 #   CC ESLs — file-local FormIDs (prefix 05 is placeholder load-order byte)
 _CC025_GOLDEN_SAINT  = 0x000816    # ccbgssse025-advdsgs.esm: ccBGSSSE025_GoldenSaintRace
 _CC025_DARK_SEDUCER  = 0x000817    # ccbgssse025-advdsgs.esm: ccBGSSSE025_DarkSeducerRace
@@ -118,20 +118,20 @@ CREA_RACE_PATTERNS = [
     ('dremora',       _SKY_DREMORA,        'Skyrim.esm 0x000131F0 DremoraRace',         None),
     ('xivilai',       _SKY_DREMORA,        'Skyrim.esm 0x000131F0 DremoraRace',         None),
     ('clannfear',     _SKY_DREMORA,        'Skyrim.esm 0x000131F0 DremoraRace',         None),
-    ('daedroth',      _BSH_DAEDROTH,       'BSHeartland.esm 0x020ADFB0 CYRDaedraDaedrothRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
+    # ('daedroth',      _BSH_DAEDROTH,       'BSHeartland.esm 0x020ADFB0 CYRDaedraDaedrothRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
     ('spiderda',      _SKY_DREMORA,        'Skyrim.esm 0x000131F0 DremoraRace (Spider Daedra)', None),
-    ('everscamp',     _BS_SCAMP,           'BSAssets.esm 0x01601FA8 BSKScampRace',      'Skyrim.esm 0x000131F0 DremoraRace'),
-    ('scamp',         _BS_SCAMP,           'BSAssets.esm 0x01601FA8 BSKScampRace',      'Skyrim.esm 0x000131F0 DremoraRace'),
+    # ('everscamp',     _BS_SCAMP,           'BSAssets.esm 0x01601FA8 BSKScampRace',      'Skyrim.esm 0x000131F0 DremoraRace'),
+    # ('scamp',         _BS_SCAMP,           'BSAssets.esm 0x01601FA8 BSKScampRace',      'Skyrim.esm 0x000131F0 DremoraRace'),
     ('mehrunes',      _SKY_DREMORA,        'Skyrim.esm 0x000131F0 DremoraRace (Mehrunes Dagon)', None),
     ('jyggalag',      _SKY_DREMORA,        'Skyrim.esm 0x000131F0 DremoraRace (Jyggalag)', None),
     # ---- Shivering Isles unique creatures ----
-    ('goldensaint',   _CC025_GOLDEN_SAINT, 'ccbgssse025-advdsgs.esm local 0x000816 ccBGSSSE025_GoldenSaintRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
-    ('golden saint',  _CC025_GOLDEN_SAINT, 'ccbgssse025-advdsgs.esm local 0x000816 ccBGSSSE025_GoldenSaintRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
-    ('darkseducer',   _CC025_DARK_SEDUCER, 'ccbgssse025-advdsgs.esm local 0x000817 ccBGSSSE025_DarkSeducerRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
-    ('dark seducer',  _CC025_DARK_SEDUCER, 'ccbgssse025-advdsgs.esm local 0x000817 ccBGSSSE025_DarkSeducerRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
-    ('seducer',       _CC025_DARK_SEDUCER, 'ccbgssse025-advdsgs.esm local 0x000817 ccBGSSSE025_DarkSeducerRace', None),
-    ('saint',         _CC025_GOLDEN_SAINT, 'ccbgssse025-advdsgs.esm local 0x000816 ccBGSSSE025_GoldenSaintRace', None),
-    ('elytra',        _CC025_ELYTRA,       'ccbgssse025-advdsgs.esm local 0x000A76 ccBGSSSE025_ElytraRace',     'Skyrim.esm 0x000131F0 DremoraRace'),
+    # ('goldensaint',   _CC025_GOLDEN_SAINT, 'ccbgssse025-advdsgs.esm local 0x000816 ccBGSSSE025_GoldenSaintRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
+    # ('golden saint',  _CC025_GOLDEN_SAINT, 'ccbgssse025-advdsgs.esm local 0x000816 ccBGSSSE025_GoldenSaintRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
+    # ('darkseducer',   _CC025_DARK_SEDUCER, 'ccbgssse025-advdsgs.esm local 0x000817 ccBGSSSE025_DarkSeducerRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
+    # ('dark seducer',  _CC025_DARK_SEDUCER, 'ccbgssse025-advdsgs.esm local 0x000817 ccBGSSSE025_DarkSeducerRace', 'Skyrim.esm 0x000131F0 DremoraRace'),
+    # ('seducer',       _CC025_DARK_SEDUCER, 'ccbgssse025-advdsgs.esm local 0x000817 ccBGSSSE025_DarkSeducerRace', None),
+    # ('saint',         _CC025_GOLDEN_SAINT, 'ccbgssse025-advdsgs.esm local 0x000816 ccBGSSSE025_GoldenSaintRace', None),
+    # ('elytra',        _CC025_ELYTRA,       'ccbgssse025-advdsgs.esm local 0x000A76 ccBGSSSE025_ElytraRace',     'Skyrim.esm 0x000131F0 DremoraRace'),
     ('grummite',      _SKY_FALMER,         'Skyrim.esm 0x000131F4 FalmerRace (closest to Grummite)', None),
     ('gnarl',         _SKY_SPRIGGAN,       'Skyrim.esm 0x00013204 SprigganRace (closest to Gnarl)', None),
     ('hunger',        _SKY_DREMORA,        'Skyrim.esm 0x000131F0 DremoraRace (Hunger)', None),
@@ -187,11 +187,11 @@ CREA_RACE_PATTERNS = [
     ('spiderling',    _SKY_SPIDER,         'Skyrim.esm 0x000131F8 FrostbiteSpiderRace (Spiderling)', None),
     ('spider',        _SKY_SPIDER,         'Skyrim.esm 0x000131F8 FrostbiteSpiderRace', None),
     # ---- Humanoid creatures ----
-    ('goblin',        _CC040_GOBLIN,       'ccbgssse040-advobgobs.esl local 0x000800 ccBGSSSE040_GoblinRace', 'BSAssets.esm 0x01602681 BSKGoblinRace'),
-    ('imp',           _BS_IMP,             'BSAssets.esm 0x0160299D BSKImpRace',        'Skyrim.esm 0x000131F0 DremoraRace'),
-    ('minotaur lord', _BS_MINOTAUR_LORD,   'BSAssets.esm 0x016026DB CYRMinotaurLordRace', 'BSAssets.esm 0x016026EA CYRMinotaurRace'),
-    ('minotaur',      _BS_MINOTAUR,        'BSAssets.esm 0x016026EA CYRMinotaurRace',   'BSAssets.esm 0x016026DB CYRMinotaurLordRace'),
-    ('ogre',          _BS_OGRE,            'BSAssets.esm 0x01601FBD BSKOgreRace',       'Skyrim.esm 0x000131F9 GiantRace'),
+    # ('goblin',        _CC040_GOBLIN,       'ccbgssse040-advobgobs.esl local 0x000800 ccBGSSSE040_GoblinRace', 'BSAssets.esm 0x01602681 BSKGoblinRace'),
+    # ('imp',           _BS_IMP,             'BSAssets.esm 0x0160299D BSKImpRace',        'Skyrim.esm 0x000131F0 DremoraRace'),
+    # ('minotaur lord', _BS_MINOTAUR_LORD,   'BSAssets.esm 0x016026DB CYRMinotaurLordRace', 'BSAssets.esm 0x016026EA CYRMinotaurRace'),
+    # ('minotaur',      _BS_MINOTAUR,        'BSAssets.esm 0x016026EA CYRMinotaurRace',   'BSAssets.esm 0x016026DB CYRMinotaurLordRace'),
+    # ('ogre',          _BS_OGRE,            'BSAssets.esm 0x01601FBD BSKOgreRace',       'Skyrim.esm 0x000131F9 GiantRace'),
     ('giant',         _SKY_GIANT,          'Skyrim.esm 0x000131F9 GiantRace',           None),
     ('gatekeeper',    _SKY_GIANT,          'Skyrim.esm 0x000131F9 GiantRace (Gatekeeper)', None),
     # ---- Fallback for unrecognized ----

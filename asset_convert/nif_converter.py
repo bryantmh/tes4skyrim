@@ -42,6 +42,7 @@ from .skyrim_overrides import (
     ARMOR_PIECE_OFFSETS,
     BSX_FLAGS_ANIMATED,
     BSX_FLAGS_CONSTRAINED,
+    BSX_FLAGS_DYNAMIC,
     BSX_FLAGS_STATIC,
     OBLIVION_TO_SKYRIM_BONE_MAP,
     SHIELD_INV_MARKER_ROT_X,
@@ -914,11 +915,16 @@ def _walk_node(parent, node, fix_textures, stats):
 def _add_bsx_flags(root, has_constraints=False):
     """Add BSXFlags extra data to root if collision is present anywhere in the tree.
 
-    Static meshes use value 130 = ARTICULATED(0x80) | HAVOK(0x02).
-    Animated doors/activators use 139 = ARTICULATED(0x80) | COMPLEX(0x08) | HAVOK(0x02) | ANIMATED(0x01).
-    Dynamic constrained objects (swinging signs) use 202 = ARTICULATED(0x80) | DYNAMIC(0x40) | COMPLEX(0x08) | HAVOK(0x02).
-    The DYNAMIC(0x40) bit is required for Skyrim to simulate constrained bodies;
-    without it the engine treats them as static and they stop at a gravity-defying angle.
+    Value selection (priority order):
+      constrained dynamic (signs)  → 0xCA  BSX_FLAGS_CONSTRAINED
+      animated (doors/activators)  → 0x8B  BSX_FLAGS_ANIMATED
+      dynamic clutter (mass > 0)   → 0xC2  BSX_FLAGS_DYNAMIC
+      static                       → 0x82  BSX_FLAGS_STATIC
+
+    The DYNAMIC bit (0x40) is critical for any object with mass > 0:
+    without it Skyrim uses a coarse bounding sphere for the activation/grab
+    shell instead of the actual collision shape, and applies extra drag when
+    the object is carried.
 
     BSInvMarker (if present) must remain first — BSXFlags goes immediately after it.
     """
@@ -933,6 +939,21 @@ def _add_bsx_flags(root, has_constraints=False):
                     return True
         return False
 
+    def _has_dynamic_body(node):
+        """Return True if any rigid body in the tree has mass > 0."""
+        if node is None:
+            return False
+        co = getattr(node, 'collision_object', None)
+        if co is not None:
+            rb = getattr(co, 'body', None)
+            if rb is not None and getattr(rb, 'mass', 0) > 0:
+                return True
+        if hasattr(node, 'children'):
+            for child in node.children:
+                if _has_dynamic_body(child):
+                    return True
+        return False
+
     if not _has_any_collision(root):
         return
     if hasattr(root, 'extra_data_list'):
@@ -940,7 +961,6 @@ def _add_bsx_flags(root, has_constraints=False):
             if isinstance(ed, NifFormat.BSXFlags):
                 return  # Already present
 
-    # Priority: constrained dynamic > animated > static
     root_is_animated = (
         root.controller is not None and
         isinstance(root.controller, NifFormat.NiControllerManager)
@@ -949,6 +969,8 @@ def _add_bsx_flags(root, has_constraints=False):
         bsx_value = BSX_FLAGS_CONSTRAINED
     elif root_is_animated:
         bsx_value = BSX_FLAGS_ANIMATED
+    elif _has_dynamic_body(root):
+        bsx_value = BSX_FLAGS_DYNAMIC
     else:
         bsx_value = BSX_FLAGS_STATIC
 
