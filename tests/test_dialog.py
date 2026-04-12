@@ -27,7 +27,6 @@ from tes5_import.record_types.dialog_misc import (
     _DIAL_TYPE_SERVICE,
     _DIAL_TYPE_TOPIC,
     _EDID_TO_SUBTYPE_INT,
-    _QUEST_DEPENDENT_FUNCS,
     _TES4_ONLY_FUNCS,
     BARK_SUBTYPES,
     build_voice_type_ctda,
@@ -163,7 +162,7 @@ class TestCTDAConversion:
         assert len(result) == 32
 
     def test_preserves_function_index(self):
-        for func in (58, 72, 79, 77):
+        for func in (58, 72, 77):
             raw = _make_ctda(func)
             result = _convert_ctda_tes4_to_tes5(raw)
             assert result is not None
@@ -620,8 +619,9 @@ class TestINFOConversion:
         assert struct.unpack_from('<H', ctdas[0], 8)[0] == 426
         assert struct.unpack_from('<H', ctdas[-1], 8)[0] == 66
 
-    def test_bark_strips_quest_conditions(self):
-        """Bark INFOs must strip quest-dependent conditions."""
+    def test_bark_preserves_quest_conditions(self):
+        """Bark INFOs now preserve quest-dependent conditions since
+        .seq + VMAD means quests run and stages evaluate correctly."""
         quest_conds = [_make_ctda(f) for f in (56, 58, 59)]
         non_quest = _make_ctda(77)  # GetDead
         all_conds = quest_conds + [non_quest]
@@ -629,8 +629,9 @@ class TestINFOConversion:
         result = convert_INFO(rec, is_bark=True)
         ctdas = _find_all_subrecords(result, b'CTDA')
         funcs = {struct.unpack_from('<H', c, 8)[0] for c in ctdas}
-        for qf in _QUEST_DEPENDENT_FUNCS:
-            assert qf not in funcs
+        # All quest-dependent functions should now be preserved
+        for qf in (56, 58, 59):
+            assert qf in funcs, f"Quest func {qf} should be preserved on bark INFOs"
         assert 77 in funcs  # GetDead preserved
 
     def test_bark_preserves_get_in_cell(self):
@@ -758,15 +759,17 @@ class TestBarkTopicDetection:
 
     def test_edid_overrides_dtype(self):
         """Known bark EditorID overrides dtype=Conversation."""
-        assert is_bark_topic('INFOGENERAL', dtype=_DIAL_TYPE_CONVERSATION)
+        # INFOGENERAL is now a selectable Rumors topic, not a bark
+        assert not is_bark_topic('INFOGENERAL', dtype=_DIAL_TYPE_CONVERSATION)
         assert is_bark_topic('AnswerStatus', dtype=_DIAL_TYPE_CONVERSATION)
         assert is_bark_topic('TRANSITION', dtype=_DIAL_TYPE_CONVERSATION)
 
     def test_system_topics_are_barks(self):
-        """INFOGENERAL/AnswerStatus/TRANSITION → Idle bark (94)."""
-        for edid in ('INFOGENERAL', 'AnswerStatus', 'TRANSITION'):
+        """AnswerStatus/TRANSITION → Idle bark (94). INFOGENERAL is Rumors (not bark)."""
+        for edid in ('AnswerStatus', 'TRANSITION'):
             assert _EDID_TO_SUBTYPE_INT[edid] == 94
             assert 94 in BARK_SUBTYPES
+        assert 'INFOGENERAL' not in _EDID_TO_SUBTYPE_INT
 
 
 # ===========================================================================
@@ -1100,14 +1103,14 @@ class TestDialogEvaluationSimulation:
 class TestConsistency:
     """Cross-check consistency between different parts of the dialog system."""
 
-    def test_get_in_cell_not_quest_dependent(self):
-        """GetInCell (71) must NOT be in _QUEST_DEPENDENT_FUNCS — it provides
+    def test_get_in_cell_not_tes4_only(self):
+        """GetInCell (71) must NOT be in _TES4_ONLY_FUNCS — it provides
         location-based filtering with properly remapped FormIDs."""
-        assert 71 not in _QUEST_DEPENDENT_FUNCS
+        assert 71 not in _TES4_ONLY_FUNCS
 
-    def test_get_current_ai_proc_not_quest_dependent(self):
-        """GetCurrentAIProcedure (67) must NOT be in _QUEST_DEPENDENT_FUNCS."""
-        assert 67 not in _QUEST_DEPENDENT_FUNCS
+    def test_get_current_ai_proc_not_tes4_only(self):
+        """GetCurrentAIProcedure (67) must NOT be in _TES4_ONLY_FUNCS."""
+        assert 67 not in _TES4_ONLY_FUNCS
 
     def test_conversation_type1_is_chain_topic(self):
         """TES4 DATA.Type=1 (Conversation) topics are chain topics: they're
@@ -1139,10 +1142,10 @@ class TestConsistency:
             assert category in (3, 5, 7), \
                 f"{edid} (subtype {subtype}) has category {category}, expected 3/5/7"
 
-    def test_quest_dependent_funcs_disjoint_from_dropped(self):
-        """Quest-dependent and TES4-only function sets don't overlap."""
-        overlap = _QUEST_DEPENDENT_FUNCS & _TES4_ONLY_FUNCS
-        assert not overlap, f"Overlapping functions: {overlap}"
+    def test_tes4_only_funcs_complete(self):
+        """TES4-only functions include all functions that don't exist in TES5."""
+        expected = {76, 40, 79, 104, 171, 251}
+        assert _TES4_ONLY_FUNCS == expected
 
     def test_all_dial_skip_types_are_valid(self):
         """Skip types must be valid TES4 DATA.Type values."""

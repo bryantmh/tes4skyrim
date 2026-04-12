@@ -22,7 +22,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .constants import IMPORT_DISPATCH, SKIP_TYPES, TYPE_MAP
 from .record_types.dialog_misc import (
+    build_stage_gate_ctdas,
     build_topic_npc_ctdas,
+    build_topic_stage_gating,
     build_voice_type_ctdas_for_info,
     collect_topic_npc_fids,
     convert_DIAL,
@@ -315,6 +317,8 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                 errors += 1
 
     # --- Phase 3b: QUST (needs dialogue_quest_fids from pre-scan) ---
+    # Track all StartGameEnabled quest FormIDs for .seq file generation
+    sge_quest_fids = set()
     qust_records = by_type.get('QUST', [])
     if qust_records and 'QUST' not in all_skip:
         print(f"  Converting {len(qust_records)} QUST records ({len(dialogue_quest_fids)} are dialogue quests)...")
@@ -325,6 +329,13 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                                           well_known_props=_WELL_KNOWN_PROPERTIES)
                 writer.add_record('QUST', qust_bytes)
                 converted += 1
+                # Track SGE quests for .seq generation
+                fid = get_formid(rec, 'FormID')
+                flags = get_int(rec, 'DATA.Flags')
+                is_dialogue = fid in dialogue_quest_fids
+                # Quest has SGE if: TES4 flag bit 0 set OR it's a dialogue quest (forced SGE)
+                if (flags & 0x01) or is_dialogue:
+                    sge_quest_fids.add(fid)
             except Exception as e:
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
                 errors += 1
@@ -334,7 +345,8 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     _build_world_groups(by_type, writer)
 
     # --- Phase 5: DIAL/INFO hierarchy ---
-    _build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid)
+    dialog_sge_fids = _build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid)
+    sge_quest_fids |= dialog_sge_fids
 
     t3 = time.time()
     print(f"\nConverted {converted} records ({errors} errors) in {t3-t2:.2f}s")
@@ -345,10 +357,42 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     file_size = os.path.getsize(output_path)
     print(f"Wrote {output_path} ({file_size:,} bytes)")
 
+    # Generate .seq file for StartGameEnabled quests
+    _write_seq_file(output_path, sge_quest_fids)
+
     # Reset FormID remapping
     set_formid_index_offset(0)
 
     return converted, errors
+
+
+def _write_seq_file(output_path: str, sge_quest_fids: set):
+    """Write a .seq file listing all StartGameEnabled quest FormIDs.
+
+    The Skyrim engine reads this file on game start to initialize SGE quests.
+    Without it, quests with the StartGameEnabled flag don't actually start,
+    which means dialogue quests never run and no dialog appears.
+
+    Format: raw binary array of uint32 FormIDs (little-endian), no header.
+    Path:   <Data>/seq/<PluginName>.seq  (next to the ESM in Data folder)
+    """
+    if not sge_quest_fids:
+        print("  No StartGameEnabled quests — skipping .seq generation")
+        return
+
+    output_dir = os.path.dirname(output_path)
+    plugin_name = os.path.basename(output_path)
+    seq_dir = os.path.join(output_dir, 'seq')
+    os.makedirs(seq_dir, exist_ok=True)
+
+    seq_path = os.path.join(seq_dir, os.path.splitext(plugin_name)[0] + '.seq')
+    sorted_fids = sorted(sge_quest_fids)
+    with open(seq_path, 'wb') as f:
+        for fid in sorted_fids:
+            f.write(struct.pack('<I', fid))
+
+    print(f"  Wrote {seq_path} ({len(sorted_fids)} SGE quests, "
+          f"{len(sorted_fids) * 4} bytes)")
 
 
 def _build_cell_groups(by_type: dict, writer: PluginWriter):
@@ -794,6 +838,10 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
     writer.add_record('QUST', pack_record('QUST', catchall_quest_fid, 0, catchall_subs))
     orphan_count = 0
 
+    # Build stage gating map: topic_fid → [(quest_fid, min_stage), ...]
+    topic_stage_gates = build_topic_stage_gating(by_type, offset)
+    total_stage_gated = 0
+
     dial_converted = 0
     info_converted = 0
     dlbr_created = 0
@@ -914,6 +962,10 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
             topic_children = b''
             child_info_count = 0
             npc_injected = 0
+            stage_gated = 0
+            # Stage gate CTDAs for this topic (if any)
+            stage_gate_ctdas = build_stage_gate_ctdas(
+                topic_stage_gates.get(dial_fid, []))
             for info_rec in child_infos:
                 try:
                     if bark:
@@ -927,6 +979,10 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
                         npc_injected += 1
                     else:
                         injected_ctdas = b''
+                    # Prepend stage gate conditions before other injected CTDAs
+                    if stage_gate_ctdas:
+                        injected_ctdas = stage_gate_ctdas + injected_ctdas
+                        stage_gated += 1
                     info_bytes = convert_INFO(info_rec, voice_type_ctdas=injected_ctdas,
                                               is_bark=bark,
                                               fid_to_edid=fid_to_edid,
@@ -938,6 +994,7 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
                     print(f"  ERROR converting INFO: {e}")
 
             total_npc_injected += npc_injected
+            total_stage_gated += stage_gated
 
             # Convert DIAL with DLBR linkage and correct category
             # Pass quest_fid_override for orphan DIALs so QNAM is always set
@@ -985,7 +1042,13 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
           f"branches: {dlbr_created}, views: {dlvw_created}, "
           f"skipped: {skipped_count}, "
           f"orphan DIALs assigned to catch-all quest: {orphan_count}, "
-          f"INFOs with GetIsID injected: {total_npc_injected}")
+          f"INFOs with GetIsID injected: {total_npc_injected}, "
+          f"INFOs stage-gated: {total_stage_gated}, "
+          f"topics with stage gates: {len(topic_stage_gates)}")
+
+    # Return set of SGE quest FormIDs created in this function
+    # (catch-all quest has SGE flags 0x0011)
+    return {catchall_quest_fid}
 
 
 def main():

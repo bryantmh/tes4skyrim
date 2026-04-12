@@ -664,7 +664,6 @@ from tes5_import.record_types.dialog_misc import (
     _DIAL_TYPE_TOPIC,
     _EDID_TO_SUBTYPE_INT,
     _FUNC_GET_IS_ID,
-    _QUEST_DEPENDENT_FUNCS,
     _TES4_ONLY_FUNCS,
     BARK_SUBTYPES,
     build_getisid_ctda,
@@ -965,8 +964,9 @@ class TestDialogueConversion:
         func_last = struct.unpack_from('<H', ctdas[-1], 8)[0]
         assert func_last == 66
 
-    def test_info_bark_strips_quest_conditions(self):
-        """Bark INFOs must strip quest-dependent conditions."""
+    def test_info_bark_preserves_quest_conditions(self):
+        """Bark INFOs now preserve quest-dependent conditions (.seq + VMAD
+        means quests run and stages evaluate correctly)."""
         conditions = []
         for func in [56, 58, 59, 99]:  # Quest-dependent functions
             raw = struct.pack('<B3x I HH II', 0, 0x3F800000, func, 0, 0x1234, 0)
@@ -977,11 +977,11 @@ class TestDialogueConversion:
         rec = _make_info_rec(conditions=conditions)
         result = convert_INFO(rec, is_bark=True)
         ctdas = _find_all_subrecords(result, b'CTDA')
-        # Only GetDead (77) should remain
-        for ctda in ctdas:
-            func = struct.unpack_from('<H', ctda, 8)[0]
-            assert func not in _QUEST_DEPENDENT_FUNCS, \
-                f"Quest-dependent func {func} should be stripped from bark INFOs"
+        funcs = [struct.unpack_from('<H', c, 8)[0] for c in ctdas]
+        # All functions should be preserved (56, 58, 59, 99, 77)
+        for func in [56, 58, 59, 99, 77]:
+            assert func in funcs, \
+                f"Quest func {func} should be PRESERVED on bark INFOs now"
 
     def test_info_conversation_keeps_quest_conditions(self):
         """Conversation INFOs (is_bark=False) keep quest conditions."""

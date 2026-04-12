@@ -41,30 +41,11 @@ _FUNC_GET_IS_VOICE_TYPE = 426  # GetIsVoiceType(vtyp_formid) — TES5 voice rout
 _TES4_ONLY_FUNCS = frozenset({
     76,   # GetDisposition  — disposition system removed in TES5
     40,   # GetVampire      — replaced by keyword checks in TES5
+    79,   # GetIsPlayerBirthsign — no birthsigns in TES5
     104,  # IsYielding      — not in TES5
     171,  # IsPlayerInJail  — not in TES5
     251,  # GetPCInfamy     — not in TES5 (replaced by Skyrim's crime system)
 })
-
-
-# Condition functions that depend on quest state.  TES4 quests have no
-# Papyrus scripts, so quest variables/stages are never set at runtime.
-# For bark INFOs these conditions would ALWAYS fail, blocking dialogue.
-# Strip them from bark topics to let the lines fire naturally.
-#
-# NOTE: GetInCell (71) and GetCurrentAIProcedure (67) are NOT in this set.
-# GetInCell provides important location-based filtering (FormIDs are remapped
-# correctly) and GetCurrentAIProcedure exists in TES5 (function 67).  Keeping
-# them lets bark topics retain location/AI gating that prevents inappropriate
-# lines from firing (e.g. city-specific greetings staying city-specific).
-_QUEST_DEPENDENT_FUNCS = frozenset({
-    56,   # GetQuestRunning — quest scripts not running
-    58,   # GetStage        — quest stage never set
-    59,   # GetStageDone    — quest stage never marked done
-    99,   # GetQuestCompleted — quest never completed
-    79,   # GetIsPlayerBirthsign — no birthsigns in TES5
-})
-
 
 def _convert_ctda_tes4_to_tes5(raw: bytes) -> 'bytes | None':
     """Convert a 24-byte TES4 CTDA to 32-byte TES5 CTDA.
@@ -441,10 +422,6 @@ def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
     voice_type_ctdas: Pre-built CTDA subrecords for GetIsVoiceType conditions.
     These are injected BEFORE the TES4-converted conditions so the engine can
     filter by voice type first (matching Skyrim's standard pattern).
-
-    is_bark: If True, strip quest-dependent conditions that would always fail
-    because TES4 quest scripts aren't running.  Keeps identity/race/faction
-    conditions intact so NPC-specific lines still gate correctly.
     """
     # TES4 emotion type names → TES5 wbEmotionTypeEnum values
     # Both use the same 0-6 range (Neutral/Anger/Disgust/Fear/Sad/Happy/Surprise)
@@ -526,19 +503,12 @@ def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
     # CTDAs — conditions (convert from TES4 24-byte to TES5 32-byte format)
     # _convert_ctda_tes4_to_tes5 returns None for TES4-only functions (e.g.
     # GetDisposition) that would always fail in TES5 — skip those entirely.
-    # For bark topics, additionally strip quest-dependent conditions that
-    # reference quest state (stages/variables) which will never be set.
     cc = get_int(rec, 'ConditionCount')
     for i in range(cc):
         raw_hex = rec.get(f'Condition[{i}].Raw', '')
         if raw_hex:
             try:
                 raw = bytes.fromhex(raw_hex)
-                # For bark INFOs, strip quest-dependent conditions
-                if is_bark and len(raw) >= 10:
-                    func_idx = struct.unpack_from('<H', raw, 8)[0]
-                    if func_idx in _QUEST_DEPENDENT_FUNCS:
-                        continue
                 ctda = _convert_ctda_tes4_to_tes5(raw)
                 if ctda is not None:
                     subs += pack_subrecord('CTDA', ctda)
@@ -595,7 +565,6 @@ _EDID_TO_SUBTYPE_INT: dict[str, int] = {
     'BarterStolen': 70, 'Training': 67, 'RepairExit': 67,
     'Recharge': 67, 'RechargeExit': 67, 'TrainingExit': 67,
     # Type=1 system topics that are barks
-    'INFOGENERAL': 94,   # Rumors → Idle bark (not a conversation topic)
     'AnswerStatus': 94,  # Disposition status → Idle bark
     'TRANSITION': 94,    # Scene transitions → Idle bark
 }
@@ -881,6 +850,140 @@ def collect_topic_npc_fids(child_infos: list, offset: int) -> set:
             except (ValueError, struct.error):
                 continue
     return npc_fids
+
+
+# ---------------------------------------------------------------------------
+# Topic stage gating — parse TES4 scripts for AddTopic/SetStage
+# ---------------------------------------------------------------------------
+
+_FUNC_GET_STAGE = 58  # GetStage(quest_formid)
+
+
+def build_topic_stage_gating(by_type: dict, offset: int) -> dict:
+    """Build topic gating map from AddTopic commands in TES4 scripts.
+
+    Parses INFO ResultScript and QUST stage scripts for addtopic/setstage
+    to determine which topics should only appear after specific quest stages.
+
+    Returns: {topic_fid: [(quest_fid, min_stage), ...]}
+    where quest_fid and min_stage define the required visibility gate.
+    Topics with only stage<=0 gates are excluded (always available).
+    """
+    import re
+    from collections import defaultdict as _defaultdict
+
+    re_setstage = re.compile(r'\bsetstage\s+(\w+)\s+(\d+)', re.IGNORECASE)
+    re_addtopic = re.compile(r'\baddtopic\s+(\w+)', re.IGNORECASE)
+
+    infos = by_type.get('INFO', [])
+    quests = by_type.get('QUST', [])
+    dials = by_type.get('DIAL', [])
+
+    # Build edid -> fid maps
+    dial_edid_to_fid = {}
+    for rec in dials:
+        edid = get_str(rec, 'EditorID')
+        fid = get_formid(rec, 'FormID')
+        if edid and fid:
+            dial_edid_to_fid[edid.lower()] = fid
+
+    quest_edid_to_fid = {}
+    for rec in quests:
+        edid = get_str(rec, 'EditorID')
+        fid = get_formid(rec, 'FormID')
+        if edid and fid:
+            quest_edid_to_fid[edid.lower()] = fid
+
+    # Parse scripts for addtopic/setstage
+    topic_gating_raw: dict[str, list] = _defaultdict(list)
+
+    # INFO ResultScripts
+    for rec in infos:
+        script = get_str(rec, 'ResultScript')
+        if not script:
+            continue
+        addtopics = re_addtopic.findall(script)
+        setstages = re_setstage.findall(script)
+        if addtopics and setstages:
+            quest_edid, stage_str = setstages[0]
+            stage = int(stage_str)
+            for at in addtopics:
+                topic_gating_raw[at.lower()].append((quest_edid.lower(), stage))
+
+    # QUST stage scripts
+    for rec in quests:
+        quest_edid = get_str(rec, 'EditorID')
+        if not quest_edid:
+            continue
+        stage_count = get_int(rec, 'StageCount')
+        for i in range(stage_count):
+            stage_idx = get_int(rec, f'Stage[{i}].Index')
+            scripts = []
+            s = get_str(rec, f'Stage[{i}].ResultScript')
+            if s:
+                scripts.append(s)
+            log_count = get_int(rec, f'Stage[{i}].LogCount')
+            for j in range(log_count):
+                s = get_str(rec, f'Stage[{i}].Log[{j}].ResultScript')
+                if s:
+                    scripts.append(s)
+            for script in scripts:
+                addtopics = re_addtopic.findall(script)
+                for at in addtopics:
+                    topic_gating_raw[at.lower()].append(
+                        (quest_edid.lower(), stage_idx))
+
+    # Consolidate: pick the most permissive gate per quest, skip stage<=0
+    result: dict[int, list] = {}
+    for topic_edid, gate_list in topic_gating_raw.items():
+        topic_fid = dial_edid_to_fid.get(topic_edid)
+        if not topic_fid:
+            continue
+        by_quest: dict[str, list] = _defaultdict(list)
+        for q, s in gate_list:
+            by_quest[q].append(s)
+        gates = []
+        for q, stages in by_quest.items():
+            min_stage = min(stages)
+            if min_stage <= 0:
+                continue  # Stage 0 = always available
+            quest_fid = quest_edid_to_fid.get(q)
+            if quest_fid:
+                gates.append((quest_fid, min_stage))
+        if gates:
+            result[topic_fid] = gates
+
+    return result
+
+
+def build_stage_gate_ctdas(gates: list) -> bytes:
+    """Build CTDA subrecords for stage gating conditions.
+
+    gates: list of (quest_fid, min_stage) — topic appears if ANY gate passes.
+    Emits: GetStage(questA) >= stageA OR | ... | GetStage(questN) >= stageN AND
+    """
+    if not gates:
+        return b''
+    result = b''
+    for idx, (quest_fid, min_stage) in enumerate(sorted(gates)):
+        is_last = (idx == len(gates) - 1)
+        # type_byte: bits [5:7] = CompOp (3=GE=0x60), bit 0 = OR flag
+        type_byte = 0x60  # >=
+        if not is_last:
+            type_byte |= 0x01  # OR flag
+        comp_float = struct.pack('<f', float(min_stage))
+        comp_raw = struct.unpack('<I', comp_float)[0]
+        ctda = struct.pack('<B3xIHHIIIII',
+                           type_byte,
+                           comp_raw,
+                           _FUNC_GET_STAGE, 0,
+                           quest_fid,   # Param1 = quest FormID
+                           0,           # Param2
+                           0,           # RunOn = Subject
+                           0,           # Reference
+                           0xFFFFFFFF)  # Unknown
+        result += pack_subrecord('CTDA', ctda)
+    return result
 
 
 # ---------------------------------------------------------------------------
