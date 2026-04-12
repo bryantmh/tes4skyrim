@@ -1941,7 +1941,7 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
 
 
 def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
-                  remap_skeleton=None):
+                  remap_skeleton=None, subdir_filter=None):
     """Convert all NIF files in mesh_dir to Skyrim format, writing to output_dir.
 
     Skip reason codes:
@@ -1949,11 +1949,21 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
       RD   — read failure (corrupt, truncated, unknown block types)
       WR   — write failure (version-incompatible blocks, e.g. NiGeomMorpherController)
 
+    Args:
+        subdir_filter: If provided, an iterable of root subfolder names (e.g.
+                       ['architecture', 'clutter']) to include. NIFs whose first
+                       path component (relative to mesh_dir) is not in the set
+                       are skipped. None means include everything.
+
     Returns a stats dict compatible with asset_pipeline.py expectations.
     """
     mesh_path = Path(mesh_dir)
     out_base = Path(output_dir)
     all_nifs = list(mesh_path.rglob('*.nif'))
+
+    allowed_subdirs = None
+    if subdir_filter is not None:
+        allowed_subdirs = {s.lower() for s in subdir_filter}
 
     # Filter out paths matching SKIP_PATHS segments
     nif_files = []
@@ -1961,6 +1971,8 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
     for nf in all_nifs:
         rel_parts = [p.lower() for p in nf.relative_to(mesh_path).parts]
         if any(seg in rel_parts for seg in SKIP_PATHS):
+            skipped_by_path += 1
+        elif allowed_subdirs is not None and rel_parts and rel_parts[0] not in allowed_subdirs:
             skipped_by_path += 1
         else:
             nif_files.append(nf)

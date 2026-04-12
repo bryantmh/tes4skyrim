@@ -43,14 +43,17 @@ def extract_bsas(source_file, data_path, extract_dir='export', force=False):
     return result
 
 
-def convert_meshes(source_file, extract_dir='export', output_dir='output'):
+def convert_meshes(source_file, extract_dir='export', output_dir='output',
+                   mesh_subdirs=None):
     """Convert extracted NIFs and copy textures into `output_dir/<source_name>/`.
     Assumes BSA extraction has already been run (extract_bsas).
 
     Args:
-        source_file: Plugin filename (e.g. 'Oblivion.esm').
-        extract_dir: Root extraction directory (default: export).
-        output_dir:  Final output root (files placed under output_dir/<source_name>/).
+        source_file:  Plugin filename (e.g. 'Oblivion.esm').
+        extract_dir:  Root extraction directory (default: export).
+        output_dir:   Final output root (files placed under output_dir/<source_name>/).
+        mesh_subdirs: Optional list of root mesh subfolders to include (e.g.
+                      ['architecture', 'clutter']). None means all subfolders.
 
     Returns a dict with keys: 'mesh_conversion', 'textures_copied', 'other_copied'.
     """
@@ -77,7 +80,8 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output'):
         mesh_dst = plugin_dir / 'meshes' / 'tes4'
         stats['mesh_conversion'] = nif_converter.batch_convert(
             str(mesh_src), output_dir=str(mesh_dst),
-            fix_textures=True, remap_skeleton=None
+            fix_textures=True, remap_skeleton=None,
+            subdir_filter=mesh_subdirs,
         )
     else:
         print(f"  No meshes found at {mesh_src}")

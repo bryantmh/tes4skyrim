@@ -273,7 +273,8 @@ def phase_extract(file_name: str, tes4_data: str, config: dict,
 # Phase 4: Convert assets
 # ===========================================================================
 
-def phase_assets(file_name: str, config: dict, output_dir: str = None):
+def phase_assets(file_name: str, config: dict, output_dir: str = None,
+                 mesh_subdirs=None):
     """Convert extracted NIF assets and copy textures to output (meshes only)."""
     from asset_convert.asset_pipeline import convert_meshes
 
@@ -285,6 +286,7 @@ def phase_assets(file_name: str, config: dict, output_dir: str = None):
         source_file=file_name,
         extract_dir=extract_dir,
         output_dir=out_dir,
+        mesh_subdirs=mesh_subdirs,
     )
     total = sum(v for v in stats.values() if isinstance(v, int))
     print(f"[{file_name}] Meshes complete ({total} items processed)")
@@ -595,6 +597,9 @@ def main():
                         help="Pack output assets into Skyrim SE BSA archives")
     parser.add_argument("--mesh-bounds-only",    action="store_true",
                         help="Scan mesh NIF bounds and update OBND cache")
+    parser.add_argument("--mesh-subdirs",        nargs="+", metavar="SUBDIR",
+                        help="Limit mesh conversion to these root subfolders "
+                             "(e.g. architecture clutter). Default: all.")
 
     args = parser.parse_args()
 
@@ -675,7 +680,8 @@ def main():
         print("  Phase 3: MESH & TEXTURE CONVERSION")
         print("=" * 54)
         for fn in order:
-            if not phase_assets(fn, config, output_dir=output_dir):
+            if not phase_assets(fn, config, output_dir=output_dir,
+                                mesh_subdirs=getattr(args, 'mesh_subdirs', None)):
                 success = False
         print()
 

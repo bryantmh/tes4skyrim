@@ -655,7 +655,26 @@ def scale_constraint_pivots(data):
         if d.max_friction > 0.5:
             d.max_friction = 0.01
 
-        # 4. broadphaseType=10 for dynamic constrained bodies.
+        # 4. Re-scale inertia for dynamic constrained bodies.
+        #    _convert_collision already applied _HAVOK_SCALE (0.1) to inertia.
+        #    Inertia has units mass*length^2, so it requires _HAVOK_SCALE^2 = 0.01 total.
+        #    Apply the missing second factor of 0.1 here.
+        #    (General clutter inertia stays at *0.1 since Oblivion clutter was authored
+        #    with smaller values and the result is already in the correct Skyrim range.)
+        for e in block.entities:
+            if e is not None and e.mass > 0.0:
+                I = e.inertia
+                I.m_11 *= _HAVOK_SCALE
+                I.m_12 *= _HAVOK_SCALE
+                I.m_13 *= _HAVOK_SCALE
+                I.m_21 *= _HAVOK_SCALE
+                I.m_22 *= _HAVOK_SCALE
+                I.m_23 *= _HAVOK_SCALE
+                I.m_31 *= _HAVOK_SCALE
+                I.m_32 *= _HAVOK_SCALE
+                I.m_33 *= _HAVOK_SCALE
+
+        # 5. broadphaseType=10 for dynamic constrained bodies.
         for e in block.entities:
             if e is not None and e.mass > 0.0:
                 e.unknown_byte = 10

@@ -43,9 +43,12 @@ STEPS = [
      "Pack assets into BSA archives",             False, True),
     ("modify_body_meshes", "--modify-body-meshes", "11. Body Meshes",
      "Add greaves partition to body NIFs",       False, False),
+    ("copy_to_skyrim",    None,                   "12. Copy to Skyrim",
+     "Copy mod files to Skyrim SE",  False, True),
 ]
 
-_DEFAULT_ON = {k for k, *_ in STEPS if _[3]}  # keys where default_on=True
+_DEFAULT_ON = {k for k, *_ in STEPS if k != "modify_body_meshes"
+               and k != "copy_to_skyrim"}
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 CLR = {
@@ -107,6 +110,61 @@ def _find_game_path(game: str) -> str:
     return ""
 
 
+def _copy_to_skyrim(output_dir: str, skyrim_data: str, file_name: str,
+                    copy_plugins: bool, copy_bsa: bool, copy_sound: bool,
+                    log_cb):
+    """Copy conversion outputs into the Skyrim Data directory.
+
+    - Plugins (.esm/.esp): copy from output_dir root, overwrite.
+    - BSAs (.bsa):         copy from output_dir root, overwrite.
+    - Sound folder:        merge file-by-file into skyrim_data/sound/,
+                           overwriting individual files but never deleting
+                           anything already there.
+    """
+    import shutil
+    src_root = Path(output_dir) / file_name
+    dst_root = Path(skyrim_data)
+
+    if not src_root.is_dir():
+        log_cb(f"  Copy: source not found: {src_root}")
+        return
+
+    copied = 0
+
+    if copy_plugins:
+        for ext in ("*.esm", "*.esp"):
+            for src in src_root.glob(ext):
+                dst = dst_root / src.name
+                shutil.copy2(src, dst)
+                log_cb(f"  -> {dst.name}")
+                copied += 1
+
+    if copy_bsa:
+        for src in src_root.glob("*.bsa"):
+            dst = dst_root / src.name
+            shutil.copy2(src, dst)
+            log_cb(f"  -> {dst.name}")
+            copied += 1
+
+    if copy_sound:
+        src_sound = src_root / "sound"
+        dst_sound = dst_root / "sound"
+        if src_sound.is_dir():
+            for src_file in src_sound.rglob("*"):
+                if src_file.is_file():
+                    rel = src_file.relative_to(src_sound)
+                    dst_file = dst_sound / rel
+                    dst_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dst_file)
+                    copied += 1
+            log_cb(f"  sound/ -> {dst_sound} ({copied} files)")
+        else:
+            log_cb("  Copy sound: no sound/ folder in output, skipping")
+            return
+
+    log_cb(f"  Copy to Skyrim complete ({copied} files)")
+
+
 def load_config() -> dict:
     if not CONFIG_FILE.exists():
         return {}
@@ -130,12 +188,38 @@ def scan_plugins(data_path: str) -> list:
     return plugins
 
 
-def _run_process(cmd, log_cb, env=None):
+def scan_mesh_subdirs(file_name: str) -> list:
+    """Return sorted list of root mesh subdirectories in export/<file_name>/meshes/."""
+    if not file_name:
+        return []
+    mesh_dir = SCRIPT_DIR / "export" / file_name / "meshes"
+    if not mesh_dir.is_dir():
+        return []
+    subdirs = sorted(
+        d.name for d in mesh_dir.iterdir()
+        if d.is_dir()
+    )
+    return subdirs
+
+
+# ── Subprocess helper ─────────────────────────────────────────────────────────
+
+# On Windows, hide the console window that subprocess.Popen would otherwise
+# create when launched from a console-less process (pythonw / .pyw).
+_POPEN_FLAGS = {}
+if sys.platform == "win32":
+    _POPEN_FLAGS["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+
+def _run_process(cmd, log_cb, env=None, cancel_event=None):
     """Run cmd as subprocess, streaming output to `log_cb` as bytes arrive.
 
     Uses binary reads to avoid stdio buffering issues on Windows and with
     child processes; decodes to UTF-8 with replacement on the fly and
     emits complete lines immediately.
+
+    If cancel_event is a threading.Event, the process is terminated when it
+    is set.
     """
     try:
         full_env = os.environ.copy()
@@ -150,11 +234,21 @@ def _run_process(cmd, log_cb, env=None):
             bufsize=0,  # unbuffered binary mode
             cwd=str(SCRIPT_DIR),
             env=full_env,
+            **_POPEN_FLAGS,
         )
 
         out = proc.stdout
         buf = bytearray()
         while True:
+            # Check for cancellation
+            if cancel_event is not None and cancel_event.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                return -2  # sentinel for cancelled
+
             chunk = out.read(1024)
             if not chunk:
                 break
@@ -201,6 +295,7 @@ def gui_main():
     cfg = load_config()
     tes4_path    = cfg.get("tes4DataPath", "") or _find_game_path("oblivion")
     output_path  = cfg.get("outputDir", "")  or str(SCRIPT_DIR / "output")
+    skyrim_path = _find_game_path("skyrimse")
 
     # ── Root window ───────────────────────────────────────────────────────────
     root = tk.Tk()
@@ -259,6 +354,13 @@ def gui_main():
                           ("disabled", CLR["btn"])],
               foreground=[("disabled", CLR["subtext"])])
 
+    S("Cancel.TButton", background="#453030", foreground=CLR["red"],
+                        borderwidth=0, relief="flat", padding=(8, 6),
+                        font="Segoe\\ UI 10")
+    style.map("Cancel.TButton",
+              background=[("active", "#5a3030"), ("disabled", CLR["border"])],
+              foreground=[("disabled", CLR["subtext"])])
+
     S("Danger.TButton", background="#453030", foreground=CLR["red"],
                         borderwidth=0, relief="flat", padding=(8, 4))
     style.map("Danger.TButton", background=[("active", "#5a3030")])
@@ -285,6 +387,12 @@ def gui_main():
     step_vars   = {key: tk.BooleanVar(value=(key in _DEFAULT_ON))
                    for key, *_ in STEPS}
     running     = threading.Event()
+    cancel_evt  = threading.Event()  # set to request cancellation
+
+    skyrim_var = tk.StringVar(value=skyrim_path)
+
+    # mesh subfolder state: list of (name, BooleanVar)
+    mesh_subdir_vars = []  # populated when "Meshes" step panel expands
 
     # ── Layout: sidebar + log pane ────────────────────────────────────────────
     outer = ttk.Frame(root)
@@ -406,8 +514,14 @@ def gui_main():
         updated["outputDir"]    = output_var.get()
         save_config(updated)
 
-    # Also save on focusout of entries
     tes4_var.trace_add("write", lambda *_: None)  # live binding via on_change
+
+    _sep()
+
+    # ── Skyrim SE data directory ──────────────────────────────────────────────
+    sky_frame = ttk.Frame(sidebar, style="Panel.TFrame")
+    sky_frame.pack(fill=tk.X, padx=14, pady=(0, 4))
+    _path_row(sky_frame, "Skyrim SE Data Directory", skyrim_var, browse_dir=True)
 
     _sep()
 
@@ -439,17 +553,89 @@ def gui_main():
         side=tk.RIGHT, padx=(2, 0))
 
     def _update_run_btn(*_):
-        has = any(v.get() for v in step_vars.values())
+        has = any(v.get() for k, v in step_vars.items() if k != "copy_to_skyrim")
         st  = "normal" if has and not running.is_set() else "disabled"
         run_btn.configure(state=st)
 
-    for key, flag, label, tip, default_on, needs_file in STEPS:
+    # ── Mesh subfolder modal overlay ──────────────────────────────────────────
+    # A Frame placed over `outer` (fills the whole window) with a card centred
+    # inside it.  No Toplevel — entirely within the existing window.
+
+    def _open_mesh_subdir_panel():
+        nonlocal mesh_subdir_vars
+
+        fname   = file_var.get()
+        subdirs = scan_mesh_subdirs(fname)
+
+        old_vals = {name: v.get() for name, v in mesh_subdir_vars}
+        mesh_subdir_vars.clear()
+        for name in subdirs:
+            mesh_subdir_vars.append((name, tk.BooleanVar(value=old_vals.get(name, True))))
+
+        # Card placed directly over the window, no overlay behind it
+        card = tk.Frame(outer, bg=CLR["panel"],
+                        highlightbackground=CLR["border"], highlightthickness=1)
+
+        def _close():
+            card.destroy()
+
+        # Title row
+        title_row = tk.Frame(card, bg=CLR["panel"])
+        title_row.pack(fill=tk.X, padx=16, pady=(14, 0))
+        tk.Label(title_row, text="Mesh subfolders to convert",
+                 bg=CLR["panel"], fg=CLR["text"],
+                 font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Button(title_row, text="All",
+                   command=lambda: [v.set(True) for _, v in mesh_subdir_vars],
+                   width=4).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(title_row, text="None",
+                   command=lambda: [v.set(False) for _, v in mesh_subdir_vars],
+                   width=5).pack(side=tk.RIGHT)
+
+        ttk.Separator(card, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=16, pady=8)
+
+        if not subdirs:
+            tk.Label(card, text="Run the Extract step first to populate this list.",
+                     bg=CLR["panel"], fg=CLR["subtext"],
+                     font=("Segoe UI", 9)).pack(anchor="w", padx=16, pady=(0, 8))
+        else:
+            for name, var in mesh_subdir_vars:
+                ttk.Checkbutton(card, text=name, variable=var,
+                                style="TCheckbutton").pack(anchor="w", padx=20, pady=1)
+
+        ttk.Separator(card, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=16, pady=8)
+
+        ttk.Button(card, text="OK", style="Accent.TButton",
+                   command=_close).pack(pady=(0, 14))
+
+        # Centre the card over the window
+        card.update_idletasks()
+        card.place(in_=outer, anchor="center", relx=0.5, rely=0.5)
+        card.lift()
+
+    # Build step checkboxes
+    _mesh_step_row = None
+    for step in STEPS:
+        key, label, tip = step[0], step[2], step[3]
         row = ttk.Frame(sidebar, style="Panel.TFrame")
         row.pack(fill=tk.X, padx=14, pady=1)
         ttk.Checkbutton(row, text=label, variable=step_vars[key],
-                         command=_update_run_btn).pack(side=tk.LEFT)
+                        command=_update_run_btn).pack(side=tk.LEFT)
         ttk.Label(row, text=tip, style="PanelSub.TLabel").pack(
             side=tk.LEFT, padx=(6, 0))
+        if key == "meshes":
+            _mesh_step_row = row
+
+    # Small link sitting just below the Meshes checkbox row
+    _mesh_toggle_row = ttk.Frame(sidebar, style="Panel.TFrame")
+    _mesh_toggle_row.pack(fill=tk.X, padx=14, pady=(0, 1), after=_mesh_step_row)
+    mesh_toggle_lbl = tk.Label(
+        _mesh_toggle_row, text="  filter subfolders...",
+        bg=CLR["panel"], fg=CLR["subtext"],
+        font=("Segoe UI", 9, "underline"), cursor="hand2",
+    )
+    mesh_toggle_lbl.pack(side=tk.LEFT, padx=(20, 0))
+    mesh_toggle_lbl.bind("<Button-1>", lambda _: _open_mesh_subdir_panel())
 
     _sep()
 
@@ -461,9 +647,19 @@ def gui_main():
                          style="Accent.TButton", command=lambda: _run_clicked())
     run_btn.pack(fill=tk.X, pady=(0, 6))
 
-    clear_btn = ttk.Button(bf, text="Clear Log", command=lambda: _clear_log(),
+    # Clear Log + Cancel on the same row
+    btn_row = ttk.Frame(bf, style="Panel.TFrame")
+    btn_row.pack(fill=tk.X)
+    btn_row.columnconfigure(0, weight=1)
+    btn_row.columnconfigure(1, weight=1)
+
+    clear_btn = ttk.Button(btn_row, text="Clear Log", command=lambda: _clear_log(),
                            style="Danger.TButton")
-    clear_btn.pack(fill=tk.X)
+    clear_btn.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+
+    cancel_btn = ttk.Button(btn_row, text="Cancel", command=lambda: _cancel_clicked(),
+                            style="Cancel.TButton", state="disabled")
+    cancel_btn.grid(row=0, column=1, sticky="ew", padx=(3, 0))
 
     # Progress bar + status
     prog_bar = ttk.Progressbar(sidebar, mode="indeterminate", length=200)
@@ -536,7 +732,10 @@ def gui_main():
 
     def _set_running(state: bool):
         running.set() if state else running.clear()
+        if not state:
+            cancel_evt.clear()
         run_btn.configure(state="disabled" if state else "normal")
+        cancel_btn.configure(state="normal" if state else "disabled")
         file_combo.configure(state="disabled" if state else "readonly")
         if state:
             prog_bar.pack(fill=tk.X, padx=14, pady=(4, 0))
@@ -548,8 +747,15 @@ def gui_main():
             status_var.set("Ready")
         _update_run_btn()
 
+    def _cancel_clicked():
+        if running.is_set():
+            cancel_evt.set()
+            status_var.set("Cancelling...")
+            cancel_btn.configure(state="disabled")
+
     # ── Run logic ─────────────────────────────────────────────────────────────
-    def _build_cmd(step_key: str, fname: str, out_dir: str) -> list:
+    def _build_cmd(step_key: str, fname: str, out_dir: str,
+                   selected_subdirs=None) -> list:
         """Build the convert.py command for a single step."""
         _, flag, _, _, _, needs_file = next(
             s for s in STEPS if s[0] == step_key)
@@ -558,6 +764,8 @@ def gui_main():
             cmd += ["-f", fname]
         if out_dir:
             cmd += ["--output-dir", out_dir]
+        if step_key == "meshes" and selected_subdirs:
+            cmd += ["--mesh-subdirs"] + selected_subdirs
         return cmd
 
     def _run_clicked():
@@ -570,10 +778,21 @@ def gui_main():
             messagebox.showwarning("No Steps",
                                    "Select at least one pipeline step.", parent=root)
             return
+
+        # Collect selected mesh subdirs (None = all)
+        selected_subdirs = None
+        if "meshes" in steps and mesh_subdir_vars:
+            chosen = [name for name, v in mesh_subdir_vars if v.get()]
+            all_names = [name for name, _ in mesh_subdir_vars]
+            if chosen and chosen != all_names:
+                selected_subdirs = chosen
+
         _clear_log()
         _log(f"File: {fname or '(none)'}")
         _log(f"Steps: {', '.join(steps)}")
         _log(f"Output: {out_dir}")
+        if selected_subdirs:
+            _log(f"Mesh subdirs: {', '.join(selected_subdirs)}")
         _log("")
 
         q = queue.Queue()
@@ -592,29 +811,61 @@ def gui_main():
         def _worker():
             _set_running(True)
             try:
-                default_set = {k for k, *rest in STEPS if rest[3]}
-                active_set  = set(steps)
+                default_set = {k for k, *rest in STEPS
+                               if rest[3] and k != "copy_to_skyrim"}
+                active_set  = set(steps) - {"copy_to_skyrim"}
                 ret = 0
-                # If selection == default set and a file is specified,
-                # run the pipeline once (convert.py default behaviour)
-                if active_set == default_set and fname:
+                # If selection == default set and a file is specified and no
+                # mesh subfolder filter, run the pipeline once
+                if active_set == default_set and fname and not selected_subdirs:
                     cmd = [sys.executable, "-u", str(SCRIPT_DIR / "convert.py"),
                            "-f", fname]
                     if out_dir:
                         cmd += ["--output-dir", out_dir]
                     q.put(f"Running: {' '.join(cmd)}")
-                    ret = _run_process(cmd, q.put)
+                    ret = _run_process(cmd, q.put, cancel_event=cancel_evt)
                 else:
                     for step in steps:
-                        cmd = _build_cmd(step, fname, out_dir)
+                        if cancel_evt.is_set():
+                            break
+                        if step == "copy_to_skyrim":
+                            continue  # handled separately below
+                        cmd = _build_cmd(step, fname, out_dir, selected_subdirs)
                         q.put(f"Running: {' '.join(cmd)}")
-                        r = _run_process(cmd, q.put)
+                        r = _run_process(cmd, q.put, cancel_event=cancel_evt)
+                        if r == -2:
+                            ret = -2
+                            break
                         if r != 0:
                             ret = r
+                # ── Copy to Skyrim ────────────────────────────────────────
+                if (ret == 0 and not cancel_evt.is_set()
+                        and step_vars["copy_to_skyrim"].get()):
+                    sky_dir = skyrim_var.get().strip()
+                    if not sky_dir:
+                        q.put("  Copy skipped: Skyrim SE Data directory not set")
+                    else:
+                        q.put("")
+                        q.put("=== Copying to Skyrim ===")
+                        _copy_to_skyrim(
+                            output_dir=out_dir,
+                            skyrim_data=sky_dir,
+                            file_name=fname,
+                            copy_plugins=True,
+                            copy_bsa=True,
+                            copy_sound=True,
+                            log_cb=q.put,
+                        )
+
                 q.put("")
-                q.put("  DONE" if ret == 0 else "  FAILED")
+                if ret == -2:
+                    q.put("  CANCELLED")
+                elif ret == 0:
+                    q.put("  DONE")
+                else:
+                    q.put("  FAILED")
             finally:
-                _set_running(False)
+                root.after(0, lambda: _set_running(False))
 
         threading.Thread(target=_worker, daemon=True).start()
         # Start draining the queue in the UI thread
@@ -637,7 +888,7 @@ def main():
 
     if args.cli:
         cmd = [sys.executable, "-u", str(SCRIPT_DIR / "convert.py")] + extra
-        ret = subprocess.run(cmd, cwd=str(SCRIPT_DIR))
+        ret = subprocess.run(cmd, cwd=str(SCRIPT_DIR), **_POPEN_FLAGS)
         return ret.returncode
 
     return gui_main()
