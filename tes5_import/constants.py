@@ -198,11 +198,13 @@ def _init_dispatch():
         convert_LVSP,
         convert_NPC_,
     )
-    from .record_types.dialog_misc import (
+    from .dialog_converter import (
         convert_DIAL,
         convert_INFO,
-        convert_PACK,
         convert_QUST,
+    )
+    from .record_types.dialog_misc import (
+        convert_PACK,
         convert_WTHR,
     )
     from .record_types.equipment import (

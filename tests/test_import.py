@@ -1,5 +1,5 @@
 """
-Tests for TES5 import — verifies binary output is correctly structured.
+Tests for TES5 import - verifies binary output is correctly structured.
 
 Tests the writer, record converters, and group hierarchy.
 """
@@ -305,21 +305,21 @@ class TestConverters:
         # _convert_biped_flags returns PRIMARY equip slots plus equipment-conflict
         # extras (helmets block Circlet/Ears so they can't be worn simultaneously).
         # Body-coverage extras (ForeArms, Calves, etc.) go on ARMA, not ARMO.
-        # Head (bit 0) → 30 (bit 0) + Hair(1) + Circlet(12) + Ears(13) — full-face helm
+        # Head (bit 0) â†’ 30 (bit 0) + Hair(1) + Circlet(12) + Ears(13) - full-face helm
         assert _convert_biped_flags(0x01) == (1 | (1 << 1) | (1 << 12) | (1 << 13))
-        # Hair (bit 1) → 31 (bit 1) + Circlet(12) — open-face helm blocks circlets
+        # Hair (bit 1) â†’ 31 (bit 1) + Circlet(12) - open-face helm blocks circlets
         assert _convert_biped_flags(0x02) == ((1 << 1) | (1 << 12))
-        # Upper body (bit 2) → 32 (bit 2) — no extra equipment conflicts
+        # Upper body (bit 2) â†’ 32 (bit 2) - no extra equipment conflicts
         assert _convert_biped_flags(0x04) == 0x04
-        # Lower body (bit 3) → 44-LowerBody (bit 14)
+        # Lower body (bit 3) â†’ 44-LowerBody (bit 14)
         assert _convert_biped_flags(0x08) == (1 << 14)
-        # Hand (bit 4) → 33-Hands (bit 3)
+        # Hand (bit 4) â†’ 33-Hands (bit 3)
         assert _convert_biped_flags(0x10) == (1 << 3)
-        # Foot (bit 5) → 37 (bit 7)
+        # Foot (bit 5) â†’ 37 (bit 7)
         assert _convert_biped_flags(0x20) == 0x80
-        # Amulet (bit 8) → 35 (bit 5)
+        # Amulet (bit 8) â†’ 35 (bit 5)
         assert _convert_biped_flags(0x100) == 0x20
-        # Shield (bit 13) → 39 (bit 9)
+        # Shield (bit 13) â†’ 39 (bit 9)
         assert _convert_biped_flags(0x2000) == 0x200
         # Upper+Lower body combined
         assert _convert_biped_flags(0x0C) == 0x04 | (1 << 14)
@@ -528,7 +528,7 @@ class TestConverters:
         result = convert_BOOK(rec)
         self._check_record(result, 'BOOK')
         assert self._has_subrecord(result, 'DESC')
-        # INAM (pickup sound) and CNAM must be present — missing INAM causes BookMenu crash
+        # INAM (pickup sound) and CNAM must be present - missing INAM causes BookMenu crash
         assert self._has_subrecord(result, 'INAM'), "BOOK must have INAM (pickup sound)"
         assert self._has_subrecord(result, 'CNAM'), "BOOK must have CNAM"
         inam_data = self._get_subrecord_data(result, 'INAM')
@@ -539,7 +539,7 @@ class TestConverters:
     def test_book_html_font_face_remapped(self):
         """<font face=N> in Oblivion DESC must be remapped to face=3 for Skyrim BookMenu."""
         from tes5_import.record_types.equipment import _fix_book_html
-        # Oblivion face=5 (handwriting) and face=1 (decorative) both → face=3
+        # Oblivion face=5 (handwriting) and face=1 (decorative) both â†’ face=3
         assert '<font face=3>' in _fix_book_html('<font face=5>text')
         assert '<font face=3>' in _fix_book_html('<FONT face=1>text')
         assert '</font>' in _fix_book_html('text</font>')
@@ -651,20 +651,13 @@ class TestIntegration:
 # Dialogue conversion tests
 # ---------------------------------------------------------------------------
 
-from tes5_import.record_types.dialog_misc import (
-    _convert_ctda_tes4_to_tes5,
+from tes5_import.dialog_converter import (
+    _convert_ctda,
     _DIAL_SKIP_EDIDS,
     _DIAL_SKIP_TYPES,
-    _DIAL_TYPE_COMBAT,
-    _DIAL_TYPE_CONVERSATION,
-    _DIAL_TYPE_DETECTION,
-    _DIAL_TYPE_MISC,
-    _DIAL_TYPE_PERSUASION,
-    _DIAL_TYPE_SERVICE,
-    _DIAL_TYPE_TOPIC,
     _EDID_TO_SUBTYPE_INT,
+    _FUNC_DROP,
     _FUNC_GET_IS_ID,
-    _TES4_ONLY_FUNCS,
     BARK_SUBTYPES,
     build_getisid_ctda,
     build_topic_npc_ctdas,
@@ -674,6 +667,13 @@ from tes5_import.record_types.dialog_misc import (
     convert_DIAL,
     convert_INFO,
     convert_QUST,
+    DIAL_TYPE_COMBAT,
+    DIAL_TYPE_CONVERSATION,
+    DIAL_TYPE_DETECTION,
+    DIAL_TYPE_MISC,
+    DIAL_TYPE_PERSUASION,
+    DIAL_TYPE_SERVICE,
+    DIAL_TYPE_TOPIC,
     info_has_positive_getisid,
     is_bark_topic,
     make_dlbr,
@@ -689,28 +689,28 @@ class TestDialogueConversion:
     # -- CTDA conversion --
 
     def test_ctda_tes4_to_tes5_size(self):
-        """TES4 CTDA (24B) → TES5 CTDA (32B)."""
+        """TES4 CTDA (24B) â†’ TES5 CTDA (32B)."""
         tes4_ctda = struct.pack('<B3x I HH II',
                                 0x00,        # type: Equal
                                 0x3F800000,  # CompValue = 1.0f
                                 72, 0,       # GetIsID (func 72)
                                 0x00001234,  # Param1
                                 0)           # Param2
-        result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+        result = _convert_ctda(tes4_ctda)
         assert result is not None
         assert len(result) == 32
 
-    def test_ctda_drops_tes4_only_funcs(self):
+    def test_ctda_drops_FUNC_DROP(self):
         """TES4-only functions (GetDisposition etc) should return None."""
-        for func_idx in _TES4_ONLY_FUNCS:
+        for func_idx in _FUNC_DROP:
             tes4_ctda = struct.pack('<B3x I HH II',
                                     0x00, 0x3F800000, func_idx, 0, 0, 0)
-            result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+            result = _convert_ctda(tes4_ctda)
             assert result is None, f"func {func_idx} should be dropped"
 
     def test_ctda_use_global_flag(self):
         """CTDA Use Global flag is bit 2 (0x04), not bit 5 (0x20)."""
-        set_formid_index_offset(1)  # offset=1 → remap 0x00XXXX to 0x01XXXX
+        set_formid_index_offset(1)  # offset=1 â†’ remap 0x00XXXX to 0x01XXXX
         try:
             # type=0x04 (Equal + UseGlobal): CompValue is a Global FormID
             tes4_ctda = struct.pack('<B3x I HH II',
@@ -719,9 +719,9 @@ class TestDialogueConversion:
                                     58, 0,       # GetStage
                                     0x00005678,  # Param1 = Quest FormID
                                     0)
-            result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+            result = _convert_ctda(tes4_ctda)
             assert result is not None
-            # CompValue should be remapped: 0x00001234 → 0x01001234
+            # CompValue should be remapped: 0x00001234 â†’ 0x01001234
             comp = struct.unpack_from('<I', result, 4)[0]
             assert comp == 0x01001234
         finally:
@@ -737,7 +737,7 @@ class TestDialogueConversion:
                                     0x3F800000,  # CompValue = 1.0f
                                     72, 0,       # GetIsID
                                     0x00001234, 0)
-            result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+            result = _convert_ctda(tes4_ctda)
             assert result is not None
             # CompValue should NOT be remapped (it's a float literal)
             comp = struct.unpack_from('<I', result, 4)[0]
@@ -748,7 +748,7 @@ class TestDialogueConversion:
     def test_ctda_unknown_field_is_ffffffff(self):
         """TES5 CTDA bytes 28-31 must be 0xFFFFFFFF (vanilla convention)."""
         tes4_ctda = struct.pack('<B3x I HH II', 0, 0x3F800000, 72, 0, 0, 0)
-        result = _convert_ctda_tes4_to_tes5(tes4_ctda)
+        result = _convert_ctda(tes4_ctda)
         unknown = struct.unpack_from('<I', result, 28)[0]
         assert unknown == 0xFFFFFFFF
 
@@ -776,7 +776,7 @@ class TestDialogueConversion:
     def test_voice_type_ctdas_generic_info(self):
         """Generic INFO (no GetIsID) gets NO voice type injection.
 
-        Generic lines fire for any NPC — adding GetIsVoiceType for ALL voice
+        Generic lines fire for any NPC - adding GetIsVoiceType for ALL voice
         types would bloat the ESM and block NPCs with unrecognised voice types.
         """
         rec = {'ConditionCount': '0'}
@@ -1026,20 +1026,21 @@ class TestDialogueConversion:
 
     def test_is_bark_topic_by_dtype(self):
         """is_bark_topic returns True for combat/detection/misc DATA.Type."""
-        assert is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_COMBAT)
-        assert is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_DETECTION)
-        assert is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_MISC)
+        assert is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_COMBAT)
+        assert is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_DETECTION)
+        assert is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_MISC)
         # Topic/Conversation types are NOT bark by dtype alone
-        assert not is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_TOPIC)
-        assert not is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_CONVERSATION)
+        assert not is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_TOPIC)
+        assert not is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_CONVERSATION)
         # dtype=-1 (unknown) does not make it a bark
         assert not is_bark_topic('UnknownEdid', dtype=-1)
 
     def test_is_bark_topic_edid_overrides_dtype(self):
         """Known bark EditorID is bark even if dtype=Topic."""
-        assert is_bark_topic('INFOGENERAL', dtype=_DIAL_TYPE_CONVERSATION)
-        assert is_bark_topic('AnswerStatus', dtype=_DIAL_TYPE_CONVERSATION)
-        assert is_bark_topic('TRANSITION', dtype=_DIAL_TYPE_CONVERSATION)
+        assert is_bark_topic('AnswerStatus', dtype=DIAL_TYPE_CONVERSATION)
+        assert is_bark_topic('TRANSITION', dtype=DIAL_TYPE_CONVERSATION)
+        # INFOGENERAL (Rumors) is intentionally NOT a bark — it's a conversation topic
+        assert not is_bark_topic('INFOGENERAL', dtype=DIAL_TYPE_CONVERSATION)
 
     # -- should_skip_dial --
 
@@ -1077,12 +1078,12 @@ class TestDialogueConversion:
         assert not should_skip_dial(rec)
 
     def test_should_skip_dial_combat_not_skipped(self):
-        """Combat topics (Type=2) are NOT skipped — they become barks."""
+        """Combat topics (Type=2) are NOT skipped - they become barks."""
         rec = {'EditorID': 'Attack', 'DATA.Type': '2'}
         assert not should_skip_dial(rec)
 
     def test_should_skip_dial_detection_not_skipped(self):
-        """Detection topics (Type=4) are NOT skipped — they become barks."""
+        """Detection topics (Type=4) are NOT skipped - they become barks."""
         rec = {'EditorID': 'Noticed', 'DATA.Type': '4'}
         assert not should_skip_dial(rec)
 
@@ -1111,9 +1112,11 @@ class TestDialogueConversion:
 
     def test_edid_subtype_system_barks(self):
         """System/transition EditorIDs map to Idle bark subtype."""
-        for edid in ('INFOGENERAL', 'AnswerStatus', 'TRANSITION'):
+        for edid in ('AnswerStatus', 'TRANSITION'):
             assert _EDID_TO_SUBTYPE_INT[edid] == 94  # Idle
             assert 94 in BARK_SUBTYPES
+        # INFOGENERAL is NOT a bark — it's the Rumors conversation topic
+        assert 'INFOGENERAL' not in _EDID_TO_SUBTYPE_INT
 
     # -- DLBR / DLVW --
 
@@ -1143,7 +1146,7 @@ class TestDialogueConversion:
     # -- CREA VTCK --
 
     def test_crea_has_vtck(self):
-        """Converted CREA (→NPC_) must have VTCK subrecord."""
+        """Converted CREA (â†’NPC_) must have VTCK subrecord."""
         from tes5_import.skyrim_overrides import VOICE_TYPE_MAP, set_voice_type
         # Ensure at least one voice type is registered
         set_voice_type('Imperial', 'Male', 0x01AABB01)
@@ -1162,7 +1165,7 @@ class TestDialogueConversion:
                    'DATA.Strength': '50', 'SpellCount': '0'}
             result = convert_CREA(rec)
             vtck = _find_subrecord(result, b'VTCK')
-            assert vtck is not None, "CREA→NPC_ must have VTCK"
+            assert vtck is not None, "CREAâ†’NPC_ must have VTCK"
             vtyp_fid = struct.unpack_from('<I', vtck, 0)[0]
             assert vtyp_fid != 0, "VTCK FormID must not be zero"
         finally:
@@ -1452,7 +1455,7 @@ class TestVoiceFileNaming:
         assert m is None
 
     def test_voice_type_map_coverage(self):
-        """Voice type map covers all 10 playable races × 2 genders."""
+        """Voice type map covers all 10 playable races Ã— 2 genders."""
         playable_races = [
             'Argonian', 'Breton', 'DarkElf', 'HighElf', 'Imperial',
             'Khajiit', 'Nord', 'Orc', 'Redguard', 'WoodElf',

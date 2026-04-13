@@ -1,8 +1,8 @@
 """
-Comprehensive tests for TES4→TES5 dialog/quest conversion.
+Comprehensive tests for TES4-TES5 dialog/quest conversion.
 
 Tests cover:
-- CTDA format conversion (24B→32B)
+- CTDA format conversion (24B-32B)
 - Voice type routing (GetIsVoiceType injection)
 - Bark vs conversation classification
 - DIAL/INFO/QUST/DLBR/DLVW record structure
@@ -15,20 +15,20 @@ Tests cover:
 import struct
 import pytest
 
-from tes5_import.record_types.dialog_misc import (
-    _convert_ctda_tes4_to_tes5,
+from tes5_import.dialog_converter import (
+    _convert_ctda,
     _DIAL_SKIP_EDIDS,
     _DIAL_SKIP_TYPES,
-    _DIAL_TYPE_COMBAT,
-    _DIAL_TYPE_CONVERSATION,
-    _DIAL_TYPE_DETECTION,
-    _DIAL_TYPE_MISC,
-    _DIAL_TYPE_PERSUASION,
-    _DIAL_TYPE_SERVICE,
-    _DIAL_TYPE_TOPIC,
     _EDID_TO_SUBTYPE_INT,
-    _TES4_ONLY_FUNCS,
+    _FUNC_DROP,
     BARK_SUBTYPES,
+    DIAL_TYPE_COMBAT,
+    DIAL_TYPE_CONVERSATION,
+    DIAL_TYPE_DETECTION,
+    DIAL_TYPE_MISC,
+    DIAL_TYPE_PERSUASION,
+    DIAL_TYPE_SERVICE,
+    DIAL_TYPE_TOPIC,
     build_voice_type_ctda,
     build_voice_type_ctdas_for_info,
     convert_DIAL,
@@ -153,39 +153,39 @@ def _make_qust_rec(formid='00099999', edid='TestQuest', full='Test Quest',
 # ===========================================================================
 
 class TestCTDAConversion:
-    """Verify 24B TES4 → 32B TES5 CTDA conversion."""
+    """Verify 24B TES4 - 32B TES5 CTDA conversion."""
 
     def test_output_size_32_bytes(self):
         raw = _make_ctda(72, param1=0x1234)
-        result = _convert_ctda_tes4_to_tes5(raw)
+        result = _convert_ctda(raw)
         assert result is not None
         assert len(result) == 32
 
     def test_preserves_function_index(self):
         for func in (58, 72, 77):
             raw = _make_ctda(func)
-            result = _convert_ctda_tes4_to_tes5(raw)
+            result = _convert_ctda(raw)
             assert result is not None
             assert struct.unpack_from('<H', result, 8)[0] == func
 
     def test_drops_tes4_only_functions(self):
-        for func in _TES4_ONLY_FUNCS:
+        for func in _FUNC_DROP:
             raw = _make_ctda(func)
-            assert _convert_ctda_tes4_to_tes5(raw) is None
+            assert _convert_ctda(raw) is None
 
     def test_get_disposition_dropped(self):
         """GetDisposition(76) is the most common dropped function (1751 uses)."""
         raw = _make_ctda(76, comp_value=struct.unpack('<I', struct.pack('<f', 70.0))[0])
-        assert _convert_ctda_tes4_to_tes5(raw) is None
+        assert _convert_ctda(raw) is None
 
     def test_unknown_field_0xFFFFFFFF(self):
         raw = _make_ctda(58)
-        result = _convert_ctda_tes4_to_tes5(raw)
+        result = _convert_ctda(raw)
         assert struct.unpack_from('<I', result, 28)[0] == 0xFFFFFFFF
 
     def test_reference_field_zero(self):
         raw = _make_ctda(72)
-        result = _convert_ctda_tes4_to_tes5(raw)
+        result = _convert_ctda(raw)
         assert struct.unpack_from('<I', result, 24)[0] == 0
 
     def test_use_global_flag_bit2(self):
@@ -194,7 +194,7 @@ class TestCTDAConversion:
         try:
             raw = _make_ctda(58, param1=0x00005678,
                              comp_value=0x00001234, type_byte=0x04)
-            result = _convert_ctda_tes4_to_tes5(raw)
+            result = _convert_ctda(raw)
             comp = struct.unpack_from('<I', result, 4)[0]
             assert comp == 0x01001234  # remapped
         finally:
@@ -207,7 +207,7 @@ class TestCTDAConversion:
             float_1 = struct.unpack('<I', struct.pack('<f', 1.0))[0]
             raw = _make_ctda(72, param1=0x00001234, comp_value=float_1,
                              type_byte=0x20)
-            result = _convert_ctda_tes4_to_tes5(raw)
+            result = _convert_ctda(raw)
             comp = struct.unpack_from('<I', result, 4)[0]
             assert comp == float_1  # unchanged
         finally:
@@ -215,14 +215,14 @@ class TestCTDAConversion:
 
     def test_or_flag_preserved(self):
         raw = _make_ctda(72, type_byte=0x01)  # OR flag
-        result = _convert_ctda_tes4_to_tes5(raw)
+        result = _convert_ctda(raw)
         assert result[0] & 0x01
 
     def test_formid_params_remapped(self):
         set_formid_index_offset(2)
         try:
             raw = _make_ctda(72, param1=0x00001234, param2=0x00005678)
-            result = _convert_ctda_tes4_to_tes5(raw)
+            result = _convert_ctda(raw)
             p1 = struct.unpack_from('<I', result, 12)[0]
             p2 = struct.unpack_from('<I', result, 16)[0]
             assert p1 == 0x02001234
@@ -235,7 +235,7 @@ class TestCTDAConversion:
         set_formid_index_offset(1)
         try:
             raw = _make_ctda(14, param1=0x00000035)  # GetActorValue(Alchemy)
-            result = _convert_ctda_tes4_to_tes5(raw)
+            result = _convert_ctda(raw)
             p1 = struct.unpack_from('<I', result, 12)[0]
             assert p1 == 0x00000035  # NOT remapped
         finally:
@@ -244,7 +244,7 @@ class TestCTDAConversion:
     def test_run_on_preserved(self):
         """RunOn field passes through unchanged."""
         raw = _make_ctda(72, run_on=2)  # Reference
-        result = _convert_ctda_tes4_to_tes5(raw)
+        result = _convert_ctda(raw)
         assert struct.unpack_from('<I', result, 20)[0] == 2
 
 
@@ -278,7 +278,7 @@ class TestVoiceTypeCTDA:
         assert comp == 0x3F800000  # 1.0f
 
     def test_npc_specific_info_gets_npc_vtyp(self):
-        """INFO with GetIsID(npc) → GetIsVoiceType(npc's voice type)."""
+        """INFO with GetIsID(npc) - GetIsVoiceType(npc's voice type)."""
         npc_fid = 0x01001234
         npc_vtyp = 0x01000099
         npc_to_vtyp = {npc_fid: npc_vtyp}
@@ -295,13 +295,13 @@ class TestVoiceTypeCTDA:
             set_formid_index_offset(0)
 
     def test_generic_info_gets_no_vtyp(self):
-        """Generic INFO (no GetIsID) → no voice type injection."""
+        """Generic INFO (no GetIsID) - no voice type injection."""
         rec = _make_info_rec()  # no conditions
         result = build_voice_type_ctdas_for_info(rec, {})
         assert result == b''
 
     def test_generic_info_gets_topic_vtyps(self):
-        """Generic INFO with topic_vtyps → gets voice types from siblings."""
+        """Generic INFO with topic_vtyps - gets voice types from siblings."""
         rec = _make_info_rec()  # no conditions
         topic_vtyps = {0x01000011, 0x01000022}
         result = build_voice_type_ctdas_for_info(rec, {}, topic_vtyps=topic_vtyps)
@@ -319,13 +319,13 @@ class TestVoiceTypeCTDA:
         assert funcs == {426}
 
     def test_generic_info_empty_topic_vtyps_no_ctda(self):
-        """Generic INFO with empty topic_vtyps → no voice type injection."""
+        """Generic INFO with empty topic_vtyps - no voice type injection."""
         rec = _make_info_rec()
         result = build_voice_type_ctdas_for_info(rec, {}, topic_vtyps=set())
         assert result == b''
 
     def test_multiple_npc_targets_or_chain(self):
-        """INFO with multiple GetIsID conditions → OR'd voice type chain."""
+        """INFO with multiple GetIsID conditions - OR'd voice type chain."""
         npc1 = 0x01001111
         npc2 = 0x01002222
         vtyp1 = 0x01000011
@@ -350,7 +350,7 @@ class TestVoiceTypeCTDA:
             set_formid_index_offset(0)
 
     def test_same_vtyp_deduped(self):
-        """Two NPCs with same voice type → one CTDA, not two."""
+        """Two NPCs with same voice type - one CTDA, not two."""
         npc1 = 0x01001111
         npc2 = 0x01002222
         shared_vtyp = 0x01000011
@@ -368,7 +368,7 @@ class TestVoiceTypeCTDA:
             set_formid_index_offset(0)
 
     def test_unknown_npc_no_vtyp(self):
-        """NPC not in npc_to_vtyp map → no voice type generated."""
+        """NPC not in npc_to_vtyp map - no voice type generated."""
         conds = [_make_ctda(72, param1=0x0000FFFF)]  # unknown NPC
         set_formid_index_offset(1)
         try:
@@ -502,7 +502,7 @@ class TestDIALConversion:
         assert len(data) == 4
 
     def test_greeting_hello_subtype(self):
-        rec = _make_dial_rec(edid='GREETING', dtype=_DIAL_TYPE_TOPIC)
+        rec = _make_dial_rec(edid='GREETING', dtype=DIAL_TYPE_TOPIC)
         result = convert_DIAL(rec)
         snam = _find_subrecord(result, b'SNAM')
         assert snam == b'HELO'
@@ -510,7 +510,7 @@ class TestDIALConversion:
         assert data[1] == 7  # Category = Misc
 
     def test_attack_combat_subtype(self):
-        rec = _make_dial_rec(edid='Attack', dtype=_DIAL_TYPE_COMBAT)
+        rec = _make_dial_rec(edid='Attack', dtype=DIAL_TYPE_COMBAT)
         result = convert_DIAL(rec)
         snam = _find_subrecord(result, b'SNAM')
         assert snam == b'ATCK'
@@ -526,7 +526,7 @@ class TestDIALConversion:
         assert snam == b'CUST'  # Custom conversation topic
 
     def test_bark_no_bnam(self):
-        rec = _make_dial_rec(edid='GREETING', dtype=_DIAL_TYPE_TOPIC)
+        rec = _make_dial_rec(edid='GREETING', dtype=DIAL_TYPE_TOPIC)
         result = convert_DIAL(rec, info_count=5)
         assert _find_subrecord(result, b'BNAM') is None
 
@@ -572,14 +572,14 @@ class TestDIALConversion:
             assert len(snam) == 4, f"{edid}: SNAM should be 4 bytes"
 
     def test_generic_combat_dtype_to_attack_subtype(self):
-        """Unknown EditorID with Combat dtype → Attack subtype."""
-        rec = _make_dial_rec(edid='UnknownCombat', dtype=_DIAL_TYPE_COMBAT)
+        """Unknown EditorID with Combat dtype - Attack subtype."""
+        rec = _make_dial_rec(edid='UnknownCombat', dtype=DIAL_TYPE_COMBAT)
         result = convert_DIAL(rec)
         snam = _find_subrecord(result, b'SNAM')
         assert snam == b'ATCK'
 
     def test_generic_detection_dtype_to_nota_subtype(self):
-        rec = _make_dial_rec(edid='UnknownDetection', dtype=_DIAL_TYPE_DETECTION)
+        rec = _make_dial_rec(edid='UnknownDetection', dtype=DIAL_TYPE_DETECTION)
         result = convert_DIAL(rec)
         snam = _find_subrecord(result, b'SNAM')
         assert snam == b'NOTA'
@@ -635,7 +635,7 @@ class TestINFOConversion:
         assert 77 in funcs  # GetDead preserved
 
     def test_bark_preserves_get_in_cell(self):
-        """GetInCell (71) must NOT be stripped from barks — it provides
+        """GetInCell (71) must NOT be stripped from barks â€” it provides
         location-based filtering that prevents wrong city greetings."""
         conds = [_make_ctda(71, param1=0x00001234)]  # GetInCell
         rec = _make_info_rec(conditions=conds)
@@ -662,7 +662,7 @@ class TestINFOConversion:
         funcs = {struct.unpack_from('<H', c, 8)[0] for c in ctdas}
         assert 58 in funcs
 
-    def test_tes4_only_funcs_dropped(self):
+    def test_FUNC_DROP_dropped(self):
         """TES4-only condition functions don't appear in output."""
         conds = [_make_ctda(76)]  # GetDisposition
         rec = _make_info_rec(conditions=conds)
@@ -743,29 +743,29 @@ class TestBarkTopicDetection:
         assert not is_bark_topic(edid)
 
     def test_combat_dtype_is_bark(self):
-        assert is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_COMBAT)
+        assert is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_COMBAT)
 
     def test_detection_dtype_is_bark(self):
-        assert is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_DETECTION)
+        assert is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_DETECTION)
 
     def test_misc_dtype_is_bark(self):
-        assert is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_MISC)
+        assert is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_MISC)
 
     def test_topic_dtype_not_bark(self):
-        assert not is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_TOPIC)
+        assert not is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_TOPIC)
 
     def test_conversation_dtype_not_bark(self):
-        assert not is_bark_topic('UnknownEdid', dtype=_DIAL_TYPE_CONVERSATION)
+        assert not is_bark_topic('UnknownEdid', dtype=DIAL_TYPE_CONVERSATION)
 
     def test_edid_overrides_dtype(self):
         """Known bark EditorID overrides dtype=Conversation."""
         # INFOGENERAL is now a selectable Rumors topic, not a bark
-        assert not is_bark_topic('INFOGENERAL', dtype=_DIAL_TYPE_CONVERSATION)
-        assert is_bark_topic('AnswerStatus', dtype=_DIAL_TYPE_CONVERSATION)
-        assert is_bark_topic('TRANSITION', dtype=_DIAL_TYPE_CONVERSATION)
+        assert not is_bark_topic('INFOGENERAL', dtype=DIAL_TYPE_CONVERSATION)
+        assert is_bark_topic('AnswerStatus', dtype=DIAL_TYPE_CONVERSATION)
+        assert is_bark_topic('TRANSITION', dtype=DIAL_TYPE_CONVERSATION)
 
     def test_system_topics_are_barks(self):
-        """AnswerStatus/TRANSITION → Idle bark (94). INFOGENERAL is Rumors (not bark)."""
+        """AnswerStatus/TRANSITION - Idle bark (94). INFOGENERAL is Rumors (not bark)."""
         for edid in ('AnswerStatus', 'TRANSITION'):
             assert _EDID_TO_SUBTYPE_INT[edid] == 94
             assert 94 in BARK_SUBTYPES
@@ -968,7 +968,7 @@ class TestDialogEvaluationSimulation:
         elif func_idx == 77:  # GetDead
             result = 0.0  # NPC is alive
         elif func_idx == 66:  # GetIsRace
-            result = 0.0  # simplified — not testing race
+            result = 0.0  # simplified â€” not testing race
         else:
             result = 1.0  # unknown functions pass by default
 
@@ -1104,21 +1104,21 @@ class TestConsistency:
     """Cross-check consistency between different parts of the dialog system."""
 
     def test_get_in_cell_not_tes4_only(self):
-        """GetInCell (71) must NOT be in _TES4_ONLY_FUNCS — it provides
+        """GetInCell (71) must NOT be in _FUNC_DROP â€” it provides
         location-based filtering with properly remapped FormIDs."""
-        assert 71 not in _TES4_ONLY_FUNCS
+        assert 71 not in _FUNC_DROP
 
     def test_get_current_ai_proc_not_tes4_only(self):
-        """GetCurrentAIProcedure (67) must NOT be in _TES4_ONLY_FUNCS."""
-        assert 67 not in _TES4_ONLY_FUNCS
+        """GetCurrentAIProcedure (67) must NOT be in _FUNC_DROP."""
+        assert 67 not in _FUNC_DROP
 
     def test_conversation_type1_is_chain_topic(self):
         """TES4 DATA.Type=1 (Conversation) topics are chain topics: they're
         only reachable via TCLT links, NEVER shown as top-level dialog."""
-        # Chain topics don't get BNAM or DLBR — the import_main._build_dialog_groups
+        # Chain topics don't get BNAM or DLBR â€” the import_main._build_dialog_groups
         # checks `dtype == 1` to skip DLBR creation. Verify the classification:
-        assert not is_bark_topic('SomeConversation', dtype=_DIAL_TYPE_CONVERSATION)
-        # Type 1 is not a bark, but it IS a chain — tested by exclusion in import_main
+        assert not is_bark_topic('SomeConversation', dtype=DIAL_TYPE_CONVERSATION)
+        # Type 1 is not a bark, but it IS a chain â€” tested by exclusion in import_main
 
     def test_edid_subtype_all_in_bark_subtypes(self):
         """Every EditorID subtype mapping should be a bark subtype."""
@@ -1128,7 +1128,7 @@ class TestConsistency:
 
     def test_bark_subtypes_have_category_override(self):
         """Every bark subtype should have a category override."""
-        from tes5_import.record_types.dialog_misc import convert_DIAL
+        from tes5_import.dialog_converter import convert_DIAL
         # We test indirectly by converting a DIAL for each bark subtype's EditorID
         tested = set()
         for edid, subtype in _EDID_TO_SUBTYPE_INT.items():
@@ -1142,10 +1142,16 @@ class TestConsistency:
             assert category in (3, 5, 7), \
                 f"{edid} (subtype {subtype}) has category {category}, expected 3/5/7"
 
-    def test_tes4_only_funcs_complete(self):
-        """TES4-only functions include all functions that don't exist in TES5."""
-        expected = {76, 40, 79, 104, 171, 251}
-        assert _TES4_ONLY_FUNCS == expected
+    def test_FUNC_DROP_complete(self):
+        """_FUNC_DROP includes all known TES4-only functions plus reused indices."""
+        # Known TES4-only functions must be present
+        tes4_only = {40, 76, 79, 104, 160, 171, 201, 251}
+        assert tes4_only.issubset(_FUNC_DROP)
+        # Known critical reused-index functions must be present
+        critical_reused = {249, 365, 81, 109, 128, 180, 197, 224, 227}
+        assert critical_reused.issubset(_FUNC_DROP)
+        # Total size: 8 TES4-only + 21 reused + 4 OBSE = 33
+        assert len(_FUNC_DROP) == 33
 
     def test_all_dial_skip_types_are_valid(self):
         """Skip types must be valid TES4 DATA.Type values."""
@@ -1261,11 +1267,11 @@ class TestTCLTRemapping:
 
     Bug fixed: TCLT stripping code read with get_formid (+1 offset), wrote back
     the remapped value, then convert_INFO read with get_formid again (+1 offset)
-    → double remapping (prefix 02 instead of 01 for Oblivion.esm records).
+    - double remapping (prefix 02 instead of 01 for Oblivion.esm records).
     """
 
     def test_tclt_single_remapping(self):
-        """TCLT FormID should be remapped once (00→01), not twice (00→02)."""
+        """TCLT FormID should be remapped once (00-01), not twice (00-02)."""
         # Simulate a TES4 export INFO with one TCLT choice
         rec = _make_info_rec()
         rec['ChoiceCount'] = '1'
@@ -1317,7 +1323,7 @@ class TestTCLTRemapping:
             for i, raw in enumerate(kept_raw):
                 rec[f'Choice[{i}]'] = raw
 
-            # Now convert — should apply offset exactly once
+            # Now convert â€” should apply offset exactly once
             info_bytes = convert_INFO(rec, voice_type_ctdas=b'', is_bark=False)
             pos = 24
             tclt_fids = []
@@ -1344,7 +1350,7 @@ class TestVoiceTypeInjectionScope:
     - Conversation INFOs: NO GetIsVoiceType (GetIsID sufficient)
 
     In Skyrim.esm, only 13% of INFOs have GetIsVoiceType (barks/radiant).
-    87% of INFOs have no voice type — conversation topics use GetIsID.
+    87% of INFOs have no voice type â€” conversation topics use GetIsID.
     """
 
     def test_conversation_info_no_voice_type(self):
@@ -1353,7 +1359,7 @@ class TestVoiceTypeInjectionScope:
         vtyp_fid = 0x01000011
         npc_to_vtyp = {npc_fid: vtyp_fid}
 
-        # An INFO with GetIsID condition — this is a conversation line
+        # An INFO with GetIsID condition â€” this is a conversation line
         rec = _make_info_rec(conditions=[_make_ctda(72, param1=0x00001234)])
         set_formid_index_offset(1)
         try:
@@ -1366,7 +1372,7 @@ class TestVoiceTypeInjectionScope:
             voice_ctdas = b''  # non-bark: no voice type injection
             info_bytes = convert_INFO(rec, voice_type_ctdas=voice_ctdas,
                                       is_bark=False)
-            # Parse CTDAs from info_bytes — should NOT contain func 426
+            # Parse CTDAs from info_bytes â€” should NOT contain func 426
             ctda_funcs = _extract_ctda_funcs(info_bytes)
             assert 426 not in ctda_funcs
         finally:
@@ -1393,7 +1399,7 @@ class TestVoiceTypeInjectionScope:
     def test_conditionless_conversation_info_stays_conditionless(self):
         """Generic conversation INFO with no conditions should stay conditionless.
 
-        Skyrim has 7,137 INFOs (23%) with no conditions — this is normal.
+        Skyrim has 7,137 INFOs (23%) with no conditions â€” this is normal.
         """
         rec = _make_info_rec()  # no conditions
         info_bytes = convert_INFO(rec, voice_type_ctdas=b'', is_bark=False)
@@ -1419,7 +1425,7 @@ def _extract_ctda_funcs(record_bytes: bytes) -> set:
 
     def test_collect_scro_properties(self):
         """_collect_scro_properties extracts and remaps SCRO entries."""
-        from tes5_import.record_types.dialog_misc import _collect_scro_properties
+        from tes5_import.dialog_converter import _collect_scro_properties
         set_formid_index_offset(1)
         try:
             fid_to_edid = {0x00001234: 'TestActor'}
@@ -1432,7 +1438,7 @@ def _extract_ctda_funcs(record_bytes: bytes) -> set:
 
     def test_collect_scro_skips_player(self):
         """_collect_scro_properties skips the player FormID (0x14)."""
-        from tes5_import.record_types.dialog_misc import _collect_scro_properties
+        from tes5_import.dialog_converter import _collect_scro_properties
         fid_to_edid = {0x14: 'Player'}
         rec = {'SCRO[0]': '00000014'}
         props = _collect_scro_properties(rec, fid_to_edid)
@@ -1440,7 +1446,7 @@ def _extract_ctda_funcs(record_bytes: bytes) -> set:
 
     def test_collect_all_scro_includes_stage_refs(self):
         """_collect_all_scro_properties includes stage-level SCRO entries."""
-        from tes5_import.record_types.dialog_misc import _collect_all_scro_properties
+        from tes5_import.dialog_converter import _collect_all_scro_properties
         set_formid_index_offset(1)
         try:
             fid_to_edid = {0x00001234: 'QuestTarget', 0x00005678: 'StageNPC'}
