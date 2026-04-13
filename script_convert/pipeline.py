@@ -163,7 +163,13 @@ def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph, 
 
 
 def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
-    """Convert QUST stage scripts to Quest fragment .psc files."""
+    """Convert QUST stage scripts to Quest fragment .psc files.
+
+    A fragment is generated for every stage that has journal log text (CNAM),
+    whether or not it also has a result script.  Each fragment calls
+    SetObjectiveDisplayed / SetObjectiveCompleted so the quest appears in the
+    Skyrim journal — without those calls CNAM text is never visible.
+    """
     records = parse_export_file(qust_path)
 
     for rec in records:
@@ -177,7 +183,11 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, 
         except ValueError:
             continue
 
-        fragments = []  # (stage_index, log_idx, script_source, stage_arr_idx, log_arr_idx)
+        # Collect all stages that need a fragment:
+        # - stages with log text (need objective calls even if no result script)
+        # - stages with result scripts (need script body)
+        # Each entry: (stage_idx, log_idx, log_text, result_script, complete_flag, stage_arr_idx, log_arr_idx)
+        fragments = []
         for i in range(stage_count):
             stage_idx_str = rec.get(f'Stage[{i}].Index', '0')
             try:
@@ -192,14 +202,23 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, 
                 continue
 
             for j in range(log_count):
+                log_text = rec.get(f'Stage[{i}].Log[{j}].Text', '')
                 script = rec.get(f'Stage[{i}].Log[{j}].ResultScript', '')
-                if script and script.strip():
-                    fragments.append((stage_idx, j, script, i, j))
+                log_flags_str = rec.get(f'Stage[{i}].Log[{j}].Flags', '0')
+                try:
+                    log_flags = int(log_flags_str)
+                except ValueError:
+                    log_flags = 0
+                complete_flag = bool(log_flags & 0x01)
+                if log_text or (script and script.strip()):
+                    fragments.append((stage_idx, j, log_text, script, complete_flag, i, j))
 
         if not fragments:
             continue
 
-        stats['qust_total'] += len(fragments)
+        # Count only fragments that have result scripts for stats
+        scripted_count = sum(1 for f in fragments if f[3] and f[3].strip())
+        stats['qust_total'] += scripted_count
 
         try:
             conv = ScriptConverter(xref)
@@ -211,13 +230,21 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, 
                 '',
             ]
 
-            for stage_idx, log_idx, script_src, stage_arr_idx, log_arr_idx in fragments:
+            for stage_idx, log_idx, log_text, script_src, complete_flag, stage_arr_idx, log_arr_idx in fragments:
                 # Load per-stage SCROs for this fragment
                 _preload_stage_scro_refs(conv, rec, xref, stage_arr_idx, log_arr_idx)
                 func_name = f'Fragment_Stage_{stage_idx:04d}_Item_{log_idx}'
                 out_lines.append(f'Function {func_name}()')
-                body_lines = conv.convert_fragment(script_src, 'Quest')
-                out_lines.extend(body_lines)
+                # Objective tracking: make this stage's entry visible in the journal
+                if log_text:
+                    if complete_flag:
+                        out_lines.append(f'  SetObjectiveCompleted({stage_idx}, true)')
+                    else:
+                        out_lines.append(f'  SetObjectiveDisplayed({stage_idx}, true)')
+                # Original result script body (if any)
+                if script_src and script_src.strip():
+                    body_lines = conv.convert_fragment(script_src, 'Quest')
+                    out_lines.extend(body_lines)
                 out_lines.append('EndFunction')
                 out_lines.append('')
 
@@ -240,10 +267,10 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, 
             out_path = os.path.join(output_dir, f'{script_name}.psc')
             with open(out_path, 'w', encoding='utf-8') as f:
                 f.write(papyrus)
-            stats['qust_ok'] += len(fragments)
+            stats['qust_ok'] += scripted_count
             stats['todo_count'] += papyrus.count(';TODO')
         except Exception as e:
-            stats['qust_err'] += len(fragments)
+            stats['qust_err'] += scripted_count
             stats['errors'].append(f'QUST {edid}: {e}')
 
 
@@ -358,10 +385,10 @@ def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int,
     buf += _pack_wstring(script_name)            # FileName
     for stage_idx, log_idx in stage_fragments:
         frag_name = f'Fragment_Stage_{stage_idx:04d}_Item_{log_idx}'
-        buf += struct.pack('<H', stage_idx)   # stageIndex
-        buf += struct.pack('<H', 0)           # unknown
-        buf += struct.pack('<I', stage_idx)   # stageIndex (I32)
-        buf += struct.pack('<B', 0)           # unknown
+        buf += struct.pack('<H', stage_idx)   # Quest Stage (U16)
+        buf += struct.pack('<h', 0)           # Unknown (S16)
+        buf += struct.pack('<i', log_idx)     # Quest Stage Index = log entry index (S32)
+        buf += struct.pack('<b', 1)           # Unknown (S8) — vanilla always 1
         buf += _pack_wstring(script_name)
         buf += _pack_wstring(frag_name)
 

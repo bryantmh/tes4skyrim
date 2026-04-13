@@ -222,6 +222,25 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                 pass
     print(f"  Built FormID->EditorID map: {len(fid_to_edid)} entries")
 
+    # Build CrossRefGraph for INFO script property type detection.
+    # INFO result scripts reference factions/quests/etc. as bare EditorID tokens.
+    # ScriptConverter needs xref.edid_to_formid + xref.record_type to classify
+    # these tokens (Quest/Faction/Actor/etc.) and register them as property refs.
+    # Without this, properties like FightersGuild stay unbound (None at runtime).
+    from script_convert.cross_ref import CrossRefGraph
+    xref = CrossRefGraph()
+    for rec in all_records:
+        fid_str = rec.get('FormID', '')
+        edid_str = rec.get('EditorID', '')
+        sig = rec.get('Signature', '')
+        if fid_str and edid_str:
+            edid_low = edid_str.lower()
+            xref.edid_to_formid[edid_low] = fid_str
+            xref.record_type[fid_str] = sig
+            if sig == 'QUST':
+                xref.quest_edids.add(edid_low)
+    print(f"  Built CrossRefGraph: {len(xref.edid_to_formid)} entries, {len(xref.quest_edids)} quests")
+
     # --- Phase 0c: Create vendor factions for merchant NPCs ---
     from .record_types.actors import create_vendor_factions
     create_vendor_factions(by_type, writer)
@@ -345,7 +364,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     _build_world_groups(by_type, writer)
 
     # --- Phase 5: DIAL/INFO hierarchy ---
-    dialog_sge_fids = _build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid)
+    dialog_sge_fids = _build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref)
     sge_quest_fids |= dialog_sge_fids
 
     t3 = time.time()
@@ -739,7 +758,7 @@ def _build_npc_to_vtyp_map(by_type: dict, num_new_masters: int) -> dict:
 
 
 def _build_dialog_groups(by_type: dict, writer: PluginWriter,
-                         npc_to_vtyp: dict, fid_to_edid: dict = None):
+                         npc_to_vtyp: dict, fid_to_edid: dict = None, xref=None):
     """Build DIAL/INFO/DLBR/DLVW group hierarchy.
 
     This is the core of Skyrim dialogue conversion.  For each DIAL topic:
@@ -986,7 +1005,8 @@ def _build_dialog_groups(by_type: dict, writer: PluginWriter,
                     info_bytes = convert_INFO(info_rec, voice_type_ctdas=injected_ctdas,
                                               is_bark=bark,
                                               fid_to_edid=fid_to_edid,
-                                              well_known_props=_WELL_KNOWN_PROPERTIES)
+                                              well_known_props=_WELL_KNOWN_PROPERTIES,
+                                              xref=xref)
                     topic_children += info_bytes
                     child_info_count += 1
                     info_converted += 1

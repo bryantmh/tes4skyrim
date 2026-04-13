@@ -204,7 +204,11 @@ def convert_QUST(rec: dict, dialogue_quest_fids: set = None,
     if edid:
         subs += pack_string_subrecord('EDID', edid)
 
-    # VMAD — quest stage script fragments
+    # VMAD — quest stage script fragments.
+    # We generate a fragment for every stage that has journal log text OR a result
+    # script.  Text-only stages need a fragment so the objective calls
+    # (SetObjectiveDisplayed / SetObjectiveCompleted) can be injected by the
+    # script converter — without them the quest never appears in the journal.
     stage_count = get_int(rec, 'StageCount')
     stage_frags = []
     for i in range(stage_count):
@@ -212,10 +216,14 @@ def convert_QUST(rec: dict, dialogue_quest_fids: set = None,
         stage_idx = get_int(rec, f'Stage[{i}].Index')
         if log_count > 0:
             for j in range(log_count):
-                if get_str(rec, f'Stage[{i}].Log[{j}].ResultScript'):
+                has_text = bool(get_str(rec, f'Stage[{i}].Log[{j}].Text'))
+                has_script = bool(get_str(rec, f'Stage[{i}].Log[{j}].ResultScript'))
+                if has_text or has_script:
                     stage_frags.append((stage_idx, j))
         else:
-            if get_str(rec, f'Stage[{i}].ResultScript'):
+            has_text = bool(get_str(rec, f'Stage[{i}].LogEntry'))
+            has_script = bool(get_str(rec, f'Stage[{i}].ResultScript'))
+            if has_text or has_script:
                 stage_frags.append((stage_idx, 0))
     if stage_frags and edid:
         from script_convert.pipeline import build_vmad_quest_fragments
@@ -276,6 +284,28 @@ def convert_QUST(rec: dict, dialogue_quest_fids: set = None,
             subs += pack_uint8_subrecord('QSDT', stage_flags)
             if log_text:
                 subs += pack_string_subrecord('CNAM', log_text)
+
+    # Objectives (QOBJ/FNAM/NNAM) — one per stage that has journal text.
+    # In Skyrim the journal only tracks quests that have active objectives;
+    # stage CNAM alone never appears.  We mirror each stage's log text as
+    # an objective so that SetObjectiveDisplayed() calls in the stage
+    # fragments can surface the quest in the HUD and journal.
+    for i in range(stage_count):
+        stage_idx = get_int(rec, f'Stage[{i}].Index')
+        log_count = get_int(rec, f'Stage[{i}].LogCount')
+        if log_count > 0:
+            for j in range(log_count):
+                obj_text = get_str(rec, f'Stage[{i}].Log[{j}].Text')
+                if obj_text:
+                    subs += pack_subrecord('QOBJ', struct.pack('<H', stage_idx))
+                    subs += pack_uint32_subrecord('FNAM', 0)
+                    subs += pack_string_subrecord('NNAM', obj_text)
+        else:
+            obj_text = get_str(rec, f'Stage[{i}].LogEntry')
+            if obj_text:
+                subs += pack_subrecord('QOBJ', struct.pack('<H', stage_idx))
+                subs += pack_uint32_subrecord('FNAM', 0)
+                subs += pack_string_subrecord('NNAM', obj_text)
 
     # ANAM — required next alias ID (U32)
     subs += pack_uint32_subrecord('ANAM', 0)
@@ -411,10 +441,58 @@ def convert_DIAL(rec: dict, info_count: int = 0, dlbr_fid: int = 0,
     return pack_record('DIAL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
+def _build_info_script_properties(result_script: str, xref) -> dict:
+    """Build VMAD property bindings for an INFO result script.
+
+    Runs ScriptConverter on the ResultScript to discover which EditorIDs are
+    referenced as properties (quests, factions, actors, globals, etc.), then
+    looks each up in the CrossRefGraph to get its FormID and Papyrus type.
+
+    Returns {property_name: tes5_formid} for all resolved properties.
+    Player (FormID 0x14) is handled specially — always bound to 0x14.
+    The load-order offset is applied to TES4 FormIDs via get_formid_index_offset().
+    """
+    if not xref:
+        return {}
+
+    from script_convert.converter import ScriptConverter
+    from script_convert.constants import _safe_property_name
+
+    offset = get_formid_index_offset()
+
+    try:
+        conv = ScriptConverter(xref)
+        conv.convert_fragment(result_script, 'TopicInfo')
+    except Exception:
+        return {}
+
+    prop_vals = {}
+    for prop_edid, _ptype in conv._property_refs.items():
+        low = prop_edid.lower()
+        if low in ('player', 'playerref'):
+            prop_vals[prop_edid] = _PLAYER_FORMID
+            continue
+        fid_hex = xref.edid_to_formid.get(low, '')
+        if not fid_hex:
+            continue
+        try:
+            raw_fid = int(fid_hex, 16)
+        except (ValueError, TypeError):
+            continue
+        if raw_fid == 0:
+            continue
+        # Apply load-order offset (TES4 index 0x00 → TES5 index 0x01+)
+        if offset and (raw_fid >> 24) == 0x00 and (raw_fid & 0x00FFFFFF) >= 0x100:
+            raw_fid = (raw_fid & 0x00FFFFFF) | (offset << 24)
+        prop_vals[prop_edid] = raw_fid
+    return prop_vals
+
+
 def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
                  is_bark: bool = False,
                  fid_to_edid: dict = None,
-                 well_known_props: dict = None) -> bytes:
+                 well_known_props: dict = None,
+                 xref=None) -> bytes:
     """INFO — Dialog response. Major restructuring from TES4.
 
     TES5 order: EDID [VMAD] ENAM CNAM [TCLT[]] [TRDT NAM1 NAM2 NAM3]* CTDAs
@@ -437,7 +515,7 @@ def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
     result_script = get_str(rec, 'ResultScript')
     if result_script and result_script.strip() and info_fid:
         from script_convert.pipeline import build_vmad_info_fragment
-        prop_vals = _collect_scro_properties(rec, fid_to_edid) if fid_to_edid else {}
+        prop_vals = _build_info_script_properties(result_script, xref)
         if well_known_props:
             prop_vals.update(well_known_props)
         vmad = build_vmad_info_fragment(info_fid, property_values=prop_vals or None)
