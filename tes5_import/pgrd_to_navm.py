@@ -41,12 +41,12 @@ PGRI inter-cell connection (14 bytes per entry):
   offset 4  float  X of the exit point (world coords in the neighbouring cell)
   offset 8  float  Y
   offset 12 float  Z
-  Not exported by current exporter; cross-cell edge links are omitted.
+  Exported as InterCell[i].LocalPoint, InterCell[i].X/Y/Z.
 
 PGRL point-to-reference mapping (variable):
   FormID(4) + array of U32 point indices
   Maps an in-cell object reference to the pathgrid points near it.
-  Not needed for navmesh conversion.
+  Exported as RefMap[i].Reference, RefMap[i].Point[j].
 
 =============================================================================
 RESEARCH NOTES — TES5 NAVM FORMAT
@@ -163,175 +163,25 @@ NavMeshGrid divisor:
 ALGORITHM: PGRD → NAVM CONVERSION
 =============================================================================
 
-The fundamental structural mismatch:
+Approach: Delaunay triangulation over PGRD nodes + LAND height sampling
 
-  PGRD = navigation GRAPH  (nodes + explicit edge list)
-  NAVM = navigation MESH   (triangulated surface)
-
-The Bethesda navmesh format requires:
-  1. A triangulated polygon mesh covering the walkable surface
-  2. Adjacency between every pair of edge-sharing triangles
-  3. A spatial index (grid) for fast triangle lookup
-
-Since PGRD edges represent walkable corridors between points, we model each
-edge as a rectangular "corridor strip" and triangulate it:
-
-  For each undirected edge (A, B):
-    Extrude perpendicular to AB by CORRIDOR_HALF_WIDTH on each side
-    This yields a quad (4 vertices), split into 2 triangles
-    Average Z of A and B used for the quad's Z
-
-  For isolated points (degree 0) — no triangles generated.
-  For very short edges (< MIN_EDGE_LEN) — skip to avoid degenerate triangles.
-
-Vertex deduplication:
-  Corridor endpoints are snapped to a 1-unit grid and deduplicated so
-  adjacent corridors share vertices at pathgrid nodes, enabling the engine
-  to recognise them as connected.
-
-Adjacency computation:
-  After building all triangles, compute which triangles share each edge.
-  Two triangles are adjacent if they share exactly two vertices (in any order).
-  The S16 edge-link fields (Edge 0-1, 1-2, 2-0) reference the adjacent
-  triangle's index, or -1 for boundary edges.
-
-NavMeshGrid:
-  A G×G spatial grid where G = GRID_DIVISOR (4).  Each grid cell stores the
-  indices of triangles whose centroid falls within that cell.
-
-Limitations of this approach:
-  - Corridor width is uniform; real pathgrid paths may vary in width
-  - Pathgrid points on stairs/slopes produce flat quads at averaged Z
-  - No cover flags (set to 0)
-  - No cross-cell edge links (PGRI not exported by current exporter)
-  - Points with no connections produce no triangles
-  - Very complex pathgrids may produce overlapping or degenerate geometry
-
-=============================================================================
-BRAINSTORM: Getting to a fully usable navmesh
-=============================================================================
-
-The corridor-extrusion approach produces structurally valid NVNM data but is
-unusable in practice because: (a) triangle density is too low to represent
-real walkable surface, (b) corridor quads overlap at junctions producing
-degenerate geometry the engine rejects, (c) there is no height information
-(Z is averaged, ignoring slopes), (d) no water / door triangles, and
-(e) no inter-cell edge links. Below are ranked ideas for improvement using
-every data source available.
-
-DATA SOURCES AVAILABLE
-  1. PGRD  — exact node positions + full edge graph (now exported with PGRR)
-             PGRI — inter-cell exit point world positions
-             PGRL — point-to-reference mappings (links nodes to placed objects)
-  2. LAND  — VHGT height field: 33×33 vertex grid per cell, quantised but
-             accurate. VNML vertex normals give slope direction. XCLW gives
-             water height per cell.
-  3. REFR/DOOR — every placed DOOR has XTEL giving target cell + exit position.
-             These are the door triangles the engine needs for "found" nav.
-  4. REFR/STATIC — placed STATs, FURNs, CONTs define blocking geometry.
-             Their NIF collision meshes can be rasterised as exclusion zones.
-  5. CELL  — DATA.Flags bit 0 = IsInterior, bit 1 = HasWater. XCLW = water Z.
-
-IDEA 1 — LAND height field → real walkable surface (highest impact)
-  The LAND VHGT subrecord encodes a 33×33 height grid (1024 game-unit cell,
-  so ~32 units per vertex interval). Decode the delta-encoded heights into
-  absolute Z values. Triangulate the grid into 32×32×2 = 2048 triangles.
-  Mask out non-walkable triangles using:
-    a. Slope threshold: VNML normals with steep Z-component (< ~0.5) → drop
-    b. PGRD coverage: only keep triangles within CORRIDOR_HALF_WIDTH of at
-       least one pathgrid node. This gives the engine a precise, slope-aware
-       walkable surface rather than flat corridor quads.
-  VHGT decode: first byte = base height (S8, multiply by 8), subsequent bytes
-  are S8 row/column deltas. Full formula documented in xEdit VHGT handler.
-  This alone would make exterior navmeshes engine-usable.
-
-IDEA 2 — Constrained Delaunay triangulation at pathgrid nodes (CDT)
-  Instead of extruding corridors, place pathgrid nodes directly as vertices
-  and triangulate using CDT with pathgrid edges as constrained segments.
-  Add LAND grid vertices as Steiner points within PGRD coverage radius.
-  CDT guarantees: (a) no overlapping triangles, (b) edges of the pathgrid
-  appear as triangle edges (enabling clean adjacency), (c) Z is sampled from
-  LAND height field at each vertex position (bilinear interpolation).
-  Python library: scipy.spatial.Delaunay (unconstrained) is available now.
-  Full CDT would require shapely or a custom implementation, but even
-  unconstrained Delaunay over (PGRD nodes + nearby LAND grid samples) is
-  dramatically better than corridor extrusion.
-
-IDEA 3 — Export and use PGRI inter-cell connections
-  PGRI gives the world-space XYZ of the exit point in the neighbouring cell
-  for every cross-cell edge. The importer can:
-    a. Collect all PGRI entries for a cell at export time (not yet done)
-    b. At import time, after all NAVMs are built, do a second pass:
-       for each PGRI entry, find the NAVM triangle in the neighbouring cell
-       whose centroid is closest to the PGRI exit point, and add an Edge Link
-       record pointing to it.
-  This would make inter-cell navigation work. Without it, NPCs stop at cell
-  boundaries. PGRI is already defined in the TES4 format — just not exported.
-  Exporter change needed: parse PGRI subrecord (14 bytes per entry:
-    U16 local_point_idx, 2×U8 pad, float X, float Y, float Z)
-  and emit InterCell[i].LocalPoint=N, InterCell[i].X=, Y=, Z=.
-
-IDEA 4 — REFR DOOR records → door triangle links
-  Every placed DOOR REFR has XTEL data: target CELL FormID + exit position.
-  In the NAVM, door triangles (the triangle adjacent to a door) must be
-  declared in the Door Triangles array with the door reference FormID and
-  the CRC "PathingDoor" (0x748C1087 — needs verification from TES5.pas).
-  Algorithm:
-    a. For each DOOR REFR in the cell, get its world position from DATA.
-    b. Find the NAVM triangle whose centroid is nearest to the door position.
-    c. Set that triangle's flag bit 10 (0x0400 = Door) and add a Door Triangle
-       entry with the REFR FormID and CRC.
-  The export already has XTEL data on REFR. What's needed: pass the list of
-  door positions into convert_PGRD. The importer pipeline must forward the
-  cell's REFR list alongside the PGRD record.
-
-IDEA 5 — Water triangle flags from CELL.XCLW
-  If the cell has HasWater (DATA flags bit 1) and a water height (XCLW),
-  any navmesh triangle whose Z centroid is below the water height should have
-  triangle flag bit 9 (0x0200 = Water) set. This is how the engine decides
-  whether the player is in shallow water for movement speed purposes.
-  The cell's water height is already exported (XCLW.WaterHeight). Pass it
-  into convert_PGRD and set the flag on sub-water triangles.
-
-IDEA 6 — LAND-based slope exclusion + preferred path flags
-  Using LAND vertex normals (VNML): compute the surface normal at each
-  triangle centroid. If the slope angle exceeds ~46° (normal Z < 0.69),
-  mark the triangle with flag bit 4 (0x0010 = No Large Creatures) or exclude
-  it entirely. Triangles directly over pathgrid edges could be marked
-  flag bit 6 (0x0040 = Preferred) to guide NPC pathfinding along the same
-  routes Oblivion used.
-
-IDEA 7 — Static collision mesh rasterisation (exclusion zones)
-  Placed STAT/FURN/CONT references have positions + rotations. Their NIF
-  files were already converted by nif_converter. The collision meshes in those
-  NIFs define impassable volumes. Project these onto the navmesh and delete
-  or split any triangle whose centroid falls inside a collision volume.
-  This is expensive but would eliminate phantom walkable-through-wall paths.
-  A simpler approximation: treat each STAT as a cylinder with radius derived
-  from its NIF bounding sphere, and delete navmesh triangles within that radius.
-
-IDEA 8 — Post-process: merge near-duplicate vertices and remove slivers
-  After triangulation, run a vertex merge pass (snap to 1-unit grid,
-  deduplicate) and remove degenerate triangles (area < 4 square units).
-  Then rebuild adjacency. This cures the overlapping corridor quad problem
-  without changing the algorithm.
-
-IDEA 9 — PGRL node-to-reference links → ONAM population
-  PGRL maps pathgrid nodes to nearby placed references (REFR FormIDs).
-  NAVM.ONAM lists associated base-object FormIDs. By reading PGRL, we know
-  which references are spatially associated with pathgrid nodes, and we can
-  walk from REFR FormID → NAME (base object FormID) → populate ONAM.
-  This is cosmetic (ONAM is used by the CK for display), but having it
-  populated correctly makes the navmesh look right in xEdit / CK.
-
-IMPLEMENTATION ORDER (recommended):
-  Step 1: Export PGRI (cross-cell exits) — exporter change, no algo change
-  Step 2: Pass CELL water height + door REFRs into convert_PGRD — plumbing
-  Step 3: LAND height decode + bilinear Z sampling per vertex — replaces flat Z
-  Step 4: Unconstrained Delaunay at PGRD nodes (scipy) — replaces corridors
-  Step 5: Water and door triangle flags — straightforward once Step 2 done
-  Step 6: Inter-cell edge links (Phase 2 pass after all NAVMs built)
-  Step 7: Slope exclusion via LAND VNML
+1. Read PGRD points and edge graph.
+2. Decode LAND VHGT height field (33×33 grid, 128-unit spacing) and build a
+   bilinear Z-sampler for the cell.
+3. Insert PGRD nodes as seed vertices.  Add extra Steiner points along each
+   PGRD edge at ~64-unit intervals, and on a coarser grid within the
+   PGRD coverage radius, to improve mesh density.
+4. Run scipy.spatial.Delaunay on the 2D (X,Y) vertex set.
+5. Keep only triangles whose centroid is within COVERAGE_RADIUS of at least
+   one PGRD node (discards triangles far from any walkable path).
+6. Assign Z to each vertex by bilinear interpolation from the LAND height grid.
+   If no LAND data is available, fall back to the nearest PGRD point's Z.
+7. Remove degenerate triangles (area < MIN_TRI_AREA).
+8. Remove triangles whose centroid falls inside a static object's bounding box
+   from the mesh_bounds cache (exclusion zones).
+9. Compute triangle adjacency from shared edges.
+10. Flag water triangles (centroid Z < water_z).
+11. Serialise NVNM blob and build NAVM record.
 
 =============================================================================
 """
@@ -341,7 +191,7 @@ import struct
 import logging
 
 from .text_reader import get_int, get_float, get_str, get_formid
-from .writer import pack_record, pack_subrecord, pack_string_subrecord
+from .writer import pack_subrecord, pack_string_subrecord
 
 _log = logging.getLogger(__name__)
 
@@ -349,92 +199,130 @@ _log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# CRC32 of "PathingCell" (Bethesda variant, verified from Skyrim.esm)
-_PATHING_CELL_CRC = 0x8B8F1C87
+# CRC constant in the NVNM header — verified from Skyrim.esm NAVM records
+_PATHING_CELL_CRC = 0xA5E9A03C
 
 # NVNM version — always 12 for Skyrim SE
 _NVNM_VERSION = 12
 
-# Half-width of the walkable corridor generated per pathgrid edge (game units)
-# Oblivion pathgrid edges typically represent ~128 unit wide walkways
-CORRIDOR_HALF_WIDTH = 64.0
+# NavMeshGrid divisor (G): grid is G×G cells. 4 for interior, 8 for exterior.
+GRID_DIVISOR_INTERIOR = 4
+GRID_DIVISOR_EXTERIOR = 8
 
-# Minimum edge length below which we skip corridor generation (avoids degenerate tris)
-MIN_EDGE_LEN = 8.0
+# How far from any PGRD node a Delaunay triangle centroid may be to survive
+# the coverage mask.  128 units = one LAND grid vertex spacing.
+COVERAGE_RADIUS = 192.0
 
-# NavMeshGrid divisor (G): grid is G×G cells. 4 is standard for interior cells.
-GRID_DIVISOR = 4
+# Spacing between Steiner points added along PGRD edges (game units).
+EDGE_STEINER_SPACING = 64.0
 
-# Vertex snap grid (1 unit) for deduplication at corridor junctions
-VERT_SNAP = 1.0
+# Minimum triangle area to keep (avoids degenerate slivers).
+MIN_TRI_AREA = 16.0
+
+# Exclusion: triangle is blocked if its centroid is within this factor of
+# an object's half-extent in each axis (1.0 = exactly inside the AABB).
+EXCLUSION_SCALE = 0.85
+
+
+# ---------------------------------------------------------------------------
+# LAND height field decoder
+# ---------------------------------------------------------------------------
+
+# Exterior cell size in game units
+_CELL_SIZE = 4096.0
+# LAND grid is 33×33 vertices; spacing = 4096/32 = 128 units
+_LAND_VERTS = 33
+_LAND_SPACING = _CELL_SIZE / (_LAND_VERTS - 1)  # 128.0
+
+# VHGT multiplier: each delta unit = 8 game units of height
+_VHGT_UNIT = 8.0
+
+
+def _decode_vhgt(vhgt_hex: str) -> list:
+    """Decode a VHGT hex string into a 33×33 list of absolute Z values.
+
+    VHGT format:
+      bytes 0-3:  float  HeightOffset (base height for the cell, in VHGT units)
+      bytes 4-4+33*33: S8 delta array, row-major.
+        row_acc starts at HeightOffset.  col_acc starts at row_acc.
+        Each byte adds to col_acc; at end of each row, row_acc += last_col_acc.
+      bytes 4+33*33 .. end: 3 pad bytes (ignored)
+
+    Absolute height = accumulated_value * _VHGT_UNIT
+    """
+    try:
+        data = bytes.fromhex(vhgt_hex)
+    except ValueError:
+        return []
+
+    if len(data) < 4 + _LAND_VERTS * _LAND_VERTS:
+        return []
+
+    height_offset = struct.unpack_from('<f', data, 0)[0]
+    deltas = data[4:4 + _LAND_VERTS * _LAND_VERTS]
+
+    grid = []
+    row_acc = height_offset
+    idx = 0
+    for _row in range(_LAND_VERTS):
+        col_acc = row_acc
+        row_vals = []
+        for _col in range(_LAND_VERTS):
+            delta = struct.unpack_from('<b', deltas, idx)[0]
+            col_acc += delta
+            row_vals.append(col_acc * _VHGT_UNIT)
+            idx += 1
+        grid.append(row_vals)
+        # End of row: row_acc accumulates the last col_acc
+        row_acc = col_acc
+
+    return grid  # grid[row][col], row=0 is south, col=0 is west
+
+
+def _make_height_sampler(vhgt_hex: str, cell_origin_x: float, cell_origin_y: float):
+    """Return a callable f(x, y) -> z using bilinear interpolation of the LAND grid.
+
+    cell_origin_x/y: world-space coordinates of the SW corner of the cell
+    (i.e. grid_x * 4096 and grid_y * 4096 for exterior cells).
+
+    Returns None if VHGT data is missing or invalid.
+    """
+    grid = _decode_vhgt(vhgt_hex)
+    if not grid:
+        return None
+
+    def sample(wx: float, wy: float) -> float:
+        # Convert world coords to grid coords (0..32 range)
+        lx = (wx - cell_origin_x) / _LAND_SPACING
+        ly = (wy - cell_origin_y) / _LAND_SPACING
+        # Clamp to valid grid range
+        lx = max(0.0, min(_LAND_VERTS - 1 - 1e-6, lx))
+        ly = max(0.0, min(_LAND_VERTS - 1 - 1e-6, ly))
+        col0 = int(lx)
+        row0 = int(ly)
+        col1 = min(col0 + 1, _LAND_VERTS - 1)
+        row1 = min(row0 + 1, _LAND_VERTS - 1)
+        fx = lx - col0
+        fy = ly - row0
+        z00 = grid[row0][col0]
+        z10 = grid[row0][col1]
+        z01 = grid[row1][col0]
+        z11 = grid[row1][col1]
+        return (z00 * (1 - fx) * (1 - fy) +
+                z10 * fx * (1 - fy) +
+                z01 * (1 - fx) * fy +
+                z11 * fx * fy)
+
+    return sample
 
 
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
-def _snap(v: float) -> float:
-    """Snap coordinate to VERT_SNAP grid."""
-    return round(v / VERT_SNAP) * VERT_SNAP
-
-
-def _perp2d(dx: float, dy: float, length: float) -> tuple:
-    """Return unit perpendicular (rotated 90° CCW) scaled to half-width."""
-    if length < 1e-9:
-        return 0.0, 0.0
-    nx = -dy / length
-    ny = dx / length
-    return nx * CORRIDOR_HALF_WIDTH, ny * CORRIDOR_HALF_WIDTH
-
-
-def _build_corridors(points: list, adjacency: dict) -> tuple:
-    """Build triangles from pathgrid edges as corridor quads.
-
-    points: list of (x, y, z)
-    adjacency: dict { i: set of j } — undirected edges (only i<j stored)
-
-    Returns:
-        verts: list of (x, y, z) — deduplicated vertices
-        tris:  list of (v0, v1, v2) — triangle vertex indices
-    """
-    vert_map: dict = {}   # (sx, sy, sz) → index
-    verts: list = []
-    tris: list = []
-
-    def get_vert(x: float, y: float, z: float) -> int:
-        key = (_snap(x), _snap(y), _snap(z))
-        if key not in vert_map:
-            vert_map[key] = len(verts)
-            verts.append((x, y, z))
-        return vert_map[key]
-
-    for i, neighbours in adjacency.items():
-        ax, ay, az = points[i]
-        for j in neighbours:
-            bx, by, bz = points[j]
-            dx = bx - ax
-            dy = by - ay
-            edge_len = math.sqrt(dx * dx + dy * dy)
-            if edge_len < MIN_EDGE_LEN:
-                continue
-            px, py = _perp2d(dx, dy, edge_len)
-            # Average Z for the corridor (flat approximation)
-            za = az
-            zb = bz
-            # Four corners of the corridor quad:
-            #  A_left, A_right (at point A)
-            #  B_left, B_right (at point B)
-            al = get_vert(ax + px, ay + py, za)
-            ar = get_vert(ax - px, ay - py, za)
-            bl = get_vert(bx + px, by + py, zb)
-            br = get_vert(bx - px, by - py, zb)
-            # Split quad into 2 CCW triangles viewed from above:
-            #  tri0: al, bl, ar
-            #  tri1: bl, br, ar
-            tris.append((al, bl, ar))
-            tris.append((bl, br, ar))
-
-    return verts, tris
+def _tri_area_2d(ax, ay, bx, by, cx, cy) -> float:
+    """Signed area of a 2D triangle (positive = CCW)."""
+    return 0.5 * ((bx - ax) * (cy - ay) - (cx - ax) * (by - ay))
 
 
 def _compute_adjacency(tris: list) -> list:
@@ -442,11 +330,7 @@ def _compute_adjacency(tris: list) -> list:
 
     Returns a list of (e01, e12, e20) per triangle, where each value is
     the index of the adjacent triangle or -1 for a boundary edge.
-
-    An edge is shared when two triangles contain the same two vertex indices
-    (in any order).
     """
-    # Build edge → list of (tri_index, edge_slot) mapping
     edge_map: dict = {}
     for ti, (v0, v1, v2) in enumerate(tris):
         for slot, (va, vb) in enumerate([(v0, v1), (v1, v2), (v2, v0)]):
@@ -464,14 +348,7 @@ def _compute_adjacency(tris: list) -> list:
 
 def _build_navmesh_grid(verts: list, tris: list, min_x: float, min_y: float,
                         max_x: float, max_y: float, divisor: int) -> list:
-    """Build a G×G grid of triangle index lists for the NavMeshGrid.
-
-    Each cell in the grid contains the indices of triangles whose centroid
-    falls within that cell's bounding rectangle.
-
-    Returns a list of G^2 lists, row-major (Y-major), each containing S16
-    triangle indices.
-    """
+    """Build a G×G grid of triangle index lists for the NavMeshGrid."""
     g = divisor
     span_x = max_x - min_x if max_x > min_x else 1.0
     span_y = max_y - min_y if max_y > min_y else 1.0
@@ -490,35 +367,82 @@ def _build_navmesh_grid(verts: list, tris: list, min_x: float, min_y: float,
 
 
 # ---------------------------------------------------------------------------
+# Delaunay triangulation
+# ---------------------------------------------------------------------------
+
+def _delaunay_triangulate(points2d: list) -> list:
+    """Run scipy Delaunay on a list of (x, y) tuples.
+
+    Returns a list of (i, j, k) index triples (CCW winding), or [] on failure.
+    """
+    try:
+        import numpy as np
+        from scipy.spatial import Delaunay  # type: ignore
+    except ImportError:
+        return []
+
+    if len(points2d) < 3:
+        return []
+
+    pts = np.array(points2d, dtype=np.float64)
+
+    # Remove near-duplicate points to avoid degenerate Delaunay input
+    # (scipy Delaunay can hang or produce garbage with coincident points)
+    tol = 0.5
+    keep = []
+    seen_keys: set = set()
+    for i, (x, y) in enumerate(points2d):
+        key = (round(x / tol), round(y / tol))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            keep.append(i)
+
+    if len(keep) < 3:
+        return []
+
+    pts_unique = pts[keep]
+    try:
+        tri = Delaunay(pts_unique)
+    except Exception:
+        return []
+
+    # Remap indices back to the original point list
+    idx_map = {new: old for new, old in enumerate(keep)}
+    result = []
+    for simplex in tri.simplices:
+        i0 = idx_map[simplex[0]]
+        i1 = idx_map[simplex[1]]
+        i2 = idx_map[simplex[2]]
+        # Ensure CCW winding
+        ax, ay = points2d[i0]
+        bx, by = points2d[i1]
+        cx, cy = points2d[i2]
+        area = _tri_area_2d(ax, ay, bx, by, cx, cy)
+        if area < 0:
+            i1, i2 = i2, i1
+        result.append((i0, i1, i2))
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # NVNM serialiser
 # ---------------------------------------------------------------------------
 
-def _pack_nvnm(verts: list, tris: list, adj: list,
+def _pack_nvnm(verts: list, tris: list, adj: list, tri_flags: list,
                wrld_fid: int, cell_fid: int,
-               grid_x: int, grid_y: int) -> bytes:
-    """Serialise all navmesh geometry into the NVNM binary blob.
-
-    verts:    list of (x, y, z) floats
-    tris:     list of (v0, v1, v2) int indices
-    adj:      list of (e01, e12, e20) adjacency indices (-1 = none)
-    wrld_fid: parent worldspace FormID (0 for interior)
-    cell_fid: parent CELL FormID (used for interior; ignored for exterior)
-    grid_x/y: exterior grid coordinates (used only when wrld_fid != 0)
-    """
+               grid_x: int, grid_y: int,
+               is_exterior: bool) -> bytes:
+    """Serialise all navmesh geometry into the NVNM binary blob."""
     buf = bytearray()
 
-    # Version
     buf += struct.pack('<I', _NVNM_VERSION)
-
-    # Pathing Cell header: CRC + Parent Worldspace + Parent union
     buf += struct.pack('<I', _PATHING_CELL_CRC)
     buf += struct.pack('<I', wrld_fid)
 
     if wrld_fid == 0:
-        # Interior: parent is CELL FormID
         buf += struct.pack('<I', cell_fid)
     else:
-        # Exterior: parent is {GridY(S16), GridX(S16)}
         buf += struct.pack('<hh', grid_y, grid_x)
 
     # Vertices
@@ -530,16 +454,11 @@ def _pack_nvnm(verts: list, tris: list, adj: list,
     buf += struct.pack('<I', len(tris))
     for ti, (v0, v1, v2) in enumerate(tris):
         e01, e12, e20 = adj[ti]
-        # Triangle flags: set bits 0-2 when corresponding edge has an
-        # internal (same-navmesh) adjacency; external links not set here.
-        flags = 0
-        if e01 != -1:
-            flags |= 0x0001
-        if e12 != -1:
-            flags |= 0x0002
-        if e20 != -1:
-            flags |= 0x0004
-        cover = 0  # no cover data for converted navmeshes
+        # Bits 0-2 mean "edge is EXTERNAL (inter-navmesh)" — must be 0 for
+        # internal same-navmesh adjacency.  We produce no edge links, so all
+        # adjacency is internal and these bits stay clear.
+        flags = tri_flags[ti] if ti < len(tri_flags) else 0
+        cover = 0
         buf += struct.pack('<hhhhhh HH',
                            v0, v1, v2,
                            e01 if e01 != -1 else -1,
@@ -547,7 +466,7 @@ def _pack_nvnm(verts: list, tris: list, adj: list,
                            e20 if e20 != -1 else -1,
                            flags, cover)
 
-    # Edge Links — none (inter-cell links not available from export data)
+    # Edge Links — none
     buf += struct.pack('<I', 0)
 
     # Door Triangles — none
@@ -570,17 +489,15 @@ def _pack_nvnm(verts: list, tris: list, adj: list,
     span_x = max_x - min_x if max_x > min_x else 1.0
     span_y = max_y - min_y if max_y > min_y else 1.0
 
-    # NavMeshGrid Divisor + max distances + bounds
-    buf += struct.pack('<I', GRID_DIVISOR)
-    buf += struct.pack('<f', span_x / GRID_DIVISOR)
-    buf += struct.pack('<f', span_y / GRID_DIVISOR)
+    divisor = GRID_DIVISOR_EXTERIOR if is_exterior else GRID_DIVISOR_INTERIOR
+    buf += struct.pack('<I', divisor)
+    buf += struct.pack('<f', span_x / divisor)
+    buf += struct.pack('<f', span_y / divisor)
     buf += struct.pack('<ffffff', min_x, min_y, min_z, max_x, max_y, max_z)
 
-    # NavMeshGrid: GRID_DIVISOR^2 cells, each U16-count-prefixed S16 list
-    grid = _build_navmesh_grid(verts, tris, min_x, min_y, max_x, max_y,
-                               GRID_DIVISOR)
+    grid = _build_navmesh_grid(verts, tris, min_x, min_y, max_x, max_y, divisor)
     for cell_tris in grid:
-        buf += struct.pack('<H', len(cell_tris))
+        buf += struct.pack('<I', len(cell_tris))  # U32 count prefix (not U16)
         for ti in cell_tris:
             buf += struct.pack('<h', ti)
 
@@ -588,63 +505,302 @@ def _pack_nvnm(verts: list, tris: list, adj: list,
 
 
 # ---------------------------------------------------------------------------
+# Core conversion logic
+# ---------------------------------------------------------------------------
+
+def _build_vertex_set(points: list, edges: list) -> list:
+    """Build the full vertex list for Delaunay input.
+
+    Includes:
+    - All PGRD nodes
+    - Steiner points along each PGRD edge at EDGE_STEINER_SPACING intervals
+    """
+    pts2d = []
+    seen_keys: set = set()
+
+    def add(x: float, y: float):
+        key = (round(x * 2), round(y * 2))  # 0.5-unit dedup
+        if key not in seen_keys:
+            seen_keys.add(key)
+            pts2d.append((x, y))
+
+    # Seed: all PGRD nodes
+    for (x, y, *_) in points:
+        add(x, y)
+
+    # Steiner points along each edge
+    for (i, j) in edges:
+        ax, ay, _ = points[i]
+        bx, by, _ = points[j]
+        dx = bx - ax
+        dy = by - ay
+        length = math.sqrt(dx * dx + dy * dy)
+        if length < 1e-6:
+            continue
+        steps = max(1, int(length / EDGE_STEINER_SPACING))
+        for s in range(1, steps):
+            t = s / steps
+            add(ax + dx * t, ay + dy * t)
+
+    return pts2d
+
+
+def _assign_z(pts2d: list, points: list, height_sampler) -> list:
+    """Assign Z to each 2D point.
+
+    Priority:
+    1. height_sampler bilinear interpolation from LAND VHGT (if available)
+    2. Nearest PGRD node Z (fallback)
+    """
+    if height_sampler is not None:
+        return [(x, y, height_sampler(x, y)) for (x, y) in pts2d]
+
+    # Fallback: nearest PGRD node Z
+    pgrd_xy = [(p[0], p[1]) for p in points]
+    pgrd_z = [p[2] for p in points]
+    result = []
+    for (x, y) in pts2d:
+        best_d2 = 1e30
+        best_z = 0.0
+        for k, (px, py) in enumerate(pgrd_xy):
+            d2 = (x - px) ** 2 + (y - py) ** 2
+            if d2 < best_d2:
+                best_d2 = d2
+                best_z = pgrd_z[k]
+        result.append((x, y, best_z))
+    return result
+
+
+def _filter_by_coverage(verts: list, tris: list, points: list) -> list:
+    """Keep only triangles whose centroid is within COVERAGE_RADIUS of any PGRD node.
+
+    Returns the filtered triangle list.
+    """
+    pgrd_xy = [(p[0], p[1]) for p in points]
+    r2 = COVERAGE_RADIUS * COVERAGE_RADIUS
+    kept = []
+    for tri in tris:
+        v0, v1, v2 = tri
+        cx = (verts[v0][0] + verts[v1][0] + verts[v2][0]) / 3.0
+        cy = (verts[v0][1] + verts[v1][1] + verts[v2][1]) / 3.0
+        for (px, py) in pgrd_xy:
+            if (cx - px) ** 2 + (cy - py) ** 2 <= r2:
+                kept.append(tri)
+                break
+    return kept
+
+
+def _filter_by_area(verts: list, tris: list) -> list:
+    """Remove degenerate triangles (2D area < MIN_TRI_AREA)."""
+    kept = []
+    for tri in tris:
+        v0, v1, v2 = tri
+        ax, ay = verts[v0][0], verts[v0][1]
+        bx, by = verts[v1][0], verts[v1][1]
+        cx, cy = verts[v2][0], verts[v2][1]
+        area = abs(_tri_area_2d(ax, ay, bx, by, cx, cy))
+        if area >= MIN_TRI_AREA:
+            kept.append(tri)
+    return kept
+
+
+def _filter_by_exclusions(verts: list, tris: list, exclusions: list) -> list:
+    """Remove triangles whose centroid falls inside any exclusion AABB.
+
+    exclusions: list of (cx, cy, cz, hx, hy, hz) — center + half-extents in XYZ.
+    """
+    if not exclusions:
+        return tris
+    kept = []
+    for tri in tris:
+        v0, v1, v2 = tri
+        tx = (verts[v0][0] + verts[v1][0] + verts[v2][0]) / 3.0
+        ty = (verts[v0][1] + verts[v1][1] + verts[v2][1]) / 3.0
+        tz = (verts[v0][2] + verts[v1][2] + verts[v2][2]) / 3.0
+        blocked = False
+        for (ecx, ecy, ecz, ehx, ehy, ehz) in exclusions:
+            if (abs(tx - ecx) <= ehx * EXCLUSION_SCALE and
+                    abs(ty - ecy) <= ehy * EXCLUSION_SCALE and
+                    abs(tz - ecz) <= ehz * EXCLUSION_SCALE):
+                blocked = True
+                break
+        if not blocked:
+            kept.append(tri)
+    return kept
+
+
+def _prune_unused_verts(verts: list, tris: list) -> tuple:
+    """Remove vertices not referenced by any triangle; remap triangle indices."""
+    used = set()
+    for tri in tris:
+        used.update(tri)
+    old_to_new = {}
+    new_verts = []
+    for old_idx in sorted(used):
+        old_to_new[old_idx] = len(new_verts)
+        new_verts.append(verts[old_idx])
+    new_tris = [(old_to_new[v0], old_to_new[v1], old_to_new[v2]) for (v0, v1, v2) in tris]
+    return new_verts, new_tris
+
+
+def _compute_water_flags(verts: list, tris: list, water_z: float) -> list:
+    """Return per-triangle flags with Water bit (0x0200) set where centroid Z < water_z."""
+    flags = []
+    for tri in tris:
+        v0, v1, v2 = tri
+        cz = (verts[v0][2] + verts[v1][2] + verts[v2][2]) / 3.0
+        flags.append(0x0200 if cz < water_z else 0)
+    return flags
+
+
+# ---------------------------------------------------------------------------
+# Exclusion zone builder from REFR records + mesh bounds
+# ---------------------------------------------------------------------------
+
+def _build_exclusion_zones(refr_recs: list) -> list:
+    """Build AABB exclusion zones from placed STATIC/FURN/CONT references.
+
+    Uses the mesh_bounds cache loaded by the import pipeline.  Only records
+    with a known NIF model and cached bounds are used.
+
+    Returns a list of (cx, cy, cz, hx, hy, hz) tuples in world space.
+    """
+    try:
+        from .mesh_bounds import get_mesh_obnd
+    except ImportError:
+        return []
+
+    exclusions = []
+    # Only exclude large static objects — skip actors, doors, lights, etc.
+    _EXCLUDED_BASE_TYPES = {'DOOR', 'LIGH', 'ACTI', 'NPC_', 'CREA'}
+
+    for refr in refr_recs:
+        base_sig = get_str(refr, 'BaseType') or ''
+        if base_sig in _EXCLUDED_BASE_TYPES:
+            continue
+
+        model = get_str(refr, 'Model.MODL') or get_str(refr, 'MODL')
+        if not model:
+            continue
+
+        # Normalise path the same way mesh_bounds does
+        norm = model.lower().replace('\\', '/')
+        if not norm.startswith('tes4/'):
+            norm = 'tes4/' + norm.lstrip('/')
+        if not norm.endswith('.nif'):
+            norm += '.nif' if '.' not in norm.split('/')[-1] else ''
+
+        bounds = get_mesh_obnd(norm)
+        if bounds is None:
+            continue
+
+        bx0, by0, bz0, bx1, by1, bz1 = bounds
+        # Half-extents
+        hx = (bx1 - bx0) / 2.0
+        hy = (by1 - by0) / 2.0
+        hz = (bz1 - bz0) / 2.0
+        # Skip tiny objects (less than 32 units in any horizontal axis)
+        if hx < 32 or hy < 32:
+            continue
+
+        # World position from REFR DATA
+        rx = get_float(refr, 'DATA.PosX') or 0.0
+        ry = get_float(refr, 'DATA.PosY') or 0.0
+        rz = get_float(refr, 'DATA.PosZ') or 0.0
+
+        # AABB center in world space (bounds are model-local; ignore rotation for now)
+        local_cx = (bx0 + bx1) / 2.0
+        local_cy = (by0 + by1) / 2.0
+        local_cz = (bz0 + bz1) / 2.0
+
+        exclusions.append((rx + local_cx, ry + local_cy, rz + local_cz, hx, hy, hz))
+
+    return exclusions
+
+
+# ---------------------------------------------------------------------------
+# NAVM record packer
+# ---------------------------------------------------------------------------
+
+def _pack_navm_record(form_id: int, subrecords: bytes) -> bytes:
+    """Pack a NAVM record with the Compressed flag (0x00040000) set.
+
+    When the Compressed flag is set the record data layout is:
+      4 bytes  U32  uncompressed data size
+      N bytes       zlib-compressed data (deflate, level 6)
+
+    The record header dataSize field holds the compressed size + 4
+    (the 4-byte uncompressed-size prefix is counted).
+    """
+    import zlib
+    uncompressed_size = len(subrecords)
+    compressed = zlib.compress(subrecords, 6)
+    payload = struct.pack('<I', uncompressed_size) + compressed
+
+    flags = 0x00040000  # Compressed
+    sig_bytes = b'NAVM'
+    # TES5 record header: sig(4) + dataSize(4) + flags(4) + formID(4) + vcs1(4) + formVersion(2) + vcs2(2)
+    header = struct.pack('<4sIIIIHH',
+                         sig_bytes,
+                         len(payload),
+                         flags,
+                         form_id,
+                         0,   # vcs1
+                         44,  # FORM_VERSION_SSE
+                         0)   # vcs2
+    return header + payload
+
+
+# ---------------------------------------------------------------------------
 # Public converter
 # ---------------------------------------------------------------------------
 
-def convert_PGRD(rec: dict, writer=None) -> tuple:
+def convert_PGRD(rec: dict, writer=None,
+                 land_rec: dict = None,
+                 cell_rec: dict = None,
+                 refr_recs: list = None) -> tuple:
     """Convert a TES4 PGRD (PathGrid) record to a TES5 NAVM (NavMesh) record.
 
-    Uses the pathgrid point positions and per-point connection counts to
-    reconstruct a walkable navmesh.  Each undirected edge in the pathgrid is
-    extruded into a rectangular corridor strip and triangulated.  Triangle
-    adjacency is computed from shared vertices.
+    Uses Delaunay triangulation over pathgrid nodes and LAND height data to
+    produce a walkable navmesh surface.
 
     Args:
-        rec:    Parsed PGRD record dict (from text_reader).
-        writer: ESM writer (must supply alloc_formid()).
+        rec:       Parsed PGRD record dict (from text_reader).
+        writer:    ESM writer (must supply alloc_formid()).
+        land_rec:  LAND record for this cell (provides VHGT height field).
+        cell_rec:  CELL record (provides water height, interior flag, grid coords).
+        refr_recs: List of REFR records in this cell (for exclusion zones).
 
     Returns:
-        (navm_bytes, navm_formid) on success, or (None, 0) if conversion fails
-        (fewer than 3 points, writer missing, or no triangles produced).
-
-    Limitations:
-        - Corridor width is uniform (CORRIDOR_HALF_WIDTH game units).
-        - Slope / Z variation on edges is modelled as a flat quad at averaged Z.
-        - Cross-cell edge links (PGRI) are not produced because the current
-          PGRD exporter does not export them.
-        - Triangle cover flags are all zero.
+        (navm_bytes, navm_formid) on success, or (None, 0) if conversion fails.
     """
     if writer is None:
         return None, 0
 
     point_count = get_int(rec, 'DATA.PointCount')
-    if point_count < 2:
+    if point_count is None or point_count < 2:
         return None, 0
 
     # ---- Read point positions and connection degrees ----
     points = []
     degrees = []
     for i in range(point_count):
-        x = get_float(rec, f'Point[{i}].X')
-        y = get_float(rec, f'Point[{i}].Y')
-        z = get_float(rec, f'Point[{i}].Z')
-        conn = get_int(rec, f'Point[{i}].Connections')
+        x = get_float(rec, f'Point[{i}].X') or 0.0
+        y = get_float(rec, f'Point[{i}].Y') or 0.0
+        z = get_float(rec, f'Point[{i}].Z') or 0.0
+        conn = get_int(rec, f'Point[{i}].Connections') or 0
         points.append((x, y, z))
         degrees.append(conn)
 
     if len(points) < 2:
         return None, 0
 
-    # ---- Build adjacency from exported PGRR edge data ----
-    # The exporter now exports Point[i].Edge[j] = target index from PGRR.
-    # PGRR is a flat S16 array where point i owns degrees[i] consecutive entries.
-    # We read those explicitly, then fall back to nearest-neighbour only when
-    # no edge data is present (older exports or missing PGRR subrecord).
-    adjacency: dict = {i: set() for i in range(len(points))}
-
+    # ---- Build edge list from exported PGRR data ----
+    edges = []
     has_edge_data = get_int(rec, 'Point[0].Edge[0]') is not None
 
     if has_edge_data:
+        seen_edges: set = set()
         for i in range(len(points)):
             deg = degrees[i]
             for j in range(deg):
@@ -652,51 +808,122 @@ def convert_PGRD(rec: dict, writer=None) -> tuple:
                 if target is None:
                     break
                 if 0 <= target < len(points) and target != i:
-                    # Store undirected edge with canonical ordering
-                    a, b = (i, target) if i < target else (target, i)
-                    adjacency[a].add(b)
+                    key = (min(i, target), max(i, target))
+                    if key not in seen_edges:
+                        seen_edges.add(key)
+                        edges.append(key)
     else:
-        # Fallback: nearest-neighbour approximation when PGRR was not exported.
-        # Each point connects to its `degree` spatially nearest neighbours.
-        def dist2(a, b):
-            return (a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2
+        # Fallback: nearest-neighbour edges when PGRR was not exported
+        def _dist2(a, b):
+            return (a[0]-b[0])**2 + (a[1]-b[1])**2
 
+        seen_edges = set()
         for i in range(len(points)):
             deg = degrees[i]
             if deg == 0:
                 continue
-            others = sorted(
-                [(dist2(points[i], points[j]), j) for j in range(len(points)) if j != i]
-            )
+            others = sorted((_dist2(points[i], points[j]), j)
+                            for j in range(len(points)) if j != i)
             added = 0
             for _, j in others:
                 if added >= deg:
                     break
-                a, b = (i, j) if i < j else (j, i)
-                adjacency[a].add(b)
+                key = (min(i, j), max(i, j))
+                if key not in seen_edges:
+                    seen_edges.add(key)
+                    edges.append(key)
                 added += 1
 
-    # ---- Build corridor triangles ----
-    verts, tris = _build_corridors(points, adjacency)
-
-    if not tris:
-        _log.debug("PGRD FormID %s produced no triangles", rec.get('FormID', '?'))
-        return None, 0
-
-    # ---- Compute triangle adjacency ----
-    adj = _compute_adjacency(tris)
-
-    # ---- Resolve parent cell / worldspace ----
+    # ---- Resolve parent cell / worldspace info ----
     cell_fid = get_formid(rec, 'ParentCELL') or 0
     wrld_fid = get_formid(rec, 'ParentWRLD') or 0
-
-    # Exterior grid coordinates — derived from cell FormID if not available
-    # from the record (ParentWRLD gives the worldspace, ParentCELL gives grid)
     grid_x = get_int(rec, 'GridX') or 0
     grid_y = get_int(rec, 'GridY') or 0
+    is_exterior = wrld_fid != 0
+
+    # ---- Determine cell origin for LAND height sampling ----
+    # Exterior cells: origin = (grid_x * 4096, grid_y * 4096)
+    # Interior cells: no meaningful LAND; use fallback Z
+    cell_origin_x = 0.0
+    cell_origin_y = 0.0
+    if is_exterior:
+        if cell_rec is not None:
+            cg_x = get_int(cell_rec, 'XCLC.X') or grid_x
+            cg_y = get_int(cell_rec, 'XCLC.Y') or grid_y
+        else:
+            cg_x, cg_y = grid_x, grid_y
+        cell_origin_x = cg_x * _CELL_SIZE
+        cell_origin_y = cg_y * _CELL_SIZE
+
+    # ---- Build height sampler from LAND VHGT ----
+    height_sampler = None
+    if land_rec is not None and is_exterior:
+        vhgt_hex = get_str(land_rec, 'VHGT')
+        if vhgt_hex:
+            height_sampler = _make_height_sampler(vhgt_hex, cell_origin_x, cell_origin_y)
+
+    # ---- Water height ----
+    water_z = None
+    if cell_rec is not None:
+        cell_flags = get_int(cell_rec, 'DATA.Flags') or 0
+        has_water = bool(cell_flags & 0x02)
+        if has_water:
+            wz = get_float(cell_rec, 'XCLW.WaterHeight')
+            if wz is not None:
+                water_z = wz
+
+    # ---- Build 2D vertex set (PGRD nodes + Steiner points) ----
+    pts2d = _build_vertex_set(points, edges)
+
+    if len(pts2d) < 3:
+        _log.debug("PGRD FormID %s: fewer than 3 unique 2D points", rec.get('FormID', '?'))
+        return None, 0
+
+    # ---- Delaunay triangulation ----
+    tris = _delaunay_triangulate(pts2d)
+    if not tris:
+        _log.debug("PGRD FormID %s: Delaunay produced no triangles", rec.get('FormID', '?'))
+        return None, 0
+
+    # ---- Assign Z to all 2D vertices ----
+    verts3d = _assign_z(pts2d, points, height_sampler)
+
+    # ---- Coverage masking: keep only triangles near a PGRD node ----
+    tris = _filter_by_coverage(verts3d, tris, points)
+    if not tris:
+        _log.debug("PGRD FormID %s: no triangles survived coverage mask", rec.get('FormID', '?'))
+        return None, 0
+
+    # ---- Remove degenerate triangles ----
+    tris = _filter_by_area(verts3d, tris)
+    if not tris:
+        return None, 0
+
+    # ---- Static object exclusion zones ----
+    if refr_recs:
+        exclusions = _build_exclusion_zones(refr_recs)
+        if exclusions:
+            tris = _filter_by_exclusions(verts3d, tris, exclusions)
+
+    if not tris:
+        return None, 0
+
+    # ---- Prune unreferenced vertices ----
+    verts3d, tris = _prune_unused_verts(verts3d, tris)
+
+    # ---- Per-triangle flags (water) ----
+    tri_flags = []
+    if water_z is not None:
+        tri_flags = _compute_water_flags(verts3d, tris, water_z)
+    else:
+        tri_flags = [0] * len(tris)
+
+    # ---- Triangle adjacency ----
+    adj = _compute_adjacency(tris)
 
     # ---- Serialise NVNM blob ----
-    nvnm_bytes = _pack_nvnm(verts, tris, adj, wrld_fid, cell_fid, grid_x, grid_y)
+    nvnm_bytes = _pack_nvnm(verts3d, tris, adj, tri_flags,
+                             wrld_fid, cell_fid, grid_x, grid_y, is_exterior)
 
     # ---- Build NAVM record ----
     navm_fid = writer.alloc_formid()
@@ -708,6 +935,5 @@ def convert_PGRD(rec: dict, writer=None) -> tuple:
 
     subs += pack_subrecord('NVNM', nvnm_bytes)
 
-    # Record flag 0x04000000 = AutoGen (marks this as a generated navmesh)
-    navm_bytes_out = pack_record('NAVM', navm_fid, 0x04000000, subs)
+    navm_bytes_out = _pack_navm_record(navm_fid, subs)
     return navm_bytes_out, navm_fid

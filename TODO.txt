@@ -1,28 +1,22 @@
 Major Issues:
 
 	1 - Havok feels off. Items don't move like they should do a comparison with skyrim esm / collision values and create skyrim_overrides for any data that can't be gleaned from the original model / esm
-		Specifically, there seems to be too much inertia on small items, and occasionally the items will hang in the air.
+		Specifically, there seems to be too much inertia on small items, and occasionally the items will hang in the air. Animated signs will get stuck in a position after swinging a bit.
 
 	2 - Book using default cover and no text visible
 
-	3 - Animated signs such as the fighters guild sign are improperly positioned. (Doors are now correct)
-		signthecountsarms.nif
-		signfightersguild.nif
-
-	4 - Hit detection (how close my cursor needs to be to an item till the game shows its information on my hud) is way too big.
+	4 - Activation detection (how close my cursor needs to be to an item till the game shows its information on my hud) is way too big.
 		I am able to select it 3-4x the visual mesh's size always
 			Model Examples:
 				uppersilverpitcher01.nif
 				uppergobletceramic01.nif
 
-	5 - NiParticleSystem isn't correctly converted. For instances flames aren't animated. Crash is fixed
+	5 - NiParticleSystem / NiDynamicEffect isn't correctly converted. For instances flames aren't animated. Crash is fixed
 		Model Examples:
 			fireopensmall.nif
 			middlecandlestickfloor01fake.nif appears but has no flame on the candle
 
-	6 - NiDynamicEffect isn't correctly converted.
-
-	7 - Fix furniture markers. They are mispositioned vertically in the air and backwards. I should be able to sit down in chairs for example.
+	7 - Fix furniture markers. They are mispositioned and sometimes use wrong animation
 
 	8 - Remaining armor bugs:
 		Guard Helmet showing hair
@@ -67,15 +61,7 @@ Major Issues:
 			RSP+188: (bhkCharProxyController*)
 
 			bigverts w of 999.9999 seems too high
-	
-	Looping sounds fail to loop
-	should_skip_dial causes ALL dialog topics to disappear from the NPC when enabled in import_main
-	NPCs should have barter/training
-	automatically compile papyrus with the papyrus compiler
-	https://github.com/russo-2025/papyrus-compiler/releases/tag/2026.03.15 or
-	the original compiler. Both found in tools\papyrus-compiler
-	GUI needs a script conversion box
-	override gold
+	[]
 			
 	12 - Nif converter fix broken conversion
 		Files:
@@ -107,20 +93,17 @@ Major Issues:
 
 
 Minor Issues:
+		NPCs should have barter/training
 
-		Add cancel button to gui
+		override gold
 
 		Collision for trees
 
 		Better tree selection
 
-		Purple LOD
-
 		Remove unnecessary post-processing from converter
 
 	1 - Fix face and body bug
-
-	2 - Update OBND based on meshes instead of guessing
 
 	3 - Complete Quest Conversion
 
@@ -142,11 +125,6 @@ Minor Issues:
 
 
 Refactoring:
-
-	4 - Standardize and simplify the way functions are called. Update readme
-
-	7 - Should have an option to move everything back into a BSA after conversion
-
 	8 - Fix tests and make more comprehensive
 	
 	9 - Add texture_overrides folder to export
@@ -159,7 +137,7 @@ Unknown Issues (ESM or Mesh)
 
 	Grass does not appear ingame
 
-	Nirnroot sound really load and doesn't properly loop
+	Nirnroot sound really loud
 
 	Items don't sound material hits. If no such thing exists in Oblivion, map Skyrim sounds and materials
 

@@ -63,39 +63,34 @@ _FUNC_DROP = frozenset({
     # --- TES4-only functions (not in TES5 at all) ---
     40,   # GetVampire — replaced by keyword checks in TES5
     76,   # GetDisposition — disposition system removed
-    79,   # GetIsPlayerBirthsign — no birthsigns in TES5
     104,  # IsYielding — not in TES5
-    160,  # GetFriendHit — removed
+    160,  # GetFurnitureMarkerID — removed in TES5
     171,  # IsPlayerInJail — not in TES5
-    201,  # GetPCExpelled — removed
+    201,  # GetPCFactionSubmitAuthority — removed
     251,  # GetPCInfamy — no infamy system in TES5
     # --- Reused indices: TES4 function completely different from TES5 ---
-    81,   # TES4=GetArmorRating      → TES5=GetBleedoutState
-    109,  # TES4=GetWeaponSkillType  → TES5=GetLocationCleared
-    128,  # TES4=GetFatiguePercentage→ TES5=GetActorsInHigh
-    180,  # TES4=GetDetectionLevel   → TES5=SetFavorState
-    197,  # TES4=GetPCFactionSteal   → TES5=IsRunning
-    215,  # TES4=GetDoorDefaultOpen  → TES5=GetWithinPackageLocation
-    224,  # TES4=GetIsPlayerBirthsign→ TES5=IsInCombat
-    227,  # TES4=HasVampireFed       → TES5=GetTargetHeight
-    249,  # TES4=GetPCFame           → TES5=IsInDialogueWithPlayer ***CRITICAL***
-    258,  # TES4=GetUsedItemLevel    → TES5=GetNoRumors
-    259,  # TES4=GetUsedItemActivate → TES5=GetCombatState
-    264,  # TES4=GetBarterGold       → TES5=IsInInterior
-    274,  # TES4=GetArmorRatingUpperBody→TES5=GetInCurrentLocAlias
-    305,  # TES4=GetInvestmentGold   → TES5=GetKeywordItemCount
-    313,  # TES4=IsActorEvil         → TES5=GetShouldAttack
-    323,  # TES4=WhichServiceMenu    → TES5=HasShout
-    327,  # TES4=IsRidingHorse       → TES5=GetActivatorHeight
-    329,  # TES4=IsTurnArrest        → TES5=WornHasKeyword
-    339,  # TES4=IsPlayersLastRiddenHorse → TES5=IsTorchOut
-    362,  # TES4=GetPlayerHasLastRiddenHorse → TES5=GetInCurrentLocFormList
+    81,   # TES4=GetArmorRating      → TES5=IsRotating
+    109,  # TES4=GetWeaponSkillType  → TES5=IsWeaponSkillType (semantics changed)
+    180,  # TES4=GetDetectionLevel   → TES5=HasSameEditorLocAsRef
+    197,  # TES4=GetPCFactionSteal   → TES5=GetPCEnemyofFaction
+    224,  # TES4=GetIsPlayerBirthsign→ TES5=GetVATSMode
+    227,  # TES4=HasVampireFed       → TES5=GetCannibal
+    249,  # TES4=GetPCFame           → TES5=IsInDialogueWithPlayer
+    258,  # TES4=GetUsedItemLevel    → TES5=HasAssociationType
+    259,  # TES4=GetUsedItemActivate → TES5=HasFamilyRelationship
+    264,  # TES4=GetBarterGold       → TES5=HasSpell
+    274,  # TES4=GetArmorRatingUpperBody → TES5=IsSmallBump
+    305,  # TES4=GetInvestmentGold   → TES5=GetPlayerAction
+    313,  # TES4=IsActorEvil         → TES5=GetPairedAnimation
+    323,  # TES4=WhichServiceMenu    → TES5=GetCombatState
+    329,  # TES4=IsTurnArrest        → TES5=IsFleeing
+    362,  # TES4=GetPlayerHasLastRiddenHorse → TES5=HasLinkedRef
     365,  # TES4=GetPlayerInSEWorld  → TES5=IsChild
     # --- TES4 supplemental function indices ---
-    1107, # TES4=GetOBSEVersion (OBSE-only)
-    1122, # TES4=GetActorValueC (OBSE-only, remap handled separately if needed)
-    1124, # TES4=GetBaseActorValueC (OBSE-only)
-    1884, # TES4 OBSE extended
+    1107, # OBSE: IsAmmo
+    1122, # OBSE: HasSpell (could remap to TES5 264 but semantics differ)
+    1124, # OBSE: IsClassSkill
+    1884, # OBSE: GetPCTrainingSessionsUsed
 })
 
 
@@ -213,14 +208,14 @@ def _collect_all_scro_properties(rec: dict, fid_to_edid: dict) -> dict:
     return props
 
 
-def convert_QUST(rec: dict, dialogue_quest_fids: set = None,
-                 fid_to_edid: dict = None,
+def convert_QUST(rec: dict, fid_to_edid: dict = None,
                  well_known_props: dict = None) -> bytes:
     """QUST — Quest conversion.
 
     DNAM is 12 bytes: Flags(U16) Priority(U8) FormVersion(U8=0) Unknown(4) Type(U32).
-    Dialogue quests get StartGameEnabled (0x0001) + StartsEnabled (0x0010).
+    TES4 quests with SGE get StartsEnabled in TES5 so they actually run.
     HasDialogueData (0x8000) is NEVER set — Skyrim.esm never uses it.
+    Dialog topics are owned by the universal TES4Dialogue quest, not these.
     """
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -260,11 +255,9 @@ def convert_QUST(rec: dict, dialogue_quest_fids: set = None,
     priority = get_int(rec, 'DATA.Priority')
     safe_flags = flags & 0x0009  # StartGameEnabled + AllowRepeatedStages
 
-    fid = get_formid(rec, 'FormID')
-    is_dialogue_quest = dialogue_quest_fids and fid in dialogue_quest_fids
-    if is_dialogue_quest:
-        safe_flags |= 0x0001 | 0x0010  # SGE + StartsEnabled
-        priority = min(priority, 50)
+    # TES4 quests with SGE need StartsEnabled in TES5 to actually run.
+    if safe_flags & 0x0001:
+        safe_flags |= 0x0010  # StartsEnabled
 
     dnam = struct.pack('<HBBII', safe_flags, priority, 0, 0, 0)
     subs += pack_subrecord('DNAM', dnam)
@@ -313,7 +306,8 @@ def convert_QUST(rec: dict, dialogue_quest_fids: set = None,
     # ANAM — required next alias ID
     subs += pack_uint32_subrecord('ANAM', 0)
 
-    return pack_record('QUST', fid, get_int(rec, 'RecordFlags'), subs)
+    return pack_record('QUST', get_formid(rec, 'FormID'),
+                       get_int(rec, 'RecordFlags'), subs)
 
 
 # ---------------------------------------------------------------------------
@@ -575,8 +569,13 @@ def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
     if voice_type_ctdas:
         subs += voice_type_ctdas
 
-    # TES4 conditions — convert with remap/drop
+    # TES4 conditions — convert with remap/drop.
+    # GetStageDone, GetQuestRunning, GetQuestCompleted) since TES4 quests
+    # won't be running in TES5.
+    # Must fix OR chain integrity: if a dropped condition had the OR flag,
+    # the previous condition's OR semantics must be preserved.
     cc = get_int(rec, 'ConditionCount')
+    converted_ctdas = []
     for i in range(cc):
         raw_hex = rec.get(f'Condition[{i}].Raw', '')
         if raw_hex:
@@ -584,9 +583,29 @@ def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
                 raw = bytes.fromhex(raw_hex)
                 ctda = _convert_ctda(raw)
                 if ctda is not None:
-                    subs += pack_subrecord('CTDA', ctda)
+                    converted_ctdas.append(ctda)
+                else:
+                    # Condition was dropped. If it had the OR flag (bit 0),
+                    # we need to carry that OR forward to the next surviving
+                    # condition so the OR chain isn't broken.
+                    if raw[0] & 0x01 and converted_ctdas:
+                        # This dropped condition was OR'd with the previous.
+                        # Nothing to do — the previous condition already has
+                        # its own OR/AND flag. Dropping an OR participant
+                        # is equivalent to removing it from the OR group.
+                        pass
             except (ValueError, struct.error):
                 pass
+
+    # Fix OR chain: if the LAST converted CTDA has the OR flag, clear it.
+    # A trailing OR flag with nothing after it is invalid.
+    if converted_ctdas:
+        last = converted_ctdas[-1]
+        if last[0] & 0x01:
+            converted_ctdas[-1] = bytes([last[0] & ~0x01]) + last[1:]
+
+    for ctda in converted_ctdas:
+        subs += pack_subrecord('CTDA', ctda)
 
     return pack_record('INFO', get_formid(rec, 'FormID'),
                        get_int(rec, 'RecordFlags'), subs)
@@ -870,18 +889,26 @@ def build_stage_gate_ctdas(gates: list) -> bytes:
 # Pre-scan helpers
 # ---------------------------------------------------------------------------
 
-def collect_dialogue_quest_fids(by_type: dict) -> set:
-    """Collect quest FormIDs that own non-skipped DIAL topics."""
-    dialogue_quest_fids = set()
-    for rec in by_type.get('DIAL', []):
-        if should_skip_dial(rec):
-            continue
-        qcount = get_int(rec, 'QuestCount')
-        for i in range(qcount):
-            quest_fid = get_formid(rec, f'Quest[{i}]')
-            if quest_fid:
-                dialogue_quest_fids.add(quest_fid)
-    return dialogue_quest_fids
+def collect_tclt_target_fids(by_type: dict) -> set:
+    """Collect DIAL FormIDs that are TCLT choice targets.
+
+    These topics are only reachable as child options from a parent INFO's
+    choice list. They should NOT get their own DLBR (dialog branch) because
+    they are not root-level dialog options.
+    """
+    offset = get_formid_index_offset()
+    targets = set()
+    for rec in by_type.get('INFO', []):
+        cc = get_int(rec, 'ChoiceCount')
+        for i in range(cc):
+            cfid = get_formid(rec, f'Choice[{i}]')
+            if cfid:
+                targets.add(cfid)
+        # Also check the legacy single-TCLT field
+        cfid = get_formid(rec, 'TCLT.Choice')
+        if cfid:
+            targets.add(cfid)
+    return targets
 
 
 def build_npc_to_vtyp_map(by_type: dict, num_new_masters: int) -> dict:
@@ -918,16 +945,12 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                         well_known_props: dict = None) -> set:
     """Build DIAL/INFO/DLBR/DLVW group hierarchy.
 
-    This is the core of Skyrim dialogue conversion:
-    1. For each DIAL topic, determine bark vs conversation.
-    2. Non-bark topics with INFOs get a DLBR (dialog branch).
-       - Type=0 (Topic) AND Type=1 (Conversation) both get DLBR.
-       - Type=1 was previously excluded, causing Rumors to disappear.
-    3. Barks get GetIsVoiceType injection for voice routing.
-    4. Conversation topics get GetIsID injection for NPC restriction.
-    5. DLVW records are created per quest (CK UI metadata).
+    Architecture: ONE universal dialog quest (TES4Dialogue) owns ALL topics.
+    This matches Oblivion's model where all topics are in one pool and
+    conditions on individual INFOs control what actually appears.
+    The SEQ file only needs 1 entry (the universal dialog quest).
 
-    Returns: set of StartGameEnabled quest FormIDs created here.
+    Returns: set containing the universal quest FormID (for SEQ).
     """
     from .writer import pack_group
 
@@ -937,7 +960,16 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     if not dials:
         return set()
 
-    # Pre-collect skipped DIAL FormIDs and strip TCLT references
+    # --- Create universal dialog quest (SGE + StartsEnabled) ---
+    dialog_quest_fid = writer.alloc_formid()
+    q_subs = pack_string_subrecord('EDID', 'TES4Dialogue')
+    q_subs += pack_string_subrecord('FULL', 'TES4 Dialogue')
+    q_subs += pack_subrecord('DNAM', struct.pack('<HBBII', 0x0011, 0, 0, 0, 0))
+    q_subs += pack_subrecord('NEXT', b'')
+    q_subs += pack_uint32_subrecord('ANAM', 0)
+    writer.add_record('QUST', pack_record('QUST', dialog_quest_fid, 0, q_subs))
+
+    # --- Pre-collect skipped DIAL FormIDs and strip invalid TCLT refs ---
     skipped_dial_fids = set()
     for d in dials:
         if should_skip_dial(d):
@@ -983,31 +1015,14 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     print(f"  Building DIAL hierarchy ({len(dials)} topics, {len(infos)} infos, "
           f"{len(npc_to_vtyp)} NPC->VTYP mappings)...")
 
-    # Catch-all quest for orphan DIALs
-    catchall_quest_fid = writer.alloc_formid()
-    catchall_subs = pack_string_subrecord('EDID', 'TES4DialogueGeneric')
-    catchall_subs += pack_string_subrecord('FULL', 'TES4 Dialogue Generic')
-    catchall_subs += pack_subrecord('DNAM', struct.pack('<HBBII', 0x0011, 0, 0, 0, 0))
-    catchall_subs += pack_subrecord('NEXT', b'')
-    catchall_subs += pack_uint32_subrecord('ANAM', 0)
-    writer.add_record('QUST', pack_record('QUST', catchall_quest_fid, 0, catchall_subs))
-    orphan_count = 0
+    # TCLT targets — topics only reachable via parent INFO choice links
+    tclt_target_fids = collect_tclt_target_fids(by_type)
 
     # Stage gating
     topic_stage_gates = build_topic_stage_gating(by_type, offset)
-    total_stage_gated = 0
 
-    # Counters
-    dial_converted = info_converted = dlbr_created = dlvw_created = 0
-    skipped_count = total_npc_injected = 0
-    all_dial_content = b''
-    all_dlbr_records = b''
-    all_dlvw_records = b''
-
-    quest_branches: dict[int, list] = defaultdict(list)
-    quest_topics: dict[int, list] = defaultdict(list)
-
-    # Pre-build quest-level NPC map for fallback NPC restriction
+    # Pre-build quest-level NPC map for fallback NPC restriction.
+    # Uses ORIGINAL TES4 quest ownership for sibling grouping.
     quest_npc_fids: dict[int, set] = defaultdict(set)
     for dial_rec in dials:
         if should_skip_dial(dial_rec):
@@ -1022,74 +1037,84 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
             if npcs:
                 quest_npc_fids[qfid] |= npcs
 
+    # Counters
+    dial_converted = info_converted = dlbr_created = dlvw_created = 0
+    skipped_count = total_npc_injected = total_stage_gated = 0
+    tclt_suppressed = 0
+    all_dial_content = b''
+    all_dlbr_records = b''
+
+    all_branch_fids = []
+    all_topic_fids = []
+
     for dial_rec in dials:
         dial_fid = get_formid(dial_rec, 'FormID')
         dial_edid = get_str(dial_rec, 'EditorID', '')
-        quest_fid = get_formid(dial_rec, 'Quest[0]')
+        orig_quest_fid = get_formid(dial_rec, 'Quest[0]')
         dtype = get_int(dial_rec, 'DATA.Type')
 
         if should_skip_dial(dial_rec):
             skipped_count += 1
             continue
 
-        if not quest_fid:
-            quest_fid = catchall_quest_fid
-            orphan_count += 1
-
         try:
             bark = is_bark_topic(dial_edid, dtype=dtype)
             dlbr_fid = 0
             child_infos = info_by_dial.get(dial_fid, [])
 
-            # FIX: Type=1 topics now get DLBR too (not just Type=0).
-            # Previously Type=1 was treated as "chain only" → no DLBR →
-            # topics like Rumors disappeared from the dialog menu.
-            # Scene-triggered topics won't appear inappropriately because
-            # their INFOs have quest stage conditions that gate them.
-            if not bark and quest_fid and child_infos:
-                dlbr_fid = writer.alloc_formid()
-                dlbr_edid = (f'TES4_{dial_edid}_Branch' if dial_edid
-                             else f'TES4_DLBR_{dlbr_fid:08X}')
-                dlbr_bytes = make_dlbr(dlbr_fid, dlbr_edid, quest_fid,
-                                       dial_fid, top_level=True)
-                all_dlbr_records += dlbr_bytes
-                dlbr_created += 1
-                quest_branches[quest_fid].append(dlbr_fid)
+            # Non-bark topics get DLBR (unless they are TCLT targets)
+            if not bark and child_infos:
+                if dial_fid in tclt_target_fids:
+                    tclt_suppressed += 1
+                else:
+                    dlbr_fid = writer.alloc_formid()
+                    dlbr_edid = (f'TES4_{dial_edid}_Branch' if dial_edid
+                                 else f'TES4_DLBR_{dlbr_fid:08X}')
+                    dlbr_bytes = make_dlbr(dlbr_fid, dlbr_edid,
+                                           dialog_quest_fid,
+                                           dial_fid, top_level=True)
+                    all_dlbr_records += dlbr_bytes
+                    dlbr_created += 1
+                    all_branch_fids.append(dlbr_fid)
 
-            quest_topics[quest_fid].append(dial_fid)
+            all_topic_fids.append(dial_fid)
 
-            # Voice type / NPC restriction injection
+            # --- Voice type / NPC restriction injection ---
             topic_vtyps = set()
             topic_npc_fids_set = set()
 
-            if bark:
-                # Barks: collect voice types from NPC-specific siblings
-                for info_rec in child_infos:
-                    cc = get_int(info_rec, 'ConditionCount')
-                    for ci in range(cc):
-                        raw_hex = info_rec.get(f'Condition[{ci}].Raw', '')
-                        if not raw_hex or len(raw_hex) < 32:
-                            continue
-                        try:
-                            raw = bytes.fromhex(raw_hex)
-                            func_idx = struct.unpack_from('<H', raw, 8)[0]
-                            if func_idx == _FUNC_GET_IS_ID:
-                                param1 = struct.unpack_from('<I', raw, 12)[0]
-                                remapped = param1
-                                if offset and (param1 >> 24) == 0x00 and (param1 & 0x00FFFFFF) >= 0x100:
-                                    remapped = (param1 & 0x00FFFFFF) | (offset << 24)
-                                vtyp = npc_to_vtyp.get(remapped, 0) or npc_to_vtyp.get(param1, 0)
-                                if vtyp:
-                                    topic_vtyps.add(vtyp)
-                        except (ValueError, struct.error):
-                            continue
-            else:
-                # Conversation: collect NPC FormIDs for restriction
-                topic_npc_fids_set = collect_topic_npc_fids(child_infos, offset)
-                if not topic_npc_fids_set and quest_fid:
-                    topic_npc_fids_set = quest_npc_fids.get(quest_fid, set())
+            # Collect voice types from NPC-specific GetIsID in sibling INFOs
+            for info_rec in child_infos:
+                cc = get_int(info_rec, 'ConditionCount')
+                for ci in range(cc):
+                    raw_hex = info_rec.get(f'Condition[{ci}].Raw', '')
+                    if not raw_hex or len(raw_hex) < 32:
+                        continue
+                    try:
+                        raw = bytes.fromhex(raw_hex)
+                        func_idx = struct.unpack_from('<H', raw, 8)[0]
+                        if func_idx == _FUNC_GET_IS_ID:
+                            param1 = struct.unpack_from('<I', raw, 12)[0]
+                            remapped = param1
+                            if offset and (param1 >> 24) == 0x00 \
+                                    and (param1 & 0x00FFFFFF) >= 0x100:
+                                remapped = ((param1 & 0x00FFFFFF)
+                                            | (offset << 24))
+                            vtyp = (npc_to_vtyp.get(remapped, 0)
+                                    or npc_to_vtyp.get(param1, 0))
+                            if vtyp:
+                                topic_vtyps.add(vtyp)
+                    except (ValueError, struct.error):
+                        continue
 
-            # Convert child INFOs
+            if not bark:
+                topic_npc_fids_set = collect_topic_npc_fids(child_infos,
+                                                            offset)
+                if not topic_npc_fids_set and orig_quest_fid:
+                    topic_npc_fids_set = quest_npc_fids.get(
+                        orig_quest_fid, set())
+
+            # --- Convert child INFOs ---
             topic_children = b''
             child_info_count = 0
             npc_injected = stage_gated = 0
@@ -1098,15 +1123,15 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
 
             for info_rec in child_infos:
                 try:
-                    if bark:
-                        injected_ctdas = build_voice_type_ctdas_for_info(
-                            info_rec, npc_to_vtyp, topic_vtyps=topic_vtyps)
-                    elif (topic_npc_fids_set
-                          and not info_has_positive_getisid(info_rec)):
-                        injected_ctdas = build_topic_npc_ctdas(topic_npc_fids_set)
+                    voice_ctdas = build_voice_type_ctdas_for_info(
+                        info_rec, npc_to_vtyp, topic_vtyps=topic_vtyps)
+                    npc_ctdas = b''
+                    if not bark and topic_npc_fids_set \
+                            and not info_has_positive_getisid(info_rec):
+                        npc_ctdas = build_topic_npc_ctdas(
+                            topic_npc_fids_set)
                         npc_injected += 1
-                    else:
-                        injected_ctdas = b''
+                    injected_ctdas = voice_ctdas + npc_ctdas
 
                     if stage_gate_ctdas:
                         injected_ctdas = stage_gate_ctdas + injected_ctdas
@@ -1125,12 +1150,10 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
             total_npc_injected += npc_injected
             total_stage_gated += stage_gated
 
-            # Convert DIAL
-            orig_quest = get_formid(dial_rec, 'Quest[0]')
-            override_fid = quest_fid if not orig_quest else 0
+            # Convert DIAL — ALL topics owned by universal quest
             dial_bytes = convert_DIAL(dial_rec, info_count=child_info_count,
                                       dlbr_fid=dlbr_fid,
-                                      quest_fid_override=override_fid)
+                                      quest_fid_override=dialog_quest_fid)
             dial_group_content = dial_bytes
             if topic_children:
                 dial_group_content += pack_group(
@@ -1141,18 +1164,57 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         except Exception as e:
             print(f"  ERROR building DIAL group for {dial_edid or '?'}: {e}")
 
-    # Create DLVW records (one per quest with branches)
-    for qfid, branch_list in quest_branches.items():
-        try:
-            dlvw_fid = writer.alloc_formid()
-            dlvw_edid = f'TES4_DLVW_{qfid:08X}'
-            topic_list = quest_topics.get(qfid, [])
-            dlvw_bytes = make_dlvw(dlvw_fid, dlvw_edid, qfid,
-                                   branch_list, topic_list)
-            all_dlvw_records += dlvw_bytes
-            dlvw_created += 1
-        except Exception as e:
-            print(f"  ERROR creating DLVW for quest {qfid:08X}: {e}")
+    # Create ONE DLVW for the universal dialog quest
+    all_dlvw_records = b''
+    if all_branch_fids:
+        dlvw_fid = writer.alloc_formid()
+        dlvw_bytes = make_dlvw(dlvw_fid, 'TES4_DialogueView',
+                               dialog_quest_fid,
+                               all_branch_fids, all_topic_fids)
+        all_dlvw_records = dlvw_bytes
+        dlvw_created = 1
+
+    # --- Create fallback generic greetings for all voice types ---
+    # Ensures every NPC with a voice type has at least one greeting.
+    # Uses low priority (10.0) so real converted greetings take precedence.
+    all_vtyp_fids = sorted(set(npc_to_vtyp.values()))
+    if all_vtyp_fids:
+        fallback_dial_fid = writer.alloc_formid()
+        fallback_infos = b''
+        fallback_count = 0
+        for vtyp_fid in all_vtyp_fids:
+            info_fid = writer.alloc_formid()
+            f_subs = b''
+            f_subs += pack_subrecord('ENAM', struct.pack('<HH', 0, 0))
+            f_subs += pack_subrecord('CNAM', struct.pack('<B', 0))
+            # Minimal response: "Hello."
+            f_subs += pack_subrecord('TRDT', struct.pack(
+                '<IiI B3x I B3x', 0, 0, 0, 1, 0, 1))
+            f_subs += pack_string_subrecord('NAM1', 'Hello.')
+            f_subs += pack_string_subrecord('NAM2', '')
+            f_subs += pack_string_subrecord('NAM3', '')
+            # Single GetIsVoiceType condition (AND)
+            f_subs += pack_subrecord('CTDA', build_voice_type_ctda(vtyp_fid))
+            fallback_infos += pack_record('INFO', info_fid, 0, f_subs)
+            fallback_count += 1
+
+        # Build DIAL record for fallback topic
+        fb_subs = pack_string_subrecord('EDID', 'TES4FallbackHello')
+        fb_subs += pack_string_subrecord('FULL', 'Fallback Hello')
+        fb_subs += pack_subrecord('PNAM', struct.pack('<f', 10.0))
+        fb_subs += pack_formid_subrecord('QNAM', dialog_quest_fid)
+        fb_subs += pack_subrecord('DATA', struct.pack('<BBH', 0, 7, 79))
+        fb_subs += pack_subrecord('SNAM', b'HELO')
+        fb_subs += pack_uint32_subrecord('TIFC', fallback_count)
+        fb_dial = pack_record('DIAL', fallback_dial_fid, 0, fb_subs)
+
+        fb_child_group = pack_group(
+            7, struct.pack('<I', fallback_dial_fid), fallback_infos)
+        all_dial_content += fb_dial + fb_child_group
+        info_converted += fallback_count
+        dial_converted += 1
+        print(f"    Fallback greetings: {fallback_count} INFOs for "
+              f"{len(all_vtyp_fids)} voice types")
 
     # Write all groups
     if all_dial_content:
@@ -1165,8 +1227,8 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     print(f"    Topics: {dial_converted}, infos: {info_converted}, "
           f"branches: {dlbr_created}, views: {dlvw_created}, "
           f"skipped: {skipped_count}, "
-          f"orphan DIALs: {orphan_count}, "
           f"GetIsID injected: {total_npc_injected}, "
-          f"stage-gated: {total_stage_gated}")
+          f"stage-gated: {total_stage_gated}, "
+          f"TCLT-suppressed: {tclt_suppressed}")
 
-    return {catchall_quest_fid}
+    return {dialog_quest_fid}

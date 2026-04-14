@@ -24,7 +24,6 @@ from .constants import IMPORT_DISPATCH, SKIP_TYPES, TYPE_MAP
 from .dialog_converter import (
     build_dialog_groups,
     build_npc_to_vtyp_map,
-    collect_dialogue_quest_fids,
     convert_QUST,
 )
 from .record_types.dialog_misc import convert_SOUN
@@ -34,6 +33,7 @@ from .skyrim_overrides import (
     VOICE_TYPE_MAP,
     set_voice_type,
 )
+from .pgrd_to_navm import convert_PGRD
 from .record_types.world import (
     convert_ACHR,
     convert_CELL,
@@ -193,9 +193,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     _create_tes4_special_records(writer)
 
     # --- Phase 0b: Pre-scan for dialogue conversion ---
-    # 1) Collect QUSTs that own DIAL records → force dialogue flags
-    # 2) Build NPC FormID → VTYP FormID mapping for voice type injection
-    dialogue_quest_fids = collect_dialogue_quest_fids(by_type)
+    # Build NPC FormID → VTYP FormID mapping for voice type injection
     npc_to_vtyp = build_npc_to_vtyp_map(by_type, num_new_masters)
 
     # --- Phase 0b2: Build FormID → EditorID map for VMAD property resolution ---
@@ -326,25 +324,23 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                 print(f"  ERROR converting SOUN '{get_str(rec, 'EditorID', '?')}': {e}")
                 errors += 1
 
-    # --- Phase 3b: QUST (needs dialogue_quest_fids from pre-scan) ---
+    # --- Phase 3b: QUST ---
     # Track all StartGameEnabled quest FormIDs for .seq file generation
     sge_quest_fids = set()
     qust_records = by_type.get('QUST', [])
     if qust_records and 'QUST' not in all_skip:
-        print(f"  Converting {len(qust_records)} QUST records ({len(dialogue_quest_fids)} are dialogue quests)...")
+        print(f"  Converting {len(qust_records)} QUST records...")
         for rec in qust_records:
             try:
-                qust_bytes = convert_QUST(rec, dialogue_quest_fids=dialogue_quest_fids,
-                                          fid_to_edid=fid_to_edid,
+                qust_bytes = convert_QUST(rec, fid_to_edid=fid_to_edid,
                                           well_known_props=_WELL_KNOWN_PROPERTIES)
                 writer.add_record('QUST', qust_bytes)
                 converted += 1
                 # Track SGE quests for .seq generation
                 fid = get_formid(rec, 'FormID')
                 flags = get_int(rec, 'DATA.Flags')
-                is_dialogue = fid in dialogue_quest_fids
-                # Quest has SGE if: TES4 flag bit 0 set OR it's a dialogue quest (forced SGE)
-                if (flags & 0x01) or is_dialogue:
+                # Quest has SGE if TES4 flag bit 0 set (no longer force all dialogue quests)
+                if flags & 0x01:
                     sge_quest_fids.add(fid)
             except Exception as e:
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
@@ -411,6 +407,7 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter):
     refrs = by_type.get('REFR', [])
     achrs = by_type.get('ACHR', []) + by_type.get('ACRE', [])
     lands = by_type.get('LAND', [])
+    # pgrds = by_type.get('PGRD', [])
 
     # Group children by parent CELL
     refr_by_cell = defaultdict(list)
@@ -427,6 +424,11 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter):
     for rec in lands:
         cell_fid = get_formid(rec, 'ParentCELL')
         land_by_cell[cell_fid].append(rec)
+
+    # pgrd_by_cell = defaultdict(list)
+    # for rec in pgrds:
+    #     cell_fid = get_formid(rec, 'ParentCELL')
+    #     pgrd_by_cell[cell_fid].append(rec)
 
     # Interior cells = those NOT in a worldspace
     interior_cells = [c for c in cells if not get_formid(c, 'ParentWRLD')]
@@ -490,6 +492,18 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter):
                     for land_rec in land_by_cell.get(cell_fid, []):
                         temporary += convert_LAND(land_rec)
                         converted += 1
+                    # PGRD → NAVM (interior cells have no LAND so height_sampler=None)
+                    # cell_refrs = refr_by_cell.get(cell_fid, [])
+                    # for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
+                    #     navm_bytes, _ = convert_PGRD(
+                    #         pgrd_rec, writer=writer,
+                    #         land_rec=None,
+                    #         cell_rec=cell_rec,
+                    #         refr_recs=cell_refrs,
+                    #     )
+                    #     if navm_bytes:
+                    #         temporary += navm_bytes
+                    #         converted += 1
                     if temporary:
                         children_content += pack_group(9, struct.pack('<I', cell_fid), temporary)
 
@@ -518,11 +532,12 @@ def _build_world_groups(by_type: dict, writer: PluginWriter):
     refrs = by_type.get('REFR', [])
     achrs = by_type.get('ACHR', []) + by_type.get('ACRE', [])
     lands = by_type.get('LAND', [])
+    # pgrds = by_type.get('PGRD', [])
 
     if not worlds:
         return
 
-     # Index exterior cells by worldspace
+    # Index exterior cells by worldspace
     ext_cells_by_wrld = defaultdict(list)
     for cell in cells:
         wrld_fid = get_formid(cell, 'ParentWRLD')
@@ -544,6 +559,11 @@ def _build_world_groups(by_type: dict, writer: PluginWriter):
     for rec in lands:
         cell_fid = get_formid(rec, 'ParentCELL')
         land_by_cell[cell_fid].append(rec)
+
+    # pgrd_by_cell = defaultdict(list)
+    # for rec in pgrds:
+    #     cell_fid = get_formid(rec, 'ParentCELL')
+    #     pgrd_by_cell[cell_fid].append(rec)
 
     print(f"  Building WRLD hierarchy ({len(worlds)} worldspaces)...")
     converted = 0
@@ -656,9 +676,23 @@ def _build_world_groups(by_type: dict, writer: PluginWriter):
                                 if not (get_int(achr, 'RecordFlags') & 0x400):
                                     temporary += convert_ACHR(achr)
                                     converted += 1
-                            for land in land_by_cell.get(cell_fid, []):
+                            cell_lands = land_by_cell.get(cell_fid, [])
+                            for land in cell_lands:
                                 temporary += convert_LAND(land)
                                 converted += 1
+                            # PGRD → NAVM for exterior cells (pass LAND + CELL for height/water)
+                            # cell_refrs = refr_by_cell.get(cell_fid, [])
+                            # land_rec = cell_lands[0] if cell_lands else None
+                            # for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
+                            #     navm_bytes, _ = convert_PGRD(
+                            #         pgrd_rec, writer=writer,
+                            #         land_rec=land_rec,
+                            #         cell_rec=cell_rec,
+                            #         refr_recs=cell_refrs,
+                            #     )
+                            #     if navm_bytes:
+                            #         temporary += navm_bytes
+                            #         converted += 1
                             if temporary:
                                 cell_children += pack_group(9, struct.pack('<I', cell_fid), temporary)
 

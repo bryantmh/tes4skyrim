@@ -246,9 +246,10 @@ class PluginWriter:
             'RACE', 'SOUN', 'SNDR', 'MATT', 'STAT', 'ACTI', 'CONT', 'DOOR',
             'FLOR', 'FURN', 'GRAS', 'TREE', 'LIGH', 'MISC', 'KEYM', 'ARMO',
             'ARMA', 'BOOK', 'AMMO', 'ENCH', 'SPEL', 'ALCH', 'INGR', 'SCRL',
-            'SLGM', 'NPC_', 'LVLN', 'LVLI', 'LVSP', 'WTHR', 'CLMT', 'REGN',
-            'QUST', 'IDLE', 'PACK', 'EFSH', 'LSCR', 'ANIO', 'WEAP',
-            'CELL', 'WRLD', 'DIAL', 'DLBR', 'DLVW',
+            'SLGM', 'VTYP', 'OTFT', 'NPC_', 'LVLN', 'LVLI', 'LVSP', 'WTHR',
+            'CLMT', 'REGN', 'QUST', 'IDLE', 'PACK', 'EFSH', 'LSCR', 'ANIO',
+            'WEAP', 'CELL', 'WRLD', 'SMBN', 'SMQN', 'SMEN',
+            'DIAL', 'DLBR', 'DLVW',
         ]
         # Append any groups not in the canonical order
         for sig in self._top_groups:

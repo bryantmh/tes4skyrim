@@ -440,16 +440,8 @@ def convert_LAND(rec: dict) -> bytes:
                     vtxt_data += struct.pack('<HHf', vpos, 0, opacity)
                 subs += pack_subrecord('VTXT', bytes(vtxt_data))
 
-    # VTEX — array of LTEX FormIDs used by this cell's landscape layers.
-    # Required by SSELodGen for terrain LOD texture blending.
-    # Format: packed array of uint32 FormIDs (same as TES4).
-    vtex_count = get_int(rec, 'VTEXCount')
-    if vtex_count:
-        vtex_data = bytearray()
-        for vi in range(vtex_count):
-            fid = get_formid(rec, f'VTEX[{vi}]')
-            vtex_data += struct.pack('<I', fid)
-        subs += pack_subrecord('VTEX', bytes(vtex_data))
+    # VTEX is a TES4-only subrecord; TES5 LAND does not have it.
+    # Texture references are already encoded in BTXT/ATXT FormIDs above.
 
     flags = get_int(rec, 'RecordFlags')
     return pack_record('LAND', get_formid(rec, 'FormID'), flags, subs)

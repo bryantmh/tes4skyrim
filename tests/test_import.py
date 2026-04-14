@@ -825,26 +825,25 @@ class TestDialogueConversion:
         """QUST DNAM must NOT have HasDialogueData (0x8000) even for dialogue quests."""
         rec = {'FormID': '00012345', 'RecordFlags': '0',
                'EditorID': 'TestDialogueQuest', 'FULL': 'Test',
-               'DATA.Flags': '0', 'DATA.Priority': '50',
+               'DATA.Flags': '1', 'DATA.Priority': '50',
                'StageCount': '0'}
-        dialogue_quests = {0x00012345}
-        result = convert_QUST(rec, dialogue_quest_fids=dialogue_quests)
+        result = convert_QUST(rec)
         dnam_data = _find_subrecord(result, b'DNAM')
         flags = struct.unpack_from('<H', dnam_data, 0)[0]
         assert not (flags & 0x8000), "HasDialogueData must NOT be set"
         assert flags & 0x0001, "StartGameEnabled must be set"
         assert flags & 0x0010, "StartsEnabled must be set"
 
-    def test_qust_dialogue_priority_capped(self):
-        """Dialogue quest priority should be capped at 50."""
+    def test_qust_sge_preserves_priority(self):
+        """SGE quest priority is preserved (no capping)."""
         rec = {'FormID': '00012345', 'RecordFlags': '0',
                'EditorID': 'TestQ', 'FULL': 'T',
-               'DATA.Flags': '0', 'DATA.Priority': '100',
+               'DATA.Flags': '1', 'DATA.Priority': '100',
                'StageCount': '0'}
-        result = convert_QUST(rec, dialogue_quest_fids={0x00012345})
+        result = convert_QUST(rec)
         dnam_data = _find_subrecord(result, b'DNAM')
         priority = dnam_data[2]
-        assert priority <= 50, f"Priority should be capped at 50, got {priority}"
+        assert priority == 100, f"Priority should be preserved, got {priority}"
 
     def test_qust_has_next_and_anam(self):
         """QUST must have NEXT (empty marker) and ANAM subrecords."""
@@ -964,9 +963,9 @@ class TestDialogueConversion:
         func_last = struct.unpack_from('<H', ctdas[-1], 8)[0]
         assert func_last == 66
 
-    def test_info_bark_preserves_quest_conditions(self):
-        """Bark INFOs now preserve quest-dependent conditions (.seq + VMAD
-        means quests run and stages evaluate correctly)."""
+    def test_info_bark_strips_quest_conditions(self):
+        """Bark INFOs strip quest-dependent conditions (56, 58, 59, 99)
+        since TES4 quests won't be running in TES5."""
         conditions = []
         for func in [56, 58, 59, 99]:  # Quest-dependent functions
             raw = struct.pack('<B3x I HH II', 0, 0x3F800000, func, 0, 0x1234, 0)
@@ -978,10 +977,12 @@ class TestDialogueConversion:
         result = convert_INFO(rec, is_bark=True)
         ctdas = _find_all_subrecords(result, b'CTDA')
         funcs = [struct.unpack_from('<H', c, 8)[0] for c in ctdas]
-        # All functions should be preserved (56, 58, 59, 99, 77)
-        for func in [56, 58, 59, 99, 77]:
-            assert func in funcs, \
-                f"Quest func {func} should be PRESERVED on bark INFOs now"
+        # Quest functions should be STRIPPED from bark INFOs
+        for func in [56, 58, 59, 99]:
+            assert func not in funcs, \
+                f"Quest func {func} should be STRIPPED from bark INFOs"
+        # Non-quest function should be preserved
+        assert 77 in funcs, "Non-quest func 77 should be preserved"
 
     def test_info_conversation_keeps_quest_conditions(self):
         """Conversation INFOs (is_bark=False) keep quest conditions."""

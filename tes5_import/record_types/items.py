@@ -173,7 +173,6 @@ def convert_GRAS(rec: dict) -> bytes:
 def convert_TREE(rec: dict) -> bytes:
     """TREE — Tree. Convert SPT model path → tes4\speedtrees\{stem}.nif"""
     subs = _common_header_subs(rec, need_full=False, obnd_sig='TREE')
-    subs += pack_obnd(*_resolve_obnd(rec, 'TREE'))  # use resolved OBND for bounds-based LOD/world-map flags
     model = get_str(rec, 'Model.MODL')
     if model:
         # TES4 TREE MODL is like "\\DBush03.spt" — remap to our NIF output path

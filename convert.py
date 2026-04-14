@@ -57,6 +57,11 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
+# Suppress console windows when spawned from a console-less parent (pythonw/.pyw)
+_POPEN_FLAGS: dict = {}
+if sys.platform == "win32":
+    _POPEN_FLAGS["creationflags"] = subprocess.CREATE_NO_WINDOW
+
 
 def load_config(config_path: str = None) -> dict:
     path = Path(config_path) if config_path else SCRIPT_DIR / "conversion_config.json"
@@ -410,7 +415,7 @@ def phase_compile(file_name: str, config: dict, output_dir: str = None):
         ]
         try:
             r = subprocess.run(c, capture_output=True, text=True,
-                               timeout=60, cwd=str(SCRIPT_DIR))
+                               timeout=60, cwd=str(SCRIPT_DIR), **_POPEN_FLAGS)
             if r.returncode == 0 and pex_path.is_file():
                 return (True, "")
             # Extract first error line
@@ -552,7 +557,7 @@ def phase_modify_body_meshes():
     if not script.exists():
         print("ERROR: asset_convert/modify_body_meshes.py not found")
         return False
-    ret = subprocess.run([sys.executable, str(script)], cwd=str(SCRIPT_DIR))
+    ret = subprocess.run([sys.executable, str(script)], cwd=str(SCRIPT_DIR), **_POPEN_FLAGS)
     return ret.returncode == 0
 
 

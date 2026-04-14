@@ -400,28 +400,38 @@ class TestQUSTConversion:
         dnam = _find_subrecord(result, b'DNAM')
         assert dnam[3] == 0
 
-    def test_dialogue_quest_flags(self):
-        """Dialogue quests get StartGameEnabled + StartsEnabled."""
-        rec = _make_qust_rec(formid='00099999')
-        result = convert_QUST(rec, dialogue_quest_fids={0x00099999})
+    def test_sge_quest_gets_starts_enabled(self):
+        """Any quest with SGE gets StartsEnabled added."""
+        rec = _make_qust_rec(formid='00099999', flags=1)  # SGE set
+        result = convert_QUST(rec)
         dnam = _find_subrecord(result, b'DNAM')
         flags = struct.unpack_from('<H', dnam, 0)[0]
-        assert flags & 0x0001  # StartGameEnabled
-        assert flags & 0x0010  # StartsEnabled
+        assert flags & 0x0001  # StartGameEnabled preserved
+        assert flags & 0x0010  # StartsEnabled added
 
     def test_no_has_dialogue_data(self):
         """HasDialogueData (0x8000) must NEVER be set."""
-        rec = _make_qust_rec(formid='00099999')
-        result = convert_QUST(rec, dialogue_quest_fids={0x00099999})
+        rec = _make_qust_rec(formid='00099999', flags=1)
+        result = convert_QUST(rec)
         dnam = _find_subrecord(result, b'DNAM')
         flags = struct.unpack_from('<H', dnam, 0)[0]
         assert not (flags & 0x8000)
 
-    def test_dialogue_priority_capped_at_50(self):
-        rec = _make_qust_rec(priority=100, formid='00099999')
-        result = convert_QUST(rec, dialogue_quest_fids={0x00099999})
+    def test_sge_quest_preserves_priority(self):
+        """SGE quests keep their original priority."""
+        rec = _make_qust_rec(priority=100, formid='00099999', flags=1)
+        result = convert_QUST(rec)
         dnam = _find_subrecord(result, b'DNAM')
-        assert dnam[2] <= 50
+        assert dnam[2] == 100
+
+    def test_non_sge_quest_no_starts_enabled(self):
+        """Quest without SGE should NOT get SGE or StartsEnabled."""
+        rec = _make_qust_rec(formid='00099999', flags=0)
+        result = convert_QUST(rec)
+        dnam = _find_subrecord(result, b'DNAM')
+        flags = struct.unpack_from('<H', dnam, 0)[0]
+        assert not (flags & 0x0001)  # SGE not forced
+        assert not (flags & 0x0010)  # StartsEnabled not set
 
     def test_non_dialogue_quest_preserves_priority(self):
         rec = _make_qust_rec(priority=100)
@@ -1145,13 +1155,19 @@ class TestConsistency:
     def test_FUNC_DROP_complete(self):
         """_FUNC_DROP includes all known TES4-only functions plus reused indices."""
         # Known TES4-only functions must be present
-        tes4_only = {40, 76, 79, 104, 160, 171, 201, 251}
+        tes4_only = {40, 76, 104, 160, 171, 201, 251}
         assert tes4_only.issubset(_FUNC_DROP)
         # Known critical reused-index functions must be present
-        critical_reused = {249, 365, 81, 109, 128, 180, 197, 224, 227}
+        critical_reused = {249, 365, 81, 109, 180, 197, 224, 227}
         assert critical_reused.issubset(_FUNC_DROP)
-        # Total size: 8 TES4-only + 21 reused + 4 OBSE = 33
-        assert len(_FUNC_DROP) == 33
+        # Removed from DROP (same function at same index in both engines):
+        # 79=GetQuestVariable, 128=GetFatiguePercentage/GetStaminaPercentage,
+        # 215=GetDoorDefaultOpen/GetDefaultOpen, 327=IsRidingHorse/IsRidingMount,
+        # 339=IsPlayersLastRiddenHorse/IsPlayersLastRiddenMount
+        for kept in (79, 128, 215, 327, 339):
+            assert kept not in _FUNC_DROP, f"func {kept} should NOT be dropped"
+        # Total size: 7 TES4-only + 17 reused + 4 OBSE = 28
+        assert len(_FUNC_DROP) == 28
 
     def test_all_dial_skip_types_are_valid(self):
         """Skip types must be valid TES4 DATA.Type values."""
