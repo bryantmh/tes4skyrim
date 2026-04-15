@@ -226,6 +226,10 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
         subs += pack_string_subrecord('EDID', edid)
 
     # VMAD — quest stage script fragments
+    # Include every stage that has log text OR a result script, because the
+    # PSC generator (pipeline.py) emits a Fragment_Stage_NNNN_Item_N function
+    # for each such stage. The VMAD fragment list must match the PSC exactly —
+    # any stage whose function isn't registered here will never fire in-engine.
     stage_count = get_int(rec, 'StageCount')
     stage_frags = []
     for i in range(stage_count):
@@ -233,12 +237,14 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
         stage_idx = get_int(rec, f'Stage[{i}].Index')
         if log_count > 0:
             for j in range(log_count):
+                has_text = bool(get_str(rec, f'Stage[{i}].Log[{j}].Text'))
                 has_script = bool(get_str(rec, f'Stage[{i}].Log[{j}].ResultScript'))
-                if has_script:
+                if has_text or has_script:
                     stage_frags.append((stage_idx, j))
         else:
+            has_text = bool(get_str(rec, f'Stage[{i}].Text'))
             has_script = bool(get_str(rec, f'Stage[{i}].ResultScript'))
-            if has_script:
+            if has_text or has_script:
                 stage_frags.append((stage_idx, 0))
     if stage_frags and edid:
         from script_convert.pipeline import build_vmad_quest_fragments

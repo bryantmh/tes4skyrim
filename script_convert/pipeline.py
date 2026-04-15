@@ -146,7 +146,7 @@ def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph, 
                     declared.add(safe.lower())
                     out_lines.append(f'{ptype} Property {safe} Auto')
                 out_lines.append('')
-            out_lines.append('Function Fragment_0(Actor akSpeakerRef)')
+            out_lines.append('Function Fragment_0(ObjectReference akSpeakerRef)')
             out_lines.extend(body_lines)
             out_lines.append('EndFunction')
             out_lines.append('')
@@ -251,10 +251,22 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, 
             # Insert property declarations after ScriptName line
             prop_refs = conv.get_property_refs()
             if prop_refs:
+                # Merge case-variant keys: pick the most specific type (non-Quest wins)
+                merged: dict[str, tuple[str, str]] = {}  # lower_name -> (canonical_name, type)
+                for pname, ptype in sorted(prop_refs.items()):
+                    key = pname.lower()
+                    if key in merged:
+                        _, existing_type = merged[key]
+                        # Keep the more specific type; prefer original-case name
+                        if existing_type == 'Quest' and ptype != 'Quest':
+                            merged[key] = (pname, ptype)
+                        # else: keep existing (already specific, or both Quest)
+                    else:
+                        merged[key] = (pname, ptype)
                 insert_idx = 2  # After ScriptName + blank line
                 declared = set()
                 count = 0
-                for pname, ptype in sorted(prop_refs.items()):
+                for pname, ptype in sorted(merged.values(), key=lambda x: x[0].lower()):
                     safe = _safe_property_name(pname)
                     if safe.lower() in declared:
                         continue
@@ -334,10 +346,20 @@ def _add_scro_ref(conv: 'ScriptConverter', fid: str, xref: CrossRefGraph):
         return
     rtype = xref.record_type.get(fid, '')
     ptype = _record_type_to_papyrus(rtype)
-    # Prefer attached script type for cross-script property access
-    script_type = xref.get_record_script_type(edid)
-    if script_type:
-        ptype = script_type
+    # Prefer attached SCPT-derived type for cross-script property accesses
+    # (e.g. Arena.AnnounceWin). For QUST records, start with 'Quest' base type —
+    # the specific type will be promoted later if the script body uses dot-notation
+    # variable access (e.g. Arena.AnnounceWin) which the converter handles.
+    if rtype != 'QUST':
+        script_type = xref.get_record_script_type(edid)
+        if script_type:
+            ptype = script_type
+    # Don't downgrade a type already upgraded by _convert_ref (e.g. Quest → TES4_FGQuestTrack).
+    # _preload_stage_scro_refs is called once per stage and would otherwise reset types
+    # that were promoted when a prior stage's result script accessed cross-script vars.
+    cur = conv._property_refs.get(edid, '')
+    if cur and cur != 'Quest' and ptype == 'Quest':
+        return
     conv._property_refs[edid] = ptype
 
 
@@ -431,10 +453,10 @@ def build_vmad_info_fragment(info_formid: str, property_values: dict = None) -> 
     #   For each set bit in Flags, one fragment: S8 Unknown + LenString ScriptName + LenString FragmentName
     # Fragment count is implicit (popcount of Flags bits 0-1).
     buf += struct.pack('<b', 2)        # Extra bind data version = 2
-    buf += struct.pack('<B', 0x01)     # Flags = OnBegin (1 fragment)
+    buf += struct.pack('<B', 0x02)     # Flags = OnEnd (1 fragment)
     buf += _pack_wstring(script_name)  # FileName
 
-    # Fragment 0 — OnBegin
+    # Fragment 0 — OnEnd
     buf += struct.pack('<b', 0)        # Unknown
     buf += _pack_wstring(script_name)  # ScriptName
     buf += _pack_wstring('Fragment_0') # FragmentName

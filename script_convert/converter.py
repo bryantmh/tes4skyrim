@@ -581,7 +581,17 @@ class ScriptConverter:
                     declared.add(pname.lower())
             if self._property_refs:
                 prop_lines.append('; --- External references (auto-linked via VMAD) ---')
+                # Merge case-variant keys: prefer the most specific type (non-Quest wins)
+                _merged: dict[str, tuple[str, str]] = {}
                 for pname, ptype in sorted(self._property_refs.items()):
+                    key = pname.lower()
+                    if key in _merged:
+                        _, ex_type = _merged[key]
+                        if ex_type == 'Quest' and ptype != 'Quest':
+                            _merged[key] = (pname, ptype)
+                    else:
+                        _merged[key] = (pname, ptype)
+                for pname, ptype in sorted(_merged.values(), key=lambda x: x[0].lower()):
                     safe_name = _safe_property_name(pname)
                     if safe_name.lower() in declared:
                         continue  # skip if already declared as a variable
@@ -1034,12 +1044,15 @@ class ScriptConverter:
             # Can't assign to Self/GetTargetActor()/akSpeakerRef in Papyrus
             if target in ('Self', 'GetTargetActor()', 'akSpeakerRef'):
                 return f';{target} = {value}  ;cannot assign to Self in Papyrus'
+            # akSpeakerRef is ObjectReference; cast when assigned to Actor-typed fields
+            if extends == 'TopicInfo' and value == 'akSpeakerRef':
+                value = '(akSpeakerRef as Actor)'
             # In AME/TopicInfo scripts, Self refers to the target actor, not the script
             if value == 'Self':
                 if extends == 'ActiveMagicEffect':
                     value = 'GetTargetActor()'
                 elif extends == 'TopicInfo':
-                    value = 'akSpeakerRef'
+                    value = '(akSpeakerRef as Actor)'
             if value.lstrip().startswith(';TODO:'):
                 # Use None for ref-typed targets, 0 for others
                 tgt_low_todo = target.lower().split('.')[-1]
@@ -1344,6 +1357,9 @@ class ScriptConverter:
         if assign_m:
             target = self._convert_ref(assign_m.group(1), extends)
             value = self._convert_expression(assign_m.group(2), extends)
+            # akSpeakerRef is ObjectReference; cross-script fields expecting Actor need a cast
+            if extends == 'TopicInfo' and value == 'akSpeakerRef':
+                value = '(akSpeakerRef as Actor)'
             return f'{target} = {value}'
 
         return self._convert_function_call(stripped, extends)
@@ -1869,8 +1885,12 @@ class ScriptConverter:
             return f'{ref_part}.{_safe_property_name(parts[1])}'
 
         if self.xref.is_quest_ref(name):
-            self._property_refs[name] = self.xref.get_quest_script_type(name)
-            return name
+            # Use the canonical EditorID (original case from export) as the key
+            # so this matches what _add_scro_ref stores (both use formid_to_edid).
+            canon_fid = self.xref.edid_to_formid.get(low, '')
+            canon_edid = self.xref.formid_to_edid.get(canon_fid, name) if canon_fid else name
+            self._property_refs[canon_edid] = self.xref.get_quest_script_type(name)
+            return canon_edid
 
         # Local variables take precedence over game form EditorIDs (name collision)
         if low in self._local_vars or low in self._var_types:
@@ -1879,6 +1899,8 @@ class ScriptConverter:
         # Check if this is any known EditorID from the export
         fid = self.xref.edid_to_formid.get(low, '')
         if fid:
+            # Use canonical EditorID (original case) as key to match _add_scro_ref
+            canon_edid = self.xref.formid_to_edid.get(fid, name)
             rtype = self.xref.record_type.get(fid, '')
             ptype = _record_type_to_papyrus(rtype)
             # Prefer attached script type over generic Actor/ObjectReference
@@ -1886,7 +1908,7 @@ class ScriptConverter:
             script_type = self.xref.get_record_script_type(name)
             if script_type:
                 ptype = script_type
-            safe = _safe_property_name(name)
+            safe = _safe_property_name(canon_edid)
             # Don't downgrade a more specific type (e.g., Actor from
             # _resolve_self_ref) back to a generic one (ObjectReference).
             cur = self._property_refs.get(safe, '')
@@ -1983,18 +2005,22 @@ class ScriptConverter:
                 if extends == 'ActiveMagicEffect':
                     return 'GetTargetActor()'
                 if extends == 'TopicInfo':
-                    return 'akSpeakerRef'
+                    return '(akSpeakerRef as Actor)'
             # Upgrade property type to Actor when used with actor-only functions
+            canon = self._convert_ref(ref_name, extends)
             if actor_func:
-                cur = self._property_refs.get(ref_name, '')
+                # akSpeakerRef is a fixed ObjectReference parameter; cast it rather than upgrading
+                if canon == 'akSpeakerRef':
+                    return '(akSpeakerRef as Actor)'
+                cur = self._property_refs.get(canon, '')
                 if cur in ('', 'ObjectReference'):
-                    self._property_refs[ref_name] = 'Actor'
-            return self._convert_ref(ref_name, extends)
+                    self._property_refs[canon] = 'Actor'
+            return canon
         if actor_func:
             if extends == 'ActiveMagicEffect':
                 return 'GetTargetActor()'
             if extends == 'TopicInfo':
-                return 'akSpeakerRef'
+                return '(akSpeakerRef as Actor)'
         return 'Self'
 
     def _emit_function(self, ref_name: Optional[str], func_name: str,
@@ -2086,8 +2112,15 @@ class ScriptConverter:
         # StartQuest/StopQuest/GetQuestRunning/CompleteQuest/IsQuestCompleted: arg is quest
         if fname_low in ('startquest', 'stopquest', 'getquestrunning', 'completequest', 'isquestcompleted'):
             quest_ref = args_str.strip() if args_str else 'quest'
-            quest_type = self.xref.get_quest_script_type(quest_ref) if self.xref.is_quest_ref(quest_ref) else 'Quest'
-            self._property_refs[quest_ref] = quest_type
+            existing = self._property_refs.get(quest_ref, self._property_refs.get(quest_ref.lower(), ''))
+            if not existing:
+                # No type known yet — use Quest (base type sufficient for
+                # Start/Stop/IsRunning). TES4 SCPT-derived names from xref
+                # (e.g. TES4_FGC01Script) would be wrong here because in TES5
+                # the quest's VMAD script is TES4_QF_<EditorID>, not the SCPT name.
+                self._property_refs[quest_ref] = 'Quest'
+            # else: keep existing type — if already TES4_XxxScript (extends Quest),
+            # .Start()/.Stop() still work and cross-script var access still works.
             papyrus = {'startquest': 'Start', 'stopquest': 'Stop',
                         'getquestrunning': 'IsRunning',
                         'completequest': 'CompleteQuest',
@@ -2279,7 +2312,7 @@ class ScriptConverter:
                     val = int(parts[-1])
                     if val <= -100:
                         target = self._convert_expression(parts[0], extends)
-                        tgt_key = parts[0].strip()
+                        tgt_key = target  # already canonical from _convert_expression
                         cur = self._property_refs.get(tgt_key, '')
                         if cur in ('', 'ObjectReference'):
                             self._property_refs[tgt_key] = 'Actor'
@@ -2621,7 +2654,7 @@ class ScriptConverter:
                 return f'{ref}.IsDead()'
             arg = self._convert_expression(args_str.strip(), extends) if args_str else 'Self'
             if args_str:
-                self._property_refs[args_str.strip()] = 'Actor'
+                self._property_refs[arg] = 'Actor'  # arg is already canonical
             return f'{arg}.IsDead()'
 
         # ResetHealth: TES4 ResetHealth -> RestoreActorValue("Health", 9999)
@@ -2780,7 +2813,7 @@ class ScriptConverter:
             if len(parts) >= 2:
                 target = self._convert_expression(parts[0], extends)
                 val = 'true' if parts[1].strip() in ('1', 'true') else 'false'
-                self._property_refs[parts[0]] = 'Actor'
+                self._property_refs[target] = 'Actor'  # target is already canonical
                 return f'({target} as Actor).GetActorBase().SetEssential({val})'
             elif ref_name:
                 ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
@@ -2935,17 +2968,21 @@ class ScriptConverter:
                 # Cast ObjectReference refs to Actor for truly actor-only functions
                 # (skip ObjectReference-shared methods like PlaceAtMe, AddItem, etc.)
                 if is_actor_func and fname_low not in _OBJREF_SHARED_FUNCTIONS:
-                    cur = self._property_refs.get(ref_name, '')
-                    if cur == 'ObjectReference':
-                        ref = f'({ref} as Actor)'
-                    elif cur in ('',):
-                        self._property_refs[ref_name] = 'Actor'
+                    # akSpeakerRef is a fixed ObjectReference parameter in TopicInfo scripts
+                    if ref == 'akSpeakerRef':
+                        ref = f'(akSpeakerRef as Actor)'
+                    else:
+                        cur = self._property_refs.get(ref, '')
+                        if cur == 'ObjectReference':
+                            ref = f'({ref} as Actor)'
+                        elif cur in ('',):
+                            self._property_refs[ref] = 'Actor'
                 result = f'{ref}.{papyrus_func}({args})'
             else:
                 # No ref — infer implicit target based on script context
                 if needs_self and fname_low in _ACTOR_ONLY_FUNCTIONS:
                     if extends == 'TopicInfo':
-                        result = f'akSpeakerRef.{papyrus_func}({args})'
+                        result = f'(akSpeakerRef as Actor).{papyrus_func}({args})'
                     elif extends == 'ActiveMagicEffect':
                         result = f'GetTargetActor().{papyrus_func}({args})'
                     elif extends not in ('Actor',):
@@ -2961,15 +2998,18 @@ class ScriptConverter:
         if ref_name:
             ref = self._convert_ref(ref_name, extends)
             if fname_low in _ACTOR_ONLY_FUNCTIONS:
-                cur = self._property_refs.get(ref_name, '')
-                if cur == 'ObjectReference':
-                    ref = f'({ref} as Actor)'
-                elif cur in ('',):
-                    self._property_refs[ref_name] = 'Actor'
+                if ref == 'akSpeakerRef':
+                    ref = f'(akSpeakerRef as Actor)'
+                else:
+                    cur = self._property_refs.get(ref, '')
+                    if cur == 'ObjectReference':
+                        ref = f'({ref} as Actor)'
+                    elif cur in ('',):
+                        self._property_refs[ref] = 'Actor'
             return f'{ref}.{func_name}({args})  ;TODO: Verify'
         if fname_low in _ACTOR_ONLY_FUNCTIONS:
             if extends == 'TopicInfo':
-                return f'akSpeakerRef.{func_name}({args})  ;TODO: Verify'
+                return f'(akSpeakerRef as Actor).{func_name}({args})  ;TODO: Verify'
             if extends == 'ActiveMagicEffect':
                 return f'GetTargetActor().{func_name}({args})  ;TODO: Verify'
         return f'{func_name}({args})  ;TODO: Verify'
