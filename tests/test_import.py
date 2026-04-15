@@ -963,9 +963,10 @@ class TestDialogueConversion:
         func_last = struct.unpack_from('<H', ctdas[-1], 8)[0]
         assert func_last == 66
 
-    def test_info_bark_strips_quest_conditions(self):
-        """Bark INFOs strip quest-dependent conditions (56, 58, 59, 99)
-        since TES4 quests won't be running in TES5."""
+    def test_info_bark_preserves_quest_conditions(self):
+        """Bark INFOs preserve quest-dependent conditions (56, 58, 59, 99).
+        Per-quest ownership handles gating; conditions are kept intact
+        until Papyrus scripts can progress quest stages."""
         conditions = []
         for func in [56, 58, 59, 99]:  # Quest-dependent functions
             raw = struct.pack('<B3x I HH II', 0, 0x3F800000, func, 0, 0x1234, 0)
@@ -977,12 +978,10 @@ class TestDialogueConversion:
         result = convert_INFO(rec, is_bark=True)
         ctdas = _find_all_subrecords(result, b'CTDA')
         funcs = [struct.unpack_from('<H', c, 8)[0] for c in ctdas]
-        # Quest functions should be STRIPPED from bark INFOs
-        for func in [56, 58, 59, 99]:
-            assert func not in funcs, \
-                f"Quest func {func} should be STRIPPED from bark INFOs"
-        # Non-quest function should be preserved
-        assert 77 in funcs, "Non-quest func 77 should be preserved"
+        # ALL conditions should be preserved (not stripped)
+        for func in [56, 58, 59, 99, 77]:
+            assert func in funcs, \
+                f"Func {func} should be preserved on bark INFOs"
 
     def test_info_conversation_keeps_quest_conditions(self):
         """Conversation INFOs (is_bark=False) keep quest conditions."""

@@ -52,7 +52,7 @@ FUNC_GETISID = 72
 FUNC_GETINFACTION = 73
 FUNC_GETFACTIONRANK = 74
 FUNC_GETRANDOMPERC = 77
-FUNC_GETISPLAYERBIRTHSIGN = 79
+FUNC_GETQUESTVARIABLE = 79  # GetQuestVariable (NOT GetIsPlayerBirthsign)
 FUNC_GETLEVEL = 80
 FUNC_GETDEAD = 84
 FUNC_GETQUESTCOMPLETED = 99
@@ -468,13 +468,13 @@ class ConditionEvaluator:
             elif func == FUNC_GETISVOICETYPE:
                 return self._compare(0.0, comp, cv)
             elif func == FUNC_GETISRACE:
-                return None  # Player race unknown
+                return self._compare(0.0, comp, cv)  # Player race unknown, assume no match
             elif func == FUNC_GETPCISRACE:
-                return None  # Player race unknown
-            elif func == FUNC_GETISPLAYERBIRTHSIGN:
-                return self._compare(0.0, comp, cv)  # No birthsigns in TES5
+                return self._compare(0.0, comp, cv)  # Player race unknown, assume no match
+            elif func == FUNC_GETQUESTVARIABLE:
+                return self._compare(0.0, comp, cv)  # Quest vars never set
             elif func == FUNC_GETRANDOMPERC:
-                return None  # Random
+                return self._compare(50.0, comp, cv)  # Mid-range
             elif func == FUNC_GETINFACTION:
                 return self._compare(0.0, comp, cv)  # Player not in NPC factions
             elif func == FUNC_GETFACTIONRANK:
@@ -484,25 +484,27 @@ class ConditionEvaluator:
             elif func == FUNC_GETLEVEL:
                 return self._compare(1.0, comp, cv)  # Player level 1 at start
             elif func == FUNC_GETISSEX:
-                return None  # Player sex unknown
+                return self._compare(0.0, comp, cv)  # Assume male player (sex=0)
             # For quest functions, subject doesn't matter
             elif func in (FUNC_GETSTAGE, FUNC_GETQUESTRUNNING,
                           FUNC_GETQUESTCOMPLETED, FUNC_GETSTAGEDONE):
                 subject = self.npc  # dummy, quest funcs don't use subject
             else:
-                return None  # Unknown player condition
+                return self._compare(0.0, comp, cv)  # Unknown player condition → 0
         elif cond.run_on == 2:  # Reference
             # Look up the reference NPC
             ref_npc = self.db.npcs.get(cond.reference)
             if ref_npc:
                 subject = ref_npc
             else:
-                return None
+                # Reference NPC not found — assume condition fails
+                return self._compare(0.0, comp, cv)
         else:
-            return None
+            # Unknown RunOn type — assume condition fails
+            return self._compare(0.0, comp, cv)
 
         if subject is None:
-            return None
+            return self._compare(0.0, comp, cv)  # No subject → assume fails
 
         # Evaluate based on function
         if func == FUNC_GETISID:
@@ -533,17 +535,21 @@ class ConditionEvaluator:
             completed = self.game_state.get(f'completed_{p1}', False)
             actual = 1.0 if completed else 0.0
         elif func == FUNC_GETSTAGEDONE:
-            done = self.game_state.get(f'stagedone_{p1}_{int(cv)}', False)
+            # GetStageDone(quest, stage): param1=quest, param2=stage number
+            done = self.game_state.get(f'stagedone_{p1}_{p2}', False)
             actual = 1.0 if done else 0.0
+        elif func == FUNC_GETQUESTVARIABLE:
+            actual = 0.0  # Quest variables never set (TES4 scripts don't run)
+        elif func == 53:  # GetScriptVariable
+            actual = 0.0  # Script variables never set
         elif func == FUNC_GETTALKEDTOPC:
             actual = 0.0  # NPC hasn't talked to player yet
         elif func == FUNC_GETDISEASE:
             actual = 0.0  # No disease
         elif func == FUNC_GETISCLASS:
-            return None  # Would need class data
+            actual = 0.0  # Class data not loaded — assume no match
         elif func == FUNC_ISGUARD:
-            # Check if NPC is a guard — in TES4 this was ACBS bit 20, in TES5 
-            # it's faction-based. Check both ACBS flag and guard faction names.
+            # Check if NPC is a guard — ACBS flag or guard faction name
             is_guard = subject.is_guard
             if not is_guard:
                 for fid in subject.factions:
@@ -557,21 +563,44 @@ class ConditionEvaluator:
         elif func == FUNC_ISTRESPASSING:
             actual = 0.0  # Not trespassing
         elif func == FUNC_ISINMYOWNEDCELL:
-            actual = 0.0  # Can't determine
+            actual = 0.0  # Not in owned cell at game start
         elif func == FUNC_GETISCURRENTPACKAGE:
-            actual = 0.0  # No current package
+            actual = 0.0  # Not in any specific package at dialog time
         elif func == FUNC_GETISPLAYABLERACE:
             actual = 1.0  # Most NPCs are playable races
         elif func == FUNC_ISSNEAKING:
             actual = 0.0  # Not sneaking
         elif func == FUNC_GETINCELL:
-            return None  # Can't evaluate location
+            # Game start: NPCs ARE in their starting cells.
+            # We don't have ACHR placement data, so assume True
+            # (the condition was authored to match the NPC's home cell).
+            actual = 1.0
         elif func == FUNC_GETCURRENTAIPROCEDURE:
-            return None  # Can't determine
+            actual = 0.0  # Default procedure (wander/stand)
         elif func == FUNC_GETRANDOMPERC:
-            return None  # Random
+            actual = 50.0  # Mid-range; most thresholds will pass
+        elif func == FUNC_GETACTORVALUE:
+            actual = 50.0  # Default actor value (mid-range)
+        elif func == 47:  # GetItemCount
+            actual = 0.0  # No items at game start
+        elif func == 48:  # GetGold
+            actual = 0.0  # No gold tracked
+        elif func == 84:  # GetDeadCount
+            actual = 0.0  # Nobody dead at game start
+        elif func == 182:  # GetEquipped
+            actual = 0.0  # Can't determine equipment
+        elif func == 14:  # GetActorValue
+            actual = 50.0  # Default mid-range
+        elif func == 192:  # GetIgnoreCrime
+            actual = 0.0
+        elif func == 193:  # GetPCExpelled
+            actual = 0.0  # Not expelled from any faction
+        elif func == 300:  # IsInInterior
+            actual = 1.0  # Most NPCs start indoors
+        elif func == 310:  # GetInWorldspace
+            actual = 0.0  # Can't determine worldspace
         else:
-            return None  # Unknown function
+            actual = 0.0  # Unknown function — assume 0 (safe default)
 
         return self._compare(actual, comp, cv)
 
@@ -584,7 +613,7 @@ class ConditionEvaluator:
         if comp == 5: return actual <= expected
         return None
 
-    def evaluate_conditions(self, conditions: list[Condition]) -> bool | None:
+    def evaluate_conditions(self, conditions: list[Condition]) -> bool:
         """
         Evaluate a list of conditions using Skyrim's AND/OR logic.
 
@@ -593,7 +622,8 @@ class ConditionEvaluator:
         - An OR group passes if ANY condition in it passes
         - All groups are ANDed together
 
-        Returns True (all pass), False (definitely fails), None (unknown)
+        Returns True (all pass) or False (fails).
+        All conditions are evaluated deterministically — no unknowns.
         """
         if not conditions:
             return True  # No conditions = always passes
@@ -609,28 +639,17 @@ class ConditionEvaluator:
         if current_group:
             groups.append(current_group)
 
-        # Evaluate each group
-        has_unknown = False
+        # Evaluate each group — ALL must pass
         for group in groups:
-            group_result = self._evaluate_or_group(group)
-            if group_result is False:
-                return False  # Definitely fails
-            elif group_result is None:
-                has_unknown = True
+            if not self._evaluate_or_group(group):
+                return False
+        return True
 
-        return None if has_unknown else True
-
-    def _evaluate_or_group(self, group: list[Condition]) -> bool | None:
-        """Evaluate an OR group. Any True → True, all False → False, else Unknown."""
-        has_unknown = False
+    def _evaluate_or_group(self, group: list[Condition]) -> bool:
+        """Evaluate an OR group. Any True → True, all False → False."""
         for cond in group:
-            result = self.evaluate_condition(cond)
-            if result is True:
+            if self.evaluate_condition(cond):
                 return True
-            elif result is None:
-                has_unknown = True
-        if has_unknown:
-            return None
         return False
 
 
@@ -679,21 +698,21 @@ class DialogSimulator:
 
                 for info in infos:
                     cond_result = evaluator.evaluate_conditions(info.conditions)
-                    if cond_result is not False:  # True or Unknown
-                        matching_infos.append((info, cond_result))
+                    if cond_result:  # True only (deterministic)
+                        matching_infos.append(info)
 
                 if not matching_infos:
                     continue
 
                 # Classify by category
                 if dial.snam_code in ('HELO', 'GREE'):
-                    for info, certainty in matching_infos:
-                        result['greetings'].append((info, dial, certainty))
+                    for info in matching_infos:
+                        result['greetings'].append((info, dial))
                 elif dial.category in (3, 5, 7):
                     # Bark
                     bark_type = dial.snam_code or CAT_NAMES.get(dial.category, '?')
-                    for info, certainty in matching_infos:
-                        result['barks'][bark_type].append((info, dial, certainty))
+                    for info in matching_infos:
+                        result['barks'][bark_type].append((info, dial))
                 elif dial.category == 0 and dial.has_branch:
                     # Conversation topic
                     result['topics'].append((dial, matching_infos, quest))
@@ -721,27 +740,25 @@ class DialogSimulator:
 
         # Greetings
         print(f"\n--- Greetings ({len(dialog['greetings'])}) ---")
-        for info, dial, certainty in dialog['greetings'][:10]:
-            cert_str = 'OK' if certainty is True else '?'
+        if not dialog['greetings']:
+            print("  *** BUG: No greetings found! NPC will show fallback 'Hello.' ***")
+        for info, dial in dialog['greetings'][:10]:
             resp = info.responses[0][0][:80] if info.responses else '(no response text)'
             quest = self.db.qusts.get(dial.quest_fid)
             qname = quest.editor_id if quest else '?'
-            print(f"  [{cert_str}] [{info.form_id:08X}] (Quest: {qname}) {resp}")
+            print(f"  [PASS] [{info.form_id:08X}] (Quest: {qname}) {resp}")
             if verbose:
                 self._print_conditions(info.conditions, '      ')
 
         # Topics
         print(f"\n--- Conversation Topics ({len(dialog['topics'])}) ---")
         for dial, matching_infos, quest in dialog['topics']:
-            cert_counts = sum(1 for _, c in matching_infos if c is True)
-            unk_counts = sum(1 for _, c in matching_infos if c is None)
             print(f"  [{dial.form_id:08X}] \"{dial.full_name}\" (Quest: {quest.editor_id})"
-                  f" {cert_counts}OK {unk_counts}? of {len(matching_infos)} INFOs")
+                  f" {len(matching_infos)} passing INFOs")
             if verbose:
-                for info, certainty in matching_infos[:5]:
-                    cert_str = 'OK' if certainty is True else '??'
+                for info in matching_infos[:5]:
                     resp = info.responses[0][0][:60] if info.responses else '(no text)'
-                    print(f"    [{cert_str}] [{info.form_id:08X}] {resp}")
+                    print(f"    [PASS] [{info.form_id:08X}] {resp}")
                     self._print_conditions(info.conditions, '        ')
 
         # Barks
@@ -749,10 +766,9 @@ class DialogSimulator:
         for bark_type, bark_infos in sorted(dialog['barks'].items()):
             print(f"  {bark_type}: {len(bark_infos)} INFOs")
             if verbose:
-                for info, dial, certainty in bark_infos[:3]:
-                    cert_str = 'OK' if certainty is True else '?'
+                for info, dial in bark_infos[:3]:
                     resp = info.responses[0][0][:60] if info.responses else '(no text)'
-                    print(f"    [{cert_str}] [{info.form_id:08X}] {resp}")
+                    print(f"    [PASS] [{info.form_id:08X}] {resp}")
 
         return dialog
 
@@ -823,17 +839,11 @@ def detect_collisions(db: DialogDB, max_npcs: int = 0):
         dialog = sim.get_npc_dialog(npc)
 
         for dial, matching_infos, quest in dialog['topics']:
-            # Check if any INFO definitely passes
-            definite = [info for info, cert in matching_infos if cert is True]
-            unknown = [info for info, cert in matching_infos if cert is None]
-
-            if definite:
-                topic_npc_map[dial.form_id].append((npc, 'definite'))
-            elif unknown:
-                topic_npc_map[dial.form_id].append((npc, 'possible'))
+            if matching_infos:
+                topic_npc_map[dial.form_id].append(npc)
 
             # Check if this topic has GetIsID for a DIFFERENT NPC
-            for info, cert in matching_infos:
+            for info in matching_infos:
                 for cond in info.conditions:
                     if cond.func_idx == FUNC_GETISID and cond.run_on == 0:
                         if cond.param1 != npc.form_id:
@@ -855,16 +865,15 @@ def detect_collisions(db: DialogDB, max_npcs: int = 0):
         dial = db.dials.get(dial_fid)
         if not dial:
             continue
-        definite_npcs = [npc for npc, cert in npc_entries if cert == 'definite']
-        if len(definite_npcs) > 1:
+        if len(npc_entries) > 1:
             collision_count += 1
             if collision_count <= 50:
                 quest = db.qusts.get(dial.quest_fid)
                 qname = quest.editor_id if quest else '?'
                 print(f"  [{dial_fid:08X}] \"{dial.full_name}\" (Quest: {qname})")
-                print(f"    Definite: {', '.join(n.editor_id for n in definite_npcs[:10])}")
+                print(f"    NPCs: {', '.join(n.editor_id for n in npc_entries[:10])}")
 
-    print(f"\nTotal topic collisions (same topic, multiple NPCs definite): {collision_count}")
+    print(f"\nTotal topic collisions (same topic, multiple NPCs): {collision_count}")
 
     # Report per-NPC problems
     if npc_problems:
@@ -991,7 +1000,7 @@ def batch_test(db: DialogDB, max_npcs: int = 0, verbose: bool = False):
             # If ALL matching INFOs have GetIsID for OTHER NPCs, this is wrong
             all_other_npc = True
             has_getisid = False
-            for info, cert in matching_infos:
+            for info in matching_infos:
                 info_targets_other = False
                 info_has_getisid = False
                 for cond in info.conditions:

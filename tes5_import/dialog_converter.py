@@ -39,6 +39,7 @@ from .record_types.common import (
 _FUNC_GET_IS_ID = 72           # GetIsID(npc_formid)
 _FUNC_GET_IS_VOICE_TYPE = 426  # GetIsVoiceType(vtyp_formid)
 _FUNC_GET_STAGE = 58           # GetStage(quest_formid)
+_FUNC_GET_QUEST_RUNNING = 56   # GetQuestRunning(quest_formid)
 
 # TES4 function indices that are REUSED in TES5 for a DIFFERENT function.
 # These MUST be remapped or dropped, otherwise they evaluate as the wrong
@@ -664,6 +665,11 @@ def build_getisid_ctda(npc_fid: int, is_or: bool = False) -> bytes:
     return _build_ctda_equal_1(_FUNC_GET_IS_ID, npc_fid, is_or)
 
 
+def build_quest_running_ctda(quest_fid: int) -> bytes:
+    """Build a GetQuestRunning(quest_fid) == 1.0 CTDA (AND, no OR)."""
+    return _build_ctda_equal_1(_FUNC_GET_QUEST_RUNNING, quest_fid)
+
+
 def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict,
                                      topic_vtyps: set = None) -> bytes:
     """Build packed GetIsVoiceType CTDA subrecords for an INFO.
@@ -969,6 +975,22 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     q_subs += pack_uint32_subrecord('ANAM', 0)
     writer.add_record('QUST', pack_record('QUST', dialog_quest_fid, 0, q_subs))
 
+    # --- Build SGE quest set for quest-running gating ---
+    # In Oblivion, dialog only shows when its QSTI quest is running.
+    # Since we put everything on a universal always-running quest, we must
+    # explicitly add GetQuestRunning(orig_quest) conditions to INFOs whose
+    # original quest is NOT StartGameEnabled (SGE). This restores the
+    # implicit gating that Oblivion's QSTI system provided.
+    sge_quest_fids: set[int] = set()
+    for qust_rec in by_type.get('QUST', []):
+        qflags = get_int(qust_rec, 'DATA.Flags')
+        if qflags & 0x01:  # StartGameEnabled
+            qfid = get_formid(qust_rec, 'FormID')
+            if qfid:
+                sge_quest_fids.add(qfid)
+    print(f"  SGE quests: {len(sge_quest_fids)} (non-SGE will get "
+          f"GetQuestRunning gating)")
+
     # --- Pre-collect skipped DIAL FormIDs and strip invalid TCLT refs ---
     skipped_dial_fids = set()
     for d in dials:
@@ -1040,6 +1062,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     # Counters
     dial_converted = info_converted = dlbr_created = dlvw_created = 0
     skipped_count = total_npc_injected = total_stage_gated = 0
+    total_quest_gated = 0
     tclt_suppressed = 0
     all_dial_content = b''
     all_dlbr_records = b''
@@ -1117,9 +1140,22 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
             # --- Convert child INFOs ---
             topic_children = b''
             child_info_count = 0
-            npc_injected = stage_gated = 0
+            npc_injected = stage_gated = quest_gated = 0
             stage_gate_ctdas = build_stage_gate_ctdas(
                 topic_stage_gates.get(dial_fid, []))
+
+            # Build quest-running gate if original quest is NOT SGE.
+            # This restores Oblivion's implicit QSTI gating.
+            quest_running_ctda = b''
+            if orig_quest_fid and orig_quest_fid not in sge_quest_fids:
+                # Remap the quest FormID to output space
+                remapped_qfid = orig_quest_fid
+                if offset and (orig_quest_fid >> 24) == 0x00 \
+                        and (orig_quest_fid & 0x00FFFFFF) >= 0x100:
+                    remapped_qfid = ((orig_quest_fid & 0x00FFFFFF)
+                                     | (offset << 24))
+                quest_running_ctda = pack_subrecord(
+                    'CTDA', build_quest_running_ctda(remapped_qfid))
 
             for info_rec in child_infos:
                 try:
@@ -1137,6 +1173,11 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                         injected_ctdas = stage_gate_ctdas + injected_ctdas
                         stage_gated += 1
 
+                    # Quest-running gate goes FIRST (outermost AND)
+                    if quest_running_ctda:
+                        injected_ctdas = quest_running_ctda + injected_ctdas
+                        quest_gated += 1
+
                     info_bytes = convert_INFO(
                         info_rec, voice_type_ctdas=injected_ctdas,
                         is_bark=bark, fid_to_edid=fid_to_edid,
@@ -1149,6 +1190,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
 
             total_npc_injected += npc_injected
             total_stage_gated += stage_gated
+            total_quest_gated += quest_gated
 
             # Convert DIAL — ALL topics owned by universal quest
             dial_bytes = convert_DIAL(dial_rec, info_count=child_info_count,
@@ -1229,6 +1271,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
           f"skipped: {skipped_count}, "
           f"GetIsID injected: {total_npc_injected}, "
           f"stage-gated: {total_stage_gated}, "
+          f"quest-gated: {total_quest_gated}, "
           f"TCLT-suppressed: {tclt_suppressed}")
 
     return {dialog_quest_fid}
