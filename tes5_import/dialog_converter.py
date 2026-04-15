@@ -64,6 +64,8 @@ _FUNC_DROP = frozenset({
     # --- TES4-only functions (not in TES5 at all) ---
     40,   # GetVampire — replaced by keyword checks in TES5
     76,   # GetDisposition — disposition system removed
+    # --- Reused index: TES4=GetTalkedToPC, TES5=GetActorValue ---
+    50,   # TES4=GetTalkedToPC → TES5=GetActorValue (zero param1 survives as junk)
     104,  # IsYielding — not in TES5
     160,  # GetFurnitureMarkerID — removed in TES5
     171,  # IsPlayerInJail — not in TES5
@@ -523,13 +525,20 @@ def convert_INFO(rec: dict, voice_type_ctdas: bytes = b'',
     # VMAD
     info_fid = get_str(rec, 'FormID') or ''
     result_script = get_str(rec, 'ResultScript')
-    if result_script and result_script.strip() and info_fid:
-        from script_convert.pipeline import build_vmad_info_fragment
-        prop_vals = _build_info_script_properties(result_script, xref)
-        if well_known_props:
-            prop_vals.update(well_known_props)
-        vmad = build_vmad_info_fragment(info_fid, property_values=prop_vals or None)
-        subs += pack_subrecord('VMAD', vmad)
+    if result_script and info_fid:
+        # Strip comment-only lines — TES4 ";Choice" directives are metadata,
+        # not executable code. Generating VMAD for them creates references to
+        # non-existent .pex scripts which can block TCLT processing.
+        code_lines = [ln for ln in result_script.strip().splitlines()
+                      if ln.strip() and not ln.strip().startswith(';')]
+        if code_lines:
+            from script_convert.pipeline import build_vmad_info_fragment
+            prop_vals = _build_info_script_properties(result_script, xref)
+            if well_known_props:
+                prop_vals.update(well_known_props)
+            vmad = build_vmad_info_fragment(info_fid,
+                                           property_values=prop_vals or None)
+            subs += pack_subrecord('VMAD', vmad)
 
     # ENAM
     tes4_flags = get_int(rec, 'DATA.Flags')
@@ -676,6 +685,7 @@ def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict,
 
     NPC-specific INFOs: map GetIsID NPC → voice type.
     Generic INFOs: use topic_vtyps from NPC-specific siblings.
+    Bark INFOs without GetIsID: skip voice type (generic barks match any NPC).
     """
     offset = get_formid_index_offset()
 
@@ -696,6 +706,9 @@ def build_voice_type_ctdas_for_info(rec: dict, npc_to_vtyp: dict,
             continue
 
     if not npc_fids:
+        # For greeting/goodbye barks (HELO/GBYE): use topic_vtyps collected
+        # from NPC-specific siblings, same as conversation topics.
+        # For other barks (combat, flee, etc.): skip — they're generic.
         vtyp_fids = topic_vtyps if topic_vtyps else set()
         if not vtyp_fids:
             return b''
@@ -1085,20 +1098,24 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
             dlbr_fid = 0
             child_infos = info_by_dial.get(dial_fid, [])
 
-            # Non-bark topics get DLBR (unless they are TCLT targets)
+            # Non-bark topics get DLBR.
+            # TCLT targets also get DLBR (vanilla Skyrim requires BNAM
+            # on TCLT target DIALs) but with top_level=False so they
+            # don't appear in the top-level topic menu.
             if not bark and child_infos:
-                if dial_fid in tclt_target_fids:
+                is_tclt_target = dial_fid in tclt_target_fids
+                if is_tclt_target:
                     tclt_suppressed += 1
-                else:
-                    dlbr_fid = writer.alloc_formid()
-                    dlbr_edid = (f'TES4_{dial_edid}_Branch' if dial_edid
-                                 else f'TES4_DLBR_{dlbr_fid:08X}')
-                    dlbr_bytes = make_dlbr(dlbr_fid, dlbr_edid,
-                                           dialog_quest_fid,
-                                           dial_fid, top_level=True)
-                    all_dlbr_records += dlbr_bytes
-                    dlbr_created += 1
-                    all_branch_fids.append(dlbr_fid)
+                dlbr_fid = writer.alloc_formid()
+                dlbr_edid = (f'TES4_{dial_edid}_Branch' if dial_edid
+                             else f'TES4_DLBR_{dlbr_fid:08X}')
+                dlbr_bytes = make_dlbr(dlbr_fid, dlbr_edid,
+                                       dialog_quest_fid,
+                                       dial_fid,
+                                       top_level=not is_tclt_target)
+                all_dlbr_records += dlbr_bytes
+                dlbr_created += 1
+                all_branch_fids.append(dlbr_fid)
 
             all_topic_fids.append(dial_fid)
 

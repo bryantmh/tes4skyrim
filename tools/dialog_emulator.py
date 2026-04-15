@@ -121,6 +121,9 @@ class NPCData:
     factions: dict       # faction_fid → rank
     level: int
     name: str            # FULL
+    cell_fids: set = field(default_factory=set)  # CELL FormIDs from ACHR placement
+    wrld_fids: set = field(default_factory=set)  # WRLD FormIDs from ACHR placement
+    is_interior: bool = False                     # True if any placement is in an interior cell
 
 
 @dataclass
@@ -191,6 +194,8 @@ class DialogDB:
         self.dlbrs: dict[int, DLBRData] = {}
         self.vtyps: dict[int, str] = {}  # fid → editor_id
         self.facts: dict[int, str] = {}  # fid → editor_id
+        self.cells: dict[int, str] = {}  # cell_fid → editor_id
+        self.npc_cells: dict[int, set[int]] = defaultdict(set)  # npc_fid → {cell_fids}
 
         # Indexes built after loading
         self.infos_by_dial: dict[int, list[INFOData]] = defaultdict(list)
@@ -206,6 +211,10 @@ class DialogDB:
         print(f"Loading {filepath}...", file=sys.stderr)
         header, records, is_localized = read_tes5_file(filepath)
         print(f"  {len(records)} records, localized={is_localized}", file=sys.stderr)
+
+        # Temporary: collect CELL data and ACHR placements for NPC→cell mapping
+        cell_data: dict[int, tuple[str, int, int]] = {}  # cell_fid → (edid, flags, parent_wrld)
+        achr_placements: list[tuple[int, int, int]] = []  # (npc_base_fid, cell_fid, wrld_fid)
 
         for rec in records:
             if rec.type == 'NPC_':
@@ -226,10 +235,42 @@ class DialogDB:
                 edid_sub = _get(rec, 'EDID')
                 if edid_sub:
                     self.facts[rec.form_id] = _zstring(edid_sub.data)
+            elif rec.type == 'CELL':
+                edid_sub = _get(rec, 'EDID')
+                edid = _zstring(edid_sub.data) if edid_sub else ''
+                # DATA flags: bit 0 = Is Interior Cell
+                data_sub = _get(rec, 'DATA')
+                cell_flags = struct.unpack_from('<H', data_sub.data, 0)[0] if data_sub and len(data_sub.data) >= 2 else 0
+                cell_data[rec.form_id] = (edid, cell_flags, rec.parent_wrld)
+                if edid:
+                    self.cells[rec.form_id] = edid
+            elif rec.type == 'ACHR':
+                # NAME = base NPC FormID
+                name_sub = _get(rec, 'NAME')
+                if name_sub and len(name_sub.data) >= 4:
+                    base_fid = struct.unpack_from('<I', name_sub.data, 0)[0]
+                    achr_placements.append((base_fid, rec.parent_cell, rec.parent_wrld))
 
-        print(f"  Loaded: {len(self.npcs)} NPCs, {len(self.dials)} DIALs, "
-              f"{len(self.infos)} INFOs, {len(self.qusts)} QUSTs, "
-              f"{len(self.dlbrs)} DLBRs, {len(self.vtyps)} VTYPs", file=sys.stderr)
+        # Build NPC→cell/worldspace mapping from ACHR placements
+        for base_fid, cell_fid, wrld_fid in achr_placements:
+            if base_fid in self.npcs:
+                npc = self.npcs[base_fid]
+                if cell_fid:
+                    npc.cell_fids.add(cell_fid)
+                    self.npc_cells[base_fid].add(cell_fid)
+                if wrld_fid:
+                    npc.wrld_fids.add(wrld_fid)
+                # Check if placed in interior cell
+                if cell_fid in cell_data:
+                    _, cell_flags, _ = cell_data[cell_fid]
+                    if cell_flags & 0x0001:  # Is Interior Cell
+                        npc.is_interior = True
+
+        placed_npcs = sum(1 for n in self.npcs.values() if n.cell_fids)
+        print(f"  Loaded: {len(self.npcs)} NPCs ({placed_npcs} with cell placement), "
+              f"{len(self.dials)} DIALs, {len(self.infos)} INFOs, {len(self.qusts)} QUSTs, "
+              f"{len(self.dlbrs)} DLBRs, {len(self.vtyps)} VTYPs, {len(cell_data)} CELLs, "
+              f"{len(achr_placements)} ACHRs", file=sys.stderr)
 
     def _parse_npc(self, rec: TES5Record, is_localized: bool):
         edid_sub = _get(rec, 'EDID')
@@ -239,8 +280,8 @@ class DialogDB:
         vtck_sub = _get(rec, 'VTCK')
         vtck = struct.unpack_from('<I', vtck_sub.data, 0)[0] if vtck_sub and len(vtck_sub.data) >= 4 else 0
 
-        # Race
-        race_sub = _get(rec, 'RACE')
+        # Race (TES5 uses RNAM, not RACE)
+        race_sub = _get(rec, 'RNAM')
         race = struct.unpack_from('<I', race_sub.data, 0)[0] if race_sub and len(race_sub.data) >= 4 else 0
 
         # ACBS flags (female = bit 0, guard = bit 5)
@@ -571,10 +612,8 @@ class ConditionEvaluator:
         elif func == FUNC_ISSNEAKING:
             actual = 0.0  # Not sneaking
         elif func == FUNC_GETINCELL:
-            # Game start: NPCs ARE in their starting cells.
-            # We don't have ACHR placement data, so assume True
-            # (the condition was authored to match the NPC's home cell).
-            actual = 1.0
+            # Check if the NPC is placed in the specified cell
+            actual = 1.0 if p1 in subject.cell_fids else 0.0
         elif func == FUNC_GETCURRENTAIPROCEDURE:
             actual = 0.0  # Default procedure (wander/stand)
         elif func == FUNC_GETRANDOMPERC:
@@ -596,9 +635,9 @@ class ConditionEvaluator:
         elif func == 193:  # GetPCExpelled
             actual = 0.0  # Not expelled from any faction
         elif func == 300:  # IsInInterior
-            actual = 1.0  # Most NPCs start indoors
+            actual = 1.0 if subject.is_interior else 0.0
         elif func == 310:  # GetInWorldspace
-            actual = 0.0  # Can't determine worldspace
+            actual = 1.0 if p1 in subject.wrld_fids else 0.0
         else:
             actual = 0.0  # Unknown function — assume 0 (safe default)
 
@@ -719,7 +758,7 @@ class DialogSimulator:
 
         return result
 
-    def walk_npc(self, npc_edid: str, verbose: bool = True):
+    def walk_npc(self, npc_edid: str, verbose: bool = True, all_conditions: bool = False):
         """Walk through all dialog for an NPC by EditorID."""
         npc = self.db.npc_by_edid.get(npc_edid)
         if not npc:
@@ -735,6 +774,11 @@ class DialogSimulator:
         for fid, rank in npc.factions.items():
             fname = self.db.facts.get(fid, f'{fid:08X}')
             print(f"  {fname}: rank {rank}")
+        # Cell placement
+        if npc.cell_fids:
+            cell_names = [self.db.cells.get(c, f'{c:08X}') for c in npc.cell_fids]
+            print(f"Cells: {', '.join(cell_names)}")
+            print(f"Interior: {npc.is_interior}")
 
         dialog = self.get_npc_dialog(npc)
 
@@ -742,38 +786,63 @@ class DialogSimulator:
         print(f"\n--- Greetings ({len(dialog['greetings'])}) ---")
         if not dialog['greetings']:
             print("  *** BUG: No greetings found! NPC will show fallback 'Hello.' ***")
-        for info, dial in dialog['greetings'][:10]:
+        for info, dial in dialog['greetings']:
             resp = info.responses[0][0][:80] if info.responses else '(no response text)'
-            quest = self.db.qusts.get(dial.quest_fid)
-            qname = quest.editor_id if quest else '?'
-            print(f"  [PASS] [{info.form_id:08X}] (Quest: {qname}) {resp}")
-            if verbose:
+            print(f"  [PASS] [{info.form_id:08X}] (DIAL: {dial.editor_id}/{dial.form_id:08X}) {resp}")
+            if verbose or all_conditions:
                 self._print_conditions(info.conditions, '      ')
+
+        if all_conditions:
+            # Show failing INFOs that reference this NPC by FormID (GetIsID) in any greeting DIAL
+            passing_info_fids = {info.form_id for info, _ in dialog['greetings']}
+            seen_dial_fids = {dial.form_id for _, dial in dialog['greetings']}
+            for dial_fid in seen_dial_fids:
+                dial = self.db.dials.get(dial_fid)
+                if not dial:
+                    continue
+                for info in self.db.infos_by_dial.get(dial_fid, []):
+                    if info.form_id in passing_info_fids:
+                        continue
+                    # Only show INFOs that reference this NPC directly
+                    references_npc = any(
+                        c.func_idx == FUNC_GETISID and c.param1 == npc.form_id
+                        for c in info.conditions
+                    )
+                    if not references_npc:
+                        continue
+                    resp = info.responses[0][0][:80] if info.responses else '(no response text)'
+                    print(f"  [FAIL] [{info.form_id:08X}] (DIAL: {dial.editor_id}/{dial.form_id:08X}) {resp}")
+                    self._print_conditions(info.conditions, '      ')
 
         # Topics
         print(f"\n--- Conversation Topics ({len(dialog['topics'])}) ---")
         for dial, matching_infos, quest in dialog['topics']:
-            print(f"  [{dial.form_id:08X}] \"{dial.full_name}\" (Quest: {quest.editor_id})"
-                  f" {len(matching_infos)} passing INFOs")
-            if verbose:
-                for info in matching_infos[:5]:
+            all_infos = self.db.infos_by_dial.get(dial.form_id, [])
+            print(f"  [{dial.form_id:08X}] \"{dial.full_name}\" (DIAL: {dial.editor_id})"
+                  f" {len(matching_infos)}/{len(all_infos)} passing INFOs")
+            if verbose or all_conditions:
+                passing_fids = {i.form_id for i in matching_infos}
+                shown = all_infos if all_conditions else matching_infos
+                for info in shown[:10]:
+                    passed = info.form_id in passing_fids
                     resp = info.responses[0][0][:60] if info.responses else '(no text)'
-                    print(f"    [PASS] [{info.form_id:08X}] {resp}")
+                    tag = 'PASS' if passed else 'FAIL'
+                    print(f"    [{tag}] [{info.form_id:08X}] {resp}")
                     self._print_conditions(info.conditions, '        ')
 
         # Barks
         print(f"\n--- Barks ---")
         for bark_type, bark_infos in sorted(dialog['barks'].items()):
             print(f"  {bark_type}: {len(bark_infos)} INFOs")
-            if verbose:
+            if verbose or all_conditions:
                 for info, dial in bark_infos[:3]:
                     resp = info.responses[0][0][:60] if info.responses else '(no text)'
                     print(f"    [PASS] [{info.form_id:08X}] {resp}")
 
         return dialog
 
-    def _print_conditions(self, conditions: list[Condition], indent: str = '  '):
-        """Print conditions in readable form."""
+    def _fmt_condition(self, c: Condition) -> str:
+        """Format a single condition as a string."""
         FUNC_NAMES = {
             72: 'GetIsID', 426: 'GetIsVoiceType', 58: 'GetStage', 59: 'GetStageDone',
             56: 'GetQuestRunning', 99: 'GetQuestCompleted', 71: 'GetInCell',
@@ -782,32 +851,62 @@ class DialogSimulator:
             67: 'GetCurrentAIProcedure',
         }
         COMP_NAMES = {0: '==', 1: '!=', 2: '>', 3: '>=', 4: '<', 5: '<='}
+        fname = FUNC_NAMES.get(c.func_idx, f'Func{c.func_idx}')
+        comp = COMP_NAMES.get(c.comp_type, '?')
+        run_str = f' [RunOn={c.run_on}]' if c.run_on != 0 else ''
+
+        p1_fid = f'{c.param1:08X}'
+        p1_str = p1_fid
+        if c.func_idx == FUNC_GETISID:
+            npc = self.db.npcs.get(c.param1)
+            if npc:
+                p1_str = f'{npc.editor_id}/{p1_fid}'
+        elif c.func_idx == FUNC_GETISVOICETYPE:
+            vtyp = self.db.vtyps.get(c.param1)
+            if vtyp:
+                p1_str = f'{vtyp}/{p1_fid}'
+        elif c.func_idx in (FUNC_GETSTAGE, FUNC_GETQUESTRUNNING, FUNC_GETQUESTCOMPLETED, FUNC_GETSTAGEDONE):
+            qust = self.db.qusts.get(c.param1)
+            if qust:
+                p1_str = f'{qust.editor_id}/{p1_fid}'
+        elif c.func_idx in (FUNC_GETINFACTION, FUNC_GETFACTIONRANK):
+            fact = self.db.facts.get(c.param1)
+            if fact:
+                p1_str = f'{fact}/{p1_fid}'
+        elif c.func_idx == FUNC_GETINCELL:
+            cell = self.db.cells.get(c.param1)
+            if cell:
+                p1_str = f'{cell}/{p1_fid}'
+
+        return f'{fname}({p1_str}) {comp} {c.comp_value}{run_str}'
+
+    def _print_conditions(self, conditions: list[Condition], indent: str = '  '):
+        """Print conditions grouped by AND/OR logic.
+
+        Each AND group is printed as one line. Single-condition groups are
+        printed plain. Multi-condition OR groups are printed as:
+            AND( cond1 OR cond2 OR cond3 )
+        """
+        if not conditions:
+            return
+
+        # Split into AND groups (a group ends on the first non-OR condition)
+        groups: list[list[Condition]] = []
+        current: list[Condition] = []
         for c in conditions:
-            fname = FUNC_NAMES.get(c.func_idx, f'Func{c.func_idx}')
-            comp = COMP_NAMES.get(c.comp_type, '?')
-            or_str = ' OR' if c.is_or else ''
-            run_str = f' [RunOn={c.run_on}]' if c.run_on != 0 else ''
+            current.append(c)
+            if not c.is_or:
+                groups.append(current)
+                current = []
+        if current:
+            groups.append(current)
 
-            # Resolve param names where possible
-            p1_str = f'{c.param1:08X}'
-            if c.func_idx == FUNC_GETISID:
-                npc = self.db.npcs.get(c.param1)
-                if npc:
-                    p1_str = npc.editor_id
-            elif c.func_idx == FUNC_GETISVOICETYPE:
-                vtyp = self.db.vtyps.get(c.param1)
-                if vtyp:
-                    p1_str = vtyp
-            elif c.func_idx in (FUNC_GETSTAGE, FUNC_GETQUESTRUNNING, FUNC_GETQUESTCOMPLETED, FUNC_GETSTAGEDONE):
-                qust = self.db.qusts.get(c.param1)
-                if qust:
-                    p1_str = qust.editor_id
-            elif c.func_idx == FUNC_GETINFACTION or c.func_idx == FUNC_GETFACTIONRANK:
-                fact = self.db.facts.get(c.param1)
-                if fact:
-                    p1_str = fact
-
-            print(f"{indent}{fname}({p1_str}) {comp} {c.comp_value}{or_str}{run_str}")
+        for group in groups:
+            if len(group) == 1:
+                print(f'{indent}AND {self._fmt_condition(group[0])}')
+            else:
+                parts = ' OR '.join(self._fmt_condition(c) for c in group)
+                print(f'{indent}AND ({parts})')
 
 
 # ---------------------------------------------------------------------------
@@ -1049,13 +1148,15 @@ def main():
     parser.add_argument('--detect-collisions', action='store_true', help='Detect topic collisions across NPCs')
     parser.add_argument('--max-npcs', type=int, default=0, help='Limit number of NPCs in batch mode')
     parser.add_argument('--verbose', '-v', action='store_true', help='Show detailed conditions')
+    parser.add_argument('--all-conditions', '-a', action='store_true',
+                        help='Show ALL INFOs (passing and failing) with full conditions inline')
     args = parser.parse_args()
 
     db = DialogDB(args.esm)
 
     if args.npc:
         sim = DialogSimulator(db)
-        sim.walk_npc(args.npc, verbose=args.verbose)
+        sim.walk_npc(args.npc, verbose=args.verbose, all_conditions=args.all_conditions)
     elif args.quest:
         walk_quest(db, args.quest)
     elif args.batch:
