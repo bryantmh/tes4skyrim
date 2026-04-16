@@ -1167,21 +1167,25 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
             stage_gate_ctdas = build_stage_gate_ctdas(
                 topic_stage_gates.get(dial_fid, []))
 
-            # Build quest-running gate if original quest is NOT SGE.
-            # This restores Oblivion's implicit QSTI gating.
-            quest_running_ctda = b''
-            if orig_quest_fid and orig_quest_fid not in sge_quest_fids:
-                # Remap the quest FormID to output space
-                remapped_qfid = orig_quest_fid
-                if offset and (orig_quest_fid >> 24) == 0x00 \
-                        and (orig_quest_fid & 0x00FFFFFF) >= 0x100:
-                    remapped_qfid = ((orig_quest_fid & 0x00FFFFFF)
-                                     | (offset << 24))
-                quest_running_ctda = pack_subrecord(
-                    'CTDA', build_quest_running_ctda(remapped_qfid))
-
             for info_rec in child_infos:
                 try:
+                    # Build quest-running gate per-INFO using the INFO's own QSTI
+                    # quest, not the DIAL's Quest[0]. This handles shared topics
+                    # (like "contract") owned by many quests correctly — each INFO
+                    # is gated on its own quest running.
+                    quest_running_ctda = b''
+                    info_quest_fid = get_formid(info_rec, 'QSTI.Quest')
+                    if not info_quest_fid:
+                        info_quest_fid = orig_quest_fid
+                    if info_quest_fid and info_quest_fid not in sge_quest_fids:
+                        remapped_qfid = info_quest_fid
+                        if offset and (info_quest_fid >> 24) == 0x00 \
+                                and (info_quest_fid & 0x00FFFFFF) >= 0x100:
+                            remapped_qfid = ((info_quest_fid & 0x00FFFFFF)
+                                             | (offset << 24))
+                        quest_running_ctda = pack_subrecord(
+                            'CTDA', build_quest_running_ctda(remapped_qfid))
+
                     voice_ctdas = build_voice_type_ctdas_for_info(
                         info_rec, npc_to_vtyp, topic_vtyps=topic_vtyps)
                     npc_ctdas = b''

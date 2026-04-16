@@ -237,10 +237,12 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, 
                 out_lines.append(f'Function {func_name}()')
                 # Objective tracking: make this stage's entry visible in the journal
                 if log_text:
+                    # Always display the objective first — Skyrim requires the
+                    # objective to be in Displayed state before SetObjectiveCompleted
+                    # will create a journal entry for it.
+                    out_lines.append(f'  SetObjectiveDisplayed({stage_idx}, true)')
                     if complete_flag:
                         out_lines.append(f'  SetObjectiveCompleted({stage_idx}, true)')
-                    else:
-                        out_lines.append(f'  SetObjectiveDisplayed({stage_idx}, true)')
                 # Original result script body (if any)
                 if script_src and script_src.strip():
                     body_lines = conv.convert_fragment(script_src, 'Quest')
@@ -457,7 +459,7 @@ def build_vmad_info_fragment(info_formid: str, property_values: dict = None) -> 
     buf += _pack_wstring(script_name)  # FileName
 
     # Fragment 0 — OnEnd
-    buf += struct.pack('<b', 0)        # Unknown
+    buf += struct.pack('<B', 1)        # Unknown (always 1 in vanilla Skyrim.esm)
     buf += _pack_wstring(script_name)  # ScriptName
     buf += _pack_wstring('Fragment_0') # FragmentName
 

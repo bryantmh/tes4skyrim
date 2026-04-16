@@ -2099,8 +2099,14 @@ class ScriptConverter:
             else:
                 quest_ref = 'quest'
                 stage = '0'
-            quest_type = self.xref.get_quest_script_type(quest_ref) if self.xref.is_quest_ref(quest_ref) else 'Quest'
-            self._property_refs[quest_ref] = quest_type
+            # Always use base Quest type for SetStage/GetStage method calls.
+            # The TES4 attached script (TES4_FGC01Script etc.) won't match the
+            # quest's TES5 VMAD script (TES4_QF_*), so the property would be
+            # null at runtime if we used the TES4 script type.
+            if quest_ref not in self._property_refs or self._property_refs[quest_ref] == 'Quest':
+                self._property_refs[quest_ref] = 'Quest'
+            # Don't downgrade a more specific type already set via cross-script
+            # variable access (e.g. FGC01Rats.someVar) — that uses the TES4 type.
             papyrus = {'setstage': 'SetStage', 'getstage': 'GetStage',
                         'getstagedone': 'GetStageDone'}[fname_low]
             if fname_low in ('getstage', 'getstagedone') and len(parts) < 2:
