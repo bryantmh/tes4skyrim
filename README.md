@@ -5,28 +5,26 @@ Converts TES4 (Oblivion) master/plugin files to TES5 (Skyrim SE) format, includi
 ## Requirements
 
 - **Python 3.8+**
-- **PyFFI** — NIF mesh reading/writing (`pip install PyFFI`)
-- **numpy** — Numerical operations for skin retargeting (`pip install numpy`)
-- **pytest** — Test runner (`pip install pytest`)
-- **ffmpeg** - Used for voice conversion
-- **xWMAEncode.exe** - Also used for voice conversion
+- **[PyFFI](https://pyffi.sourceforge.net/)** — NIF mesh reading/writing (`pip install PyFFI`)
+- **[numpy](https://numpy.org/)** — Numerical operations for skin retargeting (`pip install numpy`)
+- **[pytest](https://pytest.org/)** — Test runner (`pip install pytest`)
+- **ffmpeg** — Used for voice audio conversion
+- **xWMAEncode.exe** — Used for xWMA voice compression (see below)
 
-Some of the game's audio files need to be compressed using xWMA. In order to convert these, we need to make use of a utility known as "xWMAEncode.exe." The catch behind this is that the utility is included with Microsoft's DirectX SDK and cannot be legally redistributed on its own.
+> **xWMAEncode.exe** is part of the [Microsoft DirectX SDK (June 2010)](https://www.microsoft.com/en-us/download/details.aspx?id=6812) and cannot be redistributed. After installing the SDK, find it in `Utilities\bin\x86\` and place it in the project root directory. It can also be extracted from the SDK installer using 7-Zip without a full install.
 
-To obtain xWMAEncode.exe, you will need to download the June 2010 Microsoft DirectX SDK. A free download is available from microsoft.com here: http://www.microsoft.com/en-us/download/details.aspx?id=6812.
+## Credits
 
-After downloading and installing the SDK, the program can be found in the Utilities\bin\x86 folder. If you do not wish to install the SDK, you can also just open the downloaded EXE in an archiving tool such as 7-zip and manually extract the program. Place the xWMAEncode.exe file in the project root directory.
-
-## Additional Credits
-
-xEdit and all its contributors for esm record definitions and BSArch.exe for BSA packing
-Nifscope and its contributors for its information on nif formats
-Zilav's Oblivion -> Skyrim xEdit conversion scripts for the original inspiration and lots of useful information
-Ormin for useful mesh conversion information and mopp_rl.exe for collision generation https://github.com/Ormin/skyblivion-NIFConverter
-Ormin again for useful script conversion information https://github.com/Ormin/skyblivion-ScriptConverter
-Sjors Boomschors for manually converted speed tree models https://morroblivion.com/forums/conversion-to-skyrim/conversion-to-skyrim/2617
-The Papyrus Compiler project for its... papyrus compiler https://github.com/russo-2025/papyrus-compiler
-All the wonderful people I used to know on the Morroblivion forum, and those still working hard on Skyblivion and Skywind all these years later. You are an inspiration.
+| Contributor | Contribution |
+|-------------|-------------|
+| [xEdit and all contributors](https://github.com/TES5Edit/TES5Edit) | ESM record definitions,  `BSArch.exe` for BSA packing, and `LODGenx64.exe` for object LOD generation |
+| Zilav's Oblivion -> Skyrim xEdit conversion scripts for the original inspiration and lots of useful information |
+| [NifSkope](https://github.com/niftools/nifskope) contributors | NIF format documentation |
+| [Ormin](https://github.com/Ormin/skyblivion-NIFConverter) | `MOPP_RL.exe` for Havok collision generation and mesh conversion reference |
+| [Ormin](https://github.com/Ormin/skyblivion-ScriptConverter) | Script converter reference for OBScript→Papyrus transpilation |
+| [Sjors Boomschors](https://morroblivion.com/forums/conversion-to-skyrim/conversion-to-skyrim/2617) | Manually converted SpeedTree models (`assets/speedtrees/`) |
+| [russo-2025](https://github.com/russo-2025/papyrus-compiler) | Papyrus Compiler |
+| All the wonderful people I used to know on the Morroblivion forum, and those still working hard on Skyblivion and Skywind all these years later. You are an inspiration. |
 
 ### Install all dependencies
 
@@ -169,3 +167,15 @@ The `SKIP_PATHS` set in `asset_convert/nif_converter.py` controls which path seg
 ## BSA extraction caching
 
 Extracted BSAs are tracked via a manifest file (`.bsa_extract_manifest.json`). Rerunning the pipeline skips already-extracted archives unless the extract step is forced by deleting the manifest.
+
+## License
+
+This project is released under the MIT License.
+
+The following components have separate licensing:
+
+| Component | License | Notes |
+|-----------|---------|-------|
+| `asset_convert/MOPP_RL.exe` | Unspecified (Ormin) | From [skyblivion-NIFConverter](https://github.com/Ormin/skyblivion-NIFConverter); included by community convention |
+| `asset_convert/template.nif` | Unspecified (Ormin) | Required by MOPP_RL.exe |
+| `xWMAEncode.exe` | Microsoft (not redistributed) | Obtain separately from the DirectX SDK |
