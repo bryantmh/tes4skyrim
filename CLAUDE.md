@@ -35,6 +35,7 @@ Convert TES4 (Oblivion) master/plugin files to TES5 (Skyrim SE) format. The pipe
   Attempt to ensure that files do NOT go over approximately 1000 lines if at all possible. If a file is getting too long, break it up into multiple files with clear responsibilities.
   If I ask you to perform a task, and you don't see the problem, it is NOT because my test data is stale. There is always a REAL problem you need to solve.
   ALWAYS investigate and complete issues in the order that I present them to you in my prompt. They are given in order of highest importance for you to work on.
+  output/Oblivion.esm is a FOLDER, not a file!! If you fail to write it is NOT because the file is locked. It is because you are trying to overwrite a folder with a file. The output .esm should go in output/Oblivion.esm/Oblivion.esm
 
 **Assistant Constraint — No Git Stash**:
 - The assistant MUST NOT run `git stash` or `git stash pop` in this repository.
