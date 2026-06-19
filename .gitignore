@@ -1,14 +1,13 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
-.claude/
 
 export/
 output/
 external/
 logs/
 temp/
-references/
+/references/
 
 *_log.txt
 *.log

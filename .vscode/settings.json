@@ -5,7 +5,6 @@
         "**/.pytest_cache": true,
         "**/.papyrus": true,
         "**/.ruff_cache": true,
-        "**/.claude": true
     },
     "files.watcherExclude": {
         "**/output/**": true,
