@@ -23,27 +23,67 @@ field layouts see the `oblivion-dialog-system` and `skyrim-dialog-system` skills
 
 ### Topic Type → Category / Subtype / SNAM
 
-Oblivion `DATA.Type` is a single 7-value enum. Skyrim splits this into a Category
-(0–7), a Subtype (0–102), and a 4-char SNAM code. The faithful mapping by
-*purpose*:
+Oblivion `DATA.Type` is a single 7-value enum. Skyrim's DIAL `DATA` is a 4-byte
+struct that must be written in the correct **on-disk** order and with the
+correct **real subtype numbers** — both differ from what xEdit's struct labels
+suggest.
 
-| TES4 Type | TES5 Category | TES5 Subtype | SNAM | Notes |
+> ⚠ **DATA byte layout (verified against real Skyrim.esm — getting this wrong
+> CRASHES the game on load):**
+> ```
+> byte0 = TopicFlags (U8)       (usually 0)
+> byte1 = Subtype    (U8)        ← the fine code (Hello=73, Hit=23, …); mirrors SNAM
+> byte2,3 = Category (U16)       ← 0 Topic,2 Scene,3 Combat,5 Detection,6 Service,7 Misc
+> ```
+> xEdit labels these "Category(U8) then Subtype(U16)", but the on-disk order is
+> **subtype-byte then category-U16**. If you write category into byte1 and
+> subtype into the U16 (the xEdit-label order), the engine reads an out-of-range
+> category, indexes a dialogue-dispatch table out of bounds, and throws an
+> `EXCEPTION_ACCESS_VIOLATION` while initializing the topic at startup.
+> The **subtype numbers also differ from xEdit's display enum** — take them from
+> real data (table below), not from the xEdit enum.
+
+Faithful TES4 Type → TES5 mapping by *purpose*:
+
+| TES4 Type | TES5 Category | TES5 Subtype (real) | SNAM | Notes |
 |-----------|---------------|--------------|------|-------|
-| 0 Topic | 0 Topic | 0 Custom | `CUST` | Standard conversation topic. |
-| 1 Conversation | 0 Topic | 0 Custom | `CUST` | Also a conversation topic; Skyrim has no separate "Conversation" category. These are typically NPC-to-NPC or chained topics. |
-| 2 Combat | 3 Combat | a combat subtype | (per subtype) | A bark. Combat barks in Skyrim are keyed by specific subtypes (Attack/Hit/Flee/etc.) — see "Barks" below; a generic mapping uses the nearest combat subtype. |
-| 3 Persuasion | 0 Topic | 0 Custom | `CUST` | Skyrim has no persuasion topic type; the Speechcraft minigame is gone. Persuasion topics become ordinary topics (the *line* survives; the minigame does not). **Judgment call** — behavior diverges because the mechanic is absent. |
-| 4 Detection | 5 Detection | a detection subtype | (per subtype) | A bark (e.g. NoticeCorpse). |
-| 5 Service | 6 Service | a service subtype | (per subtype) | Service topics (barter/train/etc.). Skyrim drives services from the NPC/faction, not the topic; the *line* maps, the *service hookup* is on the actor. |
-| 6 Miscellaneous | 7 Miscellaneous | 0 / nearest | (per) | Misc barks. |
+| 0 Topic | 0 Topic | 0 Custom | `CUST` | Standard player topic. |
+| 1 Conversation | 0 Topic | 0 Custom | `CUST` | No separate "Conversation" category in Skyrim; NPC-to-NPC / chained topics. |
+| 2 Combat | 3 Combat | nearest combat subtype | (per) | Bark — Attack=20/`ATCK`, Hit=23/`HIT_`, Flee=24/`FLEE`, etc. |
+| 3 Persuasion | 0 Topic | 0 Custom | `CUST` | Speechcraft minigame gone; line survives, mechanic does not. **Judgment.** |
+| 4 Detection | 5 Detection | nearest detection subtype | (per) | Bark — Notice/Alert=51/`NOTA`, LostToNormal=57/`LOTN`, etc. |
+| 5 Service | 6 Service | nearest service subtype | (per) | Skyrim drives services from the NPC/faction; line maps, service hookup is on the actor. |
+| 6 Miscellaneous | 7 Misc | 88 Idle (`IDLE`) or nearest | (per) | Misc barks. |
 
-> **SNAM is required** in Skyrim (defaults to `CUST`). For barks, the SNAM code
-> must match the situation Skyrim expects (e.g. `HELO` for greeting topics,
-> `GBYE` goodbye). Identify Oblivion bark topics by their reserved EditorID
-> (`GREETING`, `GOODBYE`, `HELLO`, combat/detection topics) and assign the
-> corresponding Skyrim subtype + SNAM, because Oblivion's Type enum is coarser
-> than Skyrim's subtype list. This is partly **judgment** where Oblivion's data
-> doesn't name the exact Skyrim subtype.
+**Real Skyrim subtype byte → SNAM → category** (use these exact numbers; from
+Skyrim.esm). Reserved Oblivion EditorIDs map onto them:
+
+| Oblivion EDID | Subtype | SNAM | Category |
+|---------------|--------:|------|---------:|
+| GREETING / HELLO | 73 | `HELO` | 7 |
+| GOODBYE | 72 | `GBYE` | 7 |
+| IDLE / IdleChatter | 88 | `IDLE` | 7 |
+| Attack | 20 | `ATCK` | 3 |
+| PowerAttack | 21 | `POAT` | 3 |
+| Bash | 22 | `BASH` | 3 |
+| Hit | 23 | `HIT_` | 3 |
+| Flee | 24 | `FLEE` | 3 |
+| Block | 29 | `BLOC` | 3 |
+| Taunt | 30 | `TAUT` | 3 |
+| Steal | 32 | `STEA` | 3 |
+| Assault | 36 | `ASSA` | 3 |
+| Murder | 37 | `MURD` | 3 |
+| Trespass | 43 | `TRES` | 3 |
+| Seen / Noticed | 51 | `NOTA` | 5 |
+| Lost / Unseen | 57 | `LOTN` | 5 |
+| NoticeCorpse | 70 | `NOTI` | 7 |
+| ObserveCombat | 69 | `OBCO` | 7 |
+
+> **SNAM is required** (mirrors the subtype byte; defaults to `CUST`). Identify
+> Oblivion barks by reserved EditorID; Oblivion's coarse Type enum doesn't name
+> the exact Skyrim subtype, so the EDID→subtype mapping above is partly
+> **judgment** where the source is ambiguous. Full subtype table is in the
+> `skyrim-dialog-system` records reference.
 
 ### Quest ownership (QSTI → QNAM)
 

@@ -35,7 +35,11 @@ For a converted quest/topic, each of these should hold in-game:
 
 ### DIAL
 - [ ] EDID copied/generated.
-- [ ] `DATA.Type` mapped to Category + Subtype + `SNAM` (4-char code; required).
+- [ ] `DATA.Type` mapped to Subtype + Category + `SNAM`, and `DATA` written in
+      the correct on-disk order **TopicFlags(U8) + Subtype(U8) + Category(U16)**
+      with the **real Skyrim subtype numbers** (Hello=73, Hit=23, …). Writing
+      category in the subtype byte (the xEdit-label order) → out-of-range
+      category → **load crash** (EXCEPTION_ACCESS_VIOLATION). See `dial-info.md`.
 - [ ] Bark topics identified by reserved EDID (GREETING/HELLO/GOODBYE/combat/
       detection) and given the right subtype + SNAM; **no BNAM** on barks.
 - [ ] `QSTI` → `QNAM` (primary quest); extra QSTI handled (conditions or
@@ -112,6 +116,23 @@ These are not copies — they must be **synthesized**, or dialogue won't work:
 | **Removed mechanics** (persuasion minigame, disposition, rumors, infamy/fame, birthsign) | Lines survive but the *systems* gating/driving them are gone. | Lines map; mechanics can't. Note per-topic. |
 | **Audio** | Lines silent until transcoded/re-pathed. | Asset pipeline step (MP3→FUZ + LIP). |
 | **IDLE playback** | Oblivion .kf anims won't play in Skyrim's behavior graph. | Map to existing Skyrim gesture idles. |
+
+---
+
+## Load-crash causes (malformed records the engine chokes on at startup)
+
+Distinct from fidelity gaps: these make Skyrim **crash on load / new game**, not
+just behave differently. The engine walks dialogue structures at startup, so a
+malformed DIAL/INFO is fatal, not silent.
+
+| Crash | Cause | Fix |
+|-------|-------|-----|
+| `EXCEPTION_ACCESS_VIOLATION` while initializing a topic (crash log shows a `TESTopic*` and its owning `TESQuest*`) | **DIAL `DATA` written in the wrong byte order or with wrong subtype numbers.** On-disk order is `TopicFlags(U8) + Subtype(U8) + Category(U16)`; writing category in byte1 yields an out-of-range category the engine indexes out of bounds. | Pack `flags, subtype, category-U16` with the **real** Skyrim subtype numbers (see `dial-info.md`). |
+| Crash on a topic whose owning quest shows `{Active=false}` | Topic owned by a quest that isn't running when the engine touches it (esp. barks, which are processed at startup). | Ensure every topic's owning quest is Start-Game-Enabled/running, or own barks/orphans by an always-running quest. |
+| Crash walking an INFO condition list | Malformed CTDA (wrong size, dangling FormID, or OR flag on the last condition). | 32-byte CTDAs; remap/validate FormIDs; clear trailing OR (`conditions.md`). |
+
+> Missing voice files do **not** crash — a line just plays silently. Don't chase
+> audio when diagnosing a startup crash; look at record structure first.
 
 ---
 

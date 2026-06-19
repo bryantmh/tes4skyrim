@@ -70,59 +70,73 @@ DIAL's GRUP (group), not inline in the DIAL record. Record flag `0x4000` =
 | `PNAM` | float | Priority. Default **50.0**. Higher = considered first. |
 | `BNAM` | FormID→DLBR | Owning branch. Present on conversation topics (those that belong to a branch); absent on bark topics (combat/detection/misc subtypes, which aren't part of a branch). |
 | `QNAM` | FormID→QUST | Owning quest. **Required for the topic to function.** |
-| `DATA` | struct (4B) | TopicFlags(U8) + Category(U8) + Subtype(U16). |
-| `SNAM` | U32 | 4-char Subtype code as raw little-endian ASCII (e.g. `CUST`, `HELO`, `GBYE`). Default `CUST`. Required. |
+| `DATA` | struct (4B) | **TopicFlags(U8) + Subtype(U8) + Category(U16)** — see the warning below; the on-disk order is NOT what xEdit's labels suggest. |
+| `SNAM` | U32 | 4-char Subtype code as raw little-endian ASCII (e.g. `CUST`, `HELO`, `GBYE`). Default `CUST`. Required. Mirrors the Subtype byte. |
 | `TIFC` | U32 | INFO count (number of child INFOs). |
 
-### DATA breakdown
+### DATA breakdown — ⚠ on-disk layout vs. xEdit labels
+
+> **CRITICAL (verified against real Skyrim.esm bytes).** xEdit's
+> `wbDefinitionsTES5.pas` labels the DATA struct as `TopicFlags(U8) +
+> Category(U8) + Subtype(U16)`, **but the real on-disk byte order is
+> `TopicFlags(U8) + Subtype(U8) + Category(U16)`** — the fine "subtype" enum is
+> the single byte at offset 1, and the coarse 0–7 "category" is the U16 at
+> offset 2. Moreover the **subtype enum NUMBERS in the data differ from xEdit's
+> display enum** (e.g. real Hello = 73, not the 79 xEdit shows). Always take the
+> numbers from real data, decoded with this layout:
+>
+> ```
+> byte0 = TopicFlags (U8)
+> byte1 = Subtype    (U8)   ← the fine code; mirrors SNAM
+> byte2,3 = Category (U16)  ← 0 Topic,1 Favor,2 Scene,3 Combat,4 Favors,
+>                             5 Detection,6 Service,7 Miscellaneous
+> ```
+> Writing the bytes in the xEdit-label order (category in byte1, subtype in the
+> U16) produces an out-of-range category value the engine indexes into a
+> dialogue-dispatch table → **access violation / crash on load**.
+
 - **Topic Flags (U8):** `0x01` Do All Before Repeating.
-- **Category (U8) enum:** 0 Topic, 1 Favor, 2 Scene, 3 Combat, 4 Favors,
+- **Category (U16):** 0 Topic, 1 Favor, 2 Scene, 3 Combat, 4 Favors,
   5 Detection, 6 Service, 7 Miscellaneous.
-- **Subtype (U16) enum** (selected — full list of 0–102 below): 0 Custom,
-  1 ForceGreet, 2 Rumors, 13 Reject, 14 Scene, 16 Agree, 17 Refuse,
-  26 Attack, 27 PowerAttack, 28 Bash, 29 Hit, 30 Flee, 31 Bleedout,
-  33 Death, 36 Taunt, 39 Yield, 42 Assault, 43 Murder, 49 Trespass,
-  76 NoticeCorpse, 78 GoodBye, 79 Hello, 88 PickpocketTopic, 90 SharedInfo,
-  93 PlayerShout, 94 Idle.
 
-<details><summary>Full Subtype enum (0–102)</summary>
+**Real Subtype byte → SNAM → Category** (the values actually present in
+Skyrim.esm; dominant SNAM/category per subtype byte). Use these, not xEdit's
+display enum:
 
-```
-0 Custom, 1 ForceGreet, 2 Rumors, 3 Custom?, 4 Intimidate, 5 Flatter, 6 Bribe,
-7 Ask Gift, 8 Gift, 9 Ask Favor, 10 Favor, 11 Show Relationships, 12 Follow,
-13 Reject, 14 Scene, 15 Show, 16 Agree, 17 Refuse, 18 ExitFavorState,
-19 MoralRefusal, 20 FlyingMountLand, 21 FlyingMountCancelLand,
-22 FlyingMountAcceptTarget, 23 FlyingMountRejectTarget, 24 FlyingMountNoTarget,
-25 FlyingMountDestinationReached, 26 Attack, 27 PowerAttack, 28 Bash, 29 Hit,
-30 Flee, 31 Bleedout, 32 AvoidThreat, 33 Death, 34 GroupStrategy, 35 Block,
-36 Taunt, 37 AllyKilled, 38 Steal, 39 Yield, 40 AcceptYield, 41 PickpocketCombat,
-42 Assault, 43 Murder, 44 AssaultNC, 45 MurderNC, 46 PickpocketNC, 47 StealFromNC,
-48 TrespassAgainstNC, 49 Trespass, 50 WereTransformCrime, 51 VoicePowerStartShort,
-52 VoicePowerStartLong, 53 VoicePowerEndShort, 54 VoicePowerEndLong, 55 AlertIdle,
-56 LostIdle, 57 NormalToAlert, 58 AlertToCombat, 59 NormalToCombat,
-60 AlertToNormal, 61 CombatToNormal, 62 CombatToLost, 63 LostToNormal,
-64 LostToCombat, 65 DetectFriendDie, 66 ServiceRefusal, 67 Repair, 68 Travel,
-69 Training, 70 BarterExit, 71 RepairExit, 72 Recharge, 73 RechargeExit,
-74 TrainingExit, 75 ObserveCombat, 76 NoticeCorpse, 77 TimeToGo, 78 GoodBye,
-79 Hello, 80 SwingMeleeWeapon, 81 ShootBow, 82 ZKeyObject, 83 Jump,
-84 KnockOverObject, 85 DestroyObject, 86 StandonFurniture, 87 LockedObject,
-88 PickpocketTopic, 89 PursueIdleTopic, 90 SharedInfo, 91 PlayerCastProjectileSpell,
-92 PlayerCastSelfSpell, 93 PlayerShout, 94 Idle, 95 EnterSprintBreath,
-96 EnterBowZoomBreath, 97 ExitBowZoomBreath, 98 ActorCollidewithActor,
-99 PlayerinIronSights, 100 OutofBreath, 101 CombatGrunt, 102 LeaveWaterBreath
-```
-</details>
+| Sub | SNAM | Cat | Meaning | | Sub | SNAM | Cat | Meaning |
+|----:|------|----:|---------|-|----:|------|----:|---------|
+| 0 | CUST | 0 | Custom topic | | 43 | TRES | 3 | Trespass |
+| 1 | PFGT | 0 | ForceGreet | | 49 | ALIL | 5 | AlertIdle |
+| 2 | RUMO | 0 | Rumors | | 50 | LOIL | 5 | LostIdle |
+| 14 | SCEN | 2 | Scene | | 51 | NOTA | 5 | Notice/Alert |
+| 16 | AGRE | 4 | Agree | | 52 | ALTC | 5 | AlertToCombat |
+| 17 | REFU | 4 | Refuse | | 53 | NOTC | 5 | NormalToCombat |
+| 20 | ATCK | 3 | Attack | | 54 | ALTN | 5 | AlertToNormal |
+| 21 | POAT | 3 | PowerAttack | | 55 | COTN | 5 | CombatToNormal |
+| 22 | BASH | 3 | Bash | | 56 | COLO | 5 | CombatToLost |
+| 23 | HIT_ | 3 | Hit | | 57 | LOTN | 5 | LostToNormal |
+| 24 | FLEE | 3 | Flee | | 58 | LOTC | 5 | LostToCombat |
+| 25 | BLED | 3 | Bleedout | | 69 | OBCO | 7 | ObserveCombat |
+| 27 | DETH | 3 | Death | | 70 | NOTI | 7 | NoticeCorpse |
+| 29 | BLOC | 3 | Block | | 71 | TITG | 7 | TimeToGo |
+| 30 | TAUT | 3 | Taunt | | 72 | GBYE | 7 | GoodBye |
+| 32 | STEA | 3 | Steal | | 73 | HELO | 7 | Hello |
+| 36 | ASSA | 3 | Assault | | 84 | IDAT | 7 | Idle Topic |
+| 37 | MURD | 3 | Murder | | 88 | IDLE | 7 | Idle |
+| 39 | MUNC | 3 | MurderNC | | 94 | OUTB | 7 | OutOfBreath |
 
-Real record (top-level topic):
+Real record (a Hit combat bark):
 ```
 Signature=DIAL
 FormID=00000E3C
 PNAM=50.0
 QNAM=0003372B          # owning QUST
-DATA: TopicFlags=0x00 Category=23 Subtype=0x0003
-SNAM="HIT_"            # 4-char subtype code
+DATA bytes = 00 17 03 00  → TopicFlags=0x00, Subtype=0x17(23 Hit), Category=0x0003(Combat)
+SNAM="HIT_"            # mirrors the subtype
 TIFC=1
 ```
+A Hello greeting: `DATA = 00 49 07 00` (Subtype 0x49=73 Hello, Category 7 Misc),
+`SNAM="HELO"`. A plain conversation topic: `DATA = 00 00 00 00`, `SNAM="CUST"`.
 
 ---
 
