@@ -173,6 +173,50 @@ def convert_WEAP(rec: dict, writer=None) -> bytes:
     return pack_record('WEAP', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
+def _armor_keywords(tes4_biped: int, armor_type: int) -> list:
+    """Build the TES5 keyword list for a converted ARMO.
+
+    armor_type: 0=Light, 1=Heavy, 2=Clothing (matches BOD2 enum).
+    Returns [type keyword, piece keyword, vendor keyword] like vanilla armor
+    (e.g. iron helmet: ArmorHeavy + ArmorHelmet + VendorItemArmor).
+    """
+    from ..constants import (
+        KW_ARMOR_HEAVY, KW_ARMOR_LIGHT, KW_ARMOR_CLOTHING, KW_ARMOR_JEWELRY,
+        KW_ARMOR_HELMET, KW_ARMOR_CUIRASS, KW_ARMOR_BOOTS, KW_ARMOR_GAUNTLETS,
+        KW_ARMOR_SHIELD, KW_CLOTHING_HEAD, KW_CLOTHING_BODY, KW_CLOTHING_HANDS,
+        KW_CLOTHING_FEET, KW_CLOTHING_RING, KW_CLOTHING_NECKLACE,
+        KW_VENDOR_ARMOR, KW_VENDOR_CLOTHING, KW_VENDOR_JEWELRY,
+    )
+    is_clothing = (armor_type == 2)
+    kws = []
+
+    # Jewelry (rings/amulets) is its own category regardless of armor type
+    is_ring = bool(tes4_biped & ((1 << 6) | (1 << 7)))
+    is_amulet = bool(tes4_biped & (1 << 8))
+    if is_ring or is_amulet:
+        kws.append(KW_ARMOR_JEWELRY)
+        kws.append(KW_CLOTHING_RING if is_ring else KW_CLOTHING_NECKLACE)
+        kws.append(KW_VENDOR_JEWELRY)
+        return kws
+
+    kws.append({0: KW_ARMOR_LIGHT, 1: KW_ARMOR_HEAVY}.get(armor_type, KW_ARMOR_CLOTHING))
+
+    # Piece keyword from the primary TES4 slot (checked in priority order)
+    if tes4_biped & (1 << 13):                       # Shield
+        kws.append(KW_ARMOR_SHIELD)
+    elif tes4_biped & ((1 << 0) | (1 << 1)):         # Head / Hair
+        kws.append(KW_CLOTHING_HEAD if is_clothing else KW_ARMOR_HELMET)
+    elif tes4_biped & ((1 << 2) | (1 << 3)):         # Upper / Lower body
+        kws.append(KW_CLOTHING_BODY if is_clothing else KW_ARMOR_CUIRASS)
+    elif tes4_biped & (1 << 4):                      # Hand
+        kws.append(KW_CLOTHING_HANDS if is_clothing else KW_ARMOR_GAUNTLETS)
+    elif tes4_biped & (1 << 5):                      # Foot
+        kws.append(KW_CLOTHING_FEET if is_clothing else KW_ARMOR_BOOTS)
+
+    kws.append(KW_VENDOR_CLOTHING if is_clothing else KW_VENDOR_ARMOR)
+    return kws
+
+
 def convert_ARMO(rec: dict, is_clothing: bool = False, writer=None) -> bytes:
     """Convert ARMO or CLOT → ARMO.
 
@@ -221,6 +265,16 @@ def convert_ARMO(rec: dict, is_clothing: bool = False, writer=None) -> bytes:
     # RNAM — Race (DefaultRace)
     subs += pack_formid_subrecord('RNAM', 0x00000019)
 
+    # KSIZ/KWDA — keywords (type + piece + vendor).  Vanilla armor always
+    # carries these; armor perks, vendor filtering, and crafting key off them.
+    keywords = _armor_keywords(tes4_biped, armor_type)
+    if keywords:
+        subs += pack_subrecord('KSIZ', struct.pack('<I', len(keywords)))
+        subs += pack_subrecord('KWDA', b''.join(struct.pack('<I', k) for k in keywords))
+
+    # DESC — required subrecord on TES5 ARMO (empty description)
+    subs += pack_string_subrecord('DESC', '')
+
     # MODL[] — Armature (ARMA references): generate ARMA companion record
     if writer is not None and male_model:
         arma_fid = writer.alloc_formid()
@@ -241,6 +295,24 @@ def convert_ARMO(rec: dict, is_clothing: bool = False, writer=None) -> bytes:
     return pack_record('ARMO', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
+# TES4 biped slots that get a body-weight slider: Upper Body(2), Lower Body(3),
+# Hand(4), Foot(5).  The asset converter emits <mesh>_0.nif/<mesh>_1.nif weight
+# variants for these piece types; helmets/shields/jewelry stay single-mesh.
+_WEIGHT_SLIDER_SLOT_MASK = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)
+
+
+def _weighted_model_path(path: str) -> str:
+    """Insert the vanilla `_1` weight suffix before the extension.
+
+    Skyrim's weight slider interpolates between <stem>_0.nif and <stem>_1.nif;
+    ARMA model paths reference the _1 file (vanilla convention, e.g.
+    Armor\\Iron\\Male\\CuirassLight_1.nif)."""
+    stem, dot, ext = path.rpartition('.')
+    if not dot:
+        return path + '_1'
+    return f'{stem}_1.{ext}'
+
+
 def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
                 is_shield: bool = False) -> bytes:
     """Build an ARMA (Armor Addon) companion record for an ARMO.
@@ -251,6 +323,9 @@ def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
     subs = b''
     edid = get_str(rec, 'EditorID', '')
     subs += pack_string_subrecord('EDID', edid + '_AA')
+
+    tes4_biped = get_int(rec, 'BMDT.BipedFlags')
+    has_weight_slider = bool(tes4_biped & _WEIGHT_SLIDER_SLOT_MASK) and not is_shield
 
     # BOD2 — body coverage flags (may be wider than the ARMO's equipment slot).
     # ARMA declares which body regions the mesh covers, e.g. a cuirass mesh
@@ -280,18 +355,24 @@ def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
     # DNAM — ARMA-specific data (12 bytes)
     # Priority M(U8) + Priority F(U8) + WeightSlider M(U8) + WeightSlider F(U8)
     # + pad(2) + DetectionSoundValue(U8) + pad(U8) + WeaponAdjust(float)
-    # Weight slider: 0=disabled (Oblivion meshes lack a _0/_1 weight morph pair)
+    # Weight slider: 2=enabled (vanilla IronCuirassAA DNAM = 05 05 02 02 …) for
+    # body/hands/feet pieces — the asset converter emits _0/_1 mesh variants.
     # Priority: 10 matches vanilla Skyrim iron armor
-    dnam = struct.pack('<BBBBHBBf', 10, 10, 0, 0, 0, 0, 0, 0.0)
+    slider = 2 if has_weight_slider else 0
+    dnam = struct.pack('<BBBBHBBf', 10, 10, slider, slider, 0, 0, 0, 0.0)
     subs += pack_subrecord('DNAM', dnam)
 
-    # MOD2 — Male biped model (the actual worn mesh)
+    # MOD2 — Male biped model (the actual worn mesh).  Weight-slider pieces
+    # reference the _1 variant (vanilla convention); the engine derives _0.
     male_model = get_str(rec, 'Male.BipedModel.MODL')
+    female_model = get_str(rec, 'Female.BipedModel.MODL')
+    if has_weight_slider:
+        male_model = _weighted_model_path(male_model) if male_model else male_model
+        female_model = _weighted_model_path(female_model) if female_model else female_model
     if male_model:
         subs += pack_string_subrecord('MOD2', _prefix_path(male_model))
 
     # MOD3 — Female biped model
-    female_model = get_str(rec, 'Female.BipedModel.MODL')
     if female_model:
         subs += pack_string_subrecord('MOD3', _prefix_path(female_model))
     elif male_model:
@@ -304,7 +385,6 @@ def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
         subs += pack_formid_subrecord('MODL', race_fid)
 
     # SNDD — Footstep sound (boots need footstep set)
-    tes4_biped = get_int(rec, 'BMDT.BipedFlags')
     is_feet = bool(tes4_biped & (1 << 5))   # TES4 bit 5 = Foot
     if is_feet:
         if armor_type == 1:  # Heavy

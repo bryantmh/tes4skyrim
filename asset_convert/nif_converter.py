@@ -1429,6 +1429,15 @@ def _add_prn_skin(data, root_node):
             bone_entry.vertex_weights[vi].index = vi
             bone_entry.vertex_weights[vi].weight = 1.0
 
+        # Bounding sphere: engine culls skinned geometry by per-bone spheres;
+        # a zero-radius sphere makes the mesh invisible.  With an identity
+        # bind the bone-space sphere equals the geometry's own bound sphere.
+        # (skin_retarget recomputes this from the final bind matrices later.)
+        bone_entry.bounding_sphere_offset.x = geom_data.center.x
+        bone_entry.bounding_sphere_offset.y = geom_data.center.y
+        bone_entry.bounding_sphere_offset.z = geom_data.center.z
+        bone_entry.bounding_sphere_radius = geom_data.radius
+
         # Build BSDismemberSkinInstance
         bsd = NifFormat.BSDismemberSkinInstance()
         bsd.skeleton_root = root_node
@@ -1944,6 +1953,16 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
 
         _retarget(data, src_path=src_path)
 
+        # Exact body fit: correct the FK approximation with the OB→SK body
+        # residual displacement field (body_fit.py) so armor lands on the
+        # Skyrim body surface.  When applied, the legacy calibrated piece
+        # offsets are skipped — the field subsumes them.  Helmets/shields have
+        # no body correspondence and keep their calibrated offsets.
+        _fit_applied = 0
+        if _piece_type not in ('helmet', 'shield'):
+            from .body_fit import apply_body_fit
+            _fit_applied = apply_body_fit(data, src_path=str(src_path))
+
         # NOW rename bones to Skyrim names — AFTER skin transforms are correct.
         stats['bones_remapped'] += _remap_bone_names(data)
 
@@ -1958,17 +1977,30 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
 
         # Apply per-piece armor vertex offset/scale (from skyrim_overrides) AFTER
         # body-skin is stripped, so only true armor geometry is shifted.
-        _cfg = ARMOR_PIECE_OFFSETS.get(_piece_type, ARMOR_PIECE_OFFSETS['default'])
-        apply_armor_offset(data, _cfg)
+        # Skipped when the exact body-fit field was applied (it replaces these
+        # hand-calibrated corrections); helmets/shields always use offsets.
+        if _fit_applied == 0:
+            _cfg = ARMOR_PIECE_OFFSETS.get(_piece_type, ARMOR_PIECE_OFFSETS['default'])
+            apply_armor_offset(data, _cfg)
+
+    # For weight=1: morph armor vertices by the body _0→_1 displacement field
+    # BEFORE splicing (spliced fill comes from the _1 body directly).  Runs even
+    # without splice info so seam vertices (wrists/ankles/neck) track the body.
+    if weight == 1 and not _is_gnd and _in_armor_dir and has_skin:
+        from .skin_replacement import morph_armor_to_weight1
+        morph_armor_to_weight1(data, _body_nibs_to_splice, src_path=src_path)
 
     # Splice Skyrim body geometry AFTER retarget + bone rename so that bone
     # NiNodes in the armor NIF already have Skyrim names to match against.
     if _body_nibs_to_splice:
-        # For weight=1: morph armor vertices to follow body_1 shape BEFORE splice
-        if weight == 1:
-            from .skin_replacement import morph_armor_to_weight1
-            morph_armor_to_weight1(data, _body_nibs_to_splice)
         splice_body_geometry(data, _body_nibs_to_splice, weight=weight)
+
+    # Recompute bone bounding spheres LAST — apply_armor_offset/splice/morph
+    # move skinned vertices without touching binds, and the engine culls
+    # skinned geometry by these spheres (zero/stale sphere = invisible mesh).
+    if not _is_gnd and _in_armor_dir and has_skin:
+        from .skin_retarget import update_all_bone_spheres
+        update_all_bone_spheres(data)
 
     # Count tangents injected (approximate: each converted geometry node that had tangent data)
     stats['tangents_injected'] = stats['properties_converted']  # best we can count here
@@ -2028,53 +2060,76 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         result['error'] = 'VER'
         return result
 
-    # Full read (fresh Data object so inspect state is clean)
-    data = NifFormat.Data()
-    try:
-        with open(src_path, 'rb') as f:
-            data.inspect(f)
-            data.read(f)
-    except Exception:
-        result['error'] = 'RD'
-        return result
+    def _convert_to_buffer(weight):
+        """Fresh read → convert at the given body weight → serialized bytes.
 
-    stats = _convert_nif(data, fix_textures=fix_textures, src_path=str(src_path))
-
-    # Embed flame particle subtree at FlameNode* attachment points.
-    # Oblivion's engine dynamically attached fire/flame NIFs at these nodes at
-    # runtime; Skyrim doesn't, so we bake the converted flame into the NIF.
-    # Code does work so it's been disabled
-    # if src_meshes_dir is not None:
-    #     for root in data.roots:
-    #         if root is not None:
-    #             _embed_flame_nodes(root, src_meshes_dir, fix_textures)
-
-    # Generate tangent space for all NiTriShapeData that don't already have it.
-    # Missing tangents cause incorrect normal-map lighting in Skyrim which
-    # appears as "rainbow colored shaders" on architecture and other meshes.
-    # This is equivalent to what SpellOptimizeGeometry does in the legacy converter.
-    if _TANGENT_SPELL:
+        Returns (stats, bytes) or (None, error_code)."""
+        d = NifFormat.Data()
         try:
-            toaster = _NifToaster()
-            spell = _SpellAddTangentSpace(data=data, toaster=toaster)
-            spell.recurse()
+            with open(src_path, 'rb') as f:
+                d.inspect(f)
+                d.read(f)
         except Exception:
-            pass
+            return None, 'RD'
 
-    # Write to a buffer first — some NIFs have version-incompatible blocks
-    # (e.g. NiGeomMorpherController morph arrays) that fail at Skyrim version.
-    buf = _io.BytesIO()
-    try:
-        data.write(buf)
-    except Exception:
-        result['error'] = 'WR'
+        st = _convert_nif(d, fix_textures=fix_textures, src_path=str(src_path),
+                          weight=weight)
+
+        # Generate tangent space for all NiTriShapeData that don't already have
+        # it.  Missing tangents cause incorrect normal-map lighting in Skyrim
+        # ("rainbow colored shaders" on architecture and other meshes).
+        if _TANGENT_SPELL:
+            try:
+                toaster = _NifToaster()
+                spell = _SpellAddTangentSpace(data=d, toaster=toaster)
+                spell.recurse()
+            except Exception:
+                pass
+
+        # Write to a buffer first — some NIFs have version-incompatible blocks
+        # (e.g. NiGeomMorpherController morph arrays) that fail at Skyrim version.
+        buf = _io.BytesIO()
+        try:
+            d.write(buf)
+        except Exception:
+            return None, 'WR'
+        return st, buf.getvalue()
+
+    # Worn armor/clothing pieces (except helmets/shields) get _0/_1 body-weight
+    # variants: the ARMA records enable the weight slider and reference the _1
+    # path, and the engine interpolates vertices between the two files.
+    _base = os.path.basename(str(src_path)).lower()
+    _pathl = str(src_path).lower().replace('\\', '/')
+    _wants_weights = (not _base.endswith('_gnd.nif')
+                      and ('armor' in _pathl or 'clothes' in _pathl)
+                      and _get_armor_piece_type(str(src_path)) not in ('helmet', 'shield'))
+
+    stats, payload = _convert_to_buffer(0)
+    if stats is None:
+        result['error'] = payload
         return result
 
     dst_dir = os.path.dirname(dst_path)
     if dst_dir:
         os.makedirs(dst_dir, exist_ok=True)
+    # Plain path is always written (weightless fallback — also covers record-side
+    # pieces whose ARMA did not enable the slider).
     with open(dst_path, 'wb') as f:
-        f.write(buf.getvalue())
+        f.write(payload)
+
+    if _wants_weights:
+        stem, ext = os.path.splitext(dst_path)
+        with open(f'{stem}_0{ext}', 'wb') as f:
+            f.write(payload)
+        stats1, payload1 = _convert_to_buffer(1)
+        if stats1 is not None:
+            with open(f'{stem}_1{ext}', 'wb') as f:
+                f.write(payload1)
+        else:
+            # _1 conversion failed: fall back to the _0 mesh so the weight
+            # slider still resolves both variants.
+            with open(f'{stem}_1{ext}', 'wb') as f:
+                f.write(payload)
 
     result['converted'] = True
     result['strips_fixed'] = stats['strips_fixed'] > 0

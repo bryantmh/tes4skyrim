@@ -54,12 +54,88 @@ _SKIN_TEX_TO_BODY_NIF = [
     ('underwear', 'malebody_0.nif',  'femalebody_0.nif'),
 ]
 
-def morph_armor_to_weight1(data, skin_info: dict) -> None:
-    """Morph armor vertices toward body_1 shape for weight=1 variant.
+def _weight1_name(nif_basename: str) -> str:
+    """malebody_0.nif → malebody_1.nif (no-op for names without _0 suffix)."""
+    if nif_basename.endswith('_0.nif'):
+        return nif_basename[:-6] + '_1.nif'
+    return nif_basename
 
-    Placeholder — full weight-morph implementation pending.
+
+def morph_armor_to_weight1(data, skin_info: dict, src_path: str = '') -> int:
+    """Morph armor vertices by the Skyrim body _0 → _1 weight displacement field.
+
+    The engine's weight slider interpolates armor vertices between the _0 and
+    _1 mesh variants; the _1 variant must follow the high-weight body shape or
+    the (fatter) body clips through the armor.  Each armor vertex takes the
+    inverse-distance-weighted average displacement of its nearest body_0
+    vertices (the _0/_1 body NIFs share 1:1 vertex correspondence).
+
+    skin_info supplies which body NIFs the armor exposes; when empty, a
+    gender-appropriate default set (body+hands+feet) is used so seam vertices
+    still track the body shape.  Returns the number of geometries morphed.
     """
-    pass
+    if not _PYFFI:
+        return 0
+    try:
+        from scipy.spatial import cKDTree
+    except ImportError:
+        return 0
+
+    body_names = [n for n in (skin_info or {}) if n.endswith('_0.nif')]
+    if not body_names:
+        female = '/f/' in src_path.replace('\\', '/').lower()
+        prefix = 'female' if female else 'male'
+        body_names = [f'{prefix}body_0.nif', f'{prefix}hands_0.nif',
+                      f'{prefix}feet_0.nif']
+
+    p0_list, delta_list = [], []
+    for name in body_names:
+        pairs0 = load_body_geom(name)
+        pairs1 = load_body_geom(_weight1_name(name))
+        # _0 and _1 body NIFs have identical block structure → shapes pair by order
+        for (g0, _), (g1, _) in zip(pairs0, pairs1):
+            v0 = _forward_skin_verts(g0)
+            v1 = _forward_skin_verts(g1)
+            if not v0 or not v1 or len(v0) != len(v1):
+                continue
+            p0_list.extend(v0)
+            delta_list.extend((np.asarray(v1) - np.asarray(v0)))
+    if not p0_list:
+        return 0
+
+    tree = cKDTree(np.asarray(p0_list))
+    deltas = np.asarray(delta_list)
+
+    count = 0
+    for root in data.roots:
+        if root is None:
+            continue
+        for block in root.tree():
+            if not isinstance(block, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
+                continue
+            if getattr(block, 'skin_instance', None) is None:
+                continue  # rigid geometry doesn't follow the body weight
+            geom_data = block.data
+            if geom_data is None or geom_data.num_vertices == 0:
+                continue
+            nv = geom_data.num_vertices
+            verts = np.array([[v.x, v.y, v.z] for v in geom_data.vertices])
+
+            k = min(4, len(p0_list))
+            dist, idx = tree.query(verts, k=k)
+            if k == 1:
+                dist = dist[:, None]
+                idx = idx[:, None]
+            w = 1.0 / np.maximum(dist, 1e-3) ** 2
+            w /= w.sum(axis=1, keepdims=True)
+            verts += (w[:, :, None] * deltas[idx]).sum(axis=1)
+
+            for vi in range(nv):
+                geom_data.vertices[vi].x = float(verts[vi, 0])
+                geom_data.vertices[vi].y = float(verts[vi, 1])
+                geom_data.vertices[vi].z = float(verts[vi, 2])
+            count += 1
+    return count
 
 
 def _forward_skin_verts(block) -> list | None:
@@ -258,7 +334,8 @@ def load_body_geom(nif_basename: str) -> list:
 
 
 def clip_body_geom(src_geom, bi_to_name: dict, keep_bones: set,
-                    section_verts: list = None, proximity_threshold: float = 6.0):
+                    section_verts: list = None, proximity_threshold: float = 6.0,
+                    substitute_geom=None):
     """Clip a Skyrim body NiTriShape to the region matching removed OB body skin.
 
     When section_verts is provided (list of per-section vertex-position lists):
@@ -268,6 +345,11 @@ def clip_body_geom(src_geom, bi_to_name: dict, keep_bones: set,
         exactly traces the shape of each gap even when the AABB would be far too large.
 
     When not provided, all vertices are kept.
+
+    substitute_geom: optional same-topology shape (the _1 weight body) whose
+    positions/normals are emitted for the kept vertices.  The keep-mask is always
+    computed from src_geom (_0) so the _0 and _1 spliced fills keep IDENTICAL
+    topology — required for the engine's weight-slider vertex interpolation.
 
     bi_to_name / keep_bones: retained for API compatibility, not used for filtering.
     Returns (verts, normals, uvs, tris, kept_weights, bi_to_name) or None.
@@ -365,11 +447,17 @@ def clip_body_geom(src_geom, bi_to_name: dict, keep_bones: set,
         return None
 
     kept_indices = sorted(old_to_new.keys())
+    # Positions/normals may come from the substitute (_1 weight) shape; the
+    # keep-mask above always derives from src_geom so topology stays identical.
+    out_data = src_data
+    if substitute_geom is not None and substitute_geom.data is not None \
+            and substitute_geom.data.num_vertices == num_verts:
+        out_data = substitute_geom.data
     # Return raw positions — translation offset applied in build_clipped_geom
-    verts = [(src_data.vertices[vi].x, src_data.vertices[vi].y, src_data.vertices[vi].z)
+    verts = [(out_data.vertices[vi].x, out_data.vertices[vi].y, out_data.vertices[vi].z)
              for vi in kept_indices]
-    normals = [(src_data.normals[vi].x, src_data.normals[vi].y, src_data.normals[vi].z)
-               for vi in kept_indices] if src_data.has_normals else []
+    normals = [(out_data.normals[vi].x, out_data.normals[vi].y, out_data.normals[vi].z)
+               for vi in kept_indices] if out_data.has_normals else []
     uvs = [(src_data.uv_sets[0][vi].u, src_data.uv_sets[0][vi].v)
            for vi in kept_indices] if src_data.num_uv_sets > 0 else []
     kept_weights = [vert_weights[vi] for vi in kept_indices]
@@ -575,10 +663,11 @@ def apply_armor_offset(data, cfg) -> None:
     sy = getattr(cfg, 'sy', 1.0)
     sz = getattr(cfg, 'sz', 1.0)
     rotate = getattr(cfg, 'rotate', 0.0)
+    forearm_dy = getattr(cfg, 'forearm_dy', 0.0)
 
     has_work = (abs(dx) > 1e-6 or abs(dy) > 1e-6 or abs(dz) > 1e-6
                 or abs(sx - 1.0) > 1e-6 or abs(sy - 1.0) > 1e-6 or abs(sz - 1.0) > 1e-6
-                or abs(rotate) > 1e-6)
+                or abs(rotate) > 1e-6 or abs(forearm_dy) > 1e-6)
     if not has_work:
         return
 
@@ -687,6 +776,13 @@ def apply_armor_offset(data, cfg) -> None:
             vw[:, 1] = y_mid + y_off * cos_r - z_off * sin_r
             vw[:, 2] = z_mid + y_off * sin_r + z_off * cos_r
 
+        # 3b. Lower-arm forward shift: +Y blended per-vertex by the skin weight
+        #     on forearm/hand/finger bones (weight = smooth elbow falloff).
+        if abs(forearm_dy) > 1e-6:
+            w_fore = _forearm_weights(skin, n)
+            if w_fore is not None:
+                vw[:, 1] += forearm_dy * w_fore
+
         # 4. Final translation.
         vw += translate
 
@@ -704,6 +800,33 @@ def apply_armor_offset(data, cfg) -> None:
 
         # Recompute bind matrices so M@B@W = I with new vertex positions.
         _manual_update_bind_position(block, skin, skel_root)
+
+
+def _forearm_weights(skin, num_verts: int):
+    """Per-vertex total skin weight on forearm/hand/finger bones (0..1 array).
+
+    Returns None when the mesh has no such bones (nothing to shift)."""
+    skin_data = getattr(skin, 'data', None)
+    if skin_data is None:
+        return None
+    w = np.zeros(num_verts, dtype=np.float64)
+    found = False
+    for bi in range(min(skin.num_bones, skin_data.num_bones)):
+        bone = skin.bones[bi]
+        if bone is None:
+            continue
+        name = bytes(bone.name).rstrip(b'\x00').decode('latin-1', errors='replace').lower()
+        if not ('forearm' in name or 'hand' in name or 'finger' in name):
+            continue
+        found = True
+        be = skin_data.bone_list[bi]
+        for vwi in range(be.num_vertices):
+            vw_ = be.vertex_weights[vwi]
+            if vw_.index < num_verts:
+                w[vw_.index] += float(vw_.weight)
+    if not found:
+        return None
+    return np.clip(w, 0.0, 1.0)
 
 
 def is_underwear_only(geom_name: bytes) -> bool:
@@ -806,7 +929,12 @@ def splice_body_geometry(data, skin_info: dict, weight: int = 0) -> int:
         section_verts  = info.get('section_verts',  []) or None
 
         geom_entries = load_body_geom(nif_name)
-        for src_geom, bi_to_name in geom_entries:
+        # For the _1 weight variant emit high-weight body positions, but keep
+        # clipping on the _0 shapes so the _0/_1 fills have IDENTICAL topology
+        # (the engine interpolates weight-slider vertices 1:1 between files).
+        sub_entries = load_body_geom(_weight1_name(nif_name)) if weight == 1 else []
+        for gi, (src_geom, bi_to_name) in enumerate(geom_entries):
+            sub_geom = sub_entries[gi][0] if gi < len(sub_entries) else None
             skin = getattr(src_geom, 'skin_instance', None)
             if skin is None or not isinstance(skin, NifFormat.BSDismemberSkinInstance):
                 continue
@@ -819,7 +947,8 @@ def splice_body_geometry(data, skin_info: dict, weight: int = 0) -> int:
                 continue
             clip_result = clip_body_geom(src_geom, bi_to_name, keep_bones,
                                            section_verts=section_verts,
-                                           proximity_threshold=3.8)
+                                           proximity_threshold=3.8,
+                                           substitute_geom=sub_geom)
             if clip_result is None:
                 continue
             geom_name = geom_name_raw if geom_name_raw else b'BodyFill'

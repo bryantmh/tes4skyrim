@@ -249,11 +249,19 @@ class ArmorOffsetConfig:
     sy: float = 1.0   # per-axis scale Y (front/back)
     sz: float = 1.0   # per-axis scale Z (up/down)
     rotate: float = 0.0   # front-to-back tilt in radians
+    # Extra forward (+Y) shift for vertices skinned to forearm/hand bones,
+    # blended by their skin weight (smooth at the elbow).  Long sleeves sit
+    # slightly behind the Skyrim lower arm after retarget; this pulls just
+    # the lower-arm portion forward without moving the torso.
+    forearm_dy: float = 0.0
 
 
 ARMOR_PIECE_OFFSETS: dict[str, ArmorOffsetConfig] = {
-    # Upper body: torso armors.
-    'cuirass':   ArmorOffsetConfig(dy=-1.6, dz=-6, sx=1.05, sy=1.08, sz=1.08),
+    # Upper body: torso armors.  forearm_dy pulls long sleeves forward to
+    # follow the Skyrim lower arm (tunable; only affects forearm/hand-weighted
+    # vertices).
+    'cuirass':   ArmorOffsetConfig(dy=-1.6, dz=-6, sx=1.05, sy=1.08, sz=1.08,
+                                   forearm_dy=1.5),
     # Lower body: pants, greaves, skirts.
     'greaves':   ArmorOffsetConfig(dy=-0.5, sx=1.05, sy=1.08, sz=1.05),
     # Feet: boots, shoes.
@@ -261,7 +269,13 @@ ARMOR_PIECE_OFFSETS: dict[str, ArmorOffsetConfig] = {
     # Hands: gauntlets, gloves, bracers.
     'gauntlets': ArmorOffsetConfig(),
     # Head: helmets, hoods, hats, circlets.
-    'helmet':    ArmorOffsetConfig(dz=7, dy=-1.8),
+    # Calibrated against the vanilla Skyrim iron helmet (same item in both
+    # games): OB iron helmet placed at the OB head bone + this offset lands
+    # on vanilla's world z 114.9..133.9 / y centre -0.1.  PRN and skinned
+    # helmets share this offset — both are placed in OB-world frame before
+    # apply_armor_offset runs (PRN geometry is anchored at the OB bone
+    # position by retarget_skin_to_skyrim).
+    'helmet':    ArmorOffsetConfig(dz=4.7, dy=-1.0),
     # Shields (Prn='SHIELD' handled separately, but keep entry for safety).
     'shield':    ArmorOffsetConfig(),
     # Fallback for unrecognised piece types

@@ -52,6 +52,28 @@ ARMA_BODY_COVERAGE_EXTRA = {
     1: [13],     # Hair (helmet ARMA slot) → also 43-Ears (hides ears through helm)
 }
 
+# Skyrim.esm keyword FormIDs for converted ARMO records (armor perks, vendor
+# systems, and crafting menus all key off these — vanilla armor always has
+# type + piece + vendor keywords).
+KW_ARMOR_HEAVY       = 0x0006BBD2
+KW_ARMOR_LIGHT       = 0x0006BBD3
+KW_ARMOR_CLOTHING    = 0x0006BBE8
+KW_ARMOR_JEWELRY     = 0x0006BBE9
+KW_ARMOR_HELMET      = 0x0006C0EE
+KW_ARMOR_CUIRASS     = 0x0006C0EC
+KW_ARMOR_BOOTS       = 0x0006C0ED
+KW_ARMOR_GAUNTLETS   = 0x0006C0EF
+KW_ARMOR_SHIELD      = 0x000965B2
+KW_CLOTHING_HEAD     = 0x0010CD11
+KW_CLOTHING_BODY     = 0x000A8657
+KW_CLOTHING_HANDS    = 0x0010CD13
+KW_CLOTHING_FEET     = 0x0010CD12
+KW_CLOTHING_RING     = 0x0010CD09
+KW_CLOTHING_NECKLACE = 0x0010CD0A
+KW_VENDOR_ARMOR      = 0x0008F959
+KW_VENDOR_CLOTHING   = 0x0008F95B
+KW_VENDOR_JEWELRY    = 0x0008F95A
+
 # TES4 weapon type → TES5 animation type
 WEAPON_TYPE_MAP = {
     0: 1,  # Blade 1H → Sword

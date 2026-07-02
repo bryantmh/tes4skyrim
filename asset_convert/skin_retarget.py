@@ -442,6 +442,27 @@ def _resolve_sk_target(name: str, sk_skel: dict) -> tuple:
     return None, None
 
 
+# Inverse of OBLIVION_TO_SKYRIM_BONE_MAP (first OB name wins for duplicates)
+_SKYRIM_TO_OBLIVION_BONE: dict = {}
+for _ob, _sk in OBLIVION_TO_SKYRIM_BONE_MAP.items():
+    _SKYRIM_TO_OBLIVION_BONE.setdefault(_sk, _ob)
+
+
+def _resolve_ob_world(bone_name: str, sk_name: str, ob_skel: dict):
+    """Look up a bone's OBLIVION skeleton world transform.
+
+    `bone_name` may already be an Oblivion name (direct lookup) or a Skyrim
+    name (from _add_prn_skin), which is reverse-mapped to its Oblivion source.
+    Returns the 4×4 world matrix or None.
+    """
+    if bone_name in ob_skel:
+        return ob_skel[bone_name]
+    ob_name = _SKYRIM_TO_OBLIVION_BONE.get(bone_name) or _SKYRIM_TO_OBLIVION_BONE.get(sk_name)
+    if ob_name and ob_name in ob_skel:
+        return ob_skel[ob_name]
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Bind matrix recomputation
 # ---------------------------------------------------------------------------
@@ -453,6 +474,12 @@ def _manual_update_bind_position(block, skin, skel_root):
     B_i = G @ inv(W_bone_i)  where W_bone_i = bone world transform relative to skel_root
 
     Guarantees: S @ B_i @ W_i = inv(G) @ G @ inv(W_i) @ W_i = I
+
+    Also recomputes each bone's bounding sphere (offset in bone space + radius)
+    from the bind-space vertices weighted to that bone.  The engine uses these
+    spheres for view-frustum culling of skinned geometry: a zero-radius sphere
+    (as left by freshly created PRN skins) or a stale Oblivion-space sphere
+    makes the mesh get culled — i.e. invisible in game.
     """
     skin_data = skin.data
     if skin_data is None:
@@ -465,6 +492,11 @@ def _manual_update_bind_position(block, skin, skel_root):
 
     G_inv = np.linalg.inv(G)
     _write_skin_transform(skin_data.skin_transform, G_inv)
+
+    geom_data = getattr(block, 'data', None)
+    verts = None
+    if geom_data is not None and getattr(geom_data, 'num_vertices', 0) > 0:
+        verts = np.array([[v.x, v.y, v.z] for v in geom_data.vertices])
 
     for i in range(skin_data.num_bones):
         if i >= skin.num_bones:
@@ -479,6 +511,69 @@ def _manual_update_bind_position(block, skin, skel_root):
 
         B = G @ np.linalg.inv(W_bone)
         _write_skin_transform(skin_data.bone_list[i].skin_transform, B)
+
+        if verts is not None:
+            _update_bone_bounding_sphere(skin_data.bone_list[i], B, verts)
+
+
+def update_all_bone_spheres(data) -> int:
+    """Recompute bone bounding spheres for every skinned geometry from the
+    CURRENT vertex data and the stored bind matrices.
+
+    Call after any pass that moves skinned vertices without touching binds
+    (apply_armor_offset, body splice, weight morph) — the engine culls skinned
+    geometry by these spheres, so stale/zero spheres make meshes vanish.
+    Returns the number of geometries updated.
+    """
+    count = 0
+    for root in data.roots:
+        if root is None:
+            continue
+        for block in root.tree():
+            if not isinstance(block, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
+                continue
+            skin = getattr(block, 'skin_instance', None)
+            skin_data = getattr(skin, 'data', None) if skin is not None else None
+            geom_data = getattr(block, 'data', None)
+            if skin_data is None or geom_data is None:
+                continue
+            if getattr(geom_data, 'num_vertices', 0) == 0:
+                continue
+            verts = np.array([[v.x, v.y, v.z] for v in geom_data.vertices])
+            for i in range(skin_data.num_bones):
+                bd = skin_data.bone_list[i]
+                st = bd.skin_transform
+                B = np.eye(4)
+                B[0, :3] = [st.rotation.m_11, st.rotation.m_12, st.rotation.m_13]
+                B[1, :3] = [st.rotation.m_21, st.rotation.m_22, st.rotation.m_23]
+                B[2, :3] = [st.rotation.m_31, st.rotation.m_32, st.rotation.m_33]
+                B[:3, :3] *= st.scale
+                B[3, :3] = [st.translation.x, st.translation.y, st.translation.z]
+                _update_bone_bounding_sphere(bd, B, verts)
+            count += 1
+    return count
+
+
+def _update_bone_bounding_sphere(bone_data, B, verts):
+    """Set a bone's bounding sphere from its weighted verts in bind (bone) space.
+
+    Matches vanilla Skyrim data: sphere = geometry verts (weighted to the bone)
+    transformed by the bone's bind matrix B (mesh space → bone space).
+    """
+    idxs = [vw.index for vw in bone_data.vertex_weights if vw.weight > 0.0]
+    if not idxs:
+        bone_data.bounding_sphere_offset.x = 0.0
+        bone_data.bounding_sphere_offset.y = 0.0
+        bone_data.bounding_sphere_offset.z = 0.0
+        bone_data.bounding_sphere_radius = 0.0
+        return
+    pts = verts[idxs] @ B[:3, :3] + B[3, :3]
+    center = (pts.min(axis=0) + pts.max(axis=0)) / 2.0
+    radius = float(np.sqrt(((pts - center) ** 2).sum(axis=1).max()))
+    bone_data.bounding_sphere_offset.x = float(center[0])
+    bone_data.bounding_sphere_offset.y = float(center[1])
+    bone_data.bounding_sphere_offset.z = float(center[2])
+    bone_data.bounding_sphere_radius = radius
 
 
 # ---------------------------------------------------------------------------
@@ -1023,7 +1118,15 @@ def retarget_skin_to_skyrim(data, src_path: str = '') -> int:
             if prn_bone_name:
                 sk_name, W_sk = _resolve_sk_target(prn_bone_name, sk_skel)
                 if sk_name is not None:
-                    bone_pos = W_sk[3, :3]
+                    # Place the geometry at the OBLIVION bone position, not the
+                    # Skyrim one.  PRN verts are authored in OB-bone-local space;
+                    # the downstream ARMOR_PIECE_OFFSETS calibration (applied to
+                    # verts by apply_armor_offset) is expressed as an OB-world →
+                    # SK-world correction shared with skinned meshes.  Using the
+                    # SK bone position here double-applies the skeleton delta
+                    # (helmets ride ~8 units too high).
+                    W_ob = _resolve_ob_world(prn_bone_name, sk_name, ob_skel)
+                    bone_pos = (W_ob if W_ob is not None else W_sk)[3, :3]
                     block.translation.x = float(bone_pos[0])
                     block.translation.y = float(bone_pos[1])
                     block.translation.z = float(bone_pos[2])

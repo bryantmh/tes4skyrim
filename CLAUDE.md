@@ -782,6 +782,13 @@ VTEX[i]=FormID
 - Marker-bearing NIFs live outside meshes/furniture too: clutter/castleinterior (castle beds/thrones), architecture (cathedral pews, tents/sleepingmat, ships/sibed, anvil tree bench), dungeons (benches, thrones, sacrifice altar), oblivion/architecture/citadel. Find them with a binary grep for the ASCII string `BSFurnitureMarker` (block type names are plaintext in NIF headers).
 - BSFurnitureMarker lives in root NiNode's extra_data_list. During NiNode→BSFadeNode conversion, it must be explicitly converted and transferred (bulk extra_data_list copy breaks animated objects). Marker offsets are model-space and stay valid under the root-rotation wrap pass.
 
+### Activation pick region (HUD rollover "too big" on small clutter)
+- Skyrim's crosshair activation pick = camera ray vs Havok collision with a FIXED slop radius: `fActivatePickRadius` (default 16 units) + `fActivatePickLength` (default 180) in `[Interface]` of Skyrim.ini. These are INI settings, NOT GMSTs (verified: no such records in Skyrim.esm) — cannot be overridden from our plugin.
+- Investigated 2026-07 (uppersilverpitcher01, uppergobletceramic01): converted NIF data is EXACT — bhkConvexVerticesShape hull extents == visual bbox to 2 decimals, plane distances (normals[].w, used by Havok raycasts) consistent with vertices, havok filter layer=4 (SKYL_CLUTTER, same as vanilla), OBND tight (mesh-scanned), NiTriShapeData bound spheres minimal, block layout matches vanilla clutter. There is NO data-side bug.
+- The oversized rollover is the fixed 16-unit engine slop being proportionally huge on Oblivion clutter, which is ~half the size of Skyrim equivalents (OB ceramic goblet half-width 3.4 vs vanilla goblets 5.4–7.2; OB silver pitcher 16×9×27 vs vanilla silverjug 30×26×42). (3.4+16)/3.4 ≈ 5.7× footprint — matches the reported "3-4x". Vanilla small items (coins, gems) behave identically.
+- Remedy: user-side INI `fActivatePickRadius=2` (or ~4) under `[Interface]`; test live in console with `setini "fActivatePickRadius:Interface" 2`. Do NOT shrink collision shapes to compensate — physics must match visuals.
+- tes4/tes5_nif_analyzer now print `BoundSphere` (NiTriShapeData center/radius) and bhkConvexVerticesShape vertex `extents` for this kind of investigation.
+
 ### NIF analyzer tools
 - `python tools/tes4_nif_analyzer.py <nif_or_dir> [--outdir temp/analysis] [--max N]` — Dumps NIF structure to human-readable text (includes furniture marker positions/refs/orientations)
 - `python tools/tes4_nif_analyzer.py <nif_or_dir> --bbox` — Prints world-space geometry bounding boxes (per-block + total, all transforms applied) to stdout; use to find mesh origins, floor levels, pillow bumps, etc.

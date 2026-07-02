@@ -40,6 +40,10 @@ def _fmt_flags(flags):
     return f"0x{flags:04X} ({flags})"
 
 
+# Set by main() when --skin is passed: dump full skin/shader detail
+DETAIL_SKIN = False
+
+
 def _safe_name(block):
     n = getattr(block, 'name', None)
     if n is None:
@@ -160,6 +164,14 @@ def dump_block(block, data, indent=0, lines=None):
             bp_cls = bp.__class__.__name__
             lines.append(f"{prefix}  BSProperty: {bp_cls}")
             if isinstance(bp, NifFormat.BSLightingShaderProperty):
+                if DETAIL_SKIN:
+                    lines.append(f"{prefix}    shaderType={getattr(bp, 'skyrim_shader_type', '?')} "
+                                 f"SF1=0x{int(getattr(bp, 'shader_flags_1', 0)):08X} "
+                                 f"SF2=0x{int(getattr(bp, 'shader_flags_2', 0)):08X}")
+                    lines.append(f"{prefix}    alpha={getattr(bp, 'alpha', 0):.2f} "
+                                 f"glossiness={getattr(bp, 'glossiness', 0):.2f} "
+                                 f"uvScale=({bp.uv_scale.u:.2f},{bp.uv_scale.v:.2f})"
+                                 if hasattr(bp, 'uv_scale') else f"{prefix}    (no uv_scale)")
                 if hasattr(bp, 'texture_set') and bp.texture_set:
                     for ti in range(min(bp.texture_set.num_textures, 9)):
                         t = bp.texture_set.textures[ti]
@@ -179,6 +191,8 @@ def dump_block(block, data, indent=0, lines=None):
                          f"{'tris=' + str(d.num_triangles) if hasattr(d, 'num_triangles') else ''}"
                          f"{'strips=' + str(d.num_strips) if hasattr(d, 'num_strips') else ''} "
                          f"hasVC={d.has_vertex_colors} hasNormals={d.has_normals}")
+            if hasattr(d, 'center') and hasattr(d.center, 'x'):
+                lines.append(f"{prefix}    BoundSphere: center={_fmt_vec3(d.center)} radius={d.radius:.4f}")
             if hasattr(d, 'extra_vectors_flags'):
                 lines.append(f"{prefix}    ExtraVectorsFlags: {d.extra_vectors_flags}")
         skin = getattr(block, 'skin_instance', None)
@@ -190,6 +204,8 @@ def dump_block(block, data, indent=0, lines=None):
                 for pi in range(skin.num_partitions):
                     p = skin.partitions[pi]
                     lines.append(f"{prefix}    Partition[{pi}]: bodyPart={p.body_part} flags={p.part_flag}")
+            if DETAIL_SKIN:
+                _dump_skin_detail(skin, prefix + '    ', lines)
 
     # NiParticleSystem
     if isinstance(block, NifFormat.NiParticleSystem):
@@ -289,6 +305,40 @@ def dump_block(block, data, indent=0, lines=None):
     return lines
 
 
+def _dump_skin_detail(skin, prefix, lines):
+    """Dump skin instance internals: bones, skin data transforms, partitions."""
+    root = getattr(skin, 'skeleton_root', None)
+    lines.append(f"{prefix}SkeletonRoot: {_safe_name(root) if root is not None else '(null)'}")
+    bones = list(getattr(skin, 'bones', []) or [])
+    for bi, b in enumerate(bones):
+        lines.append(f"{prefix}Bone[{bi}]: {_safe_name(b) if b is not None else '(null)'}")
+    sd = getattr(skin, 'data', None)
+    if sd is not None:
+        st = sd.skin_transform
+        lines.append(f"{prefix}SkinData transform: T={_fmt_vec3(st.translation)} "
+                     f"R={_fmt_mat33(st.rotation)} S={st.scale:.4f}")
+        for bi in range(min(sd.num_bones, len(bones) if bones else sd.num_bones)):
+            bd = sd.bone_list[bi]
+            bt = bd.skin_transform
+            lines.append(f"{prefix}Bind[{bi}] ({_safe_name(bones[bi]) if bi < len(bones) and bones[bi] is not None else '?'}): "
+                         f"T={_fmt_vec3(bt.translation)} S={bt.scale:.4f}")
+            lines.append(f"{prefix}  R={_fmt_mat33(bt.rotation)}")
+            lines.append(f"{prefix}  boundSphere: c={_fmt_vec3(bd.bounding_sphere_offset)} "
+                         f"r={bd.bounding_sphere_radius:.4f} numVerts={bd.num_vertices}")
+    part = getattr(skin, 'skin_partition', None)
+    if part is None and sd is not None:
+        part = getattr(sd, 'skin_partition', None)
+    if part is not None:
+        lines.append(f"{prefix}SkinPartition: {part.num_skin_partition_blocks} blocks")
+        for pi in range(part.num_skin_partition_blocks):
+            pb = part.skin_partition_blocks[pi]
+            bone_idx = [pb.bones[i] for i in range(pb.num_bones)]
+            lines.append(f"{prefix}  Block[{pi}]: verts={pb.num_vertices} tris={pb.num_triangles} "
+                         f"strips={pb.num_strips} weightsPerVert={pb.num_weights_per_vertex} "
+                         f"hasVertMap={pb.has_vertex_map} hasWeights={pb.has_vertex_weights} "
+                         f"hasBoneIdx={pb.has_bone_indices} bones={bone_idx}")
+
+
 def _dump_collision_shape(shape, prefix, lines):
     """Dump collision shape hierarchy."""
     if shape is None:
@@ -307,6 +357,12 @@ def _dump_collision_shape(shape, prefix, lines):
     elif isinstance(shape, NifFormat.bhkConvexVerticesShape):
         lines.append(f"{prefix}  verts={len(shape.vertices)} normals={len(shape.normals)} "
                      f"radius={shape.radius:.4f} material={shape.material}")
+        if len(shape.vertices):
+            xs = [v.x for v in shape.vertices]
+            ys = [v.y for v in shape.vertices]
+            zs = [v.z for v in shape.vertices]
+            lines.append(f"{prefix}  extents: min=({min(xs):.4f}, {min(ys):.4f}, {min(zs):.4f}) "
+                         f"max=({max(xs):.4f}, {max(ys):.4f}, {max(zs):.4f})")
     elif isinstance(shape, NifFormat.bhkNiTriStripsShape):
         lines.append(f"{prefix}  strips_data={len(list(shape.strips_data))} material={shape.material}")
     elif isinstance(shape, NifFormat.bhkPackedNiTriStripsShape):
@@ -412,7 +468,13 @@ def main():
     parser.add_argument('--max', type=int, default=0, help='Max files to process (0=all)')
     parser.add_argument('--bbox', action='store_true',
                         help='Print world-space geometry bounding boxes to stdout instead of dumping')
+    parser.add_argument('--skin', action='store_true',
+                        help='Dump full skin detail (bones, bind matrices, partitions, shader flags)')
     args = parser.parse_args()
+
+    if args.skin:
+        global DETAIL_SKIN
+        DETAIL_SKIN = True
 
     src = Path(args.src)
     outdir = Path(args.outdir)

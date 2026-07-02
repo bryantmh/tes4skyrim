@@ -67,6 +67,50 @@ from .writer import (
 _WELL_KNOWN_PROPERTIES: dict[str, int] = {}   # populated by _create_tes4_special_records
 
 
+def _create_naked_torso_override(writer: PluginWriter):
+    """Override Skyrim.esm's NakedTorso ARMA (0x000D67) to add biped slot 44.
+
+    modify_body_meshes.py splits the body mesh's part-32 partition into
+    torso(32) + upper-legs(44) so greaves can hide just the thighs.  The engine
+    only renders a skin partition when the naked-skin ARMA *covers* that slot —
+    vanilla NakedTorso covers 32/34/35/36/38 only, so partition 144 (slot 44)
+    is never drawn and the lower body turns invisible.  This override is a
+    byte-faithful copy of the vanilla record with slot 44 added to BOD2.
+    """
+    subs = pack_string_subrecord('EDID', 'NakedTorso')
+    # Vanilla BODT slots 0x174 (32 Body, 34 ForeArms, 35 Amulet, 36 Ring,
+    # 38 Calves) + bit 14 (44 LowerBody).  ArmorType 2 = Clothing.
+    subs += pack_subrecord('BOD2', struct.pack('<II', 0x174 | (1 << 14), 2))
+    subs += pack_subrecord('RNAM', struct.pack('<I', 0x00000019))
+    subs += pack_subrecord('DNAM', bytes.fromhex('000002020200001700000000'))
+    subs += pack_string_subrecord('MOD2', 'Actors\\Character\\Character Assets\\MaleBody_1.NIF')
+    subs += pack_subrecord('MO2T', bytes.fromhex(
+        '02000000060000000000000037FBB636646473000FD3010CD2B0412D646473000FD3010C'
+        '76F00CEC646473000FD3010C224CE083646473000FD3010CF042E4F4646473000FD3010C'
+        '7DA1F730646473000FD3010C'))
+    subs += pack_string_subrecord('MOD3', 'Actors\\Character\\Character Assets\\FemaleBody_1.nif')
+    subs += pack_subrecord('MO3T', bytes.fromhex(
+        '020000000600000000000000628B0C5E6464730066BB204C450088BA6464730066BB204C'
+        'E403E00A6464730066BB204C295389986464730066BB204CA5325E9C6464730066BB204C'
+        'AF0C34576464730066BB204C'))
+    subs += pack_string_subrecord('MOD4', 'Actors\\Character\\Character Assets\\1stPersonMaleBody_1.NIF')
+    subs += pack_subrecord('MO4T', bytes.fromhex('020000000000000000000000'))
+    subs += pack_string_subrecord('MOD5', 'Actors\\Character\\Character Assets\\1stPersonFemaleBody_1.nif')
+    subs += pack_subrecord('MO5T', bytes.fromhex('020000000000000000000000'))
+    # NAM0-3: base skin textures (male/female TXST FormIDs from Skyrim.esm)
+    subs += pack_subrecord('NAM0', struct.pack('<I', 0x0003EDE8))
+    subs += pack_subrecord('NAM1', struct.pack('<I', 0x0003EDE7))
+    subs += pack_subrecord('NAM2', struct.pack('<I', 0x0007BBB1))
+    subs += pack_subrecord('NAM3', struct.pack('<I', 0x0007BBB2))
+    # Additional races (vanilla list: playable races + vampire variants)
+    for race_fid in (0x00013741, 0x0008883C, 0x00013744, 0x00088844,
+                     0x00013746, 0x00088794, 0x00013747, 0x000A82B9,
+                     0x00013748, 0x00088846):
+        subs += pack_subrecord('MODL', struct.pack('<I', race_fid))
+    # Same FormID as Skyrim.esm's record (master index 0) → an override
+    writer.add_record('ARMA', pack_record('ARMA', 0x00000D67, 0, subs))
+
+
 def _create_tes4_special_records(writer: PluginWriter):
     """Create globals and factions needed by converted Papyrus scripts.
 
@@ -91,6 +135,8 @@ def _create_tes4_special_records(writer: PluginWriter):
     infamy_subs += pack_subrecord('FLTV', struct.pack('<f', 0.0))
     writer.add_record('GLOB', pack_record('GLOB', infamy_fid, 0, infamy_subs))
     _WELL_KNOWN_PROPERTIES['TES4Infamy'] = infamy_fid
+
+    _create_naked_torso_override(writer)
 
     # TES4CyrodiilCrimeFaction — Faction with crime flags
     crime_fid = writer.alloc_formid()
