@@ -126,7 +126,7 @@ for fast recall only.
 
 | Record | Key subrecords (in order) | Notes |
 |--------|---------------------------|-------|
-| **DIAL** | EDID, FULL, PNAM(float priority, dflt 50.0), BNAM(→DLBR), QNAM(→QUST), DATA(4B), SNAM(U32 4-char code), TIFC(U32 info count) | DATA on-disk = TopicFlags(U8)+**Subtype(U8)**+**Category(U16)** (NOT the xEdit label order — see records.md ⚠). SNAM raw LE ASCII (e.g. `CUST`,`HELO`) mirrors the subtype. |
+| **DIAL** | EDID, FULL, PNAM(float priority, dflt 50.0), BNAM(→DLBR), QNAM(→QUST), DATA(4B), SNAM(U32 4-char code), TIFC(U32 info count) | DATA on-disk = TopicFlags(U8)+**Category(U8)**+**Subtype(U16)** (the xEdit order — swapping it crashes at startup; see records.md ⚠). Subtype NUMBERS come from real data, not xEdit's shifted display enum (real Hello=73). SNAM raw LE ASCII (e.g. `CUST`,`HELO`) mirrors the subtype and is what the engine keys on. |
 | **INFO** | EDID, VMAD, ENAM(4B flags+reset), TPIC(→DIAL), PNAM(prev INFO), CNAM(favor U8), TCLT[](→DIAL/INFO links), Responses[(TRDT 24B + NAM1 + NAM2 + NAM3 + SNAM/LNAM idle)], CTDAs, RNAM(prompt), ANAM(speaker) | A child INFO references its parent topic via the GRUP. ENAM flags incl. Goodbye(0x01), Random(0x02), Say once(0x04). |
 | **QUST** | EDID, VMAD, FULL, DNAM(12B general), ENAM(event 4B), QTGL[], FLTR, quest CTDAs, INDX/QSDT stages, QOBJ/QSTA objectives, ANAM(next alias id), ALST/ALLS aliases, NNAM, QSTA targets | DNAM = Flags(U16)+Priority(U8)+FormVer(U8)+Unknown(4B)+Type(U32). |
 | **DLBR** | EDID, QNAM(→QUST, req), TNAM(category U32: 0=Player,1=Command), DNAM(flags U32: 0x01 Top-Level, 0x02 Blocking, 0x04 Exclusive), SNAM(→DIAL starting topic, req) | One branch per conversation flow. |

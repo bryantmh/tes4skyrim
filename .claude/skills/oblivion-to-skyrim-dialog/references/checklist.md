@@ -35,11 +35,12 @@ For a converted quest/topic, each of these should hold in-game:
 
 ### DIAL
 - [ ] EDID copied/generated.
-- [ ] `DATA.Type` mapped to Subtype + Category + `SNAM`, and `DATA` written in
-      the correct on-disk order **TopicFlags(U8) + Subtype(U8) + Category(U16)**
-      with the **real Skyrim subtype numbers** (Hello=73, Hit=23, …). Writing
-      category in the subtype byte (the xEdit-label order) → out-of-range
-      category → **load crash** (EXCEPTION_ACCESS_VIOLATION). See `dial-info.md`.
+- [ ] `DATA.Type` mapped to Category + Subtype + `SNAM`, and `DATA` written in
+      the correct on-disk order **TopicFlags(U8) + Category(U8) + Subtype(U16)**
+      (the xEdit order) with the **real Skyrim subtype numbers** (Hello=73,
+      Hit=23, … — from data, NOT xEdit's display enum which is shifted).
+      Writing subtype in the category byte (swapped) → out-of-range category →
+      **load crash** (EXCEPTION_ACCESS_VIOLATION). See `dial-info.md`.
 - [ ] Bark topics identified by reserved EDID (GREETING/HELLO/GOODBYE/combat/
       detection) and given the right subtype + SNAM; **no BNAM** on barks.
 - [ ] `QSTI` → `QNAM` (primary quest); extra QSTI handled (conditions or
@@ -127,9 +128,13 @@ malformed DIAL/INFO is fatal, not silent.
 
 | Crash | Cause | Fix |
 |-------|-------|-----|
-| `EXCEPTION_ACCESS_VIOLATION` while initializing a topic (crash log shows a `TESTopic*` and its owning `TESQuest*`) | **DIAL `DATA` written in the wrong byte order or with wrong subtype numbers.** On-disk order is `TopicFlags(U8) + Subtype(U8) + Category(U16)`; writing category in byte1 yields an out-of-range category the engine indexes out of bounds. | Pack `flags, subtype, category-U16` with the **real** Skyrim subtype numbers (see `dial-info.md`). |
-| Crash on a topic whose owning quest shows `{Active=false}` | Topic owned by a quest that isn't running when the engine touches it (esp. barks, which are processed at startup). | Ensure every topic's owning quest is Start-Game-Enabled/running, or own barks/orphans by an always-running quest. |
+| `EXCEPTION_ACCESS_VIOLATION` while initializing a topic (crash log shows a `TESTopic*` and its owning `TESQuest*`) | **DIAL `DATA` with an out-of-range category byte** — usually from writing the struct in a swapped order. On-disk order is `TopicFlags(U8) + Category(U8) + Subtype(U16)` (the xEdit order); putting the subtype in byte1 yields a category the engine indexes out of bounds. | Pack `flags, category, subtype-U16` with the **real** Skyrim subtype numbers (see `dial-info.md`). Verified fix for the 2026-06-18 startup crash (topic "Seen"/quest "Charactergen"). |
 | Crash walking an INFO condition list | Malformed CTDA (wrong size, dangling FormID, or OR flag on the last condition). | 32-byte CTDAs; remap/validate FormIDs; clear trailing OR (`conditions.md`). |
+
+> A topic owned by a quest that is not running does **not** crash — vanilla
+> Skyrim is full of topics owned by not-yet-started quests (that ownership IS
+> the gating mechanism). A `{Active=false}` quest in a crash log is normal
+> context, not the cause.
 
 > Missing voice files do **not** crash — a line just plays silently. Don't chase
 > audio when diagnosing a startup crash; look at record structure first.

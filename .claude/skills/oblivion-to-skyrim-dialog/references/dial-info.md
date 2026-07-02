@@ -32,16 +32,19 @@ suggest.
 > CRASHES the game on load):**
 > ```
 > byte0 = TopicFlags (U8)       (usually 0)
-> byte1 = Subtype    (U8)        ← the fine code (Hello=73, Hit=23, …); mirrors SNAM
-> byte2,3 = Category (U16)       ← 0 Topic,2 Scene,3 Combat,5 Detection,6 Service,7 Misc
+> byte1 = Category   (U8)        ← 0 Topic,2 Scene,3 Combat,5 Detection,6 Service,7 Misc
+> byte2,3 = Subtype  (U16)       ← the fine code (Hello=73, Hit=23, …); mirrors SNAM
 > ```
-> xEdit labels these "Category(U8) then Subtype(U16)", but the on-disk order is
-> **subtype-byte then category-U16**. If you write category into byte1 and
-> subtype into the U16 (the xEdit-label order), the engine reads an out-of-range
-> category, indexes a dialogue-dispatch table out of bounds, and throws an
-> `EXCEPTION_ACCESS_VIOLATION` while initializing the topic at startup.
-> The **subtype numbers also differ from xEdit's display enum** — take them from
-> real data (table below), not from the xEdit enum.
+> This IS xEdit's order (`wbDefinitionsTES5`: Topic Flags U8, Category U8,
+> Subtype U16) and was confirmed byte-for-byte against real Skyrim.esm (Hello =
+> `00 07 49 00`: category 7, subtype 0x49=73). If you swap them (subtype in
+> byte1, category in the U16), the engine reads an out-of-range category,
+> indexes its per-category topic tables out of bounds, and throws an
+> `EXCEPTION_ACCESS_VIOLATION` while initializing topics at startup.
+> The **subtype NUMBERS differ from xEdit's display enum** (which is shifted —
+> the field is `cpIgnore` there and synced from SNAM) — take them from real
+> data (table below), not from the xEdit enum. SNAM is what the engine keys
+> subtype behavior on; the DATA subtype int just mirrors it.
 
 Faithful TES4 Type → TES5 mapping by *purpose*:
 
@@ -55,7 +58,7 @@ Faithful TES4 Type → TES5 mapping by *purpose*:
 | 5 Service | 6 Service | nearest service subtype | (per) | Skyrim drives services from the NPC/faction; line maps, service hookup is on the actor. |
 | 6 Miscellaneous | 7 Misc | 88 Idle (`IDLE`) or nearest | (per) | Misc barks. |
 
-**Real Skyrim subtype byte → SNAM → category** (use these exact numbers; from
+**Real Skyrim subtype → SNAM → category** (use these exact numbers; from
 Skyrim.esm). Reserved Oblivion EditorIDs map onto them:
 
 | Oblivion EDID | Subtype | SNAM | Category |
@@ -79,7 +82,7 @@ Skyrim.esm). Reserved Oblivion EditorIDs map onto them:
 | NoticeCorpse | 70 | `NOTI` | 7 |
 | ObserveCombat | 69 | `OBCO` | 7 |
 
-> **SNAM is required** (mirrors the subtype byte; defaults to `CUST`). Identify
+> **SNAM is required** (mirrors the subtype; defaults to `CUST`). Identify
 > Oblivion barks by reserved EditorID; Oblivion's coarse Type enum doesn't name
 > the exact Skyrim subtype, so the EDID→subtype mapping above is partly
 > **judgment** where the source is ambiguous. Full subtype table is in the

@@ -70,37 +70,36 @@ DIAL's GRUP (group), not inline in the DIAL record. Record flag `0x4000` =
 | `PNAM` | float | Priority. Default **50.0**. Higher = considered first. |
 | `BNAM` | FormID→DLBR | Owning branch. Present on conversation topics (those that belong to a branch); absent on bark topics (combat/detection/misc subtypes, which aren't part of a branch). |
 | `QNAM` | FormID→QUST | Owning quest. **Required for the topic to function.** |
-| `DATA` | struct (4B) | **TopicFlags(U8) + Subtype(U8) + Category(U16)** — see the warning below; the on-disk order is NOT what xEdit's labels suggest. |
-| `SNAM` | U32 | 4-char Subtype code as raw little-endian ASCII (e.g. `CUST`, `HELO`, `GBYE`). Default `CUST`. Required. Mirrors the Subtype byte. |
+| `DATA` | struct (4B) | **TopicFlags(U8) + Category(U8) + Subtype(U16)** — the xEdit order; see the warning below about the subtype NUMBERS. |
+| `SNAM` | U32 | 4-char Subtype code as raw little-endian ASCII (e.g. `CUST`, `HELO`, `GBYE`). Default `CUST`. Required. Mirrors the Subtype; this is what the engine keys subtype behavior on. |
 | `TIFC` | U32 | INFO count (number of child INFOs). |
 
-### DATA breakdown — ⚠ on-disk layout vs. xEdit labels
+### DATA breakdown — ⚠ subtype numbers vs. xEdit's display enum
 
-> **CRITICAL (verified against real Skyrim.esm bytes).** xEdit's
-> `wbDefinitionsTES5.pas` labels the DATA struct as `TopicFlags(U8) +
-> Category(U8) + Subtype(U16)`, **but the real on-disk byte order is
-> `TopicFlags(U8) + Subtype(U8) + Category(U16)`** — the fine "subtype" enum is
-> the single byte at offset 1, and the coarse 0–7 "category" is the U16 at
-> offset 2. Moreover the **subtype enum NUMBERS in the data differ from xEdit's
-> display enum** (e.g. real Hello = 73, not the 79 xEdit shows). Always take the
-> numbers from real data, decoded with this layout:
+> **CRITICAL (verified against real Skyrim.esm bytes).** The on-disk order IS
+> xEdit's (`wbDefinitionsTES5.pas`) order:
 >
 > ```
 > byte0 = TopicFlags (U8)
-> byte1 = Subtype    (U8)   ← the fine code; mirrors SNAM
-> byte2,3 = Category (U16)  ← 0 Topic,1 Favor,2 Scene,3 Combat,4 Favors,
+> byte1 = Category   (U8)   ← 0 Topic,1 Favor,2 Scene,3 Combat,4 Favors,
 >                             5 Detection,6 Service,7 Miscellaneous
+> byte2,3 = Subtype  (U16)  ← the fine code; mirrors SNAM
 > ```
-> Writing the bytes in the xEdit-label order (category in byte1, subtype in the
-> U16) produces an out-of-range category value the engine indexes into a
-> dialogue-dispatch table → **access violation / crash on load**.
+> Writing the struct swapped (subtype in byte1, category in the U16) produces
+> an out-of-range category value the engine indexes into its per-category
+> topic tables → **access violation / crash on load** while topics initialize.
+>
+> However, the **subtype enum NUMBERS in the data differ from xEdit's display
+> enum** (e.g. real Hello = 73, not the 79 xEdit shows — xEdit marks the field
+> `cpIgnore` and syncs it from SNAM, so its enum has drifted). Take the numbers
+> from real data (table below). SNAM is authoritative for the engine.
 
 - **Topic Flags (U8):** `0x01` Do All Before Repeating.
-- **Category (U16):** 0 Topic, 1 Favor, 2 Scene, 3 Combat, 4 Favors,
+- **Category (U8):** 0 Topic, 1 Favor, 2 Scene, 3 Combat, 4 Favors,
   5 Detection, 6 Service, 7 Miscellaneous.
 
-**Real Subtype byte → SNAM → Category** (the values actually present in
-Skyrim.esm; dominant SNAM/category per subtype byte). Use these, not xEdit's
+**Real Subtype → SNAM → Category** (the values actually present in
+Skyrim.esm; dominant SNAM/category per subtype). Use these, not xEdit's
 display enum:
 
 | Sub | SNAM | Cat | Meaning | | Sub | SNAM | Cat | Meaning |
@@ -131,11 +130,11 @@ Signature=DIAL
 FormID=00000E3C
 PNAM=50.0
 QNAM=0003372B          # owning QUST
-DATA bytes = 00 17 03 00  → TopicFlags=0x00, Subtype=0x17(23 Hit), Category=0x0003(Combat)
+DATA bytes = 00 03 17 00  → TopicFlags=0x00, Category=0x03(Combat), Subtype=0x0017(23 Hit)
 SNAM="HIT_"            # mirrors the subtype
 TIFC=1
 ```
-A Hello greeting: `DATA = 00 49 07 00` (Subtype 0x49=73 Hello, Category 7 Misc),
+A Hello greeting: `DATA = 00 07 49 00` (Category 7 Misc, Subtype 0x49=73 Hello),
 `SNAM="HELO"`. A plain conversation topic: `DATA = 00 00 00 00`, `SNAM="CUST"`.
 
 ---
