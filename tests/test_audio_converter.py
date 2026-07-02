@@ -20,6 +20,7 @@ from asset_convert.audio_converter import (
     convert_file_to_xwm,
     convert_sounds,
     find_ffmpeg,
+    find_xwmaencode,
     organize_voice_files,
 )
 
@@ -29,6 +30,9 @@ from asset_convert.audio_converter import (
 
 FFMPEG = find_ffmpeg()
 needs_ffmpeg = pytest.mark.skipif(FFMPEG is None, reason='ffmpeg not on PATH')
+XWMAENCODE = find_xwmaencode()
+needs_xwmaencode = pytest.mark.skipif(XWMAENCODE is None,
+                                      reason='xWMAEncode.exe not found')
 
 # ASF (WMA / XWM) container magic bytes (first 16 bytes)
 ASF_MAGIC = bytes([
@@ -73,25 +77,37 @@ def test_find_ffmpeg_with_invalid_path():
 # ---------------------------------------------------------------------------
 
 @needs_ffmpeg
-def test_convert_wav_to_xwm_produces_asf_output(tmp_path):
-    """A WAV input should produce a file with ASF magic bytes."""
+@needs_xwmaencode
+def test_convert_wav_to_xwm_produces_xwma_output(tmp_path):
+    """A WAV input should produce a real xWMA file (RIFF/XWMA container)."""
     src = _make_wav(tmp_path / 'test.wav')
     dst = tmp_path / 'test.xwm'
-    ok = convert_file_to_xwm(src, dst, FFMPEG)
+    ok = convert_file_to_xwm(src, dst, FFMPEG, xwmaencode=XWMAENCODE)
     assert ok, 'convert_file_to_xwm returned False'
     assert dst.is_file(), 'Output file was not created'
     assert dst.stat().st_size > 0, 'Output file is empty'
     header = dst.read_bytes()[:16]
-    assert header == ASF_MAGIC, f'Output does not have ASF magic: {header.hex()}'
+    assert header[:4] == b'RIFF' and b'XWMA' in header, \
+        f'Output is not xWMA: {header.hex()}'
 
 
 @needs_ffmpeg
+def test_convert_file_to_xwm_without_encoder_returns_false(tmp_path):
+    """Without xWMAEncode there is no ASF fallback — must return False
+    (ffmpeg's ASF container does not play reliably in Skyrim)."""
+    src = _make_wav(tmp_path / 'a.wav')
+    dst = tmp_path / 'a.xwm'
+    assert convert_file_to_xwm(src, dst, FFMPEG, xwmaencode=None) is False
+
+
+@needs_ffmpeg
+@needs_xwmaencode
 def test_convert_file_to_xwm_creates_parent_dirs(tmp_path):
     """convert_file_to_xwm should create missing parent directories."""
     src = _make_wav(tmp_path / 'a.wav')
     dst = tmp_path / 'deep' / 'nested' / 'out.xwm'
     assert not dst.parent.exists()
-    ok = convert_file_to_xwm(src, dst, FFMPEG)
+    ok = convert_file_to_xwm(src, dst, FFMPEG, xwmaencode=XWMAENCODE)
     assert ok
     assert dst.parent.exists()
     assert dst.is_file()
@@ -133,14 +149,14 @@ def test_convert_sounds_converts_wav_files(tmp_path):
         output_dir=str(tmp_path / 'output'),
     )
 
-    assert result['converted'] == 2
-    assert result['copied'] == 0
+    # Non-voice sounds are copied as-is (Skyrim SE plays WAV/MP3/XWM natively)
+    assert result['copied'] == 2
     assert result['failed'] == 0
     assert result['total'] == 2
 
     out_dir = tmp_path / 'output' / plugin / 'sound' / 'tes4'
-    assert (out_dir / 'a.xwm').is_file()
-    assert (out_dir / 'b.xwm').is_file()
+    assert (out_dir / 'a.wav').is_file()
+    assert (out_dir / 'b.wav').is_file()
 
 
 @needs_ffmpeg
@@ -211,9 +227,10 @@ def test_voice_filename_re(name, expected):
         assert m is None, f'Expected no match for {name!r}'
     else:
         assert m is not None, f'Expected a match for {name!r}'
-        assert m.group(1).lower() == expected[0]
-        assert m.group(2) == expected[1]
-        assert m.group(3).lower() == expected[2]
+        # groups: (prefix, formid8, response index, extension)
+        assert m.group(2).lower() == expected[0]
+        assert m.group(3) == expected[1]
+        assert m.group(4).lower() == expected[2]
 
 
 # ---------------------------------------------------------------------------
@@ -259,10 +276,33 @@ def test_organize_voice_files_basic(tmp_path):
     assert result['errors'] == 0
     assert result['organized'] == 1
 
-    expected_fid = (0x0000a1b2 & 0x00FFFFFF) | (1 << 24)
-    expected_name = f'{expected_fid:08X}_0.xwm'
-    out_path = (tmp_path / 'output' / 'Sound' / 'Voice' / plugin
-                / 'TES4MaleNord' / expected_name)
+    # Skyrim resolves <prefix>_<fid8 with load byte ZEROED>_<n> — the FormID
+    # is NOT shifted, and without a voice map the source prefix is kept.
+    out_path = (tmp_path / 'output' / 'sound' / 'Voice' / plugin
+                / 'TES4MaleNord' / 'hello_0000a1b2_0.xwm')
+    assert out_path.is_file(), f'Expected output not found: {out_path}'
+
+
+@needs_ffmpeg
+def test_organize_voice_files_uses_voice_map(tmp_path):
+    """The importer's voicemap renames files to the prefix Skyrim will
+    actually look up (converted owning-quest + topic EditorIDs)."""
+    plugin = 'Test.esm'
+    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    voice_src.mkdir(parents=True, exist_ok=True)
+    _make_wav(voice_src / 'oldquest_oldtopic_0000a1b2_1.wav')
+
+    result = organize_voice_files(
+        source_dir=str(tmp_path / 'extract'),
+        dest_dir=str(tmp_path / 'output'),
+        plugin_name=plugin,
+        convert_audio=True,
+        ffmpeg_path=FFMPEG,
+        voice_map={0x00A1B2: 'newquest_newtopic'},
+    )
+    assert result['errors'] == 0 and result['organized'] == 1
+    out_path = (tmp_path / 'output' / 'sound' / 'Voice' / plugin
+                / 'TES4MaleNord' / 'newquest_newtopic_0000a1b2_1.xwm')
     assert out_path.is_file(), f'Expected output not found: {out_path}'
 
 

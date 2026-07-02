@@ -220,21 +220,67 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
             if txt:
                 subs += pack_string_subrecord('CNAM', txt)
 
-    # Objectives — mirror each stage's journal text as an objective so the
-    # on-screen objective tracks like Oblivion's journal did.
+    # --- Quest targets -> reference aliases + per-objective targets ---
+    # Oblivion QSTA: quest-level (REFR FormID + flags + conditions, usually
+    # GetStage bounds that gate WHEN the compass marker shows). Skyrim QSTA:
+    # per-OBJECTIVE (alias index + flags + conditions); markers appear while
+    # a displayed objective has a passing target. Mapping: one forced-ref
+    # alias per unique target ref, and every objective carries every target
+    # WITH its converted conditions — the GetStage conditions then gate the
+    # marker per stage at runtime exactly as Oblivion did. The stage
+    # fragments (script_convert) call SetObjectiveDisplayed(stage).
+    targets = []          # (alias_id, tes4_flags_low_byte, [ctda bytes])
+    alias_by_fid = {}
+    t = 0
+    while f'Target[{t}].FormID' in rec:
+        tfid = get_formid(rec, f'Target[{t}].FormID')
+        if tfid:
+            alias_id = alias_by_fid.setdefault(tfid, len(alias_by_fid))
+            tflags = get_int(rec, f'Target[{t}].Flags') & 0x01
+            ctdas = convert_ctda_list(rec, prefix=f'Target[{t}].')
+            targets.append((alias_id, tflags, ctdas))
+        t += 1
+
+    target_subs = b''
+    for alias_id, tflags, ctdas in targets:
+        target_subs += pack_subrecord('QSTA', struct.pack('<iB3x',
+                                                          alias_id, tflags))
+        for ctda in ctdas:
+            target_subs += pack_subrecord('CTDA', ctda)
+
+    # Objectives — one per stage with journal text (objective index = stage
+    # index, which is what the generated stage fragments display), each
+    # carrying all quest targets.
+    seen_stages = set()
     for i in range(stage_count):
         stage_idx = get_int(rec, f'Stage[{i}].Index')
+        if stage_idx in seen_stages:
+            continue
         log_count = get_int(rec, f'Stage[{i}].LogCount')
         texts = ([get_str(rec, f'Stage[{i}].Log[{j}].Text')
                   for j in range(log_count)] if log_count > 0
                  else [get_str(rec, f'Stage[{i}].LogEntry')])
-        for txt in texts:
-            if txt:
-                subs += pack_subrecord('QOBJ', struct.pack('<H', stage_idx))
-                subs += pack_uint32_subrecord('FNAM', 0)
-                subs += pack_string_subrecord('NNAM', txt)
+        txt = next((x for x in texts if x), None)
+        if not txt:
+            continue
+        seen_stages.add(stage_idx)
+        subs += pack_subrecord('QOBJ', struct.pack('<H', stage_idx))
+        subs += pack_uint32_subrecord('FNAM', 0)
+        subs += pack_string_subrecord('NNAM', txt)
+        subs += target_subs
 
-    subs += pack_uint32_subrecord('ANAM', 0)   # Next Alias ID (required)
+    subs += pack_uint32_subrecord('ANAM', len(alias_by_fid))  # Next Alias ID
+
+    # Reference aliases (forced ref). Flags: Optional (0x0002 — a fill
+    # failure must not block quest start, or dialogue dies with it) +
+    # Allow Reuse (0x0008) + Allow Dead (0x0010) + Allow Disabled (0x0080) +
+    # Allow Destroyed (0x1000).
+    for tfid, alias_id in sorted(alias_by_fid.items(), key=lambda kv: kv[1]):
+        subs += pack_uint32_subrecord('ALST', alias_id)
+        subs += pack_string_subrecord('ALID', f'TES4Target{alias_id:02d}')
+        subs += pack_uint32_subrecord('FNAM', 0x0000109A)
+        subs += pack_formid_subrecord('ALFR', tfid)
+        subs += pack_subrecord('ALED', b'')
 
     return pack_record('QUST', get_formid(rec, 'FormID'),
                        get_int(rec, 'RecordFlags'), subs)
@@ -512,6 +558,30 @@ def make_dlvw(fid: int, edid: str, quest_fid: int,
 
 
 # ===========================================================================
+# Voice file naming
+# ===========================================================================
+
+def voice_file_prefix(quest_edid: str, topic_edid: str) -> str:
+    """The `<quest>_<topic>` prefix Skyrim uses to resolve a voice file.
+
+    Runtime path: Sound\\Voice\\<plugin>\\<VoiceType>\\<prefix>_<fid8>_<n>.fuz
+    built from the OWNING quest EditorID + topic EditorID. Truncation rule
+    verified against all ~54K joinable filenames in the vanilla Voices BSA:
+      - topic has an EditorID: quest[:10] + '_' + topic[:25 - len(questpart)]
+        (combined prefix capped at 26 chars; topic gets the slack when the
+        quest is shorter than 10)
+      - topic has NO EditorID: quest uncut + '_' (double underscore before
+        the FormID)
+    All lowercase. The FormID component is the 8-hex value with the
+    load-order byte zeroed.
+    """
+    if topic_edid:
+        q = quest_edid[:10]
+        return f"{q}_{topic_edid[:25 - len(q)]}".lower()
+    return f"{quest_edid}_".lower()
+
+
+# ===========================================================================
 # Pre-scan helpers
 # ===========================================================================
 
@@ -642,12 +712,17 @@ def build_addtopic_stage_gates(by_type: dict) -> dict:
 
 def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                         fid_to_edid: dict = None, xref=None,
-                        well_known_props: dict = None) -> set:
+                        well_known_props: dict = None,
+                        voice_map: dict = None) -> set:
     """Build the DIAL/INFO/DLBR/DLVW hierarchy with original-quest ownership.
 
     Returns the set of quest FormIDs that must go in the .seq file (the
     synthetic generic dialogue quest; real SGE quests are added by the QUST
     pass in import_main).
+
+    voice_map, when given, is filled with {info_fid_low24: voice filename
+    prefix} so the audio pipeline can name extracted voice files the way the
+    Skyrim engine will look them up (owning quest EDID + topic EDID).
     """
 
     dials = by_type.get('DIAL', [])
@@ -680,6 +755,12 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     sge_quest_fids = {get_formid(r, 'FormID') for r in by_type.get('QUST', [])
                       if (get_int(r, 'DATA.Flags') & 0x01)
                       and get_formid(r, 'FormID')}
+
+    # Quest EDID lookup (remapped FormID space) for voice filename prefixes.
+    quest_edid_by_fid = {get_formid(r, 'FormID'): get_str(r, 'EditorID', '')
+                         for r in by_type.get('QUST', [])
+                         if get_formid(r, 'FormID')}
+    quest_edid_by_fid[generic_quest_fid] = 'TES4DialogueGeneric'
 
     info_by_dial = defaultdict(list)
     for rec in infos:
@@ -719,7 +800,8 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
             content, dlbr_bytes, owner_qfid, dial_fid, dlbr_fid = _build_one_topic(
                 dial_rec, info_by_dial, writer, remap, offset, generic_quest_fid,
                 tclt_targets, stage_gates, npc_to_vtyp, quest_npc_fids,
-                sge_quest_fids, fid_to_edid, xref, well_known_props, stats)
+                sge_quest_fids, quest_edid_by_fid, voice_map,
+                fid_to_edid, xref, well_known_props, stats)
             all_dial_content += content
             if dlbr_bytes:
                 all_dlbr += dlbr_bytes
@@ -798,8 +880,8 @@ def _topic_voice_types(child_infos: list, npc_to_vtyp: dict, offset: int) -> set
 
 def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
                      generic_quest_fid, tclt_targets, stage_gates, npc_to_vtyp,
-                     quest_npc_fids, sge_quest_fids, fid_to_edid, xref,
-                     well_known_props, stats):
+                     quest_npc_fids, sge_quest_fids, quest_edid_by_fid,
+                     voice_map, fid_to_edid, xref, well_known_props, stats):
     """Convert one DIAL topic and its child INFOs. Returns
     (dial_group_bytes, dlbr_bytes, owner_quest_fid, dial_fid, dlbr_fid)."""
     dial_fid = get_formid(dial_rec, 'FormID')
@@ -887,6 +969,10 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
                 well_known_props=well_known_props, xref=xref)
             child_count += 1
             stats['infos'] += 1
+            if voice_map is not None:
+                info_fid = get_formid(info_rec, 'FormID')
+                voice_map[info_fid & 0xFFFFFF] = voice_file_prefix(
+                    quest_edid_by_fid.get(owner_qfid, ''), edid)
         except Exception as e:
             print(f"  ERROR info under {edid or '?'}: {e}")
 

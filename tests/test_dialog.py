@@ -57,7 +57,7 @@ from tes5_import.text_reader import set_formid_index_offset
 
 def _find_subrecord(record_bytes: bytes, sig: bytes) -> 'bytes | None':
     pos = 24
-    while pos < len(record_bytes) - 6:
+    while pos + 6 <= len(record_bytes):
         sub_sig = record_bytes[pos:pos+4]
         sub_size = struct.unpack_from('<H', record_bytes, pos+4)[0]
         if sub_sig == sig:
@@ -69,7 +69,7 @@ def _find_subrecord(record_bytes: bytes, sig: bytes) -> 'bytes | None':
 def _find_all_subrecords(record_bytes: bytes, sig: bytes) -> list:
     results = []
     pos = 24
-    while pos < len(record_bytes) - 6:
+    while pos + 6 <= len(record_bytes):
         sub_sig = record_bytes[pos:pos+4]
         sub_size = struct.unpack_from('<H', record_bytes, pos+4)[0]
         if sub_sig == sig:
@@ -81,7 +81,7 @@ def _find_all_subrecords(record_bytes: bytes, sig: bytes) -> list:
 def _sub_order(record_bytes: bytes) -> list:
     order = []
     pos = 24
-    while pos < len(record_bytes) - 6:
+    while pos + 6 <= len(record_bytes):
         order.append(record_bytes[pos:pos+4].decode('ascii'))
         pos += 6 + struct.unpack_from('<H', record_bytes, pos+4)[0]
     return order
@@ -389,6 +389,60 @@ class TestQUST:
         flags = struct.unpack_from('<H', _find_subrecord(out, b'DNAM'), 0)[0]
         assert flags & 0x0011 == 0
 
+    def test_quest_targets_become_aliases_and_objective_targets(self):
+        """TES4 quest-level targets (REFR + conditions) -> one forced-ref
+        alias per unique target plus QSTA(alias, flags)+CTDAs on each
+        objective; conditions (usually GetStage bounds) then gate the compass
+        marker per stage at runtime, exactly like Oblivion."""
+        set_formid_index_offset(1)
+        try:
+            out = convert_QUST({
+                'FormID': '00010605', 'RecordFlags': '0', 'EditorID': 'QMark',
+                'DATA.Flags': '0', 'StageCount': '1',
+                'Stage[0].Index': '10', 'Stage[0].LogCount': '1',
+                'Stage[0].Log[0].Flags': '0',
+                'Stage[0].Log[0].Text': 'Find the thing.',
+                'Target[0].FormID': '0001656A',
+                'Target[0].Flags': '1',
+                'Target[0].ConditionCount': '1',
+                'Target[0].Condition[0].Raw':
+                    _tes4_ctda(func=58, comp=0x41200000, p1=0x00010605).hex(),
+            })
+        finally:
+            set_formid_index_offset(0)
+        qsta = _find_subrecord(out, b'QSTA')
+        assert qsta is not None and len(qsta) == 8
+        alias, tflags = struct.unpack_from('<iB', qsta, 0)
+        assert alias == 0 and tflags == 1
+        assert struct.unpack('<I', _find_subrecord(out, b'ALST'))[0] == 0
+        assert struct.unpack('<I', _find_subrecord(out, b'ALFR'))[0] == 0x0101656A
+        assert struct.unpack('<I', _find_subrecord(out, b'ANAM'))[0] == 1
+        fnam_alias = _find_all_subrecords(out, b'FNAM')[-1]
+        assert struct.unpack('<I', fnam_alias)[0] & 0x0002, \
+            "alias must be Optional so a fill failure can't block quest start"
+        order = _sub_order(out)
+        assert order.index('QOBJ') < order.index('QSTA') < order.index('ANAM') \
+            < order.index('ALST') < order.index('ALED')
+        # target condition carried onto the objective target
+        ctdas = _find_all_subrecords(out, b'CTDA')
+        assert any(struct.unpack_from('<H', c, 8)[0] == 58 for c in ctdas)
+
+    def test_duplicate_stage_objectives_deduped(self):
+        """One objective per stage index — the engine keys objectives by
+        index, and the stage fragment displays SetObjectiveDisplayed(stage)."""
+        out = convert_QUST({
+            'FormID': '00010606', 'RecordFlags': '0', 'EditorID': 'QDup',
+            'DATA.Flags': '0', 'StageCount': '2',
+            'Stage[0].Index': '10', 'Stage[0].LogCount': '2',
+            'Stage[0].Log[0].Flags': '0', 'Stage[0].Log[0].Text': 'First.',
+            'Stage[1].Log[1].Flags': '0', 'Stage[0].Log[1].Text': 'Second.',
+            'Stage[1].Index': '10', 'Stage[1].LogCount': '1',
+            'Stage[1].Log[0].Flags': '0', 'Stage[1].Log[0].Text': 'Third.',
+        })
+        qobjs = _find_all_subrecords(out, b'QOBJ')
+        assert len(qobjs) == 1
+        assert struct.unpack('<H', qobjs[0])[0] == 10
+
     def test_stages_and_anam(self):
         out = convert_QUST({
             'FormID': '00010604', 'RecordFlags': '0', 'EditorID': 'QTest',
@@ -503,6 +557,35 @@ class TestQuestOwnership:
             assert struct.unpack_from('<I', gates[0], 12)[0] == 0x010A0002
             # INFO under single-quest topic: ownership gates natively
             assert FUNC_GET_QUEST_RUNNING not in ctda_funcs(recs[('INFO', 0x010C0003)])
+        finally:
+            set_formid_index_offset(0)
+
+    def test_voice_file_prefix_rules(self):
+        """Truncation rules verified against the vanilla Voices BSA:
+        quest[:10] + topic[:25-len(questpart)] when the topic has an EDID
+        (combined cap 26); quest uncut + '_' when it doesn't."""
+        from tes5_import.dialog_converter import voice_file_prefix
+        assert voice_file_prefix('DialogueGeneric',
+                                 'DialogueGenericSharedInfo') \
+            == 'dialoguege_dialoguegeneric'
+        assert voice_file_prefix('DA05', 'DA05SindingWhyKillTheSpriggan') \
+            == 'da05_da05sindingwhykillthe'
+        assert voice_file_prefix('MQ01', 'Rats') == 'mq01_rats'
+        assert voice_file_prefix('DGIntimidateQuest', '') \
+            == 'dgintimidatequest_'
+
+    def test_voice_map_filled_with_owner_quest_prefix(self):
+        """voice_map keys are INFO low-24 FormIDs; prefixes use the CONVERTED
+        owning quest (generic for shared topics, original for single-quest)."""
+        set_formid_index_offset(1)
+        try:
+            writer = _FakeWriter()
+            vmap = {}
+            build_dialog_groups(self._mini_by_type(), writer, npc_to_vtyp={},
+                                voice_map=vmap)
+            assert vmap[0x0C0001].startswith('tes4dialog'), \
+                "shared-topic INFO named under the generic quest"
+            assert vmap[0x0C0003] == 'latequest_singletopic'
         finally:
             set_formid_index_offset(0)
 

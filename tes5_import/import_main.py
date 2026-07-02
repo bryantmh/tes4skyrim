@@ -351,8 +351,10 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     _build_world_groups(by_type, writer)
 
     # --- Phase 5: DIAL/INFO hierarchy ---
-    dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES)
+    voice_map = {}
+    dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map)
     sge_quest_fids |= dialog_sge_fids
+    _write_voice_map(output_path, voice_map)
 
     t3 = time.time()
     print(f"\nConverted {converted} records ({errors} errors) in {t3-t2:.2f}s")
@@ -370,6 +372,25 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     set_formid_index_offset(0)
 
     return converted, errors
+
+
+def _write_voice_map(output_path: str, voice_map: dict):
+    """Write the INFO FormID -> voice filename prefix map next to the ESM.
+
+    The audio pipeline (organize_voice_files) uses it to name extracted voice
+    files the way the Skyrim engine resolves them at runtime: the prefix is
+    built from the CONVERTED records' owning-quest + topic EditorIDs, so the
+    Oblivion filename prefix cannot be trusted.
+    """
+    if not voice_map:
+        return
+    map_path = output_path + '.voicemap.txt'
+    with open(map_path, 'w', encoding='utf-8') as f:
+        f.write('# InfoFormID(low24,hex)=voice filename prefix '
+                '(questEDID_topicEDID, Skyrim truncation rules)\n')
+        for fid in sorted(voice_map):
+            f.write(f'{fid:06X}={voice_map[fid]}\n')
+    print(f"  Wrote {map_path} ({len(voice_map)} voice filename prefixes)")
 
 
 def _write_seq_file(output_path: str, sge_quest_fids: set):

@@ -142,20 +142,23 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None) -> 'bytes | None':
                        run_on, 0, 0xFFFFFFFF)
 
 
-def convert_ctda_list(rec: dict, offset: 'int | None' = None) -> list:
+def convert_ctda_list(rec: dict, offset: 'int | None' = None,
+                      prefix: str = '') -> list:
     """Convert all of a record's TES4 conditions, repairing the OR chain.
 
-    Reads Condition[i].Raw (24-byte hex blobs) and returns a list of 32-byte
-    TES5 CTDAs. Dropping a condition that participated in an OR group is safe —
-    it's simply removed from the group — but the LAST surviving condition must
-    not retain a dangling OR flag, so we clear it.
+    Reads [prefix]Condition[i].Raw (24-byte hex blobs) and returns a list of
+    32-byte TES5 CTDAs. prefix selects nested condition lists (e.g.
+    'Target[2].' for quest target conditions). Dropping a condition that
+    participated in an OR group is safe — it's simply removed from the group —
+    but the LAST surviving condition must not retain a dangling OR flag, so we
+    clear it.
     """
     if offset is None:
         offset = get_formid_index_offset()
     out = []
     i = 0
     while True:
-        raw_hex = rec.get(f'Condition[{i}].Raw')
+        raw_hex = rec.get(f'{prefix}Condition[{i}].Raw')
         if raw_hex is None:
             break
         i += 1

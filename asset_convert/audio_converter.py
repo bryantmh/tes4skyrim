@@ -200,6 +200,7 @@ def convert_sounds(
         convert_audio=(ffmpeg is not None),
         ffmpeg_path=ffmpeg_path,
         formid_index=formid_index,
+        voice_map=find_voice_map(output_dir, source_name),
     )
 
     # ── Non-voice sounds: copy as-is (Skyrim SE plays MP3/WAV/XWM natively) ──
@@ -283,14 +284,42 @@ _TES4_VOICE_TYPE_MAP = {
 }
 
 # Oblivion voice filename: <quest>_<topic>_<infoFID8hex>_<idx>.<ext>
-# We need to PRESERVE the quest_topic_ prefix — Skyrim constructs the expected
-# filename as QuestEDID_TopicEDID_InfoFormID(masked)_RespNum at runtime.
-# The InfoFormID in the filename uses the 24-bit value (load-order byte stripped,
-# padded to 8 hex).  We must NOT shift the FormID.
+# Skyrim resolves a voice file as <prefix>_<InfoFormID>_<RespNum>.<ext> where
+# <prefix> is built at RUNTIME from the converted plugin's owning-quest and
+# topic EditorIDs (with Skyrim's own truncation rules — see
+# dialog_converter.voice_file_prefix). The Oblivion filename prefix uses
+# Oblivion's truncation of the ORIGINAL quest, so it cannot be trusted;
+# files are renamed via the voicemap emitted by the importer, keyed on the
+# InfoFormID (24-bit value, load-order byte stripped).
 _VOICE_FILENAME_RE = re.compile(
     r'^(.+)_([0-9a-fA-F]{8})_(\d+)\.(mp3|wav|xwm|fuz)$',
     re.IGNORECASE,
 )
+
+
+def load_voice_map(map_path) -> dict:
+    """Load the importer's `<esm>.voicemap.txt` into {info_fid24: prefix}."""
+    voice_map = {}
+    with open(map_path, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            fid_hex, prefix = line.split('=', 1)
+            try:
+                voice_map[int(fid_hex, 16) & 0xFFFFFF] = prefix
+            except ValueError:
+                continue
+    return voice_map
+
+
+def find_voice_map(output_dir, source_name) -> 'dict | None':
+    """Locate and load the voicemap written next to the converted ESM
+    (output/<plugin>/<plugin>.voicemap.txt), if present."""
+    map_path = Path(output_dir) / source_name / (source_name + '.voicemap.txt')
+    if map_path.exists():
+        return load_voice_map(map_path)
+    return None
 
 
 def organize_voice_files(
@@ -302,6 +331,7 @@ def organize_voice_files(
     ffmpeg_path='ffmpeg',
     formid_index: int = 1,
     xwmaencode_path: 'str | None' = None,
+    voice_map: 'dict | str | None' = None,
 ) -> dict:
     """Reorganise extracted TES4 voice files into TES5 directory layout.
 
@@ -321,12 +351,27 @@ def organize_voice_files(
         ffmpeg_path:      Path to ffmpeg executable (default 'ffmpeg').
         formid_index:     Load-order index byte for the plugin (default 1).
         xwmaencode_path:  Path to xWMAEncode.exe (auto-detected if None).
+        voice_map:        {info_fid24: prefix} dict or path to the importer's
+                          `<esm>.voicemap.txt`. Files are RENAMED to the
+                          mapped prefix so the runtime lookup (built from the
+                          converted records' quest/topic EditorIDs) finds
+                          them. Without it the Oblivion prefix is kept, which
+                          only resolves when the EditorIDs and truncation
+                          happen to match.
 
     Returns:
         dict with keys: organized, skipped, no_match, errors, unmapped_races.
     """
     source_dir = Path(source_dir)
     dest_dir   = Path(dest_dir)
+    if isinstance(voice_map, (str, Path)):
+        voice_map = load_voice_map(voice_map)
+    if voice_map:
+        print(f'  Voice map: {len(voice_map)} filename prefixes from importer')
+    else:
+        print('  WARNING: no voice map — keeping Oblivion filename prefixes; '
+              'lines whose quest/topic EditorIDs were truncated differently '
+              'will not play')
 
     voice_root = source_dir / 'sound' / 'Voice'
     if not voice_root.exists():
@@ -395,13 +440,18 @@ def organize_voice_files(
                     resp_idx         = m.group(3)   # 1-based index from source filename
                     src_ext          = m.group(4).lower()
 
-                    # Skyrim voice filename: QuestEDID_TopicEDID_InfoFormID_RespNum
-                    # InfoFormID = original 24-bit value padded to 8 hex (NO load-order shift).
-                    # The prefix from the source filename already contains Quest_Topic.
-                    # We keep the FormID as-is from the source (it's already the 24-bit value).
-                    dst_name = (f'{prefix}_{info_fid_hex}_{resp_idx}.xwm'
-                                if ffmpeg and src_ext in ('mp3', 'wav')
-                                else f'{prefix}_{info_fid_hex}_{resp_idx}.{src_ext}')
+                    # Skyrim voice filename: <prefix>_<InfoFormID>_<RespNum>
+                    # where prefix comes from the CONVERTED records (voicemap,
+                    # keyed by the 24-bit InfoFormID) and the FormID keeps 8
+                    # hex digits with the load-order byte zeroed. Lowercase —
+                    # the engine's lookup is case-insensitive on disk but BSA
+                    # paths are stored lowercase.
+                    fid24 = int(info_fid_hex, 16) & 0xFFFFFF
+                    if voice_map:
+                        prefix = voice_map.get(fid24, prefix)
+                    dst_ext = ('xwm' if ffmpeg and src_ext in ('mp3', 'wav')
+                               else src_ext)
+                    dst_name = f'{prefix}_{fid24:08x}_{resp_idx}.{dst_ext}'.lower()
                     dst_path = out_dir / dst_name
 
                     if dst_path.exists():
