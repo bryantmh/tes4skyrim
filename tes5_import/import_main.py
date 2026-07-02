@@ -196,6 +196,16 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # Build NPC FormID → VTYP FormID mapping for voice type injection
     npc_to_vtyp = build_npc_to_vtyp_map(by_type, num_new_masters)
 
+    # AddTopic unlock plan: gated topics get GetGlobalValue conditions and one
+    # GLOB each; revealer INFO/stage fragments set the globals (must exist
+    # before the QUST pass so quest VMADs can bind them as properties).
+    from .dialog_unlocks import build_unlock_plan, create_unlock_globals
+    unlock_plan = build_unlock_plan(by_type)
+    unlock_globals = create_unlock_globals(writer, unlock_plan)
+    print(f"  AddTopic unlocks: {len(unlock_globals)} gated topics, "
+          f"{len(unlock_plan['info_reveals'])} revealer INFOs, "
+          f"{len(unlock_plan['stage_reveals'])} revealer quest stages")
+
     # --- Phase 0b2: Build FormID → EditorID map for VMAD property resolution ---
     # Scripts reference external records via SCRO FormIDs. To populate VMAD
     # property values (so CK isn't needed), we need EditorIDs to generate
@@ -333,7 +343,9 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         for rec in qust_records:
             try:
                 qust_bytes = convert_QUST(rec, fid_to_edid=fid_to_edid,
-                                          well_known_props=_WELL_KNOWN_PROPERTIES)
+                                          well_known_props=_WELL_KNOWN_PROPERTIES,
+                                          unlock_plan=unlock_plan,
+                                          unlock_globals=unlock_globals)
                 writer.add_record('QUST', qust_bytes)
                 converted += 1
                 # Track SGE quests for .seq generation
@@ -352,7 +364,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     # --- Phase 5: DIAL/INFO hierarchy ---
     voice_map = {}
-    dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map)
+    dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map, unlock_plan=unlock_plan, unlock_globals=unlock_globals)
     sge_quest_fids |= dialog_sge_fids
     _write_voice_map(output_path, voice_map)
 

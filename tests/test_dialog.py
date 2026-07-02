@@ -382,6 +382,26 @@ class TestQUST:
         assert prio == 30
         assert formver == 0
 
+    def test_journal_quests_get_side_quest_type(self):
+        """Quests with journal stages must be Type 8 (Side Quest). Type 0
+        (None) is Skyrim's journal-INVISIBLE control-quest type — the quest
+        never lists in the journal, can't be tracked, and its objective
+        targets never produce compass/map markers."""
+        out = convert_QUST({
+            'FormID': '00010607', 'RecordFlags': '0', 'EditorID': 'QJournal',
+            'DATA.Flags': '0', 'StageCount': '1',
+            'Stage[0].Index': '10', 'Stage[0].LogCount': '1',
+            'Stage[0].Log[0].Flags': '0', 'Stage[0].Log[0].Text': 'Entry.',
+        })
+        dnam = _find_subrecord(out, b'DNAM')
+        assert struct.unpack_from('<I', dnam, 8)[0] == 8
+        # dialogue/control quest without journal text stays Type 0
+        out = convert_QUST({'FormID': '00010608', 'RecordFlags': '0',
+                            'EditorID': 'QCtl', 'DATA.Flags': '0',
+                            'StageCount': '0'})
+        dnam = _find_subrecord(out, b'DNAM')
+        assert struct.unpack_from('<I', dnam, 8)[0] == 0
+
     def test_non_sge_quest_not_start_enabled(self):
         out = convert_QUST({'FormID': '00010603', 'RecordFlags': '0',
                             'EditorID': 'LateQuest', 'DATA.Flags': '0',
@@ -607,6 +627,222 @@ class TestQuestOwnership:
             assert data[1] == 7
             assert struct.unpack_from('<H', data, 2)[0] == 73
             assert _find_subrecord(fallback, b'SNAM') == b'HELO'
+        finally:
+            set_formid_index_offset(0)
+
+
+class TestAddTopicUnlocks:
+    """AddTopic visibility -> unlock globals. Oblivion only shows a topic once
+    it has been ADDED (data Add-Topics list, AddTopic script command, or a
+    spoken line mentioning the topic's name). Skyrim has no AddTopic, so the
+    conversion gates each explicitly-added topic on a GLOB the revealing
+    fragments set."""
+
+    def _by_type(self):
+        return {
+            'QUST': [
+                {'FormID': '000A0001', 'EditorID': 'FGQuest',
+                 'DATA.Flags': '1', 'StageCount': '1',
+                 'Stage[0].Index': '10', 'Stage[0].LogCount': '1',
+                 'Stage[0].Log[0].Flags': '0',
+                 'Stage[0].Log[0].Text': 'Journal.',
+                 'Stage[0].Log[0].ResultScript': 'AddTopic stageTopic'},
+            ],
+            'DIAL': [
+                {'FormID': '000B0001', 'EditorID': 'contract',
+                 'DATA.Type': '0', 'QuestCount': '1', 'Quest[0]': '000A0001',
+                 'FULL': 'Contract'},
+                {'FormID': '000B0002', 'EditorID': 'ratsTOPIC',
+                 'DATA.Type': '0', 'QuestCount': '1', 'Quest[0]': '000A0001',
+                 'FULL': 'Rats'},
+                {'FormID': '000B0003', 'EditorID': 'choiceTopic',
+                 'DATA.Type': '1', 'QuestCount': '1', 'Quest[0]': '000A0001',
+                 'FULL': 'A choice'},
+                {'FormID': '000B0004', 'EditorID': 'stageTopic',
+                 'DATA.Type': '0', 'QuestCount': '1', 'Quest[0]': '000A0001',
+                 'FULL': 'Stage things'},
+            ],
+            'INFO': [
+                # Revealer: adds ratsTOPIC via data list, links choiceTopic via TCLT
+                {'FormID': '000C0001', 'ParentDIAL': '000B0001',
+                 'QSTI.Quest': '000A0001', 'ResponseCount': '1',
+                 'Response[0].ResponseText': 'Arvena has a rat problem.',
+                 'Response[0].EmotionType': '0', 'Response[0].EmotionValue': '0',
+                 'Response[0].ResponseNumber': '1',
+                 'AddTopic[0]': '000B0002',
+                 'ChoiceCount': '1', 'Choice[0]': '000B0003',
+                 'ConditionCount': '0', 'DATA.Flags': '0'},
+                # Mention revealer: response text names the gated topic "Rats"
+                {'FormID': '000C0002', 'ParentDIAL': '000B0004',
+                 'QSTI.Quest': '000A0001', 'ResponseCount': '1',
+                 'Response[0].ResponseText': 'Ask Azzan about Rats sometime.',
+                 'Response[0].EmotionType': '0', 'Response[0].EmotionValue': '0',
+                 'Response[0].ResponseNumber': '1',
+                 'ChoiceCount': '0', 'ConditionCount': '0', 'DATA.Flags': '0'},
+                # Gated topic's own INFO
+                {'FormID': '000C0003', 'ParentDIAL': '000B0002',
+                 'QSTI.Quest': '000A0001', 'ResponseCount': '0',
+                 'ChoiceCount': '0', 'ConditionCount': '0', 'DATA.Flags': '0'},
+                # Choice-target topic INFO (must never be unlock-gated)
+                {'FormID': '000C0004', 'ParentDIAL': '000B0003',
+                 'QSTI.Quest': '000A0001', 'ResponseCount': '0',
+                 'ChoiceCount': '0', 'ConditionCount': '0', 'DATA.Flags': '0'},
+            ],
+        }
+
+    def test_unlock_plan(self):
+        from tes5_import.dialog_unlocks import build_unlock_plan
+        plan = build_unlock_plan(self._by_type())
+        # ratsTOPIC gated (data list); stageTopic gated (stage script AddTopic);
+        # choiceTopic NOT gated (only a TCLT target, never explicitly added);
+        # contract NOT gated (never added)
+        assert plan['gated'] == {0x0B0002: 'TES4Unlock_ratsTOPIC',
+                                 0x0B0004: 'TES4Unlock_stageTopic'}
+        # data-list revealer + mention revealer
+        assert plan['info_reveals'][0x0C0001] == ['TES4Unlock_ratsTOPIC']
+        assert plan['info_reveals'][0x0C0002] == ['TES4Unlock_ratsTOPIC']
+        # stage script revealer
+        assert plan['stage_reveals'] == {('fgquest', 10): ['TES4Unlock_stageTopic']}
+
+    def test_bark_revealed_topics_are_not_gated(self):
+        """A topic revealed by a GREETING/HELLO info must NOT be gated: the
+        bark fires on first contact, so in Oblivion it's effectively visible
+        immediately (Azzan's 'Join the Fighters Guild' via his FG-ad
+        greeting). A gate only risks the fragment racing the topic menu."""
+        from tes5_import.dialog_unlocks import build_unlock_plan
+        bt = self._by_type()
+        bt['DIAL'].append({'FormID': '000B0005', 'EditorID': 'GREETING',
+                           'DATA.Type': '6', 'QuestCount': '1',
+                           'Quest[0]': '000A0001'})
+        bt['INFO'].append({'FormID': '000C0005', 'ParentDIAL': '000B0005',
+                           'QSTI.Quest': '000A0001', 'ResponseCount': '0',
+                           'AddTopic[0]': '000B0002',
+                           'ChoiceCount': '0', 'ConditionCount': '0',
+                           'DATA.Flags': '0'})
+        plan = build_unlock_plan(bt)
+        assert 0x0B0002 not in plan['gated'], \
+            "greeting-revealed topic must be ungated"
+        assert 0x0B0004 in plan['gated'], \
+            "conversation/stage-revealed topic stays gated"
+        # no lingering revealer entries for the dropped global
+        for gs in plan['info_reveals'].values():
+            assert 'TES4Unlock_ratsTOPIC' not in gs
+
+    def test_gated_choice_target_revealed_by_tclt_parent(self):
+        """A gated topic that is also a choice target keeps its gate but the
+        TCLT-parent INFO becomes a revealer, so taking the choice unlocks it
+        permanently (Oblivion: choices work regardless of added state)."""
+        from tes5_import.dialog_unlocks import build_unlock_plan
+        bt = self._by_type()
+        # make choiceTopic explicitly added by the stage script too
+        bt['QUST'][0]['Stage[0].Log[0].ResultScript'] = \
+            'AddTopic stageTopic\r\nAddTopic choiceTopic'
+        plan = build_unlock_plan(bt)
+        assert 0x0B0003 in plan['gated']
+        # the TCLT parent (infoA links Choice[0]=choiceTopic) now reveals it
+        assert plan['gated'][0x0B0003] in plan['info_reveals'][0x0C0001]
+
+    def test_choice_only_topic_gets_normal_branch(self):
+        """A TCLT-target topic never explicitly added is choice-only in
+        Oblivion — its branch must be Normal (DNAM=0), not Top-Level, or it
+        leaks into the topic menu (e.g. Azzan's 'Yes. Sign me up.')."""
+        from tes5_import.dialog_unlocks import build_unlock_plan, \
+            create_unlock_globals
+        set_formid_index_offset(1)
+        try:
+            bt = self._by_type()
+            plan = build_unlock_plan(bt)
+            writer = _FakeWriter()
+            globals_map = create_unlock_globals(writer, plan)
+            build_dialog_groups(bt, writer, npc_to_vtyp={},
+                                unlock_plan=plan, unlock_globals=globals_map)
+            dnam_by_start = {}
+            for sig, fid, rb in _walk_records(writer.groups['DLBR']):
+                start = struct.unpack('<I', _find_subrecord(rb, b'SNAM'))[0]
+                dnam_by_start[start] = struct.unpack(
+                    '<I', _find_subrecord(rb, b'DNAM'))[0]
+            assert dnam_by_start[0x010B0003] == 0, \
+                "choice-only topic must be a Normal branch"
+            assert dnam_by_start[0x010B0001] == 1, \
+                "ordinary topic stays top-level"
+            assert dnam_by_start[0x010B0002] == 1, \
+                "gated (explicitly added) topic stays top-level"
+        finally:
+            set_formid_index_offset(0)
+
+    def test_infos_sorted_by_quest_priority(self):
+        """Oblivion picks the first passing INFO by QUEST PRIORITY (desc);
+        Skyrim walks physical order — the converter must sort each topic's
+        children by their own quest's priority."""
+        set_formid_index_offset(1)
+        try:
+            bt = {
+                'QUST': [
+                    {'FormID': '000A0001', 'EditorID': 'LowPrio',
+                     'DATA.Flags': '1', 'DATA.Priority': '11',
+                     'StageCount': '0'},
+                    {'FormID': '000A0002', 'EditorID': 'HighPrio',
+                     'DATA.Flags': '1', 'DATA.Priority': '60',
+                     'StageCount': '0'},
+                ],
+                'DIAL': [
+                    {'FormID': '000B0001', 'EditorID': 'GREETING',
+                     'DATA.Type': '6', 'QuestCount': '2',
+                     'Quest[0]': '000A0001', 'Quest[1]': '000A0002'},
+                ],
+                'INFO': [
+                    {'FormID': '000C0001', 'ParentDIAL': '000B0001',
+                     'QSTI.Quest': '000A0001', 'ResponseCount': '0',
+                     'ChoiceCount': '0', 'ConditionCount': '0',
+                     'DATA.Flags': '0'},
+                    {'FormID': '000C0002', 'ParentDIAL': '000B0001',
+                     'QSTI.Quest': '000A0002', 'ResponseCount': '0',
+                     'ChoiceCount': '0', 'ConditionCount': '0',
+                     'DATA.Flags': '0'},
+                ],
+            }
+            writer = _FakeWriter()
+            build_dialog_groups(bt, writer, npc_to_vtyp={})
+            order = [fid for sig, fid, _ in _walk_records(writer.groups['DIAL'])
+                     if sig == 'INFO']
+            assert order.index(0x010C0002) < order.index(0x010C0001), \
+                "priority-60 quest's INFO must precede the priority-11 one"
+        finally:
+            set_formid_index_offset(0)
+
+    def test_gates_and_revealer_vmads_in_output(self):
+        from tes5_import.dialog_unlocks import build_unlock_plan
+        from tes5_import.dialog_conditions import FUNC_GET_GLOBAL_VALUE
+        set_formid_index_offset(1)
+        try:
+            by_type = self._by_type()
+            plan = build_unlock_plan(by_type)
+            writer = _FakeWriter()
+            from tes5_import.dialog_unlocks import create_unlock_globals
+            globals_map = create_unlock_globals(writer, plan)
+            build_dialog_groups(by_type, writer, npc_to_vtyp={},
+                                unlock_plan=plan, unlock_globals=globals_map)
+            recs = {(sig, fid): rb
+                    for sig, fid, rb in _walk_records(writer.groups['DIAL'])}
+
+            def ctda_list(rb):
+                return [(struct.unpack_from('<H', c, 8)[0],
+                         struct.unpack_from('<I', c, 12)[0])
+                        for c in _find_all_subrecords(rb, b'CTDA')]
+
+            # gated topic INFO carries GetGlobalValue(unlock GLOB) == 1
+            gates = [c for c in ctda_list(recs[('INFO', 0x010C0003)])
+                     if c[0] == FUNC_GET_GLOBAL_VALUE]
+            assert gates == [(FUNC_GET_GLOBAL_VALUE,
+                              globals_map['TES4Unlock_ratsTOPIC'])]
+            # choice-target topic INFO has no unlock gate
+            assert not [c for c in ctda_list(recs[('INFO', 0x010C0004)])
+                        if c[0] == FUNC_GET_GLOBAL_VALUE]
+            # revealer INFO (no result script) still gets a VMAD binding the GLOB
+            vmad = _find_subrecord(recs[('INFO', 0x010C0001)], b'VMAD')
+            assert vmad is not None
+            assert b'TES4_TIF__000C0001' in vmad
+            assert struct.pack('<I', globals_map['TES4Unlock_ratsTOPIC']) in vmad
         finally:
             set_formid_index_offset(0)
 

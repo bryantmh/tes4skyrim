@@ -47,6 +47,18 @@ def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -
         if xref.ref_as_int:
             print(f'    {len(xref.ref_as_int)} ref variables detected as integer-only (cross-script)')
 
+    # Phase 1.6: AddTopic unlock plan — MUST be the same analysis the importer
+    # runs, so the SetValue lines in the generated fragments match the VMAD
+    # property bindings and GLOB records written into the ESM.
+    from tes5_import.dialog_unlocks import build_unlock_plan
+    by_type = {}
+    for sig in ('DIAL', 'INFO', 'QUST'):
+        path = os.path.join(export_dir, f'{sig}.txt')
+        by_type[sig] = parse_export_file(path) if os.path.exists(path) else []
+    unlock_plan = build_unlock_plan(by_type)
+    print(f'    AddTopic unlocks: {len(unlock_plan["gated"])} gated topics, '
+          f'{len(unlock_plan["info_reveals"])} revealer INFOs')
+
     stats = {
         'scpt_total': 0, 'scpt_ok': 0, 'scpt_err': 0,
         'info_total': 0, 'info_ok': 0, 'info_err': 0,
@@ -64,13 +76,15 @@ def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -
     info_path = os.path.join(export_dir, 'INFO.txt')
     if os.path.exists(info_path):
         print('  Converting INFO result scripts...')
-        _convert_info_scripts(info_path, output_dir, xref, stats)
+        _convert_info_scripts(info_path, output_dir, xref, stats,
+                              info_reveals=unlock_plan['info_reveals'])
 
     # Phase 4: Convert QUST stage scripts
     qust_path = os.path.join(export_dir, 'QUST.txt')
     if os.path.exists(qust_path):
         print('  Converting QUST stage scripts...')
-        _convert_qust_scripts(qust_path, output_dir, xref, stats)
+        _convert_qust_scripts(qust_path, output_dir, xref, stats,
+                              stage_reveals=unlock_plan['stage_reveals'])
 
     total = stats['scpt_ok'] + stats['info_ok'] + stats['qust_ok']
     errs = stats['scpt_err'] + stats['info_err'] + stats['qust_err']
@@ -114,39 +128,65 @@ def _convert_scpt_records(scpt_path: str, output_dir: str, xref: CrossRefGraph, 
             stats['errors'].append(f'SCPT {edid} ({formid}): {e}')
 
 
-def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
-    """Convert INFO result scripts to TopicInfo fragment .psc files."""
+def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph,
+                          stats: dict, info_reveals: dict = None):
+    """Convert INFO result scripts to TopicInfo fragment .psc files.
+
+    info_reveals ({info_fid24: [unlock global names]}) marks AddTopic revealer
+    INFOs: their OnEnd fragment sets the unlock globals (a fragment is
+    generated even when the INFO has no result script). Must stay in sync with
+    the VMADs the importer writes (same unlock plan).
+    """
     records = parse_export_file(info_path)
+    info_reveals = info_reveals or {}
 
     for rec in records:
         result_script = rec.get('ResultScript', '')
-        if not result_script or not result_script.strip():
+        has_script = bool(result_script and result_script.strip())
+        formid = rec.get('FormID', '')
+        try:
+            fid24 = int(formid, 16) & 0xFFFFFF
+        except (TypeError, ValueError):
+            fid24 = 0
+        reveals = info_reveals.get(fid24, [])
+        if not has_script and not reveals:
             continue
 
-        formid = rec.get('FormID', '')
-        stats['info_total'] += 1
+        if has_script:
+            stats['info_total'] += 1
 
         try:
-            conv = ScriptConverter(xref)
-            _preload_scro_refs(conv, rec, xref)
-            body_lines = conv.convert_fragment(result_script, 'TopicInfo')
+            body_lines = []
+            prop_refs = {}
+            if has_script:
+                conv = ScriptConverter(xref)
+                _preload_scro_refs(conv, rec, xref)
+                body_lines = conv.convert_fragment(result_script, 'TopicInfo')
+                prop_refs = dict(conv._property_refs)
 
             script_name = f'TES4_TIF__{formid}'
-            prop_refs = dict(conv._property_refs)
             out_lines = [
                 f'ScriptName {script_name} extends TopicInfo Hidden',
                 '',
             ]
+            declared = set()
+            for gname in reveals:
+                declared.add(gname.lower())
+                out_lines.append(f'GlobalVariable Property {gname} Auto')
             if prop_refs:
-                declared = set()
                 for pname, ptype in sorted(prop_refs.items()):
                     safe = _safe_property_name(pname)
                     if safe.lower() in declared:
                         continue
                     declared.add(safe.lower())
                     out_lines.append(f'{ptype} Property {safe} Auto')
+            if declared:
                 out_lines.append('')
             out_lines.append('Function Fragment_0(ObjectReference akSpeakerRef)')
+            # Unlock the AddTopic-revealed topics first — OnEnd fires when the
+            # line finishes, right before the topic menu refreshes.
+            for gname in reveals:
+                out_lines.append(f'  {gname}.SetValue(1)')
             out_lines.extend(body_lines)
             out_lines.append('EndFunction')
             out_lines.append('')
@@ -155,22 +195,29 @@ def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph, 
             out_path = os.path.join(output_dir, f'{script_name}.psc')
             with open(out_path, 'w', encoding='utf-8') as f:
                 f.write(papyrus)
-            stats['info_ok'] += 1
+            if has_script:
+                stats['info_ok'] += 1
             stats['todo_count'] += papyrus.count(';TODO')
         except Exception as e:
             stats['info_err'] += 1
             stats['errors'].append(f'INFO {formid}: {e}')
 
 
-def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
+def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph,
+                          stats: dict, stage_reveals: dict = None):
     """Convert QUST stage scripts to Quest fragment .psc files.
 
     A fragment is generated for every stage that has journal log text (CNAM),
     whether or not it also has a result script.  Each fragment calls
     SetObjectiveDisplayed / SetObjectiveCompleted so the quest appears in the
     Skyrim journal — without those calls CNAM text is never visible.
+
+    stage_reveals ({(quest_edid_lower, stage): [unlock global names]}) marks
+    stages whose TES4 result scripts contained `AddTopic X`: the fragment sets
+    the unlock globals (the AddTopic command itself is a no-op in conversion).
     """
     records = parse_export_file(qust_path)
+    stage_reveals = stage_reveals or {}
 
     for rec in records:
         edid = rec.get('EditorID', '')
@@ -243,6 +290,9 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, 
                     out_lines.append(f'  SetObjectiveDisplayed({stage_idx}, true)')
                     if complete_flag:
                         out_lines.append(f'  SetObjectiveCompleted({stage_idx}, true)')
+                # AddTopic unlock globals revealed by this stage's TES4 script
+                for gname in stage_reveals.get((edid.lower(), stage_idx), []):
+                    out_lines.append(f'  {gname}.SetValue(1)')
                 # Original result script body (if any)
                 if script_src and script_src.strip():
                     body_lines = conv.convert_fragment(script_src, 'Quest')
@@ -251,6 +301,10 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph, 
                 out_lines.append('')
 
             # Insert property declarations after ScriptName line
+            quest_globals = sorted({g for (q, _s), gs in stage_reveals.items()
+                                    if q == edid.lower() for g in gs})
+            for gi, gname in enumerate(quest_globals):
+                out_lines.insert(2 + gi, f'GlobalVariable Property {gname} Auto')
             prop_refs = conv.get_property_refs()
             if prop_refs:
                 # Merge case-variant keys: pick the most specific type (non-Quest wins)

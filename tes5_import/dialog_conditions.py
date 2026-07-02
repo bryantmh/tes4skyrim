@@ -30,6 +30,7 @@ FUNC_GET_IS_ID = 72            # GetIsID(ref)
 FUNC_GET_STAGE = 58            # GetStage(quest)
 FUNC_GET_STAGE_DONE = 59       # GetStageDone(quest, stage)
 FUNC_GET_QUEST_RUNNING = 56    # GetQuestRunning(quest)
+FUNC_GET_GLOBAL_VALUE = 74     # GetGlobalValue(glob)
 FUNC_GET_IS_VOICE_TYPE = 426   # GetIsVoiceType(vtyp)  — TES5-only, no TES4 source
 
 # --- Function-index reconciliation (data-derived; see module docstring) --------
