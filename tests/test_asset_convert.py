@@ -1,5 +1,6 @@
 """Tests for asset_convert package — NIF conversion, texture paths, bones, BSA extraction."""
 
+import math
 import os
 import shutil
 import struct
@@ -1248,11 +1249,19 @@ class TestFurnitureMarkerConversion:
         for block in dst_data.blocks:
             if isinstance(block, NF.BSFurnitureMarkerNode):
                 found = True
+                # Single ref-14 entry at (1.87, -55.65, -61.02), ori=0: the NPC
+                # approaches walking +Y and sits facing -Y (heading pi).  The
+                # entry point is in FRONT of the seated occupant.
                 assert block.num_positions == 1
                 p = block.positions[0]
                 assert p.animation_type == 1  # Sit
-                assert p.entry_properties.behind == 1
-                assert abs(p.heading - 0.0) < 0.01
+                assert p.entry_properties.front == 1
+                assert abs(p.heading - math.pi) < 0.01
+                # Seat = entry projected to the geometry centre line
+                assert abs(p.offset.x - 1.87) < 1.0
+                assert abs(p.offset.y - 0.0) < 2.0
+                # Hip height = entry (floor) z + 34
+                assert abs(p.offset.z - (-61.02 + 34.0)) < 0.5
         assert found, "BSFurnitureMarkerNode not found in converted throne NIF"
 
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
@@ -1277,15 +1286,19 @@ class TestFurnitureMarkerConversion:
         for block in dst_data.blocks:
             if isinstance(block, NF.BSFurnitureMarkerNode):
                 found = True
-                assert block.num_positions == 2
-                # Position 0: ref=1 → Sleep, left entry
-                p0 = block.positions[0]
-                assert p0.animation_type == 2  # Sleep
-                assert p0.entry_properties.left == 1
-                assert abs(p0.heading - 1.570) < 0.01
-                # Position 1: ref=2 → Sleep, right entry
-                p1 = block.positions[1]
-                assert p1.animation_type == 2  # Sleep
-                assert p1.entry_properties.right == 1
-                assert abs(p1.heading - 4.712) < 0.01
+                # The two Oblivion entries (ref 1 left / ref 2 right, at x=+-91
+                # ori 1570/4712) converge on ONE sleep position mid-bed, like
+                # vanilla commonbed01 (one position, entry right|left).
+                assert block.num_positions == 1
+                p = block.positions[0]
+                assert p.animation_type == 2  # Sleep
+                assert p.entry_properties.left == 1
+                assert p.entry_properties.right == 1
+                # Occupant faces +Y (head at the -Y pillow end)
+                assert abs(p.heading - 0.0) < 0.01
+                # Hips stay on the entry line (y = -21.2)
+                assert abs(p.offset.x - 0.0) < 2.0
+                assert abs(p.offset.y - (-21.2)) < 1.0
+                # Sleep marker z = entry (floor) z + 37.09
+                assert abs(p.offset.z - (-47.43 + 37.09)) < 0.5
         assert found, "BSFurnitureMarkerNode not found in converted bed NIF"

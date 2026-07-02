@@ -319,6 +319,178 @@ def _identity_matrix():
     return m
 
 
+# --- Furniture marker conversion ------------------------------------------
+#
+# Oblivion BSFurnitureMarker positions are ENTRY POINTS: where the NPC stands
+# on the floor (~50-95 units away from the furniture) before the sit/sleep
+# animation carries them onto it.  One marker exists per approach direction
+# (a single chair has up to 4).  Skyrim BSFurnitureMarkerNode positions are
+# the actual SIT/SLEEP spots (hip position), one per physical seat.
+#
+# Data-verified relations (100% consistent across all 48 marker-bearing
+# Oblivion furniture NIFs, plus the marker files in dungeons/architecture):
+#   - position_ref 1-10 = sleep entries, 11-19 = sit entries
+#   - orientation (milliradians) is the approach walk direction (0 = +Y)
+#   - occupant facing (Skyrim heading; for sleep = head-to-feet direction)
+#     = orientation + offset by ref:
+#       left side {1, 3, 11}: -pi/2      right side {2, 12}: +pi/2
+#       behind occupant / beyond head {4, 13}: 0
+#       in front {14}: +pi  (NPC approaches facing the seat, turns, sits)
+#     (ref 3 = mat side entry, ref 4 = mat head-end crawl entry — verified
+#      against sleepingmat01's pillow bump, calibrated on Skyrim bedroll01)
+#   - entries stand on the floor: mesh-space floor z = entry z
+#   - Skyrim marker z above floor: 34.0 for sit (vanilla chairs/benches),
+#     37.09 for sleep (vanilla beds; all 24 Oblivion bed mattress surfaces
+#     lie 36.5-42 above their entry z, so this matches them too)
+#
+# Seat recovery:
+#   - SIT entries stand a fixed distance from their seat: 51.5 units for
+#     side entries, 55.0 for front/behind (measured spread across all
+#     chairs/benches/stools: 51.3-51.8 and 54.5-55.9).  Walking that far
+#     along the approach direction lands on the seat.  A bench's side entry
+#     is 51.5 from the END seat, so it merges with the correct cluster, and
+#     curved benches (anviltreebenchseat01) get seats on the arc rather
+#     than at the geometry centre.
+#   - SLEEP entry distances vary per bed (67-106) but always point across
+#     the hip line, so the geometry centre projected onto the approach ray
+#     recovers the hip position.
+# Candidates are then clustered: a chair's 3-4 entries converge on one
+# seat; a bench's front/behind entry pairs form one cluster per physical
+# seat (matching vanilla commonbench01's 3 positions).
+
+_FURN_REF_HEADING = {
+    1: -math.pi / 2, 2: math.pi / 2, 3: -math.pi / 2, 4: 0.0,  # bed (sleep)
+    11: -math.pi / 2, 12: math.pi / 2, 13: 0.0, 14: math.pi,   # chair (sit)
+}
+_FURN_SIT_SIDE_DIST = 51.5   # entry-to-seat travel, side sit entries (11/12)
+_FURN_SIT_FRONT_DIST = 55.0  # entry-to-seat travel, front/behind sit entries (13/14)
+_FURN_SIT_HEIGHT = 34.0      # vanilla commonchair01 marker z (floor-relative)
+_FURN_SLEEP_HEIGHT = 37.0931  # vanilla commonbed01 marker z (floor-relative)
+_FURN_SEAT_CLUSTER_RADIUS = 20.0  # bench seats are ~43 apart; same-seat entries land within ~2
+
+
+def _geometry_center_xy(root):
+    """World-space XY centre of the geometry bounding box under root
+    (all local transforms applied, including the root's own)."""
+    lo = [np.inf, np.inf]
+    hi = [-np.inf, -np.inf]
+
+    def walk(block, M):
+        if block is None:
+            return
+        if hasattr(block, 'translation') and hasattr(block.translation, 'x'):
+            r = block.rotation
+            L = np.eye(4)
+            L[0, :3] = [r.m_11, r.m_12, r.m_13]
+            L[1, :3] = [r.m_21, r.m_22, r.m_23]
+            L[2, :3] = [r.m_31, r.m_32, r.m_33]
+            L[:3, :3] *= block.scale
+            L[3, :3] = [block.translation.x, block.translation.y, block.translation.z]
+            M = L @ M  # NIF row-vector convention: child-local applied first
+        d = getattr(block, 'data', None)
+        if d is not None and hasattr(d, 'vertices') and getattr(d, 'num_vertices', 0) > 0:
+            verts = np.array([[v.x, v.y, v.z] for v in d.vertices])
+            world = verts @ M[:3, :3] + M[3, :3]
+            for ax in range(2):
+                lo[ax] = min(lo[ax], world[:, ax].min())
+                hi[ax] = max(hi[ax], world[:, ax].max())
+        if hasattr(block, 'children'):
+            for c in block.children:
+                walk(c, M)
+
+    walk(root, np.eye(4))
+    if not np.isfinite(lo).all():
+        return 0.0, 0.0
+    return (lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0
+
+
+def _convert_furniture_markers(markers, root):
+    """Convert Oblivion BSFurnitureMarker blocks (entry points) into one
+    Skyrim BSFurnitureMarkerNode (seat positions).  Returns None if the
+    markers contain no positions."""
+    entries = []
+    for ed in markers:
+        for pi in range(ed.num_positions):
+            fp = ed.positions[pi]
+            theta = fp.orientation / 1000.0  # milliradians -> radians
+            ref = fp.position_ref_1
+            entries.append({
+                'p': (fp.offset.x, fp.offset.y, fp.offset.z),
+                'd': (math.sin(theta), math.cos(theta)),  # approach direction
+                'heading': (theta + _FURN_REF_HEADING.get(ref, math.pi)) % (2 * math.pi),
+                'sleep': 1 <= ref <= 10,
+                'ref': ref,
+            })
+    if not entries:
+        return None
+
+    center = None  # computed lazily; only sleep entries need it
+    for e in entries:
+        if e['sleep']:
+            # Hip position: geometry centre projected onto the approach ray
+            if center is None:
+                center = _geometry_center_xy(root)
+            t = max(0.0, (center[0] - e['p'][0]) * e['d'][0] +
+                    (center[1] - e['p'][1]) * e['d'][1])
+        else:
+            # Seat: fixed travel distance along the approach direction
+            t = _FURN_SIT_SIDE_DIST if e['ref'] in (11, 12) else _FURN_SIT_FRONT_DIST
+        e['seat'] = (e['p'][0] + t * e['d'][0], e['p'][1] + t * e['d'][1])
+
+    clusters = []  # list of lists of entries
+    for e in entries:
+        for cluster in clusters:
+            sx = sum(m['seat'][0] for m in cluster) / len(cluster)
+            sy = sum(m['seat'][1] for m in cluster) / len(cluster)
+            if math.hypot(e['seat'][0] - sx, e['seat'][1] - sy) < _FURN_SEAT_CLUSTER_RADIUS:
+                cluster.append(e)
+                break
+        else:
+            clusters.append([e])
+
+    frn = NifFormat.BSFurnitureMarkerNode()
+    frn.name = b'FRN'
+    frn.num_positions = len(clusters)
+    frn.positions.update_size()
+    for ci, cluster in enumerate(clusters):
+        dst = frn.positions[ci]
+        sx = sum(m['seat'][0] for m in cluster) / len(cluster)
+        sy = sum(m['seat'][1] for m in cluster) / len(cluster)
+        sleep = any(m['sleep'] for m in cluster)
+        floor_z = min(m['p'][2] for m in cluster)
+        dst.offset.x = sx
+        dst.offset.y = sy
+        dst.offset.z = floor_z + (_FURN_SLEEP_HEIGHT if sleep else _FURN_SIT_HEIGHT)
+        # Circular mean of the entry-derived headings (they agree in practice);
+        # atan2 already yields (-pi, pi] like vanilla marker headings
+        heading = math.atan2(sum(math.sin(m['heading']) for m in cluster),
+                             sum(math.cos(m['heading']) for m in cluster))
+        dst.heading = heading
+        dst.animation_type = 2 if sleep else 1
+        # Entry flags: which side of the seat each entry point lies on,
+        # relative to the occupant's facing direction.
+        fwd = (math.sin(heading), math.cos(heading))
+        right = (fwd[1], -fwd[0])
+        ep = dst.entry_properties
+        for m in cluster:
+            vx, vy = m['p'][0] - sx, m['p'][1] - sy
+            norm = math.hypot(vx, vy)
+            if norm < 1e-3:
+                ep.front = 1
+                continue
+            vx, vy = vx / norm, vy / norm
+            along = vx * fwd[0] + vy * fwd[1]
+            if along > 0.5:
+                ep.front = 1
+            elif along < -0.5:
+                ep.behind = 1
+            elif vx * right[0] + vy * right[1] > 0:
+                ep.right = 1
+            else:
+                ep.left = 1
+    return frn
+
+
 def _rewrite_tex_path(raw_bytes):
     """Prepend tes4\\ to a texture path that doesn't already have it."""
     path = raw_bytes.decode('utf-8', errors='replace')
@@ -1445,65 +1617,19 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
             # BSFurnitureMarker is converted to BSFurnitureMarkerNode for sit/sleep.
             if hasattr(root, 'extra_data_list'):
                 # --- Furniture marker conversion ---
-                for ed in root.extra_data_list:
-                    if not isinstance(ed, NifFormat.BSFurnitureMarker):
-                        continue
-                    frn = NifFormat.BSFurnitureMarkerNode()
-                    frn.name = b'FRN'
-                    frn.num_positions = ed.num_positions
-                    frn.positions.update_size()
-                    for pi in range(ed.num_positions):
-                        src_pos = ed.positions[pi]
-                        dst_pos = frn.positions[pi]
-                        # --- Sitting position from approach position ---
-                        # Oblivion BSFurnitureMarker stores the APPROACH position:
-                        # where the NPC stands ~50 units away before the sit animation.
-                        # Skyrim BSFurnitureMarkerNode stores the actual SITTING position.
-                        # The approach is always offset in the direction BEHIND the NPC
-                        # (opposite to their facing direction).
-                        # Facing direction in OB: ori=0→+Y, ori=π/2→+X (sin/cos of ori).
-                        # To recover seat: project out the component in the facing direction.
-                        theta = src_pos.orientation / 1000.0  # milliradians → radians
-                        fx = math.sin(theta)  # facing X component
-                        fy = math.cos(theta)  # facing Y component
-                        ax = src_pos.offset.x
-                        ay = src_pos.offset.y
-                        # parallel component of approach in facing direction = approach offset
-                        parallel = ax * fx + ay * fy
-                        dst_pos.offset.x = ax - parallel * fx  # remove offset, keep perp
-                        dst_pos.offset.y = ay - parallel * fy
-                        # Z: negate (OB stores negative = below origin; SK = seat height above origin)
-                        dst_pos.offset.z = -src_pos.offset.z
-                        # Heading: ori is the approach direction (NPC faces away, so +π).
-                        # Empirically confirmed: ori/1000 + π gives correct NPC orientation.
-                        dst_pos.heading = theta + math.pi
-                        # position_ref → animation_type + entry_properties
-                        ref = src_pos.position_ref_1
-                        if 1 <= ref <= 10:
-                            dst_pos.animation_type = 2  # Sleep
-                        elif 11 <= ref <= 19:
-                            dst_pos.animation_type = 1  # Sit
-                        else:
-                            dst_pos.animation_type = 1  # Default to Sit
-                        # Entry direction from position_ref
-                        ep = dst_pos.entry_properties
-                        if ref in (1, 11):
-                            ep.left = 1
-                        elif ref in (2, 12):
-                            ep.right = 1
-                        elif ref == 13:
-                            ep.front = 1
-                        elif ref == 14:
-                            ep.behind = 1
-                        else:
-                            # Unknown ref or generic — allow entry from front
-                            ep.front = 1
-                    fade.num_extra_data_list += 1
-                    fade.extra_data_list.update_size()
-                    fade.extra_data_list[fade.num_extra_data_list - 1] = frn
-                    stats.setdefault('furniture_markers', 0)
-                    stats['furniture_markers'] += 1
-                    break  # Only one BSFurnitureMarker per NIF
+                # See _convert_furniture_markers: Oblivion entry points on the
+                # floor become Skyrim seat positions (clustered, re-headed).
+                frn_markers = [ed for ed in root.extra_data_list
+                               if isinstance(ed, NifFormat.BSFurnitureMarker)
+                               and not isinstance(ed, NifFormat.BSFurnitureMarkerNode)]
+                if frn_markers:
+                    frn = _convert_furniture_markers(frn_markers, root)
+                    if frn is not None:
+                        fade.num_extra_data_list += 1
+                        fade.extra_data_list.update_size()
+                        fade.extra_data_list[fade.num_extra_data_list - 1] = frn
+                        stats.setdefault('furniture_markers', 0)
+                        stats['furniture_markers'] += 1
 
                 # --- Prn string extra data ---
                 for ed in root.extra_data_list:
