@@ -559,12 +559,13 @@ def _convert_collision(node, actual_root=None):
         rb.max_linear_velocity  = 104.4
         rb.max_angular_velocity = 31.57
 
-    # bhkCompressedMeshShape.target must point to the specific NiNode that
-    # owns the collision object (i.e. `node` itself).  Using actual_root
-    # (BSFadeNode with identity transform) is wrong when collision is on an
-    # inner NiNode that carries the rotation — Havok would position the shape
-    # at the origin instead of the correct rotated world position.
-    rb.shape = _convert_shape(rb.shape, node)
+    # bhkCompressedMeshShape.target must point to the root BSFadeNode
+    # (identity transform).  The body's world placement comes from
+    # bhkRigidBodyT.rotation/translation, which are already in Havok
+    # world-space; pointing target at a rotated child node makes the engine
+    # compose transforms twice and is part of the child-node collision
+    # crash pattern (hkpCollisionDispatcher CTD).
+    rb.shape = _convert_shape(rb.shape, actual_root if actual_root is not None else node)
 
 def convert_all_collisions(node, actual_root=None):
     """Recursively convert collision objects on every node in the entire tree.

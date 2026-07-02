@@ -1182,6 +1182,42 @@ class TestCollisionTargetPointsToRoot:
                 assert block.target is root, \
                     f"bhkCompressedMeshShape.target points to {type(block.target).__name__}, expected root"
 
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    def test_static_collision_stays_on_root_when_wrapped(self, tmp_path):
+        """Static collision must live on the root BSFadeNode, even when root
+        rotation baking wraps the geometry in an inner NiNode.  Collision on a
+        child NiNode causes intermittent hkpCollisionDispatcher CTDs when the
+        character proxy touches the shape (castleint2way.nif crash)."""
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat as NF
+
+        src = EXPORT_MESHES / _DOOR_WITH_ROTATION
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'out.nif'
+        result = convert_nif(str(src), str(dst))
+        if result.get('error') or result.get('skipped'):
+            pytest.skip(f'Conversion issue: {result}')
+        assert result.get('root_rotation_baked'), \
+            'castleint2way.nif should trigger the rotation wrap pass'
+
+        dst_data = NF.Data()
+        with open(str(dst), 'rb') as f:
+            dst_data.read(f)
+
+        root = dst_data.roots[0]
+        assert getattr(root, 'collision_object', None) is not None, \
+            'Root BSFadeNode lost its bhkCollisionObject'
+        assert root.collision_object.target is root, \
+            'bhkCollisionObject.target must be the root BSFadeNode'
+        for block in dst_data.blocks:
+            if block is root or not isinstance(block, NF.NiNode):
+                continue
+            assert getattr(block, 'collision_object', None) is None, \
+                f'Static collision found on child node "{block.name}" — must be on root only'
+
 
 # ---------------------------------------------------------------------------
 # MOPP build_type test (Issue 13 — collision crash fix)
