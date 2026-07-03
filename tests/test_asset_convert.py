@@ -782,7 +782,7 @@ _CLUTTER_SAMPLES = [
     'clutter/upperclass/uppergobletceramic01.nif',
 ]
 
-_INERTIA_SCALE = 0.1  # matches collision.py _HAVOK_SCALE
+_INERTIA_SCALE = 0.01  # matches collision.py _HAVOK_SCALE ** 2 (inertia ∝ length²)
 
 
 class TestDynamicClutterPhysics:
@@ -838,7 +838,7 @@ class TestDynamicClutterPhysics:
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
     @pytest.mark.parametrize('rel_path', _CLUTTER_SAMPLES)
     def test_clutter_inertia_scaled_by_havok_scale(self, rel_path, tmp_path):
-        """Inertia should be Oblivion value * 0.1 (one power of HAVOK_SCALE)."""
+        """Inertia should be Oblivion value * 0.01 (HAVOK_SCALE², inertia ∝ mass·length²)."""
         import time
         if not hasattr(time, '_original_clock'):
             time.clock = time.perf_counter
@@ -877,7 +877,7 @@ class TestDynamicClutterPhysics:
                     )):
                         expected = src_val * _INERTIA_SCALE
                         assert dst_val == pytest.approx(expected, rel=0.01), \
-                            f"axis {axis}: inertia={dst_val}, expected {expected} (src*0.1)"
+                            f"axis {axis}: inertia={dst_val}, expected {expected} (src*0.01)"
                     break
 
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
@@ -1182,18 +1182,32 @@ class TestCollisionTargetPointsToRoot:
                 assert block.target is root, \
                     f"bhkCompressedMeshShape.target points to {type(block.target).__name__}, expected root"
 
+    # (rel_path, expected bhkRigidBodyT quaternion (x,y,z,w) after the root
+    # rotation is composed into the body — source bodies are identity)
+    _WRAPPED_COLLISION_CASES = [
+        # 180° about Z
+        (_DOOR_WITH_ROTATION, (0.0, 0.0, 1.0, 0.0)),
+        # +90° about Z — convention-sensitive: a conjugate/transpose error
+        # in the quaternion math flips the sign of z relative to w
+        ('architecture/castleinterior/stackhallentrance01.nif',
+         (0.0, 0.0, 0.7071068, 0.7071068)),
+    ]
+
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
-    def test_static_collision_stays_on_root_when_wrapped(self, tmp_path):
+    @pytest.mark.parametrize('rel_path,expected_quat', _WRAPPED_COLLISION_CASES)
+    def test_static_collision_stays_on_root_when_wrapped(self, rel_path, expected_quat, tmp_path):
         """Static collision must live on the root BSFadeNode, even when root
-        rotation baking wraps the geometry in an inner NiNode.  Collision on a
+        rotation baking wraps the geometry in an inner NiNode: collision on a
         child NiNode causes intermittent hkpCollisionDispatcher CTDs when the
-        character proxy touches the shape (castleint2way.nif crash)."""
+        character proxy touches the shape (castleint2way.nif crash).  The
+        zeroed root transform must be composed into bhkRigidBodyT.rotation or
+        the collision is rotated relative to the mesh (stackhallentrance01)."""
         import time
         if not hasattr(time, '_original_clock'):
             time.clock = time.perf_counter
         from pyffi.formats.nif import NifFormat as NF
 
-        src = EXPORT_MESHES / _DOOR_WITH_ROTATION
+        src = EXPORT_MESHES / rel_path
         if not src.exists():
             pytest.skip(f'{src} not found')
         dst = tmp_path / 'out.nif'
@@ -1201,7 +1215,7 @@ class TestCollisionTargetPointsToRoot:
         if result.get('error') or result.get('skipped'):
             pytest.skip(f'Conversion issue: {result}')
         assert result.get('root_rotation_baked'), \
-            'castleint2way.nif should trigger the rotation wrap pass'
+            f'{rel_path} should trigger the rotation wrap pass'
 
         dst_data = NF.Data()
         with open(str(dst), 'rb') as f:
@@ -1217,6 +1231,14 @@ class TestCollisionTargetPointsToRoot:
                 continue
             assert getattr(block, 'collision_object', None) is None, \
                 f'Static collision found on child node "{block.name}" — must be on root only'
+
+        q = root.collision_object.body.rotation
+        got = (q.x, q.y, q.z, q.w)
+        # q and -q are the same rotation; accept either sign
+        err = min(max(abs(g - e) for g, e in zip(got, expected_quat)),
+                  max(abs(g + e) for g, e in zip(got, expected_quat)))
+        assert err < 1e-4, \
+            f'bhkRigidBodyT rotation {got} != expected {expected_quat} — collision misrotated vs mesh'
 
 
 # ---------------------------------------------------------------------------
@@ -1259,6 +1281,49 @@ class TestMoppBuildType:
         if not found_mopp:
             pytest.skip("No bhkMoppBvTreeShape in converted NIF")
 
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    @pytest.mark.parametrize('rel_path', [
+        _DOOR_WITH_ROTATION,
+        # 6 chunk jumps incl. backward ones — exercises region relocation
+        'architecture/castleinterior/stackhallentrance01.nif',
+    ])
+    def test_mopp_is_dechunked(self, rel_path, tmp_path):
+        """Converted MOPPs must contain NO chunk-jump opcodes (0x70) and walk
+        clean.  MOPP_RL builds chunked MOPPs (an SPU streaming feature) that
+        Skyrim's PC engine mis-executes — EXCEPTION_STACK_OVERFLOW in
+        hkpCollisionDispatcher when a query descends into a 0x70 branch (the
+        intermittent castleint2way.nif crash)."""
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat as NF
+        from asset_convert.mopp import walk_mopp
+
+        src = EXPORT_MESHES / rel_path
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'out.nif'
+        result = convert_nif(str(src), str(dst))
+        if result.get('error') or result.get('skipped'):
+            pytest.skip(f'Conversion issue: {result}')
+
+        dst_data = NF.Data()
+        with open(str(dst), 'rb') as f:
+            dst_data.read(f)
+
+        found_mopp = False
+        for block in dst_data.blocks:
+            if isinstance(block, NF.bhkMoppBvTreeShape):
+                found_mopp = True
+                mopp = bytes(bytearray(block.mopp_data))
+                r = walk_mopp(mopp, len(mopp))
+                assert not r['errors'], f'MOPP walk errors: {r["errors"][:3]}'
+                assert not r['chunk_jumps'], \
+                    f'{len(r["chunk_jumps"])} chunk-jump (0x70) opcodes still reachable'
+                assert b'\xcd' * 8 not in mopp, \
+                    'uninitialised 0xCD filler left in MOPP data'
+        assert found_mopp, 'converted NIF lost its bhkMoppBvTreeShape'
+
 
 class TestFurnitureMarkerConversion:
     """BSFurnitureMarker → BSFurnitureMarkerNode conversion."""
@@ -1296,8 +1361,9 @@ class TestFurnitureMarkerConversion:
                 # Seat = entry projected to the geometry centre line
                 assert abs(p.offset.x - 1.87) < 1.0
                 assert abs(p.offset.y - 0.0) < 2.0
-                # Hip height = entry (floor) z + 34
-                assert abs(p.offset.z - (-61.02 + 34.0)) < 0.5
+                # Model is re-origined so the floor (entry z) sits at 0;
+                # hip height = 34 above the floor
+                assert abs(p.offset.z - 34.0) < 0.5
         assert found, "BSFurnitureMarkerNode not found in converted throne NIF"
 
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
@@ -1335,6 +1401,7 @@ class TestFurnitureMarkerConversion:
                 # Hips stay on the entry line (y = -21.2)
                 assert abs(p.offset.x - 0.0) < 2.0
                 assert abs(p.offset.y - (-21.2)) < 1.0
-                # Sleep marker z = entry (floor) z + 37.09
-                assert abs(p.offset.z - (-47.43 + 37.09)) < 0.5
+                # Model is re-origined so the floor (entry z) sits at 0;
+                # sleep marker z = 37.09 above the floor
+                assert abs(p.offset.z - 37.09) < 0.5
         assert found, "BSFurnitureMarkerNode not found in converted bed NIF"

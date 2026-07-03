@@ -10,6 +10,8 @@ from . import pyffi_monkey_patch as _patch  # noqa: F401
 
 from pyffi.formats.nif import NifFormat
 
+from .mopp import dechunk_mopp
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -411,10 +413,27 @@ def _extract_mopp_result(out_data, root_node):
 
     MOPP_RL.exe leaves build_type=0xCD (uninit memory); set it to 1
     (BUILT_WITHOUT_CHUNK_SUBDIVISION) which is what vanilla Skyrim uses.
+
+    MOPP_RL also builds its MOPP with chunk subdivision enabled (0x70
+    chunk-jump opcodes + 16-byte-aligned sub-trees), which vanilla Skyrim
+    never uses and the PC engine mis-executes — the intermittent
+    EXCEPTION_STACK_OVERFLOW in hkpCollisionDispatcher when walking over
+    converted statics (castleint2way.nif).  dechunk_mopp() rewrites the
+    bytecode to vanilla-style unchunked code; returns None if the result
+    cannot be verified (caller falls back to a plain packed shape, no MOPP).
     """
     result = out_data.roots[0].collision_object.body.shape
     if hasattr(result, 'build_type'):
         result.build_type = 1
+    if getattr(result, 'mopp_data_size', 0):
+        try:
+            fixed = dechunk_mopp(bytes(bytearray(result.mopp_data)))
+        except ValueError:
+            return None
+        result.mopp_data_size = len(fixed)
+        result.mopp_data.update_size()
+        for _i, _b in enumerate(fixed):
+            result.mopp_data[_i] = _b
     # bhkCompressedMeshShape (inner of bhkMoppBvTreeShape) needs its target set
     inner = getattr(result, 'shape', None)
     if inner is not None and hasattr(inner, 'target'):
@@ -496,8 +515,10 @@ def _convert_shape(shape, root_node):
         tmp_nif = _build_packed_nif(packed)
         out = _run_mopp_rl(tmp_nif)
         if out is not None:
-            return _extract_mopp_result(out, root_node)
-        # MOPP_RL failed — return packed shape as-is (no MOPP but valid)
+            res = _extract_mopp_result(out, root_node)
+            if res is not None:
+                return res
+        # MOPP_RL/dechunk failed — return packed shape as-is (no MOPP but valid)
         return packed
 
     if isinstance(shape, NifFormat.bhkMoppBvTreeShape):
@@ -511,8 +532,10 @@ def _convert_shape(shape, root_node):
             tmp_nif = _build_packed_nif(converted)
             out = _run_mopp_rl(tmp_nif)
             if out is not None:
-                return _extract_mopp_result(out, root_node)
-            # MOPP_RL failed — return packed shape directly.
+                res = _extract_mopp_result(out, root_node)
+                if res is not None:
+                    return res
+            # MOPP_RL/dechunk failed — return packed shape directly.
             # Never return the outer bhkMoppBvTreeShape with stale Oblivion MOPP
             # data: Skyrim can't load Oblivion MOPP and will silently drop the
             # collision, while the incompatible blob causes undefined behaviour.
@@ -524,7 +547,9 @@ def _convert_shape(shape, root_node):
         tmp_nif = _build_packed_nif(shape)
         out = _run_mopp_rl(tmp_nif)
         if out is not None:
-            return _extract_mopp_result(out, root_node)
+            res = _extract_mopp_result(out, root_node)
+            if res is not None:
+                return res
         return shape
 
     # Unknown shape — return as-is
@@ -1045,6 +1070,120 @@ def _offset_collision_shape_verts(co, ox, oy, oz):
             v.x += ox
             v.y += oy
             v.z += oz
+
+
+_OB_GAME_UNITS_PER_HAVOK = 7.0  # Oblivion: 1 Havok unit = 7 game units
+
+
+def _m3_from_quat_xyzw(x, y, z, w):
+    """Unit quaternion (x,y,z,w) → 3x3 column-vector rotation matrix.
+
+    Same formula as NifSkope's Matrix::fromQuat, which is how the engine
+    interprets bhkRigidBodyT.rotation.
+    """
+    return [
+        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z),     2 * (x * z + w * y)],
+        [2 * (x * y + w * z),     1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+        [2 * (x * z - w * y),     2 * (y * z + w * x),     1 - 2 * (x * x + y * y)],
+    ]
+
+
+def _quat_xyzw_from_m3(m):
+    """3x3 column-vector rotation matrix → unit quaternion (x,y,z,w).
+
+    Shoemake branches handle 180° rotations (trace = -1, w = 0), which are
+    common on Oblivion architecture roots.
+    """
+    tr = m[0][0] + m[1][1] + m[2][2]
+    if tr > 0.0:
+        s = math.sqrt(tr + 1.0) * 2.0
+        w = 0.25 * s
+        x = (m[2][1] - m[1][2]) / s
+        y = (m[0][2] - m[2][0]) / s
+        z = (m[1][0] - m[0][1]) / s
+    elif m[0][0] > m[1][1] and m[0][0] > m[2][2]:
+        s = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2.0
+        w = (m[2][1] - m[1][2]) / s
+        x = 0.25 * s
+        y = (m[0][1] + m[1][0]) / s
+        z = (m[0][2] + m[2][0]) / s
+    elif m[1][1] > m[2][2]:
+        s = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2.0
+        w = (m[0][2] - m[2][0]) / s
+        x = (m[0][1] + m[1][0]) / s
+        y = 0.25 * s
+        z = (m[1][2] + m[2][1]) / s
+    else:
+        s = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2.0
+        w = (m[1][0] - m[0][1]) / s
+        x = (m[0][2] + m[2][0]) / s
+        y = (m[1][2] + m[2][1]) / s
+        z = 0.25 * s
+    return x, y, z, w
+
+
+def bake_node_transform_into_body(coll_obj, node, extra_z=0.0):
+    """Compose a node's local transform L=(R,T,s) into its collision body.
+
+    extra_z: additional model-space z translation carried by the wrapper but
+    not present on the node itself (the furniture origin shift — the importer
+    lowers the REFRs by the same amount, so the collision must rise with the
+    geometry or it ends up sunk by the shift).
+
+    Used when the root's transform is about to be zeroed (rotation-wrap pass):
+    the engine places a root collision body at REFR ∘ bodyT, so the vanishing
+    root transform must be absorbed into bodyT or the collision ends up
+    rotated/offset relative to the mesh (stackhallentrance01: 90° off).
+    Collision must stay on the ROOT node — attaching it to the inner wrapper
+    aligns it too, but intermittently crashes hkpCollisionDispatcher.
+
+    NIF matrices act on row vectors under PyFFI's m_ij naming; the engine
+    (and NifSkope) reads the same file bytes as a column-vector matrix, so the
+    column matrix is the m_ij-named transpose.  bhkRigidBody(T) translation is
+    in Oblivion Havok units at this stage (game / 7); the Skyrim rescale
+    (× _HAVOK_SCALE) happens later in _convert_collision.
+
+    bhkRigidBody (non-T) carries no transform of its own, so it is promoted to
+    bhkRigidBodyT (identical field layout — PyFFI class swap) to hold L.
+    Returns True if the body was modified.
+    """
+    body = getattr(coll_obj, 'body', None)
+    if body is None or not isinstance(body, NifFormat.bhkRigidBody):
+        return False
+
+    r = node.rotation
+    R = [[r.m_11, r.m_21, r.m_31],
+         [r.m_12, r.m_22, r.m_32],
+         [r.m_13, r.m_23, r.m_33]]  # column-vector convention
+    s = node.scale
+    T = (node.translation.x / _OB_GAME_UNITS_PER_HAVOK,
+         node.translation.y / _OB_GAME_UNITS_PER_HAVOK,
+         (node.translation.z + extra_z) / _OB_GAME_UNITS_PER_HAVOK)
+
+    if isinstance(body, NifFormat.bhkRigidBodyT):
+        q = body.rotation
+        M_old = _m3_from_quat_xyzw(q.x, q.y, q.z, q.w)
+        t_old = (body.translation.x, body.translation.y, body.translation.z)
+    else:
+        body.__class__ = NifFormat.bhkRigidBodyT
+        M_old = _m3_from_quat_xyzw(0.0, 0.0, 0.0, 1.0)
+        t_old = (0.0, 0.0, 0.0)
+
+    # bodyT' = L ∘ bodyT:  M' = R·M,  t' = R·(t·s) + T
+    M_new = [[sum(R[i][k] * M_old[k][j] for k in range(3)) for j in range(3)]
+             for i in range(3)]
+    t_new = [sum(R[i][k] * t_old[k] * s for k in range(3)) + T[i]
+             for i in range(3)]
+    x, y, z, w = _quat_xyzw_from_m3(M_new)
+
+    body.rotation.x = x
+    body.rotation.y = y
+    body.rotation.z = z
+    body.rotation.w = w
+    body.translation.x = t_new[0]
+    body.translation.y = t_new[1]
+    body.translation.z = t_new[2]
+    return True
 
 
 def hoist_collision(root):
