@@ -1,9 +1,11 @@
 """World/cell converters: LTEX, CELL, WRLD, REFR, ACHR, ACRE, LAND, REGN, LSCR, EFSH."""
 
+import math
 import struct
 
 from ..constants import MAP_MARKER_TYPE_MAP, MATT_MAP, map_lock_level
 from ..skyrim_overrides import TES4_MARKER_FORMID_TO_SKYRIM
+from .items import get_base_origin_shift
 from .common import (
     _prefix_path,
     get_float,
@@ -309,6 +311,25 @@ def convert_REFR(rec: dict) -> bytes:
     rx = get_float(rec, 'RotX')
     ry = get_float(rec, 'RotY')
     rz = get_float(rec, 'RotZ')
+
+    # Furniture origin compensation: marker-bearing models are re-origined
+    # to the floor (+shift inside the NIF), so their placed references drop
+    # by the same amount along the model's local Z — world visuals stay
+    # identical while the REFR z lands at the floor, where the engine
+    # anchors seated actors.  See asset_convert/furniture_markers.py.
+    shift = get_base_origin_shift(rec.get('NAME', '') or '')
+    if shift:
+        s = scale if scale and scale != 1.0 else 1.0
+        if abs(rx) < 1e-4 and abs(ry) < 1e-4:
+            pz -= shift * s
+        else:
+            # Local +Z in world for Bethesda euler (R = Rz·Ry·Rx)
+            wx = math.cos(rx) * math.sin(ry) * math.cos(rz) + math.sin(rx) * math.sin(rz)
+            wy = math.cos(rx) * math.sin(ry) * math.sin(rz) - math.sin(rx) * math.cos(rz)
+            wz = math.cos(rx) * math.cos(ry)
+            px -= shift * s * wx
+            py -= shift * s * wy
+            pz -= shift * s * wz
     subs += pack_subrecord('DATA', struct.pack('<ffffff', px, py, pz, rx, ry, rz))
 
     flags = get_int(rec, 'RecordFlags')

@@ -112,44 +112,76 @@ def convert_FLOR(rec: dict) -> bytes:
 # 0x40000001, beds 0x88000001).  Vanilla beds additionally set bit 27
 # (0x08000000 "Must Exit to Talk").
 _FURN_SEATS: dict = {}  # normalised MODL path -> seat list (see cluster_seats)
+# Original TES4 base FormID (uppercase 8-hex string) -> origin shift for its
+# model.  The NIF converter re-origins marker-bearing models to the vanilla
+# floor-origin convention (the engine anchors seated actors to the REFR z),
+# so every placed reference of these bases must be lowered by the same
+# amount.  Applies to ALL record types sharing the model (FURN and STAT).
+_BASE_ORIGIN_SHIFT: dict = {}
 
 
 def _furn_model_key(modl: str) -> str:
     return modl.lower().replace('\\', '/').lstrip('/')
 
 
-def load_furniture_seats(meshes_dir, furn_records) -> int:
-    """Compute the converted-NIF seat list for every FURN model.
+def get_base_origin_shift(base_fid: str) -> float:
+    """Origin shift for a placed reference's base record (0.0 if none)."""
+    return _BASE_ORIGIN_SHIFT.get(base_fid.upper(), 0.0)
+
+
+def load_furniture_models(meshes_dir, by_type) -> int:
+    """Compute seat lists + origin shifts for every marker-bearing model.
 
     meshes_dir: <export_dir>/meshes (source Oblivion NIFs from BSA extraction).
-    Returns the number of models resolved.  Models whose NIF is missing or
-    unreadable fall back to a conservative single-seat FURN at convert time.
+    by_type: full record dict (sig -> [records]) — every record type whose
+    model is a marker-bearing NIF gets an origin-shift entry so its REFRs
+    can be compensated.
+
+    Returns the number of models resolved.  FURN models whose NIF is
+    missing or unreadable fall back to a conservative single-seat FURN at
+    convert time (their REFRs are left unshifted, matching the unshifted /
+    missing mesh).
     """
     import os
     _FURN_SEATS.clear()
+    _BASE_ORIGIN_SHIFT.clear()
     try:
-        from asset_convert.furniture_markers import seats_from_nif
+        from asset_convert.furniture_markers import furniture_model_info, scan_marker_nifs
     except ImportError as exc:
         print(f"  Furniture seats: asset_convert unavailable ({exc}), using fallback")
         return 0
+    if not os.path.isdir(meshes_dir):
+        print(f"  Furniture seats: meshes dir not found ({meshes_dir}), using fallback")
+        return 0
 
+    marker_models = scan_marker_nifs(meshes_dir)
+    model_shift: dict = {}
     resolved = 0
-    for rec in furn_records:
-        modl = get_str(rec, 'Model.MODL')
-        if not modl:
-            continue
-        key = _furn_model_key(modl)
-        if key in _FURN_SEATS:
-            continue
+    for key in sorted(marker_models):
         nif_path = os.path.join(meshes_dir, key.replace('/', os.sep))
         try:
-            _FURN_SEATS[key] = seats_from_nif(nif_path)
-            resolved += 1
-        except OSError:
-            pass  # NIF not extracted — convert_FURN falls back
+            info = furniture_model_info(nif_path)
         except Exception as exc:
             print(f"  Furniture seats: failed to read {key}: {exc}")
-    print(f"  Furniture seats: {resolved} models resolved from {meshes_dir}")
+            continue
+        _FURN_SEATS[key] = info['seats']
+        model_shift[key] = info['origin_shift']
+        resolved += 1
+
+    shifted_bases = 0
+    for recs in by_type.values():
+        for rec in recs:
+            modl = get_str(rec, 'Model.MODL')
+            if not modl:
+                continue
+            shift = model_shift.get(_furn_model_key(modl))
+            if shift and abs(shift) > 1e-4:
+                fid = get_str(rec, 'FormID')
+                if fid:
+                    _BASE_ORIGIN_SHIFT[fid.upper()] = shift
+                    shifted_bases += 1
+    print(f"  Furniture seats: {resolved} marker models resolved, "
+          f"{shifted_bases} base records need REFR z compensation")
     return resolved
 
 

@@ -333,16 +333,24 @@ from .furniture_markers import (
     cluster_seats as _cluster_seats,
     extract_entries as _extract_furniture_entries,
     geometry_center_xy as _geometry_center_xy,
+    origin_shift as _furniture_origin_shift,
 )
 
 
 def _convert_furniture_markers(markers, root):
     """Convert Oblivion BSFurnitureMarker blocks (entry points) into one
-    Skyrim BSFurnitureMarkerNode (seat positions).  Returns None if the
-    markers contain no positions."""
+    Skyrim BSFurnitureMarkerNode (seat positions).
+
+    Returns (frn, origin_shift) — origin_shift is the +z translation that
+    re-origins the model to the vanilla floor-origin convention.  The
+    engine anchors the seated actor to the REFR z (not the marker z), so
+    the model must be wrapped in an inner NiNode translated by this amount
+    and the importer lowers the REFRs to match (see furniture_markers.py).
+    Returns (None, 0.0) if the markers contain no positions."""
     entries = _extract_furniture_entries(markers)
     if not entries:
-        return None
+        return None, 0.0
+    shift = _furniture_origin_shift(entries)
     seats = _cluster_seats(entries, lambda: _geometry_center_xy(root))
 
     frn = NifFormat.BSFurnitureMarkerNode()
@@ -353,7 +361,7 @@ def _convert_furniture_markers(markers, root):
         dst = frn.positions[ci]
         dst.offset.x = seat['x']
         dst.offset.y = seat['y']
-        dst.offset.z = seat['z']
+        dst.offset.z = seat['z'] + shift  # re-origined coords (floor = 0)
         dst.heading = seat['heading']
         dst.animation_type = 2 if seat['sleep'] else 1
         ep = dst.entry_properties
@@ -361,7 +369,7 @@ def _convert_furniture_markers(markers, root):
         ep.behind = 1 if seat['entry_flags'] & _ENTRY_BEHIND else 0
         ep.right = 1 if seat['entry_flags'] & _ENTRY_RIGHT else 0
         ep.left = 1 if seat['entry_flags'] & _ENTRY_LEFT else 0
-    return frn
+    return frn, shift
 
 
 def _rewrite_tex_path(raw_bytes):
@@ -1496,13 +1504,16 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
                                if isinstance(ed, NifFormat.BSFurnitureMarker)
                                and not isinstance(ed, NifFormat.BSFurnitureMarkerNode)]
                 if frn_markers:
-                    frn = _convert_furniture_markers(frn_markers, root)
+                    frn, furn_shift = _convert_furniture_markers(frn_markers, root)
                     if frn is not None:
                         fade.num_extra_data_list += 1
                         fade.extra_data_list.update_size()
                         fade.extra_data_list[fade.num_extra_data_list - 1] = frn
                         stats.setdefault('furniture_markers', 0)
                         stats['furniture_markers'] += 1
+                        # Geometry must be re-origined by the same shift
+                        # (wrap pass below); importer lowers REFRs to match.
+                        stats['_furn_origin_shift'] = furn_shift
 
                 # --- Prn string extra data ---
                 for ed in root.extra_data_list:
@@ -1704,9 +1715,17 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         # to the inner NiNode so Havok reads the NiNode's world transform
         # (= original R + T) when positioning the collision — no baking required.
         # This matches the legacy copyover_legacy_nif_animations.py approach exactly.
+        #
+        # Furniture re-origin rides the same wrapper: marker-bearing models are
+        # translated +furn_shift so the floor plane sits at z=0 (vanilla origin
+        # convention — the engine anchors seated actors to the REFR z, so the
+        # origin must be at the floor).  The importer lowers the REFRs of every
+        # base record using the model by the same amount, keeping world-space
+        # visuals identical.  See asset_convert/furniture_markers.py.
         wrapped = False
+        furn_shift = stats.pop('_furn_origin_shift', 0.0)
         if (not has_skin and hasattr(root, 'rotation') and hasattr(root, 'children')
-                and not _is_identity(root.rotation)):
+                and (not _is_identity(root.rotation) or abs(furn_shift) > 1e-4)):
             # Create inner NiNode that carries the original rotation and translation
             inner = NifFormat.NiNode()
             inner.name = root.name
@@ -1718,7 +1737,7 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
             inner.rotation.m_31 = R.m_31; inner.rotation.m_32 = R.m_32; inner.rotation.m_33 = R.m_33
             inner.translation.x = root.translation.x
             inner.translation.y = root.translation.y
-            inner.translation.z = root.translation.z
+            inner.translation.z = root.translation.z + furn_shift
             inner.scale = root.scale
             # Move collision to inner node so Havok uses the correct NiNode world transform
             # Note: this likely causes crashes due to the collision not being on the root node

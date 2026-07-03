@@ -48,6 +48,22 @@ Seat recovery:
 Candidates are then clustered: a chair's 3-4 entries converge on one
 seat; a bench's front/behind entry pairs form one cluster per physical
 seat (matching vanilla commonbench01's 3 positions).
+
+ORIGIN SHIFT (the floating-sit fix, verified in-game 2026-07):
+The Skyrim engine anchors the seated actor's root to the furniture
+REFERENCE's Z (measured: seated getpos z == REFR z) and the sit/sleep
+animation supplies the fixed ~34-unit hip rise; the marker's Z does NOT
+set the actor height.  Every vanilla furniture mesh has its origin at the
+mesh BOTTOM (floor plane), so root = floor and the hip lands on the seat.
+Oblivion furniture origins are at mid-height, which floated actors by
+exactly the origin-to-floor distance (~16 on stools/benches = 1 game
+foot, ~34 on chairs).  Fix: re-origin converted furniture to the vanilla
+convention — the NIF converter wraps the model in an inner NiNode
+translated by `origin_shift` (= -floor_z = -min entry z, entries stand on
+the floor) and shifts the marker offsets the same way, while the importer
+subtracts the same shift from every placed reference of every base record
+using the model (FURN and STAT share these meshes).  World-space visuals
+are unchanged; the REFR now sits at the floor like vanilla.
 """
 
 import math
@@ -213,10 +229,23 @@ def cluster_seats(entries, center_fn):
     return seats
 
 
-def seats_from_nif(nif_path):
-    """Parse an Oblivion NIF and return its seat list (see cluster_seats).
+def origin_shift(entries):
+    """Model-space z translation that moves the furniture's floor plane to
+    z=0 (the vanilla origin convention).  Entries stand on the floor, so
+    the floor plane = the lowest entry z."""
+    if not entries:
+        return 0.0
+    return -min(e['p'][2] for e in entries)
 
-    Returns [] when the NIF has no furniture markers; raises on read errors.
+
+def furniture_model_info(nif_path):
+    """Parse an Oblivion NIF and return its furniture conversion data:
+
+      {'seats': [...see cluster_seats; z already in re-origined coords...],
+       'origin_shift': float}
+
+    Returns {'seats': [], 'origin_shift': 0.0} when the NIF has no
+    furniture markers; raises on read errors.
     """
     import time
     if not hasattr(time, 'clock'):
@@ -237,5 +266,39 @@ def seats_from_nif(nif_path):
                 marker_blocks.append(ed)
     entries = extract_entries(marker_blocks)
     if not entries:
-        return []
-    return cluster_seats(entries, lambda: geometry_center_xy(roots[0]))
+        return {'seats': [], 'origin_shift': 0.0}
+    shift = origin_shift(entries)
+    seats = cluster_seats(entries, lambda: geometry_center_xy(roots[0]))
+    for s in seats:
+        s['z'] += shift
+    return {'seats': seats, 'origin_shift': shift}
+
+
+def seats_from_nif(nif_path):
+    """Back-compat helper: seat list only (z in re-origined coords)."""
+    return furniture_model_info(nif_path)['seats']
+
+
+def scan_marker_nifs(meshes_dir):
+    """Return the set of relative paths (lowercase, forward slashes) of all
+    NIFs under meshes_dir containing a BSFurnitureMarker block.
+
+    Cheap: block type names are plaintext in the NIF header, which sits in
+    the first few KB of the file — no PyFFI parse needed.
+    """
+    import os
+    found = set()
+    for root, _dirs, files in os.walk(meshes_dir):
+        for fname in files:
+            if not fname.lower().endswith('.nif'):
+                continue
+            path = os.path.join(root, fname)
+            try:
+                with open(path, 'rb') as fh:
+                    head = fh.read(8192)
+            except OSError:
+                continue
+            if b'BSFurnitureMarker' in head:
+                rel = os.path.relpath(path, meshes_dir)
+                found.add(rel.lower().replace('\\', '/'))
+    return found
