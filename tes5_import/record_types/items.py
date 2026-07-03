@@ -94,50 +94,119 @@ def convert_FLOR(rec: dict) -> bytes:
     return _simple_object(rec, 'FLOR', extra_subs=extra)
 
 
+# --- FURN marker data -------------------------------------------------------
+#
+# TES5 FURN MNAM bits 0-23 enable NIF marker POSITION 0-23 (xEdit "Sit 0..23").
+# The converted NIF's positions are the clustered SEATS produced by
+# asset_convert/furniture_markers.py, NOT the original Oblivion entry markers,
+# so the TES4 MNAM bitmask (which indexed the Oblivion NIF's entry list)
+# CANNOT be passed through: dangling bits make the engine index past the
+# NIF's position list and seat NPCs at garbage positions far from the mesh.
+#
+# The seat list is computed here with the SAME shared code the NIF converter
+# uses (same clustering, same order), from the source NIF in the export dir.
+# Populated once by load_furniture_seats() (called from import_main Phase 0).
+#
+# High MNAM flags: TES4 and TES5 share bit 30 (sit-type furniture) and
+# bit 31 (bed-type) — verified against vanilla Skyrim (chairs/benches
+# 0x40000001, beds 0x88000001).  Vanilla beds additionally set bit 27
+# (0x08000000 "Must Exit to Talk").
+_FURN_SEATS: dict = {}  # normalised MODL path -> seat list (see cluster_seats)
+
+
+def _furn_model_key(modl: str) -> str:
+    return modl.lower().replace('\\', '/').lstrip('/')
+
+
+def load_furniture_seats(meshes_dir, furn_records) -> int:
+    """Compute the converted-NIF seat list for every FURN model.
+
+    meshes_dir: <export_dir>/meshes (source Oblivion NIFs from BSA extraction).
+    Returns the number of models resolved.  Models whose NIF is missing or
+    unreadable fall back to a conservative single-seat FURN at convert time.
+    """
+    import os
+    _FURN_SEATS.clear()
+    try:
+        from asset_convert.furniture_markers import seats_from_nif
+    except ImportError as exc:
+        print(f"  Furniture seats: asset_convert unavailable ({exc}), using fallback")
+        return 0
+
+    resolved = 0
+    for rec in furn_records:
+        modl = get_str(rec, 'Model.MODL')
+        if not modl:
+            continue
+        key = _furn_model_key(modl)
+        if key in _FURN_SEATS:
+            continue
+        nif_path = os.path.join(meshes_dir, key.replace('/', os.sep))
+        try:
+            _FURN_SEATS[key] = seats_from_nif(nif_path)
+            resolved += 1
+        except OSError:
+            pass  # NIF not extracted — convert_FURN falls back
+        except Exception as exc:
+            print(f"  Furniture seats: failed to read {key}: {exc}")
+    print(f"  Furniture seats: {resolved} models resolved from {meshes_dir}")
+    return resolved
+
+
 def convert_FURN(rec: dict) -> bytes:
     extra = b''
-
-    # TES4 MNAM is a U32 bitmask:
-    #  bits 0-23  → active sit marker slots (Sit 0 … Sit 23)
-    #  bit 30 (0x40000000) → Is Perch (chair/bench type)
-    #  bit 31 (0x80000000) → Sleep (bed type)
-    # TES5 MNAM has the same bit layout for bits 0-23 and the high flags.
-    # Additionally TES5 requires:
-    #  PNAM  — placeholder unknown (4 zero bytes)
-    #  FNAM  — flags U16 (0 = default)
-    #  MNAM  — active markers U32 (same bitmask as TES4)
-    #  Markers array: for each active bit 0–23: ENAM(U32) + NAM0(4B) + FNMK(FormID)
-    #  FNPR array: defines anim types available at this furniture
-    furn_flags = get_int(rec, 'MNAM.Flags')
-
-    is_sleep = bool(furn_flags & 0x80000000)   # bed
-    # is_perch = bool(furn_flags & 0x40000000)  # chair/bench (unused but noted)
+    tes4_flags = get_int(rec, 'MNAM.Flags')
 
     # PNAM — 4 unknown bytes (empty placeholder, required by engine)
     extra += pack_subrecord('PNAM', b'\x00\x00\x00\x00')
-
     # FNAM — U16 flags (bit 1 = Ignored By Sandbox); pass 0
     extra += pack_subrecord('FNAM', struct.pack('<H', 0))
 
-    # MNAM — active markers bitmask (same value as TES4)
-    extra += pack_uint32_subrecord('MNAM', furn_flags)
+    modl = get_str(rec, 'Model.MODL')
+    seats = _FURN_SEATS.get(_furn_model_key(modl)) if modl else None
 
-    # Markers array — one ENAM+NAM0+FNMK group per active sit slot (bits 0-23)
-    # NAM0: 4 bytes — first 2 unknown (zeros), last 2 = disabled entry-points U16 (0 = all enabled)
-    for bit in range(24):
-        if furn_flags & (1 << bit):
-            extra += pack_subrecord('ENAM', struct.pack('<I', bit))
-            extra += pack_subrecord('NAM0', b'\x00\x00\x00\x00')
-            extra += pack_subrecord('FNMK', struct.pack('<I', 0))  # NULL keyword
-
-    # FNPR — entry points: defines what animations work at this furniture
-    # Format: Type(U16) + EntryPoints(U16 flags: 0x01=Front, 0x02=Behind, 0x04=Right, 0x08=Left)
-    # For beds: AnimType=2 (Lay), entry=Front
-    # For perch/chairs: AnimType=1 (Sit), entry=Front
-    if furn_flags & 0x00FFFFFF:  # any active markers
-        anim_type = 2 if is_sleep else 1  # Lay or Sit
-        entry_points = 0x01               # Front
-        extra += pack_subrecord('FNPR', struct.pack('<HH', anim_type, entry_points))
+    if seats == []:
+        # NIF read successfully but has NO furniture markers: enabling any
+        # MNAM bit would make the engine index a non-existent NIF position.
+        # Emit no active markers (decorative furniture).
+        extra += pack_uint32_subrecord('MNAM', tes4_flags & 0xC0000000)
+        extra += pack_subrecord('WBDT', struct.pack('<Bb', 0, -1))
+    elif seats:
+        # Enable every clustered seat; per-record approach restriction is
+        # carried by the FNPR entry flags below (Oblivion restricts by
+        # enabling a SUBSET of entry markers — e.g. SEChair01F/R/L share a
+        # NIF and enable different entries).
+        mnam = (1 << len(seats)) - 1
+        mnam |= tes4_flags & 0xC0000000
+        any_sleep = any(s['sleep'] for s in seats)
+        if any_sleep:
+            mnam |= 0x08000000  # Must Exit to Talk (all vanilla beds set it)
+        extra += pack_uint32_subrecord('MNAM', mnam)
+        # WBDT — workbench data: type None, skill -1 (vanilla standard)
+        extra += pack_subrecord('WBDT', struct.pack('<Bb', 0, -1))
+        # FNPR — one per NIF marker position, in position order:
+        # Type (1=Sit, 2=Sleep) + entry-point flags.  Only the entry
+        # directions whose TES4 entry marker was enabled in this record's
+        # bitmask are allowed; if the record enables none of a seat's
+        # entries, allow all of them (seat unreachable otherwise).
+        for seat in seats:
+            enabled = 0
+            for entry_index, flag in seat['members']:
+                if tes4_flags & (1 << entry_index):
+                    enabled |= flag
+            if not enabled:
+                enabled = seat['entry_flags']
+            anim_type = 2 if seat['sleep'] else 1
+            extra += pack_subrecord('FNPR', struct.pack('<HH', anim_type, enabled))
+    else:
+        # Source NIF unavailable: conservative single seat, all entries.
+        is_sleep = bool(tes4_flags & 0x80000000)
+        mnam = 0x00000001 | (tes4_flags & 0xC0000000)
+        if is_sleep:
+            mnam |= 0x08000000
+        extra += pack_uint32_subrecord('MNAM', mnam)
+        extra += pack_subrecord('WBDT', struct.pack('<Bb', 0, -1))
+        extra += pack_subrecord('FNPR', struct.pack('<HH', 2 if is_sleep else 1, 0x0F))
 
     return _simple_object(rec, 'FURN', extra_subs=extra)
 
@@ -171,7 +240,7 @@ def convert_GRAS(rec: dict) -> bytes:
 
 
 def convert_TREE(rec: dict) -> bytes:
-    """TREE — Tree. Convert SPT model path → tes4\speedtrees\{stem}.nif"""
+    r"""TREE — Tree. Convert SPT model path → tes4\speedtrees\{stem}.nif"""
     subs = _common_header_subs(rec, need_full=False, obnd_sig='TREE')
     model = get_str(rec, 'Model.MODL')
     if model:
