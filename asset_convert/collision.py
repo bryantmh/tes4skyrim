@@ -18,7 +18,109 @@ _ASSET_DIR  = Path(__file__).parent
 _MOPP_RL    = str(_ASSET_DIR / 'MOPP_RL.exe')
 _MOPP_RL_CWD = str(_ASSET_DIR)
 _HAVOK_SCALE = 0.1
+_GAME_UNITS_PER_HAVOK = 69.9904  # Skyrim: 1 Havok unit = 69.9904 game units
 NIF_FLAGS = 14  # Standard Skyrim NiAVObject flags (SelectiveUpdate bits 1-3)
+
+# ---------------------------------------------------------------------------
+# Havok material conversion
+# ---------------------------------------------------------------------------
+# Oblivion stores materials as a small sequential enum (OblivionHavokMaterial,
+# 0-31).  Skyrim stores them as CRC32 hashes of the Creation Kit material name
+# (SkyrimHavokMaterial).  Passing the Oblivion int through unmapped leaves the
+# engine with an unknown material (no impact sounds/decals, no stair-walk flag).
+_OB_TO_SK_MATERIAL = {
+    0:  3741512247,  # Stone            → SKY_HAV_MAT_STONE
+    1:  3839073443,  # Cloth            → SKY_HAV_MAT_CLOTH
+    2:  3106094762,  # Dirt             → SKY_HAV_MAT_DIRT
+    3:  3739830338,  # Glass            → SKY_HAV_MAT_GLASS
+    4:  1848600814,  # Grass            → SKY_HAV_MAT_GRASS
+    5:  1288358971,  # Metal            → SKY_HAV_MAT_SOLID_METAL
+    6:  2974920155,  # Organic          → SKY_HAV_MAT_ORGANIC
+    7:  591247106,   # Skin             → SKY_HAV_MAT_SKIN
+    8:  1024582599,  # Water            → SKY_HAV_MAT_WATER
+    9:  500811281,   # Wood             → SKY_HAV_MAT_WOOD
+    10: 1570821952,  # Heavy Stone      → SKY_HAV_MAT_HEAVY_STONE
+    11: 2229413539,  # Heavy Metal      → SKY_HAV_MAT_HEAVY_METAL
+    12: 3070783559,  # Heavy Wood       → SKY_HAV_MAT_HEAVY_WOOD
+    13: 3074114406,  # Chain            → SKY_HAV_MAT_MATERIAL_CHAIN
+    14: 398949039,   # Snow             → SKY_HAV_MAT_SNOW
+    15: 899511101,   # Stone Stairs     → SKY_HAV_MAT_STAIRS_STONE
+    16: 1461712277,  # Cloth Stairs     → SKY_HAV_MAT_STAIRS_WOOD (carpeted)
+    17: 899511101,   # Dirt Stairs      → SKY_HAV_MAT_STAIRS_STONE
+    18: 880200008,   # Glass Stairs     → SKY_HAV_MAT_STAIRS_GLASS
+    19: 899511101,   # Grass Stairs     → SKY_HAV_MAT_STAIRS_STONE
+    20: 899511101,   # Metal Stairs     → SKY_HAV_MAT_STAIRS_STONE (no metal stairs)
+    21: 1461712277,  # Organic Stairs   → SKY_HAV_MAT_STAIRS_WOOD
+    22: 1461712277,  # Skin Stairs      → SKY_HAV_MAT_STAIRS_WOOD
+    23: 899511101,   # Water Stairs     → SKY_HAV_MAT_STAIRS_STONE
+    24: 1461712277,  # Wood Stairs      → SKY_HAV_MAT_STAIRS_WOOD
+    25: 899511101,   # Heavy Stone Strs → SKY_HAV_MAT_STAIRS_STONE
+    26: 899511101,   # Heavy Metal Strs → SKY_HAV_MAT_STAIRS_STONE
+    27: 1461712277,  # Heavy Wood Strs  → SKY_HAV_MAT_STAIRS_WOOD
+    28: 899511101,   # Chain Stairs     → SKY_HAV_MAT_STAIRS_STONE
+    29: 1560365355,  # Snow Stairs      → SKY_HAV_MAT_STAIRS_SNOW
+    30: 1288358971,  # Elevator         → SKY_HAV_MAT_SOLID_METAL
+    31: 2974920155,  # Rubber           → SKY_HAV_MAT_ORGANIC
+}
+
+
+def _set_havok_material(hm, value):
+    """Set every material item inside a HavokMaterial struct to *value*.
+
+    PyFFI instantiates one enum item per read context (typed as whichever
+    variant matched the source version); CRC values are outside the old
+    Oblivion enum's range so bypass enum validation when needed.
+    """
+    for it in getattr(hm, '_items', []):
+        if it.__class__.__name__.endswith('HavokMaterial'):
+            # NOT set_value(): PyFFI's EnumBase.set_value only logs a warning
+            # and returns when the value isn't in its (old, Oblivion-era) enum
+            # list.  Skyrim CRC values must be written raw.
+            it._value = int(value)
+
+
+def _get_havok_material(hm):
+    """Return the raw material int stored in a HavokMaterial struct."""
+    for it in getattr(hm, '_items', []):
+        if it.__class__.__name__.endswith('HavokMaterial'):
+            return int(it.get_value())
+    return 0
+
+
+def _convert_materials(shape, _seen=None):
+    """Recursively map Oblivion havok material enums to Skyrim CRC values.
+
+    Values ≤ 31 are Oblivion enum indices; anything larger is already a
+    Skyrim CRC (idempotent — safe to call on partially converted trees).
+    """
+    if shape is None:
+        return
+    if _seen is None:
+        _seen = set()
+    if id(shape) in _seen:
+        return
+    _seen.add(id(shape))
+
+    hm = getattr(shape, 'material', None)
+    if hm is not None and hasattr(hm, '_items'):
+        cur = _get_havok_material(hm)
+        if 0 <= cur <= 31:
+            _set_havok_material(hm, _OB_TO_SK_MATERIAL.get(cur, 3741512247))
+
+    # Recurse into child shapes / sub-shape material carriers
+    for attr in ('shape',):
+        _convert_materials(getattr(shape, attr, None), _seen)
+    for list_attr in ('sub_shapes',):
+        subs = getattr(shape, list_attr, None)
+        if subs is not None:
+            for s in subs:
+                _convert_materials(s, _seen)
+    data = getattr(shape, 'data', None)
+    if data is not None:
+        subs = getattr(data, 'sub_shapes', None)
+        if subs is not None:
+            for s in subs:
+                _convert_materials(s, _seen)
 
 # ---------------------------------------------------------------------------
 # Triangle extraction from NiTriStripsData
@@ -430,6 +532,228 @@ def _convert_shape(shape, root_node):
 
 
 # ---------------------------------------------------------------------------
+# Concave clutter hull decomposition
+# ---------------------------------------------------------------------------
+# Oblivion clutter ships ONE convex hull per object.  A convex hull fills
+# every concavity: a goblet's hull spans rim→base (the thin stem gets a fat
+# cylinder of phantom collision), a pitcher's hull fills the handle gap.
+# Skyrim's crosshair/activation raycast tests the Havok shape, so the pick
+# region extends 2-5× beyond the visible mesh around such features.  Vanilla
+# Skyrim authors compound shapes instead (glazedgoblet01 = bhkListShape of a
+# cup box + stem box).  We reproduce that: recursively split the VISUAL
+# vertices along the axis-aligned cut that minimises total hull volume, and
+# emit a bhkListShape of per-piece convex hulls when this removes enough
+# phantom volume.
+# NOTE: Testing this ingame seemd to make no difference
+
+_DECOMP_MAX_DEPTH = 3          # binary split tree → ≤ 8 pieces
+_DECOMP_SPLIT_GAIN = 0.90      # accept a cut only if it removes ≥10% volume
+_DECOMP_MIN_PIECE_VERTS = 8
+_DECOMP_MAX_HULL_VERTS = 64
+
+
+def _hull_volume(pts):
+    from scipy.spatial import ConvexHull
+    try:
+        return ConvexHull(pts).volume
+    except Exception:
+        return None
+
+
+def _recursive_hull_split(pts, depth):
+    """Split point cloud into pieces whose hulls waste less volume.
+
+    Returns a list of point arrays (≥1 entries).  Points near the cut plane
+    are shared by both halves so piece hulls overlap slightly (no gaps).
+    """
+    import numpy as np
+    vol = _hull_volume(pts)
+    if vol is None or vol <= 0 or depth <= 0:
+        return [pts]
+
+    best = None
+    for axis in range(3):
+        lo, hi = pts[:, axis].min(), pts[:, axis].max()
+        extent = hi - lo
+        if extent * _GAME_UNITS_PER_HAVOK < 3.0:  # too thin to split
+            continue
+        eps = 0.02 * extent
+        for frac in (0.3, 0.4, 0.5, 0.6, 0.7):
+            cut = lo + frac * extent
+            coords = pts[:, axis]
+            # Each half must reach past the first vertex "ring" on the far
+            # side of the cut, otherwise sparse vertex rows leave an unfilled
+            # band of collision between the two piece hulls.
+            above = coords[coords > cut]
+            below = coords[coords < cut]
+            reach_a = (above.min() if len(above) else cut) + eps
+            reach_b = (below.max() if len(below) else cut) - eps
+            a = pts[coords <= reach_a]
+            b = pts[coords >= reach_b]
+            if len(a) < _DECOMP_MIN_PIECE_VERTS or len(b) < _DECOMP_MIN_PIECE_VERTS:
+                continue
+            va = _hull_volume(a)
+            vb = _hull_volume(b)
+            if va is None or vb is None:
+                continue
+            if best is None or va + vb < best[0]:
+                best = (va + vb, a, b)
+
+    if best is None or best[0] > vol * _DECOMP_SPLIT_GAIN:
+        return [pts]
+    return (_recursive_hull_split(best[1], depth - 1)
+            + _recursive_hull_split(best[2], depth - 1))
+
+
+def _build_piece_convex_shape(pts, radius, sk_material):
+    """Build a bhkConvexVerticesShape from a piece point cloud (Havok units)."""
+    import numpy as np
+    from scipy.spatial import ConvexHull
+
+    hull = None
+    hull_pts = None
+    # Quantise to a grid to keep hull vertex counts in the vanilla range
+    # (grid steps in Havok units: 0.28 / 0.56 / 1.05 game units).
+    for grid in (0.004, 0.008, 0.015):
+        q = np.unique(np.round(pts / grid) * grid, axis=0)
+        if len(q) < 4:
+            continue
+        try:
+            h = ConvexHull(q)
+        except Exception:
+            continue
+        hull, hull_pts = h, q[h.vertices]
+        if len(hull_pts) <= _DECOMP_MAX_HULL_VERTS:
+            break
+    if hull is None or len(hull_pts) < 4:
+        return None
+
+    # scipy facet equations are triangulated → dedupe coplanar planes.
+    # Equation convention: n·x + d <= 0 inside (n outward unit normal).
+    eqs = np.unique(np.round(hull.equations, 5), axis=0)
+
+    shape = NifFormat.bhkConvexVerticesShape()
+    _set_havok_material(shape.material, sk_material)
+    shape.radius = radius
+    shape.num_vertices = len(hull_pts)
+    shape.vertices.update_size()
+    for i, (x, y, z) in enumerate(hull_pts):
+        shape.vertices[i].x = float(x)
+        shape.vertices[i].y = float(y)
+        shape.vertices[i].z = float(z)
+        shape.vertices[i].w = 0.0
+    shape.num_normals = len(eqs)
+    shape.normals.update_size()
+    for i, eq in enumerate(eqs):
+        shape.normals[i].x = float(eq[0])
+        shape.normals[i].y = float(eq[1])
+        shape.normals[i].z = float(eq[2])
+        # Face plane sits at n·x = -w.  Vanilla stores planes pushed out by
+        # the convex radius (face dist = vertex dist + radius).
+        shape.normals[i].w = float(eq[3]) - radius
+    return shape
+
+
+def _collect_visual_vertices(node):
+    """Gather all visual mesh vertices under *node* in node-frame game units."""
+    import numpy as np
+    out = []
+
+    def walk(n, M):
+        if n is None:
+            return
+        L = np.eye(4)
+        if hasattr(n, 'translation') and hasattr(n.translation, 'x'):
+            r = n.rotation
+            L[0, :3] = [r.m_11, r.m_12, r.m_13]
+            L[1, :3] = [r.m_21, r.m_22, r.m_23]
+            L[2, :3] = [r.m_31, r.m_32, r.m_33]
+            L[:3, :3] *= n.scale
+            L[3, :3] = [n.translation.x, n.translation.y, n.translation.z]
+        M2 = L @ M
+        if isinstance(n, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
+            d = n.data
+            if d is not None and getattr(d, 'num_vertices', 0) > 0:
+                verts = np.array([[v.x, v.y, v.z] for v in d.vertices])
+                out.append(verts @ M2[:3, :3] + M2[3, :3])
+        elif isinstance(n, NifFormat.NiNode):
+            for c in n.children:
+                walk(c, M2)
+
+    if isinstance(node, NifFormat.NiNode):
+        for c in node.children:
+            walk(c, np.eye(4))
+    if not out:
+        return None
+    return np.vstack(out)
+
+
+def _decompose_clutter_hull(node, hull_shape):
+    """Replace a concave-filling single convex hull with a bhkListShape of
+    tighter per-piece hulls rebuilt from the visual geometry.
+
+    Returns the new bhkListShape, or None to keep the original shape.
+    Only called for dynamic (mass>0) plain bhkRigidBody clutter, where the
+    shape frame equals the node frame.
+    """
+    try:
+        import numpy as np
+        from scipy.spatial import ConvexHull  # noqa: F401 — availability check
+    except ImportError:
+        return None
+
+    pts = _collect_visual_vertices(node)
+    if pts is None or len(pts) < 24 or len(pts) > 60000:
+        return None
+    pts_hk = pts / _GAME_UNITS_PER_HAVOK
+
+    # Frame/coverage sanity: the existing (already scaled) hull must roughly
+    # match the visual AABB, otherwise the collision was authored to cover
+    # something else (or sits in a different frame) — keep it.
+    hull_pts = np.array([[v.x, v.y, v.z] for v in hull_shape.vertices])
+    if len(hull_pts) < 4:
+        return None
+    for axis in range(3):
+        v_lo, v_hi = pts_hk[:, axis].min(), pts_hk[:, axis].max()
+        h_lo, h_hi = hull_pts[:, axis].min(), hull_pts[:, axis].max()
+        v_ext, h_ext = v_hi - v_lo, h_hi - h_lo
+        max_ext = max(v_ext, h_ext, 1e-4)
+        if abs((v_lo + v_hi) - (h_lo + h_hi)) / 2 > 0.35 * max_ext:
+            return None
+        if not (0.6 <= (v_ext + 1e-4) / (h_ext + 1e-4) <= 1.67):
+            return None
+
+    single_vol = _hull_volume(pts_hk)
+    if single_vol is None or single_vol <= 0:
+        return None
+
+    pieces = _recursive_hull_split(pts_hk, _DECOMP_MAX_DEPTH)
+    if len(pieces) < 2:
+        return None
+
+    radius = max(hull_shape.radius, 0.005)
+    sk_material = _get_havok_material(hull_shape.material)
+    piece_shapes = []
+    for piece in pieces:
+        s = _build_piece_convex_shape(piece, radius, sk_material)
+        if s is None:
+            return None
+        piece_shapes.append(s)
+
+    list_shape = NifFormat.bhkListShape()
+    _set_havok_material(list_shape.material, sk_material)
+    list_shape.num_sub_shapes = len(piece_shapes)
+    list_shape.sub_shapes.update_size()
+    for i, s in enumerate(piece_shapes):
+        list_shape.sub_shapes[i] = s
+    list_shape.num_unknown_ints = len(piece_shapes)
+    list_shape.unknown_ints.update_size()
+    for i in range(len(piece_shapes)):
+        list_shape.unknown_ints[i] = 0
+    return list_shape
+
+
+# ---------------------------------------------------------------------------
 # Full collision conversion per-node
 # ---------------------------------------------------------------------------
 
@@ -465,6 +789,7 @@ def _convert_collision(node, actual_root=None):
 
     if isinstance(rb, NifFormat.bhkSimpleShapePhantom):
         rb.shape = _convert_shape(rb.shape, node)
+        _convert_materials(rb.shape)
         return
 
     # Scale rigid body translation.
@@ -523,15 +848,14 @@ def _convert_collision(node, actual_root=None):
         # Skyrim designers set masses independently; there is no consistent
         # object-to-object multiplier between the two games.
         #
-        # Inertia tensor: Oblivion stores inertia in "Oblivion Havok" units where
-        # 1 game unit = 1/7 Havok unit.  Skyrim Havok is 1 game unit = 1/70 Havok
-        # unit, so all lengths scale by _HAVOK_SCALE = 0.1.  However, Skyrim's
-        # Havok 2010 runtime normalises inertia by the BODY scale internally, so
-        # only one power of _HAVOK_SCALE is needed (not two).
-        # Empirical check: applying _HAVOK_SCALE (0.1) produces I/m ratios of
-        # 0.017–0.043, closely matching vanilla Skyrim clutter (0.004–0.04).
-        # Applying _HAVOK_SCALE^2 (0.01) gives values 10× too small.
-        _INERTIA_SCALE = _HAVOK_SCALE  # 0.1
+        # Inertia tensor: inertia ∝ mass × length², and lengths scale by
+        # _HAVOK_SCALE (0.1) going from Oblivion Havok units (game/7) to Skyrim
+        # Havok units (game/70) — so inertia scales by _HAVOK_SCALE² = 0.01.
+        # Verified against vanilla: silverjug01 (mass 0.8, r≈0.19 hk, h≈0.6 hk)
+        # stores I_x=0.031 = m(3r²+h²)/12 exactly (SI physics in Havok metres).
+        # Scaling by only 0.1 leaves inertia ~10× too large → objects resist
+        # rotation, feel sluggish/heavy when grabbed or knocked.
+        _INERTIA_SCALE = _HAVOK_SCALE ** 2  # 0.01
         rb.inertia.m_11 *= _INERTIA_SCALE
         rb.inertia.m_12 *= _INERTIA_SCALE
         rb.inertia.m_13 *= _INERTIA_SCALE
@@ -565,6 +889,17 @@ def _convert_collision(node, actual_root=None):
     # inner NiNode that carries the rotation — Havok would position the shape
     # at the origin instead of the correct rotated world position.
     rb.shape = _convert_shape(rb.shape, node)
+    _convert_materials(rb.shape)
+
+    # Dynamic clutter with a single full-object convex hull: rebuild concave
+    # objects (goblets, pitchers, ewers…) as a compound of tighter hulls so
+    # the activation raycast and contacts match the visible mesh.
+    # bhkRigidBodyT excluded — its shape frame is offset from the node frame.
+    if (rb.mass > 0 and rb.__class__ is NifFormat.bhkRigidBody
+            and isinstance(rb.shape, NifFormat.bhkConvexVerticesShape)):
+        decomposed = _decompose_clutter_hull(node, rb.shape)
+        if decomposed is not None:
+            rb.shape = decomposed
 
 def convert_all_collisions(node, actual_root=None):
     """Recursively convert collision objects on every node in the entire tree.
