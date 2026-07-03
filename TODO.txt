@@ -5,35 +5,33 @@ Major Issues:
 
 	2 - Book using default cover and no text visible
 
-	4 - Activation detection (how close my cursor needs to be to an item till the game shows its information on my hud) is way too big.
+	3 - Activation detection (how close my cursor needs to be to an item till the game shows its information on my hud) is way too big.
 		I am able to select it 3-4x the visual mesh's size always
 			Model Examples:
 				uppersilverpitcher01.nif
 				uppergobletceramic01.nif
 
-	5 - NiParticleSystem / NiDynamicEffect isn't correctly converted. For instances flames aren't animated. Crash is fixed
+	4 - NiParticleSystem / NiDynamicEffect isn't correctly converted. For instances flames aren't animated. Crash is fixed
 		Model Examples:
 			fireopensmall.nif
 			middlecandlestickfloor01fake.nif appears but has no flame on the candle
 
-	7 - Fix furniture markers. They are mispositioned and sometimes use wrong animation
-
-	8 - Remaining armor bugs:
+	5 - Remaining armor bugs:
 		Guard Helmet showing hair
 		Iron helmet not showing at all
 		Shields attach much better now, but not perfect
 		Add _1 body type
-		Need new body mesh to work to allow leg skin to appear
-		Should have another option just for armor pieces with lower arm so long sleeves don't misalign (the lower half of the arms needs to be moved forward slightly)
+		Need new skyrim body mesh to actually work to allow leg skin to appear
+		Should maybe have another option just for armor pieces with lower arm so long sleeves don't misalign (the lower half of the arms needs to be moved forward slightly)
 		lowerclass shirt 7 completely messed up (stretched wide)
 		lowerclass female shirt 3 has a gap all along the center
 		Inward pull broken for shoes
 
-	9 - Attempt to create a working speed tree (.spt) to NIF converter. oblivion speed tree files are located in export\Oblivion.esm\trees. It is not in a nif format so we will need to read the format directly and convert into nif using billboards for the leaf nodes if possible.
+	6 - Attempt to create a working speed tree (.spt) to NIF converter. oblivion speed tree files are located in export\Oblivion.esm\trees. It is not in a nif format so we will need to read the format directly and convert into nif using billboards for the leaf nodes if possible.
 		Else just add static leaf nodes that approximate the tree look. Much of the spt format is actually readable in plain text so it should be relatively easy to understand what is happenging.
 		Speed tree docs: https://nwn2.fandom.com/wiki/Speed_Tree_Format I've also included spttools-master inside the external folder. As well as a manually converted version of the trees in external\Speed Tree Conversion that uses static leaf nodes for you to reference.
 
-	10 - Crash related to updated collision objects
+	7 - Crash related to updated collision objects
 		It seems to happen when walking over castleint2way.nif inside of the anvilcastlegreathall interior cell around half of the time.
 		When examining those nifs in nifskope this stands out but I'm unsure if it matters. The skyrim version has 2 ninodes with the value of new2way underneath the collision object, whereas the original only had one
 		Additional Full crash in project root crash-2026-03-31-22-12-43.log, crash-2026-03-31-23-53-12.log
@@ -63,7 +61,7 @@ Major Issues:
 			bigverts w of 999.9999 seems too high
 	[]
 			
-	12 - Nif converter fix broken conversion
+	8 - Nif converter fix broken conversion
 		Files:
 			[RD] architecture\basementsections\ungrdltraphingedoor.nif
 			[RD] architecture\castle\kvatch\kvatch  castle int hallway01.nif
