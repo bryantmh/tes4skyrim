@@ -837,5 +837,116 @@ def _make_info_rec(data_flags=0, conditions=None, responses=None):
     return rec
 
 
+class TestFurnConversion:
+    """FURN MNAM/FNPR must index the converted NIF's clustered seat positions.
+
+    The seat list is derived from the source NIF with the shared algorithm in
+    asset_convert/furniture_markers.py; MNAM bit i enables NIF position i, so
+    dangling bits would seat NPCs at garbage positions in-game.
+    """
+
+    MESHES = os.path.join('export', 'Oblivion.esm', 'meshes')
+
+    def _unpack(self, data):
+        i = data.find(b'MNAM')
+        mnam = struct.unpack_from('<I', data, i + 6)[0]
+        fnprs = []
+        j = 0
+        while True:
+            j = data.find(b'FNPR', j)
+            if j < 0:
+                break
+            fnprs.append(struct.unpack_from('<HH', data, j + 6))
+            j += 10
+        return mnam, fnprs
+
+    def _furn_rec(self, modl, mnam_flags):
+        return {
+            'Signature': 'FURN', 'FormID': '00012345', 'RecordFlags': '0',
+            'EditorID': 'TestFurn', 'Model.MODL': modl,
+            'MNAM.Flags': str(mnam_flags),
+        }
+
+    @pytest.fixture(autouse=True)
+    def _seats(self):
+        if not os.path.isdir(self.MESHES):
+            pytest.skip('Export meshes not available')
+        from tes5_import.record_types.items import load_furniture_seats
+        recs = [
+            self._furn_rec('Furniture\\LowerClass\\LowerClassBench01.NIF', 0),
+            self._furn_rec('Furniture\\LowerClass\\LowerClassBed01.NIF', 0),
+        ]
+        load_furniture_seats(self.MESHES, recs)
+
+    def test_bench_mnam_matches_seat_count(self):
+        """3-seat bench: MNAM bits 0-2 + preserved sit-type flag, 3 FNPR."""
+        from tes5_import.record_types.items import convert_FURN
+        # TES4: bits for all 8 entry markers + sit-type bit 30
+        rec = self._furn_rec('Furniture\\LowerClass\\LowerClassBench01.NIF',
+                             0x400000FF)
+        mnam, fnprs = self._unpack(convert_FURN(rec))
+        assert mnam == 0x40000007, hex(mnam)
+        assert len(fnprs) == 3
+        assert all(t == 1 for t, _ in fnprs)  # Sit
+
+    def test_bench_entry_restriction(self):
+        """TES4 record enabling only the front-entry row (bits 5-7 = ref 14
+        entries) must yield front-only FNPR entry points on every seat."""
+        from tes5_import.record_types.items import convert_FURN
+        rec = self._furn_rec('Furniture\\LowerClass\\LowerClassBench01.NIF',
+                             0x400000E0)
+        mnam, fnprs = self._unpack(convert_FURN(rec))
+        assert mnam == 0x40000007
+        assert fnprs == [(1, 0x01), (1, 0x01), (1, 0x01)]
+
+    def test_bed_single_sleep_seat(self):
+        """Bed entries converge to ONE sleep seat: MNAM bit 0 + bed-type +
+        Must Exit to Talk, FNPR Sleep with left|right entries."""
+        from tes5_import.record_types.items import convert_FURN
+        rec = self._furn_rec('Furniture\\LowerClass\\LowerClassBed01.NIF',
+                             0x80000003)
+        mnam, fnprs = self._unpack(convert_FURN(rec))
+        assert mnam == 0x88000001, hex(mnam)
+        assert fnprs == [(2, 0x04 | 0x08)]
+
+    def test_missing_nif_fallback(self):
+        """Unresolvable model: single conservative seat, all entry points."""
+        from tes5_import.record_types.items import convert_FURN
+        rec = self._furn_rec('Clutter\\SEfurniture\\SEChair01.NIF', 0x40000004)
+        mnam, fnprs = self._unpack(convert_FURN(rec))
+        assert mnam == 0x40000001, hex(mnam)
+        assert fnprs == [(1, 0x0F)]
+
+    def test_seat_count_matches_converted_nif(self):
+        """The NIF converter must emit exactly the positions MNAM enables."""
+        import time
+        if not hasattr(time, 'clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat as NF
+        from asset_convert.nif_converter import convert_nif
+        from tes5_import.record_types.items import _FURN_SEATS, _furn_model_key
+
+        key = _furn_model_key('Furniture\\LowerClass\\LowerClassBench01.NIF')
+        seats = _FURN_SEATS[key]
+        src = os.path.join(self.MESHES, key.replace('/', os.sep))
+        with tempfile.TemporaryDirectory() as td:
+            dst = os.path.join(td, 'out.nif')
+            convert_nif(src, dst)
+            data = NF.Data()
+            with open(dst, 'rb') as f:
+                data.read(f)
+            for block in data.blocks:
+                if isinstance(block, NF.BSFurnitureMarkerNode):
+                    assert block.num_positions == len(seats)
+                    for i, seat in enumerate(seats):
+                        p = block.positions[i]
+                        assert abs(p.offset.x - seat['x']) < 0.01
+                        assert abs(p.offset.y - seat['y']) < 0.01
+                        assert abs(p.offset.z - seat['z']) < 0.01
+                    break
+            else:
+                pytest.fail('No BSFurnitureMarkerNode in converted NIF')
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])
