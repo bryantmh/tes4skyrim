@@ -319,6 +319,59 @@ def _identity_matrix():
     return m
 
 
+# --- Furniture marker conversion ------------------------------------------
+#
+# The full algorithm and data-verified ref/heading/z relations live in
+# asset_convert/furniture_markers.py, SHARED with tes5_import's FURN record
+# converter: the FURN MNAM bitmask indexes the NIF positions written here,
+# so both sides must produce the identical seat list.
+from .furniture_markers import (
+    ENTRY_BEHIND as _ENTRY_BEHIND,
+    ENTRY_FRONT as _ENTRY_FRONT,
+    ENTRY_LEFT as _ENTRY_LEFT,
+    ENTRY_RIGHT as _ENTRY_RIGHT,
+    cluster_seats as _cluster_seats,
+    extract_entries as _extract_furniture_entries,
+    geometry_center_xy as _geometry_center_xy,
+    origin_shift as _furniture_origin_shift,
+)
+
+
+def _convert_furniture_markers(markers, root):
+    """Convert Oblivion BSFurnitureMarker blocks (entry points) into one
+    Skyrim BSFurnitureMarkerNode (seat positions).
+
+    Returns (frn, origin_shift) — origin_shift is the +z translation that
+    re-origins the model to the vanilla floor-origin convention.  The
+    engine anchors the seated actor to the REFR z (not the marker z), so
+    the model must be wrapped in an inner NiNode translated by this amount
+    and the importer lowers the REFRs to match (see furniture_markers.py).
+    Returns (None, 0.0) if the markers contain no positions."""
+    entries = _extract_furniture_entries(markers)
+    if not entries:
+        return None, 0.0
+    shift = _furniture_origin_shift(entries)
+    seats = _cluster_seats(entries, lambda: _geometry_center_xy(root))
+
+    frn = NifFormat.BSFurnitureMarkerNode()
+    frn.name = b'FRN'
+    frn.num_positions = len(seats)
+    frn.positions.update_size()
+    for ci, seat in enumerate(seats):
+        dst = frn.positions[ci]
+        dst.offset.x = seat['x']
+        dst.offset.y = seat['y']
+        dst.offset.z = seat['z'] + shift  # re-origined coords (floor = 0)
+        dst.heading = seat['heading']
+        dst.animation_type = 2 if seat['sleep'] else 1
+        ep = dst.entry_properties
+        ep.front = 1 if seat['entry_flags'] & _ENTRY_FRONT else 0
+        ep.behind = 1 if seat['entry_flags'] & _ENTRY_BEHIND else 0
+        ep.right = 1 if seat['entry_flags'] & _ENTRY_RIGHT else 0
+        ep.left = 1 if seat['entry_flags'] & _ENTRY_LEFT else 0
+    return frn, shift
+
+
 def _rewrite_tex_path(raw_bytes):
     """Prepend tes4\\ to a texture path that doesn't already have it."""
     path = raw_bytes.decode('utf-8', errors='replace')
@@ -1445,65 +1498,22 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
             # BSFurnitureMarker is converted to BSFurnitureMarkerNode for sit/sleep.
             if hasattr(root, 'extra_data_list'):
                 # --- Furniture marker conversion ---
-                for ed in root.extra_data_list:
-                    if not isinstance(ed, NifFormat.BSFurnitureMarker):
-                        continue
-                    frn = NifFormat.BSFurnitureMarkerNode()
-                    frn.name = b'FRN'
-                    frn.num_positions = ed.num_positions
-                    frn.positions.update_size()
-                    for pi in range(ed.num_positions):
-                        src_pos = ed.positions[pi]
-                        dst_pos = frn.positions[pi]
-                        # --- Sitting position from approach position ---
-                        # Oblivion BSFurnitureMarker stores the APPROACH position:
-                        # where the NPC stands ~50 units away before the sit animation.
-                        # Skyrim BSFurnitureMarkerNode stores the actual SITTING position.
-                        # The approach is always offset in the direction BEHIND the NPC
-                        # (opposite to their facing direction).
-                        # Facing direction in OB: ori=0→+Y, ori=π/2→+X (sin/cos of ori).
-                        # To recover seat: project out the component in the facing direction.
-                        theta = src_pos.orientation / 1000.0  # milliradians → radians
-                        fx = math.sin(theta)  # facing X component
-                        fy = math.cos(theta)  # facing Y component
-                        ax = src_pos.offset.x
-                        ay = src_pos.offset.y
-                        # parallel component of approach in facing direction = approach offset
-                        parallel = ax * fx + ay * fy
-                        dst_pos.offset.x = ax - parallel * fx  # remove offset, keep perp
-                        dst_pos.offset.y = ay - parallel * fy
-                        # Z: negate (OB stores negative = below origin; SK = seat height above origin)
-                        dst_pos.offset.z = -src_pos.offset.z
-                        # Heading: ori is the approach direction (NPC faces away, so +π).
-                        # Empirically confirmed: ori/1000 + π gives correct NPC orientation.
-                        dst_pos.heading = theta + math.pi
-                        # position_ref → animation_type + entry_properties
-                        ref = src_pos.position_ref_1
-                        if 1 <= ref <= 10:
-                            dst_pos.animation_type = 2  # Sleep
-                        elif 11 <= ref <= 19:
-                            dst_pos.animation_type = 1  # Sit
-                        else:
-                            dst_pos.animation_type = 1  # Default to Sit
-                        # Entry direction from position_ref
-                        ep = dst_pos.entry_properties
-                        if ref in (1, 11):
-                            ep.left = 1
-                        elif ref in (2, 12):
-                            ep.right = 1
-                        elif ref == 13:
-                            ep.front = 1
-                        elif ref == 14:
-                            ep.behind = 1
-                        else:
-                            # Unknown ref or generic — allow entry from front
-                            ep.front = 1
-                    fade.num_extra_data_list += 1
-                    fade.extra_data_list.update_size()
-                    fade.extra_data_list[fade.num_extra_data_list - 1] = frn
-                    stats.setdefault('furniture_markers', 0)
-                    stats['furniture_markers'] += 1
-                    break  # Only one BSFurnitureMarker per NIF
+                # See _convert_furniture_markers: Oblivion entry points on the
+                # floor become Skyrim seat positions (clustered, re-headed).
+                frn_markers = [ed for ed in root.extra_data_list
+                               if isinstance(ed, NifFormat.BSFurnitureMarker)
+                               and not isinstance(ed, NifFormat.BSFurnitureMarkerNode)]
+                if frn_markers:
+                    frn, furn_shift = _convert_furniture_markers(frn_markers, root)
+                    if frn is not None:
+                        fade.num_extra_data_list += 1
+                        fade.extra_data_list.update_size()
+                        fade.extra_data_list[fade.num_extra_data_list - 1] = frn
+                        stats.setdefault('furniture_markers', 0)
+                        stats['furniture_markers'] += 1
+                        # Geometry must be re-origined by the same shift
+                        # (wrap pass below); importer lowers REFRs to match.
+                        stats['_furn_origin_shift'] = furn_shift
 
                 # --- Prn string extra data ---
                 for ed in root.extra_data_list:
@@ -1705,9 +1715,17 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         # to the inner NiNode so Havok reads the NiNode's world transform
         # (= original R + T) when positioning the collision — no baking required.
         # This matches the legacy copyover_legacy_nif_animations.py approach exactly.
+        #
+        # Furniture re-origin rides the same wrapper: marker-bearing models are
+        # translated +furn_shift so the floor plane sits at z=0 (vanilla origin
+        # convention — the engine anchors seated actors to the REFR z, so the
+        # origin must be at the floor).  The importer lowers the REFRs of every
+        # base record using the model by the same amount, keeping world-space
+        # visuals identical.  See asset_convert/furniture_markers.py.
         wrapped = False
+        furn_shift = stats.pop('_furn_origin_shift', 0.0)
         if (not has_skin and hasattr(root, 'rotation') and hasattr(root, 'children')
-                and not _is_identity(root.rotation)):
+                and (not _is_identity(root.rotation) or abs(furn_shift) > 1e-4)):
             # Create inner NiNode that carries the original rotation and translation
             inner = NifFormat.NiNode()
             inner.name = root.name
@@ -1719,7 +1737,7 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
             inner.rotation.m_31 = R.m_31; inner.rotation.m_32 = R.m_32; inner.rotation.m_33 = R.m_33
             inner.translation.x = root.translation.x
             inner.translation.y = root.translation.y
-            inner.translation.z = root.translation.z
+            inner.translation.z = root.translation.z + furn_shift
             inner.scale = root.scale
             # Move collision to inner node so Havok uses the correct NiNode world transform
             # Note: this likely causes crashes due to the collision not being on the root node

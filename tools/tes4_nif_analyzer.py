@@ -106,6 +106,22 @@ def dump_block(block, data, indent=0, lines=None):
                 lines.append(f"{prefix}    {ed_cls} '{ed_name}' ({sz} bytes)")
             elif isinstance(ed, NifFormat.BSInvMarker):
                 lines.append(f"{prefix}    BSInvMarker rotX={ed.rotation_x} rotY={ed.rotation_y} rotZ={ed.rotation_z} zoom={ed.zoom}")
+            elif isinstance(ed, NifFormat.BSFurnitureMarker):
+                lines.append(f"{prefix}    {ed_cls} '{ed_name}' positions={ed.num_positions}")
+                for fpi in range(ed.num_positions):
+                    fp = ed.positions[fpi]
+                    parts = [f"offset={_fmt_vec3(fp.offset)}"]
+                    if hasattr(fp, 'orientation'):
+                        parts.append(f"orientation={fp.orientation}")
+                    if hasattr(fp, 'position_ref_1'):
+                        parts.append(f"ref1={fp.position_ref_1} ref2={fp.position_ref_2}")
+                    if hasattr(fp, 'heading'):
+                        parts.append(f"heading={fp.heading:.4f}")
+                    if hasattr(fp, 'animation_type'):
+                        parts.append(f"animType={fp.animation_type}")
+                    if hasattr(fp, 'entry_properties'):
+                        parts.append(f"entry={fp.entry_properties}")
+                    lines.append(f"{prefix}      Pos[{fpi}]: {' '.join(parts)}")
             else:
                 lines.append(f"{prefix}    {ed_cls} '{ed_name}'")
 
@@ -308,6 +324,65 @@ def _dump_collision_shape(shape, prefix, lines):
         _dump_collision_shape(shape.shape, prefix + '  ', lines)
 
 
+def _world_transform(parents):
+    """Compose local transforms root→block. parents = list from root to block (inclusive)."""
+    import numpy as np
+    M = np.eye(4)
+    for b in parents:
+        if not (hasattr(b, 'translation') and hasattr(b.translation, 'x')):
+            continue
+        L = np.eye(4)
+        r = b.rotation
+        L[0, :3] = [r.m_11, r.m_12, r.m_13]
+        L[1, :3] = [r.m_21, r.m_22, r.m_23]
+        L[2, :3] = [r.m_31, r.m_32, r.m_33]
+        L[:3, :3] *= b.scale
+        L[3, :3] = [b.translation.x, b.translation.y, b.translation.z]
+        M = L @ M  # NIF row-vector convention: child-local applied first
+    return M
+
+
+def dump_bbox(nif_path, lines=None):
+    """Print world-space bounding box per geometry block and aggregate."""
+    import numpy as np
+    if lines is None:
+        lines = []
+    data = NifFormat.Data()
+    with open(nif_path, 'rb') as f:
+        data.inspect(f)
+        data.read(f)
+    lines.append(f"NIF: {nif_path}")
+    total_min = np.array([np.inf] * 3)
+    total_max = np.array([-np.inf] * 3)
+
+    def walk(block, chain):
+        nonlocal total_min, total_max
+        if block is None:
+            return
+        chain = chain + [block]
+        d = getattr(block, 'data', None)
+        if d is not None and hasattr(d, 'vertices') and getattr(d, 'num_vertices', 0) > 0:
+            verts = np.array([[v.x, v.y, v.z] for v in d.vertices])
+            M = _world_transform(chain)
+            world = verts @ M[:3, :3] + M[3, :3]
+            lo, hi = world.min(axis=0), world.max(axis=0)
+            total_min = np.minimum(total_min, lo)
+            total_max = np.maximum(total_max, hi)
+            lines.append(f"  {block.__class__.__name__} '{_safe_name(block)}': "
+                         f"min=({lo[0]:.2f}, {lo[1]:.2f}, {lo[2]:.2f}) "
+                         f"max=({hi[0]:.2f}, {hi[1]:.2f}, {hi[2]:.2f})")
+        if hasattr(block, 'children'):
+            for c in block.children:
+                walk(c, chain)
+
+    for root in data.roots:
+        walk(root, [])
+    if np.isfinite(total_min).all():
+        lines.append(f"  TOTAL: min=({total_min[0]:.2f}, {total_min[1]:.2f}, {total_min[2]:.2f}) "
+                     f"max=({total_max[0]:.2f}, {total_max[1]:.2f}, {total_max[2]:.2f})")
+    return lines
+
+
 def analyze_nif(nif_path):
     """Read a NIF file and return a list of text lines describing its structure."""
     data = NifFormat.Data()
@@ -335,6 +410,8 @@ def main():
     parser.add_argument('src', help='NIF file or directory to analyze')
     parser.add_argument('--outdir', default='references/export', help='Output directory for text dumps')
     parser.add_argument('--max', type=int, default=0, help='Max files to process (0=all)')
+    parser.add_argument('--bbox', action='store_true',
+                        help='Print world-space geometry bounding boxes to stdout instead of dumping')
     args = parser.parse_args()
 
     src = Path(args.src)
@@ -349,6 +426,14 @@ def main():
 
     if args.max > 0:
         nifs = nifs[:args.max]
+
+    if args.bbox:
+        for nif_path in nifs:
+            try:
+                print('\n'.join(dump_bbox(str(nif_path))))
+            except Exception as e:
+                print(f"ERROR {nif_path}: {e}")
+        return
 
     print(f"Analyzing {len(nifs)} NIF files...")
     for nif_path in nifs:

@@ -252,6 +252,13 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     cache_path = os.path.join(export_dir, 'mesh_bounds_cache.json')
     load_mesh_bounds(cache_path)
 
+    # --- Phase 0e: Compute furniture seat lists from source NIF markers ---
+    # FURN MNAM/FNPR must index the converted NIF's clustered seat positions,
+    # and REFRs of re-origined furniture models need z compensation
+    # (shared algorithm in asset_convert/furniture_markers.py).
+    from .record_types.items import load_furniture_models
+    load_furniture_models(os.path.join(export_dir, 'meshes'), by_type)
+
     # --- Phase 1: Simple record types (flat top-level groups) ---
     print("\nConverting records...")
     t2 = time.time()
