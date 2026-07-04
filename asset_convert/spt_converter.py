@@ -92,6 +92,12 @@ def _copy_nif_remap_textures(src: Path, dst: Path) -> bool:
                     block.textures[i] = (_OUR_PFX + tex[len(_SKY_PFX):]).encode()
                 elif lc.startswith(_OB_PFX):
                     block.textures[i] = ('tes4\\' + tex[len(_OB_PFX):]).encode()
+    # The Skyblivion tree assets pair bhkRigidBodyT with CMS collision — a
+    # combination vanilla Skyrim never ships and which intermittently
+    # produces invalid-shape-key CTDs.  Bake the body transform into the
+    # shape data and demote to a plain identity bhkRigidBody.
+    from .collision import demote_t_body_on_mesh_collision
+    demote_t_body_on_mesh_collision(data)
     dst.parent.mkdir(parents=True, exist_ok=True)
     with open(dst, 'wb') as f:
         data.write(f)

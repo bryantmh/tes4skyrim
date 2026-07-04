@@ -11,7 +11,7 @@ Supported:
   - Root rotation baking into children (non-skinned)
   - Inline tangents from NiBinaryExtraData
   - NiControllerManager string palette resolution
-  - Havok collision conversion (bhkNiTriStripsShape→bhkPackedNiTriStripsShape via MOPP_RL)
+  - Havok collision conversion (bhkNiTriStripsShape→bhkCompressedMeshShape via cms_builder)
   - NiParticleSystem removal
 
 Skip reason codes (printed in skip list at end of batch_convert):
@@ -2138,7 +2138,8 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
             remaining = len(stats['warn_counts']) - len(top_cats)
             print(f'  ... ({total_suppressed - shown} more in {remaining} other categories)')
 
-    print(f'\nDetailed stats: Strips→Shape={stats["strips"]}, '
+    # plain ASCII: cp1252 consoles/pipes choke on the arrow character
+    print(f'\nDetailed stats: Strips->Shape={stats["strips"]}, '
           f'Properties={stats["properties"]}, '
           f'Roots={stats["roots"]}, Rotations baked={stats["rotations"]}')
 

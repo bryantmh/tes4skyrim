@@ -129,10 +129,17 @@ def walk_mopp(mopp, size, start=0, follow_chunks=True):
                 i += 3
 
             elif code == 0x0B:                             # TERM_REOFFSET32
+                # Full 32-bit big-endian operand SETS the terminal offset.
+                # (PyFFI's parse_mopp only read bytes 3-4 — an Oblivion-era
+                # guess; Skyrim CMS keys carry the chunk id in the high bytes,
+                # e.g. operand 0x00040000 = chunk 0.  Verified: with the full
+                # read, walked key sets exactly match the CMS-predicted key
+                # sets on vanilla Skyrim meshes.)
                 if i + 4 >= size:
                     oob(i, 'REOFFSET32 operands'); break
                 visited.update(range(i, i + 5))
-                toffset = mopp[i + 3] << 8 | mopp[i + 4]
+                toffset = (mopp[i + 1] << 24 | mopp[i + 2] << 16
+                           | mopp[i + 3] << 8 | mopp[i + 4])
                 i += 5
 
             elif 0x10 <= code <= 0x1C:                     # SPLIT8 (13 dop dirs)

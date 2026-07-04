@@ -1,24 +1,16 @@
-import io as _io
 import math
-import os
-import subprocess
-import time
-from pathlib import Path
 
 # Apply all PyFFI patches (time.clock fix, nif.xml condition fixes) before import
 from . import pyffi_monkey_patch as _patch  # noqa: F401
 
 from pyffi.formats.nif import NifFormat
 
-from .mopp import dechunk_mopp
+from .cms_builder import build_cms_collision
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_ASSET_DIR  = Path(__file__).parent
-_MOPP_RL    = str(_ASSET_DIR / 'MOPP_RL.exe')
-_MOPP_RL_CWD = str(_ASSET_DIR)
 _HAVOK_SCALE = 0.1
 _GAME_UNITS_PER_HAVOK = 69.9904  # Skyrim: 1 Havok unit = 69.9904 game units
 NIF_FLAGS = 14  # Standard Skyrim NiAVObject flags (SelectiveUpdate bits 1-3)
@@ -212,26 +204,6 @@ def _remove_stair_risers(verts, triangles):
     return filtered
 
 
-def _build_packed_nif(packed_shape):
-    """Wrap a bhkPackedNiTriStripsShape in a minimal BSFadeNode NIF for MOPP_RL."""
-    data = NifFormat.Data(version=0x14020007, user_version=12,
-                          user_version_2=83)
-    fade = NifFormat.BSFadeNode()
-    fade.flags = NIF_FLAGS
-    mopp_wrap = NifFormat.bhkMoppBvTreeShape()
-    mopp_wrap.shape = packed_shape
-    rb = NifFormat.bhkRigidBody()
-    rb.shape = mopp_wrap
-    coll_obj = NifFormat.bhkCollisionObject()
-    coll_obj.flags = 129
-    coll_obj.target = fade
-    coll_obj.body = rb
-    fade.collision_object = coll_obj
-    data.roots.append(fade)
-    data.header.endian_type = NifFormat.EndianType.ENDIANLITTLE
-    return data
-
-
 def _ni_strips_to_packed(bhk_strips):
     """Convert bhkNiTriStripsShape → bhkPackedNiTriStripsShape.
 
@@ -307,51 +279,271 @@ def _ni_strips_to_packed(bhk_strips):
 
 
 # ---------------------------------------------------------------------------
-# Rigid body conversion
+# Mesh collision rebuild (strips/packed → vanilla-style MOPP + CMS)
 # ---------------------------------------------------------------------------
 
-def _run_mopp_rl(input_nif_data):
-    """Run MOPP_RL.exe on a NifFormat.Data object.
+def _shape_tri_soup(shape):
+    """Extract (triangles_hu, sk_material) from a mesh collision shape.
 
-    Writes input to a temp file, runs MOPP_RL.exe, reads and returns the
-    resulting NifFormat.Data, or None on failure.
+    bhkNiTriStripsShape data is at game-unit scale (÷7 → Oblivion havok,
+    ×_HAVOK_SCALE → Skyrim havok).  hkPackedNiTriStripsData is at 1/7
+    game-unit scale already (×_HAVOK_SCALE only).  Returns None for
+    non-mesh shapes (caller uses the primitive conversion path).
     """
-    if not os.path.exists(_MOPP_RL):
-        return None
-    import uuid
-    uid = uuid.uuid4().hex
-    temp_dir = os.path.join(_ASSET_DIR.parent, 'temp')
-    os.makedirs(temp_dir, exist_ok=True)
-    tmp_in  = os.path.join(temp_dir, f'mopp_{uid}.nif')
-    tmp_out = os.path.join(temp_dir, f'mopp_{uid}_out.nif')
-    try:
-        buf = _io.BytesIO()
-        input_nif_data.write(buf)
-        with open(tmp_in, 'wb') as f:
-            f.write(buf.getvalue())
-
-        result = subprocess.run(
-            [_MOPP_RL, tmp_in, tmp_out],
-            capture_output=True,
-            cwd=_MOPP_RL_CWD,  # asset_convert/ — where template.nif lives
-        )
-        if result.returncode != 0 or not os.path.exists(tmp_out):
+    if isinstance(shape, NifFormat.bhkNiTriStripsShape):
+        scale = _HAVOK_SCALE / 7.0
+        tris = []
+        for sd in shape.strips_data:
+            if sd is None:
+                continue
+            verts = [(v.x * scale, v.y * scale, v.z * scale)
+                     for v in sd.vertices]
+            tris.extend((verts[a], verts[b], verts[c])
+                        for a, b, c in _triangulate_strips(sd))
+        if not tris:
             return None
+        material = _get_havok_material(shape.material)
+        if 0 <= material <= 31:
+            material = _OB_TO_SK_MATERIAL.get(material, 3741512247)
+        return tris, material
 
-        out_data = NifFormat.Data()
-        with open(tmp_out, 'rb') as f:
-            out_data.inspect(f)
-            out_data.read(f)
-        return out_data
-    except Exception:
+    if isinstance(shape, NifFormat.bhkPackedNiTriStripsShape):
+        data = getattr(shape, 'data', None)
+        if data is None or data.num_triangles == 0:
+            return None
+        verts = [(v.x * _HAVOK_SCALE, v.y * _HAVOK_SCALE, v.z * _HAVOK_SCALE)
+                 for v in data.vertices]
+        tris = []
+        for t in data.triangles:
+            a, b, c = t.triangle.v_1, t.triangle.v_2, t.triangle.v_3
+            if a == b or b == c or a == c:
+                continue
+            tris.append((verts[a], verts[b], verts[c]))
+        if not tris:
+            return None
+        material = 3741512247  # stone default
+        if shape.num_sub_shapes > 0:
+            material = _get_havok_material(shape.sub_shapes[0].material)
+            if 0 <= material <= 31:
+                material = _OB_TO_SK_MATERIAL.get(material, 3741512247)
+        return tris, material
+
+    return None
+
+
+def _bake_body_transform_into_tris(rb, tris):
+    """Fold a bhkRigidBodyT transform into the triangle soup (Skyrim hu).
+
+    Vanilla Skyrim never pairs a transformed rigid body with MOPP/mesh
+    collision (0 of 6341 vanilla CMS meshes contain bhkRigidBodyT): the
+    engine's CMS/MOPP query path intermittently produces invalid shape keys
+    (HK_INVALID_SHAPE_KEY → runaway hit scan → CTD) when one is present —
+    every Collision Sentinel CULPRIT was a rotated-root mesh whose wrap
+    pass produced bhkRigidBodyT + CMS.  So the body transform is applied to
+    the vertices here and the body is demoted to a plain identity
+    bhkRigidBody, exactly like vanilla static collision.
+
+    rb.translation must already be in Skyrim havok units (the caller scales
+    it before shape conversion).  Returns the transformed triangle list.
+    """
+    if not isinstance(rb, NifFormat.bhkRigidBodyT):
+        return tris
+    q = rb.rotation
+    R = _m3_from_quat_xyzw(q.x, q.y, q.z, q.w)  # column-vector convention
+    t = (rb.translation.x, rb.translation.y, rb.translation.z)
+
+    def xf(v):
+        return (
+            R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2] + t[0],
+            R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2] + t[1],
+            R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2] + t[2],
+        )
+
+    tris = [(xf(a), xf(b), xf(c)) for a, b, c in tris]
+    rb.__class__ = NifFormat.bhkRigidBody
+    rb.rotation.x = rb.rotation.y = rb.rotation.z = 0.0
+    rb.rotation.w = 1.0
+    rb.translation.x = rb.translation.y = rb.translation.z = 0.0
+    return tris
+
+
+def _packed_from_tris(tris, sk_material):
+    """Fallback: bare bhkPackedNiTriStripsShape (no MOPP) from a hu soup.
+
+    Only used when the Havok bridge is unavailable or rejects the mesh.
+    Packed data vertices are stored at 10× havok units (1/7 game scale).
+    """
+    vert_index = {}
+    verts = []
+    idx_tris = []
+    for tri in tris:
+        idx = []
+        for v in tri:
+            key = (round(v[0], 6), round(v[1], 6), round(v[2], 6))
+            i = vert_index.get(key)
+            if i is None:
+                i = len(verts)
+                vert_index[key] = i
+                verts.append(key)
+            idx.append(i)
+        if idx[0] == idx[1] or idx[1] == idx[2] or idx[0] == idx[2]:
+            continue
+        idx_tris.append(idx)
+    if not idx_tris:
         return None
-    finally:
-        for p in (tmp_in, tmp_out):
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
 
+    packed_verts = [(x * 10.0, y * 10.0, z * 10.0) for x, y, z in verts]
+    hkdata = NifFormat.hkPackedNiTriStripsData()
+    hkdata.num_vertices = len(packed_verts)
+    hkdata.vertices.update_size()
+    for i, (x, y, z) in enumerate(packed_verts):
+        hkdata.vertices[i].x = x
+        hkdata.vertices[i].y = y
+        hkdata.vertices[i].z = z
+    hkdata.num_triangles = len(idx_tris)
+    hkdata.triangles.update_size()
+    for i, (a, b, c) in enumerate(idx_tris):
+        hkdata.triangles[i].triangle.v_1 = a
+        hkdata.triangles[i].triangle.v_2 = b
+        hkdata.triangles[i].triangle.v_3 = c
+        hkdata.triangles[i].welding_info = 0
+        nx, ny, nz = _find_normal(packed_verts, a, b, c)
+        hkdata.triangles[i].normal.x = nx
+        hkdata.triangles[i].normal.y = ny
+        hkdata.triangles[i].normal.z = nz
+
+    packed = NifFormat.bhkPackedNiTriStripsShape()
+    packed.num_sub_shapes = 1
+    packed.sub_shapes.update_size()
+    packed.sub_shapes[0].layer = 1  # LAYER_STATIC
+    packed.sub_shapes[0].num_vertices = len(packed_verts)
+    _set_havok_material(packed.sub_shapes[0].material, sk_material)
+    packed.scale.x = 1.0
+    packed.scale.y = 1.0
+    packed.scale.z = 1.0
+    packed.unknown_float_1 = 0.1
+    packed.unknown_float_3 = 0.1
+    packed.data = hkdata
+    return packed
+
+
+def _rebuild_mesh_collision(rb, target_node):
+    """Rebuild strips/packed mesh collision as vanilla MOPP+CMS (in place).
+
+    Handles rb.shape being bhkNiTriStripsShape, bhkPackedNiTriStripsShape,
+    or a stale Oblivion bhkMoppBvTreeShape wrapping either.  Bakes any
+    bhkRigidBodyT transform into the geometry (body becomes plain identity
+    bhkRigidBody).  Returns True when handled; False → caller uses the
+    primitive-shape conversion path.
+    """
+    shape = rb.shape
+    inner = shape.shape if isinstance(shape, NifFormat.bhkMoppBvTreeShape) else shape
+    soup = _shape_tri_soup(inner)
+    if soup is None:
+        return False
+    tris, sk_material = soup
+    tris = [t for t in tris
+            if all(math.isfinite(c) for v in t for c in v)]
+    if not tris:
+        return False
+    tris = _bake_body_transform_into_tris(rb, tris)
+    mopp = build_cms_collision(tris, sk_material, NifFormat)
+    if mopp is not None:
+        mopp.shape.target = target_node
+        rb.shape = mopp
+        return True
+    packed = _packed_from_tris(tris, sk_material)
+    if packed is not None:
+        rb.shape = packed
+        return True
+    return False
+
+
+def demote_t_body_on_mesh_collision(data):
+    """Demote bhkRigidBodyT bodies that own MOPP/CMS collision (in-place).
+
+    For pre-made Skyrim-format assets (the Skyblivion speedtree pack pairs
+    bhkRigidBodyT with bhkCompressedMeshShape — a combination vanilla Skyrim
+    never ships, 0 of 6341 vanilla CMS meshes, and the engine path that
+    intermittently produces invalid shape keys / CTDs).
+
+    Pure-translation bodies (the speedtree case): the CMS chunk translations,
+    big verts, bounds and the MOPP origin are shifted by t — MOPP bytecode is
+    origin-relative, so no recompile is needed.  Rotated bodies fall back to
+    a full decode + rebuild through the Havok bridge.  Returns the number of
+    bodies demoted.
+    """
+    from .cms import decode_cms
+
+    n = 0
+    for blk in list(data.blocks):
+        if blk.__class__ is not NifFormat.bhkRigidBodyT:
+            continue
+        mopp = blk.shape
+        if not isinstance(mopp, NifFormat.bhkMoppBvTreeShape):
+            continue
+        cms = getattr(mopp, 'shape', None)
+        cms_data = getattr(cms, 'data', None)
+        if cms_data is None or type(cms_data).__name__ != 'bhkCompressedMeshShapeData':
+            continue
+
+        q = blk.rotation
+        t = (blk.translation.x, blk.translation.y, blk.translation.z)
+        rot_identity = max(abs(q.x), abs(q.y), abs(q.z),
+                           abs(abs(q.w) - 1.0)) < 1e-5
+        xforms_identity = all(
+            max(abs(x.rotation.x), abs(x.rotation.y), abs(x.rotation.z),
+                abs(abs(x.rotation.w) - 1.0)) < 1e-5
+            for x in cms_data.chunk_transforms
+        )
+
+        if rot_identity and xforms_identity:
+            for ch in cms_data.chunks:
+                ch.translation.x += t[0]
+                ch.translation.y += t[1]
+                ch.translation.z += t[2]
+            for bv in cms_data.big_verts:
+                bv.x += t[0]
+                bv.y += t[1]
+                bv.z += t[2]
+            for bound in (cms_data.bounds_min, cms_data.bounds_max):
+                bound.x += t[0]
+                bound.y += t[1]
+                bound.z += t[2]
+            mopp.origin.x += t[0]
+            mopp.origin.y += t[1]
+            mopp.origin.z += t[2]
+        else:
+            # Rotated body — rebuild the whole chain over transformed tris.
+            R = _m3_from_quat_xyzw(q.x, q.y, q.z, q.w)
+            tris = [
+                tuple(
+                    tuple(sum(R[i][k] * v[k] for k in range(3)) + t[i]
+                          for i in range(3))
+                    for v in tri
+                )
+                for _key, tri in decode_cms(cms_data)
+            ]
+            material = 3741512247
+            if cms_data.num_materials > 0:
+                material = int(cms_data.chunk_materials[0].material)
+            new_mopp = build_cms_collision(tris, material, NifFormat)
+            if new_mopp is None:
+                continue  # keep the T body rather than lose collision
+            new_mopp.shape.target = cms.target
+            blk.shape = new_mopp
+
+        blk.rotation.x = blk.rotation.y = blk.rotation.z = 0.0
+        blk.rotation.w = 1.0
+        blk.translation.x = blk.translation.y = blk.translation.z = 0.0
+        blk.__class__ = NifFormat.bhkRigidBody
+        n += 1
+    return n
+
+
+# ---------------------------------------------------------------------------
+# Rigid body conversion
+# ---------------------------------------------------------------------------
 
 def _convert_rigid_body(rb):
     """Set Skyrim-compatible rigid body flags (in-place).
@@ -408,44 +600,14 @@ def _convert_rigid_body(rb):
 # Recursive shape conversion
 # ---------------------------------------------------------------------------
 
-def _extract_mopp_result(out_data, root_node):
-    """Extract the collision shape from MOPP_RL output and set its target.
-
-    MOPP_RL.exe leaves build_type=0xCD (uninit memory); set it to 1
-    (BUILT_WITHOUT_CHUNK_SUBDIVISION) which is what vanilla Skyrim uses.
-
-    MOPP_RL also builds its MOPP with chunk subdivision enabled (0x70
-    chunk-jump opcodes + 16-byte-aligned sub-trees), which vanilla Skyrim
-    never uses and the PC engine mis-executes — the intermittent
-    EXCEPTION_STACK_OVERFLOW in hkpCollisionDispatcher when walking over
-    converted statics (castleint2way.nif).  dechunk_mopp() rewrites the
-    bytecode to vanilla-style unchunked code; returns None if the result
-    cannot be verified (caller falls back to a plain packed shape, no MOPP).
-    """
-    result = out_data.roots[0].collision_object.body.shape
-    if hasattr(result, 'build_type'):
-        result.build_type = 1
-    if getattr(result, 'mopp_data_size', 0):
-        try:
-            fixed = dechunk_mopp(bytes(bytearray(result.mopp_data)))
-        except ValueError:
-            return None
-        result.mopp_data_size = len(fixed)
-        result.mopp_data.update_size()
-        for _i, _b in enumerate(fixed):
-            result.mopp_data[_i] = _b
-    # bhkCompressedMeshShape (inner of bhkMoppBvTreeShape) needs its target set
-    inner = getattr(result, 'shape', None)
-    if inner is not None and hasattr(inner, 'target'):
-        inner.target = root_node
-    return result
-
 def _convert_shape(shape, root_node):
     """Recursively convert an Oblivion Havok shape to Skyrim format.
 
-    Scales all geometry/dimensions by _HAVOK_SCALE (0.1).
-    bhkNiTriStripsShape is converted to bhkPackedNiTriStripsShape and
-    re-MOP'd via MOPP_RL.exe.
+    Scales all geometry/dimensions by _HAVOK_SCALE (0.1).  Top-level mesh
+    collision (strips/packed/MOPP) is rebuilt in _rebuild_mesh_collision
+    before this runs; the mesh branches here only serve nested occurrences
+    (e.g. a strips shape inside a bhkListShape) and produce a bare packed
+    shape without MOPP.
     Returns the (possibly replaced) shape.
     """
     if shape is None:
@@ -507,49 +669,17 @@ def _convert_shape(shape, root_node):
         return shape
 
     if isinstance(shape, NifFormat.bhkNiTriStripsShape):
-        # Convert strips → packed, then regenerate MOPP
+        # Nested strips (inside a list shape) → bare packed triangle shape.
         packed = _ni_strips_to_packed(shape)
-        if packed is None:
-            return shape  # keep original on failure
-        # Try to regenerate MOPP data via MOPP_RL
-        tmp_nif = _build_packed_nif(packed)
-        out = _run_mopp_rl(tmp_nif)
-        if out is not None:
-            res = _extract_mopp_result(out, root_node)
-            if res is not None:
-                return res
-        # MOPP_RL/dechunk failed — return packed shape as-is (no MOPP but valid)
-        return packed
+        return packed if packed is not None else shape
 
     if isinstance(shape, NifFormat.bhkMoppBvTreeShape):
-        # Convert inner shape, which may already produce a MOPP via MOPP_RL.
-        # If conversion gives back a bhkMoppBvTreeShape, use it directly.
-        # If it gives back a bhkPackedNiTriStripsShape, regenerate MOPP for it.
-        converted = _convert_shape(shape.shape, root_node)
-        if isinstance(converted, NifFormat.bhkMoppBvTreeShape):
-            return converted
-        if isinstance(converted, NifFormat.bhkPackedNiTriStripsShape):
-            tmp_nif = _build_packed_nif(converted)
-            out = _run_mopp_rl(tmp_nif)
-            if out is not None:
-                res = _extract_mopp_result(out, root_node)
-                if res is not None:
-                    return res
-            # MOPP_RL/dechunk failed — return packed shape directly.
-            # Never return the outer bhkMoppBvTreeShape with stale Oblivion MOPP
-            # data: Skyrim can't load Oblivion MOPP and will silently drop the
-            # collision, while the incompatible blob causes undefined behaviour.
-            return converted
-        return shape
+        # Never keep the outer bhkMoppBvTreeShape with stale Oblivion MOPP
+        # data: Skyrim can't load Oblivion MOPP and will silently drop the
+        # collision, while the incompatible blob causes undefined behaviour.
+        return _convert_shape(shape.shape, root_node)
 
     if isinstance(shape, NifFormat.bhkPackedNiTriStripsShape):
-        # Already packed — regenerate MOPP
-        tmp_nif = _build_packed_nif(shape)
-        out = _run_mopp_rl(tmp_nif)
-        if out is not None:
-            res = _extract_mopp_result(out, root_node)
-            if res is not None:
-                return res
         return shape
 
     # Unknown shape — return as-is
@@ -908,12 +1038,14 @@ def _convert_collision(node, actual_root=None):
         rb.max_linear_velocity  = 104.4
         rb.max_angular_velocity = 31.57
 
-    # bhkCompressedMeshShape.target must point to the specific NiNode that
-    # owns the collision object (i.e. `node` itself).  Using actual_root
-    # (BSFadeNode with identity transform) is wrong when collision is on an
-    # inner NiNode that carries the rotation — Havok would position the shape
-    # at the origin instead of the correct rotated world position.
-    rb.shape = _convert_shape(rb.shape, actual_root if actual_root is not None else node)
+    # Mesh collision (strips/packed, possibly under a stale Oblivion MOPP) is
+    # rebuilt from scratch as vanilla-style MOPP + bhkCompressedMeshShape with
+    # any bhkRigidBodyT transform baked into the geometry (plain identity
+    # body, like all 6341 vanilla CMS meshes).  The CMS target is the root
+    # BSFadeNode — static collision must live on the root.
+    target_node = actual_root if actual_root is not None else node
+    if not _rebuild_mesh_collision(rb, target_node):
+        rb.shape = _convert_shape(rb.shape, target_node)
     _convert_materials(rb.shape)
 
     # Dynamic clutter with a single full-object convex hull: rebuild concave
@@ -937,7 +1069,7 @@ def convert_all_collisions(node, actual_root=None):
     them as pointers.  This function walks the full tree to convert every one.
 
     actual_root: the NIF's top-level root node (BSFadeNode).  Passed through
-    to _convert_collision → _convert_shape → _extract_mopp_result so that
+    to _convert_collision → _rebuild_mesh_collision so that
     bhkCompressedMeshShape.target always points to the root, not an inner wrapper.
     """
     if node is None or not isinstance(node, NifFormat.NiNode):

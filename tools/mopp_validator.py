@@ -8,7 +8,8 @@ queries):
   - jumps/branches landing outside the mopp data
   - walks reaching uninitialised 0xCD filler bytes (MOPP_RL leaves these)
   - unknown opcodes (with context bytes for reverse-engineering)
-  - shape keys out of range for the shape's triangle count
+  - MOPP terminal key set != the shape's exact key set (packed: triangle
+    indices; CMS: engine chunk/winding/index decode via asset_convert.cms)
   - unreachable tail bytes (reports the true code length)
 
 Opcode table: PyFFI's parse_mopp (reverse-engineered by niftools) extended
@@ -18,7 +19,7 @@ they must all validate clean.
 
 Usage:
     python tools/mopp_validator.py <nif_or_dir> [<nif_or_dir> ...]
-        [--max N] [--verbose] [--summary]
+        [--max N] [--verbose] [--summary] [--workers N]
 """
 import argparse
 import os
@@ -33,13 +34,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from asset_convert.mopp import walk_mopp  # noqa: E402
 
 
-def shape_key_count(mopp_shape):
-    """Number of valid shape keys for the shape under a bhkMoppBvTreeShape.
+def expected_keys(mopp_shape):
+    """Exact set of valid shape keys for the shape under a bhkMoppBvTreeShape.
 
-    bhkCompressedMeshShape: chunk triangles are keyed
-    (chunk_id << bits_per_index) | tri; big tris follow in the highest chunk
-    slot.  We return a conservative upper bound check instead: total triangle
-    count for packed shapes, None (skip check) for CMS.
+    Packed shapes: keys are triangle indices 0..n-1.
+    bhkCompressedMeshShape: the engine chunk/winding/index key decode from
+    asset_convert.cms (validated 200/200 against vanilla meshes).
+    Returns None when the key set cannot be derived.
     """
     from pyffi.formats.nif import NifFormat
     inner = getattr(mopp_shape, 'shape', None)
@@ -48,7 +49,11 @@ def shape_key_count(mopp_shape):
     if isinstance(inner, NifFormat.bhkPackedNiTriStripsShape):
         data = getattr(inner, 'data', None)
         if data is not None:
-            return data.num_triangles
+            return set(range(data.num_triangles))
+    data = getattr(inner, 'data', None)
+    if data is not None and type(data).__name__ == 'bhkCompressedMeshShapeData':
+        from asset_convert.cms import predict_keys
+        return predict_keys(data)
     return None
 
 
@@ -100,12 +105,14 @@ def validate_nif(path, verbose=False, counter=None):
         hit = sorted(cd_runs & r['visited'])
         if hit:
             issues.append('walk reaches 0xCD filler at offsets %s' % hit[:8])
-        nkeys = shape_key_count(blk)
-        if nkeys is not None:
-            bad = [t for t in r['tris'] if t >= nkeys]
-            if bad:
-                issues.append('shape keys out of range (max valid %d): %s'
-                              % (nkeys - 1, sorted(bad)[:8]))
+        keys = expected_keys(blk)
+        if keys is not None and r['tris'] != keys:
+            extra = sorted(r['tris'] - keys)
+            missing = sorted(keys - r['tris'])
+            issues.append('MOPP terminal keys != shape keys '
+                          '(invalid: %s, unreachable: %s)'
+                          % ([hex(k) for k in extra[:6]],
+                             [hex(k) for k in missing[:6]]))
     if not found and verbose:
         print('  (no bhkMoppBvTreeShape)')
     return issues
@@ -126,6 +133,14 @@ def collect_nifs(paths, limit=None):
     return out
 
 
+def _validate_worker(path):
+    """Multiprocessing worker: returns (path, issues, error_repr_or_None)."""
+    try:
+        return (path, validate_nif(path), None)
+    except Exception as e:
+        return (path, [], repr(e))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('paths', nargs='+', help='NIF files or directories')
@@ -135,29 +150,50 @@ def main():
                     help='only print totals and failing files')
     ap.add_argument('--histogram', action='store_true',
                     help='print aggregate opcode histogram over all walked mopps')
+    ap.add_argument('--workers', type=int, default=1,
+                    help='parallel worker processes (use cpu_count-1 for big scans)')
     args = ap.parse_args()
 
     nifs = collect_nifs(args.paths, args.max)
     n_clean = n_bad = n_err = 0
     counter = {} if args.histogram else None
-    for path in nifs:
-        try:
-            if args.verbose:
-                print(path)
-            issues = validate_nif(path, verbose=args.verbose, counter=counter)
-        except Exception as e:
-            n_err += 1
-            print('%s: READ ERROR %r' % (path, e))
-            continue
-        if issues:
-            n_bad += 1
-            print('%s:' % path)
-            for msg in issues:
-                print('  %s' % msg)
-        else:
-            n_clean += 1
-            if not args.summary and not args.verbose:
-                print('%s: OK' % path)
+
+    if args.workers > 1 and len(nifs) > 1:
+        import multiprocessing as mp
+        with mp.Pool(processes=args.workers) as pool:
+            results = pool.imap_unordered(_validate_worker, nifs, chunksize=16)
+            for path, issues, err in results:
+                if err is not None:
+                    n_err += 1
+                    print('%s: READ ERROR %s' % (path, err))
+                elif issues:
+                    n_bad += 1
+                    print('%s:' % path)
+                    for msg in issues:
+                        print('  %s' % msg)
+                else:
+                    n_clean += 1
+                    if not args.summary:
+                        print('%s: OK' % path)
+    else:
+        for path in nifs:
+            try:
+                if args.verbose:
+                    print(path)
+                issues = validate_nif(path, verbose=args.verbose, counter=counter)
+            except Exception as e:
+                n_err += 1
+                print('%s: READ ERROR %r' % (path, e))
+                continue
+            if issues:
+                n_bad += 1
+                print('%s:' % path)
+                for msg in issues:
+                    print('  %s' % msg)
+            else:
+                n_clean += 1
+                if not args.summary and not args.verbose:
+                    print('%s: OK' % path)
     print('---')
     print('%d clean, %d with issues, %d unreadable (of %d)' %
           (n_clean, n_bad, n_err, len(nifs)))
