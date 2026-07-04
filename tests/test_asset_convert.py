@@ -782,7 +782,7 @@ _CLUTTER_SAMPLES = [
     'clutter/upperclass/uppergobletceramic01.nif',
 ]
 
-_INERTIA_SCALE = 0.1  # matches collision.py _HAVOK_SCALE
+_INERTIA_SCALE = 0.01  # matches collision.py _HAVOK_SCALE ** 2 (inertia ∝ length²)
 
 
 class TestDynamicClutterPhysics:
@@ -838,7 +838,7 @@ class TestDynamicClutterPhysics:
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
     @pytest.mark.parametrize('rel_path', _CLUTTER_SAMPLES)
     def test_clutter_inertia_scaled_by_havok_scale(self, rel_path, tmp_path):
-        """Inertia should be Oblivion value * 0.1 (one power of HAVOK_SCALE)."""
+        """Inertia should be Oblivion value * 0.01 (HAVOK_SCALE², inertia ∝ mass·length²)."""
         import time
         if not hasattr(time, '_original_clock'):
             time.clock = time.perf_counter
@@ -877,7 +877,7 @@ class TestDynamicClutterPhysics:
                     )):
                         expected = src_val * _INERTIA_SCALE
                         assert dst_val == pytest.approx(expected, rel=0.01), \
-                            f"axis {axis}: inertia={dst_val}, expected {expected} (src*0.1)"
+                            f"axis {axis}: inertia={dst_val}, expected {expected} (src*0.01)"
                     break
 
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
@@ -1182,6 +1182,134 @@ class TestCollisionTargetPointsToRoot:
                 assert block.target is root, \
                     f"bhkCompressedMeshShape.target points to {type(block.target).__name__}, expected root"
 
+    # Rotated-root meshes: the wrap pass zeroes the root transform L and the
+    # collision geometry must end up baked into the CMS in the L∘bodyT frame.
+    _WRAPPED_COLLISION_CASES = [
+        _DOOR_WITH_ROTATION,                                  # 180° about Z
+        'architecture/castleinterior/stackhallentrance01.nif',  # +90° about Z
+    ]
+
+    @staticmethod
+    def _m3_from_quat(x, y, z, w):
+        return [
+            [1 - 2*(y*y + z*z), 2*(x*y - w*z),     2*(x*z + w*y)],
+            [2*(x*y + w*z),     1 - 2*(x*x + z*z), 2*(y*z - w*x)],
+            [2*(x*z - w*y),     2*(y*z + w*x),     1 - 2*(x*x + y*y)],
+        ]
+
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    @pytest.mark.parametrize('rel_path', _WRAPPED_COLLISION_CASES)
+    def test_static_collision_stays_on_root_when_wrapped(self, rel_path, tmp_path):
+        """Static mesh collision must live on the root BSFadeNode as a PLAIN
+        identity bhkRigidBody with the root rotation L and any source bodyT
+        baked into the CMS geometry.  Vanilla Skyrim never pairs a
+        bhkRigidBodyT with MOPP/CMS collision (0 of 6341 vanilla CMS meshes);
+        shipping one intermittently produces invalid-shape-key hits →
+        runaway hkpAllCdPointTempCollector scan → EXCEPTION_STACK_OVERFLOW
+        (the AnvilCastleGreatHall CTDs — every Collision Sentinel CULPRIT
+        was a rotated-root mesh).  The geometric comparison against the
+        source collision in the L∘bodyT world frame catches
+        conjugate/transpose convention errors in the bake."""
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat as NF
+        from asset_convert.cms import decode_cms
+
+        src = EXPORT_MESHES / rel_path
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'out.nif'
+        result = convert_nif(str(src), str(dst))
+        if result.get('error') or result.get('skipped'):
+            pytest.skip(f'Conversion issue: {result}')
+        assert result.get('root_rotation_baked'), \
+            f'{rel_path} should trigger the rotation wrap pass'
+
+        # Expected world-frame collision soup from the SOURCE:
+        # L (root rotation) ∘ bodyT ∘ (strips verts / 70)
+        src_data = NF.Data()
+        with open(str(src), 'rb') as f:
+            src_data.read(f)
+        sroot = src_data.roots[0]
+        r = sroot.rotation
+        L = [[r.m_11, r.m_21, r.m_31],
+             [r.m_12, r.m_22, r.m_32],
+             [r.m_13, r.m_23, r.m_33]]  # column-vector convention
+        sbody = sroot.collision_object.body
+        if isinstance(sbody, NF.bhkRigidBodyT):
+            q = sbody.rotation
+            Rb = self._m3_from_quat(q.x, q.y, q.z, q.w)
+            tb = (sbody.translation.x * 0.1, sbody.translation.y * 0.1,
+                  sbody.translation.z * 0.1)  # OB havok → SK havok
+        else:
+            Rb = self._m3_from_quat(0.0, 0.0, 0.0, 1.0)
+            tb = (0.0, 0.0, 0.0)
+
+        def world(v):
+            b = tuple(sum(Rb[i][k] * v[k] for k in range(3)) + tb[i]
+                      for i in range(3))
+            return tuple(sum(L[i][k] * b[k] for k in range(3))
+                         for i in range(3))
+
+        expected_centroids = []
+        for block in src_data.blocks:
+            if isinstance(block, NF.bhkNiTriStripsShape):
+                for sd in block.strips_data:
+                    verts = [world((v.x / 70.0, v.y / 70.0, v.z / 70.0))
+                             for v in sd.vertices]
+                    for si in range(sd.num_strips):
+                        strip = list(sd.points[si])
+                        for j in range(len(strip) - 2):
+                            a, b, c = strip[j], strip[j+1], strip[j+2]
+                            if a != b and b != c and a != c:
+                                expected_centroids.append(tuple(
+                                    (verts[a][i] + verts[b][i] + verts[c][i]) / 3
+                                    for i in range(3)))
+        assert expected_centroids, 'source has no strips collision'
+
+        dst_data = NF.Data()
+        with open(str(dst), 'rb') as f:
+            dst_data.read(f)
+
+        root = dst_data.roots[0]
+        assert getattr(root, 'collision_object', None) is not None, \
+            'Root BSFadeNode lost its bhkCollisionObject'
+        assert root.collision_object.target is root, \
+            'bhkCollisionObject.target must be the root BSFadeNode'
+        for block in dst_data.blocks:
+            if block is root or not isinstance(block, NF.NiNode):
+                continue
+            assert getattr(block, 'collision_object', None) is None, \
+                f'Static collision found on child node "{block.name}" — must be on root only'
+
+        # Vanilla pattern: plain identity bhkRigidBody, never bhkRigidBodyT
+        body = root.collision_object.body
+        assert body.__class__ is NF.bhkRigidBody, \
+            f'mesh collision body is {type(body).__name__} — vanilla CMS never uses bhkRigidBodyT'
+        q = body.rotation
+        assert max(abs(q.x), abs(q.y), abs(q.z), abs(q.w - 1.0)) < 1e-4, \
+            f'body rotation ({q.x}, {q.y}, {q.z}, {q.w}) is not identity'
+        t = body.translation
+        assert max(abs(t.x), abs(t.y), abs(t.z)) < 1e-6, \
+            f'body translation ({t.x}, {t.y}, {t.z}) is not zero'
+
+        # CMS geometry must be the source collision in the L∘bodyT frame
+        cms = None
+        for block in dst_data.blocks:
+            if isinstance(block, NF.bhkCompressedMeshShapeData):
+                cms = block
+        assert cms is not None, 'converted NIF lost its bhkCompressedMeshShapeData'
+        decoded = decode_cms(cms)
+        assert len(decoded) == len(expected_centroids), \
+            f'CMS has {len(decoded)} tris, source has {len(expected_centroids)}'
+        for _key, tri in decoded:
+            c = tuple((tri[0][i] + tri[1][i] + tri[2][i]) / 3 for i in range(3))
+            best = min(sum((c[i] - e[i]) ** 2 for i in range(3))
+                       for e in expected_centroids)
+            assert best < 0.002 ** 2, \
+                f'decoded triangle centroid {c} has no source match within 0.002 hu — bake convention error'
+
 
 # ---------------------------------------------------------------------------
 # MOPP build_type test (Issue 13 — collision crash fix)
@@ -1223,6 +1351,95 @@ class TestMoppBuildType:
         if not found_mopp:
             pytest.skip("No bhkMoppBvTreeShape in converted NIF")
 
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    @pytest.mark.parametrize('rel_path', [
+        _DOOR_WITH_ROTATION,
+        # 6 chunk jumps incl. backward ones — exercises region relocation
+        'architecture/castleinterior/stackhallentrance01.nif',
+    ])
+    def test_mopp_is_dechunked(self, rel_path, tmp_path):
+        """Converted MOPPs must contain NO chunk-jump opcodes (0x70) and walk
+        clean.  MOPP_RL builds chunked MOPPs (an SPU streaming feature) that
+        Skyrim's PC engine mis-executes — EXCEPTION_STACK_OVERFLOW in
+        hkpCollisionDispatcher when a query descends into a 0x70 branch (the
+        intermittent castleint2way.nif crash)."""
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat as NF
+        from asset_convert.mopp import walk_mopp
+
+        src = EXPORT_MESHES / rel_path
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'out.nif'
+        result = convert_nif(str(src), str(dst))
+        if result.get('error') or result.get('skipped'):
+            pytest.skip(f'Conversion issue: {result}')
+
+        dst_data = NF.Data()
+        with open(str(dst), 'rb') as f:
+            dst_data.read(f)
+
+        found_mopp = False
+        for block in dst_data.blocks:
+            if isinstance(block, NF.bhkMoppBvTreeShape):
+                found_mopp = True
+                mopp = bytes(bytearray(block.mopp_data))
+                r = walk_mopp(mopp, len(mopp))
+                assert not r['errors'], f'MOPP walk errors: {r["errors"][:3]}'
+                assert not r['chunk_jumps'], \
+                    f'{len(r["chunk_jumps"])} chunk-jump (0x70) opcodes still reachable'
+                assert b'\xcd' * 8 not in mopp, \
+                    'uninitialised 0xCD filler left in MOPP data'
+        assert found_mopp, 'converted NIF lost its bhkMoppBvTreeShape'
+
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    @pytest.mark.parametrize('rel_path', [
+        # Collision Sentinel CULPRIT: MOPP_RL's own bytecode produced
+        # key=0xFFFFFFFF (invalid shape key) hits at runtime on this mesh.
+        'architecture/castleinterior/castleintarch2way01.nif',
+        'architecture/castleinterior/stackhallentrance01.nif',
+    ])
+    def test_mopp_rebuilt_by_havok_bridge(self, rel_path, tmp_path):
+        """MOPP bytecode must come from Havok's own compiler (the Dovah MOPP
+        bridge) and its terminal key set must exactly equal the engine's CMS
+        shape-key decode.  MOPP_RL's ancient-Havok MOPP intermittently
+        mis-culled queries → invalid-shape-key decode → CTD."""
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat as NF
+        from asset_convert.mopp import walk_mopp
+        from asset_convert.cms import predict_keys
+
+        src = EXPORT_MESHES / rel_path
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'out.nif'
+        result = convert_nif(str(src), str(dst))
+        if result.get('error') or result.get('skipped'):
+            pytest.skip(f'Conversion issue: {result}')
+
+        dst_data = NF.Data()
+        with open(str(dst), 'rb') as f:
+            dst_data.read(f)
+
+        mopp_blk = cms = None
+        for block in dst_data.blocks:
+            if isinstance(block, NF.bhkMoppBvTreeShape):
+                mopp_blk = block
+            if isinstance(block, NF.bhkCompressedMeshShapeData):
+                cms = block
+        assert mopp_blk is not None and cms is not None, \
+            'converted NIF lost its MOPP/CMS chain'
+
+        mopp = bytes(bytearray(mopp_blk.mopp_data))
+        r = walk_mopp(mopp, len(mopp))
+        assert not r['errors'], f'MOPP walk errors: {r["errors"][:3]}'
+        assert r['tris'] == predict_keys(cms), \
+            'MOPP terminal keys do not match the CMS shape-key decode'
+
 
 class TestFurnitureMarkerConversion:
     """BSFurnitureMarker → BSFurnitureMarkerNode conversion."""
@@ -1260,8 +1477,9 @@ class TestFurnitureMarkerConversion:
                 # Seat = entry projected to the geometry centre line
                 assert abs(p.offset.x - 1.87) < 1.0
                 assert abs(p.offset.y - 0.0) < 2.0
-                # Hip height = entry (floor) z + 34
-                assert abs(p.offset.z - (-61.02 + 34.0)) < 0.5
+                # Model is re-origined so the floor (entry z) sits at 0;
+                # hip height = 34 above the floor
+                assert abs(p.offset.z - 34.0) < 0.5
         assert found, "BSFurnitureMarkerNode not found in converted throne NIF"
 
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
@@ -1299,6 +1517,7 @@ class TestFurnitureMarkerConversion:
                 # Hips stay on the entry line (y = -21.2)
                 assert abs(p.offset.x - 0.0) < 2.0
                 assert abs(p.offset.y - (-21.2)) < 1.0
-                # Sleep marker z = entry (floor) z + 37.09
-                assert abs(p.offset.z - (-47.43 + 37.09)) < 0.5
+                # Model is re-origined so the floor (entry z) sits at 0;
+                # sleep marker z = 37.09 above the floor
+                assert abs(p.offset.z - 37.09) < 0.5
         assert found, "BSFurnitureMarkerNode not found in converted bed NIF"

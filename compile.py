@@ -44,7 +44,6 @@ HIDDEN_IMPORTS = [
     "asset_convert.bsa_extract",
     "asset_convert.nif_converter",
     "asset_convert.skin_retarget",
-    "asset_convert.collision_new",
     "asset_convert.skyrim_overrides",
     "asset_convert.spt_converter",
     "asset_convert.lod_gen",
@@ -64,9 +63,10 @@ HIDDEN_IMPORTS = [
 
 # Binary files to bundle
 BINARIES = [
-    # MOPP_RL.exe is required at runtime for Havok collision generation
-    (str(SCRIPT_DIR / "asset_convert" / "MOPP_RL.exe"), "asset_convert"),
-    (str(SCRIPT_DIR / "asset_convert" / "template.nif"), "asset_convert"),
+    # Havok MOPP/welding compiler bridge — required at runtime for
+    # bhkCompressedMeshShape collision generation (cms_builder.py)
+    (str(SCRIPT_DIR / "asset_convert" / "dovah_hkp_mesh_mopp_bridge.exe"),
+     "asset_convert"),
 ]
 
 
@@ -109,7 +109,7 @@ def _build(onefile: bool, clean: bool):
     for hi in HIDDEN_IMPORTS:
         cmd += ["--hidden-import", hi]
 
-    # Add binary files (MOPP_RL.exe, template.nif)
+    # Add binary files (dovah_hkp_mesh_mopp_bridge.exe)
     for src, dest in BINARIES:
         if Path(src).exists():
             cmd += ["--add-binary", f"{src}{';' if sys.platform == 'win32' else ':'}{dest}"]

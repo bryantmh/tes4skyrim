@@ -88,8 +88,6 @@ TESConversion/
     skin_retarget.py    # Skeleton retargeting (Oblivion Bip01 → Skyrim NPC bones)
     bsa_extract.py      # BSA archive extraction with caching
     asset_pipeline.py   # Full extract → convert → output orchestrator
-    MOPP_RL.exe         # Havok MOPP generation tool (self-contained)
-    template.nif        # Template NIF required by MOPP_RL.exe
   tools/                # Debug/analysis utilities
   gui.py                # GUI frontend for the pipeline
   ...
@@ -176,6 +174,4 @@ The following components have separate licensing:
 
 | Component | License | Notes |
 |-----------|---------|-------|
-| `asset_convert/MOPP_RL.exe` | Unspecified (Ormin) | From [skyblivion-NIFConverter](https://github.com/Ormin/skyblivion-NIFConverter); included by community convention |
-| `asset_convert/template.nif` | Unspecified (Ormin) | Required by MOPP_RL.exe |
 | `xWMAEncode.exe` | Microsoft (not redistributed) | Obtain separately from the DirectX SDK |

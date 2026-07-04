@@ -89,6 +89,8 @@ Major Issues:
 			[WR] weapons\silver\bow.nif
 			[WR] weapons\steel\bow.nif
 
+	9 - Crash when entering the Anvil Mage's Guild
+
 
 Minor Issues:
 		NPCs should have barter/training

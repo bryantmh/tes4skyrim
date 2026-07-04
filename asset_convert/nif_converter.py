@@ -11,7 +11,7 @@ Supported:
   - Root rotation baking into children (non-skinned)
   - Inline tangents from NiBinaryExtraData
   - NiControllerManager string palette resolution
-  - Havok collision conversion (bhkNiTriStripsShape→bhkPackedNiTriStripsShape via MOPP_RL)
+  - Havok collision conversion (bhkNiTriStripsShape→bhkCompressedMeshShape via cms_builder)
   - NiParticleSystem removal
 
 Skip reason codes (printed in skip list at end of batch_convert):
@@ -54,8 +54,8 @@ from .skyrim_overrides import (
     WEAPON_INV_MARKER_ROT_Z,
     WEAPON_INV_MARKER_ZOOM,
 )
-from .collision import (convert_all_collisions, hoist_collision, remove_empty_collision_nodes,
-                        scale_constraint_pivots)
+from .collision import (bake_node_transform_into_body, convert_all_collisions, hoist_collision,
+                        remove_empty_collision_nodes, scale_constraint_pivots)
 
 # Apply all PyFFI patches (time.clock fix, nif.xml condition fixes) before import
 from . import pyffi_monkey_patch as _patch  # noqa: F401
@@ -1711,10 +1711,10 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         # the BSFadeNode's own transform.
         #
         # Skyrim ignores BSFadeNode root-node rotation for static placement, but it
-        # DOES apply child NiNode rotation correctly.  The collision object is moved
-        # to the inner NiNode so Havok reads the NiNode's world transform
-        # (= original R + T) when positioning the collision — no baking required.
-        # This matches the legacy copyover_legacy_nif_animations.py approach exactly.
+        # DOES apply child NiNode rotation correctly.  The collision object STAYS
+        # on the root (a bhkCollisionObject on a child NiNode intermittently
+        # crashes hkpCollisionDispatcher) and the vanishing root transform is
+        # composed into the rigid body instead (bake_node_transform_into_body).
         #
         # Furniture re-origin rides the same wrapper: marker-bearing models are
         # translated +furn_shift so the floor plane sits at z=0 (vanilla origin
@@ -1739,12 +1739,18 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
             inner.translation.y = root.translation.y
             inner.translation.z = root.translation.z + furn_shift
             inner.scale = root.scale
-            # Move collision to inner node so Havok uses the correct NiNode world transform
-            # Note: this likely causes crashes due to the collision not being on the root node
-            if hasattr(root, 'collision_object') and root.collision_object is not None:
-                inner.collision_object = root.collision_object
-                inner.collision_object.target = inner
-                root.collision_object = None
+            # Collision stays on the root BSFadeNode (target already = root),
+            # but the body must absorb the root transform L that is being
+            # zeroed: the engine places a root collision body at REFR ∘ bodyT,
+            # while Oblivion applied REFR ∘ L ∘ bodyT.  Without this the
+            # collision is rotated relative to the mesh (stackhallentrance01:
+            # 90° off).  The furniture origin shift rides the same wrapper, so
+            # it must be absorbed too (REFRs are lowered by the same amount).
+            # Note: root.rotation/translation are still the original values
+            # here — zeroing happens below.
+            if getattr(root, 'collision_object', None) is not None:
+                bake_node_transform_into_body(root.collision_object, root,
+                                              extra_z=furn_shift)
             # Move all children to inner node
             inner.num_children = root.num_children
             inner.children.update_size()
@@ -1788,9 +1794,11 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
                         if replacement is not None:
                             obj_entry.av_object = replacement
 
-        # Skyrim requires collision on the root node only (or on an inner NiNode
-        # when a rotation wrapper was created — Havok reads the NiNode's world xform).
+        # Skyrim requires collision on the root node only.
         # If we did NOT wrap, check whether a child holds the collision and hoist it.
+        # (When wrapped, the root's own collision was kept on the root above;
+        # hoisting from under the rotated wrapper is not supported because
+        # hoist_collision only bakes the child's translation, not rotation.)
         # Exception 1: animated objects (NiControllerManager on root) keep collision on
         # the animated child node so the KEYFRAMED rigid body follows the animation.
         # Exception 2: NIFs with Havok constraints (hinge/ragdoll/malleable) need the
@@ -2130,7 +2138,8 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
             remaining = len(stats['warn_counts']) - len(top_cats)
             print(f'  ... ({total_suppressed - shown} more in {remaining} other categories)')
 
-    print(f'\nDetailed stats: Strips→Shape={stats["strips"]}, '
+    # plain ASCII: cp1252 consoles/pipes choke on the arrow character
+    print(f'\nDetailed stats: Strips->Shape={stats["strips"]}, '
           f'Properties={stats["properties"]}, '
           f'Roots={stats["roots"]}, Rotations baked={stats["rotations"]}')
 
