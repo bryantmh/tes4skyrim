@@ -33,149 +33,32 @@ Major Issues:
 			
 	7 - Nif converter fix broken conversion
 		Files:
-		[RD] architecture\anvil\lorgrenskeleton01.nif
 		[RD] architecture\basementsections\ungrdltraphingedoor.nif
-		[RD] architecture\bruma\brumabraiser01.nif
 		[RD] architecture\castle\kvatch\kvatch  castle int hallway01.nif
-		[RD] architecture\cloudrulertemple\crtfirelogs.nif
-		[RD] architecture\imperialcity\interior\magesguildportal.nif
-		[RD] architecture\leyawiin\blackwoodpump01.nif
-		[RD] architecture\leyawiin\blackwoodpump02.nif
 		[WR] architecture\ships\mainmast02.nif
 		[WR] architecture\statue\nightmotherstatue.nif
 		[WR] architecture\statue\nightmotherstatuebase.nif
 		[RD] characters\_1stperson\skeleton.nif
 		[RD] characters\imperial\headhuman_50.nif
 		[RD] characters\khajiit\male\headkhajiit.nif
-		[RD] clutter\davaerminorb.nif
-		[RD] clutter\eyeofnocturnal.nif
 		[RD] clutter\farm\handscythe01.nif
 		[RD] clutter\farm\oar01.nif
 		[RD] clutter\floorplane01.nif
-		[RD] clutter\ms05dreamworldelementa.nif
-		[RD] clutter\ms05dreamworldelementb.nif
-		[RD] clutter\ms05dreamworldelementc.nif
-		[RD] clutter\ms05dreamworldelementd.nif
 		[RD] clutter\stonepedastellarge01.nif
-		[RD] dungeons\ayleidruins\exterior\arwellgrate01.nif
-		[RD] dungeons\ayleidruins\interior\argreatwelkydstoneitem01.nif
 		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
-		[RD] dungeons\ayleidruins\interior\traps\argastrapgrate01.nif
-		[RD] dungeons\ayleidruins\interior\traps\artrapchannelspikes01.nif
-		[RD] dungeons\ayleidruins\interior\traps\artrapevilstone01.nif
-		[RD] dungeons\ayleidruins\interior\traps\artrapgascloud01.nif
-		[RD] dungeons\ayleidruins\interior\traps\artrapgasemitter01.nif
-		[RD] dungeons\caves\cprollingrock01.nif
-		[RD] dungeons\caves\csecretdoor01.nif
-		[RD] dungeons\caves\csecretdooropen01.nif
 		[WR] dungeons\caves\triggers\ctrigtripwire01.nif
-		[RD] dungeons\chargen\idcrumblewall01.nif
-		[RD] dungeons\chargen\prisonsecretwall01.nif
-		[RD] dungeons\fortruins\traps\rftrapdarts01.nif
-		[RD] dungeons\misc\dustcloudhorizontal01.nif
-		[RD] dungeons\misc\dustfallingbits01.nif
-		[RD] dungeons\misc\dustgroundpuff01.nif
-		[RD] dungeons\misc\frostfiregastrap.nif
-		[RD] dungeons\misc\fx\fxcloudthick01.nif
-		[RD] dungeons\misc\fx\fxcloudthick02.nif
-		[RD] dungeons\misc\fx\fxcloudthin01.nif
-		[RD] dungeons\misc\fx\fxdustcloud01.nif
-		[RD] dungeons\misc\fx\fxdustcloudfaint01.nif
-		[RD] dungeons\misc\fx\fxdustfall01.nif
-		[RD] dungeons\misc\fx\fxdustfall02.nif
-		[RD] dungeons\misc\fx\fxdustpuffup01.nif
-		[RD] dungeons\misc\fx\fxlightbeamdust01.nif
-		[RD] dungeons\misc\fx\fxmq09barrier01.nif
-		[RD] dungeons\misc\fx\fxplasmacloud01.nif
-		[RD] dungeons\misc\fx\fxplasmacloudfast01.nif
-		[RD] dungeons\misc\fx\fxtwinklelights01.nif
-		[RD] dungeons\misc\fx\fxwhiteflamemedium.nif
-		[RD] dungeons\misc\fx\fxwhitetorchlarge.nif
-		[RD] dungeons\misc\risingdustcloud01.nif
-		[RD] effects\bloodspray.nif
-		[RD] effects\dustcloud.nif
-		[RD] effects\lichbloodspray.nif
-		[RD] effects\metalsparks.nif
-		[RD] effects\skeletonbloodspray.nif
-		[RD] effects\stonedustcloud.nif
-		[RD] effects\watersplash.nif
-		[RD] effects\willothewispbloodspray.nif
-		[RD] effects\wooddustcloud.nif
-		[RD] fire\firearcanemedium01.nif
-		[RD] fire\firecandleflame.nif
-		[RD] fire\fireopenlarge.nif
-		[RD] fire\fireopenlargesmoke.nif
-		[RD] fire\fireopenmedium.nif
-		[RD] fire\fireopenmediumsmoke.nif
-		[RD] fire\fireopensmall.nif
-		[RD] fire\fireopensmallsmoke.nif
-		[RD] fire\firetorchlarge.nif
-		[RD] fire\firetorchlargesmoke.nif
-		[RD] fire\firetorchsmall.nif
-		[RD] fire\smokelarge.nif
-		[RD] fire\smokemedium.nif
-		[RD] idleobjects\ascensionparticles.nif
-		[RD] landscape\landscapewaterfall01.nif
-		[RD] landscape\landscapewaterfall02.nif
-		[RD] landscape\landscapewaterfall03.nif
-		[RD] landscape\landscapewatervertbot.nif
-		[RD] landscape\landscapewaterverttop.nif
-		[RD] landscape\miscfirefly01.nif
-		[RD] landscape\miscfirefly02.nif
-		[RD] landscape\miscfirefly03.nif
-		[RD] landscape\miscfirefly04.nif
-		[RD] magiceffects\alteration.nif
-		[RD] magiceffects\binditem.nif
-		[RD] magiceffects\bindmythicdawn.nif
-		[RD] magiceffects\conjuration.nif
-		[RD] magiceffects\destruction.nif
-		[RD] magiceffects\drain.nif
-		[RD] magiceffects\fireball.nif
-		[RD] magiceffects\fireshield.nif
-		[RD] magiceffects\frostcloud.nif
-		[RD] magiceffects\frostshield.nif
-		[RD] magiceffects\illusion.nif
-		[RD] magiceffects\invisibility.nif
-		[RD] magiceffects\mysticism.nif
-		[RD] magiceffects\reanimate.nif
-		[RD] magiceffects\restoration.nif
-		[RD] magiceffects\shockbolt.nif
-		[RD] magiceffects\shockshield.nif
-		[RD] magiceffects\soultrap.nif
-		[RD] magiceffects\summondaedra.nif
-		[RD] magiceffects\summonundead.nif
-		[RD] magiceffects\turnundead.nif
-		[RD] oblivion\architecture\citadel\interior\citadeltower\obliviontowerpedastel.nif
+		[VER] marker_arrow.nif
+		[VER] marker_divine.nif
+		[VER] marker_map.nif
+		[VER] marker_radius.nif
+		[VER] marker_temple.nif
+		[VER] marker_travel.nif
 		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
-		[RD] oblivion\clutter\fountain\oblivionbloodfountain01.nif
-		[RD] oblivion\clutter\fountain\oblivionmajickafountain01.nif
-		[RD] oblivion\clutter\traps\hallwaytrackbladetrap.nif
-		[RD] oblivion\clutter\traps\oblivionclawtrap01.nif
-		[RD] oblivion\clutter\traps\obliviongateclawgateleft01.nif
-		[RD] oblivion\clutter\traps\obliviongateclawgateright01.nif
-		[RD] oblivion\clutter\traps\obminetrap01.nif
-		[RD] oblivion\clutter\traps\obtrapgascloud01.nif
-		[RD] oblivion\clutter\traps\obturretbig01.nif
-		[RD] oblivion\environment\obcloud01.nif
-		[RD] oblivion\environment\oblivionsmokeemitter01.nif
-		[RD] oblivion\gate\flashglow01.nif
-		[RD] oblivion\gate\obgatemini01.nif
-		[RD] oblivion\gate\oblivionarchgate01.nif
-		[RD] oblivion\gate\obliviongate_forming.nif
-		[RD] oblivion\gate\oblivionmagicgate01.nif
-		[RD] oblivion\gate\oblivionwargateani02.nif
+		[WR] oblivion\gate\obgatemini01.nif
+		[WR] oblivion\gate\obliviongate_forming.nif
 		[WR] oblivion\plants\harradagroundattack.nif
 		[WR] oblivion\plants\harradauprightattack.nif
-		[RD] oblivion\plants\spiddalcloudplant.nif
-		[RD] oblivion\seige\deidricseigecrawleractivator.nif
-		[RD] oblivion\seige\siegecrawlerdeath.nif
-		[RD] oblivion\sigil\sigilfireboom01.nif
-		[RD] oblivion\sigil\sigillighttower.nif
-		[RD] oblivion\sigil\sigillighttowerbase.nif
-		[RD] oblivion\sigil\sigillighttowercap.nif
-		[RD] oblivion\sigil\sigilstone01.nif
-		[RD] oblivion\sigil\sigilstonecore01.nif
-		[RD] oblivion\sigil\sigilstonegreat01.nif
+		[WR] oblivion\sigil\sigillighttowerbase.nif
 		[WR] weapons\daedric\bow.nif
 		[WR] weapons\dwarven\bow.nif
 		[WR] weapons\ebony\bow.nif
@@ -183,7 +66,6 @@ Major Issues:
 		[WR] weapons\glass\bow.nif
 		[WR] weapons\iron\bow.nif
 		[WR] weapons\silver\bow.nif
-		[WR] weapons\steel\bow.nif
 
 	8 - Crash when entering the Anvil Mage's Guild (anvilmagesguild) and when entering the anvil castle private quarters cell, but no crash logs are created.
 

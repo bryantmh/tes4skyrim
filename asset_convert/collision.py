@@ -600,6 +600,59 @@ def _convert_rigid_body(rb):
 # Recursive shape conversion
 # ---------------------------------------------------------------------------
 
+def _expand_multisphere(ms):
+    """Expand bhkMultiSphereShape into per-sphere bhkConvexTransformShape-
+    wrapped bhkSphereShapes.
+
+    hkpMultiSphereShape is deprecated in Skyrim's Havok generation: 0 of
+    17,216 vanilla meshes ship the block, and files that do (Oblivion's
+    alchemy apparatus clutter) crash SSE at cell load with no crash log.
+    Vanilla expresses the same thing as ConvexTransform+Sphere children in a
+    list shape (e.g. clutter\\kitchen\\woodenladle01.nif).
+
+    Sphere data arrives in Oblivion Havok units — the ×0.1 rescale happens
+    here.  Returns a single wrapper for 1 sphere, a bhkListShape for several,
+    or None for an empty multisphere.
+    """
+    mat = _get_havok_material(ms.material)
+    wrappers = []
+    for s in ms.spheres:
+        sph = NifFormat.bhkSphereShape()
+        _set_havok_material(sph.material, mat)
+        sph.radius = s.radius * _HAVOK_SCALE
+
+        cts = NifFormat.bhkConvexTransformShape()
+        _set_havok_material(cts.material, mat)
+        cts.unknown_float_1 = sph.radius
+        for i in range(8):
+            cts.unknown_8_bytes[i] = 0
+        t = cts.transform
+        # Identity rotation, translation in the 4th column, 4th row all
+        # zeros (incl. m_44) — matches vanilla bhkConvexTransformShape.
+        t.m_11 = 1.0; t.m_12 = 0.0; t.m_13 = 0.0; t.m_14 = s.center.x * _HAVOK_SCALE
+        t.m_21 = 0.0; t.m_22 = 1.0; t.m_23 = 0.0; t.m_24 = s.center.y * _HAVOK_SCALE
+        t.m_31 = 0.0; t.m_32 = 0.0; t.m_33 = 1.0; t.m_34 = s.center.z * _HAVOK_SCALE
+        t.m_41 = 0.0; t.m_42 = 0.0; t.m_43 = 0.0; t.m_44 = 0.0
+        cts.shape = sph
+        wrappers.append(cts)
+
+    if not wrappers:
+        return None
+    if len(wrappers) == 1:
+        return wrappers[0]
+    ls = NifFormat.bhkListShape()
+    _set_havok_material(ls.material, mat)
+    ls.num_sub_shapes = len(wrappers)
+    ls.sub_shapes.update_size()
+    for i, w in enumerate(wrappers):
+        ls.sub_shapes[i] = w
+    ls.num_unknown_ints = len(wrappers)
+    ls.unknown_ints.update_size()
+    for i in range(len(wrappers)):
+        ls.unknown_ints[i] = 0
+    return ls
+
+
 def _convert_shape(shape, root_node):
     """Recursively convert an Oblivion Havok shape to Skyrim format.
 
@@ -638,12 +691,7 @@ def _convert_shape(shape, root_node):
         return shape
 
     if isinstance(shape, NifFormat.bhkMultiSphereShape):
-        for sphere in shape.spheres:
-            sphere.center.x *= _HAVOK_SCALE
-            sphere.center.y *= _HAVOK_SCALE
-            sphere.center.z *= _HAVOK_SCALE
-            sphere.radius   *= _HAVOK_SCALE
-        return shape
+        return _expand_multisphere(shape)
 
     if isinstance(shape, (NifFormat.bhkConvexTransformShape,
                            NifFormat.bhkTransformShape)):
@@ -664,8 +712,26 @@ def _convert_shape(shape, root_node):
         return shape
 
     if isinstance(shape, NifFormat.bhkListShape):
+        # Convert children; flatten any nested bhkListShape produced by child
+        # conversion (e.g. multisphere expansion) — a list shape carries no
+        # transform of its own so flattening is semantics-preserving, and
+        # vanilla never nests list shapes.
+        children = []
         for i in range(len(shape.sub_shapes)):
-            shape.sub_shapes[i] = _convert_shape(shape.sub_shapes[i], root_node)
+            c = _convert_shape(shape.sub_shapes[i], root_node)
+            if isinstance(c, NifFormat.bhkListShape):
+                children.extend(list(c.sub_shapes))
+            elif c is not None:
+                children.append(c)
+        if len(children) != shape.num_sub_shapes:
+            shape.num_sub_shapes = len(children)
+            shape.sub_shapes.update_size()
+            shape.num_unknown_ints = len(children)
+            shape.unknown_ints.update_size()
+            for i in range(len(children)):
+                shape.unknown_ints[i] = 0
+        for i, c in enumerate(children):
+            shape.sub_shapes[i] = c
         return shape
 
     if isinstance(shape, NifFormat.bhkNiTriStripsShape):

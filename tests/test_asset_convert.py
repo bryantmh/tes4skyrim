@@ -773,6 +773,52 @@ class TestCollisionRigidBody:
                         f"unknown_6_shorts[3]={block.unknown_6_shorts[3]}, must be 0"
 
 
+class TestMultiSphereExpansion:
+    """bhkMultiSphereShape must never survive conversion.
+
+    0 of 17,216 vanilla Skyrim meshes ship the block (deprecated Havok path);
+    apparatusalembicnovice.nif shipping one crashed SSE at cell load with no
+    crash log.  It must expand into ConvexTransform+Sphere children.
+    """
+
+    _SRC = 'clutter/magesguild/apparatusalembicnovice.nif'
+
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    def test_multisphere_expanded(self, tmp_path):
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat
+
+        src = EXPORT_MESHES / self._SRC
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'out.nif'
+        result = convert_nif(str(src), str(dst))
+        assert not result.get('error') and not result.get('skipped'), result
+
+        data = NifFormat.Data()
+        with open(str(dst), 'rb') as f:
+            data.read(f)
+        spheres = []
+        for block in data.blocks:
+            assert not isinstance(block, NifFormat.bhkMultiSphereShape), \
+                'bhkMultiSphereShape survived conversion (vanilla never ships it)'
+            if isinstance(block, NifFormat.bhkConvexTransformShape) and \
+                    isinstance(block.shape, NifFormat.bhkSphereShape):
+                t = block.transform
+                spheres.append((t.m_14, t.m_24, t.m_34, block.shape.radius))
+        # Source multisphere: 2 spheres, centers/radii in Oblivion Havok units
+        # (-1.9658, .0046, -.6552) r=.7834 and (1.4860, .0046, .3394) r=.9492
+        assert len(spheres) == 2, f'expected 2 expanded spheres, got {len(spheres)}'
+        spheres.sort()
+        exp = [(-0.19658, 0.00046, -0.06552, 0.07834),
+               (0.14860, 0.00046, 0.03394, 0.09492)]
+        for got, want in zip(spheres, exp):
+            for g, w in zip(got, want):
+                assert abs(g - w) < 1e-3, f'{got} != {want}'
+
+
 # ---------------------------------------------------------------------------
 # Dynamic clutter physics tests (Issue 1 — Havok mass/inertia scaling)
 # ---------------------------------------------------------------------------

@@ -70,7 +70,37 @@ def _fmt4(v):
     return f"({v.x:.4f}, {v.y:.4f}, {v.z:.4f}, {v.w:.4f})"
 
 
-def check_file(path, dump_constraints=False):
+def _check_geometry(block, issues):
+    """NaN/Inf sweep over render geometry (NiTriShapeData etc.)."""
+    tname = type(block).__name__
+    n_nan_v = n_nan_n = n_nan_uv = 0
+    if getattr(block, 'has_vertices', False):
+        for v in block.vertices:
+            if not (math.isfinite(v.x) and math.isfinite(v.y) and math.isfinite(v.z)):
+                n_nan_v += 1
+    if getattr(block, 'has_normals', False):
+        for v in block.normals:
+            if not (math.isfinite(v.x) and math.isfinite(v.y) and math.isfinite(v.z)):
+                n_nan_n += 1
+    for uvset in getattr(block, 'uv_sets', []):
+        for uv in uvset:
+            if not (math.isfinite(uv.u) and math.isfinite(uv.v)):
+                n_nan_uv += 1
+    c = getattr(block, 'center', None)
+    r = getattr(block, 'radius', None)
+    if c is not None and not (math.isfinite(c.x) and math.isfinite(c.y) and math.isfinite(c.z)):
+        issues.append(f"{tname}: NON-FINITE bound-sphere center")
+    if r is not None and not math.isfinite(r):
+        issues.append(f"{tname}: NON-FINITE bound-sphere radius {r}")
+    if n_nan_v:
+        issues.append(f"{tname}: {n_nan_v}/{block.num_vertices} NON-FINITE vertices")
+    if n_nan_n:
+        issues.append(f"{tname}: {n_nan_n} NON-FINITE normals")
+    if n_nan_uv:
+        issues.append(f"{tname}: {n_nan_uv} NON-FINITE UVs")
+
+
+def check_file(path, dump_constraints=False, geometry=False):
     lines = []
     issues = []
     try:
@@ -82,6 +112,8 @@ def check_file(path, dump_constraints=False):
 
     for block in data.blocks:
         tname = type(block).__name__
+        if geometry and isinstance(block, NifFormat.NiGeometryData):
+            _check_geometry(block, issues)
         if not tname.startswith('bhk'):
             continue
 
@@ -160,6 +192,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root")
     ap.add_argument("--constraints", action="store_true", help="dump constraint descriptors in detail")
+    ap.add_argument("--geometry", action="store_true", help="also NaN-sweep render geometry (verts/normals/UVs/bound spheres)")
     ap.add_argument("--quiet", action="store_true", help="only print files with issues")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     args = ap.parse_args()
@@ -174,7 +207,7 @@ def main():
 
     total_issues = 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        for out, nissues in ex.map(lambda p: check_file(p, args.constraints), files):
+        for out, nissues in ex.map(lambda p: check_file(p, args.constraints, args.geometry), files):
             total_issues += nissues
             if nissues or not args.quiet or args.constraints:
                 print("\n".join(out))

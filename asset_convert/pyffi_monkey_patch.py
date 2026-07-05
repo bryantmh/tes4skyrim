@@ -77,13 +77,18 @@ def _apply_nifformat_patches(NifFormat):
     # ------------------------------------------------------------------
     # Patch 3: NiPSysData.unknown_short_1 / unknown_short_2
     # ------------------------------------------------------------------
-    # PyFFI condition: "! version >= 335675399 && user_version == 11"
+    # PyFFI condition: "!((Version >= 20.2.0.7) && (User Version == 11))"
     #   → absent for FO3 (UV1=11), PRESENT for Skyrim (UV1=12).  WRONG.
     # Correct (per v0.9): absent for ALL Bethesda 20.2 (UV2 > 0).
     # We approximate this as user_version >= 11 (excludes both FO3 & Skyrim)
     # which matches the v0.9 semantics for all platforms we care about.
+    # Parenthesization is CRITICAL: Expression parses the unparenthesized
+    # '! version >= X && ...' as '((!version) >= X) && ...' = always False,
+    # which drops the two shorts from OBLIVION reads as well — every source
+    # NIF containing NiPSysData then misaligns by 4 bytes and fails to read
+    # (the entire fire/effects/magiceffects [RD] failure list).
     _psy_fixed_expr = Expression(
-        '! version >= 335675399 && user_version >= 11'
+        '!((version >= 335675399) && (user_version >= 11))'
     )
     for _attr in NifFormat.NiPSysData._attrs:
         if _attr.name in ('unknown_short_1', 'unknown_short_2'):
