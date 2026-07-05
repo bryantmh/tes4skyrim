@@ -1052,6 +1052,85 @@ def _add_bsx_flags(root, has_constraints=False):
 # ---------------------------------------------------------------------------
 
 
+def _sanitize_geometry_data(data):
+    """Zero out non-finite floats in render geometry.
+
+    A handful of Oblivion source meshes ship NaN data (anvildooruc02.nif has
+    9 NaN UVs, middlecandlestickfloor03fake.nif has 2 — one mesh in each of
+    the AnvilMagesGuild / AnvilCastlePrivateQuarters cells, whose loads
+    crashed with no crash log).  Oblivion's renderer tolerated non-finite
+    mesh data; Skyrim SE dies at cell load.
+
+    Non-finite UVs are zeroed; non-finite vertices move to the mesh's finite
+    centroid (collapses the triangle instead of stretching it to the origin);
+    non-finite normals/tangents/bitangents become +Z; a non-finite bound
+    sphere is recomputed after vertices are fixed.
+
+    Returns the number of components fixed.
+    """
+    fixed = 0
+    for block in data.blocks:
+        if not isinstance(block, NifFormat.NiGeometryData):
+            continue
+
+        if getattr(block, 'has_vertices', False) and block.num_vertices:
+            bad_verts = [v for v in block.vertices
+                         if not (math.isfinite(v.x) and math.isfinite(v.y)
+                                 and math.isfinite(v.z))]
+            if bad_verts:
+                finite = [(v.x, v.y, v.z) for v in block.vertices
+                          if math.isfinite(v.x) and math.isfinite(v.y)
+                          and math.isfinite(v.z)]
+                if finite:
+                    cx = sum(p[0] for p in finite) / len(finite)
+                    cy = sum(p[1] for p in finite) / len(finite)
+                    cz = sum(p[2] for p in finite) / len(finite)
+                else:
+                    cx = cy = cz = 0.0
+                for v in bad_verts:
+                    v.x, v.y, v.z = cx, cy, cz
+                    fixed += 1
+                try:
+                    block.update_center_radius()
+                except Exception:
+                    pass
+
+        for attr in ('normals', 'tangents', 'bitangents'):
+            for v in getattr(block, attr, []):
+                if not (math.isfinite(v.x) and math.isfinite(v.y)
+                        and math.isfinite(v.z)):
+                    v.x, v.y, v.z = 0.0, 0.0, 1.0
+                    fixed += 1
+
+        for uv_set in getattr(block, 'uv_sets', []):
+            for uv in uv_set:
+                if not math.isfinite(uv.u):
+                    uv.u = 0.0
+                    fixed += 1
+                if not math.isfinite(uv.v):
+                    uv.v = 0.0
+                    fixed += 1
+
+        for c in getattr(block, 'vertex_colors', []):
+            for ch in ('r', 'g', 'b', 'a'):
+                if not math.isfinite(getattr(c, ch)):
+                    setattr(c, ch, 1.0)
+                    fixed += 1
+
+        center, radius = getattr(block, 'center', None), getattr(block, 'radius', None)
+        if center is not None and radius is not None:
+            if not (math.isfinite(center.x) and math.isfinite(center.y)
+                    and math.isfinite(center.z) and math.isfinite(radius)):
+                try:
+                    block.update_center_radius()
+                    fixed += 1
+                except Exception:
+                    center.x = center.y = center.z = 0.0
+                    block.radius = 100.0
+                    fixed += 1
+    return fixed
+
+
 def _resolve_palette_strings(data):
     """Resolve StringOffset fields in NiControllerSequence controlled_blocks.
 
@@ -1408,6 +1487,11 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
     # ignored — leaving every node_name as b''.  Skyrim uses node_name to look
     # up animation targets; empty names → null → crash on NIF load.
     _resolve_palette_strings(data)
+
+    # Fix non-finite render geometry (NaN UVs/verts in Oblivion sources) BEFORE
+    # any tangent computation or skin retargeting can propagate the NaNs.
+    # Skyrim SE crashes at cell load on non-finite mesh data with no crash log.
+    _sanitize_geometry_data(data)
 
     # --- Armor / clothing NIF fixups (before version upgrade) ---------------
     nif_basename = os.path.basename(src_path).lower()

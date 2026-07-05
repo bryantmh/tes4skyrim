@@ -600,6 +600,59 @@ def _convert_rigid_body(rb):
 # Recursive shape conversion
 # ---------------------------------------------------------------------------
 
+def _expand_multisphere(ms):
+    """Expand bhkMultiSphereShape into per-sphere bhkConvexTransformShape-
+    wrapped bhkSphereShapes.
+
+    hkpMultiSphereShape is deprecated in Skyrim's Havok generation: 0 of
+    17,216 vanilla meshes ship the block, and files that do (Oblivion's
+    alchemy apparatus clutter) crash SSE at cell load with no crash log.
+    Vanilla expresses the same thing as ConvexTransform+Sphere children in a
+    list shape (e.g. clutter\\kitchen\\woodenladle01.nif).
+
+    Sphere data arrives in Oblivion Havok units — the ×0.1 rescale happens
+    here.  Returns a single wrapper for 1 sphere, a bhkListShape for several,
+    or None for an empty multisphere.
+    """
+    mat = _get_havok_material(ms.material)
+    wrappers = []
+    for s in ms.spheres:
+        sph = NifFormat.bhkSphereShape()
+        _set_havok_material(sph.material, mat)
+        sph.radius = s.radius * _HAVOK_SCALE
+
+        cts = NifFormat.bhkConvexTransformShape()
+        _set_havok_material(cts.material, mat)
+        cts.unknown_float_1 = sph.radius
+        for i in range(8):
+            cts.unknown_8_bytes[i] = 0
+        t = cts.transform
+        # Identity rotation, translation in the 4th column, 4th row all
+        # zeros (incl. m_44) — matches vanilla bhkConvexTransformShape.
+        t.m_11 = 1.0; t.m_12 = 0.0; t.m_13 = 0.0; t.m_14 = s.center.x * _HAVOK_SCALE
+        t.m_21 = 0.0; t.m_22 = 1.0; t.m_23 = 0.0; t.m_24 = s.center.y * _HAVOK_SCALE
+        t.m_31 = 0.0; t.m_32 = 0.0; t.m_33 = 1.0; t.m_34 = s.center.z * _HAVOK_SCALE
+        t.m_41 = 0.0; t.m_42 = 0.0; t.m_43 = 0.0; t.m_44 = 0.0
+        cts.shape = sph
+        wrappers.append(cts)
+
+    if not wrappers:
+        return None
+    if len(wrappers) == 1:
+        return wrappers[0]
+    ls = NifFormat.bhkListShape()
+    _set_havok_material(ls.material, mat)
+    ls.num_sub_shapes = len(wrappers)
+    ls.sub_shapes.update_size()
+    for i, w in enumerate(wrappers):
+        ls.sub_shapes[i] = w
+    ls.num_unknown_ints = len(wrappers)
+    ls.unknown_ints.update_size()
+    for i in range(len(wrappers)):
+        ls.unknown_ints[i] = 0
+    return ls
+
+
 def _convert_shape(shape, root_node):
     """Recursively convert an Oblivion Havok shape to Skyrim format.
 
@@ -638,12 +691,7 @@ def _convert_shape(shape, root_node):
         return shape
 
     if isinstance(shape, NifFormat.bhkMultiSphereShape):
-        for sphere in shape.spheres:
-            sphere.center.x *= _HAVOK_SCALE
-            sphere.center.y *= _HAVOK_SCALE
-            sphere.center.z *= _HAVOK_SCALE
-            sphere.radius   *= _HAVOK_SCALE
-        return shape
+        return _expand_multisphere(shape)
 
     if isinstance(shape, (NifFormat.bhkConvexTransformShape,
                            NifFormat.bhkTransformShape)):
@@ -664,8 +712,26 @@ def _convert_shape(shape, root_node):
         return shape
 
     if isinstance(shape, NifFormat.bhkListShape):
+        # Convert children; flatten any nested bhkListShape produced by child
+        # conversion (e.g. multisphere expansion) — a list shape carries no
+        # transform of its own so flattening is semantics-preserving, and
+        # vanilla never nests list shapes.
+        children = []
         for i in range(len(shape.sub_shapes)):
-            shape.sub_shapes[i] = _convert_shape(shape.sub_shapes[i], root_node)
+            c = _convert_shape(shape.sub_shapes[i], root_node)
+            if isinstance(c, NifFormat.bhkListShape):
+                children.extend(list(c.sub_shapes))
+            elif c is not None:
+                children.append(c)
+        if len(children) != shape.num_sub_shapes:
+            shape.num_sub_shapes = len(children)
+            shape.sub_shapes.update_size()
+            shape.num_unknown_ints = len(children)
+            shape.unknown_ints.update_size()
+            for i in range(len(children)):
+                shape.unknown_ints[i] = 0
+        for i, c in enumerate(children):
+            shape.sub_shapes[i] = c
         return shape
 
     if isinstance(shape, NifFormat.bhkNiTriStripsShape):
@@ -1083,92 +1149,295 @@ def convert_all_collisions(node, actual_root=None):
 
 
 
+def _vec_cross(a, b):
+    """Cross product of two PyFFI Vector4s (xyz), returned as a tuple."""
+    return (a.y * b.z - a.z * b.y,
+            a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x)
+
+
+def _vec_set_unit(dst, xyz, w=0.0):
+    """Normalise xyz and store into a PyFFI Vector4."""
+    x, y, z = xyz
+    mag = math.sqrt(x * x + y * y + z * z)
+    if mag > 1e-6:
+        x /= mag; y /= mag; z /= mag
+    dst.x = x
+    dst.y = y
+    dst.z = z
+    dst.w = w
+
+
+def _copy_struct(src, dst):
+    """Copy a PyFFI compound field-by-field (Vector4s by component)."""
+    done = set()
+    for a in dst._attrs:
+        name = a.name
+        if name in done:
+            continue
+        done.add(name)
+        try:
+            sv = getattr(src, name)
+            dv = getattr(dst, name)
+        except Exception:
+            continue
+        if hasattr(dv, 'x') and hasattr(dv, 'w'):
+            dv.x = sv.x; dv.y = sv.y; dv.z = sv.z; dv.w = sv.w
+        elif hasattr(dv, '_attrs'):
+            _copy_struct(sv, dv)
+        elif isinstance(dv, (int, float, bool)):
+            try:
+                setattr(dst, name, sv)
+            except Exception:
+                pass
+
+
+# SubConstraint.type (hkConstraintType) → (plain constraint block class name,
+# descriptor attribute name on both SubConstraint and the plain block).
+_MALLEABLE_INNER = {
+    0: ('bhkBallAndSocketConstraint', 'ball_and_socket'),
+    1: ('bhkHingeConstraint', 'hinge'),
+    2: ('bhkLimitedHingeConstraint', 'limited_hinge'),
+    6: ('bhkPrismaticConstraint', 'prismatic'),
+    7: ('bhkRagdollConstraint', 'ragdoll'),
+    8: ('bhkStiffSpringConstraint', 'stiff_spring'),
+}
+
+
+def _demote_malleable_constraints(data):
+    """Replace every bhkMalleableConstraint with a plain constraint of its inner type.
+
+    Vanilla Skyrim ships ZERO bhkMalleableConstraint meshes (0 of 17,216 —
+    binary block-type grep), so the engine path for them is untested; the
+    inner descriptor as a plain constraint is the vanilla-conformant form.
+    The malleable strength/tau/damping wrapper data is dropped.
+
+    Returns the list of newly created constraint blocks (they are referenced
+    from the rigid bodies but not yet present in data.blocks).
+    """
+    new_blocks = []
+    replacements = {}
+    for block in data.blocks:
+        if not isinstance(block, NifFormat.bhkMalleableConstraint):
+            continue
+        sub = block.sub_constraint
+        inner = _MALLEABLE_INNER.get(sub.type)
+        if inner is None:
+            continue
+        cls_name, desc_attr = inner
+        new_block = getattr(NifFormat, cls_name)()
+        # bhkConstraint header: entities + priority come from the outer block
+        # (SubConstraint's own entity list is "usually NONE").
+        new_block.num_entities = block.num_entities
+        new_block.entities.update_size()
+        for i in range(block.num_entities):
+            new_block.entities[i] = block.entities[i]
+        new_block.priority = block.priority
+        _copy_struct(getattr(sub, desc_attr), getattr(new_block, desc_attr))
+        replacements[block] = new_block
+        new_blocks.append(new_block)
+
+    if replacements:
+        # Swap references in every rigid body's constraints array.
+        for block in data.blocks:
+            constraints = getattr(block, 'constraints', None)
+            if constraints is None:
+                continue
+            for i, c in enumerate(constraints):
+                if c in replacements:
+                    constraints[i] = replacements[c]
+    return new_blocks
+
+
+def _fix_limited_hinge(d):
+    """Skyrim-format fixes for a LimitedHingeDescriptor (pivots already scaled).
+
+    1. Missing perp_2_axle_in_b_1: Oblivion's LimitedHingeDescriptor does not
+       have perp_2_axle_in_b_1; Skyrim does.  Leaving it zero causes the sign
+       to spawn at a wrong tilt.  Derived as: perp_b2 × axle_b (normalised).
+       Vanilla Skyrim stores w=-1 on perp_2_axle_in_a_1 and perp_2_axle_in_b_1.
+
+    2. Clamp max_friction to Skyrim range.
+       Oblivion stores max_friction=3.0; Skyrim signs use 0.01.
+       At 3.0 the hinge has enough rotational friction to lock the sign
+       at any angle against gravity, so it stops at a wrong tilt instead
+       of swinging freely back to vertical.
+    """
+    perp_b1 = getattr(d, 'perp_2_axle_in_b_1', None)
+    if perp_b1 is not None:
+        _vec_set_unit(perp_b1, _vec_cross(d.perp_2_axle_in_b_2, d.axle_b), w=-1.0)
+
+    perp_a1 = getattr(d, 'perp_2_axle_in_a_1', None)
+    if perp_a1 is not None:
+        perp_a1.w = -1.0
+
+    if d.max_friction > 0.5:
+        d.max_friction = 0.01
+
+
+def _fix_ragdoll(d):
+    """Derive the Skyrim-only RagdollDescriptor motor axes.
+
+    In the Skyrim (Havok 2010) layout twist/plane/motor are the three columns
+    of an orthonormal basis — motor = twist × plane (verified on vanilla
+    desecratedimperial.nif: twist=(1,0,0), plane=(0,1,0), motor=(0,0,1)).
+    Oblivion's layout has no motor fields, so PyFFI leaves them zero, which
+    ships a singular constraint basis.
+    """
+    for twist_name, plane_name, motor_name in (('twist_a', 'plane_a', 'motor_a'),
+                                               ('twist_b', 'plane_b', 'motor_b')):
+        motor = getattr(d, motor_name, None)
+        if motor is None:
+            continue
+        if math.sqrt(motor.x ** 2 + motor.y ** 2 + motor.z ** 2) > 1e-6:
+            continue  # already populated
+        _vec_set_unit(motor, _vec_cross(getattr(d, twist_name),
+                                        getattr(d, plane_name)))
+
+
+def _fix_hinge(d):
+    """Derive the Skyrim-only HingeDescriptor fields.
+
+    Oblivion stores only pivot_a, perp_a1, perp_a2, pivot_b, axle_b.  Skyrim
+    additionally needs axle_a and perp_2_axle_in_b_1/2; left zero the hinge
+    axis is degenerate.  Frame convention (per nif.xml): perp2 = axle × perp1,
+    so axle_a = perp_a1 × perp_a2.  For the B side only axle_b is known; any
+    orthonormal complement works because a plain hinge has no angle limits —
+    build perp_b1 by Gram-Schmidt from perp_a1, then perp_b2 = axle_b × perp_b1.
+    """
+    axle_a = getattr(d, 'axle_a', None)
+    if axle_a is not None:
+        L = math.sqrt(axle_a.x ** 2 + axle_a.y ** 2 + axle_a.z ** 2)
+        if L < 1e-6:
+            _vec_set_unit(axle_a, _vec_cross(d.perp_2_axle_in_a_1,
+                                             d.perp_2_axle_in_a_2))
+
+    perp_b1 = getattr(d, 'perp_2_axle_in_b_1', None)
+    perp_b2 = getattr(d, 'perp_2_axle_in_b_2', None)
+    if perp_b1 is None or perp_b2 is None:
+        return
+    L1 = math.sqrt(perp_b1.x ** 2 + perp_b1.y ** 2 + perp_b1.z ** 2)
+    L2 = math.sqrt(perp_b2.x ** 2 + perp_b2.y ** 2 + perp_b2.z ** 2)
+    if L1 > 1e-6 and L2 > 1e-6:
+        return  # already populated
+    ab = d.axle_b
+    # Reference vector not parallel to axle_b
+    ref = d.perp_2_axle_in_a_1
+    rx, ry, rz = ref.x, ref.y, ref.z
+    dot = rx * ab.x + ry * ab.y + rz * ab.z
+    px, py, pz = rx - dot * ab.x, ry - dot * ab.y, rz - dot * ab.z
+    if px * px + py * py + pz * pz < 1e-9:
+        # perp_a1 parallel to axle_b — fall back to whichever world axis isn't
+        for rx, ry, rz in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
+            dot = rx * ab.x + ry * ab.y + rz * ab.z
+            px, py, pz = rx - dot * ab.x, ry - dot * ab.y, rz - dot * ab.z
+            if px * px + py * py + pz * pz > 1e-9:
+                break
+    _vec_set_unit(perp_b1, (px, py, pz))
+    _vec_set_unit(perp_b2, _vec_cross(ab, perp_b1))
+
+
+def _fix_prismatic(d):
+    """Best-effort Skyrim fields for a PrismaticDescriptor.
+
+    Oblivion stores pivot_a, pivot_b, sliding_b, plane_b (+ a rotation).
+    Skyrim additionally wants sliding_a/plane_a (the same axes expressed in
+    body A's frame).  Without the body world transforms at this point, copy
+    the B-frame axes — constrained prop pairs sit at near-identity relative
+    rotation in practice.  Sliding distances are lengths → scale by 0.1.
+    NOTE: vanilla Skyrim ships zero bhkPrismaticConstraint meshes, so this
+    path is inherently untested by Bethesda.
+    """
+    for src_name, dst_name in (('sliding_b', 'sliding_a'), ('plane_b', 'plane_a')):
+        src = getattr(d, src_name, None)
+        dst = getattr(d, dst_name, None)
+        if src is None or dst is None:
+            continue
+        if math.sqrt(dst.x ** 2 + dst.y ** 2 + dst.z ** 2) < 1e-6:
+            dst.x = src.x; dst.y = src.y; dst.z = src.z; dst.w = src.w
+    for attr in ('min_distance', 'max_distance'):
+        v = getattr(d, attr, None)
+        if v is not None:
+            setattr(d, attr, v * _HAVOK_SCALE)
+
+
+def _constraint_descriptors(block):
+    """Yield (kind, descriptor) for a plain bhkConstraint block."""
+    for kind in ('limited_hinge', 'ragdoll', 'hinge', 'prismatic',
+                 'stiff_spring', 'ball_and_socket'):
+        d = getattr(block, kind, None)
+        if d is not None:
+            yield kind, d
+
+
 def scale_constraint_pivots(data):
     """Fix Havok constraint data for Oblivion → Skyrim conversion.
 
-    Two things need fixing for swinging signs (bhkLimitedHingeConstraint):
+    Applies to EVERY constraint descriptor type (limited hinge, ragdoll,
+    hinge, prismatic, stiff spring, ball-and-socket):
 
-    1. Pivot scale: pivot_a/pivot_b are in Oblivion Havok-space positions and
+    1. Malleable demotion: bhkMalleableConstraint (never shipped by vanilla
+       Skyrim) is replaced by a plain constraint of its inner type.
+    2. Pivot scale: pivot_a/pivot_b are Oblivion Havok-space positions and
        must be scaled by _HAVOK_SCALE (0.1).  Axis vectors are unit vectors
-       and must NOT be scaled.
-
-    2. Missing perp_2_axle_in_b_1: Oblivion's LimitedHingeDescriptor does not
-       have perp_2_axle_in_b_1; Skyrim does.  Leaving it zero causes the sign
-       to spawn at a wrong tilt.  Derived as: perp_b2 × axle_b (normalised).
-
-    3. broadphaseType=10 for dynamic constrained bodies.
+       and must NOT be scaled.  Stiff-spring length and prismatic sliding
+       distances are lengths and scale too.
+    3. Skyrim-only fields Oblivion has no source for are derived
+       (limited hinge perp_b1, hinge axle_a/perp_b1/perp_b2).
+    4. Inertia rescale: _convert_collision already applied _HAVOK_SCALE (0.1)
+       to inertia; it has units mass*length^2 so it needs _HAVOK_SCALE^2 =
+       0.01 total.  Apply the missing factor once per body (deduped — the
+       scales crossbar participates in three constraints).
+    5. broadphaseType=10 for dynamic constrained bodies.
 
     bhkRigidBodyT is kept as-is: Skyrim uses bhkRigidBodyT for constrained
     sign bodies (confirmed in vanilla signfourshieldstavern01.nif).  The T
     offset is body-local relative to the owning NiNode, which is already
     correct after _convert_collision scales it by _HAVOK_SCALE.
     """
-    for block in data.blocks:
-        if not isinstance(block, NifFormat.bhkLimitedHingeConstraint):
-            continue
-        d = block.limited_hinge
+    constraint_blocks = [b for b in data.blocks
+                         if isinstance(b, NifFormat.bhkConstraint)]
+    constraint_blocks += _demote_malleable_constraints(data)
 
-        # 1. Scale pivot positions (xyz only; w is unused padding).
-        for pivot_attr in ('pivot_a', 'pivot_b'):
-            pivot = getattr(d, pivot_attr, None)
-            if pivot is not None:
-                pivot.x *= _HAVOK_SCALE
-                pivot.y *= _HAVOK_SCALE
-                pivot.z *= _HAVOK_SCALE
+    inertia_scaled = set()
+    for block in constraint_blocks:
+        if isinstance(block, NifFormat.bhkMalleableConstraint):
+            continue  # replaced by its demoted inner constraint
+        for kind, d in _constraint_descriptors(block):
+            # Scale pivot positions (xyz only; w is unused padding).
+            for pivot_attr in ('pivot_a', 'pivot_b'):
+                pivot = getattr(d, pivot_attr, None)
+                if pivot is not None:
+                    pivot.x *= _HAVOK_SCALE
+                    pivot.y *= _HAVOK_SCALE
+                    pivot.z *= _HAVOK_SCALE
+            if kind == 'limited_hinge':
+                _fix_limited_hinge(d)
+            elif kind == 'ragdoll':
+                _fix_ragdoll(d)
+            elif kind == 'hinge':
+                _fix_hinge(d)
+            elif kind == 'prismatic':
+                _fix_prismatic(d)
+            elif kind == 'stiff_spring':
+                length = getattr(d, 'length', None)
+                if length is not None:
+                    d.length = length * _HAVOK_SCALE
 
-        # 2. Compute missing perp_2_axle_in_b_1 for Skyrim format.
-        #    axle_b, perp_2_axle_in_b_1, perp_2_axle_in_b_2 form a right-handed
-        #    orthonormal frame.  Recover perp_2_axle_in_b_1 = perp_b2 × axle_b.
-        #    Vanilla Skyrim stores w=-1 on perp_2_axle_in_a_1 and perp_2_axle_in_b_1.
-        perp_b1 = getattr(d, 'perp_2_axle_in_b_1', None)
-        if perp_b1 is not None:
-            axle_b  = d.axle_b
-            perp_b2 = d.perp_2_axle_in_b_2
-            cx = perp_b2.y * axle_b.z - perp_b2.z * axle_b.y
-            cy = perp_b2.z * axle_b.x - perp_b2.x * axle_b.z
-            cz = perp_b2.x * axle_b.y - perp_b2.y * axle_b.x
-            mag = math.sqrt(cx*cx + cy*cy + cz*cz)
-            if mag > 1e-6:
-                cx /= mag; cy /= mag; cz /= mag
-            perp_b1.x = cx
-            perp_b1.y = cy
-            perp_b1.z = cz
-            perp_b1.w = -1.0
-
-        perp_a1 = getattr(d, 'perp_2_axle_in_a_1', None)
-        if perp_a1 is not None:
-            perp_a1.w = -1.0
-
-        # 3. Clamp max_friction to Skyrim range.
-        #    Oblivion stores max_friction=3.0; Skyrim signs use 0.01.
-        #    At 3.0 the hinge has enough rotational friction to lock the sign
-        #    at any angle against gravity, so it stops at a wrong tilt instead
-        #    of swinging freely back to vertical.
-        if d.max_friction > 0.5:
-            d.max_friction = 0.01
-
-        # 4. Re-scale inertia for dynamic constrained bodies.
-        #    _convert_collision already applied _HAVOK_SCALE (0.1) to inertia.
-        #    Inertia has units mass*length^2, so it requires _HAVOK_SCALE^2 = 0.01 total.
-        #    Apply the missing second factor of 0.1 here.
-        #    (General clutter inertia stays at *0.1 since Oblivion clutter was authored
-        #    with smaller values and the result is already in the correct Skyrim range.)
         for e in block.entities:
             if e is not None and e.mass > 0.0:
-                I = e.inertia
-                I.m_11 *= _HAVOK_SCALE
-                I.m_12 *= _HAVOK_SCALE
-                I.m_13 *= _HAVOK_SCALE
-                I.m_21 *= _HAVOK_SCALE
-                I.m_22 *= _HAVOK_SCALE
-                I.m_23 *= _HAVOK_SCALE
-                I.m_31 *= _HAVOK_SCALE
-                I.m_32 *= _HAVOK_SCALE
-                I.m_33 *= _HAVOK_SCALE
-
-        # 5. broadphaseType=10 for dynamic constrained bodies.
-        for e in block.entities:
-            if e is not None and e.mass > 0.0:
+                if id(e) not in inertia_scaled:
+                    inertia_scaled.add(id(e))
+                    I = e.inertia
+                    I.m_11 *= _HAVOK_SCALE
+                    I.m_12 *= _HAVOK_SCALE
+                    I.m_13 *= _HAVOK_SCALE
+                    I.m_21 *= _HAVOK_SCALE
+                    I.m_22 *= _HAVOK_SCALE
+                    I.m_23 *= _HAVOK_SCALE
+                    I.m_31 *= _HAVOK_SCALE
+                    I.m_32 *= _HAVOK_SCALE
+                    I.m_33 *= _HAVOK_SCALE
                 e.unknown_byte = 10
 
 
