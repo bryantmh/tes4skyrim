@@ -827,57 +827,73 @@ def _process_controller_manager(node, palette):
 # ---------------------------------------------------------------------------
 
 # Oblivion marks where a flame should burn with an empty FlameNode* NiNode and
-# attaches a flame NIF there dynamically at runtime.  Skyrim instead uses the
-# Master Particle System: a BSValueNode carrying an AddonNode index tells the
-# engine to spawn the matching ADDN record's particle NIF at that node
-# (vanilla candlehornfloor01.nif = 4x BSValueNode "AddOnNode49").  We convert
-# each FlameNode into the correct BSValueNode.
+# attaches a flame NIF there dynamically at runtime (firecandleflame.nif for
+# candles/sconces/lamps, the torch flame for torches).  Skyrim has no such
+# runtime attachment, so we CONVERT: the matching Oblivion flame NIF is run
+# through the full converter once (cached per worker) and its converted
+# subtree is grafted under each FlameNode marker.  This ships Oblivion's own
+# flame visuals — flip-book quads + particle systems — instead of substituting
+# Skyrim's Master-Particle-System flames.
 #
-# Do NOT graft a converted particle subtree here: the engine builds a
-# BSEffectShaderMaterial from the embedded particle's BSEffectShaderProperty
-# and overruns its buffer (crash 2026-07-05, vmovntdq store past page end,
-# CandleFat02Fake).  The BSValueNode path spawns the vanilla, engine-blessed
-# MPS particle NIF instead — no custom particle geometry ships in the mesh.
+# (A much earlier graft attempt crashed the engine — that crash was actually
+# the PyFFI NiPSysData 66-vs-70-byte misalignment plus uv_scale=(0,0), both
+# long fixed; the interim BSValueNode/AddonNode substitution is now removed.)
 
-# ADDN (AddonNode) indices from vanilla Skyrim.esm ADDN records (DATA field):
-_ADDN_CANDLE_FLAME = 49   # MPSCandleFlame01
-_ADDN_TORCH_FIRE = 46     # MPSTorchFire01
-
-# BSXFlags bit 4 (0x10) — the mesh contains BSValueNode AddonNode spawn points.
-# Vanilla candlehornfloor01.nif ships BSX=147 (0x93 = static 0x82 | this bit |
-# articulated 0x01).  The engine only processes AddonNode spawns when set.
-_BSX_ADDON_BIT = 0x10
+_FLAME_CACHE = {}   # (meshes_root_lower, flame_name) -> nif bytes | None
+_FLAME_ATLAS_JOBS = {}  # same key -> flip-book atlas jobs from the conversion
 
 
-def _flame_addon_value(src_path):
-    """Pick the Master-Particle-System AddonNode index for a host mesh.
-
-    Torch meshes get the torch fire (46); everything else (candles,
-    candelabra, sconces, lamps, lecterns, chandeliers) gets the candle
-    flame (49) — the small upright flame Oblivion attaches at these markers.
-    """
+def _flame_nif_for_host(src_path):
+    """Which Oblivion flame NIF burns at this host's FlameNode markers."""
     name = os.path.basename(str(src_path)).lower()
-    if 'torch' in name:
-        return _ADDN_TORCH_FIRE
-    return _ADDN_CANDLE_FLAME
+    return 'firetorchsmall.nif' if 'torch' in name else 'firecandleflame.nif'
 
 
-def _convert_flame_nodes(root_node, src_path):
-    """Retype every empty FlameNode* NiNode as a BSValueNode (Master Particle
-    System addon spawn point).  Modifies root_node's tree in-place; returns the
-    number of flame nodes converted.
+def _load_converted_flame(src_path, flame_name):
+    """Convert meshes/fire/<flame_name> once per worker; return serialized
+    Skyrim NIF bytes (deep-copies are made by re-reading), or None."""
+    norm = str(src_path).replace('/', os.sep).replace('\\', os.sep)
+    key = os.sep + 'meshes' + os.sep
+    i = norm.lower().rfind(key)
+    if i < 0:
+        return None
+    meshes_root = norm[:i + len(key)]
+    cache_key = (meshes_root.lower(), flame_name)
+    if cache_key in _FLAME_CACHE:
+        return _FLAME_CACHE[cache_key]
+    result = None
+    flame_src = meshes_root + 'fire' + os.sep + flame_name
+    if os.path.isfile(flame_src):
+        try:
+            fdata = NifFormat.Data()
+            with open(flame_src, 'rb') as f:
+                fdata.inspect(f)
+                f.seek(0)
+                fdata.read(f)
+            fstats = _convert_nif(fdata, fix_textures=True, src_path=flame_src)
+            buf = _io.BytesIO()
+            fdata.write(buf)
+            result = buf.getvalue()
+            _FLAME_ATLAS_JOBS[cache_key] = fstats.get('_flipbook_atlases', {})
+        except Exception:
+            result = None
+    _FLAME_CACHE[cache_key] = result
+    return result
 
-    A FlameNode is a bare marker (name + transform, no children/properties/
-    collision), so the BSValueNode only needs its translation copied over — the
-    flame then burns in the right spot.  Rotation is reset to identity and
-    scale to 1.0 to match vanilla AddOnNodes (Oblivion FlameNodes carry a 90°
-    tip + ~2x scale meant for the old attached NIF, which would mis-orient and
-    mis-scale the MPS flame).
 
-    PyFFI struct/array fields (translation, rotation, ...) are read-only
-    properties — mutate them in place, never setattr.
+def _convert_flame_nodes(root_node, src_path, stats=None):
+    """Graft the converted Oblivion flame NIF under every empty FlameNode*
+    marker.  Modifies root_node's tree in-place; returns the graft count.
+
+    Marker transform: TRANSLATION and SCALE are kept (Oblivion authored
+    FlameNodes with ~2x scale that the attached flame NIF expects); ROTATION
+    is reset to identity — the converted flame's own billboard wrappers carry
+    the Skyrim −90°X axis correction, and a rotated parent would tip them.
     """
-    addon_value = _flame_addon_value(src_path)
+    flame_name = _flame_nif_for_host(src_path)
+    flame_bytes = _load_converted_flame(src_path, flame_name)
+    if flame_bytes is None:
+        return 0
     count = 0
 
     def _visit(node):
@@ -893,43 +909,54 @@ def _convert_flame_nodes(root_node, src_path):
                 nm = nm.decode('latin1')
             if (nm.startswith('FlameNode')
                     and isinstance(child, NifFormat.NiNode)
-                    and not isinstance(child, NifFormat.BSValueNode)
                     and child.num_children == 0):
-                bvn = NifFormat.BSValueNode()
-                bvn.name = b'AddOnNode%d' % addon_value
-                bvn.flags = child.flags
-                # Keep position; reset orientation/scale to vanilla AddOnNode.
-                bvn.translation.x = child.translation.x
-                bvn.translation.y = child.translation.y
-                bvn.translation.z = child.translation.z
-                bvn.rotation.set_identity()
-                bvn.scale = 1.0
-                bvn.value = addon_value
-                bvn.unknown_byte = 1   # vanilla AddOnNodes use 1
-                node.children[i] = bvn
+                # Deep-copy the converted flame by re-reading its bytes.
+                fdata = NifFormat.Data()
+                buf = _io.BytesIO(flame_bytes)
+                fdata.inspect(buf)
+                buf.seek(0)
+                fdata.read(buf)
+                froot = fdata.roots[0]
+                kids = [c for c in froot.children if c is not None]
+                child.rotation.set_identity()
+                child.num_children = len(kids)
+                child.children.update_size()
+                for j, k in enumerate(kids):
+                    child.children[j] = k
                 count += 1
             else:
                 _visit(child)
 
     _visit(root_node)
 
-    # Flag the root so the engine spawns the AddonNode particle systems.
-    # If the root has no BSXFlags (static "fake" candle without collision),
-    # create one — without the Addon bit the engine ignores the BSValueNodes.
-    if count and hasattr(root_node, 'extra_data_list'):
-        for ed in root_node.extra_data_list:
-            if isinstance(ed, NifFormat.BSXFlags):
-                ed.integer_data |= _BSX_ADDON_BIT
-                break
-        else:
-            bsx = NifFormat.BSXFlags()
-            bsx.name = b'BSX'
-            bsx.integer_data = _BSX_ADDON_BIT
-            root_node.num_extra_data_list += 1
-            root_node.extra_data_list.update_size()
-            for i in range(root_node.num_extra_data_list - 1, 0, -1):
-                root_node.extra_data_list[i] = root_node.extra_data_list[i - 1]
-            root_node.extra_data_list[0] = bsx
+    if count:
+        # The grafted particle systems need per-frame controller updates:
+        # ensure BSXFlags bit 0 (Animated) on the host root.
+        if hasattr(root_node, 'extra_data_list'):
+            for ed in root_node.extra_data_list:
+                if isinstance(ed, NifFormat.BSXFlags):
+                    ed.integer_data |= 0x01
+                    break
+            else:
+                bsx = NifFormat.BSXFlags()
+                bsx.name = b'BSX'
+                bsx.integer_data = 0x01
+                root_node.num_extra_data_list += 1
+                root_node.extra_data_list.update_size()
+                for i in range(root_node.num_extra_data_list - 1, 0, -1):
+                    root_node.extra_data_list[i] = root_node.extra_data_list[i - 1]
+                root_node.extra_data_list[0] = bsx
+        # Propagate the flame's flip-book atlas jobs so convert_nif builds
+        # them into this host's output tree too (idempotent, exists-checked).
+        if stats is not None:
+            norm = str(src_path).replace('/', os.sep).replace('\\', os.sep)
+            key = os.sep + 'meshes' + os.sep
+            i = norm.lower().rfind(key)
+            if i >= 0:
+                cache_key = (norm[:i + len(key)].lower(), flame_name)
+                jobs = _FLAME_ATLAS_JOBS.get(cache_key, {})
+                if jobs:
+                    stats.setdefault('_flipbook_atlases', {}).update(jobs)
 
     return count
 
@@ -1202,6 +1229,94 @@ def _convert_particle_system(node, fix_textures):
     node.bs_properties[1] = alpha_prop
 
 
+# Skyrim billboard axis correction (see the root-billboard handling for the
+# full story): Oblivion mode-1 billboards keep local +Y up / +Z at camera;
+# Skyrim keeps local +Z up / ±Y at camera.  Oblivion-authored flat-XY quads
+# need this −90°-about-X rotation on their billboard node (byte-identical to
+# vanilla campfire01burning "Plane05").
+_BB_AXIS_FIX = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0))
+
+
+def _compose_axis_fix(rot):
+    """rot ← rot · R_fix (PyFFI row-vector convention) in place."""
+    m = [[rot.m_11, rot.m_12, rot.m_13],
+         [rot.m_21, rot.m_22, rot.m_23],
+         [rot.m_31, rot.m_32, rot.m_33]]
+    f = _BB_AXIS_FIX
+    r = [[sum(m[i][k] * f[k][j] for k in range(3)) for j in range(3)]
+         for i in range(3)]
+    rot.m_11, rot.m_12, rot.m_13 = r[0]
+    rot.m_21, rot.m_22, rot.m_23 = r[1]
+    rot.m_31, rot.m_32, rot.m_33 = r[2]
+
+
+def _wrap_in_billboard(child, bb_mode):
+    """Wrap a geometry block in a fresh NiBillboardNode carrying the Skyrim
+    axis correction (vanilla campfire pattern: BSFadeNode → NiBillboardNode
+    → NiTriShape)."""
+    bb = NifFormat.NiBillboardNode()
+    bb.name = (child.name or b'') + b'-Billboard'
+    bb.flags = NIF_FLAGS
+    bb.billboard_mode = bb_mode
+    _compose_axis_fix(bb.rotation)
+    bb.num_children = 1
+    bb.children.update_size()
+    bb.children[0] = child
+    return bb
+
+
+def _skyrimize_billboard(bb):
+    """Convert a (non-root) Oblivion NiBillboardNode for Skyrim.
+
+    - Contains a particle system anywhere in its subtree → DEMOTE to a plain
+      NiNode (a billboarding ancestor spins the emitters) and wrap its direct
+      geometry children in fresh axis-corrected billboard nodes.
+    - Pure geometry billboard → keep it, but compose the Skyrim axis
+      correction into its rotation (Oblivion billboards are authored identity
+      over flat-XY quads; Skyrim's up/facing axes differ).
+    """
+    bb_mode = int(getattr(bb, 'billboard_mode', 1)) or 1
+    has_psys = any(isinstance(b, NifFormat.NiParticleSystem)
+                   for b in bb.tree())
+    if not has_psys:
+        _compose_axis_fix(bb.rotation)
+        return bb
+    plain = NifFormat.NiNode()
+    plain.name = bb.name
+    plain.flags = NIF_FLAGS
+    plain.translation.x = bb.translation.x
+    plain.translation.y = bb.translation.y
+    plain.translation.z = bb.translation.z
+    plain.rotation.m_11 = bb.rotation.m_11; plain.rotation.m_12 = bb.rotation.m_12; plain.rotation.m_13 = bb.rotation.m_13
+    plain.rotation.m_21 = bb.rotation.m_21; plain.rotation.m_22 = bb.rotation.m_22; plain.rotation.m_23 = bb.rotation.m_23
+    plain.rotation.m_31 = bb.rotation.m_31; plain.rotation.m_32 = bb.rotation.m_32; plain.rotation.m_33 = bb.rotation.m_33
+    plain.scale = bb.scale
+    plain.num_extra_data_list = bb.num_extra_data_list
+    plain.extra_data_list.update_size()
+    for j, ed in enumerate(bb.extra_data_list):
+        plain.extra_data_list[j] = ed
+    if bb.controller is not None:
+        plain.controller = bb.controller
+    if getattr(bb, 'collision_object', None) is not None:
+        plain.collision_object = bb.collision_object
+        plain.collision_object.target = plain
+    plain.num_children = bb.num_children
+    plain.children.update_size()
+    for j in range(bb.num_children):
+        c = bb.children[j]
+        if isinstance(c, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
+            c = _wrap_in_billboard(c, bb_mode)
+        plain.children[j] = c
+    # Particle modifiers in the subtree may reference the OLD billboard node
+    # (emitter_object / gravity_object) — remap to the replacement or the ref
+    # dangles ("block is missing from the nif tree") and the sim breaks.
+    for blk in plain.tree():
+        for attr in ('emitter_object', 'gravity_object'):
+            if getattr(blk, attr, None) is bb:
+                setattr(blk, attr, plain)
+    return plain
+
+
 def _walk_node(parent, node, fix_textures, stats):
     """Recursively process a node and its children.
 
@@ -1286,9 +1401,14 @@ def _walk_node(parent, node, fix_textures, stats):
                     break
             _process_controller_manager(node, palette)
 
-        # Recurse into children
+        # Recurse into children.  Non-root NiBillboardNodes get the Skyrim
+        # billboard treatment on the way back up (axis correction, or demotion
+        # when they contain particle emitters — e.g. firecandleflame.nif nests
+        # its emitter under two levels of billboards).
         for i in range(len(node.children)):
             result = _walk_node(node, node.children[i], fix_textures, stats)
+            if isinstance(result, NifFormat.NiBillboardNode):
+                result = _skyrimize_billboard(result)
             node.children[i] = result
 
         # Compact: remove None slots left by stripped nodes (NiParticleSystem,
@@ -1955,32 +2075,15 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
                 # (campfire01burning): BSFadeNode → NiBillboardNode "Plane05"
                 # → NiTriShape.  Wrap each direct geometry child in a child
                 # NiBillboardNode carrying the source root's billboard mode.
+                # Wrap direct geometry children in axis-corrected billboards
+                # (see _wrap_in_billboard / _BB_AXIS_FIX for the Oblivion vs
+                # Skyrim billboard axis convention story).
                 bb_mode = int(getattr(root, 'billboard_mode', 1)) or 1
                 for j in range(len(plain.children)):
                     c = plain.children[j]
                     if isinstance(c, (NifFormat.NiTriShape,
                                       NifFormat.NiTriStrips)):
-                        bb = NifFormat.NiBillboardNode()
-                        bb.name = (c.name or b'') + b'-Billboard'
-                        bb.flags = NIF_FLAGS
-                        bb.billboard_mode = bb_mode
-                        # Billboard axis convention differs between engines:
-                        # Oblivion ROTATE_ABOUT_UP keeps local +Y up and faces
-                        # local +Z at the camera (fire quads are authored flat
-                        # in XY, height along +Y, identity node rotation).
-                        # Skyrim keeps local +Z up and faces local ±Y — the
-                        # SAME flat-XY quad needs a -90°-about-X node rotation
-                        # (vanilla campfire01burning Plane05: rot maps local
-                        # Y→world Z, local Z→world -Y).  Identity here leaves
-                        # the quad lying flat, spinning about Z = edge-on from
-                        # every angle = fire invisible in game.
-                        bb.rotation.m_11 = 1.0; bb.rotation.m_12 = 0.0; bb.rotation.m_13 = 0.0
-                        bb.rotation.m_21 = 0.0; bb.rotation.m_22 = 0.0; bb.rotation.m_23 = 1.0
-                        bb.rotation.m_31 = 0.0; bb.rotation.m_32 = -1.0; bb.rotation.m_33 = 0.0
-                        bb.num_children = 1
-                        bb.children.update_size()
-                        bb.children[0] = c
-                        plain.children[j] = bb
+                        plain.children[j] = _wrap_in_billboard(c, bb_mode)
                 data.roots[i] = plain
                 root = plain
             else:
@@ -2292,7 +2395,12 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         # Walk and convert children first (geometry, shaders, etc.)
         if hasattr(root, 'children'):
             for j in range(len(root.children)):
-                root.children[j] = _walk_node(root, root.children[j], fix_textures, stats)
+                _res = _walk_node(root, root.children[j], fix_textures, stats)
+                if isinstance(_res, NifFormat.NiBillboardNode):
+                    # Same Skyrim billboard treatment as _walk_node applies to
+                    # deeper levels (axis fix / demote-when-particles).
+                    _res = _skyrimize_billboard(_res)
+                root.children[j] = _res
             # Compact: remove None children left by stripped nodes
             keep = [c for c in root.children if c is not None]
             if len(keep) < root.num_children:
@@ -2465,6 +2573,14 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
 
     stats = _convert_nif(data, fix_textures=fix_textures, src_path=str(src_path))
 
+    # Graft the converted Oblivion flame NIF under FlameNode* markers (candle
+    # flame / torch fire) — full conversion of Oblivion's own flame visuals,
+    # not a Skyrim MPS substitution.  Runs BEFORE the atlas build so the
+    # flame's flip-book atlas jobs (merged into stats) are executed below.
+    for root in data.roots:
+        if root is not None:
+            _convert_flame_nodes(root, src_path, stats)
+
     # Build flip-book atlas textures planned by _process_geometry (frame strip
     # for BSEffectShaderPropertyFloatController U-Offset animation).  Output
     # goes into the textures/ tree beside the destination meshes/ tree.
@@ -2484,13 +2600,6 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
                     except Exception:
                         pass  # shader falls back to sampling a missing atlas;
                               # frames were pre-validated so this is unexpected
-
-    # Convert FlameNode* markers into BSValueNode Master-Particle-System addon
-    # spawn points (candle flame / torch fire), the way vanilla Skyrim lights
-    # do it.  This is what makes "fake" (lit) candles/sconces show a flame.
-    for root in data.roots:
-        if root is not None:
-            _convert_flame_nodes(root, src_path)
 
     # Generate tangent space for all NiTriShapeData that don't already have it.
     # Missing tangents cause incorrect normal-map lighting in Skyrim which

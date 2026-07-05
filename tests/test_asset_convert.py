@@ -887,22 +887,25 @@ class TestParticleSystemConversion:
                 f'effect shader block[{i}] UV Scale ({su},{sv}) — zero = invisible'
 
 class TestFlameNodeConversion:
-    """FlameNode markers → BSValueNode Master-Particle-System spawn points.
+    """FlameNode markers → grafted CONVERTED Oblivion flame subtree.
 
-    Oblivion marks flame positions with empty FlameNode* NiNodes.  Vanilla
-    Skyrim uses BSValueNode "AddOnNodeNN" (candle flame=49, torch fire=46) so
-    the engine spawns the matching MPS particle NIF.  Grafting a converted
-    particle subtree here instead crashed the engine (BSEffectShaderMaterial
-    buffer overrun, 2026-07-05) — this guards against a regression to that.
+    Oblivion marks flame positions with empty FlameNode* NiNodes and attaches
+    a flame NIF there at runtime (firecandleflame.nif / torch flame).  The
+    conversion grafts the converted flame subtree under each marker: particle
+    systems + billboard-wrapped flip-book quads.  Requirements each guard a
+    real bug: no surviving NiBillboardNode may contain a particle system
+    (spinning emitter), emitter/gravity object refs must resolve in-tree
+    (demote dangled them), and the host root needs BSX bit 0 so the grafted
+    controllers tick.
     """
 
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
-    @pytest.mark.parametrize('rel,expect_value', [
-        ('lights/candlefat02fake.nif', 49),
-        ('lights/middlecandlestickfloor01fake.nif', 49),
-        ('lights/torchtall01.nif', 46),
+    @pytest.mark.parametrize('rel,flame_tex', [
+        ('lights/candlefat02fake.nif', b'firecandleflame'),
+        ('lights/middlecandlestickfloor01fake.nif', b'firecandleflame'),
+        ('lights/torchtall01.nif', b'firetorch'),
     ])
-    def test_flamenode_becomes_bsvaluenode(self, rel, expect_value, tmp_path):
+    def test_flamenode_gets_grafted_flame(self, rel, flame_tex, tmp_path):
         import time
         if not hasattr(time, '_original_clock'):
             time.clock = time.perf_counter
@@ -911,29 +914,43 @@ class TestFlameNodeConversion:
         src = EXPORT_MESHES / rel
         if not src.exists():
             pytest.skip(f'{src} not found')
-        dst = tmp_path / 'out.nif'
+        dst = tmp_path / 'meshes' / 'out.nif'
+        dst.parent.mkdir(parents=True, exist_ok=True)
         result = convert_nif(str(src), str(dst))
         assert result.get('converted'), result
 
         data = NifFormat.Data()
         with open(str(dst), 'rb') as f:
+            data.inspect(f)
+            f.seek(0)
             data.read(f)
-        # No FlameNode should survive; a BSValueNode with the right addon value
-        # must be present, and NO particle geometry / effect shader embedded.
+        # The grafted flame must ship its particle system(s).
+        psys = [b for b in data.blocks
+                if isinstance(b, NifFormat.NiParticleSystem)]
+        assert psys, 'no particle system grafted at FlameNode'
+        # No BSValueNode/AddonNode substitution remains.
+        assert not any(isinstance(b, NifFormat.BSValueNode) for b in data.blocks), \
+            'legacy MPS AddonNode substitution still present'
+        # No surviving billboard may contain a particle system (spun emitter).
         for b in data.blocks:
-            nm = getattr(b, 'name', b'') or b''
-            assert not (isinstance(b, NifFormat.NiNode)
-                        and not isinstance(b, NifFormat.BSValueNode)
-                        and nm.startswith(b'FlameNode')), 'FlameNode not converted'
-        bvns = [b for b in data.blocks if isinstance(b, NifFormat.BSValueNode)]
-        assert bvns, 'no BSValueNode created'
-        assert any(b.value == expect_value for b in bvns), \
-            f'no AddonNode {expect_value}; got {[b.value for b in bvns]}'
-        assert not any(isinstance(b, NifFormat.NiParticleSystem) for b in data.blocks), \
-            'embedded particle system would crash the engine'
-        # BSXFlags must carry the AddonNode bit (0x10) so the engine spawns it.
+            if isinstance(b, NifFormat.NiBillboardNode):
+                assert not any(isinstance(t, NifFormat.NiParticleSystem)
+                               for t in b.tree()), \
+                    'NiBillboardNode still contains a particle system'
+        # Emitter/gravity object refs must resolve inside the tree.
+        tree_ids = {id(b) for b in data.blocks}
+        for b in data.blocks:
+            for attr in ('emitter_object', 'gravity_object'):
+                ref = getattr(b, attr, None)
+                if ref is not None:
+                    assert id(ref) in tree_ids, f'dangling {attr}'
+        # The flame texture family must appear on an effect shader.
+        texs = b'|'.join(bytes(b.source_texture).lower() for b in data.blocks
+                         if isinstance(b, NifFormat.BSEffectShaderProperty))
+        assert flame_tex in texs, f'{flame_tex} not in shader textures: {texs}'
+        # Host BSX must have the Animated bit so grafted controllers tick.
         bsx = [b for b in data.blocks if isinstance(b, NifFormat.BSXFlags)]
-        assert bsx and (bsx[0].integer_data & 0x10), 'BSX AddonNode bit not set'
+        assert bsx and (bsx[0].integer_data & 0x01), 'BSX Animated bit not set'
 
 
 class TestMultiSphereExpansion:
