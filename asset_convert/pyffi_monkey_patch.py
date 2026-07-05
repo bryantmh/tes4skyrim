@@ -164,16 +164,22 @@ def _install_skyrim_psysdata_serializer(NifFormat):
             (0, '<B'),                                   # Has Normals (particles: no)
             (float(c.x), '<f'), (float(c.y), '<f'), (float(c.z), '<f'),  # Bound center
             (float(self.radius), '<f'),                  # Bound radius
-            (0, '<B'),                                   # Has Vertex Colors
+            (1, '<B'),                                   # Has Vertex Colors (810/837 vanilla)
             (0, '<H'),                                   # Consistency Flags (0=MUTABLE)
-            (0, '<i'),                                   # Additional Data (ref, -1? vanilla=0)
-            (0, '<B'),                                   # Has Radii
+            (-1, '<i'),                                  # Additional Data (NULL ref; 837/837 vanilla = -1.
+                                                         #  0 would REF BLOCK 0 = the root node!)
+            (1, '<B'),                                   # Has Radii (837/837 vanilla)
             (int(getattr(self, 'num_active', 0)), '<H'), # Num Active
             (1 if getattr(self, 'has_sizes', True) else 0, '<B'),          # Has Sizes
             (0, '<B'),                                   # Has Rotations
             (1 if getattr(self, 'has_rotation_angles', True) else 0, '<B'),  # Has Rotation Angles
             (0, '<B'),                                   # Has Rotation Axes
-            (1, '<B'),                                   # Has Texture Indices
+            (0, '<B'),                                   # Has Texture Indices — MUST be 0 when
+                                                         #  Num Subtexture Offsets is 0: the engine does
+                                                         #  rand % count for atlas frame selection →
+                                                         #  EXCEPTION_INT_DIVIDE_BY_ZERO in the emitter
+                                                         #  update.  0/837 vanilla blocks pair 1 with
+                                                         #  count=0 (atlas blocks have count 1..128).
             (0, '<I'),                                   # Num Subtexture Offsets
             (1.0, '<f'),                                 # Aspect Ratio
             (0, '<H'),                                   # Aspect Flags
@@ -185,6 +191,7 @@ def _install_skyrim_psysdata_serializer(NifFormat):
 
     _orig_get_size = PSysData.get_size
     _orig_write = PSysData.write
+    _orig_read = PSysData.read
 
     def get_size(self, data=None):
         if _use_handroll(self, data):
@@ -198,13 +205,65 @@ def _install_skyrim_psysdata_serializer(NifFormat):
             return
         _orig_write(self, stream, data=data)
 
-    # NOTE: read() is intentionally NOT overridden.  The converter only reads
-    # Oblivion-version sources (not #BS202#), which use PyFFI's Oblivion layout
-    # correctly.  Our own Skyrim output is never re-read by the pipeline; if a
-    # tool re-reads it, PyFFI's stock (wrong) layout applies but that only
-    # affects that tool's view, not the on-disk bytes the game engine reads.
+    # Field names in _sk_fields order (parallel to the packed tuples), used by
+    # the Skyrim reader to restore attribute values.
+    _SK_NAMES = [
+        'group_id', 'bs_max_vertices', 'keep_flags', 'compress_flags',
+        'has_vertices', 'bs_data_flags', 'material_crc', 'has_normals',
+        'cx', 'cy', 'cz', 'radius', 'has_vertex_colors',
+        'consistency_flags', 'additional_data', 'has_radii', 'num_active',
+        'has_sizes', 'has_rotations', 'has_rotation_angles', 'has_rotation_axes',
+        'has_texture_indices', 'num_subtexture_offsets', 'aspect_ratio',
+        'aspect_flags', 's2a_a2', 's2a_s1', 's2a_s2', 'has_rotation_speeds',
+    ]
+
+    def read(self, stream, data=None):
+        """Read the authoritative Skyrim #BS202# NiPSysData layout.
+
+        Handles the variable Subtexture Offsets Vector4 array (vanilla fire has
+        real atlas offsets) so vanilla particle NIFs parse for analysis.  The
+        Additional Data ref is pushed onto the link stack so PyFFI's fix_links
+        pass stays consistent."""
+        if not _is_skyrim(data):
+            _orig_read(self, stream, data=data)
+            return
+        fmts = [fmt for _v, fmt in _sk_fields(self)]
+        vals = {}
+        for name, fmt in zip(_SK_NAMES, fmts):
+            n = _struct.calcsize(fmt)
+            vals[name] = _struct.unpack(fmt, stream.read(n))[0]
+        # NOTE: we deliberately read ONLY the fixed 70-byte prefix (matching
+        # get_size).  Vanilla files may carry a Subtexture Offsets array after
+        # it; PyFFI's loader compares get_size (70) to the declared block_size
+        # and seeks past the remainder, so we must NOT consume it here or the
+        # next block starts 16*n bytes early.
+        nsub = int(vals['num_subtexture_offsets'])
+        subs = []
+        # Restore the attributes PyFFI/our code reads back.
+        self.num_vertices = 0
+        self.bs_max_vertices = vals['bs_max_vertices']
+        self.keep_flags = vals['keep_flags']
+        self.compress_flags = vals['compress_flags']
+        self.has_vertices = True
+        self.num_uv_sets = vals['bs_data_flags'] & 0x3F
+        self.center.x, self.center.y, self.center.z = vals['cx'], vals['cy'], vals['cz']
+        self.radius = vals['radius']
+        self.num_active = vals['num_active']
+        self.has_sizes = bool(vals['has_sizes'])
+        self.has_rotation_angles = bool(vals['has_rotation_angles'])
+        if hasattr(self, 'has_subtexture_offset_u_vs'):
+            self.has_subtexture_offset_u_vs = bool(vals['has_texture_indices'])
+            self.num_subtexture_offset_u_vs = nsub
+        # Additional Data ref → link stack (block index or -1).
+        add = vals['additional_data']
+        if hasattr(data, '_link_stack') and data._link_stack is not None:
+            data._link_stack.append(add if add >= 0 else -1)
+        # Stash decoded subtex for analysis tooling.
+        self._sk_subtex_offsets = subs
+
     PSysData.get_size = get_size
     PSysData.write = write
+    PSysData.read = read
 
 
 def apply_patches():

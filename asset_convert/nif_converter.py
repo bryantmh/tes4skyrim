@@ -458,7 +458,66 @@ def _strip_dead_geometry_controllers(geom):
         ctrl = nxt
 
 
-def _process_geometry(strips_or_shape, fix_textures):
+def _resolve_source_texture(tex_rel, src_nif_path):
+    """Map a rewritten texture path (textures\\tes4\\fire\\x\\y.dds) back to the
+    extracted source file next to the source mesh tree
+    (export/<esm>/textures/fire/x/y.dds).  Returns an absolute path or None."""
+    if not src_nif_path:
+        return None
+    norm = src_nif_path.replace('/', os.sep).replace('\\', os.sep)
+    key = os.sep + 'meshes' + os.sep
+    i = norm.lower().rfind(key)
+    if i < 0:
+        return None
+    tex_root = norm[:i] + os.sep + 'textures' + os.sep
+    rel = tex_rel.replace('/', '\\')
+    low = rel.lower()
+    for prefix in ('textures\\tes4\\', 'textures\\'):
+        if low.startswith(prefix):
+            rel = rel[len(prefix):]
+            break
+    cand = tex_root + rel.replace('\\', os.sep)
+    return cand if os.path.isfile(cand) else None
+
+
+def _plan_flipbook_atlas(frame_rels, stats):
+    """Validate NiFlipController frame textures and register an atlas-build
+    job (executed by convert_nif, which knows the output tree).
+
+    Returns (atlas_rel_path, n_padded, n_real) or None if the frames can't be
+    resolved/decoded — the caller then falls back to a static first frame."""
+    from . import flipbook
+    if stats is None or len(frame_rels) < 2:
+        return None
+    src_nif = stats.get('_src_path', '')
+    files = []
+    dims = None
+    for rel in frame_rels:
+        f = _resolve_source_texture(rel, src_nif)
+        if f is None:
+            return None
+        info = flipbook.probe_dds(f)
+        if info is None:
+            return None
+        if dims is None:
+            dims = info[:2]
+        elif info[:2] != dims:
+            return None
+        files.append(f)
+    # Atlas name: <frame dir>_flip.dds beside the frame folder, e.g.
+    # textures\tes4\fire\fireopensmall\FireOpenSmall01.dds
+    #   -> textures\tes4\fire\fireopensmall_flip.dds
+    first = frame_rels[0].replace('/', '\\')
+    parent = first.rsplit('\\', 1)[0]
+    atlas_rel = parent.rstrip('\\') + '_flip.dds'
+    n_real = len(files)
+    n_pad = flipbook.next_pow2(n_real)
+    jobs = stats.setdefault('_flipbook_atlases', {})
+    jobs[atlas_rel.lower()] = {'atlas_rel': atlas_rel, 'files': files}
+    return atlas_rel, n_pad, n_real
+
+
+def _process_geometry(strips_or_shape, fix_textures, stats=None):
     """Convert a NiTriStrips or NiTriShape into a ready Skyrim NiTriShape.
 
     Returns the NiTriShape (may be a new object if input was NiTriStrips).
@@ -596,28 +655,37 @@ def _process_geometry(strips_or_shape, fix_textures):
         sf1.slsf_1_own_emit = 0
 
     # NiFlipController: fire/effect quads animate through multiple texture frames
-    # using NiFlipController on the NiTexturingProperty.  We switch to
-    # BSEffectShaderProperty (needed for additive/effect blending) and use the
-    # first-frame texture as a static source_texture.
-    #
-    # We do NOT port the NiFlipController itself: in Skyrim, NiFlipController
-    # targets NiTexturingProperty which is now gone, so attaching it to the
-    # geometry node causes an invalid-target crash (red triangle).  Skyrim fire
-    # quads use BSEffectShaderPropertyFloatController for UV animation, which
-    # requires artist-tuned parameters we cannot derive from the Oblivion source.
-    # A static first-frame texture is far better than a crashed mesh.
+    # using NiFlipController on the NiTexturingProperty.  NiFlipController is
+    # DEAD in Skyrim (0/17,216 vanilla meshes) — the Skyrim equivalent is a
+    # frame-strip atlas texture + BSEffectShaderPropertyFloatController stepping
+    # "U Offset" (var 6) with stepped (CONST) keys.  We compose the flip frames
+    # into a horizontal-strip DDS (asset_convert/flipbook.py; the job runs in
+    # convert_nif which knows the output tree) and drive the shader with the
+    # controller — this restores the flip-book animation in game AND in
+    # NifSkope (its EffectFloatController is supported; NiPSys chains are not).
+    # Fallback when frames can't be resolved: static first-frame texture.
     if flip_ctrl is not None:
-        # Derive effective texture (first frame)
         srcs = [s for s in flip_ctrl.sources if s is not None and s.file_name]
-        if srcs:
-            pth = srcs[0].file_name
-            effective_path = (_rewrite_tex_path(pth) if fix_textures
-                              else pth.decode('utf-8', errors='replace')).encode('utf-8')
+        frames = []
+        for s in srcs:
+            pth = s.file_name
+            frames.append((_rewrite_tex_path(pth) if fix_textures
+                           else pth.decode('utf-8', errors='replace')))
+        atlas = _plan_flipbook_atlas(frames, stats) if len(frames) >= 2 else None
+        if frames:
+            effective_path = frames[0].encode('utf-8')
         else:
             effective_path = tex_set.textures[0] if diffuse_path else b''
 
         # Build BSEffectShaderProperty for the effect quad
         eff_shader = NifFormat.BSEffectShaderProperty()
+        # PyFFI defaults UV Scale to (0,0) — that collapses EVERY UV to the
+        # texture's top-left texel (usually transparent on flame textures) and
+        # renders the geometry invisible.  Vanilla is offset (0,0), scale (1,1).
+        eff_shader.uv_offset.u = 0.0
+        eff_shader.uv_offset.v = 0.0
+        eff_shader.uv_scale.u = 1.0
+        eff_shader.uv_scale.v = 1.0
         esf1 = eff_shader.shader_flags_1
         esf1.slsf_1_own_emit = 1       # fire is self-illuminated
         esf1.slsf_1_z_buffer_test = 1
@@ -625,6 +693,13 @@ def _process_geometry(strips_or_shape, fix_textures):
         esf2.slsf_2_z_buffer_write = 0  # effect quads don't write to depth
         if has_double_sided:
             esf2.slsf_2_double_sided = 1
+        # SSE renders geometry invisible/black when the shader's Vertex Colors
+        # flag disagrees with the mesh data (vanilla fire quads: data vcolors +
+        # flags2 0x30).  Vertex alpha rides along (Oblivion uses vcol alpha to
+        # dim layered flame quads, e.g. 0.25 on FireOpenLarge:1).
+        if getattr(ts.data, 'has_vertex_colors', False):
+            esf2.slsf_2_vertex_colors = 1
+            esf1.slsf_1_vertex_alpha = 1
         eff_shader.source_texture = effective_path
         eff_shader.texture_clamp_mode = 3
         # emissive_multiple defaults to 0.0 → the flame quad renders BLACK.
@@ -634,6 +709,38 @@ def _process_geometry(strips_or_shape, fix_textures):
         eff_shader.emissive_color.g = 1.0
         eff_shader.emissive_color.b = 1.0
         eff_shader.emissive_color.a = 1.0
+
+        if atlas is not None:
+            atlas_path, n_pad, n_real = atlas
+            eff_shader.source_texture = atlas_path.encode('utf-8')
+            eff_shader.uv_scale.u = 1.0 / n_pad   # show one frame of the strip
+            # Frame duration: NiFlipController.delta, else spread over its
+            # cycle, else the Oblivion default ~15fps.
+            delta = float(getattr(flip_ctrl, 'delta', 0.0) or 0.0)
+            if delta <= 0.0:
+                span = float(flip_ctrl.stop_time) - float(flip_ctrl.start_time)
+                delta = span / n_real if span > 0 else 1.0 / 15.0
+            fc = NifFormat.BSEffectShaderPropertyFloatController()
+            fc.flags = 0x48               # Active | Compute Scaled Time, loop
+            fc.frequency = 1.0
+            fc.phase = 0.0
+            fc.start_time = 0.0
+            fc.stop_time = n_real * delta
+            fc.type_of_controlled_variable = 6   # U Offset
+            fc.target = eff_shader
+            interp = NifFormat.NiFloatInterpolator()
+            interp.float_value = 0.0
+            fdata = NifFormat.NiFloatData()
+            kg = fdata.data
+            kg.interpolation = 5          # CONST — stepped frames (no smear)
+            kg.num_keys = n_real
+            kg.keys.update_size()
+            for k in range(n_real):
+                kg.keys[k].time = k * delta
+                kg.keys[k].value = k / float(n_pad)
+            interp.data = fdata
+            fc.interpolator = interp
+            eff_shader.controller = fc
 
         ts.bs_properties[0] = eff_shader
     else:
@@ -807,13 +914,147 @@ def _convert_flame_nodes(root_node, src_path):
     _visit(root_node)
 
     # Flag the root so the engine spawns the AddonNode particle systems.
+    # If the root has no BSXFlags (static "fake" candle without collision),
+    # create one — without the Addon bit the engine ignores the BSValueNodes.
     if count and hasattr(root_node, 'extra_data_list'):
         for ed in root_node.extra_data_list:
             if isinstance(ed, NifFormat.BSXFlags):
                 ed.integer_data |= _BSX_ADDON_BIT
                 break
+        else:
+            bsx = NifFormat.BSXFlags()
+            bsx.name = b'BSX'
+            bsx.integer_data = _BSX_ADDON_BIT
+            root_node.num_extra_data_list += 1
+            root_node.extra_data_list.update_size()
+            for i in range(root_node.num_extra_data_list - 1, 0, -1):
+                root_node.extra_data_list[i] = root_node.extra_data_list[i - 1]
+            root_node.extra_data_list[0] = bsx
 
     return count
+
+
+# Vanilla Skyrim particle-modifier `order` values (slighthousefire.nif census).
+# The engine processes modifiers in ascending order; the BS* rewrites and the
+# injected LOD must slot into the same order bands or the system misbehaves.
+_PSYS_ORDER = {
+    'NiPSysAgeDeathModifier': 0,
+    'BSPSysLODModifier': 1,
+    'NiPSysEmitter': 1000,          # any *Emitter
+    'NiPSysSpawnModifier': 1000,
+    'BSPSysSimpleColorModifier': 3000,
+    'NiPSysRotationModifier': 3000,
+    'BSPSysScaleModifier': 3000,
+    'NiPSysGravityModifier': 4000,
+    'NiPSysPositionModifier': 6000,
+    'NiPSysBoundUpdateModifier': 7000,
+}
+
+
+def _psys_order_for(mod):
+    tn = type(mod).__name__
+    if tn in _PSYS_ORDER:
+        return _PSYS_ORDER[tn]
+    if tn.endswith('Emitter'):
+        return 1000
+    return 3000
+
+
+def _make_scale_ramp_from_growfade(gf):
+    """Build a 60-entry BSPSysScaleModifier ramp reproducing a
+    NiPSysGrowFadeModifier's grow-in/hold/fade-out over the particle lifetime.
+
+    grow_time/fade_time are absolute seconds; without the emitter life span we
+    treat them as fractions of a unit lifetime (Oblivion fire values are small,
+    e.g. grow 0.0 fade 0.2).  Vanilla ramps peak ~1.0 and taper to ~0.1."""
+    n = 60
+    grow = max(float(getattr(gf, 'grow_time', 0.0)), 0.0)
+    fade = max(float(getattr(gf, 'fade_time', 0.2)), 0.001)
+    base = float(getattr(gf, 'base_scale', 1.0)) or 1.0
+    # Interpret grow/fade as fractions of lifetime (clamp to sane band).
+    grow_frac = min(max(grow, 0.0), 0.9)
+    fade_frac = min(max(fade, 0.05), 0.9)
+    scales = []
+    for i in range(n):
+        t = i / (n - 1)
+        if grow_frac > 0 and t < grow_frac:
+            s = t / grow_frac
+        elif t > 1.0 - fade_frac:
+            s = max((1.0 - t) / fade_frac, 0.1)
+        else:
+            s = 1.0
+        scales.append(base * s)
+    return scales
+
+
+def _skyrimize_modifiers(node):
+    """Rewrite a NiParticleSystem's modifier list to the Skyrim vocabulary so
+    the SSE particle engine actually drives it (else particles are invisible).
+
+    - NiPSysGrowFadeModifier → BSPSysScaleModifier (60-entry scale ramp)
+    - NiPSysColorModifier    → BSPSysSimpleColorModifier
+    - inject BSPSysLODModifier (universal in vanilla) if absent
+    - keep emitter/spawn/rotation/gravity/position/bound-update/age-death as-is
+    - set NiPSysModifier Name/Order/Target/Active on every modifier
+    """
+    old = [m for m in node.modifiers if m is not None]
+    new = []
+    have_lod = any(isinstance(m, NifFormat.BSPSysLODModifier) for m in old)
+    have_age = any(isinstance(m, NifFormat.NiPSysAgeDeathModifier) for m in old)
+
+    for m in old:
+        if isinstance(m, NifFormat.NiPSysGrowFadeModifier):
+            sm = NifFormat.BSPSysScaleModifier()
+            ramp = _make_scale_ramp_from_growfade(m)
+            sm.num_floats = len(ramp)
+            sm.floats.update_size()
+            for i, v in enumerate(ramp):
+                sm.floats[i] = v
+            new.append(sm)
+        elif isinstance(m, NifFormat.NiPSysColorModifier):
+            cm = NifFormat.BSPSysSimpleColorModifier()
+            cm.fade_in_percent = 0.1
+            cm.fade_out_percent = 0.25
+            cm.color_1_start_percent = 0.0
+            cm.color_1_end_percent = 0.15
+            cm.color_2_start_percent = 1.0
+            cm.color_2_end_percent = 0.5
+            # Fire palette: warm→bright→cool, alpha in→hold→out.
+            cols = [(1.0, 0.75, 0.5, 0.0), (1.0, 1.0, 1.0, 1.0), (1.0, 0.6, 0.3, 0.0)]
+            for i, (r, g, b, a) in enumerate(cols):
+                cm.colors[i].r = r; cm.colors[i].g = g
+                cm.colors[i].b = b; cm.colors[i].a = a
+            new.append(cm)
+        else:
+            new.append(m)
+
+    if not have_lod:
+        lod = NifFormat.BSPSysLODModifier()
+        lod.uknown_float_1 = 0.033333
+        lod.uknown_float_2 = 0.233333
+        lod.uknown_float_3 = 0.2
+        lod.uknown_float_4 = 1.0
+        new.append(lod)
+    if not have_age:
+        age = NifFormat.NiPSysAgeDeathModifier()
+        new.append(age)
+
+    # Sort by vanilla processing order (stable).
+    new.sort(key=_psys_order_for)
+
+    # Set NiPSysModifier common fields on each.
+    for i, m in enumerate(new):
+        tn = type(m).__name__
+        if not (getattr(m, 'name', None) or b''):
+            m.name = ('%s:%d' % (tn, i)).encode('latin1')
+        m.order = _psys_order_for(m)
+        m.target = node
+        m.active = True
+
+    node.num_modifiers = len(new)
+    node.modifiers.update_size()
+    for i, m in enumerate(new):
+        node.modifiers[i] = m
 
 
 def _convert_particle_system(node, fix_textures):
@@ -873,14 +1114,30 @@ def _convert_particle_system(node, fix_textures):
         fresh.has_normals = False
         node.data = fresh
 
-    # Fix version-conditional fields on kept modifiers.
-    # NiPSysGrowFadeModifier gains base_scale (float) at UV2>=34.  The field
-    # defaults to 0.0 which makes all particles invisible (scale = 0 × grow).
-    # Set to 1.0 so particles start at full size and grow/fade correctly.
-    for mod in node.modifiers:
-        if mod is not None and isinstance(mod, NifFormat.NiPSysGrowFadeModifier):
-            if hasattr(mod, 'base_scale'):
-                mod.base_scale = 1.0
+    # Rebuild the modifier chain to the Skyrim vocabulary.  Oblivion-era
+    # NiPSysGrowFadeModifier / NiPSysColorModifier are valid block types but the
+    # SSE particle engine does NOT drive them (it expects the BS* equivalents),
+    # so particles spawn at scale 0 / alpha 0 = INVISIBLE.  Every vanilla
+    # Skyrim particle system also carries a BSPSysLODModifier (498/498 census)
+    # without which the system culls at all distances.  _skyrimize_modifiers
+    # converts GrowFade→BSPSysScaleModifier, Color→BSPSysSimpleColorModifier,
+    # injects BSPSysLODModifier, and sets vanilla modifier `order` values.
+    _skyrimize_modifiers(node)
+
+    # Fix the emitter/update controller flags to the vanilla value.  Oblivion
+    # ships flags=0x08 (Active only); vanilla Skyrim uses 0x48/0x4c (Active |
+    # Compute Scaled Time, cycle bits preserved).  The Compute-Scaled-Time bit
+    # (0x40) is default-true in Skyrim and drives the emitter's time base —
+    # without it the birth-rate interpolator can evaluate to 0.  OR the bit in
+    # rather than overwrite: Oblivion's NiPSysUpdateCtlr carries CLAMP cycle
+    # bits (0x0c) that vanilla keeps (campfire01burning UpdateCtlr = 0x4c).
+    ctrl = node.controller
+    while ctrl is not None:
+        if isinstance(ctrl, (NifFormat.NiPSysEmitterCtlr,
+                             NifFormat.NiPSysUpdateCtlr,
+                             NifFormat.NiPSysModifierActiveCtlr)):
+            ctrl.flags |= 0x48
+        ctrl = getattr(ctrl, 'next_controller', None)
 
     # Rewrite paths and derive effective texture from NiFlipController (first frame)
     # if present, else use the diffuse from NiTexturingProperty.
@@ -901,21 +1158,48 @@ def _convert_particle_system(node, fix_textures):
     else:
         effective_path = b''
 
-    # Build BSEffectShaderProperty (Skyrim particle shader)
+    # Build BSEffectShaderProperty (Skyrim particle shader) — flags match
+    # vanilla fire (slighthousefire.nif Fireball): flags1 = z_buffer_test only,
+    # flags2 = vertex_colors only; emissive_multiple 1.5 (fire glows; vanilla
+    # uses 1.25–1.5).  soft_effect is NOT set on vanilla fire particle shaders.
     shader = NifFormat.BSEffectShaderProperty()
-    sf1 = shader.shader_flags_1
-    sf1.slsf_1_z_buffer_test = 1
-    sf1.slsf_1_soft_effect = 1          # soft (depth-fade) particle blending
+    # PyFFI defaults UV Scale to (0,0) — that collapses EVERY particle UV to
+    # the texture's top-left texel (transparent on flame textures) = invisible
+    # particles.  Vanilla: offset (0,0), scale (1,1).  THIS was the fire-
+    # invisibility endgame bug (2026-07-05).
+    shader.uv_offset.u = 0.0
+    shader.uv_offset.v = 0.0
+    shader.uv_scale.u = 1.0
+    shader.uv_scale.v = 1.0
+    shader.shader_flags_1.slsf_1_z_buffer_test = 1
     sf2 = shader.shader_flags_2
     sf2.slsf_2_z_buffer_write = 0       # particles don't write to depth buffer
-    sf2.slsf_2_vertex_colors = 1        # most particles modulate colour per-vertex
+    sf2.slsf_2_vertex_colors = 1        # particles modulate colour per-vertex
     shader.source_texture = effective_path
-    shader.texture_clamp_mode = 3       # WRAP_S | WRAP_T
-    shader.emissive_multiple = 1.0      # default 0 = black particles
+    # u32 packs clamp mode (low byte, 3 = WRAP_S|WRAP_T) with lighting
+    # influence (byte 1, 0xFF) — every vanilla fire effect shader uses 0xFF03.
+    shader.texture_clamp_mode = 0xFF03
+    shader.emissive_multiple = 1.5
+    shader.emissive_color.r = 1.0
+    shader.emissive_color.g = 1.0
+    shader.emissive_color.b = 1.0
+    shader.emissive_color.a = 1.0
 
     node.bs_properties[0] = shader
-    if alpha_prop is not None:
-        node.bs_properties[1] = alpha_prop
+    if alpha_prop is None:
+        # Vanilla particles always have a NiAlphaProperty (additive: src=SRC_ALPHA
+        # dst=ONE, flags 0x100d).  Without it the particles don't alpha-blend.
+        alpha_prop = NifFormat.NiAlphaProperty()
+        alpha_prop.flags = 0x100d
+    else:
+        # Oblivion sources often SHARE one NiAlphaProperty across several
+        # particle systems.  Vanilla Skyrim never does — every PS carries its
+        # own shader+alpha pair.  Clone so each system owns its alpha block.
+        cloned = NifFormat.NiAlphaProperty()
+        cloned.flags = alpha_prop.flags
+        cloned.threshold = alpha_prop.threshold
+        alpha_prop = cloned
+    node.bs_properties[1] = alpha_prop
 
 
 def _walk_node(parent, node, fix_textures, stats):
@@ -934,6 +1218,14 @@ def _walk_node(parent, node, fix_textures, stats):
     # causing the "mispositioned" visual bug.  Strip them.
     node_name = getattr(node, 'name', b'') or b''
     if node_name.startswith(b'SecretBigger') or node_name.startswith(b'Secret Bigger'):
+        return None
+
+    # EditorMarker geometry: Oblivion ships editor-only marker meshes (e.g.
+    # the pyramid inside fire NIFs) hidden at runtime via the node's hidden
+    # flag.  Our conversion clobbers node flags with NIF_FLAGS (visible), so
+    # the marker shows in game as an untextured black shape.  Vanilla Skyrim
+    # NIFs don't carry editor markers in these objects — strip them.
+    if node_name.startswith(b'EditorMarker'):
         return None
 
     # NiParticleSystem: convert to Skyrim-compatible format.
@@ -964,7 +1256,7 @@ def _walk_node(parent, node, fix_textures, stats):
 
     # Geometry conversion
     if isinstance(node, (NifFormat.NiTriStrips, NifFormat.NiTriShape)):
-        ts = _process_geometry(node, fix_textures)
+        ts = _process_geometry(node, fix_textures, stats)
         # Only count as strips_fixed if we actually converted (not kept as NiTriStrips)
         if isinstance(node, NifFormat.NiTriStrips) and not isinstance(ts, NifFormat.NiTriStrips):
             stats['strips_fixed'] += 1
@@ -1013,14 +1305,35 @@ def _walk_node(parent, node, fix_textures, stats):
 
 
 
+def _tree_is_animated(root):
+    """True if anything in the tree needs per-frame controller updates:
+    a NiParticleSystem, or any block with a NiTimeController attached.
+
+    Vanilla census (400 particle-bearing Skyrim meshes): 399/400 set BSXFlags
+    bit 0 (Animated) — the exception is a trailer camera rig.  Without bit 0
+    the engine never ticks the controllers, so particles never emit (the file
+    is valid but the fire/effect is INVISIBLE)."""
+    for b in root.tree():
+        if isinstance(b, NifFormat.NiParticleSystem):
+            return True
+        if getattr(b, 'controller', None) is not None:
+            return True
+    return False
+
+
 def _add_bsx_flags(root, has_constraints=False):
-    """Add BSXFlags extra data to root if collision is present anywhere in the tree.
+    """Add BSXFlags extra data to root if collision is present anywhere in the
+    tree, or if the tree is animated (particles / time controllers).
 
     Value selection (priority order):
       constrained dynamic (signs)  → 0xCA  BSX_FLAGS_CONSTRAINED
       animated (doors/activators)  → 0x8B  BSX_FLAGS_ANIMATED
       dynamic clutter (mass > 0)   → 0xC2  BSX_FLAGS_DYNAMIC
       static                       → 0x82  BSX_FLAGS_STATIC
+    plus bit 0 (Animated) OR'd in whenever the tree has particle systems or
+    time controllers (0x82→0x83, 0xC2→0xC3 — both appear in the vanilla
+    census).  With no collision at all, animated trees get plain 0x01 (the
+    most common vanilla value for collisionless particle meshes).
 
     The DYNAMIC bit (0x40) is critical for any object with mass > 0:
     without it Skyrim uses a coarse bounding sphere for the activation/grab
@@ -1055,25 +1368,34 @@ def _add_bsx_flags(root, has_constraints=False):
                     return True
         return False
 
+    tree_animated = _tree_is_animated(root)
     if not _has_any_collision(root):
-        return
+        if not tree_animated:
+            return
+        bsx_value = 0x01  # Animated only — vanilla collisionless particle meshes
+    else:
+        root_is_animated = (
+            root.controller is not None and
+            isinstance(root.controller, NifFormat.NiControllerManager)
+        )
+        if has_constraints:
+            bsx_value = BSX_FLAGS_CONSTRAINED
+        elif root_is_animated:
+            bsx_value = BSX_FLAGS_ANIMATED
+        elif _has_dynamic_body(root):
+            bsx_value = BSX_FLAGS_DYNAMIC
+        else:
+            bsx_value = BSX_FLAGS_STATIC
+        if tree_animated:
+            bsx_value |= 0x01  # engine must tick controllers/particles
+
     if hasattr(root, 'extra_data_list'):
         for ed in root.extra_data_list:
             if isinstance(ed, NifFormat.BSXFlags):
-                return  # Already present
-
-    root_is_animated = (
-        root.controller is not None and
-        isinstance(root.controller, NifFormat.NiControllerManager)
-    )
-    if has_constraints:
-        bsx_value = BSX_FLAGS_CONSTRAINED
-    elif root_is_animated:
-        bsx_value = BSX_FLAGS_ANIMATED
-    elif _has_dynamic_body(root):
-        bsx_value = BSX_FLAGS_DYNAMIC
-    else:
-        bsx_value = BSX_FLAGS_STATIC
+                # Already present — just make sure the Animated bit is right.
+                if tree_animated:
+                    ed.integer_data |= 0x01
+                return
 
     bsx = NifFormat.BSXFlags()
     bsx.name = b'BSX'
@@ -1523,6 +1845,7 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         'tangents_injected': 0,
         'bones_remapped': 0,
         'textures_fixed': 0,
+        '_src_path': str(src_path),   # for flip-book frame resolution
     }
 
     # Detect animation (affects motion_system choice in collision_handler)
@@ -1594,15 +1917,80 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         if root is None:
             continue
 
-        # Wrap NiBillboardNode roots in a plain NiNode parent
+        # NiBillboardNode roots.  A NiBillboardNode re-orients its ENTIRE
+        # subtree to face the camera every frame.  For a pure billboard sprite
+        # that's fine, but Oblivion fire/effect NIFs put the particle-system
+        # emitters under the billboard root too — the spinning transform then
+        # scrambles world-space particle emission and the system renders
+        # nowhere (invisible flames).  Vanilla Skyrim keeps particle emitters
+        # under a PLAIN node.  So: if the billboard subtree contains any
+        # NiParticleSystem, demote the root to a plain NiNode (the individual
+        # particles self-billboard; static effect quads keep a fixed
+        # orientation, which is acceptable).  Otherwise keep the billboard and
+        # just wrap it so the root can become a BSFadeNode.
         if isinstance(root, NifFormat.NiBillboardNode):
-            wrapper = NifFormat.NiNode()
-            wrapper.flags = NIF_FLAGS
-            wrapper.num_children = 1
-            wrapper.children.update_size()
-            wrapper.children[0] = root
-            data.roots[i] = wrapper
-            root = wrapper
+            has_psys = any(isinstance(b, NifFormat.NiParticleSystem)
+                           for b in root.tree())
+            if has_psys:
+                plain = NifFormat.NiNode()
+                plain.name = root.name
+                plain.flags = NIF_FLAGS
+                plain.translation = root.translation
+                plain.rotation = root.rotation
+                plain.scale = root.scale
+                plain.num_children = root.num_children
+                plain.children.update_size()
+                for j, c in enumerate(root.children):
+                    plain.children[j] = c
+                plain.num_extra_data_list = root.num_extra_data_list
+                plain.extra_data_list.update_size()
+                for j, ed in enumerate(root.extra_data_list):
+                    plain.extra_data_list[j] = ed
+                if root.controller is not None:
+                    plain.controller = root.controller
+                # The root must not billboard (it would spin the particle
+                # emitters), but the flat fire QUADS still need to face the
+                # camera — a fixed-facing quad is edge-on/backfacing from most
+                # angles in game (fires looked invisible).  Vanilla pattern
+                # (campfire01burning): BSFadeNode → NiBillboardNode "Plane05"
+                # → NiTriShape.  Wrap each direct geometry child in a child
+                # NiBillboardNode carrying the source root's billboard mode.
+                bb_mode = int(getattr(root, 'billboard_mode', 1)) or 1
+                for j in range(len(plain.children)):
+                    c = plain.children[j]
+                    if isinstance(c, (NifFormat.NiTriShape,
+                                      NifFormat.NiTriStrips)):
+                        bb = NifFormat.NiBillboardNode()
+                        bb.name = (c.name or b'') + b'-Billboard'
+                        bb.flags = NIF_FLAGS
+                        bb.billboard_mode = bb_mode
+                        # Billboard axis convention differs between engines:
+                        # Oblivion ROTATE_ABOUT_UP keeps local +Y up and faces
+                        # local +Z at the camera (fire quads are authored flat
+                        # in XY, height along +Y, identity node rotation).
+                        # Skyrim keeps local +Z up and faces local ±Y — the
+                        # SAME flat-XY quad needs a -90°-about-X node rotation
+                        # (vanilla campfire01burning Plane05: rot maps local
+                        # Y→world Z, local Z→world -Y).  Identity here leaves
+                        # the quad lying flat, spinning about Z = edge-on from
+                        # every angle = fire invisible in game.
+                        bb.rotation.m_11 = 1.0; bb.rotation.m_12 = 0.0; bb.rotation.m_13 = 0.0
+                        bb.rotation.m_21 = 0.0; bb.rotation.m_22 = 0.0; bb.rotation.m_23 = 1.0
+                        bb.rotation.m_31 = 0.0; bb.rotation.m_32 = -1.0; bb.rotation.m_33 = 0.0
+                        bb.num_children = 1
+                        bb.children.update_size()
+                        bb.children[0] = c
+                        plain.children[j] = bb
+                data.roots[i] = plain
+                root = plain
+            else:
+                wrapper = NifFormat.NiNode()
+                wrapper.flags = NIF_FLAGS
+                wrapper.num_children = 1
+                wrapper.children.update_size()
+                wrapper.children[0] = root
+                data.roots[i] = wrapper
+                root = wrapper
 
         # Convert NiNode root → BSFadeNode (skip for worn armor: they use NiNode)
         if type(root).__name__ == 'NiNode' and not _is_worn_armor:
@@ -2076,6 +2464,26 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         return result
 
     stats = _convert_nif(data, fix_textures=fix_textures, src_path=str(src_path))
+
+    # Build flip-book atlas textures planned by _process_geometry (frame strip
+    # for BSEffectShaderPropertyFloatController U-Offset animation).  Output
+    # goes into the textures/ tree beside the destination meshes/ tree.
+    _atlas_jobs = stats.pop('_flipbook_atlases', {})
+    if _atlas_jobs:
+        from . import flipbook as _flipbook
+        _dstn = str(dst_path).replace('/', os.sep).replace('\\', os.sep)
+        _k = os.sep + 'meshes' + os.sep
+        _i = _dstn.lower().rfind(_k)
+        if _i >= 0:
+            _out_root = _dstn[:_i] + os.sep
+            for _job in _atlas_jobs.values():
+                _out = _out_root + _job['atlas_rel'].replace('\\', os.sep)
+                if not os.path.isfile(_out):
+                    try:
+                        _flipbook.build_flip_atlas(_job['files'], _out)
+                    except Exception:
+                        pass  # shader falls back to sampling a missing atlas;
+                              # frames were pre-validated so this is unexpected
 
     # Convert FlameNode* markers into BSValueNode Master-Particle-System addon
     # spawn points (candle flame / torch fire), the way vanilla Skyrim lights

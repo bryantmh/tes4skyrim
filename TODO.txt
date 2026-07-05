@@ -62,6 +62,11 @@ Major Issues:
 		[WR] weapons\iron\bow.nif
 		[WR] weapons\silver\bow.nif
 
+	8 - Crash on opening inventory with potions
+	POSSIBLE RELEVANT OBJECTS:
+	RCX: (AlchemyItem*) "Weak Poison of Debilitation" [0x110984AB] ("Oblivion.esm") "Weak Poison of Debilitation"
+	RSP+1F8: (InventoryMenu*)
+	RSP+758: (`anonymous namespace'::DejaGFxLogger*)
 
 Minor Issues:
 		NPCs should have barter/training

@@ -1632,6 +1632,27 @@ def hoist_collision(root):
     return False
 
 
+def _collect_psys_referenced_nodes(root):
+    """Return the set of id()s of nodes referenced by particle-system modifiers
+    (NiPSysGravityModifier.gravity_object, *Emitter.emitter_object).
+
+    These are empty marker NiNodes (e.g. 'Gravity', 'SparkGravity') that the
+    particle physics point at; removing them dangles the reference and breaks
+    the simulation (invisible particles)."""
+    refs = set()
+    for block in getattr(root, 'tree', lambda: [])():
+        tn = type(block).__name__
+        if tn == 'NiPSysGravityModifier':
+            go = getattr(block, 'gravity_object', None)
+            if go is not None:
+                refs.add(id(go))
+        elif tn.endswith('Emitter') and 'Ctlr' not in tn:
+            eo = getattr(block, 'emitter_object', None)
+            if eo is not None:
+                refs.add(id(eo))
+    return refs
+
+
 def remove_empty_collision_nodes(root):
     """Remove empty NiNode children that were collision containers.
 
@@ -1639,17 +1660,24 @@ def remove_empty_collision_nodes(root):
     'Collision045') is left empty: no children, no collision_object.  Skyrim
     processes every child of BSFadeNode and an unexpected empty NiNode can
     trigger crashes.  This function compacts the children array in-place.
+
+    Nodes referenced by particle-system modifiers (Gravity/emitter objects)
+    are PRESERVED even when empty — dropping them dangles the reference and the
+    particle system stops rendering.
     """
     if not hasattr(root, 'children') or not isinstance(root, NifFormat.NiNode):
         return
+    protected = _collect_psys_referenced_nodes(root)
     keep = []
     for child in root.children:
         if child is None:
             continue
-        # Remove bare NiNodes with no children and no collision
+        # Remove bare NiNodes with no children and no collision — unless a
+        # particle modifier references them.
         if (type(child).__name__ in ('NiNode',) and
                 child.num_children == 0 and
-                getattr(child, 'collision_object', None) is None):
+                getattr(child, 'collision_object', None) is None and
+                id(child) not in protected):
             continue
         keep.append(child)
     if len(keep) < root.num_children:

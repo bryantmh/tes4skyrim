@@ -819,11 +819,72 @@ class TestParticleSystemConversion:
         assert psd_sizes, 'no NiPSysData block in converted fireopensmall'
         for sz in psd_sizes:
             assert sz == 70, f'NiPSysData block_size {sz} != vanilla 70 (layout bug)'
-        # NiPSysGrowFadeModifier, if kept, must be the correct 29-byte Skyrim
-        # size (base_scale present) — a 25-byte block means base_scale dropped.
+        # Modifier vocabulary must be Skyrim's — else the SSE particle engine
+        # doesn't drive the system and particles are invisible.  Vanilla uses
+        # BSPSysLODModifier (universal), BSPSysScaleModifier (not GrowFade),
+        # BSPSysSimpleColorModifier (not NiPSysColorModifier).
+        present = set(bt)
+        assert 'BSPSysLODModifier' in present, 'missing BSPSysLODModifier (system culls)'
+        assert 'NiPSysGrowFadeModifier' not in present, \
+            'NiPSysGrowFadeModifier not converted to BSPSysScaleModifier (invisible)'
+        assert 'NiPSysColorModifier' not in present, \
+            'NiPSysColorModifier not converted to BSPSysSimpleColorModifier'
+        assert 'BSPSysScaleModifier' in present, 'no BSPSysScaleModifier'
+        # The root MUST carry BSXFlags with bit 0 (Animated) — without it the
+        # engine never ticks the particle controllers and the fire is
+        # invisible (vanilla census: 399/400 particle meshes set bit 0).
+        # fireopensmall has no collision, so the vanilla value is plain 0x01.
+        # BSXFlags sits before any NiPSysData so a partial read reaches it.
+        assert 'BSXFlags' in present, 'converted particle mesh has no BSXFlags'
+        raw = open(str(dst), 'rb').read()
+        idx = raw.find(b'BSX\x00') if b'BSX\x00' in raw else raw.find(b'BSX')
+        assert idx != -1, 'BSX name string not found'
+        # BSXFlags block body = name string index (u32) + integer_data (u32);
+        # simplest robust check: locate the block via header offsets.
+        offs = []
+        pos = hdr.get_size(data=data)  # first block starts right after header
         for i in range(hdr.num_blocks):
-            if bt[bti[i]] == 'NiPSysGrowFadeModifier':
-                assert bsz[i] == 29, f'GrowFade block_size {bsz[i]} != 29'
+            offs.append(pos)
+            pos += bsz[i]
+        bsx_i = next(i for i in range(hdr.num_blocks) if bt[bti[i]] == 'BSXFlags')
+        import struct as _struct
+        _, bsx_val = _struct.unpack_from('<iI', raw, offs[bsx_i])
+        assert bsx_val & 0x01, \
+            f'BSXFlags 0x{bsx_val:x} missing Animated bit — particles never tick'
+        # NiPSysData field bytes must match the vanilla census (837 blocks):
+        #  - Has Texture Indices (off 46) MUST be 0 when Num Subtexture Offsets
+        #    (off 47) is 0: the engine does rand % count for atlas frame
+        #    selection → EXCEPTION_INT_DIVIDE_BY_ZERO in the emitter update.
+        #    0/837 vanilla blocks pair flag=1 with count=0.
+        #  - Additional Data (off 35) must be -1 (NULL ref; 0 would reference
+        #    block 0 = the root node).  Has VColors (32) = 1, Has Radii (39) = 1.
+        for i in range(hdr.num_blocks):
+            if bt[bti[i]] != 'NiPSysData':
+                continue
+            o = offs[i]
+            has_vcol = raw[o + 32]
+            (add_data,) = _struct.unpack_from('<i', raw, o + 35)
+            has_radii = raw[o + 39]
+            has_ti = raw[o + 46]
+            (n_subtex,) = _struct.unpack_from('<I', raw, o + 47)
+            assert not (has_ti and n_subtex == 0), \
+                'HasTexIndices=1 with 0 subtex offsets → div-by-zero in emitter'
+            assert add_data == -1, f'AdditionalData ref {add_data} != -1 (null)'
+            assert has_vcol == 1 and has_radii == 1, \
+                f'HasVColors={has_vcol} HasRadii={has_radii} != vanilla (1,1)'
+        # Every effect shader must have a NON-ZERO UV Scale.  PyFFI defaults
+        # UV Scale to (0,0), which collapses all UVs to the texture's top-left
+        # texel (transparent on flame textures) → geometry/particles render
+        # INVISIBLE.  Vanilla is (1,1); flip-book atlases use (1/N, 1).
+        for i in range(hdr.num_blocks):
+            if bt[bti[i]] != 'BSEffectShaderProperty':
+                continue
+            o = offs[i]
+            (nextra,) = _struct.unpack_from('<I', raw, o + 4)
+            q = o + 12 + 4 * nextra + 8 + 8  # flags + uv_offset
+            su, sv = _struct.unpack_from('<2f', raw, q)
+            assert su > 0 and sv > 0, \
+                f'effect shader block[{i}] UV Scale ({su},{sv}) — zero = invisible'
 
 class TestFlameNodeConversion:
     """FlameNode markers → BSValueNode Master-Particle-System spawn points.
