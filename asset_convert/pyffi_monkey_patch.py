@@ -94,6 +94,118 @@ def _apply_nifformat_patches(NifFormat):
         if _attr.name in ('unknown_short_1', 'unknown_short_2'):
             _attr.vercond = _psy_fixed_expr
 
+    # ------------------------------------------------------------------
+    # Patch 4: hand-rolled NiPSysData layout for Skyrim (BSStream 83)
+    # ------------------------------------------------------------------
+    _install_skyrim_psysdata_serializer(NifFormat)
+
+
+# ---------------------------------------------------------------------------
+# Patch 4 implementation: correct Skyrim NiPSysData binary layout
+# ---------------------------------------------------------------------------
+# PyFFI 2.2.3's NiPSysData attribute list is the WRONG (older Bethesda) field
+# arrangement for Skyrim: it is missing Material CRC (4), Consistency Flags (2),
+# Additional Data ref (4), Has Texture Indices (1) and Aspect Flags (2), and
+# invents spurious unknown_byte_1/unknown_link/unknown_short_3/unknown_byte_4
+# fields.  The net size is 66 bytes for an empty block where real Skyrim is 70,
+# and the field ORDER is wrong regardless of size — so the SSE engine misreads
+# every following block (BSEffectShaderMaterial buffer-overrun CTD).
+#
+# We cannot reorder PyFFI's cached attribute list at runtime, so we override
+# NiPSysData.get_size / read / write to emit the authoritative BSStream-83
+# layout (derived from nif.xml 0.10 #BS202# path, verified == 70 bytes on the
+# vanilla census).  Only the num_vertices==0 (empty particle pool) case that
+# our converter produces is hand-rolled; anything with real per-particle arrays
+# falls back to PyFFI (Oblivion source reads still use PyFFI's Oblivion layout,
+# which is separately correct because Oblivion isn't #BS202#).
+
+_SKYRIM_VER = 0x14020007
+
+
+def _install_skyrim_psysdata_serializer(NifFormat):
+    import struct as _struct
+
+    PSysData = NifFormat.NiPSysData
+
+    def _is_skyrim(data):
+        return data is not None and getattr(data, 'version', 0) == _SKYRIM_VER
+
+    def _use_handroll(self, data):
+        """Hand-roll the NiPSysData layout whenever writing a Skyrim NIF.
+
+        Our converter only ever emits NiPSysData with an EMPTY inline particle
+        pool (Skyrim generates particles at runtime from bs_max_vertices), so
+        the hand-rolled 70-byte #BS202# layout is always the correct output.
+        PyFFI's own NiPSysData layout is structurally wrong for Skyrim (missing
+        Material CRC / Consistency Flags / Additional Data / Has Texture
+        Indices / Aspect Flags), so we never defer to it for Skyrim output."""
+        return _is_skyrim(data)
+
+    def _sk_fields(self):
+        """Return the ordered list of (value, struct_fmt) for the Skyrim
+        BSStream-83 NiPSysData layout, num_vertices==0 (empty pool)."""
+        # BS Data Flags: low 6 bits = num UV sets, bit 12 (0x1000) = has tangents.
+        # Particle data has neither → 0.  PyFFI stores these as num_uv_sets +
+        # extra_vectors_flags bytes; recombine defensively.
+        bs_data_flags = int(getattr(self, 'num_uv_sets', 0)) & 0x3F
+        c = self.center
+        # BS Max Vertices: the particle-pool size.  num_vertices and
+        # bs_max_vertices alias the same slot; take whichever is set, min 75.
+        pool = max(int(getattr(self, 'num_vertices', 0)),
+                   int(getattr(self, 'bs_max_vertices', 0)), 75)
+        return [
+            (0, '<i'),                                   # Group ID
+            (pool, '<H'),                                # BS Max Vertices
+            (int(getattr(self, 'keep_flags', 0)), '<B'), # Keep Flags
+            (int(getattr(self, 'compress_flags', 0)), '<B'),  # Compress Flags
+            (1, '<B'),                                   # Has Vertices (always)
+            (bs_data_flags, '<H'),                       # BS Data Flags
+            (0, '<I'),                                   # Material CRC
+            (0, '<B'),                                   # Has Normals (particles: no)
+            (float(c.x), '<f'), (float(c.y), '<f'), (float(c.z), '<f'),  # Bound center
+            (float(self.radius), '<f'),                  # Bound radius
+            (0, '<B'),                                   # Has Vertex Colors
+            (0, '<H'),                                   # Consistency Flags (0=MUTABLE)
+            (0, '<i'),                                   # Additional Data (ref, -1? vanilla=0)
+            (0, '<B'),                                   # Has Radii
+            (int(getattr(self, 'num_active', 0)), '<H'), # Num Active
+            (1 if getattr(self, 'has_sizes', True) else 0, '<B'),          # Has Sizes
+            (0, '<B'),                                   # Has Rotations
+            (1 if getattr(self, 'has_rotation_angles', True) else 0, '<B'),  # Has Rotation Angles
+            (0, '<B'),                                   # Has Rotation Axes
+            (1, '<B'),                                   # Has Texture Indices
+            (0, '<I'),                                   # Num Subtexture Offsets
+            (1.0, '<f'),                                 # Aspect Ratio
+            (0, '<H'),                                   # Aspect Flags
+            (0.0, '<f'),                                 # Speed to Aspect Aspect 2
+            (0.0, '<f'),                                 # Speed to Aspect Speed 1
+            (0.0, '<f'),                                 # Speed to Aspect Speed 2
+            (0, '<B'),                                   # Has Rotation Speeds
+        ]
+
+    _orig_get_size = PSysData.get_size
+    _orig_write = PSysData.write
+
+    def get_size(self, data=None):
+        if _use_handroll(self, data):
+            return sum(_struct.calcsize(fmt) for _v, fmt in _sk_fields(self))
+        return _orig_get_size(self, data=data)
+
+    def write(self, stream, data=None):
+        if _use_handroll(self, data):
+            for v, fmt in _sk_fields(self):
+                stream.write(_struct.pack(fmt, v))
+            return
+        _orig_write(self, stream, data=data)
+
+    # NOTE: read() is intentionally NOT overridden.  The converter only reads
+    # Oblivion-version sources (not #BS202#), which use PyFFI's Oblivion layout
+    # correctly.  Our own Skyrim output is never re-read by the pipeline; if a
+    # tool re-reads it, PyFFI's stock (wrong) layout applies but that only
+    # affects that tool's view, not the on-disk bytes the game engine reads.
+    PSysData.get_size = get_size
+    PSysData.write = write
+
 
 def apply_patches():
     """Import NifFormat and apply all patches.  Safe to call multiple times."""

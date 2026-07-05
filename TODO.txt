@@ -11,11 +11,6 @@ Major Issues:
 				uppersilverpitcher01.nif
 				uppergobletceramic01.nif
 
-	4 - NiParticleSystem / NiDynamicEffect isn't correctly converted. For instances flames don't appear or aren't animated.
-		Model Examples:
-			fireopensmall.nif
-			middlecandlestickfloor01fake.nif appears but has no flame on the candle
-
 	5 - Remaining armor bugs:
 		Guard Helmet showing hair
 		Iron helmet not showing at all
@@ -66,8 +61,6 @@ Major Issues:
 		[WR] weapons\glass\bow.nif
 		[WR] weapons\iron\bow.nif
 		[WR] weapons\silver\bow.nif
-
-	8 - Crash when entering the Anvil Mage's Guild (anvilmagesguild) and when entering the anvil castle private quarters cell, but no crash logs are created.
 
 
 Minor Issues:

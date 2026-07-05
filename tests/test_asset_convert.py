@@ -773,6 +773,108 @@ class TestCollisionRigidBody:
                         f"unknown_6_shorts[3]={block.unknown_6_shorts[3]}, must be 0"
 
 
+class TestParticleSystemConversion:
+    """NiParticleSystem / flame conversion.
+
+    Regression guard for the vercond precedence bug in pyffi_monkey_patch that
+    dropped NiPSysData's two added-particle shorts on OBLIVION reads too,
+    misaligning every particle NIF by 4 bytes and failing the entire
+    fire/effects/magiceffects conversion list.
+    """
+
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    def test_fireopensmall_converts_and_psysdata_is_skyrim_layout(self, tmp_path):
+        """fireopensmall must convert, and its NiPSysData blocks must be the
+        authoritative 70-byte Skyrim BSStream-83 layout (hand-rolled — PyFFI's
+        own layout is structurally wrong and misaligns the engine → CTD).
+
+        We verify against the HEADER block_size table (read via inspect only);
+        we do NOT PyFFI-struct-read the block, because PyFFI cannot parse the
+        correct Skyrim NiPSysData layout (that is the whole reason it is
+        hand-rolled).  70 bytes is the vanilla value for an empty particle pool
+        (census of 27 vanilla empty NiPSysData blocks — all 70)."""
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat
+
+        src = EXPORT_MESHES / 'fire' / 'fireopensmall.nif'
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'out.nif'
+        result = convert_nif(str(src), str(dst))
+        assert not result.get('error'), f"fireopensmall failed to convert: {result}"
+        assert result.get('converted'), result
+
+        # Header-only read (no block struct parse).
+        data = NifFormat.Data()
+        with open(str(dst), 'rb') as f:
+            data.inspect(f)
+        hdr = data.header
+        bt = [b.decode('latin1') for b in hdr.block_types]
+        bti = list(hdr.block_type_index)
+        bsz = list(hdr.block_size)
+        psd_sizes = [bsz[i] for i in range(hdr.num_blocks)
+                     if bt[bti[i]] == 'NiPSysData']
+        assert psd_sizes, 'no NiPSysData block in converted fireopensmall'
+        for sz in psd_sizes:
+            assert sz == 70, f'NiPSysData block_size {sz} != vanilla 70 (layout bug)'
+        # NiPSysGrowFadeModifier, if kept, must be the correct 29-byte Skyrim
+        # size (base_scale present) — a 25-byte block means base_scale dropped.
+        for i in range(hdr.num_blocks):
+            if bt[bti[i]] == 'NiPSysGrowFadeModifier':
+                assert bsz[i] == 29, f'GrowFade block_size {bsz[i]} != 29'
+
+class TestFlameNodeConversion:
+    """FlameNode markers → BSValueNode Master-Particle-System spawn points.
+
+    Oblivion marks flame positions with empty FlameNode* NiNodes.  Vanilla
+    Skyrim uses BSValueNode "AddOnNodeNN" (candle flame=49, torch fire=46) so
+    the engine spawns the matching MPS particle NIF.  Grafting a converted
+    particle subtree here instead crashed the engine (BSEffectShaderMaterial
+    buffer overrun, 2026-07-05) — this guards against a regression to that.
+    """
+
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    @pytest.mark.parametrize('rel,expect_value', [
+        ('lights/candlefat02fake.nif', 49),
+        ('lights/middlecandlestickfloor01fake.nif', 49),
+        ('lights/torchtall01.nif', 46),
+    ])
+    def test_flamenode_becomes_bsvaluenode(self, rel, expect_value, tmp_path):
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat
+
+        src = EXPORT_MESHES / rel
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'out.nif'
+        result = convert_nif(str(src), str(dst))
+        assert result.get('converted'), result
+
+        data = NifFormat.Data()
+        with open(str(dst), 'rb') as f:
+            data.read(f)
+        # No FlameNode should survive; a BSValueNode with the right addon value
+        # must be present, and NO particle geometry / effect shader embedded.
+        for b in data.blocks:
+            nm = getattr(b, 'name', b'') or b''
+            assert not (isinstance(b, NifFormat.NiNode)
+                        and not isinstance(b, NifFormat.BSValueNode)
+                        and nm.startswith(b'FlameNode')), 'FlameNode not converted'
+        bvns = [b for b in data.blocks if isinstance(b, NifFormat.BSValueNode)]
+        assert bvns, 'no BSValueNode created'
+        assert any(b.value == expect_value for b in bvns), \
+            f'no AddonNode {expect_value}; got {[b.value for b in bvns]}'
+        assert not any(isinstance(b, NifFormat.NiParticleSystem) for b in data.blocks), \
+            'embedded particle system would crash the engine'
+        # BSXFlags must carry the AddonNode bit (0x10) so the engine spawns it.
+        bsx = [b for b in data.blocks if isinstance(b, NifFormat.BSXFlags)]
+        assert bsx and (bsx[0].integer_data & 0x10), 'BSX AddonNode bit not set'
+
+
 class TestMultiSphereExpansion:
     """bhkMultiSphereShape must never survive conversion.
 

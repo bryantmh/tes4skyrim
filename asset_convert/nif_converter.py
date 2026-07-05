@@ -430,6 +430,34 @@ def _set_tangents(ts_data, bitangents, tangents):
 # Node-level conversion
 # ---------------------------------------------------------------------------
 
+def _strip_dead_geometry_controllers(geom):
+    """Remove NiGeomMorpherController / NiMaterialColorController from a
+    geometry node's controller chain.
+
+    Neither block type exists in vanilla Skyrim (0 of 17,216 meshes use
+    NiGeomMorpherController — it's the Oblivion bow/flex morph system, which
+    Skyrim replaces with skeletal animation on *skinned.nif bows).  Beyond
+    being dead weight, PyFFI mis-serializes NiGeomMorpherController across the
+    20.0→20.2 version bump: interpolator_weights is populated under the
+    Oblivion layout but empty under the Skyrim layout, so the write aborts with
+    an array-size mismatch (the entire weapons\\*\\bow.nif [WR] failure list).
+    """
+    prev = None
+    ctrl = getattr(geom, 'controller', None)
+    while ctrl is not None:
+        nxt = getattr(ctrl, 'next_controller', None)
+        if isinstance(ctrl, (NifFormat.NiGeomMorpherController,
+                             NifFormat.NiMaterialColorController)):
+            # Unlink this controller from the chain.
+            if prev is None:
+                geom.controller = nxt
+            else:
+                prev.next_controller = nxt
+        else:
+            prev = ctrl
+        ctrl = nxt
+
+
 def _process_geometry(strips_or_shape, fix_textures):
     """Convert a NiTriStrips or NiTriShape into a ready Skyrim NiTriShape.
 
@@ -437,6 +465,11 @@ def _process_geometry(strips_or_shape, fix_textures):
     NiTriStrips with controllers are NOT converted to NiTriShape (the controller
     still references the original node by block index; converting breaks the NIF).
     """
+    # Drop Skyrim-incompatible geometry controllers (morph/material-color) first,
+    # so strips that were only kept as strips because of a dead morpher can
+    # convert to NiTriShape.
+    _strip_dead_geometry_controllers(strips_or_shape)
+
     # Convert NiTriStrips → NiTriShape only when there are no controllers attached.
     # Strips with controllers (NiGeomMorpherController etc.) must stay as NiTriStrips.
     if isinstance(strips_or_shape, NifFormat.NiTriStrips):
@@ -594,6 +627,13 @@ def _process_geometry(strips_or_shape, fix_textures):
             esf2.slsf_2_double_sided = 1
         eff_shader.source_texture = effective_path
         eff_shader.texture_clamp_mode = 3
+        # emissive_multiple defaults to 0.0 → the flame quad renders BLACK.
+        # Fire is self-illuminated; scale its emission to full.
+        eff_shader.emissive_multiple = 1.0
+        eff_shader.emissive_color.r = 1.0
+        eff_shader.emissive_color.g = 1.0
+        eff_shader.emissive_color.b = 1.0
+        eff_shader.emissive_color.a = 1.0
 
         ts.bs_properties[0] = eff_shader
     else:
@@ -679,67 +719,58 @@ def _process_controller_manager(node, palette):
 # Flame attachment for "fake" light NIFs
 # ---------------------------------------------------------------------------
 
-# Oblivion dynamically attaches a flame NIF at FlameNode* markers on the
-# fake (lit) versions of light objects at runtime.  Skyrim doesn't do this;
-# the flame must be embedded in the NIF.  We detect empty FlameNode* children
-# and embed a pre-converted copy of firecandleflame.nif at each one.
+# Oblivion marks where a flame should burn with an empty FlameNode* NiNode and
+# attaches a flame NIF there dynamically at runtime.  Skyrim instead uses the
+# Master Particle System: a BSValueNode carrying an AddonNode index tells the
+# engine to spawn the matching ADDN record's particle NIF at that node
+# (vanilla candlehornfloor01.nif = 4x BSValueNode "AddOnNode49").  We convert
+# each FlameNode into the correct BSValueNode.
+#
+# Do NOT graft a converted particle subtree here: the engine builds a
+# BSEffectShaderMaterial from the embedded particle's BSEffectShaderProperty
+# and overruns its buffer (crash 2026-07-05, vmovntdq store past page end,
+# CandleFat02Fake).  The BSValueNode path spawns the vanilla, engine-blessed
+# MPS particle NIF instead — no custom particle geometry ships in the mesh.
 
-_FLAME_EMBED_CACHE = {}   # src_meshes_dir → converted NiBillboardNode subtree root
+# ADDN (AddonNode) indices from vanilla Skyrim.esm ADDN records (DATA field):
+_ADDN_CANDLE_FLAME = 49   # MPSCandleFlame01
+_ADDN_TORCH_FIRE = 46     # MPSTorchFire01
+
+# BSXFlags bit 4 (0x10) — the mesh contains BSValueNode AddonNode spawn points.
+# Vanilla candlehornfloor01.nif ships BSX=147 (0x93 = static 0x82 | this bit |
+# articulated 0x01).  The engine only processes AddonNode spawns when set.
+_BSX_ADDON_BIT = 0x10
 
 
-def _get_flame_subtree(src_meshes_dir, fix_textures):
-    """Return a converted NiBillboardNode from firecandleflame.nif, or None on failure.
+def _flame_addon_value(src_path):
+    """Pick the Master-Particle-System AddonNode index for a host mesh.
 
-    Cached per src_meshes_dir so we only convert it once per batch.
-    The returned object is a raw PyFFI block; callers must NOT mutate it
-    (each call to embed gets its own tree via _clone_nif_tree).
+    Torch meshes get the torch fire (46); everything else (candles,
+    candelabra, sconces, lamps, lecterns, chandeliers) gets the candle
+    flame (49) — the small upright flame Oblivion attaches at these markers.
     """
-    cache_key = (str(src_meshes_dir), fix_textures)
-    if cache_key in _FLAME_EMBED_CACHE:
-        return _FLAME_EMBED_CACHE[cache_key]
-
-    _FLAME_EMBED_CACHE[cache_key] = None  # set sentinel first to avoid re-entry
-
-    flame_src = os.path.join(str(src_meshes_dir), 'fire', 'firecandleflame.nif')
-    if not os.path.exists(flame_src):
-        return None
-
-    flame_data = NifFormat.Data()
-    try:
-        with open(flame_src, 'rb') as f:
-            flame_data.read(f)
-    except Exception:
-        return None
-
-    # Convert the flame NIF in-place (same pipeline as regular NIFs)
-    _convert_nif(flame_data, fix_textures=fix_textures)
-
-    # Find the NiBillboardNode (flame visual root) in the converted data
-    # Structure: NiNode "Scene Root" → NiBillboardNode "FireCandleFlame" → children
-    # After _convert_nif the outer NiNode becomes BSFadeNode; NiBillboardNode is child
-    for root in flame_data.roots:
-        if root is None:
-            continue
-        for child in getattr(root, 'children', []):
-            if child is not None and isinstance(child, NifFormat.NiBillboardNode):
-                _FLAME_EMBED_CACHE[cache_key] = child
-                return child
-    return None
+    name = os.path.basename(str(src_path)).lower()
+    if 'torch' in name:
+        return _ADDN_TORCH_FIRE
+    return _ADDN_CANDLE_FLAME
 
 
-def _embed_flame_nodes(root_node, src_meshes_dir, fix_textures):
-    """Walk root_node's tree looking for empty FlameNode* NiNodes.
+def _convert_flame_nodes(root_node, src_path):
+    """Retype every empty FlameNode* NiNode as a BSValueNode (Master Particle
+    System addon spawn point).  Modifies root_node's tree in-place; returns the
+    number of flame nodes converted.
 
-    For each found, attach a converted firecandleflame.nif subtree as its child.
-    Modifies root_node in-place.  Returns count of flame nodes populated.
+    A FlameNode is a bare marker (name + transform, no children/properties/
+    collision), so the BSValueNode only needs its translation copied over — the
+    flame then burns in the right spot.  Rotation is reset to identity and
+    scale to 1.0 to match vanilla AddOnNodes (Oblivion FlameNodes carry a 90°
+    tip + ~2x scale meant for the old attached NIF, which would mis-orient and
+    mis-scale the MPS flame).
+
+    PyFFI struct/array fields (translation, rotation, ...) are read-only
+    properties — mutate them in place, never setattr.
     """
-    if not src_meshes_dir:
-        return 0
-
-    flame_root = _get_flame_subtree(src_meshes_dir, fix_textures)
-    if flame_root is None:
-        return 0
-
+    addon_value = _flame_addon_value(src_path)
     count = 0
 
     def _visit(node):
@@ -753,18 +784,35 @@ def _embed_flame_nodes(root_node, src_meshes_dir, fix_textures):
             nm = getattr(child, 'name', b'') or b''
             if isinstance(nm, bytes):
                 nm = nm.decode('latin1')
-            if nm.startswith('FlameNode') and isinstance(child, NifFormat.NiNode):
-                if child.num_children == 0:
-                    # Attach flame subtree — PyFFI allows sharing block refs
-                    # (the NIF writer walks reachable blocks so shared subtrees
-                    # appear once in the output block list).
-                    child.num_children = 1
-                    child.children.update_size()
-                    child.children[0] = flame_root
-                    count += 1
-            _visit(child)
+            if (nm.startswith('FlameNode')
+                    and isinstance(child, NifFormat.NiNode)
+                    and not isinstance(child, NifFormat.BSValueNode)
+                    and child.num_children == 0):
+                bvn = NifFormat.BSValueNode()
+                bvn.name = b'AddOnNode%d' % addon_value
+                bvn.flags = child.flags
+                # Keep position; reset orientation/scale to vanilla AddOnNode.
+                bvn.translation.x = child.translation.x
+                bvn.translation.y = child.translation.y
+                bvn.translation.z = child.translation.z
+                bvn.rotation.set_identity()
+                bvn.scale = 1.0
+                bvn.value = addon_value
+                bvn.unknown_byte = 1   # vanilla AddOnNodes use 1
+                node.children[i] = bvn
+                count += 1
+            else:
+                _visit(child)
 
     _visit(root_node)
+
+    # Flag the root so the engine spawns the AddonNode particle systems.
+    if count and hasattr(root_node, 'extra_data_list'):
+        for ed in root_node.extra_data_list:
+            if isinstance(ed, NifFormat.BSXFlags):
+                ed.integer_data |= _BSX_ADDON_BIT
+                break
+
     return count
 
 
@@ -815,14 +863,14 @@ def _convert_particle_system(node, fix_textures):
         old_data = node.data
         orig_count = max(old_data.num_vertices, 75)
         fresh = NifFormat.NiPSysData()
+        # The Skyrim NiPSysData binary layout is hand-rolled by
+        # pyffi_monkey_patch Patch 4 (PyFFI's own layout is structurally wrong
+        # for #BS202#).  That serializer always emits an empty inline pool with
+        # BS Max Vertices = max(num_vertices, bs_max_vertices, 75), so we just
+        # record the pool size here; the per-vertex arrays are never written.
         fresh.bs_max_vertices = orig_count
-        fresh.num_vertices = 0
         fresh.has_vertices = True
         fresh.has_normals = False
-        if hasattr(fresh, 'has_sizes'):
-            fresh.has_sizes = True
-        if hasattr(fresh, 'has_rotation_angles'):
-            fresh.has_rotation_angles = getattr(old_data, 'has_rotation_angles', True)
         node.data = fresh
 
     # Fix version-conditional fields on kept modifiers.
@@ -1972,6 +2020,10 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
     Already-Skyrim versions are copied to dst_path unchanged.
     Unsupported/incompatible versions are skipped (not written to dst_path).
     Returns a result dict compatible with batch_convert's _update() expectations.
+
+    src_meshes_dir: root of the source mesh tree (passed through by
+    batch_convert).  Currently unused — kept as a hook for passes that need to
+    read sibling meshes.
     """
     result = {
         'converted': False,
@@ -2025,14 +2077,12 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
 
     stats = _convert_nif(data, fix_textures=fix_textures, src_path=str(src_path))
 
-    # Embed flame particle subtree at FlameNode* attachment points.
-    # Oblivion's engine dynamically attached fire/flame NIFs at these nodes at
-    # runtime; Skyrim doesn't, so we bake the converted flame into the NIF.
-    # Code does work so it's been disabled
-    # if src_meshes_dir is not None:
-    #     for root in data.roots:
-    #         if root is not None:
-    #             _embed_flame_nodes(root, src_meshes_dir, fix_textures)
+    # Convert FlameNode* markers into BSValueNode Master-Particle-System addon
+    # spawn points (candle flame / torch fire), the way vanilla Skyrim lights
+    # do it.  This is what makes "fake" (lit) candles/sconces show a flame.
+    for root in data.roots:
+        if root is not None:
+            _convert_flame_nodes(root, src_path)
 
     # Generate tangent space for all NiTriShapeData that don't already have it.
     # Missing tangents cause incorrect normal-map lighting in Skyrim which
