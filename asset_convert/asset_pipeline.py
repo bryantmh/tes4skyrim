@@ -116,10 +116,9 @@ def convert_speedtrees(source_file, extract_dir='export', output_dir='output'):
     spt_src = extract_dir / source_name / 'trees'
     if spt_src.exists():
         spt_dst = plugin_dir / 'meshes' / 'tes4' / 'speedtrees'
-        # Textures from bundled assets go to textures/tes4/speedtrees/
-        tex_dst = plugin_dir / 'textures' / 'tes4' / 'speedtrees'
+        # tree textures ship via the generic texture copy (textures/tes4/trees/)
         spt_stats['spt_conversion'] = spt_converter.convert_spt_directory(
-            spt_src, spt_dst, tex_output_dir=tex_dst)
+            spt_src, spt_dst, export_dir=extract_dir / source_name)
     else:
         print(f"  No trees/ directory found at {spt_src}")
 

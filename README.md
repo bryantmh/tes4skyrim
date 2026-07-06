@@ -20,9 +20,8 @@ Converts TES4 (Oblivion) master/plugin files to TES5 (Skyrim SE) format, includi
 | [xEdit and all contributors](https://github.com/TES5Edit/TES5Edit) | ESM record definitions,  `BSArch.exe` for BSA packing, and `LODGenx64.exe` for object LOD generation |
 | Zilav's Oblivion -> Skyrim xEdit conversion scripts for the original inspiration and lots of useful information |
 | [NifSkope](https://github.com/niftools/nifskope) contributors | NIF format documentation |
-| [Ormin](https://github.com/Ormin/skyblivion-NIFConverter) | `MOPP_RL.exe` for Havok collision generation and mesh conversion reference |
+| [Ormin](https://github.com/Ormin/skyblivion-NIFConverter) | Mesh conversion reference |
 | [Ormin](https://github.com/Ormin/skyblivion-ScriptConverter) | Script converter reference for OBScript→Papyrus transpilation |
-| [Sjors Boomschors](https://morroblivion.com/forums/conversion-to-skyrim/conversion-to-skyrim/2617) | Manually converted SpeedTree models (`assets/speedtrees/`) |
 | [russo-2025](https://github.com/russo-2025/papyrus-compiler) | Papyrus Compiler |
 | All the wonderful people I used to know on the Morroblivion forum, and those still working hard on Skyblivion and Skywind all these years later. You are an inspiration. |
 
