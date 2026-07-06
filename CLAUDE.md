@@ -577,6 +577,53 @@ The `-ExtractAssets` flag triggers BSA extraction and mesh conversion:
 - `DLCShiveringIsles - Meshes.bsa`, `DLCShiveringIsles - Textures.bsa`
 - `Knights.bsa` (single BSA for smaller DLCs)
 
+## PGRD → NAVM/NAVI Conversion (PathGrid → NavMesh)
+
+TES4 PGRD (per-cell pathgrid of nodes+edges) is converted to a TES5 NAVM per
+cell PLUS a single top-level NAVI (Navmesh Info Map). Implemented in
+`tes5_import/pgrd_to_navm.py` (`convert_PGRD`) and `tes5_import/navi_builder.py`
+(`build_navi_record`), wired in `import_main.py` Phase 4 for both interior
+(`_build_cell_groups`) and exterior (`_build_world_groups`) cells.
+
+- **NAVI IS MANDATORY**: Skyrim only uses a NAVM for pathfinding when it is also
+  indexed in a top-level NAVI record. NAVM records alone are ignored. NAVI goes
+  in the top-level group order immediately BEFORE CELL (verified vs xEdit
+  `wbAddGroupOrder`, and added to `writer._group_order`).
+- **Algorithm**: read PGRD nodes + exact edge graph (`Point[i].Edge[j]`), seed a
+  2D vertex set (nodes + Steiner points along each edge at 128u), Delaunay
+  triangulate (scipy), assign Z (exterior: bilinear LAND VHGT sample; interior:
+  inverse-distance blend of nearby node Z), coverage-mask to hug the walkable
+  region, drop slivers, carve static footprints (rotation-aware AABB from
+  placed STAT/CONT/FURN/ACTI/TREE base meshes via mesh_bounds), prune, compute
+  edge adjacency, flag water tris (centroid Z < XCLW water height).
+- **Static-footprint carving**: `_build_base_model_index(by_type)` in
+  import_main maps raw low-24 base FormID → normalised `tes4/...nif` key, only
+  for blocking base types (so doors/lights/markers never punch holes). REFR
+  exports position as `PosX/PosY/PosZ` + `RotZ` + `XSCL.Scale` and base object
+  as `NAME` (there is NO `DATA.PosX`/`BaseType`/`Model.MODL` on REFR — the old
+  exclusion code read fields that don't exist and was dead).
+- **NVNM binary layout** (validated byte-exact against Skyrim.esm via
+  `tools/navmesh_dump.py`): all arrays use U32 count prefixes; CRC of
+  "PathingCell" = `0xA5E9A03C`; parent union decided by (Parent Worldspace==0)
+  → interior = FormID Parent Cell, exterior = `S16 Grid Y` then `S16 Grid X`;
+  `Max X/Y Distance` = bbox span / divisor; NavMeshGrid = divisor² arrays each
+  `U32 count + count×S16`. Door Triangle struct is **10 bytes** (S16+U32+FormID),
+  NOT 12. NAVM record is written with the Compressed flag (0x00040000).
+- **NVMI (in NAVI)**: validated byte-exact (57 bytes) vs Skyrim.esm NAVI
+  0x00012FB4: `FormID, U32 Category(0=Edited), 3×float centroid, 4B PrefMerge,
+  U32 EdgeLink count, U32 PrefEdgeLink count, U32 DoorLink count, U8 IsIsland,
+  [island union empty when 0], PathingCell(U32 CRC, FormID WS, parent union)`.
+  We emit 0 edge/door links (can't compute cross-navmesh portals from PGRD).
+  NAVI has NO EDID; order is `NVER(=12), NVMI…, NVPP(empty: two 0 counts)`.
+- **Exterior PGRD point coords are WORLD coords** (not cell-local) → LAND
+  sampler origin = `grid_x*4096, grid_y*4096`. Points can extend past the cell
+  into neighbours; the sampler clamps to the 33×33 grid.
+- **Tests**: `tests/test_pgrd_navm.py` (14 tests: NVNM round-trip, adjacency
+  symmetry, grid coverage, water flags, footprint carving, NAVI/NVMI layout).
+- **Reusable tool**: `python tools/navmesh_dump.py <esm> [--navi|--navm]
+  [--nvnm-decode] [--max N]` — decompresses + decodes real NAVI/NAVM/NVNM for
+  format verification (this is how the layout was validated against Skyrim.esm).
+
 ## LAND Record Structure
 
 Both TES4 and TES5 use `wbLandscapeLayers` from wbDefinitionsCommon.pas. The "Layers" array is a FLAT array of Layer entries where each is EITHER a Base Layer (BTXT) OR an Alpha Layer (ATXT+VTXT) — they are NOT nested.

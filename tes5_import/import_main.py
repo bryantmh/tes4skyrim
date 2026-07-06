@@ -34,6 +34,7 @@ from .skyrim_overrides import (
     set_voice_type,
 )
 from .pgrd_to_navm import convert_PGRD
+from .navi_builder import build_navi_record
 from .record_types.world import (
     convert_ACHR,
     convert_CELL,
@@ -365,9 +366,25 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
                 errors += 1
 
-    # --- Phase 4: CELL/WRLD hierarchy ---
-    _build_cell_groups(by_type, writer)
-    _build_world_groups(by_type, writer)
+    # --- Phase 4: CELL/WRLD hierarchy (+ PGRD→NAVM navmeshes) ---
+    # Base-object model index for navmesh static-footprint carving. Only
+    # blocking base types contribute; keyed by raw low-24 FormID so lookups
+    # work regardless of load-order remapping.
+    base_model_by_fid = _build_base_model_index(by_type)
+    # NAVM metadata accumulated across interior + exterior cells, used to build
+    # the single top-level NAVI (Navmesh Info Map) the engine needs.
+    navm_metas: list = []
+
+    _build_cell_groups(by_type, writer, navm_metas, base_model_by_fid)
+    _build_world_groups(by_type, writer, navm_metas, base_model_by_fid)
+
+    # Build the NAVI record indexing every generated navmesh.
+    if navm_metas:
+        navi_fid = writer.alloc_formid()
+        navi_bytes = build_navi_record(navi_fid, navm_metas)
+        if navi_bytes:
+            writer.add_raw_group('NAVI', navi_bytes)
+        print(f"  Built NAVI: {len(navm_metas)} navmeshes registered")
 
     # --- Phase 5: DIAL/INFO hierarchy ---
     voice_map = {}
@@ -441,13 +458,62 @@ def _write_seq_file(output_path: str, sge_quest_fids: set):
           f"{len(sorted_fids) * 4} bytes)")
 
 
-def _build_cell_groups(by_type: dict, writer: PluginWriter):
+# Base record types whose placed footprint should carve holes in a navmesh.
+# Doors/lights/markers/actors are intentionally excluded.
+_NAVM_BLOCKING_BASE_TYPES = frozenset({'STAT', 'CONT', 'FURN', 'ACTI', 'TREE'})
+
+
+def _navm_model_key(model: str) -> str:
+    """Normalise a TES4 model path to the mesh_bounds cache key.
+
+    Mirrors mesh_bounds' key format: lowercase, forward slashes, 'tes4/' prefix,
+    '.nif' suffix.  e.g. 'Furniture\\ChairNoble01.NIF' -> 'tes4/furniture/chairnoble01.nif'.
+    """
+    p = model.lower().replace('\\', '/').lstrip('/')
+    if p.startswith('textures/'):
+        p = p[len('textures/'):]
+    if not p.startswith('tes4/'):
+        p = 'tes4/' + p
+    if not p.endswith('.nif'):
+        p += '.nif'
+    return p
+
+
+def _build_base_model_index(by_type: dict) -> dict:
+    """Map raw low-24 base-object FormID -> normalised model key.
+
+    Only blocking base types are indexed, so navmesh carving never removes
+    triangles under doors, lights, or markers.
+    """
+    index = {}
+    for sig in _NAVM_BLOCKING_BASE_TYPES:
+        for rec in by_type.get(sig, []):
+            model = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
+            if not model:
+                continue
+            fid_str = rec.get('FormID')
+            if not fid_str:
+                continue
+            try:
+                low = int(fid_str, 16) & 0x00FFFFFF
+            except ValueError:
+                continue
+            index[low] = _navm_model_key(model)
+    return index
+
+
+def _build_cell_groups(by_type: dict, writer: PluginWriter,
+                       navm_metas: list = None, base_model_by_fid: dict = None):
     """Build CELL group hierarchy (interior cells only — exterior in WRLD)."""
+    if navm_metas is None:
+        navm_metas = []
+    if base_model_by_fid is None:
+        base_model_by_fid = {}
     cells = by_type.get('CELL', [])
     refrs = by_type.get('REFR', [])
     achrs = by_type.get('ACHR', []) + by_type.get('ACRE', [])
     lands = by_type.get('LAND', [])
-    # pgrds = by_type.get('PGRD', [])
+    pgrds = by_type.get('PGRD', [])
 
     # Group children by parent CELL
     refr_by_cell = defaultdict(list)
@@ -465,10 +531,10 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter):
         cell_fid = get_formid(rec, 'ParentCELL')
         land_by_cell[cell_fid].append(rec)
 
-    # pgrd_by_cell = defaultdict(list)
-    # for rec in pgrds:
-    #     cell_fid = get_formid(rec, 'ParentCELL')
-    #     pgrd_by_cell[cell_fid].append(rec)
+    pgrd_by_cell = defaultdict(list)
+    for rec in pgrds:
+        cell_fid = get_formid(rec, 'ParentCELL')
+        pgrd_by_cell[cell_fid].append(rec)
 
     # Interior cells = those NOT in a worldspace
     interior_cells = [c for c in cells if not get_formid(c, 'ParentWRLD')]
@@ -532,18 +598,20 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter):
                     for land_rec in land_by_cell.get(cell_fid, []):
                         temporary += convert_LAND(land_rec)
                         converted += 1
-                    # PGRD → NAVM (interior cells have no LAND so height_sampler=None)
-                    # cell_refrs = refr_by_cell.get(cell_fid, [])
-                    # for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
-                    #     navm_bytes, _ = convert_PGRD(
-                    #         pgrd_rec, writer=writer,
-                    #         land_rec=None,
-                    #         cell_rec=cell_rec,
-                    #         refr_recs=cell_refrs,
-                    #     )
-                    #     if navm_bytes:
-                    #         temporary += navm_bytes
-                    #         converted += 1
+                    # PGRD → NAVM (interior cells have no LAND; Z from node heights)
+                    cell_refrs = refr_by_cell.get(cell_fid, [])
+                    for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
+                        navm_bytes, meta = convert_PGRD(
+                            pgrd_rec, writer=writer,
+                            land_rec=None,
+                            cell_rec=cell_rec,
+                            refr_recs=cell_refrs,
+                            base_model_by_fid=base_model_by_fid,
+                        )
+                        if navm_bytes:
+                            temporary += navm_bytes
+                            navm_metas.append(meta)
+                            converted += 1
                     if temporary:
                         children_content += pack_group(9, struct.pack('<I', cell_fid), temporary)
 
@@ -565,14 +633,19 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter):
     print(f"    Interior cells: {len(interior_cells)}, children: {converted}")
 
 
-def _build_world_groups(by_type: dict, writer: PluginWriter):
+def _build_world_groups(by_type: dict, writer: PluginWriter,
+                        navm_metas: list = None, base_model_by_fid: dict = None):
     """Build WRLD group hierarchy (worldspaces + exterior cells)."""
+    if navm_metas is None:
+        navm_metas = []
+    if base_model_by_fid is None:
+        base_model_by_fid = {}
     worlds = by_type.get('WRLD', [])
     cells = by_type.get('CELL', [])
     refrs = by_type.get('REFR', [])
     achrs = by_type.get('ACHR', []) + by_type.get('ACRE', [])
     lands = by_type.get('LAND', [])
-    # pgrds = by_type.get('PGRD', [])
+    pgrds = by_type.get('PGRD', [])
 
     if not worlds:
         return
@@ -600,10 +673,10 @@ def _build_world_groups(by_type: dict, writer: PluginWriter):
         cell_fid = get_formid(rec, 'ParentCELL')
         land_by_cell[cell_fid].append(rec)
 
-    # pgrd_by_cell = defaultdict(list)
-    # for rec in pgrds:
-    #     cell_fid = get_formid(rec, 'ParentCELL')
-    #     pgrd_by_cell[cell_fid].append(rec)
+    pgrd_by_cell = defaultdict(list)
+    for rec in pgrds:
+        cell_fid = get_formid(rec, 'ParentCELL')
+        pgrd_by_cell[cell_fid].append(rec)
 
     print(f"  Building WRLD hierarchy ({len(worlds)} worldspaces)...")
     converted = 0
@@ -720,19 +793,21 @@ def _build_world_groups(by_type: dict, writer: PluginWriter):
                             for land in cell_lands:
                                 temporary += convert_LAND(land)
                                 converted += 1
-                            # PGRD → NAVM for exterior cells (pass LAND + CELL for height/water)
-                            # cell_refrs = refr_by_cell.get(cell_fid, [])
-                            # land_rec = cell_lands[0] if cell_lands else None
-                            # for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
-                            #     navm_bytes, _ = convert_PGRD(
-                            #         pgrd_rec, writer=writer,
-                            #         land_rec=land_rec,
-                            #         cell_rec=cell_rec,
-                            #         refr_recs=cell_refrs,
-                            #     )
-                            #     if navm_bytes:
-                            #         temporary += navm_bytes
-                            #         converted += 1
+                            # PGRD → NAVM for exterior cells (LAND gives Z, CELL gives water)
+                            cell_refrs = refr_by_cell.get(cell_fid, [])
+                            land_rec = cell_lands[0] if cell_lands else None
+                            for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
+                                navm_bytes, meta = convert_PGRD(
+                                    pgrd_rec, writer=writer,
+                                    land_rec=land_rec,
+                                    cell_rec=cell_rec,
+                                    refr_recs=cell_refrs,
+                                    base_model_by_fid=base_model_by_fid,
+                                )
+                                if navm_bytes:
+                                    temporary += navm_bytes
+                                    navm_metas.append(meta)
+                                    converted += 1
                             if temporary:
                                 cell_children += pack_group(9, struct.pack('<I', cell_fid), temporary)
 
