@@ -63,7 +63,7 @@ COLLISION_MIN_RADIUS = 5.0
 # geometry budgets (SpeedTree LOD0 counts can be enormous; these caps keep
 # tri counts near vanilla Skyrim tree levels while preserving the look)
 MAX_STEMS_PER_LEVEL = {1: 64, 2: 260, 3: 320, 4: 320}
-MAX_LEAVES = 520
+MAX_LEAVES = 900
 MIN_STEM_WORLD_LEN = 2.0        # skip micro-stems
 TUBE_MIN_RADIUS = 0.35          # below this, a stem renders no tube (world units)
 
@@ -111,6 +111,78 @@ def _ortho_frame(d: np.ndarray):
     n1 /= (np.linalg.norm(n1) + 1e-12)
     n2 = np.cross(d, n1)
     return n1, n2
+
+
+def _cull_isolated_leaves(leaf_positions, radius, min_neighbours=2):
+    """Drop leaf attachments that have fewer than `min_neighbours` other
+    leaves within `radius` — those render as floating clumps detached from
+    the main foliage mass.
+    """
+    if len(leaf_positions) <= min_neighbours + 1:
+        return leaf_positions
+    pts = np.array([p for p, _, _ in leaf_positions], dtype=np.float64)
+    try:
+        from scipy.spatial import cKDTree
+        tree = cKDTree(pts)
+        counts = tree.query_ball_point(pts, radius, return_length=True)
+        keep = counts > min_neighbours    # >self means >=min_neighbours others
+    except Exception:
+        # O(n^2) fallback (n is small — hundreds)
+        keep = np.ones(len(pts), bool)
+        for i in range(len(pts)):
+            d = np.linalg.norm(pts - pts[i], axis=1)
+            if int((d < radius).sum()) <= min_neighbours:
+                keep[i] = False
+    if keep.all():
+        return leaf_positions
+    return [lp for lp, k in zip(leaf_positions, keep) if k]
+
+
+def _thin_keep_all_branches(attach, budget, rng):
+    """Down-sample leaf attachment points to `budget` while guaranteeing
+    every branch keeps at least one point (no bare branch).
+
+    attach: list of (pos, tan, x, branch_idx).  Returns a thinned list.
+    Each branch is allotted a share of the budget proportional to its point
+    count (>=1), then thinned within itself.
+    """
+    from collections import defaultdict
+    by_branch = defaultdict(list)
+    for a in attach:
+        by_branch[a[3]].append(a)
+    n_branches = len(by_branch)
+    if budget <= n_branches:
+        # one point per branch (the branch's midpoint-ish first point)
+        return [pts[len(pts) // 2] for pts in by_branch.values()][:budget]
+    total = len(attach)
+    kept = []
+    for pts in by_branch.values():
+        share = max(1, round(budget * len(pts) / total))
+        if share >= len(pts):
+            kept.extend(pts)
+        else:
+            idx = rng.choice(len(pts), size=share, replace=False)
+            kept.extend(pts[i] for i in sorted(idx))
+    # if rounding overshot the budget, trim extras (keeping >=1 per branch is
+    # already satisfied; drop from the largest contributors)
+    if len(kept) > budget:
+        drop = len(kept) - budget
+        # drop random surplus but never a branch's last point
+        counts = defaultdict(int)
+        for a in kept:
+            counts[a[3]] += 1
+        droppable = [i for i, a in enumerate(kept) if counts[a[3]] > 1]
+        rng.shuffle(droppable)
+        remove = set()
+        for i in droppable:
+            if drop <= 0:
+                break
+            if counts[kept[i][3]] > 1:
+                remove.add(i)
+                counts[kept[i][3]] -= 1
+                drop -= 1
+        kept = [a for i, a in enumerate(kept) if i not in remove]
+    return kept
 
 
 def _rotate_toward(d: np.ndarray, target: np.ndarray, angle_rad: float) -> np.ndarray:
@@ -338,7 +410,16 @@ def build_tree(tree: SptTree, seed: int | None = None,
     geo.trunk_capsule = (tpts[0].copy(), tpts[k].copy(), max(cap_r, 1.0))
 
     # ---- branch levels ----
+    # Two passes: (1) grow all stems, recording each parent's furthest child
+    # attach position; (2) draw each branch's tube clipped to where its
+    # children/leaves actually reach — a branch is bare beyond its last child,
+    # so an unclipped tip protrudes past the foliage as a stray spike.
     stems_by_level = {0: [(trunk_stem, ttans)]}
+    pending = []          # tube draw jobs, filled below
+    golden = math.pi * (3.0 - math.sqrt(5.0))
+    # id(stem) -> furthest child attach x (0..1); trunk seeded from its branches
+    furthest_child = {}
+
     for li in range(1, len(branch_levels)):
         lv = branch_levels[li]
         parent_lv = branch_levels[li - 1]
@@ -346,11 +427,6 @@ def build_tree(tree: SptTree, seed: int | None = None,
         if not parents:
             break
 
-        # candidate children across all parents.  x = absolute position on
-        # the parent; x_rel = position within the generation window — SHAPE
-        # curves (length/radius/start angle/gravity) evaluate at x_rel, so a
-        # narrow window still sweeps the full curve (cottonwood forks its
-        # whole limb fan inside the trunk's [0, 0.1] window).
         candidates = []      # (parent_stem, ptans, x, x_rel)
         for (pstem, ptans) in parents:
             cnt = parent_lv.child_freq * pstem.stored_length
@@ -373,12 +449,13 @@ def build_tree(tree: SptTree, seed: int | None = None,
             candidates = [candidates[i] for i in sorted(idx)]
 
         out = []
-        golden = math.pi * (3.0 - math.sqrt(5.0))
         for ci, (pstem, ptans, x, x_rel) in enumerate(candidates):
             stored_len = float(lv.length.eval_var(x_rel, rng))
             wlen = stored_len * K
             if wlen < MIN_STEM_WORLD_LEN:
                 continue
+            # this child covers its parent up to x
+            furthest_child[id(pstem)] = max(furthest_child.get(id(pstem), 0.0), x)
             # interpolate parent point / tangent / radius at x
             fi = x * (len(pstem.points) - 1)
             i0 = int(fi)
@@ -410,19 +487,31 @@ def build_tree(tree: SptTree, seed: int | None = None,
                                           fval, nr, rng)
             stem = Stem(li, pts, radii, wlen, stored_len, x)
             out.append((stem, tans))
-
             if base_r >= TUBE_MIN_RADIUS:
-                v, n, uv, tri = _tube_mesh(pts, radii, tans, naz, lv, tree, False, rng)
-                c = _bark_colors(v, trunk_len, wind=0.5 if li == len(branch_levels) - 1 else 0.0,
-                                 t_axis=(pts, wlen))
-                all_v.append(v); all_n.append(n); all_uv.append(uv); all_c.append(c)
-                all_t.append(tri + vbase)
-                vbase += len(v)
-                if base_r >= COLLISION_MIN_RADIUS:
-                    geo.collision_verts.append(v)
-                    geo.collision_tris.append(tri)
+                pending.append((stem, tans, lv, naz, base_r, li))
 
         stems_by_level[li] = out
+
+    # pass 2: draw branch tubes.  A childless intermediate branch is not
+    # drawn (it would be a bare stick); everything else is drawn in full and
+    # COVERED with leaves in the leaf pass so no bare wood shows.
+    n_branch_levels = len(branch_levels)
+    tube_stems = []       # stems that got drawn (bark that must be leaf-covered)
+    for (stem, tans, lv, naz, base_r, li) in pending:
+        is_leaf_carrier = (li == n_branch_levels - 1)
+        if not is_leaf_carrier and furthest_child.get(id(stem), 0.0) <= 0.01:
+            continue          # childless intermediate branch → skip (bare)
+        pts, radii = stem.points, stem.radii
+        v, n, uv, tri = _tube_mesh(pts, radii, tans, naz, lv, tree, False, rng)
+        c = _bark_colors(v, trunk_len, wind=0.5 if is_leaf_carrier else 0.0,
+                         t_axis=(pts, stem.length))
+        all_v.append(v); all_n.append(n); all_uv.append(uv); all_c.append(c)
+        all_t.append(tri + vbase)
+        vbase += len(v)
+        if base_r >= COLLISION_MIN_RADIUS:
+            geo.collision_verts.append(v)
+            geo.collision_tris.append(tri)
+        tube_stems.append((stem, tans, li))
 
     # ---- leaves ----
     leaf_maps = [m for m in tree.leaf_maps
@@ -443,42 +532,119 @@ def build_tree(tree: SptTree, seed: int | None = None,
         drape = lg >= 5.0
         strand_len = 0.0
         if drape:
-            # curtain length: willow branches sit in the upper trunk; the
-            # strands must reach ~40% of tree height to fill the crown
-            strand_len = tree.size * WORLD_SCALE * 0.32
-        leaf_positions = []      # (pos, stem_dir, x)
+            # curtain length: proportional to the average carrier-branch
+            # length so the strand always trails its own branch (never floats
+            # off on its own).  Willow branches are ~0.3*Size long.
+            avg_branch = np.mean([s.length for s, _ in carriers]) if carriers else 0.0
+            strand_len = min(avg_branch * 1.4, tree.size * WORLD_SCALE * 0.28)
+
+        # 1) Collect ATTACHMENT POINTS along every leaf-carrying branch.
+        #    Leaves cover the WHOLE branch (x from just above the base out to
+        #    the very tip, x=1.0) so no bare tip protrudes past the foliage.
+        #    Also cover the exposed tips of any drawn structural bough whose
+        #    own children stop short of its end (furthest_child < ~0.9).
+        #    Each point is tagged with its host branch index so thinning can
+        #    guarantee every branch keeps foliage.
+        attach = []   # (pos, tan, x, branch_idx)
+
+        def _sample_branch(pstem, ptans, x0, x1, count, bidx):
+            span = max(x1 - x0, 1e-3)
+            for i in range(count):
+                x = min(x0 + span * (i + rng.uniform(0.15, 0.85)) / count, 1.0)
+                fi = x * (len(pstem.points) - 1)
+                i0 = int(min(fi, len(pstem.points) - 1))
+                f = fi - i0
+                j1 = min(i0 + 1, len(pstem.points) - 1)
+                pos = pstem.points[i0] * (1 - f) + pstem.points[j1] * f
+                tan = ptans[i0] * (1 - f) + ptans[j1] * f
+                tan /= (np.linalg.norm(tan) + 1e-12)
+                attach.append((pos, tan, x, bidx))
+
+        # tip caps: leaf clusters that sit AT/just beyond a branch tip so the
+        # end point is always buried in foliage (kept out of the drape budget
+        # and never thinned away — they carry a sentinel branch index of -1)
+        tip_caps = []      # (pos, tan)
+
+        bidx = 0
         for (pstem, ptans) in carriers:
             cnt = int(round(carrier_lv.child_freq * pstem.stored_length))
-            cnt = max(cnt, 1)
-            first, last = carrier_lv.child_first, carrier_lv.child_last
-            span = max(last - first, 1e-3)
-            for i in range(cnt):
-                x = min(first + span * (i + rng.uniform(0.2, 0.8)) / cnt, 0.999)
-                fi = x * (len(pstem.points) - 1)
-                i0 = int(fi)
-                f = fi - i0
-                pos = pstem.points[i0] * (1 - f) + pstem.points[min(i0 + 1, len(pstem.points) - 1)] * f
-                tan = ptans[i0] * (1 - f) + ptans[min(i0 + 1, len(ptans) - 1)] * f
-                tan /= (np.linalg.norm(tan) + 1e-12)
-                # placement distance offset (leaf level "length" spline)
-                dist = float(leaf_level.length.eval_var(rng.uniform(0, 1), rng)) * K
-                n1, n2 = _ortho_frame(tan)
-                az = rng.uniform(0, 2 * math.pi)
-                od = math.cos(az) * n1 + math.sin(az) * n2
-                base = pos + od * dist
-                if drape:
-                    # a vertical strand of cards hanging from this point
-                    n_cards = 4
-                    step = strand_len * rng.uniform(0.7, 1.1) / n_cards
-                    for c in range(n_cards):
-                        z = base - np.array([0.0, 0.0, step * c])
-                        leaf_positions.append((z, tan, x))
-                else:
-                    leaf_positions.append((base, tan, x))
-        if len(leaf_positions) > max_leaves:
-            idx = rng.choice(len(leaf_positions), size=max_leaves, replace=False)
-            leaf_positions = [leaf_positions[i] for i in idx]
-        geo.n_leaves = len(leaf_positions)
+            cnt = max(cnt, 4)                     # never leave a branch bare
+            _sample_branch(pstem, ptans, 0.02, 1.0, cnt, bidx)
+            tip = pstem.points[-1]
+            ttan = ptans[-1] / (np.linalg.norm(ptans[-1]) + 1e-12)
+            tip_caps.append((tip + ttan * pstem.radii[-1], ttan))
+            bidx += 1
+
+        # cover the exposed tips of drawn structural boughs (non-carrier
+        # branches whose children/leaves stopped short of the branch end)
+        carrier_ids = {id(s) for s, _ in carriers}
+        for (stem, tans, li) in tube_stems:
+            if id(stem) in carrier_ids:
+                continue
+            cov = furthest_child.get(id(stem), 0.0)
+            if cov >= 0.9:
+                continue                          # already covered to the tip
+            # dress the bare span [cov, 1.0] with a few leaf clusters
+            n_tip = max(2, int(round((1.0 - cov) * 6)))
+            _sample_branch(stem, tans, max(cov, 0.5), 1.0, n_tip, bidx)
+            ttan = tans[-1] / (np.linalg.norm(tans[-1]) + 1e-12)
+            tip_caps.append((stem.points[-1] + ttan * stem.radii[-1], ttan))
+            bidx += 1
+
+        # 2) Budget by ATTACHMENT POINT (not final card).  Each non-drape
+        #    attachment expands to a small CLUMP of cards (see step 3); draped
+        #    attachments expand to a hanging strand.  Thin proportionally but
+        #    keep >=1 point per branch so no branch is left bare.
+        cards_per = 4 if drape else 3
+        max_attach = max(1, max_leaves // cards_per)
+        if len(attach) > max_attach:
+            attach = _thin_keep_all_branches(attach, max_attach, rng)
+        geo.n_leaves = len(attach) * cards_per
+
+        # 3) Expand each attachment into a TIGHT CLUSTER of cards hugging the
+        #    twig.  Placing a small clump (not one lone card) at each point is
+        #    what makes foliage read as branch-following — dense where twigs
+        #    are dense, thin at the edges, with the natural inlets/gaps of a
+        #    real crown — and guarantees no single card is left floating.  The
+        #    cluster radius is a fraction of a leaf width so cards overlap.
+        leaf_w = (leaf_maps[0].size[0] * K) if leaf_maps else 0.08 * K
+        clump = 1 if drape else 3          # cards per attachment
+        clump_r = leaf_w * 0.55
+        leaf_positions = []      # (pos, stem_dir, x)
+        for (pos, tan, x, _bi) in attach:
+            n1, n2 = _ortho_frame(tan)
+            if drape:
+                # strand hangs from the branch; the TOP card sits at the
+                # branch so the strand is always visually anchored
+                step = strand_len * rng.uniform(0.75, 1.05) / cards_per
+                for c in range(cards_per):
+                    z = pos - np.array([0.0, 0.0, step * c])
+                    leaf_positions.append((z, tan, x))
+            else:
+                for _ in range(clump):
+                    off = (n1 * rng.uniform(-1, 1) + n2 * rng.uniform(-1, 1)
+                           + tan * rng.uniform(-0.6, 0.6)) * clump_r
+                    leaf_positions.append((pos + off, tan, x))
+
+        # tip caps: 3 jittered cards straddling each branch tip so the end
+        # point is fully buried (never draped, never thinned).  Jitter by a
+        # fraction of the leaf size so the cards overlap the tip.
+        leaf_w = (leaf_maps[0].size[0] * K) if leaf_maps else 0.08 * K
+        for (tip, ttan) in tip_caps:
+            tn1, tn2 = _ortho_frame(ttan)
+            for _ in range(3):
+                jit = (tn1 * rng.uniform(-0.4, 0.4)
+                       + tn2 * rng.uniform(-0.4, 0.4)) * leaf_w
+                leaf_positions.append((tip + jit, ttan, 1.0))
+
+        # cull isolated CLUMPS: cards come in clumps of 3, so a lone clump
+        # already has 2 internal neighbours — require more than that within a
+        # ~2.5-leaf radius so an isolated clump (no OTHER clump nearby) is
+        # removed while a clump embedded in the mass survives.  (Draped
+        # strands are exempt — a hanging curtain is legitimately sparse.)
+        if leaf_positions and not drape:
+            leaf_positions = _cull_isolated_leaves(
+                leaf_positions, leaf_w * 2.5, min_neighbours=clump + 2)
 
         # canopy centre for outward normals
         if leaf_positions:
@@ -496,6 +662,12 @@ def build_tree(tree: SptTree, seed: int | None = None,
         else:
             groups = {m.texture: {'v': [], 'n': [], 'uv': [], 'c': [], 't': []}
                       for m in leaf_maps}
+        # Composite leaf atlases ship square (512x512 / 256x256), so the
+        # UV crop's on-screen aspect is du/dv.  Keeping each leaf card at that
+        # aspect stops the texture being stretched / alpha-cut (the "sharp
+        # bottom edge" artifact).
+        atlas_ar = 1.0
+
         for pos, tan, x in leaf_positions:
             k = int(rng.integers(0, len(leaf_maps)))
             m = leaf_maps[k]
@@ -507,10 +679,17 @@ def build_tree(tree: SptTree, seed: int | None = None,
                 quad = _FULL_QUAD
             # leaf card size = section 4005 * Size (section 4006 is supposed
             # to be exactly that product, but it is STALE in ~15 shrubs —
-            # buckthorn stores 0.08 where 4005*Size = 3.6 — so always derive)
-            w = m.size[0] * K
-            h = m.size[1] * K
-            if w <= 0 or h <= 0:
+            # buckthorn stores 0.08 where 4005*Size = 3.6 — so always derive).
+            # The card must match the UV crop's ON-SCREEN aspect (crop_uv_ar *
+            # atlas_ar) or the leaf texture is stretched and its alpha edge
+            # cuts across the card — the "sharp bottom edge" artifact.
+            du = abs(quad[0] - quad[2])           # crop u extent
+            dv = abs(quad[1] - quad[5])           # crop v extent
+            crop_ar = (du / dv) * atlas_ar if dv > 1e-4 else 1.0
+            area = max(m.size[0] * m.size[1], 1e-6) * K * K
+            h = math.sqrt(area / max(crop_ar, 1e-3))
+            w = crop_ar * h
+            if not (w > 0 and h > 0):
                 w = h = 0.08 * K
             _leaf_card(g, pos, w, h, m, quad, centre, rng, drape)
         for tex_key, g in groups.items():

@@ -95,12 +95,30 @@ def load_tree_manifest(export_dir: Path) -> dict:
     return out
 
 
+# subdir preference for resolving a texture stem.  `billboards/` holds
+# whole-tree render images (NOT leaf atlases) — a leaf stem can collide with
+# a billboard of the same name (e.g. shrubrhododendronsu.dds exists in both
+# leaves/ and billboards/); mapping leaf UV quads onto the billboard produces
+# hard-edged garbage in-game.  Prefer leaves/branches; never billboards.
+_TEX_SUBDIR_RANK = {'leaves': 0, 'branches': 1, '': 2, 'billboards': 9}
+
+
 def _tex_index(tex_root: Path) -> dict:
-    """{stem_lower: relative_subdir} for all DDS under the trees texture dir."""
+    """{stem_lower: relative_subdir} for all DDS under the trees texture dir.
+
+    When the same stem exists in several subdirs, the lowest-ranked subdir
+    wins (leaves > branches > root >> billboards) so leaf atlases are never
+    shadowed by a same-named whole-tree billboard render.
+    """
     idx = {}
     if tex_root and tex_root.is_dir():
         for p in tex_root.rglob('*.dds'):
-            idx.setdefault(p.stem.lower(), p.relative_to(tex_root).parent.as_posix())
+            stem = p.stem.lower()
+            sub = p.relative_to(tex_root).parent.as_posix()
+            rank = _TEX_SUBDIR_RANK.get(sub, 5)
+            prev = idx.get(stem)
+            if prev is None or rank < _TEX_SUBDIR_RANK.get(prev, 5):
+                idx[stem] = sub
     return idx
 
 
