@@ -38,17 +38,27 @@ from .spt_parser import SptTree, LevelParams
 # world units per (stored_value * Size)
 WORLD_SCALE = 10.0
 
-# Gravity semantics (validated in-game): the stored value is a TOTAL PITCH
-# TURN in units of 90 degrees, applied progressively along the stem in the
-# vertical plane of its initial direction.  Positive pitches the growth
-# upward — and PAST vertical when the turn exceeds the gap, which is what
-# makes a weeping willow (branch gravity 2..4 = 180..360 deg: the branch
-# arches over the top and its tip hangs straight down) while cottonwood
-# (0.2..0.4 = 18..36 deg) merely steepens.  Survey of all 113 Oblivion SPTs:
-# every branch-level value is in [0, 4]; only willow/blacklocust exceed 1.
-# Near-vertical stems (trunks, gravity 1) instead cap at vertical — they
-# have no defined pitch plane and must stay upright against disturbance.
-GRAVITY_TURN_CLAMP = 3.0        # max |total turn| in units of 90 deg (270°)
+# Gravity semantics (validated against Oblivion's own billboard renders in
+# textures/trees/billboards/ — the engine's actual output): the value maps
+# to a TARGET PITCH the stem bends toward along its length,
+#
+#     theta_target = 90 deg - |g - 1| * 90 deg      (g > 0)
+#
+# i.e. g=1 points straight up (every normal trunk stores 1 = stay vertical),
+# g=0.2..0.4 settles just above horizontal (oak/cottonwood boughs), and
+# values past 1 WRAP OVER the top: g=2 back to horizontal, g=3 straight
+# DOWN.  g=0 means no influence (redwood).
+#
+# How fast a stem approaches the target is scaled by its FLEXIBILITY curve
+# (6002) — the second key: weeping willow branches store gravity 2..4 but
+# flexibility 0 (they hold their start angles; the round crown and hanging
+# leaf curtains make the weeping look), while cottonwood limbs (flex
+# 0.4..0.6, gravity 0.2..0.4) bow outward along their length.
+GRAVITY_RESPONSE = 1.2          # approach rate at flexibility = 1
+
+# stems at least this thick (world units, base radius) contribute their
+# tube triangles to the exact-mesh collision shape
+COLLISION_MIN_RADIUS = 5.0
 
 # geometry budgets (SpeedTree LOD0 counts can be enormous; these caps keep
 # tri counts near vanilla Skyrim tree levels while preserving the look)
@@ -81,7 +91,9 @@ class TreeGeometry:
     bark_tris: np.ndarray = None
     # leaves grouped by texture: list of dicts with verts/normals/uvs/colors/tris
     leaf_groups: list = field(default_factory=list)
-    trunk_capsule: tuple = None         # (p0, p1, radius) world units
+    trunk_capsule: tuple = None         # (p0, p1, radius) world units (fallback)
+    collision_verts: list = field(default_factory=list)  # (N,3) arrays, world
+    collision_tris: list = field(default_factory=list)   # (M,3) index arrays
     height: float = 0.0
     radius: float = 0.0                 # horizontal extent
     n_leaves: int = 0
@@ -114,13 +126,6 @@ def _rotate_toward(d: np.ndarray, target: np.ndarray, angle_rad: float) -> np.nd
     return out / (np.linalg.norm(out) + 1e-12)
 
 
-def _rotate_about(v: np.ndarray, axis: np.ndarray, ang: float) -> np.ndarray:
-    """Rodrigues rotation of v about unit axis by ang radians."""
-    c, s = math.cos(ang), math.sin(ang)
-    out = v * c + np.cross(axis, v) * s + axis * float(np.dot(axis, v)) * (1 - c)
-    return out / (np.linalg.norm(out) + 1e-12)
-
-
 def _perturb(d: np.ndarray, angle_rad: float, rng: np.random.Generator) -> np.ndarray:
     """Rotate d by angle_rad about a random perpendicular axis."""
     if angle_rad <= 0.0:
@@ -138,7 +143,8 @@ def _perturb(d: np.ndarray, angle_rad: float, rng: np.random.Generator) -> np.nd
 
 def _grow_stem(origin: np.ndarray, direction: np.ndarray, world_len: float,
                base_radius: float, lv: LevelParams, grav_value: float,
-               n_rings: int, rng: np.random.Generator) -> tuple:
+               flex_value: float, n_rings: int,
+               rng: np.random.Generator) -> tuple:
     """Integrate a stem centerline with disturbance + gravity.
 
     Returns (points (n_rings+1,3), radii (n_rings+1,), tangents (n_rings+1,3)).
@@ -154,21 +160,13 @@ def _grow_stem(origin: np.ndarray, direction: np.ndarray, world_len: float,
     dist_var = math.radians(lv.disturbance.variance)
     up = np.array([0.0, 0.0, 1.0])
 
-    # gravity setup: pitch turn in the initial direction's vertical plane
-    g = float(np.clip(grav_value, -GRAVITY_TURN_CLAMP, GRAVITY_TURN_CLAMP))
-    upright = abs(float(d[2])) > 0.985     # trunks / treetop stems
-    pitch_axis = None
-    weights = None
-    if g != 0.0 and not upright:
-        pitch_axis = np.cross(d, up)       # +rotation pitches d upward
-        n = np.linalg.norm(pitch_axis)
-        pitch_axis = pitch_axis / n if n > 1e-6 else None
-        gps = np.array([float(lv.gravity_profile.eval(i / n_rings))
-                        if lv.gravity_profile else i / n_rings
-                        for i in range(1, n_rings + 1)])
-        s = float(gps.sum())
-        weights = gps / s if s > 1e-6 else np.full(n_rings, 1.0 / n_rings)
-        total_turn = g * (math.pi / 2)
+    g = float(grav_value)
+    # target pitch: g=1 -> +90 (up), wraps over past 1 (g=3 -> -90, down)
+    if g > 0.0:
+        target_pitch = math.radians(90.0 - abs(g - 1.0) * 90.0)
+    else:
+        target_pitch = math.radians(max(-90.0, g * 90.0))
+    target_pitch = float(np.clip(target_pitch, -math.pi / 2, math.pi / 2))
 
     for i in range(1, n_rings + 1):
         t = i / n_rings
@@ -177,15 +175,20 @@ def _grow_stem(origin: np.ndarray, direction: np.ndarray, world_len: float,
             w = float(lv.disturbance.eval(t))
             jitter = rng.uniform(-1.0, 1.0) * dist_var * w / n_rings * 2.0
             d = _perturb(d, abs(jitter), rng)
-        if g != 0.0:
-            if upright or pitch_axis is None:
-                # keep upright: close the remaining gap to vertical
+        if g != 0.0 and flex_value > 0.0:
+            # bend toward the target-pitch direction, keeping the stem's
+            # current azimuth; a purely vertical stem has no azimuth and
+            # stays put until disturbance gives it one (paradise trunks).
+            hx, hy = float(d[0]), float(d[1])
+            hlen = math.hypot(hx, hy)
+            if hlen > 1e-6:
+                target = np.array([hx / hlen * math.cos(target_pitch),
+                                   hy / hlen * math.cos(target_pitch),
+                                   math.sin(target_pitch)])
                 gp = float(lv.gravity_profile.eval(t)) if lv.gravity_profile else t
-                gap = math.acos(float(np.clip(np.dot(d, up), -1.0, 1.0)))
-                frac = min(1.0, 3.0 * abs(g) * gp / n_rings)
-                d = _rotate_toward(d, up, gap * frac)
-            else:
-                d = _rotate_about(d, pitch_axis, total_turn * float(weights[i - 1]))
+                gap = math.acos(float(np.clip(np.dot(d, target), -1.0, 1.0)))
+                frac = min(1.0, GRAVITY_RESPONSE * flex_value * gp / n_rings)
+                d = _rotate_toward(d, target, gap * frac)
         p = p + d * seg
         pts[i] = p
         tans[i] = d
@@ -299,11 +302,13 @@ def build_tree(tree: SptTree, seed: int | None = None,
     n_rings = int(np.clip(trunk.length_segments, 3, _RING_CAP[0]))
     n_az = int(np.clip(trunk.cross_segments, 4, _CROSS_CAP[0]))
 
-    # trunk gravity always straightens toward vertical (fights disturbance);
-    # Camoran paradise trunks have gravity 0 + high disturbance = wandering.
+    # trunk gravity 1 = stay vertical (fights disturbance); Camoran paradise
+    # trunks have gravity 0 + high disturbance = wandering; forsythia canes
+    # have gravity 3 = arch to the ground.
     tpts, tradii, ttans = _grow_stem(
         np.zeros(3), np.array([0.0, 0.0, 1.0]), trunk_len, trunk_rad,
-        trunk, abs(float(trunk.gravity.eval(0.0))), n_rings, rng)
+        trunk, float(trunk.gravity.eval(0.0)),
+        max(float(trunk.flexibility.eval(0.0)), 0.15), n_rings, rng)
 
     flare_phases = None
     if trunk.flare_count > 0:
@@ -322,6 +327,8 @@ def build_tree(tree: SptTree, seed: int | None = None,
     all_v.append(v); all_n.append(n); all_uv.append(uv); all_c.append(c)
     all_t.append(tri + vbase)
     vbase += len(v)
+    geo.collision_verts.append(v)
+    geo.collision_tris.append(tri)
 
     trunk_stem = Stem(0, tpts, tradii, trunk_len, trunk_stored_len)
     # collision hugs the trunk: capsule along the actual (leaning) centerline
@@ -339,8 +346,12 @@ def build_tree(tree: SptTree, seed: int | None = None,
         if not parents:
             break
 
-        # candidate children across all parents
-        candidates = []      # (parent_stem, ptans, x)
+        # candidate children across all parents.  x = absolute position on
+        # the parent; x_rel = position within the generation window — SHAPE
+        # curves (length/radius/start angle/gravity) evaluate at x_rel, so a
+        # narrow window still sweeps the full curve (cottonwood forks its
+        # whole limb fan inside the trunk's [0, 0.1] window).
+        candidates = []      # (parent_stem, ptans, x, x_rel)
         for (pstem, ptans) in parents:
             cnt = parent_lv.child_freq * pstem.stored_length
             if lv.gen_profile is not None:
@@ -352,8 +363,9 @@ def build_tree(tree: SptTree, seed: int | None = None,
             first, last = parent_lv.child_first, parent_lv.child_last
             span = max(last - first, 1e-3)
             for i in range(cnt):
-                x = first + span * (i + rng.uniform(0.15, 0.85)) / cnt
-                candidates.append((pstem, ptans, min(x, 0.999)))
+                x_rel = (i + rng.uniform(0.15, 0.85)) / cnt
+                x = first + span * x_rel
+                candidates.append((pstem, ptans, min(x, 0.999), x_rel))
 
         budget = MAX_STEMS_PER_LEVEL.get(li, 300)
         if len(candidates) > budget:
@@ -362,8 +374,8 @@ def build_tree(tree: SptTree, seed: int | None = None,
 
         out = []
         golden = math.pi * (3.0 - math.sqrt(5.0))
-        for ci, (pstem, ptans, x) in enumerate(candidates):
-            stored_len = float(lv.length.eval_var(x, rng))
+        for ci, (pstem, ptans, x, x_rel) in enumerate(candidates):
+            stored_len = float(lv.length.eval_var(x_rel, rng))
             wlen = stored_len * K
             if wlen < MIN_STEM_WORLD_LEN:
                 continue
@@ -378,7 +390,7 @@ def build_tree(tree: SptTree, seed: int | None = None,
                          + pstem.radii[min(i0 + 1, len(pstem.radii) - 1)] * f)
 
             # direction: rotate away from parent axis by start angle
-            a_deg = float(lv.start_angle.eval_var(x, rng))
+            a_deg = float(lv.start_angle.eval_var(x_rel, rng))
             a_rad = math.radians(np.clip(a_deg, -180.0, 180.0))
             n1, n2 = _ortho_frame(ptan)
             az = golden * ci + rng.uniform(-0.35, 0.35)
@@ -386,14 +398,16 @@ def build_tree(tree: SptTree, seed: int | None = None,
             d = math.cos(a_rad) * ptan + math.sin(a_rad) * radial
             d /= (np.linalg.norm(d) + 1e-12)
 
-            base_r = float(lv.radius.eval_var(x, rng)) * K
+            base_r = float(lv.radius.eval_var(x_rel, rng)) * K
             base_r = float(np.clip(base_r, 0.1, max(prad * 0.85, 0.1)))
 
             nr = int(np.clip(lv.length_segments, 2, _RING_CAP.get(min(li, 2), 3)))
             naz = int(np.clip(lv.cross_segments, 3, _CROSS_CAP.get(min(li, 2), 4)))
 
-            gval = float(lv.gravity.eval_var(x, rng))
-            pts, radii, tans = _grow_stem(ppos, d, wlen, base_r, lv, gval, nr, rng)
+            gval = float(lv.gravity.eval_var(x_rel, rng))
+            fval = float(lv.flexibility.eval(x_rel))
+            pts, radii, tans = _grow_stem(ppos, d, wlen, base_r, lv, gval,
+                                          fval, nr, rng)
             stem = Stem(li, pts, radii, wlen, stored_len, x)
             out.append((stem, tans))
 
@@ -404,6 +418,9 @@ def build_tree(tree: SptTree, seed: int | None = None,
                 all_v.append(v); all_n.append(n); all_uv.append(uv); all_c.append(c)
                 all_t.append(tri + vbase)
                 vbase += len(v)
+                if base_r >= COLLISION_MIN_RADIUS:
+                    geo.collision_verts.append(v)
+                    geo.collision_tris.append(tri)
 
         stems_by_level[li] = out
 
@@ -417,10 +434,18 @@ def build_tree(tree: SptTree, seed: int | None = None,
         if not carriers and last_bi > 0:
             carriers = stems_by_level.get(last_bi - 1, [])
         carrier_lv = branch_levels[-1]
-        # leaf-level gravity: hanging foliage (weeping willow leaves = 90).
+        # Leaf-level gravity drives hanging foliage.  A large value (weeping
+        # willow leaves store 90) means the foliage drapes straight down as
+        # long curtains — modelled as vertical STRANDS of stacked cards, the
+        # only way to reproduce the willow's solid teardrop crown that hangs
+        # far below its branches.  Ordinary leaves (gravity 0) get one card.
         lg = float(leaf_level.gravity.eval(0.0))
-        hang_bias = float(np.clip(abs(lg) if abs(lg) <= 1.0 else abs(lg) / 90.0,
-                                  0.0, 1.0)) if lg > 0.0 else 0.0
+        drape = lg >= 5.0
+        strand_len = 0.0
+        if drape:
+            # curtain length: willow branches sit in the upper trunk; the
+            # strands must reach ~40% of tree height to fill the crown
+            strand_len = tree.size * WORLD_SCALE * 0.32
         leaf_positions = []      # (pos, stem_dir, x)
         for (pstem, ptans) in carriers:
             cnt = int(round(carrier_lv.child_freq * pstem.stored_length))
@@ -440,10 +465,16 @@ def build_tree(tree: SptTree, seed: int | None = None,
                 n1, n2 = _ortho_frame(tan)
                 az = rng.uniform(0, 2 * math.pi)
                 od = math.cos(az) * n1 + math.sin(az) * n2
-                if hang_bias > 0.0:
-                    od = od * (1.0 - hang_bias) + np.array([0.0, 0.0, -1.0]) * hang_bias
-                    od /= (np.linalg.norm(od) + 1e-12)
-                leaf_positions.append((pos + od * dist, tan, x))
+                base = pos + od * dist
+                if drape:
+                    # a vertical strand of cards hanging from this point
+                    n_cards = 4
+                    step = strand_len * rng.uniform(0.7, 1.1) / n_cards
+                    for c in range(n_cards):
+                        z = base - np.array([0.0, 0.0, step * c])
+                        leaf_positions.append((z, tan, x))
+                else:
+                    leaf_positions.append((base, tan, x))
         if len(leaf_positions) > max_leaves:
             idx = rng.choice(len(leaf_positions), size=max_leaves, replace=False)
             leaf_positions = [leaf_positions[i] for i in idx]
@@ -481,7 +512,7 @@ def build_tree(tree: SptTree, seed: int | None = None,
             h = m.size[1] * K
             if w <= 0 or h <= 0:
                 w = h = 0.08 * K
-            _leaf_card(g, pos, w, h, m, quad, centre, rng, hang_bias)
+            _leaf_card(g, pos, w, h, m, quad, centre, rng, drape)
         for tex_key, g in groups.items():
             if not g['v']:
                 continue
@@ -525,17 +556,19 @@ def _bark_colors(verts, trunk_len, wind=0.0, t_axis=None):
     return c
 
 
-def _leaf_card(g, pos, w, h, leaf_map, uv_quad, centre, rng, hang_bias=0.0):
+def _leaf_card(g, pos, w, h, leaf_map, uv_quad, centre, rng, drape=False):
     """Two crossed quads forming one leaf cluster card.
 
     uv_quad: 8 floats, texture corners in order BR, BL, TL, TR
     (composite-map convention from SPT section 10002).
+    drape: part of a hanging strand — cards stay upright (the strand itself
+    provides the downward drape), so no per-card downward pitch.
     """
     yaw = rng.uniform(0, 2 * math.pi)
     ov = math.radians((leaf_map.orientation_var or 0.0) * 90.0)
     tilt = rng.uniform(-ov, ov) if ov else rng.uniform(-0.25, 0.25)
     rot = math.radians(leaf_map.rotate or 0.0) + rng.uniform(-0.3, 0.3)
-    hang = float(np.clip(max(leaf_map.hang or 0.0, hang_bias), 0.0, 1.0))
+    hang = float(np.clip(leaf_map.hang or 0.0, 0.0, 1.0)) if not drape else 0.0
 
     out = pos - centre
     out[2] *= 0.5

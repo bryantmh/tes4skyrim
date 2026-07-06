@@ -25,12 +25,12 @@ Texture paths point into the tes4 namespace copied by the asset pipeline:
     textures\tes4\trees\leaves\<icon>.dds
 
 Usage (CLI):
-    python -m asset_convert.spt_converter <src_dir> <dst_dir>
+    python -m asset_convert.spt_converter <src_dir> <dst_dir> [--workers N]
 """
 
 import io
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -54,7 +54,13 @@ from .collision import _set_havok_material
 
 NIF_FLAGS = 14
 BSX_FLAGS = 130            # 0x82: complex + havok (vanilla flora value)
-_HAVOK_SCALE = 0.1
+# Generated tree geometry is in game/render units (Size*10).  Skyrim Havok
+# collision is game_units / 69.9904 (1 havok unit = 69.9904 game units) —
+# verified against vanilla wrtempletree01.nif (Gildergreen): its CMS collision
+# decodes to ~5.5 havok units tall for a ~389-game-unit trunk stub.  Using
+# 0.1 here (the source-NIF havok scale used elsewhere) made collision ~7x too
+# big because that path's source verts are already in havok units, not game.
+_GAME_TO_HAVOK = 1.0 / 69.9904
 _SKY_MAT_WOOD = 500811281  # SKY_HAV_MAT_WOOD
 
 BARK_TEX_DIR = 'textures\\tes4\\trees\\branches\\'
@@ -199,12 +205,12 @@ def _make_shape(name: bytes, verts, norms, uvs, colors, tris,
     return ts
 
 
-def _make_collision(root, capsule):
-    """Static wood capsule for the trunk.  capsule = (p0, p1, radius)."""
+def _capsule_shape(capsule):
+    """Fallback trunk capsule.  capsule = (p0, p1, radius) world units."""
     p0, p1, r = capsule
-    r_h = max(float(r) * _HAVOK_SCALE, 0.05)
-    a = np.asarray(p0, float) * _HAVOK_SCALE
-    b = np.asarray(p1, float) * _HAVOK_SCALE
+    r_h = max(float(r) * _GAME_TO_HAVOK, 0.02)
+    a = np.asarray(p0, float) * _GAME_TO_HAVOK
+    b = np.asarray(p1, float) * _GAME_TO_HAVOK
     # inset endpoints by the radius so hemisphere caps stay inside the trunk
     axis = b - a
     ln = float(np.linalg.norm(axis))
@@ -212,7 +218,6 @@ def _make_collision(root, capsule):
         axis /= ln
         a = a + axis * r_h
         b = b - axis * r_h
-
     cap = NifFormat.bhkCapsuleShape()
     cap.radius = r_h
     cap.radius_1 = r_h
@@ -220,9 +225,41 @@ def _make_collision(root, capsule):
     cap.first_point.x, cap.first_point.y, cap.first_point.z = map(float, a)
     cap.second_point.x, cap.second_point.y, cap.second_point.z = map(float, b)
     _set_havok_material(cap.material, _SKY_MAT_WOOD)
+    return cap
+
+
+def _make_collision(root, geo: TreeGeometry):
+    """Exact trunk/thick-limb mesh collision.
+
+    Builds bhkMoppBvTreeShape -> bhkCompressedMeshShape from the generated
+    tube triangles through the real Havok bridge (cms_builder), so collision
+    matches the rendered trunk exactly — the vanilla Gildergreen pattern
+    (wrtempletree01.nif: BSLeafAnimNode root + plain identity static body +
+    CMS).  Falls back to a trunk capsule if the bridge fails.
+    """
+    from .cms_builder import build_cms_collision
+
+    shape = None
+    tris_hu = []
+    for verts, tris in zip(geo.collision_verts, geo.collision_tris):
+        v = np.asarray(verts, float) * _GAME_TO_HAVOK
+        for a, b, c in tris:
+            tris_hu.append((tuple(v[a]), tuple(v[b]), tuple(v[c])))
+    if tris_hu:
+        try:
+            mopp = build_cms_collision(tris_hu, _SKY_MAT_WOOD, NifFormat)
+        except Exception:
+            mopp = None
+        if mopp is not None:
+            mopp.shape.target = root
+            shape = mopp
+    if shape is None:
+        if geo.trunk_capsule is None:
+            return None
+        shape = _capsule_shape(geo.trunk_capsule)
 
     rb = NifFormat.bhkRigidBody()
-    rb.shape = cap
+    rb.shape = shape
     rb.mass = 0.0
     rb.friction = 0.5
     rb.restitution = 0.4
@@ -233,8 +270,8 @@ def _make_collision(root, capsule):
     rb.motion_system = 5          # MO_SYS_BOX_STABILIZED (static)
     rb.quality_type = 0           # MO_QUAL_INVALID (static)
     rb.deactivator_type = 1
-    rb.havok_col_filter.layer = 2         # OL_STATIC
-    rb.havok_col_filter_copy.layer = 2
+    rb.havok_col_filter.layer = 1         # SKYL_STATIC
+    rb.havok_col_filter_copy.layer = 1
     rb.unknown_int_1 = 0
     rb.unknown_int_2 = 1
     rb.unknown_3_ints[0] = 0
@@ -270,8 +307,9 @@ def build_tree_nif(geo: TreeGeometry, name: str,
     root.extra_data_list.update_size()
     root.extra_data_list[0] = bsx
 
-    if geo.trunk_capsule is not None:
-        root.collision_object = _make_collision(root, geo.trunk_capsule)
+    co = _make_collision(root, geo)
+    if co is not None:
+        root.collision_object = co
 
     shapes = [_make_shape((name + ':Bark').encode(),
                           geo.bark_verts, geo.bark_normals, geo.bark_uvs,
@@ -340,21 +378,44 @@ def convert_one(spt_path: Path, out_path: Path, icon: str = '',
     return True
 
 
+def _convert_job(args):
+    """Module-level worker for ProcessPoolExecutor (must be picklable).
+
+    args = (spt_path_str, out_path_str, icon, seed, tex_idx, out_name).
+    Returns (out_name, ok, error_message_or_None).
+    """
+    spt_path, out_path, icon, seed, tex_idx, out_name = args
+    try:
+        convert_one(Path(spt_path), Path(out_path), icon=icon, seed=seed,
+                    tex_idx=tex_idx, name=out_name)
+        return (out_name, True, None)
+    except Exception as e:  # noqa: BLE001 — report, don't abort the batch
+        return (out_name, False, f'{Path(spt_path).name}: {e}')
+
+
 def convert_spt_directory(src_dir: Path, dst_dir: Path,
-                          export_dir: Path | None = None) -> dict:
+                          export_dir: Path | None = None,
+                          workers: int | None = None) -> dict:
     """Convert all .spt files under src_dir into NIFs in dst_dir.
 
     One NIF per TREE record (named <editorid>.nif, seeded and textured from
     the record), plus one <sptstem>.nif for unreferenced SPT files.
 
+    Conversion is CPU-bound (numpy geometry + PyFFI serialization + the
+    Havok MOPP bridge), so it runs across a ProcessPoolExecutor — threads
+    would serialize on the GIL and give no speedup.
+
     Args:
         src_dir:    e.g. export/Oblivion.esm/trees
         dst_dir:    e.g. output/Oblivion.esm/meshes/tes4/speedtrees
         export_dir: dir containing TREE.txt and textures/ (default: src_dir parent)
+        workers:    process count (default: cpu_count - 1)
     """
     src_dir = Path(src_dir)
     dst_dir = Path(dst_dir)
     export_dir = Path(export_dir) if export_dir else src_dir.parent
+    if workers is None or workers < 1:
+        workers = _WORKER_COUNT
 
     spt_files = sorted(src_dir.rglob('*.spt'))
     if not spt_files:
@@ -364,37 +425,40 @@ def convert_spt_directory(src_dir: Path, dst_dir: Path,
     manifest = load_tree_manifest(export_dir)
     tex_idx = _tex_index(export_dir / 'textures' / 'trees')
 
-    # jobs: (spt_path, out_name, icon, seed)
+    # jobs for the pool: pass everything by value so workers need no globals
     jobs = []
-    referenced = set()
     for p in spt_files:
         entries = manifest.get(p.stem.lower(), [])
         if entries:
-            referenced.add(p.stem.lower())
             for edid, icon, seed in entries:
                 if edid:
-                    jobs.append((p, edid.lower(), icon, seed))
+                    out_name = edid.lower()
+                    jobs.append((str(p), str(dst_dir / (out_name + '.nif')),
+                                 icon, seed, tex_idx, out_name))
         else:
-            jobs.append((p, p.stem.lower(), '', None))
+            out_name = p.stem.lower()
+            jobs.append((str(p), str(dst_dir / (out_name + '.nif')),
+                         '', None, tex_idx, out_name))
     n_records = sum(1 for j in jobs if j[3] is not None)
+    workers = max(1, min(workers, len(jobs)))
     print(f'  [SPT] {len(spt_files)} SPT files, {len(jobs)} tree variants '
-          f'({n_records} from TREE records) with {_WORKER_COUNT} workers...')
+          f'({n_records} from TREE records) with {workers} workers...')
 
+    dst_dir.mkdir(parents=True, exist_ok=True)
     counts = {'ok': 0, 'fail': 0, 'skip': 0}
 
-    def _task(job):
-        p, out_name, icon, seed = job
-        try:
-            return convert_one(p, dst_dir / (out_name + '.nif'), icon=icon,
-                               seed=seed, tex_idx=tex_idx, name=out_name)
-        except Exception as e:
-            print(f'  [SPT] ERROR {p.name} -> {out_name}: {e}')
-            return False
-
-    with ThreadPoolExecutor(max_workers=_WORKER_COUNT) as pool:
-        futures = {pool.submit(_task, j): j for j in jobs}
-        for fut in as_completed(futures):
-            counts['ok' if fut.result() else 'fail'] += 1
+    if workers == 1:
+        results = (_convert_job(j) for j in jobs)
+        for _name, ok, err in results:
+            counts['ok' if ok else 'fail'] += 1
+            if err:
+                print(f'  [SPT] ERROR {err}')
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            for _name, ok, err in pool.map(_convert_job, jobs, chunksize=1):
+                counts['ok' if ok else 'fail'] += 1
+                if err:
+                    print(f'  [SPT] ERROR {err}')
 
     print(f"  [SPT] Done: {counts['ok']} ok, {counts['fail']} fail")
     return counts
@@ -413,6 +477,8 @@ if __name__ == '__main__':
     parser.add_argument('dst_dir', help='Destination directory for .nif output')
     parser.add_argument('--export-dir', default=None,
                         help='Export dir with TREE.txt/textures (default: parent of src_dir)')
+    parser.add_argument('--workers', type=int, default=None,
+                        help=f'Parallel worker processes (default: {_WORKER_COUNT})')
     args = parser.parse_args()
 
     if not _PYFFI:
@@ -421,5 +487,6 @@ if __name__ == '__main__':
 
     counts = convert_spt_directory(
         Path(args.src_dir), Path(args.dst_dir),
-        export_dir=Path(args.export_dir) if args.export_dir else None)
+        export_dir=Path(args.export_dir) if args.export_dir else None,
+        workers=args.workers)
     raise SystemExit(0 if counts['fail'] == 0 else 1)

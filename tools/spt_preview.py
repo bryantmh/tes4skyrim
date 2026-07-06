@@ -217,6 +217,19 @@ def render_tree(spt_path: Path, tex_root: Path, views=(0.0,), size=800,
         draw.line([(0, gy), (size, gy)], fill=(90, 90, 90, 255))
         panels.append(img)
 
+    # Oblivion's own billboard render (ground truth), if available
+    bb = tex_root / 'billboards' / (Path(spt_path).stem.lower() + '.dds')
+    if bb.exists():
+        try:
+            w, h, bgra = decode_dds(bb)
+            bbimg = Image.frombytes('RGBA', (w, h), bytes(bgra), 'raw', 'BGRA')
+            panel = Image.new('RGBA', (size, size), (30, 34, 40, 255))
+            bbimg = bbimg.resize((size, size))
+            panel.alpha_composite(bbimg)
+            panels.append(panel)
+        except Exception:
+            pass
+
     out = Image.new('RGBA', (size * len(panels), size))
     for i, p in enumerate(panels):
         out.paste(p, (i * size, 0))
