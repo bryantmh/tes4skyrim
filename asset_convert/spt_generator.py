@@ -523,13 +523,17 @@ def build_tree(tree: SptTree, seed: int | None = None,
         if not carriers and last_bi > 0:
             carriers = stems_by_level.get(last_bi - 1, [])
         carrier_lv = branch_levels[-1]
-        # Leaf-level gravity drives hanging foliage.  A large value (weeping
-        # willow leaves store 90) means the foliage drapes straight down as
-        # long curtains — modelled as vertical STRANDS of stacked cards, the
-        # only way to reproduce the willow's solid teardrop crown that hangs
-        # far below its branches.  Ordinary leaves (gravity 0) get one card.
+        # Hanging foliage (long draped strands) is the weeping-willow look.
+        # It requires BOTH high leaf-level gravity (leaves hang, stored 90)
+        # AND high BRANCH gravity (the branches themselves arch over and
+        # down, willow stores 2..4).  Junipers and white pines also store
+        # leaf gravity 90 but their branches have gravity <=0.5 — they are
+        # ordinary upright conifers, NOT weeping, so leaf gravity alone is
+        # not enough (it would trail foliage down a juniper's bare trunk).
         lg = float(leaf_level.gravity.eval(0.0))
-        drape = lg >= 5.0
+        max_branch_grav = max((abs(lv.gravity.hi) for lv in branch_levels[1:]),
+                              default=0.0)
+        drape = lg >= 5.0 and max_branch_grav >= 1.5
         strand_len = 0.0
         if drape:
             # curtain length: proportional to the average carrier-branch
@@ -636,6 +640,17 @@ def build_tree(tree: SptTree, seed: int | None = None,
                 jit = (tn1 * rng.uniform(-0.4, 0.4)
                        + tn2 * rng.uniform(-0.4, 0.4)) * leaf_w
                 leaf_positions.append((tip + jit, ttan, 1.0))
+
+        # foliage floor: no leaf may sit below the lowest branch attachment
+        # on the trunk.  A branch (child_first .. 1.0 on the trunk) plus its
+        # leaf coverage can otherwise trail foliage down a bare lower trunk
+        # (juniper: branches start at 25% but leaves reached the ground).
+        # Exempt drape trees — willow strands hang below their branch by design.
+        first_branches = stems_by_level.get(1, [])
+        if first_branches and not drape:
+            trunk_first_z = min(float(s.points[0][2]) for s, _ in first_branches)
+            trunk_first_z -= leaf_w    # small tolerance so the join isn't bald
+            leaf_positions = [lp for lp in leaf_positions if lp[0][2] >= trunk_first_z]
 
         # cull isolated CLUMPS: cards come in clumps of 3, so a lone clump
         # already has 2 internal neighbours — require more than that within a
