@@ -271,16 +271,44 @@ def convert_GRAS(rec: dict) -> bytes:
     return _simple_object(rec, 'GRAS', has_full=False, extra_subs=extra)
 
 
+# TES5 TREE CNAM (48 bytes = 12 floats): Trunk Flexibility, Branch
+# Flexibility, Trunk Amplitude, Front Amplitude, Back Amplitude, Side
+# Amplitude, Front Frequency, Back Frequency, Side Frequency, Leaf
+# Flexibility, Leaf Amplitude, Leaf Frequency.  Values from vanilla
+# TreeReachTree01 — moderate sway that suits full-size trees.
+_TREE_CNAM = struct.pack('<12f', 1.0, 1.0, 0.04, 0.03, 0.04, 0.034,
+                         0.5, 0.5, 0.4, 1.0, 2.0, 1.0)
+
+
 def convert_TREE(rec: dict) -> bytes:
-    r"""TREE — Tree. Convert SPT model path → tes4\speedtrees\{stem}.nif"""
-    subs = _common_header_subs(rec, need_full=False, obnd_sig='TREE')
+    r"""TREE — Tree.
+
+    The SPT converter generates one NIF per TREE record (seeded by the
+    record's SNAM seed, leaf-textured by its ICON), named by lowercase
+    EditorID: tes4\speedtrees\<editorid>.nif.  OBND comes from the TES4
+    billboard dimensions (the tree's real world size); CNAM supplies the
+    BSLeafAnimNode wind parameters TES4 has no source for.
+    """
+    subs = b''
+    edid = get_str(rec, 'EditorID')
+    if edid:
+        subs += pack_string_subrecord('EDID', edid)
+    bb_w = get_float(rec, 'BNAM.BillboardWidth')
+    bb_h = get_float(rec, 'BNAM.BillboardHeight')
+    if bb_w > 0 and bb_h > 0:
+        half = min(int(bb_w / 2), 32767)
+        subs += pack_obnd(-half, -half, 0, half, half, min(int(bb_h), 32767))
+    else:
+        subs += pack_obnd(*_resolve_obnd(rec, 'TREE'))
     model = get_str(rec, 'Model.MODL')
-    if model:
-        # TES4 TREE MODL is like "\\DBush03.spt" — remap to our NIF output path
+    if model and edid:
+        subs += pack_string_subrecord('MODL', f'tes4\\speedtrees\\{edid.lower()}.nif')
+    elif model:
         import os
         stem = os.path.splitext(os.path.basename(model.replace('\\', '/').lstrip('/')))[0]
-        nif_path = f'tes4\\speedtrees\\{stem}.nif'
-        subs += pack_string_subrecord('MODL', nif_path)
+        subs += pack_string_subrecord('MODL', f'tes4\\speedtrees\\{stem.lower()}.nif')
+    subs += pack_subrecord('PFPC', struct.pack('<I', 0))
+    subs += pack_subrecord('CNAM', _TREE_CNAM)
     return pack_record('TREE', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 

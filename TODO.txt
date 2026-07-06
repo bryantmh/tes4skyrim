@@ -11,12 +11,7 @@ Major Issues:
 				uppersilverpitcher01.nif
 				uppergobletceramic01.nif
 
-	4 - NiParticleSystem / NiDynamicEffect isn't correctly converted. For instances flames don't appear or aren't animated.
-		Model Examples:
-			fireopensmall.nif
-			middlecandlestickfloor01fake.nif appears but has no flame on the candle
-
-	5 - Remaining armor bugs:
+	4 - Remaining armor bugs:
 		Guard Helmet showing hair
 		Iron helmet not showing at all
 		Shields attach much better now, but not perfect
@@ -27,11 +22,7 @@ Major Issues:
 		lowerclass female shirt 3 has a gap all along the center
 		Inward pull broken for shoes
 
-	6 - Attempt to create a working speed tree (.spt) to NIF converter. oblivion speed tree files are located in export\Oblivion.esm\trees. It is not in a nif format so we will need to read the format directly and convert into nif using billboards for the leaf nodes if possible.
-		Else just add static leaf nodes that approximate the tree look. Much of the spt format is actually readable in plain text so it should be relatively easy to understand what is happenging.
-		Speed tree docs: https://nwn2.fandom.com/wiki/Speed_Tree_Format I've also included spttools-master inside the external folder. As well as a manually converted version of the trees in external\Speed Tree Conversion that uses static leaf nodes for you to reference.
-			
-	7 - Nif converter fix broken conversion
+	5 - Nif converter fix broken conversion
 		Files:
 		[RD] architecture\basementsections\ungrdltraphingedoor.nif
 		[RD] architecture\castle\kvatch\kvatch  castle int hallway01.nif
@@ -67,17 +58,16 @@ Major Issues:
 		[WR] weapons\iron\bow.nif
 		[WR] weapons\silver\bow.nif
 
-	8 - Crash when entering the Anvil Mage's Guild (anvilmagesguild) and when entering the anvil castle private quarters cell, but no crash logs are created.
-
+	6 - Crash on opening inventory with potions
+	POSSIBLE RELEVANT OBJECTS:
+	RCX: (AlchemyItem*) "Weak Poison of Debilitation" [0x110984AB] ("Oblivion.esm") "Weak Poison of Debilitation"
+	RSP+1F8: (InventoryMenu*)
+	RSP+758: (`anonymous namespace'::DejaGFxLogger*)
 
 Minor Issues:
 		NPCs should have barter/training
 
 		override gold
-
-		Collision for trees
-
-		Better tree selection
 
 		Remove unnecessary post-processing from converter
 

@@ -773,6 +773,186 @@ class TestCollisionRigidBody:
                         f"unknown_6_shorts[3]={block.unknown_6_shorts[3]}, must be 0"
 
 
+class TestParticleSystemConversion:
+    """NiParticleSystem / flame conversion.
+
+    Regression guard for the vercond precedence bug in pyffi_monkey_patch that
+    dropped NiPSysData's two added-particle shorts on OBLIVION reads too,
+    misaligning every particle NIF by 4 bytes and failing the entire
+    fire/effects/magiceffects conversion list.
+    """
+
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    def test_fireopensmall_converts_and_psysdata_is_skyrim_layout(self, tmp_path):
+        """fireopensmall must convert, and its NiPSysData blocks must be the
+        authoritative 70-byte Skyrim BSStream-83 layout (hand-rolled — PyFFI's
+        own layout is structurally wrong and misaligns the engine → CTD).
+
+        We verify against the HEADER block_size table (read via inspect only);
+        we do NOT PyFFI-struct-read the block, because PyFFI cannot parse the
+        correct Skyrim NiPSysData layout (that is the whole reason it is
+        hand-rolled).  70 bytes is the vanilla value for an empty particle pool
+        (census of 27 vanilla empty NiPSysData blocks — all 70)."""
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat
+
+        src = EXPORT_MESHES / 'fire' / 'fireopensmall.nif'
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'out.nif'
+        result = convert_nif(str(src), str(dst))
+        assert not result.get('error'), f"fireopensmall failed to convert: {result}"
+        assert result.get('converted'), result
+
+        # Header-only read (no block struct parse).
+        data = NifFormat.Data()
+        with open(str(dst), 'rb') as f:
+            data.inspect(f)
+        hdr = data.header
+        bt = [b.decode('latin1') for b in hdr.block_types]
+        bti = list(hdr.block_type_index)
+        bsz = list(hdr.block_size)
+        psd_sizes = [bsz[i] for i in range(hdr.num_blocks)
+                     if bt[bti[i]] == 'NiPSysData']
+        assert psd_sizes, 'no NiPSysData block in converted fireopensmall'
+        for sz in psd_sizes:
+            assert sz == 70, f'NiPSysData block_size {sz} != vanilla 70 (layout bug)'
+        # Modifier vocabulary must be Skyrim's — else the SSE particle engine
+        # doesn't drive the system and particles are invisible.  Vanilla uses
+        # BSPSysLODModifier (universal), BSPSysScaleModifier (not GrowFade),
+        # BSPSysSimpleColorModifier (not NiPSysColorModifier).
+        present = set(bt)
+        assert 'BSPSysLODModifier' in present, 'missing BSPSysLODModifier (system culls)'
+        assert 'NiPSysGrowFadeModifier' not in present, \
+            'NiPSysGrowFadeModifier not converted to BSPSysScaleModifier (invisible)'
+        assert 'NiPSysColorModifier' not in present, \
+            'NiPSysColorModifier not converted to BSPSysSimpleColorModifier'
+        assert 'BSPSysScaleModifier' in present, 'no BSPSysScaleModifier'
+        # The root MUST carry BSXFlags with bit 0 (Animated) — without it the
+        # engine never ticks the particle controllers and the fire is
+        # invisible (vanilla census: 399/400 particle meshes set bit 0).
+        # fireopensmall has no collision, so the vanilla value is plain 0x01.
+        # BSXFlags sits before any NiPSysData so a partial read reaches it.
+        assert 'BSXFlags' in present, 'converted particle mesh has no BSXFlags'
+        raw = open(str(dst), 'rb').read()
+        idx = raw.find(b'BSX\x00') if b'BSX\x00' in raw else raw.find(b'BSX')
+        assert idx != -1, 'BSX name string not found'
+        # BSXFlags block body = name string index (u32) + integer_data (u32);
+        # simplest robust check: locate the block via header offsets.
+        offs = []
+        pos = hdr.get_size(data=data)  # first block starts right after header
+        for i in range(hdr.num_blocks):
+            offs.append(pos)
+            pos += bsz[i]
+        bsx_i = next(i for i in range(hdr.num_blocks) if bt[bti[i]] == 'BSXFlags')
+        import struct as _struct
+        _, bsx_val = _struct.unpack_from('<iI', raw, offs[bsx_i])
+        assert bsx_val & 0x01, \
+            f'BSXFlags 0x{bsx_val:x} missing Animated bit — particles never tick'
+        # NiPSysData field bytes must match the vanilla census (837 blocks):
+        #  - Has Texture Indices (off 46) MUST be 0 when Num Subtexture Offsets
+        #    (off 47) is 0: the engine does rand % count for atlas frame
+        #    selection → EXCEPTION_INT_DIVIDE_BY_ZERO in the emitter update.
+        #    0/837 vanilla blocks pair flag=1 with count=0.
+        #  - Additional Data (off 35) must be -1 (NULL ref; 0 would reference
+        #    block 0 = the root node).  Has VColors (32) = 1, Has Radii (39) = 1.
+        for i in range(hdr.num_blocks):
+            if bt[bti[i]] != 'NiPSysData':
+                continue
+            o = offs[i]
+            has_vcol = raw[o + 32]
+            (add_data,) = _struct.unpack_from('<i', raw, o + 35)
+            has_radii = raw[o + 39]
+            has_ti = raw[o + 46]
+            (n_subtex,) = _struct.unpack_from('<I', raw, o + 47)
+            assert not (has_ti and n_subtex == 0), \
+                'HasTexIndices=1 with 0 subtex offsets → div-by-zero in emitter'
+            assert add_data == -1, f'AdditionalData ref {add_data} != -1 (null)'
+            assert has_vcol == 1 and has_radii == 1, \
+                f'HasVColors={has_vcol} HasRadii={has_radii} != vanilla (1,1)'
+        # Every effect shader must have a NON-ZERO UV Scale.  PyFFI defaults
+        # UV Scale to (0,0), which collapses all UVs to the texture's top-left
+        # texel (transparent on flame textures) → geometry/particles render
+        # INVISIBLE.  Vanilla is (1,1); flip-book atlases use (1/N, 1).
+        for i in range(hdr.num_blocks):
+            if bt[bti[i]] != 'BSEffectShaderProperty':
+                continue
+            o = offs[i]
+            (nextra,) = _struct.unpack_from('<I', raw, o + 4)
+            q = o + 12 + 4 * nextra + 8 + 8  # flags + uv_offset
+            su, sv = _struct.unpack_from('<2f', raw, q)
+            assert su > 0 and sv > 0, \
+                f'effect shader block[{i}] UV Scale ({su},{sv}) — zero = invisible'
+
+class TestFlameNodeConversion:
+    """FlameNode markers → grafted CONVERTED Oblivion flame subtree.
+
+    Oblivion marks flame positions with empty FlameNode* NiNodes and attaches
+    a flame NIF there at runtime (firecandleflame.nif / torch flame).  The
+    conversion grafts the converted flame subtree under each marker: particle
+    systems + billboard-wrapped flip-book quads.  Requirements each guard a
+    real bug: no surviving NiBillboardNode may contain a particle system
+    (spinning emitter), emitter/gravity object refs must resolve in-tree
+    (demote dangled them), and the host root needs BSX bit 0 so the grafted
+    controllers tick.
+    """
+
+    @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
+    @pytest.mark.parametrize('rel,flame_tex', [
+        ('lights/candlefat02fake.nif', b'firecandleflame'),
+        ('lights/middlecandlestickfloor01fake.nif', b'firecandleflame'),
+        ('lights/torchtall01.nif', b'firetorch'),
+    ])
+    def test_flamenode_gets_grafted_flame(self, rel, flame_tex, tmp_path):
+        import time
+        if not hasattr(time, '_original_clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat
+
+        src = EXPORT_MESHES / rel
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path / 'meshes' / 'out.nif'
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        result = convert_nif(str(src), str(dst))
+        assert result.get('converted'), result
+
+        data = NifFormat.Data()
+        with open(str(dst), 'rb') as f:
+            data.inspect(f)
+            f.seek(0)
+            data.read(f)
+        # The grafted flame must ship its particle system(s).
+        psys = [b for b in data.blocks
+                if isinstance(b, NifFormat.NiParticleSystem)]
+        assert psys, 'no particle system grafted at FlameNode'
+        # No BSValueNode/AddonNode substitution remains.
+        assert not any(isinstance(b, NifFormat.BSValueNode) for b in data.blocks), \
+            'legacy MPS AddonNode substitution still present'
+        # No surviving billboard may contain a particle system (spun emitter).
+        for b in data.blocks:
+            if isinstance(b, NifFormat.NiBillboardNode):
+                assert not any(isinstance(t, NifFormat.NiParticleSystem)
+                               for t in b.tree()), \
+                    'NiBillboardNode still contains a particle system'
+        # Emitter/gravity object refs must resolve inside the tree.
+        tree_ids = {id(b) for b in data.blocks}
+        for b in data.blocks:
+            for attr in ('emitter_object', 'gravity_object'):
+                ref = getattr(b, attr, None)
+                if ref is not None:
+                    assert id(ref) in tree_ids, f'dangling {attr}'
+        # The flame texture family must appear on an effect shader.
+        texs = b'|'.join(bytes(b.source_texture).lower() for b in data.blocks
+                         if isinstance(b, NifFormat.BSEffectShaderProperty))
+        assert flame_tex in texs, f'{flame_tex} not in shader textures: {texs}'
+        # Host BSX must have the Animated bit so grafted controllers tick.
+        bsx = [b for b in data.blocks if isinstance(b, NifFormat.BSXFlags)]
+        assert bsx and (bsx[0].integer_data & 0x01), 'BSX Animated bit not set'
+
+
 class TestMultiSphereExpansion:
     """bhkMultiSphereShape must never survive conversion.
 
