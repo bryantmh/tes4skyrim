@@ -61,15 +61,21 @@ Major Issues for V1:
 
 	7 - NPCs should have barter/training
 
-	8 - Convert Grass
+	8 - NPCs missing proper outfits and instead are wearing random clothing
 
-	9 - Ensure proper creature replacements that use oblivion values where possible (missing mountain lion)
+	9 - Convert Grass
 
-	10 - Proper LOD generation oneclick solution as opposed to external generation
+	10 - Ensure proper creature replacements that use oblivion values where possible (missing mountain lion)
 
-	11 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
+	11 - Proper LOD generation oneclick solution as opposed to external generation
+		Still missing:
+		Correct textures
+		Water
+		Tree LOD
 
-	12 - Add versioning
+	12 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
+
+	13 - Add versioning
 
 Later Issues:
 	1 - Lip syncing with voice
@@ -114,25 +120,27 @@ Later Issues:
 
 Minor Issues:
 
-	8 -	Override gold with skyrim gold
+	1 -	Override gold with skyrim gold
 
-	9 - Weapons have an attack animation of unknown instead of default
+	2 - Weapons have an attack animation of unknown instead of default
 
-	10 - Improve landscape layer blending
+	3 - Improve landscape layer blending
 	
-	11 - Should properly position inventory items. The side that allows the largest view should face out
+	4 - Should properly position inventory items. The side that allows the largest view should face out
 	
-	12 - Properly convert creatures including animations (may be a pipe dream)
+	5 - Properly convert creatures including animations (may be a pipe dream)
 
-	13 - Every class teaches 1 handed this is obviously not correct in in accordance with the original data
+	6 - Every class teaches 1 handed this is obviously not correct in in accordance with the original data
 
-	14 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
+	7 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
 
-	15 - Add texture_overrides folder to export instead of only .bsa files
+	8 - Add texture_overrides folder to export instead of only .bsa files
 
-	16 - Nirnroot sound is really loud
+	9 - Nirnroot sound is really loud
 
-	17 - Land textures have weird specular
+	10 - Land textures have weird specular
 
-	18 - Harvested plants don't make a sound
+	11 - Harvested plants don't make a sound
+
+	12 - Update world map cloud mesh and texture
 

@@ -45,9 +45,18 @@ DELTA_SCALE = 8.0      # each int8 delta = 8 Skyrim units of height
 
 LOD_LEVELS  = [4, 8, 16, 32]
 
-# Texture size for diffuse DDS output, keyed by LOD level (matches vanilla Skyrim)
-TEX_SIZE_BY_LEVEL = {4: 1024, 8: 1024, 16: 2048, 32: 2048}
-TEX_SIZE = 1024  # fallback default
+# Diffuse DDS size per LOD level.  A level-N tile spans N cells; it is only ever
+# viewed at distance, so per-cell texel density can stay low.  The old flat
+# 1024/2048 gave every one of the ~960 LOD4 tiles a 683KB diffuse + 1.4MB normal
+# => 3GB.  Scaling with level (roughly constant texels/cell) keeps quality where
+# it's seen and cuts the total ~8x.
+TEX_SIZE_BY_LEVEL = {4: 256, 8: 512, 16: 1024, 32: 2048}
+TEX_SIZE = 512  # fallback default
+
+# Normal maps carry far less perceptible detail than diffuse at LOD distance,
+# so bake them at half the diffuse resolution (BC5 is 2x DXT1 per texel, so this
+# is the single biggest size win).
+NORMAL_SIZE_DIVISOR = 2
 
 # ---------------------------------------------------------------------------
 # LAND record parsing
@@ -222,14 +231,12 @@ def _decode_land(body, _sub):
     else:
         colors = np.full((VERTS_SIDE, VERTS_SIDE, 3), 128, dtype=np.uint8)
 
-    # Primary texture name (first ATXT)
-    atxt = _sub(body, 'ATXT')
-    tex_name = None
-    if atxt and len(atxt) >= 4:
-        ltex_fid = struct.unpack_from('<I', atxt)[0]
-        tex_name = f'ltex_{ltex_fid:08X}'
+    # Full per-quadrant texture layer structure (BTXT/ATXT/VTXT) for the
+    # diffuse compositor.  decode_land_layers takes the raw record body.
+    from .terrain_lod_textures import decode_land_layers
+    layers = decode_land_layers(body)
 
-    return {'heights': heights, 'colors': colors, 'tex_name': tex_name}
+    return {'heights': heights, 'colors': colors, 'layers': layers}
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +590,86 @@ def _write_flat_normal_dds(path: Path, size: int = TEX_SIZE):
     path.write_bytes(_make_flat_bc5_dds(size))
 
 
+def _make_bc5_dds_header(size: int, mip_count: int) -> bytes:
+    top_blocks = max(1, size // 4) * max(1, size // 4)
+    top_linear_size = top_blocks * 16
+    flags = 0x1 | 0x2 | 0x4 | 0x1000 | 0x80000 | 0x20000
+    caps  = 0x1000 | 0x400000 | 0x8
+    hdr  = b'DDS '
+    hdr += struct.pack('<I', 124)
+    hdr += struct.pack('<I', flags)
+    hdr += struct.pack('<I', size)
+    hdr += struct.pack('<I', size)
+    hdr += struct.pack('<I', top_linear_size)
+    hdr += struct.pack('<I', 0)
+    hdr += struct.pack('<I', mip_count)
+    hdr += b'\x00' * 44
+    hdr += struct.pack('<II', 32, 0x4)
+    hdr += b'ATI2'
+    hdr += struct.pack('<IIIII', 0, 0, 0, 0, 0)
+    hdr += struct.pack('<I', caps)
+    hdr += struct.pack('<IIII', 0, 0, 0, 0)
+    assert len(hdr) == 128
+    return hdr
+
+
+def _encode_bc4_block(vals16: np.ndarray) -> bytes:
+    """Encode one 4x4 block of a single channel (16 uint8 values) as BC4 (8 bytes)."""
+    v = vals16.astype(np.int32)
+    r0 = int(v.max())
+    r1 = int(v.min())
+    if r0 == r1:
+        # all equal -> endpoints equal, indices all 0
+        return struct.pack('BB', r0, r1) + b'\x00' * 6
+    # 8-value interpolation mode (r0 > r1)
+    palette = [r0, r1] + [((7 - i) * r0 + i * r1) // 7 for i in range(1, 7)]
+    palette = np.array(palette, dtype=np.int32)
+    idx = np.abs(v[:, None] - palette[None, :]).argmin(axis=1)
+    bits = 0
+    for i, code in enumerate(idx):
+        bits |= (int(code) & 7) << (3 * i)
+    idx_bytes = bits.to_bytes(6, 'little')
+    return struct.pack('BB', r0, r1) + idx_bytes
+
+
+def _write_normal_dds(normal_rgb: np.ndarray, path: Path):
+    """Write a real BC5/ATI2 normal map from an RGB normal image.
+
+    BC5 stores two channels: R (=normal X) and G (=normal Y).  Skyrim's landscape
+    LOD shader reconstructs Z.  Full mip chain, matching vanilla format.
+    """
+    from PIL import Image
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img = Image.fromarray(normal_rgb, 'RGB')
+    size = img.size[0]
+
+    mip_data = bytearray()
+    mip_count = 0
+    s = size
+    cur = img
+    while s >= 1:
+        arr = np.asarray(cur.resize((s, s), Image.LANCZOS) if cur.size[0] != s else cur,
+                         dtype=np.uint8)
+        R = arr[:, :, 0]
+        G = arr[:, :, 1]
+        # pad to multiple of 4
+        ph = (s + 3) & ~3
+        pw = (s + 3) & ~3
+        Rp = np.zeros((ph, pw), np.uint8); Rp[:s, :s] = R
+        Gp = np.zeros((ph, pw), np.uint8); Gp[:s, :s] = G
+        for by in range(0, ph, 4):
+            for bx in range(0, pw, 4):
+                mip_data += _encode_bc4_block(Rp[by:by+4, bx:bx+4].reshape(16))
+                mip_data += _encode_bc4_block(Gp[by:by+4, bx:bx+4].reshape(16))
+        mip_count += 1
+        if s == 1:
+            break
+        s //= 2
+
+    hdr = _make_bc5_dds_header(size, mip_count)
+    path.write_bytes(hdr + bytes(mip_data))
+
+
 # ---------------------------------------------------------------------------
 # NIF writing via pyffi
 # ---------------------------------------------------------------------------
@@ -628,7 +715,10 @@ def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
 
     N = tv * tv
 
-    # Triangles (CCW winding, as in vanilla BTR)
+    # Triangles: wind so the front face points UP (+Z).  The terrain is a top
+    # surface; with X=col, Y=row and Z up, i0->i1->i2 is CCW seen from +Z (front
+    # face up).  The previous i0->i2->i1 order was CW = back-facing, so the land
+    # rendered only from below / looked transparent from above.
     tris = []
     for row in range(tv - 1):
         for col in range(tv - 1):
@@ -636,8 +726,8 @@ def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
             i1 = i0 + 1
             i2 = i0 + tv
             i3 = i2 + 1
-            tris.append((i0, i2, i1))
-            tris.append((i1, i2, i3))
+            tris.append((i0, i1, i2))
+            tris.append((i1, i3, i2))
 
     world_scale = float(level)
 
@@ -750,6 +840,64 @@ def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
 
 
 # ---------------------------------------------------------------------------
+# Diffuse tile compositing + heightmap normal maps
+# ---------------------------------------------------------------------------
+
+# Per-cell pixel resolution when compositing the diffuse atlas.  A level-N tile
+# is N cells per side, so the atlas is N*CELL_DIFFUSE_PX per side; clamped to the
+# per-level TEX_SIZE on write.
+CELL_DIFFUSE_PX = 64
+
+
+def _composite_tile_diffuse(lands, tile_x, tile_y, level, ltex_map, tex_root):
+    """Composite a level-N tile diffuse from its cells' real landscape textures.
+
+    Returns (atlas RGB ndarray, side_px) with image row 0 = north (+Y), so it
+    matches the DDS orientation vanilla terrain LOD uses.
+    """
+    from .terrain_lod_textures import composite_cell
+    side = level * CELL_DIFFUSE_PX
+    atlas = np.full((side, side, 3), 60, dtype=np.uint8)
+    for cy in range(level):
+        for cx in range(level):
+            key = (tile_x + cx, tile_y + cy)
+            land = lands.get(key)
+            if land is None:
+                continue
+            img = composite_cell(land['layers'], land.get('colors'),
+                                 ltex_map, tex_root, tile_x + cx, tile_y + cy,
+                                 cell_px=CELL_DIFFUSE_PX, tex_size=64)
+            col0 = cx * CELL_DIFFUSE_PX
+            # north (+Y, higher cy) at the TOP of the image
+            row0 = (level - 1 - cy) * CELL_DIFFUSE_PX
+            atlas[row0:row0+CELL_DIFFUSE_PX, col0:col0+CELL_DIFFUSE_PX] = img
+    return atlas, side
+
+
+def _heightmap_normal_rgb(heights: np.ndarray, out_px: int) -> np.ndarray:
+    """Derive a tangent-space normal map (RGB uint8) from a height grid.
+
+    Skyrim terrain-LOD normal maps encode the surface normal so distant terrain
+    is lit; a flat normal leaves the LOD looking unlit.  heights is in game
+    units; we resize to out_px and take the gradient.
+    """
+    from PIL import Image
+    hh = np.nan_to_num(heights.astype(np.float32))
+    im = Image.fromarray(hh).resize((out_px, out_px), Image.BILINEAR)
+    hh = np.asarray(im, dtype=np.float32)
+    # world-space spacing between output samples (game units)
+    span = CELL_SIZE * (heights.shape[0] - 1) / 32.0  # tile world span
+    dpx = span / out_px
+    gy, gx = np.gradient(hh, dpx)
+    nz = np.ones_like(gx)
+    nx, ny, nzz = -gx, -gy, nz
+    norm = np.sqrt(nx*nx + ny*ny + nzz*nzz) + 1e-6
+    nx, ny, nzz = nx/norm, ny/norm, nzz/norm
+    rgb = np.stack([(nx*0.5+0.5), (ny*0.5+0.5), (nzz*0.5+0.5)], axis=-1)
+    return np.clip(rgb*255, 0, 255).astype(np.uint8)
+
+
+# ---------------------------------------------------------------------------
 # Per-tile worker — pool initializer + task function
 # ---------------------------------------------------------------------------
 
@@ -757,14 +905,19 @@ def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
 _worker_lands     = None
 _worker_mesh_dir  = None
 _worker_tex_dir   = None
+_worker_ltex_map  = None
+_worker_tex_root  = None
 
 
-def _worker_init(lands, mesh_dir_s, tex_dir_s):
+def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s):
     """Called once per worker process to stash shared read-only data."""
     global _worker_lands, _worker_mesh_dir, _worker_tex_dir
+    global _worker_ltex_map, _worker_tex_root
     _worker_lands    = lands
     _worker_mesh_dir = Path(mesh_dir_s)
     _worker_tex_dir  = Path(tex_dir_s)
+    _worker_ltex_map = ltex_map
+    _worker_tex_root = Path(tex_root_s)
 
 
 def _process_tile(args):
@@ -785,12 +938,23 @@ def _process_tile(args):
         (_worker_mesh_dir / f'{tag}.btr').write_bytes(nif_bytes)
 
         tex_size = TEX_SIZE_BY_LEVEL.get(level, TEX_SIZE)
-        _write_dds_dxt1(colors, _worker_tex_dir / f'{tag}.dds', size=tex_size)
-        _write_flat_normal_dds(_worker_tex_dir / f'{tag}_n.dds', size=tex_size)
+
+        # Diffuse: composite real landscape textures per LAND alpha layers.
+        atlas, _side = _composite_tile_diffuse(
+            _worker_lands, tile_x, tile_y, level,
+            _worker_ltex_map, _worker_tex_root)
+        _write_dds_dxt1(atlas, _worker_tex_dir / f'{tag}.dds', size=tex_size)
+
+        # Normal map: derive from the tile heightmap so distant terrain is lit.
+        # Baked at half the diffuse resolution (BC5 is 2x DXT1/texel).
+        normal_size = max(64, tex_size // NORMAL_SIZE_DIVISOR)
+        normal_rgb = _heightmap_normal_rgb(heights, normal_size)
+        _write_normal_dds(normal_rgb, _worker_tex_dir / f'{tag}_n.dds')
 
         return tag, True, None
     except Exception as e:
-        return tag, False, str(e)
+        import traceback
+        return tag, False, f"{e}\n{traceback.format_exc()}"
 
 
 # ---------------------------------------------------------------------------
@@ -839,6 +1003,12 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     mesh_dir.mkdir(parents=True, exist_ok=True)
     tex_dir.mkdir(parents=True, exist_ok=True)
 
+    # Resolve LTEX FormID -> landscape diffuse/normal .dds for the compositor.
+    from .terrain_lod_textures import build_ltex_texture_map
+    ltex_map = build_ltex_texture_map(esm_path)
+    tex_root = output_dir / 'textures'
+    print(f"  Resolved {len(ltex_map)} LTEX landscape textures.")
+
     # Number of worker processes: cpu_count - 2, minimum 1
     n_workers = max(1, (os.cpu_count() or 2) - 2)
     print(f"  Using {n_workers} worker process(es).")
@@ -869,7 +1039,7 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
         with ProcessPoolExecutor(
             max_workers=n_workers,
             initializer=_worker_init,
-            initargs=(lands, str(mesh_dir), str(tex_dir)),
+            initargs=(lands, str(mesh_dir), str(tex_dir), ltex_map, str(tex_root)),
         ) as pool:
             for tag, ok, err in pool.map(_process_tile, work):
                 if ok:

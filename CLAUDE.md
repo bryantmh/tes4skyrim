@@ -970,6 +970,21 @@ VTEX[i]=FormID
 - Landscape textures extracted from BSA are DXT1 BC1 512x512 — fully supported by SSELodGen
 - If terrain LOD appears purple after correct data install: ensure OLD LOD tiles are deleted before regenerating
 
+### Distant LOD generation (one-click, rebuilt 2026-07-06) — `convert.py` Phase 8 `phase_lod`
+Two pieces, both native, both re-enabled in the pipeline (`generate_lod` + `generate_terrain_lod`).
+
+**Terrain LOD** (`asset_convert/terrain_lod.py` + `terrain_lod_textures.py`): per-tile `.btr` heightmap NIF + composited diffuse `.dds` + heightmap-derived BC5 normal `.dds`, LOD levels 4/8/16/32. TES4Tamriel = 1301 tiles.
+- **The old diffuse was the bug**: it upscaled raw LAND VCLR vertex colors → a blurry color grid (why distant terrain looked wrong). FIX: `terrain_lod_textures.composite_cell()` composites the REAL landscape textures — resolve LTEX FormID→diffuse via `build_ltex_texture_map` (LAND BTXT/ATXT → LTEX.TNAM → TXST.TX00 = `tes4\landscape\*.dds`), then per quadrant blend base + alpha layers using the ATXT/VTXT opacity grid (17×17, pos=row*17+col), ×VCLR shading at 0.4 strength (full x2 caused hard cell seams). Landscape UV repeats every 2 cells.
+- `.btr` structure = `BSMultiBoundNode` "chunk" → `NiTriShape` "land" (scale=level, local 0..4096 verts, shader type 18 LODLandscapeNoise, no UV/normals/vcol needed) → `BSMultiBound`/`BSMultiBoundAABB`. Loads in-game; AABB magnitude matches vanilla LOD4. (xLODGen source only READS .btr for object-face culling — terrain .btr generation is entirely ours.)
+- Normal map derived from the heightmap gradient (`_heightmap_normal_rgb` + real BC5 via `_encode_bc4_block`), replacing the old flat normal so distant terrain is lit.
+- Validate with `python tools/terrain_lod_render.py --esm output/oblivion.esm/oblivion.esm --worldspace TES4Tamriel --cell X Y --radius R` → side-by-side hillshade + composited diffuse (the primary iteration tool; do NOT byte-match vanilla .btr). `tools/lod_nif_inspect.py` dumps .btr/.bto geometry+shader.
+
+**Object LOD + tree billboards** (`asset_convert/lod_gen.py` via `tools/LODGenx64.exe`): STAT/etc. flagged `0x8000` (Distant LOD)/`0x10000000` (World Map) by size in the importer get baked into `.bto`. TREE refs render as **crossed-quad billboard cards** via LODGen's FlatTextures mechanism (`_tree_billboard` points the LOD "model" at `tes4\trees\billboards\<sptstem>.dds` — Oblivion ships 118 billboard renders; `_write_flat_textures` emits the descriptor + a normals file so cards are lit + `_ensure_white_dds`). 91 flat textures, 716/734 LOD4 .bto contain tree billboards. `.btt`/`.lst` vanilla tree-LOD format was deliberately NOT reverse-engineered (risky, unvalidatable) — flat cards in .bto is the reliable Skyblivion path.
+- **GOTCHA**: `LODGenx64.exe` runs with cwd=tools/ → `PathData=` MUST be absolute (`Path(output_dir).resolve()`) or it fails its Data-dir check (exit -1, log "No Data directory"). LODGen's "Oh crap N = N = ..." stderr spam is a harmless degenerate-triangle notice, not an error.
+- `_promote_lod_textures` copies .bto-referenced textures to the textures root AND synthesizes missing NORMAL maps (`_a_n.dds` atlas normals + any missing `_n.dds`) from the source normal or a flat normal — LODGen writes atlas diffuse but not atlas normals, so object LOD would render unlit without this.
+
+**World map** uses terrain LOD (all levels incl. LOD32) + object LOD. WRLD NAM0/NAM9 bounds are RAW float world units (NOT /4096) and MNAM map dims must be correct — both verified in the output ESM.
+
 ## Skyblivion Analysis — Conversion Best Practices
 
 Analysis of ~140 Skyblivion/Skywind conversion scripts in `external/Skyblivion Conversion Edit Scripts/`. These findings are incorporated into our import script.

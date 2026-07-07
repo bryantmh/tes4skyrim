@@ -485,22 +485,23 @@ def phase_lod(file_name: str, tes5_data: str, config: dict,
     else:
         worldspace_edid = config.get('worldspaceEditorID', stem)
 
-    print(f"[{file_name}] Generating LOD (worldspace: {worldspace_edid})...")
+    print(f"[{file_name}] Generating object LOD (worldspace: {worldspace_edid})...")
     ok = generate_lod(
         esm_path=esm_path,
         output_dir=output_dir,
         worldspace_edid=worldspace_edid,
     )
 
-    # Terrain LOD generation is broken, use xlodgen for now 
-    # print(f"[{file_name}] Generating terrain LOD...")
-    # generate_terrain_lod(
-    #     esm_path=esm_path,
-    #     output_dir=output_dir,
-    #     worldspace_edid=worldspace_edid,
-    # )
+    # Terrain LOD: heightmap .btr tiles + composited landscape-texture diffuse
+    # (real LTEX textures blended per LAND alpha layers) + heightmap normal maps.
+    print(f"[{file_name}] Generating terrain LOD...")
+    ok_terrain = generate_terrain_lod(
+        esm_path=esm_path,
+        output_dir=output_dir,
+        worldspace_edid=worldspace_edid,
+    )
 
-    return ok
+    return ok and ok_terrain
 
 
 # ===========================================================================
