@@ -1,3 +1,14 @@
+Gameplan:
+	Fix distant water M11
+	Fix distant textures M11
+	Fix distant trees M11
+	Fix grass conversion M9
+	Fix potion crashing M1
+	Fix npc barter M7
+	Fix dogwood tree L8
+	Fix terminal spawning L12
+	Fix app design M12
+
 Major Issues for V1:
 
 	1 - Crash on opening inventory with potions
@@ -30,21 +41,12 @@ Major Issues for V1:
 		[WR] architecture\ships\mainmast02.nif
 		[WR] architecture\statue\nightmotherstatue.nif
 		[WR] architecture\statue\nightmotherstatuebase.nif
-		[RD] characters\_1stperson\skeleton.nif
-		[RD] characters\imperial\headhuman_50.nif
-		[RD] characters\khajiit\male\headkhajiit.nif
 		[RD] clutter\farm\handscythe01.nif
 		[RD] clutter\farm\oar01.nif
 		[RD] clutter\floorplane01.nif
 		[RD] clutter\stonepedastellarge01.nif
 		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
 		[WR] dungeons\caves\triggers\ctrigtripwire01.nif
-		[VER] marker_arrow.nif
-		[VER] marker_divine.nif
-		[VER] marker_map.nif
-		[VER] marker_radius.nif
-		[VER] marker_temple.nif
-		[VER] marker_travel.nif
 		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
 		[WR] oblivion\gate\obgatemini01.nif
 		[WR] oblivion\gate\obliviongate_forming.nif
@@ -113,10 +115,15 @@ Later Issues:
 		Needs better curving of branches to match source
 		Needs better handling of unattached leaves
 		Trunk texture bad UV
+		Dogwood tree is only flowers ingame when it should be leaves and flowers
 
 	9 - Refine LOD mesh decimation
 
 	10 - Properly document all tools
+
+	11 - BSA builder must be limited to 2GB files
+
+	12 - Fix infinite terminal spawning when using double click version
 
 Minor Issues:
 

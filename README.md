@@ -66,7 +66,7 @@ pip install PyFFI numpy scipy pytest
 
 ## Quick start
 
-The easiest way to run a conversion is the GUI:
+The easiest way to run a conversion is the GUI. Either double click gui.pyw or in the terminal:
 
 ```bash
 python gui.py
