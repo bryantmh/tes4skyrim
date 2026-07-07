@@ -192,13 +192,14 @@ TESConversion/
 | Contributor | Contribution |
 |-------------|--------------|
 | [xEdit and all contributors](https://github.com/TES5Edit/TES5Edit) | ESM record definitions; `BSArch.exe` (BSA packing) and `LODGenx64.exe` (object LOD) |
-| Zilav's Oblivion → Skyrim xEdit conversion scripts | Original inspiration and a wealth of format knowledge |
+| Zilav's Oblivion → Skyrim xEdit conversion scripts | The original inspiration and the information I needed to get started |
 | [NifSkope](https://github.com/niftools/nifskope) contributors | NIF format documentation |
 | [Ormin — NIFConverter](https://github.com/Ormin/skyblivion-NIFConverter) | Mesh conversion reference |
 | [Ormin — ScriptConverter](https://github.com/Ormin/skyblivion-ScriptConverter) | OBScript → Papyrus transpilation reference |
 | [russo-2025](https://github.com/russo-2025/papyrus-compiler) | Papyrus compiler |
-| The Morroblivion, Skyblivion, and Skywind communities | For years of inspiration and hard work. |
+| [LvxMagick](https://www.nexusmods.com/skyrimspecialedition/mods/183399) | Mopp Bridge |
 
+And finally to all the wonderful people I used to know on the Morroblivion forum, and those still working hard on Skyblivion and Skywind all these years later. You are an inspiration
 ---
 
 ## License
