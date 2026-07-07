@@ -1,28 +1,29 @@
-Major Issues:
+Major Issues for V1:
 
-	1 - Havok feels off. Items don't move like they should do a comparison with skyrim esm / collision values and create skyrim_overrides for any data that can't be gleaned from the original model / esm
-		Specifically, there seems to be too much inertia on small items, and occasionally the items will hang in the air. Animated signs will get stuck in a position after swinging a bit.
+	1 - Crash on opening inventory with potions
+		POSSIBLE RELEVANT OBJECTS:
+			RCX: (AlchemyItem*) "Weak Poison of Debilitation" [0x110984AB] ("Oblivion.esm") "Weak Poison of Debilitation"
+			RSP+1F8: (InventoryMenu*)
+			RSP+758: (`anonymous namespace'::DejaGFxLogger*)
 
 	2 - Book using default cover and no text visible
 
-	3 - Activation detection (how close my cursor needs to be to an item till the game shows its information on my hud) is way too big.
+	3 - Havok feels off. Items don't move like they should do a comparison with skyrim esm / collision values and create skyrim_overrides for any data that can't be gleaned from the original model / esm
+		Specifically, there seems to be too much inertia on small items, and occasionally the items will hang in the air. Animated signs will get stuck in a position after swinging a bit.
+
+	4 - Activation detection (how close my cursor needs to be to an item till the game shows its information on my hud) is way too big.
 		I am able to select it 3-4x the visual mesh's size always
 			Model Examples:
 				uppersilverpitcher01.nif
 				uppergobletceramic01.nif
 
-	4 - Remaining armor bugs:
+	5 - Remaining armor bugs:
 		Guard Helmet showing hair
 		Iron helmet not showing at all
-		Shields attach much better now, but not perfect
 		Add _1 body type
 		Need new skyrim body mesh to actually work to allow leg skin to appear
-		Should maybe have another option just for armor pieces with lower arm so long sleeves don't misalign (the lower half of the arms needs to be moved forward slightly)
-		lowerclass shirt 7 completely messed up (stretched wide)
-		lowerclass female shirt 3 has a gap all along the center
-		Inward pull broken for shoes
 
-	5 - Nif converter fix broken conversion
+	6 - Nif converter fix broken conversion
 		Files:
 		[RD] architecture\basementsections\ungrdltraphingedoor.nif
 		[RD] architecture\castle\kvatch\kvatch  castle int hallway01.nif
@@ -58,58 +59,78 @@ Major Issues:
 		[WR] weapons\iron\bow.nif
 		[WR] weapons\silver\bow.nif
 
-	6 - Crash on opening inventory with potions
-	POSSIBLE RELEVANT OBJECTS:
-	RCX: (AlchemyItem*) "Weak Poison of Debilitation" [0x110984AB] ("Oblivion.esm") "Weak Poison of Debilitation"
-	RSP+1F8: (InventoryMenu*)
-	RSP+758: (`anonymous namespace'::DejaGFxLogger*)
+	7 - NPCs should have barter/training
+
+	8 - Convert Grass
+
+	9 - Ensure proper creature replacements that use oblivion values where possible (missing mountain lion)
+
+	10 - Proper LOD generation oneclick solution as opposed to external generation
+
+	11 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
+
+Later Issues:
+	1 - Lip syncing with voice
+
+	2 - Fix face and body bug
+
+	3 - Refine quest conversion
+		Missing quest markers
+
+	4 - Refine dialog conversion
+		Missing topics
+		Missing greetings
+		Creatures with wrong voices
+
+	5 - Refine pathgrid conversion
+		Better know where doors are better
+		Better handle navmesh on multiple floors
+		Better handle which objects need to be avoided for generation (currently too many)
+		Better fix discontinuities without going through walls
+		Better handle navmesh on objects in exteriors (like bridges)
+
+	6 - Package Records. These will need a new advanced conversion algorithm
+
+	7 - Refine Clothing/Armor conversion
+		Shields attach don't attach perfectly
+		Update existing path:
+			Should maybe have another option just for armor pieces with lower arm so long sleeves don't misalign (the lower half of the arms needs to be moved forward slightly)
+			lowerclass shirt 7 completely messed up (stretched wide)
+			lowerclass female shirt 3 has a gap all along the center
+			Inward pull broken for shoes
+		or
+			Refined process that morphs to Skryim body (see wip-armor-fitting)
+	
+	8 - Refine Speedtree conversion
+		Needs better curving of branches to match source
+		Needs better handling of unattached leaves
+		Trunk texture bad UV
+
+	9 - Refine LOD mesh decimation
+
+	10 - Properly document all tools
 
 Minor Issues:
-		NPCs should have barter/training
 
-		override gold
-
-		Remove unnecessary post-processing from converter
-
-	1 - Fix face and body bug
-
-	3 - Complete Quest Conversion
-
-	4 - Refined pathgrid conversion
-
-	5 - Package Records: Ignore and skip for now. Will create advanced conversion algorithm later
-
-	6 - Every class teaches 1 handed this is obviously not correct in in accordance with the original data
-
-	7 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
+	8 -	Override gold with skyrim gold
 
 	9 - Weapons have an attack animation of unknown instead of default
 
 	10 - Improve landscape layer blending
 	
-	13 - Should properly position inventory items. The side that allows the largest view should face out.
+	11 - Should properly position inventory items. The side that allows the largest view should face out
 	
-	14 - Properly convert creatures including animations. This is a major task, so just use skyrim_overrides to find suitable replacements. Also add other bethesda + beyond skyrim esm files to locate additioal replacements.
+	12 - Properly convert creatures including animations (may be a pipe dream)
 
+	13 - Every class teaches 1 handed this is obviously not correct in in accordance with the original data
 
-Refactoring:
-	8 - Fix tests and make more comprehensive
-	
-	9 - Add texture_overrides folder to export
+	14 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
 
-	10 - Upgrade pyffi to 2.2.4?
+	15 - Add texture_overrides folder to export instead of only .bsa files
 
+	16 - Nirnroot sound is really loud
 
+	17 - Land textures have weird specular
 
-Unknown Issues (ESM or Mesh)
-
-	Grass does not appear ingame
-
-	Nirnroot sound really loud
-
-	Items don't sound material hits. If no such thing exists in Oblivion, map Skyrim sounds and materials
-
-	Land textures have weird specular
-
-	Harvested plants don't make a sound
+	18 - Harvested plants don't make a sound
 
