@@ -4,7 +4,7 @@
 
 <p align="center">
   A complete pipeline for converting <b>TES4 (Oblivion)</b> master and plugin files into
-  <b>TES5 (Skyrim Special Edition)</b> format — records, meshes, textures, collision,
+  <b>TES5 (Skyrim)</b> format — records, meshes, textures, collision,
   animations, sounds, dialogue, and scripts.
 </p>
 
@@ -115,7 +115,7 @@ python convert.py -f Oblivion.esm --speedtrees-only    # Convert SpeedTree (.spt
 python convert.py -f Oblivion.esm --sounds-only        # Copy/convert sound files
 python convert.py -f Oblivion.esm --scripts-only       # Transpile scripts → Papyrus
 python convert.py -f Oblivion.esm --lod-only           # Generate object & terrain LOD (slow)
-python convert.py -f Oblivion.esm --pack-only          # Pack output assets into SSE BSAs
+python convert.py -f Oblivion.esm --pack-only          # Pack output assets into Skyrim BSAs
 python convert.py -f Oblivion.esm --modify-body-meshes # Add greaves partition to body NIFs
 python convert.py -f Oblivion.esm --mesh-bounds-only   # Rescan mesh bounds → OBND cache
 ```
@@ -156,7 +156,7 @@ python -m pytest tests/ -v
 | 6 | **Sounds** | Convert voice and sound files to Skyrim formats. |
 | 7 | **Scripts** | Transpile Oblivion scripts to Papyrus and compile. |
 | — | **LOD** | *(opt-in)* Generate object and terrain LOD meshes. |
-| — | **Pack** | *(opt-in)* Pack the converted assets into Skyrim SE BSA archives. |
+| — | **Pack** | *(opt-in)* Pack the converted assets into Skyrim BSA archives. |
 
 > **Design principle:** the export is a *pure* dump of TES4 data — no type mapping, no path
 > prefixing, no derived fields. **All** transformations live in the import and asset steps.
