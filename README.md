@@ -1,176 +1,213 @@
-# TES4-to-TES5 Conversion Project
+<p align="center">
+  <img src="docs/banner.svg" alt="TES4 Skyrim — Oblivion to Skyrim Conversion" width="720">
+</p>
 
-Converts TES4 (Oblivion) master/plugin files to TES5 (Skyrim SE) format, including record data and game assets (meshes, textures, sounds).
+<p align="center">
+  A complete pipeline for converting <b>TES4 (Oblivion)</b> master and plugin files into
+  <b>TES5 (Skyrim Special Edition)</b> format — records, meshes, textures, collision,
+  animations, sounds, dialogue, and scripts.
+</p>
+
+---
+
+## What it does
+
+This is a full data-conversion pipeline. It takes an
+Oblivion `.esm`/`.esp` (plus its BSA assets) and produces a Skyrim plugin with its
+assets ready to drop into your `Data` folder. Currently in early alpha stage with many bugs to work out, but it is already more fully featured than any other tools in existence.
+
+- **Record conversion** — Every TES4 record type is remapped to its TES5 equivalent
+  (`CREA`→`NPC_`, `CLOT`→`ARMO`, `LVLC`→`LVLN`, …), with all the structural fixups Skyrim
+  requires,
+  and companion records (`ARMA`, `TXST`, `SNDR`, `VTYP`, …).
+- **Navmesh** — Oblivion Pathgrids (`PGRD`), along with cell and mesh information are used to automatically generate Navmeshes to allow NPC navigation are triangulated into Skyrim navmeshes. This still needs a little refinement, but its a good start
+- **Mesh conversion** — Oblivion NIFs → Skyrim NIFs (v20.2.0.7):
+  NiTriStrips→NiTriShape, shader system upgrade, texture path rewriting, bone remapping,
+  and root-node conversion. Only a few base game meshes are currently unsupported
+- **Havok collision** — Full rigid-body, constraint, and mesh-collision conversion with
+  real MOPP generation via the bundled Havok bridge. And no crash-causing collision like the original Skyblivion collision generator
+- **Skeleton retargeting** — Armor and clothing meshes are re-posed from the Oblivion
+  skeleton to the Skyrim skeleton using an animation-corpus + optimization solver. WIP, but all weapons, armor, and clothing are fully functional, including pants/greaves. Due to the differences between skeletons, legs will currently turn invisible with a torso equipped, and there is quite a bit of clipping that needs to be solved. But this is the first automated converter of its kind
+- **Particles, fire & animated objects** — Particle systems, flame nodes, flip-book
+  fire, and keyframed collision are all converted to their Skyrim equivalents. Also a first for automated conversion
+- **SpeedTree conversion** — Oblivion `.spt` trees are procedurally rebuilt as Skyrim
+  flora NIFs, one per `TREE` record. They aren't exactly 1-1, but they are fairly convincing replicas. No conversion process for this existed before this tool
+- **Dialogue & quests** — `DIAL`/`INFO`/`QUST` converted into Skyrim's branch/voice-type
+  architecture (`DLBR`, `DLVW`, `VTYP`), including voice-file renaming. WIP, with some things like greetings missing
+- **Scripts** — Oblivion scripts are transpiled to Papyrus (`.psc`) source and compiled. WIP, but this along with dialog means some quests are at least partially functional.
+- **Sounds** — Voice and sound files are converted (via ffmpeg + xWMAEncode). You may run into oddities like rats speaking like Wes Johnson, but you have access to most dialog topics and the correct voices. Lip syncing not included yet
+
+In short, this project aims to be nothing less than comprehensive and has a laundry list of bugs, but its getting better all the time. I'd love to accept any contributions as PRs.
+
+---
 
 ## Requirements
 
-- **Python 3.8+**
-- **[PyFFI](https://pyffi.sourceforge.net/)** — NIF mesh reading/writing (`pip install PyFFI`)
-- **[numpy](https://numpy.org/)** — Numerical operations for skin retargeting (`pip install numpy`)
-- **[pytest](https://pytest.org/)** — Test runner (`pip install pytest`)
-- **ffmpeg** — Used for voice audio conversion
-- **xWMAEncode.exe** — Used for xWMA voice compression (see below)
-
-> **xWMAEncode.exe** is part of the [Microsoft DirectX SDK (June 2010)](https://www.microsoft.com/en-us/download/details.aspx?id=6812) and cannot be redistributed. After installing the SDK, find it in `Utilities\bin\x86\` and place it in the project root directory. It can also be extracted from the SDK installer using 7-Zip without a full install.
-
-## Credits
-
-| Contributor | Contribution |
-|-------------|-------------|
-| [xEdit and all contributors](https://github.com/TES5Edit/TES5Edit) | ESM record definitions,  `BSArch.exe` for BSA packing, and `LODGenx64.exe` for object LOD generation |
-| Zilav's Oblivion -> Skyrim xEdit conversion scripts for the original inspiration and lots of useful information |
-| [NifSkope](https://github.com/niftools/nifskope) contributors | NIF format documentation |
-| [Ormin](https://github.com/Ormin/skyblivion-NIFConverter) | Mesh conversion reference |
-| [Ormin](https://github.com/Ormin/skyblivion-ScriptConverter) | Script converter reference for OBScript→Papyrus transpilation |
-| [russo-2025](https://github.com/russo-2025/papyrus-compiler) | Papyrus Compiler |
-| All the wonderful people I used to know on the Morroblivion forum, and those still working hard on Skyblivion and Skywind all these years later. You are an inspiration. |
-
-### Install all dependencies
+| Dependency | Purpose | Install |
+|------------|---------|---------|
+| **Python 3.8+** | Runs the whole pipeline | — |
+| **[PyFFI](https://pyffi.sourceforge.net/)** | NIF mesh reading/writing | `pip install PyFFI` |
+| **[numpy](https://numpy.org/)** | Skin retargeting math | `pip install numpy` |
+| **[scipy](https://scipy.org/)** | Navmesh triangulation, collision hulls, trees | `pip install scipy` |
+| **[pytest](https://pytest.org/)** | Test runner | `pip install pytest` |
+| **ffmpeg** | Voice/sound audio conversion | On `PATH` |
+| **xWMAEncode.exe** | xWMA voice compression | See note below |
 
 ```bash
-pip install PyFFI numpy pytest
+pip install PyFFI numpy scipy pytest
 ```
 
-## Quick Start
+> **xWMAEncode.exe** ships with the [Microsoft DirectX SDK (June 2010)](https://www.microsoft.com/en-us/download/details.aspx?id=6812)
+> and cannot be redistributed. After installing the SDK, find it in `Utilities\bin\x86\`
+> and copy it to the project root. (You can also extract it from the SDK installer with
+> 7-Zip without a full install.)
 
-### Full pipeline (all steps)
+---
 
-```bash
-python convert.py -f Oblivion.esm
-```
+## Quick start
 
-### Run only a specific step
-
-```bash
-python convert.py -f Oblivion.esm --export-only         # Export TES4 binary → text cache
-python convert.py -f Oblivion.esm --import-only         # Build TES5 ESM/ESP from text cache
-python convert.py -f Oblivion.esm --extract-only        # Pull assets from BSA archives
-python convert.py -f Oblivion.esm --assets-only         # Convert NIFs/SPTs, copy textures & sounds
-python convert.py -f Oblivion.esm --lod-only            # LOD mesh generation (slow)
-python convert.py --modify-body-meshes                  # Add greaves partition to character body NIFs
-```
-
-### Custom output directory
-
-```bash
-python convert.py -f Oblivion.esm --output-dir C:/MyMods/Oblivion
-```
-
-### Mesh conversion only
-
-```bash
-python -m asset_convert.nif_converter path/to/meshes/ path/to/output/
-```
-
-### BSA extraction only
-
-```bash
-python -m asset_convert.bsa_extract Oblivion.esm --data-path "C:/path/to/Oblivion/Data"
-```
-
-### Run tests
-
-```bash
-python -m pytest tests/ -v
-```
-
-## Project Structure
-
-```
-TESConversion/
-  convert.py            # Pipeline orchestrator (all phases, CLI)
-  tes4_export/          # TES4 binary → KEY=VALUE text export
-  tes5_import/          # KEY=VALUE text → TES5 binary import
-  asset_convert/        # Asset conversion pipeline
-    nif_converter.py    # NIF mesh conversion (strips→shapes, textures, bones, collision, skin retarget)
-    collision.py        # Havok collision conversion (bhkNiTriStrips→bhkPackedNiTriStrips via MOPP_RL)
-    skin_retarget.py    # Skeleton retargeting (Oblivion Bip01 → Skyrim NPC bones)
-    bsa_extract.py      # BSA archive extraction with caching
-    asset_pipeline.py   # Full extract → convert → output orchestrator
-  tools/                # Debug/analysis utilities
-  gui.py                # GUI frontend for the pipeline
-  ...
-```
-
-## Pipeline Phases and CLI Arguments
-
-| Flag | Phase | Description |
-|------|-------|-------------|
-| `--export-only` | 1. Export | Parse TES4 binary → per-type text cache |
-| `--import-only` | 2. Import | Build TES5 ESM/ESP from text cache |
-| `--extract-only` | 3. Extract | Pull meshes/textures/sounds from BSA archives |
-| `--assets-only` | 4. Assets | Convert NIFs/SPTs, copy textures & sounds |
-| `--lod-only` | 5. LOD | Generate object & terrain LOD meshes |
-| `--modify-body-meshes` | 6. Body | Add greaves partition to character body NIFs |
-
-Other flags:
-- `-f PLUGIN`            Plugin filename (e.g. `Oblivion.esm`, `Knights.esp`)
-- `--output-dir PATH`    Override the output directory (default: `output/`)
-
-If no `--*-only` argument is given, the default pipeline runs: **Export → Import → Extract → Assets**.
-
-## Tools and Scripts
-
-- `asset_convert/nif_converter.py`      NIF mesh conversion (Oblivion → Skyrim)
-- `asset_convert/bsa_extract.py`        BSA archive extraction
-- `asset_convert/skin_retarget.py`      Skeleton retargeting for armor/clothes
-- `asset_convert/modify_body_meshes.py` Add greaves partition to body mesh
-- `tools/tes4_nif_analyzer.py`          NIF structure dump (Oblivion)
-- `tools/tes5_nif_analyzer.py`          NIF structure dump (Skyrim)
-- `tools/tes5_esm_reader.py`            TES5 ESM/ESP reader and dumper
-
-## GUI
-
-Run the GUI with:
+The easiest way to run a conversion is the GUI:
 
 ```bash
 python gui.py
 ```
 
-Features:
-- Auto-detects Oblivion data directory from the Windows registry
-- Scans the configured data directory for all `.esm` / `.esp` plugins
-- Configurable output directory (saved to `conversion_config.json`)
-- Per-step checkboxes with **All** / **Default** shortcuts
-- Real-time streaming log output
+The GUI:
 
-## Packaging (Standalone Executable)
+- Auto-detects your Oblivion data directory from the Windows registry
+- Scans it for all `.esm` / `.esp` plugins
+- Lets you pick an output directory (saved to `conversion_config.json`)
+- Offers per-step checkboxes with **All** / **Default** shortcuts
+- Streams the pipeline log live
 
-Build a single self-contained executable with:
+Or run the full pipeline from the command line:
 
 ```bash
-python compile.py
+python convert.py -f Oblivion.esm
 ```
 
-Outputs `dist/TESConverter/TESConverter.exe` (plus bundled dependencies). Requires [PyInstaller](https://pyinstaller.org) (`pip install pyinstaller`).
+The output plugin and assets are written to `output/` (override with `--output-dir`).
 
-## What the mesh converter does
+---
 
-1. **NiTriStrips → NiTriShape** — Skyrim SE cannot render NiTriStrips geometry
-2. **NiTexturingProperty → BSLightingShaderProperty** — Skyrim shader system conversion
-3. **NiNode → BSFadeNode** — Skyrim's standard root node type
-4. **Texture path rewriting** — Prepends `tes4\` to avoid conflicts with Skyrim's own textures
-5. **Bone name remapping** — Renames Oblivion `Bip01` skeleton bones to Skyrim `NPC` naming
-6. **Skin retargeting** — Deforms armor vertices from Oblivion T-pose to Skyrim rest pose using spatial Gaussian blending
-7. **Havok collision conversion** — Converts bhkNiTriStripsShape to bhkPackedNiTriStripsShape with MOPP regeneration
-8. **Root rotation baking** — Bakes non-identity root rotations into child transforms
-9. **Furniture marker conversion** — BSFurnitureMarker → BSFurnitureMarkerNode
-10. **NiParticleSystem conversion** — Updates particle data format for Skyrim
+## Command line
 
-### Path filtering
+### Run the full pipeline
 
-The `SKIP_PATHS` set in `asset_convert/nif_converter.py` controls which path segments are skipped during batch conversion. By default `menus` and `creatures` are skipped.
+```bash
+python convert.py -f Oblivion.esm
+```
 
-## BSA extraction caching
+With no `--*-only` flag, the default pipeline runs:
 
-Extracted BSAs are tracked via a manifest file (`.bsa_extract_manifest.json`). Rerunning the pipeline skips already-extracted archives unless the extract step is forced by deleting the manifest.
+> **Export → Extract → Meshes → SpeedTrees → Import → Sounds → Scripts**
+
+### Run a single step
+
+Each `--*-only` flag runs exactly that step and nothing else:
+
+```bash
+python convert.py -f Oblivion.esm --export-only        # Parse TES4 binary → text cache
+python convert.py -f Oblivion.esm --import-only        # Build TES5 ESM/ESP from text cache
+python convert.py -f Oblivion.esm --extract-only       # Extract assets from BSA archives
+python convert.py -f Oblivion.esm --meshes-only        # Convert NIFs + copy textures
+python convert.py -f Oblivion.esm --speedtrees-only    # Convert SpeedTree (.spt) files
+python convert.py -f Oblivion.esm --sounds-only        # Copy/convert sound files
+python convert.py -f Oblivion.esm --scripts-only       # Transpile scripts → Papyrus
+python convert.py -f Oblivion.esm --lod-only           # Generate object & terrain LOD (slow)
+python convert.py -f Oblivion.esm --pack-only          # Pack output assets into SSE BSAs
+python convert.py -f Oblivion.esm --modify-body-meshes # Add greaves partition to body NIFs
+python convert.py -f Oblivion.esm --mesh-bounds-only   # Rescan mesh bounds → OBND cache
+```
+
+### Common options
+
+| Flag | Description |
+|------|-------------|
+| `-f, --files FILE…` | Plugin(s) to process (default: all listed in the config) |
+| `--output-dir PATH` | Output directory (default: `output/`) |
+| `--config PATH` | Path to `conversion_config.json` |
+| `--mesh-subdirs SUB…` | Limit mesh conversion to specific root subfolders (e.g. `architecture clutter`) |
+
+### Running individual tools directly
+
+```bash
+# Mesh conversion only
+python -m asset_convert.nif_converter path/to/meshes/ path/to/output/
+
+# BSA extraction only
+python -m asset_convert.bsa_extract Oblivion.esm --data-path "C:/path/to/Oblivion/Data"
+
+# Tests
+python -m pytest tests/ -v
+```
+
+---
+
+## Pipeline phases
+
+| # | Phase | What happens |
+|---|-------|--------------|
+| 1 | **Export** | Parse the TES4 binary into a per-record-type KEY=VALUE text cache (`export/<name>/`). A pure dump — no transformation. |
+| 2 | **Extract** | Pull meshes, textures, and sounds out of the Oblivion BSA archives (cached via a manifest). |
+| 3 | **Meshes** | Convert Oblivion NIFs → Skyrim NIFs and copy textures. |
+| 4 | **SpeedTrees** | Procedurally rebuild `.spt` trees as Skyrim flora NIFs. |
+| 5 | **Import** | Read the text cache and write the TES5 binary ESM/ESP — all record transformations happen here. |
+| 6 | **Sounds** | Convert voice and sound files to Skyrim formats. |
+| 7 | **Scripts** | Transpile Oblivion scripts to Papyrus and compile. |
+| — | **LOD** | *(opt-in)* Generate object and terrain LOD meshes. |
+| — | **Pack** | *(opt-in)* Pack the converted assets into Skyrim SE BSA archives. |
+
+> **Design principle:** the export is a *pure* dump of TES4 data — no type mapping, no path
+> prefixing, no derived fields. **All** transformations live in the import and asset steps.
+
+---
+
+## Project structure
+
+```
+TESConversion/
+├── convert.py            # Pipeline orchestrator (all phases, CLI)
+├── gui.py                # GUI frontend
+├── tes4_export/          # TES4 binary → KEY=VALUE text export
+├── tes5_import/          # KEY=VALUE text → TES5 binary import (all record transforms)
+├── asset_convert/        # Asset conversion pipeline
+│   ├── nif_converter.py  #   NIF mesh conversion (strips, shaders, bones, collision, skin)
+│   ├── collision.py      #   Havok collision conversion
+│   ├── cms_builder.py    #   Compressed-mesh collision + MOPP generation
+│   ├── skin_retarget.py  #   Oblivion → Skyrim skeleton retargeting
+│   ├── spt_converter.py  #   SpeedTree (.spt) → Skyrim flora NIF
+│   ├── bsa_extract.py    #   BSA extraction with caching
+│   └── asset_pipeline.py #   Extract → convert → output orchestrator
+├── tools/                # Debug/analysis utilities (NIF/ESM dumpers, sanity checkers)
+├── tests/                # Pytest suite
+├── docs/                 # Format notes and reference docs
+└── conversion_config.json
+```
+
+---
+
+## Credits
+
+| Contributor | Contribution |
+|-------------|--------------|
+| [xEdit and all contributors](https://github.com/TES5Edit/TES5Edit) | ESM record definitions; `BSArch.exe` (BSA packing) and `LODGenx64.exe` (object LOD) |
+| Zilav's Oblivion → Skyrim xEdit conversion scripts | Original inspiration and a wealth of format knowledge |
+| [NifSkope](https://github.com/niftools/nifskope) contributors | NIF format documentation |
+| [Ormin — NIFConverter](https://github.com/Ormin/skyblivion-NIFConverter) | Mesh conversion reference |
+| [Ormin — ScriptConverter](https://github.com/Ormin/skyblivion-ScriptConverter) | OBScript → Papyrus transpilation reference |
+| [russo-2025](https://github.com/russo-2025/papyrus-compiler) | Papyrus compiler |
+| The Morroblivion, Skyblivion, and Skywind communities | For years of inspiration and hard work. |
+
+---
 
 ## License
 
-This project is released under the MIT License.
+This project is released under the **MIT License**.
 
-The following components have separate licensing:
+Some components carry separate licensing:
 
-| Component | License | Notes |
-|-----------|---------|-------|
-| `xWMAEncode.exe` | Microsoft (not redistributed) | Obtain separately from the DirectX SDK |
+| Component | License / Terms |
+|-----------|-----------------|
+| `xWMAEncode.exe` | Microsoft (not redistributed) — obtain from the DirectX SDK |
+| Oblivion banner font | The [Oblivion font](https://www.dafont.com/oblivion.font) by mistic100 is *free for personal use only* and based on Bethesda's trademarked logo. It is **not** bundled in this repo; the banner ships as pre-rendered vector outlines. |

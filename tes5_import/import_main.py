@@ -252,6 +252,9 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     from .mesh_bounds import load_mesh_bounds
     cache_path = os.path.join(export_dir, 'mesh_bounds_cache.json')
     load_mesh_bounds(cache_path)
+    # 2D silhouette footprints (for navmesh obstacle carving) live beside it.
+    from .mesh_footprints import load_mesh_footprints
+    load_mesh_footprints(os.path.join(export_dir, 'mesh_footprints_cache.json'))
 
     # --- Phase 0e: Compute furniture seat lists from source NIF markers ---
     # FURN MNAM/FNPR must index the converted NIF's clustered seat positions,
@@ -371,12 +374,14 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # blocking base types contribute; keyed by raw low-24 FormID so lookups
     # work regardless of load-order remapping.
     base_model_by_fid = _build_base_model_index(by_type)
+    # Raw low-24 DOOR base FormIDs, so the navmesh can choke + link at doorways.
+    door_fids = _build_door_fid_set(by_type)
     # NAVM metadata accumulated across interior + exterior cells, used to build
     # the single top-level NAVI (Navmesh Info Map) the engine needs.
     navm_metas: list = []
 
-    _build_cell_groups(by_type, writer, navm_metas, base_model_by_fid)
-    _build_world_groups(by_type, writer, navm_metas, base_model_by_fid)
+    _build_cell_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids)
+    _build_world_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids)
 
     # Build the NAVI record indexing every generated navmesh.
     if navm_metas:
@@ -502,8 +507,23 @@ def _build_base_model_index(by_type: dict) -> dict:
     return index
 
 
+def _build_door_fid_set(by_type: dict) -> set:
+    """Raw low-24 FormIDs of all DOOR base records (for navmesh door handling)."""
+    out = set()
+    for rec in by_type.get('DOOR', []):
+        fid_str = rec.get('FormID')
+        if not fid_str:
+            continue
+        try:
+            out.add(int(fid_str, 16) & 0x00FFFFFF)
+        except ValueError:
+            continue
+    return out
+
+
 def _build_cell_groups(by_type: dict, writer: PluginWriter,
-                       navm_metas: list = None, base_model_by_fid: dict = None):
+                       navm_metas: list = None, base_model_by_fid: dict = None,
+                       door_fids: set = None):
     """Build CELL group hierarchy (interior cells only — exterior in WRLD)."""
     if navm_metas is None:
         navm_metas = []
@@ -607,6 +627,7 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter,
                             cell_rec=cell_rec,
                             refr_recs=cell_refrs,
                             base_model_by_fid=base_model_by_fid,
+                            door_fids=door_fids,
                         )
                         if navm_bytes:
                             temporary += navm_bytes
@@ -634,12 +655,15 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter,
 
 
 def _build_world_groups(by_type: dict, writer: PluginWriter,
-                        navm_metas: list = None, base_model_by_fid: dict = None):
+                        navm_metas: list = None, base_model_by_fid: dict = None,
+                        door_fids: set = None):
     """Build WRLD group hierarchy (worldspaces + exterior cells)."""
     if navm_metas is None:
         navm_metas = []
     if base_model_by_fid is None:
         base_model_by_fid = {}
+    if door_fids is None:
+        door_fids = set()
     worlds = by_type.get('WRLD', [])
     cells = by_type.get('CELL', [])
     refrs = by_type.get('REFR', [])
@@ -803,6 +827,7 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
                                     cell_rec=cell_rec,
                                     refr_recs=cell_refrs,
                                     base_model_by_fid=base_model_by_fid,
+                                    door_fids=door_fids,
                                 )
                                 if navm_bytes:
                                     temporary += navm_bytes

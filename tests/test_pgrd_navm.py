@@ -12,6 +12,7 @@ import pytest
 
 pytest.importorskip("scipy")
 pytest.importorskip("numpy")
+pytest.importorskip("shapely")
 
 from tes5_import import pgrd_to_navm as p2n
 from tes5_import.navi_builder import build_navi_record
@@ -391,3 +392,74 @@ def test_navm_meta_center_is_geometry_centroid():
     # Grid spans 0..800 in x/y; centroid should be near the middle.
     assert 100 < cx < 700
     assert 100 < cy < 700
+
+
+# ---------------------------------------------------------------------------
+# VHGT (exterior LAND height field) decode
+# ---------------------------------------------------------------------------
+
+def test_vhgt_decode_is_bounded_and_scaled():
+    # Build a VHGT blob: offset 100.0 (game units) then 33x33 zero gradients.
+    # Every cell should decode to exactly the offset (no accumulation drift,
+    # no 1e30 overflow from mixing raw/scaled units).
+    offset = 100.0
+    data = struct.pack('<f', offset) + b'\x00' * (33 * 33) + b'\x00\x00\x00'
+    grid = p2n._decode_vhgt(data.hex())
+    assert grid is not None
+    flat = [z for row in grid for z in row]
+    assert all(abs(z - offset) < 1e-3 for z in flat), (min(flat), max(flat))
+
+
+def test_vhgt_constant_slope_accumulates_linearly():
+    # A gradient of +1 raw unit per column → each column is +_VHGT_UNIT higher.
+    deltas = bytearray()
+    for _row in range(33):
+        deltas.append(0)                 # row-start delta 0
+        deltas.extend([1] * 32)          # +1 per column
+    data = struct.pack('<f', 0.0) + bytes(deltas) + b'\x00\x00\x00'
+    grid = p2n._decode_vhgt(data.hex())
+    assert grid[0][0] == 0.0
+    assert abs(grid[0][32] - 32 * p2n._VHGT_UNIT) < 1e-3
+
+
+# ---------------------------------------------------------------------------
+# Door handling
+# ---------------------------------------------------------------------------
+
+def _door_refr(fid, x, y, rot_z=0.0, teleport=False):
+    r = {'Signature': 'REFR', 'FormID': fid, 'NAME': '0000BEEF',
+         'PosX': str(x), 'PosY': str(y), 'PosZ': '100', 'RotZ': str(rot_z)}
+    if teleport:
+        r['XTEL.Door'] = '0000CAFE'
+    return r
+
+
+def test_door_triangle_emitted_and_flagged():
+    rec = _grid_pgrd(n=7, spacing=200.0)   # covers 0..1200
+    door = _door_refr('00012345', 600, 600, teleport=True)
+    navm, _ = p2n.convert_PGRD(rec, writer=FakeWriter(), refr_recs=[door])
+    _, _, nvnm = _parse_navm(navm)
+    assert nvnm['door_tris'] == 1
+    # The linked triangle must carry the Door flag (0x0400).
+    door_flagged = [t for t in nvnm['triangles'] if t[6] & 0x0400]
+    assert len(door_flagged) == 1
+
+
+def test_all_triangles_carry_found_flag():
+    rec = _grid_pgrd(n=5)
+    navm, _ = p2n.convert_PGRD(rec, writer=FakeWriter())
+    _, _, nvnm = _parse_navm(navm)
+    assert nvnm['triangles']
+    assert all(t[6] & 0x0800 for t in nvnm['triangles'])  # Found flag
+
+
+def test_interior_door_vs_teleport_both_link():
+    rec = _grid_pgrd(n=7, spacing=200.0)
+    interior = _door_refr('00011111', 400, 600, teleport=False)
+    interior['NAME'] = '000147BB'  # base is a DOOR
+    teleport = _door_refr('00022222', 800, 600, teleport=True)
+    navm, _ = p2n.convert_PGRD(
+        rec, writer=FakeWriter(), refr_recs=[interior, teleport],
+        door_fids={0x000147BB})
+    _, _, nvnm = _parse_navm(navm)
+    assert nvnm['door_tris'] == 2
