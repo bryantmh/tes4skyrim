@@ -69,6 +69,8 @@ Major Issues for V1:
 
 	11 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
 
+	12 - Add versioning
+
 Later Issues:
 	1 - Lip syncing with voice
 

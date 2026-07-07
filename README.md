@@ -37,7 +37,7 @@ assets ready to drop into your `Data` folder. Currently in early alpha stage wit
 - **Scripts** — Oblivion scripts are transpiled to Papyrus (`.psc`) source and compiled. WIP, but this along with dialog means some quests are at least partially functional.
 - **Sounds** — Voice and sound files are converted (via ffmpeg + xWMAEncode). You may run into oddities like rats speaking like Wes Johnson, but you have access to most dialog topics and the correct voices. Lip syncing not included yet
 
-In short, this project aims to be nothing less than comprehensive and has a laundry list of bugs, but its getting better all the time. I'd love to accept any contributions as PRs.
+In short, this project aims to be nothing less than comprehensive and has a laundry list of bugs, but its getting better all the time. I'd love to accept any contributions as PRs. See TODO.txt for known issues / roadmap
 
 ---
 
