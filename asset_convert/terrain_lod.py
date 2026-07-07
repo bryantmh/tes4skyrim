@@ -92,6 +92,41 @@ def _find_worldspace_fid(raw: bytes, n: int, edid: str):
     return None
 
 
+def _worldspace_default_water(esm_path: Path, edid: str) -> float:
+    """Read the WRLD DNAM default water height for the worldspace (else 0.0).
+
+    DNAM = DefaultLandHeight(float) + DefaultWaterHeight(float).
+    """
+    raw = Path(esm_path).read_bytes()
+    n = len(raw)
+    p = 0
+    while p < n - 24:
+        if raw[p:p+4] == b'WRLD':
+            size = struct.unpack_from('<I', raw, p+4)[0]
+            body = raw[p+24:p+24+size]
+            q = 0
+            found = False
+            dnam = None
+            while q + 6 <= len(body):
+                s = body[q:q+4]
+                sz = struct.unpack_from('<H', body, q+4)[0]
+                if s == b'EDID':
+                    if body[q+6:q+6+sz].rstrip(b'\x00').decode('latin-1', 'replace') == edid:
+                        found = True
+                elif s == b'DNAM' and sz >= 8:
+                    dnam = body[q+6:q+6+8]
+                q += 6 + sz
+            if found and dnam:
+                return struct.unpack_from('<f', dnam, 4)[0]
+            p += 24 + size
+        elif raw[p:p+4] == b'GRUP':
+            p += 24
+        else:
+            size = struct.unpack_from('<I', raw, p+4)[0]
+            p += 24 + size
+    return 0.0
+
+
 def _parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel'):
     """Return dict: (cell_x, cell_y) -> {heights: ndarray(33,33 float32),
                                           colors:  ndarray(33,33,3 uint8),
@@ -107,6 +142,7 @@ def _parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel'):
     # We only collect LAND records that belong to the target worldspace.
 
     cell_coords = {}   # form_id → (x, y)
+    cell_water  = {}   # (x, y) → (has_water: bool, water_height: float or None)
 
     # Find target worldspace FormID first (fast linear scan)
     target_wrld_fid = _find_worldspace_fid(raw, n, worldspace_edid)
@@ -170,6 +206,19 @@ def _parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel'):
                         gy = struct.unpack_from('<i', xclc, 4)[0]
                         cell_coords[fid] = (gx, gy)
                         cur_cell_fid = fid
+                        # Water height (XCLW) + HasWater flag (DATA bit 1).
+                        has_water = False
+                        data = _sub(body, 'DATA')
+                        if data and len(data) >= 1:
+                            has_water = bool(data[0] & 0x02)
+                        wh = None
+                        xclw = _sub(body, 'XCLW')
+                        if xclw and len(xclw) >= 4:
+                            v = struct.unpack_from('<f', xclw, 0)[0]
+                            # FLT_MAX sentinel (~3.4e38) = "use worldspace default"
+                            if abs(v) < 1e30:
+                                wh = v
+                        cell_water[(gx, gy)] = (has_water, wh)
                 elif sig == 'LAND':
                     # Only collect LAND from the target worldspace
                     if target_wrld_fid is None or cur_wrld_fid == target_wrld_fid:
@@ -177,6 +226,9 @@ def _parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel'):
                         if coords is not None:
                             land = _decode_land(body, _sub)
                             if land is not None:
+                                hw, wh = cell_water.get(coords, (False, None))
+                                land['has_water'] = hw
+                                land['water_height'] = wh
                                 lands[coords] = land
                 p = np_
 
@@ -674,9 +726,109 @@ def _write_normal_dds(normal_rgb: np.ndarray, path: Path):
 # NIF writing via pyffi
 # ---------------------------------------------------------------------------
 
+def _build_water_shape(water_cells: dict, level: int, world_scale: float):
+    """Build a plain NiTriShape of flat water quads for distant water.
+
+    Returned as a plain shape (added directly under the root), NOT wrapped in a
+    BSMultiBoundNode named "Water" — that triggers the engine's water-slot path
+    and a null WATR deref (CTD). water_cells: {(cx, cy): water_z_world} with
+    cx,cy tile-local 0..level-1.  Each cell becomes one flat quad at water_z in
+    the same local frame as the land shape (0..CELL_SIZE per tile, Z pre-divided
+    by world_scale so vertex_z*scale = world Z).
+    """
+    if not water_cells:
+        return None
+
+    verts = []
+    tris = []
+    zs = []
+    # Local (pre-scale) frame: the whole level-N tile spans 0..CELL_SIZE, so one
+    # cell spans CELL_SIZE/level.  (Z is likewise pre-divided by world_scale.)
+    cell_local = CELL_SIZE / level
+    for (cx, cy), wz in water_cells.items():
+        x0 = cx * cell_local
+        y0 = cy * cell_local
+        z = wz / world_scale
+        base = len(verts)
+        verts.append((x0,               y0,               z))
+        verts.append((x0 + cell_local,  y0,               z))
+        verts.append((x0 + cell_local,  y0 + cell_local,  z))
+        verts.append((x0,               y0 + cell_local,  z))
+        # CCW from +Z (front face up), matching the land winding
+        tris.append((base, base + 1, base + 2))
+        tris.append((base, base + 2, base + 3))
+        zs.append(wz)
+
+    if not verts:
+        return None
+
+    sd = NifFormat.NiTriShapeData()
+    sd.has_vertices = True
+    sd.has_normals  = False
+    sd.num_uv_sets  = 1
+    sd.has_uv       = True     # PyFFI needs the uv_sets array populated to write
+    sd.num_vertices = len(verts)
+    sd.vertices.update_size()
+    for i, (x, y, z) in enumerate(verts):
+        sd.vertices[i].x = x
+        sd.vertices[i].y = y
+        sd.vertices[i].z = z
+    sd.uv_sets.update_size()
+    for i in range(len(verts)):
+        sd.uv_sets[0][i].u = 0.0
+        sd.uv_sets[0][i].v = 0.0
+    sd.num_triangles = len(tris)
+    sd.num_triangle_points = len(tris) * 3
+    sd.has_triangles = True
+    sd.triangles.update_size()
+    for i, (a, b, c) in enumerate(tris):
+        sd.triangles[i].v_1 = a
+        sd.triangles[i].v_2 = b
+        sd.triangles[i].v_3 = c
+
+    world_half = CELL_SIZE * level / 2.0
+    z_ctr = (min(zs) + max(zs)) / 2.0
+    sd.center.x = world_half
+    sd.center.y = world_half
+    sd.center.z = z_ctr
+    sd.radius = math.sqrt(2 * world_half**2 + 1.0)
+
+    # Water plane shader: same LODLandscapeNoise (18) path as the land shape
+    # (so it renders as ordinary LOD geometry, no water-slot codepath), textured
+    # with vanilla Skyrim's own water diffuse so distant water matches vanilla.
+    texset = NifFormat.BSShaderTextureSet()
+    texset.num_textures = 9
+    texset.textures.update_size()
+    texset.textures[0] = b'Textures\\Water\\DefaultWater.dds'
+
+    shader = NifFormat.BSLightingShaderProperty()
+    shader.skyrim_shader_type = 18
+    shader.texture_set = texset
+    shader.shader_flags_1.slsf_1_model_space_normals = 1
+    shader.shader_flags_1.slsf_1_own_emit            = 1
+    shader.shader_flags_1.slsf_1_z_buffer_test       = 1
+    shader.shader_flags_2.slsf_2_lod_landscape  = 1
+    shader.shader_flags_2.slsf_2_z_buffer_write = 1
+    shader.uv_scale.u = 1.0
+    shader.uv_scale.v = 1.0
+
+    wshape = NifFormat.NiTriShape()
+    wshape.name  = b'land'   # plain LOD geometry name (NOT "Water"/"WATER")
+    wshape.flags = 14
+    wshape.scale = float(level)
+    wshape.data  = sd
+    wshape.bs_properties[0] = shader
+    return wshape
+
+
 def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
-                       level: int, edid: str, output_dir: Path) -> bytes:
+                       level: int, edid: str, output_dir: Path,
+                       water_cells: dict = None) -> bytes:
     """Build a .btr NIF for a terrain tile and return bytes.
+
+    water_cells: {(cx, cy): water_z} for cells (tile-local 0..level-1) that have
+    a distant-water surface.  When present, a second BSMultiBoundNode child
+    holds flat water quads at those heights (vanilla terrain-LOD water layout).
 
     Vertex layout matches vanilla Skyrim terrain LOD:
       - BSMultiBoundNode root named "chunk" (required for Skyrim LOD culling)
@@ -828,9 +980,25 @@ def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
     root.name         = b'chunk'
     root.flags        = 14
     root.multi_bound  = multi_bound
-    root.num_children = 1
+
+    children = [shape]
+
+    # ---- Water child ----------------------------------------------------
+    # Distant water is a flat plane at the water height.  It is added as a plain
+    # NiTriShape child of the root (NOT its own BSMultiBoundNode): a BSMultiBound-
+    # Node named "Water" makes the engine take its water-slot codepath and
+    # dereference a worldspace WATR pointer we don't provide → null-deref CTD
+    # (SkyrimSE.exe+0E310B0, rcx=0). A plain shape is treated as ordinary LOD
+    # geometry and renders the blue plane without that path.
+    if water_cells:
+        water_shape = _build_water_shape(water_cells, level, world_scale)
+        if water_shape is not None:
+            children.append(water_shape)
+
+    root.num_children = len(children)
     root.children.update_size()
-    root.children[0]  = shape
+    for i, c in enumerate(children):
+        root.children[i] = c
 
     nif_data.roots = [root]
 
@@ -907,17 +1075,45 @@ _worker_mesh_dir  = None
 _worker_tex_dir   = None
 _worker_ltex_map  = None
 _worker_tex_root  = None
+_worker_default_water = 0.0
 
 
-def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s):
+def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
+                 default_water=0.0):
     """Called once per worker process to stash shared read-only data."""
     global _worker_lands, _worker_mesh_dir, _worker_tex_dir
-    global _worker_ltex_map, _worker_tex_root
+    global _worker_ltex_map, _worker_tex_root, _worker_default_water
     _worker_lands    = lands
     _worker_mesh_dir = Path(mesh_dir_s)
     _worker_tex_dir  = Path(tex_dir_s)
     _worker_ltex_map = ltex_map
     _worker_tex_root = Path(tex_root_s)
+    _worker_default_water = default_water
+
+
+def _tile_water_cells(lands, tile_x, tile_y, level, default_water):
+    """Return {(cx, cy): water_z} for tile-local cells that have distant water.
+
+    A cell has water if its CELL HasWater flag is set OR its terrain dips below
+    the water surface (submerged margin).  water_z = cell XCLW override, else the
+    worldspace default.
+    """
+    out = {}
+    for cy in range(level):
+        for cx in range(level):
+            land = lands.get((tile_x + cx, tile_y + cy))
+            if land is None:
+                continue
+            wz = land.get('water_height')
+            if wz is None:
+                wz = default_water
+            has_water = land.get('has_water', False)
+            # Also treat cells whose terrain min dips below the water surface as
+            # water (lakes/coast that the flag may not mark on every cell).
+            hmin = float(np.nanmin(land['heights'])) if land.get('heights') is not None else 0.0
+            if has_water or hmin < wz - 8.0:
+                out[(cx, cy)] = wz
+    return out
 
 
 def _process_tile(args):
@@ -933,8 +1129,11 @@ def _process_tile(args):
         heights, colors = _assemble_tile(_worker_lands, tile_x, tile_y, level)
 
         output_dir = _worker_mesh_dir.parent.parent.parent
+        water_cells = _tile_water_cells(_worker_lands, tile_x, tile_y, level,
+                                        _worker_default_water)
         nif_bytes  = _build_terrain_nif(heights, tile_x, tile_y, level,
-                                        worldspace_edid, output_dir)
+                                        worldspace_edid, output_dir,
+                                        water_cells=water_cells)
         (_worker_mesh_dir / f'{tag}.btr').write_bytes(nif_bytes)
 
         tex_size = TEX_SIZE_BY_LEVEL.get(level, TEX_SIZE)
@@ -991,6 +1190,12 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
         return False
     print(f"  Found {len(lands)} LAND records.")
 
+    default_water = _worldspace_default_water(esm_path, worldspace_edid)
+    n_water = sum(1 for v in lands.values()
+                  if v.get('has_water') or v.get('water_height') is not None)
+    print(f"  Default water height {default_water:.1f}; "
+          f"{n_water} cells with explicit water data.")
+
     # Determine cell bounds
     all_x = [k[0] for k in lands]
     all_y = [k[1] for k in lands]
@@ -1039,7 +1244,8 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
         with ProcessPoolExecutor(
             max_workers=n_workers,
             initializer=_worker_init,
-            initargs=(lands, str(mesh_dir), str(tex_dir), ltex_map, str(tex_root)),
+            initargs=(lands, str(mesh_dir), str(tex_dir), ltex_map, str(tex_root),
+                      default_water),
         ) as pool:
             for tag, ok, err in pool.map(_process_tile, work):
                 if ok:
