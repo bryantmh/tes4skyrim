@@ -131,6 +131,10 @@ Later Issues:
 
 	14 - Convert weathers
 
+	15 - Single threaded workflows
+		ESM import
+		Creature conversion
+
 Minor Issues:
 
 	1 -	Override gold with skyrim gold
@@ -162,4 +166,10 @@ Minor Issues:
 	14 - Texture "promotion" for distant objects shouldn't be necessary. All textures should be in tes4 folder
 
 	15 - Change logo from TES4 to TESIV
+
+	16 - Add a timer to GUI
+
+	17 - Voicemap.txt shouldn't be in output folder
+
+	18 - Replace copy to skyrim step with zip output
 

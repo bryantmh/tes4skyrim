@@ -1,0 +1,362 @@
+SSEEdit 4.1.5p x64 (389942B5) starting session 2026-07-07 22:29:47
+
+The Source Code Form of this program is subject to the terms of the Mozilla Public License, v. 2.0
+If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+The Source Code Form is available at https://github.com/TES5Edit/TES5Edit
+
+Using Skyrim Special Edition Data Path: C:\Program Files (x86)\Steam\SteamApps\common\Skyrim Special Edition\Data\
+Using Backup Path: C:\Program Files (x86)\Steam\SteamApps\common\Skyrim Special Edition\Data\SSEEdit Backups\
+Using Scripts Path: C:\Users\Bryant\Downloads\Keep\xEdit\Edit Scripts\
+Using Cache Path: C:\Program Files (x86)\Steam\SteamApps\common\Skyrim Special Edition\Data\SSEEdit Cache\
+Using ini: C:\Users\Bryant\Documents\My Games\Skyrim Special Edition\Skyrim.ini
+Using custom ini: C:\Users\Bryant\Documents\My Games\Skyrim Special Edition\SkyrimCustom.ini
+Using save path: C:\Users\Bryant\Documents\My Games\Skyrim Special Edition\Saves\
+Using Creation Club Content list: C:\Program Files (x86)\Steam\SteamApps\common\Skyrim Special Edition\Skyrim.ccc
+Using plugin list: C:\Users\Bryant\AppData\Local\Skyrim Special Edition\Plugins.txt
+Using settings file: C:\Users\Bryant\AppData\Local\Skyrim Special Edition\Plugins.sseviewsettings
+Using language: English
+Using general string encoding: 1252  (ANSI - Latin I)
+Using translatable string encoding: 1252  (ANSI - Latin I)
+Using VMAD string encoding: 65001 (UTF-8)
+Loading active plugin list: C:\Users\Bryant\AppData\Local\Skyrim Special Edition\Plugins.txt
+[00:00] Background Loader: starting...
+[00:00] Background Loader: [Skyrim - Misc.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Shaders.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Interface.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Animations.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Meshes0.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Meshes1.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Sounds.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Voices_en0.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Textures0.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Textures1.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Textures2.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Textures3.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Textures4.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Textures5.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Textures6.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Textures7.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim - Textures8.bsa] Loading Resources.
+[00:00] Background Loader: Warning: <Can't find Skyrim - Patch.bsa>
+[00:00] Background Loader: [Skyrim Extended Cut - Saints and Seducers - Textures.bsa] Loading Resources.
+[00:00] Background Loader: [Skyrim Extended Cut - Saints and Seducers.bsa] Loading Resources.
+[00:00] Background Loader: [C:\Program Files (x86)\Steam\SteamApps\common\Skyrim Special Edition\Data\] Setting Resource Path.
+[00:00] Background Loader: Start building resources cache...
+[00:00] Background Loader: ...resources cache finished building
+[00:00] Background Loader: loading "Skyrim.esm"...
+[00:00] Background Loader: [Skyrim.esm] Loading file
+[00:01] Background Loader: [Skyrim.esm] File loaded (CRC32:24BB49CD)
+[00:01] Background Loader: [Skyrim.esm] Start processing
+[00:01] Background Loader: [Skyrim.esm] Header processed. Expecting 920181 records
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "GMST" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "KYWD" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "LCRT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "AACT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "TXST" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "GLOB" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "CLAS" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "FACT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "HDPT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "HAIR" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "EYES" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "RACE" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "SOUN" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "ASPC" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "MGEF" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "SCPT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "LTEX" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "ENCH" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "SPEL" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "SCRL" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "ACTI" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "TACT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "ARMO" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "BOOK" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "CONT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "DOOR" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "INGR" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "LIGH" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "MISC" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "APPA" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "STAT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "SCOL" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "MSTT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "PWAT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "GRAS" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "TREE" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "CLDC" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "FLOR" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "FURN" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "WEAP" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "AMMO" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "NPC_" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "LVLN" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "KEYM" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "ALCH" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "IDLM" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "COBJ" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "PROJ" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "HAZD" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "SLGM" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "LVLI" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "WTHR" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "CLMT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "SPGD" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "RFCT" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "REGN" processed
+[00:01] Background Loader: [Skyrim.esm] GRUP Top "NAVI" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "CELL" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "WRLD" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "DIAL" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "QUST" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "IDLE" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "PACK" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "CSTY" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "LSCR" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "LVSP" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "ANIO" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "WATR" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "EFSH" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "EXPL" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "DEBR" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "IMGS" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "IMAD" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "FLST" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "PERK" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "BPTD" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "ADDN" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "AVIF" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "CAMS" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "CPTH" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "VTYP" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "MATT" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "IPCT" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "IPDS" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "ARMA" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "ECZN" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "LCTN" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "MESG" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "RGDL" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "DOBJ" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "LGTM" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "MUSC" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "FSTP" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "FSTS" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "SMBN" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "SMQN" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "SMEN" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "DLBR" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "MUST" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "DLVW" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "WOOP" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "SHOU" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "EQUP" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "RELA" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "SCEN" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "ASTP" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "OTFT" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "ARTO" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "MATO" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "MOVT" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "HAZD" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "SNDR" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "DUAL" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "SNCT" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "SOPM" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "COLL" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "CLFM" processed
+[00:02] Background Loader: [Skyrim.esm] GRUP Top "REVB" processed
+[00:02] Background Loader: [Skyrim.esm] Building FormID index
+[00:02] Background Loader: [Skyrim.esm] FormID index built
+[00:02] Background Loader: [Skyrim.esm] Building string indices
+[00:02] Background Loader: [Skyrim.esm] String indices built
+[00:02] Background Loader: [Skyrim.esm] Warning: File contains empty top level group: GRUP Top "HAZD"
+[00:02] Background Loader: [Skyrim.esm] Removed empty group: GRUP Top "HAZD"
+[00:02] Background Loader: [Skyrim.esm] Warning: File contains empty top level group: GRUP Top "RGDL"
+[00:02] Background Loader: [Skyrim.esm] Removed empty group: GRUP Top "RGDL"
+[00:02] Background Loader: [Skyrim.esm] Warning: File contains empty top level group: GRUP Top "CLDC"
+[00:02] Background Loader: [Skyrim.esm] Removed empty group: GRUP Top "CLDC"
+[00:02] Background Loader: [Skyrim.esm] Warning: File contains empty top level group: GRUP Top "PWAT"
+[00:02] Background Loader: [Skyrim.esm] Removed empty group: GRUP Top "PWAT"
+[00:02] Background Loader: [Skyrim.esm] Warning: File contains empty top level group: GRUP Top "SCOL"
+[00:02] Background Loader: [Skyrim.esm] Removed empty group: GRUP Top "SCOL"
+[00:02] Background Loader: [Skyrim.esm] Warning: File contains empty top level group: GRUP Top "SCPT"
+[00:02] Background Loader: [Skyrim.esm] Removed empty group: GRUP Top "SCPT"
+[00:02] Background Loader: [Skyrim.esm] Warning: File contains empty top level group: GRUP Top "HAIR"
+[00:02] Background Loader: [Skyrim.esm] Removed empty group: GRUP Top "HAIR"
+[00:02] Background Loader: [Skyrim.esm] Processing completed
+[00:02] Background Loader: loading "SkyrimSE.exe"...
+[00:02] Background Loader: [SkyrimSE.exe] Loading file
+[00:02] Background Loader: [SkyrimSE.exe] File loaded (CRC32:B0E31D87)
+[00:02] Background Loader: [SkyrimSE.exe] Start processing
+[00:02] Background Loader: [SkyrimSE.exe] Adding master "Skyrim.esm"
+[00:02] Background Loader: [SkyrimSE.exe] Header processed. Expecting 29 records
+[00:02] Background Loader: [SkyrimSE.exe] GRUP Top "TXST" processed
+[00:02] Background Loader: [SkyrimSE.exe] GRUP Top "GLOB" processed
+[00:02] Background Loader: [SkyrimSE.exe] GRUP Top "EYES" processed
+[00:02] Background Loader: [SkyrimSE.exe] GRUP Top "IMAD" processed
+[00:02] Background Loader: [SkyrimSE.exe] GRUP Top "BPTD" processed
+[00:02] Background Loader: [SkyrimSE.exe] GRUP Top "AVIF" processed
+[00:02] Background Loader: [SkyrimSE.exe] GRUP Top "IPDS" processed
+[00:02] Background Loader: [SkyrimSE.exe] Building FormID index
+[00:02] Background Loader: [SkyrimSE.exe] FormID index built
+[00:02] Background Loader: [SkyrimSE.exe] Building string indices
+[00:02] Background Loader: [SkyrimSE.exe] String indices built
+[00:02] Background Loader: [SkyrimSE.exe] Processing completed
+[00:02] Background Loader: loading "Oblivion.esm"...
+[00:02] Background Loader: [Oblivion.esm] Loading file
+[00:03] Background Loader: [Oblivion.esm] File loaded (CRC32:9B67012D)
+[00:03] Background Loader: [Oblivion.esm] Start processing
+[00:03] Background Loader: [Oblivion.esm] Adding master "Skyrim.esm"
+[00:03] Background Loader: [Oblivion.esm] Header processed. Expecting 1241012 records
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "TXST" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "GLOB" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "CLAS" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "FACT" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "RACE" processed
+[00:03] Background Loader: <Note: FSTMetal [SOUN:0000022B] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTSnowLand [SOUN:00000220] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTArmorLightSneak [SOUN:00000228] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTArmorHeavySneak [SOUN:00000229] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTWoodSneak [SOUN:00000227] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTStoneSneak [SOUN:00000225] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTWaterSneak [SOUN:00000226] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTSnowSneak [SOUN:00000224] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTSnow [SOUN:0000021F] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTMetalSneak [SOUN:00000223] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTGrassSneak [SOUN:00000222] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FSTEarthSneak [SOUN:00000221] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundWoodLand [SOUN:0000021E] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundWaterLand [SOUN:0000021D] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundGrassLand [SOUN:0000021A] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundEarthLand [SOUN:00000219] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundStoneLand [SOUN:0000021C] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundMetalLand [SOUN:0000021B] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundLightArmor [SOUN:00000218] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundHeavyArmor [SOUN:00000217] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundWood [SOUN:00000216] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundWater [SOUN:00000215] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundStone [SOUN:00000214] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundGrass [SOUN:00000213] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FootSoundDirt [SOUN:00000212] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: MagicFailureSoundRestoration [SOUN:00000131] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: MagicFailureSoundMysticism [SOUN:00000130] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: MagicFailureSoundIllusion [SOUN:0000012F] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: MagicFailureSoundDestruction [SOUN:0000012E] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: MagicFailureSoundConjuration [SOUN:0000012D] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: MagicFailureSoundAlteration [SOUN:0000012C] was injected into Skyrim.esm>
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "SOUN" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "SNDR" processed
+[00:03] Background Loader: <Note: FurnitureMarker11 [STAT:0000006E] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FurnitureMarker12 [STAT:0000006F] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FurnitureMarker13 [STAT:00000070] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FurnitureMarker14 [STAT:00000071] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FlameNode9 [STAT:00000027] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FlameNode8 [STAT:00000026] was injected into Skyrim.esm>
+[00:03] Background Loader: Warning: Record [ECZN:0000001E] in file Skyrim.esm is being overridden by record [STAT:0100001E] in file Oblivion.esm.
+[00:03] Background Loader: Warning: Record [CELL:00000025] in file Skyrim.esm is being overridden by record [STAT:01000025] in file Oblivion.esm.
+[00:03] Background Loader: <Note: FlameNode6 [STAT:00000024] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: FlameNode5 [STAT:00000023] was injected into Skyrim.esm>
+[00:03] Background Loader: Warning: Record [ACTI:00000022] in file Skyrim.esm is being overridden by record [STAT:01000022] in file Oblivion.esm.
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "STAT" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "ACTI" processed
+[00:03] Background Loader: <Note: StolenGoods "Evidence" [CONT:00000011] was injected into Skyrim.esm>
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "CONT" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "DOOR" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "FLOR" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "FURN" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "GRAS" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "TREE" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "LIGH" processed
+[00:03] Background Loader: <Note: WelkyndStone "Welkynd Stone" [MISC:00000191] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: DASkeletonKey "Skeleton Key" [MISC:0000000B] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: RepairHammer "Repair Hammer" [MISC:0000000C] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: VarlaStone "Varla Stone" [MISC:00000194] was injected into Skyrim.esm>
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "MISC" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "KEYM" processed
+[00:03] Background Loader: Warning: Record [STAT:00000015] in file Skyrim.esm is being overridden by record [ARMO:01000015] in file Oblivion.esm.
+[00:03] Background Loader: Warning: Record [STAT:00000017] in file Skyrim.esm is being overridden by record [ARMO:01000017] in file Oblivion.esm.
+[00:03] Background Loader: Warning: Record [CPTH:00000016] in file Skyrim.esm is being overridden by record [ARMO:01000016] in file Oblivion.esm.
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "ARMO" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "ARMA" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "BOOK" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "AMMO" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "ENCH" processed
+[00:03] Background Loader: <Note: DefaultPlayerSpell "Heal Minor Wounds" [SPEL:00000136] was injected into Skyrim.esm>
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "SPEL" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "ALCH" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "INGR" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "SCRL" processed
+[00:03] Background Loader: <Note: BlackSoulGem "Black Soul Gem" [SLGM:00000192] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: AzurasStar "Azura's Star" [SLGM:00000193] was injected into Skyrim.esm>
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "SLGM" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "VTYP" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "OTFT" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "NPC_" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "LVLN" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "LVLI" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "LVSP" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "WTHR" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "QUST" processed
+[00:03] Background Loader: <Note: effectAbsorb [EFSH:00000144] was injected into Skyrim.esm>
+[00:03] Background Loader: <Note: effectReflect [EFSH:00000145] was injected into Skyrim.esm>
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "EFSH" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "LSCR" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "ANIO" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "WEAP" processed
+[00:03] Background Loader: [Oblivion.esm] GRUP Top "NAVI" processed
+[00:04] Background Loader: [Oblivion.esm] GRUP Top "CELL" processed
+[00:05] Background Loader: [Oblivion.esm] GRUP Top "WRLD" processed
+[00:05] Background Loader: <Note: GREETING "GREETING" [DIAL:000000C8] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: HELLO "HELLO" [DIAL:000000D2] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: GOODBYE "GOODBYE" [DIAL:000000D4] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: IdleChatter "Idle Chatter" [DIAL:000000D5] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: INFOGENERAL "Rumors" [DIAL:000000D7] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Attack "Attack" [DIAL:000000DC] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Hit "Hit" [DIAL:000000DD] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Flee "Flee" [DIAL:000000DE] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Steal "Steal" [DIAL:000000DF] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Trespass "Trespass" [DIAL:000000E0] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Yield "Yield" [DIAL:000000E1] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: AcceptYield "AcceptYield" [DIAL:000000E2] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Pickpocket "Pickpocket" [DIAL:000000E3] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Assault "Assault" [DIAL:000000E4] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Murder "Murder" [DIAL:000000E5] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: PowerAttack "PowerAttack" [DIAL:000000E6] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: AssaultNoCrime "AssaultNoCrime" [DIAL:000000E7] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: MurderNoCrime "MurderNoCrime" [DIAL:000000E8] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: PickpocketNoCrime "PickpocketNoCrime" [DIAL:000000E9] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: StealNoCrime "StealNoCrime" [DIAL:000000EA] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: TrespassNoCrime "TrespassNoCrime" [DIAL:000000EB] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Noticed "Noticed" [DIAL:00000104] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Seen "Seen" [DIAL:00000105] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Unseen "Unseen" [DIAL:00000106] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Lost "Lost" [DIAL:00000107] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: InfoRefusal "InfoRefusal" [DIAL:00000118] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Idle "Idle" [DIAL:00000119] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: ObserveCombat "ObserveCombat" [DIAL:0000011A] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: Corpse "Corpse" [DIAL:0000011B] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: <Note: TimeToGo "TimeToGo" [DIAL:0000011C] (in [01192C59] <Error: Could not be resolved>) was injected into Skyrim.esm>
+[00:05] Background Loader: [Oblivion.esm] GRUP Top "DIAL" processed
+[00:05] Background Loader: [Oblivion.esm] GRUP Top "DLBR" processed
+[00:05] Background Loader: [Oblivion.esm] GRUP Top "DLVW" processed
+[00:05] Background Loader: [Oblivion.esm] GRUP Top "FLST" processed
+[00:05] Background Loader: [Oblivion.esm] GRUP Top "PROJ" processed
+[00:05] Background Loader: [Oblivion.esm] GRUP Top "WATR" processed
+[00:05] Background Loader: [Oblivion.esm] GRUP Top "LTEX" processed
+[00:05] Background Loader: [Oblivion.esm] Building FormID index
+[00:05] Background Loader: [Oblivion.esm] FormID index built
+[00:05] Background Loader: [Oblivion.esm] Building string indices
+[00:06] Background Loader: [Oblivion.esm] String indices built
+[00:06] Background Loader: [Oblivion.esm] Processing completed
+[00:06] Background Loader: [Skyrim.esm] Start loading or building reference info.
+[00:06] Background Loader: [SkyrimSE.exe] Start loading or building reference info.
+[00:06] Background Loader: [Oblivion.esm] Start loading or building reference info.
+[00:06] Background Loader: [SkyrimSE.exe] Done building reference info.
+[00:07] Background Loader: [Skyrim.esm] Done loading reference info.
+[00:17] Background Loader: still building references...
+[00:27] Background Loader: still building references...
+[00:37] Background Loader: still building references...
+[00:40] Background Loader: [Oblivion.esm] Done building and saving reference info.
+[00:40] Background Loader: finished
