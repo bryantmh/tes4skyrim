@@ -965,7 +965,8 @@ def convert_PGRD(rec: dict, writer=None,
                  cell_rec: dict = None,
                  refr_recs: list = None,
                  base_model_by_fid: dict = None,
-                 door_fids: set = None) -> tuple:
+                 door_fids: set = None,
+                 navm_fid: int = None) -> tuple:
     """Convert one TES4 PGRD to a TES5 NAVM record.
 
     Args:
@@ -976,13 +977,17 @@ def convert_PGRD(rec: dict, writer=None,
         refr_recs:          REFR records in this cell (exclusion footprints).
         base_model_by_fid:  {raw_low_base_fid: 'tes4/...nif'} for footprints.
         door_fids:          set of raw low-24 DOOR base FormIDs (for door links).
+        navm_fid:           Pre-allocated NAVM FormID.  When given, the writer is
+                            not touched for allocation — this lets callers assign
+                            FormIDs deterministically before farming the (heavy,
+                            scipy-bound) geometry work out to a thread pool.
 
     Returns:
         (navm_bytes, meta) where meta is a dict
         {fid, wrld_fid, cell_fid, grid_x, grid_y, is_exterior, center,
          base_objects} — or (None, None) on failure.
     """
-    if writer is None:
+    if writer is None and navm_fid is None:
         return None, None
 
     point_count = get_int(rec, 'DATA.PointCount', 0)
@@ -1106,7 +1111,8 @@ def convert_PGRD(rec: dict, writer=None,
                       wrld_fid, cell_fid, grid_x, grid_y, is_exterior,
                       door_tris=door_tris)
 
-    navm_fid = writer.alloc_formid()
+    if navm_fid is None:
+        navm_fid = writer.alloc_formid()
     subs = b''
     edid = get_str(rec, 'EditorID')
     if edid:

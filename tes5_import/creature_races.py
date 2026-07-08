@@ -88,10 +88,6 @@ _FOLDER_KEYWORDS = {
     'mehrunesdagon': [_KW_DAEDRA, _KW_CREATURE],
 }
 
-# Extra ARMA biped slots for body parts beyond the first (bits 10.. = slots
-# 40..46, the creature-safe range). Part 0 always gets slot 32 (Body, 0x4).
-_EXTRA_SLOT_BITS = [1 << (10 + i) for i in range(14)]
-
 # crea_fid_low24 → (race_fid, folder) — consumed by convert_CREA
 _CREA_RACE_MAP = {}
 # folder → project summary (attacks etc.) for anything else that needs it
@@ -173,6 +169,11 @@ def _build_race(writer, rec, folder: str, bodies: list, proj: dict,
     subs += pack_formid_subrecord('NAM5', _NAM5_IMPACT_SET)
     subs += pack_formid_subrecord('ONAM', _ONAM_OPEN_SND)
     subs += pack_formid_subrecord('LNAM', _LNAM_CLOSE_SND)
+    # Biped object names: vanilla creatures name ONLY slot 2 ('BODY') and ship
+    # the whole animal (body+head+eyes+tail) as a single skinned NIF on that
+    # one BODY-slot ARMA (census: DogRace names 'BODY' and nothing else).  The
+    # creature pipeline merges all Oblivion body parts into one <creature>.nif
+    # for exactly this reason, so a single BODY slot is all that's needed.
     for slot in range(32):
         subs += pack_subrecord('NAME', b'BODY\x00' if slot == 2 else b'\x00')
     subs += pack_subrecord('VNAM', struct.pack('<I', _VNAM_EQUIP_FLAGS))
@@ -184,33 +185,29 @@ def _build_race(writer, rec, folder: str, bodies: list, proj: dict,
 
 def _build_skin(writer, folder: str, bodies: list, race_fid: int,
                 skin_fid: int, edid_base: str) -> None:
-    """ARMA per body-part NIF + the skin ARMO referencing them all."""
-    arma_fids = []
-    slot_union = 0
-    for i, body in enumerate(bodies):
-        slot = 0x4 if i == 0 else _EXTRA_SLOT_BITS[min(i - 1,
-                                                       len(_EXTRA_SLOT_BITS) - 1)]
-        slot_union |= slot
-        arma_fid = writer.alloc_formid()
-        stem = os.path.splitext(body)[0]
-        subs = b''
-        subs += pack_string_subrecord('EDID', f'TES4{edid_base}{stem}AA')
-        subs += pack_subrecord('BOD2', struct.pack('<II', slot, 2))
-        subs += pack_formid_subrecord('RNAM', race_fid)
-        subs += pack_subrecord('DNAM', _ARMA_DNAM)
-        subs += pack_string_subrecord(
-            'MOD2', f'Actors\\TES4\\{folder}\\{body}')
-        writer.add_record('ARMA', pack_record('ARMA', arma_fid, 0, subs))
-        arma_fids.append(arma_fid)
+    """Single BODY-slot ARMA (the merged whole-animal NIF) + its skin ARMO.
+
+    Vanilla creatures use ONE ARMA on slot BODY (0x4); the creature pipeline
+    merges every Oblivion body part into one <creature>.nif so a single ARMA
+    covers the whole animal (see merge_creature_body / DogRace census)."""
+    body = bodies[0]
+    arma_fid = writer.alloc_formid()
+    stem = os.path.splitext(body)[0]
+    subs = b''
+    subs += pack_string_subrecord('EDID', f'TES4{edid_base}{stem}AA')
+    subs += pack_subrecord('BOD2', struct.pack('<II', 0x4, 2))
+    subs += pack_formid_subrecord('RNAM', race_fid)
+    subs += pack_subrecord('DNAM', _ARMA_DNAM)
+    subs += pack_string_subrecord('MOD2', f'Actors\\TES4\\{folder}\\{body}')
+    writer.add_record('ARMA', pack_record('ARMA', arma_fid, 0, subs))
 
     subs = b''
     subs += pack_string_subrecord('EDID', f'TES4Skin{edid_base}')
     subs += pack_obnd(0, 0, 0, 0, 0, 0)
-    subs += pack_subrecord('BOD2', struct.pack('<II', slot_union, 2))
+    subs += pack_subrecord('BOD2', struct.pack('<II', 0x4, 2))
     subs += pack_formid_subrecord('RNAM', race_fid)
     subs += pack_subrecord('DESC', b'\x00')
-    for arma_fid in arma_fids:
-        subs += pack_formid_subrecord('MODL', arma_fid)
+    subs += pack_formid_subrecord('MODL', arma_fid)
     subs += pack_subrecord('DATA', struct.pack('<If', 0, 0.0))
     subs += pack_subrecord('DNAM', struct.pack('<f', 0.0))
     # flags=4: non-playable (vanilla SkinDog)
@@ -244,12 +241,21 @@ def build_creature_races(by_type: dict, writer, export_dir: str) -> None:
             continue
         fid = get_formid(rec, 'FormID') & 0x00FFFFFF
 
-        nifz = []
-        for i in range(get_int(rec, 'NIFZCount', 0)):
-            fn = (get_str(rec, f'NIFZ[{i}]') or '').lower()
-            if fn in proj['bodies']:
-                nifz.append(fn)
-        bodies = sorted(set(nifz)) or list(proj['bodies'])
+        # The creature pipeline merged each CREA's NIFZ part set into ONE
+        # whole-animal NIF named after its first (body) part; that merged file
+        # is what proj['bodies'] now lists.  Resolve this CREA's part set to
+        # its merged NIF so dog/wolf/skeletal-hound (same folder) each point
+        # at the right mesh.
+        nifz = [(get_str(rec, f'NIFZ[{i}]') or '').lower()
+                for i in range(get_int(rec, 'NIFZCount', 0))]
+        nifz = [p for p in nifz if p.endswith('.nif')]
+        merged = f'{os.path.splitext(nifz[0])[0]}.nif' if nifz else None
+        if merged and merged in proj['bodies']:
+            bodies = [merged]
+        elif proj['bodies']:
+            bodies = [proj['bodies'][0]]   # fallback: folder's first merged NIF
+        else:
+            continue
 
         key = (folder, tuple(bodies))
         if key not in made:

@@ -1,6 +1,7 @@
 Gameplan:
-	Finish creature conversion mi5
+	Separate out Claude.md non-essential info into docs
 	Move External L13
+	Finish creature conversion mi5
 	Fix distant water M11
 	Fix distant textures M11
 	Fix distant trees M11
@@ -81,6 +82,8 @@ Major Issues for V1:
 
 	13 - Add versioning
 
+	14 - Fix all CK and Xedit warnings
+
 Later Issues:
 	1 - Lip syncing with voice
 
@@ -145,7 +148,9 @@ Minor Issues:
 	
 	4 - Should properly position inventory items. The side that allows the largest view should face out
 	
-	5 - Properly convert creatures including animations (may be a pipe dream)
+	5 - Properly convert creatures including animations
+		https://github.com/SpectralPlatypus/ck-cmd "C:\Users\Bryant\Documents\Code\TESConversion\references\ck-cmd-master"
+		https://wiki.beyondskyrim.org/wiki/Arcane_University:Implementation_of_Custom_Animations
 
 	6 - Every class teaches 1 handed this is obviously not correct in in accordance with the original data
 

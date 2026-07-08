@@ -125,24 +125,31 @@ def scan_mesh_bounds(mesh_dir: str, cache_path: str, workers: int = None) -> int
     return len(results)
 
 
-def load_mesh_bounds(cache_path: str) -> int:
+def load_mesh_bounds(cache_path: str, quiet: bool = False) -> int:
     """Load previously computed bounds from *cache_path* into the module cache.
 
     Per-key lookup: if a key exists in the JSON it is used; missing keys fall
     back to type defaults (no recompute).  Returns the number of entries loaded.
+
+    quiet=True skips the status prints — used by navmesh worker processes, which
+    each call this once in their pool initializer and would otherwise spam one
+    line per worker.
     """
     global _MESH_BOUNDS
     if not os.path.exists(cache_path):
-        print(f"  Mesh bounds: cache not found ({cache_path}), using type defaults")
+        if not quiet:
+            print(f"  Mesh bounds: cache not found ({cache_path}), using type defaults")
         return 0
     try:
         with open(cache_path, encoding='utf-8') as fh:
             raw = json.load(fh)
         _MESH_BOUNDS = {k: tuple(v) for k, v in raw.items()}
-        print(f"  Mesh bounds: loaded {len(_MESH_BOUNDS)} entries from cache")
+        if not quiet:
+            print(f"  Mesh bounds: loaded {len(_MESH_BOUNDS)} entries from cache")
         return len(_MESH_BOUNDS)
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"  Mesh bounds: could not load cache ({exc}), using type defaults")
+        if not quiet:
+            print(f"  Mesh bounds: could not load cache ({exc}), using type defaults")
         return 0
 
 

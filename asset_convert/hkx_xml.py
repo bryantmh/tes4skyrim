@@ -5,6 +5,15 @@ which the bundled Havok serializer compiles back to a Skyrim LE 32-bit binary
 packfile (`convert -v:WIN32`). Round-trip verified byte-count-identical on
 vanilla files. Used by the skeleton / character / project / behavior graph
 generators for creature conversion.
+
+Generation and validation happen in the WIN32 (32-bit LE) format because the
+32-bit hkxcmd can only READ 32-bit packfiles.  Skyrim SE however only LOADS
+64-bit (AMD64) havok files — every vanilla SSE hkx has pointer size 8, and a
+32-bit project makes the engine silently fail the behavior-graph load,
+rendering the actor invisible (collision capsule still works).  So the final
+step for anything shipped to the output tree is `convert_hkx_to_amd64()`
+(hkxcmd `-v:AMD64`, verified byte-identical to Bethesda's own shipped SSE
+dogproject.hkx when run on the LE original).
 """
 
 import os
@@ -161,9 +170,12 @@ def fmt_qtransform_rot(q_xyzw) -> str:
 
 def _run_hkxcmd(args, out_path):
     # hkxcmd CRASHES (0xC0000417) on forward-slash paths — always pass
-    # absolute backslash paths
+    # absolute backslash paths.  Output paths MUST end in .hkx/.xml/.hkt:
+    # any other extension makes hkxcmd treat the path as a DIRECTORY and
+    # write <out_path>\<basename> instead (and crash if the real
+    # destination already exists as a directory from an earlier mishap).
     res = subprocess.run([HKXCMD] + args, capture_output=True, text=True)
-    if res.returncode != 0 or not os.path.exists(out_path):
+    if res.returncode != 0 or not os.path.isfile(out_path):
         raise RuntimeError(
             f'hkxcmd {" ".join(args)} failed ({res.returncode}):\n'
             f'{res.stdout}\n{res.stderr}')
@@ -184,3 +196,29 @@ def decompile_hkx(hkx_path: str, xml_path: str) -> None:
     xml_path = os.path.abspath(xml_path)
     os.makedirs(os.path.dirname(xml_path), exist_ok=True)
     _run_hkxcmd(['convert', '-v:XML', hkx_path, xml_path], xml_path)
+
+
+def convert_hkx_to_amd64(hkx_path: str) -> None:
+    """In-place WIN32 → AMD64 packfile conversion (the SSE format).
+
+    Must be the LAST step: hkxcmd (32-bit Havok) cannot read the AMD64
+    output back, so all round-trip validation has to happen on the WIN32
+    file first.  No-op if the file is already 64-bit.
+    """
+    hkx_path = os.path.abspath(hkx_path)
+    with open(hkx_path, 'rb') as f:
+        head = f.read(0x14)
+    if len(head) >= 0x11 and head[0x10] == 8:
+        return  # already AMD64
+    # Temp name must keep the .hkx extension — hkxcmd treats any other
+    # extension as a directory name and writes <tmp>\<basename>.
+    tmp = hkx_path[:-len('.hkx')] + '.amd64tmp.hkx'
+    try:
+        _run_hkxcmd(['convert', '-v:AMD64', hkx_path, tmp], tmp)
+        os.replace(tmp, hkx_path)
+    finally:
+        if os.path.isfile(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass

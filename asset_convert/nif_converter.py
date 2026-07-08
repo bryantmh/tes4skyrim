@@ -458,6 +458,49 @@ def _strip_dead_geometry_controllers(geom):
         ctrl = nxt
 
 
+def _strip_creature_bone_controllers(data):
+    """Remove Oblivion-runtime controllers from creature NIF node chains.
+
+    Oblivion creature skeletons carry an active (flags=12) but DATALESS
+    NiTransformController on every bone plus a bhkBlendController on every
+    ragdoll bone and a NiBSBoneLODController on Bip01 — all driven by
+    Oblivion's engine at runtime.  Vanilla Skyrim creature skeletons ship
+    NONE of these (bhkBlendController: 0 of all vanilla actor meshes; their
+    only NiTransformControllers have a real interpolator+data — e.g. the
+    dog's jaw/tongue idle).  Skyrim drives bones from the behavior graph, so
+    these leftovers are at best dead weight and at worst engine hazards
+    (an active controller with a null interpolator on every bone).
+
+    Keeps NiTransformControllers that have an interpolator (real embedded
+    animation).  Returns the number of controllers removed.
+    """
+    removed = 0
+    for root in data.roots:
+        if root is None:
+            continue
+        for block in root.tree():
+            if not hasattr(block, 'controller'):
+                continue
+            prev = None
+            ctrl = getattr(block, 'controller', None)
+            while ctrl is not None:
+                nxt = getattr(ctrl, 'next_controller', None)
+                dead = isinstance(ctrl, (NifFormat.bhkBlendController,
+                                         NifFormat.NiBSBoneLODController)) \
+                    or (isinstance(ctrl, NifFormat.NiTransformController)
+                        and getattr(ctrl, 'interpolator', None) is None)
+                if dead:
+                    if prev is None:
+                        block.controller = nxt
+                    else:
+                        prev.next_controller = nxt
+                    removed += 1
+                else:
+                    prev = ctrl
+                ctrl = nxt
+    return removed
+
+
 def _resolve_source_texture(tex_rel, src_nif_path):
     """Map a rewritten texture path (textures\\tes4\\fire\\x\\y.dds) back to the
     extracted source file next to the source mesh tree
@@ -1928,6 +1971,22 @@ def _add_prn_skin(data, root_node, keep_bone_names=False, plain=False):
             bone_entry.vertex_weights[vi].index = vi
             bone_entry.vertex_weights[vi].weight = 1.0
 
+        # Per-bone bounding sphere — the engine visibility-culls skinned
+        # geometry by these spheres (moved by the live bone each frame); a
+        # zero-radius sphere is never visible in-game even though NifSkope
+        # ignores the field and renders the mesh fine.  The bind transform is
+        # identity, so the sphere is just the vertex bounds in mesh space.
+        verts = geom_data.vertices
+        cx = (min(v.x for v in verts) + max(v.x for v in verts)) / 2.0
+        cy = (min(v.y for v in verts) + max(v.y for v in verts)) / 2.0
+        cz = (min(v.z for v in verts) + max(v.z for v in verts)) / 2.0
+        bone_entry.bounding_sphere_offset.x = cx
+        bone_entry.bounding_sphere_offset.y = cy
+        bone_entry.bounding_sphere_offset.z = cz
+        bone_entry.bounding_sphere_radius = max(
+            ((v.x - cx) ** 2 + (v.y - cy) ** 2 + (v.z - cz) ** 2) ** 0.5
+            for v in verts)
+
         # Build the skin instance (plain for creature parts, dismember for
         # worn armor)
         if plain:
@@ -2063,6 +2122,32 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
 
     # Body-skin geometry is stripped AFTER retarget (see below).
     _body_nibs_to_splice: dict = {}
+
+    if creature:
+        # Oblivion-runtime bone controllers (dataless NiTransformController,
+        # bhkBlendController, NiBSBoneLODController) don't exist in vanilla
+        # Skyrim creature assets — the behavior graph drives the bones.
+        _strip_creature_bone_controllers(data)
+
+        # Engine contract: the anim rig root must be named 'NPC Root [Root]'
+        # (all 30 vanilla creature rigs; the engine binds the graph to the
+        # actor 3D through this node by name — a 'Bip01' root never binds
+        # and the actor spawns invisible).  hkx_skeleton/hkx_anim apply the
+        # same rename on the havok side; here we rename the NIF node in the
+        # skeleton AND every body part (skin bones resolve by node name).
+        from .hkx_skeleton import BONE_RENAMES
+        renames = {k.encode('latin-1'): v.encode('latin-1')
+                   for k, v in BONE_RENAMES.items()}
+        for root in data.roots:
+            if root is None:
+                continue
+            for block in root.tree():
+                nm = getattr(block, 'name', None)
+                if nm is None:
+                    continue
+                key = bytes(nm).rstrip(b'\x00')
+                if key in renames:
+                    block.name = renames[key]
 
     if creature and not has_skin:
         # Rigid Prn-attached creature parts (heads, eyes, tails): bake node
@@ -2625,6 +2710,112 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def _shape_blocks(root):
+    """All NiTriShape/NiTriStrips geometry blocks under a root."""
+    return [b for b in root.tree()
+            if isinstance(b, (NifFormat.NiTriShape, NifFormat.NiTriStrips))]
+
+
+def _bone_nodes_by_name(root):
+    """Map name(str, no NUL) -> NiNode for every NiNode under root."""
+    out = {}
+    for b in root.tree():
+        if isinstance(b, NifFormat.NiNode):
+            nm = bytes(b.name).rstrip(b'\x00').decode('latin-1')
+            out.setdefault(nm, b)
+    return out
+
+
+def _append_child(node, child):
+    node.num_children += 1
+    node.children.update_size()
+    node.children[node.num_children - 1] = child
+
+
+def merge_creature_body(part_paths, dst_path):
+    """Merge the converted creature body-part NIFs into ONE skinned NIF.
+
+    Vanilla Skyrim creatures ship the WHOLE animal (body + head + eyes + tail
+    + any extra parts) as a single skinned mesh under one root, referenced by
+    a SINGLE ARMA on the BODY slot (census: DogRace names only 'BODY'; the
+    rabbit.nif root carries every Rabbit* bone NiNode plus 'Bunnyfur01' and
+    'Eyes' shapes as siblings).  Oblivion instead splits the creature into a
+    skeleton.nif plus one NIF per body part.  Attaching each Oblivion part as
+    its own ARMA on an extra biped slot does NOT work — the engine renders
+    only the BODY-slot ARMA for a creature, so the head/eyes silently vanish.
+
+    So: take the largest converted part (the body — it already embeds the full
+    Bip01 bone hierarchy) as the base, then graft every OTHER part's shapes in
+    as siblings under the base root, re-pointing each grafted shape's skin
+    bones at the base root's matching NiNode (adding the node if the base
+    lacks it).  Skin bones resolve against the animated skeleton by NAME at
+    runtime, so the merged NIF renders exactly like a vanilla single-file
+    creature mesh.
+
+    part_paths: list of already-converted .nif paths (Skyrim version).  The
+    one with the most bone nodes is used as the base.  Writes the merged NIF
+    to dst_path.  Returns {'base': str, 'grafted': int, 'shapes': int}.
+    """
+    if not _PYFFI:
+        return {'error': 'pyffi not installed'}
+    if not part_paths:
+        return {'error': 'no parts'}
+
+    datas = []
+    for p in part_paths:
+        d = NifFormat.Data()
+        with open(p, 'rb') as f:
+            d.read(f)
+        datas.append((p, d))
+
+    # Base = the part with the most bone NiNodes (the body carries the whole
+    # skeleton copy; heads/eyes carry only one or two bones).
+    def bone_count(d):
+        return sum(1 for r in d.roots if r is not None
+                   for b in r.tree() if isinstance(b, NifFormat.NiNode))
+
+    datas.sort(key=lambda pd: bone_count(pd[1]), reverse=True)
+    base_path, base_data = datas[0]
+    base_root = next(r for r in base_data.roots if r is not None)
+    base_bones = _bone_nodes_by_name(base_root)
+
+    grafted = 0
+    for path, d in datas[1:]:
+        for src_root in d.roots:
+            if src_root is None:
+                continue
+            for shape in _shape_blocks(src_root):
+                si = shape.skin_instance
+                if si is not None:
+                    # Re-point each skin bone at the base root's node of the
+                    # same name (add a placeholder bone node if absent so the
+                    # engine still matches it against the live skeleton).
+                    for bi, bone in enumerate(si.bones):
+                        nm = bytes(bone.name).rstrip(b'\x00').decode('latin-1')
+                        tgt = base_bones.get(nm)
+                        if tgt is None:
+                            tgt = NifFormat.NiNode()
+                            tgt.name = bone.name
+                            tgt.flags = NIF_FLAGS
+                            _append_child(base_root, tgt)
+                            base_bones[nm] = tgt
+                        si.bones[bi] = tgt
+                    if si.skeleton_root is not None:
+                        si.skeleton_root = base_root
+                _append_child(base_root, shape)
+                grafted += 1
+
+    base_root.name = os.path.basename(dst_path).encode('latin-1')
+
+    dst_dir = os.path.dirname(dst_path)
+    if dst_dir:
+        os.makedirs(dst_dir, exist_ok=True)
+    with open(dst_path, 'wb') as f:
+        base_data.write(f)
+    return {'base': base_path, 'grafted': grafted,
+            'shapes': len(_shape_blocks(base_root))}
+
 
 def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
                 src_meshes_dir=None, creature=False):

@@ -276,9 +276,46 @@ _TRIGGER_TMPL = '''<hkobject>
 \t<hkparam name="isAnnotation">false</hkparam>
 </hkobject>'''
 
+_VARIABLE_INFO_TMPL = '''<hkobject>
+\t<hkparam name="role">
+\t\t<hkobject>
+\t\t\t<hkparam name="role">ROLE_DEFAULT</hkparam>
+\t\t\t<hkparam name="flags">0</hkparam>
+\t\t</hkobject>
+\t</hkparam>
+\t<hkparam name="type">VARIABLE_TYPE_{vtype}</hkparam>
+</hkobject>'''
 
-def build_behavior_xml(behavior_name: str, clips: dict) -> str:
-    """The generated v1 state machine (see module docstring)."""
+# The engine-side graph interface: SSE's movement controller / combat / AI
+# bind these by name at graph init (every vanilla creature behavior declares
+# them — vanilla dogbehavior has 65 variables; this is the engine-set/read
+# subset).  A graph with NO variables leaves the movement hookup dead: the
+# actor plays its start state forever and never walks or reacts.
+# All word defaults are 0 (= 0.0 for REALs).
+ENGINE_VARIABLES = [
+    ('Speed', 'REAL'), ('Direction', 'REAL'), ('TurnDelta', 'REAL'),
+    ('TurnDeltaDamped', 'REAL'), ('SpeedSampled', 'REAL'),
+    ('staggerMagnitude', 'REAL'), ('staggerDirection', 'REAL'),
+    ('iState', 'INT32'), ('iGetUpType', 'INT32'),
+    ('iCharacterSelector', 'INT32'),
+    ('IsAttacking', 'BOOL'), ('IsAttackReady', 'BOOL'),
+    ('IsRecoiling', 'BOOL'), ('IsStaggering', 'BOOL'),
+    ('IsBleedingOut', 'BOOL'), ('IsBashing', 'BOOL'),
+    ('bAnimationDriven', 'BOOL'), ('bAllowRotation', 'BOOL'),
+    ('bHeadTracking', 'BOOL'), ('bCanHeadTrack', 'BOOL'),
+    ('bDisableHeadTrack', 'BOOL'), ('bForceIdleStop', 'BOOL'),
+]
+
+
+def build_behavior_xml(behavior_name: str, clips: dict,
+                       hit_times: dict = None) -> str:
+    """The generated v1 state machine (see module docstring).
+
+    hit_times: {state_name: [seconds]} — Oblivion 'Hit' text-key times for
+    attack clips, emitted as preHitFrame/HitFrame triggers (the engine's
+    attack-damage contract; without HitFrame an attack never deals damage).
+    """
+    hit_times = hit_times or {}
     # ---- event vocabulary: standard + per-attack ----
     events = ['moveStart', 'moveStop', 'moveForward', 'moveBackward',
               'turnLeft', 'turnRight', 'turnStop', 'swimStart', 'swimStop',
@@ -316,14 +353,21 @@ def build_behavior_xml(behavior_name: str, clips: dict) -> str:
     for state_id, (st_name, kf_path, looping, enter_evt, end_evt) in \
             enumerate(defs):
         anim_file = 'Animations\\' + _clip_state_name(kf_path) + '.hkx'
-        triggers_ref = 'null'
+        trigger_items = []
+        for t in hit_times.get(st_name, []):
+            trigger_items.append(_TRIGGER_TMPL.format(
+                time=max(0.0, t - 0.1), event_id=eid['preHitFrame'],
+                rel='false'))
+            trigger_items.append(_TRIGGER_TMPL.format(
+                time=t, event_id=eid['HitFrame'], rel='false'))
         if end_evt:
+            trigger_items.append(_TRIGGER_TMPL.format(
+                time=0.0, event_id=eid[end_evt], rel='true'))
+        triggers_ref = 'null'
+        if trigger_items:
             trig = pf.add('hkbClipTriggerArray')
-            trig.param_raw(
-                'triggers',
-                _TRIGGER_TMPL.format(time=0.0, event_id=eid[end_evt],
-                                     rel='true'),
-                numelements=1)
+            trig.param_raw('triggers', '\n'.join(trigger_items),
+                           numelements=len(trigger_items))
             triggers_ref = trig.ref
         clip = pf.add('hkbClipGenerator')
         clip.param('variableBindingSet', 'null')
@@ -395,17 +439,21 @@ def build_behavior_xml(behavior_name: str, clips: dict) -> str:
     strings = pf.add('hkbBehaviorGraphStringData')
     strings.param_strings('eventNames', events)
     strings.param_array('attributeNames', [])
-    strings.param_array('variableNames', [])
+    strings.param_strings('variableNames', [n for n, _t in ENGINE_VARIABLES])
     strings.param_array('characterPropertyNames', [])
 
     values = pf.add('hkbVariableValueSet')
-    values.param_structs('wordVariableValues', [])
+    values.param_structs('wordVariableValues',
+                         [[('value', 0)]] * len(ENGINE_VARIABLES))
     values.param_array('quadVariableValues', [])
     values.param_array('variantVariableValues', [])
 
     gdata = pf.add('hkbBehaviorGraphData')
     gdata.param_array('attributeDefaults', [])
-    gdata.param_structs('variableInfos', [])
+    gdata.param_raw('variableInfos',
+                    '\n'.join(_VARIABLE_INFO_TMPL.format(vtype=t)
+                              for _n, t in ENGINE_VARIABLES),
+                    numelements=len(ENGINE_VARIABLES))
     gdata.param_structs('characterPropertyInfos', [])
     gdata.param_structs('eventInfos', [[('flags', 0)]] * len(events))
     gdata.param('variableInitialValues', values.ref)
@@ -479,6 +527,9 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
             'end_event': end_evt,
             'sounds': [float(t) for t, s in clip.text_keys
                        if s.strip().lower().startswith('sound')],
+            # Oblivion 'Hit' text keys → HitFrame triggers (damage contract)
+            'hits': [float(t) for t, s in clip.text_keys
+                     if s.strip().lower() == 'hit'],
         })
         if motion:
             motions[stem] = {
@@ -494,7 +545,9 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
 
     behavior_name = f'TES4{name.capitalize()}Behavior'
     _write_and_compile(
-        build_behavior_xml(behavior_name, clips),
+        build_behavior_xml(behavior_name, clips,
+                           hit_times={c['name']: c['hits']
+                                      for c in clip_meta if c['hits']}),
         os.path.join(proj_dir, 'behaviors', behavior_name.lower() + '.hkx'))
     _write_and_compile(
         build_character_xml(

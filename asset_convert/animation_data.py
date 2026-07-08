@@ -113,7 +113,11 @@ def project_block_lines(manifest: dict) -> list:
     lines += manifest['project_files']
     lines.append('1')
     for uid, clip in enumerate(manifest['clips']):
-        triggers = [f'SoundPlay:{_fmt(t)}' for t in clip.get('sounds', [])]
+        timed = [(t, 'SoundPlay') for t in clip.get('sounds', [])]
+        for t in clip.get('hits', []):
+            timed.append((max(0.0, t - 0.1), 'preHitFrame'))
+            timed.append((t, 'HitFrame'))
+        triggers = [f'{name}:{_fmt(t)}' for t, name in sorted(timed)]
         if clip.get('end_event'):
             triggers.append(f"{clip['end_event']}:{_fmt(clip['duration'])}")
         lines += [clip['name'], str(uid), '1', '0', '0', str(len(triggers))]

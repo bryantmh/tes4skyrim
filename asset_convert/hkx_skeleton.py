@@ -34,6 +34,20 @@ from pyffi.formats.nif import NifFormat
 
 UNLOCKED_BONES = {'Bip01', 'Bip01 NonAccum'}
 
+# The SSE engine binds the behavior graph to the actor's 3D through a root
+# node hard-named 'NPC Root [Root]': ALL 30 vanilla creature skeleton.hkx
+# name their anim hkaSkeleton AND its bone 0 exactly that (census 2026-07-08),
+# and every vanilla creature skeleton.nif contains a matching NiNode.  An
+# Oblivion rig root named 'Bip01' never binds -> actor spawns INVISIBLE with
+# only its collision capsule working.  The rename must be applied everywhere
+# a bone name is emitted: skeleton.hkx (here), animation tracks/
+# originalSkeletonName (hkx_anim), ragdoll lookups (hkx_ragdoll), and the
+# converted skeleton/body NIF node names (nif_converter creature mode).
+ROOT_BONE_NAME = 'NPC Root [Root]'
+# 'Bip02' = 3ds Max second-biped naming (Oblivion horse). Source census over
+# all 32 Oblivion.esm creatures: 31x Bip01, 1x Bip02, nothing else.
+BONE_RENAMES = {'Bip01': ROOT_BONE_NAME, 'Bip02': ROOT_BONE_NAME}
+
 
 @dataclass
 class Bone:
@@ -120,8 +134,9 @@ def collect_bones(root_node) -> list:
 
     def visit(node, parent_idx):
         idx = len(bones)
+        raw = _node_name(node)
         bones.append(Bone(
-            name=_node_name(node),
+            name=BONE_RENAMES.get(raw, raw),
             parent=parent_idx,
             translation=(float(node.translation.x), float(node.translation.y),
                          float(node.translation.z)),

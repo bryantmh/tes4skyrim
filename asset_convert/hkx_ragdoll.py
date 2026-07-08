@@ -226,7 +226,8 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
             if body is None:
                 continue
             name = bytes(node.name).decode('latin-1').rstrip('\x00')
-            idx = bone_index.get(name)
+            from asset_convert.hkx_skeleton import BONE_RENAMES
+            idx = bone_index.get(BONE_RENAMES.get(name, name))
             if idx is None:
                 continue
             body_by_bone[idx] = (body, node)

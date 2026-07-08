@@ -44,7 +44,10 @@ def clip_to_animation_data(clip: DecodedClip, bone_names: list,
     values, so pass the skeleton pose when available).
     """
     n_frames = len(clip.times)
-    track_map = {t.bone: t for t in clip.tracks}
+    # KF tracks carry Oblivion bone names; the skeleton bone list has the
+    # engine-contract root rename applied (Bip01 -> 'NPC Root [Root]').
+    from asset_convert.hkx_skeleton import BONE_RENAMES
+    track_map = {BONE_RENAMES.get(t.bone, t.bone): t for t in clip.tracks}
 
     anim = AnimationData()
     anim.duration = float(clip.duration)

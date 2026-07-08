@@ -125,7 +125,9 @@ class TestSkeletonHkx:
     def test_bone_collection(self):
         from asset_convert.hkx_skeleton import load_skeleton_bones
         bones = load_skeleton_bones(DOG_SKEL)
-        assert bones[0].name == 'Bip01' and bones[0].parent == -1
+        # engine contract: rig root renamed to the name SSE binds by
+        # (all 30 vanilla creature rigs use exactly this root bone name)
+        assert bones[0].name == 'NPC Root [Root]' and bones[0].parent == -1
         assert len(bones) == 45
         # parent-before-child ordering (required by Havok)
         for i, b in enumerate(bones):

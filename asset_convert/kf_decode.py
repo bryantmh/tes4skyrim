@@ -408,7 +408,8 @@ def _decode_sequence(seq, fps: float) -> DecodedClip:
 
 
 def split_root_motion(clip: DecodedClip,
-                      accum_bones=('Bip01 NonAccum', 'Bip01')) -> Optional[dict]:
+                      accum_bones=('Bip01 NonAccum', 'Bip01',
+                                   'Bip02 NonAccum', 'Bip02')) -> Optional[dict]:
     """Extract root motion from the accumulation bone and make it in-place.
 
     Oblivion accumulates locomotion on the sequence accum root — usually

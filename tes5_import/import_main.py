@@ -18,7 +18,7 @@ import struct
 import sys
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 from .constants import IMPORT_DISPATCH, SKIP_TYPES, TYPE_MAP
 from .dialog_converter import (
@@ -33,7 +33,6 @@ from .skyrim_overrides import (
     VOICE_TYPE_MAP,
     set_voice_type,
 )
-from .pgrd_to_navm import convert_PGRD
 from .navi_builder import build_navi_record
 from .record_types.world import (
     convert_ACHR,
@@ -388,8 +387,21 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # the single top-level NAVI (Navmesh Info Map) the engine needs.
     navm_metas: list = []
 
-    _build_cell_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids)
-    _build_world_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids)
+    # Navmesh generation (scipy Delaunay + footprint carving) is the heaviest
+    # CPU work in the import and is independent per cell, so run it up front
+    # across a thread pool.  FormIDs are pre-allocated in deterministic cell
+    # order first, so the output stays byte-identical to the single-threaded
+    # path regardless of completion order.  The group builders below then just
+    # look up the precomputed (navm_bytes, meta) instead of calling convert_PGRD.
+    navm_cache = _precompute_navmeshes(
+        by_type, writer, base_model_by_fid, door_fids,
+        footprints_cache=os.path.join(export_dir, 'mesh_footprints_cache.json'),
+        bounds_cache=os.path.join(export_dir, 'mesh_bounds_cache.json'))
+
+    _build_cell_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids,
+                       navm_cache)
+    _build_world_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids,
+                        navm_cache)
 
     # Build the NAVI record indexing every generated navmesh.
     if navm_metas:
@@ -529,14 +541,173 @@ def _build_door_fid_set(by_type: dict) -> set:
     return out
 
 
+def _gather_navm_jobs(by_type: dict):
+    """Enumerate PGRD→NAVM jobs in the exact order the group builders visit them.
+
+    Order is: interior cells (block/sub-block, same key order as
+    _build_cell_groups) first, then exterior cells per worldspace (persistent
+    cells have no PGRDs, then block/sub-block exterior cells, same key order as
+    _build_world_groups).  Keeping this identical to the builders means the
+    FormIDs handed out below match the single-threaded allocation exactly.
+
+    Yields job dicts with everything convert_PGRD needs plus a cache key
+    (cell_fid, pgrd_fid) the builders use to look the result back up.
+    """
+    cells = by_type.get('CELL', [])
+    refrs = by_type.get('REFR', [])
+    lands = by_type.get('LAND', [])
+    pgrds = by_type.get('PGRD', [])
+
+    refr_by_cell = defaultdict(list)
+    for rec in refrs:
+        refr_by_cell[get_formid(rec, 'ParentCELL')].append(rec)
+    land_by_cell = defaultdict(list)
+    for rec in lands:
+        land_by_cell[get_formid(rec, 'ParentCELL')].append(rec)
+    pgrd_by_cell = defaultdict(list)
+    for rec in pgrds:
+        pgrd_by_cell[get_formid(rec, 'ParentCELL')].append(rec)
+
+    jobs = []
+
+    def _emit(cell_rec, land_rec):
+        cell_fid = get_formid(cell_rec, 'FormID')
+        cell_refrs = refr_by_cell.get(cell_fid, [])
+        for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
+            jobs.append({
+                'key': (cell_fid, get_formid(pgrd_rec, 'FormID')),
+                'pgrd_rec': pgrd_rec,
+                'land_rec': land_rec,
+                'cell_rec': cell_rec,
+                'refr_recs': cell_refrs,
+            })
+
+    # --- Interior cells (mirror _build_cell_groups ordering) ---
+    interior_cells = [c for c in cells if not get_formid(c, 'ParentWRLD')]
+    blocks = defaultdict(lambda: defaultdict(list))
+    for cell in interior_cells:
+        fid = get_formid(cell, 'FormID')
+        blocks[fid % 10][(fid // 10) % 10].append(cell)
+    for block_num in sorted(blocks.keys()):
+        for sub_block_num in sorted(blocks[block_num].keys()):
+            for cell_rec in blocks[block_num][sub_block_num]:
+                _emit(cell_rec, None)  # interiors have no LAND
+
+    # --- Exterior cells (mirror _build_world_groups ordering) ---
+    worlds = by_type.get('WRLD', [])
+    ext_cells_by_wrld = defaultdict(list)
+    for cell in cells:
+        wrld_fid = get_formid(cell, 'ParentWRLD')
+        if wrld_fid:
+            ext_cells_by_wrld[wrld_fid].append(cell)
+
+    for wrld_rec in sorted(worlds, key=lambda w: get_formid(w, 'FormID')):
+        wrld_fid = get_formid(wrld_rec, 'FormID')
+        exterior_cells = [c for c in ext_cells_by_wrld.get(wrld_fid, [])
+                          if not (get_int(c, 'RecordFlags') & 0x400)]
+        # Persistent cells have no PGRDs generated (builder skips them), so skip.
+        ext_blocks = defaultdict(lambda: defaultdict(list))
+        for cell in exterior_cells:
+            grid_x = get_int(cell, 'XCLC.X')
+            grid_y = get_int(cell, 'XCLC.Y')
+            block_label = struct.pack('<hh', grid_y // 32, grid_x // 32)
+            sub_label = struct.pack('<hh', grid_y // 8, grid_x // 8)
+            ext_blocks[block_label][sub_label].append(cell)
+        for block_label in sorted(ext_blocks.keys()):
+            for sub_label in sorted(ext_blocks[block_label].keys()):
+                for cell_rec in sorted(
+                        ext_blocks[block_label][sub_label],
+                        key=lambda c: (get_int(c, 'XCLC.Y'), get_int(c, 'XCLC.X'))):
+                    cell_fid = get_formid(cell_rec, 'FormID')
+                    cell_lands = land_by_cell.get(cell_fid, [])
+                    _emit(cell_rec, cell_lands[0] if cell_lands else None)
+
+    return jobs
+
+
+def _navm_worker_count(job_count: int) -> int:
+    """Pick a worker count bounded by CPU count and job count."""
+    cpu = max(1, (os.cpu_count() or 4) - 1)
+    return min(cpu, max(1, job_count))
+
+
+def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
+                          base_model_by_fid: dict, door_fids: set,
+                          footprints_cache: str = '',
+                          bounds_cache: str = '') -> dict:
+    """Run every PGRD→NAVM conversion in parallel; return {key: (bytes, meta)}.
+
+    FormIDs are pre-allocated serially in builder-visit order so results are
+    byte-identical to the single-threaded path regardless of completion order.
+
+    A *process* pool (not threads) is used because convert_PGRD is dominated by
+    pure-Python work (edge graph building, coverage masking, adjacency) that
+    holds the GIL — only the scipy Delaunay call releases it, so threads
+    serialise on the GIL and pin one core.  Processes give true N-core scaling.
+
+    The worker lives in the light-weight `navm_worker` module (NOT this one) so
+    each spawned child avoids re-importing the whole import pipeline; it takes
+    no writer (FormIDs are pre-assigned) so nothing unpicklable crosses the
+    process boundary.  `max_tasks_per_child` recycles workers periodically so
+    scipy allocator fragmentation can't grow unbounded across 8k+ cells.
+    """
+    from . import navm_worker
+
+    jobs = _gather_navm_jobs(by_type)
+    if not jobs:
+        return {}
+
+    # The load-order master-index offset is a text_reader module global set once
+    # in this (parent) process; spawned workers start at 0, so capture it and
+    # replay it in each child's init or their get_formid() calls mis-map every
+    # PathingCell parent FormID (→ navmesh-load null-deref crash).
+    formid_offset = get_formid_index_offset()
+
+    # Deterministic FormID assignment (matches serial alloc_formid order).
+    for job in jobs:
+        job['navm_fid'] = writer.alloc_formid()
+
+    worker_count = _navm_worker_count(len(jobs))
+    print(f"  Generating {len(jobs)} navmeshes (PGRD->NAVM) "
+          f"across {worker_count} processes...")
+    t0 = time.time()
+    cache: dict = {}
+
+    # A single tiny job isn't worth a process pool's spin-up cost.
+    if len(jobs) == 1 or worker_count == 1:
+        navm_worker.init_worker(base_model_by_fid, door_fids, footprints_cache,
+                                bounds_cache, formid_offset)
+        for job in jobs:
+            key, result = navm_worker.run_job(job)
+            cache[key] = result
+    else:
+        # chunksize amortises IPC over many small jobs.
+        chunksize = max(1, len(jobs) // (worker_count * 8))
+        with ProcessPoolExecutor(
+                max_workers=worker_count,
+                initializer=navm_worker.init_worker,
+                initargs=(base_model_by_fid, door_fids, footprints_cache,
+                          bounds_cache, formid_offset),
+                max_tasks_per_child=500) as ex:
+            for key, result in ex.map(navm_worker.run_job, jobs,
+                                      chunksize=chunksize):
+                cache[key] = result
+
+    print(f"    Navmesh generation: {len(jobs)} cells in "
+          f"{time.time() - t0:.2f}s ({worker_count} workers)")
+    return cache
+
+
 def _build_cell_groups(by_type: dict, writer: PluginWriter,
                        navm_metas: list = None, base_model_by_fid: dict = None,
-                       door_fids: set = None):
+                       door_fids: set = None, navm_cache: dict = None):
     """Build CELL group hierarchy (interior cells only — exterior in WRLD)."""
     if navm_metas is None:
         navm_metas = []
     if base_model_by_fid is None:
         base_model_by_fid = {}
+    if navm_cache is None:
+        navm_cache = {}
     cells = by_type.get('CELL', [])
     refrs = by_type.get('REFR', [])
     achrs = by_type.get('ACHR', []) + by_type.get('ACRE', [])
@@ -627,16 +798,11 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter,
                         temporary += convert_LAND(land_rec)
                         converted += 1
                     # PGRD → NAVM (interior cells have no LAND; Z from node heights)
-                    cell_refrs = refr_by_cell.get(cell_fid, [])
+                    # Precomputed in parallel by _precompute_navmeshes.
                     for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
-                        navm_bytes, meta = convert_PGRD(
-                            pgrd_rec, writer=writer,
-                            land_rec=None,
-                            cell_rec=cell_rec,
-                            refr_recs=cell_refrs,
-                            base_model_by_fid=base_model_by_fid,
-                            door_fids=door_fids,
-                        )
+                        navm_bytes, meta = navm_cache.get(
+                            (cell_fid, get_formid(pgrd_rec, 'FormID')),
+                            (None, None))
                         if navm_bytes:
                             temporary += navm_bytes
                             navm_metas.append(meta)
@@ -664,7 +830,7 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter,
 
 def _build_world_groups(by_type: dict, writer: PluginWriter,
                         navm_metas: list = None, base_model_by_fid: dict = None,
-                        door_fids: set = None):
+                        door_fids: set = None, navm_cache: dict = None):
     """Build WRLD group hierarchy (worldspaces + exterior cells)."""
     if navm_metas is None:
         navm_metas = []
@@ -672,6 +838,8 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
         base_model_by_fid = {}
     if door_fids is None:
         door_fids = set()
+    if navm_cache is None:
+        navm_cache = {}
     worlds = by_type.get('WRLD', [])
     cells = by_type.get('CELL', [])
     refrs = by_type.get('REFR', [])
@@ -826,17 +994,11 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
                                 temporary += convert_LAND(land)
                                 converted += 1
                             # PGRD → NAVM for exterior cells (LAND gives Z, CELL gives water)
-                            cell_refrs = refr_by_cell.get(cell_fid, [])
-                            land_rec = cell_lands[0] if cell_lands else None
+                            # Precomputed in parallel by _precompute_navmeshes.
                             for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
-                                navm_bytes, meta = convert_PGRD(
-                                    pgrd_rec, writer=writer,
-                                    land_rec=land_rec,
-                                    cell_rec=cell_rec,
-                                    refr_recs=cell_refrs,
-                                    base_model_by_fid=base_model_by_fid,
-                                    door_fids=door_fids,
-                                )
+                                navm_bytes, meta = navm_cache.get(
+                                    (cell_fid, get_formid(pgrd_rec, 'FormID')),
+                                    (None, None))
                                 if navm_bytes:
                                     temporary += navm_bytes
                                     navm_metas.append(meta)
