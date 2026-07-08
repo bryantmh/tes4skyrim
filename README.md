@@ -198,6 +198,8 @@ TESConversion/
 | [Ormin — ScriptConverter](https://github.com/Ormin/skyblivion-ScriptConverter) | OBScript → Papyrus transpilation reference |
 | [russo-2025](https://github.com/russo-2025/papyrus-compiler) | Papyrus compiler |
 | [LvxMagick](https://www.nexusmods.com/skyrimspecialedition/mods/183399) | Mopp Bridge |
+| [Bad Dog — PyNifly](https://github.com/BadDogSkyrim/PyNifly) | Pure-Python Havok hk_2010 packfile reader + hkaSplineCompressedAnimation codec (vendored in `external/pynifly_hkx/`, GPL-3.0) — the heart of creature animation conversion |
+| [figment — hkxcmd](https://github.com/figment/hkxcmd) | Havok packfile XML↔binary compiler (`external/hkxcmd/`) used to build skeleton/behavior/animation `.hkx` |
 
 And finally to all the wonderful people I used to know on the Morroblivion forum, and those still working hard on Skyblivion and Skywind all these years later. You are an inspiration
 ---
@@ -210,5 +212,7 @@ Some components carry separate licensing:
 
 | Component | License / Terms |
 |-----------|-----------------|
+| `external/pynifly_hkx/` | GPL-3.0 (vendored from PyNifly 27.4.0; local changes marked `# TESConversion:`) |
+| `external/hkxcmd/hkxcmd.exe` | hkxcmd by figment (bundles Havok SDK runtime; see upstream repo for terms) |
 | `xWMAEncode.exe` | Microsoft (not redistributed) — obtain from the DirectX SDK |
 | Oblivion banner font | The [Oblivion font](https://www.dafont.com/oblivion.font) by mistic100 is *free for personal use only* and based on Bethesda's trademarked logo. It is **not** bundled in this repo; the banner ships as pre-rendered vector outlines. |

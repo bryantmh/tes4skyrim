@@ -4,7 +4,6 @@ __pycache__/
 
 export/
 output/
-external/
 logs/
 temp/
 /references/

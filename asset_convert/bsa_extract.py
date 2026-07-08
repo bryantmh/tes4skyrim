@@ -36,6 +36,77 @@ from .audio_converter import (
 _WORKER_COUNT = max(1, (os.cpu_count() or 4) - 3)
 
 
+def read_bsa_files(bsa_path, wanted_names):
+    """Read specific files out of a TES4/FO3/Skyrim LE/Skyrim SE BSA
+    (versions 103/104/105) without extracting the archive.
+
+    Layout differences (verified against xEdit wbBSArchive.pas):
+      - v105 (SSE) folder record = hash(8) count(4) unk(4) offset(8);
+        v103/104 = hash(8) count(4) offset(4)
+      - archiveFlags 0x100 (v104/105): file data prefixed with bstring name
+      - compression: zlib (v103/104), LZ4 *frame* (v105); compressed data =
+        u32 uncompressed size + payload
+
+    `wanted_names`: full archive paths (``folder\\file``, any case/slashes).
+    Returns {normalized_path: bytes} for entries found; only matched entries
+    are decompressed.
+    """
+    wanted = {w.lower().replace('/', '\\') for w in wanted_names}
+    found = {}
+    with open(bsa_path, 'rb') as fh:
+        head = fh.read(36)
+        if head[:4] != b'BSA\x00':
+            raise ValueError(f'Not a BSA file: {bsa_path}')
+        (version, dir_offset, flags, folder_count, _file_count, _,
+         total_fname_len, _) = struct.unpack_from('<IIIIIIII', head, 4)
+        compress_default = bool(flags & 0x0004)
+        embedded_names = version >= 104 and bool(flags & 0x0100)
+
+        fh.seek(dir_offset)
+        folder_counts = []
+        for _ in range(folder_count):
+            if version >= 105:
+                _h, cnt, _unk, _off = struct.unpack('<QIIq', fh.read(24))
+            else:
+                _h, cnt, _off = struct.unpack('<QII', fh.read(16))
+            folder_counts.append(cnt)
+
+        records = []   # [folder, size, offset]
+        for cnt in folder_counts:
+            name_len = fh.read(1)[0]
+            folder = fh.read(name_len).rstrip(b'\x00').decode('latin-1')
+            for _ in range(cnt):
+                _h, size, offset = struct.unpack('<QII', fh.read(16))
+                records.append([folder, size, offset])
+
+        names = fh.read(total_fname_len).split(b'\x00')
+        for folder, size, offset in records:
+            if not names:
+                break
+            fname = names.pop(0).decode('latin-1')
+            path = (folder + '\\' + fname if folder else fname).lower()
+            if path not in wanted:
+                continue
+            fh.seek(offset)
+            compressed = bool(size & 0x40000000) ^ compress_default
+            size &= ~0x40000000
+            if embedded_names:
+                nlen = fh.read(1)[0]
+                fh.read(nlen)
+                size -= 1 + nlen
+            data = fh.read(size)
+            if compressed:
+                if version >= 105:
+                    import lz4.frame   # only needed for SSE archives
+                    data = lz4.frame.decompress(data[4:])
+                else:
+                    data = zlib.decompress(data[4:])
+            found[path] = data
+            if len(found) == len(wanted):
+                break
+    return found
+
+
 def _get_bsa_files(data_path, source_file):
     """Determine which BSA files to extract for a given source plugin.
 

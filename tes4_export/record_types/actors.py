@@ -11,6 +11,7 @@ from ..tes4_reader import Record, get_all_subrecords, get_formid_str, get_subrec
 from .common import (
     emit_conditions,
     emit_float,
+    escape_value,
     emit_formid,
     emit_icon,
     emit_model,
@@ -211,6 +212,24 @@ def export_CREA(rec: Record) -> list:
     nift = get_subrecord(rec, "NIFT")
     if nift:
         lines.append(f"NIFT.Size={len(nift.data)}")
+
+    # NIFZ - body part model file list (null-separated string block)
+    nifz = get_subrecord(rec, "NIFZ")
+    if nifz:
+        parts = [p.decode("cp1252", "replace")
+                 for p in nifz.data.split(b"\x00") if p]
+        lines.append(f"NIFZCount={len(parts)}")
+        for i, p in enumerate(parts):
+            lines.append(f"NIFZ[{i}]={escape_value(p)}")
+
+    # KFFZ - animation .kf file list (null-separated string block)
+    kffz = get_subrecord(rec, "KFFZ")
+    if kffz:
+        parts = [p.decode("cp1252", "replace")
+                 for p in kffz.data.split(b"\x00") if p]
+        lines.append(f"KFFZCount={len(parts)}")
+        for i, p in enumerate(parts):
+            lines.append(f"KFFZ[{i}]={escape_value(p)}")
 
     # Sound entries (CSDT/CSDI/CSDC chains)
     csdts = get_all_subrecords(rec, "CSDT")

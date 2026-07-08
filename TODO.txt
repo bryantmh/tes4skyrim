@@ -1,4 +1,6 @@
 Gameplan:
+	Finish creature conversion mi5
+	Move External L13
 	Fix distant water M11
 	Fix distant textures M11
 	Fix distant trees M11
@@ -125,6 +127,10 @@ Later Issues:
 
 	12 - Fix infinite terminal spawning when using double click version
 
+	13 - Move all external to external folder and update readme (bsarch.exe, LODGENx64.exe, papyrus.exe)
+
+	14 - Convert weathers
+
 Minor Issues:
 
 	1 -	Override gold with skyrim gold
@@ -150,4 +156,10 @@ Minor Issues:
 	11 - Harvested plants don't make a sound
 
 	12 - Update world map cloud mesh and texture
+
+	13 - Convert Skyrim LE meshes to Skyrim SE format
+
+	14 - Texture "promotion" for distant objects shouldn't be necessary. All textures should be in tes4 folder
+
+	15 - Change logo from TES4 to TESIV
 
