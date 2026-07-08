@@ -143,14 +143,50 @@ output.
 
 ## 4. Step-by-step pipeline
 
+### IMPLEMENTATION STATUS (2026-07-09) — pipeline is LIVE end-to-end
+The whole chain is implemented and wired as pipeline **Phase 4b: Creatures**
+(`python convert.py -f X --creatures-only`, GUI step "5. Creatures"):
+
+- `asset_convert/creature_pipeline.py` — orchestrator: per creature folder →
+  behavior project (`hkx_behavior.generate_creature_project`) + skeleton.nif/
+  body-NIF conversion (`nif_converter creature=True`) + animation singlefile
+  registration (`animation_data.write_singlefiles`) + the
+  `export/<plugin>/creature_projects.json` contract for the importer.
+  32/32 real Oblivion.esm creatures convert (boxtest/endgame excluded: test
+  asset / KFM cinematic).
+- `asset_convert/animation_data.py` — animationdata + boundanims +
+  animationsetdata emission and the **singlefile merge** (vanilla base
+  auto-extracted from the user's `Skyrim - Animations.bsa`, LE v104 zlib or
+  SSE v105 LZ4, cached in `export/animdata_base/`). Grammar + the
+  Bethesda hash (crc32 init=0/xorout=0 of lowercase; ≤4-char strings stored
+  as packed ASCII — `hkx` = 7891816; dirs hashed WITH `meshes\` prefix)
+  byte-validated against the vanilla files.
+- `asset_convert/hkx_ragdoll.py` — the ragdoll stage inside skeleton.hkx:
+  Oblivion `bhkBlendCollisionObject` bodies + ragdoll/hinge constraints →
+  ragdoll hkaSkeleton + 2 hkaSkeletonMappers + hkpPhysicsData +
+  hkaRagdollInstance (vanilla deer anatomy; GAME units — ob-havok ×7;
+  identity mappers by folding body translation offsets into shape verts).
+- `tes5_import/creature_races.py` — Phase 0f: generated RACE/ARMA/ARMO per
+  unique (creature folder, NIFZ body set), layouts mirrored from real
+  Skyrim.esm DogRace/SkinDog/NakedDogAA dumps; ATKE = the generated
+  `attackStart_TES4_*` events; `convert_CREA` RNAM → the generated race
+  (`resolve_creature_race` aliasing kept only as fallback). NPC_ humanoids
+  keep the Skyrim race override system.
+- Death: `death.kf`/`dies.kf` = single-play `Death` state on `deathStart`
+  (holds last pose); ragdoll-driven death via the behavior graph
+  (PoweredRagdoll modifier) is still a refinement.
+
+Remaining refinements: specialidle/IDLE wiring (Step 7), foot IK / look-at /
+speed-blended gait states, per-creature SNDR sound sets + ARMA footstep
+SNDD, per-creature BPTD (GNAM currently points at the vanilla canine body
+part data), equip/unequip weapon states, in-game validation pass.
+
 ### Step 0 — Groundwork
-0.1 **Fix CREA export** (`tes4_export/record_types/actors.py`): emit `NIFZ` (model file
-    list — the body-part NIFs) and `KFFZ` (special-anim list). Today only `Model.MODL`
-    (= the skeleton path) survives; NIFZ is what distinguishes wolf from dog (they share
-    `creatures/dog/`) and is per-record data the folder can't provide.
-0.2 Fix `tes4_nif_analyzer.py` `bhkSimpleShapePhantom` crash.
+0.1 **DONE** — CREA export emits `NIFZ[i]`/`NIFZCount` + `KFFZ[i]`/`KFFZCount`
+    (`tes4_export/record_types/actors.py`).
+0.2 Fix `tes4_nif_analyzer.py` `bhkSimpleShapePhantom` crash. (open)
 0.3 Extract `Update.bsa` over `references/Skyrim Animations/` (BSArch) for fixed vanilla
-    animation data.
+    animation data. (open — reference-only concern)
 
 ### Step 1 — Creature manifest (plugin-agnostic inventory)
 New tool `tools/creature_inventory.py`: for each CREA record (post-0.1 export), emit a
@@ -161,10 +197,12 @@ motion is present on `Bip01 NonAccum`), and skeleton bone census. This manifest 
 single input that drives records (Step 2), meshes (Step 3), animations (Step 4), and
 behavior generation (Step 5) — for ANY plugin.
 
-### Step 2 — Records (tes5_import)
-Today `convert_CREA` (`tes5_import/record_types/actors.py`) aliases creatures onto
-existing Skyrim races via `resolve_creature_race()` keyword matching. Replace with
-per-creature record synthesis (keep the old path as a fallback for unconvertible cases):
+### Step 2 — Records (tes5_import) — DONE (see creature_races.py; notes below)
+Implemented as described, with these deltas: one RACE per unique (folder,
+NIFZ set) rather than per record (dog vs wolf get separate races sharing one
+project); multi-part bodies get one ARMA per part NIF (slot 32-Body for the
+first, creature slots 40+ for the rest) instead of a merged body NIF; GNAM
+reuses the vanilla canine BPTD; ARMA SNDD omitted for now.
 
 2.1 **RACE per creature**: ANAM = `Actors\TES4\<creature>\Character Assets\skeleton.nif`
     (our converted skeleton, both genders), Behavior Graph MODL =
@@ -183,7 +221,17 @@ per-creature record synthesis (keep the old path as a fallback for unconvertible
 2.3 **NPC_**: existing convert_CREA output + RNAM → the new race.
 2.4 Sounds: CREA sound-type lists → SNDR sets later; silence is acceptable initially.
 
-### Step 3 — Skeleton + body meshes (asset_convert)
+### Step 3 — Skeleton + body meshes (asset_convert) — DONE
+Implemented as `nif_converter creature=True`: skeleton.nif → BSFadeNode +
+BSX=198 with bhkBlendCollisionObject ragdoll KEPT and converted
+(`collision.py::_convert_blend_collision` — flags 137, keyframed/fixed,
+layer 8 BIPED, translation scaled not zeroed); body parts keep NiNode root +
+plain NiSkinInstance with regenerated partitions; Prn-attached heads/eyes
+get node transforms baked into verts + rigid plain-NiSkinInstance to the
+original Oblivion bone. skeleton.hkx (3.3) includes the full ragdoll stage
+via hkx_ragdoll.py. BSBound/BSInvMarker/SkeletonID extra data not emitted
+(engine-optional). Original notes:
+
 Because we keep the Oblivion skeleton, **no reskinning/retargeting is needed at all** —
 bone names, weights, and bind matrices in body meshes stay valid. This deletes the
 hardest humanoid-pipeline problem (rest-pose retarget) from the creature path entirely.
@@ -275,15 +323,24 @@ stack (simplest quadruped) with the draugr/troll stacks as bipedal references:
 - Start with ONE creature (deer or rat: small clip set, no weapons) and iterate against
   in-game testing before generalizing.
 
-### Step 6 — animationdata / animationsetdata emission + merge
-Emit `meshes/animationdata/tes4<creature>project.txt` (file list + per-clip trigger
-entries), `boundanims/anims_tes4<creature>project.txt` (root-motion curves from Step
-4.2), and `animationsetdata/tes4<creature>projectdata/` (attack sets — grammar from the
-extracted vanilla folders). Build the **singlefile merger**: parse the vanilla
-`animationdatasinglefile.txt`/`animationsetdatasinglefile.txt` (SSE ships them in its
-BSAs; grammar = indexed concatenation of exactly these per-project files), append our
-projects, ship the merged files in the output. This registration step is what makes the
-engine load a NEW behavior project at all.
+### Step 6 — animationdata / animationsetdata emission + merge — DONE
+`asset_convert/animation_data.py`. Grammar notes that cost real digging:
+- animationdatasinglefile = N + names + per project `[linecount, block]`,
+  where a `[linecount, motion block]` pair follows ONLY when the flag line
+  AFTER the project-file list (NOT line 1) is "1". Validated by a full walk
+  of both the vanilla file (429 SSE projects) and our merged output.
+- Clip block = name, uid (index into the boundanims motion blocks),
+  playbackspeed, crop×2, trigger count, `Event:time` lines, blank.
+- Motion block = uid, duration, translation rows `t x y z`, rotation rows
+  `t x y z w` (cumulative root displacement, GAME units, quats xyzw —
+  from kf_decode's split_root_motion, RDP-simplified).
+- animationsetdata V3 block = attacks (event, "0", clip count, clip names)
+  + CRC triples (dir/file/ext) using crc32(init=0,xorout=0) over lowercase,
+  ≤4-char strings packed as ASCII, dir = `meshes\actors\tes4\<name>\animations`.
+- The merge base MUST be the user's own game version (SSE has 429 projects
+  vs LE's 327 — merging over the wrong base kills DLC creatures); extracted
+  from `Skyrim - Animations.bsa` via `bsa_extract.read_bsa_files`
+  (v103/104/105, embedded names, zlib/LZ4-frame) and cached.
 
 ### Step 7 — IDLE records / special idles
 Oblivion `idleanims/specialidle_*.kf` are chosen by IDLE records with conditions

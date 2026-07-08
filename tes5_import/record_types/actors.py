@@ -420,8 +420,14 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
         subs += pack_formid_subrecord('INAM', inam)
 
     # VTCK — Voice type (must come before RNAM per TES5 NPC_ definition)
+    # Race: generated creature race (creature pipeline project) when
+    # available; else the legacy Skyrim-race aliasing fallback.
+    from ..creature_races import get_creature_race
     full = get_str(rec, 'FULL')
-    crea_race_fid, _src, _alt = resolve_creature_race(edid, full)
+    _src = None
+    crea_race_fid = get_creature_race(get_formid(rec, 'FormID') & 0x00FFFFFF)
+    if crea_race_fid is None:
+        crea_race_fid, _src, _alt = resolve_creature_race(edid, full)
     tes4_flags = get_int(rec, 'ACBS.Flags')
     gender = 'Female' if (tes4_flags & 1) else 'Male'
     tes4_race_fid = get_formid(rec, 'RNAM.Race')

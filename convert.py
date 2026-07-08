@@ -316,6 +316,33 @@ def phase_speedtrees(file_name: str, config: dict, output_dir: str = None):
     return True
 
 
+def phase_creatures(file_name: str, tes5_data: str, config: dict,
+                    output_dir: str = None):
+    """Convert creatures: generated behavior projects (skeleton.hkx,
+    animations, behavior graph), skeleton/body NIF conversion, and
+    registration in the merged animation singlefiles.
+
+    Must run BEFORE import: Phase 0f of the importer reads
+    export/<name>/creature_projects.json to generate RACE/ARMA/ARMO chains.
+    NPC_ humanoids are unaffected (they keep the Skyrim race overrides).
+    """
+    from asset_convert.creature_pipeline import convert_creatures
+
+    export_subdir = str(SCRIPT_DIR / "export" / file_name)
+    if not os.path.isdir(export_subdir):
+        print(f"[{file_name}] No export directory, skipping creatures")
+        return False
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    out_meshes = str(out_root / file_name / "meshes")
+
+    print(f"[{file_name}] Converting creatures (behavior projects + meshes)...")
+    res = convert_creatures(export_subdir, out_meshes,
+                            skyrim_data_path=tes5_data)
+    print(f"[{file_name}] Creatures complete "
+          f"({len(res['projects'])} projects, {len(res['errors'])} errors)")
+    return not res['errors']
+
+
 # ===========================================================================
 # Phase 5: Sound copy
 # ===========================================================================
@@ -596,6 +623,9 @@ def main():
                         help="Convert NIFs and copy textures only")
     parser.add_argument("--speedtrees-only",     action="store_true",
                         help="Convert SPT (SpeedTree) files only")
+    parser.add_argument("--creatures-only",      action="store_true",
+                        help="Convert creatures (behavior projects, "
+                             "skeleton/body meshes, animation registration)")
     parser.add_argument("--sounds-only",         action="store_true",
                         help="Copy extracted sound files to output")
     parser.add_argument("--lod-only",            action="store_true",
@@ -644,7 +674,8 @@ def main():
     # ── Determine which steps to run ──────────────────────────────────────
     _any_only = any([
         args.export_only, args.import_only, args.extract_only,
-        args.meshes_only, args.speedtrees_only, args.sounds_only,
+        args.meshes_only, args.speedtrees_only, args.creatures_only,
+        args.sounds_only,
         args.lod_only, args.modify_body_meshes, args.scripts_only,
         args.pack_only, args.mesh_bounds_only,
     ])
@@ -654,6 +685,7 @@ def main():
         do_extract      = args.extract_only
         do_meshes       = args.meshes_only
         do_speedtrees   = args.speedtrees_only
+        do_creatures    = args.creatures_only
         do_sounds       = args.sounds_only
         do_lod          = args.lod_only
         do_body         = args.modify_body_meshes
@@ -661,8 +693,10 @@ def main():
         do_pack         = args.pack_only
         do_mesh_bounds  = args.mesh_bounds_only
     else:
-        # Default: export -> extract -> meshes -> speedtrees -> import -> sounds -> scripts
+        # Default: export -> extract -> meshes -> speedtrees -> creatures ->
+        # import -> sounds -> scripts
         do_export = do_extract = do_meshes = do_speedtrees = do_import = True
+        do_creatures = True
         do_sounds = do_scripts = True
         do_lod = do_body = do_pack = do_mesh_bounds = False
 
@@ -702,6 +736,16 @@ def main():
         print("=" * 54)
         for fn in order:
             if not phase_speedtrees(fn, config, output_dir=output_dir):
+                success = False
+        print()
+
+    if do_creatures:
+        print("=" * 54)
+        print("  Phase 4b: CREATURE CONVERSION")
+        print("=" * 54)
+        for fn in order:
+            if not phase_creatures(fn, tes5_data, config,
+                                   output_dir=output_dir):
                 success = False
         print()
 

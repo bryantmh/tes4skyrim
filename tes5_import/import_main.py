@@ -263,6 +263,14 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     from .record_types.items import load_furniture_models
     load_furniture_models(os.path.join(export_dir, 'meshes'), by_type)
 
+    # --- Phase 0f: Generated creature RACE/ARMA/ARMO chains ---
+    # One race per unique (creature folder, body-part set) among CREA records
+    # whose folder was converted by the creature pipeline (creatures step).
+    # convert_CREA then points RNAM at the generated race; NPC_ humanoids
+    # keep the Skyrim playable-race override system.
+    from .creature_races import build_creature_races
+    build_creature_races(by_type, writer, export_dir)
+
     # --- Phase 1: Simple record types (flat top-level groups) ---
     print("\nConverting records...")
     t2 = time.time()
