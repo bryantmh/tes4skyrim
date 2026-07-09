@@ -525,6 +525,35 @@ creature is fully proven.
   silently never renders while slot-32 body works). `_build_race` names slot 32 'BODY' +
   every extra part slot (40+, index 10+) with the part's NIF stem, mirroring
   `_build_skin`'s slot assignment.
+- **Merged body NIFs carry the FULL rig from the converted skeleton.nif (2026-07-08,
+  the mangled-goblin bug)**: `merge_creature_body` builds a fresh NiNode root with the
+  whole bone hierarchy copied from `character assets/skeleton.nif` (names incl.
+  `NPC Root [Root]`, local transforms, NO collision/extra data) and grafts every part's
+  shapes onto it, re-pointing skin bones by name. There is NO "base part": Oblivion
+  body-part NIFs embed only the bone SUBSET they're skinned to (goblin hand = 14 finger
+  bones, chest = 13 spine bones — the hand won the old most-bones heuristic), so
+  grafting onto any single part left other parts' bones as identity placeholders at the
+  origin → parts attached in wrong locations. A skin bone the rig lacks (part-local
+  control nodes) is copied from the part's own tree with its true world transform.
+  Merges also must NEVER read a file another merge wrote: parts are converted into
+  `_parts/` staging, merged outputs get unique stems (collision-numbered), and the
+  exact NIFZ-set→file mapping ships as `body_map` in the manifest /
+  creature_projects.json (record side does zero name derivation — creature variants
+  share parts across sets, and in-place merging compounded whole bodies into every
+  later file: 82KB→6.3MB, quadratic time).
+- **hkaRagdollInstance requires a CONNECTED constrained tree (2026-07-08, the storm
+  atronach spawn crash)**: n ragdoll bones need exactly n-1 constraints, single root.
+  Storm/frost/flame atronachs carry ~54 free-floating rock bodies
+  (bhkBlendCollisionObject, NO constraints — animated orbiting rocks); making every
+  body-carrying bone a ragdoll part put 70 bodies/16 constraints in the
+  hkaRagdollInstance and the engine crashed at actor spawn while pairing blend bodies
+  (crash stack: bhkBlendCollisionObject 'Rock Pelvis C' + hkpPositionConstraintMotor +
+  hkaRagdollInstance + QueuedCharacter). `extract_ragdoll` now keeps only the largest
+  constraint-connected component (atronachs: 17 parts/16 constraints); rocks stay in
+  skeleton.nif as animated blend collision.
+- **Creature pipeline uses ProcessPoolExecutor (2026-07-08)**: the per-creature work is
+  CPU-bound pure Python (pyffi, KF decode, spline compression) — ThreadPoolExecutor
+  serialized on the GIL and gave zero parallelism.
 - **NiSkinData per-bone bounding spheres are mandatory (2026-07-08, the third
   invisible-part root cause)**: the engine visibility-culls skinned geometry through the
   per-bone bounding spheres in `NiSkinData.bone_list` (each sphere is moved by its live
@@ -545,6 +574,21 @@ creature is fully proven.
   `preHitFrame`/`HitFrame` triggers converted from the Oblivion `Hit` text key (KF text
   keys → `clip['hits']` in the manifest) in BOTH the graph clip trigger arrays and the
   animationdata cache trigger lines — HitFrame is the engine's attack-damage contract.
+- **BSSpeedSamplerModifier is the engine's movement hookup (2026-07-08, the
+  stuck-in-idle root cause)**: the engine drives actor movement by SAMPLING the graph's
+  animation-driven speed through a `BSSpeedSamplerModifier` (Bethesda hkb extension;
+  every vanilla creature locomotion graph has exactly one, wrapped around the whole
+  state machine at the root: root SM → single 'Root' state → `hkbModifierGenerator`
+  { `hkbModifierList` [sampler] , inner SM }). Its members are variable-bound:
+  state→iState, direction→Direction, goalSpeed→Speed, speedOut→SpeedSampled
+  (`hkbVariableBindingSet`, BINDING_TYPE_VARIABLE). A graph WITHOUT it gives AI pathing
+  no speed to drive → the actor never receives movement, stands in idle forever, and
+  combat can't approach either — even though the event vocabulary (moveStart etc.),
+  wildcard transitions, cache registration, and setdata CRCs are all correct (each was
+  verified independently before finding this). Layout copied verbatim from
+  quadrupedbehavior.hkx #0441/#0440/#0439/#0438/#0365/#0364 (userData values 0/1/1/2
+  included). Signatures: BSSpeedSamplerModifier 0xd297fda9, hkbModifierGenerator
+  0x1f81fae6, hkbModifierList 0xa4180ca1, hkbVariableBindingSet 0x338ad4ff.
 - **`--names` subset runs preserve other registrations**: convert_creatures merges the
   singlefiles from ALL on-disk `project_manifest.json`s, not just the current batch
   (a subset run used to silently drop every other creature from the cache).

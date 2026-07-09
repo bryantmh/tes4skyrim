@@ -1,5 +1,4 @@
 Gameplan:
-	Separate out Claude.md non-essential info into docs
 	Move External L13
 	Finish creature conversion mi5
 	Fix distant water M11
@@ -41,28 +40,12 @@ Major Issues for V1:
 		Files:
 		[RD] architecture\basementsections\ungrdltraphingedoor.nif
 		[RD] architecture\castle\kvatch\kvatch  castle int hallway01.nif
-		[WR] architecture\ships\mainmast02.nif
-		[WR] architecture\statue\nightmotherstatue.nif
-		[WR] architecture\statue\nightmotherstatuebase.nif
 		[RD] clutter\farm\handscythe01.nif
 		[RD] clutter\farm\oar01.nif
 		[RD] clutter\floorplane01.nif
 		[RD] clutter\stonepedastellarge01.nif
 		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
-		[WR] dungeons\caves\triggers\ctrigtripwire01.nif
 		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
-		[WR] oblivion\gate\obgatemini01.nif
-		[WR] oblivion\gate\obliviongate_forming.nif
-		[WR] oblivion\plants\harradagroundattack.nif
-		[WR] oblivion\plants\harradauprightattack.nif
-		[WR] oblivion\sigil\sigillighttowerbase.nif
-		[WR] weapons\daedric\bow.nif
-		[WR] weapons\dwarven\bow.nif
-		[WR] weapons\ebony\bow.nif
-		[WR] weapons\elven\bow.nif
-		[WR] weapons\glass\bow.nif
-		[WR] weapons\iron\bow.nif
-		[WR] weapons\silver\bow.nif
 
 	7 - NPCs should have barter/training
 
@@ -83,6 +66,50 @@ Major Issues for V1:
 	13 - Add versioning
 
 	14 - Fix all CK and Xedit warnings
+
+	15 - Goblin mesh completely distorted
+		Storm Atronach crashes game
+		POSSIBLE RELEVANT OBJECTS:
+		RDI: (hkbBlendingTransitionEffect*) "BlendSmooth"
+		RBP: (hkpPositionConstraintMotor*)
+		RSP+0: (hkpConstraintInstance*)
+		RSP+50: (bhkBlendCollisionObject*)
+		RSP+58: (NiNode*) "Rock Pelvis C"
+		RSP+A8: (bhkBlendCollisionObject*)
+		RSP+B0: (NiNode*) "Bip01 R Thigh"
+		RSP+B8: (NiNode*) "Rock R Thigh D"
+		RSP+100: (hkReferencedObjectLock*)
+		RSP+120: (hkpLimitedHingeConstraintData*)
+		RSP+140: (bhkLimitedHingeConstraint*)
+		RSP+220: (hkpRigidBody*)
+		RSP+2E0: (hkaRagdollInstance*)
+		RSP+2F8: (bhkBlendCollisionObject*)
+		RSP+328: (hkaSkeleton*)
+		RSP+330: (hkaSkeletonMapper*)
+		RSP+340: (BSFadeNode*) "Scene Root"
+		RSP+348: (BShkbAnimationGraph*)
+		RSP+380: (hkbCharacter*)
+		RSP+428: (BSAnimationGraphManager*)
+		RSP+450: (Character*) "Storm Atronach" [0xFF000B78] ("Oblivion.esm") [0xFF000B78]
+		RSP+478: (NiNode*) "Bip01 Wing01"
+		RSP+480: (BaseExtraList*)
+		RSP+498: (Character*) "Storm Atronach" [0xFF000B78] ("Oblivion.esm") [0xFF000B78]
+		RSP+4D8: (ScrapHeap*)
+		RSP+4F8: (NiNode*) "NPC Root [Root]"
+		RSP+560: (TESNPC*) "Storm Atronach" [0x1101FF23] ("Oblivion.esm") "Storm Atronach" [0x1101FF23]
+		RSP+648: (BackgroundProcessThread*)
+		RSP+700: (QueuedCharacter*)
+		RSP+718: (BSResource::LooseFileLocation*)
+		RSP+7B0: (hkbBehaviorGraph*) "TES4StormatronachBehavior.hkb"
+		RSP+810: (hkbStateMachine*) "TES4StormatronachBehaviorRoot"
+		RSP+838: (hkbClipGenerator*) "Attack_handtohandattackrightpower"
+		RSP+A88: (BSLightingShaderProperty*)
+		RSP+BF8: (hkbAnimationBindingWithTriggers*)
+		RSP+C80: (hkbBindable::CacheBindablesCollector*)
+		RSP+CC0: (BSTAnimationGraphDataChannel<Actor,float,ActorSpeedChannel>*)
+		RSP+D88: (BSResource::`anonymous namespace'::GlobalPaths*)
+
+	16 - Bow first person model doesn't work (remains on back and invisible in hands)
 
 Later Issues:
 	1 - Lip syncing with voice
@@ -135,8 +162,11 @@ Later Issues:
 	14 - Convert weathers
 
 	15 - Single threaded workflows
-		ESM import
+		ESM import additional sections than just navmesh
 		Creature conversion
+		Note that ThreadPoolExecutor doesn't seem to work often, whereas ProcessPoolExector seems more consistent
+
+	16 - Interior lights appear off. Perhaps too much falloff of light sources?
 
 Minor Issues:
 
@@ -177,4 +207,26 @@ Minor Issues:
 	17 - Voicemap.txt shouldn't be in output folder
 
 	18 - Replace copy to skyrim step with zip output
+
+	19 - Creature conversion console errors
+	Reading <struct 'NiMorphData'> failed
+	Traceback (most recent call last):
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\formats\nif\__init__.py", line 1383, in read
+		block.read(stream, self)
+		~~~~~~~~~~^^^^^^^^^^^^^^
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\object_models\xml\struct_.py", line 373, in read
+		attr_value.read(stream, data)
+		~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\object_models\xml\array.py", line 304, in read
+		elem.read(stream, data)
+		~~~~~~~~~^^^^^^^^^^^^^^
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\object_models\xml\struct_.py", line 373, in read
+		attr_value.read(stream, data)
+		~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\formats\nif\__init__.py", line 899, in read
+		raise ValueError('string too long (0x%08X at 0x%08X)'
+						% (n, stream.tell()))
+	ValueError: string too long (0x5A000000 at 0x000003BC)
+
+	20 - Arrows are converted as bolts
 

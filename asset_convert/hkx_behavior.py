@@ -49,6 +49,10 @@ hkx_xml.SIGNATURES.update({
     'hkbClipTriggerArray': '0x59c23a0f',
     'hkbBlendingTransitionEffect': '0xfd8584fe',
     'hkbVariableValueSet': '0x27812d8d',
+    'hkbVariableBindingSet': '0x338ad4ff',
+    'hkbModifierGenerator': '0x1f81fae6',
+    'hkbModifierList': '0xa4180ca1',
+    'BSSpeedSamplerModifier': '0xd297fda9',
     'hkbCharacterData': '0x300d6808',
     'hkbCharacterStringData': '0x655b42bc',
     'hkbMirroredSkeletonInfo': '0xc6c2da4f',
@@ -286,6 +290,13 @@ _VARIABLE_INFO_TMPL = '''<hkobject>
 \t<hkparam name="type">VARIABLE_TYPE_{vtype}</hkparam>
 </hkobject>'''
 
+_BINDING_TMPL = '''<hkobject>
+\t<hkparam name="memberPath">{member}</hkparam>
+\t<hkparam name="variableIndex">{var_index}</hkparam>
+\t<hkparam name="bitIndex">-1</hkparam>
+\t<hkparam name="bindingType">BINDING_TYPE_VARIABLE</hkparam>
+</hkobject>'''
+
 # The engine-side graph interface: SSE's movement controller / combat / AI
 # bind these by name at graph init (every vanilla creature behavior declares
 # them — vanilla dogbehavior has 65 variables; this is the engine-set/read
@@ -459,12 +470,89 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     gdata.param('variableInitialValues', values.ref)
     gdata.param('stringData', strings.ref)
 
+    # ---- engine movement hookup (mirrors the vanilla quadruped root) ----
+    # The engine samples the graph's animation-driven movement speed through
+    # a BSSpeedSamplerModifier bound to iState/Direction/Speed/SpeedSampled.
+    # Without it AI pathing has no speed to drive, the actor never receives
+    # movement, and it stands in its idle forever (combat can't approach
+    # either).  Vanilla wraps the whole locomotion state machine in a
+    # hkbModifierGenerator under a single-state root state machine; copy
+    # that layout verbatim (userData values included).
+    vidx = {n: i for i, (n, _t) in enumerate(ENGINE_VARIABLES)}
+    sampler_binds = pf.add('hkbVariableBindingSet')
+    sampler_binds.param_raw(
+        'bindings',
+        '\n'.join(_BINDING_TMPL.format(member=m, var_index=vidx[v])
+                  for m, v in (('state', 'iState'),
+                               ('direction', 'Direction'),
+                               ('goalSpeed', 'Speed'),
+                               ('speedOut', 'SpeedSampled'))),
+        numelements=4)
+    sampler_binds.param('indexOfBindingToEnable', -1)
+
+    sampler = pf.add('BSSpeedSamplerModifier')
+    sampler.param('variableBindingSet', sampler_binds.ref)
+    sampler.param('userData', 2)
+    sampler.param('name', 'BSSpeedSamplerModifier')
+    sampler.param('enable', True)
+    sampler.param('state', -1)
+    sampler.param('direction', '0.000000')
+    sampler.param('goalSpeed', '0.000000')
+    sampler.param('speedOut', '0.000000')
+
+    mod_list = pf.add('hkbModifierList')
+    mod_list.param('variableBindingSet', 'null')
+    mod_list.param('userData', 1)
+    mod_list.param('name', 'RootModifierList')
+    mod_list.param('enable', True)
+    mod_list.param_array('modifiers', [sampler.ref])
+
+    mod_gen = pf.add('hkbModifierGenerator')
+    mod_gen.param('variableBindingSet', 'null')
+    mod_gen.param('userData', 1)
+    mod_gen.param('name', 'RootModifierGenerator')
+    mod_gen.param('modifier', mod_list.ref)
+    mod_gen.param('generator', sm.ref)
+
+    root_state = pf.add('hkbStateMachineStateInfo')
+    root_state.param('variableBindingSet', 'null')
+    root_state.param_array('listeners', [])
+    root_state.param('enterNotifyEvents', 'null')
+    root_state.param('exitNotifyEvents', 'null')
+    root_state.param('transitions', 'null')
+    root_state.param('generator', mod_gen.ref)
+    root_state.param('name', 'Root')
+    root_state.param('stateId', 0)
+    root_state.param('probability', '1.000000')
+    root_state.param('enable', True)
+
+    root_sm = pf.add('hkbStateMachine')
+    root_sm.param('variableBindingSet', 'null')
+    root_sm.param('userData', 0)
+    root_sm.param('name', f'{behavior_name}RootBehavior')
+    root_sm.param_raw('eventToSendWhenStateOrTransitionChanges', (
+        '<hkobject>\n\t<hkparam name="id">-1</hkparam>\n'
+        '\t<hkparam name="payload">null</hkparam>\n</hkobject>'))
+    root_sm.param('startStateChooser', 'null')
+    root_sm.param('startStateId', 0)
+    root_sm.param('returnToPreviousStateEventId', -1)
+    root_sm.param('randomTransitionEventId', -1)
+    root_sm.param('transitionToNextHigherStateEventId', -1)
+    root_sm.param('transitionToNextLowerStateEventId', -1)
+    root_sm.param('syncVariableIndex', -1)
+    root_sm.param('wrapAroundStateId', False)
+    root_sm.param('maxSimultaneousTransitions', 32)
+    root_sm.param('startStateMode', 'START_STATE_MODE_DEFAULT')
+    root_sm.param('selfTransitionMode', 'SELF_TRANSITION_MODE_NO_TRANSITION')
+    root_sm.param_array('states', [root_state.ref])
+    root_sm.param('wildcardTransitions', 'null')
+
     graph = pf.add('hkbBehaviorGraph')
     graph.param('variableBindingSet', 'null')
     graph.param('userData', 0)
     graph.param('name', f'{behavior_name}.hkb')
     graph.param('variableMode', 'VARIABLE_MODE_DISCARD_WHEN_INACTIVE')
-    graph.param('rootGenerator', sm.ref)
+    graph.param('rootGenerator', root_sm.ref)
     graph.param('data', gdata.ref)
 
     top = pf.add('hkRootLevelContainer')

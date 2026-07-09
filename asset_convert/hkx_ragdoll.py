@@ -236,19 +236,60 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
     if len(body_by_bone) < 2:
         return None
 
-    # ragdoll part order: anim-skeleton DFS order restricted to body bones
+    # First pass: per body, find the constraint joining it to a parent body.
+    raw = []   # (anim idx, body, constraint info or None, parent anim idx)
+    for idx in sorted(body_by_bone):
+        body, _node = body_by_bone[idx]
+        con_info, parent_anim = None, None
+        for con in getattr(body, 'constraints', []):
+            kind, d = _descriptor(con)
+            if kind is None:
+                continue
+            ents = [body_id_to_bone.get(id(e)) for e in con.entities]
+            if len(ents) == 2 and ents[0] == idx and ents[1] is not None:
+                con_info = (kind, d, _v4(body.translation, _OB_TO_GAME),
+                            _v4(body_by_bone[ents[1]][0].translation,
+                                _OB_TO_GAME))
+                parent_anim = ents[1]
+                break
+        raw.append((idx, body, con_info, parent_anim))
+
+    # hkaRagdollInstance requires a CONNECTED constrained TREE (n bones,
+    # n-1 constraints) — the engine crashes at actor spawn otherwise.  The
+    # storm atronach carries ~54 free-floating rock bodies with NO
+    # constraints; those stay in skeleton.nif as animated blend collision
+    # but must NOT become ragdoll bones.  Keep only the largest
+    # constraint-connected component.
+    edges = {idx: par for idx, _b, con, par in raw if con is not None}
+    nodes = set(edges) | set(edges.values())
+    if len(nodes) < 2:
+        return None
+
+    def _root_of(i):
+        seen = set()
+        while i in edges and i not in seen:
+            seen.add(i)
+            i = edges[i]
+        return i
+
+    comp_of = {i: _root_of(i) for i in nodes}
+    from collections import Counter
+    biggest = Counter(comp_of.values()).most_common(1)[0][0]
+    kept = {i for i, r in comp_of.items() if r == biggest}
+
+    # ragdoll part order: anim-skeleton DFS order restricted to kept bones
+    # (parents precede children in DFS numbering, so part_of_bone[parent]
+    # always exists by the time the child is reached)
     part_of_bone = {}
     parts = []
-    for idx in sorted(body_by_bone):
-        body, node = body_by_bone[idx]
+    for idx, body, con_info, parent_anim in raw:
+        if idx not in kept:
+            continue
         p = RagdollPart()
         p.anim_index = idx
         p.name = 'Ragdoll_' + bones[idx].name
-        # nearest ancestor with a body
-        a = bones[idx].parent
-        while a >= 0 and a not in part_of_bone:
-            a = bones[a].parent
-        p.parent = part_of_bone.get(a, -1)
+        p.parent = part_of_bone[parent_anim] if con_info is not None else -1
+        p.constraint = con_info
 
         offset = _v4(body.translation, _OB_TO_GAME)
         p.mass = float(body.mass) if body.mass > 0 else 1.0
@@ -265,17 +306,6 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
             inertia = 0.4 * p.mass * r_bs * r_bs
         p.inertia = inertia
 
-        # constraint joining this body to its parent body
-        for con in getattr(body, 'constraints', []):
-            kind, d = _descriptor(con)
-            if kind is None:
-                continue
-            ents = [body_id_to_bone.get(id(e)) for e in con.entities]
-            if len(ents) == 2 and ents[0] == idx and ents[1] is not None:
-                p.constraint = (kind, d, offset,
-                                _v4(body_by_bone[ents[1]][0].translation,
-                                    _OB_TO_GAME))
-                break
         part_of_bone[idx] = len(parts)
         parts.append(p)
 

@@ -242,15 +242,15 @@ def build_creature_races(by_type: dict, writer, export_dir: str) -> None:
         fid = get_formid(rec, 'FormID') & 0x00FFFFFF
 
         # The creature pipeline merged each CREA's NIFZ part set into ONE
-        # whole-animal NIF named after its first (body) part; that merged file
-        # is what proj['bodies'] now lists.  Resolve this CREA's part set to
-        # its merged NIF so dog/wolf/skeletal-hound (same folder) each point
-        # at the right mesh.
+        # whole-animal NIF and ships the exact set→file mapping as body_map
+        # ('|'.join(lowercase nifz) → merged filename), so dog/wolf/
+        # skeletal-hound (same folder) each point at the right mesh without
+        # re-deriving names here.
         nifz = [(get_str(rec, f'NIFZ[{i}]') or '').lower()
                 for i in range(get_int(rec, 'NIFZCount', 0))]
         nifz = [p for p in nifz if p.endswith('.nif')]
-        merged = f'{os.path.splitext(nifz[0])[0]}.nif' if nifz else None
-        if merged and merged in proj['bodies']:
+        merged = (proj.get('body_map') or {}).get('|'.join(nifz))
+        if merged:
             bodies = [merged]
         elif proj['bodies']:
             bodies = [proj['bodies'][0]]   # fallback: folder's first merged NIF

@@ -2717,23 +2717,30 @@ def _shape_blocks(root):
             if isinstance(b, (NifFormat.NiTriShape, NifFormat.NiTriStrips))]
 
 
-def _bone_nodes_by_name(root):
-    """Map name(str, no NUL) -> NiNode for every NiNode under root."""
-    out = {}
-    for b in root.tree():
-        if isinstance(b, NifFormat.NiNode):
-            nm = bytes(b.name).rstrip(b'\x00').decode('latin-1')
-            out.setdefault(nm, b)
-    return out
-
-
 def _append_child(node, child):
     node.num_children += 1
     node.children.update_size()
     node.children[node.num_children - 1] = child
 
 
-def merge_creature_body(part_paths, dst_path):
+def _copy_bone_tree(src_node, dst_parent, mapping):
+    """Recursively copy the NiNode-only hierarchy under src_node into
+    dst_parent (name, flags, full local transform — no collision objects,
+    controllers or extra data).  Fills mapping[name] = copied node."""
+    for child in src_node.children:
+        if not isinstance(child, NifFormat.NiNode):
+            continue
+        cp = NifFormat.NiNode()
+        cp.name = child.name
+        cp.flags = child.flags
+        cp.set_transform(child.get_transform())
+        nm = bytes(child.name).rstrip(b'\x00').decode('latin-1')
+        mapping.setdefault(nm, cp)
+        _append_child(dst_parent, cp)
+        _copy_bone_tree(child, cp, mapping)
+
+
+def merge_creature_body(part_paths, dst_path, skeleton_path=None):
     """Merge the converted creature body-part NIFs into ONE skinned NIF.
 
     Vanilla Skyrim creatures ship the WHOLE animal (body + head + eyes + tail
@@ -2745,17 +2752,22 @@ def merge_creature_body(part_paths, dst_path):
     its own ARMA on an extra biped slot does NOT work — the engine renders
     only the BODY-slot ARMA for a creature, so the head/eyes silently vanish.
 
-    So: take the largest converted part (the body — it already embeds the full
-    Bip01 bone hierarchy) as the base, then graft every OTHER part's shapes in
-    as siblings under the base root, re-pointing each grafted shape's skin
-    bones at the base root's matching NiNode (adding the node if the base
-    lacks it).  Skin bones resolve against the animated skeleton by NAME at
-    runtime, so the merged NIF renders exactly like a vanilla single-file
-    creature mesh.
+    Layout (mirrors vanilla): a fresh NiNode root carrying the FULL bone
+    hierarchy copied from the converted skeleton.nif (correct names incl.
+    'NPC Root [Root]', local transforms, no collision), plus every part's
+    shapes as siblings, each shape's skin bones re-pointed by NAME at the
+    rig copy.  No part is a "base": Oblivion body-part NIFs only embed the
+    bone SUBSET they are skinned to (a goblin hand embeds 14 finger bones,
+    the chest only 13 spine bones), so grafting onto any single part leaves
+    the other parts' bones as identity placeholders at the origin — the
+    mangled-goblin bug.  A skin bone missing from the skeleton (e.g. a
+    part-local control node) is copied from the part's own tree with its
+    true world transform.
 
-    part_paths: list of already-converted .nif paths (Skyrim version).  The
-    one with the most bone nodes is used as the base.  Writes the merged NIF
-    to dst_path.  Returns {'base': str, 'grafted': int, 'shapes': int}.
+    part_paths: already-converted .nif paths (Skyrim version).
+    skeleton_path: the creature's converted 'character assets/skeleton.nif'.
+    Writes the merged NIF to dst_path.  Returns {'grafted': int,
+    'shapes': int, 'bones': int}.
     """
     if not _PYFFI:
         return {'error': 'pyffi not installed'}
@@ -2769,52 +2781,58 @@ def merge_creature_body(part_paths, dst_path):
             d.read(f)
         datas.append((p, d))
 
-    # Base = the part with the most bone NiNodes (the body carries the whole
-    # skeleton copy; heads/eyes carry only one or two bones).
-    def bone_count(d):
-        return sum(1 for r in d.roots if r is not None
-                   for b in r.tree() if isinstance(b, NifFormat.NiNode))
+    root = NifFormat.NiNode()
+    root.name = os.path.basename(dst_path).encode('latin-1')
+    root.flags = NIF_FLAGS
 
-    datas.sort(key=lambda pd: bone_count(pd[1]), reverse=True)
-    base_path, base_data = datas[0]
-    base_root = next(r for r in base_data.roots if r is not None)
-    base_bones = _bone_nodes_by_name(base_root)
+    bones = {}
+    if skeleton_path and os.path.exists(skeleton_path):
+        skel = NifFormat.Data()
+        with open(skeleton_path, 'rb') as f:
+            skel.read(f)
+        for r in skel.roots:
+            if isinstance(r, NifFormat.NiNode):
+                _copy_bone_tree(r, root, bones)
 
     grafted = 0
-    for path, d in datas[1:]:
+    for _path, d in datas:
         for src_root in d.roots:
             if src_root is None:
                 continue
             for shape in _shape_blocks(src_root):
                 si = shape.skin_instance
                 if si is not None:
-                    # Re-point each skin bone at the base root's node of the
-                    # same name (add a placeholder bone node if absent so the
-                    # engine still matches it against the live skeleton).
                     for bi, bone in enumerate(si.bones):
+                        if bone is None:
+                            continue
                         nm = bytes(bone.name).rstrip(b'\x00').decode('latin-1')
-                        tgt = base_bones.get(nm)
+                        tgt = bones.get(nm)
                         if tgt is None:
+                            # part-local bone the rig lacks: copy it with its
+                            # true world transform (root is identity)
                             tgt = NifFormat.NiNode()
                             tgt.name = bone.name
-                            tgt.flags = NIF_FLAGS
-                            _append_child(base_root, tgt)
-                            base_bones[nm] = tgt
+                            tgt.flags = bone.flags
+                            tgt.set_transform(bone.get_transform(src_root))
+                            _append_child(root, tgt)
+                            bones[nm] = tgt
                         si.bones[bi] = tgt
                     if si.skeleton_root is not None:
-                        si.skeleton_root = base_root
-                _append_child(base_root, shape)
+                        si.skeleton_root = root
+                _append_child(root, shape)
                 grafted += 1
 
-    base_root.name = os.path.basename(dst_path).encode('latin-1')
+    # reuse the first part's Data for version/header fields
+    out_data = datas[0][1]
+    out_data.roots = [root]
 
     dst_dir = os.path.dirname(dst_path)
     if dst_dir:
         os.makedirs(dst_dir, exist_ok=True)
     with open(dst_path, 'wb') as f:
-        base_data.write(f)
-    return {'base': base_path, 'grafted': grafted,
-            'shapes': len(_shape_blocks(base_root))}
+        out_data.write(f)
+    return {'grafted': grafted, 'shapes': len(_shape_blocks(root)),
+            'bones': len(bones)}
 
 
 def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,

@@ -23,13 +23,14 @@ override system. This pipeline is for everything CREA.
 
 import json
 import os
+import shutil
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)
 
-_WORKERS = max(1, (os.cpu_count() or 4) - 3)
+_WORKERS = max(1, (os.cpu_count() or 4) - 1)
 
 # Not real creatures: 'boxtest' is a Bethesda test asset; 'endgame' is the
 # KFM-driven Mehrunes Dagon avatar cinematic (morph-controller NIFs PyFFI
@@ -65,18 +66,33 @@ def _convert_creature(creature_dir: str, name: str, out_meshes_dir: str,
             if fn.lower().endswith('.hkx'):
                 convert_hkx_to_amd64(os.path.join(dirpath, fn))
 
-    # Convert every non-skeleton part NIF once (keyed lowercase filename).
-    converted = {}       # lower filename -> converted dst path
+    # Clear stale part/merged NIFs from earlier runs (root level only — the
+    # skeleton lives in 'character assets').
+    for fn in os.listdir(proj_dir):
+        if fn.lower().endswith('.nif'):
+            try:
+                os.remove(os.path.join(proj_dir, fn))
+            except OSError:
+                pass
+
+    # Convert every non-skeleton part NIF once into an ISOLATED staging dir.
+    # Merges must never read a file another merge has written: creature
+    # variants (goblin tribes, zombie limb combos, sheep fleeces) SHARE parts
+    # across their NIFZ sets, and the old in-place layout let later merges
+    # pick up earlier whole-body merge outputs as "parts" — compounding the
+    # entire body into every subsequent file (mangled overlapping geometry,
+    # 70x file sizes, quadratic merge times).
+    parts_dir = os.path.join(proj_dir, '_parts')
+    converted = {}       # lower filename -> pristine converted part path
     nif_failures = []
     for fn in sorted(os.listdir(creature_dir)):
         if not fn.lower().endswith('.nif'):
             continue
-        is_skeleton = fn.lower().startswith('skeleton')
-        if is_skeleton:
+        if fn.lower().startswith('skeleton'):
             dst = os.path.join(proj_dir, 'character assets', fn.lower())
             convert_nif(os.path.join(creature_dir, fn), dst, creature=True)
             continue
-        dst = os.path.join(proj_dir, fn.lower())
+        dst = os.path.join(parts_dir, fn.lower())
         res = convert_nif(os.path.join(creature_dir, fn), dst, creature=True)
         if res.get('error'):
             nif_failures.append((fn, res['error']))
@@ -87,41 +103,47 @@ def _convert_creature(creature_dir: str, name: str, out_meshes_dir: str,
     # wolf, skeletal-hound) each with its own NIFZ part set.  Merge EACH set
     # into one skinned NIF (whole animal under one root), the vanilla layout —
     # the engine renders only the single BODY-slot ARMA, so separate head/eyes
-    # NIFs never show.  The merged file is named after the set's body part.
+    # NIFs never show.  Merged names are unique per set (first part's stem,
+    # numbered on collision); the exact set→file mapping ships in the
+    # manifest as body_map so the record side never has to re-derive it.
     if not part_sets:
         part_sets = [tuple(converted.keys())] if converted else []
     bodies = []          # merged NIF filenames (one per distinct part set)
-    used = set()
+    body_map = {}        # '|'.join(pset) -> merged NIF filename
+    used_stems, used = set(), set()
     for pset in part_sets:
         paths = [converted[p] for p in pset if p in converted]
         if not paths:
             continue
-        # name the merged file after the part with the most bones (body)
-        stem = os.path.splitext(os.path.basename(pset[0]))[0]
+        base_stem = os.path.splitext(os.path.basename(pset[0]))[0]
+        stem, n = base_stem, 2
+        while stem in used_stems:
+            stem = f'{base_stem}_{n:02d}'
+            n += 1
+        used_stems.add(stem)
         merged_name = f'{stem}.nif'
-        merged_dst = os.path.join(proj_dir, merged_name)
         try:
-            merge_creature_body(paths, merged_dst)
-            bodies.append(merged_name)
-            used.update(os.path.abspath(p) for p in paths)
+            merge_creature_body(
+                paths, os.path.join(proj_dir, merged_name),
+                skeleton_path=os.path.join(proj_dir, 'character assets',
+                                           'skeleton.nif'))
         except Exception as e:
             nif_failures.append((merged_name, f'{type(e).__name__}: {e}'))
-            bodies.append(os.path.basename(paths[0]))
-            used.update(os.path.abspath(p) for p in paths[1:])
+            shutil.copy2(paths[0], os.path.join(proj_dir, merged_name))
+        bodies.append(merged_name)
+        body_map['|'.join(pset)] = merged_name
+        used.update(paths)
 
-    # Drop the now-redundant individual part NIFs (kept only if a merge reused
-    # the file in place or a part belonged to no set).
-    merged_abs = {os.path.abspath(os.path.join(proj_dir, b)) for b in bodies}
-    for p in used:
-        if p not in merged_abs and os.path.exists(p):
-            try:
-                os.remove(p)
-            except OSError:
-                pass
+    # Parts no set consumed stay as standalone meshes next to the merges.
+    for fn_l, p in converted.items():
+        if p not in used and not os.path.exists(os.path.join(proj_dir, fn_l)):
+            shutil.move(p, os.path.join(proj_dir, fn_l))
+    shutil.rmtree(parts_dir, ignore_errors=True)
 
     manifest['skeleton_nif'] = \
         f'actors\\tes4\\{name.lower()}\\character assets\\skeleton.nif'
     manifest['bodies'] = bodies
+    manifest['body_map'] = body_map
     manifest['nif_failures'] = nif_failures
 
     # keep the on-disk manifest in sync (includes the mesh keys)
@@ -205,8 +227,11 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
 
     log(f'  Converting {len(dirs)} creatures '
         f'({workers or _WORKERS} workers)...')
+    # ProcessPoolExecutor: the per-creature work is CPU-bound pure Python
+    # (pyffi NIF conversion, KF decode, spline compression) — threads
+    # serialize on the GIL and give no speedup at all.
     projects, errors = {}, {}
-    with ThreadPoolExecutor(max_workers=workers or _WORKERS) as pool:
+    with ProcessPoolExecutor(max_workers=workers or _WORKERS) as pool:
         futs = {pool.submit(_convert_creature, cdir, name, out_meshes_dir,
                             part_sets.get(name.lower())):
                 name for cdir, name in dirs}
@@ -248,13 +273,19 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
             f' total projects)')
 
     # Contract for tes5_import (RACE/ARMA/ARMO generation).
+    # .get defaults: an interrupted run can leave a manifest without the
+    # mesh keys (they are added after project generation) — don't let one
+    # stale file kill the summary for every other creature.
     summary = {name: {
         'project_hkx': m['project_hkx'],
-        'skeleton_nif': m['skeleton_nif'],
-        'bodies': m['bodies'],
-        'attacks': m['attacks'],
-        'clips': [c['name'] for c in m['clips']],
-        'bones': m['bones'],
+        'skeleton_nif': m.get(
+            'skeleton_nif',
+            f'actors\\tes4\\{name.lower()}\\character assets\\skeleton.nif'),
+        'bodies': m.get('bodies', []),
+        'body_map': m.get('body_map', {}),
+        'attacks': m.get('attacks', []),
+        'clips': [c['name'] for c in m.get('clips', [])],
+        'bones': m.get('bones', []),
     } for name, m in all_manifests.items()}
     with open(os.path.join(export_dir, 'creature_projects.json'), 'w',
               encoding='utf-8') as f:
