@@ -270,6 +270,12 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     from .creature_races import build_creature_races
     build_creature_races(by_type, writer, export_dir)
 
+    # --- Phase 0g: index skipped TES4 PACK records so actor converters can
+    # substitute vanilla AI packages (PKID pass-through would dangle and
+    # leave every actor with no AI → stuck in idle) ---
+    from .packages import load_package_types
+    load_package_types(by_type)
+
     # --- Phase 1: Simple record types (flat top-level groups) ---
     print("\nConverting records...")
     t2 = time.time()

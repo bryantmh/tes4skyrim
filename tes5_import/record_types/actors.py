@@ -4,6 +4,14 @@ import struct
 
 from ..constants import DEFAULT_RACE, RACE_MAP, TES4_SKILL_TO_TES5, TES5_SKILL_ORDER
 from ..npc_face_mapper import build_face_tail_subs, build_pnam_subs
+from ..packages import (
+    CSTY_ANIMAL,
+    CSTY_DEFAULT,
+    DPLT_CREATURE_LIST,
+    DPLT_NPC_LIST,
+    PKID_CREATURE_MASTER,
+    substitute_npc_packages,
+)
 from ..skyrim_overrides import (
     ATTRIBUTE_SKILL_MAP,
     TES4_RACE_FID_TO_EDID,
@@ -86,8 +94,12 @@ def _npc_aidt(rec: dict) -> bytes:
     conf = get_int(rec, 'AIDT.Confidence')
     energy = get_int(rec, 'AIDT.EnergyLevel', 50)
     resp = get_int(rec, 'AIDT.Responsibility')
-    # TES4 aggression → TES5 tier
-    tes5_aggr = 2 if aggr >= 70 else (1 if aggr >= 40 else 0)
+    # TES4 aggression → TES5 tier. TES4 semantics: attack anything with
+    # disposition < aggression, default 5 — so anything above 5 initiates
+    # combat against disliked targets and maps to TES5 1 (attacks enemies).
+    # The old >=40 threshold left mid-range actors (dog=30) at 0 =
+    # Unaggressive, which never initiates combat at all.
+    tes5_aggr = 2 if aggr >= 70 else (1 if aggr > 5 else 0)
     # TES4 confidence → TES5 tier
     tes5_conf = 0 if conf < 30 else (3 if conf >= 70 else 2)
     # TES4 responsibility → TES5 morality (inverted: high resp = no crime)
@@ -317,12 +329,15 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     # AIDT — AI data
     subs += pack_subrecord('AIDT', _npc_aidt(rec))
 
-    # PKID — AI packages
+    # PKID — AI packages. TES4 PACK records are skipped (SKIP_TYPES), so a
+    # raw pass-through emitted references to records that don't exist and the
+    # actor had NO working packages → the AI layer made no decisions and the
+    # engine never sent the behavior graph movement events (stuck-in-idle).
+    # Substitute the vanilla generic packages instead (tes5_import/packages.py).
     pc = get_int(rec, 'AIPackageCount')
-    for i in range(pc):
-        pfid = get_formid(rec, f'AIPackage[{i}]')
-        if pfid:
-            subs += pack_formid_subrecord('PKID', pfid)
+    pack_fids = [get_formid(rec, f'AIPackage[{i}]') for i in range(pc)]
+    for pfid in substitute_npc_packages([p for p in pack_fids if p]):
+        subs += pack_formid_subrecord('PKID', pfid)
 
     # CNAM — Class
     cnam = get_formid(rec, 'CNAM.Class')
@@ -349,10 +364,10 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     hclr_b = get_int(rec, 'HCLR.B', 60)
     subs += pack_formid_subrecord('HCLF', map_hair_color(hclr_r, hclr_g, hclr_b))
 
-    # ZNAM — Combat style
-    znam = get_formid(rec, 'ZNAM.CombatStyle')
-    if znam:
-        subs += pack_formid_subrecord('ZNAM', znam)
+    # ZNAM — Combat style. CSTY is skipped, so the TES4 reference would
+    # dangle; the vanilla default combat style keeps combat AI functional.
+    if get_formid(rec, 'ZNAM.CombatStyle'):
+        subs += pack_formid_subrecord('ZNAM', CSTY_DEFAULT)
 
     # NAM6 / NAM7 — Height / Weight (TES4 has these on RACR records, not NPC;
     # use neutral defaults so the race's own scale applies)
@@ -372,6 +387,9 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
         writer.add_record('OTFT', pack_record('OTFT', otft_fid, 0, otft_subs))
         subs += pack_formid_subrecord('DOFT', otft_fid)
 
+    # DPLT — default package list: the vanilla fallback AI most NPCs carry
+    subs += pack_formid_subrecord('DPLT', DPLT_NPC_LIST)
+
     # Trailing face data: FTST, QNAM, NAM9, NAMA
     subs += build_face_tail_subs(rec, race_edid, gender)
 
@@ -381,8 +399,8 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
 def convert_CREA(rec: dict, writer=None) -> bytes:
     """CREA → NPC_ (creatures become NPCs in TES5).
 
-    Same subrecord order as NPC_: EDID OBND ACBS SNAM INAM RNAM
-    COCT/CNTO AIDT PKID CNAM FULL DATA DNAM DOFT
+    Same subrecord order as NPC_: EDID OBND ACBS SNAM INAM VTCK RNAM
+    COCT/CNTO AIDT PKID FULL DATA DNAM ZNAM DOFT DPLT
     """
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -459,26 +477,15 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
             subs += pack_uint32_subrecord('COCT', coct)
             subs += item_data
 
-    # AIDT — 20 bytes (TES5 format)
-    aggr = get_int(rec, 'AIDT.Aggression')
-    conf = get_int(rec, 'AIDT.Confidence')
-    resp = get_int(rec, 'AIDT.Responsibility')
-    tes5_aggr = 2 if aggr >= 70 else (1 if aggr >= 40 else 0)
-    tes5_conf = 0 if conf < 30 else (3 if conf >= 70 else 2)
-    tes5_moral = 3 if resp >= 80 else (2 if resp >= 50 else (1 if resp >= 30 else 0))
-    tes5_assist = 1 if resp >= 30 else 0
-    aidt = struct.pack('<BBBBBB BB III',
-                       tes5_aggr, tes5_conf, 50,
-                       tes5_moral, 0, tes5_assist,
-                       0, 0, 0, 0, 0)
-    subs += pack_subrecord('AIDT', aidt)
+    # AIDT — 20 bytes (TES5 format, shared with NPC_)
+    subs += pack_subrecord('AIDT', _npc_aidt(rec))
 
-    # AI packages
-    pc = get_int(rec, 'AIPackageCount')
-    for i in range(pc):
-        pfid = get_formid(rec, f'AIPackage[{i}]')
-        if pfid:
-            subs += pack_formid_subrecord('PKID', pfid)
+    # PKID — TES4 PACK records are skipped (SKIP_TYPES), so a raw pass-through
+    # gave creatures NO working packages → the AI layer made no decisions and
+    # the engine never sent the graph movement/attack events (the stuck-in-idle
+    # root cause). Every vanilla creature carries exactly ONE package,
+    # DefaultMasterPackageCreature — give converted creatures the same hookup.
+    subs += pack_formid_subrecord('PKID', PKID_CREATURE_MASTER)
 
     # FULL — Name (after PKID in TES5 NPC_ order)
     if full:
@@ -512,6 +519,12 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     struct.pack_into('<H', dnam, 40, min(cr_str, 65535))
     subs += pack_subrecord('DNAM', bytes(dnam))
 
+    # ZNAM — combat style (CSTY is skipped; use vanilla styles).
+    # TES4 DATA.Type: 0=Creature, 1=Daedra, 2=Undead, 3=Humanoid, 4=Horse.
+    crea_type = get_int(rec, 'DATA.Type')
+    subs += pack_formid_subrecord(
+        'ZNAM', CSTY_ANIMAL if crea_type in (0, 4) else CSTY_DEFAULT)
+
     # DOFT — Default outfit
     if writer is not None and item_fids:
         otft_fid = writer.alloc_formid()
@@ -522,6 +535,9 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
         otft_subs += pack_subrecord('INAM', inam_data)
         writer.add_record('OTFT', pack_record('OTFT', otft_fid, 0, otft_subs))
         subs += pack_formid_subrecord('DOFT', otft_fid)
+
+    # DPLT — default package list, like every vanilla creature (EncWolf etc.)
+    subs += pack_formid_subrecord('DPLT', DPLT_CREATURE_LIST)
 
     return pack_record('NPC_', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 

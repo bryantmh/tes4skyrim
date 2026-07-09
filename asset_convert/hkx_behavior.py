@@ -139,13 +139,22 @@ def build_attack_events(clips: dict) -> list:
 def state_defs(clips: dict) -> list:
     """The graph's state list, shared by the behavior XML and the
     animationdata manifest: (state_name, kf_path, looping, enter_evt,
-    end_evt) tuples, Idle first (state id 0)."""
+    end_evt) tuples, Idle first (state id 0).
+
+    CombatStance is a looping idle-clip state entered on combatStanceStart
+    (routed from the engine's ActionDraw): the combat controller "draws"
+    before attacking and waits for the graph to confirm with a weaponDraw
+    event (sent as the state's enterNotifyEvent) — without the handshake it
+    never sends the RACE's attackStart_* events."""
     defs = []
     if clips['idle']:
         defs.append(('Idle', clips['idle'], True, None, None))
     for st, (_names, enter, _exit) in LOCOMOTION_STATES.items():
         if st in clips['locomotion']:
             defs.append((st, clips['locomotion'][st], True, enter, None))
+    if clips['idle']:
+        defs.append(('CombatStance', clips['idle'], True,
+                     'combatStanceStart', None))
     for st, (_names, enter, end_evt) in SINGLE_PLAY.items():
         if st in clips['single']:
             defs.append((st, clips['single'][st], False, enter, end_evt))
@@ -318,19 +327,50 @@ ENGINE_VARIABLES = [
 ]
 
 
+def movement_type_names(name: str) -> list:
+    """The creature's engine movement-type names — the CONTRACT that makes an
+    actor movable at all (2026-07-09, the tc-can't-move root cause).
+
+    The engine registers an actor's movement types by enumerating the ROOT
+    behavior graph's variables named `iState_<X>` and looking up the MOVT
+    record whose MNAM == <X> (ck-cmd RetargetCreature.cpp does exactly this
+    rename+MOVT-clone when retargeting creatures; vanilla dogbehavior
+    declares iState_DogDefault/iState_DogRun matching MOVT MNAM DogDefault/
+    DogRun). A graph with NO iState_* variables gives the movement
+    controller ZERO movement types: the actor cannot move even under
+    console `tc` control, no locomotion events are ever sent, and it idles
+    forever — records, packages, clips and cache all being correct.
+
+    These names are declared as INT32 graph variables here AND emitted as
+    MOVT records by tes5_import/creature_races.py (via the manifest), so
+    consistency is by construction, like the ATKE attack events.
+    """
+    base = f'TES4{name.lower()}'
+    return [f'{base}Default', f'{base}Run']
+
+
 def build_behavior_xml(behavior_name: str, clips: dict,
-                       hit_times: dict = None) -> str:
+                       hit_times: dict = None,
+                       movement_types: list = None) -> str:
     """The generated v1 state machine (see module docstring).
 
     hit_times: {state_name: [seconds]} — Oblivion 'Hit' text-key times for
     attack clips, emitted as preHitFrame/HitFrame triggers (the engine's
     attack-damage contract; without HitFrame an attack never deals damage).
+
+    movement_types: MOVT MNAM strings (movement_type_names()) declared as
+    `iState_<X>` INT32 variables — the engine's movement-type registration
+    contract; without them the actor cannot move at all.
     """
     hit_times = hit_times or {}
+    movement_types = movement_types or []
     # ---- event vocabulary: standard + per-attack ----
     events = ['moveStart', 'moveStop', 'moveForward', 'moveBackward',
               'turnLeft', 'turnRight', 'turnStop', 'swimStart', 'swimStop',
-              'recoilStart', 'recoilStop', 'staggerStart', 'staggerStop',
+              'recoilStart', 'recoilStop', 'recoilLargeStart',
+              'staggerStart', 'staggerStop',
+              'combatStanceStart', 'combatStanceStop',
+              'weaponDraw', 'weaponSheathe',
               'attackStop', 'returnToDefault', 'deathStart', 'IdleStop',
               'SoundPlay', 'preHitFrame', 'HitFrame', 'FootFront', 'FootBack']
     attack_events = build_attack_events(clips)
@@ -396,11 +436,29 @@ def build_behavior_xml(behavior_name: str, clips: dict,
         clip.param('mode', 'MODE_LOOPING' if looping else 'MODE_SINGLE_PLAY')
         clip.param('flags', 0)
 
+        # CombatStance confirms the engine's draw request (ActionDraw →
+        # combatStanceStart) by notifying weaponDraw on entry — the combat
+        # controller waits for it before sending any attackStart_* event.
+        enter_ref = exit_ref = 'null'
+        if st_name == 'CombatStance':
+            for evt_name, which in (('weaponDraw', 'enter'),
+                                    ('weaponSheathe', 'exit')):
+                arr = pf.add('hkbStateMachineEventPropertyArray')
+                arr.param_raw('events', (
+                    '<hkobject>\n'
+                    f'\t<hkparam name="id">{eid[evt_name]}</hkparam>\n'
+                    '\t<hkparam name="payload">null</hkparam>\n'
+                    '</hkobject>'), numelements=1)
+                if which == 'enter':
+                    enter_ref = arr.ref
+                else:
+                    exit_ref = arr.ref
+
         state = pf.add('hkbStateMachineStateInfo')
         state.param('variableBindingSet', 'null')
         state.param_array('listeners', [])
-        state.param('enterNotifyEvents', 'null')
-        state.param('exitNotifyEvents', 'null')
+        state.param('enterNotifyEvents', enter_ref)
+        state.param('exitNotifyEvents', exit_ref)
         state.param('transitions', 'null')
         state.param('generator', clip.ref)
         state.param('name', st_name)
@@ -415,8 +473,18 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     # exits back to Idle
     idle_id = 0
     for evt in ('moveStop', 'turnStop', 'swimStop', 'attackStop',
-                'recoilStop', 'staggerStop', 'returnToDefault'):
+                'recoilStop', 'staggerStop', 'returnToDefault',
+                'combatStanceStop', 'IdleStop'):
         wildcards.append((eid[evt], idle_id))
+
+    # extra engine-sent aliases: moveForward re-enters forward locomotion
+    # (sent on direction changes while moving), recoilLargeStart shares the
+    # single recoil clip
+    state_ids = {d[0]: i for i, d in enumerate(defs)}
+    if 'MoveForward' in state_ids:
+        wildcards.append((eid['moveForward'], state_ids['MoveForward']))
+    if 'Recoil' in state_ids:
+        wildcards.append((eid['recoilLargeStart'], state_ids['Recoil']))
 
     wild = pf.add('hkbStateMachineTransitionInfoArray')
     wild.param_raw(
@@ -447,15 +515,27 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     sm.param_array('states', [s.ref for s in state_objs])
     sm.param('wildcardTransitions', wild.ref)
 
+    # ---- variables: engine interface + movement-type registration ----
+    # iState_<MOVT MNAM> variables are how the engine discovers the actor's
+    # movement types (see movement_type_names). Vanilla pairs each with a
+    # locomotion-state id and initializes iState to the default type's value
+    # (dogbehavior: iState=30, iState_DogDefault=30, iState_DogRun=31); our
+    # flat graph uses the MoveForward state id for all of them.
+    loco_id = next((i for i, d in enumerate(defs) if d[0] == 'MoveForward'), 0)
+    variables = ENGINE_VARIABLES + [(f'iState_{mt}', 'INT32')
+                                    for mt in movement_types]
+    var_values = [loco_id if (n == 'iState' or n.startswith('iState_')) else 0
+                  for n, _t in variables]
+
     strings = pf.add('hkbBehaviorGraphStringData')
     strings.param_strings('eventNames', events)
     strings.param_array('attributeNames', [])
-    strings.param_strings('variableNames', [n for n, _t in ENGINE_VARIABLES])
+    strings.param_strings('variableNames', [n for n, _t in variables])
     strings.param_array('characterPropertyNames', [])
 
     values = pf.add('hkbVariableValueSet')
     values.param_structs('wordVariableValues',
-                         [[('value', 0)]] * len(ENGINE_VARIABLES))
+                         [[('value', v)] for v in var_values])
     values.param_array('quadVariableValues', [])
     values.param_array('variantVariableValues', [])
 
@@ -463,8 +543,8 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     gdata.param_array('attributeDefaults', [])
     gdata.param_raw('variableInfos',
                     '\n'.join(_VARIABLE_INFO_TMPL.format(vtype=t)
-                              for _n, t in ENGINE_VARIABLES),
-                    numelements=len(ENGINE_VARIABLES))
+                              for _n, t in variables),
+                    numelements=len(variables))
     gdata.param_structs('characterPropertyInfos', [])
     gdata.param_structs('eventInfos', [[('flags', 0)]] * len(events))
     gdata.param('variableInitialValues', values.ref)
@@ -632,15 +712,18 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
             }
 
     behavior_name = f'TES4{name.capitalize()}Behavior'
+    move_types = movement_type_names(lname)
     _write_and_compile(
         build_behavior_xml(behavior_name, clips,
                            hit_times={c['name']: c['hits']
-                                      for c in clip_meta if c['hits']}),
+                                      for c in clip_meta if c['hits']},
+                           movement_types=move_types),
         os.path.join(proj_dir, 'behaviors', behavior_name.lower() + '.hkx'))
+    # dedupe: states can share one animation file (Idle + CombatStance)
+    anim_files = list(dict.fromkeys(c['anim'] for c in clip_meta))
     _write_and_compile(
         build_character_xml(
-            f'TES4{name.capitalize()}Character',
-            [c['anim'] for c in clip_meta],
+            f'TES4{name.capitalize()}Character', anim_files,
             f'Behaviors\\{behavior_name.lower()}.hkx', n_bones=len(bones)),
         os.path.join(proj_dir, 'characters', f'tes4{lname}character.hkx'))
     _write_and_compile(
@@ -661,6 +744,7 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
         'anim_dir': f'meshes\\actors\\tes4\\{lname}\\animations',
         'clips': clip_meta,
         'attacks': [[e, s] for e, s in attack_states if s in converted],
+        'movement_types': move_types,
         'motions': motions,
         'bones': len(bones),
         'failures': failures,

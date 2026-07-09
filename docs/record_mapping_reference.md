@@ -117,6 +117,16 @@ see the `oblivion-to-skyrim-dialog` skill.
 
 ### Records With Major Conversion Issues
 - **PACK** — TES5 package system is completely different (procedural tree). Only skeleton records can be created.
+  **Substitution (2026-07-09)**: PKID refs to skipped PACKs must NOT be passed through (they dangle → the
+  actor has no working AI packages). NOTE: this was necessary but did NOT resolve the creature stuck-in-idle
+  bug — the vanilla-asset A/B dog moved even with dangling packages. `tes5_import/packages.py`
+  substitutes vanilla generics instead: creatures always get PKID `DefaultMasterPackageCreature` (0010F2A5) +
+  DPLT `DefaultMasterPackageListCreature` (0010F2A6) — exactly what every vanilla wolf/dog/skeever carries;
+  humanoids get one `DefaultSandboxCurrentLocation1024` (000BFB6B) standing in for wander/eat/sleep-type TES4
+  packages (ref-targeted types — follow/escort/ambush — are dropped) + DPLT `DefaultMasterPackageList`
+  (00021E81). Skipped CSTY refs are likewise replaced: ZNAM = `csWolf` (00057BE8) for animal/horse CREA,
+  `DefaultCombatstyle` (0000003D) otherwise. TES4 aggression >5 now maps to TES5 tier 1 (the old >=40
+  threshold left e.g. dogs at Unaggressive, which never initiates combat).
 - **QUST** — Alias system, objectives, and VMAD fragments are all new. Only basic stage data can be transferred.
 - **INFO** — Dialog response structure changed significantly. VMAD fragments replace result scripts.
 - **NPC_/CREA** — Attribute system removed, skill system changed, many new subsystems (templates, outfits, perks, keywords).

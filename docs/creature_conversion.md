@@ -592,6 +592,73 @@ creature is fully proven.
 - **`--names` subset runs preserve other registrations**: convert_creatures merges the
   singlefiles from ALL on-disk `project_manifest.json`s, not just the current batch
   (a subset run used to silently drop every other creature from the cache).
+- **AI package substitution (2026-07-09 — necessary, but NOT the stuck-in-idle cause)**:
+  PACK is in SKIP_TYPES but convert_CREA/convert_NPC_ passed the TES4 PKID FormIDs
+  through, so every actor's package list pointed at records that don't exist (vanilla
+  creatures each carry exactly one package, DefaultMasterPackageCreature). Fix
+  (`tes5_import/packages.py` + import Phase 0g): creatures get PKID
+  DefaultMasterPackageCreature (0010F2A5) + DPLT DefaultMasterPackageListCreature
+  (0010F2A6); humanoids get DefaultSandboxCurrentLocation1024 (000BFB6B) standing in for
+  wander/eat/sleep-type TES4 packages + DPLT DefaultMasterPackageList (00021E81).
+  Companion fixes: ZNAM no longer dangles on skipped CSTY (creatures: csWolf 00057BE8
+  for animal/horse types, DefaultCombatstyle 0000003D otherwise; NPCs:
+  DefaultCombatstyle), and TES4 aggression >5 → TES5 tier 1 (dog aggr 30 was mapped to
+  0 = Unaggressive and would never initiate combat; TES4 default is 5).
+  **User-tested: creatures STILL idle with the fix in place.** The decisive datapoint was
+  the creature_vanilla_ab ESP: our records + vanilla canine assets MOVED AROUND (even
+  when its packages still dangled) — the movement gate was inside the generated asset
+  stack, not the records/AI-input side. Statically re-verified clean vs vanilla during
+  this hunt: character hkx (property/capsule/axis fields), project hkx, animationdata
+  motion curves (nonzero, plausible speeds), setdata attack blocks (V3 grammar walk of
+  the whole singlefile), sampler wiring, variable defaults (bAnimationDriven=0).
+  `tools/creature_vanilla_ab.py` now supports `--layers behavior|skeleton,body` +
+  `--edid` lookup for per-layer bisection. Bisection results: vanilla-behavior-only ESP
+  moves, vanilla-NIFs-only ESP doesn't, and console `tc` (take control) can't move the
+  actor either → the movement CONTROLLER itself had nothing to drive (see next bullet).
+- **IDLE records are the engine-action → graph-event routing table (2026-07-09, the
+  stuck-in-idle root cause #3 — animations)**: the engine does NOT send moveStart etc.
+  directly; it fires Actor Actions (AACT — ActionMoveStart/ActionDraw/...) and walks the
+  IDLE records parented under each action, filtered by DNAM == the actor's root behavior
+  graph path; the match's ENAM string is the event actually sent. One IDLE per action per
+  creature project exists in vanilla (DogMoveStart: DNAM=DogBehavior.hkx,
+  ENAM=moveStart, ANAM parent=ActionMoveStart — 36 distinct MoveStart IDLEs in
+  Skyrim.esm). A behavior file with no IDLE records receives NO events at all: after the
+  MOVT fix the dog translated (movement controller live) but played idle forever and
+  never attacked. `sae` works regardless because it bypasses the routing. Fix:
+  `tes5_import/creature_idles.py` (called from build_creature_races, once per project)
+  emits the vanilla-dog leaf set (move/turn/stagger/recoil/idle-stop/reset/death-wait +
+  the conditioned swim root/start/stop tree, DATA bytes + IsSwimming CTDA copied
+  verbatim) with DNAM = our generated behavior path. Attack events are NOT IDLE-routed —
+  the combat controller sends RACE ATKE strings directly, but only after the DRAW
+  HANDSHAKE: ActionDraw routes combatStanceStart into the graph and the combat
+  controller waits for the graph to answer with a weaponDraw event before attacking.
+  The generated graph now has a looping CombatStance state (idle clip, entered on
+  combatStanceStart, exits on combatStanceStop) whose enter/exitNotifyEvents send
+  weaponDraw/weaponSheathe (hkbStateMachineEventPropertyArray), plus
+  moveForward/recoilLargeStart/IdleStop wildcards. Discovery credit: the Skyrim
+  Behavior Modding Guide ("the Idle Animations tab... parses events... and sends
+  animation events to the behavior graph") + ck-cmd's `IDLERecord()` helper.
+- **iState_* graph variables ↔ MOVT records are the movement-type registration contract
+  (2026-07-09, stuck-in-idle root cause #2 — locomotion/movement)**: the engine gives an actor its
+  movement types by enumerating the root behavior graph's variables named
+  `iState_<X>` and looking up the MOVT record whose MNAM == `<X>`. Vanilla
+  dogbehavior.hkx declares `iState_DogDefault`/`iState_DogRun` (initial values 30/31,
+  and `iState` itself initialized to the Default value 30) matching MOVT
+  `Dog_Default_MT` (MNAM=DogDefault) / `Dog_Run_MT` (MNAM=DogRun);
+  quadrupedbehavior.hkx declares one per species. ck-cmd's RetargetCreature.cpp
+  (references/ck-cmd-master) is the Rosetta stone: retargeting a creature = renaming
+  the `iState_*` variables AND cloning the matching MOVT records with the new MNAM. A
+  graph with NO `iState_*` variables leaves the movement controller with ZERO movement
+  types: the actor cannot move under AI or under console `tc`, no locomotion events are
+  ever sent (`sae moveStart` still works — it's a direct graph poke), and it idles
+  forever while every static layer (events, transitions, cache, CRCs, records,
+  packages) validates clean. Fix: `hkx_behavior.movement_type_names()` declares
+  `iState_TES4<name>Default`/`iState_TES4<name>Run` INT32 variables (value = the
+  MoveForward state id, iState initialized to match), the names ship in
+  project_manifest.json / creature_projects.json as `movement_types`, and
+  `creature_races._build_movts` emits matching MOVT records (SPED/INAM byte-copied
+  from vanilla Dog_Default_MT; per-creature speeds from TES4 DATA.Speed are a later
+  refinement) — graph↔record consistency by construction, like ATKE.
 - **Record side (`tes5_import/creature_races.py`, import Phase 0f)**: one generated RACE +
   skin ARMO + per-body-part ARMA per unique (creature folder, NIFZ body set) — layouts
   byte-mirrored from real Skyrim.esm dumps of DogRace(000131EE)/SkinDog(0004B2C9)

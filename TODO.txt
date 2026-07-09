@@ -10,6 +10,9 @@ Gameplan:
 	Fix dogwood tree L8
 	Fix terminal spawning L12
 	Fix app design M12
+	Refine Navmesh
+	Refine Dialog
+	Refine Clothing
 
 Major Issues for V1:
 
@@ -53,8 +56,6 @@ Major Issues for V1:
 
 	9 - Convert Grass
 
-	10 - Ensure proper creature replacements that use oblivion values where possible (missing mountain lion)
-
 	11 - Proper LOD generation oneclick solution as opposed to external generation
 		Still missing:
 		Correct textures
@@ -67,8 +68,7 @@ Major Issues for V1:
 
 	14 - Fix all CK and Xedit warnings
 
-	15 - Goblin mesh completely distorted
-		Storm Atronach crashes game
+	15 - Storm Atronach crashes game. the skeleton contains part of the NIF! This could be part of the cause
 		POSSIBLE RELEVANT OBJECTS:
 		RDI: (hkbBlendingTransitionEffect*) "BlendSmooth"
 		RBP: (hkpPositionConstraintMotor*)
@@ -108,8 +108,83 @@ Major Issues for V1:
 		RSP+C80: (hkbBindable::CacheBindablesCollector*)
 		RSP+CC0: (BSTAnimationGraphDataChannel<Actor,float,ActorSpeedChannel>*)
 		RSP+D88: (BSResource::`anonymous namespace'::GlobalPaths*)
+	So does "Main Mast"
+	POSSIBLE RELEVANT OBJECTS:
+		RCX: (BSTriShape*) "MainMast01:15" ("tes4\Architecture\Ships\MainMast01.NIF")
+		RSP+78: (hkpPositionConstraintMotor*)
+		RSP+A0: (hkaRagdollInstance*)
+		RSP+B8: (bhkBlendCollisionObject*)
+		RSP+E8: (hkaSkeleton*)
+		RSP+F0: (hkaSkeletonMapper*)
+		RSP+100: (BSFadeNode*) "Scene Root"
+		RSP+108: (BShkbAnimationGraph*)
+		RSP+140: (hkbCharacter*)
+		RSP+1E8: (BSAnimationGraphManager*)
+		RSP+210: (Character*) "Skeleton" [0x11014FBC] ("Oblivion.esm") [0x11014FBC]
+		RSP+238: (NiNode*) "Bip01 Pelvis"
+		RSP+240: (BaseExtraList*)
+		RSP+258: (Character*) "Skeleton" [0x11014FBC] ("Oblivion.esm") [0x11014FBC]
+		RSP+298: (ScrapHeap*)
+		RSP+2B8: (NiNode*) "NPC Root [Root]"
+		RSP+320: (TESNPC*) "Skeleton" [0x1101E58D] ("Oblivion.esm") "Skeleton" [0x1101E58D]
+		RSP+408: (BackgroundProcessThread*)
+		RSP+4C0: (QueuedCharacter*)
+		RSP+4D8: (BSResource::LooseFileLocation*)
+		RSP+5D0: (hkbStateMachine*) "TES4SkeletonBehaviorRootBehavior"
+		RSP+5F8: (hkbModifierGenerator*) "RootModifierGenerator"
+		RSP+8E0: (hkbAnimationBindingSet*)
+		RSP+9B8: (hkbAnimationBindingWithTriggers*)
+		RSP+C30: (AnimationFileManagerSingleton*)
+		RSP+DA8: (hkbClipGenerator*) "Idle"
+		RSP+DE0: (hkaDefaultAnimationControl*)
+		RSP+E18: (hkbBehaviorGraph*) "TES4SkeletonBehavior.hkb"
+		RSP+E30: (BSSpeedSamplerModifier*) "BSSpeedSamplerModifier"
+		RSP+E38: (hkbVariableBindingSet*)
+		RSP+E80: (hkbVariableValueSet*)
+		RSP+E88: (hkContainerHeapAllocator::Allocator*)
+		RSP+F68: (BSSpeedSamplerModifier*) "BSSpeedSamplerModifier"
+	And Skeleton
+	POSSIBLE RELEVANT OBJECTS:
+		RDX: (hkpPositionConstraintMotor*)
+		RSP+0: (hkpConstraintInstance*)
+		RSP+28: (bhkBlendCollisionObject*)
+		RSP+60: (NiNode*) "Bip01 R Foot"
+		RSP+A0: (NiNode*) "Bip01 R Calf"
+		RSP+100: (hkReferencedObjectLock*)
+		RSP+120: (hkpLimitedHingeConstraintData*)
+		RSP+140: (bhkLimitedHingeConstraint*)
+		RSP+220: (hkpRigidBody*)
+		RSP+2E0: (hkaRagdollInstance*)
+		RSP+2F8: (bhkBlendCollisionObject*)
+		RSP+328: (hkaSkeleton*)
+		RSP+330: (hkaSkeletonMapper*)
+		RSP+340: (BSFadeNode*) "Scene Root"
+		RSP+348: (BShkbAnimationGraph*)
+		RSP+380: (hkbCharacter*)
+		RSP+428: (BSAnimationGraphManager*)
+		RSP+450: (Character*) "Skeleton" [0x110C8116] ("Oblivion.esm") [0x110C8116]
+		RSP+478: (NiNode*) "Bip01 Pelvis"
+		RSP+480: (BaseExtraList*)
+		RSP+498: (Character*) "Skeleton" [0x110C8116] ("Oblivion.esm") [0x110C8116]
+		RSP+4D8: (ScrapHeap*)
+		RSP+4F8: (NiNode*) "NPC Root [Root]"
+		RSP+560: (TESNPC*) "Skeleton" [0x1101E798] ("Oblivion.esm") "Skeleton" [0x1101E798]
+		RSP+648: (BackgroundProcessThread*)
+		RSP+700: (QueuedCharacter*)
+		RSP+718: (BSResource::LooseFileLocation*)
+		RSP+810: (hkbStateMachine*) "TES4SkeletonBehaviorRootBehavior"
+		RSP+838: (hkbModifierGenerator*) "RootModifierGenerator"
+		RSP+BF8: (hkbAnimationBindingWithTriggers*)
+		RSP+E70: (AnimationFileManagerSingleton*)
+		RSP+FE8: (hkbClipGenerator*) "Idle"
 
 	16 - Bow first person model doesn't work (remains on back and invisible in hands)
+
+	17 - Creatures can't move
+
+	18 - Creatures have no ragdoll
+
+	19 - Leveled NPCs not spawning
 
 Later Issues:
 	1 - Lip syncing with voice
@@ -148,6 +223,7 @@ Later Issues:
 		Needs better handling of unattached leaves
 		Trunk texture bad UV
 		Dogwood tree is only flowers ingame when it should be leaves and flowers
+		Jackpot! C:\Users\Bryant\Documents\Code\TESConversion\references\ck-cmd-master\src\spt\sptconvert.cpp
 
 	9 - Refine LOD mesh decimation
 
@@ -167,6 +243,8 @@ Later Issues:
 		Note that ThreadPoolExecutor doesn't seem to work often, whereas ProcessPoolExector seems more consistent
 
 	16 - Interior lights appear off. Perhaps too much falloff of light sources?
+
+	17 - Goblins don't properly hold weapons
 
 Minor Issues:
 
@@ -229,4 +307,8 @@ Minor Issues:
 	ValueError: string too long (0x5A000000 at 0x000003BC)
 
 	20 - Arrows are converted as bolts
+
+	21 - Bad cell names "Test End Game"
+
+	22 - Activators like standing stones or altars do nothing
 

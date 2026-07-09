@@ -284,6 +284,11 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
         'bodies': m.get('bodies', []),
         'body_map': m.get('body_map', {}),
         'attacks': m.get('attacks', []),
+        # engine movement-type registration contract (iState_* graph vars ↔
+        # MOVT MNAM); fallback derives the same names for stale manifests
+        'movement_types': m.get('movement_types',
+                                [f'TES4{name.lower()}Default',
+                                 f'TES4{name.lower()}Run']),
         'clips': [c['name'] for c in m.get('clips', [])],
         'bones': m.get('bones', []),
     } for name, m in all_manifests.items()}

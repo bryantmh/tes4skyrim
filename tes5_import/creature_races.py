@@ -51,6 +51,14 @@ _RACE_DATA_TEMPLATE = bytes.fromhex(
     '00000000')
 _MODT = bytes.fromhex('020000000000000000000000')
 _ARMA_DNAM = bytes.fromhex('000000000000001100000000')
+# MOVT speed/rotate data + anim-speed thresholds, byte-copied from vanilla
+# Dog_Default_MT (0004E5E0) / Dog_Run_MT (000EA64A) — both ship identical
+# SPED in Skyrim.esm. Per-creature speeds (TES4 DATA.Speed) are a later
+# refinement; registration is what makes the actor movable at all.
+_MOVT_SPED = bytes.fromhex(
+    '000000000000000000000000000000007B149542EC11FA43'
+    '7B1495427B149542DB0F4940E4CB9640E4CB9640')
+_MOVT_INAM = bytes.fromhex('FFFF7F7FFFFF7F7FFFFF7F7F')
 _MTNM_CODES = (b'WALK', b'RUN1', b'SNEK', b'BLDO', b'SWIM')
 _EGT_MALE = 'Actors\\Character\\UpperBodyHumanMale.egt'
 _EGT_FEMALE = 'Actors\\Character\\UpperBodyHumanFemale.egt'
@@ -183,6 +191,29 @@ def _build_race(writer, rec, folder: str, bodies: list, proj: dict,
     writer.add_record('RACE', pack_record('RACE', race_fid, 0, subs))
 
 
+def _build_movts(writer, folder: str, proj: dict) -> None:
+    """Generated MOVT records for one creature project (once per folder).
+
+    The engine gives an actor movement types by matching the behavior
+    graph's `iState_<X>` variables against MOVT records with MNAM == <X>
+    (vanilla: dogbehavior iState_DogDefault/iState_DogRun ↔ Dog_Default_MT/
+    Dog_Run_MT; ck-cmd's RetargetCreature clones MOVTs the same way). A
+    graph whose iState_* names have no MOVT records — or a plugin whose
+    MOVTs have no graph variables — leaves the actor unable to move AT ALL
+    (no AI movement, no `tc` control, no locomotion events: the 2026-07-09
+    stuck-in-idle root cause). The names come from the creature pipeline
+    manifest so graph and records agree by construction (like ATKE)."""
+    names = proj.get('movement_types') or [f'TES4{folder}Default',
+                                           f'TES4{folder}Run']
+    for mnam in names:
+        subs = pack_string_subrecord('EDID', f'{mnam}_MT')
+        subs += pack_string_subrecord('MNAM', mnam)
+        subs += pack_subrecord('SPED', _MOVT_SPED)
+        subs += pack_subrecord('INAM', _MOVT_INAM)
+        writer.add_record('MOVT', pack_record('MOVT', writer.alloc_formid(),
+                                              0, subs))
+
+
 def _build_skin(writer, folder: str, bodies: list, race_fid: int,
                 skin_fid: int, edid_base: str) -> None:
     """Single BODY-slot ARMA (the merged whole-animal NIF) + its skin ARMO.
@@ -230,6 +261,7 @@ def build_creature_races(by_type: dict, writer, export_dir: str) -> None:
         _PROJECTS = json.load(f)
 
     made = {}
+    movt_folders = set()
     n_races = 0
     for rec in by_type.get('CREA', []):
         model = (get_str(rec, 'Model.MODL') or '').replace('/', '\\')
@@ -256,6 +288,15 @@ def build_creature_races(by_type: dict, writer, export_dir: str) -> None:
             bodies = [proj['bodies'][0]]   # fallback: folder's first merged NIF
         else:
             continue
+
+        if folder not in movt_folders:
+            _build_movts(writer, folder, proj)
+            # engine-action → graph-event routing (IDLE records) — without
+            # these the engine never sends the graph ANY events and the
+            # actor plays idle forever while sliding around
+            from .creature_idles import build_creature_idles
+            build_creature_idles(writer, folder, proj)
+            movt_folders.add(folder)
 
         key = (folder, tuple(bodies))
         if key not in made:
