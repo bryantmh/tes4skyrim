@@ -276,6 +276,16 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     from .packages import load_package_types
     load_package_types(by_type)
 
+    # --- Phase 0h: placed leveled creatures (REFR→LVLC) ---
+    # Skyrim only spawns actors from ACHR→NPC_, so each placed LVLC becomes an
+    # ACHR aimed at a generated shell NPC_ whose TPLT points at the LVLN.
+    # Must run after 0f (needs the generated creature races) and before the
+    # CELL/WRLD builders, which read by_type['REFR'] / by_type['ACHR'].
+    from .leveled_actors import build_leveled_actor_shells
+    n_lvl_achr = build_leveled_actor_shells(by_type, writer)
+    print(f"  Leveled creature placements: {n_lvl_achr} REFR -> ACHR "
+          f"via generated shell NPCs")
+
     # --- Phase 1: Simple record types (flat top-level groups) ---
     print("\nConverting records...")
     t2 = time.time()

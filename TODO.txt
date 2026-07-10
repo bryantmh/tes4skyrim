@@ -1,6 +1,5 @@
 Gameplan:
 	Move External L13
-	Finish creature conversion mi5
 	Fix distant water M11
 	Fix distant textures M11
 	Fix distant trees M11
@@ -68,121 +67,7 @@ Major Issues for V1:
 
 	14 - Fix all CK and Xedit warnings
 
-	15 - Storm Atronach crashes game. the skeleton contains part of the NIF! This could be part of the cause
-		POSSIBLE RELEVANT OBJECTS:
-		RDI: (hkbBlendingTransitionEffect*) "BlendSmooth"
-		RBP: (hkpPositionConstraintMotor*)
-		RSP+0: (hkpConstraintInstance*)
-		RSP+50: (bhkBlendCollisionObject*)
-		RSP+58: (NiNode*) "Rock Pelvis C"
-		RSP+A8: (bhkBlendCollisionObject*)
-		RSP+B0: (NiNode*) "Bip01 R Thigh"
-		RSP+B8: (NiNode*) "Rock R Thigh D"
-		RSP+100: (hkReferencedObjectLock*)
-		RSP+120: (hkpLimitedHingeConstraintData*)
-		RSP+140: (bhkLimitedHingeConstraint*)
-		RSP+220: (hkpRigidBody*)
-		RSP+2E0: (hkaRagdollInstance*)
-		RSP+2F8: (bhkBlendCollisionObject*)
-		RSP+328: (hkaSkeleton*)
-		RSP+330: (hkaSkeletonMapper*)
-		RSP+340: (BSFadeNode*) "Scene Root"
-		RSP+348: (BShkbAnimationGraph*)
-		RSP+380: (hkbCharacter*)
-		RSP+428: (BSAnimationGraphManager*)
-		RSP+450: (Character*) "Storm Atronach" [0xFF000B78] ("Oblivion.esm") [0xFF000B78]
-		RSP+478: (NiNode*) "Bip01 Wing01"
-		RSP+480: (BaseExtraList*)
-		RSP+498: (Character*) "Storm Atronach" [0xFF000B78] ("Oblivion.esm") [0xFF000B78]
-		RSP+4D8: (ScrapHeap*)
-		RSP+4F8: (NiNode*) "NPC Root [Root]"
-		RSP+560: (TESNPC*) "Storm Atronach" [0x1101FF23] ("Oblivion.esm") "Storm Atronach" [0x1101FF23]
-		RSP+648: (BackgroundProcessThread*)
-		RSP+700: (QueuedCharacter*)
-		RSP+718: (BSResource::LooseFileLocation*)
-		RSP+7B0: (hkbBehaviorGraph*) "TES4StormatronachBehavior.hkb"
-		RSP+810: (hkbStateMachine*) "TES4StormatronachBehaviorRoot"
-		RSP+838: (hkbClipGenerator*) "Attack_handtohandattackrightpower"
-		RSP+A88: (BSLightingShaderProperty*)
-		RSP+BF8: (hkbAnimationBindingWithTriggers*)
-		RSP+C80: (hkbBindable::CacheBindablesCollector*)
-		RSP+CC0: (BSTAnimationGraphDataChannel<Actor,float,ActorSpeedChannel>*)
-		RSP+D88: (BSResource::`anonymous namespace'::GlobalPaths*)
-	So does "Main Mast"
-	POSSIBLE RELEVANT OBJECTS:
-		RCX: (BSTriShape*) "MainMast01:15" ("tes4\Architecture\Ships\MainMast01.NIF")
-		RSP+78: (hkpPositionConstraintMotor*)
-		RSP+A0: (hkaRagdollInstance*)
-		RSP+B8: (bhkBlendCollisionObject*)
-		RSP+E8: (hkaSkeleton*)
-		RSP+F0: (hkaSkeletonMapper*)
-		RSP+100: (BSFadeNode*) "Scene Root"
-		RSP+108: (BShkbAnimationGraph*)
-		RSP+140: (hkbCharacter*)
-		RSP+1E8: (BSAnimationGraphManager*)
-		RSP+210: (Character*) "Skeleton" [0x11014FBC] ("Oblivion.esm") [0x11014FBC]
-		RSP+238: (NiNode*) "Bip01 Pelvis"
-		RSP+240: (BaseExtraList*)
-		RSP+258: (Character*) "Skeleton" [0x11014FBC] ("Oblivion.esm") [0x11014FBC]
-		RSP+298: (ScrapHeap*)
-		RSP+2B8: (NiNode*) "NPC Root [Root]"
-		RSP+320: (TESNPC*) "Skeleton" [0x1101E58D] ("Oblivion.esm") "Skeleton" [0x1101E58D]
-		RSP+408: (BackgroundProcessThread*)
-		RSP+4C0: (QueuedCharacter*)
-		RSP+4D8: (BSResource::LooseFileLocation*)
-		RSP+5D0: (hkbStateMachine*) "TES4SkeletonBehaviorRootBehavior"
-		RSP+5F8: (hkbModifierGenerator*) "RootModifierGenerator"
-		RSP+8E0: (hkbAnimationBindingSet*)
-		RSP+9B8: (hkbAnimationBindingWithTriggers*)
-		RSP+C30: (AnimationFileManagerSingleton*)
-		RSP+DA8: (hkbClipGenerator*) "Idle"
-		RSP+DE0: (hkaDefaultAnimationControl*)
-		RSP+E18: (hkbBehaviorGraph*) "TES4SkeletonBehavior.hkb"
-		RSP+E30: (BSSpeedSamplerModifier*) "BSSpeedSamplerModifier"
-		RSP+E38: (hkbVariableBindingSet*)
-		RSP+E80: (hkbVariableValueSet*)
-		RSP+E88: (hkContainerHeapAllocator::Allocator*)
-		RSP+F68: (BSSpeedSamplerModifier*) "BSSpeedSamplerModifier"
-	And Skeleton
-	POSSIBLE RELEVANT OBJECTS:
-		RDX: (hkpPositionConstraintMotor*)
-		RSP+0: (hkpConstraintInstance*)
-		RSP+28: (bhkBlendCollisionObject*)
-		RSP+60: (NiNode*) "Bip01 R Foot"
-		RSP+A0: (NiNode*) "Bip01 R Calf"
-		RSP+100: (hkReferencedObjectLock*)
-		RSP+120: (hkpLimitedHingeConstraintData*)
-		RSP+140: (bhkLimitedHingeConstraint*)
-		RSP+220: (hkpRigidBody*)
-		RSP+2E0: (hkaRagdollInstance*)
-		RSP+2F8: (bhkBlendCollisionObject*)
-		RSP+328: (hkaSkeleton*)
-		RSP+330: (hkaSkeletonMapper*)
-		RSP+340: (BSFadeNode*) "Scene Root"
-		RSP+348: (BShkbAnimationGraph*)
-		RSP+380: (hkbCharacter*)
-		RSP+428: (BSAnimationGraphManager*)
-		RSP+450: (Character*) "Skeleton" [0x110C8116] ("Oblivion.esm") [0x110C8116]
-		RSP+478: (NiNode*) "Bip01 Pelvis"
-		RSP+480: (BaseExtraList*)
-		RSP+498: (Character*) "Skeleton" [0x110C8116] ("Oblivion.esm") [0x110C8116]
-		RSP+4D8: (ScrapHeap*)
-		RSP+4F8: (NiNode*) "NPC Root [Root]"
-		RSP+560: (TESNPC*) "Skeleton" [0x1101E798] ("Oblivion.esm") "Skeleton" [0x1101E798]
-		RSP+648: (BackgroundProcessThread*)
-		RSP+700: (QueuedCharacter*)
-		RSP+718: (BSResource::LooseFileLocation*)
-		RSP+810: (hkbStateMachine*) "TES4SkeletonBehaviorRootBehavior"
-		RSP+838: (hkbModifierGenerator*) "RootModifierGenerator"
-		RSP+BF8: (hkbAnimationBindingWithTriggers*)
-		RSP+E70: (AnimationFileManagerSingleton*)
-		RSP+FE8: (hkbClipGenerator*) "Idle"
-
 	16 - Bow first person model doesn't work (remains on back and invisible in hands)
-
-	17 - Creatures can't move
-
-	18 - Creatures have no ragdoll
 
 	19 - Leveled NPCs not spawning
 
@@ -246,6 +131,9 @@ Later Issues:
 
 	17 - Goblins don't properly hold weapons
 
+	18 - Creature animation issues. Still needs a lot of work and refinement
+		Ragdoll is mangled, and animations don't look natural.
+
 Minor Issues:
 
 	1 -	Override gold with skyrim gold
@@ -255,10 +143,6 @@ Minor Issues:
 	3 - Improve landscape layer blending
 	
 	4 - Should properly position inventory items. The side that allows the largest view should face out
-	
-	5 - Properly convert creatures including animations
-		https://github.com/SpectralPlatypus/ck-cmd "C:\Users\Bryant\Documents\Code\TESConversion\references\ck-cmd-master"
-		https://wiki.beyondskyrim.org/wiki/Arcane_University:Implementation_of_Custom_Animations
 
 	6 - Every class teaches 1 handed this is obviously not correct in in accordance with the original data
 
@@ -311,4 +195,6 @@ Minor Issues:
 	21 - Bad cell names "Test End Game"
 
 	22 - Activators like standing stones or altars do nothing
+
+	23 - Flame atronach animated section not properly converted
 

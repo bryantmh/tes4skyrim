@@ -205,91 +205,294 @@ def _descriptor(constraint):
     return None, None
 
 
-def extract_ragdoll(skeleton_nif_path: str, bones: list):
-    """Parse the Oblivion skeleton.nif into RagdollPart list (parent-before-
-    child, constraints attached), or None when the skeleton has no ragdoll."""
-    data = NifFormat.Data()
-    with open(skeleton_nif_path, 'rb') as f:
-        data.read(f)
+# --- vanilla rock-joint template (atronachstorm skeleton.nif census: every
+# free orbiting rock is ragdoll-constrained to its nearest body-carrying
+# ancestor with exactly these limits) ---
+_SYNTH_CONE = 0.872665          # 50 deg
+_SYNTH_PLANE = 1.570796         # +/- 90 deg
+_SYNTH_TWIST = 0.087266         # +/- 5 deg
+_SYNTH_FRICTION = 10.0
 
-    bone_index = {b.name: i for i, b in enumerate(bones)}
-    body_by_bone = {}       # anim bone index -> (rigid_body, node)
-    body_id_to_bone = {}    # id(rigid_body) -> anim bone index
-    for root in data.roots:
-        if not isinstance(root, NifFormat.NiNode):
-            continue
-        for node in root.tree():
-            if not isinstance(node, NifFormat.NiNode):
-                continue
-            co = getattr(node, 'collision_object', None)
-            body = getattr(co, 'body', None) if co is not None else None
-            if body is None:
-                continue
-            name = bytes(node.name).decode('latin-1').rstrip('\x00')
-            from asset_convert.hkx_skeleton import BONE_RENAMES
-            idx = bone_index.get(BONE_RENAMES.get(name, name))
-            if idx is None:
-                continue
-            body_by_bone[idx] = (body, node)
-            body_id_to_bone[id(body)] = idx
 
-    if len(body_by_bone) < 2:
+class _SynthVec:
+    __slots__ = ('x', 'y', 'z')
+
+    def __init__(self, v):
+        self.x, self.y, self.z = float(v[0]), float(v[1]), float(v[2])
+
+
+class _SynthRagdoll:
+    """Duck-typed RagdollDescriptor for _add_ragdoll_constraint_data, in the
+    same Oblivion-unit conventions as a PyFFI descriptor."""
+
+    def __init__(self, pivot_a, pivot_b, twist_a, plane_a, twist_b, plane_b):
+        self.pivot_a = _SynthVec(pivot_a)
+        self.pivot_b = _SynthVec(pivot_b)
+        self.twist_a = _SynthVec(twist_a)
+        self.plane_a = _SynthVec(plane_a)
+        self.twist_b = _SynthVec(twist_b)
+        self.plane_b = _SynthVec(plane_b)
+        self.cone_max_angle = _SYNTH_CONE
+        self.plane_min_angle = -_SYNTH_PLANE
+        self.plane_max_angle = _SYNTH_PLANE
+        self.twist_min_angle = -_SYNTH_TWIST
+        self.twist_max_angle = _SYNTH_TWIST
+        self.max_friction = _SYNTH_FRICTION
+
+
+def _decode_name(node):
+    return bytes(node.name).decode('latin-1').rstrip('\x00')
+
+
+def plan_ragdoll_tree(data):
+    """Plan the single constrained tree over EVERY collision body in a
+    creature skeleton.nif (works on Oblivion source or mid-conversion data).
+
+    ENGINE CONTRACT (2026-07-09 Storm Atronach / Skeleton Load3D crash): the
+    SSE ragdoll attach walks constraints across ALL bhkBlendCollisionObject
+    bodies; any body outside one connected constrained tree leaves the walk
+    dereferencing an uninitialized hkpPositionConstraintMotor pointer ->
+    EXCEPTION_ACCESS_VIOLATION.  Vanilla atronachstorm constrains all 26
+    free orbiting rocks to their parent bones (27 bodies / 26 constraints);
+    Oblivion ships those rocks UNCONSTRAINED, so joints must be synthesized.
+
+    Returns None when there are fewer than 2 bodies, else a dict:
+      body_nodes  [NiNode] every body-carrying node under the bone root, DFS
+      edges       {id(child): parent NiNode} existing constraint links
+                  (first valid constraint per body; cycles broken)
+      synthetic   [(child NiNode, parent NiNode)] joints to ADD so the graph
+                  becomes one tree (nearest body-carrying NIF ancestor,
+                  fallback = the main tree root)
+      worlds      {id(node): (R 3x3 row-conv, t vec3)} world transforms in
+                  game units
+      root        the main tree root NiNode
+      node_of_id  {id(node): NiNode}
+    """
+    from asset_convert.hkx_skeleton import find_skeleton_root
+    try:
+        skel_root = find_skeleton_root(data)
+    except ValueError:
         return None
 
-    # First pass: per body, find the constraint joining it to a parent body.
-    raw = []   # (anim idx, body, constraint info or None, parent anim idx)
-    for idx in sorted(body_by_bone):
-        body, _node = body_by_bone[idx]
-        con_info, parent_anim = None, None
+    body_nodes = []
+    node_parent = {}
+    worlds = {}
+
+    def _local(node):
+        m = node.rotation
+        R = np.array([[m.m_11, m.m_12, m.m_13],
+                      [m.m_21, m.m_22, m.m_23],
+                      [m.m_31, m.m_32, m.m_33]], dtype=float) \
+            * float(node.scale)
+        t = np.array([node.translation.x, node.translation.y,
+                      node.translation.z], dtype=float)
+        return R, t
+
+    def visit(node, parent, R_p, t_p):
+        R_l, t_l = _local(node)
+        R_w = R_l @ R_p
+        t_w = t_l @ R_p + t_p
+        worlds[id(node)] = (R_w, t_w)
+        node_parent[id(node)] = parent
+        co = getattr(node, 'collision_object', None)
+        if co is not None and getattr(co, 'body', None) is not None:
+            body_nodes.append(node)
+        for child in node.children:
+            if isinstance(child, NifFormat.NiNode):
+                visit(child, node, R_w, t_w)
+
+    visit(skel_root, None, np.eye(3), np.zeros(3))
+
+    if len(body_nodes) < 2:
+        return None
+
+    dfs_index = {id(n): i for i, n in enumerate(body_nodes)}
+    body_of = {id(n): n.collision_object.body for n in body_nodes}
+    node_of_body = {id(b): nid for nid, b in
+                    ((id(n), body_of[id(n)]) for n in body_nodes)}
+    node_of_id = {id(n): n for n in body_nodes}
+
+    # existing constraint links: first valid constraint per body whose
+    # entities are (self, another body)
+    edges = {}
+    for n in body_nodes:
+        body = body_of[id(n)]
         for con in getattr(body, 'constraints', []):
             kind, d = _descriptor(con)
             if kind is None:
                 continue
-            ents = [body_id_to_bone.get(id(e)) for e in con.entities]
-            if len(ents) == 2 and ents[0] == idx and ents[1] is not None:
-                con_info = (kind, d, _v4(body.translation, _OB_TO_GAME),
-                            _v4(body_by_bone[ents[1]][0].translation,
-                                _OB_TO_GAME))
-                parent_anim = ents[1]
+            ents = list(con.entities)
+            if (len(ents) == 2 and ents[0] is body
+                    and id(ents[1]) in node_of_body):
+                edges[id(n)] = node_of_id[node_of_body[id(ents[1])]]
                 break
-        raw.append((idx, body, con_info, parent_anim))
 
-    # hkaRagdollInstance requires a CONNECTED constrained TREE (n bones,
-    # n-1 constraints) — the engine crashes at actor spawn otherwise.  The
-    # storm atronach carries ~54 free-floating rock bodies with NO
-    # constraints; those stay in skeleton.nif as animated blend collision
-    # but must NOT become ragdoll bones.  Keep only the largest
-    # constraint-connected component.
-    edges = {idx: par for idx, _b, con, par in raw if con is not None}
-    nodes = set(edges) | set(edges.values())
-    if len(nodes) < 2:
+    # break constraint cycles (defensive; each body has <= 1 outgoing edge)
+    for n in list(body_nodes):
+        seen = set()
+        nid = id(n)
+        while nid in edges and nid not in seen:
+            seen.add(nid)
+            nid = id(edges[nid])
+        if nid in seen:
+            del edges[nid]
+
+    # connected components (union-find over edges)
+    uf = {}
+
+    def find(x):
+        r = x
+        while uf.get(r, r) != r:
+            r = uf[r]
+        while uf.get(x, x) != x:
+            uf[x], x = r, uf[x]
+        return r
+
+    for cid, pnode in edges.items():
+        uf[find(cid)] = find(id(pnode))
+
+    comps = {}
+    for n in body_nodes:
+        comps.setdefault(find(id(n)), []).append(id(n))
+    comp_roots = {}     # component key -> tree root id (no outgoing edge)
+    for key, members in comps.items():
+        roots = [m for m in members if m not in edges]
+        comp_roots[key] = roots[0]
+
+    # main root = root of the largest component (ties: earliest DFS)
+    main_key = max(comps, key=lambda k: (len(comps[k]),
+                                         -dfs_index[comp_roots[k]]))
+    main_root = node_of_id[comp_roots[main_key]]
+
+    # synthesize joints: link every other component root to its nearest
+    # body-carrying NIF ancestor outside its own component (vanilla rock
+    # pattern), fallback = the main tree root
+    synthetic = []
+    other_roots = sorted((comp_roots[k] for k in comps if k != main_key),
+                         key=lambda nid: dfs_index[nid])
+    for rid in other_roots:
+        child = node_of_id[rid]
+        target = None
+        anc = node_parent.get(rid)
+        while anc is not None:
+            if id(anc) in body_of and find(id(anc)) != find(rid):
+                target = anc
+                break
+            anc = node_parent.get(id(anc))
+        if target is None and find(id(main_root)) != find(rid):
+            target = main_root
+        if target is None:
+            continue
+        synthetic.append((child, target))
+        uf[find(rid)] = find(id(target))
+
+    return {'body_nodes': body_nodes, 'edges': edges, 'synthetic': synthetic,
+            'worlds': worlds, 'root': main_root, 'node_of_id': node_of_id}
+
+
+def extract_ragdoll(skeleton_nif_path: str, bones: list):
+    """Parse the Oblivion skeleton.nif into RagdollPart list (parent-before-
+    child, constraints attached), or None when the skeleton has no ragdoll.
+
+    EVERY blend-collision body becomes a ragdoll part of one connected
+    constrained tree; unconstrained bodies (atronach rocks, detached
+    skeleton-creature clusters) get synthetic vanilla-template joints to
+    their nearest body-carrying ancestor (see plan_ragdoll_tree)."""
+    data = NifFormat.Data()
+    with open(skeleton_nif_path, 'rb') as f:
+        data.read(f)
+
+    plan = plan_ragdoll_tree(data)
+    if plan is None:
         return None
 
-    def _root_of(i):
-        seen = set()
-        while i in edges and i not in seen:
-            seen.add(i)
-            i = edges[i]
-        return i
+    from asset_convert.hkx_skeleton import BONE_RENAMES
+    bone_index = {b.name: i for i, b in enumerate(bones)}
 
-    comp_of = {i: _root_of(i) for i in nodes}
-    from collections import Counter
-    biggest = Counter(comp_of.values()).most_common(1)[0][0]
-    kept = {i for i, r in comp_of.items() if r == biggest}
+    def anim_idx(node):
+        name = _decode_name(node)
+        return bone_index.get(BONE_RENAMES.get(name, name))
 
-    # ragdoll part order: anim-skeleton DFS order restricted to kept bones
-    # (parents precede children in DFS numbering, so part_of_bone[parent]
-    # always exists by the time the child is reached)
-    part_of_bone = {}
-    parts = []
-    for idx, body, con_info, parent_anim in raw:
-        if idx not in kept:
+    if any(anim_idx(n) is None for n in plan['body_nodes']):
+        return None     # body outside the anim skeleton — no usable ragdoll
+
+    bone_worlds = _bone_worlds(bones)
+    body_of = {id(n): n.collision_object.body for n in plan['body_nodes']}
+
+    # per-child constraint info: real descriptors for planned edges,
+    # synthetic vanilla-template ragdoll joints for the augmentation
+    parent_of = {}          # id(child node) -> parent NiNode
+    con_of = {}             # id(child node) -> (kind, d, off_a, off_b)
+    for n in plan['body_nodes']:
+        pnode = plan['edges'].get(id(n))
+        if pnode is None:
             continue
+        body, pbody = body_of[id(n)], body_of[id(pnode)]
+        for con in getattr(body, 'constraints', []):
+            kind, d = _descriptor(con)
+            if kind is None:
+                continue
+            ents = list(con.entities)
+            if len(ents) == 2 and ents[0] is body and ents[1] is pbody:
+                parent_of[id(n)] = pnode
+                con_of[id(n)] = (kind, d, _v4(body.translation, _OB_TO_GAME),
+                                 _v4(pbody.translation, _OB_TO_GAME))
+                break
+
+    for child, pnode in plan['synthetic']:
+        body, pbody = body_of[id(child)], body_of[id(pnode)]
+        off_a = _v4(body.translation, _OB_TO_GAME)
+        off_b = _v4(pbody.translation, _OB_TO_GAME)
+        R_cw, t_cw = bone_worlds[anim_idx(child)]
+        R_pw, t_pw = bone_worlds[anim_idx(pnode)]
+        # pivot at the child body COM; the emitter computes
+        # piv = d.pivot*7 + off, in each entity's bone-local frame
+        com_local = _v4(body.center, _OB_TO_GAME) + off_a   # child bone frame
+        com_w = com_local @ R_cw + t_cw
+        piv_parent = (com_w - t_pw) @ R_pw.T                # parent bone frame
+        R_rel = R_cw @ R_pw.T           # child-frame vec -> parent frame
+        tw_b = R_rel[0] / (np.linalg.norm(R_rel[0]) or 1.0)
+        pl_b = R_rel[1] / (np.linalg.norm(R_rel[1]) or 1.0)
+        parent_of[id(child)] = pnode
+        con_of[id(child)] = (
+            'ragdoll',
+            _SynthRagdoll(pivot_a=_v4(body.center),
+                          pivot_b=(piv_parent - off_b) / _OB_TO_GAME,
+                          twist_a=(1.0, 0.0, 0.0), plane_a=(0.0, 1.0, 0.0),
+                          twist_b=tw_b, plane_b=pl_b),
+            off_a, off_b)
+
+    # part order: DFS over the final tree (parent-before-child by
+    # construction, required by hkaSkeleton parentIndices)
+    dfs_index = {id(n): i for i, n in enumerate(plan['body_nodes'])}
+    children = {}
+    for cid, pnode in parent_of.items():
+        children.setdefault(id(pnode), []).append(cid)
+    for lst in children.values():
+        lst.sort(key=dfs_index.__getitem__)
+
+    node_of_id = plan['node_of_id']
+    order = []
+    stack = [id(plan['root'])]
+    while stack:
+        nid = stack.pop()
+        order.append(nid)
+        stack.extend(reversed(children.get(nid, [])))
+    if len(order) != len(plan['body_nodes']):
+        return None     # tree did not cover every body — bail to anim-only
+
+    part_of_node = {}
+    parts = []
+    for nid in order:
+        node = node_of_id[nid]
+        body = body_of[nid]
+        idx = anim_idx(node)
         p = RagdollPart()
         p.anim_index = idx
         p.name = 'Ragdoll_' + bones[idx].name
-        p.parent = part_of_bone[parent_anim] if con_info is not None else -1
-        p.constraint = con_info
+        pnode = parent_of.get(nid)
+        p.parent = part_of_node[id(pnode)] if pnode is not None else -1
+        p.constraint = con_of.get(nid)
 
         offset = _v4(body.translation, _OB_TO_GAME)
         p.mass = float(body.mass) if body.mass > 0 else 1.0
@@ -306,10 +509,36 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
             inertia = 0.4 * p.mass * r_bs * r_bs
         p.inertia = inertia
 
-        part_of_bone[idx] = len(parts)
+        part_of_node[nid] = len(parts)
         parts.append(p)
 
     return parts
+
+
+def ragdoll_info(skeleton_nif_path: str, bones: list):
+    """Slim summary for the behavior generator (death/ragdoll states):
+    {'parts': n, 'pose_bones': (i0, i1, i2)} with pose-matching picks in
+    RAGDOLL skeleton indices (vanilla uses pelvis + a leg + head; we pick the
+    root part and the two deepest parts of distinct subtrees), or None when
+    the skeleton has no usable ragdoll."""
+    try:
+        parts = extract_ragdoll(skeleton_nif_path, bones)
+    except Exception:
+        return None
+    if not parts:
+        return None
+
+    def _depth(i):
+        d = 0
+        while parts[i].parent >= 0:
+            i = parts[i].parent
+            d += 1
+        return d
+
+    order = sorted(range(len(parts)), key=_depth, reverse=True)
+    b1 = order[0] if len(parts) > 1 else 0
+    b2 = next((i for i in order if i not in (0, b1)), b1)
+    return {'parts': len(parts), 'pose_bones': (0, b1, b2)}
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +658,12 @@ def _add_rigid_body(pf, part, world_R, world_t):
 
 
 def _add_ragdoll_constraint_data(pf, d, offset_a, offset_b, motor_ref):
-    """hkpRagdollConstraintData from an Oblivion RagdollDescriptor."""
+    """hkpRagdollConstraintData from an Oblivion RagdollDescriptor.
+
+    motor_ref=None emits motors as null (the hkpPhysicsSystem copy);
+    vanilla motorizes ONLY the hkaRagdollInstance constraint set."""
+    motors = (f'{motor_ref} {motor_ref} {motor_ref}' if motor_ref
+              else 'null null null')
     rows_a = _basis_rows(_v4(d.twist_a), _v4(d.plane_a))
     rows_b = _basis_rows(_v4(d.twist_b), _v4(d.plane_b))
     piv_a = _v4(d.pivot_a, _OB_TO_GAME) + offset_a
@@ -462,7 +696,7 @@ def _add_ragdoll_constraint_data(pf, d, offset_a, offset_b, motor_ref):
 \t\t\t<hkparam name="initializedOffset">96</hkparam>
 \t\t\t<hkparam name="previousTargetAnglesOffset">100</hkparam>
 \t\t\t<hkparam name="target_bRca">{tgt}</hkparam>
-\t\t\t<hkparam name="motors">{motor_ref} {motor_ref} {motor_ref}</hkparam>
+\t\t\t<hkparam name="motors">{motors}</hkparam>
 \t\t</hkobject>
 \t</hkparam>
 \t<hkparam name="angFriction">
@@ -525,9 +759,18 @@ def _add_ragdoll_constraint_data(pf, d, offset_a, offset_b, motor_ref):
     return data
 
 
-def _add_hinge_constraint_data(pf, kind, d, offset_a, offset_b):
+def _add_hinge_constraint_data(pf, kind, d, offset_a, offset_b,
+                               motor_ref=None):
     """hkpLimitedHingeConstraintData from an Oblivion (Limited)Hinge
-    descriptor. Plain hinges get wide limits."""
+    descriptor. Plain hinges get wide limits.
+
+    motor_ref: hkpPositionConstraintMotor for the hkaRagdollInstance copy,
+    None (null) for the hkpPhysicsSystem copy.  The engine's ragdoll attach
+    dereferences the RAGDOLL set's angMotor.motor without a null check —
+    hinge constraints with a null motor there crash SSE at actor Load3D
+    (2026-07-09 Storm Atronach / Skeleton crash: every vanilla creature
+    skeleton.hkx motorizes ALL ragdoll-instance constraints and nulls ALL
+    physics-system copies)."""
     axle_a = _v4(d.axle_a)
     perp_a = _v4(getattr(d, 'perp_2_axle_in_a_1', None)) \
         if getattr(d, 'perp_2_axle_in_a_1', None) is not None else None
@@ -570,7 +813,7 @@ def _add_hinge_constraint_data(pf, kind, d, offset_a, offset_b):
 \t\t\t<hkparam name="previousTargetAngleOffset">68</hkparam>
 \t\t\t<hkparam name="correspondingAngLimitSolverResultOffset">16</hkparam>
 \t\t\t<hkparam name="targetAngle">0.000000</hkparam>
-\t\t\t<hkparam name="motor">null</hkparam>
+\t\t\t<hkparam name="motor">{motor_ref or 'null'}</hkparam>
 \t\t</hkobject>
 \t</hkparam>
 \t<hkparam name="angFriction">
@@ -693,17 +936,20 @@ def emit_ragdoll(pf, bones, parts, anim_skel_ref):
                       [(p.anim_index, ri) for ri, p in enumerate(parts)],
                       unmapped_anim)
 
+    # vanilla motor values (dog skeleton.hkx #0126) — the omitted-`type`
+    # default is TYPE_INVALID, which the solver dispatches on; always emit it
     motor = pf.add('hkpPositionConstraintMotor')
+    motor.param('type', 'TYPE_POSITION')
     motor.param('minForce', '-1000000.000000')
-    motor.param('maxForce', '1000000.000000')
+    motor.param('maxForce', '100.000000')
     motor.param('tau', '0.800000')
     motor.param('damping', '1.000000')
-    motor.param('proportionalRecoveryVelocity', '2.000000')
-    motor.param('constantRecoveryVelocity', '1.000000')
+    motor.param('proportionalRecoveryVelocity', '5.000000')
+    motor.param('constantRecoveryVelocity', '0.200000')
 
     bodies = [_add_rigid_body(pf, p, *worlds[p.anim_index]) for p in parts]
 
-    def _constraints():
+    def _constraints(motor_ref):
         insts = []
         for ri, p in enumerate(parts):
             if p.constraint is None or p.parent < 0:
@@ -711,17 +957,18 @@ def emit_ragdoll(pf, bones, parts, anim_skel_ref):
             kind, d, off_a, off_b = p.constraint
             if kind == 'ragdoll':
                 data = _add_ragdoll_constraint_data(pf, d, off_a, off_b,
-                                                    motor.ref)
+                                                    motor_ref)
             else:
-                data = _add_hinge_constraint_data(pf, kind, d, off_a, off_b)
+                data = _add_hinge_constraint_data(pf, kind, d, off_a, off_b,
+                                                  motor_ref)
             insts.append(_add_constraint_instance(
                 pf, data.ref, bodies[ri].ref, bodies[p.parent].ref, p.name))
         return insts
 
-    # vanilla duplicates the constraint graph: one instance set for the
-    # ragdoll instance, one for the physics system (bodies are shared)
-    con_ragdoll = _constraints()
-    con_system = _constraints()
+    # vanilla duplicates the constraint graph: the hkaRagdollInstance set is
+    # fully motored, the hkpPhysicsSystem set is fully null (bodies shared)
+    con_ragdoll = _constraints(motor.ref)
+    con_system = _constraints(None)
 
     ragdoll = pf.add('hkaRagdollInstance')
     ragdoll.param_array('rigidBodies', [b.ref for b in bodies])

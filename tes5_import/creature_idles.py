@@ -14,8 +14,12 @@ shows attack animations — the third and final stuck-in-idle layer
 
 Attack events are NOT routed here: the combat controller sends the RACE's
 ATKE strings directly — but only after the draw handshake (ActionDraw →
-combatStanceStart in, graph confirms with weaponDraw out; see the
-CombatStance state in asset_convert/hkx_behavior.py).
+combatStanceStart in, graph replies weaponDraw out via the root-level
+StartCombat/StopCombat expression-modifier pair in
+asset_convert/hkx_behavior.py) and only while the graph's IsAttackReady /
+bEquipOK variables read 1 (vanilla initial values).  Death routes through
+the DeathWait tree (DeathAnimation conditioned / Ragdoll fall-through,
+vanilla dog layout) into the graph's ragdoll wrapper states.
 
 Layouts mirror the vanilla dog set byte-for-byte (DATA group/flag bytes and
 the swim IsSwimming CTDA copied verbatim from Skyrim.esm DogMoveStart/
@@ -45,6 +49,8 @@ _ACTIONS = {
     'ActionSheath': 0x00046BAF,
     'ActionDeathWait': 0x0005DD59,
     'ActionSwimStateChange': 0x00013003,
+    'ActionKnockDown': 0x000D1FDC,
+    'ActionRagdollInstant': 0x0009BB4E,
 }
 
 # (edid suffix, graph event, action, vanilla-dog DATA hex)
@@ -65,23 +71,37 @@ _LEAVES = [
     ('CombatStance', 'combatStanceStart', 'ActionDraw', '000000110000'),
     ('CombatStanceStop', 'combatStanceStop', 'ActionSheath',
      '000000200000'),
-    ('DeathWait', 'deathStart', 'ActionDeathWait', '000000730000'),
+    # death is handled by the DeathWait TREE below (DeathAnimation/Ragdoll —
+    # Oblivion creatures have no death anims, the ragdoll IS the death)
+    ('Knockdown', 'Ragdoll', 'ActionKnockDown', '000000630000'),
+    ('RagdollInstant', 'RagdollInstant', 'ActionRagdollInstant',
+     '000000740000'),
 ]
 
 # IsSwimming == 1 condition, verbatim from vanilla DogSwimStart
 _SWIM_CTDA = bytes.fromhex(
     '000F8B000000803FB900933300000000000000000000000000000000FFFFFFFF')
 _SWIM_DATA = bytes.fromhex('0000003F0000')
+# vanilla DogDeathWait conditions (verbatim) — gate the DeathAnimation
+# branch; when false the walk falls through to the Ragdoll sibling
+_DEATH_ANIM_CTDAS = [bytes.fromhex(
+    '00AC8D00000000004402B92000000000000000000000000000000000FFFFFFFF'),
+    bytes.fromhex(
+    '00AC8D00000000003901B92000000000000000000000000000000000FFFFFFFF')]
+_DEATH_ROOT_DATA = bytes.fromhex('000000000000')
+_DEATH_ANIM_DATA = bytes.fromhex('000000730000')
+_DEATH_RAGDOLL_DATA = bytes.fromhex('000000740000')
 
 
 def _idle(writer, edid: str, dnam: str, enam: str, parent: int,
-          previous: int, data: bytes, ctda: bytes = None) -> int:
+          previous: int, data: bytes, ctda=None) -> int:
     """One IDLE record (subrecord order: EDID CTDA* DNAM ENAM ANAM DATA);
-    ANAM = (parent, previous sibling). Returns the new FormID."""
+    ANAM = (parent, previous sibling). ctda: bytes or list of bytes.
+    Returns the new FormID."""
     fid = writer.alloc_formid()
     subs = pack_string_subrecord('EDID', edid)
-    if ctda:
-        subs += pack_subrecord('CTDA', ctda)
+    for c in ([ctda] if isinstance(ctda, bytes) else (ctda or [])):
+        subs += pack_subrecord('CTDA', c)
     subs += pack_string_subrecord('DNAM', dnam)
     if enam:
         subs += pack_string_subrecord('ENAM', enam)
@@ -111,3 +131,14 @@ def build_creature_idles(writer, folder: str, proj: dict) -> None:
                   _SWIM_DATA, ctda=_SWIM_CTDA)
     _idle(writer, f'{base}SwimStop', dnam, 'swimStop', root, start,
           _SWIM_DATA)
+
+    # Death: vanilla dog tree — ActionDeathWait root, DeathAnimation child
+    # (conditioned) with Ragdoll as the fall-through sibling.  The generated
+    # graph handles both (AnimateToRagdoll / Fully Ragdoll wrapper states);
+    # without this tree `kill` leaves the actor idling upright forever.
+    droot = _idle(writer, f'{base}DeathWaitRoot', dnam, '',
+                  _ACTIONS['ActionDeathWait'], 0, _DEATH_ROOT_DATA)
+    danim = _idle(writer, f'{base}DeathWait', dnam, 'DeathAnimation', droot,
+                  0, _DEATH_ANIM_DATA, ctda=_DEATH_ANIM_CTDAS)
+    _idle(writer, f'{base}DeathWaitRagdoll', dnam, 'Ragdoll', droot, danim,
+          _DEATH_RAGDOLL_DATA)

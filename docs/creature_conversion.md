@@ -632,12 +632,71 @@ creature is fully proven.
   the combat controller sends RACE ATKE strings directly, but only after the DRAW
   HANDSHAKE: ActionDraw routes combatStanceStart into the graph and the combat
   controller waits for the graph to answer with a weaponDraw event before attacking.
-  The generated graph now has a looping CombatStance state (idle clip, entered on
-  combatStanceStart, exits on combatStanceStop) whose enter/exitNotifyEvents send
-  weaponDraw/weaponSheathe (hkbStateMachineEventPropertyArray), plus
-  moveForward/recoilLargeStart/IdleStop wildcards. Discovery credit: the Skyrim
-  Behavior Modding Guide ("the Idle Animations tab... parses events... and sends
-  animation events to the behavior graph") + ck-cmd's `IDLERecord()` helper.
+  Discovery credit: the Skyrim Behavior Modding Guide ("the Idle Animations tab...
+  parses events... and sends animation events to the behavior graph") + ck-cmd's
+  `IDLERecord()` helper.
+- **The weaponDraw reply is sent by a root-level expression-modifier pair, and combat
+  additionally gates on IsAttackReady/bEquipOK == 1 (2026-07-09, the no-attacks root
+  cause)**: state enter/exitNotifyEvents (first attempt) did NOT unlock attacks in-game.
+  Vanilla ground truth (hkxcmd XML dump of canine quadrupedbehavior.hkx): NOTHING in
+  the vanilla graph notifies weaponDraw from a state — the reply comes from an
+  always-present pair in the ROOT modifier list: `StartCombat_EDM`
+  (hkbEventDrivenModifier, activate=combatStanceStart, deactivate=combatStanceStop,
+  activeByDefault=false) wrapping `StartCombat_EEM` (hkbEvaluateExpressionModifier)
+  with expressions `iCombatStance = 1` (EVENT_MODE_SEND_ONCE) and `weaponDraw if
+  (iCombatStance == 1)` (EVENT_MODE_SEND_ON_FALSE_TO_TRUE), plus the mirror-image
+  StopCombat pair (activeByDefault=true) sending weaponSheathe. AND vanilla
+  dogbehavior initializes `IsAttackReady = 1` and `bEquipOK = 1` — our graph had
+  IsAttackReady=0, which the combat controller reads before sending any attackStart_*
+  (symptom: follows/chases forever, never attacks). Both replicated verbatim in
+  `build_behavior_xml` (ENGINE_VARIABLES now carries per-variable initial values);
+  the CombatStance state remains as the combat-facing pose but no longer notifies.
+- **Per-creature MOVT SPED from clip root motion + parametric walk/run blend
+  (2026-07-09, the too-fast fix)**: shipping vanilla-dog SPED bytes (forwardRun ≈ 500
+  u/s) for every creature made them slide far faster than their walk animation.
+  ck-cmd `calculateMOVTs` (ConvertNif.cpp): forwardWalk = |root-motion end translation|
+  / duration. `generate_creature_project` now computes `speeds` {walk/run/back/swim}
+  from the motion endpoints (dog: walk 55.9, run 379.9 — vanilla dog is 74.54/500.14)
+  → manifest + creature_projects.json → `creature_races._movt_sped()` packs the
+  11-float SPED (left/right 0, rotate π & 3π/2 rad/s = vanilla dog; no run clip → run
+  = walk). Animation side: vanilla plays the RIGHT-looking gait via a PARAMETRIC
+  blender, not states — ForwardWalkBlend_Dog is an hkbBlenderGenerator with flags 17
+  (SYNC|PARAMETRIC), blendParameter bound to SpeedSampled, children anchored at each
+  clip's NATURAL speed (74.54 = the MOVT value, proving MOVT speeds == clip root-motion
+  speeds). Our MoveForward state now wraps walk+run clips (runforward/fastforward.kf,
+  previously unused) in exactly that blender, so the played animation tracks actual
+  speed. Vanilla dog fact: `iState` never changes (stays 30) and both dog MOVTs are
+  byte-identical — walk vs run is chosen by the AI from the forwardWalk/forwardRun
+  COLUMNS of the active MOVT, not by switching MOVTs (iState/MOVT switching is for
+  multi-mode creatures like horses; the values are arbitrary tags, NOT state ids).
+- **Death = ragdoll for Oblivion creatures (2026-07-09, the kill-keeps-idling fix)**:
+  Oblivion creatures ship NO death animations (physics death), so a deathStart-driven
+  Death anim state can never fire for most creatures. Vanilla routing: ActionDeathWait
+  → DogDeathWaitRoot → DogDeathWait (ENAM=DeathAnimation, 2 CTDAs) else
+  DogDeathWaitRagdoll (ENAM=Ragdoll fall-through); dogbehavior's root SM handles
+  DeathAnimation → AnimateToRagdoll (enterNotify **AddRagdollToWorld**, internal
+  Ragdoll → Fully Ragdoll via BSRagdollContactListenerModifier floor contact) and
+  Ragdoll/RagdollInstant → Fully Ragdoll (enterNotify
+  **RemoveCharacterControllerFromWorld**) — those two notify events are consumed by
+  the ENGINE. Replicated: creature_idles.py emits the DeathWait tree (CTDAs verbatim)
+  + Knockdown (ActionKnockDown 000D1FDC → Ragdoll) + RagdollInstant (ActionRagdollInstant
+  0009BB4E → RagdollInstant); build_behavior_xml adds the two wrapper states
+  (hkbPoweredRagdollControlsModifier maxForce 200 COMPUTE / 0 RAGDOLL, pose-matching
+  bones picked from ragdoll part depths, idle-clip pose holders) gated on
+  `hkx_ragdoll.ragdoll_info()`. No getup states yet (Oblivion creatures lack getup
+  clips) — a knocked-down-but-alive actor stays down; death is unaffected.
+- **Ragdoll constraint motors are mandatory in the hkaRagdollInstance set (2026-07-09,
+  the Storm Atronach / Skeleton Load3D crash)**: crash log showed
+  EXCEPTION_ACCESS_VIOLATION dereferencing an hkpPositionConstraintMotor with a
+  packed-float garbage pointer during ragdoll attach, always on creatures whose
+  Oblivion skeletons use bhkLimitedHingeConstraints (atronach rock hinges, skeleton
+  foot/calf hinges) — our hinges had `motor=null` everywhere. Vanilla census (dog +
+  atronachstorm skeleton.hkx dumps): the hkaRagdollInstance constraint set is FULLY
+  MOTORED (hinges get the single shared hkpPositionConstraintMotor, ragdoll data gets
+  it ×3), the duplicate hkpPhysicsSystem set is FULLY NULL. Also the motor must emit
+  `type=TYPE_POSITION` explicitly (omitted param = TYPE_INVALID, solver dispatches on
+  it) with vanilla values maxForce=100/prop=5.0/const=0.2. Fixed in hkx_ragdoll.py
+  (`_constraints(motor_ref)` builds the motored + null sets).
 - **iState_* graph variables ↔ MOVT records are the movement-type registration contract
   (2026-07-09, stuck-in-idle root cause #2 — locomotion/movement)**: the engine gives an actor its
   movement types by enumerating the root behavior graph's variables named
@@ -656,9 +715,9 @@ creature is fully proven.
   `iState_TES4<name>Default`/`iState_TES4<name>Run` INT32 variables (value = the
   MoveForward state id, iState initialized to match), the names ship in
   project_manifest.json / creature_projects.json as `movement_types`, and
-  `creature_races._build_movts` emits matching MOVT records (SPED/INAM byte-copied
-  from vanilla Dog_Default_MT; per-creature speeds from TES4 DATA.Speed are a later
-  refinement) — graph↔record consistency by construction, like ATKE.
+  `creature_races._build_movts` emits matching MOVT records (SPED now computed
+  per creature from clip root motion — see the too-fast fix bullet above) —
+  graph↔record consistency by construction, like ATKE.
 - **Record side (`tes5_import/creature_races.py`, import Phase 0f)**: one generated RACE +
   skin ARMO + per-body-part ARMA per unique (creature folder, NIFZ body set) — layouts
   byte-mirrored from real Skyrim.esm dumps of DogRace(000131EE)/SkinDog(0004B2C9)
@@ -671,11 +730,15 @@ creature is fully proven.
   `convert_CREA` RNAM → generated race via `get_creature_race()`;
   `resolve_creature_race` Skyrim-race aliasing = FALLBACK only. NPC_ humanoids keep the
   Skyrim race override system (user directive).
-- Remaining refinements: specialidle/IDLE wiring, foot IK/look-at/speed-blended gaits,
-  ragdoll-driven death in the graph (PoweredRagdoll — Death state currently holds the last
-  anim pose), per-creature SNDR sound sets + ARMA footstep SNDD, per-creature BPTD (RACE
-  GNAM = vanilla canine body-part data for now), equip/unequip weapon states, in-game
-  validation.
+- Remaining refinements: specialidle/random-idle IDLE wiring (DogIdleRoot/DogIdles
+  pattern), foot IK/look-at, getup-after-knockdown (needs getup clips Oblivion lacks —
+  knocked-down live actors stay down; death unaffected), canned 90/180° turns
+  (impossible from Oblivion data: turnleft/turnright.kf are looping shuffles with NO
+  root-motion rotation — vanilla canned turns are authored root-motion clips; looping
+  TurnLeft/TurnRight states are the turn support Oblivion data allows), per-creature
+  SNDR sound sets + ARMA footstep SNDD, per-creature BPTD (RACE GNAM = vanilla canine
+  body-part data for now), equip/unequip weapon states, body_map misses for
+  skinned-hound variants (race collapse onto one variant), in-game validation.
 - **Toolchain gotchas (all cost real debugging time)**: hkxcmd CRASHES (0xC0000417) on
   FORWARD-SLASH paths — always `os.path.abspath`. hkxcmd's XML parser needs referenced
   objects defined BEFORE referencers (root container LAST). PyFFI fresh

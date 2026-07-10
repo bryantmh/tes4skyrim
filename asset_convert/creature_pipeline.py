@@ -289,6 +289,9 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
         'movement_types': m.get('movement_types',
                                 [f'TES4{name.lower()}Default',
                                  f'TES4{name.lower()}Run']),
+        # clip root-motion speeds (u/s) → per-creature MOVT SPED columns
+        'speeds': m.get('speeds', {}),
+        'has_ragdoll': m.get('has_ragdoll', False),
         'clips': [c['name'] for c in m.get('clips', [])],
         'bones': m.get('bones', []),
     } for name, m in all_manifests.items()}

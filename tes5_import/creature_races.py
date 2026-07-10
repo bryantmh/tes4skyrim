@@ -51,14 +51,27 @@ _RACE_DATA_TEMPLATE = bytes.fromhex(
     '00000000')
 _MODT = bytes.fromhex('020000000000000000000000')
 _ARMA_DNAM = bytes.fromhex('000000000000001100000000')
-# MOVT speed/rotate data + anim-speed thresholds, byte-copied from vanilla
-# Dog_Default_MT (0004E5E0) / Dog_Run_MT (000EA64A) — both ship identical
-# SPED in Skyrim.esm. Per-creature speeds (TES4 DATA.Speed) are a later
-# refinement; registration is what makes the actor movable at all.
-_MOVT_SPED = bytes.fromhex(
-    '000000000000000000000000000000007B149542EC11FA43'
-    '7B1495427B149542DB0F4940E4CB9640E4CB9640')
+# MOVT SPED layout: 11 floats — leftWalk, leftRun, rightWalk, rightRun,
+# forwardWalk, forwardRun, backWalk, backRun, rotateInPlaceWalk,
+# rotateInPlaceRun, rotateWhileMovingRun (rotate in RADIANS/sec — vanilla
+# dog: 0,0,0,0, 74.54, 500.14, 74.54, 74.54, π, 3π/2, 3π/2, both dog MOVTs
+# byte-identical).  Per-creature forward/back speeds come from the clip
+# root-motion endpoints (proj['speeds'], ck-cmd calculateMOVTs method):
+# commanded speed must equal the animation's natural speed or actors slide/
+# moonwalk (2026-07-09 "far too fast" report — every creature was shipping
+# the vanilla dog's 500 u/s run).  No run clip → run = walk speed (the
+# creature simply can't move faster than its only gait).
+_DOG_WALK, _DOG_RUN = 74.54, 500.14
+_ROT_WALK, _ROT_RUN = 3.14159265, 4.71238898
 _MOVT_INAM = bytes.fromhex('FFFF7F7FFFFF7F7FFFFF7F7F')
+
+
+def _movt_sped(speeds: dict) -> bytes:
+    walk = speeds.get('walk') or _DOG_WALK
+    run = speeds.get('run') or walk
+    back = speeds.get('back') or walk * 0.8
+    return struct.pack('<11f', 0.0, 0.0, 0.0, 0.0, walk, max(run, walk),
+                       back, back, _ROT_WALK, _ROT_RUN, _ROT_RUN)
 _MTNM_CODES = (b'WALK', b'RUN1', b'SNEK', b'BLDO', b'SWIM')
 _EGT_MALE = 'Actors\\Character\\UpperBodyHumanMale.egt'
 _EGT_FEMALE = 'Actors\\Character\\UpperBodyHumanFemale.egt'
@@ -205,10 +218,11 @@ def _build_movts(writer, folder: str, proj: dict) -> None:
     manifest so graph and records agree by construction (like ATKE)."""
     names = proj.get('movement_types') or [f'TES4{folder}Default',
                                            f'TES4{folder}Run']
+    sped = _movt_sped(proj.get('speeds') or {})
     for mnam in names:
         subs = pack_string_subrecord('EDID', f'{mnam}_MT')
         subs += pack_string_subrecord('MNAM', mnam)
-        subs += pack_subrecord('SPED', _MOVT_SPED)
+        subs += pack_subrecord('SPED', sped)
         subs += pack_subrecord('INAM', _MOVT_INAM)
         writer.add_record('MOVT', pack_record('MOVT', writer.alloc_formid(),
                                               0, subs))

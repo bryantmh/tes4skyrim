@@ -56,6 +56,15 @@ hkx_xml.SIGNATURES.update({
     'hkbCharacterData': '0x300d6808',
     'hkbCharacterStringData': '0x655b42bc',
     'hkbMirroredSkeletonInfo': '0xc6c2da4f',
+    'hkbEventDrivenModifier': '0x7ed3f44e',
+    'hkbEvaluateExpressionModifier': '0xf900f6be',
+    'hkbExpressionDataArray': '0x4b9ee1a2',
+    'hkbBlenderGenerator': '0x22df7147',
+    'hkbBlenderGeneratorChild': '0xe2b384b0',
+    'hkbPoweredRagdollControlsModifier': '0x7cb54065',
+    'BSRagdollContactListenerModifier': '0x8003d8ce',
+    'hkbBoneIndexArray': '0xaa8619',
+    'hkbBoneWeightArray': '0xcd902b77',
 })
 
 
@@ -95,7 +104,7 @@ def classify_clips(creature_dir: str) -> dict:
                 creature_dir, fn)
 
     out = {'idle': None, 'locomotion': {}, 'attacks': [], 'single': {},
-           'extra': []}
+           'extra': [], 'run': None}
     used = set()
     for cand in IDLE_CANDIDATES:
         if cand in kfs:
@@ -106,6 +115,14 @@ def classify_clips(creature_dir: str) -> dict:
         for n in names:
             if n in kfs:
                 out['locomotion'][state] = kfs[n]
+                used.add(n)
+                break
+    # run gait: a faster forward clip distinct from the walk clip — feeds the
+    # MoveForward parametric speed blend (vanilla ForwardWalkBlend layout)
+    if 'forward' in used:
+        for n in ('runforward', 'fastforward'):
+            if n in kfs and n not in used:
+                out['run'] = kfs[n]
                 used.add(n)
                 break
     for state, (names, _e, _x) in SINGLE_PLAY.items():
@@ -142,10 +159,10 @@ def state_defs(clips: dict) -> list:
     end_evt) tuples, Idle first (state id 0).
 
     CombatStance is a looping idle-clip state entered on combatStanceStart
-    (routed from the engine's ActionDraw): the combat controller "draws"
-    before attacking and waits for the graph to confirm with a weaponDraw
-    event (sent as the state's enterNotifyEvent) — without the handshake it
-    never sends the RACE's attackStart_* events."""
+    (routed from the engine's ActionDraw) — the combat-facing stance pose.
+    The weaponDraw reply the combat controller waits for is sent by the
+    root-level StartCombat/StopCombat expression-modifier pair (vanilla
+    quadruped layout), not by this state."""
     defs = []
     if clips['idle']:
         defs.append(('Idle', clips['idle'], True, None, None))
@@ -311,19 +328,25 @@ _BINDING_TMPL = '''<hkobject>
 # them — vanilla dogbehavior has 65 variables; this is the engine-set/read
 # subset).  A graph with NO variables leaves the movement hookup dead: the
 # actor plays its start state forever and never walks or reacts.
-# All word defaults are 0 (= 0.0 for REALs).
+# Third field = initial word value.  Vanilla dogbehavior inits IsAttackReady
+# and bEquipOK to 1 — the combat controller reads them before ever sending
+# an attackStart_* event, so a 0 default means the actor follows its target
+# but NEVER attacks (2026-07-09 no-attacks root cause, with the weaponDraw
+# reply below).  iCombatStance is engine-written on stance changes and
+# drives the StartCombat/StopCombat expression pair.
 ENGINE_VARIABLES = [
-    ('Speed', 'REAL'), ('Direction', 'REAL'), ('TurnDelta', 'REAL'),
-    ('TurnDeltaDamped', 'REAL'), ('SpeedSampled', 'REAL'),
-    ('staggerMagnitude', 'REAL'), ('staggerDirection', 'REAL'),
-    ('iState', 'INT32'), ('iGetUpType', 'INT32'),
-    ('iCharacterSelector', 'INT32'),
-    ('IsAttacking', 'BOOL'), ('IsAttackReady', 'BOOL'),
-    ('IsRecoiling', 'BOOL'), ('IsStaggering', 'BOOL'),
-    ('IsBleedingOut', 'BOOL'), ('IsBashing', 'BOOL'),
-    ('bAnimationDriven', 'BOOL'), ('bAllowRotation', 'BOOL'),
-    ('bHeadTracking', 'BOOL'), ('bCanHeadTrack', 'BOOL'),
-    ('bDisableHeadTrack', 'BOOL'), ('bForceIdleStop', 'BOOL'),
+    ('Speed', 'REAL', 0), ('Direction', 'REAL', 0), ('TurnDelta', 'REAL', 0),
+    ('TurnDeltaDamped', 'REAL', 0), ('SpeedSampled', 'REAL', 0),
+    ('staggerMagnitude', 'REAL', 0), ('staggerDirection', 'REAL', 0),
+    ('iState', 'INT32', 0), ('iGetUpType', 'INT32', 0),
+    ('iCharacterSelector', 'INT32', 0), ('iCombatStance', 'INT32', 0),
+    ('IsAttacking', 'BOOL', 0), ('IsAttackReady', 'BOOL', 1),
+    ('bEquipOK', 'BOOL', 1),
+    ('IsRecoiling', 'BOOL', 0), ('IsStaggering', 'BOOL', 0),
+    ('IsBleedingOut', 'BOOL', 0), ('IsBashing', 'BOOL', 0),
+    ('bAnimationDriven', 'BOOL', 0), ('bAllowRotation', 'BOOL', 0),
+    ('bHeadTracking', 'BOOL', 0), ('bCanHeadTrack', 'BOOL', 0),
+    ('bDisableHeadTrack', 'BOOL', 0), ('bForceIdleStop', 'BOOL', 0),
 ]
 
 
@@ -351,7 +374,9 @@ def movement_type_names(name: str) -> list:
 
 def build_behavior_xml(behavior_name: str, clips: dict,
                        hit_times: dict = None,
-                       movement_types: list = None) -> str:
+                       movement_types: list = None,
+                       speeds: dict = None,
+                       ragdoll: dict = None) -> str:
     """The generated v1 state machine (see module docstring).
 
     hit_times: {state_name: [seconds]} — Oblivion 'Hit' text-key times for
@@ -361,9 +386,20 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     movement_types: MOVT MNAM strings (movement_type_names()) declared as
     `iState_<X>` INT32 variables — the engine's movement-type registration
     contract; without them the actor cannot move at all.
+
+    speeds: {'walk': u/s, 'run': u/s, ...} clip root-motion speeds — anchor
+    weights for the MoveForward parametric walk/run blend (vanilla
+    ForwardWalkBlend: children weighted by natural clip speed, blend
+    parameter bound to SpeedSampled, flags=17 SYNC|PARAMETRIC).
+
+    ragdoll: hkx_ragdoll.ragdoll_info() dict — enables the death/ragdoll
+    wrapper states (DeathAnimation/Ragdoll/RagdollInstant routing, mirrors
+    the vanilla dogbehavior root SM). Oblivion creatures have no death
+    animations: death IS the ragdoll.
     """
     hit_times = hit_times or {}
     movement_types = movement_types or []
+    speeds = speeds or {}
     # ---- event vocabulary: standard + per-attack ----
     events = ['moveStart', 'moveStop', 'moveForward', 'moveBackward',
               'turnLeft', 'turnRight', 'turnStop', 'swimStart', 'swimStop',
@@ -372,6 +408,8 @@ def build_behavior_xml(behavior_name: str, clips: dict,
               'combatStanceStart', 'combatStanceStop',
               'weaponDraw', 'weaponSheathe',
               'attackStop', 'returnToDefault', 'deathStart', 'IdleStop',
+              'DeathAnimation', 'Ragdoll', 'RagdollInstant',
+              'AddRagdollToWorld', 'RemoveCharacterControllerFromWorld',
               'SoundPlay', 'preHitFrame', 'HitFrame', 'FootFront', 'FootBack']
     attack_events = build_attack_events(clips)
     events += attack_events
@@ -399,11 +437,52 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     if not defs:
         raise ValueError('creature has no usable clips')
 
+    # variable table is fixed up-front so bindings inside the state loop can
+    # reference indices (iState_<MOVT MNAM> registration: see
+    # movement_type_names).  Initial values: loco state id for the iState
+    # family, declared defaults otherwise (IsAttackReady/bEquipOK = 1).
+    loco_id = next((i for i, d in enumerate(defs) if d[0] == 'MoveForward'), 0)
+    variables = ([(n, t, iv) for n, t, iv in ENGINE_VARIABLES]
+                 + [(f'iState_{mt}', 'INT32', loco_id)
+                    for mt in movement_types])
+    var_values = [loco_id if n == 'iState' else iv
+                  for n, _t, iv in variables]
+    vidx = {n: i for i, (n, _t, _iv) in enumerate(variables)}
+
+    def _binding_set(pairs):
+        """hkbVariableBindingSet from (memberPath, variable name) pairs."""
+        b = pf.add('hkbVariableBindingSet')
+        b.param_raw('bindings',
+                    '\n'.join(_BINDING_TMPL.format(member=m,
+                                                   var_index=vidx[v])
+                              for m, v in pairs),
+                    numelements=len(pairs))
+        b.param('indexOfBindingToEnable', -1)
+        return b
+
+    def _clip(name, kf_path, looping, triggers_ref='null'):
+        clip = pf.add('hkbClipGenerator')
+        clip.param('variableBindingSet', 'null')
+        clip.param('userData', 0)
+        clip.param('name', name)
+        clip.param('animationName',
+                   'Animations\\' + _clip_state_name(kf_path) + '.hkx')
+        clip.param('triggers', triggers_ref)
+        clip.param('cropStartAmountLocalTime', '0.000000')
+        clip.param('cropEndAmountLocalTime', '0.000000')
+        clip.param('startTime', '0.000000')
+        clip.param('playbackSpeed', '1.000000')
+        clip.param('enforcedDuration', '0.000000')
+        clip.param('userControlledTimeFraction', '0.000000')
+        clip.param('animationBindingIndex', -1)
+        clip.param('mode', 'MODE_LOOPING' if looping else 'MODE_SINGLE_PLAY')
+        clip.param('flags', 0)
+        return clip
+
     state_objs = []
     wildcards = []
     for state_id, (st_name, kf_path, looping, enter_evt, end_evt) in \
             enumerate(defs):
-        anim_file = 'Animations\\' + _clip_state_name(kf_path) + '.hkx'
         trigger_items = []
         for t in hit_times.get(st_name, []):
             trigger_items.append(_TRIGGER_TMPL.format(
@@ -420,47 +499,51 @@ def build_behavior_xml(behavior_name: str, clips: dict,
             trig.param_raw('triggers', '\n'.join(trigger_items),
                            numelements=len(trigger_items))
             triggers_ref = trig.ref
-        clip = pf.add('hkbClipGenerator')
-        clip.param('variableBindingSet', 'null')
-        clip.param('userData', 0)
-        clip.param('name', st_name)
-        clip.param('animationName', anim_file)
-        clip.param('triggers', triggers_ref)
-        clip.param('cropStartAmountLocalTime', '0.000000')
-        clip.param('cropEndAmountLocalTime', '0.000000')
-        clip.param('startTime', '0.000000')
-        clip.param('playbackSpeed', '1.000000')
-        clip.param('enforcedDuration', '0.000000')
-        clip.param('userControlledTimeFraction', '0.000000')
-        clip.param('animationBindingIndex', -1)
-        clip.param('mode', 'MODE_LOOPING' if looping else 'MODE_SINGLE_PLAY')
-        clip.param('flags', 0)
+        clip = _clip(st_name, kf_path, looping, triggers_ref)
 
-        # CombatStance confirms the engine's draw request (ActionDraw →
-        # combatStanceStart) by notifying weaponDraw on entry — the combat
-        # controller waits for it before sending any attackStart_* event.
-        enter_ref = exit_ref = 'null'
-        if st_name == 'CombatStance':
-            for evt_name, which in (('weaponDraw', 'enter'),
-                                    ('weaponSheathe', 'exit')):
-                arr = pf.add('hkbStateMachineEventPropertyArray')
-                arr.param_raw('events', (
-                    '<hkobject>\n'
-                    f'\t<hkparam name="id">{eid[evt_name]}</hkparam>\n'
-                    '\t<hkparam name="payload">null</hkparam>\n'
-                    '</hkobject>'), numelements=1)
-                if which == 'enter':
-                    enter_ref = arr.ref
-                else:
-                    exit_ref = arr.ref
+        # MoveForward with a distinct run clip becomes the vanilla parametric
+        # speed blend (ForwardWalkBlend_Dog layout): children anchored at
+        # each clip's natural root-motion speed, blendParameter driven by
+        # SpeedSampled, flags 17 = SYNC|PARAMETRIC — the played animation
+        # tracks the actor's actual speed instead of always looking like a
+        # walk (2026-07-09 "moves fast but plays walk/idle" fix, with the
+        # computed MOVT SPED values in tes5_import/creature_races.py).
+        generator = clip
+        if st_name == 'MoveForward' and clips.get('run') and speeds.get(
+                'walk') and speeds.get('run'):
+            run_clip = _clip('MoveForwardRun', clips['run'], True)
+            children = []
+            for child_gen, w in ((clip, speeds['walk']),
+                                 (run_clip, speeds['run'])):
+                ch = pf.add('hkbBlenderGeneratorChild')
+                ch.param('variableBindingSet', 'null')
+                ch.param('generator', child_gen.ref)
+                ch.param('boneWeights', 'null')
+                ch.param('weight', f'{w:.6f}')
+                ch.param('worldFromModelWeight', '1.000000')
+                children.append(ch)
+            bind = _binding_set([('blendParameter', 'SpeedSampled')])
+            blender = pf.add('hkbBlenderGenerator')
+            blender.param('variableBindingSet', bind.ref)
+            blender.param('userData', 0)
+            blender.param('name', 'ForwardSpeedBlend')
+            blender.param('referencePoseWeightThreshold', '0.000000')
+            blender.param('blendParameter', '1.000000')
+            blender.param('minCyclicBlendParameter', '0.000000')
+            blender.param('maxCyclicBlendParameter', '1.000000')
+            blender.param('indexOfSyncMasterChild', -1)
+            blender.param('flags', 17)
+            blender.param('subtractLastChild', False)
+            blender.param_array('children', [c.ref for c in children])
+            generator = blender
 
         state = pf.add('hkbStateMachineStateInfo')
         state.param('variableBindingSet', 'null')
         state.param_array('listeners', [])
-        state.param('enterNotifyEvents', enter_ref)
-        state.param('exitNotifyEvents', exit_ref)
+        state.param('enterNotifyEvents', 'null')
+        state.param('exitNotifyEvents', 'null')
         state.param('transitions', 'null')
-        state.param('generator', clip.ref)
+        state.param('generator', generator.ref)
         state.param('name', st_name)
         state.param('stateId', state_id)
         state.param('probability', '1.000000')
@@ -515,22 +598,11 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     sm.param_array('states', [s.ref for s in state_objs])
     sm.param('wildcardTransitions', wild.ref)
 
-    # ---- variables: engine interface + movement-type registration ----
-    # iState_<MOVT MNAM> variables are how the engine discovers the actor's
-    # movement types (see movement_type_names). Vanilla pairs each with a
-    # locomotion-state id and initializes iState to the default type's value
-    # (dogbehavior: iState=30, iState_DogDefault=30, iState_DogRun=31); our
-    # flat graph uses the MoveForward state id for all of them.
-    loco_id = next((i for i, d in enumerate(defs) if d[0] == 'MoveForward'), 0)
-    variables = ENGINE_VARIABLES + [(f'iState_{mt}', 'INT32')
-                                    for mt in movement_types]
-    var_values = [loco_id if (n == 'iState' or n.startswith('iState_')) else 0
-                  for n, _t in variables]
-
+    # ---- variables / events tables ----
     strings = pf.add('hkbBehaviorGraphStringData')
     strings.param_strings('eventNames', events)
     strings.param_array('attributeNames', [])
-    strings.param_strings('variableNames', [n for n, _t in variables])
+    strings.param_strings('variableNames', [n for n, _t, _iv in variables])
     strings.param_array('characterPropertyNames', [])
 
     values = pf.add('hkbVariableValueSet')
@@ -543,7 +615,7 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     gdata.param_array('attributeDefaults', [])
     gdata.param_raw('variableInfos',
                     '\n'.join(_VARIABLE_INFO_TMPL.format(vtype=t)
-                              for _n, t in variables),
+                              for _n, t, _iv in variables),
                     numelements=len(variables))
     gdata.param_structs('characterPropertyInfos', [])
     gdata.param_structs('eventInfos', [[('flags', 0)]] * len(events))
@@ -558,17 +630,10 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     # either).  Vanilla wraps the whole locomotion state machine in a
     # hkbModifierGenerator under a single-state root state machine; copy
     # that layout verbatim (userData values included).
-    vidx = {n: i for i, (n, _t) in enumerate(ENGINE_VARIABLES)}
-    sampler_binds = pf.add('hkbVariableBindingSet')
-    sampler_binds.param_raw(
-        'bindings',
-        '\n'.join(_BINDING_TMPL.format(member=m, var_index=vidx[v])
-                  for m, v in (('state', 'iState'),
-                               ('direction', 'Direction'),
-                               ('goalSpeed', 'Speed'),
-                               ('speedOut', 'SpeedSampled'))),
-        numelements=4)
-    sampler_binds.param('indexOfBindingToEnable', -1)
+    sampler_binds = _binding_set([('state', 'iState'),
+                                  ('direction', 'Direction'),
+                                  ('goalSpeed', 'Speed'),
+                                  ('speedOut', 'SpeedSampled')])
 
     sampler = pf.add('BSSpeedSamplerModifier')
     sampler.param('variableBindingSet', sampler_binds.ref)
@@ -580,12 +645,67 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     sampler.param('goalSpeed', '0.000000')
     sampler.param('speedOut', '0.000000')
 
+    # ---- combat stance handshake (verbatim vanilla quadruped layout) ----
+    # The engine's ActionDraw routes combatStanceStart (IDLE record); combat
+    # then WAITS for the graph to reply with a weaponDraw event before ever
+    # sending an attackStart_*.  Vanilla sends that reply from a root-level
+    # hkbEventDrivenModifier/hkbEvaluateExpressionModifier pair (StartCombat/
+    # StopCombat), NOT from state notify events — an actor without this pair
+    # chases its target forever and never attacks.
+    def _combat_eem(name, stance_val, reply_evt):
+        arr = pf.add('hkbExpressionDataArray')
+        arr.param_raw('expressionsData', (
+            '<hkobject>\n'
+            f'\t<hkparam name="expression">iCombatStance = {stance_val}'
+            '</hkparam>\n'
+            '\t<hkparam name="assignmentVariableIndex">-1</hkparam>\n'
+            '\t<hkparam name="assignmentEventIndex">-1</hkparam>\n'
+            '\t<hkparam name="eventMode">EVENT_MODE_SEND_ONCE</hkparam>\n'
+            '</hkobject>\n'
+            '<hkobject>\n'
+            f'\t<hkparam name="expression">{reply_evt} if '
+            f'(iCombatStance == {stance_val})</hkparam>\n'
+            '\t<hkparam name="assignmentVariableIndex">-1</hkparam>\n'
+            '\t<hkparam name="assignmentEventIndex">-1</hkparam>\n'
+            '\t<hkparam name="eventMode">EVENT_MODE_SEND_ON_FALSE_TO_TRUE'
+            '</hkparam>\n'
+            '</hkobject>'), numelements=2)
+        eem = pf.add('hkbEvaluateExpressionModifier')
+        eem.param('variableBindingSet', 'null')
+        eem.param('userData', 2)
+        eem.param('name', name)
+        eem.param('enable', True)
+        eem.param('expressions', arr.ref)
+        return eem
+
+    def _edm(name, modifier_ref, activate, deactivate, active_by_default):
+        edm = pf.add('hkbEventDrivenModifier')
+        edm.param('variableBindingSet', 'null')
+        edm.param('userData', 1)
+        edm.param('name', name)
+        edm.param('enable', True)
+        edm.param('modifier', modifier_ref)
+        edm.param('activateEventId', activate)
+        edm.param('deactivateEventId', deactivate)
+        edm.param('activeByDefault', active_by_default)
+        return edm
+
+    stop_combat = _edm('StopCombat_EDM',
+                       _combat_eem('StopCombat_EEM', 0, 'weaponSheathe').ref,
+                       eid['combatStanceStop'], eid['combatStanceStart'],
+                       True)
+    start_combat = _edm('StartCombat_EDM',
+                        _combat_eem('StartCombat_EEM', 1, 'weaponDraw').ref,
+                        eid['combatStanceStart'], eid['combatStanceStop'],
+                        False)
+
     mod_list = pf.add('hkbModifierList')
     mod_list.param('variableBindingSet', 'null')
     mod_list.param('userData', 1)
     mod_list.param('name', 'RootModifierList')
     mod_list.param('enable', True)
-    mod_list.param_array('modifiers', [sampler.ref])
+    mod_list.param_array('modifiers', [stop_combat.ref, start_combat.ref,
+                                       sampler.ref])
 
     mod_gen = pf.add('hkbModifierGenerator')
     mod_gen.param('variableBindingSet', 'null')
@@ -594,17 +714,162 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     mod_gen.param('modifier', mod_list.ref)
     mod_gen.param('generator', sm.ref)
 
-    root_state = pf.add('hkbStateMachineStateInfo')
-    root_state.param('variableBindingSet', 'null')
-    root_state.param_array('listeners', [])
-    root_state.param('enterNotifyEvents', 'null')
-    root_state.param('exitNotifyEvents', 'null')
-    root_state.param('transitions', 'null')
-    root_state.param('generator', mod_gen.ref)
-    root_state.param('name', 'Root')
-    root_state.param('stateId', 0)
-    root_state.param('probability', '1.000000')
-    root_state.param('enable', True)
+    def _root_state(state_id, name, generator_ref, enter_evt_name=None,
+                    transitions_ref='null'):
+        enter_ref = 'null'
+        if enter_evt_name:
+            arr = pf.add('hkbStateMachineEventPropertyArray')
+            arr.param_raw('events', (
+                '<hkobject>\n'
+                f'\t<hkparam name="id">{eid[enter_evt_name]}</hkparam>\n'
+                '\t<hkparam name="payload">null</hkparam>\n'
+                '</hkobject>'), numelements=1)
+            enter_ref = arr.ref
+        st = pf.add('hkbStateMachineStateInfo')
+        st.param('variableBindingSet', 'null')
+        st.param_array('listeners', [])
+        st.param('enterNotifyEvents', enter_ref)
+        st.param('exitNotifyEvents', 'null')
+        st.param('transitions', transitions_ref)
+        st.param('generator', generator_ref)
+        st.param('name', name)
+        st.param('stateId', state_id)
+        st.param('probability', '1.000000')
+        st.param('enable', True)
+        return st
+
+    root_states = [_root_state(0, 'Root', mod_gen.ref)]
+    root_wild_ref = 'null'
+
+    # ---- death / ragdoll wrapper states (vanilla dogbehavior root SM) ----
+    # Oblivion creatures ship no death animations — death IS the ragdoll.
+    # The engine's kill flow fires ActionDeathWait, whose IDLE tree
+    # (tes5_import/creature_idles.py) sends DeathAnimation or Ragdoll; the
+    # wrapper states power the ragdoll (skeleton.hkx hkaRagdollInstance) and
+    # notify AddRagdollToWorld / RemoveCharacterControllerFromWorld, which
+    # the engine itself consumes.  Without them `kill` leaves the actor
+    # standing in its idle forever.
+    if ragdoll and clips['idle']:
+        pb0, pb1, pb2 = ragdoll['pose_bones']
+
+        def _powered_ragdoll(name, max_force, mode):
+            bones_arr = pf.add('hkbBoneIndexArray')
+            bones_arr.param('variableBindingSet', 'null')
+            bones_arr.param_array('boneIndices', [])
+            weights = pf.add('hkbBoneWeightArray')
+            weights.param('variableBindingSet', 'null')
+            weights.param_array('boneWeights', [])
+            m = pf.add('hkbPoweredRagdollControlsModifier')
+            m.param('variableBindingSet', 'null')
+            m.param('userData', 1)
+            m.param('name', name)
+            m.param('enable', True)
+            m.param_raw('controlData', (
+                '<hkobject>\n'
+                f'\t<hkparam name="maxForce">{max_force:.6f}</hkparam>\n'
+                '\t<hkparam name="tau">0.800000</hkparam>\n'
+                '\t<hkparam name="damping">1.000000</hkparam>\n'
+                '\t<hkparam name="proportionalRecoveryVelocity">2.000000'
+                '</hkparam>\n'
+                '\t<hkparam name="constantRecoveryVelocity">1.000000'
+                '</hkparam>\n'
+                '</hkobject>'))
+            m.param('bones', bones_arr.ref)
+            m.param_raw('worldFromModelModeData', (
+                '<hkobject>\n'
+                f'\t<hkparam name="poseMatchingBone0">{pb0}</hkparam>\n'
+                f'\t<hkparam name="poseMatchingBone1">{pb1}</hkparam>\n'
+                f'\t<hkparam name="poseMatchingBone2">{pb2}</hkparam>\n'
+                f'\t<hkparam name="mode">{mode}</hkparam>\n'
+                '</hkobject>'))
+            m.param('boneWeights', weights.ref)
+            return m
+
+        def _mod_state_gen(name, modifiers, clip_name):
+            # objects must be defined before their referencers (hkxcmd
+            # parser rejects forward references)
+            pose_clip = _clip(clip_name, clips['idle'], True)
+            lst = pf.add('hkbModifierList')
+            lst.param('variableBindingSet', 'null')
+            lst.param('userData', 0)
+            lst.param('name', f'{name}_ML')
+            lst.param('enable', True)
+            lst.param_array('modifiers', [m.ref for m in modifiers])
+            gen = pf.add('hkbModifierGenerator')
+            gen.param('variableBindingSet', 'null')
+            gen.param('userData', 1)
+            gen.param('name', f'{name}_MG')
+            gen.param('modifier', lst.ref)
+            gen.param('generator', pose_clip.ref)
+            return gen
+
+        # falling-over stage: powered ragdoll drives toward the animated
+        # pose; the contact listener converts floor contact into a Ragdoll
+        # event (vanilla CollisionListener), completing the collapse
+        contact_bones = pf.add('hkbBoneIndexArray')
+        contact_bones.param('variableBindingSet', 'null')
+        contact_bones.param_array('boneIndices',
+                                  list(range(ragdoll['parts'])))
+        listener = pf.add('BSRagdollContactListenerModifier')
+        listener.param('variableBindingSet', 'null')
+        listener.param('userData', 2)
+        listener.param('name', 'CollisionListener')
+        listener.param('enable', True)
+        listener.param_raw('contactEvent', (
+            '<hkobject>\n'
+            f'\t<hkparam name="id">{eid["Ragdoll"]}</hkparam>\n'
+            '\t<hkparam name="payload">null</hkparam>\n'
+            '</hkobject>'))
+        listener.param('bones', contact_bones.ref)
+
+        anim2rag = _mod_state_gen(
+            'AnimateToRagdoll',
+            [_powered_ragdoll('PoweredRagdollMatching', 200.0,
+                              'WORLD_FROM_MODEL_MODE_COMPUTE'), listener],
+            'AnimateToRagdollPose')
+        full_rag = _mod_state_gen(
+            'FullyRagdoll',
+            [_powered_ragdoll('PoweredRagdollNoMatching', 0.0,
+                              'WORLD_FROM_MODEL_MODE_RAGDOLL')],
+            'FullyRagdollPose')
+
+        rag_fx = pf.add('hkbBlendingTransitionEffect')
+        rag_fx.param('variableBindingSet', 'null')
+        rag_fx.param('userData', 0)
+        rag_fx.param('name', 'RagdollBlend')
+        rag_fx.param('selfTransitionMode',
+                     'SELF_TRANSITION_MODE_CONTINUE_IF_CYCLIC')
+        rag_fx.param('eventMode', 'EVENT_MODE_DEFAULT')
+        rag_fx.param('duration', '0.200000')
+        rag_fx.param('toGeneratorStartTimeFraction', '0.000000')
+        rag_fx.param('flags', 'FLAG_IGNORE_FROM_WORLD_FROM_MODEL')
+        rag_fx.param('endMode', 'END_MODE_NONE')
+        rag_fx.param('blendCurve', 'BLEND_CURVE_SMOOTH')
+
+        a2r_trans = pf.add('hkbStateMachineTransitionInfoArray')
+        a2r_trans.param_raw(
+            'transitions',
+            _TRANSITION_TMPL.format(effect=rag_fx.ref,
+                                    event_id=eid['Ragdoll'], to_state=2),
+            numelements=1)
+
+        root_states.append(_root_state(1, 'AnimateToRagdoll', anim2rag.ref,
+                                       'AddRagdollToWorld', a2r_trans.ref))
+        root_states.append(_root_state(
+            2, 'Fully Ragdoll', full_rag.ref,
+            'RemoveCharacterControllerFromWorld'))
+
+        root_wild = pf.add('hkbStateMachineTransitionInfoArray')
+        root_wild.param_raw(
+            'transitions',
+            '\n'.join(_TRANSITION_TMPL.format(effect=e, event_id=ev,
+                                              to_state=s)
+                      for ev, s, e in (
+                          (eid['DeathAnimation'], 1, rag_fx.ref),
+                          (eid['Ragdoll'], 2, rag_fx.ref),
+                          (eid['RagdollInstant'], 2, 'null'))),
+            numelements=3)
+        root_wild_ref = root_wild.ref
 
     root_sm = pf.add('hkbStateMachine')
     root_sm.param('variableBindingSet', 'null')
@@ -624,8 +889,8 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     root_sm.param('maxSimultaneousTransitions', 32)
     root_sm.param('startStateMode', 'START_STATE_MODE_DEFAULT')
     root_sm.param('selfTransitionMode', 'SELF_TRANSITION_MODE_NO_TRANSITION')
-    root_sm.param_array('states', [root_state.ref])
-    root_sm.param('wildcardTransitions', 'null')
+    root_sm.param_array('states', [s.ref for s in root_states])
+    root_sm.param('wildcardTransitions', root_wild_ref)
 
     graph = pf.add('hkbBehaviorGraph')
     graph.param('variableBindingSet', 'null')
@@ -665,6 +930,7 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
     registration) and tes5_import (RACE ATKE/behavior-graph paths).
     """
     from asset_convert.hkx_anim import convert_clip_hkx
+    from asset_convert.hkx_ragdoll import ragdoll_info
     from asset_convert.hkx_skeleton import generate_skeleton_hkx
 
     skeleton_nif = os.path.join(creature_dir, 'skeleton.nif')
@@ -675,16 +941,25 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
     bones = generate_skeleton_hkx(
         skeleton_nif, os.path.join(proj_dir, 'character assets',
                                    'skeleton.hkx'))
+    ragdoll = ragdoll_info(skeleton_nif, bones)
 
     # convert every clip the graph uses, collecting per-clip metadata
+    # (the run gait clip is not a state — it feeds the MoveForward
+    # parametric speed blend — but still needs conversion + registration)
+    convert_list = list(state_defs(clips))
+    if clips.get('run'):
+        convert_list.append(('MoveForwardRun', clips['run'], True, None,
+                             None))
     clip_meta, motions, failures = [], {}, []
-    for st_name, kf, looping, _enter, end_evt in state_defs(clips):
+    for st_name, kf, looping, _enter, end_evt in convert_list:
         stem = _clip_state_name(kf)
         out_hkx = os.path.join(proj_dir, 'animations', stem + '.hkx')
         try:
             clip, motion = convert_clip_hkx(kf, bones, out_hkx, fps=fps)
         except Exception as e:  # keep going; report at the end
             failures.append((kf, f'{type(e).__name__}: {e}'))
+            if st_name == 'MoveForwardRun':
+                clips['run'] = None     # blender must not reference it
             continue
         clip_meta.append({
             'name': st_name,
@@ -711,13 +986,35 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
                               if motion['rotations'] is not None else None),
             }
 
+    # natural clip speeds (game units/sec) from root-motion endpoints —
+    # ck-cmd calculateMOVTs: forwardWalk = |end translation| / duration.
+    # These anchor both the MOVT SPED columns (tes5_import) and the
+    # MoveForward parametric blend, so commanded speed == animation speed.
+    def _speed_of(kf_path):
+        if not kf_path:
+            return None
+        m = motions.get(_clip_state_name(kf_path))
+        if not m or not m['translations'] or not m['duration']:
+            return None
+        end = m['translations'][-1]
+        v = (end[0] ** 2 + end[1] ** 2) ** 0.5 / m['duration']
+        return round(v, 3) if v > 1.0 else None
+
+    speeds = {
+        'walk': _speed_of(clips['locomotion'].get('MoveForward')),
+        'run': _speed_of(clips.get('run')),
+        'back': _speed_of(clips['locomotion'].get('MoveBackward')),
+        'swim': _speed_of(clips['locomotion'].get('Swim')),
+    }
+
     behavior_name = f'TES4{name.capitalize()}Behavior'
     move_types = movement_type_names(lname)
     _write_and_compile(
         build_behavior_xml(behavior_name, clips,
                            hit_times={c['name']: c['hits']
                                       for c in clip_meta if c['hits']},
-                           movement_types=move_types),
+                           movement_types=move_types,
+                           speeds=speeds, ragdoll=ragdoll),
         os.path.join(proj_dir, 'behaviors', behavior_name.lower() + '.hkx'))
     # dedupe: states can share one animation file (Idle + CombatStance)
     anim_files = list(dict.fromkeys(c['anim'] for c in clip_meta))
@@ -745,6 +1042,8 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
         'clips': clip_meta,
         'attacks': [[e, s] for e, s in attack_states if s in converted],
         'movement_types': move_types,
+        'speeds': speeds,
+        'has_ragdoll': bool(ragdoll),
         'motions': motions,
         'bones': len(bones),
         'failures': failures,
