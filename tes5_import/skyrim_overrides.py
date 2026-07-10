@@ -828,7 +828,7 @@ def map_hair_color(r: int, g: int, b: int) -> int:
 MGEF_CODE_TO_SKYRIM = {
     # All FormIDs verified against Skyrim.esm MGEF records (950 total).
     # -- Alteration --
-    'BRDN': 0,                     # Burden — no Skyrim equivalent
+    'BRDN': 0x0003A2C6,            # Burden → AlchDamageStamina (closest hostile)
     'FTHR': 0x0003EB01,            # Feather → AlchFortifyCarryWeight
     'FISH': 0x0003AE9E,            # Fire Shield → FireCloakFFSelf
     'FRSH': 0x0003AEA0,            # Frost Shield → FrostCloakFFSelf
@@ -843,12 +843,12 @@ MGEF_CODE_TO_SKYRIM = {
     'WKMA': 0x00073F51,            # Weakness to Magic → AlchWeaknessMagic
     'WKPO': 0x00090042,            # Weakness to Poison → AlchWeaknessPoison
     # -- Conjuration --
-    'BABO': 0,                     # Bound Boots — no equivalent
-    'BACT': 0,                     # Bound Cuirass — no equivalent
-    'BAGA': 0,                     # Bound Gauntlets — no equivalent
-    'BAGR': 0,                     # Bound Greaves — no equivalent
-    'BAHE': 0,                     # Bound Helmet — no equivalent
-    'BASH': 0,                     # Bound Shield — no equivalent
+    'BABO': 0x00051B15,            # Bound Boots → ArmorFFSelf0 (armor buff)
+    'BACT': 0x00051B15,            # Bound Cuirass → ArmorFFSelf0 (armor buff)
+    'BAGA': 0x00051B15,            # Bound Gauntlets → ArmorFFSelf0 (armor buff)
+    'BAGR': 0x00051B15,            # Bound Greaves → ArmorFFSelf0 (armor buff)
+    'BAHE': 0x00051B15,            # Bound Helmet → ArmorFFSelf0 (armor buff)
+    'BASH': 0x00051B15,            # Bound Shield → ArmorFFSelf0 (armor buff)
     'BWAX': 0x0001CE9E,            # Bound Axe → BoundBattleAxeFFSelf
     'BWBO': 0x0001CEA0,            # Bound Bow → BoundBowFFSelf
     'BWDA': 0x0001CE9F,            # Bound Dagger → BoundSwordFFSelf
@@ -867,21 +867,21 @@ MGEF_CODE_TO_SKYRIM = {
     'SMZB': 0x000640B4,            # Summon Zombie → SummonFamiliar
     'TNUN': 0x0004B145,            # Turn Undead → TurnUndeadFFAimed25
     # -- Destruction --
-    'DGAT': 0,                     # Damage Attribute — removed
+    'DGAT': 0x0003A2C6,            # Damage Attribute → per-attribute (see MGEF_AV_CODE_TO_SKYRIM)
     'DGFA': 0x0003A2C6,            # Damage Fatigue → AlchDamageStamina
     'DGHE': 0x0003EB42,            # Damage Health → AlchDamageHealth
     'DGSP': 0x0003A2B6,            # Damage Magicka → AlchDamageMagicka
-    'DRAT': 0,                     # Drain Attribute — removed
+    'DRAT': 0x0003A2C6,            # Drain Attribute → per-attribute (see MGEF_AV_CODE_TO_SKYRIM)
     'DRFA': 0x0003A2C6,            # Drain Fatigue → AlchDamageStamina
     'DRHE': 0x0003EB42,            # Drain Health → AlchDamageHealth
     'DRSP': 0x0003A2B6,            # Drain Magicka → AlchDamageMagicka
-    'DRSK': 0,                     # Drain Skill — removed
+    'DRSK': 0x0003A2C6,            # Drain Skill → AlchDamageStamina (no skill damage in TES5)
     'FIDG': 0x00012F03,            # Fire Damage → FireDamageFFAimed
     'FRDG': 0x0001CEA2,            # Frost Damage → FrostDamageFFAimed
     'SHDG': 0x0001CEA8,            # Shock Damage → ShockDamageFFAimed
-    'DISE': 0,                     # Disease — no direct equivalent
+    'DISE': 0x0003EB42,            # Disease → AlchDamageHealth (closest hostile)
     'POSN': 0x0003EB42,            # Poison → AlchDamageHealth (closest)
-    'WKDI': 0,                     # Weakness to Disease
+    'WKDI': 0x00090042,            # Weakness to Disease → AlchWeaknessPoison (closest)
     # -- Illusion --
     'CALM': 0x0004DEE7,            # Calm → InfluenceAggDownFFAimed
     'CHML': 0x0001EA6A,            # Chameleon → InvisibillityFFSelf
@@ -897,20 +897,20 @@ MGEF_CODE_TO_SKYRIM = {
     'SLNC': 0x0008F3EA,            # Silence → MuffleFFSelf
     'TELE': 0x0001A4CB,            # Telekinesis → TelekinesisEffect
     # -- Restoration --
-    'ABAT': 0,                     # Absorb Attribute — removed
+    'ABAT': 0x000F1D01,            # Absorb Attribute → per-attribute (see MGEF_AV_CODE_TO_SKYRIM)
     'ABFA': 0x000F1D01,            # Absorb Fatigue → AbsorbStaminaConcAimed
     'ABHE': 0x0008D5BE,            # Absorb Health → AbsorbHealthConcAimed
-    'ABSK': 0,                     # Absorb Skill — removed
+    'ABSK': 0x000F1D01,            # Absorb Skill → AbsorbStaminaConcAimed (no skill absorb in TES5)
     'ABSP': 0x000F1CFE,            # Absorb Magicka → AbsorbMagickaConcAimed
     'CUDI': 0x000AE722,            # Cure Disease → AlchCureDisease
     'CUPA': 0x000AE722,            # Cure Paralysis → AlchCureDisease (closest)
     'CUPO': 0x00109ADD,            # Cure Poison → AlchCurePoison
-    'FOAT': 0,                     # Fortify Attribute → various
+    'FOAT': 0x0003EAF9,            # Fortify Attribute → per-attribute (see MGEF_AV_CODE_TO_SKYRIM)
     'FOFA': 0x0003EAF9,            # Fortify Fatigue → AlchFortifyStamina
     'FOHE': 0x0003EAF3,            # Fortify Health → AlchFortifyHealth
     'FOSP': 0x0003EAF8,            # Fortify Magicka → AlchFortifyMagicka
-    'FOSK': 0,                     # Fortify Skill → various
-    'REAT': 0,                     # Restore Attribute — removed
+    'FOSK': 0x0003EAF9,            # Fortify Skill → per-skill (see MGEF_AV_CODE_TO_SKYRIM)
+    'REAT': 0x0003EB16,            # Restore Attribute → per-attribute (see MGEF_AV_CODE_TO_SKYRIM)
     'REFA': 0x0003EB16,            # Restore Fatigue → AlchRestoreStamina
     'REHE': 0x0003EB15,            # Restore Health → AlchRestoreHealth
     'RESP': 0x0003EB17,            # Restore Magicka → AlchRestoreMagicka
@@ -932,6 +932,92 @@ MGEF_CODE_TO_SKYRIM = {
     'REDG': 0,                     # Reflect Damage → no equivalent
     'DSPL': 0,                     # Dispel → no equivalent
     'DTCT': 0x0001EA74,            # Detect Life → DetectLifeFriendInteriorConcSelf
+}
+
+# ---------------------------------------------------------------------------
+# Attribute/skill-targeted TES4 effects → Skyrim MGEF, keyed by the effect's
+# ActorValue (EFIT byte 20). TES4 attributes: 0=Strength 1=Intelligence
+# 2=Willpower 3=Agility 4=Speed 5=Endurance 6=Personality 7=Luck.
+# Skills use absolute AV indices 12-32 (Armorer..Speechcraft).
+# Falls back to MGEF_CODE_TO_SKYRIM when the AV is missing from the table.
+# All FormIDs verified against references/Skyrim.esm/MGEF.txt.
+# ---------------------------------------------------------------------------
+
+_DAMAGE_ATTR = {
+    0: 0x0003A2C6,   # Strength → AlchDamageStamina
+    1: 0x0003A2B6,   # Intelligence → AlchDamageMagicka
+    2: 0x00073F2B,   # Willpower → AlchDamageMagickaRate
+    3: 0x0003A2C6,   # Agility → AlchDamageStamina
+    4: 0x00073F25,   # Speed → AlchDamageSpeed
+    5: 0x0003EB42,   # Endurance → AlchDamageHealth
+    6: 0x0003A2B6,   # Personality → AlchDamageMagicka
+    7: 0x00073F2C,   # Luck → AlchDamageStaminaRate
+}
+
+_FORTIFY_ATTR = {
+    0: 0x0003EB01,   # Strength → AlchFortifyCarryWeight
+    1: 0x0003EAF8,   # Intelligence → AlchFortifyMagicka
+    2: 0x0003EB07,   # Willpower → AlchFortifyMagickaRate
+    3: 0x0003EAF9,   # Agility → AlchFortifyStamina
+    4: 0x0003EAF9,   # Speed → AlchFortifyStamina
+    5: 0x0003EAF3,   # Endurance → AlchFortifyHealth
+    6: 0x0003EB23,   # Personality → AlchFortifyBarter
+    7: 0x0003EB06,   # Luck → AlchFortifyHealRate
+}
+
+_RESTORE_ATTR = {
+    0: 0x0003EB16,   # Strength → AlchRestoreStamina
+    1: 0x0003EB17,   # Intelligence → AlchRestoreMagicka
+    2: 0x0003EB17,   # Willpower → AlchRestoreMagicka
+    3: 0x0003EB16,   # Agility → AlchRestoreStamina
+    4: 0x0003EB16,   # Speed → AlchRestoreStamina
+    5: 0x0003EB15,   # Endurance → AlchRestoreHealth
+    6: 0x0003EB17,   # Personality → AlchRestoreMagicka
+    7: 0x0003EB16,   # Luck → AlchRestoreStamina
+}
+
+_ABSORB_ATTR = {
+    0: 0x000F1D01,   # Strength → AbsorbStaminaConcAimed
+    1: 0x000F1CFE,   # Intelligence → AbsorbMagickaConcAimed
+    2: 0x000F1CFE,   # Willpower → AbsorbMagickaConcAimed
+    3: 0x000F1D01,   # Agility → AbsorbStaminaConcAimed
+    4: 0x000F1D01,   # Speed → AbsorbStaminaConcAimed
+    5: 0x0008D5BE,   # Endurance → AbsorbHealthConcAimed
+    6: 0x000F1CFE,   # Personality → AbsorbMagickaConcAimed
+    7: 0x000F1D01,   # Luck → AbsorbStaminaConcAimed
+}
+
+_FORTIFY_SKILL = {
+    12: 0x0003EB1D,  # Armorer → AlchFortifySmithing
+    13: 0x0003EAF9,  # Athletics → AlchFortifyStamina
+    14: 0x0003EB19,  # Blade → AlchFortifyOneHanded
+    15: 0x0003EB1C,  # Block → AlchFortifyBlock
+    16: 0x0003EB19,  # Blunt → AlchFortifyOneHanded
+    17: 0x0003EB19,  # HandToHand → AlchFortifyOneHanded
+    18: 0x0003EB1E,  # HeavyArmor → AlchFortifyHeavyArmor
+    19: 0x0003EB18,  # Alchemy → AlchFortifyAlchemy
+    20: 0x0003EB24,  # Alteration → AlchFortifyAlteration
+    21: 0x0003EB25,  # Conjuration → AlchFortifyConjuration
+    22: 0x0003EB26,  # Destruction → AlchFortifyDestruction
+    23: 0x0003EB27,  # Illusion → AlchFortifyIllusion
+    24: 0x0003EB27,  # Mysticism → AlchFortifyIllusion
+    25: 0x0003EB28,  # Restoration → AlchFortifyRestoration
+    26: 0x0003EAF9,  # Acrobatics → AlchFortifyStamina
+    27: 0x0003EB1F,  # LightArmor → AlchFortifyLightArmor
+    28: 0x0003EB1B,  # Marksman → AlchFortifyMarksman
+    29: 0x0003EB23,  # Mercantile → AlchFortifyBarter
+    30: 0x0003EB21,  # Security → AlchFortifyLockpicking
+    31: 0x0003EB22,  # Sneak → AlchFortifySneak
+    32: 0x0003EB23,  # Speechcraft → AlchFortifyBarter
+}
+
+MGEF_AV_CODE_TO_SKYRIM = {
+    'DGAT': _DAMAGE_ATTR,    # Damage Attribute
+    'DRAT': _DAMAGE_ATTR,    # Drain Attribute
+    'FOAT': _FORTIFY_ATTR,   # Fortify Attribute
+    'REAT': _RESTORE_ATTR,   # Restore Attribute
+    'ABAT': _ABSORB_ATTR,    # Absorb Attribute
+    'FOSK': _FORTIFY_SKILL,  # Fortify Skill
 }
 
 # Skyrim fallback arrow projectile used when we cannot build a converted PROJ

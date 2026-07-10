@@ -1484,6 +1484,9 @@ def main():
                         help='Only export these record types (e.g. WEAP NPC_ HDPT)')
     parser.add_argument('--list-types', action='store_true',
                         help='Just list record types and counts, then exit')
+    parser.add_argument('--formid', nargs='+', metavar='FID',
+                        help='Print the record(s) with these FormIDs (hex, load-order '
+                             'index ignored) to stdout and exit')
     args = parser.parse_args()
 
     esm_path = args.esm
@@ -1500,6 +1503,20 @@ def main():
     header, all_records, is_localized = read_tes5_file(esm_path)
     print(f'  Parsed {len(all_records):,} records in {time.time() - t0:.2f}s')
     print(f'  Localized strings: {is_localized}')
+
+    if args.formid:
+        # Match on the low 24 bits so crash-log FormIDs (load-order prefixed)
+        # can be pasted directly.
+        wanted = {int(f, 16) & 0x00FFFFFF for f in args.formid}
+        found = 0
+        for rec in all_records:
+            if rec.form_id & 0x00FFFFFF in wanted:
+                print(format_record(rec, is_localized))
+                print()
+                found += 1
+        if not found:
+            print('No records matched.')
+        return
 
     if args.list_types:
         by_type: dict = defaultdict(int)

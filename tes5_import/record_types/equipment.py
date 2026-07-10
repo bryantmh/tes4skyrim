@@ -11,6 +11,7 @@ from ..skyrim_overrides import (
     DEFAULT_ARROW_PROJECTILE,
     HEAVY_ARMOR_FOOTSTEP_SET,
     LIGHT_ARMOR_FOOTSTEP_SET,
+    MGEF_AV_CODE_TO_SKYRIM,
     MGEF_CODE_TO_SKYRIM,
     SHIELD_EQUIP_TYPE,
     TES4_SKILL_TO_TES5_INDEX,
@@ -42,31 +43,61 @@ from .common import (
 )
 
 
-def _resolve_mgef(code: str) -> int:
-    """Map a TES4 4-char magic effect code to a Skyrim MGEF FormID."""
+def _resolve_mgef(code: str, actor_value: int = -1) -> int:
+    """Map a TES4 4-char magic effect code to a Skyrim MGEF FormID.
+
+    Attribute/skill-targeted effects (DRAT, FOSK, ...) resolve through the
+    effect's ActorValue; everything else uses the flat code table.
+    """
+    per_av = MGEF_AV_CODE_TO_SKYRIM.get(code)
+    if per_av is not None:
+        fid = per_av.get(actor_value)
+        if fid:
+            return fid
     return MGEF_CODE_TO_SKYRIM.get(code, 0)
+
+
+# Harmless zero-magnitude filler effects used when a record would otherwise
+# have no (or too few) effects. A null EFID hard-crashes the inventory menu,
+# so we must always reference a real MGEF.
+_FILLER_EFFECTS = (0x0003EB15, 0x0003EB17, 0x0003EB16, 0x0003EAF3)  # AlchRestore{Health,Magicka,Stamina}, AlchFortifyHealth
 
 
 def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0) -> bytes:
     """Pack EFID/EFIT pairs for all effects on a record.
 
-    If pad_to > 0, pads with empty effects up to that count (e.g. 4 for INGR).
+    Effects with no TES5 equivalent are dropped — an EFID of 0 (null MGEF)
+    crashes the game as soon as the item's card is shown in a menu. If all
+    effects are dropped, or pad_to demands more (e.g. 4 for INGR), real
+    zero-magnitude filler effects are used.
     """
-    subs = b''
+    effects = []
     effect_count = get_int(rec, count_key)
-    actual = min(effect_count, pad_to) if pad_to else effect_count
-    for i in range(actual):
+    for i in range(effect_count):
+        if pad_to and len(effects) >= pad_to:
+            break
         code = get_str(rec, f'Effect[{i}].EFID')
-        mgef_fid = _resolve_mgef(code) if code else 0
-        subs += pack_formid_subrecord('EFID', mgef_fid)
+        av = get_int(rec, f'Effect[{i}].ActorValue', -1)
+        mgef_fid = _resolve_mgef(code, av) if code else 0
+        if not mgef_fid:
+            continue
         mag = get_int(rec, f'Effect[{i}].Magnitude')
         area = get_int(rec, f'Effect[{i}].Area')
         dur = get_int(rec, f'Effect[{i}].Duration')
-        subs += pack_subrecord('EFIT', struct.pack('<fII', float(mag), area, dur))
-    # Pad to required count with empty effects
-    for _ in range(actual, pad_to):
-        subs += pack_formid_subrecord('EFID', 0)
-        subs += pack_subrecord('EFIT', struct.pack('<fII', 0.0, 0, 0))
+        effects.append((mgef_fid, float(mag), area, dur))
+
+    # Every effect-bearing record needs at least one real effect; INGR needs
+    # exactly pad_to. Fill with distinct harmless zero-magnitude effects.
+    want = max(pad_to, 1)
+    used = {fid for fid, _, _, _ in effects}
+    fillers = iter(fid for fid in _FILLER_EFFECTS if fid not in used)
+    while len(effects) < want:
+        effects.append((next(fillers, _FILLER_EFFECTS[0]), 0.0, 0, 0))
+
+    subs = b''
+    for mgef_fid, mag, area, dur in effects:
+        subs += pack_formid_subrecord('EFID', mgef_fid)
+        subs += pack_subrecord('EFIT', struct.pack('<fII', mag, area, dur))
     return subs
 
 
@@ -612,11 +643,13 @@ def convert_ALCH(rec: dict) -> bytes:
     value = get_int(rec, 'ENIT.Value')
     tes4_flags = get_int(rec, 'ENIT.Flags')
     tes5_flags = 0
-    if tes4_flags & 0x02:  # Food
-        tes5_flags |= 0x02
+    if tes4_flags & 0x01:  # No auto-calc → Manual Calc
+        tes5_flags |= 0x01
     full = get_str(rec, 'FULL', '').lower()
     if 'poison' in full:
-        tes5_flags |= 0x02  # Actually poison flag is bit 17 in flags
+        tes5_flags |= 0x20000  # Poison (bit 17)
+    elif tes4_flags & 0x02:  # Food
+        tes5_flags |= 0x02
     enit = struct.pack('<IIIII', value, tes5_flags, 0, 0, 0)
     subs += pack_subrecord('ENIT', enit)
 
@@ -636,9 +669,10 @@ def convert_INGR(rec: dict) -> bytes:
     weight = get_float(rec, 'DATA.Weight')
     subs += pack_subrecord('DATA', struct.pack('<If', value, weight))
 
-    # ENIT — same as ALCH basically
-    enit_flags = get_int(rec, 'ENIT.Flags')
-    subs += pack_subrecord('ENIT', struct.pack('<IIIII', 0, enit_flags, 0, 0, 0))
+    # ENIT — TES5 INGR: IngredientValue(s32) + Flags(u32), 8 bytes
+    # (unlike ALCH's 20). TES4 flag bits 0x01 no-autocalc / 0x02 food match.
+    enit_flags = get_int(rec, 'ENIT.Flags') & 0x03
+    subs += pack_subrecord('ENIT', struct.pack('<iI', value, enit_flags))
 
     # Effects (TES5 ingredients have exactly 4)
     subs += _pack_effects(rec, pad_to=4)

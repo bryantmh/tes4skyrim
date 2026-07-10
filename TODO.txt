@@ -2,7 +2,6 @@ Gameplan:
 	Move External L13
 	Fix potion crashing M1
 	Fix npc barter M7
-	Fix dogwood tree L8
 	Fix terminal spawning L12
 	Fix app design M12
 	Refine Navmesh
@@ -90,13 +89,6 @@ Later Issues:
 		or
 			Refined process that morphs to Skryim body (see wip-armor-fitting)
 	
-	8 - Refine Speedtree conversion
-		Needs better curving of branches to match source
-		Needs better handling of unattached leaves
-		Trunk texture bad UV
-		Dogwood tree is only flowers ingame when it should be leaves and flowers
-		Jackpot! C:\Users\Bryant\Documents\Code\TESConversion\references\ck-cmd-master\src\spt\sptconvert.cpp
-
 	10 - Properly document all tools
 
 	11 - BSA builder must be limited to 2GB files
