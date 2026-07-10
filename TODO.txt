@@ -1,7 +1,6 @@
 Gameplan:
 	Move External L13
 	Fix distant trees M11
-	Fix grass conversion M9
 	Fix potion crashing M1
 	Fix npc barter M7
 	Fix dogwood tree L8
@@ -50,8 +49,6 @@ Major Issues for V1:
 	7 - NPCs should have barter/training
 
 	8 - NPCs missing proper outfits and instead are wearing random clothing
-
-	9 - Convert Grass
 
 	11 - Proper LOD generation oneclick solution as opposed to external generation
 		Still missing:
@@ -147,8 +144,6 @@ Minor Issues:
 
 	9 - Nirnroot sound is really loud
 
-	10 - Land textures have weird specular
-
 	11 - Harvested plants don't make a sound
 
 	12 - Update world map cloud mesh and texture
@@ -192,6 +187,8 @@ Minor Issues:
 	22 - Activators like standing stones or altars do nothing
 
 	23 - Flame atronach animated section not properly converted
+	
+	24 - Character meshes should be skipped
 
 
 Crashes:

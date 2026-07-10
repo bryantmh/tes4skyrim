@@ -56,6 +56,7 @@ from .skyrim_overrides import (
 )
 from .collision import (bake_node_transform_into_body, convert_all_collisions, hoist_collision,
                         remove_empty_collision_nodes, scale_constraint_pivots)
+from .tri_reconstruct import clear_match_groups, fix_missing_triangles
 
 # Apply all PyFFI patches (time.clock fix, nif.xml condition fixes) before import
 from . import pyffi_monkey_patch as _patch  # noqa: F401
@@ -191,6 +192,7 @@ def _categorize_pyffi_warnings(messages: list) -> dict:
 SKIP_PATHS = frozenset({
     'menus',
     'creatures',
+    'characters'
 })
 
 _WORKER_COUNT = max(1, (os.cpu_count() or 4) - 3)
@@ -603,6 +605,14 @@ def _process_geometry(strips_or_shape, fix_textures, stats=None):
     # consistency_flags = CT_STATIC (0x4000 = 16384)
     if hasattr(ts.data, 'consistency_flags'):
         ts.data.consistency_flags = 0x4000  # CT_STATIC
+
+    # Some vanilla Oblivion meshes (grass blades in particular) ship
+    # NiTriShapeData with has_triangles=False — the index array is absent.
+    # Skyrim's grass planter CTDs on that; rebuild the triangles.  Legacy
+    # vertex match groups likewise ship on several Oblivion meshes and no
+    # vanilla Skyrim mesh carries them — drop them.
+    fix_missing_triangles(ts.data)
+    clear_match_groups(ts.data)
 
     # Reset ExtraVectorsFlags to 0 (Skyrim valid: 0=none, 16=has binormal+tangent).
     # Oblivion NIFs may store value 1 (binormals-only) which is invalid in Skyrim

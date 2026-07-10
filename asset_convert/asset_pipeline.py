@@ -19,7 +19,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import bsa_extract, nif_converter, spt_converter
+from . import bsa_extract, grass_profile, landscape_normals, nif_converter, spt_converter
 
 
 def extract_bsas(source_file, data_path, extract_dir='export', force=False):
@@ -88,6 +88,20 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
         stats['mesh_conversion'] = {'converted': 0, 'skipped': 0, 'errors': 0}
 
     # -----------------------------------------------------------------------
+    # Grass models — GRAS NIFs (from the export's GRAS.txt) get the vanilla
+    # grass shader profile and a copy under meshes\landscape\grass\, the
+    # location every working GRAS record uses (see grass_profile module doc).
+    # -----------------------------------------------------------------------
+    if mesh_src.exists():
+        processed, modified, missing = grass_profile.run(
+            extract_dir / source_name, plugin_dir / 'meshes')
+        stats['grass_profile'] = {
+            'processed': processed, 'modified': modified, 'missing': missing}
+        print(f"  Grass models: {processed} placed under landscape\\grass, "
+              f"{modified} profiled"
+              + (f", {missing} missing" if missing else ""))
+
+    # -----------------------------------------------------------------------
     # Copy Textures
     # -----------------------------------------------------------------------
     print("\n" + "=" * 60)
@@ -99,6 +113,14 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
         tex_dst = plugin_dir / 'textures' / 'tes4'
         stats['textures_copied'] = _copy_tree(tex_src, tex_dst)
         print(f"  Textures: {stats['textures_copied']} files -> {tex_dst}")
+
+        # Landscape normal maps: DXT1 has no alpha channel, which Skyrim's
+        # landscape shader reads as a full-strength specular mask (shiny
+        # ground).  Re-container as DXT5 with a dark alpha.  Runs after the
+        # copy so re-copies don't resurrect the DXT1 versions.
+        checked, fixed = landscape_normals.run(tex_dst / 'landscape')
+        stats['landscape_normals_fixed'] = fixed
+        print(f"  Landscape normals: {checked} checked, {fixed} DXT1->DXT5 fixed")
 
     return stats
 

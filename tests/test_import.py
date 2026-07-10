@@ -871,12 +871,12 @@ class TestFurnConversion:
     def _seats(self):
         if not os.path.isdir(self.MESHES):
             pytest.skip('Export meshes not available')
-        from tes5_import.record_types.items import load_furniture_seats
+        from tes5_import.record_types.items import load_furniture_models
         recs = [
             self._furn_rec('Furniture\\LowerClass\\LowerClassBench01.NIF', 0),
             self._furn_rec('Furniture\\LowerClass\\LowerClassBed01.NIF', 0),
         ]
-        load_furniture_seats(self.MESHES, recs)
+        load_furniture_models(self.MESHES, {'FURN': recs})
 
     def test_bench_mnam_matches_seat_count(self):
         """3-seat bench: MNAM bits 0-2 + preserved sit-type flag, 3 FNPR."""

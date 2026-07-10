@@ -77,7 +77,7 @@ _OBND_DEFAULTS = {
     'FURN': (-30, -30, 0, 30, 30, 50),
     # Large objects
     'STAT': (-50, -50, 0, 50, 50, 80),
-    'GRAS': (-10, -10, 0, 10, 10, 10),
+    # GRAS intentionally absent: grass OBND is always all-zeros (see convert_GRAS)
     'TREE': (-50, -50, 0, 50, 50, 150),
     # Actors
     'NPC_': (-12, -12, 0, 12, 12, 60),

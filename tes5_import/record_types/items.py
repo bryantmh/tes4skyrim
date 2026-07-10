@@ -244,14 +244,46 @@ def convert_FURN(rec: dict) -> bytes:
 
 
 def convert_GRAS(rec: dict) -> bytes:
-    extra = b''
-    # TES5 GRAS DATA is similar structure
-    density = get_int(rec, 'DATA.Density')
+    """GRAS — Grass.
+
+    Every working GRAS record (vanilla Skyrim.esm, USSEP, Beyond Skyrim's
+    BSHeartland.esm, Skyrim Extended Cut, Legacy Orsinium) shares three
+    structural invariants the generic object path violates:
+      1. OBND is all ZEROS (never computed mesh bounds);
+      2. MODT is present (BSHeartland proves a 12-byte version-2 stub
+         with no texture hashes works);
+      3. the model path lives under meshes\\landscape\\grass\\ (45/45
+         surveyed MODL paths — the asset pipeline places a copy of each
+         converted grass NIF there, see grass_profile.grass_model_dest).
+    Grass is engine-instanced from LAND texture layers, not placed, so it
+    skips the normal object treatment.
+    """
+    from asset_convert.grass_profile import grass_model_dest
+    subs = b''
+    edid = get_str(rec, 'EditorID')
+    if edid:
+        subs += pack_string_subrecord('EDID', edid)
+    subs += pack_obnd()  # all zeros — vanilla/BSHeartland invariant
+    path = get_str(rec, 'Model.MODL')
+    if path:
+        subs += pack_string_subrecord('MODL', grass_model_dest(path))
+        # MODT stub (version 2, no hashes) — present on every working GRAS
+        subs += pack_subrecord('MODT', struct.pack('<III', 2, 0, 0))
+
+    # TES5 GRAS DATA is the same layout, but TES4 values were tuned for
+    # Oblivion's much coarser placement grid (iMinGrassSize=80 vs Skyrim's
+    # 20 — 16x fewer placement points).  Passed through raw, Density up to
+    # 100 with PositionRange up to 90 over-instances Skyrim's grass planter
+    # and CTDs (no log) on cells where dense grass textures cover whole
+    # quadrants.  Clamp both to the proven-working envelope: vanilla uses
+    # Density 3-6 / PositionRange <=32; BSHeartland (working Oblivion-style
+    # grass fields) goes up to Density 80 / PositionRange ~32.
+    density = min(get_int(rec, 'DATA.Density'), 80)
     min_slope = get_int(rec, 'DATA.MinSlope')
     max_slope = get_int(rec, 'DATA.MaxSlope', 90)
     uf_water = get_int(rec, 'DATA.UnitFromWaterAmount')
     uf_type = get_int(rec, 'DATA.UnitFromWaterType')
-    pos_range = get_float(rec, 'DATA.PositionRange')
+    pos_range = min(get_float(rec, 'DATA.PositionRange'), 32.0)
     h_range = get_float(rec, 'DATA.HeightRange')
     c_range = get_float(rec, 'DATA.ColorRange')
     wave = get_float(rec, 'DATA.WavePeriod')
@@ -267,8 +299,8 @@ def convert_GRAS(rec: dict) -> bytes:
     struct.pack_into('<f', data, 20, c_range)
     struct.pack_into('<f', data, 24, wave)
     data[28] = flags
-    extra += pack_subrecord('DATA', bytes(data))
-    return _simple_object(rec, 'GRAS', has_full=False, extra_subs=extra)
+    subs += pack_subrecord('DATA', bytes(data))
+    return pack_record('GRAS', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
 # TES5 TREE CNAM (48 bytes = 12 floats): Trunk Flexibility, Branch
