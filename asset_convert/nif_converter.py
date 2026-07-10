@@ -458,6 +458,49 @@ def _strip_dead_geometry_controllers(geom):
         ctrl = nxt
 
 
+def _strip_creature_bone_controllers(data):
+    """Remove Oblivion-runtime controllers from creature NIF node chains.
+
+    Oblivion creature skeletons carry an active (flags=12) but DATALESS
+    NiTransformController on every bone plus a bhkBlendController on every
+    ragdoll bone and a NiBSBoneLODController on Bip01 — all driven by
+    Oblivion's engine at runtime.  Vanilla Skyrim creature skeletons ship
+    NONE of these (bhkBlendController: 0 of all vanilla actor meshes; their
+    only NiTransformControllers have a real interpolator+data — e.g. the
+    dog's jaw/tongue idle).  Skyrim drives bones from the behavior graph, so
+    these leftovers are at best dead weight and at worst engine hazards
+    (an active controller with a null interpolator on every bone).
+
+    Keeps NiTransformControllers that have an interpolator (real embedded
+    animation).  Returns the number of controllers removed.
+    """
+    removed = 0
+    for root in data.roots:
+        if root is None:
+            continue
+        for block in root.tree():
+            if not hasattr(block, 'controller'):
+                continue
+            prev = None
+            ctrl = getattr(block, 'controller', None)
+            while ctrl is not None:
+                nxt = getattr(ctrl, 'next_controller', None)
+                dead = isinstance(ctrl, (NifFormat.bhkBlendController,
+                                         NifFormat.NiBSBoneLODController)) \
+                    or (isinstance(ctrl, NifFormat.NiTransformController)
+                        and getattr(ctrl, 'interpolator', None) is None)
+                if dead:
+                    if prev is None:
+                        block.controller = nxt
+                    else:
+                        prev.next_controller = nxt
+                    removed += 1
+                else:
+                    prev = ctrl
+                ctrl = nxt
+    return removed
+
+
 def _resolve_source_texture(tex_rel, src_nif_path):
     """Map a rewritten texture path (textures\\tes4\\fire\\x\\y.dds) back to the
     extracted source file next to the source mesh tree
@@ -1786,7 +1829,62 @@ def _get_body_parts_for_geometry(geom_name: str, num_partitions: int) -> list[in
     return [ARMOR_DEFAULT_BODY_PART] * num_partitions
 
 
-def _add_prn_skin(data, root_node):
+def _get_prn_bone(root_node):
+    """Return the 'Prn' NiStringExtraData value on a root node, or None."""
+    ed_list = getattr(root_node, 'extra_data_list', None)
+    if ed_list is None:
+        return None
+    for ed_idx in range(root_node.num_extra_data_list):
+        ed = ed_list[ed_idx]
+        if isinstance(ed, NifFormat.NiStringExtraData):
+            ed_name = bytes(ed.name).rstrip(b'\x00').decode('latin-1',
+                                                            errors='replace')
+            if ed_name == 'Prn':
+                return bytes(ed.string_data).rstrip(b'\x00').decode(
+                    'latin-1', errors='replace')
+    return None
+
+
+def _bake_node_transforms_into_verts(root_node):
+    """Bake each geometry's node-to-root transform PLUS the root's own
+    transform into the vertex/normal data, then zero those transforms.
+
+    Needed before rigid-skinning Prn-attached creature parts: skinned
+    rendering ignores node transforms, but Oblivion applied them when
+    parenting the part to the bone (doghead's root carries a real rotation).
+    After baking, vertices are in bone-local space so an identity bind
+    matrix is correct.
+    """
+    root_m = root_node.get_transform()
+    for block in list(root_node.tree()):
+        if not isinstance(block, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
+            continue
+        gd = block.data
+        if gd is None:
+            continue
+        full = block.get_transform(root_node) * root_m
+        rot = full.get_matrix_33()
+        for v in gd.vertices:
+            nv = v * full
+            v.x, v.y, v.z = nv.x, nv.y, nv.z
+        if getattr(gd, 'has_normals', 0):
+            for n in gd.normals:
+                nn = n * rot
+                n.x, n.y, n.z = nn.x, nn.y, nn.z
+        block.rotation.set_identity()
+        block.translation.x = block.translation.y = block.translation.z = 0.0
+        block.scale = 1.0
+        try:
+            gd.update_center_radius()
+        except Exception:
+            pass
+    root_node.rotation.set_identity()
+    root_node.translation.x = root_node.translation.y = 0.0
+    root_node.translation.z = 0.0
+    root_node.scale = 1.0
+
+
+def _add_prn_skin(data, root_node, keep_bone_names=False, plain=False):
     """Add Skyrim-compatible BSDismemberSkinInstance to non-skinned rigid armor.
 
     Oblivion attaches some armor pieces (e.g. helmets) rigidly to a bone via a
@@ -1797,27 +1895,21 @@ def _add_prn_skin(data, root_node):
     the NIF, then assigns all vertices weight 1.0 to that bone so the existing
     Oblivion mesh geometry is preserved exactly in the converted NIF.
 
+    keep_bone_names=True keeps the ORIGINAL Oblivion bone name (creature
+    parts — the converted creature skeleton keeps Oblivion bones).
+    plain=True builds a plain NiSkinInstance instead of a
+    BSDismemberSkinInstance (vanilla creature meshes never use dismember).
+
     Returns the number of geometry blocks that were skinned.
     """
     if not isinstance(root_node, NifFormat.NiNode):
         return 0
 
-    # Find 'Prn' NiStringExtraData on the root node
-    prn_bone = None
-    ed_list = getattr(root_node, 'extra_data_list', None)
-    if ed_list is not None:
-        for ed_idx in range(root_node.num_extra_data_list):
-            ed = ed_list[ed_idx]
-            if isinstance(ed, NifFormat.NiStringExtraData):
-                ed_name = bytes(ed.name).rstrip(b'\x00').decode('latin-1', errors='replace')
-                if ed_name == 'Prn':
-                    prn_val = bytes(ed.string_data).rstrip(b'\x00').decode(
-                        'latin-1', errors='replace')
-                    prn_bone = OBLIVION_TO_SKYRIM_BONE_MAP.get(prn_val, prn_val)
-                    break
-
-    if prn_bone is None:
+    prn_val = _get_prn_bone(root_node)
+    if prn_val is None:
         return 0
+    prn_bone = prn_val if keep_bone_names else \
+        OBLIVION_TO_SKYRIM_BONE_MAP.get(prn_val, prn_val)
 
     # Create the bone NiNode placeholder (Skyrim engine matches by name to skeleton)
     bone_node = NifFormat.NiNode()
@@ -1879,19 +1971,40 @@ def _add_prn_skin(data, root_node):
             bone_entry.vertex_weights[vi].index = vi
             bone_entry.vertex_weights[vi].weight = 1.0
 
-        # Build BSDismemberSkinInstance
-        bsd = NifFormat.BSDismemberSkinInstance()
+        # Per-bone bounding sphere — the engine visibility-culls skinned
+        # geometry by these spheres (moved by the live bone each frame); a
+        # zero-radius sphere is never visible in-game even though NifSkope
+        # ignores the field and renders the mesh fine.  The bind transform is
+        # identity, so the sphere is just the vertex bounds in mesh space.
+        verts = geom_data.vertices
+        cx = (min(v.x for v in verts) + max(v.x for v in verts)) / 2.0
+        cy = (min(v.y for v in verts) + max(v.y for v in verts)) / 2.0
+        cz = (min(v.z for v in verts) + max(v.z for v in verts)) / 2.0
+        bone_entry.bounding_sphere_offset.x = cx
+        bone_entry.bounding_sphere_offset.y = cy
+        bone_entry.bounding_sphere_offset.z = cz
+        bone_entry.bounding_sphere_radius = max(
+            ((v.x - cx) ** 2 + (v.y - cy) ** 2 + (v.z - cz) ** 2) ** 0.5
+            for v in verts)
+
+        # Build the skin instance (plain for creature parts, dismember for
+        # worn armor)
+        if plain:
+            bsd = NifFormat.NiSkinInstance()
+        else:
+            bsd = NifFormat.BSDismemberSkinInstance()
         bsd.skeleton_root = root_node
         bsd.data = skin_data_blk
         bsd.skin_partition = None   # regenerated by retarget_skin_to_skyrim
         bsd.num_bones = 1
         bsd.bones.update_size()
         bsd.bones[0] = bone_node
-        bsd.num_partitions = 1
-        bsd.partitions.update_size()
-        bsd.partitions[0].body_part = body_part
-        bsd.partitions[0].part_flag.pf_editor_visible = 1
-        bsd.partitions[0].part_flag.pf_start_net_boneset = 1
+        if not plain:
+            bsd.num_partitions = 1
+            bsd.partitions.update_size()
+            bsd.partitions[0].body_part = body_part
+            bsd.partitions[0].part_flag.pf_editor_visible = 1
+            bsd.partitions[0].part_flag.pf_start_net_boneset = 1
 
         block.skin_instance = bsd
         skinned += 1
@@ -1952,8 +2065,17 @@ def _upgrade_skin_instances(data):
             block.skin_instance = bsd
 
 
-def _convert_nif(data, fix_textures=True, src_path='', weight=0):
+def _convert_nif(data, fix_textures=True, src_path='', weight=0,
+                 creature=False):
     """Convert a PyFFI NifFormat.Data in-place to Skyrim format.
+
+    creature=True selects the creature-asset rules (skeleton.nif and skinned
+    body parts from meshes/creatures/): skinned bodies keep a plain NiNode
+    root and their plain NiSkinInstance with ORIGINAL Oblivion bone names
+    (the faithful-port strategy keeps the Oblivion skeleton, so no retarget
+    and no bone renaming); skeleton.nif becomes a BSFadeNode with BSX=198
+    (vanilla creature-skeleton value) and its ragdoll bhk tree converted in
+    place on the bone nodes (never hoisted to the root).
 
     Returns a stats dict.
     """
@@ -2001,7 +2123,44 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
     # Body-skin geometry is stripped AFTER retarget (see below).
     _body_nibs_to_splice: dict = {}
 
-    if not _is_gnd and _in_armor_dir:
+    if creature:
+        # Oblivion-runtime bone controllers (dataless NiTransformController,
+        # bhkBlendController, NiBSBoneLODController) don't exist in vanilla
+        # Skyrim creature assets — the behavior graph drives the bones.
+        _strip_creature_bone_controllers(data)
+
+        # Engine contract: the anim rig root must be named 'NPC Root [Root]'
+        # (all 30 vanilla creature rigs; the engine binds the graph to the
+        # actor 3D through this node by name — a 'Bip01' root never binds
+        # and the actor spawns invisible).  hkx_skeleton/hkx_anim apply the
+        # same rename on the havok side; here we rename the NIF node in the
+        # skeleton AND every body part (skin bones resolve by node name).
+        from .hkx_skeleton import BONE_RENAMES
+        renames = {k.encode('latin-1'): v.encode('latin-1')
+                   for k, v in BONE_RENAMES.items()}
+        for root in data.roots:
+            if root is None:
+                continue
+            for block in root.tree():
+                nm = getattr(block, 'name', None)
+                if nm is None:
+                    continue
+                key = bytes(nm).rstrip(b'\x00')
+                if key in renames:
+                    block.name = renames[key]
+
+    if creature and not has_skin:
+        # Rigid Prn-attached creature parts (heads, eyes, tails): bake node
+        # transforms into the verts, then rigid-skin to the ORIGINAL Oblivion
+        # bone (the converted creature skeleton keeps Oblivion bone names)
+        # with a plain NiSkinInstance, matching vanilla creature meshes.
+        for root in data.roots:
+            if root is not None and _get_prn_bone(root) is not None:
+                _bake_node_transforms_into_verts(root)
+                _add_prn_skin(data, root, keep_bone_names=True, plain=True)
+        has_skin = _has_skin(data)
+
+    if not creature and not _is_gnd and _in_armor_dir:
         if not has_skin and not _is_shield:
             # Non-skinned armor pieces (e.g. Oblivion helmets attached via 'Prn'
             # NiStringExtraData) need a BSDismemberSkinInstance added.
@@ -2031,7 +2190,11 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
     # but NOT shields.  Shields use BSFadeNode root + Prn='SHIELD' in Skyrim,
     # just like weapons.  Only _gnd (ground model) variants also get BSFadeNode.
     _is_shield = 'shield' in nif_basename
-    _is_worn_armor = (not _is_gnd and _in_armor_dir and not _is_shield)
+    # Creature body parts keep NiNode root + plain NiSkinInstance, exactly
+    # like worn armor keeps NiNode (both are skeleton-attached at runtime).
+    _is_creature_body = creature and has_skin
+    _is_worn_armor = (not _is_gnd and _in_armor_dir and not _is_shield) \
+        or _is_creature_body
 
     for i, root in enumerate(data.roots):
         if root is None:
@@ -2439,7 +2602,11 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         has_constraints = any(
             isinstance(block, NifFormat.bhkConstraint) for block in data.blocks
         )
-        if not wrapped and not root_is_animated and not has_constraints and hasattr(root, 'collision_object') and root.collision_object is None:
+        if not wrapped and not root_is_animated and not has_constraints \
+                and not creature \
+                and hasattr(root, 'collision_object') and root.collision_object is None:
+            # (creature skeletons/bodies excluded: ragdoll collision lives on
+            # the bone nodes and empty leaf bones must not be pruned)
             if hoist_collision(root):
                 # Remove the now-empty collision-container NiNode child
                 remove_empty_collision_nodes(root)
@@ -2447,7 +2614,9 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         # Convert ALL collision objects in the tree (root + any child nodes).
         # Child-node collisions (e.g. animated display-case lids) also need
         # Skyrim-format unknown_6_shorts; leaving them unconverted causes crashes.
-        convert_all_collisions(root)
+        # Creature skeletons keep + convert their bhkBlendCollisionObjects
+        # (ragdoll bone collision — vanilla creature skeletons have them).
+        convert_all_collisions(root, keep_blend=creature)
 
         # Scale Havok constraint pivot points (Oblivion → Skyrim Havok scale).
         # Constraint pivots are stored in Havok-space positions and must be scaled
@@ -2459,13 +2628,46 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
         # Skyrim requires BSXFlags extra data when collision is present
         _add_bsx_flags(root, has_constraints=has_constraints)
 
+        # Creature skeleton.nif: vanilla value is 198 (0xC6 = Havok | Ragdoll
+        # | Dynamic | Articulated) — the generic collision heuristics above
+        # can't derive it from a bone tree.
+        if creature and 'skeleton' in nif_basename and \
+                hasattr(root, 'extra_data_list'):
+            bsx = next((ed for ed in root.extra_data_list
+                        if isinstance(ed, NifFormat.BSXFlags)), None)
+            if bsx is None:
+                bsx = NifFormat.BSXFlags()
+                bsx.name = b'BSX'
+                root.num_extra_data_list += 1
+                root.extra_data_list.update_size()
+                root.extra_data_list[root.num_extra_data_list - 1] = bsx
+            bsx.integer_data = 198
+
     # Retarget worn armor/clothing skins to Skyrim skeleton bind poses and
     # regenerate NiSkinPartition in Skyrim triangle format.  Must run AFTER
     # _walk_node (NiTriStrips→NiTriShape complete) so that update_skin_partition
     # can read triangle data; must also be AFTER version upgrade (UV2=83).
     # Bones still have OBLIVION names at this point — retarget uses OB→SK
     # name mapping internally.
-    if not _is_gnd and _in_armor_dir and has_skin:
+    if creature and has_skin:
+        # Creature skins keep Oblivion bones/weights/bind matrices verbatim
+        # (same skeleton) — only the NiSkinPartition must be regenerated in
+        # Skyrim triangle format (after _walk_node's strips→shapes pass).
+        from .skin_retarget import _regen_skin_partition
+        for root in data.roots:
+            if root is None:
+                continue
+            for block in list(root.tree()):
+                if not isinstance(block, (NifFormat.NiTriShape,
+                                          NifFormat.NiTriStrips)):
+                    continue
+                skin = getattr(block, 'skin_instance', None)
+                if skin is not None:
+                    geom_name = bytes(block.name).rstrip(b'\x00').decode(
+                        'latin-1', errors='replace')
+                    _regen_skin_partition(block, skin, geom_name)
+
+    if not creature and not _is_gnd and _in_armor_dir and has_skin:
         from .skin_retarget import retarget_skin_to_skyrim as _retarget
 
         # Pre-retarget: classify the piece type early so we can apply fixups.
@@ -2509,8 +2711,132 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0):
 # Public API
 # ---------------------------------------------------------------------------
 
+def _shape_blocks(root):
+    """All NiTriShape/NiTriStrips geometry blocks under a root."""
+    return [b for b in root.tree()
+            if isinstance(b, (NifFormat.NiTriShape, NifFormat.NiTriStrips))]
+
+
+def _append_child(node, child):
+    node.num_children += 1
+    node.children.update_size()
+    node.children[node.num_children - 1] = child
+
+
+def _copy_bone_tree(src_node, dst_parent, mapping):
+    """Recursively copy the NiNode-only hierarchy under src_node into
+    dst_parent (name, flags, full local transform — no collision objects,
+    controllers or extra data).  Fills mapping[name] = copied node."""
+    for child in src_node.children:
+        if not isinstance(child, NifFormat.NiNode):
+            continue
+        cp = NifFormat.NiNode()
+        cp.name = child.name
+        cp.flags = child.flags
+        cp.set_transform(child.get_transform())
+        nm = bytes(child.name).rstrip(b'\x00').decode('latin-1')
+        mapping.setdefault(nm, cp)
+        _append_child(dst_parent, cp)
+        _copy_bone_tree(child, cp, mapping)
+
+
+def merge_creature_body(part_paths, dst_path, skeleton_path=None):
+    """Merge the converted creature body-part NIFs into ONE skinned NIF.
+
+    Vanilla Skyrim creatures ship the WHOLE animal (body + head + eyes + tail
+    + any extra parts) as a single skinned mesh under one root, referenced by
+    a SINGLE ARMA on the BODY slot (census: DogRace names only 'BODY'; the
+    rabbit.nif root carries every Rabbit* bone NiNode plus 'Bunnyfur01' and
+    'Eyes' shapes as siblings).  Oblivion instead splits the creature into a
+    skeleton.nif plus one NIF per body part.  Attaching each Oblivion part as
+    its own ARMA on an extra biped slot does NOT work — the engine renders
+    only the BODY-slot ARMA for a creature, so the head/eyes silently vanish.
+
+    Layout (mirrors vanilla): a fresh NiNode root carrying the FULL bone
+    hierarchy copied from the converted skeleton.nif (correct names incl.
+    'NPC Root [Root]', local transforms, no collision), plus every part's
+    shapes as siblings, each shape's skin bones re-pointed by NAME at the
+    rig copy.  No part is a "base": Oblivion body-part NIFs only embed the
+    bone SUBSET they are skinned to (a goblin hand embeds 14 finger bones,
+    the chest only 13 spine bones), so grafting onto any single part leaves
+    the other parts' bones as identity placeholders at the origin — the
+    mangled-goblin bug.  A skin bone missing from the skeleton (e.g. a
+    part-local control node) is copied from the part's own tree with its
+    true world transform.
+
+    part_paths: already-converted .nif paths (Skyrim version).
+    skeleton_path: the creature's converted 'character assets/skeleton.nif'.
+    Writes the merged NIF to dst_path.  Returns {'grafted': int,
+    'shapes': int, 'bones': int}.
+    """
+    if not _PYFFI:
+        return {'error': 'pyffi not installed'}
+    if not part_paths:
+        return {'error': 'no parts'}
+
+    datas = []
+    for p in part_paths:
+        d = NifFormat.Data()
+        with open(p, 'rb') as f:
+            d.read(f)
+        datas.append((p, d))
+
+    root = NifFormat.NiNode()
+    root.name = os.path.basename(dst_path).encode('latin-1')
+    root.flags = NIF_FLAGS
+
+    bones = {}
+    if skeleton_path and os.path.exists(skeleton_path):
+        skel = NifFormat.Data()
+        with open(skeleton_path, 'rb') as f:
+            skel.read(f)
+        for r in skel.roots:
+            if isinstance(r, NifFormat.NiNode):
+                _copy_bone_tree(r, root, bones)
+
+    grafted = 0
+    for _path, d in datas:
+        for src_root in d.roots:
+            if src_root is None:
+                continue
+            for shape in _shape_blocks(src_root):
+                si = shape.skin_instance
+                if si is not None:
+                    for bi, bone in enumerate(si.bones):
+                        if bone is None:
+                            continue
+                        nm = bytes(bone.name).rstrip(b'\x00').decode('latin-1')
+                        tgt = bones.get(nm)
+                        if tgt is None:
+                            # part-local bone the rig lacks: copy it with its
+                            # true world transform (root is identity)
+                            tgt = NifFormat.NiNode()
+                            tgt.name = bone.name
+                            tgt.flags = bone.flags
+                            tgt.set_transform(bone.get_transform(src_root))
+                            _append_child(root, tgt)
+                            bones[nm] = tgt
+                        si.bones[bi] = tgt
+                    if si.skeleton_root is not None:
+                        si.skeleton_root = root
+                _append_child(root, shape)
+                grafted += 1
+
+    # reuse the first part's Data for version/header fields
+    out_data = datas[0][1]
+    out_data.roots = [root]
+
+    dst_dir = os.path.dirname(dst_path)
+    if dst_dir:
+        os.makedirs(dst_dir, exist_ok=True)
+    with open(dst_path, 'wb') as f:
+        out_data.write(f)
+    return {'grafted': grafted, 'shapes': len(_shape_blocks(root)),
+            'bones': len(bones)}
+
+
 def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
-                src_meshes_dir=None):
+                src_meshes_dir=None, creature=False):
     """Convert a single Oblivion NIF to Skyrim format.
 
     Already-Skyrim versions are copied to dst_path unchanged.
@@ -2571,7 +2897,8 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         result['error'] = 'RD'
         return result
 
-    stats = _convert_nif(data, fix_textures=fix_textures, src_path=str(src_path))
+    stats = _convert_nif(data, fix_textures=fix_textures,
+                         src_path=str(src_path), creature=creature)
 
     # Graft the converted Oblivion flame NIF under FlameNode* markers (candle
     # flame / torch fire) — full conversion of Oblivion's own flame visuals,

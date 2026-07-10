@@ -165,21 +165,29 @@ def scan_mesh_footprints(mesh_dir: str, cache_path: str, workers: int = None) ->
     return len(results)
 
 
-def load_mesh_footprints(cache_path: str) -> int:
-    """Load footprint polygons from cache into the module cache."""
+def load_mesh_footprints(cache_path: str, quiet: bool = False) -> int:
+    """Load footprint polygons from cache into the module cache.
+
+    quiet=True skips the status prints — used by navmesh worker processes,
+    which each call this once in their pool initializer and would otherwise
+    spam one "loaded N entries" line per worker.
+    """
     global _FOOTPRINTS
     if not os.path.exists(cache_path):
-        print(f"  Mesh footprints: cache not found ({cache_path})")
+        if not quiet:
+            print(f"  Mesh footprints: cache not found ({cache_path})")
         return 0
     try:
         with open(cache_path, encoding='utf-8') as fh:
             raw = json.load(fh)
         _FOOTPRINTS = {k: [(float(x), float(y)) for (x, y) in v]
                        for k, v in raw.items()}
-        print(f"  Mesh footprints: loaded {len(_FOOTPRINTS)} entries")
+        if not quiet:
+            print(f"  Mesh footprints: loaded {len(_FOOTPRINTS)} entries")
         return len(_FOOTPRINTS)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
-        print(f"  Mesh footprints: could not load cache ({exc})")
+        if not quiet:
+            print(f"  Mesh footprints: could not load cache ({exc})")
         return 0
 
 

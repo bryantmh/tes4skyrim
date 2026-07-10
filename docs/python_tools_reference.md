@@ -1,0 +1,46 @@
+# Python Tools Reference
+
+Linked from [CLAUDE.md](../CLAUDE.md). Command reference for the pipeline's
+Python modules and `tools/` debug utilities.
+
+## tes4_export (export pipeline)
+- **Export**: `python -m tes4_export.export "path/to/Oblivion.esm"` — Pure TES4 binary dump to KEY=VALUE text
+- **Pipeline**: `python convert.py` — Full export→import pipeline
+- **List types**: `python -m tes4_export.export "path/to/Oblivion.esm" --list-types`
+- Export performance: ~8s to parse 1.17M records from Oblivion.esm, ~36s total with write
+
+## tes5_import (import pipeline)
+- **Import**: `python -m tes5_import export/Oblivion.esm -o output/Oblivion.esm -m Skyrim.esm` — TES4 text → TES5 binary ESM/ESP
+- **Tests**: `python -m pytest tests/ -v`
+- Import performance: ~28K records converted from Oblivion.esm, 413MB output, 0 errors
+
+## asset_convert (asset pipeline)
+- **NIF conversion**: `python -m asset_convert.nif_converter <src_dir> <dst_dir> [--workers N]` — Full Oblivion→Skyrim NIF conversion (strips, textures, bones, collision, skin retarget). See [nif_conversion_notes.md](nif_conversion_notes.md) for the deep implementation notes.
+- **SKIP_PATHS**: `asset_convert/nif_converter.py::SKIP_PATHS` — frozenset of path segments to skip during batch conversion (default: `menus`, `creatures`, `trees`). Trees are skipped because TREE records map model paths to `speedtrees/` via spt_converter — the original `trees/` geometry NIFs are not referenced at all.
+- NIF conversion stats: 8032 source NIFs from Oblivion BSAs. 7380 v20 files converted (91.9%). 650 v10/v4 files copied as-is.
+- **SpeedTree (.spt) conversion**: `python -m asset_convert.spt_converter <trees_src> <nif_dst> [--export-dir <dir>]` — see [nif_conversion_notes.md](nif_conversion_notes.md#speedtree-spt-conversion) for the full algorithm.
+- **Preview/iteration tool**: `python tools/spt_preview.py <spt_or_dir> [--views 0,90] [--out dir]` renders generated tree geometry to PNG with real leaf textures beside Oblivion's own billboard render for A/B comparison.
+
+## tools/ (debug/analysis)
+
+Rule: NOT meant for one-off tools. Only multi-use tools that take args. Should also have multiple functions per file, not one-off scripts.
+
+- **NIF analyzer**: `python tools/tes4_nif_analyzer.py <nif_or_dir> [--outdir dir] [--max N]` — Dump NIF structure to text. `--bbox` prints world-space geometry bounding boxes.
+- **NIF analyzer (Skyrim)**: `python tools/tes5_nif_analyzer.py <nif_or_dir> [--outdir dir] [--max N]` — Same format for Skyrim NIFs (re-exports from tes4 version; PyFFI handles both versions)
+- **ESM reader**: `python tools/tes5_esm_reader.py <esm> [--outdir dir] [--types TYPE ...]` — TES5 binary reader with per-type KEY=VALUE output
+- **Cell mesh lister**: `python tools/cell_meshes.py <export_dir> --cell <FormID_or_EditorID> [--cell ...] [--meshes-only]` — Lists all placed base objects + model paths in a cell; multiple --cell prints the mesh-set intersection. Use to find the suspect mesh set when a specific cell crashes.
+- **NIF block scanner**: `python tools/nif_block_scan.py <dir> [--has TYPE]... [--any TYPE...] [--histogram] [--workers N]` — Header-only binary block-type search (block names are plaintext in NIF headers; ripgrep skips binaries so use this instead). `--has X --has Y` = the "0 vanilla files pair X with Y" diagnostic; `--histogram` = block-type census over a tree.
+- **Particle chain dumper**: `python tools/psys_dump.py <nif> [...] [--convert]` — Dumps everything that determines particle visibility: BSXFlags, controller chains, every modifier, emitter params, NiPSysData, shader/alpha properties. `--convert` runs the converter in-memory first and dumps the RESULT (works around PyFFI being unable to re-read our hand-rolled Skyrim output).
+- **Collision sanity checker**: `python tools/collision_sanity.py <nif_or_dir_or_listfile.txt> [--constraints] [--geometry] [--quiet]` — Walks all bhk blocks: NaN/Inf sweep, degenerate hulls/lists, non-unit constraint axes, hinge limit ordering; `--constraints` dumps full descriptor values; `--geometry` additionally NaN-sweeps RENDER geometry.
+- **MOPP validator**: `python tools/mopp_validator.py <nif_or_dir> [--verbose|--summary|--histogram|--workers N]` — validates MOPP walk cleanliness AND exact terminal-key-set == shape-key decode.
+- **Navmesh renderer**: `python tools/navmesh_render.py --cell <FormID_or_EditorID> [--out png] [--size N]` — top-down render of LAND heightmap, mesh footprints, pathgrid, generated navmesh triangles, doors. Primary PGRD→NAVM iteration tool.
+- **Navmesh dumper**: `python tools/navmesh_dump.py <esm> [--navi|--navm] [--nvnm-decode] [--max N]` — decompresses + decodes real NAVI/NAVM/NVNM for format verification.
+- **Terrain LOD renderer**: `python tools/terrain_lod_render.py --esm <esm> --worldspace <name> --cell X Y --radius R` — side-by-side hillshade + composited diffuse for terrain LOD iteration.
+- **LOD NIF inspector**: `python tools/lod_nif_inspect.py` — dumps .btr/.bto geometry+shader.
+- **KF animation explorer**: `python tools/kf_animation_explorer.py --build-cache` — searches .kf animation corpus for skin retargeting.
+
+## verify_plugin.py
+- **Summary**: `python verify_plugin.py <plugin.esp>` — record counts, version info
+- **Integrity checks**: `--check` — missing OBND, wrong form version, CELL DATA size, NPC_ race/ACBS
+- **Record dump**: `--dump --verbose` — hex dump of all subrecords
+- **Filter**: `--type NPC_`, `--formid 00012345`, `--edid SomeEditor`

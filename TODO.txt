@@ -1,5 +1,4 @@
 Gameplan:
-	Finish creature conversion mi5
 	Move External L13
 	Fix distant water M11
 	Fix distant textures M11
@@ -10,6 +9,9 @@ Gameplan:
 	Fix dogwood tree L8
 	Fix terminal spawning L12
 	Fix app design M12
+	Refine Navmesh
+	Refine Dialog
+	Refine Clothing
 
 Major Issues for V1:
 
@@ -40,36 +42,18 @@ Major Issues for V1:
 		Files:
 		[RD] architecture\basementsections\ungrdltraphingedoor.nif
 		[RD] architecture\castle\kvatch\kvatch  castle int hallway01.nif
-		[WR] architecture\ships\mainmast02.nif
-		[WR] architecture\statue\nightmotherstatue.nif
-		[WR] architecture\statue\nightmotherstatuebase.nif
 		[RD] clutter\farm\handscythe01.nif
 		[RD] clutter\farm\oar01.nif
 		[RD] clutter\floorplane01.nif
 		[RD] clutter\stonepedastellarge01.nif
 		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
-		[WR] dungeons\caves\triggers\ctrigtripwire01.nif
 		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
-		[WR] oblivion\gate\obgatemini01.nif
-		[WR] oblivion\gate\obliviongate_forming.nif
-		[WR] oblivion\plants\harradagroundattack.nif
-		[WR] oblivion\plants\harradauprightattack.nif
-		[WR] oblivion\sigil\sigillighttowerbase.nif
-		[WR] weapons\daedric\bow.nif
-		[WR] weapons\dwarven\bow.nif
-		[WR] weapons\ebony\bow.nif
-		[WR] weapons\elven\bow.nif
-		[WR] weapons\glass\bow.nif
-		[WR] weapons\iron\bow.nif
-		[WR] weapons\silver\bow.nif
 
 	7 - NPCs should have barter/training
 
 	8 - NPCs missing proper outfits and instead are wearing random clothing
 
 	9 - Convert Grass
-
-	10 - Ensure proper creature replacements that use oblivion values where possible (missing mountain lion)
 
 	11 - Proper LOD generation oneclick solution as opposed to external generation
 		Still missing:
@@ -80,6 +64,12 @@ Major Issues for V1:
 	12 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
 
 	13 - Add versioning
+
+	14 - Fix all CK and Xedit warnings
+
+	16 - Bow first person model doesn't work (remains on back and invisible in hands)
+
+	19 - Leveled NPCs not spawning
 
 Later Issues:
 	1 - Lip syncing with voice
@@ -118,6 +108,7 @@ Later Issues:
 		Needs better handling of unattached leaves
 		Trunk texture bad UV
 		Dogwood tree is only flowers ingame when it should be leaves and flowers
+		Jackpot! C:\Users\Bryant\Documents\Code\TESConversion\references\ck-cmd-master\src\spt\sptconvert.cpp
 
 	9 - Refine LOD mesh decimation
 
@@ -132,8 +123,16 @@ Later Issues:
 	14 - Convert weathers
 
 	15 - Single threaded workflows
-		ESM import
+		ESM import additional sections than just navmesh
 		Creature conversion
+		Note that ThreadPoolExecutor doesn't seem to work often, whereas ProcessPoolExector seems more consistent
+
+	16 - Interior lights appear off. Perhaps too much falloff of light sources?
+
+	17 - Goblins don't properly hold weapons
+
+	18 - Creature animation issues. Still needs a lot of work and refinement
+		Ragdoll is mangled, and animations don't look natural.
 
 Minor Issues:
 
@@ -144,8 +143,6 @@ Minor Issues:
 	3 - Improve landscape layer blending
 	
 	4 - Should properly position inventory items. The side that allows the largest view should face out
-	
-	5 - Properly convert creatures including animations (may be a pipe dream)
 
 	6 - Every class teaches 1 handed this is obviously not correct in in accordance with the original data
 
@@ -172,4 +169,32 @@ Minor Issues:
 	17 - Voicemap.txt shouldn't be in output folder
 
 	18 - Replace copy to skyrim step with zip output
+
+	19 - Creature conversion console errors
+	Reading <struct 'NiMorphData'> failed
+	Traceback (most recent call last):
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\formats\nif\__init__.py", line 1383, in read
+		block.read(stream, self)
+		~~~~~~~~~~^^^^^^^^^^^^^^
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\object_models\xml\struct_.py", line 373, in read
+		attr_value.read(stream, data)
+		~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\object_models\xml\array.py", line 304, in read
+		elem.read(stream, data)
+		~~~~~~~~~^^^^^^^^^^^^^^
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\object_models\xml\struct_.py", line 373, in read
+		attr_value.read(stream, data)
+		~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\formats\nif\__init__.py", line 899, in read
+		raise ValueError('string too long (0x%08X at 0x%08X)'
+						% (n, stream.tell()))
+	ValueError: string too long (0x5A000000 at 0x000003BC)
+
+	20 - Arrows are converted as bolts
+
+	21 - Bad cell names "Test End Game"
+
+	22 - Activators like standing stones or altars do nothing
+
+	23 - Flame atronach animated section not properly converted
 

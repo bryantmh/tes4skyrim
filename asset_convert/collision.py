@@ -978,24 +978,69 @@ def _decompose_clutter_hull(node, hull_shape):
 # Full collision conversion per-node
 # ---------------------------------------------------------------------------
 
-def _convert_collision(node, actual_root=None):
+def _convert_blend_collision(node, coll_obj):
+    """Convert a bhkBlendCollisionObject on a creature-skeleton bone.
+
+    Vanilla Skyrim creature skeletons KEEP blend collision objects (dog:
+    flags=137, plain bhkRigidBody with a NON-zero bone-relative translation
+    in Havok units, capsule shapes, motion_system=4 KEYFRAMED,
+    quality_type=1 FIXED, layer=8 BIPED).  Shape/material/2010-format fixups
+    are shared with the standard path.  Inertia gets ×0.1 here; the
+    constraint pass (scale_constraint_pivots) applies the second ×0.1 for
+    every constrained body, landing at the correct ×0.01 total.
+    """
+    coll_obj.flags = 137
+    rb = getattr(coll_obj, 'body', None)
+    if rb is None:
+        return
+    # Blend bodies USE their translation (bone-relative placement) — scale,
+    # never zero, even for plain bhkRigidBody.
+    rb.translation.x *= _HAVOK_SCALE
+    rb.translation.y *= _HAVOK_SCALE
+    rb.translation.z *= _HAVOK_SCALE
+    rb.center.x *= _HAVOK_SCALE
+    rb.center.y *= _HAVOK_SCALE
+    rb.center.z *= _HAVOK_SCALE
+    _convert_rigid_body(rb)
+    for attr in ('m_11', 'm_12', 'm_13', 'm_21', 'm_22', 'm_23',
+                 'm_31', 'm_32', 'm_33'):
+        setattr(rb.inertia, attr, getattr(rb.inertia, attr) * _HAVOK_SCALE)
+    rb.motion_system = 4        # MO_SYS_KEYFRAMED (bone follows animation)
+    rb.quality_type = 1         # MO_QUAL_FIXED
+    rb.deactivator_type = 1
+    rb.solver_deactivation = 1
+    rb.havok_col_filter.layer = 8   # SKYL_BIPED
+    rb.shape = _convert_shape(rb.shape, node)
+    _convert_materials(rb.shape)
+
+
+def _convert_collision(node, actual_root=None, keep_blend=False):
     """Convert all collision on a NiNode from Oblivion to Skyrim Havok format.
 
     Modifies node.collision_object in-place.
     actual_root: the NIF's top-level root node, used as target for
     bhkCompressedMeshShape so Skyrim reads the correct world transform.
+    keep_blend: creature skeletons — convert bhkBlendCollisionObject
+    (ragdoll bone collision, fully supported by Skyrim) instead of
+    stripping it.
     """
     if not hasattr(node, 'collision_object') or node.collision_object is None:
         return
 
-    # bhkSPCollisionObject / bhkNPCollisionObject / bhkBlendCollisionObject are
-    # Oblivion phantom/trigger-volume types (fire damage spheres, etc.).  Skyrim
-    # does not support these block types; the engine reads garbage or null-derefs
-    # when it encounters them, causing a red-triangle (failed load).  Strip them.
-    _PHANTOM_COLL_TYPES = frozenset({
-        'bhkSPCollisionObject', 'bhkNPCollisionObject', 'bhkBlendCollisionObject'
-    })
-    if node.collision_object.__class__.__name__ in _PHANTOM_COLL_TYPES:
+    # bhkSPCollisionObject / bhkNPCollisionObject are Oblivion phantom/
+    # trigger-volume types (fire damage spheres, etc.).  Skyrim does not
+    # support these block types; the engine reads garbage or null-derefs when
+    # it encounters them, causing a red-triangle (failed load).  Strip them.
+    # bhkBlendCollisionObject is ALSO stripped on world objects, but on
+    # creature skeletons (keep_blend) it is the vanilla ragdoll-bone type.
+    cls_name = node.collision_object.__class__.__name__
+    if cls_name == 'bhkBlendCollisionObject':
+        if keep_blend:
+            _convert_blend_collision(node, node.collision_object)
+        else:
+            node.collision_object = None
+        return
+    if cls_name in ('bhkSPCollisionObject', 'bhkNPCollisionObject'):
         node.collision_object = None
         return
 
@@ -1124,7 +1169,7 @@ def _convert_collision(node, actual_root=None):
         if decomposed is not None:
             rb.shape = decomposed
 
-def convert_all_collisions(node, actual_root=None):
+def convert_all_collisions(node, actual_root=None, keep_blend=False):
     """Recursively convert collision objects on every node in the entire tree.
 
     Skyrim requires ALL bhkCollisionObject instances in a NIF to use Skyrim
@@ -1137,15 +1182,16 @@ def convert_all_collisions(node, actual_root=None):
     actual_root: the NIF's top-level root node (BSFadeNode).  Passed through
     to _convert_collision → _rebuild_mesh_collision so that
     bhkCompressedMeshShape.target always points to the root, not an inner wrapper.
+    keep_blend: creature skeleton mode — see _convert_collision.
     """
     if node is None or not isinstance(node, NifFormat.NiNode):
         return
     if actual_root is None:
         actual_root = node
-    _convert_collision(node, actual_root)
+    _convert_collision(node, actual_root, keep_blend=keep_blend)
     if hasattr(node, 'children'):
         for child in node.children:
-            convert_all_collisions(child, actual_root)
+            convert_all_collisions(child, actual_root, keep_blend=keep_blend)
 
 
 
