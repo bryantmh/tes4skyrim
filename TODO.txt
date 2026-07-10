@@ -97,8 +97,6 @@ Later Issues:
 		Dogwood tree is only flowers ingame when it should be leaves and flowers
 		Jackpot! C:\Users\Bryant\Documents\Code\TESConversion\references\ck-cmd-master\src\spt\sptconvert.cpp
 
-	9 - Refine LOD mesh decimation
-
 	10 - Properly document all tools
 
 	11 - BSA builder must be limited to 2GB files

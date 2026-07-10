@@ -232,8 +232,11 @@ class SptTree:
     leaf_quads: list = field(default_factory=list)       # 10002: per-leaf-map UV quad (8 floats)
     billboard_quads: list = field(default_factory=list)  # 10003
     frond_quads: list = field(default_factory=list)      # 10004
-    leaf_blossom_distance: float = 0.0  # 3000
+    leaf_blossom_distance: float = 0.0  # 3000 min position along branch (0..1)
+    leaf_blossom_depth: int = 0         # 3001
+    leaf_blossom_weight: float = 0.0    # 3002 fraction of leaves that blossom
     leaf_placement_tolerance: float = 0.0  # 3007
+    leaf_collision: int = 0             # 3008: 0 none, 1 branch, 2 tree
     leaf_rock: float = 0.0              # 21000
     leaf_rustle: float = 0.0            # 21001
     wind_level: int = 0                 # 11002
@@ -580,8 +583,14 @@ def parse_spt(path) -> SptTree:
             # --- leaves globals kept ---
             elif sid == 3000:
                 tree.leaf_blossom_distance = rf()
+            elif sid == 3001:
+                tree.leaf_blossom_depth = ri()
+            elif sid == 3002:
+                tree.leaf_blossom_weight = rf()
             elif sid == 3007:
                 tree.leaf_placement_tolerance = rf()
+            elif sid == 3008:
+                tree.leaf_collision = ri()
             elif sid == 11002:
                 tree.wind_level = ri()
             elif sid == 8003:
