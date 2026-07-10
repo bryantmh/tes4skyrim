@@ -349,14 +349,30 @@ def _mesh_exists(path: str, output_meshes_dir: Path) -> bool:
     return (output_meshes_dir / rel).exists()
 
 
+# Objects smaller than this (max OBND dimension, game units) are only baked
+# into the near LOD-4 tiles.  A level-8 tile starts ~2 cells out; small
+# clutter is invisible there but its baked geometry still costs disk/VRAM.
+_LOD8_MIN_SIZE = 400.0
+
+
+def _obnd_max_dim(stat: dict) -> float:
+    obnd = stat.get('obnd')
+    if not obnd:
+        return 0.0
+    x1, y1, z1, x2, y2, z2 = obnd
+    return float(max(x2 - x1, y2 - y1, z2 - z1))
+
+
 def _lod_meshes_for(stat: dict, output_meshes_dir: Path):
     """
     Return (lod4, lod8, lod16) mesh paths for a stat record.
 
-    - Normal LOD objects (0x8000) get lod4 only.
-    - World-map objects (0x10000000) get lod4 + lod16 (same _far.nif)
-      so LODGenx64 bakes tiles for both distance and world-map view.
-    - lod8 is always empty.
+    - Trees use their billboard-card _far.nif at every level — the cards are
+      8 verts each, so distant forests stay visible for almost no cost.
+    - Other LOD objects (0x8000) get lod4; lod8 only if they're big enough
+      to matter at level-8 distances (_LOD8_MIN_SIZE).
+    - World-map objects (0x10000000) additionally get lod16 so LODGenx64
+      bakes tiles for the far ring / world-map view.
     """
     lod4  = stat.get('lod4', '')
     lod8  = stat.get('lod8', '')
@@ -373,20 +389,30 @@ def _lod_meshes_for(stat: dict, output_meshes_dir: Path):
     if not _mesh_exists(far, output_meshes_dir):
         return '', '', ''
 
-    # World-map flagged objects (0x10000000) get lod16 for map-view LOD
+    from .lod_far_gen import is_tree_model, _tier_path, _TIER8, _TIER16
+    if is_tree_model(stat):
+        return far, far, far
+
     flags = stat.get('flags', 0)
-    lod16_mesh = far if (flags & 0x10000000) else ''
-    return far, '', lod16_mesh
+    lod8_mesh = lod16_mesh = ''
+    if _obnd_max_dim(stat) >= _LOD8_MIN_SIZE:
+        far8 = str(_tier_path(Path(far), _TIER8['suffix']))
+        lod8_mesh = far8 if _mesh_exists(far8, output_meshes_dir) else far
+    if flags & 0x10000000:
+        far16 = str(_tier_path(Path(far), _TIER16['suffix']))
+        lod16_mesh = far16 if _mesh_exists(far16, output_meshes_dir) else far
+    return far, lod8_mesh, lod16_mesh
 
 
 # ---------------------------------------------------------------------------
 # 3. Build the LODGen input text file
 #
-# Trees are NOT special-cased: converted TREE records carry the same
-# size-derived LOD flags as STAT, get a decimated _far.nif like any other
-# object, and flow through the generic path below.  (The old FlatTextures
-# billboard mechanism baked "objpassthru" card shapes into the .bto that never
-# rendered in-game; it has been removed.)
+# Trees flow through the generic object path, but their _far.nif is a
+# crossed-quad billboard card built from Oblivion's shipped billboard render
+# (lod_far_gen.generate_tree_billboard_far) rather than decimated geometry —
+# vanilla-style flat tree LOD, ~8 verts per instance.  (LODGen's own
+# FlatTextures mechanism baked "objpassthru" card shapes into the .bto that
+# never rendered in-game; real billboard NIFs use the proven object path.)
 # ---------------------------------------------------------------------------
 
 
@@ -490,9 +516,11 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
     # PathData points to our output directory so LODGen finds the extracted
     # _far.nif meshes there rather than looking in the Skyrim SE Data folder.
     # Must have a trailing backslash or LODGen will concatenate without a separator.
-    dest      = output_dir / 'meshes' / 'terrain' / edid / 'Objects'
     # Resolve to absolute — LODGen runs with cwd=tools/ so a relative PathData
-    # ("output\...") would fail its Data-directory existence check.
+    # ("output\...") would fail its Data-directory existence check, and a
+    # relative PathOutput would silently write the .bto under tools\.
+    dest      = (Path(output_dir).resolve() / 'meshes' / 'terrain' / edid
+                 / 'Objects')
     path_data = str(Path(output_dir).resolve()).rstrip('\\/') + '\\'
     header = [
         f"GameMode=TES5",
@@ -604,7 +632,8 @@ def generate_lod(esm_path: Path, output_dir: Path,
     from .lod_far_gen import generate_missing_far_nifs
     generate_missing_far_nifs(stats, output_dir / 'meshes',
                                referenced_models=referenced_models,
-                               force_regen_generated=True)
+                               force_regen_generated=True,
+                               tex_root=output_dir / 'textures')
 
     # Write LOD input (all LOD-flagged objects) and run LODGenx64 once
     lodgen_txt = write_lodgen_input(esm_path, output_dir, edid,
@@ -612,6 +641,13 @@ def generate_lod(esm_path: Path, output_dir: Path,
                                     cell_sw=(eff_sw_x, eff_sw_y))
     ok = False
     if lodgen_txt:
+        # Remove stale tiles first: LODGen only rewrites tiles that still have
+        # refs, so old (oversized) .bto would otherwise linger.
+        stale = list(objects_dir.glob('*.bto'))
+        for f in stale:
+            f.unlink()
+        if stale:
+            print(f"  Removed {len(stale)} stale .bto tiles")
         ok = run_lodgen(lodgen_txt, output_dir)
 
     # Promote LOD object textures from meshes/tes4/ subdirectories to the

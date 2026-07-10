@@ -47,10 +47,18 @@ _NIF_FLAGS  = 14
 # Global target across all shapes combined.  Auto-decimation needs more
 # headroom than hand-made vanilla _far.nif (~5-10%) to keep silhouettes; the
 # QEM error floor below stops early on shapes that would fall apart anyway.
-_DECIMATE_RATIO    = 0.15
+_DECIMATE_RATIO    = 0.08
+_MAX_TARGET_VERTS  = 800     # absolute cap: LOD geometry is baked per-instance
+                             # into every .bto tile, so heavy meshes multiply
 _MIN_TRIS          = 12      # min output tris to keep a shape
 _MIN_SRC_TRIS      = 20      # min source tris to include a shape at all
 _SF2_VERTEX_COLORS = 0x20    # SF2 bit to clear when removing vertex colors
+
+# Tree models get a crossed-quad billboard _far.nif (vanilla-style flat tree
+# LOD) instead of decimated geometry — decimating leaf cards shreds canopies
+# and drops trunks, and the full geometry made .bto tiles enormous.
+_TREE_MODEL_PREFIX = 'tes4\\speedtrees\\'
+_BILLBOARD_TEX_DIR = 'tes4\\trees\\billboards'
 
 
 # ---------------------------------------------------------------------------
@@ -59,15 +67,25 @@ _SF2_VERTEX_COLORS = 0x20    # SF2 bit to clear when removing vertex colors
 
 
 _BOUNDARY_WEIGHT = 8.0     # boundary-edge constraint quadric weight (× len²)
+_PRUNE_MAX_AREA_FRAC = 0.05  # only islands below this share of total surface
+                             # area may be pruned to meet the vertex budget
 _WELD_EPS        = 1e-3    # position weld tolerance (game units)
 _MAX_DEV_FRAC    = 0.03    # error floor: stop when a collapse would deviate
                            # more than this fraction of the model diagonal
 _EDGE_LEN_REG    = 0.5     # edge-length regularization (× mean face area)
 
+# Coarser variants for the far LOD rings.  The _far8/_far16 meshes are
+# re-decimated FROM the _far.nif with a relaxed error floor — at level-8/16
+# distances (2+ km) silhouette lumps are invisible but baked verts still
+# cost disk/VRAM in every tile.
+_TIER8  = dict(ratio=0.5,  cap=250, dev=0.08, suffix='_far8')
+_TIER16 = dict(ratio=0.25, cap=120, dev=0.12, suffix='_far16')
+
 
 def _qem_decimate(verts: np.ndarray, tris: np.ndarray,
                   uvs: Optional[np.ndarray],
-                  target_verts: int) -> Tuple:
+                  target_verts: int,
+                  max_dev_frac: float = _MAX_DEV_FRAC) -> Tuple:
     """Quadric-error-metric half-edge-collapse simplification.
 
     Positions are welded (UV-seam duplicates share one topology node) so
@@ -156,7 +174,7 @@ def _qem_decimate(verts: np.ndarray, tris: np.ndarray,
         np.add.at(A, F0[:, k], area2 / 6.0)   # area2 = 2×area, /3 per corner
     mean_face_area = float(area2.mean()) / 2.0
     diag = float(np.linalg.norm(P.max(axis=0) - P.min(axis=0)))
-    max_dev2 = (diag * _MAX_DEV_FRAC) ** 2
+    max_dev2 = (diag * max_dev_frac) ** 2
 
     hom = np.ones(4)
 
@@ -250,8 +268,10 @@ def _qem_decimate(verts: np.ndarray, tris: np.ndarray,
     # ---- component pruning --------------------------------------------------
     # When collapses stall above target (the error floor protects shapes made
     # of many small disconnected islands — foliage cards, clutter piles), drop
-    # whole components smallest-area-first until the budget is met.  The
-    # largest component (trunk, main hull) is never dropped.
+    # whole components smallest-area-first until the budget is met.  Only
+    # components below _PRUNE_MAX_AREA_FRAC of the shape's total area may be
+    # dropped: pruning anything bigger visibly removes chunks of the object
+    # (this is what used to delete tree trunks whose canopy out-measured them).
     if alive > target:
         parent = list(range(W))
 
@@ -280,10 +300,13 @@ def _qem_decimate(verts: np.ndarray, tris: np.ndarray,
             comp_faces.setdefault(r, []).append(fi)
 
         if len(comp_faces) > 1:
+            total_area = sum(comp_area.values())
             by_area = sorted(comp_area, key=comp_area.get)
             for r in by_area[:-1]:                    # never drop the largest
                 if alive <= target:
                     break
+                if comp_area[r] > total_area * _PRUNE_MAX_AREA_FRAC:
+                    break                             # rest are bigger still
                 dropped_verts = set()
                 for fi in comp_faces[r]:
                     face_alive[fi] = False
@@ -398,7 +421,8 @@ def _strip_node(node) -> None:
             node.extra_data_list.update_size()
 
 
-def _decimate_shape_inplace(shape, target_verts: int) -> bool:
+def _decimate_shape_inplace(shape, target_verts: int,
+                            max_dev_frac: float = _MAX_DEV_FRAC) -> bool:
     """Decimate one NiTriShape in local space to approximately target_verts vertices.
 
     Keeps the original BSLightingShaderProperty (correct flags + textures).
@@ -432,7 +456,8 @@ def _decimate_shape_inplace(shape, target_verts: int) -> bool:
     except Exception:
         pass
 
-    d_v, d_t, d_uv = _qem_decimate(verts, tris, uvs, target_verts)
+    d_v, d_t, d_uv = _qem_decimate(verts, tris, uvs, target_verts,
+                                   max_dev_frac)
     if len(d_t) < _MIN_TRIS:
         return False
 
@@ -547,7 +572,8 @@ def _collect_shapes(node, out: list) -> None:
             _collect_shapes(child, out)
 
 
-def _decimate_children(node, targets: Dict[int, int]) -> int:
+def _decimate_children(node, targets: Dict[int, int],
+                       max_dev_frac: float = _MAX_DEV_FRAC) -> int:
     """Walk a NiNode's children, decimate shapes, drop non-geometry blocks.
 
     targets maps id(shape) → target_verts for each NiTriShape.
@@ -561,12 +587,12 @@ def _decimate_children(node, targets: Dict[int, int]) -> int:
             continue
         if isinstance(child, NifFormat.NiTriShape):
             target = targets.get(id(child), 50)
-            if _decimate_shape_inplace(child, target):
+            if _decimate_shape_inplace(child, target, max_dev_frac):
                 keep.append(child)
                 survivors += 1
         elif isinstance(child, NifFormat.NiNode):
             _strip_node(child)
-            sub = _decimate_children(child, targets)
+            sub = _decimate_children(child, targets, max_dev_frac)
             if sub > 0:
                 keep.append(child)
                 survivors += sub
@@ -580,7 +606,9 @@ def _decimate_children(node, targets: Dict[int, int]) -> int:
     return survivors
 
 
-def _decimate_nif_inplace(nif_data, ratio: float) -> bool:
+def _decimate_nif_inplace(nif_data, ratio: float,
+                          cap: int = _MAX_TARGET_VERTS,
+                          max_dev_frac: float = _MAX_DEV_FRAC) -> bool:
     """Decimate all geometry in the NIF in-place using a global proportional budget.
 
     Phase 1: count total source verts across all valid shapes.
@@ -609,7 +637,7 @@ def _decimate_nif_inplace(nif_data, ratio: float) -> bool:
     if total_source == 0:
         return False
 
-    total_target = max(200, int(total_source * ratio))
+    total_target = min(max(150, int(total_source * ratio)), cap)
 
     # Phase 2: per-shape target proportional to vertex share
     targets: Dict[int, int] = {}
@@ -624,8 +652,178 @@ def _decimate_nif_inplace(nif_data, ratio: float) -> bool:
             continue
         _strip_node(root)
         root.flags = _NIF_FLAGS
-        survivors += _decimate_children(root, targets)
+        survivors += _decimate_children(root, targets, max_dev_frac)
     return survivors > 0
+
+
+# ---------------------------------------------------------------------------
+# Tree billboard LOD (vanilla-style flat crossed quads)
+# ---------------------------------------------------------------------------
+
+def _write_billboard_flat_normal(path: Path, size: int = 128) -> None:
+    """Write a flat-normal uncompressed DDS so billboard LOD is lit evenly."""
+    import struct as _struct
+    path.parent.mkdir(parents=True, exist_ok=True)
+    hdr = b'DDS ' + _struct.pack('<I', 124)
+    hdr += _struct.pack('<I', 0x1 | 0x2 | 0x4 | 0x1000 | 0x8)
+    hdr += _struct.pack('<II', size, size)
+    hdr += _struct.pack('<I', size * 4)
+    hdr += _struct.pack('<II', 0, 0)
+    hdr += b'\x00' * 44
+    hdr += _struct.pack('<II', 32, 0x41)              # RGB | ALPHAPIXELS
+    hdr += _struct.pack('<I', 0)
+    hdr += _struct.pack('<I', 32)
+    hdr += _struct.pack('<IIII', 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000)
+    hdr += _struct.pack('<I', 0x1000)
+    hdr += _struct.pack('<IIII', 0, 0, 0, 0)
+    # BGRA (255,128,128,255) = flat +Z normal
+    px = bytes((255, 128, 128, 255)) * (size * size)
+    path.write_bytes(hdr + px)
+
+
+def _billboard_geometry(width: float, z_bottom: float, z_top: float):
+    """Crossed-quad card verts/normals/uvs/tris (two quads at 90°)."""
+    hw = width / 2.0
+    verts = np.array([
+        (-hw, 0.0, z_bottom), (hw, 0.0, z_bottom),
+        (hw, 0.0, z_top),     (-hw, 0.0, z_top),
+        (0.0, -hw, z_bottom), (0.0, hw, z_bottom),
+        (0.0, hw, z_top),     (0.0, -hw, z_top),
+    ], dtype=np.float32)
+    normals = np.array([(0, 1, 0)] * 4 + [(1, 0, 0)] * 4, dtype=np.float32)
+    # DDS v=0 is the top of the rendered tree
+    uvs = np.array([(0, 1), (1, 1), (1, 0), (0, 0)] * 2, dtype=np.float32)
+    tris = np.array([(0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7)],
+                    dtype=np.int32)
+    return verts, normals, uvs, tris
+
+
+def generate_tree_billboard_far(dst_path: Path, obnd, model_rel: str,
+                                tex_root: Path) -> bool:
+    """Write a crossed-quad billboard _far.nif for a TREE model.
+
+    Uses Oblivion's own shipped billboard render
+    (textures\\tes4\\trees\\billboards\\<model stem>.dds — a full-tree render
+    including the trunk).  Card size comes from OBND, which the importer
+    derived from the billboard dimensions, so proportions match.  Returns
+    False if the billboard texture doesn't exist (caller falls back to
+    geometry decimation).
+    """
+    stem = os.path.splitext(os.path.basename(
+        model_rel.replace('\\', '/')))[0].lower()
+    diffuse_rel = f'{_BILLBOARD_TEX_DIR}\\{stem}.dds'
+    if not (tex_root / diffuse_rel).exists():
+        return False
+    normal_rel = f'{_BILLBOARD_TEX_DIR}\\{stem}_n.dds'
+    if not (tex_root / normal_rel).exists():
+        try:
+            _write_billboard_flat_normal(tex_root / normal_rel)
+        except Exception:
+            return False
+
+    width = height = z_min = 0.0
+    if obnd:
+        x1, y1, z1, x2, y2, z2 = obnd
+        width  = float(max(x2 - x1, y2 - y1))
+        height = float(z2 - z1)
+        z_min  = float(z1)
+    if width <= 0:
+        width = 256.0
+    if height <= 0:
+        height, z_min = 384.0, 0.0
+    # Sink the card slightly so it doesn't float on slopes (LODGen's own
+    # flat-billboard code uses the same 5-unit sink).
+    verts, normals, uvs, tris = _billboard_geometry(
+        width, z_min - 5.0, z_min + height)
+
+    tsd = NifFormat.NiTriShapeData()
+    tsd.num_vertices = len(verts)
+    tsd.has_vertices = True
+    tsd.vertices.update_size()
+    tsd.has_normals = True
+    tsd.normals.update_size()
+    tsd.num_uv_sets = 1
+    tsd.uv_sets.update_size()
+    for i in range(len(verts)):
+        v = tsd.vertices[i]
+        v.x, v.y, v.z = map(float, verts[i])
+        n = tsd.normals[i]
+        n.x, n.y, n.z = map(float, normals[i])
+        uv = tsd.uv_sets[0][i]
+        uv.u, uv.v = map(float, uvs[i])
+    tsd.num_triangles = len(tris)
+    tsd.num_triangle_points = len(tris) * 3
+    tsd.has_triangles = True
+    tsd.triangles.update_size()
+    for i, (a, b, c) in enumerate(tris):
+        t = tsd.triangles[i]
+        t.v_1, t.v_2, t.v_3 = int(a), int(b), int(c)
+    ctr = (verts.min(axis=0) + verts.max(axis=0)) / 2.0
+    tsd.center.x, tsd.center.y, tsd.center.z = map(float, ctr)
+    tsd.radius = float(np.linalg.norm(verts - ctr, axis=1).max())
+    tsd.consistency_flags = 0x4000  # CT_STATIC
+
+    texset = NifFormat.BSShaderTextureSet()
+    texset.num_textures = 9
+    texset.textures.update_size()
+    texset.textures[0] = f'textures\\{diffuse_rel}'.encode()
+    texset.textures[1] = f'textures\\{normal_rel}'.encode()
+
+    shader = NifFormat.BSLightingShaderProperty()
+    shader.texture_set = texset
+    shader.uv_scale.u = 1.0
+    shader.uv_scale.v = 1.0
+    shader.glossiness = 1.0
+    shader.specular_strength = 0.0
+    shader.alpha = 1.0
+    shader.emissive_multiple = 1.0
+    shader.texture_clamp_mode = 3
+    shader.shader_flags_1.slsf_1_z_buffer_test = 1
+    shader.shader_flags_1.slsf_1_specular = 0
+    shader.shader_flags_2.slsf_2_z_buffer_write = 1
+    shader.shader_flags_2.slsf_2_double_sided = 1
+
+    alpha = NifFormat.NiAlphaProperty()
+    alpha.flags = 4844        # alpha testing, GREATER (LODGen's own value)
+    alpha.threshold = 128
+
+    shape = NifFormat.NiTriShape()
+    shape.name = b'TreeBillboard'
+    shape.flags = _NIF_FLAGS
+    shape.data = tsd
+    shape.bs_properties.update_size()
+    shape.bs_properties[0] = shader
+    shape.bs_properties[1] = alpha
+    try:
+        shape.update_tangent_space(as_extra=False)
+    except Exception:
+        pass
+
+    root = NifFormat.BSFadeNode()
+    root.name = (stem + '_far').encode('latin1')
+    root.flags = _NIF_FLAGS
+    root.num_children = 1
+    root.children.update_size()
+    root.children[0] = shape
+
+    data = NifFormat.Data()
+    data.version = _SKYRIM_VER
+    data.user_version = 12
+    data.user_version_2 = 83
+    data.header.endian_type = 1
+    data.roots = [root]
+    buf = io.BytesIO()
+    try:
+        data.write(buf)
+    except Exception:
+        return False
+
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    dst_path.write_bytes(buf.getvalue())
+    marker = dst_path.with_suffix('.nif.generated')
+    marker.write_text('generated by lod_far_gen (tree billboard)\n',
+                      encoding='utf-8')
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -633,7 +831,9 @@ def _decimate_nif_inplace(nif_data, ratio: float) -> bool:
 # ---------------------------------------------------------------------------
 
 def generate_far_nif(src_path: Path, dst_path: Path,
-                     decimate_ratio: float = _DECIMATE_RATIO) -> bool:
+                     decimate_ratio: float = _DECIMATE_RATIO,
+                     cap: int = _MAX_TARGET_VERTS,
+                     max_dev_frac: float = _MAX_DEV_FRAC) -> bool:
     """Generate dst_path (_far.nif) by decimating each shape in src_path.
 
     Only processes NIFs already in Skyrim format (v20.2.0.7).
@@ -657,7 +857,7 @@ def generate_far_nif(src_path: Path, dst_path: Path,
     except Exception:
         return False
 
-    if not _decimate_nif_inplace(nif_data, decimate_ratio):
+    if not _decimate_nif_inplace(nif_data, decimate_ratio, cap, max_dev_frac):
         return False
 
     # Rename root to <stem>_far
@@ -687,11 +887,25 @@ def _is_generated(far_path: Path) -> bool:
     return far_path.with_suffix('.nif.generated').exists()
 
 
+def is_tree_model(stat: dict) -> bool:
+    """True if this stat should get billboard tree LOD."""
+    if stat.get('sig') == 'TREE':
+        return True
+    rel = stat.get('model', '').lower().replace('/', '\\').lstrip('\\')
+    if rel.startswith('meshes\\'):
+        rel = rel[len('meshes\\'):]
+    return rel.startswith(_TREE_MODEL_PREFIX)
+
+
 def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
                                referenced_models: 'set | None' = None,
                                workers: int = None,
-                               force_regen_generated: bool = False) -> int:
+                               force_regen_generated: bool = False,
+                               tex_root: 'Path | None' = None) -> int:
     """Generate _far.nif files for all LOD-flagged stats that lack one.
+
+    TREE-type stats get a crossed-quad billboard card (Oblivion's shipped
+    billboard render); everything else is QEM-decimated from the full mesh.
 
     Args:
         stats:                  {form_id: {flags, model, ...}} from lod_gen._parse_esm()
@@ -702,16 +916,21 @@ def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
                                 auto-generated (have a .nif.generated marker).
                                 Hand-crafted _far.nif files (no marker) are
                                 never overwritten.
+        tex_root:               textures/ root (for billboard lookup); defaults
+                                to <output_meshes_dir>/../textures.
 
     Returns the number of _far.nif files successfully created.
     """
-    from .lod_gen import _FLAG_DISTANT_LOD, _FLAG_WORLD_MAP, _far_nif_path, _mesh_exists
+    from .lod_gen import (_FLAG_DISTANT_LOD, _FLAG_WORLD_MAP, _far_nif_path,
+                          _mesh_exists, _LOD8_MIN_SIZE, _obnd_max_dim)
     import multiprocessing as mp
 
     if workers is None:
         workers = max(1, (os.cpu_count() or 4) - 1)
+    if tex_root is None:
+        tex_root = output_meshes_dir.parent / 'textures'
 
-    tasks: List[Tuple[Path, Path]] = []
+    tasks: List[tuple] = []
     seen: set = set()
 
     for stat in stats.values():
@@ -742,10 +961,17 @@ def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
             if not _is_generated(dst):
                 continue  # skip — hand-crafted, never overwrite
 
-        if not src.exists():
+        tree = is_tree_model(stat)
+        if not src.exists() and not tree:
             continue  # source doesn't exist yet
 
-        tasks.append((src, dst))
+        # Which far-ring tiers does this object need?  (Trees reuse their
+        # billboard at every level, so they never need tier meshes.)
+        need8  = (not tree) and _obnd_max_dim(stat) >= _LOD8_MIN_SIZE
+        need16 = (not tree) and bool(flags & _FLAG_WORLD_MAP)
+
+        tasks.append((src, dst, tree, stat.get('obnd'), rel, tex_root,
+                      need8, need16))
 
     if not tasks:
         print(f'  LOD: all {len(seen)} unique models already have _far.nif')
@@ -755,8 +981,8 @@ def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
     success = failed = 0
 
     if workers <= 1:
-        for src, dst in tasks:
-            if generate_far_nif(src, dst):
+        for task in tasks:
+            if _far_nif_worker(task):
                 success += 1
             else:
                 failed += 1
@@ -773,7 +999,36 @@ def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
     return success
 
 
-def _far_nif_worker(args: Tuple[Path, Path]) -> bool:
+def _tier_path(far_path: Path, suffix: str) -> Path:
+    """foo_far.nif → foo<suffix>.nif (e.g. foo_far8.nif)."""
+    stem = far_path.stem
+    if stem.endswith('_far'):
+        stem = stem[:-len('_far')]
+    return far_path.with_name(stem + suffix + '.nif')
+
+
+def _far_nif_worker(args: tuple) -> bool:
     """Top-level worker for multiprocessing.Pool — must be picklable."""
-    src, dst = args
-    return generate_far_nif(src, dst)
+    src, dst, tree, obnd, model_rel, tex_root, need8, need16 = args
+    if tree:
+        if generate_tree_billboard_far(dst, obnd, model_rel, tex_root):
+            return True
+        # no billboard texture for this tree — fall back to decimation
+    if not dst.exists() or _is_generated(dst):
+        if not src.exists():
+            return False
+        if not generate_far_nif(src, dst):
+            return False
+    # Far-ring tiers are decimated FROM the _far.nif (also works for the
+    # hand-crafted vanilla _far meshes, which are already low-poly).
+    if need8:
+        p8 = _tier_path(dst, _TIER8['suffix'])
+        if not p8.exists() or _is_generated(p8):
+            generate_far_nif(dst, p8, _TIER8['ratio'], _TIER8['cap'],
+                             _TIER8['dev'])
+    if need16:
+        p16 = _tier_path(dst, _TIER16['suffix'])
+        if not p16.exists() or _is_generated(p16):
+            generate_far_nif(dst, p16, _TIER16['ratio'], _TIER16['cap'],
+                             _TIER16['dev'])
+    return True

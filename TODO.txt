@@ -1,6 +1,5 @@
 Gameplan:
 	Move External L13
-	Fix distant trees M11
 	Fix potion crashing M1
 	Fix npc barter M7
 	Fix dogwood tree L8
@@ -49,10 +48,6 @@ Major Issues for V1:
 	7 - NPCs should have barter/training
 
 	8 - NPCs missing proper outfits and instead are wearing random clothing
-
-	11 - Proper LOD generation oneclick solution as opposed to external generation
-		Still missing:
-		Tree LOD
 
 	12 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
 
@@ -189,6 +184,8 @@ Minor Issues:
 	23 - Flame atronach animated section not properly converted
 	
 	24 - Character meshes should be skipped
+
+	25 - Refine LOD
 
 
 Crashes:
