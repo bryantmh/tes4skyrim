@@ -247,9 +247,11 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                 xref.quest_edids.add(edid_low)
     print(f"  Built CrossRefGraph: {len(xref.edid_to_formid)} entries, {len(xref.quest_edids)} quests")
 
-    # --- Phase 0c: Create vendor factions for merchant NPCs ---
-    from .record_types.actors import create_vendor_factions
+    # --- Phase 0c: Create vendor factions for merchant NPCs, plus the
+    # trainer faction + per-trainer CLAS clones for the training service ---
+    from .record_types.actors import create_trainer_records, create_vendor_factions
     create_vendor_factions(by_type, writer)
+    create_trainer_records(by_type, writer)
 
     # --- Phase 0d: Load mesh bounds for accurate OBND computation ---
     # Bounds cache is written by convert.py (scan_mesh_bounds) after mesh+speedtree

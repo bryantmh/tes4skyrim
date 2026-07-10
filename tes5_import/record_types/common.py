@@ -2,6 +2,8 @@
 Shared helper functions for TES5 record converters.
 """
 
+import struct
+
 from ..mesh_bounds import get_mesh_obnd
 from ..text_reader import get_float, get_formid, get_int, get_str
 from ..writer import (
@@ -102,6 +104,44 @@ def _resolve_obnd(rec: dict, obnd_sig: str) -> tuple:
         if bounds is not None:
             return bounds
     return _OBND_DEFAULTS.get(obnd_sig, _OBND_DEFAULT)
+
+
+# Skyrim VendorItem* KYWD FormIDs (verified against Skyrim.esm). Vendors only
+# buy/sell items whose keywords appear in their faction's VEND formlist, so
+# every sellable converted item must carry the matching keyword.
+VENDOR_KYWD = {
+    'Weapon':     0x0008F958,
+    'Armor':      0x0008F959,
+    'Jewelry':    0x0008F95A,
+    'Clothing':   0x0008F95B,
+    'Food':       0x0008CDEA,
+    'Ingredient': 0x0008CDEB,
+    'Potion':     0x0008CDEC,
+    'Poison':     0x0008CDED,
+    'Book':       0x000937A2,
+    'SoulGem':    0x000937A3,
+    'Staff':      0x000937A4,
+    'SpellTome':  0x000937A5,
+    'Clutter':    0x000914E9,
+    'AnimalHide': 0x000914EA,
+    'OreIngot':   0x000914EC,
+    'Gem':        0x000914ED,
+    'Tool':       0x000914EE,
+    'Key':        0x000914EF,
+    'Arrow':      0x000917E7,
+    'FoodRaw':    0x000A0E56,
+    'Scroll':     0x000A0E57,
+}
+
+
+def pack_keywords(kwd_fids) -> bytes:
+    """KSIZ + KWDA subrecords for a keyword FormID list (b'' when empty)."""
+    fids = [f for f in kwd_fids if f]
+    if not fids:
+        return b''
+    out = pack_uint32_subrecord('KSIZ', len(fids))
+    out += pack_subrecord('KWDA', b''.join(struct.pack('<I', f) for f in fids))
+    return out
 
 
 def _simple_object(rec: dict, sig: str, has_full: bool = True,

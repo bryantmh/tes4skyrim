@@ -33,6 +33,16 @@ def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # Deploy static scripts (TES4Polyfill + shared service-menu fragments) so
+    # they compile alongside the generated ones.
+    static_dir = os.path.join(os.path.dirname(__file__), 'static_scripts')
+    if os.path.isdir(static_dir):
+        import shutil
+        for name in os.listdir(static_dir):
+            if name.endswith('.psc'):
+                shutil.copy2(os.path.join(static_dir, name),
+                             os.path.join(output_dir, name))
+
     # Phase 1: Build cross-reference graph
     print('  Building cross-reference graph...')
     xref = CrossRefGraph()
@@ -72,12 +82,24 @@ def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -
         print('  Converting SCPT records...')
         _convert_scpt_records(scpt_path, output_dir, xref, stats)
 
+    # Service-menu topics (Barter/Training): INFOs under them whose fragment
+    # is generated here must ALSO open the Skyrim menu — the importer attaches
+    # the shared static script only to INFOs WITHOUT their own fragment.
+    from tes5_import.dialog_converter import SERVICE_MENU_TOPICS, DIAL_TYPE_SERVICE
+    service_topics = {}
+    for rec in by_type.get('DIAL', []):
+        edid = rec.get('EditorID', '')
+        if (edid in SERVICE_MENU_TOPICS
+                and rec.get('DATA.Type', '') == str(DIAL_TYPE_SERVICE)):
+            service_topics[rec.get('FormID', '')] = SERVICE_MENU_TOPICS[edid][0]
+
     # Phase 3: Convert INFO result scripts
     info_path = os.path.join(export_dir, 'INFO.txt')
     if os.path.exists(info_path):
         print('  Converting INFO result scripts...')
         _convert_info_scripts(info_path, output_dir, xref, stats,
-                              info_reveals=unlock_plan['info_reveals'])
+                              info_reveals=unlock_plan['info_reveals'],
+                              service_topics=service_topics)
 
     # Phase 4: Convert QUST stage scripts
     qust_path = os.path.join(export_dir, 'QUST.txt')
@@ -128,17 +150,31 @@ def _convert_scpt_records(scpt_path: str, output_dir: str, xref: CrossRefGraph, 
             stats['errors'].append(f'SCPT {edid} ({formid}): {e}')
 
 
+# Fragment lines that open the Skyrim service menus (appended to scripted
+# INFOs under the Barter/Training topics; script-less ones get the shared
+# static scripts of the same content instead).
+_SERVICE_MENU_CALL = {
+    'barter': '  (akSpeakerRef as Actor).ShowBarterMenu()',
+    'training': '  Game.ShowTrainingMenu(akSpeakerRef as Actor)',
+}
+
+
 def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph,
-                          stats: dict, info_reveals: dict = None):
+                          stats: dict, info_reveals: dict = None,
+                          service_topics: dict = None):
     """Convert INFO result scripts to TopicInfo fragment .psc files.
 
     info_reveals ({info_fid24: [unlock global names]}) marks AddTopic revealer
     INFOs: their OnEnd fragment sets the unlock globals (a fragment is
     generated even when the INFO has no result script). Must stay in sync with
     the VMADs the importer writes (same unlock plan).
+
+    service_topics ({dial_formid_str: 'barter'|'training'}) marks the service-
+    menu topics; fragments for their INFOs also open the corresponding menu.
     """
     records = parse_export_file(info_path)
     info_reveals = info_reveals or {}
+    service_topics = service_topics or {}
 
     for rec in records:
         result_script = rec.get('ResultScript', '')
@@ -149,7 +185,9 @@ def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph,
         except (TypeError, ValueError):
             fid24 = 0
         reveals = info_reveals.get(fid24, [])
+        service_kind = service_topics.get(rec.get('ParentDIAL', ''), '')
         if not has_script and not reveals:
+            # Script-less service-menu INFOs use the shared static scripts.
             continue
 
         if has_script:
@@ -188,6 +226,8 @@ def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph,
             for gname in reveals:
                 out_lines.append(f'  {gname}.SetValue(1)')
             out_lines.extend(body_lines)
+            if service_kind:
+                out_lines.append(_SERVICE_MENU_CALL[service_kind])
             out_lines.append('EndFunction')
             out_lines.append('')
 
@@ -473,16 +513,19 @@ def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int,
     return bytes(buf)
 
 
-def build_vmad_info_fragment(info_formid: str, property_values: dict = None) -> bytes:
+def build_vmad_info_fragment(info_formid: str, property_values: dict = None,
+                             script_name: str = None) -> bytes:
     """Build VMAD binary for an INFO record with a result script fragment.
 
     Args:
         info_formid: INFO FormID string (e.g. "00012345")
         property_values: optional dict {property_name: formid} for script properties
+        script_name: override the per-INFO TES4_TIF__ name with a shared static
+            fragment script (e.g. TES4_ShowBarterMenu for service-menu INFOs)
 
     Returns VMAD binary data.
     """
-    script_name = f'TES4_TIF__{info_formid}'
+    script_name = script_name or f'TES4_TIF__{info_formid}'
     buf = bytearray()
 
     # VMAD header

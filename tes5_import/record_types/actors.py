@@ -118,19 +118,26 @@ def _npc_aidt(rec: dict) -> bytes:
 #   Vendor Faction System
 # ---------------------------------------------------------------------------
 
+# Skyrim.esm Gold001 (index 0 in the output load order)
+GOLD001_FID = 0x0000000F
+
 # TES4 AIDT.Services bitmask → Skyrim VendorItem KYWD FormIDs.
 # Training (bit 14), Recharge (bit 16), Repair (bit 17) have no vendor keyword
 # equivalent — Training is handled by CLAS, the others are TES4-only.
+# MUST stay in sync with the keywords the item converters emit (VENDOR_KYWD in
+# record_types/common.py): a vendor only trades items whose keywords appear in
+# its faction's VEND formlist.
 _TES4_SERVICE_BIT_TO_SKYRIM_KEYWORDS = {
-    0:  [0x0008F958],                         # Weapons → VendorItemWeapon
+    0:  [0x0008F958, 0x000917E7],             # Weapons → VendorItemWeapon + Arrow
     1:  [0x0008F959],                         # Armor   → VendorItemArmor
     2:  [0x0008F95B, 0x0008F95A],             # Clothing → VendorItemClothing + Jewelry
-    3:  [0x000937A2],                         # Books → VendorItemBook
-    4:  [0x0008CDEB, 0x000A0E56],             # Ingredients → VendorItemIngredient + FoodRaw
+    3:  [0x000937A2, 0x000A0E57],             # Books → VendorItemBook + Scroll
+    4:  [0x0008CDEB, 0x000A0E56,
+         0x0008CDEA],                         # Ingredients → Ingredient + FoodRaw + Food (TES4 food = ingredients)
     7:  [0x000914E9],                         # Lights → VendorItemClutter
     8:  [0x000914E9],                         # Apparatus → VendorItemClutter (no TES5 apparatus)
     10: [0x000914ED, 0x000914EA, 0x000914EC,
-         0x000914EE],                         # Misc → Gem + AnimalHide + OreIngot + Tool
+         0x000914EE, 0x000914E9],             # Misc → Gem + AnimalHide + OreIngot + Tool + Clutter
     11: [0x000937A5, 0x000A0E57,
          0x000937A4],                         # Spells → SpellTome + Scroll + Staff
     12: [0x000937A3, 0x000937A4],             # MagicItems → SoulGem + Staff
@@ -220,6 +227,101 @@ def get_vendor_faction_fid(services: int) -> int:
     return _vendor_faction_cache.get(vendor_bits, 0)
 
 
+def get_vendor_faction_fids() -> list[int]:
+    """All vendor FACT FormIDs (for the barter-topic GetInFaction OR-chain)."""
+    return sorted(set(_vendor_faction_cache.values()))
+
+
+# ---------------------------------------------------------------------------
+#   Trainer System
+# ---------------------------------------------------------------------------
+# Skyrim's training menu reads the trainer's skill and level cap from the
+# NPC's CLASS (CLAS DATA Teaches/MaxTrainingLevel), but Oblivion stores them
+# per-NPC in AIDT (the class fields are just CS defaults — 92 of 114 vanilla
+# trainers disagree with their class). So each trainer NPC gets a clone of its
+# own class with Teaches/MaxTraining replaced, plus membership in a synthetic
+# trainer faction that gates the generated Training dialogue topic.
+
+_trainer_faction_fid = 0
+_trainer_class_by_npc: dict[int, int] = {}   # remapped NPC fid -> CLAS clone fid
+
+
+def _npc_trainer_params(rec: dict):
+    """(teaches_tes5_index, max_level) for a trainer NPC, or None.
+
+    A trainer offers the Training service (AIDT bit 14) with a level cap > 0
+    and a skill that still exists in Skyrim (Athletics/Acrobatics don't).
+    """
+    svc = get_int(rec, 'AIDT.Services')
+    if not (svc & (1 << 14)):
+        return None
+    max_train = get_int(rec, 'AIDT.MaxTraining')
+    if max_train <= 0:
+        return None
+    teaches_name = TES4_SKILL_TO_TES5.get(get_int(rec, 'AIDT.Teaches') + 12)
+    if not teaches_name or teaches_name not in TES5_SKILL_ORDER:
+        return None
+    return TES5_SKILL_ORDER.index(teaches_name), min(255, max_train)
+
+
+def create_trainer_records(by_type: dict, writer) -> None:
+    """Phase 0c2: trainer FACT + per-trainer CLAS clones for NPC_ trainers."""
+    global _trainer_faction_fid
+    _trainer_faction_fid = 0
+    _trainer_class_by_npc.clear()
+
+    clas_by_fid = {get_formid(r, 'FormID'): r for r in by_type.get('CLAS', [])
+                   if get_formid(r, 'FormID')}
+
+    trainers = []   # (npc_fid, clas_rec_or_None, teaches_idx, max_level)
+    for rec in by_type.get('NPC_', []):
+        params = _npc_trainer_params(rec)
+        if not params:
+            continue
+        clas_rec = clas_by_fid.get(get_formid(rec, 'CNAM.Class'))
+        trainers.append((get_formid(rec, 'FormID'), clas_rec, *params))
+
+    if not trainers:
+        return
+    print(f"  Creating trainer records for {len(trainers)} trainer NPCs...")
+
+    # One faction marks every trainer; the generated Training topic is gated
+    # on GetInFaction(this). Flags 0 like vanilla JobTrainerFaction.
+    _trainer_faction_fid = writer.alloc_formid()
+    f = pack_string_subrecord('EDID', 'TES4JobTrainerFaction')
+    f += pack_string_subrecord('FULL', 'Trainer')
+    f += pack_subrecord('DATA', struct.pack('<I', 0))
+    f += pack_subrecord('CRVA', b'\x01\x01' + b'\x00' * 18)
+    writer.add_record('FACT', pack_record('FACT', _trainer_faction_fid, 0, f))
+
+    # CLAS clones, deduped per (source class, skill, cap). NPCs without a
+    # resolvable class get a minimal default class carrying the trainer data.
+    clone_cache: dict[tuple, int] = {}
+    for npc_fid, clas_rec, teaches_idx, max_level in trainers:
+        src_fid = get_formid(clas_rec, 'FormID') if clas_rec else 0
+        key = (src_fid, teaches_idx, max_level)
+        clone_fid = clone_cache.get(key)
+        if not clone_fid:
+            clone_fid = writer.alloc_formid()
+            edid = (f'TES4Trainer{TES5_SKILL_ORDER[teaches_idx]}'
+                    f'{max_level}_{src_fid & 0xFFFFFF:06X}')
+            writer.add_record('CLAS', convert_CLAS(
+                clas_rec or {}, override_fid=clone_fid, override_edid=edid,
+                override_teaches=teaches_idx, override_maxtrain=max_level))
+            clone_cache[key] = clone_fid
+        _trainer_class_by_npc[npc_fid] = clone_fid
+
+
+def get_trainer_faction_fid() -> int:
+    """The synthetic trainer FACT FormID (0 when no trainers exist)."""
+    return _trainer_faction_fid
+
+
+def get_trainer_class_fid(npc_fid: int) -> int:
+    """The trainer CLAS clone for a (remapped) NPC FormID, or 0."""
+    return _trainer_class_by_npc.get(npc_fid, 0)
+
+
 def _resolve_npc_race(rec: dict):
     """Resolve TES4 race FormID to (race_edid, skyrim_race_fid, gender_str)."""
     tes4_race_fid = get_formid(rec, 'RNAM.Race')
@@ -284,6 +386,12 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     if vendor_fid:
         subs += pack_subrecord('SNAM', struct.pack('<IbBBB', vendor_fid, 0, 0, 0, 0))
 
+    # SNAM — Trainer faction (gates the generated Training dialogue topic)
+    trainer_clas_fid = get_trainer_class_fid(get_formid(rec, 'FormID'))
+    if trainer_clas_fid and _trainer_faction_fid:
+        subs += pack_subrecord('SNAM', struct.pack('<IbBBB',
+                                                   _trainer_faction_fid, 0, 0, 0, 0))
+
     # INAM — Death item
     inam = get_formid(rec, 'INAM.DeathItem')
     if inam:
@@ -312,19 +420,26 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     # COCT + CNTO — Items (also collected for OTFT outfit creation)
     item_fids = []
     ic = get_int(rec, 'ItemCount')
-    if ic > 0:
-        coct = 0
-        item_data = b''
-        for i in range(ic):
-            fid = get_formid(rec, f'Item[{i}].FormID')
-            count = get_int(rec, f'Item[{i}].Count', 1)
-            if fid:
-                item_data += pack_subrecord('CNTO', struct.pack('<Ii', fid, count))
-                item_fids.append(fid)
-                coct += 1
-        if coct:
-            subs += pack_uint32_subrecord('COCT', coct)
-            subs += item_data
+    coct = 0
+    item_data = b''
+    for i in range(ic):
+        fid = get_formid(rec, f'Item[{i}].FormID')
+        count = get_int(rec, f'Item[{i}].Count', 1)
+        if fid:
+            item_data += pack_subrecord('CNTO', struct.pack('<Ii', fid, count))
+            item_fids.append(fid)
+            coct += 1
+    # Vendor buying power: TES5 has no barter-gold field — a chest-less vendor
+    # trades from its own inventory, so ACBS.BarterGold becomes carried gold.
+    # Not added to item_fids: gold must not leak into the DOFT outfit.
+    barter_gold = get_int(rec, 'ACBS.BarterGold') if vendor_fid else 0
+    if barter_gold > 0:
+        item_data += pack_subrecord('CNTO', struct.pack('<Ii', GOLD001_FID,
+                                                        barter_gold))
+        coct += 1
+    if coct:
+        subs += pack_uint32_subrecord('COCT', coct)
+        subs += item_data
 
     # AIDT — AI data
     subs += pack_subrecord('AIDT', _npc_aidt(rec))
@@ -339,8 +454,9 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     for pfid in substitute_npc_packages([p for p in pack_fids if p]):
         subs += pack_formid_subrecord('PKID', pfid)
 
-    # CNAM — Class
-    cnam = get_formid(rec, 'CNAM.Class')
+    # CNAM — Class. Trainer NPCs get their synthesized class clone (carries
+    # the AIDT Teaches/MaxTraining data Skyrim's training menu reads).
+    cnam = trainer_clas_fid or get_formid(rec, 'CNAM.Class')
     if cnam:
         subs += pack_formid_subrecord('CNAM', cnam)
 
@@ -463,19 +579,24 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     # Items
     item_fids = []
     ic = get_int(rec, 'ItemCount')
-    if ic > 0:
-        coct = 0
-        item_data = b''
-        for i in range(ic):
-            fid = get_formid(rec, f'Item[{i}].FormID')
-            count = get_int(rec, f'Item[{i}].Count', 1)
-            if fid:
-                item_data += pack_subrecord('CNTO', struct.pack('<Ii', fid, count))
-                item_fids.append(fid)
-                coct += 1
-        if coct:
-            subs += pack_uint32_subrecord('COCT', coct)
-            subs += item_data
+    coct = 0
+    item_data = b''
+    for i in range(ic):
+        fid = get_formid(rec, f'Item[{i}].FormID')
+        count = get_int(rec, f'Item[{i}].Count', 1)
+        if fid:
+            item_data += pack_subrecord('CNTO', struct.pack('<Ii', fid, count))
+            item_fids.append(fid)
+            coct += 1
+    # Vendor buying power (see convert_NPC_): barter gold -> carried gold.
+    crea_barter_gold = get_int(rec, 'ACBS.BarterGold') if crea_vendor_fid else 0
+    if crea_barter_gold > 0:
+        item_data += pack_subrecord('CNTO', struct.pack('<Ii', GOLD001_FID,
+                                                        crea_barter_gold))
+        coct += 1
+    if coct:
+        subs += pack_uint32_subrecord('COCT', coct)
+        subs += item_data
 
     # AIDT — 20 bytes (TES5 format, shared with NPC_)
     subs += pack_subrecord('AIDT', _npc_aidt(rec))
@@ -593,10 +714,17 @@ def convert_HAIR(rec: dict) -> bytes:
     pass
 
 
-def convert_CLAS(rec: dict) -> bytes:
-    """CLAS — TES5 DATA is 36 bytes with Skyblivion skill-weight algorithm."""
+def convert_CLAS(rec: dict, *, override_fid: int = 0, override_edid: str = '',
+                 override_teaches: int = -1, override_maxtrain: int = -1) -> bytes:
+    """CLAS — TES5 DATA is 36 bytes with Skyblivion skill-weight algorithm.
+
+    The override_* parameters support Phase 0c trainer-class synthesis: Skyrim
+    reads a trainer's skill/cap from the NPC's CLASS, but Oblivion stores them
+    per-NPC in AIDT, so trainer NPCs get a clone of their own class with just
+    Teaches/MaxTraining replaced (override_teaches is a TES5_SKILL_ORDER index).
+    """
     subs = b''
-    edid = get_str(rec, 'EditorID')
+    edid = override_edid or get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
     full = get_str(rec, 'FULL')
@@ -653,6 +781,11 @@ def convert_CLAS(rec: dict) -> bytes:
         teaches = 0
 
     max_train = get_int(rec, 'DATA.MaxTraining')
+    if override_teaches >= 0:
+        teaches = override_teaches
+    if override_maxtrain >= 0:
+        max_train = override_maxtrain
+    max_train = min(255, max(0, max_train))
 
     # TES5 CLAS DATA: Unknown(4) + Teaches(S8,1) + MaxTraining(U8,1) + SkillWeights(18) + Bleedout(float,4) + VoicePoints(U32,4) + AttrWeights(4×U8) = 36 bytes
     data = struct.pack('<I', 0xFFFC0000)  # Flags (vanilla default)
@@ -663,7 +796,9 @@ def convert_CLAS(rec: dict) -> bytes:
     data += struct.pack('<4B', 1, 1, 1, 0)  # Attr weights: Health, Magicka, Stamina, Unknown
     subs += pack_subrecord('DATA', data)
 
-    return pack_record('CLAS', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
+    fid = override_fid or get_formid(rec, 'FormID')
+    flags = 0 if override_fid else get_int(rec, 'RecordFlags')
+    return pack_record('CLAS', fid, flags, subs)
 
 
 def convert_GLOB(rec: dict) -> bytes:

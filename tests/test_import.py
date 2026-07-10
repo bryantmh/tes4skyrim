@@ -948,5 +948,191 @@ class TestFurnConversion:
                 pytest.fail('No BSFurnitureMarkerNode in converted NIF')
 
 
+class TestServiceConversion:
+    """Barter/training services: trainer CLAS clones, vendor gold, dialogue."""
+
+    def _subrecords(self, rec_bytes: bytes) -> dict:
+        data = rec_bytes[RECORD_HEADER_SIZE:]
+        subs = {}
+        pos = 0
+        while pos + 6 <= len(data):
+            sig = data[pos:pos + 4].decode('ascii')
+            size = struct.unpack_from('<H', data, pos + 4)[0]
+            subs.setdefault(sig, []).append(data[pos + 6:pos + 6 + size])
+            pos += 6 + size
+        return subs
+
+    def _trainer_npc(self, teaches='7', maxtrain='70', services='16385'):
+        # services 16385 = 0x4001 (weapons vendor + training)
+        return {'Signature': 'NPC_', 'FormID': '00000500', 'RecordFlags': '0',
+                'EditorID': 'TestTrainer', 'FULL': 'Trainer',
+                'ACBS.Flags': '0', 'ACBS.Level': '5', 'ACBS.CalcMin': '5',
+                'ACBS.CalcMax': '10', 'ACBS.BarterGold': '800',
+                'FactionCount': '0', 'SpellCount': '0', 'ItemCount': '0',
+                'AIPackageCount': '0',
+                'AIDT.Aggression': '5', 'AIDT.Confidence': '50',
+                'AIDT.Responsibility': '50', 'AIDT.Services': services,
+                'AIDT.Teaches': teaches, 'AIDT.MaxTraining': maxtrain,
+                'CNAM.Class': '00000900',
+                'DATA.Health': '50', 'DATA.Intelligence': '40',
+                'DATA.Strength': '60', 'DATA.Endurance': '45',
+                'HCLR.R': '100', 'HCLR.G': '80', 'HCLR.B': '60'}
+
+    def _clas_rec(self):
+        return {'Signature': 'CLAS', 'FormID': '00000900', 'RecordFlags': '0',
+                'EditorID': 'TestClass', 'FULL': 'Warrior', 'DESC': '',
+                'DATA.Specialization': '0', 'DATA.Teaches': '0',
+                'DATA.MaxTraining': '0'}
+
+    def test_trainer_class_and_faction(self):
+        from tes5_import.record_types.actors import (
+            create_trainer_records, create_vendor_factions,
+            get_trainer_class_fid, get_trainer_faction_fid)
+        from tes5_import.constants import TES5_SKILL_ORDER
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        npc = self._trainer_npc()   # Teaches=7 (Alchemy), max 70
+        by_type = {'NPC_': [npc], 'CLAS': [self._clas_rec()]}
+        create_vendor_factions(by_type, writer)
+        create_trainer_records(by_type, writer)
+
+        assert get_trainer_faction_fid() != 0
+        clone_fid = get_trainer_class_fid(0x00000500)
+        assert clone_fid != 0
+        # The CLAS clone must carry Teaches=Alchemy + MaxTraining=70
+        clas_bytes = writer._top_groups['CLAS'][-1]
+        subs = self._subrecords(clas_bytes)
+        data = subs['DATA'][0]
+        teaches, maxtrain = struct.unpack_from('<bB', data, 4)
+        assert teaches == TES5_SKILL_ORDER.index('Alchemy')
+        assert maxtrain == 70
+
+        # NPC gets the clone as CNAM, trainer faction SNAM, and vendor gold
+        npc_bytes = convert_NPC_(npc)
+        nsubs = self._subrecords(npc_bytes)
+        assert struct.unpack('<I', nsubs['CNAM'][0])[0] == clone_fid
+        snam_fids = {struct.unpack_from('<I', s)[0] for s in nsubs['SNAM']}
+        assert get_trainer_faction_fid() in snam_fids
+        cnto = [struct.unpack('<Ii', c) for c in nsubs['CNTO']]
+        assert (0x0000000F, 800) in cnto   # Gold001 x barter gold
+
+    def test_trainer_unmappable_skill_skipped(self):
+        from tes5_import.record_types.actors import (
+            create_trainer_records, get_trainer_class_fid)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        # Teaches=1 (Athletics) has no Skyrim skill -> not a trainer
+        npc = self._trainer_npc(teaches='1')
+        create_trainer_records({'NPC_': [npc], 'CLAS': []}, writer)
+        assert get_trainer_class_fid(0x00000500) == 0
+
+    def test_service_menu_kind(self):
+        from tes5_import.dialog_converter import (service_menu_kind,
+                                                  should_skip_dial)
+        barter = {'Signature': 'DIAL', 'FormID': '0000010F',
+                  'EditorID': 'Barter', 'DATA.Type': '5'}
+        refusal = {'Signature': 'DIAL', 'FormID': '0000010E',
+                   'EditorID': 'ServiceRefusal', 'DATA.Type': '5'}
+        assert service_menu_kind(barter) == 'barter'
+        assert not should_skip_dial(barter)
+        assert service_menu_kind(refusal) == ''
+        assert should_skip_dial(refusal)
+
+    def test_convert_info_service_vmad(self):
+        from tes5_import.dialog_converter import convert_INFO
+        rec = {'Signature': 'INFO', 'FormID': '00062116', 'RecordFlags': '0',
+               'ParentDIAL': '0000010F', 'DATA.Flags': '2',
+               'ResponseCount': '1', 'Response[0].EmotionType': '0',
+               'Response[0].EmotionValue': '50',
+               'Response[0].ResponseNumber': '1',
+               'Response[0].ResponseText': 'Take a look.'}
+        result = convert_INFO(rec, service_menu='barter')
+        assert b'TES4_ShowBarterMenu' in result
+        result = convert_INFO(rec, service_menu='training')
+        assert b'TES4_ShowTrainingMenu' in result
+        # Without a service menu there is no VMAD at all
+        assert b'VMAD' not in convert_INFO(rec)
+
+    def test_vendor_item_keywords(self):
+        """Sellable items carry the VendorItem* keyword the vendor factions
+        filter on (no keyword = item invisible in the barter menu)."""
+        from tes5_import.record_types.common import VENDOR_KYWD
+
+        def kwda_fids(rec_bytes):
+            data = self._subrecords(rec_bytes).get('KWDA')
+            if not data:
+                return set()
+            return {struct.unpack_from('<I', data[0], i)[0]
+                    for i in range(0, len(data[0]), 4)}
+
+        weap = convert_WEAP({'Signature': 'WEAP', 'FormID': '00001000',
+                             'RecordFlags': '0', 'EditorID': 'TestSword',
+                             'DATA.Type': '0', 'DATA.Value': '10',
+                             'DATA.Weight': '5', 'DATA.Damage': '8'})
+        assert VENDOR_KYWD['Weapon'] in kwda_fids(weap)
+
+        staff = convert_WEAP({'Signature': 'WEAP', 'FormID': '00001001',
+                              'RecordFlags': '0', 'EditorID': 'TestStaff',
+                              'DATA.Type': '4', 'DATA.Value': '10',
+                              'DATA.Weight': '5', 'DATA.Damage': '8'})
+        assert VENDOR_KYWD['Staff'] in kwda_fids(staff)
+
+        # Ring (TES4 biped bit 6 = RightRing) -> Jewelry, not Clothing
+        ring = convert_CLOT({'Signature': 'CLOT', 'FormID': '00001002',
+                             'RecordFlags': '0', 'EditorID': 'TestRing',
+                             'BMDT.BipedFlags': str(1 << 6),
+                             'DATA.Value': '50', 'DATA.Weight': '0.1'})
+        assert VENDOR_KYWD['Jewelry'] in kwda_fids(ring)
+
+        shirt = convert_CLOT({'Signature': 'CLOT', 'FormID': '00001003',
+                              'RecordFlags': '0', 'EditorID': 'TestShirt',
+                              'BMDT.BipedFlags': str(1 << 2),
+                              'DATA.Value': '5', 'DATA.Weight': '1'})
+        assert VENDOR_KYWD['Clothing'] in kwda_fids(shirt)
+
+        misc = convert_MISC({'Signature': 'MISC', 'FormID': '00001004',
+                             'RecordFlags': '0', 'EditorID': 'TestPlate',
+                             'DATA.Value': '2', 'DATA.Weight': '1'})
+        assert VENDOR_KYWD['Clutter'] in kwda_fids(misc)
+
+        # Every emitted keyword must be tradable at the matching TES4 vendor
+        from tes5_import.record_types.actors import _keywords_for_services
+        assert VENDOR_KYWD['Arrow'] in _keywords_for_services(1 << 0)
+        assert VENDOR_KYWD['Clutter'] in _keywords_for_services(1 << 10)
+
+    def test_barter_topic_dialogue(self):
+        """End-to-end: Barter topic converts with prompt, gate and fragment."""
+        from tes5_import.dialog_converter import build_dialog_groups
+        from tes5_import.record_types.actors import (
+            create_trainer_records, create_vendor_factions)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        npc = self._trainer_npc()
+        qust = {'Signature': 'QUST', 'FormID': '00010602',
+                'EditorID': 'Generic', 'DATA.Flags': '5',
+                'DATA.Priority': '30', 'StageCount': '0'}
+        dial = {'Signature': 'DIAL', 'FormID': '0000010F',
+                'EditorID': 'Barter', 'FULL': 'Barter', 'DATA.Type': '5',
+                'QuestCount': '1', 'Quest[0]': '00010602'}
+        info = {'Signature': 'INFO', 'FormID': '00062116', 'RecordFlags': '0',
+                'ParentDIAL': '0000010F', 'DATA.Flags': '2',
+                'QSTI.Quest': '00010602', 'ResponseCount': '1',
+                'Response[0].EmotionType': '0',
+                'Response[0].EmotionValue': '50',
+                'Response[0].ResponseNumber': '1',
+                'Response[0].ResponseText': 'I have much to offer.'}
+        by_type = {'NPC_': [npc], 'CLAS': [self._clas_rec()],
+                   'QUST': [qust], 'DIAL': [dial], 'INFO': [info]}
+        create_vendor_factions(by_type, writer)
+        create_trainer_records(by_type, writer)
+        build_dialog_groups(by_type, writer, npc_to_vtyp={})
+
+        dial_group = b''.join(writer._top_groups['DIAL'])
+        # Player prompt replaces the raw 'Barter' FULL
+        assert b'What have you got for sale?' in dial_group
+        # Both the original line and the synthetic fallback carry the shared
+        # barter fragment (the script name appears 3x per VMAD: attached
+        # script, fragment FileName, fragment ScriptName)
+        assert dial_group.count(b'TES4_ShowBarterMenu') == 6
+        assert b'Take a look.' in dial_group
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])

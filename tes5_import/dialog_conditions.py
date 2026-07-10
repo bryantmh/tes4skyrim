@@ -27,6 +27,7 @@ CTDA_USE_GLOBAL = 0x04    # comparison value is a GLOB FormID, not a float
 
 # --- Dialogue-critical function indices (identical in both games) --------------
 FUNC_GET_IS_ID = 72            # GetIsID(ref)
+FUNC_GET_IN_FACTION = 71       # GetInFaction(fact)
 FUNC_GET_STAGE = 58            # GetStage(quest)
 FUNC_GET_STAGE_DONE = 59       # GetStageDone(quest, stage)
 FUNC_GET_QUEST_RUNNING = 56    # GetQuestRunning(quest)

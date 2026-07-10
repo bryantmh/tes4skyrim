@@ -1,56 +1,5 @@
 ScriptName TES4Polyfill Hidden
 {Utility functions for converted TES4 Oblivion scripts.
-All functions are Global and parameter-based — no instance state needed.}
-
-; ==========================================================================
-; Actor Value Mapping (TES4 AV names → TES5 AV names)
-; ==========================================================================
-
-String Function MapActorValue(String avName) Global
-  If avName == "Strength"
-    Return "UnarmedDamage"
-  ElseIf avName == "Intelligence"
-    Return "Magicka"
-  ElseIf avName == "Willpower"
-    Return "MagickaRate"
-  ElseIf avName == "Agility"
-    Return "SpeedMult"
-  ElseIf avName == "Speed"
-    Return "SpeedMult"
-  ElseIf avName == "Endurance"
-    Return "HealRate"
-  ElseIf avName == "Personality"
-    Return "Speechcraft"
-  ElseIf avName == "Luck"
-    Return "Health"
-  ElseIf avName == "Armorer"
-    Return "Smithing"
-  ElseIf avName == "Athletics"
-    Return "Stamina"
-  ElseIf avName == "Blade"
-    Return "OneHanded"
-  ElseIf avName == "Blunt"
-    Return "TwoHanded"
-  ElseIf avName == "HandToHand"
-    Return "UnarmedDamage"
-  ElseIf avName == "Mysticism"
-    Return "Alteration"
-  ElseIf avName == "Mercantile"
-    Return "Speechcraft"
-  ElseIf avName == "Security"
-    Return "Lockpicking"
-  ElseIf avName == "Acrobatics"
-    Return "SpeedMult"
-  ElseIf avName == "Fatigue"
-    Return "Stamina"
-  ElseIf avName == "Encumbrance"
-    Return "CarryWeight"
-  Else
-    Return avName
-  EndIf
-EndFunction
-ScriptName TES4Polyfill Hidden
-{Utility functions for converted TES4 Oblivion scripts.
 All functions are Global — no instance needed.
 Provides equivalents for Oblivion functions with no direct Papyrus mapping.}
 

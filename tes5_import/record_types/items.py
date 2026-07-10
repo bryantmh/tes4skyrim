@@ -4,6 +4,7 @@ import struct
 
 from ..constants import LOD_SIZE_THRESHOLD, WORLD_MAP_SIZE_THRESHOLD
 from .common import (
+    VENDOR_KYWD,
     _common_header_subs,
     _prefix_path,
     _resolve_obnd,
@@ -14,6 +15,7 @@ from .common import (
     get_str,
     pack_float_subrecord,
     pack_formid_subrecord,
+    pack_keywords,
     pack_obnd,
     pack_record,
     pack_string_subrecord,
@@ -51,6 +53,8 @@ def convert_ACTI(rec: dict) -> bytes:
 
 def convert_MISC(rec: dict) -> bytes:
     extra = b''
+    # KSIZ/KWDA before DATA per TES5 MISC order (vendor sell-list filter)
+    extra += pack_keywords([VENDOR_KYWD['Clutter']])
     value = get_int(rec, 'DATA.Value')
     weight = get_float(rec, 'DATA.Weight')
     extra += pack_subrecord('DATA', struct.pack('<If', value, weight))
@@ -59,6 +63,7 @@ def convert_MISC(rec: dict) -> bytes:
 
 def convert_KEYM(rec: dict) -> bytes:
     extra = b''
+    extra += pack_keywords([VENDOR_KYWD['Key']])
     value = get_int(rec, 'DATA.Value')
     weight = get_float(rec, 'DATA.Weight')
     extra += pack_subrecord('DATA', struct.pack('<If', value, weight))
@@ -400,6 +405,7 @@ def convert_LIGH(rec: dict) -> bytes:
 
 def convert_SLGM(rec: dict) -> bytes:
     extra = b''
+    extra += pack_keywords([VENDOR_KYWD['SoulGem']])
     value = get_int(rec, 'DATA.Value')
     weight = get_float(rec, 'DATA.Weight')
     extra += pack_subrecord('DATA', struct.pack('<If', value, weight))

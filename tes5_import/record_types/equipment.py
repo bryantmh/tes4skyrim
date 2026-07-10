@@ -27,6 +27,7 @@ from ..skyrim_overrides import (
     WEAPON_ANIM_VNAM,
 )
 from .common import (
+    VENDOR_KYWD,
     _common_header_subs,
     _convert_biped_flags,
     _prefix_path,
@@ -36,6 +37,7 @@ from .common import (
     get_str,
     pack_float_subrecord,
     pack_formid_subrecord,
+    pack_keywords,
     pack_obnd,
     pack_record,
     pack_string_subrecord,
@@ -156,6 +158,9 @@ def convert_WEAP(rec: dict, writer=None) -> bytes:
     # BAMT — Block Material
     subs += pack_formid_subrecord('BAMT', WEAPON_ANIM_BAMT.get(anim_type, 0x000774C2))
 
+    # KSIZ/KWDA — vendor keyword (TES4 type 4 = Staff)
+    subs += pack_keywords([VENDOR_KYWD['Staff' if tes4_type == 4 else 'Weapon']])
+
     # INAM — Impact Data Set (hit effects/particles)
     subs += pack_formid_subrecord('INAM', WEAPON_ANIM_INAM.get(anim_type, 0x00013CAC))
 
@@ -251,6 +256,14 @@ def convert_ARMO(rec: dict, is_clothing: bool = False, writer=None) -> bytes:
 
     # RNAM — Race (DefaultRace)
     subs += pack_formid_subrecord('RNAM', 0x00000019)
+
+    # KSIZ/KWDA — vendor keyword: rings (TES4 bits 6/7) and amulets (bit 8)
+    # are jewelry; otherwise clothing vs armor by armor type.
+    if tes4_biped & 0x01C0:
+        vendor_kwd = 'Jewelry'
+    else:
+        vendor_kwd = 'Clothing' if is_clothing else 'Armor'
+    subs += pack_keywords([VENDOR_KYWD[vendor_kwd]])
 
     # MODL[] — Armature (ARMA references): generate ARMA companion record
     if writer is not None and male_model:
@@ -416,6 +429,9 @@ def convert_AMMO(rec: dict, writer=None) -> bytes:
     else:
         proj_fid = DEFAULT_ARROW_PROJECTILE
 
+    # KSIZ/KWDA — vendor keyword (weapon vendors' list includes Arrow)
+    subs += pack_keywords([VENDOR_KYWD['Arrow']])
+
     # TES5 AMMO DATA (SSE, 20 bytes): Projectile(FormID) Flags(U32) Damage(float) Value(U32) Weight(float)
     data = struct.pack('<IIfIf', proj_fid, flags & 0x01, float(damage), value, weight)
     subs += pack_subrecord('DATA', data)
@@ -511,6 +527,9 @@ def convert_BOOK(rec: dict) -> bytes:
         tes5_flags |= 0x01  # Teaches Skill
     if flags & 0x02:  # Can't be taken
         tes5_flags |= 0x02
+
+    # KSIZ/KWDA — vendor keyword (TES4 flag 0x01 = Scroll)
+    subs += pack_keywords([VENDOR_KYWD['Scroll' if flags & 0x01 else 'Book']])
 
     data = struct.pack('<BBHiIf', tes5_flags, 0, 0, teaches_tes5, value, weight)
     subs += pack_subrecord('DATA', data)
@@ -631,6 +650,16 @@ def convert_SPEL(rec: dict) -> bytes:
 
 def convert_ALCH(rec: dict) -> bytes:
     subs = _common_header_subs(rec, obnd_sig='ALCH')
+
+    tes4_flags = get_int(rec, 'ENIT.Flags')
+    full = get_str(rec, 'FULL', '').lower()
+    is_poison = 'poison' in full
+    is_food = bool(tes4_flags & 0x02)
+
+    # KSIZ/KWDA — vendor keyword (after FULL per vanilla ALCH order)
+    kwd = 'Poison' if is_poison else ('Food' if is_food else 'Potion')
+    subs += pack_keywords([VENDOR_KYWD[kwd]])
+
     model = get_str(rec, 'Model.MODL')
     if model:
         subs += pack_string_subrecord('MODL', _prefix_path(model))
@@ -641,14 +670,12 @@ def convert_ALCH(rec: dict) -> bytes:
     # ENIT (Potion) — TES5: Cost(4) + PrimaryFlags(4) + PrimaryEffect(4) +
     #   UseSound(4) + pad(4) = 20 bytes
     value = get_int(rec, 'ENIT.Value')
-    tes4_flags = get_int(rec, 'ENIT.Flags')
     tes5_flags = 0
     if tes4_flags & 0x01:  # No auto-calc → Manual Calc
         tes5_flags |= 0x01
-    full = get_str(rec, 'FULL', '').lower()
-    if 'poison' in full:
+    if is_poison:
         tes5_flags |= 0x20000  # Poison (bit 17)
-    elif tes4_flags & 0x02:  # Food
+    elif is_food:
         tes5_flags |= 0x02
     enit = struct.pack('<IIIII', value, tes5_flags, 0, 0, 0)
     subs += pack_subrecord('ENIT', enit)
@@ -661,6 +688,10 @@ def convert_ALCH(rec: dict) -> bytes:
 
 def convert_INGR(rec: dict) -> bytes:
     subs = _common_header_subs(rec, obnd_sig='INGR')
+
+    # KSIZ/KWDA — vendor keyword (TES4 food is sold by ingredient vendors)
+    subs += pack_keywords([VENDOR_KYWD['Ingredient']])
+
     model = get_str(rec, 'Model.MODL')
     if model:
         subs += pack_string_subrecord('MODL', _prefix_path(model))
@@ -687,6 +718,9 @@ def convert_SGST(rec: dict) -> bytes:
     """
     subs = _common_header_subs(rec, obnd_sig='SCRL')
 
+    # KSIZ/KWDA — vendor keyword
+    subs += pack_keywords([VENDOR_KYWD['Scroll']])
+
     # DESC before MODL per TES5 spec
     desc = get_str(rec, 'DESC', '')
     subs += pack_string_subrecord('DESC', desc)
@@ -712,6 +746,7 @@ def convert_APPA(rec: dict) -> bytes:
     model = get_str(rec, 'Model.MODL')
     if model:
         subs += pack_string_subrecord('MODL', _prefix_path(model))
+    subs += pack_keywords([VENDOR_KYWD['Clutter']])
     value = get_int(rec, 'DATA.Value')
     weight = get_float(rec, 'DATA.Weight')
     subs += pack_subrecord('DATA', struct.pack('<If', value, weight))
