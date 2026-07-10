@@ -271,6 +271,21 @@ Playable Oblivion races map directly to Skyrim equivalents by EditorID:
 - **Poison Detection**: Name contains 'poison' → set poison flag ($20000) + ITMPoisonUse sound ($00106614) + VendorItemPoison keyword
 - Needs OBND, standard potion sound otherwise
 
+### Magic Effects (EFID/EFIT) — null EFID = inventory CTD (fixed 2026-07-10)
+- **NEVER write EFID=00000000**: the game dereferences each effect's base MGEF
+  when a menu builds the item card → instant CTD on opening inventory with the
+  item (crash log: `(AlchemyItem*)` in RCX + `InventoryMenu`). Applies to ALCH,
+  INGR, ENCH, SPEL, SCRL alike.
+- `_pack_effects()` (tes5_import/record_types/equipment.py) drops effects whose
+  TES4 code has no Skyrim mapping and guarantees ≥1 real effect (INGR: exactly 4)
+  by padding with zero-magnitude AlchRestore* fillers.
+- Attribute/skill-targeted codes (DRAT/DGAT/FOAT/REAT/ABAT/FOSK) resolve through
+  the effect's ActorValue via `MGEF_AV_CODE_TO_SKYRIM` (skyrim_overrides.py):
+  e.g. Drain Endurance → AlchDamageHealth, Fortify Personality → AlchFortifyBarter,
+  Fortify Blade → AlchFortifyOneHanded. Flat `MGEF_CODE_TO_SKYRIM` is the fallback.
+- **TES5 INGR ENIT is 8 bytes** (s32 value + u32 flags), NOT the 20-byte ALCH
+  layout (xEdit wbDefinitionsTES5 INGR).
+
 ### CELL Conversion
 - **Remove Oblivion Interior Flag**: Clear bit $08 from DATA flags on interior cells
 - **Clear Hand Changed Flag**: Clear bit $40 from DATA flags

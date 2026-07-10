@@ -2663,6 +2663,8 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
         # Creature skins keep Oblivion bones/weights/bind matrices verbatim
         # (same skeleton) — only the NiSkinPartition must be regenerated in
         # Skyrim triangle format (after _walk_node's strips→shapes pass).
+        # (The 80-bone cap reduction happens later in merge_creature_body —
+        # part NIFs store bones FLAT, so no hierarchy exists to merge into.)
         from .skin_retarget import _regen_skin_partition
         for root in data.roots:
             if root is None:
@@ -2831,6 +2833,23 @@ def merge_creature_body(part_paths, dst_path, skeleton_path=None):
                         si.skeleton_root = root
                 _append_child(root, shape)
                 grafted += 1
+
+    # SSE renders a skinned shape by memcpy'ing one 3x4 matrix per skin bone
+    # into a fixed 80-matrix buffer (shadow pass) — >80 bones = CTD (imp: 85,
+    # in-game verified 2026-07-10). Merge the lightest leaf bones into their
+    # parents; must run HERE (after grafting) because only the merged rig has
+    # bone hierarchy — Oblivion part NIFs store bones flat. Bone merging
+    # invalidates the parts' NiSkinPartitions, so regenerate them.
+    from .skin_retarget import (_regen_skin_partition,
+                                merge_oversized_skin_bones)
+    if merge_oversized_skin_bones(root):
+        for shape in _shape_blocks(root):
+            si = shape.skin_instance
+            if si is not None:
+                _regen_skin_partition(
+                    shape, si,
+                    bytes(shape.name).rstrip(b'\x00').decode('latin-1',
+                                                             'replace'))
 
     # reuse the first part's Data for version/header fields
     out_data = datas[0][1]

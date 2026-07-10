@@ -190,6 +190,37 @@ The `-ExtractAssets` flag triggers BSA extraction and mesh conversion:
   - Laplacian-smoothed mesh weights: Created discontinuities. REVERTED.
   - Global/per-mesh inverse filter, RBF interpolation, 2x global overshoot: All failed (see repo memory for full list)
 
+## Creature skin render crash — >80 skin bones per shape (SOLVED 2026-07-10)
+- Symptom: render-thread `EXCEPTION_ACCESS_VIOLATION` in a VCRUNTIME140 memcpy
+  (`vmovdqa [rcx+…]`) inside BSBatchRenderer pass setup (BSUtilityShader =
+  shadow-depth pass); crash objects show NiSkinInstance/NiSkinPartition +
+  BSTriShape named `"(<armo fid>)[0]/(<arma fid>) [50%]"`. FormIDs resolve
+  (via `tools/tes5_esm_reader.py <esm> --formid <fid>`) to the generated
+  creature skin ARMO/ARMA.
+- **Root cause (proven by crash-log registers)**: SSE memcpys one 3x4 matrix
+  (48 B) per NiSkinInstance bone into a fixed **80-matrix (3840 B) buffer**.
+  Imp = 85 bones → copy size RBP=4080=85×48, fault at dest offset 3840=80×48,
+  R8=464 remaining. Per-partition bone counts are irrelevant; the per-shape
+  TOTAL is the limit. Vanilla max: dragon, 77. The crash needs the shadow
+  path, so >80-bone actors can *appear* fine where no shadow-casting light
+  hits them (mehrunesdagon/spiderdaedra initially seemed unaffected).
+- **Fix (in-game verified)**: `skin_retarget.merge_oversized_skin_bones()` —
+  merge the lowest-total-weight LEAF bones into their parents until ≤78
+  (SSE_MAX_SKIN_BONES; vanilla max is 77 and splitting at exactly 80 froze the
+  game, so stay clearly under). Bind pose is exact (B·W=I at rest); only tip
+  articulation (fingertips/ear tips/eyebrows) is lost. Weights renormalized;
+  partitions regenerated afterwards.
+- **Where it runs matters**: called from `merge_creature_body()` AFTER rig
+  grafting — Oblivion body-part NIFs store their skin bones FLAT (no
+  parent/child links), so leaf detection only works on the merged rig. The
+  hierarchy lookup is BY NAME (bone pointers aren't tree members at part
+  stage). Affected creatures: imp 85→78, spiderdaedra 88→78, mehrunesdagon
+  98→78; all other 151 merged bodies were already ≤80.
+- **Shape-SPLITTING does NOT work** (tested in-game: game froze) — don't
+  split skinned shapes to duck the cap; merge bones instead.
+- Diagnostics: `tools/skin_partition_dump.py <nif>` (per-shape/partition
+  bone/vert/tri counts, flags >80-bone shapes + index-range problems).
+
 ## NIF bhkRigidBody field mapping (PyFFI ↔ newer nif.xml)
 - `unknown_int_1` → bhkWorldObjCInfo.Unused01 (4 bytes binary padding) — **zero for safety**
 - `unknown_int_2` → BroadPhaseType(1B) + Unused02(3B) — set to 1 (BROAD_PHASE_ENTITY)

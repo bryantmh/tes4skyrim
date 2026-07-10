@@ -1,6 +1,5 @@
 Gameplan:
 	Move External L13
-	Fix potion crashing M1
 	Fix npc barter M7
 	Fix terminal spawning L12
 	Fix app design M12
@@ -9,12 +8,6 @@ Gameplan:
 	Refine Clothing
 
 Major Issues for V1:
-
-	1 - Crash on opening inventory with potions
-		POSSIBLE RELEVANT OBJECTS:
-			RCX: (AlchemyItem*) "Weak Poison of Debilitation" [0x110984AB] ("Oblivion.esm") "Weak Poison of Debilitation"
-			RSP+1F8: (InventoryMenu*)
-			RSP+758: (`anonymous namespace'::DejaGFxLogger*)
 
 	2 - Book using default cover and no text visible
 
@@ -179,30 +172,6 @@ Minor Issues:
 
 
 Crashes:
-Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at 0x7FFA295B0C1E VCRUNTIME140.dll+0010C1E	vmovdqa [rcx+0xE0], ymm4
-Exception Flags: 0x00000000 (Continuable)
-Number of Parameters: 2
-Exception Thread ID: 84376
-Access Violation: Tried to write memory at 0x014FAE4C2000
-ACCESS VIOLATION ANALYSIS:
-	Instruction: vmovdqa [rcx+0xE0], ymm4
-	Memory Operand: [base=rcx, index=none, scale=0, disp=+0xe0]
-	Base Register: rcx = 0x0000014FAE4C1F20
-	Computed Address: 0x0000014FAE4C2000
-POSSIBLE RELEVANT OBJECTS:
-	RSP+40: (NiSkinInstance*)
-	RSP+50: (BSLightingShader*)
-	RSP+98: (BSShaderAccumulator*)
-	RSP+A8: (NiSkinPartition*)
-	RSP+118: (BSLightingShader*)
-	RSP+120: (BSTriShape*) " (1118EC35)[0]/ (1118EC34) [50%]"
-	RSP+1C0: (BSBatchRenderer*)
-	RSP+338: (NiCamera*) "WorldRoot Camera"
-	RSP+4A8: (Main*)
-	RSP+620: (BSShaderAccumulator*)
-	RSP+628: (NiCamera*)
-	RSP+810: (CInputHandler*)
-
 Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at 0x7FFA295B238E VCRUNTIME140.dll+001238E	vmovntdq [rcx+0xA0], ymm2
 Exception Flags: 0x00000000 (Continuable)
 Number of Parameters: 2

@@ -511,6 +511,155 @@ def _regen_skin_partition(block, skin, geom_name: str):
             skin.partitions[pi].part_flag.pf_start_net_boneset = 1
 
 
+# ---------------------------------------------------------------------------
+# Skin bone-count reduction (SSE 80-bone-matrix render buffer)
+# ---------------------------------------------------------------------------
+
+# SSE's renderer memcpys one 3x4 matrix (48 bytes) per skin bone into a
+# fixed 80-matrix buffer when drawing a skinned shape (observed in the
+# BSUtilityShader shadow pass). A NiSkinInstance with more than 80 bones
+# overflows it -> CTD (vmovdqa AV in VCRUNTIME memcpy; imp crash log
+# registers showed copy size 85*48 into an 80*48 allocation). Vanilla's
+# biggest rig (dragon) uses 77 bones per shape. In-game verified fix
+# (2026-07-10): merge the lightest leaf bones' weights into their parents —
+# bind pose is exact (B_i @ W_i = I at rest), only tip articulation is lost.
+# NOTE: splitting the shape instead does NOT work (tested: froze the game).
+SSE_MAX_SKIN_BONES = 80
+
+
+def merge_oversized_skin_bones(root, max_bones: int = SSE_MAX_SKIN_BONES):
+    """Reduce every skinned shape under `root` to <= max_bones skin bones by
+    merging the lowest-total-weight leaf bones into their parents.
+
+    Bone hierarchy is matched BY NAME (like merge_creature_body): during
+    part conversion the skin's bone pointers may not be members of the
+    current tree, but node names are stable across the whole pipeline.
+
+    Callers must regenerate the NiSkinPartition afterwards. Returns the
+    number of shapes reduced."""
+    def _nm(node):
+        return bytes(node.name).rstrip(b'\x00').decode('latin-1', 'replace')
+
+    parent_name = {}
+    for node in root.tree():
+        if isinstance(node, NifFormat.NiNode):
+            for ch in node.children:
+                if isinstance(ch, NifFormat.NiNode):
+                    parent_name[_nm(ch)] = _nm(node)
+
+    reduced = 0
+    for shape in list(root.tree()):
+        if not isinstance(shape, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
+            continue
+        skin = getattr(shape, 'skin_instance', None)
+        if skin is None or skin.data is None or skin.num_bones <= max_bones:
+            continue
+        sd = skin.data
+        bones = list(skin.bones)
+        n = len(bones)
+        names = [_nm(b) for b in bones]
+        name_idx = {nm: i for i, nm in enumerate(names)}
+
+        def parent_idx(i):
+            p = parent_name.get(names[i])
+            return name_idx.get(p, -1) if p is not None else -1
+
+        tot_w = [sum(vw.weight for vw in sd.bone_list[i].vertex_weights)
+                 for i in range(n)]
+
+        merge_set = set()
+        # Iterate: merging a leaf can expose its parent as a new leaf, so
+        # keep passing until under the cap (or no candidates remain).
+        while n - len(merge_set) > max_bones:
+            live_children = {i: 0 for i in range(n)}
+            for i in range(n):
+                if i in merge_set:
+                    continue
+                p = parent_idx(i)
+                if p >= 0 and p not in merge_set:
+                    live_children[p] += 1
+            cands = sorted(
+                (i for i in range(n)
+                 if i not in merge_set and live_children[i] == 0
+                 and parent_idx(i) >= 0 and parent_idx(i) not in merge_set),
+                key=lambda i: tot_w[i])
+            if not cands:
+                break
+            before = len(merge_set)
+            for i in cands:
+                if n - len(merge_set) <= max_bones:
+                    break
+                merge_set.add(i)
+            if len(merge_set) == before:
+                break
+
+        if n - len(merge_set) > max_bones:
+            print(f'      [SKIN-BONES] WARNING: "{_shape_name(shape)}" still '
+                  f'{n - len(merge_set)} bones (> {max_bones}) — not enough '
+                  f'mergeable leaf bones')
+        if not merge_set:
+            continue
+
+        # vert -> {surviving bone idx: weight}, tips rerouted to survivors
+        vert_w = {}
+        for i in range(n):
+            tgt = i
+            while tgt in merge_set:
+                tgt = parent_idx(tgt)
+            for vw in sd.bone_list[i].vertex_weights:
+                acc = vert_w.setdefault(vw.index, {})
+                acc[tgt] = acc.get(tgt, 0.0) + vw.weight
+
+        survivors = [i for i in range(n) if i not in merge_set]
+        new_index = {old: k for k, old in enumerate(survivors)}
+
+        skin.num_bones = len(survivors)
+        skin.bones.update_size()
+        for k, old in enumerate(survivors):
+            skin.bones[k] = bones[old]
+
+        old_entries = [sd.bone_list[i] for i in range(n)]
+        sd.num_bones = len(survivors)
+        sd.bone_list.update_size()
+        per_bone = {k: [] for k in range(len(survivors))}
+        for vi, wmap in vert_w.items():
+            tot = sum(wmap.values())
+            for old, w in wmap.items():
+                per_bone[new_index[old]].append((vi, w / tot))
+        for k, old in enumerate(survivors):
+            src, dst = old_entries[old], sd.bone_list[k]
+            for m in ('m_11', 'm_12', 'm_13', 'm_21', 'm_22', 'm_23',
+                      'm_31', 'm_32', 'm_33'):
+                setattr(dst.skin_transform.rotation, m,
+                        getattr(src.skin_transform.rotation, m))
+            dst.skin_transform.translation.x = src.skin_transform.translation.x
+            dst.skin_transform.translation.y = src.skin_transform.translation.y
+            dst.skin_transform.translation.z = src.skin_transform.translation.z
+            dst.skin_transform.scale = src.skin_transform.scale
+            dst.bounding_sphere_offset.x = src.bounding_sphere_offset.x
+            dst.bounding_sphere_offset.y = src.bounding_sphere_offset.y
+            dst.bounding_sphere_offset.z = src.bounding_sphere_offset.z
+            dst.bounding_sphere_radius = src.bounding_sphere_radius
+            ws = sorted(per_bone[k])
+            dst.num_vertices = len(ws)
+            dst.vertex_weights.update_size()
+            for wi, (vi, w) in enumerate(ws):
+                dst.vertex_weights[wi].index = vi
+                dst.vertex_weights[wi].weight = w
+
+        merged_names = [
+            bytes(bones[i].name).rstrip(b'\x00').decode('latin-1')
+            for i in sorted(merge_set)]
+        print(f'      [SKIN-BONES] "{_shape_name(shape)}": {n} -> '
+              f'{len(survivors)} bones (merged {merged_names})')
+        reduced += 1
+    return reduced
+
+
+def _shape_name(shape) -> str:
+    return bytes(shape.name).rstrip(b'\x00').decode('latin-1', 'replace')
+
+
 
 
 # ---------------------------------------------------------------------------
