@@ -251,7 +251,7 @@ _HAVOK_SCALE = 0.1
 # Source: Skyrim skeleton.nif node survey + legacy BONE_MAP.
 # ---------------------------------------------------------------------------
 _PRN_REMAP: dict[str, str] = {
-    'BackWeapon':  'WeaponBack',    # 2H weapons, bows
+    'BackWeapon':  'WeaponBack',    # 2H weapons (bows refined to WeaponBow below)
     'SideWeapon':  'WeaponSword',   # 1H swords / generic 1H (refined by filename below)
     'Quiver':      'QUIVER',        # arrow quivers
     'Weapon':      'Weapon',        # already valid (keeps as-is)
@@ -291,13 +291,20 @@ def _remap_prn(oblivion_prn: str, nif_filename: str) -> str:
 
     For 'SideWeapon' (all Oblivion 1H weapons), refines to per-type node by
     looking for weapon type keywords in the NIF filename.
+
+    For 'BackWeapon' (all Oblivion 2H weapons AND bows), bows must go to
+    'WeaponBow' — with 'WeaponBack' the draw animation never reparents the
+    mesh to the hand, so an equipped bow stays glued to the back and the
+    hands look empty.  Vanilla Skyrim bow NIFs all carry Prn=WeaponBow.
     """
     skyrim_prn = _PRN_REMAP.get(oblivion_prn, oblivion_prn)
+    lower = nif_filename.lower()
     if oblivion_prn == 'SideWeapon':
-        lower = nif_filename.lower()
         for keyword, prn in _WEAPON_FILENAME_PRN:
             if keyword in lower:
                 return prn
+    elif oblivion_prn == 'BackWeapon' and 'bow' in lower:
+        return 'WeaponBow'
     return skyrim_prn
 
 

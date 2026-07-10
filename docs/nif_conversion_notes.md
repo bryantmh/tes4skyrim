@@ -142,6 +142,11 @@ The `-ExtractAssets` flag triggers BSA extraction and mesh conversion:
 - **Shoes vs boots calves slot**: Shoes (clogs, sandals) should NOT claim Calves(38) in ARMA. Only boots get calves. Detection: `'boot' in model_path`. Clothing foot items without 'boot' are shoes.
 - **Body skin splice section_bboxes coordinate space**: OB body skin sections are in OB skeleton space; SK body NIF verts are in SK skeleton space. These are DIFFERENT frames. The OB arm area (z≈98–105) is at SK z≈72–92 after retarget. **Always use POST-RETARGET section_bboxes** from `collect_skin_info()` — these are in SK world space and correctly localise both arm openings and neck. Pre-retarget bboxes (source OB verts) only work for neck/collar (small-x geometry that happens to be at the same world z in both skeletons) but MISS the arms (which are displaced ~20 Z units by skeleton frame differences). SK male body max arm reach (|x|>20) sits at z=75–97 world, exactly within the post-retarget 'Arms' bbox z=72–92. Use `bbox_pad=1.0` to stay under 25% of total body verts spliced.
 
+## NIF weapon Prn (attach node) contract
+- The draw animation looks for the weapon at the skeleton node matching its WEAP AnimationType; the mesh's `Prn` decides where the engine actually parents it. A mismatch = weapon stays sheathed / hands look empty when drawn (seen twice: axes with Prn=WeaponAxe but WEAP type Mace; bows with Prn=WeaponBack).
+- **Bows must get Prn='WeaponBow'** (vanilla ironbow.nif), NOT 'WeaponBack' — Oblivion uses 'BackWeapon' for both 2H weapons and bows, so `_remap_prn` refines by filename ('bow' in basename).
+- Converted bows are static (rigid) in hand. Vanilla Skyrim bows are skinned to a 7-bone chain (Bow_MidBone → Lo/Up bones → StringBones) with a BGED behavior graph (`Weapons\Iron\IronBow.hkx`) driving the draw-bend; replicating that (weight synthesis along the limbs + string) is future polish, not needed for visibility.
+
 ## NIF shield conversion
 - Shields use BSFadeNode root + Prn='SHIELD' (same as weapons, NOT NiNode like worn armor)
 - **Orientation fix**: Oblivion shields are modeled with thin (face-normal) axis along Y. Skyrim's SHIELD bone expects it along Z. A +90° rotation around X is applied to the BSFadeNode root. Root rotation baking wraps this in an inner NiNode.

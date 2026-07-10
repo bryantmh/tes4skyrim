@@ -528,31 +528,67 @@ class TestConverters:
         result = convert_BOOK(rec)
         self._check_record(result, 'BOOK')
         assert self._has_subrecord(result, 'DESC')
-        # INAM (pickup sound) and CNAM must be present - missing INAM causes BookMenu crash
-        assert self._has_subrecord(result, 'INAM'), "BOOK must have INAM (pickup sound)"
-        assert self._has_subrecord(result, 'CNAM'), "BOOK must have CNAM"
+        # INAM (Inventory Art STAT) must always be present — BookMenu
+        # null-derefs (in-game crash) when a book without INAM is read.
+        assert self._has_subrecord(result, 'INAM'), "BOOK must have INAM"
         inam_data = self._get_subrecord_data(result, 'INAM')
         assert len(inam_data) == 4, "INAM must be a 4-byte FormID"
-        inam_fid = struct.unpack_from('<I', inam_data)[0]
-        assert inam_fid != 0, "INAM must not be null"
+        assert struct.unpack_from('<I', inam_data)[0] != 0, "INAM must not be null"
+        assert self._has_subrecord(result, 'CNAM'), "BOOK must have CNAM"
+        cnam_data = self._get_subrecord_data(result, 'CNAM')
+        assert cnam_data == b'\x00', "CNAM must be an empty description string"
+
+    def test_book_inventory_art_uses_own_mesh(self):
+        """With a writer, INAM must reference a companion STAT wrapping the
+        book's own converted mesh (not the vanilla HighPolySkyrimBook)."""
+        class _FakeWriter:
+            def __init__(self):
+                self.records = []
+                self._next = 0x01000000
+            def alloc_formid(self):
+                self._next += 1
+                return self._next
+            def add_record(self, sig, data):
+                self.records.append((sig, data))
+        w = _FakeWriter()
+        rec = {'Signature': 'BOOK', 'FormID': '00006000', 'RecordFlags': '0',
+               'EditorID': 'TestBook', 'FULL': 'A Test Book',
+               'DESC': 'Once upon a time...', 'DATA.Flags': '0',
+               'DATA.Teaches': '255', 'DATA.Value': '5', 'DATA.Weight': '1.0',
+               'Model.MODL': 'Books\\TestBook.nif'}
+        result = convert_BOOK(rec, writer=w)
+        inam_fid = struct.unpack_from('<I', self._get_subrecord_data(result, 'INAM'))[0]
+        assert inam_fid == 0x01000001, "INAM must point at the companion STAT"
+        assert len(w.records) == 1 and w.records[0][0] == 'STAT'
+        assert b'tes4\\Books\\TestBook.nif' in w.records[0][1]
+
+    def test_book_scroll_flag_sets_note_type(self):
+        """TES4 Scroll flag (0x01) must convert to TES5 Type 255 (Note/Scroll)."""
+        rec = {'Signature': 'BOOK', 'FormID': '00006001', 'RecordFlags': '0',
+               'EditorID': 'TestNote', 'FULL': 'A Test Note',
+               'DESC': 'note text', 'DATA.Flags': '1',
+               'DATA.Teaches': '255', 'DATA.Value': '5', 'DATA.Weight': '0.1'}
+        result = convert_BOOK(rec)
+        data = self._get_subrecord_data(result, 'DATA')
+        assert data[1] == 255, "scroll-flagged book must have Type=255 (Note/Scroll)"
 
     def test_book_html_font_face_remapped(self):
-        """<font face=N> in Oblivion DESC must be remapped to face=3 for Skyrim BookMenu."""
+        """Numeric Oblivion <font face=N> must become Skyrim named fonts."""
         from tes5_import.record_types.equipment import _fix_book_html
-        # Oblivion face=5 (handwriting) and face=1 (decorative) both â†’ face=3
-        assert '<font face=3>' in _fix_book_html('<font face=5>text')
-        assert '<font face=3>' in _fix_book_html('<FONT face=1>text')
+        assert "<font face='$HandwrittenFont'>" in _fix_book_html('<font face=5>text')
+        assert "<font face='$SkyrimBooks'>" in _fix_book_html('<FONT face=1>text')
+        assert "<font face='$DaedricFont'>" in _fix_book_html('<font face=4>text')
         assert '</font>' in _fix_book_html('text</font>')
         assert 'face=5' not in _fix_book_html('<font face=5>text')
 
     def test_book_html_img_prefixed(self):
-        """IMG src paths must be prefixed with tes4/ for Skyrim texture namespace."""
+        """IMG src paths must use img:// with the converted texture path."""
         from tes5_import.record_types.equipment import _fix_book_html
         result = _fix_book_html('<IMG src="Book/fancy_font/h_62x62.dds" width=62 height=62>')
-        assert 'tes4/Book/fancy_font/h_62x62.dds' in result
-        # Already-prefixed paths must not be double-prefixed
-        result2 = _fix_book_html('<IMG src="tes4/Book/fancy_font/h.dds">')
-        assert result2.count('tes4/') == 1
+        assert "src='img://textures/tes4/menus/Book/fancy_font/h_62x62.dds'" in result
+        # Already-converted paths must not be double-prefixed
+        result2 = _fix_book_html("<IMG src='img://textures/tes4/menus/book/h.dds'>")
+        assert result2.count('img://') == 1
 
     def test_book_html_no_double_br(self):
         """\\r\\n after <br> must not be converted to <br><br>."""

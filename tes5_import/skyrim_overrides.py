@@ -1052,12 +1052,6 @@ TES4_SKILL_TO_TES5_INDEX = {
     32: 17,  # Speechcraft → Speech (AV 17)
 }
 
-# BOOK pickup sound (INAM) — generic book pickup sound from Skyrim.esm.
-# Sourced from BookSkyrim (0x000E894C) which is the most common general-purpose
-# book pickup sound in Skyrim.esm.  All converted books use this default;
-# scroll/note variants could be differentiated later by model name.
-BOOK_INAM: int = 0x000E894C
-
 # ---------------------------------------------------------------------------
 # Invisible marker base-object substitution:
 # Oblivion FormID (low 24-bit, no load-order byte) → Skyrim.esm FormID

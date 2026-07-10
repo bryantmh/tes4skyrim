@@ -311,7 +311,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         simple_types.add(sig)
 
     # Types that need the writer passed in (for companion record generation)
-    _WRITER_TYPES = {'ARMO', 'CLOT', 'WEAP', 'AMMO', 'NPC_', 'CREA'}
+    _WRITER_TYPES = {'ARMO', 'CLOT', 'WEAP', 'AMMO', 'NPC_', 'CREA', 'BOOK'}
 
     converted = 0
     errors = 0

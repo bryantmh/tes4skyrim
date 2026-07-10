@@ -28,11 +28,11 @@ see the `oblivion-to-skyrim-dialog` skill.
 |-----------|-----------|-------|
 | ACTI | ACTI | Add OBND. Needs VMAD instead of SCRI. |
 | ALCH | ALCH | Add OBND. ENIT restructured. Effects need MGEF FormID resolution. |
-| AMMO | AMMO | Add OBND. DATA restructured. Needs DNAM for projectile ref. |
+| AMMO | AMMO | Add OBND. SSE DATA (20B): Projectile FID + Flags(U32) + Damage(f) + Value + Weight(f). **Flags bit 0x04 = Non-Bolt — must be set or the game classifies the ammo as a crossbow bolt.** A companion PROJ is synthesised per arrow (TES4 has none): PROJ DATA Type is a **bit value** (Arrow=0x40, not enum 7 — wrong type = no working projectile); offsets per wbDefinitionsTES5 {72}=CollisionRadius 0.5, {76}=Lifetime 0, {80}=RelaunchInterval 0.25; Sound=WPNBowProjectileSD (0x0003F2B4). Values matched to vanilla ArrowIronProjectile (0x0003BE11). |
 | ANIO | ANIO | Minor changes. |
 | APPA | MISC | No apparatus in TES5. Convert to MISC. |
 | ARMO | ARMO | **Major changes**: BMDT(4B)→BOD2(8B), 16→32 biped slots. Armor models move to ARMA records. ARMO references ARMA via MODL array. No direct mesh on ARMO. Add OBND, RNAM (race), keywords. |
-| BOOK | BOOK | Add OBND. DATA restructured. Skill teaching uses TES5 skill enum. |
+| BOOK | BOOK | Add OBND. DATA restructured. Skill teaching uses TES5 skill enum. TES4 Scroll flag (0x01) → DATA.Type 255 (Note/Scroll). **INAM (Inventory Art STAT) is mandatory — BookMenu null-derefs (in-game crash) when a book without INAM is read.** But pointing INAM at a vanilla stand-in shows the default Skyrim cover, so we synthesise a per-book `InvArt_<edid>` STAT wrapping the book's own converted mesh. CNAM (Description string) present-but-empty like vanilla. Book text (DESC) HTML: Skyrim Scaleform only knows **named fonts** (`<font face='$SkyrimBooks'>`, `$HandwrittenFont`, `$DaedricFont`) — Oblivion's numeric `<font face=N>` resolves to no font and renders NO text (map 1/2/3→$SkyrimBooks, 4→$DaedricFont, 5→$HandwrittenFont); IMG src needs `img://textures/tes4/menus/<path>` (Oblivion srcs are relative to Textures\Menus\). |
 | BSGN | *(none)* | Birthsigns don't exist. Spells should go to Race records or Standing Stones. Exported as BSGN_SPELLS for reference. |
 | CELL | CELL | DATA: U8→U16 flags. Lighting (XCLL) expanded. New: LTMP (lighting template), XLCN (location), XCAS (acoustic space), XCMO (music type). |
 | CLAS | CLAS | Simplified in TES5. No attributes/skills. Only Flags, Teaches, MaxTraining. |

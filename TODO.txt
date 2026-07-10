@@ -1,6 +1,6 @@
 Gameplan:
 	Fix books M2
-	Fix Bows and arrows. Should also use proper projectile. Mi20 M16
+	Fix Bows and arrows. Should also use proper projectile. M16
 	Fix prn iron helmet attachment M5
 	Fix guard helmet showing hair through it M5
 	Add _1 body type M5
@@ -18,7 +18,7 @@ Gameplan:
 
 Major Issues for V1:
 
-	2 - Book using default cover and no text visible
+	2 - Book needs to use skyrim book mesh (but oblivion texture) so that it can open in the inventory
 
 	3 - Havok feels off. Items don't move like they should do a comparison with skyrim esm / collision values and create skyrim_overrides for any data that can't be gleaned from the original model / esm
 		Specifically, there seems to be too much inertia on small items, and occasionally the items will hang in the air. Animated signs will get stuck in a position after swinging a bit.
@@ -54,7 +54,7 @@ Major Issues for V1:
 
 	14 - Fix all CK and Xedit warnings
 
-	16 - Bow first person model doesn't work (remains on back and invisible in hands)
+	16 - Bow first person model is backwards, and arrows are held at an invisible location behind the arrow when nocking
 
 
 Later Issues:
@@ -160,8 +160,6 @@ Minor Issues:
 		raise ValueError('string too long (0x%08X at 0x%08X)'
 						% (n, stream.tell()))
 	ValueError: string too long (0x5A000000 at 0x000003BC)
-
-	20 - Arrows are converted as bolts
 
 	21 - Bad cell names "Test End Game"
 

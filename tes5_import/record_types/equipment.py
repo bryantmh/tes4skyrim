@@ -6,7 +6,6 @@ import struct
 from ..constants import ENCH_CAST_TYPE_MAP, ENCH_TYPE_MAP, WEAPON_TYPE_MAP, ARMA_BODY_COVERAGE_EXTRA
 from ..skyrim_overrides import (
     ARMA_ADDITIONAL_RACES,
-    BOOK_INAM,
     CLOTHING_FOOTSTEP_SET,
     DEFAULT_ARROW_PROJECTILE,
     HEAVY_ARMOR_FOOTSTEP_SET,
@@ -103,20 +102,26 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0) ->
     return subs
 
 
-def _build_weapon_1stperson_stat(edid: str, model_path: str, stat_fid: int) -> bytes:
-    """Build a minimal STAT record for a weapon's 1st-person model (WNAM target).
+def _build_model_stat(edid: str, model_path: str, stat_fid: int) -> bytes:
+    """Build a minimal STAT record wrapping a mesh (WEAP WNAM / BOOK INAM target).
 
-    WNAM on WEAP must point to a STAT record whose MODL is the 1st-person mesh.
-    We reuse the world model path since Oblivion has no separate 1st-person meshes.
     TES5 STAT order: EDID OBND MODL DNAM
     """
     subs = b''
-    subs += pack_string_subrecord('EDID', '1stPerson_' + edid)
+    subs += pack_string_subrecord('EDID', edid)
     subs += pack_obnd()
     subs += pack_string_subrecord('MODL', model_path)
-    # DNAM (4 bytes): MaxAngle(float) — 0.0 for weapons
+    # DNAM: MaxAngle(float) + Directional Material(FormID, null)
     subs += pack_subrecord('DNAM', struct.pack('<fI', 0.0, 0))
     return pack_record('STAT', stat_fid, 0, subs)
+
+
+def _build_weapon_1stperson_stat(edid: str, model_path: str, stat_fid: int) -> bytes:
+    """Build a STAT record for a weapon's 1st-person model (WNAM target).
+
+    We reuse the world model path since Oblivion has no separate 1st-person meshes.
+    """
+    return _build_model_stat('1stPerson_' + edid, model_path, stat_fid)
 
 
 def convert_WEAP(rec: dict, writer=None) -> bytes:
@@ -370,14 +375,18 @@ def _build_arrow_proj(edid: str, model_path: str, speed: float, proj_fid: int) -
     """Build a minimal PROJ record for a converted arrow.
 
     TES5 PROJ order: EDID OBND FULL MODL DATA NAM1 VNAM
-    DATA (92 bytes) layout (from ArrowIronProjectile):
-      Flags(U16) Type(U16) Gravity(f) Speed(f) Range(f)
-      LightFID(I) MuzzleFlash(I) TracerChance(f) ExplAltTrig(f)
-      ExplosionFID(I) Sound(I) MuzzleFlashDur(f) Fade(f)
-      ImpactForceMult(f) SoundLevel(I) DisabledSoundLevel(I)
-      SoundLevelRadius(f) OverrideSoundLevel(I) SoundLevelDB(f)
-      ... (padding to 92 bytes)
-    Type 7 = Arrow.  Flags 0x00C0 = from ArrowIronProjectile.
+    DATA (92 bytes) layout per wbDefinitionsTES5.pas, values matched to
+    vanilla ArrowIronProjectile (0003BE11):
+      {00} Flags(U16) {02} Type(U16) {04} Gravity(f) {08} Speed(f) {12} Range(f)
+      {16} Light {20} MuzzleFlashLight {24} TracerChance(f)
+      {28} ExplAltTrigProximity(f) {32} ExplAltTrigTimer(f) {36} Explosion
+      {40} Sound {44} MuzzleFlashDuration(f) {48} FadeDuration(f)
+      {52} ImpactForce(f) {56} SoundCountdown {60} SoundDisable
+      {64} DefaultWeaponSource {68} ConeSpread(f) {72} CollisionRadius(f)
+      {76} Lifetime(f) {80} RelaunchInterval(f) {84} DecalData {88} CollisionLayer
+    Type is a bit value: Arrow = 0x40 (NOT an ordinal — 7 would be
+    Missile|Lobber|Beam and the engine spawns no usable projectile).
+    Flags 0x00C0 = Can Be Picked Up + Supersonic (as ArrowIronProjectile).
     """
     subs = b''
     subs += pack_string_subrecord('EDID', edid + 'Projectile')
@@ -389,18 +398,19 @@ def _build_arrow_proj(edid: str, model_path: str, speed: float, proj_fid: int) -
     tes5_speed = max(500.0, speed * 3600.0)
 
     data = bytearray(92)
-    struct.pack_into('<H', data, 0, 0x00C0)          # Flags
-    struct.pack_into('<H', data, 2, 7)               # Type: Arrow
+    struct.pack_into('<H', data, 0, 0x00C0)          # Flags: CanBePickedUp|Supersonic
+    struct.pack_into('<H', data, 2, 0x40)            # Type: Arrow
     struct.pack_into('<f', data, 4, 0.35)            # Gravity
     struct.pack_into('<f', data, 8, tes5_speed)      # Speed
     struct.pack_into('<f', data, 12, 60000.0)        # Range
-    struct.pack_into('<f', data, 48, 5.0)            # Lifetime
-    struct.pack_into('<f', data, 52, 1.0)            # Relaunch
-    struct.pack_into('<f', data, 76, 0.5)            # ImpactForceMult
-    struct.pack_into('<f', data, 80, 0.25)           # Unknown
+    struct.pack_into('<I', data, 40, 0x0003F2B4)     # Sound: WPNBowProjectileSD
+    struct.pack_into('<f', data, 48, 5.0)            # Fade Duration
+    struct.pack_into('<f', data, 52, 1.0)            # Impact Force
+    struct.pack_into('<f', data, 72, 0.5)            # Collision Radius
+    struct.pack_into('<f', data, 80, 0.25)           # Relaunch Interval
     subs += pack_subrecord('DATA', bytes(data))
-    # NAM1 — impact data set (0 = none)
-    subs += pack_subrecord('NAM1', struct.pack('<I', 0))
+    # NAM1 — muzzle flash model filename (empty)
+    subs += pack_string_subrecord('NAM1', '')
     # VNAM — sound level (1 = normal)
     subs += pack_subrecord('VNAM', struct.pack('<I', 1))
     return pack_record('PROJ', proj_fid, 0, subs)
@@ -429,57 +439,69 @@ def convert_AMMO(rec: dict, writer=None) -> bytes:
     else:
         proj_fid = DEFAULT_ARROW_PROJECTILE
 
+    # YNAM/ZNAM — pickup/putdown sounds (as vanilla arrows: ITMGenericWeaponUp/Down)
+    subs += pack_formid_subrecord('YNAM', 0x0003E7B7)
+    subs += pack_formid_subrecord('ZNAM', 0x0003E877)
+
     # KSIZ/KWDA — vendor keyword (weapon vendors' list includes Arrow)
     subs += pack_keywords([VENDOR_KYWD['Arrow']])
 
     # TES5 AMMO DATA (SSE, 20 bytes): Projectile(FormID) Flags(U32) Damage(float) Value(U32) Weight(float)
-    data = struct.pack('<IIfIf', proj_fid, flags & 0x01, float(damage), value, weight)
+    # Flags: bit 0 = Ignores Normal Weapon Resistance (carried over from TES4),
+    # bit 2 = Non-Bolt — REQUIRED or the engine classifies the ammo as a
+    # crossbow bolt (TES4 has no bolts; everything converts as an arrow).
+    tes5_flags = (flags & 0x01) | 0x04
+    data = struct.pack('<IIfIf', proj_fid, tes5_flags, float(damage), value, weight)
     subs += pack_subrecord('DATA', data)
     subs += pack_string_subrecord('ONAM', '')  # Short name
 
     return pack_record('AMMO', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
+# Oblivion numeric font faces (SFontFile_N in Oblivion.ini) → Skyrim named
+# fonts (Interface\fontconfig.txt).  Skyrim's Scaleform BookMenu only knows
+# fonts by their $-alias — a numeric <font face=N> resolves to no font at all
+# and the book renders with NO VISIBLE TEXT.
+#   1 = Kingthings Regular (book body) → $SkyrimBooks
+#   2 = Kingthings Shadowed           → $SkyrimBooks
+#   3 = Tahoma Bold Small (UI)        → $SkyrimBooks
+#   4 = Daedric                       → $DaedricFont
+#   5 = Handwritten                   → $HandwrittenFont
+_OBLIVION_FACE_TO_SKYRIM_FONT = {
+    '1': '$SkyrimBooks',
+    '2': '$SkyrimBooks',
+    '3': '$SkyrimBooks',
+    '4': '$DaedricFont',
+    '5': '$HandwrittenFont',
+}
+
+
 def _fix_book_html(text: str) -> str:
     """Update Oblivion book HTML for Skyrim's Scaleform BookMenu compatibility.
 
-    Applies four fixes in order:
-    1. Replace Oblivion <font face=N> with Skyrim-compatible font tags.
-       Oblivion uses face=1 (serif/manuscript) and face=5 (handwritten).
-       Skyrim's Scaleform uses face indices 1-5 but with different fonts;
-       face=1 crashes Skyrim (references a font that doesn't exist in the
-       Scaleform context).  Map all Oblivion faces to face=3 (the generic
-       body-text font Skyrim BookMenu expects).
-    2. Strip <FONT COLOR=...> and other unsupported attribute combinations
-       that can crash Scaleform's HTML parser.
-    3. Prefix IMG src paths with 'tes4/' so Skyrim looks in the correct
-       texture namespace (Data\\Textures\\tes4\\Book\\...).
-    4. Strip Windows-style \\r\\n sequences and replace with <br> where
-       Oblivion authors used them as line breaks inside HTML.
+    Applies three fixes in order:
+    1. Replace Oblivion numeric <font face=N> tags with Skyrim's named fonts
+       (see _OBLIVION_FACE_TO_SKYRIM_FONT) and strip other attributes.
+    2. Rewrite IMG src paths: Oblivion paths are relative to
+       Textures\\Menus\\ (e.g. "Book/foo.dds"); Skyrim Scaleform needs the
+       img:// scheme with a full Data-relative path
+       (img://textures/tes4/menus/book/foo.dds).
+    3. Turn bare \\r\\n line breaks into <br> where Oblivion authors used raw
+       newlines as visual breaks.
     """
-    # 1. Replace <font face=N> / <FONT face=N> with face=3 (safe Skyrim font).
-    #    Oblivion face values: 1=Quill (decorative), 2=book text, 3=?, 4=?, 5=handwriting.
-    #    Skyrim Scaleform supports face 1-6 but 1 and 2 can crash in BookMenu context.
-    #    face=3 is the standard readable body font in Skyrim's BookMenu.
+    # 1. Remap <font face=N> / </font> to Skyrim named fonts.
     text = re.sub(r'<(/?)[Ff][Oo][Nn][Tt](\s[^>]*)?>', _remap_font_tag, text)
 
-    # 2. Strip unsupported color/size attributes from any remaining font tags
-    #    (belt-and-suspenders — after step 1 only face=3 tags should remain).
-
-    # 3. Prefix IMG src with 'tes4/' for texture namespace.
-    # Pattern: <IMG src="path"> — capture optional quote, path, and optional closing quote.
+    # 2. Rewrite IMG src to the img:// scheme + converted texture path.
     def _prefix_img(m):
-        quote = m.group(1)
-        path = m.group(2)
-        # closing_quote group(3) consumed but not re-emitted separately (included in replacement)
-        if not path.lower().startswith('tes4/'):
-            path = 'tes4/' + path
-        return f'<IMG src={quote}{path}{quote}'
-    # Match opening quote, path, and consume the matching closing quote to avoid doubling.
+        path = m.group(2).replace('\\', '/')
+        if not path.lower().startswith('img://'):
+            path = 'img://textures/tes4/menus/' + path.lstrip('/')
+        return f"<img src='{path}'"
+    # Match opening quote, path, and consume the matching closing quote.
     text = re.sub(r'<IMG\s+src=(["\']?)([^"\'>\s]+)\1', _prefix_img, text, flags=re.IGNORECASE)
 
-    # 4. Replace bare \r\n sequences (not already preceded by <br>) with <br>.
-    #    Oblivion authors sometimes used raw newlines as visual line breaks.
+    # 3. Replace bare \r\n sequences (not already preceded by <br>) with <br>.
     text = re.sub(r'(?<!>)\r\n', '<br>\r\n', text)
 
     return text
@@ -488,21 +510,21 @@ def _fix_book_html(text: str) -> str:
 def _remap_font_tag(m: re.Match) -> str:
     """Replace an Oblivion <font ...> tag with a Skyrim-compatible version.
 
-    Preserves close tags (</font>) as-is.  For open tags, replaces the face
-    attribute with face=3 and strips all other attributes (color, size, etc.)
-    that Skyrim's Scaleform BookMenu doesn't handle safely.
+    Preserves close tags (</font>).  For open tags, maps the numeric face to
+    the equivalent Skyrim named font and strips all other attributes (color,
+    size, etc.) that Skyrim's Scaleform BookMenu doesn't handle safely.
     """
     slash = m.group(1)   # '/' for close tag, '' for open
-    attrs = m.group(2)   # attribute string, may be None
+    attrs = m.group(2) or ''
     if slash:
         return '</font>'
-    if not attrs:
-        return '<font face=3>'
-    # Keep only the 'face' attribute, remapped to 3
-    return '<font face=3>'
+    face_m = re.search(r'face\s*=\s*["\']?(\d)', attrs, flags=re.IGNORECASE)
+    face = face_m.group(1) if face_m else '1'
+    font = _OBLIVION_FACE_TO_SKYRIM_FONT.get(face, '$SkyrimBooks')
+    return f"<font face='{font}'>"
 
 
-def convert_BOOK(rec: dict) -> bytes:
+def convert_BOOK(rec: dict, writer=None) -> bytes:
     # TES5 BOOK field order: EDID OBND FULL MODL DESC DATA INAM CNAM
     subs = _common_header_subs(rec, obnd_sig='BOOK')
     model = get_str(rec, 'Model.MODL')
@@ -531,16 +553,26 @@ def convert_BOOK(rec: dict) -> bytes:
     # KSIZ/KWDA — vendor keyword (TES4 flag 0x01 = Scroll)
     subs += pack_keywords([VENDOR_KYWD['Scroll' if flags & 0x01 else 'Book']])
 
-    data = struct.pack('<BBHiIf', tes5_flags, 0, 0, teaches_tes5, value, weight)
+    # Type: 0 = Book/Tome, 255 = Note/Scroll (TES4 flag 0x01 = Scroll)
+    book_type = 255 if flags & 0x01 else 0
+    data = struct.pack('<BBHiIf', tes5_flags, book_type, 0, teaches_tes5, value, weight)
     subs += pack_subrecord('DATA', data)
 
-    # INAM — Pickup sound.  All vanilla Skyrim books have this; missing INAM
-    # causes a null-deref crash in BookMenu when the book is picked up or read.
-    subs += pack_formid_subrecord('INAM', BOOK_INAM)
+    # INAM — Inventory Art (STAT).  BookMenu null-derefs without it (in-game
+    # crash on reading any book), so it must always be present.  Pointing it
+    # at a vanilla stand-in (HighPolySkyrimBook) shows the default Skyrim
+    # cover in the inventory, so we synthesise a per-book STAT wrapping the
+    # book's own converted mesh instead.
+    inam_fid = 0x000E894C  # HighPolySkyrimBook — fallback for model-less books
+    if writer is not None and model:
+        edid = get_str(rec, 'EditorID', '')
+        inam_fid = writer.alloc_formid()
+        stat_bytes = _build_model_stat('InvArt_' + edid, _prefix_path(model), inam_fid)
+        writer.add_record('STAT', stat_bytes)
+    subs += pack_formid_subrecord('INAM', inam_fid)
 
-    # CNAM — Always present in vanilla Skyrim books (null formid for non-spell books).
-    # Spell-tome books would point to the spell FormID here; we don't handle that yet.
-    subs += pack_formid_subrecord('CNAM', 0)
+    # CNAM — Description (string, empty like vanilla non-descriptive books).
+    subs += pack_string_subrecord('CNAM', '')
 
     return pack_record('BOOK', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
