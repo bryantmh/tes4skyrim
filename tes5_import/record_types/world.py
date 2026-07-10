@@ -155,10 +155,15 @@ def convert_CELL(rec: dict) -> bytes:
     if xown:
         subs += pack_formid_subrecord('XOWN', xown)
 
-    # Water height
+    # Water height.  TES4 stores -2147483648.0 as "use worldspace default";
+    # writing that through as a literal TES5 height puts the cell's water at
+    # -2e9 (i.e. nowhere).  Omit it so the engine falls back to the worldspace
+    # default water height (WRLD DNAM).
     wh = get_str(rec, 'XCLW.WaterHeight')
     if wh:
-        subs += pack_float_subrecord('XCLW', get_float(rec, 'XCLW.WaterHeight'))
+        whf = get_float(rec, 'XCLW.WaterHeight')
+        if -1e9 < whf < 1e9:
+            subs += pack_float_subrecord('XCLW', whf)
 
     return pack_record('CELL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
@@ -183,7 +188,17 @@ def convert_WRLD(rec: dict) -> bytes:
     if wnam:
         subs += pack_formid_subrecord('WNAM', wnam)
 
-    # TES4 CNAM/NAM2/SNAM reference TES4 records — omit (would be dangling refs)
+    # TES4 CNAM/SNAM reference TES4 records — omit (would be dangling refs).
+    #
+    # Water: TES4 WATR records are in skipTypes (we use Skyrim's water), so
+    # point NAM2 (water type) and NAM3 (LOD water type) at Skyrim.esm's
+    # DefaultWater (0x18, master index 0).  Vanilla Tamriel uses the same
+    # record for both.  Without NAM3 the engine's terrain-LOD water codepath
+    # derefs a null WATR pointer and CTDs as soon as a .btr contains a WATER
+    # BSMultiBoundNode.  NAM4 = LOD water height; Oblivion's sea level is 0.
+    subs += pack_formid_subrecord('NAM2', 0x00000018)
+    subs += pack_formid_subrecord('NAM3', 0x00000018)
+    subs += pack_float_subrecord('NAM4', 0.0)
 
     # DNAM — land/water defaults
     subs += pack_subrecord('DNAM', struct.pack('<ff', -2048.0, 0.0))

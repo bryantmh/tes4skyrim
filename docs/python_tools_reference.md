@@ -35,8 +35,10 @@ Rule: NOT meant for one-off tools. Only multi-use tools that take args. Should a
 - **MOPP validator**: `python tools/mopp_validator.py <nif_or_dir> [--verbose|--summary|--histogram|--workers N]` — validates MOPP walk cleanliness AND exact terminal-key-set == shape-key decode.
 - **Navmesh renderer**: `python tools/navmesh_render.py --cell <FormID_or_EditorID> [--out png] [--size N]` — top-down render of LAND heightmap, mesh footprints, pathgrid, generated navmesh triangles, doors. Primary PGRD→NAVM iteration tool.
 - **Navmesh dumper**: `python tools/navmesh_dump.py <esm> [--navi|--navm] [--nvnm-decode] [--max N]` — decompresses + decodes real NAVI/NAVM/NVNM for format verification.
-- **Terrain LOD renderer**: `python tools/terrain_lod_render.py --esm <esm> --worldspace <name> --cell X Y --radius R` — side-by-side hillshade + composited diffuse for terrain LOD iteration.
+- **Terrain LOD renderer**: `python tools/terrain_lod_render.py --esm <esm> --worldspace <name> --cell X Y --radius R` — side-by-side hillshade + composited diffuse (incl. water murk) for terrain LOD iteration.
 - **LOD NIF inspector**: `python tools/lod_nif_inspect.py` — dumps .btr/.bto geometry+shader.
+- **Terrain LOD tile debugger**: `python -m tools.terrain_lod_tile_debug --tiles LEVEL,TX,TY ... [--png-dir temp]` — regenerates specific .btr/.dds tiles in-process (single-threaded), reports water quad counts, dumps diffuse PNGs.
+- **Terrain LOD texture probe**: `python -m tools.terrain_lod_tex_probe [--cell X Y]` — audits LTEX→TXST→dds resolution (ok/missing/loadfail) and per-cell BTXT/ATXT layer data.
 - **KF animation explorer**: `python tools/kf_animation_explorer.py --build-cache` — searches .kf animation corpus for skin retargeting.
 
 ## verify_plugin.py

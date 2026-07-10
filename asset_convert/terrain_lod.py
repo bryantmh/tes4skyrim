@@ -93,12 +93,21 @@ def _find_worldspace_fid(raw: bytes, n: int, edid: str):
 
 
 def _parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel'):
-    """Return dict: (cell_x, cell_y) -> {heights: ndarray(33,33 float32),
-                                          colors:  ndarray(33,33,3 uint8),
-                                          tex_base: str or None}"""
+    """Parse LAND + CELL water data for one worldspace from the output ESM.
+
+    Returns (lands, cell_water, default_water_height):
+      lands:      (cell_x, cell_y) -> {heights: ndarray(33,33 float32),
+                                       colors:  ndarray(33,33,3 uint8),
+                                       layers:  BTXT/ATXT/VTXT dict}
+      cell_water: (cell_x, cell_y) -> (has_water: bool, height: float or None)
+                  height is the cell XCLW override; None = use worldspace default
+      default_water_height: WRLD DNAM default water height (0.0 if absent)
+    """
     raw = esm_path.read_bytes()
     n   = len(raw)
     lands = {}
+    cell_water = {}
+    wrld_water = {'default': None}
 
     # We need CELL grid coords alongside each LAND.
     # Strategy: track current CELL grid coords via a lightweight group scanner.
@@ -170,6 +179,24 @@ def _parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel'):
                         gy = struct.unpack_from('<i', xclc, 4)[0]
                         cell_coords[fid] = (gx, gy)
                         cur_cell_fid = fid
+                        if target_wrld_fid is None or cur_wrld_fid == target_wrld_fid:
+                            # DATA bit 0x02 = Has Water; XCLW = height override
+                            data = _sub(body, 'DATA')
+                            flags = 0
+                            if data:
+                                flags = data[0] | (data[1] << 8 if len(data) >= 2 else 0)
+                            wh = None
+                            xclw = _sub(body, 'XCLW')
+                            if xclw and len(xclw) >= 4:
+                                v = struct.unpack_from('<f', xclw)[0]
+                                if -1e9 < v < 1e9:   # exclude "default" sentinels
+                                    wh = v
+                            cell_water[(gx, gy)] = (bool(flags & 0x02), wh)
+                elif sig == 'WRLD':
+                    if target_wrld_fid is not None and fid == target_wrld_fid:
+                        dnam = _sub(body, 'DNAM')
+                        if dnam and len(dnam) >= 8:
+                            wrld_water['default'] = struct.unpack_from('<f', dnam, 4)[0]
                 elif sig == 'LAND':
                     # Only collect LAND from the target worldspace
                     if target_wrld_fid is None or cur_wrld_fid == target_wrld_fid:
@@ -183,7 +210,8 @@ def _parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel'):
     # Skip TES4/TES5 file header
     hdr_size = struct.unpack_from('<I', raw, 4)[0]
     scan(24 + hdr_size, n, 0, 0)
-    return lands
+    default_wh = wrld_water['default'] if wrld_water['default'] is not None else 0.0
+    return lands, cell_water, default_wh
 
 
 def _decode_land(body, _sub):
@@ -359,6 +387,37 @@ def _fill_missing(h: np.ndarray, c: np.ndarray):
     nan_mask = np.isnan(h)
     if nan_mask.any():
         h[nan_mask] = 0.0
+
+
+# ---------------------------------------------------------------------------
+# LOD water (vanilla-style)
+# ---------------------------------------------------------------------------
+
+def _cell_water_height(cell_water, key, default_wh):
+    """Water height for a cell, or None if the cell has no water."""
+    cw = cell_water.get(key)
+    if cw is None or not cw[0]:
+        return None
+    return cw[1] if cw[1] is not None else default_wh
+
+
+def _tile_water_quads(lands, cell_water, tile_x, tile_y, level, default_wh):
+    """Return [(cx, cy, water_height_world), ...] for cells in this tile that
+    need a LOD water quad (cell has water and its terrain dips below the water
+    surface), matching how vanilla terrain LOD only carries water quads where
+    water is actually visible.  cx/cy are cell offsets within the tile."""
+    quads = []
+    for cx in range(level):
+        for cy in range(level):
+            key = (tile_x + cx, tile_y + cy)
+            wh = _cell_water_height(cell_water, key, default_wh)
+            if wh is None:
+                continue
+            land = lands.get(key)
+            if land is not None and float(land['heights'].min()) >= wh:
+                continue   # terrain entirely above water in this cell
+            quads.append((cx, cy, wh))
+    return quads
 
 
 # ---------------------------------------------------------------------------
@@ -674,8 +733,143 @@ def _write_normal_dds(normal_rgb: np.ndarray, path: Path):
 # NIF writing via pyffi
 # ---------------------------------------------------------------------------
 
+def _build_water_node(water_quads, level: int):
+    """Build the vanilla-style LOD water node for a tile.
+
+    Vanilla .btr structure (verified against Skyrim.esm terrain meshes):
+      root "chunk" child[1] = BSMultiBoundNode named "WATER" (scale 1) holding
+      one shape with an independent flat quad per water cell:
+        * LOD4:  BSSegmentedTriShape with EXACTLY 16 segments — a fixed 4x4
+          grid over the tile (1 cell per segment at LOD4), column-major
+          (segment index = sx*4 + sy).  Segments let the engine hide the quad
+          for cells that are loaded at full detail.  Per-segment binary layout
+          (nif.xml BSGeometrySegmentData, PyFFI's BSSegment fields are
+          misaligned over the same 9 bytes):
+            flags(byte)=0 | start_index(uint, tri-POINTS, 0 when empty)
+            | num_primitives(uint)
+          Through PyFFI's fields: internal_index = start_index << 8, and
+          num_primitives=2 lands exactly on the bsseg_water bit (2 << 8).
+        * LOD8/16/32: plain NiTriShape (no segments — these tiles never
+          overlap the loaded-cell area).
+      The shape has NO shader property, no UVs, no normals: the engine
+      attaches the worldspace LOD water shader itself (WRLD NAM3).  That is
+      also why NAM3 must point at a valid WATR record — a null one CTDs.
+      Quad verts are local 0..4096 like the land (x scale=level), Z = water
+      height / level.  Quads are unshared (4 verts each) so per-cell heights
+      can differ.
+    """
+    cell_local = CELL_SIZE / level
+    scale = float(level)
+
+    quad_map = {(cx, cy): wh for cx, cy, wh in water_quads}
+    span = max(1, level // 4)   # cells per segment side (4x4 segment grid)
+
+    ordered = []                # quads in segment order, column-major
+    seg_num_prims = [0] * 16
+    seg_start = [0] * 16
+    for sx in range(4):
+        for sy in range(4):
+            seg = sx * 4 + sy
+            n_before = len(ordered)
+            for cx in range(sx * span, (sx + 1) * span):
+                for cy in range(sy * span, (sy + 1) * span):
+                    wh = quad_map.get((cx, cy))
+                    if wh is not None:
+                        ordered.append((cx, cy, wh))
+            count = len(ordered) - n_before
+            seg_num_prims[seg] = count * 2
+            # start_index in triangle points; vanilla stores 0 for empty segments
+            seg_start[seg] = n_before * 6 if count else 0
+
+    verts = []
+    tris = []
+    for cx, cy, wh in ordered:
+        x0 = cx * cell_local
+        y0 = cy * cell_local
+        z = wh / scale
+        b = len(verts)
+        verts += [(x0, y0, z), (x0 + cell_local, y0, z),
+                  (x0, y0 + cell_local, z), (x0 + cell_local, y0 + cell_local, z)]
+        tris += [(b, b + 1, b + 2), (b + 1, b + 3, b + 2)]
+
+    # ---- geometry data ----
+    shapedata = NifFormat.NiTriShapeData()
+    shapedata.has_vertices = True
+    shapedata.has_normals = False
+    shapedata.num_uv_sets = 0
+    shapedata.has_uv = False
+    shapedata.num_vertices = len(verts)
+    shapedata.vertices.update_size()
+    for i, (x, y, z) in enumerate(verts):
+        shapedata.vertices[i].x = x
+        shapedata.vertices[i].y = y
+        shapedata.vertices[i].z = z
+    shapedata.num_triangles = len(tris)
+    shapedata.num_triangle_points = len(tris) * 3
+    shapedata.has_triangles = True
+    shapedata.triangles.update_size()
+    for i, (a, b, c) in enumerate(tris):
+        shapedata.triangles[i].v_1 = a
+        shapedata.triangles[i].v_2 = b
+        shapedata.triangles[i].v_3 = c
+
+    # Bounding sphere in LOCAL coords (vanilla: bbox centre, corner radius)
+    va = np.array(verts, dtype=np.float64)
+    lo = va.min(axis=0)
+    hi = va.max(axis=0)
+    ctr = (lo + hi) / 2.0
+    shapedata.center.x, shapedata.center.y, shapedata.center.z = ctr
+    shapedata.radius = float(np.linalg.norm((hi - lo) / 2.0))
+
+    if level == 4:
+        shape = NifFormat.BSSegmentedTriShape()
+        shape.num_segments = 16
+        shape.segment.update_size()
+        for i in range(16):
+            seg = shape.segment[i]
+            # True layout: flags byte (0) | start uint | num_prims uint.
+            # PyFFI's misaligned view: internal_index covers flags+start[0:3],
+            # its 'flags' bitstruct covers start[3]+num_prims[0:3].
+            seg.internal_index = (seg_start[i] << 8) & 0xFFFFFFFF
+            seg.flags.bsseg_water = 1 if seg_num_prims[i] else 0
+            seg.unknown_byte_1 = 0
+    else:
+        shape = NifFormat.NiTriShape()
+    shape.name = b''
+    shape.flags = 14
+    shape.scale = scale
+    shape.data = shapedata
+
+    # ---- WATER BSMultiBoundNode ----
+    whs = [wh for _, _, wh in ordered]
+    aabb = NifFormat.BSMultiBoundAABB()
+    # XY: bbox of the quads in WORLD units relative to the tile origin.
+    aabb.position.x = float(ctr[0] * scale)
+    aabb.position.y = float(ctr[1] * scale)
+    aabb.extent.x = float((hi[0] - lo[0]) / 2.0 * scale)
+    aabb.extent.y = float((hi[1] - lo[1]) / 2.0 * scale)
+    # Z: vanilla spans [min height, max(max height, 0)].
+    z_lo = min(whs)
+    z_hi = max(max(whs), 0.0)
+    aabb.position.z = (z_lo + z_hi) / 2.0
+    aabb.extent.z = (z_hi - z_lo) / 2.0
+
+    multi_bound = NifFormat.BSMultiBound()
+    multi_bound.data = aabb
+
+    wnode = NifFormat.BSMultiBoundNode()
+    wnode.name = b'WATER'
+    wnode.flags = 14
+    wnode.multi_bound = multi_bound
+    wnode.num_children = 1
+    wnode.children.update_size()
+    wnode.children[0] = shape
+    return wnode
+
+
 def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
-                       level: int, edid: str, output_dir: Path) -> bytes:
+                       level: int, edid: str, output_dir: Path,
+                       water_quads=None) -> bytes:
     """Build a .btr NIF for a terrain tile and return bytes.
 
     Vertex layout matches vanilla Skyrim terrain LOD:
@@ -752,11 +946,17 @@ def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
             # Z stored pre-divided by scale so vertex_z × scale = world_Z
             shapedata.vertices[i].z = float(h33[row, col]) / world_scale
 
-    # UV set (all zeros — LOD landscape shader uses world-space texturing)
+    # UV set — the tile texture maps across the whole tile.  Vanilla ground
+    # truth (tamriel.4.0.32.btr): u = x/4096, v = 1 - y/4096 (v=0 at the NORTH
+    # edge, matching the DDS row 0 = north).  All-zero UVs made every triangle
+    # sample a single texel, so each tile rendered as one flat colour — the
+    # in-game map became a hard-edged per-tile checkerboard.
     shapedata.uv_sets.update_size()
-    for i in range(N):
-        shapedata.uv_sets[0][i].u = 0.0
-        shapedata.uv_sets[0][i].v = 0.0
+    for row in range(tv):
+        for col in range(tv):
+            i = row * tv + col
+            shapedata.uv_sets[0][i].u = col * step / CELL_SIZE
+            shapedata.uv_sets[0][i].v = 1.0 - (row * step / CELL_SIZE)
 
     shapedata.num_triangles       = len(tris)
     shapedata.num_triangle_points = len(tris) * 3
@@ -828,9 +1028,19 @@ def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
     root.name         = b'chunk'
     root.flags        = 14
     root.multi_bound  = multi_bound
-    root.num_children = 1
-    root.children.update_size()
-    root.children[0]  = shape
+
+    # Water: child[1] BSMultiBoundNode "WATER" (vanilla structure).  The engine
+    # textures it with the worldspace LOD water shader (WRLD NAM3).
+    if water_quads:
+        water_node = _build_water_node(water_quads, level)
+        root.num_children = 2
+        root.children.update_size()
+        root.children[0] = shape
+        root.children[1] = water_node
+    else:
+        root.num_children = 1
+        root.children.update_size()
+        root.children[0] = shape
 
     nif_data.roots = [root]
 
@@ -849,24 +1059,36 @@ def _build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
 CELL_DIFFUSE_PX = 64
 
 
-def _composite_tile_diffuse(lands, tile_x, tile_y, level, ltex_map, tex_root):
+_EMPTY_LAYERS = {'base': {}, 'alpha': {}}
+
+
+def _composite_tile_diffuse(lands, tile_x, tile_y, level, ltex_map, tex_root,
+                            tile_heights, cell_water, default_wh):
     """Composite a level-N tile diffuse from its cells' real landscape textures.
+
+    tile_heights is the FILLED tile height grid from _assemble_tile (row 0 =
+    south), used to bake the underwater murk.  Cells with no LAND record get
+    the engine default texture + murk instead of a flat fill colour.
 
     Returns (atlas RGB ndarray, side_px) with image row 0 = north (+Y), so it
     matches the DDS orientation vanilla terrain LOD uses.
     """
     from .terrain_lod_textures import composite_cell
     side = level * CELL_DIFFUSE_PX
-    atlas = np.full((side, side, 3), 60, dtype=np.uint8)
+    atlas = np.empty((side, side, 3), dtype=np.uint8)
     for cy in range(level):
         for cx in range(level):
             key = (tile_x + cx, tile_y + cy)
             land = lands.get(key)
-            if land is None:
-                continue
-            img = composite_cell(land['layers'], land.get('colors'),
+            layers = land['layers'] if land is not None else _EMPTY_LAYERS
+            colors = land.get('colors') if land is not None else None
+            # 33x33 height patch for this cell from the filled tile grid
+            h33 = tile_heights[cy*32:cy*32+33, cx*32:cx*32+33]
+            wh = _cell_water_height(cell_water, key, default_wh)
+            img = composite_cell(layers, colors,
                                  ltex_map, tex_root, tile_x + cx, tile_y + cy,
-                                 cell_px=CELL_DIFFUSE_PX, tex_size=64)
+                                 cell_px=CELL_DIFFUSE_PX, tex_size=128,
+                                 heights=h33, water_height=wh)
             col0 = cx * CELL_DIFFUSE_PX
             # north (+Y, higher cy) at the TOP of the image
             row0 = (level - 1 - cy) * CELL_DIFFUSE_PX
@@ -882,13 +1104,17 @@ def _heightmap_normal_rgb(heights: np.ndarray, out_px: int) -> np.ndarray:
     units; we resize to out_px and take the gradient.
     """
     from PIL import Image
-    hh = np.nan_to_num(heights.astype(np.float32))
+    # heights row 0 = SOUTH (LAND convention); the diffuse tile is written with
+    # image row 0 = NORTH, and the normal map shares its UVs — flip to match.
+    hh = np.flipud(np.nan_to_num(heights.astype(np.float32)))
     im = Image.fromarray(hh).resize((out_px, out_px), Image.BILINEAR)
     hh = np.asarray(im, dtype=np.float32)
     # world-space spacing between output samples (game units)
     span = CELL_SIZE * (heights.shape[0] - 1) / 32.0  # tile world span
     dpx = span / out_px
-    gy, gx = np.gradient(hh, dpx)
+    grow, gx = np.gradient(hh, dpx)
+    # image rows run north→south, so ∂h/∂y_world = -∂h/∂row
+    gy = -grow
     nz = np.ones_like(gx)
     nx, ny, nzz = -gx, -gy, nz
     norm = np.sqrt(nx*nx + ny*ny + nzz*nzz) + 1e-6
@@ -902,22 +1128,28 @@ def _heightmap_normal_rgb(heights: np.ndarray, out_px: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 # Per-process global set by _worker_init; avoids pickling lands on every task.
-_worker_lands     = None
-_worker_mesh_dir  = None
-_worker_tex_dir   = None
-_worker_ltex_map  = None
-_worker_tex_root  = None
+_worker_lands      = None
+_worker_mesh_dir   = None
+_worker_tex_dir    = None
+_worker_ltex_map   = None
+_worker_tex_root   = None
+_worker_cell_water = None
+_worker_default_wh = 0.0
 
 
-def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s):
+def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
+                 cell_water, default_wh):
     """Called once per worker process to stash shared read-only data."""
     global _worker_lands, _worker_mesh_dir, _worker_tex_dir
     global _worker_ltex_map, _worker_tex_root
-    _worker_lands    = lands
-    _worker_mesh_dir = Path(mesh_dir_s)
-    _worker_tex_dir  = Path(tex_dir_s)
-    _worker_ltex_map = ltex_map
-    _worker_tex_root = Path(tex_root_s)
+    global _worker_cell_water, _worker_default_wh
+    _worker_lands      = lands
+    _worker_mesh_dir   = Path(mesh_dir_s)
+    _worker_tex_dir    = Path(tex_dir_s)
+    _worker_ltex_map   = ltex_map
+    _worker_tex_root   = Path(tex_root_s)
+    _worker_cell_water = cell_water
+    _worker_default_wh = default_wh
 
 
 def _process_tile(args):
@@ -932,9 +1164,13 @@ def _process_tile(args):
     try:
         heights, colors = _assemble_tile(_worker_lands, tile_x, tile_y, level)
 
+        water_quads = _tile_water_quads(_worker_lands, _worker_cell_water,
+                                        tile_x, tile_y, level, _worker_default_wh)
+
         output_dir = _worker_mesh_dir.parent.parent.parent
         nif_bytes  = _build_terrain_nif(heights, tile_x, tile_y, level,
-                                        worldspace_edid, output_dir)
+                                        worldspace_edid, output_dir,
+                                        water_quads=water_quads)
         (_worker_mesh_dir / f'{tag}.btr').write_bytes(nif_bytes)
 
         tex_size = TEX_SIZE_BY_LEVEL.get(level, TEX_SIZE)
@@ -942,7 +1178,8 @@ def _process_tile(args):
         # Diffuse: composite real landscape textures per LAND alpha layers.
         atlas, _side = _composite_tile_diffuse(
             _worker_lands, tile_x, tile_y, level,
-            _worker_ltex_map, _worker_tex_root)
+            _worker_ltex_map, _worker_tex_root,
+            heights, _worker_cell_water, _worker_default_wh)
         _write_dds_dxt1(atlas, _worker_tex_dir / f'{tag}.dds', size=tex_size)
 
         # Normal map: derive from the tile heightmap so distant terrain is lit.
@@ -985,11 +1222,13 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
         return False
 
     print(f"\n[TerrainLOD] Parsing LAND records from {esm_path.name}...")
-    lands = _parse_land_records(esm_path, worldspace_edid)
+    lands, cell_water, default_wh = _parse_land_records(esm_path, worldspace_edid)
     if not lands:
         print("  No LAND records found.")
         return False
-    print(f"  Found {len(lands)} LAND records.")
+    n_water = sum(1 for hw, _ in cell_water.values() if hw)
+    print(f"  Found {len(lands)} LAND records; {n_water} water cells "
+          f"(default water height {default_wh}).")
 
     # Determine cell bounds
     all_x = [k[0] for k in lands]
@@ -1039,7 +1278,8 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
         with ProcessPoolExecutor(
             max_workers=n_workers,
             initializer=_worker_init,
-            initargs=(lands, str(mesh_dir), str(tex_dir), ltex_map, str(tex_root)),
+            initargs=(lands, str(mesh_dir), str(tex_dir), ltex_map, str(tex_root),
+                      cell_water, default_wh),
         ) as pool:
             for tag, ok, err in pool.map(_process_tile, work):
                 if ok:

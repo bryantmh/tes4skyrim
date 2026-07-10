@@ -149,6 +149,13 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         skip_types = set()
     all_skip = SKIP_TYPES | skip_types
 
+    # Per-plugin output dirs are named after the plugin (output/Oblivion.esm/ is
+    # a FOLDER); given the folder, write <folder>/<folder-name> inside it rather
+    # than failing to overwrite a directory with a file at the end of the run.
+    if os.path.isdir(output_path):
+        output_path = os.path.join(
+            output_path, os.path.basename(os.path.normpath(output_path)))
+
     print(f"Reading exports from: {export_dir}")
     t0 = time.time()
 

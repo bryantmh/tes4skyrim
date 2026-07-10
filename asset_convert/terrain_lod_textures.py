@@ -41,6 +41,19 @@ QUAD_VERTS = 17            # vertices per quadrant side (33 per cell = 2*17-1)
 # tile atlas; keep modest so a 32x32-cell tile stays a sane texture size.
 CELL_PX = 64
 
+# Engine default for quadrants with no BTXT base layer.  Oblivion renders
+# unpainted land with Landscape\Default.dds; ~23% of Tamriel quadrants
+# (mostly sea floor) have no base layer, and the old grey-128 fallback painted
+# them as huge flat grey areas in the distant LOD.
+DEFAULT_LAND_TEXTURE = 'tes4\\landscape\\default.dds'
+
+# Baked underwater murk.  Vanilla terrain LOD diffuse bakes submerged terrain
+# toward a flat murky colour (the LOD water sheet drawn above it is nearly
+# opaque-looking only up close).  Blend by depth below the cell water height.
+MURK_COLOR = np.array([54.0, 66.0, 62.0], dtype=np.float32)
+MURK_FULL_DEPTH = 512.0    # game units below water at which murk saturates
+MURK_MAX = 0.9             # never fully hide the ground texture
+
 
 # ---------------------------------------------------------------------------
 # Output-ESM parsing: LTEX FormID -> diffuse/normal texture path
@@ -137,7 +150,7 @@ def decode_land_layers(body: bytes) -> dict:
     17x17 quadrant vertex grid.
     """
     base = {}
-    alpha = {}
+    alpha = {}          # quad -> [(layer_idx, ltex_fid, grid), ...]
 
     p = 0
     n = len(body)
@@ -155,10 +168,10 @@ def decode_land_layers(body: bytes) -> dict:
             pending_atxt = (tex, quad)
             # opacity grid defaults to 0
             grid = np.zeros((QUAD_VERTS, QUAD_VERTS), dtype=np.float32)
-            alpha.setdefault(quad, []).append((tex, grid))
+            alpha.setdefault(quad, []).append((layer, tex, grid))
         elif tag == b'VTXT' and pending_atxt is not None:
             tex, quad = pending_atxt
-            grid = alpha[quad][-1][1]
+            grid = alpha[quad][-1][2]
             cnt = len(val) // 8
             for i in range(cnt):
                 pos, _u, op = struct.unpack_from('<HHf', val, i*8)
@@ -167,7 +180,10 @@ def decode_land_layers(body: bytes) -> dict:
             pending_atxt = None
         p += 6 + sz
 
-    return {'base': base, 'alpha': alpha}
+    # Blend order is the ATXT layer index, not file order.
+    alpha_sorted = {q: [(t, g) for _l, t, g in sorted(lst, key=lambda e: e[0])]
+                    for q, lst in alpha.items()}
+    return {'base': base, 'alpha': alpha_sorted}
 
 
 # ---------------------------------------------------------------------------
@@ -212,23 +228,17 @@ def _load_texture_rgb(rel_path: str, tex_root: Path, size: int = 64):
 # ---------------------------------------------------------------------------
 
 def _upsample_opacity(grid17: np.ndarray, out_px: int) -> np.ndarray:
-    """Bilinearly upsample a 17x17 opacity grid to (out_px, out_px)."""
+    """Bilinearly upsample a 17x17 opacity grid to (out_px, out_px), flipping
+    to image orientation (grid row 0 = SOUTH, image row 0 = NORTH)."""
     from PIL import Image
-    im = Image.fromarray((np.clip(grid17, 0, 1) * 255).astype(np.uint8), 'L')
+    im = Image.fromarray((np.clip(np.flipud(grid17), 0, 1) * 255).astype(np.uint8), 'L')
     im = im.resize((out_px, out_px), Image.BILINEAR)
     return np.asarray(im, dtype=np.float32) / 255.0
 
 
-def _tiled_texture(rgb_tile: np.ndarray, quad_px: int, u0: float, v0: float,
-                   uv_span: float) -> np.ndarray:
-    """Sample rgb_tile tiled across a quadrant of quad_px pixels.
-
-    u0,v0 = UV of the quadrant's origin; uv_span = UV covered by the quadrant.
-    """
+def _sample_tiled(rgb_tile: np.ndarray, us: np.ndarray, vs: np.ndarray) -> np.ndarray:
+    """Sample rgb_tile (tiling/wrapping) at world UV columns `us`, rows `vs`."""
     ts = rgb_tile.shape[0]
-    # world UV per pixel
-    us = (u0 + (np.arange(quad_px) + 0.5) / quad_px * uv_span)
-    vs = (v0 + (np.arange(quad_px) + 0.5) / quad_px * uv_span)
     px = ((us % 1.0) * ts).astype(np.int32) % ts
     py = ((vs % 1.0) * ts).astype(np.int32) % ts
     return rgb_tile[np.ix_(py, px)]
@@ -236,24 +246,32 @@ def _tiled_texture(rgb_tile: np.ndarray, quad_px: int, u0: float, v0: float,
 
 def composite_cell(layers: dict, colors: np.ndarray, ltex_map: dict,
                    tex_root: Path, cell_gx: int, cell_gy: int,
-                   cell_px: int = CELL_PX, tex_size: int = 64) -> np.ndarray:
+                   cell_px: int = CELL_PX, tex_size: int = 128,
+                   heights: np.ndarray = None,
+                   water_height: float = None) -> np.ndarray:
     """Composite one LAND cell into an (cell_px, cell_px, 3) uint8 RGB image.
 
-    Quadrant layout in the image (row 0 = top = +Y):
+    Quadrant layout in the image (row 0 = top = +Y = north):
       TL(2) TR(3)
       BL(0) BR(1)
-    layers: from decode_land_layers.  colors: (33,33,3) uint8 VCLR shading.
+    layers: from decode_land_layers.  colors: (33,33,3) uint8 VCLR shading
+    (row 0 = south).  heights: (33,33) float32 cell heights (row 0 = south),
+    used with water_height to bake the underwater murk.
     """
     base = layers['base']
     alpha = layers['alpha']
     quad_px = cell_px // 2
     out = np.zeros((cell_px, cell_px, 3), dtype=np.float32)
 
-    # UV per quadrant: cell spans 1/TILE_REPEAT_CELLS of the texture; quadrant
-    # spans half that.  Origin from world cell coords so neighbouring cells line
-    # up seamlessly.
+    # World-UV sample grids for the whole cell image.  The cell spans
+    # 1/TILE_REPEAT_CELLS of the texture; origins from world cell coords so
+    # neighbouring cells line up seamlessly.  Image row 0 is the cell's NORTH
+    # edge, so v must DECREASE as the row index grows — sampling with
+    # ascending v mirrored every quadrant vertically and broke texture
+    # continuity at each quadrant boundary (the horizontal banding bug).
     uv_cell = 1.0 / TILE_REPEAT_CELLS
-    uv_quad = uv_cell / 2.0
+    us = (cell_gx + (np.arange(cell_px) + 0.5) / cell_px) * uv_cell
+    vs = (cell_gy + 1.0 - (np.arange(cell_px) + 0.5) / cell_px) * uv_cell
 
     # image (row,col) block for each quad: (row_slice, col_slice)
     # top row = TL,TR ; bottom row = BL,BR
@@ -263,49 +281,55 @@ def composite_cell(layers: dict, colors: np.ndarray, ltex_map: dict,
         0: (slice(quad_px, cell_px),    slice(0, quad_px)),           # BL
         1: (slice(quad_px, cell_px),    slice(quad_px, cell_px)),     # BR
     }
-    # quadrant world offset in cells: BL=(0,0) BR=(0.5,0) TL=(0,0.5) TR=(0.5,0.5)
-    quad_uv_off = {0: (0.0, 0.0), 1: (0.5, 0.0), 2: (0.0, 0.5), 3: (0.5, 0.5)}
 
     for quad in range(4):
         rs, cs = quad_blocks[quad]
-        qoff_u, qoff_v = quad_uv_off[quad]
-        u0 = (cell_gx * uv_cell) + qoff_u * uv_cell
-        v0 = (cell_gy * uv_cell) + qoff_v * uv_cell
+        q_us = us[cs]
+        q_vs = vs[rs]
 
-        # base layer
+        # base layer; quadrants with no BTXT use the engine default texture
         base_fid = base.get(quad)
-        if base_fid:
-            diff = ltex_map.get(base_fid, {}).get('diffuse', '')
-            btile = _load_texture_rgb(diff, tex_root, tex_size)
-        else:
-            btile = np.full((tex_size, tex_size, 3), 128, dtype=np.uint8)
-        quad_img = _tiled_texture(btile, quad_px, u0, v0, uv_quad).astype(np.float32)
+        diff = ltex_map.get(base_fid, {}).get('diffuse', '') if base_fid else ''
+        btile = _load_texture_rgb(diff or DEFAULT_LAND_TEXTURE, tex_root, tex_size)
+        quad_img = _sample_tiled(btile, q_us, q_vs).astype(np.float32)
 
-        # alpha layers
+        # alpha layers, in ATXT layer order
         for (lfid, grid17) in alpha.get(quad, []):
             diff = ltex_map.get(lfid, {}).get('diffuse', '')
             if not diff:
                 continue
             atile = _load_texture_rgb(diff, tex_root, tex_size)
-            atex = _tiled_texture(atile, quad_px, u0, v0, uv_quad).astype(np.float32)
+            atex = _sample_tiled(atile, q_us, q_vs).astype(np.float32)
             op = _upsample_opacity(grid17, quad_px)[:, :, None]
             quad_img = quad_img * (1.0 - op) + atex * op
 
         out[rs, cs] = quad_img
 
-    # Modulate by VCLR luminance shading (baked AO / lighting).  colors is 33x33;
-    # resize to cell_px and use as a subtle per-pixel multiplier.  VCLR is a
-    # light map centred ~0.5 = neutral (x2 = unshaded).  Applying the full x2
-    # range produced hard cell seams (per-cell VCLR discontinuities) and crushed
+    # Modulate by VCLR luminance shading (baked AO / lighting).  colors is 33x33
+    # with row 0 = south — flip to image orientation.  VCLR is a light map
+    # centred ~0.5 = neutral (x2 = unshaded).  Applying the full x2 range
+    # produced hard cell seams (per-cell VCLR discontinuities) and crushed
     # shadows, so blend the shading only partway toward neutral.
     if colors is not None:
         from PIL import Image
-        shade = Image.fromarray(colors, 'RGB').resize((cell_px, cell_px), Image.BILINEAR)
+        shade = Image.fromarray(np.flipud(colors).copy(), 'RGB').resize(
+            (cell_px, cell_px), Image.BILINEAR)
         shade = np.asarray(shade, dtype=np.float32) / 255.0
         lum = shade.mean(axis=2, keepdims=True) * 2.0          # 0..2, 1=neutral
         SHADE_STRENGTH = 0.4                                    # 0=off, 1=full
         mult = 1.0 + (lum - 1.0) * SHADE_STRENGTH
         out = np.clip(out * mult, 0, 255)
 
+    # Bake the underwater murk: blend submerged pixels toward a flat murky
+    # colour by depth, like vanilla LOD diffuse (the LOD water sheet alone is
+    # too translucent to hide raw seafloor texture at distance).
+    if water_height is not None and heights is not None:
+        from PIL import Image
+        himg = Image.fromarray(np.flipud(np.nan_to_num(
+            heights.astype(np.float32)))).resize((cell_px, cell_px), Image.BILINEAR)
+        depth = float(water_height) - np.asarray(himg, dtype=np.float32)
+        a = np.clip(depth / MURK_FULL_DEPTH, 0.0, 1.0)[:, :, None] * MURK_MAX
+        out = out * (1.0 - a) + MURK_COLOR[None, None, :] * a
+
     # Note: image row 0 is +Y (north); callers assemble tiles top-down.
-    return out.astype(np.uint8)
+    return np.clip(out, 0, 255).astype(np.uint8)

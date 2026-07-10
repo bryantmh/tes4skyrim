@@ -62,71 +62,22 @@ def _region_grid(lands, min_x, min_y, max_x, max_y, per_cell):
     return out
 
 
-def _region_diffuse(lands_layers, colors_map, ltex_map, tex_root,
+def _region_diffuse(lands, cell_water, default_wh, ltex_map, tex_root,
                     min_x, min_y, max_x, max_y, per_cell):
     W = (max_x - min_x + 1) * per_cell
     H = (max_y - min_y + 1) * per_cell
     out = np.full((H, W, 3), 40, dtype=np.uint8)
-    for (cx, cy), layers in lands_layers.items():
+    for (cx, cy), land in lands.items():
         if not (min_x <= cx <= max_x and min_y <= cy <= max_y):
             continue
-        img = TLT.composite_cell(layers, colors_map.get((cx, cy)), ltex_map,
-                                 tex_root, cx, cy, cell_px=per_cell, tex_size=64)
+        wh = TL._cell_water_height(cell_water, (cx, cy), default_wh)
+        img = TLT.composite_cell(land['layers'], land.get('colors'), ltex_map,
+                                 tex_root, cx, cy, cell_px=per_cell,
+                                 heights=land['heights'], water_height=wh)
         col0 = (cx - min_x) * per_cell
         row0 = (max_y - cy) * per_cell
         out[row0:row0+per_cell, col0:col0+per_cell] = img
     return out
-
-
-def _parse_land_full(esm_path, worldspace_edid):
-    """Parse LAND heights + colours (via terrain_lod) AND per-cell layer data."""
-    lands = TL._parse_land_records(esm_path, worldspace_edid)
-    colors_map = {k: v['colors'] for k, v in lands.items()}
-    # Re-scan for layer structure (terrain_lod._decode_land drops it)
-    raw = Path(esm_path).read_bytes()
-    layers_map = {}
-    import struct as _s
-    target = TL._find_worldspace_fid(raw, len(raw), worldspace_edid)
-    cell_coords = {}
-    n = len(raw)
-
-    def _rec(p):
-        sig = raw[p:p+4]
-        size = _s.unpack_from('<I', raw, p+4)[0]
-        fid = _s.unpack_from('<I', raw, p+12)[0]
-        return sig, fid, raw[p+24:p+24+size], p+24+size
-
-    def scan(start, end, cell_fid, wrld_fid):
-        p = start
-        while p < end and p + 24 <= n:
-            if raw[p:p+4] == b'GRUP':
-                gs = _s.unpack_from('<I', raw, p+4)[0]
-                gt = _s.unpack_from('<I', raw, p+12)[0]
-                lbl = raw[p+8:p+12]
-                nc, nw = cell_fid, wrld_fid
-                if gt == 1:
-                    nw = _s.unpack_from('<I', lbl)[0]
-                elif gt == 6:
-                    nc = _s.unpack_from('<I', lbl)[0]
-                scan(p+24, p+gs, nc, nw)
-                p += gs
-            else:
-                sig, fid, body, np_ = _rec(p)
-                if sig == b'CELL':
-                    xclc = TLT._sub(body, b'XCLC')
-                    if xclc and len(xclc) >= 8:
-                        cell_coords[fid] = _s.unpack_from('<ii', xclc)
-                        cell_fid = fid
-                elif sig == b'LAND':
-                    if target is None or wrld_fid == target:
-                        co = cell_coords.get(cell_fid)
-                        if co is not None:
-                            layers_map[co] = TLT.decode_land_layers(body)
-                p = np_
-
-    hdr = _s.unpack_from('<I', raw, 4)[0]
-    scan(24 + hdr, n, 0, 0)
-    return lands, colors_map, layers_map
 
 
 def main():
@@ -147,8 +98,9 @@ def main():
     tex_root = esm.parent / 'textures'
 
     print(f"Parsing LAND from {esm} (worldspace {args.worldspace})...")
-    lands, colors_map, layers_map = _parse_land_full(esm, args.worldspace)
-    print(f"  {len(lands)} LAND cells, {len(layers_map)} with layers")
+    lands, cell_water, default_wh = TL._parse_land_records(esm, args.worldspace)
+    print(f"  {len(lands)} LAND cells; "
+          f"{sum(1 for hw, _ in cell_water.values() if hw)} water cells")
     if not lands:
         print("No LAND records; abort")
         return
@@ -173,7 +125,7 @@ def main():
 
     hmap = _region_grid(lands, min_x, min_y, max_x, max_y, per_cell)
     shade = hillshade(hmap)
-    diffuse = _region_diffuse(layers_map, colors_map, ltex_map, tex_root,
+    diffuse = _region_diffuse(lands, cell_water, default_wh, ltex_map, tex_root,
                               min_x, min_y, max_x, max_y, per_cell)
 
     from PIL import Image
