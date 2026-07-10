@@ -14,6 +14,19 @@ EXPORT_MESHES = Path('export/Oblivion.esm/meshes')
 _GRASS_SAMPLE = 'plants/gclonggrass01.nif'
 
 
+def _grass_world_bounds(data):
+    """(minZ, maxZ) of all geometry in root space — a rotation/flatten-invariant
+    check that the vertex bake preserved world-space geometry."""
+    root = data.roots[0]
+    zs = []
+    for blk in root.tree():
+        if isinstance(blk, (NifFormat.NiTriShape, NifFormat.NiTriStrips)) and blk.data:
+            m = blk.get_transform(root)
+            for v in blk.data.vertices:
+                zs.append((v * m).z)
+    return (min(zs), max(zs))
+
+
 # ---------------------------------------------------------------------------
 # grass_profile
 # ---------------------------------------------------------------------------
@@ -96,6 +109,45 @@ class TestGrassProfile:
 
         # Second pass is a no-op
         assert grass_profile.apply_grass_profile(dst) is False
+
+    @pytest.mark.skipif(not (EXPORT_MESHES / 'plants/bwcattail02.nif').exists(),
+                        reason='Export meshes not available')
+    def test_grass_flattens_rotated_root(self, tmp_path):
+        """A source whose root carries a non-identity rotation is wrapped in an
+        inner NiNode by the generic converter (Pass-6c).  Skyrim's grass
+        instancer CTDs on that nesting, so apply_grass_profile must collapse it
+        back to BSFadeNode -> geometry (TES4 BWCattail CTD, 2026-07-10)."""
+        dst = tmp_path / 'cattail.nif'
+        result = convert_nif(str(EXPORT_MESHES / 'plants/bwcattail02.nif'), str(dst))
+        assert result['converted'], f"Conversion failed: {result.get('error')}"
+
+        # Before profiling: converter wraps geometry in an inner NiNode.
+        data = NifFormat.Data()
+        with open(dst, 'rb') as f:
+            data.read(f)
+        root = data.roots[0]
+        assert isinstance(root, NifFormat.BSFadeNode)
+        assert any(type(c).__name__ == 'NiNode' for c in root.children), \
+            "expected an inner NiNode wrapper on the rotated source"
+
+        world_before = _grass_world_bounds(data)
+
+        assert grass_profile.apply_grass_profile(dst) is True
+
+        # After: geometry sits directly under the fade-node root, no NiNode.
+        data = NifFormat.Data()
+        with open(dst, 'rb') as f:
+            data.read(f)
+        root = data.roots[0]
+        assert isinstance(root, NifFormat.BSFadeNode)
+        for c in root.children:
+            assert isinstance(c, (NifFormat.NiTriShape, NifFormat.NiTriStrips)), \
+                f"grass root still has a non-geometry child: {type(c).__name__}"
+
+        # World-space geometry must be preserved by the vertex bake.
+        world_after = _grass_world_bounds(data)
+        for a, b in zip(world_before, world_after):
+            assert abs(a - b) < 1e-2, f"geometry bounds shifted: {world_before} -> {world_after}"
 
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
     @pytest.mark.parametrize('rel', [

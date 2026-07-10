@@ -105,6 +105,91 @@ def load_grass_model_paths(export_dir):
     return paths
 
 
+def _flatten_grass_root(data):
+    """Collapse intermediate NiNodes so all geometry sits directly under the
+    BSFadeNode root — the flat structure every working grass NIF uses.
+
+    Skyrim's grass instancer (AddCellGrassTask → BSMultiStreamInstanceTriShape)
+    expects grass geometry as a *direct* child of the fade-node root.  The
+    generic NIF converter, however, wraps geometry in an inner NiNode whenever
+    the source root carries a non-identity rotation (Pass-6c in nif_converter),
+    producing BSFadeNode → NiNode → NiTriShape.  For statics Skyrim honours that
+    child-NiNode rotation, but the grass path never traverses it and dereferences
+    a garbage pointer → CTD (e.g. TES4 BWCattail01/02/03, whose source roots are
+    rotated).
+
+    This bakes each intermediate node's transform into its geometry's vertices
+    and normals, then re-parents the geometry straight onto the root and drops
+    the now-empty NiNode.  Only plain NiNode wrappers holding geometry are
+    collapsed; anything with collision, controllers, or extra data is left
+    alone.  Returns True if the tree changed.
+    """
+    NifFormat = _nif_format()
+    root = data.roots[0] if data.roots else None
+    if root is None or not isinstance(root, NifFormat.BSFadeNode):
+        return False
+    if not hasattr(root, 'children'):
+        return False
+
+    def _is_plain_wrapper(node):
+        # A bare NiNode (not a subclass like NiBillboardNode) whose only content
+        # is geometry — safe to bake away.
+        if type(node).__name__ != 'NiNode':
+            return False
+        if getattr(node, 'collision_object', None) is not None:
+            return False
+        if getattr(node, 'controller', None) is not None:
+            return False
+        if getattr(node, 'num_extra_data_list', 0):
+            return False
+        if getattr(node, 'num_children', 0) == 0:
+            return False
+        for c in node.children:
+            if not isinstance(c, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
+                return False
+        return True
+
+    new_children = []
+    changed = False
+    for child in list(root.children):
+        if child is None:
+            continue
+        if not _is_plain_wrapper(child):
+            new_children.append(child)
+            continue
+        # Bake the wrapper's transform into each geometry child, then hoist
+        # the geometry up to the root.
+        wrap_m = child.get_transform()          # wrapper local → root space
+        for geo in child.children:
+            gd = geo.data
+            full = geo.get_transform() * wrap_m  # geo local → root space
+            rot = full.get_matrix_33()
+            if gd is not None:
+                for v in gd.vertices:
+                    nv = v * full
+                    v.x, v.y, v.z = nv.x, nv.y, nv.z
+                if getattr(gd, 'has_normals', 0):
+                    for n in gd.normals:
+                        nn = n * rot
+                        n.x, n.y, n.z = nn.x, nn.y, nn.z
+                try:
+                    gd.update_center_radius()
+                except Exception:
+                    pass
+            geo.rotation.set_identity()
+            geo.translation.x = geo.translation.y = geo.translation.z = 0.0
+            geo.scale = 1.0
+            new_children.append(geo)
+        changed = True
+
+    if changed:
+        root.num_children = len(new_children)
+        root.children.update_size()
+        for j, c in enumerate(new_children):
+            root.children[j] = c
+    return changed
+
+
 def apply_grass_profile(nif_path):
     """Apply the vanilla grass shader profile to one converted (LE) NIF.
 
@@ -115,7 +200,9 @@ def apply_grass_profile(nif_path):
     with open(nif_path, 'rb') as f:
         data.read(f)
 
-    changed = False
+    # Flatten intermediate NiNode wrappers first (grass instancer contract).
+    changed = _flatten_grass_root(data)
+
     for block in data.blocks:
         if isinstance(block, NifFormat.BSLightingShaderProperty):
             sf1 = block.shader_flags_1
