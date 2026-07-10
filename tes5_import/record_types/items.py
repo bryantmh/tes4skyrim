@@ -379,10 +379,27 @@ def convert_LIGH(rec: dict) -> bytes:
     g = get_int(rec, 'DATA.Color.G')
     b = get_int(rec, 'DATA.Color.B')
     flags = get_int(rec, 'DATA.Flags')
-    falloff = get_float(rec, 'DATA.FalloffExponent', 1.0)
-    fov = get_float(rec, 'DATA.FOV', 90.0)
+    flags &= ~0x10  # TES4 'Unused' bit
+    # TES4 stores 0 for "engine default" here; xEdit's wbLIGHAfterLoad applies
+    # the same substitution (0 falloff -> 1.0, 0 FOV -> 90).
+    falloff = get_float(rec, 'DATA.FalloffExponent', 1.0) or 1.0
+    fov = get_float(rec, 'DATA.FOV', 90.0) or 90.0
     value = get_int(rec, 'DATA.Value')
     weight = get_float(rec, 'DATA.Weight')
+    # TES4 has no flicker-effect parameters — the animation was implied by the
+    # flags alone.  Skyrim needs explicit period/amplitudes or animated lights
+    # render static/degenerate.  Values follow vanilla Skyrim conventions
+    # (torches: 0.333/0.5/16; pulse candles: 0.333/0.2/1).
+    if flags & 0x08:      # Flicker
+        period, int_amp, mov_amp = 0.333, 0.5, 16.0
+    elif flags & 0x40:    # Flicker Slow
+        period, int_amp, mov_amp = 0.667, 0.5, 16.0
+    elif flags & 0x80:    # Pulse
+        period, int_amp, mov_amp = 1.0, 0.2, 0.0
+    elif flags & 0x100:   # Pulse Slow
+        period, int_amp, mov_amp = 2.0, 0.2, 0.0
+    else:
+        period, int_amp, mov_amp = 1.0, 0.0, 0.0
     data = bytearray(48)
     struct.pack_into('<i', data, 0, time)
     struct.pack_into('<I', data, 4, radius)
@@ -390,13 +407,17 @@ def convert_LIGH(rec: dict) -> bytes:
     struct.pack_into('<I', data, 12, flags)
     struct.pack_into('<f', data, 16, falloff)
     struct.pack_into('<f', data, 20, fov)
+    struct.pack_into('<f', data, 24, 1.0)  # Near clip (vanilla default)
+    struct.pack_into('<f', data, 28, period)
+    struct.pack_into('<f', data, 32, int_amp)
+    struct.pack_into('<f', data, 36, mov_amp)
     struct.pack_into('<I', data, 40, value)
     struct.pack_into('<f', data, 44, weight)
     subs += pack_subrecord('DATA', bytes(data))
 
-    fade = get_float(rec, 'FNAM.Fade')
-    if fade:
-        subs += pack_float_subrecord('FNAM', fade)
+    # FNAM is required in TES5; TES4's default when absent is 1.0.
+    fade = get_float(rec, 'FNAM.Fade', 1.0)
+    subs += pack_float_subrecord('FNAM', fade)
     snam = get_formid(rec, 'SNAM.Sound')
     if snam:
         subs += pack_formid_subrecord('SNAM', snam)

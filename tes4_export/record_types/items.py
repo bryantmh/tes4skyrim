@@ -166,7 +166,9 @@ def export_LIGH(rec: Record) -> list:
     emit_icon(lines, "ICON", rec)
     emit_script(lines, rec)
     data = get_subrecord(rec, "DATA")
-    if data and len(data.data) >= 32:
+    # DATA is 32 bytes, or 24 in an older variant that omits Value/Weight
+    # (Time, Radius, Color, Flags, Falloff, FOV are always present).
+    if data and len(data.data) >= 24:
         d = data.data
         lines.append(f"DATA.Time={struct.unpack_from('<i', d, 0)[0]}")
         lines.append(f"DATA.Radius={struct.unpack_from('<I', d, 4)[0]}")
@@ -176,8 +178,9 @@ def export_LIGH(rec: Record) -> list:
         lines.append(f"DATA.Flags={struct.unpack_from('<I', d, 12)[0]}")
         lines.append(f"DATA.FalloffExponent={struct.unpack_from('<f', d, 16)[0]}")
         lines.append(f"DATA.FOV={struct.unpack_from('<f', d, 20)[0]}")
-        lines.append(f"DATA.Value={struct.unpack_from('<I', d, 24)[0]}")
-        lines.append(f"DATA.Weight={struct.unpack_from('<f', d, 28)[0]}")
+        if len(d) >= 32:
+            lines.append(f"DATA.Value={struct.unpack_from('<I', d, 24)[0]}")
+            lines.append(f"DATA.Weight={struct.unpack_from('<f', d, 28)[0]}")
     emit_float(lines, "FNAM.Fade", get_subrecord(rec, "FNAM"))
     emit_formid(lines, "SNAM.Sound", get_subrecord(rec, "SNAM"))
     return lines

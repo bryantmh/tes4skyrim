@@ -129,9 +129,12 @@ def convert_CELL(rec: dict) -> bytes:
         dir_fade = get_float(rec, 'XCLL.DirectionalFade', 1.0)
         clip_dist = get_float(rec, 'XCLL.FogClipDist')
 
-        # TES5 XCLL is 92 bytes — ambient, directional, fog near, fog far,
-        # directional rotation, directional fade, fog clip, fog power,
-        # ambient colors (X+,X-,Y+,Y-,Z+,Z-), specular, fresnel
+        # TES5 XCLL is 92 bytes (per xEdit wbDefinitionsTES5):
+        #  0 ambient, 4 directional, 8 fog near color, 12 fog near, 16 fog far,
+        #  20 dir rot XY, 24 dir rot Z, 28 dir fade, 32 fog clip, 36 fog power,
+        #  40 directional ambient X+/X-/Y+/Y-/Z+/Z- (6 colors), 64 specular,
+        #  68 scale, 72 fog far color, 76 fog max, 80/84 light fade begin/end,
+        #  88 inherit flags.
         xcll = bytearray(92)
         xcll[0] = ar; xcll[1] = ag; xcll[2] = ab; xcll[3] = 0
         xcll[4] = dr; xcll[5] = dg; xcll[6] = db; xcll[7] = 0
@@ -144,11 +147,24 @@ def convert_CELL(rec: dict) -> bytes:
         struct.pack_into('<f', xcll, 28, dir_fade)
         struct.pack_into('<f', xcll, 32, clip_dist)
         struct.pack_into('<f', xcll, 36, 1.0)  # Fog power
+        # Directional ambient: Skyrim's engine lights interiors from these six
+        # colors, not the legacy ambient at offset 0.  TES4 has a single flat
+        # ambient, so replicate it into all six directions (vanilla cells set
+        # both the legacy ambient and this block).
+        for off in range(40, 64, 4):
+            xcll[off] = ar; xcll[off + 1] = ag; xcll[off + 2] = ab; xcll[off + 3] = 0
+        # Specular color stays black; scale 1.0
+        struct.pack_into('<f', xcll, 68, 1.0)
         # Fog far color = same as fog
-        xcll[40] = fr; xcll[41] = fg; xcll[42] = fb; xcll[43] = 0
-        # Fog max = 1.0
-        struct.pack_into('<f', xcll, 44, 1.0)
+        xcll[72] = fr; xcll[73] = fg; xcll[74] = fb; xcll[75] = 0
+        struct.pack_into('<f', xcll, 76, 1.0)  # Fog max
+        # Light fade begin/end 0 = engine defaults (vanilla does the same).
+        # Inherit flags 0: nothing comes from the (null) lighting template.
         subs += pack_subrecord('XCLL', bytes(xcll))
+
+    # LTMP — lighting template is a required TES5 subrecord.  TES4 has no
+    # equivalent and XCLL inherits nothing, so point it at NULL.
+    subs += pack_formid_subrecord('LTMP', 0)
 
     # Ownership
     xown = get_formid(rec, 'XOWN.Owner')

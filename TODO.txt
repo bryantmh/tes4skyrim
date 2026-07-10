@@ -1,8 +1,17 @@
 Gameplan:
+	Fix books M2
+	Fix Bows and arrows. Should also use proper projectile. Mi20 M16
+	Fix prn iron helmet attachment M5
+	Fix guard helmet showing hair through it M5
+	Add _1 body type M5
+	Make skyrim body mesh work M5
 	Move External L13
-	Fix npc barter M7
 	Fix terminal spawning L12
 	Fix app design M12
+	Bsa builder limit L11
+	Bad cell names Mi21
+	Activator scripts Mi22
+	No real greetings just "Hello" L4
 	Refine Navmesh
 	Refine Dialog
 	Refine Clothing
@@ -37,8 +46,6 @@ Major Issues for V1:
 		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
 		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
 
-	7 - NPCs should have barter/training
-
 	8 - NPCs missing proper outfits and instead are wearing random clothing
 
 	12 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
@@ -62,6 +69,7 @@ Later Issues:
 		Missing topics
 		Missing greetings
 		Creatures with wrong voices
+		Missing sound for many lines including barter lines
 
 	5 - Refine pathgrid conversion
 		Better know where doors are better
@@ -94,10 +102,7 @@ Later Issues:
 
 	15 - Single threaded workflows
 		ESM import additional sections than just navmesh
-		Creature conversion
 		Note that ThreadPoolExecutor doesn't seem to work often, whereas ProcessPoolExector seems more consistent
-
-	16 - Interior lights appear off. Perhaps too much falloff of light sources?
 
 	17 - Goblins don't properly hold weapons
 
@@ -113,8 +118,6 @@ Minor Issues:
 	3 - Improve landscape layer blending
 	
 	4 - Should properly position inventory items. The side that allows the largest view should face out
-
-	6 - Every class teaches 1 handed this is obviously not correct in in accordance with the original data
 
 	7 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
 
