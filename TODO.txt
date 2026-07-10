@@ -1,7 +1,5 @@
 Gameplan:
 	Move External L13
-	Fix distant water M11
-	Fix distant textures M11
 	Fix distant trees M11
 	Fix grass conversion M9
 	Fix potion crashing M1
@@ -57,8 +55,6 @@ Major Issues for V1:
 
 	11 - Proper LOD generation oneclick solution as opposed to external generation
 		Still missing:
-		Correct textures
-		Water
 		Tree LOD
 
 	12 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
@@ -69,7 +65,6 @@ Major Issues for V1:
 
 	16 - Bow first person model doesn't work (remains on back and invisible in hands)
 
-	19 - Leveled NPCs not spawning
 
 Later Issues:
 	1 - Lip syncing with voice
@@ -198,3 +193,58 @@ Minor Issues:
 
 	23 - Flame atronach animated section not properly converted
 
+
+Crashes:
+Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at 0x7FFA295B0C1E VCRUNTIME140.dll+0010C1E	vmovdqa [rcx+0xE0], ymm4
+Exception Flags: 0x00000000 (Continuable)
+Number of Parameters: 2
+Exception Thread ID: 84376
+Access Violation: Tried to write memory at 0x014FAE4C2000
+ACCESS VIOLATION ANALYSIS:
+	Instruction: vmovdqa [rcx+0xE0], ymm4
+	Memory Operand: [base=rcx, index=none, scale=0, disp=+0xe0]
+	Base Register: rcx = 0x0000014FAE4C1F20
+	Computed Address: 0x0000014FAE4C2000
+POSSIBLE RELEVANT OBJECTS:
+	RSP+40: (NiSkinInstance*)
+	RSP+50: (BSLightingShader*)
+	RSP+98: (BSShaderAccumulator*)
+	RSP+A8: (NiSkinPartition*)
+	RSP+118: (BSLightingShader*)
+	RSP+120: (BSTriShape*) " (1118EC35)[0]/ (1118EC34) [50%]"
+	RSP+1C0: (BSBatchRenderer*)
+	RSP+338: (NiCamera*) "WorldRoot Camera"
+	RSP+4A8: (Main*)
+	RSP+620: (BSShaderAccumulator*)
+	RSP+628: (NiCamera*)
+	RSP+810: (CInputHandler*)
+
+Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at 0x7FFA295B238E VCRUNTIME140.dll+001238E	vmovntdq [rcx+0xA0], ymm2
+Exception Flags: 0x00000000 (Continuable)
+Number of Parameters: 2
+Exception Thread ID: 110104
+Access Violation: Tried to write memory at 0x017861760000
+ACCESS VIOLATION ANALYSIS:
+	Instruction: vmovntdq [rcx+0xA0], ymm2
+	Memory Operand: [base=rcx, index=none, scale=0, disp=+0xa0]
+	Base Register: rcx = 0x000001786175FF60
+	Computed Address: 0x0000017861760000
+POSSIBLE RELEVANT OBJECTS:
+	RSP+128: (BSPathSmootherPOVSearch*)
+	RSP+1F8: (ScrapHeap*)
+	RSP+298: (BSTArrayBase::IAllocatorFunctor*)
+	RSP+2D8: (GroundPathRayValidator*)
+	RSP+2E0: (GroundPathPathingNodeGenerator*)
+	RSP+3C8: (NavMesh*) [0x11192625] ("Oblivion.esm")
+	RSP+5D0: (CombatPathingRequestGeneric<CombatPathingGoalPolicyFindTargetLocation,CombatPathingSearchPolicyStandard>*)
+	RSP+618: (PathSmootherRayCastUsePreferredTris*)
+	RSP+728: (CombatNavmeshSearchT<CombatPathingGoalPolicyFindTargetLocation,CombatPathingSearchPolicyStandard>*)
+	RSP+758: (Pathing*)
+	RSP+788: (TrianglePathWaterAndLedgeSplitter*)
+	RSP+858: (CombatPathBuilderT<CombatPathBuilderStandard,CombatPathingGoalPolicyFindTargetLocation,CombatPathingSearchPolicyStandard>*)
+	RSP+870: (CombatTargetLocationSearch*)
+	RSP+AE0: (TESWorldSpace*) [0x1100003C] ("Oblivion.esm")
+	RSP+C48: (AutoRegisterCombatPathingRequestGeneric<CombatPathingGoalPolicyFindTargetLocation,CombatPathingSearchPolicyStandard,CombatPathDestinationRef>*)
+	RSP+CA0: (PathingTaskData*)
+	RSP+E60: (BSWin32TaskletGroupData*)
+	RSP+E68: (BSWin32TaskletManager*)

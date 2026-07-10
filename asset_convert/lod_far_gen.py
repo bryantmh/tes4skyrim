@@ -7,19 +7,23 @@ Algorithm
 ---------
 1. Read the converted Skyrim NIF (v20.2.0.7, BSStream 83).
 2. Walk all solid (non-skinned) geometry **per shape in local space**.
-3. Apply grid-based vertex-clustering decimation (O(nV + nT)), targeting
-   ~8% of the original vertex count per shape.
+3. Simplify each shape with quadric-error-metric (QEM) half-edge collapses:
+   positions are welded for topology, edges are collapsed cheapest-first into
+   a surviving original vertex (no position/UV interpolation), boundary edges
+   carry constraint quadrics so open meshes keep their rims, and collapses
+   that would flip a face normal are rejected.  This replaced grid-based
+   vertex clustering, which snapped vertices to coarse cells and left big
+   holes in objects.
 4. Recompute smooth per-vertex normals; recompute tangent/bitangent vectors
    from UV differentials (standard tangent-space method).
 5. Re-write the NIF in-place: keep every NiTriShape that survives decimation
-   with its *original* BSLightingShaderProperty and textures intact.
+   with its *original* BSLightingShaderProperty (and NiAlphaProperty) intact.
    Strip collision, controllers, skin, vertex colors, and extra data from
    all nodes.
 6. Clear the VertexColors shader flag (SF2 bit 0x20) since vertex colors are
    removed.
 7. Write to <model_base>_far.nif.
 
-Key difference from v1: geometry is NOT merged into a single world-space mesh.
 Each shape is decimated independently so it keeps its own texture correctly.
 BSLightingShaderProperty is COPIED from the source (correct flags, no
 recreation) — this fixes the missing ZBufferTest flag that caused objects to
@@ -40,9 +44,10 @@ from pyffi.formats.nif import NifFormat
 _SKYRIM_VER = 0x14020007
 _NIF_FLAGS  = 14
 
-# Global target: 5% of total source verts across all shapes combined.
-# This matches empirically observed ratios in vanilla _far.nif files.
-_DECIMATE_RATIO    = 0.07
+# Global target across all shapes combined.  Auto-decimation needs more
+# headroom than hand-made vanilla _far.nif (~5-10%) to keep silhouettes; the
+# QEM error floor below stops early on shapes that would fall apart anyway.
+_DECIMATE_RATIO    = 0.15
 _MIN_TRIS          = 12      # min output tris to keep a shape
 _MIN_SRC_TRIS      = 20      # min source tris to include a shape at all
 _SF2_VERTEX_COLORS = 0x20    # SF2 bit to clear when removing vertex colors
@@ -53,59 +58,279 @@ _SF2_VERTEX_COLORS = 0x20    # SF2 bit to clear when removing vertex colors
 # ---------------------------------------------------------------------------
 
 
-def _cluster_decimate(verts: np.ndarray, tris: np.ndarray,
-                      uvs: Optional[np.ndarray],
-                      target_verts: int) -> Tuple:
-    """Position-only vertex-clustering targeting target_verts output vertices.
+_BOUNDARY_WEIGHT = 8.0     # boundary-edge constraint quadric weight (× len²)
+_WELD_EPS        = 1e-3    # position weld tolerance (game units)
+_MAX_DEV_FRAC    = 0.03    # error floor: stop when a collapse would deviate
+                           # more than this fraction of the model diagonal
+_EDGE_LEN_REG    = 0.5     # edge-length regularization (× mean face area)
 
-    Each cluster uses the FIRST-SEEN vertex's UV (not an average).  Averaging
-    UVs across texture-seam duplicates (e.g. one vertex at UV=(0,0.5) and its
-    seam-mirror at UV=(1,0.5)) produces UV=(0.5,0.5) which samples from the
-    wrong texture region — causing invisible or mis-mapped faces.  Taking the
-    first-seen UV preserves at least one correct sample per cluster.
 
-    Architecture geometry is sparse in 3-D (mostly flat surfaces), so the grid
-    n is scaled 2× larger than the naïve cube-root to hit the target density.
+def _qem_decimate(verts: np.ndarray, tris: np.ndarray,
+                  uvs: Optional[np.ndarray],
+                  target_verts: int) -> Tuple:
+    """Quadric-error-metric half-edge-collapse simplification.
+
+    Positions are welded (UV-seam duplicates share one topology node) so
+    collapses can cross seams; each output corner keeps ITS original vertex's
+    UV, so texture charts never bleed into each other.  A collapse u→v moves
+    u to v's exact original position (no interpolation), is charged the
+    combined quadric error at v, is rejected if it would flip an adjacent
+    face's normal, and boundary edges carry perpendicular constraint quadrics
+    so open rims shrink last.  This preserves silhouettes and never punches
+    holes the way grid vertex-clustering did.
+
+    Returns (new_verts, new_tris, new_uvs).
     """
-    if not len(verts) or not len(tris):
+    nV, nT = len(verts), len(tris)
+    if nV == 0 or nT == 0:
         return verts, tris, uvs
 
-    n = max(4, int(math.ceil((max(target_verts, 8) * 2.0) ** (1.0 / 3.0))))
-    lo = verts.min(axis=0)
-    hi = verts.max(axis=0)
-    span = hi - lo
-    cell = np.where(span > 1e-6, span / n, 1.0)
-    coords = np.floor((verts - lo) / cell).astype(np.int64)
-    coords  = np.clip(coords, 0, n - 1)
-    key = coords[:, 0] * n * n + coords[:, 1] * n + coords[:, 2]
+    # ---- weld positions for topology -------------------------------------
+    keys = np.round(verts / _WELD_EPS).astype(np.int64)
+    _, first_idx, wid = np.unique(keys, axis=0, return_index=True,
+                                  return_inverse=True)
+    W = len(first_idx)
+    P = verts[first_idx].astype(np.float64)          # position per weld node
 
-    unique_keys, inv = np.unique(key, return_inverse=True)
-    m = len(unique_keys)
+    F0 = wid[tris]                                    # faces in weld space
+    ok = (F0[:, 0] != F0[:, 1]) & (F0[:, 1] != F0[:, 2]) & (F0[:, 0] != F0[:, 2])
+    F0 = F0[ok]
+    C0 = tris[ok]                                     # original corner ids (UVs)
+    if not len(F0):
+        return verts, tris, uvs
 
-    # Average position per cluster
-    nv  = np.zeros((m, 3), np.float32)
-    cnt = np.zeros(m, np.float32)
-    np.add.at(nv, inv, verts)
-    np.add.at(cnt, inv, 1)
-    nv /= np.maximum(cnt[:, None], 1)
+    # ---- initial quadrics (area-weighted face planes) ---------------------
+    v0, v1, v2 = P[F0[:, 0]], P[F0[:, 1]], P[F0[:, 2]]
+    fn = np.cross(v1 - v0, v2 - v0)                   # |fn| = 2×area
+    area2 = np.linalg.norm(fn, axis=1)
+    nrm = fn / np.maximum(area2, 1e-12)[:, None]
+    d = -np.einsum('ij,ij->i', nrm, v0)
+    plane = np.concatenate([nrm, d[:, None]], axis=1)             # (nF,4)
+    fq = plane[:, :, None] * plane[:, None, :] * area2[:, None, None]
+    Q = np.zeros((W, 4, 4), np.float64)
+    for k in range(3):
+        np.add.at(Q, F0[:, k], fq)
 
-    # First-seen UV per cluster — avoids averaging across seam duplicates
-    nuv = None
-    if uvs is not None:
-        nuv  = np.zeros((m, 2), np.float32)
-        seen = np.zeros(m, dtype=bool)
-        for old_i in range(len(verts)):
-            cid = inv[old_i]
-            if not seen[cid]:
-                nuv[cid] = uvs[old_i]
-                seen[cid] = True
+    # ---- boundary constraint quadrics -------------------------------------
+    edges = np.concatenate([F0[:, [0, 1]], F0[:, [1, 2]], F0[:, [2, 0]]])
+    edges_s = np.sort(edges, axis=1)
+    uniq_e, e_cnt = np.unique(edges_s, axis=0, return_counts=True)
+    boundary = uniq_e[e_cnt == 1]
+    if len(boundary):
+        # Constraint plane through each boundary edge: any plane containing the
+        # edge penalizes moving its endpoints off the edge line, which is what
+        # keeps open rims (window frames, wall tops, leaf-card edges) intact.
+        # Use the plane spanned by the edge and the world axis least aligned
+        # with it.
+        ea, eb = boundary[:, 0], boundary[:, 1]
+        edge_v = P[eb] - P[ea]
+        ax = np.zeros_like(edge_v)
+        ax[np.arange(len(edge_v)), np.argmin(np.abs(edge_v), axis=1)] = 1.0
+        cn = np.cross(edge_v, ax)
+        cl = np.linalg.norm(cn, axis=1)
+        good = cl > 1e-12
+        cn[good] /= cl[good][:, None]
+        cd = -np.einsum('ij,ij->i', cn, P[ea])
+        cplane = np.concatenate([cn, cd[:, None]], axis=1)
+        w = _BOUNDARY_WEIGHT * np.einsum('ij,ij->i', edge_v, edge_v)
+        cq = cplane[:, :, None] * cplane[:, None, :] * w[:, None, None]
+        np.add.at(Q, ea, cq)
+        np.add.at(Q, eb, cq)
 
-    # Remap triangles, drop degenerate
-    nt = inv[tris.ravel()].reshape(-1, 3)
-    a, b, c = nt[:, 0], nt[:, 1], nt[:, 2]
-    ok = (a != b) & (b != c) & (a != c)
-    nt = nt[ok]
+    # ---- mutable topology --------------------------------------------------
+    import heapq
+    faces = [[int(a), int(b), int(c)] for a, b, c in F0]
+    corners = [[int(a), int(b), int(c)] for a, b, c in C0]
+    face_alive = [True] * len(faces)
+    vert_faces = [set() for _ in range(W)]
+    for fi, f in enumerate(faces):
+        for v in f:
+            vert_faces[v].add(fi)
 
+    version = [0] * W
+    alive = sum(1 for s in vert_faces if s)
+
+    # Per-vertex accumulated face area (for the error floor) + regularization.
+    A = np.zeros(W, np.float64)
+    for k in range(3):
+        np.add.at(A, F0[:, k], area2 / 6.0)   # area2 = 2×area, /3 per corner
+    mean_face_area = float(area2.mean()) / 2.0
+    diag = float(np.linalg.norm(P.max(axis=0) - P.min(axis=0)))
+    max_dev2 = (diag * _MAX_DEV_FRAC) ** 2
+
+    hom = np.ones(4)
+
+    def cost_of(u, v):
+        hom[:3] = P[v]
+        q = Q[u] + Q[v]
+        c = float(hom @ q @ hom)
+        # edge-length regularization: discourage long-distance collapses that
+        # stretch faces into "sails" even when the quadric error is small.
+        # Scaled like "one average face displaced by the collapse distance".
+        dv = P[u] - P[v]
+        c += _EDGE_LEN_REG * mean_face_area * float(dv @ dv)
+        return c
+
+    def neighbors(u):
+        out = set()
+        for fi in vert_faces[u]:
+            out.update(faces[fi])
+        out.discard(u)
+        return out
+
+    heap = []
+    for e in uniq_e:
+        a, b = int(e[0]), int(e[1])
+        heapq.heappush(heap, (cost_of(a, b), a, b, version[a], version[b]))
+        heapq.heappush(heap, (cost_of(b, a), b, a, version[b], version[a]))
+
+    target = max(int(target_verts), 4)
+
+    while alive > target and heap:
+        cost, u, v, vu, vv = heapq.heappop(heap)
+        if version[u] != vu or version[v] != vv:
+            continue
+        if not vert_faces[u] or not vert_faces[v]:
+            continue
+        if not math.isfinite(cost):
+            continue
+        # error floor: if even the cheapest remaining collapse would deviate
+        # more than _MAX_DEV_FRAC of the diagonal, stop — a heavier LOD beats
+        # a shredded one.  (cost ≈ local_area × deviation².)
+        if cost > (A[u] + A[v]) * max_dev2 + 1e-12:
+            continue
+        # still adjacent?
+        shared = [fi for fi in vert_faces[u] if v in faces[fi]]
+        if not shared:
+            continue
+
+        # normal-flip guard: faces of u that survive (don't contain v)
+        flip = False
+        pu, pv = P[u], P[v]
+        for fi in vert_faces[u]:
+            f = faces[fi]
+            if v in f:
+                continue
+            i = f.index(u)
+            a, b = f[(i + 1) % 3], f[(i + 2) % 3]
+            n_before = np.cross(P[a] - pu, P[b] - pu)
+            n_after = np.cross(P[a] - pv, P[b] - pv)
+            if np.dot(n_before, n_after) <= 0:
+                flip = True
+                break
+        if flip:
+            continue
+
+        # ---- perform collapse u -> v ----
+        for fi in list(vert_faces[u]):
+            f = faces[fi]
+            if v in f:
+                # face degenerates: remove from all its vertices
+                face_alive[fi] = False
+                for w_ in f:
+                    vert_faces[w_].discard(fi)
+            else:
+                i = f.index(u)
+                f[i] = v
+                vert_faces[v].add(fi)
+        vert_faces[u].clear()
+        Q[v] += Q[u]
+        A[v] += A[u]
+        version[u] += 1
+        version[v] += 1
+        alive -= 1
+        if not vert_faces[v]:
+            alive -= 1
+            continue
+
+        for nb in neighbors(v):
+            heapq.heappush(heap, (cost_of(nb, v), nb, v, version[nb], version[v]))
+            heapq.heappush(heap, (cost_of(v, nb), v, nb, version[v], version[nb]))
+
+    # ---- component pruning --------------------------------------------------
+    # When collapses stall above target (the error floor protects shapes made
+    # of many small disconnected islands — foliage cards, clutter piles), drop
+    # whole components smallest-area-first until the budget is met.  The
+    # largest component (trunk, main hull) is never dropped.
+    if alive > target:
+        parent = list(range(W))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        comp_area: dict = {}
+        comp_faces: dict = {}
+        for fi, f in enumerate(faces):
+            if not face_alive[fi]:
+                continue
+            ra, rb, rc = find(f[0]), find(f[1]), find(f[2])
+            for r2 in (rb, rc):
+                if find(r2) != find(ra):
+                    parent[find(r2)] = find(ra)
+        for fi, f in enumerate(faces):
+            if not face_alive[fi]:
+                continue
+            r = find(f[0])
+            e0, e1, e2 = P[f[0]], P[f[1]], P[f[2]]
+            comp_area[r] = comp_area.get(r, 0.0) + \
+                float(np.linalg.norm(np.cross(e1 - e0, e2 - e0))) / 2.0
+            comp_faces.setdefault(r, []).append(fi)
+
+        if len(comp_faces) > 1:
+            by_area = sorted(comp_area, key=comp_area.get)
+            for r in by_area[:-1]:                    # never drop the largest
+                if alive <= target:
+                    break
+                dropped_verts = set()
+                for fi in comp_faces[r]:
+                    face_alive[fi] = False
+                    for w_ in faces[fi]:
+                        if vert_faces[w_]:
+                            vert_faces[w_].discard(fi)
+                            if not vert_faces[w_]:
+                                dropped_verts.add(w_)
+                alive -= len(dropped_verts)
+
+    # ---- rebuild output arrays --------------------------------------------
+    # Output vertex = (surviving weld node, corner's ORIGINAL UV): faces keep
+    # their own texture chart, seams stay intact.
+    out_map = {}
+    out_v: list = []
+    out_uv: list = []
+    out_t = []
+    for fi, f in enumerate(faces):
+        if not face_alive[fi]:
+            continue
+        idx3 = []
+        for k in range(3):
+            wnode = f[k]
+            o = corners[fi][k]
+            if uvs is not None:
+                key = (wnode, round(float(uvs[o][0]) * 4096),
+                       round(float(uvs[o][1]) * 4096))
+            else:
+                key = wnode
+            j = out_map.get(key)
+            if j is None:
+                j = len(out_v)
+                out_map[key] = j
+                out_v.append(P[wnode])
+                if uvs is not None:
+                    out_uv.append(uvs[o])
+            idx3.append(j)
+        if idx3[0] != idx3[1] and idx3[1] != idx3[2] and idx3[0] != idx3[2]:
+            out_t.append(idx3)
+
+    if not out_t:
+        return (np.zeros((0, 3), np.float32), np.zeros((0, 3), np.int32),
+                np.zeros((0, 2), np.float32) if uvs is not None else None)
+
+    nv = np.asarray(out_v, dtype=np.float32)
+    nt = np.asarray(out_t, dtype=np.int32)
+    nuv = np.asarray(out_uv, dtype=np.float32) if uvs is not None else None
     return nv, nt, nuv
 
 
@@ -207,7 +432,7 @@ def _decimate_shape_inplace(shape, target_verts: int) -> bool:
     except Exception:
         pass
 
-    d_v, d_t, d_uv = _cluster_decimate(verts, tris, uvs, target_verts)
+    d_v, d_t, d_uv = _qem_decimate(verts, tris, uvs, target_verts)
     if len(d_t) < _MIN_TRIS:
         return False
 

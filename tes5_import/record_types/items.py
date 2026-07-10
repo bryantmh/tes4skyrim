@@ -297,9 +297,10 @@ def convert_TREE(rec: dict) -> bytes:
     bb_h = get_float(rec, 'BNAM.BillboardHeight')
     if bb_w > 0 and bb_h > 0:
         half = min(int(bb_w / 2), 32767)
-        subs += pack_obnd(-half, -half, 0, half, half, min(int(bb_h), 32767))
+        bounds = (-half, -half, 0, half, half, min(int(bb_h), 32767))
     else:
-        subs += pack_obnd(*_resolve_obnd(rec, 'TREE'))
+        bounds = _resolve_obnd(rec, 'TREE')
+    subs += pack_obnd(*bounds)
     model = get_str(rec, 'Model.MODL')
     if model and edid:
         subs += pack_string_subrecord('MODL', f'tes4\\speedtrees\\{edid.lower()}.nif')
@@ -309,7 +310,15 @@ def convert_TREE(rec: dict) -> bytes:
         subs += pack_string_subrecord('MODL', f'tes4\\speedtrees\\{stem.lower()}.nif')
     subs += pack_subrecord('PFPC', struct.pack('<I', 0))
     subs += pack_subrecord('CNAM', _TREE_CNAM)
-    return pack_record('TREE', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
+    # Same size-derived LOD flags as STAT: trees flow through the standard
+    # object-LOD pipeline (decimated _far.nif -> LODGen) like any other object.
+    flags = get_int(rec, 'RecordFlags')
+    max_dim = max(bounds[3] - bounds[0], bounds[4] - bounds[1], bounds[5] - bounds[2])
+    if max_dim >= LOD_SIZE_THRESHOLD:
+        flags |= 0x8000       # Has Distant LOD
+    if max_dim >= WORLD_MAP_SIZE_THRESHOLD:
+        flags |= 0x10000000   # Show in World Map
+    return pack_record('TREE', get_formid(rec, 'FormID'), flags, subs)
 
 
 def convert_LIGH(rec: dict) -> bytes:

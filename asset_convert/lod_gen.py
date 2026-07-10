@@ -380,124 +380,13 @@ def _lod_meshes_for(stat: dict, output_meshes_dir: Path):
 
 
 # ---------------------------------------------------------------------------
-# Tree billboards (flat cards in object LOD)
-#
-# TREE base objects render at distance as crossed billboard quads.  Oblivion
-# ships the billboard renders in textures\tes4\trees\billboards\<sptstem>.dds.
-# We point the TREE's LOD "model" at that .dds and register it in a FlatTextures
-# descriptor; LODGen then bakes crossed-quad billboards into the .bto object LOD
-# (the reliable, in-engine-tested path — same mechanism Skyblivion used).
-# ---------------------------------------------------------------------------
-
-def _tree_billboard(stat: dict, output_dir: Path):
-    """Resolve a TREE base's billboard (dds path, width, height) or None.
-
-    The billboard image is textures\\tes4\\trees\\billboards\\<stem>.dds where
-    <stem> is the TREE's speedtree model stem.  Width/height come from OBND.
-    """
-    model = stat.get('model', '')
-    if not model:
-        return None
-    import os
-    stem = os.path.splitext(os.path.basename(model.replace('\\', '/').lstrip('/')))[0].lower()
-    bb_rel = f'tes4\\trees\\billboards\\{stem}.dds'
-    bb_file = output_dir / 'textures' / bb_rel
-    if not bb_file.exists():
-        return None
-
-    # Size from OBND (X/Y span -> width, Z span -> height); fall back to a
-    # reasonable default tree size if OBND is degenerate.
-    obnd = stat.get('obnd')
-    width = height = 0.0
-    if obnd:
-        x1, y1, z1, x2, y2, z2 = obnd
-        width  = max(x2 - x1, y2 - y1)
-        height = z2 - z1
-    if width <= 0:
-        width = 256.0
-    if height <= 0:
-        height = 384.0
-    # Texture path is relative to Data\textures (LODGen prepends textures\)
-    return (f'textures\\{bb_rel}', float(width), float(height))
-
-
-def _billboard_normals():
-    """Return (normals, tangents, bitangents) for the 8 billboard verts.
-
-    Crossed quads: verts 0-3 on the X-plane (normal ~ +Y), 4-7 on the Y-plane
-    (normal ~ +X).  Flat lighting-friendly outward normals so the LOD tree is
-    lit instead of black.
-    """
-    # normals per vertex
-    n = [(0, 1, 0)] * 4 + [(1, 0, 0)] * 4
-    t = [(1, 0, 0)] * 4 + [(0, 1, 0)] * 4
-    b = [(0, 0, 1)] * 8
-    return n, t, b
-
-
-def _write_flat_textures(flat_descs: dict, edid: str, output_dir: Path) -> str:
-    """Write the LODGen FlatTextures descriptor file; return its path.
-
-    Line format (tab-separated, see LODGeneratorCMD/Program.cs):
-      SourceTexture  width  height  shiftZ  scale  effect1  [normals_file]  [glow]
-    We also write a normals file so billboard cards are lit (default zeros make
-    them black).
-    """
-    # Ensure the default glow texture exists (LODGen defaults GlowTexture to
-    # textures\white.dds and may try to load it from PathData=output_dir).
-    _ensure_white_dds(output_dir / 'textures' / 'white.dds')
-    n, t, b = _billboard_normals()
-    norm_file = LODGEN_EXE.parent / f'LODGen {edid}.flatnormals.txt'
-    with open(norm_file, 'w', encoding='utf-8') as f:
-        for v in n:
-            f.write(f"{v[0]},{v[1]},{v[2]}\n")
-        for v in t:
-            f.write(f"{v[0]},{v[1]},{v[2]}\n")
-        for v in b:
-            f.write(f"{v[0]},{v[1]},{v[2]}\n")
-
-    flat_file = LODGEN_EXE.parent / f'LODGen {edid}.flat.txt'
-    with open(flat_file, 'w', encoding='utf-8') as f:
-        for tex, (w, h) in sorted(flat_descs.items()):
-            # tex  width  height  shiftZ  scale  effect1  normals_file
-            # (GlowTexture omitted -> LODGen defaults to textures\white.dds)
-            f.write(f"{_normalize_tex(tex)}\t{w:.2f}\t{h:.2f}\t0\t1\t0\t"
-                    f"{norm_file}\n")
-    return str(flat_file)
-
-
-def _normalize_tex(path: str) -> str:
-    """Lowercase backslash form for a texture path (LODGen matches lowercase)."""
-    return path.lower().replace('/', '\\').strip('\\')
-
-
-def _ensure_white_dds(path: Path):
-    """Create a 4x4 opaque-white DXT1 DDS if it doesn't already exist."""
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # DDS header (DXT1, 4x4, no mips)
-    hdr = b'DDS '
-    hdr += struct.pack('<I', 124)
-    hdr += struct.pack('<I', 0x1 | 0x2 | 0x4 | 0x1000 | 0x80000)  # caps/h/w/pf/linsize
-    hdr += struct.pack('<I', 4)      # height
-    hdr += struct.pack('<I', 4)      # width
-    hdr += struct.pack('<I', 8)      # linear size (one DXT1 block)
-    hdr += struct.pack('<I', 0)      # depth
-    hdr += struct.pack('<I', 0)      # mip count
-    hdr += b'\x00' * 44
-    hdr += struct.pack('<II', 32, 0x4)   # pf size, FOURCC
-    hdr += b'DXT1'
-    hdr += struct.pack('<IIIII', 0, 0, 0, 0, 0)
-    hdr += struct.pack('<I', 0x1000)     # caps TEXTURE
-    hdr += struct.pack('<IIII', 0, 0, 0, 0)
-    # One DXT1 block: c0=c1=0xFFFF (white), indices all 0
-    block = struct.pack('<HHI', 0xFFFF, 0xFFFF, 0)
-    path.write_bytes(hdr + block)
-
-
-# ---------------------------------------------------------------------------
 # 3. Build the LODGen input text file
+#
+# Trees are NOT special-cased: converted TREE records carry the same
+# size-derived LOD flags as STAT, get a decimated _far.nif like any other
+# object, and flow through the generic path below.  (The old FlatTextures
+# billboard mechanism baked "objpassthru" card shapes into the .bto that never
+# rendered in-game; it has been removed.)
 # ---------------------------------------------------------------------------
 
 
@@ -549,9 +438,6 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
 
     # Collect exterior REFR records in this worldspace whose base is a STAT/ACTI/etc.
     lines = []
-    seen_bases = set()
-
-    flat_descs = {}   # billboard dds path -> (width, height)
 
     for ref in refs:
         # Must be in our worldspace
@@ -570,33 +456,16 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
             continue
 
         stat_flags_val = stat.get('flags', 0)
-
-        # --- TREE: render as a flat billboard card in object LOD -------------
-        if stat.get('sig') == 'TREE':
-            bb = _tree_billboard(stat, output_dir)
-            if bb is None:
-                continue
-            bb_path, bb_w, bb_h = bb
-            flat_descs[bb_path] = (bb_w, bb_h)
-            # LOD model columns all point at the billboard dds (flat card).
-            # The value must MATCH the FlatTextures key (lowercase textures\ path,
-            # NOT a meshes\ path) so LODGen's FlatList lookup hits.
-            mat = ''
-            stat_edid  = stat.get('edid', f'{base_fid:08X}')
-            stat_flags = f"{stat_flags_val:08X}"
-            nb = _normalize_tex(bb_path)
-            base_entry = f"{stat_edid}\t{stat_flags}\t{mat}\t{_normalize(model)}\t{nb}\t{nb}\t{nb}"
-        else:
-            stat_is_lod = bool(stat_flags_val & (_FLAG_DISTANT_LOD | _FLAG_WORLD_MAP))
-            if not stat_is_lod:
-                continue
-            lod4, lod8, lod16 = _lod_meshes_for(stat, output_meshes_dir)
-            if not (lod4 or lod8 or lod16):
-                continue
-            mat = ''
-            stat_edid   = stat.get('edid', f'{base_fid:08X}')
-            stat_flags  = f"{stat_flags_val:08X}"
-            base_entry  = f"{stat_edid}\t{stat_flags}\t{mat}\t{_normalize(model)}\t{_normalize(lod4)}\t{_normalize(lod8)}\t{_normalize(lod16)}"
+        stat_is_lod = bool(stat_flags_val & (_FLAG_DISTANT_LOD | _FLAG_WORLD_MAP))
+        if not stat_is_lod:
+            continue
+        lod4, lod8, lod16 = _lod_meshes_for(stat, output_meshes_dir)
+        if not (lod4 or lod8 or lod16):
+            continue
+        mat = ''
+        stat_edid   = stat.get('edid', f'{base_fid:08X}')
+        stat_flags  = f"{stat_flags_val:08X}"
+        base_entry  = f"{stat_edid}\t{stat_flags}\t{mat}\t{_normalize(model)}\t{_normalize(lod4)}\t{_normalize(lod8)}\t{_normalize(lod16)}"
 
         # Reference line
         ref_fid   = f"{ref['form_id']:08X}"
@@ -617,12 +486,6 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
         print(f"  No LOD references found for worldspace '{edid}'")
         return None
 
-    # Write the FlatTextures descriptor for tree billboards.
-    flat_file = None
-    if flat_descs:
-        flat_file = _write_flat_textures(flat_descs, edid, output_dir)
-        print(f"  Tree billboards: {len(flat_descs)} flat textures")
-
     # Build header.
     # PathData points to our output directory so LODGen finds the extracted
     # _far.nif meshes there rather than looking in the Skyrim SE Data folder.
@@ -638,8 +501,6 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
         f"PathData={path_data}",
         f"PathOutput={dest}",
     ]
-    if flat_file is not None:
-        header.append(f"FlatTextures={flat_file}")
 
     out_txt = LODGEN_EXE.parent / f"LODGen {edid}.txt"
     with open(out_txt, 'w', encoding='utf-8') as f:
