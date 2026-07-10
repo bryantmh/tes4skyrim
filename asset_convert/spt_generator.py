@@ -57,9 +57,17 @@ WORLD_SCALE = 10.0
 # is what confines the return-hook to the outer stem, completing the S
 # started by the angle profile's out-curl.
 #
+# The tropism accumulates PER UNIT GROWN LENGTH (constant curvature per
+# growth step, like real phototropism), so the step is also multiplied by
+# the stem's STORED length: a long cottonwood limb (stored ~0.45) curls
+# all the way back vertical while a deadbush stem (stored 0.02-0.07)
+# barely feels the pull and keeps its authored sprawl.  A length-blind
+# response verticalized every short-stemmed shrub (deadbush rendered as a
+# narrow broom at half its billboard width).
+#
 # Corpus evidence (references/spttools + all 113 Oblivion SPTs):
-#   - cottonwood/dogwood limbs (g .2-.6, flex .4-.6): emerge at half
-#     their start angle, curl out, then the tip curls back vertical.
+#   - cottonwood/dogwood limbs (g .2-.6, flex .4-.6, stored len .3-.6):
+#     curl out along the angle profile, then the tip curls back vertical.
 #   - forsythia canes: g 0.2-0.3 VARIANCE 0.5 — the only negative-capable
 #     level in the corpus; each cane draws its own strength, some rising,
 #     some arching down = the fountain.
@@ -68,11 +76,10 @@ WORLD_SCALE = 10.0
 #     "g>1 bends downward" wrap rule.
 #   - willow branches g 2-4 but flex 0: held; the weeping look is the
 #     hanging leaf curtains.
-# Deadbush pins the magnitude: it stores gravity 1.0 with flexibility up
-# to 0.96, yet Oblivion renders a sprawling crooked bush — tropism is a
-# WEAK finisher on top of the authored shape (start angle + angle profile
-# + disturbance deflection), never the shape itself.
-GRAVITY_RESPONSE = 2.0          # tropism strength at g*flex*fp = 1
+#   - deadbush stores gravity 1.0 with flexibility up to 0.96 yet renders
+#     a sprawling crooked bush — its stems are simply too SHORT (stored
+#     0.02-0.07) to accumulate any lift.
+GRAVITY_RESPONSE = 4.5          # tropism per unit stored length at g*flex*fp = 1
 
 # stems at least this thick (world units, base radius) contribute their
 # tube triangles to the exact-mesh collision shape
@@ -251,7 +258,7 @@ def _grow_stem(origin: np.ndarray, parent_axis: np.ndarray,
                radial: np.ndarray, alpha0: float, world_len: float,
                base_radius: float, lv: LevelParams, grav_value: float,
                flex_value: float, n_rings: int,
-               rng: np.random.Generator) -> tuple:
+               rng: np.random.Generator, stored_len: float = 1.0) -> tuple:
     """Integrate a stem centerline from the STORED SHAPE CURVES.
 
     The centerline is the composition of three authored effects, in the
@@ -259,20 +266,26 @@ def _grow_stem(origin: np.ndarray, parent_axis: np.ndarray,
 
     1. ANGLE PROFILE (6017, misnamed "Gravity Profile" in CAD 4 — the v3
        UI calls it Angle Profile): the stem's angle from its parent axis
-       along its own length is  alpha(t) = start_angle * profile(t).
-       Every Oblivion branch level stores the profile as 0.5 -> 1.0, so a
-       branch EMERGES AT HALF ITS START ANGLE — flowing out of the parent
-       like a real limb out of a stump — and curls outward to the full
-       angle at the tip.  This is the deterministic out-curl of the
-       billboard silhouettes; spawning branches at their full start angle
-       made every attachment a straight rigid spoke.
+       along its own length is  alpha(t) = start_angle * profile(t) with
+       the curve NORMALIZED BY ITS OWN PEAK — the stored start angle is
+       the angle the branch ACHIEVES at the curve's maximum, the shape
+       only says where along the stem it gets there.  Corpus evidence:
+       deadbush and oak boughs store a FLAT 0.5 yet their billboards
+       spread at the FULL start angle (an un-normalized multiplier held
+       them at half angle — the "narrow broom" deadbush), while
+       cottonwood/forsythia store a 0.5 -> 0.98 ramp whose billboards
+       show limbs emerging at ~half angle and curling out to full at the
+       tip (a fixed x2 recentering doubled their spread and flattened
+       them — user-rejected); rhododendron stores 0.74 -> 0.35, leaving
+       its stub at the full angle and curling back up = the dome.
     2. GRAVITY TROPISM: world-space pull toward straight up (negative
        draws: down), torque proportional to sin(angle from the pole),
-       strength g * flexibility * FLEXIBILITY PROFILE (6003, a 0 -> 1
-       tip-ward ramp: bases hold the authored angle-profile shape, tips
-       curl back).  Angle profile curls the stem OUT, tip-weighted
-       tropism hooks it back IN — together they are the S-curve of
-       forsythia canes and cottonwood limbs.
+       strength g * flexibility * stored stem length * FLEXIBILITY
+       PROFILE (6003, a 0 -> 1 tip-ward ramp: bases hold the authored
+       angle-profile shape, tips curl back).  Angle profile curls the
+       stem OUT, tip-weighted length-scaled tropism hooks the long limbs
+       back IN — together they are the S-curve of forsythia canes and
+       cottonwood limbs, while short shrub stems keep their sprawl.
     3. DISTURBANCE (6000): the stored curve IS the drawn deflection
        profile — accumulated bend away from the stem's heading =
        variance_degrees * curve_y(t), applied in a per-stem plane.
@@ -303,12 +316,17 @@ def _grow_stem(origin: np.ndarray, parent_axis: np.ndarray,
     g_mag = abs(g)
 
     aprof = lv.gravity_profile          # 6017 = angle profile (see above)
+    ap_max = 1.0
+    if aprof is not None:
+        ap_max = max(float(np.max(aprof._sample_curve()[1])), 1e-3)
     plane_axis = np.cross(parent_axis, radial)
     plane_axis /= (np.linalg.norm(plane_axis) + 1e-12)
 
     def _alpha(t):
-        prof = float(aprof.eval(t)) if aprof else 1.0
-        return alpha0 * prof
+        # peak-normalized (see docstring): full start angle at the curve max
+        if aprof is None:
+            return alpha0
+        return alpha0 * float(aprof.eval(t)) / ap_max
 
     a_prev = _alpha(0.0)
     d = math.cos(a_prev) * parent_axis + math.sin(a_prev) * radial
@@ -352,7 +370,7 @@ def _grow_stem(origin: np.ndarray, parent_axis: np.ndarray,
             s = float(np.linalg.norm(perp))         # = sin(theta)
             if s > 1e-9:
                 fp = float(lv.flex_profile.eval(t)) if lv.flex_profile else t
-                step = (GRAVITY_RESPONSE * g_mag * flex_value
+                step = (GRAVITY_RESPONSE * g_mag * flex_value * stored_len
                         * max(fp, 0.0) / n_rings)
                 ang = min(step * s, math.asin(min(s, 1.0)))
                 d = math.cos(ang) * d + math.sin(ang) * (perp / s)
@@ -514,7 +532,8 @@ def build_tree(tree: SptTree, seed: int | None = None,
         np.zeros(3), np.array([0.0, 0.0, 1.0]),
         np.array([math.cos(t_az), math.sin(t_az), 0.0]), 0.0,
         trunk_len, trunk_rad, trunk, float(trunk.gravity.eval(0.0)),
-        float(trunk.flexibility.eval(0.0)), n_rings, rng)
+        float(trunk.flexibility.eval(0.0)), n_rings, rng,
+        stored_len=trunk_stored_len)
 
     flare_phases = None
     if trunk.flare_count > 0:
@@ -537,6 +556,16 @@ def build_tree(tree: SptTree, seed: int | None = None,
     geo.collision_tris.append(tri)
 
     trunk_stem = Stem(0, tpts, tradii, trunk_len, trunk_stored_len)
+    # CROWN FLOOR: the trunk's branch-generation First (6010) is where the
+    # lowest bough leaves the trunk — no foliage can exist below it.  Trees
+    # store a real clearance (locust 0.25, oak 0.30, dogwood 0.40, willow
+    # 0.50); shrubs store 0 so their foliage legitimately reaches the base.
+    # This is the billboard's clear-trunk height; deriving the floor from
+    # the foliage itself (percentile) failed exactly when foliage was
+    # spuriously low.
+    fi = trunk.child_first * n_rings
+    i0 = int(min(fi, n_rings - 1))
+    crown_floor = float(tpts[i0][2] * (1 - (fi - i0)) + tpts[i0 + 1][2] * (fi - i0))
     # collision hugs the trunk: capsule along the actual (leaning) centerline
     # over the lower ~70%, radius = mean of the tapered ring radii there
     k = max(1, int(round(n_rings * 0.7)))
@@ -622,7 +651,8 @@ def build_tree(tree: SptTree, seed: int | None = None,
             gval = float(lv.gravity.eval_var(x_rel, rng))
             fval = float(lv.flexibility.eval(x_rel))
             pts, radii, tans = _grow_stem(ppos, ptan, radial, a_rad, wlen,
-                                          base_r, lv, gval, fval, nr, rng)
+                                          base_r, lv, gval, fval, nr, rng,
+                                          stored_len=stored_len)
             stem = Stem(li, pts, radii, wlen, stored_len, x)
             out.append((stem, tans))
             if base_r >= TUBE_MIN_RADIUS:
@@ -639,6 +669,10 @@ def build_tree(tree: SptTree, seed: int | None = None,
         is_leaf_carrier = (li == n_branch_levels - 1)
         if not is_leaf_carrier and furthest_child.get(id(stem), 0.0) <= 0.01:
             continue          # childless intermediate branch → skip (bare)
+        if is_leaf_carrier and float(stem.points[:, 2].max()) < crown_floor:
+            continue          # twig entirely below the crown floor → no
+                              # tube either (its leaves would all be culled,
+                              # leaving a bare stick under the crown)
         pts, radii = stem.points, stem.radii
         v, n, uv, tri = _tube_mesh(pts, radii, tans, naz, lv, tree, False, rng,
                                    stored_len=stem.stored_length)
@@ -663,16 +697,20 @@ def build_tree(tree: SptTree, seed: int | None = None,
             carriers = stems_by_level.get(last_bi - 1, [])
         carrier_lv = branch_levels[-1]
         # Hanging foliage (long draped strands) is the weeping-willow look.
-        # It requires BOTH high leaf-level gravity (leaves hang, stored 90)
-        # AND high BRANCH gravity (the branches themselves arch over and
-        # down, willow stores 2..4).  Junipers and white pines also store
-        # leaf gravity 90 but their branches have gravity <=0.5 — they are
-        # ordinary upright conifers, NOT weeping, so leaf gravity alone is
-        # not enough (it would trail foliage down a juniper's bare trunk).
+        # It requires high leaf-level gravity (leaves hang, stored 90) AND
+        # high branch gravity (willow stores 2..4) AND those high-gravity
+        # branches PINNED RIGID (flexibility 0): the author drew droop the
+        # branches cannot express, so the SDK hangs it as foliage.
+        # Junipers/white pines store leaf gravity 90 but branch gravity
+        # <=0.5 (upright conifers); black locust stores branch gravity up
+        # to 3 but with flexibility 0.3 — that gravity is real branch LIFT,
+        # and draping it scattered floating strands under its crown.
+        # Willow is the only tree in the corpus that passes all three.
         lg = float(leaf_level.gravity.eval(0.0))
-        max_branch_grav = max((abs(lv.gravity.hi) for lv in branch_levels[1:]),
-                              default=0.0)
-        drape = lg >= 5.0 and max_branch_grav >= 1.5
+        drape_lvs = [lv for lv in branch_levels[1:]
+                     if abs(lv.gravity.hi) >= 1.5]
+        drape = (lg >= 5.0 and bool(drape_lvs)
+                 and max(lv.flexibility.hi for lv in drape_lvs) <= 0.05)
         strand_len = 0.0
         if drape:
             # curtain length: proportional to the average carrier-branch
@@ -744,6 +782,9 @@ def build_tree(tree: SptTree, seed: int | None = None,
 
         bidx = 0
         for (pstem, ptans) in carriers:
+            if float(pstem.points[:, 2].max()) < crown_floor:
+                continue      # below the crown floor: no tube was drawn
+                              # for it, so no foliage (or tip cap) either
             cnt = int(round(carrier_lv.child_freq * pstem.stored_length))
             cnt = max(cnt, 4)                     # never leave a branch bare
             _sample_branch(pstem, ptans, lx0, lx1, cnt, bidx)
@@ -883,19 +924,36 @@ def build_tree(tree: SptTree, seed: int | None = None,
                     leaf_positions.append((tip + jit, ttan, 1.0, aid))
 
         # foliage floor: no card CENTER may sit below the crown's real
-        # underside.  Use the 5th PERCENTILE of attachment heights — a
-        # single rogue down-swung twig otherwise drags the floor to the
-        # ground and lets its clump sit at the trunk foot (black locust).
-        # Exempt drape trees — willow strands hang below their branches by
-        # design.
+        # underside.  The hard floor is the trunk's branch-generation
+        # First height (crown_floor, see above — 0 for shrubs); on top of
+        # it, the 5th PERCENTILE of attachment heights when the crown
+        # genuinely starts well off the ground (a single rogue down-swung
+        # twig otherwise drags the floor down and its clump sits at the
+        # trunk foot).  Exempt drape trees — willow strands hang below
+        # their branches by design.
         if attach and not drape:
             az_ = [a[0][2] for a in attach]
-            floor_z = float(np.percentile(az_, 5.0))
-            # only trees whose crown genuinely starts well off the ground
-            # get floored — a shrub's foliage legitimately reaches its base
-            if floor_z > 0.12 * max(az_):
+            floor_z = crown_floor
+            p5 = float(np.percentile(az_, 5.0))
+            if p5 > 0.12 * max(az_):
+                floor_z = max(floor_z, p5)
+            if floor_z > 0.0:
+                # one leaf width of slack, and never bare a drawn branch:
+                # a branch that crosses the floor keeps its HIGHEST cluster
+                # even if that dips below (a hard cut left visible branches
+                # leafless along the crown underside)
+                lim = floor_z - leaf_w
+                surviving = {a[3] for a in attach if a[0][2] >= lim}
+                rescue = {}
+                for i, a in enumerate(attach):
+                    if a[3] in surviving:
+                        continue
+                    cur = rescue.get(a[3])
+                    if cur is None or a[0][2] > attach[cur][0][2]:
+                        rescue[a[3]] = i
+                keep_aidx = set(rescue.values())
                 leaf_positions = [lp for lp in leaf_positions
-                                  if lp[0][2] >= floor_z]
+                                  if lp[0][2] >= lim or lp[3] in keep_aidx]
 
         # cull FLOATING GROUPS: an attachment group (clump or tip cap)
         # with no OTHER group's centre within ~2.4 leaf widths renders as
