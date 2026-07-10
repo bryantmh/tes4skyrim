@@ -208,20 +208,48 @@ def scan_mesh_subdirs(file_name: str) -> list:
 
 # On Windows, hide the console window that subprocess.Popen would otherwise
 # create when launched from a console-less process (pythonw / .pyw).
-_POPEN_FLAGS = {}
-if sys.platform == "win32":
-    _POPEN_FLAGS["creationflags"] = subprocess.CREATE_NO_WINDOW
+from subprocess_flags import POPEN_FLAGS as _POPEN_FLAGS, configure_multiprocessing
+
+configure_multiprocessing()
+
+
+def _kill_process_tree(proc):
+    """Forcibly kill `proc` and every descendant it spawned.
+
+    ``proc.terminate()`` only signals the direct child (convert.py); the
+    conversion spawns grandchildren — multiprocessing Pool workers plus helper
+    .exes (ffmpeg, hkxcmd, BSArch, LODGen). Those must be killed too or they
+    keep running and hold the stdout pipe open, so cancellation appears to hang.
+
+    On Windows, ``taskkill /T`` walks the whole tree by PID. Fall back to
+    ``proc.kill()`` if taskkill is unavailable or errors.
+    """
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=15,
+                **_POPEN_FLAGS,
+            )
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
 
 
 def _run_process(cmd, log_cb, env=None, cancel_event=None):
     """Run cmd as subprocess, streaming output to `log_cb` as bytes arrive.
 
-    Uses binary reads to avoid stdio buffering issues on Windows and with
-    child processes; decodes to UTF-8 with replacement on the fly and
-    emits complete lines immediately.
+    A dedicated reader thread pulls bytes off the pipe so the control loop can
+    poll `cancel_event` on a short interval — a blocking pipe read must never be
+    what stands between the user clicking Cancel and the process dying.
 
-    If cancel_event is a threading.Event, the process is terminated when it
-    is set.
+    On cancellation the entire process tree is killed (see
+    `_kill_process_tree`) and -2 is returned.
     """
     try:
         full_env = os.environ.copy()
@@ -240,36 +268,60 @@ def _run_process(cmd, log_cb, env=None, cancel_event=None):
         )
 
         out = proc.stdout
-        buf = bytearray()
+        line_q: "queue.Queue" = queue.Queue()
+
+        def _reader():
+            """Read bytes off the pipe, split into lines, push onto line_q."""
+            buf = bytearray()
+            try:
+                while True:
+                    chunk = out.read(1024)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                    while True:
+                        nl = buf.find(b"\n")
+                        if nl == -1:
+                            break
+                        line = bytes(buf[:nl + 1])
+                        del buf[:nl + 1]
+                        line_q.put(line.decode("utf-8", errors="replace")
+                                   .rstrip("\r\n"))
+            except (OSError, ValueError):
+                pass
+            finally:
+                if buf:
+                    text = bytes(buf).decode("utf-8", errors="replace").rstrip("\r\n")
+                    if text:
+                        line_q.put(text)
+                line_q.put(None)  # sentinel: pipe closed
+
+        reader = threading.Thread(target=_reader, daemon=True)
+        reader.start()
+
+        cancelled = False
         while True:
-            # Check for cancellation
+            # Cancel takes effect within one poll interval, even if the child
+            # is silent or blocked deep inside a long-running step.
             if cancel_event is not None and cancel_event.is_set():
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                return -2  # sentinel for cancelled
-
-            chunk = out.read(1024)
-            if not chunk:
+                _kill_process_tree(proc)
+                cancelled = True
                 break
-            buf.extend(chunk)
-            # Emit complete lines
-            while True:
-                nl = buf.find(b"\n")
-                if nl == -1:
-                    break
-                line = bytes(buf[:nl + 1])
-                del buf[:nl + 1]
-                text = line.decode("utf-8", errors="replace").rstrip("\r\n")
-                log_cb(text)
 
-        # flush any trailing data
-        if buf:
-            text = bytes(buf).decode("utf-8", errors="replace").rstrip("\r\n")
-            if text:
-                log_cb(text)
+            try:
+                item = line_q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if item is None:  # pipe closed — process finished on its own
+                break
+            log_cb(item)
+
+        if cancelled:
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            return -2  # sentinel for cancelled
 
         proc.wait()
         return proc.returncode
@@ -737,7 +789,8 @@ def gui_main():
         if not state:
             cancel_evt.clear()
         run_btn.configure(state="disabled" if state else "normal")
-        cancel_btn.configure(state="normal" if state else "disabled")
+        cancel_btn.configure(state="normal" if state else "disabled",
+                             text="Cancel")
         file_combo.configure(state="disabled" if state else "readonly")
         if state:
             prog_bar.pack(fill=tk.X, padx=14, pady=(4, 0))
@@ -753,7 +806,9 @@ def gui_main():
         if running.is_set():
             cancel_evt.set()
             status_var.set("Cancelling...")
-            cancel_btn.configure(state="disabled")
+            cancel_btn.configure(state="disabled", text="Cancelling...")
+            _log("")
+            _log("  Cancelling — killing running processes...")
 
     # ── Run logic ─────────────────────────────────────────────────────────────
     def _build_cmd(step_key: str, fname: str, out_dir: str,
@@ -882,6 +937,48 @@ def gui_main():
 #  Entry point
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _relaunch_windowless() -> bool:
+    """On Windows, re-exec the GUI under pythonw.exe so no console window lingers.
+
+    When launched as ``python gui.py`` / ``./gui.py`` from a terminal (or via the
+    ``py`` launcher, which allocates its own console), the GUI ends up with a
+    console window that just sits behind it. Detaching under the console-less
+    interpreter removes that stray window; the GUI's own log pane is the only
+    place subprocess output should appear.
+
+    Returns True if a relaunch was started (caller should exit), False otherwise.
+    """
+    if sys.platform != "win32":
+        return False
+    # Already console-less (launched via .pyw / pythonw) — nothing to do.
+    exe = sys.executable
+    if not exe.lower().endswith("python.exe"):
+        return False
+    pythonw = os.path.join(os.path.dirname(exe), "pythonw.exe")
+    if not os.path.isfile(pythonw):
+        return False
+    # Guard against an infinite relaunch loop.
+    if os.environ.get("_TES_GUI_RELAUNCHED") == "1":
+        return False
+
+    env = os.environ.copy()
+    env["_TES_GUI_RELAUNCHED"] = "1"
+    # DETACHED_PROCESS so the new process has no console at all and is not tied
+    # to the (soon-to-close) parent terminal.
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0)
+    try:
+        subprocess.Popen(
+            [pythonw, str(Path(__file__).resolve())] + sys.argv[1:],
+            cwd=str(SCRIPT_DIR),
+            env=env,
+            creationflags=flags,
+            close_fds=True,
+        )
+        return True
+    except OSError:
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="TES4->TES5 Converter GUI")
     parser.add_argument("--cli", action="store_true",
@@ -892,6 +989,10 @@ def main():
         cmd = [sys.executable, "-u", str(SCRIPT_DIR / "convert.py")] + extra
         ret = subprocess.run(cmd, cwd=str(SCRIPT_DIR), **_POPEN_FLAGS)
         return ret.returncode
+
+    # Detach from any inherited console so the GUI stands alone (Windows only).
+    if _relaunch_windowless():
+        return 0
 
     return gui_main()
 

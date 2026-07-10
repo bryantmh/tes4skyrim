@@ -20,6 +20,9 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from subprocess_flags import POPEN_FLAGS  # noqa: E402
+
 HKXCMD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                       'external', 'hkxcmd', 'hkxcmd.exe')
 
@@ -174,7 +177,8 @@ def _run_hkxcmd(args, out_path):
     # any other extension makes hkxcmd treat the path as a DIRECTORY and
     # write <out_path>\<basename> instead (and crash if the real
     # destination already exists as a directory from an earlier mishap).
-    res = subprocess.run([HKXCMD] + args, capture_output=True, text=True)
+    res = subprocess.run([HKXCMD] + args, capture_output=True, text=True,
+                         **POPEN_FLAGS)
     if res.returncode != 0 or not os.path.isfile(out_path):
         raise RuntimeError(
             f'hkxcmd {" ".join(args)} failed ({res.returncode}):\n'

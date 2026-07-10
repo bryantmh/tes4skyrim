@@ -6,7 +6,6 @@ Gameplan:
 	Add _1 body type M5
 	Make skyrim body mesh work M5
 	Move External L13
-	Fix terminal spawning L12
 	Fix app design M12
 	Bsa builder limit L11
 	Bad cell names Mi21
@@ -93,8 +92,6 @@ Later Issues:
 	10 - Properly document all tools
 
 	11 - BSA builder must be limited to 2GB files
-
-	12 - Fix infinite terminal spawning when using double click version
 
 	13 - Move all external to external folder and update readme (bsarch.exe, LODGENx64.exe, papyrus.exe)
 

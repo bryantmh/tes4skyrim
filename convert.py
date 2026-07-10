@@ -58,9 +58,11 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
 # Suppress console windows when spawned from a console-less parent (pythonw/.pyw)
-_POPEN_FLAGS: dict = {}
-if sys.platform == "win32":
-    _POPEN_FLAGS["creationflags"] = subprocess.CREATE_NO_WINDOW
+from subprocess_flags import POPEN_FLAGS as _POPEN_FLAGS, configure_multiprocessing
+
+# multiprocessing.Pool workers (nif/lod conversion) must also inherit a hidden
+# console — configure before any pool is created.
+configure_multiprocessing()
 
 
 def load_config(config_path: str = None) -> dict:
@@ -590,7 +592,12 @@ def phase_modify_body_meshes():
     if not script.exists():
         print("ERROR: asset_convert/modify_body_meshes.py not found")
         return False
-    ret = subprocess.run([sys.executable, str(script)], cwd=str(SCRIPT_DIR), **_POPEN_FLAGS)
+    ret = subprocess.run([sys.executable, str(script)], cwd=str(SCRIPT_DIR),
+                         capture_output=True, text=True, **_POPEN_FLAGS)
+    if ret.stdout:
+        print(ret.stdout, end="")
+    if ret.stderr:
+        print(ret.stderr, end="")
     return ret.returncode == 0
 
 

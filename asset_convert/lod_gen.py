@@ -21,6 +21,9 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR = Path(__file__).parent.parent.resolve()
+sys.path.insert(0, str(SCRIPT_DIR))
+from subprocess_flags import POPEN_FLAGS  # noqa: E402
+
 LODGEN_EXE = (
     SCRIPT_DIR / "tools" / "LODGenx64.exe"
 )
@@ -557,7 +560,14 @@ def run_lodgen(lodgen_input: Path, output_dir: Path) -> bool:
         # already under textures\\tes4\\, doubling the prefix and causing null-ptr crashes.
     ]
     print(f"  Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=str(LODGEN_EXE.parent))
+    # Capture output so it reaches the GUI log instead of a popped-up console
+    # window (which never exists under the console-less GUI launcher).
+    result = subprocess.run(cmd, cwd=str(LODGEN_EXE.parent),
+                            capture_output=True, text=True, **POPEN_FLAGS)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="")
     if result.returncode != 0:
         print(f"  WARNING: LODGenx64.exe exited with code {result.returncode}")
         return False

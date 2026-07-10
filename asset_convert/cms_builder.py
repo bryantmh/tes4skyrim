@@ -36,11 +36,15 @@ import json
 import math
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
 from .cms import decode_cms
 from .mopp import walk_mopp
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from subprocess_flags import POPEN_FLAGS  # noqa: E402
 
 _ASSET_DIR = Path(__file__).parent
 _MOPP_BRIDGE = str(_ASSET_DIR / 'dovah_hkp_mesh_mopp_bridge.exe')
@@ -78,6 +82,7 @@ def run_mopp_bridge(vertices, triangles, shape_keys, timeout=300):
             [_MOPP_BRIDGE, '--input', tmp_in, '--output', tmp_out,
              '--no-stdout'],
             capture_output=True, timeout=timeout,
+            **POPEN_FLAGS,
         )
         if result.returncode != 0 or not os.path.exists(tmp_out):
             return None

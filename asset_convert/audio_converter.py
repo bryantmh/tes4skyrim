@@ -17,9 +17,13 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from subprocess_flags import POPEN_FLAGS  # noqa: E402
 
 # Use most CPUs – wmav2 is fast so many parallel ffmpeg processes help.
 _WORKER_COUNT = max(1, (os.cpu_count() or 4) - 1)
@@ -35,6 +39,7 @@ def find_ffmpeg(ffmpeg_path: str = 'ffmpeg') -> 'str | None':
             [ffmpeg_path, '-version'],
             capture_output=True,
             timeout=10,
+            **POPEN_FLAGS,
         )
         if b'ffmpeg version' in r.stdout or b'ffmpeg version' in r.stderr:
             return ffmpeg_path
@@ -68,6 +73,7 @@ def find_xwmaencode(search_dir: 'str | None' = None) -> 'str | None':
             ['xWMAEncode'],
             capture_output=True,
             timeout=5,
+            **POPEN_FLAGS,
         )
         if b'xWMA Encoding Tool' in r.stdout or b'xWMA Encoding Tool' in r.stderr:
             return 'xWMAEncode'
@@ -115,7 +121,8 @@ def convert_file_to_xwm(src_path, dst_path, ffmpeg: str,
                 '-c:a', 'pcm_s16le',   # 16-bit PCM
                 str(wav_path),
             ]
-            r1 = subprocess.run(cmd_wav, capture_output=True, timeout=60)
+            r1 = subprocess.run(cmd_wav, capture_output=True, timeout=60,
+                                **POPEN_FLAGS)
             if r1.returncode != 0 or not os.path.isfile(wav_path):
                 return False
 
@@ -126,7 +133,8 @@ def convert_file_to_xwm(src_path, dst_path, ffmpeg: str,
                 str(wav_path),
                 str(dst_path),
             ]
-            r2 = subprocess.run(cmd_xwm, capture_output=True, timeout=60)
+            r2 = subprocess.run(cmd_xwm, capture_output=True, timeout=60,
+                                **POPEN_FLAGS)
             return (r2.returncode == 0
                     and dst_path.is_file()
                     and dst_path.stat().st_size > 0)

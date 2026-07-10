@@ -16,7 +16,11 @@ directory is on a different drive.
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from subprocess_flags import POPEN_FLAGS  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Staging helpers
@@ -185,6 +189,7 @@ def pack_bsas(
                 capture_output=True,
                 text=True,
                 timeout=600,      # 10-minute cap for very large archives
+                **POPEN_FLAGS,
             )
 
             if completed.returncode != 0:
