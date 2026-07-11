@@ -1,14 +1,11 @@
 Gameplan:
 	Fix Books M2
 	Refine Navmesh
-	Move External L13
 	Fix app design M12
-	Bsa builder limit L11
 	Bad cell names Mi21
 	Activator scripts Mi22
 	Fix Arrows. Should also use proper projectile. M16
 	No real greetings just "Hello" L4
-	Texture promotion resulting in duplicate textures and wasted space. Non 0/1 armor nif still there, wasated space. character meshes converted but unused so wasted Mi11
 
 Prompts:
 	Book are animated to open in the inventory. If we don't use the correct animated mesh, the book fails to open. We need to use skyrim book mesh inventory model INAM, BUT we ideally need to apply the oblivion texture for the book front/back covers and spine.
@@ -18,10 +15,9 @@ Prompts:
 	Here is my plan: Add a script to better categorize the meshes and even parts of meshes as floors obstacles, walls, and things that are ok to path over. I'm sure there is a way to do this programmatically.
 	Then once you have that, you'll have to load the actual landscape topography and mesh triangles to generate a good navmesh that properly avoids obstacles. This is a complex task, but I know you can do it!
 	
-	Skyrim bsa files have a file size limit (2,147,483,648 bytes). The BSA builder should respect that limit. If the limit will be reached create a dummy .esl file or more (oblivion_loader.esl, oblivion_loader_1.esl) to fit everything else into
+	Exterior cell names are bad. For example, with the current system, leaving the anvilcastlegreathall to the exterior, the door says the exterior cell is called "Test End Game" this is obviously incorrect. Make sure these exterior cells have the correct names
 
-	Move any external dependencies used by our pipeline to the external folder. bsarch.exe, LODGENx64.exe, papyrus.exe are the ones that come to mind but it's possible there are more. Ensure they are all documented properly in the readme license section.
-
+	Activator scripts don't seem to be working. For example, activating an altar should display a message onscreen and provide an effect to the user. Additionally, activating a nirnroot should stop it from emiting its sound
 Major Issues for V1:
 
 	1 - Book needs to use skyrim book mesh (but oblivion texture) so that it can open in the inventory
@@ -83,10 +79,6 @@ Later Issues:
 	
 	7 - Properly document all tools
 
-	8 - BSA builder must be limited to 2GB files
-
-	9 - Move all external to external folder and update readme (bsarch.exe, LODGENx64.exe, papyrus.exe)
-
 	10 - Convert weathers
 
 	11 - Single threaded workflows
@@ -119,8 +111,6 @@ Minor Issues:
 	9 - Update world map cloud mesh and texture
 
 	10 - Convert Skyrim LE meshes to Skyrim SE format
-
-	11 - Texture "promotion" for distant objects shouldn't be necessary. All textures should be in tes4 folder
 
 	12 - Change logo from TES4 to TESIV
 

@@ -3,7 +3,12 @@
 import math
 import struct
 
-from ..constants import MAP_MARKER_TYPE_MAP, MATT_MAP, map_lock_level
+from ..constants import (
+    MAP_MARKER_TYPE_MAP,
+    MATT_MAP,
+    SKYRIM_MAP_MARKER_LCRT,
+    map_lock_level,
+)
 from ..skyrim_overrides import TES4_MARKER_FORMID_TO_SKYRIM
 from .items import get_base_origin_shift
 from .common import (
@@ -20,6 +25,19 @@ from .common import (
     pack_subrecord,
     pack_uint8_subrecord,
 )
+
+
+# Interior CELL FormID -> LCTN FormID of the map-marker location it belongs to.
+# Populated by tes5_import.locations before the cell groups are built; the CELL
+# converter reads it to emit XLCN, which is what lets entering a dungeon
+# discover its location (and so reveal its map marker).
+_CELL_LOCATION: dict = {}
+
+
+def set_cell_locations(cell_to_location: dict):
+    """Register the interior-cell → Location map used to emit CELL XLCN."""
+    _CELL_LOCATION.clear()
+    _CELL_LOCATION.update(cell_to_location)
 
 
 def convert_LTEX(rec: dict, writer=None) -> tuple:
@@ -181,6 +199,13 @@ def convert_CELL(rec: dict) -> bytes:
         if -1e9 < whf < 1e9:
             subs += pack_float_subrecord('XCLW', whf)
 
+    # XLCN — Location.  Entering a cell that belongs to a location discovers
+    # that location, which is what reveals its map marker.  Set for interiors
+    # sitting behind a map marker's door (see tes5_import/locations.py).
+    lctn_fid = _CELL_LOCATION.get(get_formid(rec, 'FormID'))
+    if lctn_fid:
+        subs += pack_formid_subrecord('XLCN', lctn_fid)
+
     return pack_record('CELL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
@@ -262,12 +287,47 @@ def convert_WRLD(rec: dict) -> bytes:
     return pack_record('WRLD', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
+# REFR record flag 0x400 — "Persistent Reference".
+REFR_PERSISTENT_FLAG = 0x00000400
+
+# Map marker FNAM flags (identical in TES4 and TES5).
+MAP_MARKER_VISIBLE = 0x01
+MAP_MARKER_CAN_TRAVEL = 0x02
+
+
+def map_marker_flags(rec: dict) -> int:
+    """FNAM 'Map Flags' for a converted map marker.
+
+    Oblivion and Skyrim agree on the bits (0x01 Visible, 0x02 Can Travel To) but
+    not on how a marker becomes discovered:
+
+    * Oblivion's engine flips Visible/Can Travel To at runtime, using its own
+      hardcoded proximity check.  That is why 406 of its 513 markers ship as
+      FNAM=0 (every cave, fort, Ayleid ruin and Oblivion gate) — the flags are
+      placeholders the engine overwrites.
+    * Skyrim has no such system.  A marker is revealed only when the player
+      discovers the Location it belongs to, and it is only usable as a
+      fast-travel destination if Can Travel To is set on the record.
+
+    Copying FNAM verbatim would therefore leave those 406 markers permanently
+    undiscoverable.  So: keep Visible exactly where Oblivion had it (cities and
+    stables start revealed), and grant Can Travel To to every marker, letting
+    Skyrim's Location discovery do the revealing.  This mirrors vanilla Skyrim,
+    whose undiscovered markers pair FNAM=0 with a Location that reveals them.
+    """
+    tes4_flags = get_int(rec, 'MapMarker.Flags')
+    flags = MAP_MARKER_CAN_TRAVEL
+    if tes4_flags & MAP_MARKER_VISIBLE:
+        flags |= MAP_MARKER_VISIBLE
+    return flags
+
+
 def convert_REFR(rec: dict) -> bytes:
     """REFR — placed object reference.
 
     TES5 order (from wbDefinitionsTES5.pas):
     EDID VMAD NAME XMBO XPRM ... XTEL XLOC XEZN ... XOWN XESP XLKR
-    ... XSCL ... XMRK/FNAM/FULL/TNAM ... DATA
+    ... XSCL ... XMRK/FNAM/FULL/TNAM ... XLRT ... DATA
     """
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -325,15 +385,22 @@ def convert_REFR(rec: dict) -> bytes:
 
     # XTRG does NOT exist in TES5 — skip it entirely
 
-    # Map Marker (XMRK + FNAM + FULL + TNAM)
-    if get_str(rec, 'MapMarker') == '1':
+    # Map Marker (XMRK + FNAM + FULL + TNAM, then XLRT).
+    is_map_marker = get_str(rec, 'MapMarker') == '1'
+    if is_map_marker:
         subs += pack_subrecord('XMRK', b'')
+        subs += pack_uint8_subrecord('FNAM', map_marker_flags(rec))
         marker_full = get_str(rec, 'MapMarker.FULL')
         if marker_full:
             subs += pack_string_subrecord('FULL', marker_full)
         marker_type = get_int(rec, 'MapMarker.Type')
         tes5_marker = MAP_MARKER_TYPE_MAP.get(marker_type, 0)
         subs += pack_subrecord('TNAM', struct.pack('<BB', tes5_marker, 0))
+        # XLRT — Location Ref Type.  Binds this reference to its Location as
+        # that Location's map marker; without it the engine cannot tie the
+        # marker to the Location the player discovers.  396/397 vanilla map
+        # markers carry MapMarkerRefType here.
+        subs += pack_formid_subrecord('XLRT', SKYRIM_MAP_MARKER_LCRT)
 
     # Position/Rotation (DATA)
     px = get_float(rec, 'PosX')
@@ -364,6 +431,10 @@ def convert_REFR(rec: dict) -> bytes:
     subs += pack_subrecord('DATA', struct.pack('<ffffff', px, py, pz, rx, ry, rz))
 
     flags = get_int(rec, 'RecordFlags')
+    if is_map_marker:
+        # Map markers must be persistent references — the map/fast-travel system
+        # resolves them outside the loaded cell.  All 397 vanilla markers set it.
+        flags |= REFR_PERSISTENT_FLAG
     return pack_record('REFR', get_formid(rec, 'FormID'), flags, subs)
 
 

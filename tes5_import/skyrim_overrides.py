@@ -1079,7 +1079,11 @@ TES4_MARKER_FORMID_TO_SKYRIM = {
     0x00000003: 0x00000003,  # NorthMarker      → same FormID in Skyrim.esm
     0x00000005: 0x0000003B,  # DivineMarker     → XMarker (no Skyrim equivalent)
     0x00000006: 0x0000003B,  # TempleMarker     → XMarker (no Skyrim equivalent)
-    0x00000010: 0x00000034,  # MapMarker        → XMarkerHeading
+    # MapMarker → MapMarker.  Skyrim's STAT 0x10 *is* the map marker base object
+    # (all 397 vanilla marker REFRs use NAME=00000010).  Substituting
+    # XMarkerHeading here makes the engine treat the reference as a plain
+    # invisible marker, so it never appears on the map or becomes discoverable.
+    0x00000010: 0x00000010,  # MapMarker        → MapMarker
     0x00000012: 0x00000002,  # HorseMarker      → TravelMarker (closest)
     0x00000034: 0x00000034,  # XMarkerHeading   → same FormID in Skyrim.esm
     0x0000003B: 0x0000003B,  # XMarker          → same FormID in Skyrim.esm

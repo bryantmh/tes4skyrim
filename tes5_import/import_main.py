@@ -34,6 +34,7 @@ from .skyrim_overrides import (
     set_voice_type,
 )
 from .navi_builder import build_navi_record
+from .locations import build_marker_locations
 from .record_types.world import (
     convert_ACHR,
     convert_CELL,
@@ -41,6 +42,7 @@ from .record_types.world import (
     convert_LTEX,
     convert_REFR,
     convert_WRLD,
+    set_cell_locations,
 )
 from .text_reader import (
     get_float,
@@ -400,6 +402,12 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
             except Exception as e:
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
                 errors += 1
+
+    # --- Phase 3c: LCTN map-marker Locations ---
+    # Skyrim only reveals a map marker when the player discovers the Location it
+    # belongs to, and Oblivion has no Locations at all — so build one per marker
+    # before the cells are written, since interiors need XLCN pointing at them.
+    set_cell_locations(build_marker_locations(by_type, writer))
 
     # --- Phase 4: CELL/WRLD hierarchy (+ PGRD→NAVM navmeshes) ---
     # Base-object model index for navmesh static-footprint carving. Only
