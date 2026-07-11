@@ -275,10 +275,17 @@ ARMOR_PIECE_OFFSETS: dict[str, ArmorOffsetConfig] = {
 # ARMOR_PIECE_OFFSETS (e.g. helmet dz=+7, tuned on genuinely skinned helms
 # like TownguardCho) must NOT be applied — they pushed rigid helms on top of
 # the head.  The only correction needed is the anatomical difference between
-# the two skeletons' head-bone frames: the Oblivion head pivot sits lower in
-# the skull than Skyrim's (OB headhuman.nif skull top = pivot+13.6; SK
-# malehead.nif = pivot+11.5), so head gear drops ~2.1 units.
+# the heads in their respective head-pivot frames, measured from
+# OB headhuman.nif vs SK malehead.nif (see docs/nif_conversion_notes.md):
+#   skull top   OB +13.6  SK +11.5  -> dz = -2.1
+#   Y span      OB [-3.75, +11.31]  SK [-5.97, +11.58] -> the SK skull
+#     reaches 2.2 further BACK with only 0.27 front slack, so translation
+#     alone cannot fix back-of-head clipping: sy = 17.55/15.06 = 1.165 and
+#     dy = -1.6 map the OB span exactly onto the SK span
+#   X width     OB 11.18  SK 12.55  -> sx = 1.12 (centered)
+# Scales act around the world origin = head pivot for PRN verts, so this is
+# exactly "same helm, resized around the head it sits on".
 ARMOR_PIECE_OFFSETS_PRN: dict[str, ArmorOffsetConfig] = {
-    'helmet':  ArmorOffsetConfig(dz=-2.1),
+    'helmet':  ArmorOffsetConfig(dy=-1.6, dz=-2.1, sx=1.12, sy=1.165),
     'default': ArmorOffsetConfig(),
 }

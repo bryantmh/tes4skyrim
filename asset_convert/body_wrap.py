@@ -11,13 +11,16 @@ BUILD (offline, `python -m asset_convert.body_wrap`):
   1. Load the Oblivion body part meshes (upperbody/lowerbody/hand/foot) in
      T-pose — the surfaces all Oblivion armor was modelled around.
   2. FK-pose a copy with the very same retarget the armor gets (fkp).
-  3. Fit the posed body EXACTLY onto the real Skyrim body surface
-     (malebody_0/hands/feet): iterative closest-point projection with
+  3. Fit the posed body EXACTLY onto the real Skyrim body surfaces — BOTH
+     weight-slider targets (malebody_0 AND malebody_1, hands, feet):
+     iterative closest-point projection with
      normal-agreement filtering, the per-step displacement smoothed over the
      welded mesh graph (topology-aware — never bleeds between the legs), plus
      limb-segment length rescaling so wrists/ankles land right (dst).
-  4. Save src (T-pose), fkp, dst, triangles, and per-vertex skin-weight bone
-     centroids to generated/body_wrap_{gender}.npz.
+  4. Save src (T-pose), fkp, dst0/dst1, triangles, and per-vertex
+     skin-weight bone centroids to generated/body_wrap_{gender}.npz.  The
+     dual dst targets give converted armor true _0/_1 weight-morph variants
+     (vanilla ARMA weight-slider convention).
 
 APPLY (runtime, called from skin_retarget.retarget_skin_to_skyrim):
   1. Run the normal FK deform (unchanged — provides the smooth base).
@@ -68,11 +71,12 @@ _OB_BODY_SETS = {
                 'hands': ['femalehand.nif'],
                 'feet':  ['femalefoot.nif']}, 'armor/f/'),
 }
+# Skyrim target bodies exist as _0 (thin) / _1 (heavy) weight-slider pairs;
+# a field is fitted against each so armor gets true _0/_1 morph variants.
 _SK_BODY_SETS = {
-    'male':   {'body': 'malebody_0.nif', 'hands': 'malehands_0.nif',
-               'feet': 'malefeet_0.nif'},
-    'female': {'body': 'femalebody_0.nif', 'hands': 'femalehands_0.nif',
-               'feet': 'femalefeet_0.nif'},
+    'male':   {'body': 'malebody', 'hands': 'malehands', 'feet': 'malefeet'},
+    'female': {'body': 'femalebody', 'hands': 'femalehands',
+               'feet': 'femalefeet'},
 }
 
 # ---- build parameters ------------------------------------------------------
@@ -109,13 +113,47 @@ SIDE_PENALTY = 0.03
 # looser fit — clipping is far more visible than half a unit of looseness.
 CLEAR_MARGIN = 1.0
 CLEAR_MARGIN_RANGE = 8.0   # margin fades out by this authored clearance
-CLEAR_MIN_C0 = -0.5        # verts authored deeper inside the OB body than
-                           # this are intentional (inner shells) — never pushed
-CLEAR_PROX = 2.5           # enforcement fades out by this authored clearance:
-                           # only skin-hugging verts can poke through skin, and
-                           # far away the two clearance estimators diverge
+CLEAR_INNER_FADE = 0.5     # the outward margin dies off by this depth for
+                           # verts authored INSIDE the OB body (shirt collars/
+                           # necklines sit against the chest at c0 ~ -0.6..-1.5).
+                           # Their authored DEPTH is still preserved (target =
+                           # c0): excluding them entirely let the field drag
+                           # collars 2+ units deeper -> jagged skin-through-
+                           # fabric neckline clipping
+CLEAR_PROX = 4.0           # enforcement fades out by this authored clearance:
+                           # only near-body verts can poke through skin, and
+                           # far away the two clearance estimators diverge.
+                           # 2.5 was too tight: shirt collars (authored 2-3
+                           # off the neck) and the cuirass front fauld (3.4)
+                           # ended up inside the body with enforcement faded
+                           # to <25% strength
 PUSH_SMOOTH_PASSES = 8     # deficit diffusion over the armor mesh graph
 PUSH_CAP = 2.0             # per-vertex push hard limit (game units)
+PUSH_RAW_KEEP = 0.6        # fraction of the RAW (undiffused) deficit kept as
+                           # a floor under the diffused value: diffusion kills
+                           # per-vertex noise but also diluted genuine isolated
+                           # deficits (shirt collar ring 0.9-1.9 deep) into
+                           # surrounding slack.  Raw deficits are already
+                           # gated by rel/prox, so the floor is safe.
+PUSH_ITERS = 2             # enforcement passes: one push rarely lands exactly
+                           # on target (c1 is re-estimated after moving), a
+                           # second pass converges deep deficits (collar backs)
+CLEAR_K = 24               # triangles per clearance query.  12 was too few at
+                           # the wrist: cuff verts saw ONLY hand triangles
+                           # (which abstain from reliability) and never the
+                           # body's wrist ring, so cuffs kept rel=0/no rescue
+# Fit-reliability floor on BODY triangles.  Without it, enforcement dies
+# exactly at the wrist and neck seam rings (the fit bunches there, stretch
+# reliability -> 0), which is where shirt cuffs and collars kept clipping.
+# Hand/foot triangles stay hard-masked to 0 (gauntlets/boots replace them).
+REL_FLOOR = 0.4
+# Skin weight on this bone marks head gear: the field has no head surface,
+# so corrections interpolated from neck/shoulder triangles would drag helmets
+# into the middle of the head.  Head-weighted vertices keep the plain FK
+# result and the legacy ARMOR_PIECE_OFFSETS helmet offset (see nif_converter).
+# Head ONLY — the OB body upperbody mesh includes the neck, so Neck/Neck1
+# regions have real field coverage and gating them regresses cuirass collars.
+HEAD_BONES = ('Bip01 Head',)
 # Correction-field smoothing at load (body-graph Jacobi passes).  Sweep on
 # iron cuirass/gauntlets/boots (2026-07-10): more passes monotonically lowers
 # armor edge distortion but slowly reintroduces clipping; 12 = best tradeoff
@@ -174,9 +212,30 @@ def closest_point_on_triangles(p, a, b, c):
 
 
 def weld_groups(verts: np.ndarray, tol: float = _WELD_TOL) -> np.ndarray:
-    """Group coincident vertices (UV-seam twins). Returns group id per vertex."""
-    key = np.round(verts / tol).astype(np.int64)
-    _, inv = np.unique(key, axis=0, return_inverse=True)
+    """Group coincident vertices (UV-seam twins). Returns group id per vertex.
+
+    True distance-based welding (KDTree pairs + union-find), not grid
+    rounding: seam twins that land on opposite sides of a rounding boundary
+    (e.g. after per-block world transforms differing by float error) must
+    still weld, or the two copies receive different corrections and the seam
+    visibly splits."""
+    from scipy.spatial import cKDTree
+    n = len(verts)
+    parent = np.arange(n)
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    pairs = cKDTree(verts).query_pairs(tol, output_type='ndarray')
+    for i, j in pairs:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[rj] = ri
+    roots = np.fromiter((find(i) for i in range(n)), dtype=np.int64, count=n)
+    _, inv = np.unique(roots, return_inverse=True)
     return inv
 
 
@@ -370,9 +429,9 @@ def _fk_pose_group(gender: str):
     return posed
 
 
-def _load_sk_surface(gender: str, group: str):
-    """Skyrim target surface for a group: (verts (N,3), tris (M,3))."""
-    path = _SK_BODY_DIR / _SK_BODY_SETS[gender][group]
+def _load_sk_surface(gender: str, group: str, weight: int):
+    """Skyrim target surface for a group+weight: (verts (N,3), tris (M,3))."""
+    path = _SK_BODY_DIR / f'{_SK_BODY_SETS[gender][group]}_{weight}.nif'
     if not path.exists():
         return None
     data = _read_nif(path)
@@ -470,7 +529,8 @@ def build_field(gender: str, verbose: bool = True) -> bool:
         print(f'  [{gender}] OB body meshes missing — cannot build')
         return False
 
-    all_src, all_fkp, all_dst, all_tris, all_bc, all_part = [], [], [], [], [], []
+    all_src, all_fkp, all_tris, all_bc, all_part = [], [], [], [], []
+    all_dst = {0: [], 1: []}
     offset = 0
 
     for group, gd in groups.items():
@@ -483,42 +543,48 @@ def build_field(gender: str, verbose: bool = True) -> bool:
 
         # segment scaling is fit INITIALISATION only; the stored FK-posed
         # verts (fkp) stay raw — they must match what armor FK produces.
-        cur = _segment_scale(fk_raw.copy(), gd['bones'], ob_skel, sk_skel)
-
-        sk = _load_sk_surface(gender, group)
-        if sk is None:
-            print(f'  [{gender}/{group}] missing SK target surface')
-            return False
-        sk_v, sk_t = sk
-        sk_cent = sk_v[sk_t].mean(axis=1)
-        sk_tri_n = np.cross(sk_v[sk_t[:, 1]] - sk_v[sk_t[:, 0]],
-                            sk_v[sk_t[:, 2]] - sk_v[sk_t[:, 0]])
-        sk_tri_n /= np.maximum(
-            np.linalg.norm(sk_tri_n, axis=1, keepdims=True), 1e-12)
-        sk_tree = cKDTree(sk_cent)
+        seed = _segment_scale(fk_raw.copy(), gd['bones'], ob_skel, sk_skel)
 
         wg = weld_groups(v0)
         n_g = int(wg.max()) + 1
         nbr_idx, nbr_ptr = _build_adjacency(tris, wg, n_g)
 
-        for iters, smooth_n, step in _FIT_PHASES:
-            for _ in range(iters):
-                vn = _vertex_normals(cur, tris, wg, n_g)
-                tgt = _project_points(cur, vn, sk_v, sk_t, sk_tree, sk_tri_n)
-                delta_g = _group_mean(tgt - cur, wg, n_g)
-                delta_g = _smooth_group_field(delta_g, nbr_idx, nbr_ptr, smooth_n)
-                cur = cur + step * delta_g[wg]
+        for wt in (0, 1):
+            sk = _load_sk_surface(gender, group, wt)
+            if sk is None:
+                print(f'  [{gender}/{group}] missing SK target surface _{wt}')
+                return False
+            sk_v, sk_t = sk
+            sk_cent = sk_v[sk_t].mean(axis=1)
+            sk_tri_n = np.cross(sk_v[sk_t[:, 1]] - sk_v[sk_t[:, 0]],
+                                sk_v[sk_t[:, 2]] - sk_v[sk_t[:, 0]])
+            sk_tri_n /= np.maximum(
+                np.linalg.norm(sk_tri_n, axis=1, keepdims=True), 1e-12)
+            sk_tree = cKDTree(sk_cent)
 
-        # residual: how exactly the fitted body sits on the SK surface
-        vn = _vertex_normals(cur, tris, wg, n_g)
-        proj = _project_points(cur, vn, sk_v, sk_t, sk_tree, sk_tri_n)
-        res = np.linalg.norm(proj - cur, axis=1)
-        corr = np.linalg.norm(cur - fk_raw, axis=1)
-        if verbose:
-            print(f'  [{gender}/{group}] {len(v0)} verts: surface residual '
-                  f'mean={res.mean():.3f} p95={np.percentile(res, 95):.3f}; '
-                  f'FK correction mean={corr.mean():.2f} '
-                  f'p95={np.percentile(corr, 95):.2f} max={corr.max():.2f}')
+            cur = seed.copy()
+            for iters, smooth_n, step in _FIT_PHASES:
+                for _ in range(iters):
+                    vn = _vertex_normals(cur, tris, wg, n_g)
+                    tgt = _project_points(cur, vn, sk_v, sk_t, sk_tree,
+                                          sk_tri_n)
+                    delta_g = _group_mean(tgt - cur, wg, n_g)
+                    delta_g = _smooth_group_field(delta_g, nbr_idx, nbr_ptr,
+                                                  smooth_n)
+                    cur = cur + step * delta_g[wg]
+
+            # residual: how exactly the fitted body sits on the SK surface
+            vn = _vertex_normals(cur, tris, wg, n_g)
+            proj = _project_points(cur, vn, sk_v, sk_t, sk_tree, sk_tri_n)
+            res = np.linalg.norm(proj - cur, axis=1)
+            corr = np.linalg.norm(cur - fk_raw, axis=1)
+            if verbose:
+                print(f'  [{gender}/{group}/_{wt}] {len(v0)} verts: surface '
+                      f'residual mean={res.mean():.3f} '
+                      f'p95={np.percentile(res, 95):.3f}; '
+                      f'FK correction mean={corr.mean():.2f} '
+                      f'p95={np.percentile(corr, 95):.2f} max={corr.max():.2f}')
+            all_dst[wt].append(cur)
 
         # per-vertex bone centroid (region gate for candidate matching)
         bc = np.zeros_like(v0)
@@ -535,7 +601,6 @@ def build_field(gender: str, verbose: bool = True) -> bool:
 
         all_src.append(v0)
         all_fkp.append(fk_raw)
-        all_dst.append(cur)
         all_tris.append(tris + offset)
         all_bc.append(bc)
         # part id per vertex: clearance is only ENFORCED against the body
@@ -551,7 +616,8 @@ def build_field(gender: str, verbose: bool = True) -> bool:
         out,
         src=np.vstack(all_src).astype(np.float32),
         fkp=np.vstack(all_fkp).astype(np.float32),
-        dst=np.vstack(all_dst).astype(np.float32),
+        dst0=np.vstack(all_dst[0]).astype(np.float32),
+        dst1=np.vstack(all_dst[1]).astype(np.float32),
         tris=np.vstack(all_tris).astype(np.int32),
         vert_bc=np.vstack(all_bc).astype(np.float32),
         part=np.concatenate(all_part))
@@ -579,15 +645,19 @@ def build_all_fields(verbose: bool = True) -> int:
 # ---------------------------------------------------------------------------
 
 class WrapField:
-    """Loaded wrap field: FK-posed body surface + smoothed correction field."""
+    """Loaded wrap field: FK-posed body surface + smoothed correction fields.
+
+    Weight-indexed members (lists [w0, w1]) carry the _0 (thin) and _1
+    (heavy) Skyrim body targets; everything Oblivion-side is single."""
 
     def __init__(self, z):
         from scipy.spatial import cKDTree
         self.src = z['src'].astype(np.float64)     # T-pose verts (metrics)
         fkp = z['fkp'].astype(np.float64)
-        self.dst = z['dst'].astype(np.float64)     # fitted verts (metrics)
+        dst_w = [z['dst0'].astype(np.float64), z['dst1'].astype(np.float64)]
         tris = z['tris'].astype(np.int64)
         vert_bc = z['vert_bc'].astype(np.float64)
+        part = z['part'].astype(np.int64)
 
         # Smooth the correction field over the body graph: the fit's residual
         # high-frequency noise (tangential bunching, per-triangle projection
@@ -598,10 +668,12 @@ class WrapField:
         wg = weld_groups(fkp)
         n_g = int(wg.max()) + 1
         nbr_idx, nbr_ptr = _build_adjacency(tris, wg, n_g)
-        delta_g = _group_mean(self.dst - fkp, wg, n_g)
-        delta_g = _smooth_group_field(delta_g, nbr_idx, nbr_ptr,
-                                      DELTA_SMOOTH_PASSES)
-        self.delta = delta_g[wg]                   # (N,3) per body vertex
+        self.delta = []
+        for dst in dst_w:
+            delta_g = _group_mean(dst - fkp, wg, n_g)
+            delta_g = _smooth_group_field(delta_g, nbr_idx, nbr_ptr,
+                                          DELTA_SMOOTH_PASSES)
+            self.delta.append(delta_g[wg])         # (N,3) per body vertex
 
         # drop degenerate triangles (zero area in FK pose)
         n = np.cross(fkp[tris[:, 1]] - fkp[tris[:, 0]],
@@ -621,26 +693,28 @@ class WrapField:
             ln = np.linalg.norm(tn, axis=1, keepdims=True)
             return tn / np.maximum(ln, 1e-12)
         self.src_tri_n = _tri_normals(self.src)
-        self.dst_tri_n = _tri_normals(self.dst)
         self.src_tree = cKDTree(self.src[self.tris].mean(axis=1))
-        self.dst_tree = cKDTree(self.dst[self.tris].mean(axis=1))
+        self.dst = dst_w
+        self.dst_tri_n = [_tri_normals(d) for d in dst_w]
+        self.dst_tree = [cKDTree(d[self.tris].mean(axis=1)) for d in dst_w]
 
         # Per-triangle fit reliability: 1 where the fitted surface is locally
-        # near-isometric to the authored body, ~0 where the fit bunched
-        # (fingers, seam rings).  Clearance enforcement only trusts the
-        # fitted surface where this is high.
+        # near-isometric to the authored body, low where the fit bunched
+        # (fingers, seam rings).  Floored at REL_FLOOR on the body so
+        # enforcement never fully dies at the wrist/neck seam rings (shirt
+        # cuff + collar clipping); hand/foot triangles are hard-masked to 0
+        # (gauntlets/boots replace them and their fit is untrustworthy).
         e = np.vstack([self.tris[:, [0, 1]], self.tris[:, [1, 2]],
                        self.tris[:, [0, 2]]])
         l0 = np.linalg.norm(self.src[e[:, 0]] - self.src[e[:, 1]], axis=1)
-        l1 = np.linalg.norm(self.dst[e[:, 0]] - self.dst[e[:, 1]], axis=1)
-        stretch = np.abs(l1 / np.maximum(l0, 0.05) - 1.0)
-        tri_stretch = stretch.reshape(3, -1).mean(axis=0)
-        self.tri_rel = np.exp(-(tri_stretch / 0.25) ** 2)
-        # only the body part is enforced (see build_field); old field files
-        # without 'part' enforce everywhere
-        if 'part' in z:
-            part = z['part'].astype(np.int64)
-            self.tri_rel = self.tri_rel * (part[self.tris].max(axis=1) == 0)
+        body_tri = part[self.tris].max(axis=1) == 0
+        self.tri_rel = []
+        for dst in dst_w:
+            l1 = np.linalg.norm(dst[e[:, 0]] - dst[e[:, 1]], axis=1)
+            stretch = np.abs(l1 / np.maximum(l0, 0.05) - 1.0)
+            tri_stretch = stretch.reshape(3, -1).mean(axis=0)
+            rel = np.maximum(np.exp(-(tri_stretch / 0.25) ** 2), REL_FLOOR)
+            self.tri_rel.append(rel * body_tri)
 
 
 def _field_path(female: bool) -> Path:
@@ -676,7 +750,7 @@ def wrap_available(src_path: str) -> bool:
 # Runtime application
 # ---------------------------------------------------------------------------
 
-def _field_corrections(field, pts, abc):
+def _field_corrections(field, pts, abc, weight=0):
     """Blended correction vectors for points (P,3) in FK-posed space.
 
     For each point: K nearest body triangles, per-candidate correction =
@@ -715,9 +789,10 @@ def _field_corrections(field, pts, abc):
     tot = np.maximum(bu + bv + bw, 1e-12)
     bu, bv, bw = bu / tot, bv / tot, bw / tot
 
-    delta_cp = (bu[..., None] * field.delta[t[..., 0]]
-                + bv[..., None] * field.delta[t[..., 1]]
-                + bw[..., None] * field.delta[t[..., 2]])        # (P,K,3)
+    delta = field.delta[weight]
+    delta_cp = (bu[..., None] * delta[t[..., 0]]
+                + bv[..., None] * delta[t[..., 1]]
+                + bw[..., None] * delta[t[..., 2]])              # (P,K,3)
 
     d_best = d.min(axis=1)
     sig_d = 0.8 + 0.30 * d_best
@@ -735,7 +810,8 @@ def _field_corrections(field, pts, abc):
     return (w[:, :, None] * delta_cp).sum(axis=1)
 
 
-def _blended_clearance(field, pts, verts_surf, tri_normals, tree, k=12):
+def _blended_clearance(field, pts, verts_surf, tri_normals, tree,
+                       tri_rel=None, k=12):
     """Smooth signed clearance of pts against a body surface, plus the
     blended outward normal.  Gaussian blend over nearby triangles so the
     result is a smooth field (safe to use for pushing vertices)."""
@@ -760,17 +836,40 @@ def _blended_clearance(field, pts, verts_surf, tri_normals, tree, k=12):
     n_out = (w[:, :, None] * tri_normals[tri]).sum(axis=1)
     ln = np.linalg.norm(n_out, axis=1, keepdims=True)
     n_out /= np.maximum(ln, 1e-12)
-    rel_out = (w * field.tri_rel[tri]).sum(axis=1)
+    if tri_rel is None:
+        rel_out = None
+    else:
+        # zero-rel triangles (hand/foot parts) ABSTAIN from the reliability
+        # vote instead of vetoing it: a sleeve cuff whose neighbourhood is
+        # half forearm / half hand must keep the forearm's reliability, or
+        # wrist clearance enforcement dies exactly where cuffs clip.  BUT
+        # only triangles near the closest surface may vote (d_best + 2):
+        # otherwise boot-shaft verts hugging the (abstaining) foot inherit
+        # reliability from calf triangles 8+ units away and get pushed
+        # around by an estimate that has nothing to do with their surface.
+        # Verts with no nearby voting triangles get 0 (protected).
+        r = tri_rel[tri]
+        voting = w * (r > 0.0) * (d <= (d_best + 2.0)[:, None])
+        vsum = voting.sum(axis=1)
+        rel_out = (voting * r).sum(axis=1) / np.maximum(vsum, 1e-12)
+        rel_out[vsum < 1e-12] = 0.0
     return c_out, n_out, rel_out
 
 
-def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool) -> int:
+def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool,
+                      weight: int = 0) -> int:
     """FK deform + exact body-fit correction for all non-PRN skinned geoms.
 
     Drop-in replacement for skin_retarget's FK Phase B: runs the standard FK
     animation deform first (smooth base), then cancels its measured error
-    against the Skyrim body via the wrap correction field.  Returns the
-    number of geometries corrected (0 = caller should run plain FK)."""
+    against the Skyrim body via the wrap correction field.  `weight` selects
+    the _0 (thin) or _1 (heavy) Skyrim body target.
+
+    ALL blocks are solved as ONE system — a single cross-block weld, one
+    correction query, one deficit diffusion graph.  Per-block solving split
+    armor seams (cuirass/pauldron boundary verts got different corrections
+    and visibly came apart).  Returns the number of geometries corrected
+    (0 = caller should run plain FK)."""
     from .skin_retarget import (_deform_vertices_animation_fk,
                                 _load_animation_deltas, _load_skeleton,
                                 _SKEL_OBLIVION, _m44_to_np)
@@ -784,9 +883,7 @@ def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool) -> int:
         if is_prn or block.data is None or block.data.num_vertices == 0:
             continue
         try:
-            G = None
-            from .skin_retarget import _m44_to_np as _m44
-            G = _m44(block.get_transform(skel_root))
+            G = _m44_to_np(block.get_transform(skel_root))
         except (ValueError, RuntimeError):
             G = np.eye(4)
         v = np.array([[p.x, p.y, p.z] for p in block.data.vertices],
@@ -799,15 +896,22 @@ def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool) -> int:
 
     ob_skel = _load_skeleton(_SKEL_OBLIVION)
 
-    count = 0
+    # ---- gather every eligible block into one concatenated system --------
+    metas = []          # (block, G_id, G, start, nv)
+    vw_parts, pre_parts, abc_parts, hf_parts, tri_parts = [], [], [], [], []
+    off = 0
     for block, is_prn, _prn_bone in skinned_geoms:
         if is_prn:
             continue
         geom_data = block.data
         skin = block.skin_instance
-        if geom_data is None or skin.data is None or geom_data.num_vertices == 0:
+        if (geom_data is None or skin.data is None
+                or geom_data.num_vertices == 0):
             continue
+        v0 = pre_fk.get(id(block))
         nv = geom_data.num_vertices
+        if v0 is None or len(v0) != nv:
+            continue
 
         try:
             G = _m44_to_np(block.get_transform(skel_root))
@@ -819,11 +923,13 @@ def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool) -> int:
                          dtype=np.float64)
         vw = verts if G_id else verts @ G[:3, :3] + G[3, :3]
 
-        # per-vertex skin-weight bone centroid (region gate), welded so
-        # UV-seam twins (which can carry different weights) agree exactly
+        # per-vertex skin-weight bone centroid (region gate) + head-gear
+        # weight fraction (helmets: the field has no head surface, so
+        # head-weighted verts keep the plain FK result)
         bones_w = _geom_bone_weights(block)
         abc = np.zeros((nv, 3), dtype=np.float64)
         absum = np.zeros(nv)
+        head_w = np.zeros(nv)
         for bone, (idx, w) in bones_w.items():
             if bone not in ob_skel:
                 continue
@@ -831,58 +937,98 @@ def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool) -> int:
             valid = (idx < nv) & (w > 1e-6)
             np.add.at(abc, idx[valid], np.outer(w[valid], head))
             np.add.at(absum, idx[valid], w[valid])
+            if bone in HEAD_BONES:
+                np.add.at(head_w, idx[valid], w[valid])
         has = absum > 1e-6
         abc[has] /= absum[has][:, None]
         abc[~has] = vw[~has]
+        # head-gear gating is a PER-GEOMETRY decision: a helmet (majority
+        # head-weighted) keeps plain FK everywhere, but a shirt whose collar
+        # verts carry partial head weights (authored for neck-turn deform)
+        # must NOT lose correction/enforcement exactly at the collar
+        hw_total = float(head_w.sum())
+        ab_total = float(absum.sum())
+        geom_is_head = ab_total > 1e-6 and hw_total / ab_total > 0.5
+        hf = np.full(nv, 1.0 if geom_is_head else 0.0)
 
-        wg = weld_groups(vw)
-        n_g = int(wg.max()) + 1
-        abc = _group_mean(abc, wg, n_g)[wg]
+        metas.append((block, G_id, G, off, nv))
+        vw_parts.append(vw)
+        pre_parts.append(v0)
+        abc_parts.append(abc)
+        hf_parts.append(hf)
+        tri_parts.append(_geom_triangles(block) + off)
+        off += nv
 
-        corr = _field_corrections(field, vw, abc)
-        new_w = vw + corr
+    if not metas:
+        return 0
 
-        # --- minimum-clearance enforcement -------------------------------
-        # authored clearance (T-pose vert vs OB body) must be preserved,
-        # plus an outward safety margin near the body: residual field noise
-        # must never leave armor under the Skyrim body skin.  The deficit is
-        # DIFFUSED over the armor mesh graph before pushing: per-vertex
-        # estimator noise cancels against neighbouring slack, while genuine
-        # deficit regions (many adjacent verts short of clearance) survive
-        # and get pushed out coherently.
-        v0 = pre_fk.get(id(block))
-        if v0 is not None and len(v0) == nv:
-            c0, _n0, _r0 = _blended_clearance(field, v0, field.src,
-                                              field.src_tri_n, field.src_tree)
-            c1, n1, rel1 = _blended_clearance(field, new_w, field.dst,
-                                              field.dst_tri_n, field.dst_tree)
-            margin = CLEAR_MARGIN * np.exp(
-                -(np.maximum(c0, 0.0) / CLEAR_MARGIN_RANGE) ** 2)
-            prox = np.exp(-(np.maximum(c0, 0.0) / CLEAR_PROX) ** 2)
-            deficit = ((c0 + margin) - c1) * prox * rel1
-            inner = c0 < CLEAR_MIN_C0     # authored inside — never pushed
-            deficit[inner] = 0.0
-            arm_tris = _geom_triangles(block)
-            if len(arm_tris):
-                a_idx, a_ptr = _build_adjacency(arm_tris, wg, n_g)
-                deficit_g = _group_mean(deficit[:, None], wg, n_g)
-                deficit_g = _smooth_group_field(deficit_g, a_idx, a_ptr,
-                                                PUSH_SMOOTH_PASSES)
-                deficit = deficit_g[wg][:, 0]
-            push = np.clip(deficit, 0.0, PUSH_CAP)
-            push[inner] = 0.0
-            new_w = new_w + n1 * push[:, None]
+    VW = np.vstack(vw_parts)
+    PRE = np.vstack(pre_parts)
+    ABC = np.vstack(abc_parts)
+    HF = np.concatenate(hf_parts)
+    TRIS = np.vstack(tri_parts) if tri_parts else np.zeros((0, 3), np.int64)
 
-        # weld final positions (coincident twins must stay coincident)
-        new_w = _group_mean(new_w, wg, n_g)[wg]
+    # single cross-block weld: seam twins across blocks (pauldron/torso)
+    # must receive identical output positions
+    wg = weld_groups(VW)
+    n_g = int(wg.max()) + 1
+    ABC = _group_mean(ABC, wg, n_g)[wg]
+    HF = _group_mean(HF[:, None], wg, n_g)[wg][:, 0]
 
-        out = new_w if G_id else (new_w - G[3, :3]) @ np.linalg.inv(G[:3, :3])
+    corr = _field_corrections(field, VW, ABC, weight)
+    corr = corr * (1.0 - HF)[:, None]
+    new_w = VW + corr
+
+    # --- minimum-clearance enforcement ------------------------------------
+    # authored clearance (T-pose vert vs OB body) must be preserved, plus an
+    # outward safety margin near the body: residual field noise must never
+    # leave armor under the Skyrim body skin.  The deficit is DIFFUSED over
+    # the (global) armor mesh graph before pushing: per-vertex estimator
+    # noise cancels against neighbouring slack, while genuine deficit
+    # regions survive and get pushed out coherently.
+    c0, _n0, _r0 = _blended_clearance(field, PRE, field.src,
+                                      field.src_tri_n, field.src_tree,
+                                      k=CLEAR_K)
+    # outward margin fades with authored clearance in BOTH directions:
+    # far-off verts (hoods, hems) get none, and verts authored inside the
+    # body (collar necklines) get none either — but their authored depth is
+    # still enforced (target = c0), so a sinking collar gets pushed back.
+    margin = CLEAR_MARGIN * np.exp(
+        -(np.maximum(c0, 0.0) / CLEAR_MARGIN_RANGE) ** 2) * np.exp(
+        -(np.minimum(c0, 0.0) / CLEAR_INNER_FADE) ** 2)
+    prox = np.exp(-(np.maximum(c0, 0.0) / CLEAR_PROX) ** 2)
+    a_idx = a_ptr = None
+    if len(TRIS):
+        a_idx, a_ptr = _build_adjacency(TRIS, wg, n_g)
+    for _ in range(PUSH_ITERS):
+        c1, n1, rel1 = _blended_clearance(field, new_w, field.dst[weight],
+                                          field.dst_tri_n[weight],
+                                          field.dst_tree[weight],
+                                          field.tri_rel[weight], k=CLEAR_K)
+        raw = ((c0 + margin) - c1) * prox * rel1 * (1.0 - HF)
+        deficit = raw
+        if a_idx is not None:
+            deficit_g = _group_mean(raw[:, None], wg, n_g)
+            deficit_g = _smooth_group_field(deficit_g, a_idx, a_ptr,
+                                            PUSH_SMOOTH_PASSES)
+            # diffusion cancels per-vertex noise but also dilutes genuine
+            # isolated deficits (collar rings) — keep a floor of the raw
+            deficit = np.maximum(deficit_g[wg][:, 0], PUSH_RAW_KEEP * raw)
+        push = np.clip(deficit, 0.0, PUSH_CAP)
+        new_w = new_w + n1 * push[:, None]
+
+    # weld final positions (coincident twins must stay coincident)
+    new_w = _group_mean(new_w, wg, n_g)[wg]
+
+    for block, G_id, G, start, nv in metas:
+        seg = new_w[start:start + nv]
+        out = seg if G_id else (seg - G[3, :3]) @ np.linalg.inv(G[:3, :3])
+        geom_data = block.data
         for vi in range(nv):
             geom_data.vertices[vi].x = float(out[vi, 0])
             geom_data.vertices[vi].y = float(out[vi, 1])
             geom_data.vertices[vi].z = float(out[vi, 2])
-        count += 1
-    return count
+    return len(metas)
 
 
 # ---------------------------------------------------------------------------

@@ -2711,7 +2711,8 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
         _piece_type = _get_armor_piece_type(src_path)
 
         _prn_block_ids: set = set()
-        _retarget(data, src_path=src_path, prn_out=_prn_block_ids)
+        _retarget(data, src_path=src_path, prn_out=_prn_block_ids,
+                  weight=weight)
 
         # NOW rename bones to Skyrim names — AFTER skin transforms are correct.
         stats['bones_remapped'] += _remap_bone_names(data)
@@ -2732,8 +2733,12 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
         # When the surface-wrap field is active the fit is already exact, so
         # the FK-drift compensation offsets must NOT be applied (they would
         # push armor off the body they were tuned to approximate).
+        # EXCEPTION: helmets/hoods.  The wrap field has no head surface, so
+        # body_wrap leaves head-weighted verts at the plain FK result
+        # (HEAD_BONES gating) — skinned head gear still needs the FK-tuned
+        # helmet offset or it sits inside the middle of the head.
         from .body_wrap import wrap_available as _wrap_available
-        if not _wrap_available(src_path):
+        if not _wrap_available(src_path) or _piece_type == 'helmet':
             _cfg = ARMOR_PIECE_OFFSETS.get(_piece_type, ARMOR_PIECE_OFFSETS['default'])
             apply_armor_offset(data, _cfg, exclude_block_ids=_prn_block_ids)
         if _prn_block_ids:
@@ -2744,10 +2749,8 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
     # Splice Skyrim body geometry AFTER retarget + bone rename so that bone
     # NiNodes in the armor NIF already have Skyrim names to match against.
     if _body_nibs_to_splice:
-        # For weight=1: morph armor vertices to follow body_1 shape BEFORE splice
-        if weight == 1:
-            from .skin_replacement import morph_armor_to_weight1
-            morph_armor_to_weight1(data, _body_nibs_to_splice)
+        # weight=1 armor verts were already morphed by the wrap field's dst1
+        # target during retarget; the splice just picks the matching _1 body.
         splice_body_geometry(data, _body_nibs_to_splice, weight=weight)
 
     # Bow bend rig: graft the vanilla 7-bone rig + BGED onto converted bows
@@ -3031,6 +3034,44 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         os.makedirs(dst_dir, exist_ok=True)
     with open(dst_path, 'wb') as f:
         f.write(buf.getvalue())
+
+    # Biped wearables get vanilla-style _0/_1 weight-slider variants: the
+    # ARMA records reference <name>_1.nif with the weight slider enabled and
+    # the engine morphs between the pair.  The primary conversion above is
+    # weight 0; a second pass converts against the _1 (heavy) body targets.
+    # Weight-insensitive pieces (PRN helmets/shields) simply produce two
+    # identical files, which the engine handles fine.
+    _srcl = str(src_path).lower().replace('\\', '/')
+    _wearable = (not creature and not _srcl.endswith('_gnd.nif')
+                 and ('armor' in _srcl or 'clothes' in _srcl))
+    if _wearable:
+        _root, _ext = os.path.splitext(str(dst_path))
+        with open(_root + '_0' + _ext, 'wb') as f:
+            f.write(buf.getvalue())
+        w1_bytes = None
+        try:
+            data1 = NifFormat.Data()
+            with open(src_path, 'rb') as f:
+                data1.inspect(f)
+                data1.read(f)
+            _convert_nif(data1, fix_textures=fix_textures,
+                         src_path=str(src_path), weight=1)
+            if _TANGENT_SPELL:
+                try:
+                    toaster = _NifToaster()
+                    spell = _SpellAddTangentSpace(data=data1, toaster=toaster)
+                    spell.recurse()
+                except Exception:
+                    pass
+            buf1 = _io.BytesIO()
+            data1.write(buf1)
+            w1_bytes = buf1.getvalue()
+        except Exception:
+            w1_bytes = None
+        # weight-1 failure must not leave a dangling _1 reference — fall
+        # back to the weight-0 mesh so the ARMA path always resolves
+        with open(_root + '_1' + _ext, 'wb') as f:
+            f.write(w1_bytes if w1_bytes is not None else buf.getvalue())
 
     result['converted'] = True
     result['strips_fixed'] = stats['strips_fixed'] > 0

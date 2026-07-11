@@ -2,7 +2,6 @@ Gameplan:
 	Fix Books M2
 	Fix Arrows. Should also use proper projectile. M16
 	Fix helmets showing back of head M5
-	Add _1 body type M5
 	Make skyrim body mesh work M5
 	Move External L13
 	Fix app design M12
@@ -16,9 +15,13 @@ Gameplan:
 
 	Fable:
 
-	A few issues. 1) Some edges are coming apart with a discontinuity. That should never happen. For example the shoulders on the iron cuirass. The distortion ingame is completely unnoticeable currently, so you can allow a bit more to prevent discontinuities.
-	In addition to that, there is still some clipping around the wrists for some shirts, and around the color for a lot of women's clothing. 2) Helmets (both skinned and the prn) have the back of the head clipping through the mesh quite significantly. The whole head should be inside the helmet.
-	3) I need you to generate the _1 variant of armor that is used for body morphs (see vanilla skyrim) the same technique should be able to accomplish that. 4) is the FK code necessary to keep at all? The current body wrap code produces superior results in every way. If not remove all of its dead code
+	A few issues.
+	1) Some edges are coming apart with a minor discontinuity. That should never happen. For example the shoulder seam below the pauldrons on the male iron cuirass. The distortion ingame is completely unnoticeable currently, so you can definitely allow a bit more leeway in order to prevent discontinuities and clipping.
+	In addition to that, there is still some clipping around the wrists for some shirts (for example middleclass\04\m\shirt.nif"), and around the collar for a lot of shirts (for example "\clothes\middleclass\01\f\shirt.nif") even after raising CLEAR_MARGIN to 1. We can always raise clear_margin more but I want to make sure it's the right lever.
+	2) Helmets (the prn variety like the iron helm) have the back of the head clipping through the mesh quite significantly. The whole head should be inside the helmet. The skinned variant (like the guard helm) is too low and situated inside the middle of the head instead of sitting on top. I know there is some helmet specific code that may be to blame.
+	3) I need you to generate the _0 and _1 variants of armor that is used for body morphs (see vanilla skyrim) the same technique you are doing in body_wrap should be able to accomplish that. I believe what you are currently doing is equivalent to the _0 armor
+	4) is the FK code necessary to keep at all? It seems like it's just a fallback. The current body wrap code produces superior results in every way. If it's not necessary for your great results, remove all of it as dead code. If it is necessary, just add a comment explaining why.
+	Don't spend too much time on one thing fiddling with values trying to get it perfect. You used up half of my tokens doing that last time when the first attempt was already really good! I will come back to you if I have any issues.
 
 	There is a modify_body_meshes script that is intended to modify the skyrim body to allow it to properly equip greaves without making body parts invisible. However, with the current meshes it produces, if nothing is equipped, that part of the body is completely invisible.
 	Find and fix the problem. Additionally, since that creates a new slot, add a script that will take a skyrim esm as input and patch its body items to use both the original body slot as well as the new slot we are creating.
@@ -49,8 +52,6 @@ Major Issues for V1:
 				uppergobletceramic01.nif
 
 	5 - Remaining armor bugs:
-		Guard Helmet a bit incorrect. Back of the head is showing through helmet, but front looks good.
-		Add _1 body type
 		Need new skyrim body mesh to actually work to allow leg skin to appear
 
 	6 - Nif converter fix broken conversion
@@ -100,13 +101,6 @@ Later Issues:
 
 	7 - Refine Clothing/Armor conversion
 		Shields attach don't attach perfectly
-		Update existing path:
-			Should maybe have another option just for armor pieces with lower arm so long sleeves don't misalign (the lower half of the arms needs to be moved forward slightly)
-			lowerclass shirt 7 completely messed up (stretched wide)
-			lowerclass female shirt 3 has a gap all along the center
-			Inward pull broken for shoes
-		or
-			Refined process that morphs to Skryim body (see wip-armor-fitting)
 	
 	10 - Properly document all tools
 

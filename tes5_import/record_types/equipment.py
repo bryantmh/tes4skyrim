@@ -329,23 +329,31 @@ def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
     # DNAM — ARMA-specific data (12 bytes)
     # Priority M(U8) + Priority F(U8) + WeightSlider M(U8) + WeightSlider F(U8)
     # + pad(2) + DetectionSoundValue(U8) + pad(U8) + WeaponAdjust(float)
-    # Weight slider: 0=disabled (Oblivion meshes lack a _0/_1 weight morph pair)
+    # Weight slider: 0x02=enabled (vanilla convention) — the mesh converter
+    # emits _0/_1 weight-morph variants for every biped wearable NIF (the
+    # body-wrap field is fitted against both malebody_0 and malebody_1).
     # Priority: 10 matches vanilla Skyrim iron armor
-    dnam = struct.pack('<BBBBHBBf', 10, 10, 0, 0, 0, 0, 0, 0.0)
+    dnam = struct.pack('<BBBBHBBf', 10, 10, 2, 2, 0, 0, 0, 0.0)
     subs += pack_subrecord('DNAM', dnam)
+
+    # Biped model paths use the vanilla weight-slider convention: the record
+    # stores <name>_1.nif and the engine swaps _1/_0 by actor weight.
+    def _weighted(path: str) -> str:
+        p = _prefix_path(path)
+        return p[:-4] + '_1.nif' if p.lower().endswith('.nif') else p
 
     # MOD2 — Male biped model (the actual worn mesh)
     male_model = get_str(rec, 'Male.BipedModel.MODL')
     if male_model:
-        subs += pack_string_subrecord('MOD2', _prefix_path(male_model))
+        subs += pack_string_subrecord('MOD2', _weighted(male_model))
 
     # MOD3 — Female biped model
     female_model = get_str(rec, 'Female.BipedModel.MODL')
     if female_model:
-        subs += pack_string_subrecord('MOD3', _prefix_path(female_model))
+        subs += pack_string_subrecord('MOD3', _weighted(female_model))
     elif male_model:
         # Fall back to male model for female
-        subs += pack_string_subrecord('MOD3', _prefix_path(male_model))
+        subs += pack_string_subrecord('MOD3', _weighted(male_model))
 
     # MODL[] — Additional Races that can equip this armor addon.
     # Per TES5 record definition: MODL (Additional Races) comes BEFORE SNDD.

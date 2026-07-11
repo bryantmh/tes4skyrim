@@ -669,11 +669,12 @@ class TestEdgeLengthPreservation:
         assert total_edges > 100, f"Too few edges checked: {total_edges}"
         fail_pct = bad_edges / total_edges * 100
         # Body-wrap fit (2026-07-10): armor is reshaped onto the actual Skyrim
-        # body (clearance-exact, +0.5 margin), so a chunk of edges legitimately
+        # body (clearance-exact, +1.0 margin per user request — clipping is
+        # far more visible than distortion), so a chunk of edges legitimately
         # stretch >15% — that is the garment resizing to the new body, not
-        # mesh damage.  Iron cuirass measures ~16.6%; the explosion guard is
+        # mesh damage.  Iron cuirass measures ~25%; the explosion guard is
         # the max-displacement assertion in TestVertexDeformation.
-        assert fail_pct < 20.0, \
+        assert fail_pct < 30.0, \
             f"{bad_edges}/{total_edges} ({fail_pct:.1f}%) edges exceed {self.EDGE_TOL*100:.0f}% tolerance\n" \
             f"Worst: {worst_info} (ratio={worst_ratio:.3f})"
 
@@ -718,8 +719,10 @@ class TestEdgeLengthPreservation:
 
         assert total_edges > 100, f"Too few edges checked: {total_edges}"
         fail_pct = bad_edges / total_edges * 100
-        # Boots should have < 5% bad edges (minimal deformation)
-        assert fail_pct < 5.0, \
+        # Body-wrap clearance enforcement (+1.0 margin, user-requested
+        # aggressiveness) legitimately expands the snug boot shaft; the
+        # explosion guard is the max-displacement assertion elsewhere.
+        assert fail_pct < 35.0, \
             f"Boots: {bad_edges}/{total_edges} ({fail_pct:.1f}%) edges exceed 10% tolerance"
 
 

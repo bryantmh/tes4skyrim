@@ -54,14 +54,6 @@ _SKIN_TEX_TO_BODY_NIF = [
     ('underwear', 'malebody_0.nif',  'femalebody_0.nif'),
 ]
 
-def morph_armor_to_weight1(data, skin_info: dict) -> None:
-    """Morph armor vertices toward body_1 shape for weight=1 variant.
-
-    Placeholder — full weight-morph implementation pending.
-    """
-    pass
-
-
 def _forward_skin_verts(block) -> list | None:
     """Return world-space vertex positions of a body-skin block.
 
@@ -808,6 +800,11 @@ def splice_body_geometry(data, skin_info: dict, weight: int = 0) -> int:
     for nif_name, info in sorted(skin_info.items()):
         keep_bones = info['bones']
         sections = info.get('sections', [])
+
+        # skin_info keys are the _0 body NIFs; weight=1 splices the heavy
+        # weight-slider variant instead (armor verts were wrap-morphed to it)
+        if weight == 1:
+            nif_name = nif_name.replace('_0.nif', '_1.nif')
 
         # Detect gender from body NIF name
         is_female = nif_name.lower().startswith('female')

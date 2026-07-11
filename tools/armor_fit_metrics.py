@@ -86,6 +86,9 @@ def main():
     ap.add_argument('--gender', choices=['male', 'female'], default=None,
                     help='default: from path (/f/ = female)')
     ap.add_argument('--edge-tol', type=float, default=0.15)
+    ap.add_argument('--weight', type=int, choices=[0, 1], default=0,
+                    help='which weight-slider body target the converted NIF '
+                         'was fitted to (_0 or _1)')
     args = ap.parse_args()
 
     female = (args.gender == 'female') if args.gender else \
@@ -99,7 +102,7 @@ def main():
 
     if field is not None:
         src_tree, src_tri_n = _surface(field.src, field.tris)
-        dst_tree, dst_tri_n = _surface(field.dst, field.tris)
+        dst_tree, dst_tri_n = _surface(field.dst[args.weight], field.tris)
 
     grand_edges = grand_bad = 0
     for name, src_list in sorted(src_blocks.items()):
@@ -143,8 +146,8 @@ def main():
             if field is not None:
                 c_src = _signed_clearance(sv, field.src, field.tris,
                                           src_tree, src_tri_n)
-                c_out = _signed_clearance(ov, field.dst, field.tris,
-                                          dst_tree, dst_tri_n)
+                c_out = _signed_clearance(ov, field.dst[args.weight],
+                                          field.tris, dst_tree, dst_tri_n)
                 dc = c_out - c_src
                 new_clip = (dc < -0.3) & (c_out < -0.1)
                 line += (f'clearance dmean={dc.mean():+5.2f} '
