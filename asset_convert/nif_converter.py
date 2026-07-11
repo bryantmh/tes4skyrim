@@ -2729,8 +2729,13 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
         # body-skin is stripped, so only true armor geometry is shifted.
         # PRN-attached rigid pieces get their own (near-zero) offsets — the
         # regular table compensates FK-retarget drift they never had.
-        _cfg = ARMOR_PIECE_OFFSETS.get(_piece_type, ARMOR_PIECE_OFFSETS['default'])
-        apply_armor_offset(data, _cfg, exclude_block_ids=_prn_block_ids)
+        # When the surface-wrap field is active the fit is already exact, so
+        # the FK-drift compensation offsets must NOT be applied (they would
+        # push armor off the body they were tuned to approximate).
+        from .body_wrap import wrap_available as _wrap_available
+        if not _wrap_available(src_path):
+            _cfg = ARMOR_PIECE_OFFSETS.get(_piece_type, ARMOR_PIECE_OFFSETS['default'])
+            apply_armor_offset(data, _cfg, exclude_block_ids=_prn_block_ids)
         if _prn_block_ids:
             _cfg_prn = ARMOR_PIECE_OFFSETS_PRN.get(
                 _piece_type, ARMOR_PIECE_OFFSETS_PRN['default'])

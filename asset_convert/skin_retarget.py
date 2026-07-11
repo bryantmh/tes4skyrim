@@ -1028,7 +1028,8 @@ def _deform_vertices_animation_fk(skinned_geoms, skel_root, bone_deltas):
 # Main retarget entry point
 # ---------------------------------------------------------------------------
 
-def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None) -> int:
+def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None,
+                            allow_wrap: bool = True) -> int:
     """Retarget skinned armor from Oblivion skeleton to Skyrim skeleton.
 
     Called BEFORE _remap_bone_names() — bones still have Oblivion names.
@@ -1112,14 +1113,31 @@ def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None
         except (ValueError, RuntimeError):
             pass
 
-    # --- Phase B.1: FK animation pre-deformation (BEFORE bone repositioning) ---
-    # Deform vertices ~90% of the way from OB T-pose toward SK rest pose using
-    # DQS with delta matrices from the animation corpus cache.
-    bone_deltas = _load_animation_deltas()
-    fk_applied = False
-    if bone_deltas:
-        _deform_vertices_animation_fk(skinned_geoms, skel_root, bone_deltas)
-        fk_applied = True
+    # --- Phase B: vertex deformation (BEFORE bone repositioning) ---
+    # Preferred: surface-relative wrap (exact fit onto the Skyrim body —
+    # preserves each vertex's authored clearance from the body surface).
+    # Fallback: FK animation DQS (~90% approximation) when no wrap field
+    # has been built for this gender.
+    # allow_wrap=False forces the FK path — used by body_wrap's own field
+    # build, which FK-poses the OB body meshes to seed correspondence (the
+    # wrap must never bootstrap from a previous wrap field).
+    wrapped = 0
+    if allow_wrap:
+        try:
+            from .body_wrap import get_field, deform_geoms_wrap
+            _wrap_field = get_field(female)
+            if _wrap_field is not None:
+                wrapped = deform_geoms_wrap(skinned_geoms, skel_root,
+                                            _wrap_field, female)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f'      [WRAP] wrap deform failed ({e}) — falling back to FK')
+            wrapped = 0
+    if not wrapped:
+        bone_deltas = _load_animation_deltas()
+        if bone_deltas:
+            _deform_vertices_animation_fk(skinned_geoms, skel_root, bone_deltas)
         # Phase B.1b: Z-scale correction
         # _apply_residual_corrections(skinned_geoms, skel_root,
         #                             old_bone_worlds, ob_skel, sk_skel,
