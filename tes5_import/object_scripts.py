@@ -38,6 +38,17 @@ SCRIPTABLE_TYPES = {
     'APPA', 'SLGM', 'SGST', 'SBSP',
 }
 
+# Output (TES5) signatures whose xEdit record definition actually lists a VMAD
+# subrecord.  Attaching a VMAD to any other record makes xEdit flag it as an
+# "unexpected (or out of order) subrecord" — e.g. ALCH/SLGM/STAT/AMMO have no
+# VMAD in the Skyrim def, so a converted object script is dropped for those.
+# Sourced from wbDefinitionsTES5.pas (records containing a plain `wbVMAD,`).
+VMAD_SUPPORTED_OUTPUT_TYPES = {
+    'ACTI', 'APPA', 'ARMO', 'BOOK', 'CONT', 'DOOR', 'EXPL', 'FLOR', 'FURN',
+    'INGR', 'KEYM', 'LIGH', 'MGEF', 'MISC', 'NPC_', 'RACE', 'TACT', 'TREE',
+    'WEAP',
+}
+
 # record FormID (int, output space) -> packed VMAD bytes.  Filled by
 # build_object_script_plan(); read by the record converters via get_object_vmad().
 _OBJECT_VMAD: dict[int, bytes] = {}
@@ -82,8 +93,16 @@ def build_object_script_plan(by_type: dict, xref, fid_to_edid: dict) -> int:
         scpt_by_fid[fid] = (rec.get('EditorID', ''), sctx,
                             xref.get_extends_class(fid))
 
+    from .constants import TYPE_MAP
+
     count = 0
     for sig in SCRIPTABLE_TYPES:
+        # Skip types whose Skyrim output record has no VMAD field in its def;
+        # binding a script there only produces an "unexpected subrecord" error
+        # (ALCH, SLGM, STAT, AMMO, and SGST→SCRL / SBSP→STAT map here).
+        out_sig = TYPE_MAP.get(sig, sig)
+        if out_sig not in VMAD_SUPPORTED_OUTPUT_TYPES:
+            continue
         for rec in by_type.get(sig, []):
             scri = rec.get('SCRI', '')
             if not scri or scri not in scpt_by_fid:

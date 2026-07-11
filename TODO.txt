@@ -43,7 +43,7 @@ Major Issues for V1:
 
 	7 - Add versioning
 
-	8 - Fix all CK and Xedit warnings
+	8 - Fix all CK warnings
 
 	9 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting
 

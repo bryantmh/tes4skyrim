@@ -269,17 +269,17 @@ def build_marker_locations(by_type: dict, writer) -> tuple:
         if name:
             subs += pack_string_subrecord('FULL', name)
 
+        # PNAM — parent location.  Vanilla nests every place inside the hold
+        # that contains it, which is what lets "Whiterun Hold" name the ground
+        # between its landmarks.  Per xEdit's LCTN def, PNAM precedes MNAM/RNAM.
+        parent = world_to_location.get(world_fid)
+        if parent:
+            subs += pack_formid_subrecord('PNAM', parent)
+
         # MNAM — "World Location Marker Ref".  This is the link the engine
         # follows to reveal the marker once the location is discovered.
         subs += pack_formid_subrecord('MNAM', marker_fid)
         subs += pack_float_subrecord('RNAM', DEFAULT_LOCATION_RADIUS)
-
-        # PNAM — parent location.  Vanilla nests every place inside the hold
-        # that contains it, which is what lets "Whiterun Hold" name the ground
-        # between its landmarks.
-        parent = world_to_location.get(world_fid)
-        if parent:
-            subs += pack_formid_subrecord('PNAM', parent)
 
         writer.add_record('LCTN', pack_record('LCTN', lctn_fid, 0, subs))
         count += 1
