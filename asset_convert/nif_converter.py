@@ -309,6 +309,104 @@ def _remap_prn(oblivion_prn: str, nif_filename: str) -> str:
     return skyrim_prn
 
 
+_SHIELD_ATTACH_T = None
+
+
+def _shield_attach_transform():
+    """4x4 mapping shield geometry from Oblivion attach space to Skyrim's.
+
+    Oblivion shields attach to 'Bip01 L ForearmTwist' (strapped across the
+    forearm, identity root transform); Skyrim attaches the NIF root to the
+    'SHIELD' bone (child of the left hand, at the grip).  To keep the shield
+    sitting on the arm EXACTLY as it did in Oblivion, we map between the two
+    attach frames through an anatomical hand frame built from the same three
+    landmarks on each skeleton (hand joint, middle-finger base, thumb base):
+
+        T = W_obForearmTwist @ F_ob^-1 @ F_sk @ W_SHIELD^-1
+
+    (row-vector convention, matching skeleton_bones_*.json).  Applying T as
+    the shield NIF's root transform reproduces the Oblivion placement
+    relative to the arm; validated against vanilla ironshield.nif — the
+    result lands on the Skyrim convention (face in XY plane, dome toward -Z,
+    grip near the origin) within a few units.
+
+    Returns a 4x4 numpy array (rotation rows 0-2, translation row 3), or
+    None if the skeleton JSONs are unavailable.
+    """
+    global _SHIELD_ATTACH_T
+    if _SHIELD_ATTACH_T is not None:
+        return _SHIELD_ATTACH_T
+
+    import json as _json
+    gen = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated')
+    try:
+        with open(os.path.join(gen, 'skeleton_bones_oblivion.json')) as f:
+            ob = {k: np.array(v, dtype=np.float64) for k, v in _json.load(f).items()}
+        with open(os.path.join(gen, 'skeleton_bones_skyrim_male.json')) as f:
+            sk = {k: np.array(v, dtype=np.float64) for k, v in _json.load(f).items()}
+
+        def _anat_hand_frame(hand, mid_base, thumb_base):
+            """Rows: [finger-dir, thumb-dir, cross, hand-origin] anatomy->world."""
+            h = hand[3, :3]
+            fdir = mid_base[3, :3] - h
+            fdir /= np.linalg.norm(fdir)
+            tdir = thumb_base[3, :3] - h
+            tdir = tdir - (tdir @ fdir) * fdir
+            tdir /= np.linalg.norm(tdir)
+            q = np.cross(fdir, tdir)
+            q /= np.linalg.norm(q)
+            F = np.eye(4)
+            F[0, :3] = fdir
+            F[1, :3] = tdir
+            F[2, :3] = q
+            F[3, :3] = h
+            return F
+
+        f_ob = _anat_hand_frame(ob['Bip01 L Hand'], ob['Bip01 L Finger2'],
+                                ob['Bip01 L Finger0'])
+        f_sk = _anat_hand_frame(sk['NPC L Hand [LHnd]'], sk['NPC L Finger20 [LF20]'],
+                                sk['NPC L Finger00 [LF00]'])
+        T = (ob['Bip01 L ForearmTwist'] @ np.linalg.inv(f_ob)
+             @ f_sk @ np.linalg.inv(sk['SHIELD']))
+
+        # Forearm-clearance correction.  T preserves the shield's pose
+        # relative to the OBLIVION forearm, but the Skyrim forearm leaves the
+        # hand at a different angle (~16° out of the strap plane, elbow at
+        # SHIELD-local z=+7.2 vs the shield back face at z≈+2) — the arm pokes
+        # through the shield.  Rotate about the grip (origin) so the mapped
+        # Oblivion forearm axis lands on the actual Skyrim forearm axis: the
+        # shield lies along the real arm, hand position unchanged.
+        w_s_inv = np.linalg.inv(sk['SHIELD'])[:3, :3]
+        d_ob = ob['Bip01 L Forearm'][3, :3] - ob['Bip01 L Hand'][3, :3]
+        d_ob /= np.linalg.norm(d_ob)
+        d_ob = d_ob @ (np.linalg.inv(f_ob) @ f_sk)[:3, :3] @ w_s_inv
+        d_ob /= np.linalg.norm(d_ob)
+        d_sk = sk['NPC L Forearm [LLar]'][3, :3] - sk['NPC L Hand [LHnd]'][3, :3]
+        d_sk /= np.linalg.norm(d_sk)
+        d_sk = d_sk @ w_s_inv
+        d_sk /= np.linalg.norm(d_sk)
+        axis = np.cross(d_ob, d_sk)
+        s = np.linalg.norm(axis)
+        if s > 1e-6:
+            axis /= s
+            c = float(np.clip(d_ob @ d_sk, -1.0, 1.0))
+            K = np.array([[0, -axis[2], axis[1]],
+                          [axis[2], 0, -axis[0]],
+                          [-axis[1], axis[0], 0]])
+            # Rodrigues in row-vector convention (v @ R): transpose of the
+            # standard column form.
+            r_fix = np.eye(3) + s * K.T + (1 - c) * (K.T @ K.T)
+            fix4 = np.eye(4)
+            fix4[:3, :3] = r_fix
+            T = T @ fix4
+
+        _SHIELD_ATTACH_T = T
+    except (OSError, KeyError, ValueError) as e:
+        print(f'  WARNING: shield attach transform unavailable ({e}); '
+              f'shield keeps Oblivion orientation')
+        _SHIELD_ATTACH_T = None
+    return _SHIELD_ATTACH_T
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -2381,58 +2479,28 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
                         fade.num_extra_data_list += 1
                         fade.extra_data_list.update_size()
                         fade.extra_data_list[fade.num_extra_data_list - 1] = inv
-                        # Shield orientation fix.
+                        # Shield placement: exact Oblivion-relative attachment.
                         #
-                        # Oblivion shields: face in XZ plane (Y is depth), face normal = -Y.
-                        #   Attachment bone (Bip01 L ForearmTwist) is at the forearm/wrist rim,
-                        #   so NIF origin (X=0) is at the forearm, and the shield face center
-                        #   is at roughly X≈21, Z≈0.
+                        # Oblivion straps the shield to 'Bip01 L ForearmTwist'
+                        # (identity root transform); Skyrim glues the NIF root
+                        # to the 'SHIELD' bone at the hand grip.  The transform
+                        # from _shield_attach_transform() maps between the two
+                        # attach frames through anatomically corresponding hand
+                        # frames of both skeletons, so the shield sits on the
+                        # forearm at the handle exactly as it did in Oblivion —
+                        # no per-mesh bbox heuristics.
                         #
-                        # Skyrim shields: face in XY plane (Z is depth), face normal = -Z.
-                        #   Attachment bone (SHIELD) is near the hand, positioned at face center.
-                        #   NIF origin should be at face center (vanilla convention).
-                        #
-                        # Rotation R = [[-1,0,0],[0,0,1],[0,1,0]] maps:
-                        #   X → -X  (width flipped, corrects 180° orientation)
-                        #   Y → +Z  (depth stays as depth; -Y face normal → -Z face normal ✓)
-                        #   Z → +Y  (height: Oblivion Z-up → Skyrim Y-up ✓)
-                        #
-                        # Translation: compute mesh bbox center in Oblivion local space,
-                        # apply R, then negate — this re-centers the face at the NIF origin
-                        # to match the Skyrim SHIELD bone attachment convention.
-                        #
-                        # Pass-6c below detects non-identity rotation and wraps geometry in
-                        # an inner NiNode (carrying both R and T), then zeros the BSFadeNode.
-                        _shield_verts = []
-                        def _collect_shield_verts(node, accum):
-                            if hasattr(node, 'data') and node.data is not None:
-                                d = node.data
-                                if hasattr(d, 'vertices') and d.vertices:
-                                    for _sv in d.vertices:
-                                        accum.append((_sv.x, _sv.y, _sv.z))
-                            if hasattr(node, 'children'):
-                                for _sc in node.children:
-                                    if _sc is not None:
-                                        _collect_shield_verts(_sc, accum)
-                        _collect_shield_verts(old_root, _shield_verts)
-                        if _shield_verts:
-                            _sv_arr = np.array(_shield_verts, dtype=np.float64)
-                            # Use bbox midpoint as face center estimate
-                            _cx = (_sv_arr[:, 0].min() + _sv_arr[:, 0].max()) * 0.5
-                            _cy = (_sv_arr[:, 1].min() + _sv_arr[:, 1].max()) * 0.5
-                            _cz = (_sv_arr[:, 2].min() + _sv_arr[:, 2].max()) * 0.5
-                            # R * center: new_x=-cx, new_y=cz, new_z=cy
-                            _tx = float( _cx)   # negate rotated center: -(-cx) = cx
-                            _ty = float(-_cz)   # -cz
-                            _tz = float(-_cy)   # -cy
-                        else:
-                            _tx, _ty, _tz = 0.0, 0.0, 0.0
-                        fade.rotation.m_11 = -1.0; fade.rotation.m_12 =  0.0; fade.rotation.m_13 = 0.0
-                        fade.rotation.m_21 =  0.0; fade.rotation.m_22 =  0.0; fade.rotation.m_23 = 1.0
-                        fade.rotation.m_31 =  0.0; fade.rotation.m_32 =  1.0; fade.rotation.m_33 = 0.0
-                        fade.translation.x = _tx
-                        fade.translation.y = _ty
-                        fade.translation.z = _tz
+                        # Pass-6c below detects non-identity rotation and wraps
+                        # geometry in an inner NiNode (carrying both R and T),
+                        # then zeros the BSFadeNode.
+                        _T = _shield_attach_transform()
+                        if _T is not None:
+                            fade.rotation.m_11 = float(_T[0, 0]); fade.rotation.m_12 = float(_T[0, 1]); fade.rotation.m_13 = float(_T[0, 2])
+                            fade.rotation.m_21 = float(_T[1, 0]); fade.rotation.m_22 = float(_T[1, 1]); fade.rotation.m_23 = float(_T[1, 2])
+                            fade.rotation.m_31 = float(_T[2, 0]); fade.rotation.m_32 = float(_T[2, 1]); fade.rotation.m_33 = float(_T[2, 2])
+                            fade.translation.x = float(_T[3, 0])
+                            fade.translation.y = float(_T[3, 1])
+                            fade.translation.z = float(_T[3, 2])
 
                     new_prn = NifFormat.NiStringExtraData()
                     new_prn.name = b'Prn'
@@ -2751,7 +2819,12 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
     if _body_nibs_to_splice:
         # always the _0 fill: the _1 variant is generated afterwards by
         # post-morphing the finished mesh (identical topology contract)
-        splice_body_geometry(data, _body_nibs_to_splice)
+        # Fill partitions get the piece's primary biped slot — the ARMA only
+        # renders partitions for slots it claims (a slot-44 pants ARMA culls
+        # a partition-32 fill, leaving invisible skin holes).
+        _fill_bp = {'greaves': 44, 'boots': 37, 'gauntlets': 33}.get(
+            _get_armor_piece_type(src_path), 32)
+        splice_body_geometry(data, _body_nibs_to_splice, fill_body_part=_fill_bp)
 
     # Bow bend rig: graft the vanilla 7-bone rig + BGED onto converted bows
     # so limbs bend and the string draws (BowProject.hkx animates the bones).

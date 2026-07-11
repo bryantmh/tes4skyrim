@@ -102,10 +102,10 @@ SBP_33_HANDS     = 33   # Hands (gloves, gauntlets inner)
 SBP_34_FOREARMS  = 34   # Forearms (gauntlets outer, vambraces)
 SBP_37_FEET      = 37   # Feet (boots)
 SBP_38_CALVES    = 38   # Calves / lower legs (boots)
-SBP_44_LOWERBODY = 44   # Upper legs / thighs (greaves).  Requires the character
-                         # body mesh to have a matching partition — see
-                         # tools/modify_body_meshes.py to add part-44 partitions
-                         # to malebody_0.nif / femalebody_0.nif.
+SBP_44_LOWERBODY = 44   # Lower body: hips + upper legs (greaves).  Requires the
+                         # character body mesh to have a matching partition
+                         # (asset_convert/modify_body_meshes.py) AND the wearing
+                         # ARMA to claim slot 44 (tools/patch_body_slots.py).
 SBP_130_HEAD     = 130  # Head skin (character's head mesh)
 SBP_131_HAIR     = 131  # Hair / headwear (helmets, hoods, circlets)
 

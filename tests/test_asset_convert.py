@@ -1219,17 +1219,21 @@ class TestShieldVsArmorClassification:
 
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
     def test_shield_orientation_corrected(self, tmp_path):
-        """Converted shield must have face in XY plane (Z thin) centered at origin.
+        """Converted shield must land in Skyrim SHIELD-bone space like vanilla.
 
-        Oblivion shields have face in XZ plane with grip at origin. Skyrim SHIELD
-        bone expects face in XY plane centered at the origin (matching vanilla
-        ironshield.nif: X ≈ ±21, Y ≈ ±22, Z ≈ ±6).
+        The root transform comes from _shield_attach_transform(): an exact
+        mapping from the Oblivion attach frame (Bip01 L ForearmTwist) to the
+        Skyrim SHIELD bone frame via anatomically corresponding hand frames.
+        Result contract (matches vanilla ironshield.nif: X ≈ ±21, Y ≈ ±22,
+        Z ∈ [-8.5, +2]): face in the XY plane (Z thin), dome toward -Z, grip
+        region near the origin.
         """
         import time
         if not hasattr(time, '_original_clock'):
             time.clock = time.perf_counter
         from pyffi.formats.nif import NifFormat as NF
         import numpy as np
+        from asset_convert.nif_converter import _shield_attach_transform
 
         src = EXPORT_MESHES / _SHIELD_SAMPLE
         if not src.exists():
@@ -1250,16 +1254,18 @@ class TestShieldVsArmorClassification:
         assert root.num_children == 1, "Shield BSFadeNode should have exactly one inner NiNode child"
         inner = root.children[0]
         assert isinstance(inner, NF.NiNode), "Shield inner child must be NiNode"
-        # Verify inner rotation matches the expected shield orientation matrix
+        # Inner rotation/translation must match the skeleton-derived transform
+        T = _shield_attach_transform()
+        assert T is not None, "Shield attach transform must be computable from skeleton JSONs"
         ri = inner.rotation
-        assert abs(ri.m_11 - (-1.0)) < 1e-3, "Inner NiNode m_11 should be -1.0 (X-flip)"
-        assert abs(ri.m_23 - 1.0) < 1e-3, "Inner NiNode m_23 should be 1.0 (Y→Z)"
-        assert abs(ri.m_32 - 1.0) < 1e-3, "Inner NiNode m_32 should be 1.0 (Z→Y)"
-        # Compute world vertex bbox (inner NiNode R * local_vert + inner NiNode T)
         Rmat = np.array([[ri.m_11, ri.m_12, ri.m_13],
                          [ri.m_21, ri.m_22, ri.m_23],
                          [ri.m_31, ri.m_32, ri.m_33]], dtype=float)
         Tvec = np.array([inner.translation.x, inner.translation.y, inner.translation.z])
+        assert np.allclose(Rmat, T[:3, :3], atol=1e-4), \
+            "Inner NiNode rotation must equal the shield attach transform"
+        assert np.allclose(Tvec, T[3, :3], atol=1e-3), \
+            "Inner NiNode translation must equal the shield attach transform"
         all_verts = []
         def _cv(node, accum):
             if hasattr(node, 'data') and node.data is not None:
@@ -1273,18 +1279,30 @@ class TestShieldVsArmorClassification:
                         _cv(c, accum)
         _cv(inner, all_verts)
         assert all_verts, "Shield must have geometry"
-        world = np.array([Rmat @ v + Tvec for v in all_verts])
-        # Face should be in XY plane (Z thin, Z range << X range and Y range)
-        z_range = world[:, 2].max() - world[:, 2].min()
-        x_range = world[:, 0].max() - world[:, 0].min()
-        y_range = world[:, 1].max() - world[:, 1].min()
-        assert z_range < x_range * 0.5 and z_range < y_range * 0.5, \
-            f"Shield Z range {z_range:.1f} should be much less than X {x_range:.1f} or Y {y_range:.1f}"
-        # Face should be roughly centered at world origin
+        # v @ R + T — same row-vector convention as skin_retarget._m44_to_np
+        world = np.array([v @ Rmat + Tvec for v in all_verts])
+        # Shield must be a slab: smallest principal extent << the other two.
+        # (Axis-aligned Z-range is no longer meaningful — the attach transform
+        # tilts the strap plane ~16° to lie along the Skyrim forearm.)
+        centered = world - world.mean(axis=0)
+        evals, evecs = np.linalg.eigh(centered.T @ centered)
+        thin_axis = evecs[:, 0]   # least-variance direction = face normal
+        spans = [float((centered @ evecs[:, i]).ptp()) for i in range(3)]
+        assert spans[0] < spans[1] * 0.6 and spans[0] < spans[2] * 0.6, \
+            f"Shield should be a slab; principal spans {spans}"
+        # Face normal roughly along ±Z (within the forearm-clearance tilt)
+        assert abs(thin_axis[2]) > 0.85, \
+            f"Shield face normal should be near ±Z: {thin_axis}"
+        # Dome bulges outward (-Z, away from the arm) like vanilla shields
+        cz = world[:, 2].mean()
+        assert cz < 0.5, f"Shield centroid should sit at/behind the grip plane (dome -Z): cz={cz:.2f}"
+        # Grip region near the origin: the authentic Oblivion strapped placement
+        # is a few units toward the elbow vs Skyrim's grip-centred art, so the
+        # tolerance is looser than exact centring.
         cx = (world[:, 0].min() + world[:, 0].max()) * 0.5
         cy = (world[:, 1].min() + world[:, 1].max()) * 0.5
-        assert abs(cx) < 3.0, f"Shield face not centered in X: cx={cx:.2f}"
-        assert abs(cy) < 3.0, f"Shield face not centered in Y: cy={cy:.2f}"
+        assert abs(cx) < 10.0, f"Shield too far off the grip in X: cx={cx:.2f}"
+        assert abs(cy) < 10.0, f"Shield too far off the grip in Y: cy={cy:.2f}"
 
     @pytest.mark.skipif(not EXPORT_MESHES.exists(), reason='Export meshes not available')
     def test_worn_armor_no_prn(self, tmp_path):
