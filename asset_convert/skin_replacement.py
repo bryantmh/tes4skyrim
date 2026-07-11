@@ -556,7 +556,8 @@ _UNDERWEAR_ONLY_NAMES = frozenset([
 ])
 
 
-def apply_armor_offset(data, cfg) -> None:
+def apply_armor_offset(data, cfg, only_block_ids: set | None = None,
+                       exclude_block_ids: set | None = None) -> None:
     """Shift, scale, and optionally tilt all skinned armor geometry vertices.
 
     cfg : ArmorOffsetConfig (from skyrim_overrides)
@@ -564,6 +565,10 @@ def apply_armor_offset(data, cfg) -> None:
         sx/sy/sz   – independent per-axis scale around world origin.
         rotate     – front-to-back tilt in radians in the YZ plane around
                      the mesh centroid.
+    only_block_ids / exclude_block_ids : set of id(block) values
+        Restrict the offset to (or exempt from it) specific geometry blocks —
+        used to give PRN-attached rigid pieces their own offset config
+        (ARMOR_PIECE_OFFSETS_PRN) separate from FK-retargeted skinned pieces.
 
     Body skin geometry blocks are always skipped.  Recomputes NiSkinData
     bind matrices after moving vertices.
@@ -604,6 +609,10 @@ def apply_armor_offset(data, cfg) -> None:
 
             for block in root.tree():
                 if not isinstance(block, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
+                    continue
+                if only_block_ids is not None and id(block) not in only_block_ids:
+                    continue
+                if exclude_block_ids is not None and id(block) in exclude_block_ids:
                     continue
                 if is_body_skin_geometry(block):
                     continue  # never shift body fill skin

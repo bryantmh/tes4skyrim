@@ -267,3 +267,18 @@ ARMOR_PIECE_OFFSETS: dict[str, ArmorOffsetConfig] = {
     # Fallback for unrecognised piece types
     'default':   ArmorOffsetConfig(),
 }
+
+# PRN-attached rigid pieces (no real skin in the Oblivion NIF; rigid-skinned
+# to the Skyrim bone by nif_converter._add_prn_skin).  Their verts are
+# authored in an upright bone-pivot frame and land EXACTLY in the Skyrim bone
+# frame after retarget, so the FK-deformation compensation offsets in
+# ARMOR_PIECE_OFFSETS (e.g. helmet dz=+7, tuned on genuinely skinned helms
+# like TownguardCho) must NOT be applied — they pushed rigid helms on top of
+# the head.  The only correction needed is the anatomical difference between
+# the two skeletons' head-bone frames: the Oblivion head pivot sits lower in
+# the skull than Skyrim's (OB headhuman.nif skull top = pivot+13.6; SK
+# malehead.nif = pivot+11.5), so head gear drops ~2.1 units.
+ARMOR_PIECE_OFFSETS_PRN: dict[str, ArmorOffsetConfig] = {
+    'helmet':  ArmorOffsetConfig(dz=-2.1),
+    'default': ArmorOffsetConfig(),
+}

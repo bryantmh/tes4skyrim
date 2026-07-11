@@ -205,8 +205,8 @@ TES4 Attributes (Strength, Intelligence, etc.) have no TES5 equivalent. Health/M
 
 | TES4 Slot (Bit) | TES5 Slot (Bit) | Name |
 |------------------|------------------|------|
-| 0 (Head) | 0 (30-Head) | |
-| 1 (Hair) | 1 (31-Hair) | |
+| 0 (Head) | 0 (30-Head) | Full-face helm: also gets 31+41+42+43 extras |
+| 1 (Hair) | 1 (31-Hair) | Helm: also gets 41-LongHair + 42-Circlet extras |
 | 2 (Upper Body) | 2 (32-Body) | |
 | 3 (Lower Body) | 2 (32-Body) | Merged with upper |
 | 4 (Hand) | 3 (33-Hands) | |
@@ -216,6 +216,16 @@ TES4 Attributes (Strength, Intelligence, etc.) have no TES5 equivalent. Health/M
 | 8 (Amulet) | 5 (35-Amulet) | |
 | 13 (Shield) | 9 (39-Shield) | |
 | 15 (Tail) | 13 (43-Tail) | |
+
+**Helmet hair hiding (slot 41):** Skyrim's slot 31 alone does NOT fully hide
+hair — the engine swaps the hair headpart for its "hairline" extra part, whose
+meshes carry dismember partitions [141, 131] (verified: `hairline01.nif` etc.).
+Vanilla helmets are modelled big enough to enclose the hairline; tighter
+Oblivion helms are not, so the hairline pokes through the shell (top hidden,
+sides visible). Converted headgear therefore also covers slot 41 (LongHair) on
+both ARMO and ARMA (`BIPED_SLOT_EXTRA` / `ARMA_BODY_COVERAGE_EXTRA` in
+`tes5_import/constants.py`), which suppresses the 141 partitions → all hair
+fully hidden.
 
 ## Enchantment Type Mapping
 

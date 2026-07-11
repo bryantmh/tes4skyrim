@@ -305,10 +305,12 @@ class TestConverters:
         # _convert_biped_flags returns PRIMARY equip slots plus equipment-conflict
         # extras (helmets block Circlet/Ears so they can't be worn simultaneously).
         # Body-coverage extras (ForeArms, Calves, etc.) go on ARMA, not ARMO.
-        # Head (bit 0) â†’ 30 (bit 0) + Hair(1) + Circlet(12) + Ears(13) - full-face helm
-        assert _convert_biped_flags(0x01) == (1 | (1 << 1) | (1 << 12) | (1 << 13))
-        # Hair (bit 1) â†’ 31 (bit 1) + Circlet(12) - open-face helm blocks circlets
-        assert _convert_biped_flags(0x02) == ((1 << 1) | (1 << 12))
+        # Head (bit 0) â†’ 30 (bit 0) + Hair(1) + LongHair(11) + Circlet(12) + Ears(13)
+        # - full-face helm.  LongHair(41) also covered so the hairline headpart
+        # (partition 141) is hidden, not just swapped in (see BIPED_SLOT_EXTRA).
+        assert _convert_biped_flags(0x01) == (1 | (1 << 1) | (1 << 11) | (1 << 12) | (1 << 13))
+        # Hair (bit 1) â†’ 31 (bit 1) + LongHair(11) + Circlet(12) - open-face helm
+        assert _convert_biped_flags(0x02) == ((1 << 1) | (1 << 11) | (1 << 12))
         # Upper body (bit 2) â†’ 32 (bit 2) - no extra equipment conflicts
         assert _convert_biped_flags(0x04) == 0x04
         # Lower body (bit 3) â†’ 44-LowerBody (bit 14)

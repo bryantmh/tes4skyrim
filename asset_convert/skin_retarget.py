@@ -1028,7 +1028,7 @@ def _deform_vertices_animation_fk(skinned_geoms, skel_root, bone_deltas):
 # Main retarget entry point
 # ---------------------------------------------------------------------------
 
-def retarget_skin_to_skyrim(data, src_path: str = '') -> int:
+def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None) -> int:
     """Retarget skinned armor from Oblivion skeleton to Skyrim skeleton.
 
     Called BEFORE _remap_bone_names() — bones still have Oblivion names.
@@ -1041,6 +1041,11 @@ def retarget_skin_to_skyrim(data, src_path: str = '') -> int:
       Phase B: Deform vertices via LBS from OB T-pose to SK rest pose
       Phase C: Recompute NiSkinData bind matrices (S, B_i) from new positions
       Phase D: Regenerate NiSkinPartition in Skyrim triangle format
+
+    PRN-attached rigid pieces (single bone, identity bind — built by
+    nif_converter._add_prn_skin) skip the FK deformation entirely; when
+    ``prn_out`` is given, ``id(block)`` of each such geometry is added to it
+    so the caller can exempt them from the FK-tuned armor offsets.
 
     Returns the number of geometries retargeted.
     """
@@ -1169,6 +1174,8 @@ def retarget_skin_to_skyrim(data, src_path: str = '') -> int:
         geom_name = _get_block_name(block)
 
         if is_prn:
+            if prn_out is not None:
+                prn_out.add(id(block))
             if prn_bone_name:
                 sk_name, W_sk = _resolve_sk_target(prn_bone_name, sk_skel)
                 if sk_name is not None:

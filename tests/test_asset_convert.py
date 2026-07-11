@@ -1747,3 +1747,116 @@ class TestFurnitureMarkerConversion:
                 # sleep marker z = 37.09 above the floor
                 assert abs(p.offset.z - 37.09) < 0.5
         assert found, "BSFurnitureMarkerNode not found in converted bed NIF"
+
+
+class TestBowRig:
+    """Converted bows: correct orientation + vanilla bend rig (bow_rig.py)."""
+
+    BOW_SRC = 'weapons/steel/bow.nif'
+
+    @pytest.fixture(scope='class')
+    def converted_bow(self, tmp_path_factory):
+        src = EXPORT_MESHES / self.BOW_SRC
+        if not src.exists():
+            pytest.skip(f'{src} not found')
+        dst = tmp_path_factory.mktemp('bow') / 'bow.nif'
+        result = convert_nif(str(src), str(dst))
+        assert result['converted'], f"Conversion failed: {result.get('error')}"
+        from pyffi.formats.nif import NifFormat as NF
+        data = NF.Data()
+        with open(str(dst), 'rb') as f:
+            data.read(f)
+        return data
+
+    def test_not_flipped(self, converted_bow):
+        # The blanket weapon 180-deg Y flip must NOT apply to bows: the string
+        # side must stay at -X (vanilla steelbow string bones sit at x=-13.7).
+        from pyffi.formats.nif import NifFormat as NF
+        root = converted_bow.roots[0]
+        for b in root.tree():
+            if isinstance(b, NF.NiTriShape):
+                xs = [v.x for v in b.data.vertices]
+                # geometry transform must be identity (no baked flip node)
+                t = b.get_transform(root)
+                assert abs(t.m_11 - 1.0) < 1e-4, 'bow geometry was Y-flipped'
+                assert min(xs) < -10, 'bow string side not at -X'
+
+    def test_prn_weapon_bow(self, converted_bow):
+        from pyffi.formats.nif import NifFormat as NF
+        root = converted_bow.roots[0]
+        prns = [bytes(ed.string_data).rstrip(b'\x00').decode()
+                for ed in root.extra_data_list
+                if isinstance(ed, NF.NiStringExtraData)
+                and bytes(ed.name).rstrip(b'\x00') == b'Prn']
+        assert prns == ['WeaponBow']
+
+    def test_bend_rig_bones(self, converted_bow):
+        from pyffi.formats.nif import NifFormat as NF
+        root = converted_bow.roots[0]
+        names = {bytes(b.name).rstrip(b'\x00').decode()
+                 for b in root.tree() if isinstance(b, NF.NiNode)}
+        for bone in ('Bow_MidBone', 'Bow_LoBone1', 'Bow_LoBone2',
+                     'Bow_StringBone1', 'Bow_UpBone1', 'Bow_UpBone2',
+                     'Bow_StringBone2'):
+            assert bone in names, f'missing rig bone {bone}'
+
+    def test_geometry_skinned_with_partition(self, converted_bow):
+        from pyffi.formats.nif import NifFormat as NF
+        root = converted_bow.roots[0]
+        shapes = [b for b in root.tree() if isinstance(b, NF.NiTriShape)]
+        assert shapes
+        for b in shapes:
+            si = b.skin_instance
+            assert si is not None, 'bow geometry not skinned'
+            assert type(si).__name__ == 'NiSkinInstance'  # vanilla bows: plain
+            assert si.skin_partition is not None
+            assert si.skin_partition.num_skin_partition_blocks >= 1
+            # every bone entry needs a non-zero bounding sphere (engine culls
+            # skinned shapes by these; zero radius = invisible in game)
+            for i in range(si.data.num_bones):
+                assert si.data.bone_list[i].bounding_sphere_radius > 0.1
+            # SLSF1_Skinned: without it the renderer never applies bone
+            # deforms — bow renders frozen in bind pose (string never draws)
+            shaders = [p for p in b.bs_properties
+                       if isinstance(p, NF.BSLightingShaderProperty)]
+            assert shaders, 'bow shape has no BSLightingShaderProperty'
+            assert shaders[0].shader_flags_1.slsf_1_skinned == 1, \
+                'SLSF1_Skinned missing - mesh will not follow the bend rig'
+
+    def test_string_verts_weighted_to_string_bones(self, converted_bow):
+        from pyffi.formats.nif import NifFormat as NF
+        root = converted_bow.roots[0]
+        for b in root.tree():
+            if not isinstance(b, NF.NiTriShape):
+                continue
+            si = b.skin_instance
+            names = [bytes(bn.name).rstrip(b'\x00').decode()
+                     for bn in si.bones]
+            sb = [i for i, n in enumerate(names) if 'StringBone' in n]
+            weights = {}
+            for bi in range(si.data.num_bones):
+                for vw in si.data.bone_list[bi].vertex_weights:
+                    weights.setdefault(vw.index, {})[bi] = vw.weight
+            # mid-string verts (x < -13, |y| < 5) must be string-bone driven
+            found = 0
+            for vi, v in enumerate(b.data.vertices):
+                if v.x < -13 and abs(v.y) < 5:
+                    w_sb = sum(w for bi, w in weights.get(vi, {}).items()
+                               if bi in sb)
+                    assert w_sb > 0.9, \
+                        f'mid-string vert {vi} not on string bones ({w_sb:.2f})'
+                    found += 1
+            assert found > 0, 'no mid-string verts found'
+
+    def test_behavior_graph_and_bsx(self, converted_bow):
+        from pyffi.formats.nif import NifFormat as NF
+        root = converted_bow.roots[0]
+        bged = [ed for ed in root.extra_data_list
+                if type(ed).__name__ == 'BSBehaviorGraphExtraData']
+        assert len(bged) == 1
+        assert bytes(bged[0].behaviour_graph_file).rstrip(b'\x00').decode() \
+            == 'Weapons\\Bow\\BowProject.hkx'
+        bsx = [ed for ed in root.extra_data_list
+               if isinstance(ed, NF.BSXFlags)]
+        assert bsx and (int(bsx[0].integer_data) & 0x08), \
+            'BSXFlags Animated bit missing - graph never ticks'

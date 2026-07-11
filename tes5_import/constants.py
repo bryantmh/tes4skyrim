@@ -30,9 +30,14 @@ BIPED_SLOT_MAP = {
 # Derived from vanilla Skyrim armor sets (iron, steel, daedric, elven):
 #   IronHelmet ARMO BOD2: Hair(31)+Circlet(42) = open-face
 #   EbonyHelmet ARMO BOD2: Head(30)+Hair(31)+Circlet(42)+Ears(43) = full-face
+# Slot 41 (LongHair) is ALSO covered (unlike vanilla helmets): slot 31 alone
+# swaps the hair headpart to its "hairline" extra part, whose meshes carry
+# partitions [141, 131] — vanilla helmets are modelled to enclose the
+# hairline but tighter Oblivion helms are not, so it pokes through the shell.
+# Covering 41 suppresses the 141 partitions too → all hair fully hidden.
 BIPED_SLOT_EXTRA = {
-    0: [1, 12, 13],  # Head (full-face helm) → also Hair(31)+Circlet(42)+Ears(43)
-    1: [12],         # Hair (open-face helm) → also Circlet(42) to block simultaneous use
+    0: [1, 11, 12, 13],  # Head (full-face) → also Hair(31)+LongHair(41)+Circlet(42)+Ears(43)
+    1: [11, 12],         # Hair (open-face helm) → also LongHair(41)+Circlet(42)
 }
 
 # Extra TES5 slots for ARMA body coverage.  ARMA records need to declare
@@ -49,7 +54,10 @@ ARMA_BODY_COVERAGE_EXTRA = {
     3: [4],      # Hands (gauntlets) → also 34-ForeArms
     7: [8],      # Feet (boots) → also 38-Calves
     14: [8],     # LowerBody (greaves) → also 38-Calves
-    1: [13],     # Hair (helmet ARMA slot) → also 43-Ears (hides ears through helm)
+    # Hair (helmet ARMA slot) → also 41-LongHair + 43-Ears.  LongHair hides
+    # the hairline headpart / long-hair strands (partition 141) that slot 31
+    # alone leaves visible — they clip through tight Oblivion helm shells.
+    1: [11, 13],
 }
 
 # TES4 weapon type → TES5 animation type

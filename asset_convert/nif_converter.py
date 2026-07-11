@@ -40,6 +40,7 @@ from .skyrim_overrides import (
     ARMOR_GND_INV_MARKER_ROT_Z,
     ARMOR_GND_INV_MARKER_ZOOM,
     ARMOR_PIECE_OFFSETS,
+    ARMOR_PIECE_OFFSETS_PRN,
     BSX_FLAGS_ANIMATED,
     BSX_FLAGS_CONSTRAINED,
     BSX_FLAGS_DYNAMIC,
@@ -1931,7 +1932,7 @@ def _add_prn_skin(data, root_node, keep_bone_names=False, plain=False):
     # Create the bone NiNode placeholder (Skyrim engine matches by name to skeleton)
     bone_node = NifFormat.NiNode()
     bone_node.name = prn_bone.encode('latin-1')
-    bone_node.flags = NIF_FLAGS
+    bone_node.flags = NIF_FLAGS  
 
     # Insert bone node as FIRST child of root (vanilla Skyrim helmets have the
     # bone NiNode before geometry blocks). Shift existing children right by one.
@@ -2129,6 +2130,19 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
     _in_armor_dir = 'armor' in src_path.lower().replace('\\', '/') or \
                     'clothes' in src_path.lower().replace('\\', '/')   # clothing
     _is_shield = 'shield' in nif_basename
+
+    # Bow bend rig: capture string vertex masks from the Oblivion draw morph
+    # BEFORE _walk_node strips the NiGeomMorpherController (see bow_rig.py).
+    # Detection mirrors _remap_prn: Prn='BackWeapon' + 'bow' in the filename.
+    _bow_string_masks: dict = {}
+    _is_bow_weapon = False
+    if 'bow' in nif_basename and not _is_gnd and not _in_armor_dir:
+        for _r in data.roots:
+            if _r is not None and _get_prn_bone(_r) == 'BackWeapon':
+                from .bow_rig import capture_string_masks
+                _is_bow_weapon = True
+                _bow_string_masks = capture_string_masks(data)
+                break
 
     if _is_gnd and has_skin:
         # Ground models with cloth-physics bones (Bone01/Bone02) show as red
@@ -2347,10 +2361,14 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
                         # on the wrong side without flipping the weapon upside-down (unlike 180°Z).
                         # Pass-6c below detects this non-identity rotation and bakes it into an
                         # inner NiNode so Skyrim applies it correctly to static geometry.
-                        # if _weapon_prn_remapped == 'WeaponAxe':
-                        fade.rotation.m_11 = -1.0; fade.rotation.m_12 =  0.0; fade.rotation.m_13 = 0.0
-                        fade.rotation.m_21 =  0.0; fade.rotation.m_22 =  1.0; fade.rotation.m_23 = 0.0
-                        fade.rotation.m_31 =  0.0; fade.rotation.m_32 =  0.0; fade.rotation.m_33 = -1.0
+                        # NOT for bows: Oblivion bows already match the Skyrim WeaponBow
+                        # frame (string side at -X: OB steel bow string x=-15.7, vanilla
+                        # steelbow string bones x=-13.7) — the flip held them backwards
+                        # with the curve facing the archer.
+                        if remapped != 'WeaponBow':
+                            fade.rotation.m_11 = -1.0; fade.rotation.m_12 =  0.0; fade.rotation.m_13 = 0.0
+                            fade.rotation.m_21 =  0.0; fade.rotation.m_22 =  1.0; fade.rotation.m_23 = 0.0
+                            fade.rotation.m_31 =  0.0; fade.rotation.m_32 =  0.0; fade.rotation.m_33 = -1.0
 
                     elif remapped == 'SHIELD':
                         # Shield BSInvMarker for inventory display (match vanilla ironshield.nif)
@@ -2692,7 +2710,8 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
         # Pre-retarget: classify the piece type early so we can apply fixups.
         _piece_type = _get_armor_piece_type(src_path)
 
-        _retarget(data, src_path=src_path)
+        _prn_block_ids: set = set()
+        _retarget(data, src_path=src_path, prn_out=_prn_block_ids)
 
         # NOW rename bones to Skyrim names — AFTER skin transforms are correct.
         stats['bones_remapped'] += _remap_bone_names(data)
@@ -2708,8 +2727,14 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
 
         # Apply per-piece armor vertex offset/scale (from skyrim_overrides) AFTER
         # body-skin is stripped, so only true armor geometry is shifted.
+        # PRN-attached rigid pieces get their own (near-zero) offsets — the
+        # regular table compensates FK-retarget drift they never had.
         _cfg = ARMOR_PIECE_OFFSETS.get(_piece_type, ARMOR_PIECE_OFFSETS['default'])
-        apply_armor_offset(data, _cfg)
+        apply_armor_offset(data, _cfg, exclude_block_ids=_prn_block_ids)
+        if _prn_block_ids:
+            _cfg_prn = ARMOR_PIECE_OFFSETS_PRN.get(
+                _piece_type, ARMOR_PIECE_OFFSETS_PRN['default'])
+            apply_armor_offset(data, _cfg_prn, only_block_ids=_prn_block_ids)
 
     # Splice Skyrim body geometry AFTER retarget + bone rename so that bone
     # NiNodes in the armor NIF already have Skyrim names to match against.
@@ -2719,6 +2744,17 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
             from .skin_replacement import morph_armor_to_weight1
             morph_armor_to_weight1(data, _body_nibs_to_splice)
         splice_body_geometry(data, _body_nibs_to_splice, weight=weight)
+
+    # Bow bend rig: graft the vanilla 7-bone rig + BGED onto converted bows
+    # so limbs bend and the string draws (BowProject.hkx animates the bones).
+    # Runs LAST: needs final NiTriShape geometry and the BSFadeNode root with
+    # Prn already remapped to WeaponBow.
+    if _is_bow_weapon:
+        from .bow_rig import add_bow_rig
+        for _r in data.roots:
+            if _r is not None and _get_prn_bone(_r) == 'WeaponBow':
+                stats['bow_rig_shapes'] = add_bow_rig(data, _bow_string_masks)
+                break
 
     # Count tangents injected (approximate: each converted geometry node that had tangent data)
     stats['tangents_injected'] = stats['properties_converted']  # best we can count here
