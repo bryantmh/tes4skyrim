@@ -605,9 +605,20 @@ def build_field(gender: str, verbose: bool = True) -> bool:
         all_bc.append(bc)
         # part id per vertex: clearance is only ENFORCED against the body
         # part — gauntlets/boots replace the body's hands/feet in Skyrim, and
-        # the fitted hand/foot surfaces are the least reliable
-        all_part.append(np.full(len(v0), 0 if group == 'body' else 1,
-                                dtype=np.int32))
+        # the fitted hand/foot surfaces are the least reliable (bunched
+        # fingers/toes).  EXCEPTION: the wrist/ankle seam region of the
+        # hand/foot fits (within 3 units of the body surface) is smooth and
+        # is exactly where clothing shoe tops and shirt cuffs clip — those
+        # verts count as body so enforcement can rescue them.
+        if group == 'body':
+            part = np.zeros(len(v0), dtype=np.int32)
+        else:
+            part = np.ones(len(v0), dtype=np.int32)
+            if 'body' in groups:
+                from scipy.spatial import cKDTree as _KD
+                d_body, _ = _KD(groups['body']['v0']).query(v0)
+                part[d_body < 3.0] = 0
+        all_part.append(part)
         offset += len(v0)
 
     _GEN_DIR.mkdir(parents=True, exist_ok=True)
@@ -1029,6 +1040,99 @@ def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool,
             geom_data.vertices[vi].y = float(out[vi, 1])
             geom_data.vertices[vi].z = float(out[vi, 2])
     return len(metas)
+
+
+def morph_converted_to_weight1(data, female: bool) -> int:
+    """Morph a CONVERTED (weight-0) wearable NIF into its _1 variant in place.
+
+    The engine lerps the _0/_1 pair per-vertex by actor weight, which
+    requires IDENTICAL topology — so the _1 mesh must never come from a
+    second independent conversion (the body splice clips differently and
+    the pair explodes at intermediate slider values).  Instead the finished
+    _0 mesh gets the body morph applied: each skinned vertex receives
+    dst1 - dst0 (the fitted _0->_1 Skyrim body morph, built from the
+    REFERENCE body meshes) interpolated from the nearest fitted-body
+    triangles.  Spliced body fill lies ON the _0 surface so it receives the
+    exact body morph; armor receives the same smooth field, which is how
+    vanilla _1 armor relates to _0.  Rigid PRN pieces (helmets, shields)
+    are never morphed.  Returns the number of geometries morphed."""
+    field = get_field(female)
+    if field is None or not _PYFFI:
+        return 0
+    diff = field.dst[1] - field.dst[0]      # per body vertex, SK space
+    dst0 = field.dst[0]
+    tree = field.dst_tree[0]
+
+    count = 0
+    for root in data.roots:
+        if root is None:
+            continue
+        for block in root.tree():
+            if not isinstance(block, (NifFormat.NiTriShape,
+                                      NifFormat.NiTriStrips)):
+                continue
+            skin = getattr(block, 'skin_instance', None)
+            if skin is None or skin.data is None:
+                continue
+            if block.data is None or block.data.num_vertices == 0:
+                continue
+            # rigid PRN pieces: single bone with identity bind — no morph
+            if skin.num_bones == 1 and skin.data.num_bones >= 1:
+                st = skin.data.bone_list[0].skin_transform
+                if (abs(st.rotation.m_11 - 1.0) < 0.001
+                        and abs(st.translation.x) < 0.001
+                        and abs(st.translation.y) < 0.001
+                        and abs(st.translation.z) < 0.001):
+                    continue
+            nv = block.data.num_vertices
+            v = np.array([[p.x, p.y, p.z] for p in block.data.vertices],
+                         dtype=np.float64)
+
+            k = min(CLEAR_K, len(field.tris))
+            _, tri = tree.query(v, k=k)
+            if k == 1:
+                tri = tri[:, None]
+            t = field.tris[tri]
+            a, b, c = dst0[t[..., 0]], dst0[t[..., 1]], dst0[t[..., 2]]
+            cp = closest_point_on_triangles(v[:, None, :], a, b, c)
+            d = np.linalg.norm(v[:, None, :] - cp, axis=2)
+            # barycentric interpolation of the morph at each closest point
+            ab = b - a
+            ac = c - a
+            d00 = np.einsum('pki,pki->pk', ab, ab)
+            d01 = np.einsum('pki,pki->pk', ab, ac)
+            d11 = np.einsum('pki,pki->pk', ac, ac)
+            cpa = cp - a
+            d20 = np.einsum('pki,pki->pk', cpa, ab)
+            d21 = np.einsum('pki,pki->pk', cpa, ac)
+            den = d00 * d11 - d01 * d01
+            den = np.where(np.abs(den) < 1e-12, 1.0, den)
+            bv = np.clip((d11 * d20 - d01 * d21) / den, 0.0, 1.0)
+            bw = np.clip((d00 * d21 - d01 * d20) / den, 0.0, 1.0)
+            bu = np.clip(1.0 - bv - bw, 0.0, 1.0)
+            tot = np.maximum(bu + bv + bw, 1e-12)
+            bu, bv, bw = bu / tot, bv / tot, bw / tot
+            m_cp = (bu[..., None] * diff[t[..., 0]]
+                    + bv[..., None] * diff[t[..., 1]]
+                    + bw[..., None] * diff[t[..., 2]])
+            d_best = d.min(axis=1)
+            sig = 1.5 + 0.5 * d_best
+            w = np.exp(-((d - d_best[:, None]) ** 2) / (2.0 * sig[:, None] ** 2))
+            w /= w.sum(axis=1, keepdims=True)
+            morph = (w[:, :, None] * m_cp).sum(axis=1)
+
+            # weld so coincident seam twins morph identically
+            wg = weld_groups(v)
+            morph = _group_mean(morph, wg, int(wg.max()) + 1)[wg]
+
+            out = v + morph
+            gd = block.data
+            for vi in range(nv):
+                gd.vertices[vi].x = float(out[vi, 0])
+                gd.vertices[vi].y = float(out[vi, 1])
+                gd.vertices[vi].z = float(out[vi, 2])
+            count += 1
+    return count
 
 
 # ---------------------------------------------------------------------------

@@ -326,21 +326,29 @@ def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
     # RNAM — Race (must match parent ARMO)
     subs += pack_formid_subrecord('RNAM', 0x00000019)
 
+    # Weight-slider morphing follows the vanilla convention: ONLY gear
+    # covering body/hands/feet uses it (ARMA path <name>_1.nif + slider
+    # enabled; engine lerps the _0/_1 pair by actor weight).  Vanilla
+    # helmets and shields have the slider DISABLED and a plain path
+    # (IronShieldAA / IronHelmetAA), and rigid PRN pieces must never be
+    # weight-morphed.  TES4 biped bits: 2=UpperBody 3=LowerBody 4=Hand 5=Foot.
+    tes4_biped_flags = get_int(rec, 'BMDT.BipedFlags')
+    use_slider = bool(tes4_biped_flags & 0b111100)
+
     # DNAM — ARMA-specific data (12 bytes)
     # Priority M(U8) + Priority F(U8) + WeightSlider M(U8) + WeightSlider F(U8)
     # + pad(2) + DetectionSoundValue(U8) + pad(U8) + WeaponAdjust(float)
-    # Weight slider: 0x02=enabled (vanilla convention) — the mesh converter
-    # emits _0/_1 weight-morph variants for every biped wearable NIF (the
-    # body-wrap field is fitted against both malebody_0 and malebody_1).
+    # Weight slider: 0x02=enabled (vanilla convention)
     # Priority: 10 matches vanilla Skyrim iron armor
-    dnam = struct.pack('<BBBBHBBf', 10, 10, 2, 2, 0, 0, 0, 0.0)
+    slider = 2 if use_slider else 0
+    dnam = struct.pack('<BBBBHBBf', 10, 10, slider, slider, 0, 0, 0, 0.0)
     subs += pack_subrecord('DNAM', dnam)
 
-    # Biped model paths use the vanilla weight-slider convention: the record
-    # stores <name>_1.nif and the engine swaps _1/_0 by actor weight.
     def _weighted(path: str) -> str:
         p = _prefix_path(path)
-        return p[:-4] + '_1.nif' if p.lower().endswith('.nif') else p
+        if use_slider and p.lower().endswith('.nif'):
+            return p[:-4] + '_1.nif'
+        return p
 
     # MOD2 — Male biped model (the actual worn mesh)
     male_model = get_str(rec, 'Male.BipedModel.MODL')

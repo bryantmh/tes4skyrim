@@ -759,7 +759,7 @@ def _recompute_body_binds(geom, armor_root):
         _write_skin_transform(skin_data.bone_list[i].skin_transform, B)
 
 
-def splice_body_geometry(data, skin_info: dict, weight: int = 0) -> int:
+def splice_body_geometry(data, skin_info: dict) -> int:
     """Attach clipped Skyrim body geometry into an armor NIF after retarget+rename.
 
     skin_info: {nif_basename -> {'bones': set[str], 'sections': [set, ...]}}
@@ -800,11 +800,6 @@ def splice_body_geometry(data, skin_info: dict, weight: int = 0) -> int:
     for nif_name, info in sorted(skin_info.items()):
         keep_bones = info['bones']
         sections = info.get('sections', [])
-
-        # skin_info keys are the _0 body NIFs; weight=1 splices the heavy
-        # weight-slider variant instead (armor verts were wrap-morphed to it)
-        if weight == 1:
-            nif_name = nif_name.replace('_0.nif', '_1.nif')
 
         # Detect gender from body NIF name
         is_female = nif_name.lower().startswith('female')

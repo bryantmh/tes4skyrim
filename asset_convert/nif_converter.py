@@ -2749,9 +2749,9 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
     # Splice Skyrim body geometry AFTER retarget + bone rename so that bone
     # NiNodes in the armor NIF already have Skyrim names to match against.
     if _body_nibs_to_splice:
-        # weight=1 armor verts were already morphed by the wrap field's dst1
-        # target during retarget; the splice just picks the matching _1 body.
-        splice_body_geometry(data, _body_nibs_to_splice, weight=weight)
+        # always the _0 fill: the _1 variant is generated afterwards by
+        # post-morphing the finished mesh (identical topology contract)
+        splice_body_geometry(data, _body_nibs_to_splice)
 
     # Bow bend rig: graft the vanilla 7-bone rig + BGED onto converted bows
     # so limbs bend and the string draws (BowProject.hkx animates the bones).
@@ -3036,11 +3036,13 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         f.write(buf.getvalue())
 
     # Biped wearables get vanilla-style _0/_1 weight-slider variants: the
-    # ARMA records reference <name>_1.nif with the weight slider enabled and
-    # the engine morphs between the pair.  The primary conversion above is
-    # weight 0; a second pass converts against the _1 (heavy) body targets.
-    # Weight-insensitive pieces (PRN helmets/shields) simply produce two
-    # identical files, which the engine handles fine.
+    # ARMA records for body/hands/feet gear reference <name>_1.nif with the
+    # weight slider enabled and the engine lerps the pair per-vertex.  That
+    # lerp REQUIRES identical topology, so the _1 file is NEVER a second
+    # independent conversion (the body splice clips differently and the
+    # pair explodes at intermediate slider values) — it is the finished
+    # weight-0 mesh post-morphed by the fitted _0->_1 Skyrim body morph
+    # (body_wrap.morph_converted_to_weight1; rigid PRN blocks untouched).
     _srcl = str(src_path).lower().replace('\\', '/')
     _wearable = (not creature and not _srcl.endswith('_gnd.nif')
                  and ('armor' in _srcl or 'clothes' in _srcl))
@@ -3050,26 +3052,16 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
             f.write(buf.getvalue())
         w1_bytes = None
         try:
-            data1 = NifFormat.Data()
-            with open(src_path, 'rb') as f:
-                data1.inspect(f)
-                data1.read(f)
-            _convert_nif(data1, fix_textures=fix_textures,
-                         src_path=str(src_path), weight=1)
-            if _TANGENT_SPELL:
-                try:
-                    toaster = _NifToaster()
-                    spell = _SpellAddTangentSpace(data=data1, toaster=toaster)
-                    spell.recurse()
-                except Exception:
-                    pass
-            buf1 = _io.BytesIO()
-            data1.write(buf1)
-            w1_bytes = buf1.getvalue()
+            from .body_wrap import morph_converted_to_weight1
+            _female = '/f/' in _srcl
+            if morph_converted_to_weight1(data, _female):
+                buf1 = _io.BytesIO()
+                data.write(buf1)
+                w1_bytes = buf1.getvalue()
         except Exception:
             w1_bytes = None
-        # weight-1 failure must not leave a dangling _1 reference — fall
-        # back to the weight-0 mesh so the ARMA path always resolves
+        # no morph (PRN-only piece / no field) or failure: identical copy so
+        # the ARMA _1 path always resolves
         with open(_root + '_1' + _ext, 'wb') as f:
             f.write(w1_bytes if w1_bytes is not None else buf.getvalue())
 
