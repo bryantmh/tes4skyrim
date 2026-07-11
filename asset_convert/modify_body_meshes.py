@@ -1,24 +1,37 @@
 """Modify vanilla Skyrim character body meshes to add a body-part 44
-(SBP_44_LOWERBODY / upper leg / greaves) partition.
+(SBP_44_LOWERBODY / lower body / greaves) partition.
 
 The vanilla body mesh only has three body-part partitions:
-  32 = Body   (whole torso + upper legs)
+  32 = Body   (whole torso + pelvis + upper legs, including the underwear)
   34 = Forearms
   38 = Calves
 
 This means equipping armor at biped slot 44 (greaves) hides nothing on the
 character body, causing the greaves to clip with the visible body geometry.
 
-This script splits the part-32 partition in half:
-  32 = Torso  (spine/chest/pelvis bones drive the vertices)
-  44 = Upper legs  (thigh bones drive the vertices)
+This script splits every part-32 partition at the waist:
+  32 = Torso  (spine/chest bones drive the vertices)
+  44 = Lower body  (pelvis + thigh bones drive the vertices)
 
-Both malebody_0.nif and femalebody_0.nif are processed and written to
-output/oblivion.esm/meshes/actors/character/character assets/
+The pelvis region is deliberately part of 44: Oblivion LowerBody items
+(greaves/pants) cover hips + legs, so they must hide the hip skin AND the
+underwear overlay (MaleUnderwear/FemaleUnderwear — separate shapes weighted
+to pelvis/thighs, which this split reassigns to 44 as well).  The female
+bra region stays in 32 (chest/clavicle-weighted) so shirts hide it instead.
+
+IMPORTANT: partition 44 only renders in-game if the wearing ARMA also claims
+biped slot 44.  The vanilla NakedTorso ARMA claims 32/34/38 only, so the
+thighs would be INVISIBLE on a naked character.  tools/patch_body_slots.py
+generates the companion plugin that adds slot 44 to every slot-32 ARMO/ARMA
+(NakedTorso and all vanilla body armor) — it must be run whenever these
+meshes are deployed.
+
+All four body meshes (male/female, _0/_1 weight) are processed and written
+to output/oblivion.esm/meshes/actors/character/character assets/
 
 Usage:
-    python tools/modify_body_meshes.py [--skyrim-mesh-root <path>]
-                                       [--output-dir <path>]
+    python asset_convert/modify_body_meshes.py [--skyrim-mesh-root <path>]
+                                               [--output-dir <path>]
 """
 import argparse, os, sys, time
 
@@ -26,15 +39,41 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import asset_convert.pyffi_monkey_patch  # noqa: F401 — must precede NifFormat
 from pyffi.formats.nif import NifFormat
 
-# Body-part slot for upper legs
+# Body-part slot for lower body (hips + upper legs)
 SBP_44_LOWERBODY = 44
 SBP_32_BODY      = 32
 
-# Bones whose primary influence marks a vertex as "upper leg"
-THIGH_BONES = {
+# Bones whose primary influence marks a vertex as "lower body".  Pelvis is
+# included so the hip/underwear region moves to part 44 with the thighs —
+# pants (slot 44) must hide the underwear, not clip through it.  The waist
+# boundary falls where NPC Spine [Spn0] overtakes NPC Pelvis [Pelv] as the
+# dominant weight, which matches where Oblivion LowerBody clothing starts.
+LOWERBODY_BONES = {
     'NPC L Thigh [LThg]',
     'NPC R Thigh [RThg]',
+    'NPC Pelvis [Pelv]',
 }
+
+# For the underwear OVERLAY shapes (MaleUnderwear / FemaleUnderwear — not the
+# *UnderwearBody* main body shapes) the classification is inverted: everything
+# is lower-body (part 44) EXCEPT the female bra region, which is driven by
+# these chest bones and must stay in part 32 so shirts hide it.  Without this
+# the spine-weighted waistband of the male briefs stayed in part 32 and got
+# clipped out by equipped shirts.
+UNDERWEAR_TORSO_BONES = {
+    'NPC Spine2 [Spn2]',
+    'NPC R Clavicle [RClv]',
+    'NPC L Clavicle [LClv]',
+    'NPC R UpperarmTwist1 [RUt1]',
+    'NPC R UpperarmTwist2 [RUt2]',
+    'NPC L UpperarmTwist1 [LUt1]',
+    'NPC L UpperarmTwist2 [LUt2]',
+}
+
+
+def _is_underwear_overlay(shape_name: str) -> bool:
+    low = shape_name.lower()
+    return 'underwear' in low and 'body' not in low
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -131,10 +170,11 @@ def _split_body_partition(nif_path, out_path):
     For each NiTriShape that has a BSDismemberSkinInstance with body-part 32:
       - For each NiSkinPartition block assigned to body-part 32:
         1. Classify every vertex by primary bone influence.
-        2. If vertex is primarily a thigh bone → mark as 'upper-leg'.
-        3. If ANY vertex of a triangle is upper-leg → classify whole tri as upper-leg.
-           (This avoids split vertices with mismatched partitions.)
-        4. Build two new partition blocks: torso (32) and upper-leg (44).
+        2. If vertex is primarily a pelvis/thigh bone → mark as 'lower-body'.
+        3. If ANY vertex of a triangle is lower-body → classify whole tri as
+           lower-body.  (Avoids split vertices with mismatched partitions and
+           biases the waist boundary into part 44, which pants always cover.)
+        4. Build two new partition blocks: torso (32) and lower-body (44).
       - Replace the single part-32 NiSkinPartition block with the two new ones.
 
     Returns True on success, False on any error.
@@ -170,6 +210,9 @@ def _split_body_partition(nif_path, out_path):
         # Build a mapping: bone slot index → bone name
         bone_names = _bone_list_from_instance(skin)
 
+        shape_name = bytes(block.name).rstrip(b'\x00').decode('latin-1', errors='replace')
+        underwear_overlay = _is_underwear_overlay(shape_name)
+
         # Get the NiSkinPartition
         sp = skin.skin_partition
         if sp is None:
@@ -191,7 +234,7 @@ def _split_body_partition(nif_path, out_path):
             nwpv = blk.num_weights_per_vertex
             bone_slots = [int(blk.bones[i]) for i in range(blk.num_bones)]
 
-            is_thigh = [False] * nv
+            is_lower = [False] * nv
             for lv in range(nv):
                 if blk.has_vertex_weights and blk.has_bone_indices:
                     best_w, bi_local = -1.0, 0
@@ -202,43 +245,63 @@ def _split_body_partition(nif_path, out_path):
                     local_bi  = blk.bone_indices[lv][bi_local]
                     glob_slot = bone_slots[local_bi] if local_bi < len(bone_slots) else -1
                     if 0 <= glob_slot < len(bone_names):
-                        is_thigh[lv] = bone_names[glob_slot] in THIGH_BONES
+                        if underwear_overlay:
+                            # Underwear overlay: lower-body unless bra region
+                            is_lower[lv] = (bone_names[glob_slot]
+                                            not in UNDERWEAR_TORSO_BONES)
+                        else:
+                            is_lower[lv] = bone_names[glob_slot] in LOWERBODY_BONES
 
-            torso_tris, upper_tris = [], []
+            torso_tris, lower_tris = [], []
             for ti in range(blk.num_triangles):
                 tri = blk.triangles[ti]
                 v0, v1, v2 = tri.v_1, tri.v_2, tri.v_3
-                if any(is_thigh[vv] for vv in (v0, v1, v2)):
-                    upper_tris.append((v0, v1, v2))
+                if underwear_overlay:
+                    # Bias boundary tris toward the bra (32): a bra edge tri in
+                    # 44 would leave a notch when pants hide slot 44.
+                    lower = all(is_lower[vv] for vv in (v0, v1, v2))
+                else:
+                    # Bias boundary tris toward 44: pants always cover the
+                    # waistline, so overlapping into the torso is invisible.
+                    lower = any(is_lower[vv] for vv in (v0, v1, v2))
+                if lower:
+                    lower_tris.append((v0, v1, v2))
                 else:
                     torso_tris.append((v0, v1, v2))
 
-            if not upper_tris:
-                print(f'    WARNING: no thigh vertices in part-32 block {bi} — keeping as-is')
+            if not lower_tris:
+                print(f'    WARNING: no lower-body vertices in part-32 block {bi} — keeping as-is')
                 continue
 
             print(f'    Splitting part-32 block {bi}: '
-                  f'{len(torso_tris)} torso tris + {len(upper_tris)} upper-leg tris')
+                  f'{len(torso_tris)} torso tris + {len(lower_tris)} lower-body tris')
 
             # Snapshot block data to Python before we touch anything
             bd = _extract_block_data(blk)
-            splits_needed.append((bi, torso_tris, upper_tris, bd, bsd_part_flags(bsd)))
+            splits_needed.append((bi, torso_tris, lower_tris, bd, bsd_part_flags(bsd)))
 
         if not splits_needed:
             continue
 
         # ── Phase 2: Modify each part-32 block in-place → torso data ──
-        for bi, torso_tris, upper_tris, bd, _ in splits_needed:
+        # A block with NO torso triangles (e.g. the male underwear overlay is
+        # 100% pelvis/thigh-weighted) is simply relabelled to part 44 in place;
+        # appending would duplicate its geometry.
+        for bi, torso_tris, lower_tris, bd, _ in splits_needed:
             if torso_tris:
                 _fill_block(sp.skin_partition_blocks[bi], bd, torso_tris)
-            # (If torso_tris is empty, we still do the append but leave this block unchanged)
+            else:
+                skin.partitions[bi].body_part = SBP_44_LOWERBODY
+                print(f'    Block {bi} is entirely lower-body - relabelled 32 to 44')
 
-        # ── Phase 3: Append new upper-leg blocks ──
-        for bi, torso_tris, upper_tris, bd, bsd_flags in splits_needed:
+        # ── Phase 3: Append new lower-body blocks (for blocks actually split) ──
+        for bi, torso_tris, lower_tris, bd, bsd_flags in splits_needed:
+            if not torso_tris:
+                continue  # relabelled in place above
             new_sp_idx = int(sp.num_skin_partition_blocks)
             sp.num_skin_partition_blocks = new_sp_idx + 1
             sp.skin_partition_blocks.update_size()
-            _fill_block(sp.skin_partition_blocks[new_sp_idx], bd, upper_tris)
+            _fill_block(sp.skin_partition_blocks[new_sp_idx], bd, lower_tris)
 
             new_bsd_idx = int(skin.num_partitions)
             skin.num_partitions = new_bsd_idx + 1
@@ -251,7 +314,7 @@ def _split_body_partition(nif_path, out_path):
         modified = True
 
     if not modified:
-        print(f'  No part-32 upper-leg split needed (no thigh vertices found)')
+        print(f'  No part-32 lower-body split needed (no pelvis/thigh vertices found)')
         return False
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -289,15 +352,13 @@ def main():
 
     src_base = os.path.join(args.skyrim_mesh_root,
                             'meshes', 'actors', 'character', 'character assets')
+    # Only the body meshes carry a part-32 partition; hands/feet meshes use
+    # parts 33/34/37/38 and are left vanilla.
     meshes = [
         ('malebody_0.nif',   'male body (low-weight)'),
         ('malebody_1.nif',   'male body (high-weight)'),
         ('femalebody_0.nif', 'female body (low-weight)'),
         ('femalebody_1.nif', 'female body (high-weight)'),
-        ('malehands_0.nif',  'male hands'),
-        ('malehands_1.nif',  'male hands high-weight'),
-        ('femalehands_0.nif','female hands'),
-        ('femalehands_1.nif','female hands high-weight'),
     ]
 
     ok = 0

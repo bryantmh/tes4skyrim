@@ -1,52 +1,41 @@
 Gameplan:
 	Fix Books M2
-	Fix Arrows. Should also use proper projectile. M16
-	Fix guard helmet showing hair through it M5
-	Add _1 body type M5
-	Make skyrim body mesh work M5
+	Refine Navmesh
 	Move External L13
 	Fix app design M12
 	Bsa builder limit L11
 	Bad cell names Mi21
 	Activator scripts Mi22
+	Fix Arrows. Should also use proper projectile. M16
 	No real greetings just "Hello" L4
-	Refine Navmesh
-	Refine Dialog
-	Refine Clothing
+	Texture promotion resulting in duplicate textures and wasted space. Non 0/1 armor nif still there, wasated space. character meshes converted but unused so wasted Mi11
 
-	Fable:
-	There is a wip-armor-fitting branch that contains some code to exactly morph the oblivion meshes to fit the skyrim skeleton but has some issues and ended up looking a bit worse than the current approach in its current state. The current approach is inexact, and leaves a bunch of clipping because it is based off of the oblivion kf animations and that only gets to around 90% of the target.
-	I would like you to modify the armor/clothing conversion to exactly retarget the skyrim skeleton in a way that won't create clipping. Because the meshes were never designed to exactly match, It's okay to stretch them a little bit where necessary, but the stretching should be minimal. Take care to not just create vertex explosions like earlier attempts with less advanced ai models did almost every time.
-
-	There is a modify_body_meshes script that is intended to modify the skyrim body to allow it to properly equip greaves without making body parts invisible. However, with the current meshes it produces, if nothing is equipped, that part of the body is completely invisible.
-	Find and fix the problem. Additionally, since that creates a new slot, add a script that will take a skyrim esm as input and patch its body items to use both the original body slot as well as the new slot we are creating.
-
+Prompts:
 	Book are animated to open in the inventory. If we don't use the correct animated mesh, the book fails to open. We need to use skyrim book mesh inventory model INAM, BUT we ideally need to apply the oblivion texture for the book front/back covers and spine.
 
-	Opus:
+	The biggest issue with navmesh generation are many holes that shouldn't be there and disconnected sections. Ideally the navmesh fills all those holes with good large triangles, while avoiding walls and obstacles. The issue is the current system is really bad at finding what is an unpassable wall and what is a floor, for example anvilfightersguild (temp/anvilfg_navmesh.png) holes are actually walls and correct, but the walls don't show on the image. In fact, I earlier painted the approximate wall location (nav_AFG_withpaintedwalls.png).
+	We also need to be better at trusting the pathgrid height. If the pathgrid is going over a static bridge outdoors for example, we know it is walkable and that is the approximate height of the floor. It will also incorrectly attach second floor triangles with the first floor navmesh.
+	Here is my plan: Add a script to better categorize the meshes and even parts of meshes as floors obstacles, walls, and things that are ok to path over. I'm sure there is a way to do this programmatically.
+	Then once you have that, you'll have to load the actual landscape topography and mesh triangles to generate a good navmesh that properly avoids obstacles. This is a complex task, but I know you can do it!
+	
 	Skyrim bsa files have a file size limit (2,147,483,648 bytes). The BSA builder should respect that limit. If the limit will be reached create a dummy .esl file or more (oblivion_loader.esl, oblivion_loader_1.esl) to fit everything else into
 
 	Move any external dependencies used by our pipeline to the external folder. bsarch.exe, LODGENx64.exe, papyrus.exe are the ones that come to mind but it's possible there are more. Ensure they are all documented properly in the readme license section.
 
 Major Issues for V1:
 
-	2 - Book needs to use skyrim book mesh (but oblivion texture) so that it can open in the inventory
+	1 - Book needs to use skyrim book mesh (but oblivion texture) so that it can open in the inventory
 
-	3 - Havok feels off. Items don't move like they should do a comparison with skyrim esm / collision values and create skyrim_overrides for any data that can't be gleaned from the original model / esm
+	2 - Havok feels off. Items don't move like they should do a comparison with skyrim esm / collision values and create skyrim_overrides for any data that can't be gleaned from the original model / esm
 		Specifically, there seems to be too much inertia on small items, and occasionally the items will hang in the air. Animated signs will get stuck in a position after swinging a bit.
 
-	4 - Activation detection (how close my cursor needs to be to an item till the game shows its information on my hud) is way too big.
+	3 - Activation detection (how close my cursor needs to be to an item till the game shows its information on my hud) is way too big.
 		I am able to select it 3-4x the visual mesh's size always
 			Model Examples:
 				uppersilverpitcher01.nif
 				uppergobletceramic01.nif
 
-	5 - Remaining armor bugs:
-		Guard Helmet showing hair
-		Add _1 body type
-		Need new skyrim body mesh to actually work to allow leg skin to appear
-
-	6 - Nif converter fix broken conversion
+	4 - Nif converter fix broken conversion
 		Files:
 		[RD] architecture\basementsections\ungrdltraphingedoor.nif
 		[RD] architecture\castle\kvatch\kvatch  castle int hallway01.nif
@@ -57,16 +46,17 @@ Major Issues for V1:
 		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
 		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
 
-	8 - NPCs missing proper outfits and instead are wearing random clothing
+	5 - NPCs missing proper outfits and instead are wearing random clothing. Also they seem to have duplicated items in their inventories
 
-	12 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
+	6 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
 
-	13 - Add versioning
+	7 - Add versioning
 
-	14 - Fix all CK and Xedit warnings
+	8 - Fix all CK and Xedit warnings
 
-	16 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting
+	9 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting
 
+	10 - Need new skyrim body mesh to actually work to allow leg skin to appear
 
 Later Issues:
 	1 - Lip syncing with voice
@@ -90,32 +80,22 @@ Later Issues:
 		Better handle navmesh on objects in exteriors (like bridges)
 
 	6 - Package Records. These will need a new advanced conversion algorithm
-
-	7 - Refine Clothing/Armor conversion
-		Shields attach don't attach perfectly
-		Update existing path:
-			Should maybe have another option just for armor pieces with lower arm so long sleeves don't misalign (the lower half of the arms needs to be moved forward slightly)
-			lowerclass shirt 7 completely messed up (stretched wide)
-			lowerclass female shirt 3 has a gap all along the center
-			Inward pull broken for shoes
-		or
-			Refined process that morphs to Skryim body (see wip-armor-fitting)
 	
-	10 - Properly document all tools
+	7 - Properly document all tools
 
-	11 - BSA builder must be limited to 2GB files
+	8 - BSA builder must be limited to 2GB files
 
-	13 - Move all external to external folder and update readme (bsarch.exe, LODGENx64.exe, papyrus.exe)
+	9 - Move all external to external folder and update readme (bsarch.exe, LODGENx64.exe, papyrus.exe)
 
-	14 - Convert weathers
+	10 - Convert weathers
 
-	15 - Single threaded workflows
+	11 - Single threaded workflows
 		ESM import additional sections than just navmesh
 		Note that ThreadPoolExecutor doesn't seem to work often, whereas ProcessPoolExector seems more consistent
 
-	17 - Goblins don't properly hold weapons
+	12 - Goblins don't properly hold weapons
 
-	18 - Creature animation issues. Still needs a lot of work and refinement
+	13 - Creature animation issues. Still needs a lot of work and refinement
 		Ragdoll is mangled, and animations don't look natural.
 
 Minor Issues:
@@ -128,29 +108,29 @@ Minor Issues:
 	
 	4 - Should properly position inventory items. The side that allows the largest view should face out
 
-	7 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
+	5 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
 
-	8 - Add texture_overrides folder to export instead of only .bsa files
+	6 - Add texture_overrides folder to export instead of only .bsa files
 
-	9 - Nirnroot sound is really loud
+	7 - Nirnroot sound is really loud
 
-	11 - Harvested plants don't make a sound
+	8 - Harvested plants don't make a sound
 
-	12 - Update world map cloud mesh and texture
+	9 - Update world map cloud mesh and texture
 
-	13 - Convert Skyrim LE meshes to Skyrim SE format
+	10 - Convert Skyrim LE meshes to Skyrim SE format
 
-	14 - Texture "promotion" for distant objects shouldn't be necessary. All textures should be in tes4 folder
+	11 - Texture "promotion" for distant objects shouldn't be necessary. All textures should be in tes4 folder
 
-	15 - Change logo from TES4 to TESIV
+	12 - Change logo from TES4 to TESIV
 
-	16 - Add a timer to GUI
+	13 - Add a timer to GUI
 
-	17 - Voicemap.txt shouldn't be in output folder
+	14 - Voicemap.txt shouldn't be in output folder
 
-	18 - Replace copy to skyrim step with zip output
+	15 - Replace copy to skyrim step with zip output
 
-	19 - Creature conversion console errors
+	16 - Creature conversion console errors
 	Reading <struct 'NiMorphData'> failed
 	Traceback (most recent call last):
 	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\formats\nif\__init__.py", line 1383, in read
@@ -170,15 +150,21 @@ Minor Issues:
 						% (n, stream.tell()))
 	ValueError: string too long (0x5A000000 at 0x000003BC)
 
-	21 - Bad cell names "Test End Game"
+	17 - Bad cell names "Test End Game"
 
-	22 - Activators like standing stones or altars do nothing
+	18 - Activators like standing stones or altars do nothing
 
-	23 - Flame atronach animated section not properly converted
+	19 - Flame atronach animated section not properly converted
 	
-	24 - Character meshes should be skipped
+	20 - Refine LOD
 
-	25 - Refine LOD
+	21 - Should trim skin in converted clothing that would be occluded by the clothing mesh to avoid clipping
+
+	22 - Clothes don't move which character skin, resulting in clipping
+
+	23 - Can see back of head of skinned helmets
+
+	24 - GUI should create arma plugin for all base Skyrim DLC with a popup to select more esp files.
 
 
 Crashes:

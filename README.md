@@ -20,22 +20,22 @@ assets ready to drop into your `Data` folder. Currently in early alpha stage wit
   (`CREA`→`NPC_`, `CLOT`→`ARMO`, `LVLC`→`LVLN`, …), with all the structural fixups Skyrim
   requires,
   and companion records (`ARMA`, `TXST`, `SNDR`, `VTYP`, …).
-- **Navmesh** — Oblivion Pathgrids (`PGRD`), along with cell and mesh information are used to automatically generate Navmeshes to allow NPC navigation are triangulated into Skyrim navmeshes. This still needs a little refinement, but its a good start
+- **Navmesh** — Oblivion Pathgrids (`PGRD`), along with cell and mesh information are used to automatically generate Navmeshes to allow NPC navigation are triangulated into Skyrim navmeshes. This still needs quite a bit of refinement, but its a good start
 - **Mesh conversion** — Oblivion NIFs → Skyrim NIFs (v20.2.0.7):
   NiTriStrips→NiTriShape, shader system upgrade, texture path rewriting, bone remapping,
   and root-node conversion. Only a few base game meshes are currently unsupported
 - **Havok collision** — Full rigid-body, constraint, and mesh-collision conversion with
   real MOPP generation via the bundled Havok bridge. And no crash-causing collision like the original Skyblivion collision generator
 - **Skeleton retargeting** — Armor and clothing meshes are re-posed from the Oblivion
-  skeleton to the Skyrim skeleton using an animation-corpus + optimization solver. WIP, but all weapons, armor, and clothing are fully functional, including pants/greaves. Due to the differences between skeletons, legs will currently turn invisible with a torso equipped, and there is quite a bit of clipping that needs to be solved. But this is the first automated converter of its kind
+  skeleton to the Skyrim skeleton using an animation-corpus + optimization solver. WIP, but all weapons, armor, and clothing are fully functional, including pants/greaves. with a system to allow you to use them in conjunction with your skyrim outfits without clipping, there is still a little bit of clipping on some meshes that needs to be solved, but most look almost perfect. Torso will also be invisible when legs are equiped and vice versa currently.
 - **Particles, fire & animated objects** — Particle systems, flame nodes, flip-book
-  fire, and keyframed collision are all converted to their Skyrim equivalents. Also a first for automated conversion
+  fire, and keyframed collision are all converted to their Skyrim equivalents.
 - **SpeedTree conversion** — Oblivion `.spt` trees are procedurally rebuilt as Skyrim
-  flora NIFs, one per `TREE` record. They aren't exactly 1-1, but they are fairly convincing replicas. No conversion process for this existed before this tool
+  flora NIFs, one per `TREE` record. They aren't exactly 1-1, but they are fairly convincing replicas.
 - **Dialogue & quests** — `DIAL`/`INFO`/`QUST` converted into Skyrim's branch/voice-type
   architecture (`DLBR`, `DLVW`, `VTYP`), including voice-file renaming. WIP, with some things like greetings missing
 - **Scripts** — Oblivion scripts are transpiled to Papyrus (`.psc`) source and compiled. WIP, but this along with dialog means some quests are at least partially functional.
-- **Sounds** — Voice and sound files are converted (via ffmpeg + xWMAEncode). You may run into oddities like rats speaking like Wes Johnson, but you have access to most dialog topics and the correct voices. Lip syncing not included yet
+- **Sounds** — Voice and sound files are converted (via ffmpeg + xWMAEncode). You may run into oddities like silent voices still and Lip syncing not included yet
 
 In short, this project aims to be nothing less than comprehensive and has a laundry list of bugs, but its getting better all the time. I'd love to accept any contributions as PRs. See TODO.txt for known issues / roadmap
 

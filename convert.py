@@ -586,14 +586,38 @@ def phase_mesh_bounds(file_name: str, config: dict, output_dir: str = None,
     return True
 
 
-def phase_modify_body_meshes():
-    """Add greaves partition to vanilla Skyrim character body NIFs."""
-    script = SCRIPT_DIR / "asset_convert" / "modify_body_meshes.py"
-    if not script.exists():
-        print("ERROR: asset_convert/modify_body_meshes.py not found")
-        return False
-    ret = subprocess.run([sys.executable, str(script)], cwd=str(SCRIPT_DIR),
-                         capture_output=True, text=True, **_POPEN_FLAGS)
+def phase_modify_body_meshes(tes5_data: str = None):
+    """Add greaves partition to vanilla Skyrim character body NIFs, then
+    generate the companion slot-44 patch for Skyrim.esm.
+
+    The patch (tools/patch_body_slots.py) is mandatory alongside the split
+    body meshes: without slot 44 on the NakedTorso ARMA the new lower-body
+    skin partition never renders and naked thighs are invisible.
+    """
+    # Disabled because it doesn't help
+    # script = SCRIPT_DIR / "asset_convert" / "modify_body_meshes.py"
+    # if not script.exists():
+    #     print("ERROR: asset_convert/modify_body_meshes.py not found")
+    #     return False
+    # ret = subprocess.run([sys.executable, str(script)], cwd=str(SCRIPT_DIR),
+    #                      capture_output=True, text=True, **_POPEN_FLAGS)
+    # if ret.stdout:
+    #     print(ret.stdout, end="")
+    # if ret.stderr:
+    #     print(ret.stderr, end="")
+    # if ret.returncode != 0:
+    #     return False
+
+    # Companion plugin: add slot 44 to every slot-32 ARMO/ARMA in Skyrim.esm
+    skyrim_esm = Path(tes5_data) / "Skyrim.esm" if tes5_data else None
+    if skyrim_esm is None or not skyrim_esm.exists():
+        print("WARNING: Skyrim.esm not found - slot-44 patch not generated "
+              "(run tools/patch_body_slots.py manually)")
+        return True
+    patch_script = SCRIPT_DIR / "tools" / "patch_body_slots.py"
+    ret = subprocess.run([sys.executable, str(patch_script), str(skyrim_esm)],
+                         cwd=str(SCRIPT_DIR), capture_output=True, text=True,
+                         **_POPEN_FLAGS)
     if ret.stdout:
         print(ret.stdout, end="")
     if ret.stderr:
@@ -816,7 +840,7 @@ def main():
         print("=" * 54)
         print("  Phase 10: MODIFY BODY MESHES")
         print("=" * 54)
-        if not phase_modify_body_meshes():
+        if not phase_modify_body_meshes(tes5_data):
             success = False
         print()
 

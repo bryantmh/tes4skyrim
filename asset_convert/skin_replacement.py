@@ -54,14 +54,6 @@ _SKIN_TEX_TO_BODY_NIF = [
     ('underwear', 'malebody_0.nif',  'femalebody_0.nif'),
 ]
 
-def morph_armor_to_weight1(data, skin_info: dict) -> None:
-    """Morph armor vertices toward body_1 shape for weight=1 variant.
-
-    Placeholder — full weight-morph implementation pending.
-    """
-    pass
-
-
 def _forward_skin_verts(block) -> list | None:
     """Return world-space vertex positions of a body-skin block.
 
@@ -767,7 +759,7 @@ def _recompute_body_binds(geom, armor_root):
         _write_skin_transform(skin_data.bone_list[i].skin_transform, B)
 
 
-def splice_body_geometry(data, skin_info: dict, weight: int = 0) -> int:
+def splice_body_geometry(data, skin_info: dict, fill_body_part: int = 32) -> int:
     """Attach clipped Skyrim body geometry into an armor NIF after retarget+rename.
 
     skin_info: {nif_basename -> {'bones': set[str], 'sections': [set, ...]}}
@@ -776,6 +768,12 @@ def splice_body_geometry(data, skin_info: dict, weight: int = 0) -> int:
     the Skyrim body NIF vertices.  Each section (disconnected removed skin block)
     produces its own bbox for fine-grained clipping.
     Must be called AFTER retarget_skin_to_skyrim() and _remap_bone_names().
+
+    fill_body_part: BSDismember body part assigned to every spliced fill
+    partition.  MUST be a biped slot the item's ARMA claims or the engine
+    culls the fill (a slot-44 pants ARMA never renders a partition-32 fill).
+    Callers pass the piece's primary slot: 32 cuirass/shirt, 44 greaves/pants,
+    37 boots, 33 gauntlets.
     """
     if not skin_info or not _PYFFI:
         return 0
@@ -852,6 +850,12 @@ def splice_body_geometry(data, skin_info: dict, weight: int = 0) -> int:
                 _regen_skin_partition(new_geom, new_geom.skin_instance, geom_name_str)
             except Exception:
                 pass
+            # Fill partitions must carry a slot the item's ARMA claims —
+            # otherwise the engine culls them (invisible skin holes).
+            fill_skin = new_geom.skin_instance
+            if isinstance(fill_skin, NifFormat.BSDismemberSkinInstance):
+                for pi in range(fill_skin.num_partitions):
+                    fill_skin.partitions[pi].body_part = fill_body_part
             spliced += 1
 
     return spliced
