@@ -25,7 +25,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from subprocess_flags import POPEN_FLAGS  # noqa: E402
 
 LODGEN_EXE = (
-    SCRIPT_DIR / "tools" / "LODGenx64.exe"
+    SCRIPT_DIR / "external" / "lodgen" / "LODGenx64.exe"
 )
 
 

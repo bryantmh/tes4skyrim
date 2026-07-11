@@ -409,7 +409,7 @@ def phase_compile(file_name: str, config: dict, output_dir: str = None):
         return False
 
     # Find the compiler
-    compiler = SCRIPT_DIR / "tools" / "papyrus-compiler" / "papyrus.exe"
+    compiler = SCRIPT_DIR / "external" / "papyrus-compiler" / "papyrus.exe"
     if not compiler.is_file():
         print(f"[{file_name}] ERROR: papyrus compiler not found at {compiler}")
         return False

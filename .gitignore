@@ -10,7 +10,9 @@ temp/
 
 *_log.txt
 *.log
-xWMAEncode.exe
-papyrus-compiler/
 .papyrus
 tools/*.txt
+
+# Non-redistributable external tools — user supplies these (see README)
+external/xwmaencode/xWMAEncode.exe
+external/papyrus-compiler/
