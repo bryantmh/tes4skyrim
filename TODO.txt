@@ -164,7 +164,7 @@ Minor Issues:
 
 	23 - Can see back of head of skinned helmets
 
-	24 - GUI should create arma plugin for all base Skyrim DLC with a popup to select more esp files.
+	24 - GUI should create arma plugin for all base Skyrim DLC + update.esm + unofficial patch (if it exists) with a popup menu to select more esp files if wanted. Should clean masters to avoid unnecessary ones.
 
 
 Crashes:

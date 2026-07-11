@@ -11,6 +11,8 @@ All three are orchestrated by generate_lod(), which convert.py calls as Phase 4.
 
 import math
 import os
+import re as _re
+import shutil
 import struct
 import subprocess
 import sys
@@ -660,10 +662,9 @@ def generate_lod(esm_path: Path, output_dir: Path,
             print(f"  Removed {len(stale)} stale .bto tiles")
         ok = run_lodgen(lodgen_txt, output_dir)
 
-    # Promote LOD object textures from meshes/tes4/ subdirectories to the
-    # textures root so .bto files can find them by bare filename.
-    _promote_lod_textures(objects_dir, output_dir / 'textures',
-                          output_dir / 'meshes' / 'tes4')
+    # Fill in any LOD texture the .bto files reference but that does not exist
+    # (atlas normal maps).  No copying: .bto refs are full paths, already valid.
+    _fill_missing_lod_textures(objects_dir, output_dir / 'textures')
 
     if ok:
         print(f"[LOD] Object LOD generation complete.")
@@ -672,89 +673,71 @@ def generate_lod(esm_path: Path, output_dir: Path,
     return ok
 
 
-def _promote_lod_textures(bto_dir: Path, tex_root: Path, search_dir: Path):
-    """Copy LOD textures referenced by .bto files up to the textures root.
+_BTO_TEX_RE = _re.compile(rb'[A-Za-z0-9_\\/ .-]{3,200}?\.dds', _re.IGNORECASE)
 
-    .bto files reference LOD textures by bare filename (e.g. 'CastleWallLOD01.dds').
-    Skyrim resolves these from the textures root (textures\\<basename>.dds).
-    Converted textures live in subdirectories under *search_dir* (e.g.
-    output/.../meshes/tes4/ or output/.../textures/tes4/), so we recursively
-    search both and copy missing textures to *tex_root*.
-    Also searches *tex_root* itself recursively if a texture lives in a subdir there.
+
+def _bto_texture_refs(bto_dir: Path) -> set:
+    """Texture paths referenced by the .bto tiles, relative to the textures root.
+
+    LODGen writes full paths ('data\\textures\\tes4\\...\\foo.dds'), so a ref
+    resolves directly against textures/ — nothing needs copying or renaming.
     """
-    import re as _re
-    import shutil
+    refs = set()
+    for bto in bto_dir.glob('*.bto'):
+        for m in _BTO_TEX_RE.finditer(bto.read_bytes()):
+            s = m.group(0).decode('latin-1').lower().replace('/', '\\')
+            for prefix in ('data\\textures\\', 'textures\\'):
+                if s.startswith(prefix):
+                    s = s[len(prefix):]
+                    break
+            refs.add(s)
+    return refs
 
-    needed = set()
-    for bto in bto_dir.glob("*.bto"):
-        for m in _re.finditer(rb'[A-Za-z0-9_]{3,}\.dds', bto.read_bytes(), _re.IGNORECASE):
-            needed.add(m.group(0).decode('latin-1').lower())
 
-    if not needed:
+def _fill_missing_lod_textures(bto_dir: Path, tex_root: Path):
+    """Create the LOD textures the .bto tiles reference but that don't exist.
+
+    In practice these are only NORMAL maps: LODGen writes each atlas diffuse
+    (<name>_a.dds) but no matching atlas normal (<name>_a_n.dds), and object LOD
+    renders unlit against a missing _n.  Each one is written at the exact path
+    the .bto asks for, built from the atlas's source normal when there is one
+    (single-texture atlas) and otherwise a flat normal sized to the diffuse.
+    """
+    missing = sorted(r for r in _bto_texture_refs(bto_dir)
+                     if not (tex_root / r).exists())
+    if not missing:
         return
 
-    # Build a name → path index from both search_dir and tex_root subdirs
-    index: dict = {}
-    for sd in [search_dir, tex_root]:
-        if sd.exists():
-            for dds in sd.rglob('*.dds'):
-                key = dds.name.lower()
-                if key not in index:
-                    index[key] = dds
-
-    copied = 0
-    missing = set()
-    for name in needed:
-        dest = tex_root / name
-        if dest.exists():
-            continue
-        src = index.get(name)
-        if src:
-            tex_root.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
-            copied += 1
-        else:
-            missing.add(name)
-
-    if copied:
-        print(f"  Promoted {copied} LOD textures to textures root.")
-
-    # Synthesize missing atlas NORMAL maps (<name>_a_n.dds).  LODGen writes the
-    # atlas diffuse (<name>_a.dds) but here does not emit the atlas normal, so
-    # object LOD would reference a missing _n and render unlit.  For each needed
-    # _a_n we build it from the atlas's source normal (single-texture atlas) or
-    # fall back to a flat normal at the atlas resolution.
     synth = 0
-    still_missing = set()
-    for name in list(missing):
-        # Any missing NORMAL map referenced by a .bto: object LOD renders unlit
-        # (or the engine can choke) without it.  Build one from the best source
-        # normal we can find, else a flat normal sized to the paired diffuse.
-        if not name.endswith('_n.dds'):
-            still_missing.add(name)
+    unresolved = []
+    for rel in missing:
+        dest = tex_root / rel
+        if not rel.endswith('_n.dds'):
+            unresolved.append(rel)
             continue
-        dest = tex_root / name
-        stem = name[:-len('_n.dds')]             # e.g. 'lcstone01_a' or 'brumawoodpost_grey'
-        # candidate source normals: the non-atlas normal of the same base
+        stem = rel[:-len('_n.dds')]              # 'tes4\...\lcstone01_a'
+        # An atlas ('..._a') borrows the normal of the texture it was built from.
         base = stem[:-2] if stem.endswith('_a') else stem
-        src_normal = index.get(f'{base}_n.dds')
-        diffuse = (index.get(f'{stem}.dds') or index.get(f'{base}.dds')
-                   or (tex_root / f'{stem}.dds'))
+        src_normal = tex_root / f'{base}_n.dds'
+        diffuse = tex_root / f'{stem}.dds'
+        if not diffuse.exists():
+            diffuse = tex_root / f'{base}.dds'
         try:
-            if src_normal and src_normal.exists() and src_normal != dest:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if src_normal.exists() and src_normal != dest:
                 shutil.copy2(src_normal, dest)
             else:
                 _write_flat_normal_for(diffuse, dest)
             synth += 1
         except Exception:
-            still_missing.add(name)
+            unresolved.append(rel)
 
     if synth:
         print(f"  Synthesized {synth} object-LOD normal maps.")
-    if still_missing:
-        print(f"  WARNING: {len(still_missing)} LOD textures not found: "
-              + ", ".join(sorted(still_missing)[:5])
-              + ("..." if len(still_missing) > 5 else ""))
+    if unresolved:
+        print(f"  WARNING: {len(unresolved)} LOD textures missing: "
+              + ", ".join(unresolved[:5])
+              + ("..." if len(unresolved) > 5 else ""))
 
 
 def _write_flat_normal_for(atlas_diffuse: Path, dest: Path):
