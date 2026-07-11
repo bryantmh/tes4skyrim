@@ -9,6 +9,7 @@ from ..constants import (
     SKYRIM_MAP_MARKER_LCRT,
     map_lock_level,
 )
+from ..locations import WORLD_NAMES
 from ..skyrim_overrides import TES4_MARKER_FORMID_TO_SKYRIM
 from .items import get_base_origin_shift
 from .common import (
@@ -33,11 +34,25 @@ from .common import (
 # discover its location (and so reveal its map marker).
 _CELL_LOCATION: dict = {}
 
+# (WRLD FormID, grid X, grid Y) -> LCTN FormID naming that exterior cell square.
+# Skyrim reads an exterior cell's *name* off its XLCN — no vanilla exterior cell
+# has a FULL — so a cell missing from this map shows up as "Wilderness".
+_GRID_LOCATION: dict = {}
 
-def set_cell_locations(cell_to_location: dict):
-    """Register the interior-cell → Location map used to emit CELL XLCN."""
+# WRLD FormID -> LCTN FormID, the catch-all location for that worldspace.
+_WORLD_LOCATION: dict = {}
+
+
+def set_cell_locations(cell_to_location: dict,
+                       grid_to_location: dict = None,
+                       world_to_location: dict = None):
+    """Register the cell → Location maps used to emit CELL XLCN."""
     _CELL_LOCATION.clear()
     _CELL_LOCATION.update(cell_to_location)
+    _GRID_LOCATION.clear()
+    _GRID_LOCATION.update(grid_to_location or {})
+    _WORLD_LOCATION.clear()
+    _WORLD_LOCATION.update(world_to_location or {})
 
 
 def convert_LTEX(rec: dict, writer=None) -> tuple:
@@ -199,10 +214,17 @@ def convert_CELL(rec: dict) -> bytes:
         if -1e9 < whf < 1e9:
             subs += pack_float_subrecord('XCLW', whf)
 
-    # XLCN — Location.  Entering a cell that belongs to a location discovers
-    # that location, which is what reveals its map marker.  Set for interiors
-    # sitting behind a map marker's door (see tes5_import/locations.py).
+    # XLCN — Location.  This does double duty in Skyrim: entering a cell that
+    # belongs to a location discovers it (revealing its map marker), and it is
+    # also where the engine reads the cell's *name* from.  Not one vanilla
+    # exterior cell carries a FULL, so an exterior with no XLCN is displayed as
+    # "Wilderness" on a load door.  Interiors are matched by FormID; exteriors
+    # by their grid square, falling back to the worldspace's own location.
     lctn_fid = _CELL_LOCATION.get(get_formid(rec, 'FormID'))
+    if not lctn_fid and x is not None:
+        world_fid = get_formid(rec, 'ParentWRLD')
+        lctn_fid = (_GRID_LOCATION.get((world_fid, x, y))
+                    or _WORLD_LOCATION.get(world_fid))
     if lctn_fid:
         subs += pack_formid_subrecord('XLCN', lctn_fid)
 
@@ -221,7 +243,14 @@ def convert_WRLD(rec: dict) -> bytes:
 
     if edid:
         subs += pack_string_subrecord('EDID', edid)
-    full = get_str(rec, 'FULL')
+
+    # Name the worldspace with the same resolved name its Location uses, so the
+    # dev names Bethesda shipped (AnvilCastleCourtyardWorld's "TestEndGame") do
+    # not reach the player, and so Tamriel — which has no FULL at all, because
+    # the TES4 engine hardcoded its label — is not left nameless.
+    # A worldspace absent from the table resolved to no usable name at all (the
+    # unreachable test worlds); leaving it nameless beats shipping "TestMatt".
+    full = WORLD_NAMES.get(get_formid(rec, 'FormID'))
     if full:
         subs += pack_string_subrecord('FULL', full)
 

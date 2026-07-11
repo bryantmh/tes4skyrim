@@ -403,11 +403,12 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
                 errors += 1
 
-    # --- Phase 3c: LCTN map-marker Locations ---
+    # --- Phase 3c: LCTN Locations ---
     # Skyrim only reveals a map marker when the player discovers the Location it
-    # belongs to, and Oblivion has no Locations at all — so build one per marker
-    # before the cells are written, since interiors need XLCN pointing at them.
-    set_cell_locations(build_marker_locations(by_type, writer))
+    # belongs to, and it reads an exterior cell's displayed name off that same
+    # Location — Oblivion has neither, so build them here, before the cells are
+    # written, since every cell needs an XLCN pointing at one.
+    set_cell_locations(*build_marker_locations(by_type, writer))
 
     # --- Phase 4: CELL/WRLD hierarchy (+ PGRD→NAVM navmeshes) ---
     # Base-object model index for navmesh static-footprint carving. Only
