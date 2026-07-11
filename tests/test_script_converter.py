@@ -381,7 +381,26 @@ End
         result = converter.convert_standalone('UpdateScript', source, 'ObjectReference', 'UpdateScript')
         assert 'Event OnUpdate()' in result
         assert 'RegisterForSingleUpdate' in result
+        # Object/actor GameMode loops are gated on load state (OnCellAttach start /
+        # OnCellDetach stop), NOT auto-started from OnInit — otherwise every
+        # scripted object in the game begins ticking the moment the save loads.
+        assert 'Event OnCellAttach()' in result
+        assert 'Event OnCellDetach()' in result
+        assert 'Event OnInit()' not in result
+        # The OnUpdate re-registration only continues while still loaded.
+        assert 'Is3DLoaded()' in result
+
+    def test_gamemode_quest_still_uses_oninit(self, converter):
+        # Quest scripts run globally, so their loop DOES self-start from OnInit.
+        source = """ScriptName QUpdateScript
+
+Begin GameMode
+  set x to 1
+End
+"""
+        result = converter.convert_standalone('QUpdateScript', source, 'Quest', 'QUpdateScript')
         assert 'Event OnInit()' in result
+        assert 'Event OnCellAttach()' not in result
 
     def test_extends_quest(self, converter):
         source = """ScriptName QuestScript

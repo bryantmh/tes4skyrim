@@ -2,7 +2,6 @@ Gameplan:
 	Fix Books M2
 	Refine Navmesh
 	Fix app design M12
-	Activator scripts Mi22
 	Fix Arrows. Should also use proper projectile. M16
 	No real greetings just "Hello" L4
 
@@ -14,7 +13,6 @@ Prompts:
 	Here is my plan: Add a script to better categorize the meshes and even parts of meshes as floors obstacles, walls, and things that are ok to path over. I'm sure there is a way to do this programmatically.
 	Then once you have that, you'll have to load the actual landscape topography and mesh triangles to generate a good navmesh that properly avoids obstacles. This is a complex task, but I know you can do it!
 	
-	Activator scripts don't seem to be working. For example, activating an altar should display a message onscreen and provide an effect to the user. Additionally, activating a nirnroot should stop it from emiting its sound
 Major Issues for V1:
 
 	1 - Book needs to use skyrim book mesh (but oblivion texture) so that it can open in the inventory
@@ -136,8 +134,6 @@ Minor Issues:
 		raise ValueError('string too long (0x%08X at 0x%08X)'
 						% (n, stream.tell()))
 	ValueError: string too long (0x5A000000 at 0x000003BC)
-
-	18 - Activators like standing stones or altars do nothing
 
 	19 - Flame atronach animated section not properly converted
 	
