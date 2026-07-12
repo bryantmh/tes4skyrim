@@ -247,3 +247,72 @@ def read_getisid_fids(rec: dict, offset: 'int | None' = None,
 def has_positive_getisid(rec: dict) -> bool:
     """True if the record has at least one GetIsID(X) == 1.0 condition."""
     return bool(read_getisid_fids(rec, positive_only=True))
+
+
+def read_func_param_fids(rec: dict, func_idx: int,
+                         offset: 'int | None' = None) -> set:
+    """Remapped param1 FormIDs of every `func(X) == 1.0` condition on a record.
+
+    Used to harvest the "who is this line for" gates a sibling INFO carries
+    (e.g. GetInFaction(Beggars)) so a conditionless sibling can inherit them.
+    """
+    if offset is None:
+        offset = get_formid_index_offset()
+    fids = set()
+    i = 0
+    while True:
+        raw_hex = rec.get(f'Condition[{i}].Raw')
+        if raw_hex is None:
+            break
+        i += 1
+        if not raw_hex or len(raw_hex) < 24:
+            continue
+        try:
+            raw = bytes.fromhex(raw_hex)
+            if struct.unpack_from('<H', raw, 8)[0] != func_idx:
+                continue
+            if (raw[0] & 0xF0) != 0x00 or struct.unpack_from('<f', raw, 4)[0] != 1.0:
+                continue
+            fid = struct.unpack_from('<I', raw, 12)[0]
+            if fid:
+                fids.add(_remap_formid(fid, offset))
+        except (ValueError, struct.error):
+            continue
+    return fids
+
+
+def has_any_conditions(rec: dict) -> bool:
+    """True if the record carries at least one TES4 condition."""
+    return bool(rec.get('Condition[0].Raw'))
+
+
+# TES4 condition functions that already answer "WHO is this line for":
+# GetInCell(67), GetIsClass(68), GetIsRace(69), GetInFaction(71), GetIsID(72),
+# GetFactionRank(73). GetIsSex(70) is deliberately excluded — male/female alone
+# is not an audience restriction.
+_AUDIENCE_FUNCS = frozenset({67, 68, 69, 71, 72, 73})
+
+
+def has_audience_condition(rec: dict) -> bool:
+    """True if the record already restricts WHICH actors the line reaches.
+
+    An INFO gated on a cell, class, race, faction or actor has stated its own
+    audience — injecting a GetIsID OR-chain harvested from its siblings on top
+    would narrow it to a handful of NPCs (e.g. AnvilTopic, gated GetInCell
+    (Anvil), would stop reaching most Anvil NPCs).
+    """
+    i = 0
+    while True:
+        raw_hex = rec.get(f'Condition[{i}].Raw')
+        if raw_hex is None:
+            break
+        i += 1
+        if not raw_hex or len(raw_hex) < 24:
+            continue
+        try:
+            raw = bytes.fromhex(raw_hex)
+            if struct.unpack_from('<H', raw, 8)[0] in _AUDIENCE_FUNCS:
+                return True
+        except (ValueError, struct.error):
+            continue
+    return False

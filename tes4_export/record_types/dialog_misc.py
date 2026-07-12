@@ -114,36 +114,76 @@ def export_QUST(rec: Record) -> list:
         lines.append(f"DATA.Flags={data.data[0]}")
         lines.append(f"DATA.Priority={data.data[1]}")
 
-    emit_conditions(lines, rec)
-
-    # Stages — iterate subrecords in order to capture QSDT + CNAM + SCTX/SCRO per log entry
-    stages = []  # list of (index, [{'flags': int, 'text': str, 'script': str, 'refs': [str]}, ...])
+    # QUST holds CTDAs in THREE distinct positions (xEdit wbDefinitionsTES4
+    # QUST record): quest-level (before the first Stage/Target), per-log-entry
+    # (inside a Stage's Log Entry — result-script gate), and per-Target (after
+    # each QSTA — this is what gates the compass/map marker per stage). A flat
+    # get_all_subrecords(rec,'CTDA') conflates all three and destroys the
+    # QSTA->condition association that decides which objective's marker shows.
+    # So walk the subrecord stream positionally and bucket CTDAs by context.
+    #
+    # State: 'quest' until the first INDX or QSTA; 'log' while inside a Stage
+    # log entry; 'target' after a QSTA. Quest-level CTDAs are emitted as the
+    # top-level Condition[] list the importer already reads.
+    quest_ctdas = []      # top-level quest conditions
+    stages = []           # (index, [{'flags','text','script','refs','ctdas'}, ...])
+    targets = []          # [{'formid','flags','ctdas'}, ...]
     current_idx = None
     current_logs = []
+    state = "quest"       # quest | log | target
     for sub in rec.subrecords:
         if sub.type == "INDX":
             if current_idx is not None:
                 stages.append((current_idx, current_logs))
             current_idx = struct.unpack_from('<h', sub.data, 0)[0] if len(sub.data) >= 2 else 0
             current_logs = []
-        elif sub.type == "QSDT" and current_idx is not None:
+            state = "stage"
+        elif sub.type == "QSDT":
             qsdt_flags = sub.data[0] if sub.data else 0
-            current_logs.append({'flags': qsdt_flags, 'text': '', 'script': '', 'refs': []})
-        elif sub.type == "CNAM" and current_idx is not None and current_logs:
+            current_logs.append({'flags': qsdt_flags, 'text': '', 'script': '',
+                                 'refs': [], 'ctdas': []})
+            state = "log"
+        elif sub.type == "CNAM" and current_logs:
             current_logs[-1]['text'] = get_string(sub)
-        elif sub.type == "SCTX" and current_idx is not None and current_logs:
+        elif sub.type == "SCTX" and current_logs:
             current_logs[-1]['script'] = get_string(sub)
-        elif sub.type == "SCRO" and current_idx is not None and current_logs:
+        elif sub.type == "SCRO" and current_logs:
             if len(sub.data) >= 4:
                 current_logs[-1]['refs'].append(get_formid_str(struct.unpack_from('<I', sub.data, 0)[0]))
+        elif sub.type == "QSTA":
+            if len(sub.data) >= 8:
+                targets.append({
+                    'formid': get_formid_str(struct.unpack_from('<I', sub.data, 0)[0]),
+                    'flags': struct.unpack_from('<I', sub.data, 4)[0],
+                    'ctdas': [],
+                })
+            state = "target"
+        elif sub.type == "CTDA" and len(sub.data) >= 20:
+            if state == "target" and targets:
+                targets[-1]['ctdas'].append(sub.data.hex())
+            elif state == "log" and current_logs:
+                current_logs[-1]['ctdas'].append(sub.data.hex())
+            elif state == "quest":
+                quest_ctdas.append(sub.data.hex())
+            # CTDAs seen in 'stage' state (between INDX and first QSDT) are rare;
+            # fold them into the quest bucket so nothing is silently lost.
+            else:
+                quest_ctdas.append(sub.data.hex())
     if current_idx is not None:
         stages.append((current_idx, current_logs))
+
+    # Quest-level conditions (top-level Condition[] the importer reads).
+    if quest_ctdas:
+        lines.append(f"ConditionCount={len(quest_ctdas)}")
+        for i, raw in enumerate(quest_ctdas):
+            lines.append(f"Condition[{i}].Raw={raw}")
 
     if stages:
         lines.append(f"StageCount={len(stages)}")
         for i, (stage_idx, log_entries) in enumerate(stages):
             lines.append(f"Stage[{i}].Index={stage_idx}")
-            log_entries = log_entries or [{'flags': 0, 'text': '', 'script': '', 'refs': []}]
+            log_entries = log_entries or [{'flags': 0, 'text': '', 'script': '',
+                                           'refs': [], 'ctdas': []}]
             lines.append(f"Stage[{i}].LogCount={len(log_entries)}")
             for j, entry in enumerate(log_entries):
                 lines.append(f"Stage[{i}].Log[{j}].Flags={entry['flags']}")
@@ -154,14 +194,18 @@ def export_QUST(rec: Record) -> list:
                 for k, ref in enumerate(entry.get('refs', [])):
                     lines.append(f"Stage[{i}].Log[{j}].SCRO[{k}]={ref}")
 
-    # Targets (QSTA)
-    qstas = get_all_subrecords(rec, "QSTA")
-    if qstas:
-        lines.append(f"TargetCount={len(qstas)}")
-        for i, qsta in enumerate(qstas):
-            if len(qsta.data) >= 8:
-                lines.append(f"Target[{i}].FormID={get_formid_str(struct.unpack_from('<I', qsta.data, 0)[0])}")
-                lines.append(f"Target[{i}].Flags={struct.unpack_from('<I', qsta.data, 4)[0]}")
+    # Targets (QSTA) with their per-target conditions. These CTDAs (typically
+    # GetStage/GetStageDone bounds) are what the importer replays on each
+    # Skyrim objective's QSTA so the marker shows for the right stage.
+    if targets:
+        lines.append(f"TargetCount={len(targets)}")
+        for i, tgt in enumerate(targets):
+            lines.append(f"Target[{i}].FormID={tgt['formid']}")
+            lines.append(f"Target[{i}].Flags={tgt['flags']}")
+            if tgt['ctdas']:
+                lines.append(f"Target[{i}].ConditionCount={len(tgt['ctdas'])}")
+                for k, raw in enumerate(tgt['ctdas']):
+                    lines.append(f"Target[{i}].Condition[{k}].Raw={raw}")
 
     return lines
 

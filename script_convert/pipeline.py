@@ -352,10 +352,23 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph,
                 for pname, ptype in sorted(prop_refs.items()):
                     key = pname.lower()
                     if key in merged:
-                        _, existing_type = merged[key]
-                        # Keep the more specific type; prefer original-case name
+                        existing_name, existing_type = merged[key]
+                        # Keep the more specific type; prefer the first-seen
+                        # (SCRO-canonical) name so it matches the VMAD binding.
                         if existing_type == 'Quest' and ptype != 'Quest':
-                            merged[key] = (pname, ptype)
+                            merged[key] = (existing_name, ptype)
+                        elif ptype == 'ActorBase' and existing_type != 'ActorBase':
+                            # Base typing from a base-semantics function
+                            # (SetEssential base) must win over ANY reference
+                            # type — including Actor and Actor-derived TES4_*
+                            # scripts. The VMAD binds this property to a base
+                            # (NPC_/CREA) record, and a reference-typed property
+                            # bound to a base is UNBINDABLE: Papyrus aborts the
+                            # whole script's init, so the quest never finishes
+                            # initialising and its aliases never fill. (FGC01Rats:
+                            # QuillWeave, an NPC_ base, was typed as the Actor
+                            # script TES4_FGC01QuillweaveScript.)
+                            merged[key] = (existing_name, ptype)
                         # else: keep existing (already specific, or both Quest)
                     else:
                         merged[key] = (pname, ptype)
@@ -456,6 +469,12 @@ def _add_scro_ref(conv: 'ScriptConverter', fid: str, xref: CrossRefGraph):
     cur = conv._property_refs.get(edid, '')
     if cur and cur != 'Quest' and ptype == 'Quest':
         return
+    # Never overwrite an ActorBase typing set by a base-semantics function
+    # (SetEssential base). The SCRO here is the base record, so a reference /
+    # Actor-script type would be UNBINDABLE against the base and abort the whole
+    # script's init. ActorBase is a hard constraint, not a promotable guess.
+    if cur == 'ActorBase':
+        return
     conv._property_refs[edid] = ptype
 
 
@@ -464,13 +483,21 @@ def _add_scro_ref(conv: 'ScriptConverter', fid: str, xref: CrossRefGraph):
 # ===========================================================================
 
 def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int, int]],
-                               property_values: dict = None) -> bytes:
-    """Build VMAD binary for a QUST record with stage script fragments.
+                               property_values: dict = None,
+                               attached_script: tuple = None) -> bytes:
+    """Build VMAD binary for a QUST record with stage script fragments and/or
+    an attached quest script.
 
     Args:
         quest_edid: Quest EditorID
-        stage_fragments: list of (stage_index, log_index) tuples
-        property_values: optional dict {property_name: formid} for script properties
+        stage_fragments: list of (stage_index, log_index) tuples; may be empty
+            when only an attached script is present (vanilla then writes the
+            fragments section with count=0 and an EMPTY file name — e.g.
+            MS12PostQuest / WIThief01 in Skyrim.esm).
+        property_values: optional dict {property_name: formid} for the QF
+            fragment script's properties
+        attached_script: optional (script_name, {prop: formid}) for the
+            converted TES4 quest script (SCRI) to attach alongside
 
     Returns VMAD binary data.
     """
@@ -480,19 +507,21 @@ def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int,
     # VMAD header
     buf += struct.pack('<HH', 5, 2)  # version=5, objectFormat=2
 
-    # Scripts array: 1 script
-    buf += struct.pack('<H', 1)
-    buf += _pack_wstring(script_name)
-    buf += struct.pack('<B', 0)   # flags=0
-    # Properties
-    if property_values:
-        buf += struct.pack('<H', len(property_values))
-        for pname, fid in property_values.items():
+    scripts = []
+    if stage_fragments:
+        scripts.append((script_name, property_values or {}))
+    if attached_script:
+        scripts.append(attached_script)
+
+    buf += struct.pack('<H', len(scripts))
+    for sname, props in scripts:
+        buf += _pack_wstring(sname)
+        buf += struct.pack('<B', 0)   # flags=0
+        buf += struct.pack('<H', len(props))
+        for pname, fid in props.items():
             buf += _pack_wstring(pname)
             buf += struct.pack('<BB', 1, 1)       # type=Object, status=Edited
             buf += struct.pack('<HhI', 0, -1, fid) # unused=0, alias=-1, FormID
-    else:
-        buf += struct.pack('<H', 0)   # propertyCount=0
 
     # Script fragments (quest type, wbScriptFragmentsQuest):
     #   S8  Extra bind data version = 2
@@ -500,7 +529,7 @@ def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int,
     #   LenString(U16) FileName
     buf += struct.pack('<b', 2)                  # Extra bind data version = 2
     buf += struct.pack('<H', len(stage_fragments))  # FragmentCount
-    buf += _pack_wstring(script_name)            # FileName
+    buf += _pack_wstring(script_name if stage_fragments else '')  # FileName
     for stage_idx, log_idx in stage_fragments:
         frag_name = f'Fragment_Stage_{stage_idx:04d}_Item_{log_idx}'
         buf += struct.pack('<H', stage_idx)   # Quest Stage (U16)
@@ -509,6 +538,18 @@ def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int,
         buf += struct.pack('<b', 1)           # Unknown (S8) — vanilla always 1
         buf += _pack_wstring(script_name)
         buf += _pack_wstring(frag_name)
+
+    # Alias-script array (wbVMADFragmentedQUST: Version, ObjectFormat, Scripts,
+    # ScriptFragmentsQuest, **Aliases**) — an S16 count followed by that many
+    # alias-script entries.  A QUST VMAD is malformed without it, and the engine
+    # parses VMAD strictly: running off the end of the buffer where it expects
+    # this count aborts the record's whole script/alias binding, so EVERY quest
+    # alias fills as NONE *and* every QF script property comes back None.  That
+    # is the real reason converted quests showed a journal objective but never a
+    # marker.  Verified against Skyrim.esm: vanilla QUST VMADs end with exactly
+    # these two bytes (e.g. DBSideContract03's 643-byte VMAD parses to 643/643
+    # only once the trailing count is read).  We attach no alias scripts, so 0.
+    buf += struct.pack('<h', 0)
 
     return bytes(buf)
 

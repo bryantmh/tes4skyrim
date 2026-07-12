@@ -29,13 +29,17 @@ _VALUE_TYPES = {'Int', 'Float', 'Bool'}
 
 _PLAYER_FORMID = 0x14
 
-# Object record types that carry a SCRI in TES4 and become plain object scripts
-# in Skyrim.  Actors (NPC_/CREA) and QUST/INFO have their own script pipelines
-# and are intentionally excluded.
+# Record types that carry a SCRI in TES4 and become plain object scripts
+# in Skyrim.  NPC_/CREA are included: TES4 attaches actor scripts to the BASE
+# record, and Skyrim instantiates a base record's VMAD scripts on every placed
+# reference — without this, script-typed properties (e.g.
+# TES4_FGC01PiranusScript) can never cast and read as None in-game.
+# QUST/INFO have their own script pipelines (quest SCRI is attached by
+# dialog_converter's QUST VMAD; INFO result scripts become TIF fragments).
 SCRIPTABLE_TYPES = {
     'ACTI', 'FLOR', 'CONT', 'DOOR', 'FURN', 'MISC', 'KEYM', 'LIGH',
     'STAT', 'BOOK', 'WEAP', 'ARMO', 'CLOT', 'AMMO', 'INGR', 'ALCH',
-    'APPA', 'SLGM', 'SGST', 'SBSP',
+    'APPA', 'SLGM', 'SGST', 'SBSP', 'NPC_', 'CREA',
 }
 
 # Output (TES5) signatures whose xEdit record definition actually lists a VMAD
@@ -53,10 +57,20 @@ VMAD_SUPPORTED_OUTPUT_TYPES = {
 # build_object_script_plan(); read by the record converters via get_object_vmad().
 _OBJECT_VMAD: dict[int, bytes] = {}
 
+# QUST FormID (int, output space) -> (script_name, {prop: formid}).  Filled by
+# build_quest_script_plan(); consumed by dialog_converter.convert_QUST, which
+# splices the script into the quest's VMAD alongside the QF fragment script.
+_QUEST_SCRIPT: dict[int, tuple] = {}
+
 
 def get_object_vmad(record_fid: int) -> bytes:
     """Packed VMAD subrecord for a record's attached object script (b'' if none)."""
     return _OBJECT_VMAD.get(record_fid, b'')
+
+
+def get_quest_script(record_fid: int):
+    """(script_name, props) for a QUST's converted TES4 quest script, or None."""
+    return _QUEST_SCRIPT.get(record_fid)
 
 
 def _remap(fid: int, offset: int) -> int:
@@ -68,6 +82,55 @@ def _remap(fid: int, offset: int) -> int:
     if offset and fid and (fid >> 24) == 0x00 and (fid & 0x00FFFFFF) >= 0x100:
         return (fid & 0x00FFFFFF) | (offset << 24)
     return fid
+
+
+def _collect_scpts(by_type: dict, xref) -> dict:
+    """SCPT FormID -> (EditorID, SCTX source, extends class)."""
+    scpt_by_fid: dict[str, tuple] = {}
+    for rec in by_type.get('SCPT', []):
+        fid = rec.get('FormID', '')
+        sctx = rec.get('SCTX', '')
+        if not fid or not sctx or not sctx.strip():
+            continue
+        scpt_by_fid[fid] = (rec.get('EditorID', ''), sctx,
+                            xref.get_extends_class(fid))
+    return scpt_by_fid
+
+
+def build_quest_script_plan(by_type: dict, xref, fid_to_edid: dict) -> int:
+    """Resolve every QUST's attached TES4 quest script (SCRI) to a
+    (script_name, bound-properties) plan for convert_QUST to splice into the
+    quest VMAD.  Without this the converted TES4_<QuestScript>.pex is never
+    attached, so its GameMode logic never runs and every property another
+    script declares with that type (e.g. TES4_FGQuestTrack) fails to cast and
+    reads None in-game.
+
+    Returns the number of quests with a script plan.
+    """
+    _QUEST_SCRIPT.clear()
+    offset = get_formid_index_offset()
+    scpt_by_fid = _collect_scpts(by_type, xref)
+
+    for rec in by_type.get('QUST', []):
+        scri = rec.get('SCRI', '')
+        if not scri or scri not in scpt_by_fid:
+            continue
+        rec_fid_str = rec.get('FormID', '')
+        if not rec_fid_str:
+            continue
+        try:
+            rec_fid = _remap(int(rec_fid_str, 16), offset)
+        except ValueError:
+            continue
+        edid, sctx, extends = scpt_by_fid[scri]
+        script_name = f'TES4_{_safe_property_name(edid or f"Script_{scri}")}'
+        try:
+            props = _resolve_props(sctx, edid, extends, xref, fid_to_edid, offset)
+        except Exception:
+            props = {}
+        _QUEST_SCRIPT[rec_fid] = (script_name, props)
+
+    return len(_QUEST_SCRIPT)
 
 
 def build_object_script_plan(by_type: dict, xref, fid_to_edid: dict) -> int:
@@ -82,16 +145,7 @@ def build_object_script_plan(by_type: dict, xref, fid_to_edid: dict) -> int:
     """
     _OBJECT_VMAD.clear()
     offset = get_formid_index_offset()
-
-    # SCPT FormID -> (EditorID, SCTX source, extends class)
-    scpt_by_fid: dict[str, tuple] = {}
-    for rec in by_type.get('SCPT', []):
-        fid = rec.get('FormID', '')
-        sctx = rec.get('SCTX', '')
-        if not fid or not sctx or not sctx.strip():
-            continue
-        scpt_by_fid[fid] = (rec.get('EditorID', ''), sctx,
-                            xref.get_extends_class(fid))
+    scpt_by_fid = _collect_scpts(by_type, xref)
 
     from .constants import TYPE_MAP
 

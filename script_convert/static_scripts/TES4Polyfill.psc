@@ -229,6 +229,19 @@ Function EvaluatePackage(Actor akActor) Global
 EndFunction
 
 ; ==========================================================================
+; Container
+; ==========================================================================
+
+; TES4 `GetContainer` returns the container an item is inside (0 when it is
+; lying in the world).  Papyrus has no way to walk from an item reference back
+; to its container, but it does not need one to answer the question every
+; caller actually asks: an item held in an inventory has no 3D placement, so
+; its parent cell is None.  That is the same test, and it is exact.
+Bool Function IsInContainer(ObjectReference akRef) Global
+  Return akRef.GetParentCell() == None
+EndFunction
+
+; ==========================================================================
 ; Day/Time Helpers
 ; ==========================================================================
 

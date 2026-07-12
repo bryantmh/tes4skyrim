@@ -74,6 +74,31 @@ def pack_top_group(sig: str, contents: bytes) -> bytes:
     return pack_group(0, label, contents)
 
 
+def _count_records_and_groups(blob: bytes) -> int:
+    """Count every record and GRUP in a serialized group blob (recursively).
+
+    Used to compute the TES4 header's HEDR record count from the actual written
+    bytes. A GRUP header is 24 bytes with its total size at offset 4 (covering
+    the header); a record header is 24 bytes with its DATA size at offset 4
+    (NOT covering the header). Both GRUPs and records are counted, matching
+    vanilla Skyrim.esm (HEDR ≈ records + groups).
+    """
+    count = 0
+    pos = 0
+    n = len(blob)
+    while pos + 24 <= n:
+        tag = blob[pos:pos + 4]
+        size = struct.unpack_from('<I', blob, pos + 4)[0]
+        count += 1
+        if tag == b'GRUP':
+            # Recurse into the group's children (size includes the 24B header).
+            count += _count_records_and_groups(blob[pos + 24:pos + size])
+            pos += size
+        else:
+            pos += 24 + size
+    return count
+
+
 def pack_tes4_header(masters: list, num_records: int = 0,
                      next_object_id: int = 0x800,
                      author: str = "TES4-to-TES5 Converter",
@@ -197,12 +222,30 @@ class PluginWriter:
         """
         import os
         tmp_path = filepath + '.tmp'
+
+        # Assemble the top-level group bodies first so the header's HEDR record
+        # count can be computed from the ACTUAL written content. The count must
+        # include records nested in CELL/WRLD/DIAL hierarchies (added via
+        # add_raw_group, which never touched _record_count) plus every GRUP —
+        # vanilla Skyrim.esm's HEDR ≈ records + groups. A count that omits the
+        # hierarchies (our old 38,585 vs 1.17M real) leaves the header wildly
+        # under-reporting, which the engine's loader does not tolerate cleanly.
+        group_blobs = []
+        for sig in self._group_order():
+            if sig not in self._top_groups:
+                continue
+            contents = b''.join(self._top_groups[sig])
+            if contents:
+                group_blobs.append(pack_top_group(sig, contents))
+
+        total_count = sum(_count_records_and_groups(b) for b in group_blobs)
+
         try:
             with open(tmp_path, 'wb') as f:
                 # TES4 header
                 header = pack_tes4_header(
                     self.masters,
-                    num_records=self._record_count,
+                    num_records=total_count,
                     next_object_id=self._next_object_id,
                     author=self.author,
                     description=self.description,
@@ -210,14 +253,8 @@ class PluginWriter:
                 )
                 f.write(header)
 
-                # Write each top-level group in a deterministic order
-                for sig in self._group_order():
-                    if sig not in self._top_groups:
-                        continue
-                    items = self._top_groups[sig]
-                    contents = b''.join(items)
-                    if contents:
-                        f.write(pack_top_group(sig, contents))
+                for blob in group_blobs:
+                    f.write(blob)
         except Exception:
             # Clean up partial temp file so it doesn't litter the output dir
             try:
@@ -240,16 +277,32 @@ class PluginWriter:
             ) from e
 
     def _group_order(self) -> list:
-        """Canonical top-level group ordering for TES5."""
+        """Canonical top-level group ordering for TES5.
+
+        CRITICAL: QUST must come AFTER CELL, WRLD and DIAL (this is vanilla
+        Skyrim.esm's order: …CELL, WRLD, DIAL, QUST, …). The engine/CK loads
+        top-level groups in file order and resolves a quest's forced-reference
+        aliases (ALFR) WHEN it loads the QUST group. If QUST precedes CELL/WRLD,
+        the ACHR/REFR targets living in those cell groups are not in the form
+        map yet, so every forced ref fails with "[QUESTS] Could not find forced
+        ref (…)" and the alias fills NONE (no marker). A quest in a PLUGIN can
+        still find a ref in a MASTER because masters load fully first — which is
+        exactly why the same alias resolved in the test ESP but not in-file.
+        DIAL is also placed before QUST to match vanilla.
+        """
         order = [
             'GMST', 'KYWD', 'TXST', 'GLOB', 'CLAS', 'FACT', 'HDPT', 'EYES',
             'RACE', 'SOUN', 'SNDR', 'MATT', 'STAT', 'ACTI', 'CONT', 'DOOR',
             'FLOR', 'FURN', 'GRAS', 'TREE', 'LIGH', 'MISC', 'KEYM', 'ARMO',
             'ARMA', 'BOOK', 'AMMO', 'ENCH', 'SPEL', 'ALCH', 'INGR', 'SCRL',
             'SLGM', 'VTYP', 'OTFT', 'NPC_', 'LVLN', 'LVLI', 'LVSP', 'WTHR',
-            'CLMT', 'REGN', 'QUST', 'IDLE', 'PACK', 'EFSH', 'LSCR', 'ANIO',
-            'WEAP', 'LCTN', 'NAVI', 'CELL', 'WRLD', 'SMBN', 'SMQN', 'SMEN',
+            'CLMT', 'REGN', 'IDLE', 'PACK', 'EFSH', 'LSCR', 'ANIO',
+            'WEAP', 'LCTN', 'NAVI',
+            # References resolved by quests must exist before QUST loads:
+            'CELL', 'WRLD',
+            'SMBN', 'SMQN', 'SMEN',
             'DIAL', 'DLBR', 'DLVW',
+            'QUST',
         ]
         # Append any groups not in the canonical order
         for sig in self._top_groups:

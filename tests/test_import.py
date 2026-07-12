@@ -495,11 +495,19 @@ class TestConverters:
 
     def test_glob(self):
         rec = {'Signature': 'GLOB', 'FormID': '00003000', 'RecordFlags': '0',
-               'EditorID': 'GameHour', 'FNAM.Type': 'f', 'FLTV.Value': '12.0'}
+               'EditorID': 'TES4Fame', 'FNAM.Type': 'f', 'FLTV.Value': '12.0'}
         result = convert_GLOB(rec)
         self._check_record(result, 'GLOB')
         fnam = self._get_subrecord_data(result, 'FNAM')
         assert fnam == bytes([ord('f')])
+
+    def test_glob_engine_time_global_dropped(self):
+        """GameHour etc. collide with Skyrim engine globals; script references
+        are canonicalized to the vanilla forms, so our copy must not be
+        emitted."""
+        rec = {'Signature': 'GLOB', 'FormID': '00003000', 'RecordFlags': '0',
+               'EditorID': 'GameHour', 'FNAM.Type': 'f', 'FLTV.Value': '12.0'}
+        assert convert_GLOB(rec) == b''
 
     def test_lvli(self):
         rec = {'Signature': 'LVLI', 'FormID': '00004000', 'RecordFlags': '0',

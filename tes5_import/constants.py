@@ -356,7 +356,10 @@ def _init_dispatch():
         'CSTY',   # Combat Style -> Completely restructured
         'IDLE',   # Animation system different
         'GMST',   # Game settings differ between TES4/TES5
-        'GLOB',   # Globals may conflict with Skyrim values
+        # GLOB is NOT skipped: converted scripts bind GlobalVariable properties
+        # to TES4 globals (TES4Fame, quest counters...), which read None if the
+        # records don't exist. convert_GLOB drops the engine-time globals
+        # (GameHour etc.) whose references are canonicalized to vanilla forms.
         'CLMT',   # Climate system differs
         'REGN',   # Region system differs
         'EYES',   # Do not convert — NPCs map to Skyrim head parts

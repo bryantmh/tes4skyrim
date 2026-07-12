@@ -42,6 +42,39 @@ BLOCK_MAP = {
     'scripteffectupdate': ('Event OnUpdate()', 'EndEvent'),
 }
 
+# Oblivion block filters (`begin OnEquip player`, `begin OnTrigger player`,
+# `begin OnPackageDone SomePackage`) restrict the block to fire only for that
+# object.  Papyrus has no such filter, so the block body must be wrapped in an
+# equivalent guard on the event parameter that carries the filtered object.
+#
+# Maps block type -> (event parameter name, Papyrus type of that parameter).
+# A block type absent from this table has no parameter to filter on, so its
+# filter cannot be expressed and is dropped (with a TODO).
+BLOCK_FILTER_PARAM = {
+    'onactivate':         ('akActionRef', 'ObjectReference'),
+    'onadd':              ('akNewContainer', 'ObjectReference'),
+    'ondrop':             ('akOldContainer', 'ObjectReference'),
+    'onequip':            ('akActor', 'Actor'),
+    'onactorequip':       ('akActor', 'Actor'),
+    'onunequip':          ('akActor', 'Actor'),
+    'onsell':             ('akSeller', 'Actor'),
+    'ontrigger':          ('akActionRef', 'ObjectReference'),
+    'ontriggerenter':     ('akActionRef', 'ObjectReference'),
+    'ontriggerleave':     ('akActionRef', 'ObjectReference'),
+    'ontriggeractor':     ('akActionRef', 'ObjectReference'),
+    'ontriggermob':       ('akActionRef', 'ObjectReference'),
+    'onhit':              ('akAggressor', 'ObjectReference'),
+    'onhitwith':          ('akSource', 'Form'),
+    'ondeath':            ('akKiller', 'Actor'),
+    'onstartcombat':      ('akTarget', 'Actor'),
+    'onmagiceffecthit':   ('akEffect', 'MagicEffect'),
+    'onmagiceffectapply': ('akEffect', 'MagicEffect'),
+    'onpackagestart':     ('akNewPackage', 'Package'),
+    'onpackagedone':      ('akOldPackage', 'Package'),
+    'onpackageend':       ('akOldPackage', 'Package'),
+    'onpackagechange':    ('akOldPackage', 'Package'),
+}
+
 # Oblivion type -> Papyrus type mapping
 TYPE_MAP = {
     'short': 'Int',
@@ -626,6 +659,14 @@ _GLOBAL_CANONICAL = {
 
 
 _RECORD_TYPE_PAPYRUS = {
+    # NPC_/CREA are BASE records (TESNPC), so 'Actor' is technically wrong —
+    # the VM type-checks VMAD object properties and an Actor-typed property
+    # bound to a base form silently reads None in-game. But TES4 scripts use
+    # NPC base EditorIDs in reference contexts pervasively (comparisons,
+    # assignments), and a blanket ActorBase typing breaks ~1000 script
+    # compilations. Instead, handlers whose TES4 argument is base-semantics
+    # (SetEssential) override the individual property to ActorBase; a full fix
+    # needs base-aware comparison/assignment emission (GetBaseObject()).
     'QUST': 'Quest', 'NPC_': 'Actor', 'CREA': 'Actor',
     'FACT': 'Faction', 'GLOB': 'GlobalVariable',
     'SPEL': 'Spell', 'ENCH': 'Enchantment', 'MGEF': 'MagicEffect',

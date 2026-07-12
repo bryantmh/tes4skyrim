@@ -349,6 +349,11 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     if edid:
         subs += pack_string_subrecord('EDID', edid)
 
+    # VMAD — converted TES4 actor script (SCRI), attached to the base so every
+    # placed reference gets an instance (mirrors TES4 semantics).
+    from ..object_scripts import get_object_vmad
+    subs += get_object_vmad(get_formid(rec, 'FormID'))
+
     # OBND (NPC_ default bounds)
     subs += pack_obnd(-12, -12, 0, 12, 12, 60)
 
@@ -522,6 +527,12 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     edid = get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
+
+    # VMAD — converted TES4 creature script (SCRI), attached to the base so
+    # every placed reference gets an instance (mirrors TES4 semantics).
+    from ..object_scripts import get_object_vmad
+    subs += get_object_vmad(get_formid(rec, 'FormID'))
+
     subs += pack_obnd(-12, -12, 0, 12, 12, 60)  # NPC_ default bounds
 
     # ACBS — auto-calc stats for creatures
@@ -801,9 +812,19 @@ def convert_CLAS(rec: dict, *, override_fid: int = 0, override_edid: str = '',
     return pack_record('CLAS', fid, flags, subs)
 
 
+# TES4 globals whose names collide with Skyrim engine globals. Script
+# references to these are canonicalized to the vanilla forms by
+# script_convert (_GLOBAL_CANONICAL), so emitting our own copies would only
+# create duplicate EditorIDs.
+_ENGINE_GLOBALS = {'gamehour', 'gamedayspassed', 'gameday', 'gamemonth',
+                   'gameyear', 'timescale'}
+
+
 def convert_GLOB(rec: dict) -> bytes:
     subs = b''
     edid = get_str(rec, 'EditorID')
+    if edid and edid.lower() in _ENGINE_GLOBALS:
+        return b''
     if edid:
         subs += pack_string_subrecord('EDID', edid)
     type_char = get_str(rec, 'FNAM.Type', 'f')

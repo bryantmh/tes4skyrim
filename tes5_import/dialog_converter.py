@@ -66,7 +66,9 @@ from .dialog_conditions import (
     build_ctda,
     build_or_chain,
     convert_ctda_list,
-    has_positive_getisid,
+    has_any_conditions,
+    has_audience_condition,
+    read_func_param_fids,
     read_getisid_fids,
 )
 
@@ -169,6 +171,78 @@ def _quest_has_journal(rec: dict) -> bool:
     return False
 
 
+""" TES4 CTDA function indices used when resolving quest-target stage gates. """
+_FUNC_GET_STAGE = 58
+_FUNC_GET_STAGE_DONE = 59
+
+# CTDA operator = the top 3 bits of the type byte.
+_CTDA_OPS = {
+    0x00: lambda a, b: a == b,
+    0x20: lambda a, b: a != b,
+    0x40: lambda a, b: a > b,
+    0x60: lambda a, b: a >= b,
+    0x80: lambda a, b: a < b,
+    0xA0: lambda a, b: a <= b,
+}
+
+
+def _target_live_at_stage(raw_hexes: list, stage_idx: int) -> bool:
+    """Would Oblivion have shown this quest target's marker at `stage_idx`?
+
+    Oblivion gates each QSTA with conditions — overwhelmingly `GetStage <op> N`
+    on the quest's own FormID, which is exactly "show this marker during this
+    part of the quest". Skyrim has no equivalent (its objective targets are
+    unconditional), so we resolve the gate here: evaluate the chain with
+    GetStage == stage_idx and put the target only on the objectives where it
+    holds.
+
+    OR semantics follow the CTDA chain rule: bit 0 of the type byte ORs a
+    condition with the NEXT one, so the chain is an AND of OR-groups. A
+    condition we cannot evaluate (any function other than GetStage/GetStageDone
+    — GetQuestVariable, GetDeadCount, …) is treated as PASSING: it is a runtime
+    fact we cannot know, and dropping the target on a maybe would lose a marker
+    Oblivion did show. A target with no conditions at all is always live.
+    """
+    if not raw_hexes:
+        return True
+
+    groups = []          # list of OR-groups; each group is a list of bools
+    current = []
+    for raw_hex in raw_hexes:
+        try:
+            raw = bytes.fromhex(raw_hex)
+        except ValueError:
+            continue
+        if len(raw) < 20:
+            continue
+        type_byte = raw[0]
+        comp = struct.unpack_from('<f', raw, 4)[0]
+        func = struct.unpack_from('<H', raw, 8)[0]
+
+        if func == _FUNC_GET_STAGE:
+            op = _CTDA_OPS.get(type_byte & 0xE0)
+            value = bool(op(float(stage_idx), comp)) if op else True
+        elif func == _FUNC_GET_STAGE_DONE:
+            # GetStageDone(quest, N): stage N has been completed. Approximate
+            # with "we are at or past N" — the only monotonic reading available
+            # from static data.
+            target_stage = struct.unpack_from('<I', raw, 16)[0]
+            done = stage_idx >= target_stage
+            op = _CTDA_OPS.get(type_byte & 0xE0)
+            value = bool(op(1.0 if done else 0.0, comp)) if op else True
+        else:
+            value = True                      # not statically knowable -> pass
+
+        current.append(value)
+        if not (type_byte & 0x01):            # no OR -> this group ends here
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+
+    return all(any(g) for g in groups)
+
+
 def _quest_dnam(rec: dict) -> bytes:
     """DNAM (12 bytes): Flags(U16) Priority(U8) FormVer(U8=0) Unknown(4) Type(U32).
 
@@ -209,10 +283,13 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
     if edid:
         subs += pack_string_subrecord('EDID', edid)
 
-    # VMAD — quest stage script fragments (Papyrus), only if there are stages
-    # with text/script. The fragment list must match the generated PSC exactly.
+    # VMAD — quest stage script fragments (Papyrus) plus the converted TES4
+    # quest script (SCRI), when either exists. The fragment list must match
+    # the generated PSC exactly.
     stage_frags = _quest_stage_fragments(rec)
-    if stage_frags and edid:
+    from .object_scripts import get_quest_script
+    attached = get_quest_script(get_formid(rec, 'FormID'))
+    if (stage_frags or attached) and edid:
         from script_convert.pipeline import build_vmad_quest_fragments
         prop_vals = (_collect_all_scro_properties(rec, fid_to_edid)
                      if fid_to_edid else {})
@@ -226,7 +303,8 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
                         if n in unlock_globals:
                             prop_vals[n] = unlock_globals[n]
         subs += pack_subrecord('VMAD', build_vmad_quest_fragments(
-            edid, stage_frags, property_values=prop_vals or None))
+            edid, stage_frags, property_values=prop_vals or None,
+            attached_script=attached))
 
     full = get_str(rec, 'FULL')
     if full:
@@ -256,36 +334,41 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
                 subs += pack_string_subrecord('CNAM', txt)
 
     # --- Quest targets -> reference aliases + per-objective targets ---
-    # Oblivion QSTA: quest-level (REFR FormID + flags + conditions, usually
-    # GetStage bounds that gate WHEN the compass marker shows). Skyrim QSTA:
-    # per-OBJECTIVE (alias index + flags + conditions); markers appear while
-    # a displayed objective has a passing target. Mapping: one forced-ref
-    # alias per unique target ref, and every objective carries every target
-    # WITH its converted conditions — the GetStage conditions then gate the
-    # marker per stage at runtime exactly as Oblivion did. The stage
-    # fragments (script_convert) call SetObjectiveDisplayed(stage).
-    targets = []          # (alias_id, tes4_flags_low_byte, [ctda bytes])
+    # Oblivion QSTA is QUEST-level: one entry per (target ref, condition set),
+    # where the conditions are GetStage bounds saying WHEN that target's compass
+    # marker is live. Skyrim QSTA is per-OBJECTIVE and vanilla leaves it
+    # UNCONDITIONAL — the objective being Displayed is what selects the marker
+    # (checked across Skyrim.esm: objectives read `QOBJ FNAM NNAM QSTA [QSTA…]`
+    # with CTDAs the rare exception, and the right target simply sits on the
+    # right objective).
+    #
+    # So the faithful mapping is to RESOLVE Oblivion's GetStage gates at build
+    # time rather than replay them at runtime: for each objective (= stage), emit
+    # only the targets whose TES4 conditions hold AT THAT STAGE, with no CTDAs.
+    # Carrying every target on every objective (the previous design) makes the
+    # engine face a list whose leading entries are false and it renders no marker
+    # at all — objective shows in the journal, compass/map stay empty.
     alias_by_fid = {}
+    targets = []          # (alias_id, tes4_flags_low_byte, [raw TES4 ctda hex])
     t = 0
     while f'Target[{t}].FormID' in rec:
         tfid = get_formid(rec, f'Target[{t}].FormID')
         if tfid:
             alias_id = alias_by_fid.setdefault(tfid, len(alias_by_fid))
             tflags = get_int(rec, f'Target[{t}].Flags') & 0x01
-            ctdas = convert_ctda_list(rec, prefix=f'Target[{t}].')
-            targets.append((alias_id, tflags, ctdas))
+            raws = []
+            k = 0
+            while True:
+                raw = rec.get(f'Target[{t}].Condition[{k}].Raw')
+                if raw is None:
+                    break
+                raws.append(raw)
+                k += 1
+            targets.append((alias_id, tflags, raws))
         t += 1
 
-    target_subs = b''
-    for alias_id, tflags, ctdas in targets:
-        target_subs += pack_subrecord('QSTA', struct.pack('<iB3x',
-                                                          alias_id, tflags))
-        for ctda in ctdas:
-            target_subs += pack_subrecord('CTDA', ctda)
-
     # Objectives — one per stage with journal text (objective index = stage
-    # index, which is what the generated stage fragments display), each
-    # carrying all quest targets.
+    # index, which is what the generated stage fragments display).
     seen_stages = set()
     for i in range(stage_count):
         stage_idx = get_int(rec, f'Stage[{i}].Index')
@@ -302,19 +385,37 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
         subs += pack_subrecord('QOBJ', struct.pack('<H', stage_idx))
         subs += pack_uint32_subrecord('FNAM', 0)
         subs += pack_string_subrecord('NNAM', txt)
-        subs += target_subs
+
+        live = [(a, f) for a, f, raws in targets
+                if _target_live_at_stage(raws, stage_idx)]
+        # An objective with no live target keeps its journal text but marks
+        # nothing — same as vanilla's marker-less objectives ("Return when
+        # you're ready"). If Oblivion gated every target away at this stage,
+        # honour that rather than inventing a marker.
+        emitted = set()
+        for alias_id, tflags in live:
+            if alias_id in emitted:
+                continue          # same ref gated by several stage windows
+            emitted.add(alias_id)
+            subs += pack_subrecord('QSTA', struct.pack('<iB3x',
+                                                       alias_id, tflags))
 
     subs += pack_uint32_subrecord('ANAM', len(alias_by_fid))  # Next Alias ID
 
-    # Reference aliases (forced ref). Flags: Optional (0x0002 — a fill
-    # failure must not block quest start, or dialogue dies with it) +
-    # Allow Reuse (0x0008) + Allow Dead (0x0010) + Allow Disabled (0x0080) +
-    # Allow Destroyed (0x1000).
+    # Reference aliases (forced ref).  Layout and flag value both follow vanilla:
+    # ALST, ALID, FNAM, ALFR, VTCK, ALED.  **VTCK is present on 2687/2687 vanilla
+    # forced-ref aliases — a 100% invariant** (empty = "no voice-type override"),
+    # and every one of the 255 vanilla objective+forced-ref quests carries it.
+    # Flags 0x0292 = Optional (0x0002 — a fill failure must not block quest start,
+    # or the dialogue dies with it) + Allow Dead (0x0010) + Allow Disabled
+    # (0x0080) + Allow Reserved (0x0200); an attested vanilla combination.  The
+    # old 0x109A added Allow Reuse/Allow Destroyed and appears nowhere in vanilla.
     for tfid, alias_id in sorted(alias_by_fid.items(), key=lambda kv: kv[1]):
         subs += pack_uint32_subrecord('ALST', alias_id)
         subs += pack_string_subrecord('ALID', f'TES4Target{alias_id:02d}')
-        subs += pack_uint32_subrecord('FNAM', 0x0000109A)
+        subs += pack_uint32_subrecord('FNAM', 0x00000292)
         subs += pack_formid_subrecord('ALFR', tfid)
+        subs += pack_formid_subrecord('VTCK', 0)
         subs += pack_subrecord('ALED', b'')
 
     return pack_record('QUST', get_formid(rec, 'FormID'),
@@ -378,6 +479,12 @@ _BARK_SUBTYPES = frozenset(
 _SKIP_TYPES = frozenset({DIAL_TYPE_PERSUASION, DIAL_TYPE_SERVICE})
 _SKIP_EDIDS = frozenset({
     'CreatureResponses', 'SECreatureResponses', 'TamrielGateResponses', 'ANY',
+    # InfoRefusal (DATA.Type 6 Misc, not a Type-3 persuasion topic so not caught
+    # by _SKIP_TYPES) is the persuasion/disposition refusal line ("That's
+    # privileged information. I'm sorry."). Skyrim has no persuasion mechanic to
+    # trigger it, and it is conditionless under the always-running Generic quest,
+    # so as an IDLE bark it fired as EVERY NPC's walk-past line. No equivalent.
+    'InfoRefusal',
 })
 
 # Oblivion Service-type topics that become real Skyrim service dialogue.
@@ -437,14 +544,17 @@ def classify_topic(edid: str, dtype: int):
 
 def convert_DIAL(rec: dict, *, info_count: int, dlbr_fid: int,
                  quest_fid: int, category: int, subtype: int,
-                 snam: bytes, priority: float = 50.0) -> bytes:
+                 snam: bytes, priority: float = 50.0,
+                 edid_override: str = None, formid_override: int = None) -> bytes:
     """DIAL — Dialog Topic. Order: EDID FULL PNAM [BNAM] QNAM DATA SNAM TIFC.
 
     quest_fid is the REMAPPED owning quest (original QSTI quest, or the synthetic
-    generic dialogue quest for orphan/bark topics).
+    generic dialogue quest for orphan/bark topics). edid_override/formid_override
+    let the per-quest bark split emit multiple DIALs from one source record with
+    unique EditorIDs and FormIDs.
     """
     subs = b''
-    edid = get_str(rec, 'EditorID')
+    edid = edid_override if edid_override is not None else get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
     full = get_str(rec, 'FULL')
@@ -464,8 +574,9 @@ def convert_DIAL(rec: dict, *, info_count: int, dlbr_fid: int,
     subs += pack_subrecord('DATA', struct.pack('<BBH', 0, category & 0xFF, subtype))
     subs += pack_subrecord('SNAM', snam)
     subs += pack_uint32_subrecord('TIFC', info_count)
-    return pack_record('DIAL', get_formid(rec, 'FormID'),
-                       get_int(rec, 'RecordFlags'), subs)
+    formid = (formid_override if formid_override is not None
+              else get_formid(rec, 'FormID'))
+    return pack_record('DIAL', formid, get_int(rec, 'RecordFlags'), subs)
 
 
 # ===========================================================================
@@ -523,7 +634,7 @@ SERVICE_MENU_SCRIPTS = {
 def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
                  fid_to_edid: dict = None, well_known_props: dict = None,
                  xref=None, reveal_props: dict = None,
-                 service_menu: str = '') -> bytes:
+                 service_menu: str = '', drop_tclt: bool = False) -> bytes:
     """INFO — Dialog response.
 
     Order: EDID [VMAD] ENAM CNAM [TCLT...] [TRDT NAM1 NAM2 NAM3]* CTDAs.
@@ -572,14 +683,16 @@ def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
     # CNAM — favor level (None)
     subs += pack_subrecord('CNAM', struct.pack('<B', 0))
 
-    # TCLT — choices (follow-up topic links)
-    choice_count = get_int(rec, 'ChoiceCount')
+    # TCLT — choices (follow-up topic links). Bark topics have no branches or
+    # choices in Skyrim, so drop any TCLT (Oblivion greeting/bark topics that
+    # chained to other greetings would otherwise dangle at split sub-topics).
+    choice_count = 0 if drop_tclt else get_int(rec, 'ChoiceCount')
     if choice_count > 0:
         for i in range(choice_count):
             cfid = get_formid(rec, f'Choice[{i}]')
             if cfid:
                 subs += pack_formid_subrecord('TCLT', cfid)
-    else:
+    elif not drop_tclt:
         cfid = get_formid(rec, 'TCLT.Choice')
         if cfid:
             subs += pack_formid_subrecord('TCLT', cfid)
@@ -718,6 +831,22 @@ def build_npc_to_vtyp_map(by_type: dict, num_new_masters: int) -> dict:
 # Main dialogue group builder
 # ===========================================================================
 
+def _make_generic_quest(writer, edid: str, full: str) -> int:
+    """Create a StartGameEnabled synthetic dialogue quest; return its FormID.
+
+    Owns orphan/generic bark topics. Flags 0x0011 (StartGameEnabled +
+    StartsEnabled), priority 0, form-version 0. Must be listed in the .seq file
+    to actually run from a new game."""
+    fid = writer.alloc_formid()
+    q = pack_string_subrecord('EDID', edid)
+    q += pack_string_subrecord('FULL', full)
+    q += pack_subrecord('DNAM', struct.pack('<HBBII', 0x0011, 0, 0, 0, 0))
+    q += pack_subrecord('NEXT', b'')
+    q += pack_uint32_subrecord('ANAM', 0)
+    writer.add_record('QUST', pack_record('QUST', fid, 0, q))
+    return fid
+
+
 def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                         fid_to_edid: dict = None, xref=None,
                         well_known_props: dict = None,
@@ -747,14 +876,15 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
             return (fid & 0x00FFFFFF) | (offset << 24)
         return fid
 
-    # --- Synthetic generic dialogue quest (owns orphan/bark topics only) ---
-    generic_quest_fid = writer.alloc_formid()
-    gq = pack_string_subrecord('EDID', 'TES4DialogueGeneric')
-    gq += pack_string_subrecord('FULL', 'TES4 Generic Dialogue')
-    gq += pack_subrecord('DNAM', struct.pack('<HBBII', 0x0011, 0, 0, 0, 0))
-    gq += pack_subrecord('NEXT', b'')
-    gq += pack_uint32_subrecord('ANAM', 0)
-    writer.add_record('QUST', pack_record('QUST', generic_quest_fid, 0, gq))
+    # --- Synthetic generic dialogue quest (owns orphan conversation topics) ---
+    generic_quest_fid = _make_generic_quest(writer, 'TES4DialogueGeneric',
+                                            'TES4 Generic Dialogue')
+    # Per-source-DIAL synthetic quests for the quest-less INFOs of bark topics.
+    # Skyrim honors only one bark topic per subtype per quest, so GREETING and
+    # HELLO (both HELO) cannot both dump their quest-less lines into one shared
+    # generic quest — each bark DIAL with orphan lines gets its own quest.
+    # Populated on demand by _build_bark_topics_per_quest; drained into SGE.
+    bark_generic_quests = {}   # source DIAL EditorID -> synthetic quest FID
 
     # --- Pre-scan ---
     skipped_fids = {get_formid(d, 'FormID') for d in dials if should_skip_dial(d)}
@@ -771,6 +901,30 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                          for r in by_type.get('QUST', [])
                          if get_formid(r, 'FormID')}
     quest_edid_by_fid[generic_quest_fid] = 'TES4DialogueGeneric'
+
+    # Quest-level dialogue conditions: in Oblivion a QUST's own CTDAs gate ALL
+    # of that quest's dialogue (e.g. NQDBeggars = GetInFaction(Beggars), so its
+    # conditionless beggar HELLO/GREETING lines only reach beggars). Skyrim has
+    # no quest-level dialogue gate, so these must be injected into every INFO the
+    # quest owns. Keyed by RAW quest FormID; converted (32-byte) CTDAs.
+    quest_dialog_ctdas = {}
+    for qr in by_type.get('QUST', []):
+        qfid = get_formid(qr, 'FormID')
+        if not qfid:
+            continue
+        ctdas = convert_ctda_list(qr, offset)
+        if ctdas:
+            quest_dialog_ctdas[qfid] = b''.join(
+                pack_subrecord('CTDA', c) for c in ctdas)
+
+    # VTYP FormID -> EditorID, so an NPC-specific line can record the folder its
+    # speaker's voice type resolves to (voice files are relocated there).
+    from .skyrim_overrides import CUSTOM_VTYP_EDIDS, VOICE_TYPE_MAP
+    vtyp_edid_by_fid = {}
+    for vt_edid, key in CUSTOM_VTYP_EDIDS.items():
+        vt_fid = VOICE_TYPE_MAP.get(key)
+        if vt_fid:
+            vtyp_edid_by_fid[vt_fid] = vt_edid
 
     # TES4 quest priorities: Oblivion picks the first passing INFO in QUEST
     # PRIORITY order (highest first), NOT file order. Our flattened topics are
@@ -818,18 +972,30 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     # Per-owning-quest view aggregation (one DLVW per quest).
     view_branches = defaultdict(list)
     view_topics = defaultdict(list)
+    bark_dials = []          # deferred to the global bark pass
 
     for dial_rec in dials:
         if should_skip_dial(dial_rec):
             stats['skipped'] += 1
             continue
+        # Bark topics (greetings, combat/detection barks) are emitted by the
+        # global bark pass so they can be grouped by (quest, subtype) across ALL
+        # bark DIALs — Skyrim honors only one bark topic per subtype per quest.
+        edid = get_str(dial_rec, 'EditorID', '')
+        if not service_menu_kind(dial_rec):
+            _c, _s, _snam, is_bark = classify_topic(
+                edid, get_int(dial_rec, 'DATA.Type'))
+            if is_bark:
+                bark_dials.append(dial_rec)
+                continue
         try:
             content, dlbr_bytes, owner_qfid, dial_fid, dlbr_fid = _build_one_topic(
                 dial_rec, info_by_dial, writer, remap, offset, generic_quest_fid,
                 tclt_targets, unlock_plan, unlock_globals, npc_to_vtyp,
                 quest_npc_fids, sge_quest_fids, quest_edid_by_fid,
                 quest_priority, voice_map,
-                fid_to_edid, xref, well_known_props, stats)
+                fid_to_edid, xref, well_known_props,
+                quest_dialog_ctdas, vtyp_edid_by_fid, stats)
             if not content:      # dropped (e.g. service topic with no gate)
                 stats['skipped'] += 1
                 continue
@@ -842,6 +1008,19 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         except Exception as e:
             print(f"  ERROR topic {get_str(dial_rec, 'EditorID', '?')}: {e}")
 
+    # --- Global bark pass: one topic per (owning quest, subtype) ---
+    bark_ctx = dict(
+        npc_to_vtyp=npc_to_vtyp, sge_quest_fids=sge_quest_fids,
+        remap=remap, offset=offset, unlock_plan=unlock_plan,
+        unlock_globals=unlock_globals, fid_to_edid=fid_to_edid,
+        well_known_props=well_known_props, xref=xref, voice_map=voice_map,
+        quest_edid_by_fid=quest_edid_by_fid, quest_priority=quest_priority,
+        quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid, stats=stats)
+    bark_content, bark_sge = _build_bark_pass(
+        bark_dials, info_by_dial, writer, remap,
+        bark_generic_quests, bark_ctx)
+    all_dial_content += bark_content
+
     # --- One DLVW per owning quest ---
     all_dlvw = b''
     for qfid, branches in view_branches.items():
@@ -850,10 +1029,6 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                               branches, view_topics.get(qfid, []))
         stats['views'] += 1
 
-    # --- Fallback generic greetings (one per voice type) ---
-    all_dial_content += _build_fallback_greetings(
-        writer, generic_quest_fid, npc_to_vtyp, stats)
-
     if all_dial_content:
         writer.add_raw_group('DIAL', all_dial_content)
     if all_dlbr:
@@ -861,13 +1036,17 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     if all_dlvw:
         writer.add_raw_group('DLVW', all_dlvw)
 
-    print(f"    topics={stats['topics']} infos={stats['infos']} "
+    print(f"    topics={stats['topics']} bark-topics={stats['bark_topics']} "
+          f"infos={stats['infos']} "
           f"branches={stats['branches']} views={stats['views']} "
           f"skipped={stats['skipped']} voice-gated={stats['voice_gated']} "
           f"id-gated={stats['id_gated']} unlock-gated={stats['unlock_gated']} "
-          f"revealers={stats['revealers']} quest-gated={stats['quest_gated']}")
+          f"revealers={stats['revealers']} quest-gated={stats['quest_gated']} "
+          f"quest-cond-gated={stats['quest_cond_gated']}")
 
-    return {generic_quest_fid}
+    # Synthetic quests that must run from a new game (in the .seq file): the
+    # generic conversation-topic quest + the per-subtype generic bark quests.
+    return {generic_quest_fid} | bark_sge
 
 
 def read_getisid_fids_for_topic(child_infos: list) -> set:
@@ -914,7 +1093,8 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
                      unlock_globals, npc_to_vtyp,
                      quest_npc_fids, sge_quest_fids, quest_edid_by_fid,
                      quest_priority, voice_map,
-                     fid_to_edid, xref, well_known_props, stats):
+                     fid_to_edid, xref, well_known_props,
+                     quest_dialog_ctdas, vtyp_edid_by_fid, stats):
     """Convert one DIAL topic and its child INFOs. Returns
     (dial_group_bytes, dlbr_bytes, owner_quest_fid, dial_fid, dlbr_fid)."""
     dial_fid = get_formid(dial_rec, 'FormID')
@@ -1013,48 +1193,25 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
         unlock_gate_bytes = pack_subrecord('CTDA', build_ctda(
             FUNC_GET_GLOBAL_VALUE, param1=gfid))
 
-    # --- Convert child INFOs ---
-    topic_children = b''
-    child_count = 0
-    for info_rec in child_infos:
-        try:
-            # Per-INFO quest gate: Oblivion only shows an INFO while its own
-            # QSTI quest runs. When the topic's owner quest is not that quest
-            # (shared topics owned by the generic quest), re-express the
-            # gating as GetQuestRunning. SGE quests are exempt (always
-            # running from a new game via the .seq file).
-            quest_gate_bytes = b''
-            info_qfid = get_formid(info_rec, 'QSTI.Quest') or orig_quest_fid
-            if (info_qfid and info_qfid not in sge_quest_fids
-                    and remap(info_qfid) != owner_qfid):
-                quest_gate_bytes = pack_subrecord('CTDA', build_ctda(
-                    FUNC_GET_QUEST_RUNNING, param1=remap(info_qfid)))
-            injected = _build_injected_ctdas(
-                info_rec, is_bark, npc_to_vtyp, topic_vtyps, topic_npc_fids,
-                service_gate_bytes + quest_gate_bytes, unlock_gate_bytes,
-                offset, stats)
-            # Revealer INFO: its OnEnd fragment sets the unlock globals; bind
-            # each global name -> GLOB FormID as a VMAD property.
-            reveal_names = unlock_plan['info_reveals'].get(
-                get_formid(info_rec, 'FormID') & 0xFFFFFF)
-            reveal_props = None
-            if reveal_names:
-                reveal_props = {n: unlock_globals[n] for n in reveal_names
-                                if n in unlock_globals}
-                if reveal_props:
-                    stats['revealers'] += 1
-            topic_children += convert_INFO(
-                info_rec, injected_ctdas=injected, fid_to_edid=fid_to_edid,
-                well_known_props=well_known_props, xref=xref,
-                reveal_props=reveal_props, service_menu=service_kind)
-            child_count += 1
-            stats['infos'] += 1
-            if voice_map is not None:
-                info_fid = get_formid(info_rec, 'FormID')
-                voice_map[info_fid & 0xFFFFFF] = voice_file_prefix(
-                    quest_edid_by_fid.get(owner_qfid, ''), edid)
-        except Exception as e:
-            print(f"  ERROR info under {edid or '?'}: {e}")
+    # Shared context passed to the per-INFO converter.
+    info_ctx = dict(
+        is_bark=is_bark, npc_to_vtyp=npc_to_vtyp, topic_vtyps=topic_vtyps,
+        topic_npc_fids=topic_npc_fids, service_gate_bytes=service_gate_bytes,
+        unlock_gate_bytes=unlock_gate_bytes, service_kind=service_kind,
+        orig_quest_fid=orig_quest_fid, sge_quest_fids=sge_quest_fids,
+        remap=remap, offset=offset, unlock_plan=unlock_plan,
+        unlock_globals=unlock_globals, fid_to_edid=fid_to_edid,
+        well_known_props=well_known_props, xref=xref, voice_map=voice_map,
+        quest_edid_by_fid=quest_edid_by_fid, edid=edid,
+        quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid, stats=stats)
+
+    # Bark topics are handled by the global bark pass (grouped by quest+subtype
+    # across ALL bark DIALs), never here — see _build_bark_pass.
+    assert not is_bark, "bark topics must go through _build_bark_pass"
+
+    # --- Conversation topic: single topic under its owning quest ---
+    topic_children, child_count = _convert_topic_infos(
+        child_infos, owner_qfid, info_ctx)
 
     # Guaranteed catch-all so every vendor/trainer offers the topic even when
     # no original line's conditions pass (most barter lines are GetIsID-gated
@@ -1072,6 +1229,248 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
     if topic_children:
         content += pack_group(7, struct.pack('<I', dial_fid), topic_children)
     return content, dlbr_bytes, owner_qfid, dial_fid, dlbr_fid
+
+
+def _convert_topic_infos(child_infos, owner_qfid, ctx):
+    """Convert a list of child INFOs for a topic owned by owner_qfid.
+
+    Returns (topic_children_bytes, child_count). owner_qfid is the REMAPPED
+    owning quest of the topic these INFOs belong to; a per-INFO GetQuestRunning
+    gate is injected only when an INFO's own quest differs from the owner (this
+    never happens for the per-quest bark split, which passes matching owners)."""
+    topic_children = b''
+    child_count = 0
+    for info_rec in child_infos:
+        try:
+            # Per-INFO quest gate: Oblivion only shows an INFO while its own
+            # QSTI quest runs. When the topic's owner quest is not that quest
+            # (shared conversation topics owned by the generic quest),
+            # re-express the gating as GetQuestRunning. SGE quests are exempt
+            # (always running from a new game via the .seq file).
+            quest_gate_bytes = b''
+            info_qfid = (get_formid(info_rec, 'QSTI.Quest')
+                         or ctx['orig_quest_fid'])
+            if (info_qfid and info_qfid not in ctx['sge_quest_fids']
+                    and ctx['remap'](info_qfid) != owner_qfid):
+                quest_gate_bytes = pack_subrecord('CTDA', build_ctda(
+                    FUNC_GET_QUEST_RUNNING, param1=ctx['remap'](info_qfid)))
+            # Quest-level dialogue conditions: Oblivion gates ALL of a quest's
+            # dialogue on the QUST's own CTDAs (NQDBeggars = GetInFaction
+            # (Beggars) — that, not any INFO condition, is what keeps the
+            # conditionless beggar lines on beggars). Skyrim has no quest-level
+            # dialogue gate, so the owning quest's conditions ride on each INFO.
+            quest_cond_bytes = ctx['quest_dialog_ctdas'].get(info_qfid, b'')
+            if quest_cond_bytes:
+                ctx['stats']['quest_cond_gated'] += 1
+            injected = _build_injected_ctdas(
+                info_rec, ctx['is_bark'], ctx['npc_to_vtyp'],
+                ctx['topic_vtyps'], ctx['topic_npc_fids'],
+                ctx['service_gate_bytes'] + quest_gate_bytes + quest_cond_bytes,
+                ctx['unlock_gate_bytes'], ctx['offset'], ctx['stats'],
+                sibling_factions=ctx.get('sibling_factions'),
+                sibling_npcs=ctx.get('sibling_npcs'))
+            # Revealer INFO: its OnEnd fragment sets the unlock globals; bind
+            # each global name -> GLOB FormID as a VMAD property.
+            reveal_names = ctx['unlock_plan']['info_reveals'].get(
+                get_formid(info_rec, 'FormID') & 0xFFFFFF)
+            reveal_props = None
+            if reveal_names:
+                reveal_props = {n: ctx['unlock_globals'][n] for n in reveal_names
+                                if n in ctx['unlock_globals']}
+                if reveal_props:
+                    ctx['stats']['revealers'] += 1
+            topic_children += convert_INFO(
+                info_rec, injected_ctdas=injected,
+                fid_to_edid=ctx['fid_to_edid'],
+                well_known_props=ctx['well_known_props'], xref=ctx['xref'],
+                reveal_props=reveal_props, service_menu=ctx['service_kind'],
+                drop_tclt=ctx['is_bark'])
+            child_count += 1
+            ctx['stats']['infos'] += 1
+            if ctx['voice_map'] is not None:
+                info_fid = get_formid(info_rec, 'FormID')
+                prefix = voice_file_prefix(
+                    ctx['quest_edid_by_fid'].get(owner_qfid, ''), ctx['edid'])
+                # Target voice-type folders. An NPC-specific line (GetIsID) is
+                # voiced by that NPC's assigned VTYP, which is NOT always the
+                # folder Oblivion filed the recording under (Arvena Thelas is a
+                # Dark Elf but her lines sit in high elf/f/). The engine looks in
+                # the NPC's VTYP folder, so record it so the renamer relocates
+                # the file there instead of trusting the source race dir.
+                own_npcs = read_getisid_fids(info_rec, offset=ctx['offset'],
+                                             positive_only=True)
+                vt_edids = sorted({
+                    ctx['vtyp_edid_by_fid'].get(ctx['npc_to_vtyp'][n], '')
+                    for n in own_npcs if n in ctx['npc_to_vtyp']} - {''})
+                if vt_edids:
+                    prefix = prefix + '\t' + ','.join(vt_edids)
+                ctx['voice_map'][info_fid & 0xFFFFFF] = prefix
+        except Exception as e:
+            print(f"  ERROR info under {ctx['edid'] or '?'}: {e}")
+    return topic_children, child_count
+
+
+def _ctdas_scope_audience(ctda_bytes: bytes) -> bool:
+    """True if these packed CTDAs already restrict WHO a line reaches.
+
+    A quest whose own conditions name a faction or an actor (GetInFaction /
+    GetIsID) has already scoped its dialogue's audience, so its conditionless
+    lines must not be further narrowed by a sibling's conditions.
+    """
+    if not ctda_bytes:
+        return False
+    pos = 0
+    while pos + 6 <= len(ctda_bytes):
+        size = struct.unpack_from('<H', ctda_bytes, pos + 4)[0]
+        body = ctda_bytes[pos + 6:pos + 6 + size]
+        if len(body) >= 10:
+            func = struct.unpack_from('<H', body, 8)[0]
+            if func in (FUNC_GET_IN_FACTION, FUNC_GET_IS_ID):
+                return True
+        pos += 6 + size
+    return False
+
+
+def _build_bark_pass(bark_dials, info_by_dial, writer, remap,
+                     bark_generic_quests, ctx):
+    """Emit bark topics grouped by (owning quest, subtype) across ALL bark DIALs.
+
+    Skyrim honors only ONE topic per bark subtype per owning quest (verified:
+    every vanilla HELO topic has a distinct owner; no quest owns two). GREETING
+    and HELLO are BOTH the HELO subtype, so an INFO from either that is owned by
+    the same quest Q must share a single HELO topic under Q — not two. This pass
+    regroups every bark INFO by (remapped quest, subtype code) globally and emits
+    exactly one topic per group, mirroring vanilla's one-bark-per-quest layout.
+
+    Quest-less INFOs of a given subtype go to a synthetic per-subtype
+    always-running generic quest (one HELO generic quest, one IDLE generic
+    quest, ...), so those don't collide either. Quest ownership provides the
+    "only while my quest runs" gate natively, so no GetQuestRunning is injected.
+
+    Returns (dial_group_bytes, sge_quest_fids) — the synthetic generic quests
+    are StartGameEnabled and must be added to the .seq file to run from a new
+    game."""
+    # (owner_qfid, subtype) -> {'infos': [...], 'src': dial_rec,
+    #                           'cat': category, 'snam': snam, 'dial_fid': fid}
+    groups = {}
+    order = []
+    sge_extra = set()
+
+    for dial_rec in bark_dials:
+        dial_fid = get_formid(dial_rec, 'FormID')
+        edid = get_str(dial_rec, 'EditorID', '')
+        dtype = get_int(dial_rec, 'DATA.Type')
+        category, subtype, snam, _is_bark = classify_topic(edid, dtype)
+        child_infos = info_by_dial.get(dial_fid, [])
+        # Priority-order the INFOs (highest quest priority first), matching the
+        # conversation-topic sort so Skyrim's physical order == Oblivion's.
+        child_infos = sorted(
+            child_infos,
+            key=lambda r: -ctx['quest_priority'].get(
+                get_formid(r, 'QSTI.Quest'), 0))
+        for info_rec in child_infos:
+            raw_q = get_formid(info_rec, 'QSTI.Quest')
+            if raw_q:
+                owner_qfid = remap(raw_q)
+            else:
+                # Synthetic per-subtype generic quest (created once).
+                snam_code = snam.decode('latin1')
+                qkey = f'TES4Generic{snam_code}'
+                if qkey not in bark_generic_quests:
+                    qfid = _make_generic_quest(
+                        writer, qkey, f'TES4 Generic {snam_code}')
+                    bark_generic_quests[qkey] = qfid
+                    sge_extra.add(qfid)
+                owner_qfid = bark_generic_quests[qkey]
+            key = (owner_qfid, subtype)
+            if key not in groups:
+                # Prefer a real DIAL FormID for the group's topic; the first
+                # source DIAL seen for this key donates its record + (if unused)
+                # its FormID.
+                groups[key] = {'infos': [], 'src': dial_rec, 'cat': category,
+                               'snam': snam, 'edid': edid, 'src_fid': dial_fid}
+                order.append(key)
+            groups[key]['infos'].append(info_rec)
+
+    # Assign FormIDs: each group tries to reuse the original FormID of its
+    # donor source DIAL, but a DIAL FormID can be claimed by only one group.
+    claimed = set()
+    content = b''
+    for key in order:
+        owner_qfid, subtype = key
+        g = groups[key]
+        src_fid = g['src_fid']
+        if src_fid not in claimed:
+            this_dial_fid = src_fid
+            claimed.add(src_fid)
+        else:
+            this_dial_fid = writer.alloc_formid()
+        this_edid = f"{g['edid']}_{owner_qfid:08X}" if g['edid'] else \
+            f"TES4Bark_{subtype}_{owner_qfid:08X}"
+
+        # Per-group INFO context: voice types are pooled from THIS group's INFOs
+        # (a generic bark line inherits its siblings' voices). The voice-file
+        # prefix MUST use the EditorID actually written into the DIAL record
+        # (the split-suffixed one) — the engine builds the voice path from the
+        # record's own EditorID, so a voicemap keyed on the pre-split name would
+        # name every file something the game never looks for (= silent lines).
+        # Barks carry no identity/unlock/service gates. Ownership is the group's
+        # quest, so quest gates never fire (owner == info's own quest).
+        group_ctx = dict(ctx)
+        group_ctx['is_bark'] = True
+        group_ctx['topic_vtyps'] = _topic_voice_types(
+            g['infos'], ctx['npc_to_vtyp'], ctx['offset'])
+        group_ctx['topic_npc_fids'] = set()
+        group_ctx['service_gate_bytes'] = b''
+        group_ctx['unlock_gate_bytes'] = b''
+        group_ctx['service_kind'] = ''
+        group_ctx['edid'] = this_edid
+        # No fallback quest for quest-less INFOs: their owner IS the synthetic
+        # generic quest already, so leave info_qfid None -> no quest gate.
+        group_ctx['orig_quest_fid'] = None
+        # Audience the group's CONDITIONED siblings target, for conditionless
+        # lines to inherit — but only when the owning quest's own CTDAs don't
+        # already scope the audience (NQDBeggars does: GetInFaction(Beggars),
+        # so its conditionless beggar lines must stay quest-scoped, NOT be
+        # narrowed to whichever NPCs a sibling happens to name).
+        raw_q = get_formid(g['infos'][0], 'QSTI.Quest')
+        qctdas = ctx['quest_dialog_ctdas'].get(raw_q, b'')
+        if _ctdas_scope_audience(qctdas):
+            group_ctx['sibling_factions'] = set()
+            group_ctx['sibling_npcs'] = set()
+        else:
+            sib_f, sib_n = set(), set()
+            for ir in g['infos']:
+                sib_f |= read_func_param_fids(ir, FUNC_GET_IN_FACTION,
+                                              ctx['offset'])
+                sib_n |= read_getisid_fids(ir, offset=ctx['offset'],
+                                           positive_only=True)
+            group_ctx['sibling_factions'] = sib_f
+            group_ctx['sibling_npcs'] = sib_n
+
+        topic_children, child_count = _convert_topic_infos(
+            g['infos'], owner_qfid, group_ctx)
+        if not child_count:
+            continue
+        # Topic priority carries Oblivion's arbitration. Oblivion picks the
+        # passing bark from the highest-PRIORITY quest (NQDBeggars=12 beats
+        # Generic=5, so a beggar begs instead of saying "Good day."). That used
+        # to be baked into the INFO order of one shared topic; now that each
+        # quest owns its own bark topic, the quest priority must ride on the
+        # topic's PNAM (Skyrim: higher PNAM = considered first). Quest-less
+        # groups keep the 50.0 default.
+        priority = float(ctx['quest_priority'].get(raw_q, 50)) if raw_q else 50.0
+        dial_bytes = convert_DIAL(
+            g['src'], info_count=child_count, dlbr_fid=0,
+            quest_fid=owner_qfid, category=g['cat'], subtype=subtype,
+            snam=g['snam'], priority=priority, edid_override=this_edid,
+            formid_override=this_dial_fid)
+        content += dial_bytes
+        content += pack_group(7, struct.pack('<I', this_dial_fid),
+                              topic_children)
+        ctx['stats']['bark_topics'] = ctx['stats'].get('bark_topics', 0) + 1
+
+    return content, sge_extra
 
 
 # Response text for the synthetic catch-all service INFOs (silent subtitle —
@@ -1101,7 +1500,8 @@ def _build_service_fallback_info(writer, service_kind: str,
 
 def _build_injected_ctdas(info_rec, is_bark, npc_to_vtyp, topic_vtyps,
                           topic_npc_fids, quest_gate_bytes, unlock_gate_bytes,
-                          offset, stats):
+                          offset, stats, sibling_factions=None,
+                          sibling_npcs=None):
     """Build the Skyrim-required gates for one INFO, ordered for OR-chain safety.
 
     Order (outermost AND first): [quest-running gate] [AddTopic unlock gate]
@@ -1121,51 +1521,39 @@ def _build_injected_ctdas(info_rec, is_bark, npc_to_vtyp, topic_vtyps,
         voice_bytes = build_or_chain(FUNC_GET_IS_VOICE_TYPE, sorted(vtyps))
         stats['voice_gated'] += 1
 
-    # Identity gate: conversation INFO lacking its own positive GetIsID.
+    # Identity gate: a conversation INFO that never says WHO it is for would
+    # otherwise show on every NPC (Oblivion relied on AddTopic for that). Only
+    # inject when the INFO states no audience of its own — a line already gated
+    # on a cell/faction/class/race HAS an audience, and bolting a sibling-derived
+    # GetIsID OR-chain onto it narrows it to a handful of NPCs (AnvilTopic is
+    # GetInCell(Anvil)-gated; injecting GetIsID stripped it from most of Anvil).
     id_bytes = b''
-    if not is_bark and topic_npc_fids and not has_positive_getisid(info_rec):
+    if not is_bark and topic_npc_fids and not has_audience_condition(info_rec):
         id_bytes = build_or_chain(FUNC_GET_IS_ID, sorted(topic_npc_fids))
         stats['id_gated'] += 1
+
+    # Sibling gate for a CONDITIONLESS bark line. Oblivion leaves some bark
+    # INFOs with no conditions at all, relying on the quest's own CTDAs to scope
+    # them (NQDBeggars = GetInFaction(Beggars)). Where the quest supplies no such
+    # scope, an unconditional line would greet EVERY NPC (MS45's "I think we
+    # should get out of here, quick!"). Its siblings under the same quest+topic
+    # DO carry the intended audience (GetInFaction(HackdirtBrethren) /
+    # GetIsID), so a conditionless line inherits their OR-chain rather than
+    # going universal. Only fires when the INFO has zero conditions of its own.
+    sib_bytes = b''
+    if is_bark and not has_any_conditions(info_rec):
+        if sibling_factions:
+            sib_bytes = build_or_chain(FUNC_GET_IN_FACTION,
+                                       sorted(sibling_factions))
+            stats['sibling_gated'] += 1
+        elif sibling_npcs:
+            sib_bytes = build_or_chain(FUNC_GET_IS_ID, sorted(sibling_npcs))
+            stats['sibling_gated'] += 1
 
     if unlock_gate_bytes:
         stats['unlock_gated'] += 1
     if quest_gate_bytes:
         stats['quest_gated'] += 1
 
-    return quest_gate_bytes + unlock_gate_bytes + voice_bytes + id_bytes
-
-
-def _build_fallback_greetings(writer, generic_quest_fid, npc_to_vtyp, stats):
-    """One low-priority 'Hello.' greeting per voice type so every NPC can greet.
-
-    Priority 10 < 50 so any real converted greeting wins.
-    """
-    vtyp_fids = sorted(set(npc_to_vtyp.values()))
-    if not vtyp_fids:
-        return b''
-    fallback_dial_fid = writer.alloc_formid()
-    infos = b''
-    for vtyp_fid in vtyp_fids:
-        info_fid = writer.alloc_formid()
-        s = pack_subrecord('ENAM', struct.pack('<HH', 0, 0))
-        s += pack_subrecord('CNAM', struct.pack('<B', 0))
-        s += pack_subrecord('TRDT', struct.pack('<IiI B3x I B3x', 0, 0, 0, 1, 0, 1))
-        s += pack_string_subrecord('NAM1', 'Hello.')
-        s += pack_string_subrecord('NAM2', '')
-        s += pack_string_subrecord('NAM3', '')
-        s += pack_subrecord('CTDA', build_ctda(FUNC_GET_IS_VOICE_TYPE, param1=vtyp_fid))
-        infos += pack_record('INFO', info_fid, 0, s)
-        stats['infos'] += 1
-
-    d = pack_string_subrecord('EDID', 'TES4FallbackHello')
-    d += pack_string_subrecord('FULL', 'Fallback Hello')
-    d += pack_subrecord('PNAM', struct.pack('<f', 10.0))
-    d += pack_formid_subrecord('QNAM', generic_quest_fid)
-    # flags, Category=7 (Misc), Subtype=73 (Hello) — real on-disk values
-    d += pack_subrecord('DATA', struct.pack('<BBH', 0, 7, 73))
-    d += pack_subrecord('SNAM', b'HELO')
-    d += pack_uint32_subrecord('TIFC', len(vtyp_fids))
-    dial = pack_record('DIAL', fallback_dial_fid, 0, d)
-    stats['topics'] += 1
-    print(f"    Fallback greetings: {len(vtyp_fids)} voice types")
-    return dial + pack_group(7, struct.pack('<I', fallback_dial_fid), infos)
+    return (quest_gate_bytes + unlock_gate_bytes + voice_bytes + id_bytes
+            + sib_bytes)

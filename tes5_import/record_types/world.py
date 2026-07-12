@@ -319,6 +319,35 @@ def convert_WRLD(rec: dict) -> bytes:
 # REFR record flag 0x400 — "Persistent Reference".
 REFR_PERSISTENT_FLAG = 0x00000400
 
+
+def _reference_location(rec: dict) -> int:
+    """LCTN a placed reference belongs to, for its XLCN 'Persistent Location'.
+
+    Skyrim's quest/map-marker system reads the marker position off the TARGET
+    REFERENCE's own XLCN (a persistent ref's Location), not just its cell's —
+    5639/10504 vanilla ACHR carry it and it mirrors the parent cell's Location.
+    A quest target inside a cell whose CELL has XLCN but whose own ref does NOT
+    produces a journal entry with no marker. Resolve the ref's Location the same
+    way convert_CELL does: interior by parent-cell FormID, exterior by the grid
+    square the ref stands in, falling back to the worldspace location.
+    """
+    parent_cell = get_formid(rec, 'ParentCELL')
+    lctn_fid = _CELL_LOCATION.get(parent_cell)
+    if lctn_fid:
+        return lctn_fid
+    world_fid = get_formid(rec, 'ParentWRLD')
+    if world_fid:
+        gx = _ref_grid(get_float(rec, 'PosX'))
+        gy = _ref_grid(get_float(rec, 'PosY'))
+        return (_GRID_LOCATION.get((world_fid, gx, gy))
+                or _WORLD_LOCATION.get(world_fid) or 0)
+    return 0
+
+
+def _ref_grid(pos: float) -> int:
+    """Exterior grid coordinate for a world-space ordinate (matches locations._grid)."""
+    return int(pos // 4096.0)
+
 # Map marker FNAM flags (identical in TES4 and TES5).
 MAP_MARKER_VISIBLE = 0x01
 MAP_MARKER_CAN_TRAVEL = 0x02
@@ -396,16 +425,24 @@ def convert_REFR(rec: dict) -> bytes:
         lock_flags = get_int(rec, 'XLOC.Flags')
         subs += pack_subrecord('XLOC', struct.pack('<BxxxIBxxx8x', tes5_level, lock_key, lock_flags))
 
-    # Ownership (XOWN)
-    xown = get_formid(rec, 'XOWN.Owner')
-    if xown:
-        subs += pack_formid_subrecord('XOWN', xown)
+    # XLCN — Persistent Location. Only persistent refs carry it (they are the
+    # quest-target-eligible ones); it lets the quest/map-marker system place a
+    # marker on this reference. Emitted before XESP to match vanilla order.
+    if get_int(rec, 'RecordFlags') & REFR_PERSISTENT_FLAG:
+        ref_lctn = _reference_location(rec)
+        if ref_lctn:
+            subs += pack_formid_subrecord('XLCN', ref_lctn)
 
     # Enable parent (XESP)
     xesp_ref = get_formid(rec, 'XESP.Reference')
     if xesp_ref:
         xesp_flags = get_int(rec, 'XESP.Flags')
         subs += pack_subrecord('XESP', struct.pack('<II', xesp_ref, xesp_flags))
+
+    # Ownership (XOWN)
+    xown = get_formid(rec, 'XOWN.Owner')
+    if xown:
+        subs += pack_formid_subrecord('XOWN', xown)
 
     # Scale (XSCL)
     scale = get_float(rec, 'XSCL.Scale')
@@ -477,6 +514,14 @@ def convert_ACHR(rec: dict) -> bytes:
     name_fid = get_formid(rec, 'NAME')
     if name_fid:
         subs += pack_formid_subrecord('NAME', name_fid)
+
+    # XLCN — Persistent Location (see convert_REFR). This is what lets a quest
+    # marker resolve onto a persistent actor placed inside an interior — without
+    # it the objective shows in the journal but no compass/map arrow appears.
+    if get_int(rec, 'RecordFlags') & REFR_PERSISTENT_FLAG:
+        ref_lctn = _reference_location(rec)
+        if ref_lctn:
+            subs += pack_formid_subrecord('XLCN', ref_lctn)
 
     xesp_ref = get_formid(rec, 'XESP.Reference')
     if xesp_ref:

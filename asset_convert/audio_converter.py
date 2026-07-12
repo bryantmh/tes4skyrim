@@ -306,16 +306,27 @@ _VOICE_FILENAME_RE = re.compile(
 
 
 def load_voice_map(map_path) -> dict:
-    """Load the importer's `<esm>.voicemap.txt` into {info_fid24: prefix}."""
+    """Load the importer's `<esm>.voicemap.txt`.
+
+    Returns {info_fid24: (prefix, [target_vtyp_edids])}. The optional
+    tab-separated VTYP list names the folder(s) the line's speaker resolves to
+    when that differs from the Oblivion source race folder (e.g. Arvena Thelas
+    is a Dark Elf but her recordings sit under high elf/f/). Empty list = keep
+    the source race folder (generic lines are recorded per race, correctly)."""
     voice_map = {}
     with open(map_path, encoding='utf-8') as f:
         for line in f:
-            line = line.strip()
+            line = line.rstrip('\n')
             if not line or line.startswith('#') or '=' not in line:
                 continue
-            fid_hex, prefix = line.split('=', 1)
+            fid_hex, value = line.split('=', 1)
+            if '\t' in value:
+                prefix, vt = value.split('\t', 1)
+                vtyps = [v for v in vt.split(',') if v]
+            else:
+                prefix, vtyps = value, []
             try:
-                voice_map[int(fid_hex, 16) & 0xFFFFFF] = prefix
+                voice_map[int(fid_hex, 16) & 0xFFFFFF] = (prefix, vtyps)
             except ValueError:
                 continue
     return voice_map
@@ -374,6 +385,10 @@ def organize_voice_files(
     dest_dir   = Path(dest_dir)
     if isinstance(voice_map, (str, Path)):
         voice_map = load_voice_map(voice_map)
+    # Normalise: values may be a bare prefix (str) or (prefix, [vtyps]).
+    if voice_map:
+        voice_map = {k: (v if isinstance(v, tuple) else (v, []))
+                     for k, v in voice_map.items()}
     if voice_map:
         print(f'  Voice map: {len(voice_map)} filename prefixes from importer')
     else:
@@ -455,18 +470,30 @@ def organize_voice_files(
                     # the engine's lookup is case-insensitive on disk but BSA
                     # paths are stored lowercase.
                     fid24 = int(info_fid_hex, 16) & 0xFFFFFF
+                    target_vtyps = []
                     if voice_map:
-                        prefix = voice_map.get(fid24, prefix)
+                        entry = voice_map.get(fid24)
+                        if entry is not None:
+                            prefix, target_vtyps = entry
                     dst_ext = ('xwm' if ffmpeg and src_ext in ('mp3', 'wav')
                                else src_ext)
                     dst_name = f'{prefix}_{fid24:08x}_{resp_idx}.{dst_ext}'.lower()
-                    dst_path = out_dir / dst_name
 
-                    if dst_path.exists():
-                        stats['skipped'] += 1
-                        continue
-
-                    conversion_jobs.append((audio_file, dst_path))
+                    # NPC-specific line: the engine reads it from the speaker's
+                    # VTYP folder, which may differ from the Oblivion source race
+                    # dir (Arvena = Dark Elf, recording under high elf/f/). Emit
+                    # into each named VTYP folder; otherwise keep the source race
+                    # folder (generic lines are recorded per race).
+                    out_dirs = ([dest_dir / 'sound' / 'Voice' / effective_plugin
+                                 / vt for vt in target_vtyps]
+                                if target_vtyps else [out_dir])
+                    for od in out_dirs:
+                        od.mkdir(parents=True, exist_ok=True)
+                        dst_path = od / dst_name
+                        if dst_path.exists():
+                            stats['skipped'] += 1
+                            continue
+                        conversion_jobs.append((audio_file, dst_path))
 
     if not conversion_jobs:
         if unmapped_races:

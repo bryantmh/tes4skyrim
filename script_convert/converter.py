@@ -4,12 +4,92 @@ import re
 from typing import Optional
 
 from script_convert.constants import (
-    BLOCK_MAP, TYPE_MAP, ACTOR_VALUE_MAP, KNOWN_GLOBALS,
+    BLOCK_MAP, BLOCK_FILTER_PARAM, TYPE_MAP, ACTOR_VALUE_MAP, KNOWN_GLOBALS,
     _PAPYRUS_RESERVED, FUNCTION_MAP, _BARE_BOOL_FUNCTIONS,
     _ACTOR_ONLY_FUNCTIONS, _OBJREF_SHARED_FUNCTIONS,
     _safe_property_name, _canonical_global, _record_type_to_papyrus,
 )
 from script_convert.cross_ref import CrossRefGraph
+
+
+_COND_LINE_RE = re.compile(r'^(\s*(?:If|ElseIf)\s+)(.*)$', re.IGNORECASE)
+
+# Placeholder for a bare TES4 `GetContainer` that is not inside an equip event.
+# Papyrus cannot walk from an item to its container, so the expression has no
+# standalone translation — but the comparison it sits in usually does, and
+# _resolve_getcontainer rewrites the whole comparison once it is visible.
+_GETCONTAINER_MARKER = '__TES4_GETCONTAINER__'
+
+
+def _resolve_getcontainer(line: str) -> str:
+    """Rewrite a comparison against the GetContainer placeholder.
+
+    `GetContainer == 0` asks "am I lying in the world rather than in someone's
+    inventory", which TES4Polyfill.IsInContainer answers exactly.  Any other
+    comparison (`GetContainer != SomeRef` — "is a *particular* actor holding
+    me") has no Papyrus equivalent; it is neutralised to the value that does not
+    fire the branch, and left as a TODO rather than compiled into a lie.
+    """
+    if _GETCONTAINER_MARKER not in line:
+        return line
+    m = re.match(
+        rf'^(\s*)(.*?){re.escape(_GETCONTAINER_MARKER)}\s*(==|!=)\s*0\b(.*)$',
+        line)
+    if m:
+        indent, pre, op, rest = m.groups()
+        call = 'TES4Polyfill.IsInContainer(Self)'
+        expr = f'!{call}' if op == '==' else call
+        return f'{indent}{pre}{expr}{rest}'
+    # Unsupported shape — do not let the placeholder reach the compiler.
+    neutral = 'False' if re.search(r'!=\s*\w', line) else 'True'
+    stripped = line.strip()
+    indent = line[:len(line) - len(line.lstrip())]
+    if _COND_LINE_RE.match(line):
+        kw = stripped.split()[0]
+        return (f'{indent}{kw} {neutral}  '
+                f';TODO: GetContainer has no Papyrus equivalent ({stripped})')
+    return f'{indent};TODO: GetContainer has no Papyrus equivalent: {stripped}'
+
+
+def _split_trailing_comment(expr: str) -> tuple[str, str]:
+    """Split an expression at its first `;` outside a string literal."""
+    in_str = False
+    for i, ch in enumerate(expr):
+        if ch == '"':
+            in_str = not in_str
+        elif ch == ';' and not in_str:
+            return expr[:i].rstrip(), expr[i:]
+    return expr.rstrip(), ''
+
+
+def _repair_commented_condition(line: str) -> str:
+    """Neutralise an If/ElseIf whose condition was EATEN by an emitted comment.
+
+    Some conversions append an explanatory `;NE: …` comment mid-expression, which
+    in Papyrus comments out the rest of the line and leaves a truncated condition
+    like `If (False  ;NE: GetIsCurrentPackage == 0)`.  That will not compile, so
+    the line is replaced with `If True` and the original preserved as a comment.
+
+    The condition is only broken if what survives in front of the `;` is not a
+    self-contained expression: unbalanced parentheses, or a dangling trailing
+    operator.  A well-formed condition followed by an ordinary trailing comment
+    is left ALONE — blanket-rewriting those to `True` silently deleted real
+    guards (an item's OnEquipped body, a quest's GetItemCount gate) and made the
+    guarded code run unconditionally.
+    """
+    m = _COND_LINE_RE.match(line)
+    if not m:
+        return line
+    cond, comment = _split_trailing_comment(m.group(2))
+    if not comment or not cond:
+        return line
+    balanced = cond.count('(') == cond.count(')')
+    dangling = re.search(r'(==|!=|>=|<=|>|<|&&|\|\||\+|-|\*|/|\band\b|\bor\b|\bnot\b)$',
+                         cond, re.IGNORECASE) is not None
+    if balanced and not dangling:
+        return line          # ordinary trailing comment — the condition is fine
+    full = (cond + ' ' + comment).strip()
+    return f'{m.group(1)}True  ;{full}'
 
 
 class ScriptConverter:
@@ -192,12 +272,15 @@ class ScriptConverter:
         gamemode_body = []
 
         # Group blocks by event type to merge duplicates (Papyrus forbids
-        # duplicate Event declarations)
+        # duplicate Event declarations).  Each source block keeps its own filter
+        # guard, because blocks that merge into one event can carry different
+        # filters (`begin OnAdd player` and `begin OnDrop player` both become
+        # OnContainerChanged, but guard on different parameters).
         from collections import defaultdict
-        merged_blocks: dict[str, list] = defaultdict(list)
+        merged_blocks: dict[str, list] = defaultdict(list)   # key -> [(guard, lines)]
         block_order: list[str] = []
 
-        for block_type, block_lines in blocks:
+        for block_type, block_filter, block_lines in blocks:
             if block_type in ('gamemode', 'menumode', 'scripteffectupdate'):
                 gamemode_body.extend(block_lines)
                 continue
@@ -208,37 +291,42 @@ class ScriptConverter:
             merge_key = mapping[0] if mapping else block_type
             if merge_key not in merged_blocks:
                 block_order.append(merge_key)
-            merged_blocks[merge_key].extend(block_lines)
+            guard = self._block_filter_guard(block_type, block_filter)
+            merged_blocks[merge_key].append((guard, block_lines))
 
         for merge_key in block_order:
-            all_lines = merged_blocks[merge_key]
+            segments = merged_blocks[merge_key]
             # merge_key is already the event_begin string (or the block_type if unmapped)
             self._current_event = merge_key
-            if merge_key.startswith('Event ') or merge_key.startswith(';'):
-                event_begin = merge_key
-                event_end = 'EndEvent' if merge_key.startswith('Event ') else ''
-                if not event_begin.startswith(';'):
-                    out.append(event_begin)
-                    for bline in all_lines:
-                        converted = self._convert_line(bline, extends)
-                        out.append(f'  {converted}')
-                    out.append(event_end)
-                else:
-                    # Unsupported event — comment out all code to avoid top-level errors
-                    out.append(event_begin)
-                    for bline in all_lines:
-                        converted = self._convert_line(bline, extends)
-                        out.append(f'  ;{converted}')
-                    if event_end:
-                        out.append(event_end)
-                out.append('')
+            commented = not merge_key.startswith('Event ')
+            if commented:
+                out.append(merge_key if merge_key.startswith(';')
+                           else f';TODO: Unknown event block: {merge_key}')
             else:
-                # Unknown block type — comment it out
-                out.append(f';TODO: Unknown event block: {merge_key}')
-                for bline in all_lines:
-                    converted = self._convert_line(bline, extends)
-                    out.append(f'  ;{converted}')
-                out.append('')
+                out.append(merge_key)
+
+            for guard, block_lines in segments:
+                body = []
+                for bline in block_lines:
+                    body.append(self._convert_line(bline, extends))
+                if commented:
+                    # Unsupported event — comment out all code to avoid
+                    # top-level errors.  The guard is meaningless here.
+                    for converted in body:
+                        out.append(f'  ;{converted}')
+                    continue
+                if guard:
+                    out.append(f'  If {guard}')
+                    for converted in body:
+                        out.append(f'    {converted}')
+                    out.append('  EndIf')
+                else:
+                    for converted in body:
+                        out.append(f'  {converted}')
+
+            if not commented:
+                out.append('EndEvent')
+            out.append('')
 
         # In TES4 a `begin GameMode` block on a placed object/actor reference
         # only runs while that reference is LOADED (in/near an active cell); on
@@ -500,15 +588,8 @@ class ScriptConverter:
 
         # Post-process: fix conditions containing embedded comments that break parsing
         # e.g. "If (False  ;comment == 0)" → the ; eats the ==0 part
-        # Only fix if the ; appears BEFORE operators/comparands (not trailing comments)
-        _cond_with_embedded_comment = re.compile(
-            r'^(\s*(?:If|ElseIf)\s+)(.*);(.+(?:==|!=|>=|<=|>|<|&&|\|\||\)).*)$',
-            re.IGNORECASE)
         for idx in range(len(out)):
-            m = _cond_with_embedded_comment.match(out[idx])
-            if m:
-                full_cond = m.group(2) + ';' + m.group(3)
-                out[idx] = f'{m.group(1)}True  ;{full_cond.strip()}'
+            out[idx] = _repair_commented_condition(out[idx])
 
         # Post-process: fix assignments where RHS contains embedded comment that eats operators
         # e.g. "temp = (False  ;comment == 0)" → just the comment
@@ -696,6 +777,20 @@ class ScriptConverter:
             if current_event and not has_actionref and 'akActionRef' in lines[idx]:
                 # Replace undefined akActionRef with Self
                 lines[idx] = lines[idx].replace('akActionRef', 'Self')
+        # GetContainer() returns an ObjectReference.  When the variable it lands
+        # in was upgraded to Actor (because the script later calls an actor-only
+        # method on it, e.g. UnequipItem), Papyrus needs an explicit downcast.
+        _getcontainer_assign_re = re.compile(
+            r'^(\s*)(\w+)(\s*=\s*.*\.GetContainer\(\))\s*$', re.IGNORECASE)
+        for idx in range(len(lines)):
+            m = _getcontainer_assign_re.match(lines[idx])
+            if not m:
+                continue
+            tgt = m.group(2)
+            ptype = self._property_refs.get(
+                tgt, self._property_refs.get(tgt.lower(), ''))
+            if ptype == 'Actor' or self._var_types.get(tgt.lower()) == 'Actor':
+                lines[idx] = f'{m.group(1)}{tgt}{m.group(3)} as Actor'
         # Fix cross-script Float args in item count functions
         _item_count_re = re.compile(
             r'(\.(RemoveItem|AddItem)\s*\(\s*\w+\s*,\s*)(\w+\.\w+)(\s*\))',
@@ -704,15 +799,12 @@ class ScriptConverter:
             m = _item_count_re.search(lines[idx])
             if m and ' as Int' not in m.group(3):
                 lines[idx] = lines[idx][:m.start(3)] + m.group(3) + ' as Int' + lines[idx][m.end(3):]
-        # Fix conditions containing embedded comments that break parsing
-        _cond_with_embedded_comment = re.compile(
-            r'^(\s*(?:If|ElseIf)\s+)(.*);(.+(?:==|!=|>=|<=|>|<|&&|\|\||\)).*)$',
-            re.IGNORECASE)
+        # Resolve GetContainer placeholders (needs the whole comparison in view)
         for idx in range(len(lines)):
-            m = _cond_with_embedded_comment.match(lines[idx])
-            if m:
-                full_cond = m.group(2) + ';' + m.group(3)
-                lines[idx] = f'{m.group(1)}True  ;{full_cond.strip()}'
+            lines[idx] = _resolve_getcontainer(lines[idx])
+        # Fix conditions containing embedded comments that break parsing
+        for idx in range(len(lines)):
+            lines[idx] = _repair_commented_condition(lines[idx])
         # Fix assignments where RHS contains embedded comment that eats operators
         for idx in range(len(lines)):
             line = lines[idx]
@@ -765,23 +857,61 @@ class ScriptConverter:
                 cleaned = re.sub(r'  +', ' ', cleaned)
                 indent = len(line) - len(line.lstrip())
                 lines[idx] = line[:indent] + cleaned.lstrip()
-        # Fix Int vs Package/Topic/Form comparisons (TES4 GetCurrentAIPackage → TODO)
-        # e.g. "If (0 == SE10GoldenSaintPray2x12)" where SE10GoldenSaintPray2x12 is Package
+        # Fix Int vs form-typed comparisons left behind by TES4 condition
+        # functions with no Papyrus equivalent, e.g. GetCurrentAIPackage becomes
+        # the literal 0 and leaves `If (0 == SE10GoldenSaintPray2x12)` — a
+        # Package compared to an Int, which will not compile.
+        #
+        # Only a form-typed identifier compared DIRECTLY against a numeric
+        # literal is a genuine mismatch.  A form used as a function argument
+        # (`GetItemCount(MSShadowScaleHeart)`) or compared to another form
+        # (`GetBaseObject() == SE08BarrierCrystal`) is valid Papyrus, and
+        # rewriting those to True silently deletes the guard — which made every
+        # such script run its body unconditionally on load (quests auto-started
+        # because a SetStage behind a dead GetItemCount check always fired).
+        #
+        # Neutralise only the offending comparison, not the whole condition, so
+        # the surviving terms still gate the body.
         _type_mismatch_types = {'Package', 'Topic', 'MiscObject'}
-        _cond_re = re.compile(r'^(\s*(?:If|ElseIf)\s+).*\b(\w+)\b.*$', re.IGNORECASE)
+
+        def _is_form_typed(ident: str) -> bool:
+            low = ident.lower()
+            # A script's own variable shadows any same-named form: DABoethia
+            # declares `short Salutation` while a Topic named Salutation also
+            # exists, and `Salutation == 1` is an ordinary Int test on the
+            # variable, not a form comparison.
+            if self._var_types.get(low) or low in self._local_vars:
+                return False
+            ptype = self._property_refs.get(
+                ident, self._property_refs.get(low, ''))
+            return ptype in _type_mismatch_types
+
+        # <form ident> <cmp> <number>   or   <number> <cmp> <form ident>
+        # A leading '.' (obj.Method) or trailing '(' (a call) disqualifies it.
+        _mismatch_cmp_re = re.compile(
+            r'(?<![.\w])([a-zA-Z_]\w*)(?!\s*\()\s*(==|!=|>=|<=|>|<)\s*(-?\d+(?:\.\d+)?)'
+            r'|(-?\d+(?:\.\d+)?)\s*(==|!=|>=|<=|>|<)\s*([a-zA-Z_]\w*)(?!\s*[.(])')
+        _cond_re = re.compile(r'^\s*(?:If|ElseIf)\b', re.IGNORECASE)
         for idx in range(len(lines)):
-            m = _cond_re.match(lines[idx])
-            if not m:
+            if not _cond_re.match(lines[idx]):
                 continue
-            line_stripped = lines[idx].strip()
-            # Check if any identifier in the condition is a Package/Topic/MiscObject property
-            for ident in re.findall(r'\b([a-zA-Z_]\w*)\b', line_stripped):
-                ptype = self._property_refs.get(ident, self._property_refs.get(ident.lower(), ''))
-                if ptype in _type_mismatch_types:
-                    kw = line_stripped.split()[0]
-                    indent = len(lines[idx]) - len(line_stripped)
-                    lines[idx] = ' ' * indent + f'{kw} True  ;TODO: Type mismatch fix ({line_stripped})'
-                    break
+            original = lines[idx].strip()
+
+            def _neutralise(m: 're.Match') -> str:
+                # These all come from a TES4 condition function that returned
+                # a form (GetIsCurrentPackage, GetCurrentAIPackage, …) and has
+                # no Papyrus equivalent, so the truth of the test is unknowable.
+                # Resolve to the value that does NOT fire the branch: an
+                # equality test becomes False, an inequality becomes True.
+                ident = m.group(1) if m.group(1) is not None else m.group(6)
+                if not _is_form_typed(ident):
+                    return m.group(0)
+                op = m.group(2) if m.group(1) is not None else m.group(5)
+                return 'True' if op == '!=' else 'False'
+
+            fixed = _mismatch_cmp_re.sub(_neutralise, lines[idx])
+            if fixed != lines[idx]:
+                lines[idx] = f'{fixed.rstrip()}  ;TODO: Type mismatch fix ({original})'
         # Fix integer assignments to cross-script ref-typed variables
         if self.xref:
             _assign_int_re = re.compile(r'^(\s*)([\w.]+)\s*=\s*(-?\d+)\s*(;.*)?$')
@@ -869,7 +999,20 @@ class ScriptConverter:
         return lines
 
     def get_property_refs(self) -> dict[str, str]:
-        """Get accumulated external property references."""
+        """Get accumulated external property references.
+
+        Property TYPES are decided by how the script body uses each ref (the
+        per-function handlers promote to Actor/ObjectReference/base as needed).
+        We deliberately do NOT blanket-coerce types here based on the bound
+        record: a property the body uses as an Actor/ObjectReference must stay
+        that type even if it happens to be bound to a base, because retyping it
+        to ActorBase would break the body (`StartCombat`, MoveTo, ==Actor…).
+
+        The one confirmed alias-break case — an NPC base used ONLY via
+        `GetActorBase()` (SetEssential) but typed as an Actor-derived script —
+        is fixed at the point of use (the SetEssential handler types it
+        ActorBase), not here.
+        """
         return dict(self._property_refs)
 
     # -----------------------------------------------------------------------
@@ -975,6 +1118,7 @@ class ScriptConverter:
         variables = []
         blocks = []
         current_block = None
+        current_filter = ''
         current_lines = []
         _seen_vars = set()
 
@@ -1003,13 +1147,20 @@ class ScriptConverter:
             begin_m = re.match(r'^begin\s+(\w+)(.*)', stripped, re.IGNORECASE)
             if begin_m:
                 current_block = begin_m.group(1).lower()
+                # `begin OnEquip player` — the trailing argument is a FILTER that
+                # restricts the block to that object.  Dropping it makes the
+                # block fire for everyone (any actor equipping the item, any
+                # actor tripping the trigger), so it must be carried through and
+                # compiled into a guard on the Papyrus event parameter.
+                current_filter = begin_m.group(2).split(';')[0].strip()
                 current_lines = []
                 continue
 
             if low == 'end':
                 if current_block is not None:
-                    blocks.append((current_block, current_lines))
+                    blocks.append((current_block, current_filter, current_lines))
                     current_block = None
+                    current_filter = ''
                     current_lines = []
                 continue
 
@@ -1017,6 +1168,75 @@ class ScriptConverter:
                 current_lines.append(raw_line)
 
         return variables, blocks
+
+    def _current_event_actor_param(self) -> str:
+        """Name of the Actor parameter of the event being converted, if any.
+
+        Used for TES4 calls whose implicit subject is "whoever this event is
+        about" — e.g. bare GetContainer inside OnEquipped is the equipping
+        actor, which is exactly akActor.
+        """
+        ev = self._current_event or ''
+        m = re.search(r'\bActor\s+(ak\w+)', ev)
+        return m.group(1) if m else ''
+
+    def _block_filter_guard(self, block_type: str, block_filter: str) -> str:
+        """Compile a TES4 block filter into a Papyrus condition, or '' if none.
+
+        `begin OnEquip player` fires the block ONLY when the player equips the
+        item; `begin OnPackageDone SomePkg` only when that package ends.  Papyrus
+        events carry no filter, so the restriction becomes an `If` around the
+        body, testing the event parameter that holds the filtered object (see
+        BLOCK_FILTER_PARAM).  Without this the block runs for every actor /
+        container / package, which is how an item's "you can't equip this"
+        message ended up firing for NPCs the moment they loaded in.
+        """
+        if not block_filter:
+            return ''
+        target = BLOCK_FILTER_PARAM.get(block_type)
+        if not target:
+            # MenuMode's argument is a menu ID and OnAlarm's is a crime type —
+            # neither names an object, and neither block has a parameter to
+            # filter on.  Nothing to guard.
+            return ''
+        param, param_type = target
+
+        name = block_filter.strip()
+        if name.lower() == 'player':
+            return f'{param} == Game.GetPlayer()'
+
+        # Anything else is a form EditorID. Bind it as a property and compare.
+        if not re.match(r'^\w+$', name) or not self.xref:
+            return ''
+        fid = self.xref.edid_to_formid.get(name.lower(), '')
+        if not fid:
+            return ''
+        rtype = _record_type_to_papyrus(self.xref.record_type.get(fid, ''))
+
+        # The comparison has to typecheck against the event parameter.  On an
+        # ACTOR script `begin OnEquip SomePotion` filters the ITEM equipped, not
+        # the equipper — but Skyrim's OnEquipped only hands us the actor, so
+        # there is nothing to test the item against.  Emitting the comparison
+        # anyway gives `akActor == SomePotion`, which will not compile.
+        param_is_actor = param_type == 'Actor'
+        filter_is_actor = rtype in ('Actor', 'ObjectReference')
+        if param_is_actor and not filter_is_actor:
+            # (no Papyrus parameter carries the item; the filter is lost)
+            return ''
+        if param_type in ('ObjectReference', 'Actor', 'Form'):
+            ptype = rtype if filter_is_actor else param_type
+        else:
+            ptype = param_type
+        safe = _safe_property_name(name)
+        existing = self._property_refs.get(safe)
+        if existing and existing != ptype:
+            # The name is already bound at a type the guard cannot compare
+            # against (the script uses the same form some other way).  Rebinding
+            # it would break those uses, so drop the guard instead of emitting a
+            # comparison that will not compile.
+            return ''
+        self._property_refs[safe] = ptype
+        return f'{param} == {safe}'
 
     def _convert_line(self, line: str, extends: str) -> str:
         """Convert a single Oblivion script line to Papyrus."""
@@ -1815,11 +2035,25 @@ class ScriptConverter:
                 return '50'
             if bare_low == 'getdetectionlevel':
                 return '0'
+            # Bare GetContainer means "the container I am in".  Skyrim has no
+            # ObjectReference.GetContainer(), but the two things TES4 scripts
+            # ask with it both convert:
+            #   * inside an equip/unequip event the container IS the actor the
+            #     event hands us, so `set tempRef to GetContainer` is akActor;
+            #   * `GetContainer == 0` is "am I lying in the world", which is
+            #     TES4Polyfill.IsInContainer (see there).
+            # It must not silently become 0 — `set ref to GetContainer` would
+            # yield a None ref and kill every call that follows it.
+            if bare_low == 'getcontainer':
+                actor_param = self._current_event_actor_param()
+                if actor_param:
+                    return actor_param
+                return _GETCONTAINER_MARKER
             if bare_low in ('getisalerted', 'israining', 'menumode',
                             'istimepassing', 'getplayerinseworld',
                             'getcurrentaiprocedure', 'getcurrentaipackage',
                             'getiscurrentpackage', 'isidleplaying',
-                            'getcontainer', 'getbookread', 'gettalkedtopc',
+                            'getbookread', 'gettalkedtopc',
                             'getcrimeknown', 'getstartingpos',
                             'getplayercontrolsdisabled', 'getisplayerbirthsign',
                             'hasbeenpickedup', 'getweatherpercent',
@@ -2839,15 +3073,32 @@ class ScriptConverter:
             ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
             return f'Debug.SendAnimationEvent({ref}, "{idle_name}")'
 
-        # SetEssential: SetEssential ref 1/0 -> ref.GetActorBase().SetEssential(true/false)
+        # SetEssential: TES4's SetEssential takes a BASE id (SetEssential base 1).
+        # The property must be typed to match what it is BOUND to (VMAD binds the
+        # SCRO FormID, which for a base EditorID is the base record):
+        #   - base arg (NPC_/CREA, or unknown) -> ActorBase property, direct
+        #     `target.SetEssential(v)`. An Actor-derived-script type here would
+        #     be UNBINDABLE (a base is not an Actor) and abort the whole script's
+        #     init -> quest never finishes init -> aliases never fill. This was
+        #     the FGC01Rats bug: QuillWeave (NPC_ base) was typed as the Actor-
+        #     script TES4_FGC01QuillweaveScript.
+        #   - placed reference arg (ACHR/ACRE/REFR) -> Actor, via GetActorBase().
         if fname_low == 'setessential':
             normalized = args_str.replace(',', ' ').strip() if args_str else ''
             parts = normalized.split() if normalized else []
             if len(parts) >= 2:
                 target = self._convert_expression(parts[0], extends)
                 val = 'true' if parts[1].strip() in ('1', 'true') else 'false'
-                self._property_refs[target] = 'Actor'  # target is already canonical
-                return f'({target} as Actor).GetActorBase().SetEssential({val})'
+                arg_fid = self.xref.edid_to_formid.get(parts[0].lower(), '') if self.xref else ''
+                arg_rtype = self.xref.record_type.get(arg_fid, '') if arg_fid else ''
+                if arg_rtype in ('ACHR', 'ACRE', 'REFR'):
+                    self._property_refs[target] = 'Actor'
+                    return f'({target} as Actor).GetActorBase().SetEssential({val})'
+                # Base form (or unresolved): bind as ActorBase and call directly.
+                # Force ActorBase even over an attached-script type, since the
+                # VMAD binds this to the base and only ActorBase can bind there.
+                self._property_refs[target] = 'ActorBase'
+                return f'{target}.SetEssential({val})'
             elif ref_name:
                 ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
                 val = 'true' if args_str and args_str.strip() in ('1', 'true') else 'false'

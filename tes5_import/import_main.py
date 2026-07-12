@@ -283,9 +283,11 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # Papyrus script + FormID bindings for the script's external references.
     # Without this the OnActivate/OnLoad/GameMode handlers never run in-game
     # (altars showed no message/effect, nirnroots never stopped their sound).
-    from .object_scripts import build_object_script_plan
+    from .object_scripts import build_object_script_plan, build_quest_script_plan
     n_obj_scripts = build_object_script_plan(by_type, xref, fid_to_edid)
     print(f"  Object scripts: attached {n_obj_scripts} SCPT scripts to records via VMAD")
+    n_qust_scripts = build_quest_script_plan(by_type, xref, fid_to_edid)
+    print(f"  Quest scripts: planned {n_qust_scripts} SCRI attachments for QUST VMADs")
 
     # --- Phase 0c: Create vendor factions for merchant NPCs, plus the
     # trainer faction + per-trainer CLAS clones for the training service ---
@@ -519,8 +521,10 @@ def _write_voice_map(output_path: str, voice_map: dict):
         return
     map_path = output_path + '.voicemap.txt'
     with open(map_path, 'w', encoding='utf-8') as f:
-        f.write('# InfoFormID(low24,hex)=voice filename prefix '
-                '(questEDID_topicEDID, Skyrim truncation rules)\n')
+        f.write('# InfoFormID(low24,hex)=prefix[\\tVTYP1,VTYP2] '
+                '(questEDID_topicEDID; optional tab-separated target voice-type '
+                'folders for NPC-specific lines whose speaker VTYP differs from '
+                'the Oblivion source race folder)\n')
         for fid in sorted(voice_map):
             f.write(f'{fid:06X}={voice_map[fid]}\n')
     print(f"  Wrote {map_path} ({len(voice_map)} voice filename prefixes)")

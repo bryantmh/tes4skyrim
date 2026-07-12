@@ -410,10 +410,14 @@ class TestQUST:
         assert flags & 0x0011 == 0
 
     def test_quest_targets_become_aliases_and_objective_targets(self):
-        """TES4 quest-level targets (REFR + conditions) -> one forced-ref
-        alias per unique target plus QSTA(alias, flags)+CTDAs on each
-        objective; conditions (usually GetStage bounds) then gate the compass
-        marker per stage at runtime, exactly like Oblivion."""
+        """TES4 quest-level targets (REFR + GetStage conditions) -> one
+        forced-ref alias per unique target, plus an UNCONDITIONAL QSTA(alias,
+        flags) on each objective whose stage the TES4 conditions admit.
+
+        Vanilla objective targets carry no CTDAs — the displayed objective is
+        what selects the marker — so Oblivion's GetStage gates are resolved at
+        build time instead of replayed at runtime.
+        """
         set_formid_index_offset(1)
         try:
             out = convert_QUST({
@@ -440,12 +444,62 @@ class TestQUST:
         fnam_alias = _find_all_subrecords(out, b'FNAM')[-1]
         assert struct.unpack('<I', fnam_alias)[0] & 0x0002, \
             "alias must be Optional so a fill failure can't block quest start"
+        assert _find_subrecord(out, b'VTCK') is not None, \
+            "VTCK is on 2687/2687 vanilla forced-ref aliases"
         order = _sub_order(out)
         assert order.index('QOBJ') < order.index('QSTA') < order.index('ANAM') \
             < order.index('ALST') < order.index('ALED')
-        # target condition carried onto the objective target
-        ctdas = _find_all_subrecords(out, b'CTDA')
-        assert any(struct.unpack_from('<H', c, 8)[0] == 58 for c in ctdas)
+        # Objective targets are unconditional, exactly like vanilla.
+        assert not _find_all_subrecords(out, b'CTDA')
+
+    def test_target_only_on_the_stages_its_conditions_admit(self):
+        """A target gated `GetStage == 20` marks only objective 20 — not 10.
+
+        Carrying every target onto every objective (with its conditions
+        replayed as CTDAs) leaves the engine with a list whose leading entries
+        are false, and it draws no marker at all: the objective shows in the
+        journal but the compass and map stay empty.
+        """
+        set_formid_index_offset(1)
+        try:
+            out = convert_QUST({
+                'FormID': '00010609', 'RecordFlags': '0', 'EditorID': 'QGate',
+                'DATA.Flags': '0', 'StageCount': '2',
+                'Stage[0].Index': '10', 'Stage[0].LogCount': '1',
+                'Stage[0].Log[0].Flags': '0',
+                'Stage[0].Log[0].Text': 'Go see her.',
+                'Stage[1].Index': '20', 'Stage[1].LogCount': '1',
+                'Stage[1].Log[0].Flags': '0',
+                'Stage[1].Log[0].Text': 'Now search the cellar.',
+                # target 0 lives only at stage 10, target 1 only at stage 20
+                'Target[0].FormID': '0001656A', 'Target[0].Flags': '0',
+                'Target[0].ConditionCount': '1',
+                'Target[0].Condition[0].Raw':
+                    _tes4_ctda(func=58, comp=0x41200000, p1=0x00010609).hex(),
+                'Target[1].FormID': '0001656B', 'Target[1].Flags': '0',
+                'Target[1].ConditionCount': '1',
+                'Target[1].Condition[0].Raw':
+                    _tes4_ctda(func=58, comp=0x41A00000, p1=0x00010609).hex(),
+            })
+        finally:
+            set_formid_index_offset(0)
+
+        # Walk the objectives and collect the alias each one marks.
+        marks = {}
+        pos, current = 24, None
+        while pos + 6 <= len(out):
+            sig = out[pos:pos + 4]
+            size = struct.unpack_from('<H', out, pos + 4)[0]
+            body = out[pos + 6:pos + 6 + size]
+            if sig == b'QOBJ':
+                current = struct.unpack('<H', body)[0]
+                marks[current] = []
+            elif sig == b'QSTA' and current is not None:
+                marks[current].append(struct.unpack_from('<i', body, 0)[0])
+            pos += 6 + size
+
+        assert marks == {10: [0], 20: [1]}, \
+            "each objective must mark only the target Oblivion gated to it"
 
     def test_duplicate_stage_objectives_deduped(self):
         """One objective per stage index — the engine keys objectives by
@@ -609,24 +663,60 @@ class TestQuestOwnership:
         finally:
             set_formid_index_offset(0)
 
-    def test_fallback_greetings_use_real_hello_subtype(self):
-        """One low-priority Hello per voice type; DATA must carry the REAL
-        on-disk Hello subtype (73) in the U16, category 7 in byte 1."""
+    def _greeting_by_type(self):
+        """A shared GREETING (Hello bark) topic whose two INFOs are owned by two
+        different quests — the case that must split into one HELO topic per
+        quest (Skyrim honors only one bark topic per subtype per quest)."""
+        return {
+            'QUST': [
+                {'FormID': '000A0001', 'EditorID': 'QuestA',
+                 'DATA.Flags': '1', 'StageCount': '0'},
+                {'FormID': '000A0002', 'EditorID': 'QuestB',
+                 'DATA.Flags': '1', 'StageCount': '0'},
+            ],
+            'DIAL': [
+                {'FormID': '000B00C8', 'EditorID': 'GREETING',
+                 'DATA.Type': '0', 'QuestCount': '2',
+                 'Quest[0]': '000A0001', 'Quest[1]': '000A0002'},
+            ],
+            'INFO': [
+                {'FormID': '000C0001', 'ParentDIAL': '000B00C8',
+                 'QSTI.Quest': '000A0001', 'ResponseCount': '0',
+                 'ChoiceCount': '0', 'ConditionCount': '0', 'DATA.Flags': '0'},
+                {'FormID': '000C0002', 'ParentDIAL': '000B00C8',
+                 'QSTI.Quest': '000A0002', 'ResponseCount': '0',
+                 'ChoiceCount': '0', 'ConditionCount': '0', 'DATA.Flags': '0'},
+            ],
+        }
+
+    def test_bark_greeting_split_per_quest(self):
+        """A shared GREETING topic must emit ONE HELO topic per owning quest
+        (no single shared topic, no fallback). Skyrim honors only one bark
+        topic of a subtype per quest, so each quest's greeting needs its own
+        topic. Every emitted topic keeps the real Hello subtype (73/HELO)."""
         set_formid_index_offset(1)
         try:
             writer = _FakeWriter()
-            build_dialog_groups(self._mini_by_type(), writer,
-                                npc_to_vtyp={0x01001000: 0x01002000})
-            fallback = None
+            build_dialog_groups(self._greeting_by_type(), writer,
+                                npc_to_vtyp={})
+            helo_owners = []
             for sig, fid, rec_bytes in _walk_records(writer.groups['DIAL']):
-                if sig == 'DIAL' and _find_subrecord(rec_bytes, b'EDID') \
-                        == b'TES4FallbackHello\x00':
-                    fallback = rec_bytes
-            assert fallback is not None
-            data = _find_subrecord(fallback, b'DATA')
-            assert data[1] == 7
-            assert struct.unpack_from('<H', data, 2)[0] == 73
-            assert _find_subrecord(fallback, b'SNAM') == b'HELO'
+                if sig != 'DIAL':
+                    continue
+                data = _find_subrecord(rec_bytes, b'DATA')
+                if data and struct.unpack_from('<H', data, 2)[0] == 73:
+                    assert data[1] == 7, "Hello category must be 7 (Misc)"
+                    assert _find_subrecord(rec_bytes, b'SNAM') == b'HELO'
+                    qnam = _find_subrecord(rec_bytes, b'QNAM')
+                    helo_owners.append(struct.unpack('<I', qnam)[0])
+            # One HELO topic per owning quest (QuestA, QuestB), each distinct.
+            assert len(helo_owners) == 2, helo_owners
+            assert len(set(helo_owners)) == 2, "each quest owns its own HELO topic"
+            # No fallback greeting topic remains.
+            edids = [_find_subrecord(rb, b'EDID')
+                     for sig, fid, rb in _walk_records(writer.groups['DIAL'])
+                     if sig == 'DIAL']
+            assert not any(e and b'Fallback' in e for e in edids)
         finally:
             set_formid_index_offset(0)
 

@@ -294,9 +294,70 @@ def build_marker_locations(by_type: dict, writer) -> tuple:
         if interior and interior not in cell_to_location:
             cell_to_location[interior] = lctn_fid
 
+    marker_linked = len(cell_to_location)
+
+    # Every OTHER teleport-reachable interior (city houses, shops, guild halls —
+    # anything whose entrance door isn't sitting on a map marker) still needs an
+    # XLCN, or Skyrim can't place a quest marker for a target inside it: the
+    # journal objective shows but no compass/map arrow appears, because the
+    # marker system resolves an interior ref's map position through its cell's
+    # Location. Fall the interior back to the Location of the exterior grid cell
+    # its entrance door stands in, then to that door's worldspace location.
+    # Doors are processed nearest-to-worldspace-origin first only for
+    # determinism; first writer wins so the marker links above are never
+    # overwritten.
+    for rec in sorted(refrs, key=lambda r: get_formid(r, 'FormID')):
+        dest_door = get_formid(rec, 'XTEL.Door')
+        if not dest_door:
+            continue
+        interior = cell_of_door.get(dest_door, 0)
+        if not interior or interior in cell_to_location:
+            continue
+        world_fid = get_formid(rec, 'ParentWRLD')
+        if not world_fid:
+            continue                      # door itself is in an interior; skip
+        gx = _grid(get_float(rec, 'PosX'))
+        gy = _grid(get_float(rec, 'PosY'))
+        loc = (grid_to_location.get((world_fid, gx, gy))
+               or world_to_location.get(world_fid))
+        if loc:
+            cell_to_location[interior] = loc
+
+    door_linked = len(cell_to_location) - marker_linked
+
+    # Nested interiors (a basement, upper floor, or back room reached ONLY from
+    # another interior) inherit the location of the interior they open off. A
+    # quest target in Arvena's basement needs a marker just as much as one in her
+    # front room, and vanilla gives the whole building one location. Build the
+    # interior→interior door graph and propagate to a fixed point.
+    interior_links = defaultdict(set)     # src interior cell -> {dest interior cells}
+    for rec in refrs:
+        dest_door = get_formid(rec, 'XTEL.Door')
+        if not dest_door or get_formid(rec, 'ParentWRLD'):
+            continue                       # only doors that live inside an interior
+        src = get_formid(rec, 'ParentCELL')
+        dest = cell_of_door.get(dest_door, 0)
+        if src and dest and src != dest:
+            interior_links[src].add(dest)
+
+    changed = True
+    while changed:
+        changed = False
+        for src in sorted(interior_links):
+            loc = cell_to_location.get(src)
+            if not loc:
+                continue
+            for dest in sorted(interior_links[src]):
+                if dest not in cell_to_location:
+                    cell_to_location[dest] = loc
+                    changed = True
+
+    nested_linked = len(cell_to_location) - marker_linked - door_linked
     print(f"  Created {len(world_to_location)} LCTN worldspace locations, "
           f"{count} LCTN map-marker locations "
-          f"({len(cell_to_location)} interiors linked via XLCN)")
+          f"({marker_linked} interiors linked to a marker, "
+          f"{door_linked} via their entrance door, "
+          f"{nested_linked} nested interiors)")
     return cell_to_location, grid_to_location, world_to_location
 
 

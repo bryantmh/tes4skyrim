@@ -494,6 +494,135 @@ class TestVMADBuilders:
         script_count = struct.unpack_from('<H', result, 4)[0]
         assert script_count == 1
 
+    def test_vmad_quest_parses_to_exactly_its_length(self):
+        """A QUST VMAD must end with the alias-script array count (S16).
+
+        Per xEdit's wbVMADFragmentedQUST the QUST VMAD is
+        Version, ObjectFormat, Scripts, ScriptFragmentsQuest, **Aliases** —
+        and the engine parses it strictly. Omitting the trailing count runs the
+        parser off the end of the buffer and it abandons the record's whole
+        script/alias binding: every quest alias fills as NONE and every QF
+        script property comes back None (journal objective shows, no marker).
+        Vanilla ends with exactly these two bytes — Skyrim.esm's
+        DBSideContract03 VMAD parses 643/643 only once they are read.
+
+        So parse the whole thing back and require we consume every byte.
+        """
+        data = build_vmad_quest_fragments(
+            'TestQuest', [(10, 0), (20, 1)],
+            property_values={'SomeQuest': 0x01035713})
+        off = 0
+
+        def take(fmt):
+            nonlocal off
+            vals = struct.unpack_from(fmt, data, off)
+            off += struct.calcsize(fmt)
+            return vals
+
+        def wstring():
+            nonlocal off
+            (length,) = take('<H')
+            s = data[off:off + length].decode('latin1')
+            off += length
+            return s
+
+        version, obj_format, script_count = take('<hhH')
+        assert (version, obj_format) == (5, 2)
+        for _ in range(script_count):
+            wstring()                       # script name
+            take('<B')                      # flags
+            (prop_count,) = take('<H')
+            for _ in range(prop_count):
+                wstring()                   # property name
+                prop_type, _status = take('<BB')
+                assert prop_type == 1, 'object property'
+                take('<HhI')                # unused, aliasId, formid
+
+        frag_version, frag_count = take('<bH')
+        assert frag_version == 2
+        wstring()                           # fragment file name
+        for _ in range(frag_count):
+            take('<HhiB')
+            wstring()                       # script name
+            wstring()                       # fragment name
+
+        (alias_count,) = take('<h')
+        assert alias_count == 0
+
+        assert off == len(data), (
+            f'QUST VMAD must parse to exactly its length; consumed {off} '
+            f'of {len(data)} — a truncated tail silently kills alias filling')
+
+    @staticmethod
+    def _strict_parse_qust_vmad(data):
+        """Parse a QUST VMAD; returns (scripts, frag_count, frag_file) and
+        asserts every byte is consumed."""
+        off = 0
+
+        def take(fmt):
+            nonlocal off
+            vals = struct.unpack_from(fmt, data, off)
+            off += struct.calcsize(fmt)
+            return vals
+
+        def wstring():
+            nonlocal off
+            (length,) = take('<H')
+            s = data[off:off + length].decode('latin1')
+            off += length
+            return s
+
+        version, obj_format, script_count = take('<hhH')
+        assert (version, obj_format) == (5, 2)
+        scripts = []
+        for _ in range(script_count):
+            sname = wstring()
+            take('<B')
+            (prop_count,) = take('<H')
+            props = {}
+            for _ in range(prop_count):
+                pname = wstring()
+                prop_type, _status = take('<BB')
+                assert prop_type == 1
+                _un, _alias, fid = take('<HhI')
+                props[pname] = fid
+            scripts.append((sname, props))
+        frag_version, frag_count = take('<bH')
+        assert frag_version == 2
+        frag_file = wstring()
+        for _ in range(frag_count):
+            take('<HhiB')
+            wstring()
+            wstring()
+        (alias_count,) = take('<h')
+        assert alias_count == 0
+        assert off == len(data)
+        return scripts, frag_count, frag_file
+
+    def test_vmad_quest_attached_script_with_fragments(self):
+        """Attached quest script rides alongside the QF fragment script."""
+        data = build_vmad_quest_fragments(
+            'TestQuest', [(10, 0)], property_values={'SomeRef': 0x01000800},
+            attached_script=('TES4_TestQuestScript', {'OtherRef': 0x01000801}))
+        scripts, frag_count, frag_file = self._strict_parse_qust_vmad(data)
+        assert [s[0] for s in scripts] == ['TES4_QF_TestQuest',
+                                          'TES4_TestQuestScript']
+        assert scripts[0][1] == {'SomeRef': 0x01000800}
+        assert scripts[1][1] == {'OtherRef': 0x01000801}
+        assert frag_count == 1
+        assert frag_file == 'TES4_QF_TestQuest'
+
+    def test_vmad_quest_attached_script_no_fragments(self):
+        """No fragments: only the attached script, and the fragments section
+        carries count=0 with an EMPTY file name (vanilla: MS12PostQuest,
+        WIThief01 in Skyrim.esm write exactly this shape)."""
+        data = build_vmad_quest_fragments(
+            'TestQuest', [], attached_script=('TES4_TestQuestScript', {}))
+        scripts, frag_count, frag_file = self._strict_parse_qust_vmad(data)
+        assert [s[0] for s in scripts] == ['TES4_TestQuestScript']
+        assert frag_count == 0
+        assert frag_file == ''
+
     def test_vmad_info_fragment_header(self):
         result = build_vmad_info_fragment('00012345')
         version, obj_format = struct.unpack_from('<HH', result, 0)
