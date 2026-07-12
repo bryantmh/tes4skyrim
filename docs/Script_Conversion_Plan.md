@@ -172,9 +172,33 @@ EndEvent
 - Script only checks flags/stages → 1.0s (slow check)
 - Default → 0.5s
 
-**Special case: Scripts with BOTH GameMode and MenuMode blocks**
-TES4 scripts can have separate GameMode/MenuMode blocks. In Papyrus:
-- Merge both into OnUpdate(), using `Utility.IsInMenuMode()` to branch
+**`begin MenuMode <id>` blocks: comment out, do NOT merge into OnUpdate**
+
+A `begin MenuMode <id>` block runs *only while that specific menu is open* —
+1014 = lockpicking, 1030 = class menu, 1002 = inventory, 1023 = quest/map,
+1022 = magic. Skyrim has no per-menu event, and `Utility.IsInMenuMode()` only
+answers "is *some* menu open", so **there is nothing to convert the trigger to.**
+
+Merging these bodies into the GameMode `OnUpdate` loop (which is what the
+converter used to do, with no guard at all) makes them run on the first tick as
+if every menu were open at once. `MQ01Script` is the worst case: its
+`MenuMode 1014` and `MenuMode 1030` blocks call `setstage MQ01 70` / `84`
+unconditionally, so on a new game the tutorial quest blew straight through its
+stage machine and hit stage 100's `stopquest MQ01` — this was the
+"MQ01 starts then immediately fails / jumps to the last stage" bug.
+
+The converter now emits MenuMode bodies as a converted-but-commented block after
+`OnUpdate`, so the trigger can't fire and the translation stays available for
+anyone hand-porting it to a Papyrus menu hook. Only ~11 MenuMode blocks exist in
+all of Oblivion.esm, 5 of them in MQ01Script.
+
+**Locals whose name collides with a TES4 command**
+
+`DiveRockScript` declares `short message`. A local is registered under BOTH its
+original TES4 spelling and its Papyrus-safe rename (`message` → `myMessage`,
+since `Message` is a Papyrus type): the body still spells it the TES4 way, so if
+only the safe name is registered, `if message == 0` is compiled as the TES4
+`Message` *command* and comes out as `If Debug.Notification("") == 0`.
 
 ### Step 6: Variable → Property Conversion
 
@@ -188,6 +212,22 @@ TES4: ref mySelf              → ObjectReference Property mySelf Auto
 - Variables used as boolean flags (short with only 0/1 values) → `Bool Property ... Auto`
 - `ref` variables that always hold actors → `Actor Property ... Auto`
 - Quest variables accessed cross-script → public properties on Quest script
+
+**`_property_refs` MUST be keyed on the Papyrus-safe name**
+
+Everything that writes a property ref — `_add_scro_ref` (SCRO preload) and
+`_convert_ref` (body conversion) — has to key `_property_refs` on
+`_safe_property_name(edid)`, which is also what `_collect_scro_properties` writes
+into the VMAD. Keying on the raw EditorID anywhere creates a *second* entry for
+any EditorID that gets renamed, and many Oblivion EditorIDs collide with vanilla
+Skyrim script names (`MS14` → `myMS14`).
+
+When that happened, the generic `Quest` type seeded from the SCRO and the
+specific `TES4_MS14Script` promoted by `_convert_ref` lived under different keys.
+The "don't downgrade a promoted type" guard compared the wrong key and never
+fired, so the *generic* type won the declaration and the script compiled to
+`Quest Property myMS14` with a body calling `myMS14.QuestDone` →
+`field or property QuestDone not found`. Same root cause for `GoHomeRythe`.
 
 ### Step 7: Expression Conversion
 
@@ -515,6 +555,8 @@ These contracts were each verified against `PapyrusCompiler.exe`:
 | **`OnEffectStart`/`OnEffectFinish` take `(Actor akTarget, Actor akCaster)`.** The signature is fixed by `ActiveMagicEffect.psc`; an invented one is rejected. | `the parameter types of function oneffectstart … do not match the parent script activemagiceffect`. |
 | **A `Global` function may not touch a script property** (there is no instance). `TES4Polyfill` is all-Global, so `GetDayOfWeek` fetches GameDaysPassed via `Game.GetFormFromFile(0x39, "Skyrim.esm")` instead of holding a property. | `variable GameDaysPassed is undefined`. |
 | **`GetIsID` → `GetBaseObject()`, never `(x as Actor).GetActorBase()`.** TES4's `GetIsID` compares against *any* base form (the SE38 oddities are MISC/INGR/WEAP/KEY, not actors). `GetBaseObject()` is declared on ObjectReference (no cast needed, works for actors too) and returns a Form, which compares against every base type. Operands are typed via `_record_type_to_base_papyrus` (NPC_/CREA → **ActorBase**, not Actor). | `cannot cast a tes4_se38oddityscript to a actor, types are incompatible`. |
+| **`_property_refs` must be keyed on `_safe_property_name(edid)` on EVERY write path** (`_add_scro_ref` *and* `_convert_ref`) — that is also the name `_collect_scro_properties` puts in the VMAD. Keying on the raw EditorID makes a *second* entry for any renamed EditorID (`MS14` → `myMS14`), so the "don't downgrade a promoted type" guard compares the wrong key, never fires, and the generic `Quest` from the SCRO beats the specific `TES4_MS14Script` promoted from the body. | `field or property QuestDone not found` / `field or property GoHomeRythe not found` — a `Quest`-typed property with a body calling quest-script members on it. |
+| **Always pass `-nocache` to `papyrus.exe compile`.** Its cache keys on the *source* only, not the output path: an unchanged `.psc` is treated as already compiled, so it **exits 0 and writes no `.pex` at all**. Static scripts whose text never varies between runs (`TES4_ShowBarterMenu`, `TES4_ShowTrainingMenu`, `TES4Polyfill`) hit this every time. | Reported as a bare `exit code 0` "failure" with no error text, and the object the script is attached to silently does nothing in-game. |
 
 ### Quest scripts: gate the GameMode body on `IsRunning()`
 

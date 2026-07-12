@@ -25,6 +25,7 @@ from script_convert.constants import (
 from script_convert.pipeline import (
     _sanitize_name,
     _pack_wstring,
+    _superseded_stages,
     build_vmad_quest_fragments,
     build_vmad_info_fragment,
     convert_all_scripts,
@@ -977,3 +978,110 @@ class TestPapyrusCompilerContracts:
             'Event OnEffectStart(Actor akTarget, Actor akCaster)'
         assert BLOCK_MAP['scripteffectfinish'][0] == \
             'Event OnEffectFinish(Actor akTarget, Actor akCaster)'
+
+
+# ===========================================================================
+# Quest objective completion (TES4 log -> TES5 objective states)
+# ===========================================================================
+
+def _stage_gate(op: int, value: float, or_next: bool = False) -> str:
+    """A raw TES4 CTDA hex for `GetStage <op> value` on the quest itself.
+
+    Byte layout matches the real records (verified against FGC01Rats): type byte
+    (op in the top 3 bits, 0x01 = OR with next), comparison float at +4,
+    function index at +8 (58 = GetStage).
+    """
+    raw = (bytes([op | (0x01 if or_next else 0x00), 0, 0, 0])
+           + struct.pack('<f', float(value))
+           + struct.pack('<H', 58) + b'\x00' * 2
+           + b'\x13\x57\x03\x00' + b'\x00' * 8)
+    return raw.hex()
+
+
+_EQ = 0x00
+_GE = 0x60
+_LE = 0xA0
+
+
+def _frags(*stages):
+    """fragments tuples as _convert_qust_scripts builds them."""
+    return [(s, 0, f'Log text {s}.', '', False, i, 0)
+            for i, s in enumerate(stages)]
+
+
+class TestQuestObjectiveCompletion:
+    """Oblivion's journal is an append-only log with no notion of a completed
+    objective; Skyrim's is a set of independently-stated objectives.  The
+    completion points are recovered from the TES4 quest-target stage gates.
+    """
+
+    def test_objective_completes_when_its_own_step_ends(self):
+        """The core bug: walking stages must tick off the steps left behind.
+
+        One target live only at stage 10 and another only at 20 => reaching 20
+        finishes step 10.
+        """
+        rec = {
+            'Target[0].FormID': '0000BC69',
+            'Target[0].Condition[0].Raw': _stage_gate(_EQ, 10),
+            'Target[1].FormID': '0000BC72',
+            'Target[1].Condition[0].Raw': _stage_gate(_EQ, 20),
+        }
+        sup = _superseded_stages(rec, _frags(10, 20))
+        assert sup[(20, 0)] == [10], "stage 20 must complete objective 10"
+        assert sup[(10, 0)] == [], "nothing precedes stage 10"
+
+    def test_parallel_objectives_stay_open(self):
+        """A target live across 40..50 keeps BOTH objectives open — a quest can
+        have several objectives outstanding at once, so 50 must NOT close 40."""
+        rec = {
+            'Target[0].FormID': '0000BC72',
+            'Target[0].Condition[0].Raw': _stage_gate(_GE, 40),
+            'Target[0].Condition[1].Raw': _stage_gate(_LE, 50),
+            'Target[1].FormID': '0000BC69',
+            'Target[1].Condition[0].Raw': _stage_gate(_EQ, 55),
+        }
+        sup = _superseded_stages(rec, _frags(40, 50, 55))
+        assert sup[(50, 0)] == [], \
+            "stage 50 shares 40's live marker — 40 is still in progress"
+        assert sup[(55, 0)] == [40, 50], \
+            "both parallel objectives close together when the marker goes dark"
+
+    def test_not_a_blanket_sweep_of_lower_indices(self):
+        """Regression: completing every lower-numbered objective would tick a
+        still-live parallel step.  Only the finished step may be completed."""
+        rec = {
+            'Target[0].FormID': '0000BC72',
+            'Target[0].Condition[0].Raw': _stage_gate(_GE, 10),
+            'Target[0].Condition[1].Raw': _stage_gate(_LE, 90),  # live throughout
+            'Target[1].FormID': '0000BC69',
+            'Target[1].Condition[0].Raw': _stage_gate(_EQ, 20),
+        }
+        sup = _superseded_stages(rec, _frags(10, 20, 90))
+        assert 10 not in sup[(20, 0)], \
+            "objective 10's marker is still live at 20 — it must stay open"
+        assert 10 not in sup[(90, 0)] or sup[(90, 0)] == [20], \
+            "only genuinely-finished steps close"
+
+    def test_objective_completed_exactly_once(self):
+        """An objective is closed by the FIRST stage that ends it, not re-closed
+        by every later stage."""
+        rec = {
+            'Target[0].FormID': '0000BC69',
+            'Target[0].Condition[0].Raw': _stage_gate(_EQ, 10),
+            'Target[1].FormID': '0000BC72',
+            'Target[1].Condition[0].Raw': _stage_gate(_EQ, 20),
+            'Target[2].FormID': '0000BC73',
+            'Target[2].Condition[0].Raw': _stage_gate(_EQ, 30),
+        }
+        sup = _superseded_stages(rec, _frags(10, 20, 30))
+        closes = [s for done in sup.values() for s in done]
+        assert closes.count(10) == 1, "objective 10 must be completed once"
+        assert sup[(30, 0)] == [20]
+
+    def test_no_targets_falls_back_to_linear_log(self):
+        """A quest with no QSTA gates has nothing to read, so each entry is
+        closed when the log moves on — Oblivion's linear default."""
+        sup = _superseded_stages({}, _frags(10, 20, 30))
+        assert sup[(20, 0)] == [10]
+        assert sup[(30, 0)] == [20]

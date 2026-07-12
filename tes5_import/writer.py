@@ -292,7 +292,7 @@ class PluginWriter:
         """
         order = [
             'GMST', 'KYWD', 'TXST', 'GLOB', 'CLAS', 'FACT', 'HDPT', 'EYES',
-            'RACE', 'SOUN', 'SNDR', 'MATT', 'STAT', 'ACTI', 'CONT', 'DOOR',
+            'RACE', 'SOUN', 'SOPM', 'SNDR', 'MATT', 'STAT', 'ACTI', 'CONT', 'DOOR',
             'FLOR', 'FURN', 'GRAS', 'TREE', 'LIGH', 'MISC', 'KEYM', 'ARMO',
             'ARMA', 'BOOK', 'AMMO', 'ENCH', 'SPEL', 'ALCH', 'INGR', 'SCRL',
             'SLGM', 'VTYP', 'OTFT', 'NPC_', 'LVLN', 'LVLI', 'LVSP', 'WTHR',
