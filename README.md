@@ -105,6 +105,12 @@ python convert.py -f Oblivion.esm
 
 The output plugin and assets are written to `output/` (override with `--output-dir`).
 
+Once installed and loaded up ingame, begin "Oblivion" with 
+
+```bash
+setstage Charactergen 5
+```
+
 ---
 
 ## Command line

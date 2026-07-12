@@ -337,6 +337,14 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     print(f"  Leveled creature placements: {n_lvl_achr} REFR -> ACHR "
           f"via generated shell NPCs")
 
+    # --- Phase 0i: index inventory item types for the outfit split ---
+    # A TES4 actor equips out of one mixed CNTO inventory; TES5 needs the
+    # wearables moved to a DOFT outfit and everything else left in CNTO
+    # (see outfits.py). Classifying an item needs its record type and biped
+    # slot, so index them before the actor converters run in Phase 1.
+    from .outfits import load_item_index
+    load_item_index(by_type)
+
     # --- Phase 1: Simple record types (flat top-level groups) ---
     print("\nConverting records...")
     t2 = time.time()

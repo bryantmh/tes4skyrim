@@ -4,6 +4,7 @@ import struct
 
 from ..constants import DEFAULT_RACE, RACE_MAP, TES4_SKILL_TO_TES5, TES5_SKILL_ORDER
 from ..npc_face_mapper import build_face_tail_subs, build_pnam_subs
+from ..outfits import split_inventory
 from ..packages import (
     CSTY_ANIMAL,
     CSTY_DEFAULT,
@@ -34,6 +35,27 @@ from .common import (
     pack_uint8_subrecord,
     pack_uint32_subrecord,
 )
+
+
+def _read_items(rec: dict) -> list:
+    """Actor's TES4 CNTO inventory as [(fid, count)], in export order."""
+    items = []
+    for i in range(get_int(rec, 'ItemCount')):
+        fid = get_formid(rec, f'Item[{i}].FormID')
+        if fid:
+            items.append((fid, get_int(rec, f'Item[{i}].Count', 1)))
+    return items
+
+
+def _build_outfit(writer, edid: str, outfit_fids: list) -> int:
+    """Emit the OTFT companion record for an actor and return its FormID."""
+    otft_fid = writer.alloc_formid()
+    subs = pack_string_subrecord('EDID', edid)
+    # INAM — item FormIDs packed as consecutive 4-byte LE uint32
+    subs += pack_subrecord(
+        'INAM', b''.join(struct.pack('<I', fid) for fid in outfit_fids))
+    writer.add_record('OTFT', pack_record('OTFT', otft_fid, 0, subs))
+    return otft_fid
 
 
 def _npc_skills_dnam(rec: dict) -> bytes:
@@ -422,21 +444,18 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
             for sfid in spell_fids:
                 subs += pack_formid_subrecord('SPLO', sfid)
 
-    # COCT + CNTO — Items (also collected for OTFT outfit creation)
-    item_fids = []
-    ic = get_int(rec, 'ItemCount')
+    # COCT + CNTO — carried inventory, and the wearables that become the outfit.
+    # The TES4 inventory holds both; Skyrim needs them SPLIT (see outfits.py):
+    # the outfit is added on top of CNTO at load, so an item in both is carried
+    # twice, and only wearables may appear in an outfit at all.
+    outfit_fids, carried = split_inventory(_read_items(rec))
     coct = 0
     item_data = b''
-    for i in range(ic):
-        fid = get_formid(rec, f'Item[{i}].FormID')
-        count = get_int(rec, f'Item[{i}].Count', 1)
-        if fid:
-            item_data += pack_subrecord('CNTO', struct.pack('<Ii', fid, count))
-            item_fids.append(fid)
-            coct += 1
+    for fid, count in carried:
+        item_data += pack_subrecord('CNTO', struct.pack('<Ii', fid, count))
+        coct += 1
     # Vendor buying power: TES5 has no barter-gold field — a chest-less vendor
     # trades from its own inventory, so ACBS.BarterGold becomes carried gold.
-    # Not added to item_fids: gold must not leak into the DOFT outfit.
     barter_gold = get_int(rec, 'ACBS.BarterGold') if vendor_fid else 0
     if barter_gold > 0:
         item_data += pack_subrecord('CNTO', struct.pack('<Ii', GOLD001_FID,
@@ -496,17 +515,11 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     subs += pack_subrecord('NAM7', struct.pack('<f', 1.0))
 
     # DOFT — Default outfit (requires OTFT companion record)
-    # TES4 NPCs equip items from CNTO inventory; TES5 requires OTFT + DOFT.
-    if writer is not None and item_fids:
-        otft_fid = writer.alloc_formid()
-        otft_subs = b''
-        otft_edid = (edid or 'NPC') + '_Outfit'
-        otft_subs += pack_string_subrecord('EDID', otft_edid)
-        # INAM — array of item FormIDs (packed as consecutive 4-byte LE uint32)
-        inam_data = b''.join(struct.pack('<I', fid) for fid in item_fids)
-        otft_subs += pack_subrecord('INAM', inam_data)
-        writer.add_record('OTFT', pack_record('OTFT', otft_fid, 0, otft_subs))
-        subs += pack_formid_subrecord('DOFT', otft_fid)
+    # TES4 NPCs equip out of CNTO; TES5 wears exactly what the outfit lists.
+    if writer is not None and outfit_fids:
+        subs += pack_formid_subrecord(
+            'DOFT', _build_outfit(writer, (edid or 'NPC') + '_Outfit',
+                                  outfit_fids))
 
     # DPLT — default package list: the vanilla fallback AI most NPCs carry
     subs += pack_formid_subrecord('DPLT', DPLT_NPC_LIST)
@@ -587,18 +600,15 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     # RNAM — Race (after VTCK per TES5 NPC_ definition)
     subs += pack_formid_subrecord('RNAM', crea_race_fid)
 
-    # Items
-    item_fids = []
-    ic = get_int(rec, 'ItemCount')
+    # Items — carried inventory and outfit are disjoint (see convert_NPC_).
+    # Creature inventories are mostly loot leveled-lists, which belong in CNTO;
+    # only the armed/armored ones (skeletons, dremora) yield an outfit at all.
+    outfit_fids, carried = split_inventory(_read_items(rec))
     coct = 0
     item_data = b''
-    for i in range(ic):
-        fid = get_formid(rec, f'Item[{i}].FormID')
-        count = get_int(rec, f'Item[{i}].Count', 1)
-        if fid:
-            item_data += pack_subrecord('CNTO', struct.pack('<Ii', fid, count))
-            item_fids.append(fid)
-            coct += 1
+    for fid, count in carried:
+        item_data += pack_subrecord('CNTO', struct.pack('<Ii', fid, count))
+        coct += 1
     # Vendor buying power (see convert_NPC_): barter gold -> carried gold.
     crea_barter_gold = get_int(rec, 'ACBS.BarterGold') if crea_vendor_fid else 0
     if crea_barter_gold > 0:
@@ -658,15 +668,10 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
         'ZNAM', CSTY_ANIMAL if crea_type in (0, 4) else CSTY_DEFAULT)
 
     # DOFT — Default outfit
-    if writer is not None and item_fids:
-        otft_fid = writer.alloc_formid()
-        otft_subs = b''
-        otft_edid = (edid or 'CREA') + '_Outfit'
-        otft_subs += pack_string_subrecord('EDID', otft_edid)
-        inam_data = b''.join(struct.pack('<I', fid) for fid in item_fids)
-        otft_subs += pack_subrecord('INAM', inam_data)
-        writer.add_record('OTFT', pack_record('OTFT', otft_fid, 0, otft_subs))
-        subs += pack_formid_subrecord('DOFT', otft_fid)
+    if writer is not None and outfit_fids:
+        subs += pack_formid_subrecord(
+            'DOFT', _build_outfit(writer, (edid or 'CREA') + '_Outfit',
+                                  outfit_fids))
 
     # DPLT — default package list, like every vanilla creature (EncWolf etc.)
     subs += pack_formid_subrecord('DPLT', DPLT_CREATURE_LIST)

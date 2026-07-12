@@ -1180,5 +1180,180 @@ class TestServiceConversion:
         assert b'Take a look.' in dial_group
 
 
+class TestOutfitSplit:
+    """TES4 inventory → TES5 outfit (OTFT) + carried inventory (CNTO).
+
+    Skyrim wears exactly what the outfit lists and ADDS it on top of CNTO, so
+    the split must be disjoint, wearable-only, and free of biped-slot ties.
+    """
+
+    # TES4 BMDT biped bits: 2=UpperBody 3=LowerBody 5=Foot
+    BODY = 1 << 2
+    LEGS = 1 << 3
+    FEET = 1 << 5
+
+    def _index(self, **types):
+        """Install a fresh item index from {sig: [rec, ...]}."""
+        from tes5_import.outfits import load_item_index
+        from tes5_import.text_reader import set_formid_index_offset
+        set_formid_index_offset(0)
+        load_item_index(types)
+
+    def _armo(self, fid, edid, slots, value=100):
+        return {'Signature': 'ARMO', 'FormID': fid, 'EditorID': edid,
+                'BMDT.BipedFlags': str(slots), 'DATA.Value': str(value)}
+
+    def _clot(self, fid, edid, slots, value=5):
+        return {'Signature': 'CLOT', 'FormID': fid, 'EditorID': edid,
+                'BMDT.BipedFlags': str(slots), 'DATA.Value': str(value)}
+
+    def _lvli(self, fid, edid, entries):
+        rec = {'Signature': 'LVLI', 'FormID': fid, 'EditorID': edid,
+               'EntryCount': str(len(entries))}
+        for i, e in enumerate(entries):
+            rec[f'Entry[{i}].FormID'] = e
+        return rec
+
+    def test_only_wearables_reach_the_outfit(self):
+        """Loot/keys/potions in an outfit are what the CK rejects with
+        'contains non-armor objects' — they must stay in CNTO."""
+        from tes5_import.outfits import split_inventory
+        self._index(
+            ARMO=[self._armo('00000001', 'Cuirass', self.BODY)],
+            WEAP=[{'Signature': 'WEAP', 'FormID': '00000002', 'EditorID': 'Axe'}],
+            KEYM=[{'Signature': 'KEYM', 'FormID': '00000003', 'EditorID': 'Key'}],
+            ALCH=[{'Signature': 'ALCH', 'FormID': '00000004', 'EditorID': 'Potion'}],
+            INGR=[{'Signature': 'INGR', 'FormID': '00000005', 'EditorID': 'Herb'}],
+        )
+        outfit, carried = split_inventory([(i, 1) for i in range(1, 6)])
+        assert outfit == [1, 2]                      # armor + weapon
+        assert [f for f, _ in carried] == [3, 4, 5]  # key, potion, ingredient
+
+    def test_outfit_and_inventory_are_disjoint(self):
+        """Skyrim adds the outfit ON TOP of CNTO, so an item in both is
+        carried twice — the duplicate-inventory bug."""
+        from tes5_import.outfits import split_inventory
+        self._index(
+            ARMO=[self._armo('00000001', 'Cuirass', self.BODY)],
+            KEYM=[{'Signature': 'KEYM', 'FormID': '00000002', 'EditorID': 'Key'}],
+        )
+        outfit, carried = split_inventory([(1, 1), (2, 1)])
+        assert not set(outfit) & {f for f, _ in carried}
+
+    def test_armor_beats_clothing_for_a_contested_slot(self):
+        """An NPC issued both armor and clothes was meant to wear the armor."""
+        from tes5_import.outfits import split_inventory
+        self._index(
+            ARMO=[self._armo('00000001', 'SteelCuirass', self.BODY, value=180)],
+            CLOT=[self._clot('00000002', 'Shirt', self.BODY, value=5)],
+        )
+        outfit, carried = split_inventory([(2, 1), (1, 1)])  # shirt listed first
+        assert outfit == [1]
+        assert [f for f, _ in carried] == [2]  # loser is carried, not dropped
+
+    def test_leveled_clothing_list_loses_to_armor(self):
+        """Azzan: his steel competed with LL0NPCClothingShirt/Pants/ShoesMiddle,
+        not with plain CLOT records. A leveled list must claim the union of its
+        leaves' slots or it silently wins the slot and the NPC wears the shirt.
+        """
+        from tes5_import.outfits import split_inventory
+        self._index(
+            ARMO=[self._armo('00000001', 'SteelCuirass', self.BODY, value=180)],
+            CLOT=[self._clot('00000010', 'MiddleShirt', self.BODY | self.LEGS)],
+            LVLI=[self._lvli('00000002', 'LL0NPCClothingShirtMiddle',
+                             ['00000010'])],
+        )
+        outfit, carried = split_inventory([(1, 1), (2, 1)])
+        assert outfit == [1], 'armor must win the body slot over a clothing list'
+        assert [f for f, _ in carried] == [2]
+
+    def test_multislot_loser_cannot_win_on_a_second_slot(self):
+        """A garment spanning body+legs that loses the body slot to a cuirass
+        must not survive by winning legs — Skyrim would equip it and it would
+        cover the chest again (the LL0VampireShirt case)."""
+        from tes5_import.outfits import split_inventory
+        self._index(
+            ARMO=[self._armo('00000001', 'Cuirass', self.BODY, value=4800)],
+            CLOT=[self._clot('00000002', 'Shirt', self.BODY | self.LEGS)],
+        )
+        outfit, carried = split_inventory([(1, 1), (2, 1)])
+        assert outfit == [1]
+        assert [f for f, _ in carried] == [2]
+
+    def test_repeated_sublist_is_not_a_cycle(self):
+        """Oblivion weights an entry by naming it twice (LL2NPCStaff25 lists
+        LL1NPCStaff1Normal100 twice). A visited-set shared across siblings reads
+        the repeat as a cycle and rejects the whole list — which left every
+        leveled-weapon actor unarmed."""
+        from tes5_import.outfits import is_outfit_eligible, split_inventory
+        self._index(
+            WEAP=[{'Signature': 'WEAP', 'FormID': '00000010', 'EditorID': 'Staff'}],
+            LVLI=[
+                self._lvli('00000011', 'LL1NPCStaffNormal', ['00000010']),
+                # names the same sublist twice, to weight it
+                self._lvli('00000001', 'LL2NPCStaff25',
+                           ['00000011', '00000011']),
+            ],
+        )
+        assert is_outfit_eligible(0x01) is True
+        outfit, carried = split_inventory([(1, 1)])
+        assert outfit == [1], 'a weighted weapon list must still be worn'
+        assert carried == []
+
+    def test_mixed_leveled_list_stays_in_inventory(self):
+        """A list that can roll gold/ingredients is not a valid outfit form."""
+        from tes5_import.outfits import is_outfit_eligible
+        self._index(
+            ARMO=[self._armo('00000010', 'Cuirass', self.BODY)],
+            MISC=[{'Signature': 'MISC', 'FormID': '00000011', 'EditorID': 'Gold'}],
+            LVLI=[self._lvli('00000001', 'LL0Loot', ['00000010', '00000011'])],
+        )
+        assert is_outfit_eligible(0x01) is False
+
+    def test_empty_leveled_list_is_not_outfit_eligible(self):
+        """An outfit entry that resolves to nothing is the CK's
+        'Unable to find valid outfit form'."""
+        from tes5_import.outfits import is_outfit_eligible
+        self._index(LVLI=[self._lvli('00000001', 'LL0Empty', [])])
+        assert is_outfit_eligible(0x01) is False
+
+    def test_jewelry_does_not_contend(self):
+        """Rings/amulets never conflict with armor, and an NPC wears two rings."""
+        from tes5_import.outfits import split_inventory
+        ring_r, ring_l, amulet = 1 << 6, 1 << 7, 1 << 8
+        self._index(CLOT=[
+            self._clot('00000001', 'Ring1', ring_r),
+            self._clot('00000002', 'Ring2', ring_l),
+            self._clot('00000003', 'Amulet', amulet),
+        ])
+        outfit, carried = split_inventory([(1, 1), (2, 1), (3, 1)])
+        assert sorted(outfit) == [1, 2, 3]
+        assert carried == []
+
+    def test_formid_offset_is_tolerated(self):
+        """Callers pass FormIDs from get_formid(), which has already applied the
+        load-order offset (0x00xxxxxx → 0x01xxxxxx). An unmasked index lookup
+        misses every record and the actor gets no outfit at all."""
+        from tes5_import.outfits import is_outfit_eligible
+        self._index(ARMO=[self._armo('00000001', 'Cuirass', self.BODY)])
+        assert is_outfit_eligible(0x01000001) is True
+
+    def test_nothing_is_lost(self):
+        """Every source item must reach the actor via exactly one channel."""
+        from tes5_import.outfits import split_inventory
+        self._index(
+            ARMO=[self._armo('00000001', 'Cuirass', self.BODY),
+                  self._armo('00000002', 'Boots', self.FEET)],
+            CLOT=[self._clot('00000003', 'Shirt', self.BODY)],
+            KEYM=[{'Signature': 'KEYM', 'FormID': '00000004', 'EditorID': 'Key'}],
+        )
+        items = [(1, 1), (2, 1), (3, 1), (4, 2)]
+        outfit, carried = split_inventory(items)
+        assert len(outfit) + len(carried) == len(items)
+        assert set(outfit) | {f for f, _ in carried} == {1, 2, 3, 4}
+        # counts on carried items survive the split
+        assert dict(carried)[4] == 2
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])
