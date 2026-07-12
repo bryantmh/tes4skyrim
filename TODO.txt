@@ -49,7 +49,6 @@ Major Issues for V1:
 
 	10 - Need new skyrim body mesh to actually work to allow leg skin to appear
 
-	11 - There are several quests that are improperly starting immediately upon game load "the ghost ship of anvil", "imperial dragon armor" "permanent retirement" "the renegade shadowscale" and "the stone of st. alessia"
 
 Later Issues:
 	1 - Lip syncing with voice
@@ -94,27 +93,8 @@ Later Issues:
 
 	18 - Quest objectives aren't getting completed
 
-	19 - CK Compiler bugs:
-	   	1965 ): no viable alternative at input 'Int'
-		495 ): Attempting to add temporary variable named ::temp_var to free list multiple times
-		93 ): cannot compare a none to a int (cast missing or types unrelated)
-		93 ): GetStage is not a function or does not exist
-		71 ): cannot relatively compare variables of type bool
-		63 ): Attempting to add temporary variable named ::tempstage_var to free list multiple times
-		58 ): cannot relatively compare variables to None
-		45 ): cannot cast a tes4_se38museumitemscript to a actor, types are incompatible
-		36 ): cannot cast a tes4_se38oddityscript to a actor, types are incompatible
-		28 ): SetStage is not a function or does not exist
-		25 ): EvaluatePackage is not a function or does not exist
-		24 ): "tes4_setombstoneushnargrashadborgobscript" is too long, please shorten it to 38 characters or less
-		24 ): "tes4_se07adarkseducerelitequartersguard02script" is too long, please shorten it to 38 characters or less
-		24 ): "tes4_se07adarkseducerelitequartersguard01script" is too long, please shorten it to 38 characters or less
-		18 ): cannot name a variable or property the same as a known type or script
-		18 ): Disable is not a function or does not exist
-		17 ): no viable alternative at input 'Actor'
-		16 ): cannot compare a door to a int (cast missing or types unrelated)
-		16 ): Door is not a variable
-		13 ): Enable is not a function or does not exist
+
+	20 - CK Compiler TODOs
 
 Minor Issues:
 

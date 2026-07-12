@@ -4,6 +4,7 @@ import os
 import re
 from pathlib import Path
 
+from script_convert.constants import papyrus_script_name
 from tes5_import.text_reader import parse_export_file, unescape_value
 
 # ===========================================================================
@@ -135,7 +136,7 @@ class CrossRefGraph:
         script_edid = self.script_formid_to_edid.get(scri_fid, '')
         if not script_edid:
             return 'Quest'
-        return f'TES4_{script_edid}'
+        return papyrus_script_name(script_edid)
 
     def get_record_script_type(self, name: str) -> str:
         """Get the Papyrus script class name for any record with an attached script.
@@ -157,7 +158,7 @@ class CrossRefGraph:
         script_edid = self.script_formid_to_edid.get(scri_fid, '')
         if not script_edid:
             return ''
-        return f'TES4_{script_edid}'
+        return papyrus_script_name(script_edid)
 
     def build_ref_as_int_map(self, scpt_path: str):
         """Scan all SCPT SCTX sources to find ref variables used only as integers.

@@ -18,6 +18,9 @@ from script_convert.constants import (
     TYPE_MAP,
     ACTOR_VALUE_MAP,
     FUNCTION_MAP,
+    PAPYRUS_MAX_SCRIPT_NAME,
+    papyrus_script_name,
+    _safe_property_name,
 )
 from script_convert.pipeline import (
     _sanitize_name,
@@ -439,6 +442,63 @@ End
         result = converter.convert_standalone('FloatTest', source, 'ObjectReference', 'FloatTest')
         assert 'Float Property timer = 0.0 Auto' in result
 
+    def test_variable_shadowing_a_tes4_command(self, converter):
+        """A local whose name collides with a TES4 command must stay a variable.
+
+        DiveRockScript declares `short message`; `if message == 0` was compiled as
+        the TES4 `Message` COMMAND (`If Debug.Notification("") == 0`), which does
+        not type-check. The declaration renamed it to myMessage (Message is a
+        Papyrus type), but the reference kept the original spelling — so the
+        original spelling must be recognised as a local too.
+        """
+        source = """ScriptName DiveRockScript
+
+short message
+
+Begin GameMode
+  if message == 0
+    set message to 1
+  endif
+End
+"""
+        result = converter.convert_standalone(
+            'DiveRockScript', source, 'ObjectReference', 'DiveRockScript')
+        assert 'Int Property myMessage Auto' in result
+        assert 'If myMessage == 0' in result
+        assert 'myMessage = 1' in result
+        assert 'Debug.Notification' not in result
+
+    def test_menumode_body_is_not_run_in_onupdate(self, converter_with_quests):
+        """`begin MenuMode <id>` has no Skyrim equivalent and must NOT execute.
+
+        These bodies used to be merged, unguarded, into the GameMode OnUpdate
+        loop — so MQ01Script's MenuMode 1014/1030 blocks ran `setstage MQ01 70/84`
+        on the first tick of a new game, blowing the tutorial quest through its
+        whole stage machine and into stage 100's `stopquest MQ01`.
+        """
+        source = """ScriptName MQ01Script
+
+short tutorialOff
+
+Begin GameMode
+  set tutorialOff to 0
+End
+
+Begin MenuMode 1014
+  setstage MQ01 70
+End
+"""
+        result = converter_with_quests.convert_standalone(
+            'MQ01Script', source, 'Quest', 'MQ01Script')
+        lines = result.split('\n')
+        onupdate = lines[lines.index('Event OnUpdate()'):]
+        onupdate = onupdate[:onupdate.index('EndEvent')]
+        # The MenuMode SetStage must not appear anywhere inside OnUpdate...
+        assert not any('SetStage(70)' in ln for ln in onupdate)
+        # ...but must survive as a comment so it can be hand-ported.
+        assert any(ln.lstrip().startswith(';') and 'SetStage(70)' in ln
+                   for ln in lines)
+
 
 # ===========================================================================
 # Fragment conversion tests
@@ -656,6 +716,52 @@ class TestUtilities:
         assert _sanitize_name('Test-Script!') == 'Test_Script_'
 
 
+class TestScroRefTyping:
+    """_add_scro_ref must key property_refs on the Papyrus-SAFE name.
+
+    Keying on the raw EditorID created a second entry for any EditorID that gets
+    renamed — MS14 is a vanilla Skyrim script name, so it becomes myMS14. The
+    generic 'Quest' from the SCRO and the specific 'TES4_MS14Script' promoted by
+    _convert_ref then lived under different keys, the downgrade guard never fired,
+    and the generic type won the declaration: `Quest Property myMS14` with a body
+    calling `myMS14.QuestDone` ("field or property QuestDone not found").
+    """
+
+    def _xref(self):
+        x = CrossRefGraph()
+        x.formid_to_edid['00017606'] = 'MS14'
+        x.edid_to_formid['ms14'] = '00017606'
+        x.record_type['00017606'] = 'QUST'
+        x.quest_edids.add('ms14')
+        x.record_scri['00017606'] = '0001B94A'
+        x.script_formid_to_edid['0001B94A'] = 'MS14Script'
+        x.script_formid_to_type['0001B94A'] = 1
+        return x
+
+    def test_scro_does_not_shadow_promoted_quest_script_type(self):
+        from script_convert.pipeline import _add_scro_ref
+        x = self._xref()
+        conv = ScriptConverter(x)
+        # SCRO preload runs first and seeds the generic base type...
+        _add_scro_ref(conv, '00017606', x)
+        # ...then the body promotes it to the quest's own script class.
+        conv.convert_fragment('set MS14.QuestDone to 1', 'Quest')
+        refs = conv.get_property_refs()
+        # Exactly one entry, under the safe name, with the specific type.
+        assert 'MS14' not in refs
+        assert refs['myMS14'] == 'TES4_MS14Script'
+
+    def test_scro_preload_after_promotion_does_not_downgrade(self):
+        """_preload_stage_scro_refs runs once per stage; a later stage must not
+        reset a type an earlier stage's body already promoted."""
+        from script_convert.pipeline import _add_scro_ref
+        x = self._xref()
+        conv = ScriptConverter(x)
+        conv.convert_fragment('set MS14.QuestDone to 1', 'Quest')
+        _add_scro_ref(conv, '00017606', x)   # next stage re-seeds the SCRO
+        assert conv.get_property_refs()['myMS14'] == 'TES4_MS14Script'
+
+
 # ===========================================================================
 # Type mapping tests
 # ===========================================================================
@@ -776,3 +882,98 @@ class TestIntegration:
 
         convert_all_scripts(str(export_dir), str(output_dir))
         assert os.path.exists(os.path.join(str(output_dir), '_CONVERSION_REPORT.txt'))
+
+
+# ===========================================================================
+# Creation Kit PapyrusCompiler contracts
+#
+# Each of these was verified against Skyrim's own PapyrusCompiler.exe (see
+# docs/script_conversion_plan.md).  A violated contract means the script does
+# not compile, produces no .pex, and the record it is bound to silently does
+# nothing in-game — so these are regression tests, not style checks.
+# ===========================================================================
+
+class TestPapyrusCompilerContracts:
+
+    def test_script_name_never_exceeds_38_chars(self):
+        """The CK rejects a ScriptName longer than 38 characters."""
+        long_edid = 'TrigZoneCloseCurrentOblivionRdCitadel01SCRIPT'
+        name = papyrus_script_name(long_edid)
+        assert len(name) <= PAPYRUS_MAX_SCRIPT_NAME
+        assert name.startswith('TES4_')
+
+    def test_truncated_script_names_stay_unique(self):
+        """Names that differ only past the 38-char cut must not collide."""
+        a = papyrus_script_name('TrigZoneCloseCurrentOblivionRdCitadel01SCRIPT')
+        b = papyrus_script_name('TrigZoneCloseCurrentOblivionRdCitadel02SCRIPT')
+        assert a != b
+
+    def test_short_script_name_is_left_alone(self):
+        assert papyrus_script_name('SE38OdditySCRIPT') == 'TES4_SE38OdditySCRIPT'
+
+    def test_script_name_is_deterministic(self):
+        """The .psc name, the filename and the VMAD name all call this — they
+        must agree, or the script never binds to its record."""
+        assert (papyrus_script_name('SETombstoneUshnargraShadborgobSCRIPT')
+                == papyrus_script_name('SETombstoneUshnargraShadborgobSCRIPT'))
+
+    def test_temp_prefixed_names_are_renamed(self):
+        """PapyrusCompiler reserves the ::temp* register namespace for itself."""
+        for name in ('temp', 'tempstage', 'template', 'tempRef'):
+            assert not _safe_property_name(name).startswith('temp')
+
+    def test_temp_rename_is_case_sensitive(self):
+        """`Temp` and `tmp` compile fine — only a lowercase `temp` prefix clashes."""
+        assert _safe_property_name('Temp') == 'Temp'
+        assert _safe_property_name('tmp') == 'tmp'
+        assert _safe_property_name('atemp') == 'atemp'
+
+    def test_vanilla_script_names_are_reserved(self):
+        """A property may not reuse ANY Skyrim script name, not just a type."""
+        for name in ('Door', 'DarkBrotherhood', 'MS14'):
+            assert _safe_property_name(name) != name
+
+    def test_reserved_rename_preserves_casing(self):
+        assert _safe_property_name('DarkBrotherhood') == 'myDarkBrotherhood'
+
+    def test_no_doubled_cast(self, xref):
+        """`X as Int as Int` is a parse error."""
+        conv = ScriptConverter(xref)
+        assert conv._cast('GameDaysPassed.GetValue() as Int', 'Int') == \
+            'GameDaysPassed.GetValue() as Int'
+        assert conv._cast('someVar', 'Int') == 'someVar as Int'
+
+    def test_quest_script_gamemode_is_gated_on_isrunning(self, xref):
+        """TES4 quest-script GameMode only runs while the quest runs; Skyrim
+        raises OnInit regardless, and SetStage on a stopped quest STARTS it."""
+        src = 'scn QS\n\nshort n\n\nbegin gamemode\n  set n to 1\nend'
+        out = ScriptConverter(xref).convert_standalone('QS', src, 'Quest', 'QS')
+        assert 'If (!IsRunning())' in out
+
+    def test_object_script_gamemode_is_not_isrunning_gated(self, xref):
+        """Only quest scripts get the IsRunning gate; object scripts are gated
+        on load state instead."""
+        src = 'scn OS\n\nshort n\n\nbegin gamemode\n  set n to 1\nend'
+        out = ScriptConverter(xref).convert_standalone('OS', src, 'ObjectReference', 'OS')
+        assert 'IsRunning()' not in out
+
+    def test_getisid_uses_getbaseobject_not_actor_cast(self, xref):
+        """GetIsID compares against ANY base form — the SE38 oddities are MISC
+        items, so `(Self as Actor).GetActorBase()` is an invalid cast."""
+        src = 'scn S\n\nbegin onadd\n  if getIsID SomeItem == 1\n    return\n  endif\nend'
+        out = ScriptConverter(xref).convert_standalone('S', src, 'ObjectReference', 'S')
+        assert 'GetBaseObject()' in out
+        assert 'as Actor).GetActorBase()' not in out
+
+    def test_bool_function_compared_to_number_is_cast(self, xref):
+        """Papyrus refuses to order a Bool; TES4's GetDetected returns Int 0/1."""
+        src = 'scn S\n\nbegin gamemode\n  if SomeRef.getdetected player > 0\n    return\n  endif\nend'
+        out = ScriptConverter(xref).convert_standalone('S', src, 'ObjectReference', 'S')
+        assert 'as Int) > 0' in out
+
+    def test_magic_effect_event_signatures_match_parent(self):
+        """OnEffectStart/Finish signatures are fixed by ActiveMagicEffect.psc."""
+        assert BLOCK_MAP['scripteffectstart'][0] == \
+            'Event OnEffectStart(Actor akTarget, Actor akCaster)'
+        assert BLOCK_MAP['scripteffectfinish'][0] == \
+            'Event OnEffectFinish(Actor akTarget, Actor akCaster)'

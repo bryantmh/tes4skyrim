@@ -437,6 +437,13 @@ def phase_compile(file_name: str, config: dict, output_dir: str = None):
         pex_path = script_out / pex_name
         c = [
             str(compiler), "compile",
+            # papyrus.exe keys its cache on the SOURCE only, not the output path,
+            # so an unchanged .psc is "already compiled": it exits 0 and writes no
+            # .pex at all.  Scripts whose text never varies between runs (the
+            # static TES4_ShowBarterMenu / TES4_ShowTrainingMenu / TES4Polyfill)
+            # therefore silently produced no .pex and were reported as
+            # "exit code 0" failures.  Always ignore the cache.
+            "-nocache",
             "-i", str(psc),
             "-o", str(script_out),
             "-h", str(skyrim_headers),

@@ -8,6 +8,7 @@ from script_convert.constants import (
     _PAPYRUS_RESERVED, FUNCTION_MAP, _BARE_BOOL_FUNCTIONS,
     _ACTOR_ONLY_FUNCTIONS, _OBJREF_SHARED_FUNCTIONS,
     _safe_property_name, _canonical_global, _record_type_to_papyrus,
+    _record_type_to_base_papyrus, papyrus_script_name,
 )
 from script_convert.cross_ref import CrossRefGraph
 
@@ -213,8 +214,16 @@ class ScriptConverter:
             extends = self._infer_extends(source, extends)
 
         variables, blocks = self._parse_source(source)
-        # Store locally declared variable names for expression disambiguation
-        self._local_vars = {_safe_property_name(v[1]).lower() for v in variables}
+        # Store locally declared variable names for expression disambiguation.
+        # Register BOTH the original TES4 name and the Papyrus-safe name: the
+        # body still spells the variable the TES4 way, and a variable whose name
+        # collides with a TES4 command (DiveRockScript's `short message`) is only
+        # recognised as a variable — instead of being compiled as that command —
+        # if the ORIGINAL spelling is in this set.
+        self._local_vars = set()
+        for v in variables:
+            self._local_vars.add(v[1].lower())
+            self._local_vars.add(_safe_property_name(v[1]).lower())
         # Store variable types for type-aware assignment conversion
         _edid_low = editor_id.lower()
         for v in variables:
@@ -225,10 +234,15 @@ class ScriptConverter:
                (_edid_low, vname_safe.lower()) in self.xref.ref_as_int:
                 ptype = 'Int'
             self._var_types[vname_safe.lower()] = ptype
-        # Build rename map: original_lower -> safe_name (only when they differ)
+            self._var_types[v[1].lower()] = ptype
+        # Build rename map: original_lower -> safe_name (only when they differ).
+        # Compare CASE-SENSITIVELY: the `temp` -> `Temp` rename (which dodges the
+        # compiler's ::temp* scratch-register namespace) differs only in case, and
+        # a case-insensitive test skipped it — leaving the declaration renamed but
+        # every reference still pointing at the old name.
         for _, vname in variables:
             safe = _safe_property_name(vname)
-            if safe.lower() != vname.lower():
+            if safe != vname:
                 self._var_renames[vname.lower()] = safe
 
         source_low = source.lower()
@@ -239,7 +253,7 @@ class ScriptConverter:
         self._has_scripteffectupdate = any(b[0] == 'scripteffectupdate' for b in blocks)
 
         out = []
-        out.append(f'ScriptName TES4_{name} extends {extends}')
+        out.append(f'ScriptName {papyrus_script_name(name)} extends {extends}')
         out.append(f'{{Converted from TES4: {editor_id or name}}}')
         out.append('')
 
@@ -270,6 +284,7 @@ class ScriptConverter:
         # Convert blocks — merge duplicate event types
         needs_oninit_update = self._has_gamemode or self._has_scripteffectupdate
         gamemode_body = []
+        menumode_blocks: list[tuple[str, list]] = []   # (menu id filter, source lines)
 
         # Group blocks by event type to merge duplicates (Papyrus forbids
         # duplicate Event declarations).  Each source block keeps its own filter
@@ -281,8 +296,26 @@ class ScriptConverter:
         block_order: list[str] = []
 
         for block_type, block_filter, block_lines in blocks:
-            if block_type in ('gamemode', 'menumode', 'scripteffectupdate'):
+            if block_type in ('gamemode', 'scripteffectupdate'):
                 gamemode_body.extend(block_lines)
+                continue
+
+            # `begin MenuMode <id>` fires ONLY while that specific menu is open
+            # (1014 = lockpicking, 1030 = class menu, 1002 = inventory, ...).
+            # Skyrim has no per-menu equivalent — Utility.IsInMenuMode() is only
+            # "some menu is open" — so there is nothing to convert the trigger to.
+            # These bodies used to be merged into the GameMode OnUpdate loop with
+            # NO guard at all, which meant they ran on the very first tick as if
+            # every menu were open simultaneously.  MQ01Script is the worst case:
+            # its MenuMode 1014 and 1030 blocks do `setstage MQ01 70` / `84`
+            # unconditionally, so the tutorial quest blew through its whole stage
+            # machine the moment a new game started and hit stage 100's
+            # `stopquest MQ01` — the "MQ01 starts then immediately fails" bug.
+            # Commenting the body out is the honest conversion: the trigger cannot
+            # be reproduced, so it must not fire, and the source stays visible for
+            # anyone hand-porting it to a Papyrus menu hook.
+            if block_type == 'menumode':
+                menumode_blocks.append((block_filter, block_lines))
                 continue
 
             # Merge blocks by their target Papyrus event name, not TES4 block type
@@ -338,15 +371,30 @@ class ScriptConverter:
         # floods the engine and crashes.  So:
         #   * ObjectReference/Actor scripts gate the loop on load state
         #     (OnCellAttach start → OnCellDetach stop), matching "while loaded".
-        #   * Quest / ActiveMagicEffect keep the OnInit self-start (their
-        #     lifecycle IS global / effect-scoped).
+        #   * Quest scripts gate the BODY on IsRunning(): in TES4 a quest
+        #     script's GameMode block only executes while the quest is running,
+        #     so its body may (and routinely does) assume that.  Skyrim raises
+        #     OnInit on the quest object whether or not the quest ever started,
+        #     and SetStage on a stopped quest STARTS it — so an ungated body
+        #     silently auto-starts the quest at load (MQDragonArmor's
+        #     `if gamedayspassed >= armorFinishDay` is true at day 1 vs 0).
+        #   * ActiveMagicEffect keeps the plain OnInit self-start (its lifecycle
+        #     IS the effect).
         load_gated = extends in ('ObjectReference', 'Actor')
+        quest_gated = extends == 'Quest'
 
-        # Emit OnUpdate for GameMode/MenuMode/ScriptEffectUpdate
+        # Emit OnUpdate for GameMode/ScriptEffectUpdate
         if gamemode_body:
             interval = self._get_update_interval()
             self._current_event = 'Event OnUpdate()'
             out.append('Event OnUpdate()')
+            if quest_gated:
+                out.append('  If (!IsRunning())')
+                # Not running: don't execute the body, but keep polling so the
+                # loop resumes on its own once the quest is started elsewhere.
+                out.append(f'    RegisterForSingleUpdate({interval})')
+                out.append('    Return')
+                out.append('  EndIf')
             for bline in gamemode_body:
                 converted = self._convert_line(bline, extends)
                 out.append(f'  {converted}')
@@ -358,6 +406,19 @@ class ScriptConverter:
             else:
                 out.append(f'  RegisterForSingleUpdate({interval})')
             out.append('EndEvent')
+            out.append('')
+
+        # MenuMode bodies, preserved as comments (see the block loop above for
+        # why they must not execute).  Converted rather than dumped raw so a
+        # hand-port only has to supply the menu hook, not redo the translation.
+        for menu_id, block_lines in menumode_blocks:
+            label = f'MenuMode {menu_id}'.strip()
+            out.append(f'; --- TES4 `begin {label}` — no Skyrim equivalent; '
+                       'body preserved but NOT executed ---')
+            for bline in block_lines:
+                converted = self._convert_line(bline, extends)
+                if converted.strip():
+                    out.append(f';  {converted}')
             out.append('')
 
         # Start/stop the update loop.
@@ -996,6 +1057,15 @@ class ScriptConverter:
                     old_expr = comp_m.group(0)
                     new_expr = f'{comp_m.group(1)}.GetBaseObject() {comp_m.group(2)} {rhs}'
                     lines[idx] = line.replace(old_expr, new_expr)
+
+        # Bool-returning call ordered against a number: TES4's GetDetected/GetDead
+        # return 0/1, so scripts write `getdetected X > 0`.  Papyrus refuses to
+        # order a Bool, so cast the call.
+        for idx in range(len(lines)):
+            code, _, comment = lines[idx].partition(';')
+            fixed = self._BOOL_CMP_RE.sub(r'(\1 as Int)\2', code)
+            if fixed != code:
+                lines[idx] = fixed + (';' + comment if comment else '')
         return lines
 
     def get_property_refs(self) -> dict[str, str]:
@@ -1506,6 +1576,47 @@ class ScriptConverter:
         r'GetPos[XYZ]|GetWalkSpeed|GetCurrentTime|RandomFloat|Utility\.RandomFloat|'
         r'GetHeight|GetWidth|GetLength|GetValue)\s*\(', re.IGNORECASE)
 
+    # Papyrus functions that return Bool where the TES4 original returned an
+    # Int 0/1.  Oblivion scripts freely write `getdetected X > 0` / `getdead ==
+    # 0`, but Papyrus refuses to order or add a Bool ("cannot relatively compare
+    # variables of type bool", "cannot add a bool to a int"), so these need an
+    # explicit `as Int` wherever they meet a number.
+    # (name list defined below, shared with _BOOL_CMP_RE)
+
+    # A Bool-returning call placed in a RELATIONAL comparison against a number.
+    # `X.IsDead() > 0` must become `(X.IsDead() as Int) > 0`.  The argument list
+    # may itself contain a call (`IsDetectedBy(Game.GetPlayer())`), so the arg
+    # pattern allows one level of nested parentheses.
+    _BOOL_FUNC_NAMES = (
+        r'IsDetectedBy|HasLOS|CanSee|IsInDialogueWithPlayer|IsRidingMount|'
+        r'IsInCombat|IsAnimPlaying|GetDetected|IsDead|IsRunning|IsLocked|'
+        r'IsEnabled|IsHostileToActor|IsWeaponDrawn|IsSneaking|IsSwimming|'
+        r'IsInInterior|IsChild|IsEssential|IsInFaction|IsGuard|IsPlayerTeammate|'
+        r'IsAlarmed|IsAlerted|IsUnconscious|IsBleedingOut|IsTrespassing|'
+        r'HasKeyword|HasSpell|HasPerk|HasMagicEffect|IsCompleted|IsObjectiveCompleted')
+    _ARGS = r'(?:[^()]|\([^()]*\))*'      # args, allowing one nesting level
+    _BOOL_CMP_RE = re.compile(
+        r'((?:\w+(?:\(' + _ARGS + r'\))?\.)*'              # optional receiver chain
+        r'(?:' + _BOOL_FUNC_NAMES + r')'
+        r'\s*\(' + _ARGS + r'\))'                          # the call itself
+        r'(\s*(?:>=|<=|>|<)\s*-?\d+(?:\.\d+)?)',           # relational op + number
+        re.IGNORECASE)
+    # Same functions, matched as a method call anywhere in an expression — used
+    # to add `as Int` when one is ASSIGNED to a TES4 short/long variable.
+    _BOOL_RETURNING_FUNCS = re.compile(
+        r'\.(?:' + _BOOL_FUNC_NAMES + r')\s*\(', re.IGNORECASE)
+
+    @staticmethod
+    def _cast(expr: str, ptype: str) -> str:
+        """Cast `expr` to `ptype`, unless it is already cast to it.
+
+        Papyrus rejects a doubled cast (`X as Int as Int`) outright, and several
+        handlers emit their own cast before the caller adds one.
+        """
+        if re.search(rf'\bas\s+{ptype}\s*$', expr, re.IGNORECASE):
+            return expr
+        return f'{expr} as {ptype}'
+
     def _coerce_float_to_int(self, target: str, value: str) -> str:
         """Add 'as Int' cast when assigning Float-returning function to Int variable."""
         tgt_low = target.lower().split('.')[-1]
@@ -1521,6 +1632,12 @@ class ScriptConverter:
                 remote_vars = self.xref.script_all_vars.get(remote_script, {})
                 vtype = remote_vars.get(parts[1].lower(), '')
         if vtype != 'Int':
+            return value
+        # Already an Int-typed expression.  Several handlers emit their own cast
+        # (`gamedayspassed` -> `GameDaysPassed.GetValue() as Int`), and casting
+        # that again produces `X as Int as Int`, which Papyrus cannot parse —
+        # this was the single biggest CK compile error (1965 of them).
+        if re.search(r'\bas\s+Int\s*$', value, re.IGNORECASE):
             return value
         if self._FLOAT_RETURNING_FUNCS.search(value):
             # Wrap in parens if expression contains arithmetic to prevent binding issues
@@ -1540,8 +1657,7 @@ class ScriptConverter:
                 if id_type == 'Float':
                     return f'({value}) as Int'
         # Bool→Int coercion: functions like IsDetectedBy return Bool, TES4 assigns to Int
-        if re.search(r'\.(?:IsDetectedBy|HasLOS|CanSee|IsInDialogueWithPlayer|'
-                     r'IsRidingMount|IsInCombat|IsAnimPlaying|GetDetected)\s*\(', value, re.IGNORECASE):
+        if self._BOOL_RETURNING_FUNCS.search(value):
             return f'{value} as Int'
         return value
 
@@ -2157,8 +2273,14 @@ class ScriptConverter:
             # so this matches what _add_scro_ref stores (both use formid_to_edid).
             canon_fid = self.xref.edid_to_formid.get(low, '')
             canon_edid = self.xref.formid_to_edid.get(canon_fid, name) if canon_fid else name
-            self._property_refs[canon_edid] = self.xref.get_quest_script_type(name)
-            return canon_edid
+            # Through _safe_property_name like every other ref: an Oblivion quest
+            # EditorID can collide with a Skyrim script name (MS14), and emitting
+            # it raw here left the body calling `MS14.SetStage()` while the
+            # declaration said `myMS14` — the CK then reads MS14 as the TYPE
+            # ("cannot call the member function SetStage ... on a type").
+            safe = _safe_property_name(canon_edid)
+            self._property_refs[safe] = self.xref.get_quest_script_type(name)
+            return safe
 
         # Local variables take precedence over game form EditorIDs (name collision)
         if low in self._local_vars or low in self._var_types:
@@ -2291,6 +2413,41 @@ class ScriptConverter:
                 return '(akSpeakerRef as Actor)'
         return 'Self'
 
+    def _resolve_objref_ref(self, ref_name, extends) -> str:
+        """Resolve the reference for an ObjectReference-typed function call.
+
+        Like `_resolve_self_ref(actor_func=True)` this redirects the implicit
+        `Self` of ActiveMagicEffect/TopicInfo scripts (whose Self is NOT a
+        reference) onto the reference they act on — but it does not add the
+        `as Actor` cast, because the callee is declared on ObjectReference and
+        works for actors and objects alike.
+        """
+        if not ref_name:
+            if extends == 'ActiveMagicEffect':
+                return 'GetTargetActor()'
+            if extends == 'TopicInfo':
+                return 'akSpeakerRef'
+            return 'Self'
+        if ref_name.lower() in ('self', 'myself', 'getself'):
+            if extends == 'ActiveMagicEffect':
+                return 'GetTargetActor()'
+            if extends == 'TopicInfo':
+                return 'akSpeakerRef'
+        return self._convert_ref(ref_name, extends)
+
+    def _bind_base_form_property(self, name: str) -> None:
+        """Type `name` as the Papyrus type of the BASE record it names.
+
+        Used by base-object comparisons (GetIsID), whose operand is the base
+        record itself: an NPC_ is an ActorBase, a MISC is a MiscObject.  Falls
+        back to Form, which compares against every base type.
+        """
+        rtype = ''
+        if self.xref:
+            fid = self.xref.edid_to_formid.get(name.lower(), '')
+            rtype = self.xref.record_type.get(fid, '') if fid else ''
+        self._property_refs[name] = _record_type_to_base_papyrus(rtype)
+
     def _emit_function(self, ref_name: Optional[str], func_name: str,
                        args_str: str, extends: str) -> str:
         """Emit a converted function call."""
@@ -2367,6 +2524,11 @@ class ScriptConverter:
             else:
                 quest_ref = 'quest'
                 stage = '0'
+            # The quest EditorID is a PROPERTY name, so it goes through the same
+            # sanitiser as every other ref — an Oblivion quest can be named the
+            # same as a Skyrim script (MS14), and emitting it raw makes the CK
+            # read it as the type rather than the property.
+            quest_ref = _safe_property_name(quest_ref)
             # Always use base Quest type for SetStage/GetStage method calls.
             # The TES4 attached script (TES4_FGC01Script etc.) won't match the
             # quest's TES5 VMAD script (TES4_QF_*), so the property would be
@@ -2381,11 +2543,16 @@ class ScriptConverter:
                 return f'{quest_ref}.{papyrus}()'
             if fname_low in ('getstage', 'getstagedone') and stage == '0' and len(parts) < 2:
                 return f'{quest_ref}.{papyrus}()'
-            return f'{quest_ref}.{papyrus}({stage})'
+            # The stage is often a VARIABLE (`setstage MQ01 tempstage`), so it has
+            # to go through the expression converter like any other operand —
+            # emitting it raw skipped the variable renames and left references
+            # pointing at names that no longer exist.
+            stage_expr = self._convert_expression(stage, extends)
+            return f'{quest_ref}.{papyrus}({stage_expr})'
 
         # StartQuest/StopQuest/GetQuestRunning/CompleteQuest/IsQuestCompleted: arg is quest
         if fname_low in ('startquest', 'stopquest', 'getquestrunning', 'completequest', 'isquestcompleted'):
-            quest_ref = args_str.strip() if args_str else 'quest'
+            quest_ref = _safe_property_name(args_str.strip() if args_str else 'quest')
             existing = self._property_refs.get(quest_ref, self._property_refs.get(quest_ref.lower(), ''))
             if not existing:
                 # No type known yet — use Quest (base type sufficient for
@@ -2454,7 +2621,8 @@ class ScriptConverter:
         if fname_low == 'modcrimegold':
             arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
             self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
-            return f'TES4CyrodiilCrimeFaction.ModCrimeGold({arg} as Int, false)'
+            return (f'TES4CyrodiilCrimeFaction.ModCrimeGold'
+                    f'({self._cast(arg, "Int")}, false)')
         if fname_low in ('payfine', 'payfinethief'):
             self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
             return 'TES4CyrodiilCrimeFaction.PlayerPayCrimeGold(false, false)'
@@ -2475,11 +2643,11 @@ class ScriptConverter:
         if fname_low == 'modpcfame':
             arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
             self._property_refs['TES4Fame'] = 'GlobalVariable'
-            return f'TES4Fame.Mod({arg} as Float)'
+            return f'TES4Fame.Mod({self._cast(arg, "Float")})'
         if fname_low == 'modpcinfamy':
             arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
             self._property_refs['TES4Infamy'] = 'GlobalVariable'
-            return f'TES4Infamy.Mod({arg} as Float)'
+            return f'TES4Infamy.Mod({self._cast(arg, "Float")})'
         if fname_low == 'setpcfame':
             arg = self._convert_expression(args_str.strip(), extends) if args_str else '0'
             self._property_refs['TES4Fame'] = 'GlobalVariable'
@@ -2914,15 +3082,23 @@ class ScriptConverter:
                 return f'Game.GetGameSettingString("{setting}")'
             return f'Game.GetGameSettingFloat("{setting}")'
 
-        # GetDeadCount: TES4 GetDeadCount ActorRef -> ref.IsDead() (no Skyrim equivalent for count)
+        # GetDeadCount: TES4 counts how many actors of a BASE type are dead.
+        # Skyrim has no equivalent, and the operand is a base form, not a
+        # reference — so `.IsDead()` was wrong twice: it asks the wrong question
+        # and it returns Bool where TES4 returns an Int that callers do
+        # arithmetic on (`set ambushCount to getdeadcount X + 3`), which the CK
+        # rejects outright ("cannot add a bool to a int").
+        # Emit a typed Int so the surrounding arithmetic compiles, and flag it.
         if fname_low == 'getdeadcount':
             if ref_name:
-                ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
-                return f'{ref}.IsDead()'
-            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'Self'
+                ref = self._resolve_objref_ref(ref_name, extends)
+                return f'(({ref}.IsDead()) as Int)'
             if args_str:
-                self._property_refs[arg] = 'Actor'  # arg is already canonical
-            return f'{arg}.IsDead()'
+                self._bind_base_form_property(args_str.strip())
+            # A bare 0, NOT a trailing `;TODO` comment: this is an operand and
+            # gets embedded mid-expression (`getdeadcount X + 3`), where a `;`
+            # would comment out the rest of the line.
+            return '0'
 
         # ResetHealth: TES4 ResetHealth -> RestoreActorValue("Health", 9999)
         if fname_low == 'resethealth':
@@ -3003,13 +3179,22 @@ class ScriptConverter:
                 return f'{spell}.Cast({source}, {target})'
             return f'{spell}.Cast({source})'
 
-        # GetIsId: ref.GetIsId ActorBase -> (ref as Actor).GetActorBase() == actorBase
+        # GetIsID: ref.GetIsID baseForm -> ref.GetBaseObject() == baseForm
+        #
+        # TES4's GetIsID asks "is this reference's BASE record that one", and the
+        # operand can be ANY base type — the SE38 oddities are MISC items, not
+        # actors.  Emitting `(ref as Actor).GetActorBase()` was wrong twice: on a
+        # non-actor script `Self as Actor` is a cast the CK rejects outright, and
+        # typing the operand ActorBase mis-binds every non-actor base.
+        # GetBaseObject() is declared on ObjectReference (so it needs no cast, and
+        # still works for actors, since Actor extends ObjectReference) and returns
+        # a Form, which compares against every base type.
         if fname_low == 'getisid':
             arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
             if args_str:
-                self._property_refs[args_str.strip()] = 'ActorBase'
-            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
-            return f'({ref} as Actor).GetActorBase() == {arg}'
+                self._bind_base_form_property(args_str.strip())
+            ref = self._resolve_objref_ref(ref_name, extends)
+            return f'{ref}.GetBaseObject() == {arg}'
 
         # GetIsRace: ref.GetIsRace RaceRef -> ref.GetRace() == raceRef
         if fname_low in ('getisrace', 'getpcisrace'):
@@ -3104,14 +3289,6 @@ class ScriptConverter:
                 val = 'true' if args_str and args_str.strip() in ('1', 'true') else 'false'
                 return f'({ref} as Actor).GetActorBase().SetEssential({val})'
             return f'; SetEssential {args_str or ""}  ;could not parse'
-
-        # GetIsID: ref.GetIsID baseForm -> ref.GetBaseObject() == baseForm
-        if fname_low == 'getisid':
-            arg = self._convert_expression(args_str.strip(), extends) if args_str else 'None'
-            if args_str:
-                self._property_refs[args_str.strip()] = 'ActorBase'
-            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
-            return f'{ref}.GetActorBase() == {arg}'
 
         # SetOwnership: ref.SetOwnership owner -> ref.SetActorOwner/SetFactionOwner
         if fname_low == 'setownership':

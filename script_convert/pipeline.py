@@ -9,7 +9,8 @@ from tes5_import.text_reader import parse_export_file
 
 from script_convert.constants import (_PAPYRUS_RESERVED, _RECORD_TYPE_PAPYRUS, _GLOBAL_CANONICAL,
                                      _sanitize_name, _safe_property_name, _canonical_global,
-                                     _record_type_to_papyrus)
+                                     _record_type_to_papyrus, papyrus_script_name,
+                                     PAPYRUS_MAX_SCRIPT_NAME)
 from script_convert.cross_ref import CrossRefGraph
 from script_convert.converter import ScriptConverter
 
@@ -140,7 +141,9 @@ def _convert_scpt_records(scpt_path: str, output_dir: str, xref: CrossRefGraph, 
             name = _sanitize_name(edid or f'Script_{formid}')
             papyrus = conv.convert_standalone(name, sctx, extends, edid)
 
-            out_path = os.path.join(output_dir, f'TES4_{name}.psc')
+            # The FILENAME must match the ScriptName the converter emitted, or
+            # the compiler cannot find the script by name.
+            out_path = os.path.join(output_dir, papyrus_script_name(name) + '.psc')
             with open(out_path, 'w', encoding='utf-8') as f:
                 f.write(papyrus)
             stats['scpt_ok'] += 1
@@ -311,7 +314,7 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph,
             conv = ScriptConverter(xref)
             # Pre-populate external references from SCRO entries
             _preload_scro_refs(conv, rec, xref)
-            script_name = f'TES4_QF_{_sanitize_name(edid)}'
+            script_name = papyrus_script_name(edid, 'TES4_QF_')
             out_lines = [
                 f'ScriptName {script_name} extends Quest Hidden',
                 '',
@@ -463,10 +466,19 @@ def _add_scro_ref(conv: 'ScriptConverter', fid: str, xref: CrossRefGraph):
         script_type = xref.get_record_script_type(edid)
         if script_type:
             ptype = script_type
+    # Key on the Papyrus-SAFE name, which is what _convert_ref stores and what
+    # _collect_scro_properties writes into the VMAD.  Keying on the raw EditorID
+    # instead created a SECOND entry for any EditorID that gets renamed (MS14 is
+    # a vanilla Skyrim script name, so it becomes myMS14): the generic 'Quest'
+    # from this SCRO and the specific 'TES4_MS14Script' from _convert_ref lived
+    # under different keys, so the downgrade guard below never fired and the
+    # generic one won the declaration — leaving the body calling myMS14.QuestDone
+    # on a plain Quest ("field or property QuestDone not found").
+    key = _safe_property_name(edid)
     # Don't downgrade a type already upgraded by _convert_ref (e.g. Quest → TES4_FGQuestTrack).
     # _preload_stage_scro_refs is called once per stage and would otherwise reset types
     # that were promoted when a prior stage's result script accessed cross-script vars.
-    cur = conv._property_refs.get(edid, '')
+    cur = conv._property_refs.get(key, '')
     if cur and cur != 'Quest' and ptype == 'Quest':
         return
     # Never overwrite an ActorBase typing set by a base-semantics function
@@ -475,7 +487,7 @@ def _add_scro_ref(conv: 'ScriptConverter', fid: str, xref: CrossRefGraph):
     # script's init. ActorBase is a hard constraint, not a promotable guess.
     if cur == 'ActorBase':
         return
-    conv._property_refs[edid] = ptype
+    conv._property_refs[key] = ptype
 
 
 # ===========================================================================
@@ -501,7 +513,7 @@ def build_vmad_quest_fragments(quest_edid: str, stage_fragments: list[tuple[int,
 
     Returns VMAD binary data.
     """
-    script_name = f'TES4_QF_{_sanitize_name(quest_edid)}'
+    script_name = papyrus_script_name(quest_edid, 'TES4_QF_')
     buf = bytearray()
 
     # VMAD header

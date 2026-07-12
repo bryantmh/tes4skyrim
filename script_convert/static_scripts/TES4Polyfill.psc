@@ -245,12 +245,18 @@ EndFunction
 ; Day/Time Helpers
 ; ==========================================================================
 
+; Every function here is Global, so none of them may touch a script property —
+; a Global has no instance to read one from ("variable GameDaysPassed is
+; undefined").  Fetch the vanilla GameDaysPassed global (Skyrim.esm 0x00000039)
+; by form ID instead.
 Int Function GetDayOfWeek() Global
-  Return ((GameDaysPassed.GetValue() as Int) % 7)
+  GlobalVariable daysPassed = Game.GetFormFromFile(0x00000039, "Skyrim.esm") as GlobalVariable
+  If daysPassed == None
+    Return 0
+  EndIf
+  Return ((daysPassed.GetValue() as Int) % 7)
 EndFunction
 
 Float Function GetCurrentTime() Global
   Return Utility.GetCurrentGameTime()
 EndFunction
-
-GlobalVariable Property GameDaysPassed Auto

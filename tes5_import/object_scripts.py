@@ -20,7 +20,7 @@ converters then splice the VMAD in right after EDID (Skyrim order: EDID VMAD OBN
 """
 
 from script_convert.converter import ScriptConverter
-from script_convert.constants import _safe_property_name
+from script_convert.constants import _safe_property_name, papyrus_script_name
 from script_convert.pipeline import build_vmad_object_script
 from .text_reader import parse_export_file, get_formid_index_offset
 
@@ -123,7 +123,7 @@ def build_quest_script_plan(by_type: dict, xref, fid_to_edid: dict) -> int:
         except ValueError:
             continue
         edid, sctx, extends = scpt_by_fid[scri]
-        script_name = f'TES4_{_safe_property_name(edid or f"Script_{scri}")}'
+        script_name = papyrus_script_name(edid or f'Script_{scri}')
         try:
             props = _resolve_props(sctx, edid, extends, xref, fid_to_edid, offset)
         except Exception:
@@ -170,7 +170,7 @@ def build_object_script_plan(by_type: dict, xref, fid_to_edid: dict) -> int:
                 continue
 
             edid, sctx, extends = scpt_by_fid[scri]
-            script_name = f'TES4_{_safe_property_name(edid or f"Script_{scri}")}'
+            script_name = papyrus_script_name(edid or f'Script_{scri}')
 
             try:
                 obj_props = _resolve_props(sctx, edid, extends, xref,
