@@ -330,29 +330,37 @@ def export_GMST(rec: Record) -> list:
 
 
 def export_SOUN(rec: Record) -> list:
+    """SOUN — SNDX and SNDD share the same struct (xEdit wbDefinitionsTES4 SOUN):
+
+        u8  Minimum attenuation distance  (multiply by 5   for game units)
+        u8  Maximum attenuation distance  (multiply by 100 for game units)
+        s8  Frequency adjustment %
+        u8  Unused
+        u16 Flags
+        u16 Unused
+        u16 Static Attenuation (divide by 100 for dB)
+        u8  Stop time
+        u8  Start time
+
+    The trailing 4 bytes (static attenuation / stop / start) are optional;
+    Oblivion.esm ships 12-byte SNDX for 1138 of 1140 SOUN records.
+    """
     lines = []
     emit_string(lines, "EditorID", get_subrecord(rec, "EDID"))
     emit_string(lines, "FNAM.Filename", get_subrecord(rec, "FNAM"))
-    # SNDD or SNDX (older format)
     sndd = get_subrecord(rec, "SNDD")
-    if sndd and len(sndd.data) >= 8:
-        d = sndd.data
-        lines.append(f"SNDD.MinAttDist={d[0]}")
-        lines.append(f"SNDD.MaxAttDist={d[1]}")
-        lines.append(f"SNDD.FreqAdj={struct.unpack_from('<b', d, 2)[0]}")
-        lines.append(f"SNDD.Flags={struct.unpack_from('<I', d, 4)[0]}")
+    sub = sndd if (sndd and len(sndd.data) >= 8) else get_subrecord(rec, "SNDX")
+    if sub and len(sub.data) >= 8:
+        key = sub.type
+        d = sub.data
+        lines.append(f"{key}.MinAttDist={d[0]}")
+        lines.append(f"{key}.MaxAttDist={d[1]}")
+        lines.append(f"{key}.FreqAdj={struct.unpack_from('<b', d, 2)[0]}")
+        lines.append(f"{key}.Flags={struct.unpack_from('<H', d, 4)[0]}")
         if len(d) >= 12:
-            lines.append(f"SNDD.Attenuation={struct.unpack_from('<H', d, 8)[0]}")
-            lines.append(f"SNDD.StopTime={d[10]}")
-            lines.append(f"SNDD.StartTime={d[11]}")
-    else:
-        sndx = get_subrecord(rec, "SNDX")
-        if sndx and len(sndx.data) >= 8:
-            d = sndx.data
-            lines.append(f"SNDX.MinAttDist={d[0]}")
-            lines.append(f"SNDX.MaxAttDist={d[1]}")
-            lines.append(f"SNDX.FreqAdj={struct.unpack_from('<b', d, 2)[0]}")
-            lines.append(f"SNDX.Flags={struct.unpack_from('<I', d, 4)[0]}")
+            lines.append(f"{key}.StaticAttenuation={struct.unpack_from('<H', d, 8)[0]}")
+            lines.append(f"{key}.StopTime={d[10]}")
+            lines.append(f"{key}.StartTime={d[11]}")
     return lines
 
 

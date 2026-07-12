@@ -22,12 +22,74 @@ from .common import (
 )
 
 
+# TES4 SNDX/SNDD flag bits (xEdit wbDefinitionsTES4, SOUN)
+_TES4_SND_RANDOM_FREQ_SHIFT = 0x0001
+_TES4_SND_LOOP              = 0x0010
+_TES4_SND_MENU_SOUND        = 0x0020
+_TES4_SND_2D                = 0x0040
+
+# Vanilla Skyrim SOPM constants (verified against references/Skyrim.esm SOPM dump)
+_SOPM_2D = 0x000B5183            # SOMDialogue2D — non-attenuating, for menu/2D sounds
+_SOPM_ONAM_CHANNELS = bytes.fromhex(
+    '646400003232323264000000640064000064000000640064')
+# ANAM: unknown[4] minDistance(f32) maxDistance(f32) curve[5] unknown[3]
+_SOPM_ANAM_LEAD = bytes.fromhex('809dfa00')   # most common in vanilla (24/69)
+_SOPM_ANAM_TAIL = b'\x00\x00\x00'             # most common in vanilla (56/69)
+# Standard vanilla falloff curve, shared by every SOMMono*/SOMStereoRad* model
+_SOPM_CURVE = bytes((100, 50, 20, 5, 0))
+
+
+def _build_sopm(writer, min_dist: float, max_dist: float, stereo: bool) -> int:
+    """Get-or-create a Sound Output Model with the given attenuation distances.
+
+    Skyrim does not store falloff distances on the sound itself — they live in
+    the SOPM the SNDR's ONAM points at (vanilla ships one per distance:
+    SOMMono00400, SOMMono03000, SOMMono10000, ...).  Oblivion instead stores the
+    distances per-SOUN in SNDX, so we mint a SOPM per distinct distance pair and
+    cache it, rather than pinning every sound to a single model.
+
+    Returns the SOPM FormID.
+    """
+    cache = getattr(writer, '_sopm_cache', None)
+    if cache is None:
+        cache = writer._sopm_cache = {}
+    key = (round(min_dist), round(max_dist), stereo)
+    if key in cache:
+        return cache[key]
+
+    fid = writer.alloc_formid()
+    kind = 'Stereo' if stereo else 'Mono'
+    subs = pack_string_subrecord(
+        'EDID', f'TES4_SOM{kind}{round(max_dist):05d}_{round(min_dist):05d}')
+    # NAM1: Flags(u8) unknown[2] ReverbSend%(u8).  Flag 0x01 = Attenuates With
+    # Distance — required, or the sound plays at full volume everywhere.
+    subs += pack_subrecord('NAM1', struct.pack('<BHB', 0x01, 0, 30))
+    # MNAM: 0 = Uses HRTF (mono), 1 = Defined Speaker Output (stereo)
+    subs += pack_uint32_subrecord('MNAM', 1 if stereo else 0)
+    if stereo:
+        subs += pack_subrecord('ONAM', _SOPM_ONAM_CHANNELS)
+    subs += pack_subrecord('ANAM', _SOPM_ANAM_LEAD
+                           + struct.pack('<ff', min_dist, max_dist)
+                           + _SOPM_CURVE + _SOPM_ANAM_TAIL)
+    writer.add_record('SOPM', pack_record('SOPM', fid, 0, subs))
+    cache[key] = fid
+    return fid
+
+
 def convert_SOUN(rec: dict, writer=None) -> tuple:
     """SOUN — needs companion SNDR record in TES5.
     Returns (soun_bytes, sndr_bytes_or_None, sndr_formid).
 
     SOUN order: EDID OBND SDSC
     SNDR order: EDID CNAM GNAM SNAM ANAM[] ONAM LNAM BNAM
+
+    Volume in Skyrim comes from two places, and both must be carried over from
+    TES4 or every sound plays far louder than vanilla:
+      * SNDR BNAM 'Static Attenuation (db)' — a per-sound volume trim.  Oblivion
+        stores the same value in SNDX bytes 8-9 (95% of Oblivion.esm SOUNs set
+        it; median 6.6 dB).
+      * The SOPM's min/max attenuation distance — how fast the sound falls off
+        with distance.  Oblivion stores these in SNDX bytes 0-1.
     """
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -40,6 +102,18 @@ def convert_SOUN(rec: dict, writer=None) -> tuple:
     sndr_bytes = None
     filename = get_str(rec, 'FNAM.Filename')
     if filename and writer:
+        # SNDX and SNDD hold the same struct; whichever is present wins.
+        pfx = 'SNDD' if rec.get('SNDD.MaxAttDist') is not None else 'SNDX'
+        tes4_flags = get_int(rec, f'{pfx}.Flags') or 0
+        # TES4 stores the distances scaled down: min x5, max x100 (xEdit wbMul).
+        min_dist = (get_int(rec, f'{pfx}.MinAttDist') or 0) * 5.0
+        max_dist = (get_int(rec, f'{pfx}.MaxAttDist') or 0) * 100.0
+        # Static attenuation is a u16 of hundredths of a dB in both games, so it
+        # transfers as a raw value with no rescaling.
+        static_atten = get_int(rec, f'{pfx}.StaticAttenuation') or 0
+
+        is_2d = bool(tes4_flags & (_TES4_SND_2D | _TES4_SND_MENU_SOUND))
+
         sndr_fid = writer.alloc_formid()
         sndr_subs = b''
         sndr_edid = f"TES4_{edid}_SNDR" if edid else f"TES4_SOUN_{get_formid(rec, 'FormID'):08X}_SNDR"
@@ -50,17 +124,25 @@ def convert_SOUN(rec: dict, writer=None) -> tuple:
         sndr_subs += pack_formid_subrecord('GNAM', 0x000172A1)
         # ANAM = Sound file path
         sndr_subs += pack_string_subrecord('ANAM', _prefix_path(filename))
-        # ONAM = Sound Output Model: SOMMono03000 (0x000ABEF3 in Skyrim.esm)
-        # Required — CK reports 'Sound Output Model missing' if absent
-        sndr_subs += pack_formid_subrecord('ONAM', 0x000ABEF3)
+        # ONAM = Sound Output Model. Required — CK reports 'Sound Output Model
+        # missing' if absent.  2D/menu sounds are not positional, so they take
+        # the vanilla non-attenuating model; everything else gets a SOPM built
+        # from this sound's own TES4 falloff distances.
+        if is_2d or max_dist <= 0:
+            onam_fid = _SOPM_2D
+        else:
+            onam_fid = _build_sopm(writer, min_dist, max_dist, stereo=False)
+        sndr_subs += pack_formid_subrecord('ONAM', onam_fid)
         # LNAM = Loop Data struct (4 bytes): byte[0]=Unknown, byte[1]=Looping enum,
         # byte[2]=Unknown, byte[3]=Rumble.  Looping enum: 0x00=None, 0x08=Loop.
-        # TES4 SNDD/SNDX bit 4 (0x10) = "Is Looping" flag.
-        tes4_flags = get_int(rec, 'SNDD.Flags') or get_int(rec, 'SNDX.Flags') or 0
-        lnam_value = 0x00000800 if (tes4_flags & 0x10) else 0  # 0x800 = bytes[0,8,0,0] = Loop
+        lnam_value = 0x00000800 if (tes4_flags & _TES4_SND_LOOP) else 0
         sndr_subs += pack_subrecord('LNAM', struct.pack('<I', lnam_value))
         # BNAM = Values: FreqShift(S8) FreqVariance(S8) Priority(U8) dbVariance(U8) StaticAttenuation(U16)
-        sndr_subs += pack_subrecord('BNAM', struct.pack('<bbBBH', 0, 0, 128, 0, 0))
+        freq_adj = get_int(rec, f'{pfx}.FreqAdj') or 0
+        freq_var = 0 if not (tes4_flags & _TES4_SND_RANDOM_FREQ_SHIFT) else 10
+        sndr_subs += pack_subrecord(
+            'BNAM', struct.pack('<bbBBH', max(-128, min(127, freq_adj)),
+                                freq_var, 128, 0, min(65535, static_atten)))
         sndr_bytes = pack_record('SNDR', sndr_fid, 0, sndr_subs)
 
     if sndr_fid:

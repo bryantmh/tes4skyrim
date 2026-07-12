@@ -37,8 +37,6 @@ Major Issues for V1:
 		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
 		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
 
-	5 - NPCs missing proper outfits and instead are wearing random clothing. Also they seem to have duplicated items in their inventories
-
 	6 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
 
 	7 - Add versioning
@@ -91,9 +89,6 @@ Later Issues:
 
 	17 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
 
-	18 - Quest objectives aren't getting completed
-
-
 	20 - CK Compiler TODOs
 
 Minor Issues:
@@ -110,9 +105,7 @@ Minor Issues:
 
 	6 - Add texture_overrides folder to export instead of only .bsa files
 
-	7 - Nirnroot sound is really loud
-
-	8 - Harvested plants don't make a sound
+	8 - Harvested plants don't make a sound. Intentional?
 
 	9 - Update world map cloud mesh and texture
 
