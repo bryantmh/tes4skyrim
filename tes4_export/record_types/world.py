@@ -170,6 +170,10 @@ def export_REFR(rec: Record) -> list:
     xmrk = get_subrecord(rec, "XMRK")
     if xmrk:
         lines.append("MapMarker=1")
+        # FNAM map flags: 0x01 Visible, 0x02 Can Travel To
+        fnam = get_subrecord(rec, "FNAM")
+        if fnam and fnam.data:
+            lines.append(f"MapMarker.Flags={fnam.data[0]}")
         emit_string(lines, "MapMarker.FULL", get_subrecord(rec, "FULL"))
         tnam = get_subrecord(rec, "TNAM")
         if tnam and len(tnam.data) >= 2:

@@ -240,6 +240,20 @@ class ScriptConverter:
                     out.append(f'  ;{converted}')
                 out.append('')
 
+        # In TES4 a `begin GameMode` block on a placed object/actor reference
+        # only runs while that reference is LOADED (in/near an active cell); on
+        # a quest script it runs globally once the quest is running.  Auto-
+        # starting an OnUpdate poll from OnInit (fires once per instance the
+        # moment the save loads, for EVERY reference in the game) turned every
+        # scripted object into a permanent ticker — hundreds of scripts firing
+        # SetStage / ForceWeather / quest completion at once on load, which
+        # floods the engine and crashes.  So:
+        #   * ObjectReference/Actor scripts gate the loop on load state
+        #     (OnCellAttach start → OnCellDetach stop), matching "while loaded".
+        #   * Quest / ActiveMagicEffect keep the OnInit self-start (their
+        #     lifecycle IS global / effect-scoped).
+        load_gated = extends in ('ObjectReference', 'Actor')
+
         # Emit OnUpdate for GameMode/MenuMode/ScriptEffectUpdate
         if gamemode_body:
             interval = self._get_update_interval()
@@ -248,19 +262,39 @@ class ScriptConverter:
             for bline in gamemode_body:
                 converted = self._convert_line(bline, extends)
                 out.append(f'  {converted}')
-            out.append(f'  RegisterForSingleUpdate({interval})')
+            if load_gated:
+                # Only keep ticking while still loaded (OnCellDetach clears it).
+                out.append('  If (Is3DLoaded())')
+                out.append(f'    RegisterForSingleUpdate({interval})')
+                out.append('  EndIf')
+            else:
+                out.append(f'  RegisterForSingleUpdate({interval})')
             out.append('EndEvent')
             out.append('')
 
-        # Emit OnInit for RegisterForSingleUpdate
+        # Start/stop the update loop.
         if needs_oninit_update:
-            has_oninit = any(b[0] == 'oninit' for b in blocks)
-            if not has_oninit:
-                interval = self._get_update_interval()
-                out.append('Event OnInit()')
+            interval = self._get_update_interval()
+            if load_gated:
+                # Object/actor: run only while loaded.  OnCellAttach fires each
+                # time the reference streams into an active cell; OnCellDetach
+                # when it streams out.  This confines the loop to when the
+                # object is actually present, exactly like TES4 GameMode.
+                out.append('Event OnCellAttach()')
                 out.append(f'  RegisterForSingleUpdate({interval})')
                 out.append('EndEvent')
                 out.append('')
+                out.append('Event OnCellDetach()')
+                out.append('  UnregisterForUpdate()')
+                out.append('EndEvent')
+                out.append('')
+            else:
+                has_oninit = any(b[0] == 'oninit' for b in blocks)
+                if not has_oninit:
+                    out.append('Event OnInit()')
+                    out.append(f'  RegisterForSingleUpdate({interval})')
+                    out.append('EndEvent')
+                    out.append('')
 
         # Balance If/EndIf within event blocks (some TES4 scripts have extra EndIf)
         out = self._balance_if_endif(out)
@@ -2227,23 +2261,16 @@ class ScriptConverter:
                 arg = f'{arg} as Int'
             return f'TES4Infamy.SetValueInt({arg})'
 
-        # Weather functions
-        if fname_low in ('forceweather', 'fw'):
-            parts = [p.strip() for p in (args_str.replace(',', ' ').split() if args_str else ['None'])]
-            weather = self._convert_expression(parts[0], extends) if parts else 'None'
-            if parts and parts[0].strip():
-                self._property_refs[parts[0].strip()] = 'Weather'
-            flag = 'true' if (len(parts) <= 1 or parts[1] in ('1', 'true')) else 'false'
-            return f'{weather}.ForceActive({flag})'
-        if fname_low in ('setweather', 'sw'):
-            parts = [p.strip() for p in (args_str.replace(',', ' ').split() if args_str else ['None'])]
-            weather = self._convert_expression(parts[0], extends) if parts else 'None'
-            if parts and parts[0].strip():
-                self._property_refs[parts[0].strip()] = 'Weather'
-            flag = 'true' if (len(parts) > 1 and parts[1] in ('1', 'true')) else 'false'
-            return f'{weather}.SetActive({flag}, false)'
+        # Weather functions.  Oblivion WTHR records are NOT converted (WTHR is in
+        # skipTypes), so any weather FormID we bound would dangle — and pushing a
+        # dangling/foreign weather into Skyrim's sky system divides-by-zero in the
+        # weather update and hard-crashes.  There is no faithful Skyrim target, so
+        # neutralize the override rather than emit a call on a bad reference.
+        if fname_low in ('forceweather', 'fw', 'setweather', 'sw'):
+            arg = args_str.strip() if args_str else ''
+            return f';NE: {fname_low} {arg} (Oblivion weather not converted)'
         if fname_low == 'releaseweatheroverride':
-            return 'Weather.ReleaseOverride()'
+            return ';NE: ReleaseWeatherOverride (Oblivion weather not converted)'
         if fname_low in ('getiscurrentweather', 'getweatherpercent'):
             if fname_low == 'getweatherpercent':
                 self._line_comments.append(';NE: GetWeatherPercent approximated')

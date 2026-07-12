@@ -43,6 +43,10 @@ def _common_header_subs(rec: dict, need_obnd: bool = True, need_full: bool = Tru
     edid = get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
+    # VMAD — converted TES4 object script (SCPT via SCRI), if one was bound.
+    # Skyrim order places VMAD right after EDID, before OBND.
+    from ..object_scripts import get_object_vmad
+    subs += get_object_vmad(get_formid(rec, 'FormID'))
     if need_obnd:
         bounds = obnd_override if obnd_override is not None else _resolve_obnd(rec, obnd_sig)
         subs += pack_obnd(*bounds)

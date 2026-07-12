@@ -248,7 +248,7 @@ class PluginWriter:
             'ARMA', 'BOOK', 'AMMO', 'ENCH', 'SPEL', 'ALCH', 'INGR', 'SCRL',
             'SLGM', 'VTYP', 'OTFT', 'NPC_', 'LVLN', 'LVLI', 'LVSP', 'WTHR',
             'CLMT', 'REGN', 'QUST', 'IDLE', 'PACK', 'EFSH', 'LSCR', 'ANIO',
-            'WEAP', 'NAVI', 'CELL', 'WRLD', 'SMBN', 'SMQN', 'SMEN',
+            'WEAP', 'LCTN', 'NAVI', 'CELL', 'WRLD', 'SMBN', 'SMQN', 'SMEN',
             'DIAL', 'DLBR', 'DLVW',
         ]
         # Append any groups not in the canonical order

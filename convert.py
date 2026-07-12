@@ -409,7 +409,7 @@ def phase_compile(file_name: str, config: dict, output_dir: str = None):
         return False
 
     # Find the compiler
-    compiler = SCRIPT_DIR / "tools" / "papyrus-compiler" / "papyrus.exe"
+    compiler = SCRIPT_DIR / "external" / "papyrus-compiler" / "papyrus.exe"
     if not compiler.is_file():
         print(f"[{file_name}] ERROR: papyrus compiler not found at {compiler}")
         return False
@@ -531,6 +531,41 @@ def phase_lod(file_name: str, tes5_data: str, config: dict,
     )
 
     return ok and ok_terrain
+
+
+# ===========================================================================
+# Phase 8b: Prune unreferenced textures
+# ===========================================================================
+
+def phase_prune_textures(file_name: str, config: dict, output_dir: str = None,
+                         dry_run: bool = False):
+    """Delete output textures no shipped mesh or record references.
+
+    Runs after LOD/speedtree/terrain generation (the last producers of meshes
+    that can name a texture) and before packing, so the BSAs never carry the
+    face/body/eye art of the character meshes the conversion skips.
+    """
+    from asset_convert import texture_prune
+
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    plugin_dir = out_root / file_name
+    export_dir = SCRIPT_DIR / "export" / file_name
+    if not plugin_dir.is_dir():
+        print(f"[{file_name}] No output directory found, skipping texture prune")
+        return False
+
+    print(f"[{file_name}] Pruning unreferenced textures"
+          + (" (dry run)" if dry_run else "") + "...")
+    try:
+        kept, removed, freed = texture_prune.prune(plugin_dir, export_dir,
+                                                   dry_run=dry_run)
+    except RuntimeError as e:
+        print(f"[{file_name}] SKIPPED: {e}")
+        return False
+    verb = "would remove" if dry_run else "removed"
+    print(f"[{file_name}] Textures: {kept} kept, {removed} {verb} "
+          f"({freed / 1e6:.0f} MB freed)")
+    return True
 
 
 # ===========================================================================
@@ -669,6 +704,12 @@ def main():
                         help="Pack output assets into Skyrim SE BSA archives")
     parser.add_argument("--mesh-bounds-only",    action="store_true",
                         help="Scan mesh NIF bounds and update OBND cache")
+    parser.add_argument("--prune-textures-only", action="store_true",
+                        help="Delete output textures no mesh or record "
+                             "references (run after LOD, before packing)")
+    parser.add_argument("--dry-run",             action="store_true",
+                        help="With --prune-textures-only: report what would be "
+                             "deleted without deleting it")
     parser.add_argument("--mesh-subdirs",        nargs="+", metavar="SUBDIR",
                         help="Limit mesh conversion to these root subfolders "
                              "(e.g. architecture clutter). Default: all.")
@@ -708,7 +749,7 @@ def main():
         args.meshes_only, args.speedtrees_only, args.creatures_only,
         args.sounds_only,
         args.lod_only, args.modify_body_meshes, args.scripts_only,
-        args.pack_only, args.mesh_bounds_only,
+        args.pack_only, args.mesh_bounds_only, args.prune_textures_only,
     ])
     if _any_only:
         do_export       = args.export_only
@@ -723,6 +764,7 @@ def main():
         do_scripts      = args.scripts_only
         do_pack         = args.pack_only
         do_mesh_bounds  = args.mesh_bounds_only
+        do_prune        = args.prune_textures_only
     else:
         # Default: export -> extract -> meshes -> speedtrees -> creatures ->
         # import -> sounds -> scripts
@@ -730,6 +772,9 @@ def main():
         do_creatures = True
         do_sounds = do_scripts = True
         do_lod = do_body = do_pack = do_mesh_bounds = False
+        # The prune reads the LOD/terrain meshes to learn which landscape
+        # textures survive, so it only runs where those already exist.
+        do_prune = False
 
     success = True
 
@@ -825,6 +870,15 @@ def main():
         print("=" * 54)
         for fn in order:
             phase_lod(fn, tes5_data, config, output_dir=output_dir)
+        print()
+
+    if do_prune:
+        print("=" * 54)
+        print("  Phase 8b: PRUNE UNREFERENCED TEXTURES")
+        print("=" * 54)
+        for fn in order:
+            phase_prune_textures(fn, config, output_dir=output_dir,
+                                 dry_run=args.dry_run)
         print()
 
     if do_pack:

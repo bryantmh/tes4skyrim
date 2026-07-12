@@ -563,6 +563,66 @@ def build_vmad_info_fragment(info_formid: str, property_values: dict = None,
     return bytes(buf)
 
 
+# Papyrus property object-type codes for the VMAD property record (objectFormat 2).
+#   1 = Object (FormID + alias), 2 = wstring, 3 = Int32, 4 = Float, 5 = Bool
+_VMAD_PROP_OBJECT = 1
+_VMAD_PROP_INT = 3
+_VMAD_PROP_FLOAT = 4
+_VMAD_PROP_BOOL = 5
+
+
+def build_vmad_object_script(script_name: str,
+                             object_props: dict = None,
+                             value_props: dict = None) -> bytes:
+    """Build VMAD binary attaching a single Papyrus script to an object record.
+
+    Unlike QUST/INFO VMADs this has NO fragment section — plain object scripts
+    (ACTI/CONT/DOOR/FLOR/… on their placed instances or, as here, on the base
+    record) run their own event handlers (OnActivate, OnLoad, …) directly.
+
+    Args:
+        script_name: full Papyrus script name (e.g. 'TES4_SE07AltarScript').
+        object_props: {property_name: formid_int} — Object-typed properties
+            bound to a record FormID (records/spells/quests/globals/actors).
+        value_props: {property_name: (kind, value)} — literal-valued properties
+            where kind is 'int' | 'float' | 'bool'.  Optional; usually the
+            script's non-ref locals stay unbound and default to 0.
+
+    Returns VMAD binary data (version 5, objectFormat 2).
+    """
+    object_props = object_props or {}
+    value_props = value_props or {}
+    buf = bytearray()
+
+    # VMAD header
+    buf += struct.pack('<HH', 5, 2)   # version=5, objectFormat=2
+
+    # Attached scripts: exactly 1
+    buf += struct.pack('<H', 1)
+    buf += _pack_wstring(script_name)
+    buf += struct.pack('<B', 0)       # flags=0
+
+    total_props = len(object_props) + len(value_props)
+    buf += struct.pack('<H', total_props)
+    for pname, fid in object_props.items():
+        buf += _pack_wstring(pname)
+        buf += struct.pack('<BB', _VMAD_PROP_OBJECT, 1)   # type=Object, status=Edited
+        buf += struct.pack('<HhI', 0, -1, fid)            # unused=0, alias=-1, FormID
+    for pname, (kind, value) in value_props.items():
+        buf += _pack_wstring(pname)
+        if kind == 'float':
+            buf += struct.pack('<BB', _VMAD_PROP_FLOAT, 1)
+            buf += struct.pack('<f', float(value))
+        elif kind == 'bool':
+            buf += struct.pack('<BB', _VMAD_PROP_BOOL, 1)
+            buf += struct.pack('<B', 1 if value else 0)
+        else:  # int
+            buf += struct.pack('<BB', _VMAD_PROP_INT, 1)
+            buf += struct.pack('<i', int(value))
+
+    return bytes(buf)
+
+
 def _pack_wstring(s: str) -> bytes:
     """Pack a VMAD wstring: U16 length + UTF-8 bytes."""
     encoded = s.encode('utf-8')

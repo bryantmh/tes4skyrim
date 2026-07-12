@@ -25,6 +25,7 @@ import collections as _collections
 import io as _io
 import logging as _logging
 import os
+import re
 import shutil
 import struct
 import math
@@ -490,6 +491,60 @@ def _rewrite_tex_path(raw_bytes):
     elif not low.startswith('textures\\'):
         path = 'Textures\\tes4\\' + path
     return path
+
+
+def _norm_tex_ref(raw):
+    """Normalise a NIF texture path to a key relative to the textures root.
+
+    'Textures\\tes4\\foo\\Bar.DDS' -> 'tes4/foo/bar.dds'.  Returns None for
+    anything that isn't a texture (file_name also carries non-DDS paths).
+    """
+    if not raw:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode('utf-8', errors='replace')
+    p = raw.strip().lower().replace('\\', '/').lstrip('/')
+    if not p.endswith('.dds'):
+        return None
+    if p.startswith('textures/'):
+        p = p[len('textures/'):]
+    return p or None
+
+
+def _harvest_textures(data, out):
+    """Add every texture path the converted NIF references to the set *out*.
+
+    Walks the finished blocks rather than the paths we rewrote, so it also picks
+    up textures written by the particle/effect/flip-book branches and by any
+    block we pass through untouched.
+    """
+    def add(raw):
+        p = _norm_tex_ref(raw)
+        if p:
+            out.add(p)
+
+    for root in data.roots:
+        if root is None:
+            continue
+        for block in root.tree():
+            tex_set = getattr(block, 'texture_set', None)
+            if tex_set is not None:
+                for t in tex_set.textures:
+                    add(t)
+            add(getattr(block, 'source_texture', None))
+            add(getattr(block, 'greyscale_texture', None))
+            add(getattr(block, 'file_name', None))
+
+
+_TEX_BYTES_RE = re.compile(rb'[A-Za-z0-9_\\/ .()&+-]{3,200}?\.dds', re.IGNORECASE)
+
+
+def _harvest_texture_bytes(raw: bytes, out):
+    """Scrape texture paths out of a NIF we copied through without parsing."""
+    for m in _TEX_BYTES_RE.finditer(raw):
+        p = _norm_tex_ref(m.group(0))
+        if p:
+            out.add(p)
 
 
 def _has_skin(data):
@@ -2989,7 +3044,7 @@ def merge_creature_body(part_paths, dst_path, skeleton_path=None):
 
 
 def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
-                src_meshes_dir=None, creature=False):
+                src_meshes_dir=None, creature=False, wearable_plan=None):
     """Convert a single Oblivion NIF to Skyrim format.
 
     Already-Skyrim versions are copied to dst_path unchanged.
@@ -2997,8 +3052,11 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
     Returns a result dict compatible with batch_convert's _update() expectations.
 
     src_meshes_dir: root of the source mesh tree (passed through by
-    batch_convert).  Currently unused — kept as a hook for passes that need to
-    read sibling meshes.
+    batch_convert), used to key a NIF against the wearable plan.
+
+    wearable_plan: mapping from asset_convert.wearable_plan.build_plan, naming
+    the _0/_1/plain variants each armor/clothing mesh is referenced as.  None
+    disables weight-variant output entirely.
     """
     result = {
         'converted': False,
@@ -3011,6 +3069,7 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         'root_converted': False,
         'root_rotation_baked': False,
         'version_upgraded': False,
+        'textures': set(),         # texture paths this mesh references
     }
 
     if not _PYFFI:
@@ -3027,11 +3086,14 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         return result
 
     if data.version in _SKYRIM_VERSIONS:
-        # Already Skyrim — copy as-is
+        # Already Skyrim — copy as-is.  Nothing rewrote its texture paths, so
+        # scan the bytes for them; the prune must not drop what this still uses.
         dst_dir = os.path.dirname(dst_path)
         if dst_dir:
             os.makedirs(dst_dir, exist_ok=True)
         shutil.copy2(src_path, dst_path)
+        with open(src_path, 'rb') as f:
+            _harvest_texture_bytes(f.read(), result['textures'])
         result['copied'] = True
         return result
 
@@ -3093,6 +3155,11 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         except Exception:
             pass
 
+    # Record which textures this mesh ends up referencing.  Collected here, off
+    # the finished blocks, so the pipeline can drop every texture nothing ships
+    # a reference to without re-reading the whole output tree afterwards.
+    _harvest_textures(data, result['textures'])
+
     # Write to a buffer first — some NIFs have version-incompatible blocks
     # (e.g. NiGeomMorpherController morph arrays) that fail at Skyrim version.
     buf = _io.BytesIO()
@@ -3116,27 +3183,46 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
     # pair explodes at intermediate slider values) — it is the finished
     # weight-0 mesh post-morphed by the fitted _0->_1 Skyrim body morph
     # (body_wrap.morph_converted_to_weight1; rigid PRN blocks untouched).
+    #
+    # Which variants exist is decided by the plugin, not by the path: gear
+    # without the slider (helmets, shields, rings) is referenced as the plain
+    # mesh and gains nothing from a _0/_1 pair, while slider gear never uses
+    # the plain mesh unless it doubles as a ground model.  wearable_plan
+    # derives that from the same records the importer writes, so we only emit
+    # files something actually references.
     _srcl = str(src_path).lower().replace('\\', '/')
     _wearable = (not creature and not _srcl.endswith('_gnd.nif')
                  and ('armor' in _srcl or 'clothes' in _srcl))
-    if _wearable:
+    if _wearable and wearable_plan is not None:
+        from . import wearable_plan as _wp
+        want = _wp.variants_for(wearable_plan, src_path, src_meshes_dir)
         _root, _ext = os.path.splitext(str(dst_path))
-        with open(_root + '_0' + _ext, 'wb') as f:
-            f.write(buf.getvalue())
-        w1_bytes = None
-        try:
-            from .body_wrap import morph_converted_to_weight1
-            _female = '/f/' in _srcl
-            if morph_converted_to_weight1(data, _female):
-                buf1 = _io.BytesIO()
-                data.write(buf1)
-                w1_bytes = buf1.getvalue()
-        except Exception:
+
+        # The plain mesh was already written above; drop it if nothing uses it.
+        if not want & _wp.BASE:
+            try:
+                os.remove(dst_path)
+            except OSError:
+                pass
+
+        if want & _wp.W0:
+            with open(_root + '_0' + _ext, 'wb') as f:
+                f.write(buf.getvalue())
+        if want & _wp.W1:
             w1_bytes = None
-        # no morph (PRN-only piece / no field) or failure: identical copy so
-        # the ARMA _1 path always resolves
-        with open(_root + '_1' + _ext, 'wb') as f:
-            f.write(w1_bytes if w1_bytes is not None else buf.getvalue())
+            try:
+                from .body_wrap import morph_converted_to_weight1
+                _female = '/f/' in _srcl
+                if morph_converted_to_weight1(data, _female):
+                    buf1 = _io.BytesIO()
+                    data.write(buf1)
+                    w1_bytes = buf1.getvalue()
+            except Exception:
+                w1_bytes = None
+            # no morph (PRN-only piece / no field) or failure: identical copy so
+            # the ARMA _1 path always resolves
+            with open(_root + '_1' + _ext, 'wb') as f:
+                f.write(w1_bytes if w1_bytes is not None else buf.getvalue())
 
     result['converted'] = True
     result['strips_fixed'] = stats['strips_fixed'] > 0
@@ -3150,7 +3236,7 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
 
 
 def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
-                  remap_skeleton=None, subdir_filter=None):
+                  remap_skeleton=None, subdir_filter=None, wearable_plan=None):
     """Convert all NIF files in mesh_dir to Skyrim format, writing to output_dir.
 
     Skip reason codes:
@@ -3163,6 +3249,10 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
                        ['architecture', 'clutter']) to include. NIFs whose first
                        path component (relative to mesh_dir) is not in the set
                        are skipped. None means include everything.
+        wearable_plan: Mapping from asset_convert.wearable_plan.build_plan,
+                       naming which _0/_1/plain variants of each armor and
+                       clothing mesh the plugin references.  None writes no
+                       weight variants at all.
 
     Returns a stats dict compatible with asset_pipeline.py expectations.
     """
@@ -3198,6 +3288,9 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
         'roots': 0,
         'rotations': 0,
         'warn_counts': _collections.Counter(),
+        # Union of the textures every written mesh references — the pipeline
+        # prunes the texture tree against this.
+        'textures_used': set(),
     }
 
     # Collect (rel_path, reason) for every skipped file
@@ -3213,12 +3306,13 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
 
     work_args = [
         (str(nif_file), str(out_base / nif_file.relative_to(mesh_path)),
-         fix_textures, remap_skeleton, str(mesh_path))
+         fix_textures, remap_skeleton, str(mesh_path), wearable_plan)
         for nif_file in nif_files
     ]
 
     def _update(nif_str, r):
         stats['warn_counts'].update(r.get('warn_counts', {}))
+        stats['textures_used'].update(r.get('textures', ()))
         if r.get('error'):
             stats['errors'] += 1
             rel = str(Path(nif_str).relative_to(mesh_path))
@@ -3308,13 +3402,15 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
 
 
 def _batch_worker(args):
-    nif_str, out_path, fix_textures, remap_skeleton, src_meshes_dir = args
+    (nif_str, out_path, fix_textures, remap_skeleton, src_meshes_dir,
+     wearable_plan) = args
     global _worker_warn_log
     _worker_warn_log = []
     try:
         r = convert_nif(nif_str, out_path,
                         fix_textures=fix_textures, remap_skeleton=remap_skeleton,
-                        src_meshes_dir=src_meshes_dir)
+                        src_meshes_dir=src_meshes_dir,
+                        wearable_plan=wearable_plan)
         r['warn_counts'] = _categorize_pyffi_warnings(_worker_warn_log)
         return ('ok', nif_str, r)
     except Exception as e:

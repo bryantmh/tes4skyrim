@@ -164,7 +164,14 @@ TESConversion/
     spt_parser.py         # SpeedTree .spt binary → structured params (bezier curves, levels, leaf maps, collision)
     spt_generator.py      # Procedural tree geometry from parsed SPT params (bark tubes + leaf cards + collision soup)
     spt_converter.py      # SpeedTree .spt → Skyrim NIF (real procedural conversion, one NIF per TREE record)
-    dovah_hkp_mesh_mopp_bridge.exe  # Havok MOPP/welding compiler (real hkpMoppUtility)
+  external/               # Third-party binaries & vendored code (see README license table)
+    bsarch/BSArch.exe               # BSA packing (xEdit)
+    lodgen/LODGenx64.exe            # Object LOD generation (xEdit)
+    hkxcmd/hkxcmd.exe               # Havok packfile XML<->binary compiler
+    mopp_bridge/dovah_hkp_mesh_mopp_bridge.exe  # Havok MOPP/welding compiler (real hkpMoppUtility)
+    papyrus-compiler/papyrus.exe    # Papyrus compiler (MIT)
+    xwmaencode/xWMAEncode.exe       # xWMA voice compression (not redistributed)
+    pynifly_hkx/                    # Vendored PyNifly Havok reader (GPL-3.0)
   tests/                  # Root-level test directory
     test_export.py        # Export pipeline tests (pytest)
     test_import.py        # Import pipeline tests (pytest)

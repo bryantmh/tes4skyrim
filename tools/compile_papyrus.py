@@ -18,7 +18,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 def find_compiler():
-    p = _PROJECT_ROOT / 'tools' / 'papyrus-compiler' / 'papyrus.exe'
+    p = _PROJECT_ROOT / 'external' / 'papyrus-compiler' / 'papyrus.exe'
     if p.exists():
         return str(p)
     raise FileNotFoundError('papyrus.exe not found')

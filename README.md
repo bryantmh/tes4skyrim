@@ -59,8 +59,25 @@ pip install PyFFI numpy scipy pytest
 
 > **xWMAEncode.exe** ships with the [Microsoft DirectX SDK (June 2010)](https://www.microsoft.com/en-us/download/details.aspx?id=6812)
 > and cannot be redistributed. After installing the SDK, find it in `Utilities\bin\x86\`
-> and copy it to the project root. (You can also extract it from the SDK installer with
+> and copy it to `external/xwmaencode/`. (You can also extract it from the SDK installer with
 > 7-Zip without a full install.)
+
+### Bundled tools
+
+Every third-party binary the pipeline shells out to lives under `external/`:
+
+| Tool | Location | Used by |
+|------|----------|---------|
+| **BSArch.exe** | `external/bsarch/` | BSA packing (`--pack-only`) |
+| **LODGenx64.exe** | `external/lodgen/` | Object LOD generation (`--lod-only`) |
+| **hkxcmd.exe** | `external/hkxcmd/` | Havok `.hkx` skeleton/behavior/animation compiling |
+| **dovah_hkp_mesh_mopp_bridge.exe** | `external/mopp_bridge/` | Havok MOPP / mesh-collision generation |
+| **papyrus.exe** | `external/papyrus-compiler/` | Papyrus script compilation (`--scripts-only`) |
+| **xWMAEncode.exe** | `external/xwmaencode/` | xWMA voice compression (`--sounds-only`) |
+
+All of these are checked in and need no setup — **except `xWMAEncode.exe`**, which
+Microsoft does not permit redistributing. You must supply that one yourself (see the
+note above). Every bundled tool's license is listed in the [License](#license) table.
 
 ---
 
@@ -179,6 +196,7 @@ TESConversion/
 │   ├── spt_converter.py  #   SpeedTree (.spt) → Skyrim flora NIF
 │   ├── bsa_extract.py    #   BSA extraction with caching
 │   └── asset_pipeline.py #   Extract → convert → output orchestrator
+├── external/             # Third-party binaries & vendored code (see License below)
 ├── tools/                # Debug/analysis utilities (NIF/ESM dumpers, sanity checkers)
 ├── tests/                # Pytest suite
 ├── docs/                 # Format notes and reference docs
@@ -191,13 +209,13 @@ TESConversion/
 
 | Contributor | Contribution |
 |-------------|--------------|
-| [xEdit and all contributors](https://github.com/TES5Edit/TES5Edit) | ESM record definitions; `BSArch.exe` (BSA packing) and `LODGenx64.exe` (object LOD) |
+| [xEdit and all contributors](https://github.com/TES5Edit/TES5Edit) | ESM record definitions; `BSArch.exe` (BSA packing) and `LODGenx64.exe` (object LOD), both in `external/` |
 | Zilav's Oblivion → Skyrim xEdit conversion scripts | The original inspiration and the information I needed to get started |
 | [NifSkope](https://github.com/niftools/nifskope) contributors | NIF format documentation |
 | [Ormin — NIFConverter](https://github.com/Ormin/skyblivion-NIFConverter) | Mesh conversion reference |
 | [Ormin — ScriptConverter](https://github.com/Ormin/skyblivion-ScriptConverter) | OBScript → Papyrus transpilation reference |
-| [russo-2025](https://github.com/russo-2025/papyrus-compiler) | Papyrus compiler |
-| [LvxMagick](https://www.nexusmods.com/skyrimspecialedition/mods/183399) | Mopp Bridge |
+| [russo-2025](https://github.com/russo-2025/papyrus-compiler) | Papyrus compiler (`external/papyrus-compiler/`) |
+| [LvxMagick](https://www.nexusmods.com/skyrimspecialedition/mods/183399) | Mopp Bridge (`external/mopp_bridge/`) |
 | [Bad Dog — PyNifly](https://github.com/BadDogSkyrim/PyNifly) | Pure-Python Havok hk_2010 packfile reader + hkaSplineCompressedAnimation codec (vendored in `external/pynifly_hkx/`, GPL-3.0) — the heart of creature animation conversion |
 | [figment — hkxcmd](https://github.com/figment/hkxcmd) | Havok packfile XML↔binary compiler (`external/hkxcmd/`) used to build skeleton/behavior/animation `.hkx` |
 
@@ -208,11 +226,31 @@ And finally to all the wonderful people I used to know on the Morroblivion forum
 
 This project is released under the **MIT License**.
 
-Some components carry separate licensing:
+Everything under `external/` is third-party and carries its own licensing. Nothing in
+that folder is covered by this project's MIT license.
 
-| Component | License / Terms |
-|-----------|-----------------|
-| `external/pynifly_hkx/` | GPL-3.0 (vendored from PyNifly 27.4.0; local changes marked `# TESConversion:`) |
-| `external/hkxcmd/hkxcmd.exe` | hkxcmd by figment (bundles Havok SDK runtime; see upstream repo for terms) |
-| `xWMAEncode.exe` | Microsoft (not redistributed) — obtain from the DirectX SDK |
-| Oblivion banner font | The [Oblivion font](https://www.dafont.com/oblivion.font) by mistic100 is *free for personal use only* and based on Bethesda's trademarked logo. It is **not** bundled in this repo; the banner ships as pre-rendered vector outlines. |
+| Component | Upstream | License / Terms |
+|-----------|----------|-----------------|
+| `external/bsarch/BSArch.exe` | [xEdit](https://github.com/TES5Edit/TES5Edit) | MPL-2.0 / GPL-2.0 (xEdit dual license) — redistributed |
+| `external/lodgen/LODGenx64.exe` | [xEdit](https://github.com/TES5Edit/TES5Edit) | MPL-2.0 / GPL-2.0 (xEdit dual license) — redistributed |
+| `external/hkxcmd/hkxcmd.exe` | [figment/hkxcmd](https://github.com/figment/hkxcmd) | **BSD-3-Clause** for hkxcmd's own sources (© 2011; text in `external/hkxcmd/LICENSE.TXT`). **Statically links Havok** — see the Havok note below |
+| `external/mopp_bridge/dovah_hkp_mesh_mopp_bridge.exe` | [LvxMagick — DovahNifWorkbench](https://www.nexusmods.com/skyrimspecialedition/mods/183399) | No stated license (Nexus-only, no public source). **Statically links Havok** — see the Havok note below |
+| `external/pynifly_hkx/` | [BadDogSkyrim/PyNifly](https://github.com/BadDogSkyrim/PyNifly) | **GPL-3.0** (vendored from PyNifly 27.4.0; local changes marked `# TESConversion:`) |
+| `external/papyrus-compiler/papyrus.exe` | [russo-2025/papyrus-compiler](https://github.com/russo-2025/papyrus-compiler) | **MIT** (© 2025 russo-2025) — redistributed; license text in `external/papyrus-compiler/LICENSE` |
+| `external/xwmaencode/xWMAEncode.exe` | [Microsoft DirectX SDK (June 2010)](https://www.microsoft.com/en-us/download/details.aspx?id=6812) | Microsoft — **not redistributed**; obtain from the SDK (see [Requirements](#requirements)) |
+| Oblivion banner font | [dafont](https://www.dafont.com/oblivion.font) | The Oblivion font by mistic100 is *free for personal use only* and based on Bethesda's trademarked logo. It is **not** bundled in this repo; the banner ships as pre-rendered vector outlines. |
+
+> **Note on GPL-3.0:** `external/pynifly_hkx/` is GPL-3.0. It is used by the creature
+> animation conversion path (`asset_convert/hkx_anim.py`). If you redistribute a build
+> that includes it, the GPL's terms apply to that distribution.
+
+> ### ⚠️ Note on Havok
+>
+> Two bundled binaries — `hkxcmd.exe` and `dovah_hkp_mesh_mopp_bridge.exe` — statically
+> link the **proprietary Havok SDK**. Both embed the notice:
+>
+> > *Copyright 1999-2011 Havok.com Inc. (and its Licensors). All Rights Reserved.
+> > See www.havok.com for details.*
+>
+> **Neither author's license grants any rights to the Havok code inside.** These two
+> binaries are redistributed here as-is

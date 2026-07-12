@@ -34,6 +34,7 @@ from .skyrim_overrides import (
     set_voice_type,
 )
 from .navi_builder import build_navi_record
+from .locations import build_marker_locations
 from .record_types.world import (
     convert_ACHR,
     convert_CELL,
@@ -41,6 +42,7 @@ from .record_types.world import (
     convert_LTEX,
     convert_REFR,
     convert_WRLD,
+    set_cell_locations,
 )
 from .text_reader import (
     get_float,
@@ -239,13 +241,51 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         fid_str = rec.get('FormID', '')
         edid_str = rec.get('EditorID', '')
         sig = rec.get('Signature', '')
-        if fid_str and edid_str:
+        if not fid_str:
+            continue
+        if edid_str:
             edid_low = edid_str.lower()
             xref.edid_to_formid[edid_low] = fid_str
-            xref.record_type[fid_str] = sig
+            xref.formid_to_edid[fid_str] = edid_str
             if sig == 'QUST':
                 xref.quest_edids.add(edid_low)
-    print(f"  Built CrossRefGraph: {len(xref.edid_to_formid)} entries, {len(xref.quest_edids)} quests")
+        xref.record_type[fid_str] = sig
+        # SCPT type/EditorID (needed for get_extends_class + object-script binding)
+        if sig == 'SCPT':
+            if edid_str:
+                xref.script_formid_to_edid[fid_str] = edid_str
+            schr_type = rec.get('SCHR.Type')
+            if schr_type is not None:
+                try:
+                    xref.script_formid_to_type[fid_str] = int(schr_type)
+                except ValueError:
+                    pass
+        # Attached-script + placed-ref base chains (get_extends_class, ref typing)
+        scri = rec.get('SCRI', '')
+        if scri:
+            xref.record_scri[fid_str] = scri
+        if sig in ('NPC_', 'CREA'):
+            xref.npc_formids.add(fid_str)
+        if sig in ('ACHR', 'ACRE', 'REFR'):
+            name_fid = rec.get('NAME', '')
+            if name_fid:
+                xref.record_base[fid_str] = name_fid
+    # Populate per-script variable tables + ref-as-int analysis so the object
+    # script converter can type its properties (same pass the CLI runs).
+    scpt_path = os.path.join(export_dir, 'SCPT.txt')
+    if os.path.exists(scpt_path):
+        xref.build_ref_as_int_map(scpt_path)
+    print(f"  Built CrossRefGraph: {len(xref.edid_to_formid)} entries, "
+          f"{len(xref.quest_edids)} quests, {len(xref.script_formid_to_edid)} scripts")
+
+    # --- Phase 0b3: Bind converted object scripts (SCPT via SCRI) to records ---
+    # Each scriptable object record gets a VMAD naming its compiled TES4_<script>
+    # Papyrus script + FormID bindings for the script's external references.
+    # Without this the OnActivate/OnLoad/GameMode handlers never run in-game
+    # (altars showed no message/effect, nirnroots never stopped their sound).
+    from .object_scripts import build_object_script_plan
+    n_obj_scripts = build_object_script_plan(by_type, xref, fid_to_edid)
+    print(f"  Object scripts: attached {n_obj_scripts} SCPT scripts to records via VMAD")
 
     # --- Phase 0c: Create vendor factions for merchant NPCs, plus the
     # trainer faction + per-trainer CLAS clones for the training service ---
@@ -400,6 +440,13 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
             except Exception as e:
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
                 errors += 1
+
+    # --- Phase 3c: LCTN Locations ---
+    # Skyrim only reveals a map marker when the player discovers the Location it
+    # belongs to, and it reads an exterior cell's displayed name off that same
+    # Location — Oblivion has neither, so build them here, before the cells are
+    # written, since every cell needs an XLCN pointing at one.
+    set_cell_locations(*build_marker_locations(by_type, writer))
 
     # --- Phase 4: CELL/WRLD hierarchy (+ PGRD→NAVM navmeshes) ---
     # Base-object model index for navmesh static-footprint carving. Only

@@ -86,21 +86,37 @@ ENCH_CAST_TYPE_MAP = {
     3: 0,  # Apparel → Constant Effect
 }
 
-# Map marker type mapping (TES4 → TES5)
+# Map marker type mapping (TES4 → TES5).
+# TES4 enum (wbDefinitionsTES4.pas): 0 None, 1 Camp, 2 Cave, 3 City,
+#   4 Elven Ruin, 5 Fort Ruin, 6 Mine, 7 Landmark, 8 Tavern, 9 Settlement,
+#   10 Daedric Shrine, 11 Oblivion Gate, 12 Unknown (door icon).
+# TES5 enum (wbDefinitionsTES5.pas): 0 None, 1 City, 2 Town, 3 Settlement,
+#   4 Cave, 5 Camp, 6 Fort, 7 Nordic Ruins, 8 Dwemer Ruin, 11 Landmark,
+#   13 Farm, 15 Mine, 34 Shrine, ...
 MAP_MARKER_TYPE_MAP = {
-    0: 0,   # None
-    1: 1,   # City
-    2: 3,   # Settlement → Town
-    3: 4,   # Cave
-    4: 5,   # Camp
-    5: 6,   # Fort
-    6: 7,   # Mine → Ayleid Ruin → Nordic Ruin
-    7: 11,  # Landmark
-    8: 14,  # Tavern → Inn
-    9: 34,  # Daedric Shrine
-    10: 34, # Oblivion Gate → Daedric
-    11: 1,  # Unknown → City
+    0: 0,    # None            → None
+    1: 5,    # Camp            → Camp
+    2: 4,    # Cave            → Cave
+    3: 1,    # City            → City
+    4: 8,    # Elven Ruin      → Dwemer Ruin (closest "ancient ruin" icon)
+    5: 6,    # Fort Ruin       → Fort
+    6: 15,   # Mine            → Mine
+    7: 11,   # Landmark        → Landmark
+    8: 2,    # Tavern          → Town (Skyrim has no inn icon; TES5 14 = Wood Mill)
+    9: 3,    # Settlement      → Settlement
+    10: 34,  # Daedric Shrine  → Shrine
+    11: 34,  # Oblivion Gate   → Shrine (no gate icon in Skyrim)
+    12: 11,  # Unknown (door)  → Landmark
 }
+
+# LCRT "MapMarkerRefType" in Skyrim.esm.  Every vanilla map-marker REFR carries
+# this as its XLRT (Location Ref Type); it is what binds the reference to its
+# Location as that location's map marker.
+SKYRIM_MAP_MARKER_LCRT = 0x0010F63C
+
+# Base object every Skyrim map marker REFR points at (STAT "MapMarker").
+# Oblivion uses the same FormID for its MapMarker static.
+SKYRIM_MAP_MARKER_STAT = 0x00000010
 
 # LTEX material type → Skyrim MATT FormID
 MATT_MAP = {

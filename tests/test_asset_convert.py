@@ -294,6 +294,95 @@ class TestBsaExtract:
 
 
 # ---------------------------------------------------------------------------
+# BSA packing tests — 2 GiB size limit, overflow splitting, ESL loaders
+# ---------------------------------------------------------------------------
+
+class TestBsaPack:
+    """Test BSA size-limit binning and loader-ESL generation."""
+
+    @staticmethod
+    def _entries(*sizes):
+        """Build (src, archive_rel_path, size) tuples like _collect_files returns."""
+        return [(Path(f'src{i}'), Path(f'meshes/f{i}.nif'), s)
+                for i, s in enumerate(sizes)]
+
+    def test_size_limit_under_engine_hard_limit(self):
+        """The payload budget must leave headroom for BSA metadata."""
+        from asset_convert.bsa_pack import BSA_HARD_LIMIT, BSA_SIZE_LIMIT
+        # 32-bit file-data offsets cap a BSA at exactly 2 GiB.
+        assert BSA_HARD_LIMIT == 2_147_483_648
+        assert BSA_SIZE_LIMIT < BSA_HARD_LIMIT
+
+    def test_no_split_when_content_fits(self):
+        from asset_convert.bsa_pack import _bin_files
+        bins = _bin_files(self._entries(100, 200, 300), limit=1000)
+        assert len(bins) == 1
+
+    def test_splits_when_over_limit(self):
+        from asset_convert.bsa_pack import _bin_files
+        bins = _bin_files(self._entries(600, 500), limit=1000)
+        assert len(bins) == 2
+
+    def test_exactly_at_limit_does_not_split(self):
+        """A bin filled to exactly the limit is still legal."""
+        from asset_convert.bsa_pack import _bin_files
+        bins = _bin_files(self._entries(600, 400), limit=1000)
+        assert len(bins) == 1
+
+    def test_no_bin_exceeds_limit(self):
+        from asset_convert.bsa_pack import _bin_files
+        bins = _bin_files(self._entries(*([300] * 10)), limit=1000)
+        assert all(sum(e[2] for e in b) <= 1000 for b in bins)
+
+    def test_split_is_lossless(self):
+        """Every file must land in exactly one bin — none dropped, none duplicated."""
+        from asset_convert.bsa_pack import _bin_files
+        files = self._entries(*([250] * 9))
+        bins = _bin_files(files, limit=1000)
+        packed = [e for b in bins for e in b]
+        assert len(packed) == len(files)
+        assert {str(e[1]) for e in packed} == {str(e[1]) for e in files}
+
+    def test_oversized_single_file_isolated(self):
+        """A file bigger than a whole BSA can't be split; it gets its own bin."""
+        from asset_convert.bsa_pack import _bin_files
+        bins = _bin_files(self._entries(100, 5000, 100), limit=1000)
+        big = [b for b in bins if b[0][2] == 5000]
+        assert len(big) == 1 and len(big[0]) == 1
+
+    def test_empty_input_yields_no_bins(self):
+        from asset_convert.bsa_pack import _bin_files
+        assert _bin_files([], limit=1000) == []
+
+    def test_loader_stem_naming(self):
+        """Overflow loaders are oblivion_loader, oblivion_loader_1, ..."""
+        from asset_convert.bsa_pack import _loader_stem
+        assert _loader_stem(0) == 'oblivion_loader'
+        assert _loader_stem(1) == 'oblivion_loader_1'
+        assert _loader_stem(2) == 'oblivion_loader_2'
+
+    def test_loader_esl_is_valid_light_master(self):
+        """The dummy ESL must be a record-free TES4 header with ESM+ESL flags."""
+        import struct
+        from asset_convert.bsa_pack import write_loader_esl, ESL_FLAG, ESM_FLAG
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / 'oblivion_loader.esl'
+            write_loader_esl(p)
+            data = p.read_bytes()
+            sig, size, flags, _fid, _v1, form_ver, _v2 = struct.unpack(
+                '<4sIIIIHH', data[:24])
+            assert sig == b'TES4'
+            # ESL flag keeps it out of the 255-plugin load-order limit.
+            assert flags & ESL_FLAG
+            assert flags & ESM_FLAG
+            assert form_ver == 44
+            # Header-only: declared payload is all that follows the 24-byte header.
+            assert size == len(data) - 24
+            # No records => no GRUPs.
+            assert b'GRUP' not in data
+
+
+# ---------------------------------------------------------------------------
 # NIF structural correctness tests — Skyrim LE format validation
 # ---------------------------------------------------------------------------
 
@@ -1287,7 +1376,8 @@ class TestShieldVsArmorClassification:
         centered = world - world.mean(axis=0)
         evals, evecs = np.linalg.eigh(centered.T @ centered)
         thin_axis = evecs[:, 0]   # least-variance direction = face normal
-        spans = [float((centered @ evecs[:, i]).ptp()) for i in range(3)]
+        # np.ptp(x), not x.ptp() — the ndarray method was removed in NumPy 2.0.
+        spans = [float(np.ptp(centered @ evecs[:, i])) for i in range(3)]
         assert spans[0] < spans[1] * 0.6 and spans[0] < spans[2] * 0.6, \
             f"Shield should be a slab; principal spans {spans}"
         # Face normal roughly along ±Z (within the forearm-clearance tilt)

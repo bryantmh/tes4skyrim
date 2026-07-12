@@ -19,7 +19,8 @@ import os
 import shutil
 from pathlib import Path
 
-from . import bsa_extract, grass_profile, landscape_normals, nif_converter, spt_converter
+from . import (bsa_extract, grass_profile, landscape_normals, nif_converter,
+               spt_converter, texture_prune, wearable_plan)
 
 
 def extract_bsas(source_file, data_path, extract_dir='export', force=False):
@@ -78,11 +79,23 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
     mesh_src = extract_dir / source_name / 'meshes'
     if mesh_src.exists():
         mesh_dst = plugin_dir / 'meshes' / 'tes4'
+        # Which _0/_1/plain variants each wearable is actually referenced as —
+        # without this the converter writes all three for every armor and
+        # clothing mesh and the plugin only ever loads one or two of them.
+        plan = wearable_plan.build_plan(extract_dir / source_name)
+        print(f"  Wearable variant plan: {len(plan)} meshes referenced by "
+              f"ARMO/CLOT")
         stats['mesh_conversion'] = nif_converter.batch_convert(
             str(mesh_src), output_dir=str(mesh_dst),
             fix_textures=True, remap_skeleton=None,
             subdir_filter=mesh_subdirs,
+            wearable_plan=plan,
         )
+        # The textures the converted meshes reference, harvested as they were
+        # written.  Persisted because the prune runs in a later phase (after LOD
+        # and speedtrees add their own meshes), possibly a separate invocation.
+        texture_prune.write_manifest(
+            plugin_dir, stats['mesh_conversion'].pop('textures_used', set()))
     else:
         print(f"  No meshes found at {mesh_src}")
         stats['mesh_conversion'] = {'converted': 0, 'skipped': 0, 'errors': 0}
@@ -105,7 +118,7 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
     # Copy Textures
     # -----------------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("Copy Assets to Output")
+    print("Copy Textures to Output")
     print("=" * 60)
 
     tex_src = extract_dir / source_name / 'textures'

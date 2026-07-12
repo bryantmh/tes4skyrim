@@ -8,8 +8,8 @@ Handles two operations:
   convert_sounds()       – Parallel batch conversion of all extracted sounds.
   organize_voice_files() – Reorganise TES4 voice files to TES5 directory layout.
 
-xWMAEncode.exe is a Microsoft DirectX SDK utility. It must be placed in the
-project root directory or on PATH. See README for download instructions.
+xWMAEncode.exe is a Microsoft DirectX SDK utility. It must be placed in
+external/xwmaencode/ or on PATH. See README for download instructions.
 
 All conversion is multithreaded: one worker per file in ThreadPoolExecutor.
 """
@@ -53,7 +53,7 @@ def find_xwmaencode(search_dir: 'str | None' = None) -> 'str | None':
 
     Search order:
       1. Explicit search_dir (if provided)
-      2. Project root (parent of asset_convert/)
+      2. external/xwmaencode/ under the project root
       3. System PATH
     """
     candidates = []
@@ -61,7 +61,7 @@ def find_xwmaencode(search_dir: 'str | None' = None) -> 'str | None':
         candidates.append(Path(search_dir) / 'xWMAEncode.exe')
     # Project root = parent of this file's directory
     project_root = Path(__file__).resolve().parent.parent
-    candidates.append(project_root / 'xWMAEncode.exe')
+    candidates.append(project_root / 'external' / 'xwmaencode' / 'xWMAEncode.exe')
 
     for cand in candidates:
         if cand.is_file():
