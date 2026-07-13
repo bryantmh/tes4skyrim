@@ -228,7 +228,6 @@ def _init_dispatch():
         convert_QUST,
     )
     from .record_types.dialog_misc import (
-        convert_PACK,
         convert_WTHR,
     )
     from .record_types.equipment import (
@@ -329,8 +328,8 @@ def _init_dispatch():
         'QUST': convert_QUST,
         'DIAL': convert_DIAL,
         'INFO': convert_INFO,
-        # Newly implemented
-        'PACK': convert_PACK,
+        # PACK is converted in its own phase (import_main 3b2), not here — it
+        # needs the QUST aliases, which the generic dispatch runs too early for.
         'WATR': convert_WATR,
         'WTHR': convert_WTHR,
     })
@@ -364,7 +363,10 @@ def _init_dispatch():
         'REGN',   # Region system differs
         'EYES',   # Do not convert — NPCs map to Skyrim head parts
         'HAIR',   # Do not convert — NPCs map to Skyrim head parts
-        'PACK',   # Causes startup to not finish. Will implement later.
+        # PACK is converted (tes5_import/pack_converter.py) as TES5 template
+        # instances. It is NOT in the generic dispatch — quest packages need the
+        # QUST aliases to exist first, so PACK is written in its own phase after
+        # QUST (import_main Phase 3b2).
     })
 
 

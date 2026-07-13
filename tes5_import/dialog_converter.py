@@ -379,7 +379,8 @@ def _quest_dnam(rec: dict) -> bytes:
 def convert_QUST(rec: dict, fid_to_edid: dict = None,
                  well_known_props: dict = None,
                  unlock_plan: dict = None,
-                 unlock_globals: dict = None) -> bytes:
+                 unlock_globals: dict = None,
+                 pack_plan=None) -> bytes:
     """QUST — Quest conversion (original quest, not the synthetic dialogue one).
 
     Order: EDID [VMAD] FULL DNAM NEXT [stages] [objectives] ANAM [aliases].
@@ -509,26 +510,64 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
             subs += pack_subrecord('QSTA', struct.pack('<iB3x',
                                                        alias_id, tflags))
 
+    # --- Package aliases -------------------------------------------------
+    # A Skyrim quest package must hang off a reference alias (ALPC): that is
+    # what lets it outrank the actor's standing schedule, which is exactly what
+    # Oblivion achieved by putting a conditioned package at the top of the
+    # actor's AI list.  pack_plan (built in Phase 0) says which refs this quest's
+    # packages name; aliases are allocated here, and PACK reads back the SAME
+    # indices, so the two cannot drift.
+    qfid = get_formid(rec, 'FormID')
+    alias_packages = {}       # alias_id -> [pack_fid, ...]
+    if pack_plan is not None:
+        for ref_fid, alias_id in pack_plan.assign_aliases(qfid, alias_by_fid):
+            pkgs = pack_plan.packages_for_alias(qfid, ref_fid)
+            if pkgs:
+                alias_packages[alias_id] = pkgs
+        # A ref that was already a quest target can also run packages.
+        for ref_fid, alias_id in alias_by_fid.items():
+            pkgs = pack_plan.packages_for_alias(qfid, ref_fid)
+            if pkgs and alias_id not in alias_packages:
+                alias_packages[alias_id] = pkgs
+
     subs += pack_uint32_subrecord('ANAM', len(alias_by_fid))  # Next Alias ID
 
     # Reference aliases (forced ref).  Layout and flag value both follow vanilla:
-    # ALST, ALID, FNAM, ALFR, VTCK, ALED.  **VTCK is present on 2687/2687 vanilla
-    # forced-ref aliases — a 100% invariant** (empty = "no voice-type override"),
-    # and every one of the 255 vanilla objective+forced-ref quests carries it.
+    # ALST, ALID, FNAM, ALFR, [ALPC...], VTCK, ALED.  **VTCK is present on
+    # 2687/2687 vanilla forced-ref aliases — a 100% invariant** (empty = "no
+    # voice-type override"), and every one of the 255 vanilla objective+forced-ref
+    # quests carries it.
     # Flags 0x0292 = Optional (0x0002 — a fill failure must not block quest start,
     # or the dialogue dies with it) + Allow Dead (0x0010) + Allow Disabled
     # (0x0080) + Allow Reserved (0x0200); an attested vanilla combination.  The
     # old 0x109A added Allow Reuse/Allow Destroyed and appears nowhere in vanilla.
     for tfid, alias_id in sorted(alias_by_fid.items(), key=lambda kv: kv[1]):
         subs += pack_uint32_subrecord('ALST', alias_id)
-        subs += pack_string_subrecord('ALID', f'TES4Target{alias_id:02d}')
+        subs += pack_string_subrecord('ALID', _alias_name(tfid, alias_id,
+                                                          fid_to_edid))
         subs += pack_uint32_subrecord('FNAM', 0x00000292)
         subs += pack_formid_subrecord('ALFR', tfid)
+        for pfid in alias_packages.get(alias_id, ()):
+            subs += pack_formid_subrecord('ALPC', pfid)
         subs += pack_formid_subrecord('VTCK', 0)
         subs += pack_subrecord('ALED', b'')
 
-    return pack_record('QUST', get_formid(rec, 'FormID'),
-                       get_int(rec, 'RecordFlags'), subs)
+    return pack_record('QUST', qfid, get_int(rec, 'RecordFlags'), subs)
+
+
+def _alias_name(ref_fid: int, alias_id: int, fid_to_edid: dict) -> str:
+    """Stable, readable alias name.
+
+    Papyrus property bindings and ALPC links resolve by index, but a name that
+    tracks the reference makes the output legible in the CK/SSEEdit.  The player
+    alias is named 'Player' because that is what every vanilla quest calls it.
+    """
+    if ref_fid == 0x00000014:
+        return 'Player'
+    edid = (fid_to_edid or {}).get(ref_fid, '')
+    if edid:
+        return edid[:32]
+    return f'TES4Target{alias_id:02d}'
 
 
 # ===========================================================================

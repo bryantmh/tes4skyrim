@@ -25,7 +25,7 @@ pytest.importorskip("scipy")
 from tes5_import import pgrd_to_navm as p2n  # noqa: E402
 from tes5_import.navi_builder import build_navi_record  # noqa: E402
 from tes5_import.navmesh import build as nmbuild  # noqa: E402
-from tes5_import.navmesh import contour, params, region, voxel  # noqa: E402
+from tes5_import.navmesh import params, region, spanmesh, voxel  # noqa: E402
 
 
 class FakeWriter:
@@ -112,6 +112,43 @@ def _centroids(verts, tris):
                sum(verts[i][2] for i in t) / 3.0)
 
 
+def _components(verts, tris):
+    """Number of connected components (an NPC cannot cross between them)."""
+    parent = list(range(len(verts)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for (a, b, c) in tris:
+        parent[find(a)] = find(b)
+        parent[find(b)] = find(c)
+    return len({find(a) for (a, _b, _c) in tris})
+
+
+def _covered(verts, tris, px, py):
+    """Is (px, py) inside any navmesh triangle?
+
+    Asserting on triangle CENTROIDS instead is a trap: it only happens to work
+    while triangles are small.  Once the mesher emits a triangle larger than the
+    feature under test — a rug, say — the feature is fully covered but no centroid
+    lands on it, and the test fails on a mesh that is entirely correct.
+    """
+    for (ia, ib, ic) in tris:
+        a, b, c = verts[ia], verts[ib], verts[ic]
+        d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+        if abs(d) < 1e-9:
+            continue
+        l0 = ((b[1] - c[1]) * (px - c[0]) + (c[0] - b[0]) * (py - c[1])) / d
+        l1 = ((c[1] - a[1]) * (px - c[0]) + (a[0] - c[0]) * (py - c[1])) / d
+        l2 = 1.0 - l0 - l1
+        if l0 >= -1e-6 and l1 >= -1e-6 and l2 >= -1e-6:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Voxel / region behaviour — the core rules
 # ---------------------------------------------------------------------------
@@ -176,9 +213,8 @@ def test_rug_is_walked_over_not_carved_around():
 
     verts, tris = _build_cell(soups, refrs, nodes, edges, base_model)
     assert tris
-    covered = any(abs(cx) < 120 and abs(cy) < 120
-                  for (cx, cy, _cz) in _centroids(verts, tris))
-    assert covered, "navmesh was carved around a rug instead of over it"
+    assert _covered(verts, tris, 0.0, 0.0), \
+        "navmesh was carved around a rug instead of over it"
 
 
 def test_table_blocks_the_floor_beneath_it():
@@ -195,10 +231,10 @@ def test_table_blocks_the_floor_beneath_it():
 
     verts, tris = _build_cell(soups, refrs, nodes, edges, base_model)
     assert tris
-    for (cx, cy, cz) in _centroids(verts, tris):
-        if abs(cx) < 60 and abs(cy) < 60 and cz < 60:
-            pytest.fail("navmesh runs through a 120u-tall table at "
-                        "(%.0f, %.0f, %.0f)" % (cx, cy, cz))
+    # Test COVERAGE, not centroids: a single big triangle laid straight over the
+    # table has no centroid inside it and would sail through a centroid check.
+    assert not _covered(verts, tris, 0.0, 0.0), \
+        "navmesh runs through a 120u-tall table"
 
 
 # ---------------------------------------------------------------------------
@@ -219,43 +255,74 @@ def test_navmesh_stays_inside_the_walls():
 
 
 # ---------------------------------------------------------------------------
-# Contour / triangulation
+# Span mesher — the guarantees that replaced the contour/height-map mesher
 # ---------------------------------------------------------------------------
 
-def test_contour_orientation():
-    """Outer rings wind CCW (+area); holes wind CW (-area)."""
-    mask = {(x, y): 0.0 for x in range(5) for y in range(5)
-            if not (x == 2 and y == 2)}
-    loops = contour.trace_contours(mask)
-    areas = sorted(contour._signed_area(l) for l in loops)
-    assert areas[0] < 0 < areas[-1]
+def test_flat_floor_meshes_as_one_connected_piece():
+    """A single walkable surface must come out as ONE connected component."""
+    hf = voxel.Heightfield(0, 0, 0, 8, 8, 16.0, 8.0)
+    for y in range(8):
+        for x in range(8):
+            hf.add_span(x, y, -8, 0, True)
+    verts, tris = spanmesh.build_mesh(hf)
+    assert tris
+    assert _components(verts, tris) == 1
 
 
-def test_triangulation_covers_the_polygon():
-    """Triangulated area must match the polygon's area (no dropped floor).
+def test_two_storeys_are_never_joined_by_a_triangle():
+    """No triangle may span two floors.
 
-    Regression: the hand-rolled ear clipper bailed out on big concave rooms and
-    silently lost ~40% of the floor.
+    This is THE bug the contour mesher could not avoid: a height map holds one Z
+    per column, so two storeys sharing a column forced the triangulator to bridge
+    them, producing a wall of near-vertical triangles "connecting" the floors.
+    The span graph makes it unrepresentable — spans a storey apart are never
+    adjacent, so no triangle can have a corner on each.
     """
-    verts, tris = contour.triangulate([(0, 0), (10, 0), (10, 10), (0, 10)], [])
-    area = 0.0
+    hf = voxel.Heightfield(0, 0, 0, 8, 8, 16.0, 8.0)
+    for y in range(8):
+        for x in range(8):
+            hf.add_span(x, y, -8, 0, True)          # ground floor
+            hf.add_span(x, y, 242, 250, True)       # storey above
+    verts, tris = spanmesh.build_mesh(hf)
+    assert tris
     for (a, b, c) in tris:
-        va, vb, vc = verts[a], verts[b], verts[c]
-        area += abs((vb[0] - va[0]) * (vc[1] - va[1]) -
-                    (vc[0] - va[0]) * (vb[1] - va[1])) * 0.5
-    assert area == pytest.approx(100.0, rel=0.02)
+        zs = [verts[a][2], verts[b][2], verts[c][2]]
+        assert max(zs) - min(zs) < params.MAX_CLIMB, \
+            "a triangle bridged two storeys (z spread %.0f)" % (max(zs) - min(zs))
 
 
-def test_triangulation_respects_holes():
-    outer = [(0, 0), (10, 0), (10, 10), (0, 10)]
-    hole = [(4, 4), (4, 6), (6, 6), (6, 4)]          # CW hole
-    verts, tris = contour.triangulate(outer, [hole])
-    area = 0.0
-    for (a, b, c) in tris:
-        va, vb, vc = verts[a], verts[b], verts[c]
-        area += abs((vb[0] - va[0]) * (vc[1] - va[1]) -
-                    (vc[0] - va[0]) * (vb[1] - va[1])) * 0.5
-    assert area == pytest.approx(96.0, rel=0.05)     # 100 - 4
+def test_a_staircase_stays_connected_to_its_floor():
+    """A stair must mesh as one piece with the floor it rises from.
+
+    Regression: the height-map mesher peeled a staircase into several layers,
+    contoured each on its own, and left them joined only at a triangle corner —
+    which an NPC cannot cross.
+    """
+    hf = voxel.Heightfield(0, 0, 0, 12, 4, 16.0, 8.0)
+    for y in range(4):
+        for x in range(4):                          # flat floor
+            hf.add_span(x, y, -8, 0, True)
+        for i, x in enumerate(range(4, 12)):        # stair, one riser per column
+            z = (i + 1) * 20.0
+            hf.add_span(x, y, z - 8, z, True)
+    verts, tris = spanmesh.build_mesh(hf)
+    assert tris
+    assert _components(verts, tris) == 1, \
+        "the staircase came out disconnected from its floor"
+
+
+def test_a_ledge_taller_than_a_step_stays_separate():
+    """Surfaces further apart than a step must NOT be joined."""
+    hf = voxel.Heightfield(0, 0, 0, 8, 4, 16.0, 8.0)
+    for y in range(4):
+        for x in range(4):
+            hf.add_span(x, y, -8, 0, True)          # floor
+        for x in range(4, 8):
+            hf.add_span(x, y, 192, 200, True)       # ledge 200u up
+    verts, tris = spanmesh.build_mesh(hf)
+    assert tris
+    assert _components(verts, tris) == 2, \
+        "an unclimbable ledge was joined to the floor"
 
 
 # ---------------------------------------------------------------------------

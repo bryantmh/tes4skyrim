@@ -67,6 +67,14 @@ SEED_Z_TOLERANCE = 96.0
 # Sized to the agent so a staircase or a doorway comes out genuinely walkable
 # rather than a sliver.
 PGRD_BAND = 24.0
+# How far the stamp reaches in Z to SNAP a pathgrid sample onto real walkable
+# collision.  A pathgrid is coarse on stairs (the Anvil Fighters Guild runs a whole
+# flight on two nodes ~100u apart in Z), so a sample interpolated along such an
+# edge can float above the tread it is meant to stand on and must reach down for
+# it.  But reaching too far is worse than not reaching at all: at 128u the band
+# starts latching onto whatever surface happens to lie under a balcony, and the
+# layer count goes UP.  A step height plus a stair riser is the right order.
+PGRD_SNAP_Z = 48.0
 
 # --- Limits ----------------------------------------------------------------------
 # Hard cap on grid dimension per cell; beyond this CS is coarsened.  Guards

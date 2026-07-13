@@ -6,20 +6,24 @@
       -> filter (ledge/headroom)     (voxel.py)
       -> regions + pathgrid seed     (region.py)
       -> erode by agent radius       (voxel.py)
-      -> contours -> polygons -> triangles (contour.py)
+      -> mesh the span graph         (spanmesh.py)
       -> drop steep tris, prune unvouched islands
 
-The pathgrid goes in FIRST, not last.  It used to be applied as a repair pass on
-the finished mesh, which meant every stage in between — the ledge filter, the
-headroom filter, the region cull, the agent erosion — was free to delete the very
-surfaces the pathgrid says an NPC walks, and the repair could only paste ribbons
-back on top of the damage.  Staircases lost their mesh that way, and the ribbons
-pasted back never conformed to what surrounded them.
+Two decisions carry this design.
 
-Stamped up front as PROTECTED spans, the pathgrid is instead part of the geometry
-every later stage reasons about: no filter may un-walk it, no cull may drop it,
-erosion may not eat it, and the contourer builds the staircase as an ordinary,
-connected part of the mesh because the spans are simply there.
+THE PATHGRID GOES IN FIRST, not last.  It used to be a repair pass on the finished
+mesh, which meant every stage in between — the ledge filter, the headroom filter,
+the region cull, the agent erosion — was free to delete the very surfaces the
+pathgrid says an NPC walks, and the repair could only paste ribbons back over the
+damage.  Staircases lost their mesh that way.  Stamped up front as PROTECTED spans
+it is instead part of the geometry every later stage reasons about: no filter may
+un-walk it, no cull may drop it, and erosion may not eat it.
+
+THE MESH IS BUILT FROM THE SPAN GRAPH, not from contours.  A contour is a height
+map (one Z per column) and a building is not: a staircase carries an NPC over the
+room below it, and a house stacks two storeys in the same columns.  Meshing spans
+directly makes adjacency — and therefore connectivity — structural, so staircases
+cannot fragment and no triangle can bridge two floors.  See spanmesh.py.
 
 Returns (verts, tris) in world space.  The caller (pgrd_to_navm) keeps ownership
 of the NVNM/NAVM binary packing, which is already validated byte-exact against
@@ -30,43 +34,32 @@ import logging
 import math
 import time
 
-from . import contour, params, region, voxel, world
+from . import params, region, spanmesh, voxel, world
 
 _log = logging.getLogger(__name__)
 
 
 def _drop_steep_triangles(verts, tris, nodes):
-    """Remove triangles steeper than a walkable slope.
+    """Remove triangles too steep for an NPC to walk.
 
-    A contour can bridge a Z discontinuity — joining a stair top straight down to
-    the stair bottom — which reads as a near-vertical face an NPC would "walk" up.
+    A contour can bridge a Z discontinuity — most damagingly, it can join a
+    ground-floor surface straight up to the storey above, producing a wall of
+    near-vertical triangles that "connect" the two floors.  No NPC walks up an
+    80-degree face, so any triangle steeper than the walkable slope is an artefact
+    and goes, WITHOUT EXCEPTION.
 
-    A triangle the PATHGRID runs across is never dropped, however steep it looks:
-    on a staircase the treads are stamped at the pathgrid's own heights, and the
-    ramp between two stamped treads is legitimately steep.  Dropping those is what
-    left staircases bare, so geometry-derived steepness alone cannot condemn a
-    triangle the designers walked an NPC over.
+    There used to be an exception — a steep triangle was kept if the pathgrid ran
+    near it, on the theory that a stamped staircase is legitimately steep.  That
+    is what let the cross-floor triangles survive: a vertical triangle spanning
+    two storeys has its centroid halfway up, which lands right beside the stair
+    pathgrid, so it was exempted and kept.  A real staircase ramp is nowhere near
+    vertical (Oblivion's are ~30 degrees), so it does not need the exception and
+    nothing else deserves it.  MAX_SLOPE_DEG is the single ceiling.
     """
     if not tris:
         return verts, tris
 
-    import numpy as np
     cos_lim = math.cos(math.radians(params.MAX_SLOPE_DEG))
-    narr = np.asarray(nodes) if nodes else np.empty((0, 3))
-    snap2 = (params.SEED_SNAP * 1.5) ** 2
-
-    def on_pathgrid(va, vb, vc):
-        if not len(narr):
-            return False
-        cx = (va[0] + vb[0] + vc[0]) / 3.0
-        cy = (va[1] + vb[1] + vc[1]) / 3.0
-        cz = (va[2] + vb[2] + vc[2]) / 3.0
-        d2 = (narr[:, 0] - cx) ** 2 + (narr[:, 1] - cy) ** 2
-        m = d2 < snap2
-        if not m.any():
-            return False
-        return bool((np.abs(narr[m, 2] - cz) < params.SEED_Z_TOLERANCE).any())
-
     kept = []
     for (a, b, c) in tris:
         va, vb, vc = verts[a], verts[b], verts[c]
@@ -78,68 +71,9 @@ def _drop_steep_triangles(verts, tris, nodes):
         ln = math.sqrt(nx * nx + ny * ny + nz * nz)
         if ln < 1e-9:
             continue
-        if abs(nz) / ln >= cos_lim or on_pathgrid(va, vb, vc):
+        if abs(nz) / ln >= cos_lim:
             kept.append((a, b, c))
     return _compact(verts, kept)
-
-
-def _weld(verts, tris):
-    """Merge coincident vertices so independently-contoured layers become one mesh.
-
-    Each Z-layer is contoured on its own (it has to be — a contour is a height
-    map), which means a staircase layer and the floor layer it rises from produce
-    their OWN vertices at the lattice corners they share.  Geometrically the two
-    surfaces meet; topologically they are two disconnected components that touch
-    at a corner — which is exactly what "the stairs only connect at one triangle
-    corner" looks like, and why so many cells came out as islands.
-
-    Welding vertices that coincide in 3D turns those duplicate corners into shared
-    ones, so the layers become a single connected surface.  It adds no geometry and
-    moves nothing: it only merges points that were already in the same place.
-
-    The Z tolerance is a step height — two layers that meet at a walkable seam are
-    at most a step apart there, while a floor and the ceiling below it are a storey
-    apart and never weld.
-    """
-    if not verts:
-        return verts, tris
-    snap = params.CS * 0.5
-    ztol = params.MAX_CLIMB
-
-    buckets = {}
-    remap = [0] * len(verts)
-    out = []
-    for i, v in enumerate(verts):
-        kx = int(round(v[0] / snap))
-        ky = int(round(v[1] / snap))
-        hit = None
-        # Check this cell and its neighbours so a pair straddling a bucket edge
-        # still welds.
-        for bx in (kx - 1, kx, kx + 1):
-            for by in (ky - 1, ky, ky + 1):
-                for j in buckets.get((bx, by), ()):
-                    o = out[j]
-                    if (abs(o[0] - v[0]) <= snap and abs(o[1] - v[1]) <= snap
-                            and abs(o[2] - v[2]) <= ztol):
-                        hit = j
-                        break
-                if hit is not None:
-                    break
-            if hit is not None:
-                break
-        if hit is None:
-            hit = len(out)
-            out.append(v)
-            buckets.setdefault((kx, ky), []).append(hit)
-        remap[i] = hit
-
-    new_tris = []
-    for (a, b, c) in tris:
-        na, nb, nc = remap[a], remap[b], remap[c]
-        if na == nb or nb == nc or na == nc:
-            continue                      # collapsed to a degenerate sliver
-        new_tris.append((na, nb, nc))
-    return _compact(out, new_tris)
 
 
 def _compact(verts, tris):
@@ -267,21 +201,16 @@ def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
         region_of, regions = region.build_regions(hf)
 
     # Standoff from walls.  Protected (pathgrid) columns are exempt, so this can
-    # never pinch a staircase or a doorway back to a sliver.  Erosion can still
-    # split an ordinary region in two, so rebuild regions when it changed
-    # anything — contouring stale regions fans triangles across the new gap.
-    if voxel.erode_walkable(hf):
-        region_of, _regions = region.build_regions(hf)
+    # never pinch a staircase or a doorway back to a sliver.
+    voxel.erode_walkable(hf)
 
-    verts, tris = contour.build_mesh(hf, region_of)
+    # Mesh the SPAN GRAPH directly (see spanmesh).  Adjacent spans share corner
+    # vertices, so the mesh is connected by construction — no layers to seam
+    # together, no islands to weld, and two spans a storey apart are never
+    # adjacent, so no triangle can bridge two floors.
+    verts, tris = spanmesh.build_mesh(hf)
     if not tris:
         return [], []
-
-    # Each Z-layer was contoured independently, so layers that physically meet
-    # (a staircase and its floor) still own separate vertices at the corners they
-    # share.  Weld those together or the mesh stays a pile of islands touching at
-    # corners — an NPC cannot cross between disconnected navmesh.
-    verts, tris = _weld(verts, tris)
 
     verts, tris = _drop_steep_triangles(verts, tris, nodes)
     if not tris:

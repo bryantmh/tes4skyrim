@@ -294,6 +294,26 @@ def export_SCPT(rec: Record) -> list:
     sctx = get_subrecord(rec, "SCTX")
     if sctx:
         lines.append(f"SCTX={escape_value(get_string(sctx))}")
+    # Local variables: SLSD (index) is always followed by SCVR (name). The index
+    # is what a GetScriptVariable condition stores in its param2, so the pair is
+    # the only way to turn such a condition back into a named variable.
+    i = 0
+    for j, sub in enumerate(rec.subrecords):
+        if sub.type != "SLSD" or len(sub.data) < 4:
+            continue
+        index = struct.unpack_from('<I', sub.data, 0)[0]
+        name = ""
+        if j + 1 < len(rec.subrecords):
+            nxt = rec.subrecords[j + 1]
+            if nxt.type == "SCVR":
+                name = get_string(nxt)
+        if not name:
+            continue
+        lines.append(f"Variable[{i}].Index={index}")
+        lines.append(f"Variable[{i}].Name={escape_value(name)}")
+        i += 1
+    if i:
+        lines.append(f"VariableCount={i}")
     # Script references (FormIDs referenced in the compiled script)
     scros = get_all_subrecords(rec, "SCRO")
     for i, scro in enumerate(scros):

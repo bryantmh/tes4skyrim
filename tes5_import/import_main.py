@@ -322,11 +322,30 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     from .creature_races import build_creature_races
     build_creature_races(by_type, writer, export_dir)
 
-    # --- Phase 0g: index skipped TES4 PACK records so actor converters can
-    # substitute vanilla AI packages (PKID pass-through would dangle and
-    # leave every actor with no AI → stuck in idle) ---
+    # --- Phase 0g: plan AI packages -------------------------------------
+    # TES4 PACK records convert to TES5 template instances (pack_converter).
+    # Quest-owned packages must hang off a QUST reference alias (ALPC) to
+    # outrank the actor's standing schedule, so the alias indices have to be
+    # decided BEFORE either QUST or PACK is written — both read this one plan.
+    from .pack_aliases import (PackagePlan, build_script_var_map,
+                               build_scriptvar_owner_map)
     from .packages import load_package_types
     load_package_types(by_type)
+
+    _script_vars = build_script_var_map(by_type)
+    _sv_owner = build_scriptvar_owner_map(by_type, fid_to_edid)
+    pack_plan = PackagePlan()
+    pack_plan.build(by_type,
+                    {get_formid(r, 'FormID') for r in by_type.get('QUST', [])},
+                    _sv_owner)
+    print(f"  Package plan: {pack_plan.summary()}")
+
+    # Quest packages live on a QUST alias (ALPC), not in the actor's PKID list.
+    from .packages import set_quest_packages
+    set_quest_packages(pack_plan.owner_quest.keys())
+
+    from .pack_converter import PackContext
+    pack_ctx = PackContext(plan=pack_plan, script_vars=_script_vars)
 
     # --- Phase 0h: placed leveled creatures (REFR→LVLC) ---
     # Skyrim only spawns actors from ACHR→NPC_, so each placed LVLC becomes an
@@ -439,7 +458,8 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                 qust_bytes = convert_QUST(rec, fid_to_edid=fid_to_edid,
                                           well_known_props=_WELL_KNOWN_PROPERTIES,
                                           unlock_plan=unlock_plan,
-                                          unlock_globals=unlock_globals)
+                                          unlock_globals=unlock_globals,
+                                          pack_plan=pack_plan)
                 writer.add_record('QUST', qust_bytes)
                 converted += 1
                 # Track SGE quests for .seq generation
@@ -450,6 +470,23 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                     sge_quest_fids.add(fid)
             except Exception as e:
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
+                errors += 1
+
+    # --- Phase 3b2: PACK AI packages ---
+    # Must run AFTER QUST: convert_QUST allocates the reference-alias indices
+    # that a quest package's PTDA/PLDT point at (PackagePlan holds them), so the
+    # aliases have to exist before the packages that reference them are written.
+    pack_records = by_type.get('PACK', [])
+    if pack_records and 'PACK' not in all_skip:
+        from .pack_converter import convert_PACK
+        print(f"  Converting {len(pack_records)} PACK records...")
+        for rec in pack_records:
+            try:
+                writer.add_record('PACK', convert_PACK(rec, pack_ctx))
+                converted += 1
+            except Exception as e:
+                print(f"  ERROR converting PACK "
+                      f"'{get_str(rec, 'EditorID', '?')}': {e}")
                 errors += 1
 
     # --- Phase 3c: LCTN Locations ---

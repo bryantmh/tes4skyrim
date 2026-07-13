@@ -32,32 +32,63 @@ cell PLUS a single top-level NAVI (Navmesh Info Map). Implemented in
      low-hanging-obstacle merge, ledge (MAX_CLIMB=34u), min-headroom
      (AGENT_HEIGHT=128u) — plus agent-radius erosion (AGENT_RADIUS=24u) for a
      correct standoff from walls.
-  3. `region.build_regions` + `seed_regions`: flood-fill spans into connected
-     regions (spans link only within MAX_CLIMB → floor 1 vs floor 2 stay
-     separate, stairs connect); KEEP only regions a pathgrid node vouches for.
-     Tabletops/roofs/ledges hold no node and are dropped. A node's Z disambiguates
-     multi-floor columns. `synthesize_floor` lays floor under orphaned nodes whose
-     room shell is placed in a neighbouring cell (e.g. Anvil FG bedroom wing).
-  4. `contour.build_mesh`: trace each region's boundary, simplify
-     (MAX_SIMPLIFY_ERR=12u → straight wall-following edges), then triangulate
-     with interior Steiner points (TRI_TARGET_EDGE 128u/320u) + edge-flip
-     refinement for UNIFORM, non-sliver triangles. Vertex Z from span tops.
-  5. `build.build_navmesh`: orchestrates the above, then a QUALITY pass:
-     `_drop_steep_triangles` (remove tris steeper than MAX_SLOPE — contour
-     artefacts bridging a Z gap, e.g. stair-top straight to stair-bottom),
-     `_stitch_pathgrid_bridges` (add a triangle ribbon between components a PGRD
-     edge says are joined — reconnects a staircase whose top step sits >step
-     height below the upper floor's collision), `_prune_islands` (keep the main
-     component + only large pathgrid-vouched ones; drop specks so there are no
-     unreachable navmesh islands).  Then this module computes adjacency, water
-     flags, door triangles.
-- **Quality invariants** (see `tools/navmesh_diag.py <cell>`): 0 steep
-  triangles, 1 connected component, every pathgrid node within a step of the
-  navmesh. Erosion uses a EUCLIDEAN distance transform (scipy
-  `distance_transform_edt`), NOT a chamfer — a chamfer overestimates diagonal
-  distance ~1.7x and left wide dead zones around obstacles. Contours are
-  DEBURRED (Chaikin corner-cutting) before Douglas-Peucker so obstacle holes come
-  out octagon-like instead of saw-toothed.
+  2b. `voxel.stamp_pathgrid` — **the pathgrid goes in HERE, before any filter.**
+     A band of PGRD_BAND (24u) either side of every pathgrid line is stamped as
+     PROTECTED walkable spans, snapping onto real collision at that height where
+     it exists and synthesizing a span where it does not. Protected spans are
+     immune to every later stage: ledge filter, headroom filter, region cull and
+     agent erosion all skip them. The stamp yields to NOTHING (an early version
+     skipped columns with blocking collision, which silently refused to stamp
+     staircases — a stair's own faces are steep, hence "blocking" — and left the
+     storeys of a house as disconnected islands).
+  3. `region.build_regions` + `seed_regions` + `keep_regions`: flood-fill spans
+     into connected regions and KEEP only those a pathgrid node vouches for.
+     Tabletops/roofs/ledges hold no node and are dropped. `keep_pathgrid_heights`
+     then drops any span no pathgrid sample vouches for at its height — this is
+     what stops navmesh appearing on the CEILING of a room a staircase passes over.
+  4. `spanmesh.build_mesh`: mesh the SPAN GRAPH directly (see below). Then
+     `_decimate` collapses edges, bounded by BOTH a plane error (MAX_SIMPLIFY_ERR)
+     and a triangle-QUALITY test (aspect ratio ≤6, edge ≤TRI_TARGET_EDGE).
+  5. `build.build_navmesh`: orchestrates the above, then `_drop_steep_triangles`
+     (MAX_SLOPE_DEG is a HARD ceiling with no exceptions) and `_prune_islands`
+     (drop components no pathgrid node stands on). Then this module computes
+     adjacency, water flags, door triangles.
+
+### Mesh the SPAN GRAPH, never contours (the decisive fix)
+
+A contour is a **height map** — one Z per (cx,cy) column — and a building is not.
+A staircase carries an NPC *over* the room below it, and a house stacks two
+storeys in the same columns. The old contour mesher tried to slice the world into
+height-map "layers" and contour each; every defect came from the seams:
+
+- a staircase peeled into 5 layers, each contoured alone, each an island joined to
+  the next only at a triangle **corner** (an NPC cannot cross that);
+- a layer boundary falling between two floors let the triangulator bridge them —
+  a wall of near-vertical triangles "connecting" storey 1 to storey 2;
+- a short pathgrid stub became its own layer and was culled for being small,
+  leaving a pathgrid line with **no navmesh under it**.
+
+Tuning the slicer traded these defects for one another indefinitely. `spanmesh.py`
+instead meshes the span graph: the unit is a **span**, not a column
+(`node=(cx,cy,span_index)`, `adjacent = neighbouring column && |Δtop| ≤ MAX_CLIMB`),
+one quad per span, and **adjacent spans share corner vertices**. Connectivity is
+therefore structural — nothing to stitch, weld or repair — and two spans a storey
+apart are simply never adjacent, so a cross-floor triangle is *unrepresentable*.
+Result over 150 interior cells: **0 wrong-floor, 0 steep, 0.9% of pathgrid length
+uncovered** (was 2.5% uncovered / 2452 broken pathgrid edges with contours).
+
+- **Quality invariants** (`tools/navmesh_audit.py --interiors N` sweeps many cells
+  in parallel; `tools/navmesh_diag.py <cell>` for one). The metric that matters is
+  **BROKEN PATHGRID EDGES** — an edge whose two ends land on navmesh an NPC cannot
+  cross between. A raw component count is NOT a bug metric: a cave with six
+  chambers this cell's pathgrid never links is legitimately six components.
+  Erosion uses a EUCLIDEAN distance transform (scipy `distance_transform_edt`),
+  NOT a chamfer — a chamfer overestimates diagonal distance ~1.7x and left wide
+  dead zones around obstacles.
+- **Decimation must bound triangle QUALITY, not just planarity.** A vertex in the
+  middle of a flat floor is coplanar with all its neighbours, so a purely planar
+  collapse test drags it clear across the room and the floor degenerates into a
+  fan of long thin slivers. Bound the aspect ratio and the edge length too.
 - **Obstruction is decided in WORLD SPACE, never per-mesh.** An object obstructs
   iff it rises more than MAX_CLIMB above the floor beneath it — so rugs/pillows
   are walked over, tables/barrels are routed around, with NO size gate or rug
