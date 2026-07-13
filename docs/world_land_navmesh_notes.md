@@ -16,78 +16,74 @@ cell PLUS a single top-level NAVI (Navmesh Info Map). Implemented in
   indexed in a top-level NAVI record. NAVM records alone are ignored. NAVI goes
   in the top-level group order immediately BEFORE CELL (verified vs xEdit
   `wbAddGroupOrder`, and added to `writer._group_order`).
-- **Algorithm (region-based, rewritten 2026-07-06 — replaces the old sparse
-  "Delaunay-then-coverage-mask" that produced thin ribbons floating above the
-  floor with jagged holes)**: reconstruct the WALKABLE FLOOR as a shapely
-  polygon, then tile it.
-  1. `_build_walkable_polygon`: buffer every pathgrid EDGE into a
-     `CORRIDOR_HALF_WIDTH`(=75u) capsule + every NODE into a `NODE_RADIUS`(=95u)
-     disc, union → clean-edged room/corridor polygons. Bethesda places pathgrid
-     nodes just inside the walls, so this tight radius leaves the WALLS as clean
-     gaps between corridors (validated against a user-painted wall reference for
-     AnvilFightersGuild). A small dilate+erode close bridges node-disc pinholes
-     BEFORE obstacle subtraction (so it can't refill carved holes).
-  2. Subtract obstacle footprints (real furniture/architecture) and door jambs.
-  3. `_triangulate_region`: sample boundary vertices along every ring at
-     `BOUNDARY_STEP`(=64u) + an interior `FILL_STEP`(=128u) grid clipped to the
-     polygon, Delaunay (scipy), keep triangles whose centroid is inside the
-     polygon. Dense boundary sampling → clean edges that follow walls + holes.
-  4. `_assign_z`: nearest-pathgrid-node Z, weighted STEEPLY (1/(d⁴+1)) toward the
-     closest node so multi-level interiors don't average across floors. Exterior
-     uses the SAME node-Z (nodes sit on the walkable street surface, which is
-     ~100u above raw LAND terrain — see LAND note below), easing toward the LAND
-     height only past `LAND_BLEND_DIST`(=300u) from any node.
-  5. Compute edge adjacency, flag water tris (centroid Z < XCLW water height),
-     add door triangles, choose a per-navmesh grid divisor (~600u buckets).
-- **Obstacle carving uses REAL MESH SILHOUETTES, not AABBs** (2026-07-06):
-  `tes5_import/mesh_footprints.py` caches the 2D CONVEX HULL of each converted
-  NIF's XY vertices (`scan_mesh_footprints` → `export/<plugin>/mesh_footprints_cache.json`,
-  simplified to ≤24 pts). `_build_exclusion_zones` rotates/scales/places each
-  hull so a round well carves a circle, an angled wall its true diagonal, etc.
-  — AABB (mesh_bounds) is used only for fast height/size gates + fallback. Each
-  footprint is shrunk by `EXCLUSION_MARGIN`(=24u) so the navmesh hugs the object
-  surface. `_classify_footprints` splits obstacles from FLOORS/shells: a
-  footprint containing ≥`FLOOR_NODE_COUNT`(=3) pathgrid nodes or spanning
-  >35% of the pathgrid extent is a FLOOR (NPC stands on it — a floor tile, rug,
-  or the building shell whose AABB covers the whole room) and is NEVER carved;
-  furniture with a single sit/sleep interaction node stays an obstacle. Size
-  gate: skip flat objects (height <40u), and require min half-extent ≥13u AND
-  area ≥1600u² so long-thin benches carve but sacks/cups don't.
-- **Door handling** (`_collect_doors`, `_door_choke_obstacles`,
-  `_build_door_links`): a door REFR is teleport (has `XTEL.Door` → connects two
-  cells) or interior-only (base in the DOOR set → same-cell passage). BOTH get a
-  Door Triangle. The navmesh is CHOKED at every door: jamb rectangles flank each
-  opening to neck the region to `DOOR_WIDTH`(=90u), and a guaranteed passage
-  SLOT is unioned back through the door centre so the choke can never sever
-  connectivity. The Door Triangle links the triangle straddling the threshold
-  line (weighted toward small along-facing offset). Door CRC "PathingDoor" =
-  `0xE48B73F3`. `door_fids` (raw low-24 DOOR base FormIDs) is threaded from
-  import_main via `_build_door_fid_set`. **Limitation**: cross-cell Portal Edge
-  Links between the two navmeshes of a teleport door are NOT computed (can't
-  resolve the other navmesh's triangle from PGRD alone).
+- **Algorithm (collision-voxel, rewritten 2026-07-12 — replaces the pathgrid-
+  buffering approach that could not represent walls; see
+  [navmesh_rebuild_plan.md](navmesh_rebuild_plan.md))**: VOXELIZE the real Havok
+  collision geometry of everything placed in the cell. The collision mesh is
+  exactly what the engine uses to decide what an NPC stands on / is blocked by,
+  so we use it directly instead of guessing from the pathgrid. Modules live in
+  `tes5_import/navmesh/`:
+  1. `world.gather_cell_geometry`: for every REFR, transform its base mesh's
+     cached collision soup by the ref's FULL rotation + scale + position into
+     cell space; split by surface normal into WALKABLE (|nz|≥cos46°) and
+     BLOCKING. Exteriors also emit the LAND height field as walkable terrain.
+  2. `voxel.build_heightfield` + `apply_filters`: rasterize into a column grid of
+     Z-spans (CS=16u interior / 32u exterior, CH=8u), then Recast filters —
+     low-hanging-obstacle merge, ledge (MAX_CLIMB=34u), min-headroom
+     (AGENT_HEIGHT=128u) — plus agent-radius erosion (AGENT_RADIUS=24u) for a
+     correct standoff from walls.
+  3. `region.build_regions` + `seed_regions`: flood-fill spans into connected
+     regions (spans link only within MAX_CLIMB → floor 1 vs floor 2 stay
+     separate, stairs connect); KEEP only regions a pathgrid node vouches for.
+     Tabletops/roofs/ledges hold no node and are dropped. A node's Z disambiguates
+     multi-floor columns. `synthesize_floor` lays floor under orphaned nodes whose
+     room shell is placed in a neighbouring cell (e.g. Anvil FG bedroom wing).
+  4. `contour.build_mesh`: trace each region's boundary, simplify
+     (MAX_SIMPLIFY_ERR=12u → straight wall-following edges), then triangulate
+     with interior Steiner points (TRI_TARGET_EDGE 128u/320u) + edge-flip
+     refinement for UNIFORM, non-sliver triangles. Vertex Z from span tops.
+  5. `build.build_navmesh`: orchestrates the above + connectivity repair (carve a
+     corridor along any PGRD edge whose endpoints ended in different components).
+     Then this module computes adjacency, water flags, door triangles.
+- **Obstruction is decided in WORLD SPACE, never per-mesh.** An object obstructs
+  iff it rises more than MAX_CLIMB above the floor beneath it — so rugs/pillows
+  are walked over, tables/barrels are routed around, with NO size gate or rug
+  list. Collision meshes are ORIGIN-CENTERED, so any per-mesh height rule is
+  meaningless (a table's local extent says nothing about how high it stands).
+- **Collision cache**: `asset_convert/collision_extract.py` reads the CONVERTED
+  `output/.../meshes/tes4/**.nif` (collision is root-mounted there; the CMS is a
+  flat triangle soup — no NiNode-transform walk needed). `scan_collision` →
+  `export/<plugin>/collision_cache.bin` (binary, ~15MB, ~2 min one-time).
+  Scales: CMS ×70, primitives (box/convex/capsule/sphere) ×10 — both measured
+  exactly. Layer gate keeps only OL_STATIC/ANIM_STATIC/TERRAIN/GROUND/STAIRS.
+- **REFR rotation is the TRANSPOSE** of the naive Rz@Ry@Rx product (the engine
+  inverse-applies the stored rotation). The old code applied only RotZ and
+  mis-oriented every ramp; the non-transposed full matrix put Anvil FG's floor
+  shell ~180° backwards from its furniture. `world._rot_matrix`.
+- **Door handling** (`_collect_doors`, `_build_door_links`): a door REFR is
+  teleport (`XTEL.Door`) or interior-only (base in the DOOR set). BOTH get a Door
+  Triangle linking the tri straddling the threshold line. The doorway is choked
+  naturally now by the door frame's own collision — no jamb hack. Door CRC
+  "PathingDoor" = `0xE48B73F3`. **Limitation**: cross-cell Portal Edge Links are
+  not computed.
 - **Base-model index**: `_build_base_model_index(by_type)` in import_main maps
-  raw low-24 base FormID → normalised `tes4/...nif` key, only for blocking base
-  types (so doors/lights/markers never punch holes). REFR exports position as
-  `PosX/PosY/PosZ` + `RotZ` + `XSCL.Scale` and base object as `NAME` (there is NO
-  `DATA.PosX`/`BaseType`/`Model.MODL` on REFR).
+  raw low-24 base FormID → `tes4/...nif` key, only for blocking base types. REFR
+  exports position as `PosX/PosY/PosZ` + `RotX/RotY/RotZ` + `XSCL.Scale`, base as
+  `NAME`.
 - **Triangle flags** (wbDefinitionsTES5.pas): every generated tri sets
-  `0x0800 Found` (matches vanilla); water tris add `0x0200`, door-linked tris add
-  `0x0400`. `_TRI_EDGE_LINK` bits (0x0001/2/4) are NOT set (we emit no Edge
-  Links). Cover Triangles array = empty.
-- **LAND VHGT decode** (`_decode_vhgt`): offset float + 33×33 SIGNED int8
-  gradients; accumulate in RAW units (÷8 the offset going in, ×8 coming out) —
-  mixing raw and ×8-scaled units in the accumulator multiplies the running
-  height by 8 every row → 1e30 overflow (the bug that made exterior navmesh Z
-  garbage). Pathgrid node Z is ~100u ABOVE the raw LAND height in cities
-  (streets are cobblestone statics), so LAND is the terrain, NOT the walk
-  surface — Z comes from nodes, not LAND.
-- **Rendering/iteration tool**: `python tools/navmesh_render.py --cell <FormID_or_EditorID>
-  [--out png] [--size N]` renders a top-down image: LAND heightmap, real mesh
-  SILHOUETTE footprints (obstacles red, floors/shells faint gray), pathgrid
-  nodes+edges (yellow), generated navmesh triangles (green/water blue/door
-  orange), teleport doors (magenta) vs interior doors (cyan) with facing lines.
-  This is the primary tool for tuning the converter — always compare against it.
-  Needs the mesh_bounds + mesh_footprints caches (auto-discovers pipeline paths).
+  `0x0800 Found`; water tris add `0x0200`, door-linked tris add `0x0400`. No Edge
+  Links, empty Cover Triangles.
+- **LAND VHGT decode** (`world.decode_vhgt`): offset float + 33×33 SIGNED int8
+  gradients; BOTH the offset and the accumulated deltas scale by 8:
+  `(cumsum(deltas) + offset) * 8`. The old code did `offset/8` in and `*8` out,
+  which annihilated the offset and put exterior terrain ~16,700u below its own
+  REFRs (Tamriel 47,6: terrain 829..3213 vs objects 18288..19776). This was the
+  dominant coverage bug (pathgrid-on-floor 32%→92%).
+- **Iteration tools**: `python tools/navmesh_preview.py --cell <FormID_or_EditorID>`
+  renders the generated navmesh (green) OVER the collision layer — walkable dim,
+  BLOCKING/walls RED — plus pathgrid. Showing the walls is what the old renderer
+  couldn't do (it never loaded them). `tools/navmesh_probe.py --cell X` reports
+  pathgrid-on-floor coverage and Z error for a cell.
 - **NVNM binary layout** (validated byte-exact against Skyrim.esm via
   `tools/navmesh_dump.py`): all arrays use U32 count prefixes; CRC of
   "PathingCell" = `0xA5E9A03C`; parent union decided by (Parent Worldspace==0)
@@ -101,14 +97,16 @@ cell PLUS a single top-level NAVI (Navmesh Info Map). Implemented in
   [island union empty when 0], PathingCell(U32 CRC, FormID WS, parent union)`.
   We emit 0 edge/door links (can't compute cross-navmesh portals from PGRD).
   NAVI has NO EDID; order is `NVER(=12), NVMI…, NVPP(empty: two 0 counts)`.
-- **Exterior PGRD point coords are WORLD coords** (not cell-local) → LAND
-  sampler origin = `grid_x*4096, grid_y*4096`. Points can extend past the cell
-  into neighbours; the sampler clamps to the 33×33 grid.
-- **Dependencies**: needs `shapely` (walkable-region boolean ops) + `scipy`
-  (Delaunay/KD-tree). Both pip-installed.
-- **Tests**: `tests/test_pgrd_navm.py` (19 tests: NVNM round-trip, adjacency
-  symmetry, grid coverage, water flags, footprint carving, door triangles/flags,
-  VHGT decode, NAVI/NVMI layout).
+- **Exterior PGRD/REFR point coords are WORLD coords** (not cell-local) → LAND
+  origin = `grid_x*4096, grid_y*4096`.
+- **Dependencies**: `numpy` + `scipy` (Delaunay); `mapbox_earcut` used when
+  present (fallback ear-clipper otherwise). `shapely` is no longer needed.
+- **Performance**: full 8228-cell run ≈ 7 min across 15 processes (was ~1 min
+  for the old low-quality path). Per-cell ~0.15s interior / ~0.7s exterior.
+- **Tests**: `tests/test_pgrd_navm.py` (19 tests: region flood-fill (flat floor,
+  two-storey separation, staircase), wall-doesn't-swallow-floor, rug walked over
+  vs table routed around, walls contain the mesh, contour orientation,
+  triangulation area/holes, VHGT offset, NVNM/NAVI layout).
 - **Reusable tool**: `python tools/navmesh_dump.py <esm> [--navi|--navm]
   [--nvnm-decode] [--max N]` — decompresses + decodes real NAVI/NAVM/NVNM for
   format verification (this is how the layout was validated against Skyrim.esm).
