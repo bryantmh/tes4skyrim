@@ -611,20 +611,22 @@ def phase_mesh_bounds(file_name: str, config: dict, output_dir: str = None,
                       export_dir: str = None) -> bool:
     """Scan converted NIF meshes and write OBND bounds cache."""
     from tes5_import.mesh_bounds import scan_mesh_bounds
-    from tes5_import.mesh_footprints import scan_mesh_footprints
+    from asset_convert.collision_extract import scan_collision
     _export_dir = export_dir or str(SCRIPT_DIR / "export")
     _out_dir    = output_dir or str(SCRIPT_DIR / "output")
     mesh_out_dir = str(Path(_out_dir) / file_name / 'meshes')
     cache_path   = str(Path(_export_dir) / file_name / 'mesh_bounds_cache.json')
-    fp_path      = str(Path(_export_dir) / file_name / 'mesh_footprints_cache.json')
+    col_path     = str(Path(_export_dir) / file_name / 'collision_cache.bin')
     if not os.path.isdir(mesh_out_dir):
         print(f"[{file_name}] No meshes directory found, skipping bounds scan")
         return False
     print(f"[{file_name}] Scanning mesh bounds...")
     scan_mesh_bounds(mesh_out_dir, cache_path)
-    # 2D silhouette footprints for navmesh obstacle carving.
-    print(f"[{file_name}] Scanning mesh footprints...")
-    scan_mesh_footprints(mesh_out_dir, fp_path)
+    # Havok collision soups (walkable/blocking triangles) for navmesh building.
+    # Read from the CONVERTED meshes: collision is root-mounted there, and the
+    # CMS is a flat triangle soup — no node-transform walk or strip decode.
+    print(f"[{file_name}] Scanning mesh collision...")
+    scan_collision(mesh_out_dir, col_path)
     return True
 
 

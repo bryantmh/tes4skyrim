@@ -10,10 +10,10 @@ just text_reader/writer, and loads scipy/shapely lazily) keeps each child small.
 FormIDs are pre-assigned in the parent (job['navm_fid']) so no PluginWriter — an
 unpicklable, shared-state object — has to cross the process boundary.
 
-The mesh-footprint silhouette cache is a module global in `mesh_footprints`; a
-spawned child does NOT inherit the parent's loaded copy, so each worker loads it
-once from disk in the pool initializer.  Without this, obstacle carving would
-silently no-op in the children.
+The Havok collision cache is a module global in `asset_convert.collision_extract`;
+a spawned child does NOT inherit the parent's loaded copy, so each worker loads it
+once from disk in the pool initializer.  Without this, every cell would voxelize
+an empty world and emit no navmesh at all.
 """
 
 from .pgrd_to_navm import convert_PGRD
@@ -23,9 +23,9 @@ _BASE_MODEL_BY_FID: dict = {}
 _DOOR_FIDS: set = set()
 
 
-def init_worker(base_model_by_fid: dict, door_fids: set, footprints_cache: str,
-                bounds_cache: str = '', formid_offset: int = 0):
-    """ProcessPool initializer: stash carving context; load carving caches.
+def init_worker(base_model_by_fid: dict, door_fids: set, collision_cache: str,
+                formid_offset: int = 0):
+    """ProcessPool initializer: stash context; load the collision cache.
 
     Runs once per worker process.  A spawned child does NOT inherit the parent's
     module-global state, so everything convert_PGRD relies on must be rebuilt
@@ -38,23 +38,18 @@ def init_worker(base_model_by_fid: dict, door_fids: set, footprints_cache: str,
         keeps master index 0x00 instead of the plugin's real index.  The engine
         then can't resolve the navmesh's parent cell at load and null-derefs in
         Hook_NavMeshLoad.  MUST be set before any get_formid() call.
-      - `mesh_footprints._FOOTPRINTS` (object silhouettes)   → footprints_cache
-      - `mesh_bounds._MESH_BOUNDS`   (object AABBs)           → bounds_cache
-        `_build_exclusion_zones` calls get_mesh_obnd() as its size/height gate
-        AND footprint fallback, so if bounds are missing it returns [] for every
-        ref and NO obstacles (furniture, pillars, WALLS) get carved.
+      - `collision_extract._COLLISION` — the per-mesh Havok collision soups the
+        navmesh is voxelized from.  Without it every cell has no geometry and
+        produces no navmesh at all.
     """
     global _BASE_MODEL_BY_FID, _DOOR_FIDS
     _BASE_MODEL_BY_FID = base_model_by_fid
     _DOOR_FIDS = door_fids
     from .text_reader import set_formid_index_offset
     set_formid_index_offset(formid_offset)
-    if footprints_cache:
-        from .mesh_footprints import load_mesh_footprints
-        load_mesh_footprints(footprints_cache, quiet=True)
-    if bounds_cache:
-        from .mesh_bounds import load_mesh_bounds
-        load_mesh_bounds(bounds_cache, quiet=True)
+    if collision_cache:
+        from asset_convert.collision_extract import load_collision
+        load_collision(collision_cache, quiet=True)
 
 
 def run_job(job: dict):

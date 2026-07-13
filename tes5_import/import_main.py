@@ -302,9 +302,10 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     from .mesh_bounds import load_mesh_bounds
     cache_path = os.path.join(export_dir, 'mesh_bounds_cache.json')
     load_mesh_bounds(cache_path)
-    # 2D silhouette footprints (for navmesh obstacle carving) live beside it.
-    from .mesh_footprints import load_mesh_footprints
-    load_mesh_footprints(os.path.join(export_dir, 'mesh_footprints_cache.json'))
+    # Havok collision soups (walkable/blocking triangles) the navmesh is built
+    # from.  Written by convert.py (scan_collision) from the CONVERTED meshes.
+    from asset_convert.collision_extract import load_collision
+    load_collision(os.path.join(export_dir, 'collision_cache.bin'))
 
     # --- Phase 0e: Compute furniture seat lists from source NIF markers ---
     # FURN MNAM/FNPR must index the converted NIF's clustered seat positions,
@@ -477,8 +478,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # look up the precomputed (navm_bytes, meta) instead of calling convert_PGRD.
     navm_cache = _precompute_navmeshes(
         by_type, writer, base_model_by_fid, door_fids,
-        footprints_cache=os.path.join(export_dir, 'mesh_footprints_cache.json'),
-        bounds_cache=os.path.join(export_dir, 'mesh_bounds_cache.json'))
+        collision_cache=os.path.join(export_dir, 'collision_cache.bin'))
 
     _build_cell_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids,
                        navm_cache)
@@ -717,8 +717,7 @@ def _navm_worker_count(job_count: int) -> int:
 
 def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
                           base_model_by_fid: dict, door_fids: set,
-                          footprints_cache: str = '',
-                          bounds_cache: str = '') -> dict:
+                          collision_cache: str = '') -> dict:
     """Run every PGRD→NAVM conversion in parallel; return {key: (bytes, meta)}.
 
     FormIDs are pre-allocated serially in builder-visit order so results are
@@ -759,8 +758,8 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
 
     # A single tiny job isn't worth a process pool's spin-up cost.
     if len(jobs) == 1 or worker_count == 1:
-        navm_worker.init_worker(base_model_by_fid, door_fids, footprints_cache,
-                                bounds_cache, formid_offset)
+        navm_worker.init_worker(base_model_by_fid, door_fids, collision_cache,
+                                formid_offset)
         for job in jobs:
             key, result = navm_worker.run_job(job)
             cache[key] = result
@@ -770,8 +769,8 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
         with ProcessPoolExecutor(
                 max_workers=worker_count,
                 initializer=navm_worker.init_worker,
-                initargs=(base_model_by_fid, door_fids, footprints_cache,
-                          bounds_cache, formid_offset),
+                initargs=(base_model_by_fid, door_fids, collision_cache,
+                          formid_offset),
                 max_tasks_per_child=500) as ex:
             for key, result in ex.map(navm_worker.run_job, jobs,
                                       chunksize=chunksize):

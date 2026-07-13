@@ -1,8 +1,17 @@
-"""Tests for PGRD (PathGrid) → NAVM (NavMesh) conversion and NAVI building.
+"""Tests for collision-driven navmesh generation and NAVM/NAVI packing.
 
-Validates the NVNM binary layout against the structure dumped from a real
-Skyrim.esm navmesh (see tools/navmesh_dump.py) and the NVMI/NAVI layout against
-a real Skyrim.esm NAVI record.
+The navmesh is built by VOXELIZING the Havok collision meshes of everything
+placed in a cell (see tes5_import/navmesh/), so these tests feed synthetic
+collision soups — a floor slab, walls, a table, a rug — through the real
+pipeline and assert the behaviours we actually care about:
+
+  * floors become navmesh, walls do not
+  * an NPC walks OVER a rug but AROUND a table (the world-space step-height
+    rule, which is the whole reason obstruction is not decided per-mesh)
+  * stairs connect; two stacked floors do not
+
+Plus the NVNM/NVMI binary layout, validated against real Skyrim.esm records
+(tools/navmesh_dump.py).  That layout is byte-exact and must not drift.
 """
 
 import struct
@@ -10,17 +19,16 @@ import zlib
 
 import pytest
 
-pytest.importorskip("scipy")
 pytest.importorskip("numpy")
-pytest.importorskip("shapely")
+pytest.importorskip("scipy")
 
-from tes5_import import pgrd_to_navm as p2n
-from tes5_import.navi_builder import build_navi_record
+from tes5_import import pgrd_to_navm as p2n  # noqa: E402
+from tes5_import.navi_builder import build_navi_record  # noqa: E402
+from tes5_import.navmesh import build as nmbuild  # noqa: E402
+from tes5_import.navmesh import contour, params, region, voxel  # noqa: E402
 
 
 class FakeWriter:
-    """Minimal writer supplying sequential FormIDs."""
-
     def __init__(self, start=0x01000800):
         self._next = start
 
@@ -31,435 +39,375 @@ class FakeWriter:
 
 
 # ---------------------------------------------------------------------------
-# Test fixtures — synthetic pathgrids
+# Synthetic collision helpers
 # ---------------------------------------------------------------------------
 
-def _grid_pgrd(cell_fid='00001234', wrld_fid=None, n=5, spacing=200.0):
-    """Build an n×n grid pathgrid, each node connected to its neighbours."""
-    rec = {'Signature': 'PGRD', 'FormID': '000104D1', 'EditorID': 'TestGrid'}
-    if wrld_fid:
-        rec['ParentWRLD'] = wrld_fid
-    rec['ParentCELL'] = cell_fid
+def _quad(x0, y0, x1, y1, z):
+    """Two triangles forming a horizontal slab at height z (flat 9N list)."""
+    return [x0, y0, z, x1, y0, z, x1, y1, z,
+            x0, y0, z, x1, y1, z, x0, y1, z]
 
-    points = []
+
+def _wall(x0, y0, x1, y1, z0, z1):
+    """Two triangles forming a vertical wall quad."""
+    return [x0, y0, z0, x1, y1, z0, x1, y1, z1,
+            x0, y0, z0, x1, y1, z1, x0, y0, z1]
+
+
+def _box(cx, cy, z0, z1, half):
+    """A solid box: walkable top + four blocking sides."""
+    w = _quad(cx - half, cy - half, cx + half, cy + half, z1)
+    b = []
+    b += _wall(cx - half, cy - half, cx + half, cy - half, z0, z1)
+    b += _wall(cx + half, cy - half, cx + half, cy + half, z0, z1)
+    b += _wall(cx + half, cy + half, cx - half, cy + half, z0, z1)
+    b += _wall(cx - half, cy + half, cx - half, cy - half, z0, z1)
+    return w, b
+
+
+def _refr(fid, base, x, y, z, rot_z=0.0, scale=1.0):
+    return {'Signature': 'REFR', 'FormID': fid, 'NAME': base,
+            'PosX': str(x), 'PosY': str(y), 'PosZ': str(z),
+            'RotX': '0.0', 'RotY': '0.0', 'RotZ': str(rot_z),
+            'XSCL.Scale': str(scale)}
+
+
+def _room_collision(r=500.0, h=200.0):
+    """A 2r x 2r room: floor slab + 4 perimeter walls, centred on the origin."""
+    block = []
+    block += _wall(-r, -r, r, -r, 0.0, h)
+    block += _wall(r, -r, r, r, 0.0, h)
+    block += _wall(r, r, -r, r, 0.0, h)
+    block += _wall(-r, r, -r, -r, 0.0, h)
+    return {'w': _quad(-r, -r, r, r, 0.0), 'b': block}
+
+
+def _nodes_grid(n=3, spacing=250.0, z=0.0):
+    """n x n pathgrid nodes centred on the origin, 4-connected."""
+    nodes = []
     for iy in range(n):
         for ix in range(n):
-            points.append((ix * spacing, iy * spacing, 100.0))
-    rec['DATA.PointCount'] = str(len(points))
-
-    def idx(ix, iy):
-        return iy * n + ix
-
-    edges = {i: [] for i in range(len(points))}
+            nodes.append(((ix - (n - 1) / 2) * spacing,
+                          (iy - (n - 1) / 2) * spacing, z))
+    edges = []
     for iy in range(n):
         for ix in range(n):
-            i = idx(ix, iy)
+            i = iy * n + ix
             if ix + 1 < n:
-                j = idx(ix + 1, iy)
-                edges[i].append(j)
-                edges[j].append(i)
+                edges.append((i, iy * n + ix + 1))
             if iy + 1 < n:
-                j = idx(ix, iy + 1)
-                edges[i].append(j)
-                edges[j].append(i)
-
-    for i, (x, y, z) in enumerate(points):
-        rec[f'Point[{i}].X'] = str(x)
-        rec[f'Point[{i}].Y'] = str(y)
-        rec[f'Point[{i}].Z'] = str(z)
-        rec[f'Point[{i}].Connections'] = str(len(edges[i]))
-        for j, tgt in enumerate(edges[i]):
-            rec[f'Point[{i}].Edge[{j}]'] = str(tgt)
-    return rec
+                edges.append((i, (iy + 1) * n + ix))
+    return nodes, edges
 
 
-# ---------------------------------------------------------------------------
-# NVNM parsing helper (mirrors the on-disk layout)
-# ---------------------------------------------------------------------------
-
-def _parse_navm(navm_bytes):
-    """Parse a compressed NAVM record -> (formid, subs dict, nvnm dict)."""
-    sig, size, flags, formid = struct.unpack_from('<4sIII', navm_bytes, 0)
-    assert sig == b'NAVM'
-    assert flags & 0x00040000, "NAVM must set the Compressed flag"
-    payload = navm_bytes[24:24 + size]
-    uncompressed_size = struct.unpack_from('<I', payload, 0)[0]
-    body = zlib.decompress(payload[4:])
-    assert len(body) == uncompressed_size
-
-    # Parse subrecords.
-    subs = {}
-    off = 0
-    while off + 6 <= len(body):
-        ssig = body[off:off + 4].decode('latin1')
-        slen = struct.unpack_from('<H', body, off + 4)[0]
-        off += 6
-        subs[ssig] = body[off:off + slen]
-        off += slen
-
-    nvnm = _parse_nvnm(subs['NVNM'])
-    return formid, subs, nvnm
+def _build_cell(soups, refrs, nodes, edges, base_model):
+    """Run the real builder with an injected collision accessor."""
+    return nmbuild.build_navmesh(refrs, base_model, soups.get, nodes, edges)
 
 
-def _parse_nvnm(d):
-    p = 0
-    ver, crc, wrld = struct.unpack_from('<III', d, p); p += 12
-    out = {'version': ver, 'crc': crc, 'worldspace': wrld}
-    if wrld == 0:
-        out['parent_cell'] = struct.unpack_from('<I', d, p)[0]; p += 4
-    else:
-        gy, gx = struct.unpack_from('<hh', d, p); p += 4
-        out['grid_y'], out['grid_x'] = gy, gx
-
-    nv = struct.unpack_from('<I', d, p)[0]; p += 4
-    verts = []
-    for _ in range(nv):
-        verts.append(struct.unpack_from('<fff', d, p)); p += 12
-    out['vertices'] = verts
-
-    nt = struct.unpack_from('<I', d, p)[0]; p += 4
-    tris = []
-    for _ in range(nt):
-        t = struct.unpack_from('<6h2H', d, p); p += 16
-        tris.append(t)
-    out['triangles'] = tris
-
-    ne = struct.unpack_from('<I', d, p)[0]; p += 4 + ne * 12
-    nd = struct.unpack_from('<I', d, p)[0]; p += 4 + nd * 10
-    nc = struct.unpack_from('<I', d, p)[0]; p += 4 + nc * 2
-    out['edge_links'], out['door_tris'], out['cover_tris'] = ne, nd, nc
-
-    divisor = struct.unpack_from('<I', d, p)[0]; p += 4
-    out['divisor'] = divisor
-    out['max_x_dist'], out['max_y_dist'] = struct.unpack_from('<ff', d, p); p += 8
-    bbox = struct.unpack_from('<6f', d, p); p += 24
-    out['bbox'] = bbox
-
-    total = 0
-    for _ in range(divisor * divisor):
-        cnt = struct.unpack_from('<I', d, p)[0]; p += 4 + cnt * 2
-        total += cnt
-    out['grid_total'] = total
-    out['consumed'] = p
-    out['len'] = len(d)
-    return out
+def _centroids(verts, tris):
+    for t in tris:
+        yield (sum(verts[i][0] for i in t) / 3.0,
+               sum(verts[i][1] for i in t) / 3.0,
+               sum(verts[i][2] for i in t) / 3.0)
 
 
 # ---------------------------------------------------------------------------
-# NVNM structure tests
+# Voxel / region behaviour — the core rules
 # ---------------------------------------------------------------------------
 
-def test_interior_navm_roundtrip():
-    rec = _grid_pgrd(cell_fid='00001234', n=5)
-    navm, meta = p2n.convert_PGRD(rec, writer=FakeWriter())
-    assert navm is not None
-    formid, subs, nvnm = _parse_navm(navm)
-
-    assert nvnm['version'] == 12
-    assert nvnm['crc'] == 0xA5E9A03C
-    assert nvnm['worldspace'] == 0
-    # Interior parent cell is the remapped FormID (offset 0 in tests -> unchanged).
-    assert nvnm['parent_cell'] == meta['cell_fid']
-    # NVNM must be fully consumed (no trailing/misaligned bytes).
-    assert nvnm['consumed'] == nvnm['len']
-    assert len(nvnm['vertices']) >= 3
-    assert len(nvnm['triangles']) >= 1
-    assert nvnm['edge_links'] == 0
-    assert nvnm['door_tris'] == 0
-    assert nvnm['cover_tris'] == 0
+def test_flat_floor_is_one_region():
+    hf = voxel.Heightfield(0, 0, 0, 10, 10, 16.0, 8.0)
+    for y in range(10):
+        for x in range(10):
+            hf.add_span(x, y, -8, 0, True)
+    _ro, regions = region.build_regions(hf)
+    assert len(regions) == 1
 
 
-def test_exterior_navm_grid_coords():
-    rec = _grid_pgrd(cell_fid='00005678', wrld_fid='0000003C', n=5)
-    cell_rec = {'XCLC.X': '-30', 'XCLC.Y': '-1'}
-    navm, meta = p2n.convert_PGRD(rec, writer=FakeWriter(), cell_rec=cell_rec)
-    assert navm is not None
-    _, _, nvnm = _parse_navm(navm)
-
-    assert nvnm['worldspace'] == meta['wrld_fid']
-    assert nvnm['worldspace'] != 0
-    # Verified field order vs Skyrim.esm: Grid Y then Grid X.
-    assert nvnm['grid_y'] == -1
-    assert nvnm['grid_x'] == -30
-    assert nvnm['consumed'] == nvnm['len']
+def test_two_stacked_floors_stay_separate_regions():
+    """A second storey must never merge into the first."""
+    hf = voxel.Heightfield(0, 0, 0, 10, 10, 16.0, 8.0)
+    for y in range(10):
+        for x in range(10):
+            hf.add_span(x, y, -8, 0, True)
+            hf.add_span(x, y, 192, 200, True)
+    _ro, regions = region.build_regions(hf)
+    assert len(regions) == 2
 
 
-def test_triangle_indices_in_range():
-    rec = _grid_pgrd(n=6)
-    navm, _ = p2n.convert_PGRD(rec, writer=FakeWriter())
-    _, _, nvnm = _parse_navm(navm)
-    nverts = len(nvnm['vertices'])
-    for (v0, v1, v2, e01, e12, e20, flags, cover) in nvnm['triangles']:
-        for v in (v0, v1, v2):
-            assert 0 <= v < nverts
-        for e in (e01, e12, e20):
-            assert e == -1 or 0 <= e < len(nvnm['triangles'])
-        assert cover == 0
+def test_staircase_connects_into_one_region():
+    """Steps within MAX_CLIMB of each other must form one walkable region."""
+    step = params.MAX_CLIMB - 4.0
+    hf = voxel.Heightfield(0, 0, 0, 10, 3, 16.0, 8.0)
+    for x in range(10):
+        for y in range(3):
+            hf.add_span(x, y, x * step - 8, x * step, True)
+    _ro, regions = region.build_regions(hf)
+    assert len(regions) == 1
 
 
-def test_adjacency_is_symmetric():
-    """If tri A lists tri B as an edge neighbour, B must list A back."""
-    rec = _grid_pgrd(n=6)
-    navm, _ = p2n.convert_PGRD(rec, writer=FakeWriter())
-    _, _, nvnm = _parse_navm(navm)
-    tris = nvnm['triangles']
-    for ti, t in enumerate(tris):
-        for e in t[3:6]:
-            if e != -1:
-                assert ti in tris[e][3:6], f"tri {ti}->{e} not mirrored"
+def test_wall_span_does_not_swallow_the_floor():
+    """A wall standing ON a floor must not merge into one giant blocking span.
 
-
-def test_grid_indexes_all_triangles():
-    rec = _grid_pgrd(n=5)
-    navm, _ = p2n.convert_PGRD(rec, writer=FakeWriter())
-    _, _, nvnm = _parse_navm(navm)
-    # Every triangle lands in exactly one grid bucket (by centroid).
-    assert nvnm['grid_total'] == len(nvnm['triangles'])
-
-
-def test_max_distance_matches_span_over_divisor():
-    rec = _grid_pgrd(n=5)
-    navm, _ = p2n.convert_PGRD(rec, writer=FakeWriter())
-    _, _, nvnm = _parse_navm(navm)
-    min_x, min_y, min_z, max_x, max_y, max_z = nvnm['bbox']
-    span_x = max_x - min_x
-    span_y = max_y - min_y
-    assert nvnm['max_x_dist'] == pytest.approx(span_x / nvnm['divisor'], rel=1e-4)
-    assert nvnm['max_y_dist'] == pytest.approx(span_y / nvnm['divisor'], rel=1e-4)
-
-
-def test_water_flag_set_below_water_height():
-    rec = _grid_pgrd(n=5)
-    # Nodes at z=100; water at z=500 → everything underwater → all Water-flagged.
-    cell_rec = {'DATA.Flags': str(0x02), 'XCLW.WaterHeight': '500.0'}
-    navm, _ = p2n.convert_PGRD(rec, writer=FakeWriter(), cell_rec=cell_rec)
-    _, _, nvnm = _parse_navm(navm)
-    assert nvnm['triangles'], "expected triangles"
-    assert all(t[6] & 0x0200 for t in nvnm['triangles'])
-
-
-def test_too_few_points_returns_none():
-    rec = {'Signature': 'PGRD', 'DATA.PointCount': '1',
-           'Point[0].X': '0', 'Point[0].Y': '0', 'Point[0].Z': '0',
-           'Point[0].Connections': '0'}
-    navm, meta = p2n.convert_PGRD(rec, writer=FakeWriter())
-    assert navm is None and meta is None
-
-
-def test_no_writer_returns_none():
-    rec = _grid_pgrd(n=5)
-    assert p2n.convert_PGRD(rec, writer=None) == (None, None)
+    Regression: merging spans by mere adjacency fused wall and floor into a
+    single 400u-tall BLOCKING span, erasing the floor beneath it (observed as a
+    column reading -260..235 BLOCKING under a pathgrid node standing at -254).
+    """
+    hf = voxel.Heightfield(0, 0, 0, 4, 4, 16.0, 8.0)
+    hf.add_span(1, 1, -8, 0, True)        # floor
+    hf.add_span(1, 1, 0, 400, False)      # wall rising from it
+    col = hf.spans[1 * 4 + 1]
+    assert any(s[2] for s in col), "the floor span was destroyed by the wall"
 
 
 # ---------------------------------------------------------------------------
-# Exclusion (static-footprint carving) tests
+# The step-over rule: rugs vs tables (decided in WORLD space, never per-mesh)
 # ---------------------------------------------------------------------------
 
-def test_static_footprint_carves_triangles(monkeypatch):
-    # A big STAT centred in the grid should remove central triangles.
-    rec = _grid_pgrd(n=7, spacing=200.0)  # covers 0..1200 in x,y
-    base_low = 0x00ABCDEF
-    refr = {'Signature': 'REFR', 'NAME': format(base_low, '08X'),
-            'PosX': '600', 'PosY': '600', 'PosZ': '100'}
-    base_model = {base_low: 'tes4/stat/bigrock.nif'}
+def test_rug_is_walked_over_not_carved_around():
+    """A low flat object must leave the floor beneath it navigable."""
+    soups = {'room.nif': _room_collision(),
+             'rug.nif': {'w': _quad(-120, -120, 120, 120, 2.0), 'b': []}}
+    base_model = {1: 'room.nif', 2: 'rug.nif'}
+    refrs = [_refr('00000001', '00000001', 0, 0, 0),
+             _refr('00000002', '00000002', 0, 0, 0)]
+    nodes, edges = _nodes_grid()
 
-    # Fake a 400×400×200 mesh AABB centred at origin.
-    monkeypatch.setattr(p2n, 'get_mesh_obnd',
-                        lambda k: (-200, -200, -100, 200, 200, 100),
-                        raising=False)
-    # get_mesh_obnd is imported lazily inside _build_exclusion_zones; patch the
-    # source module instead.
-    import tes5_import.mesh_bounds as mb
-    monkeypatch.setattr(mb, 'get_mesh_obnd',
-                        lambda k: (-200, -200, -100, 200, 200, 100))
-
-    navm_no, _ = p2n.convert_PGRD(_grid_pgrd(n=7, spacing=200.0),
-                                  writer=FakeWriter())
-    navm_yes, _ = p2n.convert_PGRD(rec, writer=FakeWriter(),
-                                   refr_recs=[refr], base_model_by_fid=base_model)
-    _, _, nvnm_no = _parse_navm(navm_no)
-    _, _, nvnm_yes = _parse_navm(navm_yes)
-    assert len(nvnm_yes['triangles']) < len(nvnm_no['triangles'])
+    verts, tris = _build_cell(soups, refrs, nodes, edges, base_model)
+    assert tris
+    covered = any(abs(cx) < 120 and abs(cy) < 120
+                  for (cx, cy, _cz) in _centroids(verts, tris))
+    assert covered, "navmesh was carved around a rug instead of over it"
 
 
-def test_tiny_object_does_not_carve(monkeypatch):
-    rec = _grid_pgrd(n=7, spacing=200.0)
-    base_low = 0x00ABCDEF
-    refr = {'Signature': 'REFR', 'NAME': format(base_low, '08X'),
-            'PosX': '600', 'PosY': '600', 'PosZ': '100'}
-    base_model = {base_low: 'tes4/clutter/cup.nif'}
-    import tes5_import.mesh_bounds as mb
-    # 20×20 half-extents → below MIN_EXCLUSION_HALF_EXTENT → ignored.
-    monkeypatch.setattr(mb, 'get_mesh_obnd',
-                        lambda k: (-20, -20, -10, 20, 20, 10))
+def test_table_blocks_the_floor_beneath_it():
+    """A tall object must NOT leave its own footprint navigable."""
+    tw, tb = _box(0, 0, 0.0, 120.0, 110.0)   # 220x220 table, 120u tall
+    soups = {'room.nif': _room_collision(),
+             'table.nif': {'w': tw, 'b': tb}}
+    base_model = {1: 'room.nif', 2: 'table.nif'}
+    refrs = [_refr('00000001', '00000001', 0, 0, 0),
+             _refr('00000002', '00000002', 0, 0, 0)]
+    # Nodes routed AROUND the table, as Bethesda would author them.
+    nodes = [(-300, -300, 0), (300, -300, 0), (300, 300, 0), (-300, 300, 0)]
+    edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
 
-    navm_no, _ = p2n.convert_PGRD(_grid_pgrd(n=7, spacing=200.0),
-                                  writer=FakeWriter())
-    navm_yes, _ = p2n.convert_PGRD(rec, writer=FakeWriter(),
-                                   refr_recs=[refr], base_model_by_fid=base_model)
-    _, _, nvnm_no = _parse_navm(navm_no)
-    _, _, nvnm_yes = _parse_navm(navm_yes)
-    assert len(nvnm_yes['triangles']) == len(nvnm_no['triangles'])
+    verts, tris = _build_cell(soups, refrs, nodes, edges, base_model)
+    assert tris
+    for (cx, cy, cz) in _centroids(verts, tris):
+        if abs(cx) < 60 and abs(cy) < 60 and cz < 60:
+            pytest.fail("navmesh runs through a 120u-tall table at "
+                        "(%.0f, %.0f, %.0f)" % (cx, cy, cz))
 
 
 # ---------------------------------------------------------------------------
-# NAVI builder tests (validated against Skyrim.esm NAVI 0x00012FB4)
+# Walls
 # ---------------------------------------------------------------------------
 
-def _parse_navi(navi_bytes):
-    sig, size, flags, formid = struct.unpack_from('<4sIII', navi_bytes, 0)
-    assert sig == b'NAVI'
-    body = navi_bytes[24:24 + size]
-    subs = []
-    off = 0
-    while off + 6 <= len(body):
-        ssig = body[off:off + 4].decode('latin1')
-        slen = struct.unpack_from('<H', body, off + 4)[0]
-        off += 6
-        subs.append((ssig, body[off:off + slen]))
-        off += slen
-    return formid, subs
+def test_navmesh_stays_inside_the_walls():
+    soups = {'room.nif': _room_collision()}
+    base_model = {1: 'room.nif'}
+    refrs = [_refr('00000001', '00000001', 0, 0, 0)]
+    nodes, edges = _nodes_grid()
 
-
-def _parse_nvmi(d):
-    p = 0
-    fid = struct.unpack_from('<I', d, p)[0]; p += 4
-    cat = struct.unpack_from('<I', d, p)[0]; p += 4
-    center = struct.unpack_from('<fff', d, p); p += 12
-    p += 4  # preferred merges flag
-    ne = struct.unpack_from('<I', d, p)[0]; p += 4 + ne * 4
-    npe = struct.unpack_from('<I', d, p)[0]; p += 4 + npe * 4
-    ndl = struct.unpack_from('<I', d, p)[0]; p += 4 + ndl * 8
-    is_island = d[p]; p += 1
-    crc = struct.unpack_from('<I', d, p)[0]; p += 4
-    ws = struct.unpack_from('<I', d, p)[0]; p += 4
-    out = {'fid': fid, 'category': cat, 'center': center, 'is_island': is_island,
-           'crc': crc, 'worldspace': ws}
-    if ws == 0:
-        out['parent_cell'] = struct.unpack_from('<I', d, p)[0]; p += 4
-    else:
-        gy, gx = struct.unpack_from('<hh', d, p); p += 4
-        out['grid_y'], out['grid_x'] = gy, gx
-    out['consumed'] = p
-    out['len'] = len(d)
-    return out
-
-
-def test_navi_layout_interior_and_exterior():
-    metas = [
-        {'fid': 0x01000900, 'wrld_fid': 0, 'cell_fid': 0x0001A2B3,
-         'grid_x': 0, 'grid_y': 0, 'is_exterior': False,
-         'center': (10.0, 20.0, 30.0), 'base_objects': []},
-        {'fid': 0x01000901, 'wrld_fid': 0x0000003C, 'cell_fid': 0,
-         'grid_x': -30, 'grid_y': -1, 'is_exterior': True,
-         'center': (-100.0, 200.0, 5.0), 'base_objects': []},
-    ]
-    navi = build_navi_record(0x01000FFF, metas)
-    formid, subs = _parse_navi(navi)
-    assert formid == 0x01000FFF
-
-    sigs = [s for s, _ in subs]
-    # Real Skyrim.esm order: NVER first, one NVMI per navmesh, NVPP last, no EDID.
-    assert sigs[0] == 'NVER'
-    assert sigs.count('NVMI') == 2
-    assert sigs[-1] == 'NVPP'
-    assert 'EDID' not in sigs
-    assert struct.unpack('<I', dict(subs)['NVER'])[0] == 12
-
-    nvmis = [_parse_nvmi(d) for s, d in subs if s == 'NVMI']
-    for n in nvmis:
-        assert n['consumed'] == n['len']  # each NVMI fully consumed (57 bytes vanilla)
-        assert n['crc'] == 0xA5E9A03C
-        assert n['category'] == 0
-        assert n['is_island'] == 0
-
-    interior, exterior = nvmis
-    assert interior['worldspace'] == 0
-    assert interior['parent_cell'] == 0x0001A2B3
-    assert exterior['worldspace'] == 0x0000003C
-    assert exterior['grid_y'] == -1
-    assert exterior['grid_x'] == -30
-
-
-def test_navi_empty_metas_returns_empty():
-    assert build_navi_record(0x01000FFF, []) == b''
-
-
-def test_navm_meta_center_is_geometry_centroid():
-    rec = _grid_pgrd(n=5)
-    _, meta = p2n.convert_PGRD(rec, writer=FakeWriter())
-    cx, cy, cz = meta['center']
-    # Grid spans 0..800 in x/y; centroid should be near the middle.
-    assert 100 < cx < 700
-    assert 100 < cy < 700
+    verts, tris = _build_cell(soups, refrs, nodes, edges, base_model)
+    assert tris
+    for (x, y, _z) in verts:
+        assert -520 <= x <= 520 and -520 <= y <= 520, \
+            "navmesh escaped the room walls"
 
 
 # ---------------------------------------------------------------------------
-# VHGT (exterior LAND height field) decode
+# Contour / triangulation
 # ---------------------------------------------------------------------------
 
-def test_vhgt_decode_is_bounded_and_scaled():
-    # Build a VHGT blob: offset 100.0 (game units) then 33x33 zero gradients.
-    # Every cell should decode to exactly the offset (no accumulation drift,
-    # no 1e30 overflow from mixing raw/scaled units).
-    offset = 100.0
-    data = struct.pack('<f', offset) + b'\x00' * (33 * 33) + b'\x00\x00\x00'
-    grid = p2n._decode_vhgt(data.hex())
+def test_contour_orientation():
+    """Outer rings wind CCW (+area); holes wind CW (-area)."""
+    mask = {(x, y): 0.0 for x in range(5) for y in range(5)
+            if not (x == 2 and y == 2)}
+    loops = contour.trace_contours(mask)
+    areas = sorted(contour._signed_area(l) for l in loops)
+    assert areas[0] < 0 < areas[-1]
+
+
+def test_triangulation_covers_the_polygon():
+    """Triangulated area must match the polygon's area (no dropped floor).
+
+    Regression: the hand-rolled ear clipper bailed out on big concave rooms and
+    silently lost ~40% of the floor.
+    """
+    verts, tris = contour.triangulate([(0, 0), (10, 0), (10, 10), (0, 10)], [])
+    area = 0.0
+    for (a, b, c) in tris:
+        va, vb, vc = verts[a], verts[b], verts[c]
+        area += abs((vb[0] - va[0]) * (vc[1] - va[1]) -
+                    (vc[0] - va[0]) * (vb[1] - va[1])) * 0.5
+    assert area == pytest.approx(100.0, rel=0.02)
+
+
+def test_triangulation_respects_holes():
+    outer = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    hole = [(4, 4), (4, 6), (6, 6), (6, 4)]          # CW hole
+    verts, tris = contour.triangulate(outer, [hole])
+    area = 0.0
+    for (a, b, c) in tris:
+        va, vb, vc = verts[a], verts[b], verts[c]
+        area += abs((vb[0] - va[0]) * (vc[1] - va[1]) -
+                    (vc[0] - va[0]) * (vb[1] - va[1])) * 0.5
+    assert area == pytest.approx(96.0, rel=0.05)     # 100 - 4
+
+
+# ---------------------------------------------------------------------------
+# LAND VHGT decoding
+# ---------------------------------------------------------------------------
+
+def test_vhgt_offset_is_scaled_like_the_deltas():
+    """The VHGT offset float is in delta units and scales by 8, like the deltas.
+
+    Regression: the old decoder did `offset / 8` in and `* 8` out, which cancels
+    for the deltas but ANNIHILATES the offset — putting exterior terrain
+    thousands of units below the objects standing on it (Tamriel 47,6 decoded to
+    z=829..3213 while its own REFRs sat at z=18288..19776).
+    """
+    from tes5_import.navmesh.world import decode_vhgt
+    offset = 2397.0
+    data = struct.pack('<f', offset) + bytes(33 * 33)   # all-zero gradients
+    grid = decode_vhgt(data.hex())
     assert grid is not None
-    flat = [z for row in grid for z in row]
-    assert all(abs(z - offset) < 1e-3 for z in flat), (min(flat), max(flat))
+    assert grid.min() == pytest.approx(offset * 8.0)
+    assert grid.max() == pytest.approx(offset * 8.0)
 
 
 def test_vhgt_constant_slope_accumulates_linearly():
-    # A gradient of +1 raw unit per column → each column is +_VHGT_UNIT higher.
-    deltas = bytearray()
-    for _row in range(33):
-        deltas.append(0)                 # row-start delta 0
-        deltas.extend([1] * 32)          # +1 per column
-    data = struct.pack('<f', 0.0) + bytes(deltas) + b'\x00\x00\x00'
-    grid = p2n._decode_vhgt(data.hex())
-    assert grid[0][0] == 0.0
-    assert abs(grid[0][32] - 32 * p2n._VHGT_UNIT) < 1e-3
+    from tes5_import.navmesh.world import decode_vhgt
+    deltas = bytes([1]) * (33 * 33)          # +1 per step on both axes
+    data = struct.pack('<f', 0.0) + deltas
+    grid = decode_vhgt(data.hex())
+    assert grid[0][0] == pytest.approx(8.0)
+    assert grid[0][32] == pytest.approx(33 * 8.0)
+    assert grid[32][0] == pytest.approx(33 * 8.0)
 
 
 # ---------------------------------------------------------------------------
-# Door handling
+# NVNM / NAVI binary layout (validated against real Skyrim.esm records)
 # ---------------------------------------------------------------------------
 
-def _door_refr(fid, x, y, rot_z=0.0, teleport=False):
-    r = {'Signature': 'REFR', 'FormID': fid, 'NAME': '0000BEEF',
-         'PosX': str(x), 'PosY': str(y), 'PosZ': '100', 'RotZ': str(rot_z)}
-    if teleport:
-        r['XTEL.Door'] = '0000CAFE'
-    return r
+def _decode_nvnm(nvnm):
+    p = 0
+    ver = struct.unpack_from('<I', nvnm, p)[0]
+    p += 4
+    crc = struct.unpack_from('<I', nvnm, p)[0]
+    p += 4
+    wrld = struct.unpack_from('<I', nvnm, p)[0]
+    p += 4
+    if wrld == 0:
+        parent = struct.unpack_from('<I', nvnm, p)[0]
+        grid = None
+    else:
+        gy, gx = struct.unpack_from('<hh', nvnm, p)
+        parent, grid = None, (gx, gy)
+    p += 4
+    nv = struct.unpack_from('<I', nvnm, p)[0]
+    p += 4
+    verts = []
+    for _ in range(nv):
+        verts.append(struct.unpack_from('<fff', nvnm, p))
+        p += 12
+    nt = struct.unpack_from('<I', nvnm, p)[0]
+    p += 4
+    tris, adj, flags = [], [], []
+    for _ in range(nt):
+        t = struct.unpack_from('<6h2H', nvnm, p)
+        tris.append(t[0:3])
+        adj.append(t[3:6])
+        flags.append(t[6])
+        p += 16
+    return {'ver': ver, 'crc': crc, 'wrld': wrld, 'parent': parent,
+            'grid': grid, 'verts': verts, 'tris': tris, 'adj': adj,
+            'flags': flags}
 
 
-def test_door_triangle_emitted_and_flagged():
-    rec = _grid_pgrd(n=7, spacing=200.0)   # covers 0..1200
-    door = _door_refr('00012345', 600, 600, teleport=True)
-    navm, _ = p2n.convert_PGRD(rec, writer=FakeWriter(), refr_recs=[door])
-    _, _, nvnm = _parse_navm(navm)
-    assert nvnm['door_tris'] == 1
-    # The linked triangle must carry the Door flag (0x0400).
-    door_flagged = [t for t in nvnm['triangles'] if t[6] & 0x0400]
-    assert len(door_flagged) == 1
+def test_nvnm_header_constants():
+    """Version and CRC constants must not drift from Skyrim.esm."""
+    assert p2n._NVNM_VERSION == 12
+    assert p2n._PATHING_CELL_CRC == 0xA5E9A03C
+    assert p2n._PATHING_DOOR_CRC == 0xE48B73F3
+
+
+def test_nvnm_roundtrip_and_adjacency_symmetry():
+    verts = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 100.0, 0.0),
+             (0.0, 100.0, 0.0)]
+    tris = [(0, 1, 2), (0, 2, 3)]
+    adj = p2n._compute_adjacency(tris)
+    nvnm = p2n._pack_nvnm(verts, tris, adj, [0] * len(tris),
+                          wrld_fid=0, cell_fid=0x00001234,
+                          grid_x=0, grid_y=0, is_exterior=False)
+    d = _decode_nvnm(nvnm)
+    assert d['ver'] == 12
+    assert d['crc'] == 0xA5E9A03C
+    assert d['parent'] == 0x00001234
+    assert len(d['verts']) == 4
+    assert len(d['tris']) == 2
+    for ti, a in enumerate(d['adj']):
+        for tj in a:
+            if tj >= 0:
+                assert ti in d['adj'][tj], "adjacency is not symmetric"
+
+
+def test_nvnm_exterior_writes_grid_y_then_x():
+    verts = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 100.0, 0.0)]
+    tris = [(0, 1, 2)]
+    nvnm = p2n._pack_nvnm(verts, tris, p2n._compute_adjacency(tris), [0],
+                          wrld_fid=0x0000003C, cell_fid=0,
+                          grid_x=7, grid_y=-3, is_exterior=True)
+    d = _decode_nvnm(nvnm)
+    assert d['wrld'] == 0x0000003C
+    assert d['grid'] == (7, -3)
 
 
 def test_all_triangles_carry_found_flag():
-    rec = _grid_pgrd(n=5)
-    navm, _ = p2n.convert_PGRD(rec, writer=FakeWriter())
-    _, _, nvnm = _parse_navm(navm)
-    assert nvnm['triangles']
-    assert all(t[6] & 0x0800 for t in nvnm['triangles'])  # Found flag
+    verts = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 100.0, 0.0)]
+    tris = [(0, 1, 2)]
+    nvnm = p2n._pack_nvnm(verts, tris, p2n._compute_adjacency(tris), [0],
+                          wrld_fid=0, cell_fid=1, grid_x=0, grid_y=0,
+                          is_exterior=False)
+    d = _decode_nvnm(nvnm)
+    assert d['flags'][0] & p2n._TRI_FLAG_FOUND
 
 
-def test_interior_door_vs_teleport_both_link():
-    rec = _grid_pgrd(n=7, spacing=200.0)
-    interior = _door_refr('00011111', 400, 600, teleport=False)
-    interior['NAME'] = '000147BB'  # base is a DOOR
-    teleport = _door_refr('00022222', 800, 600, teleport=True)
-    navm, _ = p2n.convert_PGRD(
-        rec, writer=FakeWriter(), refr_recs=[interior, teleport],
-        door_fids={0x000147BB})
-    _, _, nvnm = _parse_navm(navm)
-    assert nvnm['door_tris'] == 2
+def test_water_flag_set_below_water_height():
+    verts = [(0.0, 0.0, -50.0), (100.0, 0.0, -50.0), (100.0, 100.0, -50.0),
+             (0.0, 0.0, 50.0), (100.0, 0.0, 50.0), (100.0, 100.0, 50.0)]
+    tris = [(0, 1, 2), (3, 4, 5)]
+    flags = p2n._compute_water_flags(verts, tris, water_z=0.0)
+    assert flags[0] == p2n._TRI_FLAG_WATER
+    assert flags[1] == 0
+
+
+def test_navm_record_is_compressed():
+    verts = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 100.0, 0.0)]
+    tris = [(0, 1, 2)]
+    nvnm = p2n._pack_nvnm(verts, tris, p2n._compute_adjacency(tris), [0],
+                          wrld_fid=0, cell_fid=1, grid_x=0, grid_y=0,
+                          is_exterior=False)
+    from tes5_import.writer import pack_subrecord
+    rec = p2n._pack_navm_record(0x01000801, pack_subrecord('NVNM', nvnm))
+    sig, size, flags, formid = struct.unpack_from('<4sIII', rec, 0)
+    assert sig == b'NAVM'
+    assert flags & 0x00040000, "NAVM must be written compressed"
+    assert formid == 0x01000801
+    subs = zlib.decompress(rec[24:24 + size][4:])
+    assert subs[:4] == b'NVNM'
+
+
+def test_navi_record_layout():
+    metas = [{
+        'fid': 0x01000801, 'wrld_fid': 0, 'cell_fid': 0x00001234,
+        'grid_x': 0, 'grid_y': 0, 'is_exterior': False,
+        'center': (1.0, 2.0, 3.0), 'base_objects': [],
+    }]
+    rec = build_navi_record(0x01000900, metas)
+    assert rec[:4] == b'NAVI'
+    # NAVI carries no EDID; the first subrecord is NVER.
+    assert rec[24:28] == b'NVER'

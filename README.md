@@ -43,6 +43,8 @@ In short, this project aims to be nothing less than comprehensive and has a laun
 
 ## Requirements
 
+A decent PC. The more cores and ram the better. The more cores, the more ram it uses. Validated with a 7950X3D and 32GB of system ram (uses a peak of ~14 GB RAM converting Oblivion.esm)
+
 | Dependency | Purpose | Install |
 |------------|---------|---------|
 | **Python 3.8+** | Runs the whole pipeline | — |
