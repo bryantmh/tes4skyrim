@@ -1,6 +1,5 @@
 Gameplan:
 	Refine Navmesh L5
-	Refine Dialog - Fix topics being missing for quests L4
 	Refine scripts - cleanup todos L20
 	Package records L6
 	CK warnings M8
@@ -56,7 +55,6 @@ Later Issues:
 	2 - Fix face and body bug
 
 	4 - Refine dialog conversion
-		Missing topics
 		Missing greetings
 		Creatures with wrong voices
 		Missing sound for many lines including barter lines

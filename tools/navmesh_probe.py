@@ -8,7 +8,9 @@ the render/probe tools all agree on how a cell is assembled.
 
 import argparse
 import os
+import pickle
 import sys
+import time
 
 import numpy as np
 
@@ -32,14 +34,34 @@ def model_key(model):
     return k
 
 
+def load_by_type(export_dir, reindex=False):
+    """Parsed export records grouped by type, CACHED to disk.
+
+    Parsing the export is ~78s single-threaded (1.1M records) and every tool here
+    needs it, so a re-render used to cost more in parsing than in rendering.  The
+    parsed slices are pickled next to the export and reused.
+    """
+    cache = os.path.join(export_dir, 'navmesh_index.pkl')
+    if os.path.exists(cache) and not reindex:
+        with open(cache, 'rb') as fh:
+            return pickle.load(fh)
+
+    t0 = time.time()
+    recs = parse_export_directory(export_dir, type_filter=_TYPES)
+    by_type = group_records_by_type(recs)
+    with open(cache, 'wb') as fh:
+        pickle.dump(by_type, fh, pickle.HIGHEST_PROTOCOL)
+    print('indexed export in %.0fs -> %s' % (time.time() - t0, cache))
+    return by_type
+
+
 def load_cell(export_dir, cell_arg, load_collision=True):
     """Return a dict with cell/refrs/pgrd/land/nodes/edges/base_model."""
     if load_collision:
         ce.load_collision(os.path.join(export_dir, 'collision_cache.bin'),
                           quiet=True)
 
-    recs = parse_export_directory(export_dir, type_filter=_TYPES)
-    by_type = group_records_by_type(recs)
+    by_type = load_by_type(export_dir)
 
     cell = None
     for c in by_type.get('CELL', []):

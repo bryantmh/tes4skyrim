@@ -188,6 +188,16 @@ def build_unlock_plan(by_type: dict) -> dict:
             continue
         own_topic = _low24(rec.get('ParentDIAL', ''))
         globals_set = set()
+        # EXPLICIT reveals (AddTopic data list, AddTopic script command, Choice
+        # link) make the target reachable the instant the revealing line plays,
+        # independent of the target's own conditions. MENTION reveals (the
+        # target's FULL name appearing in prose) are tracked separately: an
+        # Oblivion greeting that says "you're ready for advancement" only
+        # auto-adds the topic WHEN THAT LINE FIRES, which is itself
+        # stage-gated — so a mention in a bark line must NOT count as
+        # "revealed on first contact" (that wrongly ungated 162 topics, e.g.
+        # Azzan's "Advancement" showing before the guild is joined).
+        explicit_set = set()
         i = 0
         while True:
             val = rec.get(f'AddTopic[{i}]')
@@ -196,13 +206,13 @@ def build_unlock_plan(by_type: dict) -> dict:
             i += 1
             g = gated.get(_low24(val))
             if g:
-                globals_set.add(g)
+                explicit_set.add(g)
         script = rec.get('ResultScript', '')
         if script:
             for name in _RE_ADDTOPIC.findall(script):
                 g = gated.get(dial_edid_to_fid24.get(name.lower(), 0))
                 if g:
-                    globals_set.add(g)
+                    explicit_set.add(g)
         # A choice link to a gated topic also reveals it — in Oblivion,
         # offering a choice makes the target reachable regardless of its
         # added state, and once taken it stays known.
@@ -214,12 +224,13 @@ def build_unlock_plan(by_type: dict) -> dict:
             i += 1
             g = gated.get(_low24(val))
             if g:
-                globals_set.add(g)
+                explicit_set.add(g)
         val = rec.get('TCLT.Choice')
         if val:
             g = gated.get(_low24(val))
             if g:
-                globals_set.add(g)
+                explicit_set.add(g)
+        mention_set = set()
         if mention_re:
             i = 0
             while True:
@@ -228,14 +239,18 @@ def build_unlock_plan(by_type: dict) -> dict:
                     break
                 i += 1
                 for m in mention_re.findall(text):
-                    globals_set.add(names_to_global[m.lower()])
+                    mention_set.add(names_to_global[m.lower()])
+        globals_set = explicit_set | mention_set
         # Speaking a line of topic T already requires T unlocked — self-reveals
         # are meaningless and would only bloat the fragment count.
         globals_set.discard(gated.get(own_topic))
         if globals_set:
             info_reveals[info_fid24] = globals_set
+            # Only an EXPLICIT bark reveal (AddTopic/Choice) makes the topic
+            # visible on first contact; a prose mention rides the bark line's
+            # own conditions and must keep the gate.
             if _is_bark(own_topic):
-                bark_revealed |= globals_set
+                bark_revealed |= explicit_set
 
     # --- Bark-revealed topics are NOT gated. A GREETING/HELLO revealer fires
     # the moment the player contacts the NPC — in Oblivion the topic is
@@ -257,6 +272,28 @@ def build_unlock_plan(by_type: dict) -> dict:
         gnames = sorted({gated[f] for f in fids if f in gated})
         if gnames:
             stage_reveals[key] = gnames
+
+    # --- INVARIANT: a gate with no revealer is an unopenable door ---
+    # The gate (GetGlobalValue in the ESM) and the thing that opens it (a
+    # SetValue in a generated Papyrus fragment) are built from THIS plan by two
+    # different pipelines — tes5_import writes the condition, script_convert
+    # writes the fragment body. If a topic is gated but nothing anywhere sets
+    # its global, the topic can NEVER appear: quest-blocking, and invisible to
+    # every record-level check (the ESM looks perfect). An ungated topic that
+    # shows a little early is a cosmetic bug; a gated topic with no revealer is
+    # a dead quest — so when the two disagree, drop the gate.
+    revealed = set()
+    for gs in info_reveals.values():
+        revealed.update(gs)
+    for gs in stage_reveals.values():
+        revealed.update(gs)
+    orphan_gates = {f: g for f, g in gated.items() if g not in revealed}
+    if orphan_gates:
+        print(f'    WARNING: {len(orphan_gates)} gated topics have NO revealer '
+              f'(gate would never open) — leaving them ungated: '
+              f'{sorted(orphan_gates.values())[:5]}'
+              f'{"..." if len(orphan_gates) > 5 else ""}')
+        gated = {f: g for f, g in gated.items() if g in revealed}
 
     return {'gated': gated, 'info_reveals': info_reveals,
             'stage_reveals': stage_reveals}

@@ -1179,6 +1179,153 @@ class TestServiceConversion:
         assert dial_group.count(b'TES4_ShowBarterMenu') == 6
         assert b'Take a look.' in dial_group
 
+    def test_greeting_choice_reaches_response_topic(self):
+        """A greeting bark whose INFO carries a Choice must keep that TCLT and
+        the response topic must get a TOP-LEVEL branch — otherwise the NPC
+        greets the player but the player cannot select the response (FGC01Rats:
+        Arvena asks what happened in the basement, player can't answer). Also
+        verifies a greeting Choice pointing at ANOTHER bark is dropped (it would
+        dangle after the bark pass splits/merges topics)."""
+        from tes5_import.dialog_converter import build_dialog_groups
+        from tes5_import.text_reader import set_formid_index_offset
+        set_formid_index_offset(0)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        qust = {'Signature': 'QUST', 'FormID': '00035713',
+                'EditorID': 'FGC01Rats', 'DATA.Flags': '1',
+                'DATA.Priority': '30', 'StageCount': '0'}
+        # GREETING (bark). Its INFO offers a Choice -> the response topic, plus a
+        # Choice -> another greeting sub-topic (must be dropped).
+        greeting = {'Signature': 'DIAL', 'FormID': '000000C8',
+                    'EditorID': 'GREETING', 'FULL': 'GREETING',
+                    'DATA.Type': '0',  # classified as bark by reserved EDID
+                    'QuestCount': '1', 'Quest[0]': '00035713'}
+        greet_info = {'Signature': 'INFO', 'FormID': '00036622',
+                      'RecordFlags': '0', 'ParentDIAL': '000000C8',
+                      'DATA.Flags': '0', 'QSTI.Quest': '00035713',
+                      'ResponseCount': '1', 'Response[0].EmotionType': '0',
+                      'Response[0].EmotionValue': '50',
+                      'Response[0].ResponseNumber': '1',
+                      'Response[0].ResponseText': 'What did you find?',
+                      # GetStage(FGC01Rats)==30 — the greeting only fires after
+                      # the lion is dealt with. The response must inherit this.
+                      'ConditionCount': '1',
+                      'Condition[0].Raw':
+                          '000000000000f0413a000000135703000000000000000000',
+                      'ChoiceCount': '2',
+                      'Choice[0]': '00036613',   # -> FGC01Choice1 (conversation)
+                      'Choice[1]': '000000C9'}   # -> another GREETING (dropped)
+        greeting2 = {'Signature': 'DIAL', 'FormID': '000000C9',
+                     'EditorID': 'GREETING', 'FULL': 'GREETING',
+                     'DATA.Type': '0', 'QuestCount': '1',
+                     'Quest[0]': '00035713'}
+        greet2_info = {'Signature': 'INFO', 'FormID': '000000CA',
+                       'RecordFlags': '0', 'ParentDIAL': '000000C9',
+                       'DATA.Flags': '0', 'QSTI.Quest': '00035713',
+                       'ResponseCount': '1', 'Response[0].EmotionType': '0',
+                       'Response[0].EmotionValue': '50',
+                       'Response[0].ResponseNumber': '1',
+                       'Response[0].ResponseText': 'Hello again.'}
+        # The player response topic (conversation), reached only via the greeting.
+        choice1 = {'Signature': 'DIAL', 'FormID': '00036613',
+                   'EditorID': 'FGC01Choice1', 'FULL': 'It was a mountain lion.',
+                   'DATA.Type': '0', 'QuestCount': '1', 'Quest[0]': '00035713'}
+        choice1_info = {'Signature': 'INFO', 'FormID': '0003662A',
+                        'RecordFlags': '0', 'ParentDIAL': '00036613',
+                        'DATA.Flags': '0', 'QSTI.Quest': '00035713',
+                        'ResponseCount': '1', 'Response[0].EmotionType': '0',
+                        'Response[0].EmotionValue': '70',
+                        'Response[0].ResponseNumber': '1',
+                        'Response[0].ResponseText': 'A mountain lion? How?'}
+        by_type = {'QUST': [qust],
+                   'DIAL': [greeting, greeting2, choice1],
+                   'INFO': [greet_info, greet2_info, choice1_info]}
+        build_dialog_groups(by_type, writer, npc_to_vtyp={})
+
+        dial_group = b''.join(writer._top_groups.get('DIAL', []))
+        dlbr_group = b''.join(writer._top_groups.get('DLBR', []))
+
+        # The greeting INFO keeps its TCLT to the conversation response topic...
+        greet_rec = self._find_record(dial_group, b'INFO', 0x00036622)
+        assert greet_rec is not None, 'greeting INFO missing'
+        tclts = {struct.unpack('<I', d[:4])[0]
+                 for d in self._subrecords(greet_rec).get('TCLT', [])}
+        assert 0x00036613 in tclts, 'greeting lost its Choice to the response'
+        # ...but drops the Choice that points at another bark.
+        assert 0x000000C9 not in tclts, 'bark->bark choice should be dropped'
+
+        # The response topic's branch is TOP-LEVEL (DNAM=1), so it is selectable.
+        branch = self._find_record(dlbr_group, b'DLBR', None,
+                                   snam=0x00036613)
+        assert branch is not None, 'no branch for the response topic'
+        dnam = self._subrecords(branch)['DNAM'][0]
+        assert struct.unpack('<I', dnam[:4])[0] == 1, \
+            'greeting-reached response topic must be a top-level branch'
+
+        # The response INFO inherits the greeting's quest-TIMING gate
+        # (GetStage==30), so it only appears after the lion is dealt with —
+        # NOT from the first conversation. Without this the top-level topic
+        # leaks into the menu whenever GetIsID passes.
+        resp = self._find_record(dial_group, b'INFO', 0x0003662A)
+        assert resp is not None, 'response INFO missing'
+        funcs = [struct.unpack_from('<H', c, 8)[0]
+                 for c in self._subrecords(resp).get('CTDA', [])]
+        assert 58 in funcs, \
+            'response topic must inherit the greeting GetStage(58) timing gate'
+
+    def test_bark_prose_mention_does_not_ungate_topic(self):
+        """A gated topic whose FULL name merely appears in a GREETING's prose
+        must STAY gated. Only an explicit AddTopic/Choice from a bark reveals a
+        topic on first contact; a prose mention rides that bark line's own
+        (stage) conditions. Azzan's 'Advancement' was showing before joining
+        the guild because 6 late-game greetings say the word 'advancement'."""
+        from tes5_import.dialog_unlocks import build_unlock_plan
+        # A conversation topic 'Advancement', AddTopic'd by a normal join line.
+        topic = {'Signature': 'DIAL', 'FormID': '0003568F',
+                 'EditorID': 'advancementFG', 'FULL': 'Advancement',
+                 'DATA.Type': '0'}
+        join_info = {'Signature': 'INFO', 'FormID': '0002427B',
+                     'ParentDIAL': '00024279',   # a conversation topic (FGJoin1)
+                     'AddTopicCount': '1', 'AddTopic[0]': '0003568F'}
+        join_topic = {'Signature': 'DIAL', 'FormID': '00024279',
+                      'EditorID': 'FGJoin1', 'DATA.Type': '0'}
+        # A GREETING (bark) whose response text mentions 'Advancement'.
+        greeting = {'Signature': 'DIAL', 'FormID': '000000C8',
+                    'EditorID': 'GREETING', 'DATA.Type': '0'}
+        greet_info = {'Signature': 'INFO', 'FormID': '00023F7B',
+                      'ParentDIAL': '000000C8',
+                      'ResponseCount': '1',
+                      'Response[0].ResponseText':
+                          'You are ready for advancement.'}
+        by_type = {'DIAL': [topic, join_topic, greeting],
+                   'INFO': [join_info, greet_info], 'QUST': []}
+        plan = build_unlock_plan(by_type)
+        assert 0x03568F in plan['gated'], \
+            'topic mentioned only in bark prose must stay gated'
+
+    def _find_record(self, group_bytes, sig, formid, snam=None):
+        """Find a record by (sig, formid) or by (sig, SNAM value) in a group."""
+        pos = 0
+        n = len(group_bytes)
+        while pos + RECORD_HEADER_SIZE <= n:
+            rsig = group_bytes[pos:pos + 4]
+            size = struct.unpack_from('<I', group_bytes, pos + 4)[0]
+            if rsig == b'GRUP':
+                pos += RECORD_HEADER_SIZE   # descend into group contents
+                continue
+            rfid = struct.unpack_from('<I', group_bytes, pos + 12)[0]
+            rec = group_bytes[pos:pos + RECORD_HEADER_SIZE + size]
+            pos += RECORD_HEADER_SIZE + size
+            if rsig != sig:
+                continue
+            if formid is not None and rfid != formid:
+                continue
+            if snam is not None:
+                sn = self._subrecords(rec).get('SNAM')
+                if not sn or struct.unpack('<I', sn[0][:4])[0] != snam:
+                    continue
+            return rec
+        return None
+
 
 class TestOutfitSplit:
     """TES4 inventory → TES5 outfit (OTFT) + carried inventory (CNTO).

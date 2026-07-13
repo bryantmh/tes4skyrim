@@ -65,7 +65,7 @@ class Heightfield:
         self.min_z = min_z
         self.spans = [[] for _ in range(w * h)]
 
-    def add_span(self, cx, cy, zmin, zmax, walkable):
+    def add_span(self, cx, cy, zmin, zmax, walkable, protected=False):
         """Insert a span, merging only spans that genuinely OVERLAP in Z.
 
         Two spans that merely TOUCH at a boundary must NOT merge: a wall stands
@@ -79,11 +79,20 @@ class Heightfield:
         and a blocking span that overlap resolve to whichever TOP surface is
         higher (a floor laid over a beam is still floor; a solid lip over a floor
         blocks it).  A strictly-below overlap keeps both when only touching.
+
+        A span is a 5-list [zmin, zmax, walkable, protected, pgz].  PROTECTED
+        marks a span the pathgrid vouches for (see stamp_pathgrid): it is walkable
+        by authored assertion, and no later filter, region cull or erosion pass may
+        take that away.  Protection is sticky through merges — if either side of a
+        merge was protected, the result is.  PGZ carries the height the PATHGRID
+        asserted there (None when unprotected); region growing compares those, so
+        two floors of a house never link just because both are protected.
         """
         if cx < 0 or cy < 0 or cx >= self.w or cy >= self.h:
             return
         col = self.spans[cy * self.w + cx]
-        lo, hi, wk = zmin, zmax, walkable
+        lo, hi, wk, pr = zmin, zmax, walkable, protected
+        pgz = zmax if protected else None
 
         keep = []
         for s in col:
@@ -98,14 +107,25 @@ class Heightfield:
             if s[2] == wk:
                 lo = min(lo, s[0])
                 hi = max(hi, s[1])
+                if s[3]:
+                    pr = True
+                    if pgz is None:
+                        pgz = s[4]
             else:
                 # Mixed flags: the higher top surface wins the flag; union extent.
-                if s[1] > hi:
+                # A protected span always wins though — the pathgrid says an NPC
+                # stands here, so a blocking span overlapping it cannot bury it.
+                if s[3] or pr:
+                    wk = True
+                    pr = True
+                    if pgz is None:
+                        pgz = s[4]
+                elif s[1] > hi:
                     wk = s[2]
                 lo = min(lo, s[0])
                 hi = max(hi, s[1])
 
-        keep.append([lo, hi, wk])
+        keep.append([lo, hi, wk, pr, pgz])
         keep.sort(key=lambda s: s[0])
         self.spans[cy * self.w + cx] = keep
 
@@ -414,6 +434,11 @@ def filter_ledge_spans(hf):
                         min_drop = min(min_drop, best if best is not None else -height)
 
                 # A span whose neighbours differ by more than a step is a ledge.
+                # A PROTECTED span is exempt: a staircase reads as a ledge at
+                # every step (each tread's neighbours differ by the riser), and
+                # the pathgrid has already asserted an NPC walks it.
+                if s[3]:
+                    continue
                 if min_drop < -climb or (max_drop - min_drop) > climb:
                     to_clear.append(s)
 
@@ -422,11 +447,15 @@ def filter_ledge_spans(hf):
 
 
 def filter_walkable_low_height_spans(hf):
-    """Un-walk any span without AGENT_HEIGHT of clearance above it."""
+    """Un-walk any span without AGENT_HEIGHT of clearance above it.
+
+    Protected (pathgrid) spans are exempt: under a staircase or a low arch the
+    voxel headroom can read short, but the designers put a pathgrid line there.
+    """
     height = params.AGENT_HEIGHT
     for col in hf.spans:
         for i, s in enumerate(col):
-            if not s[2]:
+            if not s[2] or s[3]:
                 continue
             ceil_z = col[i + 1][0] if i + 1 < len(col) else 1e9
             if ceil_z - s[1] < height:
@@ -434,52 +463,181 @@ def filter_walkable_low_height_spans(hf):
 
 
 def erode_walkable(hf, radius=None):
-    """Erode the walkable set by the agent radius, in voxels.
+    """Erode the walkable set by exactly the agent radius (EUCLIDEAN distance).
 
-    Correct standoff from walls by construction — this replaces the old
-    hand-tuned EXCLUSION_MARGIN, which shrank each obstacle footprint by a fudge
-    factor and hoped.
+    Standoff from walls by construction — replaces the old hand-tuned
+    EXCLUSION_MARGIN.  The distance MUST be Euclidean: a Manhattan/chamfer
+    transform (its predecessor) overestimates distance diagonally, so a nominal
+    24u erosion actually cleared cells ~1.7x further out at 45 deg — the wide
+    dead zones around obstacles the navmesh left.  A true Euclidean transform
+    erodes an exact disc, which also rounds concave corners into an octagon-like
+    curve instead of leaving axis-aligned saw teeth.
     """
     radius = params.AGENT_RADIUS if radius is None else radius
-    r = int(np.ceil(radius / hf.cs))
-    if r <= 0:
-        return
+    if radius <= 0:
+        return 0
     w, h = hf.w, hf.h
+    r_units = radius / hf.cs
 
-    # Distance-to-nonwalkable via a two-pass chamfer over the column grid, using
-    # the TOP walkable span per column.  Column-level (not span-level) erosion is
-    # what Recast does too, and it is what keeps this fast.
-    INF = 1 << 20
-    dist = np.full(w * h, INF, dtype=np.int32)
+    walkable = np.zeros((h, w), dtype=bool)
     for i, col in enumerate(hf.spans):
-        if not any(s[2] for s in col):
-            dist[i] = 0
-    d = dist.reshape(h, w)
-    for y in range(h):
-        for x in range(w):
-            v = d[y, x]
-            if x > 0:
-                v = min(v, d[y, x - 1] + 1)
-            if y > 0:
-                v = min(v, d[y - 1, x] + 1)
-            d[y, x] = v
-    for y in range(h - 1, -1, -1):
-        for x in range(w - 1, -1, -1):
-            v = d[y, x]
-            if x + 1 < w:
-                v = min(v, d[y, x + 1] + 1)
-            if y + 1 < h:
-                v = min(v, d[y + 1, x] + 1)
-            d[y, x] = v
+        if any(s[2] for s in col):
+            walkable.flat[i] = True
+
+    # Exact Euclidean distance (in cells) from each walkable cell to the nearest
+    # NON-walkable cell.  Clear every walkable cell within r_units of an edge.
+    try:
+        from scipy.ndimage import distance_transform_edt
+        dist = distance_transform_edt(walkable)      # dist to nearest False
+    except ImportError:
+        # Fallback: two-pass chamfer with a diagonal cost so it at least
+        # approximates Euclidean (3-4 chamfer, scaled by /3).
+        INF = 1 << 20
+        d = np.where(walkable, INF, 0).astype(np.float64)
+        for y in range(h):
+            for x in range(w):
+                v = d[y, x]
+                if x > 0:
+                    v = min(v, d[y, x - 1] + 3)
+                if y > 0:
+                    v = min(v, d[y - 1, x] + 3)
+                    if x > 0:
+                        v = min(v, d[y - 1, x - 1] + 4)
+                    if x + 1 < w:
+                        v = min(v, d[y - 1, x + 1] + 4)
+                d[y, x] = v
+        for y in range(h - 1, -1, -1):
+            for x in range(w - 1, -1, -1):
+                v = d[y, x]
+                if x + 1 < w:
+                    v = min(v, d[y, x + 1] + 3)
+                if y + 1 < h:
+                    v = min(v, d[y + 1, x] + 3)
+                    if x + 1 < w:
+                        v = min(v, d[y + 1, x + 1] + 4)
+                    if x > 0:
+                        v = min(v, d[y + 1, x - 1] + 4)
+                d[y, x] = v
+        dist = d / 3.0
+
+    # distance_transform_edt gives 1.0 for a walkable cell that touches a wall
+    # cell, so the cell's own half-width is already counted; erode strictly LESS
+    # than the radius to keep the mesh as close to the wall as the agent really
+    # allows.  Using '<=' here cost an extra cell of standoff all the way round.
+    clear = walkable & (dist < r_units)
+
+    # A protected (pathgrid) column is never eroded.  Bethesda ran a pathgrid line
+    # there, so an agent fits — and eroding it is what stripped the navmesh off
+    # narrow staircases and doorways, the exact places NPCs must be able to walk.
+    protected = np.zeros((h, w), dtype=bool)
+    for i, col in enumerate(hf.spans):
+        if any(s[3] for s in col):
+            protected.flat[i] = True
+    clear &= ~protected
 
     changed = 0
     for i, col in enumerate(hf.spans):
-        if d.flat[i] <= r:
+        if clear.flat[i]:
             for s in col:
                 if s[2]:
                     s[2] = False
                     changed += 1
     return changed
+
+
+def stamp_pathgrid(hf, nodes, edges):
+    """Burn the pathgrid into the heightfield as PROTECTED walkable spans.
+
+    This is the pathgrid's proper place in the pipeline.  It used to be consulted
+    only at the end, as a repair pass that bolted triangles onto a finished mesh
+    — which meant every stage in between (ledge filter, headroom filter, region
+    cull, agent erosion) was free to delete the very surfaces the pathgrid says
+    an NPC walks, and the repair could only paste ribbons back on top.  Stairs
+    lost their mesh that way, and what was pasted back never conformed.
+
+    Stamped BEFORE any filter runs, the pathgrid instead becomes part of the
+    geometry the rest of the pipeline reasons about: the contourer builds the
+    staircase as an ordinary part of the mesh, connected to what it adjoins,
+    because the spans are simply there.
+
+    For every pathgrid edge we walk the line at sub-cell steps and stamp a band of
+    PGRD_BAND either side of it.  The band is UNCONDITIONAL: the pathgrid is the
+    one thing in the input we know is right, so a fixed-width strip along every
+    pathgrid line is navmesh no matter what the collision says.  Nothing here
+    yields to geometry — earlier versions skipped columns where a blocking span
+    straddled the line, which quietly refused to stamp staircases (a stair's own
+    faces are steep, hence "blocking") and left the storeys as disconnected
+    islands.
+
+    Where real collision already exists near the asserted height (the stair
+    treads, the floor) we SNAP to it, so the mesh sits on the true surface rather
+    than floating; where none exists the span is synthesized outright, because the
+    pathgrid is ground truth and the geometry is what is incomplete.
+    """
+    if not nodes:
+        return 0
+
+    ch = hf.ch
+    half = params.PGRD_BAND
+    r_cells = max(1, int(round(half / hf.cs)))
+    snap_z = params.MAX_CLIMB
+
+    stamped = 0
+
+    def stamp_point(wx, wy, wz):
+        nonlocal stamped
+        cx0 = int((wx - hf.min_x) / hf.cs)
+        cy0 = int((wy - hf.min_y) / hf.cs)
+        for dy in range(-r_cells, r_cells + 1):
+            for dx in range(-r_cells, r_cells + 1):
+                if dx * dx + dy * dy > r_cells * r_cells:
+                    continue
+                cx, cy = cx0 + dx, cy0 + dy
+                if cx < 0 or cy < 0 or cx >= hf.w or cy >= hf.h:
+                    continue
+                col = hf.spans[cy * hf.w + cx]
+
+                # Snap to a WALKABLE span at this height when there is one: the
+                # stair treads and the floor are the true surface, and using them
+                # keeps the mesh on the geometry instead of on a floating plane.
+                best = None
+                for s in col:
+                    if not s[2]:
+                        continue
+                    d = abs(s[1] - wz)
+                    if d <= snap_z and (best is None or d < abs(best[1] - wz)):
+                        best = s
+                if best is not None:
+                    best[3] = True
+                    # Record the height the pathgrid asserted here.  Region
+                    # growing compares these, not the span tops, so a staircase
+                    # links step to step while two storeys of a house — both
+                    # protected, both stacked in XY — never link to each other.
+                    if best[4] is None or abs(wz - best[1]) < abs(best[4] - best[1]):
+                        best[4] = wz
+                    stamped += 1
+                else:
+                    hf.add_span(cx, cy, wz - ch, wz, True, protected=True)
+                    stamped += 1
+
+    for n in nodes:
+        stamp_point(n[0], n[1], n[2])
+
+    # Sweep the corridor along every edge, at half-cell steps so it is continuous.
+    step = hf.cs * 0.5
+    for (i, j) in edges or ():
+        if i >= len(nodes) or j >= len(nodes):
+            continue
+        a, b = nodes[i], nodes[j]
+        dist = max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+        n_steps = max(1, int(dist / step))
+        for k in range(1, n_steps):
+            t = k / n_steps
+            stamp_point(a[0] + (b[0] - a[0]) * t,
+                        a[1] + (b[1] - a[1]) * t,
+                        a[2] + (b[2] - a[2]) * t)
+
+    return stamped
 
 
 def apply_filters(hf):

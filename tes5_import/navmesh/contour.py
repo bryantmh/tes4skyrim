@@ -24,11 +24,18 @@ from . import params
 # ---------------------------------------------------------------------------
 
 def _walkable_mask(hf):
-    """{(cx,cy): top_z} for columns with at least one walkable span."""
+    """{(cx,cy): top_z} for columns with at least one walkable span.
+
+    A protected (pathgrid) span wins the column; otherwise the highest top.
+    """
     out = {}
     for cy in range(hf.h):
         for cx in range(hf.w):
             col = hf.spans[cy * hf.w + cx]
+            pro = [s[1] for s in col if s[2] and s[3]]
+            if pro:
+                out[(cx, cy)] = max(pro)
+                continue
             tops = [s[1] for s in col if s[2]]
             if tops:
                 out[(cx, cy)] = max(tops)
@@ -36,16 +43,32 @@ def _walkable_mask(hf):
 
 
 def _region_masks(hf, region_of):
-    """One {(cx,cy): top_z} mask per connected region.
+    """{(cx,cy): top_z} masks — one per Z-COHERENT LAYER, not one per region.
 
     Tracing one GLOBAL mask is wrong: disconnected rooms merge into a single
     polygon set and the ear-clipper then fans enormous slivers straight across
-    the walls between them.  Each region must be contoured on its own.
+    the walls between them.  But one mask per REGION is wrong too, and much more
+    damagingly so.
 
-    Where several spans of the same region stack in one column (rare), the
-    highest is used — the column can only carry one 2.5D surface.
+    A mask is a HEIGHT MAP: at most one Z per (cx,cy).  A region, though, is a
+    connected walkable SURFACE, and a staircase legitimately connects a house's
+    ground floor to its upper floor — so a single region can cover the same XY
+    column twice, once per storey.  Forcing that region through one height map
+    makes each shared column pick one storey or the other, and the triangulator
+    then stitches the two heights together into giant vertical zig-zags spanning
+    the whole house (observed: BrumaJGhastasHouse, a region spanning z -236..+19).
+
+    So we peel each region into LAYERS: a layer claims at most one span per
+    column, grown by adjacency under the step-height gate, so every layer really
+    is a height map.  The staircase and the floor it rises from stay in the same
+    layer (each tread is within a step of the next); the storey above is a layer
+    of its own.  Each layer is then contoured on its own, which is exactly what
+    the 2.5D contour tracer requires.
     """
-    masks = {}
+    climb = params.MAX_CLIMB
+
+    # Walkable spans of each region, indexed by column.
+    by_region = {}
     for cy in range(hf.h):
         for cx in range(hf.w):
             col = hf.spans[cy * hf.w + cx]
@@ -55,10 +78,48 @@ def _region_masks(hf, region_of):
                 rid = region_of.get((cx, cy, si))
                 if rid is None:
                     continue
-                m = masks.setdefault(rid, {})
-                prev = m.get((cx, cy))
-                if prev is None or s[1] > prev:
-                    m[(cx, cy)] = s[1]
+                by_region.setdefault(rid, {}).setdefault((cx, cy), []).append(s)
+
+    masks = []
+    for cols in by_region.values():
+        # Remaining (unclaimed) spans per column.
+        left = {k: list(v) for k, v in cols.items()}
+        while left:
+            # Seed the layer at the lowest unclaimed span, so a layer grows along
+            # a floor rather than starting halfway up a stair and splitting it.
+            seed_key = min(left, key=lambda k: min(s[1] for s in left[k]))
+            seed = min(left[seed_key], key=lambda s: s[1])
+
+            mask = {}
+            stack = [(seed_key, seed)]
+            mask[seed_key] = seed[1]
+            left[seed_key].remove(seed)
+            if not left[seed_key]:
+                del left[seed_key]
+
+            while stack:
+                (cx, cy), s = stack.pop()
+                for nk in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
+                    if nk in mask or nk not in left:
+                        continue
+                    # The neighbour span closest in Z that is still a step away.
+                    cand = None
+                    for ns in left[nk]:
+                        if abs(ns[1] - s[1]) > climb:
+                            continue
+                        if cand is None or abs(ns[1] - s[1]) < abs(cand[1] - s[1]):
+                            cand = ns
+                    if cand is None:
+                        continue
+                    mask[nk] = cand[1]
+                    left[nk].remove(cand)
+                    if not left[nk]:
+                        del left[nk]
+                    stack.append((nk, cand))
+
+            if len(mask) >= params.MIN_REGION_VOXELS:
+                masks.append(mask)
+
     return masks
 
 
@@ -144,6 +205,30 @@ def _dp(points, eps):
     return [p for p, k in zip(points, keep) if k]
 
 
+def _deburr(loop, passes=2):
+    """Remove single-cell teeth from a raw voxel contour before simplification.
+
+    A contour traced on the voxel lattice has axis-aligned 1-cell spikes (a
+    column that pokes out or in by one cell), which Douglas-Peucker preserves as
+    saw teeth if they exceed its tolerance.  Chaikin-style corner cutting rounds
+    those: replace each vertex by points 1/4 and 3/4 toward its neighbours, then
+    collinear-merge.  Two passes turn a 90-deg jag into an octagon-like bevel
+    without pulling the boundary off the walls (cuts stay inside the ring).
+    """
+    if len(loop) < 4:
+        return loop
+    for _ in range(passes):
+        n = len(loop)
+        out = []
+        for i in range(n):
+            ax, ay = loop[i]
+            bx, by = loop[(i + 1) % n]
+            out.append((ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25))
+            out.append((ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75))
+        loop = out
+    return loop
+
+
 def simplify_loop(loop, eps):
     """Douglas-Peucker on a CLOSED loop.
 
@@ -164,6 +249,27 @@ def simplify_loop(loop, eps):
     b = _dp(loop[i1:] + loop[:i0 + 1], eps)
     out = a[:-1] + b[:-1]
     return out if len(out) >= 3 else list(loop)
+
+
+def _ring_contains_pt(ring, pt):
+    """Even-odd point-in-polygon: is pt strictly inside ring?
+
+    Used to decide which outer contour a hole belongs to.  A bounding-box test is
+    NOT containment — two walkable strips either side of an obstacle have
+    overlapping boxes — and mis-assigning a hole makes the triangulator bridge
+    across the obstacle to reach it.
+    """
+    x, y = pt[0], pt[1]
+    inside = False
+    n = len(ring)
+    for i in range(n):
+        x0, y0 = ring[i]
+        x1, y1 = ring[(i + 1) % n]
+        if (y0 > y) != (y1 > y):
+            xint = x0 + (y - y0) * (x1 - x0) / (y1 - y0)
+            if x < xint:
+                inside = not inside
+    return inside
 
 
 def _signed_area(poly):
@@ -505,7 +611,10 @@ def _mesh_mask(hf, mask, all_verts, all_tris):
 
     outers, holes = [], []
     for loop in loops:
-        s = simplify_loop(loop, eps)
+        # Deburr single-cell voxel teeth, then Douglas-Peucker.  Deburring first
+        # rounds 90-deg lattice jags so the simplified ring reads as an octagon
+        # around obstacles instead of a saw blade.
+        s = simplify_loop(_deburr(loop), eps)
         if len(s) < 3:
             continue
         area = _signed_area(s)
@@ -524,13 +633,13 @@ def _mesh_mask(hf, mask, all_verts, all_tris):
         return best
 
     for outer in outers:
-        ox0 = min(p[0] for p in outer)
-        ox1 = max(p[0] for p in outer)
-        oy0 = min(p[1] for p in outer)
-        oy1 = max(p[1] for p in outer)
-        mine = [h for h in holes
-                if ox0 <= min(p[0] for p in h) and max(p[0] for p in h) <= ox1
-                and oy0 <= min(p[1] for p in h) and max(p[1] for p in h) <= oy1]
+        # Assign each hole to the outer ring that ACTUALLY contains it.  A
+        # bounding-box test (what this used to do) is not containment: two
+        # walkable strips either side of a bed give two separate outer rings whose
+        # boxes overlap, so the bed's hole got attached to a ring it does not lie
+        # inside, and the triangulator then bridged to it — drawing a triangle
+        # straight across the bed to join two parallel spans.
+        mine = [h for h in holes if _ring_contains_pt(outer, h[0])]
 
         # Uniform Steiner-point triangulation for even triangle sizing (the
         # navmesh should not contain long thin triangles); step is in lattice
@@ -571,16 +680,18 @@ def _mesh_mask(hf, mask, all_verts, all_tris):
 def build_mesh(hf, region_of=None):
     """Walkable columns -> (verts3d, tris).
 
-    Contours are traced PER REGION when region_of is supplied.  Doing it on one
-    global mask merges disconnected rooms into a single polygon set, and the
-    triangulator then fans huge slivers across the walls between them.
+    Contours are traced per Z-COHERENT LAYER when region_of is supplied (see
+    _region_masks).  Doing it on one global mask merges disconnected rooms into a
+    single polygon set and the triangulator fans huge slivers across the walls
+    between them; doing it per region is just as broken once a staircase makes one
+    region cover two storeys of the same columns.
 
     Vertex Z comes from the walkable span tops beneath each lattice corner, so
     the mesh sits on the floor it was derived from and stairs stay sloped.
     """
     all_verts, all_tris = [], []
     if region_of:
-        for mask in _region_masks(hf, region_of).values():
+        for mask in _region_masks(hf, region_of):
             _mesh_mask(hf, mask, all_verts, all_tris)
     else:
         mask = _walkable_mask(hf)

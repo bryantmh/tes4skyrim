@@ -42,9 +42,22 @@ cell PLUS a single top-level NAVI (Navmesh Info Map). Implemented in
      (MAX_SIMPLIFY_ERR=12u → straight wall-following edges), then triangulate
      with interior Steiner points (TRI_TARGET_EDGE 128u/320u) + edge-flip
      refinement for UNIFORM, non-sliver triangles. Vertex Z from span tops.
-  5. `build.build_navmesh`: orchestrates the above + connectivity repair (carve a
-     corridor along any PGRD edge whose endpoints ended in different components).
-     Then this module computes adjacency, water flags, door triangles.
+  5. `build.build_navmesh`: orchestrates the above, then a QUALITY pass:
+     `_drop_steep_triangles` (remove tris steeper than MAX_SLOPE — contour
+     artefacts bridging a Z gap, e.g. stair-top straight to stair-bottom),
+     `_stitch_pathgrid_bridges` (add a triangle ribbon between components a PGRD
+     edge says are joined — reconnects a staircase whose top step sits >step
+     height below the upper floor's collision), `_prune_islands` (keep the main
+     component + only large pathgrid-vouched ones; drop specks so there are no
+     unreachable navmesh islands).  Then this module computes adjacency, water
+     flags, door triangles.
+- **Quality invariants** (see `tools/navmesh_diag.py <cell>`): 0 steep
+  triangles, 1 connected component, every pathgrid node within a step of the
+  navmesh. Erosion uses a EUCLIDEAN distance transform (scipy
+  `distance_transform_edt`), NOT a chamfer — a chamfer overestimates diagonal
+  distance ~1.7x and left wide dead zones around obstacles. Contours are
+  DEBURRED (Chaikin corner-cutting) before Douglas-Peucker so obstacle holes come
+  out octagon-like instead of saw-toothed.
 - **Obstruction is decided in WORLD SPACE, never per-mesh.** An object obstructs
   iff it rises more than MAX_CLIMB above the floor beneath it — so rugs/pillows
   are walked over, tables/barrels are routed around, with NO size gate or rug

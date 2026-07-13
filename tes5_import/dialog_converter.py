@@ -243,6 +243,115 @@ def _target_live_at_stage(raw_hexes: list, stage_idx: int) -> bool:
     return all(any(g) for g in groups)
 
 
+# TES4 CTDA functions that express quest TIMING (when a line is live). These are
+# the conditions a choice-reached response topic must inherit from the greeting
+# that reveals it, so a promoted top-level topic doesn't appear before its time.
+# 56 GetQuestRunning, 58 GetStage, 59 GetStageDone, 99 GetQuestCompleted.
+_QUEST_STATE_FUNCS = frozenset({56, 58, 59, 99})
+
+
+def _has_quest_state_condition(rec: dict) -> bool:
+    """True if `rec` has any quest-TIMING condition of its own (GetStage etc.)."""
+    i = 0
+    while True:
+        raw_hex = rec.get(f'Condition[{i}].Raw')
+        if raw_hex is None:
+            return False
+        i += 1
+        if not raw_hex:
+            continue
+        try:
+            raw = bytes.fromhex(raw_hex)
+        except ValueError:
+            continue
+        if len(raw) >= 10 and struct.unpack_from('<H', raw, 8)[0] in \
+                _QUEST_STATE_FUNCS:
+            return True
+
+
+def _quest_state_ctdas(rec: dict, offset: int) -> list:
+    """Converted (32-byte) CTDAs for just the quest-TIMING conditions on `rec`.
+
+    Reads Condition[i].Raw, keeps only quest-state functions (GetStage etc.),
+    converts + remaps them, and clears any dangling OR flag so the returned
+    list is a standalone AND-group. Identity/faction/voice conditions are
+    deliberately excluded — the response topic already carries its own GetIsID;
+    only the missing TIMING gate is inherited. Returns [] when the revealer has
+    no quest-state conditions (e.g. an always-available greeting)."""
+    from .dialog_conditions import convert_ctda, CTDA_OR
+    out = []
+    i = 0
+    while True:
+        raw_hex = rec.get(f'Condition[{i}].Raw')
+        if raw_hex is None:
+            break
+        i += 1
+        if not raw_hex:
+            continue
+        try:
+            raw = bytes.fromhex(raw_hex)
+        except ValueError:
+            continue
+        if len(raw) < 10:
+            continue
+        func = struct.unpack_from('<H', raw, 8)[0]
+        if func not in _QUEST_STATE_FUNCS:
+            continue
+        try:
+            ctda = convert_ctda(raw, offset)
+        except (ValueError, struct.error):
+            continue
+        if ctda is not None:
+            out.append(ctda)
+    # A trailing OR flag with nothing after it is invalid — clear it.
+    if out and (out[-1][0] & CTDA_OR):
+        out[-1] = bytes([out[-1][0] & ~CTDA_OR]) + out[-1][1:]
+    return out
+
+
+def _bark_choice_gate_bytes(revealer_gates: list) -> bytes:
+    """Combine per-revealer quest-state gates into one CTDA block for the
+    response topic's INFOs.
+
+    revealer_gates is a list (one entry per greeting that reveals this topic)
+    of lists of converted CTDA bytes (that greeting's quest-state AND-group).
+    Semantics: the response is available if ANY revealer is live (OR across
+    revealers), and a revealer is live when ALL its conditions hold (AND
+    within).
+
+      * ANY revealer with an EMPTY gate → the response is always reachable from
+        that greeting → no gate at all (return b'').
+      * One revealer → emit its AND-group verbatim (covers stage-range gates
+        like `GetStage>=30 AND GetStage<120`).
+      * Several revealers each with exactly ONE condition → OR-chain them
+        (bit 0 set on all but the last).
+      * Several revealers where some carry an AND-group → a flat CTDA list
+        can't express OR-of-ANDs, so use the FIRST revealer's group (the
+        primary reveal path). Losing the gate entirely would let the topic leak
+        into the menu, which is the bug we're fixing; a slightly-off timing on
+        these ~31 multi-path topics is the lesser evil.
+    """
+    from .dialog_conditions import CTDA_OR
+    if not revealer_gates:
+        return b''
+    if any(len(g) == 0 for g in revealer_gates):
+        return b''                      # an always-available reveal path exists
+    if len(revealer_gates) == 1:
+        return b''.join(pack_subrecord('CTDA', c) for c in revealer_gates[0])
+    if all(len(g) == 1 for g in revealer_gates):
+        # OR-chain of one condition per revealer.
+        out = b''
+        n = len(revealer_gates)
+        for idx, g in enumerate(revealer_gates):
+            c = g[0]
+            is_last = (idx == n - 1)
+            tb = c[0] | CTDA_OR if not is_last else c[0] & ~CTDA_OR
+            out += pack_subrecord('CTDA', bytes([tb]) + c[1:])
+        return out
+    # Mixed AND-groups across revealers — use the first revealer's group.
+    return b''.join(pack_subrecord('CTDA', c) for c in revealer_gates[0])
+
+
 def _quest_dnam(rec: dict) -> bytes:
     """DNAM (12 bytes): Flags(U16) Priority(U8) FormVer(U8=0) Unknown(4) Type(U32).
 
@@ -634,7 +743,7 @@ SERVICE_MENU_SCRIPTS = {
 def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
                  fid_to_edid: dict = None, well_known_props: dict = None,
                  xref=None, reveal_props: dict = None,
-                 service_menu: str = '', drop_tclt: bool = False) -> bytes:
+                 service_menu: str = '', bark_dial_fids: set = None) -> bytes:
     """INFO — Dialog response.
 
     Order: EDID [VMAD] ENAM CNAM [TCLT...] [TRDT NAM1 NAM2 NAM3]* CTDAs.
@@ -646,6 +755,15 @@ def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
     unlock globals, so a VMAD is emitted even without a result script.
     service_menu ('barter'/'training') attaches the fragment that opens the
     Skyrim barter/training menu when the line finishes.
+
+    bark_dial_fids (non-None only for bark INFOs) is the set of all bark DIAL
+    FormIDs (remapped). A bark INFO drops any choice that targets ANOTHER bark
+    (those get split/merged in the bark pass, so the link would dangle), but
+    KEEPS choices that target a conversation (CUST) topic — that is the vanilla
+    "NPC greets you, then you pick a response" pattern (Skyrim HELO→CUST TCLT,
+    e.g. C03SkorQuestStartBranchTopic). Dropping those left greetings with a
+    line but no selectable response (FGC01Rats: Arvena asks what happened but
+    the player can't answer).
     """
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -683,18 +801,27 @@ def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
     # CNAM — favor level (None)
     subs += pack_subrecord('CNAM', struct.pack('<B', 0))
 
-    # TCLT — choices (follow-up topic links). Bark topics have no branches or
-    # choices in Skyrim, so drop any TCLT (Oblivion greeting/bark topics that
-    # chained to other greetings would otherwise dangle at split sub-topics).
-    choice_count = 0 if drop_tclt else get_int(rec, 'ChoiceCount')
+    # TCLT — choices (follow-up topic links). A bark INFO keeps only choices
+    # that point at a CONVERSATION topic (the vanilla greeting→CUST-response
+    # pattern); a choice that points at another bark is dropped, because barks
+    # are split/merged by (quest, subtype) in the bark pass and the link would
+    # dangle at a sub-topic that no longer exists under that FormID.
+    def _keep_choice(cfid: int) -> bool:
+        if not cfid:
+            return False
+        if bark_dial_fids is not None and cfid in bark_dial_fids:
+            return False
+        return True
+
+    choice_count = get_int(rec, 'ChoiceCount')
     if choice_count > 0:
         for i in range(choice_count):
             cfid = get_formid(rec, f'Choice[{i}]')
-            if cfid:
+            if _keep_choice(cfid):
                 subs += pack_formid_subrecord('TCLT', cfid)
-    elif not drop_tclt:
+    else:
         cfid = get_formid(rec, 'TCLT.Choice')
-        if cfid:
+        if _keep_choice(cfid):
             subs += pack_formid_subrecord('TCLT', cfid)
 
     # Responses (TRDT 12B -> 24B; text + emotion preserved)
@@ -942,6 +1069,56 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         info_by_dial[get_formid(rec, 'ParentDIAL')].append(rec)
 
     tclt_targets = collect_tclt_target_fids(by_type)
+    # Remapped FormIDs of every bark DIAL (greetings + combat/detection/misc
+    # barks). A bark INFO's choice that points into this set is dropped (the
+    # target is split/merged by the bark pass); a choice pointing OUTSIDE it
+    # (a conversation topic) is kept so greeting→response routing survives.
+    bark_dial_fids = set()
+    for d in dials:
+        if should_skip_dial(d) or service_menu_kind(d):
+            continue
+        _c, _s, _snam, _is_bark = classify_topic(
+            get_str(d, 'EditorID', ''), get_int(d, 'DATA.Type'))
+        if _is_bark:
+            bark_dial_fids.add(get_formid(d, 'FormID'))
+    # Conversation topics reached by a BARK/greeting's choice. In vanilla Skyrim
+    # these are TOP-LEVEL branches (DNAM=1): the greeting bark plays, then the
+    # response appears as a menu topic (e.g. HELO→C03SkorQuestStartBranchTopic,
+    # branch DNAM=1). So — unlike a choice target reached only from a
+    # conversation topic (a mid-chain player line that must stay off the menu) —
+    # a greeting-reached target must be top-level or the player has the line but
+    # no way to pick it. FGC01Rats: Arvena's report-back greeting → FGC01Choice1.
+    bark_choice_targets = set()
+    # In Oblivion a choice-reached response topic needs NO stage condition of its
+    # own — it is only reachable while the revealing greeting is live, and the
+    # greeting IS stage-gated (Arvena's "what did you find?" fires at
+    # GetStage(FGC01Rats)==30). Once the response is promoted to a top-level
+    # Skyrim topic it appears whenever ITS OWN INFO conditions pass — which are
+    # just GetIsID(Arvena) — so it leaks in from the first conversation. Recover
+    # the timing by inheriting the revealing greeting's QUEST-STATE conditions
+    # (GetStage/GetStageDone/GetQuestRunning/GetQuestCompleted). Multiple
+    # greetings may reveal the same response at different stages, so OR their
+    # gates together (any live revealer makes the response available).
+    # bark_choice_gate: target_dial_fid -> list[ list[converted CTDA] ] (one
+    # inner list per revealer; ANY revealer's gate suffices).
+    bark_choice_gate = defaultdict(list)
+    for info_rec in infos:
+        if get_formid(info_rec, 'ParentDIAL') not in bark_dial_fids:
+            continue
+        targets_here = []
+        for i in range(get_int(info_rec, 'ChoiceCount')):
+            cfid = get_formid(info_rec, f'Choice[{i}]')
+            if cfid and cfid not in bark_dial_fids:
+                targets_here.append(cfid)
+        cfid = get_formid(info_rec, 'TCLT.Choice')
+        if cfid and cfid not in bark_dial_fids:
+            targets_here.append(cfid)
+        if not targets_here:
+            continue
+        gate = _quest_state_ctdas(info_rec, offset)
+        for cfid in targets_here:
+            bark_choice_targets.add(cfid)
+            bark_choice_gate[cfid].append(gate)  # gate may be [] (no timing)
     unlock_plan = unlock_plan or {'gated': {}, 'info_reveals': {},
                                   'stage_reveals': {}}
     unlock_globals = unlock_globals or {}
@@ -991,7 +1168,8 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         try:
             content, dlbr_bytes, owner_qfid, dial_fid, dlbr_fid = _build_one_topic(
                 dial_rec, info_by_dial, writer, remap, offset, generic_quest_fid,
-                tclt_targets, unlock_plan, unlock_globals, npc_to_vtyp,
+                tclt_targets, bark_choice_targets, bark_choice_gate,
+                unlock_plan, unlock_globals, npc_to_vtyp,
                 quest_npc_fids, sge_quest_fids, quest_edid_by_fid,
                 quest_priority, voice_map,
                 fid_to_edid, xref, well_known_props,
@@ -1015,7 +1193,8 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         unlock_globals=unlock_globals, fid_to_edid=fid_to_edid,
         well_known_props=well_known_props, xref=xref, voice_map=voice_map,
         quest_edid_by_fid=quest_edid_by_fid, quest_priority=quest_priority,
-        quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid, stats=stats)
+        quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid,
+        bark_dial_fids=bark_dial_fids, stats=stats)
     bark_content, bark_sge = _build_bark_pass(
         bark_dials, info_by_dial, writer, remap,
         bark_generic_quests, bark_ctx)
@@ -1089,7 +1268,9 @@ def _topic_voice_types(child_infos: list, npc_to_vtyp: dict, offset: int) -> set
 
 
 def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
-                     generic_quest_fid, tclt_targets, unlock_plan,
+                     generic_quest_fid, tclt_targets, bark_choice_targets,
+                     bark_choice_gate,
+                     unlock_plan,
                      unlock_globals, npc_to_vtyp,
                      quest_npc_fids, sge_quest_fids, quest_edid_by_fid,
                      quest_priority, voice_map,
@@ -1158,7 +1339,14 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
         # me up." must not sit in Azzan's topic menu. Choice targets that ARE
         # explicitly added stay top-level; their unlock gate hides them until
         # revealed (their TCLT parents are revealers too).
+        #
+        # EXCEPTION: a target reached from a BARK/greeting choice must be
+        # TOP-LEVEL, matching vanilla (every HELO→CUST branch is DNAM=1). A
+        # greeting bark can't hold a menu, so the engine surfaces the response
+        # as a top-level topic once the bark's TCLT points at it; a Normal
+        # branch there leaves the player with the line but no way to select it.
         is_linked = (dial_fid in tclt_targets
+                     and dial_fid not in bark_choice_targets
                      and (dial_fid & 0xFFFFFF) not in unlock_plan['gated'])
         dlbr_fid = writer.alloc_formid()
         dlbr_edid = (f'TES4_{edid}_Branch' if edid
@@ -1193,11 +1381,18 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
         unlock_gate_bytes = pack_subrecord('CTDA', build_ctda(
             FUNC_GET_GLOBAL_VALUE, param1=gfid))
 
+    # Bark-choice timing gate: a top-level response topic reached from a
+    # (stage-gated) greeting inherits that greeting's quest-state gate so it
+    # only surfaces when Oblivion would have offered the choice.
+    bark_choice_gate_bytes = _bark_choice_gate_bytes(
+        bark_choice_gate.get(dial_fid, []))
+
     # Shared context passed to the per-INFO converter.
     info_ctx = dict(
         is_bark=is_bark, npc_to_vtyp=npc_to_vtyp, topic_vtyps=topic_vtyps,
         topic_npc_fids=topic_npc_fids, service_gate_bytes=service_gate_bytes,
-        unlock_gate_bytes=unlock_gate_bytes, service_kind=service_kind,
+        unlock_gate_bytes=unlock_gate_bytes,
+        bark_choice_gate_bytes=bark_choice_gate_bytes, service_kind=service_kind,
         orig_quest_fid=orig_quest_fid, sge_quest_fids=sge_quest_fids,
         remap=remap, offset=offset, unlock_plan=unlock_plan,
         unlock_globals=unlock_globals, fid_to_edid=fid_to_edid,
@@ -1262,10 +1457,21 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
             quest_cond_bytes = ctx['quest_dialog_ctdas'].get(info_qfid, b'')
             if quest_cond_bytes:
                 ctx['stats']['quest_cond_gated'] += 1
+            # Inherited greeting timing gate — but ONLY when this INFO doesn't
+            # already state its own quest timing. An INFO with its own
+            # GetStage/GetStageDone/GetQuestRunning knows when it should show;
+            # ANDing the greeting's (possibly different) stage would suppress it.
+            bc_gate = ctx.get('bark_choice_gate_bytes', b'')
+            if bc_gate and _has_quest_state_condition(info_rec):
+                bc_gate = b''
+            if bc_gate:
+                ctx['stats']['bark_choice_gated'] = \
+                    ctx['stats'].get('bark_choice_gated', 0) + 1
             injected = _build_injected_ctdas(
                 info_rec, ctx['is_bark'], ctx['npc_to_vtyp'],
                 ctx['topic_vtyps'], ctx['topic_npc_fids'],
-                ctx['service_gate_bytes'] + quest_gate_bytes + quest_cond_bytes,
+                ctx['service_gate_bytes'] + quest_gate_bytes + quest_cond_bytes
+                + bc_gate,
                 ctx['unlock_gate_bytes'], ctx['offset'], ctx['stats'],
                 sibling_factions=ctx.get('sibling_factions'),
                 sibling_npcs=ctx.get('sibling_npcs'))
@@ -1284,7 +1490,8 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
                 fid_to_edid=ctx['fid_to_edid'],
                 well_known_props=ctx['well_known_props'], xref=ctx['xref'],
                 reveal_props=reveal_props, service_menu=ctx['service_kind'],
-                drop_tclt=ctx['is_bark'])
+                bark_dial_fids=(ctx.get('bark_dial_fids')
+                                if ctx['is_bark'] else None))
             child_count += 1
             ctx['stats']['infos'] += 1
             if ctx['voice_map'] is not None:
@@ -1423,6 +1630,7 @@ def _build_bark_pass(bark_dials, info_by_dial, writer, remap,
         group_ctx['topic_npc_fids'] = set()
         group_ctx['service_gate_bytes'] = b''
         group_ctx['unlock_gate_bytes'] = b''
+        group_ctx['bark_choice_gate_bytes'] = b''
         group_ctx['service_kind'] = ''
         group_ctx['edid'] = this_edid
         # No fallback quest for quest-less INFOs: their owner IS the synthetic

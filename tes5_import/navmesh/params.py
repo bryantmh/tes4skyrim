@@ -55,8 +55,18 @@ SEED_SNAP = 64.0
 # When a node's column has several spans (multi-floor), take the span whose Z is
 # within this of the node's Z.  Node Z states which floor the designer meant.
 SEED_Z_TOLERANCE = 96.0
-# Width of the corridor carved to repair a severed PGRD edge (see build.py).
-REPAIR_WIDTH = 48.0
+# Half-width of the band stamped along every pathgrid line (voxel.stamp_pathgrid).
+# This band is UNCONDITIONAL navmesh: the pathgrid is the only part of the input
+# we know to be correct, so a strip of this width around every pathgrid line is
+# always in the final mesh, whatever the collision says.  Nothing culls it — no
+# ledge/headroom filter, no region cull, no agent erosion — and the stamp yields
+# to nothing.  (Making it yield to blocking collision silently refused to stamp
+# staircases, whose own faces are steep enough to be classed blocking, and left
+# the storeys of a house as disconnected islands.)
+#
+# Sized to the agent so a staircase or a doorway comes out genuinely walkable
+# rather than a sliver.
+PGRD_BAND = 24.0
 
 # --- Limits ----------------------------------------------------------------------
 # Hard cap on grid dimension per cell; beyond this CS is coarsened.  Guards

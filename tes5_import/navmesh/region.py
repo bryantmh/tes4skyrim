@@ -39,13 +39,30 @@ def build_regions(hf):
     Two spans in neighbouring columns connect only if their tops are within
     MAX_CLIMB — this is what keeps floor 1 and floor 2 apart, and what lets a
     staircase connect step to step.
+
+    A PROTECTED span links on the PATHGRID height it was stamped with, not on its
+    voxel top.  Regions are what the contourer meshes, and it meshes each one as
+    an INDEPENDENT polygon — two regions that merely abut share no vertices and
+    touch at a corner at best, which is exactly how a staircase ended up joined to
+    its floor by a single triangle corner.  A staircase must therefore land in the
+    SAME region as the floor it rises from, and comparing stamped pathgrid heights
+    achieves that: the pathgrid line up a staircase is continuous, so consecutive
+    stamped samples differ by only a few units and the stair links tread to tread
+    and on into the floor.
+
+    Two STOREYS of a house are also both protected and stacked in the same
+    columns, but their stamped heights differ by a whole storey, so they still do
+    not link.  (A cruder "relax the gate whenever both spans are protected" rule
+    got this badly wrong: it fused both floors into one region, and the contourer
+    then triangulated giant vertical zig-zags between them.)
     """
     climb = params.MAX_CLIMB
     w, h = hf.w, hf.h
     spans = hf.spans
 
     # Index walkable spans per column ONCE (this is the hot loop of the whole
-    # build on big exterior cells, so keep it flat and allocation-free).
+    # build on big exterior cells, so keep it flat and allocation-free).  A span's
+    # LINK height is the pathgrid Z stamped on it, or its top when it has none.
     walk = {}
     for ci in range(w * h):
         col = spans[ci]
@@ -54,7 +71,8 @@ def build_regions(hf):
             if s[2]:
                 if ws is None:
                     ws = []
-                ws.append((i, s[1]))          # only the TOP matters for linking
+                link_z = s[4] if (s[3] and s[4] is not None) else s[1]
+                ws.append((i, link_z))
         if ws is not None:
             walk[ci] = ws
 
@@ -64,16 +82,16 @@ def build_regions(hf):
     for ci, ws in walk.items():
         cx = ci % w
         cy = ci // w
-        for (si, stop) in ws:
+        for (si, slz) in ws:
             key = (cx, cy, si)
             if key in region_of:
                 continue
             rid = len(regions)
             members = []
-            q = deque([(cx, cy, si, stop)])
+            q = deque([(cx, cy, si, slz)])
             region_of[key] = rid
             while q:
-                x, y, i, top = q.popleft()
+                x, y, i, lz = q.popleft()
                 members.append((x, y, i))
                 for (nx, ny) in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
                     if nx < 0 or ny < 0 or nx >= w or ny >= h:
@@ -81,16 +99,13 @@ def build_regions(hf):
                     nws = walk.get(ny * w + nx)
                     if not nws:
                         continue
-                    for (ni, ntop) in nws:
+                    for (ni, nlz) in nws:
                         nk = (nx, ny, ni)
                         if nk in region_of:
                             continue
-                        # Neighbouring spans connect only within a step height:
-                        # this is what keeps floor 1 and floor 2 apart while
-                        # letting a staircase link step to step.
-                        if -climb <= ntop - top <= climb:
+                        if -climb <= nlz - lz <= climb:
                             region_of[nk] = rid
-                            q.append((nx, ny, ni, ntop))
+                            q.append((nx, ny, ni, nlz))
             regions.append(members)
 
     return region_of, regions
@@ -135,122 +150,117 @@ def seed_regions(hf, region_of, regions, nodes):
     return seeded
 
 
-def unseeded_nodes(hf, region_of, nodes, seeded):
-    """Nodes that no kept region covers — the floor under them is missing."""
-    snap = int(round(params.SEED_SNAP / hf.cs))
-    ztol = params.SEED_Z_TOLERANCE
-    out = []
-    for node in nodes:
-        nx, ny, nz = node
-        cx0 = int((nx - hf.min_x) / hf.cs)
-        cy0 = int((ny - hf.min_y) / hf.cs)
-        found = False
-        for dy in range(-snap, snap + 1):
-            if found:
-                break
-            for dx in range(-snap, snap + 1):
-                cx, cy = cx0 + dx, cy0 + dy
-                if cx < 0 or cy < 0 or cx >= hf.w or cy >= hf.h:
-                    continue
-                for si, s in enumerate(hf.spans[cy * hf.w + cx]):
-                    if (s[2] and abs(s[1] - nz) <= ztol
-                            and region_of.get((cx, cy, si)) in seeded):
-                        found = True
-                        break
-                if found:
-                    break
-        if not found:
-            out.append(node)
-    return out
-
-
-def synthesize_floor(hf, nodes, edges, missing):
-    """Stamp walkable spans under pathgrid nodes/edges that have no floor.
-
-    Some rooms' floor shells are placed in a neighbouring cell (verified: the
-    Anvil Fighters Guild bedroom wing is fully furnished — beds, chests, rugs —
-    but its floor/wall shell lives in another cell's REFR list, so this cell has
-    NO collision under 14 of its pathgrid nodes).  The pathgrid asserts an NPC
-    walks there, and the pathgrid is authored ground truth, so we trust it and
-    lay down a floor at the node's height.
-
-    Only the affected nodes get a patch, and only where the column has no
-    walkable span already — this never overrides real geometry.  The patch is
-    also swept along any PGRD edge between two patched nodes, so a synthesized
-    room comes out connected rather than as a scatter of discs.
-    """
-    if not missing:
-        return 0
-
-    idx = {}
-    for i, n in enumerate(nodes):
-        idx[(round(n[0], 1), round(n[1], 1), round(n[2], 1))] = i
-    missing_ids = set()
-    for n in missing:
-        i = idx.get((round(n[0], 1), round(n[1], 1), round(n[2], 1)))
-        if i is not None:
-            missing_ids.add(i)
-
-    radius = max(params.SEED_SNAP, params.AGENT_RADIUS * 2.0)
-    stamped = 0
-
-    def stamp(wx, wy, wz):
-        nonlocal stamped
-        r = int(round(radius / hf.cs))
-        cx0 = int((wx - hf.min_x) / hf.cs)
-        cy0 = int((wy - hf.min_y) / hf.cs)
-        for dy in range(-r, r + 1):
-            for dx in range(-r, r + 1):
-                if dx * dx + dy * dy > r * r:
-                    continue
-                cx, cy = cx0 + dx, cy0 + dy
-                if cx < 0 or cy < 0 or cx >= hf.w or cy >= hf.h:
-                    continue
-                col = hf.spans[cy * hf.w + cx]
-                # Never overwrite real geometry at this height: if anything
-                # (walkable or blocking) already occupies the node's Z band,
-                # leave it alone — that is a wall or an existing floor.
-                blocked = any(s[0] - params.MAX_CLIMB <= wz <= s[1] + params.MAX_CLIMB
-                              for s in col)
-                if blocked:
-                    continue
-                hf.add_span(cx, cy, wz - hf.ch, wz, True)
-                stamped += 1
-
-    for n in missing:
-        stamp(n[0], n[1], n[2])
-
-    # Sweep along edges joining two patched nodes so the room is contiguous.
-    for (i, j) in edges or ():
-        if i not in missing_ids and j not in missing_ids:
-            continue
-        a, b = nodes[i], nodes[j]
-        dist = max(abs(a[0] - b[0]), abs(a[1] - b[1]))
-        steps = int(dist / (hf.cs * 0.5)) + 1
-        for k in range(1, steps):
-            t = k / steps
-            stamp(a[0] + (b[0] - a[0]) * t,
-                  a[1] + (b[1] - a[1]) * t,
-                  a[2] + (b[2] - a[2]) * t)
-
-    return stamped
-
-
 def keep_regions(hf, region_of, seeded):
     """Clear the walkable flag on every span outside a seeded region.
 
     This is what discards tabletops, crate tops, roofs and ledges: they are
     physically standable but hold no pathgrid node, so no designer ever intended
     an NPC to path across them.
+
+    Protected spans (stamped from the pathgrid) are never dropped — they ARE the
+    designer's assertion, so they cannot be culled for failing to look like one.
     """
     dropped = 0
     for cy in range(hf.h):
         for cx in range(hf.w):
             col = hf.spans[cy * hf.w + cx]
             for si, s in enumerate(col):
-                if not s[2]:
+                if not s[2] or s[3]:
                     continue
                 if region_of.get((cx, cy, si)) not in seeded:
+                    s[2] = False
+                    dropped += 1
+    return dropped
+
+
+def _pathgrid_samples(nodes, edges):
+    """Densify the pathgrid into (x, y, z) samples along every edge.
+
+    A bare node set is too sparse to gate spans by height (nodes sit ~128-256u
+    apart while spans are every cell), and a straight stair edge climbs steeply
+    between its two nodes, so we interpolate points along each edge at ~cell
+    spacing.  The result is a dense height oracle that tracks the floor AND the
+    slope of every staircase.
+    """
+    samples = [(float(n[0]), float(n[1]), float(n[2])) for n in nodes]
+    for (i, j) in edges or ():
+        if i >= len(nodes) or j >= len(nodes):
+            continue
+        a, b = nodes[i], nodes[j]
+        seg = max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+        steps = max(1, int(seg / params.CS))
+        for k in range(1, steps):
+            t = k / steps
+            samples.append((a[0] + (b[0] - a[0]) * t,
+                            a[1] + (b[1] - a[1]) * t,
+                            a[2] + (b[2] - a[2]) * t))
+    return samples
+
+
+def keep_pathgrid_heights(hf, nodes, edges):
+    """Keep only walkable spans the PATHGRID vouches for AT THE RIGHT HEIGHT.
+
+    ``keep_regions`` works at the region level, but a staircase legitimately
+    climb-connects a room's floor to the ceiling of the room beneath it (the
+    stair treads wrap over that lower room), so the flood-fill merges floor +
+    stairs + ceiling into ONE region.  Keeping the whole region then paints
+    navmesh on the ceiling where there is no room ("triangles on the wrong
+    floor").
+
+    The pathgrid is authored ground truth for where NPCs stand, so it is the
+    only thing that can tell the floor from the ceiling here: keep a span iff a
+    densified pathgrid sample lies within XY reach and within the floor Z
+    tolerance of that span's top.  This also RESCUES floors the region seeding
+    dropped (a second storey whose region no node happened to seed) — any span a
+    pathgrid sample sits on is kept regardless of its region — which is why
+    two-storey houses now get both floors.
+
+    Runs after ``keep_regions`` (so tabletops/roofs are already gone) and only
+    ever removes spans, so it can never add a wall back.
+    """
+    import numpy as np
+
+    samples = _pathgrid_samples(nodes, edges)
+    if not samples:
+        return 0
+    sarr = np.asarray(samples, dtype=np.float64)
+
+    # Generous XY reach so the floor BETWEEN sparse nodes survives, but tight
+    # enough in Z that the ceiling (a full storey up) is rejected.
+    xy_r = params.SEED_SNAP * 2.5
+    xy_r2 = xy_r * xy_r
+    ztol = params.SEED_Z_TOLERANCE
+    reach_c = int(round(xy_r / hf.cs)) + 1
+
+    # Bucket samples into grid columns once, then for each walkable span test
+    # only samples in the surrounding cell window (keeps this O(spans * local)).
+    dropped = 0
+    for cy in range(hf.h):
+        wy = hf.min_y + cy * hf.cs
+        for cx in range(hf.w):
+            col = hf.spans[cy * hf.w + cx]
+            has_walk = False
+            for s in col:
+                if s[2]:
+                    has_walk = True
+                    break
+            if not has_walk:
+                continue
+            wx = hf.min_x + cx * hf.cs
+            d2 = (sarr[:, 0] - wx) ** 2 + (sarr[:, 1] - wy) ** 2
+            near = d2 <= xy_r2
+            if not near.any():
+                # No pathgrid anywhere near this column: it is not vouched.
+                for s in col:
+                    if s[2] and not s[3]:
+                        s[2] = False
+                        dropped += 1
+                continue
+            near_z = sarr[near, 2]
+            for s in col:
+                if not s[2] or s[3]:
+                    continue
+                if np.min(np.abs(near_z - s[1])) > ztol:
                     s[2] = False
                     dropped += 1
     return dropped
