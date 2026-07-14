@@ -1,4 +1,5 @@
 Gameplan:
+	Fix weapons missing on NPCs M11
 	Refine Navmesh L5
 	Refine scripts - cleanup todos L20
 	Package records L6
@@ -6,10 +7,7 @@ Gameplan:
 	Fix meshes L15 L16 M4
 	Lip syncing L1
 	Update app design M6
-	Update body mesh step mi24
 	Update documentation / readme L7 mi12
-	Versioning M7
-	Make final step zip instead of copy mi15
 
 Prompts:
 	Book are animated to open in the inventory. If we don't use the correct animated mesh, the book fails to open. We need to use skyrim book mesh inventory model INAM, BUT we ideally need to apply the oblivion texture for the book front/back covers and spine.
@@ -38,15 +36,15 @@ Major Issues for V1:
 		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
 		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
 
-	6 - Cleanup App UI with new branding / Add screenshots of app + ingame + youtube video to readme
-
-	7 - Add versioning
+	6 - Add screenshots of app + ingame + youtube video to readme
 
 	8 - Fix all CK warnings
 
 	9 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting
 
 	10 - Need new skyrim body mesh to actually work to allow leg skin to appear
+
+	11 - NPCs have lost all their weapons
 
 
 Later Issues:
@@ -60,11 +58,12 @@ Later Issues:
 		Missing sound for many lines including barter lines
 
 	5 - Refine pathgrid conversion
-		Better know where doors are better
-		Better handle navmesh on multiple floors
-		Better handle which objects need to be avoided for generation (currently too many)
-		Better fix discontinuities without going through walls
-		Better handle navmesh on objects in exteriors (like bridges)
+		Better handle door triangles.
+		Cull triangle groups below a certain area/size
+		Cull individual triangles below a certain size
+		Disallow navmesh in the same x and y coordinates within a certain threshold in the y direction
+		Disallow any navmesh triangles not connected to a teleporting door OR another cell.
+		Speed up conversion by 5x. Currently takes ~20 minutes
 
 	6 - Package Records. These will need a new advanced conversion algorithm
 	
@@ -107,21 +106,11 @@ Minor Issues:
 
 	5 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
 
-	6 - Add texture_overrides folder to export instead of only .bsa files
-
 	8 - Harvested plants don't make a sound. Intentional?
 
 	9 - Update world map cloud mesh and texture
 
 	10 - Convert Skyrim LE meshes to Skyrim SE format
-
-	12 - Change logo from TES4 to TESIV
-
-	13 - Add a timer to GUI
-
-	14 - Voicemap.txt shouldn't be in output folder
-
-	15 - Replace copy to skyrim step with zip output
 
 	16 - Creature conversion console errors
 	Reading <struct 'NiMorphData'> failed
@@ -153,7 +142,5 @@ Minor Issues:
 	22 - Clothes don't move which character skin, resulting in clipping
 
 	23 - Can see back of head of skinned helmets
-
-	24 - GUI should create arma plugin for all base Skyrim DLC + update.esm + unofficial patch (if it exists) with a popup menu to select more esp files if wanted. Should clean masters to avoid unnecessary ones.
 
 	25 - Source scripts shouldn't be bundled

@@ -122,6 +122,11 @@ def audit(verts, tris, nodes, edges):
     # components, and counting those as failures buries the real bug.  What is
     # always wrong is a pathgrid edge — an authored "an NPC walks from A to B" —
     # whose ends are on pieces of navmesh an NPC cannot actually cross between.
+    #
+    # A node is anchored to the triangle COVERING it in XY at the nearest height,
+    # not to the nearest vertex: triangles are now up to TRI_TARGET_EDGE across,
+    # so the nearest vertex to a node standing mid-triangle can easily belong to
+    # some other piece (a ledge above), which mis-reported the edge as broken.
     parent = list(range(len(verts)))
 
     def find(x):
@@ -136,33 +141,51 @@ def audit(verts, tris, nodes, edges):
     comp = [find(i) for i in range(len(verts))]
 
     def comp_at(n):
+        best = None            # (|dz|, vertex_index)
+        for ti, (va, vb, vc) in enumerate(tri_pts):
+            z = _tri_z(n[0], n[1], va, vb, vc)
+            if z is None:
+                continue
+            dz = abs(z - n[2])
+            if best is None or dz < best[0]:
+                best = (dz, tris[ti][0])
+        if best is not None:
+            return comp[best[1]]
         d = (V[:, 0] - n[0]) ** 2 + (V[:, 1] - n[1]) ** 2 + (V[:, 2] - n[2]) ** 2
         return comp[int(np.argmin(d))]
 
     ncomp = {i: comp_at(n) for i, n in enumerate(nodes)}
     broken = sum(1 for (i, j) in edges if ncomp[i] != ncomp[j])
 
-    # --- steep tris the pathgrid does NOT vouch for ---
-    narr = np.asarray(nodes) if nodes else np.empty((0, 3))
-    snap2 = (params.SEED_SNAP * 1.5) ** 2
+    # --- steep WALL-sized tris (single steps are legitimate) ---
+    #
+    # A stair riser meshed at CS=16 is steeper than the walkable slope yet is a
+    # single step the pathgrid walks; the generator keeps those on purpose.
+    # What must never exist is a steep triangle TALLER than any step could be —
+    # the cross-floor wall artifact.  Mirror the generator's own invariant.
     cos_lim = math.cos(math.radians(50))
+    max_step_span = params.MAX_CLIMB * 2.5
     steep = 0
     for (a, b, c) in tris:
         n = np.cross(V[b] - V[a], V[c] - V[a])
         ln = np.linalg.norm(n)
         if ln < 1e-9 or abs(n[2]) / ln >= cos_lim:
             continue
-        cen = (V[a] + V[b] + V[c]) / 3.0
-        if len(narr):
-            d2 = (narr[:, 0] - cen[0]) ** 2 + (narr[:, 1] - cen[1]) ** 2
-            m = d2 < snap2
-            if m.any() and (np.abs(narr[m, 2] - cen[2]) < params.SEED_Z_TOLERANCE).any():
-                continue
-        steep += 1
+        zs = (V[a][2], V[b][2], V[c][2])
+        if max(zs) - min(zs) > max_step_span:
+            steep += 1
 
-    # --- wrong floor ---
+    # --- wrong floor: navmesh near a node exists ONLY at the wrong height ---
     wrong = 0
     for (nx, ny, nz) in nodes:
+        covered_ok = False
+        for (va, vb, vc) in tri_pts:
+            z = _tri_z(nx, ny, va, vb, vc)
+            if z is not None and abs(z - nz) <= params.MAX_CLIMB * 2:
+                covered_ok = True
+                break
+        if covered_ok:
+            continue
         d = (V[:, 0] - nx) ** 2 + (V[:, 1] - ny) ** 2
         near = d < (params.SEED_SNAP * 1.5) ** 2
         if near.any() and np.min(np.abs(V[near, 2] - nz)) > params.MAX_CLIMB * 2:

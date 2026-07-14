@@ -1,0 +1,45 @@
+name: Tag on push to master
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute and push next tag
+        run: |
+          git fetch --tags
+
+          latest=$(git tag -l '[0-9]*.[0-9][0-9]' | sort -t. -k1,1n -k2,2n | tail -n1)
+
+          if [ -z "$latest" ]; then
+            cents=0
+          else
+            major=$(echo "$latest" | cut -d. -f1)
+            minor=$(echo "$latest" | cut -d. -f2)
+            cents=$((10#$major * 100 + 10#$minor))
+          fi
+
+          next_cents=$((cents + 1))
+          next_major=$((next_cents / 100))
+          next_minor=$((next_cents % 100))
+          next_tag=$(printf "%d.%02d" "$next_major" "$next_minor")
+
+          echo "Latest tag: ${latest:-<none>}"
+          echo "Next tag: $next_tag"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$next_tag" -m "Release $next_tag"
+          git push origin "$next_tag"

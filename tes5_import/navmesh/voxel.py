@@ -181,13 +181,17 @@ def _rasterize(hf, tris, walkable):
     cs, ch = hf.cs, hf.ch
     inv_cs = 1.0 / cs
 
-    # Per-triangle XY bbox -> column range.
+    # Per-triangle XY bbox -> column range.  A triangle entirely OUTSIDE the
+    # grid must be skipped, not clipped: since the bounds are clamped to the
+    # pathgrid window, outlier geometry can lie far off-grid, and clipping its
+    # bbox would smear spurious spans along the border columns.
     tx = tris[:, :, 0]
     ty = tris[:, :, 1]
     x0 = np.floor((tx.min(axis=1) - hf.min_x) * inv_cs).astype(np.int32)
     x1 = np.floor((tx.max(axis=1) - hf.min_x) * inv_cs).astype(np.int32)
     y0 = np.floor((ty.min(axis=1) - hf.min_y) * inv_cs).astype(np.int32)
     y1 = np.floor((ty.max(axis=1) - hf.min_y) * inv_cs).astype(np.int32)
+    oob = (x1 < 0) | (x0 > hf.w - 1) | (y1 < 0) | (y0 > hf.h - 1)
     np.clip(x0, 0, hf.w - 1, out=x0)
     np.clip(x1, 0, hf.w - 1, out=x1)
     np.clip(y0, 0, hf.h - 1, out=y0)
@@ -201,6 +205,8 @@ def _rasterize(hf, tris, walkable):
     tl = tris.tolist()          # python floats: ~2x faster than numpy scalars here
 
     for i in range(len(tl)):
+        if oob[i]:
+            continue
         a, b, c = tl[i]
         ax, ay, az = a
         bx, by, bz = b
@@ -289,6 +295,7 @@ def _rasterize_grid(hf, tris, walkable):
     x1 = np.floor((tris[:, :, 0].max(axis=1) - hf.min_x) / cs).astype(np.int64)
     y0 = np.floor((tris[:, :, 1].min(axis=1) - hf.min_y) / cs).astype(np.int64)
     y1 = np.floor((tris[:, :, 1].max(axis=1) - hf.min_y) / cs).astype(np.int64)
+    oob = (x1 < 0) | (x0 > hf.w - 1) | (y1 < 0) | (y0 > hf.h - 1)
     np.clip(x0, 0, hf.w - 1, out=x0)
     np.clip(x1, 0, hf.w - 1, out=x1)
     np.clip(y0, 0, hf.h - 1, out=y0)
@@ -302,7 +309,7 @@ def _rasterize_grid(hf, tris, walkable):
 
     half_ch = hf.ch * 0.5
     for i in range(len(tris)):
-        if abs(det[i]) < 1e-9:
+        if oob[i] or abs(det[i]) < 1e-9:
             continue
         gx = np.arange(x0[i], x1[i] + 1)
         gy = np.arange(y0[i], y1[i] + 1)
@@ -580,7 +587,7 @@ def stamp_pathgrid(hf, nodes, edges):
     ch = hf.ch
     half = params.PGRD_BAND
     r_cells = max(1, int(round(half / hf.cs)))
-    snap_z = params.MAX_CLIMB
+    snap_z = params.PGRD_SNAP_Z
 
     stamped = 0
 
@@ -597,9 +604,17 @@ def stamp_pathgrid(hf, nodes, edges):
                     continue
                 col = hf.spans[cy * hf.w + cx]
 
-                # Snap to a WALKABLE span at this height when there is one: the
-                # stair treads and the floor are the true surface, and using them
-                # keeps the mesh on the geometry instead of on a floating plane.
+                # Snap to the WALKABLE span nearest this height: the stair treads
+                # and the floor are the true surface, and using them keeps the
+                # mesh on the geometry instead of on a floating plane.
+                #
+                # The snap window is generous (SNAP_Z, not a step height) because
+                # a pathgrid is COARSE on stairs — the Anvil Fighters Guild runs a
+                # whole flight with two nodes, ~100u apart in Z — so a sample
+                # interpolated along that edge can sit far above the tread it is
+                # meant to be standing on.  With a tight window it misses the
+                # treads entirely and synthesizes a floating ramp steeper than an
+                # NPC can walk, which then shatters into unconnected fragments.
                 best = None
                 for s in col:
                     if not s[2]:
@@ -609,12 +624,13 @@ def stamp_pathgrid(hf, nodes, edges):
                         best = s
                 if best is not None:
                     best[3] = True
-                    # Record the height the pathgrid asserted here.  Region
-                    # growing compares these, not the span tops, so a staircase
-                    # links step to step while two storeys of a house — both
-                    # protected, both stacked in XY — never link to each other.
-                    if best[4] is None or abs(wz - best[1]) < abs(best[4] - best[1]):
-                        best[4] = wz
+                    # The link height is the SNAPPED SURFACE's own top, not the
+                    # interpolated pathgrid Z: the staircase's real treads are what
+                    # an NPC walks, and linking on them makes the layer follow the
+                    # actual stair.  (Linking on the interpolated Z made the layer
+                    # follow a straight line through the air between two distant
+                    # nodes, which no run of treads matches.)
+                    best[4] = best[1]
                     stamped += 1
                 else:
                     hf.add_span(cx, cy, wz - ch, wz, True, protected=True)

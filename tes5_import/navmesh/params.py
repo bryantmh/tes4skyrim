@@ -39,13 +39,19 @@ MAX_SLOPE_DEG = 46.0
 MAX_SIMPLIFY_ERR = 12.0
 # Contours shorter than this many voxels are noise (specks behind furniture).
 MIN_REGION_VOXELS = 8
-# Target navmesh triangle edge length (game units).  Interior Steiner points are
-# seeded on a grid of this spacing so triangles come out roughly uniform in size
-# rather than as earcut fans of long thin slivers.  ~vanilla interior tri scale.
+# Target navmesh triangle edge length (game units).  Simplification never makes
+# an edge longer than this, so triangles come out roughly uniform in size rather
+# than as fans of long thin slivers.  ~vanilla interior tri scale.  Scaled by the
+# heightfield's cell size, so an exterior (CS 32) allows 2x longer edges.
 TRI_TARGET_EDGE = 128.0
-# Exteriors are a whole 4096u cell of smooth terrain — a dense grid there just
-# explodes the triangle/vertex count and build time, so use much larger tris.
-TRI_TARGET_EDGE_EXTERIOR = 320.0
+# Triangle shape bound during simplification: longest_edge^2 / (4 * area).  An
+# equilateral triangle scores 0.58; slivers score high.  A collapse or a smooth
+# move may not create a triangle worse than this.  (The old bound of 6 let
+# decimation fill rooms with visible near-degenerate fans.)
+MAX_ASPECT = 4.0
+# Simplification rounds (collapse + flip + smooth per round).  Converges fast;
+# rounds after the third change little.
+SIMPLIFY_PASSES = 4
 
 # --- Pathgrid coupling -----------------------------------------------------------
 # A pathgrid node associates with a walkable span within this XY distance.  The
@@ -55,6 +61,22 @@ SEED_SNAP = 64.0
 # When a node's column has several spans (multi-floor), take the span whose Z is
 # within this of the node's Z.  Node Z states which floor the designer meant.
 SEED_Z_TOLERANCE = 96.0
+# How far a walkable span may be from the pathgrid — measured as WALKED
+# (geodesic) distance over the span graph, not straight-line XY — and still be
+# kept (region.keep_pathgrid_heights).  The pathgrid is SPARSE: Bethesda ran a
+# line down the middle of a room, not around it, and the whole point of
+# voxelizing real collision is to EXPAND from that line and fill the walkable
+# floor.  Geodesic distance wraps around furniture but cannot pass through
+# walls, so a big reach fills the room without painting the street outside the
+# shell.  (160u straight-line, the old gate, trimmed real floor in large rooms.)
+PGRD_XY_REACH = 384.0
+# Radius of the flood barrier stamped over each TELEPORT door of an interior
+# cell.  The reach flood may arrive at these columns (the doorstep keeps its
+# mesh, so the Door Triangle exists) but never expands from them, so the mesh
+# ends at the threshold — like vanilla — instead of escaping through the open
+# doorway onto the decorative street outside the shell.  Must comfortably
+# exceed a doorway's half-width so the flood cannot slip around the corners.
+DOOR_BARRIER_RADIUS = 64.0
 # Half-width of the band stamped along every pathgrid line (voxel.stamp_pathgrid).
 # This band is UNCONDITIONAL navmesh: the pathgrid is the only part of the input
 # we know to be correct, so a strip of this width around every pathgrid line is
@@ -67,6 +89,14 @@ SEED_Z_TOLERANCE = 96.0
 # Sized to the agent so a staircase or a doorway comes out genuinely walkable
 # rather than a sliver.
 PGRD_BAND = 24.0
+# How far the stamp reaches in Z to SNAP a pathgrid sample onto real walkable
+# collision.  A pathgrid is coarse on stairs (the Anvil Fighters Guild runs a whole
+# flight on two nodes ~100u apart in Z), so a sample interpolated along such an
+# edge can float above the tread it is meant to stand on and must reach down for
+# it.  But reaching too far is worse than not reaching at all: at 128u the band
+# starts latching onto whatever surface happens to lie under a balcony, and the
+# layer count goes UP.  A step height plus a stair riser is the right order.
+PGRD_SNAP_Z = 48.0
 
 # --- Limits ----------------------------------------------------------------------
 # Hard cap on grid dimension per cell; beyond this CS is coarsened.  Guards

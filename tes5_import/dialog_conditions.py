@@ -101,6 +101,28 @@ def _remap_formid(fid: int, offset: int) -> int:
     return fid
 
 
+# TES4 GetScriptVariable(53) reads a variable on the legacy (pre-Papyrus) script
+# system.  Skyrim still LISTS function 53, but the legacy VM is gone and vanilla
+# Skyrim.esm uses it exactly ZERO times; the live equivalent is
+# GetVMScriptVariable(630), which reads a Papyrus property off a reference
+# (4,290 vanilla uses between it and GetVMQuestVariable).  Param2 is a runtime
+# string pointer, so the property NAME travels in a companion CIS2 subrecord as
+# the mangled `::<name>_var` form (verified: `CIS2=::RadiantAelaBlock_var`).
+#
+# This is the gate a huge number of Oblivion quest packages actually use — e.g.
+# FGC01Rats' escort package is `GetScriptVariable(PinarusREF, packageVAR) == 1`,
+# set by the dialogue INFO that agrees to help.  Without this translation the
+# condition silently invokes a dead function and the package never fires.
+GET_SCRIPT_VARIABLE = 53
+GET_VM_SCRIPT_VARIABLE = 630
+GET_VM_QUEST_VARIABLE = 629
+
+
+def papyrus_var_name(var: str) -> str:
+    """Papyrus property name as a CIS2 script-variable reference."""
+    return f'::{var}_var'
+
+
 def convert_ctda(raw: bytes, offset: 'int | None' = None) -> 'bytes | None':
     """Convert one 24-byte TES4 CTDA to a 32-byte TES5 CTDA.
 
@@ -176,6 +198,86 @@ def convert_ctda_list(rec: dict, offset: 'int | None' = None,
     if out and (out[-1][0] & CTDA_OR):
         out[-1] = bytes([out[-1][0] & ~CTDA_OR]) + out[-1][1:]
     return out
+
+
+def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
+                                   offset: 'int | None' = None,
+                                   prefix: str = '') -> list:
+    """Like convert_ctda_list, but returns [(ctda_bytes, cis2_or_None)].
+
+    A TES4 GetScriptVariable condition carries its variable NAME as a script-
+    local index we cannot see in the CTDA itself — the name lives in the target
+    ref's script.  `script_vars` maps ref_fid -> {var_index: var_name} (built by
+    the caller from the SCPT records), letting us re-emit the condition as
+    GetVMScriptVariable + a CIS2 naming the Papyrus property.
+
+    Conditions whose variable we cannot resolve are DROPPED rather than emitted
+    against the dead legacy function — a condition that can never be true would
+    silently disable the package it gates.
+    """
+    if offset is None:
+        offset = get_formid_index_offset()
+    script_vars = script_vars or {}
+    out = []
+    i = 0
+    while True:
+        raw_hex = rec.get(f'{prefix}Condition[{i}].Raw')
+        if raw_hex is None:
+            break
+        i += 1
+        if not raw_hex:
+            continue
+        try:
+            raw = bytes.fromhex(raw_hex)
+        except ValueError:
+            continue
+
+        func = struct.unpack_from('<H', raw + b'\0' * 24, 8)[0]
+        if func == GET_SCRIPT_VARIABLE:
+            pair = _convert_script_var_ctda(raw, script_vars, offset)
+            if pair is not None:
+                out.append(pair)
+            continue
+
+        try:
+            ctda = convert_ctda(raw, offset)
+        except (ValueError, struct.error):
+            continue
+        if ctda is not None:
+            out.append((ctda, None))
+
+    if out and (out[-1][0][0] & CTDA_OR):
+        fixed = bytes([out[-1][0][0] & ~CTDA_OR]) + out[-1][0][1:]
+        out[-1] = (fixed, out[-1][1])
+    return out
+
+
+def _convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int):
+    """GetScriptVariable(ref, varIdx) -> GetVMScriptVariable(ref, '::var_var')."""
+    data = raw + b'\x00' * max(0, 24 - len(raw))
+    type_byte = data[0]
+    comp_raw = struct.unpack_from('<I', data, 4)[0]
+    param1 = struct.unpack_from('<I', data, 12)[0]   # the reference
+    param2 = struct.unpack_from('<I', data, 16)[0]   # script-local var index
+
+    ref = _remap_formid(param1, offset)
+    name = script_vars.get(param1 & 0x00FFFFFF, {}).get(param2)
+    if not name:
+        return None
+
+    if type_byte & CTDA_USE_GLOBAL:
+        comp_raw = _remap_formid(comp_raw, offset)
+    run_on = 0
+    if type_byte & CTDA_RUN_ON_TARGET:
+        run_on = 1
+        type_byte &= ~CTDA_RUN_ON_TARGET
+
+    ctda = struct.pack('<B3xIHHIIII I',
+                       type_byte, comp_raw,
+                       GET_VM_SCRIPT_VARIABLE, 0,
+                       ref, 0,
+                       run_on, 0, 0xFFFFFFFF)
+    return ctda, papyrus_var_name(name)
 
 
 # --- Builders for the Skyrim-required injected conditions ----------------------

@@ -27,6 +27,7 @@ Usage:
   python convert.py -f Oblivion.esm --pack-only
   python convert.py -f Oblivion.esm --mesh-bounds-only
   python convert.py --modify-body-meshes
+  python convert.py --modify-body-meshes --patch-plugins Skyrim.esm Dawnguard.esm Dragonborn.esm
   python convert.py --output-dir /path/to/output -f Oblivion.esm
 """
 
@@ -630,38 +631,47 @@ def phase_mesh_bounds(file_name: str, config: dict, output_dir: str = None,
     return True
 
 
-def phase_modify_body_meshes(tes5_data: str = None):
+def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
+                             output_dir: str = None):
     """Add greaves partition to vanilla Skyrim character body NIFs, then
-    generate the companion slot-44 patch for Skyrim.esm.
+    generate ONE merged companion slot-44 patch covering `plugins`.
 
     The patch (tools/patch_body_slots.py) is mandatory alongside the split
     body meshes: without slot 44 on the NakedTorso ARMA the new lower-body
     skin partition never renders and naked thighs are invisible.
-    """
-    # Disabled because it doesn't help
-    # script = SCRIPT_DIR / "asset_convert" / "modify_body_meshes.py"
-    # if not script.exists():
-    #     print("ERROR: asset_convert/modify_body_meshes.py not found")
-    #     return False
-    # ret = subprocess.run([sys.executable, str(script)], cwd=str(SCRIPT_DIR),
-    #                      capture_output=True, text=True, **_POPEN_FLAGS)
-    # if ret.stdout:
-    #     print(ret.stdout, end="")
-    # if ret.stderr:
-    #     print(ret.stderr, end="")
-    # if ret.returncode != 0:
-    #     return False
 
-    # Companion plugin: add slot 44 to every slot-32 ARMO/ARMA in Skyrim.esm
-    skyrim_esm = Path(tes5_data) / "Skyrim.esm" if tes5_data else None
-    if skyrim_esm is None or not skyrim_esm.exists():
-        print("WARNING: Skyrim.esm not found - slot-44 patch not generated "
-              "(run tools/patch_body_slots.py manually)")
+    `plugins` defaults to just Skyrim.esm; the GUI passes the user's whole
+    selected load order (Skyrim.esm + DLCs + Update.esm + any chosen mods)
+    so every installed armor mod is folded into the same "Slot44 Patch.esp",
+    with unused masters cleaned once across the merged result. Each plugin
+    not present in tes5_data is skipped with a warning rather than failing
+    the whole step.
+    """
+    if not tes5_data:
+        print("WARNING: Skyrim data path not found - slot-44 patch not "
+              "generated (run tools/patch_body_slots.py manually)")
         return True
+
+    plugins = plugins or ["Skyrim.esm"]
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    out_path = out_root / "Oblivion.esm" / "Slot44 Patch.esp"
+
+    plugin_paths = []
+    for name in plugins:
+        plugin_path = Path(tes5_data) / name
+        if not plugin_path.exists():
+            print(f"WARNING: {name} not found - skipping")
+            continue
+        plugin_paths.append(str(plugin_path))
+    if not plugin_paths:
+        print("WARNING: none of the selected plugins were found - slot-44 "
+              "patch not generated")
+        return True
+
     patch_script = SCRIPT_DIR / "tools" / "patch_body_slots.py"
-    ret = subprocess.run([sys.executable, str(patch_script), str(skyrim_esm)],
-                         cwd=str(SCRIPT_DIR), capture_output=True, text=True,
-                         **_POPEN_FLAGS)
+    ret = subprocess.run(
+        [sys.executable, str(patch_script), *plugin_paths, "-o", str(out_path)],
+        cwd=str(SCRIPT_DIR), capture_output=True, text=True, **_POPEN_FLAGS)
     if ret.stdout:
         print(ret.stdout, end="")
     if ret.stderr:
@@ -722,6 +732,10 @@ def main():
     parser.add_argument("--mesh-subdirs",        nargs="+", metavar="SUBDIR",
                         help="Limit mesh conversion to these root subfolders "
                              "(e.g. architecture clutter). Default: all.")
+    parser.add_argument("--patch-plugins",       nargs="+", metavar="PLUGIN",
+                        help="Skyrim plugin filenames to generate a slot-44 "
+                             "patch for (e.g. Skyrim.esm Dawnguard.esm). "
+                             "Default: Skyrim.esm only.")
 
     args = parser.parse_args()
 
@@ -903,7 +917,9 @@ def main():
         print("=" * 54)
         print("  Phase 10: MODIFY BODY MESHES")
         print("=" * 54)
-        if not phase_modify_body_meshes(tes5_data):
+        if not phase_modify_body_meshes(
+                tes5_data, plugins=getattr(args, 'patch_plugins', None),
+                output_dir=output_dir):
             success = False
         print()
 

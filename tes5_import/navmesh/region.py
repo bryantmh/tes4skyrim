@@ -197,70 +197,105 @@ def _pathgrid_samples(nodes, edges):
     return samples
 
 
-def keep_pathgrid_heights(hf, nodes, edges):
-    """Keep only walkable spans the PATHGRID vouches for AT THE RIGHT HEIGHT.
+def keep_pathgrid_heights(hf, nodes, edges, barriers=None):
+    """Keep only walkable spans within WALKING reach of the pathgrid.
 
     ``keep_regions`` works at the region level, but a staircase legitimately
-    climb-connects a room's floor to the ceiling of the room beneath it (the
-    stair treads wrap over that lower room), so the flood-fill merges floor +
-    stairs + ceiling into ONE region.  Keeping the whole region then paints
-    navmesh on the ceiling where there is no room ("triangles on the wrong
-    floor").
+    climb-connects a room's floor to surfaces at storey height (the treads wrap
+    over the room below), so the flood-fill merges them into ONE region and
+    region-level vouching cannot tell the floor from the ceiling.
 
-    The pathgrid is authored ground truth for where NPCs stand, so it is the
-    only thing that can tell the floor from the ceiling here: keep a span iff a
-    densified pathgrid sample lies within XY reach and within the floor Z
-    tolerance of that span's top.  This also RESCUES floors the region seeding
-    dropped (a second storey whose region no node happened to seed) — any span a
-    pathgrid sample sits on is kept regardless of its region — which is why
-    two-storey houses now get both floors.
+    The gate here is GEODESIC: multi-source Dijkstra over the span graph
+    (neighbouring columns, tops within MAX_CLIMB — the same adjacency the mesher
+    uses), seeded at every densified pathgrid sample on the spans within
+    SEED_Z_TOLERANCE of the sample's own Z.  A span survives iff the flood
+    reaches it within PGRD_XY_REACH of walked distance.
+
+    Why geodesic and not straight-line XY (the previous version):
+
+      * a straight-line reach big enough to fill a whole room from the sparse
+        line of nodes down its middle also reaches THROUGH the walls, and
+        painted navmesh on the street outside a house's interior shell;
+      * walking distance wraps around furniture (floor behind a table is kept)
+        but does not pass through walls (no walkable adjacency), and it can
+        only reach surfaces an NPC could genuinely step to from the pathgrid —
+        a ceiling the stair merely passes near in Z is never step-reachable,
+        so the wrong-floor defect stays unrepresentable.
 
     Runs after ``keep_regions`` (so tabletops/roofs are already gone) and only
     ever removes spans, so it can never add a wall back.
     """
-    import numpy as np
+    import heapq
 
     samples = _pathgrid_samples(nodes, edges)
     if not samples:
         return 0
-    sarr = np.asarray(samples, dtype=np.float64)
 
-    # Generous XY reach so the floor BETWEEN sparse nodes survives, but tight
-    # enough in Z that the ceiling (a full storey up) is rejected.
-    xy_r = params.SEED_SNAP * 2.5
-    xy_r2 = xy_r * xy_r
+    w, h, cs = hf.w, hf.h, hf.cs
+    climb = params.MAX_CLIMB
     ztol = params.SEED_Z_TOLERANCE
-    reach_c = int(round(xy_r / hf.cs)) + 1
 
-    # Bucket samples into grid columns once, then for each walkable span test
-    # only samples in the surrounding cell window (keeps this O(spans * local)).
-    dropped = 0
-    for cy in range(hf.h):
-        wy = hf.min_y + cy * hf.cs
-        for cx in range(hf.w):
-            col = hf.spans[cy * hf.w + cx]
-            has_walk = False
-            for s in col:
-                if s[2]:
-                    has_walk = True
-                    break
-            if not has_walk:
+    # Walkable span tops per column (span list index -> top) for adjacency.
+    walk = {}
+    for ci in range(w * h):
+        ws = [(si, s[1]) for si, s in enumerate(hf.spans[ci]) if s[2]]
+        if ws:
+            walk[ci] = ws
+
+    # Costs in half-cells so the 3-4 chamfer stays integer: straight=2, diag=3.
+    limit = int(params.PGRD_XY_REACH / cs * 2.0)
+    dist = {}
+    heap = []
+    for (sx, sy, sz) in samples:
+        cx = int((sx - hf.min_x) / cs)
+        cy = int((sy - hf.min_y) / cs)
+        if cx < 0 or cy < 0 or cx >= w or cy >= h:
+            continue
+        for (si, top) in walk.get(cy * w + cx, ()):
+            if abs(top - sz) <= ztol:
+                key = (cx, cy, si)
+                if dist.get(key, 1 << 30) > 0:
+                    dist[key] = 0
+                    heapq.heappush(heap, (0, cx, cy, si, top))
+
+    # Barrier columns (teleport-door thresholds) may be REACHED — the mesh must
+    # still cover the doorstep so the Door Triangle exists — but never expanded
+    # FROM, so the flood cannot pour through the doorway into the fake exterior.
+    barriers = barriers or ()
+
+    steps = ((-1, 0, 2), (1, 0, 2), (0, -1, 2), (0, 1, 2),
+             (-1, -1, 3), (1, -1, 3), (-1, 1, 3), (1, 1, 3))
+    while heap:
+        d, cx, cy, si, top = heapq.heappop(heap)
+        if d > dist.get((cx, cy, si), 1 << 30):
+            continue
+        if cy * w + cx in barriers:
+            continue
+        for (dx, dy, c) in steps:
+            nd = d + c
+            if nd > limit:
                 continue
-            wx = hf.min_x + cx * hf.cs
-            d2 = (sarr[:, 0] - wx) ** 2 + (sarr[:, 1] - wy) ** 2
-            near = d2 <= xy_r2
-            if not near.any():
-                # No pathgrid anywhere near this column: it is not vouched.
-                for s in col:
-                    if s[2] and not s[3]:
-                        s[2] = False
-                        dropped += 1
+            nx, ny = cx + dx, cy + dy
+            if nx < 0 or ny < 0 or nx >= w or ny >= h:
                 continue
-            near_z = sarr[near, 2]
-            for s in col:
-                if not s[2] or s[3]:
+            for (ni, ntop) in walk.get(ny * w + nx, ()):
+                if abs(ntop - top) > climb:
                     continue
-                if np.min(np.abs(near_z - s[1])) > ztol:
-                    s[2] = False
-                    dropped += 1
+                nk = (nx, ny, ni)
+                if nd < dist.get(nk, 1 << 30):
+                    dist[nk] = nd
+                    heapq.heappush(heap, (nd, nx, ny, ni, ntop))
+
+    dropped = 0
+    for ci, ws in walk.items():
+        cx = ci % w
+        cy = ci // w
+        col = hf.spans[ci]
+        for (si, _top) in ws:
+            s = col[si]
+            if s[3]:
+                continue                       # protected: pathgrid asserts it
+            if (cx, cy, si) not in dist:
+                s[2] = False
+                dropped += 1
     return dropped

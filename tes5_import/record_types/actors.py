@@ -11,7 +11,7 @@ from ..packages import (
     DPLT_CREATURE_LIST,
     DPLT_NPC_LIST,
     PKID_CREATURE_MASTER,
-    substitute_npc_packages,
+    npc_packages,
 )
 from ..skyrim_overrides import (
     ATTRIBUTE_SKILL_MAP,
@@ -468,14 +468,14 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     # AIDT — AI data
     subs += pack_subrecord('AIDT', _npc_aidt(rec))
 
-    # PKID — AI packages. TES4 PACK records are skipped (SKIP_TYPES), so a
-    # raw pass-through emitted references to records that don't exist and the
-    # actor had NO working packages → the AI layer made no decisions and the
-    # engine never sent the behavior graph movement events (stuck-in-idle).
-    # Substitute the vanilla generic packages instead (tes5_import/packages.py).
+    # PKID — the actor's own AI packages, converted (pack_converter.py) and kept
+    # in TES4 ORDER: Skyrim, like Oblivion, runs the first package whose
+    # conditions pass, so the order IS the behaviour.  Quest packages are
+    # excluded — they reach the actor through a QUST reference alias (ALPC),
+    # which is what lets them outrank this standing schedule.
     pc = get_int(rec, 'AIPackageCount')
     pack_fids = [get_formid(rec, f'AIPackage[{i}]') for i in range(pc)]
-    for pfid in substitute_npc_packages([p for p in pack_fids if p]):
+    for pfid in npc_packages(pack_fids):
         subs += pack_formid_subrecord('PKID', pfid)
 
     # CNAM — Class. Trainer NPCs get their synthesized class clone (carries

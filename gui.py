@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import queue
+import time
 from pathlib import Path
 
 SCRIPT_DIR  = Path(__file__).parent.resolve()
@@ -22,35 +23,32 @@ CONFIG_FILE = SCRIPT_DIR / "conversion_config.json"
 # (key, cli_flag, label, description, default_on, needs_file)
 STEPS = [
     ("export",             "--export-only",        "1. Export",
-     "Parse TES4 binary -> text cache",          True,  True),
+     "Parse TES4 binary into a text cache",          True,  True),
     ("extract",            "--extract-only",       "2. Extract",
-     "Pull assets from BSA archives",            True,  True),
+     "Pull assets from TES4 BSA archives",            True,  True),
     ("meshes",             "--meshes-only",        "3. Meshes",
-     "Convert NIFs + textures",                 True,  True),
+     "Convert standard NIFs and copy textures",                 True,  True),
     ("speedtrees",         "--speedtrees-only",    "4. SpeedTrees",
      "Convert SPT files",           True,  True),
     ("creatures",          "--creatures-only",     "5. Creatures",
-     "Behavior projects + creature meshes",       True,  True),
-    ("mesh_bounds",        "--mesh-bounds-only",   "6. Mesh Bounds",
-     "Scan NIF bounds for OBND cache",    False, True),
-    ("import_",            "--import-only",        "7. Import",
+     "Convert creature models and animations",       True,  True),
+    ("import_",            "--import-only",        "6. Import",
      "Build TES5 ESM/ESP from text cache",       True,  True),
-    ("sounds",             "--sounds-only",        "8. Sounds",
-     "Convert sound files to XWM",               True,  True),
-    ("scripts",            "--scripts-only",       "9. Scripts",
+    ("sounds",             "--sounds-only",        "7. Sounds",
+     "Convert voice files to XWM and copy sounds",               True,  True),
+    ("scripts",            "--scripts-only",       "8. Scripts",
      "Convert Oblivion scripts to Papyrus",      True,  True),
-    ("lod",                "--lod-only",           "10. LOD",
-     "Generate LOD meshes",               False, True),
-    ("pack",               "--pack-only",          "11. Pack BSAs",
+    ("lod",                "--lod-only",           "9. LOD",
+     "Generate distant LOD",               False, True),
+    ("pack",               "--pack-only",          "10. Pack BSAs",
      "Pack assets into BSA archives",             False, True),
-    ("modify_body_meshes", "--modify-body-meshes", "12. Body Meshes",
-     "Add greaves partition to body NIFs",       False, False),
-    ("copy_to_skyrim",    None,                   "13. Copy to Skyrim",
-     "Copy mod files to Skyrim SE",  False, True),
+    ("modify_body_meshes", "--modify-body-meshes", "11. Patch Skyrim",
+     "Build ARMA slot-44 patch for your load order",       True,  False),
+    ("pack_zip",          None,                   "12. Pack Mod Zip",
+     "Zip mod files for installation",   True,  True),
 ]
 
-_DEFAULT_ON = {k for k, *_ in STEPS if k != "modify_body_meshes"
-               and k != "copy_to_skyrim"}
+_DEFAULT_ON = {k for k, *_ in STEPS}
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 CLR = {
@@ -75,7 +73,36 @@ CLR = {
     "log_warn":     "#f9e2af",
     "check_on":     "#7c6af7",
     "check_off":    "#44475a",
+    "gold":         "#c9a35c",
+    "gold_hover":   "#ddb96f",
 }
+
+
+def _style_titlebar(root) -> None:
+    """Recolor the native Windows title bar to match the app's dark/purple theme."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        root.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+
+        def _bgr(hexcolor: str) -> int:
+            hexcolor = hexcolor.lstrip("#")
+            r, g, b = (int(hexcolor[i:i + 2], 16) for i in (0, 2, 4))
+            return r | (g << 8) | (b << 16)
+
+        DWMWA_CAPTION_COLOR = 35
+        DWMWA_TEXT_COLOR = 36
+        dwmapi = ctypes.windll.dwmapi
+        caption = ctypes.c_int(_bgr(CLR["bg"]))
+        text = ctypes.c_int(_bgr(CLR["text"]))
+        dwmapi.DwmSetWindowAttribute(
+            hwnd, DWMWA_CAPTION_COLOR, ctypes.byref(caption), ctypes.sizeof(caption))
+        dwmapi.DwmSetWindowAttribute(
+            hwnd, DWMWA_TEXT_COLOR, ctypes.byref(text), ctypes.sizeof(text))
+    except Exception:
+        pass  # older Windows builds (<22H2) don't support these attributes
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -112,59 +139,36 @@ def _find_game_path(game: str) -> str:
     return ""
 
 
-def _copy_to_skyrim(output_dir: str, skyrim_data: str, file_name: str,
-                    copy_plugins: bool, copy_bsa: bool, copy_sound: bool,
-                    log_cb):
-    """Copy conversion outputs into the Skyrim Data directory.
+def _pack_to_zip(output_dir: str, file_name: str, log_cb) -> bool:
+    """Pack plugin (.esm/.esl/.esp) and .bsa files into a zip for distribution.
 
-    - Plugins (.esm/.esp): copy from output_dir root, overwrite.
-    - BSAs (.bsa):         copy from output_dir root, overwrite.
-    - Sound folder:        merge file-by-file into skyrim_data/sound/,
-                           overwriting individual files but never deleting
-                           anything already there.
+    The zip is placed adjacent to the per-file output folder (i.e. inside
+    output_dir, alongside output_dir/file_name/) and named "<file_name>.zip".
     """
-    import shutil
+    import zipfile
+
     src_root = Path(output_dir) / file_name
-    dst_root = Path(skyrim_data)
-
     if not src_root.is_dir():
-        log_cb(f"  Copy: source not found: {src_root}")
-        return
+        log_cb(f"  Pack: source not found: {src_root}")
+        return False
 
-    copied = 0
+    zip_path = Path(output_dir) / f"{file_name}.zip"
 
-    if copy_plugins:
-        for ext in ("*.esm", "*.esp"):
-            for src in src_root.glob(ext):
-                dst = dst_root / src.name
-                shutil.copy2(src, dst)
-                log_cb(f"  -> {dst.name}")
-                copied += 1
+    packed = 0
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for ext in ("*.esm", "*.esl", "*.esp", "*.bsa"):
+            for src in sorted(src_root.glob(ext)):
+                zf.write(src, arcname=src.name)
+                log_cb(f"  + {src.name}")
+                packed += 1
 
-    if copy_bsa:
-        for src in src_root.glob("*.bsa"):
-            dst = dst_root / src.name
-            shutil.copy2(src, dst)
-            log_cb(f"  -> {dst.name}")
-            copied += 1
+    if packed == 0:
+        zip_path.unlink(missing_ok=True)
+        log_cb("  Pack: no plugin/BSA files found, skipping")
+        return False
 
-    if copy_sound:
-        src_sound = src_root / "sound"
-        dst_sound = dst_root / "sound"
-        if src_sound.is_dir():
-            for src_file in src_sound.rglob("*"):
-                if src_file.is_file():
-                    rel = src_file.relative_to(src_sound)
-                    dst_file = dst_sound / rel
-                    dst_file.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_file, dst_file)
-                    copied += 1
-            log_cb(f"  sound/ -> {dst_sound} ({copied} files)")
-        else:
-            log_cb("  Copy sound: no sound/ folder in output, skipping")
-            return
-
-    log_cb(f"  Copy to Skyrim complete ({copied} files)")
+    log_cb(f"  Pack complete -> {zip_path} ({packed} files)")
+    return True
 
 
 def load_config() -> dict:
@@ -188,6 +192,104 @@ def scan_plugins(data_path: str) -> list:
         if name.lower().endswith(('.esm', '.esp')):
             plugins.append(name)
     return plugins
+
+
+# Base game + official Creation Club content, in Bethesda's own load-order
+# priority (the order the game/CC installer expects them in, independent of
+# whatever plugins.txt says) — these are always listed first, and default to
+# checked whenever they're actually present in the Data folder.
+_OFFICIAL_PLUGINS = [
+    "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+    "ccasvsse001-almsivi.esm", "ccbgssse001-fish.esm", "ccbgssse002-exoticarrows.esl",
+    "ccbgssse003-zombies.esl", "ccbgssse004-ruinsedge.esl", "ccbgssse005-goldbrand.esl",
+    "ccbgssse006-stendarshammer.esl", "ccbgssse007-chrysamere.esl",
+    "ccbgssse010-petdwarvenarmoredmudcrab.esl", "ccbgssse011-hrsarmrelvn.esl",
+    "ccbgssse012-hrsarmrstl.esl", "ccbgssse014-spellpack01.esl",
+    "ccbgssse019-staffofsheogorath.esl", "ccbgssse020-graycowl.esl",
+    "ccbgssse021-lordsmail.esl", "ccmtysse001-knightsofthenine.esl",
+    "ccqdrsse001-survivalmode.esl", "cctwbsse001-puzzledungeon.esm",
+    "cceejsse001-hstead.esm", "ccqdrsse002-firewood.esl", "ccbgssse018-shadowrend.esl",
+    "ccbgssse035-petnhound.esl", "ccfsvsse001-backpacks.esl", "cceejsse002-tower.esl",
+    "ccedhsse001-norjewel.esl", "ccvsvsse002-pets.esl", "ccbgssse037-curios.esl",
+    "ccbgssse034-mntuni.esl", "ccbgssse045-hasedoki.esl", "ccbgssse008-wraithguard.esl",
+    "ccbgssse036-petbwolf.esl", "ccffbsse001-imperialdragon.esl", "ccmtysse002-ve.esl",
+    "ccbgssse043-crosselv.esl", "ccvsvsse001-winter.esl", "cceejsse003-hollow.esl",
+    "ccbgssse016-umbra.esm", "ccbgssse031-advcyrus.esm", "ccbgssse038-bowofshadows.esl",
+    "ccbgssse040-advobgobs.esl", "ccbgssse050-ba_daedric.esl", "ccbgssse052-ba_iron.esl",
+    "ccbgssse054-ba_orcish.esl", "ccbgssse058-ba_steel.esl",
+    "ccbgssse059-ba_dragonplate.esl", "ccbgssse061-ba_dwarven.esl",
+    "ccpewsse002-armsofchaos.esl", "ccbgssse041-netchleather.esl",
+    "ccedhsse002-splkntset.esl", "ccbgssse064-ba_elven.esl", "ccbgssse063-ba_ebony.esl",
+    "ccbgssse062-ba_dwarvenmail.esl", "ccbgssse060-ba_dragonscale.esl",
+    "ccbgssse056-ba_silver.esl", "ccbgssse055-ba_orcishscaled.esl",
+    "ccbgssse053-ba_leather.esl", "ccbgssse051-ba_daedricmail.esl",
+    "ccbgssse057-ba_stalhrim.esl", "ccbgssse066-staves.esl", "ccbgssse067-daedinv.esm",
+    "ccbgssse068-bloodfall.esl", "ccbgssse069-contest.esl", "ccvsvsse003-necroarts.esl",
+    "ccvsvsse004-beafarmer.esl", "ccbgssse025-advdsgs.esm", "ccffbsse002-crossbowpack.esl",
+    "ccbgssse013-dawnfang.esl", "ccrmssse001-necrohouse.esl", "ccedhsse003-redguard.esl",
+    "cceejsse004-hall.esl", "cceejsse005-cave.esm", "cckrtsse001_altar.esl",
+    "cccbhsse001-gaunt.esl", "ccafdsse001-dwesanctuary.esm", "_ResourcePack.esl",
+]
+
+
+def scan_skyrim_plugins(data_path: str) -> list:
+    """Return sorted list of .esm/.esp/.esl files in data_path."""
+    if not data_path or not os.path.isdir(data_path):
+        return []
+    return sorted(name for name in os.listdir(data_path)
+                 if name.lower().endswith(('.esm', '.esp', '.esl')))
+
+
+def scan_skyrim_load_order(data_path: str) -> tuple:
+    """Return (ordered_names, default_checked_set) for the Skyrim plugin picker.
+
+    Order: base game + official Creation Club content first (in Bethesda's
+    own priority order), then any other plugins.txt entries in load order,
+    then any remaining installed-but-unlisted plugins last. Only the first
+    two groups (official content and anything plugins.txt actually lists)
+    default to checked — a plugin sitting in Data/ that neither list
+    mentions is surfaced but starts unchecked.
+    """
+    installed = {name.lower(): name for name in scan_skyrim_plugins(data_path)}
+    if not installed:
+        return [], set()
+
+    ordered = []
+    seen = set()
+    for name in _OFFICIAL_PLUGINS:
+        found = installed.get(name.lower())
+        if found and found not in seen:
+            ordered.append(found)
+            seen.add(found)
+    default_checked = set(ordered)
+
+    plugins_txt = (Path(os.environ.get("LOCALAPPDATA", ""))
+                   / "Skyrim Special Edition" / "plugins.txt")
+    if plugins_txt.exists():
+        try:
+            with open(plugins_txt, "r", encoding="utf-8-sig", errors="replace") as fh:
+                for raw_line in fh:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    # A leading "*" means the plugin is active; without it,
+                    # plugins.txt is just listing a disabled/known plugin.
+                    active = line.startswith("*")
+                    line = line.lstrip("*")
+                    name = installed.get(line.lower())
+                    if name and name not in seen:
+                        ordered.append(name)
+                        seen.add(name)
+                        if active:
+                            default_checked.add(name)
+        except OSError:
+            pass
+
+    for name in installed.values():
+        if name not in seen:
+            ordered.append(name)
+            seen.add(name)
+    return ordered, default_checked
 
 
 def scan_mesh_subdirs(file_name: str) -> list:
@@ -348,17 +450,20 @@ def gui_main():
     # ── Load / init config ────────────────────────────────────────────────────
     cfg = load_config()
     tes4_path    = cfg.get("tes4DataPath", "") or _find_game_path("oblivion")
+    tes5_path    = cfg.get("tes5DataPath", "") or _find_game_path("skyrimse")
     output_path  = cfg.get("outputDir", "")  or str(SCRIPT_DIR / "output")
-    skyrim_path = _find_game_path("skyrimse")
 
     # ── Root window ───────────────────────────────────────────────────────────
     root = tk.Tk()
-    root.title("TES4 -> TES5 Converter")
-    root.geometry("1060x800")
-    root.minsize(860, 620)
+    root.title("TES4Skyrim")
+    root.geometry("1060x877")
+    root.minsize(860, 680)
     root.configure(bg=CLR["bg"])
     root.option_add("*Background", CLR["bg"])
     root.option_add("*Foreground", CLR["text"])
+    icon_path = SCRIPT_DIR / "docs" / "favicon.ico"
+    root.iconbitmap(default=str(icon_path))
+    _style_titlebar(root)
 
     style = ttk.Style(root)
     style.theme_use("clam")
@@ -408,6 +513,14 @@ def gui_main():
                           ("disabled", CLR["btn"])],
               foreground=[("disabled", CLR["subtext"])])
 
+    S("Run.TButton",   background=CLR["gold"], foreground="#1e1e2e",
+                        borderwidth=0, relief="flat", padding=(14, 6),
+                        font="Segoe\\ UI 10 bold")
+    style.map("Run.TButton",
+              background=[("active", CLR["gold_hover"]),
+                          ("disabled", CLR["btn"])],
+              foreground=[("disabled", CLR["subtext"])])
+
     S("Cancel.TButton", background="#453030", foreground=CLR["red"],
                         borderwidth=0, relief="flat", padding=(8, 6),
                         font="Segoe\\ UI 10")
@@ -436,6 +549,7 @@ def gui_main():
 
     # ── State vars ────────────────────────────────────────────────────────────
     tes4_var    = tk.StringVar(value=tes4_path)
+    tes5_var    = tk.StringVar(value=tes5_path)
     output_var  = tk.StringVar(value=output_path)
     file_var    = tk.StringVar()
     step_vars   = {key: tk.BooleanVar(value=(key in _DEFAULT_ON))
@@ -443,10 +557,10 @@ def gui_main():
     running     = threading.Event()
     cancel_evt  = threading.Event()  # set to request cancellation
 
-    skyrim_var = tk.StringVar(value=skyrim_path)
-
     # mesh subfolder state: list of (name, BooleanVar)
     mesh_subdir_vars = []  # populated when "Meshes" step panel expands
+    # Skyrim patch-plugin state: list of (name, BooleanVar), all-on by default
+    patch_plugin_vars = []
 
     # ── Layout: sidebar + log pane ────────────────────────────────────────────
     outer = ttk.Frame(root)
@@ -504,9 +618,34 @@ def gui_main():
     # ── Title ─────────────────────────────────────────────────────────────────
     tf = ttk.Frame(sidebar, style="Panel.TFrame")
     tf.pack(fill=tk.X, padx=14, pady=(16, 4))
-    ttk.Label(tf, text="TES4  ->  TES5", style="Head.TLabel").pack(anchor="w")
-    ttk.Label(tf, text="Oblivion to Skyrim SE converter",
-              style="PanelSub.TLabel").pack(anchor="w")
+
+    banner_img = None
+    banner_path = SCRIPT_DIR / "docs" / "banner.png"
+    if banner_path.exists():
+        try:
+            from PIL import Image, ImageTk
+            src = Image.open(banner_path)
+            target_w = 350
+            # Scale to 1.5x the width-fit height, then crop left/right back
+            # down to target_w so the logo reads larger within the same column.
+            base_h = target_w * src.height / src.width
+            scale_h = round(base_h * 1.5)
+            scale_w = round(target_w * (scale_h / base_h))
+            src = src.resize((scale_w, scale_h), Image.LANCZOS)
+            left = (scale_w - target_w) // 2
+            src = src.crop((left, 0, left + target_w, scale_h))
+            banner_img = ImageTk.PhotoImage(src)
+        except Exception:
+            banner_img = None
+
+    if banner_img is not None:
+        banner_label = ttk.Label(tf, image=banner_img, style="Panel.TLabel")
+        banner_label.image = banner_img  # keep a reference alive
+        banner_label.pack(fill=tk.X)
+    else:
+        ttk.Label(tf, text="TES4  ->  TES5", style="Head.TLabel").pack(anchor="w")
+        ttk.Label(tf, text="Oblivion to Skyrim SE converter",
+                  style="PanelSub.TLabel").pack(anchor="w")
 
     _sep()
 
@@ -565,6 +704,7 @@ def gui_main():
     def _save_dir_to_config(*_):
         updated = load_config()
         updated["tes4DataPath"] = tes4_var.get()
+        updated["tes5DataPath"] = tes5_var.get()
         updated["outputDir"]    = output_var.get()
         save_config(updated)
 
@@ -572,10 +712,16 @@ def gui_main():
 
     _sep()
 
-    # ── Skyrim SE data directory ──────────────────────────────────────────────
-    sky_frame = ttk.Frame(sidebar, style="Panel.TFrame")
-    sky_frame.pack(fill=tk.X, padx=14, pady=(0, 4))
-    _path_row(sky_frame, "Skyrim SE Data Directory", skyrim_var, browse_dir=True)
+    # ── Skyrim SE data directory (for the "Patch Skyrim" step) ───────────────
+    tes5_frame = ttk.Frame(sidebar, style="Panel.TFrame")
+    tes5_frame.pack(fill=tk.X, padx=14, pady=(0, 4))
+
+    def _on_tes5_change(path):
+        _refresh_patch_plugin_vars()
+        _save_dir_to_config()
+
+    _path_row(tes5_frame, "Skyrim SE Data Directory", tes5_var,
+              browse_dir=True, on_change=_on_tes5_change)
 
     _sep()
 
@@ -607,7 +753,7 @@ def gui_main():
         side=tk.RIGHT, padx=(2, 0))
 
     def _update_run_btn(*_):
-        has = any(v.get() for k, v in step_vars.items() if k != "copy_to_skyrim")
+        has = any(v.get() for v in step_vars.values())
         st  = "normal" if has and not running.is_set() else "disabled"
         run_btn.configure(state=st)
 
@@ -667,8 +813,87 @@ def gui_main():
         card.place(in_=outer, anchor="center", relx=0.5, rely=0.5)
         card.lift()
 
+    def _refresh_patch_plugin_vars():
+        """(Re)populate patch_plugin_vars from the Skyrim load order,
+        preserving any existing checkbox state. New entries default to
+        checked only if they're official content or listed in plugins.txt;
+        plugins found only by a raw directory scan default to unchecked."""
+        nonlocal patch_plugin_vars
+        names, default_checked = scan_skyrim_load_order(tes5_var.get())
+        old_vals = {name: v.get() for name, v in patch_plugin_vars}
+        patch_plugin_vars = [
+            (name, tk.BooleanVar(value=old_vals.get(name, name in default_checked)))
+            for name in names]
+
+    _refresh_patch_plugin_vars()
+
+    def _open_patch_plugin_panel():
+        _refresh_patch_plugin_vars()
+
+        card = tk.Frame(outer, bg=CLR["panel"],
+                        highlightbackground=CLR["border"], highlightthickness=1)
+        _wheel_bound = []  # [bind_id] once a canvas is created below
+
+        def _close():
+            if _wheel_bound:
+                card.unbind_all("<MouseWheel>")
+            card.destroy()
+
+        title_row = tk.Frame(card, bg=CLR["panel"])
+        title_row.pack(fill=tk.X, padx=16, pady=(14, 0))
+        tk.Label(title_row, text="Plugins to patch (slot 44 / body)",
+                 bg=CLR["panel"], fg=CLR["text"],
+                 font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Button(title_row, text="All",
+                   command=lambda: [v.set(True) for _, v in patch_plugin_vars],
+                   width=4).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(title_row, text="None",
+                   command=lambda: [v.set(False) for _, v in patch_plugin_vars],
+                   width=5).pack(side=tk.RIGHT)
+
+        ttk.Separator(card, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=16, pady=8)
+
+        if not patch_plugin_vars:
+            tk.Label(card,
+                     text="No plugins found. Set the Skyrim SE Data Directory above.",
+                     bg=CLR["panel"], fg=CLR["subtext"],
+                     font=("Segoe UI", 9)).pack(anchor="w", padx=16, pady=(0, 8))
+        else:
+            list_frame = tk.Frame(card, bg=CLR["panel"])
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=8)
+
+            canvas = tk.Canvas(list_frame, bg=CLR["panel"], highlightthickness=0,
+                               width=320, height=min(360, 22 * len(patch_plugin_vars)))
+            vsb = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+            inner = tk.Frame(canvas, bg=CLR["panel"])
+            inner.bind("<Configure>",
+                      lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+            canvas.create_window((0, 0), window=inner, anchor="nw")
+            canvas.configure(yscrollcommand=vsb.set)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+            def _wheel(e):
+                canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+            card.bind_all("<MouseWheel>", _wheel)
+            _wheel_bound.append(True)
+
+            for name, var in patch_plugin_vars:
+                ttk.Checkbutton(inner, text=name, variable=var,
+                                style="TCheckbutton").pack(anchor="w", padx=8, pady=1)
+
+        ttk.Separator(card, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=16, pady=8)
+
+        ttk.Button(card, text="OK", style="Accent.TButton",
+                   command=_close).pack(pady=(0, 14))
+
+        card.update_idletasks()
+        card.place(in_=outer, anchor="center", relx=0.5, rely=0.5)
+        card.lift()
+
     # Build step checkboxes
     _mesh_step_row = None
+    _body_step_row = None
     for step in STEPS:
         key, label, tip = step[0], step[2], step[3]
         row = ttk.Frame(sidebar, style="Panel.TFrame")
@@ -679,6 +904,8 @@ def gui_main():
             side=tk.LEFT, padx=(6, 0))
         if key == "meshes":
             _mesh_step_row = row
+        if key == "modify_body_meshes":
+            _body_step_row = row
 
     # Small link sitting just below the Meshes checkbox row
     _mesh_toggle_row = ttk.Frame(sidebar, style="Panel.TFrame")
@@ -691,6 +918,17 @@ def gui_main():
     mesh_toggle_lbl.pack(side=tk.LEFT, padx=(20, 0))
     mesh_toggle_lbl.bind("<Button-1>", lambda _: _open_mesh_subdir_panel())
 
+    # Small link sitting just below the Patch Skyrim checkbox row
+    _body_toggle_row = ttk.Frame(sidebar, style="Panel.TFrame")
+    _body_toggle_row.pack(fill=tk.X, padx=14, pady=(0, 1), after=_body_step_row)
+    body_toggle_lbl = tk.Label(
+        _body_toggle_row, text="  select plugins...",
+        bg=CLR["panel"], fg=CLR["subtext"],
+        font=("Segoe UI", 9, "underline"), cursor="hand2",
+    )
+    body_toggle_lbl.pack(side=tk.LEFT, padx=(20, 0))
+    body_toggle_lbl.bind("<Button-1>", lambda _: _open_patch_plugin_panel())
+
     _sep()
 
     # ── Action buttons ────────────────────────────────────────────────────────
@@ -698,7 +936,7 @@ def gui_main():
     bf.pack(fill=tk.X, padx=14, pady=(0, 6))
 
     run_btn = ttk.Button(bf, text="  Run Selected Steps",
-                         style="Accent.TButton", command=lambda: _run_clicked())
+                         style="Run.TButton", command=lambda: _run_clicked())
     run_btn.pack(fill=tk.X, pady=(0, 6))
 
     # Clear Log + Cancel on the same row
@@ -720,9 +958,16 @@ def gui_main():
     prog_bar.pack(fill=tk.X, padx=14, pady=(4, 0))
     prog_bar.pack_forget()
 
+    status_row = ttk.Frame(sidebar, style="Panel.TFrame")
+    status_row.pack(side=tk.BOTTOM, fill=tk.X, padx=14, pady=(0, 10))
+
     status_var = tk.StringVar(value="Ready")
-    ttk.Label(sidebar, textvariable=status_var, style="PanelSub.TLabel").pack(
-        side=tk.BOTTOM, fill=tk.X, padx=14, pady=(0, 10))
+    ttk.Label(status_row, textvariable=status_var, style="PanelSub.TLabel").pack(
+        side=tk.LEFT)
+
+    timer_var = tk.StringVar(value="")
+    ttk.Label(status_row, textvariable=timer_var, style="PanelSub.TLabel").pack(
+        side=tk.LEFT, padx=(8, 0))
 
     # ── Log pane ──────────────────────────────────────────────────────────────
     log_hdr = tk.Frame(log_pane, bg=CLR["panel"], height=34)
@@ -784,6 +1029,25 @@ def gui_main():
         log_text.delete("1.0", tk.END)
         log_text.configure(state=tk.DISABLED)
 
+    _timer_job = [None]
+    _timer_start = [0.0]
+
+    def _tick_timer():
+        elapsed = time.monotonic() - _timer_start[0]
+        m, s = divmod(int(elapsed), 60)
+        h, m = divmod(m, 60)
+        timer_var.set(f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}")
+        _timer_job[0] = root.after(1000, _tick_timer)
+
+    def _start_timer():
+        _timer_start[0] = time.monotonic()
+        _tick_timer()
+
+    def _stop_timer():
+        if _timer_job[0] is not None:
+            root.after_cancel(_timer_job[0])
+            _timer_job[0] = None
+
     def _set_running(state: bool):
         running.set() if state else running.clear()
         if not state:
@@ -796,10 +1060,12 @@ def gui_main():
             prog_bar.pack(fill=tk.X, padx=14, pady=(4, 0))
             prog_bar.start(12)
             status_var.set("Running...")
+            _start_timer()
         else:
             prog_bar.stop()
             prog_bar.pack_forget()
             status_var.set("Ready")
+            _stop_timer()
         _update_run_btn()
 
     def _cancel_clicked():
@@ -812,7 +1078,7 @@ def gui_main():
 
     # ── Run logic ─────────────────────────────────────────────────────────────
     def _build_cmd(step_key: str, fname: str, out_dir: str,
-                   selected_subdirs=None) -> list:
+                   selected_subdirs=None, selected_patch_plugins=None) -> list:
         """Build the convert.py command for a single step."""
         _, flag, _, _, _, needs_file = next(
             s for s in STEPS if s[0] == step_key)
@@ -823,6 +1089,8 @@ def gui_main():
             cmd += ["--output-dir", out_dir]
         if step_key == "meshes" and selected_subdirs:
             cmd += ["--mesh-subdirs"] + selected_subdirs
+        if step_key == "modify_body_meshes" and selected_patch_plugins:
+            cmd += ["--patch-plugins"] + selected_patch_plugins
         return cmd
 
     def _run_clicked():
@@ -844,12 +1112,22 @@ def gui_main():
             if chosen and chosen != all_names:
                 selected_subdirs = chosen
 
+        # Collect selected Skyrim plugins to patch (None = all/default)
+        selected_patch_plugins = None
+        if "modify_body_meshes" in steps and patch_plugin_vars:
+            chosen = [name for name, v in patch_plugin_vars if v.get()]
+            all_names = [name for name, _ in patch_plugin_vars]
+            if chosen != all_names:
+                selected_patch_plugins = chosen
+
         _clear_log()
         _log(f"File: {fname or '(none)'}")
         _log(f"Steps: {', '.join(steps)}")
         _log(f"Output: {out_dir}")
         if selected_subdirs:
             _log(f"Mesh subdirs: {', '.join(selected_subdirs)}")
+        if selected_patch_plugins is not None:
+            _log(f"Patch plugins: {', '.join(selected_patch_plugins) or '(none)'}")
         _log("")
 
         q = queue.Queue()
@@ -869,12 +1147,13 @@ def gui_main():
             _set_running(True)
             try:
                 default_set = {k for k, *rest in STEPS
-                               if rest[3] and k != "copy_to_skyrim"}
-                active_set  = set(steps) - {"copy_to_skyrim"}
+                               if rest[3] and k != "pack_zip"}
+                active_set  = set(steps) - {"pack_zip"}
                 ret = 0
                 # If selection == default set and a file is specified and no
-                # mesh subfolder filter, run the pipeline once
-                if active_set == default_set and fname and not selected_subdirs:
+                # mesh subfolder / patch-plugin filter, run the pipeline once
+                if (active_set == default_set and fname
+                        and not selected_subdirs and selected_patch_plugins is None):
                     cmd = [sys.executable, "-u", str(SCRIPT_DIR / "convert.py"),
                            "-f", fname]
                     if out_dir:
@@ -885,9 +1164,10 @@ def gui_main():
                     for step in steps:
                         if cancel_evt.is_set():
                             break
-                        if step == "copy_to_skyrim":
+                        if step == "pack_zip":
                             continue  # handled separately below
-                        cmd = _build_cmd(step, fname, out_dir, selected_subdirs)
+                        cmd = _build_cmd(step, fname, out_dir, selected_subdirs,
+                                         selected_patch_plugins)
                         q.put(f"Running: {' '.join(cmd)}")
                         r = _run_process(cmd, q.put, cancel_event=cancel_evt)
                         if r == -2:
@@ -895,24 +1175,16 @@ def gui_main():
                             break
                         if r != 0:
                             ret = r
-                # ── Copy to Skyrim ────────────────────────────────────────
+                # ── Pack mod files to zip ───────────────────────────────────
                 if (ret == 0 and not cancel_evt.is_set()
-                        and step_vars["copy_to_skyrim"].get()):
-                    sky_dir = skyrim_var.get().strip()
-                    if not sky_dir:
-                        q.put("  Copy skipped: Skyrim SE Data directory not set")
-                    else:
-                        q.put("")
-                        q.put("=== Copying to Skyrim ===")
-                        _copy_to_skyrim(
-                            output_dir=out_dir,
-                            skyrim_data=sky_dir,
-                            file_name=fname,
-                            copy_plugins=True,
-                            copy_bsa=True,
-                            copy_sound=True,
-                            log_cb=q.put,
-                        )
+                        and step_vars["pack_zip"].get() and fname):
+                    q.put("")
+                    q.put("=== Packing mod zip ===")
+                    _pack_to_zip(
+                        output_dir=out_dir,
+                        file_name=fname,
+                        log_cb=q.put,
+                    )
 
                 q.put("")
                 if ret == -2:

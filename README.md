@@ -43,7 +43,7 @@ In short, this project aims to be nothing less than comprehensive and has a laun
 
 ## Requirements
 
-A decent PC. The more cores and ram the better. The more cores, the more ram it uses. Validated with a 7950X3D and 32GB of system ram (uses a peak of ~14 GB RAM converting Oblivion.esm)
+A decent PC. The more cores and ram the better. The more cores, the more ram it uses. Validated with a 7950X3D and 32GB of system ram (uses a peak of ~11 GB RAM converting Oblivion.esm)
 
 | Dependency | Purpose | Install |
 |------------|---------|---------|
@@ -98,6 +98,8 @@ The GUI:
 - Lets you pick an output directory (saved to `conversion_config.json`)
 - Offers per-step checkboxes with **All** / **Default** shortcuts
 - Streams the pipeline log live
+
+If you'd like to use any modded Oblivion assets such as models or textures, first complete the "extract" step and then place your modded assets in the export/"plugin you are trying to convert" directory and overwrite
 
 Or run the full pipeline from the command line:
 
