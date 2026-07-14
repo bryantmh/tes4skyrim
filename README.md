@@ -91,10 +91,16 @@ python convert.py -f Oblivion.esm
 
 The output plugin and assets are written to `output/` (override with `--output-dir`).
 
+
 Once installed and loaded up ingame, begin "Oblivion" with 
 
 ```bash
 setstage Charactergen 5
+```
+or simply teleport to the worldspace with a command like
+
+```bash
+cow tes4tamriel 20 20
 ```
 
 If you'd like to use any modded Oblivion assets such as models or textures, first complete the "extract" step and then place your modded assets in the export/"plugin you are trying to convert" directory and overwrite
