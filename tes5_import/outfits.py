@@ -50,14 +50,25 @@ from .text_reader import get_int
 
 # Record types Skyrim's outfit system accepts directly. LVLI is allowed too,
 # but only when the whole list resolves to these (see _lvli_is_wearable).
-_WEARABLE_SIGS = {'ARMO', 'CLOT', 'WEAP', 'AMMO', 'LIGH'}
+#
+# WEAP/AMMO/LIGH are NOT included, even though the CK will happily let an OTFT
+# reference them: a survey of every vanilla OTFT in Skyrim.esm (481 records)
+# found zero that contain a weapon, and a second survey of AMMO/LIGH turned up
+# none either — every INAM entry resolves to ARMO or an all-armor LVLI. Bandits
+# and guards carry their weapon as a plain CNTO entry instead; Skyrim's combat
+# AI equips the best weapon out of an actor's own inventory at runtime, so a
+# weapon never needs (and per Bethesda's own data, never gets) outfit
+# membership. Putting weapons in the outfit was tried and broke NPC combat
+# equipping entirely — see git history on this file for the regression.
+_WEARABLE_SIGS = {'ARMO', 'CLOT'}
 
 # Every TES4 record type a CNTO entry (or an LVLI leaf) can legally name — i.e.
 # the carryable items. Placed instances (REFR/ACHR/ACRE), cells, land, pathgrids
 # and dialogue can never appear in an inventory, so indexing them is both wasted
 # work and (at ~1M REFRs) a memory problem — see load_item_index.
 _INVENTORY_SIGS = frozenset({
-    'ARMO', 'CLOT', 'WEAP', 'AMMO', 'LIGH',   # wearables
+    'ARMO', 'CLOT',                            # outfit-eligible wearables
+    'WEAP', 'AMMO', 'LIGH',                    # carried, equipped at runtime
     'LVLI',                                    # leveled lists
     'MISC', 'KEYM', 'ALCH', 'INGR', 'BOOK',    # carried, never worn
     'SLGM', 'SGST', 'APPA',
@@ -65,7 +76,10 @@ _INVENTORY_SIGS = frozenset({
 
 # The subset whose record dict we retain: LVLI needs its entries walked, and
 # ARMO/CLOT need BMDT.BipedFlags + DATA.Value for slot-conflict resolution.
-_INSPECTED_SIGS = frozenset({'LVLI', 'ARMO', 'CLOT', 'WEAP', 'AMMO', 'LIGH'})
+# WEAP/AMMO/LIGH only need their signature (to exclude them from LVLI
+# wearable-resolution), never their record, so keeping those out of _ITEM_REC
+# avoids retaining ~1300 WEAP dicts nobody reads.
+_INSPECTED_SIGS = frozenset({'LVLI', 'ARMO', 'CLOT'})
 
 # Guard against a malformed/cyclic LVLI graph in a plugin.
 _MAX_LVLI_DEPTH = 8

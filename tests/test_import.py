@@ -1363,7 +1363,9 @@ class TestOutfitSplit:
 
     def test_only_wearables_reach_the_outfit(self):
         """Loot/keys/potions in an outfit are what the CK rejects with
-        'contains non-armor objects' — they must stay in CNTO."""
+        'contains non-armor objects' — they must stay in CNTO. Weapons must
+        too: a survey of every vanilla Skyrim.esm OTFT found none containing a
+        weapon — Skyrim's combat AI equips weapons from CNTO at runtime."""
         from tes5_import.outfits import split_inventory
         self._index(
             ARMO=[self._armo('00000001', 'Cuirass', self.BODY)],
@@ -1373,8 +1375,8 @@ class TestOutfitSplit:
             INGR=[{'Signature': 'INGR', 'FormID': '00000005', 'EditorID': 'Herb'}],
         )
         outfit, carried = split_inventory([(i, 1) for i in range(1, 6)])
-        assert outfit == [1, 2]                      # armor + weapon
-        assert [f for f, _ in carried] == [3, 4, 5]  # key, potion, ingredient
+        assert outfit == [1]                            # armor only
+        assert [f for f, _ in carried] == [2, 3, 4, 5]  # weapon, key, potion, ingredient
 
     def test_outfit_and_inventory_are_disjoint(self):
         """Skyrim adds the outfit ON TOP of CNTO, so an item in both is
@@ -1431,7 +1433,9 @@ class TestOutfitSplit:
         """Oblivion weights an entry by naming it twice (LL2NPCStaff25 lists
         LL1NPCStaff1Normal100 twice). A visited-set shared across siblings reads
         the repeat as a cycle and rejects the whole list — which left every
-        leveled-weapon actor unarmed."""
+        leveled-weapon actor unarmed. A weapon-only list is never outfit
+        material (weapons are carried, not worn), so it must resolve as
+        non-wearable rather than erroring out from the false cycle."""
         from tes5_import.outfits import is_outfit_eligible, split_inventory
         self._index(
             WEAP=[{'Signature': 'WEAP', 'FormID': '00000010', 'EditorID': 'Staff'}],
@@ -1442,10 +1446,10 @@ class TestOutfitSplit:
                            ['00000011', '00000011']),
             ],
         )
-        assert is_outfit_eligible(0x01) is True
+        assert is_outfit_eligible(0x01) is False
         outfit, carried = split_inventory([(1, 1)])
-        assert outfit == [1], 'a weighted weapon list must still be worn'
-        assert carried == []
+        assert outfit == [], 'a weapon list is carried, never worn'
+        assert carried == [(1, 1)]
 
     def test_mixed_leveled_list_stays_in_inventory(self):
         """A list that can roll gold/ingredients is not a valid outfit form."""

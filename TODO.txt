@@ -44,9 +44,6 @@ Major Issues for V1:
 
 	10 - Need new skyrim body mesh to actually work to allow leg skin to appear
 
-	11 - NPCs have lost all their weapons
-
-
 Later Issues:
 	1 - Lip syncing with voice
 
@@ -93,6 +90,12 @@ Later Issues:
 	21 - Optimize. Reduce ram and cpu usage and make sure everything is properly multithreaded.
 
 	22 - Allow running process on zip (mod)
+
+	23 - Fix walking up stairs
+
+	24 - Iron shortsword is invisible in the handle
+
+	25 - NPC levels / health is inordinately high!
 
 Minor Issues:
 
@@ -142,5 +145,3 @@ Minor Issues:
 	22 - Clothes don't move which character skin, resulting in clipping
 
 	23 - Can see back of head of skinned helmets
-
-	25 - Source scripts shouldn't be bundled
