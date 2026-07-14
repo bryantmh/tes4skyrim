@@ -1,13 +1,9 @@
 Gameplan:
-	Fix weapons missing on NPCs M11
+	CK warnings M6
 	Refine Navmesh L5
 	Refine scripts - cleanup todos L20
-	Package records L6
-	CK warnings M8
-	Fix meshes L15 L16 M4
+	Fix meshes L15 L16 M4 L24
 	Lip syncing L1
-	Update app design M6
-	Update documentation / readme L7 mi12
 
 Prompts:
 	Book are animated to open in the inventory. If we don't use the correct animated mesh, the book fails to open. We need to use skyrim book mesh inventory model INAM, BUT we ideally need to apply the oblivion texture for the book front/back covers and spine.
@@ -36,13 +32,13 @@ Major Issues for V1:
 		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
 		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
 
-	6 - Add screenshots of app + ingame + youtube video to readme
+	5 - Add screenshots of app + ingame + youtube video to readme
 
-	8 - Fix all CK warnings
+	6 - Fix all CK warnings
 
-	9 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting
+	7 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting
 
-	10 - Need new skyrim body mesh to actually work to allow leg skin to appear
+	8 - Need new skyrim body mesh to actually work to allow leg skin to appear
 
 Later Issues:
 	1 - Lip syncing with voice
@@ -61,11 +57,7 @@ Later Issues:
 		Disallow navmesh in the same x and y coordinates within a certain threshold in the y direction
 		Disallow any navmesh triangles not connected to a teleporting door OR another cell.
 		Speed up conversion by 5x. Currently takes ~20 minutes
-
-	6 - Package Records. These will need a new advanced conversion algorithm
 	
-	7 - Properly document all tools
-
 	10 - Convert weathers
 
 	11 - Single threaded workflows
@@ -85,7 +77,7 @@ Later Issues:
 
 	17 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
 
-	20 - CK Compiler TODOs
+	20 - Papyrus Compiler TODOs
 
 	21 - Optimize. Reduce ram and cpu usage and make sure everything is properly multithreaded.
 
@@ -109,13 +101,13 @@ Minor Issues:
 
 	5 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
 
-	8 - Harvested plants don't make a sound. Intentional?
+	6 - Harvested plants don't make a sound. Intentional?
 
-	9 - Update world map cloud mesh and texture
+	7 - Update world map cloud mesh and texture
 
-	10 - Convert Skyrim LE meshes to Skyrim SE format
+	8 - Convert Skyrim LE meshes to Skyrim SE format
 
-	16 - Creature conversion console errors
+	9 - Creature conversion console errors
 	Reading <struct 'NiMorphData'> failed
 	Traceback (most recent call last):
 	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\formats\nif\__init__.py", line 1383, in read
@@ -135,13 +127,21 @@ Minor Issues:
 						% (n, stream.tell()))
 	ValueError: string too long (0x5A000000 at 0x000003BC)
 
-	19 - Flame atronach animated section not properly converted
+	10 - Flame atronach animated section not properly converted
 	
-	20 - Refine LOD
+	11 - Refine LOD
 		Still too big and holes in distant meshes
 
-	21 - Should trim skin in converted clothing that would be occluded by the clothing mesh to avoid clipping
+	12 - Should trim skin in converted clothing that would be occluded by the clothing mesh to avoid clipping
 
-	22 - Clothes don't move which character skin, resulting in clipping
+	13 - Clothes don't move which character skin, resulting in clipping
 
-	23 - Can see back of head of skinned helmets
+	14 - Can see back of head of skinned helmets
+
+	15 - Minor issues with 44 patch plugin
+
+	16 - Taskbar and app icon
+
+	17 - Cleanup output log and update colors
+
+	18 - Shops missing full inventory of items

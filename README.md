@@ -35,6 +35,10 @@ In short, this project aims to be nothing less than a complete, faithful Oblivio
 conversion, and it's getting closer all the time. Contributions are very welcome — see
 `TODO.txt` for the current bug list and roadmap.
 
+<p align="center">
+  <img src="docs/readme_img.png" alt="An Oblivion Vista" width="720">
+</p>
+
 ---
 
 ## Requirements

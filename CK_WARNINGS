@@ -12776,7 +12776,7 @@ It is time
 [MASTERFILE] Reference attached to wrong cell for its location: 'SandstoneCavernExterior' (01008059) (-32, -1) in WorldSpace 'TES4Tamriel' (0100003C)
 [CELLS] Ref is not in its persistence location 'TES4SkingradWestGateLocation' (01191135).
 [MASTERFILE] Reference attached to wrong cell for its location: 'WeyeExterior' (01007BC4) (0, 15) in WorldSpace 'TES4Tamriel' (0100003C)
-[CELLS] Ref is not in its persistence location 'TES4SkingradWestGateLoca]tion' (01191135).
+[CELLS] Ref is not in its persistence location 'TES4SkingradWestGateLocation' (01191135).
 [MASTERFILE] Reference attached to wrong cell for its location: 'Wilderness' (0100AB31) (-38, -1) in WorldSpace 'TES4Tamriel' (0100003C)
 [CELLS] Ref is not in its persistence location 'TES4SkingradWestGateLocation' (01191135).
 [MASTERFILE] Mapmarker ref does not have map marker data.
