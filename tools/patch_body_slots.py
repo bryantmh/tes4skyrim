@@ -46,19 +46,25 @@ For PLAYABLE items the patch adds slot 44 to every slot-32 ARMO/ARMA:
 Skyrim cuirasses/robes model the legs as part of the slot-32 mesh, so they
 must both hide the new leg skin and equip-conflict with Oblivion greaves.
 
-The output is a small patch (ESL-flagged by default) with the input plugin
-as master.  Run it at minimum on Skyrim.esm; run it additionally on any
-third-party armor mod that should coexist with converted Oblivion
-equipment.  Load each patch after the plugin it patches.
+All plugins passed in are merged into a SINGLE output patch (ESL-flagged by
+default), each becoming one of its masters — this is meant to be run once
+across the user's whole load order (Skyrim.esm + DLCs + any third-party
+armor mods) rather than once per plugin, so equipping any of them behaves
+correctly against the same "Slot44 Patch.esp". Every FormID is remapped
+from each source plugin's own master-slot indices into the merged master
+list before Clean Masters runs once over the combined output, dropping
+whichever merged masters ended up unreferenced (e.g. Update.esm, when
+nothing the patch actually touches references it). Load the patch after
+every plugin it lists as a master.
 
 Localized masters (Skyrim.esm has the localized flag) store FULL/DESC as
 string-table indices; since the patch itself is not localized, the tool
-resolves those indices from the master's .strings/.dlstrings files (loose or
-inside a BSA next to the plugin) and inlines the text.
+resolves those indices from each master's .strings/.dlstrings files (loose
+or inside a BSA next to the plugin) and inlines the text.
 
 Usage:
     python tools/patch_body_slots.py "C:/.../Data/Skyrim.esm"
-    python tools/patch_body_slots.py MyArmorMod.esp -o "output/Oblivion.esm/MyArmorMod - Slot44 Patch.esp"
+    python tools/patch_body_slots.py Skyrim.esm Dawnguard.esm Dragonborn.esm MyArmorMod.esp
     python tools/patch_body_slots.py Skyrim.esm --language german --no-esl
 """
 
@@ -309,77 +315,257 @@ def _pack_header(masters: list, num_records: int, next_object_id: int,
 
 
 # ---------------------------------------------------------------------------
+# FormID field tables, used both for Clean Masters usage-scanning (in
+# patch_plugins, before any FormID is packed) and for remapping already-
+# packed record bytes below. Scoped to the exact FormID-typed subrecords
+# ARMO/ARMA can carry, per the xEdit TES5 definitions
+# (references/xEdit/Core/wbDefinitionsTES5.pas, wbRecord(ARMO ...)/
+# wbRecord(ARMA ...)): a signature list rather than a blind byte scan, since
+# this tool only ever emits these two record types.
+# ---------------------------------------------------------------------------
+
+# Single 4-byte FormID subrecords, by owning record type.
+_FORMID_SUBS = {
+    'ARMO': {'EITM', 'BIDS', 'BAMT', 'RNAM', 'TNAM'},
+    'ARMA': {'RNAM', 'NAM0', 'NAM1', 'NAM2', 'NAM3', 'SNDD', 'ONAM'},
+}
+# MODL is a repeated array entry (ARMO's Armature list / ARMA's Additional
+# Races list) — always FormID-typed in both record types, so it's implicit.
+_FORMID_ARRAY_SUB = 'MODL'
+
+
+def _remap_record_bytes(rec_bytes: bytes, slot_map: dict) -> bytes:
+    """Rewrite a packed record's own FormID plus its FormID-typed
+    subrecords' top byte (master slot) through slot_map, returning
+    re-packed record bytes.
+
+    The record's own header FormID must be remapped too: an ARMO/ARMA
+    override's top byte encodes which master originally owns it (e.g.
+    Dawnguard.esm's own new records use Dawnguard's *local* self-index,
+    which is a different number from Dawnguard's index in the merged
+    master list) — leaving it unmapped would silently reassign the record
+    to the wrong master (or collide with the patch's own synthetic
+    records) once multiple plugins share one merged master list.
+    """
+    rec_type = rec_bytes[:4].decode('ascii')
+    form_id  = struct.unpack_from('<I', rec_bytes, 12)[0]
+    flags    = struct.unpack_from('<I', rec_bytes, 8)[0]
+    form_ver = struct.unpack_from('<H', rec_bytes, 20)[0]
+    subs = t5r._parse_subrecords(rec_bytes[24:])
+
+    old_rec_top = form_id >> 24
+    new_rec_top = slot_map.get(old_rec_top, old_rec_top)
+    form_id = (new_rec_top << 24) | (form_id & 0xFFFFFF)
+
+    wanted = _FORMID_SUBS.get(rec_type, set())
+    out = b''
+    for sub in subs:
+        data = sub.data
+        if (sub.type == _FORMID_ARRAY_SUB or sub.type in wanted) and len(data) == 4:
+            old_top = data[3]
+            new_top = slot_map.get(old_top, old_top)
+            if new_top != old_top:
+                data = data[:3] + bytes((new_top,))
+        out += pack_subrecord(sub.type, data)
+    return pack_record(rec_type, form_id, flags, out, form_ver or FORM_VERSION_SSE)
+
+
+# ---------------------------------------------------------------------------
 # Main patching pass
 # ---------------------------------------------------------------------------
 
-def patch_plugin(input_path: str, output_path: str, language: str = 'english',
-                 esl: bool = True, verbose: bool = False) -> int:
-    """Scan input plugin and write the body-slot patch.
+def _merged_master_list(input_paths: list) -> list:
+    """Build the union of every input plugin's own masters plus the plugins
+    themselves, in dependency-safe order (each plugin's masters are added
+    before the plugin), so all patched plugins can share one output file."""
+    merged = []
+    seen = set()
+    for path in input_paths:
+        header, _, _ = t5r.read_tes5_file(path)
+        own_masters = [t5r._zstring(s.data) for s in header.subrecords if s.type == 'MAST']
+        for m in own_masters:
+            if m not in seen:
+                merged.append(m)
+                seen.add(m)
+        name = os.path.basename(path)
+        if name not in seen:
+            merged.append(name)
+            seen.add(name)
+    return merged
+
+
+def patch_plugins(input_paths: list, output_path: str, language: str = 'english',
+                  esl: bool = True, verbose: bool = False,
+                  clean_masters: bool = True) -> int:
+    """Scan one or more Skyrim plugins and write ONE merged slot-44 patch.
+
+    Every input plugin becomes a master of the single output patch (so a
+    load order's worth of armor mods can share one "Slot44 Patch.esp"); each
+    plugin's FormIDs are remapped from its own local master-slot indices
+    into the merged master list before records are emitted. Clean Masters
+    then runs once over the whole merged output, dropping whichever of the
+    merged masters ended up unreferenced (e.g. Update.esm when nothing the
+    patch touches actually references it).
+
+    `input_paths` is treated as load order (earlier = lower priority): when
+    more than one plugin defines the same FormID (e.g. an armor mod
+    overriding a vanilla ARMO's biped flags), only the LAST plugin's version
+    of that record is used — matching how the game itself resolves
+    overrides — rather than operating on every plugin's copy independently.
 
     Returns the number of records in the patch (0 = no patch written).
     """
-    header, records, is_localized = t5r.read_tes5_file(input_path)
+    merged_masters = _merged_master_list(input_paths)
 
-    input_name = os.path.basename(input_path)
-    masters = [t5r._zstring(s.data) for s in header.subrecords if s.type == 'MAST']
-    # New records live in the patch's own FormID space: the patch's master
-    # list is [input's masters..., input], so the patch itself is index
-    # len(masters) + 1.
-    patch_master_index = len(masters) + 1
+    # ── Resolve overrides: for every ARMO/ARMA FormID touched by more than
+    #    one plugin, keep only the LAST plugin's copy (load-order winner) —
+    #    matching how the game itself resolves overrides — rather than
+    #    operating on every plugin's copy of the record independently.
+    #    Everything from here on is keyed by merged_fid (merged-master
+    #    space), since the same real-world record carries a different raw
+    #    top byte in each plugin's own file and cross-plugin comparisons on
+    #    raw local FormIDs would silently miss matches. ──
+    # merged_fid -> (rec, input_name, local_to_merged, tables, is_localized)
+    resolved: dict = {}
+    for input_path in input_paths:
+        input_name = os.path.basename(input_path)
+        header, records, is_localized = t5r.read_tes5_file(input_path)
+        own_masters = [t5r._zstring(s.data) for s in header.subrecords if s.type == 'MAST']
+        local_to_merged = {i: merged_masters.index(m) for i, m in enumerate(own_masters)}
+        local_to_merged[len(own_masters)] = merged_masters.index(input_name)
 
-    tables = {'strings': {}, 'dlstrings': {}}
-    if is_localized:
-        tables = _load_string_tables(input_path, language)
-        if not tables['strings']:
-            print(f'WARNING: {input_name} is localized but no string tables were '
-                  f'found — item names in the patch will be empty.')
+        tables = {'strings': {}, 'dlstrings': {}}
+        if is_localized:
+            tables = _load_string_tables(input_path, language)
+            if not tables['strings']:
+                print(f'WARNING: {input_name} is localized but no string tables were '
+                      f'found — item names in the patch will be empty.')
+
+        for rec in records:
+            if rec.type not in ('ARMO', 'ARMA'):
+                continue
+            merged_fid = (local_to_merged[rec.form_id >> 24] << 24) | (rec.form_id & 0xFFFFFF)
+            resolved[merged_fid] = (rec, input_name, local_to_merged, tables, is_localized)
+
+    def _merged_formid_refs(rec, local_to_merged, sig):
+        """FormIDs in `sig` subrecords of `rec`, translated to merged space."""
+        out = []
+        for s in rec.subrecords:
+            if s.type == sig and len(s.data) == 4:
+                raw = struct.unpack_from('<I', s.data)[0]
+                top = local_to_merged.get(raw >> 24)
+                if top is not None:
+                    out.append((top << 24) | (raw & 0xFFFFFF))
+        return out
+
+    # ── Selection (all comparisons in merged space) ──
+    skin_arma = {}   # merged_fid -> ctx, for winning ARMAs that are skin torsos
+    for merged_fid, ctx in resolved.items():
+        rec = ctx[0]
+        if rec.type == 'ARMA' and _is_skin_torso_arma(rec):
+            skin_arma[merged_fid] = ctx
+
+    skin_armo = {}   # merged_fid -> (ctx, [referenced skin_arma merged_fids])
+    for merged_fid, ctx in resolved.items():
+        rec, _, local_to_merged, _, _ = ctx
+        if rec.type != 'ARMO':
+            continue
+        refs = [f for f in _merged_formid_refs(rec, local_to_merged, 'MODL') if f in skin_arma]
+        if refs:
+            skin_armo[merged_fid] = (ctx, refs)
+
+    n32 = {}   # merged_fid -> ctx
+    for merged_fid, ctx in resolved.items():
+        rec = ctx[0]
+        if merged_fid in skin_arma or merged_fid in skin_armo:
+            continue
+        flags, _ = _biped_flags(rec)
+        if flags is None or not flags & SLOT_32_BODY or flags & SLOT_44_LOWERBODY:
+            continue
+        n32[merged_fid] = ctx
+
+    # ── Which merged master slots are actually needed (record's own slot +
+    #    every FormID-typed subrecord field it carries), so Clean Masters can
+    #    compact the master list before anything is packed into a FormID's
+    #    one-byte slot field. ──
+    used_merged: set = set()
+    for merged_fid, ctx in {**skin_arma, **{k: v[0] for k, v in skin_armo.items()}, **n32}.items():
+        rec, _, local_to_merged, _, _ = ctx
+        used_merged.add(merged_fid >> 24)
+        for s in rec.subrecords:
+            if (s.type == _FORMID_ARRAY_SUB or s.type in _FORMID_SUBS.get(rec.type, ())) \
+                    and len(s.data) == 4:
+                used_merged.add(local_to_merged.get(s.data[3], s.data[3]))
+
+    final_masters = merged_masters
+    merged_to_final = {i: i for i in range(len(merged_masters))}
+    if clean_masters:
+        final_masters = [m for i, m in enumerate(merged_masters) if i in used_merged]
+        merged_to_final = {old: new for new, old in enumerate(
+            i for i in range(len(merged_masters)) if i in used_merged)}
+        dropped = [m for i, m in enumerate(merged_masters) if i not in used_merged]
+        if dropped and verbose:
+            print(f'  Clean Masters: dropping unused master(s): {", ".join(dropped)}')
+
+    if len(final_masters) > 254:
+        raise SystemExit(
+            f'ERROR: this patch would need {len(final_masters)} masters after '
+            f'Clean Masters, but a plugin can have at most 254. Deselect some '
+            f'of the input plugins (prefer ones without any armor/body records) '
+            f'and try again.')
+
+    # Patch's own new-record space always sits one slot past every real
+    # master, now that final_masters is guaranteed small.
+    patch_master_index = len(final_masters)
+
+    def _to_final(local_to_merged):
+        return {local: merged_to_final[merged]
+               for local, merged in local_to_merged.items()
+               if merged in merged_to_final}
 
     warnings: list = []
     out_armo: list = []
     out_arma: list = []
     log: list = []
+    next_oid = 0x800
+    per_plugin_counts: dict = {}   # input_name -> [skin_arma, skin_armo, n32]
 
     # ── Pass 1: split skin torso ARMAs and create thigh/calf companions ──
-    armas = [r for r in records if r.type == 'ARMA']
-    armos = [r for r in records if r.type == 'ARMO']
-
-    next_oid = 0x800
-    skin_new: dict = {}     # torso ARMA fid -> [thigh fid, calf fid]
-    for rec in armas:
-        if not _is_skin_torso_arma(rec):
-            continue
+    skin_new: dict = {}   # torso ARMA final_fid -> [thigh final_fid, calf final_fid]
+    for merged_fid, (rec, input_name, local_to_merged, tables, is_localized) in skin_arma.items():
+        local_to_final = _to_final(local_to_merged)
         flags, bod = _biped_flags(rec)
         edid_sub = _get_sub(rec, 'EDID')
         edid = t5r._zstring(edid_sub.data) if edid_sub else f'{rec.form_id:08X}'
 
         # Torso override: keep body/forearms(+amulet/ring), drop calves —
         # they move to the dedicated Calves addon.
-        new_mask = flags & ~(SLOT_38_CALVES | SLOT_44_LOWERBODY) | \
-            (flags & TORSO_MASK)
-        out_arma.append(_repack(
+        new_mask = flags & ~(SLOT_38_CALVES | SLOT_44_LOWERBODY) | (flags & TORSO_MASK)
+        torso_bytes = _repack(
             rec, lambda s, b=bod, m=new_mask:
-                _with_biped_flags(s, m) if s is b else s.data))
+                _with_biped_flags(s, m) if s is b else s.data)
+        out_arma.append(_remap_record_bytes(torso_bytes, local_to_final))
 
         fids = []
         for suffix, mask in (('Thighs', THIGH_MASK), ('Calves', CALVES_MASK)):
             fid = (patch_master_index << 24) | next_oid
             next_oid += 1
-            out_arma.append(_build_skin_clone(rec, fid, f'TES4{edid}{suffix}', mask))
+            clone_bytes = _build_skin_clone(rec, fid, f'TES4{edid}{suffix}', mask)
+            out_arma.append(_remap_record_bytes(clone_bytes, local_to_final))
             fids.append(fid)
-        skin_new[rec.form_id] = fids
-        log.append(f'  ARMA {rec.form_id:08X} {edid}: split -> torso '
+        skin_new[merged_fid] = fids
+        per_plugin_counts.setdefault(input_name, [0, 0, 0])[0] += 1
+        log.append(f'  [{input_name}] ARMA {rec.form_id:08X} {edid}: split -> torso '
                    f'{new_mask:08X} + Thighs(44) + Calves(38)')
 
     # ── Pass 2: skin ARMOs referencing split torso ARMAs get the new
     #    armatures appended (and are excluded from the slot-44 addition) ──
-    skin_armo_ids = set()
-    for rec in armos:
-        arma_refs = [struct.unpack_from('<I', s.data)[0]
-                     for s in rec.subrecords if s.type == 'MODL' and len(s.data) == 4]
-        new_refs = [fid for ref in arma_refs for fid in skin_new.get(ref, [])]
+    for merged_fid, ((rec, input_name, local_to_merged, tables, is_localized), refs) \
+            in skin_armo.items():
+        local_to_final = _to_final(local_to_merged)
+        new_refs = [fid for ref in refs for fid in skin_new.get(ref, [])]
         if not new_refs:
             continue
-        skin_armo_ids.add(rec.form_id)
         last_modl = [s for s in rec.subrecords if s.type == 'MODL'][-1]
 
         def xform(sub, last=last_modl, refs=new_refs, r=rec):
@@ -390,43 +576,53 @@ def patch_plugin(input_path: str, output_path: str, language: str = 'english',
                 return [(sub.type, data)] + [('MODL', struct.pack('<I', f))
                                              for f in refs]
             return data
-        out_armo.append(_repack(rec, xform))
+        armo_bytes = _repack(rec, xform)
+        out_armo.append(_remap_record_bytes(armo_bytes, local_to_final))
         edid_sub = _get_sub(rec, 'EDID')
-        log.append(f'  ARMO {rec.form_id:08X} '
+        per_plugin_counts.setdefault(input_name, [0, 0, 0])[1] += 1
+        log.append(f'  [{input_name}] ARMO {rec.form_id:08X} '
                    f'{t5r._zstring(edid_sub.data) if edid_sub else "?"}: '
                    f'+{len(new_refs)} skin armatures')
 
     # ── Pass 3: playable slot-32 items get slot 44 added ──
-    n32 = 0
-    for rec in armos + armas:
-        if rec.form_id in skin_armo_ids or rec.form_id in skin_new:
-            continue
+    for merged_fid, (rec, input_name, local_to_merged, tables, is_localized) in n32.items():
+        local_to_final = _to_final(local_to_merged)
         flags, bod = _biped_flags(rec)
-        if flags is None or not flags & SLOT_32_BODY or flags & SLOT_44_LOWERBODY:
-            continue
-        n32 += 1
-        out = (out_armo if rec.type == 'ARMO' else out_arma)
-        out.append(_repack(
+        rec_bytes = _repack(
             rec, lambda s, b=bod, r=rec:
                 _with_biped_flags(s, struct.unpack_from('<I', s.data)[0] | SLOT_44_LOWERBODY)
-                if s is b else _localize_sub(s, is_localized, tables, r, warnings)))
+                if s is b else _localize_sub(s, is_localized, tables, r, warnings))
+        rec_bytes = _remap_record_bytes(rec_bytes, local_to_final)
+        out = (out_armo if rec.type == 'ARMO' else out_arma)
+        out.append(rec_bytes)
+        per_plugin_counts.setdefault(input_name, [0, 0, 0])[2] += 1
 
+    for input_path in input_paths:
+        input_name = os.path.basename(input_path)
+        if input_name in per_plugin_counts:
+            c = per_plugin_counts[input_name]
+            print(f'{input_name}: {c[0]} skin ARMAs split, {c[1]} skin ARMOs '
+                  f're-armatured, {c[2]} playable records +slot44')
+
+    total_skin_split = len(skin_arma)
+    total_rearmored = len(skin_armo)
+    total_n32 = len(n32)
     n = len(out_armo) + len(out_arma)
-    print(f'{input_name}: {len(skin_new)} skin ARMAs split, '
-          f'{len(skin_armo_ids)} skin ARMOs re-armatured, '
-          f'{n32} playable records +slot44, {n} records total')
     for w in warnings[:20]:
         print(f'  WARNING: {w}')
     if verbose:
         print('\n'.join(log))
+    print(f'Total: {total_skin_split} skin ARMAs split, {total_rearmored} skin ARMOs '
+          f're-armatured, {total_n32} playable records +slot44, {n} records total')
     if n == 0:
         print('Nothing to patch — no output written.')
         return 0
 
-    out = _pack_header(masters + [input_name], n, next_oid, esl,
-                       f'TES4 conversion body-slot patch for {input_name}: '
-                       f'splits naked skin into torso/thighs/calves addons and '
-                       f'adds biped slot 44 to slot-32 body items.')
+    out = _pack_header(final_masters, n, next_oid, esl,
+                       'TES4 conversion body-slot patch: splits naked skin into '
+                       'torso/thighs/calves addons and adds biped slot 44 to '
+                       'slot-32 body items, across ' + ', '.join(
+                           os.path.basename(p) for p in input_paths) + '.')
     if out_armo:
         out += pack_top_group('ARMO', b''.join(out_armo))
     if out_arma:
@@ -436,37 +632,43 @@ def patch_plugin(input_path: str, output_path: str, language: str = 'english',
     with open(output_path, 'wb') as f:
         f.write(out)
     print(f'Written: {output_path}  ({n} records, '
-          f"{'ESL-flagged ' if esl else ''}masters: {masters + [input_name]})")
+          f"{'ESL-flagged ' if esl else ''}masters: {final_masters})")
     return n
 
 
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('plugin', help='Path to the TES5 plugin to patch (e.g. Skyrim.esm)')
+    parser.add_argument('plugins', nargs='+',
+                        help='Path(s) to the TES5 plugin(s) to patch (e.g. Skyrim.esm '
+                             'Dawnguard.esm ...). All are merged into one output patch, '
+                             'in the order given (load order).')
     parser.add_argument('-o', '--output', default=None,
                         help='Output patch path (default: output/Oblivion.esm/'
-                             '"<stem> - Slot44 Patch.esp")')
+                             '"Slot44 Patch.esp")')
     parser.add_argument('--language', default='english',
                         help='String-table language for localized masters (default: english)')
     parser.add_argument('--no-esl', action='store_true',
                         help='Do not set the ESL (light plugin) flag on the patch')
+    parser.add_argument('--no-clean-masters', action='store_true',
+                        help='Keep every input plugin\'s masters, even if unused '
+                             '(default: drop masters not referenced by the patch)')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='List every patched record')
     args = parser.parse_args()
 
-    if not os.path.exists(args.plugin):
-        print(f'ERROR: plugin not found: {args.plugin}')
-        return 1
+    for plugin in args.plugins:
+        if not os.path.exists(plugin):
+            print(f'ERROR: plugin not found: {plugin}')
+            return 1
 
     out = args.output
     if out is None:
-        stem = os.path.splitext(os.path.basename(args.plugin))[0]
-        out = os.path.join(_REPO_ROOT, 'output', 'Oblivion.esm',
-                           f'{stem} - Slot44 Patch.esp')
+        out = os.path.join(_REPO_ROOT, 'output', 'Oblivion.esm', 'Slot44 Patch.esp')
 
-    patch_plugin(args.plugin, out, language=args.language,
-                 esl=not args.no_esl, verbose=args.verbose)
+    patch_plugins(args.plugins, out, language=args.language,
+                 esl=not args.no_esl, verbose=args.verbose,
+                 clean_masters=not args.no_clean_masters)
     return 0
 
 

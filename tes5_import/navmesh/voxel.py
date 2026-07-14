@@ -181,13 +181,17 @@ def _rasterize(hf, tris, walkable):
     cs, ch = hf.cs, hf.ch
     inv_cs = 1.0 / cs
 
-    # Per-triangle XY bbox -> column range.
+    # Per-triangle XY bbox -> column range.  A triangle entirely OUTSIDE the
+    # grid must be skipped, not clipped: since the bounds are clamped to the
+    # pathgrid window, outlier geometry can lie far off-grid, and clipping its
+    # bbox would smear spurious spans along the border columns.
     tx = tris[:, :, 0]
     ty = tris[:, :, 1]
     x0 = np.floor((tx.min(axis=1) - hf.min_x) * inv_cs).astype(np.int32)
     x1 = np.floor((tx.max(axis=1) - hf.min_x) * inv_cs).astype(np.int32)
     y0 = np.floor((ty.min(axis=1) - hf.min_y) * inv_cs).astype(np.int32)
     y1 = np.floor((ty.max(axis=1) - hf.min_y) * inv_cs).astype(np.int32)
+    oob = (x1 < 0) | (x0 > hf.w - 1) | (y1 < 0) | (y0 > hf.h - 1)
     np.clip(x0, 0, hf.w - 1, out=x0)
     np.clip(x1, 0, hf.w - 1, out=x1)
     np.clip(y0, 0, hf.h - 1, out=y0)
@@ -201,6 +205,8 @@ def _rasterize(hf, tris, walkable):
     tl = tris.tolist()          # python floats: ~2x faster than numpy scalars here
 
     for i in range(len(tl)):
+        if oob[i]:
+            continue
         a, b, c = tl[i]
         ax, ay, az = a
         bx, by, bz = b
@@ -289,6 +295,7 @@ def _rasterize_grid(hf, tris, walkable):
     x1 = np.floor((tris[:, :, 0].max(axis=1) - hf.min_x) / cs).astype(np.int64)
     y0 = np.floor((tris[:, :, 1].min(axis=1) - hf.min_y) / cs).astype(np.int64)
     y1 = np.floor((tris[:, :, 1].max(axis=1) - hf.min_y) / cs).astype(np.int64)
+    oob = (x1 < 0) | (x0 > hf.w - 1) | (y1 < 0) | (y0 > hf.h - 1)
     np.clip(x0, 0, hf.w - 1, out=x0)
     np.clip(x1, 0, hf.w - 1, out=x1)
     np.clip(y0, 0, hf.h - 1, out=y0)
@@ -302,7 +309,7 @@ def _rasterize_grid(hf, tris, walkable):
 
     half_ch = hf.ch * 0.5
     for i in range(len(tris)):
-        if abs(det[i]) < 1e-9:
+        if oob[i] or abs(det[i]) < 1e-9:
             continue
         gx = np.arange(x0[i], x1[i] + 1)
         gy = np.arange(y0[i], y1[i] + 1)

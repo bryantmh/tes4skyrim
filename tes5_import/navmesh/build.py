@@ -40,26 +40,30 @@ _log = logging.getLogger(__name__)
 
 
 def _drop_steep_triangles(verts, tris, nodes):
-    """Remove triangles too steep for an NPC to walk.
+    """Remove wall-sized steep triangles; KEEP stair risers.
 
-    A contour can bridge a Z discontinuity — most damagingly, it can join a
-    ground-floor surface straight up to the storey above, producing a wall of
-    near-vertical triangles that "connect" the two floors.  No NPC walks up an
-    80-degree face, so any triangle steeper than the walkable slope is an artefact
-    and goes, WITHOUT EXCEPTION.
+    A triangle steeper than the walkable slope is suspect, but steepness alone is
+    the wrong test: a stair riser meshed at CS=16u is legitimately steeper than
+    MAX_SLOPE_DEG (a 26u riser over one 16u cell is a 58-degree face, and a whole
+    tread-to-tread quad can be vertical), yet it is a single STEP the pathgrid
+    walks.  Dropping those was what shredded every staircase into disconnected
+    treads — the "holes on stairs" bug: the treads survived, the riser triangles
+    between them did not, and the corridor fell apart.
 
-    There used to be an exception — a steep triangle was kept if the pathgrid ran
-    near it, on the theory that a stamped staircase is legitimately steep.  That
-    is what let the cross-floor triangles survive: a vertical triangle spanning
-    two storeys has its centroid halfway up, which lands right beside the stair
-    pathgrid, so it was exempted and kept.  A real staircase ramp is nowhere near
-    vertical (Oblivion's are ~30 degrees), so it does not need the exception and
-    nothing else deserves it.  MAX_SLOPE_DEG is the single ceiling.
+    The discriminator is the triangle's VERTICAL EXTENT.  A single step is at most
+    MAX_CLIMB tall (corner averaging on a stamped stair can stretch that to about
+    twice), while the cross-floor wall this filter exists to kill spans a whole
+    storey (150u+).  The span mesher already makes cross-floor triangles
+    unrepresentable — spans a storey apart never share corner vertices — so this
+    is a pure backstop, and it must only fire on what cannot possibly be a step:
+
+        drop  <=>  steeper than MAX_SLOPE_DEG  AND  taller than 2.5 * MAX_CLIMB
     """
     if not tris:
         return verts, tris
 
     cos_lim = math.cos(math.radians(params.MAX_SLOPE_DEG))
+    max_step_span = params.MAX_CLIMB * 2.5
     kept = []
     for (a, b, c) in tris:
         va, vb, vc = verts[a], verts[b], verts[c]
@@ -71,8 +75,12 @@ def _drop_steep_triangles(verts, tris, nodes):
         ln = math.sqrt(nx * nx + ny * ny + nz * nz)
         if ln < 1e-9:
             continue
-        if abs(nz) / ln >= cos_lim:
-            kept.append((a, b, c))
+        if abs(nz) / ln < cos_lim:
+            zspan = (max(va[2], vb[2], vc[2]) -
+                     min(va[2], vb[2], vc[2]))
+            if zspan > max_step_span:
+                continue
+        kept.append((a, b, c))
     return _compact(verts, kept)
 
 
@@ -105,12 +113,22 @@ def _tri_components(tris, nverts):
 
 
 def _prune_islands(verts, tris, nodes):
-    """Drop navmesh components no pathgrid node stands on.
+    """Drop navmesh components no pathgrid node stands on, and any island that
+    merely SHADOWS a bigger piece.
 
     An NPC cannot cross between disconnected navmesh pieces, so an unreachable
     island is worse than useless.  A component holding a pathgrid node is kept —
     the designers walk NPCs there — and everything else (a roof corner, a scrap
     over a wall, a shelf top) is removed.
+
+    The vouch test alone is not enough around STAIRCASES: the floor sliver left
+    under a flight after the headroom filter, or a stamped ribbon that failed to
+    snap onto the treads, sits right next to a stair-base node — vouched — yet
+    is a disconnected scrap directly UNDER the real stair mesh.  A disconnected
+    island lying in the XY footprint of a bigger kept component, within
+    sub-storey Z of its surface, is an artifact by definition: if an NPC could
+    genuinely stand there it would have connected.  Two real storeys are never
+    caught by this — they are a full storey (250u+) apart.
     """
     if not tris:
         return verts, tris
@@ -134,13 +152,69 @@ def _prune_islands(verts, tris, nodes):
                 return True
         return False
 
-    ordered = sorted(comps.values(), key=len, reverse=True)
-    keep_tris = [tris[ti] for ti in ordered[0]]           # main component
-    for tri_idx in ordered[1:]:
-        if vouched(tri_idx):
-            keep_tris.extend(tris[ti] for ti in tri_idx)
+    shadow_dz = params.MAX_CLIMB * 5.0     # sub-storey; two floors are 250u+
 
+    def shadowed(tri_idx, kept_tri_idx):
+        """True if most of this island lies under/over kept mesh nearby in Z."""
+        hits = 0
+        total = 0
+        for ti in tri_idx:
+            a, b, c = tris[ti]
+            cx = (varr[a][0] + varr[b][0] + varr[c][0]) / 3.0
+            cy = (varr[a][1] + varr[b][1] + varr[c][1]) / 3.0
+            cz = (varr[a][2] + varr[b][2] + varr[c][2]) / 3.0
+            total += 1
+            for tj in kept_tri_idx:
+                p, q, r = tris[tj]
+                pa, pb, pc = varr[p], varr[q], varr[r]
+                d = ((pb[1] - pc[1]) * (pa[0] - pc[0]) +
+                     (pc[0] - pb[0]) * (pa[1] - pc[1]))
+                if abs(d) < 1e-9:
+                    continue
+                l0 = ((pb[1] - pc[1]) * (cx - pc[0]) +
+                      (pc[0] - pb[0]) * (cy - pc[1])) / d
+                l1 = ((pc[1] - pa[1]) * (cx - pc[0]) +
+                      (pa[0] - pc[0]) * (cy - pc[1])) / d
+                l2 = 1.0 - l0 - l1
+                if l0 < -0.02 or l1 < -0.02 or l2 < -0.02:
+                    continue
+                z = l0 * pa[2] + l1 * pb[2] + l2 * pc[2]
+                if abs(z - cz) <= shadow_dz:
+                    hits += 1
+                    break
+        return total and hits / total >= 0.6
+
+    ordered = sorted(comps.values(), key=len, reverse=True)
+    kept_comps = [ordered[0]]                             # main component
+    for tri_idx in ordered[1:]:
+        if not vouched(tri_idx):
+            continue
+        flat_kept = [ti for comp in kept_comps for ti in comp]
+        if shadowed(tri_idx, flat_kept):
+            continue
+        kept_comps.append(tri_idx)
+
+    keep_tris = [tris[ti] for comp in kept_comps for ti in comp]
     return _compact(verts, keep_tris)
+
+
+def teleport_door_positions(refr_recs):
+    """(x, y) of every teleport-door REFR (XTEL) in the cell.
+
+    A teleport door leads to ANOTHER cell, so the navmesh must end at its
+    threshold — exactly as vanilla navmeshes do.  These positions become
+    barriers for the pathgrid-reach flood (see region.keep_pathgrid_heights):
+    without them, an interior cell's mesh escapes through the open doorway and
+    spreads over the decorative street/porch geometry outside the shell.
+    """
+    out = []
+    for refr in refr_recs or ():
+        if refr.get('XTEL.Door'):
+            try:
+                out.append((float(refr.get('PosX')), float(refr.get('PosY'))))
+            except (TypeError, ValueError):
+                pass
+    return out
 
 
 def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
@@ -158,14 +232,35 @@ def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
 
     # Bounds: cover the geometry AND the pathgrid (a node can sit just outside
     # the collision, e.g. in a doorway) with room for the agent-radius erosion.
+    #
+    # But CLAMP the geometry's contribution to a window around the pathgrid
+    # (plus the LAND extent for exteriors).  The final mesh can only exist near
+    # the pathgrid — region seeding and keep_pathgrid_heights cull every span
+    # farther than ~SEED_SNAP*2.5 from a pathgrid sample — so collision far
+    # outside the node bbox cannot affect the result.  It CAN, however, blow the
+    # grid past MAX_GRID_DIM and coarsen CS by whole octaves: one outlier REFR in
+    # FelgageldtCave stretched the bounds to 74k x 122k units, the grid guard
+    # pushed CS from 16 to 256, and the entire cave voxelized into mush.
     pad = params.AGENT_RADIUS * 2.0 + params.CS * 2.0
+    win = params.PGRD_XY_REACH + params.AGENT_RADIUS * 2.0 + params.CS * 4.0
+    lo_x = min(n[0] for n in nodes) - win
+    hi_x = max(n[0] for n in nodes) + win
+    lo_y = min(n[1] for n in nodes) - win
+    hi_y = max(n[1] for n in nodes) + win
+    if land_rec is not None:
+        lo_x = min(lo_x, origin_x)
+        hi_x = max(hi_x, origin_x + 4096.0)
+        lo_y = min(lo_y, origin_y)
+        hi_y = max(hi_y, origin_y + 4096.0)
     xs = [n[0] for n in nodes]
     ys = [n[1] for n in nodes]
     zs = [n[2] for n in nodes]
     for arr in (walkable, blocking, land_walk):
         if len(arr):
-            xs += [float(arr[:, :, 0].min()), float(arr[:, :, 0].max())]
-            ys += [float(arr[:, :, 1].min()), float(arr[:, :, 1].max())]
+            xs += [max(lo_x, float(arr[:, :, 0].min())),
+                   min(hi_x, float(arr[:, :, 0].max()))]
+            ys += [max(lo_y, float(arr[:, :, 1].min())),
+                   min(hi_y, float(arr[:, :, 1].max()))]
             zs += [float(arr[:, :, 2].min()), float(arr[:, :, 2].max())]
     bounds = (min(xs) - pad, min(ys) - pad, min(zs) - pad,
               max(xs) + pad, max(ys) + pad, max(zs) + pad)
@@ -194,10 +289,27 @@ def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
     # A staircase climb-connects a room's floor to the CEILING of the room beneath
     # it (the treads wrap over that room), so the flood-fill merges floor + stairs
     # + ceiling into one region and keep_regions alone would paint navmesh on the
-    # ceiling.  Drop any span no pathgrid sample vouches for at its height.  This
-    # also rescues a storey whose region no node happened to seed, which is why
-    # two-storey houses get all their floors.
-    if region.keep_pathgrid_heights(hf, nodes, edges):
+    # ceiling.  Drop any span the pathgrid cannot WALK to within PGRD_XY_REACH
+    # (geodesic over the span graph).  Teleport doors are flood barriers in
+    # interiors: the mesh ends at the threshold instead of escaping through the
+    # doorway onto the decorative geometry outside the cell's shell.
+    barriers = None
+    if land_rec is None:
+        tdoors = teleport_door_positions(refr_recs)
+        if tdoors:
+            barriers = set()
+            r_cells = max(1, int(round(params.DOOR_BARRIER_RADIUS / hf.cs)))
+            for (dx, dy) in tdoors:
+                cx0 = int((dx - hf.min_x) / hf.cs)
+                cy0 = int((dy - hf.min_y) / hf.cs)
+                for oy in range(-r_cells, r_cells + 1):
+                    for ox in range(-r_cells, r_cells + 1):
+                        if ox * ox + oy * oy > r_cells * r_cells:
+                            continue
+                        cx, cy = cx0 + ox, cy0 + oy
+                        if 0 <= cx < hf.w and 0 <= cy < hf.h:
+                            barriers.add(cy * hf.w + cx)
+    if region.keep_pathgrid_heights(hf, nodes, edges, barriers=barriers):
         region_of, regions = region.build_regions(hf)
 
     # Standoff from walls.  Protected (pathgrid) columns are exempt, so this can

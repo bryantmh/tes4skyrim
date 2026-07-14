@@ -157,6 +157,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     if os.path.isdir(output_path):
         output_path = os.path.join(
             output_path, os.path.basename(os.path.normpath(output_path)))
+    plugin_out_dir = os.path.dirname(output_path)
 
     print(f"Reading exports from: {export_dir}")
     t0 = time.time()
@@ -296,16 +297,27 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     create_trainer_records(by_type, writer)
 
     # --- Phase 0d: Load mesh bounds for accurate OBND computation ---
-    # Bounds cache is written by convert.py (scan_mesh_bounds) after mesh+speedtree
-    # conversion, so it includes all NIFs including speedtrees.
+    # Bounds cache normally comes from convert.py's mesh-bounds phase (after
+    # mesh+speedtree conversion, so it includes speedtree NIFs too). If it's
+    # missing — e.g. running the import step standalone — scan it here from
+    # the already-converted output meshes so callers never have to run a
+    # separate step for this.
     # Cache lives in the export directory: export/<plugin>/mesh_bounds_cache.json
-    from .mesh_bounds import load_mesh_bounds
+    from .mesh_bounds import load_mesh_bounds, scan_mesh_bounds
     cache_path = os.path.join(export_dir, 'mesh_bounds_cache.json')
+    mesh_dir = os.path.join(plugin_out_dir, 'meshes')
+    if not os.path.exists(cache_path) and os.path.isdir(mesh_dir):
+        print(f"  Mesh bounds cache not found, scanning {mesh_dir}...")
+        scan_mesh_bounds(mesh_dir, cache_path)
     load_mesh_bounds(cache_path)
     # Havok collision soups (walkable/blocking triangles) the navmesh is built
-    # from.  Written by convert.py (scan_collision) from the CONVERTED meshes.
-    from asset_convert.collision_extract import load_collision
-    load_collision(os.path.join(export_dir, 'collision_cache.bin'))
+    # from, extracted from the CONVERTED meshes. Same fallback as above.
+    from asset_convert.collision_extract import load_collision, scan_collision
+    col_path = os.path.join(export_dir, 'collision_cache.bin')
+    if not os.path.exists(col_path) and os.path.isdir(mesh_dir):
+        print(f"  Collision cache not found, scanning {mesh_dir}...")
+        scan_collision(mesh_dir, col_path)
+    load_collision(col_path)
 
     # --- Phase 0e: Compute furniture seat lists from source NIF markers ---
     # FURN MNAM/FNPR must index the converted NIF's clustered seat positions,

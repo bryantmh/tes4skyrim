@@ -40,18 +40,21 @@ def render(export_dir, cell_arg, out_path, size):
     dt = time.time() - t0
     print('navmesh: %d verts %d tris  (%.2fs)' % (len(verts), len(tris), dt))
 
+    # Frame the view on the pathgrid + navmesh, NOT the raw collision: one
+    # outlier REFR (FelgageldtCave has collision 70k units away) otherwise
+    # zooms the whole cell down to a blob in the corner.  Collision is still
+    # DRAWN wherever it falls; it just doesn't get to pick the framing.
     xs, ys = [], []
-    for t in (walk, block):
-        if len(t):
-            xs += [float(t[:, :, 0].min()), float(t[:, :, 0].max())]
-            ys += [float(t[:, :, 1].min()), float(t[:, :, 1].max())]
     for n in ctx['nodes']:
         xs.append(n[0])
         ys.append(n[1])
+    for v in verts:
+        xs.append(v[0])
+        ys.append(v[1])
     if not xs:
         print('nothing to draw')
         return
-    pad = 100.0
+    pad = 400.0
     x0, x1 = min(xs) - pad, max(xs) + pad
     y0, y1 = min(ys) - pad, max(ys) + pad
     S = size / max(x1 - x0, y1 - y0)
