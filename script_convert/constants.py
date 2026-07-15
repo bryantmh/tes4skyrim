@@ -240,7 +240,10 @@ FUNCTION_MAP = {
     'delete':            ('Delete',            True,  None),
     'markfordelete':     ('Delete',            True,  None),
     'placeatme':         ('PlaceAtMe',         True,  None),
-    'setdestroyed': ('Disable',             True,  None),
+    # TES4 SetDestroyed marks the ref destroyed but keeps it VISIBLE (the
+    # tripwire stays as a snapped rope).  Disable() made objects vanish on
+    # trigger; BlockActivation just stops further use like TES4 intended.
+    'setdestroyed': ('BlockActivation',     True,  None),
 
     # --- Actor State ---
     'kill':              ('Kill',              True,  None),

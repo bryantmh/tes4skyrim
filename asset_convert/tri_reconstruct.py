@@ -23,6 +23,7 @@ def _role_key(uv):
 
 
 def fix_missing_triangles(tri_data):
+    # TODO: This should only apply to grass/plant meshes
     """Rebuild tri_data.triangles when has_triangles is unset.
 
     Returns True if triangles were reconstructed, False if nothing to do.

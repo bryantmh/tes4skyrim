@@ -3232,11 +3232,28 @@ class ScriptConverter:
             sex_val = '1' if 'female' in arg else '0'
             return f'({ref} as Actor).GetActorBase().GetSex() == {sex_val}'
 
-        # PlayGroup: PlayGroup Forward 0 -> Debug.SendAnimationEvent(ref, "Forward")
+        # PlayGroup:
+        #  - SELF-calls in object scripts (activators/doors with a
+        #    NiControllerManager): the converted NIF keeps its TES4 sequences
+        #    ('Forward', 'Unequip', …), so PlayGroup Forward 0 ->
+        #    Self.PlayAnimation("Forward").  The old Debug.SendAnimationEvent
+        #    mapping only works on behavior-graph actors and silently did
+        #    nothing on activators (tripwires never played their break
+        #    animation, swinging traps never got kicked).
+        #  - Actor scripts AND explicit-ref calls keep the behavior-graph
+        #    event mapping: PlayAnimation() on an actor corrupts its behavior
+        #    graph (BShkbAnimationGraph/hkbRagdollDriver crash), and an
+        #    explicit ref target may well be an actor even in an object
+        #    script.  SendAnimationEvent is safe on both.
         if fname_low == 'playgroup':
             parts = args_str.strip().split() if args_str else ['Idle']
             anim_name = parts[0].rstrip(',').strip('"').strip("'") if parts else 'Idle'
-            # Map common Oblivion animation groups to Skyrim events
+            if extends != 'Actor' and not ref_name:
+                # NiControllerSequence names in Oblivion NIFs are capitalized
+                # ('Forward', 'Backward', 'Unequip', 'Open', 'Close', 'Idle').
+                seq = anim_name.capitalize()
+                return f'Self.PlayAnimation("{seq}")'
+            # Map common Oblivion animation groups to Skyrim behavior events
             _anim_map = {
                 'forward': 'moveStart', 'backward': 'moveStartBackward',
                 'left': 'moveStartStrafeLeft', 'right': 'moveStartStrafeRight',

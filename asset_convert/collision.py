@@ -545,6 +545,54 @@ def demote_t_body_on_mesh_collision(data):
 # Rigid body conversion
 # ---------------------------------------------------------------------------
 
+# Oblivion layer → Skyrim layer for the values whose meaning diverges.
+# Layers 0-18 are identical in both enums (STATIC..PORTAL) and pass through.
+# 19+ diverge: Oblivion 19-31 are stairs/pick layers that moved, 32 is
+# OL_OTHER, and 33-56 are per-bone ragdoll layers (OL_HEAD..OL_WING) that
+# Oblivion authors also used on constrained world props (cellchain01 anchor
+# = OL_L_FOOT).  Skyrim reads those raw values as pick/zone layers with NO
+# physical collision (42 = PATHPICK), so touching the object does nothing.
+# Vanilla Skyrim constrained props (trapmace01 links) use 10 = PROPS.
+_OB_TO_SKY_LAYER: dict[int, int] = {
+    19: 31,   # OL_STAIRS          → SKYL_STAIRHELPER
+    20: 30,   # OL_CHAR_CONTROLLER → SKYL_CHARCONTROLLER
+    21: 34,   # OL_AVOID_BOX       → SKYL_AVOIDBOX
+    22: 1,    # OL_UNKNOWN1        → STATIC (no equivalent)
+    23: 1,    # OL_UNKNOWN2        → STATIC (no equivalent)
+    24: 39,   # OL_CAMERA_PICK     → SKYL_CAMERAPICK
+    25: 40,   # OL_ITEM_PICK       → SKYL_ITEMPICK
+    26: 41,   # OL_LINE_OF_SIGHT   → SKYL_LINEOFSIGHT
+    27: 42,   # OL_PATH_PICK       → SKYL_PATHPICK
+    28: 43,   # OL_CUSTOM_PICK_1   → SKYL_CUSTOMPICK1
+    29: 44,   # OL_CUSTOM_PICK_2   → SKYL_CUSTOMPICK2
+    30: 45,   # OL_SPELL_EXPLOSION → SKYL_SPELLEXPLOSION
+    31: 46,   # OL_DROPPING_PICK   → SKYL_DROPPINGPICK
+    32: 4,    # OL_OTHER           → SKYL_CLUTTER
+}
+for _l in range(33, 58):   # OL_HEAD..OL_NULL (ragdoll bone layers)
+    _OB_TO_SKY_LAYER[_l] = 10  # SKYL_PROPS (vanilla constrained-prop layer)
+
+
+def _remap_world_filter(rb):
+    """Convert the Oblivion collision filter of a world-object body (in-place).
+
+    Remaps diverging layer values (see _OB_TO_SKY_LAYER) and zeroes the
+    flags/part byte and group: bits 0-4 are biped part numbers (meaningless
+    off the BIPED layers) and bit 7 is Skyrim's "Linked Group" flag —
+    Oblivion chains ship 0x80|part here, vanilla Skyrim constrained props
+    ship 0 and rely on the engine's per-reference group assignment.
+    Creature-skeleton blend bodies do NOT go through this (their layer is
+    forced to 8 BIPED in _convert_blend_collision and part numbers matter).
+    """
+    for hf in (getattr(rb, 'havok_col_filter', None),
+               getattr(rb, 'havok_col_filter_copy', None)):
+        if hf is None:
+            continue
+        hf.layer = _OB_TO_SKY_LAYER.get(int(hf.layer), int(hf.layer))
+        hf.flags_and_part_number = 0
+        hf.unknown_short = 0   # Group
+
+
 def _convert_rigid_body(rb):
     """Set Skyrim-compatible rigid body flags (in-place).
 
@@ -692,6 +740,12 @@ def _convert_shape(shape, root_node):
 
     if isinstance(shape, NifFormat.bhkMultiSphereShape):
         return _expand_multisphere(shape)
+
+    # bhkConvexSweepShape: early-Oblivion (10.0.1.0) wrapper for a swept
+    # convex shape (handscythe01, oar01).  Skyrim never ships it — unwrap to
+    # the inner shape, which then converts normally.
+    if shape.__class__.__name__ == 'bhkConvexSweepShape':
+        return _convert_shape(shape.shape, root_node)
 
     if isinstance(shape, (NifFormat.bhkConvexTransformShape,
                            NifFormat.bhkTransformShape)):
@@ -978,6 +1032,58 @@ def _decompose_clutter_hull(node, hull_shape):
 # Full collision conversion per-node
 # ---------------------------------------------------------------------------
 
+def _node_is_animated(node, actual_root):
+    """True if this node's transform is driven by animation in this NIF.
+
+    Sources checked (walking from the file root):
+      - NiControllerSequence controlled blocks (node-name entries),
+      - NiMultiTargetTransformController extra targets,
+      - a NiTransformController/NiKeyframeController attached to the node.
+    Used to decide whether an Oblivion MO_SYS_KEYFRAMED body stays keyframed
+    in Skyrim (gate leaves, animated lids) or is an unyielding anchor/held
+    trap part instead (see the motion-system comment in _convert_collision).
+    """
+    root = actual_root if actual_root is not None else node
+
+    def _name_of(b):
+        nm = getattr(b, 'name', b'')
+        return nm.decode('latin-1') if isinstance(nm, (bytes, bytearray)) else str(nm)
+
+    names = set()
+
+    def _walk(n):
+        if not isinstance(n, NifFormat.NiAVObject):
+            return
+        ctrl = getattr(n, 'controller', None)
+        while ctrl is not None:
+            cls = ctrl.__class__.__name__
+            if cls == 'NiControllerManager':
+                for seq in getattr(ctrl, 'controller_sequences', []) or []:
+                    if seq is None:
+                        continue
+                    for cb in getattr(seq, 'controlled_blocks', []) or []:
+                        try:
+                            nm = cb.get_node_name()
+                        except Exception:
+                            nm = None
+                        if nm:
+                            names.add(nm.decode('latin-1')
+                                      if isinstance(nm, (bytes, bytearray)) else str(nm))
+            elif cls == 'NiMultiTargetTransformController':
+                for t in getattr(ctrl, 'extra_targets', []) or []:
+                    if t is not None:
+                        names.add(_name_of(t))
+            elif 'TransformController' in cls or 'KeyframeController' in cls:
+                names.add(_name_of(n))
+            ctrl = getattr(ctrl, 'next_controller', None)
+        for c in getattr(n, 'children', []) or []:
+            if c is not None:
+                _walk(c)
+
+    _walk(root)
+    return _name_of(node) in names
+
+
 def _convert_blend_collision(node, coll_obj):
     """Convert a bhkBlendCollisionObject on a creature-skeleton bone.
 
@@ -985,9 +1091,9 @@ def _convert_blend_collision(node, coll_obj):
     flags=137, plain bhkRigidBody with a NON-zero bone-relative translation
     in Havok units, capsule shapes, motion_system=4 KEYFRAMED,
     quality_type=1 FIXED, layer=8 BIPED).  Shape/material/2010-format fixups
-    are shared with the standard path.  Inertia gets ×0.1 here; the
-    constraint pass (scale_constraint_pivots) applies the second ×0.1 for
-    every constrained body, landing at the correct ×0.01 total.
+    are shared with the standard path.  Inertia gets the full ×0.01
+    (mass·length², lengths scale ×0.1) here, same as the standard dynamic
+    path in _convert_collision.
     """
     coll_obj.flags = 137
     rb = getattr(coll_obj, 'body', None)
@@ -1004,7 +1110,8 @@ def _convert_blend_collision(node, coll_obj):
     _convert_rigid_body(rb)
     for attr in ('m_11', 'm_12', 'm_13', 'm_21', 'm_22', 'm_23',
                  'm_31', 'm_32', 'm_33'):
-        setattr(rb.inertia, attr, getattr(rb.inertia, attr) * _HAVOK_SCALE)
+        setattr(rb.inertia, attr,
+                getattr(rb.inertia, attr) * _HAVOK_SCALE * _HAVOK_SCALE)
     rb.motion_system = 4        # MO_SYS_KEYFRAMED (bone follows animation)
     rb.quality_type = 1         # MO_QUAL_FIXED
     rb.deactivator_type = 1
@@ -1027,12 +1134,8 @@ def _convert_collision(node, actual_root=None, keep_blend=False):
     if not hasattr(node, 'collision_object') or node.collision_object is None:
         return
 
-    # bhkSPCollisionObject / bhkNPCollisionObject are Oblivion phantom/
-    # trigger-volume types (fire damage spheres, etc.).  Skyrim does not
-    # support these block types; the engine reads garbage or null-derefs when
-    # it encounters them, causing a red-triangle (failed load).  Strip them.
-    # bhkBlendCollisionObject is ALSO stripped on world objects, but on
-    # creature skeletons (keep_blend) it is the vanilla ragdoll-bone type.
+    # bhkBlendCollisionObject is stripped on world objects, but on creature
+    # skeletons (keep_blend) it is the vanilla ragdoll-bone type.
     cls_name = node.collision_object.__class__.__name__
     if cls_name == 'bhkBlendCollisionObject':
         if keep_blend:
@@ -1040,7 +1143,23 @@ def _convert_collision(node, actual_root=None, keep_blend=False):
         else:
             node.collision_object = None
         return
-    if cls_name in ('bhkSPCollisionObject', 'bhkNPCollisionObject'):
+    if cls_name == 'bhkSPCollisionObject':
+        # Trigger-volume phantom (tripwire triggers, gas/fire damage zones).
+        # Skyrim fully supports bhkSPCollisionObject + bhkSimpleShapePhantom —
+        # vanilla ships 31 of them under meshes/traps alone (traptripwire01,
+        # pressure plates, bear trap...), always with collision-object
+        # flags=129 and layer 12 (TRIGGER, same enum value as Oblivion).
+        # Convert the inner shape (×0.1 scale + material remap) and keep it.
+        body = getattr(node.collision_object, 'body', None)
+        if isinstance(body, NifFormat.bhkSimpleShapePhantom):
+            node.collision_object.flags = 129
+            _remap_world_filter(body)
+            body.shape = _convert_shape(body.shape, node)
+            _convert_materials(body.shape)
+        else:
+            node.collision_object = None
+        return
+    if cls_name == 'bhkNPCollisionObject':
         node.collision_object = None
         return
 
@@ -1054,15 +1173,24 @@ def _convert_collision(node, actual_root=None, keep_blend=False):
         return
 
     if isinstance(rb, NifFormat.bhkSimpleShapePhantom):
+        _remap_world_filter(rb)
         rb.shape = _convert_shape(rb.shape, node)
         _convert_materials(rb.shape)
         return
 
     # Scale rigid body translation.
-    # bhkRigidBodyT uses translation for Havok body offset; scale it.
-    # bhkRigidBody (non-T) relies on the NiNode world transform for placement;
-    # its translation field is not used by Skyrim and should be zeroed to avoid
-    # any residual Oblivion value shifting the physics body.
+    # bhkRigidBodyT uses translation/rotation for the Havok body offset; scale
+    # the translation and keep the rotation.
+    # bhkRigidBody (non-T): OBLIVION ignores both fields, so its files carry
+    # arbitrary leftover values there.  SKYRIM APPLIES BOTH EVEN ON NON-T
+    # BODIES — proven by vanilla trapmace01.nif Base01: node rotated +0.5°
+    # about X, body rotation = the exact inverse quaternion (-0.0044,0,0,1)
+    # so its root-space MOPP stays aligned; every other vanilla non-T body is
+    # exactly identity/zero, unlike the genuinely-garbage padding fields.
+    # Leftover Oblivion rotations (up to ~115° on chain links) rotated every
+    # constraint frame and collision shape out from under the solver: chains/
+    # swinging traps acted welded solid, and ordinary clutter collision sat
+    # askew from the visual mesh ("havok interactions feel weird").
     if isinstance(rb, NifFormat.bhkRigidBodyT):
         rb.translation.x *= _HAVOK_SCALE
         rb.translation.y *= _HAVOK_SCALE
@@ -1071,35 +1199,81 @@ def _convert_collision(node, actual_root=None, keep_blend=False):
         rb.translation.x = 0.0
         rb.translation.y = 0.0
         rb.translation.z = 0.0
+        rb.translation.w = 0.0
+        rb.rotation.x = 0.0
+        rb.rotation.y = 0.0
+        rb.rotation.z = 0.0
+        rb.rotation.w = 1.0
     rb.center.x *= _HAVOK_SCALE
     rb.center.y *= _HAVOK_SCALE
     rb.center.z *= _HAVOK_SCALE
 
     _convert_rigid_body(rb)
+    _remap_world_filter(rb)
 
-    if rb.mass == 0:
-        if rb.motion_system == 6:  # Keyframed (animated lid/door etc.)
-            # Skyrim animated doors/activators: the collision body follows the
-            # NiNode animation exactly (keyframed).  Values sourced from vanilla
-            # Skyrim farmhouseanimdoor01.nif.
-            coll_obj.flags      = 137  # 0x89 = ACTIVE | D_ANIMATED | bit 7
-            rb.motion_system    = 4    # MO_SYS_KEYFRAMED
-            rb.deactivator_type = 1
-            rb.quality_type     = 1    # MO_QUAL_FIXED (position is deterministic)
-            rb.solver_deactivation = 1
-            rb.unknown_byte     = 10   # Skyrim broadphase type for animated
-            # Set bit 7 (0x80) on the animated NiNode — tells Skyrim to
-            # synchronise the node's transform updates with physics.
-            if hasattr(node, 'flags'):
-                node.flags = NIF_FLAGS | 0x80  # 0x008E = 142
+    # Penetration depth is a LENGTH (max allowed overlap): Oblivion ships
+    # 0.15 in its Havok units; vanilla Skyrim bodies carry ~0.005-0.012.
+    # Unscaled it lets contacts sink an entire chain-link deep.
+    rb.penetration_depth *= _HAVOK_SCALE
+
+    # Oblivion MO_SYS_KEYFRAMED (6) semantics are context-dependent.  Three
+    # cases, discriminated per body (vanilla Skyrim census):
+    #  1. Node driven by animation (gate leaves targeted by Open/Close
+    #     sequences, animated display-case lids) → Skyrim KEYFRAMED, like
+    #     vanilla farmhouseanimdoor01.  Keyframed is ONLY valid for animated
+    #     nodes: a keyframed body with anim flags (137/142) on a non-animated
+    #     object flips the engine into the baked/anim-static path and the
+    #     whole compound acts welded solid.
+    #  2. mass>0 AND owns a constraint (mace-trap chain links: Oblivion holds
+    #     whole traps keyframed until the trap script enables havok) →
+    #     DYNAMIC, like vanilla trapmace01's links (ms=3, quality 4).
+    #  3. Everything else (constrained-island anchors: cellchain01 root,
+    #     cellChainMiddle, mass=100 "Unyielding"; unyielding props) →
+    #     STATIC with mass 0.  Vanilla chain/noose/trap anchors are ALWAYS
+    #     static mass-0 bodies (NooseRopePiece01 root, trapmace Base01),
+    #     never keyframed.
+    keyframed_body = rb.motion_system == 6 and _node_is_animated(node, actual_root)
+    if rb.motion_system == 6 and not keyframed_body:
+        if rb.mass > 0 and rb.num_constraints > 0:
+            pass                    # case 2: falls into the dynamic branch
         else:
-            # Static object — vanilla Skyrim static NIFs (farmhouse01.nif etc.)
-            # use quality_type=0 (MO_QUAL_INVALID = auto-detect), not 1.
-            # The working pre-refactor code also used 0.
-            rb.motion_system    = 5  # SYS_BOX_STABILIZED
-            rb.deactivator_type = 1
-            rb.quality_type     = 0  # MO_QUAL_INVALID (auto-detect, vanilla standard)
-            rb.solver_deactivation = 1
+            rb.mass = 0.0           # case 3: falls into the static branch
+    if keyframed_body:
+        # Skyrim animated doors/activators: the collision body follows the
+        # NiNode animation exactly (keyframed).  Values sourced from vanilla
+        # Skyrim farmhouseanimdoor01.nif.
+        coll_obj.flags      = 137  # 0x89 = ACTIVE | D_ANIMATED | bit 7
+        rb.motion_system    = 4    # MO_SYS_KEYFRAMED
+        rb.deactivator_type = 1
+        rb.quality_type     = 1    # MO_QUAL_FIXED (position is deterministic)
+        rb.solver_deactivation = 1
+        rb.unknown_byte     = 10   # Skyrim broadphase type for animated
+        # Set bit 7 (0x80) on the animated NiNode — tells Skyrim to
+        # synchronise the node's transform updates with physics.
+        if hasattr(node, 'flags'):
+            node.flags = NIF_FLAGS | 0x80  # 0x008E = 142
+        rb.friction         = 0.50
+        rb.restitution      = 0.40
+        rb.linear_damping   = 0.0996
+        rb.angular_damping  = 0.0498
+        rb.max_linear_velocity  = 104.4
+        rb.max_angular_velocity = 31.57
+        # Scripts can switch keyframed trap bodies to dynamic at runtime
+        # (swinging traps activate that way), so inertia must be in Skyrim
+        # units even though keyframed motion ignores it.  ×0.01, same as the
+        # dynamic branch.
+        _s2 = _HAVOK_SCALE * _HAVOK_SCALE
+        for _attr in ('m_11', 'm_12', 'm_13', 'm_21', 'm_22', 'm_23',
+                      'm_31', 'm_32', 'm_33'):
+            setattr(rb.inertia, _attr, getattr(rb.inertia, _attr) * _s2)
+    elif rb.mass == 0:
+        # Static object — vanilla Skyrim static NIFs (farmhouse01.nif etc.)
+        # use quality_type=0 (MO_QUAL_INVALID = auto-detect), not 1.
+        # The working pre-refactor code also used 0.
+        rb.motion_system    = 5  # SYS_BOX_STABILIZED
+        rb.deactivator_type = 1
+        rb.quality_type     = 0  # MO_QUAL_INVALID (auto-detect, vanilla standard)
+        rb.solver_deactivation = 1
         rb.friction         = 0.50
         rb.restitution      = 0.40
         rb.linear_damping   = 0.0996
@@ -1322,14 +1496,22 @@ def _fix_limited_hinge(d):
 
 
 def _fix_ragdoll(d):
-    """Derive the Skyrim-only RagdollDescriptor motor axes.
+    """Derive the Skyrim-only RagdollDescriptor motor axes and clamp friction.
 
     In the Skyrim (Havok 2010) layout twist/plane/motor are the three columns
     of an orthonormal basis — motor = twist × plane (verified on vanilla
     desecratedimperial.nif: twist=(1,0,0), plane=(0,1,0), motor=(0,0,1)).
     Oblivion's layout has no motor fields, so PyFFI leaves them zero, which
     ships a singular constraint basis.
+
+    max_friction: Oblivion chain/trap ragdoll constraints store 10.0; at that
+    value the joint has enough rotational friction to lock solid — chains and
+    swinging traps LOOK fine but never move when touched.  Vanilla Skyrim prop
+    ragdoll constraints use 0.01 (desecratedimperial.nif), the same value the
+    limited-hinge clamp already uses (the tavern-sign fix).
     """
+    if d.max_friction > 0.5:
+        d.max_friction = 0.01
     for twist_name, plane_name, motor_name in (('twist_a', 'plane_a', 'motor_a'),
                                                ('twist_b', 'plane_b', 'motor_b')):
         motor = getattr(d, motor_name, None)
@@ -1430,11 +1612,10 @@ def scale_constraint_pivots(data):
        distances are lengths and scale too.
     3. Skyrim-only fields Oblivion has no source for are derived
        (limited hinge perp_b1, hinge axle_a/perp_b1/perp_b2).
-    4. Inertia rescale: _convert_collision already applied _HAVOK_SCALE (0.1)
-       to inertia; it has units mass*length^2 so it needs _HAVOK_SCALE^2 =
-       0.01 total.  Apply the missing factor once per body (deduped — the
-       scales crossbar participates in three constraints).
-    5. broadphaseType=10 for dynamic constrained bodies.
+    4. broadphaseType=10 for dynamic constrained bodies.  (Inertia is NOT
+       rescaled here — _convert_collision and _convert_blend_collision both
+       already apply the full ×0.01; an extra ×0.1 here left every
+       constrained body's inertia 10× too small.)
 
     bhkRigidBodyT is kept as-is: Skyrim uses bhkRigidBodyT for constrained
     sign bodies (confirmed in vanilla signfourshieldstavern01.nif).  The T
@@ -1445,7 +1626,6 @@ def scale_constraint_pivots(data):
                          if isinstance(b, NifFormat.bhkConstraint)]
     constraint_blocks += _demote_malleable_constraints(data)
 
-    inertia_scaled = set()
     for block in constraint_blocks:
         if isinstance(block, NifFormat.bhkMalleableConstraint):
             continue  # replaced by its demoted inner constraint
@@ -1472,18 +1652,6 @@ def scale_constraint_pivots(data):
 
         for e in block.entities:
             if e is not None and e.mass > 0.0:
-                if id(e) not in inertia_scaled:
-                    inertia_scaled.add(id(e))
-                    I = e.inertia
-                    I.m_11 *= _HAVOK_SCALE
-                    I.m_12 *= _HAVOK_SCALE
-                    I.m_13 *= _HAVOK_SCALE
-                    I.m_21 *= _HAVOK_SCALE
-                    I.m_22 *= _HAVOK_SCALE
-                    I.m_23 *= _HAVOK_SCALE
-                    I.m_31 *= _HAVOK_SCALE
-                    I.m_32 *= _HAVOK_SCALE
-                    I.m_33 *= _HAVOK_SCALE
                 e.unknown_byte = 10
 
 
