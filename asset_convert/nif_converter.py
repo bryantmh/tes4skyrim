@@ -270,7 +270,11 @@ _PRN_REMAP: dict[str, str] = {
 # Checked against Skyrim skeleton.nif weapon node names.
 _WEAPON_FILENAME_PRN: list[tuple[str, str]] = [
     ('dagger',    'WeaponDagger'),
-    ('shortsword','WeaponDagger'),   # short swords mount on dagger node
+    # NOTE: shortswords deliberately NOT listed — they stay on WeaponSword.
+    # The record converter maps TES4 Blade1H → Skyrim OneHandSword, and the
+    # draw animation only finds the weapon at the node matching the record's
+    # AnimationType (see convert_WEAP axe/mace comment).  Prn=WeaponDagger on
+    # a Sword-type record = invisible when held.
     ('mace',      'WeaponMace'),
     ('waraxe',    'WeaponAxe'),
     ('axe',       'WeaponAxe'),

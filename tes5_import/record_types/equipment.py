@@ -154,6 +154,16 @@ def convert_WEAP(rec: dict, writer=None) -> bytes:
         if 'waraxe' in modl_lower or '/axe' in modl_lower or '_axe' in modl_lower:
             anim_type = 3  # WarAxe
 
+    # Refine Blade 1H (TES4 type 0 → default Sword=1) to Dagger (2) when the
+    # mesh is a dagger.  The NIF converter sets Prn=WeaponDagger for these
+    # (same filename keyword), and Prn must agree with AnimationType or the
+    # weapon is invisible when drawn.  Shortswords stay Sword/WeaponSword.
+    if tes4_type == 0 and anim_type == 1:
+        # basename only — must mirror _remap_prn() in asset_convert/nif_converter.py
+        basename = model.lower().replace('\\', '/').rsplit('/', 1)[-1]
+        if 'dagger' in basename:
+            anim_type = 2  # Dagger
+
     # ETYP — Equipment Type (EQUP FormID): determines which hand slot is used
     subs += pack_formid_subrecord('ETYP', WEAPON_ANIM_EQUP.get(anim_type, 0x00013F42))
 
