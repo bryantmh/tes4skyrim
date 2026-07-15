@@ -40,11 +40,11 @@ STEPS = [
      "Convert Oblivion scripts to Papyrus",      True,  True),
     ("lod",                "--lod-only",           "9. LOD",
      "Generate distant LOD",               False, True),
-    ("pack",               "--pack-only",          "10. Pack BSAs",
-     "Pack assets into BSA archives",             False, True),
-    ("modify_body_meshes", "--modify-body-meshes", "11. Patch Skyrim",
+    ("modify_body_meshes", "--modify-body-meshes", "10. Patch Skyrim",
      "Build ARMA slot-44 patch for your load order",       True,  False),
-    ("pack_zip",          None,                   "12. Pack Mod Zip",
+    ("pack",               "--pack-only",          "11. Pack BSAs",
+     "Pack assets into BSA archives",             False, True),
+    ("pack_zip",           "--pack-zip-only",      "12. Pack Mod Zip",
      "Zip mod files for installation",   True,  True),
 ]
 
@@ -137,38 +137,6 @@ def _find_game_path(game: str) -> str:
     except ImportError:
         pass
     return ""
-
-
-def _pack_to_zip(output_dir: str, file_name: str, log_cb) -> bool:
-    """Pack plugin (.esm/.esl/.esp) and .bsa files into a zip for distribution.
-
-    The zip is placed adjacent to the per-file output folder (i.e. inside
-    output_dir, alongside output_dir/file_name/) and named "<file_name>.zip".
-    """
-    import zipfile
-
-    src_root = Path(output_dir) / file_name
-    if not src_root.is_dir():
-        log_cb(f"  Pack: source not found: {src_root}")
-        return False
-
-    zip_path = Path(output_dir) / f"{file_name}.zip"
-
-    packed = 0
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for ext in ("*.esm", "*.esl", "*.esp", "*.bsa"):
-            for src in sorted(src_root.glob(ext)):
-                zf.write(src, arcname=src.name)
-                log_cb(f"  + {src.name}")
-                packed += 1
-
-    if packed == 0:
-        zip_path.unlink(missing_ok=True)
-        log_cb("  Pack: no plugin/BSA files found, skipping")
-        return False
-
-    log_cb(f"  Pack complete -> {zip_path} ({packed} files)")
-    return True
 
 
 def load_config() -> dict:
@@ -1146,9 +1114,8 @@ def gui_main():
         def _worker():
             _set_running(True)
             try:
-                default_set = {k for k, *rest in STEPS
-                               if rest[3] and k != "pack_zip"}
-                active_set  = set(steps) - {"pack_zip"}
+                default_set = {k for k, *rest in STEPS if rest[3]}
+                active_set  = set(steps)
                 ret = 0
                 # If selection == default set and a file is specified and no
                 # mesh subfolder / patch-plugin filter, run the pipeline once
@@ -1164,8 +1131,6 @@ def gui_main():
                     for step in steps:
                         if cancel_evt.is_set():
                             break
-                        if step == "pack_zip":
-                            continue  # handled separately below
                         cmd = _build_cmd(step, fname, out_dir, selected_subdirs,
                                          selected_patch_plugins)
                         q.put(f"Running: {' '.join(cmd)}")
@@ -1175,16 +1140,6 @@ def gui_main():
                             break
                         if r != 0:
                             ret = r
-                # ── Pack mod files to zip ───────────────────────────────────
-                if (ret == 0 and not cancel_evt.is_set()
-                        and step_vars["pack_zip"].get() and fname):
-                    q.put("")
-                    q.put("=== Packing mod zip ===")
-                    _pack_to_zip(
-                        output_dir=out_dir,
-                        file_name=fname,
-                        log_cb=q.put,
-                    )
 
                 q.put("")
                 if ret == -2:

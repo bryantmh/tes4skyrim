@@ -10,8 +10,9 @@ Pipeline steps (each runnable via --<step>-only):
   sounds          Convert sound files to XWM
   scripts         Convert TES4 scripts to Papyrus .psc and compile to .pex
   lod             Generate object & terrain LOD meshes
-  pack            Pack assets into Skyrim SE BSA archives
   modify-body-meshes  Add greaves partition to character body NIFs
+  pack            Pack assets into Skyrim SE BSA archives
+  pack-zip        Zip converted plugin/BSA files for distribution
 
 Usage:
   python convert.py                               # full pipeline (export+import+extract+assets)
@@ -25,7 +26,7 @@ Usage:
   python convert.py -f Oblivion.esm --scripts-only
   python convert.py -f Oblivion.esm --lod-only
   python convert.py -f Oblivion.esm --pack-only
-  python convert.py -f Oblivion.esm --mesh-bounds-only
+  python convert.py -f Oblivion.esm --pack-zip-only
   python convert.py --modify-body-meshes
   python convert.py --modify-body-meshes --patch-plugins Skyrim.esm Dawnguard.esm Dragonborn.esm
   python convert.py --output-dir /path/to/output -f Oblivion.esm
@@ -167,9 +168,8 @@ def topological_order(files: list, tes4_data: str) -> list:
     return order
 
 
-
 # ===========================================================================
-# Phase 1: Export
+# Phase 1: Export TES4 RECORDS
 # ===========================================================================
 
 def phase_export(file_name: str, tes4_data: str, export_dir: str,
@@ -217,7 +217,100 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
     return True
 
 # ===========================================================================
-# Phase 2: Import
+# Phase 2: EXTRACT TES4 ARCHIVES
+# ===========================================================================
+
+def phase_extract(file_name: str, tes4_data: str, config: dict,
+                  output_dir: str = None):
+    """Extract BSA archives for a plugin into export/<name>/."""
+    from asset_convert.asset_pipeline import extract_bsas
+
+    extract_dir = str(SCRIPT_DIR / "export")
+
+    print(f"[{file_name}] Extracting BSA archives...")
+    extract_bsas(
+        source_file=file_name,
+        data_path=tes4_data,
+        extract_dir=extract_dir,
+    )
+    return True
+
+# ===========================================================================
+# Phase 3: CONVERT MESHES AND TEXTURES
+# ===========================================================================
+
+def phase_assets(file_name: str, config: dict, output_dir: str = None,
+                 mesh_subdirs=None):
+    """Convert extracted NIF assets and copy textures to output (meshes only)."""
+    from asset_convert.asset_pipeline import convert_meshes
+
+    extract_dir = str(SCRIPT_DIR / "export")
+    out_dir     = output_dir or str(SCRIPT_DIR / "output")
+
+    print(f"[{file_name}] Converting meshes (NIFs + textures)...")
+    stats = convert_meshes(
+        source_file=file_name,
+        extract_dir=extract_dir,
+        output_dir=out_dir,
+        mesh_subdirs=mesh_subdirs,
+    )
+    total = sum(v for v in stats.values() if isinstance(v, int))
+    print(f"[{file_name}] Meshes complete ({total} items processed)")
+    return True
+
+# ===========================================================================
+# Phase 4: CONVERT SPEEDTREES
+# ===========================================================================
+
+def phase_speedtrees(file_name: str, config: dict, output_dir: str = None):
+    """Convert SpeedTree `.spt` files into NIFs (separate step)."""
+    from asset_convert.asset_pipeline import convert_speedtrees
+
+    extract_dir = str(SCRIPT_DIR / "export")
+    out_dir     = output_dir or str(SCRIPT_DIR / "output")
+
+    print(f"[{file_name}] Converting SpeedTrees (SPTs)...")
+    stats = convert_speedtrees(
+        source_file=file_name,
+        extract_dir=extract_dir,
+        output_dir=out_dir,
+    )
+    s = stats.get('spt_conversion', {})
+    print(f"[{file_name}] SpeedTrees complete: ok={s.get('ok',0)} fail={s.get('fail',0)} skip={s.get('skip',0)}")
+    return True
+
+# ===========================================================================
+# Phase 5: CONVERT CREATURES
+# ===========================================================================
+
+def phase_creatures(file_name: str, tes5_data: str, config: dict,
+                    output_dir: str = None):
+    """Convert creatures: generated behavior projects (skeleton.hkx,
+    animations, behavior graph), skeleton/body NIF conversion, and
+    registration in the merged animation singlefiles.
+
+    Must run BEFORE import: Phase 0f of the importer reads
+    export/<name>/creature_projects.json to generate RACE/ARMA/ARMO chains.
+    NPC_ humanoids are unaffected (they keep the Skyrim race overrides).
+    """
+    from asset_convert.creature_pipeline import convert_creatures
+
+    export_subdir = str(SCRIPT_DIR / "export" / file_name)
+    if not os.path.isdir(export_subdir):
+        print(f"[{file_name}] No export directory, skipping creatures")
+        return False
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    out_meshes = str(out_root / file_name / "meshes")
+
+    print(f"[{file_name}] Converting creatures (behavior projects + meshes)...")
+    res = convert_creatures(export_subdir, out_meshes,
+                            skyrim_data_path=tes5_data)
+    print(f"[{file_name}] Creatures complete "
+          f"({len(res['projects'])} projects, {len(res['errors'])} errors)")
+    return not res['errors']
+
+# ===========================================================================
+# Phase 6: BUILD TES5 PLUGIN
 # ===========================================================================
 
 def phase_import(file_name: str, tes4_data: str, tes5_data: str,
@@ -256,98 +349,8 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
 
     return errors == 0
 
-
 # ===========================================================================
-# Phase 3: Extract BSA assets
-# ===========================================================================
-
-def phase_extract(file_name: str, tes4_data: str, config: dict,
-                  output_dir: str = None):
-    """Extract BSA archives for a plugin into export/<name>/."""
-    from asset_convert.asset_pipeline import extract_bsas
-
-    extract_dir = str(SCRIPT_DIR / "export")
-
-    print(f"[{file_name}] Extracting BSA archives...")
-    extract_bsas(
-        source_file=file_name,
-        data_path=tes4_data,
-        extract_dir=extract_dir,
-    )
-    return True
-
-
-# ===========================================================================
-# Phase 4: Convert assets
-# ===========================================================================
-
-def phase_assets(file_name: str, config: dict, output_dir: str = None,
-                 mesh_subdirs=None):
-    """Convert extracted NIF assets and copy textures to output (meshes only)."""
-    from asset_convert.asset_pipeline import convert_meshes
-
-    extract_dir = str(SCRIPT_DIR / "export")
-    out_dir     = output_dir or str(SCRIPT_DIR / "output")
-
-    print(f"[{file_name}] Converting meshes (NIFs + textures)...")
-    stats = convert_meshes(
-        source_file=file_name,
-        extract_dir=extract_dir,
-        output_dir=out_dir,
-        mesh_subdirs=mesh_subdirs,
-    )
-    total = sum(v for v in stats.values() if isinstance(v, int))
-    print(f"[{file_name}] Meshes complete ({total} items processed)")
-    return True
-
-
-def phase_speedtrees(file_name: str, config: dict, output_dir: str = None):
-    """Convert SpeedTree `.spt` files into NIFs (separate step)."""
-    from asset_convert.asset_pipeline import convert_speedtrees
-
-    extract_dir = str(SCRIPT_DIR / "export")
-    out_dir     = output_dir or str(SCRIPT_DIR / "output")
-
-    print(f"[{file_name}] Converting SpeedTrees (SPTs)...")
-    stats = convert_speedtrees(
-        source_file=file_name,
-        extract_dir=extract_dir,
-        output_dir=out_dir,
-    )
-    s = stats.get('spt_conversion', {})
-    print(f"[{file_name}] SpeedTrees complete: ok={s.get('ok',0)} fail={s.get('fail',0)} skip={s.get('skip',0)}")
-    return True
-
-
-def phase_creatures(file_name: str, tes5_data: str, config: dict,
-                    output_dir: str = None):
-    """Convert creatures: generated behavior projects (skeleton.hkx,
-    animations, behavior graph), skeleton/body NIF conversion, and
-    registration in the merged animation singlefiles.
-
-    Must run BEFORE import: Phase 0f of the importer reads
-    export/<name>/creature_projects.json to generate RACE/ARMA/ARMO chains.
-    NPC_ humanoids are unaffected (they keep the Skyrim race overrides).
-    """
-    from asset_convert.creature_pipeline import convert_creatures
-
-    export_subdir = str(SCRIPT_DIR / "export" / file_name)
-    if not os.path.isdir(export_subdir):
-        print(f"[{file_name}] No export directory, skipping creatures")
-        return False
-    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
-    out_meshes = str(out_root / file_name / "meshes")
-
-    print(f"[{file_name}] Converting creatures (behavior projects + meshes)...")
-    res = convert_creatures(export_subdir, out_meshes,
-                            skyrim_data_path=tes5_data)
-    print(f"[{file_name}] Creatures complete "
-          f"({len(res['projects'])} projects, {len(res['errors'])} errors)")
-    return not res['errors']
-
-
-# ===========================================================================
-# Phase 5: Sound copy
+# Phase 7: CONVERT SOUNDS
 # ===========================================================================
 
 def phase_sounds(file_name: str, config: dict, output_dir: str = None):
@@ -372,7 +375,7 @@ def phase_sounds(file_name: str, config: dict, output_dir: str = None):
 
 
 # ===========================================================================
-# Phase 7: Script conversion
+# Phase 8: CONVERT SCRIPTS
 # ===========================================================================
 
 def phase_scripts(file_name: str, config: dict, output_dir: str = None):
@@ -496,7 +499,7 @@ def _find_skyrim_source_scripts() -> str:
 
 
 # ===========================================================================
-# Phase 8: LOD generation
+# Phase 9: GENERATE LOD
 # ===========================================================================
 
 def phase_lod(file_name: str, tes5_data: str, config: dict,
@@ -540,96 +543,9 @@ def phase_lod(file_name: str, tes5_data: str, config: dict,
 
     return ok and ok_terrain
 
-
 # ===========================================================================
-# Phase 8b: Prune unreferenced textures
+# Phase 10: PATCH SKYRIM (SLOT 44 BODY MESHES)
 # ===========================================================================
-
-def phase_prune_textures(file_name: str, config: dict, output_dir: str = None,
-                         dry_run: bool = False):
-    """Delete output textures no shipped mesh or record references.
-
-    Runs after LOD/speedtree/terrain generation (the last producers of meshes
-    that can name a texture) and before packing, so the BSAs never carry the
-    face/body/eye art of the character meshes the conversion skips.
-    """
-    from asset_convert import texture_prune
-
-    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
-    plugin_dir = out_root / file_name
-    export_dir = SCRIPT_DIR / "export" / file_name
-    if not plugin_dir.is_dir():
-        print(f"[{file_name}] No output directory found, skipping texture prune")
-        return False
-
-    print(f"[{file_name}] Pruning unreferenced textures"
-          + (" (dry run)" if dry_run else "") + "...")
-    try:
-        kept, removed, freed = texture_prune.prune(plugin_dir, export_dir,
-                                                   dry_run=dry_run)
-    except RuntimeError as e:
-        print(f"[{file_name}] SKIPPED: {e}")
-        return False
-    verb = "would remove" if dry_run else "removed"
-    print(f"[{file_name}] Textures: {kept} kept, {removed} {verb} "
-          f"({freed / 1e6:.0f} MB freed)")
-    return True
-
-
-# ===========================================================================
-# Phase 9: Pack BSA archives
-# ===========================================================================
-
-def phase_pack(file_name: str, config: dict, output_dir: str = None):
-    """Pack converted output assets into Skyrim SE BSA archives."""
-    from asset_convert.bsa_pack import pack_bsas
-
-    out_dir = output_dir or str(SCRIPT_DIR / "output")
-    bsarch  = config.get("bsarchPath") or None
-
-    print(f"[{file_name}] Packing BSAs...")
-    results = pack_bsas(
-        source_file=file_name,
-        output_dir=out_dir,
-        bsarch_path=bsarch,
-    )
-    packed  = len(results['packed'])
-    skipped = len(results['skipped'])
-    errors  = len(results['errors'])
-    print(f"[{file_name}] BSA pack complete: {packed} packed, {skipped} skipped, {errors} errors")
-    return errors == 0
-
-
-# ===========================================================================
-# Phase 10: Modify body meshes
-# ===========================================================================
-
-# ===========================================================================
-# Phase: Mesh Bounds scan
-# ===========================================================================
-
-def phase_mesh_bounds(file_name: str, config: dict, output_dir: str = None,
-                      export_dir: str = None) -> bool:
-    """Scan converted NIF meshes and write OBND bounds cache."""
-    from tes5_import.mesh_bounds import scan_mesh_bounds
-    from asset_convert.collision_extract import scan_collision
-    _export_dir = export_dir or str(SCRIPT_DIR / "export")
-    _out_dir    = output_dir or str(SCRIPT_DIR / "output")
-    mesh_out_dir = str(Path(_out_dir) / file_name / 'meshes')
-    cache_path   = str(Path(_export_dir) / file_name / 'mesh_bounds_cache.json')
-    col_path     = str(Path(_export_dir) / file_name / 'collision_cache.bin')
-    if not os.path.isdir(mesh_out_dir):
-        print(f"[{file_name}] No meshes directory found, skipping bounds scan")
-        return False
-    print(f"[{file_name}] Scanning mesh bounds...")
-    scan_mesh_bounds(mesh_out_dir, cache_path)
-    # Havok collision soups (walkable/blocking triangles) for navmesh building.
-    # Read from the CONVERTED meshes: collision is root-mounted there, and the
-    # CMS is a flat triangle soup — no node-transform walk or strip decode.
-    print(f"[{file_name}] Scanning mesh collision...")
-    scan_collision(mesh_out_dir, col_path)
-    return True
-
 
 def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
                              output_dir: str = None):
@@ -680,6 +596,101 @@ def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
 
 
 # ===========================================================================
+# Phase 11a: PRUNE UNREFERENCED TEXTURES
+# ===========================================================================
+
+def phase_prune_textures(file_name: str, config: dict, output_dir: str = None,
+                         dry_run: bool = False):
+    """Delete output textures no shipped mesh or record references.
+
+    Runs after LOD/speedtree/terrain generation (the last producers of meshes
+    that can name a texture) and before packing, so the BSAs never carry the
+    face/body/eye art of the character meshes the conversion skips.
+    """
+    from asset_convert import texture_prune
+
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    plugin_dir = out_root / file_name
+    export_dir = SCRIPT_DIR / "export" / file_name
+    if not plugin_dir.is_dir():
+        print(f"[{file_name}] No output directory found, skipping texture prune")
+        return False
+
+    print(f"[{file_name}] Pruning unreferenced textures"
+          + (" (dry run)" if dry_run else "") + "...")
+    try:
+        kept, removed, freed = texture_prune.prune(plugin_dir, export_dir,
+                                                   dry_run=dry_run)
+    except RuntimeError as e:
+        print(f"[{file_name}] SKIPPED: {e}")
+        return False
+    verb = "would remove" if dry_run else "removed"
+    print(f"[{file_name}] Textures: {kept} kept, {removed} {verb} "
+          f"({freed / 1e6:.0f} MB freed)")
+    return True
+
+
+# ===========================================================================
+# Phase 11: PACK BSA ARCHIVES
+# ===========================================================================
+
+def phase_pack(file_name: str, config: dict, output_dir: str = None):
+    """Pack converted output assets into Skyrim SE BSA archives."""
+    from asset_convert.bsa_pack import pack_bsas
+
+    out_dir = output_dir or str(SCRIPT_DIR / "output")
+    bsarch  = config.get("bsarchPath") or None
+
+    print(f"[{file_name}] Packing BSAs...")
+    results = pack_bsas(
+        source_file=file_name,
+        output_dir=out_dir,
+        bsarch_path=bsarch,
+    )
+    packed  = len(results['packed'])
+    skipped = len(results['skipped'])
+    errors  = len(results['errors'])
+    print(f"[{file_name}] BSA pack complete: {packed} packed, {skipped} skipped, {errors} errors")
+    return errors == 0
+
+
+# ===========================================================================
+# Phase 12: PACK ZIP ARCHIVES
+# ===========================================================================
+
+def phase_pack_zip(file_name: str, config: dict, output_dir: str = None):
+    """Zip the converted plugin (.esm/.esl/.esp) and .bsa files for distribution.
+
+    The zip is placed adjacent to the per-file output folder (i.e. inside
+    output_dir, alongside output_dir/file_name/) and named "<file_name>.zip".
+    """
+    import zipfile
+
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    src_root = out_root / file_name
+    if not src_root.is_dir():
+        print(f"[{file_name}] Source not found: {src_root}, skipping zip pack")
+        return False
+
+    zip_path = out_root / f"{file_name}.zip"
+
+    packed = 0
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for ext in ("*.esm", "*.esl", "*.esp", "*.bsa"):
+            for src in sorted(src_root.glob(ext)):
+                zf.write(src, arcname=src.name)
+                packed += 1
+
+    if packed == 0:
+        zip_path.unlink(missing_ok=True)
+        print(f"[{file_name}] No plugin/BSA files found, skipping zip pack")
+        return False
+
+    print(f"[{file_name}] Zip pack complete -> {zip_path} ({packed} files)")
+    return True
+
+
+# ===========================================================================
 # Main
 # ===========================================================================
 
@@ -721,8 +732,8 @@ def main():
                         help="Convert TES4 scripts to Papyrus .psc source")
     parser.add_argument("--pack-only",           action="store_true",
                         help="Pack output assets into Skyrim SE BSA archives")
-    parser.add_argument("--mesh-bounds-only",    action="store_true",
-                        help="Scan mesh NIF bounds and update OBND cache")
+    parser.add_argument("--pack-zip-only",       action="store_true",
+                        help="Zip converted plugin/BSA files for distribution")
     parser.add_argument("--prune-textures-only", action="store_true",
                         help="Delete output textures no mesh or record "
                              "references (run after LOD, before packing)")
@@ -772,7 +783,7 @@ def main():
         args.meshes_only, args.speedtrees_only, args.creatures_only,
         args.sounds_only,
         args.lod_only, args.modify_body_meshes, args.scripts_only,
-        args.pack_only, args.mesh_bounds_only, args.prune_textures_only,
+        args.pack_only, args.pack_zip_only, args.prune_textures_only,
     ])
     if _any_only:
         do_export       = args.export_only
@@ -783,27 +794,23 @@ def main():
         do_creatures    = args.creatures_only
         do_sounds       = args.sounds_only
         do_lod          = args.lod_only
-        do_body         = args.modify_body_meshes
+        do_skyrim_patch = args.modify_body_meshes
         do_scripts      = args.scripts_only
-        do_pack         = args.pack_only
-        do_mesh_bounds  = args.mesh_bounds_only
+        do_pack_bsa     = args.pack_only
+        do_pack_zip     = args.pack_zip_only
         do_prune        = args.prune_textures_only
     else:
-        # Default: export -> extract -> meshes -> speedtrees -> creatures ->
-        # import -> sounds -> scripts
-        do_export = do_extract = do_meshes = do_speedtrees = do_import = True
-        do_creatures = True
-        do_sounds = do_scripts = True
-        do_lod = do_body = do_pack = do_mesh_bounds = False
-        # The prune reads the LOD/terrain meshes to learn which landscape
-        # textures survive, so it only runs where those already exist.
-        do_prune = False
+        # Default
+        do_export = do_extract = do_meshes = do_speedtrees = True
+        do_creatures = do_import = do_sounds = do_scripts = True
+        do_lod = do_skyrim_patch = do_pack_bsa = do_prune = True
+        do_pack_zip = False
 
     success = True
 
     if do_export:
         print("=" * 54)
-        print("  Phase 1: EXPORT")
+        print("  Phase 1: EXPORT TES4 RECORDS")
         print("=" * 54)
         for fn in order:
             if not phase_export(fn, tes4_data, export_dir, config):
@@ -812,7 +819,7 @@ def main():
 
     if do_extract:
         print("=" * 54)
-        print("  Phase 2: EXTRACT BSA ARCHIVES")
+        print("  Phase 2: EXTRACT TES4 ARCHIVES")
         print("=" * 54)
         for fn in order:
             if not phase_extract(fn, tes4_data, config):
@@ -821,7 +828,7 @@ def main():
 
     if do_meshes:
         print("=" * 54)
-        print("  Phase 3: MESH & TEXTURE CONVERSION")
+        print("  Phase 3: CONVERT MESHES AND TEXTURES")
         print("=" * 54)
         for fn in order:
             if not phase_assets(fn, config, output_dir=output_dir,
@@ -831,7 +838,7 @@ def main():
 
     if do_speedtrees:
         print("=" * 54)
-        print("  Phase 4: SPEEDTREE CONVERSION")
+        print("  Phase 4: CONVERT SPEEDTREES")
         print("=" * 54)
         for fn in order:
             if not phase_speedtrees(fn, config, output_dir=output_dir):
@@ -840,7 +847,7 @@ def main():
 
     if do_creatures:
         print("=" * 54)
-        print("  Phase 4b: CREATURE CONVERSION")
+        print("  Phase 5: CONVERT CREATURES")
         print("=" * 54)
         for fn in order:
             if not phase_creatures(fn, tes5_data, config,
@@ -848,18 +855,9 @@ def main():
                 success = False
         print()
 
-    if do_mesh_bounds:
-        print("=" * 54)
-        print("  Phase: MESH BOUNDS SCAN")
-        print("=" * 54)
-        for fn in order:
-            phase_mesh_bounds(fn, config, output_dir=output_dir,
-                              export_dir=export_dir)
-        print()
-
     if do_import:
         print("=" * 54)
-        print("  Phase 5: IMPORT")
+        print("  Phase 6: BUILD TES5 PLUGIN")
         print("=" * 54)
         for fn in order:
             if not phase_import(fn, tes4_data, tes5_data, export_dir, config,
@@ -869,7 +867,7 @@ def main():
 
     if do_sounds:
         print("=" * 54)
-        print("  Phase 6: SOUND CONVERSION")
+        print("  Phase 7: CONVERT SOUNDS")
         print("=" * 54)
         for fn in order:
             if not phase_sounds(fn, config, output_dir=output_dir):
@@ -878,7 +876,7 @@ def main():
 
     if do_scripts:
         print("=" * 54)
-        print("  Phase 7: SCRIPT CONVERSION")
+        print("  Phase 8: CONVERT SCRIPTS")
         print("=" * 54)
         for fn in order:
             if not phase_scripts(fn, config, output_dir=output_dir):
@@ -889,38 +887,48 @@ def main():
 
     if do_lod:
         print("=" * 54)
-        print("  Phase 8: LOD GENERATION")
+        print("  Phase 9: GENERATE LOD")
         print("=" * 54)
         for fn in order:
             phase_lod(fn, tes5_data, config, output_dir=output_dir)
         print()
 
-    if do_prune:
+    if do_skyrim_patch:
         print("=" * 54)
-        print("  Phase 8b: PRUNE UNREFERENCED TEXTURES")
+        print("  Phase 10: PATCH SKYRIM (SLOT 44 BODY MESHES)")
+        print("=" * 54)
+        if not phase_modify_body_meshes(
+                tes5_data, plugins=getattr(args, 'patch_plugins', None),
+                output_dir=output_dir):
+            success = False
+        print()
+
+    if do_prune:
+        # TODO: This should be part of packing BSA
+        print("=" * 54)
+        print("  Phase 11a: PRUNE UNREFERENCED TEXTURES")
         print("=" * 54)
         for fn in order:
             phase_prune_textures(fn, config, output_dir=output_dir,
                                  dry_run=args.dry_run)
         print()
 
-    if do_pack:
+    if do_pack_bsa:
         print("=" * 54)
-        print("  Phase 9: PACK BSA ARCHIVES")
+        print("  Phase 11: PACK BSA ARCHIVES")
         print("=" * 54)
         for fn in order:
             if not phase_pack(fn, config, output_dir=output_dir):
                 success = False
         print()
 
-    if do_body:
+    if do_pack_zip:
         print("=" * 54)
-        print("  Phase 10: MODIFY BODY MESHES")
+        print("  Phase 12: PACK ZIP ARCHIVES")
         print("=" * 54)
-        if not phase_modify_body_meshes(
-                tes5_data, plugins=getattr(args, 'patch_plugins', None),
-                output_dir=output_dir):
-            success = False
+        for fn in order:
+            if not phase_pack_zip(fn, config, output_dir=output_dir):
+                success = False
         print()
 
     print("Pipeline complete." if success else "Pipeline completed with errors.")

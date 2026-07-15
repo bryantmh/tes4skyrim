@@ -2,10 +2,36 @@ Gameplan:
 	CK warnings M6
 	Refine Navmesh L5
 	Refine scripts - cleanup todos L20
-	Fix meshes L15 L16 M4 L24
+	Fix meshes L16 L23
 	Lip syncing L1
 
 Prompts:
+	Analyze the CK warnings document, which contains real creation kit errors and group the errors into buckets of actual genericized errors, and place them at the bottom of the TODO.txt document.
+
+	Finish cleaning up convert.py / gui.py
+
+	Navmesh generation is starting to look really good but still needs refinement. I am going to list issues that I see along with a suggestion to fix them.
+	1) Triangle groups are sometimes distontinuous. And I've seen small groups of just 1 or a few triangles. My thoughts are that we need to disallow any navmesh triangles not connected to either a teleporting door, or else running over into another cell. 
+	I think that would probably be sufficient, but some other ideas are to cull triangle groups that have fewer than maybe 5 triangles, as well as disallowing multiple navmesh groups that share the same x,y and are within the z height of the player character (to allow for multiple disconnected floors)
+	2) The triangles themselves have issues. For example, I see some really small triangles around corners and the triangles could stand to be a bit more equalateral (like a base game navmesh). Current AI has a bit of a hard time pathfinding. My suggestion to fix this is to decrease tolerance. Done by setting a minimum triangle size and angles and prioritizing the center mass and simply deleting triangles around the edges if they aren't up to snuff
+	3) There are a lot of discontinuities in external cells that contain no discernible obstacles. I think our algorithm just has some issues with exteriors and needs more work.
+	4) The special "Door" triangles are not good. They need to be exactly at the door location and well placed. Currently they can be any shape and don't exactly mark the door entrance.
+	5) Finally, we need to speed up conversion while ideally losing almost no quality. It currently takes ~20 minutes to complete an import and it would be really great if we could reduce that a bit. It used to take only two minutes with an older algorithm for instance. That algorithm produced worse results, so I'm okay with it taking longer, but 20 minutes seems excessive.
+	Ensure that you are testing multiple cells and types of cells to avoid local minima
+
+	Certain meshes have issues.
+	1) Traps and chains Look good ingame, but don't properly swing when touched or grabbed. they are instead completely still! For instance cellchain01.nif. ctrigtripwire01.nif also doesn't break when walked over, and ctrapswingmacelong01.nif doesn't properly swing. We are clearly missing something fundamental in our havok conversion I need you to fix, especially considering the longstanding issues with havok and interia feeling off even on normal misc items (keep in mind that multiple AI attempts have found nothing on this front so the issue isn't obvious). Your last fix for this still didn't fix the problem!
+	2) statuegodszenithar01.nif is a red triangle ingame
+
+	Quest/Dialog/Script conversion has some bugs:
+	Talking to Owyn in the arena about "ready for a match", he thinks I don't have my battle raiment equiped even though I do and I cannot proceed with the quest.
+	Agronak gro malog shows "yes, I wish to challenge you. and "no, I don't want to challenge you" as topics the first time talking to him. They shouldn't be available until later in the arena questline.
+	Many NPCs are still missing their audio for dialog lines. I believe this is because our conversion over to voicetypes is incorrect. We are assigning voice types to NPCs based on race, but we should be assigning them based on the voice the original oblivion character used. Otherwise lines will end up in the wrong place.
+	I am stage 50 in the "join the mages guild" quest (mg00join), but talking to the individual guild hall leaders, they don't have their lines to allow me to start their respective quests
+	Some issues are undoubtedly related to some creation kit warnings (CK_WARNINGS, found in root directory of repo). These are two examples of big categories of errors I find suspect.
+	[MASTERFILE] Unable to find Function Info TESForm (010224FD) in TESConditionItem Parameter Init for INFO Form '' (0103C217): Quest 'TES4DialogueGeneric' (0119335B), Topic 'INFOGENERAL' (010000D7), Text "Pinarus Inventius is quite the hunter. He can track about anything, and he's deadly with his bow.".
+	[MASTERFILE] Unable to find variable ::packageVAR_var on any VM scripts for form 'PinarusInventiusRef' (0100BC72) in TESConditionItem Parameter Init for PACK Form 'FGC01PinarusHunt' (01036633).
+
 	Book are animated to open in the inventory. If we don't use the correct animated mesh, the book fails to open. We need to use skyrim book mesh inventory model INAM, BUT we ideally need to apply the oblivion texture for the book front/back covers and spine.
 
 Major Issues for V1:
@@ -21,18 +47,7 @@ Major Issues for V1:
 				uppersilverpitcher01.nif
 				uppergobletceramic01.nif
 
-	4 - Nif converter fix broken conversion
-		Files:
-		[RD] architecture\basementsections\ungrdltraphingedoor.nif
-		[RD] architecture\castle\kvatch\kvatch  castle int hallway01.nif
-		[RD] clutter\farm\handscythe01.nif
-		[RD] clutter\farm\oar01.nif
-		[RD] clutter\floorplane01.nif
-		[RD] clutter\stonepedastellarge01.nif
-		[RD] dungeons\ayleidruins\interior\arwelkydclusterfx01.nif
-		[RD] oblivion\architecture\citadel\interior\switch\scampswitch01.nif
-
-	5 - Add screenshots of app + ingame + youtube video to readme
+	5 - Add screenshots of app + youtube video to readme
 
 	6 - Fix all CK warnings
 
@@ -71,8 +86,6 @@ Later Issues:
 
 	14 - Locked doors aren't properly Locked
 
-	15 - Prison Gates fall off hinges and don't swing like doors
-
 	16 - Traps and chains don't swing.
 
 	17 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
@@ -84,8 +97,6 @@ Later Issues:
 	22 - Allow running process on zip (mod)
 
 	23 - Fix walking up stairs
-
-	24 - Iron shortsword is invisible in the handle
 
 	25 - NPC levels / health is inordinately high!
 
@@ -145,3 +156,37 @@ Minor Issues:
 	17 - Cleanup output log and update colors
 
 	18 - Shops missing full inventory of items
+
+Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at 0x7FF7607409CA SkyrimSE.exe+0BD09CA	movaps xmm5, [rdx+0x10]
+Exception Flags: 0x00000000 (Continuable)
+Number of Parameters: 2
+Exception Thread ID: 40668
+Access Violation: Tried to read memory at 0x01F0E2AD9B10
+ACCESS VIOLATION ANALYSIS:
+	Instruction: movaps xmm5, [rdx+0x10]
+	Memory Operand: [base=rdx, index=none, scale=0, disp=+0x10]
+	Base Register: rdx = 0x000001F0E2AD9B00
+	Computed Address: 0x000001F0E2AD9B10
+POSSIBLE RELEVANT OBJECTS:
+	R13: (hkaSkeletonMapper*)
+	RSP+148: (hkaSkeleton*)
+	RSP+158: (hkaSkeleton*)
+	RSP+160: (hkaRagdollInstance*)
+	RSP+168: (hkbCharacterSetup*)
+	RSP+230: (hkbRagdollDriver*)
+	RSP+280: (NiNode*) "Bip01 Tail2"
+	RSP+350: (Character*) "Wolf" [0x1106E3F3] ("Oblivion.esm") [0x1106E3F3]
+	RSP+418: (BShkbAnimationGraph*)
+	RSP+488: (NiNode*) "Bip01 NonAccum"
+	RSP+490: (hkbCharacter*)
+	RSP+4C8: (ahkpWorld*)
+	RSP+500: (Character*) "Wolf" [0x1106E3F3] ("Oblivion.esm") [0x1106E3F3]
+	RSP+510: (BSAnimationGraphManager*)
+	RSP+580: (BSAnimationGraphManager*)
+	RSP+588: (ScrapHeap*)
+	RSP+610: (BSFadeNode*) "Scene Root"
+	RSP+620: (BGSLoadFormBuffer*)
+	RSP+670: (Character*) "Stormcloak Breakaway" [0xFF00166D] ("BSHeartland.esm") [0xFF00166D]
+	RSP+840: (`anonymous namespace'::Win32FileType*)
+	RSP+CA0: (BGSSaveLoadManager*)
+	RSP+EF0: (bgs::saveload::Request*)
