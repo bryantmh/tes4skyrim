@@ -41,6 +41,8 @@ Everything falls out of that one rule and Recast's standard span filters:
 No size gates, no rug lists, no MIN_EXCLUSION_HEIGHT tuning.
 """
 
+import math
+
 import numpy as np
 
 from . import params
@@ -386,16 +388,38 @@ def filter_low_hanging_obstacles(hf):
             prev_top = s[1]
 
 
-def filter_ledge_spans(hf):
+def filter_ledge_spans(hf, ext_rect=None):
     """Un-walk spans at the lip of a drop taller than MAX_CLIMB.
 
     This is what keeps the navmesh OFF the tops of walls and away from the edge
     of a balcony — and what makes a table's sides a barrier rather than a ramp.
+
+    ext_rect: (min_x, min_y, max_x, max_y) of the cell for EXTERIORS.  Terrain
+    continues into the neighbouring cell there, so a neighbour column that is
+    merely outside this cell's LAND is unknown, not a cliff — treating it as a
+    drop un-walked the whole border row and left a two-column gap along every
+    exterior cell seam.
     """
     climb = params.MAX_CLIMB
     height = params.AGENT_HEIGHT
+    # Steep-slope spread test (below): on a uniform slope the uphill and the
+    # downhill neighbour differ by 2*cs*tan(slope), so the threshold must scale
+    # with the cell size or it redefines the walkable slope limit.  At CS=16 the
+    # scaled value equals MAX_CLIMB (no change indoors); at the exterior CS=32
+    # the raw MAX_CLIMB test was un-walking every hillside steeper than ~28
+    # degrees — big holes in open terrain with no obstacle in sight.
+    spread_lim = max(climb,
+                     2.0 * hf.cs * math.tan(math.radians(params.MAX_SLOPE_DEG)))
     w, h = hf.w, hf.h
     to_clear = []
+
+    def _outside_cell(nx, ny):
+        if ext_rect is None:
+            return False
+        wx = hf.min_x + (nx + 0.5) * hf.cs
+        wy = hf.min_y + (ny + 0.5) * hf.cs
+        return (wx < ext_rect[0] or wx > ext_rect[2] or
+                wy < ext_rect[1] or wy > ext_rect[3])
 
     for cy in range(h):
         for cx in range(w):
@@ -413,12 +437,15 @@ def filter_ledge_spans(hf):
                     nx, ny = cx + dx, cy + dy
                     if nx < 0 or ny < 0 or nx >= w or ny >= h:
                         # Off-grid: treat as a big drop so we don't run the mesh
-                        # off the edge of the world.
-                        min_drop = min(min_drop, -height)
+                        # off the edge of the world — unless the terrain simply
+                        # continues into the next exterior cell.
+                        if not _outside_cell(nx, ny):
+                            min_drop = min(min_drop, -height)
                         continue
                     ncol = hf.spans[ny * w + nx]
                     if not ncol:
-                        min_drop = min(min_drop, -height)
+                        if not _outside_cell(nx, ny):
+                            min_drop = min(min_drop, -height)
                         continue
                     found = False
                     for ni, ns in enumerate(ncol):
@@ -446,7 +473,7 @@ def filter_ledge_spans(hf):
                 # the pathgrid has already asserted an NPC walks it.
                 if s[3]:
                     continue
-                if min_drop < -climb or (max_drop - min_drop) > climb:
+                if min_drop < -climb or (max_drop - min_drop) > spread_lim:
                     to_clear.append(s)
 
     for s in to_clear:
@@ -656,10 +683,10 @@ def stamp_pathgrid(hf, nodes, edges):
     return stamped
 
 
-def apply_filters(hf):
+def apply_filters(hf, ext_rect=None):
     """Run the standard filter chain, in Recast's order."""
     filter_low_hanging_obstacles(hf)
-    filter_ledge_spans(hf)
+    filter_ledge_spans(hf, ext_rect=ext_rect)
     filter_walkable_low_height_spans(hf)
 
 

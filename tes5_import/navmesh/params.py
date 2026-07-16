@@ -70,6 +70,14 @@ SEED_Z_TOLERANCE = 96.0
 # walls, so a big reach fills the room without painting the street outside the
 # shell.  (160u straight-line, the old gate, trimmed real floor in large rooms.)
 PGRD_XY_REACH = 384.0
+# Exterior reach.  An exterior cell is open terrain: Bethesda's own exterior
+# navmeshes cover essentially the WHOLE cell, while the pathgrid is just the
+# roads.  A tight reach gate carved the open ground into arbitrary blobs around
+# the pathgrid — mesh missing over half a cell with no obstacle in sight — so
+# outdoors the flood may reach the entire cell (geodesic walking still cannot
+# climb cliffs steeper than MAX_CLIMB per step or cross water gaps, and roofs
+# remain unreachable, so the wrong-surface protection is intact).
+PGRD_XY_REACH_EXTERIOR = 8192.0
 # Radius of the flood barrier stamped over each TELEPORT door of an interior
 # cell.  The reach flood may arrive at these columns (the doorstep keeps its
 # mesh, so the Door Triangle exists) but never expands from them, so the mesh
@@ -97,6 +105,57 @@ PGRD_BAND = 24.0
 # starts latching onto whatever surface happens to lie under a balcony, and the
 # layer count goes UP.  A step height plus a stair riser is the right order.
 PGRD_SNAP_Z = 48.0
+
+# --- Door threshold quads -----------------------------------------------------------
+# Every door REFR (teleport or interior) gets an exact oriented quad stamped
+# into the mesh at its threshold: the two triangles the Door Triangle link can
+# land on.  Half-extent along the door's width (local X) and depth (local Y,
+# the walk-through direction).  96u total width stays inside a standard ~110u
+# Oblivion doorway so the quad never pokes into the jambs; 64u total depth
+# straddles the threshold line the way vanilla door triangles do.
+DOOR_QUAD_HALF_WIDTH = 48.0
+DOOR_QUAD_HALF_DEPTH = 32.0
+# Z window for claiming mesh vertices into the quad — a door only restructures
+# the floor it stands on, never a storey above/below.
+DOOR_QUAD_ZTOL = 128.0
+
+# --- Boundary cleanup ---------------------------------------------------------------
+# A triangle on the outline with at most one neighbour (a protruding flap/ear)
+# is deleted when smaller than this (game units^2, interior scale; scales with
+# the voxel size squared).  These flaps are voxel-quantization noise at wall
+# corners — too small to route through, ugly, and they read as "small triangles
+# around corners" in-game.  192 = 1.5 voxel-scale triangles at CS 16.
+# Removal is inherently safe: a triangle with <=1 neighbour cannot be a bridge,
+# so deleting it can never disconnect the mesh.  Triangles near the pathgrid
+# or a door threshold are exempt.
+EAR_MIN_AREA = 192.0
+# A flap is exempt when any densified pathgrid sample lies within this XY
+# distance of it.  Containment-only exemption still let the cull eat ribbon
+# ends and narrow cave ledges the pathgrid walks (2 wrong-floor nodes in
+# XPGloomstonePassage02); a distance buffer protects the walked line and its
+# fringe while still cleaning wall corners elsewhere.
+EAR_PGRD_RADIUS = 64.0
+# Cull rounds.  Each round exposes new boundary edges; more rounds chain-eat
+# the outline (a cave boundary is legitimately jagged).
+EAR_ROUNDS = 2
+
+# --- Island pruning ---------------------------------------------------------------
+# A disconnected component smaller than this is noise (a scrap behind a shelf, a
+# ribbon fragment on a wall top) unless a door anchors it.  NPCs cannot use a
+# 1-4 triangle island for anything.
+MIN_ISLAND_TRIS = 5
+# A component counts as door-anchored when a mesh vertex lies within this XY
+# distance of a teleport-door REFR (and within door Z tolerance).  The doorstep
+# strip in front of a door must always survive so its Door Triangle exists.
+ISLAND_DOOR_RADIUS = 150.0
+# Z window for the door-anchor test: a door's PosZ sits at its threshold, so the
+# doorstep mesh is within a step or two of it.  Wide enough for tall thresholds,
+# narrow enough that a door on a balcony never anchors the floor below it.
+ISLAND_DOOR_ZTOL = 128.0
+# Exterior: a component that comes within this of the cell border "runs over
+# into the next cell" and is kept — its continuation lives in the neighbour
+# cell's navmesh.  ~1.5 exterior cells.
+ISLAND_EDGE_MARGIN = 48.0
 
 # --- Limits ----------------------------------------------------------------------
 # Hard cap on grid dimension per cell; beyond this CS is coarsened.  Guards

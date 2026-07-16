@@ -81,7 +81,10 @@ Returns per-navmesh metadata (centroid, parent) so the caller can build NAVI.
 =============================================================================
 """
 
+import hashlib
 import math
+import os
+import pickle
 import struct
 import logging
 
@@ -177,7 +180,7 @@ def _build_navmesh_grid(verts, tris, min_x, min_y, max_x, max_y, divisor):
 
 
 def _collect_doors(refr_recs, door_fids):
-    """Return [(x, y, rot_z, ref_fid, is_teleport), ...] for door refs in cell.
+    """Return [(x, y, z, rot_z, ref_fid, is_teleport), ...] for door refs.
 
     A door is a REFR whose base is a DOOR (in door_fids) or that has an XTEL
     teleport. is_teleport distinguishes cross-cell doors (XTEL — link two
@@ -200,19 +203,21 @@ def _collect_doors(refr_recs, door_fids):
             continue
         ref_fid = get_formid(refr, 'FormID')
         out.append((get_float(refr, 'PosX'), get_float(refr, 'PosY'),
-                    get_float(refr, 'RotZ'), ref_fid, is_teleport))
+                    get_float(refr, 'PosZ'), get_float(refr, 'RotZ'),
+                    ref_fid, is_teleport))
     return out
 
 
 def _build_door_links(verts, tris, doors):
     """Return [(triangle_index, door_ref_fid), ...], one per door.
 
-    The door triangle is the walkable triangle that sits ON the doorway
-    threshold: we pick the triangle whose centroid is closest to the door
-    position but that also STRADDLES the door line (small perpendicular offset
-    along the door's facing axis), so the link lands on the choked passage strip
-    rather than an adjacent room triangle. door_ref_fid is the (remapped) REFR
-    FormID the engine walks through.
+    The mesh generator stamps an exact oriented quad on every door threshold
+    (spanmesh._stamp_door_quads), so the door triangle is normally simply the
+    triangle CONTAINING the door position at the door's height — precise by
+    construction.  When no triangle contains the point (the quad was culled or
+    there is no mesh at the door), fall back to the nearest triangle centred
+    on the threshold line.  door_ref_fid is the (remapped) REFR FormID the
+    engine walks through.
     """
     if not doors or not tris:
         return []
@@ -222,27 +227,53 @@ def _build_door_links(verts, tris, doors):
         cents.append(((verts[a][0] + verts[b][0] + verts[c][0]) / 3.0,
                       (verts[a][1] + verts[b][1] + verts[c][1]) / 3.0))
 
-    used_tris = set()
-    links = []
-    for (dx, dy, rot_z, ref_fid, _is_tp) in doors:
-        if not ref_fid:
-            continue
-        # Door facing axis (local +Y): the threshold line is perpendicular.
-        fx, fy = -math.sin(rot_z), math.cos(rot_z)
-        best_ti, best_cost = None, None
-        for ti, (cx, cy) in enumerate(cents):
+    def _containing(dx, dy, dz):
+        """Triangle containing (dx,dy) nearest dz, or None."""
+        best = None            # (|dz|, ti)
+        for ti, (a, b, c) in enumerate(tris):
             if ti in used_tris:
                 continue
-            ox, oy = cx - dx, cy - dy
-            dist2 = ox * ox + oy * oy
-            if dist2 > (DOOR_LINK_MAX_DIST ** 2):
+            va, vb, vc = verts[a], verts[b], verts[c]
+            d = ((vb[1] - vc[1]) * (va[0] - vc[0]) +
+                 (vc[0] - vb[0]) * (va[1] - vc[1]))
+            if abs(d) < 1e-9:
                 continue
-            # Prefer triangles centred near the threshold LINE (small |offset
-            # along facing|) and close to the door point.
-            along = abs(ox * fx + oy * fy)
-            cost = dist2 + (along * DOOR_LINK_ALONG_WEIGHT) ** 2
-            if best_cost is None or cost < best_cost:
-                best_cost, best_ti = cost, ti
+            l0 = ((vb[1] - vc[1]) * (dx - vc[0]) +
+                  (vc[0] - vb[0]) * (dy - vc[1])) / d
+            l1 = ((vc[1] - va[1]) * (dx - vc[0]) +
+                  (va[0] - vc[0]) * (dy - vc[1])) / d
+            l2 = 1.0 - l0 - l1
+            if l0 < -0.01 or l1 < -0.01 or l2 < -0.01:
+                continue
+            z = l0 * va[2] + l1 * vb[2] + l2 * vc[2]
+            dzz = abs(z - dz)
+            if dzz <= 128.0 and (best is None or dzz < best[0]):
+                best = (dzz, ti)
+        return best[1] if best else None
+
+    used_tris = set()
+    links = []
+    for (dx, dy, dz, rot_z, ref_fid, _is_tp) in doors:
+        if not ref_fid:
+            continue
+        best_ti = _containing(dx, dy, dz)
+        if best_ti is None:
+            # Door facing axis (local +Y): the threshold line is perpendicular.
+            fx, fy = -math.sin(rot_z), math.cos(rot_z)
+            best_cost = None
+            for ti, (cx, cy) in enumerate(cents):
+                if ti in used_tris:
+                    continue
+                ox, oy = cx - dx, cy - dy
+                dist2 = ox * ox + oy * oy
+                if dist2 > (DOOR_LINK_MAX_DIST ** 2):
+                    continue
+                # Prefer triangles centred near the threshold LINE (small
+                # |offset along facing|) and close to the door point.
+                along = abs(ox * fx + oy * fy)
+                cost = dist2 + (along * DOOR_LINK_ALONG_WEIGHT) ** 2
+                if best_cost is None or cost < best_cost:
+                    best_cost, best_ti = cost, ti
         if best_ti is not None:
             links.append((best_ti, ref_fid))
             used_tris.add(best_ti)
@@ -368,6 +399,74 @@ def _pack_navm_record(form_id: int, subrecords: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Geometry cache
+# ---------------------------------------------------------------------------
+#
+# Building a cell's navmesh geometry (voxelize -> filter -> mesh -> decimate)
+# costs seconds; packing it into an NVNM costs milliseconds.  The geometry
+# depends ONLY on inputs that rarely change between imports — the pathgrid,
+# the placed REFRs, the LAND heights, the collision cache and the generator
+# code itself — so (verts, tris) is cached to disk keyed by a hash of exactly
+# those inputs.  Any edit to the navmesh sources, params included, changes the
+# tag and self-invalidates every entry; there is no version constant to forget
+# to bump.  FormID-dependent work (NVNM parent, door links, ONAM, water flags)
+# is recomputed every run, so load-order changes cannot be baked in.
+
+def _geom_hash(tag, points, edges, refr_recs, base_model_by_fid, doors,
+               land_rec, origin_x, origin_y):
+    """Hash of everything the geometry build consumes."""
+    h = hashlib.sha1()
+    h.update(repr((tag, origin_x, origin_y)).encode())
+    h.update(repr(points).encode())
+    h.update(repr(edges).encode())
+    base_model_by_fid = base_model_by_fid or {}
+    for refr in refr_recs or ():
+        name = refr.get('NAME', '')
+        try:
+            key = base_model_by_fid.get(int(name, 16) & 0xFFFFFF, '')
+        except ValueError:
+            key = ''
+        h.update(('%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' % (
+            name, key,
+            refr.get('PosX'), refr.get('PosY'), refr.get('PosZ'),
+            refr.get('RotX'), refr.get('RotY'), refr.get('RotZ'),
+            refr.get('XSCL.Scale'), bool(refr.get('XTEL.Door')))).encode())
+    for (x, y, z, r, _fid, tp) in doors or ():
+        h.update(repr((x, y, z, r, tp)).encode())
+    if land_rec is not None:
+        h.update((get_str(land_rec, 'VHGT') or '').encode())
+    return h.hexdigest()
+
+
+def _geom_cache_load(path, want_hash):
+    """(verts, tris) from a cache file, or None on any mismatch/problem."""
+    try:
+        with open(path, 'rb') as fh:
+            stored = pickle.load(fh)
+        if stored.get('hash') != want_hash:
+            return None
+        verts = [tuple(v) for v in stored['verts'].tolist()]
+        tris = [tuple(t) for t in stored['tris'].tolist()]
+        return verts, tris
+    except Exception:
+        return None
+
+
+def _geom_cache_store(path, geom_hash, verts, tris):
+    import numpy as np
+    try:
+        tmp = path + '.tmp%d' % os.getpid()
+        with open(tmp, 'wb') as fh:
+            pickle.dump({'hash': geom_hash,
+                         'verts': np.asarray(verts, dtype=np.float32),
+                         'tris': np.asarray(tris, dtype=np.int32)},
+                        fh, pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, path)
+    except Exception:
+        pass                      # a failed cache write must never fail the cell
+
+
+# ---------------------------------------------------------------------------
 # Public converter
 # ---------------------------------------------------------------------------
 
@@ -377,7 +476,8 @@ def convert_PGRD(rec: dict, writer=None,
                  refr_recs: list = None,
                  base_model_by_fid: dict = None,
                  door_fids: set = None,
-                 navm_fid: int = None) -> tuple:
+                 navm_fid: int = None,
+                 geom_cache: tuple = None) -> tuple:
     """Convert one TES4 PGRD to a TES5 NAVM record.
 
     Args:
@@ -392,6 +492,9 @@ def convert_PGRD(rec: dict, writer=None,
                             not touched for allocation — this lets callers assign
                             FormIDs deterministically before farming the (heavy,
                             scipy-bound) geometry work out to a thread pool.
+        geom_cache:         (cache_dir, tag) enabling the on-disk geometry
+                            cache; tag must cover the generator code and the
+                            collision cache (see _geom_hash).
 
     Returns:
         (navm_bytes, meta) where meta is a dict
@@ -488,14 +591,40 @@ def convert_PGRD(rec: dict, writer=None,
         base_objects = _collect_base_objects(refr_recs)
         doors = _collect_doors(refr_recs, door_fids)
 
-    from .navmesh import build as navmesh_build
-    from asset_convert.collision_extract import get_collision
+    geom_cached = False
+    cache_path = geom_hash = None
+    verts3d = tris = None
+    if geom_cache is not None:
+        cache_dir, tag = geom_cache
+        geom_hash = _geom_hash(tag, points, edges, refr_recs,
+                               base_model_by_fid, doors,
+                               land_rec if is_exterior else None,
+                               origin_x, origin_y)
+        cache_path = os.path.join(
+            cache_dir, '%08X_%08X.pkl' % (cell_fid, get_formid(rec, 'FormID')))
+        cached = _geom_cache_load(cache_path, geom_hash)
+        if cached is not None:
+            verts3d, tris = cached
+            geom_cached = True
 
-    verts3d, tris = navmesh_build.build_navmesh(
-        refr_recs or [], base_model_by_fid or {}, get_collision,
-        points, edges,
-        land_rec=land_rec if is_exterior else None,
-        origin_x=origin_x, origin_y=origin_y)
+    if verts3d is None:
+        from .navmesh import build as navmesh_build
+        from asset_convert.collision_extract import get_collision
+
+        verts3d, tris = navmesh_build.build_navmesh(
+            refr_recs or [], base_model_by_fid or {}, get_collision,
+            points, edges,
+            land_rec=land_rec if is_exterior else None,
+            origin_x=origin_x, origin_y=origin_y,
+            doors=[(x, y, z, r, tp) for (x, y, z, r, _f, tp) in doors])
+        if verts3d:
+            # Round to float32 NOW so a fresh build and a cache hit (stored as
+            # float32) produce byte-identical NVNMs — NVNM packs f32 anyway.
+            import numpy as np
+            verts3d = [tuple(v) for v in
+                       np.asarray(verts3d, dtype=np.float32).tolist()]
+        if cache_path is not None:
+            _geom_cache_store(cache_path, geom_hash, verts3d, tris)
     if len(verts3d) < 3 or not tris:
         return None, None
 
@@ -537,6 +666,7 @@ def convert_PGRD(rec: dict, writer=None,
         'is_exterior': is_exterior,
         'center': (cx, cy, cz),
         'base_objects': base_objects,
+        'geom_cached': geom_cached,
     }
     return navm_bytes, meta
 

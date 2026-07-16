@@ -49,8 +49,14 @@ def _corner_key(cx, cy, si):
     return (cx, cy, si)
 
 
-def build_mesh(hf, region_of=None):
-    """Walkable spans -> (verts3d, tris).  Connected by construction."""
+def build_mesh(hf, region_of=None, doors=None):
+    """Walkable spans -> (verts3d, tris).  Connected by construction.
+
+    doors: optional [(x, y, z, rot_z), ...] door thresholds.  Each gets an
+    exact oriented quad stamped into the raw mesh (see _stamp_door_quads);
+    its corner vertices are pinned through decimation, so the final mesh
+    always carries two clean triangles precisely on every door threshold.
+    """
     w, h, cs = hf.w, hf.h, hf.cs
     climb = params.MAX_CLIMB
 
@@ -139,7 +145,99 @@ def build_mesh(hf, region_of=None):
             if a != d and d != e and e != a:
                 tris.append((a, d, e))
 
-    return _decimate(verts, tris, cs)
+    verts, tris, pinned = _stamp_door_quads(verts, tris, doors)
+    return _decimate(verts, tris, cs, pinned)
+
+
+def _stamp_door_quads(verts, tris, doors):
+    """Rebuild the mesh under each door into an exact oriented threshold quad.
+
+    The Door Triangle must be a well-shaped triangle sitting precisely on the
+    doorway threshold — the old approach (link whatever decimated triangle
+    happened to be nearest the door) produced door triangles of arbitrary
+    shape and position.  Here, while the mesh is still at voxel resolution,
+    every vertex inside the door's rect (oriented by the door's RotZ) is
+    snapped onto the rect's four corners.  Triangles wholly inside the rect
+    degenerate and vanish; triangles crossing the rect boundary stretch to
+    its corners; and the rect itself is covered by exactly two clean
+    triangles whose shared edge crosses the door line.  The corner vertices
+    are PINNED through decimation, so the quad survives to the output intact.
+
+    Runs on the raw voxel mesh, where vertices are dense (every cs units), so
+    a rect over walkable floor always captures vertices; after decimation the
+    triangles are bigger than the rect and there would be nothing to snap.
+
+    Returns (verts, tris, pinned_vertex_ids).
+    """
+    if not doors:
+        return verts, tris, frozenset()
+    hw = params.DOOR_QUAD_HALF_WIDTH
+    hd = params.DOOR_QUAD_HALF_DEPTH
+    ztol = params.DOOR_QUAD_ZTOL
+
+    verts = [list(v) for v in verts]
+    pinned = set()
+    vmap = {}
+    quad_tris = []
+    for (dx, dy, dz, rz) in doors:
+        tx, ty = math.cos(rz), math.sin(rz)       # threshold (width) axis
+        fx, fy = -ty, tx                          # facing (walk-through) axis
+        members = ([], [], [], [])                # per corner
+        inside = []
+        for vi, v in enumerate(verts):
+            if vi in pinned or vi in vmap:
+                continue                          # already claimed by a door
+            ox, oy = v[0] - dx, v[1] - dy
+            a = ox * tx + oy * ty
+            b = ox * fx + oy * fy
+            if abs(a) <= hw and abs(b) <= hd and abs(v[2] - dz) <= ztol:
+                ci = {(False, False): 0, (True, False): 1,
+                      (True, True): 2, (False, True): 3}[(a >= 0, b >= 0)]
+                members[ci].append(vi)
+                inside.append(vi)
+        if not inside:
+            continue                              # no mesh at this door
+        z_all = sum(verts[vi][2] for vi in inside) / len(inside)
+        cids = []
+        for ci, (sa, sb) in enumerate(((-1, -1), (1, -1), (1, 1), (-1, 1))):
+            cxw = dx + sa * hw * tx + sb * hd * fx
+            cyw = dy + sa * hw * ty + sb * hd * fy
+            ms = members[ci]
+            zm = (sum(verts[m][2] for m in ms) / len(ms)) if ms else z_all
+            verts.append([cxw, cyw, zm])
+            cids.append(len(verts) - 1)
+        for ci in range(4):
+            for m in members[ci]:
+                vmap[m] = cids[ci]
+        pinned.update(cids)
+        # CCW like the span quads ((t, f) is a right-handed frame).
+        quad_tris.append((cids[0], cids[1], cids[2]))
+        quad_tris.append((cids[0], cids[2], cids[3]))
+
+    if not vmap:
+        return verts, tris, frozenset(pinned)
+
+    out = []
+    seen = set()
+    for (a, b, c) in tris:
+        a = vmap.get(a, a)
+        b = vmap.get(b, b)
+        c = vmap.get(c, c)
+        if len({a, b, c}) < 3:
+            continue
+        k = (a, b, c) if a < b and a < c else \
+            (b, c, a) if b < c else (c, a, b)
+        km = tuple(sorted(k))
+        if km in seen:
+            continue
+        seen.add(km)
+        out.append((a, b, c))
+    for t in quad_tris:
+        km = tuple(sorted(t))
+        if km not in seen:
+            seen.add(km)
+            out.append(t)
+    return verts, out, frozenset(pinned)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +301,7 @@ def _seg_dist(p, a, b):
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
-def _decimate(verts, tris, cs):
+def _decimate(verts, tris, cs, pinned=frozenset()):
     if not tris:
         return verts, tris
 
@@ -217,9 +315,9 @@ def _decimate(verts, tris, cs):
     acc = {}
 
     for _ in range(params.SIMPLIFY_PASSES):
-        verts, tris, n_col = _collapse_pass(verts, tris, acc, max_edge)
+        verts, tris, n_col = _collapse_pass(verts, tris, acc, max_edge, pinned)
         n_flip = _flip_pass(verts, tris, max_edge)
-        n_smooth = _smooth_pass(verts, tris, max_edge)
+        n_smooth = _smooth_pass(verts, tris, max_edge, pinned)
         if n_col + n_flip + n_smooth == 0:
             break
     _flip_pass(verts, tris, max_edge)
@@ -230,7 +328,7 @@ def _decimate(verts, tris, cs):
             [(remap[a], remap[b], remap[c]) for (a, b, c) in tris])
 
 
-def _collapse_pass(verts, tris, acc, max_edge):
+def _collapse_pass(verts, tris, acc, max_edge, pinned=frozenset()):
     """One sweep of quality-bounded edge collapses, shortest edges first.
 
     Interior vertices collapse into whichever neighbour yields the best-shaped
@@ -238,6 +336,9 @@ def _collapse_pass(verts, tris, acc, max_edge):
     into one of them when it sits within MAX_SIMPLIFY_ERR of the straight line
     between them (sawtooth removal); its deviation is charged against `acc` on
     the survivor so chains of collapses stay within the same total budget.
+
+    A PINNED vertex (door-quad corner) never moves or collapses away, though
+    others may collapse INTO it.
     """
     target_err = params.MAX_SIMPLIFY_ERR
     max_aspect = params.MAX_ASPECT
@@ -273,10 +374,15 @@ def _collapse_pass(verts, tris, acc, max_edge):
             v = vmap[v]
         return v
 
-    def plane_err(v, keep):
-        """Max deviation of v's incident triangles' planes at `keep`."""
-        pk = verts[keep]
-        worst = 0.0
+    def vertex_planes(v):
+        """(anchor point, unit normal) of v's incident alive triangles.
+
+        Computed ONCE per vertex and evaluated against each collapse
+        candidate — the old per-candidate recomputation (a full _tri_shape
+        per incident triangle per candidate) was the hottest code in the
+        entire build.
+        """
+        planes = []
         for ti in vtris.get(v, ()):
             if not alive[ti]:
                 continue
@@ -284,13 +390,30 @@ def _collapse_pass(verts, tris, acc, max_edge):
             if len({a, b, c}) < 3:
                 continue
             va, vb, vc = verts[a], verts[b], verts[c]
-            _q, _e, (nx, ny, nz) = _tri_shape(va, vb, vc)
+            ux, uy, uz = vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]
+            wx, wy, wz = vc[0] - va[0], vc[1] - va[1], vc[2] - va[2]
+            nx = uy * wz - uz * wy
+            ny = uz * wx - ux * wz
+            nz = ux * wy - uy * wx
             ln = math.sqrt(nx * nx + ny * ny + nz * nz)
             if ln < 1e-9:
                 continue
-            d = abs((pk[0] - va[0]) * nx + (pk[1] - va[1]) * ny +
-                    (pk[2] - va[2]) * nz) / ln
-            worst = max(worst, d)
+            planes.append((va[0], va[1], va[2], nx / ln, ny / ln, nz / ln))
+        return planes
+
+    def plane_dev(planes, keep):
+        """Max deviation of `keep` from the given planes (early-out past
+        target_err — callers only compare against it)."""
+        pk = verts[keep]
+        worst = 0.0
+        for (ax, ay, az, nx, ny, nz) in planes:
+            d = (pk[0] - ax) * nx + (pk[1] - ay) * ny + (pk[2] - az) * nz
+            if d < 0.0:
+                d = -d
+            if d > worst:
+                worst = d
+                if worst > target_err:
+                    return worst
         return worst
 
     def collapse_quality(v, keep):
@@ -369,6 +492,8 @@ def _collapse_pass(verts, tris, acc, max_edge):
 
     collapsed = 0
     for (_d, v) in order:
+        if v in pinned:
+            continue
         if find(v) != v:
             continue
         bn = bnbrs.get(v)
@@ -384,9 +509,10 @@ def _collapse_pass(verts, tris, acc, max_edge):
             dev = _seg_dist(verts[v], verts[a], verts[b]) + acc.get(v, 0.0)
             if dev > target_err:
                 continue
+            planes = vertex_planes(v)
             best = None
             for keep in (a, b):
-                if plane_err(v, keep) > target_err:
+                if plane_dev(planes, keep) > target_err:
                     continue
                 if not link_ok(v, keep):
                     continue
@@ -404,12 +530,13 @@ def _collapse_pass(verts, tris, acc, max_edge):
             bnbrs[other] = (bnbrs.get(other, set()) - {v}) | {keep}
             collapsed += 1
         else:
+            planes = vertex_planes(v)
             best = None
             for nb in neighbours.get(v, ()):
                 nb = find(nb)
                 if nb == v:
                     continue
-                if plane_err(v, nb) > target_err:
+                if plane_dev(planes, nb) > target_err:
                     continue
                 if not link_ok(v, nb):
                     continue
@@ -529,7 +656,7 @@ def _flip_pass(verts, tris, max_edge):
     return flips
 
 
-def _smooth_pass(verts, tris, max_edge):
+def _smooth_pass(verts, tris, max_edge, pinned=frozenset()):
     """Tangential relaxation of interior vertices on locally flat surface.
 
     Moves a vertex toward the centroid of its neighbours, projected back into
@@ -559,7 +686,7 @@ def _smooth_pass(verts, tris, max_edge):
 
     moved = 0
     for v, nbs in neighbours.items():
-        if v in boundary:
+        if v in boundary or v in pinned:
             continue
         ring = [tris[ti] for ti in vtris.get(v, ())]
         if not ring:

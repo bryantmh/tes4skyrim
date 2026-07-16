@@ -36,9 +36,11 @@ def render(export_dir, cell_arg, out_path, size):
         ctx['refrs'], ctx['base_model'], ce.get_collision,
         ctx['nodes'], ctx['edges'],
         land_rec=ctx['land'] if ctx['is_exterior'] else None,
-        origin_x=ctx['grid_x'] * 4096.0, origin_y=ctx['grid_y'] * 4096.0)
+        origin_x=ctx['grid_x'] * 4096.0, origin_y=ctx['grid_y'] * 4096.0,
+        doors=ctx.get('doors'))
     dt = time.time() - t0
-    print('navmesh: %d verts %d tris  (%.2fs)' % (len(verts), len(tris), dt))
+    print('navmesh: %d verts %d tris %d doors  (%.2fs)'
+          % (len(verts), len(tris), len(ctx.get('doors') or ()), dt))
 
     # Frame the view on the pathgrid + navmesh, NOT the raw collision: one
     # outlier REFR (FelgageldtCave has collision 70k units away) otherwise
@@ -106,6 +108,18 @@ def render(export_dir, cell_arg, out_path, size):
         p = px(x, y)
         d.ellipse([p[0] - 3, p[1] - 3, p[0] + 3, p[1] + 3],
                   fill=(255, 240, 90))
+
+    # Doors: cyan diamond + threshold line (teleport doors get a white core),
+    # so door-quad placement is checkable against the door itself.
+    import math as _m
+    for (x, y, _z, rz, is_tp) in ctx.get('doors') or ():
+        p = px(x, y)
+        tx, ty = _m.cos(rz), _m.sin(rz)
+        a = px(x - 48 * tx, y - 48 * ty)
+        b = px(x + 48 * tx, y + 48 * ty)
+        d.line([a, b], fill=(60, 230, 255, 230), width=2)
+        d.ellipse([p[0] - 4, p[1] - 4, p[0] + 4, p[1] + 4],
+                  fill=(255, 255, 255) if is_tp else (60, 230, 255))
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     img.save(out_path)
@@ -176,15 +190,18 @@ def main():
                     default=max(1, (os.cpu_count() or 2) - 1))
     a = ap.parse_args()
 
+    def _outname(cell):
+        # "grid:2:4" etc. — colons are not legal in Windows filenames.
+        return 'temp/navnew_%s.png' % cell.replace(':', '_')
+
     cells = [c.strip() for c in a.cell.split(',') if c.strip()]
     if len(cells) == 1:
-        render(a.export, cells[0], a.out or 'temp/navnew_%s.png' % cells[0],
-               a.size)
+        render(a.export, cells[0], a.out or _outname(cells[0]), a.size)
         return
 
     # Several cells: render them in parallel.  Each worker re-reads the cached
     # export index (see navmesh_probe.load_by_type), so this scales with cores.
-    jobs = [(a.export, c, 'temp/navnew_%s.png' % c, a.size) for c in cells]
+    jobs = [(a.export, c, _outname(c), a.size) for c in cells]
     with ProcessPoolExecutor(max_workers=min(a.workers, len(jobs))) as ex:
         for _ in ex.map(_render_one, jobs):
             pass

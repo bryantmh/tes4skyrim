@@ -64,13 +64,28 @@ def load_cell(export_dir, cell_arg, load_collision=True):
     by_type = load_by_type(export_dir)
 
     cell = None
-    for c in by_type.get('CELL', []):
-        if c.get('FormID', '').upper() == cell_arg.upper():
-            cell = c
-            break
-        if (c.get('EditorID') or '').lower() == cell_arg.lower():
-            cell = c
-            break
+    # "grid:X:Y" (or "grid:X,Y") selects an exterior cell by grid coordinate
+    # (Tamriel first).  Colons survive the comma-splitting of --cell lists.
+    if cell_arg.lower().startswith('grid:'):
+        try:
+            gx, gy = (int(v) for v in
+                      cell_arg[5:].replace(',', ':').split(':'))
+        except ValueError:
+            raise SystemExit('bad grid spec %r (want grid:X:Y)' % cell_arg)
+        matches = [c for c in by_type.get('CELL', [])
+                   if c.get('ParentWRLD') and c.get('ParentWRLD') != '00000000'
+                   and get_int(c, 'XCLC.X', 10**9) == gx
+                   and get_int(c, 'XCLC.Y', 10**9) == gy]
+        matches.sort(key=lambda c: c.get('ParentWRLD') != '0000003C')
+        cell = matches[0] if matches else None
+    else:
+        for c in by_type.get('CELL', []):
+            if c.get('FormID', '').upper() == cell_arg.upper():
+                cell = c
+                break
+            if (c.get('EditorID') or '').lower() == cell_arg.lower():
+                cell = c
+                break
     if cell is None:
         raise SystemExit('cell %s not found' % cell_arg)
 
@@ -119,6 +134,11 @@ def load_cell(export_dir, cell_arg, load_collision=True):
     door_fids = {int(d['FormID'], 16) & 0xFFFFFF
                  for d in by_type.get('DOOR', []) if d.get('FormID')}
 
+    # Doors as build_navmesh wants them: (x, y, z, rot_z, is_teleport).
+    from tes5_import.pgrd_to_navm import _collect_doors
+    doors = [(x, y, z, r, tp)
+             for (x, y, z, r, _f, tp) in _collect_doors(refrs, door_fids)]
+
     is_ext = bool(cell.get('ParentWRLD') and
                   cell.get('ParentWRLD') != '00000000')
     grid_x = get_int(cell, 'XCLC.X', 0) if is_ext else 0
@@ -127,7 +147,7 @@ def load_cell(export_dir, cell_arg, load_collision=True):
     return {
         'by_type': by_type, 'cell': cell, 'cell_fid': fid, 'refrs': refrs,
         'pgrd': pgrd, 'land': land, 'nodes': nodes, 'edges': edges,
-        'base_model': base_model, 'door_fids': door_fids,
+        'base_model': base_model, 'door_fids': door_fids, 'doors': doors,
         'is_exterior': is_ext, 'grid_x': grid_x, 'grid_y': grid_y,
     }
 

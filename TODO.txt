@@ -7,12 +7,8 @@ Gameplan:
 
 Prompts:
 	Navmesh generation is starting to look really good but still needs refinement. I am going to list issues that I see along with a suggestion to fix them.
-	1) Triangle groups are sometimes distontinuous. And I've seen small groups of just 1 or a few triangles. My thoughts are that we need to disallow any navmesh triangles not connected to either a teleporting door, or else running over into another cell. 
-	I think that would probably be sufficient, but some other ideas are to cull triangle groups that have fewer than maybe 5 triangles, as well as disallowing multiple navmesh groups that share the same x,y and are within the z height of the player character (to allow for multiple disconnected floors)
 	2) The triangles themselves have issues. For example, I see some really small triangles around corners and the triangles could stand to be a bit more equalateral (like a base game navmesh). Current AI has a bit of a hard time pathfinding. My suggestion to fix this is to decrease tolerance. Done by setting a minimum triangle size and angles and prioritizing the center mass and simply deleting triangles around the edges if they aren't up to snuff
-	3) There are a lot of discontinuities in external cells that contain no discernible obstacles. I think our algorithm just has some issues with exteriors and needs more work.
 	4) The special "Door" triangles are not good. They need to be exactly at the door location and well placed. Currently they can be any shape and don't exactly mark the door entrance.
-	5) Finally, we need to speed up conversion while ideally losing almost no quality. It currently takes ~20 minutes to complete an import and it would be really great if we could reduce that a bit. It used to take only two minutes with an older algorithm for instance. That algorithm produced worse results, so I'm okay with it taking longer, but 20 minutes seems excessive.
 	Ensure that you are testing multiple cells and types of cells to avoid local minima
 
 	Quest/Dialog/Script conversion has some bugs:
@@ -189,10 +185,6 @@ CKPE categories, ~13 root-cause buckets. Counts are occurrence counts in the log
 	1) (2928x) "Unable to find Function Info TESForm (X) in TESConditionItem Parameter Init for INFO Form '' ...: Quest 'X', Topic 'X', Text "X"."
 		INFO condition (CTDA) references a Function-type condition parameter (a TESForm, e.g. a GetIsID/GetItemCount target) whose FormID doesn't resolve.
 		Almost all land on Quest 'Generic'/TES4DialogueGeneric topics — likely a converted CTDA parameter1/parameter2 FormID that wasn't remapped (or was remapped to 0/an unconverted TES4 form) during dialogue import. See docs/dialogue_conversion_notes.md.
-	2) (1684x) "Unable to find Package Target Reference (00000000) on owner object "X"."
-		AI Package's target reference field is FormID 00000000 — target ref alias/param never got resolved/copied during PACK conversion. All samples show owner (00000000) which points at a systemic conversion gap, not per-package data loss.
-	3) (721x) "Enchanting (X) 'X' has invalid cast type or magic effect for object (X) 'X'."
-		Converted ENCH record's cast type doesn't match the weapon/armor slot it's attached to (e.g. a Fire-and-Forget/Constant-Effect enchant on a type that requires On Equip/On Strike), or references a magic effect that doesn't support that cast type. Systemic ENCH cast-type mapping bug in equipment.py import, not per-item.
 	4) (512x) "Could not find worldspace (X) in load for Location 'X' (X) in file Oblivion.esm."
 		Generated LCTN records point at a worldspace FormID that isn't loaded/converted (0x0100003C Tamriel and gate-related worldspaces most common). See memory: Exterior cell names / LCTN worldspace+marker construction.
 	5) (298x + 297x = 595x) "Armor/ArmorAddon 'X' (X) used invalid Biped Object slot 44 for race 'DefaultRace'."

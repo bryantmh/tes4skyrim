@@ -21,10 +21,11 @@ from .pgrd_to_navm import convert_PGRD
 # Per-worker read-only carving context, populated by _init in each child.
 _BASE_MODEL_BY_FID: dict = {}
 _DOOR_FIDS: set = set()
+_GEOM_CACHE: tuple = None
 
 
 def init_worker(base_model_by_fid: dict, door_fids: set, collision_cache: str,
-                formid_offset: int = 0):
+                formid_offset: int = 0, geom_cache: tuple = None):
     """ProcessPool initializer: stash context; load the collision cache.
 
     Runs once per worker process.  A spawned child does NOT inherit the parent's
@@ -42,9 +43,10 @@ def init_worker(base_model_by_fid: dict, door_fids: set, collision_cache: str,
         navmesh is voxelized from.  Without it every cell has no geometry and
         produces no navmesh at all.
     """
-    global _BASE_MODEL_BY_FID, _DOOR_FIDS
+    global _BASE_MODEL_BY_FID, _DOOR_FIDS, _GEOM_CACHE
     _BASE_MODEL_BY_FID = base_model_by_fid
     _DOOR_FIDS = door_fids
+    _GEOM_CACHE = geom_cache
     from .text_reader import set_formid_index_offset
     set_formid_index_offset(formid_offset)
     if collision_cache:
@@ -67,6 +69,7 @@ def run_job(job: dict):
             base_model_by_fid=_BASE_MODEL_BY_FID,
             door_fids=_DOOR_FIDS,
             navm_fid=job['navm_fid'],
+            geom_cache=_GEOM_CACHE,
         )
     except Exception as e:  # noqa: BLE001 — must not kill the pool
         print(f"  ERROR generating navmesh for cell {job['key'][0]:08X}: {e}")

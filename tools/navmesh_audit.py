@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from asset_convert import collision_extract as ce  # noqa: E402
 from tes5_import.navmesh import build, params  # noqa: E402
+from tes5_import.pgrd_to_navm import _collect_doors  # noqa: E402
 from tes5_import.text_reader import (  # noqa: E402
     parse_export_directory, group_records_by_type, get_float, get_int, get_str,
 )
@@ -87,10 +88,27 @@ def _tri_z(px, py, va, vb, vc):
 
 
 def audit(verts, tris, nodes, edges):
-    """Return (cover_pct_uncovered, islands, steep, wrongfloor)."""
+    """Return (cover_pct_uncovered, broken, steep, wrongfloor, islands, tiny,
+    sliver_pct, micro)."""
     if not tris:
-        return 100.0, 0, 0, len(nodes)
+        return 100.0, 0, 0, len(nodes), 0, 0, 0.0, 0
     V = np.asarray(verts)
+
+    # --- triangle quality: slivers (bad aspect) and micro-triangles ---------
+    # aspect = longest_edge^2 / (4*area): equilateral 0.58, degenerate -> inf.
+    A = V[[t[0] for t in tris]]
+    B = V[[t[1] for t in tris]]
+    C = V[[t[2] for t in tris]]
+    e0 = np.linalg.norm(B - A, axis=1)
+    e1 = np.linalg.norm(C - B, axis=1)
+    e2 = np.linalg.norm(A - C, axis=1)
+    longest = np.maximum(e0, np.maximum(e1, e2))
+    area = 0.5 * np.linalg.norm(np.cross(B - A, C - A), axis=1)
+    ok = area > 1e-9
+    aspect = np.full(len(tris), 1e9)
+    aspect[ok] = longest[ok] ** 2 / (4.0 * area[ok])
+    sliver_pct = 100.0 * float((aspect > 6.0).sum()) / max(1, len(tris))
+    micro = int((area < 64.0).sum())
 
     # --- pathgrid coverage (the headline metric) ---
     tri_pts = [(V[a], V[b], V[c]) for (a, b, c) in tris]
@@ -157,6 +175,15 @@ def audit(verts, tris, nodes, edges):
     ncomp = {i: comp_at(n) for i, n in enumerate(nodes)}
     broken = sum(1 for (i, j) in edges if ncomp[i] != ncomp[j])
 
+    # --- island census: total components, and TINY ones (< MIN_ISLAND_TRIS).
+    # A tiny disconnected group is unusable by an NPC and should never survive
+    # pruning; any nonzero count here is generator junk.
+    comp_tris = {}
+    for (a, _b, _c) in tris:
+        comp_tris[comp[a]] = comp_tris.get(comp[a], 0) + 1
+    islands = len(comp_tris)
+    tiny = sum(1 for n in comp_tris.values() if n < params.MIN_ISLAND_TRIS)
+
     # --- steep WALL-sized tris (single steps are legitimate) ---
     #
     # A stair riser meshed at CS=16 is steeper than the walkable slope yet is a
@@ -191,7 +218,7 @@ def audit(verts, tris, nodes, edges):
         if near.any() and np.min(np.abs(V[near, 2] - nz)) > params.MAX_CLIMB * 2:
             wrong += 1
 
-    return cover, broken, steep, wrong
+    return cover, broken, steep, wrong, islands, tiny, sliver_pct, micro
 
 
 _W = {}
@@ -204,13 +231,17 @@ def _init_worker(export_dir, base_model):
 
 
 def _run_cell(job):
-    name, refrs, nodes, edges = job
+    name, refrs, nodes, edges, land, grid_x, grid_y, doors = job
     t0 = time.time()
     verts, tris = build.build_navmesh(
-        refrs, _W['base_model'], ce.get_collision, nodes, edges)
+        refrs, _W['base_model'], ce.get_collision, nodes, edges,
+        land_rec=land, origin_x=grid_x * 4096.0, origin_y=grid_y * 4096.0,
+        doors=doors)
     dt = time.time() - t0
-    cov, isl, steep, wrong = audit(verts, tris, nodes, edges)
-    return (name, len(tris), cov, isl, steep, wrong, dt)
+    (cov, broken, steep, wrong, islands, tiny, sliv,
+     micro) = audit(verts, tris, nodes, edges)
+    return (name, len(tris), cov, broken, steep, wrong, islands, tiny,
+            sliv, micro, dt)
 
 
 def main():
@@ -219,6 +250,8 @@ def main():
     ap.add_argument('--cells', help='comma-separated EditorIDs/FormIDs')
     ap.add_argument('--interiors', type=int, default=0,
                     help='audit the first N interior cells that have a pathgrid')
+    ap.add_argument('--exteriors', type=int, default=0,
+                    help='audit the first N exterior cells that have a pathgrid')
     ap.add_argument('--workers', type=int,
                     default=max(1, (os.cpu_count() or 2) - 1))
     ap.add_argument('--reindex', action='store_true',
@@ -227,10 +260,11 @@ def main():
 
     # Parsing the export is ~78s single-threaded (1.1M records) and dwarfs the
     # actual navmesh work, so the slices we need are cached to disk and reused.
-    cache = os.path.join(a.export, 'audit_index.pkl')
+    cache = os.path.join(a.export, 'audit_index3.pkl')
     if os.path.exists(cache) and not a.reindex:
         with open(cache, 'rb') as fh:
-            base_model, refr_by_cell, pgrd_by_cell, cells = pickle.load(fh)
+            (base_model, refr_by_cell, pgrd_by_cell, land_by_cell,
+             door_fids, cells) = pickle.load(fh)
     else:
         t0 = time.time()
         recs = parse_export_directory(a.export, type_filter=_TYPES)
@@ -249,12 +283,19 @@ def main():
             refr_by_cell.setdefault((r.get('ParentCELL') or '').upper(), []).append(r)
         pgrd_by_cell = {(p.get('ParentCELL') or '').upper(): p
                         for p in by_type.get('PGRD', [])}
+        land_by_cell = {(ld.get('ParentCELL') or '').upper(): ld
+                        for ld in by_type.get('LAND', [])}
+        door_fids = {int(d['FormID'], 16) & 0xFFFFFF
+                     for d in by_type.get('DOOR', []) if d.get('FormID')}
         cells = by_type.get('CELL', [])
 
         with open(cache, 'wb') as fh:
-            pickle.dump((base_model, refr_by_cell, pgrd_by_cell, cells), fh,
-                        pickle.HIGHEST_PROTOCOL)
+            pickle.dump((base_model, refr_by_cell, pgrd_by_cell, land_by_cell,
+                         door_fids, cells), fh, pickle.HIGHEST_PROTOCOL)
         print('indexed export in %.0fs -> %s' % (time.time() - t0, cache))
+
+    def _is_exterior(c):
+        return bool(c.get('ParentWRLD') and c.get('ParentWRLD') != '00000000')
 
     if a.cells:
         want = {c.strip().lower() for c in a.cells.split(',')}
@@ -262,10 +303,15 @@ def main():
                if (c.get('EditorID') or '').lower() in want
                or (c.get('FormID') or '').lower() in want]
     else:
-        sel = [c for c in cells
-               if not (c.get('ParentWRLD') and c.get('ParentWRLD') != '00000000')
-               and (c.get('FormID') or '').upper() in pgrd_by_cell]
-        sel = sel[:a.interiors or 30]
+        sel = []
+        if a.interiors or not a.exteriors:
+            ints = [c for c in cells if not _is_exterior(c)
+                    and (c.get('FormID') or '').upper() in pgrd_by_cell]
+            sel += ints[:a.interiors or 30]
+        if a.exteriors:
+            exts = [c for c in cells if _is_exterior(c)
+                    and (c.get('FormID') or '').upper() in pgrd_by_cell]
+            sel += exts[:a.exteriors]
 
     jobs = []
     for c in sel:
@@ -276,11 +322,21 @@ def main():
         nodes, edges = _pgrd_nodes(pgrd)
         if not nodes:
             continue
-        jobs.append(((c.get('EditorID') or fid)[:34],
-                     refr_by_cell.get(fid, []), nodes, edges))
+        land = land_by_cell.get(fid) if _is_exterior(c) else None
+        gx = get_int(c, 'XCLC.X', 0) if _is_exterior(c) else 0
+        gy = get_int(c, 'XCLC.Y', 0) if _is_exterior(c) else 0
+        name = c.get('EditorID') or ''
+        if _is_exterior(c) and not name:
+            name = 'ext_%d_%d' % (gx, gy)
+        refrs = refr_by_cell.get(fid, [])
+        doors = [(x, y, z, r, tp)
+                 for (x, y, z, r, _f, tp) in _collect_doors(refrs, door_fids)]
+        jobs.append(((name or fid)[:34],
+                     refrs, nodes, edges, land, gx, gy, doors))
 
-    print('%-34s %6s %7s %7s %6s %6s %6s' %
-          ('CELL', 'TRIS', 'UNCOV%', 'BROKEN', 'STEEP', 'FLOOR', 'SEC'))
+    print('%-34s %6s %7s %7s %6s %6s %5s %5s %6s %6s %6s' %
+          ('CELL', 'TRIS', 'UNCOV%', 'BROKEN', 'STEEP', 'FLOOR', 'ISL',
+           'TINY', 'SLIV%', 'MICRO', 'SEC'))
 
     # One cell per worker.  Auditing is embarrassingly parallel and each cell is
     # seconds of CPU, so a serial sweep over a few dozen cells wastes minutes.
@@ -296,24 +352,36 @@ def main():
     results.sort(key=lambda r: order[r[0]])
 
     tot_cov = []
-    tot_broken = tot_steep = tot_floor = 0
+    tot_broken = tot_steep = tot_floor = tot_tiny = tot_isl = tot_micro = 0
+    tot_dt = 0.0
+    tot_sliv = []
     nbad_cells = 0
-    for (name, ntris, cov, broken, steep, wrong, dt) in results:
-        print('%-34s %6d %7.1f %7d %6d %6d %6.2f'
-              % (name, ntris, cov, broken, steep, wrong, dt))
+    for (name, ntris, cov, broken, steep, wrong, islands, tiny, sliv, micro,
+         dt) in results:
+        print('%-34s %6d %7.1f %7d %6d %6d %5d %5d %6.1f %6d %6.2f'
+              % (name, ntris, cov, broken, steep, wrong, islands, tiny,
+                 sliv, micro, dt))
         tot_cov.append(cov)
         tot_broken += broken
         nbad_cells += (broken > 0)
         tot_steep += steep
         tot_floor += wrong
+        tot_isl += islands
+        tot_tiny += tiny
+        tot_sliv.append(sliv)
+        tot_micro += micro
+        tot_dt += dt
 
     if tot_cov:
         worst_c = sorted(zip(tot_cov, (r[0] for r in results)), reverse=True)[:5]
         worst_b = sorted(((r[3], r[0]) for r in results), reverse=True)[:5]
         print('\n%d cells | mean uncovered %.1f%% | %d broken pgrd edges in '
-              '%d cells | %d steep | %d wrong-floor'
+              '%d cells | %d steep | %d wrong-floor | %d islands (%d tiny) | '
+              'mean sliver %.1f%% | %d micro | %.1f cpu-s'
               % (len(tot_cov), sum(tot_cov) / len(tot_cov),
-                 tot_broken, nbad_cells, tot_steep, tot_floor))
+                 tot_broken, nbad_cells, tot_steep, tot_floor,
+                 tot_isl, tot_tiny, sum(tot_sliv) / len(tot_sliv), tot_micro,
+                 tot_dt))
         print('worst coverage: %s'
               % ', '.join('%s %.0f%%' % (n, c) for (c, n) in worst_c))
         print('worst broken:   %s'

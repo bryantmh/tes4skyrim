@@ -758,6 +758,36 @@ def _gather_navm_jobs(by_type: dict):
     return jobs
 
 
+def _navmesh_geom_cache(collision_cache: str):
+    """(cache_dir, tag) for the on-disk navmesh geometry cache, or None.
+
+    The tag hashes the navmesh generator SOURCES plus the collision cache's
+    identity, so editing any navmesh code (params included) or rebuilding the
+    collision cache invalidates every entry automatically — no version
+    constant to forget to bump, no stale-geometry debugging sessions.
+    """
+    if not collision_cache or not os.path.exists(collision_cache):
+        return None
+    import glob
+    import hashlib
+    h = hashlib.sha1()
+    pkg = os.path.dirname(os.path.abspath(__file__))
+    srcs = sorted(glob.glob(os.path.join(pkg, 'navmesh', '*.py')))
+    srcs.append(os.path.join(pkg, 'pgrd_to_navm.py'))
+    for src in srcs:
+        try:
+            with open(src, 'rb') as fh:
+                h.update(fh.read())
+        except OSError:
+            return None
+    st = os.stat(collision_cache)
+    h.update(repr((st.st_size, int(st.st_mtime))).encode())
+    cache_dir = os.path.join(os.path.dirname(collision_cache),
+                             'navmesh_geom_cache')
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir, h.hexdigest()
+
+
 def _navm_worker_count(job_count: int) -> int:
     """Pick a worker count bounded by CPU count and job count."""
     cpu = max(1, (os.cpu_count() or 4) - 1)
@@ -800,6 +830,7 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
         job['navm_fid'] = writer.alloc_formid()
 
     worker_count = _navm_worker_count(len(jobs))
+    geom_cache = _navmesh_geom_cache(collision_cache)
     print(f"  Generating {len(jobs)} navmeshes (PGRD->NAVM) "
           f"across {worker_count} processes...")
     t0 = time.time()
@@ -808,7 +839,7 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
     # A single tiny job isn't worth a process pool's spin-up cost.
     if len(jobs) == 1 or worker_count == 1:
         navm_worker.init_worker(base_model_by_fid, door_fids, collision_cache,
-                                formid_offset)
+                                formid_offset, geom_cache)
         for job in jobs:
             key, result = navm_worker.run_job(job)
             cache[key] = result
@@ -819,14 +850,17 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
                 max_workers=worker_count,
                 initializer=navm_worker.init_worker,
                 initargs=(base_model_by_fid, door_fids, collision_cache,
-                          formid_offset),
+                          formid_offset, geom_cache),
                 max_tasks_per_child=500) as ex:
             for key, result in ex.map(navm_worker.run_job, jobs,
                                       chunksize=chunksize):
                 cache[key] = result
 
+    hits = sum(1 for (_b, m) in cache.values()
+               if m and m.get('geom_cached'))
     print(f"    Navmesh generation: {len(jobs)} cells in "
-          f"{time.time() - t0:.2f}s ({worker_count} workers)")
+          f"{time.time() - t0:.2f}s ({worker_count} workers, "
+          f"{hits} geometry-cache hits)")
     return cache
 
 

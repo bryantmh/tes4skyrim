@@ -197,7 +197,7 @@ def _pathgrid_samples(nodes, edges):
     return samples
 
 
-def keep_pathgrid_heights(hf, nodes, edges, barriers=None):
+def keep_pathgrid_heights(hf, nodes, edges, barriers=None, reach=None):
     """Keep only walkable spans within WALKING reach of the pathgrid.
 
     ``keep_regions`` works at the region level, but a staircase legitimately
@@ -243,7 +243,7 @@ def keep_pathgrid_heights(hf, nodes, edges, barriers=None):
             walk[ci] = ws
 
     # Costs in half-cells so the 3-4 chamfer stays integer: straight=2, diag=3.
-    limit = int(params.PGRD_XY_REACH / cs * 2.0)
+    limit = int((reach or params.PGRD_XY_REACH) / cs * 2.0)
     dist = {}
     heap = []
     for (sx, sy, sz) in samples:

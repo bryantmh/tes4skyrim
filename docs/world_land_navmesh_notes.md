@@ -50,9 +50,69 @@ cell PLUS a single top-level NAVI (Navmesh Info Map). Implemented in
      `_decimate` collapses edges, bounded by BOTH a plane error (MAX_SIMPLIFY_ERR)
      and a triangle-QUALITY test (aspect ratio ≤6, edge ≤TRI_TARGET_EDGE).
   5. `build.build_navmesh`: orchestrates the above, then `_drop_steep_triangles`
-     (MAX_SLOPE_DEG is a HARD ceiling with no exceptions) and `_prune_islands`
-     (drop components no pathgrid node stands on). Then this module computes
-     adjacency, water flags, door triangles.
+     (MAX_SLOPE_DEG is a HARD ceiling with no exceptions), `_cull_boundary_flaps`
+     and `_prune_islands` (see below). Then this module computes adjacency,
+     water flags, door triangles.
+
+### Island pruning / boundary cleanup (2026-07-15 quality pass)
+
+- **`_prune_islands` keep rules**: a disconnected component survives iff it has
+  ≥ MIN_ISLAND_TRIS(5) triangles AND (it is ANCHORED — reaches a teleport door
+  within ISLAND_DOOR_RADIUS, or in an exterior comes within ISLAND_EDGE_MARGIN
+  of the cell border ("runs over into the next cell") — OR it is vouched by a
+  pathgrid node and not merely SHADOWING a kept component in Z). The size gate
+  applies to anchored components too: a 2-triangle doorstep scrap disconnected
+  from the room is worse than no mesh at the door — it steals the Door Triangle
+  from the main mesh and teleports NPCs onto an island they can't leave.
+- **`_cull_boundary_flaps`** ("delete edge triangles that aren't up to snuff"):
+  outline triangles with ≤1 neighbour (protruding flaps — provably never a
+  bridge, so removal cannot disconnect anything) below EAR_MIN_AREA are deleted,
+  EAR_ROUNDS(2) rounds. Exemption must be DISTANCE to the densified pathgrid
+  line (EAR_PGRD_RADIUS), not node containment: containment-only let the cull
+  eat ribbon ends and narrow cave ledges (2 wrong-floor nodes + broken edges in
+  XPGloomstonePassage02 until fixed). Runs BEFORE `_prune_islands` so the size
+  gate judges final component sizes.
+
+### Door threshold quads (Door Triangles done right)
+
+`spanmesh._stamp_door_quads`: every door REFR (teleport AND interior) gets an
+exact oriented quad (DOOR_QUAD_HALF_WIDTH 48 × HALF_DEPTH 32, rotated by the
+door's RotZ) stamped into the RAW voxel mesh — vertices inside the rect snap to
+its 4 corners, which are then PINNED through decimation. Must happen
+pre-decimation: afterwards triangles are bigger than the rect and there is
+nothing to snap. `pgrd_to_navm._build_door_links` then links the triangle
+CONTAINING the door point at the door's height (fallback: old nearest-centroid
+cost). Result: two clean triangles precisely straddling every threshold.
+
+### Exterior coverage (the "discontinuities with no obstacles" fixes)
+
+- **Reach**: `PGRD_XY_REACH_EXTERIOR` (8192) replaces the interior 384u gate
+  outdoors — vanilla exterior navmeshes cover essentially the whole cell, and
+  the tight gate carved open terrain into blobs around the road pathgrid.
+  Geodesic flooding still can't climb >MAX_CLIMB per step or reach roofs.
+- **Ledge spread test scales with cs**: `filter_ledge_spans`' steep-slope test
+  `(max_drop - min_drop) > lim` must use `lim = max(MAX_CLIMB,
+  2*cs*tan(MAX_SLOPE_DEG))`. With raw MAX_CLIMB at CS_EXTERIOR=32 it un-walked
+  every hillside steeper than ~28° (2·32·tan28°≈34) — the mystery holes in open
+  terrain. At CS=16 the scaled value equals MAX_CLIMB, so interiors unchanged.
+- **Cell borders**: a neighbour column outside the exterior cell's LAND is
+  unknown terrain (it continues in the next cell), NOT a cliff — treating it as
+  a drop un-walked the border row and left a 2-column gap on every cell seam
+  (`ext_rect` threading through `apply_filters`).
+
+### Geometry cache (the import-time fix)
+
+`pgrd_to_navm` caches built `(verts, tris)` per cell in
+`export/<plugin>/navmesh_geom_cache/*.pkl` (float32/int32 arrays), keyed by a
+sha1 of exactly what geometry consumes: pathgrid points/edges, per-REFR
+(name, resolved model key, pos/rot/scale, XTEL), doors, LAND VHGT, origin, and
+a TAG hashing the navmesh sources + collision-cache identity
+(`import_main._navmesh_geom_cache`). Any code/param edit self-invalidates —
+no version constant to forget (deliberate: stale caches must never explain a
+bug). Warm hit ≈ 0.03s vs seconds; fresh builds round verts to float32 first so
+cache hits are byte-identical to cold builds. FormID-dependent parts (NVNM
+parent, door links, ONAM, water flags) are recomputed every run so load-order
+changes can't bake in.
 
 ### Mesh the SPAN GRAPH, never contours (the decisive fix)
 
@@ -125,9 +185,15 @@ uncovered** (was 2.5% uncovered / 2452 broken pathgrid edges with contours).
   dominant coverage bug (pathgrid-on-floor 32%→92%).
 - **Iteration tools**: `python tools/navmesh_preview.py --cell <FormID_or_EditorID>`
   renders the generated navmesh (green) OVER the collision layer — walkable dim,
-  BLOCKING/walls RED — plus pathgrid. Showing the walls is what the old renderer
-  couldn't do (it never loaded them). `tools/navmesh_probe.py --cell X` reports
-  pathgrid-on-floor coverage and Z error for a cell.
+  BLOCKING/walls RED — plus pathgrid and door markers (cyan threshold lines;
+  white core = teleport door). Exterior cells can be addressed as
+  `--cell grid:X:Y` (colon form survives comma-list splitting; Windows filenames
+  can't hold `:` so outputs sanitize it). `tools/navmesh_probe.py --cell X`
+  reports pathgrid-on-floor coverage and Z error. `tools/navmesh_audit.py
+  --interiors N --exteriors M` sweeps both cell kinds and reports UNCOV%/
+  BROKEN/STEEP/FLOOR/ISL/TINY/SLIV%/MICRO per cell. `tools/navmesh_profile.py
+  --cell X` cProfiles one cell's build (how the shadowed()/plane_err hotspots
+  were found).
 - **NVNM binary layout** (validated byte-exact against Skyrim.esm via
   `tools/navmesh_dump.py`): all arrays use U32 count prefixes; CRC of
   "PathingCell" = `0xA5E9A03C`; parent union decided by (Parent Worldspace==0)
@@ -145,8 +211,13 @@ uncovered** (was 2.5% uncovered / 2452 broken pathgrid edges with contours).
   origin = `grid_x*4096, grid_y*4096`.
 - **Dependencies**: `numpy` + `scipy` (Delaunay); `mapbox_earcut` used when
   present (fallback ear-clipper otherwise). `shapely` is no longer needed.
-- **Performance**: full 8228-cell run ≈ 7 min across 15 processes (was ~1 min
-  for the old low-quality path). Per-cell ~0.15s interior / ~0.7s exterior.
+- **Performance**: geometry is cached across runs (see Geometry cache above),
+  so repeat imports pay ~ms per cell. Cold builds: the 2026-07-15 pass cut
+  per-cell CPU ~33% on a 65-cell mix (Wendir02 13.6s→6.1s) by vectorizing
+  `_prune_islands.shadowed` (was 45% of the build) and caching per-vertex
+  planes in `_collapse_pass` (`vertex_planes`/`plane_dev` with early-out —
+  the old code recomputed a full `_tri_shape` per incident triangle per
+  collapse candidate).
 - **Tests**: `tests/test_pgrd_navm.py` (19 tests: region flood-fill (flat floor,
   two-storey separation, staircase), wall-doesn't-swallow-floor, rug walked over
   vs table routed around, walls contain the mesh, contour orientation,
