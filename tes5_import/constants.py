@@ -78,11 +78,13 @@ ENCH_TYPE_MAP = {
     3: 6,   # Apparel → Enchantment
 }
 
-# TES4 ENCH type → TES5 cast type
+# TES4 ENCH type → TES5 cast type (wbCastEnum: 0=Constant Effect, 1=Fire and
+# Forget, 2=Concentration, 3=Scroll — verified against vanilla Skyrim.esm ENCH
+# records: weapon/staff enchants use CastType=1, armor enchants use CastType=0)
 ENCH_CAST_TYPE_MAP = {
-    0: 4,  # Scroll → Scroll
-    1: 2,  # Staff → Fire and Forget
-    2: 2,  # Weapon → Fire and Forget
+    0: 3,  # Scroll → Scroll
+    1: 1,  # Staff → Fire and Forget
+    2: 1,  # Weapon → Fire and Forget
     3: 0,  # Apparel → Constant Effect
 }
 
@@ -347,7 +349,7 @@ def _init_dispatch():
 
     SKIP_TYPES.update({
         'ROAD',   # Roads → NavMesh (not enough structured data for conversion)
-        'SCPT',   # Scripts → Papyrus (can't auto-convert)
+        'SCPT',   # Scripts → Papyrus
         'SKIL',   # Hardcoded in TES5
         'BSGN',   # Birthsigns → no equivalent
         'RACE',   # NPCs map to Skyrim races

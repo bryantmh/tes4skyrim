@@ -201,8 +201,23 @@ def _null_location() -> bytes:
     return struct.pack('<iIi', 3, 0, 0)
 
 
+# wbObjectTypeEnum values used by vanilla PTDA type-2 ("Object Type") defaults.
+OBJTYPE_FOOD = 15
+OBJTYPE_CHAIR = 27
+OBJTYPE_BED = 26
+
+
 def _null_target() -> bytes:
     return struct.pack('<iIi', 0, 0, 0)
+
+
+def build_object_type_target(obj_type: int) -> bytes:
+    """PTDA type 2 = Object Type — 'any object of this kind', not a specific
+    FormID.  This is what every vanilla Eat/Sleep instance uses for a
+    TargetSelector it doesn't pin to a specific ref; a type-0 "Specific
+    Reference" with FormID 0 (our old default) is what triggers CKPE's
+    "Unable to find Package Target Reference (00000000)" warning at runtime."""
+    return struct.pack('<iIi', 2, obj_type, 0)
 
 
 def build_location(loc_type: int, value: int, radius: int) -> bytes:
@@ -411,9 +426,14 @@ def _choose(rec: dict, ctx: PackContext, pack_fid: int) -> Inputs:
         return i
 
     # --- Eat: dedicated template (Find -> Acquire food -> Find chair) ---
+    # TES4 has no per-package food/chair ref, so these TargetSelector slots
+    # always take the vanilla "any object of this type" default (100% of
+    # 395 vanilla Eat instances use exactly these two object types).
     if ptype == T4_EAT:
         i = Inputs(EAT)
         i.set('location', loc)
+        i.set('food_target', build_object_type_target(OBJTYPE_FOOD))
+        i.set('chair_target', build_object_type_target(OBJTYPE_CHAIR))
         return i
 
     # --- Sleep: dedicated template (Find bed -> LockDoors -> Sleep) ---
@@ -422,6 +442,9 @@ def _choose(rec: dict, ctx: PackContext, pack_fid: int) -> Inputs:
         i.set('location', loc)
         if _has_target(rec) and get_int(rec, 'PTDT.Type') == 0:
             i.set('bed_target', tgt)   # sleep in *this* bed
+        else:
+            # 94% of vanilla Sleep instances use "any Bed" here too.
+            i.set('bed_target', build_object_type_target(OBJTYPE_BED))
         return i
 
     # --- Follow / Accompany: exact.  Skyrim models Accompany as a Follow

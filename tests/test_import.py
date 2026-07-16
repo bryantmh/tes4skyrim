@@ -460,6 +460,36 @@ class TestConverters:
         self._check_record(result, 'ENCH')
         enit = self._get_subrecord_data(result, 'ENIT')
         assert len(enit) == 36
+        cast_type, = struct.unpack_from('<I', enit, 8)
+        enchant_type, = struct.unpack_from('<I', enit, 20)
+        # TES4 ENIT.Type=2 (Weapon) -> TES5 CastType=1 (Fire and Forget),
+        # not 2 (Concentration) -- wbCastEnum in wbDefinitionsTES5.pas.
+        assert cast_type == 1
+        assert enchant_type == 6  # Enchantment
+
+    def test_ench_staff_cast_type(self):
+        rec = {'Signature': 'ENCH', 'FormID': '00000701', 'RecordFlags': '0',
+               'EditorID': 'TestStaffEnch', 'ENIT.Type': '1', 'ENIT.Charge': '100',
+               'ENIT.Cost': '50', 'ENIT.Flags': '0', 'EffectCount': '1',
+               'Effect[0].Magnitude': '10', 'Effect[0].Area': '0',
+               'Effect[0].Duration': '60', 'Effect[0].Type': 'Target'}
+        result = convert_ENCH(rec)
+        enit = self._get_subrecord_data(result, 'ENIT')
+        cast_type, = struct.unpack_from('<I', enit, 8)
+        enchant_type, = struct.unpack_from('<I', enit, 20)
+        assert cast_type == 1  # Fire and Forget
+        assert enchant_type == 12  # Staff Enchantment
+
+    def test_ench_apparel_cast_type(self):
+        rec = {'Signature': 'ENCH', 'FormID': '00000702', 'RecordFlags': '0',
+               'EditorID': 'TestApparelEnch', 'ENIT.Type': '3', 'ENIT.Charge': '100',
+               'ENIT.Cost': '50', 'ENIT.Flags': '0', 'EffectCount': '1',
+               'Effect[0].Magnitude': '10', 'Effect[0].Area': '0',
+               'Effect[0].Duration': '60', 'Effect[0].Type': 'Self'}
+        result = convert_ENCH(rec)
+        enit = self._get_subrecord_data(result, 'ENIT')
+        cast_type, = struct.unpack_from('<I', enit, 8)
+        assert cast_type == 0  # Constant Effect
 
     def test_cell(self):
         rec = {'Signature': 'CELL', 'FormID': '00000800', 'RecordFlags': '0',
