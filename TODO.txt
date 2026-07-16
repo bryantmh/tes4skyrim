@@ -6,10 +6,6 @@ Gameplan:
 	Lip syncing L1
 
 Prompts:
-	Analyze the CK warnings document, which contains real creation kit errors and group the errors into buckets of actual genericized errors, and place them at the bottom of the TODO.txt document.
-
-	Finish cleaning up convert.py / gui.py
-
 	Navmesh generation is starting to look really good but still needs refinement. I am going to list issues that I see along with a suggestion to fix them.
 	1) Triangle groups are sometimes distontinuous. And I've seen small groups of just 1 or a few triangles. My thoughts are that we need to disallow any navmesh triangles not connected to either a teleporting door, or else running over into another cell. 
 	I think that would probably be sufficient, but some other ideas are to cull triangle groups that have fewer than maybe 5 triangles, as well as disallowing multiple navmesh groups that share the same x,y and are within the z height of the player character (to allow for multiple disconnected floors)
@@ -79,10 +75,6 @@ Later Issues:
 
 	13 - Creature animation issues. Still needs a lot of work and refinement
 		Ragdoll is mangled, and animations don't look natural.
-
-	14 - Locked doors aren't properly Locked
-
-	16 - Traps and chains don't swing.
 
 	17 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
 

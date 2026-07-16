@@ -159,12 +159,14 @@ def export_REFR(rec: Record) -> list:
         lines.append(f"XTEL.RotY={struct.unpack_from('<f', d, 20)[0]}")
         lines.append(f"XTEL.RotZ={struct.unpack_from('<f', d, 24)[0]}")
 
-    # Lock
+    # Lock — XLOC is 12 bytes (Level+Unused3+Key) or 16 bytes (+4-byte filler)
+    # before the trailing Flags+Unused3. Flags sits right after Key either way.
     xloc = get_subrecord(rec, "XLOC")
-    if xloc and len(xloc.data) >= 16:
+    if xloc and len(xloc.data) >= 9:
         lines.append(f"XLOC.Level={xloc.data[0]}")
         lines.append(f"XLOC.Key={get_formid_str(struct.unpack_from('<I', xloc.data, 4)[0])}")
-        lines.append(f"XLOC.Flags={xloc.data[8]}")
+        flags_offset = 12 if len(xloc.data) >= 13 else 8
+        lines.append(f"XLOC.Flags={xloc.data[flags_offset]}")
 
     # Map Marker
     xmrk = get_subrecord(rec, "XMRK")
