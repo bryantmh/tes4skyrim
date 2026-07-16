@@ -164,7 +164,14 @@ def _build_race(writer, rec, folder: str, bodies: list, proj: dict,
         subs += pack_subrecord('MODT', _MODT)
     for code in _MTNM_CODES:
         subs += pack_subrecord('MTNM', code)
-    subs += pack_subrecord('VTCK', struct.pack('<II', 0, 0))
+    # VTCK male+female — vanilla creature races always fill BOTH slots
+    # (DogRace: CrDogVoice x2); a null slot draws a CK "Could not find
+    # male/female voice type" warning per race. The actors carry their own
+    # VTCK, so this is only the race-level fallback.
+    from .record_types.actors import resolve_actor_voice
+    subs += pack_subrecord('VTCK', struct.pack(
+        '<II', resolve_actor_voice(rec, 'Male'),
+        resolve_actor_voice(rec, 'Female')))
     subs += pack_subrecord('PNAM', struct.pack('<f', 5.0))
     subs += pack_subrecord('UNAM', struct.pack('<f', 3.0))
 

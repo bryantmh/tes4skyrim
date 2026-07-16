@@ -401,6 +401,13 @@ def convert_REFR(rec: dict) -> bytes:
         name_fid = skyrim_marker  # Already a Skyrim.esm FormID — no offset
     else:
         name_fid = get_formid(rec, 'NAME')
+    # Oblivion.esm ships 6 refs on the MapMarker base with no XMRK marker
+    # data at all (campsite/battle position markers). Skyrim's map code
+    # treats every 0x10-based ref as a map marker and the CK flags them
+    # ("Mapmarker ref does not have map marker data") — they are plain
+    # position markers, so ground them to XMarker.
+    if name_raw == 0x10 and get_str(rec, 'MapMarker') != '1':
+        name_fid = 0x0000003B
     if name_fid:
         subs += pack_formid_subrecord('NAME', name_fid)
 

@@ -950,12 +950,14 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
     if clips.get('run'):
         convert_list.append(('MoveForwardRun', clips['run'], True, None,
                              None))
+    attack_kfs = set(clips['attacks'])
     clip_meta, motions, failures = [], {}, []
     for st_name, kf, looping, _enter, end_evt in convert_list:
         stem = _clip_state_name(kf)
         out_hkx = os.path.join(proj_dir, 'animations', stem + '.hkx')
         try:
-            clip, motion = convert_clip_hkx(kf, bones, out_hkx, fps=fps)
+            clip, motion = convert_clip_hkx(kf, bones, out_hkx, fps=fps,
+                                            is_attack=kf in attack_kfs)
         except Exception as e:  # keep going; report at the end
             failures.append((kf, f'{type(e).__name__}: {e}'))
             if st_name == 'MoveForwardRun':

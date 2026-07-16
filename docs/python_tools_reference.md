@@ -44,6 +44,7 @@ Rule: NOT meant for one-off tools. Only multi-use tools that take args. Should a
 - **Terrain LOD tile debugger**: `python -m tools.terrain_lod_tile_debug --tiles LEVEL,TX,TY ... [--png-dir temp]` — regenerates specific .btr/.dds tiles in-process (single-threaded), reports water quad counts, dumps diffuse PNGs.
 - **Terrain LOD texture probe**: `python -m tools.terrain_lod_tex_probe [--cell X Y]` — audits LTEX→TXST→dds resolution (ok/missing/loadfail) and per-cell BTXT/ATXT layer data.
 - **KF animation explorer**: `python tools/kf_animation_explorer.py --build-cache` — searches .kf animation corpus for skin retargeting.
+- **NPC skin census**: `python -m tools.census_npc_skin [--dump references/Skyrim.esm] [--race NordRace]` — joins RACE tint-mask definitions (skin-tone TINI index per race+gender) with NPC_ tint layers to report the colors/TINV/QNAM vanilla NPCs actually use. Source of the `_RACE_SKIN_TONES` table in tes5_import/npc_face_mapper.py.
 
 ## verify_plugin.py
 - **Summary**: `python verify_plugin.py <plugin.esp>` — record counts, version info

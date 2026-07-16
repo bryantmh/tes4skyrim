@@ -38,12 +38,18 @@ from .common import (
 
 
 def _read_items(rec: dict) -> list:
-    """Actor's TES4 CNTO inventory as [(fid, count)], in export order."""
+    """Actor's TES4 CNTO inventory as [(fid, count)], in export order.
+
+    TES4 merchant inventories use NEGATIVE counts for restocking stock;
+    Skyrim restocks via respawn and treats count < 1 as adding nothing
+    (a CK warning per entry), so counts are normalized to at least 1.
+    """
     items = []
     for i in range(get_int(rec, 'ItemCount')):
         fid = get_formid(rec, f'Item[{i}].FormID')
         if fid:
-            items.append((fid, get_int(rec, f'Item[{i}].Count', 1)))
+            count = abs(get_int(rec, f'Item[{i}].Count', 1)) or 1
+            items.append((fid, count))
     return items
 
 
@@ -171,6 +177,18 @@ _TES4_SERVICE_BIT_TO_SKYRIM_KEYWORDS = {
 # Used for merchants that have no dedicated merchant chest — they trade from
 # their carried inventory only.
 _vendor_faction_cache: dict[int, int] = {}
+
+# The one faction EVERY merchant joins, purely so the Barter topic can be gated
+# with a SINGLE GetInFaction condition.
+#
+# Why this exists: the barter gate used to OR over every per-service vendor
+# faction (25 of them), which pushed each Barter INFO to 25-30 CTDAs. Vanilla
+# Skyrim never exceeds 22 conditions on an INFO (max OR-run 20), and past that
+# the engine silently drops the line — every Barter INFO failed, so merchants
+# lost the topic entirely while Training (a 1-condition gate) kept working.
+# Membership here is what the dialogue asks about; the per-service factions
+# still do the actual vending (VEND keyword filter / VENC chest).
+_merchant_marker_faction_fid = 0
 
 # Per-merchant vendor factions: (remapped) actor FormID → FACT FormID. These
 # carry a VENC (Merchant Container) pointing at the actor's own converted
@@ -309,42 +327,55 @@ def create_vendor_factions(by_type: dict, writer) -> None:
             writer, f'TES4Merchant_{actor_fid & 0xFFFFFF:06X}', flst_fid, chest)
         n_chest += 1
 
+    # The single "is a merchant" faction the Barter topic gates on. Not a vendor
+    # faction (no Vendor flag / VEND / VENV) — it exists only as a membership
+    # marker, so it can never compete with the real vendor faction the engine
+    # resolves for the barter menu.
+    global _merchant_marker_faction_fid
+    _merchant_marker_faction_fid = writer.alloc_formid()
+    marker = pack_string_subrecord('EDID', 'TES4MerchantFaction')
+    marker += pack_string_subrecord('FULL', 'Merchant')
+    marker += pack_subrecord('DATA', struct.pack('<I', 0))
+    marker += pack_subrecord('CRVA', b'\x01\x01' + b'\x00' * 18)
+    writer.add_record('FACT', pack_record('FACT', _merchant_marker_faction_fid,
+                                          0, marker))
+
     print(f"  Creating vendor factions: {len(flst_by_svc)} shared service combos, "
-          f"{n_chest} chest-backed merchants...")
+          f"{n_chest} chest-backed merchants, 1 merchant marker faction...")
 
 
 def get_vendor_faction_fids_for_actor(actor_fid: int, services: int) -> list[int]:
-    """The vendor FACT FormID(s) this actor should belong to (SNAM memberships).
+    """Vendor FACT FormIDs this actor should belong to (SNAM memberships).
 
-    A merchant must belong to EXACTLY ONE Vendor-flagged faction: the engine's
-    Actor::GetVendorFaction returns the first vendor faction it finds, and
-    giving an NPC two of them broke barter entirely — the merchant menu never
-    opened, so the Barter topic vanished from the merchant's dialogue (only the
-    always-on Rumors topic remained). Vanilla effectively never doubles them up.
+    A chest-backed merchant gets its dedicated faction (VENC → its own Oblivion
+    merchant chest); everyone else gets the shared per-service faction. Both
+    kinds carry the VEND keyword list that filters what the actor trades.
 
-    So a chest-backed merchant joins ONLY its dedicated faction (VEND for the
-    item filter + VENC for the chest stock); everyone else joins the shared
-    per-service faction. The barter dialogue gate ORs over BOTH kinds (see
-    get_vendor_faction_fids) so the topic still shows for either.
+    Every merchant additionally joins the marker faction, which is what the
+    Barter topic actually gates on — one condition instead of an OR-chain over
+    all the vendor factions.
     """
+    fids = []
+    shared = _vendor_faction_cache.get(_vendor_bits(services), 0)
+    if shared:
+        fids.append(shared)
     dedicated = _merchant_faction_by_npc.get(actor_fid)
     if dedicated:
-        return [dedicated]
-    shared = _vendor_faction_cache.get(_vendor_bits(services), 0)
-    return [shared] if shared else []
+        fids.append(dedicated)
+    if fids and _merchant_marker_faction_fid:
+        fids.append(_merchant_marker_faction_fid)
+    return fids
 
 
-def get_vendor_faction_fids() -> list[int]:
-    """All vendor FACT FormIDs for the barter-topic GetInFaction OR-chain.
+def get_merchant_faction_fid() -> int:
+    """The single FACT the Barter topic gates on (0 if no merchants exist).
 
-    Must cover EVERY faction a merchant might be the sole member of — both the
-    shared per-service factions and the dedicated per-merchant chest factions —
-    because a chest-backed merchant now belongs to its dedicated faction only
-    (see get_vendor_faction_fids_for_actor). Omitting the dedicated ones would
-    leave those merchants failing the barter gate and losing the topic.
+    One GetInFaction against this replaces the old OR-chain over every vendor
+    faction. That chain put 25-30 CTDAs on each Barter INFO — beyond anything
+    vanilla ships (max 22 conditions, max OR-run 20) — and the engine dropped
+    every one of those lines, taking the whole topic with it.
     """
-    return sorted(set(_vendor_faction_cache.values())
-                  | set(_merchant_faction_by_npc.values()))
+    return _merchant_marker_faction_fid
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +491,21 @@ def _resolve_npc_race(rec: dict):
     tes4_flags = get_int(rec, 'ACBS.Flags')
     gender = 'Female' if (tes4_flags & 1) else 'Male'
     return race_edid, skyrim_race, gender
+
+
+def resolve_actor_voice(rec: dict, gender: str) -> int:
+    """VTYP a converted actor gets: dialogue-pass voice first, then race/gender.
+
+    Same chain as convert_NPC_/convert_CREA VTCK. Also used to fill the male/
+    female VTCK slots on generated creature RACE records — vanilla creature
+    races always fill both (DogRace: CrDogVoice x2), and a null slot makes the
+    CK log "Could not find male/female voice type" per race.
+    """
+    tes4_race_fid = get_formid(rec, 'RNAM.Race')
+    race_edid = TES4_RACE_FID_TO_EDID.get(tes4_race_fid & 0x00FFFFFF, 'Imperial')
+    return (_npc_voice_map.get(get_formid(rec, 'FormID'))
+            or VOICE_TYPE_MAP.get((race_edid, gender))
+            or VOICE_TYPE_MAP.get(('Imperial', gender), 0))
 
 
 def convert_NPC_(rec: dict, writer=None) -> bytes:
@@ -1001,14 +1047,21 @@ def _convert_leveled_list(rec: dict, tes5_sig: str) -> bytes:
     flags = get_int(rec, 'LVLF.Flags')
     subs += pack_uint8_subrecord('LVLF', flags)
 
-    # Entry count — LLCT is U8 in TES5
-    ec = get_int(rec, 'EntryCount')
-    if ec > 0:
-        subs += pack_subrecord('LLCT', struct.pack('<B', min(ec, 255)))
-    for i in range(ec):
-        level = get_int(rec, f'Entry[{i}].Level', 1)
+    # Entries. A null FormID must never be written (CK: "Unable to find
+    # Leveled Object Form (00000000)"), so build the list first and derive
+    # LLCT (U8 in TES5) from what survives. Negative TES4 counts (restock
+    # semantics) are normalized like inventories.
+    entries = []
+    for i in range(get_int(rec, 'EntryCount')):
         fid = get_formid(rec, f'Entry[{i}].FormID')
-        count = get_int(rec, f'Entry[{i}].Count', 1)
+        if not fid:
+            continue
+        level = get_int(rec, f'Entry[{i}].Level', 1)
+        count = abs(get_int(rec, f'Entry[{i}].Count', 1)) or 1
+        entries.append((max(1, level), fid, count))
+    if entries:
+        subs += pack_subrecord('LLCT', struct.pack('<B', min(len(entries), 255)))
+    for level, fid, count in entries:
         # LVLO: Level(U16) + pad(U16) + FormID(U32) + Count(U16) + pad(U16) = 12 bytes
         subs += pack_subrecord('LVLO', struct.pack('<HxxIHxx', level, fid, count))
 

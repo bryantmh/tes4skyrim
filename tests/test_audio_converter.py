@@ -20,8 +20,11 @@ from asset_convert.audio_converter import (
     convert_file_to_xwm,
     convert_sounds,
     find_ffmpeg,
+    find_lipgenerator,
     find_xwmaencode,
+    load_lip_text,
     organize_voice_files,
+    pack_fuz,
 )
 
 # ---------------------------------------------------------------------------
@@ -33,6 +36,9 @@ needs_ffmpeg = pytest.mark.skipif(FFMPEG is None, reason='ffmpeg not on PATH')
 XWMAENCODE = find_xwmaencode()
 needs_xwmaencode = pytest.mark.skipif(XWMAENCODE is None,
                                       reason='xWMAEncode.exe not found')
+LIPGENERATOR = find_lipgenerator()
+needs_lipgenerator = pytest.mark.skipif(
+    LIPGENERATOR is None, reason='LipGenerator.exe not found (SSE Tools/LipGen)')
 
 # ASF (WMA / XWM) container magic bytes (first 16 bytes)
 ASF_MAGIC = bytes([
@@ -207,6 +213,98 @@ def test_convert_sounds_missing_sound_dir(tmp_path):
         output_dir=str(tmp_path / 'output'),
     )
     assert result == {'converted': 0, 'copied': 0, 'failed': 0, 'total': 0}
+
+
+# ---------------------------------------------------------------------------
+# Lip sync (.lip generation, .fuz packing, transcript map)
+# ---------------------------------------------------------------------------
+
+def test_pack_fuz_layout():
+    """FUZE container: magic, version 1, lip size, lip bytes, audio bytes."""
+    fuz = pack_fuz(b'LIPDATA', b'XWMAUDIO')
+    assert fuz[:4] == b'FUZE'
+    version, lip_size = struct.unpack('<II', fuz[4:12])
+    assert version == 1
+    assert lip_size == 7
+    assert fuz[12:19] == b'LIPDATA'
+    assert fuz[19:] == b'XWMAUDIO'
+
+
+def test_load_lip_text_roundtrip(tmp_path):
+    """The importer's liptext writer output parses back, escapes intact."""
+    from tes5_import.import_main import _write_lip_text
+    texts = {(0x00A1B2, 1): 'Attack! I will tear you apart!',
+             (0x00A1B2, 2): 'Line with\nnewline and\ttab and \\backslash',
+             (0x123456, 1): 'Plain line.'}
+    out_base = str(tmp_path / 'Test.esm')
+    _write_lip_text(out_base, texts)
+    loaded = load_lip_text(out_base + '.liptext.txt')
+    assert loaded == texts
+
+
+@needs_ffmpeg
+@needs_xwmaencode
+@needs_lipgenerator
+def test_convert_to_fuz_with_lip(tmp_path):
+    """With a transcript + LipGenerator, output is a valid .fuz containing a
+    non-empty lip track followed by the xWMA audio."""
+    src = _make_wav(tmp_path / 'test.wav', duration_s=0.5)
+    dst = tmp_path / 'test.fuz'
+    ok = convert_file_to_xwm(src, dst, FFMPEG, xwmaencode=XWMAENCODE,
+                             lipgenerator=LIPGENERATOR,
+                             lip_text='Hello there, traveler.')
+    assert ok
+    assert dst.is_file()
+    data = dst.read_bytes()
+    assert data[:4] == b'FUZE'
+    version, lip_size = struct.unpack('<II', data[4:12])
+    assert version == 1 and lip_size > 0
+    audio = data[12 + lip_size:]
+    assert audio[:4] == b'RIFF' and b'XWMA' in audio[:16]
+
+
+@needs_ffmpeg
+@needs_xwmaencode
+def test_convert_to_fuz_without_lipgen_falls_back_to_xwm(tmp_path):
+    """A .fuz destination without LipGenerator degrades to bare .xwm so the
+    audio still plays (mouth just won't move)."""
+    src = _make_wav(tmp_path / 'test.wav')
+    dst = tmp_path / 'test.fuz'
+    ok = convert_file_to_xwm(src, dst, FFMPEG, xwmaencode=XWMAENCODE,
+                             lipgenerator=None, lip_text='Some text')
+    assert ok
+    assert not dst.exists()
+    assert (tmp_path / 'test.xwm').is_file()
+
+
+@needs_ffmpeg
+@needs_xwmaencode
+@needs_lipgenerator
+def test_organize_voice_files_generates_fuz(tmp_path):
+    """A voice line whose transcript is in lip_text comes out as .fuz; a line
+    with no transcript stays .xwm."""
+    plugin = 'Test.esm'
+    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    voice_src.mkdir(parents=True, exist_ok=True)
+    _make_wav(voice_src / 'hello_0000a1b2_1.wav', duration_s=0.5)
+    _make_wav(voice_src / 'hello_0000c3d4_1.wav', duration_s=0.5)
+
+    result = organize_voice_files(
+        source_dir=str(tmp_path / 'extract'),
+        dest_dir=str(tmp_path / 'output'),
+        plugin_name=plugin,
+        convert_audio=True,
+        ffmpeg_path=FFMPEG,
+        lip_text={(0x00A1B2, 1): 'Hello there, traveler.'},
+    )
+    assert result['errors'] == 0
+    assert result['organized'] == 2
+    out_dir = tmp_path / 'output' / 'sound' / 'Voice' / plugin / 'TES4MaleNord'
+    fuz = out_dir / 'hello_0000a1b2_1.fuz'
+    assert fuz.is_file(), 'transcribed line should be packed as .fuz'
+    assert fuz.read_bytes()[:4] == b'FUZE'
+    assert (out_dir / 'hello_0000c3d4_1.xwm').is_file(), \
+        'untranscribed line should stay .xwm'
 
 
 # ---------------------------------------------------------------------------

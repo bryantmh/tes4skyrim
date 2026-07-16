@@ -208,7 +208,12 @@ OBJTYPE_BED = 26
 
 
 def _null_target() -> bytes:
-    return struct.pack('<iIi', 0, 0, 0)
+    # Type 6 = Self — vanilla's own filler for a TargetSelector it doesn't
+    # point anywhere (PTDA hex 06000000 00000000 00000000 appears in
+    # Skyrim.esm). A type-0 "Specific Reference" with FormID 0 (our old
+    # default) is what triggered the CK's "Unable to find Package Target
+    # Reference (00000000)" warning.
+    return struct.pack('<iIi', 6, 0, 0)
 
 
 def build_object_type_target(obj_type: int) -> bytes:
@@ -362,7 +367,12 @@ def resolve_target(rec: dict, ctx: PackContext, pack_fid: int) -> bytes:
     target = get_formid(rec, 'PTDT.Target')
     count = get_int(rec, 'PTDT.Count', 0)
 
-    if t_type == 0 and target:
+    if t_type == 0:
+        if not target:
+            # TES4 "specific reference" slot left empty (CastMagic-at-self
+            # packages) — a type-0 PTDA with FormID 0 is the CK's "Unable to
+            # find Package Target Reference (00000000)".
+            return _null_target()
         alias = ctx.alias_for(pack_fid, target)
         if alias is not None:
             return build_alias_target(alias)
@@ -376,7 +386,9 @@ def resolve_location(rec: dict, ctx: PackContext, pack_fid: int) -> bytes:
     value = get_formid(rec, 'PLDT.Location')
     radius = get_int(rec, 'PLDT.Radius', 0)
 
-    if loc_type == 0 and value:
+    if loc_type == 0:
+        if not value:
+            return _null_location()   # empty "near reference" slot (see resolve_target)
         alias = ctx.alias_for(pack_fid, value)
         if alias is not None:
             return build_alias_location(alias, radius)

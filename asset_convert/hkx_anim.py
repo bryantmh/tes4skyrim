@@ -94,6 +94,26 @@ def clip_to_animation_data(clip: DecodedClip, bone_names: list,
     return anim
 
 
+def ensure_weapon_swing(anim: AnimationData, clip: DecodedClip) -> None:
+    """Give an ATTACK clip the weaponSwing annotation Skyrim expects.
+
+    Skyrim reads the swing moment (swoosh sound, weapon-hit registration
+    window) off a `weaponSwing` anim event; every vanilla attack animation
+    carries one and the CK logs "Animation 'X' on race 'X' has no
+    weaponSwing/weaponLeftSwing event" per race x clip without it (3,231
+    warnings). Oblivion marks the same moment with its `hit` text key, so the
+    swing goes there; a keyless clip gets it at 40% — about where vanilla
+    one-shot attacks put it. (weaponLeftSwing is deliberately never emitted:
+    Oblivion has no left-hand attack animations.)
+    """
+    if any(a.text.lower() == 'weaponswing' for a in anim.annotations):
+        return
+    hits = [float(t) for t, s in clip.text_keys if s.strip().lower() == 'hit']
+    swing = hits[0] if hits else float(clip.duration) * 0.4
+    anim.annotations.append(Annotation(time=swing, text='weaponSwing'))
+    anim.annotations.sort(key=lambda a: a.time)
+
+
 def reference_pose_from_bones(bones) -> dict:
     """hkx_skeleton.Bone list → {name: (trans, quat_wxyz, scale)}."""
     pose = {}
@@ -200,10 +220,12 @@ def build_animation_xml(anim: 'AnimationData', skeleton_root: str) -> str:
 
 def convert_clip_hkx(ob_kf_path: str, bones, out_hkx: str,
                      fps: float = 30.0, extract_motion: bool = True,
-                     keep_xml: bool = False):
+                     keep_xml: bool = False, is_attack: bool = False):
     """Oblivion .kf → Skyrim LE .hkx (XML → hkxcmd serializer).
 
     bones: hkx_skeleton.Bone list of the creature's generated skeleton.
+    is_attack: attack clips get the weaponSwing annotation Skyrim expects
+    (see ensure_weapon_swing).
     Returns (DecodedClip, motion_or_None).
     """
     from asset_convert.hkx_xml import compile_hkx
@@ -217,6 +239,8 @@ def convert_clip_hkx(ob_kf_path: str, bones, out_hkx: str,
     bone_names = [b.name for b in bones]
     anim = clip_to_animation_data(clip, bone_names,
                                   reference_pose_from_bones(bones))
+    if is_attack:
+        ensure_weapon_swing(anim, clip)
     xml = build_animation_xml(anim, skeleton_root=bone_names[0])
     xml_path = os.path.splitext(out_hkx)[0] + '.hkx.xml'
     os.makedirs(os.path.dirname(os.path.abspath(out_hkx)), exist_ok=True)

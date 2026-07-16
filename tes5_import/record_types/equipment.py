@@ -4,6 +4,7 @@ import re
 import struct
 
 from ..constants import ENCH_CAST_TYPE_MAP, ENCH_TYPE_MAP, WEAPON_TYPE_MAP, ARMA_BODY_COVERAGE_EXTRA
+from ..magic_effects import aimed_variant, has_projectile
 from ..skyrim_overrides import (
     ARMA_ADDITIONAL_RACES,
     CLOTHING_FOOTSTEP_SET,
@@ -64,13 +65,19 @@ def _resolve_mgef(code: str, actor_value: int = -1) -> int:
 _FILLER_EFFECTS = (0x0003EB15, 0x0003EB17, 0x0003EB16, 0x0003EAF3)  # AlchRestore{Health,Magicka,Stamina}, AlchFortifyHealth
 
 
-def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0) -> bytes:
+def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
+                  delivery: int = 0, writer=None) -> bytes:
     """Pack EFID/EFIT pairs for all effects on a record.
 
     Effects with no TES5 equivalent are dropped — an EFID of 0 (null MGEF)
     crashes the game as soon as the item's card is shown in a menu. If all
     effects are dropped, or pad_to demands more (e.g. 4 for INGR), real
     zero-magnitude filler effects are used.
+
+    ``delivery`` is the owning record's delivery (2 = Aimed): an aimed magic
+    item fires the projectile of its effects' MGEFs, so if none of them has
+    one the item casts NOTHING in game.  In that case the first effect is
+    swapped for a synthesized aimed clone (see magic_effects.aimed_variant).
     """
     effects = []
     effect_count = get_int(rec, count_key)
@@ -85,18 +92,25 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0) ->
         mag = get_int(rec, f'Effect[{i}].Magnitude')
         area = get_int(rec, f'Effect[{i}].Area')
         dur = get_int(rec, f'Effect[{i}].Duration')
-        effects.append((mgef_fid, float(mag), area, dur))
+        effects.append((mgef_fid, float(mag), area, dur, code))
 
     # Every effect-bearing record needs at least one real effect; INGR needs
     # exactly pad_to. Fill with distinct harmless zero-magnitude effects.
     want = max(pad_to, 1)
-    used = {fid for fid, _, _, _ in effects}
+    used = {fid for fid, _, _, _, _ in effects}
     fillers = iter(fid for fid in _FILLER_EFFECTS if fid not in used)
     while len(effects) < want:
-        effects.append((next(fillers, _FILLER_EFFECTS[0]), 0.0, 0, 0))
+        effects.append((next(fillers, _FILLER_EFFECTS[0]), 0.0, 0, 0, ''))
+
+    if delivery == 2 and not any(has_projectile(fid) for fid, *_ in effects):
+        for idx, (fid, mag, area, dur, code) in enumerate(effects):
+            variant = aimed_variant(fid, code, writer)
+            if variant:
+                effects[idx] = (variant, mag, area, dur, code)
+                break
 
     subs = b''
-    for mgef_fid, mag, area, dur in effects:
+    for mgef_fid, mag, area, dur, _code in effects:
         subs += pack_formid_subrecord('EFID', mgef_fid)
         subs += pack_subrecord('EFIT', struct.pack('<fII', mag, area, dur))
     return subs
@@ -603,7 +617,7 @@ def convert_BOOK(rec: dict, writer=None) -> bytes:
     return pack_record('BOOK', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
-def convert_ENCH(rec: dict) -> bytes:
+def convert_ENCH(rec: dict, writer=None) -> bytes:
     """ENCH — Enchantment. ENIT completely restructured for TES5."""
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -647,12 +661,12 @@ def convert_ENCH(rec: dict) -> bytes:
     subs += pack_subrecord('ENIT', bytes(enit))
 
     # Effects — TES5 uses EFID(FormID) + EFIT(Magnitude/Area/Duration)
-    subs += _pack_effects(rec)
+    subs += _pack_effects(rec, delivery=target_type, writer=writer)
 
     return pack_record('ENCH', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
-def convert_SPEL(rec: dict) -> bytes:
+def convert_SPEL(rec: dict, writer=None) -> bytes:
     """SPEL — Spell. SPIT restructured for TES5."""
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -693,7 +707,9 @@ def convert_SPEL(rec: dict) -> bytes:
     struct.pack_into('<I', spit, 4, tes5_flags)    # Flags
     struct.pack_into('<I', spit, 8, tes5_type)     # Type
     struct.pack_into('<f', spit, 12, 0.0)          # Charge Time
-    struct.pack_into('<I', spit, 16, 2)            # Cast Type: Fire and Forget
+    # Cast Type 1 = Fire and Forget (wbCastEnum; 2 would be Concentration —
+    # verified against vanilla Firebolt: SPIT.CastType=1).
+    struct.pack_into('<I', spit, 16, 1)
     struct.pack_into('<I', spit, 20, target_type)  # Delivery
     struct.pack_into('<f', spit, 24, 0.0)          # Cast Duration
     struct.pack_into('<f', spit, 28, 0.0)          # Range
@@ -701,7 +717,7 @@ def convert_SPEL(rec: dict) -> bytes:
     subs += pack_subrecord('SPIT', bytes(spit))
 
     # Effects
-    subs += _pack_effects(rec)
+    subs += _pack_effects(rec, delivery=target_type, writer=writer)
 
     return pack_record('SPEL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
@@ -769,7 +785,7 @@ def convert_INGR(rec: dict) -> bytes:
     return pack_record('INGR', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
-def convert_SGST(rec: dict) -> bytes:
+def convert_SGST(rec: dict, writer=None) -> bytes:
     """Sigil Stone → SCRL (Scroll, closest equivalent).
 
     TES5 SCRL order: EDID OBND FULL KSIZ KWDA DESC MODL DATA SPIT EFID/EFIT
@@ -778,6 +794,11 @@ def convert_SGST(rec: dict) -> bytes:
 
     # KSIZ/KWDA — vendor keyword
     subs += pack_keywords([VENDOR_KYWD['Scroll']])
+
+    # MDOB (vanilla scroll world model) + ETYP (Either Hand) — vanilla scrolls
+    # all carry both; without ETYP the scroll cannot be equipped/cast.
+    subs += pack_formid_subrecord('MDOB', 0x00076E8F)
+    subs += pack_formid_subrecord('ETYP', 0x00013F44)
 
     # DESC before MODL per TES5 spec
     desc = get_str(rec, 'DESC', '')
@@ -791,9 +812,21 @@ def convert_SGST(rec: dict) -> bytes:
     weight = get_float(rec, 'DATA.Weight')
     subs += pack_subrecord('DATA', struct.pack('<If', value, weight))
 
-    # SPIT for scroll
-    spit = struct.pack('<IIIffIff4x', 0, 0, 0, 0.0, 2, 0, 0.0, 0.0)
+    # SPIT — same 36-byte layout as SPEL. CastType 3 = Scroll (matches every
+    # vanilla SCRL); Delivery from the first effect like SPEL.
+    target_type = 0
+    first_effect_type = get_str(rec, 'Effect[0].Type')
+    if first_effect_type == 'Touch':
+        target_type = 1
+    elif first_effect_type == 'Target':
+        target_type = 2
+    spit = struct.pack('<IIIfIIff4x', 0, 0, 0, 0.0, 3, target_type, 0.0, 0.0)
     subs += pack_subrecord('SPIT', spit)
+
+    # Effects — a sigil stone's effects were what it enchanted with in TES4;
+    # as a scroll they become its cast payload. Without them the record is a
+    # dead item (CK: "Magic Item ... has no effects defined", one per stone).
+    subs += _pack_effects(rec, delivery=target_type, writer=writer)
 
     return pack_record('SCRL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 

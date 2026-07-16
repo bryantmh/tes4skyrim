@@ -292,17 +292,24 @@ class PluginWriter:
         """
         order = [
             'GMST', 'KYWD', 'TXST', 'GLOB', 'CLAS', 'FACT', 'HDPT', 'EYES',
-            'RACE', 'SOUN', 'SOPM', 'SNDR', 'MATT', 'STAT', 'ACTI', 'CONT', 'DOOR',
+            'RACE', 'SOUN', 'SOPM', 'SNDR', 'MGEF', 'MATT', 'STAT', 'ACTI', 'CONT', 'DOOR',
             'FLOR', 'FURN', 'GRAS', 'TREE', 'LIGH', 'MISC', 'KEYM', 'ARMO',
             'ARMA', 'BOOK', 'AMMO', 'ENCH', 'SPEL', 'ALCH', 'INGR', 'SCRL',
             'SLGM', 'VTYP', 'OTFT', 'NPC_', 'LVLN', 'LVLI', 'LVSP', 'WTHR',
             'CLMT', 'REGN', 'IDLE', 'PACK', 'EFSH', 'LSCR', 'ANIO',
-            'WEAP', 'LCTN', 'NAVI',
+            'WEAP', 'NAVI',
             # References resolved by quests must exist before QUST loads:
             'CELL', 'WRLD',
-            'SMBN', 'SMQN', 'SMEN',
-            'DIAL', 'DLBR', 'DLVW',
+            'DIAL',
             'QUST',
+            # LCTN must come AFTER CELL/WRLD (vanilla: ... ECZN LCTN ... DLBR
+            # DLVW at the very end): the CK resolves each Location's LCEC
+            # worldspace + MNAM marker ref when the LCTN group loads, and with
+            # LCTN first every location logged "Could not find worldspace
+            # (0100003C) in load" — 512 warnings and undiscoverable markers.
+            'LCTN',
+            'SMBN', 'SMQN', 'SMEN',
+            'DLBR', 'DLVW',
         ]
         # Append any groups not in the canonical order
         for sig in self._top_groups:

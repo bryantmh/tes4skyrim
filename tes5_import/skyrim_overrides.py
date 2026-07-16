@@ -1244,12 +1244,12 @@ ATTRIBUTE_SKILL_MAP = {
 # Skyrim EQUP FormID for shields (ETYP subrecord on ARMO)
 SHIELD_EQUIP_TYPE = 0x000141E8
 
-# Skyrim footstep set for heavy armor boots (FSTArmorHeavyFootstepSet)
-HEAVY_ARMOR_FOOTSTEP_SET = 0x00021487
-# Skyrim footstep set for light armor boots (FSTArmorLightFootstepSet)
-LIGHT_ARMOR_FOOTSTEP_SET = 0x00024238
-# Skyrim footstep set for clothing/barefoot (FSTBarefootFootstepSet)
-CLOTHING_FOOTSTEP_SET = 0x00024237
+# Skyrim footstep sets (FormIDs verified against references/Skyrim.esm/FSTS.txt
+# — the old Light/Clothing values 0x24238/0x24237 didn't exist in Skyrim.esm,
+# giving every clothing/light-boot ArmorAddon a dangling FootstepSet).
+HEAVY_ARMOR_FOOTSTEP_SET = 0x00021487   # FSTArmorHeavyFootstepSet
+LIGHT_ARMOR_FOOTSTEP_SET = 0x00021486   # FSTArmorLightFootstepSet
+CLOTHING_FOOTSTEP_SET = 0x00021468      # FSTBarefootFootstepSet
 
 # Additional races for ARMA records.  Every ARMA should list all playable
 # races so any race can equip the armor.  These are the base race FormIDs

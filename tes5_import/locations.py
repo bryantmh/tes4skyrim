@@ -39,7 +39,7 @@ for "the wilds of <worldspace>".
 import struct
 from collections import defaultdict
 
-from .text_reader import get_float, get_formid, get_str
+from .text_reader import get_float, get_formid, get_int, get_str
 from .writer import (
     pack_float_subrecord,
     pack_formid_subrecord,
@@ -168,7 +168,7 @@ def _marker_names_by_world(markers: list) -> dict:
 
 
 def _build_worldspace_locations(by_type: dict, marker_names: dict,
-                                writer) -> dict:
+                                writer, used_edids: set) -> dict:
     """One LCTN per named worldspace; returns {world_fid: lctn_fid}.
 
     This is what an exterior cell falls back to when no map marker covers it.
@@ -188,7 +188,13 @@ def _build_worldspace_locations(by_type: dict, marker_names: dict,
 
         lctn_fid = writer.alloc_formid()
         edid_base = ''.join(c for c in name if c.isalnum())
-        subs = pack_string_subrecord('EDID', f'TES4{edid_base}Location')
+        edid = f'TES4{edid_base}Location'
+        # A worldspace named after its sole marker ("The Fringe") would
+        # otherwise collide with that marker's own location EditorID.
+        if edid in used_edids:
+            edid = f'TES4{edid_base}World{world_fid & 0xFFFFFF:06X}Location'
+        used_edids.add(edid)
+        subs = pack_string_subrecord('EDID', edid)
         subs += pack_string_subrecord('FULL', name)
 
         writer.add_record('LCTN', pack_record('LCTN', lctn_fid, 0, subs))
@@ -214,12 +220,29 @@ def build_marker_locations(by_type: dict, writer) -> tuple:
     refrs = by_type.get('REFR', [])
     markers = [r for r in refrs if get_str(r, 'MapMarker') == '1']
 
+    # Only INTERIOR cells may be claimed by a location through a door — a
+    # teleport door can just as well lead OUT to an exterior (city gate →
+    # Tamriel, Oblivion gate exit → the wilds).  Exterior destinations are
+    # poison: XTEL destination doors are persistent, and a worldspace stores
+    # every persistent ref in one dummy cell (Tamriel's 00023777), so a single
+    # exterior entry here hands its location to EVERY persistent ref in that
+    # worldspace.  That was the CK's "Ref is not in its persistence location
+    # 'TES4SkingradWestGateLocation'" spam across the whole map.
+    interior_cells = {
+        get_formid(rec, 'FormID')
+        for rec in by_type.get('CELL', [])
+        if get_int(rec, 'DATA.Flags') & 1
+    }
+
     # Worldspace locations come first so that markers can parent to them, and so
     # that FormID allocation stays in a stable, reproducible order.  They are
     # named from the markers, which is how a worldspace whose FULL is a dev name
     # ("TestEndGame") still ends up called what it should be ("Castle Anvil").
+    # EditorIDs are deduplicated across BOTH location kinds (a worldspace named
+    # by its sole marker shares the marker's name).
+    used_edids = set()
     world_to_location = _build_worldspace_locations(
-        by_type, _marker_names_by_world(markers), writer)
+        by_type, _marker_names_by_world(markers), writer, used_edids)
 
     # Every exterior cell square owned by a worldspace location, so cells with no
     # marker of their own still get named.  Marker locations overwrite their own
@@ -256,7 +279,13 @@ def build_marker_locations(by_type: dict, writer) -> tuple:
         lctn_fid = writer.alloc_formid()
 
         edid_base = ''.join(c for c in name if c.isalnum()) or f'{marker_fid:08X}'
-        subs = pack_string_subrecord('EDID', f'TES4{edid_base}Location')
+        edid = f'TES4{edid_base}Location'
+        # Marker names repeat ("A Gate to Oblivion" x50, one per random gate);
+        # EditorIDs may not — the CK renames every duplicate with a warning.
+        if edid in used_edids:
+            edid = f'TES4{edid_base}{marker_fid & 0xFFFFFF:06X}Location'
+        used_edids.add(edid)
+        subs = pack_string_subrecord('EDID', edid)
 
         world_fid = get_formid(rec, 'ParentWRLD')
         cells = []
@@ -291,7 +320,7 @@ def build_marker_locations(by_type: dict, writer) -> tuple:
         # Claim the interior behind the nearest teleport door, so entering the
         # dungeon discovers it even if the player never crossed the marker.
         interior = _interior_for_marker(rec, doors_by_world, cell_of_door)
-        if interior and interior not in cell_to_location:
+        if interior in interior_cells and interior not in cell_to_location:
             cell_to_location[interior] = lctn_fid
 
     marker_linked = len(cell_to_location)
@@ -311,7 +340,7 @@ def build_marker_locations(by_type: dict, writer) -> tuple:
         if not dest_door:
             continue
         interior = cell_of_door.get(dest_door, 0)
-        if not interior or interior in cell_to_location:
+        if interior not in interior_cells or interior in cell_to_location:
             continue
         world_fid = get_formid(rec, 'ParentWRLD')
         if not world_fid:
@@ -337,7 +366,7 @@ def build_marker_locations(by_type: dict, writer) -> tuple:
             continue                       # only doors that live inside an interior
         src = get_formid(rec, 'ParentCELL')
         dest = cell_of_door.get(dest_door, 0)
-        if src and dest and src != dest:
+        if src and dest in interior_cells and src != dest:
             interior_links[src].add(dest)
 
     changed = True

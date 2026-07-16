@@ -435,6 +435,43 @@ class TestConverters:
         dnam = self._get_subrecord_data(result, 'DNAM')
         assert len(dnam) == 52
 
+    def test_npc_skin_tone_tint_layer(self):
+        """NPCs must carry a skin-tone tint layer (TINI/TINC/TINV/TIAS) and a
+        matching QNAM — without them the engine renders the body pale white
+        regardless of race."""
+        base = {'Signature': 'NPC_', 'FormID': '00000500', 'RecordFlags': '0',
+                'EditorID': 'TestNPC', 'ACBS.Flags': '0', 'ACBS.Level': '5',
+                'FactionCount': '0', 'SpellCount': '0', 'ItemCount': '0',
+                'AIPackageCount': '0', 'AIDT.Services': '0',
+                'HCLR.R': '100', 'HCLR.G': '80', 'HCLR.B': '60'}
+        # Redguard male (TES4 race fid 0x00000D43)
+        rec = dict(base, **{'RNAM.Race': '00000D43'})
+        result = convert_NPC_(rec)
+        for sig in ('TINI', 'TINC', 'TINV', 'TIAS'):
+            assert self._has_subrecord(result, sig), f'missing {sig}'
+        tini = struct.unpack('<H', self._get_subrecord_data(result, 'TINI'))[0]
+        assert tini == 1  # Redguard male skin-tone index in Skyrim.esm
+        r, g, b, a = struct.unpack('<4B', self._get_subrecord_data(result, 'TINC'))
+        # Must be one of the census colors — all dark Redguard tones, never white
+        assert (r, g, b) in {(45, 33, 30), (53, 39, 34), (79, 69, 64)}
+        assert a == 0
+        tinv = struct.unpack('<I', self._get_subrecord_data(result, 'TINV'))[0]
+        assert tinv == 100
+        tias = struct.unpack('<h', self._get_subrecord_data(result, 'TIAS'))[0]
+        assert tias == -1
+        # QNAM must agree with the tint (tinv=100 → exactly color/255)
+        qnam = struct.unpack('<3f', self._get_subrecord_data(result, 'QNAM'))
+        for got, want in zip(qnam, (r / 255.0, g / 255.0, b / 255.0)):
+            assert abs(got - want) < 1e-6
+        # Female Nord uses the FEMALE tint list index (24, not male 1)
+        rec_f = dict(base, **{'RNAM.Race': '000224FD', 'ACBS.Flags': '1'})
+        result_f = convert_NPC_(rec_f)
+        tini_f = struct.unpack('<H', self._get_subrecord_data(result_f, 'TINI'))[0]
+        assert tini_f == 24
+        # Deterministic: same FormID → same pick
+        assert (self._get_subrecord_data(result_f, 'TINC')
+                == self._get_subrecord_data(convert_NPC_(rec_f), 'TINC'))
+
     def test_crea_becomes_npc(self):
         rec = {'Signature': 'CREA', 'FormID': '00000600', 'RecordFlags': '0',
                'EditorID': 'TestDeer', 'FULL': 'Deer',
@@ -1091,6 +1128,69 @@ class TestServiceConversion:
         cnto = [struct.unpack('<Ii', c) for c in nsubs['CNTO']]
         assert (0x0000000F, 800) in cnto   # Gold001 x barter gold
 
+    def _merchant_npc(self, fid='00000501', services='132227'):
+        npc = self._trainer_npc(services=services)
+        npc['FormID'] = fid
+        npc['EditorID'] = 'TestMerchant'
+        return npc
+
+    def test_every_merchant_joins_one_marker_faction(self):
+        """The Barter topic gates on ONE faction, so every merchant — whatever
+        its service bitmask, chest-backed or not — must be a member of it."""
+        from tes5_import.record_types.actors import (
+            create_vendor_factions, get_merchant_faction_fid,
+            get_vendor_faction_fids_for_actor)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        a = self._merchant_npc(fid='00000501', services='132227')
+        b = self._merchant_npc(fid='00000502', services='9216')
+        create_vendor_factions({'NPC_': [a, b], 'CREA': []}, writer)
+
+        marker = get_merchant_faction_fid()
+        assert marker != 0
+        for fid, svc in ((0x00000501, 132227), (0x00000502, 9216)):
+            assert marker in get_vendor_faction_fids_for_actor(fid, svc)
+
+    def test_marker_faction_is_not_a_vendor_faction(self):
+        """The marker is a membership tag only. Giving it the Vendor flag would
+        make it compete with the real vendor faction the engine resolves for the
+        barter menu (VEND keyword filter / VENC chest)."""
+        from tes5_import.record_types.actors import (create_vendor_factions,
+                                                     get_merchant_faction_fid)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        create_vendor_factions({'NPC_': [self._merchant_npc()]}, writer)
+        marker = get_merchant_faction_fid()
+        fact = next(f for f in writer._top_groups['FACT']
+                    if struct.unpack_from('<I', f, 12)[0] == marker)
+        subs = self._subrecords(fact)
+        flags = struct.unpack('<I', subs['DATA'][0])[0]
+        assert not (flags & 0x4000), 'marker must not carry the Vendor flag'
+        assert 'VEND' not in subs and 'VENV' not in subs
+
+    def test_barter_gate_is_a_single_condition(self):
+        """Regression: the Barter gate used to OR over every vendor faction,
+        putting 25-30 CTDAs on each Barter INFO. Vanilla Skyrim never exceeds 22
+        conditions on an INFO (longest OR-run is 20); past that the engine drops
+        the line, so every Barter INFO failed and merchants lost the topic
+        entirely — while Training, a 1-condition gate, kept working."""
+        from tes5_import.dialog_conditions import (FUNC_GET_IN_FACTION,
+                                                   build_ctda)
+        from tes5_import.dialog_converter import _build_service_fallback_info
+        from tes5_import.record_types.actors import (create_vendor_factions,
+                                                     get_merchant_faction_fid)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        # Many distinct service bitmasks => many vendor factions. The gate must
+        # stay at one condition regardless of how many exist.
+        npcs = [self._merchant_npc(fid=f'0000{0x600 + i:03X}', services=str(s))
+                for i, s in enumerate((3, 4, 8, 16, 1155, 2048, 4103, 5124))]
+        create_vendor_factions({'NPC_': npcs}, writer)
+
+        gate = pack_subrecord('CTDA', build_ctda(
+            FUNC_GET_IN_FACTION, param1=get_merchant_faction_fid()))
+        info = _build_service_fallback_info(writer, 'barter', gate)
+        n_ctda = self._subrecords(info).get('CTDA', [])
+        assert len(n_ctda) == 1, f'barter gate must be 1 CTDA, got {len(n_ctda)}'
+        assert struct.unpack_from('<I', n_ctda[0], 12)[0] == get_merchant_faction_fid()
+
     def test_trainer_unmappable_skill_skipped(self):
         from tes5_import.record_types.actors import (
             create_trainer_records, get_trainer_class_fid)
@@ -1602,6 +1702,176 @@ class TestOutfitSplit:
         assert set(outfit) | {f for f, _ in carried} == {1, 2, 3, 4}
         # counts on carried items survive the split
         assert dict(carried)[4] == 2
+
+
+class TestCKWarningFixes:
+    """Regressions for the 2026-07 CK_WARNINGS sweep."""
+
+    def test_engine_formids_not_remapped(self):
+        # PlayerRef 0x14 exists in NO data file (engine-hardcoded, same id in
+        # Skyrim) — remapping it to 0x01000014 dangles every package/alias
+        # reference to the player. Other low ids (Tamriel 0x3C!) are REAL
+        # Oblivion.esm records and must keep remapping.
+        from tes5_import.text_reader import set_formid_index_offset
+        set_formid_index_offset(1)
+        try:
+            rec = {'A': '00000014', 'B': '00000100', 'C': '0000003C'}
+            assert get_formid(rec, 'A') == 0x14           # PlayerRef stays put
+            assert get_formid(rec, 'B') == 0x01000100     # real ids remap
+            assert get_formid(rec, 'C') == 0x0100003C     # Tamriel IS remapped
+        finally:
+            set_formid_index_offset(0)
+
+    def test_null_package_target_is_self(self):
+        # A type-0 "Specific Reference" with FormID 0 is the CK's "Unable to
+        # find Package Target Reference (00000000)"; vanilla's filler is
+        # type 6 = Self.
+        from tes5_import.pack_converter import _null_target
+        assert struct.unpack('<iIi', _null_target())[0] == 6
+
+    def test_spel_cast_type_fire_and_forget(self):
+        from tes5_import.record_types.equipment import convert_SPEL
+        rec = {'Signature': 'SPEL', 'FormID': '00001234', 'RecordFlags': '0',
+               'EditorID': 'TestSpell', 'FULL': 'Test', 'SPIT.Cost': '10',
+               'SPIT.Flags': '0', 'SPIT.Type': '0', 'EffectCount': '1',
+               'Effect[0].EFID': 'FIDG', 'Effect[0].Type': 'Target',
+               'Effect[0].Magnitude': '10', 'Effect[0].Area': '0',
+               'Effect[0].Duration': '0'}
+        spit = _find_subrecord(convert_SPEL(rec), b'SPIT')
+        cast_type = struct.unpack_from('<I', spit, 16)[0]
+        assert cast_type == 1  # Fire and Forget (2 = Concentration)
+
+    def test_sgst_scroll_has_effects_and_etyp(self):
+        # Sigil stones -> SCRL used to carry ZERO effects ("Magic Item has no
+        # effects defined", one per stone) and no equip type.
+        from tes5_import.record_types.equipment import convert_SGST
+        rec = {'Signature': 'SGST', 'FormID': '00001234', 'RecordFlags': '0',
+               'EditorID': 'TestSigil', 'FULL': 'Sigil Stone',
+               'DATA.Value': '100', 'DATA.Weight': '1.0', 'EffectCount': '1',
+               'Effect[0].EFID': 'SHLD', 'Effect[0].Type': 'Self',
+               'Effect[0].Magnitude': '10', 'Effect[0].Area': '0',
+               'Effect[0].Duration': '120'}
+        out = convert_SGST(rec)
+        assert _find_subrecord(out, b'EFID') is not None
+        assert struct.unpack('<I', _find_subrecord(out, b'ETYP'))[0] == 0x00013F44
+        spit = _find_subrecord(out, b'SPIT')
+        assert struct.unpack_from('<I', spit, 16)[0] == 3  # CastType Scroll
+
+    def test_aimed_ench_gets_projectile_mgef(self):
+        # An AIMED enchantment whose effects all map to projectile-less
+        # Alch* MGEFs fires NOTHING in game; the converter must synthesize an
+        # aimed MGEF clone with a projectile and swap it in.
+        from tes5_import import magic_effects
+        from tes5_import.record_types.equipment import convert_ENCH
+        magic_effects.set_tes4_effect_names([])   # reset cache
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        writer.next_object_id = 0x01100000
+        rec = {'Signature': 'ENCH', 'FormID': '00001234', 'RecordFlags': '0',
+               'EditorID': 'TestStaffEnch', 'FULL': 'Drain Staff',
+               'ENIT.Type': '1', 'ENIT.Charge': '100', 'ENIT.Cost': '10',
+               'ENIT.Flags': '0', 'EffectCount': '1',
+               'Effect[0].EFID': 'DRHE', 'Effect[0].Type': 'Target',
+               'Effect[0].Magnitude': '20', 'Effect[0].Area': '0',
+               'Effect[0].Duration': '0'}
+        out = convert_ENCH(rec, writer=writer)
+        efid = struct.unpack('<I', _find_subrecord(out, b'EFID'))[0]
+        assert efid != 0x0003EB42          # not plain AlchDamageHealth
+        mgefs = writer._top_groups.get('MGEF')
+        assert mgefs and len(mgefs) == 1
+        data = _find_subrecord(mgefs[0], b'DATA')
+        assert struct.unpack_from('<I', data, 0x48)[0] != 0   # projectile
+        assert struct.unpack_from('<I', data, 0x50)[0] == 1   # fire&forget
+        assert struct.unpack_from('<I', data, 0x54)[0] == 2   # aimed
+        # second conversion reuses the cached clone
+        convert_ENCH(rec, writer=writer)
+        assert len(writer._top_groups['MGEF']) == 1
+
+    def test_leveled_list_drops_null_entries(self):
+        rec = {'Signature': 'LVLI', 'FormID': '00001234', 'RecordFlags': '0',
+               'EditorID': 'TestList', 'LVLD.ChanceNone': '0',
+               'EntryCount': '3',
+               'Entry[0].Level': '1', 'Entry[0].FormID': '00000F00',
+               'Entry[0].Count': '-100',    # TES4 restock semantics
+               'Entry[1].Level': '5',       # missing FormID -> dropped
+               'Entry[2].Level': '10', 'Entry[2].FormID': '00000F01',
+               'Entry[2].Count': '2'}
+        out = convert_LVLI(rec)
+        llct = _find_subrecord(out, b'LLCT')
+        assert llct is not None and llct[0] == 2
+        lvlos = _find_all_subrecords(out, b'LVLO')
+        assert len(lvlos) == 2
+        for lvlo in lvlos:
+            level, fid, count = struct.unpack('<HxxIHxx', lvlo)
+            assert fid != 0
+            assert count >= 1
+
+    def test_container_negative_counts_normalized(self):
+        rec = {'Signature': 'CONT', 'FormID': '00001234', 'RecordFlags': '0',
+               'EditorID': 'TestChest', 'FULL': 'Chest',
+               'Item[0].FormID': '00000F00', 'Item[0].Count': '-100',
+               'Item[1].FormID': '00000F01', 'Item[1].Count': '0',
+               'DATA.Flags': '2', 'DATA.Weight': '0.0'}
+        out = convert_CONT(rec)
+        counts = [struct.unpack('<Ii', c)[1]
+                  for c in _find_all_subrecords(out, b'CNTO')]
+        assert counts == [100, 1]
+
+    def test_footstep_sets_exist_in_skyrim(self):
+        # The old Light/Clothing constants (0x24238/0x24237) were FormIDs
+        # that do not exist in Skyrim.esm at all.
+        from tes5_import.skyrim_overrides import (
+            CLOTHING_FOOTSTEP_SET, HEAVY_ARMOR_FOOTSTEP_SET,
+            LIGHT_ARMOR_FOOTSTEP_SET)
+        assert HEAVY_ARMOR_FOOTSTEP_SET == 0x00021487
+        assert LIGHT_ARMOR_FOOTSTEP_SET == 0x00021486
+        assert CLOTHING_FOOTSTEP_SET == 0x00021468
+
+    def test_dataless_mapmarker_ref_grounded_to_xmarker(self):
+        rec = {'Signature': 'REFR', 'FormID': '00001234', 'RecordFlags': '1024',
+               'NAME': '00000010', 'ParentWRLD': '0000003C',
+               'ParentCELL': '00023777',
+               'PosX': '0.0', 'PosY': '0.0', 'PosZ': '0.0',
+               'RotX': '0.0', 'RotY': '0.0', 'RotZ': '0.0'}
+        out = convert_REFR(rec)
+        name = struct.unpack('<I', _find_subrecord(out, b'NAME'))[0]
+        assert name == 0x0000003B   # XMarker, not a marker-data-less MapMarker
+
+    def test_doors_to_exteriors_never_claim_location(self):
+        # A city-gate/Oblivion-gate door leads OUT to an exterior; claiming
+        # the destination cell poisoned the worldspace's shared persistent
+        # dummy cell, giving EVERY persistent ref in Tamriel one gate's
+        # location ("Ref is not in its persistence location ..." x13, where
+        # the CK then hangs).
+        from tes5_import.locations import build_marker_locations
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        writer.next_object_id = 0x01100000
+        interior = {'Signature': 'CELL', 'FormID': '00000C01',
+                    'EditorID': 'TestInterior', 'DATA.Flags': '1'}
+        exterior = {'Signature': 'CELL', 'FormID': '00000C02',
+                    'EditorID': 'TestExterior', 'DATA.Flags': '2',
+                    'ParentWRLD': '00000A01'}
+        wrld = {'Signature': 'WRLD', 'FormID': '00000A01',
+                'EditorID': 'TestWorld', 'FULL': 'Test World'}
+        marker = {'Signature': 'REFR', 'FormID': '00000E01',
+                  'MapMarker': '1', 'MapMarker.FULL': 'Fort Test',
+                  'ParentWRLD': '00000A01', 'PosX': '100.0', 'PosY': '100.0'}
+        dest_int = {'Signature': 'REFR', 'FormID': '00000E02',
+                    'ParentCELL': '00000C01'}
+        dest_ext = {'Signature': 'REFR', 'FormID': '00000E03',
+                    'ParentCELL': '00000C02'}
+        door_to_int = {'Signature': 'REFR', 'FormID': '00000E04',
+                       'ParentWRLD': '00000A01', 'PosX': '150.0',
+                       'PosY': '100.0', 'XTEL.Door': '00000E02'}
+        door_to_ext = {'Signature': 'REFR', 'FormID': '00000E05',
+                       'ParentWRLD': '00000A01', 'PosX': '90.0',
+                       'PosY': '100.0', 'XTEL.Door': '00000E03'}
+        by_type = {'WRLD': [wrld], 'CELL': [interior, exterior],
+                   'REFR': [marker, dest_int, dest_ext,
+                            door_to_int, door_to_ext]}
+        cell_to_location, _grid, _world = build_marker_locations(
+            by_type, writer)
+        assert get_formid(interior, 'FormID') in cell_to_location
+        assert get_formid(exterior, 'FormID') not in cell_to_location
 
 
 if __name__ == '__main__':

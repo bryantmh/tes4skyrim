@@ -462,7 +462,11 @@ def convert_CONT(rec: dict) -> bytes:
         fid = get_formid(rec, f'Item[{i}].FormID')
         if not fid:
             break
-        count = get_int(rec, f'Item[{i}].Count', 1)
+        # TES4 merchant chests use NEGATIVE counts for restocking stock
+        # ("-100" = keep 100 for sale); Skyrim restocks via the respawn flag
+        # and treats count < 1 as "adds nothing" (CK: "Container object has a
+        # count of less then 1 ... will cause issues in game").
+        count = abs(get_int(rec, f'Item[{i}].Count', 1)) or 1
         extra += pack_subrecord('CNTO', struct.pack('<Ii', fid, count))
         i += 1
     # DATA: Flags(1) + Weight(4) = 5 bytes in TES4

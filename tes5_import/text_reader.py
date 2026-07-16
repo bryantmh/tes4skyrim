@@ -168,6 +168,15 @@ def get_float(record: dict, key: str, default: float = 0.0) -> float:
         return default
 
 
+# Engine-hardcoded FormIDs that exist in NO data file: references to them must
+# never be shifted to our load index, or they dangle (the CK's "Unable to find
+# Package Target Reference (01000014)" — 144 packages plus 5 quest aliases all
+# pointing at a remapped PlayerRef). Skyrim hardcodes the same ids. NOTE: most
+# other low ids (Tamriel WRLD 0x3C, gold MISC 0xF, Player NPC_ 0x7, ...) DO
+# exist as real records in Oblivion.esm and must keep remapping normally.
+_ENGINE_FIXED_FORMIDS = frozenset({0x14})   # PlayerRef
+
+
 def get_formid(record: dict, key: str, default: int = 0) -> int:
     """Get a FormID (hex string) as an integer, applying load order remapping."""
     val = record.get(key)
@@ -175,7 +184,8 @@ def get_formid(record: dict, key: str, default: int = 0) -> int:
         return default
     try:
         fid = int(val, 16)
-        if fid and _formid_index_offset:
+        if (fid and _formid_index_offset
+                and fid not in _ENGINE_FIXED_FORMIDS):
             # Shift high byte by offset (e.g., +1 when Skyrim.esm inserted at index 0)
             high = (fid >> 24) & 0xFF
             fid = ((high + _formid_index_offset) << 24) | (fid & 0x00FFFFFF)

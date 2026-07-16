@@ -306,6 +306,51 @@ Playable Oblivion races map directly to Skyrim equivalents by EditorID:
 - **TES5 INGR ENIT is 8 bytes** (s32 value + u32 flags), NOT the 20-byte ALCH
   layout (xEdit wbDefinitionsTES5 INGR).
 
+### CK-warning sweep learnings (fixed 2026-07-16)
+- **AIMED magic needs a projectile effect**: an aimed ENCH/SPEL/SCRL whose
+  effects all resolve to projectile-less Alch* MGEFs casts NOTHING in game
+  (CK: "is AIMED but has no Magic Effects with Projectiles assigned", 369x).
+  Skyrim ships no aimed variants of plain value modifiers, so
+  `tes5_import/magic_effects.py` synthesizes a companion MGEF per (vanilla
+  effect, TES4 code): clone of the vanilla 152-byte DATA (baked in
+  `vanilla_mgef_data.py`, regen with `tools/gen_vanilla_mgef_table.py`),
+  patched to CastType=FF(1)/Delivery=Aimed(2) + a projectile (spectral arrow
+  for hostile, sunfire for beneficial), swapped in for the first effect.
+  MGEF DATA offsets: archetype 0x40, AV 0x44, projectile 0x48, cast 0x50,
+  delivery 0x54, counter-count 0x14 (zero it — clones carry no ESCE).
+- **SPEL/SCRL SPIT CastType**: wbCastEnum 0=Constant, **1=Fire and Forget**,
+  2=Concentration, 3=Scroll. `convert_SPEL` used to write 2 → every spell was
+  a Concentration cast. Scrolls (SGST→SCRL) use 3 and need ETYP EitherHand
+  (0x13F44) + effects (they had none).
+- **TES4 negative inventory/leveled counts** mean merchant restock stock;
+  Skyrim treats count<1 as "adds nothing" → normalize with abs() (CONT/NPC_
+  CNTO and LVLO alike).
+- **8-byte LVLO**: the Count+pad tail of TES4 LVLO is optional (xEdit
+  wbStructExSK optional-from-element-3). 8 bytes = Level(2)+pad(2)+FormID(4),
+  Count defaults 1. The exporter must emit these or leveled entries import
+  as null FormIDs.
+- **Footstep sets**: FSTArmorLightFootstepSet=0x21486,
+  FSTBarefootFootstepSet=0x21468 (the old 0x24238/0x24237 don't exist in
+  Skyrim.esm).
+- **Generated RACE VTCK must fill both gender slots** (vanilla DogRace:
+  CrDogVoice x2) or the CK logs missing-voice-type per race.
+- **Top-level group order**: LCTN must come AFTER CELL/WRLD/QUST (vanilla:
+  `... NAVI CELL WRLD DIAL QUST ... LCTN ... DLBR DLVW`) — the CK resolves
+  LCEC worldspaces + MNAM markers when the LCTN group loads.
+- **Door-linked locations may only claim INTERIOR cells** — a gate door leads
+  OUT to an exterior, and a worldspace keeps every persistent ref in one
+  dummy cell, so one exterior entry hands its location to every persistent
+  ref in the worldspace (the "Ref is not in its persistence location" spam /
+  CK hang).
+- **PlayerRef 0x14 never remaps** (`_ENGINE_FIXED_FORMIDS` in text_reader) —
+  but it is the ONLY such id: ~195 real Oblivion.esm records live below
+  0x800 (Tamriel 0x3C, gold 0xF, Player NPC_ 0x7, marker STATs, DIALs) and
+  must keep remapping.
+- **Zero-INFO topics are never emitted** (~856 placeholder DIALs in
+  Oblivion.esm → CK "Orphaned topic" each); TCLT choices into them are
+  dropped too.
+- Verify all of the above against a build with `tools/verify_ck_fixes.py`.
+
 ### CELL Conversion
 - **Remove Oblivion Interior Flag**: Clear bit $08 from DATA flags on interior cells
 - **Clear Hand Changed Flag**: Clear bit $40 from DATA flags

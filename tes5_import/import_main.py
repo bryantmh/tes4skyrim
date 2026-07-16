@@ -21,6 +21,7 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 from .constants import IMPORT_DISPATCH, SKIP_TYPES, TYPE_MAP
+from .magic_effects import set_tes4_effect_names
 from .dialog_converter import (
     build_dialog_groups,
     build_npc_to_vtyp_map,
@@ -195,6 +196,10 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     file_index = num_new_masters  # Our file's index in the TES5 master list
     # Start well above the highest FormID to avoid collision with companion records
     writer.next_object_id = (file_index << 24) | (max_formid + 0x1000)
+
+    # Register TES4 effect display names so synthesized aimed MGEF clones can
+    # be named what Oblivion called them (see tes5_import/magic_effects.py).
+    set_tes4_effect_names(by_type.get('MGEF', []))
 
     # --- Phase 0: Create custom VTYP records for voice types not in Skyrim.esm ---
     _create_vtyp_records(writer)
@@ -398,7 +403,8 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         simple_types.add(sig)
 
     # Types that need the writer passed in (for companion record generation)
-    _WRITER_TYPES = {'ARMO', 'CLOT', 'WEAP', 'AMMO', 'NPC_', 'CREA', 'BOOK'}
+    _WRITER_TYPES = {'ARMO', 'CLOT', 'WEAP', 'AMMO', 'NPC_', 'CREA', 'BOOK',
+                     'ENCH', 'SPEL', 'SGST'}
 
     converted = 0
     errors = 0
@@ -552,6 +558,8 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map, unlock_plan=unlock_plan, unlock_globals=unlock_globals, script_vars=_script_vars)
     sge_quest_fids |= dialog_sge_fids
     _write_voice_map(output_path, voice_map)
+    from .dialog_converter import get_lip_texts
+    _write_lip_text(output_path, get_lip_texts())
 
     t3 = time.time()
     print(f"\nConverted {converted} records ({errors} errors) in {t3-t2:.2f}s")
@@ -590,6 +598,30 @@ def _write_voice_map(output_path: str, voice_map: dict):
         for fid in sorted(voice_map):
             f.write(f'{fid:06X}={voice_map[fid]}\n')
     print(f"  Wrote {map_path} ({len(voice_map)} voice filename prefixes)")
+
+
+def _write_lip_text(output_path: str, lip_texts: dict):
+    """Write the {(info_fid24, resp_num): spoken text} map next to the ESM.
+
+    The audio pipeline pairs each voice WAV with its transcript and runs the
+    Creation Kit's LipGenerator to produce the .lip sync track, packing both
+    into a .fuz (SSE only reads lip data from .fuz containers).
+
+    Format: one line per response — `<fid24 hex6>_<resp_num>=<text>` with
+    backslash escapes for \\ \n \r \t (same scheme as the text export).
+    """
+    if not lip_texts:
+        return
+    map_path = output_path + '.liptext.txt'
+    with open(map_path, 'w', encoding='utf-8') as f:
+        f.write('# InfoFormID(low24,hex)_ResponseNumber=spoken text '
+                '(for .lip generation; escapes: \\\\ \\n \\r \\t)\n')
+        for (fid, num) in sorted(lip_texts):
+            text = (lip_texts[(fid, num)]
+                    .replace('\\', '\\\\').replace('\n', '\\n')
+                    .replace('\r', '\\r').replace('\t', '\\t'))
+            f.write(f'{fid:06X}_{num}={text}\n')
+    print(f"  Wrote {map_path} ({len(lip_texts)} response transcripts)")
 
 
 def _write_seq_file(output_path: str, sge_quest_fids: set):

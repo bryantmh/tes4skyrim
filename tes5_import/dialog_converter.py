@@ -74,6 +74,26 @@ from .dialog_conditions import (
 
 _PLAYER_FORMID = 0x14
 
+# Remapped FormIDs of TES4 topics that have NO INFOs at all (Oblivion.esm
+# ships ~850 such placeholder shells). Oblivion never displays a topic without
+# a valid INFO, so emitting them gives Skyrim dead DIALs that the CK reports
+# as "Orphaned topic ... in quest TES4DialogueGeneric" (one warning each).
+# Populated per build_dialog_groups run; convert_INFO drops choice links into
+# the set so no TCLT dangles.
+_EMPTY_DIAL_FIDS: set = set()
+
+# (info_fid24, response_number) -> spoken text, collected alongside the
+# voicemap so the audio pipeline can generate .lip files (LipGenerator needs
+# the WAV *and* the transcript). Cleared per build_dialog_groups run; drained
+# by import_main._write_lip_text via get_lip_texts().
+_lip_texts: dict = {}
+
+
+def get_lip_texts() -> dict:
+    """Return the {(info_fid24, resp_num): text} map from the last
+    build_dialog_groups run."""
+    return _lip_texts
+
 # TES4 DIAL.Type enum
 DIAL_TYPE_TOPIC = 0
 DIAL_TYPE_CONVERSATION = 1
@@ -886,11 +906,15 @@ def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
     # that point at a CONVERSATION topic (the vanilla greeting→CUST-response
     # pattern); a choice that points at another bark is dropped, because barks
     # are split/merged by (quest, subtype) in the bark pass and the link would
-    # dangle at a sub-topic that no longer exists under that FormID.
+    # dangle at a sub-topic that no longer exists under that FormID. Choices
+    # into a zero-INFO topic are dropped too — those topics are never emitted
+    # (see _EMPTY_DIAL_FIDS) and Oblivion never showed them either.
     def _keep_choice(cfid: int) -> bool:
         if not cfid:
             return False
         if bark_dial_fids is not None and cfid in bark_dial_fids:
+            return False
+        if cfid in _EMPTY_DIAL_FIDS:
             return False
         return True
 
@@ -1093,6 +1117,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     Skyrim engine will look them up (owning quest EDID + topic EDID).
     """
 
+    _lip_texts.clear()
     dials = by_type.get('DIAL', [])
     infos = by_type.get('INFO', [])
     if not dials:
@@ -1171,6 +1196,16 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     info_by_dial = defaultdict(list)
     for rec in infos:
         info_by_dial[get_formid(rec, 'ParentDIAL')].append(rec)
+
+    # Zero-INFO placeholder topics are never emitted (nor linked to via TCLT):
+    # a topic with no INFO can never be shown in Oblivion, and in Skyrim each
+    # would be a dead DIAL the CK flags as an orphaned topic. Service-menu
+    # topics are exempt — they synthesize a fallback INFO at build time.
+    _EMPTY_DIAL_FIDS.clear()
+    _EMPTY_DIAL_FIDS.update(
+        get_formid(d, 'FormID') for d in dials
+        if not info_by_dial.get(get_formid(d, 'FormID'))
+        and not service_menu_kind(d))
 
     tclt_targets = collect_tclt_target_fids(by_type)
     # Remapped FormIDs of every bark DIAL (greetings + combat/detection/misc
@@ -1278,6 +1313,9 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
 
     for dial_rec in dials:
         if should_skip_dial(dial_rec):
+            stats['skipped'] += 1
+            continue
+        if get_formid(dial_rec, 'FormID') in _EMPTY_DIAL_FIDS:
             stats['skipped'] += 1
             continue
         # Bark topics (greetings, combat/detection barks) are emitted by the
@@ -1411,21 +1449,22 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
     # Service-menu topics (Barter/Training): the Oblivion NPC lines become the
     # responses of a player-selectable topic whose prompt is synthesized and
     # whose INFOs open the Skyrim menu (fragment) — gated so the topic only
-    # shows on NPCs that actually offer the service. Gate: barter -> member of
-    # any synthesized vendor faction; training -> the trainer faction.
+    # shows on NPCs that actually offer the service. Gate: barter -> the
+    # merchant marker faction; training -> the trainer faction. ONE condition
+    # either way: a Barter gate that OR-chained every vendor faction put 25-30
+    # CTDAs on each INFO, past anything vanilla ships (max 22, max OR-run 20),
+    # and the engine silently dropped every gated line — merchants lost the
+    # topic while 1-condition Training kept working.
     service_kind = service_menu_kind(dial_rec)
     service_gate_bytes = b''
     if service_kind:
-        from .record_types.actors import (get_trainer_faction_fid,
-                                          get_vendor_faction_fids)
-        if service_kind == 'barter':
-            service_gate_bytes = build_or_chain(FUNC_GET_IN_FACTION,
-                                                get_vendor_faction_fids())
-        else:
-            tf = get_trainer_faction_fid()
-            if tf:
-                service_gate_bytes = pack_subrecord('CTDA', build_ctda(
-                    FUNC_GET_IN_FACTION, param1=tf))
+        from .record_types.actors import (get_merchant_faction_fid,
+                                          get_trainer_faction_fid)
+        gate_fid = (get_merchant_faction_fid() if service_kind == 'barter'
+                    else get_trainer_faction_fid())
+        if gate_fid:
+            service_gate_bytes = pack_subrecord('CTDA', build_ctda(
+                FUNC_GET_IN_FACTION, param1=gate_fid))
         if not service_gate_bytes:
             # No vendors/trainers exist in this file — drop the topic rather
             # than offer it ungated to every NPC.
@@ -1626,6 +1665,15 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
                 info_fid = get_formid(info_rec, 'FormID')
                 prefix = voice_file_prefix(
                     ctx['quest_edid_by_fid'].get(owner_qfid, ''), ctx['edid'])
+                # Response transcripts, keyed the way the voice FILENAME is
+                # (fid24 + response number): LipGenerator pairs each WAV with
+                # its spoken text to produce the .lip sync track.
+                for ri in range(get_int(info_rec, 'ResponseCount')):
+                    rtext = get_str(info_rec, f'Response[{ri}].ResponseText')
+                    rnum = (get_int(info_rec, f'Response[{ri}].ResponseNumber')
+                            or (ri + 1))
+                    if rtext:
+                        _lip_texts[(info_fid & 0xFFFFFF, rnum)] = rtext
                 # Target voice-type folders. An NPC-specific line (GetIsID) is
                 # voiced by that NPC's assigned VTYP, which is NOT always the
                 # folder Oblivion filed the recording under (Arvena Thelas is a

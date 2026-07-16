@@ -28,8 +28,9 @@ This is a full data-conversion pipeline. It takes an Oblivion `.esm`/`.esp` (plu
 - **Dialogue & quests** — `DIAL`/`INFO`/`QUST` converted into Skyrim's branch/voice-type architecture (`DLBR`, `DLVW`, `VTYP`), including voice-file renaming, topic/quest restructuring so NPCs greet and respond correctly, and barter/training menu hookup. Like everything else, it's still a work in progress.
 - **Scripts** — Oblivion scripts are transpiled to Papyrus (`.psc`) source and compiled,
   which combined with the dialogue work means some quests are already partially playable.
-- **Sounds** — Voice and sound files are converted (via ffmpeg + xWMAEncode). Expect the
-  occasional silent line, and lip-syncing isn't implemented yet.
+- **Sounds** — Voice and sound files are converted (via ffmpeg + xWMAEncode), and lip-sync
+  tracks are generated for every transcribed line using the Creation Kit's LipGenerator
+  (voice ships as `.fuz`). Expect the occasional silent line.
 
 In short, this project aims to be nothing less than a complete, faithful Oblivion→Skyrim
 conversion, and it's getting closer all the time. Contributions are very welcome — see

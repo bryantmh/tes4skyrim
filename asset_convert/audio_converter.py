@@ -1,8 +1,13 @@
-"""Audio conversion: MP3/WAV → XWM (Skyrim xWMA format).
+"""Audio conversion: MP3/WAV → XWM/FUZ (Skyrim voice formats) + lip sync.
 
-Two-stage pipeline:
+Pipeline per voice line:
   1. ffmpeg: MP3 → WAV (PCM, mono, 44100 Hz)
-  2. xWMAEncode.exe: WAV → XWM (proper Microsoft xWMA format)
+  2. LipGenerator.exe (ships with the SSE Creation Kit): WAV + transcript
+     → .lip FaceFX sync track. The transcript comes from the importer's
+     `<esm>.liptext.txt` (INFO response text keyed by fid24 + response num).
+  3. xWMAEncode.exe: WAV → XWM (proper Microsoft xWMA format)
+  4. lip + xwm packed into a .fuz container — SSE only reads lip data from
+     .fuz, loose .lip files are ignored. Lines with no transcript stay .xwm.
 
 Handles two operations:
   convert_sounds()       – Parallel batch conversion of all extracted sounds.
@@ -10,12 +15,17 @@ Handles two operations:
 
 xWMAEncode.exe is a Microsoft DirectX SDK utility. It must be placed in
 external/xwmaencode/ or on PATH. See README for download instructions.
+LipGenerator.exe is auto-detected from the SSE install
+(Tools/LipGen/LipGenerator/) — it must sit next to its FonixData.cdf.
 
 All conversion is multithreaded: one worker per file in ThreadPoolExecutor.
+Each job gets its own temp directory because LipGenerator writes a
+tmp16khz.wav scratch file into its working directory.
 """
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -82,72 +92,173 @@ def find_xwmaencode(search_dir: 'str | None' = None) -> 'str | None':
     return None
 
 
+def find_lipgenerator(search_dir: 'str | None' = None) -> 'str | None':
+    """Return the path to LipGenerator.exe (SSE Creation Kit lip-sync tool).
+
+    Search order:
+      1. Explicit search_dir (if provided)
+      2. external/lipgen/ under the project root
+      3. <SSE install>/Tools/LipGen/LipGenerator/ (via registry)
+
+    The exe reads FonixData.cdf from its own directory, so it must be found
+    in place (or copied together with the .cdf).
+    """
+    candidates = []
+    if search_dir:
+        candidates.append(Path(search_dir) / 'LipGenerator.exe')
+    project_root = Path(__file__).resolve().parent.parent
+    candidates.append(project_root / 'external' / 'lipgen' / 'LipGenerator.exe')
+    try:
+        import winreg
+        for subkey in (r'SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition',
+                       r'SOFTWARE\Bethesda Softworks\Skyrim Special Edition'):
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, subkey) as key:
+                    install, _ = winreg.QueryValueEx(key, 'Installed Path')
+                candidates.append(Path(install) / 'Tools' / 'LipGen'
+                                  / 'LipGenerator' / 'LipGenerator.exe')
+            except (FileNotFoundError, OSError):
+                continue
+    except ImportError:
+        pass
+    for cand in candidates:
+        if cand.is_file():
+            return str(cand)
+    return None
+
+
+def generate_lip(lipgenerator: str, wav_path, text: str,
+                 timeout: int = 120) -> 'bytes | None':
+    """Run LipGenerator on a WAV + transcript; return the .lip bytes or None.
+
+    LipGenerator resamples internally (writes tmp16khz.wav into its CWD), so
+    the process cwd is set to the WAV's own directory — callers must give
+    each parallel job a private directory. Output is <wav basename>.lip
+    next to the input.
+    """
+    wav_path = Path(wav_path)
+    # The transcript is a single command-line argument; newlines/tabs never
+    # help phoneme alignment and double quotes break list2cmdline round-trip.
+    clean = ' '.join(text.replace('"', "'").split())
+    if not clean:
+        return None
+    try:
+        r = subprocess.run(
+            [lipgenerator, wav_path.name, clean],
+            cwd=str(wav_path.parent),
+            capture_output=True, timeout=timeout,
+            **POPEN_FLAGS,
+        )
+        if r.returncode != 0:
+            return None
+        lip_path = wav_path.with_suffix('.lip')
+        if lip_path.is_file() and lip_path.stat().st_size > 0:
+            return lip_path.read_bytes()
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def pack_fuz(lip_bytes: bytes, audio_bytes: bytes) -> bytes:
+    """Pack lip-sync data + xWMA audio into a Skyrim .fuz container.
+
+    Layout: 'FUZE' magic, u32 version (1), u32 lip size, lip data, audio.
+    """
+    return (b'FUZE' + struct.pack('<II', 1, len(lip_bytes))
+            + lip_bytes + audio_bytes)
+
+
 def convert_file_to_xwm(src_path, dst_path, ffmpeg: str,
-                         xwmaencode: 'str | None' = None) -> bool:
-    """Convert a single audio file to XWM.
+                         xwmaencode: 'str | None' = None,
+                         lipgenerator: 'str | None' = None,
+                         lip_text: 'str | None' = None) -> bool:
+    """Convert a single audio file to XWM — or, with a transcript, to FUZ.
 
-    Two-stage process (when xWMAEncode is available):
-      1. ffmpeg: source → WAV (PCM mono 44100 Hz)
-      2. xWMAEncode: WAV → XWM (proper Microsoft xWMA format)
-
-    Fallback (xWMAEncode missing): ffmpeg wmav2 ASF container (may not play
-    correctly in all Skyrim versions).
+    Stages (xWMAEncode required; there is no ASF fallback):
+      1. ffmpeg: source → WAV (PCM mono 44100 Hz) in a private temp dir
+      2. LipGenerator: WAV + lip_text → .lip  (only when dst is .fuz)
+      3. xWMAEncode: WAV → XWM
+      4. dst .fuz: FUZE container (lip + xwm); dst .xwm: the xwm itself.
+         If lip generation fails, the audio is preserved as .xwm next to
+         the intended .fuz.
 
     Args:
-        src_path:     Source audio file (.mp3, .wav, or any ffmpeg-readable format).
-        dst_path:     Destination path (.xwm extension expected).
-        ffmpeg:       Path to the ffmpeg executable.
-        xwmaencode:   Path to xWMAEncode.exe (None = fallback to ffmpeg-only).
+        src_path:      Source audio (.mp3/.wav or any ffmpeg-readable format).
+        dst_path:      Destination path (.xwm, or .fuz for voice+lip).
+        ffmpeg:        Path to the ffmpeg executable.
+        xwmaencode:    Path to xWMAEncode.exe (None = failure).
+        lipgenerator:  Path to LipGenerator.exe (needed for .fuz output).
+        lip_text:      Spoken transcript for lip sync (needed for .fuz).
 
     Returns:
-        True if conversion produced a non-empty .xwm file, False on any failure.
+        True if a non-empty output file was produced, False on any failure.
     """
     src_path = Path(src_path)
     dst_path = Path(dst_path)
     dst_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if xwmaencode:
-        # Two-stage: ffmpeg → WAV → xWMAEncode → XWM
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
-            wav_path = tmp.name
-        try:
-            # Stage 1: ffmpeg → WAV
-            cmd_wav = [
-                ffmpeg,
-                '-y',
-                '-i', str(src_path),
-                '-ac', '1',             # mono
-                '-ar', '44100',         # 44.1 kHz
-                '-c:a', 'pcm_s16le',   # 16-bit PCM
-                str(wav_path),
-            ]
-            r1 = subprocess.run(cmd_wav, capture_output=True, timeout=60,
-                                **POPEN_FLAGS)
-            if r1.returncode != 0 or not os.path.isfile(wav_path):
-                return False
-
-            # Stage 2: xWMAEncode → XWM
-            cmd_xwm = [
-                xwmaencode,
-                '-b', '48000',          # 48 kbps (good balance for voice)
-                str(wav_path),
-                str(dst_path),
-            ]
-            r2 = subprocess.run(cmd_xwm, capture_output=True, timeout=60,
-                                **POPEN_FLAGS)
-            return (r2.returncode == 0
-                    and dst_path.is_file()
-                    and dst_path.stat().st_size > 0)
-        except (subprocess.TimeoutExpired, OSError):
-            return False
-        finally:
-            try:
-                os.unlink(wav_path)
-            except OSError:
-                pass
-    else:
+    if not xwmaencode:
         # xWMAEncode not available — cannot produce proper xWMA
         return False
+
+    # Private temp dir per job: LipGenerator writes tmp16khz.wav into its CWD.
+    tmp_dir = Path(tempfile.mkdtemp(prefix='voice_'))
+    wav_path = tmp_dir / 'voice.wav'
+    xwm_path = tmp_dir / 'voice.xwm'
+    try:
+        # Stage 1: ffmpeg → WAV
+        cmd_wav = [
+            ffmpeg,
+            '-y',
+            '-i', str(src_path),
+            '-ac', '1',             # mono
+            '-ar', '44100',         # 44.1 kHz
+            '-c:a', 'pcm_s16le',   # 16-bit PCM
+            str(wav_path),
+        ]
+        r1 = subprocess.run(cmd_wav, capture_output=True, timeout=60,
+                            **POPEN_FLAGS)
+        if r1.returncode != 0 or not wav_path.is_file():
+            return False
+
+        # Stage 2: lip sync track (only meaningful for .fuz destinations)
+        lip_bytes = None
+        if dst_path.suffix.lower() == '.fuz' and lipgenerator and lip_text:
+            lip_bytes = generate_lip(lipgenerator, wav_path, lip_text)
+
+        # Stage 3: xWMAEncode → XWM
+        cmd_xwm = [
+            xwmaencode,
+            '-b', '48000',          # 48 kbps (good balance for voice)
+            str(wav_path),
+            str(xwm_path),
+        ]
+        r2 = subprocess.run(cmd_xwm, capture_output=True, timeout=60,
+                            **POPEN_FLAGS)
+        if (r2.returncode != 0 or not xwm_path.is_file()
+                or xwm_path.stat().st_size == 0):
+            return False
+
+        # Stage 4: write destination
+        if dst_path.suffix.lower() == '.fuz':
+            if lip_bytes:
+                dst_path.write_bytes(pack_fuz(lip_bytes, xwm_path.read_bytes()))
+                # A pre-lip-sync run may have left the same line as .xwm;
+                # remove it so the engine unambiguously picks the .fuz.
+                stale = dst_path.with_suffix('.xwm')
+                if stale.exists():
+                    stale.unlink()
+            else:
+                # No lip track — keep the audio playable as a bare .xwm
+                dst_path = dst_path.with_suffix('.xwm')
+                shutil.copyfile(xwm_path, dst_path)
+        else:
+            shutil.copyfile(xwm_path, dst_path)
+        return dst_path.is_file() and dst_path.stat().st_size > 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +320,7 @@ def convert_sounds(
         ffmpeg_path=ffmpeg_path,
         formid_index=formid_index,
         voice_map=find_voice_map(output_dir, source_name),
+        lip_text=find_lip_text(output_dir, source_name),
     )
 
     # ── Non-voice sounds: copy as-is (Skyrim SE plays MP3/WAV/XWM natively) ──
@@ -341,6 +453,43 @@ def find_voice_map(output_dir, source_name) -> 'dict | None':
     return None
 
 
+def load_lip_text(map_path) -> dict:
+    """Load the importer's `<esm>.liptext.txt`.
+
+    Returns {(info_fid24, resp_num): spoken text}. Lines are
+    `<fid24 hex>_<resp_num>=<text>` with backslash escapes (\\ \n \r \t).
+    """
+    lip_text = {}
+    with open(map_path, encoding='utf-8') as f:
+        for line in f:
+            line = line.rstrip('\n')
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, text = line.split('=', 1)
+            if '_' not in key:
+                continue
+            fid_hex, _, num = key.rpartition('_')
+            try:
+                fid24 = int(fid_hex, 16) & 0xFFFFFF
+                resp_num = int(num)
+            except ValueError:
+                continue
+            text = (text.replace('\\\\', '\x00').replace('\\n', '\n')
+                    .replace('\\r', '\r').replace('\\t', '\t')
+                    .replace('\x00', '\\'))
+            lip_text[(fid24, resp_num)] = text
+    return lip_text
+
+
+def find_lip_text(output_dir, source_name) -> 'dict | None':
+    """Locate and load the lip transcript map written next to the converted
+    ESM (output/<plugin>/<plugin>.liptext.txt), if present."""
+    map_path = Path(output_dir) / source_name / (source_name + '.liptext.txt')
+    if map_path.exists():
+        return load_lip_text(map_path)
+    return None
+
+
 def organize_voice_files(
     source_dir,
     dest_dir,
@@ -351,22 +500,25 @@ def organize_voice_files(
     formid_index: int = 1,
     xwmaencode_path: 'str | None' = None,
     voice_map: 'dict | str | None' = None,
+    lip_text: 'dict | str | None' = None,
+    lipgenerator_path: 'str | None' = None,
 ) -> dict:
     """Reorganise extracted TES4 voice files into TES5 directory layout.
 
     TES4 layout: <source_dir>/sound/Voice/<plugin>/<Race>/<Gender>/<topic>_<infoFID>_<idx>.mp3
-    TES5 layout: <dest_dir>/Sound/Voice/<plugin>/<VoiceType>/<infoFID_shifted>_<idx>.xwm
+    TES5 layout: <dest_dir>/Sound/Voice/<plugin>/<VoiceType>/<infoFID_shifted>_<idx>.fuz
 
-    When ``convert_audio=True`` (default) each MP3/WAV is converted to XWM
-    using a 2-stage pipeline: ffmpeg → WAV → xWMAEncode → XWM.
-    Falls back to ffmpeg-only ASF if xWMAEncode is not available.
+    When ``convert_audio=True`` (default) each MP3/WAV is converted with
+    ffmpeg → WAV → xWMAEncode → XWM; lines with a transcript additionally get
+    a LipGenerator .lip track and are packed lip+xwm into a .fuz (SSE reads
+    lip data only from .fuz). Lines without a transcript stay bare .xwm.
 
     Args:
         source_dir:       Root extracted asset directory (contains 'sound/' subfolder).
         dest_dir:         Root output directory for organised files.
         plugin_name:      Override the plugin folder name (auto-detected from BSA path).
         copy:             If True (default), copy files; if False, move source files.
-        convert_audio:    Convert MP3/WAV → XWM (default True).
+        convert_audio:    Convert MP3/WAV → XWM/FUZ (default True).
         ffmpeg_path:      Path to ffmpeg executable (default 'ffmpeg').
         formid_index:     Load-order index byte for the plugin (default 1).
         xwmaencode_path:  Path to xWMAEncode.exe (auto-detected if None).
@@ -377,6 +529,10 @@ def organize_voice_files(
                           them. Without it the Oblivion prefix is kept, which
                           only resolves when the EditorIDs and truncation
                           happen to match.
+        lip_text:         {(info_fid24, resp_num): text} dict or path to the
+                          importer's `<esm>.liptext.txt`. Enables .lip
+                          generation (requires LipGenerator.exe).
+        lipgenerator_path: Path to LipGenerator.exe (auto-detected if None).
 
     Returns:
         dict with keys: organized, skipped, no_match, errors, unmapped_races.
@@ -395,6 +551,8 @@ def organize_voice_files(
         print('  WARNING: no voice map — keeping Oblivion filename prefixes; '
               'lines whose quest/topic EditorIDs were truncated differently '
               'will not play')
+    if isinstance(lip_text, (str, Path)):
+        lip_text = load_lip_text(lip_text)
 
     voice_root = source_dir / 'sound' / 'Voice'
     if not voice_root.exists():
@@ -404,6 +562,7 @@ def organize_voice_files(
 
     ffmpeg = None
     xwmaencode = None
+    lipgenerator = None
     if convert_audio:
         ffmpeg = find_ffmpeg(ffmpeg_path)
         if not ffmpeg:
@@ -417,6 +576,14 @@ def organize_voice_files(
         else:
             print('  WARNING: xWMAEncode.exe not found -- falling back to ffmpeg ASF container')
             print('           Voice audio may not play in Skyrim! See README for xWMAEncode setup.')
+        if lip_text:
+            lipgenerator = lipgenerator_path or find_lipgenerator()
+            if lipgenerator:
+                print(f'  LipGenerator found -- generating .lip sync tracks, '
+                      f'packing voice as .fuz ({len(lip_text)} transcripts)')
+            else:
+                print('  WARNING: LipGenerator.exe not found (SSE Tools/LipGen) '
+                      '-- voice converts without lip sync (.xwm only)')
 
     stats = {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0}
     unmapped_races: set = set()
@@ -475,8 +642,15 @@ def organize_voice_files(
                         entry = voice_map.get(fid24)
                         if entry is not None:
                             prefix, target_vtyps = entry
-                    dst_ext = ('xwm' if ffmpeg and src_ext in ('mp3', 'wav')
-                               else src_ext)
+                    # Transcript available + LipGenerator → lip-synced .fuz;
+                    # otherwise bare .xwm (audio only, mouth won't move).
+                    text = None
+                    if ffmpeg and src_ext in ('mp3', 'wav'):
+                        if lipgenerator and lip_text:
+                            text = lip_text.get((fid24, int(resp_idx)))
+                        dst_ext = 'fuz' if text else 'xwm'
+                    else:
+                        dst_ext = src_ext
                     dst_name = f'{prefix}_{fid24:08x}_{resp_idx}.{dst_ext}'.lower()
 
                     # NPC-specific line: the engine reads it from the speaker's
@@ -493,7 +667,7 @@ def organize_voice_files(
                         if dst_path.exists():
                             stats['skipped'] += 1
                             continue
-                        conversion_jobs.append((audio_file, dst_path))
+                        conversion_jobs.append((audio_file, dst_path, text))
 
     if not conversion_jobs:
         if unmapped_races:
@@ -507,11 +681,12 @@ def organize_voice_files(
     print(f'  Processing {len(conversion_jobs)} voice files ({_WORKER_COUNT} workers)...')
 
     def _process_one(job):
-        src_path, dst_path = job
+        src_path, dst_path, text = job
         try:
-            if ffmpeg and dst_path.suffix == '.xwm':
-                return 'ok' if convert_file_to_xwm(src_path, dst_path, ffmpeg,
-                                                    xwmaencode=xwmaencode) else 'error'
+            if ffmpeg and dst_path.suffix in ('.xwm', '.fuz'):
+                return 'ok' if convert_file_to_xwm(
+                    src_path, dst_path, ffmpeg, xwmaencode=xwmaencode,
+                    lipgenerator=lipgenerator, lip_text=text) else 'error'
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             if copy:
                 shutil.copy2(src_path, dst_path)
@@ -530,7 +705,7 @@ def organize_voice_files(
             elif result == 'error':
                 stats['errors'] += 1
                 if stats['errors'] <= 5:
-                    src, _ = futures[fut]
+                    src = futures[fut][0]
                     print(f'    ERROR: ffmpeg failed on {src.name}')
             elif result.startswith('exception:'):
                 stats['errors'] += 1

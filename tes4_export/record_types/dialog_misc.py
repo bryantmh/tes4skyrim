@@ -481,15 +481,23 @@ def export_LSCR(rec: Record) -> list:
 
 
 def _emit_leveled_entries(lines: list, rec: Record, sig: str = "LVLO"):
-    """Emit entries for leveled lists."""
+    """Emit entries for leveled lists.
+
+    LVLO is Level(s16) + Unused(2) + FormID(4) + Count(s16) + Unused(2), but
+    the Count/pad tail is OPTIONAL (xEdit wbStructExSK optional-from-element
+    3): Oblivion.esm ships 8-byte LVLOs (e.g. Dark03RewardDagger) whose count
+    defaults to 1. Skipping them exported EntryCount without the entries and
+    the import wrote null (00000000) leveled entries.
+    """
     lvlos = get_all_subrecords(rec, sig)
     lines.append(f"EntryCount={len(lvlos)}")
     for i, lvlo in enumerate(lvlos):
-        if len(lvlo.data) >= 12:
-            d = lvlo.data
+        d = lvlo.data
+        if len(d) >= 8:
             lines.append(f"Entry[{i}].Level={struct.unpack_from('<H', d, 0)[0]}")
             lines.append(f"Entry[{i}].FormID={get_formid_str(struct.unpack_from('<I', d, 4)[0])}")
-            lines.append(f"Entry[{i}].Count={struct.unpack_from('<H', d, 8)[0]}")
+            count = struct.unpack_from('<h', d, 8)[0] if len(d) >= 10 else 1
+            lines.append(f"Entry[{i}].Count={count}")
 
 
 def export_LVLI(rec: Record) -> list:

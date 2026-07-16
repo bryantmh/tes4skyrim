@@ -12,9 +12,13 @@ TES4 face data available per NPC_:
 TES5 face subrecords emitted (by the functions in this module):
   PNAM[]  — Head parts array: hair HDPT (from HNAM.Hair) + eyes HDPT
   FTST    — Head texture set TXST FormID (race+gender table, Skyrim.esm)
-  QNAM    — Texture lighting: white (1,1,1) — race FTST encodes skin color
+  QNAM    — Texture lighting: the NPC's effective skin color as 3 floats
+             (must match the skin-tone tint layer or face and body diverge)
   NAM9    — Face morphs: 19 floats mapped from Oblivion FGGS PCA coefficients
   NAMA    — Face part preset indices: (0, 0, 0, 0)  (nose, ?, eyes, mouth)
+  TINI/TINC/TINV/TIAS — the race's Skin Tone tint layer.  The engine colors
+             the BODY skin from this layer; an NPC without one renders with
+             untinted (pale white) body skin regardless of race.
 
 Hair PNAM note:
   Oblivion HAIR records are converted to Skyrim HDPT records (Type=3/Hair) by
@@ -102,6 +106,98 @@ _RACE_HEAD_TXST: dict[str, dict[str, int]] = {
     # Argonian and Khajiit have distinct scales/fur — different TXST block.
     # Omitting them here causes the engine to fall back to the race default.
 }
+
+
+# ---------------------------------------------------------------------------
+# Skin tone tint layers (fixes pale-white body skin)
+# ---------------------------------------------------------------------------
+# Skyrim colors an NPC's body skin from the tint layer whose race mask type
+# is "Skin Tone" (RACE TINP=6).  Data below is a census of Skyrim.esm
+# (tools/census_npc_skin.py): per race+gender, the race's skin-tone TINI
+# index and the top TINC colors vanilla NPCs use on it, with (r, g, b,
+# interpolation 0-100, census weight).  Each converted NPC picks one entry
+# deterministically from its FormID so populations show vanilla-like
+# variety instead of a single cloned tone.
+#
+# TES4 has no per-NPC skin color source (FGTS texture PCA is not decodable
+# into a color), so the race+gender census distribution is the best
+# available ground truth.
+
+_SKIN_RACE_ALIAS = {
+    # Must follow RACE_MAP's target Skyrim race — tint indices are per-race.
+    'GoldenSaint': 'Dremora',
+    'DarkSeducer': 'Dremora',
+    'SEDremora':   'Dremora',
+    'Sheogorath':  'Imperial',
+}
+
+# (race, gender) → (skin-tone TINI index, [(r, g, b, tinv, weight), ...])
+_RACE_SKIN_TONES: dict[tuple, tuple] = {
+    ('Imperial', 'Male'):    (1,  [(87, 61, 51, 100, 42), (92, 67, 50, 100, 27),
+                                   (198, 176, 168, 100, 26)]),
+    ('Imperial', 'Female'):  (13, [(221, 221, 221, 100, 22), (145, 119, 111, 100, 18),
+                                   (172, 159, 151, 100, 17)]),
+    ('Nord', 'Male'):        (1,  [(198, 176, 168, 100, 230), (183, 156, 145, 100, 181),
+                                   (130, 109, 91, 100, 19)]),
+    ('Nord', 'Female'):      (24, [(206, 205, 204, 100, 64), (185, 179, 170, 100, 57),
+                                   (172, 159, 151, 100, 13)]),
+    ('Breton', 'Male'):      (2,  [(198, 176, 168, 100, 80), (183, 156, 145, 100, 69),
+                                   (167, 134, 122, 100, 51)]),
+    ('Breton', 'Female'):    (16, [(221, 221, 221, 100, 48), (206, 205, 204, 100, 33),
+                                   (172, 159, 151, 100, 11)]),
+    ('Redguard', 'Male'):    (1,  [(45, 33, 30, 100, 26), (53, 39, 34, 100, 13),
+                                   (79, 69, 64, 100, 10)]),
+    ('Redguard', 'Female'):  (23, [(67, 44, 33, 100, 16), (48, 33, 22, 100, 12),
+                                   (53, 39, 34, 100, 10)]),
+    ('DarkElf', 'Male'):     (1,  [(82, 96, 107, 100, 25), (83, 91, 91, 100, 22),
+                                   (98, 119, 123, 100, 14)]),
+    ('DarkElf', 'Female'):   (24, [(85, 118, 136, 100, 27), (27, 53, 58, 100, 11),
+                                   (47, 88, 100, 100, 8)]),
+    ('HighElf', 'Male'):     (1,  [(153, 141, 85, 100, 31), (124, 101, 48, 100, 21),
+                                   (125, 112, 70, 100, 19)]),
+    ('HighElf', 'Female'):   (24, [(148, 143, 88, 100, 20), (183, 186, 125, 100, 17),
+                                   (153, 160, 109, 100, 8)]),
+    ('WoodElf', 'Male'):     (1,  [(111, 86, 62, 100, 9), (135, 106, 75, 100, 5),
+                                   (121, 91, 64, 100, 5)]),
+    ('WoodElf', 'Female'):   (24, [(132, 126, 104, 100, 7), (116, 109, 86, 100, 7),
+                                   (114, 109, 84, 100, 2)]),
+    ('Orc', 'Male'):         (1,  [(80, 92, 82, 100, 18), (83, 96, 77, 100, 14),
+                                   (41, 47, 36, 100, 14)]),
+    ('Orc', 'Female'):       (13, [(61, 82, 73, 100, 11), (74, 100, 85, 100, 8),
+                                   (99, 129, 113, 100, 4)]),
+    ('Argonian', 'Male'):    (38, [(226, 172, 240, 69, 10), (67, 4, 1, 65, 5),
+                                   (253, 253, 253, 32, 5), (54, 78, 33, 66, 5)]),
+    ('Argonian', 'Female'):  (16, [(253, 253, 253, 32, 3), (74, 137, 69, 42, 3),
+                                   (54, 78, 33, 66, 2)]),
+    ('Khajiit', 'Male'):     (1,  [(0, 0, 0, 50, 11), (213, 145, 4, 31, 5),
+                                   (47, 32, 19, 74, 4)]),
+    ('Khajiit', 'Female'):   (4,  [(0, 0, 0, 50, 3), (47, 32, 19, 74, 3),
+                                   (149, 100, 64, 81, 3)]),
+    ('Dremora', 'Male'):     (1,  [(0, 0, 0, 77, 1)]),
+    ('Dremora', 'Female'):   (24, [(0, 0, 0, 77, 1)]),
+}
+
+
+def _pick_skin_tone(race_edid: str, gender: str, fid: int):
+    """Return (tini_index, (r, g, b), tinv) for this NPC's skin-tone layer.
+
+    The pick is a weighted choice over the census table, seeded by the
+    NPC's FormID (Knuth multiplicative scramble) so it is deterministic
+    across runs but varies between consecutive FormIDs.
+    """
+    race = _SKIN_RACE_ALIAS.get(race_edid, race_edid)
+    entry = (_RACE_SKIN_TONES.get((race, gender))
+             or _RACE_SKIN_TONES.get(('Imperial', gender))
+             or _RACE_SKIN_TONES[('Imperial', 'Male')])
+    tini, choices = entry
+    total = sum(c[4] for c in choices)
+    t = ((fid * 2654435761) & 0xFFFFFFFF) % total
+    for r, g, b, tinv, weight in choices:
+        if t < weight:
+            return tini, (r, g, b), tinv
+        t -= weight
+    r, g, b, tinv, _ = choices[-1]
+    return tini, (r, g, b), tinv
 
 
 # ---------------------------------------------------------------------------
@@ -268,16 +364,22 @@ def build_pnam_subs(rec: dict, race_edid: str, gender: str = 'Male') -> bytes:
 
 
 def build_face_tail_subs(rec: dict, race_edid: str, gender: str) -> bytes:
-    """Build the trailing face subrecords for NPC_: FTST, QNAM, NAM9, NAMA.
+    """Build the trailing face subrecords for NPC_: FTST, QNAM, NAM9, NAMA,
+    and the skin-tone tint layer (TINI/TINC/TINV/TIAS).
 
     These must appear *after* DOFT/SOFT/DPLT/CRIF in the record.
 
     FTST — head texture set (race+gender default from Skyrim.esm)
-    QNAM — texture lighting multiplier; (1,1,1) = white = no tint applied
-             (the FTST already encodes the correct skin color for the race)
+    QNAM — texture lighting: the NPC's effective skin color (tint color
+             blended toward white by the interpolation value), as vanilla
+             does — QNAM must agree with the skin-tone layer or the face
+             is lit a different color than the body
     NAM9 — 19 face-morph floats mapped from Oblivion FGGS PCA coefficients;
              falls back to all-zero neutral if FGGS is absent or unparseable
     NAMA — face-part preset indices: nose=0, unknown=0, eyes=0, mouth=0
+    TINI/TINC/TINV/TIAS — skin-tone tint layer; the engine derives the BODY
+             skin color from this layer, so omitting it leaves every body
+             pale white no matter the race
     """
     subs = b''
 
@@ -286,8 +388,15 @@ def build_face_tail_subs(rec: dict, race_edid: str, gender: str) -> bytes:
     if txst_fid:
         subs += pack_formid_subrecord('FTST', txst_fid)
 
+    # Skin tone: census-weighted pick, deterministic per FormID
+    fid = get_formid(rec, 'FormID')
+    tini, (r, g, b), tinv = _pick_skin_tone(race_edid, gender, fid)
+
     # QNAM — texture lighting (stored as three 0–1 floats; xEdit × 255 → 0–255)
-    subs += pack_subrecord('QNAM', struct.pack('<3f', 1.0, 1.0, 1.0))
+    # Effective color = lerp(white, tint color, interpolation).
+    v = tinv / 100.0
+    qnam = tuple((255.0 * (1.0 - v) + c * v) / 255.0 for c in (r, g, b))
+    subs += pack_subrecord('QNAM', struct.pack('<3f', *qnam))
 
     # NAM9 — face morphs: map from FGGS PCA coefficients when available
     fggs = _parse_fggs(rec)
@@ -299,5 +408,13 @@ def build_face_tail_subs(rec: dict, race_edid: str, gender: str) -> bytes:
 
     # NAMA — face part preset indices (Nose U32, Unknown S32, Eyes U32, Mouth U32)
     subs += pack_subrecord('NAMA', struct.pack('<IiII', 0, 0, 0, 0))
+
+    # Skin-tone tint layer.  TINI = race tint-mask index (U16), TINC = RGBA
+    # (alpha always 0 in vanilla), TINV = interpolation ×100 (U32),
+    # TIAS = preset index (S16, -1 = explicit color, no preset).
+    subs += pack_subrecord('TINI', struct.pack('<H', tini))
+    subs += pack_subrecord('TINC', struct.pack('<4B', r, g, b, 0))
+    subs += pack_subrecord('TINV', struct.pack('<I', tinv))
+    subs += pack_subrecord('TIAS', struct.pack('<h', -1))
 
     return subs
