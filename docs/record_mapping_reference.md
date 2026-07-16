@@ -130,6 +130,16 @@ see the `oblivion-to-skyrim-dialog` skill.
 - **QUST** — Alias system, objectives, and VMAD fragments are all new. Only basic stage data can be transferred.
 - **INFO** — Dialog response structure changed significantly. VMAD fragments replace result scripts.
 - **NPC_/CREA** — Attribute system removed, skill system changed, many new subsystems (templates, outfits, perks, keywords).
+- **Outfit split (`tes5_import/outfits.py`)** — TES4's single CNTO inventory (engine picks what to wear at
+  spawn) → TES5 DOFT/OTFT (worn) + CNTO (carried), disjoint. Per-biped-slot conflict resolution keeps
+  one winner per slot (armor > clothing > value). **ChanceNone contract:** only a *guaranteed* winner
+  (plain ARMO/CLOT, or an LVLI with `LVLD.ChanceNone==0` down to slot-filling leaves) may EVICT a
+  lower-priority item from its slot. A probabilistic list (e.g. `LL0NPCArmorLightGreaves25`, ChanceNone
+  75) must NOT evict a guaranteed clothing base under it (`LL0NPCClothingPantsLower`, ChanceNone 0) —
+  Skyrim resolves the outfit once and has no equivalent of Oblivion's per-spawn re-scoring, so evicting
+  the guaranteed pants left ~75% of bandits bare-legged. Keep both; engine wears greaves when rolled,
+  pants otherwise. The `NN` in Bethesda's list names (`...Greaves25`, `...Cuirass100`) is the equip
+  probability. Trace any actor with `python -m tools.trace_outfit export/Oblivion.esm <EditorID>`.
 - **RACE** — Almost entirely restructured. Only basic data (height/weight/skill boosts/spells) can transfer.
 - **MGEF** — 4-char code system vs FormID system. Flag mapping is complex.
 - **ENCH/SPEL** — ENIT/SPIT completely restructured. Effects need MGEF FormID resolution.

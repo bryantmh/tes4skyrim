@@ -92,12 +92,11 @@ See [docs/python_tools_reference.md](docs/python_tools_reference.md) for the ful
 
 ```json
 {
-  "skipTypes": ["GMST", "GLOB", "MGEF", "CSTY", "WTHR", "WATR", "RACE", "CLAS", "IDLE", "PACK", "CLMT", "REGN"],
   "files": ["Oblivion.esm", "Knights.esp"]
 }
 ```
 
-`skipTypes` — Record types to exclude from import. These are checked in the Python import script (SKIP_TYPES in tes5_import/constants.py). Types that cause Skyrim to fail to load when converted should be listed here.
+Skipped record types are managed in code (`SKIP_TYPES` in `tes5_import/constants.py`): ROAD, SCPT, SKIL, BSGN, RACE, MGEF, CSTY, IDLE, GMST, CLMT, REGN, EYES, HAIR. GLOB, CLAS, WTHR, WATR and PACK ARE converted. Conditions whose params reference skipped types must be translated (RACE → Skyrim race via RACE_MAP in dialog_conditions) or dropped — a dangling param means the condition can never pass and the CK warns "Unable to find ... TESForm in TESConditionItem Parameter Init".
 
 Files are listed in dependency order. Masters are auto-detected from the TES4 binary headers. Game data paths are auto-detected from the Windows registry.
 

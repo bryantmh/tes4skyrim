@@ -104,26 +104,6 @@ Minor Issues:
 
 	8 - Convert Skyrim LE meshes to Skyrim SE format
 
-	9 - Creature conversion console errors
-	Reading <struct 'NiMorphData'> failed
-	Traceback (most recent call last):
-	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\formats\nif\__init__.py", line 1383, in read
-		block.read(stream, self)
-		~~~~~~~~~~^^^^^^^^^^^^^^
-	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\object_models\xml\struct_.py", line 373, in read
-		attr_value.read(stream, data)
-		~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
-	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\object_models\xml\array.py", line 304, in read
-		elem.read(stream, data)
-		~~~~~~~~~^^^^^^^^^^^^^^
-	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\object_models\xml\struct_.py", line 373, in read
-		attr_value.read(stream, data)
-		~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
-	File "C:\Users\Bryant\AppData\Local\Programs\Python\Python314\Lib\site-packages\pyffi\formats\nif\__init__.py", line 899, in read
-		raise ValueError('string too long (0x%08X at 0x%08X)'
-						% (n, stream.tell()))
-	ValueError: string too long (0x5A000000 at 0x000003BC)
-
 	10 - Flame atronach animated section not properly converted
 	
 	11 - Refine LOD
@@ -143,54 +123,15 @@ Minor Issues:
 
 	18 - Shops missing full inventory of items
 
-Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at 0x7FF7607409CA SkyrimSE.exe+0BD09CA	movaps xmm5, [rdx+0x10]
-Exception Flags: 0x00000000 (Continuable)
-Number of Parameters: 2
-Exception Thread ID: 40668
-Access Violation: Tried to read memory at 0x01F0E2AD9B10
-ACCESS VIOLATION ANALYSIS:
-	Instruction: movaps xmm5, [rdx+0x10]
-	Memory Operand: [base=rdx, index=none, scale=0, disp=+0x10]
-	Base Register: rdx = 0x000001F0E2AD9B00
-	Computed Address: 0x000001F0E2AD9B10
-POSSIBLE RELEVANT OBJECTS:
-	R13: (hkaSkeletonMapper*)
-	RSP+148: (hkaSkeleton*)
-	RSP+158: (hkaSkeleton*)
-	RSP+160: (hkaRagdollInstance*)
-	RSP+168: (hkbCharacterSetup*)
-	RSP+230: (hkbRagdollDriver*)
-	RSP+280: (NiNode*) "Bip01 Tail2"
-	RSP+350: (Character*) "Wolf" [0x1106E3F3] ("Oblivion.esm") [0x1106E3F3]
-	RSP+418: (BShkbAnimationGraph*)
-	RSP+488: (NiNode*) "Bip01 NonAccum"
-	RSP+490: (hkbCharacter*)
-	RSP+4C8: (ahkpWorld*)
-	RSP+500: (Character*) "Wolf" [0x1106E3F3] ("Oblivion.esm") [0x1106E3F3]
-	RSP+510: (BSAnimationGraphManager*)
-	RSP+580: (BSAnimationGraphManager*)
-	RSP+588: (ScrapHeap*)
-	RSP+610: (BSFadeNode*) "Scene Root"
-	RSP+620: (BGSLoadFormBuffer*)
-	RSP+670: (Character*) "Stormcloak Breakaway" [0xFF00166D] ("BSHeartland.esm") [0xFF00166D]
-	RSP+840: (`anonymous namespace'::Win32FileType*)
-	RSP+CA0: (BGSSaveLoadManager*)
-	RSP+EF0: (bgs::saveload::Request*)
-
 CK Warnings Analysis (CK_WARNINGS, 12789 lines, from CKPE load of converted Oblivion.esm):
 Genericized every message (FormIDs/names/numbers stripped) and grouped identical patterns. 6 top-level
 CKPE categories, ~13 root-cause buckets. Counts are occurrence counts in the log.
 
 	[MASTERFILE] 7763 total:
-	1) (2928x) "Unable to find Function Info TESForm (X) in TESConditionItem Parameter Init for INFO Form '' ...: Quest 'X', Topic 'X', Text "X"."
-		INFO condition (CTDA) references a Function-type condition parameter (a TESForm, e.g. a GetIsID/GetItemCount target) whose FormID doesn't resolve.
-		Almost all land on Quest 'Generic'/TES4DialogueGeneric topics — likely a converted CTDA parameter1/parameter2 FormID that wasn't remapped (or was remapped to 0/an unconverted TES4 form) during dialogue import. See docs/dialogue_conversion_notes.md.
 	4) (512x) "Could not find worldspace (X) in load for Location 'X' (X) in file Oblivion.esm."
 		Generated LCTN records point at a worldspace FormID that isn't loaded/converted (0x0100003C Tamriel and gate-related worldspaces most common). See memory: Exterior cell names / LCTN worldspace+marker construction.
 	5) (298x + 297x = 595x) "Armor/ArmorAddon 'X' (X) used invalid Biped Object slot 44 for race 'DefaultRace'."
 		Slot-44 body-partition patch (see [FORMS] entry below) assigns biped slot 44 to items on 'DefaultRace', which doesn't define slot 44 in its body template — cosmetic-only CK complaint, but confirms the slot-44 patch is applied indiscriminately rather than only to races that support it.
-	6) (284x) "Level multiplier for ActorBase (X) 'X' clamped to 0.10."
-		Converted leveled ActorBase (mostly SE-prefixed creature bosses/levels) has a level multiplier outside Skyrim's valid range and CK clamps it to 0.10 — leveled-creature stat conversion is producing out-of-range multipliers.
 	7) (245x) "Container object (X) has a count of less then 1 so no item is really added but will cause issues in game on owner object "X"."
 		Converted container entries have Count <= 0 — an inventory-count field is being zeroed/lost during CONT/vendor-chest conversion.
 	8) (139x) "Could not find FootstepSet (X) on ArmorAddon 'X' (X)."
