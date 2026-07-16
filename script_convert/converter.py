@@ -252,8 +252,23 @@ class ScriptConverter:
         self._has_menumode = any(b[0] == 'menumode' for b in blocks)
         self._has_scripteffectupdate = any(b[0] == 'scripteffectupdate' for b in blocks)
 
+        # Value-typed TES4 script variables must be readable by the engine's
+        # condition system: GetVMScriptVariable/GetVMQuestVariable(629/630) look
+        # up the mangled `::<name>_var` backing variable, which only exists in
+        # the .pex when BOTH the script and the auto-property carry the
+        # Conditional flag. Without it every converted GetScriptVariable/
+        # GetQuestVariable condition silently fails (CK: "Unable to find
+        # variable ::X_var on any VM scripts").
+        has_value_vars = any(
+            TYPE_MAP.get(vtype.lower(), 'Int') in ('Int', 'Float', 'Bool')
+            or (_edid_low and (_edid_low, _safe_property_name(vname).lower())
+                in self.xref.ref_as_int)
+            for vtype, vname in variables)
+        cond_flag = ' Conditional' if has_value_vars else ''
+
         out = []
-        out.append(f'ScriptName {papyrus_script_name(name)} extends {extends}')
+        out.append(f'ScriptName {papyrus_script_name(name)} extends {extends}'
+                   f'{cond_flag}')
         out.append(f'{{Converted from TES4: {editor_id or name}}}')
         out.append('')
 
@@ -273,10 +288,14 @@ class ScriptConverter:
             _var_info.append((safe_vname, ptype))
         var_start_idx = len(out)
         for safe_vname, ptype in _var_info:
+            # Conditional so the ::<name>_var backing variable is visible to
+            # CTDA GetVMScriptVariable/GetVMQuestVariable lookups (value types
+            # only — object properties cannot be conditional).
+            cond = ' Conditional' if ptype in ('Int', 'Float', 'Bool') else ''
             if ptype == 'Float':
-                out.append(f'{ptype} Property {safe_vname} = 0.0 Auto')
+                out.append(f'{ptype} Property {safe_vname} = 0.0 Auto{cond}')
             else:
-                out.append(f'{ptype} Property {safe_vname} Auto')
+                out.append(f'{ptype} Property {safe_vname} Auto{cond}')
 
         if variables:
             out.append('')
@@ -498,11 +517,16 @@ class ScriptConverter:
                         else:
                             has_ref_assign = True
                     if has_int_assign and not has_ref_assign and not has_ref_usage:
-                        # Retype: ObjectReference → Int
+                        # Retype: ObjectReference → Int (now a value type, so it
+                        # also becomes visible to the condition system)
                         decl_idx = var_start_idx + vi
                         if decl_idx < len(out):
                             out[decl_idx] = out[decl_idx].replace(
                                 'ObjectReference Property', 'Int Property', 1)
+                            if not out[decl_idx].rstrip().endswith('Conditional'):
+                                out[decl_idx] = out[decl_idx].rstrip() + ' Conditional'
+                            if not out[0].rstrip().endswith('Conditional'):
+                                out[0] = out[0].rstrip() + ' Conditional'
                             real_name = _var_info[vi][0]
                             self._var_types[real_name.lower()] = 'Int'
                             # Also replace = None back to = 0 in body

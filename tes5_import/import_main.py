@@ -203,8 +203,13 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     _create_tes4_special_records(writer)
 
     # --- Phase 0b: Pre-scan for dialogue conversion ---
-    # Build NPC FormID → VTYP FormID mapping for voice type injection
+    # Build NPC FormID → VTYP FormID mapping for voice type injection, and
+    # register it so convert_NPC_/convert_CREA stamp the SAME VNAM-resolved
+    # voice on VTCK (an actor whose VTCK disagrees with the dialogue pass's
+    # GetIsVoiceType gates never plays its lines).
     npc_to_vtyp = build_npc_to_vtyp_map(by_type, num_new_masters)
+    from .record_types.actors import set_npc_voice_map
+    set_npc_voice_map(npc_to_vtyp)
 
     # AddTopic unlock plan: gated topics get GetGlobalValue conditions and one
     # GLOB each; revealer INFO/stage fragments set the globals (must exist
@@ -544,7 +549,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     # --- Phase 5: DIAL/INFO hierarchy ---
     voice_map = {}
-    dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map, unlock_plan=unlock_plan, unlock_globals=unlock_globals)
+    dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map, unlock_plan=unlock_plan, unlock_globals=unlock_globals, script_vars=_script_vars)
     sge_quest_fids |= dialog_sge_fids
     _write_voice_map(output_path, voice_map)
 

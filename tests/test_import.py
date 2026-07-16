@@ -1384,8 +1384,9 @@ class TestOutfitSplit:
         return {'Signature': 'CLOT', 'FormID': fid, 'EditorID': edid,
                 'BMDT.BipedFlags': str(slots), 'DATA.Value': str(value)}
 
-    def _lvli(self, fid, edid, entries):
+    def _lvli(self, fid, edid, entries, chance_none=0):
         rec = {'Signature': 'LVLI', 'FormID': fid, 'EditorID': edid,
+               'LVLD.ChanceNone': str(chance_none),
                'EntryCount': str(len(entries))}
         for i, e in enumerate(entries):
             rec[f'Entry[{i}].FormID'] = e
@@ -1518,6 +1519,73 @@ class TestOutfitSplit:
         from tes5_import.outfits import is_outfit_eligible
         self._index(ARMO=[self._armo('00000001', 'Cuirass', self.BODY)])
         assert is_outfit_eligible(0x01000001) is True
+
+    def test_chance_armor_keeps_guaranteed_clothing_fallback(self):
+        """The bandit-with-no-pants bug. A bandit pairs a guaranteed clothing
+        base (LL0NPCClothingPantsLower, ChanceNone 0) under chance-based armor
+        (LL0NPCArmorLightGreaves25, ChanceNone 75 — the "25" being 25% odds).
+        Both claim LowerBody. The probabilistic greaves must NOT evict the
+        guaranteed pants: Skyrim resolves the outfit once and, ~75% of the time
+        the greaves roll nothing, so evicting the pants leaves the actor
+        bare-legged. Keeping both lets the engine wear greaves when they roll
+        and the pants otherwise."""
+        from tes5_import.outfits import split_inventory
+        self._index(
+            ARMO=[self._armo('00000010', 'IronGreaves', self.LEGS, value=1000)],
+            CLOT=[self._clot('00000011', 'Pants', self.LEGS, value=1)],
+            LVLI=[
+                self._lvli('00000001', 'LL0NPCArmorLightGreaves25',
+                           ['00000010'], chance_none=75),
+                self._lvli('00000002', 'LL0NPCClothingPantsLower',
+                           ['00000011'], chance_none=0),
+            ],
+        )
+        outfit, carried = split_inventory([(1, 1), (2, 1)])
+        assert set(outfit) == {1, 2}, \
+            'guaranteed pants must stay when the greaves that outrank it can roll none'
+        assert carried == []
+
+    def test_guaranteed_armor_still_evicts_guaranteed_clothing(self):
+        """The fallback rule must not weaken Azzan: a GUARANTEED armor list
+        (ChanceNone 0) still evicts the guaranteed clothing under it — that
+        slot will always be filled by the armor, so the clothes would only
+        double up. Only a *probabilistic* winner keeps the fallback."""
+        from tes5_import.outfits import split_inventory
+        self._index(
+            ARMO=[self._armo('00000010', 'SteelGreaves', self.LEGS, value=1000)],
+            CLOT=[self._clot('00000011', 'Pants', self.LEGS, value=1)],
+            LVLI=[
+                self._lvli('00000001', 'LL0NPCArmorGreaves100',
+                           ['00000010'], chance_none=0),
+                self._lvli('00000002', 'LL0NPCClothingPantsLower',
+                           ['00000011'], chance_none=0),
+            ],
+        )
+        outfit, carried = split_inventory([(1, 1), (2, 1)])
+        assert outfit == [1], 'guaranteed armor closes the slot to the clothing'
+        assert [f for f, _ in carried] == [2]
+
+    def test_nested_chance_none_breaks_guarantee(self):
+        """A guarantee must hold all the way down. An outer list with
+        ChanceNone 0 whose entry is a ChanceNone-75 sublist is NOT guaranteed,
+        so it cannot evict a guaranteed peer sharing the slot."""
+        from tes5_import.outfits import split_inventory
+        self._index(
+            ARMO=[self._armo('00000010', 'Greaves', self.LEGS, value=1000)],
+            CLOT=[self._clot('00000011', 'Pants', self.LEGS, value=1)],
+            LVLI=[
+                self._lvli('00000003', 'InnerChance', ['00000010'],
+                           chance_none=75),
+                self._lvli('00000001', 'OuterSure', ['00000003'],
+                           chance_none=0),
+                self._lvli('00000002', 'GuaranteedPants', ['00000011'],
+                           chance_none=0),
+            ],
+        )
+        outfit, carried = split_inventory([(1, 1), (2, 1)])
+        assert set(outfit) == {1, 2}, \
+            'a chance-none anywhere on the path breaks the guarantee'
+        assert carried == []
 
     def test_nothing_is_lost(self):
         """Every source item must reach the actor via exactly one channel."""

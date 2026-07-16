@@ -255,6 +255,64 @@ def _equip_slots(fid: int) -> int:
     return mask & ~_JEWELRY_BITS
 
 
+def _is_guaranteed(fid: int) -> bool:
+    """True when this item is CERTAIN to occupy a body slot when the actor
+    spawns — i.e. it may legitimately evict a lower-priority item from that slot.
+
+    A plain ARMO/CLOT always equips. A leveled list only equips when it rolls a
+    leaf: if its LVLD.ChanceNone is nonzero the engine frequently produces
+    nothing, so it must NOT evict a guaranteed item sharing the slot.
+
+    Bandit inventories are built exactly this way — a guaranteed clothing base
+    (LL0NPCClothingPantsLower, ChanceNone 0) under chance-based armor
+    (LL0NPCArmorLightGreaves25, ChanceNone 75, the "25" being the 25% equip
+    odds). Letting the probabilistic greaves evict the guaranteed pants left
+    ~75% of bandits bare-legged, because Skyrim resolves the outfit once and has
+    no equivalent of Oblivion's per-spawn re-scoring that would fall back to the
+    pants. So an item guarantees a slot only if it — and, for a list, every
+    resolution step down to a slot-filling leaf — is chance-none-free.
+    """
+    fid &= 0x00FFFFFF
+    sig = _ITEM_SIG.get(fid)
+    if sig in ('ARMO', 'CLOT'):
+        return True
+    if sig != 'LVLI':
+        return False  # weapon/ammo/torch: not a slot filler at all
+    return _lvli_guarantees(fid)
+
+
+def _lvli_guarantees(fid: int, depth: int = 0, path=()) -> bool:
+    """True when this leveled list is certain to yield a slot-filling wearable.
+
+    Certain means: ChanceNone is 0 AND every entry the roll can land on is
+    itself guaranteed to produce a wearable (a plain ARMO/CLOT, or a nested
+    guaranteed list). A single chance-none anywhere on a path, or a leaf that
+    isn't a wearable, breaks the guarantee.
+    """
+    if fid in path or depth > _MAX_LVLI_DEPTH:
+        return False
+    rec = _ITEM_REC.get(fid)
+    if rec is None:
+        return False
+    if get_int(rec, 'LVLD.ChanceNone') != 0:
+        return False
+    count = get_int(rec, 'EntryCount')
+    if count <= 0:
+        return False
+    sub_path = path + (fid,)
+    for i in range(count):
+        entry = _low(rec.get(f'Entry[{i}].FormID', ''))
+        if entry is None:
+            return False
+        sig = _ITEM_SIG.get(entry)
+        if sig in ('ARMO', 'CLOT'):
+            continue
+        if sig == 'LVLI' and _lvli_guarantees(entry, depth + 1, sub_path):
+            continue
+        return False
+    return True
+
+
 def _priority(fid: int) -> tuple:
     """Sort key deciding which item wins a contested biped slot.
 
@@ -304,21 +362,31 @@ def split_inventory(items: list) -> tuple:
     # via the union of their leaves' slots — a clothing list left unresolved is
     # what put Azzan in a middle-class shirt instead of his steel cuirass.
     #
-    # Claim slots greedily, best item first, and keep an item only if EVERY slot
-    # it covers is still free. Picking a separate winner per slot is not enough:
-    # a multi-slot garment can lose one slot and still win another, and Skyrim
-    # would then equip it anyway, dragging the lost slot back in. LL0VampireShirt
-    # spans upper+lower body, so against a cuirass it lost the body slot but won
-    # the legs — and the shirt covered the chest again, exactly the arbitrary
-    # equip we're fixing.
-    taken = 0
+    # Claim slots greedily, best item first, but only a GUARANTEED item reserves
+    # a slot against everything below it. A probabilistic list (LVLD.ChanceNone
+    # > 0) frequently rolls nothing, so it must not evict a guaranteed item that
+    # shares its slot — that eviction is what left ~75% of bandits bare-legged,
+    # when chance-based greaves (ChanceNone 75) outranked and discarded the
+    # guaranteed cloth pants under them. When the winner isn't guaranteed we keep
+    # BOTH: Skyrim equips the greaves on the rolls they appear and the guaranteed
+    # pants otherwise, which is how vanilla Skyrim bandit outfits are authored
+    # (chance armor layered over a guaranteed base). Only a guaranteed winner
+    # closes the slot to lower-priority items.
+    #
+    # Reserving the WHOLE slot-mask (not per-slot) still matters: a multi-slot
+    # guaranteed garment can lose one slot and win another, and Skyrim would then
+    # equip it anyway, dragging the lost slot back in (LL0VampireShirt spanned
+    # upper+lower body, lost body to a cuirass but won legs and re-covered the
+    # chest). So a guaranteed item is kept only if EVERY slot it needs is free.
+    taken = 0  # slots reserved by a guaranteed winner — closed to lesser items
     winners = set()
     for fid in sorted(set(wearable), key=_priority, reverse=True):
         slots = _equip_slots(fid)
         if slots and (slots & taken):
-            continue  # a better item already claimed one of these slots
-        taken |= slots
+            continue  # a guaranteed better item already owns one of these slots
         winners.add(fid)
+        if slots and _is_guaranteed(fid):
+            taken |= slots  # only a sure thing closes the slot behind it
 
     outfit_fids, seen = [], set()
     for fid in wearable:

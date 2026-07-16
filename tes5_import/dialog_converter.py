@@ -65,7 +65,7 @@ from .dialog_conditions import (
     FUNC_GET_QUEST_RUNNING,
     build_ctda,
     build_or_chain,
-    convert_ctda_list,
+    convert_ctda_list_with_strings,
     has_any_conditions,
     has_audience_condition,
     read_func_param_fids,
@@ -249,6 +249,23 @@ def _target_live_at_stage(raw_hexes: list, stage_idx: int) -> bool:
 # 56 GetQuestRunning, 58 GetStage, 59 GetStageDone, 99 GetQuestCompleted.
 _QUEST_STATE_FUNCS = frozenset({56, 58, 59, 99})
 
+# Additional PLAYER-progress gates a revealing greeting can carry, inherited by
+# its choice targets alongside the quest-state ones. Oblivion questlines often
+# track progress as the player's rank in a quest faction rather than a stage —
+# Agronak's challenge greetings are gated GetFactionRank(ArenaCombatants)==7
+# ON TARGET (the player), and without inheriting that the promoted "Yes, I wish
+# to challenge you" topic sits in his menu from the first conversation. Only
+# the run-on-target form is a progress gate (the subject form describes the
+# SPEAKER, and the target topic already carries its own audience conditions).
+# 71 GetInFaction, 73 GetFactionRank.
+_PLAYER_PROGRESS_FUNCS = frozenset({71, 73})
+
+# Legacy variable reads (53 GetScriptVariable / 79 GetQuestVariable) are ALSO
+# timing gates ("set Arena.ChallengeAgronak to 1" both advances state and
+# retires the greeting); they inherit as translated GetVMScriptVariable/
+# GetVMQuestVariable conditions with their CIS2 variable name riding along.
+_VAR_STATE_FUNCS = frozenset({53, 79})
+
 
 def _has_quest_state_condition(rec: dict) -> bool:
     """True if `rec` has any quest-TIMING condition of its own (GetStage etc.)."""
@@ -269,16 +286,23 @@ def _has_quest_state_condition(rec: dict) -> bool:
             return True
 
 
-def _quest_state_ctdas(rec: dict, offset: int) -> list:
-    """Converted (32-byte) CTDAs for just the quest-TIMING conditions on `rec`.
+def _quest_state_ctdas(rec: dict, offset: int, script_vars: dict = None) -> list:
+    """Converted [(32-byte CTDA, cis2-or-None)] pairs for just the TIMING
+    conditions on `rec` — the gates a promoted choice target must inherit.
 
-    Reads Condition[i].Raw, keeps only quest-state functions (GetStage etc.),
+    Reads Condition[i].Raw, keeps only:
+      * quest-state functions (GetStage etc.),
+      * run-on-target GetInFaction/GetFactionRank (player questline progress —
+        Oblivion's faction-rank-as-stage idiom),
+      * legacy variable reads, translated to GetVMScriptVariable/
+        GetVMQuestVariable with their CIS2 variable name,
     converts + remaps them, and clears any dangling OR flag so the returned
-    list is a standalone AND-group. Identity/faction/voice conditions are
-    deliberately excluded — the response topic already carries its own GetIsID;
-    only the missing TIMING gate is inherited. Returns [] when the revealer has
-    no quest-state conditions (e.g. an always-available greeting)."""
-    from .dialog_conditions import convert_ctda, CTDA_OR
+    list is a standalone AND-group. Identity/voice conditions are deliberately
+    excluded — the response topic already carries its own GetIsID; only the
+    missing TIMING gate is inherited. Returns [] when the revealer has no
+    timing conditions (e.g. an always-available greeting)."""
+    from .dialog_conditions import (CTDA_OR, CTDA_RUN_ON_TARGET, convert_ctda,
+                                    _convert_script_var_ctda)
     out = []
     i = 0
     while True:
@@ -295,29 +319,46 @@ def _quest_state_ctdas(rec: dict, offset: int) -> list:
         if len(raw) < 10:
             continue
         func = struct.unpack_from('<H', raw, 8)[0]
-        if func not in _QUEST_STATE_FUNCS:
+        if func in _VAR_STATE_FUNCS:
+            pair = _convert_script_var_ctda(raw, script_vars or {}, offset)
+            if pair is not None:
+                out.append(pair)
+            continue
+        if func not in _QUEST_STATE_FUNCS and not (
+                func in _PLAYER_PROGRESS_FUNCS
+                and raw[0] & CTDA_RUN_ON_TARGET):
             continue
         try:
             ctda = convert_ctda(raw, offset)
         except (ValueError, struct.error):
             continue
         if ctda is not None:
-            out.append(ctda)
+            out.append((ctda, None))
     # A trailing OR flag with nothing after it is invalid — clear it.
-    if out and (out[-1][0] & CTDA_OR):
-        out[-1] = bytes([out[-1][0] & ~CTDA_OR]) + out[-1][1:]
+    if out and (out[-1][0][0] & CTDA_OR):
+        out[-1] = (bytes([out[-1][0][0] & ~CTDA_OR]) + out[-1][0][1:],
+                   out[-1][1])
+    return out
+
+
+def _pack_gate_pair(pair) -> bytes:
+    """One inherited (CTDA, cis2) gate condition as packed subrecords."""
+    ctda, cis2 = pair
+    out = pack_subrecord('CTDA', ctda)
+    if cis2:
+        out += pack_string_subrecord('CIS2', cis2)
     return out
 
 
 def _bark_choice_gate_bytes(revealer_gates: list) -> bytes:
-    """Combine per-revealer quest-state gates into one CTDA block for the
+    """Combine per-revealer timing gates into one CTDA block for the
     response topic's INFOs.
 
     revealer_gates is a list (one entry per greeting that reveals this topic)
-    of lists of converted CTDA bytes (that greeting's quest-state AND-group).
-    Semantics: the response is available if ANY revealer is live (OR across
-    revealers), and a revealer is live when ALL its conditions hold (AND
-    within).
+    of lists of (converted CTDA bytes, cis2-or-None) pairs (that greeting's
+    timing AND-group). Semantics: the response is available if ANY revealer is
+    live (OR across revealers), and a revealer is live when ALL its conditions
+    hold (AND within).
 
       * ANY revealer with an EMPTY gate → the response is always reachable from
         that greeting → no gate at all (return b'').
@@ -337,19 +378,19 @@ def _bark_choice_gate_bytes(revealer_gates: list) -> bytes:
     if any(len(g) == 0 for g in revealer_gates):
         return b''                      # an always-available reveal path exists
     if len(revealer_gates) == 1:
-        return b''.join(pack_subrecord('CTDA', c) for c in revealer_gates[0])
+        return b''.join(_pack_gate_pair(p) for p in revealer_gates[0])
     if all(len(g) == 1 for g in revealer_gates):
         # OR-chain of one condition per revealer.
         out = b''
         n = len(revealer_gates)
         for idx, g in enumerate(revealer_gates):
-            c = g[0]
+            c, cis2 = g[0]
             is_last = (idx == n - 1)
             tb = c[0] | CTDA_OR if not is_last else c[0] & ~CTDA_OR
-            out += pack_subrecord('CTDA', bytes([tb]) + c[1:])
+            out += _pack_gate_pair((bytes([tb]) + c[1:], cis2))
         return out
     # Mixed AND-groups across revealers — use the first revealer's group.
-    return b''.join(pack_subrecord('CTDA', c) for c in revealer_gates[0])
+    return b''.join(_pack_gate_pair(p) for p in revealer_gates[0])
 
 
 def _quest_dnam(rec: dict) -> bytes:
@@ -782,7 +823,8 @@ SERVICE_MENU_SCRIPTS = {
 def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
                  fid_to_edid: dict = None, well_known_props: dict = None,
                  xref=None, reveal_props: dict = None,
-                 service_menu: str = '', bark_dial_fids: set = None) -> bytes:
+                 service_menu: str = '', bark_dial_fids: set = None,
+                 script_vars: dict = None) -> bytes:
     """INFO — Dialog response.
 
     Order: EDID [VMAD] ENAM CNAM [TCLT...] [TRDT NAM1 NAM2 NAM3]* CTDAs.
@@ -882,9 +924,16 @@ def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
         subs += pack_string_subrecord('NAM3', '')
 
     # Injected Skyrim-required gates FIRST, then translated TES4 conditions.
+    # The strings variant translates legacy GetScriptVariable/GetQuestVariable
+    # reads into GetVMScriptVariable/GetVMQuestVariable, whose variable NAME
+    # travels in a CIS2 subrecord right after the CTDA (`::WearingArmor_var`)
+    # — this is what makes script-variable-gated dialogue (Owyn's raiment
+    # check, the Arena match state machine) actually evaluate in Skyrim.
     subs += injected_ctdas
-    for ctda in convert_ctda_list(rec):
+    for ctda, cis2 in convert_ctda_list_with_strings(rec, script_vars):
         subs += pack_subrecord('CTDA', ctda)
+        if cis2:
+            subs += pack_string_subrecord('CIS2', cis2)
 
     return pack_record('INFO', get_formid(rec, 'FormID'),
                        get_int(rec, 'RecordFlags'), subs)
@@ -964,12 +1013,28 @@ def collect_tclt_target_fids(by_type: dict) -> set:
 
 
 def build_npc_to_vtyp_map(by_type: dict, num_new_masters: int) -> dict:
-    """NPC/CREA FormID (remapped) -> VTYP FormID, from race + gender.
+    """NPC/CREA FormID (remapped) -> VTYP FormID, from the VOICE the NPC
+    actually used in Oblivion.
 
-    Voice types are the custom TES4* records (kept so the converted audio
-    folders match). VNAM voice-race override is honored when present.
+    Oblivion resolves an NPC's voice folder through its RACE record's VNAM
+    (per-gender voice-race override), NOT the literal race: Khajiit->Argonian,
+    WoodElf/DarkElf->HighElf, Orc->Nord, Breton females->Imperial. The BSA has
+    NO recordings under khajiit/orc/wood elf/dark elf at all — assigning the
+    literal race gave those NPCs a VTYP whose voice folder is empty, so every
+    line was silent. Follow the same VNAM chain the engine uses so the
+    assigned VTYP is the folder the recordings really live in.
     """
     from .skyrim_overrides import TES4_RACE_FID_TO_EDID, VOICE_TYPE_MAP
+    # RACE fid24 -> per-gender voice race fid24 (0/missing = the race itself).
+    race_voice = {}
+    for rr in by_type.get('RACE', []):
+        rfid = get_formid(rr, 'FormID') & 0x00FFFFFF
+        if not rfid:
+            continue
+        m = get_formid(rr, 'VNAM.MaleVoice') & 0x00FFFFFF
+        f = get_formid(rr, 'VNAM.FemaleVoice') & 0x00FFFFFF
+        race_voice[rfid] = {'Male': m or rfid, 'Female': f or rfid}
+
     npc_to_vtyp = {}
     offset = num_new_masters
     for sig in ('NPC_', 'CREA'):
@@ -979,13 +1044,10 @@ def build_npc_to_vtyp_map(by_type: dict, num_new_masters: int) -> dict:
                 remapped = (raw_fid & 0x00FFFFFF) | (offset << 24)
             else:
                 remapped = raw_fid
-            # Voice-race override (NPC_ VNAM) takes precedence over the NPC race.
-            voice_race_fid = (get_formid(rec, 'VNAM.Male')
-                              or get_formid(rec, 'VNAM.Female')
-                              or get_formid(rec, 'RNAM.Race'))
-            race_edid = TES4_RACE_FID_TO_EDID.get(
-                voice_race_fid & 0x00FFFFFF, 'Imperial')
             gender = 'Female' if (get_int(rec, 'ACBS.Flags') & 1) else 'Male'
+            race_fid = get_formid(rec, 'RNAM.Race') & 0x00FFFFFF
+            voice_race_fid = race_voice.get(race_fid, {}).get(gender, race_fid)
+            race_edid = TES4_RACE_FID_TO_EDID.get(voice_race_fid, 'Imperial')
             vtyp = (VOICE_TYPE_MAP.get((race_edid, gender))
                     or VOICE_TYPE_MAP.get(('Imperial', gender), 0))
             if vtyp:
@@ -1018,7 +1080,8 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                         well_known_props: dict = None,
                         voice_map: dict = None,
                         unlock_plan: dict = None,
-                        unlock_globals: dict = None) -> set:
+                        unlock_globals: dict = None,
+                        script_vars: dict = None) -> set:
     """Build the DIAL/INFO/DLBR/DLVW hierarchy with original-quest ownership.
 
     Returns the set of quest FormIDs that must go in the .seq file (the
@@ -1078,10 +1141,12 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         qfid = get_formid(qr, 'FormID')
         if not qfid:
             continue
-        ctdas = convert_ctda_list(qr, offset)
-        if ctdas:
+        pairs = convert_ctda_list_with_strings(qr, script_vars, offset)
+        if pairs:
             quest_dialog_ctdas[qfid] = b''.join(
-                pack_subrecord('CTDA', c) for c in ctdas)
+                pack_subrecord('CTDA', c)
+                + (pack_string_subrecord('CIS2', s) if s else b'')
+                for c, s in pairs)
 
     # VTYP FormID -> EditorID, so an NPC-specific line can record the folder its
     # speaker's voice type resolves to (voice files are relocated there).
@@ -1127,6 +1192,17 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     # conversation topic (a mid-chain player line that must stay off the menu) —
     # a greeting-reached target must be top-level or the player has the line but
     # no way to pick it. FGC01Rats: Arvena's report-back greeting → FGC01Choice1.
+    #
+    # BUT this only holds when the revealing greeting is itself GATED. The
+    # generic always-available HELLO/GREETING offers generic emotional-response
+    # topics as choices (AnswerNegative/AnswerPositive/FollowupNegative/
+    # SadGeneral etc.); those are mid-conversation replies in Oblivion, reached
+    # only after picking the greeting's line. Promoting them to top-level makes
+    # them PERMANENTLY visible in the NPC's topic menu (there is no timing gate
+    # to hide them). So a target is promoted only when EVERY revealer carries a
+    # real timing gate; a target revealed by any ungated bark stays a Normal
+    # branch (reachable only via the in-conversation choice link), matching
+    # Oblivion.
     bark_choice_targets = set()
     # In Oblivion a choice-reached response topic needs NO stage condition of its
     # own — it is only reachable while the revealing greeting is live, and the
@@ -1154,10 +1230,20 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
             targets_here.append(cfid)
         if not targets_here:
             continue
-        gate = _quest_state_ctdas(info_rec, offset)
+        gate = _quest_state_ctdas(info_rec, offset, script_vars)
         for cfid in targets_here:
-            bark_choice_targets.add(cfid)
             bark_choice_gate[cfid].append(gate)  # gate may be [] (no timing)
+    # Promote to top-level only when every revealer contributes a real timing
+    # gate. If any revealer is ungated (e.g. the generic HELLO greeting), the
+    # promoted topic would sit permanently in the menu — so leave it a Normal
+    # branch instead (and drop the useless empty gate so nothing tries to gate
+    # a topic we're no longer promoting).
+    for cfid, gates in bark_choice_gate.items():
+        if gates and all(len(g) > 0 for g in gates):
+            bark_choice_targets.add(cfid)
+    for cfid in list(bark_choice_gate):
+        if cfid not in bark_choice_targets:
+            del bark_choice_gate[cfid]
     unlock_plan = unlock_plan or {'gated': {}, 'info_reveals': {},
                                   'stage_reveals': {}}
     unlock_globals = unlock_globals or {}
@@ -1212,7 +1298,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                 quest_npc_fids, sge_quest_fids, quest_edid_by_fid,
                 quest_priority, voice_map,
                 fid_to_edid, xref, well_known_props,
-                quest_dialog_ctdas, vtyp_edid_by_fid, stats)
+                quest_dialog_ctdas, vtyp_edid_by_fid, stats, script_vars)
             if not content:      # dropped (e.g. service topic with no gate)
                 stats['skipped'] += 1
                 continue
@@ -1233,7 +1319,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         well_known_props=well_known_props, xref=xref, voice_map=voice_map,
         quest_edid_by_fid=quest_edid_by_fid, quest_priority=quest_priority,
         quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid,
-        bark_dial_fids=bark_dial_fids, stats=stats)
+        bark_dial_fids=bark_dial_fids, stats=stats, script_vars=script_vars)
     bark_content, bark_sge = _build_bark_pass(
         bark_dials, info_by_dial, writer, remap,
         bark_generic_quests, bark_ctx)
@@ -1314,7 +1400,8 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
                      quest_npc_fids, sge_quest_fids, quest_edid_by_fid,
                      quest_priority, voice_map,
                      fid_to_edid, xref, well_known_props,
-                     quest_dialog_ctdas, vtyp_edid_by_fid, stats):
+                     quest_dialog_ctdas, vtyp_edid_by_fid, stats,
+                     script_vars=None):
     """Convert one DIAL topic and its child INFOs. Returns
     (dial_group_bytes, dlbr_bytes, owner_quest_fid, dial_fid, dlbr_fid)."""
     dial_fid = get_formid(dial_rec, 'FormID')
@@ -1437,7 +1524,8 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
         unlock_globals=unlock_globals, fid_to_edid=fid_to_edid,
         well_known_props=well_known_props, xref=xref, voice_map=voice_map,
         quest_edid_by_fid=quest_edid_by_fid, edid=edid,
-        quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid, stats=stats)
+        quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid,
+        stats=stats, script_vars=script_vars)
 
     # Bark topics are handled by the global bark pass (grouped by quest+subtype
     # across ALL bark DIALs), never here — see _build_bark_pass.
@@ -1530,7 +1618,8 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
                 well_known_props=ctx['well_known_props'], xref=ctx['xref'],
                 reveal_props=reveal_props, service_menu=ctx['service_kind'],
                 bark_dial_fids=(ctx.get('bark_dial_fids')
-                                if ctx['is_bark'] else None))
+                                if ctx['is_bark'] else None),
+                script_vars=ctx.get('script_vars'))
             child_count += 1
             ctx['stats']['infos'] += 1
             if ctx['voice_map'] is not None:

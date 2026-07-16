@@ -167,8 +167,16 @@ _TES4_SERVICE_BIT_TO_SKYRIM_KEYWORDS = {
          0x0008CDEA],                         # Potions → Potion + Poison + Food
 }
 
-# Module-level cache: service_bitmask → vendor FACT FormID (populated by Phase 0c)
+# Module-level cache: service_bitmask → shared vendor FACT FormID (Phase 0c).
+# Used for merchants that have no dedicated merchant chest — they trade from
+# their carried inventory only.
 _vendor_faction_cache: dict[int, int] = {}
+
+# Per-merchant vendor factions: (remapped) actor FormID → FACT FormID. These
+# carry a VENC (Merchant Container) pointing at the actor's own converted
+# Oblivion merchant chest, so the barter menu stocks the chest's full
+# merchandise instead of just the NPC's carried items.
+_merchant_faction_by_npc: dict[int, int] = {}
 
 
 def _keywords_for_services(services: int) -> list[int]:
@@ -180,78 +188,163 @@ def _keywords_for_services(services: int) -> list[int]:
     return sorted(kw_set)
 
 
+def _vendor_bits(services: int) -> int:
+    """Services bitmask with the non-vendor (training/recharge/repair) bits cleared."""
+    return services & ~((1 << 14) | (1 << 16) | (1 << 17))
+
+
+def _build_merchant_chest_map(by_type: dict) -> dict[int, int]:
+    """(remapped) base-actor FormID → (remapped) merchant-chest REFR FormID.
+
+    In Oblivion a merchant's sale stock lives in a CONT placed in the world and
+    linked to the NPC through the placed reference's XMRC (Merchant Container),
+    not in the NPC's carried inventory. Skyrim expresses the same thing with a
+    VENC on the vendor faction, so we resolve ACHR.NAME (base actor) → the chest
+    REFR here and hand it to the faction builder.
+    """
+    chest_by_npc: dict[int, int] = {}
+    for rec in by_type.get('ACHR', []):
+        chest = get_formid(rec, 'XMRC.MerchantContainer')
+        if not chest:
+            continue
+        base = get_formid(rec, 'NAME')
+        if base:
+            chest_by_npc.setdefault(base, chest)
+    return chest_by_npc
+
+
+def _vendor_flst_subs(svc_mask: int) -> bytes:
+    """FLST subrecords for a service bitmask's VendorItem keyword filter."""
+    kwds = _keywords_for_services(svc_mask)
+    # Always include VendorNoSale (0x000FF9FB) — prevents selling quest items.
+    kwds = kwds + [0x000FF9FB]
+    subs = pack_string_subrecord('EDID', f'TES4VendorList_{svc_mask:06X}')
+    for kw_fid in kwds:
+        subs += pack_formid_subrecord('LNAM', kw_fid)
+    return subs
+
+
+def _write_vendor_faction(writer, edid: str, flst_fid: int, venc_fid: int = 0) -> int:
+    """Create a vendor FACT (VEND → flst, optional VENC → chest) and return its FormID."""
+    fact_fid = writer.alloc_formid()
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_string_subrecord('FULL', 'Merchant')
+    # DATA: Vendor (0x4000) only — matches vanilla service factions
+    # (e.g. ServicesWhiterunEorlund). CanBeOwner is not set on vendor factions.
+    subs += pack_subrecord('DATA', struct.pack('<I', 0x4000))
+    # CRVA — Crime values (20 bytes of mostly zeros, like vanilla)
+    subs += pack_subrecord('CRVA', b'\x01\x01' + b'\x00' * 18)
+    # VEND — Vendor buy/sell list → FLST
+    subs += pack_formid_subrecord('VEND', flst_fid)
+    # VENC — Merchant Container → the actor's Oblivion merchant chest REFR. When
+    # present the barter menu stocks this container; order is VEND, VENC, VENV.
+    if venc_fid:
+        subs += pack_formid_subrecord('VENC', venc_fid)
+    # VENV — Vendor values (matches vanilla ServicesWhiterunEorlund): available
+    # 0..23h, radius 700, no stolen-only, sell+buy. StartHour(U16) + EndHour(U16)
+    # + Radius(U16) + Unused(2B) + OnlyBuyStolen(U8) + NotSellBuy(U8) + Unused(2B).
+    subs += pack_subrecord('VENV', struct.pack('<HHH BB BB BB',
+                                               0, 23, 700, 0, 0, 0, 0, 0, 0))
+    writer.add_record('FACT', pack_record('FACT', fact_fid, 0, subs))
+    return fact_fid
+
+
 def create_vendor_factions(by_type: dict, writer) -> None:
     """Phase 0c: Pre-scan NPC_/CREA for services and create vendor FACTs + FLSTs.
 
-    For each unique TES4 services bitmask combination:
-    1. Create an FLST containing the mapped Skyrim VendorItem keywords
-    2. Create a FACT with Vendor flag (0x4000) and VEND → that FLST
+    Two kinds of vendor faction are produced:
 
-    The NPC/CREA converters look up _vendor_faction_cache[services] to inject
-    a faction membership SNAM when writing the record.
+    * A shared per-service-bitmask faction (VEND only) for merchants that have
+      no merchant chest — they trade from their carried CNTO inventory.
+    * A dedicated per-merchant faction (VEND + VENC) for each merchant whose
+      placed reference links a merchant chest, so the barter menu stocks that
+      chest's full stock.
+
+    Both share one FLST per service bitmask. The NPC/CREA converters call
+    get_vendor_faction_fid(actor_fid, services) to pick the right one.
     """
     _vendor_faction_cache.clear()
+    _merchant_faction_by_npc.clear()
 
-    # Collect unique non-zero, non-training-only service bitmasks
-    # (Training alone = bit 14 has no vendor keyword, handled by CLAS)
-    unique_services = set()
+    chest_by_npc = _build_merchant_chest_map(by_type)
+
+    # Collect vendor actors: (remapped actor fid, vendor_bits). Training-only
+    # actors (bit 14 with no vendor bits) are handled by CLAS, not here.
+    vendor_actors: list[tuple[int, int]] = []
+    unique_services: set[int] = set()
     for sig in ('NPC_', 'CREA'):
         for rec in by_type.get(sig, []):
-            svc = get_int(rec, 'AIDT.Services')
-            # Mask out training/recharge/repair bits for vendor list purposes
-            vendor_bits = svc & ~((1 << 14) | (1 << 16) | (1 << 17))
-            if vendor_bits:
-                unique_services.add(vendor_bits)
+            bits = _vendor_bits(get_int(rec, 'AIDT.Services'))
+            if not bits:
+                continue
+            unique_services.add(bits)
+            vendor_actors.append((get_formid(rec, 'FormID'), bits))
 
     if not unique_services:
         return
 
-    print(f"  Creating vendor factions for {len(unique_services)} service combos...")
-
+    # One shared FLST per service bitmask, reused by both faction kinds.
+    flst_by_svc: dict[int, int] = {}
     for svc_mask in sorted(unique_services):
-        kwds = _keywords_for_services(svc_mask)
-        if not kwds:
+        if not _keywords_for_services(svc_mask):
             continue
-
-        # Also always include VendorNoSale (0x000FF9FB) — prevents selling quest items
-        kwds.append(0x000FF9FB)
-
-        # Create FLST
         flst_fid = writer.alloc_formid()
-        flst_subs = pack_string_subrecord('EDID', f'TES4VendorList_{svc_mask:06X}')
-        for kw_fid in kwds:
-            flst_subs += pack_formid_subrecord('LNAM', kw_fid)
-        writer.add_record('FLST', pack_record('FLST', flst_fid, 0, flst_subs))
+        writer.add_record('FLST', pack_record('FLST', flst_fid, 0,
+                                              _vendor_flst_subs(svc_mask)))
+        flst_by_svc[svc_mask] = flst_fid
 
-        # Create FACT with vendor data
-        fact_fid = writer.alloc_formid()
-        fact_subs = pack_string_subrecord('EDID', f'TES4VendorFaction_{svc_mask:06X}')
-        fact_subs += pack_string_subrecord('FULL', f'TES4 Vendor ({svc_mask:06X})')
-        # DATA: Vendor (0x4000) + CanBeOwner (0x8000)
-        fact_subs += pack_subrecord('DATA', struct.pack('<I', 0xC000))
-        # CRVA — Crime values (20 bytes of mostly zeros, like vanilla)
-        fact_subs += pack_subrecord('CRVA', b'\x01\x01' + b'\x00' * 18)
-        # VEND — Vendor buy/sell list → FLST
-        fact_subs += pack_formid_subrecord('VEND', flst_fid)
-        # VENV — Vendor values: 24h availability, no stolen-only, not sell-buy-only
-        # StartHour(U16) + EndHour(U16) + Radius(U16) + Unused(2B) +
-        # OnlyBuyStolenItems(U8) + NotSellBuy(U8) + Unused(2B) = 12 bytes
-        fact_subs += pack_subrecord('VENV', struct.pack('<HHH BB BB BB',
-                                                        0, 24, 0, 0, 0, 0, 0, 0, 0))
-        writer.add_record('FACT', pack_record('FACT', fact_fid, 0, fact_subs))
+    # Shared (chest-less) faction per service bitmask.
+    for svc_mask, flst_fid in flst_by_svc.items():
+        _vendor_faction_cache[svc_mask] = _write_vendor_faction(
+            writer, f'TES4VendorFaction_{svc_mask:06X}', flst_fid)
 
-        _vendor_faction_cache[svc_mask] = fact_fid
+    # Dedicated faction per merchant that owns a chest.
+    n_chest = 0
+    for actor_fid, bits in vendor_actors:
+        chest = chest_by_npc.get(actor_fid)
+        flst_fid = flst_by_svc.get(bits)
+        if not chest or not flst_fid:
+            continue
+        _merchant_faction_by_npc[actor_fid] = _write_vendor_faction(
+            writer, f'TES4Merchant_{actor_fid & 0xFFFFFF:06X}', flst_fid, chest)
+        n_chest += 1
+
+    print(f"  Creating vendor factions: {len(flst_by_svc)} shared service combos, "
+          f"{n_chest} chest-backed merchants...")
 
 
-def get_vendor_faction_fid(services: int) -> int:
-    """Return the vendor FACT FormID for a TES4 services bitmask, or 0."""
-    vendor_bits = services & ~((1 << 14) | (1 << 16) | (1 << 17))
-    return _vendor_faction_cache.get(vendor_bits, 0)
+def get_vendor_faction_fids_for_actor(actor_fid: int, services: int) -> list[int]:
+    """The vendor FACT FormID(s) this actor should belong to (SNAM memberships).
+
+    A merchant must belong to EXACTLY ONE Vendor-flagged faction: the engine's
+    Actor::GetVendorFaction returns the first vendor faction it finds, and
+    giving an NPC two of them broke barter entirely — the merchant menu never
+    opened, so the Barter topic vanished from the merchant's dialogue (only the
+    always-on Rumors topic remained). Vanilla effectively never doubles them up.
+
+    So a chest-backed merchant joins ONLY its dedicated faction (VEND for the
+    item filter + VENC for the chest stock); everyone else joins the shared
+    per-service faction. The barter dialogue gate ORs over BOTH kinds (see
+    get_vendor_faction_fids) so the topic still shows for either.
+    """
+    dedicated = _merchant_faction_by_npc.get(actor_fid)
+    if dedicated:
+        return [dedicated]
+    shared = _vendor_faction_cache.get(_vendor_bits(services), 0)
+    return [shared] if shared else []
 
 
 def get_vendor_faction_fids() -> list[int]:
-    """All vendor FACT FormIDs (for the barter-topic GetInFaction OR-chain)."""
-    return sorted(set(_vendor_faction_cache.values()))
+    """All vendor FACT FormIDs for the barter-topic GetInFaction OR-chain.
+
+    Must cover EVERY faction a merchant might be the sole member of — both the
+    shared per-service factions and the dedicated per-merchant chest factions —
+    because a chest-backed merchant now belongs to its dedicated faction only
+    (see get_vendor_faction_fids_for_actor). Omitting the dedicated ones would
+    leave those merchants failing the barter gate and losing the topic.
+    """
+    return sorted(set(_vendor_faction_cache.values())
+                  | set(_merchant_faction_by_npc.values()))
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +437,20 @@ def get_trainer_class_fid(npc_fid: int) -> int:
     return _trainer_class_by_npc.get(npc_fid, 0)
 
 
+# (remapped) NPC/CREA FormID -> VTYP FormID, from build_npc_to_vtyp_map —
+# the VNAM-resolved voice the actor actually used in Oblivion. Set by
+# import_main (Phase 0) so VTCK matches the GetIsVoiceType gates and audio
+# folders the dialogue pass emits; the (race, gender) computation below is
+# only the fallback when the map has no entry.
+_npc_voice_map: dict = {}
+
+
+def set_npc_voice_map(m: dict):
+    """Register the NPC->VTYP map (called by import_main before conversion)."""
+    global _npc_voice_map
+    _npc_voice_map = m or {}
+
+
 def _resolve_npc_race(rec: dict):
     """Resolve TES4 race FormID to (race_edid, skyrim_race_fid, gender_str)."""
     tes4_race_fid = get_formid(rec, 'RNAM.Race')
@@ -407,11 +514,15 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
         rank = get_int(rec, f'Faction[{i}].Rank')
         subs += pack_subrecord('SNAM', struct.pack('<IbBBB', fid, rank, 0, 0, 0))
 
-    # SNAM — Vendor faction (if this NPC sells anything)
+    # SNAM — Vendor factions (if this NPC sells anything): the shared per-service
+    # faction (barter dialogue gate) plus, for chest-backed merchants, the
+    # dedicated faction whose VENC stocks the barter menu from its chest.
     services = get_int(rec, 'AIDT.Services')
-    vendor_fid = get_vendor_faction_fid(services)
-    if vendor_fid:
-        subs += pack_subrecord('SNAM', struct.pack('<IbBBB', vendor_fid, 0, 0, 0, 0))
+    vendor_fids = get_vendor_faction_fids_for_actor(get_formid(rec, 'FormID'),
+                                                    services)
+    for vfid in vendor_fids:
+        subs += pack_subrecord('SNAM', struct.pack('<IbBBB', vfid, 0, 0, 0, 0))
+    vendor_fid = vendor_fids[0] if vendor_fids else 0
 
     # SNAM — Trainer faction (gates the generated Training dialogue topic)
     trainer_clas_fid = get_trainer_class_fid(get_formid(rec, 'FormID'))
@@ -424,9 +535,11 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     if inam:
         subs += pack_formid_subrecord('INAM', inam)
 
-    # VTCK — Voice type (custom VTYP created in Phase 0)
-    # Fall back to Imperial if the exact race/gender is not in the map
-    voice = (VOICE_TYPE_MAP.get((race_edid, gender))
+    # VTCK — Voice type (custom VTYP created in Phase 0). Primary source is
+    # the VNAM-resolved per-NPC map (matches dialogue voice gates + audio
+    # folders); fall back to literal race, then Imperial.
+    voice = (_npc_voice_map.get(get_formid(rec, 'FormID'))
+             or VOICE_TYPE_MAP.get((race_edid, gender))
              or VOICE_TYPE_MAP.get(('Imperial', gender), 0))
     if voice:
         subs += pack_formid_subrecord('VTCK', voice)
@@ -554,8 +667,16 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     calc_min = get_int(rec, 'ACBS.CalcMin', 1)
     calc_max = get_int(rec, 'ACBS.CalcMax', 100)
     tes5_flags = (tes4_flags & 0x4C9B) | 0x10
+    # TES4 flag 0x80 = "PC Level Offset" (Level is an additive offset from the
+    # player's level). TES5 reuses the same bit as "PC Level Mult", where Level
+    # is a fixed-point multiplier (1000 = 1.0x). A raw TES4 offset (e.g. 0..5)
+    # reinterpreted as a multiplier is 0.000x..0.005x, which the CK clamps to
+    # the 0.10 minimum. Since an offset can't be mapped to a multiplier, default
+    # to 1.0x when the flag is set.  See convert_NPC_ for the same handling.
+    is_pc_level = bool(tes4_flags & 0x80)
+    tes5_level = 1000 if is_pc_level else max(1, level)
     acbs = struct.pack('<IhhhHHHhHhH',
-                       tes5_flags, 0, 0, max(1, level),
+                       tes5_flags, 0, 0, tes5_level,
                        calc_min, calc_max, 100, 0, 0, 0, 0)
     subs += pack_subrecord('ACBS', acbs)
 
@@ -566,11 +687,13 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
         rank = get_int(rec, f'Faction[{i}].Rank')
         subs += pack_subrecord('SNAM', struct.pack('<IbBBB', fid, rank, 0, 0, 0))
 
-    # Vendor faction (if this creature sells anything)
+    # Vendor factions (if this creature sells anything) — see convert_NPC_.
     crea_services = get_int(rec, 'AIDT.Services')
-    crea_vendor_fid = get_vendor_faction_fid(crea_services)
-    if crea_vendor_fid:
-        subs += pack_subrecord('SNAM', struct.pack('<IbBBB', crea_vendor_fid, 0, 0, 0, 0))
+    crea_vendor_fids = get_vendor_faction_fids_for_actor(
+        get_formid(rec, 'FormID'), crea_services)
+    for vfid in crea_vendor_fids:
+        subs += pack_subrecord('SNAM', struct.pack('<IbBBB', vfid, 0, 0, 0, 0))
+    crea_vendor_fid = crea_vendor_fids[0] if crea_vendor_fids else 0
 
     # Death item
     inam = get_formid(rec, 'INAM.DeathItem')
@@ -592,7 +715,8 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     race_edid = TES4_RACE_FID_TO_EDID.get(tes4_race_fid & 0x00FFFFFF, '')
     if not race_edid:
         race_edid = _src if _src else 'Imperial'
-    voice = (VOICE_TYPE_MAP.get((race_edid, gender))
+    voice = (_npc_voice_map.get(get_formid(rec, 'FormID'))
+             or VOICE_TYPE_MAP.get((race_edid, gender))
              or VOICE_TYPE_MAP.get(('Imperial', gender), 0))
     if voice:
         subs += pack_formid_subrecord('VTCK', voice)

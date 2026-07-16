@@ -53,6 +53,13 @@ _FUNC_REMAP = {
 # index-join; comments record why.
 _FUNC_DROP = frozenset({
     40,    # GetVampire — removed
+    # Legacy VM variable reads — TES5 lists these indices but the legacy VM is
+    # gone, so they never evaluate true.  Callers that can emit a CIS2 string
+    # (convert_ctda_list_with_strings) translate them to GetVMScriptVariable/
+    # GetVMQuestVariable INSTEAD of calling convert_ctda; every other path must
+    # drop them rather than emit a condition that can never pass.
+    53,    # GetScriptVariable  -> 630 GetVMScriptVariable (strings path only)
+    79,    # GetQuestVariable   -> 629 GetVMQuestVariable  (strings path only)
     76,    # GetDisposition — removed (disposition system gone)
     81,    # reused: TES5 IsRotating
     104,   # IsYielding — removed
@@ -89,6 +96,25 @@ _FUNC_DROP = frozenset({
 })
 
 
+# Functions whose param1 is a RACE FormID in BOTH games (ptRace at the same
+# index: 69 GetIsRace, 130 GetPCIsRace). TES4 RACE records are never imported
+# (SKIP_TYPES) so the generic load-order remap would leave a dangling FormID —
+# the CK's "Unable to find ... TESForm in TESConditionItem Parameter Init"
+# warning, and a condition that can never be true in-game (2,650+ dialogue
+# lines gated on race). Translate the param to the SAME Skyrim race the NPC
+# converter assigns (RACE_MAP), so GetIsRace(speaker) keeps matching the
+# converted actors and GetPCIsRace matches the player's Skyrim race.
+_RACE_PARAM_FUNCS = frozenset({69, 130})
+
+
+def _map_race_param(fid: int) -> 'int | None':
+    from .skyrim_overrides import RACE_MAP, TES4_RACE_FID_TO_EDID
+    edid = TES4_RACE_FID_TO_EDID.get(fid & 0x00FFFFFF)
+    if edid is None:
+        return None
+    return RACE_MAP.get(edid)
+
+
 def _remap_formid(fid: int, offset: int) -> int:
     """Remap a source-file-local FormID to the output plugin's load order.
 
@@ -113,14 +139,33 @@ def _remap_formid(fid: int, offset: int) -> int:
 # FGC01Rats' escort package is `GetScriptVariable(PinarusREF, packageVAR) == 1`,
 # set by the dialogue INFO that agrees to help.  Without this translation the
 # condition silently invokes a dead function and the package never fires.
+#
+# GetQuestVariable(79) is the quest-script twin (`GetQuestVariable Arena,
+# ReadyMatch` gates most of the Arena blademaster dialogue) and is equally dead
+# in Skyrim; its live equivalent is GetVMQuestVariable(629).  Both use the same
+# script_vars table — build_script_var_map indexes QUST FormIDs alongside refs.
 GET_SCRIPT_VARIABLE = 53
+GET_QUEST_VARIABLE = 79
 GET_VM_SCRIPT_VARIABLE = 630
 GET_VM_QUEST_VARIABLE = 629
 
+# Legacy variable-read function -> live Papyrus-VM equivalent.
+_VM_VAR_FUNCS = {
+    GET_SCRIPT_VARIABLE: GET_VM_SCRIPT_VARIABLE,
+    GET_QUEST_VARIABLE: GET_VM_QUEST_VARIABLE,
+}
+
 
 def papyrus_var_name(var: str) -> str:
-    """Papyrus property name as a CIS2 script-variable reference."""
-    return f'::{var}_var'
+    """Papyrus property name as a CIS2 script-variable reference.
+
+    Must mirror the converter's property renaming (_safe_property_name): the
+    ::<name>_var lookup is against the COMPILED property, so a TES4 variable
+    the converter had to rename (reserved word, ::temp collision) must be
+    referenced by its renamed form.
+    """
+    from script_convert.constants import _safe_property_name
+    return f'::{_safe_property_name(var)}_var'
 
 
 def convert_ctda(raw: bytes, offset: 'int | None' = None) -> 'bytes | None':
@@ -147,7 +192,14 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None) -> 'bytes | None':
     # Comparison value is a GLOB FormID only when the Use Global flag is set.
     if type_byte & CTDA_USE_GLOBAL:
         comp_raw = _remap_formid(comp_raw, offset)
-    param1 = _remap_formid(param1, offset)
+    if func_idx in _RACE_PARAM_FUNCS:
+        # RACE records aren't imported: translate the param to the Skyrim
+        # race the converted NPCs actually use, or drop the condition.
+        param1 = _map_race_param(param1)
+        if param1 is None:
+            return None
+    else:
+        param1 = _remap_formid(param1, offset)
     param2 = _remap_formid(param2, offset)
 
     # TES4 "Run on target" flag -> TES5 Run On = 1 (Target). Clear the flag bit
@@ -233,7 +285,7 @@ def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
             continue
 
         func = struct.unpack_from('<H', raw + b'\0' * 24, 8)[0]
-        if func == GET_SCRIPT_VARIABLE:
+        if func in _VM_VAR_FUNCS:
             pair = _convert_script_var_ctda(raw, script_vars, offset)
             if pair is not None:
                 out.append(pair)
@@ -253,11 +305,13 @@ def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
 
 
 def _convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int):
-    """GetScriptVariable(ref, varIdx) -> GetVMScriptVariable(ref, '::var_var')."""
+    """GetScriptVariable(ref, varIdx) -> GetVMScriptVariable(ref, '::var_var');
+    GetQuestVariable(quest, varIdx) -> GetVMQuestVariable(quest, '::var_var')."""
     data = raw + b'\x00' * max(0, 24 - len(raw))
     type_byte = data[0]
     comp_raw = struct.unpack_from('<I', data, 4)[0]
-    param1 = struct.unpack_from('<I', data, 12)[0]   # the reference
+    func = struct.unpack_from('<H', data, 8)[0]
+    param1 = struct.unpack_from('<I', data, 12)[0]   # the ref / the quest
     param2 = struct.unpack_from('<I', data, 16)[0]   # script-local var index
 
     ref = _remap_formid(param1, offset)
@@ -274,7 +328,7 @@ def _convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int):
 
     ctda = struct.pack('<B3xIHHIIII I',
                        type_byte, comp_raw,
-                       GET_VM_SCRIPT_VARIABLE, 0,
+                       _VM_VAR_FUNCS[func], 0,
                        ref, 0,
                        run_on, 0, 0xFFFFFFFF)
     return ctda, papyrus_var_name(name)
