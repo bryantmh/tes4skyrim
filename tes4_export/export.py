@@ -12,11 +12,12 @@ Usage:
 """
 
 import argparse
+import mmap
 import os
 import sys
 import time
 from collections import defaultdict
-from concurrent.futures import as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 from .record_types.actors import (
     export_BSGN,
@@ -93,7 +94,14 @@ from .record_types.world import (
     export_ROAD,
     export_WRLD,
 )
-from .tes4_reader import Record, get_formid_str, get_string, get_subrecord, read_file
+from .tes4_reader import (
+    Record,
+    _read_record,
+    get_formid_str,
+    get_string,
+    get_subrecord,
+    read_file,
+)
 
 EXPORT_DISPATCH = {
     # Items / Objects
@@ -180,7 +188,8 @@ def export_records_for_type(records: list) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
-def export_file(all_records: list, output_dir: str, type_filter: set = None, source_filter: str = None):
+def export_file(all_records: list, output_dir: str, type_filter: set = None,
+                source_filter: str = None, source_path: str = None):
     """
     Export parsed TES4 records to text format.
 
@@ -190,6 +199,12 @@ def export_file(all_records: list, output_dir: str, type_filter: set = None, sou
         type_filter: If set, only export these record types
         source_filter: If set, only export records from a specific source file
                        (by load-order prefix matching)
+        source_path: Path to the source ESM/ESP binary. When given, formatting
+                     runs across a process pool whose workers re-read each
+                     record from their own mmap of the file — all_records may
+                     then come from read_file(..., parse_subs=False). When
+                     None, records must be fully parsed and are formatted
+                     serially in-process.
     """
 
     # Group records by type
@@ -221,40 +236,138 @@ def export_file(all_records: list, output_dir: str, type_filter: set = None, sou
     os.makedirs(output_dir, exist_ok=True)
 
     t_start = time.time()
-    _export_per_type_parallel(by_type, output_dir)
+    if source_path:
+        _export_per_type_parallel(by_type, output_dir, source_path)
+    else:
+        _export_per_type_serial(by_type, output_dir)
 
     t_end = time.time()
     print(f"  Export formatting/write took {t_end-t_start:.2f}s")
 
 
-def _export_per_type_parallel(by_type: dict, output_dir: str):
-    """Write per-type files using parallel workers for formatting."""
-    # Formatting is CPU-bound; use ProcessPoolExecutor
-    # But records contain complex objects — serialize them first
-    # Actually, since Python multiprocessing needs pickling, and our Record
-    # dataclass is simple, we can pass the records.
-    # However, the export functions import from modules which need to be
-    # importable — this should work fine with ProcessPoolExecutor.
-    from concurrent.futures import ThreadPoolExecutor
+def _type_filepath(sig: str, output_dir: str) -> str:
+    suffix = "_SKIP" if sig in SKIP_TYPES else ""
+    return os.path.join(output_dir, f"{sig}{suffix}.txt")
 
-    # Use threads (I/O + formatting) since GIL isn't terrible for this
-    # and avoids pickling overhead
-    def process_type(sig_records):
-        sig, records = sig_records
-        suffix = "_SKIP" if sig in SKIP_TYPES else ""
-        filename = f"{sig}{suffix}.txt"
-        filepath = os.path.join(output_dir, filename)
-        text = export_records_for_type(records)
+
+def _export_per_type_serial(by_type: dict, output_dir: str):
+    """Format fully-parsed records in-process (fallback / test path)."""
+    for sig, records in by_type.items():
+        filepath = _type_filepath(sig, output_dir)
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(text)
-        return sig, len(records), filepath
+            f.write(export_records_for_type(records))
+        print(f"    Wrote {filepath} ({len(records)} records)")
 
-    items = list(by_type.items())
-    with ThreadPoolExecutor(max_workers=_WORKER_COUNT) as executor:
-        futures = {executor.submit(process_type, item): item[0] for item in items}
-        for future in as_completed(futures):
-            sig, count, filepath = future.result()
-            print(f"    Wrote {filepath} ({count} records)")
+
+# --- Parallel formatting -----------------------------------------------------
+#
+# Formatting is pure-Python CPU work that holds the GIL, so threads pin one
+# core; a *process* pool gives real scaling. To avoid pickling every Record
+# (with all its subrecord bytes) across the process boundary, workers re-read
+# records straight from their own mmap of the source file: a job is just a
+# list of (offset, hierarchy) tuples.
+
+# Target uncompressed bytes of source data per format job. Small enough that
+# LAND/REFR spread over every core, big enough to amortise IPC.
+_FORMAT_CHUNK_BYTES = 8 * 1024 * 1024
+_FORMAT_CHUNK_RECORDS = 4000
+
+# Per-worker-process mmap of the source file (initialized lazily).
+_worker_mm = None
+_worker_path = None
+
+
+def _format_chunk_worker(args: tuple) -> str:
+    """Format one chunk of records; returns the joined text blocks.
+
+    args = (source_path, entries) with entries a list of
+    (offset, parent_wrld, parent_cell, parent_dial, is_vwd).
+    """
+    global _worker_mm, _worker_path
+    source_path, entries = args
+    if _worker_path != source_path:
+        if _worker_mm is not None:
+            _worker_mm.close()
+        with open(source_path, "rb") as f:
+            # mmap keeps its own handle; safe after the with-block closes f.
+            _worker_mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        _worker_path = source_path
+    mm = _worker_mm
+    n = len(mm)
+
+    blocks = []
+    for off, pw, pc, pd, vwd in entries:
+        rec = _read_record(mm, off, n)
+        rec.parent_wrld = pw
+        rec.parent_cell = pc
+        rec.parent_dial = pd
+        rec.is_vwd = vwd
+        blocks.append(format_record(rec))
+    return "\n\n".join(blocks)
+
+
+def _export_per_type_parallel(by_type: dict, output_dir: str, source_path: str):
+    """Write per-type files, formatting across a process pool.
+
+    Jobs are emitted in per-type order and ProcessPoolExecutor.map preserves
+    that order, so each output file's record order matches the serial path
+    exactly; results stream to disk as they arrive.
+    """
+    jobs = []       # (source_path, entries)
+    job_sigs = []   # parallel list: sig of each job
+    for sig, records in by_type.items():
+        entries = []
+        chunk_bytes = 0
+        for rec in records:
+            entries.append((rec.offset, rec.parent_wrld, rec.parent_cell,
+                            rec.parent_dial, rec.is_vwd))
+            chunk_bytes += rec.data_size
+            if (chunk_bytes >= _FORMAT_CHUNK_BYTES
+                    or len(entries) >= _FORMAT_CHUNK_RECORDS):
+                jobs.append((source_path, entries))
+                job_sigs.append(sig)
+                entries = []
+                chunk_bytes = 0
+        if entries:
+            jobs.append((source_path, entries))
+            job_sigs.append(sig)
+
+    workers = min(_WORKER_COUNT, max(1, len(jobs)))
+    if workers <= 1:
+        results = map(_format_chunk_worker, jobs)
+        _write_format_results(by_type, output_dir, job_sigs, results)
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            results = ex.map(_format_chunk_worker, jobs)
+            _write_format_results(by_type, output_dir, job_sigs, results)
+
+
+def _write_format_results(by_type: dict, output_dir: str, job_sigs: list,
+                          results):
+    """Stream ordered chunk texts into per-type files."""
+    cur_sig = None
+    cur_file = None
+    first_chunk = True
+
+    def _close_current():
+        if cur_file is not None:
+            cur_file.write("\n")
+            cur_file.close()
+            print(f"    Wrote {_type_filepath(cur_sig, output_dir)} "
+                  f"({len(by_type[cur_sig])} records)")
+
+    for sig, text in zip(job_sigs, results):
+        if sig != cur_sig:
+            _close_current()
+            cur_sig = sig
+            cur_file = open(_type_filepath(sig, output_dir), "w",
+                            encoding="utf-8")
+            first_chunk = True
+        if not first_chunk:
+            cur_file.write("\n\n")
+        cur_file.write(text)
+        first_chunk = False
+    _close_current()
 
 
 def export_header(header: Record, output_dir: str):
@@ -316,7 +429,7 @@ def main():
     type_filter = set(args.types) if args.types else None
 
     if args.list_types:
-        header, all_records = read_file(args.input)
+        header, all_records = read_file(args.input, parse_subs=False)
         by_type = defaultdict(int)
         for rec in all_records:
             by_type[rec.type] += 1
@@ -328,16 +441,18 @@ def main():
         print(f"Handled: {sum(1 for s in by_type if s in EXPORT_DISPATCH)}/{len(by_type)} types")
         return
 
-    # Full export
+    # Full export. Subrecord parsing is skipped here — the format workers
+    # re-read record data from their own mmap of the input file.
     print(f"Reading {basename}...")
     t0 = time.time()
-    header, all_records = read_file(args.input)
+    header, all_records = read_file(args.input, parse_subs=False)
     t1 = time.time()
-    print(f"  Parsed {len(all_records)} records in {t1-t0:.2f}s")
+    print(f"  Scanned {len(all_records)} records in {t1-t0:.2f}s")
 
     os.makedirs(output_dir, exist_ok=True)
     export_header(header, output_dir)
-    export_file(all_records, output_dir, type_filter, args.source_index)
+    export_file(all_records, output_dir, type_filter, args.source_index,
+                source_path=args.input)
 
 
 if __name__ == "__main__":

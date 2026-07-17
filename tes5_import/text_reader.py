@@ -5,15 +5,26 @@ Each record is delimited by ---RECORD_BEGIN--- and ---RECORD_END---.
 Lines starting with # are comments. Values are unescaped.
 """
 
+import mmap
 import os
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 _WORKER_COUNT = max(1, (os.cpu_count() or 4) - 2)
+
+# Byte size of one parse job. Big files (LAND.txt is ~1.4 GB) are split into
+# ranges of this size so parsing spreads across every worker instead of one
+# worker owning one whole file.
+_PARSE_CHUNK_BYTES = 16 * 1024 * 1024
 
 
 def unescape_value(value: str) -> str:
     """Unescape special characters from export format."""
+    # Fast path: the overwhelming majority of values (all numeric/hex data,
+    # FormIDs, most strings) contain no escapes at all. `in` scans at C speed;
+    # the char-by-char Python loop below is ~100x slower.
+    if '\\' not in value:
+        return value
     result = []
     i = 0
     while i < len(value):
@@ -66,29 +77,76 @@ def parse_record_block(lines: list) -> dict:
     return record
 
 
+_DELIM_BEGIN = b'---RECORD_BEGIN---'
+_DELIM_END = b'---RECORD_END---'
+
+
+def _find_delim_line(buf, needle: bytes, pos: int) -> int:
+    """Find *needle* at *pos* or later where it forms a whole line.
+
+    A match only counts if it starts at the beginning of a line and is
+    followed by a line break (or EOF) — mirroring the old line-based parser,
+    which compared entire lines, so a delimiter string embedded inside a
+    value never terminates a record.
+    """
+    n = len(buf)
+    while True:
+        i = buf.find(needle, pos)
+        if i < 0:
+            return -1
+        j = i + len(needle)
+        if (i == 0 or buf[i - 1:i] == b'\n') and \
+                (j >= n or buf[j:j + 1] in (b'\r', b'\n')):
+            return i
+        pos = i + 1
+
+
+def parse_file_range(args: tuple) -> list:
+    """Parse the records whose ---RECORD_BEGIN--- line starts in [start, end).
+
+    args = (filepath, start, end). Module-level so it is picklable for
+    ProcessPoolExecutor on Windows (spawn). Chunk boundaries partition the
+    file: every record belongs to exactly one chunk (the one containing its
+    BEGIN delimiter's byte offset), so parsing ranges in order reproduces the
+    whole-file parse exactly.
+    """
+    filepath, start, end = args
+    records = []
+    with open(filepath, 'rb') as f:
+        try:
+            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        except ValueError:  # empty file
+            return records
+        try:
+            begin = _find_delim_line(mm, _DELIM_BEGIN, start)
+            while begin != -1 and begin < end:
+                nl = mm.find(b'\n', begin)
+                if nl < 0:
+                    break
+                rec_end = _find_delim_line(mm, _DELIM_END, nl + 1)
+                if rec_end < 0:
+                    break
+                block = mm[nl + 1:rec_end].decode('utf-8')
+                record = parse_record_block(block.splitlines())
+                if record:
+                    records.append(record)
+                begin = _find_delim_line(mm, _DELIM_BEGIN,
+                                         rec_end + len(_DELIM_END))
+        finally:
+            mm.close()
+    return records
+
+
 def parse_export_file(filepath: str) -> list:
     """Parse an entire export file into a list of record dicts.
 
     Each dict has at minimum: Signature, FormID, EditorID (if present).
     """
-    records = []
-    current_lines = None
-
-    with open(filepath, encoding='utf-8') as f:
-        for line in f:
-            line = line.rstrip('\n')
-            if line == '---RECORD_BEGIN---':
-                current_lines = []
-            elif line == '---RECORD_END---':
-                if current_lines is not None:
-                    record = parse_record_block(current_lines)
-                    if record:
-                        records.append(record)
-                current_lines = None
-            elif current_lines is not None:
-                current_lines.append(line)
-
-    return records
+    try:
+        size = os.path.getsize(filepath)
+    except OSError:
+        return []
+    return parse_file_range((filepath, 0, size))
 
 
 def parse_export_directory(export_dir: str, type_filter: set = None) -> list:
@@ -96,6 +154,12 @@ def parse_export_directory(export_dir: str, type_filter: set = None) -> list:
 
     Returns a list of record dicts, optionally filtered by type.
     Deduplicates records by FormID (keeps the last occurrence).
+
+    Parsing is pure-Python string work that holds the GIL, so a *process*
+    pool is used (threads serialise on one core here). Files are split into
+    byte ranges so huge files (LAND.txt ~1.4 GB) spread across all workers;
+    results are concatenated in job order, which keeps the record order
+    identical to a serial whole-file parse.
     """
     all_records = []
     if not os.path.isdir(export_dir):
@@ -111,17 +175,28 @@ def parse_export_directory(export_dir: str, type_filter: set = None) -> list:
             continue
         tasks.append(os.path.join(export_dir, txt_file))
 
-    # Parse files in parallel (I/O + parsing is the bottleneck)
-    results_by_task = {}
-    with ThreadPoolExecutor(max_workers=_WORKER_COUNT) as ex:
-        future_map = {ex.submit(parse_export_file, fp): fp for fp in tasks}
-        for future in as_completed(future_map):
-            fp = future_map[future]
-            results_by_task[fp] = future.result()
-
-    # Preserve sorted order for deterministic output
+    # Build (file, start, end) range jobs
+    jobs = []
     for fp in tasks:
-        all_records.extend(results_by_task.get(fp, []))
+        try:
+            size = os.path.getsize(fp)
+        except OSError:
+            continue
+        if size == 0:
+            continue
+        for start in range(0, size, _PARSE_CHUNK_BYTES):
+            jobs.append((fp, start, min(start + _PARSE_CHUNK_BYTES, size)))
+
+    workers = min(_WORKER_COUNT, len(jobs))
+    if workers <= 1:
+        chunk_results = [parse_file_range(job) for job in jobs]
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            # ex.map preserves job order -> deterministic record order.
+            chunk_results = list(ex.map(parse_file_range, jobs))
+
+    for chunk in chunk_results:
+        all_records.extend(chunk)
 
     # Deduplicate by FormID (keep last occurrence)
     seen = {}

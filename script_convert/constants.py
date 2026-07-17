@@ -37,7 +37,11 @@ BLOCK_MAP = {
     'ontriggermob':       ('Event OnTriggerEnter(ObjectReference akActionRef)', 'EndEvent'),
     'onmagiceffecthit':   ('Event OnMagicEffectApply(ObjectReference akCaster, MagicEffect akEffect)', 'EndEvent'),
     'onactorequip':       ('Event OnEquipped(Actor akActor)', 'EndEvent'),
-    'onalarm':            (';TODO: No Papyrus equivalent for OnAlarm', ''),
+    # OnAlarm (actor noticed a crime/attack) has no Papyrus event; entering
+    # combat/search via OnCombatStateChanged is the closest trigger.  The block
+    # loop adds an aeCombatState guard per block type (alarm: != 0, start
+    # combat: == 1) so the two merge cleanly into one event.
+    'onalarm':            ('Event OnCombatStateChanged(Actor akTarget, int aeCombatState)', 'EndEvent'),
     'onstartcombat':      ('Event OnCombatStateChanged(Actor akTarget, int aeCombatState)', 'EndEvent'),
     # Signatures are fixed by ActiveMagicEffect.psc — an invented one fails to
     # compile ("the parameter types of function oneffectstart ... do not match
@@ -422,7 +426,7 @@ FUNCTION_MAP = {
     'getiscurrentpackage': (None,              True,  None),  # no-op
     'pickidle':          (None,                True,  None),  # Special handler in _emit_function
     'playidle':          (None,                True,  None),  # Special handler in _emit_function
-    'isanimplaying':     (None,                True,  None),  # returns 0
+    'isanimplaying':     (None,                True,  None),  # Special handler (anim variable)
     'getcombattarget':   ('GetCombatTarget',   True,  None),
     'isdisabled':        ('IsDisabled',        True,  None),
     'getparentcellowner':('GetParentCell',     True,  None),
@@ -569,8 +573,14 @@ FUNCTION_MAP = {
     'setdisplayname':    ('SetDisplayName',    True,  None),
     'setpackduration':   (None,                False, None),  # no-op
     'showbirthsignmenu': (None,                False, None),  # Special handler
-    'isspelltarget':     (None,                True,  None),  # no-op
-    'getarmorrating':    (None,                True,  None),  # no-op
+    'isspelltarget':     (None,                True,  None),  # Special handler (HasMagicEffect)
+    'getarmorrating':    (None,                True,  None),  # Special handler (DamageResist AV)
+    'getiscreature':     (None,                True,  None),  # Special handler (polyfill)
+    'isguard':           (None,                True,  None),  # Special handler (polyfill)
+    'hasvampirefed':     (None,                False, None),  # Special handler (polyfill)
+    'getclothingvalue':  (None,                True,  '(clothing value not tracked in Skyrim; 0)'),
+    'getshouldattack':   (None,                True,  '(no Papyrus equivalent; 0 — sibling IsInCombat term carries the check)'),
+    'pushactoraway':     (None,                True,  None),  # Special handler
     'isidleplaying':     (None,                True,  None),  # no-op
     'getopenstate':      ('GetOpenState',      True,  None),
     'getstartingpos':    (None,                True,  None),  # no-op
@@ -598,7 +608,7 @@ FUNCTION_MAP = {
     'setitemvalue':      (None,                True,  None),  # no-op
     'setnoavoidance':    (None,                True,  None),  # no-op
     'offerhorse':        (None,                True,  None),  # no-op
-    'setactorrefraction':(None,                True,  None),  # no-op
+    'setactorrefraction':(None,                True,  None),  # Special handler (alpha fade)
     'setdisplayname':    (None,                True,  None),  # Special handler
     'getcontainer':      (None,                True,  None),  # Special handler
     'stopcombatalarmonactor': ('StopCombat',   True,  None),

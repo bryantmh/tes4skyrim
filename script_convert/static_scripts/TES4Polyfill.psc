@@ -242,6 +242,76 @@ Bool Function IsInContainer(ObjectReference akRef) Global
 EndFunction
 
 ; ==========================================================================
+; Magic / Actor State
+; ==========================================================================
+
+; TES4 IsSpellTarget: "is this actor currently affected by spell X".  The
+; converter resolves X to the Skyrim MGEF the imported spell actually carries
+; and passes its Skyrim.esm FormID here.
+Bool Function HasMagicEffectByID(Actor akActor, Int aiFormID) Global
+  If akActor == None
+    Return False
+  EndIf
+  MagicEffect fx = Game.GetFormFromFile(aiFormID, "Skyrim.esm") as MagicEffect
+  If fx == None
+    Return False
+  EndIf
+  Return akActor.HasMagicEffect(fx)
+EndFunction
+
+; TES4 GetIsCreature: Skyrim marks people with the ActorTypeNPC keyword
+; (Skyrim.esm 0x00013794) on their race; converted creatures use generated
+; races without it.
+Bool Function GetIsCreature(Actor akActor) Global
+  If akActor == None
+    Return False
+  EndIf
+  Keyword npcKeyword = Game.GetFormFromFile(0x00013794, "Skyrim.esm") as Keyword
+  If npcKeyword == None
+    Return False
+  EndIf
+  Return !akActor.HasKeyword(npcKeyword)
+EndFunction
+
+; TES4 HasVampireFed: Skyrim's PlayerVampireQuest (Skyrim.esm 0x000EAFD5)
+; tracks feeding — VampireStatus is 1 exactly while a vampire has recently fed
+; (it climbs to 2..4 as the player goes hungry).
+Bool Function HasVampireFed() Global
+  Quest vq = Game.GetFormFromFile(0x000EAFD5, "Skyrim.esm") as Quest
+  PlayerVampireQuestScript vs = vq as PlayerVampireQuestScript
+  If vs == None
+    Return False
+  EndIf
+  Return vs.VampireStatus == 1
+EndFunction
+
+; TES4 IsGuard: Skyrim guards are all members of GuardDialogueFaction
+; (Skyrim.esm 0x0002BE3B).
+Bool Function IsGuard(Actor akActor) Global
+  If akActor == None
+    Return False
+  EndIf
+  Faction guardFaction = Game.GetFormFromFile(0x0002BE3B, "Skyrim.esm") as Faction
+  If guardFaction == None
+    Return False
+  EndIf
+  Return akActor.IsInFaction(guardFaction)
+EndFunction
+
+; TES4 SetActorRefraction: no refraction control in Papyrus; a translucent
+; alpha is the closest visual.  0 restores full opacity, anything else fades.
+Function SetActorRefraction(Actor akActor, Float afValue) Global
+  If akActor == None
+    Return
+  EndIf
+  If afValue > 0.0
+    akActor.SetAlpha(0.3, True)
+  Else
+    akActor.SetAlpha(1.0, True)
+  EndIf
+EndFunction
+
+; ==========================================================================
 ; Day/Time Helpers
 ; ==========================================================================
 

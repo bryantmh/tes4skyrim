@@ -16,6 +16,62 @@ from script_convert.converter import ScriptConverter
 
 
 # ===========================================================================
+# Process-pool plumbing
+#
+# Script conversion is pure-Python CPU work (ScriptConverter holds the GIL),
+# so batches run across a ProcessPoolExecutor. The read-only CrossRefGraph and
+# plan dicts are shipped once per worker via the pool initializer; each job is
+# a (kind, records) chunk whose .psc files the worker writes directly.
+# ===========================================================================
+
+_WORKER_CTX: dict = {}
+
+
+def _new_stats() -> dict:
+    return {
+        'scpt_total': 0, 'scpt_ok': 0, 'scpt_err': 0,
+        'info_total': 0, 'info_ok': 0, 'info_err': 0,
+        'qust_total': 0, 'qust_ok': 0, 'qust_err': 0,
+        'todo_count': 0, 'errors': [],
+    }
+
+
+def _script_worker_init(xref, output_dir, info_reveals, service_topics,
+                        stage_reveals):
+    _WORKER_CTX.update(xref=xref, output_dir=output_dir,
+                       info_reveals=info_reveals,
+                       service_topics=service_topics,
+                       stage_reveals=stage_reveals)
+
+
+def _script_worker_run(job):
+    kind, records = job
+    ctx = _WORKER_CTX
+    stats = _new_stats()
+    if kind == 'scpt':
+        _scpt_batch(records, ctx['output_dir'], ctx['xref'], stats)
+    elif kind == 'info':
+        _info_batch(records, ctx['output_dir'], ctx['xref'], stats,
+                    ctx['info_reveals'], ctx['service_topics'])
+    elif kind == 'qust':
+        _qust_batch(records, ctx['output_dir'], ctx['xref'], stats,
+                    ctx['stage_reveals'])
+    return stats
+
+
+def _merge_stats(into: dict, part: dict):
+    for k, v in part.items():
+        if k == 'errors':
+            into['errors'].extend(v)
+        else:
+            into[k] += v
+
+
+def _chunk(records: list, size: int):
+    return [records[i:i + size] for i in range(0, len(records), size)]
+
+
+# ===========================================================================
 # High-level conversion functions
 # ===========================================================================
 
@@ -70,18 +126,7 @@ def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -
     print(f'    AddTopic unlocks: {len(unlock_plan["gated"])} gated topics, '
           f'{len(unlock_plan["info_reveals"])} revealer INFOs')
 
-    stats = {
-        'scpt_total': 0, 'scpt_ok': 0, 'scpt_err': 0,
-        'info_total': 0, 'info_ok': 0, 'info_err': 0,
-        'qust_total': 0, 'qust_ok': 0, 'qust_err': 0,
-        'todo_count': 0, 'errors': [],
-    }
-
-    # Phase 2: Convert SCPT records
-    scpt_path = os.path.join(export_dir, 'SCPT.txt')
-    if os.path.exists(scpt_path):
-        print('  Converting SCPT records...')
-        _convert_scpt_records(scpt_path, output_dir, xref, stats)
+    stats = _new_stats()
 
     # Service-menu topics (Barter/Training): INFOs under them whose fragment
     # is generated here must ALSO open the Skyrim menu — the importer attaches
@@ -94,20 +139,51 @@ def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -
                 and rec.get('DATA.Type', '') == str(DIAL_TYPE_SERVICE)):
             service_topics[rec.get('FormID', '')] = SERVICE_MENU_TOPICS[edid][0]
 
-    # Phase 3: Convert INFO result scripts
-    info_path = os.path.join(export_dir, 'INFO.txt')
-    if os.path.exists(info_path):
-        print('  Converting INFO result scripts...')
-        _convert_info_scripts(info_path, output_dir, xref, stats,
-                              info_reveals=unlock_plan['info_reveals'],
-                              service_topics=service_topics)
+    # Phases 2-4: convert SCPT records, INFO result scripts and QUST stage
+    # scripts. Records that produce no output are filtered here so they are
+    # never pickled to a worker; the remaining work is chunked into (kind,
+    # records) jobs that all share one process pool.
+    scpt_work = []
+    scpt_path = os.path.join(export_dir, 'SCPT.txt')
+    if os.path.exists(scpt_path):
+        scpt_records = parse_export_file(scpt_path)
+        stats['scpt_total'] = len(scpt_records)
+        scpt_work = [r for r in scpt_records
+                     if r.get('SCTX', '').strip()]
 
-    # Phase 4: Convert QUST stage scripts
-    qust_path = os.path.join(export_dir, 'QUST.txt')
-    if os.path.exists(qust_path):
-        print('  Converting QUST stage scripts...')
-        _convert_qust_scripts(qust_path, output_dir, xref, stats,
-                              stage_reveals=unlock_plan['stage_reveals'])
+    info_reveals = unlock_plan['info_reveals']
+
+    def _info_makes_output(rec):
+        if rec.get('ResultScript', '').strip():
+            return True
+        try:
+            return (int(rec.get('FormID', ''), 16) & 0xFFFFFF) in info_reveals
+        except (TypeError, ValueError):
+            return False
+
+    info_work = [r for r in by_type.get('INFO', []) if _info_makes_output(r)]
+    qust_work = [r for r in by_type.get('QUST', []) if r.get('EditorID', '')]
+
+    jobs = ([('scpt', c) for c in _chunk(scpt_work, 48)]
+            + [('info', c) for c in _chunk(info_work, 128)]
+            + [('qust', c) for c in _chunk(qust_work, 8)])
+    print(f'  Converting {len(scpt_work)} SCPT / {len(info_work)} INFO / '
+          f'{len(qust_work)} QUST scripts ({len(jobs)} jobs)...')
+
+    initargs = (xref, output_dir, info_reveals, service_topics,
+                unlock_plan['stage_reveals'])
+    if workers <= 1 or len(jobs) <= 2:
+        _script_worker_init(*initargs)
+        for job in jobs:
+            _merge_stats(stats, _script_worker_run(job))
+        _WORKER_CTX.clear()
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=min(workers, len(jobs)),
+                                 initializer=_script_worker_init,
+                                 initargs=initargs) as ex:
+            for part in ex.map(_script_worker_run, jobs):
+                _merge_stats(stats, part)
 
     total = stats['scpt_ok'] + stats['info_ok'] + stats['qust_ok']
     errs = stats['scpt_err'] + stats['info_err'] + stats['qust_err']
@@ -121,11 +197,8 @@ def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -
     return stats
 
 
-def _convert_scpt_records(scpt_path: str, output_dir: str, xref: CrossRefGraph, stats: dict):
-    """Convert all SCPT records from the export file."""
-    records = parse_export_file(scpt_path)
-    stats['scpt_total'] = len(records)
-
+def _scpt_batch(records: list, output_dir: str, xref: CrossRefGraph, stats: dict):
+    """Convert a batch of SCPT records (runs in parent or worker process)."""
     for rec in records:
         formid = rec.get('FormID', '')
         edid = rec.get('EditorID', '')
@@ -162,10 +235,10 @@ _SERVICE_MENU_CALL = {
 }
 
 
-def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph,
-                          stats: dict, info_reveals: dict = None,
-                          service_topics: dict = None):
-    """Convert INFO result scripts to TopicInfo fragment .psc files.
+def _info_batch(records: list, output_dir: str, xref: CrossRefGraph,
+                stats: dict, info_reveals: dict = None,
+                service_topics: dict = None):
+    """Convert a batch of INFO records into TopicInfo fragment .psc files.
 
     info_reveals ({info_fid24: [unlock global names]}) marks AddTopic revealer
     INFOs: their OnEnd fragment sets the unlock globals (a fragment is
@@ -175,7 +248,6 @@ def _convert_info_scripts(info_path: str, output_dir: str, xref: CrossRefGraph,
     service_topics ({dial_formid_str: 'barter'|'training'}) marks the service-
     menu topics; fragments for their INFOs also open the corresponding menu.
     """
-    records = parse_export_file(info_path)
     info_reveals = info_reveals or {}
     service_topics = service_topics or {}
 
@@ -328,9 +400,9 @@ def _superseded_stages(rec: dict, fragments: list) -> dict:
     return supersedes
 
 
-def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph,
-                          stats: dict, stage_reveals: dict = None):
-    """Convert QUST stage scripts to Quest fragment .psc files.
+def _qust_batch(records: list, output_dir: str, xref: CrossRefGraph,
+                stats: dict, stage_reveals: dict = None):
+    """Convert a batch of QUST records into Quest fragment .psc files.
 
     A fragment is generated for every stage that has journal log text (CNAM),
     whether or not it also has a result script.  Each fragment calls
@@ -341,7 +413,6 @@ def _convert_qust_scripts(qust_path: str, output_dir: str, xref: CrossRefGraph,
     stages whose TES4 result scripts contained `AddTopic X`: the fragment sets
     the unlock globals (the AddTopic command itself is a no-op in conversion).
     """
-    records = parse_export_file(qust_path)
     stage_reveals = stage_reveals or {}
 
     for rec in records:

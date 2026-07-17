@@ -1085,3 +1085,183 @@ class TestQuestObjectiveCompletion:
         sup = _superseded_stages({}, _frags(10, 20, 30))
         assert sup[(20, 0)] == [10]
         assert sup[(30, 0)] == [20]
+
+
+# ===========================================================================
+# TES4-only functions made functional (pme/sme, IsSpellTarget, OnAlarm, ...)
+# ===========================================================================
+
+@pytest.fixture
+def xref_magic():
+    """CrossRefGraph stocked with MGEF/EFSH/SPEL/PACK records the new
+    handlers resolve through."""
+    x = CrossRefGraph()
+    # EFSH records (converted, so bindable as EffectShader properties)
+    for fid, edid in [('0014A0A2', 'effectSoulTrap'),
+                      ('0018B576', 'effectEnchantConjuration'),
+                      ('0018B57B', 'effectEnchantMysticism')]:
+        x.formid_to_edid[fid] = edid
+        x.edid_to_formid[edid.lower()] = fid
+        x.record_type[fid] = 'EFSH'
+    # MGEF codes: STRP has its own shader; DSPL only the enchant shader;
+    # BABO (bound boots) falls back to its school's (conjuration) glow.
+    x.mgef_shaders['strp'] = ('0014A0A2', '0018B57B', 4)
+    x.mgef_shaders['dspl'] = ('00000000', '0018B57B', 4)
+    x.mgef_shaders['babo'] = ('00000000', '00000000', 1)
+    # Spells: first effect DRHE -> AlchDamageHealth; pure-SEFF spell -> filler
+    x.spell_effects['testdrainspell'] = [('SEFF', 69), ('DRHE', 8)]
+    x.spell_effects['testscriptspell'] = [('SEFF', 69)]
+    # A PACK record for GetIsCurrentPackage/GetCurrentAIPackage
+    x.formid_to_edid['00023456'] = 'TestWanderPkg'
+    x.edid_to_formid['testwanderpkg'] = '00023456'
+    x.record_type['00023456'] = 'PACK'
+    return x
+
+
+class TestMagicEffectVisuals:
+    def test_pme_own_shader(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        result = conv._convert_line('pme STRP', 'ObjectReference')
+        assert 'effectSoulTrap.Play(Self, -1.0)' in result
+        assert conv._property_refs['effectSoulTrap'] == 'EffectShader'
+
+    def test_pme_duration_and_ref(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        conv._property_refs['SomeRef'] = 'ObjectReference'
+        result = conv._convert_line('SomeRef.pme STRP 5', 'ObjectReference')
+        assert 'effectSoulTrap.Play(SomeRef, 5)' in result
+
+    def test_pme_enchant_fallback(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        result = conv._convert_line('pme DSPL', 'ObjectReference')
+        assert 'effectEnchantMysticism.Play(Self, -1.0)' in result
+
+    def test_pme_school_fallback(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        result = conv._convert_line('pme BABO', 'ObjectReference')
+        assert 'effectEnchantConjuration.Play(Self, -1.0)' in result
+
+    def test_sme_stops(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        result = conv._convert_line('sme STRP', 'ObjectReference')
+        assert 'effectSoulTrap.Stop(Self)' in result
+
+    def test_pme_unknown_code_is_ne_not_todo(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        result = conv._convert_line('pme XXXX', 'ObjectReference')
+        assert ';TODO' not in result
+
+
+class TestIsSpellTarget:
+    def test_resolves_first_surviving_effect(self, xref_magic):
+        # SEFF drops, DRHE -> AlchDamageHealth 0x0003EB42
+        assert xref_magic.get_spell_first_skyrim_mgef('TestDrainSpell') == 0x0003EB42
+
+    def test_pure_script_spell_uses_filler(self, xref_magic):
+        # matches the importer's first filler (AlchRestoreHealth)
+        assert xref_magic.get_spell_first_skyrim_mgef('TestScriptSpell') == 0x0003EB15
+
+    def test_emits_polyfill_call(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        result = conv._convert_line('if player.IsSpellTarget TestDrainSpell',
+                                    'ObjectReference')
+        assert 'TES4Polyfill.HasMagicEffectByID(Game.GetPlayer(), 0x0003EB42)' in result
+        assert ';TODO' not in result
+
+
+class TestAnimAndPackage:
+    def test_isanimplaying_bare(self, converter):
+        result = converter._convert_line('if isAnimPlaying == 0', 'ObjectReference')
+        assert 'GetAnimationVariableBool("bAnimPlaying")' in result
+        assert ';TODO' not in result
+
+    def test_isanimplaying_on_ref(self, converter):
+        converter._property_refs['DoorRef'] = 'ObjectReference'
+        result = converter._convert_line('if DoorRef.IsAnimPlaying == 0',
+                                         'ObjectReference')
+        assert 'DoorRef.GetAnimationVariableBool("bAnimPlaying")' in result
+
+    def test_getiscurrentpackage(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        result = conv._convert_line('if GetIsCurrentPackage TestWanderPkg',
+                                    'Actor')
+        assert 'GetCurrentPackage() == TestWanderPkg' in result
+        assert conv._property_refs['TestWanderPkg'] == 'Package'
+
+    def test_getcurrentaipackage_vs_form(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        result = conv._convert_line('if ( GetCurrentAIPackage == TestWanderPkg )',
+                                    'Actor')
+        assert 'GetCurrentPackage() == TestWanderPkg' in result
+
+    def test_getcurrentaipackage_vs_number_stays_neutral(self, xref_magic):
+        conv = ScriptConverter(xref_magic)
+        result = conv._convert_line('if ( GetCurrentAIPackage != 5 )', 'Actor')
+        assert 'GetCurrentPackage()' not in result
+
+
+class TestOnAlarmBlock:
+    def test_onalarm_becomes_combat_state_guard(self, converter):
+        source = ('scriptname TestAlarm\n'
+                  'begin onAlarm 4, player\n'
+                  '  set doOnce to 1\n'
+                  'end\n')
+        result = converter.convert_standalone('TestAlarm', source, 'Actor',
+                                              'TestAlarm')
+        text = result if isinstance(result, str) else '\n'.join(result)
+        assert 'Event OnCombatStateChanged(Actor akTarget, int aeCombatState)' in text
+        assert 'If aeCombatState != 0' in text
+        assert 'No Papyrus equivalent for OnAlarm' not in text
+
+    def test_onstartcombat_gets_state_guard(self, converter):
+        source = ('scriptname TestSC\n'
+                  'begin onStartCombat\n'
+                  '  set doOnce to 1\n'
+                  'end\n')
+        result = converter.convert_standalone('TestSC', source, 'Actor', 'TestSC')
+        text = result if isinstance(result, str) else '\n'.join(result)
+        assert 'If aeCombatState == 1' in text
+
+
+class TestSingletonFixes:
+    def test_getiscreature_polyfill(self, converter):
+        result = converter._convert_line('if GetIsCreature == 0', 'ActiveMagicEffect')
+        assert 'TES4Polyfill.GetIsCreature(GetTargetActor())' in result
+
+    def test_isguard_polyfill(self, converter):
+        result = converter._convert_line('if IsGuard == 0', 'ActiveMagicEffect')
+        assert 'TES4Polyfill.IsGuard(GetTargetActor())' in result
+
+    def test_hasvampirefed_polyfill(self, converter):
+        result = converter._convert_line('if player.HasVampireFed == 1',
+                                         'ObjectReference')
+        assert 'TES4Polyfill.HasVampireFed()' in result
+
+    def test_setfactionreaction_mixed_separators(self, converter):
+        result = converter._convert_line(
+            'setfactionreaction FacA, FacB 20', 'ObjectReference')
+        assert 'FacA.SetReaction(FacB, 20)' in result
+        assert ';TODO' not in result
+
+    def test_pushactoraway(self, converter):
+        converter._property_refs['MarkerRef'] = 'ObjectReference'
+        converter._property_refs['VictimRef'] = 'ObjectReference'
+        result = converter._convert_line('MarkerRef.pushActorAway VictimRef 30',
+                                         'ObjectReference')
+        assert 'MarkerRef.PushActorAway((VictimRef as Actor), 30)' in result
+        assert ';TODO' not in result
+
+    def test_getarmorrating(self, converter):
+        converter._property_refs['GuardRef'] = 'Actor'
+        result = converter._convert_line('if GuardRef.GetArmorRating > 20',
+                                         'ObjectReference')
+        assert 'GuardRef.GetActorValue("DamageResist")' in result
+
+    def test_if_without_space_is_condition(self, converter):
+        result = converter._convert_line('if((myVar == 1))', 'ObjectReference')
+        assert result.lstrip().lower().startswith('if')
+        assert ';TODO' not in result
+
+    def test_setactorrefraction(self, converter):
+        result = converter._convert_line('SetActorRefraction 1', 'Actor')
+        assert 'TES4Polyfill.SetActorRefraction(Self, 1)' in result

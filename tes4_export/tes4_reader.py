@@ -38,6 +38,10 @@ class Record:
     parent_wrld: int = 0
     parent_dial: int = 0
     is_vwd: bool = False  # True if in VWD group (group type 10)
+    # Byte offset of the record header in the source file. Lets worker
+    # processes re-read a record from their own mmap of the file instead of
+    # having the whole Record pickled across the process boundary.
+    offset: int = -1
 
 
 @dataclass
@@ -66,9 +70,14 @@ def parse_subrecords(data: bytes) -> list:
     return subs
 
 
-def read_file(filepath: str) -> tuple:
+def read_file(filepath: str, parse_subs: bool = True) -> tuple:
     """
     Read a TES4 ESM/ESP file and return (header_record, records_by_group).
+
+    parse_subs=False skips subrecord parsing (and decompression) for all
+    records except the TES4 header — each Record then only carries its header
+    fields, hierarchy info and byte offset. Use this when the subrecord data
+    will be re-read elsewhere (e.g. by export worker processes).
 
     Returns:
         header: Record (the TES4 file header)
@@ -78,18 +87,18 @@ def read_file(filepath: str) -> tuple:
     with open(filepath, "rb") as f:
         mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
         try:
-            header, all_records = _parse_file(mm)
+            header, all_records = _parse_file(mm, parse_subs)
         finally:
             mm.close()
     return header, all_records
 
 
-def _parse_file(mm) -> tuple:
+def _parse_file(mm, parse_subs: bool = True) -> tuple:
     """Parse all records from a memory-mapped file."""
     file_size = len(mm)
     pos = 0
 
-    # Read TES4 header record first
+    # Read TES4 header record first (always fully parsed — it's one record)
     header = _read_record(mm, pos, file_size)
     pos += RECORD_HEADER_SIZE + header.data_size
     all_records = []
@@ -112,7 +121,8 @@ def _parse_file(mm) -> tuple:
         mm[pos + 8:pos + 12].decode("ascii", errors="replace")
         struct.unpack_from("<I", mm, pos + 12)[0]
 
-        _parse_group(mm, pos, group_end, file_size, all_records, 0, 0, 0)
+        _parse_group(mm, pos, group_end, file_size, all_records, 0, 0, 0,
+                     parse_subs=parse_subs)
         pos = group_end
 
     return header, all_records
@@ -120,7 +130,8 @@ def _parse_file(mm) -> tuple:
 
 def _parse_group(mm, start: int, end: int, file_size: int,
                  records: list, current_wrld: int, current_cell: int,
-                 current_dial: int, is_vwd: bool = False):
+                 current_dial: int, is_vwd: bool = False,
+                 parse_subs: bool = True):
     """Recursively parse records and sub-groups within a GRUP."""
     pos = start + GROUP_HEADER_SIZE
     group_type = struct.unpack_from("<I", mm, start + 12)[0]
@@ -150,10 +161,11 @@ def _parse_group(mm, start: int, end: int, file_size: int,
             sub_size = struct.unpack_from("<I", mm, pos + 4)[0]
             sub_end = pos + sub_size
             _parse_group(mm, pos, sub_end, file_size, records,
-                         current_wrld, current_cell, current_dial, is_vwd)
+                         current_wrld, current_cell, current_dial, is_vwd,
+                         parse_subs=parse_subs)
             pos = sub_end
         else:
-            rec = _read_record(mm, pos, file_size)
+            rec = _read_record(mm, pos, file_size, parse_subs)
             if rec is None:
                 break
 
@@ -175,7 +187,7 @@ def _parse_group(mm, start: int, end: int, file_size: int,
             pos += RECORD_HEADER_SIZE + rec.data_size
 
 
-def _read_record(mm, pos: int, file_size: int) -> Record:
+def _read_record(mm, pos: int, file_size: int, parse_subs: bool = True) -> Record:
     """Read a single record (header + subrecords) from the memory-mapped file."""
     if pos + RECORD_HEADER_SIZE > file_size:
         return None
@@ -185,7 +197,11 @@ def _read_record(mm, pos: int, file_size: int) -> Record:
     flags = struct.unpack_from("<I", mm, pos + 8)[0]
     form_id = struct.unpack_from("<I", mm, pos + 12)[0]
 
-    rec = Record(type=sig, data_size=data_size, flags=flags, form_id=form_id)
+    rec = Record(type=sig, data_size=data_size, flags=flags, form_id=form_id,
+                 offset=pos)
+
+    if not parse_subs:
+        return rec
 
     data_start = pos + RECORD_HEADER_SIZE
     data_end = data_start + data_size

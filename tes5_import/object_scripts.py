@@ -149,6 +149,12 @@ def build_object_script_plan(by_type: dict, xref, fid_to_edid: dict) -> int:
 
     from .constants import TYPE_MAP
 
+    # Property resolution runs a full ScriptConverter pass over the script
+    # source — the dominant cost here — and depends only on the SCPT, not the
+    # record it is attached to. Many records share one script (3297 scripted
+    # records / 2090 unique scripts in Oblivion.esm), so memoise per SCRI.
+    props_memo: dict[str, dict] = {}
+
     count = 0
     for sig in SCRIPTABLE_TYPES:
         # Skip types whose Skyrim output record has no VMAD field in its def;
@@ -172,11 +178,14 @@ def build_object_script_plan(by_type: dict, xref, fid_to_edid: dict) -> int:
             edid, sctx, extends = scpt_by_fid[scri]
             script_name = papyrus_script_name(edid or f'Script_{scri}')
 
-            try:
-                obj_props = _resolve_props(sctx, edid, extends, xref,
-                                           fid_to_edid, offset)
-            except Exception:
-                obj_props = {}
+            obj_props = props_memo.get(scri)
+            if obj_props is None:
+                try:
+                    obj_props = _resolve_props(sctx, edid, extends, xref,
+                                               fid_to_edid, offset)
+                except Exception:
+                    obj_props = {}
+                props_memo[scri] = obj_props
 
             from .writer import pack_subrecord
             _OBJECT_VMAD[rec_fid] = pack_subrecord(

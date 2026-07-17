@@ -81,6 +81,7 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
     """
     effects = []
     effect_count = get_int(rec, count_key)
+    dropped_dur = 0
     for i in range(effect_count):
         if pad_to and len(effects) >= pad_to:
             break
@@ -88,6 +89,7 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
         av = get_int(rec, f'Effect[{i}].ActorValue', -1)
         mgef_fid = _resolve_mgef(code, av) if code else 0
         if not mgef_fid:
+            dropped_dur = max(dropped_dur, get_int(rec, f'Effect[{i}].Duration'))
             continue
         mag = get_int(rec, f'Effect[{i}].Magnitude')
         area = get_int(rec, f'Effect[{i}].Area')
@@ -96,11 +98,17 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
 
     # Every effect-bearing record needs at least one real effect; INGR needs
     # exactly pad_to. Fill with distinct harmless zero-magnitude effects.
+    # When EVERY effect dropped (pure script-effect spells), the first filler
+    # keeps the longest dropped duration: the spell then still registers as an
+    # active magic effect for as long as the TES4 spell did, which is what the
+    # converted IsSpellTarget checks (TES4Polyfill.HasMagicEffectByID) look for.
     want = max(pad_to, 1)
     used = {fid for fid, _, _, _, _ in effects}
     fillers = iter(fid for fid in _FILLER_EFFECTS if fid not in used)
+    filler_dur = dropped_dur if not effects else 0
     while len(effects) < want:
-        effects.append((next(fillers, _FILLER_EFFECTS[0]), 0.0, 0, 0, ''))
+        effects.append((next(fillers, _FILLER_EFFECTS[0]), 0.0, 0, filler_dur, ''))
+        filler_dur = 0
 
     if delivery == 2 and not any(has_projectile(fid) for fid, *_ in effects):
         for idx, (fid, mag, area, dur, code) in enumerate(effects):

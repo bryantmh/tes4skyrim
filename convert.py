@@ -189,10 +189,12 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
     print(f"[{file_name}] Exporting...")
     t0 = time.time()
 
-    header, all_records = read_file(source)
+    # Header-only scan: format worker processes re-read record data from
+    # their own mmap of the source file (see tes4_export.export).
+    header, all_records = read_file(source, parse_subs=False)
 
     t1 = time.time()
-    print(f"  Parsed {len(all_records)} records in {t1-t0:.2f}s")
+    print(f"  Scanned {len(all_records)} records in {t1-t0:.2f}s")
 
     os.makedirs(out_dir, exist_ok=True)
     export_header(header, out_dir)
@@ -209,7 +211,7 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
     type_filter = None  # Export all types; skip types are handled by import
 
     export_file(all_records, out_dir, type_filter=type_filter,
-                source_filter=source_index)
+                source_filter=source_index, source_path=source)
 
     t2 = time.time()
     print(f"[{file_name}] Export complete in {t2-t0:.2f}s")
