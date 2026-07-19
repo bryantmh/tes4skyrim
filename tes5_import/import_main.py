@@ -18,7 +18,7 @@ import struct
 import sys
 import time
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 from .constants import IMPORT_DISPATCH, SKIP_TYPES, TYPE_MAP
 from .magic_effects import set_tes4_effect_names
@@ -160,6 +160,25 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
             output_path, os.path.basename(os.path.normpath(output_path)))
     plugin_out_dir = os.path.dirname(output_path)
 
+    # Per-phase wall-clock reporting so slow phases are visible in the log.
+    _phase_t = time.time()
+
+    def _phase_done(label: str):
+        nonlocal _phase_t
+        now = time.time()
+        print(f"  [phase] {label}: {now - _phase_t:.1f}s")
+        _phase_t = now
+
+    # Finer-grained timer for the phase-0 pre-scans (prints only slow steps).
+    _step_t = time.time()
+
+    def _step_done(label: str):
+        nonlocal _step_t
+        now = time.time()
+        if now - _step_t >= 1.0:
+            print(f"    [phase0] {label}: {now - _step_t:.1f}s")
+        _step_t = now
+
     print(f"Reading exports from: {export_dir}")
     t0 = time.time()
 
@@ -169,6 +188,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     t1 = time.time()
     print(f"  Parsed {len(all_records)} records in {len(by_type)} types ({t1-t0:.2f}s)")
+    _phase_done('parse export text')
 
     for sig in sorted(by_type.keys()):
         special_types = {'LTEX', 'SOUN', 'CELL', 'WRLD', 'REFR', 'ACHR', 'ACRE', 'LAND', 'DIAL', 'INFO'}
@@ -202,10 +222,12 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     set_tes4_effect_names(by_type.get('MGEF', []))
 
     # --- Phase 0: Create custom VTYP records for voice types not in Skyrim.esm ---
+    _step_t = time.time()
     _create_vtyp_records(writer)
 
     # --- Phase 0a: Create TES4-specific globals/factions for converted scripts ---
     _create_tes4_special_records(writer)
+    _step_done('vtyp/special records')
 
     # --- Phase 0b: Pre-scan for dialogue conversion ---
     # Build NPC FormID → VTYP FormID mapping for voice type injection, and
@@ -215,6 +237,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     npc_to_vtyp = build_npc_to_vtyp_map(by_type, num_new_masters)
     from .record_types.actors import set_npc_voice_map
     set_npc_voice_map(npc_to_vtyp)
+    _step_done('npc voice map')
 
     # AddTopic unlock plan: gated topics get GetGlobalValue conditions and one
     # GLOB each; revealer INFO/stage fragments set the globals (must exist
@@ -225,6 +248,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     print(f"  AddTopic unlocks: {len(unlock_globals)} gated topics, "
           f"{len(unlock_plan['info_reveals'])} revealer INFOs, "
           f"{len(unlock_plan['stage_reveals'])} revealer quest stages")
+    _step_done('addtopic unlock plan')
 
     # --- Phase 0b2: Build FormID → EditorID map for VMAD property resolution ---
     # Scripts reference external records via SCRO FormIDs. To populate VMAD
@@ -240,6 +264,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
             except ValueError:
                 pass
     print(f"  Built FormID->EditorID map: {len(fid_to_edid)} entries")
+    _step_done('fid->edid map')
 
     # Build CrossRefGraph for INFO script property type detection.
     # INFO result scripts reference factions/quests/etc. as bare EditorID tokens.
@@ -288,6 +313,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         xref.build_ref_as_int_map(scpt_path)
     print(f"  Built CrossRefGraph: {len(xref.edid_to_formid)} entries, "
           f"{len(xref.quest_edids)} quests, {len(xref.script_formid_to_edid)} scripts")
+    _step_done('cross-ref graph')
 
     # --- Phase 0b3: Bind converted object scripts (SCPT via SCRI) to records ---
     # Each scriptable object record gets a VMAD naming its compiled TES4_<script>
@@ -299,12 +325,14 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     print(f"  Object scripts: attached {n_obj_scripts} SCPT scripts to records via VMAD")
     n_qust_scripts = build_quest_script_plan(by_type, xref, fid_to_edid)
     print(f"  Quest scripts: planned {n_qust_scripts} SCRI attachments for QUST VMADs")
+    _step_done('object/quest script plans')
 
     # --- Phase 0c: Create vendor factions for merchant NPCs, plus the
     # trainer faction + per-trainer CLAS clones for the training service ---
     from .record_types.actors import create_trainer_records, create_vendor_factions
     create_vendor_factions(by_type, writer)
     create_trainer_records(by_type, writer)
+    _step_done('vendor/trainer records')
 
     # --- Phase 0d: Load mesh bounds for accurate OBND computation ---
     # Bounds cache normally comes from convert.py's mesh-bounds phase (after
@@ -328,6 +356,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         print(f"  Collision cache not found, scanning {mesh_dir}...")
         scan_collision(mesh_dir, col_path)
     load_collision(col_path)
+    _step_done('mesh bounds + collision caches')
 
     # --- Phase 0e: Compute furniture seat lists from source NIF markers ---
     # FURN MNAM/FNPR must index the converted NIF's clustered seat positions,
@@ -335,6 +364,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # (shared algorithm in asset_convert/furniture_markers.py).
     from .record_types.items import load_furniture_models
     load_furniture_models(os.path.join(export_dir, 'meshes'), by_type)
+    _step_done('furniture seats')
 
     # --- Phase 0f: Generated creature RACE/ARMA/ARMO chains ---
     # One race per unique (creature folder, body-part set) among CREA records
@@ -343,6 +373,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # keep the Skyrim playable-race override system.
     from .creature_races import build_creature_races
     build_creature_races(by_type, writer, export_dir)
+    _step_done('creature races')
 
     # --- Phase 0g: plan AI packages -------------------------------------
     # TES4 PACK records convert to TES5 template instances (pack_converter).
@@ -368,6 +399,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     from .pack_converter import PackContext
     pack_ctx = PackContext(plan=pack_plan, script_vars=_script_vars)
+    _step_done('package plan')
 
     # --- Phase 0h: placed leveled creatures (REFR→LVLC) ---
     # Skyrim only spawns actors from ACHR→NPC_, so each placed LVLC becomes an
@@ -378,6 +410,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     n_lvl_achr = build_leveled_actor_shells(by_type, writer)
     print(f"  Leveled creature placements: {n_lvl_achr} REFR -> ACHR "
           f"via generated shell NPCs")
+    _step_done('leveled actor shells')
 
     # --- Phase 0i: index inventory item types for the outfit split ---
     # A TES4 actor equips out of one mixed CNTO inventory; TES5 needs the
@@ -386,6 +419,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # slot, so index them before the actor converters run in Phase 1.
     from .outfits import load_item_index
     load_item_index(by_type)
+    _phase_done('phase 0 pre-scans')
 
     # --- Phase 1: Simple record types (flat top-level groups) ---
     print("\nConverting records...")
@@ -416,29 +450,27 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         for rec in by_type[sig]:
             work_items.append((sig, target_sig, rec))
 
-    _worker_count = max(1, (os.cpu_count() or 4) - 1)
-
-    def _convert_one(item):
-        sig, target_sig, rec = item
+    # Serial on purpose: this whole phase is ~1.5s of GIL-bound Python, so a
+    # thread pool adds no speed — but it DID make the output nondeterministic:
+    # converters that allocate companion records (ARMA, aimed-MGEF clones, …)
+    # called writer.alloc_formid() in thread-completion order, so companion
+    # FormIDs and record order shuffled between runs. A plain loop keeps the
+    # ESM byte-reproducible. (The genuinely heavy conversion work — text parse,
+    # LAND, navmeshes — runs in process pools elsewhere.)
+    for sig, target_sig, rec in work_items:
         converter = IMPORT_DISPATCH[sig]
-        if sig in _WRITER_TYPES:
-            record_bytes = converter(rec, writer=writer)
-        else:
-            record_bytes = converter(rec)
-        return sig, target_sig, record_bytes, None, None
-
-    with ThreadPoolExecutor(max_workers=_worker_count) as ex:
-        future_map = {ex.submit(_convert_one, item): item for item in work_items}
-        for future in as_completed(future_map):
-            sig, target_sig, rec = future_map[future]
-            try:
-                _, target_sig, record_bytes, _, _ = future.result()
-                writer.add_record(target_sig, record_bytes)
-                converted += 1
-            except Exception as e:
-                edid = get_str(rec, 'EditorID', '?')
-                print(f"  ERROR converting {sig} '{edid}': {e}")
-                errors += 1
+        try:
+            if sig in _WRITER_TYPES:
+                record_bytes = converter(rec, writer=writer)
+            else:
+                record_bytes = converter(rec)
+            writer.add_record(target_sig, record_bytes)
+            converted += 1
+        except Exception as e:
+            edid = get_str(rec, 'EditorID', '?')
+            print(f"  ERROR converting {sig} '{edid}': {e}")
+            errors += 1
+    _phase_done(f'phase 1 simple records ({len(work_items)})')
 
     # --- Phase 2: LTEX (creates TXST companion records) ---
     ltex_records = by_type.get('LTEX', [])
@@ -512,6 +544,8 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                       f"'{get_str(rec, 'EditorID', '?')}': {e}")
                 errors += 1
 
+    _phase_done('phases 2-3 LTEX/SOUN/QUST/PACK')
+
     # --- Phase 3c: LCTN Locations ---
     # Skyrim only reveals a map marker when the player discovers the Location it
     # belongs to, and it reads an exterior cell's displayed name off that same
@@ -539,11 +573,20 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     navm_cache = _precompute_navmeshes(
         by_type, writer, base_model_by_fid, door_fids,
         collision_cache=os.path.join(export_dir, 'collision_cache.bin'))
+    _phase_done('phase 4a navmesh generation')
+
+    # LAND is the heaviest per-record converter; convert all of them up front
+    # across a process pool (must run after Phase 3c set_cell_locations so the
+    # worker state snapshot is complete).
+    land_cache = _precompute_land(by_type, export_dir)
+    _phase_done('phase 4b LAND conversion')
 
     _build_cell_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids,
-                       navm_cache)
+                       navm_cache, land_cache)
+    _phase_done('phase 4c CELL groups')
     _build_world_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids,
-                        navm_cache)
+                        navm_cache, land_cache)
+    _phase_done('phase 4d WRLD groups')
 
     # Build the NAVI record indexing every generated navmesh.
     if navm_metas:
@@ -560,6 +603,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     _write_voice_map(output_path, voice_map)
     from .dialog_converter import get_lip_texts
     _write_lip_text(output_path, get_lip_texts())
+    _phase_done('phase 5 DIAL/INFO groups')
 
     t3 = time.time()
     print(f"\nConverted {converted} records ({errors} errors) in {t3-t2:.2f}s")
@@ -567,6 +611,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # Write output
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     writer.write(output_path)
+    _phase_done('write output file')
     file_size = os.path.getsize(output_path)
     print(f"Wrote {output_path} ({file_size:,} bytes)")
 
@@ -831,6 +876,76 @@ def _navm_worker_count(job_count: int) -> int:
     return min(cpu, max(1, job_count))
 
 
+# Below this many LAND records a process pool costs more than it saves.
+_LAND_PARALLEL_MIN = 64
+_LAND_CHUNK = 24
+
+
+def _precompute_land(by_type: dict, export_dir: str) -> dict:
+    """Convert every LAND record across a process pool; {fid: (ok, payload)}.
+
+    convert_LAND is by far the heaviest per-record converter (~1 ms each,
+    ~16k records — landscape heights/normals/colors/layers all re-packed), and
+    it is a pure function of the record dict, so it parallelises cleanly.
+    Other cell children (REFR/ACHR/CELL) convert in single-digit microseconds —
+    for those the pickle round-trip would cost more than the conversion, so
+    they stay serial in the builders.
+
+    Returns None when there are too few LANDs to be worth a pool; builders
+    then call convert_LAND directly.
+    """
+    lands = by_type.get('LAND', [])
+    if len(lands) < _LAND_PARALLEL_MIN:
+        return None
+
+    from . import convert_worker
+    from .locations import WORLD_NAMES
+    from .record_types import items as items_mod
+    from .record_types import world as world_mod
+
+    initargs = (
+        get_formid_index_offset(),
+        dict(world_mod._CELL_LOCATION),
+        dict(world_mod._GRID_LOCATION),
+        dict(world_mod._WORLD_LOCATION),
+        dict(WORLD_NAMES),
+        dict(items_mod._BASE_ORIGIN_SHIFT),
+        os.path.join(export_dir, 'mesh_bounds_cache.json'),
+    )
+
+    chunks = [[('LAND', rec) for rec in lands[i:i + _LAND_CHUNK]]
+              for i in range(0, len(lands), _LAND_CHUNK)]
+    workers = _navm_worker_count(len(chunks))
+    print(f"  Converting {len(lands)} LAND records across {workers} processes...")
+    t0 = time.time()
+
+    cache: dict = {}
+    with ProcessPoolExecutor(max_workers=workers,
+                             initializer=convert_worker.init_worker,
+                             initargs=initargs) as ex:
+        for results in ex.map(convert_worker.convert_chunk, chunks):
+            for (kind, fid), ok, payload in results:
+                cache[fid] = (ok, payload)
+    print(f"    LAND conversion: {len(lands)} records in {time.time() - t0:.2f}s")
+    return cache
+
+
+def _land_bytes(land_cache: dict, land_rec: dict) -> bytes:
+    """Converted bytes for a LAND record, from the precompute cache if present.
+
+    Failed precomputes re-raise here so the builders' existing per-cell error
+    handling reports them exactly as the serial path would.
+    """
+    if land_cache is not None:
+        entry = land_cache.pop(get_formid(land_rec, 'FormID'), None)
+        if entry is not None:
+            ok, payload = entry
+            if not ok:
+                raise RuntimeError(payload)
+            return payload
+    return convert_LAND(land_rec)
+
+
 def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
                           base_model_by_fid: dict, door_fids: set,
                           collision_cache: str = '') -> dict:
@@ -903,7 +1018,8 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
 
 def _build_cell_groups(by_type: dict, writer: PluginWriter,
                        navm_metas: list = None, base_model_by_fid: dict = None,
-                       door_fids: set = None, navm_cache: dict = None):
+                       door_fids: set = None, navm_cache: dict = None,
+                       land_cache: dict = None):
     """Build CELL group hierarchy (interior cells only — exterior in WRLD)."""
     if navm_metas is None:
         navm_metas = []
@@ -955,50 +1071,53 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter,
         sub_block_num = (fid // 10) % 10
         blocks[block_num][sub_block_num].append(cell)
 
-    all_cell_content = b''
+    # Accumulate group contents in lists and b''.join at each wrap point:
+    # bytes += on multi-MB buffers reallocates the whole buffer every append
+    # (quadratic); list-append + join is linear.
+    all_cell_parts = []
     converted = 0
 
     for block_num in sorted(blocks.keys()):
-        block_content = b''
+        block_parts = []
         for sub_block_num in sorted(blocks[block_num].keys()):
-            sub_block_content = b''
+            sub_block_parts = []
             for cell_rec in blocks[block_num][sub_block_num]:
                 cell_fid = get_formid(cell_rec, 'FormID')
                 try:
                     cell_bytes = convert_CELL(cell_rec)
-                    sub_block_content += cell_bytes
+                    sub_block_parts.append(cell_bytes)
 
                     # Cell children
-                    children_content = b''
+                    children_parts = []
 
                     # Persistent children (group type 8)
-                    persistent = b''
+                    persistent = []
 
                     def is_persistent(r):
                         return get_int(r, 'RecordFlags') & 0x400  # Persistent flag
                     for refr_rec in refr_by_cell.get(cell_fid, []):
                         if is_persistent(refr_rec):
-                            persistent += convert_REFR(refr_rec)
+                            persistent.append(convert_REFR(refr_rec))
                             converted += 1
                     for achr_rec in achr_by_cell.get(cell_fid, []):
                         if is_persistent(achr_rec):
-                            persistent += convert_ACHR(achr_rec)
+                            persistent.append(convert_ACHR(achr_rec))
                             converted += 1
                     if persistent:
-                        children_content += pack_group(8, struct.pack('<I', cell_fid), persistent)
+                        children_parts.append(pack_group(8, struct.pack('<I', cell_fid), b''.join(persistent)))
 
                     # Temporary children (group type 9)
-                    temporary = b''
+                    temporary = []
                     for refr_rec in refr_by_cell.get(cell_fid, []):
                         if not is_persistent(refr_rec):
-                            temporary += convert_REFR(refr_rec)
+                            temporary.append(convert_REFR(refr_rec))
                             converted += 1
                     for achr_rec in achr_by_cell.get(cell_fid, []):
                         if not is_persistent(achr_rec):
-                            temporary += convert_ACHR(achr_rec)
+                            temporary.append(convert_ACHR(achr_rec))
                             converted += 1
                     for land_rec in land_by_cell.get(cell_fid, []):
-                        temporary += convert_LAND(land_rec)
+                        temporary.append(_land_bytes(land_cache, land_rec))
                         converted += 1
                     # PGRD → NAVM (interior cells have no LAND; Z from node heights)
                     # Precomputed in parallel by _precompute_navmeshes.
@@ -1007,33 +1126,34 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter,
                             (cell_fid, get_formid(pgrd_rec, 'FormID')),
                             (None, None))
                         if navm_bytes:
-                            temporary += navm_bytes
+                            temporary.append(navm_bytes)
                             navm_metas.append(meta)
                             converted += 1
                     if temporary:
-                        children_content += pack_group(9, struct.pack('<I', cell_fid), temporary)
+                        children_parts.append(pack_group(9, struct.pack('<I', cell_fid), b''.join(temporary)))
 
-                    if children_content:
-                        sub_block_content += pack_group(6, struct.pack('<I', cell_fid), children_content)
+                    if children_parts:
+                        sub_block_parts.append(pack_group(6, struct.pack('<I', cell_fid), b''.join(children_parts)))
 
                     converted += 1
                 except Exception as e:
                     print(f"  ERROR building CELL group for {get_str(cell_rec, 'EditorID', '?')}: {e}")
 
-            if sub_block_content:
-                block_content += pack_group(3, struct.pack('<i', sub_block_num), sub_block_content)
-        if block_content:
-            all_cell_content += pack_group(2, struct.pack('<i', block_num), block_content)
+            if sub_block_parts:
+                block_parts.append(pack_group(3, struct.pack('<i', sub_block_num), b''.join(sub_block_parts)))
+        if block_parts:
+            all_cell_parts.append(pack_group(2, struct.pack('<i', block_num), b''.join(block_parts)))
 
-    if all_cell_content:
-        writer.add_raw_group('CELL', all_cell_content)
+    if all_cell_parts:
+        writer.add_raw_group('CELL', b''.join(all_cell_parts))
 
     print(f"    Interior cells: {len(interior_cells)}, children: {converted}")
 
 
 def _build_world_groups(by_type: dict, writer: PluginWriter,
                         navm_metas: list = None, base_model_by_fid: dict = None,
-                        door_fids: set = None, navm_cache: dict = None):
+                        door_fids: set = None, navm_cache: dict = None,
+                        land_cache: dict = None):
     """Build WRLD group hierarchy (worldspaces + exterior cells)."""
     if navm_metas is None:
         navm_metas = []
@@ -1083,13 +1203,16 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
 
     print(f"  Building WRLD hierarchy ({len(worlds)} worldspaces)...")
     converted = 0
-    all_wrld_content = b''
+    # List-append + join instead of bytes += — Tamriel's children total
+    # ~600 MB, and quadratic reallocation on buffers that size dominates the
+    # whole phase (see _build_cell_groups).
+    all_wrld_parts = []
 
     for wrld_rec in sorted(worlds, key=lambda w: get_formid(w, 'FormID')):
         wrld_fid = get_formid(wrld_rec, 'FormID')
         try:
             wrld_bytes = convert_WRLD(wrld_rec)
-            wrld_children = b''
+            wrld_children = []
 
             wrld_cells = ext_cells_by_wrld.get(wrld_fid, [])
 
@@ -1112,37 +1235,37 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
             for persistent_cell in persistent_cells:
                 pcell_fid = get_formid(persistent_cell, 'FormID')
                 pcell_bytes = convert_CELL(persistent_cell)
-                wrld_children += pcell_bytes
+                wrld_children.append(pcell_bytes)
 
                 # Persistent cell children
-                pcell_children = b''
-                persistent = b''
+                pcell_children = []
+                persistent = []
 
                 for refr in refr_by_cell.get(pcell_fid, []):
                     if is_persistent(refr):
-                        persistent += convert_REFR(refr)
+                        persistent.append(convert_REFR(refr))
                         converted += 1
                 for achr in achr_by_cell.get(pcell_fid, []):
                     if is_persistent(achr):
-                        persistent += convert_ACHR(achr)
+                        persistent.append(convert_ACHR(achr))
                         converted += 1
                 if persistent:
-                    pcell_children += pack_group(8, struct.pack('<I', pcell_fid), persistent)
+                    pcell_children.append(pack_group(8, struct.pack('<I', pcell_fid), b''.join(persistent)))
 
-                temporary = b''
+                temporary = []
                 for refr in refr_by_cell.get(pcell_fid, []):
                     if not is_persistent(refr):
-                        temporary += convert_REFR(refr)
+                        temporary.append(convert_REFR(refr))
                         converted += 1
                 for achr in achr_by_cell.get(pcell_fid, []):
                     if not is_persistent(achr):
-                        temporary += convert_ACHR(achr)
+                        temporary.append(convert_ACHR(achr))
                         converted += 1
                 if temporary:
-                    pcell_children += pack_group(9, struct.pack('<I', pcell_fid), temporary)
+                    pcell_children.append(pack_group(9, struct.pack('<I', pcell_fid), b''.join(temporary)))
 
                 if pcell_children:
-                    wrld_children += pack_group(6, struct.pack('<I', pcell_fid), pcell_children)
+                    wrld_children.append(pack_group(6, struct.pack('<I', pcell_fid), b''.join(pcell_children)))
 
             # Exterior cells — grouped by block/sub-block
             if exterior_cells:
@@ -1161,40 +1284,40 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
                     ext_blocks[block_label][sub_label].append(cell)
 
                 for block_label in sorted(ext_blocks.keys()):
-                    block_content = b''
+                    block_parts = []
                     for sub_label in sorted(ext_blocks[block_label].keys()):
-                        sub_content = b''
+                        sub_parts = []
                         for cell_rec in sorted(ext_blocks[block_label][sub_label],
                                                key=lambda c: (get_int(c, 'XCLC.Y'), get_int(c, 'XCLC.X'))):
                             cell_fid = get_formid(cell_rec, 'FormID')
                             cell_bytes = convert_CELL(cell_rec)
-                            sub_content += cell_bytes
+                            sub_parts.append(cell_bytes)
 
-                            cell_children = b''
-                            persistent = b''
+                            cell_children = []
+                            persistent = []
                             for refr in refr_by_cell.get(cell_fid, []):
                                 if get_int(refr, 'RecordFlags') & 0x400:
-                                    persistent += convert_REFR(refr)
+                                    persistent.append(convert_REFR(refr))
                                     converted += 1
                             for achr in achr_by_cell.get(cell_fid, []):
                                 if get_int(achr, 'RecordFlags') & 0x400:
-                                    persistent += convert_ACHR(achr)
+                                    persistent.append(convert_ACHR(achr))
                                     converted += 1
                             if persistent:
-                                cell_children += pack_group(8, struct.pack('<I', cell_fid), persistent)
+                                cell_children.append(pack_group(8, struct.pack('<I', cell_fid), b''.join(persistent)))
 
-                            temporary = b''
+                            temporary = []
                             for refr in refr_by_cell.get(cell_fid, []):
                                 if not (get_int(refr, 'RecordFlags') & 0x400):
-                                    temporary += convert_REFR(refr)
+                                    temporary.append(convert_REFR(refr))
                                     converted += 1
                             for achr in achr_by_cell.get(cell_fid, []):
                                 if not (get_int(achr, 'RecordFlags') & 0x400):
-                                    temporary += convert_ACHR(achr)
+                                    temporary.append(convert_ACHR(achr))
                                     converted += 1
                             cell_lands = land_by_cell.get(cell_fid, [])
                             for land in cell_lands:
-                                temporary += convert_LAND(land)
+                                temporary.append(_land_bytes(land_cache, land))
                                 converted += 1
                             # PGRD → NAVM for exterior cells (LAND gives Z, CELL gives water)
                             # Precomputed in parallel by _precompute_navmeshes.
@@ -1203,34 +1326,33 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
                                     (cell_fid, get_formid(pgrd_rec, 'FormID')),
                                     (None, None))
                                 if navm_bytes:
-                                    temporary += navm_bytes
+                                    temporary.append(navm_bytes)
                                     navm_metas.append(meta)
                                     converted += 1
                             if temporary:
-                                cell_children += pack_group(9, struct.pack('<I', cell_fid), temporary)
+                                cell_children.append(pack_group(9, struct.pack('<I', cell_fid), b''.join(temporary)))
 
                             if cell_children:
-                                sub_content += pack_group(6, struct.pack('<I', cell_fid), cell_children)
+                                sub_parts.append(pack_group(6, struct.pack('<I', cell_fid), b''.join(cell_children)))
 
                             converted += 1
-                        if sub_content:
-                            block_content += pack_group(5, sub_label, sub_content)
-                    if block_content:
-                        wrld_children += pack_group(4, block_label, block_content)
+                        if sub_parts:
+                            block_parts.append(pack_group(5, sub_label, b''.join(sub_parts)))
+                    if block_parts:
+                        wrld_children.append(pack_group(4, block_label, b''.join(block_parts)))
 
             # Wrap in world children group (type 1)
-            wrld_group_content = wrld_bytes
+            all_wrld_parts.append(wrld_bytes)
             if wrld_children:
-                wrld_group_content += pack_group(1, struct.pack('<I', wrld_fid), wrld_children)
+                all_wrld_parts.append(pack_group(1, struct.pack('<I', wrld_fid), b''.join(wrld_children)))
 
-            all_wrld_content += wrld_group_content
             converted += 1
 
         except Exception as e:
             print(f"  ERROR building WRLD group for {get_str(wrld_rec, 'EditorID', '?')}: {e}")
 
-    if all_wrld_content:
-        writer.add_raw_group('WRLD', all_wrld_content)
+    if all_wrld_parts:
+        writer.add_raw_group('WRLD', b''.join(all_wrld_parts))
 
     print(f"    Worldspaces: {len(worlds)}, children: {converted}")
 

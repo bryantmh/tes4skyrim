@@ -189,10 +189,12 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
     print(f"[{file_name}] Exporting...")
     t0 = time.time()
 
-    header, all_records = read_file(source)
+    # Header-only scan: format worker processes re-read record data from
+    # their own mmap of the source file (see tes4_export.export).
+    header, all_records = read_file(source, parse_subs=False)
 
     t1 = time.time()
-    print(f"  Parsed {len(all_records)} records in {t1-t0:.2f}s")
+    print(f"  Scanned {len(all_records)} records in {t1-t0:.2f}s")
 
     os.makedirs(out_dir, exist_ok=True)
     export_header(header, out_dir)
@@ -209,7 +211,7 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
     type_filter = None  # Export all types; skip types are handled by import
 
     export_file(all_records, out_dir, type_filter=type_filter,
-                source_filter=source_index)
+                source_filter=source_index, source_path=source)
 
     t2 = time.time()
     print(f"[{file_name}] Export complete in {t2-t0:.2f}s")
@@ -256,6 +258,27 @@ def phase_assets(file_name: str, config: dict, output_dir: str = None,
     )
     total = sum(v for v in stats.values() if isinstance(v, int))
     print(f"[{file_name}] Meshes complete ({total} items processed)")
+
+    # Book inventory-art: bake each distinct BOOK model's textures onto the
+    # vanilla Skyrim reading rigs (see asset_convert/book_inam.py); the import
+    # phase points each BOOK's INAM at meshes\tes4\clutter\books\inv\<base>.nif
+    from asset_convert.book_inam import generate_book_inams
+
+    templates_dir = None
+    ref_meshes = SCRIPT_DIR / "references" / "Skyrim Meshes"
+    if ref_meshes.is_dir():
+        templates_dir = str(ref_meshes)
+    _, tes5_data = get_paths(config)
+    print(f"[{file_name}] Generating book inventory-art meshes...")
+    bstats = generate_book_inams(
+        source_file=file_name,
+        extract_dir=extract_dir,
+        output_dir=out_dir,
+        templates_dir=templates_dir,
+        skyrim_data=tes5_data or None,
+    )
+    print(f"[{file_name}] Book INAM complete: ok={bstats['ok']} "
+          f"skip={bstats['skip']} fail={bstats['fail']}")
     return True
 
 # ===========================================================================

@@ -615,9 +615,11 @@ class TestConverters:
         cnam_data = self._get_subrecord_data(result, 'CNAM')
         assert cnam_data == b'\x00', "CNAM must be an empty description string"
 
-    def test_book_inventory_art_uses_own_mesh(self):
-        """With a writer, INAM must reference a companion STAT wrapping the
-        book's own converted mesh (not the vanilla HighPolySkyrimBook)."""
+    def test_book_inventory_art_uses_generated_rig(self):
+        """With a writer, INAM must reference a companion STAT pointing at the
+        generated reading-rig mesh (meshes\\tes4\\clutter\\books\\inv\\
+        <model basename>.nif, built by asset_convert/book_inam.py), and books
+        sharing the same TES4 model must share one STAT."""
         class _FakeWriter:
             def __init__(self):
                 self.records = []
@@ -637,17 +639,26 @@ class TestConverters:
         inam_fid = struct.unpack_from('<I', self._get_subrecord_data(result, 'INAM'))[0]
         assert inam_fid == 0x01000001, "INAM must point at the companion STAT"
         assert len(w.records) == 1 and w.records[0][0] == 'STAT'
-        assert b'tes4\\Books\\TestBook.nif' in w.records[0][1]
+        assert b'tes4\\clutter\\books\\inv\\testbook.nif' in w.records[0][1]
+        # a second book with the same model reuses the STAT
+        rec2 = dict(rec, FormID='00006002', EditorID='TestBookCopy')
+        result2 = convert_BOOK(rec2, writer=w)
+        inam2 = struct.unpack_from('<I', self._get_subrecord_data(result2, 'INAM'))[0]
+        assert inam2 == inam_fid, "same model must reuse the same INAM STAT"
+        assert len(w.records) == 1, "no duplicate STAT for a shared model"
 
-    def test_book_scroll_flag_sets_note_type(self):
-        """TES4 Scroll flag (0x01) must convert to TES5 Type 255 (Note/Scroll)."""
+    def test_book_scroll_flag_keeps_book_type(self):
+        """TES4 Scroll flag (0x01) must still produce Type 0: vanilla
+        Skyrim.esm types every one of its 821 BOOKs (notes included) as 0, so
+        255 is an engine-untested value.  Scroll-ness survives via the vendor
+        keyword and the note-rig inventory art."""
         rec = {'Signature': 'BOOK', 'FormID': '00006001', 'RecordFlags': '0',
                'EditorID': 'TestNote', 'FULL': 'A Test Note',
                'DESC': 'note text', 'DATA.Flags': '1',
                'DATA.Teaches': '255', 'DATA.Value': '5', 'DATA.Weight': '0.1'}
         result = convert_BOOK(rec)
         data = self._get_subrecord_data(result, 'DATA')
-        assert data[1] == 255, "scroll-flagged book must have Type=255 (Note/Scroll)"
+        assert data[1] == 0, "books must use Type=0 like all vanilla BOOKs"
 
     def test_book_html_font_face_remapped(self):
         """Numeric Oblivion <font face=N> must become Skyrim named fonts."""

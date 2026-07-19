@@ -344,6 +344,15 @@ class ScriptConverter:
             if merge_key not in merged_blocks:
                 block_order.append(merge_key)
             guard = self._block_filter_guard(block_type, block_filter)
+            # OnAlarm/OnStartCombat both land on OnCombatStateChanged, which
+            # ALSO fires when combat ends (state 0).  Gate each body on the
+            # state its TES4 block meant: alarm = combat or searching, start
+            # combat = combat begins.  Without this every OnStartCombat body
+            # re-ran when the fight ended.
+            state_guard = {'onalarm': 'aeCombatState != 0',
+                           'onstartcombat': 'aeCombatState == 1'}.get(block_type)
+            if state_guard:
+                guard = f'{state_guard} && {guard}' if guard else state_guard
             merged_blocks[merge_key].append((guard, block_lines))
 
         for merge_key in block_order:
@@ -914,13 +923,19 @@ class ScriptConverter:
                 lines[idx] = line.replace('None as Int', '0')
             elif 'None as Float' in line:
                 lines[idx] = line.replace('None as Float', '0.0')
-        # Replace TES4-only condition functions used as property accesses
-        # e.g. Game.GetPlayer().HasVampireFed == 1 → True  ;TODO: HasVampireFed
+        # Backstop for TES4-only condition functions that slipped past the
+        # dedicated _emit_function handlers (property-access shapes the
+        # expression parser doesn't route).  The lookbehind spares the
+        # handlers' own TES4Polyfill.GetIsCreature(...)/HasVampireFed() output.
         _tes4_only_props = re.compile(
-            r'\b(HasVampireFed|GetIsCreature|getClothingValue)\b',
+            r'(?<!Polyfill\.)\b(HasVampireFed|GetIsCreature|getClothingValue)\b',
             re.IGNORECASE)
         for idx in range(len(lines)):
-            m = _tes4_only_props.search(lines[idx])
+            # Only the code part counts — an ;NE:/;TODO comment naming the
+            # function must not re-trigger the rewrite on an already-converted
+            # line (e.g. getClothingValue's NE note).
+            code_only = lines[idx].split(';', 1)[0]
+            m = _tes4_only_props.search(code_only)
             if not m:
                 continue
             func_name = m.group(1)
@@ -957,7 +972,7 @@ class ScriptConverter:
         #
         # Neutralise only the offending comparison, not the whole condition, so
         # the surviving terms still gate the body.
-        _type_mismatch_types = {'Package', 'Topic', 'MiscObject'}
+        _type_mismatch_types = {'Package', 'Topic', 'MiscObject', 'Quest'}
 
         def _is_form_typed(ident: str) -> bool:
             low = ident.lower()
@@ -969,7 +984,9 @@ class ScriptConverter:
                 return False
             ptype = self._property_refs.get(
                 ident, self._property_refs.get(low, ''))
-            return ptype in _type_mismatch_types
+            # TES4_<Script>-typed quest properties numeric-compared bare
+            # (`ms04 < 55`) are the same TES4 form-vs-number pun.
+            return ptype in _type_mismatch_types or ptype.startswith('TES4_')
 
         # <form ident> <cmp> <number>   or   <number> <cmp> <form ident>
         # A leading '.' (obj.Method) or trailing '(' (a call) disqualifies it.
@@ -996,7 +1013,10 @@ class ScriptConverter:
 
             fixed = _mismatch_cmp_re.sub(_neutralise, lines[idx])
             if fixed != lines[idx]:
-                lines[idx] = f'{fixed.rstrip()}  ;TODO: Type mismatch fix ({original})'
+                # ;NE, not ;TODO: the neutralised value reproduces what the
+                # TES4 runtime did with the form-vs-number pun, so there is
+                # nothing left to hand-port.
+                lines[idx] = f'{fixed.rstrip()}  ;NE: Type mismatch fix ({original})'
         # Fix integer assignments to cross-script ref-typed variables
         if self.xref:
             _assign_int_re = re.compile(r'^(\s*)([\w.]+)\s*=\s*(-?\d+)\s*(;.*)?$')
@@ -1516,8 +1536,9 @@ class ScriptConverter:
             value = self._fix_ref_zero(target, value)
             return f'{target} = {value}'
 
-        # if / elseif
-        if_m = re.match(r'^(if|elseif)\s+(.*)', stripped, re.IGNORECASE)
+        # if / elseif — TES4 also writes `if((x))` with no space, which must not
+        # be parsed as a call to a function named "if"
+        if_m = re.match(r'^(if|elseif)(?:\s+|(?=\())\s*(.*)', stripped, re.IGNORECASE)
         if if_m:
             keyword = 'If' if if_m.group(1).lower() == 'if' else 'ElseIf'
             condition = self._convert_expression(if_m.group(2), extends)
@@ -1906,6 +1927,23 @@ class ScriptConverter:
                     comp_m = (expr[:_ci].strip(), ch, expr[_ci+1:].strip())
                     break
         if comp_m:
+            # GetCurrentAIPackage compared against a PACK EditorID: vanilla
+            # Papyrus has Actor.GetCurrentPackage(), so this converts exactly.
+            # Numeric comparands are TES4 package-TYPE codes with no Skyrim
+            # equivalent — those fall through to the usual no-op handling.
+            pkg_m = re.match(r'^(?:(\w+)\.)?(?:getcurrentaipackage|getcurrentpackage)$',
+                             comp_m[0], re.IGNORECASE)
+            if pkg_m and comp_m[1] in ('==', '!=') and self.xref:
+                cand = comp_m[2].strip().strip('()').strip()
+                fid = self.xref.edid_to_formid.get(cand.lower(), '')
+                if fid and self.xref.record_type.get(fid, '') == 'PACK':
+                    ref = self._resolve_self_ref(pkg_m.group(1), extends,
+                                                 actor_func=True)
+                    if ref == 'Self' and extends not in ('Actor',):
+                        ref = '(Self as Actor)'
+                    safe = _safe_property_name(cand)
+                    self._property_refs[safe] = 'Package'
+                    return f'{ref}.GetCurrentPackage() {comp_m[1]} {safe}'
             lhs = self._convert_expression(comp_m[0], extends)
             op = comp_m[1]
             rhs = self._convert_expression(comp_m[2], extends)
@@ -2135,9 +2173,9 @@ class ScriptConverter:
             # Special bare identifiers
             if bare_low in ('getactionref', 'isactionref'):
                 return self._get_action_ref_param()
-            if bare_low == 'isanimplaying':
-                self._line_comments.append(';IsAnimPlaying has no Papyrus equivalent')
-                return 'False'
+            if bare_low in ('isanimplaying', 'getiscreature', 'hasvampirefed',
+                            'isspelltarget', 'isguard'):
+                return self._emit_function(None, expr, '', extends)
             if bare_low == 'isxbox':
                 return 'False'
             if bare_low in ('getdayofweek', 'getdayoftheweek'):
@@ -2748,6 +2786,110 @@ class ScriptConverter:
         if fname_low == 'triggerhitshader':
             return 'Game.TriggerScreenBlood(3)'
 
+        # pme/sme (PlayMagicEffectVisuals/StopMagicEffectVisuals): the argument
+        # is a MAGIC EFFECT code (DSPL, STRP, ...), not a shader EditorID.  The
+        # visuals Oblivion plays are the effect's EFSH — and EFSH records ARE
+        # converted — so resolve code → TES4 MGEF → its shader and Play/Stop
+        # that, exactly like pms/sms do for a directly-named shader.
+        if fname_low in ('pme', 'playmagiceffectvisuals',
+                         'sme', 'stopmagiceffectvisuals'):
+            parts = args_str.strip().split() if args_str else []
+            code = parts[0] if parts else ''
+            shader_edid = (self.xref.get_mgef_shader_edid(code)
+                           if (self.xref and code) else '')
+            ref = self._resolve_objref_ref(ref_name, extends)
+            if not shader_edid:
+                orig = f'{ref_name}.{func_name} {args_str}'.strip() if ref_name \
+                    else f'{func_name} {args_str}'.strip()
+                self._line_comments.append(
+                    f';NE: {orig} (no shader found for effect code)')
+                return '0'
+            safe = _safe_property_name(shader_edid)
+            self._property_refs[safe] = 'EffectShader'
+            if fname_low in ('sme', 'stopmagiceffectvisuals'):
+                return f'{safe}.Stop({ref})'
+            duration = parts[1] if len(parts) > 1 else '-1.0'
+            dur = self._convert_expression(duration, extends)
+            return f'{safe}.Play({ref}, {dur})'
+
+        # IsSpellTarget: "is ref currently affected by spell X".  Papyrus has no
+        # per-spell test, but HasMagicEffect on the effect the converted SPEL
+        # actually carries (resolved through the importer's own code→MGEF
+        # mapping) answers the same question at runtime.
+        if fname_low == 'isspelltarget':
+            spell = args_str.strip().split()[0] if args_str and args_str.strip() else ''
+            fid = (self.xref.get_spell_first_skyrim_mgef(spell)
+                   if (self.xref and spell) else 0)
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            if ref == 'Self' and extends not in ('Actor',):
+                ref = '(Self as Actor)'
+            if fid:
+                return f'TES4Polyfill.HasMagicEffectByID({ref}, 0x{fid:08X})'
+            orig = f'{ref_name}.{func_name} {args_str}'.strip() if ref_name \
+                else f'{func_name} {args_str}'.strip()
+            self._line_comments.append(f';NE: {orig} (spell has no convertible effect)')
+            return 'False'
+
+        # IsAnimPlaying: the behavior graph exposes this as an animation
+        # variable.  Cast to Int because TES4 call sites compare/assign 0/1.
+        if fname_low == 'isanimplaying':
+            ref = self._resolve_objref_ref(ref_name, extends)
+            return f'({ref}.GetAnimationVariableBool("bAnimPlaying") as Int)'
+
+        # GetArmorRating → DamageResist actor value (what armor rating feeds)
+        if fname_low == 'getarmorrating':
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            if ref == 'Self' and extends not in ('Actor',):
+                ref = '(Self as Actor)'
+            return f'{ref}.GetActorValue("DamageResist")'
+
+        # GetIsCreature: Skyrim marks people via the ActorTypeNPC race keyword;
+        # converted creatures use generated races without it.
+        if fname_low == 'getiscreature':
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            if ref == 'Self' and extends not in ('Actor',):
+                ref = '(Self as Actor)'
+            return f'TES4Polyfill.GetIsCreature({ref})'
+
+        # HasVampireFed: Skyrim's PlayerVampireQuestScript.VampireStatus is 1
+        # exactly while the vampire has recently fed.
+        if fname_low == 'hasvampirefed':
+            return 'TES4Polyfill.HasVampireFed()'
+
+        # GetIsCurrentPackage: vanilla Actor.GetCurrentPackage() makes this an
+        # exact conversion when the argument is a converted PACK record.
+        if fname_low == 'getiscurrentpackage':
+            arg = args_str.strip().split()[0] if args_str and args_str.strip() else ''
+            fid = self.xref.edid_to_formid.get(arg.lower(), '') if (self.xref and arg) else ''
+            if fid and self.xref.record_type.get(fid, '') == 'PACK':
+                ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+                if ref == 'Self' and extends not in ('Actor',):
+                    ref = '(Self as Actor)'
+                safe = _safe_property_name(arg)
+                self._property_refs[safe] = 'Package'
+                return f'({ref}.GetCurrentPackage() == {safe})'
+            orig = f'{ref_name}.{func_name} {args_str}'.strip() if ref_name \
+                else f'{func_name} {args_str}'.strip()
+            self._line_comments.append(f';NE: {orig}')
+            return '0'
+
+        # IsGuard: membership in Skyrim's guard dialogue faction
+        if fname_low == 'isguard':
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            if ref == 'Self' and extends not in ('Actor',):
+                ref = '(Self as Actor)'
+            return f'TES4Polyfill.IsGuard({ref})'
+
+        # SetActorRefraction: no Papyrus refraction control; a translucent
+        # alpha fade is the closest visual (0 restores full opacity).
+        if fname_low == 'setactorrefraction':
+            val = args_str.strip().split()[0] if args_str and args_str.strip() else '0'
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            if ref == 'Self' and extends not in ('Actor',):
+                ref = '(Self as Actor)'
+            val_conv = self._convert_expression(val, extends)
+            return f'TES4Polyfill.SetActorRefraction({ref}, {val_conv})'
+
         # StopCombatAlarmOnActor / SCAOnActor / SCA
         if fname_low in ('scaonactor', 'sca', 'stopcombatalarmonactor'):
             ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
@@ -3080,11 +3222,33 @@ class ScriptConverter:
         if fname_low in _DROP_ARGS_FUNCS:
             args_str = ''
 
+        # PushActorAway: ObjectReference.PushActorAway(Actor, force).  The
+        # pushed target must be Actor-typed; promote or cast as needed.
+        if fname_low == 'pushactoraway':
+            parts = [p.strip() for p in
+                     (args_str.replace(',', ' ').split() if args_str else [])
+                     if p.strip()]
+            ref = self._resolve_objref_ref(ref_name, extends)
+            if parts:
+                target = self._convert_expression(parts[0], extends)
+                vtype = self._var_types.get(target.lower(), '')
+                ptype = self._property_refs.get(target, '')
+                if 'ObjectReference' in (vtype, ptype):
+                    target = f'({target} as Actor)'
+                elif not vtype and not ptype and re.match(r'^\w+$', target):
+                    self._property_refs[target] = 'Actor'
+            else:
+                target = 'Game.GetPlayer()'
+            force = self._convert_expression(parts[1], extends) if len(parts) > 1 else '1.0'
+            return f'{ref}.PushActorAway({target}, {force})'
+
         # SetFactionReaction/ModFactionReaction: TES4 setfactionreaction f1 f2 val
         # -> Papyrus f1.SetReaction(f2, val)
         if fname_low in ('setfactionreaction', 'modfactionreaction'):
-            parts = args_str.split(',') if args_str and ',' in args_str else (args_str.split() if args_str else [])
-            parts = [p.strip() for p in parts if p.strip()]
+            # TES4 accepts any mix of commas and spaces between the three args
+            parts = [p.strip() for p in
+                     (args_str.replace(',', ' ').split() if args_str else [])
+                     if p.strip()]
             if len(parts) >= 3:
                 f1 = self._convert_expression(parts[0], extends)
                 f2 = self._convert_expression(parts[1], extends)

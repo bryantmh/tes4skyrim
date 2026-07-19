@@ -151,7 +151,8 @@ def load_furniture_models(meshes_dir, by_type) -> int:
     _FURN_SEATS.clear()
     _BASE_ORIGIN_SHIFT.clear()
     try:
-        from asset_convert.furniture_markers import furniture_model_info, scan_marker_nifs
+        from asset_convert.furniture_markers import (furniture_model_info_job,
+                                                     scan_marker_nifs)
     except ImportError as exc:
         print(f"  Furniture seats: asset_convert unavailable ({exc}), using fallback")
         return 0
@@ -160,18 +161,30 @@ def load_furniture_models(meshes_dir, by_type) -> int:
         return 0
 
     marker_models = scan_marker_nifs(meshes_dir)
+    # PyFFI parsing is CPU-bound pure Python — run the per-NIF parses across
+    # a process pool (threads would serialise on the GIL).
+    jobs = [(key, os.path.join(meshes_dir, key.replace('/', os.sep)))
+            for key in sorted(marker_models)]
     model_shift: dict = {}
     resolved = 0
-    for key in sorted(marker_models):
-        nif_path = os.path.join(meshes_dir, key.replace('/', os.sep))
-        try:
-            info = furniture_model_info(nif_path)
-        except Exception as exc:
-            print(f"  Furniture seats: failed to read {key}: {exc}")
-            continue
-        _FURN_SEATS[key] = info['seats']
-        model_shift[key] = info['origin_shift']
-        resolved += 1
+
+    def _consume(results):
+        nonlocal resolved
+        for key, info, err in results:
+            if err is not None:
+                print(f"  Furniture seats: failed to read {key}: {err}")
+                continue
+            _FURN_SEATS[key] = info['seats']
+            model_shift[key] = info['origin_shift']
+            resolved += 1
+
+    if len(jobs) < 8:
+        _consume(map(furniture_model_info_job, jobs))
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+        workers = min(max(1, (os.cpu_count() or 4) - 1), len(jobs))
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            _consume(ex.map(furniture_model_info_job, jobs))
 
     shifted_bases = 0
     for recs in by_type.values():

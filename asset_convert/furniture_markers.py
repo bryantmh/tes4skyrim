@@ -279,26 +279,49 @@ def seats_from_nif(nif_path):
     return furniture_model_info(nif_path)['seats']
 
 
+def _has_marker_header(path):
+    """True if the NIF's header block-type table names BSFurnitureMarker."""
+    try:
+        with open(path, 'rb') as fh:
+            return b'BSFurnitureMarker' in fh.read(8192)
+    except OSError:
+        return False
+
+
 def scan_marker_nifs(meshes_dir):
     """Return the set of relative paths (lowercase, forward slashes) of all
     NIFs under meshes_dir containing a BSFurnitureMarker block.
 
-    Cheap: block type names are plaintext in the NIF header, which sits in
-    the first few KB of the file — no PyFFI parse needed.
+    Cheap per file: block type names are plaintext in the NIF header, which
+    sits in the first few KB — no PyFFI parse needed. But there are ~10k NIFs
+    to probe, so the 8 KB header reads run across a thread pool (file I/O
+    releases the GIL; processes would only add spawn cost here).
     """
     import os
-    found = set()
+    from concurrent.futures import ThreadPoolExecutor
+
+    paths = []
     for root, _dirs, files in os.walk(meshes_dir):
         for fname in files:
-            if not fname.lower().endswith('.nif'):
-                continue
-            path = os.path.join(root, fname)
-            try:
-                with open(path, 'rb') as fh:
-                    head = fh.read(8192)
-            except OSError:
-                continue
-            if b'BSFurnitureMarker' in head:
+            if fname.lower().endswith('.nif'):
+                paths.append(os.path.join(root, fname))
+
+    found = set()
+    if not paths:
+        return found
+    with ThreadPoolExecutor(max_workers=min(32, max(4, len(paths) // 64))) as ex:
+        for path, has_marker in zip(paths, ex.map(_has_marker_header, paths)):
+            if has_marker:
                 rel = os.path.relpath(path, meshes_dir)
                 found.add(rel.lower().replace('\\', '/'))
     return found
+
+
+def furniture_model_info_job(args):
+    """(key, info, error) for one NIF — module-level so it is picklable for
+    ProcessPoolExecutor (PyFFI parsing is CPU-bound; processes scale it)."""
+    key, nif_path = args
+    try:
+        return key, furniture_model_info(nif_path), None
+    except Exception as exc:  # noqa: BLE001 — caller reports and continues
+        return key, None, f'{type(exc).__name__}: {exc}'

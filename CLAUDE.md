@@ -30,6 +30,16 @@ Convert TES4 (Oblivion) master/plugin files to TES5 (Skyrim) format.
 - `output/Oblivion.esm` is a FOLDER, not a file. The output .esm goes in `output/Oblivion.esm/Oblivion.esm`. A write failure there means you're trying to overwrite a folder with a file, not a locked file.
 - The assistant MUST NOT run `git stash` or `git stash pop` in this repository.
 
+## Parallelism Rules (learned 2026-07-16)
+
+- **ThreadPoolExecutor is ONLY for I/O or subprocess work** (file reads, papyrus.exe, xWMAEncode). Pure-Python record conversion/parsing/formatting holds the GIL — threads pin one core AND (when converters allocate companion FormIDs) make output nondeterministic. Use ProcessPoolExecutor.
+- **Worker state replay pattern**: converter functions depend on module globals set in Phase 0 (formid offset, cell locations, WORLD_NAMES, furniture origin shifts, mesh bounds). Process pools must replay them via an initializer — see `tes5_import/navm_worker.py` and `tes5_import/convert_worker.py`.
+- **Determinism contract**: the output ESM must be byte-reproducible. Process results in submission order (`ex.map`, not `as_completed`) and keep any `writer.alloc_formid()` callers serial. Verify with `tools/esm_diff.py A.esm B.esm` (distinguishes real diffs from reorders).
+- **Export format workers re-read from mmap**: `tes4_export` scans record offsets only (`read_file(..., parse_subs=False)`) and workers re-read/format from their own mmap — never pickle `Record` objects across process boundaries.
+- **`unescape_value` fast path matters**: a `'\\' not in value` check made text parsing ~7x faster; keep C-speed scans in per-line hot paths.
+- **Don't parallelize µs-level converters** (REFR/ACHR/CELL): the pickle round-trip costs more than the conversion. Only LAND (~0.9 ms/record) is worth a pool.
+- **`bytes += big` is quadratic** — accumulate group contents in lists and `b''.join` at wrap points (CELL/WRLD builders).
+
 ## Documentation Map
 
 Deep reference material lives in `docs/` so this file stays short. Load the
@@ -279,6 +289,11 @@ TES4 uses an imperative scripting language with event blocks (GameMode, OnActiva
 - Player reference: `player.` → `Game.GetPlayer().`
 - No direct equivalent for: GetInCell (→IsInLocation), ShowMap, CloseOblivionGate, SetQuestObject
 - TES4 attributes (Strength, etc.) have no Papyrus equivalent
+- Vanilla Papyrus has more than the wikis suggest — check the game's `Data/Source/Scripts/*.psc` headers before declaring something unconvertible. `Faction.SetReaction/ModReaction`, `Actor.GetCurrentPackage()` (→ GetIsCurrentPackage/GetCurrentAIPackage-vs-form), `ObjectReference.PushActorAway` and `ObjectReference.GetAnimationVariableBool("bAnimPlaying")` (→ IsAnimPlaying) all exist and are used by the converter.
+- `pme`/`sme` (PlayMagicEffectVisuals) take a MGEF code, not a shader: resolve code → TES4 MGEF → its `DATA.EffectShader` (else EnchantEffect, else school enchant glow) → converted EFSH, and emit `<shader>.Play(ref, dur)`. EFSH records are converted, so the property binds.
+- `IsSpellTarget X` → `TES4Polyfill.HasMagicEffectByID(ref, <Skyrim MGEF fid>)` where the MGEF is the spell's first effect surviving import (same mapping as `_pack_effects`); pure script-effect spells are detected via the importer's first filler effect, which keeps the dropped effect's duration for exactly this reason.
+- `begin OnAlarm` → `OnCombatStateChanged` guarded `aeCombatState != 0`; `OnStartCombat` bodies are guarded `== 1` (the event also fires on combat END).
+- Vanilla forms with no TES4 counterpart are reached via `Game.GetFormFromFile(0x..., "Skyrim.esm")` in TES4Polyfill (ActorTypeNPC keyword for GetIsCreature, GuardDialogueFaction for IsGuard, PlayerVampireQuestScript.VampireStatus for HasVampireFed) — no property binding needed.
 
 ## Development Workflow
 
