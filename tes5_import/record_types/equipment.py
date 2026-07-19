@@ -601,22 +601,36 @@ def convert_BOOK(rec: dict, writer=None) -> bytes:
     # KSIZ/KWDA — vendor keyword (TES4 flag 0x01 = Scroll)
     subs += pack_keywords([VENDOR_KYWD['Scroll' if flags & 0x01 else 'Book']])
 
-    # Type: 0 = Book/Tome, 255 = Note/Scroll (TES4 flag 0x01 = Scroll)
-    book_type = 255 if flags & 0x01 else 0
+    # Type: always 0 (Book/Tome).  The CK lists 255 = Note/Scroll, but vanilla
+    # Skyrim.esm uses 0 for every one of its 821 BOOKs including all notes, so
+    # 255 is an engine-untested value; scroll-flagged TES4 books get 0 too.
+    book_type = 0
     data = struct.pack('<BBHiIf', tes5_flags, book_type, 0, teaches_tes5, value, weight)
     subs += pack_subrecord('DATA', data)
 
     # INAM — Inventory Art (STAT).  BookMenu null-derefs without it (in-game
-    # crash on reading any book), so it must always be present.  Pointing it
-    # at a vanilla stand-in (HighPolySkyrimBook) shows the default Skyrim
-    # cover in the inventory, so we synthesise a per-book STAT wrapping the
-    # book's own converted mesh instead.
+    # crash on reading any book), so it must always be present.  It also must
+    # point at one of the rigged Skyrim reading meshes: the open animation and
+    # page text come from the template's behavior graph + skinned page bones +
+    # PageText quad, so a static mesh here opens invisible with no text.
+    # asset_convert/book_inam.py bakes each distinct TES4 book model's cover
+    # textures onto the vanilla book/note rig and writes it to
+    # meshes\tes4\clutter\books\inv\<model basename>.nif; one STAT per model
+    # is synthesised here (cached on the writer — BOOKs convert serially).
     inam_fid = 0x000E894C  # HighPolySkyrimBook — fallback for model-less books
     if writer is not None and model:
-        edid = get_str(rec, 'EditorID', '')
-        inam_fid = writer.alloc_formid()
-        stat_bytes = _build_model_stat('InvArt_' + edid, _prefix_path(model), inam_fid)
-        writer.add_record('STAT', stat_bytes)
+        base = model.replace('/', '\\').rsplit('\\', 1)[-1].rsplit('.', 1)[0].lower()
+        cache = getattr(writer, '_book_inam_stats', None)
+        if cache is None:
+            cache = writer._book_inam_stats = {}
+        inam_fid = cache.get(base)
+        if inam_fid is None:
+            inam_fid = writer.alloc_formid()
+            inv_model = 'clutter\\books\\inv\\' + base + '.nif'
+            stat_bytes = _build_model_stat('InvArt_' + base, _prefix_path(inv_model),
+                                           inam_fid)
+            writer.add_record('STAT', stat_bytes)
+            cache[base] = inam_fid
     subs += pack_formid_subrecord('INAM', inam_fid)
 
     # CNAM — Description (string, empty like vanilla non-descriptive books).
