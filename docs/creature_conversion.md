@@ -685,6 +685,25 @@ creature is fully proven.
   bones picked from ragdoll part depths, idle-clip pose holders) gated on
   `hkx_ragdoll.ragdoll_info()`. No getup states yet (Oblivion creatures lack getup
   clips) — a knocked-down-but-alive actor stays down; death is unaffected.
+- **Blend-collision body rot/trans = the body's BIND-POSE WORLD transform, not a
+  bone-local offset (2026-07-16, the mangled-ragdoll root cause)**: on every Oblivion
+  creature skeleton, a ragdoll bhkRigidBody's translation×7 equals its bone's world
+  position EXACTLY (dog 26/26) and its rotation quaternion is the body's world
+  orientation — capsule vertices, COM, and constraint pivots/axes are authored in that
+  body frame.  (Vanilla Skyrim skeleton.nif blend bodies use the same convention in
+  metre units, so the NIF-side `_convert_blend_collision` ×0.1 pass-through was always
+  right.)  hkx_ragdoll used to treat translation as a bone-local additive offset and
+  ignored the rotation → every capsule/pivot displaced by the bone's world position
+  and mis-rotated → the ragdoll tore itself apart on death.  Fix: per body compute the
+  bone-from-body transform (row-convention `R_body_world @ R_bone_world.T` + offset)
+  and map ALL body-frame data through it at extraction time (`extract_ragdoll`
+  normalizes constraints into bone-space info dicts; the XML emitters do no frame
+  math).  Verification: capsules land on their bones AND each constraint's
+  child-frame/parent-frame pivots coincide in world space (~1e-6) — the definitive
+  joint-correctness test.  Also: vanilla creature ragdoll constraints ALL have
+  maxFrictionTorque 0.0 (dog census) — Oblivion descriptor frictions (≈10) freeze
+  Skyrim's solver into distorted poses; converted joints now use 0.0 (synthetic
+  atronach rock joints keep the vanilla 10.0).
 - **Ragdoll constraint motors are mandatory in the hkaRagdollInstance set (2026-07-09,
   the Storm Atronach / Skeleton Load3D crash)**: crash log showed
   EXCEPTION_ACCESS_VIOLATION dereferencing an hkpPositionConstraintMotor with a
@@ -730,6 +749,51 @@ creature is fully proven.
   `convert_CREA` RNAM → generated race via `get_creature_race()`;
   `resolve_creature_race` Skyrim-race aliasing = FALLBACK only. NPC_ humanoids keep the
   Skyrim race override system (user directive).
+- **Nested state-machine topology is mandatory (2026-07-16, the head-whipping +
+  never-attacks root cause)**: the old v1 graph made EVERY engine event a root-level
+  wildcard.  In combat the engine streams turnLeft/turnRight facing corrections
+  continuously, so the whole graph got yanked into full-body turn states (visible as
+  the actor "constantly scanning left and right") and any in-progress attack state was
+  aborted mid-swing (attacks never landed).  Vanilla topology (quadrupedbehavior.hkx
+  dump), now replicated by `build_behavior_xml`:
+  * Root SM: DefaultState(0) + one state per attack/recoil/stagger/death/swim.  Root
+    WILDCARDS carry ONLY recoilStart/recoilLargeStart/staggerStart/deathStart/swimStart
+    + returnToDefault (FLAG_IS_GLOBAL_WILDCARD, the universal way back) — never
+    movement or turn events.
+  * attackStart_* transitions are LOCAL transitions FROM DefaultState (attacks can only
+    start from locomotion/standing, and once inside an attack state no move/turn event
+    can leave it).
+  * Attack states wrap their clip in hkbModifierGenerator + BSIsActiveModifier
+    (0xb0fde45a) with bIsActive0→IsAttacking, bIsActive1→bAllowRotation,
+    bIsActive2→bDisableHeadTrack — the engine reads IsAttacking to stop steering
+    mid-swing.  Single-play clips fire `returnToDefault` at clip end (NOT attackStop);
+    the completion events the engine waits for (attackStop/recoilStop/staggerStop) are
+    state exitNotifyEvents.  Attack clips also emit `weaponSwing` (~0.3s before the
+    hit) like every vanilla attack clip.
+  * DefaultState → DefaultBehavior SM {StandingState(0) ↔ LocomotionState(1)} via
+    local moveStart/moveStop transitions.
+  * StandingState → StandingBehavior SM {StandingIdle(0), LoopingTurnRight(1),
+    LoopingTurnLeft(2)} — turnLeft/turnRight/turnStop are LOCAL transitions here and
+    exist nowhere else, so turn-in-place can only happen while standing (vanilla
+    exact).
+  * StandingIdle → StandingIdleBehavior SM {NonCombatIdle(0) ↔ CombatIdle(1)} on
+    combatStanceStart/Stop (replaces the old root-level CombatStance state).
+  * All SMs use START_STATE_MODE_DEFAULT (vanilla census: every SM on this path).
+- **The speed blend needs rate-scaled anchors across the whole commanded range
+  (2026-07-16, the gliding root cause)**: vanilla ForwardWalkBlend_Dog is a
+  SYNC|PARAMETRIC (flags 17) blend whose children are the SAME clips at scaled
+  playbackSpeeds, each anchored (child weight) at natural_speed × rate: walk@0.067→5
+  u/s, walk@1.0→74.54, walk@1.4→104.4, trot@0.65/1.0/1.5→186.8/287.3/425, blendParameter
+  bound to SpeedSampled.  A two-anchor rate-1.0 blend plays wrong-rate animation at
+  every other commanded speed (AI sandboxing walks well below full walk speed) → feet
+  slide.  `speed_blend_plan()` now emits walk@0.067/1.0(/1.4) + run@0.75/1.0/1.5
+  children with strictly increasing anchors; MoveBackward gets back@0.067/1.0.  Every
+  blend-child hkbClipGenerator NAME must also be registered in the animationdata cache
+  with its playback rate (vanilla dogproject.txt lists WalkForward00 @1.4 etc.; trigger
+  times in the cache are playback-local, i.e. natural/rate).  A "run" clip with less
+  root motion than the walk (wraith) is dropped (anchors must increase, MOVT run falls
+  back to walk).  iState/iState_*Default/iState_*Run now use the vanilla 30/31 tag
+  values.
 - Remaining refinements: specialidle/random-idle IDLE wiring (DogIdleRoot/DogIdles
   pattern), foot IK/look-at, getup-after-knockdown (needs getup clips Oblivion lacks —
   knocked-down live actors stay down; death unaffected), canned 90/180° turns

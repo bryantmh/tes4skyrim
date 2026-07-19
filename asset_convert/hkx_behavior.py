@@ -65,6 +65,8 @@ hkx_xml.SIGNATURES.update({
     'BSRagdollContactListenerModifier': '0x8003d8ce',
     'hkbBoneIndexArray': '0xaa8619',
     'hkbBoneWeightArray': '0xcd902b77',
+    'BSIsActiveModifier': '0xb0fde45a',
+    'hkbStateMachineEventPropertyArray': '0xb07b4388',
 })
 
 
@@ -82,11 +84,15 @@ LOCOMOTION_STATES = {
     'Swim': (['swimforward'], 'swimStart', 'swimStop'),
 }
 IDLE_CANDIDATES = ['idle']
+# single-play interrupt states: clip fires returnToDefault at its end
+# (vanilla-verbatim; the transition back is the root's returnToDefault
+# global wildcard) and the STATE notifies its stop event on exit so the
+# engine's combat/stagger controllers see completion.
 SINGLE_PLAY = {
     'Recoil': (['recoil'], 'recoilStart', 'recoilStop'),
     'Stagger': (['stagger'], 'staggerStart', 'staggerStop'),
-    # no end event: the clip holds its last pose (dead on the ground) —
-    # ragdoll death is a later refinement of the skeleton.hkx stage
+    # no exit notify/end trigger: the clip holds its last pose (dead on the
+    # ground); ragdoll death is handled by the outer wrapper SM
     'Death': (['death', 'dies'], 'deathStart', None),
 }
 
@@ -154,15 +160,21 @@ def build_attack_events(clips: dict) -> list:
 
 
 def state_defs(clips: dict) -> list:
-    """The graph's state list, shared by the behavior XML and the
+    """The graph's clip-generator list, shared by the behavior XML and the
     animationdata manifest: (state_name, kf_path, looping, enter_evt,
-    end_evt) tuples, Idle first (state id 0).
+    end_evt) tuples, Idle first.
 
-    CombatStance is a looping idle-clip state entered on combatStanceStart
-    (routed from the engine's ActionDraw) — the combat-facing stance pose.
-    The weaponDraw reply the combat controller waits for is sent by the
-    root-level StartCombat/StopCombat expression-modifier pair (vanilla
-    quadruped layout), not by this state."""
+    end_evt is the clip-END trigger registered in both the graph and the
+    animationdata cache.  Single-play clips fire `returnToDefault` (vanilla
+    convention — the root SM's global wildcard routes it back to
+    DefaultState); the completion events the ENGINE listens for (attackStop/
+    recoilStop/staggerStop) are state exitNotify events, not clip triggers.
+
+    CombatStance is the looping combat-idle clip nested under the standing
+    idle switch (combatStanceStart/Stop local transitions, routed from the
+    engine's ActionDraw).  The weaponDraw reply the combat controller waits
+    for is sent by the root-level StartCombat/StopCombat expression-modifier
+    pair (vanilla quadruped layout), not by a state."""
     defs = []
     if clips['idle']:
         defs.append(('Idle', clips['idle'], True, None, None))
@@ -172,13 +184,62 @@ def state_defs(clips: dict) -> list:
     if clips['idle']:
         defs.append(('CombatStance', clips['idle'], True,
                      'combatStanceStart', None))
-    for st, (_names, enter, end_evt) in SINGLE_PLAY.items():
+    for st, (_names, enter, _stop) in SINGLE_PLAY.items():
         if st in clips['single']:
-            defs.append((st, clips['single'][st], False, enter, end_evt))
+            defs.append((st, clips['single'][st], False, enter,
+                         'returnToDefault' if st != 'Death' else None))
     for kf, evt in zip(clips['attacks'], build_attack_events(clips)):
         defs.append((f'Attack_{_clip_state_name(kf)}', kf, False, evt,
-                     'attackStop'))
+                     'returnToDefault'))
     return defs
+
+
+def speed_blend_plan(clips: dict, speeds: dict) -> list:
+    """Children of the MoveForward parametric speed blend:
+    [(clip_gen_name, kf_path, playback_rate, anchor u/s)], anchors strictly
+    increasing.  None when the walk clip has no usable root-motion speed.
+
+    Vanilla covers the whole commanded-speed range by re-anchoring the SAME
+    clips at scaled playbackSpeeds (ForwardWalkBlend_Dog: walk@0.067→5 u/s,
+    walk@1.0→74.54, walk@1.4→104.4, trot@0.65/1.0/1.5→186.8/287.3/425 —
+    anchor == natural clip speed × rate).  A blend with only rate-1.0
+    anchors plays wrong-rate animation at every other commanded speed and
+    the actor glides/moonwalks (the 2026-07-16 gliding report).
+    """
+    fwd = clips['locomotion'].get('MoveForward')
+    walk = speeds.get('walk')
+    if not fwd or not walk:
+        return None
+    run_kf, run = clips.get('run'), speeds.get('run')
+    entries = [('MoveForwardSlow', fwd, 0.067), ('MoveForward', fwd, 1.0)]
+    if run_kf and run and run > walk * 1.05:
+        if 1.4 * walk < 0.75 * run:
+            entries.append(('MoveForwardFast', fwd, 1.4))
+        entries += [('MoveForwardRunSlow', run_kf, 0.75),
+                    ('MoveForwardRun', run_kf, 1.0),
+                    ('MoveForwardRunFast', run_kf, 1.5)]
+        natural = {id(fwd): walk, id(run_kf): run}
+    else:
+        entries.append(('MoveForwardFast', fwd, 1.4))
+        natural = {id(fwd): walk}
+    plan, last = [], 0.0
+    for nm, kf, rate in entries:
+        anchor = natural[id(kf)] * rate
+        if anchor <= last * 1.01:
+            continue
+        plan.append((nm, kf, rate, anchor))
+        last = anchor
+    return plan if len(plan) >= 2 else None
+
+
+def backward_blend_plan(clips: dict, speeds: dict) -> list:
+    """Same treatment for MoveBackward (AI backpedals slowly)."""
+    back = clips['locomotion'].get('MoveBackward')
+    spd = speeds.get('back')
+    if not back or not spd:
+        return None
+    return [('MoveBackwardSlow', back, 0.067, spd * 0.067),
+            ('MoveBackward', back, 1.0, spd)]
 
 
 # ---------------------------------------------------------------------------
@@ -290,8 +351,17 @@ _TRANSITION_TMPL = '''<hkobject>
 \t<hkparam name="fromNestedStateId">0</hkparam>
 \t<hkparam name="toNestedStateId">0</hkparam>
 \t<hkparam name="priority">0</hkparam>
-\t<hkparam name="flags">FLAG_IS_LOCAL_WILDCARD|FLAG_DISABLE_CONDITION</hkparam>
+\t<hkparam name="flags">{flags}</hkparam>
 </hkobject>'''
+
+# vanilla transition flag sets: state-local transitions are plain
+# FLAG_DISABLE_CONDITION; wildcard entries add FLAG_IS_LOCAL_WILDCARD;
+# returnToDefault/deathStart are additionally global (bubble out of nested
+# state machines).
+_F_LOCAL = 'FLAG_DISABLE_CONDITION'
+_F_WILD = 'FLAG_IS_LOCAL_WILDCARD|FLAG_DISABLE_CONDITION'
+_F_GLOBAL = ('FLAG_IS_LOCAL_WILDCARD|FLAG_IS_GLOBAL_WILDCARD|'
+             'FLAG_DISABLE_CONDITION')
 
 _TRIGGER_TMPL = '''<hkobject>
 \t<hkparam name="localTime">{time:.6f}</hkparam>
@@ -406,7 +476,7 @@ def build_behavior_xml(behavior_name: str, clips: dict,
               'recoilStart', 'recoilStop', 'recoilLargeStart',
               'staggerStart', 'staggerStop',
               'combatStanceStart', 'combatStanceStop',
-              'weaponDraw', 'weaponSheathe',
+              'weaponDraw', 'weaponSheathe', 'weaponSwing',
               'attackStop', 'returnToDefault', 'deathStart', 'IdleStop',
               'DeathAnimation', 'Ragdoll', 'RagdollInstant',
               'AddRagdollToWorld', 'RemoveCharacterControllerFromWorld',
@@ -415,9 +485,12 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     events += attack_events
     eid = {n: i for i, n in enumerate(events)}
 
+    if not clips['idle']:
+        raise ValueError('creature has no idle clip')
+
     pf = HkxPackfile(first_id=80)
 
-    # blend effects: smooth 0.3s for locomotion, snappier 0.2s reset for hits
+    # blend effect: smooth 0.3s (vanilla locomotion default)
     fx_smooth = pf.add('hkbBlendingTransitionEffect')
     for obj, nm, dur, mode in ((fx_smooth, 'BlendSmooth', 0.3,
                                 'SELF_TRANSITION_MODE_CONTINUE_IF_CYCLIC'),):
@@ -432,21 +505,13 @@ def build_behavior_xml(behavior_name: str, clips: dict,
         obj.param('endMode', 'END_MODE_NONE')
         obj.param('blendCurve', 'BLEND_CURVE_SMOOTH')
 
-    # ---- states ----
-    defs = state_defs(clips)
-    if not defs:
-        raise ValueError('creature has no usable clips')
-
-    # variable table is fixed up-front so bindings inside the state loop can
-    # reference indices (iState_<MOVT MNAM> registration: see
-    # movement_type_names).  Initial values: loco state id for the iState
-    # family, declared defaults otherwise (IsAttackReady/bEquipOK = 1).
-    loco_id = next((i for i, d in enumerate(defs) if d[0] == 'MoveForward'), 0)
+    # variable table is fixed up-front so bindings can reference indices.
+    # iState family: vanilla-style movement-type tags (dogbehavior:
+    # iState_DogDefault=30/iState_DogRun=31, iState initialized to Default).
     variables = ([(n, t, iv) for n, t, iv in ENGINE_VARIABLES]
-                 + [(f'iState_{mt}', 'INT32', loco_id)
-                    for mt in movement_types])
-    var_values = [loco_id if n == 'iState' else iv
-                  for n, _t, iv in variables]
+                 + [(f'iState_{mt}', 'INT32', 30 + i)
+                    for i, mt in enumerate(movement_types)])
+    var_values = [30 if n == 'iState' else iv for n, _t, iv in variables]
     vidx = {n: i for i, (n, _t, _iv) in enumerate(variables)}
 
     def _binding_set(pairs):
@@ -460,7 +525,7 @@ def build_behavior_xml(behavior_name: str, clips: dict,
         b.param('indexOfBindingToEnable', -1)
         return b
 
-    def _clip(name, kf_path, looping, triggers_ref='null'):
+    def _clip(name, kf_path, looping, triggers_ref='null', rate=1.0):
         clip = pf.add('hkbClipGenerator')
         clip.param('variableBindingSet', 'null')
         clip.param('userData', 0)
@@ -471,7 +536,7 @@ def build_behavior_xml(behavior_name: str, clips: dict,
         clip.param('cropStartAmountLocalTime', '0.000000')
         clip.param('cropEndAmountLocalTime', '0.000000')
         clip.param('startTime', '0.000000')
-        clip.param('playbackSpeed', '1.000000')
+        clip.param('playbackSpeed', f'{rate:.6f}')
         clip.param('enforcedDuration', '0.000000')
         clip.param('userControlledTimeFraction', '0.000000')
         clip.param('animationBindingIndex', -1)
@@ -479,124 +544,283 @@ def build_behavior_xml(behavior_name: str, clips: dict,
         clip.param('flags', 0)
         return clip
 
-    state_objs = []
-    wildcards = []
-    for state_id, (st_name, kf_path, looping, enter_evt, end_evt) in \
-            enumerate(defs):
-        trigger_items = []
+    def _trans_array(items):
+        """hkbStateMachineTransitionInfoArray from
+        (event_id, to_state, flags) tuples."""
+        arr = pf.add('hkbStateMachineTransitionInfoArray')
+        arr.param_raw(
+            'transitions',
+            '\n'.join(_TRANSITION_TMPL.format(effect=fx_smooth.ref,
+                                              event_id=e, to_state=s,
+                                              flags=f)
+                      for e, s, f in items),
+            numelements=len(items))
+        return arr
+
+    def _events_array(names):
+        arr = pf.add('hkbStateMachineEventPropertyArray')
+        arr.param_raw('events', '\n'.join(
+            '<hkobject>\n'
+            f'\t<hkparam name="id">{eid[n]}</hkparam>\n'
+            '\t<hkparam name="payload">null</hkparam>\n'
+            '</hkobject>' for n in names), numelements=len(names))
+        return arr
+
+    def _state(state_id, name, generator_ref, transitions=None,
+               exit_events=None, enter_events=None):
+        # referenced objects must be added BEFORE the stateInfo (hkxcmd's
+        # parser rejects forward references)
+        trans_ref = _trans_array(transitions).ref if transitions else 'null'
+        enter_ref = (_events_array(enter_events).ref if enter_events
+                     else 'null')
+        exit_ref = _events_array(exit_events).ref if exit_events else 'null'
+        st = pf.add('hkbStateMachineStateInfo')
+        st.param('variableBindingSet', 'null')
+        st.param_array('listeners', [])
+        st.param('enterNotifyEvents', enter_ref)
+        st.param('exitNotifyEvents', exit_ref)
+        st.param('transitions', trans_ref)
+        st.param('generator', generator_ref)
+        st.param('name', name)
+        st.param('stateId', state_id)
+        st.param('probability', '1.000000')
+        st.param('enable', True)
+        return st
+
+    def _make_sm(name, states, start_id=0, wildcard_ref='null'):
+        m = pf.add('hkbStateMachine')
+        m.param('variableBindingSet', 'null')
+        m.param('userData', 0)
+        m.param('name', name)
+        m.param_raw('eventToSendWhenStateOrTransitionChanges', (
+            '<hkobject>\n\t<hkparam name="id">-1</hkparam>\n'
+            '\t<hkparam name="payload">null</hkparam>\n</hkobject>'))
+        m.param('startStateChooser', 'null')
+        m.param('startStateId', start_id)
+        m.param('returnToPreviousStateEventId', -1)
+        m.param('randomTransitionEventId', -1)
+        m.param('transitionToNextHigherStateEventId', -1)
+        m.param('transitionToNextLowerStateEventId', -1)
+        m.param('syncVariableIndex', -1)
+        m.param('wrapAroundStateId', False)
+        m.param('maxSimultaneousTransitions', 32)
+        m.param('startStateMode', 'START_STATE_MODE_DEFAULT')
+        m.param('selfTransitionMode', 'SELF_TRANSITION_MODE_NO_TRANSITION')
+        m.param_array('states', [s.ref for s in states])
+        m.param('wildcardTransitions', wildcard_ref)
+        return m
+
+    def _parametric_blend(name, plan):
+        """Vanilla-style SYNC|PARAMETRIC speed blend: children are the same
+        clips at scaled playbackSpeeds, each anchored (weight) at its true
+        animation speed, blendParameter driven by SpeedSampled."""
+        children = []
+        for cnm, kf, rate, anchor in plan:
+            child_clip = _clip(cnm, kf, True, rate=rate)
+            ch = pf.add('hkbBlenderGeneratorChild')
+            ch.param('variableBindingSet', 'null')
+            ch.param('generator', child_clip.ref)
+            ch.param('boneWeights', 'null')
+            ch.param('weight', f'{anchor:.6f}')
+            ch.param('worldFromModelWeight', '1.000000')
+            children.append(ch)
+        bind = _binding_set([('blendParameter', 'SpeedSampled')])
+        blender = pf.add('hkbBlenderGenerator')
+        blender.param('variableBindingSet', bind.ref)
+        blender.param('userData', 0)
+        blender.param('name', name)
+        blender.param('referencePoseWeightThreshold', '0.000000')
+        blender.param('blendParameter', '1.000000')
+        blender.param('minCyclicBlendParameter', '0.000000')
+        blender.param('maxCyclicBlendParameter', '1.000000')
+        blender.param('indexOfSyncMasterChild', -1)
+        blender.param('flags', 17)
+        blender.param('subtractLastChild', False)
+        blender.param_array('children', [c.ref for c in children])
+        return blender
+
+    # =====================================================================
+    # Nested state machines (the vanilla quadruped topology, 2026-07-16).
+    # The old FLAT graph made every engine event a root wildcard: combat
+    # facing-adjustments (turnLeft/turnRight, sent continuously) hijacked
+    # the whole graph — visible as constant left/right body-whipping — and
+    # aborted every attack mid-swing (the "never attacks" report).  Vanilla
+    # nests turns inside the Standing machine (unreachable while moving or
+    # attacking) and enters attacks only via LOCAL transitions from
+    # DefaultState.
+    # =====================================================================
+    loco = clips['locomotion']
+
+    # ---- LocomotionBehavior: Forward(0) <-> Backward(1) ----
+    loco_sm = None
+    if 'MoveForward' in loco:
+        fplan = speed_blend_plan(clips, speeds)
+        fwd_gen = (_parametric_blend('ForwardSpeedBlend', fplan) if fplan
+                   else _clip('MoveForward', loco['MoveForward'], True))
+        has_back = 'MoveBackward' in loco
+        fwd_state = _state(
+            0, 'ForwardLocomotionState', fwd_gen.ref,
+            transitions=([(eid['moveBackward'], 1, _F_LOCAL)]
+                         if has_back else None))
+        loco_states = [fwd_state]
+        if has_back:
+            bplan = backward_blend_plan(clips, speeds)
+            back_gen = (_parametric_blend('BackwardSpeedBlend', bplan)
+                        if bplan
+                        else _clip('MoveBackward', loco['MoveBackward'],
+                                   True))
+            loco_states.append(_state(
+                1, 'BackwardLocomotionState', back_gen.ref,
+                transitions=[(eid['moveForward'], 0, _F_LOCAL)]))
+        loco_sm = _make_sm('LocomotionBehavior', loco_states)
+
+    # ---- StandingIdleBehavior: NonCombatIdle(0) <-> CombatIdle(1) ----
+    idle_clip = _clip('Idle', clips['idle'], True)
+    combat_clip = _clip('CombatStance', clips['idle'], True)
+    standing_idle_sm = _make_sm('StandingIdleBehavior', [
+        _state(0, 'NonCombatIdleState', idle_clip.ref,
+               transitions=[(eid['combatStanceStart'], 1, _F_LOCAL)]),
+        _state(1, 'CombatIdleState', combat_clip.ref,
+               transitions=[(eid['combatStanceStop'], 0, _F_LOCAL)]),
+    ])
+
+    # ---- StandingBehavior: idle switch + looping turn-in-place states ----
+    has_tr = 'TurnRight' in loco
+    has_tl = 'TurnLeft' in loco
+    idle_trans = []
+    if has_tr:
+        idle_trans.append((eid['turnRight'], 1, _F_LOCAL))
+    if has_tl:
+        idle_trans.append((eid['turnLeft'], 2, _F_LOCAL))
+    standing_states = [_state(0, 'StandingIdleState', standing_idle_sm.ref,
+                              transitions=idle_trans or None)]
+    if has_tr:
+        tr_trans = [(eid['turnStop'], 0, _F_LOCAL)]
+        if has_tl:
+            tr_trans.insert(0, (eid['turnLeft'], 2, _F_LOCAL))
+        standing_states.append(_state(
+            1, 'LoopingTurnRight',
+            _clip('TurnRight', loco['TurnRight'], True).ref,
+            transitions=tr_trans))
+    if has_tl:
+        tl_trans = [(eid['turnStop'], 0, _F_LOCAL)]
+        if has_tr:
+            tl_trans.insert(0, (eid['turnRight'], 1, _F_LOCAL))
+        standing_states.append(_state(
+            2, 'LoopingTurnLeft',
+            _clip('TurnLeft', loco['TurnLeft'], True).ref,
+            transitions=tl_trans))
+    standing_sm = _make_sm('StandingBehavior', standing_states)
+
+    # ---- DefaultBehavior: Standing(0) <-> Locomotion(1) ----
+    default_states = [_state(
+        0, 'StandingState', standing_sm.ref,
+        transitions=([(eid['moveStart'], 1, _F_LOCAL)] if loco_sm else None))]
+    if loco_sm:
+        default_states.append(_state(
+            1, 'LocomotionState', loco_sm.ref,
+            transitions=[(eid['moveStop'], 0, _F_LOCAL)]))
+    default_sm = _make_sm('DefaultBehavior', default_states)
+
+    # ---- root state machine: DefaultState + single-play interrupts ----
+    # Attack states wrap their clip in the vanilla IsActive modifier: while
+    # the state is active it drives IsAttacking=1 (the combat controller's
+    # in-progress flag), bAllowRotation=1 (target tracking during the
+    # swing), bDisableHeadTrack=1.  Without IsAttacking the engine keeps
+    # steering mid-swing.
+    attack_isactive_bind = _binding_set([
+        ('bIsActive0', 'IsAttacking'),
+        ('bIsActive1', 'bAllowRotation'),
+        ('bIsActive2', 'bDisableHeadTrack')])
+    attack_isactive = pf.add('BSIsActiveModifier')
+    attack_isactive.param('variableBindingSet', attack_isactive_bind.ref)
+    attack_isactive.param('userData', 2)
+    attack_isactive.param('name', 'BSIsActiveModifier_IsAttacking')
+    attack_isactive.param('enable', True)
+    for i in range(5):
+        attack_isactive.param(f'bIsActive{i}', False)
+        attack_isactive.param(f'bInvertActive{i}', False)
+    attack_ml = pf.add('hkbModifierList')
+    attack_ml.param('variableBindingSet', 'null')
+    attack_ml.param('userData', 1)
+    attack_ml.param('name', 'AttackModifierList')
+    attack_ml.param('enable', True)
+    attack_ml.param_array('modifiers', [attack_isactive.ref])
+
+    def _clip_triggers(st_name, end_evt):
+        items = []
         for t in hit_times.get(st_name, []):
-            trigger_items.append(_TRIGGER_TMPL.format(
+            items.append(_TRIGGER_TMPL.format(
+                time=max(0.0, t - 0.3), event_id=eid['weaponSwing'],
+                rel='false'))
+            items.append(_TRIGGER_TMPL.format(
                 time=max(0.0, t - 0.1), event_id=eid['preHitFrame'],
                 rel='false'))
-            trigger_items.append(_TRIGGER_TMPL.format(
+            items.append(_TRIGGER_TMPL.format(
                 time=t, event_id=eid['HitFrame'], rel='false'))
         if end_evt:
-            trigger_items.append(_TRIGGER_TMPL.format(
+            items.append(_TRIGGER_TMPL.format(
                 time=0.0, event_id=eid[end_evt], rel='true'))
-        triggers_ref = 'null'
-        if trigger_items:
-            trig = pf.add('hkbClipTriggerArray')
-            trig.param_raw('triggers', '\n'.join(trigger_items),
-                           numelements=len(trigger_items))
-            triggers_ref = trig.ref
-        clip = _clip(st_name, kf_path, looping, triggers_ref)
+        if not items:
+            return 'null'
+        trig = pf.add('hkbClipTriggerArray')
+        trig.param_raw('triggers', '\n'.join(items), numelements=len(items))
+        return trig.ref
 
-        # MoveForward with a distinct run clip becomes the vanilla parametric
-        # speed blend (ForwardWalkBlend_Dog layout): children anchored at
-        # each clip's natural root-motion speed, blendParameter driven by
-        # SpeedSampled, flags 17 = SYNC|PARAMETRIC — the played animation
-        # tracks the actor's actual speed instead of always looking like a
-        # walk (2026-07-09 "moves fast but plays walk/idle" fix, with the
-        # computed MOVT SPED values in tes5_import/creature_races.py).
-        generator = clip
-        if st_name == 'MoveForward' and clips.get('run') and speeds.get(
-                'walk') and speeds.get('run'):
-            run_clip = _clip('MoveForwardRun', clips['run'], True)
-            children = []
-            for child_gen, w in ((clip, speeds['walk']),
-                                 (run_clip, speeds['run'])):
-                ch = pf.add('hkbBlenderGeneratorChild')
-                ch.param('variableBindingSet', 'null')
-                ch.param('generator', child_gen.ref)
-                ch.param('boneWeights', 'null')
-                ch.param('weight', f'{w:.6f}')
-                ch.param('worldFromModelWeight', '1.000000')
-                children.append(ch)
-            bind = _binding_set([('blendParameter', 'SpeedSampled')])
-            blender = pf.add('hkbBlenderGenerator')
-            blender.param('variableBindingSet', bind.ref)
-            blender.param('userData', 0)
-            blender.param('name', 'ForwardSpeedBlend')
-            blender.param('referencePoseWeightThreshold', '0.000000')
-            blender.param('blendParameter', '1.000000')
-            blender.param('minCyclicBlendParameter', '0.000000')
-            blender.param('maxCyclicBlendParameter', '1.000000')
-            blender.param('indexOfSyncMasterChild', -1)
-            blender.param('flags', 17)
-            blender.param('subtractLastChild', False)
-            blender.param_array('children', [c.ref for c in children])
-            generator = blender
+    root_states_inner = []
+    next_id = 1
+    default_trans = []      # attackStart_* -> attack states (LOCAL)
+    root_wilds = []
 
-        state = pf.add('hkbStateMachineStateInfo')
-        state.param('variableBindingSet', 'null')
-        state.param_array('listeners', [])
-        state.param('enterNotifyEvents', 'null')
-        state.param('exitNotifyEvents', 'null')
-        state.param('transitions', 'null')
-        state.param('generator', generator.ref)
-        state.param('name', st_name)
-        state.param('stateId', state_id)
-        state.param('probability', '1.000000')
-        state.param('enable', True)
-        state_objs.append(state)
+    for st, (_names, enter, stop_evt) in SINGLE_PLAY.items():
+        if st not in clips['single']:
+            continue
+        end_evt = 'returnToDefault' if st != 'Death' else None
+        clip = _clip(st, clips['single'][st], False,
+                     _clip_triggers(st, end_evt))
+        root_states_inner.append(_state(
+            next_id, f'{st}State', clip.ref,
+            exit_events=[stop_evt] if stop_evt else None))
+        root_wilds.append((eid[enter], next_id, _F_WILD if st != 'Death'
+                           else _F_GLOBAL))
+        if st == 'Recoil':
+            root_wilds.append((eid['recoilLargeStart'], next_id, _F_WILD))
+        next_id += 1
 
-        if enter_evt:
-            wildcards.append((eid[enter_evt], state_id))
+    if 'Swim' in loco:
+        swim_clip = _clip('Swim', loco['Swim'], True)
+        root_states_inner.append(_state(
+            next_id, 'SwimState', swim_clip.ref,
+            transitions=[(eid['swimStop'], 0, _F_LOCAL)]))
+        root_wilds.append((eid['swimStart'], next_id, _F_WILD))
+        next_id += 1
 
-    # exits back to Idle
-    idle_id = 0
-    for evt in ('moveStop', 'turnStop', 'swimStop', 'attackStop',
-                'recoilStop', 'staggerStop', 'returnToDefault',
-                'combatStanceStop', 'IdleStop'):
-        wildcards.append((eid[evt], idle_id))
+    for kf, evt in zip(clips['attacks'], build_attack_events(clips)):
+        st_name = f'Attack_{_clip_state_name(kf)}'
+        clip = _clip(st_name, kf, False,
+                     _clip_triggers(st_name, 'returnToDefault'))
+        mg = pf.add('hkbModifierGenerator')
+        mg.param('variableBindingSet', 'null')
+        mg.param('userData', 1)
+        mg.param('name', f'{st_name}_MG')
+        mg.param('modifier', attack_ml.ref)
+        mg.param('generator', clip.ref)
+        root_states_inner.append(_state(
+            next_id, f'{st_name}State', mg.ref,
+            exit_events=['attackStop']))
+        default_trans.append((eid[evt], next_id, _F_LOCAL))
+        next_id += 1
 
-    # extra engine-sent aliases: moveForward re-enters forward locomotion
-    # (sent on direction changes while moving), recoilLargeStart shares the
-    # single recoil clip
-    state_ids = {d[0]: i for i, d in enumerate(defs)}
-    if 'MoveForward' in state_ids:
-        wildcards.append((eid['moveForward'], state_ids['MoveForward']))
-    if 'Recoil' in state_ids:
-        wildcards.append((eid['recoilLargeStart'], state_ids['Recoil']))
+    default_state = _state(0, 'DefaultState', default_sm.ref,
+                           transitions=default_trans or None)
+    root_states_inner.insert(0, default_state)
 
-    wild = pf.add('hkbStateMachineTransitionInfoArray')
-    wild.param_raw(
-        'transitions',
-        '\n'.join(_TRANSITION_TMPL.format(effect=fx_smooth.ref,
-                                          event_id=e, to_state=s)
-                  for e, s in wildcards),
-        numelements=len(wildcards))
+    root_wilds.append((eid['returnToDefault'], 0, _F_GLOBAL))
+    root_wilds.append((eid['IdleStop'], 0, _F_WILD))
+    wild = _trans_array(root_wilds)
 
-    sm = pf.add('hkbStateMachine')
-    sm.param('variableBindingSet', 'null')
-    sm.param('userData', 0)
-    sm.param('name', f'{behavior_name}Root')
-    sm.param_raw('eventToSendWhenStateOrTransitionChanges', (
-        '<hkobject>\n\t<hkparam name="id">-1</hkparam>\n'
-        '\t<hkparam name="payload">null</hkparam>\n</hkobject>'))
-    sm.param('startStateChooser', 'null')
-    sm.param('startStateId', idle_id)
-    sm.param('returnToPreviousStateEventId', -1)
-    sm.param('randomTransitionEventId', -1)
-    sm.param('transitionToNextHigherStateEventId', -1)
-    sm.param('transitionToNextLowerStateEventId', -1)
-    sm.param('syncVariableIndex', -1)
-    sm.param('wrapAroundStateId', False)
-    sm.param('maxSimultaneousTransitions', 32)
-    sm.param('startStateMode', 'START_STATE_MODE_DEFAULT')
-    sm.param('selfTransitionMode', 'SELF_TRANSITION_MODE_NO_TRANSITION')
-    sm.param_array('states', [s.ref for s in state_objs])
-    sm.param('wildcardTransitions', wild.ref)
+    sm = _make_sm(f'{behavior_name}Root', root_states_inner,
+                  start_id=0, wildcard_ref=wild.ref)
 
     # ---- variables / events tables ----
     strings = pf.add('hkbBehaviorGraphStringData')
@@ -850,7 +1074,8 @@ def build_behavior_xml(behavior_name: str, clips: dict,
         a2r_trans.param_raw(
             'transitions',
             _TRANSITION_TMPL.format(effect=rag_fx.ref,
-                                    event_id=eid['Ragdoll'], to_state=2),
+                                    event_id=eid['Ragdoll'], to_state=2,
+                                    flags=_F_WILD),
             numelements=1)
 
         root_states.append(_root_state(1, 'AnimateToRagdoll', anim2rag.ref,
@@ -863,7 +1088,7 @@ def build_behavior_xml(behavior_name: str, clips: dict,
         root_wild.param_raw(
             'transitions',
             '\n'.join(_TRANSITION_TMPL.format(effect=e, event_id=ev,
-                                              to_state=s)
+                                              to_state=s, flags=_F_WILD)
                       for ev, s, e in (
                           (eid['DeathAnimation'], 1, rag_fx.ref),
                           (eid['Ragdoll'], 2, rag_fx.ref),
@@ -1008,6 +1233,40 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
         'back': _speed_of(clips['locomotion'].get('MoveBackward')),
         'swim': _speed_of(clips['locomotion'].get('Swim')),
     }
+    # a "run" clip that isn't actually faster than the walk (wraith:
+    # runforward has LESS root motion than forward) breaks the parametric
+    # blend's increasing-anchor contract and the MOVT columns — treat the
+    # run gait as absent (MOVT run falls back to walk).
+    if (speeds['run'] and speeds['walk']
+            and speeds['run'] <= speeds['walk'] * 1.05):
+        speeds['run'] = None
+        clips['run'] = None
+
+    # register the parametric-blend children (same clips at scaled
+    # playbackSpeeds — see speed_blend_plan) in the animationdata cache:
+    # every hkbClipGenerator name in the graph needs a cache entry with its
+    # playback rate, trigger times in playback-local time (vanilla
+    # dogproject.txt convention).
+    base_of = {c['name']: c for c in clip_meta}
+    for plan in (speed_blend_plan(clips, speeds) or [],
+                 backward_blend_plan(clips, speeds) or []):
+        for cnm, kf, rate, _anchor in plan:
+            if cnm in base_of:
+                continue
+            stem = _clip_state_name(kf)
+            base = next((c for c in clip_meta if c['stem'] == stem
+                         and c.get('rate', 1) == 1), None)
+            if base is None:
+                continue
+            entry = {
+                'name': cnm, 'stem': stem, 'anim': base['anim'],
+                'duration': base['duration'], 'looping': True,
+                'end_event': None, 'rate': rate,
+                'sounds': [t / rate for t in base['sounds']],
+                'hits': [],
+            }
+            clip_meta.append(entry)
+            base_of[cnm] = entry
 
     behavior_name = f'TES4{name.capitalize()}Behavior'
     move_types = movement_type_names(lname)

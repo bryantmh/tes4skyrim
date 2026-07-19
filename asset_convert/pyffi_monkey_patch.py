@@ -286,6 +286,17 @@ def _install_early_oblivion_layouts(NifFormat):
 
     _bi.read = _bi_read
 
+    # --- Patch 6d: NiGeomMorpherController phantom byte at 10.1.0.106 -----
+    # pyffi's old nif.xml carries an "Unknown 2" UByte gated to EXACTLY
+    # 10.1.0.106 between Extra Flags and Data.  The reference nif.xml has no
+    # such field in ANY version (Morpher Flags → Data → Always Update →
+    # Num Interpolators), and real 10.1.0.106 files (mountainlion head/paws,
+    # minotaur head/eyelids — dev-era creature morph meshes) prove it: the
+    # extra byte desyncs the stream one byte late, so num_interpolators
+    # reads 0x05000000-style garbage and the whole file fails [RD].
+    gm = NifFormat.NiGeomMorpherController
+    gm._attrs[:] = [a for a in gm._attrs if a.name != 'unknown_2']
+
     # --- Patch 7: register bhkConvexSweepShape ----------------------------
     if not hasattr(NifFormat, 'bhkConvexSweepShape'):
         sweep_attrs = [
@@ -317,6 +328,7 @@ def _install_early_oblivion_layouts(NifFormat):
                                           NifFormat.bhkNiTriStripsShape,
                                           NifFormat.NiSingleInterpController,
                                           NifFormat.NiInterpController,
+                                          NifFormat.NiGeomMorpherController,
                                           NifFormat.NiPSysEmitterCtlr))
 
 

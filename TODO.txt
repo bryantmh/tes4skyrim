@@ -36,9 +36,6 @@ Major Issues for V1:
 	8 - Need new skyrim body mesh to actually work to allow leg skin to appear
 
 Later Issues:
-	1 - Lip syncing with voice
-
-	2 - Fix face and body bug
 
 	4 - Refine dialog conversion
 		Missing greetings
@@ -55,20 +52,12 @@ Later Issues:
 	
 	10 - Convert weathers
 
-	11 - Single threaded workflows
-		ESM import additional sections than just navmesh
-		Note that ThreadPoolExecutor doesn't seem to work often, whereas ProcessPoolExector seems more consistent
-
 	12 - Goblins don't properly hold weapons
 
 	13 - Creature animation issues. Still needs a lot of work and refinement
 		Ragdoll is mangled, and animations don't look natural.
 
 	17 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
-
-	20 - Papyrus Compiler TODOs
-
-	21 - Optimize. Reduce ram and cpu usage and make sure everything is properly multithreaded.
 
 	22 - Allow running process on zip (mod)
 
@@ -77,6 +66,8 @@ Later Issues:
 	25 - NPC levels / health is inordinately high!
 
 	26 - statuegodszenithar01.nif is a red triangle ingame
+
+	27 - Crime system
 
 Minor Issues:
 
@@ -114,82 +105,3 @@ Minor Issues:
 	17 - Cleanup output log and update colors
 
 	18 - Shops missing full inventory of items
-
-CK Warnings Analysis (CK_WARNINGS, updated 2026-07-16 after bugfixes, 6970 lines, from CKPE load of converted Oblivion.esm):
-Genericized every message (FormIDs/names/numbers stripped) and grouped identical patterns. Re-diffed against
-the previous 12789-line analysis below — ANIMATION/QUESTS/MAGIC/EDITOR/CELLS/FORMS are byte-for-byte unchanged;
-all movement was in [MASTERFILE] (7763 -> 1944 lines).
-
-FIXED since last analysis (previously large MASTERFILE buckets now gone or nearly gone):
-	- "Unable to find Function Info TESForm ... in TESConditionItem Parameter Init for INFO Form" — was 2928x, now 2x (stray embedded-quote variants only). CTDA condition-parameter FormID remapping for dialogue INFOs is fixed.
-	- "Unable to find variable ::X_var on any VM scripts ... for PACK Form" — was 303x, now 0x. Legacy script-variable condition translation for packages is fixed (see memory: Legacy var conditions).
-	- "Enchanting ... has invalid cast type or magic effect" — was 721x, now 1x. ENCH cast-type mapping bug is fixed.
-	- "Level multiplier for ActorBase ... clamped to 0.10" — was 284x, now 0x. Leveled-creature stat/multiplier conversion is fixed.
-	- "Unable to find Package Target Reference (00000000) on owner object" — was 1684x, now 130x (92% reduction). Package target-reference resolution is mostly fixed; remaining 130 are a real residual bug, see below.
-
-REMAINING buckets (unchanged root causes from before, still to fix):
-
-	[MASTERFILE] 1944 total:
-	1) (512x) "Could not find worldspace (X) in load for Location 'X' (X) in file Oblivion.esm."
-		Generated LCTN records point at a worldspace FormID that isn't loaded/converted (0x0100003C Tamriel and gate-related worldspaces most common). See memory: Exterior cell names / LCTN worldspace+marker construction.
-	2) (298x + 297x = 595x) "Armor/ArmorAddon 'X' (X) used invalid Biped Object slot 44 for race 'DefaultRace'."
-		Slot-44 body-partition patch (see [FORMS] entry below) assigns biped slot 44 to items on 'DefaultRace', which doesn't define slot 44 in its body template — cosmetic-only CK complaint, but confirms the slot-44 patch is applied indiscriminately rather than only to races that support it.
-	3) (245x) "Container object (X) has a count of less then 1 so no item is really added but will cause issues in game on owner object "X"."
-		Converted container entries have Count <= 0 — an inventory-count field is being zeroed/lost during CONT/vendor-chest conversion.
-	4) (139x) "Could not find FootstepSet (X) on ArmorAddon 'X' (X)."
-		ArmorAddon FootstepSet FormID reference (Oblivion has no direct equivalent) isn't populated/resolved — expected gap, needs a default FootstepSet assignment per armor material in ARMA conversion.
-	5) (135x + 135x = 270x) "Could not find male/female voice type (X) for race 'X' (X)."
-		Generated races (per-NPC custom races like TES4SEUncleLeoRace) don't have VTYP FormIDs wired up for both genders — voice type routing gap for custom/unique-NPC races specifically (distinct from the main race-based voice routing already tracked in memory).
-	6) (130x) "Unable to find Package Target Reference (00000000) on owner object "X"." — residual after the fix above; a smaller remaining set of packages still have an unresolved/zeroed target reference.
-	7) (19x) "Unable to find Package Location Reference (X) on owner object "X"." — same root cause as #6 but for the package's location field instead of target field.
-	8) (14x) "Unable to find Leveled Object Form (00000000) for owner object "X"." — leveled list entry with an unresolved/zeroed FormID, same shape as #6/#7.
-	9) (~11x) "Reference attached to wrong cell for its location: 'X' (X) (x, y) in WorldSpace 'X' (X)" — REFR's persistent-location cell doesn't match its actual grid coordinates; matches [CELLS] bucket below, likely same root cause.
-	Singletons (not worth a bucket): duplicate Navmesh map ID, mapmarker ref missing map marker data, 2 stray Function-Info-TESForm lines, 1 stray Enchanting-cast-type line (see FIXED above — not worth re-chasing at this volume).
-
-	[ANIMATION] 3231 total, 1 pattern (unchanged):
-	"Animation 'X' on race 'X' has no weaponSwing/weaponLeftSwing event" — every converted attack animation is missing weapon-swing sound/event annotations. Likely systemic: annotation/event track isn't carried over (or generated) during animation conversion. Matches TODO "Minor Issues #2: Weapons have an attack animation of unknown instead of default."
-
-	[QUESTS] 835 total, unchanged:
-	1) (806x) "Orphaned topic X in quest TES4DialogueGeneric (X)" [+ a few dozen in other named quests] — INFO/topic records exist but aren't linked into any quest's topic list (TPIC alias). Overwhelmingly TES4DialogueGeneric, consistent with the generic-greeting/topic-per-quest issues already tracked (see memory: One bark topic per quest, Greeting→response TCLT).
-	2) (5x) "Could not find forced ref (X) for Ref Alias 'X'." — quest alias's forced reference FormID doesn't resolve; small-count, likely a handful of quests with unconverted/unmapped forced-ref FormIDs.
-
-	[MAGIC] 519 total, unchanged:
-	1) (369x) "Magic Item (X) 'X' is AIMED but has no Magic Effects with Projectiles assigned." — converted spell/enchantment keeps an Aimed delivery type but its effects lost their Projectile (PROJ) reference during MGEF/ENCH conversion.
-	2) (150x) "Magic Item (X) 'X' has no effects defined." — spell/enchantment converted with zero effects; effects list is being dropped for a subset of SPEL/ENCH records.
-
-	[EDITOR] 392 total, 1 pattern (unchanged):
-	"Editor ID 'X' for TYPE (X) is not unique, previous object (X) is type OTHERTYPE. Editor ID will be set to 'XDUPLICATE001'." — EditorID collisions between generated/converted records and existing Skyrim.esm records (LCTN 129x, BOOK 68x, SOUN 42x/29x, STAT 17x, INGR 14x, SPEL 12x, QUST 12x, etc.). Cosmetic (CK auto-renames), but signals the import isn't namespacing generated EditorIDs (e.g. LCTN/BOOK) distinctly enough from vanilla Skyrim names.
-
-	[CELLS] 13 total, 1 pattern (unchanged):
-	"Ref is not in its persistence location 'X' (X)." — same underlying issue as MASTERFILE bucket #9 (REFR persistence/cell-location mismatch).
-
-	[FORMS] 1 total (unchanged):
-	Truncated SNAM_ID chunk (>512 byte max) on the TES4 form — the auto-generated slot-44 body-split patch description in the CK's own patch-note field is too long and gets truncated. Harmless (log text only), but explains why bucket #2 above sees slot 44 on DefaultRace.
-
-Suggested priority (by count x likely player impact) — updated:
-	A. ANIMATION (3231) — weaponSwing/weaponLeftSwing event annotations missing on all attack anims. Matches TODO Minor #2 (unknown attack animation). Now the single largest remaining bucket.
-	B. QUESTS #1 (806) — orphaned TES4DialogueGeneric topics. Matches existing "missing greetings"/dialog TODOs.
-	C. MASTERFILE #6+#7 (149) — residual Package Target/Location Reference gaps (down from 1684+19 — chase the remaining cases now that the bulk fix landed).
-	D. MAGIC #1+#2 (519) — AIMED spells missing projectiles / spells with zero effects — direct gameplay-breaking (dead spells).
-	E. MASTERFILE #1 (512) — LCTN worldspace resolution, ties into existing exterior-cell-naming work.
-	F. MASTERFILE #5 (270) — missing voice types for custom NPC races (distinct from the general race-voice mapping already in progress).
-	G. Remaining MASTERFILE buckets (#2-4, #8-9), EDITOR, CELLS, FORMS — lower player impact / mostly cosmetic CK log noise, fix opportunistically.
-
-FIXED 2026-07-16 (CK-warning sweep — see docs/record_mapping_reference.md "CK-warning sweep learnings" + tools/verify_ck_fixes.py):
-	- CK-hang tail warnings ("Ref is not in its persistence location" / "Reference attached to wrong cell"): door-linked
-	  locations claimed EXTERIOR destination cells, poisoning the worldspace persistent dummy cell (locations.py interior guard).
-	- MASTERFILE #1 (512): LCTN top group now written AFTER CELL/WRLD/QUST like vanilla (writer.py group order).
-	- MASTERFILE #3 (245): negative TES4 restock counts -> abs() (CONT + actor CNTO).
-	- MASTERFILE #4 (139): footstep set constants were nonexistent FormIDs (0x24238/0x24237 -> 0x21486/0x21468).
-	- MASTERFILE #5 (270): generated creature RACE VTCK gender slots now filled.
-	- MASTERFILE #6-8 (163): PlayerRef 0x14 no longer load-order-shifted (dangling 01000014 targets/aliases); null
-	  package targets -> PTDA type 6 Self; 8-byte LVLO entries now exported (leveled 00000000 entries gone).
-	- Mapmarker-without-data singleton: 6 data-less MapMarker-base refs grounded to XMarker.
-	- QUESTS #1 (806+): ~856 zero-INFO placeholder topics no longer emitted (dangling TCLT choices dropped too).
-	- MAGIC (519): SGST->SCRL now carries effects+ETYP; SPEL cast type was Concentration(2) -> FireAndForget(1);
-	  aimed items with no projectile effect get a synthesized aimed MGEF clone (magic_effects.py + vanilla_mgef_data.py).
-	- ANIMATION (3231): attack clips get a weaponSwing annotation (Oblivion 'hit' key time, else 40%) — requires
-	  re-running the creature asset pipeline to regenerate animation .hkx files. weaponLeftSwing intentionally not
-	  emitted (Oblivion has no left-hand attacks). Slot-44 warnings intentionally unfixed (slot 44 is by design).
-	- EDITOR: generated LCTN EditorIDs deduplicated (~145 of 392); remaining collisions are TES4-vs-Skyrim.esm names
-	  the CK auto-renames harmlessly — renaming them would break voice-path/EditorID-derived contracts.
