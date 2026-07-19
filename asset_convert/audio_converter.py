@@ -20,9 +20,14 @@ LipGenerator.exe is auto-detected from the SSE install
 
 All conversion is multithreaded: one worker per file in ThreadPoolExecutor.
 Each job gets its own temp directory because LipGenerator writes a
-tmp16khz.wav scratch file into its working directory.
+tmp16khz.wav scratch file into its working directory. Lip generation
+additionally runs against a pool of mutex-renamed LipGenerator copies
+(build_lipgen_pool) — the stock exe serializes ALL instances machine-wide
+on a named Fonix mutex, capping throughput at ~8 lips/s regardless of
+process count.
 """
 import os
+import queue
 import re
 import shutil
 import struct
@@ -37,6 +42,12 @@ from subprocess_flags import POPEN_FLAGS  # noqa: E402
 
 # Use most CPUs – wmav2 is fast so many parallel ffmpeg processes help.
 _WORKER_COUNT = max(1, (os.cpu_count() or 4) - 1)
+
+# Voice batches with lip sync use more threads than CPUs: each job spends
+# most of its wall time waiting on the LipGenerator subprocess (~0.3 s of
+# mostly-idle wait), so the CPU-bound ffmpeg/xWMAEncode stages of other jobs
+# fill the gaps.
+_LIP_WORKER_COUNT = max(_WORKER_COUNT, min(64, _WORKER_COUNT * 2))
 
 # ---------------------------------------------------------------------------
 # Tool detection + single-file conversion
@@ -125,6 +136,58 @@ def find_lipgenerator(search_dir: 'str | None' = None) -> 'str | None':
         if cand.is_file():
             return str(cand)
     return None
+
+
+# The Fonix engine inside LipGenerator.exe serializes ALL instances on the
+# machine through a named mutex, capping aggregate throughput at ~8 lips/s
+# no matter how many processes run (each sits ~97% idle waiting its turn —
+# the visible symptom is dozens of LipGenerator processes at ~0.1% CPU).
+# The mutex guards nothing shared: the exe creates no file mapping, so each
+# process's Fonix state is private. Renaming the mutex in per-worker copies
+# of the exe lets them run truly in parallel (measured ~8.5 → ~105 lips/s
+# with 32 workers, and per-call latency drops from 6-9 s to ~0.3 s because
+# the tool's 1 s poll loop was itself waiting on the contended mutex).
+_FONIX_MUTEX_NAME = b'FonixMemoryMutex'
+
+
+def build_lipgen_pool(lipgenerator: str, pool_dir, count: int) -> 'list[str]':
+    """Create *count* copies of LipGenerator.exe with unique Fonix mutex names.
+
+    Each copy lands in its own subdirectory of *pool_dir* with FonixData.cdf
+    hard-linked (or copied) beside it, since the exe loads the .cdf from its
+    own directory. Returns the list of patched exe paths.
+
+    Falls back to ``[lipgenerator]`` (the stock, machine-serialized exe) if
+    the mutex name is not found exactly once in the binary — an unknown exe
+    version is left untouched rather than patched blind.
+    """
+    src_exe = Path(lipgenerator)
+    exe_bytes = src_exe.read_bytes()
+    idx = exe_bytes.find(_FONIX_MUTEX_NAME)
+    if idx < 0 or exe_bytes.find(_FONIX_MUTEX_NAME, idx + 1) >= 0:
+        return [lipgenerator]
+    src_cdf = src_exe.parent / 'FonixData.cdf'
+    if not src_cdf.is_file():
+        return [lipgenerator]
+
+    pool_dir = Path(pool_dir)
+    exes = []
+    for i in range(count):
+        d = pool_dir / f'lg{i:03d}'
+        d.mkdir(parents=True, exist_ok=True)
+        new_name = b'FonixMemMtx_%04d' % i
+        assert len(new_name) == len(_FONIX_MUTEX_NAME)
+        exe = d / 'LipGenerator.exe'
+        exe.write_bytes(exe_bytes[:idx] + new_name
+                        + exe_bytes[idx + len(_FONIX_MUTEX_NAME):])
+        cdf = d / 'FonixData.cdf'
+        if not cdf.exists():
+            try:
+                os.link(src_cdf, cdf)
+            except OSError:
+                shutil.copyfile(src_cdf, cdf)
+        exes.append(str(exe))
+    return exes
 
 
 def generate_lip(lipgenerator: str, wav_path, text: str,
@@ -678,15 +741,42 @@ def organize_voice_files(
               f'{stats["skipped"]} already present')
         return {**stats, 'unmapped_races': unmapped_races}
 
-    print(f'  Processing {len(conversion_jobs)} voice files ({_WORKER_COUNT} workers)...')
+    # Stock LipGenerator instances serialize machine-wide on a named Fonix
+    # mutex (~8 lips/s total, processes near 0% CPU). Give each worker its
+    # own mutex-renamed copy so lip generation scales with the worker count.
+    n_workers = _WORKER_COUNT
+    lip_pool = None
+    lip_pool_dir = None
+    if lipgenerator and any(job[2] for job in conversion_jobs):
+        n_workers = _LIP_WORKER_COUNT
+        lip_pool_dir = Path(tempfile.mkdtemp(prefix='lipgen_pool_'))
+        lip_exes = build_lipgen_pool(lipgenerator, lip_pool_dir, n_workers)
+        lip_pool = queue.Queue()
+        for exe in lip_exes:
+            lip_pool.put(exe)
+        if len(lip_exes) > 1:
+            print(f'  LipGenerator pool: {len(lip_exes)} mutex-patched copies '
+                  f'(bypasses Fonix machine-wide serialization)')
+        else:
+            print('  WARNING: unrecognised LipGenerator.exe layout -- running '
+                  'unpatched; lip generation serializes at ~8 lips/s')
+
+    print(f'  Processing {len(conversion_jobs)} voice files ({n_workers} workers)...')
 
     def _process_one(job):
         src_path, dst_path, text = job
         try:
             if ffmpeg and dst_path.suffix in ('.xwm', '.fuz'):
-                return 'ok' if convert_file_to_xwm(
-                    src_path, dst_path, ffmpeg, xwmaencode=xwmaencode,
-                    lipgenerator=lipgenerator, lip_text=text) else 'error'
+                lip_exe = lipgenerator
+                if text and lip_pool is not None:
+                    lip_exe = lip_pool.get()
+                try:
+                    return 'ok' if convert_file_to_xwm(
+                        src_path, dst_path, ffmpeg, xwmaencode=xwmaencode,
+                        lipgenerator=lip_exe, lip_text=text) else 'error'
+                finally:
+                    if text and lip_pool is not None:
+                        lip_pool.put(lip_exe)
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             if copy:
                 shutil.copy2(src_path, dst_path)
@@ -696,21 +786,25 @@ def organize_voice_files(
         except Exception as e:
             return f'exception:{e}'
 
-    with ThreadPoolExecutor(max_workers=_WORKER_COUNT) as pool:
-        futures = {pool.submit(_process_one, job): job for job in conversion_jobs}
-        for fut in as_completed(futures):
-            result = fut.result()
-            if result == 'ok':
-                stats['organized'] += 1
-            elif result == 'error':
-                stats['errors'] += 1
-                if stats['errors'] <= 5:
-                    src = futures[fut][0]
-                    print(f'    ERROR: ffmpeg failed on {src.name}')
-            elif result.startswith('exception:'):
-                stats['errors'] += 1
-                if stats['errors'] <= 5:
-                    print(f'    ERROR: {result[10:]}')
+    try:
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            futures = {pool.submit(_process_one, job): job for job in conversion_jobs}
+            for fut in as_completed(futures):
+                result = fut.result()
+                if result == 'ok':
+                    stats['organized'] += 1
+                elif result == 'error':
+                    stats['errors'] += 1
+                    if stats['errors'] <= 5:
+                        src = futures[fut][0]
+                        print(f'    ERROR: ffmpeg failed on {src.name}')
+                elif result.startswith('exception:'):
+                    stats['errors'] += 1
+                    if stats['errors'] <= 5:
+                        print(f'    ERROR: {result[10:]}')
+    finally:
+        if lip_pool_dir is not None:
+            shutil.rmtree(lip_pool_dir, ignore_errors=True)
 
     if unmapped_races:
         print('  Warning: unmapped race/gender combos (synthesised folder names):')

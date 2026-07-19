@@ -20,6 +20,10 @@ Major Issues for V1:
 
 	7 - Need new skyrim body mesh to actually work to allow leg skin to appear
 
+	8 - Arielle Jurard is missing all info topics when talking to her as part of the anvil mage's guild questline
+
+	9 - Pinarus Inventius Doesn't move during fgc01rats when he is supposed to go hunt the mountain lion
+
 Later Issues:
 
 	1 - Refine dialog conversion

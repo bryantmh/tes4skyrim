@@ -15,8 +15,10 @@ from pathlib import Path
 import pytest
 
 from asset_convert.audio_converter import (
+    _FONIX_MUTEX_NAME,
     _TES4_VOICE_TYPE_MAP,
     _VOICE_FILENAME_RE,
+    build_lipgen_pool,
     convert_file_to_xwm,
     convert_sounds,
     find_ffmpeg,
@@ -305,6 +307,65 @@ def test_organize_voice_files_generates_fuz(tmp_path):
     assert fuz.read_bytes()[:4] == b'FUZE'
     assert (out_dir / 'hello_0000c3d4_1.xwm').is_file(), \
         'untranscribed line should stay .xwm'
+
+
+# ---------------------------------------------------------------------------
+# build_lipgen_pool (Fonix mutex-rename parallelism)
+# ---------------------------------------------------------------------------
+
+def _make_fake_lipgen(dir_path: Path, mutex_count: int = 1) -> Path:
+    """Write a fake LipGenerator.exe + FonixData.cdf into *dir_path*."""
+    dir_path.mkdir(parents=True, exist_ok=True)
+    blob = b'MZ fake exe ' + (_FONIX_MUTEX_NAME + b'\x00junk') * mutex_count \
+        + b' tail bytes'
+    exe = dir_path / 'LipGenerator.exe'
+    exe.write_bytes(blob)
+    (dir_path / 'FonixData.cdf').write_bytes(b'CDFDATA')
+    return exe
+
+
+def test_build_lipgen_pool_patches_unique_mutex_names(tmp_path):
+    """Each copy gets a distinct 16-byte mutex name; the .cdf sits beside it."""
+    exe = _make_fake_lipgen(tmp_path / 'src')
+    pool = build_lipgen_pool(str(exe), tmp_path / 'pool', 4)
+    assert len(pool) == 4
+    names = set()
+    for p in pool:
+        p = Path(p)
+        data = p.read_bytes()
+        assert _FONIX_MUTEX_NAME not in data
+        assert len(data) == exe.stat().st_size, 'patch must not change size'
+        m = data[data.find(b'FonixMemMtx_'):][:16]
+        assert len(m) == 16
+        names.add(m)
+        assert (p.parent / 'FonixData.cdf').is_file()
+    assert len(names) == 4, 'mutex names must be unique per copy'
+
+
+def test_build_lipgen_pool_falls_back_when_mutex_missing(tmp_path):
+    """An exe without the known mutex string is returned unpatched."""
+    d = tmp_path / 'src'
+    d.mkdir()
+    exe = d / 'LipGenerator.exe'
+    exe.write_bytes(b'MZ some other tool entirely')
+    (d / 'FonixData.cdf').write_bytes(b'CDFDATA')
+    assert build_lipgen_pool(str(exe), tmp_path / 'pool', 4) == [str(exe)]
+
+
+def test_build_lipgen_pool_falls_back_on_multiple_occurrences(tmp_path):
+    """Two occurrences of the mutex string = unknown layout, no blind patch."""
+    exe = _make_fake_lipgen(tmp_path / 'src', mutex_count=2)
+    assert build_lipgen_pool(str(exe), tmp_path / 'pool', 4) == [str(exe)]
+
+
+@needs_lipgenerator
+def test_build_lipgen_pool_real_exe(tmp_path):
+    """The real SSE LipGenerator.exe contains the mutex string exactly once,
+    so the pool builder must produce patched copies (not fall back)."""
+    pool = build_lipgen_pool(LIPGENERATOR, tmp_path / 'pool', 2)
+    assert len(pool) == 2
+    assert all(Path(p).is_file() for p in pool)
+    assert all(p != LIPGENERATOR for p in pool)
 
 
 # ---------------------------------------------------------------------------
