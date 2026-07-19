@@ -1023,9 +1023,13 @@ class TestFurnConversion:
         assert fnprs == [(2, 0x04 | 0x08)]
 
     def test_missing_nif_fallback(self):
-        """Unresolvable model: single conservative seat, all entry points."""
+        """Unresolvable model: single conservative seat, all entry points.
+
+        Must be a path that exists in NO extracted BSA (SEfurniture used to
+        qualify until the Shivering Isles archives joined the extraction)."""
         from tes5_import.record_types.items import convert_FURN
-        rec = self._furn_rec('Clutter\\SEfurniture\\SEChair01.NIF', 0x40000004)
+        rec = self._furn_rec('Clutter\\NoSuchDir\\NoSuchChair01.NIF',
+                             0x40000004)
         mnam, fnprs = self._unpack(convert_FURN(rec))
         assert mnam == 0x40000001, hex(mnam)
         assert fnprs == [(1, 0x0F)]

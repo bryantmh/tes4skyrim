@@ -31,6 +31,21 @@ Unit/convention notes (all verified against the vanilla deer dump):
     local frame; translation = pivot.
   - Constraint entities order = (child body, parent body) — the nif stores
     the constraint on the child body with entities[0] = itself.
+  - THE BODY FRAME IS NOT THE BONE FRAME (2026-07-16, the mangled-ragdoll
+    root cause): a blend-collision bhkRigidBody's rotation/translation hold
+    the body's BIND-POSE WORLD transform (translation×7 == the bone's world
+    position on every Oblivion skeleton; verified dog 26/26 — vanilla Skyrim
+    skeleton.nif blend bodies use the same convention in metre units).
+    Capsule vertices, COM, and constraint pivots/axes are authored in that
+    body-local frame, so converting them to our bone-local ragdoll frames
+    needs the full bone-from-body transform (R_body_world @ R_bone_world^T
+    row-convention + the world offset), NOT translation-as-offset.  The old
+    "fold body.translation in as an offset" displaced every capsule by the
+    bone's world position and dropped the rotation entirely.
+  - Vanilla creature ragdoll constraints have maxFrictionTorque 0.0 across
+    the board (dog census) — Oblivion descriptor frictions (≈10) freeze
+    joints into distorted poses in Skyrim's solver.  Synthetic rock joints
+    keep 10.0 (vanilla atronachstorm census).
 """
 
 import math
@@ -142,28 +157,29 @@ class RagdollPart:
         self.constraint = None      # (kind, descriptor dict) joining to parent
 
 
-def _capsule_from_shape(shape, offset):
-    """Any Oblivion bhk shape → (radius, vA, vB) capsule in bone-local game
-    units (offset = folded body translation)."""
+def _capsule_from_shape(shape):
+    """Any Oblivion bhk shape → (radius, vA, vB) capsule in BODY-local game
+    units (the caller maps body space → bone space via the part's
+    bone-from-body transform)."""
     name = shape.__class__.__name__
     if name == 'bhkCapsuleShape':
         r = float(shape.radius) * _OB_TO_GAME
-        return (r, _v4(shape.first_point, _OB_TO_GAME) + offset,
-                _v4(shape.second_point, _OB_TO_GAME) + offset)
+        return (r, _v4(shape.first_point, _OB_TO_GAME),
+                _v4(shape.second_point, _OB_TO_GAME))
     if name == 'bhkSphereShape':
         r = float(shape.radius) * _OB_TO_GAME
         eps = np.array([0.0, 0.0, max(0.1, r * 0.05)])
-        return (r, offset - eps, offset + eps)
+        return (r, -eps, eps)
     if name == 'bhkBoxShape':
         d = _v4(shape.dimensions, _OB_TO_GAME)     # half extents
         axis = int(np.argmax(d))
         seg = np.zeros(3)
         seg[axis] = d[axis]
         r = float(np.median(np.delete(d, axis)))
-        return (max(r, 0.5), offset - seg, offset + seg)
+        return (max(r, 0.5), -seg, seg)
     if name in ('bhkTransformShape', 'bhkConvexTransformShape'):
         m = shape.transform
-        sub = _capsule_from_shape(shape.shape, np.zeros(3))
+        sub = _capsule_from_shape(shape.shape)
         if sub is None:
             return None
         R = np.array([[m.m_11, m.m_12, m.m_13],
@@ -174,10 +190,10 @@ def _capsule_from_shape(shape, offset):
         # PyFFI m_ij is the transpose of the engine's column matrix →
         # row-convention: v' = v @ R.T ... use both orders? m_i4 column is
         # translation; rotate row-style like collision.py does.
-        return (r, va @ R.T + t + offset, vb @ R.T + t + offset)
+        return (r, va @ R.T + t, vb @ R.T + t)
     if name == 'bhkListShape':
         for sub in shape.sub_shapes:
-            got = _capsule_from_shape(sub, offset)
+            got = _capsule_from_shape(sub)
             if got is not None:
                 return got
     return None
@@ -212,32 +228,6 @@ _SYNTH_CONE = 0.872665          # 50 deg
 _SYNTH_PLANE = 1.570796         # +/- 90 deg
 _SYNTH_TWIST = 0.087266         # +/- 5 deg
 _SYNTH_FRICTION = 10.0
-
-
-class _SynthVec:
-    __slots__ = ('x', 'y', 'z')
-
-    def __init__(self, v):
-        self.x, self.y, self.z = float(v[0]), float(v[1]), float(v[2])
-
-
-class _SynthRagdoll:
-    """Duck-typed RagdollDescriptor for _add_ragdoll_constraint_data, in the
-    same Oblivion-unit conventions as a PyFFI descriptor."""
-
-    def __init__(self, pivot_a, pivot_b, twist_a, plane_a, twist_b, plane_b):
-        self.pivot_a = _SynthVec(pivot_a)
-        self.pivot_b = _SynthVec(pivot_b)
-        self.twist_a = _SynthVec(twist_a)
-        self.plane_a = _SynthVec(plane_a)
-        self.twist_b = _SynthVec(twist_b)
-        self.plane_b = _SynthVec(plane_b)
-        self.cone_max_angle = _SYNTH_CONE
-        self.plane_min_angle = -_SYNTH_PLANE
-        self.plane_max_angle = _SYNTH_PLANE
-        self.twist_min_angle = -_SYNTH_TWIST
-        self.twist_max_angle = _SYNTH_TWIST
-        self.max_friction = _SYNTH_FRICTION
 
 
 def _decode_name(node):
@@ -416,13 +406,40 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
     if any(anim_idx(n) is None for n in plan['body_nodes']):
         return None     # body outside the anim skeleton — no usable ragdoll
 
-    bone_worlds = _bone_worlds(bones)
     body_of = {id(n): n.collision_object.body for n in plan['body_nodes']}
 
+    # bone-from-body transform per body node: the body's rotation/translation
+    # are its BIND WORLD transform (see module docstring) while our ragdoll
+    # bone frames are the anim bone frames — row convention
+    # v_bone = v_body @ R_delta + t_delta.
+    xf_of = {}
+    for n in plan['body_nodes']:
+        body = body_of[id(n)]
+        q = body.rotation
+        R_bw = _quat_to_mat_row((q.x, q.y, q.z, q.w))
+        t_bw = _v4(body.translation, _OB_TO_GAME)
+        R_bone, t_bone = plan['worlds'][id(n)]
+        R_delta = R_bw @ R_bone.T
+        t_delta = (t_bw - t_bone) @ R_bone.T
+        xf_of[id(n)] = (R_delta, t_delta)
+
+    def _to_bone(nid, v, is_point):
+        R_delta, t_delta = xf_of[nid]
+        out = np.asarray(v, dtype=float) @ R_delta
+        return out + t_delta if is_point else out
+
+    def _unit(v):
+        v = np.asarray(v, dtype=float)
+        return v / (np.linalg.norm(v) or 1.0)
+
     # per-child constraint info: real descriptors for planned edges,
-    # synthetic vanilla-template ragdoll joints for the augmentation
+    # synthetic vanilla-template ragdoll joints for the augmentation.
+    # Everything is normalized here into bone-space game-unit dicts so the
+    # XML emitters do no frame math.  Converted joints get friction 0.0
+    # (vanilla creature census); synthetic rock joints keep the vanilla
+    # atronach value.
     parent_of = {}          # id(child node) -> parent NiNode
-    con_of = {}             # id(child node) -> (kind, d, off_a, off_b)
+    con_of = {}             # id(child node) -> (kind, info dict)
     for n in plan['body_nodes']:
         pnode = plan['edges'].get(id(n))
         if pnode is None:
@@ -433,34 +450,75 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
             if kind is None:
                 continue
             ents = list(con.entities)
-            if len(ents) == 2 and ents[0] is body and ents[1] is pbody:
-                parent_of[id(n)] = pnode
-                con_of[id(n)] = (kind, d, _v4(body.translation, _OB_TO_GAME),
-                                 _v4(pbody.translation, _OB_TO_GAME))
-                break
+            if not (len(ents) == 2 and ents[0] is body and ents[1] is pbody):
+                continue
+            cid, pid = id(n), id(pnode)
+            if kind == 'ragdoll':
+                info = {
+                    'rows_a': _basis_rows(_to_bone(cid, _v4(d.twist_a), 0),
+                                          _to_bone(cid, _v4(d.plane_a), 0)),
+                    'rows_b': _basis_rows(_to_bone(pid, _v4(d.twist_b), 0),
+                                          _to_bone(pid, _v4(d.plane_b), 0)),
+                    'piv_a': _to_bone(cid, _v4(d.pivot_a, _OB_TO_GAME), 1),
+                    'piv_b': _to_bone(pid, _v4(d.pivot_b, _OB_TO_GAME), 1),
+                    'cone': float(d.cone_max_angle),
+                    'plane_min': float(d.plane_min_angle),
+                    'plane_max': float(d.plane_max_angle),
+                    'twist_min': float(d.twist_min_angle),
+                    'twist_max': float(d.twist_max_angle),
+                    'friction': 0.0,
+                }
+            else:
+                axle_a = _to_bone(cid, _v4(d.axle_a), 0)
+                perp_a = getattr(d, 'perp_2_axle_in_a_1', None)
+                rows_a = (_basis_rows(axle_a, _to_bone(cid, _v4(perp_a), 0))
+                          if perp_a is not None
+                          else _basis_rows(axle_a, np.array([0.0, 0.0, 1.0])))
+                axle_b = _to_bone(pid, _v4(d.axle_b), 0)
+                p2b = getattr(d, 'perp_2_axle_in_b_2', None)
+                if p2b is not None:
+                    # stored basis B = (axle, p1, p2); p1 = p2 × axle
+                    p1b = np.cross(_unit(_v4(p2b)), _unit(_v4(d.axle_b)))
+                    rows_b = _basis_rows(axle_b, _to_bone(pid, p1b, 0))
+                else:
+                    rows_b = _basis_rows(axle_b, np.array([0.0, 0.0, 1.0]))
+                if kind == 'hinge':
+                    min_a, max_a = float(d.min_angle), float(d.max_angle)
+                else:
+                    min_a, max_a = -math.pi, math.pi
+                info = {
+                    'rows_a': rows_a, 'rows_b': rows_b,
+                    'piv_a': _to_bone(cid, _v4(d.pivot_a, _OB_TO_GAME), 1),
+                    'piv_b': _to_bone(pid, _v4(d.pivot_b, _OB_TO_GAME), 1),
+                    'min': min_a, 'max': max_a,
+                    'friction': 0.0,
+                }
+            parent_of[id(n)] = pnode
+            con_of[id(n)] = (kind, info)
+            break
 
     for child, pnode in plan['synthetic']:
-        body, pbody = body_of[id(child)], body_of[id(pnode)]
-        off_a = _v4(body.translation, _OB_TO_GAME)
-        off_b = _v4(pbody.translation, _OB_TO_GAME)
-        R_cw, t_cw = bone_worlds[anim_idx(child)]
-        R_pw, t_pw = bone_worlds[anim_idx(pnode)]
-        # pivot at the child body COM; the emitter computes
-        # piv = d.pivot*7 + off, in each entity's bone-local frame
-        com_local = _v4(body.center, _OB_TO_GAME) + off_a   # child bone frame
-        com_w = com_local @ R_cw + t_cw
-        piv_parent = (com_w - t_pw) @ R_pw.T                # parent bone frame
+        body = body_of[id(child)]
+        cid, pid = id(child), id(pnode)
+        R_cw, t_cw = plan['worlds'][cid]
+        R_pw, t_pw = plan['worlds'][pid]
+        # pivot at the child body COM, expressed in each bone's frame
+        com_child = _to_bone(cid, _v4(body.center, _OB_TO_GAME), 1)
+        com_w = com_child @ R_cw + t_cw
+        piv_parent = (com_w - t_pw) @ R_pw.T
         R_rel = R_cw @ R_pw.T           # child-frame vec -> parent frame
-        tw_b = R_rel[0] / (np.linalg.norm(R_rel[0]) or 1.0)
-        pl_b = R_rel[1] / (np.linalg.norm(R_rel[1]) or 1.0)
         parent_of[id(child)] = pnode
-        con_of[id(child)] = (
-            'ragdoll',
-            _SynthRagdoll(pivot_a=_v4(body.center),
-                          pivot_b=(piv_parent - off_b) / _OB_TO_GAME,
-                          twist_a=(1.0, 0.0, 0.0), plane_a=(0.0, 1.0, 0.0),
-                          twist_b=tw_b, plane_b=pl_b),
-            off_a, off_b)
+        con_of[id(child)] = ('ragdoll', {
+            'rows_a': _basis_rows(np.array([1.0, 0.0, 0.0]),
+                                  np.array([0.0, 1.0, 0.0])),
+            'rows_b': _basis_rows(_unit(R_rel[0]), _unit(R_rel[1])),
+            'piv_a': com_child,
+            'piv_b': piv_parent,
+            'cone': _SYNTH_CONE,
+            'plane_min': -_SYNTH_PLANE, 'plane_max': _SYNTH_PLANE,
+            'twist_min': -_SYNTH_TWIST, 'twist_max': _SYNTH_TWIST,
+            'friction': _SYNTH_FRICTION,
+        })
 
     # part order: DFS over the final tree (parent-before-child by
     # construction, required by hkaSkeleton parentIndices)
@@ -494,13 +552,15 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
         p.parent = part_of_node[id(pnode)] if pnode is not None else -1
         p.constraint = con_of.get(nid)
 
-        offset = _v4(body.translation, _OB_TO_GAME)
         p.mass = float(body.mass) if body.mass > 0 else 1.0
         inertia = max(body.inertia.m_11, body.inertia.m_22,
                       body.inertia.m_33) * (_OB_TO_GAME ** 2)
-        p.com = _v4(body.center, _OB_TO_GAME) + offset
-        p.shape = _capsule_from_shape(body.shape, offset)
-        if p.shape is None:
+        p.com = _to_bone(nid, _v4(body.center, _OB_TO_GAME), 1)
+        shape = _capsule_from_shape(body.shape)
+        if shape is not None:
+            r, va, vb = shape
+            p.shape = (r, _to_bone(nid, va, 1), _to_bone(nid, vb, 1))
+        else:
             r = max(1.0, float(np.linalg.norm(p.com)))
             p.shape = (r, p.com - [0, 0, 0.5], p.com + [0, 0, 0.5])
         if inertia <= 0:
@@ -657,18 +717,16 @@ def _add_rigid_body(pf, part, world_R, world_t):
     return body
 
 
-def _add_ragdoll_constraint_data(pf, d, offset_a, offset_b, motor_ref):
-    """hkpRagdollConstraintData from an Oblivion RagdollDescriptor.
+def _add_ragdoll_constraint_data(pf, info, motor_ref):
+    """hkpRagdollConstraintData from a bone-space info dict (extract_ragdoll).
 
     motor_ref=None emits motors as null (the hkpPhysicsSystem copy);
     vanilla motorizes ONLY the hkaRagdollInstance constraint set."""
     motors = (f'{motor_ref} {motor_ref} {motor_ref}' if motor_ref
               else 'null null null')
-    rows_a = _basis_rows(_v4(d.twist_a), _v4(d.plane_a))
-    rows_b = _basis_rows(_v4(d.twist_b), _v4(d.plane_b))
-    piv_a = _v4(d.pivot_a, _OB_TO_GAME) + offset_a
-    piv_b = _v4(d.pivot_b, _OB_TO_GAME) + offset_b
-    cone = float(d.cone_max_angle)
+    rows_a, rows_b = info['rows_a'], info['rows_b']
+    piv_a, piv_b = info['piv_a'], info['piv_b']
+    cone = info['cone']
     tgt = (fmt_vec(*rows_b[0]) + fmt_vec(*rows_b[1]) + fmt_vec(*rows_b[2]))
 
     data = pf.add('hkpRagdollConstraintData')
@@ -705,7 +763,7 @@ def _add_ragdoll_constraint_data(pf, d, offset_a, offset_b, motor_ref):
 \t\t\t<hkparam name="isEnabled">1</hkparam>
 \t\t\t<hkparam name="firstFrictionAxis">0</hkparam>
 \t\t\t<hkparam name="numFrictionAxes">3</hkparam>
-\t\t\t<hkparam name="maxFrictionTorque">{float(d.max_friction):.6f}</hkparam>
+\t\t\t<hkparam name="maxFrictionTorque">{info['friction']:.6f}</hkparam>
 \t\t</hkobject>
 \t</hkparam>
 \t<hkparam name="twistLimit">
@@ -714,8 +772,8 @@ def _add_ragdoll_constraint_data(pf, d, offset_a, offset_b, motor_ref):
 \t\t\t<hkparam name="isEnabled">1</hkparam>
 \t\t\t<hkparam name="twistAxis">0</hkparam>
 \t\t\t<hkparam name="refAxis">1</hkparam>
-\t\t\t<hkparam name="minAngle">{float(d.twist_min_angle):.6f}</hkparam>
-\t\t\t<hkparam name="maxAngle">{float(d.twist_max_angle):.6f}</hkparam>
+\t\t\t<hkparam name="minAngle">{info['twist_min']:.6f}</hkparam>
+\t\t\t<hkparam name="maxAngle">{info['twist_max']:.6f}</hkparam>
 \t\t\t<hkparam name="angularLimitsTauFactor">0.800000</hkparam>
 \t\t</hkobject>
 \t</hkparam>
@@ -740,8 +798,8 @@ def _add_ragdoll_constraint_data(pf, d, offset_a, offset_b, motor_ref):
 \t\t\t<hkparam name="refAxisInB">1</hkparam>
 \t\t\t<hkparam name="angleMeasurementMode">ZERO_WHEN_VECTORS_PERPENDICULAR</hkparam>
 \t\t\t<hkparam name="memOffsetToAngleOffset">0</hkparam>
-\t\t\t<hkparam name="minAngle">{float(d.plane_min_angle):.6f}</hkparam>
-\t\t\t<hkparam name="maxAngle">{float(d.plane_max_angle):.6f}</hkparam>
+\t\t\t<hkparam name="minAngle">{info['plane_min']:.6f}</hkparam>
+\t\t\t<hkparam name="maxAngle">{info['plane_max']:.6f}</hkparam>
 \t\t\t<hkparam name="angularLimitsTauFactor">0.800000</hkparam>
 \t\t</hkobject>
 \t</hkparam>
@@ -759,10 +817,9 @@ def _add_ragdoll_constraint_data(pf, d, offset_a, offset_b, motor_ref):
     return data
 
 
-def _add_hinge_constraint_data(pf, kind, d, offset_a, offset_b,
-                               motor_ref=None):
-    """hkpLimitedHingeConstraintData from an Oblivion (Limited)Hinge
-    descriptor. Plain hinges get wide limits.
+def _add_hinge_constraint_data(pf, info, motor_ref=None):
+    """hkpLimitedHingeConstraintData from a bone-space info dict
+    (extract_ragdoll). Plain hinges get wide limits.
 
     motor_ref: hkpPositionConstraintMotor for the hkaRagdollInstance copy,
     None (null) for the hkpPhysicsSystem copy.  The engine's ragdoll attach
@@ -771,20 +828,10 @@ def _add_hinge_constraint_data(pf, kind, d, offset_a, offset_b,
     (2026-07-09 Storm Atronach / Skeleton crash: every vanilla creature
     skeleton.hkx motorizes ALL ragdoll-instance constraints and nulls ALL
     physics-system copies)."""
-    axle_a = _v4(d.axle_a)
-    perp_a = _v4(getattr(d, 'perp_2_axle_in_a_1', None)) \
-        if getattr(d, 'perp_2_axle_in_a_1', None) is not None else None
-    rows_a = _basis_rows(axle_a, perp_a) if perp_a is not None \
-        else _basis_rows(axle_a, np.array([0.0, 0.0, 1.0]))
-    rows_b = _basis_rows(_v4(d.axle_b), rows_a[1])
-    piv_a = _v4(d.pivot_a, _OB_TO_GAME) + offset_a
-    piv_b = _v4(d.pivot_b, _OB_TO_GAME) + offset_b
-    if kind == 'hinge':
-        min_a, max_a = float(d.min_angle), float(d.max_angle)
-        friction = float(d.max_friction)
-    else:
-        min_a, max_a = -math.pi, math.pi
-        friction = 0.0
+    rows_a, rows_b = info['rows_a'], info['rows_b']
+    piv_a, piv_b = info['piv_a'], info['piv_b']
+    min_a, max_a = info['min'], info['max']
+    friction = info['friction']
 
     data = pf.add('hkpLimitedHingeConstraintData')
     data.param('userData', 0)
@@ -954,13 +1001,11 @@ def emit_ragdoll(pf, bones, parts, anim_skel_ref):
         for ri, p in enumerate(parts):
             if p.constraint is None or p.parent < 0:
                 continue
-            kind, d, off_a, off_b = p.constraint
+            kind, info = p.constraint
             if kind == 'ragdoll':
-                data = _add_ragdoll_constraint_data(pf, d, off_a, off_b,
-                                                    motor_ref)
+                data = _add_ragdoll_constraint_data(pf, info, motor_ref)
             else:
-                data = _add_hinge_constraint_data(pf, kind, d, off_a, off_b,
-                                                  motor_ref)
+                data = _add_hinge_constraint_data(pf, info, motor_ref)
             insts.append(_add_constraint_instance(
                 pf, data.ref, bodies[ri].ref, bodies[p.parent].ref, p.name))
         return insts

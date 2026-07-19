@@ -18,6 +18,13 @@ stored vertex normals.
 """
 
 
+class UnreconstructibleGeometry(ValueError):
+    """Triangle-less NiTriShapeData whose UV layout doesn't match the
+    grass-blade pattern — the file carries NO topology at all (several
+    dev-era Oblivion creature meshes: minotaur hair01/hornsa/minotaurold).
+    Such a shape cannot render anywhere; callers drop it."""
+
+
 def _role_key(uv):
     return (round(uv.u, 3), round(uv.v, 3))
 
@@ -38,14 +45,16 @@ def fix_missing_triangles(tri_data):
     nt = tri_data.num_triangles
     nv = tri_data.num_vertices
     if not tri_data.num_uv_sets or nv < 3:
-        raise ValueError('missing triangles and no UV roles to reconstruct from')
+        raise UnreconstructibleGeometry(
+            'missing triangles and no UV roles to reconstruct from')
 
     uvs = tri_data.uv_sets[0]
     roles = {}
     for i in range(nv):
         roles.setdefault(_role_key(uvs[i]), []).append(i)
     if len(roles) != 3:
-        raise ValueError(f'missing triangles; expected 3 UV roles, found {len(roles)}')
+        raise UnreconstructibleGeometry(
+            f'missing triangles; expected 3 UV roles, found {len(roles)}')
 
     verts = tri_data.vertices
 

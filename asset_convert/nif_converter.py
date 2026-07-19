@@ -58,7 +58,8 @@ from .skyrim_overrides import (
 )
 from .collision import (bake_node_transform_into_body, convert_all_collisions, hoist_collision,
                         remove_empty_collision_nodes, scale_constraint_pivots)
-from .tri_reconstruct import clear_match_groups, fix_missing_triangles
+from .tri_reconstruct import (clear_match_groups, fix_missing_triangles,
+                              UnreconstructibleGeometry)
 
 # Apply all PyFFI patches (time.clock fix, nif.xml condition fixes) before import
 from . import pyffi_monkey_patch as _patch  # noqa: F401
@@ -1589,7 +1590,18 @@ def _walk_node(parent, node, fix_textures, stats):
 
     # Geometry conversion
     if isinstance(node, (NifFormat.NiTriStrips, NifFormat.NiTriShape)):
-        ts = _process_geometry(node, fix_textures, stats)
+        try:
+            ts = _process_geometry(node, fix_textures, stats)
+        except UnreconstructibleGeometry as e:
+            # dev-era Oblivion shapes with NO topology in the file at all
+            # (minotaur hair01/hornsa/minotaurold, has_triangles=False with a
+            # non-grass UV layout) — nothing can render them; drop the shape
+            # instead of failing the whole file/creature.
+            name = node.name.decode('latin-1', 'replace') \
+                if isinstance(node.name, bytes) else str(node.name)
+            print(f"  [warn] dropping triangle-less shape '{name}': {e}")
+            stats['shapes_dropped'] = stats.get('shapes_dropped', 0) + 1
+            return None
         # Only count as strips_fixed if we actually converted (not kept as NiTriStrips)
         if isinstance(node, NifFormat.NiTriStrips) and not isinstance(ts, NifFormat.NiTriStrips):
             stats['strips_fixed'] += 1
