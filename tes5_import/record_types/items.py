@@ -377,6 +377,11 @@ def convert_LIGH(rec: dict) -> bytes:
     edid = get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
+    # VMAD — LIGH supports object scripts in Skyrim, and TES4 attaches quest
+    # scripts to lights (SE06FlameOfAgnon's SetStage lives on one); without
+    # this splice the converted script existed but was attached to nothing.
+    from ..object_scripts import get_object_vmad
+    subs += get_object_vmad(get_formid(rec, 'FormID'))
     subs += pack_obnd(*_resolve_obnd(rec, 'LIGH'))
     model = get_str(rec, 'Model.MODL')
     if model:

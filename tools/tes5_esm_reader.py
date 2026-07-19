@@ -122,8 +122,11 @@ def _parse_subrecords(data: bytes) -> list:
     return subs
 
 
-def _read_record(mm, pos: int, file_size: int):
-    """Read one TES5 record (24-byte header + subrecords). Returns None on error."""
+def _read_record(mm, pos: int, file_size: int, parse_types=None):
+    """Read one TES5 record (24-byte header + subrecords). Returns None on error.
+
+    parse_types: optional set of record signatures whose subrecords should be
+    parsed; other records keep header fields only (fast FormID scans)."""
     if pos + REC_HDR > file_size:
         return None
 
@@ -135,6 +138,9 @@ def _read_record(mm, pos: int, file_size: int):
 
     rec = TES5Record(type=sig, data_size=data_size, flags=flags,
                      form_id=form_id, form_version=form_version)
+
+    if parse_types is not None and sig not in parse_types:
+        return rec
 
     data_start = pos + REC_HDR
     data_end   = data_start + data_size
@@ -154,7 +160,8 @@ def _read_record(mm, pos: int, file_size: int):
 
 
 def _parse_group(mm, start: int, end: int, file_size: int, records: list,
-                 parent_wrld: int, parent_cell: int, parent_dial: int):
+                 parent_wrld: int, parent_cell: int, parent_dial: int,
+                 parse_types=None):
     """Recursively parse records within a GRUP block."""
     pos        = start + GRP_HDR
     group_type = struct.unpack_from('<I', mm, start + 12)[0]
@@ -180,10 +187,10 @@ def _parse_group(mm, start: int, end: int, file_size: int, records: list,
             sub_size = struct.unpack_from('<I', mm, pos + 4)[0]
             sub_end  = pos + sub_size
             _parse_group(mm, pos, sub_end, file_size, records,
-                         parent_wrld, parent_cell, parent_dial)
+                         parent_wrld, parent_cell, parent_dial, parse_types)
             pos = sub_end
         else:
-            rec = _read_record(mm, pos, file_size)
+            rec = _read_record(mm, pos, file_size, parse_types)
             if rec is None:
                 break
             rec.parent_wrld = parent_wrld
@@ -201,9 +208,12 @@ def _parse_group(mm, start: int, end: int, file_size: int, records: list,
             pos += REC_HDR + rec.data_size
 
 
-def read_tes5_file(filepath: str):
+def read_tes5_file(filepath: str, parse_types=None):
     """
     Read a TES5 ESM/ESP.
+
+    parse_types: optional set of record signatures to fully parse; records of
+    other types are returned with header fields (type/form_id/flags) only.
 
     Returns:
         header_rec: TES5Record (the TES4/file header)
@@ -213,17 +223,17 @@ def read_tes5_file(filepath: str):
     with open(filepath, 'rb') as f:
         mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
         try:
-            return _parse_file(mm)
+            return _parse_file(mm, parse_types)
         finally:
             mm.close()
 
 
-def _parse_file(mm):
+def _parse_file(mm, parse_types=None):
     file_size = len(mm)
     pos = 0
 
-    # First record is the TES4/file header
-    header = _read_record(mm, pos, file_size)
+    # First record is the TES4/file header (always fully parsed — masters live here)
+    header = _read_record(mm, pos, file_size, None)
     if header is None:
         raise ValueError('Could not read file header')
     is_localized = bool(header.flags & FLAG_LOCALIZED)
@@ -240,7 +250,8 @@ def _parse_file(mm):
             break
         group_size = struct.unpack_from('<I', mm, pos + 4)[0]
         group_end  = pos + group_size
-        _parse_group(mm, pos, group_end, file_size, all_records, 0, 0, 0)
+        _parse_group(mm, pos, group_end, file_size, all_records, 0, 0, 0,
+                     parse_types)
         pos = group_end
 
     return header, all_records, is_localized

@@ -20,7 +20,8 @@ converters then splice the VMAD in right after EDID (Skyrim order: EDID VMAD OBN
 """
 
 from script_convert.converter import ScriptConverter
-from script_convert.constants import _safe_property_name, papyrus_script_name
+from script_convert.constants import (_safe_property_name, papyrus_script_name,
+                                      resolve_property_formid)
 from script_convert.pipeline import build_vmad_object_script
 from .text_reader import parse_export_file, get_formid_index_offset
 
@@ -216,7 +217,7 @@ def _resolve_props(sctx: str, edid: str, extends: str, xref,
         if low in ('player', 'playerref'):
             obj_props[safe] = _PLAYER_FORMID
             continue
-        fid_hex = xref.edid_to_formid.get(low, '')
+        fid_hex = resolve_property_formid(xref, pname)
         if not fid_hex:
             continue
         try:

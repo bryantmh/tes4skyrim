@@ -165,13 +165,16 @@ def _quest_stage_fragments(rec: dict) -> list:
     for i in range(stage_count):
         stage_idx = get_int(rec, f'Stage[{i}].Index')
         log_count = get_int(rec, f'Stage[{i}].LogCount')
+        # .strip() must match the PSC generator's filter exactly: E3 and
+        # SEObelisks have a whitespace-only '\r\n' stage-100 result script,
+        # which emitted a VMAD fragment entry with no matching .psc function.
         if log_count > 0:
             for j in range(log_count):
                 if (get_str(rec, f'Stage[{i}].Log[{j}].Text') or
-                        get_str(rec, f'Stage[{i}].Log[{j}].ResultScript')):
+                        get_str(rec, f'Stage[{i}].Log[{j}].ResultScript').strip()):
                     frags.append((stage_idx, j))
         elif (get_str(rec, f'Stage[{i}].Text') or
-              get_str(rec, f'Stage[{i}].ResultScript')):
+              get_str(rec, f'Stage[{i}].ResultScript').strip()):
             frags.append((stage_idx, 0))
     return frags
 
@@ -809,13 +812,14 @@ def _build_info_script_properties(result_script: str, xref) -> dict:
         conv.convert_fragment(result_script, 'TopicInfo')
     except Exception:
         return {}
+    from script_convert.constants import resolve_property_formid
     props = {}
     for prop_edid in conv._property_refs:
         low = prop_edid.lower()
         if low in ('player', 'playerref'):
             props[prop_edid] = _PLAYER_FORMID
             continue
-        fid_hex = xref.edid_to_formid.get(low, '')
+        fid_hex = resolve_property_formid(xref, prop_edid)
         if not fid_hex:
             continue
         try:
@@ -1252,9 +1256,9 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     # bark_choice_gate: target_dial_fid -> list[ list[converted CTDA] ] (one
     # inner list per revealer; ANY revealer's gate suffices).
     bark_choice_gate = defaultdict(list)
+    conv_choice_targets = set()   # targets also offered by NON-bark choice links
     for info_rec in infos:
-        if get_formid(info_rec, 'ParentDIAL') not in bark_dial_fids:
-            continue
+        is_bark_info = get_formid(info_rec, 'ParentDIAL') in bark_dial_fids
         targets_here = []
         for i in range(get_int(info_rec, 'ChoiceCount')):
             cfid = get_formid(info_rec, f'Choice[{i}]')
@@ -1265,6 +1269,9 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
             targets_here.append(cfid)
         if not targets_here:
             continue
+        if not is_bark_info:
+            conv_choice_targets.update(targets_here)
+            continue
         gate = _quest_state_ctdas(info_rec, offset, script_vars)
         for cfid in targets_here:
             bark_choice_gate[cfid].append(gate)  # gate may be [] (no timing)
@@ -1273,7 +1280,18 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     # promoted topic would sit permanently in the menu — so leave it a Normal
     # branch instead (and drop the useless empty gate so nothing tries to gate
     # a topic we're no longer promoting).
+    #
+    # A target that is ALSO offered as a choice by a normal CONVERSATION line
+    # must not be promoted-and-gated either: its conversation path is reachable
+    # whenever the parent line is (no timing gate of its own), and stamping the
+    # bark revealer's gate onto the INFO would dead-end that path. SE36: the
+    # "tell me your story" choice is offered ungated from a conversation topic
+    # AND from a GetStage==15 greeting; the inherited ==15 gate made the choice
+    # unspeakable — and stage 15 is set BY that choice, so the quest froze. The
+    # conversation link survives as TCLT, which is exactly Oblivion's shape.
     for cfid, gates in bark_choice_gate.items():
+        if cfid in conv_choice_targets:
+            continue
         if gates and all(len(g) > 0 for g in gates):
             bark_choice_targets.add(cfid)
     for cfid in list(bark_choice_gate):
