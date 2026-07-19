@@ -111,22 +111,31 @@ def audit(verts, tris, nodes, edges):
     micro = int((area < 64.0).sum())
 
     # --- pathgrid coverage (the headline metric) ---
+    #
+    # A sample is covered when navmesh exists at its XY anywhere in the EDGE's
+    # Z RANGE (each end padded by a step).  The old test compared against the
+    # interpolated chord Z, but the generator follows the walked SURFACE, not
+    # the chord — on a long cave edge the chord cuts through open air two
+    # storeys above the floor the ribbon (correctly) sits on, and the old
+    # metric read that as 27% "uncovered" in a perfectly meshed cell.
     tri_pts = [(V[a], V[b], V[c]) for (a, b, c) in tris]
     total = bad = 0
+    zpad = params.MAX_CLIMB * 1.5
     for (i, j) in edges:
         a, b = nodes[i], nodes[j]
         seg = math.hypot(b[0] - a[0], b[1] - a[1])
         steps = max(2, int(seg / 32))
+        zlo = min(a[2], b[2]) - zpad
+        zhi = max(a[2], b[2]) + zpad
         for k in range(steps + 1):
             t = k / steps
             px = a[0] + (b[0] - a[0]) * t
             py = a[1] + (b[1] - a[1]) * t
-            pz = a[2] + (b[2] - a[2]) * t
             total += 1
             ok = False
             for (va, vb, vc) in tri_pts:
                 z = _tri_z(px, py, va, vb, vc)
-                if z is not None and abs(z - pz) <= params.MAX_CLIMB * 1.5:
+                if z is not None and zlo <= z <= zhi:
                     ok = True
                     break
             if not ok:

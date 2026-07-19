@@ -49,6 +49,12 @@ TRI_TARGET_EDGE = 128.0
 # move may not create a triangle worse than this.  (The old bound of 6 let
 # decimation fill rooms with visible near-degenerate fans.)
 MAX_ASPECT = 4.0
+# Edge-ratio bound (longest/shortest edge) during simplification.  The aspect
+# metric alone lets through "one side way shorter than the others" triangles:
+# a 16u voxel edge with two ~100u edges scores aspect ~3 (its area is healthy)
+# yet reads as an obvious needle radiating from a wall corner.  No move may
+# create a triangle whose edges differ by more than this factor.
+MAX_EDGE_RATIO = 4.0
 # Simplification rounds (collapse + flip + smooth per round).  Converges fast;
 # rounds after the third change little.
 SIMPLIFY_PASSES = 4
@@ -105,6 +111,12 @@ PGRD_BAND = 24.0
 # starts latching onto whatever surface happens to lie under a balcony, and the
 # layer count goes UP.  A step height plus a stair riser is the right order.
 PGRD_SNAP_Z = 48.0
+# The UPWARD half of the snap window is MAX_CLIMB (see voxel.surface_near):
+# reaching DOWN is what stairs and gullies need (a chord-paced sample floats
+# above the surface that dips under it); reaching UP more than a single step
+# could only latch onto something standing ON the walked surface (chest and
+# counter tops hoisted the mesh onto the furniture), while less than a step
+# loses a climbing cave passage and stamps the ribbon inside the hill.
 
 # --- Door threshold quads -----------------------------------------------------------
 # Every door REFR (teleport or interior) gets an exact oriented quad stamped

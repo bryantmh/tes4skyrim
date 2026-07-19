@@ -174,13 +174,76 @@ def cell_geometry(ctx, pad=200.0):
     return walk, block, bounds
 
 
+def probe_point(ctx, px, py, radius=64.0):
+    """Dump everything the navmesh build knows about one XY spot:
+    nearby REFRs, pathgrid nodes/edge samples, and the heightfield span
+    column (with walkable/protected state) after each pipeline stage."""
+    from tes5_import.navmesh import build as nbuild, region, params
+    import math
+
+    print('--- probe (%.0f, %.0f) r=%.0f ---' % (px, py, radius))
+    for r in ctx['refrs']:
+        try:
+            rx, ry, rz = (float(r.get('PosX')), float(r.get('PosY')),
+                          float(r.get('PosZ')))
+        except (TypeError, ValueError):
+            continue
+        if abs(rx - px) < radius * 2 and abs(ry - py) < radius * 2:
+            base = int(r.get('NAME', '0'), 16) & 0xFFFFFF
+            print('  REFR %s base=%06X model=%s pos=(%.0f,%.0f,%.0f) scale=%s'
+                  % (r.get('FormID'), base,
+                     ctx['base_model'].get(base, '?'),
+                     rx, ry, rz, r.get('XSCL.Scale', '1')))
+    for i, (nx, ny, nz) in enumerate(ctx['nodes']):
+        if abs(nx - px) < radius * 2 and abs(ny - py) < radius * 2:
+            print('  PGRD node %d (%.0f,%.0f,%.0f)' % (i, nx, ny, nz))
+    for (i, j) in ctx['edges']:
+        a, b = ctx['nodes'][i], ctx['nodes'][j]
+        # closest point of the edge to the probe, in XY
+        vx, vy = b[0] - a[0], b[1] - a[1]
+        den = vx * vx + vy * vy
+        t = 0.0 if den < 1e-9 else max(0.0, min(1.0, (
+            (px - a[0]) * vx + (py - a[1]) * vy) / den))
+        cx, cy = a[0] + t * vx, a[1] + t * vy
+        if math.dist((cx, cy), (px, py)) < radius:
+            print('  PGRD edge %d-%d  z@closest=%.0f (a=%.0f b=%.0f t=%.2f)'
+                  % (i, j, a[2] + t * (b[2] - a[2]), a[2], b[2], t))
+
+    walk, block, bounds = cell_geometry(ctx)
+    if bounds is None:
+        print('  (cell has no collision geometry; span dump skipped)')
+        return
+    hf = voxel.build_heightfield(walk, block, bounds)
+    def dump(tag):
+        cx = int((px - hf.min_x) / hf.cs)
+        cy = int((py - hf.min_y) / hf.cs)
+        col = hf.spans[cy * hf.w + cx]
+        print('  [%s] col(%d,%d):' % (tag, cx, cy))
+        for s in col:
+            print('    z %.0f..%.0f walk=%s prot=%s pgz=%s'
+                  % (s[0], s[1], s[2], s[3],
+                     ('%.0f' % s[4]) if s[4] is not None else '-'))
+    dump('raw')
+    voxel.stamp_pathgrid(hf, ctx['nodes'], ctx['edges'])
+    dump('stamped')
+    voxel.apply_filters(hf)
+    dump('filtered')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--export', default='export/Oblivion.esm')
     ap.add_argument('--cell', required=True)
+    ap.add_argument('--probe', default=None,
+                    help='world "X,Y": dump REFRs/pathgrid/span column there')
+    ap.add_argument('--probe-radius', type=float, default=64.0)
     a = ap.parse_args()
 
     ctx = load_cell(a.export, a.cell)
+    if a.probe:
+        px, py = (float(v) for v in a.probe.split(','))
+        probe_point(ctx, px, py, a.probe_radius)
+        return
     walk, block, bounds = cell_geometry(ctx)
     print('cell %s (%s)  exterior=%s'
           % (ctx['cell_fid'], ctx['cell'].get('EditorID'), ctx['is_exterior']))

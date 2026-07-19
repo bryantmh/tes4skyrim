@@ -235,10 +235,13 @@ def keep_pathgrid_heights(hf, nodes, edges, barriers=None, reach=None):
     climb = params.MAX_CLIMB
     ztol = params.SEED_Z_TOLERANCE
 
-    # Walkable span tops per column (span list index -> top) for adjacency.
+    # Walkable span heights per column for adjacency — the EFFECTIVE height
+    # (pathgrid height for protected spans), so the flood walks the stamped
+    # ribbon at the height the mesher will actually use (voxel.span_z).
+    from .voxel import span_z
     walk = {}
     for ci in range(w * h):
-        ws = [(si, s[1]) for si, s in enumerate(hf.spans[ci]) if s[2]]
+        ws = [(si, span_z(s)) for si, s in enumerate(hf.spans[ci]) if s[2]]
         if ws:
             walk[ci] = ws
 

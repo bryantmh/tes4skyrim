@@ -41,6 +41,24 @@ cell PLUS a single top-level NAVI (Navmesh Info Map). Implemented in
      skipped columns with blocking collision, which silently refused to stamp
      staircases — a stair's own faces are steep, hence "blocking" — and left the
      storeys of a house as disconnected islands).
+     **The sweep FOLLOWS THE WALKED SURFACE, not the edge's chord (2026-07-17).**
+     Each step predicts `z + chord_slope` then locks onto the walkable surface
+     nearest that prediction (window: PGRD_SNAP_Z=48 down, MAX_CLIMB up), so the
+     ribbon walks down through gullies and up staircases like the NPC would; the
+     chord is only the pacing fallback where geometry is absent. Snapping each
+     sample independently against the raw chord had band columns alternating
+     between terrain and chord height — a jagged lattice of near-vertical
+     triangles down every hillside. Three self-contamination guards matter:
+     (1) the follow ignores spans the sweep itself synthesized (`synth_tops`) —
+     locking onto its own tail made climbing ribbons lag their chord and arrive
+     a storey low (100+ broken edges in geometry-less cave cells); (2) a
+     re-stamp keeps whichever pgz is CLOSER to the current sample — re-snapping
+     onto a synth-merged span's walkable top ratcheted the mesh up furniture
+     one MAX_CLIMB per pass; (3) post-sweep, a synthesized span within
+     AGENT_HEIGHT of a SNAPPED protected span in the same column is dropped
+     (two standable layers can't be that close; the chord fabricated air over
+     real treads). Synth-vs-synth conflicts are kept — switchback flights both
+     crossing a floor-less column are each load-bearing.
   3. `region.build_regions` + `seed_regions` + `keep_regions`: flood-fill spans
      into connected regions and KEEP only those a pathgrid node vouches for.
      Tabletops/roofs/ledges hold no node and are dropped. `keep_pathgrid_heights`
@@ -149,6 +167,16 @@ uncovered** (was 2.5% uncovered / 2452 broken pathgrid edges with contours).
   middle of a flat floor is coplanar with all its neighbours, so a purely planar
   collapse test drags it clear across the room and the floor degenerates into a
   fan of long thin slivers. Bound the aspect ratio and the edge length too.
+  **And the EDGE RATIO (2026-07-17)**: aspect (`longest²/4·area`) alone passes a
+  16u voxel edge with two ~100u edges (aspect ≈3, healthy area) — the "one side
+  way shorter than the others" needles radiating from wall corners.
+  `MAX_EDGE_RATIO` (4) bounds `longest/shortest` on every move, non-worsening
+  (a move that improves an existing needle is still allowed, else voxel-scale
+  needles freeze in place). The needles' SEED was outline notches: a boundary
+  vertex whose boundary edge is shorter than ~1 cell is quantization noise, so
+  it may absorb up to `0.9*cs` of outline error instead of MAX_SIMPLIFY_ERR
+  (the true wall is within half a cell of either position). Together: RATIO
+  defects 113-281/cell → 0 across the test set, and 20-40% fewer triangles.
 - **Obstruction is decided in WORLD SPACE, never per-mesh.** An object obstructs
   iff it rises more than MAX_CLIMB above the floor beneath it — so rugs/pillows
   are walked over, tables/barrels are routed around, with NO size gate or rug
@@ -186,14 +214,24 @@ uncovered** (was 2.5% uncovered / 2452 broken pathgrid edges with contours).
 - **Iteration tools**: `python tools/navmesh_preview.py --cell <FormID_or_EditorID>`
   renders the generated navmesh (green) OVER the collision layer — walkable dim,
   BLOCKING/walls RED — plus pathgrid and door markers (cyan threshold lines;
-  white core = teleport door). Exterior cells can be addressed as
-  `--cell grid:X:Y` (colon form survives comma-list splitting; Windows filenames
-  can't hold `:` so outputs sanitize it). `tools/navmesh_probe.py --cell X`
-  reports pathgrid-on-floor coverage and Z error. `tools/navmesh_audit.py
-  --interiors N --exteriors M` sweeps both cell kinds and reports UNCOV%/
-  BROKEN/STEEP/FLOOR/ISL/TINY/SLIV%/MICRO per cell. `tools/navmesh_profile.py
-  --cell X` cProfiles one cell's build (how the shadowed()/plane_err hotspots
-  were found).
+  white core = teleport door). `--focus X,Y --span N` zooms a world-coord
+  window; `--ids` labels triangle indices + vertex heights; `--quality`
+  colours steep triangles red and needles magenta. Exterior cells can be
+  addressed as `--cell grid:X:Y` (colon form survives comma-list splitting;
+  Windows filenames can't hold `:` so outputs sanitize it).
+  `tools/navmesh_tri_check.py --cell A,B,...` checks EVERY triangle of a
+  cell's mesh (slope/zspan/edge-ratio/aspect/area + JUT/SINK = signed distance
+  off the real collision surface at its own XY) and lists offenders — the way
+  the furniture-hoist and needle defects were found and verified fixed.
+  `tools/navmesh_probe.py --cell X` reports pathgrid-on-floor coverage and Z
+  error; `--probe X,Y` dumps nearby REFRs/pathgrid plus the span column
+  raw/stamped/filtered — the ground-truth view of any one spot.
+  `tools/navmesh_audit.py --interiors N --exteriors M` sweeps both cell kinds
+  and reports UNCOV%/BROKEN/STEEP/FLOOR/ISL/TINY/SLIV%/MICRO per cell (UNCOV
+  measures the EDGE's z-range, not the chord — the generator follows the
+  surface, and a long cave edge's chord cuts open air two storeys up).
+  `tools/navmesh_profile.py --cell X` cProfiles one cell's build (how the
+  shadowed()/plane_err hotspots were found).
 - **NVNM binary layout** (validated byte-exact against Skyrim.esm via
   `tools/navmesh_dump.py`): all arrays use U32 count prefixes; CRC of
   "PathingCell" = `0xA5E9A03C`; parent union decided by (Parent Worldspace==0)

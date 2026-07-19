@@ -43,6 +43,7 @@ connected, so it cannot reintroduce any of the above.
 import math
 
 from . import params
+from .voxel import span_z
 
 
 def _corner_key(cx, cy, si):
@@ -60,12 +61,14 @@ def build_mesh(hf, region_of=None, doors=None):
     w, h, cs = hf.w, hf.h, hf.cs
     climb = params.MAX_CLIMB
 
-    # Walkable spans per column, as (span_index, top_z).
+    # Walkable spans per column, as (span_index, effective_z).  A protected
+    # span meshes at the PATHGRID height, not its (possibly furniture-merged)
+    # voxel top — see voxel.span_z.
     walk = {}
     for cy in range(h):
         for cx in range(w):
             col = hf.spans[cy * w + cx]
-            ws = [(si, s[1]) for si, s in enumerate(col) if s[2]]
+            ws = [(si, span_z(s)) for si, s in enumerate(col) if s[2]]
             if ws:
                 walk[(cx, cy)] = ws
     if not walk:
@@ -130,7 +133,11 @@ def build_mesh(hf, region_of=None, doors=None):
                 span_corner[(skey, ci)] = vert_of[(lx, ly, gi)]
 
     # --- quads ---------------------------------------------------------------
+    # `seen` dedups coincident quads: two walkable spans of one column within
+    # MAX_CLIMB of each other (a protected ribbon under a real floor) land in
+    # the same corner groups and would emit identical triangles twice.
     tris = []
+    seen = set()
     for (cx, cy), ws in walk.items():
         for (si, _z) in ws:
             skey = (cx, cy, si)
@@ -140,10 +147,15 @@ def build_mesh(hf, region_of=None, doors=None):
             a, b, d, e = c            # SW, SE, NE, NW
             if len({a, b, d, e}) < 3:
                 continue
-            if a != b and b != d and d != a:
-                tris.append((a, b, d))
-            if a != d and d != e and e != a:
-                tris.append((a, d, e))
+            for t in (((a, b, d)) if (a != b and b != d and d != a) else None,
+                      ((a, d, e)) if (a != d and d != e and e != a) else None):
+                if t is None:
+                    continue
+                k = tuple(sorted(t))
+                if k in seen:
+                    continue
+                seen.add(k)
+                tris.append(t)
 
     verts, tris, pinned = _stamp_door_quads(verts, tris, doors)
     return _decimate(verts, tris, cs, pinned)
@@ -272,11 +284,14 @@ def _stamp_door_quads(verts, tris, doors):
 # A few rounds of collapse+flip+smooth converge quickly.
 
 def _tri_shape(pa, pb, pc):
-    """(aspect, longest_edge, normal) — aspect is 1e9 for degenerate."""
+    """(aspect, longest_edge, normal, edge_ratio) — aspect/ratio are 1e9 for
+    degenerate."""
     e0 = math.dist(pa, pb)
     e1 = math.dist(pb, pc)
     e2 = math.dist(pc, pa)
     longest = max(e0, e1, e2)
+    shortest = min(e0, e1, e2)
+    ratio = longest / shortest if shortest > 1e-9 else 1e9
     ux, uy, uz = pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]
     wx, wy, wz = pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]
     nx = uy * wz - uz * wy
@@ -284,8 +299,8 @@ def _tri_shape(pa, pb, pc):
     nz = ux * wy - uy * wx
     area = 0.5 * math.sqrt(nx * nx + ny * ny + nz * nz)
     if area <= 1e-6:
-        return 1e9, longest, (0.0, 0.0, 0.0)
-    return longest * longest / (4.0 * area), longest, (nx, ny, nz)
+        return 1e9, longest, (0.0, 0.0, 0.0), ratio
+    return longest * longest / (4.0 * area), longest, (nx, ny, nz), ratio
 
 
 def _seg_dist(p, a, b):
@@ -315,7 +330,8 @@ def _decimate(verts, tris, cs, pinned=frozenset()):
     acc = {}
 
     for _ in range(params.SIMPLIFY_PASSES):
-        verts, tris, n_col = _collapse_pass(verts, tris, acc, max_edge, pinned)
+        verts, tris, n_col = _collapse_pass(verts, tris, acc, max_edge, pinned,
+                                            cs)
         n_flip = _flip_pass(verts, tris, max_edge)
         n_smooth = _smooth_pass(verts, tris, max_edge, pinned)
         if n_col + n_flip + n_smooth == 0:
@@ -328,7 +344,7 @@ def _decimate(verts, tris, cs, pinned=frozenset()):
             [(remap[a], remap[b], remap[c]) for (a, b, c) in tris])
 
 
-def _collapse_pass(verts, tris, acc, max_edge, pinned=frozenset()):
+def _collapse_pass(verts, tris, acc, max_edge, pinned=frozenset(), cs_local=16.0):
     """One sweep of quality-bounded edge collapses, shortest edges first.
 
     Interior vertices collapse into whichever neighbour yields the best-shaped
@@ -342,6 +358,7 @@ def _collapse_pass(verts, tris, acc, max_edge, pinned=frozenset()):
     """
     target_err = params.MAX_SIMPLIFY_ERR
     max_aspect = params.MAX_ASPECT
+    max_ratio = params.MAX_EDGE_RATIO
 
     vtris = {}
     for ti, t in enumerate(tris):
@@ -437,10 +454,15 @@ def _collapse_pass(verts, tris, acc, max_edge, pinned=frozenset()):
                 continue                       # this triangle collapses away
             old = [verts[x] for x in idx]
             new = [pk if x == v else verts[x] for x in idx]
-            q, longest, nn = _tri_shape(*new)
+            q, longest, nn, ratio = _tri_shape(*new)
             if q > max_aspect or longest > max_edge:
                 return None
-            _oq, _oe, on = _tri_shape(*old)
+            _oq, _oe, on, oratio = _tri_shape(*old)
+            # A move may not leave a needle behind — unless the triangle was
+            # an even worse needle already (refusing to touch it would freeze
+            # existing voxel-scale needles in place).
+            if ratio > max_ratio and ratio >= oratio:
+                return None
             if nn[0] * on[0] + nn[1] * on[1] + nn[2] * on[2] <= 0.0:
                 return None                    # collapse would fold the mesh
             worst = max(worst, q)
@@ -507,7 +529,17 @@ def _collapse_pass(verts, tris, acc, max_edge, pinned=frozenset()):
             if a == v or b == v or a == b:
                 continue
             dev = _seg_dist(verts[v], verts[a], verts[b]) + acc.get(v, 0.0)
-            if dev > target_err:
+            # A vertex on a VOXEL-SCALE outline notch (its boundary edge is
+            # shorter than ~a cell) is quantization noise, not signal: the
+            # true wall lies within half a cell of either position.  Such a
+            # vertex may absorb up to a cell of outline error — the plain
+            # budget (MAX_SIMPLIFY_ERR < cs) left one-cell notches standing at
+            # wall corners, and every one seeded a fan of needle triangles.
+            lim = target_err
+            if min(math.dist(verts[v], verts[a]),
+                   math.dist(verts[v], verts[b])) < cs_local * 1.75:
+                lim = max(target_err, cs_local * 0.9)
+            if dev > lim:
                 continue
             planes = vertex_planes(v)
             best = None
@@ -616,8 +648,8 @@ def _flip_pass(verts, tris, max_edge):
             continue                            # inconsistent winding: leave it
 
         pu, pv, pp, pq_ = verts[u], verts[v], verts[p], verts[q]
-        q1, _e1, n1 = _tri_shape(pu, pv, pp)
-        q2, _e2, n2 = _tri_shape(pv, pu, pq_)
+        q1, _e1, n1, r1 = _tri_shape(pu, pv, pp)
+        q2, _e2, n2, r2 = _tri_shape(pv, pu, pq_)
         l1 = math.sqrt(n1[0] ** 2 + n1[1] ** 2 + n1[2] ** 2)
         l2 = math.sqrt(n2[0] ** 2 + n2[1] ** 2 + n2[2] ** 2)
         if l1 < 1e-9 or l2 < 1e-9:
@@ -625,11 +657,15 @@ def _flip_pass(verts, tris, max_edge):
         if (n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2]) / (l1 * l2) < cos_flat:
             continue                            # a real crease (stair riser)
 
-        nq1, le1, nn1 = _tri_shape(pu, pq_, pp)      # (u, q, p)
-        nq2, le2, nn2 = _tri_shape(pv, pp, pq_)      # (v, p, q)
+        nq1, le1, nn1, nr1 = _tri_shape(pu, pq_, pp)      # (u, q, p)
+        nq2, le2, nn2, nr2 = _tri_shape(pv, pp, pq_)      # (v, p, q)
         if max(nq1, nq2) >= max(q1, q2) - 1e-6:
             continue                            # not an improvement
         if max(nq1, nq2) > max_aspect_new or max(le1, le2) > max_edge:
+            continue
+        # A flip may not create a needle where there was none.
+        if max(nr1, nr2) > params.MAX_EDGE_RATIO and \
+                max(nr1, nr2) >= max(r1, r2):
             continue
         # Both new triangles must face the same way as the old pair.
         for nn in (nn1, nn2):
@@ -694,14 +730,16 @@ def _smooth_pass(verts, tris, max_edge, pinned=frozenset()):
         # Average normal; bail if the one-ring is not genuinely flat.
         ax = ay = az = 0.0
         norms = []
+        old_ratios = []
         for t in ring:
-            _q, _e, n = _tri_shape(verts[t[0]], verts[t[1]], verts[t[2]])
+            _q, _e, n, r = _tri_shape(verts[t[0]], verts[t[1]], verts[t[2]])
             ln = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
             if ln < 1e-9:
                 norms = None
                 break
             n = (n[0] / ln, n[1] / ln, n[2] / ln)
             norms.append(n)
+            old_ratios.append(r)
             ax += n[0]
             ay += n[1]
             az += n[2]
@@ -727,11 +765,15 @@ def _smooth_pass(verts, tris, max_edge, pinned=frozenset()):
         new = (pv[0] + dx, pv[1] + dy, pv[2] + dz)
 
         ok = True
-        for t in ring:
+        for ri, t in enumerate(ring):
             pts = [new if x == v else verts[x] for x in t]
-            q, longest, nn = _tri_shape(*pts)
+            q, longest, nn, ratio = _tri_shape(*pts)
             if (q > max_aspect or longest > max_edge or
                     nn[0] * ax + nn[1] * ay + nn[2] * az <= 0.0):
+                ok = False
+                break
+            # Never worsen a triangle into (or deeper into) needle territory.
+            if ratio > params.MAX_EDGE_RATIO and ratio >= old_ratios[ri]:
                 ok = False
                 break
         if ok:

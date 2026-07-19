@@ -6,6 +6,10 @@ WALLS (blocking collision), which is what made the previous debugging blind:
 
     python tools/navmesh_preview.py --cell AnvilFightersGuild
     python tools/navmesh_preview.py --cell 00003313 --out temp/ext.png
+
+Zoom-in on a spot (world coords) with triangle indices + quality colouring:
+
+    python tools/navmesh_preview.py --cell X --focus 1234,-567 --span 500 --ids
 """
 
 import argparse
@@ -23,7 +27,8 @@ from tes5_import.navmesh import build  # noqa: E402
 from tools.navmesh_probe import load_cell, cell_geometry  # noqa: E402
 
 
-def render(export_dir, cell_arg, out_path, size):
+def render(export_dir, cell_arg, out_path, size, focus=None, span=None,
+           ids=False, quality=False):
     ctx = load_cell(export_dir, cell_arg)
     walk, block, _b = cell_geometry(ctx)
     print('cell %s (%s) exterior=%s' %
@@ -56,9 +61,16 @@ def render(export_dir, cell_arg, out_path, size):
     if not xs:
         print('nothing to draw')
         return
-    pad = 400.0
-    x0, x1 = min(xs) - pad, max(xs) + pad
-    y0, y1 = min(ys) - pad, max(ys) + pad
+    if focus is not None:
+        # Zoom window: world-coord centre + half-size.
+        fx, fy = focus
+        half = span or 400.0
+        x0, x1 = fx - half, fx + half
+        y0, y1 = fy - half, fy + half
+    else:
+        pad = 400.0
+        x0, x1 = min(xs) - pad, max(xs) + pad
+        y0, y1 = min(ys) - pad, max(ys) + pad
     S = size / max(x1 - x0, y1 - y0)
     W, H = max(1, int((x1 - x0) * S)), max(1, int((y1 - y0) * S))
 
@@ -92,13 +104,54 @@ def render(export_dir, cell_arg, out_path, size):
         b = int(220 * (1 - t))
         return (r, g, b, 120)
 
-    for (a, b, c) in tris:
+    import math as _mm
+
+    def _quality_color(a, b, c):
+        """Red = steep, magenta = needle/sliver, else height colour."""
+        va, vb, vc = verts[a], verts[b], verts[c]
+        e = sorted((_mm.dist(va, vb), _mm.dist(vb, vc), _mm.dist(vc, va)))
+        ux, uy, uz = vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]
+        wx, wy, wz = vc[0] - va[0], vc[1] - va[1], vc[2] - va[2]
+        nx = uy * wz - uz * wy
+        ny = uz * wx - ux * wz
+        nz = ux * wy - uy * wx
+        ln = _mm.sqrt(nx * nx + ny * ny + nz * nz)
+        area = 0.5 * ln
+        if area < 1e-6:
+            return (255, 0, 255, 200)
+        if abs(nz) / ln < _mm.cos(_mm.radians(50.0)):
+            return (255, 40, 40, 190)                   # steep
+        if e[2] * e[2] / (4.0 * area) > 6.0 or e[2] / max(e[0], 1e-9) > 4.0:
+            return (235, 60, 235, 170)                  # needle / bad ratio
+        return None
+
+    for ti, (a, b, c) in enumerate(tris):
         pa, pb, pc = (px(verts[a][0], verts[a][1]),
                       px(verts[b][0], verts[b][1]),
                       px(verts[c][0], verts[c][1]))
         zc = (verts[a][2] + verts[b][2] + verts[c][2]) / 3.0
-        d.polygon([pa, pb, pc], fill=zcolor(zc),
+        fill = None
+        if quality:
+            fill = _quality_color(a, b, c)
+        d.polygon([pa, pb, pc], fill=fill or zcolor(zc),
                   outline=(20, 240, 130, 180))
+        if ids:
+            cx = (pa[0] + pb[0] + pc[0]) / 3.0
+            cy = (pa[1] + pb[1] + pc[1]) / 3.0
+            if -20 < cx < W + 20 and -20 < cy < H + 20:
+                d.text((cx, cy), str(ti), fill=(255, 255, 255, 220),
+                       anchor='mm')
+
+    # Mesh vertices (visible when zoomed in): white dots + height label.
+    if focus is not None:
+        for v in verts:
+            p = px(v[0], v[1])
+            if -10 < p[0] < W + 10 and -10 < p[1] < H + 10:
+                d.ellipse([p[0] - 2, p[1] - 2, p[0] + 2, p[1] + 2],
+                          fill=(255, 255, 255, 230))
+                if ids:
+                    d.text((p[0] + 3, p[1] - 3), '%.0f' % v[2],
+                           fill=(180, 200, 255, 200))
 
     # Pathgrid on top.
     for (i, j) in ctx['edges']:
@@ -170,9 +223,9 @@ def _render_elevation(out_path, walk, block, verts, tris, ctx, x0, x1, size):
 
 
 def _render_one(args):
-    export, cell, out, size = args
+    export, cell, out, size, focus, span, ids, quality = args
     try:
-        render(export, cell, out, size)
+        render(export, cell, out, size, focus, span, ids, quality)
     except SystemExit as e:
         print('%s: %s' % (cell, e))
     return cell
@@ -186,9 +239,22 @@ def main():
     ap.add_argument('--out', default=None,
                     help='output png (single cell only; ignored for a list)')
     ap.add_argument('--size', type=int, default=1100)
+    ap.add_argument('--focus', default=None,
+                    help='zoom centre as world "X,Y" (single cell)')
+    ap.add_argument('--span', type=float, default=None,
+                    help='zoom half-size in game units (with --focus)')
+    ap.add_argument('--ids', action='store_true',
+                    help='label triangle indices + vertex heights (zoomed)')
+    ap.add_argument('--quality', action='store_true',
+                    help='colour steep (red) / sliver (magenta) triangles')
     ap.add_argument('--workers', type=int,
                     default=max(1, (os.cpu_count() or 2) - 1))
     a = ap.parse_args()
+
+    focus = None
+    if a.focus:
+        fx, fy = (float(v) for v in a.focus.split(','))
+        focus = (fx, fy)
 
     def _outname(cell):
         # "grid:2:4" etc. — colons are not legal in Windows filenames.
@@ -196,12 +262,14 @@ def main():
 
     cells = [c.strip() for c in a.cell.split(',') if c.strip()]
     if len(cells) == 1:
-        render(a.export, cells[0], a.out or _outname(cells[0]), a.size)
+        render(a.export, cells[0], a.out or _outname(cells[0]), a.size,
+               focus, a.span, a.ids, a.quality)
         return
 
     # Several cells: render them in parallel.  Each worker re-reads the cached
     # export index (see navmesh_probe.load_by_type), so this scales with cores.
-    jobs = [(a.export, c, _outname(c), a.size) for c in cells]
+    jobs = [(a.export, c, _outname(c), a.size, focus, a.span, a.ids, a.quality)
+            for c in cells]
     with ProcessPoolExecutor(max_workers=min(a.workers, len(jobs))) as ex:
         for _ in ex.map(_render_one, jobs):
             pass
