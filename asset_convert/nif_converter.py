@@ -292,6 +292,15 @@ _WEAPON_PRN_VALUES = frozenset({
     'Quiver',
 })
 
+# Skyrim-side (post-_remap_prn) Prn values of skeleton-attached equipment.
+# These meshes are normalized into vanilla attachment frames during
+# conversion, so the vanilla-derived BSInvMarker constants are exact — the
+# per-mesh inventory-rotation pass must not override them.
+_EQUIPPED_PRN_VALUES = frozenset({
+    'Weapon', 'WeaponSword', 'WeaponDagger', 'WeaponMace', 'WeaponAxe',
+    'WeaponStaff', 'WeaponBack', 'WeaponBow', 'SHIELD', 'QUIVER', 'Quiver',
+})
+
 
 def _remap_prn(oblivion_prn: str, nif_filename: str) -> str:
     """Map an Oblivion Prn value to the correct Skyrim skeleton node name.
@@ -2907,6 +2916,47 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
             if _r is not None and _get_prn_bone(_r) == 'WeaponBow':
                 stats['bow_rig_shapes'] = add_bow_rig(data, _bow_string_masks)
                 break
+
+    # --- BSInvMarker finalize: per-mesh inventory orientation ---------------
+    # Weapons and shields sit in Skyrim's normalized attachment frames (Prn
+    # node convention / SHIELD attach transform), so the vanilla-derived
+    # constant markers set above are already exact — leave them alone.
+    # Everything else that can appear in the inventory (armor/clothes _gnd,
+    # clutter, books, ingredients, keys, soul gems, ...) is still in an
+    # arbitrary Oblivion modeling frame, so a fixed rotation shows a random
+    # side.  Compute the rotation from the finished geometry (after root
+    # wrapping/furniture shifts) so the side showing the most mesh faces the
+    # inventory camera; meshes never viewed in inventory simply carry an
+    # inert extra-data block.  See asset_convert/inv_marker.py.
+    if not creature:
+        from .inv_marker import compute_inv_rotation
+        for root in data.roots:
+            if root is None or type(root).__name__ != 'BSFadeNode':
+                continue
+            if _get_prn_bone(root) in _EQUIPPED_PRN_VALUES:
+                continue
+            marker = None
+            for ed in getattr(root, 'extra_data_list', []) or []:
+                if isinstance(ed, NifFormat.BSInvMarker):
+                    marker = ed
+                    break
+            if marker is None and _has_skin(data):
+                # Skinned non-equipment meshes pose via bones, not node
+                # transforms — geometry analysis would misjudge them.
+                continue
+            rot = compute_inv_rotation(root)
+            if rot is None:
+                continue
+            if marker is None:
+                marker = NifFormat.BSInvMarker()
+                marker.name = b'INV'
+                marker.zoom = 1.0
+                root.num_extra_data_list += 1
+                root.extra_data_list.update_size()
+                root.extra_data_list[root.num_extra_data_list - 1] = marker
+            marker.rotation_x, marker.rotation_y, marker.rotation_z = rot
+            stats.setdefault('inv_markers_computed', 0)
+            stats['inv_markers_computed'] += 1
 
     # Count tangents injected (approximate: each converted geometry node that had tangent data)
     stats['tangents_injected'] = stats['properties_converted']  # best we can count here
