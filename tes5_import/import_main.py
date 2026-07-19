@@ -1191,6 +1191,51 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
         cell_fid = get_formid(rec, 'ParentCELL')
         achr_by_cell[cell_fid].append(rec)
 
+    # Re-home misplaced exterior refs.  Oblivion.esm ships a handful of
+    # temporary refs attached to a grid cell that does not match their
+    # coordinates (the TES4 CS tolerated it; 11 in Tamriel).  The Skyrim CK
+    # does not: on load it warns "Reference attached to wrong cell for its
+    # location" for each and relocates them — and hangs there.  Attach each
+    # such ref to the cell its position actually falls in.  Persistent refs
+    # and refs in persistent (dummy) cells keep their cells: the engine loads
+    # those by worldspace, not by grid.
+    grid_cell = {}   # (wrld, gx, gy) -> cell FormID, non-persistent cells only
+    cell_grid = {}   # cell FormID -> (wrld, gx, gy)
+    for cell in cells:
+        if get_int(cell, 'RecordFlags') & 0x400:
+            continue
+        if not get_str(cell, 'XCLC.X'):
+            continue
+        key = (get_formid(cell, 'ParentWRLD'),
+               get_int(cell, 'XCLC.X'), get_int(cell, 'XCLC.Y'))
+        fid = get_formid(cell, 'FormID')
+        grid_cell.setdefault(key, fid)
+        cell_grid[fid] = key
+    rehomed = 0
+    for by_cell in (refr_by_cell, achr_by_cell):
+        for cell_fid in list(by_cell):
+            grid = cell_grid.get(cell_fid)
+            if grid is None:
+                continue
+            wrld_fid, cx, cy = grid
+            kept = []
+            for rec in by_cell[cell_fid]:
+                if (not (get_int(rec, 'RecordFlags') & 0x400)
+                        and get_str(rec, 'PosX')):
+                    # Same floor semantics as world._ref_grid.
+                    gx = int(get_float(rec, 'PosX') // 4096.0)
+                    gy = int(get_float(rec, 'PosY') // 4096.0)
+                    if (gx, gy) != (cx, cy):
+                        target = grid_cell.get((wrld_fid, gx, gy))
+                        if target and target != cell_fid:
+                            by_cell[target].append(rec)
+                            rehomed += 1
+                            continue
+                kept.append(rec)
+            by_cell[cell_fid] = kept
+    if rehomed:
+        print(f"  Re-homed {rehomed} misplaced exterior refs to their position's cell")
+
     land_by_cell = defaultdict(list)
     for rec in lands:
         cell_fid = get_formid(rec, 'ParentCELL')

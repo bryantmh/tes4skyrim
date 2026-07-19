@@ -1581,21 +1581,22 @@ def _walk_node(parent, node, fix_textures, stats):
         node.flags = NIF_FLAGS
         return node
 
-    # NiDynamicEffect subtypes: handle by type.
+    # NiDynamicEffect subtypes: strip ALL of them.
     # NiTextureEffect (projected texture environment mapping) has a completely
-    # different Skyrim rendering path — strip it.
-    # NiDirectionalLight would override Skyrim's day/night cycle — strip it.
-    # NiPointLight, NiSpotLight, NiAmbientLight are valid Skyrim NIF block types
-    # and may contribute to world-space mesh illumination; keep them.
+    # different Skyrim rendering path.  Ni*Light blocks (Ambient/Directional/
+    # Point/Spot) are 3ds Max export leftovers in Oblivion assets: ZERO vanilla
+    # Skyrim meshes contain any Ni*Light block (nif_block_scan 2026-07-18), and
+    # SSE fails to load a static that carries one — statuegodszenithar01.nif
+    # (NiAmbientLight child) rendered as the missing-model red triangle.
+    # Skyrim lighting comes from placed LIGH references, never from mesh-
+    # embedded light nodes, so there is nothing to convert these into.
     # Note: the root NiNode's own effects array is cleared during NiNode→BSFadeNode
     # conversion; this branch handles dynamic-effect nodes that appear in the
     # children array.
     if isinstance(node, NifFormat.NiDynamicEffect):
-        if isinstance(node, (NifFormat.NiTextureEffect, NifFormat.NiDirectionalLight)):
-            return None
-        # NiPointLight / NiSpotLight / NiAmbientLight
-        node.flags = NIF_FLAGS
-        return node
+        stats['dynamic_effects_stripped'] = \
+            stats.get('dynamic_effects_stripped', 0) + 1
+        return None
 
     # Geometry conversion
     if isinstance(node, (NifFormat.NiTriStrips, NifFormat.NiTriShape)):
