@@ -48,6 +48,22 @@ import numpy as np
 from . import params
 
 
+def span_z(s):
+    """The height a span presents to the mesh/adjacency: the PATHGRID height
+    for a protected span, the voxel top otherwise.
+
+    A protected span can have union-merged with solid geometry standing on the
+    same floor (a chest's collision overlaps the floor span, so add_span fuses
+    them and the merged top is the CHEST's top).  Meshing that span at its top
+    put the navmesh on top of the furniture — a 50u jut with near-vertical
+    triangles down every side.  The pathgrid height is what the designers
+    asserted an NPC walks at, so a protected span is meshed and linked THERE.
+    (region.build_regions already linked on this height; the mesher and the
+    geodesic reach flood must agree with it.)
+    """
+    return s[4] if (s[3] and s[4] is not None) else s[1]
+
+
 class Heightfield:
     """A column grid of (zmin, zmax, walkable) spans.
 
@@ -607,6 +623,22 @@ def stamp_pathgrid(hf, nodes, edges):
     treads, the floor) we SNAP to it, so the mesh sits on the true surface rather
     than floating; where none exists the span is synthesized outright, because the
     pathgrid is ground truth and the geometry is what is incomplete.
+
+    THE SWEEP FOLLOWS THE SURFACE, NOT THE CHORD.  A pathgrid edge only stores
+    its two endpoints, and the straight line between them is a poor stand-in
+    for where an NPC's feet are: on a steep exterior descent the chord cuts
+    50-80u of air over the gully the terrain dips through, and on a staircase
+    it floats above the treads.  Snapping each interpolated sample
+    independently to "nearest surface within a fixed window of the CHORD" made
+    band columns alternate between terrain (snapped) and chord height (window
+    missed) — a jagged lattice of near-vertical triangles down every hillside
+    the pathgrid crossed.  Instead the sweep carries a running height: each
+    step predicts z + the chord's per-step slope (so it still arrives at the
+    far node and cannot wander onto another storey), then locks onto the
+    walkable surface nearest that prediction.  The ribbon walks DOWN through
+    the gully and back up, exactly like the NPC, and the chord is only the
+    pacing fallback where geometry is genuinely absent (rooms whose floor
+    shell lives in a neighbouring cell).
     """
     if not nodes:
         return 0
@@ -617,6 +649,49 @@ def stamp_pathgrid(hf, nodes, edges):
     snap_z = params.PGRD_SNAP_Z
 
     stamped = 0
+    # Columns where a span was SYNTHESIZED (no surface in the window), as
+    # {column_index: {top*2 rounded}} — the post-sweep cleanup below uses
+    # this to tell fabricated ribbon from stamped real geometry.
+    synth_tops = {}
+
+    def surface_near(wx, wy, z_ref):
+        """Walkable span top nearest z_ref at (wx, wy), within the asymmetric
+        snap window, or None.
+
+        DOWN is generous (PGRD_SNAP_Z): a chord-paced prediction floats over
+        the gully/stair the surface dips through, and must reach down for it.
+        UP is exactly MAX_CLIMB: a climbing passage can out-climb the chord by
+        a step per sample and must still be locked (an early 24u window lost
+        the surface on steep cave ascents and stamped the ribbon INSIDE the
+        hill), while anything more than a step above the walked line is an
+        object standing on it (chest/counter tops) and must not capture it.
+
+        Only REAL geometry counts.  The sweep runs while its own output
+        accumulates in the heightfield, and locking onto a fabricated span is
+        self-contamination: a climbing ribbon kept re-locking onto its own
+        last stamp (half a band behind, a step below) and fell ever further
+        under its chord, arriving a storey below the far node — in geometry-
+        less cave cells this alone broke a hundred pathgrid edges.  Spans in
+        synth_tops are the sweep's own fabrications and are skipped; a
+        protected span whose top is real collision (a stamped stair tread)
+        is still followed.
+        """
+        cx = int((wx - hf.min_x) / hf.cs)
+        cy = int((wy - hf.min_y) / hf.cs)
+        if cx < 0 or cy < 0 or cx >= hf.w or cy >= hf.h:
+            return None
+        tops = synth_tops.get(cy * hf.w + cx)
+        best = None
+        for s in hf.spans[cy * hf.w + cx]:
+            if not s[2]:
+                continue
+            if tops and int(round(s[1] * 2.0)) in tops:
+                continue
+            d = s[1] - z_ref
+            if -snap_z <= d <= params.MAX_CLIMB and (
+                    best is None or abs(d) < abs(best - z_ref)):
+                best = s[1]
+        return best
 
     def stamp_point(wx, wy, wz):
         nonlocal stamped
@@ -631,23 +706,26 @@ def stamp_pathgrid(hf, nodes, edges):
                     continue
                 col = hf.spans[cy * hf.w + cx]
 
-                # Snap to the WALKABLE span nearest this height: the stair treads
-                # and the floor are the true surface, and using them keeps the
-                # mesh on the geometry instead of on a floating plane.
-                #
-                # The snap window is generous (SNAP_Z, not a step height) because
-                # a pathgrid is COARSE on stairs — the Anvil Fighters Guild runs a
-                # whole flight with two nodes, ~100u apart in Z — so a sample
-                # interpolated along that edge can sit far above the tread it is
-                # meant to be standing on.  With a tight window it misses the
-                # treads entirely and synthesizes a floating ramp steeper than an
-                # NPC can walk, which then shatters into unconnected fragments.
+                # Snap to the WALKABLE span nearest the followed height: the
+                # stair treads and the floor are the true surface, and using
+                # them keeps the mesh on the geometry instead of on a floating
+                # plane.  wz is already surface-accurate at the line itself
+                # (see the sweep below), so the window only has to absorb the
+                # lateral spread of the band (a side slope rises/drops
+                # ~2*cs*tan(46) across it) and coarse node Z — down is
+                # generous (SNAP_Z), up is exactly one step (MAX_CLIMB: any
+                # tighter and a slope rising across the band gets a
+                # synthesized span WITHIN a step of the real floor — the same
+                # surface twice, meshed as coincident duplicate triangles;
+                # anything above a step is an object standing on the walked
+                # surface and stays excluded).
                 best = None
                 for s in col:
                     if not s[2]:
                         continue
-                    d = abs(s[1] - wz)
-                    if d <= snap_z and (best is None or d < abs(best[1] - wz)):
+                    d = s[1] - wz
+                    if -snap_z <= d <= params.MAX_CLIMB and (
+                            best is None or abs(d) < abs(best[1] - wz)):
                         best = s
                 if best is not None:
                     best[3] = True
@@ -657,16 +735,38 @@ def stamp_pathgrid(hf, nodes, edges):
                     # actual stair.  (Linking on the interpolated Z made the layer
                     # follow a straight line through the air between two distant
                     # nodes, which no run of treads matches.)
-                    best[4] = best[1]
+                    #
+                    # ...EXCEPT when the span is already protected with a pgz
+                    # closer to this sample's height.  A synth-merged span
+                    # (floor asserted under furniture that swallowed it) has a
+                    # walkable top that is the FURNITURE, not a surface; a
+                    # later sample re-snapping onto that top ratcheted pgz up
+                    # the chest one MAX_CLIMB per pass and walked the mesh
+                    # onto the lid.  Keep whichever height is nearer to what
+                    # this sample asserts.
+                    if best[4] is None or (
+                            abs(best[1] - wz) <= abs(best[4] - wz)):
+                        best[4] = best[1]
                     stamped += 1
                 else:
                     hf.add_span(cx, cy, wz - ch, wz, True, protected=True)
+                    synth_tops.setdefault(cy * hf.w + cx, set()).add(
+                        int(round(wz * 2.0)))
                     stamped += 1
 
+    # Node heights, locked onto their own surface where one exists (a node's
+    # authored Z is regularly a little above or below the floor it stands on,
+    # and the edge sweeps below start from these heights).
+    node_z = []
     for n in nodes:
-        stamp_point(n[0], n[1], n[2])
+        nz = surface_near(n[0], n[1], n[2])
+        node_z.append(nz if nz is not None else n[2])
 
-    # Sweep the corridor along every edge, at half-cell steps so it is continuous.
+    for i, n in enumerate(nodes):
+        stamp_point(n[0], n[1], node_z[i])
+
+    # Sweep the corridor along every edge, at half-cell steps so it is
+    # continuous, FOLLOWING the walkable surface (see docstring).
     step = hf.cs * 0.5
     for (i, j) in edges or ():
         if i >= len(nodes) or j >= len(nodes):
@@ -674,11 +774,42 @@ def stamp_pathgrid(hf, nodes, edges):
         a, b = nodes[i], nodes[j]
         dist = max(abs(a[0] - b[0]), abs(a[1] - b[1]))
         n_steps = max(1, int(dist / step))
+        az, bz = node_z[i], node_z[j]
+        dz_step = (bz - az) / n_steps
+        z = az
         for k in range(1, n_steps):
             t = k / n_steps
-            stamp_point(a[0] + (b[0] - a[0]) * t,
-                        a[1] + (b[1] - a[1]) * t,
-                        a[2] + (b[2] - a[2]) * t)
+            wx = a[0] + (b[0] - a[0]) * t
+            wy = a[1] + (b[1] - a[1]) * t
+            z_pred = z + dz_step
+            zs = surface_near(wx, wy, z_pred)
+            z = zs if zs is not None else z_pred
+            stamp_point(wx, wy, z)
+
+    # Post-sweep layer conflict resolution: a SYNTHESIZED protected span
+    # within agent headroom of a SNAPPED (real-surface) protected span in the
+    # same column loses.  Two standable layers can never be that close — the
+    # lower has no headroom — and the case arises when a chord-paced sample
+    # fabricates a span in the stairwell air right over the treads an earlier
+    # sample locked onto (one column then carries the staircase TWICE, ~50u
+    # apart, as overlapping disconnected ribbons).  Synth-vs-synth conflicts
+    # are left alone: two fabricated layers (switchback flights both crossing
+    # a floor-less column) are each load-bearing for their own flight.
+    height = params.AGENT_HEIGHT
+    for ci, tops in synth_tops.items():
+        col = hf.spans[ci]
+        prot = [s for s in col if s[2] and s[3]]
+        if len(prot) < 2:
+            continue
+        synth = [s for s in prot if int(round(s[1] * 2.0)) in tops]
+        real = [s for s in prot if int(round(s[1] * 2.0)) not in tops]
+        if not synth or not real:
+            continue
+        for s in synth:
+            if any(abs(t[1] - s[1]) < height for t in real):
+                s[2] = False
+                s[3] = False
+                s[4] = None
 
     return stamped
 
