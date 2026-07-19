@@ -256,6 +256,11 @@ FUNCTION_MAP = {
     'getdead':           ('IsDead',            True,  None),
     'isdead':            ('IsDead',            True,  None),
     'isincombat':        ('IsInCombat',        True,  None),
+    # SetForceSneak is neutralised (no Skyrim equivalent), so the live sneak
+    # state is the closest readable value for its getter.
+    'getforcesneak':     ('IsSneaking',        True,  None),
+    # TES4 knocked-down state ~ Skyrim's bleedout/recovery state.
+    'getknockedstate':   ('IsBleedingOut',     True,  None),
     'startcombat':       ('StartCombat',       True,  None),
     'stopcombat':        ('StopCombat',        True,  None),
     'getisid':           (None,                True,  None),  # Special handler in _emit_function
@@ -641,6 +646,7 @@ _BARE_BOOL_FUNCTIONS = {
     'getdead', 'isdead', 'isincombat', 'issneaking', 'isweaponout',
     'isswimming', 'isghost', 'isenabled', 'isdisabled', 'islocked',
     'getlocked', 'is3dloaded', 'getis3dloaded', 'isininterior',
+    'getforcesneak', 'getknockedstate',
 }
 
 # Functions that can ONLY be called on Actor (not ObjectReference)
@@ -659,7 +665,7 @@ _ACTOR_ONLY_FUNCTIONS = {
     'evaluatepackage', 'evp', 'addscriptpackage', 'removescriptpackage', 'stopwaiting',
     'setessential', 'setghost', 'setunconscious',
     'setscale', 'getscale',
-    'setforcerun', 'setforcesneak',
+    'setforcerun', 'setforcesneak', 'getforcesneak', 'getknockedstate',
     'setrace', 'getrace',
     'getlevel', 'getclass',
     'setplayerteammate', 'pathtoref',
@@ -788,6 +794,22 @@ def _safe_property_name(name: str) -> str:
         # turns DarkBrotherhood into the unreadable myDarkbrotherhood.
         return 'my' + safe[0].upper() + safe[1:]
     return safe
+
+
+def resolve_property_formid(xref, prop_name: str) -> str:
+    """EditorID lookup for a (possibly sanitized) property name.
+
+    _safe_property_name prefixes reserved EditorIDs with 'my' (MS14 → myMS14
+    because MS14 is a vanilla Skyrim script name).  VMAD binders receive the
+    SANITIZED name from the converter's property refs, so a direct EditorID
+    lookup misses and the property silently stays unbound — a None quest at
+    runtime, which killed every MS14 SetStage.  Reverse the rename when the
+    direct lookup fails."""
+    low = prop_name.lower()
+    fid = xref.edid_to_formid.get(low, '')
+    if not fid and low.startswith('my'):
+        fid = xref.edid_to_formid.get(low[2:], '')
+    return fid
 
 
 def _canonical_global(name: str) -> str:

@@ -1260,6 +1260,10 @@ class ScriptConverter:
 
             begin_m = re.match(r'^begin\s+(\w+)(.*)', stripped, re.IGNORECASE)
             if begin_m:
+                if current_block is not None:
+                    # Previous block never saw its End (e.g. `End ;comment`
+                    # before this fix) — close it rather than discard it.
+                    blocks.append((current_block, current_filter, current_lines))
                 current_block = begin_m.group(1).lower()
                 # `begin OnEquip player` — the trailing argument is a FILTER that
                 # restricts the block to that object.  Dropping it makes the
@@ -1270,7 +1274,12 @@ class ScriptConverter:
                 current_lines = []
                 continue
 
-            if low == 'end':
+            # `End` optionally followed by a comment or block-name label
+            # (`End ;OnActivate`, `End GameMode`) — the Shivering Isles scripts
+            # use this style heavily; matching only a bare `end` silently
+            # dropped whole event blocks (SE09AddItemsScript's OnActivate with
+            # all its SetStage calls).
+            if re.match(r'^end(?:\s|;|$)', low):
                 if current_block is not None:
                     blocks.append((current_block, current_filter, current_lines))
                     current_block = None
@@ -1280,6 +1289,10 @@ class ScriptConverter:
 
             if current_block is not None:
                 current_lines.append(raw_line)
+
+        if current_block is not None:
+            # Unterminated final block (missing End) — keep what we have.
+            blocks.append((current_block, current_filter, current_lines))
 
         return variables, blocks
 
@@ -1486,8 +1499,13 @@ class ScriptConverter:
                     # If remainder is just "+ number", extract the delay for the timer
                     delay_m = re.match(r'[+\-]\s*([\d.]+)', remainder) if remainder else None
                     delay_val = delay_m.group(1) if delay_m else '0.0'
+                    # An Int target (TES4 `short`) can't take a Float literal
+                    if self._var_types.get(target.lower().split('.')[-1]) == 'Int':
+                        delay_val = str(int(float(delay_val)))
                     return f'{say_call}\n  {target} = {delay_val}  ;Say() returns None in Papyrus; delay approximated'
-                return f'{value}\n  {target} = 0.0  ;Say() returns None in Papyrus'
+                say_dflt = ('0' if self._var_types.get(
+                    target.lower().split('.')[-1]) == 'Int' else '0.0')
+                return f'{value}\n  {target} = {say_dflt}  ;Say() returns None in Papyrus'
             # GlobalVariable: use SetValue() instead of direct assignment
             tgt_low = target.lower().split('.')[-1]
             if self._property_refs.get(target, self._property_refs.get(tgt_low, '')) == 'GlobalVariable':
@@ -2938,10 +2956,26 @@ class ScriptConverter:
             self._line_comments.append(';NE: SetAlert 0')
             return '0'
 
-        # StartConversation → Say(None)
+        # StartConversation: caller.StartConversation Target [, TopicID].
+        # The topic INFO (and its result-script fragment) is the payload —
+        # discarding it as Say(None) silenced every scripted NPC-NPC
+        # conversation (DANocturnal's Bejeen/Nocturnal talk, MQ12's
+        # Jauffre/Martin council, MS10's Llevana scene) and lost their
+        # SetStage results. Route it like SayTo: speak the topic directly.
         if fname_low == 'startconversation':
+            if args_str and ',' in args_str:
+                pparts = [p.strip() for p in args_str.split(',')]
+            else:
+                pparts = args_str.split() if args_str else []
             ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
-            return f'{ref}.Say(None)'
+            if len(pparts) >= 2 and pparts[1].strip():
+                topic_str = pparts[1].strip().split()[0]
+                topic = self._convert_expression(topic_str, extends)
+                self._property_refs[topic_str] = 'Topic'
+                return f'{ref}.Say({topic})'
+            # No topic — TES4 falls back to greeting AI; nothing to say here.
+            self._line_comments.append(';NE: StartConversation (no topic)')
+            return '0'
 
         # Wait → no-op (TES4 Wait is a package instruction, not a time delay)
         if fname_low == 'wait':
