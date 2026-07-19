@@ -164,15 +164,21 @@ The `-ExtractAssets` flag triggers BSA extraction and mesh conversion:
 ## NIF shield conversion
 - Shields use BSFadeNode root + Prn='SHIELD' (same as weapons, NOT NiNode like worn armor)
 - **Orientation fix**: Oblivion shields are modeled with thin (face-normal) axis along Y. Skyrim's SHIELD bone expects it along Z. A +90° rotation around X is applied to the BSFadeNode root. Root rotation baking wraps this in an inner NiNode.
-- **BSInvMarker**: Shields need BSInvMarker for inventory display: rot=(4712,0,0), zoom=1.0 (from vanilla ironshield.nif). Without BSInvMarker, shield is invisible in inventory.
+- **BSInvMarker**: Shields need BSInvMarker for inventory display: rot=(4712,0,0), zoom=1.0 (from vanilla ironshield.nif). Without BSInvMarker, shield is invisible in inventory. Shields keep this constant — they are exempt from the per-mesh inventory-orientation pass (see BSInvMarker section below).
 - Oblivion Prn values for shields: 'Shield' or 'Bip01 L ForearmTwist' → remapped to 'SHIELD'
 - Oblivion shield geometry names: 'Shield:0', 'Shield:2' (single geometry block, no skin)
 
 ## NIF armor ground model (_gnd) conversion
 - Armor/clothing _gnd files need **BSInvMarker** for inventory display. Without it, items are invisible in the inventory 3D viewer.
-- BSInvMarker values from vanilla Skyrim: rot=(1570,0,0), zoom=1.0 (cuirass/gauntlet gnd files). 1570 milliradians ≈ 90° (upright). Helmets and boots may not have BSInvMarker in vanilla (display defaults work).
-- BSInvMarker is added during NiNode→BSFadeNode conversion when `_is_gnd and _in_armor_dir`.
+- BSInvMarker is added during NiNode→BSFadeNode conversion when `_is_gnd and _in_armor_dir` (constant rot=(1570,0,0) as an initial value), then **recomputed per-mesh by the inventory-orientation finalize pass** (see below).
 - BSXFlags: vanilla gnd files use 194 (0xC2); our converted use 130 (0x82). Both load fine.
+
+## BSInvMarker inventory orientation (learned 2026-07-18)
+- **Engine convention** (derived empirically with `tools/inv_marker_survey.py` across ~500 vanilla meshes, mean alignment 0.97+): stored ushort angles are milliradians; the inventory view rotates the model by `M = Rx(-rx/1000) @ Ry(-ry/1000) @ Rz(-rz/1000)` (column-vector, XYZ order, negated angles) and the camera looks along **+Y** with **+Z as screen-up** (screen-right = X). Reproduces vanilla exactly: ironshield (4712,0,0) = −Z face toward camera; cuirassgnd (1570,0,0) = +Z face toward camera with model −Y at screen-up; iron weapons (4712,6283,0) ≈ pure Rx.
+- **Per-mesh computation** (`asset_convert/inv_marker.py`): the finalize pass at the end of `_convert_nif` orients each mesh so the side with the greatest front-facing projected area (of the six area-weighted PCA axis directions of the triangle soup) faces the camera. Screen roll keeps model +Z at screen-up (upright items stay upright); when the view normal is ±Z (items modeled lying flat: books, pelts, plates, gnd armor) it follows the vanilla cuirassgnd rule (−Y up for face-up items, +Y for face-down). Hidden geometry (flags & 1), `Blood*` decal shapes and EditorMarkers are excluded from the analysis.
+- **Scope**: applied to every non-creature, non-skinned BSFadeNode root — a marker is inert on meshes never shown in inventory, and clutter/books/ingredients/keys/soul gems have no reliable path signature. Existing markers (gnd) are recomputed; missing ones are added (zoom 1.0).
+- **Weapons/shields/quivers are exempt** (`_EQUIPPED_PRN_VALUES`, matched on the post-remap Prn): conversion normalizes them into vanilla attachment frames (Prn node convention / SHIELD attach transform), so the vanilla-derived constants are already exact. The computed value would also flip shields: a shield's concave strap side genuinely has more visible area than its display face.
+- Geometry math uses PyFFI's row-vector transform convention throughout — the survey validated stored-marker ↔ pyffi-space relationships end-to-end, so the generator must use the same gather code (`_gather_area_normals`).
 
 ## NIF skin retargeting (Oblivion → Skyrim skeleton)
 - **Critical**: Oblivion skeleton uses X-up coordinates (spine along X axis). Skyrim uses Z-up (spine along Z)
