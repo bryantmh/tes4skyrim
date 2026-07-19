@@ -58,8 +58,6 @@ from .skyrim_overrides import OBLIVION_TO_SKYRIM_BONE_MAP
 _REPO = Path(__file__).parent.parent
 _GEN_DIR = Path(__file__).parent / 'generated'
 _OB_BODY_DIR = _REPO / 'export' / 'Oblivion.esm' / 'meshes' / 'characters' / '_male'
-_SK_BODY_DIR = (_REPO / 'references' / 'Skyrim Meshes' / 'meshes' /
-                'actors' / 'character' / 'character assets')
 
 # Oblivion body parts per gender, grouped by which Skyrim target surface they
 # fit onto.  src tag makes retarget_skin_to_skyrim pick the right skeleton.
@@ -289,11 +287,10 @@ def _smooth_group_field(field_g, nbr_idx, nbr_ptr, iters, lam=0.5):
 # NIF reading helpers (build side)
 # ---------------------------------------------------------------------------
 
-def _read_nif(path):
-    data = NifFormat.Data()
-    with open(path, 'rb') as f:
-        data.read(f)
-    return data
+def _read_nif(source):
+    # sse_nif accepts a path or bytes and converts SSE geometry to LE blocks.
+    from .sse_nif import read_nif
+    return read_nif(source)
 
 
 def _block_name(block) -> str:
@@ -431,10 +428,11 @@ def _fk_pose_group(gender: str):
 
 def _load_sk_surface(gender: str, group: str, weight: int):
     """Skyrim target surface for a group+weight: (verts (N,3), tris (M,3))."""
-    path = _SK_BODY_DIR / f'{_SK_BODY_SETS[gender][group]}_{weight}.nif'
-    if not path.exists():
+    from .skyrim_assets import get_body_nif_bytes
+    raw = get_body_nif_bytes(f'{_SK_BODY_SETS[gender][group]}_{weight}.nif')
+    if raw is None:
         return None
-    data = _read_nif(path)
+    data = _read_nif(raw)
     v_parts, t_parts = [], []
     offset = 0
     for block, skel_root in _iter_skinned_geoms(data):

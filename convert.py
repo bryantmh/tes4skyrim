@@ -264,17 +264,12 @@ def phase_assets(file_name: str, config: dict, output_dir: str = None,
     # phase points each BOOK's INAM at meshes\tes4\clutter\books\inv\<base>.nif
     from asset_convert.book_inam import generate_book_inams
 
-    templates_dir = None
-    ref_meshes = SCRIPT_DIR / "references" / "Skyrim Meshes"
-    if ref_meshes.is_dir():
-        templates_dir = str(ref_meshes)
     _, tes5_data = get_paths(config)
     print(f"[{file_name}] Generating book inventory-art meshes...")
     bstats = generate_book_inams(
         source_file=file_name,
         extract_dir=extract_dir,
         output_dir=out_dir,
-        templates_dir=templates_dir,
         skyrim_data=tes5_data or None,
     )
     print(f"[{file_name}] Book INAM complete: ok={bstats['ok']} "

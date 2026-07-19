@@ -104,6 +104,11 @@ def _apply_nifformat_patches(NifFormat):
     # ------------------------------------------------------------------
     _install_early_oblivion_layouts(NifFormat)
 
+    # ------------------------------------------------------------------
+    # Patch 8: Skyrim SE (BSStream 100) read support
+    # ------------------------------------------------------------------
+    _install_sse_layouts(NifFormat)
+
 
 # ---------------------------------------------------------------------------
 # Patches 5-7: early-Oblivion NIF layout support
@@ -330,6 +335,271 @@ def _install_early_oblivion_layouts(NifFormat):
                                           NifFormat.NiInterpController,
                                           NifFormat.NiGeomMorpherController,
                                           NifFormat.NiPSysEmitterCtlr))
+
+
+# ---------------------------------------------------------------------------
+# Patch 8: Skyrim SE (BSStream / User Version 2 == 100) READ support
+# ---------------------------------------------------------------------------
+# The SSE "Skyrim - Meshes*.bsa" archives ship optimized meshes whose geometry
+# lives in BSTriShape blocks (and, for skinned shapes, in the SSE-layout
+# NiSkinPartition shared vertex buffer).  pyffi 2.2.3 predates SSE entirely.
+# This patch registers read-only support so vanilla SSE meshes (body/hands/
+# feet, book reading rigs, ...) can be loaded when no LE reference tree is
+# available.  Layouts verified against references/nif 0.10.0.0.xml and a
+# byte-walk of vanilla malebody_0.nif (SSE Meshes0.bsa).
+#
+# We deliberately support READ only: converted output is always written as
+# LE-format (User Version 2 = 83), which SSE loads natively.  Use
+# asset_convert.sse_nif.sse_to_le() to rebuild BSTriShape graphs into
+# NiTriShape graphs before writing.
+#
+# Decoded geometry is exposed on the block instances as numpy arrays:
+#   sse_verts (N,3) f32   sse_uvs (N,2) f32       sse_normals (N,3) f32
+#   sse_tangents (N,3)    sse_bitangents (N,3)    sse_colors (N,4) u8
+#   sse_bone_weights (N,4) f32   sse_bone_indices (N,4) u8
+#   sse_triangles (M,3) u16  (BSTriShape only; skinned shapes keep geometry
+#                             in their NiSkinPartition — see sse_partitions)
+# NiSkinPartition additionally gets:
+#   sse_partitions: list of dicts with 'bones' (tuple of skin-instance bone
+#   indices), 'vertex_map', 'weights', 'bone_indices', 'triangles' (partition-
+#   local), 'triangles_copy' (global shape vertex indices).
+
+_SSE_UV2 = 100
+
+
+def _is_sse(data):
+    return (data is not None
+            and getattr(data, 'version', 0) == _SKYRIM_VER
+            and getattr(data, 'user_version_2', 0) == _SSE_UV2)
+
+
+def _decode_sse_vertex_block(raw, num_vertices, vdesc):
+    """Decode an SSE packed vertex buffer into numpy arrays.
+
+    raw: bytes of num_vertices records; vdesc: the uint64 BSVertexDesc.
+    Returns dict of arrays (keys matching the sse_* attribute names above);
+    absent attributes map to None.
+    """
+    import numpy as np
+    out = {'sse_verts': None, 'sse_uvs': None, 'sse_normals': None,
+           'sse_tangents': None, 'sse_bitangents': None, 'sse_colors': None,
+           'sse_bone_weights': None, 'sse_bone_indices': None}
+    if num_vertices == 0:
+        return out
+    vsize = (vdesc & 0xF) * 4
+    attrs = (vdesc >> 44) & 0xFFF
+    rec = np.frombuffer(raw, dtype=np.uint8).reshape(num_vertices, vsize)
+
+    def _f32(col_off, n):
+        return rec[:, col_off:col_off + 4 * n].copy().view('<f4')
+
+    def _half(col_off, n):
+        return rec[:, col_off:col_off + 2 * n].copy().view('<f2').astype(
+            np.float32)
+
+    def _nbyte(col_off, n):
+        # ByteVector: [0,255] -> [-1,1]
+        return rec[:, col_off:col_off + n].astype(np.float32) / 255.0 * 2.0 - 1.0
+
+    off = 0
+    bit_x = None
+    if attrs & 0x1:                     # Vertex (full precision in SSE)
+        out['sse_verts'] = _f32(0, 3)
+        if attrs & 0x10:
+            bit_x = _f32(12, 1)[:, 0]   # Bitangent X shares the W slot
+        off = 16
+    if attrs & 0x2:                     # UV (half2)
+        uv_off = ((vdesc >> 8) & 0xF) * 4
+        out['sse_uvs'] = _half(uv_off, 2)
+    bit_y = bit_z = None
+    if attrs & 0x8:                     # Normal (byte3) + Bitangent Y
+        n_off = ((vdesc >> 16) & 0xF) * 4
+        out['sse_normals'] = _nbyte(n_off, 3)
+        bit_y = _nbyte(n_off + 3, 1)[:, 0]
+    if (attrs & 0x18) == 0x18:          # Tangent (byte3) + Bitangent Z
+        t_off = ((vdesc >> 20) & 0xF) * 4
+        out['sse_tangents'] = _nbyte(t_off, 3)
+        bit_z = _nbyte(t_off + 3, 1)[:, 0]
+    if attrs & 0x20:                    # Vertex Colors (byte4)
+        c_off = ((vdesc >> 24) & 0xF) * 4
+        out['sse_colors'] = rec[:, c_off:c_off + 4].copy()
+    if attrs & 0x40:                    # Bone Weights (half4) + Indices (byte4)
+        s_off = ((vdesc >> 28) & 0xF) * 4
+        out['sse_bone_weights'] = _half(s_off, 4)
+        out['sse_bone_indices'] = rec[:, s_off + 8:s_off + 12].copy()
+    if bit_x is not None and bit_y is not None and bit_z is not None:
+        out['sse_bitangents'] = np.stack([bit_x, bit_y, bit_z], axis=1)
+    return out
+
+
+def _install_sse_layouts(NifFormat):
+    import struct as _struct
+    import numpy as np
+
+    # --- BSTriShape / BSDynamicTriShape ----------------------------------
+    # Fixed prefix (after the inherited NiAVObject fields) is declared as
+    # normal pyffi attrs so the generic machinery handles the name string and
+    # the skin/shader/alpha Refs (link stack + fix_links).  The variable
+    # vertex/triangle/particle payload is consumed by a read override.
+    if not hasattr(NifFormat, 'BSTriShape'):
+        ts_attrs = [
+            _make_attr(NifFormat, {'name': 'Center', 'type': 'Vector3'}),
+            _make_attr(NifFormat, {'name': 'Radius', 'type': 'float'}),
+            _make_attr(NifFormat, {'name': 'Skin', 'type': 'Ref',
+                                   'template': 'NiObject'},
+                       template=NifFormat.NiObject),
+            _make_attr(NifFormat, {'name': 'Shader Property', 'type': 'Ref',
+                                   'template': 'NiProperty'},
+                       template=NifFormat.NiProperty),
+            _make_attr(NifFormat, {'name': 'Alpha Property', 'type': 'Ref',
+                                   'template': 'NiProperty'},
+                       template=NifFormat.NiProperty),
+            _make_attr(NifFormat, {'name': 'Vertex Desc Lo', 'type': 'uint'}),
+            _make_attr(NifFormat, {'name': 'Vertex Desc Hi', 'type': 'uint'}),
+            _make_attr(NifFormat, {'name': 'Num Triangles', 'type': 'ushort'}),
+            _make_attr(NifFormat, {'name': 'Num Vertices', 'type': 'ushort'}),
+            _make_attr(NifFormat, {'name': 'Data Size', 'type': 'uint'}),
+        ]
+
+        class BSTriShape(NifFormat.NiAVObject):
+            _attrs = ts_attrs
+            _is_template = False
+            _is_abstract = False
+
+            def read(self, stream, data=None):
+                start = stream.tell()
+                super(BSTriShape, self).read(stream, data)
+                vdesc = (int(self.vertex_desc_lo)
+                         | (int(self.vertex_desc_hi) << 32))
+                self.sse_vertex_desc = vdesc
+                nv = int(self.num_vertices)
+                nt = int(self.num_triangles)
+                self.sse_triangles = None
+                for k, v in _decode_sse_vertex_block(b'', 0, vdesc).items():
+                    setattr(self, k, v)
+                if int(self.data_size) > 0:
+                    vsize = (vdesc & 0xF) * 4
+                    dec = _decode_sse_vertex_block(
+                        stream.read(nv * vsize), nv, vdesc)
+                    for k, v in dec.items():
+                        setattr(self, k, v)
+                    self.sse_triangles = np.frombuffer(
+                        stream.read(nt * 6), dtype='<u2').reshape(nt, 3).copy()
+                # SSE-only trailing particle copy of the mesh
+                psize, = _struct.unpack('<I', stream.read(4))
+                self.sse_particle_raw = (
+                    stream.read(nv * 12 + nt * 6) if psize > 0 else b'')
+                self._read_dynamic(stream, nv)
+                self._sse_size = stream.tell() - start
+
+            def _read_dynamic(self, stream, nv):
+                pass
+
+            def get_size(self, data=None):
+                return getattr(self, '_sse_size',
+                               super(BSTriShape, self).get_size(data=data))
+
+            def write(self, stream, data=None):
+                raise NifFormat.NifError(
+                    'BSTriShape is read-only: convert SSE graphs with '
+                    'asset_convert.sse_nif.sse_to_le() before writing')
+
+        BSTriShape.__name__ = 'BSTriShape'
+        NifFormat.BSTriShape = BSTriShape
+
+        class BSDynamicTriShape(BSTriShape):
+            # Dynamic (morphable) variant: positions live in a trailing
+            # full-precision Vector4 array instead of the packed buffer.
+            def _read_dynamic(self, stream, nv):
+                dsize, = _struct.unpack('<I', stream.read(4))
+                n = dsize // 16
+                dyn = np.frombuffer(stream.read(dsize),
+                                    dtype='<f4').reshape(n, 4)
+                self.sse_verts = dyn[:, :3].copy()
+
+        BSDynamicTriShape.__name__ = 'BSDynamicTriShape'
+        NifFormat.BSDynamicTriShape = BSDynamicTriShape
+
+    # --- NiSkinPartition: SSE layout -------------------------------------
+    # NumPartitions, DataSize, VertexSize, VertexDesc(u64), shared vertex
+    # buffer, then per-partition: the classic 20.2.0.7 SkinPartition struct
+    # + LOD byte + GlobalVB bool + VertexDesc(u64) + TrianglesCopy (global
+    # shape vertex indices).  Byte-walk verified end-to-end on malebody_0.
+    _skp = NifFormat.NiSkinPartition
+    _orig_skp_read = _skp.read
+    _orig_skp_write = _skp.write
+    _orig_skp_get_size = _skp.get_size
+
+    def _skp_read(self, stream, data=None):
+        if not _is_sse(data):
+            _orig_skp_read(self, stream, data=data)
+            return
+        start = stream.tell()
+        nparts, dsize, vsize = _struct.unpack('<III', stream.read(12))
+        vdesc, = _struct.unpack('<Q', stream.read(8))
+        self.sse_vertex_desc = vdesc
+        nv_total = dsize // vsize if vsize else 0
+        dec = _decode_sse_vertex_block(stream.read(dsize), nv_total, vdesc)
+        for k, v in dec.items():
+            setattr(self, k, v)
+        self.sse_num_vertices = nv_total
+        parts = []
+        for _p in range(nparts):
+            nv, ntri, nbones, nstrips, wpv = _struct.unpack(
+                '<5H', stream.read(10))
+            bones = _struct.unpack('<%dH' % nbones, stream.read(2 * nbones))
+            part = {'bones': bones, 'num_weights_per_vertex': wpv,
+                    'vertex_map': None, 'weights': None,
+                    'bone_indices': None, 'triangles': None,
+                    'triangles_copy': None}
+            if stream.read(1)[0]:      # Has Vertex Map
+                part['vertex_map'] = np.frombuffer(
+                    stream.read(2 * nv), dtype='<u2').copy()
+            if stream.read(1)[0]:      # Has Vertex Weights
+                part['weights'] = np.frombuffer(
+                    stream.read(4 * nv * wpv),
+                    dtype='<f4').reshape(nv, wpv).copy()
+            strip_lens = _struct.unpack('<%dH' % nstrips,
+                                        stream.read(2 * nstrips))
+            has_faces = stream.read(1)[0]
+            if has_faces:
+                if nstrips:
+                    for sl in strip_lens:
+                        stream.read(2 * sl)
+                else:
+                    part['triangles'] = np.frombuffer(
+                        stream.read(6 * ntri),
+                        dtype='<u2').reshape(ntri, 3).copy()
+            if stream.read(1)[0]:      # Has Bone Indices
+                part['bone_indices'] = np.frombuffer(
+                    stream.read(nv * wpv),
+                    dtype=np.uint8).reshape(nv, wpv).copy()
+            stream.read(2)             # LOD Level + Global VB
+            stream.read(8)             # per-partition VertexDesc
+            part['triangles_copy'] = np.frombuffer(
+                stream.read(6 * ntri), dtype='<u2').reshape(ntri, 3).copy()
+            parts.append(part)
+        self.sse_partitions = parts
+        self._sse_size = stream.tell() - start
+
+    def _skp_get_size(self, data=None):
+        if hasattr(self, '_sse_size'):
+            return self._sse_size
+        return _orig_skp_get_size(self, data=data)
+
+    def _skp_write(self, stream, data=None):
+        if hasattr(self, '_sse_size'):
+            raise NifFormat.NifError(
+                'SSE-read NiSkinPartition is read-only: regenerate the '
+                'partition (skin_retarget._regen_skin_partition) before '
+                'writing')
+        _orig_skp_write(self, stream, data=data)
+
+    _skp.read = _skp_read
+    _skp.get_size = _skp_get_size
+    _skp.write = _skp_write
+
+    _refresh_attribute_caches(NifFormat, (NifFormat.BSTriShape,))
 
 
 # ---------------------------------------------------------------------------

@@ -29,17 +29,13 @@ _SKIN_TEX_PREFIX = 'textures\\characters\\'
 
 NIF_FLAGS = 14  # Standard Skyrim NiAVObject flags
 
-# Skyrim body-NIF source directory
-_SKYRIM_BODY_DIR = (Path(__file__).parent.parent /
-                    'references' / 'Skyrim Meshes' / 'meshes' /
-                    'actors' / 'character' / 'character assets')
-
 # Cache: (filepath) → list of NiTriShape blocks (cloned once, reused per NIF)
 _BODY_GEOM_CACHE: dict[str, list] = {}
 
 # Preferred path for body-fill geometry: the modified body (after modify_body_meshes.py
 # has been run) splits part-32 into torso(32)+upper-legs(44), preventing the cuirass
-# from hiding the legs.  Falls back to vanilla Skyrim Meshes if not yet generated.
+# from hiding the legs.  Falls back to the vanilla body auto-extracted from the
+# SSE BSAs (see skyrim_assets) if not yet generated.
 _SKYRIM_BODY_DIR_MODIFIED = (Path(__file__).parent.parent /
                              'output' / 'oblivion.esm' / 'meshes' /
                              'actors' / 'character' / 'character assets')
@@ -175,19 +171,28 @@ def load_body_geom(nif_basename: str) -> list:
         return _BODY_GEOM_CACHE[nif_basename]
 
     # Prefer modified body (split part-32 → torso+upper-legs) so spliced fill
-    # matches the character body in-game.  Fall back to vanilla Skyrim meshes.
-    path = _SKYRIM_BODY_DIR_MODIFIED / nif_basename
-    if not path.exists():
-        path = _SKYRIM_BODY_DIR / nif_basename
-    if not path.exists():
+    # matches the character body in-game.  Fall back to the vanilla body
+    # auto-extracted from the SSE BSAs (SSE-format — sse_nif rebuilds it
+    # into LE blocks).
+    source = _SKYRIM_BODY_DIR_MODIFIED / nif_basename
+    if not source.exists():
+        from .skyrim_assets import get_body_nif_bytes
+        source = get_body_nif_bytes(nif_basename)
+    if source is None:
+        print('[skin_replacement] WARNING: body mesh %s not found (no '
+              'modified body and no SSE install for BSA extraction) — '
+              'body-skin splice DISABLED, armor will have skin holes'
+              % nif_basename)
         _BODY_GEOM_CACHE[nif_basename] = []
         return []
 
-    body_data = NifFormat.Data()
     try:
-        with open(path, 'rb') as f:
-            body_data.read(f)
-    except Exception:
+        from .sse_nif import read_nif
+        body_data = read_nif(source)
+    except Exception as exc:
+        print('[skin_replacement] WARNING: failed to read body mesh %s (%s: '
+              '%s) — body-skin splice DISABLED, armor will have skin holes'
+              % (nif_basename, type(exc).__name__, exc))
         _BODY_GEOM_CACHE[nif_basename] = []
         return []
 

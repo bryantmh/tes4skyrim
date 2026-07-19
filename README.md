@@ -55,6 +55,7 @@ A decent PC. The more cores and ram the better. The more cores, the more ram it 
 | **[pytest](https://pytest.org/)** | Test runner | `pip install pytest` |
 | **ffmpeg** | Voice/sound audio conversion | On `PATH` |
 | **xWMAEncode.exe** | xWMA voice compression | See note below |
+| **LipGenerator.exe** | Lip sync generation | Install the Creation Kit |
 
 ```bash
 pip install PyFFI numpy scipy pytest
@@ -64,6 +65,8 @@ pip install PyFFI numpy scipy pytest
 > and cannot be redistributed. After installing the SDK, find it in `Utilities\bin\x86\`
 > and copy it to `external/xwmaencode/`. (You can also extract it from the SDK installer with
 > 7-Zip without a full install.)
+
+You also need to install the Skyrim SE Creation Kit from Steam (free)
 
 ---
 

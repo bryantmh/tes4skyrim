@@ -1,18 +1,5 @@
 Gameplan:
 	CK warnings M6
-	Refine Navmesh L5
-	Refine scripts - cleanup todos L20
-	Fix meshes L16 L23
-	Lip syncing L1
-
-Prompts:
-	Navmesh generation is starting to look really good but still needs refinement. I am going to list issues that I see along with a suggestion to fix them.
-	2) The triangles themselves have issues. For example, I see some really small triangles around corners and the triangles could stand to be a bit more equalateral (like a base game navmesh). Current AI has a bit of a hard time pathfinding. My suggestion to fix this is to decrease tolerance. Done by setting a minimum triangle size and angles and prioritizing the center mass and simply deleting triangles around the edges if they aren't up to snuff
-	4) The special "Door" triangles are not good. They need to be exactly at the door location and well placed. Currently they can be any shape and don't exactly mark the door entrance.
-	Ensure that you are testing multiple cells and types of cells to avoid local minima
-
-
-	Book are animated to open in the inventory. If we don't use the correct animated mesh, the book fails to open. We need to use skyrim book mesh inventory model INAM, BUT we ideally need to apply the oblivion texture for the book front/back covers and spine.
 
 Major Issues for V1:
 
@@ -31,43 +18,36 @@ Major Issues for V1:
 
 	6 - Fix all CK warnings
 
-	7 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting
-
-	8 - Need new skyrim body mesh to actually work to allow leg skin to appear
+	7 - Need new skyrim body mesh to actually work to allow leg skin to appear
 
 Later Issues:
 
-	4 - Refine dialog conversion
+	1 - Refine dialog conversion
 		Missing greetings
 		Creatures with wrong voices
 		Missing sound for many lines including barter lines
 
-	5 - Refine pathgrid conversion
-		Better handle door triangles.
-		Cull triangle groups below a certain area/size
-		Cull individual triangles below a certain size
-		Disallow navmesh in the same x and y coordinates within a certain threshold in the y direction
-		Disallow any navmesh triangles not connected to a teleporting door OR another cell.
-		Speed up conversion by 5x. Currently takes ~20 minutes
+	2 - Refine navmesh generation
 	
-	10 - Convert weathers
+	3 - Convert weathers
 
-	12 - Goblins don't properly hold weapons
+	4 - Goblins don't properly hold weapons
 
-	13 - Creature animation issues. Still needs a lot of work and refinement
-		Ragdoll is mangled, and animations don't look natural.
+	5 - Creature Ragdoll is mangled, and move too slowly
 
-	17 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
+	6 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
 
-	22 - Allow running process on zip (mod)
+	7 - Allow running process on zip (mod)
 
-	23 - Fix walking up stairs
+	8 - Fix walking up stairs
 
-	25 - NPC levels / health is inordinately high!
+	9 - NPC levels / health is inordinately high!
 
-	26 - statuegodszenithar01.nif is a red triangle ingame
+	10 - statuegodszenithar01.nif is a red triangle ingame
 
-	27 - Crime system
+	11 - Crime system
+
+	12 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting
 
 Minor Issues:
 

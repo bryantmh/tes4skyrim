@@ -29,13 +29,11 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 OBLIVION_SKELETON = os.path.join(BASE, 'export', 'Oblivion.esm', 'meshes',
                                  'characters', '_male', 'skeleton.nif')
-SKYRIM_SKELETON_MALE = os.path.join(BASE, 'references', 'Skyrim Meshes', 'meshes',
-                                    'actors', 'character', 'character assets',
-                                    'skeleton.nif')
-SKYRIM_SKELETON_FEMALE = os.path.join(BASE, 'references', 'Skyrim Meshes', 'meshes',
-                                      'actors', 'character',
-                                      'character assets female',
-                                      'skeleton_female.nif')
+# Vanilla Skyrim skeletons: auto-extracted from the SSE BSAs (skyrim_assets)
+SKYRIM_SKELETON_MALE = ('meshes\\actors\\character\\character assets\\'
+                        'skeleton.nif')
+SKYRIM_SKELETON_FEMALE = ('meshes\\actors\\character\\'
+                          'character assets female\\skeleton_female.nif')
 
 
 def _m44_to_list(m):
@@ -66,15 +64,21 @@ def _walk_bones(root, node, result):
                 _walk_bones(root, child, result)
 
 
-def extract_skeleton(nif_path):
+def extract_skeleton(source):
     """Extract all bone world-space transforms from a skeleton NIF.
 
-    Returns dict: bone_name -> 4x4 matrix (list of 4 lists of 4 floats)
+    source: a local file path, or a data-relative vanilla path (resolved and
+    auto-extracted via skyrim_assets).  Returns dict: bone_name -> 4x4 matrix
     in PyFFI's Matrix44 convention (row-vector: R in upper-left, t in row 4).
     """
-    data = NifFormat.Data()
-    with open(nif_path, 'rb') as f:
-        data.read(f)
+    from asset_convert.sse_nif import read_nif
+    if not os.path.isfile(source):
+        from asset_convert.skyrim_assets import get_asset_bytes
+        raw = get_asset_bytes(source)
+        if raw is None:
+            raise FileNotFoundError(source)
+        source = raw
+    data = read_nif(source)
 
     result = {}
     for root in data.roots:

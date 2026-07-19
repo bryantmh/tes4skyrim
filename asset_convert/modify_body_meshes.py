@@ -179,12 +179,14 @@ def _split_body_partition(nif_path, out_path):
 
     Returns True on success, False on any error.
     """
-    data = NifFormat.Data()
     try:
-        with open(nif_path, 'rb') as f:
-            data.read(f)
+        # sse_nif accepts a path or raw bytes (BSA-extracted SSE meshes) and
+        # returns an LE graph either way.
+        from asset_convert.sse_nif import read_nif
+        data = read_nif(nif_path)
     except Exception as e:
-        print(f'  ERROR reading {nif_path}: {e}')
+        src_label = '<BSA bytes>' if isinstance(nif_path, (bytes, bytearray)) else nif_path
+        print(f'  ERROR reading {src_label}: {e}')
         return False
 
     modified = False
@@ -338,10 +340,9 @@ def bsd_part_flags(bsd_part):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--skyrim-mesh-root',
-                        default=os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                             'references', 'Skyrim Meshes'),
-                        help='Path to extracted Skyrim meshes (default: references/Skyrim Meshes)')
+    parser.add_argument('--skyrim-mesh-root', default=None,
+                        help='Explicit extracted Skyrim meshes tree '
+                             '(default: auto-extract from the SSE BSAs)')
     parser.add_argument('--output-dir',
                         default=os.path.join(os.path.dirname(os.path.dirname(__file__)),
                                              'output', 'oblivion.esm', 'meshes',
@@ -350,8 +351,6 @@ def main():
                         help='Output directory for modified body meshes')
     args = parser.parse_args()
 
-    src_base = os.path.join(args.skyrim_mesh_root,
-                            'meshes', 'actors', 'character', 'character assets')
     # Only the body meshes carry a part-32 partition; hands/feet meshes use
     # parts 33/34/37/38 and are left vanilla.
     meshes = [
@@ -363,10 +362,18 @@ def main():
 
     ok = 0
     for fname, label in meshes:
-        src = os.path.join(src_base, fname)
-        if not os.path.exists(src):
-            print(f'Skip {fname}: not found')
-            continue
+        if args.skyrim_mesh_root:
+            src = os.path.join(args.skyrim_mesh_root, 'meshes', 'actors',
+                               'character', 'character assets', fname)
+            if not os.path.exists(src):
+                print(f'Skip {fname}: not found in --skyrim-mesh-root')
+                continue
+        else:
+            from asset_convert.skyrim_assets import get_body_nif_bytes
+            src = get_body_nif_bytes(fname)
+            if src is None:
+                print(f'Skip {fname}: no SSE install detected for BSA extraction')
+                continue
         dst = os.path.join(args.output_dir, fname)
         print(f'\nProcessing {fname} ({label}):')
         if _split_body_partition(src, dst):

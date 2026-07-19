@@ -29,8 +29,10 @@ shared STAT per model pointing at meshes\tes4\clutter\books\inv\<base>.nif.
 
 CLI:
     python -m asset_convert.book_inam Oblivion.esm [--extract-dir export]
-        [--output-dir output] [--templates-dir "references/Skyrim Meshes"]
+        [--output-dir output] [--templates-dir <explicit meshes tree>]
         [--skyrim-data "C:/.../Skyrim Special Edition/Data"] [--workers N]
+
+Templates are auto-extracted from the SSE BSAs by default (skyrim_assets).
 """
 
 import argparse
@@ -70,13 +72,11 @@ FLAT_NORMAL = (128, 128, 255, 255)  # RGBA flat tangent-space normal
 # ---------------------------------------------------------------------------
 
 def _read_nif(source):
-    data = NifFormat.Data()
-    if isinstance(source, (bytes, bytearray)):
-        data.read(io.BytesIO(source))
-    else:
-        with open(source, 'rb') as f:
-            data.read(f)
-    return data
+    # sse_nif handles LE, SSE (BSA-sourced templates) and Oblivion formats;
+    # SSE templates come back as complete LE graphs (partitions included) so
+    # emit_inam_nif can write them straight back out.
+    from asset_convert.sse_nif import read_nif
+    return read_nif(source)
 
 
 def _shape_textures(shape):
@@ -584,33 +584,30 @@ def _normal_sibling(tex_path):
 def load_templates(templates_dir=None, skyrim_data=None):
     """Return {'book': bytes, 'note': bytes} template NIFs.
 
-    Sources, in order: an on-disk Skyrim meshes tree (templates_dir, e.g. a
-    references clone), then the game's own Skyrim - Meshes*.bsa archives.
+    Sources, in order: an explicit on-disk Skyrim meshes tree (templates_dir),
+    then asset_convert.skyrim_assets (references tree -> extraction cache ->
+    the game's own SSE BSAs, auto-detected via registry).
     """
+    from asset_convert import skyrim_assets
+
+    if skyrim_data:
+        skyrim_assets.set_skyrim_data(skyrim_data)
     out = {}
     wanted = {'book': BOOK_TEMPLATE, 'note': NOTE_TEMPLATE}
-    if templates_dir:
-        for key, rel in wanted.items():
+    for key, rel in wanted.items():
+        if templates_dir:
             p = os.path.join(templates_dir, *rel.split('\\'))
             if os.path.isfile(p):
                 out[key] = open(p, 'rb').read()
-    missing = [k for k in wanted if k not in out]
-    if missing and skyrim_data:
-        from asset_convert.bsa_extract import read_bsa_files
-        for bsa in sorted(Path(skyrim_data).glob('Skyrim - Meshes*.bsa')):
-            found = read_bsa_files(str(bsa), [wanted[k] for k in missing])
-            for k in list(missing):
-                key_path = wanted[k].lower()
-                if key_path in found:
-                    out[k] = found[key_path]
-                    missing.remove(k)
-            if not missing:
-                break
+                continue
+        raw = skyrim_assets.get_asset_bytes(rel)
+        if raw is not None:
+            out[key] = raw
     still = [k for k in wanted if k not in out]
     if still:
         raise FileNotFoundError(
-            'book INAM templates not found (%s); pass --templates-dir pointing '
-            'at a Skyrim meshes tree or --skyrim-data at the SSE Data folder'
+            'book INAM templates not found (%s); no references tree and no '
+            'SSE install detected — pass --templates-dir or --skyrim-data'
             % ', '.join(wanted[k] for k in still))
     return out
 
@@ -715,8 +712,12 @@ def generate_book_inams(source_file, extract_dir='export', output_dir='output',
     n_workers = workers if workers is not None else max(1, cpu_count() - 1)
     n_workers = min(n_workers, len(models))
     init_args = (tpls['book'], tpls['note'], export_subdir, out_root)
+    # Validate templates in the parent BEFORE spawning workers: an initializer
+    # crash in a pool worker (e.g. an SSE-format BSTriShape template pyffi
+    # can't parse) surfaces only as an opaque BrokenProcessPool — and the
+    # worker's stderr is invisible when multiprocessing runs pythonw.exe.
+    _worker_init(*init_args)
     if n_workers <= 1:
-        _worker_init(*init_args)
         results = [_convert_one(m) for m in models]
     else:
         with ProcessPoolExecutor(max_workers=n_workers, initializer=_worker_init,
@@ -735,19 +736,15 @@ def main(argv=None):
     ap.add_argument('--extract-dir', default='export')
     ap.add_argument('--output-dir', default='output')
     ap.add_argument('--templates-dir', default=None,
-                    help='Skyrim meshes tree containing the reading templates '
-                         '(default: references/Skyrim Meshes if present)')
+                    help='explicit Skyrim meshes tree containing the reading '
+                         'templates (default: auto-extract from the SSE BSAs)')
     ap.add_argument('--skyrim-data', default=None,
-                    help='Skyrim SE Data folder (templates read from BSAs)')
+                    help='Skyrim SE Data folder (default: registry-detected)')
     ap.add_argument('--workers', type=int, default=None)
     args = ap.parse_args(argv)
 
-    templates_dir = args.templates_dir
-    if templates_dir is None and os.path.isdir(os.path.join('references', 'Skyrim Meshes')):
-        templates_dir = os.path.join('references', 'Skyrim Meshes')
-
     stats = generate_book_inams(args.source_file, args.extract_dir, args.output_dir,
-                                templates_dir, args.skyrim_data, args.workers)
+                                args.templates_dir, args.skyrim_data, args.workers)
     print('book_inam: ok=%(ok)d skip=%(skip)d fail=%(fail)d' % stats)
     return 0 if stats['fail'] == 0 else 1
 

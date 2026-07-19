@@ -12,6 +12,7 @@ Convert TES4 (Oblivion) master/plugin files to TES5 (Skyrim) format.
 
 -The export is a PURE dump of TES4 data. No type mapping (CREA→NPC_), no field derivation, no path prefixing. ALL transformations belong in the import script.
 - You can access OG skyrim meshes for comparison in `references\Skyrim Meshes`. A skyrim esm dump for comparison is in `Rreferences\Skyrim.esm`. Real Skyrim .nif files for analysis/testing are in the `references` folder.
+- **`references/` is for comparison/analysis ONLY — the pipeline must NEVER resolve runtime assets through it.** Any vanilla Skyrim file the conversion needs is fetched via `asset_convert/skyrim_assets.py` (cache in `export/skyrim_assets/`, else auto-extracted from the SSE BSAs via registry-detected install). BSA meshes are SSE-format; read them with `asset_convert/sse_nif.py` (`read_nif` accepts bytes or path, converts BSTriShape graphs to LE NiTriShape graphs in-memory — pyffi Patch 8 provides the SSE read layouts). Output is always written LE (uv2=83), which SSE loads natively.
 - Only run NIF comparisons on a maximum of 10 NIFs at a time when single-threaded. Search for a folder structure and run comparisons on a deeply nested subfolder likely to have the attributes you want.
 - **NEVER run tests on a large batch of NIFs without many workers** — it takes an excessively long time. When testing conversion with nif_converter, use the full number of workers (`cpu_count() - 1`).
 - Compare the `output\` mesh with a few similar Skyrim meshes and the `export\` mesh.
