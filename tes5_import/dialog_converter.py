@@ -94,6 +94,62 @@ def get_lip_texts() -> dict:
     build_dialog_groups run."""
     return _lip_texts
 
+
+# {info_fid24: set of VTYP FormIDs that have an actual recording}, scanned
+# from the extracted Oblivion voice tree. Oblivion ships MANY generic lines
+# (rumors, greetings, conversation-system chatter) recorded for only a subset
+# of the race/gender voice folders — the engine picked them for everyone and
+# played silence for the rest. Skyrim is worse: a selected line with no voice
+# file flashes past unreadably. _build_injected_ctdas narrows each generic
+# INFO's GetIsVoiceType chain to the voice types that can actually play it, so
+# other voice types fall through to a sibling line that IS voiced for them.
+# Set per build_dialog_groups run via build_voice_inventory().
+_voice_inventory: dict = {}
+
+
+def build_voice_inventory(voice_root) -> dict:
+    """Scan the extracted TES4 voice tree into {info_fid24: set(VTYP fid)}.
+
+    Layout: <voice_root>/<plugin>/<race folder>/<f|m>/<prefix>_<fid8>_<n>.mp3.
+    Race folder names ('high elf', 'golden saint', ...) map to the same
+    custom VTYP records the NPC VTCK assignment uses, so the sets compare
+    directly against npc_to_vtyp values."""
+    import re as _re
+    from pathlib import Path
+    from .skyrim_overrides import CUSTOM_VTYP_EDIDS, VOICE_TYPE_MAP
+
+    # 'HighElf' -> 'high elf' etc. (insert space at lower->Upper boundaries)
+    folder_to_key = {}
+    for (race_edid, gender) in CUSTOM_VTYP_EDIDS.values():
+        folder = _re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', race_edid).lower()
+        folder_to_key[(folder, gender[0].lower())] = (race_edid, gender)
+
+    fname_re = _re.compile(r'_([0-9a-fA-F]{8})_\d+\.(mp3|wav)$')
+    inventory: dict = {}
+    root = Path(voice_root)
+    if not root.exists():
+        return inventory
+    for plugin_dir in root.iterdir():
+        if not plugin_dir.is_dir():
+            continue
+        for race_dir in plugin_dir.iterdir():
+            if not race_dir.is_dir():
+                continue
+            for gender_dir in race_dir.iterdir():
+                if not gender_dir.is_dir():
+                    continue
+                key = folder_to_key.get((race_dir.name.lower(),
+                                         gender_dir.name.lower()[:1]))
+                vt_fid = VOICE_TYPE_MAP.get(key) if key else None
+                if not vt_fid:
+                    continue
+                for f in gender_dir.iterdir():
+                    m = fname_re.search(f.name)
+                    if m:
+                        fid24 = int(m.group(1), 16) & 0xFFFFFF
+                        inventory.setdefault(fid24, set()).add(vt_fid)
+    return inventory
+
 # TES4 DIAL.Type enum
 DIAL_TYPE_TOPIC = 0
 DIAL_TYPE_CONVERSATION = 1
@@ -1109,7 +1165,8 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                         voice_map: dict = None,
                         unlock_plan: dict = None,
                         unlock_globals: dict = None,
-                        script_vars: dict = None) -> set:
+                        script_vars: dict = None,
+                        voice_dir=None) -> set:
     """Build the DIAL/INFO/DLBR/DLVW hierarchy with original-quest ownership.
 
     Returns the set of quest FormIDs that must go in the .seq file (the
@@ -1119,9 +1176,22 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     voice_map, when given, is filled with {info_fid_low24: voice filename
     prefix} so the audio pipeline can name extracted voice files the way the
     Skyrim engine will look them up (owning quest EDID + topic EDID).
+
+    voice_dir, when given, is the extracted TES4 sound/Voice tree; injected
+    GetIsVoiceType chains on generic INFOs are narrowed to voice types that
+    actually have a recording of the line.
     """
 
     _lip_texts.clear()
+    _voice_inventory.clear()
+    if voice_dir:
+        _voice_inventory.update(build_voice_inventory(voice_dir))
+        if _voice_inventory:
+            print(f"  Voice inventory: {len(_voice_inventory)} recorded lines "
+                  f"from {voice_dir}")
+        else:
+            print(f"  WARNING: no voice recordings found under {voice_dir} — "
+                  f"generic voice gates will not be narrowed to voiced types")
     dials = by_type.get('DIAL', [])
     infos = by_type.get('INFO', [])
     if not dials:
@@ -1400,6 +1470,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
           f"infos={stats['infos']} "
           f"branches={stats['branches']} views={stats['views']} "
           f"skipped={stats['skipped']} voice-gated={stats['voice_gated']} "
+          f"voice-narrowed={stats['voice_narrowed']} "
           f"id-gated={stats['id_gated']} unlock-gated={stats['unlock_gated']} "
           f"revealers={stats['revealers']} quest-gated={stats['quest_gated']} "
           f"quest-cond-gated={stats['quest_cond_gated']}")
@@ -1916,8 +1987,32 @@ def _build_injected_ctdas(info_rec, is_bark, npc_to_vtyp, topic_vtyps,
     if own_npcs:
         vtyps = {npc_to_vtyp[n] for n in own_npcs if n in npc_to_vtyp}
     else:
-        # Generic INFO: inherit the topic's voice types (greetings included).
+        # Generic INFO: inherit the topic's voice types (greetings included),
+        # narrowed to the types that actually have a recording of THIS line —
+        # Oblivion recorded many generic lines for only a few race folders, and
+        # a voice type routed to a line with no audio plays an unreadable
+        # silent flash in Skyrim; narrowing lets it pick a voiced sibling
+        # instead. The recorded folders are ground truth of who speaks a line
+        # (INFOGENERAL race/sex-conditioned lines are recorded for exactly
+        # that audience), so an EMPTY intersection replaces the inherited set
+        # rather than keeping it — a gate that excludes the line's own
+        # recorded voice type contradicts its GetIsRace/GetIsSex conditions
+        # and the line can never play at all. Ungated generic lines (incl.
+        # barks and service-menu lines) get the recorded set as their gate:
+        # voice types with no recording fall through to a voiced sibling /
+        # catch-all instead of a silent flash; a line with NO recordings at
+        # all stays ungated (unvoiced content is kept, as in Oblivion).
+        # NPC-specific (GetIsID) lines are never touched — the NPC must keep
+        # their line even unvoiced.
         vtyps = set(topic_vtyps)
+        if _voice_inventory:
+            recorded = _voice_inventory.get(
+                get_formid(info_rec, 'FormID') & 0xFFFFFF)
+            if recorded:
+                narrowed = (vtyps & recorded) or set(recorded)
+                if narrowed != vtyps:
+                    vtyps = narrowed
+                    stats['voice_narrowed'] += 1
     voice_bytes = b''
     if vtyps:
         voice_bytes = build_or_chain(FUNC_GET_IS_VOICE_TYPE, sorted(vtyps))

@@ -560,6 +560,38 @@ def organize_voice_files(
         return {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0,
                 'unmapped_races': set()}
 
+    # Prune stale output files. The runtime filename prefix embeds quest/topic
+    # EditorIDs (which embed allocated FormIDs), so any import re-run can
+    # rename a line's expected file; organize skips existing dst files and
+    # never cleaned the old names, leaving thousands of orphans the engine
+    # can't resolve. The voicemap is authoritative: a file whose InfoID is
+    # unknown, whose prefix differs, or which sits outside its line's
+    # relocation folders is dead weight from a previous build.
+    pruned = 0
+    if voice_map and plugin_name:
+        plugin_out = dest_dir / 'sound' / 'Voice' / plugin_name
+        if plugin_out.exists():
+            for vt_dir in plugin_out.iterdir():
+                if not vt_dir.is_dir():
+                    continue
+                folder_l = vt_dir.name.lower()
+                for f in vt_dir.iterdir():
+                    m = _VOICE_FILENAME_RE.match(f.name)
+                    if not m or not f.is_file():
+                        continue
+                    entry = voice_map.get(int(m.group(2), 16) & 0xFFFFFF)
+                    stale = (
+                        entry is None
+                        or m.group(1).lower() != entry[0].lower()
+                        or (entry[1]
+                            and folder_l not in {v.lower() for v in entry[1]}))
+                    if stale:
+                        f.unlink()
+                        pruned += 1
+        if pruned:
+            print(f'  Pruned {pruned} stale voice files '
+                  f'(prefix/location no longer matches the voicemap)')
+
     ffmpeg = None
     xwmaencode = None
     lipgenerator = None
@@ -585,7 +617,8 @@ def organize_voice_files(
                 print('  WARNING: LipGenerator.exe not found (SSE Tools/LipGen) '
                       '-- voice converts without lip sync (.xwm only)')
 
-    stats = {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0}
+    stats = {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0,
+             'pruned': pruned, 'unconverted': 0}
     unmapped_races: set = set()
     conversion_jobs: list[tuple] = []   # (src_path, dst_path)
 
@@ -640,8 +673,15 @@ def organize_voice_files(
                     target_vtyps = []
                     if voice_map:
                         entry = voice_map.get(fid24)
-                        if entry is not None:
-                            prefix, target_vtyps = entry
+                        if entry is None:
+                            # No converted INFO carries this FormID (skipped
+                            # topic types: ServiceRefusal, persuasion, NPC-NPC
+                            # conversation shells). The engine can never play
+                            # audio for a record that doesn't exist — and the
+                            # prune pass would delete it again every run.
+                            stats['unconverted'] += 1
+                            continue
+                        prefix, target_vtyps = entry
                     # Transcript available + LipGenerator → lip-synced .fuz;
                     # otherwise bare .xwm (audio only, mouth won't move).
                     text = None
@@ -720,5 +760,6 @@ def organize_voice_files(
     print(f'  Voice files: {stats["organized"]} organised, '
           f'{stats["skipped"]} already present, '
           f'{stats["errors"]} errors, '
-          f'{stats["no_match"]} unrecognised names')
+          f'{stats["no_match"]} unrecognised names, '
+          f'{stats["unconverted"]} for records not in the output ESM (skipped)')
     return {**stats, 'unmapped_races': unmapped_races}

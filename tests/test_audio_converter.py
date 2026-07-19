@@ -421,6 +421,40 @@ def test_organize_voice_files_no_match_counted(tmp_path):
     assert result['organized'] == 0
 
 
+def test_organize_voice_files_prunes_stale_outputs(tmp_path):
+    """Output files whose prefix/location no longer matches the voicemap are
+    deleted: the prefix embeds quest/topic EditorIDs that change across import
+    runs, and the engine can never resolve the old names."""
+    plugin = 'Test.esm'
+    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    voice_src.mkdir(parents=True, exist_ok=True)
+    out_vt = tmp_path / 'output' / 'sound' / 'Voice' / plugin / 'TES4MaleNord'
+    out_vt.mkdir(parents=True, exist_ok=True)
+    stale_prefix = out_vt / 'oldquest_oldtopic_0000a1b2_1.xwm'
+    stale_gone = out_vt / 'quest_topic_0000ffff_1.xwm'
+    current = out_vt / 'newquest_newtopic_0000a1b2_1.xwm'
+    for f in (stale_prefix, stale_gone, current):
+        f.write_bytes(b'xwm')
+    # NPC-specific line relocated to TES4MaleImperial: the Nord-folder copy
+    # is dead weight (the engine only reads the speaker's VTYP folder).
+    stale_loc = out_vt / 'q_reloc_0000b3c4_1.xwm'
+    stale_loc.write_bytes(b'xwm')
+
+    result = organize_voice_files(
+        source_dir=str(tmp_path / 'extract'),
+        dest_dir=str(tmp_path / 'output'),
+        plugin_name=plugin,
+        convert_audio=False,
+        voice_map={0x00A1B2: 'newquest_newtopic',
+                   0x00B3C4: ('q_reloc', ['TES4MaleImperial'])},
+    )
+    assert result['pruned'] == 3
+    assert not stale_prefix.exists()
+    assert not stale_gone.exists()
+    assert not stale_loc.exists()
+    assert current.exists()
+
+
 def test_organize_voice_files_missing_voice_dir(tmp_path):
     """Returns zero counts if no Voice directory exists; does not raise."""
     result = organize_voice_files(

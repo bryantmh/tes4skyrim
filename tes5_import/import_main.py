@@ -598,7 +598,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     # --- Phase 5: DIAL/INFO hierarchy ---
     voice_map = {}
-    dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map, unlock_plan=unlock_plan, unlock_globals=unlock_globals, script_vars=_script_vars)
+    dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map, unlock_plan=unlock_plan, unlock_globals=unlock_globals, script_vars=_script_vars, voice_dir=os.path.join(export_dir, 'sound', 'Voice'))
     sge_quest_fids |= dialog_sge_fids
     _write_voice_map(output_path, voice_map)
     from .dialog_converter import get_lip_texts
