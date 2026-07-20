@@ -50,7 +50,15 @@ A template root declares its public inputs as an ordered `UNAM`/`BNAM`/`PNAM`
 list. An instance must supply values in a parallel `ANAM`(+`CNAM`/`PLDT`/`PTDA`)
 list, then repeat the same `UNAM` index list, then `XNAM`.
 
-Verified instance — `WERoad02Follow` (`0010F589`), a Follow instance:
+Verified instance — `WERoad02Follow` (`0010F589`), a Follow instance.
+**⚠ WERoad02 is a HORSEBACK world encounter — its `Ride Horse?=1` /
+`Prefer Preferred Path?=1` values are the exception, not the norm (root and
+41/44 vanilla Escort instances, 121/124 Follow instances use 0). Freezing
+those values as converter defaults made every converted escort/follow NPC
+stand still (a horseless actor with Ride Horse?=1 never moves — Pinarus
+Inventius in FGC01Rats). Defaults now mirror the template ROOT; the TES4
+Use-Horse flag (PKDT 0x00800000, 65 packages) sets `ride_horse` explicitly
+in `pack_converter._choose()`. Fixed 2026-07-19.**
 
 ```
 PKDT.hex = 00000000 12 00 02 82 FFFF 0000   ; Type=18 (instance)

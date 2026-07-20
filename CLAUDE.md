@@ -294,6 +294,10 @@ TES4 uses an imperative scripting language with event blocks (GameMode, OnActiva
 - `pme`/`sme` (PlayMagicEffectVisuals) take a MGEF code, not a shader: resolve code → TES4 MGEF → its `DATA.EffectShader` (else EnchantEffect, else school enchant glow) → converted EFSH, and emit `<shader>.Play(ref, dur)`. EFSH records are converted, so the property binds.
 - `IsSpellTarget X` → `TES4Polyfill.HasMagicEffectByID(ref, <Skyrim MGEF fid>)` where the MGEF is the spell's first effect surviving import (same mapping as `_pack_effects`); pure script-effect spells are detected via the importer's first filler effect, which keeps the dropped effect's duration for exactly this reason.
 - `begin OnAlarm` → `OnCombatStateChanged` guarded `aeCombatState != 0`; `OnStartCombat` bodies are guarded `== 1` (the event also fires on combat END).
+- Bare `begin MenuMode` + `isPCSleeping` (Oblivion's sleep-detection idiom) → `RegisterForSleep()` + OnSleepStart/OnSleepStop running the body twice with a `TES4_PCSleeping` flag (11 quests incl. MG04 inn ambush, Rufio murder, vampirism relied on it). Menu-ID MenuMode blocks stay commented out.
+- `GetSecondsPassed` substitutes `_get_update_interval()` (must equal the RegisterForSingleUpdate arg or timers run off-rate); TES4 `Say`/`SayTo` returned the line duration — assignments get `SAY_LINE_SECONDS` (3.0) so polling conversations don't machine-gun.
+- Run-on-Target CTDAs in Say()-driven topics can never pass (Say has no dialogue target) — the importer retargets them to RunOn=Reference (unique script target, usually PlayerRef) or drops them (mixed targets); see docs/dialogue_conversion_notes.md 2026-07-19.
+- Converted Escort/Follow/Travel packages must keep "Ride Horse?"=0 unless the TES4 package set Use-Horse (0x00800000) — ride_horse=1 on a horseless NPC freezes them in place (Pinarus/FGC01Rats).
 - Vanilla forms with no TES4 counterpart are reached via `Game.GetFormFromFile(0x..., "Skyrim.esm")` in TES4Polyfill (ActorTypeNPC keyword for GetIsCreature, GuardDialogueFaction for IsGuard, PlayerVampireQuestScript.VampireStatus for HasVampireFed) — no property binding needed.
 
 ## Development Workflow

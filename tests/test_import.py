@@ -1447,6 +1447,213 @@ class TestServiceConversion:
         assert 0x03568F in plan['gated'], \
             'topic mentioned only in bark prose must stay gated'
 
+    def test_convert_qust_writes_boosted_priority(self):
+        """The bug this whole class exists to catch: a fix that only changes
+        the DERIVED DIAL PNAM (used for merged bark topics) but not the QUST
+        record's OWN DNAM.Priority byte has NO EFFECT in-game, because the
+        engine arbitrates dialogue on the quest's own priority. convert_QUST
+        must write the EFFECTIVE (boosted) priority, not the raw TES4 value."""
+        from tes5_import.dialog_converter import compute_quest_priorities, convert_QUST
+        staged = {'Signature': 'QUST', 'FormID': '00035713',
+                 'EditorID': 'RealQuest', 'DATA.Flags': '0',
+                 'DATA.Priority': '60', 'StageCount': '1',
+                 'Stage[0].Index': '10'}
+        container = {'Signature': 'QUST', 'FormID': '00035714',
+                    'EditorID': 'ContainerQuest', 'DATA.Flags': '1',
+                    'DATA.Priority': '61', 'StageCount': '0'}
+        by_type = {'QUST': [staged, container]}
+        compute_quest_priorities(by_type)
+
+        staged_bytes = convert_QUST(staged)
+        container_bytes = convert_QUST(container)
+        staged_dnam = self._subrecords(staged_bytes)['DNAM'][0]
+        container_dnam = self._subrecords(container_bytes)['DNAM'][0]
+        staged_priority = staged_dnam[2]     # Priority is byte offset 2 in DNAM
+        container_priority = container_dnam[2]
+        assert container_priority < staged_priority, \
+            (f'container QUST.DNAM.Priority={container_priority} still '
+             f'>= staged QUST.DNAM.Priority={staged_priority}: the engine '
+             'reads this field directly, so the fix must land here')
+        # The raw authored value (61) must not survive unboosted-vs-boosted —
+        # confirms the write path actually consulted the override table.
+        assert container_priority != 61 or staged_priority > 60
+
+    def test_zero_stage_quest_never_outranks_staged_greeting(self):
+        """A zero-stage 'conversation container' quest (MG00General-style,
+        priority 61 in vanilla) must never outrank a REAL staged quest's
+        GREETING (priority 60) in the merged HELO bark group. Oblivion ran
+        GREETING and HELLO as separate channels, so a container quest's
+        authored priority never had to compete with a staged quest's
+        on-activate briefing; merged into one Skyrim HELO topic per quest, the
+        higher-priority container's cover line won and the staged quest's
+        SetStage-advancing briefing never played (symptom: NPC only gives a
+        generic greeting, journal stage correct, every record field verified
+        individually correct — MG00General/MG04Restore/Arielle Jurard,
+        2026-07-20)."""
+        from tes5_import.dialog_converter import build_dialog_groups
+        from tes5_import.text_reader import set_formid_index_offset
+        set_formid_index_offset(0)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+
+        staged = {'Signature': 'QUST', 'FormID': '00035713',
+                 'EditorID': 'RealQuest', 'DATA.Flags': '0',
+                 'DATA.Priority': '60', 'StageCount': '1',
+                 'Stage[0].Index': '10'}
+        container = {'Signature': 'QUST', 'FormID': '00035714',
+                    'EditorID': 'ContainerQuest', 'DATA.Flags': '1',
+                    'DATA.Priority': '61', 'StageCount': '0'}
+
+        greeting = {'Signature': 'DIAL', 'FormID': '000000C8',
+                   'EditorID': 'GREETING', 'FULL': 'GREETING',
+                   'DATA.Type': '0', 'QuestCount': '1',
+                   'Quest[0]': '00035713'}
+        staged_info = {'Signature': 'INFO', 'FormID': '00036622',
+                      'RecordFlags': '0', 'ParentDIAL': '000000C8',
+                      'DATA.Flags': '0', 'QSTI.Quest': '00035713',
+                      'ResponseCount': '1', 'Response[0].EmotionType': '0',
+                      'Response[0].EmotionValue': '50',
+                      'Response[0].ResponseNumber': '1',
+                      'Response[0].ResponseText': 'The staged briefing line.'}
+
+        hello = {'Signature': 'DIAL', 'FormID': '000000D2',
+                'EditorID': 'HELLO', 'FULL': 'HELLO',
+                'DATA.Type': '1', 'QuestCount': '1',
+                'Quest[0]': '00035714'}
+        container_info = {'Signature': 'INFO', 'FormID': '00036623',
+                          'RecordFlags': '0', 'ParentDIAL': '000000D2',
+                          'DATA.Flags': '0', 'QSTI.Quest': '00035714',
+                          'ResponseCount': '1', 'Response[0].EmotionType': '0',
+                          'Response[0].EmotionValue': '50',
+                          'Response[0].ResponseNumber': '1',
+                          'Response[0].ResponseText': 'Generic cover line.'}
+
+        by_type = {'QUST': [staged, container],
+                  'DIAL': [greeting, hello],
+                  'INFO': [staged_info, container_info]}
+        build_dialog_groups(by_type, writer, npc_to_vtyp={})
+
+        # Each quest's HELO INFO forms its own per-quest merged bark topic
+        # (Skyrim: one HELO topic per quest owner). Find both by their FULL
+        # text — a DIAL-level PNAM race, exactly like MG00General (61) vs
+        # MG04Restore (60) — and confirm the container quest's DIAL priority
+        # no longer sits above the staged quest's.
+        dial_group = b''.join(writer._top_groups.get('DIAL', []))
+        staged_topic = self._topic_owning_info(dial_group, 0x00036622)
+        container_topic = self._topic_owning_info(dial_group, 0x00036623)
+        assert staged_topic is not None, 'staged quest HELO topic not found'
+        assert container_topic is not None, \
+            'container quest HELO topic not found'
+        staged_prio = struct.unpack(
+            '<f', self._subrecords(staged_topic)['PNAM'][0][:4])[0]
+        container_prio = struct.unpack(
+            '<f', self._subrecords(container_topic)['PNAM'][0][:4])[0]
+        assert container_prio < staged_prio, \
+            (f'container quest priority {container_prio} still outranks '
+             f'the staged quest priority {staged_prio}')
+
+    def test_zero_stage_quests_keep_relative_priority_order(self):
+        """Boosting staged quests above the zero-stage ceiling must be a
+        uniform shift, not a clamp that collapses zero-stage quests together —
+        125 vanilla zero-stage quests (Dark00General=50, MQConversations=85,
+        ...) arbitrate AMONG EACH OTHER too (two factions' idle chatter
+        competing for the same generic NPC); losing that ordering would hand
+        the decision to file order instead."""
+        from tes5_import.dialog_converter import build_dialog_groups
+        from tes5_import.text_reader import set_formid_index_offset
+        set_formid_index_offset(0)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+
+        staged = {'Signature': 'QUST', 'FormID': '00035713',
+                 'EditorID': 'RealQuest', 'DATA.Flags': '0',
+                 'DATA.Priority': '60', 'StageCount': '1',
+                 'Stage[0].Index': '10'}
+        # Two zero-stage containers whose ORIGINAL priorities (85 vs 50) must
+        # stay ordered the same way after both get squeezed below 60.
+        high_container = {'Signature': 'QUST', 'FormID': '00035715',
+                          'EditorID': 'HighContainer', 'DATA.Flags': '1',
+                          'DATA.Priority': '85', 'StageCount': '0'}
+        low_container = {'Signature': 'QUST', 'FormID': '00035716',
+                         'EditorID': 'LowContainer', 'DATA.Flags': '1',
+                         'DATA.Priority': '50', 'StageCount': '0'}
+
+        greeting = {'Signature': 'DIAL', 'FormID': '000000C8',
+                   'EditorID': 'GREETING', 'FULL': 'GREETING',
+                   'DATA.Type': '0', 'QuestCount': '1',
+                   'Quest[0]': '00035713'}
+        staged_info = {'Signature': 'INFO', 'FormID': '00036622',
+                      'RecordFlags': '0', 'ParentDIAL': '000000C8',
+                      'DATA.Flags': '0', 'QSTI.Quest': '00035713',
+                      'ResponseCount': '1', 'Response[0].EmotionType': '0',
+                      'Response[0].EmotionValue': '50',
+                      'Response[0].ResponseNumber': '1',
+                      'Response[0].ResponseText': 'The staged briefing line.'}
+        hello = {'Signature': 'DIAL', 'FormID': '000000D2',
+                'EditorID': 'HELLO', 'FULL': 'HELLO',
+                'DATA.Type': '1', 'QuestCount': '1',
+                'Quest[0]': '00035715'}
+        high_info = {'Signature': 'INFO', 'FormID': '00036624',
+                    'RecordFlags': '0', 'ParentDIAL': '000000D2',
+                    'DATA.Flags': '0', 'QSTI.Quest': '00035715',
+                    'ResponseCount': '1', 'Response[0].EmotionType': '0',
+                    'Response[0].EmotionValue': '50',
+                    'Response[0].ResponseNumber': '1',
+                    'Response[0].ResponseText': 'High-priority container line.'}
+        goodbye = {'Signature': 'DIAL', 'FormID': '000000D4',
+                  'EditorID': 'GOODBYE', 'FULL': 'GOODBYE',
+                  'DATA.Type': '1', 'QuestCount': '1',
+                  'Quest[0]': '00035716'}
+        low_info = {'Signature': 'INFO', 'FormID': '00036625',
+                   'RecordFlags': '0', 'ParentDIAL': '000000D4',
+                   'DATA.Flags': '0', 'QSTI.Quest': '00035716',
+                   'ResponseCount': '1', 'Response[0].EmotionType': '0',
+                   'Response[0].EmotionValue': '50',
+                   'Response[0].ResponseNumber': '1',
+                   'Response[0].ResponseText': 'Low-priority container line.'}
+
+        by_type = {'QUST': [staged, high_container, low_container],
+                  'DIAL': [greeting, hello, goodbye],
+                  'INFO': [staged_info, high_info, low_info]}
+        build_dialog_groups(by_type, writer, npc_to_vtyp={})
+
+        dial_group = b''.join(writer._top_groups.get('DIAL', []))
+        staged_topic = self._topic_owning_info(dial_group, 0x00036622)
+        high_topic = self._topic_owning_info(dial_group, 0x00036624)
+        low_topic = self._topic_owning_info(dial_group, 0x00036625)
+        assert staged_topic is not None
+        assert high_topic is not None and low_topic is not None
+        staged_prio = struct.unpack(
+            '<f', self._subrecords(staged_topic)['PNAM'][0][:4])[0]
+        high_prio = struct.unpack(
+            '<f', self._subrecords(high_topic)['PNAM'][0][:4])[0]
+        low_prio = struct.unpack(
+            '<f', self._subrecords(low_topic)['PNAM'][0][:4])[0]
+        assert high_prio > low_prio, \
+            ('zero-stage quests lost their relative order: '
+             f'HighContainer(was 85)={high_prio} <= LowContainer(was 50)={low_prio}')
+        assert high_prio < staged_prio and low_prio < staged_prio, \
+            'both containers must still sit below the staged quest'
+
+    def _topic_owning_info(self, dial_group_bytes, info_fid):
+        """Find the DIAL record whose group directly contains an INFO with
+        this FormID (walks GRUP boundaries the way real ESM nesting does)."""
+        pos = 0
+        n = len(dial_group_bytes)
+        current_dial = None
+        while pos + RECORD_HEADER_SIZE <= n:
+            rsig = dial_group_bytes[pos:pos + 4]
+            size = struct.unpack_from('<I', dial_group_bytes, pos + 4)[0]
+            if rsig == b'GRUP':
+                pos += RECORD_HEADER_SIZE
+                continue
+            rfid = struct.unpack_from('<I', dial_group_bytes, pos + 12)[0]
+            rec = dial_group_bytes[pos:pos + RECORD_HEADER_SIZE + size]
+            pos += RECORD_HEADER_SIZE + size
+            if rsig == b'DIAL':
+                current_dial = rec
+            elif rsig == b'INFO' and rfid == info_fid:
+                return current_dial
+        return None
+
     def _find_record(self, group_bytes, sig, formid, snam=None):
         """Find a record by (sig, formid) or by (sig, SNAM value) in a group."""
         pos = 0
@@ -1891,3 +2098,44 @@ class TestCKWarningFixes:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])
+
+
+class TestSayTopicRetarget:
+    """Run-on-Target conditions in Say-driven topics (2026-07-19)."""
+
+    def _raw_ctda(self, run_on_target=True):
+        import struct
+        # GetIsID(00012345) == 1.0, TES4 24-byte CTDA
+        type_byte = 0x02 if run_on_target else 0x00   # CTDA_RUN_ON_TARGET
+        return struct.pack('<B3xfHHII4x', type_byte, 1.0, 72, 0, 0x00012345, 0)
+
+    def test_retarget_to_reference(self):
+        import struct
+        from tes5_import.dialog_conditions import convert_ctda
+        out = convert_ctda(self._raw_ctda(), offset=1,
+                           run_on_target_ref=0x14)
+        assert out is not None
+        run_on, reference = struct.unpack_from('<II', out, 20)
+        assert run_on == 2          # Reference
+        assert reference == 0x14    # PlayerRef
+        assert out[0] & 0x02 == 0   # flag bit cleared
+
+    def test_drop_run_on_target(self):
+        from tes5_import.dialog_conditions import convert_ctda
+        assert convert_ctda(self._raw_ctda(), offset=1,
+                            drop_run_on_target=True) is None
+
+    def test_default_still_target(self):
+        import struct
+        from tes5_import.dialog_conditions import convert_ctda
+        out = convert_ctda(self._raw_ctda(), offset=1)
+        run_on, reference = struct.unpack_from('<II', out, 20)
+        assert run_on == 1 and reference == 0
+
+    def test_subject_condition_untouched(self):
+        import struct
+        from tes5_import.dialog_conditions import convert_ctda
+        out = convert_ctda(self._raw_ctda(run_on_target=False), offset=1,
+                           run_on_target_ref=0x14)
+        run_on, reference = struct.unpack_from('<II', out, 20)
+        assert run_on == 0 and reference == 0

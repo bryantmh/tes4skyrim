@@ -70,7 +70,7 @@ TRAVEL = Template(
     index_list=(0, 2, 4),
     inputs=(T_LOCATION, T_BOOL, T_BOOL),
     defaults={1: 0, 2: 0},          # Ride Horse?, Prefer Preferred Path?
-    slots={'location': 0},
+    slots={'location': 0, 'ride_horse': 1},
 )
 
 # --- Sandbox (0001C254) — 918 instances ----------------------------------
@@ -161,7 +161,9 @@ FOLLOW = Template(
     formid=0x00019B2C, edid='Follow', xnam=9, version=4,
     index_list=(0, 1, 2, 4, 6, 8),
     inputs=(T_SINGLEREF, T_FLOAT, T_FLOAT, T_BOOL, T_BOOL, T_BOOL),
-    defaults={1: 128.0, 2: 256.0, 3: 0, 4: 1, 5: 0},
+    # ride_horse default 0 (root + 121/124 vanilla instances); a horseless
+    # follower with ride_horse=1 never moves.  See ESCORT note.
+    defaults={1: 128.0, 2: 256.0, 3: 0, 4: 0, 5: 0},
     slots={'target': 0, 'min_radius': 1, 'max_radius': 2, 'accompany': 3,
            'ride_horse': 4, 'need_los': 5},
 )
@@ -174,16 +176,23 @@ ESCORT = Template(
     index_list=(11, 2, 3, 4, 5, 6, 13, 15, 17),
     inputs=(T_SINGLEREF, T_INT, T_LOCATION, T_FLOAT, T_FLOAT, T_FLOAT,
             T_BOOL, T_BOOL, T_FLOAT),
+    # Defaults follow the template ROOT and the dominant vanilla instance
+    # values (41/44 escorts: ride horse 0, prefer preferred path 0).  The old
+    # 1/1 values were copied from WERoad02 — a HORSEBACK world encounter — and
+    # ride horse=1 on a horseless NPC freezes the escort: the package wins the
+    # stack (its conditions pass) but the procedure never moves the actor
+    # (Pinarus Inventius standing still in FGC01Rats).  Genuine TES4
+    # Use-Horse packages set ride_horse via _choose().
     defaults={
         1: 1,        # number of followers
-        3: 500.0,    # distance to wait for follower(s)
+        3: 512.0,    # distance to wait for follower(s) (root value)
         4: 120.0,    # follower min distance
         5: 256.0,    # follower max distance
-        6: 1,        # ride horse
-        7: 1,        # prefer preferred path
+        6: 0,        # ride horse
+        7: 0,        # prefer preferred path
         8: 500.0,    # run-if-behind distance
     },
-    slots={'target': 0, 'location': 2},
+    slots={'target': 0, 'location': 2, 'ride_horse': 6},
 )
 
 # --- HoldPosition (000503D0) — 116 instances -----------------------------

@@ -1265,3 +1265,90 @@ class TestSingletonFixes:
     def test_setactorrefraction(self, converter):
         result = converter._convert_line('SetActorRefraction 1', 'Actor')
         assert 'TES4Polyfill.SetActorRefraction(Self, 1)' in result
+
+
+# ===========================================================================
+# 2026-07-19 quest-bug sweep regressions (MG04 sleep / Say timers / guards)
+# ===========================================================================
+
+class TestMenuModeSleepConversion:
+    SRC = '''Scriptname TestSleep
+
+short sleepcheck
+short time
+
+begin gamemode
+if ( sleepcheck > 0 )
+	SetStage MG04Restore 40
+endif
+end
+
+Begin menumode
+if ( isPCSleeping == 1 )
+	set sleepcheck to 1
+endif
+End
+
+Begin MenuMode 1014
+set time to 99
+End
+'''
+
+    def test_sleep_menumode_becomes_sleep_events(self, converter):
+        result = converter.convert_standalone('TestSleep', self.SRC, 'Quest',
+                                              'TestSleep')
+        assert 'Event OnSleepStart(float afSleepStartTime, float afDesiredSleepEndTime)' in result
+        assert 'Event OnSleepStop(bool abInterrupted)' in result
+        assert 'Function TES4_MenuModeSleepBody()' in result
+        # isPCSleeping inside the sleep body reads the managed flag
+        assert 'If (TES4_PCSleeping == 1)' in result
+        assert 'RegisterForSleep()' in result
+        # body is executable (not commented out)
+        assert ';  If (TES4_PCSleeping' not in result
+
+    def test_menu_id_block_stays_commented(self, converter):
+        result = converter.convert_standalone('TestSleep', self.SRC, 'Quest',
+                                              'TestSleep')
+        assert 'begin MenuMode 1014' in result
+        assert ';  time = 99' in result
+
+    def test_non_sleep_bare_menumode_stays_commented(self, converter):
+        src = ('Scriptname TestNoSleep\n\nshort x\n\n'
+               'begin gamemode\nset x to 1\nend\n\n'
+               'Begin menumode\nset x to 2\nEnd\n')
+        result = converter.convert_standalone('TestNoSleep', src, 'Quest',
+                                              'TestNoSleep')
+        assert 'OnSleepStart' not in result
+        assert 'RegisterForSleep' not in result
+
+
+class TestSayTimerConversion:
+    def test_getsecondspassed_matches_update_interval(self, converter):
+        src = ('Scriptname TestTick\n\nfloat timer\n\n'
+               'begin gamemode\nset timer to timer - GetSecondsPassed\nend\n')
+        result = converter.convert_standalone('TestTick', src, 'Quest',
+                                              'TestTick')
+        # the substituted constant must equal the RegisterForSingleUpdate arg
+        import re as _re
+        m = _re.search(r'RegisterForSingleUpdate\(([\d.]+)\)', result)
+        assert m, result
+        assert f'timer - {m.group(1)}' in result
+
+    def test_say_assignment_gets_line_duration(self, converter):
+        converter._property_refs['ThadonRef'] = 'Actor'
+        result = converter._convert_line(
+            'set timer to ThadonRef.Say DeathSpeech01', 'Quest')
+        assert 'ThadonRef.Say(' in result
+        # timer must NOT be 0 — that machine-guns the conversation
+        assert 'timer = 0.0' not in result
+        assert 'timer = 3' in result
+
+
+class TestFilterGuardTes4Type:
+    def test_guard_kept_when_property_bound_as_tes4_script(self, xref):
+        xref.edid_to_formid['cgassassin01ref'] = '00012345'
+        xref.record_type['00012345'] = 'ACHR'
+        conv = ScriptConverter(xref)
+        conv._property_refs['CGAssassin01Ref'] = 'TES4_CGAssassinScript'
+        guard = conv._block_filter_guard('onhit', 'CGAssassin01Ref')
+        assert guard == 'akAggressor == CGAssassin01Ref'

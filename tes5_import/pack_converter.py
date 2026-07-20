@@ -277,8 +277,9 @@ def convert_flags(t4_flags: int, pack_type: int) -> tuple:
 
     # TES4 "lock doors at start/end" has no TES5 flag — the Sleep template owns
     # door-locking as a procedure input instead.  Dropped deliberately.
-    # TES4 armor-unequipped / allow-falls / no-idle-anims / use-horse: no TES5
-    # counterpart (use-horse becomes a template Ride Horse? input).  Dropped.
+    # TES4 armor-unequipped / allow-falls / no-idle-anims: no TES5
+    # counterpart.  Dropped.  Use-horse IS honored — it becomes the template
+    # "Ride Horse?" input in _choose().
 
     if pack_type == T4_AMBUSH:
         # Wait hidden, weapon out, don't call for help.
@@ -308,10 +309,12 @@ def build_psdt(rec: dict) -> bytes:
     hour = get_int(rec, 'PSDT.Time', -1)
     duration_hours = get_int(rec, 'PSDT.Duration', 0)
 
-    # TES5 splits TES4's hour-only time into hour + minute.
-    minute = 0
+    # TES5 splits TES4's hour-only time into hour + minute.  Vanilla writes
+    # minute=-1 ("Any") on 5,771/5,961 packages — an explicit 0 only ever
+    # accompanies an explicit hour, so mirror that contract.
     if hour < -1 or hour > 23:
         hour = -1
+    minute = 0 if hour >= 0 else -1
     return struct.pack('<bbBbb3xi', _s8(month), _s8(dow), date & 0xFF,
                        _s8(hour), _s8(minute), duration_hours * 60)
 
@@ -417,11 +420,17 @@ def _choose(rec: dict, ctx: PackContext, pack_fid: int) -> Inputs:
     loc = resolve_location(rec, ctx, pack_fid)
     tgt = resolve_target(rec, ctx, pack_fid)
     radius = get_int(rec, 'PLDT.Radius', 0)
+    # TES4 Use-Horse flag -> template "Ride Horse?" input (Travel / Follow /
+    # Escort carry the slot).  Never default it on: ride_horse=1 on a
+    # horseless actor makes the procedure unable to move them at all.
+    use_horse = 1 if (get_int(rec, 'PKDT.Flags', 0) & T4_USE_HORSE) else 0
 
     # --- Travel: exact ---
     if ptype == T4_TRAVEL:
         i = Inputs(TRAVEL)
         i.set('location', loc)
+        if use_horse:
+            i.set('ride_horse', 1)
         return i
 
     # --- Wander -> Sandbox: exact.  TES4 Wander = wander/sit/idle in a radius,
@@ -465,6 +474,8 @@ def _choose(rec: dict, ctx: PackContext, pack_fid: int) -> Inputs:
         i = Inputs(FOLLOW)
         i.set('target', tgt)
         i.set('accompany', 1 if ptype == T4_ACCOMPANY else 0)
+        if use_horse:
+            i.set('ride_horse', 1)
         return i
 
     # --- Escort: exact. ---
@@ -472,6 +483,8 @@ def _choose(rec: dict, ctx: PackContext, pack_fid: int) -> Inputs:
         i = Inputs(ESCORT)
         i.set('target', tgt)
         i.set('location', loc)
+        if use_horse:
+            i.set('ride_horse', 1)
         return i
 
     # --- Flee ---

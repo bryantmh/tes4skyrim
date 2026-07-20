@@ -32,13 +32,12 @@ Later Issues:
 		Missing sound for many lines including barter lines
 
 	2 - Refine navmesh generation further
+
+	3 - Refine creature conversion further
 	
 	3 - Convert weathers
 
 	4 - Goblins don't properly hold weapons
-
-	5 - Creature Ragdoll is mangled
-		converted creature ragdolls are still mangled even after you have made several attempts to fix it. the ragdoll should remain exactly in the same shape it was before death, with it's body limp and bones determining where and how much they will bend. Oblivion had ragdolls, so all the information should be available. 
 
 	6 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
 

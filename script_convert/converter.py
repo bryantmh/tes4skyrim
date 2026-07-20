@@ -14,6 +14,12 @@ from script_convert.cross_ref import CrossRefGraph
 
 
 _COND_LINE_RE = re.compile(r'^(\s*(?:If|ElseIf)\s+)(.*)$', re.IGNORECASE)
+# TES4 reads of "is the player sleeping right now" (the MenuMode sleep idiom)
+_SLEEP_READ_RE = re.compile(r'\b(?:ispcsleeping|isplayersleeping|getpcissleeping)\b',
+                            re.IGNORECASE)
+# Stand-in for the voice-line duration TES4's Say/SayTo returned (seconds).
+# Drives the pacing of every converted polling conversation.
+SAY_LINE_SECONDS = 3.0
 
 # Placeholder for a bare TES4 `GetContainer` that is not inside an equip event.
 # Papyrus cannot walk from an item to its container, so the expression has no
@@ -304,6 +310,7 @@ class ScriptConverter:
         needs_oninit_update = self._has_gamemode or self._has_scripteffectupdate
         gamemode_body = []
         menumode_blocks: list[tuple[str, list]] = []   # (menu id filter, source lines)
+        sleep_menumode_blocks: list[list] = []         # bare MenuMode + isPCSleeping
 
         # Group blocks by event type to merge duplicates (Papyrus forbids
         # duplicate Event declarations).  Each source block keeps its own filter
@@ -333,8 +340,23 @@ class ScriptConverter:
             # Commenting the body out is the honest conversion: the trigger cannot
             # be reproduced, so it must not fire, and the source stays visible for
             # anyone hand-porting it to a Papyrus menu hook.
+            # EXCEPTION — the sleep-detection idiom: a BARE `begin MenuMode`
+            # whose body reads isPCSleeping.  In Oblivion the only frames where
+            # isPCSleeping==1 are sleep-menu frames, so these bodies are
+            # self-gated and exist purely to observe the player sleeping
+            # (Rufio's murder, vampirism onset, MG04's inn ambush, bed
+            # disease...).  Skyrim's native equivalent is RegisterForSleep():
+            # the body runs once in OnSleepStart and once in OnSleepStop (the
+            # two observable "frames" of a Skyrim sleep) with a script-managed
+            # TES4_PCSleeping flag standing in for isPCSleeping.  Menu-id
+            # blocks and non-sleep bare blocks stay commented (below).
             if block_type == 'menumode':
-                menumode_blocks.append((block_filter, block_lines))
+                is_bare = not str(block_filter or '').strip()
+                reads_sleep = any(_SLEEP_READ_RE.search(l) for l in block_lines)
+                if is_bare and reads_sleep:
+                    sleep_menumode_blocks.append(block_lines)
+                else:
+                    menumode_blocks.append((block_filter, block_lines))
                 continue
 
             # Merge blocks by their target Papyrus event name, not TES4 block type
@@ -351,7 +373,7 @@ class ScriptConverter:
             # re-ran when the fight ended.
             state_guard = {'onalarm': 'aeCombatState != 0',
                            'onstartcombat': 'aeCombatState == 1'}.get(block_type)
-            if state_guard:
+            if state_guard and guard is not None:
                 guard = f'{state_guard} && {guard}' if guard else state_guard
             merged_blocks[merge_key].append((guard, block_lines))
 
@@ -376,7 +398,15 @@ class ScriptConverter:
                     for converted in body:
                         out.append(f'  ;{converted}')
                     continue
-                if guard:
+                if guard is None:
+                    # The TES4 filter exists but cannot be expressed; running
+                    # the body for EVERY event would be wrong (see
+                    # _block_filter_guard), so keep it visible-but-inert.
+                    out.append('  ; TES4 block filter could not be converted; '
+                               'body preserved but NOT executed:')
+                    for converted in body:
+                        out.append(f'  ;{converted}')
+                elif guard:
                     out.append(f'  If {guard}')
                     for converted in body:
                         out.append(f'    {converted}')
@@ -436,6 +466,43 @@ class ScriptConverter:
             out.append('EndEvent')
             out.append('')
 
+        # Sleep-idiom MenuMode bodies become real Papyrus sleep listeners.
+        # Oblivion ran the body every menu frame while the player slept; the
+        # two Skyrim-observable moments of a sleep are its start and stop
+        # events, so the body runs once in each (several bodies need two
+        # passes: MG04 records GameHour on the first and arms its trigger on
+        # the second).  isPCSleeping reads inside the body compile to the
+        # TES4_PCSleeping flag, which is 1 for both passes — matching
+        # Oblivion, where every frame that executed the body had
+        # isPCSleeping==1.  Registration rides the same lifecycle as the
+        # OnUpdate loop (OnCellAttach/OnInit below).
+        if sleep_menumode_blocks:
+            self._current_event = 'Function TES4_MenuModeSleepBody()'
+            out.append('Int TES4_PCSleeping = 0')
+            out.append('')
+            out.append('Function TES4_MenuModeSleepBody()')
+            if quest_gated:
+                out.append('  If (!IsRunning())')
+                out.append('    Return')
+                out.append('  EndIf')
+            self._in_sleep_menumode = True
+            for block_lines in sleep_menumode_blocks:
+                for bline in block_lines:
+                    out.append(f'  {self._convert_line(bline, extends)}')
+            self._in_sleep_menumode = False
+            out.append('EndFunction')
+            out.append('')
+            out.append('Event OnSleepStart(float afSleepStartTime, float afDesiredSleepEndTime)')
+            out.append('  TES4_PCSleeping = 1')
+            out.append('  TES4_MenuModeSleepBody()')
+            out.append('EndEvent')
+            out.append('')
+            out.append('Event OnSleepStop(bool abInterrupted)')
+            out.append('  TES4_MenuModeSleepBody()')
+            out.append('  TES4_PCSleeping = 0')
+            out.append('EndEvent')
+            out.append('')
+
         # MenuMode bodies, preserved as comments (see the block loop above for
         # why they must not execute).  Converted rather than dumped raw so a
         # hand-port only has to supply the menu hook, not redo the translation.
@@ -449,8 +516,11 @@ class ScriptConverter:
                     out.append(f';  {converted}')
             out.append('')
 
-        # Start/stop the update loop.
-        if needs_oninit_update:
+        # Start/stop the update loop (and the sleep listener, which shares the
+        # same lifecycle: TES4 MenuMode also only ran while the script's owner
+        # was loaded / its quest instantiated).
+        needs_sleep_reg = bool(sleep_menumode_blocks)
+        if needs_oninit_update or needs_sleep_reg:
             interval = self._get_update_interval()
             if load_gated:
                 # Object/actor: run only while loaded.  OnCellAttach fires each
@@ -458,18 +528,27 @@ class ScriptConverter:
                 # when it streams out.  This confines the loop to when the
                 # object is actually present, exactly like TES4 GameMode.
                 out.append('Event OnCellAttach()')
-                out.append(f'  RegisterForSingleUpdate({interval})')
+                if needs_oninit_update:
+                    out.append(f'  RegisterForSingleUpdate({interval})')
+                if needs_sleep_reg:
+                    out.append('  RegisterForSleep()')
                 out.append('EndEvent')
                 out.append('')
                 out.append('Event OnCellDetach()')
-                out.append('  UnregisterForUpdate()')
+                if needs_oninit_update:
+                    out.append('  UnregisterForUpdate()')
+                if needs_sleep_reg:
+                    out.append('  UnregisterForSleep()')
                 out.append('EndEvent')
                 out.append('')
             else:
                 has_oninit = any(b[0] == 'oninit' for b in blocks)
                 if not has_oninit:
                     out.append('Event OnInit()')
-                    out.append(f'  RegisterForSingleUpdate({interval})')
+                    if needs_oninit_update:
+                        out.append(f'  RegisterForSingleUpdate({interval})')
+                    if needs_sleep_reg:
+                        out.append('  RegisterForSleep()')
                     out.append('EndEvent')
                     out.append('')
 
@@ -1307,8 +1386,12 @@ class ScriptConverter:
         m = re.search(r'\bActor\s+(ak\w+)', ev)
         return m.group(1) if m else ''
 
-    def _block_filter_guard(self, block_type: str, block_filter: str) -> str:
+    def _block_filter_guard(self, block_type: str,
+                            block_filter: str) -> 'str | None':
         """Compile a TES4 block filter into a Papyrus condition, or '' if none.
+        Returns None when a real filter exists but CANNOT be expressed — the
+        caller must then keep the body commented out rather than run it
+        unconditionally for every event.
 
         `begin OnEquip player` fires the block ONLY when the player equips the
         item; `begin OnPackageDone SomePkg` only when that package ends.  Papyrus
@@ -1357,11 +1440,19 @@ class ScriptConverter:
         safe = _safe_property_name(name)
         existing = self._property_refs.get(safe)
         if existing and existing != ptype:
-            # The name is already bound at a type the guard cannot compare
-            # against (the script uses the same form some other way).  Rebinding
-            # it would break those uses, so drop the guard instead of emitting a
-            # comparison that will not compile.
-            return ''
+            # Already bound at a TES4_* script type: those extend Actor/
+            # ObjectReference, so the comparison against the event parameter
+            # still compiles — keep the existing binding and emit the guard.
+            # (Dropping it here ran CGRenote's `begin onHit CGAssassin01Ref`
+            # bodies on EVERY hit: any stray arrow killed her and jumped
+            # CharacterGen's stages out of order.)
+            if (existing.startswith('TES4_')
+                    and ptype in ('Actor', 'ObjectReference', 'Form')):
+                return f'{param} == {safe}'
+            # Genuinely incomparable (e.g. bound as Faction/GlobalVariable).
+            # An unguarded body is WRONG for every event the filter excluded —
+            # signal the caller to keep the body but not execute it.
+            return None
         self._property_refs[safe] = ptype
         return f'{param} == {safe}'
 
@@ -1498,14 +1589,23 @@ class ScriptConverter:
                     remainder = value[paren_end + 1:].strip()
                     # If remainder is just "+ number", extract the delay for the timer
                     delay_m = re.match(r'[+\-]\s*([\d.]+)', remainder) if remainder else None
-                    delay_val = delay_m.group(1) if delay_m else '0.0'
+                    # TES4 Say/SayTo RETURNED the voice line's duration and every
+                    # polling conversation counts that timer down before speaking
+                    # the next line.  Papyrus Say() returns nothing; substituting
+                    # 0 made converted conversations machine-gun a line per tick
+                    # (overlapping audio, skipped result scripts).  Approximate a
+                    # spoken line as SAY_LINE_SECONDS instead.
+                    delay_f = SAY_LINE_SECONDS + (float(delay_m.group(1)) if delay_m else 0.0)
+                    delay_val = f'{delay_f:g}'
                     # An Int target (TES4 `short`) can't take a Float literal
                     if self._var_types.get(target.lower().split('.')[-1]) == 'Int':
-                        delay_val = str(int(float(delay_val)))
-                    return f'{say_call}\n  {target} = {delay_val}  ;Say() returns None in Papyrus; delay approximated'
-                say_dflt = ('0' if self._var_types.get(
-                    target.lower().split('.')[-1]) == 'Int' else '0.0')
-                return f'{value}\n  {target} = {say_dflt}  ;Say() returns None in Papyrus'
+                        delay_val = str(int(delay_f))
+                    return f'{say_call}\n  {target} = {delay_val}  ;Say() returns None in Papyrus; line duration approximated'
+                say_dflt = (str(int(SAY_LINE_SECONDS)) if self._var_types.get(
+                    target.lower().split('.')[-1]) == 'Int'
+                    else f'{SAY_LINE_SECONDS:g}')
+                return (f'{value}\n  {target} = {say_dflt}'
+                        '  ;Say() returns None in Papyrus; line duration approximated')
             # GlobalVariable: use SetValue() instead of direct assignment
             tgt_low = target.lower().split('.')[-1]
             if self._property_refs.get(target, self._property_refs.get(tgt_low, '')) == 'GlobalVariable':
@@ -2214,6 +2314,12 @@ class ScriptConverter:
                 self._property_refs['TES4CyrodiilCrimeFaction'] = 'Faction'
                 return 'TES4CyrodiilCrimeFaction.IsPlayerExpelled()'
             if bare_low in ('getpcissleeping', 'ispcsleeping', 'isplayersleeping'):
+                # Inside a sleep-idiom MenuMode body the read means "is this a
+                # sleep frame" — that's the script-managed flag.  Elsewhere
+                # (GameMode) Oblivion never ran while sleeping, so a raw
+                # GetSleepState() read (0 when awake) keeps the same truth.
+                if getattr(self, '_in_sleep_menumode', False):
+                    return 'TES4_PCSleeping'
                 return 'Game.GetPlayer().GetSleepState()'
             if bare_low == 'isininterior':
                 if extends == 'ActiveMagicEffect':
@@ -2303,8 +2409,15 @@ class ScriptConverter:
         else:
             expr = re.sub(r'\bgetSelf\b', 'Self', expr, flags=re.IGNORECASE)
             expr = re.sub(r'\bthis\b', 'Self', expr, flags=re.IGNORECASE)
-        expr = re.sub(r'\bGetSecondsPassed\b', '0.5', expr, flags=re.IGNORECASE)
-        expr = re.sub(r'\bScriptEffectElapsedSeconds\b', '0.5', expr, flags=re.IGNORECASE)
+        # GetSecondsPassed = seconds since the last tick.  The substituted
+        # constant MUST equal the RegisterForSingleUpdate interval the script
+        # actually runs at (_get_update_interval returns 0.1 for exactly these
+        # scripts) — a 0.5 literal at a 0.1s tick made every converted timer
+        # run 5x fast (Valen Dreth's 10s taunt pause became 2s).
+        expr = re.sub(r'\bGetSecondsPassed\b', self._get_update_interval(),
+                      expr, flags=re.IGNORECASE)
+        expr = re.sub(r'\bScriptEffectElapsedSeconds\b',
+                      self._get_update_interval(), expr, flags=re.IGNORECASE)
 
         # Fix bare decimals: .5 -> 0.5 (Papyrus requires leading zero)
         expr = re.sub(r'(?<![.\w])\.(\d)', r'0.\1', expr)
@@ -3108,6 +3221,8 @@ class ScriptConverter:
 
         # IsPlayerSleeping
         if fname_low == 'isplayersleeping':
+            if getattr(self, '_in_sleep_menumode', False):
+                return 'TES4_PCSleeping'
             return 'Game.GetPlayer().GetSleepState()'
 
         # GetIsPlayableRace

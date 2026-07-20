@@ -25,6 +25,7 @@ from .magic_effects import set_tes4_effect_names
 from .dialog_converter import (
     build_dialog_groups,
     build_npc_to_vtyp_map,
+    compute_quest_priorities,
     convert_QUST,
 )
 from .record_types.dialog_misc import convert_SOUN
@@ -503,6 +504,11 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                 errors += 1
 
     # --- Phase 3b: QUST ---
+    # Zero-stage "conversation container" quests must never outrank a staged
+    # quest's dialogue arbitration (see compute_quest_priorities) — this has
+    # to run before QUST conversion so convert_QUST writes the EFFECTIVE
+    # DNAM.Priority, not the raw TES4 value.
+    compute_quest_priorities(by_type)
     # Track all StartGameEnabled quest FormIDs for .seq file generation
     sge_quest_fids = set()
     qust_records = by_type.get('QUST', [])

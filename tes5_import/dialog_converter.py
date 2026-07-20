@@ -416,6 +416,75 @@ def _bark_choice_gate_bytes(revealer_gates: list) -> bytes:
     return b''.join(_pack_gate_pair(p) for p in revealer_gates[0])
 
 
+# FormID -> effective priority (U8, 0-255), from the most recent
+# compute_quest_priorities() call. _quest_dnam reads this so the WRITTEN
+# QUST.DNAM.Priority reflects the zero-stage boost — the byte the engine
+# actually arbitrates dialogue on, not a value only used to compute a derived
+# DIAL PNAM (that alone left the QUST record's own priority unchanged, so the
+# fix had no effect in-game: MG00General kept DNAM Priority=61 even after its
+# bark topic's PNAM dropped to -1).
+_QUEST_PRIORITY_OVERRIDE: dict = {}
+
+
+def compute_quest_priorities(by_type: dict) -> dict:
+    """FormID -> effective dialogue-arbitration priority for every QUST.
+
+    Oblivion picks the first passing INFO in QUEST PRIORITY order (highest
+    first), NOT file order — Azzan's low-priority(11) first-meeting intro
+    would otherwise outrank the priority-60 Fighters Guild ad greeting that
+    reveals the join topics. Skyrim arbitrates dialogue by the QUEST's own
+    priority (QUST.DNAM.Priority), so the raw TES4 DATA.Priority value is
+    carried over for ordinary (staged) quests — EXCEPT that every STAGED
+    quest is boosted by a fixed offset so it universally outranks every
+    zero-stage "conversation container" quest (MG00General, MQConversations,
+    FGConversations, DarkConvSystem, ...), which exist purely to hold
+    ambient/HELLO-channel chatter. In Oblivion GREETING and HELLO are
+    separate channels, so a container quest's authored priority (sometimes
+    deliberately HIGH, e.g. MG00General=61, to win its own HELLO-channel
+    arbitration) never competed with a real quest's GREETING. Skyrim merges
+    both into one HELO topic per quest, so MG00General outranked
+    MG04Restore's priority-60 briefing outright: "Arielle only gives a
+    generic greeting" with the journal at the correct stage and every record
+    field individually correct. A quest with real stages represents actual
+    narrative progress the player is mid-story with, so it must always beat
+    a stage-less container quest's greeting.
+
+    A fixed UPWARD shift on staged quests, not a downward clamp on zero-stage
+    ones: DNAM.Priority is an unsigned byte (0-255), so a container quest at
+    priority 0 already has no headroom to be pushed lower. Shifting every
+    staged quest up by (max zero-stage priority - min staged priority + 1)
+    guarantees the ENTIRE staged range sits above the ENTIRE zero-stage range
+    while preserving both groups' internal relative order exactly (a uniform
+    shift, not a rank remap) — 125 vanilla zero-stage quests span their own
+    priority range (Dark00General=50, MQConversations=85, ...) that still
+    governs arbitration AMONG container quests (two factions' idle chatter
+    competing for the same generic NPC), and real quests already top out at
+    90 in vanilla data, so the shifted range comfortably fits in a U8.
+
+    Both convert_QUST (the WRITTEN QUST.DNAM.Priority byte) and
+    build_dialog_groups (the DIAL PNAM assigned to merged bark topics) must
+    read from THIS SAME table — the engine's real arbitration reads the
+    quest's own priority, so writing an unrelated derived value into DIAL
+    PNAM alone changes nothing in-game.
+    """
+    quest_priority = {get_formid(r, 'FormID'): get_int(r, 'DATA.Priority')
+                      for r in by_type.get('QUST', [])
+                      if get_formid(r, 'FormID')}
+    staged_quest_fids = {get_formid(r, 'FormID') for r in by_type.get('QUST', [])
+                        if get_formid(r, 'FormID') and get_int(r, 'StageCount')}
+    zero_stage_fids = [f for f in quest_priority if f not in staged_quest_fids]
+    if staged_quest_fids and zero_stage_fids:
+        min_staged = min(quest_priority[f] for f in staged_quest_fids)
+        max_zero_stage = max(quest_priority[f] for f in zero_stage_fids)
+        if max_zero_stage >= min_staged:
+            offset = max_zero_stage - min_staged + 1
+            for fid in staged_quest_fids:
+                quest_priority[fid] = min(255, quest_priority[fid] + offset)
+    _QUEST_PRIORITY_OVERRIDE.clear()
+    _QUEST_PRIORITY_OVERRIDE.update(quest_priority)
+    return quest_priority
+
+
 def _quest_dnam(rec: dict) -> bytes:
     """DNAM (12 bytes): Flags(U16) Priority(U8) FormVer(U8=0) Unknown(4) Type(U32).
 
@@ -430,9 +499,18 @@ def _quest_dnam(rec: dict) -> bytes:
     a Type-0 quest is never listed, so it can't be tracked and its objective
     targets never produce compass/map markers (vanilla: only 16 of ~396
     objective-bearing quests are Type 0).
+
+    Priority is the EFFECTIVE value from compute_quest_priorities() (staged
+    quests shifted above every zero-stage quest) when available, falling
+    back to the raw TES4 value for quests that table doesn't know about
+    (e.g. unit tests that convert a QUST record in isolation) — see that
+    function's docstring for why the raw DATA.Priority alone is not what the
+    engine arbitrates dialogue on.
     """
     tes4_flags = get_int(rec, 'DATA.Flags')
-    priority = get_int(rec, 'DATA.Priority')
+    fid = get_formid(rec, 'FormID')
+    priority = _QUEST_PRIORITY_OVERRIDE.get(fid, get_int(rec, 'DATA.Priority'))
+    priority = max(0, min(255, priority))
     flags = tes4_flags & 0x09          # StartGameEnabled | AllowRepeatedStages
     if flags & 0x01:
         flags |= 0x10                  # StartsEnabled
@@ -958,7 +1036,15 @@ def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
     # — this is what makes script-variable-gated dialogue (Owyn's raiment
     # check, the Arena match state machine) actually evaluate in Skyrim.
     subs += injected_ctdas
-    for ctda, cis2 in convert_ctda_list_with_strings(rec, script_vars):
+    # Say-driven topic? RunOn=Target conditions must be retargeted (or
+    # dropped) — Actor.Say() has no dialogue target to evaluate them against.
+    say_disp = _SAY_TOPIC_DISPOSITIONS.get(
+        get_formid(rec, 'ParentDIAL') & 0xFFFFFF)
+    say_ref = say_disp[1] if say_disp and say_disp[0] == 'ref' else None
+    say_drop = bool(say_disp) and say_disp[0] == 'drop'
+    for ctda, cis2 in convert_ctda_list_with_strings(
+            rec, script_vars,
+            run_on_target_ref=say_ref, drop_run_on_target=say_drop):
         subs += pack_subrecord('CTDA', ctda)
         if cis2:
             subs += pack_string_subrecord('CIS2', cis2)
@@ -1038,6 +1124,99 @@ def collect_tclt_target_fids(by_type: dict) -> set:
         if cfid:
             targets.add(cfid)
     return targets
+
+
+# Say/SayTo/StartConversation-driven topics: raw24 DIAL fid ->
+#   ('ref', final_fid)  retarget RunOn=Target conditions to that reference
+#   ('drop', None)      drop RunOn=Target conditions (mixed/unknown targets)
+# Populated by build_dialog_groups (same lifecycle as _EMPTY_DIAL_FIDS).
+_SAY_TOPIC_DISPOSITIONS: dict = {}
+
+_SAYTO_RE = re.compile(r'\bsayto[\s,]+(\w+)[\s,]+(\w+)', re.IGNORECASE)
+_SAY_RE = re.compile(r'\bsay[\s,]+(\w+)', re.IGNORECASE)
+_STARTCONV_RE = re.compile(r'\bstartconversation[\s,]+(\w+)(?:[\s,]+(\w+))?',
+                           re.IGNORECASE)
+
+
+def build_say_topic_dispositions(by_type: dict, remap) -> dict:
+    """Map script-driven (Say/SayTo/StartConversation) topics to how their
+    RunOn=Target conditions must be converted.
+
+    Skyrim's Actor.Say() has no dialogue target, so a converted RunOn=Target
+    condition in a Say-driven topic evaluates against nothing and can never
+    pass — CharacterGen's Valen Dreth taunts (race-of-target picks the line)
+    froze the whole intro this way, and 1,900+ INFOs across every scripted
+    conversation share the defect.  The script call sites tell us who the
+    target actually is: when it's unique (usually the player), the condition
+    is retargeted to RunOn=Reference on that ref — equivalent semantics, and
+    equally valid if the topic is also reachable as menu dialogue (there the
+    target IS the player).  Topics with mixed/unresolvable targets drop their
+    target conditions instead: the Oblivion call sites already select
+    speaker+topic, so auto-pass is closer to intent than never-pass.
+    """
+    # Scripted call sites live in SCPT bodies and INFO/QUST result scripts.
+    texts = [get_str(r, 'SCTX') or '' for r in by_type.get('SCPT', [])]
+    for r in by_type.get('INFO', []):
+        texts.append(get_str(r, 'ResultScript') or '')
+    for r in by_type.get('QUST', []):
+        i = 0
+        while f'Stage[{i}].Index' in r:
+            j = 0
+            while (t := r.get(f'Stage[{i}].Log[{j}].ResultScript')) is not None:
+                texts.append(t)
+                j += 1
+            i += 1
+
+    dial_by_edid = {get_str(d, 'EditorID', '').lower():
+                    get_formid(d, 'FormID') & 0xFFFFFF
+                    for d in by_type.get('DIAL', [])
+                    if get_str(d, 'EditorID')}
+    ref_by_edid = {}
+    for sig in ('ACHR', 'ACRE', 'REFR'):
+        for r in by_type.get(sig, []):
+            e = get_str(r, 'EditorID')
+            if e:
+                ref_by_edid[e.lower()] = remap(get_formid(r, 'FormID'))
+
+    def target_fid(token: str):
+        t = token.lower()
+        if t in ('player', 'playerref'):
+            return _PLAYER_FORMID
+        return ref_by_edid.get(t)      # None when unresolvable
+
+    votes = defaultdict(set)           # raw24 dial fid -> {fid or None}
+    for text in texts:
+        if not text:
+            continue
+        for line in text.replace('\\r\\n', '\n').splitlines():
+            line = line.split(';', 1)[0]
+            low = line.lower()
+            if 'say' not in low and 'startconversation' not in low:
+                continue
+            for m in _SAYTO_RE.finditer(line):
+                d = dial_by_edid.get(m.group(2).lower())
+                if d is not None:
+                    votes[d].add(target_fid(m.group(1)))
+            for m in _STARTCONV_RE.finditer(line):
+                if m.group(2):
+                    d = dial_by_edid.get(m.group(2).lower())
+                    if d is not None:
+                        votes[d].add(target_fid(m.group(1)))
+            # plain Say has no target at all; \b keeps this from eating SayTo
+            stripped = _SAYTO_RE.sub(' ', line)
+            for m in _SAY_RE.finditer(stripped):
+                d = dial_by_edid.get(m.group(1).lower())
+                if d is not None:
+                    votes[d].add(None)
+
+    out = {}
+    for dfid, tgts in votes.items():
+        real = {t for t in tgts if t is not None}
+        if len(real) == 1:
+            out[dfid] = ('ref', next(iter(real)))
+        else:
+            out[dfid] = ('drop', None)
+    return out
 
 
 def build_npc_to_vtyp_map(by_type: dict, num_new_masters: int) -> dict:
@@ -1193,9 +1372,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     # (stable — file order preserved within a quest). Without this, e.g.
     # Azzan's low-priority(11) first-meeting intro outranks the priority-60
     # Fighters Guild ad greeting that reveals the join topics.
-    quest_priority = {get_formid(r, 'FormID'): get_int(r, 'DATA.Priority')
-                      for r in by_type.get('QUST', [])
-                      if get_formid(r, 'FormID')}
+    quest_priority = compute_quest_priorities(by_type)
 
     info_by_dial = defaultdict(list)
     for rec in infos:
@@ -1210,6 +1387,14 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         get_formid(d, 'FormID') for d in dials
         if not info_by_dial.get(get_formid(d, 'FormID'))
         and not service_menu_kind(d))
+
+    # Say-driven topics: how each one's RunOn=Target conditions convert.
+    _SAY_TOPIC_DISPOSITIONS.clear()
+    _SAY_TOPIC_DISPOSITIONS.update(build_say_topic_dispositions(by_type, remap))
+    n_ref = sum(1 for v in _SAY_TOPIC_DISPOSITIONS.values() if v[0] == 'ref')
+    print(f"    say-driven topics: {len(_SAY_TOPIC_DISPOSITIONS)} "
+          f"({n_ref} retargeted to a unique ref, "
+          f"{len(_SAY_TOPIC_DISPOSITIONS) - n_ref} drop target-conditions)")
 
     tclt_targets = collect_tclt_target_fids(by_type)
     # Remapped FormIDs of every bark DIAL (greetings + combat/detection/misc

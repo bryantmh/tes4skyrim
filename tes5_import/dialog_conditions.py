@@ -168,12 +168,25 @@ def papyrus_var_name(var: str) -> str:
     return f'::{_safe_property_name(var)}_var'
 
 
-def convert_ctda(raw: bytes, offset: 'int | None' = None) -> 'bytes | None':
+def convert_ctda(raw: bytes, offset: 'int | None' = None,
+                 run_on_target_ref: 'int | None' = None,
+                 drop_run_on_target: bool = False) -> 'bytes | None':
     """Convert one 24-byte TES4 CTDA to a 32-byte TES5 CTDA.
 
     Returns None if the function must be dropped (no faithful TES5 equivalent),
     so the caller can repair the OR chain. The byte layout is field-compatible;
     Skyrim only appends Run On / Reference / trailing fields.
+
+    run_on_target_ref / drop_run_on_target handle conditions in SCRIPT-DRIVEN
+    (Say/SayTo) topics: Skyrim's Actor.Say() has no dialogue target, so a
+    RunOn=Target condition evaluates against nothing and can never pass
+    (CharacterGen: every Valen Dreth taunt is race-of-target gated — the whole
+    intro froze). When the script's SayTo target is known and unique, the
+    condition is retargeted to RunOn=Reference on that ref (equivalent — for
+    menu dialogue too, where the target IS the player); when the topic's
+    targets are mixed/unknown, drop_run_on_target discards the condition
+    (Oblivion's call sites already pick speaker+topic, so auto-pass is closer
+    to intent than never-pass).
     """
     if offset is None:
         offset = get_formid_index_offset()
@@ -205,9 +218,16 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None) -> 'bytes | None':
     # TES4 "Run on target" flag -> TES5 Run On = 1 (Target). Clear the flag bit
     # so it isn't double-counted; everything else stays Subject (0).
     run_on = 0
+    reference = 0
     if type_byte & CTDA_RUN_ON_TARGET:
-        run_on = 1
         type_byte &= ~CTDA_RUN_ON_TARGET
+        if run_on_target_ref is not None:
+            run_on = 2                    # Reference
+            reference = run_on_target_ref
+        elif drop_run_on_target:
+            return None
+        else:
+            run_on = 1                    # Target
 
     # 32-byte TES5 CTDA: type(1)+pad(3) comp(4) func(2)+pad(2) p1(4) p2(4)
     #                    runOn(4) reference(4) unknown(4)
@@ -215,7 +235,7 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None) -> 'bytes | None':
                        type_byte, comp_raw,
                        func_idx, 0,
                        param1, param2,
-                       run_on, 0, 0xFFFFFFFF)
+                       run_on, reference, 0xFFFFFFFF)
 
 
 def convert_ctda_list(rec: dict, offset: 'int | None' = None,
@@ -254,7 +274,9 @@ def convert_ctda_list(rec: dict, offset: 'int | None' = None,
 
 def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
                                    offset: 'int | None' = None,
-                                   prefix: str = '') -> list:
+                                   prefix: str = '',
+                                   run_on_target_ref: 'int | None' = None,
+                                   drop_run_on_target: bool = False) -> list:
     """Like convert_ctda_list, but returns [(ctda_bytes, cis2_or_None)].
 
     A TES4 GetScriptVariable condition carries its variable NAME as a script-
@@ -286,13 +308,17 @@ def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
 
         func = struct.unpack_from('<H', raw + b'\0' * 24, 8)[0]
         if func in _VM_VAR_FUNCS:
-            pair = _convert_script_var_ctda(raw, script_vars, offset)
+            pair = _convert_script_var_ctda(raw, script_vars, offset,
+                                            run_on_target_ref,
+                                            drop_run_on_target)
             if pair is not None:
                 out.append(pair)
             continue
 
         try:
-            ctda = convert_ctda(raw, offset)
+            ctda = convert_ctda(raw, offset,
+                                run_on_target_ref=run_on_target_ref,
+                                drop_run_on_target=drop_run_on_target)
         except (ValueError, struct.error):
             continue
         if ctda is not None:
@@ -304,7 +330,9 @@ def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
     return out
 
 
-def _convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int):
+def _convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int,
+                             run_on_target_ref: 'int | None' = None,
+                             drop_run_on_target: bool = False):
     """GetScriptVariable(ref, varIdx) -> GetVMScriptVariable(ref, '::var_var');
     GetQuestVariable(quest, varIdx) -> GetVMQuestVariable(quest, '::var_var')."""
     data = raw + b'\x00' * max(0, 24 - len(raw))
@@ -322,15 +350,22 @@ def _convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int):
     if type_byte & CTDA_USE_GLOBAL:
         comp_raw = _remap_formid(comp_raw, offset)
     run_on = 0
+    reference = 0
     if type_byte & CTDA_RUN_ON_TARGET:
-        run_on = 1
         type_byte &= ~CTDA_RUN_ON_TARGET
+        if run_on_target_ref is not None:
+            run_on = 2
+            reference = run_on_target_ref
+        elif drop_run_on_target:
+            return None
+        else:
+            run_on = 1
 
     ctda = struct.pack('<B3xIHHIIII I',
                        type_byte, comp_raw,
                        _VM_VAR_FUNCS[func], 0,
                        ref, 0,
-                       run_on, 0, 0xFFFFFFFF)
+                       run_on, reference, 0xFFFFFFFF)
     return ctda, papyrus_var_name(name)
 
 
