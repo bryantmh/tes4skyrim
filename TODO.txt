@@ -1,9 +1,5 @@
-Gameplan:
-	CK warnings M6
-
 Major Issues for V1:
-
-	1 - Book needs to use skyrim book mesh (but oblivion texture) so that it can open in the inventory
+	1 - Iterate on quest and dialog conversion until everything is playable
 
 	2 - Havok feels off. Items don't move like they should. Specifically, there seems to be too much inertia on small items, like I'm dragging a heavy object when it is something as small as a cup, Animated signs will get stuck in a position after swinging a bit, defying gravicty
 		ctrigtripwire01.nif also break when walked over, and prisoncellchains01.nif doesn't properly swing (this is most likely because it is a static and not an activator).
@@ -16,7 +12,7 @@ Major Issues for V1:
 
 	5 - Add screenshots of app + youtube video to readme
 
-	6 - Fix all CK warnings
+	6 - Fix CK Loading (not sure why it doesn't finish)
 
 	7 - Need new skyrim body mesh to actually work to allow leg skin to appear
 
@@ -35,13 +31,14 @@ Later Issues:
 		Creatures with wrong voices
 		Missing sound for many lines including barter lines
 
-	2 - Refine navmesh generation
+	2 - Refine navmesh generation further
 	
 	3 - Convert weathers
 
 	4 - Goblins don't properly hold weapons
 
 	5 - Creature Ragdoll is mangled
+		converted creature ragdolls are still mangled even after you have made several attempts to fix it. the ragdoll should remain exactly in the same shape it was before death, with it's body limp and bones determining where and how much they will bend. Oblivion had ragdolls, so all the information should be available. 
 
 	6 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
 
@@ -51,11 +48,11 @@ Later Issues:
 
 	9 - NPC levels / health is inordinately high!
 
-	10 - statuegodszenithar01.nif is a red triangle ingame
-
 	11 - Crime system
 
 	12 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting
+
+	13 - Some converted books (scrolls) are using the wrong Skyrim base mesh
 
 Minor Issues:
 
