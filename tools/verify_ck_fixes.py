@@ -229,6 +229,34 @@ def main():
                     bad_lvlo += 1
     check(bad_lvlo == 0, f'no null leveled-list entries ({bad_lvlo})')
 
+    # 13. exterior temp refs sit in the grid cell their coordinates fall in.
+    # A mismatch makes the CK warn "Reference attached to wrong cell for its
+    # location" and relocate the ref at load time (where it hung on 11
+    # Oblivion.esm refs the TES4 CS had left in a neighbouring cell).
+    cell_grid = {}
+    for r in by_type.get('CELL', []):
+        if not r.parent_wrld or (r.flags & 0x400):
+            continue
+        s = subs_of(r)
+        for xclc in s.get('XCLC', []):
+            gx, gy = struct.unpack_from('<ii', xclc, 0)
+            cell_grid[r.form_id] = (gx, gy)
+    misplaced = []
+    for sig in ('REFR', 'ACHR'):
+        for r in by_type.get(sig, []):
+            if r.flags & 0x400:
+                continue
+            grid = cell_grid.get(r.parent_cell)
+            if grid is None:
+                continue
+            for d in subs_of(r).get('DATA', []):
+                px, py = struct.unpack_from('<ff', d, 0)
+                if (int(px // 4096.0), int(py // 4096.0)) != grid:
+                    misplaced.append((sig, r.form_id))
+    check(not misplaced,
+          f'exterior temp refs in their position\'s cell ({len(misplaced)} '
+          f'misplaced: {[(s, hex(f)) for s, f in misplaced[:5]]})')
+
     print()
     if problems:
         print(f'{len(problems)} CHECK(S) FAILED')

@@ -130,6 +130,10 @@ The `-ExtractAssets` flag triggers BSA extraction and mesh conversion:
 - **0 of 17,216 vanilla Skyrim meshes ship bhkMultiSphereShape** (deprecated Havok path). The only Oblivion source that has one is `clutter\magesguild\apparatusalembicnovice.nif`, and shipping it converted CRASHES SSE at cell load (Anvil Mages Guild) with no crash log. Vanilla expresses the same thing as ConvexTransform+Sphere children in a list shape (`clutter\kitchen\woodenladle01.nif`).
 - `_expand_multisphere()` in collision.py expands it: each sphere → a `bhkSphereShape` (radius ×0.1) wrapped in a `bhkConvexTransformShape` (identity rotation, sphere center ×0.1 in the 4th column, 4th matrix row all zeros incl. m_44 — matches vanilla). 1 sphere → bare wrapper, N → bhkListShape. `_convert_shape`'s bhkListShape branch now FLATTENS a nested list produced by the expansion (a list shape has no transform of its own so flattening is safe; vanilla never nests list shapes).
 
+## NIF embedded Ni*Light blocks (dead in Skyrim, fixed 2026-07-18)
+- **0 vanilla Skyrim meshes contain any NiAmbientLight/NiDirectionalLight/NiPointLight/NiSpotLight block** (nif_block_scan). They are 3ds Max export leftovers in a handful of Oblivion assets (11 meshes: statuegodszenithar01, sanguine statue/shrine, priory doors/cabinets, vine01/02, countess clothes _gnd). SSE fails to load a static carrying one — statuegodszenithar01.nif (NiAmbientLight child of the root) rendered as the missing-model red triangle (TODO §26).
+- Skyrim lighting comes from placed LIGH references, never from mesh-embedded light nodes, so there is nothing to convert them into. `_walk_node`'s NiDynamicEffect branch now strips ALL dynamic-effect subtypes (it previously kept Ambient/Point/Spot believing them valid; NiNode `effects` arrays were already cleared, but a light in the `children` array survived).
+
 ## NIF worn armor conversion
 - Worn armor (has_skin AND not _gnd AND in armor/clothes dir) must use **NiNode** root, NOT BSFadeNode
 - BSFadeNode is for world objects only — worn armor is attached to the character skeleton
