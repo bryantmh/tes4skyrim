@@ -64,12 +64,28 @@ _ARMA_DNAM = bytes.fromhex('000000000000001100000000')
 _DOG_WALK, _DOG_RUN = 74.54, 500.14
 _ROT_WALK, _ROT_RUN = 3.14159265, 4.71238898
 _MOVT_INAM = bytes.fromhex('FFFF7F7FFFFF7F7FFFFF7F7F')
+# Oblivion creature ground speed comes from the Speed ATTRIBUTE, not the
+# animation: walk = fMoveCreatureWalkMin + (Max-Min) x Speed/100, run =
+# walk x fMoveRunMult (GMST values verified from the Oblivion.esm export:
+# 5.0 / 300.0 / 3.0).  Clip-natural MOVT speeds made fast predators crawl
+# ("mountain lion runs in slow motion", 2026-07-16): a Speed-50 lion ran
+# 457 u/s in Oblivion vs its gallop clip's natural 200 u/s.  Commanded
+# speed = max(natural, formula) capped at the parametric blend's top
+# anchor (walk x1.4 / run x2.0 rate-scaled children), so creatures only
+# speed UP toward Oblivion values and the animation rate always tracks.
+_CREA_WALK_MIN, _CREA_WALK_MAX, _RUN_MULT = 5.0, 300.0, 3.0
 
 
-def _movt_sped(speeds: dict) -> bytes:
-    walk = speeds.get('walk') or _DOG_WALK
-    run = speeds.get('run') or walk
-    back = speeds.get('back') or walk * 0.8
+def _movt_sped(speeds: dict, attr_speed: int = 0) -> bytes:
+    walk_nat = speeds.get('walk') or _DOG_WALK
+    run_nat = speeds.get('run') or walk_nat
+    back = speeds.get('back') or walk_nat * 0.8
+    walk, run = walk_nat, run_nat
+    if attr_speed:
+        f_walk = (_CREA_WALK_MIN
+                  + (_CREA_WALK_MAX - _CREA_WALK_MIN) * attr_speed / 100.0)
+        walk = min(max(walk_nat, f_walk), 1.4 * walk_nat)
+        run = min(max(run_nat, f_walk * _RUN_MULT), 2.0 * run_nat)
     return struct.pack('<11f', 0.0, 0.0, 0.0, 0.0, walk, max(run, walk),
                        back, back, _ROT_WALK, _ROT_RUN, _ROT_RUN)
 _MTNM_CODES = (b'WALK', b'RUN1', b'SNEK', b'BLDO', b'SWIM')
@@ -211,7 +227,8 @@ def _build_race(writer, rec, folder: str, bodies: list, proj: dict,
     writer.add_record('RACE', pack_record('RACE', race_fid, 0, subs))
 
 
-def _build_movts(writer, folder: str, proj: dict) -> None:
+def _build_movts(writer, folder: str, proj: dict,
+                 attr_speed: int = 0) -> None:
     """Generated MOVT records for one creature project (once per folder).
 
     The engine gives an actor movement types by matching the behavior
@@ -225,7 +242,7 @@ def _build_movts(writer, folder: str, proj: dict) -> None:
     manifest so graph and records agree by construction (like ATKE)."""
     names = proj.get('movement_types') or [f'TES4{folder}Default',
                                            f'TES4{folder}Run']
-    sped = _movt_sped(proj.get('speeds') or {})
+    sped = _movt_sped(proj.get('speeds') or {}, attr_speed)
     for mnam in names:
         subs = pack_string_subrecord('EDID', f'{mnam}_MT')
         subs += pack_string_subrecord('MNAM', mnam)
@@ -281,14 +298,29 @@ def build_creature_races(by_type: dict, writer, export_dir: str) -> None:
     with open(proj_path, encoding='utf-8') as f:
         _PROJECTS = json.load(f)
 
+    def _folder_of(rec):
+        model = (get_str(rec, 'Model.MODL') or '').replace('/', '\\')
+        parts = [p for p in model.lower().split('\\') if p]
+        # "Creatures\Dog\Skeleton.NIF" → folder "dog"
+        return parts[-2] if len(parts) >= 2 else ''
+
+    # per-folder Speed ATTRIBUTE for the MOVT formula (_movt_sped): the MAX
+    # across the folder's records — the combat variants are the fast ones
+    # and dead/quest-prop variants (Speed ~9-12) never move anyway.  One
+    # value per folder because all races sharing a behavior project share
+    # its iState_* movement-type names, hence the same MOVT records.
+    folder_speed = {}
+    for rec in by_type.get('CREA', []):
+        f = _folder_of(rec)
+        if f in _PROJECTS:
+            folder_speed[f] = max(folder_speed.get(f, 0),
+                                  get_int(rec, 'DATA.Speed', 0))
+
     made = {}
     movt_folders = set()
     n_races = 0
     for rec in by_type.get('CREA', []):
-        model = (get_str(rec, 'Model.MODL') or '').replace('/', '\\')
-        parts = [p for p in model.lower().split('\\') if p]
-        # "Creatures\Dog\Skeleton.NIF" → folder "dog"
-        folder = parts[-2] if len(parts) >= 2 else ''
+        folder = _folder_of(rec)
         proj = _PROJECTS.get(folder)
         if proj is None:
             continue
@@ -311,7 +343,7 @@ def build_creature_races(by_type: dict, writer, export_dir: str) -> None:
             continue
 
         if folder not in movt_folders:
-            _build_movts(writer, folder, proj)
+            _build_movts(writer, folder, proj, folder_speed.get(folder, 0))
             # engine-action → graph-event routing (IDLE records) — without
             # these the engine never sends the graph ANY events and the
             # actor plays idle forever while sliding around

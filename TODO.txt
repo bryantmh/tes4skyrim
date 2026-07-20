@@ -23,6 +23,10 @@ Major Issues for V1:
 	8 - Arielle Jurard is missing all info topics when talking to her as part of the anvil mage's guild questline
 
 	9 - Pinarus Inventius Doesn't move during fgc01rats when he is supposed to go hunt the mountain lion
+	
+	10 - Attempting to start the game using setStage charactergen 5 teleports me to the dungeon but nothing happens other than I get a quest stage to use right stick (even though I'm playing on mouse) to move around.
+
+	There are several quest issues that I want you to resolve. 1) Arielle Jurard is missing all info topics when talking to her as part of the anvil mage's guild questline 2) Pinarus Inventius Doesn't move during fgc01rats when he is supposed to go hunt the mountain lion. 3) Attempting to start the game using setStage charactergen 5 teleports me to the dungeon but nothing happens other than I get a quest stage to use right stick (even though I'm playing on mouse) to move around. Valen Dreth is supposed to talk to me ( he doesn't) and the other npcs are supposed to walk down the stairs and open my cell (they don't)
 
 Later Issues:
 
@@ -37,7 +41,7 @@ Later Issues:
 
 	4 - Goblins don't properly hold weapons
 
-	5 - Creature Ragdoll is mangled, and move too slowly
+	5 - Creature Ragdoll is mangled
 
 	6 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
 

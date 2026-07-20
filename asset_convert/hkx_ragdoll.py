@@ -151,7 +151,7 @@ class RagdollPart:
         self.parent = -1            # ragdoll part index
         self.name = ''
         self.mass = 1.0
-        self.inertia = 1.0          # max diagonal, game units
+        self.inertia = (1.0, 1.0, 1.0)  # tensor diagonal, game units
         self.com = np.zeros(3)      # bone-local, game units
         self.shape = None           # (radius, vA, vB) capsule, bone-local
         self.constraint = None      # (kind, descriptor dict) joining to parent
@@ -553,8 +553,16 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
         p.constraint = con_of.get(nid)
 
         p.mass = float(body.mass) if body.mass > 0 else 1.0
-        inertia = max(body.inertia.m_11, body.inertia.m_22,
-                      body.inertia.m_33) * (_OB_TO_GAME ** 2)
+        # anisotropic inertia (vanilla bodies are MOTION_BOX_INERTIA — an
+        # isotropic sphere tensor makes long thin limbs tumble unnaturally).
+        # The Oblivion diagonal is in the body frame; rotate the tensor into
+        # our bone frame (R_delta is identity on real exports, kept for
+        # safety) and keep the diagonal.
+        R_delta, _t_delta = xf_of[nid]
+        I_body = np.diag([max(0.0, body.inertia.m_11),
+                          max(0.0, body.inertia.m_22),
+                          max(0.0, body.inertia.m_33)]) * (_OB_TO_GAME ** 2)
+        I_bone = np.abs(np.diag(R_delta.T @ I_body @ R_delta))
         p.com = _to_bone(nid, _v4(body.center, _OB_TO_GAME), 1)
         shape = _capsule_from_shape(body.shape)
         if shape is not None:
@@ -563,11 +571,12 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
         else:
             r = max(1.0, float(np.linalg.norm(p.com)))
             p.shape = (r, p.com - [0, 0, 0.5], p.com + [0, 0, 0.5])
-        if inertia <= 0:
+        if not np.all(I_bone > 0):
             r_bs = max(np.linalg.norm(p.shape[1]),
                        np.linalg.norm(p.shape[2])) + p.shape[0]
-            inertia = 0.4 * p.mass * r_bs * r_bs
-        p.inertia = inertia
+            fallback = 0.4 * p.mass * r_bs * r_bs
+            I_bone = np.where(I_bone > 0, I_bone, fallback)
+        p.inertia = tuple(float(x) for x in I_bone)
 
         part_of_node[nid] = len(parts)
         parts.append(p)
@@ -627,7 +636,21 @@ def _basis_rows(axis1, axis2):
     return [a, b, np.cross(a, b)]
 
 
-def _add_rigid_body(pf, part, world_R, world_t):
+def _filter_info(part_index: int, parent_index: int) -> int:
+    """Havok group-filter value for a ragdoll body (vanilla dog census):
+    layer 0 (engine ORs the live layer in at attach), systemGroup 1, and
+    the standard ragdoll subsystem chain — subSystemId = part+1,
+    subSystemDontCollideWith = parent's subSystemId — so CONSTRAINED
+    neighbours never collide while non-adjacent parts still do.  All-zero
+    filter info lets every overlapping capsule collide with its neighbour
+    and the ragdoll blasts itself apart on death (the 2026-07-16 mangled-
+    ragdoll report, second root cause)."""
+    sub = (part_index + 1) & 0x1F
+    dont = ((parent_index + 1) & 0x1F) if parent_index >= 0 else 0
+    return (1 << 16) | (dont << 10) | (sub << 5)
+
+
+def _add_rigid_body(pf, part, world_R, world_t, filter_info=0):
     """hkpCapsuleShape + hkpRigidBody pair; returns the body object."""
     shape = pf.add('hkpCapsuleShape')
     r, va, vb = part.shape
@@ -650,7 +673,7 @@ def _add_rigid_body(pf, part, world_R, world_t):
 \t\t<hkobject>
 \t\t\t<hkparam name="type">1</hkparam>
 \t\t\t<hkparam name="objectQualityType">4</hkparam>
-\t\t\t<hkparam name="collisionFilterInfo">0</hkparam>
+\t\t\t<hkparam name="collisionFilterInfo">{filter_info}</hkparam>
 \t\t</hkobject>
 \t</hkparam>
 \t<hkparam name="allowedPenetrationDepth">0.100000</hkparam>
@@ -675,10 +698,10 @@ def _add_rigid_body(pf, part, world_R, world_t):
 \t<hkparam name="eventFilter">3</hkparam>
 \t<hkparam name="userFilter">1</hkparam>
 </hkobject>''')
-    inv_i = 1.0 / part.inertia
+    ix, iy, iz = part.inertia
     inv_m = 1.0 / part.mass
     body.param_raw('motion', f'''<hkobject>
-\t<hkparam name="type">MOTION_SPHERE_INERTIA</hkparam>
+\t<hkparam name="type">MOTION_BOX_INERTIA</hkparam>
 \t<hkparam name="deactivationIntegrateCounter">15</hkparam>
 \t<hkparam name="deactivationNumInactiveFrames">49152 49152</hkparam>
 \t<hkparam name="motionState">
@@ -703,7 +726,7 @@ def _add_rigid_body(pf, part, world_R, world_t):
 \t\t\t<hkparam name="deactivationClass">2</hkparam>
 \t\t</hkobject>
 \t</hkparam>
-\t<hkparam name="inertiaAndMassInv">{fmt_vec(inv_i, inv_i, inv_i, inv_m)}</hkparam>
+\t<hkparam name="inertiaAndMassInv">{fmt_vec(1.0 / ix, 1.0 / iy, 1.0 / iz, inv_m)}</hkparam>
 \t<hkparam name="linearVelocity">(0.000000 0.000000 0.000000 0.000000)</hkparam>
 \t<hkparam name="angularVelocity">(0.000000 0.000000 0.000000 0.000000)</hkparam>
 \t<hkparam name="deactivationRefPosition">(0.000000 0.000000 0.000000 0.000000) (0.000000 0.000000 0.000000 0.000000)</hkparam>
@@ -994,7 +1017,9 @@ def emit_ragdoll(pf, bones, parts, anim_skel_ref):
     motor.param('proportionalRecoveryVelocity', '5.000000')
     motor.param('constantRecoveryVelocity', '0.200000')
 
-    bodies = [_add_rigid_body(pf, p, *worlds[p.anim_index]) for p in parts]
+    bodies = [_add_rigid_body(pf, p, *worlds[p.anim_index],
+                              filter_info=_filter_info(i, p.parent))
+              for i, p in enumerate(parts)]
 
     def _constraints(motor_ref):
         insts = []

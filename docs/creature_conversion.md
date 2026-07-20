@@ -704,6 +704,40 @@ creature is fully proven.
   maxFrictionTorque 0.0 (dog census) — Oblivion descriptor frictions (≈10) freeze
   Skyrim's solver into distorted poses; converted joints now use 0.0 (synthetic
   atronach rock joints keep the vanilla 10.0).
+- **Ragdoll bodies need the Havok group-filter subsystem chain + box inertia
+  (2026-07-16, mangled-ragdoll round 2 — vanilla dog census)**: every vanilla ragdoll
+  body carries collisionFilterInfo = systemGroup 1 (bits 16+) | subSystemId (bits 5-9,
+  = part index+1) | subSystemDontCollideWith (bits 10-14, = PARENT's subSystemId),
+  layer 0 (the engine ORs the live layer in at attach).  All-zero filter info lets
+  every overlapping capsule collide with its constrained neighbour (Oblivion dog
+  ribcage capsules overlap by design) and the ragdoll blasts itself apart on death.
+  Also vanilla bodies are MOTION_BOX_INERTIA with the anisotropic tensor — our old
+  isotropic MOTION_SPHERE_INERTIA (max diagonal) made long thin limbs tumble
+  unnaturally; the Oblivion inertia diagonal ×49 is emitted per-axis now.  Note the
+  Oblivion skeleton exporter writes body world transform == bone world transform
+  (R_delta identity), so capsule verts are effectively bone-local already; the
+  bone-from-body transform machinery still guards against exceptions.
+- **Oblivion creature ground speed is ATTRIBUTE-driven, not animation-driven
+  (2026-07-16, the slow-motion-run report)**: walk = fMoveCreatureWalkMin +
+  (fMoveCreatureWalkMax−Min)×Speed/100, run = walk×fMoveRunMult (GMST 5.0/300.0/3.0
+  verified from the export) — a Speed-50 mountain lion ran 457 u/s in Oblivion while
+  its gallop clip's root motion is only 200 u/s (Oblivion never synced anim rate to
+  speed; it just slid).  Clip-natural MOVT speeds therefore make fast predators crawl.
+  `_movt_sped(speeds, attr_speed)` now uses commanded = max(natural, formula) capped
+  at the blend's top anchor (walk×1.4 / run×2.0 — speed_blend_plan ships @2.0 top
+  children as headroom), with attr_speed = the MAX DATA.Speed across the folder's
+  CREA records (combat variants; dead/prop variants are Speed ~9-12 and never move).
+  The parametric blend raises animation rate to match, so no skating.
+- **PyFFI's NiGeomMorpherController has a phantom `unknown_2` byte at exactly
+  10.1.0.106 (2026-07-16, the mountainlion-missing-head regression)**: the reference
+  nif.xml has no such field; stacking it with the patch-6b Manager-Controlled byte
+  made every dev-era morph-bearing NIF (mountainlion head/paws, minotaur
+  head/eyelids) unreadable [RD].  pyffi_monkey_patch patch 6d removes it.
+  eyelidslord.nif is a different dev sub-revision with NO controller byte at all —
+  still [RD], pre-existing, cosmetic.  Dev-era tri-less shapes that the grass
+  reconstructor can't rebuild (minotaur hair01/hornsa/minotaurold — no topology in
+  the file at all) raise UnreconstructibleGeometry and are DROPPED per-shape by
+  nif_converter instead of failing the whole creature.
 - **Ragdoll constraint motors are mandatory in the hkaRagdollInstance set (2026-07-09,
   the Storm Atronach / Skeleton Load3D crash)**: crash log showed
   EXCEPTION_ACCESS_VIOLATION dereferencing an hkpPositionConstraintMotor with a

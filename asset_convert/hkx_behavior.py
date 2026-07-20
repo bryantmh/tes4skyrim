@@ -211,16 +211,22 @@ def speed_blend_plan(clips: dict, speeds: dict) -> list:
     if not fwd or not walk:
         return None
     run_kf, run = clips.get('run'), speeds.get('run')
+    # top children at 2.0× give the blend headroom up to twice the natural
+    # gait speed — the MOVT command side (creature_races._movt_sped) raises
+    # slow clips toward the Oblivion attribute-formula speed and caps at
+    # this top anchor, so the animation rate always tracks ground speed.
     entries = [('MoveForwardSlow', fwd, 0.067), ('MoveForward', fwd, 1.0)]
     if run_kf and run and run > walk * 1.05:
         if 1.4 * walk < 0.75 * run:
             entries.append(('MoveForwardFast', fwd, 1.4))
         entries += [('MoveForwardRunSlow', run_kf, 0.75),
                     ('MoveForwardRun', run_kf, 1.0),
-                    ('MoveForwardRunFast', run_kf, 1.5)]
+                    ('MoveForwardRunFast', run_kf, 1.5),
+                    ('MoveForwardRunFaster', run_kf, 2.0)]
         natural = {id(fwd): walk, id(run_kf): run}
     else:
-        entries.append(('MoveForwardFast', fwd, 1.4))
+        entries += [('MoveForwardFast', fwd, 1.4),
+                    ('MoveForwardFaster', fwd, 2.0)]
         natural = {id(fwd): walk}
     plan, last = [], 0.0
     for nm, kf, rate in entries:
