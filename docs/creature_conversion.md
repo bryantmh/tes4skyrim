@@ -175,6 +175,20 @@ The whole chain is implemented and wired as pipeline **Phase 4b: Creatures**
   ragdoll hkaSkeleton + 2 hkaSkeletonMappers + hkpPhysicsData +
   hkaRagdollInstance (vanilla deer anatomy; GAME units — ob-havok ×7;
   identity mappers by folding body translation offsets into shape verts).
+  Three hard contracts learned from the mangled-ragdoll saga (2026-07-20,
+  verify with `tools/ragdoll_validate.py`):
+  - namedVariants lists the **anim→ragdoll mapper FIRST**, ragdoll→anim
+    second (30/30 vanilla creature census);
+  - `unmappedBones` are indices **in skeleton B**: they belong on the
+    ragdoll→anim mapper (anim bones with no ragdoll part) — putting them
+    on the anim→ragdoll mapper indexes past the ragdoll skeleton;
+  - **bind-pose limit legalization**: Oblivion authors joints whose limit
+    window excludes the bind pose (dog head hinge [23.8°,32.6°], bind 0;
+    deer thigh cone axis 35° off bind, cone 15°) — Skyrim's solver yanks
+    those limbs to the boundary at death (mangled corpse). Vanilla keeps
+    every bind angle inside its window (deer: exactly 0.0 everywhere), so
+    `_legalize_limits` widens (never shifts) each window to contain the
+    measured bind angle.
 - `tes5_import/creature_races.py` — Phase 0f: generated RACE/ARMA/ARMO per
   unique (creature folder, NIFZ body set), layouts mirrored from real
   Skyrim.esm DogRace/SkinDog/NakedDogAA dumps; ATKE = the generated

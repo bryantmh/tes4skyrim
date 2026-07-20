@@ -221,6 +221,65 @@ def _descriptor(constraint):
     return None, None
 
 
+# --- bind-pose limit legalization ------------------------------------------
+# Oblivion authors many joints whose limit window EXCLUDES the bind pose
+# (dog head hinge [23.8deg, 32.6deg] with the bind pose at 0; deer thigh
+# cone axis 35deg off bind with a 15deg cone).  Oblivion's death flow
+# tolerated that, but Skyrim's solver yanks every such limb to the nearest
+# limit boundary the instant the ragdoll activates -> the mangled-corpse
+# look.  Vanilla Skyrim keeps EVERY bind-pose joint angle inside its limit
+# window (deer census: exactly 0.0 on all joints; dog: within a few
+# degrees), so we widen each converted window just enough to contain the
+# measured bind angle.  Widening (never shifting) preserves the authored
+# range of motion — gravity still folds limbs toward the authored pose,
+# but nothing snaps on death.
+_BIND_EPS = 0.009        # ~0.5 deg margin inside the widened boundary
+
+
+def _bind_twist(axis, ref_a, ref_b):
+    """Signed rotation of ref_a relative to ref_b about axis (world)."""
+    axis = np.asarray(axis, dtype=float)
+    axis = axis / (np.linalg.norm(axis) or 1.0)
+
+    def _proj(v):
+        p = v - axis * float(np.dot(v, axis))
+        n = np.linalg.norm(p)
+        return p / n if n else p
+
+    pa, pb = _proj(np.asarray(ref_a, float)), _proj(np.asarray(ref_b, float))
+    return math.atan2(float(np.dot(np.cross(pb, pa), axis)),
+                      float(np.dot(pa, pb)))
+
+
+def _world_angle(a, b):
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    a = a / (np.linalg.norm(a) or 1.0)
+    b = b / (np.linalg.norm(b) or 1.0)
+    return math.acos(max(-1.0, min(1.0, float(np.dot(a, b)))))
+
+
+def _legalize_limits(kind, info, R_cw, R_pw):
+    """Widen the constraint's limit windows so the bind pose is inside them
+    (see block comment above).  rows/limits are mutated in place."""
+    wa = [np.asarray(r, float) @ R_cw for r in info['rows_a']]
+    wb = [np.asarray(r, float) @ R_pw for r in info['rows_b']]
+    if kind == 'ragdoll':
+        cone = _world_angle(wa[0], wb[0])
+        dot = float(np.dot(wa[0] / (np.linalg.norm(wa[0]) or 1.0),
+                           wb[1] / (np.linalg.norm(wb[1]) or 1.0)))
+        plane = math.asin(max(-1.0, min(1.0, dot)))
+        twist = _bind_twist(wa[0] + wb[0], wa[1], wb[1])
+        info['cone'] = max(info['cone'], cone + _BIND_EPS)
+        info['plane_min'] = min(info['plane_min'], plane - _BIND_EPS)
+        info['plane_max'] = max(info['plane_max'], plane + _BIND_EPS)
+        info['twist_min'] = min(info['twist_min'], twist - _BIND_EPS)
+        info['twist_max'] = max(info['twist_max'], twist + _BIND_EPS)
+    else:
+        ang = _bind_twist(wa[0] + wb[0], wa[1], wb[1])
+        info['min'] = min(info['min'], ang - _BIND_EPS)
+        info['max'] = max(info['max'], ang + _BIND_EPS)
+
+
 # --- vanilla rock-joint template (atronachstorm skeleton.nif census: every
 # free orbiting rock is ragdoll-constrained to its nearest body-carrying
 # ancestor with exactly these limits) ---
@@ -493,6 +552,8 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
                     'min': min_a, 'max': max_a,
                     'friction': 0.0,
                 }
+            _legalize_limits(kind, info, plan['worlds'][cid][0],
+                             plan['worlds'][pid][0])
             parent_of[id(n)] = pnode
             con_of[id(n)] = (kind, info)
             break
@@ -997,14 +1058,19 @@ def emit_ragdoll(pf, bones, parts, anim_skel_ref):
 </hkobject>''')
         return m
 
+    # unmappedBones are indices in skeleton B (vanilla dog census: the
+    # ragdoll->anim mapper lists the 28 anim bones with no ragdoll part; the
+    # anim->ragdoll mapper lists none).  Putting anim indices on the
+    # anim->ragdoll mapper instead points past the end of the ragdoll
+    # skeleton — out-of-range bone indices in the engine's pose mapper.
     mapped_anim = {p.anim_index for p in parts}
     unmapped_anim = [i for i in range(len(bones)) if i not in mapped_anim]
     map_r2a = _mapper(rskel.ref, anim_skel_ref,
                       [(ri, p.anim_index) for ri, p in enumerate(parts)],
-                      [])
+                      unmapped_anim)
     map_a2r = _mapper(anim_skel_ref, rskel.ref,
                       [(p.anim_index, ri) for ri, p in enumerate(parts)],
-                      unmapped_anim)
+                      [])
 
     # vanilla motor values (dog skeleton.hkx #0126) — the omitted-`type`
     # default is TYPE_INVALID, which the solver dispatches on; always emit it
@@ -1072,8 +1138,12 @@ def emit_ragdoll(pf, bones, parts, anim_skel_ref):
          ('variant', pdata.ref)],
         [('name', 'RagdollInstance'), ('className', 'hkaRagdollInstance'),
          ('variant', ragdoll.ref)],
-        [('name', 'SkeletonMapper'), ('className', 'hkaSkeletonMapper'),
-         ('variant', map_r2a.ref)],
+        # namedVariants mapper order is a hard vanilla contract (census
+        # 2026-07-20, 30/30 creature skeleton.hkx): the anim->ragdoll mapper
+        # is listed FIRST, ragdoll->anim second.  Reversed order feeds the
+        # engine's death-pose transfer the wrong mapping table.
         [('name', 'SkeletonMapper'), ('className', 'hkaSkeletonMapper'),
          ('variant', map_a2r.ref)],
+        [('name', 'SkeletonMapper'), ('className', 'hkaSkeletonMapper'),
+         ('variant', map_r2a.ref)],
     ]
