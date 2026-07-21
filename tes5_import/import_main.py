@@ -135,6 +135,19 @@ def _create_vtyp_records(writer: PluginWriter):
         set_voice_type(race_edid, gender, fid)
 
 
+def _read_tes4_master_count(export_dir: str) -> int:
+    """Count Master[N]= lines in the export's _HEADER.txt (0 if absent)."""
+    path = os.path.join(export_dir, '_HEADER.txt')
+    if not os.path.isfile(path):
+        return 0
+    count = 0
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.startswith('Master['):
+                count += 1
+    return count
+
+
 def import_plugin(export_dir: str, output_path: str, masters: list = None,
                   is_esm: bool = True, skip_types: set = None):
     """
@@ -180,6 +193,14 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
             print(f"    [phase0] {label}: {now - _step_t:.1f}s")
         _step_t = now
 
+    # How many masters the file had in TES4. Everything at a load-order index
+    # below this is an override of one of those masters; the plugin's own
+    # records sit at exactly this index.
+    num_tes4_masters = _read_tes4_master_count(export_dir)
+    if num_tes4_masters:
+        print(f"  TES4 masters: {num_tes4_masters} "
+              f"(records below index {num_tes4_masters:02X} are overrides)")
+
     print(f"Reading exports from: {export_dir}")
     t0 = time.time()
 
@@ -200,21 +221,33 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     writer = PluginWriter(masters=masters, is_esm=is_esm,
                           description="Converted from TES4 by tes4_export")
 
-    # Set FormID remapping: adding N new masters shifts all load order indices
-    # For Oblivion.esm with masters=['Skyrim.esm'], offset=1:
-    #   0x00XXXXXX (was index 0 in TES4) → 0x01XXXXXX (now index 1 in TES5)
-    num_new_masters = len(masters)
+    # Set FormID remapping. The TES5 master list is the TES4 one with N new
+    # masters (Skyrim.esm) PREPENDED, so every TES4 load-order index — the
+    # plugin's own and its masters' alike — shifts up by exactly N.
+    #   Oblivion.esm, masters=['Skyrim.esm'], tes4 masters=0 → offset 1:
+    #     own 0x00XXXXXX → 0x01XXXXXX
+    #   Translation.esp, masters=['Skyrim.esm','Nehrim.esm'],
+    #   tes4 masters=['Nehrim.esm'] → offset 1:
+    #     Nehrim override 0x00XXXXXX → 0x01XXXXXX  (overrides Nehrim.esm)
+    #     own new record  0x01XXXXXX → 0x02XXXXXX
+    # Using len(masters) here instead would shift overrides to the plugin's own
+    # index, turning every override into a duplicate new record.
+    num_new_masters = len(masters) - num_tes4_masters
     set_formid_index_offset(num_new_masters)
 
     # Determine next FormID from the maximum in the export (before remapping applies)
     # Must scan ALL FormIDs including those in cross-references to avoid collisions
+    # Only the plugin's OWN records can constrain its next object id — an
+    # override's low bytes belong to the master's id space, not ours.
     max_formid = 0
     for rec in all_records:
         fid_raw = int(rec.get('FormID', '0'), 16)
+        if (fid_raw >> 24) & 0xFF != num_tes4_masters:
+            continue
         low = fid_raw & 0x00FFFFFF
         if low > max_formid:
             max_formid = low
-    file_index = num_new_masters  # Our file's index in the TES5 master list
+    file_index = len(masters)  # Our file's index in the TES5 master list
     # Start well above the highest FormID to avoid collision with companion records
     writer.next_object_id = (file_index << 24) | (max_formid + 0x1000)
 

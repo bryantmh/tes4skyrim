@@ -18,7 +18,7 @@ conditions reference for the methodology.
 
 import struct
 
-from .text_reader import get_formid_index_offset
+from .text_reader import get_formid_index_offset, remap_formid
 
 # --- CTDA type-byte bits (identical in TES4 and TES5) --------------------------
 CTDA_OR = 0x01            # OR with the next condition
@@ -116,15 +116,12 @@ def _map_race_param(fid: int) -> 'int | None':
 
 
 def _remap_formid(fid: int, offset: int) -> int:
-    """Remap a source-file-local FormID to the output plugin's load order.
+    """Remap a TES4 FormID to the output plugin's load order.
 
-    Only rewrites the high byte when the FormID is local to the source file
-    (high byte 0x00) and is a real record (low 24 bits >= 0x100); engine-fixed
-    FormIDs (Player 0x14, etc.) and master-file refs pass through unchanged.
+    Delegates to text_reader.remap_formid so conditions shift identically to
+    record fields — including overrides, which keep their master's index.
     """
-    if offset and (fid >> 24) == 0x00 and (fid & 0x00FFFFFF) >= 0x100:
-        return (fid & 0x00FFFFFF) | (offset << 24)
-    return fid
+    return remap_formid(fid, offset)
 
 
 # TES4 GetScriptVariable(53) reads a variable on the legacy (pre-Papyrus) script

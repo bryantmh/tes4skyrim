@@ -189,16 +189,24 @@ def export_records_for_type(records: list) -> str:
 
 
 def export_file(all_records: list, output_dir: str, type_filter: set = None,
-                source_filter: str = None, source_path: str = None):
+                source_path: str = None, own_index: int = None):
     """
     Export parsed TES4 records to text format.
+
+    Every record physically present in the file is exported. A record whose
+    FormID carries a master's load-order index is an OVERRIDE of that master's
+    record, and is just as much a part of this plugin as a new record — a
+    translation plugin is almost entirely overrides. Filtering by load-order
+    prefix would drop them (and the import relies on getting them: the master
+    index survives remapping, so an override still points at the converted
+    master's record rather than duplicating it).
 
     Args:
         all_records: List of Record objects from read_file()
         output_dir: Directory for output files
         type_filter: If set, only export these record types
-        source_filter: If set, only export records from a specific source file
-                       (by load-order prefix matching)
+        own_index: This file's own load-order index (= its master count), used
+                   only to report how many records are overrides.
         source_path: Path to the source ESM/ESP binary. When given, formatting
                      runs across a process pool whose workers re-read each
                      record from their own mmap of the file — all_records may
@@ -209,29 +217,22 @@ def export_file(all_records: list, output_dir: str, type_filter: set = None,
 
     # Group records by type
     by_type = defaultdict(list)
-    source_prefix = None
-    if source_filter:
-        # Determine which load-order index corresponds to the source file
-        # For now, source_filter is used as a simple prefix mask (e.g., "01" for index 1)
-        source_prefix = source_filter
-
     for rec in all_records:
-        if source_prefix:
-            # Check if the record's FormID has the expected load-order prefix
-            rec_prefix = f"{(rec.form_id >> 24) & 0xFF:02X}"
-            if rec_prefix != source_prefix:
-                continue
         if type_filter and rec.type not in type_filter:
             continue
         by_type[rec.type].append(rec)
 
-    # Report counts
+    # Report counts, splitting new records from overrides of a master.
     total = sum(len(recs) for recs in by_type.values())
     print(f"  Exporting {total} records across {len(by_type)} types")
     for sig in sorted(by_type.keys()):
-        count = len(by_type[sig])
+        recs = by_type[sig]
+        overrides = (0 if own_index is None else
+                     sum(1 for r in recs
+                         if (r.form_id >> 24) & 0xFF != own_index))
+        note = f" ({overrides} overrides)" if overrides else ""
         skip = " (SKIP)" if sig in SKIP_TYPES else ""
-        print(f"    {sig}: {count}{skip}")
+        print(f"    {sig}: {len(recs)}{note}{skip}")
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -408,8 +409,6 @@ def main():
     parser.add_argument("input", help="Path to TES4 ESM/ESP file")
     parser.add_argument("--outdir", "-o", help="Output directory (default: export/<filename>/)")
     parser.add_argument("--types", "-t", nargs="+", help="Only export these record types")
-    parser.add_argument("--source-index", "-s",
-                        help="Only export records from this load-order index (hex, e.g. '00' or '01')")
     parser.add_argument("--list-types", action="store_true",
                         help="Just list record types and counts, don't export")
 
@@ -451,8 +450,9 @@ def main():
 
     os.makedirs(output_dir, exist_ok=True)
     export_header(header, output_dir)
-    export_file(all_records, output_dir, type_filter, args.source_index,
-                source_path=args.input)
+    export_file(all_records, output_dir, type_filter,
+                source_path=args.input,
+                own_index=sum(1 for s in header.subrecords if s.type == "MAST"))
 
 
 if __name__ == "__main__":

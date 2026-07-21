@@ -44,7 +44,7 @@ import re
 import struct
 from collections import defaultdict
 
-from .text_reader import get_formid_index_offset
+from .text_reader import get_formid_index_offset, remap_formid
 from .writer import pack_group
 from .record_types.common import (
     get_formid,
@@ -906,9 +906,7 @@ def _build_info_script_properties(result_script: str, xref) -> dict:
             continue
         if raw_fid == 0:
             continue
-        if offset and (raw_fid >> 24) == 0x00 and (raw_fid & 0x00FFFFFF) >= 0x100:
-            raw_fid = (raw_fid & 0x00FFFFFF) | (offset << 24)
-        props[prop_edid] = raw_fid
+        props[prop_edid] = remap_formid(raw_fid, offset)
     return props
 
 
@@ -1246,11 +1244,10 @@ def build_npc_to_vtyp_map(by_type: dict, num_new_masters: int) -> dict:
     offset = num_new_masters
     for sig in ('NPC_', 'CREA'):
         for rec in by_type.get(sig, []):
-            raw_fid = int(rec.get('FormID', '0'), 16)
-            if (raw_fid >> 24) == 0x00 and (raw_fid & 0x00FFFFFF) >= 0x100:
-                remapped = (raw_fid & 0x00FFFFFF) | (offset << 24)
-            else:
-                remapped = raw_fid
+            # Shift exactly as the record converters do, for any source index —
+            # an override keeps its master's index and must still land on the
+            # same key the converter stamps.
+            remapped = remap_formid(int(rec.get('FormID', '0'), 16), offset)
             gender = 'Female' if (get_int(rec, 'ACBS.Flags') & 1) else 'Male'
             race_fid = get_formid(rec, 'RNAM.Race') & 0x00FFFFFF
             voice_race_fid = race_voice.get(race_fid, {}).get(gender, race_fid)
@@ -1309,9 +1306,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     offset = get_formid_index_offset()
 
     def remap(fid: int) -> int:
-        if offset and fid and (fid >> 24) == 0x00 and (fid & 0x00FFFFFF) >= 0x100:
-            return (fid & 0x00FFFFFF) | (offset << 24)
-        return fid
+        return remap_formid(fid, offset)
 
     # --- Synthetic generic dialogue quest (owns orphan conversation topics) ---
     generic_quest_fid = _make_generic_quest(writer, 'TES4DialogueGeneric',

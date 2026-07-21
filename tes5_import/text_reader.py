@@ -252,19 +252,30 @@ def get_float(record: dict, key: str, default: float = 0.0) -> float:
 _ENGINE_FIXED_FORMIDS = frozenset({0x14})   # PlayerRef
 
 
+def remap_formid(fid: int, offset: int = None) -> int:
+    """Shift a TES4 FormID's load-order index into the output plugin's space.
+
+    The TES5 master list is the TES4 one with `offset` new masters prepended,
+    so EVERY index shifts up by offset — not just index 0. An override of a
+    master keeps that master's (shifted) index and so still refers to the
+    converted master's record; clobbering the index instead would turn every
+    override into a new record in our own file.
+    """
+    if offset is None:
+        offset = _formid_index_offset
+    if fid and offset and fid not in _ENGINE_FIXED_FORMIDS:
+        high = (fid >> 24) & 0xFF
+        return ((high + offset) << 24) | (fid & 0x00FFFFFF)
+    return fid
+
+
 def get_formid(record: dict, key: str, default: int = 0) -> int:
     """Get a FormID (hex string) as an integer, applying load order remapping."""
     val = record.get(key)
     if val is None:
         return default
     try:
-        fid = int(val, 16)
-        if (fid and _formid_index_offset
-                and fid not in _ENGINE_FIXED_FORMIDS):
-            # Shift high byte by offset (e.g., +1 when Skyrim.esm inserted at index 0)
-            high = (fid >> 24) & 0xFF
-            fid = ((high + _formid_index_offset) << 24) | (fid & 0x00FFFFFF)
-        return fid
+        return remap_formid(int(val, 16))
     except (ValueError, TypeError):
         return default
 

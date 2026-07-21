@@ -204,6 +204,91 @@ def _remove_stair_risers(verts, triangles):
     return filtered
 
 
+# Count of triangles rewound by _repair_inverted_floors (list so process
+# workers can mutate it; read via inverted_floor_flip_count()).
+_INVERTED_FLOOR_FLIPS = [0]
+
+
+def inverted_floor_flip_count():
+    """Triangles rewound by the inverted-floor repair since process start."""
+    return _INVERTED_FLOOR_FLIPS[0]
+
+
+def _repair_inverted_floors(tris):
+    """Flip collision triangles whose winding was reversed at the source.
+
+    Nehrim's meshes re-export collision as bhkPackedNiTriStripsShape triangle
+    lists, and the flatten dropped the parity flip on odd-indexed triangles of
+    the original strips.  The result is a floor quad with one up-facing and one
+    down-facing half.  Havok mesh collision is single-sided, so the inverted
+    half is walked straight through — the classic "I fall through half the
+    floor" symptom (priorychapelinterior, rfrmfloor and ~1000 others; vanilla
+    Oblivion has ~10, i.e. this is source corruption, not a conversion bug).
+
+    Only the case we can prove is repaired: a near-horizontal DOWN-facing
+    triangle that shares an edge with exactly one other triangle, which is
+    near-horizontal, UP-facing, and coplanar with it.  That is a split quad
+    whose halves disagree, and only one answer is geometrically consistent.
+    Everything else is left alone — a lone down-facing triangle is a perfectly
+    valid ceiling or overhang, and flipping it would create new holes.
+
+    Returns (repaired_tris, n_flipped).
+    """
+    if not tris:
+        return tris, 0
+
+    normals = []
+    for (v0, v1, v2) in tris:
+        ux, uy, uz = v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]
+        vx, vy, vz = v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2]
+        nx = uy*vz - uz*vy
+        ny = uz*vx - ux*vz
+        nz = ux*vy - uy*vx
+        mag = math.sqrt(nx*nx + ny*ny + nz*nz)
+        normals.append((nz / mag) if mag > 0 else 0.0)
+
+    # Index triangles by undirected edge, keyed on quantised coordinates so
+    # shared corners match despite float noise from the ×7 / havok rescales.
+    def key(v):
+        return (round(v[0], 3), round(v[1], 3), round(v[2], 3))
+
+    by_edge: dict = {}
+    for i, (v0, v1, v2) in enumerate(tris):
+        k0, k1, k2 = key(v0), key(v1), key(v2)
+        for e in ((k0, k1), (k1, k2), (k0, k2)):
+            by_edge.setdefault(tuple(sorted(e)), []).append(i)
+
+    _FLAT = 0.85          # near-horizontal only; walls/ramps are never touched
+    _COPLANAR = 0.5       # max z difference (havok units) between quad halves
+
+    flip = set()
+    for idxs in by_edge.values():
+        if len(idxs) != 2:
+            continue
+        i, j = idxs
+        ni, nj = normals[i], normals[j]
+        # Exactly one up, one down, both near-horizontal.
+        if ni > _FLAT and nj < -_FLAT:
+            down = j
+        elif nj > _FLAT and ni < -_FLAT:
+            down = i
+        else:
+            continue
+        zi = sum(v[2] for v in tris[i]) / 3.0
+        zj = sum(v[2] for v in tris[j]) / 3.0
+        if abs(zi - zj) > _COPLANAR:
+            continue
+        flip.add(down)
+
+    if not flip:
+        return tris, 0
+
+    out = []
+    for i, t in enumerate(tris):
+        out.append((t[0], t[2], t[1]) if i in flip else t)
+    return out, len(flip)
+
+
 def _ni_strips_to_packed(bhk_strips):
     """Convert bhkNiTriStripsShape → bhkPackedNiTriStripsShape.
 
@@ -447,6 +532,9 @@ def _rebuild_mesh_collision(rb, target_node):
     if not tris:
         return False
     tris = _bake_body_transform_into_tris(rb, tris)
+    tris, n_flipped = _repair_inverted_floors(tris)
+    if n_flipped:
+        _INVERTED_FLOOR_FLIPS[0] += n_flipped
     mopp = build_cms_collision(tris, sk_material, NifFormat)
     if mopp is not None:
         mopp.shape.target = target_node

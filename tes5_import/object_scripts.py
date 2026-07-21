@@ -23,7 +23,7 @@ from script_convert.converter import ScriptConverter
 from script_convert.constants import (_safe_property_name, papyrus_script_name,
                                       resolve_property_formid)
 from script_convert.pipeline import build_vmad_object_script
-from .text_reader import parse_export_file, get_formid_index_offset
+from .text_reader import parse_export_file, get_formid_index_offset, remap_formid
 
 # Papyrus property types that are literal-valued (not bound to a FormID).
 _VALUE_TYPES = {'Int', 'Float', 'Bool'}
@@ -75,14 +75,12 @@ def get_quest_script(record_fid: int):
 
 
 def _remap(fid: int, offset: int) -> int:
-    """Remap an Oblivion.esm (index-0) FormID into the output plugin space.
+    """Remap a TES4 FormID into the output plugin space.
 
-    Mirrors text_reader.get_formid: only index-0 forms with low bits >= 0x100
-    are shifted (engine-hardcoded low forms like Player 0x14 stay put).
+    Mirrors text_reader.get_formid (engine-hardcoded Player 0x14 stays put);
+    overrides keep their master's shifted index rather than becoming ours.
     """
-    if offset and fid and (fid >> 24) == 0x00 and (fid & 0x00FFFFFF) >= 0x100:
-        return (fid & 0x00FFFFFF) | (offset << 24)
-    return fid
+    return remap_formid(fid, offset)
 
 
 def _collect_scpts(by_type: dict, xref) -> dict:
