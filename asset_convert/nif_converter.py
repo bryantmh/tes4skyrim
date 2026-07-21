@@ -635,6 +635,50 @@ def _strip_dead_geometry_controllers(geom):
         ctrl = nxt
 
 
+def _prune_orphan_roots(data):
+    """Drop entries from data.roots that are not scene-graph roots.
+
+    Many Nehrim meshes were authored by tools that leave dangling blocks —
+    NiTriShapeData, NiTriStripsData, NiBinaryExtraData, bhkCollisionObject,
+    NiTexturingProperty — in the block list with nothing referencing them.
+    PyFFI reports every unreferenced block as a root, so data.roots comes back
+    as [NiNode, NiTriShapeData, ...].  Every pass here assumes a root is a
+    scene node and reads root.controller / root.children, which raises
+    AttributeError on those orphans (the castle\\*_far.nif and
+    artilleryduell\\flamecannonballnew.nif failures).
+
+    The orphans are unreachable from the real root, so they are dead weight:
+    dropping them both fixes the crash and shrinks the output.  Keeps every
+    NiAVObject root, and keeps a non-NiAVObject root only if it is the sole
+    root (nothing to fall back to — let the later passes deal with it).
+
+    Returns the number of roots removed.
+    """
+    roots = [r for r in data.roots if r is not None]
+    if len(roots) < 2:
+        return 0
+
+    keep = [r for r in roots if isinstance(r, NifFormat.NiAVObject)]
+    if not keep:
+        return 0
+
+    # An orphan is only safe to drop if nothing we keep still references it.
+    reachable = set()
+    for r in keep:
+        for block in r.tree():
+            reachable.add(id(block))
+    keep_ids = set(id(r) for r in keep)
+    keep += [r for r in roots
+             if id(r) not in keep_ids and id(r) in reachable]
+
+    removed = len(roots) - len(keep)
+    if removed <= 0:
+        return 0
+
+    data.roots = keep
+    return removed
+
+
 def _strip_creature_bone_controllers(data):
     """Remove Oblivion-runtime controllers from creature NIF node chains.
 
@@ -2287,6 +2331,9 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
         '_src_path': str(src_path),   # for flip-book frame resolution
     }
 
+    # Drop orphaned non-scene-graph roots before anything walks data.roots.
+    _prune_orphan_roots(data)
+
     # Detect animation (affects motion_system choice in collision_handler)
     has_skin = _has_skin(data)
 
@@ -3177,6 +3224,13 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
             data.read(f)
     except Exception:
         result['error'] = 'RD'
+        return result
+
+    # Standalone animation files (e.g. creatures/*/idleanims/*.nif) hold only a
+    # NiControllerSequence — no scene graph at all.  There is nothing to convert
+    # and every pass below assumes a NiAVObject root, so skip rather than crash.
+    if not any(isinstance(r, NifFormat.NiAVObject) for r in data.roots):
+        result['error'] = 'NOGEO'
         return result
 
     stats = _convert_nif(data, fix_textures=fix_textures,

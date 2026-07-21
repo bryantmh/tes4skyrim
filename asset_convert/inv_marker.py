@@ -52,7 +52,11 @@ def _gather_area_normals(root):
         if name.startswith(_IGNORED_NAME_PREFIXES):
             continue
         gd = block.data
-        if gd is None or gd.num_vertices == 0:
+        # Trust the array length, not num_vertices: some Oblivion meshes carry a
+        # stale count with has_vertices unset, so vertices is empty while
+        # num_vertices is nonzero (leyawiinhouselower01_far.nif) — that built a
+        # (0,) array and blew up the matmul below.
+        if gd is None or len(gd.vertices) == 0:
             continue
         try:
             tf = block.get_transform(root)
@@ -79,7 +83,7 @@ def _gather_area_normals(root):
         # Align winding-derived normals with authored vertex normals: winding
         # conventions vary between meshes, vertex normals are ground truth
         # for which side of a face is "outside".
-        if gd.has_normals:
+        if gd.has_normals and len(gd.normals) == len(gd.vertices):
             vn = np.array([[v.x, v.y, v.z] for v in gd.normals]) @ m
             tvn = vn[tris[:, 0]] + vn[tris[:, 1]] + vn[tris[:, 2]]
             flip = np.einsum('ij,ij->i', tri_n, tvn) < 0
