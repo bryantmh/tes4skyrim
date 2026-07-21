@@ -107,6 +107,16 @@ def read_bsa_files(bsa_path, wanted_names):
     return found
 
 
+# Some mods name their BSAs with a base that doesn't match the plugin stem.
+# Nehrim ships "N - *.bsa" (meshes/textures/sounds/misc/voices), none of which
+# start with "Nehrim". Map plugin stem → the extra BSA name bases to also probe.
+# ("L - *.bsa" in a Nehrim install comes from a separate mod, not the base game,
+# so it is intentionally not probed here.)
+_EXTRA_BSA_BASES = {
+    "nehrim": ["N"],
+}
+
+
 def _get_bsa_files(data_path, source_file):
     """Determine which BSA files to extract for a given source plugin.
 
@@ -115,31 +125,45 @@ def _get_bsa_files(data_path, source_file):
                       Oblivion - Sounds.bsa, Oblivion - Misc.bsa
     - Knights.esp  → Knights.bsa (single BSA for smaller DLCs)
     - DLCShiveringIsles.esp → DLCShiveringIsles - Meshes.bsa, etc.
+
+    Nehrim.esm → N - Meshes/Textures1/Textures2/Sounds/Misc.bsa and
+                 L - Voices/Misc.bsa (see _EXTRA_BSA_BASES).
     """
     data_dir = Path(data_path)
-    base = Path(source_file).stem  # e.g. "Oblivion", "Knights"
+    stem = Path(source_file).stem  # e.g. "Oblivion", "Knights", "Nehrim"
+
+    # Probe the plugin stem plus any hardcoded extra bases (e.g. Nehrim → N, L).
+    bases = [stem] + _EXTRA_BSA_BASES.get(stem.lower(), [])
 
     candidates = []
-    # Try split BSAs first (Oblivion - Meshes.bsa, etc.)
-    for pattern in [
-        f"{base} - Meshes.bsa",
-        f"{base} - Textures - Compressed.bsa",
-        f"{base} - Textures.bsa",
-        f"{base} - Sounds.bsa",
-        f"{base} - Misc.bsa",
-        f"{base} - Faces.bsa",
-        f"{base} - Voices.bsa",
-        f"{base} - Voices1.bsa",  # Oblivion splits voices across two BSAs
-        f"{base} - Voices2.bsa",
-    ]:
-        bsa_file = data_dir / pattern
-        if bsa_file.exists():
+    seen = set()
+
+    def _try(name):
+        bsa_file = data_dir / name
+        key = str(bsa_file).lower()
+        if key not in seen and bsa_file.exists():
+            seen.add(key)
             candidates.append(bsa_file)
 
-    # Try single BSA (Knights.bsa, etc.)
-    single_bsa = data_dir / f"{base}.bsa"
-    if single_bsa.exists():
-        candidates.append(single_bsa)
+    for base in bases:
+        # Split BSAs (Oblivion - Meshes.bsa, N - Textures1.bsa, etc.)
+        for pattern in [
+            f"{base} - Meshes.bsa",
+            f"{base} - Textures - Compressed.bsa",
+            f"{base} - Textures.bsa",
+            f"{base} - Textures1.bsa",  # Nehrim splits textures across two BSAs
+            f"{base} - Textures2.bsa",
+            f"{base} - Sounds.bsa",
+            f"{base} - Misc.bsa",
+            f"{base} - Faces.bsa",
+            f"{base} - Voices.bsa",
+            f"{base} - Voices1.bsa",  # Oblivion splits voices across two BSAs
+            f"{base} - Voices2.bsa",
+        ]:
+            _try(pattern)
+
+        # Single BSA (Knights.bsa, etc.)
+        _try(f"{base}.bsa")
 
     return candidates
 

@@ -522,9 +522,18 @@ def _find_skyrim_source_scripts() -> str:
 
 def phase_lod(file_name: str, tes5_data: str, config: dict,
               output_dir: str = None):
-    """Generate object LOD and terrain LOD for the converted plugin."""
+    """Generate object LOD and terrain LOD for the converted plugin.
+
+    LOD is generated for exactly the worldspaces the SOURCE game shipped distant
+    LOD for (detected from the extracted meshes\\landscape\\lod +
+    textures\\landscapelod assets — see terrain_lod.shipped_lod_worldspaces).
+    That mirrors vanilla precisely and skips child worldspaces (Anvil, Bravil,
+    the IC districts, …) which render inside their parent's LOD grid.
+    """
     from asset_convert.lod_gen import generate_lod
-    from asset_convert.terrain_lod import generate_terrain_lod
+    from asset_convert.terrain_lod import (generate_terrain_lod,
+                                           shipped_lod_worldspaces,
+                                           detect_terrain_worldspaces)
 
     out_root   = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
     output_dir = out_root / file_name
@@ -537,29 +546,54 @@ def phase_lod(file_name: str, tes5_data: str, config: dict,
         print(f"[{file_name}] ESM not found at {esm_path}, skipping LOD")
         return False
 
-    stem = Path(file_name).stem
-    if stem.lower() == 'oblivion':
-        worldspace_edid = 'TES4Tamriel'
+    # Which worldspaces get LOD?
+    #   1. explicit config override wins (single worldspace),
+    #   2. otherwise the worldspaces the source shipped LOD for (the authority),
+    #   3. otherwise fall back to auto-detecting the largest root worldspace.
+    override = config.get('worldspaceEditorID')
+    if override:
+        worldspaces = [override]
     else:
-        worldspace_edid = config.get('worldspaceEditorID', stem)
+        export_dir = SCRIPT_DIR / "export" / file_name
+        shipped = shipped_lod_worldspaces(export_dir)
+        if shipped:
+            worldspaces = [edid for edid, _fid in shipped]
+            print(f"[{file_name}] Source shipped LOD for {len(worldspaces)} "
+                  f"worldspace(s): {', '.join(worldspaces)}")
+        else:
+            ranked = detect_terrain_worldspaces(esm_path)
+            if ranked:
+                worldspaces = [ranked[0][2]]
+                print(f"[{file_name}] No shipped LOD found; falling back to "
+                      f"largest root worldspace '{ranked[0][2]}' "
+                      f"({ranked[0][0]} LAND records)")
+            else:
+                print(f"[{file_name}] No shipped LOD and no LAND records; "
+                      f"skipping LOD")
+                return True
 
-    print(f"[{file_name}] Generating object LOD (worldspace: {worldspace_edid})...")
-    ok = generate_lod(
-        esm_path=esm_path,
-        output_dir=output_dir,
-        worldspace_edid=worldspace_edid,
-    )
+    all_ok = True
+    for worldspace_edid in worldspaces:
+        print(f"[{file_name}] Generating object LOD "
+              f"(worldspace: {worldspace_edid})...")
+        ok = generate_lod(
+            esm_path=esm_path,
+            output_dir=output_dir,
+            worldspace_edid=worldspace_edid,
+        )
 
-    # Terrain LOD: heightmap .btr tiles + composited landscape-texture diffuse
-    # (real LTEX textures blended per LAND alpha layers) + heightmap normal maps.
-    print(f"[{file_name}] Generating terrain LOD...")
-    ok_terrain = generate_terrain_lod(
-        esm_path=esm_path,
-        output_dir=output_dir,
-        worldspace_edid=worldspace_edid,
-    )
+        # Terrain LOD: heightmap .btr tiles + composited landscape-texture
+        # diffuse (real LTEX textures blended per LAND alpha layers) + normals.
+        print(f"[{file_name}] Generating terrain LOD "
+              f"(worldspace: {worldspace_edid})...")
+        ok_terrain = generate_terrain_lod(
+            esm_path=esm_path,
+            output_dir=output_dir,
+            worldspace_edid=worldspace_edid,
+        )
+        all_ok = all_ok and ok and ok_terrain
 
-    return ok and ok_terrain
+    return all_ok
 
 # ===========================================================================
 # Phase 10: PATCH SKYRIM (SLOT 44 BODY MESHES)
@@ -785,10 +819,10 @@ def main():
     print(f"  Output dir    : {output_dir}")
     print()
 
-    order = topological_order(config.get("files", []), tes4_data)
-    if args.files:
-        low = {f.lower() for f in args.files}
-        order = [f for f in order if f.lower() in low]
+    # Files to process always come from -f/--files (CLI) or the GUI, which
+    # passes the selected plugins via -f. conversion_config.json no longer
+    # carries a "files" list; config.get("files") is only a legacy fallback.
+    order = topological_order(args.files or config.get("files", []), tes4_data)
     if not order:
         print("No files to process.")
         return 0

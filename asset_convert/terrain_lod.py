@@ -92,6 +92,152 @@ def _find_worldspace_fid(raw: bytes, n: int, edid: str):
     return None
 
 
+def detect_terrain_worldspaces(esm_path: Path, include_children: bool = False):
+    """Rank ROOT worldspaces in an ESM by how many LAND records they own.
+
+    Filenames don't tell us the worldspace EditorID (Oblivion.esm's worldspace
+    is 'TES4Tamriel'; Nehrim.esm's is 'NehrimWorldspace', not 'Nehrim'), and a
+    plugin may hold dozens of worldspaces of which only a few carry terrain.
+
+    Child worldspaces (those with a WNAM 'Parent Worldspace') render using their
+    parent's terrain LOD grid — e.g. AnvilWorld/BravilWorld sit inside the
+    Tamriel LOD even though they carry a handful of overlay LAND records of their
+    own. Generating separate LOD for them is wrong, so by default they are
+    excluded (their LAND is not rolled into the parent either; only the parent's
+    own terrain gets LOD). Pass include_children=True to list every LAND owner.
+
+    Scans the group hierarchy and returns
+        [(land_count, wrld_fid, edid), ...]  sorted most-terrain-first.
+    """
+    raw = esm_path.read_bytes()
+    n   = len(raw)
+
+    edid_by_fid   = {}     # wrld_fid -> EditorID
+    parent_by_fid = {}     # wrld_fid -> parent WRLD FormID (WNAM), 0 = root
+    land_by_wrld  = {}     # wrld_fid -> LAND count
+
+    def _sub(body, tag):
+        tag4 = tag.encode()
+        p = 0
+        while p + 6 <= len(body):
+            s = body[p:p+4]
+            sz = struct.unpack_from('<H', body, p+4)[0]
+            if s == tag4:
+                return body[p+6:p+6+sz]
+            p += 6 + sz
+        return None
+
+    def scan(start, end, cur_wrld_fid):
+        p = start
+        while p < end and p < n:
+            if p + 4 > n:
+                break
+            if raw[p:p+4] == b'GRUP':
+                if p + 24 > n:
+                    break
+                g_size  = struct.unpack_from('<I', raw, p+4)[0]
+                g_type  = struct.unpack_from('<I', raw, p+12)[0]
+                g_label = raw[p+8:p+12]
+                next_wrld = cur_wrld_fid
+                if g_type == 1:      # world children: label = parent WRLD FormID
+                    next_wrld = struct.unpack_from('<I', g_label)[0]
+                scan(p+24, p+g_size, next_wrld)
+                p += g_size
+            else:
+                if p + 24 > n:
+                    break
+                sig  = raw[p:p+4]
+                size = struct.unpack_from('<I', raw, p+4)[0]
+                fid  = struct.unpack_from('<I', raw, p+12)[0]
+                if sig == b'WRLD':
+                    body = raw[p+24:p+24+size]
+                    edid = _sub(body, 'EDID')
+                    if edid:
+                        edid_by_fid[fid] = edid.rstrip(b'\x00').decode(
+                            'latin-1', errors='replace')
+                    wnam = _sub(body, 'WNAM')
+                    if wnam and len(wnam) >= 4:
+                        parent_by_fid[fid] = struct.unpack_from('<I', wnam)[0]
+                elif sig == b'LAND' and cur_wrld_fid:
+                    land_by_wrld[cur_wrld_fid] = land_by_wrld.get(cur_wrld_fid, 0) + 1
+                p += 24 + size
+
+    hdr_size = struct.unpack_from('<I', raw, 4)[0]
+    scan(24 + hdr_size, n, 0)
+
+    ranked = []
+    for fid, cnt in land_by_wrld.items():
+        parent = parent_by_fid.get(fid, 0)
+        if parent and not include_children:
+            continue   # child worldspace → uses the parent's LOD grid
+        ranked.append((cnt, fid, edid_by_fid.get(fid, f'{fid:08X}')))
+    ranked.sort(key=lambda t: (-t[0], t[2].lower()))
+    return ranked
+
+
+def shipped_lod_worldspaces(export_dir: Path):
+    """Return the worldspace EditorIDs the SOURCE game shipped distant-LOD for.
+
+    Oblivion/Nehrim generate distant LOD offline and ship it as assets keyed by
+    the worldspace's *decimal* FormID:
+        meshes\\landscape\\lod\\<formid>.<x>.<y>.<level>.nif   (object LOD)
+        textures\\landscapelod\\generated\\<formid>.*.dds       (LOD textures)
+    (Oblivion also ships DistantLOD\\<edid>_<x>_<y>.lod terrain files, but the
+    extract step drops those; the mesh/texture prefixes are an equivalent, and
+    already-extracted, signal.)
+
+    We treat "the source shipped LOD for it" as the authority on which
+    worldspaces deserve LOD — that is exactly the vanilla set and it naturally
+    excludes child worldspaces (Anvil/Bravil/… inside Tamriel, whose overlay
+    LAND records never got their own LOD).
+
+    Scans the extract dir's LOD folders for the decimal-FormID prefixes, maps
+    them back to EditorIDs via the export's WRLD.txt, and returns
+        [(edid, tes4_formid), ...]  sorted by descending shipped-tile count.
+    """
+    export_dir = Path(export_dir)
+
+    # 1. Collect decimal FormID prefixes from shipped LOD assets.
+    from collections import Counter
+    counts = Counter()
+    for sub in ('meshes/landscape/lod', 'textures/landscapelod/generated'):
+        d = export_dir / sub
+        if not d.is_dir():
+            continue
+        for f in d.iterdir():
+            head = f.name.split('.', 1)[0]
+            if head.isdigit():
+                counts[int(head)] += 1
+    if not counts:
+        return []
+
+    # 2. Map decimal FormID -> EditorID from the export's WRLD.txt.
+    edid_by_fid = {}
+    wrld_txt = export_dir / 'WRLD.txt'
+    if wrld_txt.is_file():
+        cur_fid = None
+        for line in wrld_txt.read_text(encoding='utf-8', errors='replace').splitlines():
+            if line.startswith('FormID='):
+                try:
+                    cur_fid = int(line[7:].strip(), 16)
+                except ValueError:
+                    cur_fid = None
+            elif line.startswith('EditorID=') and cur_fid is not None:
+                edid_by_fid[cur_fid] = line[9:].strip()
+
+    # The importer renames Oblivion's 'Tamriel' worldspace to 'TES4Tamriel'
+    # (tes5_import/record_types/world.py) so it doesn't override Skyrim's
+    # Tamriel. LOD generation looks worldspaces up by EDID in the CONVERTED
+    # ESM, so return the post-rename name to match.
+    def _converted_edid(name):
+        return 'TES4Tamriel' if name == 'Tamriel' else name
+
+    result = [(_converted_edid(edid_by_fid.get(fid, f'{fid:08X}')), fid)
+              for fid in counts]
+    result.sort(key=lambda t: -counts[t[1]])
+    return result
+
+
 def _parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel'):
     """Parse LAND + CELL water data for one worldspace from the output ESM.
 
