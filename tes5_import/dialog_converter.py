@@ -1136,7 +1136,7 @@ _STARTCONV_RE = re.compile(r'\bstartconversation[\s,]+(\w+)(?:[\s,]+(\w+))?',
                            re.IGNORECASE)
 
 
-def build_say_topic_dispositions(by_type: dict, remap) -> dict:
+def build_say_topic_dispositions(by_type: dict) -> dict:
     """Map script-driven (Say/SayTo/StartConversation) topics to how their
     RunOn=Target conditions must be converted.
 
@@ -1174,7 +1174,7 @@ def build_say_topic_dispositions(by_type: dict, remap) -> dict:
         for r in by_type.get(sig, []):
             e = get_str(r, 'EditorID')
             if e:
-                ref_by_edid[e.lower()] = remap(get_formid(r, 'FormID'))
+                ref_by_edid[e.lower()] = get_formid(r, 'FormID')
 
     def target_fid(token: str):
         t = token.lower()
@@ -1305,9 +1305,6 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
 
     offset = get_formid_index_offset()
 
-    def remap(fid: int) -> int:
-        return remap_formid(fid, offset)
-
     # --- Synthetic generic dialogue quest (owns orphan conversation topics) ---
     generic_quest_fid = _make_generic_quest(writer, 'TES4DialogueGeneric',
                                             'TES4 Generic Dialogue')
@@ -1385,7 +1382,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
 
     # Say-driven topics: how each one's RunOn=Target conditions convert.
     _SAY_TOPIC_DISPOSITIONS.clear()
-    _SAY_TOPIC_DISPOSITIONS.update(build_say_topic_dispositions(by_type, remap))
+    _SAY_TOPIC_DISPOSITIONS.update(build_say_topic_dispositions(by_type))
     n_ref = sum(1 for v in _SAY_TOPIC_DISPOSITIONS.values() if v[0] == 'ref')
     print(f"    say-driven topics: {len(_SAY_TOPIC_DISPOSITIONS)} "
           f"({n_ref} retargeted to a unique ref, "
@@ -1528,7 +1525,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                 continue
         try:
             content, dlbr_bytes, owner_qfid, dial_fid, dlbr_fid = _build_one_topic(
-                dial_rec, info_by_dial, writer, remap, offset, generic_quest_fid,
+                dial_rec, info_by_dial, writer, offset, generic_quest_fid,
                 tclt_targets, bark_choice_targets, bark_choice_gate,
                 unlock_plan, unlock_globals, npc_to_vtyp,
                 quest_npc_fids, sge_quest_fids, quest_edid_by_fid,
@@ -1550,14 +1547,14 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     # --- Global bark pass: one topic per (owning quest, subtype) ---
     bark_ctx = dict(
         npc_to_vtyp=npc_to_vtyp, sge_quest_fids=sge_quest_fids,
-        remap=remap, offset=offset, unlock_plan=unlock_plan,
+        offset=offset, unlock_plan=unlock_plan,
         unlock_globals=unlock_globals, fid_to_edid=fid_to_edid,
         well_known_props=well_known_props, xref=xref, voice_map=voice_map,
         quest_edid_by_fid=quest_edid_by_fid, quest_priority=quest_priority,
         quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid,
         bark_dial_fids=bark_dial_fids, stats=stats, script_vars=script_vars)
     bark_content, bark_sge = _build_bark_pass(
-        bark_dials, info_by_dial, writer, remap,
+        bark_dials, info_by_dial, writer,
         bark_generic_quests, bark_ctx)
     all_dial_content += bark_content
 
@@ -1628,7 +1625,7 @@ def _topic_voice_types(child_infos: list, npc_to_vtyp: dict, offset: int) -> set
     return vtyps
 
 
-def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
+def _build_one_topic(dial_rec, info_by_dial, writer, offset,
                      generic_quest_fid, tclt_targets, bark_choice_targets,
                      bark_choice_gate,
                      unlock_plan,
@@ -1687,7 +1684,7 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
     orig_quest_fid = get_formid(dial_rec, 'Quest[0]')
     quest_count = get_int(dial_rec, 'QuestCount')
     if orig_quest_fid and quest_count <= 1:
-        owner_qfid = remap(orig_quest_fid)
+        owner_qfid = orig_quest_fid
     else:
         owner_qfid = generic_quest_fid
 
@@ -1757,7 +1754,7 @@ def _build_one_topic(dial_rec, info_by_dial, writer, remap, offset,
         unlock_gate_bytes=unlock_gate_bytes,
         bark_choice_gate_bytes=bark_choice_gate_bytes, service_kind=service_kind,
         orig_quest_fid=orig_quest_fid, sge_quest_fids=sge_quest_fids,
-        remap=remap, offset=offset, unlock_plan=unlock_plan,
+        offset=offset, unlock_plan=unlock_plan,
         unlock_globals=unlock_globals, fid_to_edid=fid_to_edid,
         well_known_props=well_known_props, xref=xref, voice_map=voice_map,
         quest_edid_by_fid=quest_edid_by_fid, edid=edid,
@@ -1810,9 +1807,9 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
             info_qfid = (get_formid(info_rec, 'QSTI.Quest')
                          or ctx['orig_quest_fid'])
             if (info_qfid and info_qfid not in ctx['sge_quest_fids']
-                    and ctx['remap'](info_qfid) != owner_qfid):
+                    and info_qfid != owner_qfid):
                 quest_gate_bytes = pack_subrecord('CTDA', build_ctda(
-                    FUNC_GET_QUEST_RUNNING, param1=ctx['remap'](info_qfid)))
+                    FUNC_GET_QUEST_RUNNING, param1=info_qfid))
             # Quest-level dialogue conditions: Oblivion gates ALL of a quest's
             # dialogue on the QUST's own CTDAs (NQDBeggars = GetInFaction
             # (Beggars) — that, not any INFO condition, is what keeps the
@@ -1912,7 +1909,7 @@ def _ctdas_scope_audience(ctda_bytes: bytes) -> bool:
     return False
 
 
-def _build_bark_pass(bark_dials, info_by_dial, writer, remap,
+def _build_bark_pass(bark_dials, info_by_dial, writer,
                      bark_generic_quests, ctx):
     """Emit bark topics grouped by (owning quest, subtype) across ALL bark DIALs.
 
@@ -1952,7 +1949,7 @@ def _build_bark_pass(bark_dials, info_by_dial, writer, remap,
         for info_rec in child_infos:
             raw_q = get_formid(info_rec, 'QSTI.Quest')
             if raw_q:
-                owner_qfid = remap(raw_q)
+                owner_qfid = raw_q
             else:
                 # Synthetic per-subtype generic quest (created once).
                 snam_code = snam.decode('latin1')

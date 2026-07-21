@@ -169,6 +169,8 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # Per-plugin output dirs are named after the plugin (output/Oblivion.esm/ is
     # a FOLDER); given the folder, write <folder>/<folder-name> inside it rather
     # than failing to overwrite a directory with a file at the end of the run.
+    # convert.py always creates that folder up front and passes the inner path,
+    # so this only fires for a direct CLI run against an existing plugin dir.
     if os.path.isdir(output_path):
         output_path = os.path.join(
             output_path, os.path.basename(os.path.normpath(output_path)))

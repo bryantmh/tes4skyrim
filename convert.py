@@ -199,19 +199,17 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
     os.makedirs(out_dir, exist_ok=True)
     export_header(header, out_dir)
 
-    # For dependent plugins, only export records owned by this file
-    # (determined by the load-order index in the FormID's top byte)
-    # Auto-detect masters from the binary header
+    # Export EVERY record in the file. Records carrying a master's load-order
+    # index are overrides of that master and belong to this plugin just as much
+    # as its new records (a translation plugin is ~100% overrides) — the import
+    # remaps them onto the converted master rather than duplicating it.
+    # Auto-detect masters from the binary header for override reporting only.
     masters = get_masters_from_binary(source)
-    source_index = None
-    if masters:
-        # The file's own records have load-order index = number of masters
-        source_index = f"{len(masters):02X}"
 
     type_filter = None  # Export all types; skip types are handled by import
 
     export_file(all_records, out_dir, type_filter=type_filter,
-                source_filter=source_index, source_path=source)
+                source_path=source, own_index=len(masters))
 
     t2 = time.time()
     print(f"[{file_name}] Export complete in {t2-t0:.2f}s")
@@ -343,11 +341,14 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
 
     out_root = output_dir or str(SCRIPT_DIR / "output")
     os.makedirs(out_root, exist_ok=True)
-    output_path = os.path.join(out_root, file_name)
-    # If a directory with the same name exists (e.g. from mesh pipeline output),
-    # write the .esm inside it rather than conflicting with the directory.
-    if os.path.isdir(output_path):
-        output_path = os.path.join(output_path, file_name)
+    # Every plugin gets its own output folder (output/<plugin>/<plugin>), which
+    # is also where the asset/mesh pipeline writes. Create it unconditionally:
+    # relying on the folder already existing left plugins with no asset phase
+    # (e.g. Translation.esp) written as a bare file in output/, with their
+    # voicemap/liptext companions loose in the output root.
+    plugin_dir = os.path.join(out_root, file_name)
+    os.makedirs(plugin_dir, exist_ok=True)
+    output_path = os.path.join(plugin_dir, file_name)
 
     # Auto-detect masters from binary, prepend Skyrim.esm
     source = os.path.join(tes4_data, file_name)
