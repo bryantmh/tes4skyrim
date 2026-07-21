@@ -204,6 +204,20 @@ def _remove_stair_risers(verts, triangles):
     return filtered
 
 
+def _face_normal(tri):
+    """Normalised face normal for a triangle given as three xyz tuples."""
+    (v0, v1, v2) = tri
+    ux, uy, uz = v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]
+    vx, vy, vz = v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2]
+    nx = uy*vz - uz*vy
+    ny = uz*vx - ux*vz
+    nz = ux*vy - uy*vx
+    mag = math.sqrt(nx*nx + ny*ny + nz*nz)
+    if mag > 0:
+        nx /= mag; ny /= mag; nz /= mag
+    return nx, ny, nz
+
+
 # Count of triangles rewound by _repair_inverted_floors (list so process
 # workers can mutate it; read via inverted_floor_flip_count()).
 _INVERTED_FLOOR_FLIPS = [0]
@@ -225,27 +239,29 @@ def _repair_inverted_floors(tris):
     floor" symptom (priorychapelinterior, rfrmfloor and ~1000 others; vanilla
     Oblivion has ~10, i.e. this is source corruption, not a conversion bug).
 
-    Only the case we can prove is repaired: a near-horizontal DOWN-facing
-    triangle that shares an edge with exactly one other triangle, which is
-    near-horizontal, UP-facing, and coplanar with it.  That is a split quad
-    whose halves disagree, and only one answer is geometrically consistent.
-    Everything else is left alone — a lone down-facing triangle is a perfectly
+    Deliberately conservative — a triangle is flipped only when all of:
+
+      1. it is near-horizontal and DOWN-facing;
+      2. it shares an edge with exactly one other triangle, which is
+         near-horizontal and UP-facing (a split quad whose halves disagree);
+      3. the two normals align once the down-facing one is inverted, i.e. the
+         pair really is a single continuous surface and winding is the only
+         thing wrong (this admits sloped/organic cave floors that a flatness
+         test would miss, and rejects genuine creases);
+      4. its local z-band is not predominantly down-facing, so real ceilings
+         with a stray up-face are never "corrected" into holes.
+
+    Everything else is left alone: a lone down-facing triangle is a perfectly
     valid ceiling or overhang, and flipping it would create new holes.
+    Measured on the dungeon trees, this repairs 1570/2276 Nehrim meshes
+    (37.6k triangles) while touching only 38/2191 vanilla Oblivion meshes.
 
     Returns (repaired_tris, n_flipped).
     """
     if not tris:
         return tris, 0
 
-    normals = []
-    for (v0, v1, v2) in tris:
-        ux, uy, uz = v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]
-        vx, vy, vz = v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2]
-        nx = uy*vz - uz*vy
-        ny = uz*vx - ux*vz
-        nz = ux*vy - uy*vx
-        mag = math.sqrt(nx*nx + ny*ny + nz*nz)
-        normals.append((nz / mag) if mag > 0 else 0.0)
+    normals = [_face_normal(t)[2] for t in tris]
 
     # Index triangles by undirected edge, keyed on quantised coordinates so
     # shared corners match despite float noise from the ×7 / havok rescales.
@@ -259,7 +275,8 @@ def _repair_inverted_floors(tris):
             by_edge.setdefault(tuple(sorted(e)), []).append(i)
 
     _FLAT = 0.85          # near-horizontal only; walls/ramps are never touched
-    _COPLANAR = 0.5       # max z difference (havok units) between quad halves
+    _FLAT_BAND = 0.5      # z bucket (havok units) for grouping one surface
+    _SURFACE_AGREE = 0.9  # how closely the halves must align once un-inverted
 
     flip = set()
     for idxs in by_edge.values():
@@ -274,12 +291,56 @@ def _repair_inverted_floors(tris):
             down = i
         else:
             continue
-        zi = sum(v[2] for v in tris[i]) / 3.0
-        zj = sum(v[2] for v in tris[j]) / 3.0
-        if abs(zi - zj) > _COPLANAR:
+        # The two halves must be near-coplanar *with each other*.  A
+        # strip-parity flip inverts one half of a surface that was continuous,
+        # so once the bad half is flipped back the pair forms a smooth
+        # surface.  Compare the down-facing triangle's normal with the
+        # up-facing one INVERTED: if they then agree, the pair really is one
+        # surface and the winding is the only thing wrong.  A genuine crease
+        # (organic rock folding back on itself, a floor meeting a ceiling)
+        # fails this because the two faces point in substantially different
+        # directions even after the flip.  This is orientation-based rather
+        # than flatness-based, so it still repairs sloped/organic cave floors
+        # (cchasmfloordouble01a) that a flatness test would wrongly skip.
+        nu, nd = (i, j) if ni > 0 else (j, i)
+        fu = _face_normal(tris[nu])
+        fd = _face_normal(tris[nd])
+        # Dot of the up normal against the flipped-down normal.
+        agree = -(fu[0]*fd[0] + fu[1]*fd[1] + fu[2]*fd[2])
+        if agree < _SURFACE_AGREE:
             continue
         flip.add(down)
 
+    if not flip:
+        return tris, 0
+
+    # Local consensus guard.  The rule above assumes the UP triangle is the
+    # correct one, which is false on a ceiling: there a lone stray UP face sits
+    # beside correctly DOWN-facing neighbours, and flipping the neighbours
+    # would destroy a good ceiling (Oblivion's crmfloorceilinghole01 does
+    # exactly this, and it holds a floor AND a ceiling so a whole-mesh ratio
+    # cannot separate them).  Judge each candidate against its own coplanar
+    # surface instead: gather the near-horizontal triangles sharing its z
+    # plane, and only flip when that surface is not predominantly down-facing.
+    # A strip-parity-corrupted floor alternates up/down (~50/50); a ceiling is
+    # overwhelmingly down, so its stray up-face never wins the vote.
+    planes: dict = {}
+    for i, nz in enumerate(normals):
+        if abs(nz) <= _FLAT:
+            continue
+        zc = sum(v[2] for v in tris[i]) / 3.0
+        planes.setdefault(round(zc / _FLAT_BAND), []).append(i)
+
+    def surface_is_ceiling(i):
+        zc = sum(v[2] for v in tris[i]) / 3.0
+        band = round(zc / _FLAT_BAND)
+        peers = planes.get(band, []) + planes.get(band - 1, []) + \
+            planes.get(band + 1, [])
+        up = sum(1 for j in peers if normals[j] > _FLAT)
+        down = sum(1 for j in peers if normals[j] < -_FLAT)
+        return down > up * 2
+
+    flip = {i for i in flip if not surface_is_ceiling(i)}
     if not flip:
         return tris, 0
 

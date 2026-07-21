@@ -274,6 +274,22 @@ The single most important havok-conversion fact, and the root cause of both "con
 - Consequence of passing them through: every constraint frame and collision shape is rotated out from under the solver → constraint assemblies act welded solid; ordinary clutter collision sits askew from the visual mesh.
 - Fix in `_convert_collision`: non-T bodies get translation=(0,0,0,0) AND rotation=(0,0,0,1). bhkRigidBodyT keeps its (scaled) transform. NOTE: field-level dumps looked "fine" for months because everyone (and the docs) believed the non-T fields were dead — when a converted mesh matches vanilla on every OTHER field, byte-diff the remaining "ignored" ones.
 
+## Inverted collision winding in Nehrim source meshes — "I fall through the floor" (SOLVED 2026-07-20)
+Falling through floors in Nehrim (worst in caves) that are solid in Oblivion. **Source-data corruption, not a conversion bug** — the converter faithfully reproduced broken input.
+- **Symptom shape matters**: you fall through *half* a floor, not all of it. Collision is present, MOPP is clean, layer/material/orientation all correct.
+- **Cause**: Nehrim re-exported collision as `bhkPackedNiTriStripsShape` (Oblivion ships `bhkNiTriStripsShape`). Flattening strips → triangle lists dropped the parity flip on odd-indexed triangles, so one half of every floor quad has reversed winding. **Havok mesh collision is single-sided** → a down-facing triangle is walked straight through from above.
+  - `priorychapelinterior.nif` floor: Oblivion `(37,35,34)`+`(35,36,34)` both UP; Nehrim `(37,35,34)` UP + `(35,34,36)` **DOWN** (last two indices swapped). Floor area 719k → 359k, exactly half.
+  - `rfrmfloor.nif` (fort/cave tileset, used in hundreds of cells): Oblivion `(0,1,2)`+`(1,3,2)` UP; Nehrim `(0,1,2)` UP + `(1,2,3)` DOWN.
+- **Scale**: 1065/4485 Nehrim meshes vs 10/4199 vanilla Oblivion (~100×). Vanilla-Oblivion cleanliness is the control test for any detector here — if a scanner flags lots of Oblivion meshes, the scanner is wrong.
+- **Fix**: `_repair_inverted_floors()` in `asset_convert/collision.py`, called from `_rebuild_mesh_collision` after the body-transform bake (so triangles are in final orientation). Counter via `inverted_floor_flip_count()`.
+- **Guard design (each earned by a real false positive)**:
+  - Near-horizontal only (|nz|>0.85) — never touches walls/ramps.
+  - Edge must be shared by exactly 2 triangles, one UP one DOWN (a split quad).
+  - **Surface-agreement**: normals must align once the down one is inverted (dot > 0.9). *Do not use a flatness test instead* — `_QUAD_FLAT=0.999` looked reasonable but cut real repairs by 70% (38.4k→11.7k tris), because organic sloped cave floors like `cchasmfloordouble01a` have ~0.95 normals. Orientation-based, not flatness-based.
+  - **Local ceiling vote**: skip if the candidate's z-band is predominantly down-facing. Oblivion's `crmfloorceilinghole01` is a ceiling with one stray UP face; without this the repair flips the *good* neighbours and punches a hole. A whole-mesh ratio does NOT work (that file has both a floor and a ceiling) — the vote must be per z-band.
+- **Result**: 1570/2276 Nehrim dungeon meshes repaired (37.6k triangles), only 38/2191 Oblivion touched, 0 errors. Oblivion `priorychapelinterior` converts byte-identically with the pass on/off. Remaining Oblivion hits are organic rock where up/down interleave legitimately — left alone deliberately (thresholds can be loosened later if under-repair shows up in game).
+- **Verify**: A/B a mesh with `_repair_inverted_floors` monkeypatched to a no-op and compare output hashes; count up/down near-horizontal faces in the decoded CMS (`asset_convert.cms.decode_cms`) before/after.
+
 ## Constrained objects: chains, swinging traps, gates, trigger phantoms (2026-07-15)
 Besides the non-T rotation root cause above, the "chains/traps look right but never move when touched/grabbed" cluster had four more independent causes, all in `asset_convert/collision.py`:
 1. **Constraint max_friction**: Oblivion ships 3.0 (limited hinge) / 10.0 (ragdoll); in Skyrim that much joint friction locks the joint solid. Vanilla Skyrim prop constraints use **0.01** (desecratedimperial.nif ragdolls, spitpot hinges, tavern signs). Clamp >0.5 → 0.01 in BOTH `_fix_limited_hinge` AND `_fix_ragdoll` (the sign fix originally only covered limited hinge — chains use ragdoll constraints).
