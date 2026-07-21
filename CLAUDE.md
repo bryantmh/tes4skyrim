@@ -300,6 +300,26 @@ TES4 uses an imperative scripting language with event blocks (GameMode, OnActiva
 - Converted Escort/Follow/Travel packages must keep "Ride Horse?"=0 unless the TES4 package set Use-Horse (0x00800000) — ride_horse=1 on a horseless NPC freezes them in place (Pinarus/FGC01Rats).
 - Vanilla forms with no TES4 counterpart are reached via `Game.GetFormFromFile(0x..., "Skyrim.esm")` in TES4Polyfill (ActorTypeNPC keyword for GetIsCreature, GuardDialogueFaction for IsGuard, PlayerVampireQuestScript.VampireStatus for HasVampireFed) — no property binding needed.
 
+### Papyrus syntax traps found via Nehrim (2026-07-20, 50.5% → 98.4% compile rate)
+
+- **`;/` opens a Papyrus BLOCK comment** (closed by `/;`). Oblivion scripts use `;//////...` banner rules constantly and TES4 had no block-comment syntax, so every banner swallowed the rest of the file. The compiler only reports this as `unexpected end of file` at the LAST line, and one unterminated banner in a widely-extended base script cascaded into ~300 downstream failures. `_postprocess_lines` pads a space after the `;`.
+- **Oblivion accepted a comma between a command and its first argument** (`IsActionRef, Player`, `MessageBox, "text"`, `SetPCExpelled Fac, 1`). `_emit_function` strips a leading comma once for all handlers; the expression router also matches `^(\w+)(?:\s*,\s*|\s+)(.+)$`. Handlers that `split(None, 1)` must still `rstrip(',')` the token.
+- **TES4 EditorIDs may start with a digit** (`1Feuerball`, `01SetBonus...`); Papyrus identifiers may not. Regexes anchored on `^[a-zA-Z_]` silently skipped these, leaving the raw name in the output. Use `^\w+` and exclude pure digits / `(?!\d+\.)` so float literals still parse. `_safe_property_name` strips the leading digit for the declaration, so call sites must go through the same lookup or the two disagree.
+- **`"EditorID".Function` (quoted ref)** is valid TES4 and appears in 143 Nehrim scripts. Unquote before the ref patterns run, or the call is emitted as a property access on a string.
+- **Anything unparseable must be emitted COMMENTED**, never as bare code — TES4 uses `-----` separator rules, which parse as a prefix expression.
+- A `FUNCTION_MAP` entry with a `None` Papyrus name normally falls through to the EditorID lookup on purpose (bare `getSecondsPassed` etc. are rewritten by later passes; routing them early TODO's them mid-expression and leaves `timer = timer - `). Bare-read commands that have no such pass belong in `_BARE_NO_EQUIV_COMMANDS`.
+
+### OBSE constructs (Nehrim depends on these heavily)
+
+- **User-defined functions**: `begin Function{ a, b }` + `Call <ScriptName> arg1, arg2` (first arg space-separated, rest comma-separated; param list may use EITHER separator). Converted to a Papyrus method named `TES4Call` on the callee script, reached through a property typed as that script. NOT `Global` — the bodies read the script's own object properties.
+  - Params must NOT also be emitted as auto-properties; the parameter would shadow the property while callers write neither, so the body reads a permanent 0.
+  - A TES4 `ref` param is an untyped handle: type it from USAGE (convert the body first, then read `_property_refs`), else `Form`. Typing it `ObjectReference` — the literal translation — rejected all 170 call sites that pass a Spell.
+  - `SetFunctionValue X` + `return` → `Return X`, and the function needs a return type plus a trailing `Return 0` for fall-through paths.
+- `eval <expr>` is a pure pass-through wrapper (Nehrim uses it only around `Call`) — drop it.
+- `Let X := Y` and the compound forms `+= -= *= /=` → `X = X op Y` (Papyrus has no compound assignment).
+- No Papyrus equivalent, emitted inert with `;NE:` — OBSE arrays/strings (`ar_*`, `sv_*`, `forEach`), path-based music (`StreamMusic` and Nehrim's bundled `emc*` plugin; Skyrim music is MusicType-based), `GetPlayerHasLastRiddenHorse`, `HasFlames`/`AddFlames`/`RemoveFlames`, `PositionCell` (Papyrus `MoveTo` takes a reference, not cell coordinates), `GetIgnoreFriendlyHits` (Skyrim exposes only the setter).
+- **OBSE `IsCasting` maps NATIVELY** — `GetAnimationVariableBool("bIsCastingRight"/"bIsCastingLeft")`, no SKSE needed. Check for a native equivalent before declaring a function unconvertible.
+
 ## Development Workflow
 
 ### Automated (Recommended)

@@ -474,6 +474,28 @@ FUNCTION_MAP = {
     'opencurrentcontainer': (None,             True,  None),  # no-op
     'removeallitems':    ('RemoveAllItems',    True,  None),
     'getdisabled':       ('IsDisabled',        True,  None),
+    # Special handlers in _emit_function (see there for why each is inert):
+    # path-based music has no Skyrim API, IsCasting maps to the animation graph.
+    'streammusic':       (None,                True,  None),
+    'emcplaytrack':      (None,                True,  None),
+    'emcmusicstop':      (None,                True,  None),
+    'emcmusicresume':    (None,                True,  None),
+    'emcmusicnexttrack': (None,                True,  None),
+    'emcsetmusictype':   (None,                True,  None),
+    'emcsetmusichold':   (None,                True,  None),
+    'emcsetbattleoverride': (None,             True,  None),
+    'emcisbattleoverridden': (None,            True,  None),
+    'emcismusiconhold':  (None,                True,  None),
+    'emcgetplaylist':    (None,                True,  None),
+    'iscasting':         (None,                True,  None),
+    'positioncell':      (None,                True,  None),
+    'getignorefriendlyhits': (None,            True,  None),
+    'hasflames':         (None,                True,  None),
+    'flameson':          (None,                True,  None),
+    'flamesoff':         (None,                True,  None),
+    'addflames':         (None,                True,  None),
+    'removeflames':      (None,                True,  None),
+    'getplayerhaslastriddenhorse': (None,      True,  None),
     'attachashpile':     (None,                True,  None),  # no-op
     'setsize':           ('SetScale',          True,  None),
     'getsize':           ('GetScale',          True,  None),
@@ -647,6 +669,28 @@ _BARE_BOOL_FUNCTIONS = {
     'isswimming', 'isghost', 'isenabled', 'isdisabled', 'islocked',
     'getlocked', 'is3dloaded', 'getis3dloaded', 'isininterior',
     'getforcesneak', 'getknockedstate',
+    # OBSE IsCasting and vanilla HasFlames are read bare/as `ref.X == 1`
+    'iscasting', 'hasflames', 'getplayerhaslastriddenhorse',
+    'getignorefriendlyhits',
+}
+
+# TES4 commands with NO Papyrus equivalent (FUNCTION_MAP name is None) that
+# must still be routed through _emit_function when read BARE, mid-expression.
+#
+# Most None-named entries deliberately fall through instead: bare reads like
+# getSecondsPassed are rewritten by dedicated later passes, and routing them
+# here would TODO them mid-expression, leaving `timer = timer - `. The commands
+# below have no such pass and no same-named Papyrus form, so without routing
+# they survive into the output as undefined identifiers. _emit_function holds
+# their special handlers (path-based music has no Skyrim API; the emc* family
+# is matched there by prefix) and the ;NE no-op fallback.
+_BARE_NO_EQUIV_COMMANDS = {
+    'streammusic',
+    'emcplaytrack', 'emcmusicstop', 'emcmusicresume', 'emcmusicnexttrack',
+    'emcsetmusictype', 'emcsetmusichold', 'emcsetbattleoverride',
+    'emcisbattleoverridden', 'emcismusiconhold', 'emcgetplaylist',
+    'iscasting', 'hasflames', 'flameson', 'flamesoff', 'addflames',
+    'removeflames', 'getplayerhaslastriddenhorse', 'getignorefriendlyhits',
 }
 
 # Functions that can ONLY be called on Actor (not ObjectReference)

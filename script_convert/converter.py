@@ -6,6 +6,7 @@ from typing import Optional
 from script_convert.constants import (
     BLOCK_MAP, BLOCK_FILTER_PARAM, TYPE_MAP, ACTOR_VALUE_MAP, KNOWN_GLOBALS,
     _PAPYRUS_RESERVED, FUNCTION_MAP, _BARE_BOOL_FUNCTIONS,
+    _BARE_NO_EQUIV_COMMANDS,
     _ACTOR_ONLY_FUNCTIONS, _OBJREF_SHARED_FUNCTIONS,
     _safe_property_name, _canonical_global, _record_type_to_papyrus,
     _record_type_to_base_papyrus, papyrus_script_name,
@@ -20,6 +21,24 @@ _SLEEP_READ_RE = re.compile(r'\b(?:ispcsleeping|isplayersleeping|getpcissleeping
 # Stand-in for the voice-line duration TES4's Say/SayTo returned (seconds).
 # Drives the pacing of every converted polling conversation.
 SAY_LINE_SECONDS = 3.0
+# Papyrus method name for an OBSE user-defined function (`begin Function{...}`).
+# One fixed name per script: OBSE allowed exactly one Function block per script
+# and `Call <ScriptName> args` names the SCRIPT, never the function.
+_UDF_NAME = 'TES4Call'
+
+
+def _split_udf_params(block_filter: str) -> list[str]:
+    """Parameter names from an OBSE `begin Function{...}` header.
+
+    Both separators occur in the wild — `{ a, b, c }` and `{ refRuneSpell
+    levelRequired}` — so split on commas AND whitespace.
+    """
+    inner = block_filter.strip()
+    if inner.startswith('{'):
+        inner = inner[1:]
+    if inner.endswith('}'):
+        inner = inner[:-1]
+    return [p for p in re.split(r'[,\s]+', inner.strip()) if p]
 
 # Placeholder for a bare TES4 `GetContainer` that is not inside an equip event.
 # Papyrus cannot walk from an item to its container, so the expression has no
@@ -115,6 +134,8 @@ class ScriptConverter:
         self._var_types: dict[str, str] = {}  # lower_name -> papyrus_type
         self._current_event: str = ''  # Current event header for context-aware conversion
         self._line_comments: list[str] = []  # Comments accumulated during expression conversion
+        self._udf_returns = False      # OBSE Function block uses SetFunctionValue
+        self._udf_return_value = ''    # value staged by SetFunctionValue
 
     def _is_ref_typed_access(self, dotted_expr: str) -> bool:
         """Check if a dotted expression (e.g. 'SEHerdirRef.TargetRef') accesses a ref-typed variable.
@@ -279,6 +300,16 @@ class ScriptConverter:
         out.append('')
 
         # Variable declarations as properties (type may be upgraded after conversion)
+        # An OBSE `begin Function{a, b}` declares its parameters as ordinary
+        # script variables.  They become the Papyrus Function's parameters, so
+        # they must NOT also be emitted as auto-properties: the parameter would
+        # shadow the property inside the body while callers write neither,
+        # leaving the body reading a permanent 0.
+        _udf_param_names = set()
+        for _bt, _bf, _bl in blocks:
+            if _bt == 'function':
+                _udf_param_names = {p.lower() for p in _split_udf_params(_bf)}
+
         _var_info = []
         _seen_vars = set()
         for vtype, vname in variables:
@@ -286,6 +317,8 @@ class ScriptConverter:
             safe_vname = _safe_property_name(vname)
             if safe_vname.lower() in _seen_vars:
                 continue  # skip duplicate declarations
+            if vname.lower() in _udf_param_names:
+                continue  # becomes a Function parameter instead
             _seen_vars.add(safe_vname.lower())
             # Override ref vars that are only used with integers (cross-script analysis)
             if ptype == 'ObjectReference' and _edid_low and \
@@ -321,9 +354,23 @@ class ScriptConverter:
         merged_blocks: dict[str, list] = defaultdict(list)   # key -> [(guard, lines)]
         block_order: list[str] = []
 
+        udf_params: list[str] = []       # OBSE user-function parameter names
+        udf_body: list[str] = []         # its body, emitted as a global Function
+
         for block_type, block_filter, block_lines in blocks:
             if block_type in ('gamemode', 'scripteffectupdate'):
                 gamemode_body.extend(block_lines)
+                continue
+
+            # OBSE user-defined function: `begin Function { a, b, c }`, invoked
+            # elsewhere as `Call ThisScript a, b, c`.  This is a plain global
+            # function, so it maps directly onto a Papyrus global Function whose
+            # parameters take the declared script variables' types.  The params
+            # must become real function arguments (not the auto-properties the
+            # variable pass emitted) or the caller has no way to pass them.
+            if block_type == 'function':
+                udf_params = _split_udf_params(block_filter)
+                udf_body = list(block_lines)
                 continue
 
             # `begin MenuMode <id>` fires ONLY while that specific menu is open
@@ -418,6 +465,67 @@ class ScriptConverter:
             if not commented:
                 out.append('EndEvent')
             out.append('')
+
+        # Emit the OBSE user-defined function (`begin Function{a,b}`, invoked as
+        # `Call ThisScript a, b`) as a Papyrus Function.  NOT Global: these
+        # bodies read the script's own object properties (GlobalScriptExpGained
+        # updates the EP GlobalVariable, GlobalWaitMenu moves a stored ref), and
+        # a Global function cannot touch instance state.  Callers therefore go
+        # through a property typed as this script — which is what the caller-side
+        # `Call` rewrite emits.
+        #
+        # The parameters shadow the same-named auto-properties the variable pass
+        # emitted, so those declarations are dropped (below): keeping both makes
+        # the body's reads resolve to the property, which no caller ever writes,
+        # so every call would silently act on 0.
+        if udf_params or udf_body:
+            self._current_event = 'Function'
+            # OBSE returned a value by assigning it with SetFunctionValue and
+            # then falling out via a bare `return`.  Papyrus carries the value on
+            # the Return itself, so a function that uses it needs a return type
+            # and each `SetFunctionValue X` + `return` pair collapses to
+            # `Return X` (done in _convert_line).
+            self._udf_returns = any(
+                re.match(r'^\s*setfunctionvalue\b', b, re.IGNORECASE)
+                for b in udf_body)
+            # Convert the body BEFORE writing the signature: a TES4 `ref` is an
+            # untyped handle, and the declared type alone is too weak to pick a
+            # Papyrus parameter type.  GlobalScriptAddSpellIfNotOwned takes a
+            # `ref` that every caller fills with a Spell and the body feeds to
+            # AddSpell/HasSpell — typing it ObjectReference (the literal
+            # translation of `ref`) rejects all 170 call sites.  Converting first
+            # lets the usage-driven type inference run, then read the result.
+            udf_lines = [self._convert_line(b, extends) for b in udf_body]
+
+            def _param_type(p: str) -> str:
+                safe = _safe_property_name(p)
+                declared = self._var_types.get(p.lower(), 'Int')
+                inferred = (self._property_refs.get(safe)
+                            or self._property_refs.get(safe.lower(), ''))
+                # Only a `ref` is ambiguous enough to override; Int/Float came
+                # from an explicit TES4 type and mean what they say.
+                if declared == 'ObjectReference' and inferred:
+                    return inferred
+                # A `ref` with no usage evidence still has to accept whatever
+                # callers pass — Form is the permissive Papyrus handle.
+                if declared == 'ObjectReference':
+                    return 'Form'
+                return declared
+
+            sig = ', '.join(f'{_param_type(p)} {_safe_property_name(p)}'
+                            for p in udf_params)
+            rtype = 'Int ' if self._udf_returns else ''
+            out.append(f'{rtype}Function {_UDF_NAME}({sig})')
+            for converted in udf_lines:
+                out.append(f'  {converted}')
+            if self._udf_returns:
+                # Papyrus requires every path out of a typed function to return
+                # a value; the TES4 body could simply run off the end.
+                out.append('  Return 0')
+            out.append('EndFunction')
+            out.append('')
+            self._udf_returns = False
+            self._udf_return_value = ''
 
         # In TES4 a `begin GameMode` block on a placed object/actor reference
         # only runs while that reference is LOADED (in/near an active cell); on
@@ -1189,6 +1297,19 @@ class ScriptConverter:
             fixed = self._BOOL_CMP_RE.sub(r'(\1 as Int)\2', code)
             if fixed != code:
                 lines[idx] = fixed + (';' + comment if comment else '')
+
+        # `;/` opens a Papyrus BLOCK comment that runs until a matching `/;`.
+        # Oblivion scripts use `;///////...` banner rules freely (Nehrim's do
+        # constantly), and TES4 had no block-comment syntax — so every banner
+        # silently swallowed the rest of the file, which the compiler only
+        # reports as "unexpected end of file" at the last line.  A single
+        # unterminated banner in a widely-extended base script cascaded into
+        # ~300 downstream failures.  Break the digraph by padding a space after
+        # the `;`; the comment text is preserved verbatim.
+        for idx in range(len(lines)):
+            code, sep, comment = lines[idx].partition(';')
+            if sep and comment.startswith('/'):
+                lines[idx] = f'{code}; {comment}'
         return lines
 
     def get_property_refs(self) -> dict[str, str]:
@@ -1222,6 +1343,8 @@ class ScriptConverter:
         self._local_vars = set()
         self._var_renames = {}
         self._var_types = {}
+        self._udf_returns = False
+        self._udf_return_value = ''
 
     @staticmethod
     def _balance_if_endif(lines: list[str]) -> list[str]:
@@ -1641,11 +1764,18 @@ class ScriptConverter:
                         return f';{target} = {value}  ;TES4 stored ref in short'
             return f'{target} = {value}'
 
-        # let X := Y (OBSE)
-        let_m = re.match(r'^let\s+(\S+)\s*:=\s*(.*)', stripped, re.IGNORECASE)
+        # let X := Y (OBSE), plus the compound forms `let X += Y` / -= *= /=.
+        # Papyrus has no compound assignment, so they expand to `X = X op Y`;
+        # without this they fell through to the function-call path and came out
+        # as `Let(X, +=, Y)`, which does not compile.
+        let_m = re.match(r'^let\s+(\S+)\s*(?::|([-+*/]))=\s*(.*)',
+                         stripped, re.IGNORECASE)
         if let_m:
             target = self._convert_ref(let_m.group(1), extends)
-            value = self._convert_expression(let_m.group(2), extends)
+            value = self._convert_expression(let_m.group(3), extends)
+            op = let_m.group(2)
+            if op and not value.lstrip().startswith(';TODO:'):
+                return f'{target} = {target} {op} {value}'
             if value.lstrip().startswith(';TODO:'):
                 tgt_low_todo = target.lower().split('.')[-1]
                 tgt_type_todo = self._var_types.get(tgt_low_todo, '') or self._property_refs.get(target, self._property_refs.get(tgt_low_todo, ''))
@@ -1683,8 +1813,21 @@ class ScriptConverter:
             return 'Else'
         if low == 'endif' or low.startswith('endif') and not low[5:6].isalpha():
             return 'EndIf'
+        # OBSE `SetFunctionValue X` stages the return value; the `return` that
+        # follows delivers it.  Papyrus has no staging step, so remember the
+        # value and fold it into the next Return.
+        sfv_m = re.match(r'^setfunctionvalue\b\s*(.*)$', stripped, re.IGNORECASE)
+        if sfv_m:
+            self._udf_return_value = self._convert_expression(
+                sfv_m.group(1).strip(), extends) if sfv_m.group(1).strip() else ''
+            return f';SetFunctionValue folded into the following Return: {stripped}'
         if low == 'return':
-            return 'Return'
+            if self._udf_return_value:
+                val = self._udf_return_value
+                self._udf_return_value = ''
+                return f'Return {val}'
+            # Inside a value-returning function every path must return a value.
+            return 'Return 0' if self._udf_returns else 'Return'
         # return followed by a comment or anything (TES4 return has no value)
         if low.startswith('return ') or low.startswith('return;'):
             rest = stripped[6:].strip()
@@ -1930,6 +2073,15 @@ class ScriptConverter:
         if not expr:
             return expr
 
+        # OBSE `eval <expr>` just forces expression evaluation in a context that
+        # would otherwise take a bare command — it contributes nothing to the
+        # value.  Nehrim uses it only to wrap `Call` (`if eval (Call Foo x, 1)`),
+        # and leaving the keyword in place stopped the inner Call from ever being
+        # recognised.  Papyrus evaluates expressions natively, so drop it.
+        eval_m = re.match(r'^eval\s+(.+)$', expr, re.IGNORECASE)
+        if eval_m:
+            return self._convert_expression(eval_m.group(1).strip(), extends)
+
         # Quoted EditorID → property ref (TES4 allows quoting form names)
         if len(expr) > 2 and expr[0] == '"' and expr[-1] == '"':
             inner_name = expr[1:-1]
@@ -1945,6 +2097,17 @@ class ScriptConverter:
                 if ptype == 'GlobalVariable':
                     return f'{safe}.GetValue() as Int'
                 return safe
+
+        # `"EditorID".Function ...` — TES4 let a quoted form name stand in for the
+        # reference itself, and Nehrim uses the style in 143 scripts.  The quotes
+        # stop every ref.Func path below from matching (they all anchor on an
+        # identifier), so the call fell through and was emitted as a property
+        # access on a string: `"1TrapFireMineWorldTrigZoneRef".GetDisabled == 1`.
+        # Unquote and re-enter; the bare name resolves through the normal lookup.
+        quoted_ref = re.match(r'^"([^"]+)"\s*\.\s*(.+)$', expr)
+        if quoted_ref:
+            return self._convert_expression(
+                f'{quoted_ref.group(1)}.{quoted_ref.group(2)}', extends)
 
         # Strip balanced outer parens and recurse — TES4 conditions always
         # wrap in parens e.g. "( GetStage Quest >= 10 )" which blocks regex
@@ -2190,8 +2353,12 @@ class ScriptConverter:
                 return f'{lhs} {op} {rhs}'
 
         # Handle function calls in expressions: "funcname arg1 arg2"
-        # Route through _emit_function for special-case handling
-        func_in_expr = re.match(r'^(\w+)\s+(.+)$', expr)
+        # Route through _emit_function for special-case handling.
+        # The separator may be a comma rather than whitespace — Oblivion accepted
+        # `IsActionRef, Player` as readily as `IsActionRef Player`, and without
+        # matching that form the call fell through unconverted and emitted the
+        # comma into the Papyrus condition.  _emit_function strips it.
+        func_in_expr = re.match(r'^(\w+)(?:\s*,\s*|\s+)(.+)$', expr)
         if func_in_expr:
             fname = func_in_expr.group(1).lower()
             if fname in FUNCTION_MAP or fname in ('getstage', 'getstagedone', 'setstage',
@@ -2207,13 +2374,16 @@ class ScriptConverter:
                     'getcontainer', 'getbookread', 'bookread', 'showclassmenu',
                     'showbirthsignmenu', 'showracemenu', 'setinchargen',
                     'setplayerinseworld', 'forcecloseobliviongate',
-                    'closecurrentobliviongate', 'isinfaction'):
+                    'closecurrentobliviongate', 'isinfaction', 'call'):
                 return self._emit_function(None, func_in_expr.group(1),
                                            func_in_expr.group(2).strip(), extends)
 
         # Handle ref.Func in expressions (only if no parens yet — avoid re-matching)
         # Require ref to start with a letter (not digit) to avoid matching floats like 0.5
-        ref_func = re.match(r'^([a-zA-Z_]\w*)\.(\w+)\s*((?:[^(].*)?)', expr)
+        # The ref may START WITH A DIGIT — Papyrus forbids it but TES4 EditorIDs
+        # do not, and Nehrim names many refs `1TrapFireMineWorldRef`.  A pure
+        # number before the dot is excluded so float literals (0.5) stay literals.
+        ref_func = re.match(r'^(?!\d+\.)(\w+)\.(\w+)\s*((?:[^(].*)?)', expr)
         if ref_func and '(' not in ref_func.group(2):
             args_rest = ref_func.group(3).strip()
             ref_name = ref_func.group(1)
@@ -2282,7 +2452,14 @@ class ScriptConverter:
 
         # Bare function names used as values (no ref, no args)
         # e.g. "getParentRef" -> "GetLinkedRef()", "GetActionRef" -> "akActionRef"
-        if re.match(r'^[a-zA-Z_]\w*$', expr):
+        #
+        # A LEADING DIGIT is allowed: Papyrus forbids it, but TES4 EditorIDs do
+        # not, and Nehrim names hundreds of forms `1Feuerball`, `01SetBonus...`.
+        # Those still have to reach the EditorID lookup below, which renames them
+        # via _safe_property_name to match the emitted property declaration —
+        # otherwise the call site keeps the raw name and nothing resolves.
+        # Pure numbers are excluded so numeric literals fall through untouched.
+        if re.match(r'^\w+$', expr) and not expr.isdigit():
             bare_low = expr.lower()
             # Local variables ALWAYS take priority over function name matching
             if bare_low in self._local_vars:
@@ -2376,7 +2553,14 @@ class ScriptConverter:
             # Only check FUNCTION_MAP if NOT a declared local variable
             if bare_low not in self._local_vars:
                 entry = FUNCTION_MAP.get(bare_low)
-                if entry and entry[0] is not None:
+                # A None Papyrus name normally falls through on purpose: bare
+                # reads like getSecondsPassed are rewritten by dedicated later
+                # passes, and routing them here TODO's them mid-expression,
+                # leaving `timer = timer - `.  The commands below have no such
+                # pass and no same-named form, so they must be routed or they
+                # survive into the output as undefined identifiers.
+                if entry and (entry[0] is not None
+                              or bare_low in _BARE_NO_EQUIV_COMMANDS):
                     return self._emit_function(None, expr, '', extends)
             # Check if it's a known EditorID -> property ref
             fid = self.xref.edid_to_formid.get(bare_low, '')
@@ -2537,6 +2721,10 @@ class ScriptConverter:
         # Fix space after dot in ref. function patterns (TES4 typo)
         stripped = re.sub(r'(\w)\.\s+(\w)', r'\1.\2', stripped)
 
+        # `"EditorID".Function args` — see the matching note in
+        # _convert_expression.  Drop the quotes so the ref patterns below match.
+        stripped = re.sub(r'^"([^"]+)"\s*\.', r'\1.', stripped)
+
         # ref.function pattern
         ref_m = re.match(r'^(\w+)\.(\w+)\s*(.*)', stripped, re.IGNORECASE)
         if ref_m:
@@ -2547,7 +2735,11 @@ class ScriptConverter:
         if func_m:
             return self._emit_function(None, func_m.group(1), func_m.group(2).strip(), extends)
 
-        return f'{stripped}  ;TODO: Could not parse'
+        # Nothing matched, so `stripped` is not valid Papyrus by definition —
+        # emitting it as live code just moves the failure to the compiler (TES4
+        # scripts use bare `-----` rules as separators, which parse as a prefix
+        # expression).  Comment it out so the surrounding code still builds.
+        return f';TODO: Could not parse: {stripped}'
 
     def _get_action_ref_param(self) -> str:
         """Return the correct event parameter for GetActionRef/IsActionRef.
@@ -2646,7 +2838,32 @@ class ScriptConverter:
         """Emit a converted function call."""
         fname_low = func_name.lower()
 
+        # Oblivion's parser tolerated a comma between a command and its first
+        # argument (`IsActionRef, Player`, `GetItemCount, Gold001`, `MessageBox,
+        # "text"`) and Nehrim's scripts use the style constantly.  Nothing
+        # downstream expects it, so a stray leading comma ends up emitted inside
+        # the generated argument list — `If (IsActionRef, Game.GetPlayer())`.
+        # Strip it once, here, so every handler sees a clean argument string.
+        args_str = args_str.lstrip().lstrip(',').lstrip()
+
         # --- Special case functions ---
+
+        # OBSE `Call <ScriptName> arg1, arg2, ...` — invoke a user-defined
+        # function.  The first argument is separated from the script name by
+        # WHITESPACE, the remainder by commas (`Call Foo 10, 1, -1`), which is
+        # why the raw text never parsed as a Papyrus call.  The callee is a
+        # script, so it is reached through a property typed as that script; the
+        # function itself is emitted as `<Script>.TES4Call(...)`.
+        if fname_low == 'call' and args_str:
+            head, _, rest = args_str.strip().partition(' ')
+            target = head.strip().rstrip(',')
+            if target:
+                script_type = papyrus_script_name(target)
+                prop = _safe_property_name(target)
+                self._property_refs[prop] = script_type
+                args = [a.strip() for a in rest.split(',') if a.strip()] if rest.strip() else []
+                conv = ', '.join(self._convert_expression(a, extends) for a in args)
+                return f'{prop}.{_UDF_NAME}({conv})'
 
         if fname_low == 'getself':
             if extends == 'ActiveMagicEffect':
@@ -2785,7 +3002,10 @@ class ScriptConverter:
                 self._property_refs[args_str.strip()] = 'Faction'
             return f'(Game.GetPlayer().GetFactionRank({faction}) < 0)'
         if fname_low == 'setpcexpelled':
-            parts = args_str.split(None, 1) if args_str else []
+            # `SetPCExpelled Faction, 1` — Oblivion allowed a comma between the
+            # args, and splitting on whitespace leaves it glued to the faction
+            # name (`Faction,`), which is then emitted as part of the call.
+            parts = [p.rstrip(',') for p in args_str.split(None, 1)] if args_str else []
             faction = self._convert_expression(parts[0], extends) if parts else 'None'
             if parts:
                 self._property_refs[parts[0].strip()] = 'Faction'
@@ -2889,6 +3109,80 @@ class ScriptConverter:
             return f'{arg}.Play({ref})'
         if fname_low == 'stopsound':
             self._line_comments.append(';NE: StopSound has no Papyrus equivalent')
+            return '0'
+
+        # Music playback by FILE PATH: vanilla `StreamMusic "data\music\..."` and
+        # Nehrim's emc* plugin commands.  Skyrim's music system is form-driven
+        # (MusicType.Add()/Remove() on a MUSC record) and neither Papyrus nor
+        # SKSE can start a track from a path, so there is nothing to call — the
+        # MUSC records would have to be authored first.  Emit an inert marker
+        # rather than a call that cannot compile.
+        # `emc*` is Nehrim's bundled music-control plugin (emcPlayTrack,
+        # emcSetMusicType, emcIsBattleOverridden, ...); match the whole family by
+        # prefix rather than chasing each name.  `emcount` is a local variable in
+        # some scripts, not a command, so require a longer name.
+        if fname_low in ('streammusic',) or (
+                fname_low.startswith('emc') and fname_low != 'emcount'
+                and len(fname_low) > 5):
+            self._line_comments.append(
+                f';NE: {func_name} — Skyrim music is MusicType-based, '
+                f'no path playback ({args_str.strip()})')
+            return '0'
+
+        # OBSE IsCasting: "is this actor playing a cast animation".  Skyrim
+        # exposes exactly that natively through the animation graph, so no SKSE
+        # dependency is needed.
+        if fname_low == 'iscasting':
+            ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
+            return (f'({ref}.GetAnimationVariableBool("bIsCastingRight") || '
+                    f'{ref}.GetAnimationVariableBool("bIsCastingLeft"))')
+
+        # Vanilla TES4 GetPlayerHasLastRiddenHorse — no Skyrim equivalent (the
+        # engine tracks no "last ridden" horse), and SKSE adds none.
+        if fname_low == 'getplayerhaslastriddenhorse':
+            self._line_comments.append(
+                ';NE: GetPlayerHasLastRiddenHorse has no Skyrim equivalent')
+            return '0'
+
+        # TES4 `PositionCell x, y, z, angle, Cell` teleports a reference to raw
+        # coordinates in a named cell.  Papyrus MoveTo takes a TARGET REFERENCE,
+        # not a cell plus coordinates, and Skyrim exposes no cell-coordinate
+        # move — the scripts using it dump refs into a trash cell, which needs a
+        # marker reference that does not exist in the conversion.
+        if fname_low == 'positioncell':
+            self._line_comments.append(
+                f';NE: PositionCell needs a target marker; Papyrus MoveTo takes '
+                f'a reference, not cell coordinates ({args_str.strip()})')
+            return '0'
+
+        # ObjectReference.IgnoreFriendlyHits is a SETTER in Skyrim; TES4's
+        # GetIgnoreFriendlyHits reads the flag back and Papyrus cannot.
+        if fname_low == 'getignorefriendlyhits':
+            self._line_comments.append(
+                ';NE: GetIgnoreFriendlyHits — Skyrim exposes only the setter')
+            return '0'
+
+        # OBSE arrays and string-variables (ar_Construct/ar_Null/sv_Destruct,
+        # `forEach x <- container`).  Papyrus has real arrays and strings but no
+        # equivalent of OBSE's dynamic containers or its iterator syntax, and the
+        # surrounding logic reads them element-by-element — there is nothing to
+        # translate call-for-call, so keep the source visible and inert.
+        if fname_low.startswith(('ar_', 'sv_')) or fname_low == 'foreach':
+            orig = f'{func_name} {args_str}'.strip()
+            self._line_comments.append(
+                f';NE: {func_name} — OBSE array/string command, no Papyrus '
+                f'equivalent ({orig})')
+            return '0'
+
+        # Vanilla TES4 HasFlames / light-state toggles on a light reference.
+        # Skyrim lights carry no scriptable flame state.
+        if fname_low == 'hasflames':
+            self._line_comments.append(
+                ';NE: HasFlames has no Skyrim equivalent')
+            return '0'
+        if fname_low in ('flameson', 'flamesoff', 'addflames', 'removeflames'):
+            self._line_comments.append(
+                f';NE: {func_name} has no Skyrim equivalent')
             return '0'
 
         # Magic shader/effect functions
@@ -3833,6 +4127,11 @@ class ScriptConverter:
         """Quote a message argument if not already quoted.
         For MessageBox with buttons (e.g. '"text" "Yes" "No"'), extract only the message."""
         s = args_str.strip()
+        # `Message, "text"` / `MessageBox, "text"` — Oblivion tolerated a comma
+        # between the command and its first argument.  Left in place it is not
+        # recognised as the opening quote, so the whole thing (comma included)
+        # got re-quoted into `", "text""`, which does not parse.
+        s = s.lstrip(',').strip()
         if s.startswith('"'):
             # Find the end of the first quoted string
             end = s.index('"', 1) if '"' in s[1:] else len(s)
