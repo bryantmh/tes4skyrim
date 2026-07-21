@@ -113,7 +113,7 @@ def read_bsa_files(bsa_path, wanted_names):
 # ("L - *.bsa" in a Nehrim install comes from a separate mod, not the base game,
 # so it is intentionally not probed here.)
 _EXTRA_BSA_BASES = {
-    "nehrim": ["N"],
+    "nehrim": ["N", "L"],
 }
 
 

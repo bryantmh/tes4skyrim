@@ -1968,3 +1968,179 @@ class TestBowRig:
                if isinstance(ed, NF.BSXFlags)]
         assert bsx and (int(bsx[0].integer_data) & 0x08), \
             'BSXFlags Animated bit missing - graph never ticks'
+
+
+class TestTextureTransformControllerConversion:
+    """NiTextureTransformController -> BS*ShaderPropertyFloatController.
+
+    Oblivion scrolls waterfall/lava/gate UVs with a NiTextureTransformController
+    on the NiTexturingProperty.  Conversion deletes NiTexturingProperty, so
+    without a translation the animation is silently lost and the waterfall
+    renders as a frozen texture (landscapewaterfall02.nif).  Skyrim's equivalent
+    is a shader float controller on the UV offset/scale -- vanilla
+    fxwaterfallbodytall.nif drives V Offset with the same 2-key ramp.
+    """
+
+    def _build_textured_strip(self, operation, keys, interp_cls=None):
+        """A minimal NiTriShape whose NiTexturingProperty carries one
+        NiTextureTransformController.  Returns (shape, NifFormat)."""
+        import time
+        if not hasattr(time, 'clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat
+
+        shape = NifFormat.NiTriShape()
+        shape.data = NifFormat.NiTriShapeData()
+
+        texprop = NifFormat.NiTexturingProperty()
+        texprop.has_base_texture = True
+        src_tex = NifFormat.NiSourceTexture()
+        src_tex.file_name = b'textures\\landscape\\water.dds'
+        texprop.base_texture.source = src_tex
+
+        ctrl = NifFormat.NiTextureTransformController()
+        ctrl.flags = 0x08          # Oblivion ships Active-only
+        ctrl.frequency = 1.0
+        ctrl.start_time = 0.0
+        ctrl.stop_time = 3.3
+        ctrl.texture_slot = 0
+        ctrl.operation = operation
+
+        interp = (interp_cls or NifFormat.NiFloatInterpolator)()
+        if keys is not None:
+            fdata = NifFormat.NiFloatData()
+            kg = fdata.data
+            kg.interpolation = 2
+            kg.num_keys = len(keys)
+            kg.keys.update_size()
+            for i, (t, v) in enumerate(keys):
+                kg.keys[i].time = t
+                kg.keys[i].value = v
+            interp.data = fdata
+        ctrl.interpolator = interp
+        texprop.controller = ctrl
+
+        shape.num_properties = 1
+        shape.properties.update_size()
+        shape.properties[0] = texprop
+        return shape, NifFormat
+
+    def _convert(self, shape):
+        from asset_convert.nif_converter import _process_geometry
+        return _process_geometry(shape, fix_textures=True)
+
+    def test_v_translate_becomes_v_offset_controller(self):
+        """The waterfall case: TT_TRANSLATE_V 0 -> -2.0 must survive as a
+        BSLightingShaderPropertyFloatController on V Offset (variable 22)."""
+        shape, NF = self._build_textured_strip(1, [(0.0, 0.0), (3.3, -2.0)])
+        ts = self._convert(shape)
+
+        shader = ts.bs_properties[0]
+        assert isinstance(shader, NF.BSLightingShaderProperty)
+        ctrl = shader.controller
+        assert ctrl is not None, 'UV animation was dropped (waterfall renders frozen)'
+        assert isinstance(ctrl, NF.BSLightingShaderPropertyFloatController)
+        assert ctrl.type_of_controlled_variable == 22, 'not V Offset'
+        assert ctrl.target is shader, 'controller target must be the shader'
+        # Compute Scaled Time (0x40) is required or the curve never advances.
+        assert ctrl.flags & 0x40, 'missing Compute Scaled Time bit'
+        assert ctrl.flags & 0x08, 'controller not Active'
+        keys = ctrl.interpolator.data.data.keys
+        assert [round(k.time, 4) for k in keys] == [0.0, 3.3]
+        assert [round(k.value, 4) for k in keys] == [0.0, -2.0]
+
+    def test_all_four_uv_channels_map(self):
+        """TT_TRANSLATE_U/V and TT_SCALE_U/V map to the Lighting enum."""
+        for operation, expected in ((0, 20), (1, 22), (3, 21), (4, 23)):
+            shape, NF = self._build_textured_strip(
+                operation, [(0.0, 0.0), (1.0, 1.0)])
+            ctrl = self._convert(shape).bs_properties[0].controller
+            assert ctrl is not None and \
+                ctrl.type_of_controlled_variable == expected, \
+                'operation %d did not map to %d' % (operation, expected)
+
+    def test_rotate_is_dropped(self):
+        """TT_ROTATE has no Skyrim equivalent -- emitting a bogus variable would
+        animate the wrong channel, so it must be dropped."""
+        shape, _ = self._build_textured_strip(2, [(0.0, 0.0), (1.0, 6.28)])
+        assert self._convert(shape).bs_properties[0].controller is None
+
+    def test_blend_interpolator_is_dropped(self):
+        """NiBlendFloatInterpolator is driven by a NiControllerManager sequence,
+        not inline keys -- there is no curve to translate."""
+        import time
+        if not hasattr(time, 'clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat
+        shape, _ = self._build_textured_strip(
+            1, None, interp_cls=NifFormat.NiBlendFloatInterpolator)
+        assert self._convert(shape).bs_properties[0].controller is None
+
+    def test_single_key_is_dropped(self):
+        """One key is a constant, not an animation."""
+        shape, _ = self._build_textured_strip(1, [(0.0, 0.5)])
+        assert self._convert(shape).bs_properties[0].controller is None
+
+    def test_multiple_channels_chain(self):
+        """Vanilla chains one controller per animated channel through
+        next_controller (fxwaterfallthin512x128: U Scale -> V Offset -> U Offset)."""
+        import time
+        if not hasattr(time, 'clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat
+
+        shape, NF = self._build_textured_strip(1, [(0.0, 0.0), (3.3, -2.0)])
+        texprop = shape.properties[0]
+        second = NF.NiTextureTransformController()
+        second.flags = 0x08
+        second.frequency = 1.0
+        second.start_time = 0.0
+        second.stop_time = 8.0
+        second.texture_slot = 0
+        second.operation = 0                      # TT_TRANSLATE_U
+        interp = NF.NiFloatInterpolator()
+        fdata = NF.NiFloatData()
+        kg = fdata.data
+        kg.interpolation = 2
+        kg.num_keys = 2
+        kg.keys.update_size()
+        kg.keys[0].time, kg.keys[0].value = 0.0, 0.0
+        kg.keys[1].time, kg.keys[1].value = 8.0, 1.0
+        interp.data = fdata
+        second.interpolator = interp
+        texprop.controller.next_controller = second
+
+        chain = []
+        ctrl = self._convert(shape).bs_properties[0].controller
+        while ctrl is not None:
+            chain.append(ctrl.type_of_controlled_variable)
+            ctrl = ctrl.next_controller
+        assert chain == [22, 20], 'expected V Offset then U Offset, got %r' % (chain,)
+
+    @pytest.mark.skipif(
+        not Path('export/Nehrim.esm/meshes/landscape/landscapewaterfall02.nif').exists(),
+        reason='Nehrim waterfall mesh not available')
+    def test_nehrim_waterfall_keeps_its_scroll(self, tmp_path):
+        """End-to-end: the reported mesh must ship animated UVs."""
+        import time
+        if not hasattr(time, 'clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat
+
+        dst = tmp_path / 'waterfall.nif'
+        result = convert_nif(
+            'export/Nehrim.esm/meshes/landscape/landscapewaterfall02.nif', str(dst))
+        assert not result.get('error'), result
+
+        data = NifFormat.Data()
+        with open(str(dst), 'rb') as f:
+            data.read(f)
+        ctrls = [b for b in data.blocks
+                 if isinstance(b, (NifFormat.BSLightingShaderPropertyFloatController,
+                                   NifFormat.BSEffectShaderPropertyFloatController))]
+        assert ctrls, 'converted waterfall has no UV animation'
+        assert all(c.type_of_controlled_variable == 22 for c in ctrls), \
+            'waterfall scroll is not on V Offset'
+        assert all(c.interpolator is not None and c.interpolator.data is not None
+                   for c in ctrls), 'controller lost its curve'
+

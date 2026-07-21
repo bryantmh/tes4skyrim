@@ -744,6 +744,101 @@ def _resolve_source_texture(tex_rel, src_nif_path):
     return cand if os.path.isfile(cand) else None
 
 
+# NiTextureTransformController.operation (TransformMember) → the Skyrim shader
+# float-controller variable that does the same thing.  Oblivion scrolls/scales a
+# texture by animating the NiTexturingProperty's texture transform; Skyrim has no
+# NiTexturingProperty, so the equivalent is a BS*ShaderPropertyFloatController on
+# the shader's UV offset/scale (vanilla FXWaterfallThin512x128 chains U Scale +
+# V Offset + U Offset exactly this way).  TT_ROTATE has NO Skyrim equivalent —
+# neither shader exposes a UV rotation float — so it is dropped, not faked.
+_TT_TRANSLATE_U, _TT_TRANSLATE_V, _TT_ROTATE, _TT_SCALE_U, _TT_SCALE_V = range(5)
+
+# operation -> (LightingShaderControlledFloat, EffectShaderControlledVariable)
+_TEX_TRANSFORM_VARS = {
+    _TT_TRANSLATE_U: (20, 6),   # U Offset
+    _TT_TRANSLATE_V: (22, 8),   # V Offset
+    _TT_SCALE_U:     (21, 7),   # U Scale
+    _TT_SCALE_V:     (23, 9),   # V Scale
+}
+
+
+def _collect_tex_transform_ctrls(props):
+    """Harvest animated NiTextureTransformControllers from Oblivion properties.
+
+    Returns a list of (source controller, NiFloatData) for the base-texture
+    slot only; the caller reads operation/timing off the source controller.
+    Skipped: TT_ROTATE (no Skyrim equivalent), non-base slots (Skyrim shaders
+    expose one UV transform, applied to all maps), and controllers whose curve
+    can't be translated — a NiBlendFloatInterpolator is driven by a
+    NiControllerManager sequence rather than inline keys (46/127 in Nehrim, all
+    on skull/fireball meshes), and a single key is a constant, not an animation.
+    """
+    out = []
+    for prop in props:
+        if not isinstance(prop, NifFormat.NiTexturingProperty):
+            continue
+        ctrl = prop.controller
+        while ctrl is not None:
+            if (isinstance(ctrl, NifFormat.NiTextureTransformController) and
+                    ctrl.operation in _TEX_TRANSFORM_VARS and
+                    getattr(ctrl, 'texture_slot', 0) == 0):
+                interp = getattr(ctrl, 'interpolator', None)
+                data = getattr(interp, 'data', None) if interp is not None else None
+                keys = getattr(data, 'data', None) if data is not None else None
+                if keys is not None and keys.num_keys >= 2:
+                    out.append((ctrl, data))
+            ctrl = getattr(ctrl, 'next_controller', None)
+    return out
+
+
+def _attach_tex_transform_ctrls(shader, harvested):
+    """Re-emit harvested texture transforms as a Skyrim shader controller chain.
+
+    Vanilla chains one BS*ShaderPropertyFloatController per animated UV channel
+    through next_controller (fxwaterfallthin512x128 does U Scale -> V Offset ->
+    U Offset), so we mirror that.  The NiFloatData is reused as-is: both engines
+    interpret the curve as a UV-space offset/scale over time, so the Oblivion
+    keys (e.g. waterfall V 0.0 -> -2.0 over 3.3s) are already correct.
+    """
+    if not harvested:
+        return
+    is_effect = isinstance(shader, NifFormat.BSEffectShaderProperty)
+    ctrl_type = (NifFormat.BSEffectShaderPropertyFloatController if is_effect
+                 else NifFormat.BSLightingShaderPropertyFloatController)
+
+    head = None
+    tail = None
+    for src_ctrl, fdata in harvested:
+        new = ctrl_type()
+        # 0x48 = Active | Compute Scaled Time, the value on every vanilla
+        # shader float controller.  Oblivion ships 0x08 (Active only); without
+        # the scaled-time bit the curve does not advance.  Preserve the source
+        # cycle bits (0x06) so CLAMP/REVERSE loops survive.
+        new.flags = 0x48 | (int(getattr(src_ctrl, 'flags', 0)) & 0x06)
+        new.frequency = getattr(src_ctrl, 'frequency', 1.0) or 1.0
+        new.phase = getattr(src_ctrl, 'phase', 0.0)
+        new.start_time = src_ctrl.start_time
+        new.stop_time = src_ctrl.stop_time
+        new.target = shader
+        new.type_of_controlled_variable = _TEX_TRANSFORM_VARS[src_ctrl.operation][1 if is_effect else 0]
+
+        interp = NifFormat.NiFloatInterpolator()
+        interp.float_value = -3.4028234663852886e+38   # vanilla "use data" sentinel
+        interp.data = fdata
+        new.interpolator = interp
+
+        if head is None:
+            head = new
+        else:
+            tail.next_controller = new
+        tail = new
+
+    # Preserve anything already on the shader (e.g. the flip-book U-Offset
+    # controller built for NiFlipController meshes) at the end of the chain.
+    tail.next_controller = shader.controller
+    shader.controller = head
+
+
 def _plan_flipbook_atlas(frame_rels, stats):
     """Validate NiFlipController frame textures and register an atlas-build
     job (executed by convert_nif, which knows the output tree).
@@ -852,6 +947,11 @@ def _process_geometry(strips_or_shape, fix_textures, stats=None):
     emissive_g = 0.0
     emissive_b = 0.0
     flip_ctrl = None   # NiFlipController on NiTexturingProperty → animated fire quads
+
+    # NiTextureTransformController on NiTexturingProperty → scrolling/scaling UVs
+    # (waterfalls, lava, Oblivion gates, sunbeams).  Harvest BEFORE the old
+    # properties are cleared below; re-attached to the Skyrim shader further down.
+    tex_transforms = _collect_tex_transform_ctrls(src.properties)
 
     for prop in src.properties:
         if isinstance(prop, NifFormat.NiTexturingProperty):
@@ -1019,6 +1119,9 @@ def _process_geometry(strips_or_shape, fix_textures, stats=None):
         ts.bs_properties[0] = shader
     if alpha_prop is not None:
         ts.bs_properties[1] = alpha_prop
+
+    # Re-emit the harvested UV animation onto whichever shader we settled on.
+    _attach_tex_transform_ctrls(ts.bs_properties[0], tex_transforms)
 
     # Set SKINNED shader flag when geometry has a skin instance.
     # Without this flag, Skyrim's character renderer ignores the mesh's bone
@@ -1376,6 +1479,9 @@ def _convert_particle_system(node, fix_textures):
     flip_ctrl = None
     alpha_prop = None
 
+    # Harvest UV-scroll controllers before the Oblivion properties are cleared.
+    tex_transforms = _collect_tex_transform_ctrls(node.properties)
+
     for prop in node.properties:
         if isinstance(prop, NifFormat.NiTexturingProperty):
             if prop.has_base_texture and prop.base_texture.source:
@@ -1485,6 +1591,7 @@ def _convert_particle_system(node, fix_textures):
     shader.emissive_color.a = 1.0
 
     node.bs_properties[0] = shader
+    _attach_tex_transform_ctrls(shader, tex_transforms)
     if alpha_prop is None:
         # Vanilla particles always have a NiAlphaProperty (additive: src=SRC_ALPHA
         # dst=ONE, flags 0x100d).  Without it the particles don't alpha-blend.
