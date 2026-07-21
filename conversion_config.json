@@ -1,5 +1,5 @@
 {
-  "// INSTRUCTIONS": "List files to convert. Masters are auto-detected from binary headers. Data paths are auto-detected from registry.",
+  "// INSTRUCTIONS": "Files to convert are supplied via -f/--files or the GUI. Masters are auto-detected from binary headers. Data paths are auto-detected from registry.",
   "// SKIP_TYPES": "Skip types are managed in tes5_import/constants.py SKIP_TYPES set.",
   "tes4DataPath": "",
   "tes5DataPath": "",

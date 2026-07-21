@@ -161,7 +161,10 @@ class TestCTDAConversion:
         assert struct.unpack_from('<I', out, 4)[0] == 0x3F800000
 
     def test_param_remapping(self):
-        out = convert_ctda(_tes4_ctda(p1=0x00012345, p2=0x00023456), offset=1)
+        """Both params shift when both are FormIDs — func 60
+        GetFactionRankDifference(ptFaction, ptActor)."""
+        out = convert_ctda(_tes4_ctda(func=60, p1=0x00012345, p2=0x00023456),
+                           offset=1)
         assert struct.unpack_from('<I', out, 12)[0] == 0x01012345
         assert struct.unpack_from('<I', out, 16)[0] == 0x01023456
 
@@ -169,6 +172,47 @@ class TestCTDAConversion:
         """Player (0x14) and other low engine FormIDs pass through."""
         out = convert_ctda(_tes4_ctda(p1=0x14), offset=1)
         assert struct.unpack_from('<I', out, 12)[0] == 0x14
+
+    def test_value_params_are_never_remapped(self):
+        """A non-FormID param must survive the load-order shift untouched.
+
+        Regression: every param was remapped unconditionally, so
+        GetBaseActorValue(Speechcraft=32) became FormID 0x01000020. Skyrim
+        indexes its actor-value table with that param directly, so the engine
+        read 16.7M entries past the end and crashed (EXCEPTION_ACCESS_VIOLATION
+        in the dialogue menu) the moment any converted NPC was spoken to.
+        """
+        # 277 GetBaseActorValue(ptActorValue) — the crash from Nehrim's
+        # trainer topics (LehrerWortgewandheit05 / INFO 00207614).
+        out = convert_ctda(_tes4_ctda(func=277, p1=32), offset=1)
+        assert struct.unpack_from('<I', out, 12)[0] == 32
+        # 14 GetActorValue(ptActorValue)
+        out = convert_ctda(_tes4_ctda(func=14, p1=32), offset=1)
+        assert struct.unpack_from('<I', out, 12)[0] == 32
+        # 70 GetIsSex(ptSex) / 131 GetPCIsSex(ptSex) — 0/1 enums
+        for func in (70, 131):
+            out = convert_ctda(_tes4_ctda(func=func, p1=1), offset=1)
+            assert struct.unpack_from('<I', out, 12)[0] == 1
+        # 247 GetIsUsedItemType(ptFormType)
+        out = convert_ctda(_tes4_ctda(func=247, p1=41), offset=1)
+        assert struct.unpack_from('<I', out, 12)[0] == 41
+
+    def test_quest_stage_param2_not_remapped(self):
+        """59 GetStageDone(ptQuest, ptQuestStage): p1 is a FormID, p2 is the
+        stage NUMBER and must stay a small integer."""
+        out = convert_ctda(_tes4_ctda(func=59, p1=0x00012345, p2=30), offset=1)
+        assert struct.unpack_from('<I', out, 12)[0] == 0x01012345
+        assert struct.unpack_from('<I', out, 16)[0] == 30
+
+    def test_formid_param_table_matches_xedit(self):
+        """Spot-check the generated table against xEdit's TES5 definitions."""
+        from tes5_import.ctda_param_types import CTDA_FORMID_PARAMS
+        assert CTDA_FORMID_PARAMS[72] == frozenset({1})      # GetIsID
+        assert CTDA_FORMID_PARAMS[59] == frozenset({1})      # GetStageDone
+        assert CTDA_FORMID_PARAMS[60] == frozenset({1, 2})   # GetFactionRankDiff
+        assert 277 not in CTDA_FORMID_PARAMS                 # GetBaseActorValue
+        assert 14 not in CTDA_FORMID_PARAMS                  # GetActorValue
+        assert 70 not in CTDA_FORMID_PARAMS                  # GetIsSex
 
     def test_dropped_functions(self):
         """TES4-only / index-reused functions return None (e.g. 76

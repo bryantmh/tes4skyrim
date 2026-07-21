@@ -21,6 +21,9 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
 from .constants import IMPORT_DISPATCH, SKIP_TYPES, TYPE_MAP
+from .master_manifest import write_manifest
+from .overrides import (OverrideContext, build_nested_overrides,
+                        detect_injected_records)
 from .magic_effects import set_tes4_effect_names
 from .dialog_converter import (
     build_dialog_groups,
@@ -54,7 +57,9 @@ from .text_reader import (
     get_str,
     group_records_by_type,
     parse_export_directory,
+    get_injected_formids,
     set_formid_index_offset,
+    set_injected_formids,
 )
 from .writer import (
     PluginWriter,
@@ -149,7 +154,8 @@ def _read_tes4_master_count(export_dir: str) -> int:
 
 
 def import_plugin(export_dir: str, output_path: str, masters: list = None,
-                  is_esm: bool = True, skip_types: set = None):
+                  is_esm: bool = True, skip_types: set = None,
+                  output_root: str = None):
     """
     Main import entry point. Reads exports and writes a TES5 plugin.
 
@@ -159,6 +165,10 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         masters: List of master file names (e.g., ['Skyrim.esm'])
         is_esm: Whether to create an ESM (True) or ESP (False)
         skip_types: Additional types to skip
+        output_root: Root output dir holding the converted masters at
+                     <root>/<Master>/<Master>. Required when the plugin has
+                     TES4 masters — its overrides are merged against them.
+                     Defaults to the parent of this plugin's output folder.
     """
     if masters is None:
         masters = ['Skyrim.esm']
@@ -199,9 +209,28 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # below this is an override of one of those masters; the plugin's own
     # records sit at exactly this index.
     num_tes4_masters = _read_tes4_master_count(export_dir)
+    ctx = None
     if num_tes4_masters:
         print(f"  TES4 masters: {num_tes4_masters} "
               f"(records below index {num_tes4_masters:02X} are overrides)")
+        # An override is emitted as the MASTER's converted record with only the
+        # author's changes applied, so we need three things from the master:
+        # its converted bytes, the companion pairings its run recorded, and its
+        # raw export (to tell what the author actually changed). OverrideContext
+        # bundles all three (see tes5_import/overrides.py).
+        if output_root is None:
+            output_root = os.path.dirname(plugin_out_dir) or '.'
+        _t = time.time()
+        ctx = OverrideContext(export_dir, masters, num_tes4_masters,
+                              output_root)
+        print(f"  Master: {len(ctx.master_index)} converted records, "
+              f"{len(ctx.master_manifest)} manifest entries, "
+              f"{len(ctx)} exported records ({time.time() - _t:.1f}s)")
+        if not len(ctx):
+            # No master export to diff against: every record would be treated
+            # as new, silently duplicating the master. The warning has already
+            # printed; run without an override context.
+            ctx = None
 
     print(f"Reading exports from: {export_dir}")
     t0 = time.time()
@@ -253,16 +282,34 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # Start well above the highest FormID to avoid collision with companion records
     writer.next_object_id = (file_index << 24) | (max_formid + 0x1000)
 
+    # INJECTED records: Oblivion let a plugin ADD a record carrying a MASTER's
+    # load-order index (see overrides.detect_injected_records). They are new
+    # records — redirect them into our own space before anything converts.
+    if num_tes4_masters:
+        injected = detect_injected_records(
+            all_records, ctx.master_export if ctx else {},
+            num_tes4_masters, writer)
+        set_injected_formids(injected)
+        if injected:
+            print(f"  Injected records: {len(injected)} moved out of the "
+                  f"master's FormID space into ours")
+
     # Register TES4 effect display names so synthesized aimed MGEF clones can
     # be named what Oblivion called them (see tes5_import/magic_effects.py).
     set_tes4_effect_names(by_type.get('MGEF', []))
 
     # --- Phase 0: Create custom VTYP records for voice types not in Skyrim.esm ---
+    # Skipped entirely for a plugin with masters: these are SUPPORT records the
+    # master's conversion already created (voice types, TES4 globals/factions,
+    # vendor/trainer factions, locations). Re-creating them in a dependent
+    # plugin duplicates master content — 27 spurious VTYP, 35 GLOB, 27 FACT —
+    # and the duplicates then compete with the originals the overrides use.
     _step_t = time.time()
-    _create_vtyp_records(writer)
+    if not ctx:
+        _create_vtyp_records(writer)
 
-    # --- Phase 0a: Create TES4-specific globals/factions for converted scripts ---
-    _create_tes4_special_records(writer)
+        # --- Phase 0a: TES4-specific globals/factions for converted scripts ---
+        _create_tes4_special_records(writer)
     _step_done('vtyp/special records')
 
     # --- Phase 0b: Pre-scan for dialogue conversion ---
@@ -365,9 +412,11 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     # --- Phase 0c: Create vendor factions for merchant NPCs, plus the
     # trainer faction + per-trainer CLAS clones for the training service ---
-    from .record_types.actors import create_trainer_records, create_vendor_factions
-    create_vendor_factions(by_type, writer)
-    create_trainer_records(by_type, writer)
+    if not ctx:
+        from .record_types.actors import (create_trainer_records,
+                                          create_vendor_factions)
+        create_vendor_factions(by_type, writer)
+        create_trainer_records(by_type, writer)
     _step_done('vendor/trainer records')
 
     # --- Phase 0d: Load mesh bounds for accurate OBND computation ---
@@ -496,10 +545,27 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     for sig, target_sig, rec in work_items:
         converter = IMPORT_DISPATCH[sig]
         try:
-            if sig in _WRITER_TYPES:
-                record_bytes = converter(rec, writer=writer)
-            else:
-                record_bytes = converter(rec)
+            src_fid = (rec.get('FormID') or '').upper()
+
+            # OVERRIDE: the master's converted record with only the author's
+            # changes substituted (see overrides.py). Nothing is re-derived, so
+            # nothing can drift: this is what stops 1821 NPC_ races being
+            # rewritten to vanilla Skyrim ones when the author changed none.
+            # A 'reconvert' result (authored effect-list change) falls through
+            # to the normal path — its FormID still lands on the master's.
+            ov = ctx.build(rec, sig) if ctx else None
+            if ov is not None and ov.status != 'reconvert':
+                if ov.record_bytes:
+                    writer.add_record(target_sig, ov.record_bytes)
+                    converted += 1
+                continue
+
+            # NEW record: the normal conversion path, unchanged.
+            with writer.converting(src_fid, get_formid(rec, 'FormID')):
+                if sig in _WRITER_TYPES:
+                    record_bytes = converter(rec, writer=writer)
+                else:
+                    record_bytes = converter(rec)
             writer.add_record(target_sig, record_bytes)
             converted += 1
         except Exception as e:
@@ -514,6 +580,15 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         print(f"  Converting {len(ltex_records)} LTEX records (with TXST creation)...")
         for rec in ltex_records:
             try:
+                ov = ctx.build(rec, 'LTEX') if ctx else None
+                if ov is not None:
+                    # An LTEX override reuses the master's record (and thereby
+                    # its TXST companion); converting fresh would mint a
+                    # duplicate TXST the master already defines.
+                    if ov.record_bytes:
+                        writer.add_record('LTEX', ov.record_bytes)
+                        converted += 1
+                    continue
                 ltex_bytes, txst_bytes, txst_fid = convert_LTEX(rec, writer)
                 writer.add_record('LTEX', ltex_bytes)
                 if txst_bytes:
@@ -529,6 +604,15 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         print(f"  Converting {len(soun_records)} SOUN records (with SNDR creation)...")
         for rec in soun_records:
             try:
+                ov = ctx.build(rec, 'SOUN') if ctx else None
+                if ov is not None:
+                    # A SOUN override reuses the master's record (and thereby
+                    # its SNDR companion); converting fresh would mint a
+                    # duplicate SNDR the master already defines.
+                    if ov.record_bytes:
+                        writer.add_record('SOUN', ov.record_bytes)
+                        converted += 1
+                    continue
                 soun_bytes, sndr_bytes, sndr_fid = convert_SOUN(rec, writer)
                 writer.add_record('SOUN', soun_bytes)
                 if sndr_bytes:
@@ -551,6 +635,16 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         print(f"  Converting {len(qust_records)} QUST records...")
         for rec in qust_records:
             try:
+                # OVERRIDE: the master's quest, with only the author's changes.
+                # Re-converting would rebuild the VMAD script bindings and
+                # re-allocate alias indices against state this run doesn't have.
+                ov = ctx.build(rec, 'QUST') if ctx else None
+                if ov is not None:
+                    if ov.record_bytes:
+                        writer.add_record('QUST', ov.record_bytes)
+                        converted += 1
+                    continue
+
                 qust_bytes = convert_QUST(rec, fid_to_edid=fid_to_edid,
                                           well_known_props=_WELL_KNOWN_PROPERTIES,
                                           unlock_plan=unlock_plan,
@@ -578,6 +672,14 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
         print(f"  Converting {len(pack_records)} PACK records...")
         for rec in pack_records:
             try:
+                # A PACK override reuses the master's converted package rather
+                # than re-deriving it against this run's (empty) alias state.
+                ov = ctx.build(rec, 'PACK') if ctx else None
+                if ov is not None:
+                    if ov.record_bytes:
+                        writer.add_record('PACK', ov.record_bytes)
+                        converted += 1
+                    continue
                 writer.add_record('PACK', convert_PACK(rec, pack_ctx))
                 converted += 1
             except Exception as e:
@@ -592,7 +694,12 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # belongs to, and it reads an exterior cell's displayed name off that same
     # Location — Oblivion has neither, so build them here, before the cells are
     # written, since every cell needs an XLCN pointing at one.
-    set_cell_locations(*build_marker_locations(by_type, writer))
+    # For a plugin with masters this is skipped: the master already built a
+    # LCTN for every marker and cell, and its CELL records already point at
+    # them. Building our own would duplicate all 265 and leave the overrides'
+    # inherited XLCN pointing at the master's anyway.
+    if not ctx:
+        set_cell_locations(*build_marker_locations(by_type, writer))
 
     # --- Phase 4: CELL/WRLD hierarchy (+ PGRD→NAVM navmeshes) ---
     # Base-object model index for navmesh static-footprint carving. Only
@@ -622,12 +729,23 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     land_cache = _precompute_land(by_type, export_dir)
     _phase_done('phase 4b LAND conversion')
 
-    _build_cell_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids,
-                       navm_cache, land_cache)
-    _phase_done('phase 4c CELL groups')
-    _build_world_groups(by_type, writer, navm_metas, base_model_by_fid, door_fids,
-                        navm_cache, land_cache)
-    _phase_done('phase 4d WRLD groups')
+    if ctx:
+        # A CELL's child GRUP REPLACES the master's — it is not merged (see
+        # overrides.build_nested_overrides). LAND and PGRD ride along: LAND
+        # overrides substitute into the master's converted LAND; PGRD has no
+        # output record to patch (it becomes a generated NAVM) and is counted
+        # as inexpressible rather than silently dropped.
+        build_nested_overrides(
+            by_type, ('CELL', 'WRLD', 'REFR', 'ACHR', 'ACRE', 'LAND', 'PGRD'),
+            ctx, writer, 'CELL/WRLD/REFR')
+        _phase_done('phase 4c/4d CELL+WRLD overrides')
+    else:
+        _build_cell_groups(by_type, writer, navm_metas, base_model_by_fid,
+                           door_fids, navm_cache, land_cache)
+        _phase_done('phase 4c CELL groups')
+        _build_world_groups(by_type, writer, navm_metas, base_model_by_fid,
+                            door_fids, navm_cache, land_cache)
+        _phase_done('phase 4d WRLD groups')
 
     # Build the NAVI record indexing every generated navmesh.
     if navm_metas:
@@ -639,12 +757,25 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     # --- Phase 5: DIAL/INFO hierarchy ---
     voice_map = {}
-    dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map, unlock_plan=unlock_plan, unlock_globals=unlock_globals, script_vars=_script_vars)
+    if ctx:
+        # Same reasoning as CELL: a DIAL's child GRUP of INFOs replaces the
+        # master's. Re-running the dialogue pipeline would also re-key topics,
+        # regenerate DLBR/DLVW branches the master already has, and re-decide
+        # which of the 71 skipped topics to drop. A translation only rewrites
+        # response text, so emit flat overrides carrying exactly that.
+        build_nested_overrides(by_type, ('DIAL', 'INFO'), ctx, writer,
+                               'DIAL/INFO')
+        dialog_sge_fids = set()
+    else:
+        dialog_sge_fids = build_dialog_groups(by_type, writer, npc_to_vtyp, fid_to_edid=fid_to_edid, xref=xref, well_known_props=_WELL_KNOWN_PROPERTIES, voice_map=voice_map, unlock_plan=unlock_plan, unlock_globals=unlock_globals, script_vars=_script_vars)
     sge_quest_fids |= dialog_sge_fids
     _write_voice_map(output_path, voice_map)
     from .dialog_converter import get_lip_texts
     _write_lip_text(output_path, get_lip_texts())
     _phase_done('phase 5 DIAL/INFO groups')
+
+    if ctx:
+        ctx.report()
 
     t3 = time.time()
     print(f"\nConverted {converted} records ({errors} errors) in {t3-t2:.2f}s")
@@ -653,6 +784,15 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     writer.write(output_path)
     _phase_done('write output file')
+
+    # Companion manifest: records which generated records belong to which
+    # source record, so a plugin that overrides them can reuse ours instead of
+    # minting duplicates. Written for every conversion — any file can be a
+    # master to something.
+    mpath = write_manifest(output_path, os.path.basename(export_dir),
+                           writer.manifest())
+    print(f"  Wrote {mpath} ({len(writer.manifest())} source records)")
+
     file_size = os.path.getsize(output_path)
     print(f"Wrote {output_path} ({file_size:,} bytes)")
 
@@ -842,8 +982,8 @@ def _gather_navm_jobs(by_type: dict):
     interior_cells = [c for c in cells if not get_formid(c, 'ParentWRLD')]
     blocks = defaultdict(lambda: defaultdict(list))
     for cell in interior_cells:
-        fid = get_formid(cell, 'FormID')
-        blocks[fid % 10][(fid // 10) % 10].append(cell)
+        object_id = get_formid(cell, 'FormID') & 0xFFFFFF
+        blocks[object_id % 10][(object_id // 10) % 10].append(cell)
     for block_num in sorted(blocks.keys()):
         for sub_block_num in sorted(blocks[block_num].keys()):
             for cell_rec in blocks[block_num][sub_block_num]:
@@ -952,6 +1092,7 @@ def _precompute_land(by_type: dict, export_dir: str) -> dict:
         dict(WORLD_NAMES),
         dict(items_mod._BASE_ORIGIN_SHIFT),
         os.path.join(export_dir, 'mesh_bounds_cache.json'),
+        get_injected_formids(),
     )
 
     chunks = [[('LAND', rec) for rec in lands[i:i + _LAND_CHUNK]]
@@ -1032,7 +1173,8 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
     # A single tiny job isn't worth a process pool's spin-up cost.
     if len(jobs) == 1 or worker_count == 1:
         navm_worker.init_worker(base_model_by_fid, door_fids, collision_cache,
-                                formid_offset, geom_cache)
+                                formid_offset, geom_cache,
+                                get_injected_formids())
         for job in jobs:
             key, result = navm_worker.run_job(job)
             cache[key] = result
@@ -1043,7 +1185,8 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
                 max_workers=worker_count,
                 initializer=navm_worker.init_worker,
                 initargs=(base_model_by_fid, door_fids, collision_cache,
-                          formid_offset, geom_cache),
+                          formid_offset, geom_cache,
+                          get_injected_formids()),
                 max_tasks_per_child=500) as ex:
             for key, result in ex.map(navm_worker.run_job, jobs,
                                       chunksize=chunksize):
@@ -1103,13 +1246,19 @@ def _build_cell_groups(by_type: dict, writer: PluginWriter,
 
     print(f"  Building CELL hierarchy ({len(interior_cells)} interior cells)...")
 
-    # Group interior cells into blocks/sub-blocks
-    # Block = formID last 2 bytes >> 12, Sub-block = formID >> 8 & 0xF (simplified)
+    # Group interior cells into blocks/sub-blocks by the last two DECIMAL
+    # digits of the ObjectID (FormID with the master-index byte stripped):
+    # block = ones digit, sub-block = tens digit (xEdit wbImplementation
+    # CheckPosition; verified against Skyrim.esm). The index byte must be
+    # excluded so every file computes the same bucket for the same record —
+    # the engine re-locates a master's cell through this bucket walk when a
+    # plugin wins the CELL record, and a cell in the wrong bucket loses all
+    # its temporary children the moment it is overridden.
     blocks = defaultdict(lambda: defaultdict(list))
     for cell in interior_cells:
-        fid = get_formid(cell, 'FormID')
-        block_num = fid % 10  # Simplified block assignment
-        sub_block_num = (fid // 10) % 10
+        object_id = get_formid(cell, 'FormID') & 0xFFFFFF
+        block_num = object_id % 10
+        sub_block_num = (object_id // 10) % 10
         blocks[block_num][sub_block_num].append(cell)
 
     # Accumulate group contents in lists and b''.join at each wrap point:

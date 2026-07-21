@@ -25,7 +25,8 @@ _GEOM_CACHE: tuple = None
 
 
 def init_worker(base_model_by_fid: dict, door_fids: set, collision_cache: str,
-                formid_offset: int = 0, geom_cache: tuple = None):
+                formid_offset: int = 0, geom_cache: tuple = None,
+                injected_formids: dict = None):
     """ProcessPool initializer: stash context; load the collision cache.
 
     Runs once per worker process.  A spawned child does NOT inherit the parent's
@@ -47,8 +48,9 @@ def init_worker(base_model_by_fid: dict, door_fids: set, collision_cache: str,
     _BASE_MODEL_BY_FID = base_model_by_fid
     _DOOR_FIDS = door_fids
     _GEOM_CACHE = geom_cache
-    from .text_reader import set_formid_index_offset
+    from .text_reader import set_formid_index_offset, set_injected_formids
     set_formid_index_offset(formid_offset)
+    set_injected_formids(injected_formids or {})
     if collision_cache:
         from asset_convert.collision_extract import load_collision
         load_collision(collision_cache, quiet=True)

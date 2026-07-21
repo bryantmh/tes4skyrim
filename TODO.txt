@@ -24,8 +24,6 @@ Major Issues for V1:
 
 	11 - quest priority is consistently 183 instead of 82, 151 instead of 50, etc.
 
-	12 - landscapewaterfall02.nif isn't animated
-
 Later Issues:
 
 	1 - Refine dialog conversion

@@ -122,6 +122,102 @@ def convert_LTEX(rec: dict, writer=None) -> tuple:
     return ltex_bytes, txst_bytes, txst_fid
 
 
+def build_cell_xcll(rec: dict):
+    """TES5 XCLL payload (92 bytes) from a TES4 CELL record, or None.
+
+    Shared by convert_CELL and the override path (override_builder), so an
+    authored lighting change patches the exact bytes conversion writes.
+
+    TES5 XCLL layout (per xEdit wbDefinitionsTES5):
+     0 ambient, 4 directional, 8 fog near color, 12 fog near, 16 fog far,
+     20 dir rot XY, 24 dir rot Z, 28 dir fade, 32 fog clip, 36 fog power,
+     40 directional ambient X+/X-/Y+/Y-/Z+/Z- (6 colors), 64 specular,
+     68 scale, 72 fog far color, 76 fog max, 80/84 light fade begin/end,
+     88 inherit flags.
+    """
+    if not get_str(rec, 'XCLL.AmbientR'):
+        return None
+    ar = get_int(rec, 'XCLL.AmbientR')
+    ag = get_int(rec, 'XCLL.AmbientG')
+    ab = get_int(rec, 'XCLL.AmbientB')
+    dr = get_int(rec, 'XCLL.DirectionalR')
+    dg = get_int(rec, 'XCLL.DirectionalG')
+    db = get_int(rec, 'XCLL.DirectionalB')
+    fr = get_int(rec, 'XCLL.FogR')
+    fg = get_int(rec, 'XCLL.FogG')
+    fb = get_int(rec, 'XCLL.FogB')
+    fog_near = get_float(rec, 'XCLL.FogNear')
+    fog_far = get_float(rec, 'XCLL.FogFar')
+    rot_xy = get_int(rec, 'XCLL.DirectionalRotXY')
+    rot_z = get_int(rec, 'XCLL.DirectionalRotZ')
+    dir_fade = get_float(rec, 'XCLL.DirectionalFade', 1.0)
+    clip_dist = get_float(rec, 'XCLL.FogClipDist')
+
+    xcll = bytearray(92)
+    xcll[0] = ar; xcll[1] = ag; xcll[2] = ab; xcll[3] = 0
+    xcll[4] = dr; xcll[5] = dg; xcll[6] = db; xcll[7] = 0
+    # Fog near color = same as fog
+    xcll[8] = fr; xcll[9] = fg; xcll[10] = fb; xcll[11] = 0
+    struct.pack_into('<f', xcll, 12, fog_near)
+    struct.pack_into('<f', xcll, 16, fog_far)
+    struct.pack_into('<i', xcll, 20, rot_xy)
+    struct.pack_into('<i', xcll, 24, rot_z)
+    struct.pack_into('<f', xcll, 28, dir_fade)
+    struct.pack_into('<f', xcll, 32, clip_dist)
+    struct.pack_into('<f', xcll, 36, 1.0)  # Fog power
+    # Directional ambient: Skyrim's engine lights interiors from these six
+    # colors, not the legacy ambient at offset 0.  TES4 has a single flat
+    # ambient, so replicate it into all six directions (vanilla cells set
+    # both the legacy ambient and this block).
+    for off in range(40, 64, 4):
+        xcll[off] = ar; xcll[off + 1] = ag; xcll[off + 2] = ab; xcll[off + 3] = 0
+    # Specular color stays black; scale 1.0
+    struct.pack_into('<f', xcll, 68, 1.0)
+    # Fog far color = same as fog
+    xcll[72] = fr; xcll[73] = fg; xcll[74] = fb; xcll[75] = 0
+    struct.pack_into('<f', xcll, 76, 1.0)  # Fog max
+    # Light fade begin/end 0 = engine defaults (vanilla does the same).
+    # Inherit flags 0: nothing comes from the (null) lighting template.
+    return bytes(xcll)
+
+
+def build_cell_xclw(rec: dict):
+    """TES5 XCLW payload from a TES4 CELL record, or None to omit.
+
+    TES4 stores -2147483648.0 as "use worldspace default"; writing that
+    through as a literal TES5 height puts the cell's water at -2e9 (i.e.
+    nowhere).  Omit it so the engine falls back to the worldspace default
+    water height (WRLD DNAM).  Shared with the override path.
+    """
+    wh = get_str(rec, 'XCLW.WaterHeight')
+    if not wh:
+        return None
+    whf = get_float(rec, 'XCLW.WaterHeight')
+    if not (-1e9 < whf < 1e9):
+        return None
+    return struct.pack('<f', whf)
+
+
+def build_wrld_mnam(rec: dict):
+    """TES5 WRLD MNAM payload (28 bytes) from a TES4 WRLD record, or None.
+
+    UsableDimX(i) + UsableDimY(i) + NWCellX(h) + NWCellY(h) + SECellX(h) +
+    SECellY(h) + CameraMinHeight(f) + CameraMaxHeight(f) + InitialPitch(f).
+    Shared by convert_WRLD and the override path.
+    """
+    if not get_str(rec, 'MNAM.UsableDimX'):
+        return None
+    dx = get_int(rec, 'MNAM.UsableDimX')
+    dy = get_int(rec, 'MNAM.UsableDimY')
+    nwx = get_int(rec, 'MNAM.NWCellX')
+    nwy = get_int(rec, 'MNAM.NWCellY')
+    sex = get_int(rec, 'MNAM.SECellX')
+    sey = get_int(rec, 'MNAM.SECellY')
+    # Camera defaults from Skyrim's Tamriel worldspace
+    return struct.pack('<iihhhhfff', dx, dy, nwx, nwy, sex, sey,
+                       50000.0, 80000.0, 50.0)
+
+
 def convert_CELL(rec: dict) -> bytes:
     """Convert CELL record."""
     subs = b''
@@ -144,56 +240,10 @@ def convert_CELL(rec: dict) -> bytes:
         y = get_int(rec, 'XCLC.Y')
         subs += pack_subrecord('XCLC', struct.pack('<iiI', x, y, 0))  # 12 bytes in TES5
 
-    # Interior lighting (XCLL)
-    if get_str(rec, 'XCLL.AmbientR'):
-        ar = get_int(rec, 'XCLL.AmbientR')
-        ag = get_int(rec, 'XCLL.AmbientG')
-        ab = get_int(rec, 'XCLL.AmbientB')
-        dr = get_int(rec, 'XCLL.DirectionalR')
-        dg = get_int(rec, 'XCLL.DirectionalG')
-        db = get_int(rec, 'XCLL.DirectionalB')
-        fr = get_int(rec, 'XCLL.FogR')
-        fg = get_int(rec, 'XCLL.FogG')
-        fb = get_int(rec, 'XCLL.FogB')
-        fog_near = get_float(rec, 'XCLL.FogNear')
-        fog_far = get_float(rec, 'XCLL.FogFar')
-        rot_xy = get_int(rec, 'XCLL.DirectionalRotXY')
-        rot_z = get_int(rec, 'XCLL.DirectionalRotZ')
-        dir_fade = get_float(rec, 'XCLL.DirectionalFade', 1.0)
-        clip_dist = get_float(rec, 'XCLL.FogClipDist')
-
-        # TES5 XCLL is 92 bytes (per xEdit wbDefinitionsTES5):
-        #  0 ambient, 4 directional, 8 fog near color, 12 fog near, 16 fog far,
-        #  20 dir rot XY, 24 dir rot Z, 28 dir fade, 32 fog clip, 36 fog power,
-        #  40 directional ambient X+/X-/Y+/Y-/Z+/Z- (6 colors), 64 specular,
-        #  68 scale, 72 fog far color, 76 fog max, 80/84 light fade begin/end,
-        #  88 inherit flags.
-        xcll = bytearray(92)
-        xcll[0] = ar; xcll[1] = ag; xcll[2] = ab; xcll[3] = 0
-        xcll[4] = dr; xcll[5] = dg; xcll[6] = db; xcll[7] = 0
-        # Fog near color = same as fog
-        xcll[8] = fr; xcll[9] = fg; xcll[10] = fb; xcll[11] = 0
-        struct.pack_into('<f', xcll, 12, fog_near)
-        struct.pack_into('<f', xcll, 16, fog_far)
-        struct.pack_into('<i', xcll, 20, rot_xy)
-        struct.pack_into('<i', xcll, 24, rot_z)
-        struct.pack_into('<f', xcll, 28, dir_fade)
-        struct.pack_into('<f', xcll, 32, clip_dist)
-        struct.pack_into('<f', xcll, 36, 1.0)  # Fog power
-        # Directional ambient: Skyrim's engine lights interiors from these six
-        # colors, not the legacy ambient at offset 0.  TES4 has a single flat
-        # ambient, so replicate it into all six directions (vanilla cells set
-        # both the legacy ambient and this block).
-        for off in range(40, 64, 4):
-            xcll[off] = ar; xcll[off + 1] = ag; xcll[off + 2] = ab; xcll[off + 3] = 0
-        # Specular color stays black; scale 1.0
-        struct.pack_into('<f', xcll, 68, 1.0)
-        # Fog far color = same as fog
-        xcll[72] = fr; xcll[73] = fg; xcll[74] = fb; xcll[75] = 0
-        struct.pack_into('<f', xcll, 76, 1.0)  # Fog max
-        # Light fade begin/end 0 = engine defaults (vanilla does the same).
-        # Inherit flags 0: nothing comes from the (null) lighting template.
-        subs += pack_subrecord('XCLL', bytes(xcll))
+    # Interior lighting (XCLL) — shared with the override path
+    xcll_payload = build_cell_xcll(rec)
+    if xcll_payload is not None:
+        subs += pack_subrecord('XCLL', xcll_payload)
 
     # LTMP — lighting template is a required TES5 subrecord.  TES4 has no
     # equivalent and XCLL inherits nothing, so point it at NULL.
@@ -204,15 +254,10 @@ def convert_CELL(rec: dict) -> bytes:
     if xown:
         subs += pack_formid_subrecord('XOWN', xown)
 
-    # Water height.  TES4 stores -2147483648.0 as "use worldspace default";
-    # writing that through as a literal TES5 height puts the cell's water at
-    # -2e9 (i.e. nowhere).  Omit it so the engine falls back to the worldspace
-    # default water height (WRLD DNAM).
-    wh = get_str(rec, 'XCLW.WaterHeight')
-    if wh:
-        whf = get_float(rec, 'XCLW.WaterHeight')
-        if -1e9 < whf < 1e9:
-            subs += pack_float_subrecord('XCLW', whf)
+    # Water height — shared with the override path
+    xclw_payload = build_cell_xclw(rec)
+    if xclw_payload is not None:
+        subs += pack_subrecord('XCLW', xclw_payload)
 
     # XLCN — Location.  This does double duty in Skyrim: entering a cell that
     # belongs to a location discovers it (revealing its map marker), and it is
@@ -273,19 +318,10 @@ def convert_WRLD(rec: dict) -> bytes:
     # DNAM — land/water defaults
     subs += pack_subrecord('DNAM', struct.pack('<ff', -2048.0, 0.0))
 
-    # Map dimensions (MNAM) — after DNAM per xEdit order.
-    # TES5 MNAM = 28 bytes: UsableDimX(i) + UsableDimY(i) + NWCellX(h) + NWCellY(h)
-    # + SECellX(h) + SECellY(h) + CameraMinHeight(f) + CameraMaxHeight(f) + InitialPitch(f)
-    mnam_str = get_str(rec, 'MNAM.UsableDimX')
-    if mnam_str:
-        dx = get_int(rec, 'MNAM.UsableDimX')
-        dy = get_int(rec, 'MNAM.UsableDimY')
-        nwx = get_int(rec, 'MNAM.NWCellX')
-        nwy = get_int(rec, 'MNAM.NWCellY')
-        sex = get_int(rec, 'MNAM.SECellX')
-        sey = get_int(rec, 'MNAM.SECellY')
-        # Camera defaults from Skyrim's Tamriel worldspace
-        mnam = struct.pack('<iihhhhfff', dx, dy, nwx, nwy, sex, sey, 50000.0, 80000.0, 50.0)
+    # Map dimensions (MNAM) — after DNAM per xEdit order. Shared with the
+    # override path.
+    mnam = build_wrld_mnam(rec)
+    if mnam is not None:
         subs += pack_subrecord('MNAM', mnam)
 
     # ONAM — World Map Offset Data (after MNAM per xEdit order)

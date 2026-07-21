@@ -246,6 +246,27 @@ def convert_WEAP(rec: dict, writer=None) -> bytes:
     return pack_record('WEAP', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
+def _armo_armor_type(rec: dict, is_clothing: bool) -> int:
+    """TES5 ArmorType enum (0=Light, 1=Heavy, 2=Clothing) for an ARMO/CLOT."""
+    if is_clothing:
+        return 2
+    gen_flags = get_int(rec, 'BMDT.GeneralFlags')
+    # TES4 bit 7 (0x80) = Heavy Armor (from wbDefinitionsTES4.pas)
+    return 1 if gen_flags & 0x80 else 0
+
+
+def build_armo_bod2(rec: dict, is_clothing: bool) -> bytes:
+    """TES5 BOD2 payload (8 bytes) from a TES4 ARMO/CLOT record.
+
+    Shared by convert_ARMO and the override path (override_builder), so an
+    authored biped/armor-type change patches the exact bytes conversion writes.
+    (The ARMA companion's BOD2 stays the master's — companions are never
+    re-minted by an override.)
+    """
+    tes5_biped = _convert_biped_flags(get_int(rec, 'BMDT.BipedFlags'))
+    return struct.pack('<II', tes5_biped, _armo_armor_type(rec, is_clothing))
+
+
 def convert_ARMO(rec: dict, is_clothing: bool = False, writer=None) -> bytes:
     """Convert ARMO or CLOT → ARMO.
 
@@ -274,16 +295,10 @@ def convert_ARMO(rec: dict, is_clothing: bool = False, writer=None) -> bytes:
     if female_world:
         subs += pack_string_subrecord('MOD4', _prefix_path(female_world))
 
-    # BOD2 (Biped Object Data) replaces BMDT
-    # ArmorType enum: 0=Light Armor, 1=Heavy Armor, 2=Clothing
+    # BOD2 (Biped Object Data) replaces BMDT — shared with the override path
     tes4_biped = get_int(rec, 'BMDT.BipedFlags')
     tes5_biped = _convert_biped_flags(tes4_biped)
-    if is_clothing:
-        armor_type = 2  # Clothing
-    else:
-        gen_flags = get_int(rec, 'BMDT.GeneralFlags')
-        # TES4 bit 7 (0x80) = Heavy Armor (from wbDefinitionsTES4.pas)
-        armor_type = 1 if gen_flags & 0x80 else 0  # Heavy=1, Light=0
+    armor_type = _armo_armor_type(rec, is_clothing)
     subs += pack_subrecord('BOD2', struct.pack('<II', tes5_biped, armor_type))
 
     # ETYP — Equip type for shields (required for equip-to-left-hand)

@@ -102,6 +102,56 @@ def _npc_skills_dnam(rec: dict) -> bytes:
     return bytes(dnam)
 
 
+def _npc_acbs(rec: dict) -> bytes:
+    """Build TES5 NPC_ ACBS payload (24 bytes) from a TES4 NPC_ record.
+
+    Shared by convert_NPC_ and the override path (override_builder), so an
+    authored ACBS/attribute change patches the exact bytes conversion writes.
+    """
+    tes4_flags = get_int(rec, 'ACBS.Flags')
+    level = get_int(rec, 'ACBS.Level', 1)
+    calc_min = get_int(rec, 'ACBS.CalcMin', 1)
+    calc_max = get_int(rec, 'ACBS.CalcMax', 100)
+    # Keep compatible bits + preserve Female flag (bit 0)
+    tes5_acbs_flags = tes4_flags & 0x4C9B
+    is_pc_level = bool(tes4_flags & 0x80)
+    # TES4 PCLevelOffset: level is an additive offset from the player's level.
+    # TES5 PCLevelMult: level is a fixed-point multiplier (1000 = 1.0×).
+    # We can't map an offset directly to a multiplier so default to 1.0×.
+    tes5_level = 1000 if is_pc_level else max(1, level)
+    endurance = get_int(rec, 'DATA.Endurance', 50)
+    intelligence = get_int(rec, 'DATA.Intelligence', 50)
+    strength = get_int(rec, 'DATA.Strength', 50)
+    return struct.pack('<IhhhHHHhHhH',
+                       tes5_acbs_flags, intelligence, strength, tes5_level,
+                       min(calc_min * 2, 1000), min(calc_max * 2, 1000),
+                       100, 0, 0, endurance, 0)
+
+
+def _crea_acbs(rec: dict) -> bytes:
+    """Build TES5 ACBS payload (24 bytes) from a TES4 CREA record.
+
+    Shared by convert_CREA and the override path. Creatures auto-calc their
+    stats (flag 0x10), so attributes stay zero.
+    """
+    tes4_flags = get_int(rec, 'ACBS.Flags')
+    level = get_int(rec, 'ACBS.Level', 1)
+    calc_min = get_int(rec, 'ACBS.CalcMin', 1)
+    calc_max = get_int(rec, 'ACBS.CalcMax', 100)
+    tes5_flags = (tes4_flags & 0x4C9B) | 0x10
+    # TES4 flag 0x80 = "PC Level Offset" (Level is an additive offset from the
+    # player's level). TES5 reuses the same bit as "PC Level Mult", where Level
+    # is a fixed-point multiplier (1000 = 1.0x). A raw TES4 offset (e.g. 0..5)
+    # reinterpreted as a multiplier is 0.000x..0.005x, which the CK clamps to
+    # the 0.10 minimum. Since an offset can't be mapped to a multiplier, default
+    # to 1.0x when the flag is set.  See _npc_acbs for the same handling.
+    is_pc_level = bool(tes4_flags & 0x80)
+    tes5_level = 1000 if is_pc_level else max(1, level)
+    return struct.pack('<IhhhHHHhHhH',
+                       tes5_flags, 0, 0, tes5_level,
+                       calc_min, calc_max, 100, 0, 0, 0, 0)
+
+
 def _npc_aidt(rec: dict) -> bytes:
     """Build TES5 AIDT subrecord (20 bytes).
 
@@ -532,26 +582,8 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     # OBND (NPC_ default bounds)
     subs += pack_obnd(-12, -12, 0, 12, 12, 60)
 
-    # ACBS — 24 bytes in TES5
-    tes4_flags = get_int(rec, 'ACBS.Flags')
-    level = get_int(rec, 'ACBS.Level', 1)
-    calc_min = get_int(rec, 'ACBS.CalcMin', 1)
-    calc_max = get_int(rec, 'ACBS.CalcMax', 100)
-    # Keep compatible bits + preserve Female flag (bit 0)
-    tes5_acbs_flags = tes4_flags & 0x4C9B
-    is_pc_level = bool(tes4_flags & 0x80)
-    # TES4 PCLevelOffset: level is an additive offset from the player's level.
-    # TES5 PCLevelMult: level is a fixed-point multiplier (1000 = 1.0×).
-    # We can't map an offset directly to a multiplier so default to 1.0×.
-    tes5_level = 1000 if is_pc_level else max(1, level)
-    endurance = get_int(rec, 'DATA.Endurance', 50)
-    intelligence = get_int(rec, 'DATA.Intelligence', 50)
-    strength = get_int(rec, 'DATA.Strength', 50)
-    acbs = struct.pack('<IhhhHHHhHhH',
-                       tes5_acbs_flags, intelligence, strength, tes5_level,
-                       min(calc_min * 2, 1000), min(calc_max * 2, 1000),
-                       100, 0, 0, endurance, 0)
-    subs += pack_subrecord('ACBS', acbs)
+    # ACBS — 24 bytes in TES5 (shared with the override path)
+    subs += pack_subrecord('ACBS', _npc_acbs(rec))
 
     # SNAM — Factions
     fc = get_int(rec, 'FactionCount')
@@ -707,24 +739,8 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
 
     subs += pack_obnd(-12, -12, 0, 12, 12, 60)  # NPC_ default bounds
 
-    # ACBS — auto-calc stats for creatures
-    tes4_flags = get_int(rec, 'ACBS.Flags')
-    level = get_int(rec, 'ACBS.Level', 1)
-    calc_min = get_int(rec, 'ACBS.CalcMin', 1)
-    calc_max = get_int(rec, 'ACBS.CalcMax', 100)
-    tes5_flags = (tes4_flags & 0x4C9B) | 0x10
-    # TES4 flag 0x80 = "PC Level Offset" (Level is an additive offset from the
-    # player's level). TES5 reuses the same bit as "PC Level Mult", where Level
-    # is a fixed-point multiplier (1000 = 1.0x). A raw TES4 offset (e.g. 0..5)
-    # reinterpreted as a multiplier is 0.000x..0.005x, which the CK clamps to
-    # the 0.10 minimum. Since an offset can't be mapped to a multiplier, default
-    # to 1.0x when the flag is set.  See convert_NPC_ for the same handling.
-    is_pc_level = bool(tes4_flags & 0x80)
-    tes5_level = 1000 if is_pc_level else max(1, level)
-    acbs = struct.pack('<IhhhHHHhHhH',
-                       tes5_flags, 0, 0, tes5_level,
-                       calc_min, calc_max, 100, 0, 0, 0, 0)
-    subs += pack_subrecord('ACBS', acbs)
+    # ACBS — auto-calc stats for creatures (shared with the override path)
+    subs += pack_subrecord('ACBS', _crea_acbs(rec))
 
     # Factions
     fc = get_int(rec, 'FactionCount')

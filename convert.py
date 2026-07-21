@@ -333,6 +333,7 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
                  export_dir: str, config: dict, output_dir: str = None):
     """Import using the Python tes5_import package."""
     from tes5_import.import_main import import_plugin
+    from tes5_import.override_merge import MissingMasterOutputError
 
     export_subdir = os.path.join(export_dir, file_name)
     if not os.path.isdir(export_subdir):
@@ -359,12 +360,17 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
 
     print(f"[{file_name}] Importing...")
     print(f"  Masters: {', '.join(masters)}")
-    converted, errors = import_plugin(
-        export_dir=export_subdir,
-        output_path=output_path,
-        masters=masters,
-        is_esm=is_esm,
-    )
+    try:
+        converted, errors = import_plugin(
+            export_dir=export_subdir,
+            output_path=output_path,
+            masters=masters,
+            is_esm=is_esm,
+            output_root=out_root,
+        )
+    except MissingMasterOutputError as e:
+        print(f"[{file_name}] ERROR: {e}")
+        return False
 
     return errors == 0
 

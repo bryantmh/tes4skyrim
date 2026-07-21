@@ -18,6 +18,7 @@ conditions reference for the methodology.
 
 import struct
 
+from .ctda_param_types import CTDA_FORMID_PARAMS
 from .text_reader import get_formid_index_offset, remap_formid
 
 # --- CTDA type-byte bits (identical in TES4 and TES5) --------------------------
@@ -202,15 +203,23 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
     # Comparison value is a GLOB FormID only when the Use Global flag is set.
     if type_byte & CTDA_USE_GLOBAL:
         comp_raw = _remap_formid(comp_raw, offset)
+    # Only FormID parameters may be load-order remapped. Most functions take a
+    # plain integer or enum, and several are used by the engine as a RAW ARRAY
+    # INDEX -- GetBaseActorValue(Speechcraft=32) remapped to 0x01000020 indexed
+    # 16.7M entries off the actor-value table and crashed the dialogue menu on
+    # every NPC. CTDA_FORMID_PARAMS is keyed by the POST-remap (TES5) index
+    # because that is the function the output file actually invokes.
+    fid_slots = CTDA_FORMID_PARAMS.get(func_idx, frozenset())
     if func_idx in _RACE_PARAM_FUNCS:
         # RACE records aren't imported: translate the param to the Skyrim
         # race the converted NPCs actually use, or drop the condition.
         param1 = _map_race_param(param1)
         if param1 is None:
             return None
-    else:
+    elif 1 in fid_slots:
         param1 = _remap_formid(param1, offset)
-    param2 = _remap_formid(param2, offset)
+    if 2 in fid_slots:
+        param2 = _remap_formid(param2, offset)
 
     # TES4 "Run on target" flag -> TES5 Run On = 1 (Target). Clear the flag bit
     # so it isn't double-counted; everything else stays Subject (0).

@@ -252,6 +252,27 @@ def get_float(record: dict, key: str, default: float = 0.0) -> float:
 _ENGINE_FIXED_FORMIDS = frozenset({0x14})   # PlayerRef
 
 
+# INJECTED FormIDs: raw TES4 FormID -> the id it must take in our own space.
+#
+# Oblivion let a plugin ADD records carrying a master's load-order index (an
+# "injected" record). Nehrim's Translation.esp does this 3 times. Shifting them
+# like an override lands them in the converted master's range at ids the master
+# does not define, so the engine resolves the reference against the master,
+# finds nothing, and hangs loading. They are new records and belong in OUR
+# index. Populated by set_injected_formids() once the master index is known.
+_injected_formids = {}
+
+
+def set_injected_formids(mapping: dict):
+    """Register raw-FormID -> our-space-FormID redirects for injected records."""
+    _injected_formids.clear()
+    _injected_formids.update(mapping)
+
+
+def get_injected_formids() -> dict:
+    return dict(_injected_formids)
+
+
 def remap_formid(fid: int, offset: int = None) -> int:
     """Shift a TES4 FormID's load-order index into the output plugin's space.
 
@@ -260,9 +281,16 @@ def remap_formid(fid: int, offset: int = None) -> int:
     master keeps that master's (shifted) index and so still refers to the
     converted master's record; clobbering the index instead would turn every
     override into a new record in our own file.
+
+    Injected records (registered via set_injected_formids) are the exception:
+    they carry a master's index but the master has no such record, so they are
+    redirected into our own space instead of dangling in the master's.
     """
     if offset is None:
         offset = _formid_index_offset
+    redirect = _injected_formids.get(fid)
+    if redirect is not None:
+        return redirect
     if fid and offset and fid not in _ENGINE_FIXED_FORMIDS:
         high = (fid >> 24) & 0xFF
         return ((high + offset) << 24) | (fid & 0x00FFFFFF)

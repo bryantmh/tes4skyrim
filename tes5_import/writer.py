@@ -12,6 +12,7 @@ Subrecord header: 6 bytes
   sig[4] + dataSize[2]
 """
 
+import contextlib
 import struct
 import threading
 
@@ -99,12 +100,31 @@ def _count_records_and_groups(blob: bytes) -> int:
     return count
 
 
+# Record types the engine loads ON DEMAND from a cell's TEMPORARY children
+# group. An override of one of these must be announced in the header's ONAM
+# array or the engine never looks for it.  Sourced from xEdit's TES4 header
+# definition (wbDefinitionsTES5.pas: wbArray(ONAM, 'Overridden Forms', ...))
+# and its ONAM builder (wbImplementation.pas ~5412).
+ONAM_SIGNATURES = frozenset({
+    b'ACHR', b'LAND', b'NAVM', b'PARW', b'PBAR', b'PBEA', b'PCON',
+    b'PFLA', b'PGRE', b'PHZD', b'PMIS', b'REFR',
+})
+
+
 def pack_tes4_header(masters: list, num_records: int = 0,
                      next_object_id: int = 0x800,
                      author: str = "TES4-to-TES5 Converter",
                      description: str = "",
-                     is_esm: bool = True) -> bytes:
-    """Pack the TES4 file header record."""
+                     is_esm: bool = True,
+                     overridden_forms: list = None) -> bytes:
+    """Pack the TES4 file header record.
+
+    `overridden_forms` becomes the ONAM array: every record this file overrides
+    that lives in a master's TEMPORARY cell-children group. Skyrim loads those
+    on demand per cell, so an override the header does not announce is simply
+    ignored — xEdit's docs put it plainly: "the game engine will ignore the
+    override that is missing from ONAM".
+    """
     subs = b''
 
     # HEDR
@@ -123,6 +143,12 @@ def pack_tes4_header(masters: list, num_records: int = 0,
     for master in masters:
         subs += pack_string_subrecord('MAST', master)
         subs += pack_subrecord('DATA', b'\x00' * 8)
+
+    # ONAM follows the master list (xEdit places it right after the
+    # 'Master Files' array). Sorted so the output stays reproducible.
+    if overridden_forms:
+        subs += pack_subrecord('ONAM', b''.join(
+            struct.pack('<I', fid) for fid in sorted(set(overridden_forms))))
 
     flags = 0x01 if is_esm else 0x00  # ESM flag
     return pack_record('TES4', 0, flags, subs, FORM_VERSION_SSE)
@@ -182,6 +208,22 @@ class PluginWriter:
         self._record_count = 0
         self._next_object_id = 0x800
         self._lock = threading.Lock()  # guards alloc_formid and add_record
+        self.own_index = len(self.masters)
+
+        # --- Companion manifest -------------------------------------------
+        # Converting a record often generates COMPANION records (ARMO -> ARMA,
+        # NPC_ -> OTFT/VTYP, AMMO -> PROJ, ...) whose FormIDs come from
+        # alloc_formid(), a bare sequential counter. A plugin that overrides
+        # such a record must reuse the MASTER's companions, not mint its own —
+        # and it can only do that if the master's run recorded which companion
+        # belongs to which source record.
+        #
+        # Rather than touch all 39 alloc_formid() call sites, the writer
+        # records the pairing itself: converters run inside
+        # `converting(source_formid)` and every id allocated during that window
+        # is attributed to that source record. No inference, no guessing.
+        self._manifest = {}          # source TES4 fid (hex str) -> {...}
+        self._converting = None
 
     @property
     def next_object_id(self):
@@ -191,12 +233,34 @@ class PluginWriter:
     def next_object_id(self, val):
         self._next_object_id = val
 
+    @contextlib.contextmanager
+    def converting(self, source_formid: str, output_formid: int = 0):
+        """Attribute records/FormIDs created in this block to a source record."""
+        prev = self._converting
+        key = (source_formid or '').upper()
+        self._converting = key
+        if key:
+            entry = self._manifest.setdefault(
+                key, {'fid': 0, 'companions': []})
+            if output_formid:
+                entry['fid'] = output_formid
+        try:
+            yield
+        finally:
+            self._converting = prev
+
     def alloc_formid(self) -> int:
         """Allocate a new FormID for generated records (ARMA, TXST, etc.). Thread-safe."""
         with self._lock:
             fid = self._next_object_id
             self._next_object_id += 1
+            if self._converting:
+                self._manifest[self._converting]['companions'].append(fid)
         return fid
+
+    def manifest(self) -> dict:
+        """source TES4 FormID -> {'fid': converted id, 'companions': [ids]}."""
+        return self._manifest
 
     def add_record(self, group_sig: str, record_bytes: bytes):
         """Add a packed record to a top-level group. Thread-safe."""
@@ -212,6 +276,44 @@ class PluginWriter:
             if group_sig not in self._top_groups:
                 self._top_groups[group_sig] = []
             self._top_groups[group_sig].append(group_bytes)
+
+    def _collect_overridden_temporary(self, group_blobs: list) -> list:
+        """FormIDs this file overrides inside a master's TEMPORARY cell group.
+
+        These go in the header's ONAM array. Skyrim loads a cell's temporary
+        children on demand, and it discovers a plugin's overrides of them from
+        ONAM alone — an override missing from the list is ignored outright, so
+        the master's version keeps winning (or, when we replaced the cell's
+        child list, nothing loads at all).
+
+        Only TEMPORARY children count: persistent records (group type 8) are
+        always resident and are explicitly skipped by xEdit's builder too. A
+        record we define ourselves is not an override, so only FormIDs at a
+        master's load-order index qualify.
+        """
+        out = []
+
+        def walk(blob, temporary=False):
+            off, end = 0, len(blob)
+            while off + GROUP_HEADER_SIZE <= end:
+                sig = blob[off:off + 4]
+                size = struct.unpack_from('<I', blob, off + 4)[0]
+                if sig == b'GRUP':
+                    gtype = struct.unpack_from('<i', blob, off + 12)[0]
+                    # 9 = temporary children, 8 = persistent, 10 = visible-distant
+                    walk(blob[off + GROUP_HEADER_SIZE:off + size],
+                         temporary or gtype == 9)
+                    off += size
+                else:
+                    if temporary and sig in ONAM_SIGNATURES:
+                        fid = struct.unpack_from('<I', blob, off + 12)[0]
+                        if (fid >> 24) & 0xFF < self.own_index:
+                            out.append(fid)
+                    off += RECORD_HEADER_SIZE + size
+
+        for blob in group_blobs:
+            walk(blob)
+        return out
 
     def write(self, filepath: str):
         """Write the complete plugin file using an atomic temp-then-rename approach.
@@ -230,15 +332,22 @@ class PluginWriter:
         # vanilla Skyrim.esm's HEDR ≈ records + groups. A count that omits the
         # hierarchies (our old 38,585 vs 1.17M real) leaves the header wildly
         # under-reporting, which the engine's loader does not tolerate cleanly.
-        group_blobs = []
+        staged = {}
         for sig in self._group_order():
             if sig not in self._top_groups:
                 continue
             contents = b''.join(self._top_groups[sig])
             if contents:
-                group_blobs.append(pack_top_group(sig, contents))
+                staged[sig] = [contents]
+
+        group_blobs = []
+        for sig in self._group_order():
+            for blob in staged.get(sig, []):
+                if blob:
+                    group_blobs.append(pack_top_group(sig, blob))
 
         total_count = sum(_count_records_and_groups(b) for b in group_blobs)
+        overridden = self._collect_overridden_temporary(group_blobs)
 
         try:
             with open(tmp_path, 'wb') as f:
@@ -250,6 +359,7 @@ class PluginWriter:
                     author=self.author,
                     description=self.description,
                     is_esm=self.is_esm,
+                    overridden_forms=overridden,
                 )
                 f.write(header)
 

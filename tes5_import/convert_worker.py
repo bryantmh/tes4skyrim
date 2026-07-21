@@ -11,14 +11,18 @@ A *process* pool (not threads) is used because the converters are pure-Python
 struct/string work that holds the GIL; threads serialise on one core.
 """
 
-from .text_reader import get_formid, set_formid_index_offset
+from .text_reader import (get_formid, set_formid_index_offset,
+                          set_injected_formids)
 
 
 def init_worker(formid_offset: int, cell_loc: dict, grid_loc: dict,
                 world_loc: dict, world_names: dict, origin_shift: dict,
-                mesh_bounds_path: str):
+                mesh_bounds_path: str, injected_formids: dict = None):
     """Pool initializer: replay parent-process module state into this child."""
     set_formid_index_offset(formid_offset)
+    # Injected-record redirects are module state too: without them a worker
+    # remaps an injected FormID into the master's range (see text_reader).
+    set_injected_formids(injected_formids or {})
 
     from .record_types.world import set_cell_locations
     set_cell_locations(cell_loc, grid_loc, world_loc)
