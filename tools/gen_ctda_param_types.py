@@ -23,6 +23,18 @@ import sys
 # Everything at or after this name in TConditionParameterType is a FormID.
 _FIRST_FORMID_TYPE = 'ptActor'
 
+# ...with these exceptions, which sit after ptActor in xEdit's alphabetical
+# enum but which the engine's own function table types as plain values. The
+# positional rule alone cannot catch them: xEdit orders the enum by name, not
+# by whether a type is a form. Verified against the parameter descriptors in
+# the unpacked SkyrimSE.exe -- see docs/dialogue_engine_contracts.md and
+# `python tools/dialog_engine_extract.py --functions <name>`. Remapping one of
+# these shifts an enum the engine uses as an array index, which is the same
+# defect class as the GetBaseActorValue crash.
+_VALUE_TYPE_EXCEPTIONS = {
+    'ptEquipType',   # engine parameter type 0x37, a plain equip-slot enum
+}
+
 _ENUM_RE = re.compile(
     r'TConditionParameterType\s*=\s*\((.*?)\)\s*;', re.S)
 _ENUM_ENTRY_RE = re.compile(r'\{\s*\d+\s*\}\s*(pt\w+)')
@@ -61,7 +73,7 @@ def formid_types(enum_names):
         first = enum_names.index(_FIRST_FORMID_TYPE)
     except ValueError:
         sys.exit(f'{_FIRST_FORMID_TYPE} not present in enum')
-    return set(enum_names[first:])
+    return set(enum_names[first:]) - _VALUE_TYPE_EXCEPTIONS
 
 
 def build(pas_path):

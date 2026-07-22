@@ -34,6 +34,67 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.tes5_esm_reader import read_tes5_file, TES5Record, _get, _all, _zstring
 
 # ---------------------------------------------------------------------------
+# Engine dialogue tables
+#
+# Extracted from the unpacked GOG/Anniversary SkyrimSE.exe by
+# tools/dialog_engine_extract.py -- see docs/dialogue_engine_contracts.md.
+# These are the engine's own tables, not xEdit's alphabetical listing, so the
+# ordering and the category each subtype belongs to are authoritative.
+# ---------------------------------------------------------------------------
+SUBTYPE_NOT_FOUND = 103   # the engine's own "no matching row" sentinel
+
+# INFO response flags. Bit meanings are xEdit's; the containing subrecord's
+# layout is the engine's (u16 flags + pad + float, read as 8 bytes).
+INFO_FLAG_GOODBYE = 1 << 0
+INFO_FLAG_RANDOM = 1 << 1
+INFO_FLAG_SAY_ONCE = 1 << 2
+INFO_FLAG_REQUIRES_PLAYER_ACTIVATION = 1 << 3
+INFO_FLAG_INFO_REFUSAL = 1 << 4
+INFO_FLAG_RANDOM_END = 1 << 5
+INFO_FLAG_INVISIBLE_CONTINUE = 1 << 6
+INFO_FLAG_WALK_AWAY = 1 << 7
+INFO_FLAG_WALK_AWAY_INVISIBLE_IN_MENU = 1 << 8
+INFO_FLAG_FORCE_SUBTITLE = 1 << 9
+INFO_FLAG_CAN_MOVE_WHILE_GREETING = 1 << 10
+INFO_FLAG_NO_LIP_FILE = 1 << 11
+INFO_FLAG_REQUIRES_POST_PROCESSING = 1 << 12
+INFO_FLAG_AUDIO_OUTPUT_OVERRIDE = 1 << 13
+INFO_FLAG_SPENDS_FAVOR_POINTS = 1 << 14
+
+# The engine stores the DATA float as trunc(value * this) in a u16.
+INFO_RESET_SCALE = 65535.0
+
+_TABLES_PATH = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), 'tes5_import', 'dialog_engine_tables.json')
+
+
+def _load_engine_tables():
+    import json
+    with open(_TABLES_PATH, encoding='utf-8') as f:
+        tables = json.load(f)
+    by_tag = {}
+    cat_by_tag = {}
+    for row in tables['subtypes']:
+        by_tag[row['tag']] = row['index']
+        cat_by_tag[row['tag']] = row['category']
+    names = {c['id']: c['name'] for c in tables['categories']}
+    sub_names = {r['index']: r['name'] for r in tables['subtypes']}
+    selectable = {r['index'] for r in tables['subtypes']
+                  if r['player_selectable']}
+    # A CTDA names its function by `opcode - 0x1000`, so the engine's own table
+    # supplies every condition function name and its parameter types. This is
+    # broader than xEdit's list (737 vs 402) and free of its transcription
+    # errors.
+    funcs = {f['ctda_index']: f for f in tables['functions']
+             if f.get('ctda_index') is not None}
+    func_names = {i: f['name'] for i, f in funcs.items()}
+    return by_tag, cat_by_tag, names, sub_names, selectable, funcs, func_names
+
+
+(SUBTYPE_BY_TAG, CATEGORY_BY_TAG, CATEGORY_NAMES, SUBTYPE_NAMES,
+ PLAYER_SELECTABLE_SUBTYPES, ENGINE_FUNCTIONS, FUNC_NAMES) = _load_engine_tables()
+
+# ---------------------------------------------------------------------------
 # Condition function IDs
 # ---------------------------------------------------------------------------
 FUNC_GETACTORVALUE = 14
@@ -43,21 +104,71 @@ FUNC_GETTALKEDTOPC = 50
 FUNC_GETQUESTRUNNING = 56
 FUNC_GETSTAGE = 58
 FUNC_GETSTAGEDONE = 59
-FUNC_GETCURRENTAIPROCEDURE = 67
+FUNC_GETINCELL = 67
 FUNC_GETISCLASS = 68
 FUNC_GETISRACE = 69
 FUNC_GETISSEX = 70
-FUNC_GETINCELL = 71
+FUNC_GETINFACTION = 71
 FUNC_GETISID = 72
-FUNC_GETINFACTION = 73
-FUNC_GETFACTIONRANK = 74
+FUNC_GETFACTIONRANK = 73
+FUNC_GETGLOBALVALUE = 74
 FUNC_GETRANDOMPERC = 77
 FUNC_GETQUESTVARIABLE = 79  # GetQuestVariable (NOT GetIsPlayerBirthsign)
 FUNC_GETLEVEL = 80
-FUNC_GETDEAD = 84
-FUNC_GETQUESTCOMPLETED = 99
+FUNC_GETDEADCOUNT = 84
+FUNC_GETDEAD = 46
+FUNC_GETQUESTCOMPLETED = 543
+FUNC_GETCURRENTAIPROCEDURE = 143
 FUNC_ISGUARD = 125
 FUNC_GETPCISRACE = 130
+
+
+def _verify_function_indices():
+    """Fail loudly if a FUNC_* constant disagrees with the engine's table.
+
+    Six of these were wrong before the engine table existed -- GetInCell was
+    reading as GetInFaction, GetDead as GetDeadCount, GetQuestCompleted as
+    GetHeadingAngle -- so every condition using them silently evaluated the
+    wrong thing. Checking at import makes that class of error impossible to
+    reintroduce.
+    """
+    expected = {
+        'FUNC_GETACTORVALUE': 'GetActorValue',
+        'FUNC_GETDISEASE': 'GetDisease',
+        'FUNC_GETDETECTED': 'GetDetected',
+        'FUNC_GETTALKEDTOPC': 'GetTalkedToPC',
+        'FUNC_GETQUESTRUNNING': 'GetQuestRunning',
+        'FUNC_GETSTAGE': 'GetStage',
+        'FUNC_GETSTAGEDONE': 'GetStageDone',
+        'FUNC_GETINCELL': 'GetInCell',
+        'FUNC_GETISCLASS': 'GetIsClass',
+        'FUNC_GETISRACE': 'GetIsRace',
+        'FUNC_GETISSEX': 'GetIsSex',
+        'FUNC_GETINFACTION': 'GetInFaction',
+        'FUNC_GETISID': 'GetIsID',
+        'FUNC_GETFACTIONRANK': 'GetFactionRank',
+        'FUNC_GETGLOBALVALUE': 'GetGlobalValue',
+        'FUNC_GETRANDOMPERC': 'GetRandomPercent',
+        'FUNC_GETQUESTVARIABLE': 'GetQuestVariable',
+        'FUNC_GETLEVEL': 'GetLevel',
+        'FUNC_GETDEAD': 'GetDead',
+        'FUNC_GETDEADCOUNT': 'GetDeadCount',
+        'FUNC_GETQUESTCOMPLETED': 'GetQuestCompleted',
+        'FUNC_ISGUARD': 'IsGuard',
+        'FUNC_GETPCISRACE': 'GetPCIsRace',
+        'FUNC_GETISVOICETYPE': 'GetIsVoiceType',
+    }
+    wrong = []
+    for const, want in expected.items():
+        idx = globals().get(const)
+        if idx is None:
+            continue
+        got = FUNC_NAMES.get(idx)
+        if got is not None and got != want:
+            wrong.append(f'{const}={idx} is {got}, not {want}')
+    if wrong:
+        raise AssertionError('condition function indices disagree with '
+                             'SkyrimSE.exe: ' + '; '.join(wrong))
 FUNC_GETTRESPASSWARNINGLEVEL = 144
 FUNC_ISTRESPASSING = 145
 FUNC_ISINMYOWNEDCELL = 146
@@ -66,9 +177,10 @@ FUNC_GETISPLAYABLERACE = 254
 FUNC_ISSNEAKING = 286
 FUNC_GETISVOICETYPE = 426
 
+_verify_function_indices()
+
 # Category names
-CAT_NAMES = {0: 'Topic', 1: 'Favor', 2: 'Scene', 3: 'Combat',
-             4: 'Favors', 5: 'Detection', 6: 'Service', 7: 'Misc'}
+CAT_NAMES = CATEGORY_NAMES   # the engine's own category names
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -152,6 +264,29 @@ class INFOData:
     tclt_targets: list   # TCLT FormIDs (next topic links)
     enam_flags: int      # ENAM flags
     favor_level: int     # CNAM
+    # INFO DATA, per TESTopicInfo::LoadForm (SkyrimSE.exe 0x3aa9a4): the
+    # subrecord is 8 bytes -- u16 flags, 2 bytes padding, then a float that the
+    # engine multiplies by 65535 and truncates to a u16 reset counter. It is
+    # NOT a count of hours.
+    info_flags: int = 0
+    reset_fraction: float = 0.0
+
+    @property
+    def reset_ticks(self) -> int:
+        """The u16 the engine actually stores, i.e. trunc(fraction * 65535)."""
+        return int(self.reset_fraction * 65535.0)
+
+    @property
+    def say_once(self) -> bool:
+        return bool(self.info_flags & INFO_FLAG_SAY_ONCE)
+
+    @property
+    def is_random(self) -> bool:
+        return bool(self.info_flags & INFO_FLAG_RANDOM)
+
+    @property
+    def is_goodbye(self) -> bool:
+        return bool(self.info_flags & INFO_FLAG_GOODBYE)
 
 
 @dataclass
@@ -194,6 +329,9 @@ class DialogDB:
         self.dlbrs: dict[int, DLBRData] = {}
         self.vtyps: dict[int, str] = {}  # fid → editor_id
         self.facts: dict[int, str] = {}  # fid → editor_id
+        self.globs: dict[int, str] = {}         # fid → editor_id
+        self.glob_values: dict[int, float] = {}  # fid → authored FLTV
+        self.glob_by_edid: dict[str, int] = {}   # lowercased editor_id → fid
         self.cells: dict[int, str] = {}  # cell_fid → editor_id
         self.npc_cells: dict[int, set[int]] = defaultdict(set)  # npc_fid → {cell_fids}
 
@@ -235,6 +373,19 @@ class DialogDB:
                 edid_sub = _get(rec, 'EDID')
                 if edid_sub:
                     self.facts[rec.form_id] = _zstring(edid_sub.data)
+            elif rec.type == 'GLOB':
+                # The converter re-expresses Oblivion's AddTopic gating as one
+                # TES4Unlock_<topic> global per gated topic, so a global's
+                # authored value is the starting state of that gate.
+                edid_sub = _get(rec, 'EDID')
+                fltv_sub = _get(rec, 'FLTV')
+                if edid_sub:
+                    name = _zstring(edid_sub.data)
+                    self.globs[rec.form_id] = name
+                    self.glob_by_edid[name.lower()] = rec.form_id
+                    if fltv_sub and len(fltv_sub.data) >= 4:
+                        self.glob_values[rec.form_id] = struct.unpack_from(
+                            '<f', fltv_sub.data, 0)[0]
             elif rec.type == 'CELL':
                 edid_sub = _get(rec, 'EDID')
                 edid = _zstring(edid_sub.data) if edid_sub else ''
@@ -335,17 +486,18 @@ class DialogDB:
         qnam_sub = _get(rec, 'QNAM')
         quest_fid = struct.unpack_from('<I', qnam_sub.data, 0)[0] if qnam_sub and len(qnam_sub.data) >= 4 else 0
 
-        data_sub = _get(rec, 'DATA')
-        category = 0
-        subtype = 0
-        if data_sub and len(data_sub.data) >= 4:
-            category = data_sub.data[1]
-            subtype = struct.unpack_from('<H', data_sub.data, 2)[0]
-
+        # TESTopic::LoadForm (SkyrimSE.exe 0x3a6fa8) derives BOTH the subtype and
+        # the category by looking SNAM's 4-character tag up in the engine's
+        # subtype table and taking the matching row's index; the values stored
+        # in DATA are overwritten, because SNAM is parsed after DATA in every
+        # one of Skyrim.esm's 15,037 DIAL records. A tag with no row resolves to
+        # 103, the engine's not-found sentinel.
         snam_sub = _get(rec, 'SNAM')
         snam_code = ''
         if snam_sub and len(snam_sub.data) >= 4:
             snam_code = snam_sub.data[:4].decode('ascii', errors='replace')
+        subtype = SUBTYPE_BY_TAG.get(snam_code, SUBTYPE_NOT_FOUND)
+        category = CATEGORY_BY_TAG.get(snam_code, 0)
 
         bnam_sub = _get(rec, 'BNAM')
         has_branch = bnam_sub is not None
@@ -399,10 +551,22 @@ class DialogDB:
         cnam_sub = _get(rec, 'CNAM')
         favor_level = cnam_sub.data[0] if cnam_sub and len(cnam_sub.data) >= 1 else 0
 
+        # DATA carries the response flags that decide whether a line is said
+        # once, picked at random, or ends the conversation. ENAM holds the same
+        # u16; whichever is present wins, and DATA additionally carries the
+        # reset float.
+        info_flags = enam_flags
+        reset_fraction = 0.0
+        data_sub = _get(rec, 'DATA')
+        if data_sub and len(data_sub.data) >= 8:
+            info_flags = struct.unpack_from('<H', data_sub.data, 0)[0]
+            reset_fraction = struct.unpack_from('<f', data_sub.data, 4)[0]
+
         self.infos[rec.form_id] = INFOData(
             form_id=rec.form_id, editor_id=edid, parent_dial=rec.parent_dial,
             conditions=conditions, responses=responses, tclt_targets=tclt_targets,
             enam_flags=enam_flags, favor_level=favor_level,
+            info_flags=info_flags, reset_fraction=reset_fraction,
         )
 
     def _parse_qust(self, rec: TES5Record, is_localized: bool):
@@ -432,6 +596,21 @@ class DialogDB:
             is_starts_enabled=bool(dnam_flags & 0x0010),
             dials=[],
         )
+
+    # DLBR DNAM is a flags field, not an enum (xEdit wbDefinitionsTES5.pas
+    # 7193): bit 0 Top-Level, bit 1 Blocking, bit 2 Exclusive. Vanilla
+    # Skyrim.esm carries 203 Normal, 2116 Top-Level and 712 Blocking branches,
+    # so all three combinations really occur.
+    BRANCH_TOP_LEVEL = 1 << 0
+    BRANCH_BLOCKING = 1 << 1
+    BRANCH_EXCLUSIVE = 1 << 2
+
+    def is_top_level_branch(self, dial) -> bool:
+        """Whether this topic is offered in the NPC's topic menu."""
+        branch = self.dlbrs.get(dial.branch_fid)
+        if branch is None:
+            return False
+        return bool(branch.branch_type & self.BRANCH_TOP_LEVEL)
 
     def _parse_dlbr(self, rec: TES5Record):
         edid_sub = _get(rec, 'EDID')
@@ -489,6 +668,14 @@ class ConditionEvaluator:
         for qust in db.qusts.values():
             if qust.is_start_game_enabled or self.game_state.get(f'quest_running_{qust.form_id}', False):
                 self.running_quests.add(qust.form_id)
+        # A quest that has been advanced past stage 0 is running by definition,
+        # whether or not it is start-game-enabled.
+        for key, value in self.game_state.items():
+            if key.startswith('stage_') and value:
+                try:
+                    self.running_quests.add(int(key[len('stage_'):]))
+                except ValueError:
+                    pass
 
     def evaluate_condition(self, cond: Condition) -> bool | None:
         """Evaluate a single condition. Returns True, False, or None (unknown)."""
@@ -576,9 +763,26 @@ class ConditionEvaluator:
             completed = self.game_state.get(f'completed_{p1}', False)
             actual = 1.0 if completed else 0.0
         elif func == FUNC_GETSTAGEDONE:
-            # GetStageDone(quest, stage): param1=quest, param2=stage number
-            done = self.game_state.get(f'stagedone_{p1}_{p2}', False)
+            # GetStageDone(quest, stage): param1=quest, param2=stage number.
+            # An explicit stagedone_ entry wins; otherwise a quest that has been
+            # advanced to stage N has necessarily run every stage up to N, so
+            # asking about an earlier stage answers yes.
+            key = f'stagedone_{p1}_{p2}'
+            if key in self.game_state:
+                done = self.game_state[key]
+            else:
+                done = p2 <= self.game_state.get(f'stage_{p1}', 0)
             actual = 1.0 if done else 0.0
+        elif func == FUNC_GETGLOBALVALUE:
+            # Condition function 74 (engine opcode 0x104A). The converter's
+            # AddTopic gates are globals, so this is what decides whether a
+            # topic has been unlocked. An explicit override wins; otherwise the
+            # global's authored starting value applies.
+            key = f'global_{p1}'
+            if key in self.game_state:
+                actual = float(self.game_state[key])
+            else:
+                actual = float(self.db.glob_values.get(p1, 0.0))
         elif func == FUNC_GETQUESTVARIABLE:
             actual = 0.0  # Quest variables never set (TES4 scripts don't run)
         elif func == 53:  # GetScriptVariable
@@ -716,7 +920,9 @@ class DialogSimulator:
         evaluator = ConditionEvaluator(self.db, npc, self.game_state)
         result = {
             'greetings': [],
-            'topics': [],      # (DIALData, [matching INFOs])
+            'topics': [],      # (DIALData, [matching INFOs]) -- menu topics
+            'choice_only': [],  # same, but Normal branches: reachable only by
+                                # following a choice link mid-conversation
             'barks': defaultdict(list),
             'issues': [],
         }
@@ -753,10 +959,69 @@ class DialogSimulator:
                     for info in matching_infos:
                         result['barks'][bark_type].append((info, dial))
                 elif dial.category == 0 and dial.has_branch:
-                    # Conversation topic
-                    result['topics'].append((dial, matching_infos, quest))
+                    # Only a TOP-LEVEL branch is offered in the NPC's topic
+                    # menu. A Normal branch (DNAM bit 0 clear) is reachable
+                    # solely by following a choice link out of a line already
+                    # being spoken, which is how Oblivion's mid-conversation
+                    # replies -- SadGeneral, AngerReceive, AnswerPositive, the
+                    # emotional-response family -- are meant to behave. Listing
+                    # them as menu topics made every NPC look like they offered
+                    # a dozen permanent topics they cannot actually offer.
+                    if self.db.is_top_level_branch(dial):
+                        result['topics'].append((dial, matching_infos, quest))
+                    else:
+                        result['choice_only'].append(
+                            (dial, matching_infos, quest))
 
         return result
+
+    def _print_topic_tree(self, dial, matching_infos, by_dial, show_infos,
+                          all_conditions, depth, seen):
+        """Print one topic and, nested beneath it, the topics its lines unlock.
+
+        `seen` guards against cycles: Oblivion conversations loop back on
+        themselves constantly (a "never mind" reply returning to the topic that
+        offered it), and without the guard the walk would not terminate.
+        """
+        indent = '  ' + '    ' * depth
+        all_infos = self.db.infos_by_dial.get(dial.form_id, [])
+        marker = '' if depth == 0 else '-> '
+        print(f"{indent}{marker}[{dial.form_id:08X}] \"{dial.full_name}\" "
+              f"(DIAL: {dial.editor_id}) "
+              f"{len(matching_infos)}/{len(all_infos)} passing INFOs")
+
+        if dial.form_id in seen:
+            print(f"{indent}    (already shown above)")
+            return
+        seen = seen | {dial.form_id}
+
+        passing_fids = {i.form_id for i in matching_infos}
+        shown = all_infos if all_conditions else matching_infos
+        # Several lines of a topic commonly offer the SAME follow-up (each
+        # variant of "will you buy the manor?" links to the one "yes" reply), so
+        # a target is printed once per topic rather than once per line.
+        printed_children = set()
+        for info in shown[:10]:
+            if show_infos:
+                passed = info.form_id in passing_fids
+                resp = (info.responses[0][0][:60] if info.responses
+                        else '(no text)')
+                tag = 'PASS' if passed else 'FAIL'
+                print(f"{indent}    [{tag}] [{info.form_id:08X}] {resp}")
+                self._print_conditions(info.conditions, indent + '        ')
+            # Follow this line's choice links down to their target topics.
+            for target in info.tclt_targets:
+                child = by_dial.get(target)
+                if child is None or target in printed_children:
+                    continue
+                child_dial, child_infos = child
+                if self.db.is_top_level_branch(child_dial):
+                    continue   # a real menu topic; it prints in its own right
+                printed_children.add(target)
+                self._rendered_children.add(child_dial.form_id)
+                self._print_topic_tree(child_dial, child_infos, by_dial,
+                                       show_infos, all_conditions,
+                                       depth + 1, seen)
 
     def walk_npc(self, npc_edid: str, verbose: bool = True, all_conditions: bool = False):
         """Walk through all dialog for an NPC by EditorID."""
@@ -816,19 +1081,33 @@ class DialogSimulator:
 
         # Topics
         print(f"\n--- Conversation Topics ({len(dialog['topics'])}) ---")
+        # A line can offer follow-up topics through its choice links (TCLT).
+        # Those targets are Normal branches, so they never appear in the menu on
+        # their own -- they exist only as the yes/no (or longer) continuation of
+        # the line the player just picked. Render them as children so the shape
+        # of the conversation survives.
+        self._rendered_children = set()
+        by_dial = {d.form_id: (d, m) for d, m, _ in
+                   dialog['topics'] + dialog['choice_only']}
         for dial, matching_infos, quest in dialog['topics']:
-            all_infos = self.db.infos_by_dial.get(dial.form_id, [])
-            print(f"  [{dial.form_id:08X}] \"{dial.full_name}\" (DIAL: {dial.editor_id})"
-                  f" {len(matching_infos)}/{len(all_infos)} passing INFOs")
-            if verbose or all_conditions:
-                passing_fids = {i.form_id for i in matching_infos}
-                shown = all_infos if all_conditions else matching_infos
-                for info in shown[:10]:
-                    passed = info.form_id in passing_fids
-                    resp = info.responses[0][0][:60] if info.responses else '(no text)'
-                    tag = 'PASS' if passed else 'FAIL'
-                    print(f"    [{tag}] [{info.form_id:08X}] {resp}")
-                    self._print_conditions(info.conditions, '        ')
+            self._print_topic_tree(dial, matching_infos, by_dial,
+                                   verbose or all_conditions, all_conditions,
+                                   depth=0, seen=set())
+
+        # Normal-branch topics reached from a menu topic are printed as children
+        # of the line that offers them, above. Anything left here is reachable
+        # only from a bark or greeting, so it gets its own section.
+        shown_as_child = getattr(self, '_rendered_children', set())
+        orphans = [t for t in dialog['choice_only']
+                   if t[0].form_id not in shown_as_child]
+        if orphans:
+            print(f"\n--- Choice-only replies reached from greetings/barks "
+                  f"({len(orphans)}) ---")
+            for dial, matching_infos, quest in orphans:
+                all_infos = self.db.infos_by_dial.get(dial.form_id, [])
+                print(f"  [{dial.form_id:08X}] \"{dial.full_name}\" "
+                      f"(DIAL: {dial.editor_id}) "
+                      f"{len(matching_infos)}/{len(all_infos)} passing INFOs")
 
         # Barks
         print(f"\n--- Barks ---")
@@ -843,13 +1122,6 @@ class DialogSimulator:
 
     def _fmt_condition(self, c: Condition) -> str:
         """Format a single condition as a string."""
-        FUNC_NAMES = {
-            72: 'GetIsID', 426: 'GetIsVoiceType', 58: 'GetStage', 59: 'GetStageDone',
-            56: 'GetQuestRunning', 99: 'GetQuestCompleted', 71: 'GetInCell',
-            73: 'GetInFaction', 74: 'GetFactionRank', 69: 'GetIsRace',
-            70: 'GetIsSex', 84: 'GetDead', 47: 'GetLevel', 50: 'GetActorValue',
-            67: 'GetCurrentAIProcedure',
-        }
         COMP_NAMES = {0: '==', 1: '!=', 2: '>', 3: '>=', 4: '<', 5: '<='}
         fname = FUNC_NAMES.get(c.func_idx, f'Func{c.func_idx}')
         comp = COMP_NAMES.get(c.comp_type, '?')
@@ -1139,6 +1411,73 @@ def batch_test(db: DialogDB, max_npcs: int = 0, verbose: bool = False):
 # Main
 # ---------------------------------------------------------------------------
 
+def build_game_state(db, stage_args, completed_args, global_args=(),
+                     unlock_all=False):
+    """Turn --stage/--completed into the dict ConditionEvaluator reads.
+
+    Quests are named by EditorID (or by hex FormID) so that callers do not have
+    to look FormIDs up by hand.
+    """
+    by_edid = {q.editor_id.lower(): q.form_id for q in db.qusts.values()
+               if q.editor_id}
+
+    def resolve(name):
+        fid = by_edid.get(name.lower())
+        if fid is None:
+            try:
+                fid = int(name, 16)
+            except ValueError:
+                sys.exit(f'no quest named {name!r}; pass an EditorID or a '
+                         'hex FormID')
+            if fid not in db.qusts:
+                sys.exit(f'no quest with FormID {fid:08X}')
+        return fid
+
+    state = {}
+    for spec in stage_args:
+        if ':' not in spec:
+            sys.exit(f'--stage wants QUEST:N, got {spec!r}')
+        name, _, num = spec.rpartition(':')
+        try:
+            stage = int(num)
+        except ValueError:
+            sys.exit(f'--stage wants an integer stage, got {num!r}')
+        fid = resolve(name)
+        state[f'stage_{fid}'] = stage
+        state[f'quest_running_{fid}'] = True
+        print(f'  game state: {name} at stage {stage} [{fid:08X}]')
+    for name in completed_args:
+        fid = resolve(name)
+        state[f'completed_{fid}'] = True
+        print(f'  game state: {name} completed [{fid:08X}]')
+
+    if unlock_all:
+        n = 0
+        for fid, edid in db.globs.items():
+            if edid.startswith('TES4Unlock_'):
+                state[f'global_{fid}'] = 1.0
+                n += 1
+        print(f'  game state: {n} TES4Unlock_* globals set to 1')
+
+    for spec in global_args:
+        if '=' not in spec:
+            sys.exit(f'--global wants NAME=VALUE, got {spec!r}')
+        name, _, raw = spec.partition('=')
+        try:
+            value = float(raw)
+        except ValueError:
+            sys.exit(f'--global wants a number, got {raw!r}')
+        fid = db.glob_by_edid.get(name.lower())
+        if fid is None:
+            try:
+                fid = int(name, 16)
+            except ValueError:
+                sys.exit(f'no global named {name!r}')
+        state[f'global_{fid}'] = value
+        print(f'  game state: global {name} = {value:g} [{fid:08X}]')
+    return state
+
+
 def main():
     parser = argparse.ArgumentParser(description='Skyrim Dialog Engine Emulator')
     parser.add_argument('esm', help='ESM/ESP file to analyze')
@@ -1150,12 +1489,29 @@ def main():
     parser.add_argument('--verbose', '-v', action='store_true', help='Show detailed conditions')
     parser.add_argument('--all-conditions', '-a', action='store_true',
                         help='Show ALL INFOs (passing and failing) with full conditions inline')
+    parser.add_argument('--stage', action='append', metavar='QUEST:N', default=[],
+                        help='Set a quest to stage N, e.g. --stage FGC01Rats:40. '
+                             'Repeatable. A quest advanced past 0 counts as '
+                             'running, and every stage up to N counts as done.')
+    parser.add_argument('--completed', action='append', metavar='QUEST', default=[],
+                        help='Mark a quest completed. Repeatable.')
+    parser.add_argument('--global', dest='globals', action='append',
+                        metavar='NAME=VALUE', default=[],
+                        help='Set a global, e.g. --global '
+                             'TES4Unlock_ratsTOPIC=1. These are the converter\'s '
+                             'AddTopic gates, so this is how you model a topic '
+                             'having been unlocked. Repeatable.')
+    parser.add_argument('--unlock-all', action='store_true',
+                        help='Set every TES4Unlock_* global to 1, i.e. assume '
+                             'every AddTopic gate has already fired.')
     args = parser.parse_args()
 
     db = DialogDB(args.esm)
+    game_state = build_game_state(db, args.stage, args.completed,
+                                  args.globals, args.unlock_all)
 
     if args.npc:
-        sim = DialogSimulator(db)
+        sim = DialogSimulator(db, game_state=game_state)
         sim.walk_npc(args.npc, verbose=args.verbose, all_conditions=args.all_conditions)
     elif args.quest:
         walk_quest(db, args.quest)
