@@ -1478,6 +1478,58 @@ class TestServiceConversion:
         # confirms the write path actually consulted the override table.
         assert container_priority != 61 or staged_priority > 60
 
+    def test_quest_priority_never_exceeds_engine_max(self):
+        """DNAM.Priority must stay in the engine's 0-100 band.
+
+        Vanilla Skyrim.esm's 391 quests top out at EXACTLY 100 with none above
+        it (the CK field is 0-100). The byte does not only order dialogue — it
+        arbitrates a quest ALIAS PACKAGE against the actor's standing schedule,
+        so an out-of-band value breaks AI too. The old additive boost pushed
+        TES4 priority 60 to 161 and put 265 of 391 quests (68%) over 100, which
+        is why converted escort/travel packages could pass their condition and
+        start (the actor stands up) yet never actually travel.
+        """
+        from tes5_import.dialog_converter import (
+            QUEST_PRIORITY_MAX, compute_quest_priorities, convert_QUST)
+        # Authored priorities spanning TES4's range, staged and zero-stage.
+        quests = []
+        for i, (prio, stages) in enumerate(
+                [(0, 1), (11, 1), (60, 1), (90, 1), (100, 1),
+                 (0, 0), (50, 0), (61, 0), (85, 0)]):
+            q = {'Signature': 'QUST', 'FormID': f'000357{i:02X}',
+                 'EditorID': f'Q{i}', 'DATA.Flags': '0',
+                 'DATA.Priority': str(prio), 'StageCount': str(stages)}
+            if stages:
+                q['Stage[0].Index'] = '10'
+            quests.append(q)
+        by_type = {'QUST': quests}
+        pri = compute_quest_priorities(by_type)
+
+        assert max(pri.values()) <= QUEST_PRIORITY_MAX, \
+            f'priority {max(pri.values())} exceeds engine max {QUEST_PRIORITY_MAX}'
+        assert min(pri.values()) >= 0
+        # ...and the written byte agrees with the table.
+        for q in quests:
+            dnam = self._subrecords(convert_QUST(q))['DNAM'][0]
+            assert 0 <= dnam[2] <= QUEST_PRIORITY_MAX
+
+        # Staged quests keep their AUTHORED priority — the correction is a
+        # downward clamp on containers only, never a shift of staged values.
+        for q in quests:
+            if int(q['StageCount']):
+                assert pri[int(q['FormID'], 16)] == int(q['DATA.Priority']), \
+                    'a staged quest must keep the priority its author wrote'
+
+        # No container may sit above the ceiling, so a normally-authored staged
+        # quest outranks every container. (Three vanilla staged quests are
+        # authored at 0, so this is NOT a universal min(staged) > max(zero) —
+        # clamping to that would flatten all 125 containers onto one value.)
+        from tes5_import.dialog_converter import ZERO_STAGE_TOP
+        zero = [pri[int(q['FormID'], 16)] for q in quests
+                if not int(q['StageCount'])]
+        assert max(zero) <= ZERO_STAGE_TOP, \
+            'a zero-stage container must never exceed the container ceiling'
+
     def test_zero_stage_quest_never_outranks_staged_greeting(self):
         """A zero-stage 'conversation container' quest (MG00General-style,
         priority 61 in vanilla) must never outrank a REAL staged quest's
@@ -1532,24 +1584,27 @@ class TestServiceConversion:
                   'INFO': [staged_info, container_info]}
         build_dialog_groups(by_type, writer, npc_to_vtyp={})
 
-        # Each quest's HELO INFO forms its own per-quest merged bark topic
-        # (Skyrim: one HELO topic per quest owner). Find both by their FULL
-        # text — a DIAL-level PNAM race, exactly like MG00General (61) vs
-        # MG04Restore (60) — and confirm the container quest's DIAL priority
-        # no longer sits above the staged quest's.
-        dial_group = b''.join(writer._top_groups.get('DIAL', []))
-        staged_topic = self._topic_owning_info(dial_group, 0x00036622)
-        container_topic = self._topic_owning_info(dial_group, 0x00036623)
-        assert staged_topic is not None, 'staged quest HELO topic not found'
-        assert container_topic is not None, \
-            'container quest HELO topic not found'
-        staged_prio = struct.unpack(
-            '<f', self._subrecords(staged_topic)['PNAM'][0][:4])[0]
-        container_prio = struct.unpack(
-            '<f', self._subrecords(container_topic)['PNAM'][0][:4])[0]
+        # Arbitration lives on QUST.DNAM.Priority — NOT on the topic's PNAM.
+        from tes5_import.dialog_converter import compute_quest_priorities
+        pri = compute_quest_priorities(by_type)
+        staged_prio = pri[0x00035713]
+        container_prio = pri[0x00035714]
         assert container_prio < staged_prio, \
             (f'container quest priority {container_prio} still outranks '
              f'the staged quest priority {staged_prio}')
+
+        # ...and every generated bark topic keeps the vanilla 50.0 PNAM
+        # default. Writing quest priority here instead is what put FGC01Rats'
+        # GREETING at 161 against its own player topics' 50.0 and cost Pinarus
+        # every topic he owned (mountain-lion AND training).
+        dial_group = b''.join(writer._top_groups.get('DIAL', []))
+        for info_fid in (0x00036622, 0x00036623):
+            topic = self._topic_owning_info(dial_group, info_fid)
+            assert topic is not None, f'HELO topic for {info_fid:08X} not found'
+            pnam = struct.unpack(
+                '<f', self._subrecords(topic)['PNAM'][0][:4])[0]
+            assert pnam == 50.0, \
+                f'bark topic PNAM must stay at the vanilla default, got {pnam}'
 
     def test_zero_stage_quests_keep_relative_priority_order(self):
         """Boosting staged quests above the zero-stage ceiling must be a
@@ -1615,18 +1670,15 @@ class TestServiceConversion:
                   'INFO': [staged_info, high_info, low_info]}
         build_dialog_groups(by_type, writer, npc_to_vtyp={})
 
-        dial_group = b''.join(writer._top_groups.get('DIAL', []))
-        staged_topic = self._topic_owning_info(dial_group, 0x00036622)
-        high_topic = self._topic_owning_info(dial_group, 0x00036624)
-        low_topic = self._topic_owning_info(dial_group, 0x00036625)
-        assert staged_topic is not None
-        assert high_topic is not None and low_topic is not None
-        staged_prio = struct.unpack(
-            '<f', self._subrecords(staged_topic)['PNAM'][0][:4])[0]
-        high_prio = struct.unpack(
-            '<f', self._subrecords(high_topic)['PNAM'][0][:4])[0]
-        low_prio = struct.unpack(
-            '<f', self._subrecords(low_topic)['PNAM'][0][:4])[0]
+        # Measured on QUST.DNAM.Priority — the byte the engine arbitrates on.
+        # (The topics' PNAM all stay at the vanilla 50.0 default, so ordering
+        # cannot be read there; see
+        # test_zero_stage_quest_never_outranks_staged_greeting.)
+        from tes5_import.dialog_converter import compute_quest_priorities
+        pri = compute_quest_priorities(by_type)
+        staged_prio = pri[0x00035713]
+        high_prio = pri[0x00035715]
+        low_prio = pri[0x00035716]
         assert high_prio > low_prio, \
             ('zero-stage quests lost their relative order: '
              f'HighContainer(was 85)={high_prio} <= LowContainer(was 50)={low_prio}')
@@ -2103,11 +2155,12 @@ if __name__ == '__main__':
 class TestSayTopicRetarget:
     """Run-on-Target conditions in Say-driven topics (2026-07-19)."""
 
-    def _raw_ctda(self, run_on_target=True):
+    def _raw_ctda(self, run_on_target=True, func=47):
         import struct
-        # GetIsID(00012345) == 1.0, TES4 24-byte CTDA
+        # func defaults to GetItemCount(47) — a STATE query, which is what the
+        # retarget exists for. Identity functions are exempt (see below).
         type_byte = 0x02 if run_on_target else 0x00   # CTDA_RUN_ON_TARGET
-        return struct.pack('<B3xfHHII4x', type_byte, 1.0, 72, 0, 0x00012345, 0)
+        return struct.pack('<B3xfHHII4x', type_byte, 1.0, func, 0, 0x00012345, 0)
 
     def test_retarget_to_reference(self):
         import struct
@@ -2125,6 +2178,37 @@ class TestSayTopicRetarget:
         assert convert_ctda(self._raw_ctda(), offset=1,
                             drop_run_on_target=True) is None
 
+    def test_identity_conditions_are_never_retargeted(self):
+        """GetIsID/GetIsRace/GetInFaction/... ask WHO is being addressed — only
+        the dialogue target can answer, so they must stay RunOn=Target.
+
+        Retargeting them onto a reference changes their meaning, and when that
+        reference is the player it makes them UNPASSABLE: GetIsID compares the
+        runtime actor's BASE form, and PlayerRef's base is vanilla Skyrim's
+        0x00000007, never the converted TES4 player NPC_ 0x01000007. That
+        silently killed 667 GREETING/bark INFOs across 101 topics — every
+        affected NPC lost their whole topic list because the greeting that
+        opens it could not pass (Pinarus Inventius kept only 'rumors').
+        """
+        import struct
+        from tes5_import.dialog_conditions import convert_ctda
+        # GetIsRace(69) is excluded here only because its PARAM is race-mapped
+        # and this fixture's dummy FormID is not a real TES4 race (it would be
+        # dropped for that unrelated reason); the exemption covers it too.
+        for func in (72, 70, 68, 71, 73):
+            raw = self._raw_ctda(func=func)
+            # ...neither the retarget...
+            out = convert_ctda(raw, offset=1, run_on_target_ref=0x14)
+            assert out is not None, f'func {func} must not be dropped'
+            run_on, reference = struct.unpack_from('<II', out, 20)
+            assert (run_on, reference) == (1, 0), \
+                f'identity func {func} was retargeted to {run_on}/{reference:#x}'
+            # ...nor the drop applies to them.
+            out = convert_ctda(raw, offset=1, drop_run_on_target=True)
+            assert out is not None, f'identity func {func} must not be dropped'
+            run_on, _ = struct.unpack_from('<II', out, 20)
+            assert run_on == 1
+
     def test_default_still_target(self):
         import struct
         from tes5_import.dialog_conditions import convert_ctda
@@ -2139,3 +2223,21 @@ class TestSayTopicRetarget:
                            run_on_target_ref=0x14)
         run_on, reference = struct.unpack_from('<II', out, 20)
         assert run_on == 0 and reference == 0
+
+    def test_engine_fixed_param_never_remapped(self):
+        """GetIsID(Player 0x00000007) [Target] means "am I addressing the
+        player" — the runtime player's base form is vanilla Skyrim's
+        0x00000007, so the param must NOT be load-order shifted to the
+        converted TES4 player copy (0x01000007 can never pass; 3,761 INFOs
+        incl. every stage-gated reveal greeting died and their AddTopic-unlock
+        fragments never ran — Pinarus lost his whole topic list, second cause
+        after the identity-retarget bug)."""
+        import struct
+        from tes5_import.dialog_conditions import convert_ctda
+        type_byte = 0x02                              # run-on-target
+        raw = struct.pack('<B3xfHHII4x', type_byte, 1.0, 72, 0, 0x00000007, 0)
+        out = convert_ctda(raw, offset=1)
+        assert out is not None
+        param1 = struct.unpack_from('<I', out, 12)[0]
+        assert param1 == 0x00000007, \
+            f'engine-fixed Player id was remapped to {param1:#010x}'

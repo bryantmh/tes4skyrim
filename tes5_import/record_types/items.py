@@ -182,7 +182,8 @@ def load_furniture_models(meshes_dir, by_type) -> int:
         _consume(map(furniture_model_info_job, jobs))
     else:
         from concurrent.futures import ProcessPoolExecutor
-        workers = min(max(1, (os.cpu_count() or 4) - 1), len(jobs))
+        from worker_budget import worker_count
+        workers = min(worker_count(), len(jobs))
         with ProcessPoolExecutor(max_workers=workers) as ex:
             _consume(ex.map(furniture_model_info_job, jobs))
 

@@ -103,6 +103,9 @@ from .tes4_reader import (
     read_file,
 )
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from worker_budget import worker_count  # noqa: E402
+
 EXPORT_DISPATCH = {
     # Items / Objects
     "STAT": export_STAT, "ACTI": export_ACTI, "MISC": export_MISC,
@@ -137,7 +140,7 @@ EXPORT_DISPATCH = {
 # Types that can't be meaningfully exported (skipped with note)
 SKIP_TYPES = set()  # All types now exported
 
-_WORKER_COUNT = max(1, (os.cpu_count() or 4) - 3)
+_WORKER_COUNT = worker_count()
 
 
 def format_record(rec: Record) -> str:

@@ -386,13 +386,58 @@ End
         assert 'Event OnUpdate()' in result
         assert 'RegisterForSingleUpdate' in result
         # Object/actor GameMode loops are gated on load state (OnCellAttach start /
-        # OnCellDetach stop), NOT auto-started from OnInit — otherwise every
-        # scripted object in the game begins ticking the moment the save loads.
+        # OnCellDetach stop) so that not every scripted object in the game begins
+        # ticking the moment the save loads.
         assert 'Event OnCellAttach()' in result
         assert 'Event OnCellDetach()' in result
-        assert 'Event OnInit()' not in result
         # The OnUpdate re-registration only continues while still loaded.
         assert 'Is3DLoaded()' in result
+
+    def test_gamemode_loop_starts_when_already_loaded(self, converter):
+        """OnCellAttach alone is not enough to start a GameMode poll.
+
+        OnCellAttach only fires when a cell BECOMES attached.  A persistent actor
+        standing in an already-attached cell when the script is first bound (new
+        game, or the player is simply already there) never receives it, so the
+        loop would never start and a GameMode-set variable stays 0 forever —
+        which is what left Arielle (MG04Restore) standing still: her travel
+        package waits on `startconv == 1`, and only her GameMode body sets it.
+
+        The OnInit start MUST stay gated on Is3DLoaded(), which is true only for
+        references currently in an attached cell.  An UNCONDITIONAL OnInit
+        register is what once made every scripted object in the game tick at
+        load and flooded the engine — that must not come back.
+        """
+        source = """ScriptName UpdateScript
+
+Begin GameMode
+  set x to 1
+End
+"""
+        result = converter.convert_standalone('UpdateScript', source,
+                                              'ObjectReference', 'UpdateScript')
+        assert 'Event OnInit()' in result, \
+            'a GameMode poll must also start for an already-loaded reference'
+        init = result.split('Event OnInit()', 1)[1].split('EndEvent', 1)[0]
+        assert 'Is3DLoaded()' in init, \
+            'OnInit registration must be gated on Is3DLoaded (anti-storm)'
+        assert 'RegisterForSingleUpdate' in init
+
+    def test_gamemode_oninit_not_duplicated(self, converter):
+        """A script with its own OnInit must not get a second one."""
+        source = """ScriptName UpdateScript
+
+Begin OnInit
+  set x to 2
+End
+
+Begin GameMode
+  set x to 1
+End
+"""
+        result = converter.convert_standalone('UpdateScript', source,
+                                              'ObjectReference', 'UpdateScript')
+        assert result.count('Event OnInit()') == 1
 
     def test_gamemode_quest_still_uses_oninit(self, converter):
         # Quest scripts run globally, so their loop DOES self-start from OnInit.

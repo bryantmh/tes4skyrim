@@ -248,8 +248,17 @@ def build_alias_target(alias_index: int) -> bytes:
 
 
 def build_alias_location(alias_index: int, radius: int = 0) -> bytes:
-    """PLDT type 9 = reference-in-alias."""
-    return struct.pack('<iii', 9, alias_index, radius)
+    """PLDT type 8 = 'Alias (reference)' — a location given by a REFERENCE alias.
+
+    Type 9 is 'Alias (location)', which resolves a LOCATION-type alias (LCTN);
+    handing it a reference-alias index resolves to nothing, so the package
+    procedure starts (the actor stands up) and then has nowhere to go.  Census
+    of Skyrim.esm PLDT types: 8 appears 585x, 9 appears **once** in 6,838
+    packages — 9 is effectively unused, 8 is the attested way a quest package
+    names a reference destination (WERoad11EscortNoHorse: PLDT type 8, alias
+    0x22).  Enum from xEdit wbLocationEnum (wbDefinitionsTES5.pas:2620).
+    """
+    return struct.pack('<iii', 8, alias_index, radius)
 
 
 # ---------------------------------------------------------------------------

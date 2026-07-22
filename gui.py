@@ -19,6 +19,8 @@ from pathlib import Path
 SCRIPT_DIR  = Path(__file__).parent.resolve()
 CONFIG_FILE = SCRIPT_DIR / "conversion_config.json"
 
+from worker_budget import worker_count, cpu_total, WORKERS_ENV_VAR
+
 # ── Pipeline steps ─────────────────────────────────────────────────────────
 # (key, cli_flag, label, description, default_on, needs_file)
 STEPS = [
@@ -421,6 +423,16 @@ def gui_main():
     tes5_path    = cfg.get("tes5DataPath", "") or _find_game_path("skyrimse")
     output_path  = cfg.get("outputDir", "")  or str(SCRIPT_DIR / "output")
 
+    # Worker count: saved choice if valid, else the pipeline's own default.
+    # Never allow more than the machine's logical CPU count.
+    cpu_max = cpu_total()
+    saved_workers = cfg.get("workers")
+    try:
+        workers_default = int(saved_workers)
+    except (TypeError, ValueError):
+        workers_default = worker_count()
+    workers_default = max(1, min(workers_default, cpu_max))
+
     # ── Root window ───────────────────────────────────────────────────────────
     root = tk.Tk()
     root.title("TES4Skyrim")
@@ -520,6 +532,7 @@ def gui_main():
     tes5_var    = tk.StringVar(value=tes5_path)
     output_var  = tk.StringVar(value=output_path)
     file_var    = tk.StringVar()
+    workers_var = tk.IntVar(value=workers_default)
     step_vars   = {key: tk.BooleanVar(value=(key in _DEFAULT_ON))
                    for key, *_ in STEPS}
     running     = threading.Event()
@@ -529,6 +542,61 @@ def gui_main():
     mesh_subdir_vars = []  # populated when "Meshes" step panel expands
     # Skyrim patch-plugin state: list of (name, BooleanVar), all-on by default
     patch_plugin_vars = []
+
+    def _get_workers() -> int:
+        """Current worker-count value, clamped to [1, cpu_max]."""
+        try:
+            n = int(workers_var.get())
+        except (tk.TclError, ValueError):
+            n = workers_default
+        n = max(1, min(n, cpu_max))
+        if n != workers_var.get():
+            workers_var.set(n)
+        return n
+
+    def _on_workers_change(*_):
+        _save_dir_to_config()
+
+    # ── Top menu bar (dark, custom-drawn) ─────────────────────────────────────
+    # Windows renders a native (white) bar for root.configure(menu=...) and
+    # ignores tk colours on it, so the bar is built from dark Menubuttons whose
+    # dropdown popups (which DO honour colour options) are tk.Menu instances.
+    _menu_opts = dict(
+        tearoff=0,
+        bg=CLR["panel"], fg=CLR["text"],
+        activebackground=CLR["accent"], activeforeground="#ffffff",
+        selectcolor=CLR["accent"], relief="flat",
+        borderwidth=0, activeborderwidth=0,
+        font=("Segoe UI", 9),
+    )
+    menubar = tk.Frame(root, bg=CLR["panel"])
+    menubar.pack(side=tk.TOP, fill=tk.X)
+    ttk.Separator(root, orient=tk.HORIZONTAL).pack(side=tk.TOP, fill=tk.X)
+
+    def _menubutton(text: str) -> tk.Menu:
+        """Add a dark top-level menu button; return its dropdown Menu."""
+        mb = tk.Menubutton(menubar, text=text,
+                           bg=CLR["panel"], fg=CLR["text"],
+                           activebackground=CLR["btn_hover"],
+                           activeforeground=CLR["text"],
+                           disabledforeground=CLR["subtext"],
+                           relief="flat", borderwidth=0, padx=10, pady=4,
+                           font=("Segoe UI", 9))
+        mb.pack(side=tk.LEFT)
+        menu = tk.Menu(mb, **_menu_opts)
+        mb.configure(menu=menu)
+        return menu
+
+    # Settings ▸ Workers ▸ (1..cpu_max) — a radio group bound to workers_var.
+    settings_menu = _menubutton("Settings")
+    workers_menu  = tk.Menu(settings_menu, **_menu_opts)
+    for n in range(1, cpu_max + 1):
+        label = f"{n}  (default)" if n == worker_count() else str(n)
+        workers_menu.add_radiobutton(
+            label=label, value=n, variable=workers_var,
+            command=_on_workers_change)
+    settings_menu.add_cascade(label=f"Workers  (max {cpu_max})",
+                              menu=workers_menu)
 
     # ── Layout: sidebar + log pane ────────────────────────────────────────────
     outer = ttk.Frame(root)
@@ -674,6 +742,7 @@ def gui_main():
         updated["tes4DataPath"] = tes4_var.get()
         updated["tes5DataPath"] = tes5_var.get()
         updated["outputDir"]    = output_var.get()
+        updated["workers"]      = _get_workers()
         save_config(updated)
 
     tes4_var.trace_add("write", lambda *_: None)  # live binding via on_change
@@ -1092,6 +1161,7 @@ def gui_main():
         _log(f"File: {fname or '(none)'}")
         _log(f"Steps: {', '.join(steps)}")
         _log(f"Output: {out_dir}")
+        _log(f"Workers: {_get_workers()} (of {cpu_max})")
         if selected_subdirs:
             _log(f"Mesh subdirs: {', '.join(selected_subdirs)}")
         if selected_patch_plugins is not None:
@@ -1111,6 +1181,10 @@ def gui_main():
             if running.is_set():
                 root.after(50, _drain_queue)
 
+        # Propagate the chosen worker count to every child process (and the
+        # multiprocessing workers they spawn) via the environment.
+        run_env = {WORKERS_ENV_VAR: str(_get_workers())}
+
         def _worker():
             _set_running(True)
             try:
@@ -1126,7 +1200,8 @@ def gui_main():
                     if out_dir:
                         cmd += ["--output-dir", out_dir]
                     q.put(f"Running: {' '.join(cmd)}")
-                    ret = _run_process(cmd, q.put, cancel_event=cancel_evt)
+                    ret = _run_process(cmd, q.put, env=run_env,
+                                       cancel_event=cancel_evt)
                 else:
                     for step in steps:
                         if cancel_evt.is_set():
@@ -1134,7 +1209,8 @@ def gui_main():
                         cmd = _build_cmd(step, fname, out_dir, selected_subdirs,
                                          selected_patch_plugins)
                         q.put(f"Running: {' '.join(cmd)}")
-                        r = _run_process(cmd, q.put, cancel_event=cancel_evt)
+                        r = _run_process(cmd, q.put, env=run_env,
+                                         cancel_event=cancel_evt)
                         if r == -2:
                             ret = -2
                             break

@@ -20,11 +20,15 @@ import io
 import math
 import os
 import struct
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from worker_budget import worker_count  # noqa: E402
 
 # Apply all PyFFI patches (time.clock fix, nif.xml condition fixes) before import
 from . import pyffi_monkey_patch as _patch  # noqa: F401
@@ -1394,8 +1398,7 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     tex_root = output_dir / 'textures'
     print(f"  Resolved {len(ltex_map)} LTEX landscape textures.")
 
-    # Number of worker processes: cpu_count - 2, minimum 1
-    n_workers = max(1, (os.cpu_count() or 2) - 2)
+    n_workers = worker_count()
     print(f"  Using {n_workers} worker process(es).")
 
     total_tiles = 0

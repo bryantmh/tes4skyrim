@@ -247,3 +247,83 @@ def test_script_var_map_walks_refr_to_base_to_script():
     }
     vars_by_ref = build_script_var_map(by_type)
     assert vars_by_ref[0x0000BC72] == {1: 'packageVAR'}
+
+
+def test_alias_location_uses_reference_alias_type_8():
+    """A quest package's location alias must be PLDT type 8 'Alias (reference)'.
+
+    Type 9 is 'Alias (location)' and expects an LCTN-type alias; given a
+    reference-alias index it resolves to nothing, so the procedure starts (the
+    actor stands up) and never travels.  Skyrim.esm census: type 8 = 585 uses,
+    type 9 = 1 use out of 6,838 PLDTs.
+    """
+    from tes5_import.pack_converter import build_alias_location
+    ltype, alias, radius = struct.unpack('<iii', build_alias_location(5, 1000))
+    assert (ltype, alias, radius) == (8, 5, 1000)
+
+
+def test_quest_escort_location_routes_through_alias_as_type_8():
+    """End-to-end: a quest-owned Escort whose PLDT names a ref gets type 8."""
+    plan = PackagePlan()
+    plan.owner_quest[0x00001000] = 0x00035713
+    plan.alias_index[(0x00035713, 0x0003662C)] = 5
+    ctx = PackContext(plan=plan)
+
+    b = convert_PACK(_pack(2, **{
+        'PLDT.Type': 0, 'PLDT.Location': '0003662C', 'PLDT.Radius': 1000,
+        'PTDT.Type': 0, 'PTDT.Target': '00000014', 'PTDT.Count': 0,
+    }), ctx)
+    ltype, alias, _ = struct.unpack('<iii', _first(_subrecords(b), 'PLDT'))
+    assert (ltype, alias) == (8, 5)
+
+
+# --- GetVMScriptVariable actor scripts move base->placed ref --------------
+# GetVMScriptVariable(ref, "::var_var") reads the property off the script on the
+# REFERENCE named in param1, not the base actor.  So an actor gated by such a
+# package condition must carry the variable-bearing script on its placed ACHR,
+# or the condition never passes and the quest package never wins (Pinarus stays
+# put).  Verified against Skyrim.esm: 100% of vanilla func-630 package
+# conditions name a REFR that carries its own VMAD.
+
+def _reloc_setup(monkeypatch, placements):
+    """Seed _OBJECT_VMAD with a base-attached actor script and a PACK condition
+    reading its variable via GetScriptVariable(func 53) on a placed ACHR."""
+    from tes5_import import object_scripts as os_
+    from tes5_import.text_reader import set_formid_index_offset
+    set_formid_index_offset(0)          # keep raw fids for a clean assertion
+    os_._OBJECT_VMAD.clear()
+    os_._OBJECT_VMAD[0x0000A29D] = b'VMAD\x04\x00base'   # marker bytes
+
+    # PACK gated on GetScriptVariable(PinarusRef=0xBC72, var index 1).
+    ctda = struct.pack('<B3xIHHIIII I',
+                       0, struct.unpack('<I', struct.pack('<f', 1.0))[0],
+                       53, 0, 0x0000BC72, 1, 0, 0, 0xFFFFFFFF)
+    achrs = [{'FormID': '0000BC72', 'NAME': '0000A29D'}]
+    achrs += [{'FormID': f'000B{n:04X}', 'NAME': '0000A29D'}
+              for n in range(placements - 1)]
+    by_type = {
+        'PACK': [{'FormID': '00036633',
+                  'Condition[0].Raw': ctda.hex()}],
+        'ACHR': achrs,
+    }
+    return os_, by_type
+
+
+def test_actor_script_relocated_to_placed_ref(monkeypatch):
+    os_, by_type = _reloc_setup(monkeypatch, placements=1)
+    moved = os_._relocate_actor_scripts_to_refs(by_type, 0)
+    assert moved == 1
+    # Script now lives on the placed ACHR ...
+    assert os_._OBJECT_VMAD.get(0x0000BC72) == b'VMAD\x04\x00base'
+    # ... and ONLY there (single placement -> moved off the base).
+    assert 0x0000A29D not in os_._OBJECT_VMAD
+
+
+def test_shared_base_keeps_script_and_adds_ref(monkeypatch):
+    """A base placed more than once keeps its script (siblings need it) and the
+    read ref gains its own copy."""
+    os_, by_type = _reloc_setup(monkeypatch, placements=3)
+    moved = os_._relocate_actor_scripts_to_refs(by_type, 0)
+    assert moved == 1
+    assert os_._OBJECT_VMAD.get(0x0000BC72) == b'VMAD\x04\x00base'
+    assert os_._OBJECT_VMAD.get(0x0000A29D) == b'VMAD\x04\x00base'

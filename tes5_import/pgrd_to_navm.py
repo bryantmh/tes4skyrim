@@ -477,7 +477,8 @@ def convert_PGRD(rec: dict, writer=None,
                  base_model_by_fid: dict = None,
                  door_fids: set = None,
                  navm_fid: int = None,
-                 geom_cache: tuple = None) -> tuple:
+                 geom_cache: tuple = None,
+                 extra_door_refrs: list = None) -> tuple:
     """Convert one TES4 PGRD to a TES5 NAVM record.
 
     Args:
@@ -495,6 +496,14 @@ def convert_PGRD(rec: dict, writer=None,
         geom_cache:         (cache_dir, tag) enabling the on-disk geometry
                             cache; tag must cover the generator code and the
                             collision cache (see _geom_hash).
+        extra_door_refrs:   Door REFRs that stand in this cell but are PARENTED
+                            elsewhere.  Exterior teleport doors are persistent
+                            refs living in the worldspace's persistent (dummy)
+                            cell, so the per-cell refr list never contains
+                            them — without this, exterior meshes got no door
+                            triangles (89/6,516) and cross-door pathing died at
+                            every house door and city gate.  They feed the door
+                            threshold stamp and door-triangle linking only.
 
     Returns:
         (navm_bytes, meta) where meta is a dict
@@ -590,6 +599,8 @@ def convert_PGRD(rec: dict, writer=None,
     if refr_recs:
         base_objects = _collect_base_objects(refr_recs)
         doors = _collect_doors(refr_recs, door_fids)
+    if extra_door_refrs:
+        doors += _collect_doors(extra_door_refrs, door_fids)
 
     geom_cached = False
     cache_path = geom_hash = None
@@ -667,6 +678,11 @@ def convert_PGRD(rec: dict, writer=None,
         'center': (cx, cy, cz),
         'base_objects': base_objects,
         'geom_cached': geom_cached,
+        # NVMI Door Links mirror the mesh's own door triangles EXACTLY —
+        # verified on all 15,462 vanilla NVMI entries (the engine joins the two
+        # sides of a load door through the door refs' XTEL pairing, so each
+        # mesh lists only its own doors).
+        'door_refs': sorted({fid for (_t, fid) in door_tris}),
     }
     return navm_bytes, meta
 

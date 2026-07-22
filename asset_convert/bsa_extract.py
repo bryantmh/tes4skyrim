@@ -30,10 +30,10 @@ from .audio_converter import (
     _TES4_VOICE_TYPE_MAP,
     _VOICE_FILENAME_RE,
 )
+from worker_budget import worker_count
 
 # Worker count used by all parallel operations in this module.
-# cpu_count() - 3 to leave headroom for the OS and other processes.
-_WORKER_COUNT = max(1, (os.cpu_count() or 4) - 3)
+_WORKER_COUNT = worker_count()
 
 
 def read_bsa_files(bsa_path, wanted_names):

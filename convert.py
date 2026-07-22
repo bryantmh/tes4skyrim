@@ -61,6 +61,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
 # Suppress console windows when spawned from a console-less parent (pythonw/.pyw)
 from subprocess_flags import POPEN_FLAGS as _POPEN_FLAGS, configure_multiprocessing
+from worker_budget import worker_count
 
 # multiprocessing.Pool workers (nif/lod conversion) must also inherit a hidden
 # console — configure before any pool is created.
@@ -456,7 +457,7 @@ def phase_compile(file_name: str, config: dict, output_dir: str = None):
     psc_count = len(psc_files)
     print(f"[{file_name}] Compiling {psc_count} Papyrus scripts...")
 
-    workers = max(1, (os.cpu_count() or 4) - 1)
+    workers = worker_count()
     ok_count = 0
     err_count = 0
     err_samples: list = []

@@ -7,10 +7,14 @@ Lines starting with # are comments. Values are unescaped.
 
 import mmap
 import os
+import sys
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
-_WORKER_COUNT = max(1, (os.cpu_count() or 4) - 2)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from worker_budget import worker_count  # noqa: E402
+
+_WORKER_COUNT = worker_count()
 
 # Byte size of one parse job. Big files (LAND.txt is ~1.4 GB) are split into
 # ranges of this size so parsing spreads across every worker instead of one

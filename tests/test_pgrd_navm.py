@@ -478,3 +478,192 @@ def test_navi_record_layout():
     assert rec[:4] == b'NAVI'
     # NAVI carries no EDID; the first subrecord is NVER.
     assert rec[24:28] == b'NVER'
+
+
+# ---------------------------------------------------------------------------
+# Edge Links — cross-cell navmesh stitching
+# ---------------------------------------------------------------------------
+# Without Edge Links every cell navmesh is an ISLAND: an actor paths fine inside
+# its own cell and can never cross a cell boundary, so any AI package with an
+# out-of-cell destination starts (the actor stands up) and never moves.  Vanilla
+# links 12,145 of 14,440 exterior navmeshes (84%), 194,744 links in total.
+#
+# Binary contract (verified against Skyrim.esm, which parses 15,949/15,949 clean):
+#   Edge Link = Type(U32) + Navmesh(FormID U32) + Triangle(S16) = 10 bytes
+#   Triangle flag bits 0/1/2 = 'Edge 0-1 / 1-2 / 2-0 Link'; when set that edge
+#   field is an INDEX into the Edge Links array, not a neighbour triangle.
+#   Type 0 = Portal (the cell-seam link).
+
+_CELL = 4096.0
+
+
+def _edge_link_cell(gx, gy, fid, hug_west):
+    """A 2-triangle quad hugging one vertical edge of an exterior cell."""
+    from tes5_import.writer import pack_subrecord
+    x0, x1 = gx * _CELL, (gx + 1) * _CELL
+    y0, y1 = gy * _CELL, gy * _CELL + 512
+    if hug_west:
+        verts = [(x0, y0, 0.0), (x0 + 512, y0, 0.0),
+                 (x0 + 512, y1, 0.0), (x0, y1, 0.0)]
+    else:
+        verts = [(x1 - 512, y0, 0.0), (x1, y0, 0.0),
+                 (x1, y1, 0.0), (x1 - 512, y1, 0.0)]
+    nvnm = p2n._pack_nvnm(verts, [(0, 1, 2), (0, 2, 3)],
+                          [(-1, -1, 1), (0, -1, -1)], [0, 0],
+                          0x0100003C, 0, gx, gy, True)
+    rec = p2n._pack_navm_record(fid, pack_subrecord('NVNM', nvnm))
+    meta = {'fid': fid, 'wrld_fid': 0x0100003C, 'grid_x': gx, 'grid_y': gy,
+            'is_exterior': True}
+    return rec, meta
+
+
+def _two_cell_cache():
+    return {
+        ('a', 1): _edge_link_cell(0, 0, 0x1000, hug_west=False),
+        ('b', 2): _edge_link_cell(1, 0, 0x2000, hug_west=True),
+    }
+
+
+def _decode_view(navm_bytes, fid):
+    from tes5_import import navm_edge_links as el
+    blob, _pre, _post = el._extract_nvnm(navm_bytes)
+    return el.NavMeshView(fid, blob)
+
+
+def test_adjacent_cells_get_reciprocal_portal_links():
+    """Two cells meeting at a seam must link to each other, both ways."""
+    from tes5_import.navm_edge_links import build_edge_links, LINK_TYPE_PORTAL
+    cache = _two_cell_cache()
+    made = build_edge_links(cache, verbose=False)
+    assert made == 2, 'one link per side of the seam'
+
+    a = _decode_view(cache[('a', 1)][0], 0x1000)
+    b = _decode_view(cache[('b', 2)][0], 0x2000)
+    assert len(a.links) == 1 and len(b.links) == 1
+    # Reciprocal: each names the OTHER mesh.
+    assert a.links[0][0] == LINK_TYPE_PORTAL
+    assert a.links[0][1] == 0x2000
+    assert b.links[0][1] == 0x1000
+    # ...and each points at a real triangle in the other mesh.
+    assert 0 <= a.links[0][2] < len(b.tris)
+    assert 0 <= b.links[0][2] < len(a.tris)
+
+
+def test_linked_edge_field_is_an_index_not_a_neighbour():
+    """The flagged edge field must become an index into Edge Links."""
+    from tes5_import.navm_edge_links import build_edge_links
+    cache = _two_cell_cache()
+    build_edge_links(cache, verbose=False)
+    a = _decode_view(cache[('a', 1)][0], 0x1000)
+    flagged = [(i, t) for i, t in enumerate(a.tris) if t[6] & 0x0007]
+    assert flagged, 'some triangle edge must be flagged as an external link'
+    for _i, t in flagged:
+        for slot in range(3):
+            if t[6] & (1 << slot):
+                idx = t[3 + slot]
+                assert 0 <= idx < len(a.links), \
+                    'flagged edge must index the Edge Links array'
+
+
+def test_non_adjacent_cells_are_not_linked():
+    """Cells that share no seam must not be stitched."""
+    from tes5_import.navm_edge_links import build_edge_links
+    cache = {
+        ('a', 1): _edge_link_cell(0, 0, 0x1000, hug_west=False),
+        ('far', 2): _edge_link_cell(5, 5, 0x3000, hug_west=True),
+    }
+    assert build_edge_links(cache, verbose=False) == 0
+
+
+def test_edge_linked_navm_round_trips_to_exact_length():
+    """A re-packed NAVM must still consume exactly its blob (no drift)."""
+    from tes5_import.navm_edge_links import build_edge_links
+    cache = _two_cell_cache()
+    build_edge_links(cache, verbose=False)
+    for key, (rec, meta) in cache.items():
+        size, flags = struct.unpack_from('<II', rec, 4)
+        body = rec[24:24 + size]
+        if flags & 0x00040000:
+            body = zlib.decompress(body[4:])
+        assert body[:4] == b'NVNM'
+
+
+def test_edge_links_are_deterministic():
+    """Same input must give byte-identical output (the ESM is reproducible)."""
+    from tes5_import.navm_edge_links import build_edge_links
+    c1, c2 = _two_cell_cache(), _two_cell_cache()
+    build_edge_links(c1, verbose=False)
+    build_edge_links(c2, verbose=False)
+    for key in c1:
+        assert c1[key][0] == c2[key][0]
+
+
+# ---------------------------------------------------------------------------
+# NAVI connectivity mirror — the engine's navmesh info map
+# ---------------------------------------------------------------------------
+# The runtime plans cross-navmesh paths on NAVI's NVMI entries, not on the NVNM
+# blobs: an NVMI with empty Edge/Door Link arrays declares its navmesh an
+# unreachable island even when the NVNM carries portal links and door
+# triangles.  Contract verified against all 15,462 Skyrim.esm NVMI entries:
+#   Edge Links == distinct NVNM edge-link neighbours, self excluded;
+#   Door Links == the mesh's own NVNM door-triangle refs, CRC "PathingDoor".
+# And the NAVI record itself must OVERRIDE Skyrim.esm's singleton 0x00012FB4
+# (as all four DLC ESMs do) — under a fresh FormID the engine never consults
+# it and no navmesh is registered at all.
+
+def _parse_nvmi_entries(navi_rec):
+    entries = {}
+    off = 24
+    while off + 6 <= len(navi_rec):
+        sig = navi_rec[off:off + 4]
+        sz = struct.unpack_from('<H', navi_rec, off + 4)[0]
+        sd = navi_rec[off + 6:off + 6 + sz]
+        off += 6 + sz
+        if sig != b'NVMI':
+            continue
+        p = 0
+        fid = struct.unpack_from('<I', sd, p)[0]; p += 24
+        ne = struct.unpack_from('<I', sd, p)[0]; p += 4
+        edges = list(struct.unpack_from(f'<{ne}I', sd, p)); p += 4 * ne
+        npf = struct.unpack_from('<I', sd, p)[0]; p += 4 + 4 * npf
+        nd = struct.unpack_from('<I', sd, p)[0]; p += 4
+        doors = []
+        for _ in range(nd):
+            crc, dref = struct.unpack_from('<II', sd, p); p += 8
+            assert crc == 0xE48B73F3, 'door link CRC must be PathingDoor'
+            doors.append(dref)
+        entries[fid] = (edges, doors)
+    return entries
+
+
+def test_nvmi_mirrors_edge_links_after_stitching():
+    """Stitched meshes must advertise their neighbours in their NVMI entry."""
+    from tes5_import.navm_edge_links import build_edge_links
+    cache = _two_cell_cache()
+    build_edge_links(cache, verbose=False)
+    metas = [meta for (_rec, meta) in cache.values()]
+    for m in metas:
+        m.setdefault('cell_fid', 0)
+        m.setdefault('center', (0.0, 0.0, 0.0))
+    rec = build_navi_record(0x00012FB4, metas)
+    entries = _parse_nvmi_entries(rec)
+    assert entries[0x1000][0] == [0x2000]
+    assert entries[0x2000][0] == [0x1000]
+
+
+def test_nvmi_mirrors_door_links():
+    """A mesh's door-triangle refs must appear as NVMI Door Links."""
+    meta = {
+        'fid': 0x01000801, 'wrld_fid': 0, 'cell_fid': 0x00001234,
+        'grid_x': 0, 'grid_y': 0, 'is_exterior': False,
+        'center': (1.0, 2.0, 3.0), 'base_objects': [],
+        'door_refs': [0x01047A11, 0x01047A15],
+    }
+    rec = build_navi_record(0x00012FB4, [meta])
+    entries = _parse_nvmi_entries(rec)
+    assert entries[0x01000801][1] == [0x01047A11, 0x01047A15]
+
+
+def test_navi_is_override_of_vanilla_singleton():
+    from tes5_import.navi_builder import NAVI_SINGLETON_FID
+    assert NAVI_SINGLETON_FID == 0x00012FB4

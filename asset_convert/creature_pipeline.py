@@ -30,7 +30,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)
 
-_WORKERS = max(1, (os.cpu_count() or 4) - 1)
+from worker_budget import worker_count  # noqa: E402
+
+_WORKERS = worker_count()
 
 # Not real creatures: 'boxtest' is a Bethesda test asset; 'endgame' is the
 # KFM-driven Mehrunes Dagon avatar cinematic (morph-controller NIFs PyFFI

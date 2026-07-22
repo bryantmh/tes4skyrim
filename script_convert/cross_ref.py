@@ -6,6 +6,7 @@ from pathlib import Path
 
 from script_convert.constants import papyrus_script_name
 from tes5_import.text_reader import parse_export_file, unescape_value
+from worker_budget import worker_count
 
 # ===========================================================================
 # Cross-reference graph builder
@@ -201,7 +202,7 @@ class CrossRefGraph:
                              start, min(start + _SCAN_CHUNK_BYTES, size)))
 
         if workers is None:
-            workers = max(1, (os.cpu_count() or 4) - 1)
+            workers = worker_count()
         workers = min(workers, max(1, len(jobs)))
         if workers <= 1 or len(jobs) <= 2:
             results = map(_scan_range, jobs)

@@ -30,12 +30,16 @@ Usage (CLI):
 
 import io
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
 
-_WORKER_COUNT = max(1, (os.cpu_count() or 4) - 3)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from worker_budget import worker_count  # noqa: E402
+
+_WORKER_COUNT = worker_count()
 
 # ---------------------------------------------------------------------------
 # PyFFI monkey-patch (must be before NifFormat import)

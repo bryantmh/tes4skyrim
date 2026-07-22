@@ -417,3 +417,182 @@ Each step is independently testable; **do not batch them**.
 - Old `convert_PACK` docstring is actively misleading (wrong `PKDT.Type` semantics,
   invented template FormIDs like "DefaultTravelToRef 0x000D6B8C"). **Delete it
   with the function**; do not mine it for tables.
+
+## 7. `GetVMScriptVariable` package gates need the script on the PLACED ref (2026-07-20)
+
+Symptom: quest NPCs don't move when they should — Arielle (MG04Restore) never
+walks to her rented room, Pinarus (FGC01Rats) never hunts the mountain lions.
+Their quest packages (travel / escort / find) are gated by a translated
+`GetScriptVariable(ActorRef, packageVAR)==N` → `GetVMScriptVariable(630)` with the
+variable name in a `CIS2 ::packageVAR_var` (see the legacy-var-condition note in
+docs/dialogue_conversion_notes.md). Everything downstream was correct — the
+package was detected as quest-owned, an `ALPC` hung it off the actor's QUST
+reference alias, `packageVAR` was declared `Auto Conditional`, and the reveal
+INFO's TIF fragment set `ActorRef.packageVAR = N; ActorRef.EvaluatePackage()`.
+
+**The break:** `GetVMScriptVariable(ref, "::var_var")` reads the property off a
+script attached to the **reference named in param1 (the ACHR)** — NOT the base
+actor. The converter attached the actor script to the base `NPC_`/`CREA`
+(object_scripts.SCRIPTABLE_TYPES), and the placed `ACHR` had no VMAD of its own.
+A base-attached script propagates to instances for property *access* (the
+fragment write works), but the condition *read* fails, so the gate never passes,
+the package never wins arbitration, and the actor stays put. Verified against
+Skyrim.esm: **100% of vanilla func-630 (`GetVMScriptVariable`) package conditions
+name a REFR that carries its own VMAD** holding the variable (RatwayDrawbridgeRef
+`::isOpen_var`, ResourceObject `::ResourceState_var`, MG02DraugrAmbushTrigger
+`::DoOnce_var`). Every vanilla p1 is a REFR (object) — Bethesda never stores this
+on an actor, so the actor case is novel, but the VM contract is identical.
+
+**Fix (`object_scripts._relocate_actor_scripts_to_refs`):** for each `ACHR`/`ACRE`
+read by a `GetVMScriptVariable` package condition, relocate the actor's script
+VMAD from the base record onto the placed ref (`convert_ACHR` now splices it in as
+`EDID VMAD NAME …`). The script is *moved* (base entry removed) so there is one
+instance both the write and the read resolve to — unless the base has >1
+placement (SI victims, Sheogorath's sheep: 3 bases), where the base keeps its
+script and the read ref gains its own copy. Scope: 94 actors relocated across
+~142 gated refs. Scripts `extends Actor`, which attaches fine to a placed actor
+reference. Regression: `test_actor_script_relocated_to_placed_ref`,
+`test_shared_base_keeps_script_and_adds_ref`.
+
+## 8. `PLDT` alias locations must be type 8, not type 9 (2026-07-20)
+
+The fix in §7 was necessary but not sufficient — after it, `sv` on Pinarus showed
+`TES4_FGC01PiranusScript` attached to the ACHR, `packageVAR` = 1, the package
+property bound, and the quest at stage 50 with every alias filled. He **stood up
+out of his chair and then went nowhere**. That symptom is diagnostic: the package
+won arbitration and its procedure started, so the fault is in the package's own
+data inputs, not the gate.
+
+`build_alias_location` emitted **`PLDT` type 9**. Per xEdit `wbLocationEnum`
+(`wbDefinitionsTES5.pas:2620`):
+
+| Type | Meaning |
+|---|---|
+| 8 | **Alias (reference)** — a REFERENCE alias ✅ what a quest package needs |
+| 9 | Alias (location) — an LCTN-type **location** alias |
+
+We were handing a *reference*-alias index to the *location*-alias slot, so the
+destination resolved to nothing. Census of Skyrim.esm confirms 9 is a dead end:
+
+```
+vanilla PLDT types: {0: 4048, 1: 448, 2: 341, 3: 605, 6: 416, 8: 585, 9: 1, 12: 394}
+```
+
+**Type 9 appears once in 6,838 packages; type 8 appears 585 times.** Vanilla
+attestation: `WERoad11EscortNoHorse` = `PLDT` type 8 alias 0x22 + `PTDA` type 4.
+`PTDA` type 4 ('Ref Alias', 236 vanilla uses) was already correct — only the
+LOCATION side was wrong, which is why the escort *target* (the player) was fine
+and only the destination was dead.
+
+Fixed to type 8; **85 quest packages** corrected, zero type-9 PLDTs remain.
+Regressions: `test_alias_location_uses_reference_alias_type_8`,
+`test_quest_escort_location_routes_through_alias_as_type_8`.
+
+Independently confirmed against the engine's own reverse-engineered layout —
+CommonLibSSE-NG `RE/P/PackageLocation.h` `PackageLocation::Type`:
+
+```
+kNone(-1) kNearReference(0) kInCell(1) kNearPackageStartLocation(2)
+kNearEditorLocation(3) kObjectID(4) kObjectType(5) kNearLinkedReference(6)
+kAtPackagelocation(7) kAlias_Reference(8) kAlias_Location(9) kNearSelf(12)
+```
+
+`SkyrimSE.exe` RTTI also carries `BGSLocAlias` as a class distinct from
+`BGSBaseAlias`, corroborating that 8 and 9 resolve through different alias kinds.
+
+**Debug lesson:** `sv` on a selected actor is the fastest way to split this class
+of bug — it shows attached scripts, their variable values, and bound properties
+in one shot. It cleared the entire condition/alias/script layer and localized the
+fault to the package inputs.
+
+## 9. QUST.DNAM.Priority must stay in the engine's 0-100 band (2026-07-20)
+
+Third bug on the same symptom, and the systemic one. `FGC01Rats` was written with
+**DNAM.Priority = 161**. Census of Skyrim.esm: **391 quests, max priority exactly
+100, ZERO above it** — the CK field is 0-100. Our output had **265 of 391 (68%)
+over 100**, up to 191.
+
+Cause: `compute_quest_priorities` boosted every staged quest by a raw additive
+offset so staged quests would outrank stage-less "conversation container" quests
+in dialogue arbitration (§ dialogue notes). TES4 priority 60 + offset 101 = 161.
+The boost solved the dialogue-ordering problem and silently created an AI one:
+**DNAM.Priority is not only a dialogue tiebreak — it arbitrates a quest ALIAS
+PACKAGE against the actor's standing schedule.** Out-of-band priority is why a
+converted escort could pass its condition and start (the actor visibly stands up)
+and still never travel.
+
+Fix: keep the two-band design but **rescale** each band into the valid range
+instead of adding an offset — zero-stage quests → `0..ZERO_STAGE_TOP` (49),
+staged quests → `50..QUEST_PRIORITY_MAX` (100). Relative order within each group
+is preserved (a linear map, not a rank remap), and the staged band still
+universally outranks the container band.
+
+Result: priorities now span 0-100 with **zero** out-of-band; staged 50-100 (n=265),
+zero-stage 0-49 (n=125). `FGC01Rats` and `MG04Restore` both land at **83 — the
+same priority vanilla gives MQ203**, its own escort-package quest.
+
+Regression: `test_quest_priority_never_exceeds_engine_max` (asserts the range,
+the written byte, and that the two-band ordering survives the clamp).
+
+**Lesson:** when a derived value is written into a field the engine reads for
+MORE than one subsystem, bound it to the range the engine documents for that
+field, not to the storage type's range (U8 0-255). The old code clamped to 255.
+
+## 10. What the engine actually does with a PACK (disassembly, 2026-07-20)
+
+Settled by disassembling the **GOG** (unencrypted) `SkyrimSE.exe` 1.6.659 — the
+Steam copy is Steam-DRM packed (`.text` entropy 8.00) and cannot be read
+statically. Use `tools/skyrim_disasm.py --exe "D:/Other Games/Skyrim Anniversary
+Edition/SkyrimSE.exe"`.
+
+Key RVAs:
+
+| RVA | What |
+|---|---|
+| `0x451990` | `TESPackage::LoadBuffer` (TESForm vtable slot 6) |
+| `0x451a00` | its main subrecord dispatch loop |
+| `0x4507d0` | package-type setter; types 18/19 both dispatch via `0x450c68` |
+| `0x457cd0` | PKCU handler → builds the package-data object |
+| `0x404710` | **the data-input reader** — driven by `PKCU.DataInputCount` |
+| `0x4432e0` | single-ANAM fallback reader (only when `Template == 0`) |
+| `0x4154d0` | `GetPackageData(slot)` |
+| `0x404e10` | slot resolver: searches the **UNAM index-byte array** |
+| `0x359c9f` | alias `ALPC` handler |
+
+Subrecords `LoadBuffer` reads: `PKDT PSDT PLDT PTDT PTDA PKCU PKPT PLD2 PTD2
+PKE2 PKW3 PKDD PKFD PT2A CTDA IDLA-F POBA POEA POCA EDID OBND VMAD`. `CNAM`/`QNAM`
+are package-level u32s (`0x45217d`); `ANAM`/`UNAM`/`XNAM` are consumed by the
+data-input reader, not this switch.
+
+**Two contracts that matter for conversion:**
+
+1. **`PKCU.DataInputCount` drives the read.** `0x404710` loops exactly that many
+   times consuming `ANAM` entries — regardless of `PKCU.Template`. If the count
+   disagrees with the number of `ANAM`s emitted, inputs are lost or the reader
+   over-runs into following subrecords.
+2. **Procedures address inputs by UNAM byte, not by position.** `0x404e10` walks
+   a parallel index-byte array (the `UNAM` list) and returns the entry whose byte
+   equals the requested slot. So the `UNAM` list must match the template root's
+   exactly; a positional-but-wrong UNAM silently feeds a procedure the wrong
+   value.
+
+**A misread worth recording:** `0x457d59`'s `test eax,eax / jne` on
+`PKCU.Template` looks like "skip the data inputs when a template is set". It is
+not — the real reader (`0x404710`) already ran at `0x457d54`; the branch only
+skips building the no-template fallback. Data confirms it: vanilla instances
+carry `PLDT` values that differ from their root (Esbern type 0 ref `0x0010ff08`;
+root type 3 value 0). **Never zero `PKCU.Template`.**
+
+**Validator:** `tools/pack_validate.py` encodes all of the above.
+
+```bash
+python tools/pack_validate.py output/Oblivion.esm/Oblivion.esm \
+       --ref "<SSE>/Data/Skyrim.esm" --summary
+```
+
+It checks PKDT type/size, PKCU size, count-vs-ANAM agreement, UNAM presence and
+length, PLDT/PTDA type legality (rejecting the type-9 bug from §8), and — with
+`--ref` — full agreement with the template root on input count, PKCU version,
+UNAM order and ANAM type names. It flags the §8 bug on a synthetic pre-fix
+record, so a clean run is meaningful. **Current state: all 7,209 converted PACKs
+clean.**

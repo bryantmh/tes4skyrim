@@ -264,6 +264,137 @@ uncovered** (was 2.5% uncovered / 2452 broken pathgrid edges with contours).
   [--nvnm-decode] [--max N]` — decompresses + decodes real NAVI/NAVM/NVNM for
   format verification (this is how the layout was validated against Skyrim.esm).
 
+### 🔴 Edge Links are MISSING — cross-cell pathing is dead (found 2026-07-20)
+
+`_pack_nvnm` hard-codes the Edge Links count to 0 ("cross-cell links can't be
+resolved from PGRD alone"). Measured against Skyrim.esm:
+
+| | exterior NAVM | with edge links | total edge links |
+|---|---|---|---|
+| VANILLA | 14,440 | **12,145 (84%)** | **194,744** (Portal 190,779 / LedgeUp 1,978 / LedgeDown 1,987) |
+| OURS | 5,825 | **0 (0%)** | **0** |
+
+Edge Links stitch adjacent cell navmeshes together. With none, **every cell
+navmesh is an isolated island**: an actor paths fine inside its current cell and
+can never cross a cell boundary, so any AI package with an out-of-cell
+destination starts (the actor stands up, plays its en-route dialogue) and then
+never moves. This is game-wide AI breakage — it was found while chasing
+"Pinarus/Arielle don't travel" after their PACK records were proven clean by
+`tools/pack_validate.py`. Geometry is fine: the destination cell's mesh
+(`AnvilWest02`, grid -48,-7) has 1,304 verts / 1,959 tris and **does** cover the
+target marker point — it just connects to nothing.
+
+**Binary contract (verified; Skyrim.esm now parses 15,949/15,949 clean):**
+- **Edge Link = `Type(U32) + Navmesh(FormID U32) + Triangle(S16)` = 10 bytes.**
+  NOT 12 — `navmesh_dump.py` had 12 and silently misparsed every navmesh that has
+  links (12,229 vanilla misparses → 0 after the fix). Verified on NAVM 0x00101F28
+  (63 links): `00000000 a61a1000 4500 | ... b200 | ... 2901` = three links to
+  neighbour 0x00101AA6 at triangles 69/178/297.
+- A triangle's **flag bits 0/1/2** = `Edge 0-1 / 1-2 / 2-0 Link`. When bit N is
+  set, that triangle's edge-N field is an **INDEX into the Edge Links array**
+  instead of a local neighbour-triangle index (xEdit `wbEdgeToStr`,
+  wbDefinitionsCommon.pas:3457). Other triangle flags: 3 Deleted, 4 No Large
+  Creatures, 5 Overlapping, 6 Preferred, 9 Water, 10 Door, 11 Found.
+- **Edge Link Type enum: 0 Portal** (cell seam), 1 Ledge Up, 2 Ledge Down,
+  3 Enable/Disable Portal.
+- Links are **reciprocal** and go to the four orthogonal neighbours — vanilla
+  NAVM 0x00101F29 grid (7,7) has 63 links: (6,7)x15, (8,7)x11, (7,6)x22,
+  (7,8)x15, and each neighbour links back the identical count.
+
+**Algorithm to implement** (post-pass, after all cell meshes exist, since it
+needs neighbour NAVM FormIDs and final triangle indices — and must stay
+deterministic, see the parallelism rules in CLAUDE.md):
+1. for each pair of orthogonally adjacent exterior cells, take triangles with a
+   border edge (edge field `-1`) lying on the shared seam;
+2. match them across the seam by coinciding edge endpoints (with a tolerance);
+3. emit reciprocal Portal links on both meshes; on each triangle set flag bit
+   `1<<edgeIndex` and replace that edge field with the index into its own Edge
+   Links array.
+
+**Audit tool**: `python tools/navmesh_connectivity.py <esm> [--ref Skyrim.esm]
+[--cell gx,gy]` — reports exterior link coverage vs the vanilla 84% baseline,
+link-type mix, door-triangle counts, and internal consistency between
+link-flagged triangle edges and Edge Link entries. Exits non-zero while coverage
+is far below vanilla.
+
+### 🔴 NAVI is a SINGLETON override + must mirror connectivity (found 2026-07-21)
+
+The edge-link stitching above was necessary but NOT sufficient — Arielle
+(MG04, destination in her OWN cell, mesh verified connected across the stairs
+by `tools/navmesh_reach.py`) still never walked. Two more defects in the NAVI
+record itself, both now fixed:
+
+1. **NAVI must be written as an OVERRIDE of Skyrim.esm's `0x00012FB4`.** The
+   Navmesh Info Map is a singleton the engine resolves by that fixed FormID;
+   every DLC registers its navmeshes by overriding it with its own NVMI set
+   (Update 251, Dawnguard 1873, HearthFires 132, Dragonborn 1732 entries) and
+   the engine merges the per-file overrides. We allocated a FRESH FormID
+   (0x011930C9), producing a NAVI the engine never consults — **none of our
+   8,156 navmeshes were registered, so no converted NPC could pathfind
+   anywhere, even inside a single connected mesh.** Loaded actors with a valid
+   package just stood; the only movement left was the engine's off-screen
+   teleport failsafe (exactly the reported symptom: Arielle occasionally
+   "teleported" to her destination, Pinarus never moved even when console-
+   teleported outdoors). `navi_builder.NAVI_SINGLETON_FID`.
+
+2. **Every NVMI entry declared zero connectivity.** Contract verified against
+   ALL 15,462 Skyrim.esm NVMI entries:
+   - `Edge Links` ∪ `Preferred Edge Links` == the distinct neighbour meshes in
+     that navmesh's own NVNM Edge Link array, **self-links excluded** (the 347
+     non-matching entries differ only by a self-link). We emit all of them as
+     plain Edge Links.
+   - `Door Links` == the door REFRs of that navmesh's own NVNM Door Triangles
+     (15,462/15,462 exact), CRC `"PathingDoor"` = 0xE48B73F3. Each side of a
+     load door lists only its own door ref; the engine joins the two meshes via
+     the doors' XTEL pairing — this is what carries an actor through ANY load
+     door (interior→exterior, city gates between worldspaces).
+   - The U32 after the FormID is **Flags** (0x20 = Is Island + island-data
+     union, 0x40 = Not Edited), not a "category"; island data is OPTIONAL
+     (305 vanilla entries have no links and no island data). We write 0.
+   Plumbing: `pgrd_to_navm` puts `door_refs` on the meta;
+   `navm_edge_links.build_edge_links` puts `edge_link_fids` on the meta (for
+   every exterior view, dirty or not); `navi_builder._pack_nvmi` mirrors both.
+
+**Also matched vanilla**: top-group order places NAVI *before* CELL/WRLD
+(Skyrim.esm order `... REGN NAVI CELL WRLD DIAL QUST ...`) — the engine fixes
+up NVMI's forward NAVM references lazily, unlike QUST ALFR. Vanilla NVMI is
+NOT sorted on disk (7,790 out-of-order adjacent pairs in Skyrim.esm), so entry
+order is free.
+
+**NVPP must be carried forward.** Every vanilla master's 0x12FB4 override
+ships a FULL 25,696-byte NVPP (Skyrim/Update/Dawnguard/HearthFires/Dragonborn
+each carry their own edited copy of the same 100-path table). Our override is
+the winning one, so an empty NVPP would replace the vanilla precomputed-path/
+road network. `navi_builder.read_master_nvpp` re-ships the newest vanilla blob
+from the registry-detected SSE install.
+
+**FormID-allocation stability.** The old code allocated the NAVI's FormID from
+`writer.alloc_formid()`; switching to the fixed singleton id removed that
+allocation and SHIFTED every later-allocated FormID (all generated
+DIAL/INFO/DLBR/DLVW/LCTN/SNDR records — thousands) relative to previously
+shipped builds, which scrambles any existing save's script/dialogue state. The
+import now burns one id at the same point to keep the layout stable. Never
+add or remove an `alloc_formid()` call without accounting for this.
+
+**Reachability tool**: `python tools/navmesh_reach.py <esm> --from-ref <fid>
+--to-ref <fid> [--cell <fid> --components]` — decodes every NAVM, builds the
+(mesh, component) graph over NVNM edge links + door-XTEL joins, locates both
+endpoints, and answers REACHABLE yes/no with component/z-range detail. This is
+what proved Arielle's cell mesh was fine and pushed the investigation to the
+NAVI layer.
+
+**Exterior door triangles need the worldspace's PERSISTENT doors (2026-07-21).**
+Exterior teleport doors (house entrances, city gates) are persistent REFRs
+parented to the worldspace's persistent *dummy* cell, not to the grid cell they
+physically stand in — so the per-cell refr list never contained them and only
+89/6,516 exterior meshes had door triangles (interiors: 1,612/1,640). Pinarus's
+exit chain died on the Anvil street side of his own front door.
+`_gather_navm_jobs` now buckets each worldspace's persistent door refs by the
+grid square their POSITION falls in and passes them to that cell's job as
+`extra_door_refrs` (convert_PGRD feeds them to the door threshold stamp +
+door-triangle linking only). The doors are part of `_geom_hash`, so affected
+exterior cells regenerate automatically.
+
 ## LAND Record Structure
 
 Both TES4 and TES5 use `wbLandscapeLayers` from wbDefinitionsCommon.pas. The "Layers" array is a FLAT array of Layer entries where each is EITHER a Base Layer (BTXT) OR an Alpha Layer (ATXT+VTXT) — they are NOT nested.

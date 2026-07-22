@@ -33,10 +33,14 @@ not render in-game.
 import io
 import math
 import os
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from worker_budget import worker_count  # noqa: E402
 
 from . import pyffi_monkey_patch  # noqa — must apply before NifFormat import
 from pyffi.formats.nif import NifFormat
@@ -926,7 +930,7 @@ def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
     import multiprocessing as mp
 
     if workers is None:
-        workers = max(1, (os.cpu_count() or 4) - 1)
+        workers = worker_count()
     if tex_root is None:
         tex_root = output_meshes_dir.parent / 'textures'
 

@@ -87,7 +87,14 @@ def _decode_nvnm(d):
         print(f"    tri[0]= v({t0[0]},{t0[1]},{t0[2]}) "
               f"e({t0[3]},{t0[4]},{t0[5]}) flags=0x{t0[6]:04X} cover=0x{t0[7]:04X}")
     p += nt * 16
-    ne = struct.unpack_from('<I', d, p)[0]; p += 4 + ne * 12   # Edge Link = 12 bytes
+    # Edge Link = Type(U32) + Navmesh(FormID U32) + Triangle(S16) = 10 bytes.
+    # NOT 12: verified against Skyrim.esm NAVM 0x00101F28 (63 links), whose raw
+    # bytes read 00000000 a61a1000 4500 | 00000000 a61a1000 b200 | ... — three
+    # links to the same neighbour mesh 0x00101AA6 at triangles 69/178/297.
+    # Stride 12 overruns the blob; stride 10 lands on a plausible tail
+    # (door=0 cover=15 divisor=6). A 12-byte stride silently misparses every
+    # navmesh that HAS edge links, which is most vanilla exteriors.
+    ne = struct.unpack_from('<I', d, p)[0]; p += 4 + ne * 10
     nd = struct.unpack_from('<I', d, p)[0]; p += 4 + nd * 10   # Door Tri = S16+U32+FormID = 10
     nc = struct.unpack_from('<I', d, p)[0]; p += 4 + nc * 2
     print(f"    edge_links={ne} door_tris={nd} cover_tris={nc}")

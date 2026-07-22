@@ -16,14 +16,13 @@ Major Issues for V1:
 
 	7 - Need new skyrim body mesh to actually work to allow leg skin to appear
 
-	8 - Arielle Jurard is missing all info topics when talking to her as part of the anvil mage's guild questline
-
 	9 - Pinarus Inventius Doesn't move during fgc01rats when he is supposed to go hunt the mountain lion
 	
-	10 - Attempting to start the game using setStage charactergen 5 teleports me to the dungeon but nothing happens other than I get a quest stage to use right stick (even though I'm playing on mouse) to move around.
-
-	11 - quest priority is consistently 183 instead of 82, 151 instead of 50, etc.
-
+	10 - If I join the fighter's guild by speaking to Azzan, but don't select "contract' and leave dialog. the next time I talk to him he is missing all topics but "rumors"
+	
+	11 - Attempting to start the game using setStage charactergen 5 teleports me to the dungeon but nothing happens other than I get a quest stage to use right stick (even though I'm playing on mouse) to move around.
+	
+remove the disabled remove_stair_risers code since that is obviously the wrong lever. then work on making sure the layer-based stair stepping is properly implemented.
 Later Issues:
 
 	1 - Refine dialog conversion
@@ -40,7 +39,14 @@ Later Issues:
 	4 - Goblins don't properly hold weapons
 
 	6 - Missing voice lines. Be specific to the AI about which ones. Problem is the copy system is relying on oblivion voice folders that don't necessarily match the given voice types.
-
+		Azzan: Fine. You are now an Associate in the Fighters guild...
+		Carahil: Then allow me to explain the task. The Council of Mages...
+				Several traveling merchants have been found
+				You are going to help me do so
+		Cristophe marine: Ah, yes. Thought so. We get many...
+				Haven't seen as many lately, what with...
+				I don't like to talk about it much, as it's bad for business...
+				Right then. The bed is just upstairs...
 	7 - Allow running process on zip (mod)
 
 	8 - Fix walking up stairs

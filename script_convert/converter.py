@@ -649,6 +649,30 @@ class ScriptConverter:
                     out.append('  UnregisterForSleep()')
                 out.append('EndEvent')
                 out.append('')
+                # OnCellAttach only fires when a cell BECOMES attached.  A
+                # persistent actor standing in an already-attached cell when the
+                # script is first bound (new game, or the player is simply
+                # already there) never gets that event, so the poll would never
+                # start and a GameMode variable the rest of the quest depends on
+                # stays 0 forever.  That is what kept Arielle (MG04Restore)
+                # standing still: her package waits on `startconv == 1`, which
+                # only her GameMode body ever sets.
+                #
+                # Gating on Is3DLoaded() keeps the anti-storm property that
+                # motivated dropping OnInit here: it is true ONLY for references
+                # currently in an attached cell, so this cannot re-create the
+                # "every scripted object in the game starts ticking at load"
+                # failure — an unconditional OnInit register is what did that.
+                if not any(b[0] == 'oninit' for b in blocks):
+                    out.append('Event OnInit()')
+                    out.append('  If (Is3DLoaded())')
+                    if needs_oninit_update:
+                        out.append(f'    RegisterForSingleUpdate({interval})')
+                    if needs_sleep_reg:
+                        out.append('    RegisterForSleep()')
+                    out.append('  EndIf')
+                    out.append('EndEvent')
+                    out.append('')
             else:
                 has_oninit = any(b[0] == 'oninit' for b in blocks)
                 if not has_oninit:
@@ -2078,7 +2102,12 @@ class ScriptConverter:
         # value.  Nehrim uses it only to wrap `Call` (`if eval (Call Foo x, 1)`),
         # and leaving the keyword in place stopped the inner Call from ever being
         # recognised.  Papyrus evaluates expressions natively, so drop it.
-        eval_m = re.match(r'^eval\s+(.+)$', expr, re.IGNORECASE)
+        # `eval` is ONLY the wrapper when a sub-expression FOLLOWS it — Oblivion
+        # scripts legally use `Eval` as a variable name (`if Eval == 0`,
+        # Dark17FollowingScript), and stripping it there emitted `If  == 0`,
+        # which broke the whole Dark Brotherhood script family at compile.
+        eval_m = re.match(r'^eval\s+(?![=<>!&|+\-*/%])(.+)$', expr,
+                          re.IGNORECASE)
         if eval_m:
             return self._convert_expression(eval_m.group(1).strip(), extends)
 
@@ -4034,11 +4063,47 @@ class ScriptConverter:
             ref = self._resolve_self_ref(ref_name, extends, actor_func=True)
             return f'{ref}.IsInFaction({arg})'
 
+        # Activate [ActionRef] [RunOnActivateFlag] — TES4 semantics: activate
+        # the object with ActionRef as activator (DEFAULT: the ORIGINAL
+        # activator inside an OnActivate/OnTrigger block, else the object
+        # itself), and run only the DEFAULT activation unless the flag is 1 —
+        # bare `Activate` never re-enters the script's own OnActivate block.
+        # The old mapping to `Activate(Game.GetPlayer())` was catastrophic the
+        # moment NPCs could pathfind: Oblivion's AutoClosingDoor/
+        # AutoCloseDoorLock (on doors game-wide) re-activate themselves from
+        # BOTH blocks, so every door an NPC used was "activated by the
+        # player" — teleporting the player through load doors, popping the
+        # lockpick minigame on locked ones — and without
+        # abDefaultProcessingOnly=true each Activate re-fired OnActivate in an
+        # infinite loop.  akActionRef is rewritten to Self by
+        # _postprocess_lines in events that have no action ref.
+        if fname_low == 'activate':
+            parts = ([p for p in re.split(r'[\s,]+', args_str.strip()) if p]
+                     if args_str else [])
+            run_flag = '0'
+            if parts and parts[-1] in ('0', '1'):
+                run_flag = parts[-1]
+                parts = parts[:-1]
+            ref = self._convert_ref(ref_name, extends) if ref_name else ''
+            if parts:
+                activator = self._convert_expression(parts[0], extends)
+            elif ref:
+                # TES4 `X.Activate` = X activates itself (quest/stage scripts
+                # opening secret walls etc. — there is no action ref there).
+                activator = ref
+            elif extends == 'TopicInfo':
+                activator = 'akSpeakerRef'
+            else:
+                activator = 'akActionRef'
+            target = ref + '.' if ref else ''
+            if run_flag == '1':
+                return f'{target}Activate({activator})'
+            return f'{target}Activate({activator}, true)'
+
         # --- Standard function map lookup ---
         # Default args for TES4 functions that implicitly use "player" when
         # called with no arguments, but the Papyrus equivalent requires them.
         _DEFAULT_ARGS = {
-            'activate': 'Game.GetPlayer()',
             'startconversation': 'Game.GetPlayer()',
             'sayto': 'Game.GetPlayer()',
             'getrandompercent': '0, 99',

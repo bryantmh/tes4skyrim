@@ -29,9 +29,13 @@ import re
 import shutil
 import struct
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from worker_budget import worker_count  # noqa: E402
 
 from .skyrim_overrides import (
     ARMOR_DEFAULT_BODY_PART,
@@ -198,7 +202,7 @@ SKIP_PATHS = frozenset({
     'characters'
 })
 
-_WORKER_COUNT = max(1, (os.cpu_count() or 4) - 3)
+_WORKER_COUNT = worker_count()
 
 OUTPUT_VERSION       = 0x14020007  # Skyrim SE NIF version
 OUTPUT_USER_VERSION  = 12

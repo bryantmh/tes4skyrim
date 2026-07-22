@@ -18,8 +18,12 @@ _prefix_path() and normalisation these map to the same key.
 import json
 import math
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Dict, Optional, Tuple
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from worker_budget import worker_count  # noqa: E402
 
 OBNDTuple = Tuple[int, int, int, int, int, int]
 
@@ -98,7 +102,7 @@ def scan_mesh_bounds(mesh_dir: str, cache_path: str, workers: int = None) -> int
 
     n = len(nif_files)
     if workers is None:
-        workers = max(1, (os.cpu_count() or 4) - 1)
+        workers = worker_count()
     print(f"  Scanning {n} NIFs for bounds ({workers} workers)...")
 
     results: Dict[str, OBNDTuple] = {}

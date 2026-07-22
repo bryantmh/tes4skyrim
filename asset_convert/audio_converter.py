@@ -39,9 +39,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from subprocess_flags import POPEN_FLAGS  # noqa: E402
+from worker_budget import worker_count  # noqa: E402
 
 # Use most CPUs – wmav2 is fast so many parallel ffmpeg processes help.
-_WORKER_COUNT = max(1, (os.cpu_count() or 4) - 1)
+_WORKER_COUNT = worker_count()
 
 # Voice batches with lip sync use more threads than CPUs: each job spends
 # most of its wall time waiting on the LipGenerator subprocess (~0.3 s of

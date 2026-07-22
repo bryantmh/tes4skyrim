@@ -35,6 +35,27 @@ FUNC_GET_QUEST_RUNNING = 56    # GetQuestRunning(quest)
 FUNC_GET_GLOBAL_VALUE = 74     # GetGlobalValue(glob)
 FUNC_GET_IS_VOICE_TYPE = 426   # GetIsVoiceType(vtyp)  — TES5-only, no TES4 source
 
+# Run-on-Target conditions that must NOT be retargeted onto a specific
+# reference. These ask "WHO is being addressed?" — a question only the dialogue
+# target can answer. Rewriting them to RunOn=Reference pins them to one actor
+# and changes what they mean; when that actor is the player the result is a
+# condition that can NEVER pass, because GetIsID compares the runtime actor's
+# BASE form and PlayerRef's base is vanilla Skyrim's 0x00000007, never the
+# converted TES4 player NPC_ 0x01000007. That mistake silently killed 667
+# GREETING/bark INFOs across 101 topics — every affected NPC lost their whole
+# topic list, because the greeting that opens it could not pass (Pinarus
+# Inventius kept only quest-less 'rumors'). They fall back to RunOn=Target,
+# which is the faithful translation for menu dialogue; a Say()-driven line
+# simply keeps a condition that no longer applies rather than one that inverts.
+_NO_TARGET_RETARGET_FUNCS = frozenset({
+    72,    # GetIsID
+    69,    # GetIsRace
+    70,    # GetIsSex
+    68,    # GetIsClass
+    71,    # GetInFaction
+    73,    # GetFactionRank
+})
+
 # --- Function-index reconciliation (data-derived; see module docstring) --------
 # REMAP: TES4 index -> TES5 index for functions that exist in both games under
 # the same name but at a DIFFERENT numeric slot. Verified by name-join of the
@@ -119,9 +140,25 @@ def _map_race_param(fid: int) -> 'int | None':
 def _remap_formid(fid: int, offset: int) -> int:
     """Remap a TES4 FormID to the output plugin's load order.
 
-    Delegates to text_reader.remap_formid so conditions shift identically to
-    record fields — including overrides, which keep their master's index.
+    Engine-fixed forms (index 0, object id < 0x100) pass through UNCHANGED:
+    Bethesda hardcodes the same ids in every game (Player NPC_ 0x7, PlayerRef
+    0x14, DoorMarker 0x1, ...), and a condition evaluates against the RUNTIME
+    form — the in-game player's base is vanilla Skyrim's 0x00000007, never our
+    converted copy of the TES4 Player record. Shifting them rewrote
+    `GetIsID(Player) [Target]` ("am I addressing the player?") on 3,761 INFOs
+    to GetIsID(0x01000007), which can never pass; every stage-gated reveal
+    greeting died, their unlock fragments never ran, and NPCs lost whole topic
+    lists (Pinarus Inventius kept only 'Rumors'). This passthrough existed
+    here before the override work unified condition remapping with
+    text_reader.remap_formid (whose record-field contract is the opposite:
+    references to the CONVERTED player copy 0x0100xxxx must keep shifting).
+
+    Everything else delegates to text_reader.remap_formid so conditions shift
+    identically to record fields — including overrides, which keep their
+    master's index.
     """
+    if (fid >> 24) == 0 and (fid & 0x00FFFFFF) < 0x100:
+        return fid
     return remap_formid(fid, offset)
 
 
@@ -227,10 +264,11 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
     reference = 0
     if type_byte & CTDA_RUN_ON_TARGET:
         type_byte &= ~CTDA_RUN_ON_TARGET
-        if run_on_target_ref is not None:
+        identity = func_idx in _NO_TARGET_RETARGET_FUNCS
+        if run_on_target_ref is not None and not identity:
             run_on = 2                    # Reference
             reference = run_on_target_ref
-        elif drop_run_on_target:
+        elif drop_run_on_target and not identity:
             return None
         else:
             run_on = 1                    # Target

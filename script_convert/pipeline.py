@@ -6,6 +6,7 @@ import re
 import struct
 
 from tes5_import.text_reader import parse_export_file
+from worker_budget import worker_count
 
 from script_convert.constants import (_PAPYRUS_RESERVED, _RECORD_TYPE_PAPYRUS, _GLOBAL_CANONICAL,
                                      _sanitize_name, _safe_property_name, _canonical_global,
@@ -86,7 +87,7 @@ def convert_all_scripts(export_dir: str, output_dir: str, workers: int = None) -
     Returns dict with conversion statistics.
     """
     if workers is None:
-        workers = max(1, (os.cpu_count() or 4) - 1)
+        workers = worker_count()
 
     os.makedirs(output_dir, exist_ok=True)
 

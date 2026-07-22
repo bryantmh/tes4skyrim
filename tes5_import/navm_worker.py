@@ -72,6 +72,7 @@ def run_job(job: dict):
             door_fids=_DOOR_FIDS,
             navm_fid=job['navm_fid'],
             geom_cache=_GEOM_CACHE,
+            extra_door_refrs=job.get('extra_door_refrs'),
         )
     except Exception as e:  # noqa: BLE001 — must not kill the pool
         print(f"  ERROR generating navmesh for cell {job['key'][0]:08X}: {e}")

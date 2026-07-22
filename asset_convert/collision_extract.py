@@ -64,9 +64,14 @@ Cache: two-phase, mirroring mesh_bounds.
 import math
 import os
 import struct
+import sys
 import zlib
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
 from typing import Dict, List, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from worker_budget import worker_count  # noqa: E402
 
 # --- Constants ----------------------------------------------------------------
 
@@ -380,7 +385,7 @@ def scan_collision(mesh_dir: str, cache_path: str, workers: int = None) -> int:
 
     n = len(nif_files)
     if workers is None:
-        workers = max(1, (os.cpu_count() or 4) - 1)
+        workers = worker_count()
     print(f"  Scanning {n} NIFs for collision ({workers} workers)...")
 
     results: Dict[str, dict] = {}

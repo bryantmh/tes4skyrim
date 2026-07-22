@@ -191,7 +191,85 @@ def build_object_script_plan(by_type: dict, xref, fid_to_edid: dict) -> int:
                 'VMAD', build_vmad_object_script(script_name, obj_props))
             count += 1
 
+    n_moved = _relocate_actor_scripts_to_refs(by_type, offset)
+    if n_moved:
+        print(f"  Actor scripts relocated to placed refs (GetVMScriptVariable "
+              f"package gates): {n_moved}")
     return count
+
+
+def _relocate_actor_scripts_to_refs(by_type: dict, offset: int) -> int:
+    """Move an actor's script VMAD from the base NPC_/CREA to its placed ACHR
+    when a package condition reads that script's variables via
+    ``GetVMScriptVariable``.
+
+    Why: ``GetVMScriptVariable(ref, "::var_var")`` reads the property off a
+    script attached to the *reference named in param1* (the ACHR), not off the
+    base record — verified against Skyrim.esm, where 100% of vanilla func-630
+    package conditions name a REFR that carries its own VMAD holding the
+    variable.  A base-attached script propagates to instances for property
+    *access* (fragment writes work), but the condition *read* fails, so the
+    quest package never wins its arbitration and the actor stays put
+    (Pinarus/FGC01Rats, Arielle/MG04Restore, ~142 actors).
+
+    The script is moved (base entry removed) rather than duplicated so there is
+    exactly ONE instance — both the fragment write (via the ACHR-typed self
+    property) and the condition read resolve to it.
+    """
+    from .pack_aliases import _scriptvar_refs_from_conditions
+
+    # Refs (raw low-24) whose script variables a package condition reads.
+    wanted_low = set()
+    for rec in by_type.get('PACK', []):
+        for ref in _scriptvar_refs_from_conditions(rec):
+            wanted_low.add(ref & 0x00FFFFFF)
+    if not wanted_low:
+        return 0
+
+    # How many times each base actor is placed — a script may be moved off the
+    # base only when that base has a single placement, else siblings would lose
+    # it.  Shared bases (rare: SI victims, Sheogorath's sheep) keep the base
+    # attachment and gain a per-ref one, matching Oblivion's per-instance vars.
+    placements: dict[int, int] = {}
+    for sig in ('ACHR', 'ACRE'):
+        for rec in by_type.get(sig, []):
+            base_str = rec.get('NAME', '')
+            if base_str:
+                try:
+                    placements[int(base_str, 16) & 0x00FFFFFF] = \
+                        placements.get(int(base_str, 16) & 0x00FFFFFF, 0) + 1
+                except ValueError:
+                    pass
+
+    moved = 0
+    for sig in ('ACHR', 'ACRE'):
+        for rec in by_type.get(sig, []):
+            fid_str = rec.get('FormID', '')
+            if not fid_str:
+                continue
+            try:
+                ref_raw = int(fid_str, 16)
+            except ValueError:
+                continue
+            if (ref_raw & 0x00FFFFFF) not in wanted_low:
+                continue
+            base_str = rec.get('NAME', '')
+            if not base_str:
+                continue
+            try:
+                base_raw = int(base_str, 16)
+            except ValueError:
+                continue
+            base_out = _remap(base_raw, offset)
+            vmad = _OBJECT_VMAD.get(base_out)
+            if not vmad:
+                continue          # base actor has no converted script
+            ref_out = _remap(ref_raw, offset)
+            _OBJECT_VMAD[ref_out] = vmad          # attach to the placed ref
+            if placements.get(base_raw & 0x00FFFFFF, 0) <= 1:
+                _OBJECT_VMAD.pop(base_out, None)  # single placement: move it
+            moved += 1
+    return moved
 
 
 def _resolve_props(sctx: str, edid: str, extends: str, xref,

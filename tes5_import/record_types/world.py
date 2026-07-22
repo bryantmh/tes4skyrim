@@ -554,6 +554,16 @@ def convert_ACHR(rec: dict) -> bytes:
     if edid:
         subs += pack_string_subrecord('EDID', edid)
 
+    # VMAD — a converted actor script relocated onto this placed reference so a
+    # GetVMScriptVariable package condition (which reads the property off the ref
+    # named in its param1, not the base actor) can pass and the quest package can
+    # win (see object_scripts._relocate_actor_scripts_to_refs). Skyrim order:
+    # EDID VMAD NAME ...
+    from ..object_scripts import get_object_vmad
+    vmad = get_object_vmad(get_formid(rec, 'FormID'))
+    if vmad:
+        subs += vmad
+
     name_fid = get_formid(rec, 'NAME')
     if name_fid:
         subs += pack_formid_subrecord('NAME', name_fid)

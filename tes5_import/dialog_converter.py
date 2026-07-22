@@ -416,14 +416,22 @@ def _bark_choice_gate_bytes(revealer_gates: list) -> bytes:
     return b''.join(_pack_gate_pair(p) for p in revealer_gates[0])
 
 
-# FormID -> effective priority (U8, 0-255), from the most recent
+# FormID -> effective priority (0-100), from the most recent
 # compute_quest_priorities() call. _quest_dnam reads this so the WRITTEN
-# QUST.DNAM.Priority reflects the zero-stage boost — the byte the engine
-# actually arbitrates dialogue on, not a value only used to compute a derived
-# DIAL PNAM (that alone left the QUST record's own priority unchanged, so the
-# fix had no effect in-game: MG00General kept DNAM Priority=61 even after its
-# bark topic's PNAM dropped to -1).
+# QUST.DNAM.Priority carries the container clamp — that byte is what the engine
+# arbitrates dialogue on (and what pits a quest ALIAS PACKAGE against an actor's
+# standing schedule). DIAL PNAM must NOT be derived from it; see convert_DIAL.
 _QUEST_PRIORITY_OVERRIDE: dict = {}
+
+# QUST.DNAM.Priority is a U8, but the engine/CK band is 0-100: Skyrim.esm's
+# 1811 quests span 0-100 with NOTHING above it.  The byte also arbitrates a
+# quest ALIAS PACKAGE against the actor's standing schedule, so an out-of-band
+# value there breaks AI, not just dialogue ordering.
+QUEST_PRIORITY_MAX = 100
+# Ceiling for stage-less "conversation container" quests (MG00General,
+# FGConversations, ...).  Staged quests keep their AUTHORED TES4 priority; only
+# a container quest that would otherwise outrank one is pulled down to here.
+ZERO_STAGE_TOP = 49
 
 
 def compute_quest_priorities(by_type: dict) -> dict:
@@ -449,23 +457,35 @@ def compute_quest_priorities(by_type: dict) -> dict:
     narrative progress the player is mid-story with, so it must always beat
     a stage-less container quest's greeting.
 
-    A fixed UPWARD shift on staged quests, not a downward clamp on zero-stage
-    ones: DNAM.Priority is an unsigned byte (0-255), so a container quest at
-    priority 0 already has no headroom to be pushed lower. Shifting every
-    staged quest up by (max zero-stage priority - min staged priority + 1)
-    guarantees the ENTIRE staged range sits above the ENTIRE zero-stage range
-    while preserving both groups' internal relative order exactly (a uniform
-    shift, not a rank remap) — 125 vanilla zero-stage quests span their own
-    priority range (Dark00General=50, MQConversations=85, ...) that still
-    governs arbitration AMONG container quests (two factions' idle chatter
-    competing for the same generic NPC), and real quests already top out at
-    90 in vanilla data, so the shifted range comfortably fits in a U8.
+    The correction is a DOWNWARD CLAMP on container quests alone — staged
+    quests keep the priority their author wrote. TES4 priorities already live
+    in 0-100 (Oblivion's CS used the same band), so leaving them untouched is
+    both faithful and automatically in range; the ONLY thing that has to
+    change is a container quest that would outrank a staged one, and pulling
+    it down to ZERO_STAGE_TOP achieves the separation without moving anything
+    else. Container quests already at or below the ceiling keep their authored
+    value, so arbitration AMONG containers (two factions' idle chatter on one
+    generic NPC) is preserved exactly.
 
-    Both convert_QUST (the WRITTEN QUST.DNAM.Priority byte) and
-    build_dialog_groups (the DIAL PNAM assigned to merged bark topics) must
-    read from THIS SAME table — the engine's real arbitration reads the
-    quest's own priority, so writing an unrelated derived value into DIAL
-    PNAM alone changes nothing in-game.
+    Two earlier approaches were WRONG and are recorded so they aren't retried:
+
+      * A uniform UPWARD shift on staged quests OVERFLOWED the band — TES4
+        priority 60 + offset 101 = 161 on FGC01Rats, and 265 of 391 quests
+        (68%) landed above 100. DNAM.Priority is not just a dialogue tiebreak,
+        it also arbitrates a quest ALIAS PACKAGE against an actor's standing
+        schedule, so an out-of-band value breaks AI too.
+      * RESCALING both groups onto sub-ranges stayed in band but destroyed the
+        authored values, collapsing 390 quests onto 35 distinct priorities
+        (125 tied at 83). Vanilla does the opposite: 1811 Skyrim.esm quests
+        use sparse, meaningful, clustered values (822 at 30, 280 at 0) that a
+        continuous remap cannot reproduce.
+
+    Only convert_QUST (the WRITTEN QUST.DNAM.Priority byte) reads this table.
+    DIAL PNAM must NOT: vanilla leaves PNAM at the 50.0 default on 5375 of
+    6535 player topics AND 659 of 664 Misc/greeting topics, i.e. greetings are
+    never boosted above the topic list. Writing quest priority into a bark
+    topic's PNAM put FGC01Rats' GREETING at 161 while its player topics stayed
+    at 50, and Pinarus lost every topic he owned (mountain-lion AND training).
     """
     quest_priority = {get_formid(r, 'FormID'): get_int(r, 'DATA.Priority')
                       for r in by_type.get('QUST', [])
@@ -474,12 +494,32 @@ def compute_quest_priorities(by_type: dict) -> dict:
                         if get_formid(r, 'FormID') and get_int(r, 'StageCount')}
     zero_stage_fids = [f for f in quest_priority if f not in staged_quest_fids]
     if staged_quest_fids and zero_stage_fids:
-        min_staged = min(quest_priority[f] for f in staged_quest_fids)
-        max_zero_stage = max(quest_priority[f] for f in zero_stage_fids)
-        if max_zero_stage >= min_staged:
-            offset = max_zero_stage - min_staged + 1
-            for fid in staged_quest_fids:
-                quest_priority[fid] = min(255, quest_priority[fid] + offset)
+        # Containers at or below the ceiling keep their authored priority
+        # untouched. Only the ones ABOVE it move, and they are ORDER-PRESERVING
+        # compressed into the headroom just under the ceiling rather than all
+        # clamped onto it — a flat clamp would tie MQConversations (85) with
+        # Dark00General (50) and hand arbitration between them to file order.
+        #
+        # The ceiling is FIXED, not min(staged priority): three staged quests
+        # (MQDragonArmor, SE06Battle, E3) are authored at 0, so a relative
+        # ceiling would be 0 and would flatten all 125 containers onto one
+        # value.
+        over = sorted((f for f in zero_stage_fids
+                       if quest_priority[f] > ZERO_STAGE_TOP),
+                      key=lambda f: (quest_priority[f], f))
+        if over:
+            # Distinct authored values map to distinct slots, highest landing on
+            # the ceiling, so relative order is exact. Slots run out only if a
+            # plugin has more than ZERO_STAGE_TOP distinct over-ceiling values;
+            # ties at the floor are then unavoidable but stay in the band.
+            distinct = sorted({quest_priority[f] for f in over})
+            base = max(0, ZERO_STAGE_TOP - len(distinct) + 1)
+            slot = {v: min(ZERO_STAGE_TOP, base + i)
+                    for i, v in enumerate(distinct)}
+            for f in over:
+                quest_priority[f] = slot[quest_priority[f]]
+    for fid, p in quest_priority.items():
+        quest_priority[fid] = max(0, min(QUEST_PRIORITY_MAX, p))
     _QUEST_PRIORITY_OVERRIDE.clear()
     _QUEST_PRIORITY_OVERRIDE.update(quest_priority)
     return quest_priority
@@ -510,7 +550,7 @@ def _quest_dnam(rec: dict) -> bytes:
     tes4_flags = get_int(rec, 'DATA.Flags')
     fid = get_formid(rec, 'FormID')
     priority = _QUEST_PRIORITY_OVERRIDE.get(fid, get_int(rec, 'DATA.Priority'))
-    priority = max(0, min(255, priority))
+    priority = max(0, min(QUEST_PRIORITY_MAX, priority))
     flags = tes4_flags & 0x09          # StartGameEnabled | AllowRepeatedStages
     if flags & 0x01:
         flags |= 0x10                  # StartsEnabled
@@ -842,6 +882,12 @@ def convert_DIAL(rec: dict, *, info_count: int, dlbr_fid: int,
     generic dialogue quest for orphan/bark topics). edid_override/formid_override
     let the per-quest bark split emit multiple DIALs from one source record with
     unique EditorIDs and FormIDs.
+
+    priority stays at the vanilla 50.0 DEFAULT and no converter passes it —
+    quest arbitration belongs on QUST.DNAM.Priority (see
+    compute_quest_priorities). Vanilla leaves PNAM at 50.0 on 5375/6535 player
+    topics and 659/664 Misc/greeting topics; ranking a greeting above the topic
+    list here cost Pinarus every topic he owned.
     """
     subs = b''
     edid = edid_override if edid_override is not None else get_str(rec, 'EditorID')
@@ -2031,18 +2077,18 @@ def _build_bark_pass(bark_dials, info_by_dial, writer,
             g['infos'], owner_qfid, group_ctx)
         if not child_count:
             continue
-        # Topic priority carries Oblivion's arbitration. Oblivion picks the
-        # passing bark from the highest-PRIORITY quest (NQDBeggars=12 beats
-        # Generic=5, so a beggar begs instead of saying "Good day."). That used
-        # to be baked into the INFO order of one shared topic; now that each
-        # quest owns its own bark topic, the quest priority must ride on the
-        # topic's PNAM (Skyrim: higher PNAM = considered first). Quest-less
-        # groups keep the 50.0 default.
-        priority = float(ctx['quest_priority'].get(raw_q, 50)) if raw_q else 50.0
+        # PNAM stays at the vanilla 50.0 DEFAULT — quest arbitration rides on
+        # QUST.DNAM.Priority (see compute_quest_priorities), never here.
+        # Skyrim.esm leaves PNAM at 50.0 on 659 of 664 Misc/greeting topics and
+        # 5375 of 6535 player topics; greetings are NEVER ranked above the topic
+        # list. Writing the quest priority here instead put FGC01Rats' GREETING
+        # at PNAM 161 against its player topics' 50.0, and Pinarus lost every
+        # topic he owned (mountain-lion AND training) — two unrelated topics on
+        # one NPC, which no per-topic condition bug could explain.
         dial_bytes = convert_DIAL(
             g['src'], info_count=child_count, dlbr_fid=0,
             quest_fid=owner_qfid, category=g['cat'], subtype=subtype,
-            snam=g['snam'], priority=priority, edid_override=this_edid,
+            snam=g['snam'], edid_override=this_edid,
             formid_override=this_dial_fid)
         content += dial_bytes
         content += pack_group(7, struct.pack('<I', this_dial_fid),
