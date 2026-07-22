@@ -14,14 +14,18 @@ different Skyrim function** — of which only **2 actually occur in vanilla
 Oblivion data**, and both are harmless renames. The real problems are not the
 conditions. They are the four mechanics Skyrim simply does not have.
 
-## 1. Disposition — 1,451 INFOs
+## 1. Disposition — 1,451 INFOs — *translate, do not drop*
 
-**The gap.** `GetDisposition` is Oblivion's most-used mechanic with no Skyrim
-counterpart at all: 1,751 conditions across 1,451 INFOs. Worse, CTDA index 76 is
-reused in Skyrim for `FastTravel`, so an unmapped condition does not merely fail,
-it invokes an unrelated function.
+**Skyrim has a disposition system.** It is not called disposition and it is not
+a 0–100 scale, which is why searching the engine for the word finds nothing.
+An NPC's friendliness is a **Relationship Rank from −4 to +4** — Archnemesis,
+Enemy, Foe, Rival, Acquaintance, Friend, Confidant, Ally, Lover — default 0,
+read by condition function **419 `GetRelationshipRank`** and settable from
+Papyrus through the native `Actor.SetRelationshipRank`
+([UESP](https://en.uesp.net/wiki/Skyrim:Disposition)).
 
-Oblivion tiers dialogue by disposition, overwhelmingly at 30 and 70:
+Oblivion uses `GetDisposition` on 1,751 conditions across 1,451 INFOs, tiering
+dialogue overwhelmingly at 30 and 70:
 
 | Threshold | Conditions |
 |---|---|
@@ -32,20 +36,45 @@ Oblivion tiers dialogue by disposition, overwhelmingly at 30 and 70:
 | 20 | 107 |
 | 60 | 80 |
 
-**Recommendation: evaluate at disposition 50 and keep the surviving lines.**
-Dropping every disposition-gated line loses 1,451 INFOs including most generic
-greetings; keeping them all makes hostile-NPC and intimate-friend lines fire at
-strangers. Fixing the threshold at 50 keeps the neutral register — the "Good
-day." / "What can I do for you?" tier — and discards both extremes, which is the
-closest single behaviour to what a mid-relationship Oblivion NPC actually says.
-276 INFOs are gated on *nothing but* disposition; those become
-unconditional after conversion, which is acceptable for neutral-tier lines and
-wrong for the 20-and-below and 80-and-above ones, so drop those two tails rather
-than admitting them.
+**Recommendation: map the 0–100 disposition onto the −4..+4 rank.** Implemented
+in `dialog_conditions.disposition_to_rank`:
 
-The emulator models this with `--disposition N` (default 50). Setting it to 50
-took Pinarus Inventius from 2 certain greetings to 7, all of them the neutral
-register.
+| Oblivion disposition | Skyrim rank |
+|---|---|
+| 0–19 | −2 Foe |
+| 20–39 | −1 Rival |
+| 40–60 | 0 Acquaintance *(both games' default)* |
+| 61–79 | 1 Friend |
+| 80–100 | 2 Confidant |
+
+Ally (3) and Lover (4) are left unused: Oblivion has no equivalent relationship,
+and reserving them keeps quest-granted ranks meaningful.
+
+This preserves the **ordering** of the tiers, which is the part that matters. A
+line Oblivion gated behind high disposition stays gated more tightly than a
+neutral one, so a stranger does not get intimate-friend greetings. The previous
+behaviour — dropping the condition — made all three tiers unconditional and
+fired them at the same NPC at once.
+
+Two details the translation must get right, both covered by
+`test_disposition_becomes_relationship_rank`:
+
+* The condition must be **rewritten, not passed through**. CTDA index 76 is
+  `FastTravel` in Skyrim, so an untouched condition invokes an unrelated
+  function.
+* `GetRelationshipRank` compares against an actor, which in dialogue is always
+  the player — base form `0x00000007`, the engine-fixed id, never our converted
+  copy of the TES4 Player record.
+
+A `Use Global` disposition comparison is still dropped: it names a GLOB holding
+a 0–100 value that cannot be rescaled at conversion time, and comparing a rank
+against it would be meaningless.
+
+Note that vanilla Skyrim itself never uses function 419 in a dialogue condition
+— it drives relationship rank from Papyrus and gates dialogue on
+`IsInFriendStatewithPlayer` / `HasParentRelationship` instead. Using 419
+directly is therefore unusual but well-formed; the function, its parameter type
+(Actor) and its Papyrus counterpart are all present in the engine.
 
 ## 2. AddTopic — 586 gated topics
 

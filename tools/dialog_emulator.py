@@ -121,6 +121,9 @@ FUNC_GETQUESTCOMPLETED = 543
 FUNC_GETCURRENTAIPROCEDURE = 143
 FUNC_ISGUARD = 125
 FUNC_GETPCISRACE = 130
+# Skyrim's disposition system: relationship rank -4..4, default 0
+# (Acquaintance). This is what Oblivion's GetDisposition converts into.
+FUNC_GETRELATIONSHIPRANK = 419
 
 
 def _verify_function_indices():
@@ -773,6 +776,10 @@ class ConditionEvaluator:
             else:
                 done = p2 <= self.game_state.get(f'stage_{p1}', 0)
             actual = 1.0 if done else 0.0
+        elif func == FUNC_GETRELATIONSHIPRANK:
+            # Both games start an NPC neutral: Oblivion at disposition 50,
+            # Skyrim at rank 0 (Acquaintance). --relationship-rank moves it.
+            actual = float(self.game_state.get('relationship_rank', 0))
         elif func == FUNC_GETGLOBALVALUE:
             # Condition function 74 (engine opcode 0x104A). The converter's
             # AddTopic gates are globals, so this is what decides whether a
@@ -1412,7 +1419,7 @@ def batch_test(db: DialogDB, max_npcs: int = 0, verbose: bool = False):
 # ---------------------------------------------------------------------------
 
 def build_game_state(db, stage_args, completed_args, global_args=(),
-                     unlock_all=False):
+                     unlock_all=False, relationship_rank=0):
     """Turn --stage/--completed into the dict ConditionEvaluator reads.
 
     Quests are named by EditorID (or by hex FormID) so that callers do not have
@@ -1433,7 +1440,7 @@ def build_game_state(db, stage_args, completed_args, global_args=(),
                 sys.exit(f'no quest with FormID {fid:08X}')
         return fid
 
-    state = {}
+    state = {'relationship_rank': relationship_rank}
     for spec in stage_args:
         if ':' not in spec:
             sys.exit(f'--stage wants QUEST:N, got {spec!r}')
@@ -1504,11 +1511,17 @@ def main():
     parser.add_argument('--unlock-all', action='store_true',
                         help='Set every TES4Unlock_* global to 1, i.e. assume '
                              'every AddTopic gate has already fired.')
+    parser.add_argument('--relationship-rank', type=int, default=0,
+                        help="The NPC's relationship rank toward the player "
+                             '(-4..4, default 0 Acquaintance). This is what '
+                             "Oblivion's disposition converts into; it pairs "
+                             'with the Oblivion emulator\'s --disposition.')
     args = parser.parse_args()
 
     db = DialogDB(args.esm)
     game_state = build_game_state(db, args.stage, args.completed,
-                                  args.globals, args.unlock_all)
+                                  args.globals, args.unlock_all,
+                                  args.relationship_rank)
 
     if args.npc:
         sim = DialogSimulator(db, game_state=game_state)

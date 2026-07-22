@@ -20,7 +20,6 @@ Major Issues for V1:
 	
 	8 - Attempting to start the game using setStage charactergen 5 teleports me to the dungeon but nothing happens other than I get a quest stage to use right stick (even though I'm playing on mouse) to move around.
 	
-remove the disabled remove_stair_risers code since that is obviously the wrong lever. then work on making sure the layer-based stair stepping is properly implemented.
 Later Issues:
 
 	1 - Refine dialog conversion

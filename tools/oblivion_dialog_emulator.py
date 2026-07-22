@@ -11,18 +11,18 @@ tools/oblivion_engine_extract.py, so the condition function numbering, the
 dialogue type names and the parameter types are the engine's own. See
 docs/dialogue_engine_contracts.md.
 
-The two things Oblivion does that Skyrim has no equivalent for, and that
-therefore drive most conversion bugs:
+This models Oblivion and only Oblivion. It describes no conversion rule and
+knows nothing about Skyrim; that is the point, because a description that
+already assumed the conversion was right could not be used to check it. Two
+mechanics dominate what an NPC will actually offer:
 
   * AddTopic. A conversation topic is invisible until something adds it -- an
     INFO's AddTopic list, an `AddTopic X` in a result script, or a quest-stage
-    script. The converter re-expresses this as TES4Unlock_<topic> globals; this
-    emulator models the real thing, so `--unlock-all` here corresponds to
-    `--unlock-all` there.
+    script. 586 of the 3,183 conversation topics are gated this way.
 
-  * Topic-level quest ownership. A DIAL belongs to several quests at once
-    (QuestCount/Quest[i]), and an INFO names one (QSTI). Skyrim moved ownership
-    onto the topic alone.
+  * Disposition. A 0-100 measure of the speaker's regard for the player, tiered
+    at 30/50/70, gating 1,451 INFOs. It is a runtime value, so `--disposition`
+    sets what the conditions see.
 
 Usage:
     python tools/oblivion_dialog_emulator.py export/Oblivion.esm \\
@@ -404,7 +404,7 @@ class OblivionDB:
 
         A topic with no revealer is available from the start; every other
         conversation topic stays hidden until one of its revealers has played.
-        This is Oblivion's central visibility rule and has no Skyrim analogue.
+        This is Oblivion's central topic-visibility rule.
         """
         revealers = defaultdict(list)
         for info in self.infos.values():
@@ -509,14 +509,10 @@ class Evaluator:
                         for fid in subject.factions)
             return self._cmp(1.0 if guard else 0.0, c.comp_type, c.comp_value)
         if f == F_GETDISPOSITION:
-            # Oblivion gates most generic greetings on disposition, comparing
-            # against 30/50/70 tiers, so leaving it undecided makes a report
-            # nearly useless. It is modelled as a settable value (--disposition,
-            # default 50, which is roughly where a neutral NPC starts) rather
-            # than guessed per-NPC. Skyrim has no disposition system at all, so
-            # these conditions have no counterpart on the other side -- a topic
-            # that Oblivion hid behind low disposition is simply always visible
-            # after conversion, which is worth seeing in the comparison.
+            # Oblivion gates most generic dialogue on the speaker's disposition
+            # toward the player, a 0-100 value tiered at 30/50/70. It is a
+            # runtime value, so it is modelled as a settable parameter
+            # (--disposition, default 50, where a neutral NPC starts).
             return self._cmp(float(self.state.get('disposition', 50)),
                              c.comp_type, c.comp_value)
         if f in (F_GETSCRIPTVARIABLE, F_GETQUESTVARIABLE):
@@ -575,8 +571,8 @@ class Simulator:
     def topic_available(self, dial_fid, ev):
         """Whether an AddTopic-gated topic has been revealed.
 
-        `--unlock-all` forces this true, matching the Skyrim emulator's flag of
-        the same name so the two reports line up.
+        `--unlock-all` forces this true, for looking at everything an NPC could
+        ever offer rather than what they offer right now.
         """
         if self.state.get('unlock_all'):
             return True

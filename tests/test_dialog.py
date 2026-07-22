@@ -215,10 +215,31 @@ class TestCTDAConversion:
         assert 70 not in CTDA_FORMID_PARAMS                  # GetIsSex
 
     def test_dropped_functions(self):
-        """TES4-only / index-reused functions return None (e.g. 76
-        GetDisposition removed; 224 reused as GetVATSMode in TES5)."""
-        for func in (76, 224, 249, 264):
+        """TES4-only / index-reused functions return None (e.g. 224 is reused
+        as GetVATSMode in TES5, 104 IsYielding was removed)."""
+        for func in (104, 224, 249, 264):
             assert convert_ctda(_tes4_ctda(func=func), offset=0) is None
+
+    def test_disposition_becomes_relationship_rank(self):
+        """GetDisposition maps onto Skyrim's relationship rank, not dropped.
+
+        Skyrim's disposition system is Relationship Rank (-4..4, default 0),
+        read by condition 419 against the player. Oblivion's 0-100 scale tiers
+        onto it, so the ORDER of a game's dialogue tiers survives: a line
+        gated on high disposition stays gated more tightly than a neutral one.
+        Dropping the condition instead (the old behaviour) made every tier of
+        a greeting fire at once on the same NPC.
+        """
+        cases = [(10.0, -2), (30.0, -1), (50.0, 0), (70.0, 1), (90.0, 2)]
+        for disposition, want_rank in cases:
+            comp = struct.unpack('<I', struct.pack('<f', disposition))[0]
+            out = convert_ctda(_tes4_ctda(func=76, comp=comp), offset=0)
+            assert out is not None, f'disposition {disposition} was dropped'
+            assert struct.unpack_from('<H', out, 8)[0] == 419
+            assert struct.unpack_from('<f', out, 4)[0] == want_rank
+            # Compared against the player's engine-fixed base form, which is
+            # never load-order shifted onto our converted copy.
+            assert struct.unpack_from('<I', out, 12)[0] == 0x00000007
 
     def test_remapped_functions(self):
         """Same-name functions at moved indices are remapped (xEdit join)."""
@@ -237,7 +258,7 @@ class TestCTDAConversion:
         OR flag on the new last condition."""
         rec = {
             'Condition[0].Raw': _tes4_ctda(type_byte=CTDA_OR).hex(),
-            'Condition[1].Raw': _tes4_ctda(func=76).hex(),   # dropped
+            'Condition[1].Raw': _tes4_ctda(func=104).hex(),  # dropped
         }
         out = convert_ctda_list(rec, offset=0)
         assert len(out) == 1

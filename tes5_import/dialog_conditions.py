@@ -82,7 +82,11 @@ _FUNC_DROP = frozenset({
     # drop them rather than emit a condition that can never pass.
     53,    # GetScriptVariable  -> 630 GetVMScriptVariable (strings path only)
     79,    # GetQuestVariable   -> 629 GetVMQuestVariable  (strings path only)
-    76,    # GetDisposition — removed (disposition system gone)
+    # NOTE: GetDisposition (76) is NOT dropped here — see _eval_disposition.
+    # Dropping it made the condition vanish and the line unconditional, so all
+    # three of Oblivion's disposition tiers fired at once and strangers got
+    # intimate-friend greetings. It is now evaluated at a fixed disposition and
+    # the whole INFO is dropped when its tier does not match.
     81,    # reused: TES5 IsRotating
     104,   # IsYielding — removed
     109,   # reused: TES5 IsWeaponSkillType (semantics changed)
@@ -203,6 +207,62 @@ def papyrus_var_name(var: str) -> str:
     return f'::{_safe_property_name(var)}_var'
 
 
+# --- Disposition -> Relationship Rank ---------------------------------------
+# Skyrim DOES have a disposition system; it is just not called that and is not
+# a 0-100 scale. An NPC's friendliness is a RELATIONSHIP RANK from -4 to +4
+# (Archnemesis, Enemy, Foe, Rival, Acquaintance, Friend, Confidant, Ally,
+# Lover), default 0, read by condition function 419 GetRelationshipRank and
+# settable from Papyrus via Actor.SetRelationshipRank. Oblivion's
+# GetDisposition (76) therefore maps onto it rather than being dropped -- and it
+# must be mapped, because CTDA index 76 is `FastTravel` in Skyrim, so passing
+# the condition through unchanged would invoke an unrelated function.
+#
+# Oblivion uses GetDisposition on 1,751 conditions across 1,451 INFOs, tiering
+# dialogue overwhelmingly at 30 and 70. The two scales line up like this, with
+# Oblivion's neutral 40-60 band mapping to Acquaintance (0), the rank a Skyrim
+# NPC starts at:
+#
+#     Oblivion disposition   Skyrim rank
+#     0-19                   -2  Foe
+#     20-39                  -1  Rival
+#     40-60                   0  Acquaintance   <- both games' default
+#     61-79                   1  Friend
+#     80-100                  2  Confidant
+#
+# Ally (3) and Lover (4) are deliberately unused: Oblivion has no equivalent
+# relationship, and reserving them keeps quest-granted ranks meaningful.
+GET_DISPOSITION = 76
+GET_RELATIONSHIP_RANK = 419
+
+# Oblivion's default starting disposition, used when a comparison has to be
+# resolved rather than translated.
+DEFAULT_DISPOSITION = 50.0
+
+
+def disposition_to_rank(disposition: float) -> int:
+    """Oblivion's 0-100 disposition as a Skyrim relationship rank (-4..4)."""
+    if disposition < 20:
+        return -2
+    if disposition < 40:
+        return -1
+    if disposition <= 60:
+        return 0
+    if disposition < 80:
+        return 1
+    return 2
+
+
+# Comparison operator encoded in the top 3 bits of a CTDA's type byte.
+_COMPARE = {
+    0: lambda a, b: a == b,
+    1: lambda a, b: a != b,
+    2: lambda a, b: a > b,
+    3: lambda a, b: a >= b,
+    4: lambda a, b: a < b,
+    5: lambda a, b: a <= b,
+}
+
+
 def convert_ctda(raw: bytes, offset: 'int | None' = None,
                  run_on_target_ref: 'int | None' = None,
                  drop_run_on_target: bool = False) -> 'bytes | None':
@@ -232,6 +292,22 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
     func_idx = struct.unpack_from('<H', data, 8)[0]
     param1 = struct.unpack_from('<I', data, 12)[0]
     param2 = struct.unpack_from('<I', data, 16)[0]
+
+    if func_idx == GET_DISPOSITION:
+        # Translate onto Skyrim's relationship rank -- see the table above.
+        # A Use Global comparison names a GLOB holding a 0-100 disposition
+        # that cannot be rescaled here, so the gate is dropped rather than
+        # compared against a rank on the wrong scale.
+        if type_byte & CTDA_USE_GLOBAL:
+            return None
+        rank = float(disposition_to_rank(struct.unpack_from('<f', data, 4)[0]))
+        comp_raw = struct.unpack('<I', struct.pack('<f', rank))[0]
+        func_idx = GET_RELATIONSHIP_RANK
+        # GetRelationshipRank takes the actor to compare against; in dialogue
+        # that is always the player, whose base form is the engine-fixed 0x7
+        # (never our converted copy -- see _remap_formid). Fall through to the
+        # shared packer below so the RunOn handling stays in one place.
+        param1, param2 = 0x00000007, 0
 
     if func_idx in _FUNC_DROP:
         return None
