@@ -58,6 +58,17 @@ def _drop_steep_triangles(verts, tris, nodes):
     is a pure backstop, and it must only fire on what cannot possibly be a step:
 
         drop  <=>  steeper than MAX_SLOPE_DEG  AND  taller than 2.5 * MAX_CLIMB
+
+    SEPARATELY, a triangle with (near-)zero XY FOOTPRINT is always dropped.  A
+    stair riser is steep but still covers ground an NPC's capsule occupies; a
+    triangle standing in an exactly vertical plane covers NOTHING, so no actor
+    can ever stand on it and it is pure wall-hugging sliver.  These are invisible
+    to the z-span rule above (a riser-height sliver is well under the gate) and
+    to the DOWNFACING check (their nz is exactly 0, neither up nor down), and a
+    coplanar pair of them reads as CK OPPOSITE_NORMALS because their normals are
+    antiparallel in XY — that was the entire residual after the door-stamp fold
+    fix (e.g. Ondo tris 1445/1447, both exactly 0.00 degrees from vertical with
+    XY area 0.0000).
     """
     if not tris:
         return verts, tris
@@ -74,6 +85,10 @@ def _drop_steep_triangles(verts, tris, nodes):
         nz = ux * wy - uy * wx
         ln = math.sqrt(nx * nx + ny * ny + nz * nz)
         if ln < 1e-9:
+            continue
+        # |nz| / 2 IS the XY-projected area, so this is a footprint test in
+        # game units^2, independent of how big the triangle is in 3D.
+        if abs(nz) * 0.5 < params.MIN_XY_FOOTPRINT:
             continue
         if abs(nz) / ln < cos_lim:
             zspan = (max(va[2], vb[2], vc[2]) -

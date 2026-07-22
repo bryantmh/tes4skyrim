@@ -27,6 +27,14 @@ AGENT_HEIGHT = 128.0
 # instead of pathing around it.
 MAX_CLIMB = 34.0
 
+# Minimum XY-projected area (game units^2) for a triangle to be kept at all.
+# A triangle standing in a near-vertical plane covers no ground, so no actor can
+# stand on it however tall it is — it is a wall-hugging sliver, not a stair
+# riser (a riser is steep but still has real footprint).  Deliberately TINY: this
+# only removes the genuinely degenerate-in-plan case, never a real surface.
+# 1.0u^2 is far below one voxel quad (CS^2 = 256u^2 at CS 16).
+MIN_XY_FOOTPRINT = 1.0
+
 # --- Surfaces -------------------------------------------------------------------
 # Walkable if the surface normal is within this of straight up.  Mirrors
 # asset_convert.collision_extract.MAX_SLOPE_DEG (which bakes the classification

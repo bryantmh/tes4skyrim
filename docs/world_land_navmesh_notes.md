@@ -102,6 +102,45 @@ nothing to snap. `pgrd_to_navm._build_door_links` then links the triangle
 CONTAINING the door point at the door's height (fallback: old nearest-centroid
 cost). Result: two clean triangles precisely straddling every threshold.
 
+#### 🔴 Snapping FOLDS triangles — restore winding (found 2026-07-22)
+
+Snapping pulls several distinct vertices onto the 4 rect corners. A triangle
+STRADDLING the rect boundary can have two of its corners pulled to *different*
+corners, which **reverses its winding** — the remap preserved the original index
+order and never rechecked. This was the ONLY source of downfacing triangles in
+the entire generator, and (because a folded triangle is inverted relative to its
+neighbours) the dominant source of CK `OPPOSITE_NORMALS` too.
+
+Measured with `temp/wind_probe3.py`: the raw mesh is always clean
+(`pre_stamp=0`) and the stamp injected 6 / 14 / 12 downfacing triangles into
+XPAichan01 / SancreTor03 / ArkvedsTower04. Classification proved **zero** came
+from the stamped quads themselves (that CCW emission is correct) — all were
+pre-existing, previously up-facing triangles.
+
+Fix: record each triangle's XY orientation BEFORE remapping and swap two indices
+if the remap reversed it. `|nz|/2` is the XY-projected area, so the sign of the
+2D cross product is the facing test. Triangle counts are unchanged (nothing is
+dropped) — 943 DOWNFACING and most of 1,516 OPPOSITE_NORMALS went to zero.
+
+Two smaller sources found alongside it:
+- **Zero-XY-footprint slivers.** A triangle in an exactly vertical plane covers
+  no ground (XY area 0.0000, `nz == 0` so invisible to a `nz < 0` test), yet a
+  coplanar pair reads as OPPOSITE_NORMALS because their normals are antiparallel
+  in XY. `_drop_steep_triangles` kept them: they are steep but their z-span is
+  riser-sized, well under the `2.5 * MAX_CLIMB` gate. Now dropped by
+  `MIN_XY_FOOTPRINT` (1.0u², far below one voxel quad, so only the genuinely
+  degenerate-in-plan case goes). Example: Ondo tris 1445/1447, all six vertices
+  at y=48.0 exactly.
+- **Decimation drift.** The C++ collapse/flip/smooth guards were only
+  RELATIVE (`new · old > 0`), so a triangle could rotate up to 90° per move and
+  walk from up-facing to down-facing across passes without any single move
+  tripping the guard. Added an absolute `nz >= 0` invariant to all three passes
+  in `native/src/decimate.cpp` (rebuild with `python native/build.py`).
+
+Verified on all 16 worst-offending cells from the shipped ESM (10 interior +
+6 exterior): every one now reports CLEAN under `tools/navmesh_check.py`'s rules,
+with coverage/steep/island metrics unchanged.
+
 ### Exterior coverage (the "discontinuities with no obstacles" fixes)
 
 - **Reach**: `PGRD_XY_REACH_EXTERIOR` (8192) replaces the interior 384u gate

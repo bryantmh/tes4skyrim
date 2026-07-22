@@ -44,7 +44,7 @@ conversion, and it's getting closer all the time. Contributions are very welcome
 
 ## Requirements
 
-A decent PC. The more cores and ram the better. The more cores, the more ram it uses. Validated with a 7950X3D and 32GB of system ram (uses a peak of ~11 GB RAM converting Oblivion.esm)
+A decent PC. The more cores and ram the better. The more cores, the more ram it uses. Validated with a 7950X3D and 32GB of system ram (uses a peak of ~16 GB RAM converting Oblivion.esm)
 
 | Dependency | Purpose | Install |
 |------------|---------|---------|

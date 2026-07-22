@@ -239,14 +239,34 @@ def _stamp_door_quads(verts, tris, doors):
     if not vmap:
         return verts, tris, frozenset(pinned)
 
+    def _xy_cross(a, b, c):
+        """2x signed XY area of a triangle; > 0 == CCW == up-facing."""
+        ax, ay = verts[a][0], verts[a][1]
+        bx, by = verts[b][0], verts[b][1]
+        cx, cy = verts[c][0], verts[c][1]
+        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
     out = []
     seen = set()
     for (a, b, c) in tris:
+        # Orientation BEFORE snapping.  Every triangle reaching here is
+        # up-facing (the span quads are emitted CCW and nothing between has
+        # reordered them), but read it rather than assume it.
+        was_ccw = _xy_cross(a, b, c) > 0.0
         a = vmap.get(a, a)
         b = vmap.get(b, b)
         c = vmap.get(c, c)
         if len({a, b, c}) < 3:
             continue
+        # Snapping moves vertices onto the rect corners, which can FOLD a
+        # triangle that straddles the rect boundary: two of its corners get
+        # pulled to different rect corners and the winding reverses.  The
+        # index order alone no longer encodes the facing, so restore it.
+        # Without this the door stamp was the ONLY source of downfacing
+        # triangles in the whole generator — 6/14/12 in XPAichan01 /
+        # SancreTor03 / ArkvedsTower04, all of them up-facing beforehand.
+        if (_xy_cross(a, b, c) > 0.0) != was_ccw:
+            b, c = c, b
         k = (a, b, c) if a < b and a < c else \
             (b, c, a) if b < c else (c, a, b)
         km = tuple(sorted(k))

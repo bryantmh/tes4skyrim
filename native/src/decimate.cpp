@@ -317,6 +317,13 @@ private:
             // May not fold the mesh.
             if (ns.nx * os.nx + ns.ny * os.ny + ns.nz * os.nz <= 0.0)
                 return -1.0;
+            // ...and may not turn a triangle DOWNFACING.  The test above is
+            // only RELATIVE (new vs old), so a triangle may rotate up to 90
+            // degrees per collapse and, over several passes, walk from
+            // up-facing to down-facing without any single move tripping it.
+            // A navmesh triangle is up-facing absolutely -- the CK flips
+            // downfacing ones on load -- so enforce that invariant directly.
+            if (ns.nz < 0.0 && os.nz >= 0.0) return -1.0;
             worst = std::max(worst, ns.aspect);
         }
         return worst;
@@ -593,6 +600,9 @@ int flip_pass_impl(Mesh& m, const FlipParams& p) {
         // Both new triangles must face the same way as the old pair.
         if (n1.nx * s1.nx + n1.ny * s1.ny + n1.nz * s1.nz <= 0.0) continue;
         if (n2.nx * s1.nx + n2.ny * s1.ny + n2.nz * s1.nz <= 0.0) continue;
+        // ...and neither may end up downfacing (see the collapse guard).
+        if ((n1.nz < 0.0 || n2.nz < 0.0) && s1.nz >= 0.0 && s2.nz >= 0.0)
+            continue;
 
         m.tris[ti * 3 + 0] = u;
         m.tris[ti * 3 + 1] = q_op;
@@ -759,6 +769,11 @@ int smooth_pass(Mesh& m, const SmoothParams& p,
             const TriShape s = tri_shape(pa, pb, pc);
             if (s.aspect > p.max_aspect || s.longest > p.max_edge ||
                 s.nx * ax + s.ny * ay + s.nz * az <= 0.0) {
+                ok = false;
+                break;
+            }
+            // May not turn the triangle downfacing (see the collapse guard).
+            if (s.nz < 0.0) {
                 ok = false;
                 break;
             }
