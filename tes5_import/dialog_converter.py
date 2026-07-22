@@ -826,6 +826,27 @@ _SKIP_EDIDS = frozenset({
     # trigger it, and it is conditionless under the always-running Generic quest,
     # so as an IDLE bark it fired as EVERY NPC's walk-past line. No equivalent.
     'InfoRefusal',
+    # Oblivion's EMOTION-RESPONSE channels. These are not topics the player ever
+    # picks: Oblivion's engine selects one after a player line to voice the
+    # NPC's reaction to it (an angry reply gets AngerReceive, a question gets
+    # QuestionGeneral, and so on). Skyrim has no such channel -- its engine
+    # picks a response only through a topic the player selected, so there is
+    # nothing to route these to. Converted, they became reachable TOPICS: the
+    # emulator showed Varel Morvayn with 11 of them ("SadGeneral",
+    # "FearGeneral", "AngerReceive", ...) hanging off his greeting, which is
+    # both wrong and player-visible nonsense.
+    #
+    # Deliberately listed by name rather than by their contiguous FormID block
+    # 0002410E..0002411C: CharGenEmperor (00024119) sits inside that range and
+    # is a real main-quest conversation that must still convert.
+    #
+    # Rumors (INFOGENERAL) is NOT here on purpose -- it is the one Oblivion
+    # conversation channel Skyrim does have (subtype 2 RUMO, special-cased by
+    # the engine at 0x595454), so it converts as a normal topic.
+    'SadGeneral', 'QuestionGeneral', 'FearGeneral', 'AngerReceive',
+    'HappyReceive', 'SurpriseReceive', 'FollowupNegative', 'FollowupPositive',
+    'AnswerNegative', 'AnswerPositive', 'AnswerStatus', 'NeutralReceive',
+    'Question',
 })
 
 # Oblivion Service-type topics that become real Skyrim service dialogue.

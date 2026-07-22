@@ -431,6 +431,34 @@ class TestDIAL:
         assert should_skip_dial({'DATA.Type': '0', 'EditorID': 'TestFoo'})
         assert not should_skip_dial({'DATA.Type': '0', 'EditorID': 'Rumors'})
 
+    def test_emotion_response_topics_are_not_converted(self):
+        """Oblivion's emotion-response channels have no Skyrim equivalent.
+
+        The engine picks these after a player line to voice the NPC's reaction;
+        Skyrim has no such channel, so converting them produced player-visible
+        topics ("SadGeneral", "AngerReceive", ...) hanging off every greeting.
+        """
+        for edid in ('SadGeneral', 'QuestionGeneral', 'FearGeneral',
+                     'AngerReceive', 'HappyReceive', 'SurpriseReceive',
+                     'FollowupNegative', 'FollowupPositive', 'AnswerNegative',
+                     'AnswerPositive', 'AnswerStatus', 'NeutralReceive',
+                     'Question'):
+            assert should_skip_dial(
+                {'DATA.Type': str(DIAL_TYPE_CONVERSATION), 'EditorID': edid}), \
+                f'{edid} should not be converted'
+
+        # Rumors is the ONE Oblivion conversation channel Skyrim does have
+        # (subtype 2 RUMO), so it must still convert...
+        assert not should_skip_dial(
+            {'DATA.Type': str(DIAL_TYPE_CONVERSATION),
+             'EditorID': 'INFOGENERAL'})
+        # ...and CharGenEmperor sits inside the emotion block's FormID range
+        # (0002410E..0002411C) but is a real main-quest conversation. This is
+        # why the skip list names topics instead of skipping the range.
+        assert not should_skip_dial(
+            {'DATA.Type': str(DIAL_TYPE_CONVERSATION),
+             'EditorID': 'CharGenEmperor'})
+
 
 # ---------------------------------------------------------------------------
 # INFO
