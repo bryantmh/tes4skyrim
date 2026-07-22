@@ -26,7 +26,7 @@ _GEOM_CACHE: tuple = None
 
 def init_worker(base_model_by_fid: dict, door_fids: set, collision_cache: str,
                 formid_offset: int = 0, geom_cache: tuple = None,
-                injected_formids: dict = None):
+                injected_formids: dict = None, disable_gc: bool = True):
     """ProcessPool initializer: stash context; load the collision cache.
 
     Runs once per worker process.  A spawned child does NOT inherit the parent's
@@ -54,6 +54,28 @@ def init_worker(base_model_by_fid: dict, door_fids: set, collision_cache: str,
     if collision_cache:
         from asset_convert.collision_extract import load_collision
         load_collision(collision_cache, quiet=True)
+
+    # Generational GC is pure overhead in this worker and costs ~2x wall-clock.
+    #
+    # Voxelizing one cell allocates a Heightfield of ~22k empty column lists.
+    # In isolation that takes 0.001s; inside the worker it took 0.356s, because
+    # each burst of container allocations trips a generational collection that
+    # then traverses every live object -- and by that point the child holds the
+    # collision cache and the cell's records, ~1.16M tracked objects.  The
+    # collector walks all of them to find nothing.
+    #
+    # Safe because this workload creates NO reference cycles: measured over 24
+    # consecutive cell builds with the collector off, gc.collect() reported 0
+    # uncollectable objects and tracemalloc stayed flat at 12.7 MB.  Refcounting
+    # alone reclaims everything, so the collector has nothing to do.
+    #
+    # Scoped to the worker process on purpose.  import_main also calls this
+    # initializer INLINE (single-job runs skip the pool), and the parent goes on
+    # to convert every other record type -- so that path passes disable_gc=False
+    # to keep the collector on in the parent.
+    if disable_gc:
+        import gc
+        gc.disable()
 
 
 def run_job(job: dict):

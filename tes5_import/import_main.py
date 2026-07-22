@@ -1242,9 +1242,12 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
 
     # A single tiny job isn't worth a process pool's spin-up cost.
     if len(jobs) == 1 or n_workers == 1:
+        # Inline in the PARENT: keep its collector (this process still has the
+        # rest of the conversion to run).  Pool workers disable it -- see
+        # navm_worker.init_worker.
         navm_worker.init_worker(base_model_by_fid, door_fids, collision_cache,
                                 formid_offset, geom_cache,
-                                get_injected_formids())
+                                get_injected_formids(), disable_gc=False)
         for job in jobs:
             key, result = navm_worker.run_job(job)
             cache[key] = result

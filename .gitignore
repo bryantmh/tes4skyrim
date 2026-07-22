@@ -16,3 +16,12 @@ external/lodgen/*.txt
 
 # Non-redistributable external tool — user supplies this (see README)
 external/xwmaencode/xWMAEncode.exe
+
+# Native navmesh extension: the built .pyd in native/dist/ IS committed (the
+# pipeline requires it and most machines have no compiler), but the link-time
+# artifacts and object files are not — nothing links against the extension.
+native/build/
+native/dist/*.lib
+native/dist/*.exp
+native/dist/*.pdb
+native/dist/*.obj

@@ -1,3 +1,11 @@
+Work Order:
+	Navmesh not sufficient for real gameplay M4, L2
+	Dialog not exact L1
+	Voice lines missing L6
+	Fix stairs L8
+	Crime System L11, mi5
+	Main Quest M8
+
 Major Issues for V1:
 	1 - Iterate on quest and dialog conversion until everything is playable
 
@@ -22,20 +30,18 @@ Major Issues for V1:
 	
 Later Issues:
 
-	1 - Refine dialog conversion
-		Missing greetings
-		Creatures with wrong voices
-		Missing sound for many lines including barter lines
+	1 - Refine dialog conversion based on dialog emulators to exactly match Oblivion
 
-	2 - Refine navmesh generation further
+	2 - Refine navmesh generation further using ck-inspired algorithms
 
-	3 - Refine creature conversion further
+	3 - Refine creature conversion further. Speed is still a bit off
 	
-	3 - Convert weathers
+	4 - Convert weathers
 
-	4 - Goblins don't properly hold weapons
+	5 - Goblins don't properly hold weapons
 
 	6 - Missing greeting voice lines (like Hello)
+
 	7 - Allow running process on zip (mod)
 
 	8 - Fix walking up stairs
@@ -53,6 +59,8 @@ Later Issues:
 	15 - Find additional inverted collision examples in Nehrim
 
 	16 - Nehrim signposts missing texture
+
+	17 - More granular navmesh caching to make rebuilds fewer
 
 Minor Issues:
 
@@ -74,8 +82,7 @@ Minor Issues:
 
 	10 - Flame atronach animated section not properly converted
 	
-	11 - Refine LOD
-		Still too big and holes in distant meshes
+	11 - Refine LOD, Still too big and holes in distant meshes
 
 	12 - Should trim skin in converted clothing that would be occluded by the clothing mesh to avoid clipping
 

@@ -34,17 +34,87 @@ def model_key(model):
     return k
 
 
+_BY_TYPE_MEMO = {}
+
+
+def _free_ram_bytes():
+    """Physically free RAM, or None if it cannot be determined."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _MS(ctypes.Structure):
+            _fields_ = [('dwLength', wintypes.DWORD),
+                        ('dwMemoryLoad', wintypes.DWORD),
+                        ('ullTotalPhys', ctypes.c_uint64),
+                        ('ullAvailPhys', ctypes.c_uint64),
+                        ('ullTotalPageFile', ctypes.c_uint64),
+                        ('ullAvailPageFile', ctypes.c_uint64),
+                        ('ullTotalVirtual', ctypes.c_uint64),
+                        ('ullAvailVirtual', ctypes.c_uint64),
+                        ('ullAvailExtendedVirtual', ctypes.c_uint64)]
+
+        ms = _MS()
+        ms.dwLength = ctypes.sizeof(_MS)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms)):
+            return int(ms.ullAvailPhys)
+    except Exception:
+        pass
+    return None
+
+
+def _guard_ram(cache_path):
+    """Refuse to unpickle the index when free RAM cannot absorb it.
+
+    THE FAILURE THIS PREVENTS: the index is ~2 GB on disk and expands to
+    roughly 3x that as live Python objects.  The in-process memo below makes
+    repeat loads free WITHIN one process, but a PROCESS POOL defeats it
+    entirely -- every spawned worker unpickles its own independent copy.
+    `navmesh_audit.py --workers 8` therefore wanted ~8 x 6 GB on a 32 GB
+    machine, drove it into the pagefile, and hard-locked the whole desktop
+    (twice, each needing a reboot).
+
+    Failing loudly with a usable message beats taking the machine down, so
+    this raises instead of loading when the headroom is not there.
+    """
+    try:
+        need = os.path.getsize(cache_path) * 3
+    except OSError:
+        return
+    free = _free_ram_bytes()
+    if free is None or free > need:
+        return
+    raise MemoryError(
+        'refusing to load %s: needs ~%.1f GB, only %.1f GB free.\n'
+        'The export index loads PER PROCESS, so a worker pool multiplies it.\n'
+        'Run with fewer workers (--workers 2), or single-process.'
+        % (cache_path, need / 2 ** 30, free / 2 ** 30))
+
+
 def load_by_type(export_dir, reindex=False):
-    """Parsed export records grouped by type, CACHED to disk.
+    """Parsed export records grouped by type, CACHED to disk AND in-process.
 
     Parsing the export is ~78s single-threaded (1.1M records) and every tool here
     needs it, so a re-render used to cost more in parsing than in rendering.  The
     parsed slices are pickled next to the export and reused.
+
+    The in-process memo is NOT an optimisation, it is a safety belt: the pickle
+    is ~2 GB on disk and expands to several GB of live objects, so a caller that
+    loads two cells in one process (a profiling sweep, a batch compare) used to
+    allocate a SECOND independent multi-GB graph and could exhaust RAM and wedge
+    the machine into swap.  One graph per (dir, process), shared by every caller.
     """
+    key = os.path.abspath(export_dir)
+    if not reindex and key in _BY_TYPE_MEMO:
+        return _BY_TYPE_MEMO[key]
+
     cache = os.path.join(export_dir, 'navmesh_index.pkl')
     if os.path.exists(cache) and not reindex:
+        _guard_ram(cache)
         with open(cache, 'rb') as fh:
-            return pickle.load(fh)
+            by_type = pickle.load(fh)
+        _BY_TYPE_MEMO[key] = by_type
+        return by_type
 
     t0 = time.time()
     recs = parse_export_directory(export_dir, type_filter=_TYPES)
@@ -52,6 +122,7 @@ def load_by_type(export_dir, reindex=False):
     with open(cache, 'wb') as fh:
         pickle.dump(by_type, fh, pickle.HIGHEST_PROTOCOL)
     print('indexed export in %.0fs -> %s' % (time.time() - t0, cache))
+    _BY_TYPE_MEMO[key] = by_type
     return by_type
 
 
