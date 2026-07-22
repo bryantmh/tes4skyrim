@@ -123,7 +123,9 @@ FUNC_ISGUARD = 125
 FUNC_GETPCISRACE = 130
 # Skyrim's disposition system: relationship rank -4..4, default 0
 # (Acquaintance). This is what Oblivion's GetDisposition converts into.
-FUNC_GETRELATIONSHIPRANK = 419
+# CTDA 403 (opcode 0x1193); the function sits at ROW 419 of the engine table,
+# which is a different number -- 419 as a CTDA index is GetObjectiveCompleted.
+FUNC_GETRELATIONSHIPRANK = 403
 
 
 def _verify_function_indices():
@@ -160,6 +162,7 @@ def _verify_function_indices():
         'FUNC_ISGUARD': 'IsGuard',
         'FUNC_GETPCISRACE': 'GetPCIsRace',
         'FUNC_GETISVOICETYPE': 'GetIsVoiceType',
+        'FUNC_GETRELATIONSHIPRANK': 'GetRelationshipRank',
     }
     wrong = []
     for const, want in expected.items():

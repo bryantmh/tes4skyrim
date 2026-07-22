@@ -554,6 +554,40 @@ def find_lip_text(output_dir, source_name) -> 'dict | None':
     return None
 
 
+_VOICE_OUTPUT_EXTS = frozenset(('.fuz', '.xwm', '.wav', '.mp3', '.lip'))
+
+
+def _prune_stale_voice_files(touched_dirs: set, intended: set) -> list:
+    """Delete voice files this run did not intend to produce.
+
+    The runtime filename is built from the converted quest/topic
+    EditorIDs, so ANY naming change renames every affected file. Without a
+    prune the old names stay next to the new ones: the folder keeps
+    growing, and — worse — a stale file makes a broken run look fixed,
+    because the audio is still sitting there under the previous name.
+
+    Only folders this run actually wrote into are touched, and only files
+    with a voice extension, so unrelated content is never at risk.
+    """
+    removed = []
+    for d in sorted(touched_dirs):
+        if not d.is_dir():
+            continue
+        for f in d.iterdir():
+            if not f.is_file():
+                continue
+            if f.suffix.lower() not in _VOICE_OUTPUT_EXTS:
+                continue
+            if f.resolve() in intended:
+                continue
+            try:
+                f.unlink()
+                removed.append(f)
+            except OSError as exc:
+                print(f'  WARN could not remove stale {f.name}: {exc}')
+    return removed
+
+
 def organize_voice_files(
     source_dir,
     dest_dir,
@@ -566,6 +600,7 @@ def organize_voice_files(
     voice_map: 'dict | str | None' = None,
     lip_text: 'dict | str | None' = None,
     lipgenerator_path: 'str | None' = None,
+    prune: bool = True,
 ) -> dict:
     """Reorganise extracted TES4 voice files into TES5 directory layout.
 
@@ -652,6 +687,14 @@ def organize_voice_files(
     stats = {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0}
     unmapped_races: set = set()
     conversion_jobs: list[tuple] = []   # (src_path, dst_path)
+    # Every output path this run WANTS to exist, and the VTYP folders it
+    # writes into. Used by _prune_stale_voice_files() below: the runtime
+    # filename embeds quest/topic EditorIDs, so any naming change (or a
+    # record being renamed/dropped) leaves the previous run's file behind
+    # under a name the engine no longer asks for. Those files are dead
+    # weight and mask exactly the bug they came from, so they are removed.
+    intended: set = set()
+    touched_dirs: set = set()
 
     for plugin_dir in voice_root.iterdir():
         if not plugin_dir.is_dir():
@@ -728,6 +771,11 @@ def organize_voice_files(
                     for od in out_dirs:
                         od.mkdir(parents=True, exist_ok=True)
                         dst_path = od / dst_name
+                        # Record it as intended BEFORE the already-present
+                        # skip: an existing file is still a wanted file and
+                        # must not be pruned below.
+                        intended.add(dst_path.resolve())
+                        touched_dirs.add(od.resolve())
                         if dst_path.exists():
                             stats['skipped'] += 1
                             continue
@@ -738,9 +786,14 @@ def organize_voice_files(
             print('  Warning: unmapped race/gender combos:')
             for r, g in sorted(unmapped_races):
                 print(f'    {r}/{g}')
+        # Still prune: "every file already exists" is exactly the state a
+        # re-run lands in after a rename, with the OLD names alongside.
+        pruned = _prune_stale_voice_files(touched_dirs, intended) if prune else []
+        if pruned:
+            print(f'  Pruned {len(pruned)} stale voice file(s) under old names')
         print(f'  Voice files: 0 organised (all already present or no files found), '
               f'{stats["skipped"]} already present')
-        return {**stats, 'unmapped_races': unmapped_races}
+        return {**stats, 'pruned': len(pruned), 'unmapped_races': unmapped_races}
 
     # Stock LipGenerator instances serialize machine-wide on a named Fonix
     # mutex (~8 lips/s total, processes near 0% CPU). Give each worker its
@@ -812,8 +865,13 @@ def organize_voice_files(
         for r, g in sorted(unmapped_races):
             print(f'    {r}/{g}')
 
+    # Prune AFTER conversion: a job that failed never wrote its output, and
+    # pruning first would have deleted the previous run's still-usable copy.
+    pruned = _prune_stale_voice_files(touched_dirs, intended) if prune else []
+
     print(f'  Voice files: {stats["organized"]} organised, '
           f'{stats["skipped"]} already present, '
+          f'{len(pruned)} stale pruned, '
           f'{stats["errors"]} errors, '
           f'{stats["no_match"]} unrecognised names')
-    return {**stats, 'unmapped_races': unmapped_races}
+    return {**stats, 'pruned': len(pruned), 'unmapped_races': unmapped_races}

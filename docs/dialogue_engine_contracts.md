@@ -91,6 +91,17 @@ carrying two different DATA subtypes — `HELO` is 73 in 288 records and 79 in 9
 `GBYE` is 72 in 126 and 78 in 3 — while the engine treats every one of them
 identically.
 
+DIAL DATA's own layout is `TopicFlags(u8) + Category(u8) + Subtype(u16)`,
+matching xEdit — the engine reads the four bytes into `TESTopic+0x30`, so byte 1
+lands on `+0x31` (category) and the u16 on `+0x32` (subtype), exactly the two
+fields the SNAM handler above writes.
+
+**A trap when checking this against `export/*.txt`:** the exporter prints DATA
+as a big-endian `u32`, so vanilla Hello *displays* as `00490700` while its
+on-disk bytes are `00 07 49 00`. Read the printed form as raw bytes and the
+category and subtype look transposed, and the category byte appears to range up
+to 96 rather than 0–7. Unpack it as a little-endian `u32` first.
+
 What this means for the converter: SNAM is the field that has to be right, and
 a wrong DATA subtype is harmless. Do not "fix" a converted DIAL by reasoning
 about its DATA bytes, and do not trust DATA when reading vanilla records to

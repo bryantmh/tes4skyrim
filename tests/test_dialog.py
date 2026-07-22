@@ -224,22 +224,91 @@ class TestCTDAConversion:
         """GetDisposition maps onto Skyrim's relationship rank, not dropped.
 
         Skyrim's disposition system is Relationship Rank (-4..4, default 0),
-        read by condition 419 against the player. Oblivion's 0-100 scale tiers
+        read by CONDITION 403 against the player. Oblivion's 0-100 scale tiers
         onto it, so the ORDER of a game's dialogue tiers survives: a line
         gated on high disposition stays gated more tightly than a neutral one.
         Dropping the condition instead (the old behaviour) made every tier of
         a greeting fire at once on the same NPC.
+
+        403 is the CTDA index (opcode 0x1193 - 0x1000); the function occupies
+        ROW 419 of the engine's table, and using the row number instead emits
+        GetObjectiveCompleted(Quest, Integer). Vanilla Skyrim.esm uses 403 in
+        298 INFO conditions and 419 in none.
         """
         cases = [(10.0, -2), (30.0, -1), (50.0, 0), (70.0, 1), (90.0, 2)]
         for disposition, want_rank in cases:
             comp = struct.unpack('<I', struct.pack('<f', disposition))[0]
             out = convert_ctda(_tes4_ctda(func=76, comp=comp), offset=0)
             assert out is not None, f'disposition {disposition} was dropped'
-            assert struct.unpack_from('<H', out, 8)[0] == 419
+            assert struct.unpack_from('<H', out, 8)[0] == 403
             assert struct.unpack_from('<f', out, 4)[0] == want_rank
-            # Compared against the player's engine-fixed base form, which is
-            # never load-order shifted onto our converted copy.
-            assert struct.unpack_from('<I', out, 12)[0] == 0x00000007
+            # The parameter is an ACTOR (engine param type 0x06), so the player
+            # is PlayerRef 0x14 -- the placed reference -- NOT the player base
+            # NPC 0x7 that GetIsID (param type 0x15, ObjectID) takes. Passing
+            # 0x7 handed the engine a TESNPC where it dereferenced an Actor and
+            # crashed on the first GREETING (EXCEPTION_ACCESS_VIOLATION, player
+            # TESNPC 0x7 in RSI). Vanilla Skyrim.esm passes 0x14 or 0, never
+            # 0x7, in all 234 uses.
+            assert struct.unpack_from('<I', out, 12)[0] == 0x00000014
+
+    def test_disposition_param_survives_load_order_offset(self):
+        """PlayerRef 0x14 must not be shifted onto the converted plugin.
+
+        Engine-fixed forms below object id 0x100 pass through unchanged; a
+        remapped 0x01000014 would be a dangling reference.
+        """
+        comp = struct.unpack('<I', struct.pack('<f', 70.0))[0]
+        out = convert_ctda(_tes4_ctda(func=76, comp=comp), offset=1)
+        assert struct.unpack_from('<I', out, 12)[0] == 0x00000014
+
+    def test_synthesized_player_param_matches_engine_param_type(self):
+        """A player param must match its function's engine parameter TYPE.
+
+        The engine distinguishes references from base forms, and the right
+        player id differs between them:
+
+            type 0x04 ObjectReferenceID / 0x06 Actor -> PlayerRef  0x14
+            type 0x15 ObjectID          / 0x19 Actor Base -> Player 0x07
+
+        Feeding a base form to a function that dereferences an Actor crashes
+        the process. Reusing GetIsID's 0x7 for GetRelationshipRank did exactly
+        that: EXCEPTION_ACCESS_VIOLATION on the first GREETING.
+
+        Skipped when the extracted engine tables are absent (they are produced
+        from a local Skyrim install by tools/dialog_engine_extract.py).
+        """
+        import json
+        import os
+        tables = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'tes5_import',
+            'dialog_engine_tables.json')
+        if not os.path.exists(tables):
+            pytest.skip('engine tables not extracted')
+        with open(tables, encoding='utf-8') as fh:
+            funcs = {f['ctda_index']: f for f in json.load(fh)['functions']
+                     if f.get('ctda_index') is not None}
+
+        REFERENCE_TYPES = {0x04, 0x06}
+        BASE_FORM_TYPES = {0x15, 0x19}
+        comp = struct.unpack('<I', struct.pack('<f', 70.0))[0]
+        # (TES4 function the converter rewrites, the id it synthesizes)
+        for tes4_func in (76,):          # GetDisposition -> GetRelationshipRank
+            out = convert_ctda(_tes4_ctda(func=tes4_func, comp=comp), offset=0)
+            assert out is not None
+            emitted_func = struct.unpack_from('<H', out, 8)[0]
+            emitted_param = struct.unpack_from('<I', out, 12)[0]
+            spec = funcs.get(emitted_func)
+            assert spec, f'function {emitted_func} not in the engine table'
+            ptype = spec['params'][0]['type']
+            if ptype in REFERENCE_TYPES:
+                assert emitted_param == 0x00000014, (
+                    f'{spec["name"]} takes {spec["params"][0]["name"]} '
+                    f'(type {ptype:#04x}, a reference) but got '
+                    f'{emitted_param:#x}; PlayerRef is 0x14')
+            elif ptype in BASE_FORM_TYPES:
+                assert emitted_param == 0x00000007, (
+                    f'{spec["name"]} takes a base form but got '
+                    f'{emitted_param:#x}; the Player NPC is 0x07')
 
     def test_remapped_functions(self):
         """Same-name functions at moved indices are remapped (xEdit join)."""
@@ -700,16 +769,35 @@ class TestQuestOwnership:
             set_formid_index_offset(0)
 
     def test_voice_file_prefix_rules(self):
-        """Truncation rules verified against the vanilla Voices BSA:
-        quest[:10] + topic[:25-len(questpart)] when the topic has an EDID
-        (combined cap 26); quest uncut + '_' when it doesn't."""
+        """Transcribed from SkyrimSE.exe (va 0x1403a6060), NOT fitted to
+        Oblivion's filenames — those follow a different rule and fitting
+        them yields a name the engine never requests.
+
+            if lenQ + lenT > 25:
+                if lenQ > 10: Q, T = Q[:10], T[:15]
+                else:         T = T[:25 - lenQ]
+        """
         from tes5_import.dialog_converter import voice_file_prefix
+        # <= 25 combined: used verbatim. The old quest[:10] cap mangled
+        # these into mg04restor_/fgd00joinf_ so the audio was never found.
+        assert voice_file_prefix('MG04Restore', 'MG04Choice1A') \
+            == 'mg04restore_mg04choice1a'
+        assert voice_file_prefix('FGD00JoinFG', 'FGJoin1') \
+            == 'fgd00joinfg_fgjoin1'
+        assert voice_file_prefix('MQ01', 'Rats') == 'mq01_rats'
+        # Exactly 25 -> still verbatim (boundary is `jbe`, i.e. <= 25).
+        assert voice_file_prefix('MG04Restore', 'MG04Choice12AB') \
+            == 'mg04restore_mg04choice12ab'
+        # > 25 with quest > 10 -> quest[:10] + topic[:15].
+        assert voice_file_prefix('ArenaDialogue', 'ArenaBetChoice1A') \
+            == 'arenadialo_arenabetchoice1'
         assert voice_file_prefix('DialogueGeneric',
                                  'DialogueGenericSharedInfo') \
             == 'dialoguege_dialoguegeneric'
+        # > 25 with quest <= 10 -> quest kept, topic absorbs the cut.
         assert voice_file_prefix('DA05', 'DA05SindingWhyKillTheSpriggan') \
             == 'da05_da05sindingwhykillthe'
-        assert voice_file_prefix('MQ01', 'Rats') == 'mq01_rats'
+        # No topic EditorID -> trailing underscore before the FormID.
         assert voice_file_prefix('DGIntimidateQuest', '') \
             == 'dgintimidatequest_'
 

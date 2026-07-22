@@ -36,8 +36,9 @@ dialogue overwhelmingly at 30 and 70:
 | 20 | 107 |
 | 60 | 80 |
 
-**Recommendation: map the 0–100 disposition onto the −4..+4 rank.** Implemented
-in `dialog_conditions.disposition_to_rank`:
+**Implemented: the 0–100 disposition maps onto the −4..+4 rank**, in
+`dialog_conditions.disposition_to_rank`. A full Oblivion.esm conversion emits
+1,724 `GetRelationshipRank` conditions and leaks zero `FastTravel`:
 
 | Oblivion disposition | Skyrim rank |
 |---|---|
@@ -75,6 +76,20 @@ Note that vanilla Skyrim itself never uses function 419 in a dialogue condition
 `IsInFriendStatewithPlayer` / `HasParentRelationship` instead. Using 419
 directly is therefore unusual but well-formed; the function, its parameter type
 (Actor) and its Papyrus counterpart are all present in the engine.
+
+The tiers now behave, where before conversion they collapsed. Pinarus
+Inventius's greeting pool by relationship rank, from
+`tools/dialog_emulator.py --relationship-rank`:
+
+| Rank | Greetings |
+|---|---|
+| −2 Foe | 23 |
+| 0 Acquaintance | 49 |
+| 2 Confidant | 50 |
+
+Previously all 98 fired at every rank. Oblivion's own numbers for the same NPC
+(`--disposition 10 / 50 / 90`) show the same shape — a markedly smaller hostile
+pool widening as regard improves.
 
 ## 2. AddTopic — 586 gated topics
 

@@ -465,6 +465,74 @@ def test_organize_voice_files_uses_voice_map(tmp_path):
     assert out_path.is_file(), f'Expected output not found: {out_path}'
 
 
+@needs_ffmpeg
+def test_organize_voice_files_prunes_renamed_leftovers(tmp_path):
+    """A second run under a NEW prefix must not leave the old file behind.
+
+    The runtime name embeds the quest/topic EditorIDs, so any naming change
+    renames every affected file. Without a prune the stale copy stays next
+    to the new one — the folder doubles, and a still-broken run looks fixed
+    because the audio is present under the previous name.
+    """
+    plugin = 'Test.esm'
+    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    voice_src.mkdir(parents=True, exist_ok=True)
+    _make_wav(voice_src / 'src_topic_0000a1b2_1.wav')
+    out_dir = (tmp_path / 'output' / 'sound' / 'Voice' / plugin
+               / 'TES4MaleNord')
+
+    common = dict(source_dir=str(tmp_path / 'extract'),
+                  dest_dir=str(tmp_path / 'output'),
+                  plugin_name=plugin, convert_audio=True, ffmpeg_path=FFMPEG)
+
+    # Run 1: the truncated (wrong) prefix.
+    organize_voice_files(voice_map={0x00A1B2: 'oldques_topic'}, **common)
+    assert (out_dir / 'oldques_topic_0000a1b2_1.xwm').is_file()
+
+    # Run 2: corrected prefix -> new file written, old one pruned.
+    result = organize_voice_files(voice_map={0x00A1B2: 'oldquest_topic'},
+                                  **common)
+    assert (out_dir / 'oldquest_topic_0000a1b2_1.xwm').is_file()
+    assert not (out_dir / 'oldques_topic_0000a1b2_1.xwm').exists(), \
+        'stale file under the previous name was not pruned'
+    assert result['pruned'] == 1
+
+    # Run 3: nothing changed -> the existing file is SKIPPED, not deleted
+    # and not rewritten. Skipping and pruning must never overlap.
+    result = organize_voice_files(voice_map={0x00A1B2: 'oldquest_topic'},
+                                  **common)
+    assert (out_dir / 'oldquest_topic_0000a1b2_1.xwm').is_file()
+    assert result['skipped'] == 1
+    assert result['pruned'] == 0
+    assert result['organized'] == 0
+
+
+@needs_ffmpeg
+def test_organize_voice_files_prune_leaves_foreign_files(tmp_path):
+    """Pruning only touches voice files in folders this run wrote into."""
+    plugin = 'Test.esm'
+    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    voice_src.mkdir(parents=True, exist_ok=True)
+    _make_wav(voice_src / 'q_t_0000a1b2_1.wav')
+    out_root = tmp_path / 'output' / 'sound' / 'Voice' / plugin
+    # A folder this run never writes to, plus a non-voice file in one it does.
+    other = out_root / 'TES4FemaleNord'
+    other.mkdir(parents=True, exist_ok=True)
+    (other / 'someone_elses_0000ffff_1.fuz').write_bytes(b'keep me')
+    used = out_root / 'TES4MaleNord'
+    used.mkdir(parents=True, exist_ok=True)
+    (used / 'notes.txt').write_text('not a voice file')
+
+    organize_voice_files(source_dir=str(tmp_path / 'extract'),
+                         dest_dir=str(tmp_path / 'output'),
+                         plugin_name=plugin, convert_audio=True,
+                         ffmpeg_path=FFMPEG)
+
+    assert (other / 'someone_elses_0000ffff_1.fuz').is_file(), \
+        'pruned a file in a folder this run never wrote to'
+    assert (used / 'notes.txt').is_file(), 'pruned a non-voice file'
+
+
 def test_organize_voice_files_no_match_counted(tmp_path):
     """Files that don't match the voice filename pattern are counted as no_match."""
     plugin = 'Test.esm'

@@ -232,7 +232,14 @@ def papyrus_var_name(var: str) -> str:
 # Ally (3) and Lover (4) are deliberately unused: Oblivion has no equivalent
 # relationship, and reserving them keeps quest-granted ranks meaningful.
 GET_DISPOSITION = 76
-GET_RELATIONSHIP_RANK = 419
+# CTDA index 403, NOT the engine function table's row number (419). A CTDA
+# names its function by `opcode - 0x1000`, and GetRelationshipRank sits at
+# opcode 0x1193 = 403 while occupying row 419 of the table. Confirmed three
+# ways: the engine table's own opcode field, xEdit's wbConditionFunctions, and
+# vanilla Skyrim.esm, which uses 403 in 298 INFO conditions and 419 in none.
+# 419 is GetObjectiveCompleted(Quest, Integer) -- emitting that instead turns
+# every converted disposition gate into an unrelated quest check.
+GET_RELATIONSHIP_RANK = 403
 
 # Oblivion's default starting disposition, used when a comparison has to be
 # resolved rather than translated.
@@ -303,11 +310,16 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
         rank = float(disposition_to_rank(struct.unpack_from('<f', data, 4)[0]))
         comp_raw = struct.unpack('<I', struct.pack('<f', rank))[0]
         func_idx = GET_RELATIONSHIP_RANK
-        # GetRelationshipRank takes the actor to compare against; in dialogue
-        # that is always the player, whose base form is the engine-fixed 0x7
-        # (never our converted copy -- see _remap_formid). Fall through to the
-        # shared packer below so the RunOn handling stays in one place.
-        param1, param2 = 0x00000007, 0
+        # The parameter is an ACTOR (engine param type 0x06), i.e. a placed
+        # REFERENCE -- so the player is PlayerRef 0x00000014, NOT the player
+        # base NPC 0x00000007. 0x7 is what GetIsID takes (param type 0x15,
+        # ObjectID), and reusing it here handed the engine a TESNPC where it
+        # dereferenced an Actor: EXCEPTION_ACCESS_VIOLATION on the first
+        # GREETING, with the player TESNPC 0x7 sitting in RSI. All 234 vanilla
+        # Skyrim.esm uses of this function pass 0x14 or 0.
+        # Fall through to the shared packer below so RunOn handling stays in
+        # one place.
+        param1, param2 = 0x00000014, 0
 
     if func_idx in _FUNC_DROP:
         return None

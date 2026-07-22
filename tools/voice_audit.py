@@ -41,20 +41,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.tes5_esm_reader import read_tes5_file, _get, _all, _zstring  # noqa: E402
+# Import the naming rule rather than mirroring it — a local copy silently
+# drifted from the converter's and made this audit agree with a bug it was
+# supposed to catch.
+from tes5_import.dialog_converter import voice_file_prefix  # noqa: E402,F401
 
 FUNC_GET_IS_VOICE_TYPE = 426
 FUNC_GET_IS_ID = 72
 
 _DISK_RE = re.compile(r'^(.+)_([0-9a-f]{8})_(\d+)\.(fuz|xwm|wav|mp3|lip)$',
                       re.IGNORECASE)
-
-
-def voice_file_prefix(quest_edid: str, topic_edid: str) -> str:
-    """Mirror of tes5_import.dialog_converter.voice_file_prefix."""
-    if topic_edid:
-        q = quest_edid[:10]
-        return f"{q}_{topic_edid[:25 - len(q)]}".lower()
-    return f"{quest_edid}_".lower()
 
 
 def parse_esm(esm_path):

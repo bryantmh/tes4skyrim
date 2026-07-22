@@ -759,13 +759,24 @@ def _alias_name(ref_fid: int, alias_id: int, fid_to_edid: dict) -> str:
 # Known reserved EditorID -> (TES5 subtype enum, SNAM 4-char code, category).
 # Category enum: 0 Topic, 3 Combat, 5 Detection, 6 Service, 7 Misc.
 # Reserved Oblivion EditorID -> (Subtype, SNAM, Category).
-# Subtype/Category/SNAM values are VERIFIED against real Skyrim.esm DATA bytes
-# (DATA = flags U8 + category U8 + subtype U16). The xEdit display enum numbers
-# differ from the on-disk subtype values, so these come from the actual master:
-#   Hello=73 GoodBye=72 Idle=88 (all category 7 Misc);
-#   Attack=20 PowerAttack=21 Bash=22 Hit=23 Flee=24 Bleedout=25 Death=27
-#   Block=29 Taunt=30 Steal=32 Trespass=43 (all category 3 Combat);
-#   NoticeAlert=51 NormalToCombat(?) ... detection codes (category 5 Detection).
+#
+# **SNAM is the field that matters.** TESTopic::LoadForm (SkyrimSE.exe RVA
+# 0x3a6fa8) looks SNAM's 4-character tag up in the engine's subtype table and
+# writes BOTH the runtime subtype (the matching row's index) and the category
+# from it, overwriting whatever DATA held -- and SNAM is stored after DATA in
+# all 15,037 vanilla DIALs, so it always wins. See
+# docs/dialogue_engine_contracts.md.
+#
+# The subtype NUMBERS below therefore only have to be well-formed, not exact;
+# they are the values vanilla Skyrim.esm happens to store (Hello=73, GoodBye=72,
+# Idle=88, Attack=20, ...). The engine's own table numbers those same tags six
+# higher (HELO=79, GBYE=78, IDLE=94, ATCK=26), and vanilla itself carries both
+# variants -- 288 HELO records say 73 and 9 say 79 -- which is only possible
+# because nothing reads the field. Do not "fix" a converted topic by adjusting
+# these numbers; check its SNAM instead.
+#
+# (Note the on-disk order is flags U8 + SUBTYPE U8 + CATEGORY U16, not the
+# reverse: vanilla HELO reads DATA=00 49 07 00 = subtype 0x49, category 7.)
 _EDID_SUBTYPE = {
     'GREETING':       (73, b'HELO', 7),
     'HELLO':          (73, b'HELO', 7),
@@ -822,7 +833,15 @@ _SKIP_EDIDS = frozenset({
 # Oblivion; they convert to player-selectable Custom topics whose INFOs open
 # the corresponding Skyrim menu via a Papyrus fragment (ShowBarterMenu /
 # ShowTrainingMenu). Every other Service topic (BarterExit, ServiceRefusal,
-# Repair, Recharge, Travel, ...) has no Skyrim mechanic and stays skipped.
+# Repair, Recharge, Travel, ...) stays skipped.
+#
+# Skyrim's engine does define the whole Service subtype family -- SERU, REPA,
+# TRAV, TRAI, BAEX, REEX, RECH, RCEX, TREX, all present in its subtype table --
+# so these are not unrepresentable. They are skipped because vanilla Skyrim
+# uses NONE of them: zero DIAL records in Skyrim.esm carry a Service subtype,
+# because services are driven entirely from Papyrus menus rather than from
+# subtype-tagged dialogue. Converting them would produce topics the engine
+# never asks for.
 # Maps EditorID -> (service kind, player prompt used as the DIAL FULL).
 SERVICE_MENU_TOPICS = {
     'Barter':   ('barter', 'What have you got for sale?'),
@@ -902,12 +921,24 @@ def convert_DIAL(rec: dict, *, info_count: int, dlbr_fid: int,
     if quest_fid:
         subs += pack_formid_subrecord('QNAM', quest_fid)
     # DATA = TopicFlags(U8) + Category(U8) + Subtype(U16), per xEdit
-    # wbDefinitionsTES5 and verified against real Skyrim.esm (Hello =
-    # 00 07 49 00: category 7 Misc, subtype 0x49=73). Writing category into
-    # the U16 puts the subtype byte where the engine reads category, and an
-    # out-of-range category crashes the engine at startup while it indexes
-    # its per-category topic dispatch tables.
-    subs += pack_subrecord('DATA', struct.pack('<BBH', 0, category & 0xFF, subtype))
+    # wbDefinitionsTES5 and confirmed in the engine: TESTopic::LoadForm reads
+    # DATA's 4 bytes into TESTopic+0x30, and the SNAM handler at RVA 0x3a6ff0
+    # writes the category to +0x31 (byte 1) and the subtype to +0x32 (the u16).
+    # Writing category into the U16 puts the subtype byte where the engine
+    # reads category, and an out-of-range category crashes the engine at
+    # startup while it indexes its per-category topic dispatch tables.
+    #
+    # Beware when checking this against export/*.txt: DATA is printed there as
+    # a big-endian u32, so vanilla Hello displays as 00490700 while its actual
+    # bytes are 00 07 49 00 (category 7 Misc, subtype 0x49 = 73). Reading the
+    # printed form as raw bytes makes the two fields look transposed.
+    #
+    # The values themselves are inert at runtime -- TESTopic::LoadForm
+    # re-derives both from SNAM afterwards, which is why vanilla contains stale
+    # subtypes (288 HELO records say 73, 9 say 79). SNAM is the field to check
+    # when a converted topic misbehaves; see docs/dialogue_engine_contracts.md.
+    subs += pack_subrecord('DATA', struct.pack('<BBH', 0, category & 0xFF,
+                                               subtype))
     subs += pack_subrecord('SNAM', snam)
     subs += pack_uint32_subrecord('TIFC', info_count)
     formid = (formid_override if formid_override is not None
@@ -1134,19 +1165,42 @@ def voice_file_prefix(quest_edid: str, topic_edid: str) -> str:
     """The `<quest>_<topic>` prefix Skyrim uses to resolve a voice file.
 
     Runtime path: Sound\\Voice\\<plugin>\\<VoiceType>\\<prefix>_<fid8>_<n>.fuz
-    built from the OWNING quest EditorID + topic EditorID. Truncation rule
-    verified against all ~54K joinable filenames in the vanilla Voices BSA:
-      - topic has an EditorID: quest[:10] + '_' + topic[:25 - len(questpart)]
-        (combined prefix capped at 26 chars; topic gets the slack when the
-        quest is shorter than 10)
-      - topic has NO EditorID: quest uncut + '_' (double underscore before
-        the FormID)
-    All lowercase. The FormID component is the 8-hex value with the
-    load-order byte zeroed.
+
+    TRANSCRIBED FROM THE ENGINE (GOG/AE SkyrimSE.exe, function at file
+    offset 0x3a5460 / va 0x1403a6060; the sibling at 0x1403a62b9 builds
+    the same prefix for the "%s_%08X_%u" case). Do NOT re-derive this from
+    observed filenames — Oblivion's own names follow a DIFFERENT rule, and
+    fitting them produces a prefix the engine never asks for.
+
+    The engine loads the TOPIC's owning quest ([rcx+0x40]) EditorID into
+    buffer A and the topic's own EditorID into buffer B, then:
+
+        lenA = strlen(A); lenB = strlen(B)
+        if lenA + lenB > 25:            # cmp rax,0x19 / jbe
+            if lenA > 10:               # cmp rcx,0xa / jbe
+                A[10] = 0               # mov byte[rsp+0x14a],0
+                B[15] = 0               # lea rax,[rsp+0x3f]
+            else:
+                B[25 - lenA] = 0        # lea rax,[rsp+0x49]; sub rax,rcx
+        sprintf(out, "%s_%s", A, B)
+
+    So a combined length of 25 or less is used verbatim; past that the
+    quest is only cut when it exceeds 10, and the topic absorbs the rest.
+    This matches Skyblivion's `Skyblivion - Copy voice files.pas`
+    (InfoFileName), which was right all along.
+
+    Topic with no EditorID: quest + '_' (double underscore before the
+    FormID). All lowercase; the FormID component is the 8-hex value with
+    the load-order byte zeroed.
     """
     if topic_edid:
-        q = quest_edid[:10]
-        return f"{q}_{topic_edid[:25 - len(q)]}".lower()
+        q, t = quest_edid, topic_edid
+        if len(q) + len(t) > 25:
+            if len(q) > 10:
+                q, t = q[:10], t[:15]
+            else:
+                t = t[:25 - len(q)]
+        return f"{q}_{t}".lower()
     return f"{quest_edid}_".lower()
 
 

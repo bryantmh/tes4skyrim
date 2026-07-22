@@ -262,7 +262,15 @@ def main():
         print(f'{len(shown)} of {len(funcs)} condition functions:')
         for f in shown:
             ref = ' [reference]' if f['takes_reference'] else ''
-            print(f'  {f["index"]:>4} 0x{f["opcode"]:04X}  {f["name"]}{ref}')
+            # Label the CTDA index explicitly and keep it distinct from the
+            # table ROW. The two are not the same -- GetRelationshipRank is row
+            # 419 but CTDA 403 -- and printing the row alone in this column
+            # once caused every converted disposition gate to be written as
+            # GetObjectiveCompleted.
+            ctda = ('CTDA %d' % f['ctda_index']
+                    if f['ctda_index'] is not None else 'script-only')
+            print(f'  row {f["index"]:>4}  0x{f["opcode"]:04X}  '
+                  f'{ctda:<14} {f["name"]}{ref}')
             for k, prm in enumerate(f['params']):
                 kind = 'FormID' if prm['is_formid'] else 'value'
                 print(f'        param{k}: {prm["name"]} '
