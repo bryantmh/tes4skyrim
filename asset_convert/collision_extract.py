@@ -61,12 +61,13 @@ Cache: two-phase, mirroring mesh_bounds.
     load_collision(cache_path)             — in each navmesh worker
 """
 
+import json
 import math
 import os
 import struct
 import sys
 import zlib
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -221,19 +222,38 @@ def _classify(a, b, c):
 def extract_nif_collision(nif_path: str) -> Optional[dict]:
     """Return {'w': [9N floats], 'b': [9M floats]} in GAME units, or None.
 
-    Collision lives on the root node in converted meshes, so no node-transform
-    walk is needed.  Non-pathing layers (clutter, biped ragdolls, triggers) are
-    dropped wholesale.
+    Convenience wrapper that parses *nif_path* and delegates.  Prefer
+    `collision_from_data` when the caller already holds a parsed NIF — reading
+    the file is ~174 ms of the ~205 ms this costs, so a second parse is by far
+    the most expensive thing about calling this twice (see scan_mesh_data).
+    """
+    return collision_from_data(read_nif_data(nif_path))
+
+
+def read_nif_data(nif_path: str):
+    """Parse a NIF into a pyffi Data object.
+
+    Split out so one parse can feed several analyses (bounds + collision).
     """
     import time as _t
     if not hasattr(_t, 'clock'):
         _t.clock = _t.perf_counter  # pyffi 2.2.3 still calls the removed time.clock
     from pyffi.formats.nif import NifFormat
-    from .cms import decode_cms
 
     data = NifFormat.Data()
     with open(nif_path, 'rb') as fh:
         data.read(fh)
+    return data
+
+
+def collision_from_data(data) -> Optional[dict]:
+    """Collision soup from an ALREADY-PARSED NIF (see extract_nif_collision).
+
+    Collision lives on the root node in converted meshes, so no node-transform
+    walk is needed.  Non-pathing layers (clutter, biped ragdolls, triggers) are
+    dropped wholesale.
+    """
+    from .cms import decode_cms
 
     walk: List[float] = []
     block_: List[float] = []
@@ -286,12 +306,65 @@ def extract_nif_collision(nif_path: str) -> Optional[dict]:
     return {'w': walk, 'b': block_}
 
 
+def bounds_from_data(data):
+    """AABB over every NiTriShapeData vertex, as an OBND 6-tuple, or None.
+
+    Lives here rather than in tes5_import.mesh_bounds so that one parsed NIF can
+    produce BOTH the bounds and the collision soup — see scan_mesh_data.
+    """
+    import math
+
+    xs: list = []
+    ys: list = []
+    zs: list = []
+    for block in data.blocks:
+        if type(block).__name__ == 'NiTriShapeData':
+            if block.has_vertices:
+                for i in range(block.num_vertices):
+                    v = block.vertices[i]
+                    xs.append(v.x)
+                    ys.append(v.y)
+                    zs.append(v.z)
+    if not xs:
+        return None
+    return (
+        int(math.floor(min(xs))), int(math.floor(min(ys))),
+        int(math.floor(min(zs))),
+        int(math.ceil(max(xs))), int(math.ceil(max(ys))),
+        int(math.ceil(max(zs))),
+    )
+
+
 def _worker(args: tuple):
+    """Collision only (kept for `python -m asset_convert.collision_extract`)."""
     nif_path, rel_key = args
     try:
         return rel_key, extract_nif_collision(nif_path)
     except Exception:
         return rel_key, None
+
+
+def _worker_both(args: tuple):
+    """(rel_key, bounds, collision) from a SINGLE parse of one NIF.
+
+    The whole point of the merged scan: bounds and collision each cost ~15-30 ms
+    of analysis on top of a ~174 ms parse, so parsing once and running both
+    nearly halves the combined phase.
+    """
+    nif_path, rel_key = args
+    try:
+        data = read_nif_data(nif_path)
+    except Exception:
+        return rel_key, None, None
+    try:
+        bounds = bounds_from_data(data)
+    except Exception:
+        bounds = None
+    try:
+        col = collision_from_data(data)
+    except Exception:
+        col = None
+    return rel_key, bounds, col
 
 
 # ---------------------------------------------------------------------------
@@ -359,26 +432,92 @@ def _deserialize(raw: bytes) -> Dict[str, dict]:
     return out
 
 
-def scan_collision(mesh_dir: str, cache_path: str, workers: int = None) -> int:
-    """Scan the CONVERTED mesh dir for .nif files, extract collision, write cache.
+def _list_nifs(mesh_dir_norm: str):
+    """[(abs_path, rel_key)] for every .nif under *mesh_dir_norm*.
 
-    mesh_dir is the converted output mesh root (e.g. output/oblivion.esm/meshes),
-    so keys come out as 'tes4/architecture/....nif' — the same keys the import
-    pipeline builds via _navm_model_key().
+    rel_key is lowercase with forward slashes, relative to the mesh root — the
+    same key the import pipeline builds via _navm_model_key().
     """
-    mesh_dir_norm = os.path.normpath(mesh_dir)
-    if not os.path.isdir(mesh_dir_norm):
-        print(f"  Collision: mesh dir not found ({mesh_dir}), skipping")
-        return 0
-
-    nif_files = []
+    out = []
     for root, _dirs, files in os.walk(mesh_dir_norm):
         for fname in files:
             if fname.lower().endswith('.nif'):
                 abs_path = os.path.join(root, fname)
                 rel = os.path.relpath(abs_path, mesh_dir_norm)
-                nif_files.append((abs_path, rel.lower().replace('\\', '/')))
+                out.append((abs_path, rel.lower().replace('\\', '/')))
+    return out
 
+
+def scan_mesh_data(mesh_dir: str, collision_cache: str, bounds_cache: str,
+                   workers: int = None):
+    """Scan the CONVERTED mesh dir ONCE, writing both caches.
+
+    Bounds and collision used to be two separate phases, each with its own
+    os.walk and its own process pool, and each independently parsing every NIF.
+    Parsing is ~174 ms of the ~190-205 ms either analysis costs, so the second
+    pass was almost entirely redundant work: one merged pass is ~1.8x faster
+    over the same file set.
+
+    The two caches stay SEPARATE files in their existing formats, so every
+    consumer (load_collision / mesh_bounds.load_mesh_bounds) is unchanged.
+
+    Returns (n_collision, n_bounds).
+    """
+    mesh_dir_norm = os.path.normpath(mesh_dir)
+    if not os.path.isdir(mesh_dir_norm):
+        print(f"  Mesh scan: mesh dir not found ({mesh_dir}), skipping")
+        return 0, 0
+
+    nif_files = _list_nifs(mesh_dir_norm)
+    if not nif_files:
+        print(f"  Mesh scan: no .nif files found in {mesh_dir}")
+        return 0, 0
+
+    n = len(nif_files)
+    if workers is None:
+        workers = worker_count()
+    print(f"  Scanning {n} NIFs for bounds + collision ({workers} workers)...")
+
+    col_results: Dict[str, dict] = {}
+    bnd_results: Dict[str, tuple] = {}
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        done = 0
+        for rel_key, bounds, col in ex.map(_worker_both, nif_files,
+                                           chunksize=16):
+            if col is not None:
+                col_results[rel_key] = col
+            if bounds is not None:
+                bnd_results[rel_key] = bounds
+            done += 1
+            if done % 1000 == 0:
+                print(f"    {done}/{n} processed...")
+
+    tw = sum(len(e['w']) // 9 for e in col_results.values())
+    tb = sum(len(e['b']) // 9 for e in col_results.values())
+    print(f"  Collision: {len(col_results)} / {n} NIFs "
+          f"({tw} walkable, {tb} blocking tris)")
+    print(f"  Mesh bounds: {len(bnd_results)} / {n} NIFs computed")
+
+    os.makedirs(os.path.dirname(os.path.abspath(collision_cache)),
+                exist_ok=True)
+    with open(collision_cache, 'wb') as fh:
+        fh.write(_serialize(col_results))
+
+    os.makedirs(os.path.dirname(os.path.abspath(bounds_cache)), exist_ok=True)
+    with open(bounds_cache, 'w', encoding='utf-8') as fh:
+        json.dump({k: list(v) for k, v in bnd_results.items()}, fh)
+
+    return len(col_results), len(bnd_results)
+
+
+def scan_collision(mesh_dir: str, cache_path: str, workers: int = None) -> int:
+    """Collision-only scan (CLI entry point; prefer scan_mesh_data)."""
+    mesh_dir_norm = os.path.normpath(mesh_dir)
+    if not os.path.isdir(mesh_dir_norm):
+        print(f"  Collision: mesh dir not found ({mesh_dir}), skipping")
+        return 0
+
+    nif_files = _list_nifs(mesh_dir_norm)
     if not nif_files:
         print(f"  Collision: no .nif files found in {mesh_dir}")
         return 0
@@ -390,15 +529,10 @@ def scan_collision(mesh_dir: str, cache_path: str, workers: int = None) -> int:
 
     results: Dict[str, dict] = {}
     with ProcessPoolExecutor(max_workers=workers) as ex:
-        futures = [ex.submit(_worker, item) for item in nif_files]
         done = 0
-        for future in as_completed(futures):
-            try:
-                rel_key, ent = future.result()
-                if ent is not None:
-                    results[rel_key] = ent
-            except Exception:
-                pass
+        for rel_key, ent in ex.map(_worker, nif_files, chunksize=16):
+            if ent is not None:
+                results[rel_key] = ent
             done += 1
             if done % 1000 == 0:
                 print(f"    {done}/{n} processed...")

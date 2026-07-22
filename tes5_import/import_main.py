@@ -429,20 +429,19 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     # the already-converted output meshes so callers never have to run a
     # separate step for this.
     # Cache lives in the export directory: export/<plugin>/mesh_bounds_cache.json
-    from .mesh_bounds import load_mesh_bounds, scan_mesh_bounds
+    from .mesh_bounds import load_mesh_bounds
+    from asset_convert.collision_extract import load_collision, scan_mesh_data
     cache_path = os.path.join(export_dir, 'mesh_bounds_cache.json')
-    mesh_dir = os.path.join(plugin_out_dir, 'meshes')
-    if not os.path.exists(cache_path) and os.path.isdir(mesh_dir):
-        print(f"  Mesh bounds cache not found, scanning {mesh_dir}...")
-        scan_mesh_bounds(mesh_dir, cache_path)
-    load_mesh_bounds(cache_path)
-    # Havok collision soups (walkable/blocking triangles) the navmesh is built
-    # from, extracted from the CONVERTED meshes. Same fallback as above.
-    from asset_convert.collision_extract import load_collision, scan_collision
     col_path = os.path.join(export_dir, 'collision_cache.bin')
-    if not os.path.exists(col_path) and os.path.isdir(mesh_dir):
-        print(f"  Collision cache not found, scanning {mesh_dir}...")
-        scan_collision(mesh_dir, col_path)
+    mesh_dir = os.path.join(plugin_out_dir, 'meshes')
+    # One scan produces BOTH caches: the two analyses share a NIF parse that
+    # costs far more than either of them (see scan_mesh_data).  Runs when
+    # EITHER cache is missing, since a single pass fills both anyway.
+    if (not os.path.exists(cache_path) or not os.path.exists(col_path)) \
+            and os.path.isdir(mesh_dir):
+        print(f"  Mesh bounds/collision cache not found, scanning {mesh_dir}...")
+        scan_mesh_data(mesh_dir, col_path, cache_path)
+    load_mesh_bounds(cache_path)
     load_collision(col_path)
     _step_done('mesh bounds + collision caches')
 
