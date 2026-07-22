@@ -155,55 +155,6 @@ def _find_normal(verts, a, b, c):
 # Shape conversion
 # ---------------------------------------------------------------------------
 
-def _remove_stair_risers(verts, triangles):
-    """Remove stair-riser triangles from a Havok collision mesh.
-
-    A stair riser is a near-vertical face (|nz| < 0.3) WHERE ALL THREE
-    vertices are also shared with at least one upward-facing (floor-like)
-    triangle (nz > 0.5).  This correctly distinguishes risers from walls:
-
-    - Riser: connects two tread levels; every vertex borders a floor face
-      on one side or the other → ALL vertices are floor-adjacent → REMOVED.
-    - Wall: has mid-wall and top vertices that only appear in vertical/ceiling
-      faces → at least one vertex is NOT floor-adjacent → KEPT.
-
-    As a safety valve, if the filter would remove more than 50 % of the
-    mesh, the original triangle list is returned unchanged (the mesh is not
-    a recognisable stair shape).
-    """
-    if not triangles:
-        return triangles
-
-    normals = [_find_normal(verts, a, b, c) for (a, b, c) in triangles]
-
-    # Mark every vertex that borders at least one upward-facing floor triangle.
-    floor_verts: set = set()
-    for i, (a, b, c) in enumerate(triangles):
-        if normals[i][2] > 0.5:
-            floor_verts.add(a)
-            floor_verts.add(b)
-            floor_verts.add(c)
-
-    filtered = []
-    removed = 0
-    for i, (a, b, c) in enumerate(triangles):
-        nz = normals[i][2]
-        if (abs(nz) < 0.3
-                and a in floor_verts
-                and b in floor_verts
-                and c in floor_verts):
-            removed += 1
-            continue
-        filtered.append((a, b, c))
-
-    # Safety: if we are removing too large a fraction the mesh is probably
-    # not stair-shaped (e.g. a thin slanted wall).  Keep original.
-    if removed > len(triangles) * 0.5:
-        return triangles
-
-    return filtered
-
-
 def _face_normal(tri):
     """Normalised face normal for a triangle given as three xyz tuples."""
     (v0, v1, v2) = tri
@@ -379,11 +330,6 @@ def _ni_strips_to_packed(bhk_strips):
 
         if not all_triangles:
             return None
-
-        # NOTE: stair-riser removal disabled pending further testing.
-        # all_triangles = _remove_stair_risers(all_verts, all_triangles)
-        # if not all_triangles:
-        #     return None
 
         hkdata = NifFormat.hkPackedNiTriStripsData()
         hkdata.num_vertices = len(all_verts)

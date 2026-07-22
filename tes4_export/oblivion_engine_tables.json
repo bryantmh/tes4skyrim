@@ -1,0 +1,5052 @@
+{
+  "source": "D:\\Other Games\\Nehrim At Fate's Edge\\Oblivion.exe",
+  "categories": {
+    "0": "Topic",
+    "1": "Conversation",
+    "2": "Combat",
+    "3": "Persuasion",
+    "4": "Detection",
+    "5": "Service",
+    "6": "Miscellaneous"
+  },
+  "types": [
+    {
+      "index": 0,
+      "name": "GREETING",
+      "message_id": 280
+    },
+    {
+      "index": 1,
+      "name": "InfoRefusal",
+      "message_id": 281
+    },
+    {
+      "index": 2,
+      "name": "Idle",
+      "message_id": 282
+    },
+    {
+      "index": 3,
+      "name": "ObserveCombat",
+      "message_id": 283
+    },
+    {
+      "index": 4,
+      "name": "Corpse",
+      "message_id": 284
+    },
+    {
+      "index": 5,
+      "name": "TimeToGo",
+      "message_id": 210
+    },
+    {
+      "index": 6,
+      "name": "HELLO",
+      "message_id": 211
+    },
+    {
+      "index": 7,
+      "name": "ANY",
+      "message_id": 212
+    },
+    {
+      "index": 8,
+      "name": "GOODBYE",
+      "message_id": 213
+    },
+    {
+      "index": 9,
+      "name": "Idle Chatter",
+      "message_id": 214
+    },
+    {
+      "index": 10,
+      "name": "SPELL HELP",
+      "message_id": 215
+    },
+    {
+      "index": 11,
+      "name": "INFO GENERAL",
+      "message_id": 220
+    },
+    {
+      "index": 12,
+      "name": "Attack",
+      "message_id": 221
+    },
+    {
+      "index": 13,
+      "name": "Hit",
+      "message_id": 222
+    },
+    {
+      "index": 14,
+      "name": "Flee",
+      "message_id": 223
+    },
+    {
+      "index": 15,
+      "name": "Steal",
+      "message_id": 224
+    },
+    {
+      "index": 16,
+      "name": "Trespass",
+      "message_id": 225
+    },
+    {
+      "index": 17,
+      "name": "Yield",
+      "message_id": 226
+    },
+    {
+      "index": 18,
+      "name": "AcceptYield",
+      "message_id": 227
+    },
+    {
+      "index": 19,
+      "name": "Pickpocket",
+      "message_id": 228
+    },
+    {
+      "index": 20,
+      "name": "Assault",
+      "message_id": 229
+    },
+    {
+      "index": 21,
+      "name": "Murder",
+      "message_id": 230
+    },
+    {
+      "index": 22,
+      "name": "PowerAttack",
+      "message_id": 231
+    },
+    {
+      "index": 23,
+      "name": "AssaultNoCrime",
+      "message_id": 232
+    },
+    {
+      "index": 24,
+      "name": "MurderNoCrime",
+      "message_id": 233
+    },
+    {
+      "index": 25,
+      "name": "PickpocketNoCrime",
+      "message_id": 234
+    },
+    {
+      "index": 26,
+      "name": "StealNoCrime",
+      "message_id": 235
+    },
+    {
+      "index": 27,
+      "name": "TrespassNoCrime",
+      "message_id": 240
+    },
+    {
+      "index": 28,
+      "name": "AdmireSuccess",
+      "message_id": 241
+    },
+    {
+      "index": 29,
+      "name": "AdmireFail",
+      "message_id": 242
+    },
+    {
+      "index": 30,
+      "name": "AdmireNeutral",
+      "message_id": 243
+    },
+    {
+      "index": 31,
+      "name": "TauntSuccess",
+      "message_id": 244
+    },
+    {
+      "index": 32,
+      "name": "TauntFail",
+      "message_id": 245
+    },
+    {
+      "index": 33,
+      "name": "TauntNeutral",
+      "message_id": 246
+    },
+    {
+      "index": 34,
+      "name": "BoastSuccess",
+      "message_id": 247
+    },
+    {
+      "index": 35,
+      "name": "BoastFail",
+      "message_id": 248
+    },
+    {
+      "index": 36,
+      "name": "BoastNeutral",
+      "message_id": 249
+    },
+    {
+      "index": 37,
+      "name": "JokeSuccess",
+      "message_id": 250
+    },
+    {
+      "index": 38,
+      "name": "JokeFail",
+      "message_id": 251
+    },
+    {
+      "index": 39,
+      "name": "JokeNeutral",
+      "message_id": 252
+    },
+    {
+      "index": 40,
+      "name": "BribeSuccess",
+      "message_id": 253
+    },
+    {
+      "index": 41,
+      "name": "BribeFail",
+      "message_id": 254
+    },
+    {
+      "index": 42,
+      "name": "DemandSuccess",
+      "message_id": 255
+    },
+    {
+      "index": 43,
+      "name": "DemandFail",
+      "message_id": 256
+    },
+    {
+      "index": 44,
+      "name": "DemandNoMoney",
+      "message_id": 257
+    },
+    {
+      "index": 45,
+      "name": "DemandNoMoreCircle",
+      "message_id": 258
+    },
+    {
+      "index": 46,
+      "name": "BribeNoMoreCircle",
+      "message_id": 259
+    },
+    {
+      "index": 47,
+      "name": "BribeNoMoney",
+      "message_id": 170
+    },
+    {
+      "index": 48,
+      "name": "ADMIRE_HATE",
+      "message_id": 171
+    },
+    {
+      "index": 49,
+      "name": "ADMIRE_LOVE",
+      "message_id": 172
+    },
+    {
+      "index": 50,
+      "name": "ADMIRE_LIKE",
+      "message_id": 173
+    },
+    {
+      "index": 51,
+      "name": "ADMIRE_DISLIKE",
+      "message_id": 174
+    },
+    {
+      "index": 52,
+      "name": "COERCE_HATE",
+      "message_id": 175
+    },
+    {
+      "index": 53,
+      "name": "COERCE_LOVE",
+      "message_id": 176
+    },
+    {
+      "index": 54,
+      "name": "COERCE_LIKE",
+      "message_id": 177
+    },
+    {
+      "index": 55,
+      "name": "COERCE_DISLIKE",
+      "message_id": 178
+    },
+    {
+      "index": 56,
+      "name": "BOAST_HATE",
+      "message_id": 179
+    },
+    {
+      "index": 57,
+      "name": "BOAST_LOVE",
+      "message_id": 180
+    },
+    {
+      "index": 58,
+      "name": "BOAST_LIKE",
+      "message_id": 181
+    },
+    {
+      "index": 59,
+      "name": "BOAST_DISLIKE",
+      "message_id": 182
+    },
+    {
+      "index": 60,
+      "name": "JOKE_HATE",
+      "message_id": 183
+    },
+    {
+      "index": 61,
+      "name": "JOKE_LOVE",
+      "message_id": 184
+    },
+    {
+      "index": 62,
+      "name": "JOKE_LIKE",
+      "message_id": 185
+    },
+    {
+      "index": 63,
+      "name": "JOKE_DISLIKE",
+      "message_id": 186
+    },
+    {
+      "index": 64,
+      "name": "BRIBE",
+      "message_id": 187
+    },
+    {
+      "index": 65,
+      "name": "PERSUASION_ENTER",
+      "message_id": 188
+    },
+    {
+      "index": 66,
+      "name": "PERSUASION_EXIT",
+      "message_id": 260
+    },
+    {
+      "index": 67,
+      "name": "Noticed",
+      "message_id": 261
+    },
+    {
+      "index": 68,
+      "name": "Seen",
+      "message_id": 262
+    },
+    {
+      "index": 69,
+      "name": "Unseen",
+      "message_id": 263
+    },
+    {
+      "index": 70,
+      "name": "Lost",
+      "message_id": 6
+    }
+  ],
+  "functions": [
+    {
+      "index": 0,
+      "name": "MessageBox",
+      "description": "",
+      "opcode": 4096,
+      "ctda_index": 0,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "String",
+          "type": 0
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "name": "GetDistance",
+      "description": "",
+      "opcode": 4097,
+      "ctda_index": 1,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "name": "AddItem",
+      "description": "",
+      "opcode": 4098,
+      "ctda_index": 2,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 3
+        },
+        {
+          "name": "Count",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "name": "SetEssential",
+      "description": "",
+      "opcode": 4099,
+      "ctda_index": 3,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Actor Base",
+          "type": 25
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "name": "Rotate",
+      "description": "",
+      "opcode": 4100,
+      "ctda_index": 4,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Axis",
+          "type": 8
+        },
+        {
+          "name": "Speed",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "name": "GetLocked",
+      "description": "",
+      "opcode": 4101,
+      "ctda_index": 5,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 6,
+      "name": "GetPos",
+      "description": "",
+      "opcode": 4102,
+      "ctda_index": 6,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Axis",
+          "type": 8
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "name": "SetPos",
+      "description": "",
+      "opcode": 4103,
+      "ctda_index": 7,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Axis",
+          "type": 8
+        },
+        {
+          "name": "Float",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "name": "GetAngle",
+      "description": "",
+      "opcode": 4104,
+      "ctda_index": 8,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Axis",
+          "type": 8
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "name": "SetAngle",
+      "description": "",
+      "opcode": 4105,
+      "ctda_index": 9,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Axis",
+          "type": 8
+        },
+        {
+          "name": "Float",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "name": "GetStartingPos",
+      "description": "",
+      "opcode": 4106,
+      "ctda_index": 10,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Axis",
+          "type": 8
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "name": "GetStartingAngle",
+      "description": "",
+      "opcode": 4107,
+      "ctda_index": 11,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Axis",
+          "type": 8
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "name": "GetSecondsPassed",
+      "description": "",
+      "opcode": 4108,
+      "ctda_index": 12,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 13,
+      "name": "Activate",
+      "description": "",
+      "opcode": 4109,
+      "ctda_index": 13,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 14,
+      "name": "GetActorValue",
+      "description": "GetAV",
+      "opcode": 4110,
+      "ctda_index": 14,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor Value",
+          "type": 5
+        }
+      ]
+    },
+    {
+      "index": 15,
+      "name": "SetActorValue",
+      "description": "SetAV",
+      "opcode": 4111,
+      "ctda_index": 15,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor Value",
+          "type": 5
+        },
+        {
+          "name": "Amount",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 16,
+      "name": "ModActorValue",
+      "description": "ModAV",
+      "opcode": 4112,
+      "ctda_index": 16,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor Value",
+          "type": 5
+        },
+        {
+          "name": "Amount",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 17,
+      "name": "SetAtStart",
+      "description": "",
+      "opcode": 4113,
+      "ctda_index": 17,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 18,
+      "name": "GetCurrentTime",
+      "description": "",
+      "opcode": 4114,
+      "ctda_index": 18,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 19,
+      "name": "PlayGroup",
+      "description": "",
+      "opcode": 4115,
+      "ctda_index": 19,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Animation Group",
+          "type": 10
+        },
+        {
+          "name": "Flags",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 20,
+      "name": "LoopGroup",
+      "description": "",
+      "opcode": 4116,
+      "ctda_index": 20,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Animation Group",
+          "type": 10
+        },
+        {
+          "name": "Integer",
+          "type": 1
+        },
+        {
+          "name": "Flags",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 21,
+      "name": "SkipAnim",
+      "description": "",
+      "opcode": 4117,
+      "ctda_index": 21,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 22,
+      "name": "StartCombat",
+      "description": "",
+      "opcode": 4118,
+      "ctda_index": 22,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 23,
+      "name": "StopCombat",
+      "description": "",
+      "opcode": 4119,
+      "ctda_index": 23,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 24,
+      "name": "GetScale",
+      "description": "",
+      "opcode": 4120,
+      "ctda_index": 24,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 25,
+      "name": "UnusedFunction1",
+      "description": "",
+      "opcode": 4121,
+      "ctda_index": 25,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 26,
+      "name": "UnusedFunction2",
+      "description": "",
+      "opcode": 4122,
+      "ctda_index": 26,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 27,
+      "name": "GetLineOfSight",
+      "description": "GetLOS",
+      "opcode": 4123,
+      "ctda_index": 27,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 28,
+      "name": "AddSpell",
+      "description": "",
+      "opcode": 4124,
+      "ctda_index": 28,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Spell Item",
+          "type": 7
+        }
+      ]
+    },
+    {
+      "index": 29,
+      "name": "RemoveSpell",
+      "description": "",
+      "opcode": 4125,
+      "ctda_index": 29,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Spell Item",
+          "type": 7
+        }
+      ]
+    },
+    {
+      "index": 30,
+      "name": "Cast",
+      "description": "",
+      "opcode": 4126,
+      "ctda_index": 30,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Magic Item",
+          "type": 11
+        },
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 31,
+      "name": "GetButtonPressed",
+      "description": "",
+      "opcode": 4127,
+      "ctda_index": 31,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 32,
+      "name": "GetInSameCell",
+      "description": "",
+      "opcode": 4128,
+      "ctda_index": 32,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 33,
+      "name": "Enable",
+      "description": "",
+      "opcode": 4129,
+      "ctda_index": 33,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 34,
+      "name": "Disable",
+      "description": "",
+      "opcode": 4130,
+      "ctda_index": 34,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 35,
+      "name": "GetDisabled",
+      "description": "",
+      "opcode": 4131,
+      "ctda_index": 35,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 36,
+      "name": "MenuMode",
+      "description": "",
+      "opcode": 4132,
+      "ctda_index": 36,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 37,
+      "name": "PlaceAtMe",
+      "description": "",
+      "opcode": 4133,
+      "ctda_index": 37,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 21
+        },
+        {
+          "name": "Count",
+          "type": 1
+        },
+        {
+          "name": "Distance",
+          "type": 1
+        },
+        {
+          "name": "Direction",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 38,
+      "name": "PlaySound",
+      "description": "",
+      "opcode": 4134,
+      "ctda_index": 38,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Sound",
+          "type": 12
+        }
+      ]
+    },
+    {
+      "index": 39,
+      "name": "GetDisease",
+      "description": "",
+      "opcode": 4135,
+      "ctda_index": 39,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 40,
+      "name": "GetVampire",
+      "description": "",
+      "opcode": 4136,
+      "ctda_index": 40,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 41,
+      "name": "GetClothingValue",
+      "description": "",
+      "opcode": 4137,
+      "ctda_index": 41,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 42,
+      "name": "SameFaction",
+      "description": "",
+      "opcode": 4138,
+      "ctda_index": 42,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 43,
+      "name": "SameRace",
+      "description": "",
+      "opcode": 4139,
+      "ctda_index": 43,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 44,
+      "name": "SameSex",
+      "description": "",
+      "opcode": 4140,
+      "ctda_index": 44,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 45,
+      "name": "GetDetected",
+      "description": "",
+      "opcode": 4141,
+      "ctda_index": 45,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 46,
+      "name": "GetDead",
+      "description": "",
+      "opcode": 4142,
+      "ctda_index": 46,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 47,
+      "name": "GetItemCount",
+      "description": "",
+      "opcode": 4143,
+      "ctda_index": 47,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 3
+        }
+      ]
+    },
+    {
+      "index": 48,
+      "name": "GetGold",
+      "description": "",
+      "opcode": 4144,
+      "ctda_index": 48,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 49,
+      "name": "GetSleeping",
+      "description": "",
+      "opcode": 4145,
+      "ctda_index": 49,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 50,
+      "name": "GetTalkedToPC",
+      "description": "",
+      "opcode": 4146,
+      "ctda_index": 50,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 51,
+      "name": "Say",
+      "description": "",
+      "opcode": 4147,
+      "ctda_index": 51,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Topic",
+          "type": 13
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        },
+        {
+          "name": "NPC (Optional)",
+          "type": 35
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 52,
+      "name": "SayTo",
+      "description": "",
+      "opcode": 4148,
+      "ctda_index": 52,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        },
+        {
+          "name": "Topic",
+          "type": 13
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 53,
+      "name": "GetScriptVariable",
+      "description": "",
+      "opcode": 4149,
+      "ctda_index": 53,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        },
+        {
+          "name": "Variable Name",
+          "type": 22
+        }
+      ]
+    },
+    {
+      "index": 54,
+      "name": "StartQuest",
+      "description": "",
+      "opcode": 4150,
+      "ctda_index": 54,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Quest",
+          "type": 14
+        }
+      ]
+    },
+    {
+      "index": 55,
+      "name": "StopQuest",
+      "description": "",
+      "opcode": 4151,
+      "ctda_index": 55,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Quest",
+          "type": 14
+        }
+      ]
+    },
+    {
+      "index": 56,
+      "name": "GetQuestRunning",
+      "description": "GetQR",
+      "opcode": 4152,
+      "ctda_index": 56,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Quest",
+          "type": 14
+        }
+      ]
+    },
+    {
+      "index": 57,
+      "name": "SetStage",
+      "description": "",
+      "opcode": 4153,
+      "ctda_index": 57,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Quest",
+          "type": 14
+        },
+        {
+          "name": "Stage",
+          "type": 23
+        }
+      ]
+    },
+    {
+      "index": 58,
+      "name": "GetStage",
+      "description": "",
+      "opcode": 4154,
+      "ctda_index": 58,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Quest",
+          "type": 14
+        }
+      ]
+    },
+    {
+      "index": 59,
+      "name": "GetStageDone",
+      "description": "",
+      "opcode": 4155,
+      "ctda_index": 59,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Quest",
+          "type": 14
+        },
+        {
+          "name": "Stage",
+          "type": 23
+        }
+      ]
+    },
+    {
+      "index": 60,
+      "name": "GetFactionRankDifference",
+      "description": "",
+      "opcode": 4156,
+      "ctda_index": 60,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 61,
+      "name": "GetAlarmed",
+      "description": "",
+      "opcode": 4157,
+      "ctda_index": 61,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 62,
+      "name": "IsRaining",
+      "description": "",
+      "opcode": 4158,
+      "ctda_index": 62,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 63,
+      "name": "GetAttacked",
+      "description": "",
+      "opcode": 4159,
+      "ctda_index": 63,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 64,
+      "name": "GetIsCreature",
+      "description": "",
+      "opcode": 4160,
+      "ctda_index": 64,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 65,
+      "name": "GetLockLevel",
+      "description": "",
+      "opcode": 4161,
+      "ctda_index": 65,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 66,
+      "name": "GetShouldAttack",
+      "description": "",
+      "opcode": 4162,
+      "ctda_index": 66,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 67,
+      "name": "GetInCell",
+      "description": "",
+      "opcode": 4163,
+      "ctda_index": 67,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Cell",
+          "type": 9
+        }
+      ]
+    },
+    {
+      "index": 68,
+      "name": "GetIsClass",
+      "description": "",
+      "opcode": 4164,
+      "ctda_index": 68,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Class",
+          "type": 16
+        }
+      ]
+    },
+    {
+      "index": 69,
+      "name": "GetIsRace",
+      "description": "",
+      "opcode": 4165,
+      "ctda_index": 69,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Race",
+          "type": 15
+        }
+      ]
+    },
+    {
+      "index": 70,
+      "name": "GetIsSex",
+      "description": "",
+      "opcode": 4166,
+      "ctda_index": 70,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Sex",
+          "type": 18
+        }
+      ]
+    },
+    {
+      "index": 71,
+      "name": "GetInFaction",
+      "description": "",
+      "opcode": 4167,
+      "ctda_index": 71,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        }
+      ]
+    },
+    {
+      "index": 72,
+      "name": "GetIsID",
+      "description": "",
+      "opcode": 4168,
+      "ctda_index": 72,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 21
+        }
+      ]
+    },
+    {
+      "index": 73,
+      "name": "GetFactionRank",
+      "description": "",
+      "opcode": 4169,
+      "ctda_index": 73,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        }
+      ]
+    },
+    {
+      "index": 74,
+      "name": "GetGlobalValue",
+      "description": "",
+      "opcode": 4170,
+      "ctda_index": 74,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Global",
+          "type": 19
+        }
+      ]
+    },
+    {
+      "index": 75,
+      "name": "IsSnowing",
+      "description": "",
+      "opcode": 4171,
+      "ctda_index": 75,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 76,
+      "name": "GetDisposition",
+      "description": "",
+      "opcode": 4172,
+      "ctda_index": 76,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 77,
+      "name": "GetRandomPercent",
+      "description": "",
+      "opcode": 4173,
+      "ctda_index": 77,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 78,
+      "name": "StreamMusic",
+      "description": "",
+      "opcode": 4174,
+      "ctda_index": 78,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "String",
+          "type": 0
+        }
+      ]
+    },
+    {
+      "index": 79,
+      "name": "GetQuestVariable",
+      "description": "",
+      "opcode": 4175,
+      "ctda_index": 79,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Quest",
+          "type": 14
+        },
+        {
+          "name": "Variable Name",
+          "type": 22
+        }
+      ]
+    },
+    {
+      "index": 80,
+      "name": "GetLevel",
+      "description": "",
+      "opcode": 4176,
+      "ctda_index": 80,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 81,
+      "name": "GetArmorRating",
+      "description": "",
+      "opcode": 4177,
+      "ctda_index": 81,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 82,
+      "name": "RemoveItem",
+      "description": "",
+      "opcode": 4178,
+      "ctda_index": 82,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 3
+        },
+        {
+          "name": "Count",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 83,
+      "name": "ModDisposition",
+      "description": "",
+      "opcode": 4179,
+      "ctda_index": 83,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 84,
+      "name": "GetDeadCount",
+      "description": "",
+      "opcode": 4180,
+      "ctda_index": 84,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Actor Base",
+          "type": 25
+        }
+      ]
+    },
+    {
+      "index": 85,
+      "name": "ShowMap",
+      "description": "",
+      "opcode": 4181,
+      "ctda_index": 85,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Map Marker",
+          "type": 24
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 86,
+      "name": "StartConversation",
+      "description": "",
+      "opcode": 4182,
+      "ctda_index": 86,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        },
+        {
+          "name": "Topic",
+          "type": 13
+        }
+      ]
+    },
+    {
+      "index": 87,
+      "name": "Drop",
+      "description": "",
+      "opcode": 4183,
+      "ctda_index": 87,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 3
+        },
+        {
+          "name": "Count",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 88,
+      "name": "AddTopic",
+      "description": "",
+      "opcode": 4184,
+      "ctda_index": 88,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Topic",
+          "type": 13
+        }
+      ]
+    },
+    {
+      "index": 89,
+      "name": "Message",
+      "description": "",
+      "opcode": 4185,
+      "ctda_index": 89,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "String",
+          "type": 0
+        }
+      ]
+    },
+    {
+      "index": 90,
+      "name": "SetAlert",
+      "description": "",
+      "opcode": 4186,
+      "ctda_index": 90,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 91,
+      "name": "GetIsAlerted",
+      "description": "",
+      "opcode": 4187,
+      "ctda_index": 91,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 92,
+      "name": "Look",
+      "description": "",
+      "opcode": 4188,
+      "ctda_index": 92,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 93,
+      "name": "StopLook",
+      "description": "",
+      "opcode": 4189,
+      "ctda_index": 93,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 94,
+      "name": "EvaluatePackage",
+      "description": "evp",
+      "opcode": 4190,
+      "ctda_index": 94,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 95,
+      "name": "Yield",
+      "description": "",
+      "opcode": 4191,
+      "ctda_index": 95,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 96,
+      "name": "EnablePlayerControls",
+      "description": "",
+      "opcode": 4192,
+      "ctda_index": 96,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 97,
+      "name": "DisablePlayerControls",
+      "description": "",
+      "opcode": 4193,
+      "ctda_index": 97,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 98,
+      "name": "GetPlayerControlsDisabled",
+      "description": "",
+      "opcode": 4194,
+      "ctda_index": 98,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 99,
+      "name": "GetHeadingAngle",
+      "description": "",
+      "opcode": 4195,
+      "ctda_index": 99,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 100,
+      "name": "PickIdle",
+      "description": "",
+      "opcode": 4196,
+      "ctda_index": 100,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 101,
+      "name": "IsWeaponOut",
+      "description": "",
+      "opcode": 4197,
+      "ctda_index": 101,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 102,
+      "name": "IsTorchOut",
+      "description": "",
+      "opcode": 4198,
+      "ctda_index": 102,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 103,
+      "name": "IsShieldOut",
+      "description": "",
+      "opcode": 4199,
+      "ctda_index": 103,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 104,
+      "name": "IsYielding",
+      "description": "",
+      "opcode": 4200,
+      "ctda_index": 104,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 105,
+      "name": "IsActionRef",
+      "description": "",
+      "opcode": 4201,
+      "ctda_index": 105,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 106,
+      "name": "IsFacingUp",
+      "description": "",
+      "opcode": 4202,
+      "ctda_index": 106,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 107,
+      "name": "GetKnockedState",
+      "description": "",
+      "opcode": 4203,
+      "ctda_index": 107,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 108,
+      "name": "GetWeaponAnimType",
+      "description": "",
+      "opcode": 4204,
+      "ctda_index": 108,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 109,
+      "name": "GetWeaponSkillType",
+      "description": "",
+      "opcode": 4205,
+      "ctda_index": 109,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 110,
+      "name": "GetCurrentAIPackage",
+      "description": "",
+      "opcode": 4206,
+      "ctda_index": 110,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 111,
+      "name": "IsWaiting",
+      "description": "",
+      "opcode": 4207,
+      "ctda_index": 111,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 112,
+      "name": "IsIdlePlaying",
+      "description": "",
+      "opcode": 4208,
+      "ctda_index": 112,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 113,
+      "name": "CompleteQuest",
+      "description": "",
+      "opcode": 4209,
+      "ctda_index": 113,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Quest",
+          "type": 14
+        }
+      ]
+    },
+    {
+      "index": 114,
+      "name": "Lock",
+      "description": "",
+      "opcode": 4210,
+      "ctda_index": 114,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 115,
+      "name": "UnLock",
+      "description": "",
+      "opcode": 4211,
+      "ctda_index": 115,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 116,
+      "name": "GetCrimeGold",
+      "description": "",
+      "opcode": 4212,
+      "ctda_index": 116,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 117,
+      "name": "SetCrimeGold",
+      "description": "",
+      "opcode": 4213,
+      "ctda_index": 117,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 118,
+      "name": "ModCrimeGold",
+      "description": "",
+      "opcode": 4214,
+      "ctda_index": 118,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 119,
+      "name": "GetCrimeKnown",
+      "description": "",
+      "opcode": 4215,
+      "ctda_index": 119,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Crime Type",
+          "type": 28
+        },
+        {
+          "name": "Criminal",
+          "type": 6
+        },
+        {
+          "name": "Victim",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 120,
+      "name": "PositionWorld",
+      "description": "PosWorld",
+      "opcode": 4216,
+      "ctda_index": 120,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "X",
+          "type": 2
+        },
+        {
+          "name": "Y",
+          "type": 2
+        },
+        {
+          "name": "Z",
+          "type": 2
+        },
+        {
+          "name": "Rotation",
+          "type": 2
+        },
+        {
+          "name": "Worldspace",
+          "type": 27
+        }
+      ]
+    },
+    {
+      "index": 121,
+      "name": "PositionCell",
+      "description": "PosCell",
+      "opcode": 4217,
+      "ctda_index": 121,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "X",
+          "type": 2
+        },
+        {
+          "name": "Y",
+          "type": 2
+        },
+        {
+          "name": "Z",
+          "type": 2
+        },
+        {
+          "name": "Rotation",
+          "type": 2
+        },
+        {
+          "name": "Interior Cell",
+          "type": 9
+        }
+      ]
+    },
+    {
+      "index": 122,
+      "name": "GetCrime",
+      "description": "",
+      "opcode": 4218,
+      "ctda_index": 122,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        },
+        {
+          "name": "Crime Type (optional)",
+          "type": 28
+        }
+      ]
+    },
+    {
+      "index": 123,
+      "name": "PayFine",
+      "description": "",
+      "opcode": 4219,
+      "ctda_index": 123,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 124,
+      "name": "PayFineThief",
+      "description": "",
+      "opcode": 4220,
+      "ctda_index": 124,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 125,
+      "name": "IsGuard",
+      "description": "",
+      "opcode": 4221,
+      "ctda_index": 125,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 126,
+      "name": "GoToJail",
+      "description": "",
+      "opcode": 4222,
+      "ctda_index": 126,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 127,
+      "name": "CanPayCrimeGold",
+      "description": "",
+      "opcode": 4223,
+      "ctda_index": 127,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 128,
+      "name": "GetFatiguePercentage",
+      "description": "GetFatigue",
+      "opcode": 4224,
+      "ctda_index": 128,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 129,
+      "name": "GetPCIsClass",
+      "description": "",
+      "opcode": 4225,
+      "ctda_index": 129,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Class",
+          "type": 16
+        }
+      ]
+    },
+    {
+      "index": 130,
+      "name": "GetPCIsRace",
+      "description": "",
+      "opcode": 4226,
+      "ctda_index": 130,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Race",
+          "type": 15
+        }
+      ]
+    },
+    {
+      "index": 131,
+      "name": "GetPCIsSex",
+      "description": "",
+      "opcode": 4227,
+      "ctda_index": 131,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Sex",
+          "type": 18
+        }
+      ]
+    },
+    {
+      "index": 132,
+      "name": "GetPCInFaction",
+      "description": "",
+      "opcode": 4228,
+      "ctda_index": 132,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        }
+      ]
+    },
+    {
+      "index": 133,
+      "name": "SameFactionAsPC",
+      "description": "",
+      "opcode": 4229,
+      "ctda_index": 133,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 134,
+      "name": "SameRaceAsPC",
+      "description": "",
+      "opcode": 4230,
+      "ctda_index": 134,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 135,
+      "name": "SameSexAsPC",
+      "description": "",
+      "opcode": 4231,
+      "ctda_index": 135,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 136,
+      "name": "GetIsReference",
+      "description": "",
+      "opcode": 4232,
+      "ctda_index": 136,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 137,
+      "name": "SetFactionRank",
+      "description": "",
+      "opcode": 4233,
+      "ctda_index": 137,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 138,
+      "name": "ModFactionRank",
+      "description": "",
+      "opcode": 4234,
+      "ctda_index": 138,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 139,
+      "name": "KillActor",
+      "description": "kill",
+      "opcode": 4235,
+      "ctda_index": 139,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor (optional)",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 140,
+      "name": "ResurrectActor",
+      "description": "resurrect",
+      "opcode": 4236,
+      "ctda_index": 140,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 141,
+      "name": "IsTalking",
+      "description": "",
+      "opcode": 4237,
+      "ctda_index": 141,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 142,
+      "name": "GetWalkSpeed",
+      "description": "GetWalk",
+      "opcode": 4238,
+      "ctda_index": 142,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 143,
+      "name": "GetCurrentAIProcedure",
+      "description": "",
+      "opcode": 4239,
+      "ctda_index": 143,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 144,
+      "name": "GetTrespassWarningLevel",
+      "description": "",
+      "opcode": 4240,
+      "ctda_index": 144,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 145,
+      "name": "IsTrespassing",
+      "description": "",
+      "opcode": 4241,
+      "ctda_index": 145,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 146,
+      "name": "IsInMyOwnedCell",
+      "description": "",
+      "opcode": 4242,
+      "ctda_index": 146,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 147,
+      "name": "GetWindSpeed",
+      "description": "",
+      "opcode": 4243,
+      "ctda_index": 147,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 148,
+      "name": "GetCurrentWeatherPercent",
+      "description": "getweatherpct",
+      "opcode": 4244,
+      "ctda_index": 148,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 149,
+      "name": "GetIsCurrentWeather",
+      "description": "getweather",
+      "opcode": 4245,
+      "ctda_index": 149,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Weather ID",
+          "type": 34
+        }
+      ]
+    },
+    {
+      "index": 150,
+      "name": "IsContinuingPackagePCNear",
+      "description": "",
+      "opcode": 4246,
+      "ctda_index": 150,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 151,
+      "name": "AddScriptPackage",
+      "description": "",
+      "opcode": 4247,
+      "ctda_index": 151,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Package",
+          "type": 29
+        }
+      ]
+    },
+    {
+      "index": 152,
+      "name": "RemoveScriptPackage",
+      "description": "",
+      "opcode": 4248,
+      "ctda_index": 152,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 153,
+      "name": "CanHaveFlames",
+      "description": "",
+      "opcode": 4249,
+      "ctda_index": 153,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 154,
+      "name": "HasFlames",
+      "description": "",
+      "opcode": 4250,
+      "ctda_index": 154,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 155,
+      "name": "AddFlames",
+      "description": "",
+      "opcode": 4251,
+      "ctda_index": 155,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 156,
+      "name": "RemoveFlames",
+      "description": "",
+      "opcode": 4252,
+      "ctda_index": 156,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 157,
+      "name": "GetOpenState",
+      "description": "",
+      "opcode": 4253,
+      "ctda_index": 157,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 158,
+      "name": "MoveToMarker",
+      "description": "MoveTo",
+      "opcode": 4254,
+      "ctda_index": 158,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        },
+        {
+          "name": "Float (Optional)",
+          "type": 2
+        },
+        {
+          "name": "Float (Optional)",
+          "type": 2
+        },
+        {
+          "name": "Float (Optional)",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 159,
+      "name": "GetSitting",
+      "description": "",
+      "opcode": 4255,
+      "ctda_index": 159,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 160,
+      "name": "GetFurnitureMarkerID",
+      "description": "",
+      "opcode": 4256,
+      "ctda_index": 160,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 161,
+      "name": "GetIsCurrentPackage",
+      "description": "",
+      "opcode": 4257,
+      "ctda_index": 161,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Package",
+          "type": 29
+        }
+      ]
+    },
+    {
+      "index": 162,
+      "name": "IsCurrentFurnitureRef",
+      "description": "",
+      "opcode": 4258,
+      "ctda_index": 162,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 163,
+      "name": "IsCurrentFurnitureObj",
+      "description": "",
+      "opcode": 4259,
+      "ctda_index": 163,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Furniture",
+          "type": 20
+        }
+      ]
+    },
+    {
+      "index": 164,
+      "name": "SetSize",
+      "description": "CSize",
+      "opcode": 4260,
+      "ctda_index": 164,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Float",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 165,
+      "name": "RemoveMe",
+      "description": "",
+      "opcode": 4261,
+      "ctda_index": 165,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Container (optional)",
+          "type": 26
+        }
+      ]
+    },
+    {
+      "index": 166,
+      "name": "DropMe",
+      "description": "",
+      "opcode": 4262,
+      "ctda_index": 166,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 167,
+      "name": "GetFactionReaction",
+      "description": "",
+      "opcode": 4263,
+      "ctda_index": 167,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Faction",
+          "type": 17
+        }
+      ]
+    },
+    {
+      "index": 168,
+      "name": "SetFactionReaction",
+      "description": "",
+      "opcode": 4264,
+      "ctda_index": 168,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 169,
+      "name": "ModFactionReaction",
+      "description": "",
+      "opcode": 4265,
+      "ctda_index": 169,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 170,
+      "name": "GetDayOfWeek",
+      "description": "",
+      "opcode": 4266,
+      "ctda_index": 170,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 171,
+      "name": "IsPlayerInJail",
+      "description": "",
+      "opcode": 4267,
+      "ctda_index": 171,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 172,
+      "name": "GetTalkedToPCParam",
+      "description": "",
+      "opcode": 4268,
+      "ctda_index": 172,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 173,
+      "name": "RemoveAllItems",
+      "description": "",
+      "opcode": 4269,
+      "ctda_index": 173,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Container (optional)",
+          "type": 26
+        },
+        {
+          "name": "Ownership Added (optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 174,
+      "name": "WakeUpPC",
+      "description": "",
+      "opcode": 4270,
+      "ctda_index": 174,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 175,
+      "name": "IsPCSleeping",
+      "description": "",
+      "opcode": 4271,
+      "ctda_index": 175,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 176,
+      "name": "IsPCAMurderer",
+      "description": "",
+      "opcode": 4272,
+      "ctda_index": 176,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 177,
+      "name": "SetCombatStyle",
+      "description": "setcs",
+      "opcode": 4273,
+      "ctda_index": 177,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Combat Style (optional)",
+          "type": 30
+        }
+      ]
+    },
+    {
+      "index": 178,
+      "name": "PlaySound3D",
+      "description": "",
+      "opcode": 4274,
+      "ctda_index": 178,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Sound",
+          "type": 12
+        }
+      ]
+    },
+    {
+      "index": 179,
+      "name": "SelectPlayerSpell",
+      "description": "spspell",
+      "opcode": 4275,
+      "ctda_index": 179,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Spell Item",
+          "type": 7
+        }
+      ]
+    },
+    {
+      "index": 180,
+      "name": "GetDetectionLevel",
+      "description": "",
+      "opcode": 4276,
+      "ctda_index": 180,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 181,
+      "name": "IsActorDetected",
+      "description": "",
+      "opcode": 4277,
+      "ctda_index": 181,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 182,
+      "name": "GetEquipped",
+      "description": "",
+      "opcode": 4278,
+      "ctda_index": 182,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 3
+        }
+      ]
+    },
+    {
+      "index": 183,
+      "name": "Wait",
+      "description": "",
+      "opcode": 4279,
+      "ctda_index": 183,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Package",
+          "type": 29
+        }
+      ]
+    },
+    {
+      "index": 184,
+      "name": "StopWaiting",
+      "description": "",
+      "opcode": 4280,
+      "ctda_index": 184,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Package",
+          "type": 29
+        }
+      ]
+    },
+    {
+      "index": 185,
+      "name": "IsSwimming",
+      "description": "",
+      "opcode": 4281,
+      "ctda_index": 185,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 186,
+      "name": "ScriptEffectElapsedSeconds",
+      "description": "",
+      "opcode": 4282,
+      "ctda_index": 186,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 187,
+      "name": "SetCellPublicFlag",
+      "description": "setpublic",
+      "opcode": 4283,
+      "ctda_index": 187,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Cell",
+          "type": 9
+        },
+        {
+          "name": "Flag",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 188,
+      "name": "GetPCSleepHours",
+      "description": "",
+      "opcode": 4284,
+      "ctda_index": 188,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 189,
+      "name": "SetPCSleepHours",
+      "description": "",
+      "opcode": 4285,
+      "ctda_index": 189,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 190,
+      "name": "GetAmountSoldStolen",
+      "description": "",
+      "opcode": 4286,
+      "ctda_index": 190,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 191,
+      "name": "ModAmountSoldStolen",
+      "description": "",
+      "opcode": 4287,
+      "ctda_index": 191,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 192,
+      "name": "CloseCurrentOblivionGate",
+      "description": "",
+      "opcode": 4288,
+      "ctda_index": 192,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 193,
+      "name": "GetPCExpelled",
+      "description": "",
+      "opcode": 4289,
+      "ctda_index": 193,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        }
+      ]
+    },
+    {
+      "index": 194,
+      "name": "SetPCExpelled",
+      "description": "",
+      "opcode": 4290,
+      "ctda_index": 194,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 195,
+      "name": "GetPCFactionMurder",
+      "description": "",
+      "opcode": 4291,
+      "ctda_index": 195,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        }
+      ]
+    },
+    {
+      "index": 196,
+      "name": "SetPCFactionMurder",
+      "description": "",
+      "opcode": 4292,
+      "ctda_index": 196,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 197,
+      "name": "GetPCFactionSteal",
+      "description": "",
+      "opcode": 4293,
+      "ctda_index": 197,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        }
+      ]
+    },
+    {
+      "index": 198,
+      "name": "SetPCFactionSteal",
+      "description": "",
+      "opcode": 4294,
+      "ctda_index": 198,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 199,
+      "name": "GetPCFactionAttack",
+      "description": "",
+      "opcode": 4295,
+      "ctda_index": 199,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        }
+      ]
+    },
+    {
+      "index": 200,
+      "name": "SetPCFactionAttack",
+      "description": "",
+      "opcode": 4296,
+      "ctda_index": 200,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 201,
+      "name": "GetPCFactionSubmitAuthority",
+      "description": "",
+      "opcode": 4297,
+      "ctda_index": 201,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        }
+      ]
+    },
+    {
+      "index": 202,
+      "name": "SetPCFactionSubmitAuthority",
+      "description": "",
+      "opcode": 4298,
+      "ctda_index": 202,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Faction",
+          "type": 17
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 203,
+      "name": "GetDestroyed",
+      "description": "",
+      "opcode": 4299,
+      "ctda_index": 203,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 204,
+      "name": "SetDestroyed",
+      "description": "",
+      "opcode": 4300,
+      "ctda_index": 204,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 205,
+      "name": "GetActionRef",
+      "description": "getAR",
+      "opcode": 4301,
+      "ctda_index": 205,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 206,
+      "name": "GetSelf",
+      "description": "this",
+      "opcode": 4302,
+      "ctda_index": 206,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 207,
+      "name": "GetContainer",
+      "description": "",
+      "opcode": 4303,
+      "ctda_index": 207,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 208,
+      "name": "GetForceRun",
+      "description": "",
+      "opcode": 4304,
+      "ctda_index": 208,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 209,
+      "name": "SetForceRun",
+      "description": "",
+      "opcode": 4305,
+      "ctda_index": 209,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 210,
+      "name": "GetForceSneak",
+      "description": "",
+      "opcode": 4306,
+      "ctda_index": 210,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 211,
+      "name": "SetForceSneak",
+      "description": "",
+      "opcode": 4307,
+      "ctda_index": 211,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 212,
+      "name": "AdvancePCSkill",
+      "description": "AdvSkill",
+      "opcode": 4308,
+      "ctda_index": 212,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Actor Value",
+          "type": 5
+        },
+        {
+          "name": "Amount",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 213,
+      "name": "AdvancePCLevel",
+      "description": "AdvLevel",
+      "opcode": 4309,
+      "ctda_index": 213,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 214,
+      "name": "HasMagicEffect",
+      "description": "",
+      "opcode": 4310,
+      "ctda_index": 214,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Magic Effect",
+          "type": 31
+        }
+      ]
+    },
+    {
+      "index": 215,
+      "name": "GetDoorDefaultOpen",
+      "description": "",
+      "opcode": 4311,
+      "ctda_index": 215,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 216,
+      "name": "SetDoorDefaultOpen",
+      "description": "",
+      "opcode": 4312,
+      "ctda_index": 216,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 217,
+      "name": "ShowClassMenu",
+      "description": "",
+      "opcode": 4313,
+      "ctda_index": 217,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 218,
+      "name": "ShowRaceMenu",
+      "description": "",
+      "opcode": 4314,
+      "ctda_index": 218,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 219,
+      "name": "ShowBirthSignMenu",
+      "description": "",
+      "opcode": 4315,
+      "ctda_index": 219,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 220,
+      "name": "ShowNameMenu",
+      "description": "",
+      "opcode": 4316,
+      "ctda_index": 220,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 221,
+      "name": "SetOpenState",
+      "description": "",
+      "opcode": 4317,
+      "ctda_index": 221,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 222,
+      "name": "CloseOblivionGate",
+      "description": "",
+      "opcode": 4318,
+      "ctda_index": 222,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 223,
+      "name": "IsSpellTarget",
+      "description": "",
+      "opcode": 4319,
+      "ctda_index": 223,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Magic Item",
+          "type": 11
+        }
+      ]
+    },
+    {
+      "index": 224,
+      "name": "GetIsPlayerBirthsign",
+      "description": "GetPBS",
+      "opcode": 4320,
+      "ctda_index": 224,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Birthsign",
+          "type": 32
+        }
+      ]
+    },
+    {
+      "index": 225,
+      "name": "GetPersuasionNumber",
+      "description": "",
+      "opcode": 4321,
+      "ctda_index": 225,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 226,
+      "name": "VampireFeed",
+      "description": "",
+      "opcode": 4322,
+      "ctda_index": 226,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 227,
+      "name": "HasVampireFed",
+      "description": "",
+      "opcode": 4323,
+      "ctda_index": 227,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 228,
+      "name": "GetIsClassDefault",
+      "description": "",
+      "opcode": 4324,
+      "ctda_index": 228,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Class",
+          "type": 16
+        }
+      ]
+    },
+    {
+      "index": 229,
+      "name": "GetClassDefaultMatch",
+      "description": "",
+      "opcode": 4325,
+      "ctda_index": 229,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 230,
+      "name": "GetInCellParam",
+      "description": "",
+      "opcode": 4326,
+      "ctda_index": 230,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Cell",
+          "type": 9
+        },
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 231,
+      "name": "SetInChargen",
+      "description": "",
+      "opcode": 4327,
+      "ctda_index": 231,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 232,
+      "name": "GetCombatTarget",
+      "description": "",
+      "opcode": 4328,
+      "ctda_index": 232,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 233,
+      "name": "GetPackageTarget",
+      "description": "",
+      "opcode": 4329,
+      "ctda_index": 233,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 234,
+      "name": "ShowSpellMaking",
+      "description": "",
+      "opcode": 4330,
+      "ctda_index": 234,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 235,
+      "name": "ShowEnchantment",
+      "description": "",
+      "opcode": 4331,
+      "ctda_index": 235,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 236,
+      "name": "SetGhost",
+      "description": "",
+      "opcode": 4332,
+      "ctda_index": 236,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 237,
+      "name": "GetIsGhost",
+      "description": "",
+      "opcode": 4333,
+      "ctda_index": 237,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 238,
+      "name": "EquipItem",
+      "description": "EquipObject",
+      "opcode": 4334,
+      "ctda_index": 238,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 3
+        },
+        {
+          "name": "Flag",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 239,
+      "name": "UnequipItem",
+      "description": "UnEquipObject",
+      "opcode": 4335,
+      "ctda_index": 239,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 3
+        },
+        {
+          "name": "Flag",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 240,
+      "name": "SetClass",
+      "description": "",
+      "opcode": 4336,
+      "ctda_index": 240,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Class",
+          "type": 16
+        }
+      ]
+    },
+    {
+      "index": 241,
+      "name": "SetUnconscious",
+      "description": "",
+      "opcode": 4337,
+      "ctda_index": 241,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 242,
+      "name": "GetUnconscious",
+      "description": "",
+      "opcode": 4338,
+      "ctda_index": 242,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 243,
+      "name": "SetRestrained",
+      "description": "",
+      "opcode": 4339,
+      "ctda_index": 243,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 244,
+      "name": "GetRestrained",
+      "description": "",
+      "opcode": 4340,
+      "ctda_index": 244,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 245,
+      "name": "ForceFlee",
+      "description": "Flee",
+      "opcode": 4341,
+      "ctda_index": 245,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Cell (optional)",
+          "type": 9
+        },
+        {
+          "name": "ObjectReferenceID (optional)",
+          "type": 4
+        }
+      ]
+    },
+    {
+      "index": 246,
+      "name": "GetIsUsedItem",
+      "description": "",
+      "opcode": 4342,
+      "ctda_index": 246,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "ObjectID",
+          "type": 21
+        }
+      ]
+    },
+    {
+      "index": 247,
+      "name": "GetIsUsedItemType",
+      "description": "",
+      "opcode": 4343,
+      "ctda_index": 247,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Form Type",
+          "type": 33
+        }
+      ]
+    },
+    {
+      "index": 248,
+      "name": "ModPCFame",
+      "description": "",
+      "opcode": 4344,
+      "ctda_index": 248,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 249,
+      "name": "GetPCFame",
+      "description": "",
+      "opcode": 4345,
+      "ctda_index": 249,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 250,
+      "name": "ModPCInfamy",
+      "description": "",
+      "opcode": 4346,
+      "ctda_index": 250,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 251,
+      "name": "GetPCInfamy",
+      "description": "",
+      "opcode": 4347,
+      "ctda_index": 251,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 252,
+      "name": "SetPCFame",
+      "description": "",
+      "opcode": 4348,
+      "ctda_index": 252,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 253,
+      "name": "SetPCInfamy",
+      "description": "",
+      "opcode": 4349,
+      "ctda_index": 253,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 254,
+      "name": "GetIsPlayableRace",
+      "description": "",
+      "opcode": 4350,
+      "ctda_index": 254,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 255,
+      "name": "GetOffersServicesNow",
+      "description": "",
+      "opcode": 4351,
+      "ctda_index": 255,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 256,
+      "name": "GetGameSetting",
+      "description": "GetGS",
+      "opcode": 4352,
+      "ctda_index": 256,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "String",
+          "type": 0
+        }
+      ]
+    },
+    {
+      "index": 257,
+      "name": "StopCombatAlarmOnActor",
+      "description": "SCAOnActor",
+      "opcode": 4353,
+      "ctda_index": 257,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 258,
+      "name": "GetUsedItemLevel",
+      "description": "",
+      "opcode": 4354,
+      "ctda_index": 258,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 259,
+      "name": "GetUsedItemActivate",
+      "description": "",
+      "opcode": 4355,
+      "ctda_index": 259,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 260,
+      "name": "SetWeather",
+      "description": "sw",
+      "opcode": 4356,
+      "ctda_index": 260,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Weather ID",
+          "type": 34
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 261,
+      "name": "ForceTakeCover",
+      "description": "TakeCover",
+      "opcode": 4357,
+      "ctda_index": 261,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        },
+        {
+          "name": "Value",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 262,
+      "name": "ModBarterGold",
+      "description": "",
+      "opcode": 4358,
+      "ctda_index": 262,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 263,
+      "name": "SetBarterGold",
+      "description": "",
+      "opcode": 4359,
+      "ctda_index": 263,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 264,
+      "name": "GetBarterGold",
+      "description": "",
+      "opcode": 4360,
+      "ctda_index": 264,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 265,
+      "name": "IsTimePassing",
+      "description": "",
+      "opcode": 4361,
+      "ctda_index": 265,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 266,
+      "name": "IsPleasant",
+      "description": "",
+      "opcode": 4362,
+      "ctda_index": 266,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 267,
+      "name": "IsCloudy",
+      "description": "",
+      "opcode": 4363,
+      "ctda_index": 267,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 268,
+      "name": "TrapUpdate",
+      "description": "",
+      "opcode": 4364,
+      "ctda_index": 268,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 269,
+      "name": "SetQuestObject",
+      "description": "",
+      "opcode": 4365,
+      "ctda_index": 269,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Object",
+          "type": 21
+        },
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 270,
+      "name": "ForceActorValue",
+      "description": "ForceAV",
+      "opcode": 4366,
+      "ctda_index": 270,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor Value",
+          "type": 5
+        },
+        {
+          "name": "Amount",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 271,
+      "name": "ModPCSkill",
+      "description": "ModPCS",
+      "opcode": 4367,
+      "ctda_index": 271,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Actor Value",
+          "type": 5
+        },
+        {
+          "name": "Amount",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 272,
+      "name": "ModPCAttribute",
+      "description": "ModPCA",
+      "opcode": 4368,
+      "ctda_index": 272,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Actor Value",
+          "type": 5
+        },
+        {
+          "name": "Amount",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 273,
+      "name": "EnableFastTravel",
+      "description": "EnableFast",
+      "opcode": 4369,
+      "ctda_index": 273,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 274,
+      "name": "GetArmorRatingUpperBody",
+      "description": "",
+      "opcode": 4370,
+      "ctda_index": 274,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 275,
+      "name": "GetParentRef",
+      "description": "",
+      "opcode": 4371,
+      "ctda_index": 275,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 276,
+      "name": "PlayBink",
+      "description": "",
+      "opcode": 4372,
+      "ctda_index": 276,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "String",
+          "type": 0
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 277,
+      "name": "GetBaseActorValue",
+      "description": "GetBaseAV",
+      "opcode": 4373,
+      "ctda_index": 277,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor Value",
+          "type": 5
+        }
+      ]
+    },
+    {
+      "index": 278,
+      "name": "IsOwner",
+      "description": "",
+      "opcode": 4374,
+      "ctda_index": 278,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Owner(optional)",
+          "type": 36
+        }
+      ]
+    },
+    {
+      "index": 279,
+      "name": "SetOwnership",
+      "description": "",
+      "opcode": 4375,
+      "ctda_index": 279,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Owner(optional)",
+          "type": 36
+        }
+      ]
+    },
+    {
+      "index": 280,
+      "name": "IsCellOwner",
+      "description": "",
+      "opcode": 4376,
+      "ctda_index": 280,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Cell",
+          "type": 9
+        },
+        {
+          "name": "Owner(optional)",
+          "type": 36
+        }
+      ]
+    },
+    {
+      "index": 281,
+      "name": "SetCellOwnership",
+      "description": "",
+      "opcode": 4377,
+      "ctda_index": 281,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Cell",
+          "type": 9
+        },
+        {
+          "name": "Owner(optional)",
+          "type": 36
+        }
+      ]
+    },
+    {
+      "index": 282,
+      "name": "IsHorseStolen",
+      "description": "",
+      "opcode": 4378,
+      "ctda_index": 282,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 283,
+      "name": "SetCellFullName",
+      "description": "",
+      "opcode": 4379,
+      "ctda_index": 283,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Cell",
+          "type": 9
+        },
+        {
+          "name": "String",
+          "type": 0
+        }
+      ]
+    },
+    {
+      "index": 284,
+      "name": "SetActorFullName",
+      "description": "",
+      "opcode": 4380,
+      "ctda_index": 284,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "String",
+          "type": 0
+        }
+      ]
+    },
+    {
+      "index": 285,
+      "name": "IsLeftUp",
+      "description": "",
+      "opcode": 4381,
+      "ctda_index": 285,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 286,
+      "name": "IsSneaking",
+      "description": "",
+      "opcode": 4382,
+      "ctda_index": 286,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 287,
+      "name": "IsRunning",
+      "description": "",
+      "opcode": 4383,
+      "ctda_index": 287,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 288,
+      "name": "GetFriendHit",
+      "description": "",
+      "opcode": 4384,
+      "ctda_index": 288,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 289,
+      "name": "IsInCombat",
+      "description": "",
+      "opcode": 4385,
+      "ctda_index": 289,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 290,
+      "name": "SetPackDuration",
+      "description": "SPDur",
+      "opcode": 4386,
+      "ctda_index": 290,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Float",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 291,
+      "name": "PlayMagicShaderVisuals",
+      "description": "PMS",
+      "opcode": 4387,
+      "ctda_index": 291,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Effect Shader ID",
+          "type": 37
+        },
+        {
+          "name": "Time(optional)",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 292,
+      "name": "PlayMagicEffectVisuals",
+      "description": "PME",
+      "opcode": 4388,
+      "ctda_index": 292,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Magic Effect",
+          "type": 31
+        },
+        {
+          "name": "Time(optional)",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 293,
+      "name": "StopMagicShaderVisuals",
+      "description": "SMS",
+      "opcode": 4389,
+      "ctda_index": 293,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Effect Shader ID",
+          "type": 37
+        }
+      ]
+    },
+    {
+      "index": 294,
+      "name": "StopMagicEffectVisuals",
+      "description": "SME",
+      "opcode": 4390,
+      "ctda_index": 294,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Magic Effect",
+          "type": 31
+        }
+      ]
+    },
+    {
+      "index": 295,
+      "name": "ResetInterior",
+      "description": "",
+      "opcode": 4391,
+      "ctda_index": 295,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Cell",
+          "type": 9
+        }
+      ]
+    },
+    {
+      "index": 296,
+      "name": "IsAnimPlaying",
+      "description": "",
+      "opcode": 4392,
+      "ctda_index": 296,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 297,
+      "name": "SetActorAlpha",
+      "description": "SAA",
+      "opcode": 4393,
+      "ctda_index": 297,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Float",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 298,
+      "name": "EnableLinkedPathPoints",
+      "description": "",
+      "opcode": 4394,
+      "ctda_index": 298,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 299,
+      "name": "DisableLinkedPathPoints",
+      "description": "",
+      "opcode": 4395,
+      "ctda_index": 299,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 300,
+      "name": "IsInInterior",
+      "description": "",
+      "opcode": 4396,
+      "ctda_index": 300,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 301,
+      "name": "ForceWeather",
+      "description": "fw",
+      "opcode": 4397,
+      "ctda_index": 301,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Weather ID",
+          "type": 34
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 302,
+      "name": "ToggleActorsAI",
+      "description": "",
+      "opcode": 4398,
+      "ctda_index": 302,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 303,
+      "name": "IsActorsAIOff",
+      "description": "",
+      "opcode": 4399,
+      "ctda_index": 303,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 304,
+      "name": "SetInvestmentGold",
+      "description": "",
+      "opcode": 4400,
+      "ctda_index": 304,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 305,
+      "name": "GetInvestmentGold",
+      "description": "",
+      "opcode": 4401,
+      "ctda_index": 305,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 306,
+      "name": "IsActorUsingATorch",
+      "description": "",
+      "opcode": 4402,
+      "ctda_index": 306,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 307,
+      "name": "SetLevel",
+      "description": "",
+      "opcode": 4403,
+      "ctda_index": 307,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        },
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 308,
+      "name": "ResetFallDamageTimer",
+      "description": "",
+      "opcode": 4404,
+      "ctda_index": 308,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 309,
+      "name": "IsXBox",
+      "description": "",
+      "opcode": 4405,
+      "ctda_index": 309,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 310,
+      "name": "GetInWorldspace",
+      "description": "",
+      "opcode": 4406,
+      "ctda_index": 310,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "WorldSpace",
+          "type": 27
+        }
+      ]
+    },
+    {
+      "index": 311,
+      "name": "ModPCMiscStat",
+      "description": "ModPCMS",
+      "opcode": 4407,
+      "ctda_index": 311,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        },
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 312,
+      "name": "GetPCMiscStat",
+      "description": "GetPCMS",
+      "opcode": 4408,
+      "ctda_index": 312,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 313,
+      "name": "IsActorEvil",
+      "description": "",
+      "opcode": 4409,
+      "ctda_index": 313,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 314,
+      "name": "IsActorAVictim",
+      "description": "",
+      "opcode": 4410,
+      "ctda_index": 314,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 315,
+      "name": "GetTotalPersuasionNumber",
+      "description": "",
+      "opcode": 4411,
+      "ctda_index": 315,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 316,
+      "name": "SetScale",
+      "description": "",
+      "opcode": 4412,
+      "ctda_index": 316,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Float",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 317,
+      "name": "ModScale",
+      "description": "",
+      "opcode": 4413,
+      "ctda_index": 317,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Float",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 318,
+      "name": "GetIdleDoneOnce",
+      "description": "",
+      "opcode": 4414,
+      "ctda_index": 318,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 319,
+      "name": "KillAllActors",
+      "description": "killall",
+      "opcode": 4415,
+      "ctda_index": 319,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Actor (optional)",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 320,
+      "name": "GetNoRumors",
+      "description": "",
+      "opcode": 4416,
+      "ctda_index": 320,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 321,
+      "name": "SetNoRumors",
+      "description": "",
+      "opcode": 4417,
+      "ctda_index": 321,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 322,
+      "name": "Dispel",
+      "description": "",
+      "opcode": 4418,
+      "ctda_index": 322,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Magic Item",
+          "type": 11
+        }
+      ]
+    },
+    {
+      "index": 323,
+      "name": "WhichServiceMenu",
+      "description": "",
+      "opcode": 4419,
+      "ctda_index": 323,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 324,
+      "name": "TriggerHitShader",
+      "description": "ths",
+      "opcode": 4420,
+      "ctda_index": 324,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Float (Optional)",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 325,
+      "name": "RefreshTopicList",
+      "description": "",
+      "opcode": 4421,
+      "ctda_index": 325,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 326,
+      "name": "Reset3DState",
+      "description": "",
+      "opcode": 4422,
+      "ctda_index": 326,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 327,
+      "name": "IsRidingHorse",
+      "description": "",
+      "opcode": 4423,
+      "ctda_index": 327,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 328,
+      "name": "DispelAllSpells",
+      "description": "",
+      "opcode": 4424,
+      "ctda_index": 328,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 329,
+      "name": "IsTurnArrest",
+      "description": "",
+      "opcode": 4425,
+      "ctda_index": 329,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 330,
+      "name": "AddAchievement",
+      "description": "",
+      "opcode": 4426,
+      "ctda_index": 330,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 331,
+      "name": "DuplicateAllItems",
+      "description": "",
+      "opcode": 4427,
+      "ctda_index": 331,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Container (optional)",
+          "type": 26
+        },
+        {
+          "name": "Ownership Added (optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 332,
+      "name": "IsInDangerousWater",
+      "description": "",
+      "opcode": 4428,
+      "ctda_index": 332,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 333,
+      "name": "EssentialDeathReload",
+      "description": "",
+      "opcode": 4429,
+      "ctda_index": 333,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "String",
+          "type": 0
+        }
+      ]
+    },
+    {
+      "index": 334,
+      "name": "SetShowQuestItems",
+      "description": "",
+      "opcode": 4430,
+      "ctda_index": 334,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 335,
+      "name": "DuplicateNPCStats",
+      "description": "",
+      "opcode": 4431,
+      "ctda_index": 335,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor (optional)",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 336,
+      "name": "ResetHealth",
+      "description": "",
+      "opcode": 4432,
+      "ctda_index": 336,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 337,
+      "name": "SetIgnoreFriendlyHits",
+      "description": "sifh",
+      "opcode": 4433,
+      "ctda_index": 337,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 338,
+      "name": "GetIgnoreFriendlyHits",
+      "description": "gifh",
+      "opcode": 4434,
+      "ctda_index": 338,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 339,
+      "name": "IsPlayersLastRiddenHorse",
+      "description": "",
+      "opcode": 4435,
+      "ctda_index": 339,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 340,
+      "name": "SetActorRefraction",
+      "description": "sar",
+      "opcode": 4436,
+      "ctda_index": 340,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Float",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 341,
+      "name": "SetItemValue",
+      "description": "",
+      "opcode": 4437,
+      "ctda_index": 341,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 342,
+      "name": "SetRigidBodyMass",
+      "description": "",
+      "opcode": 4438,
+      "ctda_index": 342,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Float",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "index": 343,
+      "name": "ShowViewerStrings",
+      "description": "svs",
+      "opcode": 4439,
+      "ctda_index": 343,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 344,
+      "name": "ReleaseWeatherOverride",
+      "description": "rwo",
+      "opcode": 4440,
+      "ctda_index": 344,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 345,
+      "name": "SetAllReachable",
+      "description": "",
+      "opcode": 4441,
+      "ctda_index": 345,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 346,
+      "name": "SetAllVisible",
+      "description": "",
+      "opcode": 4442,
+      "ctda_index": 346,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 347,
+      "name": "SetNoAvoidance",
+      "description": "",
+      "opcode": 4443,
+      "ctda_index": 347,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 348,
+      "name": "SendTrespassAlarm",
+      "description": "",
+      "opcode": 4444,
+      "ctda_index": 348,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Actor",
+          "type": 6
+        }
+      ]
+    },
+    {
+      "index": 349,
+      "name": "SetSceneIsComplex",
+      "description": "",
+      "opcode": 4445,
+      "ctda_index": 349,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 350,
+      "name": "Autosave",
+      "description": "",
+      "opcode": 4446,
+      "ctda_index": 350,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 351,
+      "name": "StartMasterFileSeekData",
+      "description": "",
+      "opcode": 4447,
+      "ctda_index": 351,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 352,
+      "name": "DumpMasterFileSeekData",
+      "description": "",
+      "opcode": 4448,
+      "ctda_index": 352,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 353,
+      "name": "IsActor",
+      "description": "",
+      "opcode": 4449,
+      "ctda_index": 353,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 354,
+      "name": "IsEssential",
+      "description": "",
+      "opcode": 4450,
+      "ctda_index": 354,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 355,
+      "name": "PreloadMagicEffect",
+      "description": "",
+      "opcode": 4451,
+      "ctda_index": 355,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Magic Effect",
+          "type": 31
+        }
+      ]
+    },
+    {
+      "index": 356,
+      "name": "ShowDialogSubtitles",
+      "description": "",
+      "opcode": 4452,
+      "ctda_index": 356,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 357,
+      "name": "ForceCloseOblivionGate",
+      "description": "",
+      "opcode": 4453,
+      "ctda_index": 357,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer (Optional)",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 358,
+      "name": "IsPlayerMovingIntoNewSpace",
+      "description": "",
+      "opcode": 4454,
+      "ctda_index": 358,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 359,
+      "name": "CreateFullActorCopy",
+      "description": "",
+      "opcode": 4455,
+      "ctda_index": 359,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 360,
+      "name": "DeleteFullActorCopy",
+      "description": "",
+      "opcode": 4456,
+      "ctda_index": 360,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 361,
+      "name": "GetTimeDead",
+      "description": "",
+      "opcode": 4457,
+      "ctda_index": 361,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 362,
+      "name": "GetPlayerHasLastRiddenHorse",
+      "description": "",
+      "opcode": 4458,
+      "ctda_index": 362,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 363,
+      "name": "PurgeCellBuffers",
+      "description": "pcb",
+      "opcode": 4459,
+      "ctda_index": 363,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 364,
+      "name": "SetPlayerInSEWorld",
+      "description": "SPInSE",
+      "opcode": 4460,
+      "ctda_index": 364,
+      "takes_reference": false,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 365,
+      "name": "GetPlayerInSEWorld",
+      "description": "gpInSE",
+      "opcode": 4461,
+      "ctda_index": 365,
+      "takes_reference": false,
+      "params": []
+    },
+    {
+      "index": 366,
+      "name": "PushActorAway",
+      "description": "",
+      "opcode": 4462,
+      "ctda_index": 366,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "ObjectReferenceID",
+          "type": 4
+        },
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 367,
+      "name": "SetActorsAI",
+      "description": "",
+      "opcode": 4463,
+      "ctda_index": 367,
+      "takes_reference": true,
+      "params": [
+        {
+          "name": "Integer",
+          "type": 1
+        }
+      ]
+    },
+    {
+      "index": 368,
+      "name": "ClearOwnership",
+      "description": "",
+      "opcode": 4464,
+      "ctda_index": 368,
+      "takes_reference": true,
+      "params": []
+    },
+    {
+      "index": 369,
+      "name": "ADD NEW FUNCTIONS BEFORE THIS ONE!!!",
+      "description": "",
+      "opcode": 4465,
+      "ctda_index": 369,
+      "takes_reference": false,
+      "params": []
+    }
+  ]
+}
