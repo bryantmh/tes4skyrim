@@ -179,31 +179,99 @@ def _build_navmesh_grid(verts, tris, min_x, min_y, max_x, max_y, divisor):
 # ---------------------------------------------------------------------------
 
 
+# model_key -> (cx, cy) local-space XY midpoint of the door PANEL (largest mesh
+# shape), relative to the model origin (the REFR pivot).  Loaded from the
+# door-centres cache built in the SAME pass as collision + mesh bounds
+# (asset_convert.collision_extract.scan_mesh_data).  The REFR pivot sits on the
+# HINGE, not the opening; the panel midpoint is the point an actor walks
+# through, and where the Door Triangle belongs.
+_DOOR_CENTROIDS = {}
+
+
+def load_door_centroids(cache_path, quiet: bool = False) -> int:
+    """Load door panel centres from the cache built by scan_mesh_data.
+
+    cache_path: path to door_centers_cache.json (sits beside the bounds cache).
+    Keys are mesh_bounds-style ('tes4/...'), matching the door_fids map.
+    """
+    import json
+    _DOOR_CENTROIDS.clear()
+    if not cache_path or not os.path.exists(cache_path):
+        if not quiet:
+            print(f"  Door centres: cache not found ({cache_path})")
+        return 0
+    try:
+        with open(cache_path, encoding='utf-8') as fh:
+            raw = json.load(fh)
+        for k, v in raw.items():
+            _DOOR_CENTROIDS[k] = (float(v[0]), float(v[1]))
+        if not quiet:
+            print(f"  Door centres: loaded {len(_DOOR_CENTROIDS)} entries")
+        return len(_DOOR_CENTROIDS)
+    except (OSError, ValueError) as exc:
+        if not quiet:
+            print(f"  Door centres: could not load cache ({exc})")
+        return 0
+
+
+def _door_threshold(refr, model_key):
+    """World-space doorway centre of a door REFR: (x, y, z) or None.
+
+    THE REFR POSITION IS THE MODEL'S PIVOT (the HINGE), NOT THE DOORWAY.  The
+    doorway centre is the midpoint of the door mesh's bounding box (see
+    load_door_centroids), offset from the pivot and rotated into world space by
+    the ref's RotZ.  z stays at the REFR position (only used to pick the
+    storey).  Returns None when no midpoint is known (falls back to raw pos).
+    """
+    if not model_key:
+        return None
+    c = _DOOR_CENTROIDS.get(model_key)
+    if c is None:
+        return None
+    scale = get_float(refr, 'XSCL.Scale', 1.0) or 1.0
+    rz = get_float(refr, 'RotZ') or 0.0
+    cosz, sinz = math.cos(rz), math.sin(rz)
+    lx, ly = c[0] * scale, c[1] * scale
+    wx = get_float(refr, 'PosX') + (lx * cosz - ly * sinz)
+    wy = get_float(refr, 'PosY') + (lx * sinz + ly * cosz)
+    return (wx, wy, get_float(refr, 'PosZ'))
+
+
 def _collect_doors(refr_recs, door_fids):
     """Return [(x, y, z, rot_z, ref_fid, is_teleport), ...] for door refs.
 
     A door is a REFR whose base is a DOOR (in door_fids) or that has an XTEL
     teleport. is_teleport distinguishes cross-cell doors (XTEL — link two
     navmeshes) from interior-only doors (same cell, just a passage).
+
+    door_fids maps raw low-24 DOOR base FormIDs to normalised model keys
+    (legacy plain sets still work — membership only, no centring).  The panel
+    centroid corrects the point from the REFR pivot (hinge) to the doorway
+    centre (see _door_threshold); z stays at the REFR position.
     """
     if not refr_recs:
         return []
-    door_fids = door_fids or set()
+    door_fids = door_fids or {}
+    is_map = isinstance(door_fids, dict)
     out = []
     for refr in refr_recs:
         name = refr.get('NAME', '')
         is_teleport = bool(refr.get('XTEL.Door'))
-        base_is_door = False
+        base = None
         if name:
             try:
-                base_is_door = (int(name, 16) & 0xFFFFFF) in door_fids
+                base = int(name, 16) & 0xFFFFFF
             except ValueError:
-                base_is_door = False
+                base = None
+        base_is_door = base is not None and base in door_fids
         if not (is_teleport or base_is_door):
             continue
         ref_fid = get_formid(refr, 'FormID')
-        out.append((get_float(refr, 'PosX'), get_float(refr, 'PosY'),
-                    get_float(refr, 'PosZ'), get_float(refr, 'RotZ'),
+        pt = _door_threshold(refr, door_fids.get(base)) if is_map else None
+        if pt is None:
+            pt = (get_float(refr, 'PosX'), get_float(refr, 'PosY'),
+                  get_float(refr, 'PosZ'))
+        out.append((pt[0], pt[1], pt[2], get_float(refr, 'RotZ'),
                     ref_fid, is_teleport))
     return out
 

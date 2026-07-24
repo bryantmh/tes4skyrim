@@ -26,7 +26,8 @@ _GEOM_CACHE: tuple = None
 
 def init_worker(base_model_by_fid: dict, door_fids: set, collision_cache: str,
                 formid_offset: int = 0, geom_cache: tuple = None,
-                injected_formids: dict = None, disable_gc: bool = True):
+                injected_formids: dict = None, disable_gc: bool = True,
+                door_centers_cache: str = None):
     """ProcessPool initializer: stash context; load the collision cache.
 
     Runs once per worker process.  A spawned child does NOT inherit the parent's
@@ -54,6 +55,13 @@ def init_worker(base_model_by_fid: dict, door_fids: set, collision_cache: str,
     if collision_cache:
         from asset_convert.collision_extract import load_collision
         load_collision(collision_cache, quiet=True)
+
+    # Door panel centroids: the REFR position is the door's hinge, not the
+    # doorway; _collect_doors offsets to the panel centre using these.  Module
+    # global in pgrd_to_navm, so each spawned worker must load its own copy.
+    if door_centers_cache:
+        from .pgrd_to_navm import load_door_centroids
+        load_door_centroids(door_centers_cache, quiet=True)
 
     # Generational GC is pure overhead in this worker and costs ~2x wall-clock.
     #

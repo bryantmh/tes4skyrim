@@ -177,6 +177,33 @@ ISLAND_DOOR_ZTOL = 128.0
 # cell's navmesh.  ~1.5 exterior cells.
 ISLAND_EDGE_MARGIN = 48.0
 
+# --- Corridor ribbons (Phase 1, corridor.py) --------------------------------------
+# Half-width of the flat ribbon laid down each pathgrid edge.  ~80u total sits
+# inside a standard ~110u Oblivion doorway with clearance for the jambs; wide
+# enough for a Skyrim NPC's path radius.  Phase 2 will grow this out to walls.
+RIBBON_HALF_WIDTH = 40.0
+# Spacing of cross-sections along an edge, so a long edge is several quads and
+# the ribbon can follow the pathgrid line's slope in Z rather than one flat
+# quad bridging the whole span.
+#
+# This ALSO sets how finely the overlap cut is resolved.  A quad between two
+# cross-sections is a straight sheet, but the boundary between two corridors'
+# owned ground bends at every junction, so a long quad paints outside the region
+# it owns.  Measured on AnvilFightersGuild (coverage / double-covered ground):
+#   32u -> 85.7% / 14.9%     16u -> 94.7% / 6.0%     8u -> 97.8% / 4.1%
+# 8u costs more triangles but is the difference between a corridor network that
+# is visibly stacked and one that is not.
+RIBBON_STEP = 8.0
+# How close a door-quad corner must be to a ribbon vertex to weld onto it
+# (share the index, hence a shared edge -> adjacency).  Half a ribbon width:
+# tight enough not to fuse across a real gap, wide enough to catch the strip.
+RIBBON_WELD_EPS = 24.0
+# A dead-end pathgrid node (degree 1) has its ribbon extended this far past the
+# node along the edge direction: the pathgrid ends before the room does, so a
+# corridor that stopped at the last node would leave a gap in front of the wall
+# or door it was heading for.  ~one ribbon half-width reaches the threshold.
+RIBBON_END_EXTEND = 40.0
+
 # --- Limits ----------------------------------------------------------------------
 # Hard cap on grid dimension per cell; beyond this CS is coarsened.  Guards
 # memory on huge exterior cells.

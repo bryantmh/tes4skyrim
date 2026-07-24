@@ -202,11 +202,22 @@ def load_cell(export_dir, cell_arg, load_collision=True):
                         seen.add(key)
                         edges.append(key)
 
-    door_fids = {int(d['FormID'], 16) & 0xFFFFFF
-                 for d in by_type.get('DOOR', []) if d.get('FormID')}
+    # door_fids maps raw low-24 DOOR base FormID -> model key, so _collect_doors
+    # can correct the door point from the REFR pivot (hinge) to the panel centre
+    # via the door-centres cache (test-navmesh-2 centering; master used the raw
+    # offset hinge position).
+    door_fids = {}
+    for d in by_type.get('DOOR', []):
+        f = d.get('FormID')
+        if not f:
+            continue
+        m = get_str(d, 'Model.MODL') or get_str(d, 'MODL')
+        door_fids[int(f, 16) & 0xFFFFFF] = model_key(m) if m else None
 
     # Doors as build_navmesh wants them: (x, y, z, rot_z, is_teleport).
-    from tes5_import.pgrd_to_navm import _collect_doors
+    from tes5_import.pgrd_to_navm import _collect_doors, load_door_centroids
+    load_door_centroids(os.path.join(export_dir, 'door_centers_cache.json'),
+                        quiet=True)
     doors = [(x, y, z, r, tp)
              for (x, y, z, r, _f, tp) in _collect_doors(refrs, door_fids)]
 

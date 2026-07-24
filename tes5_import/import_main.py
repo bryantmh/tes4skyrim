@@ -954,17 +954,31 @@ def _build_base_model_index(by_type: dict) -> dict:
     return index
 
 
-def _build_door_fid_set(by_type: dict) -> set:
-    """Raw low-24 FormIDs of all DOOR base records (for navmesh door handling)."""
-    out = set()
+def _build_door_fid_set(by_type: dict) -> dict:
+    """Map raw low-24 DOOR base FormID -> normalised model key.
+
+    The model key ('tes4/<lower model path>.nif') matches the door_centers_cache
+    keys so _collect_doors can panel-centre each door (REFR pivot is the hinge,
+    not the doorway).  Membership of the map still doubles as the "is this a
+    DOOR base" test.
+    """
+    out = {}
     for rec in by_type.get('DOOR', []):
         fid_str = rec.get('FormID')
         if not fid_str:
             continue
         try:
-            out.add(int(fid_str, 16) & 0x00FFFFFF)
+            base = int(fid_str, 16) & 0x00FFFFFF
         except ValueError:
             continue
+        model = rec.get('Model.MODL') or rec.get('MODL')
+        if model:
+            key = 'tes4/' + model.lower().replace('\\', '/').lstrip('/')
+            if not key.endswith('.nif'):
+                key += '.nif'
+        else:
+            key = None
+        out[base] = key
     return out
 
 
@@ -1234,6 +1248,10 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
 
     n_workers = _navm_worker_count(len(jobs))
     geom_cache = _navmesh_geom_cache(collision_cache)
+    # Door panel-centroid cache sits beside the collision cache in export_dir.
+    door_centers_cache = (os.path.join(os.path.dirname(collision_cache),
+                                       'door_centers_cache.json')
+                          if collision_cache else None)
     print(f"  Generating {len(jobs)} navmeshes (PGRD->NAVM) "
           f"across {n_workers} processes...")
     t0 = time.time()
@@ -1246,7 +1264,8 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
         # navm_worker.init_worker.
         navm_worker.init_worker(base_model_by_fid, door_fids, collision_cache,
                                 formid_offset, geom_cache,
-                                get_injected_formids(), disable_gc=False)
+                                get_injected_formids(), disable_gc=False,
+                                door_centers_cache=door_centers_cache)
         for job in jobs:
             key, result = navm_worker.run_job(job)
             cache[key] = result
@@ -1258,7 +1277,7 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
                 initializer=navm_worker.init_worker,
                 initargs=(base_model_by_fid, door_fids, collision_cache,
                           formid_offset, geom_cache,
-                          get_injected_formids()),
+                          get_injected_formids(), True, door_centers_cache),
                 max_tasks_per_child=500) as ex:
             for key, result in ex.map(navm_worker.run_job, jobs,
                                       chunksize=chunksize):
