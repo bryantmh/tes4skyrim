@@ -221,6 +221,14 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
     # view are unioned separately and never flattened together.
     corridors = _build_corridor_strips(nodes, edges, node_z)
 
+    # Exterior meshes are clipped to their own cell rectangle so a cross-seam
+    # ribbon (built from a PGRI InterCell link, which reaches into the neighbour
+    # cell) stops exactly at the boundary plane — leaving a border edge on the
+    # seam for build_edge_links to stitch, without importing neighbour geometry.
+    cell_clip = None
+    if land_rec is not None:
+        cell_clip = (origin_x, origin_y, origin_x + 4096.0, origin_y + 4096.0)
+
     # Doors are computed FIRST, on the raw ribbon union: each door's footprint
     # (the flat quad bridging its base line to the nearest corridor edge) is fed
     # into the union as ordinary ground, and its BASE LINE is forced to be a
@@ -231,7 +239,7 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
     door_strips = []
     door_edges = []
     if door_list:
-        rv, rt = corridor_union.build_union_mesh(corridors)
+        rv, rt = corridor_union.build_union_mesh(corridors, cell_bounds=cell_clip)
         if rt:
             for fp in corridor_doors.door_footprints(rv, rt, door_list):
                 door_strips.append(corridor_union._poly_strip(fp['poly'],
@@ -239,7 +247,8 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
                 door_edges.append(fp['base'])
 
     verts, tris = corridor_union.build_union_mesh(
-        corridors, extra_strips=door_strips, door_edges=door_edges)
+        corridors, extra_strips=door_strips, door_edges=door_edges,
+        cell_bounds=cell_clip)
     if not tris:
         return [], []
 

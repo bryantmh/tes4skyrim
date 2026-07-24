@@ -127,10 +127,65 @@ DOOR_LINK_ALONG_WEIGHT = 2.0
 
 _CELL_SIZE = 4096.0
 
+# How far past the cell seam an InterCell exit point may sit and still be
+# treated as a genuine cross-cell link.  A valid exit lands in an orthogonally
+# adjacent cell, so it is within one cell width of this cell's border; anything
+# beyond two cells is CS garbage (see _collect_intercell).
+_INTERCELL_MAX_REACH = 2.0 * _CELL_SIZE
+
 
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
+
+def _collect_intercell(rec, points, origin_x, origin_y):
+    """Cross-cell pathgrid links from PGRI, as [(local_point, (x, y, z)), ...].
+
+    Each PGRI entry names a LOCAL point in this cell and the world-space EXIT
+    point it connects to in a NEIGHBOURING cell.  Oblivion's PGRI is padded with
+    uninitialised CS memory: entries whose LocalPoint is out of range, or whose
+    exit coordinates are denormalised / absurdly far from this cell, are garbage
+    and dropped (InterCell[1] in AnvilExterior: LocalPoint=17292, X=0,
+    Y~2.5e-41).  Only a plausible exit — finite, non-denormal, and within
+    _INTERCELL_MAX_REACH of the cell origin — survives.
+
+    origin_x/origin_y are this exterior cell's world origin (SW corner).  The
+    resulting edges make the corridor ribbon reach across the seam so the
+    downstream edge-link pass has real border edges to stitch.
+    """
+    count = get_int(rec, 'InterCellCount', 0)
+    if count <= 0:
+        return []
+    out = []
+    n = len(points)
+    for i in range(count):
+        lp = rec.get(f'InterCell[{i}].LocalPoint')
+        if lp is None:
+            continue
+        try:
+            lp = int(lp)
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= lp < n):
+            continue                      # LocalPoint out of range -> garbage
+        x = get_float(rec, f'InterCell[{i}].X')
+        y = get_float(rec, f'InterCell[{i}].Y')
+        z = get_float(rec, f'InterCell[{i}].Z')
+        if x is None or y is None or z is None:
+            continue
+        # Reject denormals / non-finite (CS-uninitialised memory) and exits too
+        # far from this cell to be an orthogonal neighbour.
+        if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
+            continue
+        if abs(x) < 1e-3 and abs(y) < 1e-3:
+            continue                      # (0,0,~0) padding
+        if (x < origin_x - _INTERCELL_MAX_REACH or
+                x > origin_x + _CELL_SIZE + _INTERCELL_MAX_REACH or
+                y < origin_y - _INTERCELL_MAX_REACH or
+                y > origin_y + _CELL_SIZE + _INTERCELL_MAX_REACH):
+            continue
+        out.append((lp, (x, y, z)))
+    return out
 
 def _tri_area_2d(ax, ay, bx, by, cx, cy) -> float:
     """Signed area of a 2D triangle (positive = CCW)."""
@@ -644,6 +699,24 @@ def convert_PGRD(rec: dict, writer=None,
             grid_y = get_int(cell_rec, 'XCLC.Y', 0)
         origin_x = grid_x * _CELL_SIZE
         origin_y = grid_y * _CELL_SIZE
+
+    # ---- Cross-cell (InterCell / PGRI) edges ----
+    # Exterior cell meshes are otherwise islands: the corridor ribbons stop at
+    # the last node INSIDE the cell, never reaching the seam, so the edge-link
+    # pass finds no border edges to stitch.  Each PGRI entry gives a local node
+    # and an exit point in the neighbour cell; adding a synthetic node at the
+    # exit and an edge to it lays a ribbon that crosses the boundary plane.  The
+    # ribbon is CLIPPED back to this cell in corridor_union, leaving a border
+    # edge exactly on the seam that build_edge_links can match.
+    if is_exterior:
+        for (lp, exit_xy) in _collect_intercell(rec, points, origin_x, origin_y):
+            new_idx = len(points)
+            points.append(exit_xy)
+            key = (min(lp, new_idx), max(lp, new_idx))
+            if key not in seen_edges:
+                seen_edges.add(key)
+                edges.append(key)
+        n = len(points)
 
     # ---- Water height ----
     water_z = None

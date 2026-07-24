@@ -443,20 +443,22 @@ def export_PGRD(rec: Record) -> list:
                     lines.append(f"Point[{i}].Edge[{j}]={target}")
                     flat_idx += 1
 
-    # PGRI — inter-cell connections (14 bytes each)
-    # Offset 0: U16 local point index, offset 2: 2×U8 pad,
-    # offset 4: float X, offset 8: float Y, offset 12: float Z (world coords in neighbour cell)
-    # Used to build edge links between navmeshes at cell borders.
+    # PGRI — inter-cell connections (16 bytes each; UESP TES4 PGRD ref).
+    # Offset 0: U32 local node number, offset 4/8/12: float X/Y/Z of the FOREIGN
+    # node (world coords in the neighbouring cell).  The earlier 14-byte /
+    # U16-local reading was WRONG on both count and field type: it misaligned
+    # every entry after the first into uninitialised memory (denormal floats,
+    # out-of-range node indices).  Used to build edge links between cell-border
+    # navmeshes.
     pgri = get_subrecord(rec, "PGRI")
     if pgri:
-        entry_count = len(pgri.data) // 14
+        entry_count = len(pgri.data) // 16
         if entry_count > 0:
             lines.append(f"InterCellCount={entry_count}")
             for i in range(entry_count):
-                off = i * 14
-                # Need off+4 .. off+16 for the three floats (12 bytes starting at +4)
+                off = i * 16
                 if off + 16 <= len(pgri.data):
-                    local_pt = struct.unpack_from('<H', pgri.data, off)[0]
+                    local_pt = struct.unpack_from('<I', pgri.data, off)[0]
                     x, y, z = struct.unpack_from('<fff', pgri.data, off + 4)
                     lines.append(f"InterCell[{i}].LocalPoint={local_pt}")
                     lines.append(f"InterCell[{i}].X={x}")

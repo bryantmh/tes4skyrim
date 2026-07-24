@@ -356,6 +356,49 @@ link-type mix, door-triangle counts, and internal consistency between
 link-flagged triangle edges and Edge Link entries. Exits non-zero while coverage
 is far below vanilla.
 
+### 🔴 Corridor redesign regressed edge links — the ribbons never reach the seam (found 2026-07-23)
+
+The pathgrid-corridor redesign (build.py/corridor*.py, "THE PATHGRID IS THE
+MESH") builds one flat ribbon per pathgrid EDGE. But `build_edge_links` matches
+triangle border edges lying within `SEAM_BAND` (24u) of the exact cell-boundary
+plane, and a corridor ribbon stops at the last pathgrid NODE **inside** the cell
+— it never reaches the seam. Result: only **182 edge links across 6,504
+exterior meshes**, every exterior cell an island again. Pinarus could leave his
+house (interior door works) but couldn't cross a single Anvil grid seam.
+
+**The missing input is PGRI (InterCell).** TES4 PGRD carries, besides the
+intra-cell `Point[i].Edge[j]` topology, a **PGRI array of cross-cell links**:
+each entry names a LOCAL node and the world-space EXIT point it connects to in a
+neighbouring cell. `convert_PGRD` built edges only from `Point.Edge` and ignored
+PGRI, so no ribbon ever crossed a boundary.
+
+**Fix (two parts):**
+1. **Export bug — PGRI is 16 bytes, not 14, and LocalNode is U32, not U16**
+   (UESP TES4 PGRD ref: `Local node number (long)`, then float X/Y/Z of the
+   FOREIGN node). The old 14-byte/U16 reading misaligned every entry after the
+   first into uninitialised CS memory (denormal floats ~1e-41, node indices like
+   17306). Fixed in `tes4_export/record_types/world.py::export_PGRD`. This is a
+   pure-dump correctness fix — it belongs in the export, per CLAUDE.md.
+2. **Import — build a cross-seam ribbon per valid PGRI link.**
+   `pgrd_to_navm._collect_intercell` parses PGRI, drops residual garbage
+   (LocalNode out of range, `(0,0,~0)` padding, non-finite / far-away exits),
+   and for each survivor appends a synthetic node at the exit point plus an edge
+   LocalNode→exit. The ribbon then physically crosses the boundary plane. To keep
+   each mesh inside its own cell, `corridor_union.build_union_mesh` takes a
+   `cell_bounds` rectangle (exterior only) and **clips the unioned coverage to it
+   with shapely** before triangulating — leaving a clean border edge exactly on
+   the seam for `build_edge_links` to stitch. Chosen over extending geometry into
+   the neighbour cell (the "clip at seam, links only" model).
+
+**Verified** on the 8 Anvil cells around Pinarus (worldspace 0x0001C31A, grid
+x −48..−46, y −9..−7) via `tools/navmesh_seam_probe.py`: before = 8 isolated
+islands; after = **104 reciprocal Portal links, all 8 cells in ONE connected
+component**. InterCell yield jumped with the export fix (e.g. grid (−47,−8):
+30→42 of 58 kept; total portals in the patch 30→104). `tools/navmesh_seam_probe.py
+--wrld <hex> --gx lo hi --gy lo hi` reports per-cell seam-edge counts, InterCell
+kept/raw, reciprocity, and the connected-component structure for a cell range —
+use it to spot-check a region without a full rebuild.
+
 ### 🔴 NAVI is a SINGLETON override + must mirror connectivity (found 2026-07-21)
 
 The edge-link stitching above was necessary but NOT sufficient — Arielle

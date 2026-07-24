@@ -452,7 +452,8 @@ def _ribbon_seeds(strips, target_edge):
 RIBBON_SEED_STEP = 24.0
 
 
-def build_union_mesh(strips, extra_strips=None, door_edges=None):
+def build_union_mesh(strips, extra_strips=None, door_edges=None,
+                     cell_bounds=None):
     """Union the corridor ribbons per storey and retriangulate.
 
     Returns (verts, tris) with 3D vertices.  Coverage is the exact union of the
@@ -467,8 +468,15 @@ def build_union_mesh(strips, extra_strips=None, door_edges=None):
     to appear as a triangle edge in the retriangulation, so every door gets one
     large triangle with its long side on the door line — the vanilla Skyrim door
     triangle — instead of whatever the generic mesh happens to lay there.
+
+    cell_bounds: (minx, miny, maxx, maxy) — when given (exterior cells), the
+    unioned coverage is CLIPPED to this rectangle before triangulation, so a
+    cross-seam ribbon (built from a PGRI InterCell link that reaches into the
+    neighbour cell) stops exactly on the boundary plane.  That leaves a border
+    edge on the seam for build_edge_links to stitch, while each mesh stays
+    strictly within its own cell.
     """
-    from shapely.geometry import Polygon, MultiPolygon
+    from shapely.geometry import Polygon, MultiPolygon, box
     from shapely.ops import unary_union
 
     if not strips:
@@ -493,8 +501,19 @@ def build_union_mesh(strips, extra_strips=None, door_edges=None):
     merged = unary_union(polys)
     if merged.is_empty:
         return [], []
-    parts = (list(merged.geoms) if isinstance(merged, MultiPolygon)
-             else [merged])
+    # Clip to the cell rectangle (exterior only): a cross-seam ribbon is cut at
+    # the boundary plane, and shapely re-polygonises the result cleanly.
+    if cell_bounds is not None:
+        minx, miny, maxx, maxy = cell_bounds
+        merged = merged.intersection(box(minx, miny, maxx, maxy))
+        if merged.is_empty:
+            return [], []
+    # The clip may turn one polygon into a MultiPolygon or drop degenerate
+    # slivers to lines/points inside a GeometryCollection; keep only polygons.
+    if hasattr(merged, 'geoms'):
+        parts = [g for g in merged.geoms if isinstance(g, Polygon)]
+    else:
+        parts = [merged] if isinstance(merged, Polygon) else []
 
     # Steep-ribbon centreline seeds, computed once for all parts.  A ribbon is
     # "steep" when a target_edge-long triangle laid on it would climb more than

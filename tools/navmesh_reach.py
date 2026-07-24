@@ -29,6 +29,8 @@ import sys
 import zlib
 from collections import defaultdict, deque
 
+import numpy as np
+
 
 # ---------------------------------------------------------------------------
 # ESM walking
@@ -96,13 +98,17 @@ class Mesh:
         p += 4
         nv = struct.unpack_from('<I', d, p)[0]
         p += 4
-        self.verts = [struct.unpack_from('<fff', d, p + i * 12)
-                      for i in range(nv)]
+        # Bulk-decode with numpy: per-element struct.unpack_from over 8k meshes
+        # (~400 MB of vert/tri data) is the tool's dominant cost.  verts is a
+        # (nv, 3) float32 view; tris is (nt, 8) int16 — the two trailing U16
+        # flag fields read fine as int16 for the bit tests used here.
+        self.verts = (np.frombuffer(d, dtype='<f4', count=nv * 3, offset=p)
+                      .reshape(nv, 3))
         p += nv * 12
         nt = struct.unpack_from('<I', d, p)[0]
         p += 4
-        self.tris = [struct.unpack_from('<6h2H', d, p + i * 16)
-                     for i in range(nt)]
+        self.tris = (np.frombuffer(d, dtype='<i2', count=nt * 8, offset=p)
+                     .reshape(nt, 8))
         p += nt * 16
         ne = struct.unpack_from('<I', d, p)[0]
         p += 4
