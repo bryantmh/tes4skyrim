@@ -31,10 +31,13 @@ satisfy.
 
 DOORS
 
-carve_doors runs first, on the raw ribbon mesh; the triangles it adds are handed
-back in as `extra_tris` and join the union as ordinary ground (see _tri_strip).
-The union then resolves their overlap with the corridor by construction — the
-door coverage is preserved exactly, nothing is deleted, no post-process runs.
+corridor_doors.door_footprints runs first, on the raw ribbon union; each door's
+flat footprint (the quad bridging its base line to the nearest corridor edge) is
+handed back as an `extra_strips` polygon and joins the union as ordinary ground,
+and its BASE LINE is passed as a `door_edges` constraint so the retriangulation
+forces one large triangle with its long side on the door line — the vanilla
+Skyrim door triangle.  The union resolves any overlap with the corridor by
+construction — the door coverage is preserved exactly, nothing is deleted.
 
 HEIGHT
 
@@ -86,34 +89,6 @@ def _ribbon_polygon(s):
         (bx - wx * h, by - wy * h),
         (ax - wx * h, ay - wy * h),
     ])
-
-
-def _tri_strip(tri):
-    """Wrap a finished triangle as a strip so the union treats it as ground.
-
-    Its centreline runs along the triangle's longest edge, which gives the
-    height lookup a sensible gradient across it, and 'poly' keeps its true
-    outline for the union.
-    """
-    pts = [(float(p[0]), float(p[1]), float(p[2])) for p in tri]
-    # longest edge as the axis
-    best = None
-    for i in range(3):
-        a, b = pts[i], pts[(i + 1) % 3]
-        d = math.hypot(b[0] - a[0], b[1] - a[1])
-        if best is None or d > best[0]:
-            best = (d, a, b)
-    length, a, b = best
-    length = length or 1.0
-    ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
-    half = max(1.0, 0.5 * length)
-    return {
-        'edge': (-1, -1),
-        'na': a, 'nb': b, 'a': a, 'b': b,
-        'u': (ux, uy), 'w': (-uy, ux),
-        'half': half, 'len': length,
-        'poly': [(p[0], p[1]) for p in pts],
-    }
 
 
 def _poly_strip(poly2d, z):
