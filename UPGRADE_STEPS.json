@@ -423,6 +423,20 @@
       "6. Import",
       "11. Pack BSAs",
       "12. Pack Mod Zip"
+    ],
+    "0.581": [
+      "1. Export",
+      "2. Extract",
+      "3. Meshes",
+      "4. SpeedTrees",
+      "5. Creatures",
+      "6. Import",
+      "7. Sounds",
+      "8. Scripts",
+      "9. LOD",
+      "10. Patch Skyrim",
+      "11. Pack BSAs",
+      "12. Pack Mod Zip"
     ]
   }
 }
