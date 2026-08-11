@@ -41,7 +41,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from subprocess_flags import POPEN_FLAGS  # noqa: E402
+from subprocess_flags import POPEN_FLAGS, windows_cmd, to_wine_path  # noqa: E402
 from tes5_import.writer import pack_tes4_header  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -219,13 +219,18 @@ def _run_bsarch(
 ) -> bool:
     """Invoke BSArch on a staged directory.  Returns True on success."""
     bsa_name = bsa_path.name
-    cmd = [bsarch, 'pack', str(stage_root), str(bsa_path), '-sse', '-mt']
+    # BSArch resolves a plain '/'-leading output path relative to the input
+    # directory instead of as absolute (verified under Wine 11.0: without
+    # this it wrote "Z:\<stage_root>\<bsa_path>" and failed "Path not
+    # found") -- to_wine_path no-ops on Windows.
+    cmd = [bsarch, 'pack', to_wine_path(str(stage_root)),
+           to_wine_path(str(bsa_path)), '-sse', '-mt']
     if compress:
         cmd.append('-z')
 
     try:
         completed = subprocess.run(
-            cmd,
+            windows_cmd(cmd),
             capture_output=True,
             text=True,
             timeout=1800,     # 30-minute cap for very large archives

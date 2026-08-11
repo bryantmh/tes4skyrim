@@ -80,6 +80,12 @@ def python_version_warning() -> 'str | None':
     got = '.'.join(str(n) for n in have)
     older = have < SUPPORTED_PYTHON
     suffix = sysconfig.get_config_var('EXT_SUFFIX') or '.pyd'
+    if sys.platform == 'win32':
+        toolchain_note = (
+            '  That needs "Build Tools for Visual Studio" with the C++ workload\n'
+            '  (a full Visual Studio install is not required).\n')
+    else:
+        toolchain_note = '  That needs g++ or clang++ on PATH.\n'
     return (
         f'Running on Python {got}; this project is built and validated against '
         f'Python {want}{"+" if older else ""}.\n'
@@ -91,8 +97,7 @@ def python_version_warning() -> 'str | None':
         f'\n'
         f'      python native/build.py\n'
         f'\n'
-        f'  That needs "Build Tools for Visual Studio" with the C++ workload\n'
-        f'  (a full Visual Studio install is not required).\n'
+        f'{toolchain_note}'
         f'  This interpreter expects: _navgrow_native{suffix}'
     )
 
@@ -155,17 +160,30 @@ def _bundled_exe(rel: str, name: str, purpose: str,
     is incomplete (a partial clone, an antivirus quarantine, or a manual
     delete), so the instruction is to restore it from git, not to go and find
     it somewhere.
+
+    Off Windows these bundled .exe files run under Wine (subprocess_flags.
+    windows_cmd wraps every invocation) -- verified by hand against BSArch,
+    hkxcmd, papyrus.exe, LODGenx64.exe and the mopp bridge under Wine 11.0, all
+    running correctly with ordinary Linux paths as arguments. So the exe itself
+    being present is not sufficient there; wine has to be on PATH too.
     """
     path = SCRIPT_DIR / rel
-    if path.is_file():
-        return None
-    install = (f'This binary ships with the repo. Restore it:\n'
-               f'git checkout -- {rel}\n'
-               f'(if that does not restore it, your antivirus may have '
-               f'quarantined it)')
-    if extra:
-        install += f'\n{extra}'
-    return Missing(name, purpose, install, f'expected at {path}')
+    if not path.is_file():
+        install = (f'This binary ships with the repo. Restore it:\n'
+                   f'git checkout -- {rel}\n'
+                   f'(if that does not restore it, your antivirus may have '
+                   f'quarantined it)')
+        if extra:
+            install += f'\n{extra}'
+        return Missing(name, purpose, install, f'expected at {path}')
+    if sys.platform != 'win32' and not shutil.which('wine'):
+        return Missing(
+            'wine',
+            f'Running the bundled Windows tool {name} on this platform',
+            'Install wine (e.g. `apt install wine` / `pacman -S wine` / '
+            '`brew install --cask wine-stable`)',
+            f'{name} is present at {path}, but off Windows it needs wine to run')
+    return None
 
 
 def _ffmpeg() -> 'Missing | None':
@@ -215,10 +233,27 @@ def _lipgenerator() -> 'Missing | None':
     )
 
 
+def _load_config() -> dict:
+    """Best-effort read of conversion_config.json (empty dict on any failure).
+
+    winreg is Windows-only, so registry-based game-path detection returns
+    nothing off Windows; conversion_config.json's tes4DataPath/tes5DataPath
+    are the Linux/Mac equivalent. Reading it here lets these preflight checks
+    match what convert.py's own find_game_path() would resolve, instead of
+    reporting Skyrim SE as missing when the user has simply pointed the config
+    at it.
+    """
+    from convert import load_config
+    try:
+        return load_config()
+    except Exception:
+        return {}
+
+
 def _papyrus_headers() -> 'Missing | None':
     """Skyrim's own .psc headers, which every converted script compiles against."""
     from convert import find_game_path
-    data = find_game_path('skyrimse')
+    data = find_game_path('skyrimse', _load_config())
     if data:
         src = Path(data) / 'Source' / 'Scripts'
         if src.is_dir() and (src / 'Debug.psc').is_file():
@@ -238,7 +273,7 @@ def _papyrus_headers() -> 'Missing | None':
 
 def _creation_kit_installed() -> bool:
     from convert import find_game_path
-    return bool(find_game_path('skyrimse'))
+    return bool(find_game_path('skyrimse', _load_config()))
 
 
 # ---------------------------------------------------------------------------

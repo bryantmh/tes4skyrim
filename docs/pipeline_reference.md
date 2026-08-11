@@ -8,7 +8,9 @@ command lines see [python_tools_reference.md](python_tools_reference.md).
 
 `convert.py` at the repo root drives every stage, reading the file list from
 `conversion_config.json` in dependency order. Masters are auto-detected from
-the TES4 binary headers; game data paths come from the Windows registry.
+the TES4 binary headers; game data paths come from the Windows registry, or
+from `conversion_config.json` on any OS (see
+[Running off Windows](#running-off-windows) below).
 
 ```bash
 python convert.py                          # full pipeline
@@ -79,6 +81,68 @@ python -m pytest tests/test_import.py -v          # targeted tests only
 ```json
 { "files": ["Oblivion.esm", "Knights.esp"] }
 ```
+
+`tes4DataPath` / `tes5DataPath` (Oblivion's and Skyrim SE's `Data` folders)
+and `bsarchPath` (an explicit BSArch.exe location) are also read from here —
+see [Running off Windows](#running-off-windows) for why these matter more on
+Linux/Mac than on Windows.
+
+<a id="running-off-windows"></a>
+### Running off Windows (Linux / Mac, via Wine)
+
+The pipeline runs off Windows. Two things differ from a Windows setup; nothing
+else does — every bundled tool, code path and config key behaves identically
+either way.
+
+1. **Install Wine.** `subprocess_flags.windows_cmd()` transparently prepends
+   `wine` to every invocation of a bundled `.exe` (BSArch, hkxcmd, the papyrus
+   compiler, LODGen, the Havok mopp bridge) when not on Windows — callers never
+   branch on platform themselves. Verified by hand under Wine 11.0: all five
+   run correctly with ordinary Linux paths as arguments, no prefix or drive
+   mapping needed for any of them, with ONE exception -- `hkxcmd.exe` parses
+   its own argv and treats a leading `/` as a switch prefix, silently
+   swallowing an absolute POSIX path as an unrecognised flag. Every call site
+   already routes through `asset_convert/hkx_xml.py`'s `_to_hkxcmd_path()`,
+   which prefixes Wine's `Z:` drive and swaps in backslashes for that one tool
+   only — nothing else needs it, and this is transparent to callers.
+
+   `xWMAEncode.exe` and `LipGenerator.exe` are not redistributable and are not
+   verified under Wine in this repo (no copy was available to test with), but
+   they're wrapped through the same `windows_cmd()` path and should work the
+   same way once placed in `external/xwmaencode/` / `external/lipgen/`.
+   `ffmpeg` is unaffected — it ships native Linux/Mac builds, so
+   `find_ffmpeg()` resolves the system binary directly and `windows_cmd()`
+   no-ops for it (it only ever wraps a literal `.exe`).
+
+   `preflight.py` reports a missing `wine` the same way it reports a missing
+   `.exe` -- as a blocking dependency for whichever phase needs it.
+
+2. **`winreg`-based game-path auto-detection is Windows-only**, so
+   `conversion_config.json`'s `tes4DataPath` / `tes5DataPath` are the
+   equivalent everywhere else: set them to Oblivion's and Skyrim SE's `Data`
+   folders and every phase that would otherwise consult the registry
+   (script compilation's header lookup, `asset_convert/skyrim_assets.py`'s
+   vanilla-asset lookup, `preflight.py`'s checks, …) picks it up. This is
+   checked FIRST everywhere, so it also works as a registry override on
+   Windows if the registry ever points at the wrong install; left blank (the
+   default) it changes nothing there.
+
+3. **The compiled navmesh extension** (`native/dist/_navgrow_native*`) is a
+   `.pyd` on Windows and a `.so` elsewhere, selected automatically by Python's
+   own `EXT_SUFFIX` (`tes5_import/navmesh/_native_loader.py` already handles
+   this — no code differs). Only the Windows `.pyd` ships in the repo; build
+   the local one with:
+
+   ```bash
+   python native/build.py
+   ```
+
+   `native/build.py` looks for `g++`/`clang++`/`c++` on PATH off Windows (MSVC
+   via `vswhere` on Windows, unchanged). `native/src/grow.cpp` is portable
+   C++17 against only `Python.h` and numpy's C API, so it compiles unmodified
+   either way — verified by building and running it through
+   `tests/test_pgrd_navm.py`'s native-extension tests (grow_strips/levels_at,
+   including the guard-rail cases) under g++ 14 on Linux.
 
 ### Caching
 

@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from subprocess_flags import POPEN_FLAGS  # noqa: E402
+from subprocess_flags import POPEN_FLAGS, windows_cmd, to_wine_path  # noqa: E402
 
 HKXCMD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                       'external', 'hkxcmd', 'hkxcmd.exe')
@@ -185,14 +185,26 @@ def fmt_qtransform_rot(q_xyzw) -> str:
     return fmt_vec(*q_xyzw)
 
 
+# hkxcmd's own argv parser treats a leading '/' as a switch prefix, so an
+# absolute POSIX path run under Wine is silently swallowed as an unknown flag
+# (verified under Wine 11.0: the plain path dumps hkxcmd's usage text instead
+# of running; the Wine 'Z:' + backslash form round-trips to the correct file,
+# matching the documented native-Windows forward-slash crash, 0xC0000417).
+# xWMAEncode has the identical bug (also verified), so this is the shared
+# subprocess_flags helper, not an hkxcmd-only one -- kept under this name
+# since asset_convert/kf_writer.py and tools/creature_hkx_diff.py import it.
+_to_hkxcmd_path = to_wine_path
+
+
 def _run_hkxcmd(args, out_path):
     # hkxcmd CRASHES (0xC0000417) on forward-slash paths — always pass
     # absolute backslash paths.  Output paths MUST end in .hkx/.xml/.hkt:
     # any other extension makes hkxcmd treat the path as a DIRECTORY and
     # write <out_path>\<basename> instead (and crash if the real
     # destination already exists as a directory from an earlier mishap).
-    res = subprocess.run([HKXCMD] + args, capture_output=True, text=True,
-                         **POPEN_FLAGS)
+    cmd_args = [_to_hkxcmd_path(a) for a in args]
+    res = subprocess.run(windows_cmd([HKXCMD] + cmd_args),
+                         capture_output=True, text=True, **POPEN_FLAGS)
     if res.returncode != 0 or not os.path.isfile(out_path):
         raise RuntimeError(
             f'hkxcmd {" ".join(args)} failed ({res.returncode}):\n'

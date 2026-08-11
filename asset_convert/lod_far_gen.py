@@ -737,15 +737,18 @@ def generate_tree_billboard_far(dst_path: Path, obnd, model_rel: str,
     False if the billboard texture doesn't exist (caller falls back to
     geometry decimation).
     """
+    from .lod_gen import _win_join
+
     stem = os.path.splitext(os.path.basename(
         model_rel.replace('\\', '/')))[0].lower()
     diffuse_rel = f'{_BILLBOARD_TEX_DIR}\\{stem}.dds'
-    if not (tex_root / diffuse_rel).exists():
+    if not _win_join(tex_root, diffuse_rel).exists():
         return False
     normal_rel = f'{_BILLBOARD_TEX_DIR}\\{stem}_n.dds'
-    if not (tex_root / normal_rel).exists():
+    normal_path = _win_join(tex_root, normal_rel)
+    if not normal_path.exists():
         try:
-            _write_billboard_flat_normal(tex_root / normal_rel)
+            _write_billboard_flat_normal(normal_path)
         except Exception:
             return False
 
@@ -858,6 +861,22 @@ def generate_tree_billboard_far(dst_path: Path, obnd, model_rel: str,
 # Public API
 # ---------------------------------------------------------------------------
 
+# Bounded per-process error visibility: _far.nif generation runs across many
+# worker processes and thousands of models, so an unbounded print per failure
+# would flood the log -- but printing NOTHING (the previous behaviour) left
+# "generated 0 (77 failed)" with no way to diagnose it. Same cap pattern as
+# bsa_extract.py's own error reporting.
+_far_nif_errors_reported = 0
+
+
+def _report_far_nif_error(what: str, exc: Exception) -> None:
+    global _far_nif_errors_reported
+    if _far_nif_errors_reported >= 5:
+        return
+    _far_nif_errors_reported += 1
+    print(f'    _far.nif error ({what}): {type(exc).__name__}: {exc}')
+
+
 def generate_far_nif(src_path: Path, dst_path: Path,
                      decimate_ratio: float = _DECIMATE_RATIO,
                      cap: int = _MAX_TARGET_VERTS,
@@ -896,7 +915,8 @@ def _read_skyrim_nif(src_path: Path):
             if nif_data.version != _SKYRIM_VER:
                 return None
             nif_data.read(fh)
-    except Exception:
+    except Exception as exc:
+        _report_far_nif_error(f'read {src_path}', exc)
         return None
     return nif_data
 
@@ -919,7 +939,8 @@ def _decimate_and_write(nif_data, src_stem: str, dst_path: Path,
     buf = io.BytesIO()
     try:
         nif_data.write(buf)
-    except Exception:
+    except Exception as exc:
+        _report_far_nif_error(f'write {dst_path}', exc)
         return False
 
     with open(dst_path, 'wb') as fh:
@@ -971,7 +992,8 @@ def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
     Returns the number of _far.nif files successfully created.
     """
     from .lod_gen import (_FLAG_DISTANT_LOD, _FLAG_WORLD_MAP, _far_nif_path,
-                          _mesh_exists, _LOD8_MIN_SIZE, _obnd_max_dim)
+                          _mesh_exists, _LOD8_MIN_SIZE, _obnd_max_dim,
+                          _win_join)
     import multiprocessing as mp
 
     if workers is None:
@@ -998,10 +1020,10 @@ def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
         rel = model.lower().replace('/', '\\').lstrip('\\')
         if rel.startswith('meshes\\'):
             rel = rel[len('meshes\\'):]
-        src = output_meshes_dir / rel
+        src = _win_join(output_meshes_dir, rel)
 
         far_rel = _far_nif_path(rel.replace('\\', '/')).replace('/', '\\')
-        dst = output_meshes_dir / far_rel
+        dst = _win_join(output_meshes_dir, far_rel)
 
         far_exists = dst.exists()
         if far_exists:

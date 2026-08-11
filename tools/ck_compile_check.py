@@ -25,6 +25,9 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from subprocess_flags import windows_cmd  # noqa: E402
+
 SSE = r'C:\Program Files (x86)\Steam\steamapps\common\Skyrim Special Edition'
 CK = os.path.join(SSE, 'Papyrus Compiler', 'PapyrusCompiler.exe')
 # The native type headers (MiscObject.psc, GlobalVariable.psc, Package.psc,
@@ -72,8 +75,8 @@ def compile_one(script_name: str, out_dir: str) -> tuple:
            f'-output={out_dir}',
            f'-f={os.path.basename(FLAGS)}']
     try:
-        r = subprocess.run(cmd, cwd=OUR_SRC, capture_output=True, text=True,
-                           timeout=120)
+        r = subprocess.run(windows_cmd(cmd), cwd=OUR_SRC, capture_output=True,
+                           text=True, timeout=120)
         out = ((r.stdout or '') + (r.stderr or '')).replace('\x00', '')
         # CK compiler prints "Compilation succeeded." on success and
         # "compilation failed" / "N error(s)" with N>0 on failure. Trust those

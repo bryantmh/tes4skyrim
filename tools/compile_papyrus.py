@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT))
+from subprocess_flags import windows_cmd  # noqa: E402
 
 def find_compiler():
     p = _PROJECT_ROOT / 'external' / 'papyrus-compiler' / 'papyrus.exe'
@@ -24,19 +26,36 @@ def find_compiler():
     raise FileNotFoundError('papyrus.exe not found')
 
 def find_skyrim_headers():
-    import winreg
-    for reg_key in [
-        r'SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition',
-        r'SOFTWARE\Bethesda Softworks\Skyrim Special Edition',
-    ]:
-        try:
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_key) as k:
-                path = winreg.QueryValueEx(k, 'Installed Path')[0]
-                headers = Path(path) / 'Data' / 'Source' / 'Scripts'
-                if (headers / 'Debug.psc').exists():
-                    return str(headers)
-        except OSError:
-            pass
+    # conversion_config.json's tes5DataPath first -- the only source off
+    # Windows, where winreg (below) doesn't exist.
+    sys.path.insert(0, str(_PROJECT_ROOT))
+    from convert import find_game_path, load_config
+    try:
+        cfg = load_config()
+    except (FileNotFoundError, OSError):
+        cfg = {}
+    data = find_game_path('skyrimse', cfg)
+    if data:
+        headers = Path(data) / 'Source' / 'Scripts'
+        if (headers / 'Debug.psc').exists():
+            return str(headers)
+    try:
+        import winreg
+    except ImportError:
+        winreg = None
+    if winreg:
+        for reg_key in [
+            r'SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition',
+            r'SOFTWARE\Bethesda Softworks\Skyrim Special Edition',
+        ]:
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_key) as k:
+                    path = winreg.QueryValueEx(k, 'Installed Path')[0]
+                    headers = Path(path) / 'Data' / 'Source' / 'Scripts'
+                    if (headers / 'Debug.psc').exists():
+                        return str(headers)
+            except OSError:
+                pass
     # Fallback
     p = Path(r'C:\Program Files (x86)\Steam\steamapps\common\Skyrim Special Edition\Data\Source\Scripts')
     if p.exists():
@@ -48,7 +67,7 @@ def compile_one(args):
     cmd = [compiler, 'compile', '-i', str(f), '-o', str(out_dir), '-h', headers]
     if polyfill_dir:
         cmd.extend(['-h', polyfill_dir])
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    r = subprocess.run(windows_cmd(cmd), capture_output=True, text=True, timeout=15)
     if r.returncode != 0:
         combined = r.stdout + '\n' + r.stderr
         for line in combined.split('\n'):

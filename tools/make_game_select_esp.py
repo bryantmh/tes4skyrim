@@ -40,6 +40,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from subprocess_flags import windows_cmd  # noqa: E402
 
 from tes5_import.writer import (pack_record, pack_subrecord, pack_tes4_header,
                                 pack_top_group, pack_string_subrecord,
@@ -396,8 +397,12 @@ def write_seq(outdir: str):
 def compile_scripts(outdir: str) -> bool:
     """Compile both plugin scripts against the Skyrim SE headers."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    from convert import _find_skyrim_source_scripts
-    headers = _find_skyrim_source_scripts()
+    from convert import _find_skyrim_source_scripts, load_config
+    try:
+        cfg = load_config()
+    except (FileNotFoundError, OSError):
+        cfg = {}
+    headers = _find_skyrim_source_scripts(cfg)
     if not headers:
         print('  ERROR: Skyrim Papyrus source headers not found '
               '(<Skyrim SE>\\Data\\Source\\Scripts)')
@@ -418,8 +423,8 @@ def compile_scripts(outdir: str) -> bool:
         # unchanged file silently produces no .pex without it.
         cmd = [compiler, 'compile', '-nocache', '-i', psc, '-o', out_dir,
                '-h', headers, '-h', src_dir]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=90,
-                           cwd=root)
+        r = subprocess.run(windows_cmd(cmd), capture_output=True, text=True,
+                           timeout=90, cwd=root)
         out = (r.stdout or '') + (r.stderr or '')
         pex = os.path.join(out_dir, name + '.pex')
         if r.returncode != 0 or not os.path.isfile(pex):
@@ -451,8 +456,12 @@ def main():
 
     skyrim_esm = args.skyrim_esm
     if not skyrim_esm:
-        from convert import find_game_path
-        data_path = find_game_path('skyrimse')
+        from convert import find_game_path, load_config
+        try:
+            cfg = load_config()
+        except (FileNotFoundError, OSError):
+            cfg = {}
+        data_path = find_game_path('skyrimse', cfg)
         if not data_path:
             print('  ERROR: Skyrim SE install not found; pass --skyrim-esm')
             return 1

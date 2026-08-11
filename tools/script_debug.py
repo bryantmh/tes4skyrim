@@ -48,6 +48,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from subprocess_flags import windows_cmd  # noqa: E402
+
 MARKER = 'tools/script_debug.py'
 
 _STATE_DECL_TMPL = '''
@@ -453,7 +456,7 @@ def compile_one(plugin, stem, headers):
     cmd = [exe, 'compile', '-nocache',
            '-i', os.path.join(src_dir(plugin), stem + '.psc'),
            '-o', out_dir(plugin), '-h', headers, '-h', src_dir(plugin)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(windows_cmd(cmd), capture_output=True, text=True)
     out = r.stdout + r.stderr
     ok = r.returncode == 0 and 'error' not in out.lower()
     if not ok:

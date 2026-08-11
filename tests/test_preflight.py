@@ -138,7 +138,13 @@ def test_version_warning_states_the_consequence_and_the_toolchain(monkeypatch, v
     w = preflight.python_version_warning()
     assert w is not None, f'no warning on Python {ver}'
     assert 'may run into issues' in w
-    assert 'Build Tools for Visual Studio' in w
+    # The toolchain named must match the platform actually running: MSVC on
+    # Windows, g++/clang++ everywhere else (native/build.py branches the same
+    # way -- see docs/pipeline_reference.md#running-off-windows).
+    if preflight.sys.platform == 'win32':
+        assert 'Build Tools for Visual Studio' in w
+    else:
+        assert 'g++' in w and 'clang++' in w
     assert 'python native/build.py' in w
     # It must name both the version in use and the one that is supported.
     assert '.'.join(str(n) for n in ver) in w

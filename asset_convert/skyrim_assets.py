@@ -44,8 +44,27 @@ def set_skyrim_data(path):
     _skyrim_data_cached = False
 
 
+def _config_tes5_path():
+    """tes5DataPath from conversion_config.json, or None.
+
+    winreg (below) is Windows-only, so off Windows this config entry is the
+    only auto-detection source. Read directly rather than importing convert.py
+    to avoid a dependency cycle; empty/absent by default, so this is a no-op
+    on a Windows machine that hasn't set it.
+    """
+    try:
+        import json
+        with open(_REPO / 'conversion_config.json', 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+        p = cfg.get('tes5DataPath', '') or ''
+        return p if p and os.path.isdir(p) else None
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+
+
 def find_skyrim_data():
-    """SSE Data folder: explicit override, else Windows registry.
+    """SSE Data folder: explicit override, else conversion_config.json, else
+    the Windows registry.
 
     PIPELINE USE ONLY. This returns the path to the LIVE, heavily-modded SSE
     install. Do NOT use it to go looking at vanilla assets, to check whether a
@@ -61,6 +80,10 @@ def find_skyrim_data():
     _skyrim_data = None
     if _skyrim_data_override and os.path.isdir(_skyrim_data_override):
         _skyrim_data = _skyrim_data_override
+        return _skyrim_data
+    configured = _config_tes5_path()
+    if configured:
+        _skyrim_data = configured
         return _skyrim_data
     try:
         import winreg

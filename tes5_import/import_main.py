@@ -2353,9 +2353,13 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
             # 1.4 MB, so no individual payload is near any limit). Bounding it
             # keeps the parent's queue flat; it did NOT fix the Nehrim
             # BrokenProcessPool, so it is a tidiness change, not the cure.
-            for key, result in ex.map(navm_worker.run_job, jobs,
-                                      chunksize=chunksize,
-                                      buffersize=n_workers * chunksize * 4):
+            # Executor.map() only grew this kwarg in Python 3.14 -- omit it on
+            # older 3.x (map() just buffers everything, the pre-3.14 behaviour
+            # this project ran with before the kwarg existed).
+            _map_kwargs = {'chunksize': chunksize}
+            if sys.version_info >= (3, 14):
+                _map_kwargs['buffersize'] = n_workers * chunksize * 4
+            for key, result in ex.map(navm_worker.run_job, jobs, **_map_kwargs):
                 cache[key] = result
 
     hits = sum(1 for (_b, m) in cache.values()

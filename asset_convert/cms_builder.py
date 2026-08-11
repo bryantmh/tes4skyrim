@@ -44,7 +44,7 @@ from .cms import decode_cms
 from .mopp import walk_mopp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from subprocess_flags import POPEN_FLAGS  # noqa: E402
+from subprocess_flags import POPEN_FLAGS, windows_cmd  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _MOPP_BRIDGE = str(_PROJECT_ROOT / 'external' / 'mopp_bridge'
@@ -80,8 +80,8 @@ def run_mopp_bridge(vertices, triangles, shape_keys, timeout=300):
                 'shape_keys': list(shape_keys),
             }, f)
         result = subprocess.run(
-            [_MOPP_BRIDGE, '--input', tmp_in, '--output', tmp_out,
-             '--no-stdout'],
+            windows_cmd([_MOPP_BRIDGE, '--input', tmp_in, '--output', tmp_out,
+                        '--no-stdout']),
             capture_output=True, timeout=timeout,
             **POPEN_FLAGS,
         )

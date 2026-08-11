@@ -6,16 +6,21 @@
 The compiled module lands in `native/dist/` and is loaded by path (see
 `tes5_import/navmesh/_native_loader.py`).  It is REQUIRED at runtime -- falling
 back to Python would make output depend on whether a build artifact happened to
-be present, which breaks byte-reproducibility -- so the .pyd is committed.
+be present, which breaks byte-reproducibility -- so the .pyd/.so is committed.
 
-MSVC is located through vswhere (Build Tools are enough; a full Visual Studio
-install is not required), so this works on a machine that has never opened an
-IDE.  Nothing here is invoked by the conversion pipeline itself; the .pyd is a
-build artifact you produce once.
+On Windows, MSVC is located through vswhere (Build Tools are enough; a full
+Visual Studio install is not required), so this works on a machine that has
+never opened an IDE. Off Windows, g++/clang++ from PATH build a .so instead --
+grow.cpp is portable C++17 (only Python.h/numpy's C API), so it compiles
+unmodified; verified by hand with g++ 14 producing a working
+_navgrow_native.cpython-3xx-x86_64-linux-gnu.so that imports and exposes
+grow_strips/levels_at. Nothing here is invoked by the conversion pipeline
+itself; the .pyd/.so is a build artifact you produce once.
 """
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -59,20 +64,17 @@ def find_vcvars():
     return None
 
 
-def build_one(name, src, vcvars, py_inc, np_inc, py_lib, ext_suffix, force):
-    """Compile one module; returns a shell return code (0 = ok)."""
-    target = os.path.join(OUT_DIR, name + ext_suffix)
-    if (not force and os.path.exists(target)
-            and os.path.getmtime(target) > os.path.getmtime(src)):
-        print('up to date:', target)
-        return 0
+def find_unix_compiler():
+    """Path to a C++ compiler for the non-Windows build, or None."""
+    for name in ('g++', 'clang++', 'c++'):
+        p = shutil.which(name)
+        if p:
+            return p
+    return None
 
-    # Per-module object dir: two modules compiled into ONE directory overwrite
-    # each other's .obj when a source basename repeats, and /GL then links stale
-    # code into the wrong .pyd.
-    obj_dir = os.path.join(ROOT, 'native', 'build', name)
-    os.makedirs(obj_dir, exist_ok=True)
 
+def _build_one_msvc(name, src, toolchain, py_inc, np_inc, py_lib, target, obj_dir):
+    vcvars = toolchain
     # /O2 optimise, /GL whole-program, /fp:precise so the compiler may NOT
     # reassociate float ops -- the geometry predicates compare against exact
     # thresholds and reassociation would change which branches are taken.
@@ -104,9 +106,51 @@ def build_one(name, src, vcvars, py_inc, np_inc, py_lib, ext_suffix, force):
             f'/OPT:REF /OPT:ICF\n')
     print('building', target)
     r = subprocess.run([bat], cwd=ROOT, shell=True)
-    if r.returncode != 0:
+    return r.returncode
+
+
+def _build_one_unix(name, src, toolchain, py_inc, np_inc, target, obj_dir):
+    compiler = toolchain
+    # -fPIC -shared for a loadable extension module. -O2 (no -ffast-math, so
+    # this stays strict-IEEE like MSVC's /fp:precise above -- same reasoning:
+    # the geometry predicates compare against exact thresholds). Extension
+    # modules resolve their Python/numpy C-API symbols against the interpreter
+    # that dlopen()s them, so -- unlike the MSVC path -- there is no
+    # link-time Python library to point at.
+    cmd = [
+        compiler, '-shared', '-fPIC', '-O2', '-std=c++17', '-Wall',
+        '-I', py_inc, '-I', np_inc,
+        '-o', target, src,
+    ]
+    print('building', target)
+    print('  ' + ' '.join(cmd))
+    r = subprocess.run(cmd, cwd=ROOT)
+    return r.returncode
+
+
+def build_one(name, src, toolchain, py_inc, np_inc, py_lib, ext_suffix, force):
+    """Compile one module; returns a shell return code (0 = ok)."""
+    target = os.path.join(OUT_DIR, name + ext_suffix)
+    if (not force and os.path.exists(target)
+            and os.path.getmtime(target) > os.path.getmtime(src)):
+        print('up to date:', target)
+        return 0
+
+    # Per-module object dir: two modules compiled into ONE directory overwrite
+    # each other's .obj when a source basename repeats, and /GL then links stale
+    # code into the wrong .pyd.
+    obj_dir = os.path.join(ROOT, 'native', 'build', name)
+    os.makedirs(obj_dir, exist_ok=True)
+
+    if sys.platform == 'win32':
+        rc = _build_one_msvc(name, src, toolchain, py_inc, np_inc, py_lib,
+                             target, obj_dir)
+    else:
+        rc = _build_one_unix(name, src, toolchain, py_inc, np_inc,
+                             target, obj_dir)
+    if rc != 0:
         print('BUILD FAILED:', name, file=sys.stderr)
-        return r.returncode
+        return rc
     print('ok:', target)
     return 0
 
@@ -121,20 +165,31 @@ def main():
     ext_suffix = sysconfig.get_config_var('EXT_SUFFIX') or '.pyd'
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    vcvars = find_vcvars()
-    if not vcvars:
-        print('ERROR: MSVC not found (looked via vswhere).\n'
-              'Install "Build Tools for Visual Studio" with the C++ workload.',
-              file=sys.stderr)
-        return 1
+    py_lib = None
+    if sys.platform == 'win32':
+        toolchain = find_vcvars()
+        if not toolchain:
+            print('ERROR: MSVC not found (looked via vswhere).\n'
+                  'Install "Build Tools for Visual Studio" with the C++ workload.',
+                  file=sys.stderr)
+            return 1
+        py_lib = os.path.join(sys.base_prefix, 'libs')
+    else:
+        toolchain = find_unix_compiler()
+        if not toolchain:
+            print('ERROR: no C++ compiler found (looked for g++, clang++, c++ '
+                  'on PATH).\n'
+                  'Install one (e.g. `apt install g++` / `pacman -S gcc` / '
+                  '`xcode-select --install`).',
+                  file=sys.stderr)
+            return 1
 
     py_inc = sysconfig.get_paths()['include']
     np_inc = numpy.get_include()
-    py_lib = os.path.join(sys.base_prefix, 'libs')
 
     todo = MODULES if not a.module else {a.module: MODULES[a.module]}
     for name, src in todo.items():
-        rc = build_one(name, src, vcvars, py_inc, np_inc, py_lib,
+        rc = build_one(name, src, toolchain, py_inc, np_inc, py_lib,
                        ext_suffix, a.force)
         if rc != 0:
             return rc

@@ -38,7 +38,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from subprocess_flags import POPEN_FLAGS  # noqa: E402
+from subprocess_flags import POPEN_FLAGS, windows_cmd, to_wine_path  # noqa: E402
 from worker_budget import worker_count  # noqa: E402
 
 # Use most CPUs – wmav2 is fast so many parallel ffmpeg processes help.
@@ -235,7 +235,7 @@ def generate_lip(lipgenerator: str, wav_path, text: str,
         return None
     try:
         r = subprocess.run(
-            [lipgenerator, wav_path.name, clean],
+            windows_cmd([lipgenerator, wav_path.name, clean]),
             cwd=str(wav_path.parent),
             capture_output=True, timeout=timeout,
             **POPEN_FLAGS,
@@ -318,13 +318,16 @@ def convert_file_to_xwm(src_path, dst_path, ffmpeg: str,
             lip_bytes = generate_lip(lipgenerator, wav_path, lip_text)
 
         # Stage 3: xWMAEncode → XWM
+        # xWMAEncode parses its own argv and treats a leading '/' as a switch
+        # prefix (same bug as hkxcmd, verified under Wine 11.0) -- to_wine_path
+        # no-ops on Windows and on the relative names above.
         cmd_xwm = [
             xwmaencode,
             '-b', '48000',          # 48 kbps (good balance for voice)
-            str(wav_path),
-            str(xwm_path),
+            to_wine_path(str(wav_path)),
+            to_wine_path(str(xwm_path)),
         ]
-        r2 = subprocess.run(cmd_xwm, capture_output=True, timeout=60,
+        r2 = subprocess.run(windows_cmd(cmd_xwm), capture_output=True, timeout=60,
                             **POPEN_FLAGS)
         if (r2.returncode != 0 or not xwm_path.is_file()
                 or xwm_path.stat().st_size == 0):
@@ -756,7 +759,10 @@ def organize_voice_files(
     if isinstance(lip_text, (str, Path)):
         lip_text = load_lip_text(lip_text)
 
-    voice_root = source_dir / 'sound' / 'Voice'
+    # BSA archives store every internal path lowercase (Windows' case-
+    # insensitive filesystem never surfaced this); bsa_extract.py preserves
+    # that casing verbatim, so the extracted folder is 'voice', not 'Voice'.
+    voice_root = source_dir / 'sound' / 'voice'
     if not voice_root.exists():
         print(f'  Voice directory not found: {voice_root}')
         return {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0,

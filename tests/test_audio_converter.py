@@ -286,7 +286,10 @@ def test_organize_voice_files_generates_fuz(tmp_path):
     """A voice line whose transcript is in lip_text comes out as .fuz; a line
     with no transcript stays .xwm."""
     plugin = 'Test.esm'
-    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    # BSA archives store every internal path lowercase (see
+    # asset_convert/audio_converter.py's organize_voice_files) -- the source
+    # fixture must match, the destination stays 'Voice' (our own convention).
+    voice_src = tmp_path / 'extract' / 'sound' / 'voice' / plugin / 'Nord' / 'M'
     voice_src.mkdir(parents=True, exist_ok=True)
     _make_wav(voice_src / 'hello_0000a1b2_1.wav', duration_s=0.5)
     _make_wav(voice_src / 'hello_0000c3d4_1.wav', duration_s=0.5)
@@ -419,7 +422,10 @@ def test_organize_voice_files_basic(tmp_path):
     """Voice files should be reorganised from TES4 layout to TES5 layout."""
     plugin = 'Test.esm'
     # Build TES4 voice layout: sound/Voice/<plugin>/Nord/M/<topic>_<fid>_0.wav
-    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    # BSA archives store every internal path lowercase (see
+    # asset_convert/audio_converter.py's organize_voice_files) -- the source
+    # fixture must match, the destination stays 'Voice' (our own convention).
+    voice_src = tmp_path / 'extract' / 'sound' / 'voice' / plugin / 'Nord' / 'M'
     voice_src.mkdir(parents=True, exist_ok=True)
     wav = _make_wav(voice_src / 'hello_0000a1b2_0.wav')
 
@@ -447,7 +453,10 @@ def test_organize_voice_files_uses_voice_map(tmp_path):
     """The importer's voicemap renames files to the prefix Skyrim will
     actually look up (converted owning-quest + topic EditorIDs)."""
     plugin = 'Test.esm'
-    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    # BSA archives store every internal path lowercase (see
+    # asset_convert/audio_converter.py's organize_voice_files) -- the source
+    # fixture must match, the destination stays 'Voice' (our own convention).
+    voice_src = tmp_path / 'extract' / 'sound' / 'voice' / plugin / 'Nord' / 'M'
     voice_src.mkdir(parents=True, exist_ok=True)
     _make_wav(voice_src / 'oldquest_oldtopic_0000a1b2_1.wav')
 
@@ -475,7 +484,10 @@ def test_organize_voice_files_prunes_renamed_leftovers(tmp_path):
     because the audio is present under the previous name.
     """
     plugin = 'Test.esm'
-    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    # BSA archives store every internal path lowercase (see
+    # asset_convert/audio_converter.py's organize_voice_files) -- the source
+    # fixture must match, the destination stays 'Voice' (our own convention).
+    voice_src = tmp_path / 'extract' / 'sound' / 'voice' / plugin / 'Nord' / 'M'
     voice_src.mkdir(parents=True, exist_ok=True)
     _make_wav(voice_src / 'src_topic_0000a1b2_1.wav')
     out_dir = (tmp_path / 'output' / 'sound' / 'Voice' / plugin
@@ -518,7 +530,10 @@ def test_organize_voice_files_prune_scope(tmp_path):
     outside the plugin root, and non-voice files anywhere, stay put.
     """
     plugin = 'Test.esm'
-    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    # BSA archives store every internal path lowercase (see
+    # asset_convert/audio_converter.py's organize_voice_files) -- the source
+    # fixture must match, the destination stays 'Voice' (our own convention).
+    voice_src = tmp_path / 'extract' / 'sound' / 'voice' / plugin / 'Nord' / 'M'
     voice_src.mkdir(parents=True, exist_ok=True)
     _make_wav(voice_src / 'q_t_0000a1b2_1.wav')
     out_root = tmp_path / 'output' / 'sound' / 'Voice' / plugin
@@ -550,7 +565,10 @@ def test_organize_voice_files_prune_scope(tmp_path):
 def test_organize_voice_files_no_match_counted(tmp_path):
     """Files that don't match the voice filename pattern are counted as no_match."""
     plugin = 'Test.esm'
-    voice_src = tmp_path / 'extract' / 'sound' / 'Voice' / plugin / 'Nord' / 'M'
+    # BSA archives store every internal path lowercase (see
+    # asset_convert/audio_converter.py's organize_voice_files) -- the source
+    # fixture must match, the destination stays 'Voice' (our own convention).
+    voice_src = tmp_path / 'extract' / 'sound' / 'voice' / plugin / 'Nord' / 'M'
     voice_src.mkdir(parents=True, exist_ok=True)
     (voice_src / 'notavoicefile.mp3').write_bytes(b'dummy')
 

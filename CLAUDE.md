@@ -423,7 +423,7 @@ relevant doc when working in that area.
 ### Pipeline & architecture
 | Doc | Covers |
 |---|---|
-| [pipeline_reference.md](docs/pipeline_reference.md) | Orchestrator commands, stages, caching, SKIP_TYPES, export text format, directory layout, SSEEdit verification |
+| [pipeline_reference.md](docs/pipeline_reference.md) | Orchestrator commands, stages, caching, SKIP_TYPES, export text format, directory layout, SSEEdit verification, running off Windows (Wine + native build) |
 | [python_tools_reference.md](docs/python_tools_reference.md) | Per-module and `tools/` debug utility command reference |
 | [performance_notes.md](docs/performance_notes.md) | Parallelism rules, determinism contract, navmesh optimisation results |
 | [override_conversion.md](docs/override_conversion.md) | Converting plugins with TES4 masters: export-diff authorship, GRUP nesting, ONAM, cell buckets, injected records |

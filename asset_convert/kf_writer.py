@@ -18,9 +18,9 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from subprocess_flags import POPEN_FLAGS  # noqa: E402
+from subprocess_flags import POPEN_FLAGS, windows_cmd  # noqa: E402
 from asset_convert import pyffi_monkey_patch  # noqa: F401
-from asset_convert.hkx_xml import HKXCMD
+from asset_convert.hkx_xml import HKXCMD, _to_hkxcmd_path
 from asset_convert.kf_decode import DecodedClip, decode_kf, split_root_motion
 from pyffi.formats.nif import NifFormat
 
@@ -133,7 +133,9 @@ def convertkf(skeleton_hkx: str, kf_path: str, out_hkx: str) -> None:
     kf_path = os.path.abspath(kf_path)
     out_hkx = os.path.abspath(out_hkx)
     os.makedirs(os.path.dirname(out_hkx), exist_ok=True)
-    res = subprocess.run([HKXCMD, 'convertkf', skeleton_hkx, kf_path, out_hkx],
+    cmd = [HKXCMD, 'convertkf', _to_hkxcmd_path(skeleton_hkx),
+           _to_hkxcmd_path(kf_path), _to_hkxcmd_path(out_hkx)]
+    res = subprocess.run(windows_cmd(cmd),
                          capture_output=True, text=True, **POPEN_FLAGS)
     if res.returncode != 0 or not os.path.exists(out_hkx):
         raise RuntimeError(f'hkxcmd convertkf failed ({res.returncode}) '

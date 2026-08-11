@@ -372,17 +372,25 @@ def extract_bsa(bsa_path, extract_dir, force=False, source_name=None):
 
         fp_lower = filepath.lower().replace('/', '\\')
         if fp_lower.startswith('meshes\\'):
-            out_rel = 'meshes/' + filepath[len('meshes\\'):]
+            category, rest = 'meshes', filepath[len('meshes\\'):]
         elif fp_lower.startswith('trees\\'):
-            out_rel = 'trees/' + filepath[len('trees\\'):]
+            category, rest = 'trees', filepath[len('trees\\'):]
         elif fp_lower.startswith('textures\\'):
-            out_rel = 'textures/' + filepath[len('textures\\'):]
+            category, rest = 'textures', filepath[len('textures\\'):]
         elif fp_lower.startswith('sound\\'):
-            out_rel = 'sound/' + filepath[len('sound\\'):]
+            category, rest = 'sound', filepath[len('sound\\'):]
         else:
-            out_rel = 'misc/' + filepath
+            category, rest = 'misc', filepath
 
-        out_path = base_dir / out_rel.replace('/', os.sep)
+        # BSA internal paths are always Bethesda/Windows-style backslash-
+        # separated, regardless of host OS -- os.sep is '/' on Linux, so a
+        # plain '/'-only replace leaves every inner backslash as a literal
+        # character in one flat filename instead of real subdirectories.
+        # Split explicitly and rejoin with Path so every segment becomes a
+        # real path component on any platform.
+        out_path = base_dir / category
+        for part in rest.replace('/', '\\').split('\\'):
+            out_path = out_path / part
 
         try:
             os.makedirs(out_path.parent, exist_ok=True)

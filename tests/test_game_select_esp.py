@@ -56,8 +56,12 @@ def skyrim_esm():
     """The MQ101 override is spliced from the installed Skyrim.esm, so these
     tests need the real game files."""
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from convert import find_game_path
-    data_path = find_game_path('skyrimse')
+    from convert import find_game_path, load_config
+    try:
+        cfg = load_config()
+    except (FileNotFoundError, OSError):
+        cfg = {}
+    data_path = find_game_path('skyrimse', cfg)
     if not data_path:
         pytest.skip('Skyrim SE install not found')
     path = os.path.join(data_path, 'Skyrim.esm')
