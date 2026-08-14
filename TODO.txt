@@ -101,3 +101,5 @@ Minor Issues:
 
 	17 - Pandora compatibility
 
+	18 - should not be able to teleport to places you haven't yet visited (all map markers are visible upon entering worldspace)
+
