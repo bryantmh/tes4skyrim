@@ -1,0 +1,39 @@
+--- old/tes5_import/pgrd_to_navm.py
++++ new/tes5_import/pgrd_to_navm.py
+@@ -666,17 +666,35 @@
+     # Ledge links: pick, on each linked triangle, the edge that has no
+     # neighbour and faces the other side — that is the lip the actor steps
+     # off.  Vanilla marks it with the per-edge link bit (0x0801/2/4).
++    #
++    # A pair is committed only if BOTH directions resolve an open edge.
++    # `_open_edge_towards` is evaluated independently per side, and slightly
++    # asymmetric geometry can make one side find a facing open edge while the
++    # other does not — a one-sided link CK's own loader flags as "Bad portal
++    # navmesh ID/triangle index ... the cell needs to be refinalized" (in-game
++    # confirmed: exactly 1 of 234,612 vanilla-verified portal links in a full
++    # Oblivion.esm conversion came out one-sided this way, in FortRayles).
++    # Skipping the half-resolved pair leaves that lip un-linked (no fall-
++    # through) instead of writing a reference the engine's own validator
++    # rejects.
+     link_bit = {}                       # tri -> edge-link flag bits
+     link_slot = {}                      # (tri, slot) -> link index
+     edge_links = []                     # (type, navm_fid, triangle)
+     for (hi, lo, _drop) in ledges:
+         if not (0 <= hi < len(tris) and 0 <= lo < len(tris)):
+             continue
++        pending = []
++        ok = True
+         for (ti, other, typ) in ((hi, lo, _EDGE_LINK_LEDGE_DOWN),
+                                  (lo, hi, _EDGE_LINK_LEDGE_UP)):
+             slot = _open_edge_towards(verts, tris, adj, ti, other)
+             if slot is None or (ti, slot) in link_slot:
+-                continue
++                ok = False
++                break
++            pending.append((ti, other, typ, slot))
++        if not ok:
++            continue
++        for (ti, other, typ, slot) in pending:
+             link_bit[ti] = link_bit.get(ti, 0) | _TRI_EDGE_LINK[slot]
+             link_slot[(ti, slot)] = len(edge_links)
+             edge_links.append((typ, navm_fid, other))

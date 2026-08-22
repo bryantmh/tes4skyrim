@@ -1,0 +1,53 @@
+--- old/tes5_import/navm_split.py
++++ new/tes5_import/navm_split.py
+@@ -203,13 +203,30 @@
+     return bytes(buf), verts_center, link_fids, door_refs, door_local
+ 
+ 
+-def split_disconnected_interiors(navm_cache: dict, writer) -> int:
+-    """Split every multi-component interior NAVM in the cache; returns the
+-    number of meshes split.  Mutates navm_cache in place: the root entry keeps
+-    its (bytes, meta) shape and gains meta['extra_navms'] = [(bytes, meta)...]
+-    for the sibling components, which the group builders emit alongside it.
++def split_disconnected_interiors(navm_cache: dict, writer,
++                                 door_xtel_target: dict = None) -> int:
++    """Split every multi-component interior NAVM in the cache that actually
++    needs it; returns the number of meshes split.  Mutates navm_cache in
++    place: the root entry keeps its (bytes, meta) shape and gains
++    meta['extra_navms'] = [(bytes, meta)...] for the sibling components,
++    which the group builders emit alongside it.
++
++    door_xtel_target: door REFR FormID -> its XTEL teleport-target door
++    FormID.  A cell's disconnection is only the CharacterGen-class bug (see
++    module docstring) when a same-cell door pair has its two ends in
++    DIFFERENT components — that is the one case the engine cannot route
++    without a split. Most disconnected interiors have no such pair (two
++    unrelated rooms that never interact via a scripted teleport): splitting
++    those serves no pathing purpose and only multiplies NAVM/NVMI records the
++    CK must revalidate on load. Measured on Oblivion.esm: 352 cells have
++    multiple components, but only 18 have a genuine same-cell door pair
++    spanning them — CK hung in 'Initializing References' with all 352 split
++    (confirmed live, unaffected by fixing an unrelated portal-link bug),
++    variance the plugin can't attribute to bad data once every check passes;
++    splitting only the 18 that need it is the generic fix, not a size cap.
+     """
+     split_count = 0
++    door_xtel_target = door_xtel_target or {}
+     for key in sorted(navm_cache):
+         navm_bytes, meta = navm_cache[key]
+         if not navm_bytes or not meta or meta.get('is_exterior'):
+@@ -219,6 +236,14 @@
+             continue
+         comp, ncomp = _components(nv.tris)
+         if ncomp <= 1:
++            continue
++
++        door_comp = {fid: comp[ti] for (ti, fid) in nv.doors}
++        needs_split = any(
++            (target := door_xtel_target.get(fid)) is not None
++            and target in door_comp and door_comp[target] != c
++            for fid, c in door_comp.items())
++        if not needs_split:
+             continue
+ 
+         # Components ordered by smallest member triangle (deterministic since

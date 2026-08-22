@@ -1,0 +1,158 @@
+--- old/tes5_import/record_types/world.py
++++ new/tes5_import/record_types/world.py
+@@ -63,6 +63,13 @@
+ # set_world_land_extents.
+ _WORLD_LAND_EXTENT: dict = {}
+ 
++# Every exterior grid square that actually has a CELL: {(WRLD FormID, gx, gy)}.
++# Paired with _DOOR_PLACEMENT (door REFR FormID -> (WRLD FormID, x, y, z)) so
++# convert_REFR can tell whether an XTEL destination lands on a real cell.
++# See set_teleport_grid.
++_WORLD_GRID_CELLS: set = set()
++_DOOR_PLACEMENT: dict = {}
++
+ # Above this magnitude, float32 `a -= 2*pi` no longer changes `a`, because
+ # 2*pi has fallen below the ULP.  2**24 * 2*pi is already ~1e8 iterations.
+ _ANGLE_STALL = (2 ** 24) * 2.0 * math.pi
+@@ -135,6 +142,33 @@
+     """
+     _WORLD_LAND_EXTENT.clear()
+     _WORLD_LAND_EXTENT.update(extents or {})
++
++
++def set_teleport_grid(grid_cells, door_placement: dict):
++    r"""Register what convert_REFR needs to sanity-check an XTEL destination.
++
++    Creation Kit's teleport-data init resolves the linked door and, when that
++    door stands in an EXTERIOR cell, re-derives the destination cell from the
++    worldspace grid using the XTEL's OWN coordinates.  It null-checks the door
++    and the door's parent cell, but NOT that grid lookup: the result is passed
++    straight on (`CreationKit.exe` 1.5.73 `+0x15f0893`) and the callee reads
++    `[this+0x10]` — EXCEPTION_ACCESS_VIOLATION reading 0x10 the moment the
++    square has no cell.  In CK that is not even a clean crash: CKPE's handler
++    parks the faulting thread in `Sleep`, and the main thread then spins
++    forever in `BSSpinLock::Lock`, so the editor "hangs" at 0% CPU during
++    "Initializing References".
++
++    Oblivion never validated this, because it teleports to the target door's
++    own parent cell and ignores the coordinates for that purpose.  So its data
++    contains pairs that simply disagree: `DAPeryiteDoorTEMPREF` stores an XTEL
++    position of (2036, 1785) — grid (0,0) — while its partner
++    `DAPeryiteDoorREFX` stands at (67326, 67976) — grid (16,16) — in a
++    worldspace whose cells span x[4,36] y[5,26]. Nothing occupies (0,0).
++    """
++    _WORLD_GRID_CELLS.clear()
++    _WORLD_GRID_CELLS.update(grid_cells or ())
++    _DOOR_PLACEMENT.clear()
++    _DOOR_PLACEMENT.update(door_placement or {})
+ 
+ 
+ def set_door_navmesh_links(door_links: dict):
+@@ -682,6 +716,16 @@
+         rx = _safe_angle(get_float(rec, 'XTEL.RotX'))
+         ry = _safe_angle(get_float(rec, 'XTEL.RotY'))
+         rz = _safe_angle(get_float(rec, 'XTEL.RotZ'))
++        # An exterior destination whose grid square holds no cell crashes the
++        # CK outright (see set_teleport_grid).  The authored fallback is the
++        # target door's OWN placement — where Oblivion would have put the
++        # player anyway, since it teleports to the door's parent cell and
++        # never uses these coordinates to find it.
++        dest = _DOOR_PLACEMENT.get(xtel_door)
++        if dest:
++            dw, dx, dy, dz = dest
++            if dw and (dw, _ref_grid(px), _ref_grid(py)) not in _WORLD_GRID_CELLS:
++                px, py, pz = dx, dy, dz
+         # TES5 XTEL is 32 bytes: Door(4) + Pos(12) + Rot(12) + Flags(4)
+         # Flags: 0x0001 = No Alarm. Always 0 for converted doors.
+         subs += pack_subrecord('XTEL', struct.pack('<IffffffI', xtel_door, px, py, pz, rx, ry, rz, 0))
+@@ -1121,7 +1165,8 @@
+     """WATR — Water Type conversion.
+ 
+     TES5 order: EDID FULL NNAM ANAM FNAM MNAM SNAM XNAM DATA DNAM GNAM NAM0 NAM1
+-    TES5 DATA is 228 bytes, heavily restructured from TES4.
++    DATA is a 2-byte Damage value; DNAM is the 228-byte water-visuals struct
++    (wind/fog/color/reflectivity), heavily restructured from TES4's own DATA.
+     """
+     subs = b''
+     edid = get_str(rec, 'EditorID')
+@@ -1151,48 +1196,52 @@
+     if sound_fid:
+         subs += pack_formid_subrecord('SNAM', sound_fid)
+ 
+-    # DATA — Water properties (228 bytes in TES5)
+-    # Preserve wind velocity/direction from TES4, fill rest with reasonable defaults
+-    data = bytearray(228)
++    # DATA — Water Damage (2 bytes in TES5, a UInt16). TES4 exposes no damage
++    # value for WATR, so this is 0 for every converted water type (matches
++    # the large majority of vanilla Skyrim.esm's own WATR, where only a
++    # handful of DLC lava/acid types carry a nonzero value).
++    subs += pack_subrecord('DATA', struct.pack('<H', 0))
++
++    # DNAM — Water Data (228 bytes in TES5). Preserve wind velocity/direction
++    # from TES4, fill the rest with reasonable defaults.
++    #
++    # Real vanilla order is EDID NNAM* ANAM FNAM [MNAM] [SNAM] DATA DNAM
++    # [GNAM NAM0 NAM1] — this used to be written with the 228-byte struct
++    # under the 'DATA' tag and a bogus 196-byte block under 'DNAM', which
++    # SSEEdit's background loader flags on every single WATR record
++    # ("unexpected (or out of order) subrecord DATA"/"DNAM").
++    dnam = bytearray(228)
+     wind_vel = get_float(rec, 'DATA.WindVelocity', 0.3)
+     wind_dir = get_float(rec, 'DATA.WindDirection', 0.0)
+     # Byte 0-3: Unknown float
+-    struct.pack_into('<f', data, 0, 0.1)     # Unknown
+-    struct.pack_into('<f', data, 4, 0.1)     # Unknown
+-    struct.pack_into('<f', data, 8, 0.1)     # Unknown
+-    struct.pack_into('<f', data, 12, wind_vel)
+-    struct.pack_into('<f', data, 16, wind_dir)
++    struct.pack_into('<f', dnam, 0, 0.1)     # Unknown
++    struct.pack_into('<f', dnam, 4, 0.1)     # Unknown
++    struct.pack_into('<f', dnam, 8, 0.1)     # Unknown
++    struct.pack_into('<f', dnam, 12, wind_vel)
++    struct.pack_into('<f', dnam, 16, wind_dir)
+     # Sun specular power
+-    struct.pack_into('<f', data, 20, 100.0)
++    struct.pack_into('<f', dnam, 20, 100.0)
+     # Reflectivity amount
+-    struct.pack_into('<f', data, 24, 0.5)
++    struct.pack_into('<f', dnam, 24, 0.5)
+     # Fresnel amount
+-    struct.pack_into('<f', data, 28, 0.025)
++    struct.pack_into('<f', dnam, 28, 0.025)
+     # Scroll speeds (UV for layers)
+-    struct.pack_into('<f', data, 36, 0.3)
+-    struct.pack_into('<f', data, 40, 0.3)
++    struct.pack_into('<f', dnam, 36, 0.3)
++    struct.pack_into('<f', dnam, 40, 0.3)
+     # Fog amount
+-    struct.pack_into('<f', data, 64, 0.01)
++    struct.pack_into('<f', dnam, 64, 0.01)
+     # Fog near plane distance
+-    struct.pack_into('<f', data, 68, 1000.0)
++    struct.pack_into('<f', dnam, 68, 1000.0)
+     # Fog far plane distance
+-    struct.pack_into('<f', data, 72, 100000.0)
++    struct.pack_into('<f', dnam, 72, 100000.0)
+     # Shallow color (RGBA at offset 76): blue-ish
+-    data[76] = 64; data[77] = 96; data[78] = 128; data[79] = 200
++    dnam[76] = 64; dnam[77] = 96; dnam[78] = 128; dnam[79] = 200
+     # Deep color (RGBA at offset 80): darker blue
+-    data[80] = 32; data[81] = 48; data[82] = 96; data[83] = 255
++    dnam[80] = 32; dnam[81] = 48; dnam[82] = 96; dnam[83] = 255
+     # Reflection color (RGBA at offset 84): light
+-    data[84] = 200; data[85] = 200; data[86] = 200; data[87] = 128
++    dnam[84] = 200; dnam[85] = 200; dnam[86] = 200; dnam[87] = 128
+     # Depth
+-    struct.pack_into('<f', data, 100, 150.0)
+-    subs += pack_subrecord('DATA', bytes(data))
+-
+-    # DNAM — Visual data (196 bytes in TES5) — fill with defaults
+-    dnam = bytearray(196)
+-    struct.pack_into('<f', dnam, 0, 10.0)    # Depth normals
+-    struct.pack_into('<f', dnam, 4, 1.0)     # Depth reflections
+-    struct.pack_into('<f', dnam, 8, 0.5)     # Depth refraction
+-    struct.pack_into('<f', dnam, 12, 1.0)    # Depth specular lighting
++    struct.pack_into('<f', dnam, 100, 150.0)
+     subs += pack_subrecord('DNAM', bytes(dnam))
+ 
+     return pack_record('WATR', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)

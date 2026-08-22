@@ -1,0 +1,27 @@
+--- old/tes5_import/convert_worker.py
++++ new/tes5_import/convert_worker.py
+@@ -18,7 +18,8 @@
+ def init_worker(formid_offset: int, cell_loc: dict, grid_loc: dict,
+                 world_loc: dict, world_names: dict, origin_shift: dict,
+                 mesh_bounds_path: str, injected_formids: dict = None,
+-                door_links: dict = None):
++                door_links: dict = None, teleport_grid=None,
++                door_placement: dict = None):
+     """Pool initializer: replay parent-process module state into this child."""
+     # Join the parent's containment job so this worker cannot outlive a parent
+     # that dies without cleanup (crash / external kill). No-op off Windows.
+@@ -30,8 +31,13 @@
+     # remaps an injected FormID into the master's range (see text_reader).
+     set_injected_formids(injected_formids or {})
+ 
+-    from .record_types.world import set_cell_locations, set_door_navmesh_links
++    from .record_types.world import (set_cell_locations, set_door_navmesh_links,
++                                     set_teleport_grid)
+     set_cell_locations(cell_loc, grid_loc, world_loc)
++    # Module state like the rest: without it a worker cannot tell that an XTEL
++    # destination names an empty grid square, and writes the coordinates that
++    # crash the CK (see world.set_teleport_grid).
++    set_teleport_grid(teleport_grid, door_placement)
+     # Door -> (NAVM, triangle) for XNDP.  Module state like the rest: a worker
+     # that never receives it writes every door REFR without its navmesh link,
+     # which silently kills pathing through every teleport door it converts.

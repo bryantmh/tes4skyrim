@@ -729,27 +729,10 @@ class PluginWriter:
         still find a ref in a MASTER because masters load fully first — which is
         exactly why the same alias resolved in the test ESP but not in-file.
         DIAL is also placed before QUST to match vanilla.
-
-        The same parse-order rule runs the other way for BASE OBJECTS: a REFR
-        resolves its NAME when the CELL group is parsed, so every type a REFR
-        can point at MUST precede CELL.  Any signature missing from this list
-        falls through to the "append leftovers" tail below, i.e. lands after
-        CELL/WRLD — which is exactly how MSTT ended up there and cost
-        **1,852 references, silently deleted by CK** ("Missing/Invalid base
-        object (01xxxxxx) for reference (…)" / "Ref will be deleted", measured
-        in ckpe.log 2026-08-22; all 18 distinct bases were present in the file,
-        merely too late).  Never rely on the tail for a base-object type.
-        Ground truth for the placements below is the real Skyrim.esm and
-        Dawnguard.esm top-level order, which agree: …STAT SCOL MSTT PWAT GRAS…,
-        LTEX just after MGEF/SCPT, PROJ just before HAZD/SLGM, and WATR / FLST
-        / MOVT genuinely after CELL.
         """
         order = [
             'GMST', 'KYWD', 'TXST', 'GLOB', 'CLAS', 'FACT', 'HDPT', 'EYES',
             'RACE', 'SOUN', 'SOPM', 'SNDR', 'MGEF',
-            # Vanilla slots LTEX immediately after MGEF/SCPT — long before the
-            # CELL/WRLD groups whose LAND records name it in ATXT/BTXT.
-            'LTEX',
             # xEdit canonical: ... FLST PERK BPTD ADDN AVIF ... VTYP MATT —
             # BPTD (creature body part data) precedes the MATT/impact block
             'BPTD', 'MATT',
@@ -759,13 +742,9 @@ class PluginWriter:
             # precede the FSTS that lists it. Creature footstep audio rides
             # this chain — see tes5_import/creature_footsteps.py.
             'IPCT', 'IPDS', 'FSTP', 'FSTS',
-            # MSTT sits right after STAT in vanilla (STAT SCOL MSTT PWAT).
-            # It is a REFR base type, so it MUST be here and not in the tail.
-            'STAT', 'MSTT', 'ACTI', 'TACT', 'CONT', 'DOOR',
+            'STAT', 'ACTI', 'TACT', 'CONT', 'DOOR',
             'FLOR', 'FURN', 'GRAS', 'TREE', 'LIGH', 'MISC', 'KEYM', 'ARMO',
             'ARMA', 'BOOK', 'AMMO', 'ENCH', 'SPEL', 'ALCH', 'INGR', 'SCRL',
-            # PROJ precedes HAZD/SLGM in vanilla and is a placeable base type.
-            'PROJ',
             'SLGM', 'VTYP', 'OTFT', 'NPC_', 'LVLN', 'LVLI', 'LVSP',
             # IMGS before WTHR: a weather's IMSP points at the imagespaces
             # carrying its HDR tone mapping, and CLMT/REGN then point at WTHR.
@@ -781,12 +760,6 @@ class PluginWriter:
             # worldspace + MNAM marker ref when the LCTN group loads, and with
             # LCTN first every location logged "Could not find worldspace
             # (0100003C) in load" — 512 warnings and undiscoverable markers.
-            # Vanilla order after CELL is …ANIO WATR EFSH … IMAD FLST PERK …
-            # ECZN LCTN MESG…, so WATR and FLST belong here rather than in the
-            # leftover tail.  Nothing resolves either at parse time (vanilla
-            # itself puts them after CELL), but pinning them keeps the layout
-            # independent of the order groups were added in.
-            'WATR', 'FLST',
             'LCTN',
             # Vanilla puts MESG just after LCTN. Nothing in a MESG is resolved
             # order-sensitively at load (ours carry no conditions), but keep
@@ -794,8 +767,6 @@ class PluginWriter:
             'MESG',
             'SMBN', 'SMQN', 'SMEN',
             'DLBR', 'DLVW',
-            # Vanilla tail: …MATO MOVT HAZD SNDR DUAL SNCT SOPM COLL CLFM REVB.
-            'MOVT',
         ]
         # Append any groups not in the canonical order
         for sig in self._top_groups:

@@ -420,6 +420,8 @@ relevant doc when working in that area.
 | [world_land_navmesh_notes.md](docs/world_land_navmesh_notes.md) | PGRD→NAVM/NAVI algorithm, LAND record structure, landscape TXST, world-map cloud banks (WRLD MODL) |
 | [navmesh_corridor_redesign.md](docs/navmesh_corridor_redesign.md) | The corridor-ribbon navmesh model |
 | [ck_navmesh_generation.md](docs/ck_navmesh_generation.md) | How the CK generates navmesh (Recast), defaults, the voxel-vs-world units trap |
+| [ck_reference_init_hang.md](docs/ck_reference_init_hang.md) | The "Initializing References" hang: unchecked XTEL destination grid lookup, the GRUP-order ref deletion, and the stack-walk-first hang methodology |
+| [CHANGES_since_0.606.en.md](docs/CHANGES_since_0.606.en.md) | Changelog for the seven CK load fixes (RU: [CHANGES_since_0.606.ru.md](docs/CHANGES_since_0.606.ru.md)) |
 
 ### Skills
 | Skill | Covers |
