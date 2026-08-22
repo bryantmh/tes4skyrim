@@ -13,7 +13,6 @@ Usage:
 """
 
 import argparse
-import math
 import os
 import struct
 import sys
@@ -44,7 +43,6 @@ from .skyrim_overrides import (
 )
 from .navi_builder import NAVI_SINGLETON_FID, build_navi_record
 from .locations import build_marker_locations
-from .record_types.common import _resolve_obnd
 from .record_types.world import (
     convert_ACHR,
     convert_CELL,
@@ -3256,51 +3254,16 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
         cell_fid = get_formid(rec, 'ParentCELL')
         achr_by_cell[cell_fid].append(rec)
 
-    # Force-persist exterior refs whose base object's bounds cross into a
-    # neighbouring cell.  Skyrim's cross-cell rendering needs a stable handle
-    # for these (the CK calls it out directly: "Ref ... should be persistent
-    # but is not"); Oblivion has no such requirement, so TES4 never sets the
-    # flag and none of these carry it.  Same family of bug as the misplaced-
-    # cell fix below — CK's own auto-fix for this warning hangs instead of
-    # completing during "Initializing References" once there are enough of
-    # them (5,428 candidates in Oblivion.esm's converted landscape/rock/tree
-    # statics), so the data must already be correct going in.
-    # Radius is the worst-case (any-rotation) reach from the reference's local
-    # origin — sqrt(rx^2 + ry^2) — derived from the SAME mesh-bounds OBND
-    # source convert_STAT/convert_TREE use, so it never disagrees with the
-    # OBND actually written for the base record.
-    _CROSS_CELL_SIG = ('STAT', 'TREE')
-    base_radius_by_fid = {}
-    for sig in _CROSS_CELL_SIG:
-        for base in by_type.get(sig, []):
-            x1, y1, _z1, x2, y2, _z2 = _resolve_obnd(base, sig)
-            rx = max(abs(x1), abs(x2))
-            ry = max(abs(y1), abs(y2))
-            radius = math.hypot(rx, ry)
-            if radius > 0:
-                base_radius_by_fid[get_formid(base, 'FormID')] = radius
-
-    _CELL_SIZE = 4096.0
-    force_persistent = 0
-    for rec in refrs:
-        if get_int(rec, 'RecordFlags') & 0x400:
-            continue  # already persistent
-        if not get_formid(rec, 'ParentWRLD'):
-            continue  # interior; cross-cell straddling is exterior-only
-        radius = base_radius_by_fid.get(get_formid(rec, 'NAME'))
-        if not radius:
-            continue
-        px = get_float(rec, 'PosX')
-        py = get_float(rec, 'PosY')
-        ex = px % _CELL_SIZE
-        ey = py % _CELL_SIZE
-        dist_edge = min(ex, _CELL_SIZE - ex, ey, _CELL_SIZE - ey)
-        if dist_edge < radius:
-            rec['RecordFlags'] = str(get_int(rec, 'RecordFlags') | 0x400)
-            force_persistent += 1
-    if force_persistent:
-        print(f"  Forced {force_persistent} cross-cell-boundary REFRs persistent "
-              f"(large STAT/TREE bounds straddling a cell edge)")
+    # NOT force-persisted: an exterior static whose bounds cross a cell edge
+    # does NOT have to be persistent.  The CK warning "Ref ... should be
+    # persistent but is not" was read as a rule and applied to 74,467 refs;
+    # the vanilla census refutes it outright -- Skyrim.esm ships 67,751
+    # cell-edge-straddling STAT/TREE refs and only 842 of them (1.2%) are
+    # persistent, LOWER than the 2.3% among refs that straddle nothing.
+    # Forcing the flag made the objects vanish in game while the CK kept
+    # showing them: ICMarketBlock03House01 (forced persistent) was invisible
+    # where its neighbour ICMarketBlock03House02 (untouched) rendered, same
+    # cell, same mesh family.  See docs/ck_vs_game_missing_objects.md.
 
     # Re-home misplaced exterior refs.  Oblivion.esm ships a handful of
     # refs attached to a grid cell that does not match their coordinates (the

@@ -2,7 +2,7 @@
 
 import struct
 
-from ..constants import LOD_SIZE_THRESHOLD, WORLD_MAP_SIZE_THRESHOLD
+from ..constants import LOD_SIZE_THRESHOLD
 from ..mesh_bounds import get_mesh_physics_flags
 from .common import (
     VENDOR_KYWD,
@@ -55,8 +55,6 @@ def convert_STAT(rec: dict) -> bytes:
     max_dim = max(x2 - x1, y2 - y1, z2 - z1)
     if max_dim >= LOD_SIZE_THRESHOLD:
         flags |= 0x8000       # Has Distant LOD — SSELodGen will build LOD for this object
-    if max_dim >= WORLD_MAP_SIZE_THRESHOLD:
-        flags |= 0x10000000   # Show in World Map
     subs = _common_header_subs(rec, need_full=False, obnd_override=bounds)
     path = get_str(rec, 'Model.MODL')
     if path:
@@ -558,8 +556,6 @@ def convert_TREE(rec: dict) -> bytes:
     max_dim = max(bounds[3] - bounds[0], bounds[4] - bounds[1], bounds[5] - bounds[2])
     if max_dim >= LOD_SIZE_THRESHOLD:
         flags |= 0x8000       # Has Distant LOD
-    if max_dim >= WORLD_MAP_SIZE_THRESHOLD:
-        flags |= 0x10000000   # Show in World Map
     return pack_record('TREE', get_formid(rec, 'FormID'), flags, subs)
 
 
