@@ -51,6 +51,8 @@ STEPS = [
      "Convert SPT files",           True,  True),
     ("creatures",          "--creatures-only",     "5. Creatures",
      "Convert creature models and animations",       True,  True),
+    ("nemesis",            "--nemesis-only",       "Nemesis baseline",
+     "keeps creatures registered when Nemesis runs", False, True),
     ("import_",            "--import-only",        "6. Import",
      "Build TES5 ESM/ESP from text cache",       True,  True),
     ("sounds",             "--sounds-only",        "7. Sounds",
@@ -62,6 +64,18 @@ STEPS = [
     ("pack_zip",           "--pack-zip-only",      "10. Pack Mod Zip",
      "Zip mod files for installation",   True,  True),
 ]
+
+# Steps rendered INDENTED under another step instead of as a numbered row of
+# their own. They are still real steps -- `--nemesis-only` has to stay runnable
+# on its own, because Nemesis has to be re-fed after every one of ITS
+# regenerations, which has nothing to do with reconverting creatures -- they
+# just belong to their parent conceptually and get no number.
+SUB_OF = {"nemesis": "creatures"}
+# Nemesis is off by default (the False above): the patch only means anything in
+# a load order that actually runs Nemesis Unlimited Behavior Engine. Where it IS
+# run, Nemesis rebuilds animationdatasinglefile.txt from the vanilla project
+# list and its own output wins the conflict, so every converted creature project
+# silently de-registers and creatures slide without animating.
 # LOD is deliberately NOT here. It is not per-plugin work: sibling plugins share
 # a tile grid, so baking "master + this plugin" once per plugin generates the
 # contested tiles once per sibling and then throws all but one away. It is a
@@ -75,10 +89,22 @@ STEPS = [
 # without also hiding them — they stay tickable for the run that does want them.
 PACKING_STEPS = ("pack", "pack_zip")
 
+# Steps that start UNTICKED regardless of any setting. Unlike the packing pair
+# these are not "the tail of the pipeline everyone re-runs"; they are only
+# meaningful for a particular load order. Ticking Nemesis for someone who does
+# not run Nemesis writes a patch folder that nothing ever reads.
+OPT_IN_STEPS = ("nemesis",)
+
 # Persisted under this key in conversion_config.json. Absent (or any non-false
 # value) means ON, so a config written before this option existed keeps the old
 # behaviour instead of silently dropping the packing steps from a run.
 PACK_DEFAULT_CONFIG_KEY = "packStepsDefaultOn"
+
+# conversion_config.json key holding the Nemesis MOD folder (not its meshes
+# subfolder -- see Tools > Set Nemesis Folder). The "Nemesis baseline" step
+# reads its shipped nemesis_*singlefile.txt pair from there and never writes to
+# it.
+NEMESIS_DIR_CONFIG_KEY = "nemesisDir"
 
 # The INFERRED collision winding steps (Settings > Infer collision winding).
 # The authored-normal repair always runs and is not covered by this key. A
@@ -104,13 +130,13 @@ def winding_enabled_for(mode: str, plugin: str) -> bool:
 def default_on_steps(pack_default: bool = True) -> set:
     """Step keys that start ticked, given the Pack-by-default setting.
 
-    Every step is on by default; the packing pair is additionally gated on
-    `pack_default`. Note this deliberately does NOT read the `default_on` column
-    of STEPS — that column drives the "did the user keep the default selection?"
-    check in the runner, which is a separate question from what the checkboxes
-    start at.
+    Every step is on by default except the opt-in ones; the packing pair is
+    additionally gated on `pack_default`. Note this deliberately does NOT read
+    the `default_on` column of STEPS — that column drives the "did the user keep
+    the default selection?" check in the runner, which is a separate question
+    from what the checkboxes start at.
     """
-    keys = {k for k, *_ in STEPS}
+    keys = {k for k, *_ in STEPS} - set(OPT_IN_STEPS)
     if not pack_default:
         keys -= set(PACKING_STEPS)
     return keys
@@ -1217,6 +1243,53 @@ def gui_main():
 
     tools_menu.add_command(label="Check Dependencies",
                            command=_check_dependencies)
+
+    # Tools ▸ Set Nemesis Folder — where the "Nemesis baseline" step reads from.
+    # It cannot be auto-detected on a Mod Organizer setup: the mods live outside
+    # the game's Data folder entirely, so only the user knows the path. The
+    # picker takes the MOD folder (the thing with a recognisable name) and the
+    # `meshes` subfolder is resolved in code, because "pick the meshes folder
+    # inside the mod" is knowledge nobody should need to have.
+    def _set_nemesis_folder():
+        from asset_convert.nemesis import baseline_dir, BASELINE_FILES
+        current = (load_config().get(NEMESIS_DIR_CONFIG_KEY) or "").strip()
+        if not current:
+            # Start the dialog where Nemesis actually is rather than at the
+            # last-used folder: on a Mod Organizer setup the mods live nowhere
+            # near the game, so an undirected picker is a long hunt.
+            try:
+                from asset_convert.nemesis import autodetect
+                from asset_convert.skyrim_assets import find_skyrim_data
+                cands = autodetect(find_skyrim_data())
+                if cands:
+                    current = os.path.dirname(cands[0][0])
+            except Exception:
+                pass
+        path = filedialog.askdirectory(
+            title="Select the Nemesis Unlimited Behavior Engine mod folder",
+            initialdir=current or None)
+        if not path:
+            return
+        resolved = baseline_dir(path)
+        if not resolved:
+            _info("Set Nemesis Folder",
+                  f"That folder does not hold Nemesis's baseline files.\n\n"
+                  f"Looked for {BASELINE_FILES[0]} in:\n"
+                  f"  {path}\n  {os.path.join(path, 'meshes')}\n\n"
+                  f"Pick the Nemesis Unlimited Behavior Engine mod folder "
+                  f"(the one containing Nemesis_Engine and meshes).")
+            return
+        updated = load_config()
+        updated[NEMESIS_DIR_CONFIG_KEY] = path
+        save_config(updated)
+        _info("Set Nemesis Folder",
+              f"Nemesis folder set to:\n{path}\n\nBaseline files found in:\n"
+              f"{resolved}\n\nThe \"Nemesis baseline\" step under Creatures "
+              f"will read from there. Load this mod AFTER Nemesis Unlimited "
+              f"Behavior Engine and BEFORE Nemesis Output.")
+
+    tools_menu.add_command(label="Set Nemesis Folder…",
+                           command=_set_nemesis_folder)
     tools_menu.add_separator()
     # The same two global actions as the sidebar buttons. Menu entries are
     # late-bound (`_run_global_action` is defined further down, with the rest of
@@ -2147,8 +2220,13 @@ def gui_main():
         return cb is None or str(cb.cget("state")) != "disabled"
 
     def _set_all():
+        # OPT_IN_STEPS stay clear even here. "All" means "every step of the
+        # conversion", and an opt-in step is not one: it depends on an external
+        # tool being installed, so ticking it for someone who does not run that
+        # tool turns a complete run into a FAILED one for a step they never
+        # asked for. They stay one deliberate click away.
         for key, v in step_vars.items():
-            v.set(_runnable(key))
+            v.set(_runnable(key) and key not in OPT_IN_STEPS)
         _update_run_btn()
 
     def _set_default():
@@ -3171,18 +3249,51 @@ def gui_main():
     # source cannot run (an asset-only mod has no plugin to export) can be
     # disabled rather than silently running on nothing.
     step_widgets: dict = {}
-    for step in STEPS:
-        key, label, tip = step[0], step[2], step[3]
+    def _step_row(key, label, tip, indent=0):
         row = ttk.Frame(sidebar, style="Panel.TFrame")
-        row.pack(fill=tk.X, padx=14, pady=1)
+        row.pack(fill=tk.X, padx=14, pady=(0, 1) if indent else 1)
         cb = ttk.Checkbutton(row, text=label, variable=step_vars[key],
                              command=_update_run_btn)
-        cb.pack(side=tk.LEFT)
+        cb.pack(side=tk.LEFT, padx=(indent, 0))
         tip_lbl = ttk.Label(row, text=tip, style="PanelSub.TLabel")
         tip_lbl.pack(side=tk.LEFT, padx=(6, 0))
         step_widgets[key] = (cb, tip_lbl, tip)
+        return row
+
+    # Sub-steps are emitted right after their parent, so ordinary pack order
+    # places them correctly without any `after=` juggling.
+    _children = {}
+    for step in STEPS:
+        if step[0] in SUB_OF:
+            _children.setdefault(SUB_OF[step[0]], []).append(step)
+    for step in STEPS:
+        key, label, tip = step[0], step[2], step[3]
+        if key in SUB_OF:
+            continue
+        row = _step_row(key, label, tip)
+        for sub in _children.get(key, ()):
+            _step_row(sub[0], sub[2], sub[3], indent=20)
         if key == "meshes":
             _mesh_step_row = row
+
+    _NEMESIS_TIP = (
+        "Only needed if you run Nemesis Unlimited Behavior Engine.\n\n"
+        "Nemesis does not read the game's animationdatasinglefile.txt -- it "
+        "reads its OWN meshes\\nemesis_*singlefile.txt pair and "
+        "regenerates the game-facing one from it. Our creature projects are "
+        "not in that baseline, so they de-register: the creature still "
+        "appears and idles, but no clip has any data -- it slides along with "
+        "no walk animation and never attacks.\n\n"
+        "This ships our own copy of that pair (Nemesis's originals + our "
+        "creatures) so BOTH Skyrim's creatures and ours survive every "
+        "regeneration. The Nemesis install is only read, never modified.\n\n"
+        "Load order: this mod AFTER 'Nemesis Unlimited Behavior Engine' "
+        "and BEFORE 'Nemesis Output'.\n\n"
+        "Point Tools > Set Nemesis Folder at your Nemesis mod folder first."
+    )
+    if "nemesis" in step_widgets:
+        _attach_tooltip(step_widgets["nemesis"][0], _NEMESIS_TIP)
+        _attach_tooltip(step_widgets["nemesis"][1], _NEMESIS_TIP)
 
     # Small link sitting just below the Meshes checkbox row
     _mesh_toggle_row = ttk.Frame(sidebar, style="Panel.TFrame")

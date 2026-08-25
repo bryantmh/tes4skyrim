@@ -668,6 +668,9 @@ STEP_REQUIREMENTS = {
     'speedtrees': ('trees',),
     'creatures':  ('plugin',),
     'sounds':     ('sound',),
+    # The Nemesis patch describes generated creature projects, which only a
+    # plugin can produce (creatures come from CREA records).
+    'nemesis':    ('plugin',),
     'pack':       (),
     'pack_zip':   (),
 }

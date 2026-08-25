@@ -637,6 +637,86 @@ def phase_creatures(file_name: str, tes5_data: str, config: dict,
           f"({len(res['projects'])} projects, {len(res['errors'])} errors)")
     return not res['errors']
 
+def phase_nemesis(file_name: str, config: dict, tes5_data: str = None,
+                  output_dir: str = None):
+    """Ship a Nemesis baseline that carries Skyrim's creatures AND ours.
+
+    Nemesis does not read the game's animationdatasinglefile.txt -- it reads its
+    own `meshes\\nemesis_*singlefile.txt` pair and regenerates the game-facing
+    one from it, which is why our projects vanish. Those baseline files are
+    ordinary Data assets, so we ship our own copy (its originals + our projects)
+    and let load order override them. The Nemesis install is only READ.
+
+    Written ONCE, next to the shared singlefiles: the pair covers the union of
+    every plugin's projects, so a child plugin shipping its own copy would race
+    the master for the same path rather than adding anything. `master_dirs`
+    empty means this plugin IS the master.
+
+    The Nemesis location comes from `nemesisDir` in the config (the MOD folder;
+    `meshes` is resolved in code), or is auto-detected under `nemesisSearchDir`.
+    It cannot be guessed from the game Data folder: with Mod Organizer the mods
+    live outside it entirely.
+    """
+    from asset_convert import nemesis
+    from asset_convert.terrain_lod import _master_names
+
+    export_root = str(SCRIPT_DIR / "export")
+    export_subdir = str(record_dir(export_root, file_name))
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    if os.path.isdir(export_subdir):
+        masters = [m for m in _master_names(Path(export_subdir))
+                   if plugin_out_root(out_root, m, export_root).is_dir()]
+        if masters:
+            print(f"[{file_name}] Nemesis baseline belongs to the master "
+                  f"({', '.join(masters)}), skipping")
+            return True
+
+    manifests = nemesis.load_all_manifests(str(out_root))
+    if not manifests:
+        print(f"[{file_name}] No generated creature projects -- "
+              f"run the creatures step first")
+        return False
+
+    src = config.get("nemesisDir")
+    if src:
+        print(f"[{file_name}] Nemesis baseline (configured): {src}")
+    else:
+        # Auto-detect. Report EVERY candidate, not just the winner: a machine
+        # routinely carries several Mod Organizer instances, and silently
+        # building from another game's project list is the kind of wrong that
+        # only shows up as creatures not animating.
+        from asset_convert.skyrim_assets import find_skyrim_data
+        search = config.get("nemesisSearchDir")
+        found = (nemesis.find_nemesis_baseline(search) if search else [])
+        if found:
+            cands = [(d, f"under {search}", n, gen) for d, n, gen in found]
+        else:
+            cands = nemesis.autodetect(tes5_data or find_skyrim_data())
+        if not cands:
+            print(f"[{file_name}] No Nemesis installation found. In the GUI "
+                  f"use Tools > Set Nemesis Folder, or set \"nemesisDir\" in "
+                  f"conversion_config.json to the Nemesis Unlimited Behavior "
+                  f"Engine mod folder.")
+            return False
+        print(f"[{file_name}] Nemesis auto-detected "
+              f"({len(cands)} candidate(s)):")
+        for i, (path, source, total, ours) in enumerate(cands):
+            mark = "->" if i == 0 else "  "
+            tag = "pristine" if ours == 0 else f"already holds {ours} of ours"
+            print(f"    {mark} {path}")
+            print(f"         {total} projects, {tag} -- {source}")
+        src = cands[0][0]
+        print(f"[{file_name}] Using: {src}")
+        print(f"[{file_name}] Override with Tools > Set Nemesis Folder if "
+              f"that is the wrong one.")
+
+    dest = plugin_out_root(out_root, file_name, export_root) / "meshes"
+    print(f"[{file_name}] Writing Nemesis baseline for {len(manifests)} "
+          f"projects...")
+    nemesis.write_baseline_override(manifests, src, str(dest))
+    return True
+
+
 # ===========================================================================
 # Phase 6: BUILD TES5 PLUGIN
 # ===========================================================================
@@ -1236,6 +1316,16 @@ def phase_pack_zip(file_name: str, config: dict, output_dir: str = None):
                 zf.write(src, arcname=src.name)
                 packed += 1
 
+        # The Nemesis baseline pair is deliberately kept OUT of the BSAs
+        # (bsa_pack._LOOSE_ONLY_FILES): Nemesis walks <Data>\meshes on disk and
+        # does not read archives. So it has to travel in the zip as the loose
+        # files it is, or it never reaches the person installing the mod.
+        from asset_convert.bsa_pack import _LOOSE_ONLY_FILES
+        for src in sorted((src_root / "meshes").glob("*")):
+            if src.is_file() and src.name.lower() in _LOOSE_ONLY_FILES:
+                zf.write(src, arcname=str(src.relative_to(src_root)))
+                packed += 1
+
     if packed == 0:
         zip_path.unlink(missing_ok=True)
         print(f"[{file_name}] No plugin/BSA files found, skipping zip pack")
@@ -1291,6 +1381,9 @@ def _run_pipeline():
                         help="Add greaves partition to character body NIFs")
     parser.add_argument("--scripts-only",        action="store_true",
                         help="Convert TES4 scripts to Papyrus .psc source")
+    parser.add_argument("--nemesis-only",        action="store_true",
+                        help="Emit a Nemesis mod patch so Nemesis keeps the "
+                             "converted creature projects registered")
     parser.add_argument("--pack-only",           action="store_true",
                         help="Pack output assets into Skyrim SE BSA archives")
     parser.add_argument("--pack-zip-only",       action="store_true",
@@ -1410,7 +1503,7 @@ def _run_pipeline():
         args.meshes_only, args.speedtrees_only, args.creatures_only,
         args.sounds_only,
         args.lod_only, args.modify_body_meshes, args.scripts_only,
-        args.pack_only, args.pack_zip_only,
+        args.nemesis_only, args.pack_only, args.pack_zip_only,
     ])
     if _any_only:
         do_export       = args.export_only
@@ -1423,6 +1516,7 @@ def _run_pipeline():
         do_lod          = args.lod_only
         do_skyrim_patch = args.modify_body_meshes
         do_scripts      = args.scripts_only
+        do_nemesis      = args.nemesis_only
         do_pack_bsa     = args.pack_only
         do_pack_zip     = args.pack_zip_only
     else:
@@ -1430,6 +1524,9 @@ def _run_pipeline():
         do_export = do_extract = do_meshes = do_speedtrees = True
         do_creatures = do_import = do_sounds = do_scripts = True
         do_lod = do_skyrim_patch = do_pack_bsa = True
+        # Opt-in: a Nemesis patch is only meaningful in a load order that runs
+        # Nemesis, and it is inert clutter in one that does not.
+        do_nemesis = False
         do_pack_zip = False
 
     # ── Dependency preflight ─────────────────────────────────────────────────
@@ -1451,6 +1548,9 @@ def _run_pipeline():
         ('meshes',       do_meshes),
         ('speedtrees',   do_speedtrees),
         ('creatures',    do_creatures),
+        # No _REQUIREMENTS entry: the Nemesis baseline is pure Python with no
+        # external tool, and check_phase treats an unlisted phase as clean.
+        ('nemesis',      do_nemesis),
         ('import',       do_import),
         ('sounds',       do_sounds),
         ('scripts',      do_scripts),
@@ -1548,6 +1648,21 @@ def _run_pipeline():
         for fn in order_with_plugin:
             ok = phase_creatures(fn, tes5_data, config, output_dir=output_dir)
             _mark('creatures', fn, ok)
+            if not ok:
+                success = False
+        print()
+
+    # Directly after Creatures: the baseline registers the projects that step
+    # just generated, so running it later (after packing, as it first did)
+    # meant a creature rebuild left the registration a phase behind until the
+    # next full run.
+    if do_nemesis and order_with_plugin:
+        print("=" * 54)
+        print("  Phase 5b: NEMESIS BASELINE")
+        print("=" * 54)
+        for fn in order_with_plugin:
+            ok = phase_nemesis(fn, config, tes5_data, output_dir=output_dir)
+            _mark('nemesis', fn, ok)
             if not ok:
                 success = False
         print()

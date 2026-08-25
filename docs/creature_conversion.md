@@ -1612,6 +1612,48 @@ creature is fully proven.
   SNDR sound sets + ARMA footstep SNDD, per-creature BPTD (RACE GNAM = vanilla canine
   body-part data for now), equip/unequip weapon states, body_map misses for
   skinned-hound variants (race collapse onto one variant), in-game validation.
+- **Nemesis de-registers every generated creature project, and the fix is to
+  override its BASELINE (2026-08-25)**: the game reads ONE
+  `meshesnimationdatasinglefile.txt`, and Nemesis regenerates it into its
+  output mod. But Nemesis does not read that file to do so -- it reads its OWN
+  `meshes
+emesis_animationdatasinglefile.txt` / `nemesis_animationsetdata
+  singlefile.txt` pair (429 / 49 vanilla projects), found by walking
+  `nemesisInfo->GetDataPath() + "meshes\"` for the `nemesis_` prefix
+  (`UpdateFilesStart::VanillaUpdate` -> `GetFileLoop` / `RegisterBehavior`,
+  `curFileName.substr(8)`). Our projects are not in that baseline, so they fall
+  out of every regeneration. Symptom: graph loads (actor visible, idle plays)
+  but no clip has metadata -- the creature slides at its MOVT speed with no
+  locomotion animation and never attacks.
+  **Fix**: those baseline files are ordinary Data assets, so we ship our own
+  copy (its originals + our projects) and let load order override them --
+  `asset_convert/nemesis.py::write_baseline_override`, `convert.py
+  --nemesis-only`, GUI sub-step *Nemesis baseline* under Creatures, opt-in.
+  The Nemesis location is `nemesisDir` in the config -- the MOD folder, with
+  `meshes` resolved by `nemesis.baseline_dir` -- set through the GUI's
+  Tools > Set Nemesis Folder, or auto-detected by `nemesis.autodetect()` from
+  the Mod Organizer instance inis under `%LOCALAPPDATA%\ModOrganizer` (the
+  mods are not in the game Data folder at all, so the game path alone never
+  finds them). Every candidate is printed with its project count and whether
+  it is pristine; the step runs right after Creatures, since it registers the
+  projects that step just generated.
+  Both Skyrim's creatures and ours survive; the Nemesis install is only READ.
+  Load order: our mod AFTER *Nemesis Unlimited Behavior Engine*, BEFORE
+  *Nemesis Output*. The pair is kept out of the BSAs
+  (`bsa_pack._LOOSE_ONLY_FILES`) because Nemesis walks the disk, not archives.
+- **The `Nemesis_Engine/mod/` patch route was tried and ABANDONED — do not
+  rebuild it.** The format works (reverse-engineered from the Nemesis sources
+  and matched against the shipped `tkuc`/`zcbe`/`skice` mods: new entries ship
+  raw, markers are only for EDITING existing ones, and `MasterAnimData::add`
+  keys projects as `<name>~<N>` so a `<stem>~1` folder resolves correctly). It
+  still crashed Nemesis with an access violation on Update Engine. Suspected
+  but NOT proven: `SeparateMod` is enqueued on a thread pool per mod folder and
+  the new-project registration inside `ModThread` mutates `projectlist` /
+  `projectIndexMap` and `newAnimSetData` with no lock -- in the user's entire
+  install only the base `nemesis` mod registers a new project, and it registers
+  exactly one, where we registered 86 at once. The baseline route makes the
+  question moot: our projects are already registered, so that branch is never
+  entered.
 - **Toolchain gotchas (all cost real debugging time)**: hkxcmd CRASHES (0xC0000417) on
   FORWARD-SLASH paths — always `os.path.abspath`. hkxcmd's XML parser needs referenced
   objects defined BEFORE referencers (root container LAST). PyFFI fresh

@@ -7,5 +7,7 @@
   "files": [
     "Oblivion.esm"
   ],
-  "logRunsKept": 3
+  "logRunsKept": 3,
+  "nemesisSearchDir": "",
+  "nemesisDir": ""
 }
