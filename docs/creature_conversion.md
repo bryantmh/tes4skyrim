@@ -1631,8 +1631,12 @@ emesis_animationdatasinglefile.txt` / `nemesis_animationsetdata
   --nemesis-only`, GUI sub-step *Nemesis baseline* under Creatures, opt-in.
   The Nemesis location is `nemesisDir` in the config -- the MOD folder, with
   `meshes` resolved by `nemesis.baseline_dir` -- set through the GUI's
-  Tools > Set Nemesis Folder. It cannot be auto-detected under Mod Organizer,
-  where the mods are not in the game Data folder at all.
+  Tools > Set Nemesis Folder, or auto-detected by `nemesis.autodetect()` from
+  the Mod Organizer instance inis under `%LOCALAPPDATA%\ModOrganizer` (the
+  mods are not in the game Data folder at all, so the game path alone never
+  finds them). Every candidate is printed with its project count and whether
+  it is pristine; the step runs right after Creatures, since it registers the
+  projects that step just generated.
   Both Skyrim's creatures and ours survive; the Nemesis install is only READ.
   Load order: our mod AFTER *Nemesis Unlimited Behavior Engine*, BEFORE
   *Nemesis Output*. The pair is kept out of the BSAs

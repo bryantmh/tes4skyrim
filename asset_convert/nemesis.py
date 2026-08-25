@@ -200,6 +200,119 @@ def find_nemesis_baseline(root: str, max_depth: int = 6) -> list:
     return sorted(hits)
 
 
+def _mo2_ini_values(path: str) -> dict:
+    """`ModOrganizer.ini` as a flat dict, Qt escaping undone.
+
+    Hand-parsed rather than via configparser: values are Qt-serialised
+    (`gamePath=@ByteArray(D:\\\\Steam\\\\...)`) with doubled backslashes, and
+    the wrapper has to come off before the path means anything.
+    """
+    out = {}
+    try:
+        with open(path, encoding='utf-8', errors='replace') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith((';', '#', '[')) or '=' not in line:
+                    continue
+                key, _, val = line.partition('=')
+                val = val.strip()
+                if val.startswith('@ByteArray(') and val.endswith(')'):
+                    val = val[len('@ByteArray('):-1]
+                out[key.strip()] = val.replace('\\\\', '\\')
+    except OSError:
+        pass
+    return out
+
+
+def mo2_instances() -> list:
+    """[(name, mods_dir, game_path)] for every Mod Organizer 2 instance.
+
+    MO2 keeps global instances in `%LOCALAPPDATA%\\ModOrganizer\\<name>\\`;
+    `base_directory` in each instance's ini says where its mods actually live
+    (it is routinely on another drive), defaulting to the instance folder.
+    Portable instances live next to their own exe and cannot be discovered
+    from here.
+    """
+    root = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'ModOrganizer')
+    out = []
+    if not os.path.isdir(root):
+        return out
+    for name in sorted(os.listdir(root)):
+        inst = os.path.join(root, name)
+        ini = os.path.join(inst, 'ModOrganizer.ini')
+        if not os.path.isfile(ini):
+            continue
+        vals = _mo2_ini_values(ini)
+        base = vals.get('base_directory') or inst
+        mods = vals.get('mod_directory') or os.path.join(base, 'mods')
+        if os.path.isdir(mods):
+            out.append((name, mods, vals.get('gamePath', '')))
+    return out
+
+
+def _baseline_counts(meshes_dir: str):
+    """(total projects, how many are ours) for a baseline pair, or (-1, -1)."""
+    from asset_convert.animation_data import is_generated_project
+    try:
+        lines = _read(os.path.join(meshes_dir, BASELINE_FILES[0]))
+        n = int(lines[0])
+        return n, sum(1 for x in lines[1:1 + n] if is_generated_project(x))
+    except (OSError, ValueError, IndexError):
+        return -1, -1
+
+
+def autodetect(prefer_data: str = None) -> list:
+    """[(dir, source, projects, ours)] of every Nemesis baseline found.
+
+    Ordered best-first on two keys:
+
+    * the MO2 instance pointing at the game install we are converting for --
+      a machine routinely carries several (SE, VR, Oblivion) and picking the
+      wrong one silently builds from another game's project list;
+    * PRISTINE copies first. Our own deployed output also carries a
+      `nemesis_*singlefile.txt` pair, so a plain scan finds it too; merging
+      from it would pin the baseline to a stale snapshot of Nemesis's vanilla
+      list instead of tracking the real one.
+    """
+    prefer_game = ''
+    if prefer_data:
+        prefer_game = os.path.normcase(os.path.normpath(
+            os.path.dirname(os.path.normpath(prefer_data))))
+
+    ranked = []
+    for name, mods, game_path in mo2_instances():
+        try:
+            entries = sorted(os.listdir(mods))
+        except OSError:
+            continue
+        same_game = bool(prefer_game and game_path and os.path.normcase(
+            os.path.normpath(game_path)) == prefer_game)
+        for mod in entries:
+            found = baseline_dir(os.path.join(mods, mod))
+            if found:
+                total, ours = _baseline_counts(found)
+                ranked.append(((0 if same_game else 1, 1 if ours else 0),
+                               found, f'MO2 instance "{name}" / {mod}',
+                               total, ours))
+
+    # Vortex, or a manual install: the files sit straight in the game's Data.
+    if prefer_data:
+        found = baseline_dir(prefer_data)
+        if found:
+            total, ours = _baseline_counts(found)
+            ranked.append(((2, 1 if ours else 0), found, 'game Data folder',
+                           total, ours))
+
+    ranked.sort(key=lambda t: (t[0], t[1].lower()))
+    seen, out = set(), []
+    for _rank, path, source, total, ours in ranked:
+        key = os.path.normcase(os.path.normpath(path))
+        if key not in seen:
+            seen.add(key)
+            out.append((path, source, total, ours))
+    return out
+
+
 def baseline_dir(root: str):
     """The folder holding the baseline pair, or None.
 

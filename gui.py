@@ -51,14 +51,14 @@ STEPS = [
      "Convert SPT files",           True,  True),
     ("creatures",          "--creatures-only",     "5. Creatures",
      "Convert creature models and animations",       True,  True),
+    ("nemesis",            "--nemesis-only",       "Nemesis baseline",
+     "keeps creatures registered when Nemesis runs", False, True),
     ("import_",            "--import-only",        "6. Import",
      "Build TES5 ESM/ESP from text cache",       True,  True),
     ("sounds",             "--sounds-only",        "7. Sounds",
      "Convert voice files to XWM and copy sounds",               True,  True),
     ("scripts",            "--scripts-only",       "8. Scripts",
      "Convert Oblivion scripts to Papyrus",      True,  True),
-    ("nemesis",            "--nemesis-only",       "Nemesis baseline",
-     "keeps creatures registered when Nemesis runs", False, True),
     ("pack",               "--pack-only",          "9. Pack BSAs",
      "Pack assets into BSA archives",             False, True),
     ("pack_zip",           "--pack-zip-only",      "10. Pack Mod Zip",
@@ -1253,6 +1253,18 @@ def gui_main():
     def _set_nemesis_folder():
         from asset_convert.nemesis import baseline_dir, BASELINE_FILES
         current = (load_config().get(NEMESIS_DIR_CONFIG_KEY) or "").strip()
+        if not current:
+            # Start the dialog where Nemesis actually is rather than at the
+            # last-used folder: on a Mod Organizer setup the mods live nowhere
+            # near the game, so an undirected picker is a long hunt.
+            try:
+                from asset_convert.nemesis import autodetect
+                from asset_convert.skyrim_assets import find_skyrim_data
+                cands = autodetect(find_skyrim_data())
+                if cands:
+                    current = os.path.dirname(cands[0][0])
+            except Exception:
+                pass
         path = filedialog.askdirectory(
             title="Select the Nemesis Unlimited Behavior Engine mod folder",
             initialdir=current or None)
@@ -2208,8 +2220,13 @@ def gui_main():
         return cb is None or str(cb.cget("state")) != "disabled"
 
     def _set_all():
+        # OPT_IN_STEPS stay clear even here. "All" means "every step of the
+        # conversion", and an opt-in step is not one: it depends on an external
+        # tool being installed, so ticking it for someone who does not run that
+        # tool turns a complete run into a FAILED one for a step they never
+        # asked for. They stay one deliberate click away.
         for key, v in step_vars.items():
-            v.set(_runnable(key))
+            v.set(_runnable(key) and key not in OPT_IN_STEPS)
         _update_run_btn()
 
     def _set_default():

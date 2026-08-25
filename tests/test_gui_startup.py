@@ -193,3 +193,28 @@ def test_commit_still_resets_on_switch():
     assert "_set_default()" in commit
     assert ".strip().lower() != " in commit
     assert "_plan_applied.discard(name)" in commit
+
+
+def test_opt_in_steps_are_not_swept_in_by_bulk_selections():
+    """Nemesis depends on an EXTERNAL tool being installed, so no bulk action
+    may tick it. Ticking it for someone who does not run Nemesis turns an
+    otherwise complete run into a FAILED one for a step they never asked for.
+    """
+    assert "nemesis" in gui.OPT_IN_STEPS
+
+    # not in the initial tick state, and not in what "Default" restores
+    for pack_default in (True, False):
+        assert "nemesis" not in gui.default_on_steps(pack_default)
+
+    # the STEPS default_on column agrees, so the runner's "is this the default
+    # selection?" check never counts it either
+    on_by_default = {k for k, *rest in gui.STEPS if rest[3]}
+    assert "nemesis" not in on_by_default
+
+    # "Upgrade" filters its plan through default_on_steps, so it is covered by
+    # the assertions above; "All" has to exclude OPT_IN_STEPS explicitly.
+    import inspect
+    src = inspect.getsource(gui)
+    set_all = src[src.index("    def _set_all():"):]
+    set_all = set_all[:set_all.index(chr(10) + "    def ", 10)]
+    assert "OPT_IN_STEPS" in set_all

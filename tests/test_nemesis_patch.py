@@ -184,6 +184,73 @@ def test_load_manifests_finds_namespaced_layout(tmp_path):
     assert ad.is_generated_project('tes4oblivion_wolfproject.txt')
 
 
+def _fake_mo2(tmp_path, instances):
+    """A `%LOCALAPPDATA%/ModOrganizer` tree. `instances` is
+    {name: (base_dir, game_path, [mod names holding a baseline])}."""
+    root = tmp_path / 'ModOrganizer'
+    for name, (base, game, mods) in instances.items():
+        inst = root / name
+        inst.mkdir(parents=True)
+        # Qt escapes backslashes and wraps paths in @ByteArray(...)
+        esc = str(base).replace('\\', '\\\\')
+        (inst / 'ModOrganizer.ini').write_text(
+            '[General]\n'
+            f'gameName=Whatever\n'
+            f'gamePath=@ByteArray({str(game).replace(chr(92), chr(92) * 2)})\n'
+            '[Settings]\n'
+            f'base_directory={esc}\n', 'utf-8')
+        for mod in mods:
+            meshes = base / 'mods' / mod / 'meshes'
+            meshes.mkdir(parents=True)
+            ad, asd = _vanilla_pair()
+            nemesis._write(str(meshes / nemesis.BASELINE_FILES[0]), ad)
+            nemesis._write(str(meshes / nemesis.BASELINE_FILES[1]), asd)
+    return root
+
+
+def test_autodetect_ranks_matching_instance_and_pristine_first(
+        tmp_path, monkeypatch):
+    """Several MO2 instances is the NORMAL case (SE, VR, Oblivion), and our own
+    deployed output also carries a baseline pair. Pick the instance for the game
+    being converted, and a pristine copy over one already holding our projects.
+    """
+    game = tmp_path / 'games' / 'SkyrimSE'
+    other_game = tmp_path / 'games' / 'SkyrimVR'
+    (game / 'Data').mkdir(parents=True)
+    other_game.mkdir(parents=True)
+    right = tmp_path / 'right'
+    wrong = tmp_path / 'wrong'
+    root = _fake_mo2(tmp_path, {
+        'SE': (right, game, ['Nemesis Unlimited Behavior Engine', 'OurOutput']),
+        'VR': (wrong, other_game, ['Nemesis Unlimited Behavior Engine']),
+    })
+    # make OurOutput look like ours by merging our projects into it
+    nemesis.write_baseline_override(
+        [_manifest('dog')],
+        str(right / 'mods' / 'OurOutput'),
+        str(right / 'mods' / 'OurOutput' / 'meshes'),
+        log=lambda *a: None)
+
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
+    got = nemesis.autodetect(str(game / 'Data'))
+    paths = [p for p, _s, _t, _o in got]
+    assert len(paths) == 3
+
+    # the matching game's pristine Nemesis wins
+    assert paths[0] == str(right / 'mods' / 'Nemesis Unlimited Behavior Engine'
+                           / 'meshes')
+    # our own output is demoted below the pristine copy of the same instance
+    assert got[1][3] > 0
+    # and the other game's instance comes last
+    assert paths[-1].startswith(str(wrong))
+
+
+def test_autodetect_survives_a_missing_mo2(tmp_path, monkeypatch):
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'nope'))
+    assert nemesis.mo2_instances() == []
+    assert nemesis.autodetect(None) == []
+
+
 def test_baseline_dir_accepts_mod_root_or_meshes(tmp_path):
     """A folder picker lands on the MOD folder, so `meshes` is resolved here.
 

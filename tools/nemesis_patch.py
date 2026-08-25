@@ -56,6 +56,20 @@ def _manifests(output_root):
     return ms
 
 
+def cmd_detect(args):
+    from asset_convert.skyrim_assets import find_skyrim_data
+    cands = nemesis.autodetect(find_skyrim_data())
+    if not cands:
+        print('no Nemesis installation found')
+        return 1
+    print(f'{len(cands)} Nemesis baseline(s) found, best first:')
+    for i, (path, source, total, ours) in enumerate(cands):
+        tag = 'pristine' if ours == 0 else f'already holds {ours} of ours'
+        print(f'  {"->" if i == 0 else "  "} {path}')
+        print(f'       {total} projects, {tag} -- {source}')
+    return 0
+
+
 def cmd_find(args):
     caches = nemesis.find_caches(args.root, args.depth)
     bases = nemesis.find_nemesis_baseline(args.root, args.depth)
@@ -82,16 +96,23 @@ def cmd_baseline(args):
         return 1
     src = args.nemesis
     if not src:
-        found = nemesis.find_nemesis_baseline(args.search or args.output_root,
-                                              args.depth)
-        pristine = [d for d, _n, gen in found if gen == 0]
-        if not pristine:
-            print('could not find a pristine Nemesis baseline; pass '
-                  '--nemesis <the Nemesis Unlimited Behavior Engine mod '
-                  'folder>')
+        from asset_convert.skyrim_assets import find_skyrim_data
+        if args.search:
+            found = nemesis.find_nemesis_baseline(args.search, args.depth)
+            cands = [(d, f'under {args.search}', n, gen)
+                     for d, n, gen in found]
+        else:
+            cands = nemesis.autodetect(find_skyrim_data())
+        if not cands:
+            print('no Nemesis installation found; pass --nemesis <the Nemesis '
+                  'Unlimited Behavior Engine mod folder>')
             return 1
-        src = pristine[0]
-        print(f'using baseline from {src}')
+        for i, (path, source, total, ours) in enumerate(cands):
+            tag = 'pristine' if ours == 0 else f'already holds {ours} of ours'
+            print(f'  {"->" if i == 0 else "  "} {path}')
+            print(f'       {total} projects, {tag} -- {source}')
+        src = cands[0][0]
+        print(f'using {src}')
     out = os.path.join(args.out, 'meshes')
     print(f'{len(ms)} generated projects')
     nemesis.write_baseline_override(ms, src, out)
@@ -113,6 +134,10 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
+
+    sub.add_parser('detect',
+                   help='auto-detect Nemesis installs on this machine'
+                   ).set_defaults(fn=cmd_detect)
 
     s = sub.add_parser('find', help='locate every cache/baseline copy')
     s.add_argument('root')

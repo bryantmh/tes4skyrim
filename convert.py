@@ -637,7 +637,8 @@ def phase_creatures(file_name: str, tes5_data: str, config: dict,
           f"({len(res['projects'])} projects, {len(res['errors'])} errors)")
     return not res['errors']
 
-def phase_nemesis(file_name: str, config: dict, output_dir: str = None):
+def phase_nemesis(file_name: str, config: dict, tes5_data: str = None,
+                  output_dir: str = None):
     """Ship a Nemesis baseline that carries Skyrim's creatures AND ours.
 
     Nemesis does not read the game's animationdatasinglefile.txt -- it reads its
@@ -677,29 +678,37 @@ def phase_nemesis(file_name: str, config: dict, output_dir: str = None):
         return False
 
     src = config.get("nemesisDir")
-    if not src:
-        # Search the configured mods folder first; fall back to the game Data
-        # folder, which finds it for anyone NOT using a mod manager's virtual
-        # file system (with Mod Organizer the mods are not in Data at all).
-        roots = [config.get("nemesisSearchDir")]
+    if src:
+        print(f"[{file_name}] Nemesis baseline (configured): {src}")
+    else:
+        # Auto-detect. Report EVERY candidate, not just the winner: a machine
+        # routinely carries several Mod Organizer instances, and silently
+        # building from another game's project list is the kind of wrong that
+        # only shows up as creatures not animating.
         from asset_convert.skyrim_assets import find_skyrim_data
-        roots.append(find_skyrim_data())
-        found = []
-        for root in roots:
-            if root and os.path.isdir(root):
-                found = nemesis.find_nemesis_baseline(root)
-                if found:
-                    break
-        pristine = [d for d, _n, gen in found if gen == 0]
-        if not pristine:
-            print(f"[{file_name}] Nemesis baseline not found. In the GUI "
+        search = config.get("nemesisSearchDir")
+        found = (nemesis.find_nemesis_baseline(search) if search else [])
+        if found:
+            cands = [(d, f"under {search}", n, gen) for d, n, gen in found]
+        else:
+            cands = nemesis.autodetect(tes5_data or find_skyrim_data())
+        if not cands:
+            print(f"[{file_name}] No Nemesis installation found. In the GUI "
                   f"use Tools > Set Nemesis Folder, or set \"nemesisDir\" in "
                   f"conversion_config.json to the Nemesis Unlimited Behavior "
-                  f"Engine mod folder (\"nemesisSearchDir\" to your mods "
-                  f"folder also works).")
+                  f"Engine mod folder.")
             return False
-        src = pristine[0]
-        print(f"[{file_name}] Nemesis baseline: {src}")
+        print(f"[{file_name}] Nemesis auto-detected "
+              f"({len(cands)} candidate(s)):")
+        for i, (path, source, total, ours) in enumerate(cands):
+            mark = "->" if i == 0 else "  "
+            tag = "pristine" if ours == 0 else f"already holds {ours} of ours"
+            print(f"    {mark} {path}")
+            print(f"         {total} projects, {tag} -- {source}")
+        src = cands[0][0]
+        print(f"[{file_name}] Using: {src}")
+        print(f"[{file_name}] Override with Tools > Set Nemesis Folder if "
+              f"that is the wrong one.")
 
     dest = plugin_out_root(out_root, file_name, export_root) / "meshes"
     print(f"[{file_name}] Writing Nemesis baseline for {len(manifests)} "
@@ -1539,15 +1548,15 @@ def _run_pipeline():
         ('meshes',       do_meshes),
         ('speedtrees',   do_speedtrees),
         ('creatures',    do_creatures),
+        # No _REQUIREMENTS entry: the Nemesis baseline is pure Python with no
+        # external tool, and check_phase treats an unlisted phase as clean.
+        ('nemesis',      do_nemesis),
         ('import',       do_import),
         ('sounds',       do_sounds),
         ('scripts',      do_scripts),
         ('lod',          do_lod),
         ('skyrim_patch', do_skyrim_patch),
         ('pack_bsa',     do_pack_bsa),
-        # No _REQUIREMENTS entry: the Nemesis patch is pure Python with no
-        # external tool, and check_phase treats an unlisted phase as clean.
-        ('nemesis',      do_nemesis),
         ('pack_zip',     do_pack_zip),
     ) if on]
     _failed = preflight.check_phases(_selected)
@@ -1639,6 +1648,21 @@ def _run_pipeline():
         for fn in order_with_plugin:
             ok = phase_creatures(fn, tes5_data, config, output_dir=output_dir)
             _mark('creatures', fn, ok)
+            if not ok:
+                success = False
+        print()
+
+    # Directly after Creatures: the baseline registers the projects that step
+    # just generated, so running it later (after packing, as it first did)
+    # meant a creature rebuild left the registration a phase behind until the
+    # next full run.
+    if do_nemesis and order_with_plugin:
+        print("=" * 54)
+        print("  Phase 5b: NEMESIS BASELINE")
+        print("=" * 54)
+        for fn in order_with_plugin:
+            ok = phase_nemesis(fn, config, tes5_data, output_dir=output_dir)
+            _mark('nemesis', fn, ok)
             if not ok:
                 success = False
         print()
@@ -1738,17 +1762,6 @@ def _run_pipeline():
         for fn in order:
             ok = phase_pack(fn, config, output_dir=output_dir)
             _mark('pack', fn, ok)
-            if not ok:
-                success = False
-        print()
-
-    if do_nemesis and order_with_plugin:
-        print("=" * 54)
-        print("  Phase 11b: NEMESIS BASELINE")
-        print("=" * 54)
-        for fn in order_with_plugin:
-            ok = phase_nemesis(fn, config, output_dir=output_dir)
-            _mark('nemesis', fn, ok)
             if not ok:
                 success = False
         print()
