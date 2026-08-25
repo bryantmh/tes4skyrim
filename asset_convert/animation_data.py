@@ -271,6 +271,101 @@ def merge_animationsetdata(base_lines: list, manifests: list) -> list:
     return ([str(n + len(new_names))] + names + new_names + body + new_body)
 
 
+# ---------------------------------------------------------------------------
+# Block splitting -- what lets us REPLACE a generated project, not just append
+# ---------------------------------------------------------------------------
+
+def _read_count_block(lines, pos):
+    """MultiLineBlock: a count line followed by that many lines.
+    Returns (block_lines, next_pos)."""
+    n = int(lines[pos])
+    return lines[pos + 1:pos + 1 + n], pos + 1 + n
+
+
+def split_animationdata(lines):
+    """(names, [(project_lines, motion_lines_or_None)]).
+
+    Same grammar tools/animcache_validate.py walks: a project name list, then
+    per project a length-prefixed project block and -- only when that block's
+    has-cache flag is 1 -- a length-prefixed motion block.
+    """
+    names, pos = _read_count_block(lines, 0)
+    blocks = []
+    for _ in names:
+        proj, pos = _read_count_block(lines, pos)
+        p = 0
+        has_files = proj[p] == '1'
+        p += 1
+        if has_files:
+            p += 1 + int(proj[p])
+        motion = None
+        if proj[p] == '1':                       # has-cache flag
+            motion, pos = _read_count_block(lines, pos)
+        blocks.append((proj, motion))
+    return names, blocks
+
+
+def split_animationsetdata(lines):
+    """(names, [block_lines]).
+
+    These blocks carry NO length prefix, so the only way to find where one
+    ends is to parse it through.
+    """
+    names, pos = _read_count_block(lines, 0)
+    blocks = []
+    for _ in names:
+        start = pos
+        set_files, pos = _read_count_block(lines, pos)
+        for _sf in set_files:
+            pos += 1                                    # 'V3'
+            _swap, pos = _read_count_block(lines, pos)  # swap events
+            pos += 1 + int(lines[pos]) * 3              # HandVariableData
+            nattacks = int(lines[pos])
+            pos += 1
+            for _ in range(nattacks):
+                pos += 2                                # event, mirrored
+                _clips, pos = _read_count_block(lines, pos)
+            pos += 1 + int(lines[pos]) * 3              # crc triples
+        blocks.append(lines[start:pos])
+    return names, blocks
+
+
+def is_generated_project(name: str) -> bool:
+    """True for a project THIS converter emitted (`tes4<folder>project`)."""
+    return os.path.basename(name.replace('\\', '/')).lower().startswith(
+        _GENERATED_PROJECT_MARK)
+
+
+def strip_generated_animationdata(lines: list) -> list:
+    """Drop every generated project and its data blocks from a merged file.
+
+    `merge_animationdata` skips a project whose NAME is already registered, so
+    merging onto a previously-injected file would keep the OLD blocks forever
+    -- a creature rebuild would never reach the game. Stripping first turns the
+    merge into a true replace.
+    """
+    names, blocks = split_animationdata(lines)
+    keep = [(n, b) for n, b in zip(names, blocks)
+            if not is_generated_project(n)]
+    out = [str(len(keep))] + [n for n, _ in keep]
+    for _n, (proj, motion) in keep:
+        out += [str(len(proj))] + proj
+        if motion is not None:
+            out += [str(len(motion))] + motion
+    return out
+
+
+def strip_generated_animationsetdata(lines: list) -> list:
+    """animationsetdata counterpart of strip_generated_animationdata."""
+    names, blocks = split_animationsetdata(lines)
+    keep = [(n, b) for n, b in zip(names, blocks)
+            if not is_generated_project(n)]
+    out = [str(len(keep))] + [n for n, _ in keep]
+    for _n, block in keep:
+        out += block
+    return out
+
+
 # Every project this converter generates is named 'tes4<folder>project'. Its
 # presence in a supposedly-VANILLA singlefile means the file is really one of
 # our own merged outputs (deployed loose into the game folder, or cached from

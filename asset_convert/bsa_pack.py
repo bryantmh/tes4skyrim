@@ -93,6 +93,8 @@ def _collect_files(plugin_dir: Path, subdir_names: 'list[str]',
         for f in src.rglob('*'):
             if not f.is_file():
                 continue
+            if f.name.lower() in _LOOSE_ONLY_FILES:
+                continue
             if is_textures and texture_keep is not None:
                 key = f.relative_to(src).as_posix().lower()
                 if key not in texture_keep:
@@ -203,6 +205,16 @@ _KNOWN_DIRS: frozenset = frozenset(
     for spec in _BSA_SPECS
     for n in spec[0]
 ) | frozenset(['meshes'])
+
+# Files that must stay LOOSE and never enter an archive. Nemesis walks
+# `<Data>\meshes` on DISK for its `nemesis_*singlefile.txt` baseline pair,
+# before the game is ever launched -- it does not read BSAs. Packed into one,
+# our override is invisible to it and every converted creature project silently
+# de-registers again, which is the exact failure this file exists to prevent.
+_LOOSE_ONLY_FILES: frozenset = frozenset([
+    'nemesis_animationdatasinglefile.txt',
+    'nemesis_animationsetdatasinglefile.txt',
+])
 
 
 def _loader_stem(index: int) -> str:
