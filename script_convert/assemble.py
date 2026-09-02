@@ -44,6 +44,10 @@ def build(conv, name: str, source: str, extends: str, editor_id: str) -> str:
     body += stage_latches(conv)
 
     out = list(header(conv, name, extends, editor_id))
+    # Preserve authored notes and banners that precede the first Begin block.
+    # Generated converter diagnostics never enter tree.preamble, so source
+    # TODO labels can be kept distinct from machine-readable failure TODOs.
+    out += _script.emit_body(conv, tree.preamble, extends)
     out += properties(conv, tree)
     out += body
     return '\n'.join(out)

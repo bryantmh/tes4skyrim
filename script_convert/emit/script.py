@@ -18,6 +18,8 @@ each statement's trailing source comment.
 
 from __future__ import annotations
 
+import re
+
 from script_convert.emit import stmt as S
 from script_convert.tes4 import nodes as N
 
@@ -129,15 +131,23 @@ def _text(conv, st: N.Stmt, extends: str) -> str:
     """
     conv._line_comments.clear()
     text = conv._guard_stage_timer(S.emit(conv, st, extends))
+    if isinstance(st, N.Comment):
+        text = _source_comment(text)
     notes = '  '.join(conv._line_comments)
     conv._line_comments.clear()
     if notes:
         # A command that converts to nothing but notes IS the comment; one
         # that produced a value keeps the notes beside it.
         text = notes if text.strip() in ('', '0') else f'{text}  {notes}'
-    if st.comment and not text.lstrip().startswith(';'):
-        text = f'{text}  {st.comment}' if text else st.comment
+    source_note = _source_comment(st.comment)
+    if source_note and not text.lstrip().startswith(';'):
+        text = f'{text}  {source_note}' if text else source_note
     return _safe_comments(text)
+
+
+def _source_comment(comment: str) -> str:
+    """Keep an author's TODO distinct from conversion-failure TODO markers."""
+    return re.sub(r'(?i)\bTODO\b(?:\s*:)?', 'Source note:', comment)
 
 
 def _safe_comments(text: str) -> str:

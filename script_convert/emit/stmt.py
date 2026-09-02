@@ -44,6 +44,17 @@ def emit(conv, stmt: N.Stmt, extends: str) -> str:
     if isinstance(stmt, N.Assign):
         return conv.emit_assignment(stmt, extends)
     if isinstance(stmt, N.ExprStmt):
+        # A standalone elapsed-time read resets OBSE's baseline. Morrowind's
+        # tree-growth scripts use it immediately after arming a countdown so
+        # earlier work in the same frame is not charged to the new timer.
+        name = getattr(stmt.expr, 'name', '').lower()
+        args = getattr(stmt.expr, 'args', ())
+        if name in ('getsecondspassed', 'scripteffectelapsedseconds') \
+                and not args:
+            if conv.sc.gsp_realtime:
+                return 'TES4_LastTick = Utility.GetCurrentRealTime()'
+            return ('; GetSecondsPassed baseline reset '
+                    f'({conv._get_update_interval()}s poll)')
         # A bare command in STATEMENT position is not the same as in value
         # position: `disableLinkedPathPoints` as a value is `0`, but as a
         # statement it is `;NE: disableLinkedPathPoints`.  The difference is

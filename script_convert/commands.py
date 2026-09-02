@@ -186,6 +186,18 @@ def global_value(ctx, call) -> str:
     return f'{safe}.SetValue({call.arg(1) if len(call) > 1 else 0})'
 
 
+@command('isplayable', 'isplayable2')
+def is_playable(ctx, call) -> str:
+    """OBSE IsPlayable -- SKSE64 Form.IsPlayable on the underlying base form."""
+    if call.ref:
+        target = ctx._convert_ref(call.ref, call.extends)
+    elif len(call):
+        target = call.arg(0)
+    else:
+        target = ctx._implicit_self(call.extends)
+    return f'TES4SKSE.GetBaseForm({target}).IsPlayable()'
+
+
 @command('getfirstref')
 def get_first_ref(ctx, call) -> str:
     """GetFirstRef <formtype> -- open OBSE's walk over loaded references.

@@ -34,6 +34,8 @@ BLOCK_MAP = {
     'onequip':            ('Event OnEquipped(Actor akActor)', 'EndEvent'),
     'onunequip':          ('Event OnUnequipped(Actor akActor)', 'EndEvent'),
     'ondeath':            ('Event OnDeath(Actor akKiller)', 'EndEvent'),
+    'onmurder':           ('Event OnMurder(Actor akKiller)', 'EndEvent'),
+    'onknockout':         ('Event OnEnterBleedout()', 'EndEvent'),
     'onhit':              ('Event OnHit(ObjectReference akAggressor, Form akSource, Projectile akProjectile, bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)', 'EndEvent'),
     'onhitwith':          ('Event OnHit(ObjectReference akAggressor, Form akSource, Projectile akProjectile, bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)', 'EndEvent'),
     'onload':             ('Event OnLoad()', 'EndEvent'),
@@ -102,6 +104,7 @@ BLOCK_FILTER_PARAM = {
     'onhit':              ('akAggressor', 'ObjectReference'),
     'onhitwith':          ('akSource', 'Form'),
     'ondeath':            ('akKiller', 'Actor'),
+    'onmurder':           ('akKiller', 'Actor'),
     'onstartcombat':      ('akTarget', 'Actor'),
     'onmagiceffecthit':   ('akEffect', 'MagicEffect'),
     'onmagiceffectapply': ('akEffect', 'MagicEffect'),
@@ -308,6 +311,7 @@ PAPYRUS_BOOL_FUNCTIONS = {
     'issprinting', 'isonmount', 'isalerted', 'isequipped', 'ismounted',
     'istrespassing', 'isavrecoverydisabled', 'isfurnitureinuse',
     'isflightblocked', 'isinterior', 'islocked',
+    'isplayable', 'isplayable2',
     'getdead', 'getdisabled', 'getlocked', 'getghost', 'getisalerted',
     'getincombat', 'getnobleedoutrecovery', 'getisplayablerace',
     'getcurrentweatherpercent', 'getiscurrentpackage',
@@ -1188,8 +1192,10 @@ COMMAND_ROWS = {
     'iskeypressed2': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
     'iskeypressed3': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
     'isonguard': Cmd(note='{f}'),
-    'isplayable': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
-    'isplayable2': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
+    # Implemented by the SKSE64 handler in commands.py. The row keeps the
+    # source-level Bool/zero-argument facts available to the tree emitter.
+    'isplayable': Cmd(flags='bare_bool cmp_bool zero_arg'),
+    'isplayable2': Cmd(flags='bare_bool cmp_bool zero_arg'),
     'isplayermovingintonewspace': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
     'isplayerslastriddenhorse': Cmd(note='{f} has no Skyrim equivalent', flags='bare_bool zero_arg'),
     #: IsSwimming → no vanilla equivalent, approximate with submerged check

@@ -3478,3 +3478,23 @@ table is hand-read, not derived.
 so it can never reveal an objective the rules close WRONGLY. That is why
 `objective_completion_audit.py --against` sweeps all 6,338 objectives; it is
 what caught the 51 and the 109 above, neither of which appears in the residue.
+
+## Generic OBSE/SKSE64 syntax recovery
+
+The parser recognizes released-script damage seen across independent mods,
+not plugin-specific EditorIDs: punctuation-only banner lines become source
+comments, a physical line beginning with `&&`/`||` continues the preceding
+condition, and a quoted known zero-argument command follows its normal mapping.
+Authored `TODO` comments are relabeled `Source note:` so the converter's own
+`;TODO:` remains a reliable unsupported-behavior audit.
+
+TES4 `OnMurder` maps to Skyrim's distinct `OnMurder(Actor akKiller)` event and
+retains its block filter through `akKiller`; `OnKnockout` maps to
+`OnEnterBleedout()`. A standalone `GetSecondsPassed` resets the real-time poll
+baseline instead of emitting a bare Float expression.
+
+OBSE `IsPlayable`/`IsPlayable2` targets SKSE64 `Form.IsPlayable()`. The
+`TES4SKSE.GetBaseForm` polyfill normalizes placed references and base forms,
+and compilation augments the CK's vanilla `Form.psc` in a temporary header-only
+overlay. The overlay is deleted and never shipped. Bool-valued commands used
+in TES4 arithmetic are cast at the operand, preserving expression precedence.

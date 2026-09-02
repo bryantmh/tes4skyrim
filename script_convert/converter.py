@@ -915,6 +915,8 @@ class ScriptConverter:
             return f'{target} = {dflt}  {value}'
 
         if stmt.op:
+            if self._value_type == 'Bool':
+                value = f'({value} as Int)'
             joiner = value if not stmt.op else f'{target} {stmt.op} {value}'
             if self._is_global_target(target):
                 return (f'{target}.SetValue({self._global_read(target)} '

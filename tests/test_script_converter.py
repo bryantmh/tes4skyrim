@@ -2101,6 +2101,64 @@ class TestSayTimerConversion:
                                               'ObjectReference', 'TestNoPoll')
         assert 'TES4_SecondsPassed' not in result
 
+    def test_bare_getsecondspassed_resets_the_realtime_baseline(self, converter):
+        src = ('Scriptname TestReset\n\nfloat timer\n\n'
+               'begin gamemode\nset timer to 10\nGetSecondsPassed\nend\n')
+        result = converter.convert_standalone('TestReset', src, 'Quest',
+                                              'TestReset')
+        assert 'TES4_LastTick = Utility.GetCurrentRealTime()' in result
+        assert ';TODO' not in result
+
+
+class TestGenericScriptSyntaxRecovery:
+    def test_legacy_actor_events(self, converter):
+        src = ('Scriptname TestEvents\n'
+               'begin OnKnockout\nStopCombat\nend\n'
+               'begin OnMurder Player\nDeleteReference\nend\n')
+        result = converter.convert_standalone('TestEvents', src, 'Actor',
+                                              'TestEvents')
+        assert 'Event OnEnterBleedout()' in result
+        assert 'Event OnMurder(Actor akKiller)' in result
+        murder = result.split('Event OnMurder(Actor akKiller)', 1)[1]
+        assert 'If akKiller == Game.GetPlayer()' in murder
+
+    def test_authored_todo_is_a_source_note(self, converter):
+        src = ('Scriptname TestNotes\nshort value\n'
+               '; TODO: original author note\n'
+               'begin GameMode\nset value to 1 ; TODO tune value\nend\n')
+        result = converter.convert_standalone('TestNotes', src, 'Quest',
+                                              'TestNotes')
+        assert '; Source note: original author note' in result
+        assert '; Source note: tune value' in result
+
+    def test_banners_and_quoted_commands_are_recovered(self, converter):
+        src = ('Scriptname TestRecovery\n'
+               'begin GameMode\n:================\n----------------\n'
+               '"EnableLinkedPathPoints"\nend\n')
+        result = converter.convert_standalone('TestRecovery', src, 'Quest',
+                                              'TestRecovery')
+        assert ';:================' in result
+        assert ';----------------' in result
+        assert ';NE: EnableLinkedPathPoints' in result
+
+    def test_leading_logical_operator_continues_condition(self, converter):
+        src = ('Scriptname TestContinuedIf\nref a\nref b\nref c\n'
+               'begin GameMode\n'
+               'if a.GetDisabled == 0 && b.GetDisabled == 0\n'
+               '  && c.GetDisabled == 0\nset a to 0\nendif\nend\n')
+        result = converter.convert_standalone('TestContinuedIf', src, 'Quest',
+                                              'TestContinuedIf')
+        condition = next(line for line in result.splitlines()
+                         if 'TES4Polyfill.GetDisabled' in line)
+        assert condition.count('TES4Polyfill.GetDisabled') == 3
+
+    def test_bool_arithmetic_casts_only_the_operand(self, converter):
+        src = ('Scriptname TestPlayableCount\nshort count\nref item\n'
+               'begin GameMode\nlet count += IsPlayable2 item\nend\n')
+        result = converter.convert_standalone('TestPlayableCount', src, 'Quest',
+                                              'TestPlayableCount')
+        assert '(TES4SKSE.GetBaseForm(item).IsPlayable() as Int)' in result
+
     def test_say_assignment_becomes_a_blocking_sayline(self, converter):
         """`set T to ref.Say topic` -> T := TES4Polyfill.SayLine(ref, topic, fallback).
 

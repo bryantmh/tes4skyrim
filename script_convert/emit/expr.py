@@ -577,6 +577,11 @@ def _operand(conv, child: N.Expr, parent: N.BinOp, extends: str,
     `1.5 - (GrowTimer - 13)/6`, which is a different number.
     """
     text = emit(conv, child, extends)
+    if parent.op in _ARITH and _is_bool_valued(conv, child):
+        # TES4 freely used command booleans as 0/1 arithmetic operands.
+        # Papyrus requires the cast on that operand; casting the completed
+        # expression changes precedence and leaves the other operand invalid.
+        text = f'({text} as Int)'
     if not isinstance(child, N.BinOp):
         return text
     if _rank(child.op) < _rank(parent.op):
