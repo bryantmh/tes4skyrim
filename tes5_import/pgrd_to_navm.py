@@ -884,6 +884,46 @@ def geom_quantize(verts):
     return [tuple(v) for v in np.asarray(verts, dtype=np.float32).tolist()]
 
 
+def _dedupe_indexed_triangles(tris, ledges=()):
+    """Drop repeated faces and remap ledge endpoints to the kept triangle.
+
+    Collision-backed sheets can contribute the same indexed face more than
+    once. Because all three undirected edges are then shared by exactly those
+    copies, adjacency links every edge of one face to the other. The CK rejects
+    those duplicate edge targets. Identity deliberately uses vertex indices so
+    independently authored overlapping floors remain distinct.
+    """
+    kept = []
+    old_to_new = []
+    by_face = {}
+    for tri in tris:
+        normalized = tuple(int(v) for v in tri)
+        key = tuple(sorted(normalized))
+        target = by_face.get(key)
+        if target is None:
+            target = len(kept)
+            by_face[key] = target
+            kept.append(normalized)
+        old_to_new.append(target)
+
+    if len(kept) == len(tris):
+        return kept, [tuple(link) for link in (ledges or ())]
+
+    remapped_ledges = []
+    seen_ledges = set()
+    for link in ledges or ():
+        hi, lo, *tail = link
+        hi = old_to_new[int(hi)]
+        lo = old_to_new[int(lo)]
+        if hi == lo:
+            continue
+        remapped = (hi, lo, *tail)
+        if remapped not in seen_ledges:
+            seen_ledges.add(remapped)
+            remapped_ledges.append(remapped)
+    return kept, remapped_ledges
+
+
 def geom_equal(a, b):
     """Do two (verts, tris, ledges) triples describe the same walking surface?"""
     av, at, al = a
@@ -1235,8 +1275,13 @@ def convert_PGRD(rec: dict, writer=None,
             import numpy as np
             verts3d = [tuple(v) for v in
                        np.asarray(verts3d, dtype=np.float32).tolist()]
+            tris, ledges = _dedupe_indexed_triangles(tris, ledges)
         if cache_path is not None:
             _geom_cache_store(cache_path, geom_hash, verts3d, tris, ledges)
+    elif verts3d:
+        # Cache entries from before duplicate-face cleanup must not depend on
+        # the user deleting the cache to become legal NAVMs.
+        tris, ledges = _dedupe_indexed_triangles(tris, ledges)
     if len(verts3d) < 3 or not tris:
         return None, None
 

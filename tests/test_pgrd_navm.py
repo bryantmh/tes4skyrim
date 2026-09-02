@@ -170,6 +170,18 @@ def test_water_flag_set_below_water_height():
     assert flags[1] == 0
 
 
+def test_duplicate_indexed_faces_are_removed_and_ledges_remapped():
+    tris = [(0, 1, 2), (2, 1, 0), (2, 3, 4)]
+    ledges = [(1, 2, 64.0), (0, 2, 64.0), (0, 1, 12.0)]
+
+    got_tris, got_ledges = p2n._dedupe_indexed_triangles(tris, ledges)
+
+    assert got_tris == [(0, 1, 2), (2, 3, 4)]
+    assert got_ledges == [(0, 1, 64.0)]
+    assert p2n._compute_adjacency(got_tris) == [(-1, -1, -1),
+                                                (-1, -1, -1)]
+
+
 def test_navm_record_is_compressed():
     verts = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 100.0, 0.0)]
     tris = [(0, 1, 2)]

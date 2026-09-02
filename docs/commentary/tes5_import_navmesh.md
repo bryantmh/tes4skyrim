@@ -2600,3 +2600,16 @@ once in the parent process. Spawned workers start at 0, so it is captured here
 and replayed in each child's init; without it their `get_formid()` calls
 mis-map every PathingCell parent FormID, which the engine meets as a
 navmesh-load null deref.
+
+## Duplicate indexed face cleanup
+
+Collision-backed sheets can return the same indexed triangle more than once,
+including reversed winding. The ordinary adjacency pass then links all three
+edges of one copy to the other copy, producing duplicate edge targets rejected
+by the Creation Kit. Before caching or packing NVNM, repeated faces are removed
+by unordered vertex-index identity and ledge endpoints are remapped to the kept
+triangle. Coordinate-equal triangles with different indices remain: those may
+be independently authored overlapping floors and must not be merged.
+
+The cleanup also runs on cache hits so correctness does not depend on deleting
+a geometry cache created by an older converter.
