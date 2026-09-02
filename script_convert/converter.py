@@ -369,8 +369,7 @@ class ScriptConverter:
             out.append(ptype.lower())
         if not via_record:
             return out
-        fid = (self.xref.edid_to_formid.get(ref_name)
-               or self.xref.edid_to_formid.get(ref_name.lower(), ''))
+        fid = resolve_property_formid(self.xref, ref_name)
         scri = self.xref.record_scri.get(fid, '') if fid else ''
         if scri:
             edid = self.xref.script_formid_to_edid.get(scri, '').lower()
@@ -717,6 +716,17 @@ class ScriptConverter:
         # whatever the name happens to collide with.
         if self._ref_has_script_var(owner, name):
             return f'{self._convert_ref(owner, extends)}.{safe}'
+        # An otherwise unknown member on a KNOWN scripted object is dangling
+        # in TES4 too.  Neutralise expression reads here; assignment reads and
+        # writes are handled by emit_assignment with the same resolver.
+        if (prop_low not in KNOWN_COMMANDS
+                and prop_low not in _BARE_BOOL_FUNCTIONS
+                and prop_low not in _MEMBER_COMMANDS):
+            dangling = self._dangling_cross_script_target(
+                f'{owner}.{name}')
+            if dangling:
+                self._line_comments.append(f';{dangling}')
+                return '0'
         # A quest's own variable, likewise -- except for the quest methods,
         # which are commands on it rather than variables of it.
         if self.xref.is_quest_ref(owner) and prop_low not in _QUEST_METHODS \
@@ -1932,7 +1942,7 @@ class ScriptConverter:
             # refuses to bind an ObjectReference-derived script class to a base
             # record, and the property then reads None. A unique-placed
             # ACTI/LIGH is the exception — the binder redirects to its ref.
-            script_type = self.xref.get_record_script_type(name)
+            script_type = self.xref.get_record_script_type(canon_edid)
             if script_type and self._script_type_binds(ptype, fid):
                 ptype = script_type
             safe = _safe_property_name(canon_edid)
@@ -2522,7 +2532,7 @@ class ScriptConverter:
         if not owner_low or not var_low:
             return ''
         # Resolve the owner EditorID to its attached script's variable table.
-        fid = self.xref.edid_to_formid.get(owner_low, '')
+        fid = resolve_property_formid(self.xref, owner_low)
         script_low = ''
         if fid:
             scri = self.xref.record_scri.get(fid, '')
@@ -2533,7 +2543,7 @@ class ScriptConverter:
         if not script_low:
             return ''
         known = self.xref.script_all_vars.get(script_low)
-        if not known:
+        if known is None:
             return ''
         if var_low in known:
             return ''

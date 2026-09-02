@@ -1058,6 +1058,44 @@ class TestScroRefTyping:
         assert conv.get_property_refs()['myMS14'] == 'TES4_MS14Script'
 
 
+class TestLeadingDigitRemoteFields:
+    """Remote fields must resolve through Papyrus' leading-digit rename."""
+
+    @staticmethod
+    def _xref(fields):
+        x = CrossRefGraph()
+        x.edid_to_formid['1flightquest'] = '01000003'
+        x.formid_to_edid['01000003'] = '1FlightQuest'
+        x.record_type['01000003'] = 'QUST'
+        x.record_scri['01000003'] = '01000001'
+        x.script_formid_to_edid['01000001'] = '1FlightScript'
+        x.script_all_vars['1flightscript'] = fields
+        return x
+
+    def test_known_field_uses_the_attached_script_class(self):
+        conv = ScriptConverter(self._xref({'summoned': 'Int'}))
+        out = conv.convert_standalone(
+            'ReturnScript',
+            ('scn ReturnScript\nbegin gamemode\n'
+             '  set FlightQuest.Summoned to 0\nend\n'),
+            'Quest', 'ReturnScript')
+        assert 'TES4_1FlightScript Property d1FlightQuest Auto' in out
+        assert 'd1FlightQuest.Summoned = 0' in out
+
+    def test_missing_field_is_neutralised_in_reads_and_writes(self):
+        conv = ScriptConverter(self._xref({}))
+        out = conv.convert_standalone(
+            'ReturnScript',
+            ('scn ReturnScript\nbegin gamemode\n'
+             '  if FlightQuest.Summoned == 1\n'
+             '    set FlightQuest.Summoned to 0\n'
+             '  endif\nend\n'),
+            'Quest', 'ReturnScript')
+        assert 'If 0 == 1' in out
+        assert ';d1FlightQuest.Summoned = 0' in out
+        assert out.count('dangling in the original script') == 2
+
+
 # ===========================================================================
 # Stale source names recovered from the SCRO table
 # ===========================================================================
@@ -3792,6 +3830,15 @@ class TestGetDestroyedReadsWhatSetDestroyedWrote:
         out = converter.convert_standalone('T', src, 'ObjectReference', 'T')
         assert 'TES4Polyfill.GetDestroyed(MS48OblivionGate, TES4DestroyedRefs)' in out
         assert 'GetCurrentDestructionStage' not in out
+
+    def test_effect_setdestroyed_targets_the_affected_actor(self, converter):
+        """ActiveMagicEffect Self is the effect object, not the TES4 subject."""
+        src = ("scn T\nbegin ScriptEffectStart\n"
+               "  setDestroyed 1\nend\n")
+        out = converter.convert_standalone(
+            'T', src, 'ActiveMagicEffect', 'T')
+        assert ('TES4Polyfill.SetDestroyed(GetTargetActor(), '
+                'TES4DestroyedRefs, true)') in out
 
     def test_gate_close_marks_the_gate_destroyed(self, converter):
         """The engine call that closes a gate feeds the same FormList, which is

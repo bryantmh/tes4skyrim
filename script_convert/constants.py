@@ -1813,7 +1813,7 @@ COMMAND_ROWS = {
     #: SetDestroyed writes that same shadow list.
     'setdestroyed': Cmd(
         'TES4Polyfill.SetDestroyed({ref}, {destroyed}, {b0})',
-        defaults={0: '1'}),
+        OBJREF, defaults={0: '1'}),
 
     # The Oblivion gates: closing one needs the destroyed list, since that is
     # where the gate's closed state is recorded.
