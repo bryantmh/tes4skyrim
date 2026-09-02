@@ -202,18 +202,52 @@ def _tri_area_2d(ax, ay, bx, by, cx, cy) -> float:
     return 0.5 * ((bx - ax) * (cy - ay) - (cx - ax) * (by - ay))
 
 
-def _compute_adjacency(tris: list) -> list:
-    """Per-triangle (e01, e12, e20) adjacent-triangle indices, -1 for boundary."""
+def _compute_adjacency(tris: list, verts: list = None) -> list:
+    """Return per-edge adjacent-triangle indices, or ``-1`` at a boundary.
+
+    A shared geometric edge is not necessarily a walkable portal. In
+    particular, the CK rejects two linked triangles whose surface normals face
+    in nearly opposite directions. That topology occurs at folded vertical
+    seams in generated corridor geometry. When coordinates are available,
+    leave those seams closed instead of advertising an impossible crossing to
+    the pathfinder. The optional argument preserves the topology-only helper
+    used by older callers and tests.
+    """
     edge_map: dict = {}
     for ti, (v0, v1, v2) in enumerate(tris):
         for slot, (va, vb) in enumerate([(v0, v1), (v1, v2), (v2, v0)]):
             key = (min(va, vb), max(va, vb))
             edge_map.setdefault(key, []).append((ti, slot))
 
+    normal_data = None
+    if verts is not None:
+        # Compute once per triangle, not once per shared edge. Large exterior
+        # cells can contain thousands of triangles and each has three edges.
+        normal_data = [None] * len(tris)
+        for ti, (v0, v1, v2) in enumerate(tris):
+            try:
+                a, b, c = verts[v0], verts[v1], verts[v2]
+            except (IndexError, TypeError):
+                continue
+            ux, uy, uz = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+            vx, vy, vz = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+            nx, ny, nz = (uy * vz - uz * vy,
+                          uz * vx - ux * vz,
+                          ux * vy - uy * vx)
+            length = math.sqrt(nx * nx + ny * ny + nz * nz)
+            if length > 1e-9:
+                normal_data[ti] = (nx, ny, nz, length)
+
     adj = [[-1, -1, -1] for _ in tris]
     for entries in edge_map.values():
         if len(entries) == 2:
             (ti, si), (tj, sj) = entries
+            if normal_data is not None:
+                a, b = normal_data[ti], normal_data[tj]
+                if (a is not None and b is not None and
+                        (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) /
+                        (a[3] * b[3]) < -0.9):
+                    continue
             adj[ti][si] = tj
             adj[tj][sj] = ti
     return [tuple(a) for a in adj]
@@ -526,8 +560,6 @@ def _build_door_links(verts, tris, doors):
         """
         best = None            # ((z-band, -area, ti), ti)
         for ti, (a, b, c) in enumerate(tris):
-            if ti in used_tris:
-                continue
             va, vb, vc = verts[a], verts[b], verts[c]
             d = ((vb[1] - vc[1]) * (va[0] - vc[0]) +
                  (vc[0] - vb[0]) * (va[1] - vc[1]))
@@ -550,7 +582,6 @@ def _build_door_links(verts, tris, doors):
                 best = (key, ti)
         return best[1] if best else None
 
-    used_tris = set()
     links = []
     for (dx, dy, dz, rot_z, ref_fid, _is_tp, _w) in doors:
         if not ref_fid:
@@ -563,8 +594,6 @@ def _build_door_links(verts, tris, doors):
             fx, fy = math.cos(rot_z), -math.sin(rot_z)
             best_cost = None
             for ti, (cx, cy) in enumerate(cents):
-                if ti in used_tris:
-                    continue
                 ox, oy = cx - dx, cy - dy
                 dist2 = ox * ox + oy * oy
                 if dist2 > (DOOR_LINK_MAX_DIST ** 2):
@@ -577,7 +606,6 @@ def _build_door_links(verts, tris, doors):
                     best_cost, best_ti = cost, ti
         if best_ti is not None:
             links.append((best_ti, ref_fid))
-            used_tris.add(best_ti)
     return links
 
 
@@ -884,6 +912,71 @@ def geom_quantize(verts):
     return [tuple(v) for v in np.asarray(verts, dtype=np.float32).tolist()]
 
 
+def _orient_quantized_triangles_up(verts, tris):
+    """Wind triangles using the float32 coordinates NVNM actually stores.
+
+    Rounding a nearly-collinear plan triangle can change its signed XY area.
+    Plan-degenerate neighbours are oriented as a manifold so they traverse a
+    shared edge in opposite directions rather than acquiring opposite normals.
+    """
+    out = []
+    plan_area = []
+    for tri in tris:
+        a, b, c = (int(tri[0]), int(tri[1]), int(tri[2]))
+        pa, pb, pc = verts[a], verts[b], verts[c]
+        signed = ((pb[0] - pa[0]) * (pc[1] - pa[1])
+                  - (pc[0] - pa[0]) * (pb[1] - pa[1]))
+        if signed < 0.0:
+            out.append((a, c, b))
+            signed = -signed
+        else:
+            out.append((a, b, c))
+        plan_area.append(signed)
+
+    owners = {}
+    for ti, tri in enumerate(out):
+        for k in range(3):
+            a, b = tri[k], tri[(k + 1) % 3]
+            owners.setdefault((a, b) if a < b else (b, a), []).append(
+                (ti, a, b))
+    graph = [[] for _ in out]
+    for edge_owners in owners.values():
+        if len(edge_owners) != 2:
+            continue
+        (i, ia, ib), (j, ja, jb) = edge_owners
+        parity = int(ia == ja and ib == jb)
+        graph[i].append((j, parity))
+        graph[j].append((i, parity))
+
+    vertical = {i for i, area in enumerate(plan_area) if area <= 1e-6}
+    state = {i: 0 for i in range(len(out)) if i not in vertical}
+    queue = list(state)
+    while queue:
+        i = queue.pop()
+        for j, parity in graph[i]:
+            if j not in vertical or j in state:
+                continue
+            state[j] = state[i] ^ parity
+            queue.append(j)
+    for root in sorted(vertical):
+        if root in state:
+            continue
+        state[root] = 0
+        queue = [root]
+        while queue:
+            i = queue.pop()
+            for j, parity in graph[i]:
+                if j not in vertical or j in state:
+                    continue
+                state[j] = state[i] ^ parity
+                queue.append(j)
+    for i in vertical:
+        if state.get(i, 0):
+            a, b, c = out[i]
+            out[i] = (a, c, b)
+    return out
+
+
 def _dedupe_indexed_triangles(tris, ledges=()):
     """Drop repeated faces and remap ledge endpoints to the kept triangle.
 
@@ -922,6 +1015,14 @@ def _dedupe_indexed_triangles(tris, ledges=()):
             seen_ledges.add(remapped)
             remapped_ledges.append(remapped)
     return kept, remapped_ledges
+
+
+def _normalize_geometry(verts, tris, ledges=()):
+    """Return the canonical geometry used by cold builds and cache hits."""
+    verts = geom_quantize(verts)
+    tris, ledges = _dedupe_indexed_triangles(tris, ledges)
+    tris = _orient_quantized_triangles_up(verts, tris)
+    return verts, tris, ledges
 
 
 def geom_equal(a, b):
@@ -1051,10 +1152,11 @@ def cell_geom_key(rec, land_rec, cell_rec, refr_recs, base_model_by_fid,
 
 
 def cached_geometry(geom_cache, cell_fid, pgrd_fid):
-    """The stored (verts, tris, ledges) for one cell, ignoring its hash, or None.
+    """Canonical cached geometry for one cell, ignoring its hash, or None.
 
     Reads the payload WITHOUT checking the tag-bearing hash, which is what makes
-    an adopt/verify pass able to compare geometry across a tag change.
+    an adopt/verify pass able to compare geometry across a tag change. Legacy
+    payloads are normalized exactly as a normal cache hit is before comparison.
     """
     if not geom_cache:
         return None
@@ -1062,9 +1164,10 @@ def cached_geometry(geom_cache, cell_fid, pgrd_fid):
     try:
         with open(path, 'rb') as fh:
             stored = pickle.load(fh)
-        return ([tuple(v) for v in stored['verts'].tolist()],
-                [tuple(t) for t in stored['tris'].tolist()],
-                [tuple(l) for l in stored.get('ledges', ())])
+        return _normalize_geometry(
+            [tuple(v) for v in stored['verts'].tolist()],
+            [tuple(t) for t in stored['tris'].tolist()],
+            [tuple(l) for l in stored.get('ledges', ())])
     except Exception:
         return None
 
@@ -1270,24 +1373,19 @@ def convert_PGRD(rec: dict, writer=None,
                         if isinstance(door_fids, dict)
                         else set(door_fids or ())))
         if verts3d:
-            # Round to float32 NOW so a fresh build and a cache hit (stored as
-            # float32) produce byte-identical NVNMs — NVNM packs f32 anyway.
-            import numpy as np
-            verts3d = [tuple(v) for v in
-                       np.asarray(verts3d, dtype=np.float32).tolist()]
-            tris, ledges = _dedupe_indexed_triangles(tris, ledges)
+            verts3d, tris, ledges = _normalize_geometry(
+                verts3d, tris, ledges)
         if cache_path is not None:
             _geom_cache_store(cache_path, geom_hash, verts3d, tris, ledges)
     elif verts3d:
-        # Cache entries from before duplicate-face cleanup must not depend on
-        # the user deleting the cache to become legal NAVMs.
-        tris, ledges = _dedupe_indexed_triangles(tris, ledges)
+        # A matching cache can still predate canonical winding/face cleanup.
+        verts3d, tris, ledges = _normalize_geometry(verts3d, tris, ledges)
     if len(verts3d) < 3 or not tris:
         return None, None
 
     tri_flags = (_compute_water_flags(verts3d, tris, water_z)
                  if water_z is not None else [0] * len(tris))
-    adj = _compute_adjacency(tris)
+    adj = _compute_adjacency(tris, verts3d)
 
     # ---- Door triangles: link the navmesh tri at each door threshold ----
     door_tris = _build_door_links(verts3d, tris, doors)

@@ -23,6 +23,7 @@ pytest.importorskip("shapely")
 from tes5_import.navmesh import corridor_clean as cc  # noqa: E402
 from tes5_import.navmesh import corridor_union as cu  # noqa: E402
 from tes5_import.navmesh import params  # noqa: E402
+from tes5_import.pgrd_to_navm import _orient_quantized_triangles_up  # noqa: E402
 
 
 def _components(tris):
@@ -195,6 +196,25 @@ def test_edge_ratio_contract_is_two():
     assert params.MAX_EDGE_RATIO == 2.0
     assert params.CULL_SLIVER_RATIO == 2.0
     assert params.MIN_TRI_AREA > 0
+
+
+def test_serialized_winding_is_checked_after_float32_quantization():
+    """The NVNM-facing guard winds from the coordinates actually written."""
+    verts = [(0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 0.0, 0.0)]
+    assert _orient_quantized_triangles_up(verts, [(0, 1, 2)]) == [(0, 2, 1)]
+    assert _orient_quantized_triangles_up(verts, [(0, 2, 1)]) == [(0, 2, 1)]
+
+
+def test_vertical_slivers_get_consistent_shared_edge_winding():
+    verts = [(0.0, 0.0, 0.0), (0.0, 0.0, 1.0),
+             (0.0, 1.0, 0.0), (0.0, 1.0, 1.0)]
+    got = _orient_quantized_triangles_up(verts, [(0, 1, 2), (1, 2, 3)])
+    first, second = got
+    first_dir = next((first[k], first[(k + 1) % 3]) for k in range(3)
+                     if {first[k], first[(k + 1) % 3]} == {1, 2})
+    second_dir = next((second[k], second[(k + 1) % 3]) for k in range(3)
+                      if {second[k], second[(k + 1) % 3]} == {1, 2})
+    assert first_dir == tuple(reversed(second_dir))
 
 
 # ---------------------------------------------------------------------------

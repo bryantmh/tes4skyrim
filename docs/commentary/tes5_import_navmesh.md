@@ -722,6 +722,25 @@ cache hits are byte-identical to cold builds. FormID-dependent parts (NVNM
 parent, door links, ONAM, water flags) are recomputed every run so load-order
 changes can't bake in.
 
+Cached and cold geometry is canonicalized through the same path before it is
+stored, packed, or compared during cache verification. Vertices are quantized
+to float32 before winding is established, repeated indexed faces are removed,
+and ledge indices are remapped. Legacy cache payloads receive that same
+normalization before a stale-cache adoption comparison, so a representation-
+only cleanup cannot report 40 false geometry mismatches.
+
+The parent initializes `navm_worker` before stale-cache adoption. Adoption runs
+sample builds before the process pool exists, and the worker module otherwise
+still holds empty model/door/collision globals; that produced different meshes
+for every sampled cell and falsely reported all 40 as mismatches. `prepare`
+rejects an uninitialized context so call-order drift cannot silently recur.
+
+Adjacency is geometry-aware: two triangles sharing an edge are not linked when
+their normals are nearly opposite (`dot < -0.9`), so a folded seam cannot become
+an engine-walkable portal. Multiple doors may still name the same triangle;
+Skyrim.esm authors that arrangement and reserving one triangle per door silently
+drops valid door links at tight shared landings.
+
 ### Mesh the SPAN GRAPH, never contours (the decisive fix)
 
 A contour is a **height map** — one Z per (cx,cy) column — and a building is not.
