@@ -159,6 +159,27 @@ def create_force_combat_factions(writer: PluginWriter) -> dict:
             'TES4ForceCombatVictims': vic_fid}
 
 
+def create_take_cover_task(writer: PluginWriter,
+                           force_factions: dict) -> dict:
+    """Invisible scripted ACTI that restores one timed ForceTakeCover call."""
+    from script_convert.pipeline import build_vmad_object_script
+    from .record_types.common import pack_obnd
+
+    edid = 'TES4TakeCoverTaskBase'
+    fid = writer.derive_formid('ACTI', edid)
+    vmad = build_vmad_object_script(
+        'TES4TakeCoverTask',
+        {'TES4ForceCombatAttackers':
+             force_factions['TES4ForceCombatAttackers'],
+         'TES4ForceCombatVictims': force_factions['TES4ForceCombatVictims']})
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_subrecord('VMAD', vmad)
+    subs += pack_obnd()
+    subs += pack_subrecord('FNAM', struct.pack('<H', 0))
+    writer.add_record('ACTI', pack_record('ACTI', fid, 0, subs))
+    return {edid: fid}
+
+
 def create_destroyed_formlist(writer: PluginWriter) -> dict:
     """The FormList backing TES4 GetDestroyed, which Skyrim has no reader for.
 

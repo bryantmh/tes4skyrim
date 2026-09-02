@@ -57,6 +57,7 @@ from .synth_records import (
     create_destroyed_formlist,
     create_force_combat_factions,
     create_message_menu_records,
+    create_take_cover_task,
     create_tes4_special_records,
     create_vtyp_records,
 )
@@ -785,7 +786,10 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
             set_chargen_choice(
                 {func_idx: (chargen_mesgs[menu['choice_global']],
                             menu['fid_to_index'])}, merge=True)
-    WELL_KNOWN_PROPERTIES.update(create_force_combat_factions(writer))
+    force_factions = create_force_combat_factions(writer)
+    WELL_KNOWN_PROPERTIES.update(force_factions)
+    WELL_KNOWN_PROPERTIES.update(create_take_cover_task(
+        writer, force_factions))
     WELL_KNOWN_PROPERTIES.update(create_destroyed_formlist(writer))
     _step_done('chargen menu MESGs')
 

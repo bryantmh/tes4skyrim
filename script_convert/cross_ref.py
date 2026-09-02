@@ -296,6 +296,10 @@ class CrossRefGraph:
         # moXscrXtrapXmemorystorage.XCURRENTprobeID), so the owning script
         # cannot detect it alone. Such a variable is declared Form.
         self.ref_as_base_form: set[tuple[str, str]] = set()
+        # Ref slots whose authored assignments all point at records carrying a
+        # specific script class. Values are Papyrus `TES4_*` type names; more
+        # than one distinct type deliberately widens at the use site.
+        self.ref_script_types: dict[tuple[str, str], set[str]] = {}
         # Per-script ref-typed variable names (populated by build_ref_as_int_map)
         self.script_ref_vars: dict[str, set[str]] = {}
         # Cross-script variable accesses: script_name_lower -> set of var_name_lower
@@ -303,6 +307,9 @@ class CrossRefGraph:
         self.cross_script_vars: dict[str, set[str]] = {}
         # Per-script ALL variable declarations: script_name_lower -> dict(var_low -> type_str)
         self.script_all_vars: dict[str, dict[str, str]] = {}
+        # Undeclared indexed siblings authored by result fragments (`item1`,
+        # `timer2`, ...), inferred from the declared unsuffixed sibling.
+        self.synthetic_script_vars: dict[str, dict[str, str]] = {}
         # Per-script `ref` variables the script itself uses as an ACTOR, i.e. it
         # calls an Actor-only method on them (`myRef.startcombat`).  Those are
         # the only remote ref vars a writer may downcast with `as Actor`; a ref
@@ -884,9 +891,6 @@ class CrossRefGraph:
         self.script_all_vars = script_all_vars
         self.script_actor_vars = script_actor_vars
 
-        if not script_ref_vars:
-            return
-
         # Phase B: scan ALL scripts for usage of ref vars
         _set_re = re.compile(
             r'\bset\s+(?:(\w+)\.)?(\w+)\s+to\s+(.+)',
@@ -898,6 +902,7 @@ class CrossRefGraph:
         # rather than a record name. Used to propagate 'baseform' along
         # variable-to-variable copies (see Phase C).
         ref_flow: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        ref_script_types: dict[tuple[str, str], set[str]] = {}
 
         for scn_low, sctx in script_sources.items():
             for raw_line in sctx.split('\n'):
@@ -967,6 +972,11 @@ class CrossRefGraph:
                                            if v_fid else '')
                                 if v_rtype and v_rtype not in PLACED_REF_SIGS:
                                     usage[key].add('baseform')
+                                elif v_rtype in PLACED_REF_SIGS:
+                                    attached = self.get_record_script_type(value)
+                                    if attached:
+                                        ref_script_types.setdefault(
+                                            key, set()).add(attached)
                                 elif not v_fid:
                                     # Not a record name -- it is another
                                     # variable. Remember the edge so a base
@@ -1025,11 +1035,36 @@ class CrossRefGraph:
                     self.ref_as_base_form.add(dest)
                     changed = True
 
+        # The same copy graph carries a placed reference's attached script
+        # class. This is what lets a quest slot written by one script retain
+        # the fields of the authored gate/activator when another reads it.
+        changed = True
+        while changed:
+            changed = False
+            for dest, sources in ref_flow.items():
+                merged_types = set(ref_script_types.get(dest, ()))
+                for source in sources:
+                    merged_types.update(ref_script_types.get(source, ()))
+                if merged_types != ref_script_types.get(dest, set()):
+                    ref_script_types[dest] = merged_types
+                    changed = True
+        self.ref_script_types = ref_script_types
+
         # Phase D: detect cross-script variable access (Owner.VarName patterns)
         # These variables must be Properties on the owning script so other scripts
         # can access them. Scans SCPT sources, INFO result scripts, and QUST stage scripts.
         _owner_var_re = re.compile(r'\b(\w+)\.(\w+)\b')
         cross_script_vars: dict[str, set[str]] = {}
+        synthetic_script_vars: dict[str, dict[str, str]] = {}
+
+        def _owner_script(owner):
+            if owner in script_all_vars:
+                return owner
+            fid = self.edid_to_formid.get(owner, '')
+            scri_fid = self.record_scri.get(fid, '') if fid else ''
+            se = self.script_formid_to_edid.get(scri_fid, '') if scri_fid else ''
+            se_low = se.lower()
+            return se_low if se_low in script_all_vars else ''
 
         def _scan_text_for_cross_access(text):
             for raw_line in text.split('\n'):
@@ -1042,20 +1077,24 @@ class CrossRefGraph:
                 for match in _owner_var_re.finditer(line):
                     owner = match.group(1).lower()
                     var = match.group(2).lower()
-                    target_script = None
-                    if owner in script_all_vars and var in script_all_vars[owner]:
-                        target_script = owner
-                    else:
-                        fid = self.edid_to_formid.get(owner, '')
-                        if fid:
-                            scri_fid = self.record_scri.get(fid, '')
-                            if scri_fid:
-                                se = self.script_formid_to_edid.get(scri_fid, '')
-                                if se:
-                                    se_low = se.lower()
-                                    if se_low in script_all_vars and var in script_all_vars[se_low]:
-                                        target_script = se_low
-                    if target_script:
+                    target_script = _owner_script(owner)
+                    if not target_script:
+                        continue
+                    known = script_all_vars[target_script]
+                    if var not in known:
+                        # TES4 accepts indexed sibling variables that some
+                        # plugins omit from SCTX declarations. The authored
+                        # unsuffixed sibling supplies both identity and type;
+                        # no name-specific mod heuristic is involved.
+                        indexed = re.match(r'^(.+?)(\d+)$', var)
+                        base = indexed.group(1) if indexed else ''
+                        if not base or base not in known:
+                            continue
+                        ptype = known[base]
+                        known[var] = ptype
+                        synthetic_script_vars.setdefault(
+                            target_script, {})[var] = ptype
+                    if var in known:
                         if target_script not in cross_script_vars:
                             cross_script_vars[target_script] = set()
                         cross_script_vars[target_script].add(var)
@@ -1069,21 +1108,25 @@ class CrossRefGraph:
         # (it only ADDS names that must become Properties), and a master's own
         # INFO/QUST fragments are emitted by the master's own conversion run,
         # so the masters' copies are deliberately not scanned here.
-        for extra_file, field_name in [('INFO.txt', 'ResultScript'), ('QUST.txt', 'SCTX')]:
+        for extra_file, field_name in [('INFO.txt', 'ResultScript'),
+                                       ('QUST.txt', 'ResultScript')]:
             extra_path = os.path.join(export_dir, extra_file)
             if not os.path.isfile(extra_path):
                 continue
             try:
                 with open(extra_path, 'r', encoding='utf-8') as f:
                     for raw_line in f:
-                        if raw_line.startswith(field_name + '='):
-                            text = raw_line[len(field_name) + 1:].strip()
-                            text = text.replace('\\r\\n', '\n').replace('\\n', '\n')
+                        key, sep, text = raw_line.partition('=')
+                        if (sep and (key == field_name
+                                     or key.endswith('.' + field_name))):
+                            text = text.strip().replace('\\r\\n', '\n') \
+                                .replace('\\n', '\n')
                             _scan_text_for_cross_access(text)
             except Exception:
                 pass
 
         self.cross_script_vars = cross_script_vars
+        self.synthetic_script_vars = synthetic_script_vars
     def is_remote_ref_var(self, owner_edid: str, var_name: str) -> bool:
         """Check if a variable on a remote record's script is ref-typed in TES4.
 

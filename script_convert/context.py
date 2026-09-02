@@ -28,6 +28,9 @@ class ScriptContext:
     local_vars: set = field(default_factory=set)
     #: Lowercased variable name -> Papyrus type.
     var_types: dict = field(default_factory=dict)
+    #: Variables synthesized from authored indexed sibling access (item1,
+    #: item2, ... beside a declared item), keyed by safe Papyrus name.
+    synthetic_vars: dict = field(default_factory=dict)
     #: Original lowercased name -> Papyrus-safe name, where they differ.
     var_renames: dict = field(default_factory=dict)
     #: OBSE `array_var` declarations; a read of one is inert.
@@ -39,6 +42,10 @@ class ScriptContext:
     has_gamemode: bool = False
     has_menumode: bool = False
     has_scripteffectupdate: bool = False
+    #: Authored locals assigned GetSelf; `alias.member` is a local member read.
+    self_aliases: set = field(default_factory=set)
+    #: TES4 block currently being emitted (OnAdd/OnDrop differ after merging).
+    current_block_type: str = ''
 
     # --- Feature flags, derived from the PARSE TREE ------------------------
     uses_getsecondspassed: bool = False
@@ -47,6 +54,7 @@ class ScriptContext:
     uses_timer: bool = False
     uses_say: bool = False
     uses_say_timer: bool = False
+    uses_dropme: bool = False
 
     # --- Emission bookkeeping ----------------------------------------------
     #: Quest -> latch variable, for stage timers.  Per-script: a latch

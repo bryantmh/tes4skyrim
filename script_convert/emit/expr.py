@@ -84,6 +84,11 @@ def is_ref_typed(conv, node: N.Expr) -> bool:
     if isinstance(node, N.Call):
         return node.name.lower() in _REF_RETURNING
     if isinstance(node, N.Member):
+        # TES4 permits a zero-argument call without parentheses after a
+        # receiver (`target.GetParentRef`).  The parser represents that as a
+        # Member, but its value is still the command's reference return.
+        if node.name.lower() in _REF_RETURNING:
+            return True
         # `Owner.var` on another converted script.  BOTH routes are needed:
         # `remote_type_of` resolves through the owner's declared `TES4_<script>`
         # property type, but a quest named bare (`SE09.rebuiltGatekeeperRef`)
@@ -402,23 +407,31 @@ def _container(conv, a, b, node, extends):
     Papyrus equivalent, so it is neutralised to the value that does not fire
     the branch and left as a TODO rather than compiled into a lie.
     """
-    if not _names_get_container(a):
+    container = _get_container_receiver(conv, a, extends)
+    if container is None:
         return None
     if _is_zero(b):
-        call = 'TES4Polyfill.IsInContainer(Self)'
+        call = f'TES4Polyfill.IsInContainer({container})'
         return f'!{call}' if node.op == '==' else call
     conv._line_comments.append(
         f';TODO: GetContainer has no Papyrus equivalent ({emit_source(node)})')
     return 'False' if node.op == '!=' else 'True'
 
 
-def _names_get_container(node: N.Expr) -> bool:
-    """A bare `GetContainer`, with or without an empty argument list."""
+def _get_container_receiver(conv, node: N.Expr, extends: str):
+    """Reference whose TES4 GetContainer result is being compared."""
     if isinstance(node, N.Ident):
-        return node.name.lower() == 'getcontainer'
+        return (_resolve._self_ref(extends)
+                if node.name.lower() == 'getcontainer' else None)
     if isinstance(node, N.Call):
-        return node.name.lower() == 'getcontainer' and not node.args
-    return False
+        if node.name.lower() != 'getcontainer' or node.args:
+            return None
+        if node.receiver is None:
+            return _resolve._self_ref(extends)
+        return emit(conv, node.receiver, extends)
+    if isinstance(node, N.Member) and node.name.lower() == 'getcontainer':
+        return emit(conv, node.owner, extends)
+    return None
 
 
 #: Comparison rules, each `(ops, fn)`.  `fn(conv, a, b, node, extends)` is

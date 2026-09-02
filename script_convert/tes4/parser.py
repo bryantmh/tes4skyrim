@@ -606,14 +606,20 @@ class Parser:
             ebody = self._parse_body(_IF_TERMINATORS)
             node.elifs.append((econd, ebody, elif_line))
         if self.cur.is_ident('else'):
+            elif_line = self.cur.line
             self.advance()
             # TES4 accepts `else <condition>` as an elseif; keep the source
             # shape so emission does not have to invent one.
             if self.cur.kind not in (T.NEWLINE, T.EOF, T.COMMENT):
+                # The Construction Set also accepts the two-token spelling
+                # `else if <condition>`.  `if` is syntax here, not the first
+                # operand of the condition.
+                if self.cur.is_ident('if'):
+                    self.advance()
                 econd = self.parse_expression()
                 self.take_line_end()
                 node.elifs.append((econd, self._parse_body(_IF_TERMINATORS),
-                                   line))
+                                   elif_line))
                 node.else_is_elseif = True
             else:
                 self.take_line_end()
