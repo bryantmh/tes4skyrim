@@ -311,6 +311,69 @@ Function MirrorPlayerFactionRelation(Faction akOther, Int aiMode) Global
   EndIf
 EndFunction
 
+; Oblivion's IsActorEvil is used as a hostility/crime guard by authored
+; scripts.  Skyrim exposes the actor-to-player hostility decision directly.
+Bool Function IsActorEvil(Actor akActor) Global
+  Return akActor != None && akActor.IsHostileToActor(Game.GetPlayer())
+EndFunction
+
+; SameFactionAsPC asks whether the actor and player share any live faction
+; membership.  SKSE64 exposes the full faction arrays, including memberships
+; added or removed at runtime.
+Bool Function SameFactionAsPC(Actor akActor) Global
+  Return SameFaction(akActor, Game.GetPlayer())
+EndFunction
+
+; True when both actors currently share at least one faction. SKSE64 exposes
+; the live faction array, so additions/removals made by scripts are included.
+Bool Function SameFaction(Actor akActor, Actor akOther) Global
+  If akActor == None || akOther == None
+    Return False
+  EndIf
+  Faction[] theirs = akActor.GetFactions(-128, 127)
+  Int i = 0
+  While i < theirs.Length
+    If akOther.IsInFaction(theirs[i])
+      Return True
+    EndIf
+    i += 1
+  EndWhile
+  Return False
+EndFunction
+
+; TES4 ForceTakeCover starts a timed flee-from-target AI procedure. The
+; helper activator owns one independent timer per invocation, so this call
+; returns immediately and never stalls the authored event for the duration.
+Function ForceTakeCover(Actor akActor, Actor akThreat, Float afDuration, Activator akTaskBase) Global
+  If akActor == None || akThreat == None || akTaskBase == None
+    Return
+  EndIf
+  TES4TakeCoverTask task = akActor.PlaceAtMe(akTaskBase, 1, True) as TES4TakeCoverTask
+  If task != None
+    task.BeginTask(akActor, akThreat, afDuration)
+  EndIf
+EndFunction
+
+; Skyrim exposes no Papyrus time-of-death native.  Preserve TES4's game-hour
+; result per actor in a spare actor-value slot: first observation is zero,
+; later reads return elapsed game hours, and resurrection clears the stamp.
+Float Function GetTimeDead(Actor akActor) Global
+  If akActor == None
+    Return 0.0
+  EndIf
+  If !akActor.IsDead()
+    akActor.SetActorValue("Variable04", 0.0)
+    Return 0.0
+  EndIf
+  Float now = Utility.GetCurrentGameTime()
+  Float stamp = akActor.GetActorValue("Variable04")
+  If stamp <= 0.0
+    akActor.SetActorValue("Variable04", now)
+    Return 0.0
+  EndIf
+  Return (now - stamp) * 24.0
+EndFunction
+
 ; ==========================================================================
 ; Crime / Faction
 ; ==========================================================================
@@ -438,6 +501,16 @@ Bool Function GetIsCreature(Actor akActor) Global
     Return False
   EndIf
   Return !akActor.HasKeyword(npcKeyword)
+EndFunction
+
+; TES4 IsLeftUp reports which side of a knocked-down quadruped faces upward.
+; Skyrim's creature behavior graph performs the same left/right pose match and
+; exposes the selected child as iGetUpType (0 = GetUpLeft, 1 = GetUpRight).
+Bool Function IsLeftUp(Actor akActor) Global
+  If akActor == None
+    Return False
+  EndIf
+  Return akActor.GetAnimationVariableInt("iGetUpType") == 0
 EndFunction
 
 ; TES4 HasVampireFed: Skyrim's PlayerVampireQuest (Skyrim.esm 0x000EAFD5)

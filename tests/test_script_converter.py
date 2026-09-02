@@ -1058,6 +1058,44 @@ class TestScroRefTyping:
         assert conv.get_property_refs()['myMS14'] == 'TES4_MS14Script'
 
 
+class TestLeadingDigitRemoteFields:
+    """Remote fields must resolve through Papyrus' leading-digit rename."""
+
+    @staticmethod
+    def _xref(fields):
+        x = CrossRefGraph()
+        x.edid_to_formid['1flightquest'] = '01000003'
+        x.formid_to_edid['01000003'] = '1FlightQuest'
+        x.record_type['01000003'] = 'QUST'
+        x.record_scri['01000003'] = '01000001'
+        x.script_formid_to_edid['01000001'] = '1FlightScript'
+        x.script_all_vars['1flightscript'] = fields
+        return x
+
+    def test_known_field_uses_the_attached_script_class(self):
+        conv = ScriptConverter(self._xref({'summoned': 'Int'}))
+        out = conv.convert_standalone(
+            'ReturnScript',
+            ('scn ReturnScript\nbegin gamemode\n'
+             '  set FlightQuest.Summoned to 0\nend\n'),
+            'Quest', 'ReturnScript')
+        assert 'TES4_1FlightScript Property d1FlightQuest Auto' in out
+        assert 'd1FlightQuest.Summoned = 0' in out
+
+    def test_missing_field_is_neutralised_in_reads_and_writes(self):
+        conv = ScriptConverter(self._xref({}))
+        out = conv.convert_standalone(
+            'ReturnScript',
+            ('scn ReturnScript\nbegin gamemode\n'
+             '  if FlightQuest.Summoned == 1\n'
+             '    set FlightQuest.Summoned to 0\n'
+             '  endif\nend\n'),
+            'Quest', 'ReturnScript')
+        assert 'If 0 == 1' in out
+        assert ';d1FlightQuest.Summoned = 0' in out
+        assert out.count('dangling in the original script') == 2
+
+
 # ===========================================================================
 # Stale source names recovered from the SCRO table
 # ===========================================================================
@@ -2100,6 +2138,64 @@ class TestSayTimerConversion:
         result = converter.convert_standalone('TestNoPoll', src,
                                               'ObjectReference', 'TestNoPoll')
         assert 'TES4_SecondsPassed' not in result
+
+    def test_bare_getsecondspassed_resets_the_realtime_baseline(self, converter):
+        src = ('Scriptname TestReset\n\nfloat timer\n\n'
+               'begin gamemode\nset timer to 10\nGetSecondsPassed\nend\n')
+        result = converter.convert_standalone('TestReset', src, 'Quest',
+                                              'TestReset')
+        assert 'TES4_LastTick = Utility.GetCurrentRealTime()' in result
+        assert ';TODO' not in result
+
+
+class TestGenericScriptSyntaxRecovery:
+    def test_legacy_actor_events(self, converter):
+        src = ('Scriptname TestEvents\n'
+               'begin OnKnockout\nStopCombat\nend\n'
+               'begin OnMurder Player\nDeleteReference\nend\n')
+        result = converter.convert_standalone('TestEvents', src, 'Actor',
+                                              'TestEvents')
+        assert 'Event OnEnterBleedout()' in result
+        assert 'Event OnMurder(Actor akKiller)' in result
+        murder = result.split('Event OnMurder(Actor akKiller)', 1)[1]
+        assert 'If akKiller == Game.GetPlayer()' in murder
+
+    def test_authored_todo_is_a_source_note(self, converter):
+        src = ('Scriptname TestNotes\nshort value\n'
+               '; TODO: original author note\n'
+               'begin GameMode\nset value to 1 ; TODO tune value\nend\n')
+        result = converter.convert_standalone('TestNotes', src, 'Quest',
+                                              'TestNotes')
+        assert '; Source note: original author note' in result
+        assert '; Source note: tune value' in result
+
+    def test_banners_and_quoted_commands_are_recovered(self, converter):
+        src = ('Scriptname TestRecovery\n'
+               'begin GameMode\n:================\n----------------\n'
+               '"EnableLinkedPathPoints"\nend\n')
+        result = converter.convert_standalone('TestRecovery', src, 'Quest',
+                                              'TestRecovery')
+        assert ';:================' in result
+        assert ';----------------' in result
+        assert ';NE: EnableLinkedPathPoints' in result
+
+    def test_leading_logical_operator_continues_condition(self, converter):
+        src = ('Scriptname TestContinuedIf\nref a\nref b\nref c\n'
+               'begin GameMode\n'
+               'if a.GetDisabled == 0 && b.GetDisabled == 0\n'
+               '  && c.GetDisabled == 0\nset a to 0\nendif\nend\n')
+        result = converter.convert_standalone('TestContinuedIf', src, 'Quest',
+                                              'TestContinuedIf')
+        condition = next(line for line in result.splitlines()
+                         if 'TES4Polyfill.GetDisabled' in line)
+        assert condition.count('TES4Polyfill.GetDisabled') == 3
+
+    def test_bool_arithmetic_casts_only_the_operand(self, converter):
+        src = ('Scriptname TestPlayableCount\nshort count\nref item\n'
+               'begin GameMode\nlet count += IsPlayable2 item\nend\n')
+        result = converter.convert_standalone('TestPlayableCount', src, 'Quest',
+                                              'TestPlayableCount')
+        assert '(TES4SKSE.GetBaseForm(item).IsPlayable() as Int)' in result
 
     def test_say_assignment_becomes_a_blocking_sayline(self, converter):
         """`set T to ref.Say topic` -> T := TES4Polyfill.SayLine(ref, topic, fallback).
@@ -3734,6 +3830,15 @@ class TestGetDestroyedReadsWhatSetDestroyedWrote:
         out = converter.convert_standalone('T', src, 'ObjectReference', 'T')
         assert 'TES4Polyfill.GetDestroyed(MS48OblivionGate, TES4DestroyedRefs)' in out
         assert 'GetCurrentDestructionStage' not in out
+
+    def test_effect_setdestroyed_targets_the_affected_actor(self, converter):
+        """ActiveMagicEffect Self is the effect object, not the TES4 subject."""
+        src = ("scn T\nbegin ScriptEffectStart\n"
+               "  setDestroyed 1\nend\n")
+        out = converter.convert_standalone(
+            'T', src, 'ActiveMagicEffect', 'T')
+        assert ('TES4Polyfill.SetDestroyed(GetTargetActor(), '
+                'TES4DestroyedRefs, true)') in out
 
     def test_gate_close_marks_the_gate_destroyed(self, converter):
         """The engine call that closes a gate feeds the same FormList, which is

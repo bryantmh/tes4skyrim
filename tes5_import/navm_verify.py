@@ -284,5 +284,9 @@ def prepare(jobs: list, geom_cache) -> None:
     """
     if not geom_cache:
         return
+    from . import navm_worker
+    if navm_worker._GEOM_CACHE != geom_cache:
+        raise RuntimeError(
+            'navmesh worker context must be initialized before cache prepare')
     adopt_if_unchanged(jobs, geom_cache)
     mark_jobs(jobs, verify_budget())

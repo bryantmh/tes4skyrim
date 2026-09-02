@@ -2314,8 +2314,7 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
     """
     from asset_convert.creature_pipeline import foot_enum_map
     from asset_convert.hkx_anim import (decode_clip, event_annotations,
-                                        parse_kf_events, speed_bake_factor,
-                                        speed_bake_targets, timescale_clip,
+                                        parse_kf_events, timescale_clip,
                                         write_clip_hkx)
     from asset_convert.hkx_ragdoll import ragdoll_info
     from asset_convert.hkx_skeleton import generate_skeleton_hkx
@@ -2344,10 +2343,28 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
     attack_kfs = set(clips['attacks'])
     enum_map = foot_enum_map(sound_slots)
 
-    _bake = speed_bake_targets(clips, attr_speed)
+    # Speed-bake factors (see the attr_speed docstring): computed per FILE
+    # from its natural root motion, applied once at decode.
+    _bake = {}
+    if attr_speed:
+        f_walk = 5.0 + (300.0 - 5.0) * attr_speed / 100.0
+        for kf_path, formula, cap in (
+                (clips['locomotion'].get('MoveForward'), f_walk, 1.4),
+                (clips.get('run'), f_walk * 3.0, 2.0)):
+            if kf_path:
+                _bake[clip_state_name(kf_path)] = (formula, cap)
 
     def _bake_factor(stem, clip, motion):
-        return speed_bake_factor(_bake.get(stem), clip, motion, fps)
+        rule = _bake.get(stem)
+        if not rule or motion is None or motion.get('translations') is None:
+            return 1.0
+        formula, cap = rule
+        end = motion['translations'][-1]
+        dur = float(clip.duration) or 1.0
+        natural = float(end[0] ** 2 + end[1] ** 2) ** 0.5 / dur
+        if natural <= 1.0:
+            return 1.0
+        return min(max(formula / natural, 1.0), cap)
 
     # Phase 1 — DECODE every clip and collect its translated events
     # (parse_kf_events: 'Sound: X' → SoundPlay descriptor names, authored

@@ -7,6 +7,7 @@ from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as _tes4_nodes
 from script_convert.constants import (
     BLOCK_FILTER_PARAM, COMMAND_ROWS, DISPATCH_EVENTS, ENUM_ACTOR_VALUES,
+    EVENT_REF_PARAMS,
     LOOSE_OPS,
     ENUM_AV_LADDERS, GMST_TO_ACTOR_VALUE, KNOWN_COMMANDS, KNOWN_GLOBALS,
     PAPYRUS_BOOL_FUNCTIONS, PLACED_REF_SIGS, PLAYER_ALIAS_EXTENDS,
@@ -18,7 +19,8 @@ from script_convert.constants import (
     _OBJREF_SHARED_FUNCTIONS, _PAPYRUS_VALUE_TYPES, _REF_TYPES,
     _ZERO_ARG_REF_FUNCTIONS, _canonical_global, _digit_stripped_formid,
     _record_type_to_base_papyrus, _record_type_to_papyrus,
-    _safe_property_name, resolve_property_formid, script_type_may_override,
+    _safe_property_name, resolve_property_formid,
+    script_type_may_override,
 )
 from script_convert import resolve_name as _resolve_name
 from script_convert import assemble as _assemble
@@ -367,8 +369,7 @@ class ScriptConverter:
             out.append(ptype.lower())
         if not via_record:
             return out
-        fid = (self.xref.edid_to_formid.get(ref_name)
-               or self.xref.edid_to_formid.get(ref_name.lower(), ''))
+        fid = resolve_property_formid(self.xref, ref_name)
         scri = self.xref.record_scri.get(fid, '') if fid else ''
         if scri:
             edid = self.xref.script_formid_to_edid.get(scri, '').lower()
@@ -705,10 +706,27 @@ class ScriptConverter:
         """
         prop_low = name.lower()
         safe = _safe_property_name(name)
+        # TES4 authors commonly cache GetSelf in a ref and then qualify their
+        # own variables through it (`me.timer`). Papyrus local properties are
+        # already members of Self; emitting `me.timer` instead makes the
+        # ObjectReference alias look as though it declared that field.
+        if owner.lower() in self.sc.self_aliases and prop_low in self.sc.local_vars:
+            return safe
         # A variable the owner's script actually declares is a property read,
         # whatever the name happens to collide with.
         if self._ref_has_script_var(owner, name):
             return f'{self._convert_ref(owner, extends)}.{safe}'
+        # An otherwise unknown member on a KNOWN scripted object is dangling
+        # in TES4 too.  Neutralise expression reads here; assignment reads and
+        # writes are handled by emit_assignment with the same resolver.
+        if (prop_low not in KNOWN_COMMANDS
+                and prop_low not in _BARE_BOOL_FUNCTIONS
+                and prop_low not in _MEMBER_COMMANDS):
+            dangling = self._dangling_cross_script_target(
+                f'{owner}.{name}')
+            if dangling:
+                self._line_comments.append(f';{dangling}')
+                return '0'
         # A quest's own variable, likewise -- except for the quest methods,
         # which are commands on it rather than variables of it.
         if self.xref.is_quest_ref(owner) and prop_low not in _QUEST_METHODS \
@@ -907,6 +925,10 @@ class ScriptConverter:
             elif extends == 'TopicInfo':
                 value = '(akSpeakerRef as Actor)'
 
+        if (value.strip().lower() in EVENT_REF_PARAMS
+                and self.type_of(target) == 'Actor'):
+            value = self._cast(value, 'Actor')
+
         if value.lstrip().startswith(';TODO:'):
             ttype = self.type_of(target)
             if ttype == 'GlobalVariable':
@@ -915,6 +937,8 @@ class ScriptConverter:
             return f'{target} = {dflt}  {value}'
 
         if stmt.op:
+            if self._value_type == 'Bool':
+                value = f'({value} as Int)'
             joiner = value if not stmt.op else f'{target} {stmt.op} {value}'
             if self._is_global_target(target):
                 return (f'{target}.SetValue({self._global_read(target)} '
@@ -968,14 +992,21 @@ class ScriptConverter:
         `_coerce_float_to_int` and `_coerce_ref_to_actor` scanned.
         """
         want = self.remote_type_of(target) or self.type_of(target)
-        got = (self._value_type or self.remote_type_of(value)
+        remote_got = self.remote_type_of(value)
+        got = (self._value_type or remote_got
                or self.type_of(value) or _call_return_type(value))
-
+        # The event parameters are declared by the Papyrus event signature,
+        # not in the script's local symbol table. Their source names are
+        # authoritative ObjectReference values and require the same Actor
+        # downcast as any explicitly declared ObjectReference.
+        if value.strip().lower() in EVENT_REF_PARAMS:
+            got = 'ObjectReference'
         # TES4 used a `ref` as a flag and wrote a plain INTEGER to it (`set
         # attackRef to 1` means "already handled").  Papyrus has no such
         # coercion and `ref = 1` does not compile, so any integer literal into
         # a reference slot is the clear: `None`.
-        if (want in _REF_TYPES and _INT_LITERAL_RE.match(value.strip())
+        if ((want in _REF_TYPES or want.startswith('TES4_'))
+                and _INT_LITERAL_RE.match(value.strip())
                 # ...unless the OWNING script's own use proves the variable is
                 # an integer.  TES4 declares it `ref` and then uses it as a
                 # flag; the export records that (`ref_as_int`), and writing
@@ -1008,6 +1039,14 @@ class ScriptConverter:
             # cast only differs from HEAD's output while changing no meaning.
             if want == 'Float' and got == 'Int':
                 return f'{target} = {value}'
+            # A cross-script TES4 `ref` is conservatively exposed as Form,
+            # while the receiving local's authored use can prove the narrow
+            # base type (Spell for Cast, Armor for EquipItem, etc.).  Papyrus
+            # requires the explicit downcast even when the runtime form is the
+            # correct type.
+            if ((got == 'Form' or remote_got == 'Form')
+                    and want not in _PAPYRUS_VALUE_TYPES and want != 'Form'):
+                return f'{target} = {self._cast(value, want)}'
             # An ObjectReference into an Actor slot needs the downcast; the
             # reverse is implicit (Actor extends ObjectReference).  A property
             # typed as the SCRIPT attached to a record (`TES4_MS45MonsterScript`)
@@ -1017,6 +1056,9 @@ class ScriptConverter:
             if want == 'Actor' and (got == 'ObjectReference'
                                     or got.startswith('TES4_')):
                 return f'{target} = {self._cast(value, "Actor")}'
+            if (want.startswith('TES4_')
+                    and got not in _PAPYRUS_VALUE_TYPES):
+                return f'{target} = {self._cast(value, want)}'
         return f'{target} = {value}'
 
     def emit_command_statement(self, expr, extends: str) -> str:
@@ -1173,6 +1215,14 @@ class ScriptConverter:
         # only `ObjectReference`; `script_actor_vars` records the promotion.
         if member_low in self.xref.script_actor_vars.get(script, ()):
             return 'Actor'
+        key = (script, member_low)
+        if key in self.xref.ref_as_int:
+            return 'Int'
+        if key in self.xref.ref_as_base_form:
+            return 'Form'
+        attached = self.xref.ref_script_types.get(key, ())
+        if len(attached) == 1:
+            return next(iter(attached))
         return self.xref.script_all_vars.get(script, {}).get(member_low, '')
 
     def type_of(self, name: str, *, locals_first: bool = True) -> str:
@@ -1892,7 +1942,7 @@ class ScriptConverter:
             # refuses to bind an ObjectReference-derived script class to a base
             # record, and the property then reads None. A unique-placed
             # ACTI/LIGH is the exception — the binder redirects to its ref.
-            script_type = self.xref.get_record_script_type(name)
+            script_type = self.xref.get_record_script_type(canon_edid)
             if script_type and self._script_type_binds(ptype, fid):
                 ptype = script_type
             safe = _safe_property_name(canon_edid)
@@ -2340,6 +2390,29 @@ class ScriptConverter:
             return ''
         return _record_type_to_base_papyrus(rtype)
 
+    def _assignment_record_type(self, name: str) -> str:
+        """Papyrus value type of the record assigned by bare EditorID.
+
+        Unlike `_base_record_type`, this deliberately includes placed refs:
+        REFR is ObjectReference and ACHR/ACRE are Actor.  The declaration
+        preloader may type either one as its attached script (or as Actor from
+        an eventual call site), which is useful for property member access but
+        is not the type a separate local receives from `set local to RefID`.
+        """
+        if not self.xref:
+            return ''
+        fid = resolve_property_formid(self.xref, name)
+        rtype = self.xref.record_type.get(fid, '') if fid else ''
+        if rtype in PLACED_REF_SIGS:
+            attached = self.xref.get_record_script_type(name)
+            if attached:
+                return attached
+        if rtype in ('ACHR', 'ACRE'):
+            return 'Actor'
+        if rtype == 'REFR':
+            return 'ObjectReference'
+        return _record_type_to_base_papyrus(rtype) if rtype else ''
+
     def _is_global_target(self, target: str) -> bool:
         """True when `target` names a GlobalVariable-typed property.
 
@@ -2361,12 +2434,17 @@ class ScriptConverter:
         works for actors and objects alike.
         """
         if not ref_name:
-            return self._self_reference(extends)
+            ref = self._self_reference(extends)
+            return (self._cast(ref, 'ObjectReference')
+                    if self.type_of(ref) == 'Form' else ref)
         if (ref_name.lower() in SELF_NAMES
                 and extends in ('ActiveMagicEffect', 'TopicInfo',
                                 PLAYER_ALIAS_EXTENDS)):
-            return self._self_reference(extends)
-        return self._convert_ref(ref_name, extends, as_receiver=True)
+            ref = self._self_reference(extends)
+        else:
+            ref = self._convert_ref(ref_name, extends, as_receiver=True)
+        return (self._cast(ref, 'ObjectReference')
+                if self.type_of(ref) == 'Form' else ref)
 
     def set_scro_aliases(self, aliases: dict) -> None:
         """Install the stale-name -> canonical-EditorID map for this fragment.
@@ -2454,7 +2532,7 @@ class ScriptConverter:
         if not owner_low or not var_low:
             return ''
         # Resolve the owner EditorID to its attached script's variable table.
-        fid = self.xref.edid_to_formid.get(owner_low, '')
+        fid = resolve_property_formid(self.xref, owner_low)
         script_low = ''
         if fid:
             scri = self.xref.record_scri.get(fid, '')
@@ -2465,7 +2543,7 @@ class ScriptConverter:
         if not script_low:
             return ''
         known = self.xref.script_all_vars.get(script_low)
-        if not known:
+        if known is None:
             return ''
         if var_low in known:
             return ''

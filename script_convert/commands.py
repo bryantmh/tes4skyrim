@@ -186,6 +186,18 @@ def global_value(ctx, call) -> str:
     return f'{safe}.SetValue({call.arg(1) if len(call) > 1 else 0})'
 
 
+@command('isplayable', 'isplayable2')
+def is_playable(ctx, call) -> str:
+    """OBSE IsPlayable -- SKSE64 Form.IsPlayable on the underlying base form."""
+    if call.ref:
+        target = ctx._convert_ref(call.ref, call.extends)
+    elif len(call):
+        target = call.arg(0)
+    else:
+        target = ctx._implicit_self(call.extends)
+    return f'TES4SKSE.GetBaseForm({target}).IsPlayable()'
+
+
 @command('getfirstref')
 def get_first_ref(ctx, call) -> str:
     """GetFirstRef <formtype> -- open OBSE's walk over loaded references.
@@ -344,7 +356,11 @@ def play_group(ctx, call) -> str:
         sig = ctx.xref.get_base_signature(call.ref) if ctx.xref else ''
         is_actor = sig in ('NPC_', 'CREA', 'ACHR', 'ACRE') if sig else True
     else:
-        is_actor = call.extends == 'Actor'
+        # ActiveMagicEffect/TopicInfo Self is the script object, not the actor
+        # TES4's block acts on.  Their implicit PlayGroup target is the event
+        # actor, so it must go through the behavior graph as an animation
+        # event rather than ObjectReference.PlayAnimation on the effect.
+        is_actor = call.extends in ('Actor', 'ActiveMagicEffect', 'TopicInfo')
 
     if is_actor:
         # SendAnimationEvent takes an ObjectReference, and TES4 aims PlayGroup
@@ -497,10 +513,35 @@ def mod_disposition(ctx, call) -> str:
 
 @command('pushactoraway')
 def push_actor_away(ctx, call) -> str:
-    """PushActorAway -- the pushed target must be Actor-typed."""
+    """PushActorAway -- ObjectReference source, Actor target."""
     ref = ctx._resolve_objref_ref(call.ref, call.extends)
     target = _as_actor(ctx, call.arg(0)) if len(call) else 'Game.GetPlayer()'
     return f'{ref}.PushActorAway({target}, {call.arg(1, "1.0")})'
+
+
+@command('forcetakecover', 'takecover')
+def force_take_cover(ctx, call) -> str:
+    """Run TES4's timed flee procedure without blocking the calling script."""
+    actor = _as_actor(ctx, ctx._resolve_objref_ref(call.ref, call.extends))
+    threat = _as_actor(ctx, call.arg(0))
+    duration = call.arg(1, '0.0')
+    ctx.sc.property_refs['TES4TakeCoverTaskBase'] = 'Activator'
+    return (f'TES4Polyfill.ForceTakeCover({actor}, {threat}, {duration}, '
+            'TES4TakeCoverTaskBase)')
+
+
+@command('dropme')
+def drop_me(ctx, call) -> str:
+    """Drop the scripted inventory object from its tracked container.
+
+    TES4 inventory scripts could ask the engine to drop their own stack.
+    Skyrim exposes the inverse operation on the container, so the assembler
+    tracks OnContainerChanged/OnEquipped and this call removes one base item
+    from that exact owner into the world.
+    """
+    return ('If TES4_Container != None\n'
+            '  TES4_Container.DropObject(Self.GetBaseObject(), 1)\n'
+            'EndIf')
 
 
 @command('setpcfactionmurder', 'setpcfactionattack', 'setpcfactionsteal')

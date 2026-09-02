@@ -13,6 +13,9 @@ from asset_convert.nif_converter import (
     OUTPUT_USER_VERSION as _SKY_UV,
     OUTPUT_USER_VERSION_2 as _SKY_UV2,
     OUTPUT_VERSION as _SKY_VERSION,
+    _categorize_pyffi_warnings,
+    _door_hinge_point,
+    _matches_subdir_filter,
     _rewrite_tex_path,
     batch_convert,
     convert_nif,
@@ -26,6 +29,19 @@ _OBV_VERSION = 0x14000004
 # ---------------------------------------------------------------------------
 # NIF converter tests
 # ---------------------------------------------------------------------------
+
+
+class TestMeshSubdirFilter:
+    def test_accepts_nested_prefix_with_either_slash(self):
+        rel = ('morro', 'd', 'door.nif')
+        assert _matches_subdir_filter(rel, ['morro/d'])
+        assert _matches_subdir_filter(rel, [r'morro\d'])
+        assert not _matches_subdir_filter(rel, ['morro/x'])
+
+    def test_root_prefix_and_unfiltered_behavior_stay_unchanged(self):
+        rel = ('architecture', 'anvil', 'wall.nif')
+        assert _matches_subdir_filter(rel, ['architecture'])
+        assert _matches_subdir_filter(rel, None)
 
 class TestTexturePathRewriting:
     """Test texture path rewriting logic."""
@@ -63,6 +79,45 @@ class TestTexturePathRewriting:
     def test_data_prefix_with_forward_slashes(self):
         result = _rewrite_tex_path(b'Data/Textures/dwarven/rock01.dds')
         assert result == 'Textures\\tes4\\dwarven\\rock01.dds'
+
+
+class TestPyFFIWarningCapture:
+    def test_toaster_progress_is_not_reported_as_a_warning(self):
+        messages = [
+            '--- fix_addtangentspace ---',
+            '      ~~~ NiTriShape [Mesh:0] ~~~',
+            '        adding tangent space',
+        ]
+        assert _categorize_pyffi_warnings(messages) == {}
+
+    def test_real_data_warning_remains_visible(self):
+        warnings = _categorize_pyffi_warnings([
+            'NiNode block is missing from the nif tree: omitting reference'])
+        assert warnings == {'missing_from_nif_tree': 1}
+
+
+class TestDoorHingeInference:
+    def test_centered_vertical_leaf_gets_an_edge_hinge(self):
+        import numpy as np
+        leaf = np.asarray([
+            (-100.0, -5.0, 0.0), (100.0, -5.0, 0.0),
+            (-100.0, 5.0, 200.0), (100.0, 5.0, 200.0),
+        ])
+        hinge = _door_hinge_point([leaf])
+        assert tuple(hinge) == (-100.0, 0.0, 0.0)
+
+    def test_existing_edge_pivot_and_horizontal_hatch_are_rejected(self):
+        import numpy as np
+        edge_pivoted = np.asarray([
+            (0.0, -5.0, 0.0), (200.0, -5.0, 0.0),
+            (0.0, 5.0, 200.0), (200.0, 5.0, 200.0),
+        ])
+        horizontal = np.asarray([
+            (-100.0, -100.0, -5.0), (100.0, -100.0, -5.0),
+            (-100.0, 100.0, 5.0), (100.0, 100.0, 5.0),
+        ])
+        assert _door_hinge_point([edge_pivoted]) is None
+        assert _door_hinge_point([horizontal]) is None
 
 
 class TestBoneMapping:

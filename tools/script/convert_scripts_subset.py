@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 
 from tes5_import.text_reader import parse_export_file  # noqa: E402
 from script_convert import pipeline  # noqa: E402
+from script_convert.cross_ref import _export_dirs_with_masters  # noqa: E402
 
 
 def _quest_records(export_dir: str, quest_edid: str, by_type: dict):
@@ -122,15 +123,28 @@ def main(argv=None) -> int:
     pipeline._WORKER_CTX.clear()
     # The dangling-reference pass now runs at the WRITE (pipeline.write_psc),
     # so only the cross-script UDF cast pass is still a sweep.
-    pipeline._fix_udf_call_arg_types(out, stats['udf_sigs'])
+    pipeline._fix_udf_call_arg_types(
+        out, stats['udf_sigs'], stats['udf_callers'])
     print(f'  wrote {len(scpt)} SCPT / {len(info)} INFO / {len(qust)} QUST -> {out}')
     for e in stats['errors'][:20]:
         print('  ERR', e)
 
     if args.compile:
         import subprocess
-        cmd = [sys.executable, str(ROOT / 'tools' / 'compile_papyrus.py'),
+        cmd = [sys.executable,
+               str(ROOT / 'tools' / 'script' / 'compile_papyrus.py'),
                '--src', out, '--out', os.path.join(out, 'pex')]
+        header_dirs = []
+        for source_export in _export_dirs_with_masters(export_dir):
+            source = (ROOT / 'output' / Path(source_export).name /
+                      'scripts' / 'source')
+            if source.is_dir():
+                header_dirs.append(str(source))
+        static_headers = ROOT / 'script_convert' / 'static_scripts'
+        if static_headers.is_dir():
+            header_dirs.append(str(static_headers))
+        if header_dirs:
+            cmd.extend(['--extra-headers', ';'.join(dict.fromkeys(header_dirs))])
         print('  ' + ' '.join(cmd))
         return subprocess.call(cmd)
     return 0

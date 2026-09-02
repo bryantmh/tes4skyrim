@@ -125,19 +125,16 @@ def _pyffi_capture_init() -> None:
     pyffi_log.addHandler(_PyFFICapture())
 
 
+_PYFFI_PROGRESS_PREFIXES = (
+    # PyFFI's toaster/spells log traversal and progress at WARNING rather than
+    # INFO. These are not data warnings. Match after whitespace normalization:
+    # tree traversal indents every ``~~~`` and ``adding tangent space`` line.
+    '~~~', '---', 'adding ', 'optimizing ', 'imposing ', 'counted ',
+    'creating ', 'created ', 'merging ', 'skin ',
+)
+
+
 _WARN_CATEGORIES = {
-    # SpellAddTangentSpace / NifToaster progress markers (INFO logged at WARNING)
-    'spell_marker_tilde':          lambda m: m.startswith('~~~'),
-    'spell_marker_dash':           lambda m: m.startswith('---'),
-    'tangent_space_added':         lambda m: m.startswith('adding'),
-    # Skin partition progress messages (from update_skin_partition)
-    'skin_part_optimizing':        lambda m: m.startswith('optimizing'),
-    'skin_part_imposing':          lambda m: m.startswith('imposing'),
-    'skin_part_counted':           lambda m: m.startswith('counted'),
-    'skin_part_creating':          lambda m: m.startswith('creating'),
-    'skin_part_created':           lambda m: m.startswith('created'),
-    'skin_part_merging':           lambda m: m.startswith('merging'),
-    'skin_part_progress':          lambda m: m.startswith('skin '),
     # Geometry issues
     'improper_geometry':           lambda m: m.startswith('improper'),
     # Actual geometry/data errors
@@ -190,7 +187,9 @@ def _categorize_pyffi_warnings(messages: list) -> dict:
     """
     c: _collections.Counter = _collections.Counter()
     for msg in messages:
-        m = msg.lower()
+        m = msg.strip().lower()
+        if m.startswith(_PYFFI_PROGRESS_PREFIXES):
+            continue
         matched = False
         for cat, test in _WARN_CATEGORIES.items():
             if test(m):
@@ -2750,6 +2749,195 @@ def _dropped_accum_root_pose(root, mgr, resolve_name):
     return None
 
 
+def _door_target_geometry(target):
+    """Return render-geometry vertex arrays in *target*'s local frame.
+
+    A transform controller replaces the target node's own local transform, so
+    the hinge calculation must use the geometry below that node while excluding
+    the target transform itself. Descendant transforms remain authored data.
+    """
+    parts = []
+
+    def _matrix(block):
+        m = np.eye(4, dtype=np.float64)
+        r = block.rotation
+        m[0, :3] = (r.m_11, r.m_12, r.m_13)
+        m[1, :3] = (r.m_21, r.m_22, r.m_23)
+        m[2, :3] = (r.m_31, r.m_32, r.m_33)
+        m[:3, :3] *= float(block.scale)
+        m[3, :3] = (block.translation.x, block.translation.y,
+                    block.translation.z)
+        return m
+
+    def _walk(block, parent, include_local=True):
+        local = _matrix(block) @ parent if include_local else parent
+        geom = getattr(block, 'data', None)
+        if (geom is not None and hasattr(geom, 'vertices') and
+                getattr(geom, 'num_vertices', 0)):
+            vertices = np.asarray([(v.x, v.y, v.z) for v in geom.vertices],
+                                  dtype=np.float64)
+            parts.append(vertices @ local[:3, :3] + local[3, :3])
+        for child in (getattr(block, 'children', None) or ()):
+            if child is not None:
+                _walk(child, local)
+
+    _walk(target, np.eye(4, dtype=np.float64), include_local=False)
+    return parts
+
+
+def _generated_door_track(seq):
+    """Return the sole generated hinge track in an Open/Close sequence.
+
+    Morroblivion-style converted Morrowind doors carry a distinctive authored
+    track: two linear Euler keys, X/Y fixed at zero, Z swinging about 90
+    degrees, and no translation channel. Keeping this fingerprint narrow
+    prevents ordinary Oblivion animated doors and multi-leaf gates from being
+    rewritten.
+    """
+    found = []
+    for block in seq.controlled_blocks:
+        interp = block.interpolator
+        data = getattr(interp, 'data', None)
+        if (not isinstance(interp, NifFormat.NiTransformInterpolator) or
+                data is None or int(data.rotation_type) != 4 or
+                data.translations.num_keys != 0):
+            continue
+        groups = data.xyz_rotations
+        if any(group.num_keys != 2 for group in groups):
+            continue
+        times = [[float(key.time) for key in group.keys] for group in groups]
+        if any(abs(times[axis][key] - times[2][key]) > 1e-5
+               for axis in (0, 1) for key in (0, 1)):
+            continue
+        if any(abs(float(key.value)) > 1e-4
+               for group in groups[:2] for key in group.keys):
+            continue
+        z0, z1 = (float(key.value) for key in groups[2].keys)
+        if not 0.75 <= abs(z1 - z0) <= 2.2:
+            continue
+        found.append((block, interp, data))
+    return found[0] if len(found) == 1 else None
+
+
+def _door_hinge_point(parts):
+    """Infer the hinge line of a vertical door whose pivot is in its leaf."""
+    if not parts:
+        return None
+    vertices = np.concatenate(parts)
+    low = vertices.min(axis=0)
+    high = vertices.max(axis=0)
+    span = high - low
+    width_axis = 0 if span[0] >= span[1] else 1
+    depth_axis = 1 - width_axis
+    width = float(span[width_axis])
+    height = float(span[2])
+    if (width <= 1e-4 or height < width * 0.65 or
+            span[depth_axis] > width * 0.55):
+        return None
+
+    # A Skyrim-style door is authored with its pivot at the hinge already.
+    if min(abs(float(low[width_axis])),
+           abs(float(high[width_axis]))) < width * 0.30:
+        return None
+
+    midpoint = (low + high) * 0.5
+    side_score = {-1: 0, 1: 0}
+    for part in parts:
+        part_low = part.min(axis=0)
+        part_high = part.max(axis=0)
+        part_span = part_high - part_low
+        side = ((part_low[width_axis] + part_high[width_axis]) * 0.5 -
+                midpoint[width_axis]) / width
+        if (part_span[width_axis] < width * 0.30 and
+                part_span[2] < height * 0.40 and abs(side) > 0.25):
+            side_score[1 if side > 0 else -1] += len(part)
+
+    if side_score[1] > side_score[-1] * 1.5:
+        hinge_high = False
+    elif side_score[-1] > side_score[1] * 1.5:
+        hinge_high = True
+    else:
+        # Without a handle, the nearer extent is the authored side signal.
+        hinge_high = abs(float(high[width_axis])) < abs(float(low[width_axis]))
+
+    hinge = np.zeros(3, dtype=np.float64)
+    hinge[width_axis] = high[width_axis] if hinge_high else low[width_axis]
+    hinge[depth_axis] = midpoint[depth_axis]
+    return hinge
+
+
+def _euler_xyz_matrix(angles):
+    """NiTransformData Euler XYZ angles as a column-vector matrix."""
+    ax, ay, az = angles
+    cx, sx = math.cos(ax), math.sin(ax)
+    cy, sy = math.cos(ay), math.sin(ay)
+    cz, sz = math.cos(az), math.sin(az)
+    rx = np.asarray(((1, 0, 0), (0, cx, -sx), (0, sx, cx)))
+    ry = np.asarray(((cy, 0, sy), (0, 1, 0), (-sy, 0, cy)))
+    rz = np.asarray(((cz, -sz, 0), (sz, cz, 0), (0, 0, 1)))
+    return rx @ ry @ rz
+
+
+def _write_hinge_translations(interp, data, hinge, closed_angles):
+    """Add T(t)=T0+Rclosed*P-R(t)*P so *hinge* stays stationary."""
+    base = np.asarray((interp.translation.x, interp.translation.y,
+                       interp.translation.z), dtype=np.float64)
+    closed = _euler_xyz_matrix(closed_angles)
+    groups = data.xyz_rotations
+    data.translations.interpolation = 1
+    data.translations.num_keys = 2
+    data.translations.keys.update_size()
+    for index in range(2):
+        angles = tuple(float(group.keys[index].value) for group in groups)
+        value = base + closed @ hinge - _euler_xyz_matrix(angles) @ hinge
+        key = data.translations.keys[index]
+        key.time = float(groups[2].keys[index].time)
+        key.value.x, key.value.y, key.value.z = (float(v) for v in value)
+    first = data.translations.keys[0].value
+    interp.translation.x, interp.translation.y, interp.translation.z = (
+        first.x, first.y, first.z)
+
+
+def _fix_centered_door_pivot(root):
+    """Turn generated center-spinning Open/Close doors into hinged doors."""
+    sequences = {bytes(block.name or b'').lower(): block
+                 for block in root.tree()
+                 if isinstance(block, NifFormat.NiControllerSequence)}
+    open_track = (_generated_door_track(sequences[b'open'])
+                  if b'open' in sequences else None)
+    close_track = (_generated_door_track(sequences[b'close'])
+                   if b'close' in sequences else None)
+    if open_track is None or close_track is None:
+        return False
+    open_block, open_interp, open_data = open_track
+    close_block, close_interp, close_data = close_track
+    open_name = bytes(open_block.node_name or b'')
+    if not open_name or open_name != bytes(close_block.node_name or b''):
+        return False
+
+    open_angles = [tuple(float(group.keys[index].value)
+                         for group in open_data.xyz_rotations)
+                   for index in range(2)]
+    close_angles = [tuple(float(group.keys[index].value)
+                          for group in close_data.xyz_rotations)
+                    for index in range(2)]
+    if (max(abs(a - b) for a, b in zip(open_angles[0], close_angles[1])) > 1e-3 or
+            max(abs(a - b) for a, b in zip(open_angles[1], close_angles[0])) > 1e-3):
+        return False
+
+    target = next((block for block in root.tree()
+                   if bytes(getattr(block, 'name', b'') or b'') == open_name),
+                  None)
+    hinge = (_door_hinge_point(_door_target_geometry(target))
+             if target is not None else None)
+    if hinge is None:
+        return False
+
+    _write_hinge_translations(open_interp, open_data, hinge, open_angles[0])
+    _write_hinge_translations(close_interp, close_data, hinge, open_angles[0])
+    return True
+
+
 def _process_controller_manager(node, palette):
     """Strip unsupported NiControllerManager sequences.
 
@@ -3089,6 +3277,10 @@ def _process_controller_manager(node, palette):
 
         _fan_out_shared_entries(seq, shared_extras)
 
+    # Some Morrowind-to-Oblivion assets synthesize Open/Close as a pure
+    # 90-degree rotation while leaving the animated node at the leaf center.
+    # Add the matching translation curve so Skyrim opens them about a hinge.
+    _fix_centered_door_pivot(node)
 
     if _pending_bake is not None:
         _apply_rotation(node.rotation, _pending_bake)
@@ -7831,6 +8023,19 @@ def _finish_result(result, stats):
     return result
 
 
+def _matches_subdir_filter(rel_parts, subdir_filter) -> bool:
+    """Whether a relative mesh path is under one selected path prefix."""
+    if subdir_filter is None:
+        return True
+    rel = tuple(str(part).lower() for part in rel_parts)
+    for selected in subdir_filter:
+        prefix = tuple(part.lower() for part in re.split(
+            r'[\\/]+', str(selected)) if part)
+        if prefix and rel[:len(prefix)] == prefix:
+            return True
+    return False
+
+
 def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
                   remap_skeleton=None, subdir_filter=None, wearable_plan=None,
                   parallax=False, textures_only=False):
@@ -7853,10 +8058,8 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
     intent — so the analysis is the same and only the emit is dropped.
 
     Args:
-        subdir_filter: If provided, an iterable of root subfolder names (e.g.
-                       ['architecture', 'clutter']) to include. NIFs whose first
-                       path component (relative to mesh_dir) is not in the set
-                       are skipped. None means include everything.
+        subdir_filter: If provided, relative folder prefixes to include (e.g.
+                       ['architecture', 'morro/d']). None means everything.
         wearable_plan: Mapping from asset_convert.wearable_plan.build_plan,
                        naming which _0/_1/plain variants of each armor and
                        clothing mesh the plugin references.  None writes no
@@ -7871,10 +8074,6 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
     out_base = Path(output_dir)
     all_nifs = list(mesh_path.rglob('*.nif'))
 
-    allowed_subdirs = None
-    if subdir_filter is not None:
-        allowed_subdirs = {s.lower() for s in subdir_filter}
-
     # Filter out paths matching SKIP_PATHS segments
     nif_files = []
     skipped_by_path = 0
@@ -7882,7 +8081,7 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
         rel_parts = [p.lower() for p in nf.relative_to(mesh_path).parts]
         if any(seg in rel_parts for seg in SKIP_PATHS):
             skipped_by_path += 1
-        elif allowed_subdirs is not None and rel_parts and rel_parts[0] not in allowed_subdirs:
+        elif not _matches_subdir_filter(rel_parts, subdir_filter):
             skipped_by_path += 1
         else:
             nif_files.append(nf)

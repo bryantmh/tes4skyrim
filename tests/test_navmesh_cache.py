@@ -1177,3 +1177,13 @@ def test_prepare_is_a_noop_without_a_cache():
     jobs = [_job('interior', 0)]
     navm_verify.prepare(jobs, None)
     assert not any(j.get('verify') for j in jobs)
+
+
+def test_prepare_refuses_uninitialized_worker_context(tmp_path, monkeypatch):
+    """Adoption must never rebuild its sample with empty worker globals."""
+    from tes5_import import navm_worker
+
+    geom_cache = (str(tmp_path), 'tag')
+    monkeypatch.setattr(navm_worker, '_GEOM_CACHE', None)
+    with pytest.raises(RuntimeError, match='initialized before cache prepare'):
+        navm_verify.prepare([_job('interior')], geom_cache)

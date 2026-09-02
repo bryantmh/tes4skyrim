@@ -985,6 +985,13 @@ def phase_compile(file_name: str, config: dict, output_dir: str = None):
 
     script_out.mkdir(parents=True, exist_ok=True)
 
+    # The CK supplies vanilla declarations, but converted OBSE calls may target
+    # SKSE64 natives. Augmented base headers are compile-only and never ship.
+    from script_convert.skse_headers import prepare_skse_headers
+    skse_headers = prepare_skse_headers(
+        skyrim_headers, script_out / "_skse_headers")
+    static_headers = SCRIPT_DIR / "script_convert" / "static_scripts"
+
     # An override plugin's scripts declare properties typed as the MASTER's
     # converted scripts (`TES4_NQ16Script Property ...`), because the record
     # they name carries that master's SCRI.  Those .psc live in the master's
@@ -1015,6 +1022,8 @@ def phase_compile(file_name: str, config: dict, output_dir: str = None):
         h = ["-h", str(skyrim_headers), "-h", str(script_src)]
         for d in master_src_dirs:
             h += ["-h", str(d)]
+        # papyrus.exe searches repeated -h arguments in reverse order.
+        h += ["-h", str(static_headers), "-h", str(skse_headers)]
         return h
 
     def _compile_batch(quarantine: set) -> tuple:
@@ -1098,6 +1107,7 @@ def phase_compile(file_name: str, config: dict, output_dir: str = None):
         ]
         for d in master_src_dirs:
             c += ["-h", str(d)]     # the masters' converted script types
+        c += ["-h", str(static_headers), "-h", str(skse_headers)]
         try:
             r = subprocess.run(windows_cmd(c), capture_output=True, text=True,
                                timeout=60, cwd=str(SCRIPT_DIR), **_POPEN_FLAGS)
@@ -1205,6 +1215,7 @@ def phase_compile(file_name: str, config: dict, output_dir: str = None):
             log_path.unlink(missing_ok=True)
         except OSError:
             pass
+    shutil.rmtree(skse_headers, ignore_errors=True)
     return ok_count > 0
 
 
@@ -1529,8 +1540,8 @@ def _run_pipeline():
                         help="Remove an imported mod (deletes its export "
                              "folder and registry entry), then exit")
     parser.add_argument("--mesh-subdirs",        nargs="+", metavar="SUBDIR",
-                        help="Limit mesh conversion to these root subfolders "
-                             "(e.g. architecture clutter). Default: all.")
+                        help="Limit mesh conversion to relative folder prefixes "
+                             "(e.g. architecture morro/d). Default: all.")
     parser.add_argument("--patch-plugins",       nargs="+", metavar="PLUGIN",
                         help="Skyrim plugin filenames to generate a slot-44 "
                              "patch for (e.g. Skyrim.esm Dawnguard.esm). "

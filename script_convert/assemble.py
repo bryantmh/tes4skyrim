@@ -12,8 +12,8 @@ later phase's state.
 
 from script_convert.constants import (
     BLOCK_MAP, COMMAND_ROWS, COMBAT_STATE_GUARDS, POLL_BLOCKS,
-    REF_SPECIFICITY, _ACTOR_ONLY_FUNCTIONS,
-    _OBJREF_SHARED_FUNCTIONS, TYPE_MAP, _safe_property_name, papyrus_script_name,
+    _ACTOR_ONLY_FUNCTIONS, _OBJREF_SHARED_FUNCTIONS, TYPE_MAP,
+    _safe_property_name, papyrus_script_name,
 )
 from script_convert import symbols as _symbols
 from script_convert.emit import script as _script
@@ -44,6 +44,10 @@ def build(conv, name: str, source: str, extends: str, editor_id: str) -> str:
     body += stage_latches(conv)
 
     out = list(header(conv, name, extends, editor_id))
+    # Preserve authored notes and banners that precede the first Begin block.
+    # Generated converter diagnostics never enter tree.preamble, so source
+    # TODO labels can be kept distinct from machine-readable failure TODOs.
+    out += _script.emit_body(conv, tree.preamble, extends)
     out += properties(conv, tree)
     out += body
     return '\n'.join(out)
@@ -161,6 +165,19 @@ def _load_symbols(conv, tree, editor_id: str) -> None:
                 # is the permissive handle both sides accept; a unanimous
                 # narrower type still upgrades it in `_narrow_ref_types`.
                 ptype = 'Form'
+            else:
+                attached = set()
+                for key in keys:
+                    attached.update(conv.xref.ref_script_types.get(key, ()))
+                if len(attached) == 1:
+                    candidate = next(iter(attached))
+                    externally_read = (vname.lower() in
+                                       conv.xref.cross_script_vars.get(
+                                           edid_low, ()))
+                    if (externally_read or
+                            _uses_attached_member(tree, vname, candidate,
+                                                  conv.xref)):
+                        ptype = candidate
         sc.var_types[safe.lower()] = ptype
         sc.var_types[vname.lower()] = ptype
         # A DECLARED variable outranks anything the SCRO preload guessed for
@@ -179,7 +196,38 @@ def _load_symbols(conv, tree, editor_id: str) -> None:
         if safe != vname:
             sc.var_renames[vname.lower()] = safe
 
+    # Result fragments can author indexed siblings (`item1`..`item6`) beside
+    # one declared scalar (`item`). The TES4 VM creates those script variables
+    # even when the source declaration table omitted them; the cross-reference
+    # census has already copied the base variable's authored type.
+    if conv.xref and edid_low:
+        for name, ptype in conv.xref.synthetic_script_vars.get(edid_low, {}).items():
+            safe = _safe_property_name(name)
+            sc.synthetic_vars[safe] = ptype
+            sc.local_vars.update((name.lower(), safe.lower()))
+            sc.var_types[name.lower()] = ptype
+            sc.var_types[safe.lower()] = ptype
+
     _narrow_ref_types(conv, tree)
+
+
+def _uses_attached_member(tree, var_name: str, script_type: str, xref) -> bool:
+    """Whether `var.member` needs the attached script's declared field."""
+    if not script_type.startswith('TES4_'):
+        return False
+    fields = xref.script_all_vars.get(script_type[5:].lower(), {})
+    if not fields:
+        return False
+    low = var_name.lower()
+    bodies = ([tree.preamble, tree.body] + [b.body for b in tree.blocks]) \
+        if tree else []
+    for body in bodies:
+        for expr in N.walk_exprs_in(body):
+            owner = getattr(expr, 'receiver', None) or getattr(expr, 'owner', None)
+            if (isinstance(owner, N.Ident) and owner.name.lower() == low
+                    and getattr(expr, 'name', '').lower() in fields):
+                return True
+    return False
 
 
 def _narrow_ref_types(conv, tree) -> None:
@@ -193,14 +241,25 @@ def _narrow_ref_types(conv, tree) -> None:
     nothing downstream repairs it.
     """
     sc = conv.sc
-    refs = {low for low, t in sc.var_types.items()
-            if t in ('ObjectReference', 'Form')}
+    # Start from the AUTHORED `ref` declarations, not only the cross-script
+    # preload's current guess.  A slot cleared with 0 can be preclassified Int
+    # before this script's own comparisons prove it is a reference chain.
+    refs = {var.name.lower() for var in tree.variables
+            if var.vtype.lower() == 'ref'}
+    refs.update(low for low, t in sc.var_types.items()
+                if t in ('ObjectReference', 'Form'))
     if not refs or tree is None:
         return
     stmts = [st for block in tree.blocks for st in N.walk_stmts(block.body)]
     narrowed = _symbols.resolve_ref_types(
-        stmts, refs, conv.type_of, conv._base_record_type)
+        stmts, refs, conv.type_of, conv._assignment_record_type)
     for low, ptype in narrowed.items():
+        if (ptype.startswith('TES4_')
+                and not _uses_attached_member(tree, low, ptype, conv.xref)):
+            ptype = 'ObjectReference'
+        existing = sc.var_types.get(low, '')
+        if existing.startswith('TES4_') and ptype in ('ObjectReference', 'Form'):
+            continue
         for spelling in (low, _safe_property_name(low).lower()):
             sc.var_types[spelling] = ptype
         safe = _safe_property_name(low)
@@ -246,6 +305,12 @@ def _load_facts(conv, tree) -> None:
         and any(e.called in ('say', 'sayto')
                 for e in N.walk_expr(st.value) if e.called)
         for b in bodies for st in N.walk_stmts(b))
+    sc.uses_dropme = 'dropme' in called
+    for body in bodies:
+        for st in N.walk_stmts(body):
+            if (isinstance(st, N.Assign) and isinstance(st.target, N.Ident)
+                    and getattr(st.value, 'called', '') in ('getself', 'self')):
+                sc.self_aliases.add(st.target.name.lower())
     # The hour-boundary guard: `GameHour >= 23.98`.
     sc.uses_hour_window = any(
         isinstance(e, N.BinOp) and e.op in ('>=', '<=')
@@ -313,15 +378,21 @@ def properties(conv, tree) -> list:
         if low in seen or low in params:
             continue
         seen.add(low)
-        # The MORE SPECIFIC of the two tables wins.  Converting the body is
-        # what discovers a variable's real type, and each table learns it by a
-        # different route: `_resolve_self_ref` upgrades the PROPERTY when a
-        # call resolves its receiver as an actor, while the pre-pass upgrades
-        # the VARIABLE from the parse tree.  Either can be the one that knows,
-        # so preferring a fixed one left `ObjectReference Property replacement`
-        # under a `replacement.IsDead()` the compiler rejected.
-        ptype = _specific(conv.sc.property_refs.get(safe),
-                          conv.sc.var_types.get(low, 'Int'))
+        # A declared local is governed by the usage-driven variable table.
+        # `property_refs` also contains SCRO preload guesses for external
+        # records with the same name, including attached script types; letting
+        # that table win retyped ordinary locals as Actor/script handles and
+        # made their authored assignments illegal.  Actor call-site discovery
+        # updates `var_types` together with `property_refs`, so no information
+        # is lost by making the declaration table authoritative here.
+        ptype = conv.sc.var_types.get(low, 'Int')
+        out.append(_declare(safe, ptype))
+
+    for safe, ptype in sorted(conv.sc.synthetic_vars.items()):
+        low = safe.lower()
+        if low in seen or low in params:
+            continue
+        seen.add(low)
         out.append(_declare(safe, ptype))
 
     # Every EXTERNAL record the body named -- a quest, a faction, a sound -- is
@@ -334,6 +405,9 @@ def properties(conv, tree) -> list:
             continue
         seen.add(low)
         out.append(_declare(prop, ptype))
+
+    if conv.sc.uses_dropme:
+        out.append('ObjectReference TES4_Container = None')
 
     if out:
         out.append('')
@@ -451,8 +525,10 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
         # subject a bare `GetActionRef` means depends on which event we are
         # inside (see `_get_action_ref_param`).
         conv._current_event = header[0]
+        conv.sc.current_block_type = block.btype.lower()
         body = _script.emit_body(conv, block.body, extends, 1)
         conv._current_event = ''
+        conv.sc.current_block_type = ''
         consumes = (block.btype.lower() == 'onactivate'
                     and _consumes_activation(conv, tree))
         if not body and not consumes:
@@ -471,6 +547,10 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
     for header in order:
         opener, closer = header
         out.append(opener)
+        if conv.sc.uses_dropme and opener.startswith('Event OnContainerChanged('):
+            out.append('  TES4_Container = akNewContainer')
+        elif conv.sc.uses_dropme and opener.startswith('Event OnEquipped('):
+            out.append('  TES4_Container = akActor')
         out += merged[header]
         out.append(closer)
         out.append('')
@@ -490,6 +570,13 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
                     '  OnTrigger(akActionRef)',
                     'EndEvent',
                     '']
+    if (conv.sc.uses_dropme
+            and BLOCK_MAP['onadd'] not in merged
+            and BLOCK_MAP['ondrop'] not in merged):
+        out += ['Event OnContainerChanged(ObjectReference akNewContainer, '
+                'ObjectReference akOldContainer)',
+                '  TES4_Container = akNewContainer',
+                'EndEvent', '']
     return out
 
 
@@ -1037,19 +1124,6 @@ def chargen_latch(conv) -> list:
         return []
     return ['', 'Bool TES4_ChargenMenuBusy = False']
 
-
-
-def _specific(a: str, b: str) -> str:
-    """The more specific of two candidate types for one variable."""
-    if not a:
-        return b
-    if not b or a == b:
-        return a
-    if a in REF_SPECIFICITY and b in REF_SPECIFICITY:
-        return max(a, b, key=REF_SPECIFICITY.index)
-    # A script type (`TES4_Foo`) is the most specific thing there is: it is
-    # what cross-script variable reads through the property need.
-    return a if a.startswith('TES4_') else (b if b.startswith('TES4_') else a)
 
 
 def _promote_assigned_actors(conv, tree) -> None:

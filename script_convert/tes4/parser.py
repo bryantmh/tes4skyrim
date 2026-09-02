@@ -456,16 +456,17 @@ class Parser:
             self.take_line_end()
             return Comment(text=tok.text, line=line)
 
-        # A separator rule the author wrote WITHOUT a `;` --
-        # `-----------------`, `== == == ==`, `:= == == ==`.  Oblivion tolerated it; parsed
-        # as an expression it becomes a chain of unary minuses that Papyrus
-        # rejects ("invalid right operand in prefix expression").  It is
-        # decoration, so it survives as one.
-        if tok.kind is T.OP and self.toks[self.i + 1].kind is T.OP                 and tok.text in ('-', '=', ':=', '==', '*', '+')                 and self.toks[self.i + 1].text in ('-', '=', ':=', '==',
-                                                   '*', '+'):
-            while self.cur.kind not in (T.NEWLINE, T.EOF):
-                self.advance()
-            return Comment(text=';' + '-' * 20, line=line,
+        # A separator rule the author wrote WITHOUT a `;` -- `----------`,
+        # `:====`, `== == ==`. Oblivion tolerated these decorations; parsed as
+        # expressions they become invalid unary-operator chains in Papyrus.
+        j = self.i
+        while self.toks[j].kind not in (T.NEWLINE, T.EOF, T.COMMENT):
+            j += 1
+        banner = ''.join(t.text for t in self.toks[self.i:j])
+        if (len(banner) >= 3 and all(t.kind is T.OP for t in self.toks[self.i:j])
+                and all(ch in '-=:._*~#' for ch in banner)):
+            self.i = j
+            return Comment(text=';' + banner, line=line,
                            comment=self.take_line_end())
 
         if tok.kind is T.IDENT:
@@ -528,6 +529,18 @@ class Parser:
             if call is not None:
                 return ExprStmt(expr=call, line=line,
                                 comment=self.take_line_end())
+
+        # CSE also accepts quotes around a standalone zero-argument command.
+        # Only known zero-argument names take this path; an authored string
+        # remains a string rather than being guessed into a function call.
+        if tok.kind is T.STRING and self.toks[self.i + 1].kind \
+                in (T.NEWLINE, T.EOF, T.COMMENT):
+            from script_convert.constants import _ZERO_ARG_REF_FUNCTIONS
+            command = _unquote(tok.text)
+            if command.lower() in _ZERO_ARG_REF_FUNCTIONS:
+                self.advance()
+                return ExprStmt(expr=Call(command, (), None, line=line),
+                                line=line, comment=self.take_line_end())
 
         return self._raw_stmt(start, line)
 
@@ -593,14 +606,20 @@ class Parser:
             ebody = self._parse_body(_IF_TERMINATORS)
             node.elifs.append((econd, ebody, elif_line))
         if self.cur.is_ident('else'):
+            elif_line = self.cur.line
             self.advance()
             # TES4 accepts `else <condition>` as an elseif; keep the source
             # shape so emission does not have to invent one.
             if self.cur.kind not in (T.NEWLINE, T.EOF, T.COMMENT):
+                # The Construction Set also accepts the two-token spelling
+                # `else if <condition>`.  `if` is syntax here, not the first
+                # operand of the condition.
+                if self.cur.is_ident('if'):
+                    self.advance()
                 econd = self.parse_expression()
                 self.take_line_end()
                 node.elifs.append((econd, self._parse_body(_IF_TERMINATORS),
-                                   line))
+                                   elif_line))
                 node.else_is_elseif = True
             else:
                 self.take_line_end()

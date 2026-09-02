@@ -57,6 +57,7 @@ from .synth_records import (
     create_destroyed_formlist,
     create_force_combat_factions,
     create_message_menu_records,
+    create_take_cover_task,
     create_tes4_special_records,
     create_vtyp_records,
 )
@@ -785,7 +786,10 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
             set_chargen_choice(
                 {func_idx: (chargen_mesgs[menu['choice_global']],
                             menu['fid_to_index'])}, merge=True)
-    WELL_KNOWN_PROPERTIES.update(create_force_combat_factions(writer))
+    force_factions = create_force_combat_factions(writer)
+    WELL_KNOWN_PROPERTIES.update(force_factions)
+    WELL_KNOWN_PROPERTIES.update(create_take_cover_task(
+        writer, force_factions))
     WELL_KNOWN_PROPERTIES.update(create_destroyed_formlist(writer))
     _step_done('chargen menu MESGs')
 
@@ -2705,11 +2709,20 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
 
     n_workers = _navm_worker_count(len(jobs))
     geom_cache = _navmesh_geom_cache(collision_cache)
-    navm_verify.prepare(jobs, geom_cache)
     # Door panel-centroid cache sits beside the collision cache in export_dir.
     door_centers_cache = (os.path.join(os.path.dirname(collision_cache),
                                        'door_centers_cache.json')
                           if collision_cache else None)
+    # Cache adoption rebuilds sampled cells in this PARENT process before the
+    # pool exists. It therefore needs the exact same model, door, collision,
+    # FormID and door-centroid context as the workers. Running prepare() first
+    # silently built the sample with empty navm_worker globals and falsely
+    # reported every one of the 40 cells as a geometry mismatch.
+    navm_worker.init_worker(base_model_by_fid, door_fids, collision_cache,
+                            formid_offset, geom_cache,
+                            get_injected_formids(), disable_gc=False,
+                            door_centers_cache=door_centers_cache)
+    navm_verify.prepare(jobs, geom_cache)
     print(f"  Generating {len(jobs)} navmeshes (PGRD->NAVM) "
           f"across {n_workers} processes...")
     t0 = time.time()
@@ -2720,23 +2733,6 @@ def _precompute_navmeshes(by_type: dict, writer: PluginWriter,
             jobs, base_model_by_fid, door_fids, collision_cache,
             formid_offset, geom_cache, door_centers_cache)
     else:
-        # Run the initializer ONCE IN THE PARENT before spawning workers.
-        #
-        # An exception inside a pool `initializer=` cannot be returned to the
-        # parent: the worker dies before it can report, so the parent sees only
-        # an opaque BrokenProcessPool with no traceback — and because
-        # subprocess_flags points multiprocessing at pythonw.exe, the worker's
-        # stderr goes nowhere either. asset_convert/book_inam.py already guards
-        # its pool this way for exactly this reason; this pool did not, which is
-        # why a failure here produced a log with no cause in it.
-        #
-        # disable_gc=False: the parent keeps its collector (it has the rest of
-        # the conversion to run); the pool's own copies pass True.
-        navm_worker.init_worker(base_model_by_fid, door_fids, collision_cache,
-                                formid_offset, geom_cache,
-                                get_injected_formids(), disable_gc=False,
-                                door_centers_cache=door_centers_cache)
-
         # chunksize amortises IPC over many small jobs.
         chunksize = max(1, len(jobs) // (n_workers * 8))
         with ProcessPoolExecutor(

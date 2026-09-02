@@ -140,6 +140,24 @@ def test_nvnm_roundtrip_and_adjacency_symmetry():
                 assert ti in d['adj'][tj], "adjacency is not symmetric"
 
 
+def test_opposite_facing_fold_is_an_adjacency_boundary():
+    """A folded seam is shared geometry, but not a walkable portal."""
+    verts = [(0.0, 0.0, 0.0), (0.0, 10.0, 0.0),
+             (1.0, 0.0, 0.04), (-1.0, 0.0, 0.04)]
+    tris = [(0, 1, 2), (0, 1, 3)]
+    adj = p2n._compute_adjacency(tris, verts)
+    assert adj == [(-1, -1, -1), (-1, -1, -1)]
+
+
+def test_coplanar_shared_edge_remains_linked_with_geometry_filter():
+    verts = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0),
+             (10.0, 10.0, 0.0), (0.0, 10.0, 0.0)]
+    tris = [(0, 1, 2), (0, 2, 3)]
+    adj = p2n._compute_adjacency(tris, verts)
+    assert adj[0][2] == 1
+    assert adj[1][0] == 0
+
+
 def test_nvnm_exterior_writes_grid_y_then_x():
     verts = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 100.0, 0.0)]
     tris = [(0, 1, 2)]
@@ -168,6 +186,46 @@ def test_water_flag_set_below_water_height():
     flags = p2n._compute_water_flags(verts, tris, water_z=0.0)
     assert flags[0] == p2n._TRI_FLAG_WATER
     assert flags[1] == 0
+
+
+def test_multiple_doors_can_share_one_triangle():
+    """Vanilla Skyrim reuses a triangle when two door markers share a landing."""
+    verts = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (0.0, 100.0, 0.0)]
+    tris = [(0, 1, 2)]
+    doors = [
+        (20.0, 20.0, 0.0, 0.0, 0x01000100, True, 90.0),
+        (21.0, 20.0, 0.0, 0.0, 0x01000101, True, 90.0),
+    ]
+    assert p2n._build_door_links(verts, tris, doors) == [
+        (0, 0x01000100), (0, 0x01000101),
+    ]
+
+
+def test_duplicate_indexed_faces_are_removed_and_ledges_remapped():
+    tris = [(0, 1, 2), (2, 1, 0), (2, 3, 4)]
+    ledges = [(1, 2, 64.0), (0, 2, 64.0), (0, 1, 12.0)]
+
+    got_tris, got_ledges = p2n._dedupe_indexed_triangles(tris, ledges)
+
+    assert got_tris == [(0, 1, 2), (2, 3, 4)]
+    assert got_ledges == [(0, 1, 64.0)]
+    assert p2n._compute_adjacency(got_tris) == [(-1, -1, -1),
+                                                (-1, -1, -1)]
+
+
+def test_geometry_normalization_matches_legacy_cache_semantics():
+    """Old cached winding/duplicates canonicalize before verification."""
+    verts = [(0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 0.0, 0.0),
+             (2.0, 0.0, 0.0)]
+    tris = [(0, 1, 2), (2, 1, 0), (0, 2, 3)]
+    ledges = [(1, 2, 64.0), (0, 2, 64.0)]
+
+    got_verts, got_tris, got_ledges = p2n._normalize_geometry(
+        verts, tris, ledges)
+
+    assert got_verts == verts
+    assert got_tris == [(0, 2, 1), (0, 3, 2)]
+    assert got_ledges == [(0, 1, 64.0)]
 
 
 def test_navm_record_is_compressed():

@@ -34,6 +34,8 @@ BLOCK_MAP = {
     'onequip':            ('Event OnEquipped(Actor akActor)', 'EndEvent'),
     'onunequip':          ('Event OnUnequipped(Actor akActor)', 'EndEvent'),
     'ondeath':            ('Event OnDeath(Actor akKiller)', 'EndEvent'),
+    'onmurder':           ('Event OnMurder(Actor akKiller)', 'EndEvent'),
+    'onknockout':         ('Event OnEnterBleedout()', 'EndEvent'),
     'onhit':              ('Event OnHit(ObjectReference akAggressor, Form akSource, Projectile akProjectile, bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)', 'EndEvent'),
     'onhitwith':          ('Event OnHit(ObjectReference akAggressor, Form akSource, Projectile akProjectile, bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)', 'EndEvent'),
     'onload':             ('Event OnLoad()', 'EndEvent'),
@@ -102,6 +104,7 @@ BLOCK_FILTER_PARAM = {
     'onhit':              ('akAggressor', 'ObjectReference'),
     'onhitwith':          ('akSource', 'Form'),
     'ondeath':            ('akKiller', 'Actor'),
+    'onmurder':           ('akKiller', 'Actor'),
     'onstartcombat':      ('akTarget', 'Actor'),
     'onmagiceffecthit':   ('akEffect', 'MagicEffect'),
     'onmagiceffectapply': ('akEffect', 'MagicEffect'),
@@ -308,9 +311,11 @@ PAPYRUS_BOOL_FUNCTIONS = {
     'issprinting', 'isonmount', 'isalerted', 'isequipped', 'ismounted',
     'istrespassing', 'isavrecoverydisabled', 'isfurnitureinuse',
     'isflightblocked', 'isinterior', 'islocked',
+    'isplayable', 'isplayable2',
     'getdead', 'getdisabled', 'getlocked', 'getghost', 'getisalerted',
     'getincombat', 'getnobleedoutrecovery', 'getisplayablerace',
     'getcurrentweatherpercent', 'getiscurrentpackage',
+    'getincell', 'getiscreature', 'iscreature', 'isleftup', 'samefaction',
     'hasspell', 'hasmagiceffect', 'hasperk', 'haseffectkeyword',
     'haskeyword', 'hasnode', 'haslostoref', 'hasreftype',
     'wornhaskeyword', 'pathtoreference',
@@ -380,7 +385,8 @@ RETURN_TYPES = dict(
     + [(n, 'ObjectReference') for n in (
         'getlinkedref', 'placeatme', 'getparentref', 'placeactoratme',
         'geteditorlocation', 'getiteminslot', 'akactionref', 'aknewcontainer',
-        'akoldcontainer', 'akcastref', 'akaggressor', 'akcaster')]
+        'akoldcontainer', 'akcastref', 'akaggressor', 'akcaster',
+        'getself', 'getactionref')]
     + [(n, 'Actor') for n in (
         'gettargetactor', 'getcasteractor', 'getactorreference',
         'game.getplayer', 'getplayer', 'getcombattarget', 'getkiller',
@@ -785,8 +791,16 @@ COMMAND_ROWS = {
 
     # GetIsCreature: Skyrim marks people via the ActorTypeNPC race keyword;
     # converted creatures use generated races without it.
-    'getiscreature': Cmd('TES4Polyfill.GetIsCreature({ref})', ACTOR, flags='actor_arg zero_arg'),
-    'iscreature': Cmd('TES4Polyfill.GetIsCreature({ref})', ACTOR, flags='actor_arg'),
+    'getiscreature': Cmd('TES4Polyfill.GetIsCreature({ref})', ACTOR,
+                         flags='actor_arg bare_bool cmp_bool zero_arg'),
+    'iscreature': Cmd('TES4Polyfill.GetIsCreature({ref})', ACTOR,
+                      flags='actor_arg bare_bool cmp_bool zero_arg'),
+
+    # Quadruped get-up direction. Skyrim's pose matcher publishes the chosen
+    # left/right generator through iGetUpType; the polyfill reads that graph
+    # variable rather than inventing an input/control interpretation.
+    'isleftup': Cmd('TES4Polyfill.IsLeftUp({ref})', ACTOR,
+                    flags='actor_only bare_bool cmp_bool zero_arg'),
 
     #: IsGuard: membership in Skyrim's guard dialogue faction.
     'isguard': Cmd('TES4Polyfill.IsGuard({ref})', ACTOR, flags='actor_arg zero_arg'),
@@ -827,6 +841,33 @@ COMMAND_ROWS = {
 
     #: IsActorUsingATorch: equipped-item type 11 is the torch slot.
     'isactorusingatorch': Cmd('({ref}.GetEquippedItemType(0) == 11)', ACTOR, flags='cmp_bool'),
+
+    # TES4 IsActor is a runtime type test on any reference.  Papyrus exposes
+    # the same fact through a safe cast: a non-actor casts to None.  Keep this
+    # as a Bool-valued zero-argument reference command so the normal expression
+    # pass also folds the TES4 `== 0/1` spelling instead of comparing Bool/Int.
+    'isactor': Cmd('(({ref} as Actor) != None)', OBJREF,
+                   flags='bare_bool cmp_bool zero_arg'),
+
+    # Vanilla Oblivion actor predicates and AI controls.  IsAIEnabled is the
+    # SKSE64 getter for the same engine flag that vanilla EnableAI writes.
+    'isactorsaioff': Cmd('(!{ref}.IsAIEnabled())', ACTOR,
+                         flags='actor_only bare_bool cmp_bool zero_arg'),
+    'setactorsai': Cmd('{ref}.EnableAI({b0})', ACTOR,
+                       defaults={0: '1'}, flags='actor_only'),
+    'toggleactorsai': Cmd('{ref}.EnableAI(!{ref}.IsAIEnabled())', ACTOR,
+                          flags='actor_only zero_arg'),
+    'isactorevil': Cmd('TES4Polyfill.IsActorEvil({ref})', ACTOR,
+                       flags='actor_only bare_bool cmp_bool zero_arg'),
+    'samefactionaspc': Cmd('TES4Polyfill.SameFactionAsPC({ref})', ACTOR,
+                           flags='actor_only bare_bool cmp_bool zero_arg'),
+    'samefaction': Cmd('TES4Polyfill.SameFaction({ref}, {a0})', ACTOR,
+                       types={0: 'Actor'},
+                       flags='actor_only bare_bool cmp_bool'),
+    'gettimedead': Cmd('TES4Polyfill.GetTimeDead({ref})', ACTOR,
+                       flags='actor_only zero_arg'),
+    'isrunning': Cmd('IsRunning', MAP,
+                     flags='actor_only bare_bool cmp_bool zero_arg'),
 
     #: Unlock takes no argument in TES4; Skyrim's Lock(false) is the unlock.
     'unlock': Cmd('{ref}.Lock(false)', OBJREF),
@@ -903,6 +944,10 @@ COMMAND_ROWS = {
     'getcurrentweatherpercent': Cmd('Weather.GetCurrentWeatherTransition()'),
     'getiscurrentweather': Cmd('(Weather.GetCurrentWeather() == {a0})',
                                types={0: 'Weather'}, defaults={0: 'None'}),
+    # `GetWeather <WTHR>` is the older spelling of the same current-weather
+    # predicate; Midas and other OBSE-era mods use both spellings.
+    'getweather': Cmd('(Weather.GetCurrentWeather() == {a0})',
+                      types={0: 'Weather'}, defaults={0: 'None'}),
 
     # Weather.  WTHR/CLMT/REGN weather are fully converted, so scripted weather
     # moments drive the real converted records.  Signatures verified against
@@ -1188,8 +1233,10 @@ COMMAND_ROWS = {
     'iskeypressed2': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
     'iskeypressed3': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
     'isonguard': Cmd(note='{f}'),
-    'isplayable': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
-    'isplayable2': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
+    # Implemented by the SKSE64 handler in commands.py. The row keeps the
+    # source-level Bool/zero-argument facts available to the tree emitter.
+    'isplayable': Cmd(flags='bare_bool cmp_bool zero_arg'),
+    'isplayable2': Cmd(flags='bare_bool cmp_bool zero_arg'),
     'isplayermovingintonewspace': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
     'isplayerslastriddenhorse': Cmd(note='{f} has no Skyrim equivalent', flags='bare_bool zero_arg'),
     #: IsSwimming → no vanilla equivalent, approximate with submerged check
@@ -1210,8 +1257,6 @@ COMMAND_ROWS = {
     'sendtrespassalarm': Cmd(note='{f}'),
     #: SetActorFullName → no-op (SKSE required for SetDisplayName)
     'setactorfullname': Cmd(note='SetActorFullName'),
-    #: SetActorsAI → no-op
-    'setactorsai': Cmd(note='SetActorsAI'),
     'setallreachable': Cmd(note='{f}'),
     'setallvisible': Cmd(note='{f}'),
     #: SetCellFullName no-op
@@ -1382,7 +1427,7 @@ COMMAND_ROWS = {
     'getparentcell': Cmd('GetParentCell', MAP, flags='objref_self'),
     'setposition': Cmd('SetPosition', MAP),
     'getlinkedref': Cmd('GetLinkedRef', MAP, flags='objref_self'),
-    'getheadingangle': Cmd('GetHeadingAngle', MAP),
+    'getheadingangle': Cmd('GetHeadingAngle', MAP, flags='objref_self'),
 
     #: --- Enable / Disable ---
     'enable': Cmd('Enable', MAP, flags='objref_self'),
@@ -1768,7 +1813,7 @@ COMMAND_ROWS = {
     #: SetDestroyed writes that same shadow list.
     'setdestroyed': Cmd(
         'TES4Polyfill.SetDestroyed({ref}, {destroyed}, {b0})',
-        defaults={0: '1'}),
+        OBJREF, defaults={0: '1'}),
 
     # The Oblivion gates: closing one needs the destroyed list, since that is
     # where the gate's closed state is recorded.
@@ -2239,7 +2284,7 @@ _ACTORBASE_ARG_FUNCTIONS = _flagged('actorbase_arg') | frozenset({
 # their parameters are ObjectReference, which converts implicitly.
 _ACTOR_ARG_FUNCTIONS = _flagged('actor_arg') | frozenset({
     'getrelationshiprank', 'isdetectedby', 'ishostiletoactor',
-    'isspelltarget', 'setrelationshiprank',
+    'setrelationshiprank',
 })
 
 # Functions that can ONLY be called on Actor (not ObjectReference)
@@ -2248,7 +2293,7 @@ _ACTOR_ONLY_FUNCTIONS = _flagged('actor_only') | frozenset({
     'drawweapon', 'getalpha', 'getclass', 'getdeadcount',
     'getgoldamount', 'getincombat', 'getsitstate', 'getsleepstate',
     'getweapondrawn', 'haslos', 'isequipped', 'isinfaction',
-    'pathtoref', 'setalpha', 'setcell', 'setessential',
+    'isspelltarget', 'pathtoref', 'setalpha', 'setcell', 'setessential',
     'setopacity', 'setplayerteammate', 'setrace',
     'setrelationshiprank', 'sheatheweapon', 'startconversation',
 })

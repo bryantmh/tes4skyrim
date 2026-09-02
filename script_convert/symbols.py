@@ -42,6 +42,7 @@ from script_convert.constants import (
     COMMAND_ROWS,
     MAP,
     KNOWN_GLOBALS,
+    param_types,
     RETURN_TYPES,
 )
 
@@ -142,10 +143,17 @@ class VarUsage:
 
     #: Assigned an integer literal (`set myRef to 0`) -- the flag idiom.
     int_assign: bool = False
+    #: Numeric result types assigned to the slot.  TES4's `ref` declaration
+    #: did not stop scripts from using the slot for GetPos/GetLevel results;
+    #: Papyrus requires the declaration to match the actual value type.
+    numeric_types: set[str] = field(default_factory=set)
     #: Assigned anything reference-shaped, including another ref variable.
     ref_assign: bool = False
     #: Used AS a reference: a method receiver, or compared against one.
     ref_usage: bool = False
+    #: Compared with another slot proven to hold a reference.  This is
+    #: stronger than merely appearing as an untyped command argument.
+    ref_compare: bool = False
     #: Called through with an ACTOR-ONLY command (`x.EvaluatePackage`), so the
     #: variable must be declared Actor -- an ObjectReference does not carry
     #: those methods and the assignment into it needs an `as Actor` cast that
@@ -176,6 +184,7 @@ def scan_var_usage(stmts, names, lookup):
     """
 
     usage = {n.lower(): VarUsage() for n in names}
+    ref_comparisons = []
 
     def note_ref_usage(node):
         """Mark every name this expression uses AS a reference."""
@@ -196,15 +205,46 @@ def scan_var_usage(stmts, names, lookup):
             # A bare name passed as an ARGUMENT is being used as a form --
             # and as an ACTOR when the command takes one there (TES4Polyfill
             # .GetIsCreature, StartCombat, IsDetectedBy...).
-            actor_arg = node.name.lower() in _ACTOR_ARG_FUNCTIONS
-            for a in node.args:
+            call_name = node.name.lower()
+            actor_arg = call_name in _ACTOR_ARG_FUNCTIONS
+            row = COMMAND_ROWS.get(call_name)
+            for index, a in enumerate(node.args):
                 if isinstance(a, N.Ident) and a.name.lower() in usage:
-                    usage[a.name.lower()].ref_usage = True
-                    if actor_arg:
-                        usage[a.name.lower()].actor_usage = True
+                    arg_usage = usage[a.name.lower()]
+                    expected = row.types.get(index) if row is not None else ''
+                    if not expected:
+                        expected = param_types(call_name).get(index, '')
+                    if call_name == 'cast' and index == 0:
+                        expected = 'Spell'
+                    if actor_arg and index == 0:
+                        expected = 'Actor'
+                    # An argument is reference evidence only when the
+                    # command's authored signature says it is. SetPos/GetPos
+                    # and many other calls take numeric locals; treating every
+                    # bare argument as a form kept TES4 `ref` scratch slots
+                    # ObjectReference even when they only held Float results.
+                    if expected and expected not in ('Int', 'Float', 'Bool',
+                                                     'String'):
+                        arg_usage.ref_usage = True
+                    if expected == 'Actor':
+                        arg_usage.actor_usage = True
+                    # Command signatures are authored type evidence too.  A
+                    # ref passed as a Spell/Armor/etc. argument must take that
+                    # exact Papyrus base type before body emission; otherwise
+                    # a later command handler changes only the property table
+                    # after an earlier assignment has already been written.
+                    if (expected and expected not in
+                            ('Int', 'Float', 'Bool', 'String',
+                             'Form', 'ObjectReference', 'ActorBase')):
+                        arg_usage.form_type = expected
         elif isinstance(node, N.BinOp):
             # `x == None` / `x != None` tests a reference.
             if node.op in ('==', '!='):
+                if isinstance(node.left, N.Ident) and isinstance(node.right, N.Ident):
+                    left = node.left.name.lower()
+                    right = node.right.name.lower()
+                    if left in usage and right in usage:
+                        ref_comparisons.append((left, right))
                 for side, other in ((node.left, node.right),
                                     (node.right, node.left)):
                     if (isinstance(side, N.Ident)
@@ -237,6 +277,16 @@ def scan_var_usage(stmts, names, lookup):
                 walk(entry[1])
 
     walk(stmts)
+    # A TES4 ref slot cleared with 0 is still a reference when it is compared
+    # with another slot proven to hold one.  Keep purely numeric ref flags as
+    # Int; propagate only from an endpoint with actual reference assignment
+    # evidence, after the complete body has been scanned.
+    for left, right in ref_comparisons:
+        if usage[left].ref_assign or usage[right].ref_assign:
+            usage[left].ref_usage = True
+            usage[right].ref_usage = True
+            usage[left].ref_compare = True
+            usage[right].ref_compare = True
     return usage
 
 
@@ -264,13 +314,19 @@ def _classify_assignment(usage, value, lookup):
     usage.assigned.append(value)
     if isinstance(value, N.Literal) and not value.is_string:
         usage.int_assign = True
+        usage.numeric_types.add('Float' if '.' in value.text else 'Int')
         return
     # `x = y + 1` on a numeric operand is still the flag idiom.
     if isinstance(value, N.BinOp) and value.op in ('+', '-', '*', '/', '%'):
-        if type_of_expr(value, lookup) in ('Int', 'Float'):
+        numeric = type_of_expr(value, lookup)
+        if numeric in ('Int', 'Float'):
             usage.int_assign = True
+            usage.numeric_types.add(numeric)
             return
     vtype = type_of_expr(value, lookup)
+    if vtype in ('Int', 'Float', 'Bool'):
+        usage.numeric_types.add(vtype)
+        return
     # A CALL with a narrow return type names the exact type the variable must
     # be declared as.  A bare NAME does not: it is a base record, and the
     # variable is assigned real references elsewhere, so it widens to Form.
@@ -339,14 +395,23 @@ def resolve_ref_types(stmts, ref_vars, lookup, record_type_of):
     Reading the tree answers it up front, so each declaration is written once,
     correctly, and nothing downstream has to be repaired.
 
-    `record_type_of(name) -> str` gives the Papyrus type of the BASE RECORD a
-    name refers to, or '' -- the cross-reference question the symbol table
-    cannot answer on its own.  Returns `{lowercase name: Papyrus type}`,
+    `record_type_of(name) -> str` gives the Papyrus value type of the RECORD a
+    bare EditorID refers to, including placed REFR/ACHR/ACRE records, or '' --
+    the cross-reference question the symbol table cannot answer on its own.
+    Returns `{lowercase name: Papyrus type}`,
     holding only the variables whose type actually changes.
     """
 
     out = {}
     for low, use in scan_var_usage(stmts, ref_vars, lookup).items():
+        # A TES4 `ref` may be used purely as a numeric slot (`ref z; set z to
+        # GetPos Z`).  This is distinct from the integer-flag idiom and must
+        # retain Float results instead of becoming ObjectReference.
+        if (use.numeric_types and not use.ref_assign and not use.ref_usage
+                and not use.ref_compare and not use.actor_usage):
+            out[low] = next(t for t in NUMERIC_RANK
+                            if t in use.numeric_types)
+            continue
         # A `ref` only ever assigned integers and never used as a reference is
         # the TES4 flag idiom, not a reference at all.
         if use.is_int_flag:
@@ -384,7 +449,9 @@ def resolve_ref_types(stmts, ref_vars, lookup, record_type_of):
             continue
         if use.int_assign:
             out[low] = use.form_type or _mixed_record_type(
-                use, record_type_of)
+                use, record_type_of, lookup, ref_vars)
+            if not out[low] and use.ref_usage:
+                out[low] = 'ObjectReference'
             if not out[low]:
                 del out[low]
             continue
@@ -403,13 +470,25 @@ def resolve_ref_types(stmts, ref_vars, lookup, record_type_of):
             if value.name.lower() in ('player', 'playerref'):
                 kinds.add('Actor')
                 continue
-            kinds.add(record_type_of(value.name))
+            # A declared LOCAL wins over a same-named global record.  An
+            # external property does not: placed refs with attached scripts
+            # are deliberately typed as that script for member access, while
+            # a local assigned the ref still holds an ObjectReference.  Using
+            # the property type here made generic marker slots Actor/script
+            # typed and rejected the authored assignment.
+            assigned_type = lookup(value.name)
+            if value.name.lower() in ref_vars and assigned_type:
+                kinds.add(assigned_type)
+            else:
+                kinds.add(record_type_of(value.name) or assigned_type)
         kinds.discard('')
         if not kinds:
             if use.form_type:
                 out[low] = use.form_type
             elif use.actor_usage:
                 out[low] = 'Actor'
+            elif use.ref_usage:
+                out[low] = 'ObjectReference'
             continue
         # Being used AS a reference does NOT veto this.  A `ref` holding
         # EFSH records is called through (`stockFX.Play(...)`), and only the
@@ -426,7 +505,7 @@ def resolve_ref_types(stmts, ref_vars, lookup, record_type_of):
     return out
 
 
-def _mixed_record_type(use, record_type_of) -> str:
+def _mixed_record_type(use, record_type_of, lookup, ref_vars) -> str:
     """`Form` when an int-assigned `ref` ALSO holds base records, else ''.
 
     TES4's clear idiom (`let r := 0`) sits in the same variable as a real base
@@ -436,7 +515,18 @@ def _mixed_record_type(use, record_type_of) -> str:
     rather than narrowing to the record's own class.
     """
     for value in use.assigned:
-        if isinstance(value, N.Ident) and record_type_of(value.name):
+        if not isinstance(value, N.Ident):
+            continue
+        assigned_type = lookup(value.name)
+        if value.name.lower() not in ref_vars:
+            record_type = record_type_of(value.name)
+            if record_type:
+                return ('ObjectReference' if record_type in
+                        ('Actor', 'ObjectReference') else 'Form')
+        if assigned_type in ('Actor', 'ObjectReference') \
+                or assigned_type.startswith('TES4_'):
+            return 'ObjectReference'
+        if record_type_of(value.name) or assigned_type in _BASE_OBJECT_PAPYRUS:
             return 'Form'
     return ''
 

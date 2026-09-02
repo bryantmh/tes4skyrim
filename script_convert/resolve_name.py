@@ -215,11 +215,17 @@ def _fixed_reading(conv, low: str, extends: str):
         return '-1'
     if low == 'getcontainer':
         # Bare GetContainer means "the container I am in".  Inside an
-        # equip/unequip event the container IS the actor the event hands us.
+        # OnAdd block the new container is the exact authored answer; OnDrop
+        # runs after removal and therefore has none. Inside equip/unequip the
+        # container is the actor the event hands us.
         # A COMPARISON against it is answered on the BinOp before this operand
         # is emitted, so reaching here is a bare read.  Papyrus cannot walk
         # from an item to its container at all, so the honest value is None;
         # a placeholder only moved the failure to the compiler.
+        if conv.sc.current_block_type == 'onadd':
+            return 'akNewContainer'
+        if conv.sc.current_block_type == 'ondrop':
+            return 'None'
         actor = conv._current_event_actor_param()
         if actor:
             return actor

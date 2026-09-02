@@ -18,6 +18,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 from subprocess_flags import windows_cmd  # noqa: E402
+from script_convert.skse_headers import prepare_skse_headers  # noqa: E402
 
 def find_compiler():
     p = _PROJECT_ROOT / 'external' / 'papyrus-compiler' / 'papyrus.exe'
@@ -86,8 +87,13 @@ def main():
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Match the real build: converted scripts may use official SKSE64
+    # extensions, so validation needs the same compile-only declarations.
+    skse_dir = prepare_skse_headers(headers, out_dir / '_skse_headers')
+
     # Use polyfill dir so scripts can import TES4Polyfill
     polyfill_dir = str(src_dir) if (src_dir / 'TES4Polyfill.psc').exists() else None
+    polyfill_dir = f'{polyfill_dir};{skse_dir}' if polyfill_dir else str(skse_dir)
     if args.extra_headers:
         polyfill_dir = f'{polyfill_dir};{args.extra_headers}' if polyfill_dir else args.extra_headers
 

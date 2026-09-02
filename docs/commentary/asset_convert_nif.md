@@ -667,3 +667,24 @@ plate's +Z. That host is a flat plate (extent X=23 Y=23 Z=2) and all 121 of its
 REFRs use `RotX=0`, so nothing else would stand the flame up. Zeroing it laid the
 candle flames on their side. Hosts that are themselves +Y-up author an identity
 marker and are unaffected.
+
+## Morroblivion centered door pivots
+
+Generated Morrowind-to-Oblivion doors often author `Open` and `Close` as
+opposite two-key Z rotations while leaving the animated node in the middle of
+the leaf. Skyrim plays that data literally, so the leaf spins around its
+center. The controller conversion recognizes that authored Open/Close pair,
+infers the hinge edge from the leaf geometry and optional handle geometry, and
+adds `T(t)=T0+Rclosed*P-R(t)*P` translation keys so the hinge point is fixed.
+
+The fingerprint is deliberately narrow: a single two-key Euler track in both
+sequences, zero X/Y rotation, a door-sized Z swing, inverse Open/Close keys,
+vertical door-like geometry, and a pivot well inside the leaf. Existing
+edge-pivot doors, horizontal trapdoors and unrelated controller sequences are
+unchanged. `--mesh-subdirs` accepts full relative prefixes such as `morro/d`,
+so the door family can be rebuilt without traversing every mesh.
+
+PyFFI toaster traversal, tangent generation and skin-partition progress are
+logged at WARNING internally but are not data defects. They are filtered from
+the conversion summary after whitespace normalization; real malformed-tree,
+stream, collision and value warnings remain categorized and visible.
