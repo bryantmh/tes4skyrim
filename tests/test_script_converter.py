@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from script_convert.cross_ref import CrossRefGraph
+from script_convert.resolve import resolve_property_formid
 from script_convert.converter import ScriptConverter
 from script_convert.message_menus import build_message_plan
 from script_convert.blocks import BLOCK_MAP, block_filter_guard
@@ -3949,7 +3950,15 @@ class TestGetInCellSplitsInteriorFromExterior:
     def test_split_separates_the_two(self):
         interior, exterior = self._xref().split_cell_family('Bravil')
         assert interior == ['BravilCastleBarracks']
-        assert exterior == [('Tamriel', 17, -12)]
+        assert exterior == [('TES4Tamriel', 17, -12)]
+
+    def test_renamed_worldspace_resolves_to_its_tes4_formid(self):
+        """The emitted name must bind back to the TES4 record.
+
+        See: docs/commentary/script_convert.md#worldspace-property-rename
+        """
+        fid = resolve_property_formid(self._xref(), 'TES4Tamriel')
+        assert fid == '0100003C'
 
     def test_exterior_gets_no_cell_property(self):
         conv = ScriptConverter(self._xref())
@@ -3962,16 +3971,18 @@ class TestGetInCellSplitsInteriorFromExterior:
         assert 'Cell Property BravilBeach01' not in out
 
     def test_exterior_is_matched_by_grid_instead(self):
+        """The worldspace is a DECLARED property, under its converted name.
+
+        Helpers are emitted after the declarations, so registering the ref
+        while emitting them would leave an undefined identifier.
+        """
         conv = ScriptConverter(self._xref())
         src = ("scn T\nbegin GameMode\n"
                "  if player.GetInCell Bravil == 1\n"
                "    set x to 1\n  endif\nend\n")
         out = conv.convert_standalone('T', src, 'Quest', 'T')
         helpers = '\n'.join(conv.get_cell_family_helpers())
-        # The worldspace must be a declared property, not just cited: the
-        # helpers are emitted AFTER the declarations, so registering the ref
-        # while emitting them would leave an undefined identifier.
-        assert 'WorldSpace Property Tamriel' in out
+        assert 'WorldSpace Property TES4Tamriel' in out
         assert 'TES4_gx == 17' in helpers and 'TES4_gy == -12' in helpers
 
 

@@ -12,8 +12,14 @@ def resolve_property_formid(xref, prop_name: str) -> str:
     `d<digits>` leading-digit prefix, the plain name, the legacy digit-DELETING
     scheme, the reserved-word `my` prefix, and the `<Name>Base` ActorBase
     de-collision.  An unreversed rename leaves the property None at runtime.
+
+    `TES4Tamriel` is reversed first, to the TES4 name it was renamed from.
+
+    See: docs/commentary/script_convert.md#worldspace-property-rename
     """
     low = prop_name.lower()
+    if low == 'tes4tamriel':
+        low = 'tamriel'
     fid = ''
     if low.startswith('d') and len(low) > 1 and low[1].isdigit():
         fid = xref.edid_to_formid.get(low[1:], '')

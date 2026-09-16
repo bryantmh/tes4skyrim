@@ -3499,6 +3499,44 @@ compare against the one the poll tail never updates — so it would never open.
 Papyrus is case-insensitive, so the duplicate declarations compiled and the fault
 would only have shown in game.
 
+### A worldspace property must use the CONVERTED EditorID
+<a id="worldspace-property-rename"></a>
+
+The importer renames Oblivion's `Tamriel` worldspace to `TES4Tamriel`
+(`tes5_import/record_types/world.py`, `convert_WRLD`): its FormID 0x3C remaps to
+0x0100003C, which would otherwise override Skyrim's own Tamriel. No other
+worldspace is renamed.
+
+A `GetInCell` family whose members include EXTERIOR cells compares them by
+worldspace plus grid square, because a Papyrus `Cell` property cannot bind to an
+exterior (see `split_cell_family`). That emits a `WorldSpace` property named
+after the TES4 worldspace -- and for Tamriel the TES4 name is the one the output
+does NOT use, so the property binds to nothing and reads `None`. Every
+`TES4_ws == Tamriel` arm is then false forever, and the helper returns false for
+any exterior position.
+
+Measured on Oblivion.esm: `Tamriel` was the 4th most common unbound declared
+property, in 51 scripts (`tools/validate/vmad_property_typecheck.py --unbound`).
+
+MQ04 is the case that shows the cost. Its poll bails the Cloud Ruler scene out
+to the waiting stage when the player is not in the temple family:
+
+```
+if (getstage MQ04 >=35 && getstage MQ04 <= 41)
+  if player.getincell CloudRulerTemple == 0
+    setstage MQ04 45
+```
+
+Fast travel lands the player OUTSIDE the gates, in exterior cell
+`CloudRulerTempleExterior02` (grid 3,39) -- inside the prefix family, so vanilla
+does not bail. With the worldspace property unbound the exterior arms cannot
+match, the helper returns false, and stage 35 -> 45 fires on the arrival pass,
+skipping the gate speech, the Blades hail and Martin's speech.
+
+`converted_worldspace_edid()` in `script_convert/constants.py` is the single
+spelling of the rename; `asset_convert/lod/terrain_lod.py` needs the same
+mapping to find LOD worldspaces in the converted ESM.
+
 ### A bare ref command on a receiver parses as a MEMBER
 <a id="a-bare-ref-command-parses-as-member"></a>
 

@@ -503,16 +503,53 @@ def _index_xref_record(xref, fid_str: str, rec: dict, rekey) -> None:
         if packs:
             xref.actor_packages[fid_str] = packs
     if sig == 'PACK':
-        pkdt = rec.get('PKDT.Type')
-        if pkdt is not None:
-            try:
-                xref.pack_type[fid_str] = int(pkdt)
-            except ValueError:
-                pass
+        _index_xref_pack(xref, fid_str, rec)
+    if sig == 'CELL':
+        _index_xref_cell(xref, fid_str, rec,
+                         rekey(rec.get('ParentWRLD', ''), own_raw, own_key))
     if sig in ('ACHR', 'ACRE', 'REFR'):
         name_fid = rekey(rec.get('NAME', ''), own_raw, own_key)
         if name_fid:
             xref.record_base[fid_str] = name_fid
+
+
+def _index_xref_pack(xref, fid_str: str, rec: dict) -> None:
+    """Record a PACK's procedure type for GetCurrentAIPackage conversion."""
+    pkdt = rec.get('PKDT.Type')
+    if pkdt is None:
+        return
+    try:
+        xref.pack_type[fid_str] = int(pkdt)
+    except ValueError:
+        pass
+
+
+def _xclc(rec: dict, key: str):
+    """One XCLC grid coordinate as an int, or None when absent."""
+    try:
+        return int(rec.get(key))
+    except (TypeError, ValueError):
+        return None
+
+
+def _index_xref_cell(xref, fid_str: str, rec: dict, wrld: str) -> None:
+    """Record a CELL's interior flag, worldspace and grid square.
+
+    Without this `split_cell_family` sees no geometry and calls every member of
+    a GetInCell family interior, so an exterior is bound as a Cell property --
+    which cannot bind -- and no WorldSpace property is emitted at all.
+
+    See: docs/commentary/script_convert.md#worldspace-property-rename
+    """
+    flags = rec.get('DATA.Flags')
+    if flags is None:
+        return
+    try:
+        is_interior = bool(int(str(flags).split()[0], 0) & 1)
+    except ValueError:
+        return
+    xref.cell_geom[fid_str] = (is_interior, wrld or '',
+                               _xclc(rec, 'XCLC.X'), _xclc(rec, 'XCLC.Y'))
 
 
 def _index_xref_script(xref, fid_str: str, rec: dict, edid_str: str) -> None:

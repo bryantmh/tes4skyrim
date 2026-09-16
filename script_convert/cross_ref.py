@@ -7,7 +7,7 @@ from pathlib import Path
 
 from script_convert.constants import (
     PLACED_REF_SIGS, PLAYER_ALIAS_EXTENDS, SCHOOL_ENCHANT_SHADER, TYPE_MAP,
-    papyrus_script_name
+    converted_worldspace_edid, papyrus_script_name
 )
 from script_convert.command_rows import (
     ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
@@ -615,7 +615,8 @@ class CrossRefGraph:
             if is_int:
                 interior.append(edid)
                 continue
-            wrld_edid = self.formid_to_edid.get(wrld_fid, '')
+            wrld_edid = converted_worldspace_edid(
+                self.formid_to_edid.get(wrld_fid, ''))
             if x is None or y is None:
                 # An exterior with no XCLC is the worldspace's own persistent
                 # "dummy cell". It holds no grid square, so the faithful test is

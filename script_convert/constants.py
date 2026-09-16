@@ -514,6 +514,14 @@ def script_type_may_override(record_ptype: str) -> bool:
     return record_ptype not in _BASE_OBJECT_PAPYRUS
 
 
+def converted_worldspace_edid(edid: str) -> str:
+    """The EditorID a TES4 worldspace carries in the CONVERTED plugin.
+
+    See: docs/commentary/script_convert.md#worldspace-property-rename
+    """
+    return 'TES4Tamriel' if edid == 'Tamriel' else edid
+
+
 def wants_placed_reference(ptype: str) -> bool:
     """Whether a VMAD property of this Papyrus type must bind a PLACED
     reference rather than an actor BASE record.
