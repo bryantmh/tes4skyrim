@@ -1496,7 +1496,8 @@ class TestSkyrimRecordFormat:
 # Voice file naming tests
 # ---------------------------------------------------------------------------
 
-from asset_convert.audio.audio_converter import VOICE_FILENAME_RE, TES4_VOICE_TYPE_MAP
+from asset_convert.audio.audio_converter import VOICE_FILENAME_RE
+from asset_convert.audio.voice_races import voice_key, vtyp_edid
 
 
 class TestVoiceFileNaming:
@@ -1541,27 +1542,16 @@ class TestVoiceFileNaming:
         m = VOICE_FILENAME_RE.match('00012345_1.mp3')
         assert m is None
 
-    def test_voice_type_map_coverage(self):
-        """Voice type map covers all 10 playable races Ã— 2 genders."""
-        playable_races = [
-            'Argonian', 'Breton', 'DarkElf', 'HighElf', 'Imperial',
-            'Khajiit', 'Nord', 'Orc', 'Redguard', 'WoodElf',
-        ]
-        for race in playable_races:
-            for gender in ('M', 'F'):
-                assert (race, gender) in TES4_VOICE_TYPE_MAP, \
-                    f"Missing voice type for ({race}, {gender})"
-
-    def test_voice_type_map_sheogorath(self):
-        """Sheogorath has Male voice type only."""
-        assert ('Sheogorath', 'M') in TES4_VOICE_TYPE_MAP
-
     def test_voice_type_naming_convention(self):
-        """All voice types follow TES4{Male|Female}Race naming."""
-        for (race, gender), vtype in TES4_VOICE_TYPE_MAP.items():
-            sex = 'Male' if gender == 'M' else 'Female'
-            assert vtype.startswith(f'TES4{sex}'), \
-                f"Voice type {vtype} for ({race}, {gender}) has wrong prefix"
+        """Voice types follow TES4{Male|Female}<RaceKey> naming."""
+        for key in ('HighElf', 'Nord', 'GoldenSaint'):
+            assert vtyp_edid(key, 'M') == f'TES4Male{key}'
+            assert vtyp_edid(key, 'F') == f'TES4Female{key}'
+
+    def test_voice_key_strips_display_name_punctuation(self):
+        """The folder name is the display name; the key is its alphanumerics."""
+        assert voice_key('High Elf') == 'HighElf'
+        assert voice_key('Halb-Aeterna') == 'HalbAeterna'
 
 
 # ---------------------------------------------------------------------------
@@ -6956,14 +6946,19 @@ class TestFalloutReferenceOnlyRecords:
     """See docs/commentary/tes4_export_falloutnv.md#reference-only-types."""
 
     def test_formlist_members_pass_through_in_order(self):
-        """FLST is byte-identical between the games, so order is preserved."""
+        """FLST is byte-identical between the games, so order is preserved.
+
+        Member ids stay clear of `TES4_ITEM_FORMID_TO_SKYRIM`: an
+        engine-substituted id (0x0A/0x0B/0x0F) is deliberately rewritten, so
+        using one here would test the substitution rather than the ordering.
+        """
         from tes5_import.record_types.reference_falloutnv import convert_FLST
         rec = {'FormID': '00100000', 'RecordFlags': '0', 'EditorID': 'AmmoList',
-               'LNAM[0]': '0000000A', 'LNAM[1]': '0000000B',
-               'LNAM[2]': '0000000C'}
+               'LNAM[0]': '0010000A', 'LNAM[1]': '0010000B',
+               'LNAM[2]': '0010000C'}
         members = _find_all_subrecords(convert_FLST(rec), b'LNAM')
         assert [struct.unpack('<I', m)[0] & 0xFFFFFF for m in members] == \
-            [0xA, 0xB, 0xC]
+            [0x10000A, 0x10000B, 0x10000C]
 
     def test_texture_set_keeps_only_the_six_fnv_slots(self):
         """TES5 defines TX06/TX07, which no FO3/FNV record authors."""

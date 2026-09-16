@@ -14,8 +14,8 @@ import pytest
 
 from asset_convert.audio.audio_converter import (
     FONIX_MUTEX_NAME,
-    TES4_VOICE_TYPE_MAP,
     VOICE_FILENAME_RE,
+    _resolve_voice_type,
     build_lipgen_pool,
     convert_file_to_xwm,
     convert_sounds,
@@ -26,6 +26,9 @@ from asset_convert.audio.audio_converter import (
     organize_voice_files,
     pack_fuz,
 )
+from asset_convert.audio.voice_races import load_race_voices
+from asset_convert.game_paths import namespace_for
+from output_layout import record_dir
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -141,6 +144,11 @@ def test_convert_file_to_xwm_returns_false_for_missing_ffmpeg(tmp_path):
 # convert_sounds (batch)
 # ---------------------------------------------------------------------------
 
+def _namespace(tmp_path, plugin):
+    """Asset namespace `convert_sounds` writes this plugin's sounds under."""
+    return namespace_for(record_dir(str(tmp_path / 'export'), plugin))
+
+
 @needs_ffmpeg
 def test_convert_sounds_converts_wav_files(tmp_path):
     """WAV files in the extract dir should be converted to XWM in output dir."""
@@ -160,7 +168,8 @@ def test_convert_sounds_converts_wav_files(tmp_path):
     assert result['failed'] == 0
     assert result['total'] == 2
 
-    out_dir = tmp_path / 'output' / plugin / 'sound' / 'tes4'
+    out_dir = (tmp_path / 'output' / plugin / 'sound'
+               / _namespace(tmp_path, plugin))
     assert (out_dir / 'a.wav').is_file()
     assert (out_dir / 'b.wav').is_file()
 
@@ -180,7 +189,8 @@ def test_convert_sounds_copies_non_audio_files(tmp_path):
     )
 
     assert result['copied'] == 1
-    out = tmp_path / 'output' / plugin / 'sound' / 'tes4' / 'file.lip'
+    out = (tmp_path / 'output' / plugin / 'sound'
+           / _namespace(tmp_path, plugin) / 'file.lip')
     assert out.is_file()
 
 
@@ -394,21 +404,84 @@ def test_voice_filename_re(name, expected):
 
 
 # ---------------------------------------------------------------------------
-# TES4_VOICE_TYPE_MAP
+# Race folder -> VTYP resolution (replaced the hardcoded race table)
 # ---------------------------------------------------------------------------
 
-def test_voice_type_map_has_standard_races():
-    """All expected playable Oblivion races should be in the map."""
-    races = ['Argonian', 'Breton', 'DarkElf', 'HighElf', 'Imperial',
-             'Khajiit', 'Nord', 'Orc', 'Redguard', 'WoodElf']
-    for race in races:
-        assert (race, 'M') in TES4_VOICE_TYPE_MAP
-        assert (race, 'F') in TES4_VOICE_TYPE_MAP
+#: Display name as it appears on disk -> the VTYP EditorID fragment.
+_RACE_FOLDERS = [
+    ('Argonian', 'Argonian'), ('Breton', 'Breton'), ('Dark Elf', 'DarkElf'),
+    ('High Elf', 'HighElf'), ('Imperial', 'Imperial'), ('Khajiit', 'Khajiit'),
+    ('Nord', 'Nord'), ('Orc', 'Orc'), ('Redguard', 'Redguard'),
+    ('Wood Elf', 'WoodElf'), ('Dark Seducer', 'DarkSeducer'),
+    ('Golden Saint', 'GoldenSaint'), ('Sheogorath', 'Sheogorath'),
+    ('Dremora', 'Dremora'),
+]
 
 
-def test_voice_type_map_includes_shivering_isles_races():
-    assert ('DarkSeducer', 'M') in TES4_VOICE_TYPE_MAP
-    assert ('GoldenSaint', 'F') in TES4_VOICE_TYPE_MAP
+def _race_export(tmp_path, names):
+    """An export dir whose RACE.txt names each display name in *names*."""
+    recs = ''.join(
+        f'---RECORD_BEGIN---\nEditorID={k}\nFULL={n}\n---RECORD_END---\n'
+        for n, k in names)
+    (tmp_path / 'RACE.txt').write_text(recs, encoding='utf-8')
+    return tmp_path
+
+
+def test_race_folders_resolve_to_voice_types(tmp_path):
+    """Every Oblivion voice folder resolves from the plugin's RACE records."""
+    rv = load_race_voices(_race_export(tmp_path, _RACE_FOLDERS))
+    for folder, key in _RACE_FOLDERS:
+        for gender, sex in (('M', 'Male'), ('F', 'Female')):
+            got = _resolve_voice_type(folder, gender, False, rv, set())
+            assert got == f'TES4{sex}{key}', f'{folder}/{gender} -> {got}'
+
+
+def test_race_editorid_spelling_also_resolves(tmp_path):
+    """`HighElf` resolves as well as `high elf` -- both spellings are authored."""
+    rv = load_race_voices(_race_export(tmp_path, _RACE_FOLDERS))
+    assert _resolve_voice_type('HighElf', 'M', False, rv, set()) == \
+        'TES4MaleHighElf'
+    assert _resolve_voice_type('high elf', 'F', False, rv, set()) == \
+        'TES4FemaleHighElf'
+
+
+def test_unknown_race_is_synthesised_and_recorded(tmp_path):
+    """A folder no RACE record names still gets a name, and is reported."""
+    rv = load_race_voices(_race_export(tmp_path, [('Nord', 'Nord')]))
+    unmapped = set()
+    assert _resolve_voice_type('Gnome', 'M', False, rv, unmapped) == \
+        'TES4MaleGnome'
+    assert ('Gnome', 'M') in unmapped
+
+
+def test_master_races_resolve_for_a_dependent_plugin(tmp_path):
+    """A plugin with no races of its own inherits its master's voice folders."""
+    master = tmp_path / 'Oblivion.esm'
+    master.mkdir()
+    _race_export(master, _RACE_FOLDERS)
+    plugin = tmp_path / 'Mod.esp'
+    plugin.mkdir()
+    (plugin / '_HEADER.txt').write_text('Master[0]=Oblivion.esm\n',
+                                        encoding='utf-8')
+    rv = load_race_voices(plugin)
+    assert _resolve_voice_type('high elf', 'M', False, rv, set()) == \
+        'TES4MaleHighElf'
+
+
+def test_plugin_races_override_the_master(tmp_path):
+    """The plugin's own RACE record wins over an inherited one."""
+    master = tmp_path / 'Oblivion.esm'
+    master.mkdir()
+    _race_export(master, [('High Elf', 'HighElf')])
+    plugin = tmp_path / 'Mod.esp'
+    plugin.mkdir()
+    _race_export(plugin, [('Hochelf', 'HighElf')])
+    (plugin / '_HEADER.txt').write_text('Master[0]=Oblivion.esm\n',
+                                        encoding='utf-8')
+    rv = load_race_voices(plugin)
+    assert rv.by_race_edid['HighElf'] == 'Hochelf'
+    assert _resolve_voice_type('High Elf', 'M', False, rv, set()) == \
+        'TES4MaleHighElf'
 
 
 # ---------------------------------------------------------------------------

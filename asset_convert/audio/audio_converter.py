@@ -525,50 +525,6 @@ def convert_sounds(
 # TES4 voice file organisation (TES4 layout → TES5 layout)
 # ---------------------------------------------------------------------------
 
-#: (race folder, gender) -> VTYP EditorID. See: docs/commentary/asset_convert_audio.md#voice-file-naming-prefix
-TES4_VOICE_TYPE_MAP = {
-    ('Argonian',     'M'): 'TES4MaleArgonian',
-    ('Argonian',     'F'): 'TES4FemaleArgonian',
-    ('Breton',       'M'): 'TES4MaleBreton',
-    ('Breton',       'F'): 'TES4FemaleBreton',
-    ('DarkElf',      'M'): 'TES4MaleDarkElf',
-    ('DarkElf',      'F'): 'TES4FemaleDarkElf',
-    ('HighElf',      'M'): 'TES4MaleHighElf',
-    ('HighElf',      'F'): 'TES4FemaleHighElf',
-    ('Imperial',     'M'): 'TES4MaleImperial',
-    ('Imperial',     'F'): 'TES4FemaleImperial',
-    ('Khajiit',      'M'): 'TES4MaleKhajiit',
-    ('Khajiit',      'F'): 'TES4FemaleKhajiit',
-    ('Nord',         'M'): 'TES4MaleNord',
-    ('Nord',         'F'): 'TES4FemaleNord',
-    ('Orc',          'M'): 'TES4MaleOrc',
-    ('Orc',          'F'): 'TES4FemaleOrc',
-    ('Redguard',     'M'): 'TES4MaleRedguard',
-    ('Redguard',     'F'): 'TES4FemaleRedguard',
-    ('WoodElf',      'M'): 'TES4MaleWoodElf',
-    ('WoodElf',      'F'): 'TES4FemaleWoodElf',
-    ('DarkSeducer',  'M'): 'TES4MaleDarkSeducer',
-    ('DarkSeducer',  'F'): 'TES4FemaleDarkSeducer',
-    ('GoldenSaint',  'M'): 'TES4MaleGoldenSaint',
-    ('GoldenSaint',  'F'): 'TES4FemaleGoldenSaint',
-    ('Sheogorath',   'M'): 'TES4MaleSheogorath',
-    ('Dremora',      'M'): 'TES4MaleDremora',
-    ('Dremora',      'F'): 'TES4FemaleDremora',
-    # Alternate spellings found in Oblivion BSA folder names:
-    ('high elf',     'M'): 'TES4MaleHighElf',
-    ('high elf',     'F'): 'TES4FemaleHighElf',
-    ('dark elf',     'M'): 'TES4MaleDarkElf',
-    ('dark elf',     'F'): 'TES4FemaleDarkElf',
-    ('wood elf',     'M'): 'TES4MaleWoodElf',
-    ('wood elf',     'F'): 'TES4FemaleWoodElf',
-    ('dark seducer', 'M'): 'TES4MaleDarkSeducer',
-    ('dark seducer', 'F'): 'TES4FemaleDarkSeducer',
-    ('golden saint', 'M'): 'TES4MaleGoldenSaint',
-    ('golden saint', 'F'): 'TES4FemaleGoldenSaint',
-    ('dremora',      'M'): 'TES4MaleDremora',
-    ('dremora',      'F'): 'TES4FemaleDremora',
-}
-
 #: Oblivion voice filename. See: docs/commentary/asset_convert_audio.md#voice-file-naming-prefix
 VOICE_FILENAME_RE = re.compile(
     r'^(.+)_([0-9a-fA-F]{8})_(\d+)\.(mp3|ogg|wav|xwm|fuz)$',
@@ -656,6 +612,7 @@ from asset_convert.audio.audio_falloutnv import (folder_gender,
                                                   load_voice_type_edids,
                                                   voice_type_edid)
 from asset_convert.audio.voice_races import (load_race_voices,
+                                             voice_key,
                                              vtyp_edid as _vtyp_edid)
 
 _VOICE_OUTPUT_EXTS = frozenset(('.fuz', '.xwm', '.wav', '.mp3', '.ogg', '.lip'))
@@ -678,22 +635,44 @@ def _resolve_voice_type(race: str, gender: str, fallout: bool,
     """VTYP EditorID a source voice folder maps to.
 
     A FO3/FNV folder IS the voice type. Oblivion resolves the race through the
-    plugin's own RACE records (what the importer built its VTYPs from), then the
-    fixed table, and finally a synthesised name recorded in *unmapped_races*.
+    RACE records the importer built its VTYPs from -- the plugin's own and its
+    masters' -- falling back to a synthesised name recorded in *unmapped_races*.
+
+    See: docs/commentary/asset_convert_audio.md#race-identity-spans-the-masters
     """
     if fallout:
         return voice_type_edid(race, fnv_edids)
     key = race_voices.folder_key(race)
     if key:
         return _vtyp_edid(key, gender)
-    vt = TES4_VOICE_TYPE_MAP.get((race, gender))
-    if vt:
-        return vt
-    for (r, g), name in TES4_VOICE_TYPE_MAP.items():
-        if r.lower() == race.lower() and g.upper() == gender:
-            return name
     unmapped_races.add((race, gender))
-    return f'TES4{"Male" if gender == "M" else "Female"}{race}'
+    return _vtyp_edid(voice_key(race), gender)
+
+
+def _voice_destination(m, voice_map, voice_type, lip_text, ffmpeg,
+                       lipgenerator):
+    """(dst_name, destination VTYPs, transcript) for one source filename.
+
+    The prefix comes from the CONVERTED records via *voice_map*, keyed on the
+    24-bit InfoFormID; a transcript yields lip-synced .fuz, otherwise .xwm.
+    Oblivion holds ONE take per VOICE, so a multi-speaker line emits only into
+    the VTYP this source folder speaks for -- all of them when none is its own.
+
+    See: docs/commentary/asset_convert_audio.md#vnam-voice-routing
+    """
+    prefix, src_ext = m.group(1), m.group(4).lower()
+    fid24 = int(m.group(2), 16) & 0xFFFFFF
+    targets = []
+    if voice_map and voice_map.get(fid24) is not None:
+        prefix, targets = voice_map[fid24]
+    text = None
+    dst_ext = src_ext
+    if ffmpeg and src_ext in ('mp3', 'ogg', 'wav'):
+        if lipgenerator and lip_text:
+            text = lip_text.get((fid24, int(m.group(3))))
+        dst_ext = 'fuz' if text else 'xwm'
+    dst_name = f'{prefix}_{fid24:08x}_{m.group(3)}.{dst_ext}'.lower()
+    return dst_name, [v for v in targets if v == voice_type] or targets, text
 
 
 def _voice_leaf_dirs(race_dir, fallout: bool) -> list:
@@ -733,6 +712,115 @@ def prune_stale_voice_files(touched_dirs: set, intended: set,
             except OSError as exc:
                 print(f'  WARN could not remove stale {f.name}: {exc}')
     return removed
+
+
+def _find_voice_tools(convert_audio, voice_root, ffmpeg_path,
+                      xwmaencode_path, lipgenerator_path, lip_text):
+    """(ffmpeg, xwmaencode, lipgenerator) for this run, each None when unused.
+
+    Raises RuntimeError when conversion is requested but ffmpeg is absent.
+    """
+    if not convert_audio:
+        return None, None, None
+    ffmpeg = find_ffmpeg(ffmpeg_path, need_decoder=_voice_decoder(voice_root))
+    if not ffmpeg:
+        raise RuntimeError(
+            'ffmpeg not found but convert_audio=True.  '
+            'Install ffmpeg and make sure it is on PATH, or pass '
+            'ffmpeg_path= explicitly.')
+    xwmaencode = xwmaencode_path or find_xwmaencode()
+    if xwmaencode:
+        print('  ffmpeg + xWMAEncode found -- converting MP3 -> WAV -> XWM '
+              '(proper xWMA)')
+    else:
+        print('  WARNING: xWMAEncode.exe not found -- falling back to ffmpeg '
+              'ASF container')
+        print('           Voice audio may not play in Skyrim! See README for '
+              'xWMAEncode setup.')
+    lipgenerator = None
+    if lip_text:
+        lipgenerator = lipgenerator_path or find_lipgenerator()
+        if lipgenerator:
+            print(f'  LipGenerator found -- generating .lip sync tracks, '
+                  f'packing voice as .fuz ({len(lip_text)} transcripts)')
+        else:
+            print('  WARNING: LipGenerator.exe not found (SSE Tools/LipGen) '
+                  '-- voice converts without lip sync (.xwm only)')
+    return ffmpeg, xwmaencode, lipgenerator
+
+
+def _lip_worker_pool(lipgenerator, conversion_jobs):
+    """(n_workers, lip_pool, lip_pool_dir) for the transcode stage.
+
+    Stock LipGenerator instances serialize machine-wide on a named Fonix mutex
+    (~8 lips/s total), so each worker gets its own mutex-renamed copy.
+
+    See: docs/commentary/asset_convert_audio.md#lipgenerator-fonix-mutex
+    """
+    if not (lipgenerator and any(job[2] for job in conversion_jobs)):
+        return _WORKER_COUNT, None, None
+    lip_pool_dir = Path(tempfile.mkdtemp(prefix='lipgen_pool_'))
+    lip_exes = build_lipgen_pool(lipgenerator, lip_pool_dir, _LIP_WORKER_COUNT)
+    lip_pool = queue.Queue()
+    for exe in lip_exes:
+        lip_pool.put(exe)
+    print(f'  LipGenerator: {len(lip_exes)} parallel copies' if len(lip_exes) > 1
+          else '  WARNING: unrecognised LipGenerator.exe layout -- running '
+               'unpatched; lip generation serializes at ~8 lips/s')
+    return _LIP_WORKER_COUNT, lip_pool, lip_pool_dir
+
+
+def _convert_one(job, ffmpeg, xwmaencode, lipgenerator, lip_pool, copy):
+    """Transcode or copy one (src, dst, text) job; 'ok'/'error'/'exception:..'."""
+    src_path, dst_path, text = job
+    try:
+        if ffmpeg and dst_path.suffix in ('.xwm', '.fuz'):
+            lip_exe = lipgenerator
+            if text and lip_pool is not None:
+                lip_exe = lip_pool.get()
+            try:
+                return 'ok' if convert_file_to_xwm(
+                    src_path, dst_path, ffmpeg, xwmaencode=xwmaencode,
+                    lipgenerator=lip_exe, lip_text=text) else 'error'
+            finally:
+                if text and lip_pool is not None:
+                    lip_pool.put(lip_exe)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        if copy:
+            shutil.copy2(src_path, dst_path)
+        else:
+            shutil.move(str(src_path), dst_path)
+        return 'ok'
+    except Exception as e:
+        return f'exception:{e}'
+
+
+def _run_conversion_jobs(conversion_jobs, stats, tools, copy):
+    """Run every conversion job on a thread pool, accumulating into *stats*.
+
+    *tools* is (ffmpeg, xwmaencode, lipgenerator); the LipGenerator pool is
+    built here and torn down before returning.
+    """
+    ffmpeg, xwmaencode, lipgenerator = tools
+    n_workers, lip_pool, lip_pool_dir = _lip_worker_pool(lipgenerator,
+                                                         conversion_jobs)
+    print(f'  Processing {len(conversion_jobs)} voice files '
+          f'({n_workers} workers)...')
+    try:
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            futures = {pool.submit(_convert_one, job, ffmpeg, xwmaencode,
+                                   lipgenerator, lip_pool, copy): job
+                       for job in conversion_jobs}
+            for fut in as_completed(futures):
+                result = fut.result()
+                stats['organized' if result == 'ok' else 'errors'] += 1
+                if result != 'ok' and stats['errors'] <= 5:
+                    detail = (result[10:] if result.startswith('exception:')
+                              else f'ffmpeg failed on {futures[fut][0].name}')
+                    print(f'    ERROR: {detail}')
+    finally:
+        if lip_pool_dir is not None:
+            shutil.rmtree(lip_pool_dir, ignore_errors=True)
 
 
 def organize_voice_files(
@@ -791,31 +879,9 @@ def organize_voice_files(
         return {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0,
                 'unmapped_races': set()}
 
-    ffmpeg = None
-    xwmaencode = None
-    lipgenerator = None
-    if convert_audio:
-        ffmpeg = find_ffmpeg(ffmpeg_path,
-                             need_decoder=_voice_decoder(voice_root))
-        if not ffmpeg:
-            raise RuntimeError(
-                'ffmpeg not found but convert_audio=True.  '
-                'Install ffmpeg and make sure it is on PATH, or pass ffmpeg_path= explicitly.'
-            )
-        xwmaencode = xwmaencode_path or find_xwmaencode()
-        if xwmaencode:
-            print('  ffmpeg + xWMAEncode found -- converting MP3 -> WAV -> XWM (proper xWMA)')
-        else:
-            print('  WARNING: xWMAEncode.exe not found -- falling back to ffmpeg ASF container')
-            print('           Voice audio may not play in Skyrim! See README for xWMAEncode setup.')
-        if lip_text:
-            lipgenerator = lipgenerator_path or find_lipgenerator()
-            if lipgenerator:
-                print(f'  LipGenerator found -- generating .lip sync tracks, '
-                      f'packing voice as .fuz ({len(lip_text)} transcripts)')
-            else:
-                print('  WARNING: LipGenerator.exe not found (SSE Tools/LipGen) '
-                      '-- voice converts without lip sync (.xwm only)')
+    ffmpeg, xwmaencode, lipgenerator = _find_voice_tools(
+        convert_audio, voice_root, ffmpeg_path, xwmaencode_path,
+        lipgenerator_path, lip_text)
 
     stats = {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0}
     unmapped_races: set = set()
@@ -863,42 +929,12 @@ def organize_voice_files(
                         stats['no_match'] += 1
                         continue
 
-                    prefix           = m.group(1)   # quest_topic prefix
-                    info_fid_hex     = m.group(2)    # original 8-hex FormID
-                    resp_idx         = m.group(3)   # 1-based index from source filename
-                    src_ext          = m.group(4).lower()
-
-                    # Skyrim voice filename: <prefix>_<InfoFormID>_<RespNum>
-                    # where prefix comes from the CONVERTED records (voicemap,
-                    # keyed by the 24-bit InfoFormID) and the FormID keeps 8
-                    # hex digits with the load-order byte zeroed. Lowercase —
-                    # the engine's lookup is case-insensitive on disk but BSA
-                    # paths are stored lowercase.
-                    fid24 = int(info_fid_hex, 16) & 0xFFFFFF
-                    target_vtyps = []
-                    if voice_map:
-                        entry = voice_map.get(fid24)
-                        if entry is not None:
-                            prefix, target_vtyps = entry
-                    # Transcript available + LipGenerator → lip-synced .fuz;
-                    # otherwise bare .xwm (audio only, mouth won't move).
-                    text = None
-                    if ffmpeg and src_ext in ('mp3', 'ogg', 'wav'):
-                        if lipgenerator and lip_text:
-                            text = lip_text.get((fid24, int(resp_idx)))
-                        dst_ext = 'fuz' if text else 'xwm'
-                    else:
-                        dst_ext = src_ext
-                    dst_name = f'{prefix}_{fid24:08x}_{resp_idx}.{dst_ext}'.lower()
-
-                    # NPC-specific line: the engine reads it from the speaker's
-                    # VTYP folder, which may differ from the Oblivion source race
-                    # dir (Arvena = Dark Elf, recording under high elf/f/). Emit
-                    # into each named VTYP folder; otherwise keep the source race
-                    # folder (generic lines are recorded per race).
+                    dst_name, owned, text = _voice_destination(
+                        m, voice_map, voice_type, lip_text, ffmpeg,
+                        lipgenerator)
                     out_dirs = ([dest_dir / 'sound' / 'Voice' / effective_plugin
-                                 / vt for vt in target_vtyps]
-                                if target_vtyps else [out_dir])
+                                 / vt for vt in owned]
+                                if owned else [out_dir])
                     for od in out_dirs:
                         od.mkdir(parents=True, exist_ok=True)
                         dst_path = od / dst_name
@@ -925,69 +961,8 @@ def organize_voice_files(
               f'{stats["skipped"]} already present')
         return {**stats, 'pruned': len(pruned), 'unmapped_races': unmapped_races}
 
-    # Stock LipGenerator instances serialize machine-wide on a named Fonix
-    # mutex (~8 lips/s total, processes near 0% CPU). Give each worker its
-    # own mutex-renamed copy so lip generation scales with the worker count.
-    n_workers = _WORKER_COUNT
-    lip_pool = None
-    lip_pool_dir = None
-    if lipgenerator and any(job[2] for job in conversion_jobs):
-        n_workers = _LIP_WORKER_COUNT
-        lip_pool_dir = Path(tempfile.mkdtemp(prefix='lipgen_pool_'))
-        lip_exes = build_lipgen_pool(lipgenerator, lip_pool_dir, n_workers)
-        lip_pool = queue.Queue()
-        for exe in lip_exes:
-            lip_pool.put(exe)
-        if len(lip_exes) > 1:
-            print(f'  LipGenerator: {len(lip_exes)} parallel copies')
-        else:
-            print('  WARNING: unrecognised LipGenerator.exe layout -- running '
-                  'unpatched; lip generation serializes at ~8 lips/s')
-
-    print(f'  Processing {len(conversion_jobs)} voice files ({n_workers} workers)...')
-
-    def _process_one(job):
-        src_path, dst_path, text = job
-        try:
-            if ffmpeg and dst_path.suffix in ('.xwm', '.fuz'):
-                lip_exe = lipgenerator
-                if text and lip_pool is not None:
-                    lip_exe = lip_pool.get()
-                try:
-                    return 'ok' if convert_file_to_xwm(
-                        src_path, dst_path, ffmpeg, xwmaencode=xwmaencode,
-                        lipgenerator=lip_exe, lip_text=text) else 'error'
-                finally:
-                    if text and lip_pool is not None:
-                        lip_pool.put(lip_exe)
-            dst_path.parent.mkdir(parents=True, exist_ok=True)
-            if copy:
-                shutil.copy2(src_path, dst_path)
-            else:
-                shutil.move(str(src_path), dst_path)
-            return 'ok'
-        except Exception as e:
-            return f'exception:{e}'
-
-    try:
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            futures = {pool.submit(_process_one, job): job for job in conversion_jobs}
-            for fut in as_completed(futures):
-                result = fut.result()
-                if result == 'ok':
-                    stats['organized'] += 1
-                elif result == 'error':
-                    stats['errors'] += 1
-                    if stats['errors'] <= 5:
-                        src = futures[fut][0]
-                        print(f'    ERROR: ffmpeg failed on {src.name}')
-                elif result.startswith('exception:'):
-                    stats['errors'] += 1
-                    if stats['errors'] <= 5:
-                        print(f'    ERROR: {result[10:]}')
-    finally:
-        if lip_pool_dir is not None:
-            shutil.rmtree(lip_pool_dir, ignore_errors=True)
+    _run_conversion_jobs(conversion_jobs, stats,
+                         (ffmpeg, xwmaencode, lipgenerator), copy)
 
     if unmapped_races:
         print('  Warning: unmapped race/gender combos (synthesised folder names):')

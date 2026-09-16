@@ -455,11 +455,76 @@ Arvena Thelas is a Dark Elf whose recordings sit under `high elf/f/`. An empty
 list means keep the source race folder, which is correct for generic lines
 recorded once per race.
 
-`TES4_VOICE_TYPE_MAP` maps (TES4 race folder, gender) to the custom TES5
-VoiceType EditorID, and must stay in step with the VTYP records
-`import_main._create_vtyp_records()` creates. It carries alternate spellings
-(`high elf` as well as `HighElf`) because Oblivion's BSA folder names are
-inconsistent.
+## Race identity spans the masters
+<a id="race-identity-spans-the-masters"></a>
+
+A source voice folder is named after a race's **display name** (`FULL`), so
+resolving `high elf/` to `TES4MaleHighElf` means finding the RACE record whose
+FULL is "High Elf". `load_race_voices` reads masters first, then the plugin's
+own RACE.txt, so a later record overrides an inherited one of the same EditorID.
+
+This replaced a hardcoded `TES4_VOICE_TYPE_MAP` of 39 (folder, gender) pairs.
+Measured against it before deletion:
+
+| Export | Table entries reached | Verdict |
+|---|---|---|
+| Oblivion.esm | 0 of 39 | every folder already resolved from its own races |
+| Nehrim.esm | 0 | standalone; German FULLs (`Hochelf`, `Eraterna`) — the table *disagreed* on 8 |
+| ElsweyrAnequina.esp, Unique Landscapes, Morrowind_ob | all folders | declare `Master[0]=Oblivion.esm`; the table was standing in for a master lookup the audio stage never did |
+
+The table was a transcript of Oblivion.esm's RACE records, so a plugin mastered
+on Oblivion.esm now reads the real thing. Its alternate spellings (`high elf`
+alongside `HighElf`) are likewise authored: `by_folder` registers both the FULL
+and the EditorID of every race.
+
+A race with **no FULL** is skipped — the folder on disk is the display name, so
+a race without one has no folder to route to. Oblivion's `VampireRace`
+(`0x00000019`) is the only such record, and no `vampire/` source folder exists.
+
+## VNAM: which race's actors voice a race
+<a id="vnam-voice-routing"></a>
+
+Oblivion does not record one take per RACE. It records one take per **voice**,
+and the TES4 RACE record says which voice a race uses: `VNAM` is a per-gender
+pair of RACE FormIDs (xEdit `wbDefinitionsTES4.pas`, `wbStruct(VNAM, 'Voice')`).
+A null/absent VNAM means the race is voiced by its own actors.
+
+Measured on Oblivion.esm — 15 RACE records, 10 carrying VNAM:
+
+| Race | Male voice | Female voice |
+|---|---|---|
+| Orc | Nord | Nord |
+| Khajiit | Argonian | Argonian |
+| DarkElf | HighElf | HighElf |
+| WoodElf | HighElf | HighElf |
+| Breton | Breton (own) | Imperial |
+
+That is exactly why only **17 voice folders** exist on disk for 15 races, why
+there is no `breton/f`, and why no folder exists for Orc, Khajiit, DarkElf or
+WoodElf. It is also why an Orc legitimately speaks with a Nord-family voice —
+authored, not a conversion artifact.
+
+`build_npc_to_vtyp_map` (`tes5_import/dialogue/converter.py`) resolves NPC voice
+types through VNAM, so the voicemap's per-INFO VTYP list already reflects it.
+
+The audio stage therefore needs no VNAM lookup of its own: a source folder maps
+to exactly one VTYP (`_resolve_voice_type`), and `_voice_destination` emits a
+take only into the targets equal to that VTYP — all of them when none matches,
+which preserves the relocation case where a line is recorded under a different
+race than the speaker's.
+
+**The defect this fixes:** the destination name is `(prefix, InfoFormID, resp)`,
+with no voice component, and it was fanned into *every* target VTYP. Whichever
+race `os.walk` reached first won, and `dst_path.exists()` discarded the rest.
+Measured on Oblivion.esm: 24,017 source keys, 5,793 present in more than one
+voice folder, of which **5,782 hold genuinely different takes** (11 byte-
+identical). `000363B1`/`000363B2` — eligible to Ruslan (Redguard) and Luronk
+(Orc→Nord) — emitted one 27,831-byte file into both folders from sources of
+29,885 and 24,660 bytes.
+
+**FormID constraint:** `RaceVoices.keys` and `by_race_edid` drive VTYP FormID
+allocation in `owned_records._emit_race_vtyps`, so neither may change — moving a
+VTYP FormID breaks saves.
 
 ## Pruning stale voice output
 <a id="pruning-stale-voice-output"></a>

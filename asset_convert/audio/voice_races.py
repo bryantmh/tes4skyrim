@@ -32,13 +32,14 @@ every race keeps the voice type it already had.
 A race with no FULL is SKIPPED rather than falling back to its EditorID: the
 folder on disk is the display name, so a race that has no display name has no
 folder, and giving it an identity here would point it at an empty directory.
-Oblivion's VampireRace is exactly that case and the fixed table routes it to
-Imperial on purpose.
+
+See: docs/commentary/asset_convert_audio.md#race-identity-spans-the-masters
 """
 
 from pathlib import Path
 
-__all__ = ['voice_key', 'vtyp_edid', 'load_race_voices', 'RaceVoices']
+__all__ = ['voice_key', 'vtyp_edid', 'load_race_voices', 'RaceVoices',
+           'master_race_dirs']
 
 
 def voice_key(name: str) -> str:
@@ -97,38 +98,52 @@ def iter_records(txt: Path):
             yield rec
 
 
-def load_race_voices(export_dir) -> RaceVoices:
-    """Read RACE.txt from a per-plugin export directory (e.g. export/Nehrim.esm).
+def master_race_dirs(export_dir: Path) -> list:
+    """Sibling export directories of each master named in `_HEADER.txt`.
 
-    A plugin with no RACE.txt — or one whose races carry no FULL — yields an
-    empty result, and callers keep their previous behaviour.
+    Mirrors how the importer resolves masters, so both halves of the voice
+    pipeline read the same RACE.txt and cannot disagree on a voice type.
+    """
+    header = export_dir / '_HEADER.txt'
+    if not header.is_file():
+        return []
+    try:
+        lines = header.read_text(encoding='utf-8', errors='replace').splitlines()
+    except OSError:
+        return []
+    names = [ln.partition('=')[2].strip() for ln in lines
+             if ln.startswith('Master[')]
+    dirs = [export_dir.parent / n for n in names]
+    return [d for d in dirs if d.is_dir() and d != export_dir]
+
+
+def _iter_race_records(export_dir: Path):
+    """Every RACE record affecting this plugin: masters first, then its own."""
+    for d in master_race_dirs(export_dir) + [export_dir]:
+        yield from iter_records(d / 'RACE.txt')
+
+
+def load_race_voices(export_dir) -> RaceVoices:
+    """Voice identity for a plugin's races, its masters' races included.
+
+    A plugin that declares masters voices its actors out of THEIR race folders
+    (an Oblivion mod's `high elf/` recordings are Oblivion.esm's race), so the
+    masters are read first and the plugin's own RACE records override them.
+    A plugin with no RACE.txt anywhere yields an empty result. A race with no
+    FULL is skipped: the folder on disk IS the display name.
+
+    See: docs/commentary/asset_convert_audio.md#race-identity-spans-the-masters
     """
     by_race_edid: dict = {}
     by_folder: dict = {}
 
-    for rec in iter_records(Path(export_dir) / 'RACE.txt'):
+    for rec in _iter_race_records(Path(export_dir)):
         edid = (rec.get('EditorID') or '').strip()
-        if not edid:
-            continue
-        # A race with NO display name has no voice folder either — the folder
-        # IS the display name.  Minting it an identity of its own therefore
-        # points it at a directory that cannot exist, so it must fall through
-        # to the caller's fixed table instead.  Oblivion's VampireRace
-        # (0x00000019, FULL absent) is the case that matters: the fixed table
-        # deliberately routes it to Imperial, which HAS recordings, and
-        # claiming it here overrode that and silenced those actors.  "Somebody
-        # else's voice type" is a folder with audio in it; its own would be
-        # empty.
         full = (rec.get('FULL') or '').strip()
-        if not full:
-            continue
         key = voice_key(full)
-        if not key:
+        if not edid or not key:
             continue
         by_race_edid[edid] = key
-        # The folder on disk is the display name.  Register the EditorID too:
-        # an English-named folder in a localised plugin still has to resolve,
-        # and for Oblivion both spellings collapse onto the same key anyway.
         by_folder.setdefault(full.lower(), key)
         by_folder.setdefault(edid.lower(), key)
 
