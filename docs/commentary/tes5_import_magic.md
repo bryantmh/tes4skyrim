@@ -8,6 +8,7 @@
 - [The four defects, in priority order](#four-defects-priority-order)
 - [Path to complete conversion](#path-complete-conversion)
 - [Rules for working in this area](#rules-working-this-area)
+- [Enchantment charge (ANAM to EAMT)](#enchantment-charge-eamt)
 
 Status as of 2026-07-31. Measured with `python tools/audit/magic_audit.py export/<Plugin>`
 (written alongside this doc; re-run it after every change in this area).
@@ -579,3 +580,38 @@ consumer of `vanilla_mgef_data.py`).
   effect codes (`BA01`–`BA10`, `BW09`, `BW10`, `DISE`, `DUMY`, `RSWD`, `Z020`)
   that Oblivion does not, and its strings are German (the tool forces UTF-8
   output for this reason).
+
+## <a id="enchantment-charge-eamt"></a>Enchantment charge (ANAM to EAMT)
+
+An enchanted weapon carries two things: the ENCH it invokes, and the size of
+the charge pool it spends per cast. Both games store the pair as one struct —
+xEdit builds it from a single shared `wbEnchantment(aCapacity)` in
+`wbDefinitionsCommon.pas:8046`, whose members are
+`IsTES4(ENAM, EITM)` for the effect and `IsTES4(ANAM, EAMT)` for the u16
+capacity. TES4's `ANAM` and TES5's `EAMT` are therefore the same field under
+two names, and the value converts with no transformation.
+
+`convert_WEAP` wrote `EITM` and dropped `ANAM`, so every converted enchanted
+weapon reached Skyrim with a zero charge pool. Staves were the visible casualty
+because a staff's only function is to cast: with no charge it reads as fully
+depleted and does nothing when used. Enchanted swords degraded more quietly —
+they still swing, they just never fire their effect.
+
+Measured evidence:
+
+- Real `Skyrim.esm` (binary, not a dump): 2484 WEAP records, **2273 `EAMT`
+  subrecords, every one exactly 2 bytes**. Sample values 1500/2000/3000.
+- Vanilla pairing: 2293 WEAP carry `EITM`, **2272 of those carry `EAMT`**
+  (99.1%). An enchanted weapon without one is the rare exception.
+- TES4 source authors it universally: **221/221 Oblivion staves and 242/242
+  Nehrim staves** with an `ENAM` also carry `ANAM`, as do 720/721 and
+  559/560 enchanted weapons of all types respectively.
+
+ARMO deliberately does **not** get this field: 0 of 2167 enchanted vanilla
+`ARMO` records carry `EAMT`, because apparel enchantments in Skyrim are
+permanent while worn rather than charge-consuming. The TES4 `ANAM` on an
+armor record has no TES5 counterpart and is correctly discarded.
+
+The u16 clamp is real, not defensive: the field is 2 bytes on disk, so an
+authored `ANAM` above 65535 must saturate rather than wrap to a near-zero
+pool.

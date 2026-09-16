@@ -325,10 +325,28 @@ def _weapon_model_and_sounds(rec: dict, writer, anim_type: int,
     return subs
 
 
+def _enchantment_subs(rec: dict) -> bytes:
+    """EITM and its EAMT charge pool, or nothing when the weapon is plain.
+
+    TES4 authors the pool as ANAM beside ENAM and TES5 as EAMT beside EITM --
+    the same u16 second member of one enchantment struct in both games, so the
+    value carries across unchanged. Without EAMT a converted staff has a zero
+    charge pool and every cast fails.
+
+    See: docs/commentary/tes5_import_magic.md#enchantment-charge-eamt
+    """
+    enam = get_formid(rec, 'ENAM')
+    if not enam:
+        return b''
+    charge = min(get_int(rec, 'ANAM'), 0xFFFF)
+    return (pack_formid_subrecord('EITM', enam)
+            + pack_subrecord('EAMT', struct.pack('<H', charge)))
+
+
 def convert_WEAP(rec: dict, writer=None) -> bytes:
     """Convert WEAP.
 
-    TES5 order: EDID OBND FULL MODL EITM ETYP BIDS BAMT INAM WNAM SNAM XNAM
+    TES5 order: EDID OBND FULL MODL EITM EAMT ETYP BIDS BAMT INAM WNAM SNAM XNAM
     NAM7 TNAM UNAM NAM9 NAM8 DATA DNAM CRDT VNAM
     """
     subs = _common_header_subs(rec, obnd_sig='WEAP')
@@ -336,10 +354,7 @@ def convert_WEAP(rec: dict, writer=None) -> bytes:
     if model:
         subs += pack_string_subrecord('MODL', prefix_path(model))
 
-    # EITM — Object Effect (enchantment)
-    enam = get_formid(rec, 'ENAM')
-    if enam:
-        subs += pack_formid_subrecord('EITM', enam)
+    subs += _enchantment_subs(rec)
 
     tes4_type = get_int(rec, 'DATA.Type')
     anim_type = _weapon_anim_type(rec, tes4_type, model)
@@ -413,7 +428,7 @@ def build_armo_bod2(rec: dict, is_clothing: bool) -> bytes:
 def convert_ARMO(rec: dict, is_clothing: bool = False, writer=None) -> bytes:
     """Convert ARMO or CLOT → ARMO.
 
-    TES5 order: EDID OBND FULL EITM EAMT MOD2 ICON MOD4 ICO2 BOD2
+    TES5 order: EDID OBND FULL EITM MOD2 ICON MOD4 ICO2 BOD2
     DEST YNAM ZNAM BMCT ETYP BIDS BAMT RNAM KSIZ KWDA DESC MODL[] DATA DNAM TNAM
 
     When writer is provided, generates a companion ARMA record and references it.

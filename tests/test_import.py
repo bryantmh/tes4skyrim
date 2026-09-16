@@ -285,6 +285,36 @@ class TestConverters:
         obnd = self._get_subrecord_data(result, 'OBND')
         assert struct.unpack_from('<6h', obnd, 0) == (-5, -5, 0, 5, 5, 30)
 
+    def test_weap_enchantment_charge(self):
+        """A staff's TES4 ANAM charge pool becomes TES5 EAMT (u16).
+
+        Also asserts the two edges: a value above 65535 saturates rather than
+        wrapping (the field is 2 bytes on disk, so folding would yield a tiny
+        pool), and an unenchanted weapon gets neither EITM nor EAMT.
+
+        See: docs/commentary/tes5_import_magic.md#enchantment-charge-eamt
+        """
+        rec = {'Signature': 'WEAP', 'FormID': '00000301', 'RecordFlags': '0',
+               'EditorID': 'StaffOfFire', 'DATA.Type': '4',
+               'DATA.Speed': '1.0', 'DATA.Reach': '1.0', 'DATA.Value': '500',
+               'DATA.Health': '100', 'DATA.Weight': '9.0', 'DATA.Damage': '10',
+               'Model.MODL': 'Weapons\\Staff\\Staff.nif',
+               'ENAM': '0009535C', 'ANAM': '3600'}
+        result = convert_WEAP(rec)
+        assert self._has_subrecord(result, 'EITM')
+        eamt = self._get_subrecord_data(result, 'EAMT')
+        assert len(eamt) == 2
+        assert struct.unpack('<H', eamt)[0] == 3600
+
+        rec['ANAM'] = '100000'
+        eamt = self._get_subrecord_data(convert_WEAP(rec), 'EAMT')
+        assert struct.unpack('<H', eamt)[0] == 0xFFFF
+
+        del rec['ENAM']
+        plain = convert_WEAP(rec)
+        assert not self._has_subrecord(plain, 'EAMT')
+        assert not self._has_subrecord(plain, 'EITM')
+
     def test_armo(self):
         rec = {'Signature': 'ARMO', 'FormID': '00000300', 'RecordFlags': '0',
                'EditorID': 'IronArmor', 'FULL': 'Iron Armor',
