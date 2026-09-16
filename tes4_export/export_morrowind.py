@@ -48,6 +48,7 @@ from .record_types.morrowind_actors import (MORROWIND_ACTOR_EXPORTERS,
                                             register_sound_gens)
 from .record_types.morrowind_packages import (package_records,
                                               prune_dropped_packages)
+from .record_types.morrowind_dialog import dialogue_records
 from .record_types.morrowind_scripts import MORROWIND_SCRIPT_EXPORTERS
 from .tes3_reader import get_subrecord, read_file, read_masters
 
@@ -554,6 +555,7 @@ def convert_plugin(records, ctx: MorrowindContext) -> dict:
 
     out = {sig: [] for sig in
            ('CELL', 'REFR', 'ACHR', 'ACRE', 'LAND', 'PGRD')}
+    out.update(dialogue_records(records))
     out['PGRD'] = pathgrid_records(_collect_records(records, ctx, out), ctx)
     teleport_records(ctx)
     out['PACK'], travel_markers = package_records(ctx)

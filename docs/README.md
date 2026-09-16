@@ -34,6 +34,7 @@ What a format or contract IS. Stable; no dates, no status.
 | [creature_race_equivalence.md](reference/creature_race_equivalence.md) | Skyrim ↔ Oblivion Creature Equivalence Map |
 | [dialogue_engine_contracts.md](reference/dialogue_engine_contracts.md) | Dialogue contracts read out of SkyrimSE.exe |
 | [item_swap_table.md](reference/item_swap_table.md) | Oblivion → Skyrim Item Swap Table (MISC + Ingredients/Food) |
+| [morrowind_dialogue_format.md](reference/morrowind_dialogue_format.md) | TES3 DIAL/INFO export vocabulary the Morrowind runtime reads |
 | [package_ai_contracts.md](reference/package_ai_contracts.md) | PACK / AI Package & CTDA Engine Contracts |
 | [pipeline.md](reference/pipeline.md) | Pipeline Reference — orchestration, caching, layout, export format |
 | [prior_art_php_scriptconverter.md](reference/prior_art_php_scriptconverter.md) | PHP ScriptConverter (Skyblivion) — Comprehensive Analysis |
