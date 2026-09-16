@@ -27,7 +27,6 @@ Vanilla census (Skyrim.esm, 258 MUST / 50 MUSC) drove the shape:
 import json
 import struct
 
-from ..base.tes5_reader import records
 from ..base.writer import pack_record, pack_string_subrecord, pack_subrecord
 
 # CNAM track types (xEdit wbDefinitionsTES5.pas:7203).  These are hashes, not
@@ -396,43 +395,3 @@ def build_music_records(manifest: dict, writer, plugin: str) -> dict:
             out['battle'] = mfid
 
     return out
-
-
-# ---------------------------------------------------------------------------
-# DOBJ -- the Default Object Manager
-DOBJ_BATTLE_MUSIC_TAG = b'BTMS'
-
-
-def _read_master_dobj(skyrim_esm: str):
-    """(FormID, [(tag, formid), ...]) for Skyrim.esm's DOBJ, or None."""
-    with open(skyrim_esm, 'rb') as fh:
-        data = fh.read()
-    for rec in records(data, b'DOBJ'):
-        val = rec.sub(b'DNAM')
-        if val is not None:
-            return rec.form_id, [
-                (val[j:j + 4], struct.unpack_from('<I', val, j + 4)[0])
-                for j in range(0, len(val) - 7, 8)]
-    return None
-
-
-def build_DOBJ_override(battle_musc_fid: int, skyrim_esm: str):
-    """Skyrim.esm's DOBJ with BTMS repointed at our Battle MUSC.
-
-    Returns (formid, record_bytes), or None when the master has no DOBJ or no
-    BTMS entry -- in which case we write nothing and leave vanilla combat
-    music in place rather than inventing a default-object table.
-    """
-    found = _read_master_dobj(skyrim_esm)
-    if not found:
-        return None
-    fid, entries = found
-    if not any(tag == DOBJ_BATTLE_MUSIC_TAG for tag, _ in entries):
-        return None
-    dnam = b''.join(
-        tag + struct.pack('<I', battle_musc_fid
-                          if tag == DOBJ_BATTLE_MUSIC_TAG else old)
-        for tag, old in entries)
-    subs = pack_string_subrecord('EDID', 'DefaultObjectManager')
-    subs += pack_subrecord('DNAM', dnam)
-    return fid, pack_record('DOBJ', fid, 0, subs)

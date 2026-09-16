@@ -9,6 +9,11 @@ Oblivion race EditorID/FormID → Skyrim race FormID,
 NPC preset templates, voice types, head parts, hair colors, etc.
 """
 
+import struct
+
+from .tes5_reader import records
+from .writer import pack_record, pack_string_subrecord, pack_subrecord
+
 # ---------------------------------------------------------------------------
 # Race mapping: Oblivion race EditorID → Skyrim race FormID
 # ---------------------------------------------------------------------------
@@ -703,7 +708,57 @@ TES4_MARKER_FORMID_TO_SKYRIM = {
 # Engine-hardcoded ITEM substitutions: raw TES4 FormID -> Skyrim.esm FormID.
 TES4_ITEM_FORMID_TO_SKYRIM = {
     0x0000000F: 0x0000000F,  # Gold001 → Skyrim.esm Gold001 (currency)
+    0x0000000A: 0x0000000A,  # Lockpick/BobbyPin → Skyrim.esm Lockpick (LKPK)
+    0x0000000B: 0x0003A070,  # DASkeletonKey → Skyrim.esm TG08SkeletonKey (SKLK)
 }
+
+# ---------------------------------------------------------------------------
+#: Default Object Manager slot naming the form the engine uses for combat music
+DOBJ_BATTLE_MUSIC_TAG = b'BTMS'
+
+#: DOBJ slots the lockpicking minigame resolves; see tes5_import_pipeline.md
+DOBJ_ITEM_TAGS = {
+    b'LKPK': 0x0000000A,
+    b'SKLK': 0x0003A070,
+}
+
+def _read_master_dobj(skyrim_esm: str):
+    """(FormID, [(tag, formid), ...]) for Skyrim.esm's DOBJ, or None."""
+    with open(skyrim_esm, 'rb') as fh:
+        data = fh.read()
+    for rec in records(data, b'DOBJ'):
+        val = rec.sub(b'DNAM')
+        if val is not None:
+            return rec.form_id, [
+                (val[j:j + 4], struct.unpack_from('<I', val, j + 4)[0])
+                for j in range(0, len(val) - 7, 8)]
+    return None
+
+
+def build_DOBJ_override(overrides: dict, skyrim_esm: str):
+    """Skyrim.esm's DOBJ with each tag in *overrides* repointed at our form.
+
+    *overrides* maps a 4-byte DNAM tag to the FormID it should name.  Every
+    other default object is copied unchanged.  Returns (formid, record_bytes),
+    or None when the master has no DOBJ or names none of the tags -- in which
+    case we write nothing rather than inventing a default-object table.
+
+    See: docs/commentary/tes5_import_pipeline.md#phase-0c-dobj-btms
+    """
+    found = _read_master_dobj(skyrim_esm)
+    if not found:
+        return None
+    fid, entries = found
+    live = {tag: new_fid for tag, new_fid in overrides.items()
+            if new_fid and any(tag == have for have, _ in entries)}
+    if not live:
+        return None
+    dnam = b''.join(
+        tag + struct.pack('<I', live.get(tag, old))
+        for tag, old in entries)
+    subs = pack_string_subrecord('EDID', 'DefaultObjectManager')
+    subs += pack_subrecord('DNAM', dnam)
+    return fid, pack_record('DOBJ', fid, 0, subs)
 
 # ---------------------------------------------------------------------------
 # Weapon equipment type (EQUP) FormIDs — Skyrim.esm

@@ -844,16 +844,20 @@ def _prescan_outfits_hair_skin(by_type: dict, ctx, export_dir: str):
 
 
 def _apply_dobj_battle_override(battle, writer) -> None:
-    """Override the master's DOBJ so its BTMS names our Battle music.
+    """Override the master's DOBJ for our Battle music and the lockpick slots.
 
-    The engine reaches combat music ONLY through that default object, so a
-    Battle MUSC nothing points at can never play.  Every other entry is copied
-    unchanged -- the same full-array override each official DLC ships.
+    The engine reaches combat music and the lockpicking minigame ONLY through
+    these default objects, so a Battle MUSC nothing points at never plays and a
+    converted lockpick nothing names is inert clutter.  LKPK/SKLK keep the
+    master's own forms, which the item substitutions already redirect
+    references to.  Every other entry is copied unchanged -- the same
+    full-array override each official DLC ships.
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0c-dobj-btms
     """
     try:
-        from .record_types.music import build_DOBJ_override
+        from .base.equivalents import (
+            build_DOBJ_override, DOBJ_BATTLE_MUSIC_TAG, DOBJ_ITEM_TAGS)
         from asset_convert.sources.skyrim_assets import find_skyrim_data
         _sk = find_skyrim_data()
         _esm = os.path.join(_sk, 'Skyrim.esm') if _sk else None
@@ -861,12 +865,16 @@ def _apply_dobj_battle_override(battle, writer) -> None:
             print('  WARNING: Skyrim.esm not found; combat music '
                   'stays vanilla.')
             return
-        _dobj = build_DOBJ_override(battle, _esm)
+        _tags = dict(DOBJ_ITEM_TAGS)
+        if battle:
+            _tags[DOBJ_BATTLE_MUSIC_TAG] = battle
+        _dobj = build_DOBJ_override(_tags, _esm)
         if _dobj:
             writer.add_record('DOBJ', _dobj[1])
             print('  Music: combat music bound to the converted Battle track')
+            print('  Items: lockpick/skeleton key bound to the vanilla forms')
         else:
-            print('  WARNING: master DOBJ has no BTMS entry; '
+            print('  WARNING: master DOBJ has no overridable entry; '
                   'combat music stays vanilla.')
     except Exception as _de:
         print(f'  WARNING: DOBJ override failed: {_de}')

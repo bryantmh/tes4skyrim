@@ -395,7 +395,7 @@ class TestBattleMusicReachability(unittest.TestCase):
     def test_dobj_override_repoints_only_btms(self):
         """Every other default object must survive untouched."""
         import struct as _s
-        from tes5_import.record_types.music import (
+        from tes5_import.base.equivalents import (
             _read_master_dobj, build_DOBJ_override)
         from asset_convert.sources.skyrim_assets import find_skyrim_data
 
@@ -405,7 +405,7 @@ class TestBattleMusicReachability(unittest.TestCase):
             self.skipTest('Skyrim.esm not available')
 
         fid, entries = _read_master_dobj(esm)
-        built = build_DOBJ_override(0x0ABCDEF0, esm)
+        built = build_DOBJ_override({b'BTMS': 0x0ABCDEF0}, esm)
         self.assertIsNotNone(built)
         self.assertEqual(built[0], fid, 'must override the master FormID')
 
@@ -427,3 +427,42 @@ class TestBattleMusicReachability(unittest.TestCase):
                 self.assertEqual(fid_a, 0x0ABCDEF0)
             else:
                 self.assertEqual(fid_a, fid_b, tag_a)
+
+    def test_dobj_override_binds_lockpick_slots(self):
+        """LKPK/SKLK must name Skyrim's own forms, not our remapped MISC."""
+        import struct as _s
+        from tes5_import.base.equivalents import (
+            _read_master_dobj, build_DOBJ_override, DOBJ_ITEM_TAGS)
+        from asset_convert.sources.skyrim_assets import find_skyrim_data
+
+        data = find_skyrim_data()
+        esm = os.path.join(data, 'Skyrim.esm') if data else None
+        if not esm or not os.path.isfile(esm):
+            self.skipTest('Skyrim.esm not available')
+
+        fid, entries = _read_master_dobj(esm)
+        built = build_DOBJ_override(dict(DOBJ_ITEM_TAGS), esm)
+        self.assertIsNotNone(built)
+
+        body = built[1][24:]
+        i, dnam = 0, None
+        while i + 6 <= len(body):
+            sig = body[i:i + 4]
+            size = _s.unpack('<H', body[i + 6 - 2:i + 6])[0]
+            if sig == b'DNAM':
+                dnam = body[i + 6:i + 6 + size]
+            i += 6 + size
+        got = dict((dnam[j:j + 4], _s.unpack('<I', dnam[j + 4:j + 8])[0])
+                   for j in range(0, len(dnam), 8))
+        self.assertEqual(got[b'LKPK'], 0x0000000A)
+        self.assertEqual(got[b'SKLK'], 0x0003A070)
+        self.assertEqual(len(got), len(dict(entries)))
+
+    def test_lockpick_references_substitute_to_vanilla(self):
+        """A reference to the TES4 lockpick must land on Skyrim's form."""
+        from tes5_import.base.text_reader import get_formid
+
+        self.assertEqual(get_formid({'CNTO': '0000000A'}, 'CNTO'), 0x0000000A)
+        self.assertEqual(get_formid({'CNTO': '0000000B'}, 'CNTO'), 0x0003A070)
+        self.assertEqual(get_formid({'FormID': '0000000B'}, 'FormID') & 0xFFFFFF,
+                         0x00000B, 'own id must skip the substitution')
