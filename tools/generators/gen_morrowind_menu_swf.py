@@ -31,6 +31,7 @@ TAG_END = 0
 TAG_SHOW_FRAME = 1
 TAG_SET_BACKGROUND_COLOR = 9
 TAG_DEFINE_EDIT_TEXT = 37
+TAG_IMPORT_ASSETS2 = 71
 TAG_FILE_ATTRIBUTES = 69
 
 #: Character ids. Low and contiguous, as vanilla movies number theirs.
@@ -38,11 +39,24 @@ CHAR_BORDER = 1
 CHAR_PANEL = 2
 CHAR_TEXT = 3
 
-#: DefineEditText flags 1: HasText, HasTextColor, ReadOnly, NoSelect.
-_EDIT_FLAGS1 = 0x80 | 0x20 | 0x08 | 0x02
+#: DefineEditText byte 1 bits, MSB-first, as SWF packs them.
+_HAS_TEXT, _WORD_WRAP, _MULTILINE = 0x80, 0x40, 0x20
 
-#: Flags 2: UseOutlines, Multiline, WordWrap. HasFont off -- no embedded font.
-_EDIT_FLAGS2 = 0x80 | 0x40 | 0x10 | 0x01
+#: Byte 1, continued: ReadOnly, HasTextColor, HasFont.
+_READ_ONLY, _HAS_TEXT_COLOR, _HAS_FONT = 0x08, 0x04, 0x01
+
+#: DefineEditText byte 2 bits: HasLayout and NoSelect.
+_HAS_LAYOUT, _NO_SELECT = 0x20, 0x10
+
+#: The shared font library every vanilla menu imports its faces from.
+FONT_LIB = 'gfxfontlib.swf'
+
+#: The face Skyrim's own message text uses; a field with no font draws nothing.
+FONT_NAME = '$EverywhereMediumFont'
+
+#: Character id for the imported font, and the text height in twips.
+CHAR_FONT = 10
+TEXT_HEIGHT_TWIPS = 17 * TWIP
 
 #: Morrowind's parchment palette, sampled from its own UI art.
 PANEL_RGBA = (38, 30, 22, 235)
@@ -50,21 +64,48 @@ BORDER_RGBA = (120, 100, 66, 255)
 TEXT_RGB = (220, 208, 180)
 
 
+#: DefineEditText layout block: center align, zero margins/indent/leading.
+_LAYOUT = bytes([1]) + struct.pack('<HHHh', 0, 0, 0, 0)
+
+
 def define_edit_text(character_id: int, x: int, y: int, w: int, h: int,
-                     var_name: str, initial: str) -> Tag:
+                     var_name: str, initial: str,
+                     font_id: int = CHAR_FONT) -> Tag:
     """A dynamic text field bound to `var_name`, which AS2 and C++ can set.
 
     Bound by VARIABLE NAME rather than instance path, so the field is reachable
     through GFxMovieView::SetVariable without walking the display list.
+
+    Every flag gates the field that follows it, so a flag without its field
+    slides all the later ones and the tag parses into nonsense.
+    See: docs/commentary/morrowind_runtime.md#the-swf-gate
     """
+    flags1 = (_HAS_TEXT | _WORD_WRAP | _MULTILINE | _READ_ONLY |
+              _HAS_TEXT_COLOR | _HAS_FONT)
     body = bytearray()
     body += struct.pack('<H', character_id)
     body += pack_rect(x * TWIP, (x + w) * TWIP, y * TWIP, (y + h) * TWIP)
-    body += bytes([_EDIT_FLAGS1, _EDIT_FLAGS2])
+    body += bytes([flags1, _HAS_LAYOUT | _NO_SELECT])
+    body += struct.pack('<HH', font_id, TEXT_HEIGHT_TWIPS)
     body += bytes([TEXT_RGB[0], TEXT_RGB[1], TEXT_RGB[2], 0xFF])
+    body += _LAYOUT
     body += var_name.encode('ascii') + b'\x00'
     body += initial.encode('ascii') + b'\x00'
     return Tag(TAG_DEFINE_EDIT_TEXT, bytes(body))
+
+
+def import_font() -> Tag:
+    """ImportAssets2 pulling the shared face in under `CHAR_FONT`.
+
+    Skyrim's menus take their faces from `gfxfontlib.swf` rather than embedding
+    glyphs, so this movie imports the same one instead of shipping its own.
+    """
+    body = bytearray()
+    body += FONT_LIB.encode('ascii') + b'\x00'
+    body += bytes([1, 0])
+    body += struct.pack('<HH', 1, CHAR_FONT)
+    body += FONT_NAME.encode('ascii') + b'\x00'
+    return Tag(TAG_IMPORT_ASSETS2, bytes(body))
 
 
 def hello_world() -> Swf:
@@ -95,6 +136,7 @@ def hello_world() -> Swf:
     tags = [
         Tag(TAG_FILE_ATTRIBUTES, struct.pack('<I', 0)),
         Tag(TAG_SET_BACKGROUND_COLOR, bytes([0, 0, 0])),
+        import_font(),
         frame,
         place_object2(depth=1, character_id=CHAR_BORDER, name='Border_mc'),
         inner,
@@ -114,7 +156,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description='Author the Morrowind menu SWF.')
     ap.add_argument('--hello', action='store_true',
                     help='write the minimal draw probe instead of the menu')
-    ap.add_argument('--out', default='morrowind_runtime/interface')
+    ap.add_argument('--out',
+                    default='tes_runtime/morrowind_runtime/interface')
     ap.add_argument('--uncompressed', action='store_true',
                     help='FWS rather than CWS, so the bytes can be read')
     args = ap.parse_args()

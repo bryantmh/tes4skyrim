@@ -1,7 +1,7 @@
 // Headless store test: parses real exported DIAL/INFO text with no game.
 //
 // Built by `build.bat test` into store_test.exe. Takes an export directory
-// (the one holding DIAL.txt and INFO.txt) and reports what parsed, so the
+// (the one holding MWDI.txt and MWIN.txt) and reports what parsed, so the
 // reader is checked against 23,693 real records rather than a fixture.
 
 #include <cstdio>
@@ -48,12 +48,12 @@ void TestUnescape() {
 void TestParse() {
     std::printf("parse\n");
     const std::string text =
-        "---RECORD_BEGIN---\nSignature=DIAL\nEditorID=t1\n---RECORD_END---\n"
+        "---RECORD_BEGIN---\nSignature=MWDI\nEditorID=t1\n---RECORD_END---\n"
         "\n"
-        "---RECORD_BEGIN---\nSignature=INFO\nEditorID=i1\n---RECORD_END---\n";
+        "---RECORD_BEGIN---\nSignature=MWIN\nEditorID=i1\n---RECORD_END---\n";
     const auto recs = ParseExport(text);
     Check(recs.size() == 2, "two records");
-    Check(recs[0].at("Signature") == "DIAL", "first is DIAL");
+    Check(recs[0].at("Signature") == "MWDI", "first is MWDI");
     Check(recs[1].at("EditorID") == "i1", "second id");
 }
 
@@ -77,7 +77,7 @@ Corpus Walk(const std::string& dir) {
     std::unordered_map<std::string, std::vector<int>> ordinals;
     std::unordered_map<std::string, bool> topics;
 
-    for (const auto& rec : ParseExport(ReadFile(dir + "/DIAL.txt"))) {
+    for (const auto& rec : ParseExport(ReadFile(dir + "/MWDI.txt"))) {
         const auto it = rec.find("EditorID");
         if (it == rec.end()) continue;
         std::string id = Unescape(it->second);
@@ -86,7 +86,7 @@ Corpus Walk(const std::string& dir) {
         ++out.topics;
     }
 
-    for (const auto& rec : ParseExport(ReadFile(dir + "/INFO.txt"))) {
+    for (const auto& rec : ParseExport(ReadFile(dir + "/MWIN.txt"))) {
         ++out.infos;
         const auto idIt = rec.find("EditorID");
         if (idIt == rec.end() || idIt->second.empty()) ++out.emptyId;

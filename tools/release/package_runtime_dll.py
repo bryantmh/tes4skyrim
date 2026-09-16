@@ -1,10 +1,11 @@
 """Package the converter's SKSE DLLs as one distributable mod.
 
-The DLL is not a plugin asset: one copy serves every converted mod, so it
-ships alone rather than beside any plugin's meshes. Each converted mod
+A DLL is not a plugin asset: one copy serves every converted mod, so they
+ship together rather than beside any plugin's meshes. Each converted mod
 contributes only its own data — the animation cache fragment under
-SKSE/Plugins/TESRuntime/animation and, for FO3/FNV, the bodyparts/guns
-sidecars under SKSE/Plugins/TESRuntime — which this DLL reads at load.
+SKSE/Plugins/TESRuntime/animation, the FO3/FNV bodyparts/guns sidecars under
+SKSE/Plugins/TESRuntime, and a Morrowind plugin's dialogue under
+SKSE/Plugins/MorrowindRuntime — which these DLLs read at load.
 
 The archive mirrors what `convert.py --pack-zip-only` produces — output/
 Finished Mods/<name>.zip, contents rooted as a Data folder — so a user
@@ -33,19 +34,27 @@ PLUGINS = Path("SKSE") / "Plugins"
 
 #: Built by tes_runtime/build.bat; without this the archive has no reason to exist.
 REQUIRED = ((SRC_DIR / "TESRuntime.dll", PLUGINS / "TESRuntime.dll"),)
+#: The MorrowindRuntime submodule, beside havok_world_size under tes_runtime.
+MW_DIR = SRC_DIR / "morrowind_runtime"
+
 OPTIONAL = (
     (SRC_DIR / "HavokWorldSize.dll", PLUGINS / "HavokWorldSize.dll"),
     (SRC_DIR / "havok_world_size" / "HavokWorldSize.ini",
      PLUGINS / "HavokWorldSize.ini"),
+    (MW_DIR / "MorrowindRuntime.dll", PLUGINS / "MorrowindRuntime.dll"),
+    (MW_DIR / "interface" / "morrowind_dialogue.swf",
+     Path("Interface") / "morrowind_dialogue.swf"),
 )
 
 
 def package(out_root: Path) -> int:
     """Zip the built DLLs into <out_root>/Finished Mods/TESRuntime.zip.
 
-    HavokWorldSize ships in the same archive but stays a SEPARATE DLL: it
-    shares no code and needs no Address Library, so a fault in it must not take
-    TESRuntime down. Missing optional files are skipped, not fatal.
+    HavokWorldSize and MorrowindRuntime ship in the same archive but stay
+    SEPARATE DLLs: neither shares code with TESRuntime, so a fault in one must
+    not take the others down, and MorrowindRuntime links GPL-3.0 OpenMW that
+    must stay out of TESRuntime's binary. Missing optional files are skipped.
+    See: docs/commentary/morrowind_runtime.md#licensing
     """
     missing = [src for src, _ in REQUIRED if not src.is_file()]
     if missing:

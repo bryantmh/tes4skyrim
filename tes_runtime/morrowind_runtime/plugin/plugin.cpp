@@ -10,7 +10,9 @@
 #include <cstdio>
 #include <type_traits>
 
+#include "addresses.h"
 #include "log.h"
+#include "menu.h"
 #include "skse_abi.h"
 #include "store.h"
 
@@ -36,6 +38,9 @@ void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
         Log("store: no sidecar found -- no Morrowind dialogue will be offered, "
             "and every activation falls through to vanilla");
     }
+    // The MenuManager singleton only exists once the game is up, so the menu
+    // registers here rather than at plugin load.
+    Log("menu: install %s", InstallMenu() ? "ok" : "FAILED");
 }
 
 void QueryInterfaces(const SKSEInterface* skse) {
@@ -95,6 +100,14 @@ __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
     mwruntime::Log("MorrowindRuntime %u loading (runtime %08X, SKSE %08X)",
                    mwruntime::kPluginVersion, skse->runtimeVersion,
                    skse->skseVersion);
+    if (!mwruntime::g_versionDb.Load(skse->runtimeVersion)) {
+        mwruntime::Log("addresses: no Address Library database for this "
+                       "runtime; falling back to signature scans only");
+    } else {
+        mwruntime::Log("addresses: loaded %s (%zu entries)",
+                       mwruntime::g_versionDb.path().c_str(),
+                       mwruntime::g_versionDb.count());
+    }
     mwruntime::QueryInterfaces(skse);
     return true;
 }

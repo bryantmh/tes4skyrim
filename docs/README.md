@@ -77,7 +77,7 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [ck_warnings.md](commentary/ck_warnings.md) | tes5_import/ - what the CK complains about |
 | [core_run_log.md](commentary/core_run_log.md) | core/run_log.py - per-run logs and their profiling timestamps |
 | [ingame_testing.md](commentary/ingame_testing.md) | tools/dialog/ - in-game test methodology |
-| [morrowind_runtime.md](commentary/morrowind_runtime.md) | morrowind_runtime/, external/openmw/ - Morrowind dialogue and MWScript in-engine |
+| [morrowind_runtime.md](commentary/morrowind_runtime.md) | tes_runtime/morrowind_runtime/, external/openmw/ - Morrowind dialogue and MWScript in-engine |
 | [performance.md](commentary/performance.md) | the whole pipeline - performance and parallelism |
 | [script_convert.md](commentary/script_convert.md) | script_convert/ - TES4 script to Papyrus |
 | [script_convert_morrowind.md](commentary/script_convert_morrowind.md) | script_convert/ - what TES3 scripts do differently |

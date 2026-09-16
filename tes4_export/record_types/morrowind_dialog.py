@@ -33,6 +33,10 @@ _STRING_FIELDS = (('ONAM', 'Actor'), ('RNAM', 'Race'), ('CNAM', 'Class'),
 #: Quest-status subrecord -> its meaning. Tribunal added these; vanilla has none.
 _QUEST_FLAGS = (('QSTN', 'Name'), ('QSTF', 'Finished'), ('QSTR', 'Restart'))
 
+#: Export signatures. NOT DIAL/INFO: see dialogue_records.
+DIAL_SIG = 'MWDI'
+INFO_SIG = 'MWIN'
+
 #: Shortest legal SCVR rule: index, function, var type, 'X', comparison.
 _RULE_MIN = 5
 
@@ -163,24 +167,26 @@ def export_INFO(rec: Tes3Record, ordinal: int, topic: str) -> list:
 
 
 def dialogue_records(records: list) -> dict:
-    """{'DIAL': [...], 'INFO': [...]} over the whole plugin, in file order.
+    """{'MWDI': [...], 'MWIN': [...]} over the whole plugin, in file order.
 
     DIAL and INFO are a sequential stream rather than independent records --
     every INFO belongs to the last DIAL seen -- so this walks the file itself
     instead of being dispatched per record.
+    See: docs/reference/morrowind_dialogue_format.md#signatures
     """
-    out = {'DIAL': [], 'INFO': []}
+    out = {DIAL_SIG: [], INFO_SIG: []}
     topic = ''
     ordinal = 0
     for rec in records:
         if rec.type == 'DIAL':
             if not rec.deleted:
-                out['DIAL'].append((rec.record_id, export_DIAL(rec)))
+                out[DIAL_SIG].append((rec.record_id, export_DIAL(rec)))
             topic = rec.record_id
             ordinal = 0
             continue
         if rec.type != 'INFO' or rec.deleted or not topic:
             continue
-        out['INFO'].append((info_id(rec), export_INFO(rec, ordinal, topic)))
+        out[INFO_SIG].append(
+            (info_id(rec), export_INFO(rec, ordinal, topic)))
         ordinal += 1
     return out

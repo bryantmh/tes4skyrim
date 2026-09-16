@@ -1,6 +1,9 @@
 # Morrowind runtime
 
-**Code:** `morrowind_runtime/`, `external/openmw/`, `tools/generators/vendor_openmw.py`
+**Code:** `tes_runtime/morrowind_runtime/`, `external/openmw/`, `tools/generators/vendor_openmw.py`
+
+A **submodule of TESRuntime**, beside `havok_world_size`: its own source folder
+and its own DLL, shipping in the same `TESRuntime.zip`.
 
 Morrowind's dialogue, topics and journal run natively in Skyrim by porting
 OpenMW's own dialogue engine and MWScript VM into an SKSE plugin, rather than
@@ -22,7 +25,7 @@ Measured against real `Morrowind.esm`, the records this would have to reshape:
 `tes4_export/export_morrowind.py` handles 20 signatures and `DIAL`/`INFO` are
 not among them, so `export_record()` silently returns `[]` for all of them.
 
-## <a id="the-seam"></a>The seam that makes this portable
+## <a id="why-portable"></a>The seam that makes this portable
 
 `Interpreter::Context` (`components/interpreter/context.hpp`) is a pure abstract
 interface whose only dependency is `ESM::RefId`. The VM, the compiler and
@@ -84,7 +87,7 @@ open source file".
 
 ### <a id="phase-0-gate"></a>Phase 0 gate: it compiles standalone
 
-Verified — `morrowind_runtime\build.bat openmw` compiles **34 translation
+Verified — `tes_runtime\morrowind_runtime\build.bat openmw` compiles **34 translation
 units** (the whole MWScript compiler and interpreter, plus the `RefId` and
 logging support they pull in) to 7.9 MB of objects with:
 
@@ -104,9 +107,9 @@ text parsing against no game memory, so `build.bat test` builds
 `store_test.exe`, which runs the same loader headless:
 
 ```bash
-morrowind_runtime\build.bat test
-morrowind_runtime\store_test.exe "export\Tamriel Rebuilt 25.08.12"   # one export dir
-morrowind_runtime\store_test.exe --sidecar <staged root>             # the deployed layout
+tes_runtime\morrowind_runtime\build.bat test
+tes_runtime\morrowind_runtime\store_test.exe "export\Tamriel Rebuilt 25.08.12"   # one export dir
+tes_runtime\morrowind_runtime\store_test.exe --sidecar <staged root>             # the deployed layout
 ```
 
 Measured, with every count agreeing with an independent Python read of the
@@ -192,8 +195,8 @@ whole-word, longest first, restricted to topics the actor can actually answer.
 `session_test.exe` runs all of it headless against a real export:
 
 ```bash
-morrowind_runtime\session_test.exe <sidecar root> TR_m4_Shei
-morrowind_runtime\session_test.exe <sidecar root> TR_m7_Felms --faction Temple --rank 3
+tes_runtime\morrowind_runtime\session_test.exe <sidecar root> TR_m4_Shei
+tes_runtime\morrowind_runtime\session_test.exe <sidecar root> TR_m7_Felms --faction Temple --rank 3
 ```
 
 Measured on TR_Mainland: `TR_m4_Shei` offers 15 topics, all Thieves Guild
@@ -233,6 +236,180 @@ python tools/generators/gen_morrowind_menu_swf.py --hello
 **If that does not draw, the UI approach is wrong and the plan stops there**
 rather than after the menu has been built on it.
 
+### <a id="the-menu-must-render-itself"></a>🛑 A menu DRAWS ITSELF: vtable slot 6
+
+First in-game result: the menu registered, `LoadMovie` returned a non-null
+`GFxMovieView*`, `showmenu MorrowindDialogueMenu` took mouse focus away from the
+game world — **and nothing appeared on screen.**
+
+The engine renders no menu on its owner's behalf. `IMenu::Render` is **vtable
+slot 6**, and our vtable filled slots 6–15 with a no-op, so the movie was
+loaded, on the stack, holding focus, and never drawn. `MessageBoxMenu::Render`
+(`0x539ac0` on 1.6.659, stable id **33632**) is the whole of it:
+
+```asm
+mov  rcx, [rcx + 0x10]      ; this->view
+test rcx, rcx
+je   done
+mov  rax, [rcx]
+jmp  qword ptr [rax + 0x130]   ; GFxMovieView::Render
+```
+
+So `GFxMovieView::Render` is at vtable byte offset **`0x130`**, and a menu that
+does not make this call is invisible by construction. SKSE's `CustomMenu`
+overrides `Render()` for exactly this reason; the vtable-by-hand approach has to
+supply it explicitly.
+
+### <a id="imenu-layout"></a>🛑 `IMenu` field offsets, from a constructor
+
+The first attempt put `flags` at `0x20`, which is a different field, so the flag
+word was written where the engine keeps something else and `flags` stayed zero.
+`MessageBoxMenu`'s constructor (`0x8ec1cc` on 1.6.659) is the authority — it is
+the simplest single-vtable modal panel the engine ships, and the one SKSE's
+`CustomMenu` was itself modeled on:
+
+```asm
+lea   r8,   [rbx + 0x10]        ; &view            -> view    at 0x10
+mov   dword [rsp + 0x20], 3     ; scaleMode = 3, NOT 2
+call  0xf22f80                  ; GFxLoader::LoadMovie  (id 82325)
+mov   byte  [rbx + 0x18], 0xa   ; context          -> 0x18
+mov   dword [rbx + 0x1c], 0x11  ; flags            -> 0x1C, not 0x20
+mov   dword [rbx + 0x20], 1     ; depth            -> 0x20
+call  0xc4d690                  ; IsGamepadEnabled (id 68622)
+test  al, al
+jne   skip
+or    dword [rbx + 0x1c], 0x404 ; |= UsesCursor | UpdateUsesCursor
+```
+
+| Offset | Field | Value a plain modal panel uses |
+|---|---|---|
+| `0x10` | `view` | filled by `LoadMovie` |
+| `0x18` | context | `0xA` |
+| `0x1C` | **`flags`** | `0x11` = `kPausesGame \| kModal`, `\| 0x404` for the cursor |
+| `0x20` | depth | `1` |
+
+Flags are set **after** `LoadMovie`, not before. `scaleMode` is **3**
+(`kNoBorder`) — every vanilla menu pushes 3, and the `2` first used here was a
+guess. Id 68622 (`IsGamepadEnabled`) does not exist in 1.6.1170, so the cursor
+bits are set unconditionally rather than branching on it.
+
+### <a id="edit-text-flags"></a>🛑 `DefineEditText` flags gate the fields after them
+
+The probe's text field could never have rendered a glyph, for two compounding
+reasons — and neither raises an error.
+
+**The flag bits were LSB-first; SWF packs them MSB-first.** Decoding what the
+first probe actually wrote:
+
+| Intended | Actually set |
+|---|---|
+| `HasText HasTextColor ReadOnly NoSelect` | `HasText Multiline ReadOnly` **`HasMaxLength`** |
+| `UseOutlines Multiline WordWrap` | **`HasFontClass`** `AutoSize NoSelect UseOutlines` |
+
+`HasTextColor` was never set, yet four color bytes were written anyway;
+`HasMaxLength` and `HasFontClass` were set with no field behind either. Each
+flag gates the field that follows it, so every later field slid and the variable
+name was read out of the middle of the color — a tag that parses without error
+into nonsense.
+
+**There was no font.** Skyrim's menus import `$EverywhereMediumFont` from the
+shared `gfxfontlib.swf` rather than embedding glyphs
+(`asset_convert/ui/ui_menus.py`). A `DefineEditText` with neither `HasFont` nor
+`HasFontClass` has no glyph source at all. The movie now emits `ImportAssets2`
+for that face and the field names its character id.
+
+The field order, which is positional and unforgiving:
+
+```
+CharacterID  Bounds  Flags1 Flags2
+  [HasFont]      -> FontID u16, FontHeight u16
+  [HasTextColor] -> RGBA
+  [HasLayout]    -> align u8 + 4 x u16   (NINE bytes, not ten)
+VariableName\0  InitialText\0
+```
+
+`tests/test_morrowind_menu_swf.py` asserts each flag against the field actually
+written, and that nothing trails the text — a slid field always leaves bytes
+behind.
+
+### <a id="menu-registration"></a>Registering the menu, derived from the live game
+
+Found by attaching to the running process (`skyrim_disasm.py --live
+--save-image`), because the Steam build's on-disk `.text` is DRM-encrypted.
+Menu names are plain strings in `.rdata`, so the registration site is whatever
+call the most distinct menu-name LEAs reach:
+
+```
+call targets reached from menu-name LEAs, outside the ctor:
+  0x00cec5d0   10 distinct menus   <- BSFixedString ctor, interning names
+  0x00fa5480    (the jmp target)   <- MenuManager::Register
+```
+
+A registration site, in full (`BarterMenu`):
+
+```asm
+lea  rcx, [rip + ...]        ; the MenuManager singleton
+call 0x00fa32f0              ; GetSingleton()
+mov  qword ptr [...], rax
+lea  r8,  [rip + 0x83c866]   ; 0x8ef2b0  the CREATOR function
+mov  rcx, rax                ; MenuManager*
+lea  rdx, [rip + 0x1f647ec]  ; "BarterMenu"
+add  rsp, 0x28
+jmp  0x00fa5480              ; Register(this, name, creator)
+```
+
+So the contract is `Register(MenuManager*, const char* name, IMenu* (*)())`,
+which is what SKSE's `CustomMenu` assumes. Independently derived here and
+identical to the RVA SKSE hardcodes (`0x00FA5480`).
+
+| What | Address Library id | RVA on 1.6.1170 |
+|---|---:|---|
+| `MenuManager::GetSingleton` | **82072** | `0x00fa32f0` |
+| `MenuManager::Register` | **82086** | `0x00fa5480` |
+| a vanilla menu creator (shape reference) | 51015 | `0x008ef2b0` |
+
+Both ids exist in all 12 shipped versionlibs and keep a constant `0x2190` gap,
+so nothing here is a raw RVA and a game update does not take the menu offline.
+
+🛑 **The engine's own name for the dialogue menu is `"Dialogue Menu"`, with a
+space** — not `DialogueMenu`, which is the SWF's filename and what SKSE's
+header suggests. Both strings exist in the image; only the spaced one is what
+`Register` is called with.
+
+### <a id="singleton-is-not-a-getter"></a>🛑 `0xfa32f0` is a CONSTRUCTOR, not a getter
+
+The first build crashed on load: `EXCEPTION_ACCESS_VIOLATION` at
+`SkyrimSE.exe+0xFA40CC`, `mov r10, [r9]`. The plugin log ended right after
+resolving its four addresses, so the fault was inside `InstallMenu`.
+
+Reading the registration site more carefully shows the shape I had missed:
+
+```asm
+mov  rax, [0x20f6a00]   ; the singleton POINTER
+test rax, rax
+jne  .have_it           ; already built -> use it
+lea  rcx, [0x315ceb0]   ; else placement memory
+call 0x00fa32f0         ; the CONSTRUCTOR
+mov  [0x20f6a00], rax   ; cache it
+.have_it:
+mov  rcx, rax
+jmp  0x00fa5480         ; Register
+```
+
+`0x00fa32f0` takes `rcx` (`mov rsi, rcx` at +0x1e, then stores it). Calling it
+as `GetSingleton()` passed garbage as placement memory and corrupted the
+manager. **Read `0x20f6a00` (id 400327) instead; never call the constructor.**
+By `kMessage_DataLoaded` it is always already built.
+
+### <a id="scaleform-heap"></a>A menu must come from the Scaleform heap
+
+Vanilla creators allocate through the allocator singleton at `0x3292490`
+(id 412058), vtable slot `0x50`, as `Alloc(this, 0xa8, 0)`.
+
+🛑 **The engine frees a menu through that same allocator**, so a menu from
+`HeapAlloc` is a crash when the menu closes rather than when it opens — the
+worst kind, because the open looks like it worked.
+
 ## <a id="sidecar"></a>The sidecar: how dialogue reaches the runtime
 
 The runtime is an SKSE plugin in the player's Skyrim install. **It never sees
@@ -261,11 +438,13 @@ OpenMW is **GPL-3.0**, vendored from 0.52.0 (`b4b1c5ae`). This follows the
 pattern `external/pynifly_hkx/` already established: the project's own code is
 MIT, everything under `external/` carries its own license.
 
-The runtime is its own DLL — `MorrowindRuntime.dll` — and that boundary is what
-keeps the license contained. `TESRuntime.dll` and `TESGameBridge.dll` never link
-OpenMW code, so they are unaffected. Linking it into `TESRuntime.dll` instead
-would make that whole binary GPL-3.0, `fire.cpp`/`guns.cpp`/`sever.cpp`/`hud.cpp`
-included.
+It is a **submodule of TESRuntime, not part of its binary** — the same
+arrangement as `havok_world_size`: its own source folder, its own DLL, built by
+the parent's `build.bat` and shipped in the same `TESRuntime.zip`. That boundary
+is what keeps the license contained. `TESRuntime.dll` and `TESGameBridge.dll`
+never link OpenMW code, so they are unaffected; linking it into `TESRuntime.dll`
+instead would make that whole binary GPL-3.0, `fire.cpp`/`guns.cpp`/`sever.cpp`/
+`hud.cpp` included.
 
 A few hundred lines (`skse_abi.h`, `log.*`, `json.*`) are **copied** rather than
 shared with `tes_runtime/` for the same reason: a shared library linked into both

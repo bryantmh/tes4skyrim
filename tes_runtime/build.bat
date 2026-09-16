@@ -60,6 +60,13 @@ if errorlevel 1 (
 )
 popd
 echo [build] OK -^> %~dp0HavokWorldSize.dll
+
+REM MorrowindRuntime is the other submodule, built by its own script because it
+REM needs C++20 and the vendored OpenMW include paths. Its failure is NOT fatal
+REM here: TESRuntime ships with or without it.
+call "%~dp0morrowind_runtime\build.bat"
+if errorlevel 1 echo [build] WARNING: MorrowindRuntime did not build
+
 goto composetest
 
 :cacheonly

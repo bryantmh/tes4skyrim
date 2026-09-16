@@ -13,6 +13,11 @@ namespace mwruntime {
 
 namespace {
 
+constexpr const char* kSigTopic = "MWDI";
+constexpr const char* kSigInfo = "MWIN";
+constexpr const char* kFileTopics = "MWDI.txt";
+constexpr const char* kFileInfos = "MWIN.txt";
+
 constexpr const char* kBegin = "---RECORD_BEGIN---";
 constexpr const char* kEnd = "---RECORD_END---";
 
@@ -138,14 +143,14 @@ std::size_t LoadOne(const std::string& dir, const char* name,
     const auto records = ParseExport(text);
     for (const Record& rec : records) {
         const std::string sig = Get(rec, "Signature");
-        if (sig == "DIAL") {
+        if (sig == kSigTopic) {
             Topic topic;
             topic.id = Unescape(Get(rec, "EditorID"));
             topic.type = ParseDialType(Get(rec, "DialType"));
             if (topic.id.empty()) continue;
             g_topics[Lower(topic.id)] = std::move(topic);
             ++stats.topics;
-        } else if (sig == "INFO") {
+        } else if (sig == kSigInfo) {
             Info info = MakeInfo(rec);
             const auto it = g_topics.find(Lower(info.topic));
             if (it == g_topics.end()) continue;
@@ -230,10 +235,10 @@ StoreStats LoadStoreFrom(const std::string& rootIn) {
     // DIAL first for every plugin: an INFO is dropped unless its topic exists.
     for (const std::string& plugin : plugins) {
         const std::string dir = root + plugin + "\\";
-        if (LoadOne(dir, "DIAL.txt", stats)) ++stats.files;
+        if (LoadOne(dir, kFileTopics, stats)) ++stats.files;
     }
     for (const std::string& plugin : plugins) {
-        LoadOne(root + plugin + "\\", "INFO.txt", stats);
+        LoadOne(root + plugin + "\\", kFileInfos, stats);
     }
     SortInfos();
     return stats;

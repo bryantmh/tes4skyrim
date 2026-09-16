@@ -9,6 +9,22 @@ Dialogue does not: nothing converts these into TES5 `DIAL`/`INFO` records. They
 are consumed by OpenMW's own filter running inside the runtime DLL, so the dump
 keeps TES3's field names, its string IDs and its condition encoding.
 
+## <a id="signatures"></a>The signatures are `MWDI` / `MWIN`, not `DIAL` / `INFO`
+
+🛑 These records are written under **`MWDI`** (topic) and **`MWIN`** (response),
+deliberately not the TES3 signatures they come from.
+
+`DIAL` and `INFO` already name TES4 records that `tes5_import` converts into
+TES5 dialogue, and every record entering that pipeline must carry a **hex
+FormID**. These carry a TES3 **string id** instead, because the runtime resolves
+them by name and never needs a FormID at all. Exporting them as `DIAL`/`INFO`
+puts them in `all_records`, where `_reserve_formid_space` reaches
+`int(rec['FormID'], 16)` and the import dies on the first topic
+(`invalid literal for int() with base 16: 'HH_WinCamonna'`).
+
+So the signature is what keeps runtime data out of the record pipeline. The
+files are `MWDI.txt` and `MWIN.txt`.
+
 ## <a id="dial"></a>DIAL — a topic
 
 | Key | Value |

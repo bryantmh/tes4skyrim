@@ -1,15 +1,16 @@
 @echo off
-REM Build MorrowindRuntime.dll (SKSE plugin, x64).
+REM Build MorrowindRuntime.dll -- a TESRuntime SUBMODULE, like havok_world_size.
 REM
-REM Standalone build, same as tes_runtime and game_bridge: no SKSE source tree,
-REM no CMake, no vcpkg. Everything the plugin needs from the game is resolved at
-REM runtime through the Address Library, so the only inputs are MSVC and the
-REM Windows SDK.
-REM
-REM This is a SEPARATE DLL from TESRuntime.dll on purpose: it links vendored
-REM GPL-3.0 OpenMW code, and a fault in a 458-opcode interpreter must not take
-REM gun routing, limb severing or the animation cache down with it.
+REM Its own source folder and its own DLL, sharing no code with plugin\, for
+REM two reasons: it links vendored GPL-3.0 OpenMW that must stay out of
+REM TESRuntime's binary, and a fault in a script interpreter must not take gun
+REM routing, limb severing or the animation cache down with it. Both DLLs ship
+REM in the same TESRuntime.zip.
 REM See docs/commentary/morrowind_runtime.md#licensing
+REM
+REM Standalone build, same as its parent: no SKSE source tree, no CMake, no
+REM vcpkg. Everything from the game resolves at runtime through the Address
+REM Library, so the only inputs are MSVC and the Windows SDK.
 REM
 REM Usage:  build.bat            full plugin -> MorrowindRuntime.dll
 REM         build.bat openmw     compile the vendored OpenMW subset ONLY
@@ -25,7 +26,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set ROOT=%~dp0..
+set ROOT=%~dp0..\..
 set MW=%ROOT%\external\openmw
 
 REM OpenMW is C++20 upstream. /permissive- and /Zc:__cplusplus are required for
@@ -61,8 +62,9 @@ if /i "%~1"=="openmw" goto done
 REM Named rather than plugin\*.cpp: store_test.cpp carries a main() and is
 REM built only by `build.bat test`.
 echo [build] compiling plugin...
-cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\log.cpp ^
-   /Fo:obj\
+cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
+   plugin\log.cpp plugin\addresses.cpp plugin\menu.cpp ^
+   plugin\filter.cpp plugin\session.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
     exit /b 1

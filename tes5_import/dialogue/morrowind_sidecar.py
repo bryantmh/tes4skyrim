@@ -19,8 +19,8 @@ import shutil
 #: Where the runtime looks, relative to a plugin's output root.
 SIDECAR_DIR = os.path.join('SKSE', 'Plugins', 'MorrowindRuntime')
 
-#: Export files the runtime reads; DIAL first, since an INFO needs its topic.
-DIALOGUE_FILES = ('DIAL.txt', 'INFO.txt')
+#: Export files the runtime reads; topics first, since a response needs one.
+DIALOGUE_FILES = ('MWDI.txt', 'MWIN.txt')
 
 
 def plugin_stem(plugin_name: str) -> str:
