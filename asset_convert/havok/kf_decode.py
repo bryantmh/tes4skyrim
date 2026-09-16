@@ -515,15 +515,16 @@ def _rot_span(tr) -> float:
 
 def split_root_motion(clip: DecodedClip,
                       accum_bones=('Bip01 NonAccum', 'Bip01',
-                                   'Bip02 NonAccum', 'Bip02')) -> Optional[dict]:
-    """Extract root motion from the accum bone (`Bip01` or NonAccum) in place.
+                                   'Bip02 NonAccum', 'Bip02',
+                                   'Root Bone NonAccum',
+                                   'Root Bone')) -> Optional[dict]:
+    """Extract root motion from the accum bone in place; AUTHORED spellings.
 
     Returns {'bone', 'times', 'translations', 'rotations'} RELATIVE to the
     first sample of the candidate that moves most, or None when none moves.
-    The winner is flattened to its authored FIRST sample: NonAccum carries
-    the bind pose the engine plays once, so its heading and height stay.
-    Every accum ROOT track ends identity, that node being the engine's own.
+    The winner is flattened to its authored FIRST sample.
     See: docs/commentary/asset_convert_falloutnv.md#accum-root-identity
+    See: docs/commentary/asset_convert_creature.md#root-bone-rename
     """
     candidates = [tr for tr in clip.tracks if tr.bone in accum_bones]
     if not candidates:

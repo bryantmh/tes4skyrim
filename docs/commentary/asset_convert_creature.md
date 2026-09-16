@@ -1296,6 +1296,38 @@ hardest humanoid-pipeline problem (rest-pose retarget) from the creature path en
     assets/skeleton.hkx` (dump with hkxcmd to copy the exact object layout, incl. the
     hkaSkeleton + hkbCharacterStringData conventions).
 
+<a id="root-bone-rename"></a>
+#### The rig root must be renamed to `NPC Root [Root]`
+
+The engine binds the behavior graph to the actor's 3D through a root node
+hard-named `NPC Root [Root]`; all 30 vanilla creature `skeleton.hkx` name
+their anim `hkaSkeleton` AND its bone 0 exactly that. A rig whose root keeps
+its authored name never binds, and the actor spawns INVISIBLE with only its
+collision capsule working.
+
+`BONE_RENAMES` (`hkx_skeleton.py`) maps every authored spelling onto it.
+Source censuses over the converted skeletons:
+
+| source | roots found |
+|---|---|
+| Oblivion.esm, 32 creatures | 31x `Bip01`, 1x `Bip02` (3ds Max second-biped, the horse) |
+| Morrowind.esm, 47 creatures | 32x `Bip01`, 15x `Root Bone` |
+
+`Root Bone` is the TES3 spelling and pairs with `Root Bone NonAccum`, which
+joins `UNLOCKED_BONES` for the same reason `Bip01 NonAccum` is there — see
+[the teleport-on-death root cause](#ragdoll-root-bone1-dead-end).
+
+`find_skeleton_root` picks the root structurally (first NiNode child with
+NiNode children), never by name, so these rigs always converted; only the
+emitted NAME was wrong.
+
+The rename must reach every site a bone name is emitted: `skeleton.hkx`
+(`hkx_skeleton`), animation tracks / `originalSkeletonName` (`hkx_anim`),
+ragdoll lookups (`hkx_ragdoll`), and the converted skeleton/body NIF node
+names (`nif_converter` creature mode). `split_root_motion`
+(`kf_decode.py`) matches accum bones by authored name BEFORE the rename, so
+its `accum_bones` tuple carries the authored spellings instead.
+
 ### Step 4 — Animations: KF → Skyrim HKX
 4.1 **B-spline decode** — the blocker. The KF corpus is dominated by
     `NiBSplineCompTransformInterpolator` (dog forward.kf: 43/45 bone tracks;

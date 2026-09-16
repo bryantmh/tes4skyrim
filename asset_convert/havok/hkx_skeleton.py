@@ -32,21 +32,14 @@ from asset_convert.havok.hkx_xml import (HkxPackfile, compile_hkx, decompile_hkx
                                    fmt_vec)
 from pyffi.formats.nif import NifFormat
 
-UNLOCKED_BONES = {'Bip01', 'Bip01 NonAccum'}
+UNLOCKED_BONES = {'Bip01', 'Bip01 NonAccum', 'Root Bone NonAccum'}
 
-# The SSE engine binds the behavior graph to the actor's 3D through a root
-# node hard-named 'NPC Root [Root]': ALL 30 vanilla creature skeleton.hkx
-# name their anim hkaSkeleton AND its bone 0 exactly that (census 2026-07-08),
-# and every vanilla creature skeleton.nif contains a matching NiNode.  An
-# Oblivion rig root named 'Bip01' never binds -> actor spawns INVISIBLE with
-# only its collision capsule working.  The rename must be applied everywhere
-# a bone name is emitted: skeleton.hkx (here), animation tracks/
-# originalSkeletonName (hkx_anim), ragdoll lookups (hkx_ragdoll), and the
-# converted skeleton/body NIF node names (nif_converter creature mode).
+#: Root node name the engine binds the behavior graph through; a rig that keeps its authored root never binds.
 ROOT_BONE_NAME = 'NPC Root [Root]'
-# 'Bip02' = 3ds Max second-biped naming (Oblivion horse). Source census over
-# all 32 Oblivion.esm creatures: 31x Bip01, 1x Bip02, nothing else.
-BONE_RENAMES = {'Bip01': ROOT_BONE_NAME, 'Bip02': ROOT_BONE_NAME}
+
+#: Authored rig root spelling -> ROOT_BONE_NAME. See: docs/commentary/asset_convert_creature.md#root-bone-rename
+BONE_RENAMES = {'Bip01': ROOT_BONE_NAME, 'Bip02': ROOT_BONE_NAME,
+                'Root Bone': ROOT_BONE_NAME}
 
 # Equipment attachment nodes.  The engine finds an actor's equip points by
 # HARD-CODED NODE NAME (strings in SkyrimSE.exe: 'WEAPON', 'SHIELD', 'QUIVER',
