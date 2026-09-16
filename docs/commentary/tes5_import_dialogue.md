@@ -60,6 +60,7 @@ game, see the `oblivion-dialog-system`, `skyrim-dialog-system`, and
 
 - **DLBR (Dialog Branch)**: EDID + QNAM(quest FID) + TNAM(0=Player) + DNAM(0=Normal or 1=TopLevel) + SNAM(starting DIAL FID). Created for ALL non-bark DIAL topics. Top-level topics get DNAM=1 (appear in dialog menu). TCLT chain topics get DNAM=0 (only reachable via TCLT choice links, not shown in menu).
 - **DLVW (Dialog View)**: EDID + QNAM(quest) + BNAM[](branch FIDs) + TNAM[](topic FIDs) + ENAM(view type) + DNAM(show all text). CK UI metadata, one per quest.
+- **Service-menu gate (`_service_gate`)**: Barter/Training topics carry two ANDed CTDAs — who offers the service (merchant marker / trainer faction, `GetInFaction`) AND `GetOffersServicesNow` (func 255). Faction membership is permanent, so the faction condition alone left shopkeepers offering "What have you got for sale?" in the street at any hour; TES4 gated this implicitly through its service menu, which has no converted equivalent. Only ONE faction condition either way: an OR-chain over every vendor faction put 25-30 CTDAs on each INFO (vanilla max 22, max OR-run 20) and the engine silently dropped every gated line. Func 255 is vanilla-legal and measured — 165 vanilla Skyrim INFO CTDAs use it, all with run-on 0, operator `==`, params 0. The gate is prepended per-INFO, so it covers all 57 Barter and 10 Training INFOs from one site. Repair/Recharge/Travel remain dropped upstream in `SERVICE_MENU_TOPICS` (26 more INFOs); each needs its own Papyrus menu fragment and Skyrim has no direct Travel equivalent.
 
 ## Voice types and conditions
 <a id="voice-types-conditions"></a>
@@ -563,6 +564,58 @@ Do not ship a half-version of it.
 The driver below does **not** generalize to these: it works precisely because
 quest-advancing chains name both actors with `GetIsID`, which the flavor
 families do not.
+
+---
+
+## Script-started conversation chains
+<a id="script-started-conversation-chains"></a>
+
+**Code:** `tes5_import/dialogue/conversations.py:build_script_chain_map`,
+`script_convert/commands.py:start_conversation`
+
+The scheduler section below covers chains the ENGINE starts. A second family is
+started explicitly by a script: `StartConversation <target> <topic>`. Oblivion
+treats the two identically once begun — both hand the whole TCLT chain to the
+scheduler, which alternates speakers per `DATA.NextSpeaker` and runs each
+INFO's result.
+
+`Actor.Say(topic)` plays exactly ONE line, so converting the call to a bare Say
+restores the first line and drops the rest. A chain whose lines gate on a
+counter the results advance then stalls on line 0 forever, and any caller
+polling that counter re-speaks it every tick.
+
+Measured in Oblivion.esm: Savlian Matius' Kvatch chapel scene (`MS48Convo`,
+quest MS48 stage 90) is 10 lines gated `MS48.conv == 0..8`, each result setting
+the next value. `SavlianMatiusScript` polls `if MS48.conv == 0` at 0.25s and
+called `StartConversation TierraRef MS48Convo`; Tierra's own script speaks only
+at `conv == 8`. Converted as a single Say, nothing ever spoke lines 1-7, `conv`
+stayed 0, and Savlian repeated "Report, soldier." indefinitely (live readback:
+`TES4_MS48Script::Conv_var = 0` at stage 90).
+
+Fix: `build_script_chain_map` linearizes the chain behind every multi-line
+topic, and `start_conversation` emits the same replay the driver quest uses —
+`Utility.Wait(TES4Polyfill.SayLine(actor, topic, len) + beat)` per hop,
+alternating self/target. The call site names BOTH actors, so unlike the
+scheduler's chains no identity CTDA is needed to resolve speakers. Line
+selection stays with the engine (per-INFO CTDAs), so End fragments — the
+`set MS48.conv to N` payloads — fire exactly as before.
+
+Single-line topics (the Daedric-prince speeches, announcer barks) produce no
+chain entry and keep the plain `Say`.
+
+**Detection is by CTDA shape, never by name.** A chain is a topic whose INFOs
+gate on a consecutive run of ONE quest variable AND whose every counted line
+names a non-player listener through a run-on-target `GetIsID` — the scheduler's
+own signature. The identity test is what excludes `GREETING`: it also carries a
+counter run in places, and without the test 87 of Oblivion's 162
+`StartConversation` sites would have looped the player's greeting.
+
+Measured on Oblivion.esm: **18 topics** qualify, changing **12 of 16,519**
+generated scripts — MS48 (Kvatch), MQ12 Jauffre/Martin, DANocturnal
+(WeebamNa), four Dark Brotherhood scenes, SE06, MS40, Erthor, RallusOdiil and
+SulinusVassinus. No CharacterGen script changes and `TES4NPCConv<plugin>.psc`
+is byte-identical, because those chains are HELLO-headed and belong to the
+scheduler path below, not this one.
 
 ---
 

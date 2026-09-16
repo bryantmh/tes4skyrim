@@ -22,6 +22,7 @@ from ..base.conditions import (
     FUNC_GET_IN_FACTION,
     FUNC_GET_IS_ID,
     FUNC_GET_IS_VOICE_TYPE,
+    FUNC_GET_OFFERS_SERVICES_NOW,
     FUNC_GET_QUEST_RUNNING,
     build_ctda,
     build_or_chain,
@@ -543,11 +544,10 @@ def _topic_voice_types(child_infos: list, npc_to_vtyp: dict, offset: int) -> set
 
 
 def _service_gate(service_kind: str) -> bytes:
-    """The single CTDA gating a Barter/Training menu topic, or b''.
+    """The CTDAs gating a Barter/Training menu topic, or b''.
 
-    Barter gates on the merchant marker faction, Training on the trainer
-    faction.  ONE condition either way: an OR-chain over every vendor faction
-    ran past what the engine accepts and silently dropped every gated line.
+    Two ANDed conditions: WHO offers the service (merchant marker faction for
+    barter, trainer faction for training) and whether they offer it right now.
 
     See: docs/commentary/tes5_import_dialogue.md#branches-views-topic-ownership
     """
@@ -557,8 +557,9 @@ def _service_gate(service_kind: str) -> bytes:
                 else get_trainer_faction_fid())
     if not gate_fid:
         return b''
-    return pack_subrecord('CTDA', build_ctda(
+    return (pack_subrecord('CTDA', build_ctda(
         FUNC_GET_IN_FACTION, param1=gate_fid))
+        + pack_subrecord('CTDA', build_ctda(FUNC_GET_OFFERS_SERVICES_NOW)))
 
 
 def _info_gate_bytes(info_rec, owner_qfid, ctx):

@@ -55,6 +55,8 @@ def get_speak_as_topics() -> frozenset:
 
 
 FUNC_GET_IN_FACTION = 71       # GetInFaction(fact)
+#: GetOffersServicesNow(): true only while the actor is actively vending/training.
+FUNC_GET_OFFERS_SERVICES_NOW = 255
 FUNC_GET_STAGE = 58            # GetStage(quest)
 FUNC_GET_STAGE_DONE = 59       # GetStageDone(quest, stage)
 FUNC_GET_QUEST_RUNNING = 56    # GetQuestRunning(quest)
