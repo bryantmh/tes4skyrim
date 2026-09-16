@@ -36,6 +36,9 @@ _QUEST_FLAGS = (('QSTN', 'Name'), ('QSTF', 'Finished'), ('QSTR', 'Restart'))
 #: Shortest legal SCVR rule: index, function, var type, 'X', comparison.
 _RULE_MIN = 5
 
+#: Rule kind meaning "a numbered function", whose index is rule[2:4].
+_NUMBERED = '1'
+
 
 def _text(sub) -> str:
     """A TES3 string subrecord decoded, or '' when absent."""
@@ -62,16 +65,24 @@ def _value_lines(sub, prefix: str) -> list:
 
 
 def _condition_lines(subs: list, index: int, prefix: str) -> list:
-    """One SCVR rule plus the value subrecord that follows it."""
+    """One SCVR rule plus the value subrecord that follows it.
+
+    Rule kind `1` is a NUMBERED function whose two-digit index occupies the
+    chars a variable rule uses for its type, so the kinds decode apart.
+    See: docs/reference/morrowind_dialogue_format.md#conditions
+    """
     rule = _text(subs[index])
     if len(rule) < _RULE_MIN:
         return []
     lines = [f'{prefix}.Rule={escape_value(rule)}',
              f'{prefix}.Index={rule[0]}',
              f'{prefix}.Function={rule[1]}',
-             f'{prefix}.VarType={rule[2]}',
-             f'{prefix}.Comparison={rule[4]}',
-             f'{prefix}.Variable={escape_value(rule[_RULE_MIN:])}']
+             f'{prefix}.Comparison={rule[4]}']
+    if rule[1] == _NUMBERED:
+        lines.append(f'{prefix}.FunctionIndex={rule[2:4]}')
+    else:
+        lines.append(f'{prefix}.VarType={rule[2]}')
+        lines.append(f'{prefix}.Variable={escape_value(rule[_RULE_MIN:])}')
     nxt = subs[index + 1] if index + 1 < len(subs) else None
     lines.extend(_value_lines(nxt, prefix))
     return lines

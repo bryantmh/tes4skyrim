@@ -123,7 +123,7 @@ def test_int_and_float_conditions_keep_their_type_tag():
 
 
 def test_condition_rule_parts_and_raw_rule_round_trip():
-    """Every positional field of a SCVR rule, plus the raw string."""
+    """Every positional field of a variable rule, plus the raw string."""
     rule = '4CsX2nolore'
     kv = _kv(export_INFO(_info(conditions=((rule, 'INTV', 7),)), 0, 't'))
     assert kv['Condition[0].Rule'] == rule
@@ -132,6 +132,23 @@ def test_condition_rule_parts_and_raw_rule_round_trip():
     assert kv['Condition[0].VarType'] == 's'
     assert kv['Condition[0].Comparison'] == '2'
     assert kv['Condition[0].Variable'] == 'nolore'
+    assert 'Condition[0].FunctionIndex' not in kv
+
+
+def test_numbered_function_index_is_not_sliced_as_a_variable():
+    """'01500' is function 50 (Choice) compared '=', NOT VarType '5'.
+
+    A numbered index occupies the bytes a variable rule uses for its type, so
+    slicing both alike silently loses every Choice condition -- 1,748 of them
+    in Morrowind.esm, 11,244 in TR_Mainland.
+    See: docs/reference/morrowind_dialogue_format.md#conditions
+    """
+    kv = _kv(export_INFO(_info(conditions=(('01500', 'INTV', 1),)), 0, 't'))
+    assert kv['Condition[0].Function'] == '1'
+    assert kv['Condition[0].FunctionIndex'] == '50'
+    assert kv['Condition[0].Comparison'] == '0'
+    assert 'Condition[0].VarType' not in kv
+    assert 'Condition[0].Variable' not in kv
 
 
 def test_malformed_short_rule_is_skipped():

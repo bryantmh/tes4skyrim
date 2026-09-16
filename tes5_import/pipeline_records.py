@@ -41,6 +41,7 @@ from concurrent.futures import ProcessPoolExecutor
 from .registry import IMPORT_DISPATCH, TYPE_MAP
 from .overrides.nested import (build_nested_overrides)
 from .dialogue.quest import compute_quest_priorities, convert_QUST
+from .dialogue.morrowind_sidecar import write_morrowind_sidecar
 from .record_types.bodypart_falloutnv import write_falloutnv_sidecars
 from .record_types.sound import convert_SOUN
 from .base.owned_records import (
@@ -154,6 +155,10 @@ def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
             print(f"  ERROR converting {sig} '{edid}': {e}")
             st.errors += 1
     write_falloutnv_sidecars(st.by_type, st.writer, st.output_path)
+    staged = write_morrowind_sidecar(export_dir, st.output_path,
+                                     os.path.basename(st.output_path))
+    if staged:
+        print(f'  Staged {staged} dialogue file(s) for MorrowindRuntime')
     phase_done(f'simple records ({len(work_items)})')
 
 

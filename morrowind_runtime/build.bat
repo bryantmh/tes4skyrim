@@ -14,6 +14,7 @@ REM
 REM Usage:  build.bat            full plugin -> MorrowindRuntime.dll
 REM         build.bat openmw     compile the vendored OpenMW subset ONLY
 REM                              (the Phase 0 gate: does it build standalone?)
+REM         build.bat test       store_test.exe, the headless parser gate
 
 setlocal
 
@@ -36,6 +37,8 @@ set INCLUDES=/I"%MW%" /I"%MW%\apps"
 cd /d "%~dp0"
 if not exist obj mkdir obj
 
+if /i "%~1"=="test" goto storetest
+
 REM misc/strings and esm4 are header-only in this closure; esm/ contributes the
 REM RefId translation units refid.hpp pulls in.
 echo [build] compiling vendored OpenMW (interpreter + compiler)...
@@ -55,8 +58,11 @@ echo [build] OK -^> vendored OpenMW compiles standalone
 
 if /i "%~1"=="openmw" goto done
 
+REM Named rather than plugin\*.cpp: store_test.cpp carries a main() and is
+REM built only by `build.bat test`.
 echo [build] compiling plugin...
-cl %CXXFLAGS% %INCLUDES% plugin\*.cpp /Fo:obj\
+cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\log.cpp ^
+   /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
     exit /b 1
@@ -70,6 +76,42 @@ if errorlevel 1 (
     exit /b 1
 )
 echo [build] OK -^> %~dp0MorrowindRuntime.dll
+goto done
+
+REM The store parses export text and touches no game memory, so it is testable
+REM with no Skyrim and no SKSE. store.cpp is compiled again here rather than
+REM reused from obj\, which holds the DLL's objects.
+:storetest
+if not exist objt mkdir objt
+echo [build] compiling tests...
+cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\log.cpp plugin\filter.cpp ^
+   plugin\session.cpp plugin\store_test.cpp plugin\filter_test.cpp ^
+   plugin\session_test.cpp /Fo:objt\
+if errorlevel 1 (
+    echo [build] ERROR: test compilation failed
+    exit /b 1
+)
+link /nologo /OUT:store_test.exe objt\store.obj objt\log.obj ^
+     objt\store_test.obj kernel32.lib user32.lib shell32.lib ole32.lib
+if errorlevel 1 (
+    echo [build] ERROR: store_test link failed
+    exit /b 1
+)
+link /nologo /OUT:filter_test.exe objt\store.obj objt\log.obj ^
+     objt\filter.obj objt\filter_test.obj ^
+     kernel32.lib user32.lib shell32.lib ole32.lib
+if errorlevel 1 (
+    echo [build] ERROR: filter_test link failed
+    exit /b 1
+)
+link /nologo /OUT:session_test.exe objt\store.obj objt\log.obj ^
+     objt\filter.obj objt\session.obj objt\session_test.obj ^
+     kernel32.lib user32.lib shell32.lib ole32.lib
+if errorlevel 1 (
+    echo [build] ERROR: session_test link failed
+    exit /b 1
+)
+echo [build] OK -^> %~dp0store_test.exe, filter_test.exe, session_test.exe
 
 :done
 

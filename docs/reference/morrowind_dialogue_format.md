@@ -79,9 +79,22 @@ least 5 characters and the parts are positional:
 | `Rule` | the raw string, kept so nothing is lost to our own parse |
 | `Index` | `rule[0]`, `'0'`–`'9'` — which of several same-function slots |
 | `Function` | `rule[1]` — `1` a numbered function, `2` global, `3` local, `4` journal, `5` item, `6` dead, `7` not-id, `8` not-faction, `9` not-class, `A` not-race, `B` not-cell, `C` not-local |
-| `VarType` | `rule[2]` — `f` float, `l` long, `s` short, or a tag letter (`J` journal, `I` item, `D` dead, `X`/`F`/`C`/`R`/`L`) |
 | `Comparison` | `rule[4]` — `0` `=`, `1` `!=`, `2` `>`, `3` `>=`, `4` `<`, `5` `<=` |
-| `Variable` | `rule[5:]` — the global/local/journal/item name, or for `Function=1` the two-digit function index lives at `rule[2:4]` |
+
+Then **exactly one of two shapes**, by `Function`:
+
+| `Function` | Emits | From |
+|---|---|---|
+| `1` (numbered) | `FunctionIndex` | `rule[2:4]`, two digits, `00`–`73` |
+| anything else | `VarType` + `Variable` | `rule[2]`, then `rule[5:]` |
+
+> 🛑 **The two shapes overlap in the same bytes.** A numbered function's index
+> occupies `rule[2:4]` — precisely where a variable rule keeps its type
+> character and its `X` padding. Slicing both alike parses `01500` (function
+> 50, `Choice`, compared `=`) as `VarType='5'`, `Comparison='0'` and an empty
+> variable: no error, no missing field, and every `Choice` condition silently
+> unreadable. The first export made exactly this mistake and the corpus check
+> caught it by reporting **0 `Choice` conditions where 1,748 were measured**.
 
 > 🛑 **`ValueType` must be carried, never collapsed.** The value arrives as an
 > `INTV` (int32) or `FLTV` (float32) subrecord and the comparison differs.
@@ -110,6 +123,45 @@ scripts containing newlines.
 > Tribunal's quest system. A vanilla journal quest is a bare list of indexed
 > entries with no completion marker, so anything downstream that wants "is this
 > quest done" cannot read it off the record for `Morrowind.esm` content.
+
+## <a id="which-conditions-matter"></a>Which conditions content actually uses
+
+Rule kind `1` is "a numbered function", whose index sits at `rule[2:4]`; every
+other kind is a variable lookup. Counting the numbered ones across
+`Morrowind.esm` and `TR_Mainland.esm`: **54 of the 74 functions are used, 20
+never are.**
+
+| | TR_Mainland | Morrowind |
+|---|---:|---:|
+| numbered conditions | 14,856 | 5,486 |
+| distinct functions | 47 | 39 |
+| **`Choice`** | **11,244 (76%)** | 1,748 (32%) |
+| `TalkedToPc` | 962 | 601 |
+| `PcExpelled` | 721 | 405 |
+| `SameFaction` | 614 | 514 |
+
+> 🛑 **`Choice` dominates.** It is three quarters of TR_Mainland's numbered
+> conditions, because it is not a filter in the ordinary sense — it is how a
+> branching conversation re-enters the INFO scan after the player picks an
+> option. Getting it wrong does not break one filter, it breaks branching
+> dialogue generally.
+
+**Never used in either file** — every one of these can be a logged stub without
+affecting the test corpus:
+
+```
+PcMagicka PcFatigue PcBlock PcMediumArmor PcHeavyArmor PcLongBlade
+PcAxe PcSpear PcAthletics PcEnchant PcUnarmored PcLightArmor
+PcShortBlade PcMarksman PcHandToHand PcWillpower PcSpeed PcEndurance
+Werewolf PcWerewolfKills
+```
+
+That list is most of the Morrowind-only skill set, which is why mapping skills
+rather than modelling them costs so little in practice: the skills with no
+Skyrim counterpart are the ones dialogue never asks about. The ones content
+does use — `PcSpeechcraft`, `PcMercantile`, `PcAlchemy`, `PcConjuration`,
+`PcIntelligence` — either map directly or are attributes taking the passing
+stub.
 
 ## <a id="verified"></a>Verified against the source
 
