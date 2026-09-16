@@ -288,10 +288,38 @@ def start_conversation(ctx, call) -> str:
     ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)
     parts = ctx.arg_srcs()
     if len(parts) >= 2 and parts[1].strip():
-        ctx._mark_topic_property(parts[1].strip().split()[0])
+        topic = parts[1].strip().split()[0]
+        ctx._mark_topic_property(topic)
+        lines = ctx.conversation_chains.get(topic.lower())
+        if lines:
+            return _replay_chain(ctx, ref, call, lines)
         return f'{ref}.Say({call.arg(1)})'
     ctx.sc.property_refs['GREETING'] = 'Topic'
     return f'{ref}.Say(GREETING)'
+
+
+#: SayLine's assumed length for an unmeasured line, and the beat between them.
+_CHAIN_LINE_SECONDS = 3.0
+_CHAIN_BEAT = 0.6
+
+
+def _replay_chain(ctx, ref: str, call, lines: int) -> str:
+    """Say a multi-line NPC-to-NPC topic once per line, alternating speakers.
+
+    Oblivion's StartConversation handed the whole chain to the scheduler;
+    `Say` plays one line, so the chain must be walked here. Line selection
+    stays with the engine -- each Say picks the first INFO whose conditions
+    pass -- so End fragments advance the counter exactly as before.
+    See: docs/commentary/tes5_import_dialogue.md#script-started-conversation-chains
+    """
+    listener = ctx._cast(ctx.arg_expr(0, call.extends), 'Actor')
+    out = []
+    for n in range(lines):
+        speaker = ref if n % 2 == 0 else listener
+        out.append(f'Utility.Wait(TES4Polyfill.SayLine({speaker}, '
+                   f'{call.arg(1)}, {_CHAIN_LINE_SECONDS:g}) '
+                   f'+ {_CHAIN_BEAT})')
+    return '\n  '.join(out)
 
 
 @command('addtopic')

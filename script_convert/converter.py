@@ -10,9 +10,8 @@ from script_convert.constants import (
     KNOWN_GLOBALS, LOOSE_OPS, PAPYRUS_BOOL_FUNCTIONS, PLACED_REF_SIGS,
     PLAYER_ALIAS_EXTENDS, RETURN_TYPES, SELF_NAMES, TYPE_MAP, _REF_TYPES,
     _canonical_global, digit_stripped_formid, _record_type_to_base_papyrus,
-    generated_script_stem, is_generated_script_type, record_type_to_papyrus, safe_property_name, papyrus_script_name,
+    generated_script_stem, is_generated_script_type, safe_property_name, papyrus_script_name,
     resolve_property_formid,
-    script_type_may_override
 )
 from script_convert.command_rows import (
     COMMAND_ROWS, DISPATCH_EVENTS, ENUM_ACTOR_VALUES, ENUM_AV_LADDERS,
@@ -101,6 +100,9 @@ class ScriptConverter:
 
     #: DIAL EditorID (lower) -> `TES4Unlock_<topic>` global, from build_unlock_plan.
     topic_unlock_globals: dict = {}
+
+    #: DIAL EditorID (lower) -> chain line count, from build_script_chain_map.
+    conversation_chains: dict = {}
 
     # script EditorID (lower) -> [(mesg_edid, text, buttons)], from
     # script_convert.message_menus.build_message_plan. Populated once per run
@@ -1254,38 +1256,6 @@ class ScriptConverter:
                 return
         self.sc.property_refs[key] = 'Topic'
 
-    def _papyrus_type_for(self, fid: str, rtype: str) -> str:
-        """Papyrus property type for a record, as the IMPORTER writes it.
-
-        `record_type_to_papyrus` maps the TES4 signature, which is right until
-        the importer changes the signature on the way out. A BOOK carrying an
-        ENAM becomes a SCRL (see project_enchanted_book_is_a_scroll), so a
-        `Book` property naming one cannot bind and reads None in-game.
-        """
-        ptype = record_type_to_papyrus(rtype)
-        if (ptype == 'Book' and self.xref
-                and fid in getattr(self.xref, 'enchanted_books', ())):
-            return 'Scroll'
-        return ptype
-
-    def _script_type_binds(self, ptype: str, fid: str) -> bool:
-        """Whether an attached script class may stand in for `ptype` HERE.
-
-        Base-object types normally cannot (the VM refuses the base record —
-        see script_type_may_override), but a scripted world object (ACTI/LIGH)
-        with exactly ONE placed ref can: the property binder redirects the
-        binding to that ref, which carries the script instance. Without this,
-        the base gate stripped cross-script variables off unique activators —
-        `SE01Metronome.weatherVAR` and the SE11 trigzone stopped compiling.
-        Inventory item types (ARMO/WEAP/...) stay excluded even with a lone
-        world placement, because their properties mean the BASE (AddItem /
-        RemoveItem), never that placement.
-        """
-        if script_type_may_override(ptype):
-            return True
-        return (self.xref.record_type.get(fid, '') in ('ACTI', 'LIGH')
-                and bool(self.xref.unique_placed_ref(fid)))
-
     def _register_cell_family(self, name: str, cells: list,
                               exterior: list = None) -> str:
         """Record a GetInCell prefix family and return its helper's name.
@@ -1714,7 +1684,7 @@ class ScriptConverter:
             # Use canonical EditorID (original case) as key to match _add_scro_ref
             canon_edid = self.xref.formid_to_edid.get(fid, name)
             rtype = self.xref.record_type.get(fid, '')
-            ptype = self._papyrus_type_for(fid, rtype)
+            ptype = _resolve_name.papyrus_type_for(self.xref, fid, rtype)
             # Prefer attached script type over generic Actor/ObjectReference
             # so cross-script property access works (e.g., NPCRef.rent).
             # Base-object types (Armor/Weapon/Potion/...) are excluded: the VM
@@ -1722,7 +1692,8 @@ class ScriptConverter:
             # record, and the property then reads None. A unique-placed
             # ACTI/LIGH is the exception — the binder redirects to its ref.
             script_type = self.xref.get_record_script_type(name)
-            if script_type and self._script_type_binds(ptype, fid):
+            if script_type and _resolve_name.script_type_binds(
+                    self.xref, ptype, fid):
                 ptype = script_type
             safe = safe_property_name(canon_edid)
             # Don't downgrade a more specific type (e.g., Actor from

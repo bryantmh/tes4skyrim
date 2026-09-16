@@ -391,6 +391,25 @@ Audited output carries only 2 `;TODO:` markers across 18,566 scripts, so marker
 counts measure honesty, not correctness — never treat a clean output scan as
 evidence the conversion is complete.
 
+### <a id="script-type-property-binding"></a>When an attached script class may stand in for a property type
+
+**Code:** `script_convert/resolve_name.py:script_type_binds`
+
+A property naming a record is normally typed by the record's signature. Where
+the record carries an attached script, the generated script class is the more
+useful type — it exposes that script's variables for cross-script reads — but
+the VM refuses to bind a script class to a BASE object, so `script_type_may_override`
+gates it.
+
+One exception is measured: a scripted world object (ACTI/LIGH) with exactly ONE
+placed ref binds fine, because the property binder redirects the binding to that
+ref, which is what actually carries the script instance. Without the exception
+the base gate stripped cross-script variables off unique activators and
+`SE01Metronome.weatherVAR` and the SE11 trigzone stopped compiling.
+
+Inventory types (ARMO/WEAP/…) stay excluded even with a lone world placement:
+their properties mean the BASE (AddItem/RemoveItem), never that placement.
+
 ### <a id="generated-script-types"></a>🔴 A generated script type is recognized by PREFIX, and the prefix is per-game
 
 **`is_generated_script_type()` in `script_convert/constants.py` is the ONLY way

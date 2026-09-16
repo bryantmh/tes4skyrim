@@ -21,7 +21,8 @@ import re
 
 from script_convert.constants import (
     FAME_GLOBALS, KNOWN_GLOBALS, TES4_MURDER_BOUNTY, _FORM_TYPE_TESTS,
-    _canonical_global, safe_property_name
+    _canonical_global, record_type_to_papyrus, safe_property_name,
+    script_type_may_override
 )
 from script_convert.command_rows import (
     COMMAND_ROWS, HANDLED_COMMANDS, ACTOR_VALUE_MAP_LOW,
@@ -282,6 +283,31 @@ def _quoted(conv, inner: str, extends: str) -> str:
     return resolved if resolved is not None else '"%s"' % inner
 
 
+def papyrus_type_for(xref, fid: str, rtype: str) -> str:
+    """Papyrus property type for a record, as the IMPORTER writes it.
+
+    A BOOK carrying an ENAM leaves the importer as a SCRL, so a `Book`
+    property naming one cannot bind and reads None in-game.
+    See: docs/commentary/script_convert.md#script-type-property-binding
+    """
+    ptype = record_type_to_papyrus(rtype)
+    if (ptype == 'Book' and xref
+            and fid in getattr(xref, 'enchanted_books', ())):
+        return 'Scroll'
+    return ptype
+
+
+def script_type_binds(xref, ptype: str, fid: str) -> bool:
+    """Whether an attached script class may stand in for `ptype` HERE.
+
+    See: docs/commentary/script_convert.md#script-type-property-binding
+    """
+    if script_type_may_override(ptype):
+        return True
+    return (xref.record_type.get(fid, '') in ('ACTI', 'LIGH')
+            and bool(xref.unique_placed_ref(fid)))
+
+
 def _record(conv, expr: str, low: str):
     """A record the plugin defines, as a typed property.  None if unknown."""
     xref = conv.xref
@@ -307,11 +333,11 @@ def _record(conv, expr: str, low: str):
         return None
 
     rtype = xref.record_type.get(fid, '')
-    ptype = conv._papyrus_type_for(fid, rtype)
+    ptype = papyrus_type_for(xref, fid, rtype)
     # Prefer the attached script type for cross-script property access -- but
     # never on a base-object type, where it cannot bind.
     script_type = xref.get_record_script_type(expr)
-    if script_type and conv._script_type_binds(ptype, fid):
+    if script_type and script_type_binds(xref, ptype, fid):
         ptype = script_type
     # Key the property on the CANONICAL EditorID, not the spelling this script
     # happened to use.  TES4 name lookup is case-insensitive, so keying on the

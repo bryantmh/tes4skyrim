@@ -668,6 +668,49 @@ def _gate_exprs(chain):
     return decls, terms
 
 
+def build_script_chain_map(by_type: dict) -> dict:
+    """topic EditorID (lower) -> line count of its NPC-to-NPC chain.
+
+    `Actor.Say` plays one line, so a multi-line chain must be Said once per
+    line; the engine's per-INFO CTDAs pick which, so only the COUNT is
+    needed. Player-facing topics are excluded and keep the plain Say.
+    See: docs/commentary/tes5_import_dialogue.md#script-started-conversation-chains
+    """
+    info_by_dial = _infos_by_parent(by_type.get('INFO', []))
+    out = {}
+    for dial in by_type.get('DIAL', []):
+        edid = dial.get('EditorID', '')
+        if not edid:
+            continue
+        n = _counter_chain_len(info_by_dial.get(_raw_fid(dial), []))
+        if n > 1:
+            out[edid.lower()] = n
+    return out
+
+
+def _counter_chain_len(infos: list) -> int:
+    """Lines gating on a consecutive run of one quest variable, else 0.
+
+    Every counted line must name a non-player listener via a run-on-target
+    GetIsID -- the scheduler's own signature, and what separates an NPC
+    chain from a player topic that happens to use a counter.
+    """
+    per_var = {}
+    for inf in infos:
+        if not head_is_npc_addressed(inf):
+            continue
+        for (t, v, f, p1, p2) in _conds(inf):
+            if f == FUNC_GET_QUEST_VARIABLE and (t & _COMPARISON_MASK) == 0:
+                per_var.setdefault((p1, p2), set()).add(int(v))
+    if not per_var:
+        return 0
+    vals = max(per_var.values(), key=len)
+    run = lo = min(vals)
+    while run + 1 in vals:
+        run += 1
+    return run - lo + 1
+
+
 def generate_driver_psc(plan, say_durations: dict = None) -> str:
     """The full TES4NPCConv<plugin>.psc source, or '' when no chains."""
     if not plan['chains']:

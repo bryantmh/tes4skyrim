@@ -1910,6 +1910,59 @@ class TestNpcConversationChains:
         assert len(done1) == 2      # its own block and chain 0's
 
 
+class TestScriptStartedChains:
+    """`StartConversation A B topic` hands a whole chain to Oblivion's
+    scheduler; Skyrim's Say plays ONE line, so the chain must be replayed.
+    See: docs/commentary/tes5_import_dialogue.md#script-started-conversation-chains"""
+
+    QUEST, TOPIC = 0x000BBB10, 0x000BBB20
+    A_BASE, B_BASE = 0x000BBB01, 0x000BBB02
+
+    @staticmethod
+    def _f(v: float) -> int:
+        """`v` as its raw float bits, the CTDA comparison encoding."""
+        return struct.unpack('<I', struct.pack('<f', v))[0]
+
+    def _line(self, fid, conv_value, npc_addressed=True):
+        """One INFO gated on `conv == conv_value`."""
+        conds = [_tes4_ctda(func=72, p1=self.A_BASE)]
+        if npc_addressed:
+            conds.append(_tes4_ctda(type_byte=0x02, func=72, p1=self.B_BASE))
+        conds.append(_tes4_ctda(func=79, comp=self._f(float(conv_value)),
+                                p1=self.QUEST, p2=9))
+        rec = {'Signature': 'INFO', 'FormID': f'{fid:08X}',
+               'ParentDIAL': f'{self.TOPIC:08X}', 'DATA.DialogType': '1',
+               'DATA.NextSpeaker': '0',
+               'QSTI.Quest': f'{self.QUEST:08X}',
+               'ConditionCount': str(len(conds))}
+        for i, c in enumerate(conds):
+            rec[f'Condition[{i}].Raw'] = c.hex()
+        return rec
+
+    def _map(self, edid='MyConvo', lines=3, npc_addressed=True):
+        """The chain map for one topic carrying `lines` gated INFOs."""
+        from tes5_import.dialogue.conversations import build_script_chain_map
+        infos = [self._line(0x000BBB30 + n, n, npc_addressed)
+                 for n in range(lines)]
+        return build_script_chain_map({
+            'DIAL': [{'Signature': 'DIAL', 'FormID': f'{self.TOPIC:08X}',
+                      'EditorID': edid, 'DATA.Type': '1'}],
+            'INFO': infos,
+        })
+
+    def test_consecutive_counter_run_is_a_chain(self):
+        """A run of conv==0..3 is four lines to replay."""
+        assert self._map(lines=4) == {'myconvo': 4}
+
+    def test_single_line_topic_is_not_a_chain(self):
+        """One line needs no replay -- it keeps the plain Say."""
+        assert self._map(lines=1) == {}
+
+    def test_player_facing_topic_is_excluded(self):
+        """No run-on-target identity means no chain: else GREETING loops."""
+        assert self._map(edid='GREETING', npc_addressed=False) == {}
+
+
 class TestForceGreetOncePerDay:
     def test_quest_gated_forcegreet_keeps_once_per_day(self):
         """convert_flags strips Once Per Day from quest-gated packages (the
