@@ -464,14 +464,44 @@ def pooled_prover(initargs, n_workers):
     return _rebuild
 
 
+def _adopt_master_navm_fids(jobs: list, master_index) -> int:
+    """Point jobs at a MASTER's cell at that cell's existing NAVM ids.
+
+    Returns the number of jobs re-pointed.  Every job keeps the id
+    `derive_formid` handed it unless the master already navmeshed its cell:
+    skipping the call would change the allocator's taken-set and move
+    unrelated derived ids.
+
+    See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
+    """
+    if master_index is None:
+        return 0
+    by_cell = defaultdict(list)
+    for job in jobs:
+        by_cell[job['key'][0]].append(job)
+
+    adopted = 0
+    for cell_fid, cell_jobs in by_cell.items():
+        master_fids = master_index.navms(cell_fid)
+        if not master_fids:
+            continue
+        for job, fid in zip(cell_jobs, master_fids):
+            job['navm_fid'] = fid
+            adopted += 1
+    return adopted
+
+
 def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
-                         door_fids: set, collision_cache: str = '') -> dict:
+                         door_fids: set, collision_cache: str = '',
+                         master_index=None) -> dict:
     """Run every PGRD->NAVM conversion in parallel; return {key: (bytes, meta)}.
 
     FormIDs are pre-allocated serially in builder-visit order, so results are
     byte-identical to the single-threaded path regardless of completion order.
     The worker context is initialized HERE, in the parent, because
-    `navm_verify.prepare` re-keys entries from it.
+    `navm_verify.prepare` re-keys entries from it.  `master_index` re-points a
+    job at a master's cell to that cell's NAVM id (see
+    `_adopt_master_navm_fids`).
 
     See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
     """
@@ -486,6 +516,10 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
     formid_offset = get_formid_index_offset()
     for job in jobs:
         job['navm_fid'] = writer.derive_formid('NAVM', job['key'])
+    adopted = _adopt_master_navm_fids(jobs, master_index)
+    if adopted:
+        print(f"    {adopted} navmeshes override a master's own "
+              f"(of {len(jobs)})")
 
     n_workers = navm_worker_count(len(jobs))
     geom_cache = navmesh_geom_cache(collision_cache)

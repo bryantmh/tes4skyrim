@@ -3445,3 +3445,74 @@ cells baked correctly in a fresh process.
 `cell()`, so whichever index is used is the one whose tables are live. A
 class-level `_armed` records which export currently owns them, so the common
 single-export case still pays the load exactly once.
+
+
+## <a id="master-owned-cells"></a>Navmesh in a cell the plugin does not own
+
+**Code:** `navmesh/pool.py:gather_navm_jobs`, `overrides/master_index.py:navms`.
+
+A plugin that edits a master's cell — Unique Landscapes moving rocks around an
+Oblivion.esm exterior — must **override** that cell's navmesh, shipping it under
+the master's NAVM FormID. It must not ship a navmesh under a new id: the master's
+navmesh is still loaded, so both cover the same ground.
+
+This is what Skyrim modding practice already requires, for engine reasons rather
+than tidiness:
+
+* The engine resolves navmesh conflicts **by FormID, one winning record per id**.
+  Overrides replace; they never merge. Two records with different ids are not a
+  conflict the engine can resolve — both stay live.
+* xEdit's guidance is explicit that navmesh conflicts are settled by load order
+  and that one mod's navmesh is never forwarded into another's. Its
+  "remove identical to previous override" cleaning exists precisely to strip
+  redundant NAVM overrides, which presupposes overrides share the master's id.
+* NAVI (the Navigation Mesh Info Map) is a singleton, `0x00012FB4`, that every
+  file overrides with its own NVMI entries. An NVMI naming a duplicate navmesh
+  registers a second mesh over the same ground.
+
+### Why the id cannot be derived
+
+`derive_formid` composes every generated id as `(own_index << 24) | offset`, so a
+derived id **always** carries the plugin's own index byte and is structurally
+incapable of naming a master's record. Nor can the master's id be recomputed:
+`_choose_derived_region` picks the hash window from *that plugin's* emptiest 64K
+run of authored ids, so the offset depends on Oblivion.esm's own occupancy, not
+on anything Unique Landscapes can see.
+
+The id is therefore **read back** from the converted master, exactly as
+`MasterIndex.land` reads back reallocated LAND ids — `_scan` already walks every
+record of the built ESM, so keying NAVM by its enclosing cell-children GRUP costs
+one more branch. No formula, nothing to get wrong.
+
+### Why a list, and why the id is chosen BEFORE generation
+
+`navms()` returns a list where `land()` returns a single id: a cell owns at most
+one LAND, but a navmesh may be **split**. Measured on the converted
+`output/Oblivion.esm`: 8,238 NAVM across 8,202 cells, of which 8,182 own one and
+20 own between 2 and 7.
+
+The master id is substituted in `gather_navm_jobs`/`precompute_navmeshes`, before
+`convert_PGRD` runs — never restamped onto finished bytes the way LAND is. A NAVM
+carries its own FormID in **three** places:
+
+1. the record header,
+2. the NVNM body, where every ledge edge-link names the owning navmesh
+   (`_resolve_ledge_links` appends `(type, navm_fid, other)`),
+3. `meta['door_xndp']`, which seeds the door refs' XNDP pathing links,
+
+plus `meta['fid']`, which is what NVMI registers in NAVI. Restamping the header
+alone would leave the NVNM payload and the door links pointing at an id no record
+has. Passing the id in as `navm_fid` makes all four agree by construction.
+
+### The invariant
+
+Substitution happens only when a converted master index is present **and** the
+cell is master-owned. A masterless plugin (Oblivion.esm, Nehrim.esm) has no
+master index, so it takes the unchanged path and its navmesh output is
+byte-identical.
+
+`derive_formid` is still called for **every** job, master-owned or not, and the
+master id replaces the result afterwards. Skipping the call instead would change
+the allocator's `_derived_taken` set, and since collisions are resolved by
+rehashing against that set, unrelated derived ids in the same plugin could move —
+drift for records that have nothing to do with navmesh.

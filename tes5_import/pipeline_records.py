@@ -339,7 +339,8 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
 
     st.navm_cache = navm_pool.precompute_navmeshes(
         st.by_type, st.writer, st.base_model_by_fid, st.door_fids,
-        collision_cache=str(assets_for(export_dir) / 'collision_cache.bin'))
+        collision_cache=str(assets_for(export_dir) / 'collision_cache.bin'),
+        master_index=getattr(st.ctx, 'master_index', None) if st.ctx else None)
 
     _dump_to = os.environ.get('TESCONV_DUMP_NAVM_CACHE', '').strip()
     if _dump_to:

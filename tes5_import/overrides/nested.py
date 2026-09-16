@@ -853,6 +853,35 @@ def _navm_of(rec: dict, ctx: OverrideContext) -> tuple:
     return (navm_bytes or b''), (meta or {})
 
 
+def _attach_navmesh(rec: dict, ctx: OverrideContext, parent_out: int,
+                    parent_path: tuple, pending: list) -> tuple:
+    """(navm_bytes, group_chain) for a PGRD nested under a MASTER's cell.
+
+    Returns (b'', ()) when the precompute declined the pathgrid.  Appends the
+    meta to `ctx.navm_metas`, which is what registers the navmesh in NAVI, and
+    any split extras to `pending`.  The bytes are NOT restamped: the precompute
+    already built them under the master's NAVM id where there is one.
+
+    See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
+    """
+    record_bytes, meta = _navm_of(rec, ctx)
+    if not record_bytes:
+        return b'', ()
+
+    metas = getattr(ctx, 'navm_metas', None)
+    if metas is not None:
+        metas.append(meta)
+        for _xb, _xm in meta.get('extra_navms', ()):
+            metas.append(_xm)
+
+    label = struct.pack('<I', parent_out)
+    chain = ((6, label), (9, label))
+    for _xb, _xm in meta.get('extra_navms', ()):
+        pending.append((struct.unpack_from('<I', _xb, 12)[0], _xb,
+                        parent_path + chain))
+    return record_bytes, chain
+
+
 def _attach_new_records(new_records: list, ctx: OverrideContext,
                         pending: list) -> tuple:
     """Convert NEW records that live inside a MASTER's GRUP tree.
@@ -941,33 +970,10 @@ def _attach_new_records(new_records: list, ctx: OverrideContext,
                 if master_land:
                     record_bytes = _restamp_formid(record_bytes, master_land)
             elif sig == 'PGRD':
-                # The navmesh was already generated in parallel by
-                # _precompute_navmeshes and is keyed by (cell, pgrd) in the
-                # plugin's OWN FormID space — the same key the group builders
-                # use. Unlike LAND this is NOT restamped to a master id: a NAVM
-                # is a new record the master has no counterpart for, so it keeps
-                # the id the precompute allocated (restamping would collide with
-                # the master's own navmesh for that cell).
-                record_bytes, meta = _navm_of(rec, ctx)
+                record_bytes, chain = _attach_navmesh(rec, ctx, parent_out,
+                                                      parent_path, pending)
                 if not record_bytes:
-                    # No geometry (too few pathgrid nodes to form a ribbon) —
-                    # convert_PGRD already declined it. Not an error.
                     continue
-                # Registering the meta is what puts this navmesh in NAVI. The
-                # group builders do it for their own cells; nothing else does
-                # it for one nested into the master's hierarchy.
-                metas = getattr(ctx, 'navm_metas', None)
-                if metas is not None:
-                    metas.append(meta)
-                    for _xb, _xm in meta.get('extra_navms', ()):
-                        metas.append(_xm)
-                label = struct.pack('<I', parent_out)
-                chain = ((6, label), (9, label))
-                # A cell split into several navmeshes ships the extras in the
-                # same children group.
-                for _xb, _xm in meta.get('extra_navms', ()):
-                    pending.append((struct.unpack_from('<I', _xb, 12)[0], _xb,
-                                    parent_path + chain))
             else:
                 conv = convert_ACHR if sig in ('ACHR', 'ACRE') else convert_REFR
                 record_bytes = conv(rec)

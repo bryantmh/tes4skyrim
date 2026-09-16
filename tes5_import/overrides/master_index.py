@@ -46,6 +46,7 @@ class MasterIndex:
         self._offsets = {}      # formid -> (signature, offset, total_size)
         self._paths = {}        # formid -> ((grup_type, label), ...)
         self._land_by_cell = {}  # cell formid -> LAND formid
+        self._navm_by_cell = {}
         self.masters = []
         self.own_index = 0
         self._load()
@@ -73,6 +74,9 @@ class MasterIndex:
             self._paths[rec.form_id] = stack.path()
             if rec.sig == b'LAND' and stack.cell is not None:
                 self._land_by_cell[stack.cell] = rec.form_id
+            elif rec.sig == b'NAVM' and stack.cell is not None:
+                self._navm_by_cell.setdefault(stack.cell, []).append(
+                    rec.form_id)
 
     def group_path(self, formid: int) -> tuple:
         """The GRUP nesting a record sits in, as ((type, label), ...).
@@ -105,6 +109,13 @@ class MasterIndex:
         in-game while the cell's placed references still rendered.
         """
         return self._land_by_cell.get(cell_formid, 0)
+
+    def navms(self, cell_formid: int) -> list:
+        """Every NAVM FormID in a cell, file order.
+
+        See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
+        """
+        return self._navm_by_cell.get(cell_formid, [])
 
     def __contains__(self, formid: int) -> bool:
         return formid in self._offsets
@@ -540,6 +551,21 @@ class ChainedMasterIndex:
         # Defined further down the chain: the byte already matches the child's
         # numbering when that master occupies the same slot in both lists.
         return fid
+
+    def navms(self, cell_formid: int) -> list:
+        """The navmeshes inside a cell, answered by the file that WINS it.
+
+        Each id is restated in the slot of whichever master defines it, as
+        `land` does.
+
+        See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
+        """
+        idx, own = self._route(cell_formid)
+        if idx is None:
+            return []
+        return [self._to_child(idx, fid) if (fid >> 24) == idx.own_index
+                else fid
+                for fid in idx.navms(own)]
 
     def find_by_edid(self, signature: bytes, edid: str) -> int:
         """Later masters win, matching load order."""
