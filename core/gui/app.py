@@ -507,8 +507,9 @@ def create_window():
     scrolls now, but the DEFAULT window should still clear it outright. The
     minimum only has to keep the log pane usable, for the same reason.
     """
-    from core.gui.config import load_config
+    from core.gui.config import load_config, write_default_config
 
+    write_default_config()
     cfg = load_config()
     root = make_root()
     root.title(f"T.E.SR.A.C.T  {version_info.current_version()}")

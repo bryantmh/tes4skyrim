@@ -41,6 +41,12 @@ navmesh_cache/*
 # to every user and make their upgrade check lie.
 .conversion_state.json
 
+# Per-install settings, and the only file the running app rewrites.  Same
+# rationale: committing it ships one machine's data paths and worker count to
+# every user, and an updater that overwrote it would wipe the real ones.
+# Defaults live in core/gui/config.py: DEFAULT_CONFIG.
+conversion_config.json
+
 # Renames the gate saw before they were staged.  Bridges a local write to a
 # local stage, after which git's own rename detection takes over.
 .claude/renames.json

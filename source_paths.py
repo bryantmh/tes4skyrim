@@ -69,10 +69,22 @@ def get_paths(config: dict) -> tuple:
 
 
 def load_config(config_path: str = None) -> dict:
-    """Read conversion_config.json, or the file at `config_path`."""
-    path = Path(config_path) if config_path else SCRIPT_DIR / "conversion_config.json"
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Read conversion_config.json, or the file at `config_path`.
+
+    The default file is per-install and untracked, so its absence is normal and
+    reads as {}; every key it can hold has an in-code default. An explicit
+    `config_path` still raises, because naming a file that is not there is a typo.
+
+    See: docs/reference/pipeline.md#the-config-file-is-per-install
+    """
+    if config_path:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    try:
+        with open(SCRIPT_DIR / "conversion_config.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
 
 
 def _registered_source(export_dir: str, file_name: str) -> str:

@@ -201,7 +201,19 @@ The `// INSTRUCTIONS` / `// SKIP_TYPES` / `// logRunsKept` keys are documentatio
 for someone hand-editing the file. Keep writing them on creation so a
 first-run file is still self-describing — they are inert to every reader.
 
-**Verified low-risk: every reader already tolerates a missing file or key.**
+**DONE.** Implemented: `conversion_config.json` is gitignored, `DEFAULT_CONFIG`
+lives in `core/gui/config.py`, and `write_default_config()` seeds it from
+`create_window()`. See
+[pipeline.md](../reference/pipeline.md#the-config-file-is-per-install).
+
+**One claim below was wrong.** `source_paths.load_config()` did a bare `open()`,
+so a missing file raised `FileNotFoundError` and killed the whole CLI (the
+loader `convert.py` uses, reached also by `preflight.py`, `compile_papyrus.py`,
+`ck_compile_check.py`, `make_game_select_esp.py`). It now returns `{}` for the
+default path and still raises for an explicit `--config`. The line numbers below
+also predate the `gui.py` -> `core/gui/` split.
+
+**Every OTHER reader already tolerates a missing file or key.**
 `load_config()` returns `{}` when the file is absent
 ([gui.py:329](../../gui.py#L329)); `preflight._load_config()` is
 best-effort-empty-dict ([preflight.py:249](../../preflight.py#L249));

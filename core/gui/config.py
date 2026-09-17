@@ -35,8 +35,10 @@ import sys
 import threading
 from pathlib import Path
 
+from asset_convert.lod.mesh_decimate import LOD_DETAIL_DEFAULT
 from core.collision_options import default_for_plugin as _winding_default
 from core.process_job import create_pool_job
+from core.run_log import DEFAULT_RUNS_KEPT
 from core.subprocess_flags import POPEN_FLAGS, configure_multiprocessing
 from output_layout import asset_root
 
@@ -45,6 +47,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 CONFIG_FILE = REPO_ROOT / "conversion_config.json"
 EXPORT_DIR = REPO_ROOT / "export"
+
+#: Seeds conversion_config.json on first run. See write_default_config.
+DEFAULT_CONFIG = {
+    "// INSTRUCTIONS": "Files to convert are supplied via -f/--files or the GUI. Masters are auto-detected from binary headers. Data paths are auto-detected from registry.",
+    "// SKIP_TYPES": "Skip types are managed in tes5_import/constants.py SKIP_TYPES set.",
+    "// logRunsKept": "How many run logs to keep in logs/ (named run-<timestamp>-<plugin>.log, newest sorts last). 0 disables run logging. Default 20.",
+    "tes4DataPath": "",
+    "tes5DataPath": "",
+    "files": ["Oblivion.esm"],
+    "logRunsKept": DEFAULT_RUNS_KEPT,
+    "lodDetail": LOD_DETAIL_DEFAULT,
+}
 
 
 #: Every color the window uses; the teal `global_btn` marks non-pipeline
@@ -263,6 +277,17 @@ def save_config(cfg: dict) -> None:
     """Overwrite the saved config with `cfg`."""
     with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
         json.dump(cfg, fh, indent=2)
+
+
+def write_default_config() -> bool:
+    """Create conversion_config.json from DEFAULT_CONFIG; True if written.
+
+    See: docs/reference/pipeline.md#the-config-file-is-per-install
+    """
+    if CONFIG_FILE.exists():
+        return False
+    save_config(dict(DEFAULT_CONFIG))
+    return True
 
 
 def save_setting(key: str, value) -> None:

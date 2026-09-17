@@ -160,6 +160,26 @@ and `bsarchPath` (an explicit BSArch.exe location) are also read from here —
 see [Running off Windows](#running-off-windows) for why these matter more on
 Linux/Mac than on Windows.
 
+<a id="the-config-file-is-per-install"></a>
+#### The config file is per-install, and untracked
+
+`conversion_config.json` is the only file the running application mutates: the
+GUI writes it whenever a setting changes (data paths, output directory, worker
+count, navmesh-cache toggle, collision winding, LOD detail, Morrowind source).
+It is therefore **gitignored** — committing it would ship one machine's paths to
+every user, and any updater that overwrote it would wipe the real ones.
+
+**Every key has an in-code default, so the file is optional.** `DEFAULT_CONFIG`
+in `core/gui/config.py` holds the shipped values and the `//`-prefixed comment
+keys that make a hand-edited file self-describing; the GUI writes it on first
+run if nothing exists. Nothing depends on that write — `load_config()` reads an
+absent file as `{}`, and each consumer falls back on its own constant
+(`run_log.DEFAULT_RUNS_KEPT`, `mesh_decimate.LOD_DETAIL_DEFAULT`,
+`morrowind.source_default()`, registry auto-detection for the data paths).
+
+An explicit `--config PATH` is the one exception: a named file that does not
+exist raises, because that is a typo rather than a fresh install.
+
 <a id="run-logs"></a>
 ### Run logs
 

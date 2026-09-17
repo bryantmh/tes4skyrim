@@ -24,12 +24,18 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import core.run_log as run_log
+from core.gui.config import DEFAULT_CONFIG
 
 
 # A plugin that cannot exist: the export stage fails immediately, so the run
 # is fast, converts nothing, and still exercises the REAL logging path
 # (informational flags like --list-mods deliberately skip run logging).
 FAST_RUN = ("-f", "NoSuchPlugin.esm", "--export-only")
+
+
+def _default_config_copy():
+    """A fresh copy of the in-code defaults the GUI seeds a new install with."""
+    return dict(DEFAULT_CONFIG)
 
 
 def _run(logs_dir, env_extra=None, args=FAST_RUN):
@@ -47,9 +53,9 @@ def _run(logs_dir, env_extra=None, args=FAST_RUN):
 
 
 def _config_with(tmp_path, keep):
-    """A copy of the shipped config with `logRunsKept` set; returns its path."""
+    """A copy of the default config with `logRunsKept` set; returns its path."""
     cfg_path = tmp_path / f"cfg-{keep}.json"
-    base = json.loads((ROOT / "conversion_config.json").read_text(encoding="utf-8"))
+    base = _default_config_copy()
     base["logRunsKept"] = keep
     cfg_path.write_text(json.dumps(base), encoding="utf-8")
     return cfg_path
@@ -156,9 +162,22 @@ def test_log_runs_kept_honours_custom_count(logs_dir, tmp_path):
     assert len(_names(logs_dir)) == 2
 
 
-def test_shipped_config_declares_the_key():
-    """The key must be discoverable in the config the user actually edits."""
-    cfg = json.loads((ROOT / "conversion_config.json").read_text(encoding="utf-8"))
+def test_seeded_config_declares_the_key():
+    """The key must be discoverable in the config a new install is seeded with.
+
+    conversion_config.json is untracked, so the defaults are the contract.
+    """
+    cfg = _default_config_copy()
     assert cfg.get("logRunsKept") == run_log.DEFAULT_RUNS_KEPT
     assert any("logRunsKept" in k for k in cfg if k.startswith("//")), \
         "logRunsKept needs a // comment entry explaining it"
+
+
+def test_config_file_is_untracked():
+    """A tracked config would ship one machine's paths to every user."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "conversion_config.json"],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=30,
+    )
+    assert tracked.returncode != 0, \
+        "conversion_config.json is tracked again; it must stay gitignored"
