@@ -119,6 +119,7 @@ A dated sweep over a corpus, with counts. Frozen once written; a re-audit is a N
 | [aggression_faction.md](audits/aggression_faction.md) | Aggression / Ally / Enemy Conversion Audit |
 | [ck_warnings.md](audits/ck_warnings.md) | CK Warnings Audit — Oblivion.esm |
 | [fallout_nv_mesh_conversion.md](audits/fallout_nv_mesh_conversion.md) | Fallout NV / FO3 mesh conversion — what already works, and the particle-NIF defect |
+| [morroblivion_mesh_axis_rotation.md](audits/morroblivion_mesh_axis_rotation.md) | Morroblivion meshes authored along +Y; 45 meshes, 2,578 refs carry a compensating pitch |
 | [package_conversion.md](audits/package_conversion.md) | PACK Conversion Audit — 2026-08-17 |
 | [quest.md](audits/quest.md) | Quest Completability Audit — Oblivion.esm conversion |
 | [quest_script_conversion.md](audits/quest_script_conversion.md) | Quest Script Conversion Audit |

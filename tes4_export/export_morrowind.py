@@ -492,10 +492,11 @@ def export_plugin(source_path: str, export_dir: str, masters=()) -> dict:
     if out.get('CREA'):
         print(f"  Creatures: {owned} of {len(out['CREA'])} converted here, "
               f"the rest from a master")
-    remapped, shifted = remap_vanilla_models(out, ctx)
+    remapped, shifted, pitched = remap_vanilla_models(out, ctx)
     if remapped:
         print(f'  Morroblivion models: {remapped} vanilla mesh references remapped'
-              + (f', {shifted} re-seated' if shifted else ''))
+              + (f', {shifted} re-seated' if shifted else '')
+              + (f', {pitched} refs axis-pitched' if pitched else ''))
     out_dir = str(record_dir(export_dir, plugin))
     counts = write_export(out, out_dir)
     write_header(out_dir, _master_list(masters), sum(counts.values()),
