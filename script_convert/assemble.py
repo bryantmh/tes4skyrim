@@ -600,16 +600,10 @@ def _arm(conv, secs: str, load_gated: bool, indent: str = '  ') -> list:
 def _dialogue_gate(conv, extends: str, load_gated: bool) -> list:
     """Skip this pass while the player is in a dialogue menu.
 
-    TES4 GameMode never ran while a menu was open.  Measured in game (CharacterGen 40-50): the Emperor's poll fired during his
-    stage-42 dialogue and its Say() INTERRUPTED his 17.8s Goodbye reply, so
-    the reply's `setstage 43` was lost and the birthsign menu never opened;
-    the quest poll's stage-45 guard fired during the stage-44 dialogue and
-    sent Baurus in to force-greet over it.
+    TES4 GameMode never ran while a menu was open.  Only scripts that SPEAK
+    carry the gate; a poll that never speaks cannot cut a line.
 
-    Only scripts that SPEAK carry the gate.  Applying it to every poll (first
-    attempt, same day) put PlayerIsInDialogue on ~210 quest polls at 0.1s and
-    the VM starved: End fragments ran 11-17s late and "Yessir" played twice.
-    A non-speaking poll cannot cut a line.
+    See: docs/commentary/script_convert.md#the-dialogue-poll-gate
     """
     if not conv.sc.uses_say or extends not in ('Actor', 'Quest'):
         return []

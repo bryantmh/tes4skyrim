@@ -3499,6 +3499,24 @@ compare against the one the poll tail never updates — so it would never open.
 Papyrus is case-insensitive, so the duplicate declarations compiled and the fault
 would only have shown in game.
 
+### The dialogue poll gate
+<a id="the-dialogue-poll-gate"></a>
+
+**Code:** `script_convert/assemble.py:_dialogue_gate`
+
+TES4 `GameMode` never ran while a dialogue menu was open. Measured in game
+(CharacterGen 40-50) with no gate: the Emperor's poll fired during his stage-42
+dialogue and its `Say()` INTERRUPTED his 17.8 s Goodbye reply, so the reply's
+`setstage 43` was lost and the birthsign menu never opened; the quest poll's
+stage-45 guard fired during the stage-44 dialogue and sent Baurus in to
+force-greet over it.
+
+**Only scripts that SPEAK carry the gate** (`conv.sc.uses_say`). Applying it to
+every poll -- the first attempt, same day -- put `PlayerIsInDialogue` on ~210
+quest polls at 0.1 s and the VM starved: End fragments ran 11-17 s late and
+"Yessir" played twice. A poll that never speaks cannot cut a line, so it does
+not need the gate.
+
 ### A worldspace property must use the CONVERTED EditorID
 <a id="worldspace-property-rename"></a>
 

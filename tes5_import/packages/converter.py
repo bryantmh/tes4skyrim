@@ -846,6 +846,11 @@ def _has_target(rec: dict) -> bool:
     return get_int(rec, 'PTDT.Type', -1) >= 0
 
 
+def _approaches_ref(rec: dict, ptype: int) -> bool:
+    """True for an Ambush on a SPECIFIC reference: a scripted walk-up."""
+    return ptype == T4_AMBUSH and get_int(rec, 'PTDT.Type', -1) == 0
+
+
 # ---------------------------------------------------------------------------
 # TES4 type -> template + inputs
 # ---------------------------------------------------------------------------
@@ -1068,6 +1073,8 @@ def _pick_ambush(p: _Pick) -> Inputs:
 
     TES4 Ambush means "wait for the target to come near, then act on it" --
     Oblivion uses it for scripted approaches as well as literal ambushes.
+    An actor is approached to PTDT.Count, the authored talking distance;
+    PLDT.Radius is only the watch area around the location.
     """
     if not _has_target(p.rec):
         i = Inputs(HOLD_POSITION)
@@ -1076,11 +1083,12 @@ def _pick_ambush(p: _Pick) -> Inputs:
     radius = _pldt_radius_f(p.rec)
     if _targets_player(p.rec):
         return _force_greet(p, radius)
+    reach = float(get_int(p.rec, 'PTDT.Count', 0) or 0) or radius
     i = Inputs(FOLLOW)
     i.set('target', p.tgt)
-    if radius > 0:
-        i.set('min_radius', max(64.0, radius * 0.5))
-        i.set('max_radius', radius)
+    if reach > 0:
+        i.set('min_radius', max(64.0, reach * 0.5))
+        i.set('max_radius', reach)
     return i
 
 
@@ -1278,8 +1286,8 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     # ambushes wait on a location (no PTDT) or target another actor.
     is_forcegreet = (ptype in (T4_AMBUSH, T4_FIND)
                      and _targets_player(rec))
-    flags, speed = convert_flags(get_int(rec, 'PKDT.Flags'), ptype,
-                                 not is_forcegreet,
+    hostile = not (is_forcegreet or _approaches_ref(rec, ptype))
+    flags, speed = convert_flags(get_int(rec, 'PKDT.Flags'), ptype, hostile,
                                  quest_gated=ctx.quest_of(pack_fid) is not None)
     # A scripted one-shot (force-greet, or "go operate that switch") must run
     # at vanilla's pace and with vanilla's interrupt authorisation, or the actor

@@ -1201,7 +1201,10 @@ Bool Function _OtherLineInProgress() Global
   If until <= 0.0
     Return False
   EndIf
-  Return Utility.GetCurrentRealTime() < until
+  ; GetCurrentRealTime restarts with the process, so a deadline saved by a
+  ; LONGER earlier session sits far in the future: no line lasts two minutes.
+  Float left = until - Utility.GetCurrentRealTime()
+  Return left > 0.0 && left < 120.0
 EndFunction
 
 Bool Function _IsSpeaking(Actor a) Global
@@ -1212,7 +1215,10 @@ Bool Function _IsSpeaking(Actor a) Global
   If ended <= 0.0
     Return False
   EndIf
-  Return (Utility.GetCurrentRealTime() - ended) < SAY_GRACE()
+  ; A stamp from an earlier, longer session is in the FUTURE of this one;
+  ; read as "just ended" it held the speaker busy for the whole 600s wait.
+  Float since = Utility.GetCurrentRealTime() - ended
+  Return since >= 0.0 && since < SAY_GRACE()
 EndFunction
 
 ; How long after a line's End fragment a re-Say on the SAME actor is still

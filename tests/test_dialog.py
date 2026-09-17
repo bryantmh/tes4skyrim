@@ -1857,21 +1857,21 @@ class TestNpcConversationChains:
         assert any('unsupported gate' in why for _fid, why in plan['skipped'])
 
     def test_generated_psc_shape(self):
+        """Each hop waits out TES4Polyfill.SayLine plus the 0.6s beat.
+
+        The measured length is only the FALLBACK argument, and the `!= None`
+        guards disable a chain whose binding diverged instead of aborting the
+        poll function.
+        """
         from tes5_import.dialogue.conversations import generate_driver_psc
         plan = self._plan()
         psc = generate_driver_psc(plan, {'info:000AAA31': 3.0})
         assert psc.startswith('ScriptName TES4NPCConvTest extends Quest')
-        # Each hop goes through TES4Polyfill.SayLine, which blocks until the
-        # engine has begun the line and returns its real length; the driver
-        # waits that out plus the 0.6s beat.  The measured length is only the
-        # FALLBACK argument (a line with no voice file).
         assert 'Utility.Wait(TES4Polyfill.SayLine(Conv0A, Conv0T0, 4.00) + 0.6)' in psc
         assert 'TES4Polyfill.SayLine(Conv0B, Conv0T1, 3.00) + 0.6' in psc
         assert 'TES4Polyfill.SayLine(Conv0A, Conv0T2, 4.00) + 0.6' in psc
         assert '.Say(' not in psc
         assert 'Conv0Q0.GetStage() == 26' in psc
-        # Unbound-property guards: a binding divergence disables the chain
-        # instead of aborting the poll function.
         assert 'Conv0T0 != None' in psc and 'Conv0Q0 != None' in psc
 
     def test_property_bindings_mirror_the_psc(self):

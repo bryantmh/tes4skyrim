@@ -711,6 +711,24 @@ def _counter_chain_len(infos: list) -> int:
     return run - lo + 1
 
 
+def _chain_body(chain, i: int, cond: str, say) -> str:
+    """One chain's `if` block, latched only once the last line has played."""
+    done_sets = [f'        _done{i} = True']
+    done_sets += [f'        _done{j} = True'
+                  for j in chain.get('exclusive_with', ())]
+    body = [f'    ; {chain["owner_quest_edid"]}: head INFO '
+            f'{chain["head_fid"]:08X}',
+            f'    if {cond}']
+    body.append(say(f'Conv{i}A', f'Conv{i}T0', chain['head_fid'], 'HELLO'))
+    for k, hop in enumerate(chain['hops']):
+        spk = 'A' if hop['speaker'] == 'A' else 'B'
+        body.append(say(f'Conv{i}{spk}', f'Conv{i}T{k + 1}',
+                        hop['info_fid'], hop['topic_edid']))
+    body += done_sets
+    body.append('    endif')
+    return '\n'.join(body)
+
+
 def generate_driver_psc(plan, say_durations: dict = None) -> str:
     """The full TES4NPCConv<plugin>.psc source, or '' when no chains."""
     if not plan['chains']:
@@ -730,9 +748,7 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
         return _FALLBACK_LINE_SECONDS
 
     def _say(actor, topic, hop_or_head, topic_edid):
-        # SayLine blocks until the engine has begun the line and returns its
-        # real length (+ tail); waiting that out is what Oblivion's scheduler
-        # did between lines.  A dropped line returns 0 and the chain moves on.
+        """One blocking SayLine, waited out; a drop returns 0 and moves on."""
         return (f'        Utility.Wait(TES4Polyfill.SayLine({actor}, {topic}, '
                 f'{_fallback(hop_or_head, topic_edid):.2f}) + {_LINE_BEAT})')
 
@@ -757,20 +773,7 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
                         for k in range(len(chain['hops']) + 1)]
         cond = ' && '.join([f'!_done{i}'] + topic_guards + terms
                            + [f'CanConverse(Conv{i}A, Conv{i}B)'])
-        done_sets = [f'        _done{i} = True']
-        done_sets += [f'        _done{j} = True'
-                      for j in chain.get('exclusive_with', ())]
-        body = [f'    ; {chain["owner_quest_edid"]}: head INFO '
-                f'{chain["head_fid"]:08X}',
-                f'    if {cond}']
-        body += done_sets
-        body.append(_say(f'Conv{i}A', f'Conv{i}T0', chain['head_fid'], 'HELLO'))
-        for k, hop in enumerate(chain['hops']):
-            spk = 'A' if hop['speaker'] == 'A' else 'B'
-            body.append(_say(f'Conv{i}{spk}', f'Conv{i}T{k + 1}',
-                             hop['info_fid'], hop['topic_edid']))
-        body.append('    endif')
-        bodies.append('\n'.join(body))
+        bodies.append(_chain_body(chain, i, cond, _say))
 
     lines += decls
     lines += [

@@ -698,6 +698,45 @@ within a topic is decided by that INFO's own converted conditions — exactly
 Oblivion's rule. So per-line CTDA fidelity is preserved and the INFO End
 fragments (the `setstage` payloads) fire as they do for any other `Say()`.
 
+### The MQ04 gate conversation: what actually stalled it
+<a id="chain-atomicity"></a>
+
+The driver latches `_done<N>` after the last line, so an interrupted chain
+retries on a later poll. That is all this section's original theory left
+behind; the rest of it was WRONG and is recorded here so it is not rebuilt.
+
+**Disproven:** "the MQ04 poll advances 35 -> 40 during Cyrus's line because
+`convTimer <= 0 && speaker == 0` is already true". Stage 35's own result script
+sets `convTimer` to 30, so that guard is closed for 30 s. A poll hold built on
+the theory (`ConversationInProgress()` in the dialogue gate) changed 152
+scripts, lengthened the pause between lines, and was reverted. So was a driver
+retry for "refused" lines: no refusal was ever observed.
+
+**The two real causes, both measured in the running game:**
+
+1. **Cyrus never walked out.** `MQ04CyrusGreetJauffre` is a TES4 Ambush on an
+   actor. It converted to Follow using `PLDT.Radius` (1800, the watch area) as
+   the follow distance, so at 1,560 units Cyrus was already "in range" and the
+   driver's 500-unit `CanConverse` never passed. The approach distance is
+   `PTDT.Count` (210). Across all 80 Oblivion Ambush packages Count is a
+   100-250 talking distance; only two target an NPC, this one and
+   `MQ13NarinaCarvainToMartin`, and both open a restored chain. Fixed in
+   `tes5_import/packages/converter.py:_pick_ambush`, which also stopped giving
+   a walk-up to a named reference the weapon-drawn / sneak ambush flags.
+
+2. **Jauffre read as "still speaking" for ten minutes.**
+   `Utility.GetCurrentRealTime()` restarts at zero with the process, but the
+   SayLine stamps are actor values and persist in the save. His `Variable03`
+   ("last line ended") held 3,455 from a longer earlier session; in a fresh
+   session `now - 3455` is negative, which passed `< SAY_GRACE`, and `SayLine`
+   sat in its 600 s wait. `_IsSpeaking` now requires `since >= 0`, and
+   `_OtherLineInProgress` treats a deadline over 120 s ahead as stale. This
+   affects ANY speaker whose last line was in a longer earlier session.
+
+Diagnostic that settled it: the console `say <topic>` on a selected actor
+prints every condition it evaluates, and `getav variable03/07/08/09` on the
+speaker shows a live claim token being renewed.
+
 ### The selection rules (and why each exists)
 
 Restored only when ALL hold:
