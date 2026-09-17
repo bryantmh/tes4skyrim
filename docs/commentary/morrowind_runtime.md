@@ -233,8 +233,346 @@ ActionScript, no dialogue logic.
 python tools/generators/gen_morrowind_menu_swf.py --hello
 ```
 
-**If that does not draw, the UI approach is wrong and the plan stops there**
-rather than after the menu has been built on it.
+### ✅ CONFIRMED IN GAME: a standalone authored SWF DRAWS
+
+The probe renders: panel, border and text, opened with `showmenu
+MorrowindDialogueMenu`. **The `asset_convert/ui` failure does not generalize** —
+it was specific to adding characters to a movie the engine had already parsed,
+and says nothing about a movie parsed from scratch. A movie this project
+authors end to end is drawn like any of Bethesda's own.
+
+That settles the single biggest unknown in the plan, and it took three fixes to
+get there, none of them about the SWF container: the menu never called
+`Render` (slot 6), `flags` went to the wrong offset, and the text field carried
+mis-ordered flags and no font. Each is written up below, because every one of
+them fails SILENTLY — `LoadMovie` succeeds, the menu takes focus, the game
+pauses, and nothing appears.
+
+The probe's text renders through `$EverywhereMediumFont` imported from the
+shared `gfxfontlib.swf`. The real menu embeds its own face instead — see
+[dynamic text](#dynamic-text).
+
+## <a id="dynamic-text"></a>Dynamic text: a real embedded font
+
+**Code:** `asset_convert/ui/swf.py` (`define_font2`),
+`tools/generators/gen_morrowind_menu_swf.py`
+
+The first real menu baked its text **into the window bitmap** — a fixed
+greeting, a fixed topic list, a fixed name. That is not a menu, it is a
+screenshot: the plugin had no way to say anything. Text has to come from
+`DefineEditText` fields the plugin fills through
+`GFxMovieView::SetVariable`, which is the same mechanism `tes_runtime`'s
+`hud.cpp` already drives (`SetVariable` at vtable slot `0x10`).
+
+A `DefineEditText` needs a FONT CHARACTER. That is what forced the font
+question, because **Morrowind's own face is a bitmap atlas**, not outlines:
+`century_gothic_font_regular.fnt` plus a 256×256 `.tex`. Three things follow
+from that, all measured:
+
+| Fact | Consequence |
+|---|---|
+| Glyphs are 11×13 px with **26% antialiased midtones** | a 1-bit contour trace loses what makes them legible |
+| The face is **proportional** — 12 distinct advances over 94 glyphs, 3 px (`i`) to 14 px (`W`) | per-glyph placement needs a shipped metrics table and a layout engine |
+| Rule 2 is **per shape**, and vanilla `hudmenu.swf` carries 207 bitmap-filled shapes | 94 glyph shapes IS legal, just expensive |
+
+### 🛑 OpenMW's `MysticCards` is its DEFAULT UI font
+
+`components/fontloader/fontloader.cpp` does
+`loadFont(defaultFontId, "MysticCards")` as the fallback for `Fonts_Font_0`,
+and `docs/source/reference/modding/font.rst` states it outright. The set:
+
+| OpenMW TTF | Role | Vanilla `.fnt` |
+|---|---|---|
+| `MysticCards` | default UI face (`Fonts_Font_0`) | `magic_cards_regular` |
+| `DemonicLetters` | Daedric, scrolls (`Fonts_Font_2`) | `daedric_font` |
+| `DejaVuLGCSansMono` | console and debug, not configurable | — |
+
+They carry unfamiliar names **because they are open-source reimplementations** —
+OpenMW cannot ship Bethesda's font. MysticCards derives from **Pelagiad** (Isak
+Larborn), a face built as a Morrowind UI font, under **SIL OFL 1.1**: embedding
+and redistribution are explicitly permitted so long as the license travels with
+it. Unlike the vanilla atlas, it can actually SHIP.
+
+So the menu embeds MysticCards as a real `DefineFont2` and the text fields are
+ordinary dynamic fields — Scaleform does wrapping, alignment and scaling, and
+no glyph layout code exists on our side at all.
+
+TrueType outlines are **quadratic**, and so are SWF's curve records, so
+`qCurveTo` maps across with no approximation. The one axis flip is that a
+font's Y runs up and SWF's runs down.
+
+### `DefineFont2`, and the four ways it fails silently
+
+`define_font2` writes the tag; these are the parts that are wrong if guessed:
+
+| Part | Rule |
+|---|---|
+| **CodeTable order** | ASCENDING by character code. It is binary-searched, so an unsorted table draws the WRONG LETTERS rather than failing |
+| **OffsetTable base** | offsets count from the START of the offset table, and that table is `4 * (count + 1)` bytes because `CodeTableOffset` follows the per-glyph entries |
+| **Fill state per contour** | fill style 1 is restated after every `moveTo`, as vanilla's own glyph shapes do; a contour that never states a fill renders as nothing |
+| **FontBoundsTable** | one EMPTY rect per glyph. Scaleform measures from the outlines, and vanilla's own font library ships them empty |
+
+The tag is emitted **wide** (u32 offsets, u16 codes) unconditionally. The
+narrow form saves a few hundred bytes in a file that is already mostly bitmap,
+and is one more thing to get wrong.
+
+### <a id="shape-record-flags"></a>🛑 StyleChangeRecord flags are consumed LOW BIT FIRST
+
+The five flags of a StyleChangeRecord are one 5-bit field written high bit
+first, but their VALUES run the other way:
+
+| Flag | Bit |
+|---|---|
+| `StateMoveTo` | `0x01` |
+| `StateFillStyle0` | `0x02` |
+| `StateFillStyle1` | `0x04` |
+| `StateLineStyle` | `0x08` |
+| `StateNewStyles` | `0x10` |
+
+Writing them as five sequential 1-bit calls reverses them. Measured on the
+first embedded font: a record meant to be "move the pen" was read as
+`StateNewStyles`, and "set fill 1" as `StateFillStyle0`, after which every
+later record desynchronized — one glyph decoded a 28-bit move to
+`(-104030208, 35435399)`.
+
+**It parses.** The tag length is right, the offset table is consistent, and
+nothing errors; the glyphs simply never draw. In game that is a window whose
+chrome renders perfectly and whose text is invisible — indistinguishable from
+`SetVariable` never having run.
+
+This is the SAME failure as [DefineEditText's flags](#edit-text-flags), one
+layer down: build the flag byte by OR-ing named constants and write it once,
+never as a sequence of single bits.
+
+🛑 **This is a lookalike, not vanilla's exact face.** Rendering the authored
+atlas remains the higher-fidelity option and is a later pass; it is recorded
+here so the substitution is a decision rather than drift.
+
+## <a id="the-real-menu"></a>The real menu, from Morrowind's own art
+
+**Code:** `asset_convert/ui/morrowind_menu_art.py`,
+`tools/generators/gen_morrowind_menu_swf.py`
+
+🛑 **No Bethesda pixels are committed.** The textures are read from the
+registered Morrowind install at build time and composed into the generated
+`.swf`, which is itself a build artifact. The repo carries the LAYOUT — which
+texture goes where, at what size — and never the art.
+
+Art is taken **as shipped**, from the archives, ignoring loose replacers, for
+the same reason `find_archived_mesh` does: a user's texture pack must not change
+what the converter builds, or two installs produce different menus from one
+source. `find_archived_file` is the generalization of that helper to any stored
+path, since the UI art lives under `textures\` rather than `meshes\`.
+
+### Layout, from OpenMW's own
+
+`openmw_dialogue_window.layout` is the authority, not a reconstruction. The
+window is **588 × 433**:
+
+| Widget | Position (x y w h) | Holds |
+|---|---|---|
+| History | `15 15 364 370` | the response text, with keyword links |
+| VScroll | `370 13 14 371` | the response scrollbar |
+| Disposition | `398 8 166 18` | the disposition bar |
+| TopicsList | `398 31 166 328` | the topic list |
+| ByeButton | `398 366 166 23` | Goodbye |
+
+Persuasion is a separate `220 × 192` modal
+(`openmw_persuasion_dialog.layout`): Admire, Intimidate, Taunt and three
+bribes at 18 px pitch, a gold label, and Cancel.
+
+### The art, and the colors
+
+The frame is `menu_thick_border_*` — eight textures, **4 px** edges with 4 × 4
+corners. `MW_Box`, the inset the panes sit in, is `menu_thin_border_*` at
+**2 px**. Both decode from `Morrowind.bsa`; the edges are 512 px long and
+resample along their run, the corners never do.
+
+Colors are read from the install's own `Morrowind.ini` `[FontColor]` section
+rather than sampled or guessed:
+
+| Key | RGB | Used for |
+|---|---|---|
+| `color_background` | `0,0,0` | the panel |
+| `color_normal` | `202,165,96` | body text |
+| `color_link` | `112,126,207` | a clickable topic keyword |
+| `color_link_over` | `143,155,218` | hover |
+| `color_header` | `223,201,159` | the NPC's name |
+| `color_answer` | `150,50,30` | a chosen answer, echoed back |
+
+### <a id="the-font"></a>The font is Morrowind's own
+
+**Code:** `asset_convert/ui/morrowind_font.py`
+
+Skyrim's `$EverywhereMediumFont` was the probe's expedient; the real menu uses
+Morrowind's own face, which is what makes the window read as Morrowind's.
+
+`Data Files/Fonts/century_gothic_font_regular.fnt` is the UI face — metrics
+plus a 256 × 256 `.tex` atlas whose glyphs are white with the shape in alpha,
+so tinting is a solid fill wearing the glyph's alpha. `daedric_font` and
+`century_gothic_big` sit beside it for Daedric text and titles.
+
+The layout is **OpenMW's `components/fontloader/fontloader.cpp`**, not
+reverse-engineering: a 296-byte header (`float fontSize`, two `int 1`,
+`char[284]` atlas name) then 256 × 56-byte `GlyphInfo` of
+`{unknown, 4 corner Points, width, height, kerningLeft, kerningRight, ascent}`.
+
+Three rules from that file that are wrong if guessed:
+
+| Quantity | Value |
+|---|---|
+| advance | `mWidth + mKerningRight` — **not** `mWidth` |
+| bearing | `(mKerningLeft, fontSize - mAscent)` — the vertical offset |
+| glyph rect | `TopLeft * size`, extent from `TopRight.x` and `BottomLeft.y` |
+
+The rect uses **three** of the four corners — origin from `TopLeft`, width from
+`TopRight.x`, height from `BottomLeft.y`. Verified over
+`century_gothic_font_regular`: that formula reproduces the stated `mWidth` and
+`mHeight` for every glyph, and the cut glyphs read correctly. Guessing the
+field order instead yields rects that are non-empty, correctly sized, and cut
+from the wrong place — the text renders as scrambled letters, not as nothing.
+
+🛑 **Advance is one pixel UNDER width.** Measured over that face: all **94
+printable glyphs carry `mKerningRight = -1.0`**, uniform authored tracking that
+tucks each glyph a pixel left. It looks like an off-by-one and is not — dropping
+the kern sets every line a pixel per glyph too wide. `tests/
+test_morrowind_menu_art.py` asserts the relation so it cannot be "fixed" back.
+
+### <a id="one-bitmap"></a>🛑 One bitmap, one fill
+
+The frame composes into **ONE** image rather than nine placed clips. That is the
+rule `asset_convert/ui/ui_menus.py` established across five in-game rounds:
+**this engine draws a shape's FIRST bitmap fill across the whole shape and
+ignores the rest.** Nine rects would render as one stretched corner.
+
+Composing offline also keeps the corners' authored pixels exact — only the four
+edges resample, along the one axis they run.
+
+## <a id="activation"></a>Activation: which NPCs get this menu
+
+**Code:** `tes_runtime/morrowind_runtime/plugin/activation.cpp`,
+`tes5_import/dialogue/morrowind_sidecar.py`
+
+Routing is **one bit test on the FormID's load-order index byte**, the rule
+this project already uses everywhere (`project_master_index_routing`). At load
+the DLL asks the engine for each converted plugin's [current
+index](#load-order) and sets that bit; a plugin the user has not installed
+never sets one.
+
+```
+idx = formId >> 24
+if !mwPluginMask.test(idx):              return false   # vanilla, untouched
+if !speakers.count(formId & 0xFFFFFF):   return false   # a mute Morrowind actor
+OpenMorrowindDialogue(formId);           return true
+```
+
+The first test rejects every vanilla Skyrim NPC — and every Oblivion-converted
+one — before any map is touched, which is what keeps the hook off the hot path
+for content this runtime has nothing to do with. 🛑 Never route by EditorID or
+file name (`feedback_never_classify_by_filename`).
+
+### <a id="load-order"></a>🛑 The index byte in the sidecar is NOT the runtime one
+
+**Measured in-game: `TR_Mainland` converts at index `0x03` and the player's
+load order gives it `0x22`.** An NPC the log called `22C553BA` is stored in
+`MWAC.txt` as `03C553BA`. Comparing whole FormIDs matched nothing, every actor
+fell through to vanilla, and — because a converted Morrowind NPC has no Skyrim
+dialogue either — activating one did nothing at all.
+
+This is `project_master_index_routing` again: **a raw FormID is meaningless
+across plugins.** The fix has two halves:
+
+- `MWAC.txt` is keyed by the **local** id (`formId & 0x00FFFFFF`); the stored
+  index byte is discarded on load, because it records only where the plugin sat
+  on the converting machine.
+- The runtime index is resolved **once per plugin at load** by
+  `Game.GetFormFromFile` (id 55465) against any one of that plugin's own forms,
+  then that bit is set in the mask. The hot path stays a single bit test.
+
+`ResolveIndex` tries `.esm` then `.esp`, and a plugin that is not installed
+resolves to nothing and simply never sets a bit — which is also how the runtime
+stays inert for a load order that has no Morrowind content.
+
+The log now prints the resolved index per plugin
+(`TR_Mainland -> 8522 actor(s) at load-order index 22`), so this class of
+failure names itself rather than presenting as silence.
+
+### The actor index, and why import writes it
+
+The runtime routes by **FormID** but filters dialogue by **TES3 id**, so
+without a map between them it can tell an actor is Morrowind's and still not
+know who they are. `MWAC.txt` is that map, `FormID=EditorID` per line, written
+into the sidecar at import because the FormID is minted during import and does
+not exist at export time. A Morrowind NPC's `EditorID` *is* its TES3 string id,
+which is what `INFO.Actor` names.
+
+### <a id="why-not-the-menu"></a>🛑 The dialogue menu is the WRONG hook
+
+The first attempt sank `MenuOpenCloseEvent` and diverted when Skyrim's
+"Dialogue Menu" opened on a Morrowind speaker. **It cannot work**, and the
+reason is structural rather than a bug: a converted Morrowind NPC has no Skyrim
+dialogue at all, so that menu never opens and the sink never fires. Waiting for
+a signal the content by construction never emits.
+
+`TESObjectREFR::ActivateRef` (id 19796) is the real activation entry — both the
+player's activate and Papyrus's `ObjectReference.Activate` reach it. But it
+**cannot be detoured**: its prologue opens `48 8B C4`, `mov rax, rsp`, which
+`AnalyzePrologue` refuses outright because a relocated copy captures the
+*trampoline's* stack pointer. That exact instruction crashed the game on
+2026-08-14, and the refusal is documented in `game_bridge/plugin/detour.cpp`.
+
+### The interception point: a vtable swap
+
+`ActivateRef` ends by dispatching through the **base form's** vtable:
+
+```asm
+mov  rcx, [rsi + 0x40]     ; the base form (TESNPC)
+mov  rax, [rcx]
+call qword ptr [rax + 0x1b8]   ; TESNPC::Activate(this, ref, activator, ...)
+```
+
+So `TESNPC` vtable slot **`0x1b8`** is swapped. A vtable steals no bytes, so the
+prologue hazard does not arise at all — and the slot fires for every NPC
+activation, dialogue or not.
+
+Checking the **base form's** FormID rather than the ref's is what makes one
+indexed NPC match all of its placed references.
+
+Returning `true` without calling the original is what suppresses Skyrim's own
+activation, so no vanilla menu appears behind ours. Anything not claimed calls
+straight through.
+
+| What | ID | 1.6.1170 | How it was found |
+|---|---:|---|---|
+| `TESNPC` vtable | 195816 | `0x17e4d50` | RTTI; slot `0x1b8` verified to hold `TESNPC::Activate` on the running build |
+| `TESNPC::Activate` | 24715 | `0x3b9500` | the `[rax+0x1b8]` dispatch at the end of `ActivateRef` |
+| `UIManager::AddMessage` | 13631 | `0x1af260` | pool arithmetic: `[rcx+0x378]` vs `0x40`, `(n+0x1c)<<5` → `messagePool` at `0x380` |
+| UIManager singleton | 400445 | `0x20f8950` | loaded beside the name table at the `AddMessage` call sites |
+| `BSFixedString` ctor | 69161 | `0xcec5d0` | ~20 consecutive menu-name internings |
+
+The last three invert to exactly the RVAs SKSE hardcodes for 1.5.97, which is
+what confirms them.
+
+🛑 **The install REFUSES to swap** a slot not already holding
+`TESNPC::Activate`. Writing the wrong slot would hand the engine our function
+for an unrelated virtual — a failure no log would explain.
+
+### <a id="opening-a-menu"></a>Opening a menu: post a UIMessage
+
+A menu opens by posting `kMessage_Open` (**1**; close is **3**) through
+`UIManager::AddMessage`, which is what the console's `showmenu` and every
+engine call site do.
+
+🛑 **The name must be an INTERNED `BSFixedString`.** `AddMessage` dereferences
+its second argument and the queue compares by pointer, so a plain `const char*`
+never matches a registered menu — it fails silently, with no menu and no error.
+Every name therefore goes through the interning constructor first.
+
+`ReceiveEvent` returns `kEvent_Continue` (0) always: the event is never
+consumed, so every other sink still sees it and vanilla behaviour is untouched
+for anyone we do not divert. It runs on the main thread inside the dispatcher's
+lock, so it does one bit test, one hash lookup and at most two posted messages
+— which the engine drains on its own schedule rather than inside our callback.
 
 ### <a id="the-menu-must-render-itself"></a>🛑 A menu DRAWS ITSELF: vtable slot 6
 
@@ -423,6 +761,25 @@ and `INFO.txt` into that plugin's own output at
 which installs alongside every other converted asset, and which the DLL walks
 at `kMessage_DataLoaded` — one subfolder per plugin, so one plugin's dialogue
 can never be attributed to another's.
+
+The files are `MWDI.txt`, `MWIN.txt` and `MWAC.txt` (the
+[actor index](#activation)).
+
+### 🛑 The root comes from THIS MODULE, not the host process
+
+`SidecarDir()` resolves `GetModuleHandleEx(FROM_ADDRESS)` on one of its own
+functions and appends `MorrowindRuntime\`. An SKSE plugin is always loaded from
+`Data\SKSE\Plugins\`, which is exactly the folder holding the sidecars, so this
+needs no assumption at all.
+
+Deriving it from `GetModuleFileNameA(nullptr)` and appending
+`Data\SKSE\Plugins\...` assumes the host process sits beside the Data folder
+this plugin was loaded from. That has no upside over asking the module itself,
+and when it is wrong the failure is silent: `0 sidecar(s)`, no dialogue, and
+every activation falling through to vanilla.
+
+The loader logs the resolved root and a per-file result, so a miss names the
+path it looked in rather than only its own disappointment.
 
 The files are **copied, not re-serialized**. The exporter already writes the
 format the runtime parses (`docs/reference/morrowind_dialogue_format.md`), so a

@@ -52,25 +52,6 @@ int GetInt(const Record& rec, const char* key, int fallback) {
     return std::atoi(it->second.c_str());
 }
 
-// Directory this plugin's sidecars live in, or "" when the game path is
-// unknown. Its own folder, never TESRuntime's.
-std::string SidecarDir() {
-    char exe[MAX_PATH] = {0};
-    if (!GetModuleFileNameA(nullptr, exe, MAX_PATH)) return "";
-    std::string path(exe);
-    const std::size_t slash = path.find_last_of("\\/");
-    if (slash == std::string::npos) return "";
-    return path.substr(0, slash) + "\\Data\\SKSE\\Plugins\\MorrowindRuntime\\";
-}
-
-std::string ReadFile(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return "";
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
 void AddConditions(const Record& rec, Info& info) {
     const int count = GetInt(rec, "ConditionCount", 0);
     info.conditions.reserve(static_cast<std::size_t>(count));
@@ -211,19 +192,43 @@ std::vector<std::unordered_map<std::string, std::string>> ParseExport(
     return out;
 }
 
-StoreStats LoadStore() { return LoadStoreFrom(SidecarDir()); }
+// Where this DLL itself sits, which is `Data\SKSE\Plugins\`. The sidecars are
+// in `MorrowindRuntime\` beside it.
+//
+// 🛑 Derived from THIS MODULE, not from GetModuleFileNameA(nullptr). The host
+// process is whatever launched the game, and deriving the data path from it
+// assumes the exe and the Data folder are where this plugin expects -- an
+// assumption with no upside, since a plugin is always loaded from the folder
+// it needs to read.
+// See: docs/commentary/morrowind_runtime.md#sidecar
+std::string SidecarDir() {
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCSTR>(&SidecarDir), &self)) {
+        return "";
+    }
+    char dll[MAX_PATH] = {0};
+    if (!GetModuleFileNameA(self, dll, MAX_PATH)) return "";
+    std::string path(dll);
+    const std::size_t slash = path.find_last_of("\\/");
+    if (slash == std::string::npos) return "";
+    return path.substr(0, slash) + "\\MorrowindRuntime\\";
+}
 
-StoreStats LoadStoreFrom(const std::string& rootIn) {
-    g_topics.clear();
-    StoreStats stats;
-    if (rootIn.empty()) return stats;
-    std::string root = rootIn;
-    if (root.back() != '\\' && root.back() != '/') root.push_back('\\');
+std::string ReadFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return "";
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
 
+std::vector<std::string> SidecarPlugins(const std::string& root) {
+    std::vector<std::string> plugins;
     WIN32_FIND_DATAA find;
     HANDLE handle = FindFirstFileA((root + "*").c_str(), &find);
-    if (handle == INVALID_HANDLE_VALUE) return stats;
-    std::vector<std::string> plugins;
+    if (handle == INVALID_HANDLE_VALUE) return plugins;
     do {
         if (!(find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
         const std::string name = find.cFileName;
@@ -231,11 +236,31 @@ StoreStats LoadStoreFrom(const std::string& rootIn) {
         plugins.push_back(name);
     } while (FindNextFileA(handle, &find));
     FindClose(handle);
+    return plugins;
+}
+
+StoreStats LoadStore() { return LoadStoreFrom(SidecarDir()); }
+
+StoreStats LoadStoreFrom(const std::string& rootIn) {
+    g_topics.clear();
+    StoreStats stats;
+    if (rootIn.empty()) {
+        Log("store: no sidecar root -- GetModuleFileNameA gave nothing");
+        return stats;
+    }
+    std::string root = rootIn;
+    if (root.back() != '\\' && root.back() != '/') root.push_back('\\');
+    const std::vector<std::string> plugins = SidecarPlugins(root);
+    Log("store: root '%s' -> %zu plugin folder(s)", root.c_str(),
+        plugins.size());
 
     // DIAL first for every plugin: an INFO is dropped unless its topic exists.
     for (const std::string& plugin : plugins) {
         const std::string dir = root + plugin + "\\";
-        if (LoadOne(dir, kFileTopics, stats)) ++stats.files;
+        const bool ok = LoadOne(dir, kFileTopics, stats);
+        Log("store:   %s/%s %s", plugin.c_str(), kFileTopics,
+            ok ? "loaded" : "MISSING or empty");
+        if (ok) ++stats.files;
     }
     for (const std::string& plugin : plugins) {
         LoadOne(root + plugin + "\\", kFileInfos, stats);

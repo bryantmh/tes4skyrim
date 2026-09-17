@@ -10,7 +10,9 @@
 #include <cstdio>
 #include <type_traits>
 
+#include "activation.h"
 #include "addresses.h"
+#include "conversation.h"
 #include "log.h"
 #include "menu.h"
 #include "skse_abi.h"
@@ -38,9 +40,21 @@ void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
         Log("store: no sidecar found -- no Morrowind dialogue will be offered, "
             "and every activation falls through to vanilla");
     }
+    const std::size_t actors = LoadActorIndex();
+    Log("activation: %zu actor(s) indexed", actors);
     // The MenuManager singleton only exists once the game is up, so the menu
     // registers here rather than at plugin load.
     Log("menu: install %s", InstallMenu() ? "ok" : "FAILED");
+    InstallConversation();
+    InstallActivation();
+}
+
+// SKSE hands the Papyrus VM over here, before kMessage_DataLoaded, which is
+// what lets the actor index resolve each plugin's live load-order position.
+bool CaptureVm(void* vm) {
+    SetPapyrusVm(vm);
+    Log("papyrus: VM %p", vm);
+    return true;
 }
 
 void QueryInterfaces(const SKSEInterface* skse) {
@@ -48,14 +62,18 @@ void QueryInterfaces(const SKSEInterface* skse) {
         skse->QueryInterface(kInterface_Messaging));
     if (msg) msg->RegisterListener(skse->GetPluginHandle(), "SKSE",
                                    OnSKSEMessage);
+    auto* papyrus = static_cast<SKSEPapyrusInterface*>(
+        skse->QueryInterface(kInterface_Papyrus));
+    if (papyrus) papyrus->Register(CaptureVm);
     g_serialization = static_cast<SKSESerializationInterface*>(
         skse->QueryInterface(kInterface_Serialization));
     if (g_serialization) {
         g_serialization->SetUniqueID(skse->GetPluginHandle(),
                                      kSerializationId);
     }
-    Log("interfaces: messaging %s, serialization %s",
-        msg ? "ok" : "MISSING", g_serialization ? "ok" : "MISSING");
+    Log("interfaces: messaging %s, papyrus %s, serialization %s",
+        msg ? "ok" : "MISSING", papyrus ? "ok" : "MISSING",
+        g_serialization ? "ok" : "MISSING");
 }
 
 }  // namespace

@@ -36,7 +36,7 @@ import time
 
 from core.plugin_masters import masters_from_export_header
 from asset_convert.game_paths import namespace_for, set_namespace
-from .registry import IMPORT_DISPATCH, SKIP_TYPES
+from .registry import IMPORT_DISPATCH, RUNTIME_ONLY_TYPES, SKIP_TYPES
 from .navmesh.pool import collision_cache_chain
 from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         OverrideContext, detect_injected_records)
@@ -1135,7 +1135,8 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     print(f"Reading exports from: {export_dir}")
     t0 = time.time()
 
-    all_records = parse_export_directory(export_dir)
+    all_records = parse_export_directory(export_dir,
+                                         exclude=RUNTIME_ONLY_TYPES)
     all_records = _drop_author_deleted_records(all_records, ctx)
     by_type = group_records_by_type(all_records)
 

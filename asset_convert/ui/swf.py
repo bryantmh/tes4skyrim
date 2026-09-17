@@ -38,6 +38,10 @@ TAG_DEFINE_SPRITE = 39
 TAG_DO_INIT_ACTION = 59
 TAG_EXPORT_ASSETS = 56
 TAG_DEFINE_SCALING_GRID = 78
+TAG_DEFINE_FONT_2 = 48
+
+#: The em square DefineFont2 glyph outlines are stored in, whatever the source.
+FONT_EM = 1024
 
 # Character-defining tags, keyed by code -> whether the id is the first u16.
 # Used only to answer "which tag defines character N?", so every entry here
@@ -609,3 +613,123 @@ def define_sprite(character_id: int, tags: list) -> Tag:
 
 def do_action(block: bytes) -> Tag:
     return Tag(TAG_DO_ACTION, block)
+
+
+#: StyleChangeRecord flag bits, by the VALUE each one carries.
+_STATE_MOVE, _STATE_FILL1 = 0x01, 0x04
+
+
+def _style_change(w: BitWriter, move=None, fill1: bool = False,
+                  fill_bits: int = 1):
+    """One StyleChangeRecord: optionally move the pen, optionally set fill 1.
+
+    🛑 The five flags are ONE 5-bit field, so they are OR-ed and written once.
+    Writing them as five sequential single bits reverses them, and every later
+    record desynchronizes SILENTLY.
+    See: docs/commentary/morrowind_runtime.md#shape-record-flags
+    """
+    flags = (_STATE_MOVE if move else 0) | (_STATE_FILL1 if fill1 else 0)
+    w.ub(0, 1)
+    w.ub(flags, 5)
+    if move:
+        bits = _sbits_needed(move[0], move[1])
+        w.ub(bits, 5)
+        w.sb(move[0], bits)
+        w.sb(move[1], bits)
+    if fill1:
+        w.ub(1, fill_bits)
+
+
+def _shape_line(w: BitWriter, dx: int, dy: int):
+    """A StraightEdgeRecord: edge=1, straight=1, then a general (x,y) line."""
+    bits = max(2, _sbits_needed(dx, dy))
+    w.ub(1, 1); w.ub(1, 1)
+    w.ub(bits - 2, 4)
+    w.ub(1, 1)
+    w.sb(dx, bits); w.sb(dy, bits)
+
+
+def _shape_curve(w: BitWriter, cx: int, cy: int, ax: int, ay: int):
+    """A CurvedEdgeRecord (edge=1, straight=0): control delta, anchor delta.
+
+    SWF curves are QUADRATIC, which is exactly what a TrueType outline already
+    is -- so a `qCurveTo` maps across with no approximation.
+    """
+    bits = max(2, _sbits_needed(cx, cy, ax, ay))
+    w.ub(1, 1); w.ub(0, 1)
+    w.ub(bits - 2, 4)
+    for v in (cx, cy, ax, ay):
+        w.sb(v, bits)
+
+
+def _glyph_shape(contours: list) -> bytes:
+    """One glyph's SHAPE record: one fill style, no lines, closed contours.
+
+    `contours` is a list of `(start, segments)` where a segment is
+    `('l', x, y)` or `('q', cx, cy, x, y)`, in absolute font units with Y
+    ALREADY FLIPPED -- SWF's Y axis runs down where a font's runs up.
+
+    The first record moves AND sets the fill together; later contours only
+    move, because the fill persists across them.
+    """
+    w = BitWriter()
+    w.ub(1, 4)
+    w.ub(0, 4)
+    first = True
+    for start, segments in contours:
+        px, py = start
+        _style_change(w, move=(px, py), fill1=first)
+        first = False
+        for seg in segments:
+            if seg[0] == 'l':
+                dx, dy = seg[1] - px, seg[2] - py
+                if dx or dy:
+                    _shape_line(w, dx, dy)
+                px, py = seg[1], seg[2]
+            else:
+                _, cx, cy, ax, ay = seg
+                _shape_curve(w, cx - px, cy - py, ax - cx, ay - cy)
+                px, py = ax, ay
+    w.ub(0, 6)
+    return w.bytes()
+
+
+#: DefineFont2 flags: wide offsets, wide codes, and a layout block.
+_FONT_WIDE_OFFSETS, _FONT_WIDE_CODES, _FONT_HAS_LAYOUT = 0x08, 0x04, 0x80
+
+
+def define_font2(character_id: int, name: str, glyphs: list,
+                 ascent: int, descent: int, leading: int) -> Tag:
+    """DefineFont2 carrying real outlines, so DefineEditText can use it.
+
+    `glyphs` is `(code, advance, contours)` in FONT_EM units, ordered by code.
+    Order, offset base, per-contour fill and the empty bounds table each fail
+    SILENTLY if changed.
+    See: docs/commentary/morrowind_runtime.md#dynamic-text
+    """
+    shapes = [_glyph_shape(contours) for _code, _adv, contours in glyphs]
+    count = len(glyphs)
+    running = 4 * (count + 1)
+    offsets = []
+    for shape in shapes:
+        offsets.append(running)
+        running += len(shape)
+
+    body = bytearray(struct.pack('<H', character_id))
+    body += bytes([_FONT_WIDE_OFFSETS | _FONT_WIDE_CODES | _FONT_HAS_LAYOUT, 0])
+    encoded = name.encode('ascii')
+    body += bytes([len(encoded)]) + encoded
+    body += struct.pack('<H', count)
+    for off in offsets:
+        body += struct.pack('<I', off)
+    body += struct.pack('<I', running)
+    for shape in shapes:
+        body += shape
+    for code, _adv, _contours in glyphs:
+        body += struct.pack('<H', code)
+    body += struct.pack('<hhh', ascent, descent, leading)
+    for _code, adv, _contours in glyphs:
+        body += struct.pack('<h', adv)
+    body += bytes(count)
+    body += struct.pack('<H', 0)
+    return Tag(TAG_DEFINE_FONT_2, bytes(body))

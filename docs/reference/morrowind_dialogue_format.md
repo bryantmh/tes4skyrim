@@ -22,8 +22,16 @@ puts them in `all_records`, where `_reserve_formid_space` reaches
 `int(rec['FormID'], 16)` and the import dies on the first topic
 (`invalid literal for int() with base 16: 'HH_WinCamonna'`).
 
-So the signature is what keeps runtime data out of the record pipeline. The
-files are `MWDI.txt` and `MWIN.txt`.
+🛑 **The rename alone is NOT enough** — the importer loads every export file it
+finds, whatever the signature, so `MWDI`/`MWIN` still reached
+`_reserve_formid_space` and still died on the first topic. Both are therefore
+listed in **`tes5_import/registry.py: SKIP_TYPES`**, which is what actually
+keeps them out of `all_records`.
+
+The signature and the skip entry do different jobs: the skip keeps them out of
+the record pipeline, and the distinct signature keeps them from colliding with
+the TES4 `DIAL`/`INFO` that pipeline legitimately converts. The files are
+`MWDI.txt` and `MWIN.txt`.
 
 ## <a id="dial"></a>DIAL — a topic
 

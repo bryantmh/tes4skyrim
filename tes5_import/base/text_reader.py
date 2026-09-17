@@ -163,7 +163,27 @@ def info_result_script(rec: dict) -> str:
     return '\n'.join(p for p in parts if p)
 
 
-def parse_export_directory(export_dir: str, type_filter: set = None) -> list:
+def _export_files(export_dir: str, type_filter: set, exclude: set) -> list:
+    """The per-type export files to parse, in sorted order.
+
+    `exclude` names signatures never to READ: a record whose id is not a hex
+    FormID cannot enter the pipeline at all, so dropping it later is too late.
+    """
+    tasks = []
+    for txt_file in sorted(os.listdir(export_dir)):
+        if not txt_file.endswith('.txt') or txt_file == '_HEADER.txt':
+            continue
+        sig = txt_file.replace('.txt', '').replace('_SKIP', '')
+        if type_filter and sig not in type_filter:
+            continue
+        if exclude and sig in exclude:
+            continue
+        tasks.append(os.path.join(export_dir, txt_file))
+    return tasks
+
+
+def parse_export_directory(export_dir: str, type_filter: set = None,
+                           exclude: set = None) -> list:
     """Parse all per-type export files from a directory in parallel.
 
     Returns a list of record dicts, optionally filtered by type.
@@ -179,15 +199,7 @@ def parse_export_directory(export_dir: str, type_filter: set = None) -> list:
     if not os.path.isdir(export_dir):
         return all_records
 
-    # Collect files to parse
-    tasks = []
-    for txt_file in sorted(os.listdir(export_dir)):
-        if not txt_file.endswith('.txt') or txt_file == '_HEADER.txt':
-            continue
-        sig = txt_file.replace('.txt', '').replace('_SKIP', '')
-        if type_filter and sig not in type_filter:
-            continue
-        tasks.append(os.path.join(export_dir, txt_file))
+    tasks = _export_files(export_dir, type_filter, exclude)
 
     # Build (file, start, end) range jobs
     jobs = []

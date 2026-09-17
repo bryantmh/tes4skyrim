@@ -96,4 +96,14 @@ std::string Unescape(const std::string& text);
 std::vector<std::unordered_map<std::string, std::string>> ParseExport(
     const std::string& text);
 
+// Data\SKSE\Plugins\MorrowindRuntime\, with a trailing separator.
+std::string SidecarDir();
+
+// The per-plugin subfolder names under `root`, which is where each plugin's
+// own dialogue and actor index live.
+std::vector<std::string> SidecarPlugins(const std::string& root);
+
+// A whole file as text, or "" when it cannot be read.
+std::string ReadFile(const std::string& path);
+
 }  // namespace mwruntime

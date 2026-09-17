@@ -22,10 +22,49 @@ SIDECAR_DIR = os.path.join('SKSE', 'Plugins', 'MorrowindRuntime')
 #: Export files the runtime reads; topics first, since a response needs one.
 DIALOGUE_FILES = ('MWDI.txt', 'MWIN.txt')
 
+#: The FormID -> TES3 id index the activation hook routes on.
+ACTOR_INDEX = 'MWAC.txt'
+
+#: The export this index is built from, and the two keys it needs.
+_NPC_EXPORT = 'NPC_.txt'
+_RECORD_MARK = '---RECORD_BEGIN---'
+
 
 def plugin_stem(plugin_name: str) -> str:
     """`Morrowind.esm` -> `Morrowind`, the per-plugin sidecar folder name."""
     return os.path.splitext(os.path.basename(plugin_name))[0]
+
+
+def _index_lines(handle) -> list:
+    """`FormID=EditorID` per record, from an open NPC export."""
+    lines = []
+    form = ''
+    for line in handle:
+        line = line.rstrip('\n')
+        if line == _RECORD_MARK:
+            form = ''
+        elif line.startswith('FormID='):
+            form = line[7:]
+        elif line.startswith('EditorID=') and form:
+            lines.append(f'{form}={line[9:]}')
+            form = ''
+    return lines
+
+
+def _actor_index(export_dir: str) -> str:
+    """`FormID=EditorID` for every NPC: the TES3 id dialogue filters on.
+
+    The runtime routes activation by FormID but filters by TES3 id, so without
+    this index it can tell an actor is Morrowind's and still not know who they
+    are. Built here because the FormID is minted during import.
+    See: docs/commentary/morrowind_runtime.md#activation
+    """
+    path = os.path.join(export_dir, _NPC_EXPORT)
+    if not os.path.isfile(path):
+        return ''
+    with open(path, encoding='utf-8', errors='replace') as handle:
+        lines = _index_lines(handle)
+    return '\n'.join(lines) + ('\n' if lines else '')
 
 
 def write_morrowind_sidecar(export_dir: str, output_path: str,
@@ -45,4 +84,10 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
     for name in present:
         shutil.copyfile(os.path.join(export_dir, name),
                         os.path.join(out_dir, name))
-    return len(present)
+    index = _actor_index(export_dir)
+    if not index:
+        return len(present)
+    with open(os.path.join(out_dir, ACTOR_INDEX), 'w',
+              encoding='utf-8') as handle:
+        handle.write(index)
+    return len(present) + 1

@@ -105,6 +105,30 @@ def resolve_mesh(roots, rel: str, export_root):
     return find_vanilla_mesh(export_root, rel)
 
 
+def find_archived_file(export_root, rel: str):
+    """Any vanilla file at `rel` (a stored path like `textures\\x.dds`), else None.
+
+    Prefers the ARCHIVED copy over a loose replacer, as `find_archived_mesh`
+    does. Falls back to loose only when no archive holds the path: vanilla
+    ships `Fonts/` loose, so there is no shipped copy to prefer.
+    See: docs/commentary/tes4_export_morrowind.md#vanilla-assets
+    """
+    data_dir = source_registry.directory_for(str(export_root), _ANCHOR_PLUGIN)
+    if not data_dir:
+        return None
+    rel = _normalize(rel)
+    cached = Path(export_root) / CACHE_DIR / rel
+    if cached.is_file():
+        return cached
+    entry = _archive_index(data_dir).get(rel)
+    if entry is None:
+        loose = Path(data_dir) / rel
+        return loose if loose.is_file() else None
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_bytes(read_entry(*entry))
+    return cached
+
+
 def source_meshes(source_path: str) -> frozenset:
     """Mesh paths the archives beside `source_path` ship, relative to `meshes\\`.
 

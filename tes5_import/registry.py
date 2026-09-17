@@ -17,6 +17,9 @@ TYPE_MAP = {}
 #: TES4 signatures deliberately not converted.
 SKIP_TYPES = set()
 
+#: NOT records: runtime data keyed by TES3 string id, never read by the importer.
+RUNTIME_ONLY_TYPES = frozenset({'MWDI', 'MWIN'})
+
 def _init_dispatch() -> None:
     """Populate the three tables from the converter modules.
 

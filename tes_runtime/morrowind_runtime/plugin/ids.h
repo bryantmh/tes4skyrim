@@ -52,17 +52,151 @@ constexpr std::uint64_t kScaleformAllocator = 412058;
 // The Alloc slot in that allocator's vtable.
 constexpr std::size_t kScaleformAllocSlot = 0x50;
 
-// The scale mode every vanilla menu passes to LoadMovie. MessageBoxMenu,
-// BookMenu and BarterMenu all push 3 at [rsp+0x20]; SKSE's CustomMenu passes
-// kNoBorder, which is the same value.
-constexpr int kScaleModeNoBorder = 3;
+// GFxMovieView::ScaleModeType for LoadMovie. Vanilla menus pass kNoBorder
+// (3), which fills the viewport and CROPS whatever the aspect ratio does not
+// fit: on a 3440x1440 display the 1280x720 stage scaled by 2.69 to the width
+// and lost 247 px top and bottom -- measured as a 1580 px wide window running
+// off the bottom of the screen. kShowAll fits the whole stage, aspect kept.
+constexpr int kScaleModeShowAll = 1;
 
-// GFxMovieView::Render's byte offset in its vtable, read off the tail-jump
-// that IS MessageBoxMenu::Render (0x539ac0 on 1.6.659, id 33632):
-//   mov rcx,[rcx+0x10] / test rcx,rcx / jz / mov rax,[rcx] / jmp [rax+0x130]
-// A menu that does not make this call registers, takes focus and pauses the
-// game while drawing nothing.
-// See: docs/commentary/morrowind_runtime.md#the-menu-must-render-itself
-constexpr std::size_t kMovieViewRenderSlot = 0x130;
+// TESFullName inside TESNPC, read off TESNPC's destructor (0x385037 on
+// 1.6.659), which restores one base vtable per offset: 0x00, 0x30, 0x88,
+// 0xa0, 0xb0, 0xd8, 0xe8, 0xf0, 0x100, 0x110, 0x128, 0x138, 0x150, 0x160,
+// 0x188 -- the exact sequence TESActorBase declares, with TESFullName sixth
+// at 0xd8. Its BSFixedString (a `const char*`) follows the vtable at 0xe0.
+// The player's own TESNPC is form 0x7 of Skyrim.esm, and the name entered
+// at character creation is written to it.
+constexpr std::size_t kOffNpcFullName = 0xe0;
+constexpr std::uint32_t kPlayerBaseFormId = 0x7;
+constexpr const char* kSkyrimMaster = "Skyrim.esm";
+
+// UIMessage::type values, read off the base IMenu::ProcessMessage (0xf21bd0
+// on 1.6.659): it forwards ONLY type 6, whose data is a BSUIScaleformData
+// holding the GFxEvent* at +0x10, to the movie's HandleEvent. Type 7 is a
+// user event whose BSUIMessageData carries the event name ("Cancel") at
+// +0x18.
+constexpr std::uint32_t kMessageScaleformEvent = 6;
+constexpr std::uint32_t kMessageUserEvent = 7;
+constexpr std::size_t kMessageTypeOffset = 0x8;
+constexpr std::size_t kMessageDataOffset = 0x10;
+constexpr std::size_t kScaleformEventOffset = 0x10;
+constexpr std::size_t kUserEventNameOffset = 0x18;
+
+// What ProcessMessage returns: 0 consumed the message, 2 passes it on. The
+// base returns 0 after HandleEvent and 2 for everything else.
+constexpr std::uint32_t kResultHandled = 0;
+constexpr std::uint32_t kResultPassOn = 2;
+
+// GFxEvent::type, at +0. A GFxMouseEvent continues with x and y as floats at
+// +4 and +8, then the button at +0x10. Types 1, 2, 3, 5 and 6 (move, down,
+// up, key down, key up) were seen in game.
+constexpr std::uint32_t kEventMouseMove = 1;
+constexpr std::uint32_t kEventMouseDown = 2;
+constexpr std::size_t kMouseEventXOffset = 0x4;
+constexpr std::size_t kMouseEventButtonOffset = 0x10;
+
+// TESNPC's primary vtable (0x17e4d50 on 1.6.1170), whose slot 0x1b8 is
+// Activate(this, ref, activator, ...). `TESObjectREFR::ActivateRef` dispatches
+// through it after every guard, so this fires for EVERY NPC activation --
+// crucially, whether or not the actor has any Skyrim dialogue.
+//
+// 🛑 Hooking the DIALOGUE MENU does not work: a converted Morrowind NPC has no
+// Skyrim dialogue, so that menu never opens and a sink on it never fires.
+//
+// 🛑 Nor can `ActivateRef` itself be detoured: its prologue opens with
+// `mov rax, rsp` (48 8B C4), which AnalyzePrologue refuses because a relocated
+// copy captures the TRAMPOLINE's stack pointer. That exact instruction crashed
+// the game on 2026-08-14. A vtable swap steals no bytes, so the hazard does
+// not arise.
+// See: docs/commentary/morrowind_runtime.md#activation
+constexpr std::uint64_t kNpcVtable = 195816;
+
+// The Activate slot's byte offset in that vtable, read off the dispatch
+// `mov rcx,[ref+0x40] / mov rax,[rcx] / call [rax+0x1b8]`.
+constexpr std::size_t kActivateSlot = 0x1b8;
+
+// TESNPC::Activate (0x3b9500 on 1.6.1170), the value that slot holds. Checked
+// against the running build's image so a wrong swap is caught before install.
+constexpr std::uint64_t kNpcActivate = 24715;
+
+// UIManager::AddMessage(this, BSFixedString* menu, u32 msgId, void* data)
+// (0x170730). Identified by its pool arithmetic: [rcx+0x378] is poolUsed,
+// compared against 0x40 = kPoolSize, and (poolUsed + 0x1c) << 5 lands on
+// messagePool at 0x380 with stride 32. Inverts to the RVA SKSE hardcodes.
+constexpr std::uint64_t kUIAddMessage = 13631;
+
+// The UIManager singleton POINTER (0x20f8950 on 1.6.1170), read, never called.
+constexpr std::uint64_t kUIManagerSingleton = 400445;
+
+// The Game.GetFormFromFile Papyrus native (0x9adb30):
+//   TESForm* (VM*, uint32 stack, void* tag, int32 formID, const BSFixedString&)
+// resolves a plugin-LOCAL id through the RUNNING load order.
+//
+// 🛑 This is the only correct way to learn a plugin's index. The FormIDs the
+// sidecar carries hold the index the plugin had AT CONVERSION TIME; in the
+// player's game it is whatever their load order says. Measured: TR_Mainland
+// converts at 0x03 and loaded at 0x22, so a baked index matched nothing.
+// See: docs/commentary/morrowind_runtime.md#load-order
+constexpr std::uint64_t kGetFormFromFile = 55465;
+
+// ~BSFixedString (0xc60c30), to release an interned name.
+constexpr std::uint64_t kBSFixedStringDtor = 69164;
+
+// UIMessage ids: kMessage_Open, and kMessage_Close (2 is a legacy alias).
+constexpr std::uint32_t kMessageOpen = 1;
+constexpr std::uint32_t kMessageClose = 3;
+
+// BSFixedString::BSFixedString(this, const char*) (0xc60ac0), the interning
+// ctor every menu name goes through. A menu name must be an INTERNED string:
+// AddMessage compares by pointer, so a plain char* never matches.
+constexpr std::uint64_t kBSFixedStringCtor = 69161;
+
+// Skyrim's own dialogue menu, the one a Morrowind speaker diverts away from.
+constexpr const char* kVanillaDialogueMenu = "Dialogue Menu";
+
+// MenuTopicManager::GetSpeaker(this, TESObjectREFR** out) (0x5945b0). It
+// reads the ObjectRefHandle at this+0x68, resolves it, and keeps the result
+// only when its form type is 0x3e (Character).
+constexpr std::uint64_t kGetSpeaker = 35293;
+
+// The MenuTopicManager singleton POINTER (0x3137778 on 1.6.1170), read, never
+// called. Found as the static the constructor stores the instance into.
+//
+// 🛑 NOT the address `tools/live/dialog_live.py` documents (0x3191880): that
+// is the OBJECT, which that tool finds by scanning for the vtable pair. This
+// is the pointer TO it, which is what a plugin can read directly.
+constexpr std::uint64_t kMenuTopicManagerSingleton = 401099;
+
+// GFxValue::SetString(this, const char*) (0x8c8830), which types a GFxValue as
+// a string before SetVariable copies it into the movie. A GFxValue is 0x18
+// bytes with its type at +8 and its data at +0x10.
+constexpr std::uint64_t kGfxSetString = 51740;
+
+// GFxMovieView vtable INDICES (skse64 ScaleformMovie.h), each confirmed
+// against a byte offset the engine's own menus use:
+//   SetVariable  0x10 -> [vt+0x80],  IMenu::NextFrame writes "CurrentTime"
+//   GetVariable  0x11 -> [vt+0x88]
+//   Invoke       0x16 -> [vt+0xb0]   (this, name, result, args, count)
+//   Advance      0x25 -> [vt+0x128], IMenu::NextFrame(this, dt, 2)
+//   Render       0x26 -> [vt+0x130], MessageBoxMenu::Render's tail-jump
+//   HandleEvent  0x2d -> [vt+0x168], IMenu::ProcessMessage's forward
+//
+// 🛑 These are INDICES. The first build added 0x10 to the vtable as a BYTE
+// offset, which is slot 2 -- an unrelated getter -- so SetVariable never ran
+// and every field stayed empty with nothing in the log to say so.
+constexpr std::size_t kMovieViewSetVariableSlot = 0x10;
+constexpr std::size_t kMovieViewGetVariableSlot = 0x11;
+constexpr std::size_t kMovieViewInvokeSlot = 0x16;
+constexpr std::size_t kMovieViewAdvanceSlot = 0x25;
+constexpr std::size_t kMovieViewRenderSlot = 0x26;
+constexpr std::size_t kMovieViewHandleEventSlot = 0x2d;
+
+// GFxValue: 0x18 bytes, type at +8 (3 number, 4 string; bit 6 marks a value
+// the movie owns), data at +0x10.
+constexpr std::size_t kGfxValueSize = 0x18;
+constexpr std::size_t kGfxValueTypeOffset = 0x8;
+constexpr std::size_t kGfxValueDataOffset = 0x10;
+constexpr std::uint32_t kGfxValueTypeMask = 0x8f;
+constexpr std::uint32_t kGfxValueNumber = 3;
 
 }  // namespace mwruntime::ids

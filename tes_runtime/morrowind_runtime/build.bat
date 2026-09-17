@@ -64,7 +64,9 @@ REM built only by `build.bat test`.
 echo [build] compiling plugin...
 cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\log.cpp plugin\addresses.cpp plugin\menu.cpp ^
-   plugin\filter.cpp plugin\session.cpp /Fo:obj\
+   plugin\filter.cpp plugin\session.cpp plugin\activation.cpp ^
+   plugin\game_actor.cpp plugin\conversation.cpp ^
+   plugin\script_context.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
     exit /b 1

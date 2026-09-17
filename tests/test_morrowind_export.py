@@ -425,6 +425,50 @@ def test_collision_node_becomes_skyrim_collision():
 
 
 @needs_morrowind
+def test_item_models_convert_to_dynamic_clutter():
+    """An item record's model simulates; a fixture's stays static.
+
+    A dynamic body must carry a CONVEX shape -- havok will not simulate the
+    concave MOPP the static path builds -- on SKYL_CLUTTER with the authored
+    DATA.Weight and a non-zero inertia tensor.
+    See: docs/commentary/asset_convert_collision.md#morrowind-dynamic-clutter
+    """
+    import io
+
+    from asset_convert.nif import pyffi_monkey_patch
+    from asset_convert.nif.nif_converter_morrowind import (
+        build_collision, collision_triangles, find_collision_node)
+    assert pyffi_monkey_patch, 'the 4.0.0.2 read layouts must be installed'
+    from asset_convert.sources.bsa_extract_morrowind import iter_bsa
+    from pyffi.formats.nif import NifFormat
+
+    archive = os.path.join(MORROWIND_DATA, 'Morrowind.bsa')
+    if not os.path.exists(archive):
+        pytest.skip('Morrowind.bsa is not present')
+    target = 'meshes\\i\\in_r_l_int_bridge_02.nif'
+    payload = next((p for n, p in iter_bsa(archive)
+                    if n.lower().replace('/', '\\') == target), None)
+    assert payload is not None, 'sample mesh missing from the archive'
+
+    data = NifFormat.Data()
+    data.read(io.BytesIO(payload))
+    root = data.roots[0]
+    tris = collision_triangles(find_collision_node(root), root)
+
+    static = build_collision(root, tris).body
+    assert static.mass == 0.0
+    assert static.havok_col_filter.layer == 1
+
+    dynamic = build_collision(root, tris, 4.5).body
+    assert dynamic.mass == 4.5
+    assert dynamic.havok_col_filter.layer == 4, 'not on SKYL_CLUTTER'
+    assert dynamic.motion_system == 3 and dynamic.quality_type == 4
+    assert 'Convex' in type(dynamic.shape).__name__ or \
+        type(dynamic.shape).__name__ == 'bhkListShape'
+    assert dynamic.inertia.m_11 > 0, 'a zero tensor spins freely'
+
+
+@needs_morrowind
 def test_triangles_survive_the_version_upgrade():
     """A Morrowind shape must ship the indices it declares.
 
