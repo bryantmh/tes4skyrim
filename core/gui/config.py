@@ -35,7 +35,6 @@ import sys
 import threading
 from pathlib import Path
 
-from asset_convert.lod.mesh_decimate import LOD_DETAIL_DEFAULT
 from core.collision_options import default_for_plugin as _winding_default
 from core.process_job import create_pool_job
 from core.run_log import DEFAULT_RUNS_KEPT
@@ -47,18 +46,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 CONFIG_FILE = REPO_ROOT / "conversion_config.json"
 EXPORT_DIR = REPO_ROOT / "export"
-
-#: Seeds conversion_config.json on first run. See write_default_config.
-DEFAULT_CONFIG = {
-    "// INSTRUCTIONS": "Files to convert are supplied via -f/--files or the GUI. Masters are auto-detected from binary headers. Data paths are auto-detected from registry.",
-    "// SKIP_TYPES": "Skip types are managed in tes5_import/constants.py SKIP_TYPES set.",
-    "// logRunsKept": "How many run logs to keep in logs/ (named run-<timestamp>-<plugin>.log, newest sorts last). 0 disables run logging. Default 20.",
-    "tes4DataPath": "",
-    "tes5DataPath": "",
-    "files": ["Oblivion.esm"],
-    "logRunsKept": DEFAULT_RUNS_KEPT,
-    "lodDetail": LOD_DETAIL_DEFAULT,
-}
 
 
 #: Every color the window uses; the teal `global_btn` marks non-pipeline
@@ -279,14 +266,37 @@ def save_config(cfg: dict) -> None:
         json.dump(cfg, fh, indent=2)
 
 
+def default_config() -> dict:
+    """A fresh copy of what a new install's conversion_config.json is seeded with.
+
+    `mesh_decimate` is imported here rather than at module scope because it
+    pulls in numpy, and this module is reached by `version.py` ->
+    `release_notes.py`, which the release workflow runs on a bare runner that
+    installs no dependencies.
+
+    See: docs/reference/pipeline.md#the-config-file-is-per-install
+    """
+    from asset_convert.lod.mesh_decimate import LOD_DETAIL_DEFAULT
+    return {
+        "// INSTRUCTIONS": "Files to convert are supplied via -f/--files or the GUI. Masters are auto-detected from binary headers. Data paths are auto-detected from registry.",
+        "// SKIP_TYPES": "Skip types are managed in tes5_import/constants.py SKIP_TYPES set.",
+        "// logRunsKept": "How many run logs to keep in logs/ (named run-<timestamp>-<plugin>.log, newest sorts last). 0 disables run logging. Default 20.",
+        "tes4DataPath": "",
+        "tes5DataPath": "",
+        "files": ["Oblivion.esm"],
+        "logRunsKept": DEFAULT_RUNS_KEPT,
+        "lodDetail": LOD_DETAIL_DEFAULT,
+    }
+
+
 def write_default_config() -> bool:
-    """Create conversion_config.json from DEFAULT_CONFIG; True if written.
+    """Create conversion_config.json from `default_config()`; True if written.
 
     See: docs/reference/pipeline.md#the-config-file-is-per-install
     """
     if CONFIG_FILE.exists():
         return False
-    save_config(dict(DEFAULT_CONFIG))
+    save_config(default_config())
     return True
 
 

@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import core.run_log as run_log
-from core.gui.config import DEFAULT_CONFIG
+from core.gui.config import default_config
 
 
 # A plugin that cannot exist: the export stage fails immediately, so the run
@@ -35,7 +35,7 @@ FAST_RUN = ("-f", "NoSuchPlugin.esm", "--export-only")
 
 def _default_config_copy():
     """A fresh copy of the in-code defaults the GUI seeds a new install with."""
-    return dict(DEFAULT_CONFIG)
+    return default_config()
 
 
 def _run(logs_dir, env_extra=None, args=FAST_RUN):
