@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from asset_convert.collision import collision_extract as ce
 from tes5_import.navmesh import build
 from tes5_import.navmesh.from_pgrd import (
-    collect_doors, load_door_centroids,
+    _cell_graph, collect_doors, load_door_centroids,
 )
 from tes5_import.base.text_reader import parse_export_file
 from tes5_import.record_types.items import load_furniture_models
@@ -64,11 +64,13 @@ class CellCtx(object):
         self.name = rec.get('EditorID') or ''
         self.fid = (rec.get('FormID') or '').upper()
         pg = index.pgrd_by_cell.get(self.fid)
-        import tools.navmesh.audit as na
-        self.nodes, self.edges = na._pgrd_nodes(pg) if pg is not None else ([], [])
+        graph = (_cell_graph(pg, rec) if pg is not None
+                 else (None, None, 0.0, 0.0, False))
+        nodes, edges, self.origin_x, self.origin_y, self.exterior = graph
+        self.nodes, self.edges = nodes or [], edges or []
         self.refrs = index.refr_by_cell.get(self.fid, [])
         self.doors = collect_doors(self.refrs, index.door_fids)
-        self.land = index.land_by_cell.get(self.fid)
+        self.land = index.land_by_cell.get(self.fid) if self.exterior else None
 
     @property
     def has_pathgrid(self):
@@ -83,6 +85,7 @@ class CellCtx(object):
         verts, tris = build.build_navmesh(
             self.refrs, self.index.base_model, ce.get_collision,
             self.nodes, self.edges, land_rec=self.land,
+            origin_x=self.origin_x, origin_y=self.origin_y,
             doors=[(x, y, z, r, tp, w)
                    for (x, y, z, r, _f, tp, w) in self.doors],
             door_bases=set(self.index.door_fids.keys()),
@@ -99,6 +102,7 @@ class CellCtx(object):
         return world.gather_cell_geometry(
             self.refrs, self.index.base_model, ce.get_collision,
             land_rec=self.land,
+            origin_x=self.origin_x, origin_y=self.origin_y,
             skip_bases=set(self.index.door_fids.keys()))
 
     def collision_sources(self):
