@@ -29,6 +29,7 @@
 #include <components/interpreter/runtime.hpp>
 
 #include "dialogue_state.h"
+#include "filter.h"
 #include "log.h"
 #include "script_tables.h"
 
@@ -422,6 +423,38 @@ class OpScriptRunning : public Interpreter::Opcode0 {
     }
 };
 
+// The four AI settings, each its own opcode in TES3 but one number here.
+// `Which` is the index the co-save keys them by, not a TES3 constant.
+template <class R, int Which>
+class OpGetAiSetting : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        runtime.push(State().AiSetting(R::Target(runtime), Which));
+    }
+};
+
+template <class R, int Which>
+class OpSetAiSetting : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string actor = R::Target(runtime);
+        State().SetAiSetting(actor, Which, PopInt(runtime));
+    }
+};
+
+template <class R, int Which>
+class OpModAiSetting : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string actor = R::Target(runtime);
+        State().SetAiSetting(actor, Which,
+                             State().AiSetting(actor, Which) + PopInt(runtime));
+    }
+};
+
+class OpGetDeadCount : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        runtime.push(State().DeadCount(PopString(runtime)));
+    }
+};
+
 // -------------------------------------------------------------------- stubs
 
 // Commands with nothing to do here by DESIGN, not for want of a port: the
@@ -515,6 +548,7 @@ struct Machine {
 
     void InstallFactions();
     void InstallItemsAndScripts();
+    void InstallAiSettings();
 
     // Installs a stub for one instruction word unless something real, or an
     // alias's stub, already answers to it.
@@ -609,6 +643,39 @@ void Machine::InstallItemsAndScripts() {
     Real<OpStartScript<Explicit>>(M::opcodeStartScriptExplicit);
     Real<OpStopScript>(M::opcodeStopScript);
     Real<OpScriptRunning>(M::opcodeScriptRunning);
+    Real<OpGetDeadCount>(Compiler::Stats::opcodeGetDeadCount);
+    InstallAiSettings();
+}
+
+// Fight, Hello, Alarm and Flee: get, set and mod, bare and explicit. The
+// settings have no Skyrim field, so these are the DLL's own numbers -- but
+// a script that raises Fight and a filter that reads it back now agree.
+void Machine::InstallAiSettings() {
+    namespace A = Compiler::Ai;
+    Real<OpGetAiSetting<Implicit, kAiFight>>(A::opcodeGetFight);
+    Real<OpGetAiSetting<Explicit, kAiFight>>(A::opcodeGetFightExplicit);
+    Real<OpSetAiSetting<Implicit, kAiFight>>(A::opcodeSetFight);
+    Real<OpSetAiSetting<Explicit, kAiFight>>(A::opcodeSetFightExplicit);
+    Real<OpModAiSetting<Implicit, kAiFight>>(A::opcodeModFight);
+    Real<OpModAiSetting<Explicit, kAiFight>>(A::opcodeModFightExplicit);
+    Real<OpGetAiSetting<Implicit, kAiHello>>(A::opcodeGetHello);
+    Real<OpGetAiSetting<Explicit, kAiHello>>(A::opcodeGetHelloExplicit);
+    Real<OpSetAiSetting<Implicit, kAiHello>>(A::opcodeSetHello);
+    Real<OpSetAiSetting<Explicit, kAiHello>>(A::opcodeSetHelloExplicit);
+    Real<OpModAiSetting<Implicit, kAiHello>>(A::opcodeModHello);
+    Real<OpModAiSetting<Explicit, kAiHello>>(A::opcodeModHelloExplicit);
+    Real<OpGetAiSetting<Implicit, kAiAlarm>>(A::opcodeGetAlarm);
+    Real<OpGetAiSetting<Explicit, kAiAlarm>>(A::opcodeGetAlarmExplicit);
+    Real<OpSetAiSetting<Implicit, kAiAlarm>>(A::opcodeSetAlarm);
+    Real<OpSetAiSetting<Explicit, kAiAlarm>>(A::opcodeSetAlarmExplicit);
+    Real<OpModAiSetting<Implicit, kAiAlarm>>(A::opcodeModAlarm);
+    Real<OpModAiSetting<Explicit, kAiAlarm>>(A::opcodeModAlarmExplicit);
+    Real<OpGetAiSetting<Implicit, kAiFlee>>(A::opcodeGetFlee);
+    Real<OpGetAiSetting<Explicit, kAiFlee>>(A::opcodeGetFleeExplicit);
+    Real<OpSetAiSetting<Implicit, kAiFlee>>(A::opcodeSetFlee);
+    Real<OpSetAiSetting<Explicit, kAiFlee>>(A::opcodeSetFleeExplicit);
+    Real<OpModAiSetting<Implicit, kAiFlee>>(A::opcodeModFlee);
+    Real<OpModAiSetting<Explicit, kAiFlee>>(A::opcodeModFleeExplicit);
 }
 
 // The extension table keeps its opcodes private, so each is recovered by

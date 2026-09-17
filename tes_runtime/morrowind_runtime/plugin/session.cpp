@@ -15,6 +15,10 @@ std::string Lower(std::string text) {
     return text;
 }
 
+bool IEqual(const std::string& a, const std::string& b) {
+    return a.size() == b.size() && Lower(a) == Lower(b);
+}
+
 bool IsWordChar(char c) {
     const unsigned char u = static_cast<unsigned char>(c);
     return std::isalnum(u) != 0 || c == '\'';
@@ -27,6 +31,37 @@ bool WholeWordAt(const std::string& haystack, const std::string& needle,
     if (pos > 0 && IsWordChar(haystack[pos - 1])) return false;
     const std::size_t after = pos + needle.size();
     return after >= haystack.size() || !IsWordChar(haystack[after]);
+}
+
+// The actor whose result script hands out the starting topics. Morrowind's
+// census officer; the id is the game's, not ours.
+constexpr const char* kChargenActor = "chargen captain";
+
+// Every `AddTopic <name>` in a result script, names unquoted.
+void CollectAddTopic(const std::string& script,
+                     std::vector<std::string>* out) {
+    const std::string lower = Lower(script);
+    std::size_t at = 0;
+    while ((at = lower.find("addtopic", at)) != std::string::npos) {
+        std::size_t i = at + 8;
+        at = i;
+        while (i < script.size() && (script[i] == ' ' || script[i] == ',' ||
+                                     script[i] == '\t')) {
+            ++i;
+        }
+        const bool quoted = i < script.size() && script[i] == '"';
+        if (quoted) ++i;
+        const std::size_t start = i;
+        while (i < script.size() && script[i] != '\r' && script[i] != '\n' &&
+               (quoted ? script[i] != '"' : true)) {
+            ++i;
+        }
+        std::string name = script.substr(start, i - start);
+        while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
+            name.pop_back();
+        }
+        if (!name.empty()) out->push_back(name);
+    }
 }
 
 Reply MakeReply(const std::string& topic, const Info* info,
@@ -91,6 +126,22 @@ Reply Answer(const std::string& topic, const ActorView& actor, int choice) {
     const Topic* found = FindTopic(topic);
     if (!found) return Reply();
     return MakeReply(found->id, SelectInfo(*found, actor, choice).info, actor);
+}
+
+const char* ChargenActor() { return kChargenActor; }
+
+std::vector<std::string> ChargenTopics() {
+    std::vector<std::string> out;
+    for (const auto& entry : Topics()) {
+        for (const Info& info : entry.second.infos) {
+            if (IEqual(info.actor, kChargenActor)) {
+                CollectAddTopic(info.resultScript, &out);
+            }
+        }
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
 }
 
 std::vector<std::string> MentionedTopics(const std::string& text,

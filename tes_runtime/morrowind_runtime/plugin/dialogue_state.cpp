@@ -154,6 +154,27 @@ void DialogueState::LearnTopic(const std::string& topic) {
     }
 }
 
+int DialogueState::AiSetting(const std::string& actor, int which) const {
+    const auto it = mAiSettings.find({Key(actor), which});
+    return it == mAiSettings.end() ? 0 : it->second;
+}
+
+void DialogueState::SetAiSetting(const std::string& actor, int which,
+                                 int value) {
+    mAiSettings[{Key(actor), which}] = value;
+    Log("ai: %s setting %d = %d", actor.c_str(), which, value);
+}
+
+int DialogueState::DeadCount(const std::string& actor) const {
+    const auto it = mDeaths.find(Key(actor));
+    return it == mDeaths.end() ? 0 : it->second;
+}
+
+void DialogueState::AddDeath(const std::string& actor) {
+    const int now = ++mDeaths[Key(actor)];
+    Log("dead: %s killed %d time(s)", actor.c_str(), now);
+}
+
 const Membership& DialogueState::Faction(const std::string& faction) const {
     static const Membership kNone;
     const auto it = mFactions.find(Key(faction));
@@ -246,6 +267,13 @@ std::string DialogueState::Serialize() const {
     }
     for (const std::string& script : mRunning) out << "S\t" << script << '\n';
     for (const std::string& topic : mKnownTopics) out << "K\t" << topic << '\n';
+    for (const auto& e : mAiSettings) {
+        out << "A\t" << e.first.first << '\t' << e.first.second << '\t'
+            << e.second << '\n';
+    }
+    for (const auto& e : mDeaths) {
+        out << "N\t" << e.first << '\t' << e.second << '\n';
+    }
     out << "R\t" << reputation << '\n' << "C\t" << crimeLevel << '\n';
     return out.str();
 }
@@ -269,6 +297,8 @@ std::size_t DialogueState::Deserialize(const std::string& text) {
         else if (kind == "X" && n == 4) mReactions[{f[1], f[2]}] = Int(f[3]);
         else if (kind == "S" && n == 2) mRunning.insert(f[1]);
         else if (kind == "K" && n == 2) mKnownTopics.insert(f[1]);
+        else if (kind == "A" && n == 4) mAiSettings[{f[1], Int(f[2])}] = Int(f[3]);
+        else if (kind == "N" && n == 3) mDeaths[f[1]] = Int(f[2]);
         else if (kind == "R" && n == 2) reputation = Int(f[1]);
         else if (kind == "C" && n == 2) crimeLevel = Float(f[1]);
         else continue;

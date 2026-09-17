@@ -86,6 +86,18 @@ public:
     void SetExpelled(const std::string& faction, bool expelled);
     void SetFactionReputation(const std::string& faction, int value);
 
+    // --- the four AI settings, 0..100, per actor ---------------------------
+    // Fight, Hello, Alarm and Flee. Morrowind stores them on the actor and
+    // dialogue both sets and tests them; Skyrim has no equivalent field, so
+    // the DLL owns them the way it owns disposition.
+    int  AiSetting(const std::string& actor, int which) const;
+    void SetAiSetting(const std::string& actor, int which, int value);
+
+    // --- how many of a base actor the player has killed --------------------
+    // `GetDeadCount id`, which gates a great deal of quest dialogue.
+    int  DeadCount(const std::string& actor) const;
+    void AddDeath(const std::string& actor);
+
     // --- reputation, crime, faction reactions, running scripts -------------
     int   reputation = 0;
     float crimeLevel = 0.0f;
@@ -123,6 +135,8 @@ private:
     std::map<std::pair<std::string, std::string>, int> mReactions;
     std::set<std::string> mRunning;
     std::set<std::string> mKnownTopics;
+    std::map<std::pair<std::string, int>, int> mAiSettings;
+    std::map<std::string, int> mDeaths;
 };
 
 // The one state of this game session.

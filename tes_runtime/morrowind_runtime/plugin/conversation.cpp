@@ -10,6 +10,7 @@
 
 #include <components/interpreter/defines.hpp>
 
+#include "activation.h"
 #include "dialogue_state.h"
 #include "game_actor.h"
 #include "log.h"
@@ -789,9 +790,25 @@ void InstallConversation() {
     SetMenuInput(input);
 }
 
+// 🛑 Stands down when the chargen actor was CONVERTED: the player can reach
+// the census office, so seeding here would hand them topics -- Caius Cosades,
+// South Wall -- that conversation is supposed to earn them.
+void SeedChargenTopics() {
+    if (State().KnownTopicCount() > 0) return;
+    if (SpeakerExists(ChargenActor())) {
+        Log("conversation: chargen actor is in this world -- not seeding");
+        return;
+    }
+    const std::vector<std::string> topics = ChargenTopics();
+    for (const std::string& topic : topics) State().LearnTopic(topic);
+    Log("conversation: seeded %zu starting topic(s) from chargen",
+        topics.size());
+}
+
 void BeginConversation(const char* speaker, const char* displayName,
                        const char* playerName) {
     OnClosed();
+    SeedChargenTopics();
     State().BeginConversation();
     g_speaker = speaker ? speaker : "";
     g_speakerName = displayName && *displayName ? displayName : g_speaker;

@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <vector>
+
+#include "script_tables.h"
 
 namespace mwruntime {
 
@@ -11,6 +14,10 @@ namespace {
 // positive number reads as "dressed"; the authored tests are `<= 0` (naked)
 // and `>= 1`, never a real amount.
 constexpr float kClothedValue = 100.0f;
+
+// TES3 factions have ten ranks, 0..9; at the top there is nothing to qualify
+// for and the requirement reads as zero.
+constexpr int kTopRank = 9;
 
 bool IEquals(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;
@@ -67,6 +74,45 @@ bool TestInverted(const Condition& cond, const ActorView& actor) {
     }
 }
 
+// NpcStats::hasSkillsForRank. NOT a per-named-skill test: the faction's own
+// skills are sorted and the best three are measured against the row, so any
+// one at primary and two more at favoured will do.
+bool HasSkillsForRank(const FactionDef& faction, const RankReq& row,
+                      const ActorView& actor) {
+    std::vector<int> skills;
+    for (int index : faction.skills) {
+        if (index >= 0) skills.push_back(actor.PlayerSkill(index));
+    }
+    if (skills.empty()) return true;
+    std::sort(skills.rbegin(), skills.rend());
+    if (skills[0] < row.primarySkill) return false;
+    if (skills.size() < 2) return true;
+    if (skills[1] < row.favouredSkill) return false;
+    if (skills.size() < 3) return true;
+    return skills[2] >= row.favouredSkill;
+}
+
+// Filter::Function_RankRequirement: a two-bit answer, 1 for the stats and 2
+// for the reputation, so `== 3` means EVERY requirement for the next rank is
+// met. A non-member is rank -1, so joining tests row 0.
+float RankRequirement(const ActorView& actor) {
+    const RefId faction = actor.PrimaryFaction();
+    if (faction.empty()) return 0.0f;
+    const FactionDef* def = FindFaction(faction);
+    if (!def) return 0.0f;
+    const int rank = actor.PlayerFactionRank(faction);
+    if (rank >= kTopRank) return 0.0f;
+    const RankReq& row = def->ranks[rank + 1];
+    int result = 0;
+    if (HasSkillsForRank(*def, row, actor) &&
+        actor.PlayerAttribute(def->attribute[0]) >= row.attribute1 &&
+        actor.PlayerAttribute(def->attribute[1]) >= row.attribute2) {
+        result += 1;
+    }
+    if (actor.PlayerFactionReputation(faction) >= row.reputation) result += 2;
+    return static_cast<float>(result);
+}
+
 // The stats, the AI settings, and every flag whose answer is simply NO for a
 // character this runtime does not model that way. Split out of NumberedValue
 // so the one switch does not outgrow its own shape limit.
@@ -105,12 +151,11 @@ float PlainValue(const Condition& cond, const ActorView& actor, bool* known) {
         case Fn_Reputation:
         case Fn_PcReputation:
             return 0.0f;
-        // The actor's AI settings, at their neutral defaults.
-        case Fn_Fight:
-        case Fn_Hello:
-        case Fn_Alarm:
-        case Fn_Flee:
-            return 0.0f;
+        // The actor's AI settings, which scripts set and dialogue tests back.
+        case Fn_Fight:  return static_cast<float>(actor.AiSetting(kAiFight));
+        case Fn_Hello:  return static_cast<float>(actor.AiSetting(kAiHello));
+        case Fn_Alarm:  return static_cast<float>(actor.AiSetting(kAiAlarm));
+        case Fn_Flee:   return static_cast<float>(actor.AiSetting(kAiFlee));
         default:
             *known = false;
             return 0.0f;
@@ -127,8 +172,7 @@ float NumberedValue(const Condition& cond, const ActorView& actor, int choice,
             return static_cast<float>(
                 actor.FactionReaction(actor.PrimaryFaction(),
                                       actor.PrimaryFaction()));
-        case Fn_RankRequirement:  return static_cast<float>(
-            actor.PrimaryFactionRank());
+        case Fn_RankRequirement:  return RankRequirement(actor);
         case Fn_HealthPercent:    return static_cast<float>(actor.Health());
         case Fn_PcLevel:          return static_cast<float>(
             actor.PlayerLevel());

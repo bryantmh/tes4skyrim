@@ -184,6 +184,16 @@ const char* SpeakerId(std::uint32_t formId) {
 
 std::size_t SpeakerCount() { return g_speakers.size(); }
 
+bool SpeakerExists(const std::string& id) {
+    for (const auto& entry : g_speakers) {
+        if (entry.second.size() == id.size() &&
+            _stricmp(entry.second.c_str(), id.c_str()) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::size_t LoadActorIndex() { return LoadActorIndexFrom(SidecarDir()); }
 
 std::size_t LoadActorIndexFrom(const std::string& rootIn) {

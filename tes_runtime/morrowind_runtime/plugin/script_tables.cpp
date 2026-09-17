@@ -24,6 +24,9 @@ std::unordered_map<std::string, FormRef> g_quests;
 constexpr const char* kFileActors = "MWNP.txt";
 constexpr const char* kFileItems = "MWID.txt";
 constexpr const char* kFileQuests = "MWQS.txt";
+constexpr const char* kFileFactions = "MWFA.txt";
+
+std::unordered_map<std::string, FactionDef> g_factions;
 
 std::vector<std::string> Split(const std::string& text, char sep) {
     std::vector<std::string> out;
@@ -50,6 +53,32 @@ ActorDef ParseActor(const std::string& value) {
     out.disposition = std::atoi(f[4].c_str());
     out.female = f[5] == "1";
     out.name = f[6];
+    return out;
+}
+
+// `attr1,attr2|skill,...|a1,a2,primary,favoured,rep;...` -- the two judged
+// attributes, the faction's skills, then one threshold row per rank.
+FactionDef ParseFaction(const std::string& value) {
+    const std::vector<std::string> parts = Split(value, '|');
+    FactionDef out;
+    if (parts.size() < 3) return out;
+    const std::vector<std::string> attrs = Split(parts[0], ',');
+    for (std::size_t i = 0; i < 2 && i < attrs.size(); ++i) {
+        out.attribute[i] = std::atoi(attrs[i].c_str());
+    }
+    for (const std::string& skill : Split(parts[1], ',')) {
+        if (!skill.empty()) out.skills.push_back(std::atoi(skill.c_str()));
+    }
+    const std::vector<std::string> rows = Split(parts[2], ';');
+    for (std::size_t r = 0; r < rows.size() && r < 10; ++r) {
+        const std::vector<std::string> f = Split(rows[r], ',');
+        if (f.size() < 5) continue;
+        out.ranks[r].attribute1 = std::atoi(f[0].c_str());
+        out.ranks[r].attribute2 = std::atoi(f[1].c_str());
+        out.ranks[r].primarySkill = std::atoi(f[2].c_str());
+        out.ranks[r].favouredSkill = std::atoi(f[3].c_str());
+        out.ranks[r].reputation = std::atoi(f[4].c_str());
+    }
     return out;
 }
 
@@ -128,6 +157,7 @@ void ClearScriptTables() {
     g_actors.clear();
     g_items.clear();
     g_quests.clear();
+    g_factions.clear();
 }
 
 void LoadScriptTables(const std::string& pluginDir) {
@@ -162,6 +192,21 @@ void LoadScriptTables(const std::string& pluginDir) {
                [](const std::string& quest, const std::string& value) {
                    g_quests.emplace(Lower(quest), ParseFormRef(value));
                });
+    ForEachRow(pluginDir + kFileFactions,
+               [](const std::string& faction, const std::string& value) {
+                   g_factions.emplace(Lower(faction), ParseFaction(value));
+               });
+}
+
+const FactionDef* FindFaction(const std::string& faction) {
+    const auto it = g_factions.find(Lower(faction));
+    return it == g_factions.end() ? nullptr : &it->second;
+}
+
+std::size_t FactionCount() { return g_factions.size(); }
+
+void AddFactionForTest(const std::string& faction, const FactionDef& def) {
+    g_factions[Lower(faction)] = def;
 }
 
 const ActorDef* FindActor(const std::string& actor) {

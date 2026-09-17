@@ -53,6 +53,11 @@ std::size_t LoadActorIndexFrom(const std::string& root);
 // How many actors are indexed.
 std::size_t SpeakerCount();
 
+// True when this TES3 id names an actor that was actually CONVERTED, so the
+// player can meet them. An id in the dialogue tables but not here belongs to
+// a master whose world this conversion does not include.
+bool SpeakerExists(const std::string& id);
+
 // True once the routing table loaded. NOT yet a guarantee that activations
 // are diverted -- the event sink is still to come.
 bool ActivationInstalled();

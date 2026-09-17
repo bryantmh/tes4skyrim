@@ -2,7 +2,8 @@
 //
 //   session_test.exe <sidecar root> <actor id> [--race R] [--class C]
 //                    [--faction F] [--rank N] [--cell NAME] [--disp N]
-//                    [--topic T] [--female]
+//                    [--topic T] [--female] [--pcfaction NAME RANK]
+//                    [--journal QUEST INDEX]
 //
 // Prints the greeting, the offered topic list and one topic's answer, so the
 // filter is checked against a REAL actor before any menu exists to show it.
@@ -40,12 +41,21 @@ public:
     bool  IsFemale() const override { return female; }
     RefId PrimaryFaction() const override { return faction; }
     int   PrimaryFactionRank() const override { return rank; }
-    int   PlayerFactionRank(const RefId&) const override { return -1; }
+    // What the player has joined, so a guild's own quest line is testable.
+    std::map<RefId, int> playerFactions;
+    std::map<RefId, int> journal;
+
+    int   PlayerFactionRank(const RefId& f) const override {
+        const auto it = playerFactions.find(f);
+        return it == playerFactions.end() ? -1 : it->second;
+    }
     bool  PlayerExpelled(const RefId&) const override { return false; }
+    int   PlayerFactionReputation(const RefId&) const override { return 0; }
     int   FactionReaction(const RefId&, const RefId&) const override {
         return 0;
     }
     int   Disposition() const override { return disposition; }
+    int   AiSetting(int) const override { return 0; }
     RefId PlayerRace() const override { return "Dark Elf"; }
     RefId PlayerClass() const override { return "Warrior"; }
     bool  PlayerIsFemale() const override { return false; }
@@ -63,7 +73,10 @@ public:
     bool TalkedToPlayer() const override { return false; }
     int  DeadCount(const RefId&) const override { return 0; }
     int  ItemCount(const RefId&) const override { return 0; }
-    int  JournalIndex(const RefId&) const override { return 0; }
+    int  JournalIndex(const RefId& quest) const override {
+        const auto it = journal.find(quest);
+        return it == journal.end() ? 0 : it->second;
+    }
     float LocalVariable(const std::string&, bool* found) const override {
         *found = false;
         return 0.0f;
@@ -125,6 +138,14 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--rank") && more) actor.rank = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--cell") && more) actor.cell = argv[++i];
         else if (!std::strcmp(argv[i], "--disp") && more) actor.disposition = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--pcfaction") && i + 2 < argc) {
+            const std::string name = argv[++i];
+            actor.playerFactions[name] = std::atoi(argv[++i]);
+        }
+        else if (!std::strcmp(argv[i], "--journal") && i + 2 < argc) {
+            const std::string quest = argv[++i];
+            actor.journal[quest] = std::atoi(argv[++i]);
+        }
         else if (!std::strcmp(argv[i], "--topic") && more) wanted = argv[++i];
     }
 
@@ -147,6 +168,13 @@ int main(int argc, char** argv) {
         }
         std::putchar('\n');
     }
+
+    const std::vector<std::string> seeded = ChargenTopics();
+    std::printf("CHARGEN SEED (%zu)\n", seeded.size());
+    for (const std::string& topic : seeded) {
+        std::printf("  %s\n", topic.c_str());
+    }
+    std::putchar('\n');
 
     const std::vector<TopicEntry> topics = OfferedTopics(actor, {});
     std::printf("TOPICS (%zu)\n", topics.size());

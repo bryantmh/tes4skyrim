@@ -74,6 +74,13 @@ enum Function {
     Fn_PcWerewolfKills = 73,
 };
 
+// Which of the four AI settings `ActorView::AiSetting` is being asked for.
+// The DLL's own keys, since these are its own numbers.
+constexpr int kAiFight = 0;
+constexpr int kAiHello = 1;
+constexpr int kAiAlarm = 2;
+constexpr int kAiFlee = 3;
+
 // The first and last of the contiguous attribute/skill runs, which map onto
 // the TES3 stat indices the ActorView exposes.
 constexpr int kFirstPcSkill = Fn_PcBlock;

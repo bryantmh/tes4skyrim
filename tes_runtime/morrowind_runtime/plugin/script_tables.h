@@ -53,6 +53,25 @@ struct FormRef {
     std::uint32_t formId = 0;
 };
 
+// One row of FACT's rank table: what the player must reach to hold this rank.
+struct RankReq {
+    int attribute1 = 0;
+    int attribute2 = 0;
+    int primarySkill = 0;
+    int favouredSkill = 0;
+    int reputation = 0;
+};
+
+// A FACT record's requirement side: the two attributes and up to seven skills
+// the faction judges by, and a threshold row per rank. MWFA.txt.
+struct FactionDef {
+    // TES3 attribute indices, 0..7.
+    int attribute[2] = {0, 0};
+    // TES3 skill indices, 0..26; -1 for an unused slot.
+    std::vector<int> skills;
+    RankReq ranks[10];
+};
+
 void ClearScriptTables();
 
 // Reads the three tables from one plugin's sidecar folder (trailing slash).
@@ -68,8 +87,14 @@ const std::string& ScriptOf(const std::string& actor);
 const ActorDef* FindActor(const std::string& actor);
 const FormRef* FindItem(const std::string& item);
 const FormRef* FindQuest(const std::string& quest);
+const FactionDef* FindFaction(const std::string& faction);
+
+// Registers one faction's requirements directly, so the filter's rank rules
+// are testable without staging a sidecar.
+void AddFactionForTest(const std::string& faction, const FactionDef& def);
 std::size_t ActorCount();
 std::size_t QuestCount();
+std::size_t FactionCount();
 
 // How many scripts and actor bindings are loaded, for the log.
 std::size_t ScriptCount();

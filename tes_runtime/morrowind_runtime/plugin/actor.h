@@ -38,11 +38,19 @@ public:
     // The player's rank in `faction`, or -1 when not a member.
     virtual int   PlayerFactionRank(const RefId& faction) const = 0;
     virtual bool  PlayerExpelled(const RefId& faction) const = 0;
+    // The player's standing INSIDE a faction, which gates promotion; not the
+    // reputation that gates the world's reaction.
+    virtual int   PlayerFactionReputation(const RefId& faction) const = 0;
     virtual int   FactionReaction(const RefId& a, const RefId& b) const = 0;
 
     // --- disposition ----------------------------------------------------
     // No Skyrim equivalent: the DLL owns this outright.
     virtual int Disposition() const = 0;
+
+    // --- the AI settings ------------------------------------------------
+    // Fight, Hello, Alarm, Flee by the indices in filter.h. Also the DLL's
+    // own, so a script that raises Fight and a rule that tests it agree.
+    virtual int AiSetting(int which) const = 0;
 
     // --- the player -----------------------------------------------------
     virtual RefId PlayerRace() const = 0;

@@ -11,6 +11,7 @@
 #include <string>
 
 #include "dialogue_state.h"
+#include "filter.h"
 #include "game_actor.h"
 #include "log.h"
 #include "script_context.h"
@@ -141,6 +142,31 @@ void CoSaveCases(DialogueContext& context) {
     State().Reset();
 }
 
+// The AI settings and GetDeadCount: the DLL's own numbers, so a script that
+// writes one and a filter that reads it back have to agree, and both have to
+// survive a save.
+void AiAndDeathCases(DialogueContext& context, const GameActor& actor) {
+    std::printf("AI settings and dead count\n");
+    RunResultScript("SetFight 90\nModFight -10\nSetHello 30", context);
+    Check(actor.AiSetting(kAiFight) == 80, "SetFight then ModFight is 80");
+    Check(actor.AiSetting(kAiHello) == 30, "SetHello is 30");
+    RunResultScript("set TestGlobal to GetFight", context);
+    Check(State().Global("TestGlobal") == 80.0f,
+          "GetFight reads back what the script set");
+
+    State().AddDeath("some_bandit");
+    State().AddDeath("some_bandit");
+    RunResultScript("set TestGlobal to GetDeadCount \"some_bandit\"", context);
+    Check(State().Global("TestGlobal") == 2.0f, "GetDeadCount counts kills");
+
+    const std::string saved = State().Serialize();
+    State().Reset();
+    State().Deserialize(saved);
+    Check(State().AiSetting("test_actor", kAiFight) == 80 &&
+              State().DeadCount("some_bandit") == 2,
+          "both survive a save and load");
+}
+
 void Cases() {
     ClearScriptTables();
     LoadScriptTables("testdata\\scripts\\");
@@ -148,6 +174,7 @@ void Cases() {
     DialogueContext context(actor, "Test Actor", "Player");
     FactionCases(context, actor);
     CoSaveCases(context);
+    AiAndDeathCases(context, actor);
     TableCases(context, actor);
     State().BeginConversation();
 

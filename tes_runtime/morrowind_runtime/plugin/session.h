@@ -47,4 +47,16 @@ Reply Answer(const std::string& topic, const ActorView& actor, int choice);
 std::vector<std::string> MentionedTopics(const std::string& text,
                                          const ActorView& actor);
 
+// The topics vanilla hands the player in the census office, recovered from
+// the data's OWN chargen INFO rather than named here. A converted world is
+// entered somewhere else, so without this the universal topics -- "little
+// advice", "services", "my trade" -- are never introduced and the list of
+// every ordinary NPC comes up empty.
+// See: docs/commentary/morrowind_runtime.md#chargen-topics
+std::vector<std::string> ChargenTopics();
+
+// The actor those topics come from, so a caller can ask whether this world
+// actually contains them before standing in for that conversation.
+const char* ChargenActor();
+
 }  // namespace mwruntime

@@ -916,6 +916,124 @@ and `PlainValue` answers the rest: the 27 skills and 8 attributes through the
 stat map, and a flat NO for vampirism, lycanthropy, corprus, disease and the
 weather.
 
+### <a id="rank-requirements"></a>`RankRequirement` is a BITMASK, and it judges the PLAYER
+
+Function index 2 reads as "what rank does the speaker hold", and the filter
+first answered it that way. It is the opposite: the faction is the SPEAKER's,
+but the rank measured is the PLAYER's, and the answer is two bits — **1** for
+the skills and attributes, **2** for the faction reputation. So `== 3` means
+every requirement for the next rank is met, and the 0 returned at rank 9 is
+indistinguishable from the 0 of an unqualified character.
+
+A non-member is rank -1, so `rank + 1` is 0 and joining tests row 0. Measured
+from `Morrowind.esm`'s own FACT record, the Fighters Guild's row 0 is **not**
+all zeros:
+
+| Rank | Attributes | Primary skill | Favoured | Reputation |
+|---|---|---|---|---|
+| 0 (join) | 30 / 30 | 0 | 0 | 0 |
+| 1 | 30 / 30 | 10 | 0 | 5 |
+| 9 | 35 / 35 | 90 | 35 | 125 |
+
+The judged attributes are Strength and Endurance, so **joining needs 30 in
+both** and no skill at all. Returning the speaker's rank instead — 8 for
+Sharnoga gra-Mal — never equals 3, so the join offer was never reachable and
+the flat "you don't meet our requirements" answer won every time.
+
+The skill test is not per-named-skill. `NpcStats::hasSkillsForRank` sorts the
+player's values for the faction's seven skills and measures the best three:
+one at `mPrimarySkill`, two more at `mFavouredSkill`. The requirement rows
+reach the runtime as `MWFA.txt`, staged from the FACT records of the plugin
+and its masters.
+
+### <a id="chargen-topics"></a>🛑 The universal topics come from ONE result script
+
+A topic is listed only when the speaker can answer it AND the player has heard
+of it, and `mKnownTopics` starts empty — OpenMW has no seeding mechanism, no
+hardcoded list, and no always-known flag. Vanilla seeds it from **game data**:
+the `duties` INFO spoken by `chargen captain` in the Seyda Neen census office
+ends with nine `AddTopic` calls.
+
+```
+addtopic "specific place"    addtopic "someone in particular"
+addtopic "services"          addtopic "my trade"
+addtopic "little secret"     addtopic "latest rumors"
+addtopic "little advice"     addtopic "Caius Cosades"  addtopic "South Wall"
+```
+
+Every playthrough passes through that conversation in its first minutes. **A
+converted world is entered somewhere else entirely**, so the bootstrap never
+runs and the known set stays empty forever — which is why an ordinary NPC came
+up with a short list or none at all, while an NPC whose greeting happens to
+name its own topics still worked.
+
+The fix keeps the gate and supplies the bootstrap the same way the data does:
+the runtime reads the `AddTopic` calls out of the chargen actor's own result
+scripts and hands them over at the first conversation. Nothing is named in
+C++, so a total conversion with a different opening scene seeds from its own
+chargen INFO. Measured over the merged TR_Mainland chain: **9 topics**, and
+152 INFOs seed four or more.
+
+### <a id="quest-trace"></a>Asking whether a quest can be FINISHED
+
+**Tool:** `python -m tools.dialog.morrowind_quest_trace --plugin <esm> --quest <id>`
+
+A TES3 quest advances by `Journal <id> <index>`, reached from an INFO's result
+script — which this runtime runs — or from an object script, which still goes
+down the Papyrus path. So a stage is one of four things, and the difference is
+what makes a quest finishable:
+
+| Verdict | Meaning |
+|---|---|
+| `OK` | dialogue sets it and every command it uses is implemented |
+| `DEGRADED` | dialogue sets it, but some command in the script does nothing |
+| `BLOCKED` | only an object script sets it |
+| `UNREACHABLE` | nothing sets it at all |
+
+Measured over TR_Mainland's 2,086 journal quests and 11,726 stages:
+
+| | Quests | Stages |
+|---|---:|---:|
+| `OK` | 792 | 8,270 |
+| `DEGRADED` | 186 | 1,143 |
+| `BLOCKED` | 699 | 1,463 |
+| `UNREACHABLE` | 409 | 850 |
+
+Both Old Ebonheart Fighters Guild quests are `BLOCKED`: "More Rats?" at stages
+30 and 80, "Cursing Like a Witch" at stage 40, each on an object script
+(`TR_m3_OE_FG_cr_Velkscr`, `TR_m3_OE_FG_q_VermaiScr`) needing `OnDeath`,
+`CellChanged`, `GetDistance` or `GetDisabled`. **Object scripts, not missing
+commands, are what stop quests finishing** — `--blockers` ranks both, and the
+worst single script blocks 20 stages. That is what
+[the object-script plan](../plans/morrowind_object_scripts.md) exists to fix.
+
+🛑 Two parsing traps, both of which silently UNDER-report. The export escapes
+tabs as a literal `\t`, and scripts indent their bodies with them, so
+unescaping only newlines hides every indented statement — that alone had
+"Cursing Like a Witch" reading as fully `OK`. And `ref->Command` puts the
+target first, so a naive leading-word match blames the reference
+(`TR_m3_q_Gerardus`) instead of the command.
+
+### <a id="ai-settings"></a>The AI settings and `GetDeadCount` are the DLL's own
+
+`SetFight` / `SetHello` / `SetAlarm` / `SetFlee`, their `Mod` and `Get` forms,
+and `GetDeadCount` all name state Skyrim has no field for. They are worth
+porting anyway because **dialogue both writes and reads them**: a result script
+raises Fight and a later INFO filters on `Fight >= 90`, so leaving the filter
+answering a flat 0 made those responses unreachable even though nothing
+crashed. They live beside disposition, in the co-save.
+
+`GetDeadCount` gates a great deal of quest dialogue — Old Ebonheart's "Cursing
+Like a Witch" branches its ending on `getDeadCount TR_m3_Margia_Sycora > 0`,
+choosing between the player having killed the witch and having lied about it.
+The count only rises when something records a kill, which no hook does yet, so
+that branch currently always takes the "lied" path.
+
+Measured over the 44,950 authored result scripts, porting these moved the
+unported call total from **6,505 to 4,538** and the command count from 119 to
+108 — the largest single reduction available without an object reference,
+because `SetFight` alone is 1,405 calls.
+
 ## <a id="journal-quests"></a>The journal is Skyrim quests
 
 **Code:** `tes5_import/dialogue/quest_morrowind.py`, `plugin/game_calls.cpp`

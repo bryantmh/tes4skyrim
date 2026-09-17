@@ -124,6 +124,7 @@ if errorlevel 1 (
 link /nologo /OUT:script_test.exe objt\store.obj objt\log.obj ^
      objt\game_actor.obj objt\dialogue_state.obj objt\script_context.obj ^
      objt\script_runner.obj objt\script_tables.obj objt\script_test.obj ^
+     objt\filter.obj ^
      obj\mw\*.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (

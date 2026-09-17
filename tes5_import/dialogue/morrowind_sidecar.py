@@ -43,6 +43,9 @@ ACTOR_SCRIPTS_TABLE = 'MWOS.txt'
 #: What the FILTER needs about each NPC: `id=race|class|faction|rank|disposition|female|name`.
 ACTORS_TABLE = 'MWNP.txt'
 
+#: FACT rank requirements, which the filter's RankRequirement reads.
+FACTIONS_TABLE = 'MWFA.txt'
+
 #: What AddItem and its kin need: `item id=Plugin.esm|FormID`.
 ITEMS_TABLE = 'MWID.txt'
 
@@ -269,8 +272,11 @@ def _stage_dialogue(export_dir: str, out_dir: str, plugin_name: str,
     topics, infos = write_merged_dialogue(gathered, out_dir)
     print(f'    sidecar: {topics} topics, {infos} responses merged over '
           f'{", ".join(name for name, _path in chain)}')
-    return len(DIALOGUE_FILES) + _write_lines(
-        os.path.join(out_dir, ACTORS_TABLE), list(gathered['actors'].values()))
+    staged = _write_lines(os.path.join(out_dir, ACTORS_TABLE),
+                          list(gathered['actors'].values()))
+    staged += _write_lines(os.path.join(out_dir, FACTIONS_TABLE),
+                           list(gathered['factions'].values()))
+    return len(DIALOGUE_FILES) + staged
 
 
 def _journal_quests(writer, out_dir: str, plugin_name: str) -> int:

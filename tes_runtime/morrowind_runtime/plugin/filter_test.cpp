@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "filter.h"
+#include "script_tables.h"
 #include "store.h"
 
 namespace mwruntime {
@@ -37,6 +38,10 @@ public:
     int   factionRank = -1;
     std::map<RefId, int> playerFactions;
     std::map<RefId, bool> expelled;
+    std::map<RefId, int> factionReputation;
+    std::map<int, int> playerSkills;
+    std::map<int, int> playerAttributes;
+    std::map<int, int> aiSettings;
     int   disposition = 50;
     RefId playerRace = "Dark Elf";
     RefId playerClass = "Warrior";
@@ -73,16 +78,30 @@ public:
         const auto it = expelled.find(f);
         return it != expelled.end() && it->second;
     }
+    int PlayerFactionReputation(const RefId& f) const override {
+        const auto it = factionReputation.find(f);
+        return it == factionReputation.end() ? 0 : it->second;
+    }
     int FactionReaction(const RefId&, const RefId&) const override { return 0; }
     int Disposition() const override { return disposition; }
+    int AiSetting(int which) const override {
+        const auto it = aiSettings.find(which);
+        return it == aiSettings.end() ? 0 : it->second;
+    }
     RefId PlayerRace() const override { return playerRace; }
     RefId PlayerClass() const override { return playerClass; }
     bool  PlayerIsFemale() const override { return playerFemale; }
     int   PlayerLevel() const override { return playerLevel; }
     int   PlayerHealthPercent() const override { return playerHealth; }
     int   PlayerCrimeLevel() const override { return crimeLevel; }
-    int   PlayerSkill(int) const override { return 100; }
-    int   PlayerAttribute(int) const override { return 100; }
+    int   PlayerSkill(int index) const override {
+        const auto it = playerSkills.find(index);
+        return it == playerSkills.end() ? 100 : it->second;
+    }
+    int   PlayerAttribute(int index) const override {
+        const auto it = playerAttributes.find(index);
+        return it == playerAttributes.end() ? 100 : it->second;
+    }
     std::string PlayerCellName() const override { return cellName; }
     int  Health() const override { return health; }
     int  Level() const override { return level; }
@@ -405,12 +424,55 @@ int UnknownFunctionCases() {
     return failed;
 }
 
+// 🛑 RankRequirement judges the PLAYER against the SPEAKER's faction, and
+// answers a bitmask: 1 stats, 2 reputation, so 3 is "fully qualified". It
+// once returned the speaker's own rank, so no join offer was ever reachable.
+// See: docs/commentary/morrowind_runtime.md#rank-requirements
+int RankRequirementCases() {
+    FactionDef def;
+    def.attribute[0] = 0;
+    def.attribute[1] = 5;
+    def.ranks[0].attribute1 = 30;
+    def.ranks[0].attribute2 = 30;
+    AddFactionForTest("rr_guild", def);
+    FakeActor actor;
+    actor.faction = "rr_guild";
+    actor.factionRank = 8;
+    int failed = 0;
+    struct Case { int strength; int reputation; bool expected; const char* what; };
+    const Case cases[] = {
+        {30, 0, true,  "meeting every rank-0 requirement reads 3"},
+        {29, 0, false, "one attribute short does not"},
+        {30, -1, false, "reputation short does not"},
+    };
+    for (const Case& c : cases) {
+        actor.playerAttributes[0] = c.strength;
+        actor.playerAttributes[5] = c.strength;
+        actor.factionReputation["rr_guild"] = c.reputation;
+        const bool got = TestCondition(
+            Numbered(Fn_RankRequirement, '0', 3), actor, -1);
+        std::printf("  %s  %s\n", got == c.expected ? "ok  " : "FAIL", c.what);
+        if (got != c.expected) ++failed;
+    }
+    // The speaker's own rank must not leak into the answer.
+    actor.playerAttributes[0] = 30;
+    actor.playerAttributes[5] = 30;
+    actor.factionReputation["rr_guild"] = 0;
+    const bool notRank = !TestCondition(
+        Numbered(Fn_RankRequirement, '0', 8), actor, -1);
+    std::printf("  %s  never answers the SPEAKER's rank\n",
+                notRank ? "ok  " : "FAIL");
+    return failed + (notRank ? 0 : 1);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc == 1) {
         std::printf("unknown numbered functions\n");
-        const int failed = UnknownFunctionCases();
+        int failed = UnknownFunctionCases();
+        std::printf("rank requirements\n");
+        failed += RankRequirementCases();
         std::printf("%s\n", failed ? "FAILED" : "all passed");
         return failed ? 1 : 0;
     }

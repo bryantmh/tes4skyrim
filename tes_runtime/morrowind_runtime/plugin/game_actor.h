@@ -34,6 +34,7 @@ public:
     int   PrimaryFactionRank() const override;
     int   PlayerFactionRank(const RefId& faction) const override;
     bool  PlayerExpelled(const RefId& faction) const override;
+    int   PlayerFactionReputation(const RefId& faction) const override;
     int   FactionReaction(const RefId& a, const RefId& b) const override;
 
     int Disposition() const override;
@@ -55,6 +56,7 @@ public:
     bool Attacked() const override;
     bool TalkedToPlayer() const override;
     int  DeadCount(const RefId& id) const override;
+    int  AiSetting(int which) const override;
     int  ItemCount(const RefId& id) const override;
     int  JournalIndex(const RefId& quest) const override;
 

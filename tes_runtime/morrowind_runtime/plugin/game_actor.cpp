@@ -63,6 +63,10 @@ bool GameActor::PlayerExpelled(const RefId& faction) const {
     return State().Faction(faction).expelled;
 }
 
+int GameActor::PlayerFactionReputation(const RefId& faction) const {
+    return State().Faction(faction).reputation;
+}
+
 int GameActor::FactionReaction(const RefId& a, const RefId& b) const {
     return State().FactionReaction(a, b);
 }
@@ -101,7 +105,13 @@ bool GameActor::Attacked() const { return false; }
 
 bool GameActor::TalkedToPlayer() const { return false; }
 
-int GameActor::DeadCount(const RefId&) const { return Stub(0); }
+int GameActor::DeadCount(const RefId& id) const {
+    return State().DeadCount(id);
+}
+
+int GameActor::AiSetting(int which) const {
+    return State().AiSetting(mId, which);
+}
 
 int GameActor::ItemCount(const RefId&) const { return Stub(0); }
 

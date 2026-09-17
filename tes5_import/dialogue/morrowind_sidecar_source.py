@@ -17,6 +17,7 @@ See: docs/commentary/morrowind_runtime.md#sidecar
 """
 
 import os
+import struct
 
 from asset_convert.sources import source_registry
 from core.plugin_masters import get_masters_from_binary
@@ -31,6 +32,12 @@ _NPDT_FIELDS = {52: (44, 46), 12: (2, 4)}
 
 #: NPC_ FLAG bit 0.
 _FEMALE = 0x1
+
+#: FADT: 2 judged attributes, ten 5-int rank rows, 7 skills, flags.
+_FADT_INTS = 60
+_FADT_RANKS = 10
+_FADT_RANK_AT = 2
+_FADT_SKILLS_AT = 52
 
 
 def _binary(root: str, plugin: str):
@@ -105,28 +112,64 @@ def _actor_line(rec) -> str:
     return f'{rec.record_id}=' + '|'.join(str(field) for field in fields)
 
 
-def _take(out: dict, rec, topic: str) -> str:
-    """Fold one record into `out`; returns the topic INFOs now belong to."""
+def _faction_line(rec) -> str:
+    """`id=attr1,attr2|skills|a1,a2,primary,favoured,rep;...` for one FACT.
+
+    The rank rows are what the filter's RankRequirement measures the player
+    against, so joining and promotion are authored data rather than a guess.
+    See: docs/commentary/morrowind_runtime.md#rank-requirements
+    """
+    data = get_subrecord(rec, 'FADT')
+    if data is None or len(data.data) < _FADT_INTS * 4:
+        return ''
+    values = struct.unpack(f'<{_FADT_INTS}i', data.data[:_FADT_INTS * 4])
+    rows = []
+    for rank in range(_FADT_RANKS):
+        at = _FADT_RANK_AT + rank * 5
+        rows.append(','.join(str(value) for value in values[at:at + 5]))
+    skills = ','.join(
+        str(value) for value in values[_FADT_SKILLS_AT:_FADT_SKILLS_AT + 7]
+        if value >= 0)
+    return (f'{rec.record_id}={values[0]},{values[1]}|{skills}|'
+            + ';'.join(rows))
+
+
+def _take_dial(out: dict, rec, topic: str) -> str:
+    """The DIAL/INFO half of `_take`, kept separate so neither nests deep."""
     if rec.type == 'DIAL':
         topic = rec.record_id.lower()
-        if not rec.deleted:
-            out['topics'][topic] = rec
-            out['infos'].setdefault(topic, [])
+        if rec.deleted:
+            return topic
+        out['topics'][topic] = rec
+        out['infos'].setdefault(topic, [])
     elif rec.type == 'INFO' and topic in out['infos']:
         _merge_info(out['infos'][topic], rec)
-    elif rec.type == 'NPC_' and rec.record_id and not rec.deleted:
+    return topic
+
+
+def _take(out: dict, rec, topic: str) -> str:
+    """Fold one record into `out`; returns the topic INFOs now belong to."""
+    if rec.type in ('DIAL', 'INFO'):
+        return _take_dial(out, rec, topic)
+    if not rec.record_id or rec.deleted:
+        return topic
+    if rec.type == 'NPC_':
         out['actors'][rec.record_id.lower()] = _actor_line(rec)
+    elif rec.type == 'FACT':
+        line = _faction_line(rec)
+        if line:
+            out['factions'][rec.record_id.lower()] = line
     return topic
 
 
 def gather(chain: list) -> dict:
-    """`{'topics', 'infos', 'actors'}` over the whole chain, each plugin read
-    ONCE, a later plugin overriding or extending an earlier one.
+    """`{'topics', 'infos', 'actors', 'factions'}` over the whole chain, each
+    plugin read ONCE, a later plugin overriding or extending an earlier one.
 
     `topics` is `{lower id: DIAL rec}`, `infos` `{lower id: [entry]}` in merged
-    order, `actors` `{lower id: table line}`.
+    order, `actors` and `factions` `{lower id: table line}`.
     """
-    out = {'topics': {}, 'infos': {}, 'actors': {}}
+    out = {'topics': {}, 'infos': {}, 'actors': {}, 'factions': {}}
     for _name, path in chain:
         topic = ''
         for rec in read_file(path)[1]:
