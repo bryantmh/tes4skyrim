@@ -555,6 +555,30 @@ def set_pc_faction_crime(ctx, call) -> str:
     return f'{faction}.{setter}({amount})'
 
 
+@command('setfactionrank')
+def set_faction_rank(ctx, call) -> str:
+    """SetFactionRank -- a NEGATIVE rank is REMOVAL, not a rank.
+
+    A literal negative emits `RemoveFromFaction`; a non-negative literal
+    declines so the row table renders it. A VARIABLE rank cannot be decided
+    here, so it routes through the polyfill, which branches on the sign at
+    runtime.
+    See: docs/commentary/script_convert.md#setfactionrank--1-is-removal
+    """
+    if len(call) < 2:
+        return None
+    ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)
+    if ref == 'Self' and call.extends != 'Actor':
+        ref = '(Self as Actor)'
+    faction = call.arg(0)
+    try:
+        if float(call.source(1).strip()) < 0:
+            return f'{ref}.RemoveFromFaction({faction})'
+        return None
+    except ValueError:
+        return f'TES4Polyfill.SetFactionRank({ref}, {faction}, {call.arg(1)})'
+
+
 def _as_actor(ctx, target: str) -> str:
     """Cast or register `target` so it is Actor-typed at the call site."""
     vtype = ctx.sc.var_types.get(target.lower(), '')

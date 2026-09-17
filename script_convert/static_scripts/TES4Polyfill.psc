@@ -327,6 +327,22 @@ Function ModCrimeGold(Faction akFaction, Int aiGold) Global
   akFaction.ModCrimeGold(aiGold, false)
 EndFunction
 
+; TES4 `SetFactionRank <faction> -1` REMOVES the actor from the faction;
+; Papyrus SetFactionRank "adds the actor to the faction if necessary" and -1 is
+; a rank it keeps (vanilla parks Lydia in PotentialMarriageFaction at -1), so
+; the 1:1 mapping JOINS the faction the script meant to leave.
+; See: docs/commentary/script_convert.md#setfactionrank--1-is-removal
+Function SetFactionRank(Actor akActor, Faction akFaction, Int aiRank) Global
+  If akActor == None || akFaction == None
+    Return
+  EndIf
+  If aiRank < 0
+    akActor.RemoveFromFaction(akFaction)
+  Else
+    akActor.SetFactionRank(akFaction, aiRank)
+  EndIf
+EndFunction
+
 ; ==========================================================================
 ; Sound Wrappers
 ; ==========================================================================

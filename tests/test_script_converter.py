@@ -1832,6 +1832,53 @@ class TestSingletonFixes:
                                          'ObjectReference')
         assert 'TES4Polyfill.HasVampireFed()' in result
 
+    def test_negative_setfactionrank_removes_instead_of_joining(self, converter):
+        """TES4 `SetFactionRank <faction> -1` means LEAVE the faction.
+
+        Papyrus SetFactionRank adds the actor if necessary and keeps a negative
+        rank, so the 1:1 mapping joined the faction the script meant to leave —
+        271 of 1033 corpus calls pass -1, and the vampirism CURES
+        (`playervampirefaction`, Morroblivion's `0clanS*`) are what made every
+        NPC read a non-vampire player as a vampire.
+        See: docs/commentary/script_convert.md#setfactionrank--1-is-removal
+        """
+        result = conv_line(converter,
+            'player.setfactionrank playervampirefaction -1', 'ObjectReference')
+        assert 'RemoveFromFaction(playervampirefaction)' in result
+        assert 'SetFactionRank' not in result
+        assert ';TODO' not in result
+
+    def test_comma_separated_negative_rank_also_removes(self, converter):
+        """The `-1` idiom is written with either separator."""
+        result = conv_line(converter,
+            'SrazirrRef.setfactionrank claudemaricthugfaction, -1',
+            'ObjectReference')
+        assert 'SrazirrRef.RemoveFromFaction(claudemaricthugfaction)' in result
+
+    def test_non_negative_setfactionrank_is_unchanged(self, converter):
+        """Rank 0 is a real rank — 374 corpus calls use it — and must not be
+        turned into a removal."""
+        result = conv_line(converter,
+            'player.setfactionrank fightersguild 0', 'ObjectReference')
+        assert 'SetFactionRank(fightersguild, 0)' in result
+        assert 'RemoveFromFaction' not in result
+
+    def test_variable_rank_defers_the_sign_test_to_runtime(self, converter):
+        """A non-literal rank (Nehrim's `NehrimSymbolVar`) cannot be decided at
+        conversion time, so the polyfill branches on the sign instead."""
+        result = conv_line(converter,
+            'Player.setfactionrank NehrimSymbolFaction NehrimSymbolVar',
+            'ObjectReference')
+        assert 'TES4Polyfill.SetFactionRank(' in result
+        assert 'NehrimSymbolVar' in result
+
+    def test_modfactionrank_negative_is_not_a_removal(self, converter):
+        """ModFactionRank is RELATIVE and means the same in both games."""
+        result = conv_line(converter,
+            'player.modfactionrank fightersguild -1', 'ObjectReference')
+        assert 'ModFactionRank(fightersguild, -1)' in result
+        assert 'RemoveFromFaction' not in result
+
     def test_setfactionreaction_mixed_separators(self, converter):
         """SetAlly, never SetReaction, whatever separators are used.
 

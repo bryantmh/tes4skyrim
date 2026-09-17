@@ -3360,6 +3360,46 @@ script's own object — it redirects to `GetTargetActor()`, `akSpeakerRef` or
 the MAGIC EFFECT against an NPC instead of the effect's target — a test that can
 never be true. Caught by the semantic diff as `calls[gettargetactor/0]: 3 -> 2`.
 
+### `SetFactionRank <faction> -1` is REMOVAL, not a rank
+<a id="setfactionrank--1-is-removal"></a>
+
+**Code:** `script_convert/commands.py:set_faction_rank`,
+`script_convert/static_scripts/TES4Polyfill.psc:SetFactionRank`
+
+TES4 spells "leave this faction" as `SetFactionRank <faction> -1`. Papyrus's
+`Actor.SetFactionRank` does the opposite: the CK wiki says it "adds the actor to
+the faction if necessary", and a negative rank is one it RETAINS — vanilla parks
+Lydia in `PotentialMarriageFaction` at rank -1 while every other member sits at
+0. So the 1:1 mapping JOINED the faction the script meant to leave. Removal in
+Skyrim is `RemoveFromFaction`.
+
+Census of every `SetFactionRank`/`ModFactionRank` call in the exported corpus
+(`SCPT`/`QUST`/`INFO`/`PACK` script text, all plugins):
+
+| Rank argument | Calls |
+|---|---:|
+| `0` | 374 |
+| **`-1`** | **271** |
+| `1`-`10` | 387 |
+| `NehrimSymbolVar` (non-literal) | 1 |
+
+So 271 of 1033 calls (26%) were inverted. The user-visible symptom was
+vampirism: the CURE scripts are what enrolled the player, since
+`MS40PotionEffect` ends with `player.setfactionrank playervampirefaction -1`
+and Morroblivion's `fbmwVAVampCureQuest` cure stage does the same for
+`0clanSaundae`/`0clanSberne`/`0clanSquarra`. Faction membership is global
+state every NPC's conditions read, which is why *every* NPC — including Tamriel
+Rebuilt's Morrowind NPCs, reading vampire-clan membership — treated a
+non-vampire player as a vampire at once. The rest of the 271 are ordinary
+faction departures (`BleakersWayFaction`, `MQ15PrisonerFaction`,
+`claudemaricthugfaction` — the UESP mod-fix for *Nothing You Can Possess* uses
+the `-1` idiom explicitly to stop S'razirr fighting the player).
+
+A LITERAL negative emits `RemoveFromFaction` directly; the one variable rank
+routes through the polyfill, which branches on the sign at runtime.
+`ModFactionRank` is NOT affected — it is relative, and Papyrus's
+`ModFactionRank` has the same meaning.
+
 ### `GetFactionRelation` has TWO receiver kinds
 <a id="getfactionrelation-has-two-receivers"></a>
 
