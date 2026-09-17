@@ -1529,3 +1529,49 @@ Measured on the Tamriel Rebuilt set: 3.3s to parse the 212 MB ESP (838k
 refs/sec), 3.4s to build the texture lookup from the master's 352 MB
 `LAND.txt`, 1.0s to sample and tally all 2.73M placements. Single-threaded and
 well under any stage that would justify a pool.
+
+
+## <a id="interior-lighting"></a>Interior lighting
+
+Morrowind hand-lights each interior with an `AMBI` subrecord: ambient color,
+sunlight color, fog color and a fog-density scalar, all three colors packed
+`0x00BBGGRR`. `morrowind_cell.py` parsed `AMBI` into `cell.ambient` from the
+start, but nothing read the field and no `XCLL` key was ever emitted, so every
+converted interior reached the import with no lighting record at all.
+
+`build_cell_xcll` returns `None` when `XCLL.AmbientR` is absent, and `LTMP` is
+written NULL, so those cells inherited nothing either -- they ran entirely on
+engine defaults plus whatever placed lights they held. The symptom is flat,
+characterless interior lighting across the whole plugin.
+
+`_interior_cell` now emits the ambient, directional and fog colors whenever
+the source cell carries `AMBI`. The import side needed no change: it already
+packs all 92 XCLL bytes from those keys, and `get_int`/`get_float` default the
+components Morrowind does not author (fog near/far, directional rotation) to
+0.
+
+### The colors are authored, and varied
+
+Measured on TR_Mainland: **3,390 of 5,871 interior cells (58%) carry `AMBI`**.
+Their ambient mean-luminance spreads 0-143 with a peak in the 48-63 bucket
+(987 cells), and the colors are plainly deliberate -- `3E495A` blue-grey for a
+Dwemer ruin, `1B1111` with `413529` fog for a warm cave, `1B1921`/`2C1F2E` for
+a purple-tinted interior. It is per-cell authored color variation, which is
+exactly what the flat look was missing.
+
+The remaining 2,481 interiors author no `AMBI` and still fall through to
+engine defaults; nothing in the source can fill them.
+
+### Ambient alone is the mechanism
+
+Oblivion's interiors look correct in-game and set almost nothing else: of
+1,770 vanilla cells with `XCLL`, **1,643 (93%) have a pure-black directional
+color**, and the median fog near and fog far are both 0.0. Ambient carries the
+result on its own.
+
+That retires the obvious follow-up. Morrowind's fog density is a scalar rather
+than the near/far pair TES4 uses, so mapping it would mean fitting against
+Morroblivion's converted cells -- but it is a component vanilla Oblivion
+mostly leaves at zero, so it buys nothing until an interior is shown to need
+it. The six-way directional-ambient block stays a replicated flat ambient for
+the same reason: Oblivion proves that reads fine.

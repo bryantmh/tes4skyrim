@@ -899,12 +899,29 @@ def _ranked_textures(patch: list, ctx: MorrowindContext) -> list:
             for value in (ranked + ring)[:MAX_QUAD_LAYERS]]
 
 
+def _emit_cell_lighting(lines: list, ambient: tuple) -> None:
+    """Emit the XCLL color keys for one interior's authored AMBI.
+
+    Morrowind packs each color `0x00BBGGRR`; the import builds the full 92-byte
+    XCLL from these keys and defaults what TES3 does not author.
+
+    See: docs/commentary/tes4_export_morrowind.md#interior-lighting
+    """
+    for key, packed in (('Ambient', ambient[0]), ('Directional', ambient[1]),
+                        ('Fog', ambient[2])):
+        lines.append(f'XCLL.{key}R={packed & 0xFF}')
+        lines.append(f'XCLL.{key}G={(packed >> 8) & 0xFF}')
+        lines.append(f'XCLL.{key}B={(packed >> 16) & 0xFF}')
+
+
 def _interior_cell(cell, ctx: MorrowindContext) -> tuple:
     """One interior cell and every placement it holds."""
     form_id = ctx.interior_cell_id(cell.name)
     lines = [f'EditorID={cell.name}', f'FULL={cell.name}', 'DATA.Flags=1']
     if cell.water_height is not None:
         lines.append(f'XCLW.WaterHeight={cell.water_height}')
+    if cell.ambient is not None:
+        _emit_cell_lighting(lines, cell.ambient)
     return [(form_id, lines)], _emit_refs(cell.refs, form_id, ctx)
 
 
