@@ -3516,3 +3516,76 @@ master id replaces the result afterwards. Skipping the call instead would change
 the allocator's `_derived_taken` set, and since collisions are resolved by
 rehashing against that set, unrelated derived ids in the same plugin could move —
 drift for records that have nothing to do with navmesh.
+
+### The COLLISION caches must chain too
+
+**Code:** `navmesh/pool.py:collision_cache_chain`,
+`collision/collision_extract.py:load_collision`.
+
+Merging the reference records is only two thirds of the chain. A REFR is a
+placement; carving needs the base record's model path, and then the collision
+mesh cached for that path. `build_base_model_index` already merged
+`master_export`, so the model path resolved — but `load_collision` REPLACED
+the module cache with a single file, and the pipeline handed it the plugin's
+OWN `collision_cache.bin`, which holds only the meshes that plugin ships.
+
+Measured on UL's `CloudRulerTempleExterior02`, over the 154 merged references:
+
+| Cache loaded | entries | collision hits | misses |
+|---|---|---|---|
+| UL's own | 1,083 | **0** | 149 |
+| Oblivion.esm's | 6,093 | 143 | 6 |
+| both, chained | 7,176 | **143** | 6 |
+
+So the record merge alone left the carver with 154 references and collision for
+**none** of them. The triangle count went UP rather than down, because nothing
+carved holes where the buildings are — a denser sheet over the same ground.
+
+`load_collision` therefore takes a path OR an iterable of them, MASTERS FIRST
+so the plugin's own mesh wins a shared path key, and `collision_cache_chain`
+builds that list from the export header's master names. A masterless plugin
+yields a one-element chain and is byte-identical. The 6 residual misses are UL
+meshes absent from both caches.
+
+The parent process loads the same chain (`pipeline.py`), since furniture seats
+and door panels read the module cache too.
+
+### The geometry must merge the masters too
+
+**Code:** `navmesh/pool.py:_merge_master_cell_records`.
+
+Owning the master's NAVM id is only half the contract. A child plugin restates
+**only the references it edits**, so building the navmesh from `by_type` alone
+carves the cell as if the master had furnished nothing.
+
+Measured on Unique Landscapes Compilation v2.2.0, `CloudRulerTempleExterior02`
+(`000044AD`, Tamriel 3,39):
+
+| Source | REFR in cell |
+|---|---|
+| Oblivion.esm | 121 |
+| UL's own export | 45 |
+| of those, NEW in UL | 33 |
+| master refs UL never restates | 109 |
+
+So 109 of the master's 121 references were invisible to the carver. The LAND is
+fully restated (1,888 keys in both files), which is why the symptom was a
+*degenerate, hole-filled* navmesh rather than a missing one: the ground was
+there, almost every static that should carve or support it was not. The part of
+the cell UL does not modify is exactly the part whose geometry lives only in the
+master, and it degraded worst.
+
+This was latent before navmesh overriding landed. The thin navmesh used to ship
+under a **derived** id, so the master's correct navmesh stayed loaded beside it;
+once the child adopted the master's id, the thin mesh *replaced* the good one.
+
+`_merge_master_cell_records` therefore makes the masters the baseline for REFR
+and LAND: master records first, the plugin's own overriding by FormID, and an
+override flagged `DELETED_FLAG` dropping out so a deleted ref cannot resurrect.
+After merging, the cell above carries 154 refs (121 master + 33 new; the 12
+edited ones replace rather than add).
+
+**PGRD is deliberately NOT merged.** Which jobs exist, and their
+`(cell_fid, pgrd_fid)` keys, stay driven by the plugin's own pathgrids — merging
+there would invent jobs and move every derived NAVM id. Verified on UL: job
+count is 1,865 before and after, and the probe cell keeps pathgrid `000392E8`.

@@ -309,56 +309,74 @@ def _load_door_axes(apath) -> None:
         pass
 
 
+def _clear_door_caches() -> None:
+    """Drop every door global before a fresh load."""
+    for cache in (_DOOR_CENTROIDS, _DOOR_FLOOR_DZ, _DOOR_THRESH_LOCAL_Y,
+                  _DOOR_NO_THRESHOLD, _DOOR_WIDTH, _DOOR_PANEL_CTR):
+        cache.clear()
+
+
+def _load_door_floor_dz(paths) -> None:
+    """Fill each door model's floor z-offset from the mesh-bounds caches.
+
+    A door REFR's pivot is its local z=0, which sits at the HINGE rather
+    than on the floor, so the bounds cache's z-min supplies the drop.  The
+    axis cache wins where it already carries the slab z-min, and the caches
+    are read masters-first so a child plugin sees its masters' door meshes.
+    See: docs/commentary/tes5_import_navmesh.md#door-center-caches
+    """
+    if not (_DOOR_CENTROIDS or _DOOR_PANEL_CTR):
+        return
+    wanted = set(_DOOR_CENTROIDS) | set(_DOOR_PANEL_CTR)
+    for path in paths:
+        bpath = os.path.join(os.path.dirname(path),
+                             'mesh_bounds_cache.json')
+        if not os.path.exists(bpath):
+            continue
+        try:
+            with open(bpath, encoding='utf-8') as fh:
+                bounds = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        for k in wanted:
+            if k in _DOOR_FLOOR_DZ:
+                continue
+            b = bounds.get(k)
+            if b and len(b) >= 6:
+                _DOOR_FLOOR_DZ[k] = float(b[2])
+
+
 def load_door_centroids(cache_path, quiet: bool = False) -> int:
     """Populate the six door caches; returns the model count loaded.
 
-    cache_path: door_centers_cache.json, beside the bounds cache; keys are
-    mesh_bounds-style ('tes4/...'), matching door_fids.  Authoritative source
-    is door_panel_axis_cache.json (collision_extract.scan_door_axes); the
-    legacy mesh-bbox centers only fill models it lacks a center for.
+    cache_path: door_centers_cache.json, beside the bounds cache, or a
+    MASTERS-FIRST iterable of them so a child plugin sees its masters'
+    door meshes (it caches only the doors it ships).  Keys are
+    mesh_bounds-style ('tes4/...'), matching door_fids.  Authoritative
+    source is door_panel_axis_cache.json (collision_extract.scan_door_axes);
+    the legacy mesh-bbox centers only fill models it lacks a center for.
     See: docs/commentary/tes5_import_navmesh.md#door-center-caches
     """
-    _DOOR_CENTROIDS.clear()
-    _DOOR_FLOOR_DZ.clear()
-    _DOOR_THRESH_LOCAL_Y.clear()
-    _DOOR_NO_THRESHOLD.clear()
-    _DOOR_WIDTH.clear()
-    _DOOR_PANEL_CTR.clear()
+    _clear_door_caches()
     if not cache_path:
         return 0
-    base_dir = os.path.dirname(cache_path)
-    if os.path.exists(cache_path):
+    paths = ([cache_path] if isinstance(cache_path, str)
+             else list(cache_path))
+    for path in paths:
+        if not os.path.exists(path):
+            continue
         try:
-            with open(cache_path, encoding='utf-8') as fh:
+            with open(path, encoding='utf-8') as fh:
                 raw = json.load(fh)
             for k, v in raw.items():
                 _DOOR_CENTROIDS[k] = (float(v[0]), float(v[1]))
         except (OSError, ValueError) as exc:
             if not quiet:
                 print(f"  Door centers: could not load cache ({exc})")
-    _load_door_axes(os.path.join(base_dir, 'door_panel_axis_cache.json'))
-    # The REFR pivot sits at the door mesh's local z=0, which for a door is
-    # up at the HINGE, not on the floor: impdundoor01's panel runs local z
-    # -140.8..+57.7, so PosZ is ~141u above the threshold it stands on.
-    # The door-quad Z gate (DOOR_QUAD_ZTOL, 128) then rejected every
-    # corridor edge at the real floor height and the door produced NO
-    # footprint at all -- measured on CharacterGen's Ambush A doors, off by
-    # 140.8 and 144.0.  The mesh-bounds cache already carries each model's
-    # local z-min, so read it from there rather than duplicating it here.
-    bpath = os.path.join(base_dir, 'mesh_bounds_cache.json')
-    if os.path.exists(bpath) and (_DOOR_CENTROIDS or _DOOR_PANEL_CTR):
-        try:
-            with open(bpath, encoding='utf-8') as fh:
-                bounds = json.load(fh)
-            for k in set(_DOOR_CENTROIDS) | set(_DOOR_PANEL_CTR):
-                if k in _DOOR_FLOOR_DZ:
-                    continue            # axis cache carries the slab z-min
-                b = bounds.get(k)
-                if not b or len(b) < 6:
-                    continue
-                _DOOR_FLOOR_DZ[k] = float(b[2])
-        except (OSError, ValueError):
-            pass
+    for path in paths:
+        _load_door_axes(os.path.join(os.path.dirname(path),
+                                     'door_panel_axis_cache.json'))
+    _load_door_floor_dz(paths)
     n = len(set(_DOOR_CENTROIDS) | set(_DOOR_PANEL_CTR))
     if not quiet:
         print(f"  Door centers: loaded {n} entries "

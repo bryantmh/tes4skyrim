@@ -147,3 +147,60 @@ def test_splits_beyond_the_masters_count_keep_their_own_ids():
 
     assert navm_pool._adopt_master_navm_fids(jobs, idx) == 1
     assert [j['navm_fid'] for j in jobs] == [0x01E5591F, 0x05AAAA02]
+
+
+def _refr(fid, cell, flags=0):
+    """A minimal REFR export record parented to `cell`."""
+    rec = {'Signature': 'REFR', 'FormID': '%08X' % fid,
+           'ParentCELL': '%08X' % cell}
+    if flags:
+        rec['RecordFlags'] = str(flags)
+    return rec
+
+
+def test_navmesh_geometry_merges_the_masters_references():
+    """A child plugin carves with the master's furnishing, not just its own.
+
+    UL restates 45 of CloudRulerTempleExterior02's 121 Oblivion.esm refs, so
+    navmeshing from `by_type` alone left 109 statics invisible and the mesh
+    full of holes.
+    """
+    by_type = {'REFR': [_refr(0x01000001, 0xAAAA)]}
+    master = {'000000AA': _refr(0x000000AA, 0xAAAA),
+              '000000BB': _refr(0x000000BB, 0xAAAA)}
+
+    merged = navm_pool._merge_master_cell_records(by_type, master, 'REFR')
+
+    assert sorted(r['FormID'] for r in merged) == [
+        '000000AA', '000000BB', '01000001']
+
+
+def test_the_plugins_own_reference_overrides_the_masters():
+    """An edited ref appears ONCE, in the plugin's version."""
+    own = _refr(0x000000AA, 0xAAAA)
+    own['PosX'] = '128.0'
+    by_type = {'REFR': [own]}
+    master = {'000000AA': _refr(0x000000AA, 0xAAAA)}
+
+    merged = navm_pool._merge_master_cell_records(by_type, master, 'REFR')
+
+    assert len(merged) == 1
+    assert merged[0]['PosX'] == '128.0'
+
+
+def test_a_reference_the_plugin_deletes_carves_nothing():
+    """A deleted override must not resurrect the master's ref."""
+    by_type = {'REFR': [_refr(0x000000AA, 0xAAAA,
+                              flags=overrides.DELETED_FLAG)]}
+    master = {'000000AA': _refr(0x000000AA, 0xAAAA)}
+
+    assert navm_pool._merge_master_cell_records(
+        by_type, master, 'REFR') == []
+
+
+def test_a_masterless_plugin_merges_nothing():
+    """Oblivion.esm/Nehrim.esm keep the exact list they always had."""
+    own = [_refr(0x00000001, 0xAAAA)]
+
+    assert navm_pool._merge_master_cell_records(
+        {'REFR': own}, None, 'REFR') is own

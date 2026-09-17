@@ -73,7 +73,7 @@ def _load(export_dir, offset):
     door_fids = navm_pool.build_door_fid_set(by_type, master_export)
     base_model_by_fid = navm_pool.build_base_model_index(by_type,
                                                          master_export)
-    jobs = navm_pool.gather_navm_jobs(by_type, door_fids)
+    jobs = navm_pool.gather_navm_jobs(by_type, door_fids, master_export)
     # FormIDs are pre-assigned in the parent in the real run; any stable value
     # works here since we are not writing a plugin.
     for i, job in enumerate(jobs):

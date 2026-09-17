@@ -74,7 +74,7 @@ from .base.text_reader import (
 from .base.writer import PluginWriter, pack_group
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from output_layout import assets_for
+from output_layout import asset_cache_chain
 
 
 
@@ -339,8 +339,9 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
 
     st.navm_cache = navm_pool.precompute_navmeshes(
         st.by_type, st.writer, st.base_model_by_fid, st.door_fids,
-        collision_cache=str(assets_for(export_dir) / 'collision_cache.bin'),
-        master_index=getattr(st.ctx, 'master_index', None) if st.ctx else None)
+        collision_cache=navm_pool.collision_cache_chain(export_dir),
+        master_index=getattr(st.ctx, 'master_index', None) if st.ctx else None,
+        master_export=getattr(st.ctx, 'master_export', None) if st.ctx else None)
 
     _dump_to = os.environ.get('TESCONV_DUMP_NAVM_CACHE', '').strip()
     if _dump_to:
@@ -982,7 +983,7 @@ def _precompute_land(by_type: dict, export_dir: str) -> dict:
         dict(world_mod._WORLD_LOCATION),
         dict(WORLD_NAMES),
         dict(items_mod._BASE_ORIGIN_SHIFT),
-        str(assets_for(export_dir) / 'mesh_bounds_cache.json'),
+        asset_cache_chain(export_dir, 'mesh_bounds_cache.json'),
         get_injected_formids(),
         dict(world_mod._DOOR_NAVMESH_LINK),
         set(world_mod._WORLD_GRID_CELLS),

@@ -1120,24 +1120,39 @@ def scan_collision(mesh_dir: str, cache_path: str, workers: int = None) -> int:
     return len(results)
 
 
-def load_collision(cache_path: str, quiet: bool = False) -> int:
-    """Load the collision cache into this process's module cache."""
+def load_collision(cache_path, quiet: bool = False) -> int:
+    """Load one or more collision caches into this process's module cache.
+
+    `cache_path` is a path or an iterable of them, MASTERS FIRST: a plugin's
+    own mesh wins over the master's entry for the same path key.  A child
+    plugin caches only the meshes it ships, so loading its cache alone leaves
+    every master-owned static with no collision and nothing carves.  The
+    digest memo is dropped, belonging to the cache just replaced.
+
+    See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
+    """
     global _COLLISION, _DIGESTS
-    if not os.path.exists(cache_path):
-        if not quiet:
-            print(f"  Collision: cache not found ({cache_path})")
+    paths = [cache_path] if isinstance(cache_path, str) else list(cache_path)
+    merged, loaded = {}, 0
+    for path in paths:
+        if not os.path.exists(path):
+            if not quiet:
+                print(f"  Collision: cache not found ({path})")
+            continue
+        try:
+            with open(path, 'rb') as fh:
+                merged.update(_deserialize(fh.read()))
+            loaded += 1
+        except (OSError, ValueError, zlib.error, struct.error) as exc:
+            if not quiet:
+                print(f"  Collision: could not load cache ({exc})")
+    if not loaded:
         return 0
-    try:
-        with open(cache_path, 'rb') as fh:
-            _COLLISION = _deserialize(fh.read())
-        _DIGESTS = {}          # memo belongs to the cache that was just replaced
-        if not quiet:
-            print(f"  Collision: loaded {len(_COLLISION)} entries")
-        return len(_COLLISION)
-    except (OSError, ValueError, zlib.error, struct.error) as exc:
-        if not quiet:
-            print(f"  Collision: could not load cache ({exc})")
-        return 0
+    _COLLISION, _DIGESTS = merged, {}
+    if not quiet:
+        print(f"  Collision: loaded {len(_COLLISION)} entries "
+              f"from {loaded} cache(s)")
+    return len(_COLLISION)
 
 
 def get_collision(path_key: str) -> Optional[dict]:

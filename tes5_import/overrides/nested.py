@@ -58,12 +58,11 @@ OVERRIDE_UNMAPPABLE_TYPES = frozenset({'ROAD'})
 # shipped ALIVE at the master's position.
 DELETED_FLAG = 0x20
 
+#: status is 'emitted'|'deleted'|'unchanged'|'no-base'|'no-path'|'reconvert'.
 Override = namedtuple('Override', ['status', 'out_fid', 'record_bytes'])
-# status: 'emitted' | 'deleted' | 'unchanged' | 'no-base' | 'no-path'
-#         | 'reconvert'
 
 
-def _export_master_names(export_dir: str) -> list:
+def export_master_names(export_dir: str) -> list:
     """This plugin's TES4 master names, in load order, from its export header."""
     header = os.path.join(export_dir, '_HEADER.txt')
     if not os.path.isfile(header):
@@ -120,28 +119,13 @@ def load_master_export(export_dir: str) -> dict:
     conversion) is what makes the override path deterministic: a field neither
     export touches is never rewritten, so it cannot drift.
 
-    **Each master's ids are re-keyed into THIS plugin's index space.** A record
-    is named by its index byte, which is the master's slot in *this* plugin's
-    master list — NOT the slot it uses in its own file. Merging the exports on
-    the raw id instead collapses every master's id space into one, so the
-    last-loaded master silently wins ids that belong to an earlier one, and the
-    override is then diffed against a record of a COMPLETELY DIFFERENT TYPE.
+    Each master's ids are re-keyed into THIS plugin's index space, and
+    `remap` carries that mapping for everything a master can name: its own
+    records, plus each of ITS masters by name.
 
-    Measured on TWMP Valenwood/Elsweyr (masters Oblivion.esm, Tamriel.esp,
-    ElsweyrAnequina.esp): 119,443 of 121,505 shared ids resolved to the wrong
-    record type — 59,770 LAND and 59,668 CELL clobbered, mostly by ANQ's REFRs.
-    `0102DDE5` is a LAND in Tamriel.esp and the creature ANQCORPantherCaged
-    ("Black Panther Cub") in ElsweyrAnequina.esp, so the terrain override was
-    diffed against a creature and the builder spliced that creature's FULL (and
-    DESC) into the LAND. xEdit: "record LAND contains unexpected (or out of
-    order) subrecord FULL", and the engine hangs forever on the main menu.
-
-    A master's OWN records carry the index byte equal to its own master count.
-    Ids BELOW that belong to the master's own masters and are translated by
-    NAME through this plugin's list — the two orders usually agree, but relying
-    on that is the same unchecked assumption this function exists to remove.
+    See: docs/commentary/tes5_import_override.md#re-keying-the-masters-ids
     """
-    names = _export_master_names(export_dir)
+    names = export_master_names(export_dir)
     if not names:
         return {}
     slot_of = {n.lower(): i for i, n in enumerate(names)}
@@ -154,9 +138,7 @@ def load_master_export(export_dir: str) -> dict:
             print(f"  WARNING: master export not found ({mdir}); "
                   f"overrides cannot be diffed against it")
             continue
-        # Index byte -> this plugin's index byte, for everything this master
-        # can name: its own records, plus each of ITS masters by name.
-        own = _export_master_names(mdir)
+        own = export_master_names(mdir)
         remap = {len(own): slot}
         for k, sub in enumerate(own):
             target = slot_of.get(sub.lower())

@@ -9,6 +9,7 @@ See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
 """
 
 from asset_convert.game_paths import current_namespace
+from output_layout import asset_cache_chain
 import glob
 import hashlib
 import os
@@ -20,6 +21,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 from core.worker_budget import worker_count
 from . import cache_audit as navm_verify, worker as navm_worker
+from ..overrides.nested import DELETED_FLAG
 from ..record_types.navm_falloutnv import precompute_fallout_navmeshes
 from ..base.text_reader import (get_float, get_formid, get_formid_index_offset,
                            get_injected_formids, get_int, get_str)
@@ -191,6 +193,28 @@ def _by_parent_cell(recs) -> dict:
     return out
 
 
+def _merge_master_cell_records(by_type: dict, master_export: dict,
+                               sig: str) -> list:
+    """`sig` records the plugin navmeshes with: the masters' plus its own.
+
+    A child plugin re-states only the references it edits, so navmeshing from
+    `by_type` alone carves a cell the masters furnished as if it were bare.
+    The masters' records are the baseline; the plugin's own override them by
+    FormID, and one the plugin flags deleted drops out entirely.
+
+    See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
+    """
+    own = by_type.get(sig, [])
+    if not master_export:
+        return own
+    own_fids = {get_formid(rec, 'FormID') for rec in own}
+    merged = [rec for key, rec in master_export.items()
+              if rec.get('Signature') == sig and int(key, 16) not in own_fids]
+    merged.extend(rec for rec in own
+                  if not (get_int(rec, 'RecordFlags') & DELETED_FLAG))
+    return merged
+
+
 def _is_door_ref(rec: dict, door_fids) -> bool:
     """Is this REFR a teleport door, or a placement of a DOOR base?"""
     if rec.get('XTEL.Door'):
@@ -297,19 +321,22 @@ def _gather_exteriors(jobs, by_type, cells, indexes, pers_doors) -> None:
                                     get_int(cell_rec, 'XCLC.Y')), []))
 
 
-def gather_navm_jobs(by_type: dict, door_fids: set = None) -> list:
+def gather_navm_jobs(by_type: dict, door_fids: set = None,
+                     master_export: dict = None) -> list:
     """Enumerate PGRD->NAVM jobs in the order the group builders visit them.
 
-    Interiors first (block/sub-block), then exteriors per worldspace.  Keeping
-    this identical to the builders means the FormIDs handed out match the
-    single-threaded allocation exactly.  Each job carries everything
-    convert_PGRD needs plus a (cell_fid, pgrd_fid) key the builders look up.
+    Interiors first (block/sub-block), then exteriors per worldspace, matching
+    the builders so allocated FormIDs match the serial path.  Geometry inputs
+    merge the masters in; the jobs themselves stay driven by the plugin's OWN
+    pathgrids, so no id moves.
 
     See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
     """
     cells = by_type.get('CELL', [])
-    refr_by_cell = _by_parent_cell(by_type.get('REFR', []))
-    land_by_cell = _by_parent_cell(by_type.get('LAND', []))
+    refr_by_cell = _by_parent_cell(
+        _merge_master_cell_records(by_type, master_export, 'REFR'))
+    land_by_cell = _by_parent_cell(
+        _merge_master_cell_records(by_type, master_export, 'LAND'))
     pgrd_by_cell = _by_parent_cell(by_type.get('PGRD', []))
     indexes = (refr_by_cell, land_by_cell, pgrd_by_cell)
     pers_doors = _persistent_doors_by_grid(cells, refr_by_cell,
@@ -332,6 +359,14 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None) -> list:
 
 #: Runs AFTER geometry leaves the cache, so it cannot invalidate an entry.
 _TAG_EXCLUDE = frozenset({'edge_links.py'})
+
+
+def collision_cache_chain(export_dir: str) -> tuple:
+    """Every collision cache this plugin needs, MASTERS FIRST.
+
+    See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
+    """
+    return asset_cache_chain(export_dir, 'collision_cache.bin')
 
 
 def navmesh_geom_cache(collision_cache: str):
@@ -493,15 +528,14 @@ def _adopt_master_navm_fids(jobs: list, master_index) -> int:
 
 def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
                          door_fids: set, collision_cache: str = '',
-                         master_index=None) -> dict:
+                         master_index=None, master_export: dict = None) -> dict:
     """Run every PGRD->NAVM conversion in parallel; return {key: (bytes, meta)}.
 
     FormIDs are pre-allocated serially in builder-visit order, so results are
-    byte-identical to the single-threaded path regardless of completion order.
-    The worker context is initialized HERE, in the parent, because
-    `navm_verify.prepare` re-keys entries from it.  `master_index` re-points a
-    job at a master's cell to that cell's NAVM id (see
-    `_adopt_master_navm_fids`).
+    byte-identical to the single-threaded path.  The worker context is
+    initialized HERE because `navm_verify.prepare` re-keys entries from it.
+    `collision_cache` is a path or a masters-first chain whose LAST entry is
+    this plugin's own and sites the derived geom/door caches.
 
     See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
     """
@@ -509,7 +543,7 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
     if fallout is not None:
         return fallout
 
-    jobs = gather_navm_jobs(by_type, door_fids)
+    jobs = gather_navm_jobs(by_type, door_fids, master_export)
     if not jobs:
         return {}
 
@@ -522,7 +556,9 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
               f"(of {len(jobs)})")
 
     n_workers = navm_worker_count(len(jobs))
-    geom_cache = navmesh_geom_cache(collision_cache)
+    own_cache = (collision_cache if isinstance(collision_cache, str)
+                 else (collision_cache[-1] if collision_cache else ''))
+    geom_cache = navmesh_geom_cache(own_cache)
     door_centers = navm_verify.door_centers_cache_path(collision_cache)
     initargs = (base_model_by_fid, door_fids, collision_cache, formid_offset,
                 geom_cache, get_injected_formids(), True, door_centers)

@@ -180,6 +180,32 @@ def paths(plugin: str, export_root=None, out_root=None) -> PluginPaths:
     return PluginPaths(plugin, export_root, out_root)
 
 
+def asset_cache_chain(export_subdir, filename: str) -> tuple:
+    """Every copy of asset cache `filename` this plugin needs, MASTERS FIRST.
+
+    A child plugin caches only the assets it ships, so a master-owned mesh
+    resolves to nothing: its collision, bounds and door panels all go
+    missing at once.  Reading the masters' copies first and the plugin's
+    own last lets an override win a shared key.  A masterless plugin yields
+    a one-element chain.
+
+    See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
+    """
+    from tes5_import.overrides.nested import (export_master_names,
+                                              export_root,
+                                              master_export_dir)
+    root = export_root(str(export_subdir))
+    chain = []
+    for name in export_master_names(str(export_subdir)):
+        path = str(assets_for(master_export_dir(root, name)) / filename)
+        if path not in chain:
+            chain.append(path)
+    own = str(assets_for(export_subdir) / filename)
+    if own not in chain:
+        chain.append(own)
+    return tuple(chain)
+
+
 def assets_for(export_subdir) -> Path:
     """The SHARED asset tree that `export_subdir`'s records belong to.
 

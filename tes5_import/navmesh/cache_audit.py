@@ -302,12 +302,20 @@ def adopt_if_unchanged(jobs: list, geom_cache, sample: int = None,
     return True
 
 
-def door_centers_cache_path(collision_cache: str):
-    """The door panel-centroid cache, which sits beside the collision cache."""
+def door_centers_cache_path(collision_cache):
+    """The door panel-centroid cache(s), sitting beside the collision cache.
+
+    Mirrors `collision_cache`: a single path in, a single path out; a
+    masters-first chain in, the matching chain out, so a child plugin loads
+    its masters' door meshes as well as its own.
+    """
     if not collision_cache:
         return None
-    return os.path.join(os.path.dirname(collision_cache),
-                        'door_centers_cache.json')
+    if isinstance(collision_cache, str):
+        return os.path.join(os.path.dirname(collision_cache),
+                            'door_centers_cache.json')
+    return tuple(os.path.join(os.path.dirname(p), 'door_centers_cache.json')
+                 for p in collision_cache)
 
 
 def init_context(base_model_by_fid, door_fids, collision_cache,

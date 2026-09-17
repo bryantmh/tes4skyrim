@@ -48,6 +48,30 @@ from comparing two conversion runs.
   FormID carries a master's index is an OVERRIDE. The old `source_filter`
   dropped 13,890 of Translation.esp's 13,892 records.
 
+## <a id="re-keying-the-masters-ids"></a>Re-keying the masters' ids
+
+**Code:** `overrides/nested.py:load_master_export`.
+
+A record is named by its index byte, which is the master's slot in *this*
+plugin's master list — NOT the slot it uses in its own file. Merging the
+exports on the raw id instead collapses every master's id space into one, so
+the last-loaded master silently wins ids belonging to an earlier one, and the
+override is then diffed against a record of a COMPLETELY DIFFERENT TYPE.
+
+Measured on TWMP Valenwood/Elsweyr (masters Oblivion.esm, Tamriel.esp,
+ElsweyrAnequina.esp): 119,443 of 121,505 shared ids resolved to the wrong
+record type — 59,770 LAND and 59,668 CELL clobbered, mostly by ANQ's REFRs.
+`0102DDE5` is a LAND in Tamriel.esp and the creature ANQCORPantherCaged
+("Black Panther Cub") in ElsweyrAnequina.esp, so the terrain override was
+diffed against a creature and the builder spliced that creature's FULL (and
+DESC) into the LAND. xEdit reported "record LAND contains unexpected (or out
+of order) subrecord FULL", and the engine hung forever on the main menu.
+
+A master's OWN records carry the index byte equal to its own master count.
+Ids BELOW that belong to the master's own masters and are translated by NAME
+through this plugin's list — the two orders usually agree, but relying on
+that is the same unchecked assumption this function exists to remove.
+
 ## FormIDs and master indices
 <a id="formids-master-indices"></a>
 

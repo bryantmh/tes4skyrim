@@ -37,6 +37,7 @@ import time
 from core.plugin_masters import masters_from_export_header
 from asset_convert.game_paths import namespace_for, set_namespace
 from .registry import IMPORT_DISPATCH, SKIP_TYPES
+from .navmesh.pool import collision_cache_chain
 from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         OverrideContext, detect_injected_records)
 from .actors.magic_effects import set_tes4_effect_names
@@ -66,7 +67,7 @@ from .base.text_reader import (
 from .base.writer import PluginWriter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from output_layout import assets_for
+from output_layout import asset_cache_chain, assets_for
 
 
 
@@ -729,8 +730,9 @@ def _prescan_mesh_caches(export_dir: str, plugin_out_dir: str, _step_done):
         print("  Door threshold cache missing or stale, measuring door "
               "panels...")
         scan_door_axes(export_dir, axis_path)
-    load_mesh_bounds(cache_path)
-    load_collision(col_path)
+    load_mesh_bounds(asset_cache_chain(export_dir,
+                                       'mesh_bounds_cache.json'))
+    load_collision(collision_cache_chain(export_dir))
     _step_done('mesh bounds + collision caches')
 
 

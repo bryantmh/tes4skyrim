@@ -35,37 +35,50 @@ _MESH_BOUNDS: Dict[str, OBNDTuple] = {}
 _MESH_PHYSICS: Dict[str, int] = {}
 
 
-def load_mesh_bounds(cache_path: str, quiet: bool = False) -> int:
-    """Load previously computed bounds from *cache_path* into the module cache.
+def _read_bounds_cache(path):
+    """One cache file as {key: value}, minus the schema marker.
 
-    Per-key lookup: if a key exists in the JSON it is used; missing keys fall
-    back to type defaults (no recompute).  Returns the number of entries loaded.
+    '__schema__' carries the cache version, not a mesh (see
+    collision_extract.BOUNDS_SCHEMA_VERSION): never a lookup key, and never
+    a bounds entry either.
+    """
+    try:
+        with open(path, encoding='utf-8') as fh:
+            raw = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return {k: v for k, v in raw.items() if k != '__schema__'}
 
-    quiet=True skips the status prints — used by navmesh worker processes, which
-    each call this once in their pool initializer and would otherwise spam one
-    line per worker.
+
+def load_mesh_bounds(cache_path, quiet: bool = False) -> int:
+    """Load computed bounds into the module cache; return the entry count.
+
+    `cache_path` is one path or a MASTERS-FIRST iterable of them, so a child
+    plugin sees its masters' meshes rather than falling back to type defaults
+    for them.  The plugin's own entry wins a shared key.  quiet=True skips the
+    prints, for the navmesh workers' pool initializer.
     """
     global _MESH_BOUNDS, _MESH_PHYSICS
-    if not os.path.exists(cache_path):
+    paths = [cache_path] if isinstance(cache_path, str) else list(cache_path)
+    merged, found = {}, False
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        raw = _read_bounds_cache(path)
+        if raw is None:
+            continue
+        merged.update(raw)
+        found = True
+    if not found:
         if not quiet:
-            print(f"  Mesh bounds: cache not found ({cache_path}), using type defaults")
+            print(f"  Mesh bounds: no cache in {paths}, using type defaults")
         return 0
-    try:
-        with open(cache_path, encoding='utf-8') as fh:
-            raw = json.load(fh)
-        # '__schema__' carries the cache version, not a mesh — see
-        # collision_extract.BOUNDS_SCHEMA_VERSION.  It is not a path key, so it
-        # can never be looked up, but it must not become a bounds entry either.
-        raw = {k: v for k, v in raw.items() if k != '__schema__'}
-        _MESH_BOUNDS = {k: tuple(v[:6]) for k, v in raw.items()}
-        _MESH_PHYSICS = {k: int(v[6]) for k, v in raw.items() if len(v) > 6}
-        if not quiet:
-            print(f"  Mesh bounds: loaded {len(_MESH_BOUNDS)} entries from cache")
-        return len(_MESH_BOUNDS)
-    except (OSError, json.JSONDecodeError) as exc:
-        if not quiet:
-            print(f"  Mesh bounds: could not load cache ({exc}), using type defaults")
-        return 0
+    _MESH_BOUNDS = {k: tuple(v[:6]) for k, v in merged.items()}
+    _MESH_PHYSICS = {k: int(v[6]) for k, v in merged.items() if len(v) > 6}
+    if not quiet:
+        print(f"  Mesh bounds: loaded {len(_MESH_BOUNDS)} entries "
+              f"from {len(paths)} cache(s)")
+    return len(_MESH_BOUNDS)
 
 
 def get_mesh_obnd(path_key: str) -> Optional[OBNDTuple]:

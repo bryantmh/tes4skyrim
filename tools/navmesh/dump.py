@@ -74,22 +74,78 @@ def _decode_nvnm(d):
           f"(consumed {p}/{len(d)} bytes)")
 
 
-def main():
+def _nvnm_counts(d):
+    """(worldspace, gridY, gridX, vertices, triangles) from an NVNM blob.
+
+    Grid is (None, None) for an interior, whose parent is a cell FormID.
+    """
+    p = 12
+    wrld = struct.unpack_from('<I', d, 8)[0]
+    if wrld == 0:
+        gy = gx = None
+    else:
+        gy, gx = struct.unpack_from('<hh', d, p)
+    p += 4
+    nv = struct.unpack_from('<I', d, p)[0]
+    p += 4 + nv * 12
+    nt = struct.unpack_from('<I', d, p)[0]
+    return wrld, gy, gx, nv, nt
+
+
+def _summarize(data, only_grid):
+    """Print one line per NAVM: id, parent grid, vertex and triangle counts."""
+    rows = []
+    for rec in records(data, b'NAVM'):
+        for stag, sdata in subrecords(rec.body):
+            if stag != b'NVNM':
+                continue
+            try:
+                wrld, gy, gx, nv, nt = _nvnm_counts(sdata)
+            except struct.error:
+                continue
+            if only_grid and (gx, gy) != only_grid:
+                continue
+            rows.append((rec.form_id, wrld, gy, gx, nv, nt))
+    for fid, wrld, gy, gx, nv, nt in rows:
+        where = 'interior' if gy is None else f'({gx},{gy})'
+        print(f"NAVM 0x{fid:08X} wrld=0x{wrld:08X} {where:>12} "
+              f"verts={nv:<6} tris={nt}")
+    print(f"total navmeshes={len(rows)} "
+          f"verts={sum(r[4] for r in rows)} tris={sum(r[5] for r in rows)}")
+
+
+def _parse_args():
+    """The command line, defaulting to a NAVI dump when no mode is named."""
     ap = argparse.ArgumentParser()
     ap.add_argument('esm')
     ap.add_argument('--navi', action='store_true', help='dump NAVI records')
     ap.add_argument('--navm', action='store_true', help='dump NAVM records')
     ap.add_argument('--nvnm-decode', action='store_true',
                     help='decode NVNM blob structure')
+    ap.add_argument('--summary', action='store_true',
+                    help='one line per NAVM: parent grid, vertex/triangle count')
+    ap.add_argument('--grid', help='restrict --summary to exterior cell "X,Y"')
     ap.add_argument('--max', type=int, default=1)
     ap.add_argument('--hexlimit', type=int, default=256)
     args = ap.parse_args()
-
-    if not (args.navi or args.navm):
+    if not (args.navi or args.navm or args.summary):
         args.navi = True
+    return args
+
+
+def main():
+    args = _parse_args()
 
     with open(args.esm, 'rb') as f:
         data = f.read()
+
+    if args.summary:
+        grid = None
+        if args.grid:
+            gx, gy = args.grid.split(',')
+            grid = (int(gx), int(gy))
+        _summarize(data, grid)
+        return
 
     # Skip the TES4 header record.
     hdr_size = struct.unpack_from('<I', data, 4)[0]
