@@ -19,7 +19,7 @@ from output_layout import record_dir
 from source_paths import resolve_plugin_path
 from tes5_import.base.text_reader import parse_export_file
 
-from .morroblivion_axis import pitch_for_model
+from .morroblivion_axis import pitch_for_model, z_reseat_for_base
 from .tes3_reader import get_string, get_subrecord, read_file
 
 #: Prefix of the converted Morroblivion plugins whose records supply the models.
@@ -102,8 +102,9 @@ class MorroblivionModels:
 
     `owners` is vanilla mesh -> the vanilla record ids naming it; `models`
     is Morroblivion record FormID (low 24 bits) -> its model path, over
-    every record type in the Morroblivion masters' exports; `creatures` is
-    Morroblivion CREA EditorID -> (Model.MODL, [NIFZ]).
+    every record type in the Morroblivion masters' exports; `editor_ids`
+    is that same FormID -> EditorID, for the per-base Z re-seat; `creatures`
+    is Morroblivion CREA EditorID -> (Model.MODL, [NIFZ]).
     """
 
     def __init__(self, export_root: str, masters, source_path: str,
@@ -114,6 +115,7 @@ class MorroblivionModels:
         falls back from onto the source archives when it does not exist.
         """
         self.owners, self.models, self.creatures = {}, {}, {}
+        self.editor_ids = {}
         self.own_meshes = Path(own_meshes) if own_meshes else None
         self._own_archive = None
         self._source_path = source_path
@@ -145,6 +147,8 @@ class MorroblivionModels:
                 form_id = (rec.get('FormID') or '').lower()
                 if model and form_id:
                     self.models[form_id[2:]] = model.replace('\\\\', '\\')
+                if form_id and rec.get('EditorID'):
+                    self.editor_ids[form_id[2:]] = rec['EditorID']
                 if name == _CREATURE + '.txt' and model:
                     parts = [rec.get(f'NIFZ[{i}]') or ''
                              for i in range(int(rec.get('NIFZCount', 0) or 0))]
@@ -217,31 +221,41 @@ def remap_vanilla_models(out: dict, ctx) -> tuple:
                 if shift:
                     lines.append(f'Model.OriginShift={shift!r}')
                     shifted += 1
-    return changed, shifted, _pitch_placements(out, ctx.morroblivion.models)
+    return changed, shifted, _fix_placements(
+        out, ctx.morroblivion.models, ctx.morroblivion.editor_ids)
 
 
-def _pitch_placements(out: dict, models: dict) -> int:
-    """Add the axis pitch to every placed reference naming a wrong-axis mesh.
+def _bump(lines: list, key: str, delta: float) -> bool:
+    """Add `delta` to the `key=` line in place; False when there is none."""
+    for i, line in enumerate(lines):
+        if line.startswith(key):
+            lines[i] = f'{key}{float(line[len(key):]) + delta!r}'
+            return True
+    return False
 
-    `models` maps a master record's low-24-bit FormID to its model, so a
-    reference resolves even though the base it names belongs to Morroblivion
-    and its MODL line is never in this plugin's own output.  Rewrites RotX in
-    place, keeping the importer generic.
+
+def _fix_placements(out: dict, models: dict, editor_ids: dict) -> int:
+    """Apply Morroblivion's hand corrections to every placed reference.
+
+    Both corrections resolve through the MASTERS' indexes, because the bases
+    belong to Morroblivion and their records are never in this plugin's own
+    output.  The pitch keys on the mesh; the Z re-seat keys on the base, since
+    Morroblivion moved some bases of a mesh and left others alone.
 
     See: docs/audits/morroblivion_mesh_axis_rotation.md#the-correction
     """
-    pitched = 0
+    fixed = 0
     for sig in ('REFR', 'ACHR', 'ACRE'):
         for _form_id, lines in out.get(sig, []):
             base = next((l[len('NAME='):] for l in lines
                          if l.startswith('NAME=')), '')
-            pitch = pitch_for_model(models.get(base.lower()[2:], '')) \
-                if base else 0.0
-            if not pitch:
+            if not base:
                 continue
-            for i, line in enumerate(lines):
-                if line.startswith('RotX='):
-                    lines[i] = f'RotX={float(line[len("RotX="):]) + pitch!r}'
-                    pitched += 1
-                    break
-    return pitched
+            low = base.lower()[2:]
+            pitch = pitch_for_model(models.get(low, ''))
+            dz = z_reseat_for_base(editor_ids.get(low, ''))
+            if pitch and _bump(lines, 'RotX=', pitch):
+                fixed += 1
+            if dz and _bump(lines, 'PosZ=', dz):
+                fixed += 1
+    return fixed
