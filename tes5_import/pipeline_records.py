@@ -353,7 +353,16 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
 
     from .navmesh.edge_links import build_edge_links
     _t_el = time.time()
-    build_edge_links(st.navm_cache)
+    _mi = getattr(st.ctx, 'master_index', None) if st.ctx else None
+    _relinked = []
+    build_edge_links(
+        st.navm_cache, master_index=_mi,
+        master_navms=navm_pool.master_navm_grid(
+            getattr(st.ctx, 'master_export', None) if st.ctx else None,
+            _mi),
+        relinked_masters=_relinked)
+    if st.ctx is not None:
+        st.ctx.relinked_master_navms = _relinked
     print(f"    Edge links: {time.time() - _t_el:.1f}s")
 
     from .navmesh.split import split_disconnected_interiors

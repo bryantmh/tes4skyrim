@@ -653,6 +653,49 @@ def emit_nested_overrides(records: list, writer: PluginWriter,
     return len(records) - orphans, orphans, anchored
 
 
+def _append_relinked_navms(pending: list, ctx) -> None:
+    """Queue the MASTER navmeshes that edge-linking rewrote, ONCE.
+
+    `build_nested_overrides` runs per signature group (CELL/WRLD/REFR, then
+    DIAL/INFO), so the list is cleared as it is consumed: appending it in both
+    passes shipped all 751 master navmeshes twice, and the duplicate record
+    shadowed the real one.
+
+    See: docs/commentary/tes5_import_navmesh.md#cross-plugin-edge-links
+    """
+    relinked = getattr(ctx, 'relinked_master_navms', None)
+    if not relinked:
+        return
+    for record_bytes, meta in relinked:
+        pending.append((meta['fid'], record_bytes,
+                        ctx.master_index.group_path(meta['fid'])))
+    ctx.relinked_master_navms = []
+
+
+def _readd_bark_parents(by_type: dict, unattached: list) -> int:
+    """Re-add the DIAL parents of handed-back bark INFOs; return how many.
+
+    A bark INFO needs its parent DIAL in the same batch or the normal
+    builder has no topic to group it under.  That parent is the MASTER's
+    shared GREETING/HELLO record, counted as an unchanged override and
+    dropped, so this plugin's own copy is re-added.  The builder re-keys it
+    into per-quest topics of our own; the master's record stays untouched.
+    """
+    parents = {(r.get('ParentDIAL') or '').upper()
+               for s, r in unattached if s == 'INFO'}
+    if not parents:
+        return 0
+    seen = {(r.get('FormID') or '').upper()
+            for s, r in unattached if s == 'DIAL'}
+    added = 0
+    for rec in by_type.get('DIAL', []):
+        fid = (rec.get('FormID') or '').upper()
+        if fid in parents and fid not in seen:
+            unattached.append(('DIAL', rec))
+            added += 1
+    return added
+
+
 def build_nested_overrides(by_type: dict, sigs: tuple, ctx: OverrideContext,
                            writer: PluginWriter, label: str) -> list:
     """Emit overrides for record types that live inside GRUP hierarchies.
@@ -698,24 +741,11 @@ def build_nested_overrides(by_type: dict, sigs: tuple, ctx: OverrideContext,
             pending.append((ov.out_fid, ov.record_bytes,
                             ctx.master_index.group_path(ov.out_fid)))
 
+    _append_relinked_navms(pending, ctx)
+
     new_done, unattached = _attach_new_records(new_records, ctx, pending)
 
-    # A bark INFO handed back above needs its parent DIAL in the same batch or
-    # the normal builder has no topic to group it under. That parent is the
-    # MASTER's shared GREETING/HELLO record, which this loop just counted as an
-    # unchanged override and dropped — so re-add this plugin's own copy of it.
-    # The builder re-keys it into per-quest topics of our own; the master's
-    # record is left untouched (we ship no override for it).
-    _bark_parents = {(r.get('ParentDIAL') or '').upper()
-                     for s, r in unattached if s == 'INFO'}
-    if _bark_parents:
-        seen = {(r.get('FormID') or '').upper()
-                for s, r in unattached if s == 'DIAL'}
-        for rec in by_type.get('DIAL', []):
-            fid = (rec.get('FormID') or '').upper()
-            if fid in _bark_parents and fid not in seen:
-                unattached.append(('DIAL', rec))
-                dropped -= 1
+    dropped -= _readd_bark_parents(by_type, unattached)
 
     emitted, orphaned, anchored = emit_nested_overrides(
         pending, writer, ctx.master_index, ctx.anchored_wrld)

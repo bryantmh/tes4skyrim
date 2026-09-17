@@ -3517,6 +3517,62 @@ the allocator's `_derived_taken` set, and since collisions are resolved by
 rehashing against that set, unrelated derived ids in the same plugin could move —
 drift for records that have nothing to do with navmesh.
 
+### <a id="cross-plugin-edge-links"></a>Edge links across a plugin boundary
+
+**Code:** `navmesh/edge_links.py:_master_neighbour_views`, `_repack`.
+
+`build_edge_links` indexed `views` from `navm_cache` alone, so a cell the
+plugin does not navmesh simply was not there. Two things went wrong at
+every region boundary:
+
+* `views.get(other)` missed, so the seam was skipped and NO link was made.
+* `live_fids` held only this plugin's ids, so `_prune_links` judged every
+  master-bound link dangling, deleted it, and reverted the triangle edge to
+  a plain border.
+
+Because an override keeps the master's NAVM FormID, the stripped record
+WINS: the master's own links cannot compensate for what its override drops.
+
+Measured on Unique Landscapes Compilation v2.2.0 against Oblivion.esm:
+
+| | |
+|---|---|
+| UL cells bordering a master-only cell | 815 (1,212 edges) |
+| UL cells linked to any master navmesh | **0** |
+| Boundary cells the master linked across | 710 |
+| ...whose link UL destroyed | **710 (100%)** |
+
+Every UL region was a sealed navmesh island: actors path inside it and
+inside vanilla terrain, never between them.
+
+The fix loads each bordering master mesh read-only into `views` (so seams
+match and pruning keeps the links) and re-emits any that gained one as an
+override of the master's NAVM, keyed `('master_navm', fid)` so it cannot
+collide with a `(cell, pgrd)` job key.
+
+### A re-emitted master must keep the links it already had
+
+**Code:** `navmesh/edge_links.py:_prune_dead_links`.
+
+`live_fids` was built from the meshes THIS plugin writes plus the loaded
+neighbours, so a master mesh we re-emit had its links to cells further out
+in the master's own terrain judged dangling and deleted -- shipping an
+override strictly worse than the record it replaced. Measured on Unique
+Landscapes: of 2,675 links the master copies arrived with, 833 were lost.
+
+Every master navmesh id is therefore live, whether or not it was loaded
+here: the master's own records are always present at runtime.
+
+The frontier stops one ring out by design. A master mesh gains the seam
+facing us, but its own outward neighbours are never requested (they enter
+`views` after `wanted` is computed). Those master-to-master seams already
+exist in the master file and need nothing from us -- measured 211 such
+seams, all with a relinked master copy as their source cell.
+
+**Links must stay symmetric.** Both halves of a seam ship: ours through its
+normal cache entry, the master's through that synthetic one. Emitting only
+our side would leave a one-way portal.
+
 ### The COLLISION caches must chain too
 
 **Code:** `navmesh/pool.py:collision_cache_chain`,

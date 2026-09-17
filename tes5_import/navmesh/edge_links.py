@@ -276,13 +276,87 @@ _NEIGHBOURS = (
 )
 
 
-def build_edge_links(navm_cache: dict, verbose: bool = True) -> int:
+def _drop_stale_links(view, ours) -> None:
+    """Drop a master's links into cells THIS plugin rewrote.
+
+    See: docs/commentary/tes5_import_navmesh.md#cross-plugin-edge-links
+    """
+    if any(lk[1] in ours for lk in view.links):
+        _prune_links(view, {lk[1] for lk in view.links
+                            if lk[1] not in ours})
+        view.dirty = True
+
+
+def _master_neighbour_views(views, master_index, master_navms):
+    """Decode the MASTER meshes bordering ours; return {cell: view}.
+
+    A child plugin navmeshes only the cells it edits, so at the edge of its
+    region every neighbour is master-owned and absent from `views`: the seam
+    is skipped, and the pruning pass then deletes the links the master
+    already had.  Loading the neighbours read-only lets both happen
+    correctly, and any that gain a link are re-emitted as overrides.
+
+    See: docs/commentary/tes5_import_navmesh.md#cross-plugin-edge-links
+    """
+    if master_index is None or not master_navms:
+        return {}
+    ours = {v.fid for v in views.values()}
+    wanted = set()
+    for (wrld, gx, gy) in views:
+        for dx, dy, _axis, _ in _NEIGHBOURS:
+            wanted.add((wrld, gx + dx, gy + dy))
+        for dx, dy in ((-1, 0), (0, -1)):
+            wanted.add((wrld, gx + dx, gy + dy))
+    out = {}
+    missing = no_record = 0
+    for cell in sorted(wanted - set(views)):
+        fid = master_navms.get(cell)
+        if not fid:
+            missing += 1
+            continue
+        blob, prefix, suffix = extract_nvnm(master_index.record(fid))
+        if blob is None:
+            no_record += 1
+            continue
+        try:
+            view = NavMeshView(fid, blob)
+        except (struct.error, IndexError):
+            no_record += 1
+            continue
+        if view.exterior:
+            _drop_stale_links(view, ours)
+            out[cell] = (view, prefix, suffix)
+    if missing or no_record:
+        print(f"    Master neighbours: {len(out)} loaded, {missing} cell(s) "
+              f"with no master navmesh, {no_record} unreadable")
+    return out
+
+
+def _prune_dead_links(views, live_fids, master_navms, masters) -> None:
+    """Drop dead links; a master's reach into untouched terrain stays live.
+
+    See: docs/commentary/tes5_import_navmesh.md#cross-plugin-edge-links
+    """
+    far = set((master_navms or {}).values())
+    for cell, view in views.items():
+        live = (live_fids | far) if cell in masters else live_fids
+        if any(lk[1] not in live for lk in view.links):
+            _prune_links(view, live)
+
+
+def build_edge_links(navm_cache: dict, verbose: bool = True,
+                     master_index=None, master_navms: dict = None,
+                     relinked_masters: list = None) -> int:
     """Add reciprocal Portal links between adjacent exterior cell navmeshes.
 
-    navm_cache: {key: (navm_bytes, meta)} from _precompute_navmeshes.  Entries
-    are rewritten in place with fresh bytes when links are added.
+    navm_cache: {key: (navm_bytes, meta)} from _precompute_navmeshes, rewritten
+    in place when links are added.  `master_navms` maps {(wrld, gx, gy):
+    navm_fid} for the MASTERS' cells; a master mesh that gains a link ships as
+    an override, so both halves of the seam exist.  `live_fids` is the set a
+    link may point at; outside it would dereference a null.
 
     Returns the number of links created.
+    See: docs/commentary/tes5_import_navmesh.md#cross-plugin-edge-links
     """
     from .from_pgrd import pack_navm_record
     from ..base.writer import pack_subrecord
@@ -309,12 +383,11 @@ def build_edge_links(navm_cache: dict, verbose: bool = True) -> int:
         views[cell] = view
         holders[cell] = (key, prefix, suffix, meta)
 
-    # The set of navmeshes that will actually be written to the ESM: exactly the
-    # ones with truthy bytes (the CELL/WRLD builders write iff navm_bytes is
-    # truthy, same predicate that populated `views`).  A link may only ever point
-    # at one of these — a link to a burned/degenerate fid would be a dangling
-    # Edge Link the engine derefs into a null navmesh.  `views` already excludes
-    # None-byte meshes, so this is the definitive live set.
+    if relinked_masters is None:
+        relinked_masters = []
+    masters = _master_neighbour_views(views, master_index, master_navms)
+    for cell, (view, _pre, _suf) in masters.items():
+        views[cell] = view
     live_fids = {v.fid for v in views.values()}
 
     made = 0
@@ -339,17 +412,48 @@ def build_edge_links(navm_cache: dict, verbose: bool = True) -> int:
                 view_b.add_link(eb[0], eb[1], view_a.fid, ea[0])
                 made += 2
 
-    # Final safety: drop any link whose target is not in the live set and
-    # renumber each mesh's remaining links (the triangle edge fields store link
-    # INDICES, so removing an entry shifts every later index).  In practice this
-    # closes the small residue of links to meshes that end up unwritten.
-    for view in views.values():
-        if any(lk[1] not in live_fids for lk in view.links):
-            _prune_links(view, live_fids)
+    _prune_dead_links(views, live_fids, master_navms, masters)
 
-    # Re-pack only the meshes that changed.
+    rewritten = _repack(views, holders, masters, navm_cache,
+                        relinked_masters)
+
+    if verbose:
+        total_ext = len(views)
+        linked = sum(1 for v in views.values() if v.links)
+        pct = (100.0 * linked / total_ext) if total_ext else 0.0
+        extra = f", {len(masters)} master meshes" if masters else ""
+        print(f"  Navmesh edge links: {made} portals stitched across "
+              f"{rewritten} cells ({linked}/{total_ext} exterior "
+              f"navmeshes linked, {pct:.0f}%{extra})")
+    return made
+
+
+def _repack(views, holders, masters, navm_cache, relinked) -> int:
+    """Re-emit every mesh whose links changed; return how many.
+
+    A master's mesh has no navm_cache entry and the cell builders only look
+    up (cell, pgrd) keys, so its relinked bytes go to `relinked` instead,
+    which the nested-override pass emits in the master's own GRUP.
+
+    See: docs/commentary/tes5_import_navmesh.md#cross-plugin-edge-links
+    """
+    from .from_pgrd import pack_navm_record
+    from ..base.writer import pack_subrecord
     rewritten = 0
     for cell, view in views.items():
+        if cell in masters:
+            if not view.dirty:
+                continue
+            _mview, prefix, suffix = masters[cell]
+            subs = prefix + pack_subrecord('NVNM', view.pack()) + suffix
+            meta = {'fid': view.fid, 'is_exterior': True,
+                    'wrld_fid': cell[0], 'grid_x': cell[1],
+                    'grid_y': cell[2], 'master_override': True,
+                    'edge_link_fids': sorted(
+                        {lk[1] for lk in view.links if lk[1] != view.fid})}
+            relinked.append((pack_navm_record(view.fid, subs), meta))
+            rewritten += 1
+            continue
         key, prefix, suffix, meta = holders[cell]
         # NVMI Edge Links = the distinct neighbour meshes this mesh's NVNM edge
         # links reach, self excluded — the vanilla NVMI rule (15,115/15,462
@@ -363,15 +467,7 @@ def build_edge_links(navm_cache: dict, verbose: bool = True) -> int:
         subs = prefix + new_nvnm + suffix
         navm_cache[key] = (pack_navm_record(meta['fid'], subs), meta)
         rewritten += 1
-
-    if verbose:
-        total_ext = len(views)
-        linked = sum(1 for v in views.values() if v.links)
-        pct = (100.0 * linked / total_ext) if total_ext else 0.0
-        print(f"  Navmesh edge links: {made} portals stitched across "
-              f"{rewritten} cells ({linked}/{total_ext} exterior "
-              f"navmeshes linked, {pct:.0f}%)")
-    return made
+    return rewritten
 
 
 def extract_nvnm(navm_bytes: bytes):

@@ -361,6 +361,38 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
 _TAG_EXCLUDE = frozenset({'edge_links.py'})
 
 
+def master_navm_grid(master_export: dict, master_index) -> dict:
+    """{(wrld_fid, grid_x, grid_y): navm_fid} for the MASTERS' exterior cells.
+
+    Edge links are matched by grid position, but the master index keys its
+    navmeshes by CELL FormID, so the masters' own CELL records supply XCLC.
+    A split cell contributes its FIRST navmesh, matching the id an override
+    of that cell adopts.
+
+    See: docs/commentary/tes5_import_navmesh.md#cross-plugin-edge-links
+    """
+    if not master_export or master_index is None:
+        return {}
+    out = {}
+    ext = no_navm = 0
+    for rec in master_export.values():
+        if rec.get('Signature') != 'CELL':
+            continue
+        wrld = get_formid(rec, 'ParentWRLD')
+        if not wrld or get_int(rec, 'RecordFlags') & _PERSISTENT_FLAG:
+            continue
+        ext += 1
+        fids = master_index.navms(get_formid(rec, 'FormID'))
+        if fids:
+            out[(wrld, get_int(rec, 'XCLC.X'),
+                 get_int(rec, 'XCLC.Y'))] = fids[0]
+        else:
+            no_navm += 1
+    print(f"    Master navmesh grid: {len(out)} cells mapped, {no_navm} of "
+          f"{ext} exterior cells have no NAVM in the master index")
+    return out
+
+
 def collision_cache_chain(export_dir: str) -> tuple:
     """Every collision cache this plugin needs, MASTERS FIRST.
 
