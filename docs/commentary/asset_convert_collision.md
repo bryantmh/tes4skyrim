@@ -6,6 +6,7 @@
 
 - [NIF bhkRigidBody field mapping (PyFFI ↔ newer nif.xml)](#nif-bhkrigidbody-field-mapping)
 - [NIF dynamic clutter physics (Havok)](#nif-dynamic-clutter-physics)
+- [Morrowind dynamic clutter: synthesizing Havok from nothing](#morrowind-dynamic-clutter)
 - [MO_SYS_FIXED (7) statics simulated as clutter — "floating / spinning / on its side" (SOLVED 2026-07-28)](#mosysfixed-statics-simulated-as-clutter)
 - [Skyrim APPLIES rotation/translation on non-T bhkRigidBody (THE fundamental havok bug, found 2026-07-15)](#skyrim-applies-rotationtranslation-non-t)
 - [Hoisted collision dropped the child node's ROTATION (SOLVED 2026-08-27)](#hoisted-collision-dropped-child-nodes)
@@ -33,6 +34,61 @@
 - **Inertia tensor**: Must scale by `HAVOK_SCALE² = 0.01`. Oblivion inertia (2.3–8.8) is ~100× Skyrim (0.02–0.32) because inertia ∝ mass × distance² and collision shapes are scaled 0.1× for Skyrim Havok units.
   - The full ×0.01 is applied EXACTLY ONCE, in `_convert_collision` (dynamic + keyframed branches) and `_convert_blend_collision`. `scale_constraint_pivots` must NOT rescale again — a leftover ×0.1 there had every constrained body's inertia 10× too small (fixed 2026-07-15).
 - **Skyrim clutter standard values**: friction=0.50, restitution=0.40, linear_damping=0.0996, angular_damping=0.0498, max_linear_velocity=104.4, max_angular_velocity=31.57, deactivator_type=1, solver_deactivation=2
+
+## Morrowind dynamic clutter: synthesizing Havok from nothing
+<a id="morrowind-dynamic-clutter"></a>
+**Code:** `asset_convert/collision/clutter_plan.py`, `nif_converter_morrowind.build_collision`.
+
+A Morrowind NIF (4.0.0.2) carries no Havok data whatsoever — no `bhkCollisionObject`,
+no rigid body, no layer, no mass. There is nothing to translate, so unlike the
+Oblivion path every field is synthesized. `build_collision` originally shipped one
+static body (mass 0, `motion_system=5`, layer 1) over the RootCollisionNode geometry,
+which left every cup, ingredient and weapon welded to the world.
+
+- **Static vs dynamic is decided by RECORD TYPE, never the filename or the mesh.**
+  The rule is *anything that can be added to the player's inventory has physics*:
+  MISC / INGR / ALCH / APPA / WEAP / BOOK / KEYM / AMMO / SLGM, plus the wearables
+  ARMO / CLOT. ACTI / CONT / DOOR / STAT are placed fixtures. The plugin states
+  this, so `clutter_plan` maps model path -> record type straight from the export
+  text, exactly as `wearable_plan` does for biped slots.
+- **LIGH is NOT in the list, though a torch is carryable.** The record type covers
+  both carried torches and fixed fixtures -- chandeliers, lanterns, hanging
+  braziers -- and Tamriel Data's chandeliers (`pc_com_chandelier_01`, weight 0.0)
+  came out as 1 kg dynamic bodies hanging from a ceiling. Being an inventory item
+  is a property of the RECORD, not of the type, wherever a type spans both.
+- **A wearable contributes only its WORLD model.** ARMO/CLOT carry two meshes: the
+  biped model the armor path rigs to the body, and the world (`_GND`) model that is
+  the dropped item. Only the latter is a loose object. `_loose_item_mass` enforces
+  this structurally as well -- a tree with any skinned geometry never gets a body,
+  whatever the record says -- because a rigid body on a worn mesh would detach the
+  gear from the actor. Measured on Tamriel Data: 5,116 item models, of which only 2
+  are named as both a worn and a dropped mesh (tower shields).
+- **Mass is `DATA.Weight`**, the authored value, kept as-is per
+  [dynamic clutter physics](#nif-dynamic-clutter-physics). Weight 0 (quest items)
+  clamps to 0.1 kg — a mass-0 dynamic body is what Havok reads as immovable.
+- **A dynamic body cannot use the MOPP/`bhkCompressedMeshShape` the static path
+  builds**: Havok will not simulate concave triangle soup. Dynamic clutter gets a
+  `bhkConvexVerticesShape` over the same triangles, reusing the hull builder that
+  already serves Oblivion's clutter decomposition.
+- **Inertia** is the solid-body tensor over the hull's AABB in Havok units. The
+  Oblivion path scales an authored tensor by `_HAVOK_SCALE**2`; there is no authored
+  tensor here, so it is computed directly in Havok units and needs no rescale.
+
+**Vanilla census, `meshes/clutter`, 700 files / 248 layer-4 bodies with mass > 0:**
+
+| Field | Measured |
+|---|---|
+| mass | min 0.5, p50 8.0, p95 30.0, **max 100.0** |
+| `inertia.m_11` | min 0.00047, p50 0.217, max 30.96 |
+| `motion_system` | 3 (225), 2 (23) |
+| `quality_type` | 4 (248/248, zero exceptions) |
+| shape | ConvexVertices 118, Box 81, Capsule 22, Mopp 15, List 10, Sphere 2 |
+
+Max mass 100.0 is why `_MAX_MASS` clamps: Morrowind authors Stendarr's Hammer at
+weight 1000, which is a real authored value but ten times heavier than anything
+Havok simulates in vanilla. Convex shapes (ConvexVertices + List = 128 of 248)
+dominate; the 15 Mopp entries are the reason a synthesized dynamic body is built
+from `build_clutter_hull` rather than the static MOPP path.
 
 ## MO_SYS_FIXED (7) statics simulated as clutter — "floating / spinning / on its side" (SOLVED 2026-07-28)
 <a id="mosysfixed-statics-simulated-as-clutter"></a>

@@ -20,6 +20,8 @@ from pyffi.formats.nif import NifFormat
 
 from asset_convert.collision.cms_builder import build_cms_collision
 from asset_convert.collision.collision import GAME_UNITS_PER_HAVOK
+from asset_convert.collision.collision_hulls import build_clutter_hull
+from asset_convert.collision.clutter_plan import mesh_clutter_mass
 from asset_convert.nif.nif_passes import add_bsx_flags
 from asset_convert.nif.particles_morrowind import upgrade_legacy_particles
 
@@ -31,6 +33,12 @@ _SKY_MAT_STONE = 3741512247
 
 #: The biggest real collision mesh in the sampled corpus is 2,219 triangles.
 _MAX_COLLISION_TRIS = 20000
+
+#: SKYL_CLUTTER, the layer every loose simulated prop uses.
+_SKYL_CLUTTER = 4
+
+#: Inertia floor (havok units) so a flat item still resists rotation.
+_MIN_INERTIA_EXTENT = 0.02
 
 #: Helper nodes Morrowind uses that must never reach Skyrim as geometry.
 _HELPER_TYPES = ('AvoidNode',)
@@ -188,21 +196,60 @@ def _transformed_verts(block, root, data, scale: float) -> list:
     return out
 
 
-def build_collision(root, tris):
-    """A static bhkCollisionObject over `tris`, or None when it cannot build.
+def _set_box_inertia(body, tris, mass) -> None:
+    """Solid-box inertia over the triangles' AABB, about the center of mass.
 
-    The rigid body is the vanilla static block SpeedTree already establishes
-    for a generated CMS: identity transform, mass 0, and the collision layer
-    every immovable object uses.
-    See: docs/commentary/asset_convert_nif.md#morrowind-collision
+    Morrowind authors no tensor, so it is computed rather than rescaled: these
+    triangles are already in Skyrim havok units and need no _HAVOK_SCALE**2.
     """
-    mopp = build_cms_collision(tris, _SKY_MAT_STONE, NifFormat)
-    if mopp is None:
+    xs = [v[0] for t in tris for v in t]
+    ys = [v[1] for t in tris for v in t]
+    zs = [v[2] for t in tris for v in t]
+    dx = max(max(xs) - min(xs), _MIN_INERTIA_EXTENT)
+    dy = max(max(ys) - min(ys), _MIN_INERTIA_EXTENT)
+    dz = max(max(zs) - min(zs), _MIN_INERTIA_EXTENT)
+    k = mass / 12.0
+    body.center.x = (max(xs) + min(xs)) / 2.0
+    body.center.y = (max(ys) + min(ys)) / 2.0
+    body.center.z = (max(zs) + min(zs)) / 2.0
+    body.inertia.m_11 = k * (dy * dy + dz * dz)
+    body.inertia.m_22 = k * (dx * dx + dz * dz)
+    body.inertia.m_33 = k * (dx * dx + dy * dy)
+
+
+def _set_clutter_motion(body, tris, mass) -> None:
+    """Make `body` a simulated clutter prop of `mass` kilograms.
+
+    See: docs/commentary/asset_convert_collision.md#nif-dynamic-clutter-physics
+    """
+    body.mass = mass
+    _set_box_inertia(body, tris, mass)
+    body.motion_system = 3
+    body.quality_type = 4
+    body.solver_deactivation = 2
+    body.havok_col_filter.layer = _SKYL_CLUTTER
+    body.havok_col_filter_copy.layer = _SKYL_CLUTTER
+
+
+def build_collision(root, tris, mass=None):
+    """A bhkCollisionObject over `tris`, or None when it cannot build.
+
+    Without `mass` the body is the vanilla static block SpeedTree already
+    establishes for a generated CMS: identity transform, mass 0, and the
+    collision layer every immovable object uses.  With one it is simulated
+    clutter, which needs a CONVEX shape -- havok will not simulate the
+    concave MOPP the static path builds.
+    See: docs/commentary/asset_convert_collision.md#morrowind-dynamic-clutter
+    """
+    shape = (build_clutter_hull(tris, _SKY_MAT_STONE) if mass
+             else build_cms_collision(tris, _SKY_MAT_STONE, NifFormat))
+    if shape is None:
         return None
-    mopp.shape.target = root
+    if not mass:
+        shape.shape.target = root
 
     body = NifFormat.bhkRigidBody()
-    body.shape = mopp
+    body.shape = shape
     body.mass = 0.0
     body.friction = 0.5
     body.restitution = 0.4
@@ -220,6 +267,8 @@ def build_collision(root, tris):
     body.unknown_byte = 116
     body.unknown_time_factor_or_gravity_factor_1 = 1.0
     body.unknown_time_factor_or_gravity_factor_2 = 1.0
+    if mass:
+        _set_clutter_motion(body, tris, mass)
 
     obj = NifFormat.bhkCollisionObject()
     obj.flags = 129
@@ -261,20 +310,38 @@ def _recompute_bsx(root) -> None:
     add_bsx_flags(root)
 
 
+def _loose_item_mass(root):
+    """The clutter mass for this tree, or None when it must stay static.
+
+    A skinned tree is a WORN mesh -- a wearable's biped model, which the
+    armor path rigs to the body.  Its shape follows bones rather than a
+    rigid body, so simulating it would detach the gear from the actor; only
+    the record's separate world model is the dropped item.
+    """
+    mass = mesh_clutter_mass()
+    if mass is None:
+        return None
+    for block in root.tree():
+        if isinstance(block, NifFormat.NiTriBasedGeom) and block.skin_instance:
+            return None
+    return mass
+
+
 def attach_morrowind_collision(root, stats=None) -> bool:
     """Give a CONVERTED root the collision Morrowind's engine would build.
 
     Runs after the Oblivion collision pass, whose `_convert_shape` unwraps
     every bhkMoppBvTreeShape as stale Oblivion data, and after the root swap,
     so the CMS targets the final root. A RootCollisionNode is consumed and
-    stripped either way: it must never render.
-    See: docs/commentary/asset_convert_nif.md#morrowind-collision
+    stripped either way: it must never render.  An item record's model is
+    simulated clutter rather than a static; `clutter_plan` holds that mapping.
+    See: docs/commentary/asset_convert_collision.md#morrowind-dynamic-clutter
     """
     node, generated = collision_source(root)
     tris = collision_triangles(node, root) if node is not None else []
     built = False
     if tris and getattr(root, 'collision_object', None) is None:
-        obj = build_collision(root, tris)
+        obj = build_collision(root, tris, _loose_item_mass(root))
         if obj is not None:
             root.collision_object = obj
             _recompute_bsx(root)

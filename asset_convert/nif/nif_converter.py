@@ -84,6 +84,7 @@ from asset_convert.character.wearable_plan import (body_part_for_flags,
 from asset_convert.character.wearable_plan_falloutnv import shield_flags
 from asset_convert.havok.hkx_skeleton import BONE_RENAMES
 from asset_convert.character import wearable_plan as wp
+from asset_convert.collision.clutter_plan import latch_clutter_mass
 from asset_convert.character.body_wrap import morph_converted_to_weight1
 from asset_convert.havok.hkx_animobject import generate_animobject_project
 from asset_convert.nif.gun_parts_falloutnv import add_gun_part_sequences
@@ -1249,10 +1250,15 @@ def _authored_wear(src_path, src_meshes_dir, wearable_plan, creature, hair):
     Hair carries biped bit 1, the slot a helmet-bearing record would, so it
     resolves body part 131 without guessing.  Asked before the conversion so
     the armor rules apply to gear filed outside meshes\armor and clothes.
+
+    The clutter mass latches off the UNGATED plan: an item model is simulated
+    whatever folder it sits in, and only a creature is never loose.
     """
     plan = (wearable_plan if src_meshes_dir is not None and not creature
             and not hair else None)
     wp.latch_variants(plan, src_path, src_meshes_dir)
+    latch_clutter_mass(wearable_plan if not creature else None,
+                       src_path, src_meshes_dir)
     if plan is None:
         return bool(hair), 0x02 if hair else 0
     return (wp.is_worn(plan, src_path, src_meshes_dir),

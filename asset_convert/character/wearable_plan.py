@@ -91,7 +91,7 @@ def body_part_for_flags(biped_flags: int):
     return None
 
 
-def _norm(path: str) -> str:
+def norm_model_path(path: str) -> str:
     """Normalize an export model path to a lowercase mesh-relative key.
 
     The export escapes backslashes, so a model path arrives as
@@ -140,17 +140,15 @@ def build_biped_flags(export_dir) -> dict:
             for key in ('Male.BipedModel.MODL', 'Female.BipedModel.MODL'):
                 mp = rec.get(key, '').strip()
                 if mp:
-                    k = _norm(mp)
+                    k = norm_model_path(mp)
                     flags[k] = flags.get(k, 0) | bf
     return flags
 
 
-# Key under which build_plan stashes the biped-flag map inside the plan dict.
-# _norm() lowercases and strips leading '/', so it can never emit this string —
-# the sub-map cannot collide with a real mesh entry.
+#: Biped-flag sub-map key; norm_model_path never emits it, so it cannot collide with a mesh entry.
 BIPED_FLAGS_KEY = '*biped_flags*'
 
-#: Key under which build_plan stashes the weapon Prn map; `_norm` can never emit it either.
+#: Weapon Prn sub-map key; norm_model_path can never emit it either.
 WEAPON_PRN_KEY = '*weapon_prn*'
 
 
@@ -169,7 +167,7 @@ def biped_flags_for(plan: dict, src_path, meshes_root) -> int:
         rel = os.path.relpath(str(src_path), str(meshes_root))
     except (ValueError, TypeError):
         return 0
-    val = flags.get(_norm(rel), 0)
+    val = flags.get(norm_model_path(rel), 0)
     return val if isinstance(val, int) else 0
 
 
@@ -201,10 +199,10 @@ def build_weapon_prns(export_dir) -> dict:
         if not model or not kind.isdigit():
             continue
         prn = MORROWIND_WEAPON_PRN.get(int(kind))
-        if prn and 'staff' in os.path.basename(_norm(model)):
+        if prn and 'staff' in os.path.basename(norm_model_path(model)):
             prn = 'WeaponStaff'
         if prn:
-            out[_norm(model)] = prn
+            out[norm_model_path(model)] = prn
     return out
 
 
@@ -257,7 +255,7 @@ def build_plan(export_dir, _seen=None) -> dict:
 
     def want(path: str, flags: int):
         if path:
-            key = _norm(path)
+            key = norm_model_path(path)
             plan[key] = plan.get(key, 0) | flags
 
     for name in ('ARMO.txt', 'CLOT.txt'):
@@ -309,7 +307,7 @@ def variants_for(plan: dict, src_path, meshes_root) -> int:
         rel = os.path.relpath(str(src_path), str(meshes_root))
     except ValueError:
         return BASE
-    return plan.get(_norm(rel), BASE)
+    return plan.get(norm_model_path(rel), BASE)
 
 
 _LATCH = [0, None]
@@ -327,7 +325,7 @@ def weapon_prn_for(plan: dict, src_path, meshes_root):
         rel = os.path.relpath(str(src_path), str(meshes_root))
     except ValueError:
         return None
-    return plan.get(WEAPON_PRN_KEY, {}).get(_norm(rel))
+    return plan.get(WEAPON_PRN_KEY, {}).get(norm_model_path(rel))
 
 
 def mesh_weapon_prn():
@@ -369,4 +367,4 @@ def is_worn(plan: dict, src_path, meshes_root) -> bool:
         rel = os.path.relpath(str(src_path), str(meshes_root))
     except (ValueError, TypeError):
         return False
-    return bool(plan.get(_norm(rel), 0) & WORN)
+    return bool(plan.get(norm_model_path(rel), 0) & WORN)

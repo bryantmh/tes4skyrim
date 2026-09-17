@@ -32,6 +32,7 @@ from asset_convert.speedtree import spt_converter
 from asset_convert.texture import texture_prune
 from asset_convert.character.morrowind_armor import assemble_armor
 from asset_convert.character import wearable_plan
+from asset_convert.collision import clutter_plan
 
 
 # Shared-folder resolution lives in output_layout (one module, three
@@ -165,6 +166,9 @@ def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, rec_dir, mesh_subdirs,
     plan = wearable_plan.build_plan(rec_dir)
     print(f"  Wearable variant plan: {len(plan)} meshes referenced by "
           f"ARMO/CLOT")
+    masses = clutter_plan.build_clutter_masses(rec_dir)
+    plan[clutter_plan.CLUTTER_KEY] = masses
+    print(f"  Dynamic clutter plan: {len(masses)} item models")
     mesh_scan_fragments.clear_fragments(asset_dir)
     return nif_batch.batch_convert(
         str(mesh_src), output_dir=str(mesh_dst),

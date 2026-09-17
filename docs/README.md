@@ -33,6 +33,7 @@ What a format or contract IS. Stable; no dates, no status.
 | [creature_bug_reports.md](reference/creature_bug_reports.md) | User-filed creature bug reports, verbatim |
 | [creature_race_equivalence.md](reference/creature_race_equivalence.md) | Skyrim ↔ Oblivion Creature Equivalence Map |
 | [dialogue_engine_contracts.md](reference/dialogue_engine_contracts.md) | Dialogue contracts read out of SkyrimSE.exe |
+| [havok_contact_hook.md](reference/havok_contact_hook.md) | The engine's contact callback: classes, slot 8, stable IDs |
 | [item_swap_table.md](reference/item_swap_table.md) | Oblivion → Skyrim Item Swap Table (MISC + Ingredients/Food) |
 | [morrowind_dialogue_format.md](reference/morrowind_dialogue_format.md) | TES3 DIAL/INFO export vocabulary the Morrowind runtime reads |
 | [package_ai_contracts.md](reference/package_ai_contracts.md) | PACK / AI Package & CTDA Engine Contracts |

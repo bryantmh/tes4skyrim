@@ -233,6 +233,40 @@ def _collect_visual_vertices(node):
     return np.vstack(out)
 
 
+#: Convex radius (Havok units) for a synthesized clutter hull, vanilla's clutter value.
+_SYNTH_HULL_RADIUS = 0.01
+
+
+def build_clutter_hull(tris_hk, sk_material):
+    """A convex shape over triangles ALREADY in Havok units, or None.
+
+    For a source that authors no Havok shape at all: Morrowind geometry, whose
+    dynamic bodies cannot use the concave MOPP the static path builds.  Splits
+    into a bhkListShape when the hull is meaningfully concave, exactly as
+    decompose_clutter_hull does for Oblivion clutter.
+    See: docs/commentary/asset_convert_collision.md#morrowind-dynamic-clutter
+    """
+    if not _scipy_available() or not tris_hk:
+        return None
+    import numpy as np
+
+    pts = np.array([v for tri in tris_hk for v in tri], dtype=float)
+    if len(pts) < 4:
+        return None
+    pieces = (_recursive_hull_split(pts, _DECOMP_MAX_DEPTH)
+              if len(pts) >= 24 else [pts])
+    shapes = [s for s in (_build_piece_convex_shape(p, _SYNTH_HULL_RADIUS,
+                                                    sk_material)
+                          for p in pieces) if s is not None]
+    if not shapes:
+        shapes = [s for s in [_build_piece_convex_shape(
+            pts, _SYNTH_HULL_RADIUS, sk_material)] if s is not None]
+    if not shapes:
+        return None
+    return shapes[0] if len(shapes) == 1 else _list_shape_over(shapes,
+                                                               sk_material)
+
+
 def decompose_clutter_hull(node, hull_shape):
     """A bhkListShape of tighter per-piece hulls, or None to keep the hull.
 
