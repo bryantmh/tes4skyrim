@@ -38,10 +38,10 @@ TAG_DEFINE_SPRITE = 39
 TAG_DO_INIT_ACTION = 59
 TAG_EXPORT_ASSETS = 56
 TAG_DEFINE_SCALING_GRID = 78
-TAG_DEFINE_FONT_2 = 48
+TAG_DEFINE_FONT_3 = 75
 
-#: The em square DefineFont2 glyph outlines are stored in, whatever the source.
-FONT_EM = 1024
+#: DefineFont3's em square: 1024 units at 20 sub-units each, so a 2048-unit face converts EXACTLY.
+FONT_EM = 1024 * 20
 
 # Character-defining tags, keyed by code -> whether the id is the first u16.
 # Used only to answer "which tag defines character N?", so every entry here
@@ -732,4 +732,4 @@ def define_font2(character_id: int, name: str, glyphs: list,
         body += struct.pack('<h', adv)
     body += bytes(count)
     body += struct.pack('<H', 0)
-    return Tag(TAG_DEFINE_FONT_2, bytes(body))
+    return Tag(TAG_DEFINE_FONT_3, bytes(body))

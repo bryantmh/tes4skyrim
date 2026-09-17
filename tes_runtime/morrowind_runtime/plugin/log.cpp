@@ -37,6 +37,11 @@ void OpenLog() {
     g_file = _wfsopen(path.c_str(), L"w", _SH_DENYNO);
 }
 
+void LogToStdout(bool on) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    g_file = on ? stdout : nullptr;
+}
+
 void Log(const char* fmt, ...) {
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_file) return;

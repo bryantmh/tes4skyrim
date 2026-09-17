@@ -1,0 +1,2 @@
+TestGlobal=s,0.0
+StartsAtNine=f,9.0

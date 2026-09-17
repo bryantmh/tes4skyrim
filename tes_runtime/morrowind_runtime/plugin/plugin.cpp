@@ -13,6 +13,8 @@
 #include "activation.h"
 #include "addresses.h"
 #include "conversation.h"
+#include "cosave.h"
+#include "game_calls.h"
 #include "log.h"
 #include "menu.h"
 #include "skse_abi.h"
@@ -46,6 +48,7 @@ void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
     // registers here rather than at plugin load.
     Log("menu: install %s", InstallMenu() ? "ok" : "FAILED");
     InstallConversation();
+    InstallGameCalls();
     InstallActivation();
 }
 
@@ -71,6 +74,7 @@ void QueryInterfaces(const SKSEInterface* skse) {
         g_serialization->SetUniqueID(skse->GetPluginHandle(),
                                      kSerializationId);
     }
+    InstallCoSave(g_serialization, skse->GetPluginHandle());
     Log("interfaces: messaging %s, papyrus %s, serialization %s",
         msg ? "ok" : "MISSING", papyrus ? "ok" : "MISSING",
         g_serialization ? "ok" : "MISSING");

@@ -16,6 +16,8 @@ namespace mwruntime {
 // unknown; every file the plugin writes for a human goes here.
 std::wstring LogDir();
 void OpenLog();
+// For the headless tests: everything logged goes to stdout, or nowhere.
+void LogToStdout(bool on);
 void Log(const char* fmt, ...);
 
 }  // namespace mwruntime

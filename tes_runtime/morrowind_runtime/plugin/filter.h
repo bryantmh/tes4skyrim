@@ -47,17 +47,38 @@ FilterResult TestInfo(const Info& info, const ActorView& actor, int choice);
 // without building a topic around each.
 bool TestCondition(const Condition& cond, const ActorView& actor, int choice);
 
-// TES3 function indices the filter answers. Names match
-// esm3/dialoguecondition.hpp so the two can be read side by side.
+// TES3 function indices, in the order esm3/dialoguecondition.hpp declares
+// them, so the two can be read side by side. EVERY index is named: a rule
+// whose function has no name is a rule this runtime cannot judge.
 enum Function {
-    Fn_FacReactionLowest = 0, Fn_FacReactionHighest = 1,
-    Fn_RankRequirement = 2, Fn_Reputation = 3, Fn_HealthPercent = 4,
-    Fn_PcReputation = 5, Fn_PcLevel = 6, Fn_PcHealthPercent = 7,
-    Fn_PcGender = 38, Fn_PcExpelled = 39, Fn_PcCrimeLevel = 43,
-    Fn_SameSex = 44, Fn_SameRace = 45, Fn_SameFaction = 46,
-    Fn_FactionRankDifference = 47, Fn_Detected = 48, Fn_Alarmed = 49,
-    Fn_Choice = 50, Fn_Level = 61, Fn_Attacked = 62, Fn_TalkedToPc = 63,
-    Fn_PcHealth = 64,
+    Fn_FacReactionLowest = 0, Fn_FacReactionHighest, Fn_RankRequirement,
+    Fn_Reputation, Fn_HealthPercent, Fn_PcReputation, Fn_PcLevel,
+    Fn_PcHealthPercent, Fn_PcMagicka, Fn_PcFatigue,
+    // The eight attributes and 27 skills, 10..37, answered by the stat map.
+    Fn_PcStrength, Fn_PcBlock, Fn_PcArmorer, Fn_PcMediumArmor,
+    Fn_PcHeavyArmor, Fn_PcBluntWeapon, Fn_PcLongBlade, Fn_PcAxe, Fn_PcSpear,
+    Fn_PcAthletics, Fn_PcEnchant, Fn_PcDestruction, Fn_PcAlteration,
+    Fn_PcIllusion, Fn_PcConjuration, Fn_PcMysticism, Fn_PcRestoration,
+    Fn_PcAlchemy, Fn_PcUnarmored, Fn_PcSecurity, Fn_PcSneak, Fn_PcAcrobatics,
+    Fn_PcLightArmor, Fn_PcShortBlade, Fn_PcMarksman, Fn_PcMercantile,
+    Fn_PcSpeechcraft, Fn_PcHandToHand,
+    Fn_PcGender, Fn_PcExpelled, Fn_PcCommonDisease, Fn_PcBlightDisease,
+    Fn_PcClothingModifier, Fn_PcCrimeLevel, Fn_SameSex, Fn_SameRace,
+    Fn_SameFaction, Fn_FactionRankDifference, Fn_Detected, Fn_Alarmed,
+    Fn_Choice,
+    Fn_PcIntelligence, Fn_PcWillpower, Fn_PcAgility, Fn_PcSpeed,
+    Fn_PcEndurance, Fn_PcPersonality, Fn_PcLuck,
+    Fn_PcCorprus, Fn_Weather, Fn_PcVampire, Fn_Level, Fn_Attacked,
+    Fn_TalkedToPc, Fn_PcHealth, Fn_CreatureTarget, Fn_FriendHit, Fn_Fight,
+    Fn_Hello, Fn_Alarm, Fn_Flee, Fn_ShouldAttack, Fn_Werewolf,
+    Fn_PcWerewolfKills = 73,
 };
+
+// The first and last of the contiguous attribute/skill runs, which map onto
+// the TES3 stat indices the ActorView exposes.
+constexpr int kFirstPcSkill = Fn_PcBlock;
+constexpr int kLastPcSkill = Fn_PcHandToHand;
+constexpr int kFirstPcAttribute = Fn_PcIntelligence;
+constexpr int kLastPcAttribute = Fn_PcLuck;
 
 }  // namespace mwruntime

@@ -1,5 +1,8 @@
 #include "game_actor.h"
 
+#include "dialogue_state.h"
+#include "script_tables.h"
+
 namespace mwruntime {
 
 namespace {
@@ -9,7 +12,6 @@ namespace {
 // hide dialogue that should have shown.
 // See: docs/commentary/morrowind_runtime.md#the-seam
 constexpr int kOpenSkill = 100;
-constexpr int kNeutralDisposition = 50;
 constexpr int kAlive = 100;
 constexpr int kFirstLevel = 1;
 
@@ -26,25 +28,46 @@ RefId GameActor::Id() const { return mId; }
 
 bool GameActor::IsNpc() const { return true; }
 
-RefId GameActor::Race() const { return RefId(); }
-
-RefId GameActor::Class() const { return RefId(); }
-
-bool GameActor::IsFemale() const { return false; }
-
-RefId GameActor::PrimaryFaction() const { return RefId(); }
-
-int GameActor::PrimaryFactionRank() const { return Stub(-1); }
-
-int GameActor::PlayerFactionRank(const RefId&) const { return Stub(-1); }
-
-bool GameActor::PlayerExpelled(const RefId&) const { return false; }
-
-int GameActor::FactionReaction(const RefId&, const RefId&) const {
-    return Stub(0);
+// Who the speaker IS comes from their NPC_ record, staged as MWNP.txt. An
+// actor the table does not know answers as an unaffiliated stranger.
+RefId GameActor::Race() const {
+    const ActorDef* def = FindActor(mId);
+    return def ? def->race : RefId();
 }
 
-int GameActor::Disposition() const { return Stub(kNeutralDisposition); }
+RefId GameActor::Class() const {
+    const ActorDef* def = FindActor(mId);
+    return def ? def->clazz : RefId();
+}
+
+bool GameActor::IsFemale() const {
+    const ActorDef* def = FindActor(mId);
+    return def && def->female;
+}
+
+RefId GameActor::PrimaryFaction() const {
+    const ActorDef* def = FindActor(mId);
+    return def ? def->faction : RefId();
+}
+
+int GameActor::PrimaryFactionRank() const {
+    const ActorDef* def = FindActor(mId);
+    return def && !def->faction.empty() ? def->rank : -1;
+}
+
+int GameActor::PlayerFactionRank(const RefId& faction) const {
+    return State().Faction(faction).rank;
+}
+
+bool GameActor::PlayerExpelled(const RefId& faction) const {
+    return State().Faction(faction).expelled;
+}
+
+int GameActor::FactionReaction(const RefId& a, const RefId& b) const {
+    return State().FactionReaction(a, b);
+}
+
+int GameActor::Disposition() const { return State().Disposition(mId); }
 
 RefId GameActor::PlayerRace() const { return RefId(); }
 
@@ -56,7 +79,9 @@ int GameActor::PlayerLevel() const { return Stub(kFirstLevel); }
 
 int GameActor::PlayerHealthPercent() const { return Stub(kAlive); }
 
-int GameActor::PlayerCrimeLevel() const { return Stub(0); }
+int GameActor::PlayerCrimeLevel() const {
+    return static_cast<int>(State().crimeLevel);
+}
 
 int GameActor::PlayerSkill(int) const { return Stub(kOpenSkill); }
 
@@ -80,22 +105,24 @@ int GameActor::DeadCount(const RefId&) const { return Stub(0); }
 
 int GameActor::ItemCount(const RefId&) const { return Stub(0); }
 
-int GameActor::JournalIndex(const RefId&) const { return Stub(0); }
+int GameActor::JournalIndex(const RefId& quest) const {
+    return State().JournalIndex(quest);
+}
 
 // A variable that does not EXIST fails its rule in TES3, which is not the same
 // as reading zero -- so `found` stays false rather than reporting a value.
-float GameActor::LocalVariable(const std::string&, bool* found) const {
-    *found = false;
-    ++mStubbed;
-    return 0.0f;
+float GameActor::LocalVariable(const std::string& name, bool* found) const {
+    const ScriptLocals* locals = FindScriptLocals(ScriptOf(mId));
+    *found = locals && locals->TypeOf(name) != ' ';
+    return State().Var(mId, name);
 }
 
-float GameActor::GlobalVariable(const std::string&, bool* found) const {
-    *found = false;
-    ++mStubbed;
-    return 0.0f;
+float GameActor::GlobalVariable(const std::string& name, bool* found) const {
+    *found = State().HasGlobal(name);
+    if (!*found) ++mStubbed;
+    return State().Global(name);
 }
 
-int GameActor::Choice() const { return -1; }
+int GameActor::Choice() const { return State().choice; }
 
 }  // namespace mwruntime

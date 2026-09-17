@@ -789,6 +789,172 @@ Load order inside the DLL is DIAL for every plugin first, then INFO: an INFO
 whose topic is unknown is dropped, and a topic may be defined by one plugin and
 extended by another.
 
+## <a id="the-conversation"></a>The window's behaviour lives in C++
+
+**Code:** `plugin/menu.cpp`, `plugin/conversation.cpp`,
+`tools/generators/gen_morrowind_menu_swf.py` (writes `plugin/menu_layout.h`)
+
+The movie carries **no ActionScript**. The generator writes every hit rect, the
+path of every field and sprite, the ini colors and the font's advances into
+`menu_layout.h`, and `conversation.cpp` resolves input against those numbers —
+which is what OpenMW's `DialogueWindow` does over MyGUI. Four engine facts make
+that possible, each read off the GOG build's `IMenu` vtable (`0x18a4e90`):
+
+| Fact | Evidence |
+|---|---|
+| `GFxMovieView` slots are INDICES: SetVariable `0x10`, GetVariable `0x11`, Invoke `0x16`, Advance `0x25`, Render `0x26`, HandleEvent `0x2d` | base `IMenu::NextFrame` writes `CurrentTime` through `[vt+0x80]` and advances through `[vt+0x128]`; base `ProcessMessage` forwards through `[vt+0x168]` |
+| `ProcessMessage` must forward type **6** (`BSUIScaleformData`, event at `+0x10`) to `HandleEvent` | base returns 0 after forwarding, 2 otherwise |
+| `NextFrame(this, float dt, u32)` must call `Advance` | a menu that skips it never processes the events it was handed |
+| The wheel arrives as user events `Zoom In` / `Zoom Out` (type **7**, name at `+0x18`); `Cancel` is Tab/Escape | logged in game |
+
+🛑 The first build added `0x10` to the vtable as a BYTE offset — slot 2 — so
+`SetVariable` never ran and every field stayed empty with nothing logged.
+
+### <a id="scale-mode"></a>🛑 `kNoBorder` crops; a modal panel wants `kShowAll`
+
+Vanilla menus pass scale mode 3. Measured on 3440x1440: the 1280x720 stage
+scaled by 2.69 to the width and lost 247 px top and bottom, giving a 1580 px
+window running off the screen. Mode 1 fits the whole stage. Clicks confirm the
+mapping: event `(2029, 567)` arrived as stage `(795, 283)` = `((x-440)/2, y/2)`.
+
+### <a id="one-movie-per-session"></a>🛑 The movie is never torn down
+
+Calling `IMenu`'s own destructor on close crashed inside the movie's teardown:
+Scaleform's heap `Free` (id 84520, a page-table lookup by address) on a 0x38-byte
+object — a `GString` and three refcounted members — the heap never held. The
+allocator is not the cause: the deleting destructor frees through
+`[0x30c6900]->vt[0x60]`, the same singleton (id 412058) the menu is allocated
+from at `vt[0x50]`. The double release was not identified, so slot 0 keeps the
+menu and `MenuCreator` hands the same one back on every later open.
+
+### What a bare SWF cannot do
+
+| Trap | Rule |
+|---|---|
+| A named bare SHAPE is not scriptable | only a MovieClip answers to `_x`, `_visible`, `_width`; every moving part is a one-frame `DefineSprite` |
+| `SetVariable` on a field's bound variable sets PLAIN text | HTML goes to `<field>.htmlText` |
+| `DefineEditText` align | 0 left, **1 right**, 2 center |
+| Line pitch | ascent + descent, NOT + leading; then calibrated from `textHeight / numLines` |
+| `TextField.getCharIndexAtPoint` | absent in this Scaleform; keyword links are hit-tested with the plugin's own word wrap over the font's advances, cross-checked against `numLines` |
+| `DefineFont2`'s 1024 em | rounds a 2048-unit face and lets near-touching edges cross (the v's tip, the k's foot); `DefineFont3` stores 20x and converts exactly. Contours close explicitly |
+| Arrow textures | 32x32 with the arrow in the top-left 20x20; crop to the alpha bbox before scaling |
+
+Layout is the skins', not invented: `MW_Window`'s caption at `4 4 W-8 20`, a
+second thick frame at inset 4 below it, client at `(8, 28)`; `MWList` rows of
+font + 2 = 18 px with 3 px padding, an 18 px separator; `MW_VScroll` 14 px wide.
+
+## <a id="result-scripts"></a>Result scripts run on OpenMW's own compiler
+
+**Code:** `plugin/script_runner.cpp`, `plugin/script_context.cpp`,
+`plugin/dialogue_state.cpp`, `plugin/script_test.cpp`
+
+`RunResultScript` is `DialogueManager::executeScript`: the vendored scanner,
+`ScriptParser` and interpreter, with `Compiler::registerExtensions` used WHOLE
+so every command parses. What a command DOES is the port's progress:
+
+| Kind | How |
+|---|---|
+| Real | journal, topics, `Choice`, `Goodbye`, disposition, reputation, faction reactions, the player's factions and crime level, `AddItem`/`RemoveItem`/`GetItemCount`, `StartScript`/`StopScript`/`ScriptRunning` |
+| Deliberate no-op | `ShowMap`, `FadeIn/Out/To`, `ClearInfoActor` |
+| Stub | pops exactly the arguments its signature pushes (letters `Sclsf` before `/`, plus one for an explicit reference, plus the optional count on segment 3), returns zero, logs its name once |
+
+The extension table keeps its opcodes private, so each stub's opcode is
+recovered by asking the table to GENERATE the command and reading the word.
+
+<a id="the-context"></a>`DialogueContext` is the `Interpreter::Context` both the
+scripts and `fixDefinesDialog` (`%name`, `%PCName`) run under.
+<a id="dialogue-state"></a>`DialogueState` is what scripts write and the filter
+reads: journal, disposition, globals, locals by owner, the player's factions.
+
+### <a id="script-tables"></a>🛑 The parser asks "global?" BEFORE "id?"
+
+So a compiler context that answers "global" for an unknown name turns
+`player->...` and `Script.member` into syntax errors. Measured over all 26,820
+authored Tamriel Rebuilt result scripts (`script_test --sweep`):
+
+| Context | Failures |
+|---|---|
+| every unknown name is a float global | 1,428 |
+| globals and script locals from authored tables | 415 |
+| + every scripted object type, each INFO's own speaker | 265 |
+| + master scripts resolved through `_formid_here` | 165 |
+
+The remainder use a speaker's locals where the INFO names no actor, which the
+sweep cannot know and the game does. An unknown `set` target is a WARNING that
+skips the line (`lineparser.cpp`), by OpenMW's own rule.
+
+Reach of the commands the content calls most: `AddItem` 4,492, `RemoveItem`
+2,355, `ShowMap` 1,728, `SetFight` 1,159, `StartCombat` 1,148, `ModPCFacRep`
+1,129, `StartScript` 855, `GetItemCount` 841.
+
+### 🛑 Dialogue is cumulative, and the filter compares NAMES
+
+`tes5_import/dialogue/morrowind_sidecar_source.py` builds the sidecar's
+dialogue and actor table from the TES3 BINARIES of the plugin and every master
+it can find, merged as OpenMW's `InfoOrder` merges them (replace in place, else
+after `PNAM`, else before `NNAM`, else first when it names no predecessor).
+Measured on TR_Mainland: 69,270 responses alone, **106,958** merged over
+Morrowind, Tribunal, Bloodmoon and Tamriel_Data, in 15 s. "join the Fighters
+Guild" went from 2 responses to 29 — and still needed the speaker's faction,
+which the text export holds only as a minted FormID. `MWNP.txt` carries each
+NPC's race, class, faction, rank, base disposition, gender and name as authored.
+
+### <a id="unknown-functions"></a>🛑 A rule the runtime cannot judge REJECTS
+
+`SCVR` function 1 is a NUMBERED function, 0..73, and the filter first answered
+an index it had no case for by PASSING, on the reasoning that an unimplemented
+check should not hide a response. Measured in game: **every NPC** opened with
+"Get away from me, vampire!" and said goodbye. `Function_PcVampire` is index
+**59** and had no case, so `PCVampire == 1` passed, and that greeting sits
+early in the list where Morrowind takes the first match.
+
+Passing is the wrong default for the same reason the order matters: an
+unanswerable rule that passes decides FOR the response it guards, while one
+that rejects simply lets the next INFO answer. `filter.h` now names all 74
+indices, so an index with no case is a rule genuinely outside this runtime,
+and `PlainValue` answers the rest: the 27 skills and 8 attributes through the
+stat map, and a flat NO for vampirism, lycanthropy, corprus, disease and the
+weather.
+
+## <a id="journal-quests"></a>The journal is Skyrim quests
+
+**Code:** `tes5_import/dialogue/quest_morrowind.py`, `plugin/game_calls.cpp`
+
+Each TES3 Journal topic becomes one QUST: a stage per journal index, the page
+as the stage's log entry, the `QuestStatus=Name` page as FULL, `Finished` as
+the completes-quest bit. No objectives. `MWQS.txt` maps the authored id to
+`Plugin|FormID`; `Journal` and `SetJournalIndex` call the
+`Quest.SetCurrentStageID` native. `AddJournalEntry` stages the ENTRY's index
+even when the quest's own index does not rise — a lower page added late is
+still a new page.
+
+🛑 The quests are generated for every journal topic in the MERGED sidecar,
+masters' included, into the plugin being imported. Two TES3 plugins sharing a
+master would each mint that master's quests.
+
+### <a id="game-calls"></a>Natives, found at their registrations
+
+`lea rdx, ["SetCurrentStageID"]` is followed by `lea rax, [callback]`; the
+callback inverts to a stable id.
+
+| Native | 1.6.659 | id |
+|---|---|---|
+| `Quest.SetCurrentStageID` | `0x9e7f90` | 56684 |
+| `ObjectReference.AddItem` | `0x9cd4b0` | 56145 |
+| `ObjectReference.RemoveItem` | `0x9d0b30` | 56218 |
+| `ObjectReference.GetItemCount` | `0x9ce530` | 56173 |
+| `Game.GetPlayer` | `0x9adf00` | 55469 |
+
+The NPC's display name is `TESFullName` at `TESNPC+0xd8` (string at `+0xe0`),
+read off the destructor's vtable writes; the player's is form `0x7`.
+
+### <a id="co-save"></a>The co-save
+
+One SKSE record `MWST` v1 holding `DialogueState::Serialize()`: a format line
+then one tab-separated record per line (`J` journal, `E` entry, `D`
+disposition, `G` global, `L` local, `F` faction, `X` reaction, `S` running
+script, `R`, `C`). An unknown line is skipped; a foreign header is refused.
+
 ## <a id="licensing"></a>Licensing
 
 OpenMW is **GPL-3.0**, vendored from 0.52.0 (`b4b1c5ae`). This follows the

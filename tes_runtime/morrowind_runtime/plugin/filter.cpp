@@ -7,6 +7,11 @@ namespace mwruntime {
 
 namespace {
 
+// What worn clothing is assumed to be worth until inventories are read. Any
+// positive number reads as "dressed"; the authored tests are `<= 0` (naked)
+// and `>= 1`, never a real amount.
+constexpr float kClothedValue = 100.0f;
+
 bool IEquals(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;
     for (std::size_t i = 0; i < a.size(); ++i) {
@@ -62,6 +67,56 @@ bool TestInverted(const Condition& cond, const ActorView& actor) {
     }
 }
 
+// The stats, the AI settings, and every flag whose answer is simply NO for a
+// character this runtime does not model that way. Split out of NumberedValue
+// so the one switch does not outgrow its own shape limit.
+float PlainValue(const Condition& cond, const ActorView& actor, bool* known) {
+    const int index = cond.index;
+    if (index >= kFirstPcSkill && index <= kLastPcSkill) {
+        return static_cast<float>(actor.PlayerSkill(index - kFirstPcSkill));
+    }
+    if (index >= kFirstPcAttribute && index <= kLastPcAttribute) {
+        return static_cast<float>(
+            actor.PlayerAttribute(index - kFirstPcAttribute));
+    }
+    switch (index) {
+        // 🛑 Not modelled, and the answer is NO -- which is what keeps the
+        // "Get away from me, vampire!" greeting off every ordinary NPC.
+        case Fn_PcVampire:
+        case Fn_Werewolf:
+        case Fn_PcCorprus:
+        case Fn_PcCommonDisease:
+        case Fn_PcBlightDisease:
+        case Fn_PcWerewolfKills:
+        case Fn_CreatureTarget:
+        case Fn_ShouldAttack:
+        case Fn_FriendHit:
+        case Fn_Weather:
+            return 0.0f;
+        // The GOLD VALUE of everything worn (OpenMW sums slots 0..15), so a
+        // clothed player is far above zero and 0 means NAKED -- which is what
+        // the "Cover yourself!" greeting tests with `<= 0`.
+        case Fn_PcClothingModifier:
+            return kClothedValue;
+        // Stats the runtime does not track; the player reads as ordinary.
+        case Fn_PcMagicka:
+        case Fn_PcFatigue:
+            return static_cast<float>(actor.PlayerHealthPercent());
+        case Fn_Reputation:
+        case Fn_PcReputation:
+            return 0.0f;
+        // The actor's AI settings, at their neutral defaults.
+        case Fn_Fight:
+        case Fn_Hello:
+        case Fn_Alarm:
+        case Fn_Flee:
+            return 0.0f;
+        default:
+            *known = false;
+            return 0.0f;
+    }
+}
+
 // A numbered function's value, and whether we can answer it at all.
 float NumberedValue(const Condition& cond, const ActorView& actor, int choice,
                     bool* known) {
@@ -105,8 +160,7 @@ float NumberedValue(const Condition& cond, const ActorView& actor, int choice,
         case Fn_Level:      return static_cast<float>(actor.Level());
         case Fn_Choice:     return static_cast<float>(choice);
         default:
-            *known = false;
-            return 0.0f;
+            return PlainValue(cond, actor, known);
     }
 }
 
@@ -120,9 +174,13 @@ bool TestCondition(const Condition& cond, const ActorView& actor, int choice) {
             if (cond.index == Fn_Choice && choice == -1) return false;
             bool known = false;
             const float value = NumberedValue(cond, actor, choice, &known);
-            // An unimplemented function must not silently reject a line: TES3
-            // has no such state, so passing keeps the response reachable.
-            if (!known) return true;
+            // 🛑 An unanswerable function REJECTS. Passing it was measured
+            // wrong in game: `PCVampire == 1` is index 59, had no case, and
+            // so passed -- every NPC greeted the player as a vampire and said
+            // goodbye. A rule this runtime cannot judge must not decide FOR a
+            // response; the next INFO in the list is the right answer.
+            // See: docs/commentary/morrowind_runtime.md#unknown-functions
+            if (!known) return false;
             return CompareValue(cond, value);
         }
         case '2': {

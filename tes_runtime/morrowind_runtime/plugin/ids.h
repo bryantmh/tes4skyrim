@@ -139,6 +139,21 @@ constexpr std::uint64_t kUIManagerSingleton = 400445;
 // See: docs/commentary/morrowind_runtime.md#load-order
 constexpr std::uint64_t kGetFormFromFile = 55465;
 
+// Papyrus natives, each the callback its registration loads beside the name
+// string (`lea rdx,["SetCurrentStageID"]` ... `lea rax,[callback]`), on
+// 1.6.659: 0x9e7f90, 0x9cd4b0, 0x9d0b30, 0x9ce530, 0x9adf00. All are called
+// as the VM calls them: (VM*, stack id, self, arguments...).
+//   bool  Quest.SetCurrentStageID(int stage)
+//   void  ObjectReference.AddItem(Form, int count, bool silent)
+//   void  ObjectReference.RemoveItem(Form, int count, bool silent, ObjectReference moveTo)
+//   int   ObjectReference.GetItemCount(Form)
+//   Actor Game.GetPlayer()
+constexpr std::uint64_t kQuestSetCurrentStageId = 56684;
+constexpr std::uint64_t kRefAddItem = 56145;
+constexpr std::uint64_t kRefRemoveItem = 56218;
+constexpr std::uint64_t kRefGetItemCount = 56173;
+constexpr std::uint64_t kGameGetPlayer = 55469;
+
 // ~BSFixedString (0xc60c30), to release an interned name.
 constexpr std::uint64_t kBSFixedStringDtor = 69164;
 

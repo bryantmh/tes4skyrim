@@ -88,8 +88,11 @@ class _ContourPen:
         self._flush()
 
     def _flush(self):
-        """Emit the contour in progress, if it drew anything."""
+        """Emit the contour in progress, CLOSED: a last point that is not the
+        start gets the straight edge back that TrueType leaves implied."""
         if self._start is not None and self._segments:
+            if tuple(self._segments[-1][-2:]) != self._start:
+                self._segments.append(('l', *self._start))
             self.contours.append((self._start, self._segments))
         self._start = None
         self._segments = None

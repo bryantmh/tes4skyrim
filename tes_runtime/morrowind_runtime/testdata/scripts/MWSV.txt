@@ -1,0 +1,2 @@
+TestActorScript=s:mood,f:timer,s:met
+QuestVars=s:escaping

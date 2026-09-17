@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "log.h"
+#include "script_tables.h"
 
 namespace mwruntime {
 
@@ -262,10 +263,18 @@ StoreStats LoadStoreFrom(const std::string& rootIn) {
             ok ? "loaded" : "MISSING or empty");
         if (ok) ++stats.files;
     }
+    ClearScriptTables();
     for (const std::string& plugin : plugins) {
         LoadOne(root + plugin + "\\", kFileInfos, stats);
+        LoadScriptTables(root + plugin + "\\");
     }
     SortInfos();
+    Log("store: %zu actor(s), %zu journal quest(s), %zu global(s), %zu "
+        "script(s) with locals, %zu scripted object(s)%s", ActorCount(),
+        QuestCount(), GlobalDefs().size(), ScriptCount(), ActorScriptCount(),
+        GlobalDefs().empty() ? " -- this sidecar predates the script tables; "
+                               "restage it or result scripts that name a "
+                               "global will not compile" : "");
     return stats;
 }
 

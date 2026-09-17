@@ -37,8 +37,7 @@ set INCLUDES=/I"%MW%" /I"%MW%\apps"
 
 cd /d "%~dp0"
 if not exist obj mkdir obj
-
-if /i "%~1"=="test" goto storetest
+if not exist obj\mw mkdir obj\mw
 
 REM misc/strings and esm4 are header-only in this closure; esm/ contributes the
 REM RefId translation units refid.hpp pulls in.
@@ -50,7 +49,7 @@ cl %CXXFLAGS% %INCLUDES% ^
    "%MW%\components\debug\debuglog.cpp" ^
    "%MW%\components\files\conversion.cpp" ^
    "%MW%\components\misc\*.cpp" ^
-   /Fo:obj\
+   /Fo:obj\mw\
 if errorlevel 1 (
     echo [build] ERROR: vendored OpenMW failed to compile
     exit /b 1
@@ -58,6 +57,7 @@ if errorlevel 1 (
 echo [build] OK -^> vendored OpenMW compiles standalone
 
 if /i "%~1"=="openmw" goto done
+if /i "%~1"=="test" goto storetest
 
 REM Named rather than plugin\*.cpp: store_test.cpp carries a main() and is
 REM built only by `build.bat test`.
@@ -66,14 +66,16 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\log.cpp plugin\addresses.cpp plugin\menu.cpp ^
    plugin\filter.cpp plugin\session.cpp plugin\activation.cpp ^
    plugin\game_actor.cpp plugin\conversation.cpp ^
-   plugin\script_context.cpp /Fo:obj\
+   plugin\script_context.cpp plugin\dialogue_state.cpp ^
+   plugin\script_runner.cpp plugin\script_tables.cpp ^
+   plugin\game_calls.cpp plugin\cosave.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
     exit /b 1
 )
 
 echo [build] linking...
-link /nologo /DLL /OUT:MorrowindRuntime.dll obj\*.obj ^
+link /nologo /DLL /OUT:MorrowindRuntime.dll obj\*.obj obj\mw\*.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib advapi32.lib
 if errorlevel 1 (
     echo [build] ERROR: link failed
@@ -90,32 +92,45 @@ if not exist objt mkdir objt
 echo [build] compiling tests...
 cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\log.cpp plugin\filter.cpp ^
    plugin\session.cpp plugin\store_test.cpp plugin\filter_test.cpp ^
-   plugin\session_test.cpp /Fo:objt\
+   plugin\session_test.cpp plugin\game_actor.cpp ^
+   plugin\dialogue_state.cpp plugin\script_context.cpp ^
+   plugin\script_runner.cpp plugin\script_tables.cpp ^
+   plugin\script_test.cpp /Fo:objt\
 if errorlevel 1 (
     echo [build] ERROR: test compilation failed
     exit /b 1
 )
 link /nologo /OUT:store_test.exe objt\store.obj objt\log.obj ^
-     objt\store_test.obj kernel32.lib user32.lib shell32.lib ole32.lib
+     objt\script_tables.obj objt\store_test.obj kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
     echo [build] ERROR: store_test link failed
     exit /b 1
 )
 link /nologo /OUT:filter_test.exe objt\store.obj objt\log.obj ^
-     objt\filter.obj objt\filter_test.obj ^
+     objt\script_tables.obj objt\filter.obj objt\filter_test.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
     echo [build] ERROR: filter_test link failed
     exit /b 1
 )
 link /nologo /OUT:session_test.exe objt\store.obj objt\log.obj ^
-     objt\filter.obj objt\session.obj objt\session_test.obj ^
+     objt\script_tables.obj objt\filter.obj objt\session.obj ^
+     objt\session_test.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
     echo [build] ERROR: session_test link failed
     exit /b 1
 )
-echo [build] OK -^> %~dp0store_test.exe, filter_test.exe, session_test.exe
+link /nologo /OUT:script_test.exe objt\store.obj objt\log.obj ^
+     objt\game_actor.obj objt\dialogue_state.obj objt\script_context.obj ^
+     objt\script_runner.obj objt\script_tables.obj objt\script_test.obj ^
+     obj\mw\*.obj ^
+     kernel32.lib user32.lib shell32.lib ole32.lib
+if errorlevel 1 (
+    echo [build] ERROR: script_test link failed
+    exit /b 1
+)
+echo [build] OK -^> %~dp0store_test.exe, filter_test.exe, session_test.exe, script_test.exe
 
 :done
 

@@ -364,7 +364,56 @@ void Sweep(const char* dir) {
 }  // namespace
 }  // namespace mwruntime
 
+namespace {
+
+using namespace mwruntime;
+
+// One numbered-function rule, as SCVR encodes it.
+Condition Numbered(int index, char comparison, int value) {
+    Condition cond;
+    cond.function = '1';
+    cond.index = index;
+    cond.comparison = comparison;
+    cond.valueInt = value;
+    return cond;
+}
+
+// 🛑 The vampire regression: an index with no case must REJECT, or the
+// greeting it guards wins for every ordinary NPC.
+// See: docs/commentary/morrowind_runtime.md#unknown-functions
+int UnknownFunctionCases() {
+    FakeActor actor;
+    int failed = 0;
+    struct Case { int index; const char* what; bool expected; };
+    const Case cases[] = {
+        {Fn_PcVampire, "PCVampire == 1 rejects", false},
+        {Fn_Werewolf, "Werewolf == 1 rejects", false},
+        {Fn_PcCorprus, "PCCorprus == 1 rejects", false},
+        {Fn_PcCommonDisease, "PCCommonDisease == 1 rejects", false},
+        {74, "an index past the last function rejects", false},
+    };
+    for (const Case& row : cases) {
+        const bool got = TestCondition(Numbered(row.index, '0', 1), actor, -1);
+        std::printf("  %s  %s\n", got == row.expected ? "ok  " : "FAIL",
+                    row.what);
+        if (got != row.expected) ++failed;
+    }
+    const bool notVampire = TestCondition(Numbered(Fn_PcVampire, '0', 0),
+                                          actor, -1);
+    std::printf("  %s  PCVampire == 0 passes\n", notVampire ? "ok  " : "FAIL");
+    if (!notVampire) ++failed;
+    return failed;
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
+    if (argc == 1) {
+        std::printf("unknown numbered functions\n");
+        const int failed = UnknownFunctionCases();
+        std::printf("%s\n", failed ? "FAILED" : "all passed");
+        return failed ? 1 : 0;
+    }
     using namespace mwruntime;
     TestOrderIsPrecedence();
     TestActorAndCreature();

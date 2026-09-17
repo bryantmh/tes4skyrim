@@ -11,6 +11,7 @@
 
 #include "addresses.h"
 #include "conversation.h"
+#include "game_calls.h"
 #include "ids.h"
 #include "log.h"
 #include "store.h"
@@ -85,16 +86,6 @@ bool AddLine(const std::string& line) {
     return true;
 }
 
-// The form with `local` id in `file`, through the running load order.
-void* FormFromFile(const char* file, std::uint32_t local) {
-    if (!g_vm || !g_getFormFromFile || !g_fixedString) return nullptr;
-    void* name = nullptr;
-    g_fixedString(&name, file);
-    if (!name) return nullptr;
-    return g_getFormFromFile(g_vm, 0, nullptr, static_cast<std::int32_t>(local),
-                             &name);
-}
-
 // Our TESNPC::Activate. The FIRST test is one bit on the ref's load-order
 // index, so a vanilla or Oblivion-converted NPC reaches the engine's own
 // Activate having cost nothing measurable.
@@ -111,6 +102,7 @@ bool ActivateHook(void* npc, void* ref, void* activator, std::uint8_t unk,
     if (baseId && IsMorrowindSpeaker(baseId)) {
         Log("activation: %08X is '%s' (\"%s\") -- opening the Morrowind menu",
             baseId, SpeakerId(baseId), DisplayName(npc));
+        SetSpeakerRef(SpeakerId(baseId), ref);
         BeginConversation(SpeakerId(baseId), DisplayName(npc), PlayerName());
         return true;
     }
@@ -157,6 +149,17 @@ std::size_t LoadOneIndex(const std::string& dir, std::uint32_t* sample) {
 }  // namespace
 
 void SetPapyrusVm(void* vm) { g_vm = vm; }
+
+void* PapyrusVm() { return g_vm; }
+
+void* FormFromFile(const char* file, std::uint32_t local) {
+    if (!g_vm || !g_getFormFromFile || !g_fixedString) return nullptr;
+    void* name = nullptr;
+    g_fixedString(&name, file);
+    if (!name) return nullptr;
+    return g_getFormFromFile(g_vm, 0, nullptr, static_cast<std::int32_t>(local),
+                             &name);
+}
 
 const char* DisplayName(void* npc) {
     if (!npc) return "";

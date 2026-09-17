@@ -32,6 +32,13 @@ const char* DisplayName(void* npc);
 // The name the player entered at character creation, or "".
 const char* PlayerName();
 
+// The form with plugin-LOCAL id `local` in `file`, through the running load
+// order, or null. The only correct way to reach a converted record.
+void* FormFromFile(const char* file, std::uint32_t local);
+
+// The Papyrus VM every native call is made against.
+void* PapyrusVm();
+
 // Hands over the Papyrus VM, which Game.GetFormFromFile needs to resolve a
 // plugin's CURRENT load-order index. Called from the SKSE Papyrus callback.
 void SetPapyrusVm(void* vm);

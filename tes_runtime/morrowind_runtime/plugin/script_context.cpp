@@ -1,19 +1,10 @@
 #include "script_context.h"
 
+#include "dialogue_state.h"
 #include "log.h"
+#include "script_tables.h"
 
 namespace mwruntime {
-
-namespace {
-
-// Every write to state this context does not hold yet is logged once per
-// kind, so the log says what a script tried to change.
-void Unheld(const char* what, std::string_view name) {
-    Log("context: %s '%.*s' is not held yet -- ignored", what,
-        static_cast<int>(name.size()), name.data());
-}
-
-}  // namespace
 
 DialogueContext::DialogueContext(const ActorView& actor, std::string actorName,
                                  std::string playerName)
@@ -24,17 +15,57 @@ ESM::RefId DialogueContext::getTarget() const {
     return ESM::RefId::stringRefId(mActor.Id());
 }
 
-int   DialogueContext::getLocalShort(int) const { return 0; }
-int   DialogueContext::getLocalLong(int) const { return 0; }
-float DialogueContext::getLocalFloat(int) const { return 0.0f; }
-void  DialogueContext::setLocalShort(int, int) { Unheld("local", "short"); }
-void  DialogueContext::setLocalLong(int, int) { Unheld("local", "long"); }
-void  DialogueContext::setLocalFloat(int, float) { Unheld("local", "float"); }
+// Compiled code addresses a local by its index among the locals of its type,
+// in declaration order -- the order SpeakerLocals declared them in.
+const std::string& DialogueContext::LocalName(char type, int index) const {
+    static const std::string kNone;
+    const ScriptLocals* locals = FindScriptLocals(ScriptOf(mActor.Id()));
+    if (!locals || index < 0) return kNone;
+    const std::vector<std::string>& names =
+        type == 's' ? locals->shorts : type == 'l' ? locals->longs
+                                                   : locals->floats;
+    return static_cast<std::size_t>(index) < names.size()
+               ? names[static_cast<std::size_t>(index)]
+               : kNone;
+}
 
+float DialogueContext::Local(char type, int index) const {
+    return State().Var(mActor.Id(), LocalName(type, index));
+}
+
+void DialogueContext::SetLocal(char type, int index, float value) {
+    const std::string& name = LocalName(type, index);
+    if (!name.empty()) State().SetVar(mActor.Id(), name, value);
+}
+
+int DialogueContext::getLocalShort(int index) const {
+    return static_cast<int>(Local('s', index));
+}
+
+int DialogueContext::getLocalLong(int index) const {
+    return static_cast<int>(Local('l', index));
+}
+
+float DialogueContext::getLocalFloat(int index) const {
+    return Local('f', index);
+}
+
+void DialogueContext::setLocalShort(int index, int value) {
+    SetLocal('s', index, static_cast<float>(value));
+}
+
+void DialogueContext::setLocalLong(int index, int value) {
+    SetLocal('l', index, static_cast<float>(value));
+}
+
+void DialogueContext::setLocalFloat(int index, float value) {
+    SetLocal('f', index, value);
+}
+
+// A message box raised during dialogue is shown IN the dialogue, as a notice.
 void DialogueContext::messageBox(std::string_view message,
                                  const std::vector<std::string>&) {
-    Log("context: MessageBox \"%.*s\"", static_cast<int>(message.size()),
-        message.data());
+    State().messages.emplace_back(message);
 }
 
 void DialogueContext::report(const std::string& message) {
@@ -42,8 +73,7 @@ void DialogueContext::report(const std::string& message) {
 }
 
 int DialogueContext::getGlobalShort(std::string_view name) const {
-    bool found = false;
-    return static_cast<int>(mActor.GlobalVariable(std::string(name), &found));
+    return static_cast<int>(State().Global(std::string(name)));
 }
 
 int DialogueContext::getGlobalLong(std::string_view name) const {
@@ -51,25 +81,28 @@ int DialogueContext::getGlobalLong(std::string_view name) const {
 }
 
 float DialogueContext::getGlobalFloat(std::string_view name) const {
-    bool found = false;
-    return mActor.GlobalVariable(std::string(name), &found);
+    return State().Global(std::string(name));
 }
 
-void DialogueContext::setGlobalShort(std::string_view name, int) {
-    Unheld("global", name);
+void DialogueContext::setGlobalShort(std::string_view name, int value) {
+    State().SetGlobal(std::string(name), static_cast<float>(value));
 }
 
-void DialogueContext::setGlobalLong(std::string_view name, int) {
-    Unheld("global", name);
+void DialogueContext::setGlobalLong(std::string_view name, int value) {
+    State().SetGlobal(std::string(name), static_cast<float>(value));
 }
 
-void DialogueContext::setGlobalFloat(std::string_view name, float) {
-    Unheld("global", name);
+void DialogueContext::setGlobalFloat(std::string_view name, float value) {
+    State().SetGlobal(std::string(name), value);
 }
 
-std::vector<std::string> DialogueContext::getGlobals() const { return {}; }
+std::vector<std::string> DialogueContext::getGlobals() const {
+    return State().Globals();
+}
 
-char DialogueContext::getGlobalType(std::string_view) const { return ' '; }
+char DialogueContext::getGlobalType(std::string_view name) const {
+    return State().HasGlobal(std::string(name)) ? 'f' : ' ';
+}
 
 std::string DialogueContext::getActionBinding(std::string_view action) const {
     return std::string(action);
@@ -117,33 +150,37 @@ std::string_view DialogueContext::getCurrentCellName() const {
     return mCell;
 }
 
-int DialogueContext::getMemberShort(ESM::RefId, std::string_view,
+// `Owner.name`: the owner is a global script or a reference, and either way
+// its variables live under its own id.
+int DialogueContext::getMemberShort(ESM::RefId id, std::string_view name,
                                     bool) const {
-    return 0;
+    return static_cast<int>(State().Var(id.getRefIdString(), std::string(name)));
 }
 
-int DialogueContext::getMemberLong(ESM::RefId, std::string_view, bool) const {
-    return 0;
+int DialogueContext::getMemberLong(ESM::RefId id, std::string_view name,
+                                   bool global) const {
+    return getMemberShort(id, name, global);
 }
 
-float DialogueContext::getMemberFloat(ESM::RefId, std::string_view,
+float DialogueContext::getMemberFloat(ESM::RefId id, std::string_view name,
                                       bool) const {
-    return 0.0f;
+    return State().Var(id.getRefIdString(), std::string(name));
 }
 
-void DialogueContext::setMemberShort(ESM::RefId, std::string_view name, int,
-                                     bool) {
-    Unheld("member", name);
+void DialogueContext::setMemberShort(ESM::RefId id, std::string_view name,
+                                     int value, bool) {
+    State().SetVar(id.getRefIdString(), std::string(name),
+                   static_cast<float>(value));
 }
 
-void DialogueContext::setMemberLong(ESM::RefId, std::string_view name, int,
-                                    bool) {
-    Unheld("member", name);
+void DialogueContext::setMemberLong(ESM::RefId id, std::string_view name,
+                                    int value, bool global) {
+    setMemberShort(id, name, value, global);
 }
 
-void DialogueContext::setMemberFloat(ESM::RefId, std::string_view name, float,
-                                     bool) {
-    Unheld("member", name);
+void DialogueContext::setMemberFloat(ESM::RefId id, std::string_view name,
+                                     float value, bool) {
+    State().SetVar(id.getRefIdString(), std::string(name), value);
 }
 
 }  // namespace mwruntime

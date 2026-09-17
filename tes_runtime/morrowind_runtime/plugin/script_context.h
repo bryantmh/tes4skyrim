@@ -3,8 +3,8 @@
 // OpenMW's `fixDefinesDialog` -- the thing that turns "%name" into the
 // speaker's name -- takes a Context, and so will every result script once
 // they run. This is that Context, backed by the same ActorView the filter
-// uses. Locals, globals and members are not held yet: reads return zero and
-// writes are logged, which is the honest state until the co-save exists.
+// uses. Locals, globals and members live in DialogueState, which is what the
+// co-save will persist.
 // See: docs/commentary/morrowind_runtime.md#the-context
 
 #pragma once
@@ -75,6 +75,11 @@ public:
                          bool global) override;
 
 private:
+    // The speaker's local at `index` among its locals of `type`.
+    const std::string& LocalName(char type, int index) const;
+    float Local(char type, int index) const;
+    void  SetLocal(char type, int index, float value);
+
     const ActorView& mActor;
     std::string mActorName;
     std::string mPlayerName;

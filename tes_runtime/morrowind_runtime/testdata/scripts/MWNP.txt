@@ -1,0 +1,2 @@
+test_actor=Orc|Crusader|Fighters Guild|8|50|1|Test Actor
+gruff_actor=Nord|Smith||0|35|0|Gruff Actor
