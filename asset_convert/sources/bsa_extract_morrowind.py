@@ -21,6 +21,8 @@ import shutil
 import struct
 from pathlib import Path
 
+from .morrowind_sound_scope import normalize
+
 #: Version field standing where later archives put the "BSA\0" magic.
 TES3_BSA_MAGIC = 0x00000100
 
@@ -30,22 +32,24 @@ _HEADER_SIZE = 12
 _VOICE_DIR = 'vo'
 
 
-def copy_loose_sounds(data_dir, asset_dir) -> int:
-    """Copy `<data_dir>/Sound` into `<asset_dir>/sound`; how many files were new.
+def copy_loose_sounds(data_dir, asset_dir, owned) -> int:
+    """Copy the sounds in `owned` from `<data_dir>/Sound`; how many were new.
 
     Morrowind ships its sounds loose rather than in the archive, in a Data
-    folder its expansions share, so only the masterless plugin owns them --
-    the caller gates on that, exactly as loose music does. Files already
-    present are left alone, and the voice folder is skipped.
-    See: docs/commentary/tes4_export_morrowind.md#sounds
+    folder its expansions and every installed mod share, so `owned` -- the
+    files this plugin names that no master does -- decides what comes across.
+    Files already present are left alone, and the voice folder is skipped.
+    See: docs/commentary/tes4_export_morrowind.md#which-sounds-a-plugin-ships
     """
     source = Path(data_dir) / 'Sound'
-    if not source.is_dir():
+    if not source.is_dir() or not owned:
         return 0
     copied = 0
     for path in source.rglob('*'):
         relative = path.relative_to(source)
         if not path.is_file() or relative.parts[0].lower() == _VOICE_DIR:
+            continue
+        if normalize(str(relative)) not in owned:
             continue
         dest = Path(asset_dir) / 'sound' / relative
         if dest.exists():

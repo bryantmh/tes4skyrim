@@ -16,6 +16,7 @@
 #include "ids.h"
 #include "log.h"
 #include "main_thread.h"
+#include "object_script.h"
 #include "script_tables.h"
 
 namespace mwruntime {
@@ -82,6 +83,29 @@ using ActorCallFn = void (*)(void* vm, std::uint32_t stack, void* actor);
 using ActorIntFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* actor);
 using AdvanceSkillFn = void (*)(void* vm, std::uint32_t stack, void* tag,
                                 void* name, float amount);
+
+// Debug.MessageBox(string), global: no `self`, the text in the last argument.
+using MessageBoxFn = void (*)(void* vm, std::uint32_t stack, void* tag,
+                              void* text);
+
+// Game.GetForm(int formId) -> the form, global so its self is a tag.
+using GetFormFn = void* (*)(void* vm, std::uint32_t stack, void* tag,
+                            std::int32_t formId);
+
+// ObjectReference.PlaceAtMe(Form, int, bool, bool) -> the new reference.
+using PlaceAtMeFn = void* (*)(void* vm, std::uint32_t stack, void* self,
+                              void* base, std::int32_t count, bool persist,
+                              bool disabled);
+
+// Sound.Play(ObjectReference) -> the playback instance id, 0 on failure. A
+// MEMBER function, so the SNDR form is `self`. Sound.StopInstance(int) and
+// Sound.SetInstanceVolume(int, float) are global, so their self is a tag.
+using SoundPlayFn = std::int32_t (*)(void* vm, std::uint32_t stack,
+                                     void* sound, void* source);
+using StopInstanceFn = void (*)(void* vm, std::uint32_t stack, void* tag,
+                                std::int32_t instance);
+using InstanceVolumeFn = void (*)(void* vm, std::uint32_t stack, void* tag,
+                                  std::int32_t instance, float volume);
 
 // Skyrim's actor values for OpenMW's dynamic stats, in OpenMW's order.
 constexpr const char* kDynamicNames[] = {"Health", "Magicka", "Stamina"};
@@ -161,6 +185,13 @@ ActorCallFn    g_showBarterMenu = nullptr;
 ActorIntFn     g_getLevel = nullptr;
 GetValueFn     g_getValuePercent = nullptr;
 AdvanceSkillFn g_advanceSkill = nullptr;
+MessageBoxFn   g_messageBox = nullptr;
+PlaceAtMeFn    g_placeAtMe = nullptr;
+RefQueryFn     g_isDead = nullptr;
+GetFormFn      g_getForm = nullptr;
+SoundPlayFn      g_soundPlay = nullptr;
+StopInstanceFn   g_stopInstance = nullptr;
+InstanceVolumeFn g_instanceVolume = nullptr;
 
 std::string g_speakerId;
 void*       g_speakerRef = nullptr;
@@ -604,6 +635,105 @@ void AdvanceSkill(const char* skill, float amount) {
     });
 }
 
+// `PlaceAtPC id count`: creates references of a BASE record near the player.
+//
+// 🛑 The new reference has no authored placement, so nothing in
+// SCPT_instances.txt names it. Its instance is bound from the FormID PlaceAtMe
+// RETURNS, which is the only way a spawned creature's script ever runs.
+// See: docs/plans/morrowind_object_scripts.md#placeatpc
+void PlaceAtPlayer(const std::string& base, int count) {
+    const FormRef* ref = FindBase(base);
+    if (!ref || !g_placeAtMe) {
+        Log("game: PlaceAtPC '%s' -- %s", base.c_str(),
+            ref ? "PlaceAtMe unresolved" : "no such base record");
+        return;
+    }
+    const FormRef target = *ref;
+    const std::string id = base;
+    PostToMainThread([target, id, count]() {
+        void* player = PlayerRef();
+        void* form = Form(&target);
+        if (!player || !form) return;
+        void* made = g_placeAtMe(PapyrusVm(), 0, player, form,
+                                 count > 0 ? count : 1, false, false);
+        if (!made) {
+            Log("game: PlaceAtPC '%s' created nothing", id.c_str());
+            return;
+        }
+        BindSpawnedInstance(FormIdOf(made), id);
+    });
+}
+
+// `PlaySound3D sound` and its kin: plays a TES3 SOUN through the SNDR the
+// import minted for it, from `ref` -- or from the player, which is where
+// TES3's non-3D PlaySound puts a sound with no reference.
+//
+// 🛑 Returns Skyrim's playback INSTANCE id, which is the only handle
+// StopSound and GetSoundPlaying have. Playing is posted to the main thread
+// like every other engine call, so the id cannot be returned from the post;
+// it is taken synchronously here because Sound.Play is a plain native and the
+// caller needs the id in the same script step.
+int PlaySoundAt(const std::string& ref, const std::string& sound, bool loop,
+                float volume) {
+    const FormRef* found = FindSound(sound);
+    if (!found || !g_soundPlay) {
+        if (!found) ReportOnce("sound", sound);
+        return 0;
+    }
+    void* form = Form(found);
+    void* source = ref.empty() ? PlayerRef() : OwnerRef(ref);
+    if (!form || !source) return 0;
+    const std::int32_t instance = g_soundPlay(PapyrusVm(), 0, form, source);
+    if (instance && volume < 1.0f && g_instanceVolume) {
+        g_instanceVolume(PapyrusVm(), 0, nullptr, instance, volume);
+    }
+    if (!instance) {
+        Log("game: '%s' did not start (loop=%d)", sound.c_str(), loop ? 1 : 0);
+    }
+    return instance;
+}
+
+void StopSoundInstance(int instance) {
+    if (g_stopInstance && instance) {
+        g_stopInstance(PapyrusVm(), 0, nullptr, instance);
+    }
+}
+
+// Whether a placement is a dead actor, for the tick's `OnDeath`. Reads at
+// once: the tick already runs on the game thread, so there is nothing to post.
+// 🛑 By RUNTIME FormID, so a reference `PlaceAtPC` created answers too -- it
+// has no authored placement for GetFormFromFile to name. The form is CACHED
+// because this runs for every bound instance 15 times a second.
+bool IsDeadRef(std::uint32_t runtimeFormId) {
+    if (!g_isDead || !g_getForm || !runtimeFormId) return false;
+    static std::map<std::uint32_t, void*> cache;
+    auto found = cache.find(runtimeFormId);
+    if (found == cache.end()) {
+        found = cache.emplace(
+            runtimeFormId,
+            g_getForm(PapyrusVm(), 0, nullptr,
+                      static_cast<std::int32_t>(runtimeFormId))).first;
+    }
+    return found->second && g_isDead(PapyrusVm(), 0, found->second);
+}
+
+// A `MessageBox` raised by an object script, which has no dialogue menu to
+// render it. Debug.MessageBox is global, so it takes no `self`.
+// See: docs/plans/morrowind_object_scripts.md#messagebox
+void ShowMessage(const std::string& text) {
+    if (!g_messageBox) {
+        Log("game: MessageBox \"%s\" -- Debug.MessageBox unresolved",
+            text.c_str());
+        return;
+    }
+    PostToMainThread([text]() {
+        void* message = nullptr;
+        if (FixedString(&message, text.c_str())) {
+            g_messageBox(PapyrusVm(), 0, nullptr, &message);
+        }
+    });
+}
+
 // Skyrim's own barter menu on the speaker, opened from the game thread over
 // the dialogue -- the stacking a vanilla fragment's ShowBarterMenu uses.
 // See: docs/commentary/morrowind_runtime.md#barter
@@ -709,6 +839,17 @@ void InstallGameCalls() {
     g_getLevel = Native<ActorIntFn>("Actor.GetLevel", ids::kActorGetLevel);
     g_getValuePercent = Native<GetValueFn>("Actor.GetActorValuePercentage",
                                            ids::kActorGetValuePercent);
+    g_messageBox = Native<MessageBoxFn>("Debug.MessageBox",
+                                        ids::kDebugMessageBox);
+    g_soundPlay = Native<SoundPlayFn>("Sound.Play", ids::kSoundPlay);
+    g_stopInstance = Native<StopInstanceFn>("Sound.StopInstance",
+                                            ids::kSoundStopInstance);
+    g_instanceVolume = Native<InstanceVolumeFn>("Sound.SetInstanceVolume",
+                                                ids::kSoundSetInstanceVolume);
+    g_placeAtMe = Native<PlaceAtMeFn>("ObjectReference.PlaceAtMe",
+                                      ids::kRefPlaceAtMe);
+    g_isDead = Native<RefQueryFn>("Actor.IsDead", ids::kActorIsDead);
+    g_getForm = Native<GetFormFn>("Game.GetForm", ids::kGameGetForm);
     g_advanceSkill = Native<AdvanceSkillFn>("Game.AdvanceSkill",
                                             ids::kGameAdvanceSkill);
     GameHooks& hooks = Hooks();
@@ -717,6 +858,11 @@ void InstallGameCalls() {
     hooks.statPercent = StatPercent;
     hooks.advanceSkill = AdvanceSkill;
     hooks.showBarterMenu = ShowBarterMenu;
+    hooks.showMessage = ShowMessage;
+    hooks.placeAtPlayer = PlaceAtPlayer;
+    hooks.isDead = IsDeadRef;
+    hooks.playSound = PlaySoundAt;
+    hooks.stopSound = StopSoundInstance;
     hooks.goldCount = GoldCount;
     hooks.moveGold = MoveGold;
     hooks.activate = Activate;

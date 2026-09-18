@@ -5,6 +5,7 @@
 #include <bitset>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -14,6 +15,8 @@
 #include "game_calls.h"
 #include "ids.h"
 #include "log.h"
+#include "object_script.h"
+#include "script_tables.h"
 #include "store.h"
 
 namespace mwruntime {
@@ -21,7 +24,7 @@ namespace mwruntime {
 namespace {
 
 // The index each sidecar writes: FormID=EditorID, one per line.
-constexpr const char* kFileActors = "MWAC.txt";
+constexpr const char* kFileActors = "NPC__index.txt";
 
 // Load-order slots belonging to converted Morrowind plugins. One bit test
 // rejects every vanilla and Oblivion-converted actor before any map lookup.
@@ -37,7 +40,10 @@ bool g_installed = false;
 using ActivateFn = bool (*)(void* npc, void* ref, void* activator,
                             std::uint8_t unk, void* object, std::int32_t count);
 
-ActivateFn g_originalActivate = nullptr;
+// The Activate each swapped type had, keyed by that type's VTABLE -- which is
+// the one thing the hook can read back off the form it is handed, since a
+// single hook now serves nine types.
+std::unordered_map<void*, ActivateFn> g_originalActivate;
 
 // TESForm::formID, at +0x14 on every form.
 constexpr std::size_t kOffFormId = 0x14;
@@ -59,11 +65,6 @@ inline std::uint8_t PluginIndex(std::uint32_t formId) {
     return static_cast<std::uint8_t>(formId >> 24);
 }
 
-std::uint32_t FormIdOf(void* form) {
-    if (!form) return 0;
-    return *reinterpret_cast<std::uint32_t*>(
-        reinterpret_cast<char*>(form) + kOffFormId);
-}
 
 // One `FormID=EditorID` line, keyed by the LOCAL id. False when it is blank
 // or malformed, which is skipped rather than fatal.
@@ -86,29 +87,53 @@ bool AddLine(const std::string& line) {
     return true;
 }
 
-// Our TESNPC::Activate. The FIRST test is one bit on the ref's load-order
+// The Activate this form's type had before the swap, by the vtable the object
+// itself carries at offset 0.
+ActivateFn OriginalActivate(void* form) {
+    if (!form) return nullptr;
+    const auto it = g_originalActivate.find(
+        *reinterpret_cast<void**>(form));
+    return it == g_originalActivate.end() ? nullptr : it->second;
+}
+
+// Raises OnActivate on the instance this PLACEMENT runs, when it runs one.
+// Silent for every other reference, which is the overwhelming majority.
+void RaiseActivated(void* ref) {
+    const std::uint32_t refId = FormIdOf(ref);
+    if (!refId || !g_pluginMask.test(PluginIndex(refId))) return;
+    ObjectScript* instance = InstanceForRef(refId);
+    if (!instance) return;
+    instance->Events().activated = true;
+    Log("object: %s activated (%08X)", instance->Script().c_str(), refId);
+}
+
+// Our Activate. The FIRST test is one bit on the ref's load-order
 // index, so a vanilla or Oblivion-converted NPC reaches the engine's own
 // Activate having cost nothing measurable.
 //
 // Returning TRUE without calling the original is what suppresses Skyrim's
 // activation entirely -- no vanilla dialogue menu, no "this person has nothing
 // to say". Anything we do not claim falls through untouched.
-bool ActivateHook(void* npc, void* ref, void* activator, std::uint8_t unk,
+bool ActivateHook(void* base, void* ref, void* activator, std::uint8_t unk,
                   void* object, std::int32_t count) {
-    // `npc` is the BASE form, which is what MWAC.txt keys on; `ref` is the
+    // `base` is the BASE form, which the actor index keys on; `ref` is the
     // placed instance, whose own FormID belongs to whichever plugin placed it.
     // Checking the base is what makes one indexed NPC match all its refs.
-    const std::uint32_t baseId = FormIdOf(npc);
+    const std::uint32_t baseId = FormIdOf(base);
     if (baseId && IsMorrowindSpeaker(baseId)) {
         Log("activation: %08X is '%s' (\"%s\") -- opening the Morrowind menu",
-            baseId, SpeakerId(baseId), DisplayName(npc));
+            baseId, SpeakerId(baseId), DisplayName(base));
         SetSpeakerRef(SpeakerId(baseId), ref);
-        BeginConversation(SpeakerId(baseId), DisplayName(npc), PlayerName());
+        BeginConversation(SpeakerId(baseId), DisplayName(base), PlayerName());
         return true;
     }
-    return g_originalActivate
-               ? g_originalActivate(npc, ref, activator, unk, object, count)
-               : false;
+    // An object running a TES3 script raises OnActivate on THIS placement and
+    // still activates normally: TES3's own `Activate` inside the body is what
+    // opens the container or the book.
+    RaiseActivated(ref);
+    const ActivateFn original = OriginalActivate(base);
+    return original ? original(base, ref, activator, unk, object, count)
+                    : false;
 }
 
 // The load-order index `plugin` actually has in THIS game, by resolving one of
@@ -147,6 +172,12 @@ std::size_t LoadOneIndex(const std::string& dir, std::uint32_t* sample) {
 }
 
 }  // namespace
+
+std::uint32_t FormIdOf(void* form) {
+    if (!form) return 0;
+    return *reinterpret_cast<std::uint32_t*>(
+        reinterpret_cast<char*>(form) + kOffFormId);
+}
 
 void SetPapyrusVm(void* vm) { g_vm = vm; }
 
@@ -199,6 +230,20 @@ bool SpeakerExists(const std::string& id) {
     return false;
 }
 
+// Drops any bindings a previous session left and reports what is staged.
+//
+// 🛑 It resolves NOTHING here. `Game.GetFormFromFile` only answers for a form
+// the engine has LOADED, and only 139 of TR_Mainland's 15,540 placements are
+// persistent -- the rest do not exist until their cell does. Instances bind
+// lazily, from the live reference an engine hook already holds.
+// See: docs/plans/morrowind_object_scripts.md#only-persistent-refs-exist
+std::size_t BindInstances() {
+    ClearInstanceBindings();
+    Log("object: %zu script instance(s) staged; each binds when the engine "
+        "first hands us its reference", InstanceCount());
+    return InstanceCount();
+}
+
 std::size_t LoadActorIndex() { return LoadActorIndexFrom(SidecarDir()); }
 
 std::size_t LoadActorIndexFrom(const std::string& rootIn) {
@@ -235,46 +280,58 @@ std::size_t LoadActorIndexFrom(const std::string& rootIn) {
     return total;
 }
 
-bool InstallActivation() {
-    const std::uintptr_t vtable = Resolve("TESNPC vtable", ids::kNpcVtable,
-                                          nullptr);
-    const std::uintptr_t expected = Resolve("TESNPC::Activate",
-                                            ids::kNpcActivate, nullptr);
+// Swaps one type's Activate slot. False when an address did not resolve or the
+// slot does not already hold what it should, which is never fatal: the other
+// types still hook and that type simply keeps vanilla behaviour.
+//
+// 🛑 Refuse a swap whose slot does not already hold what we expect. A vtable
+// steals no bytes, so the prologue hazard does not arise -- but writing the
+// wrong slot would hand the engine our function for some unrelated virtual,
+// which fails in a way no log would explain.
+bool SwapActivate(const ids::ActivateTarget& target) {
+    const std::uintptr_t vtable = Resolve(target.name, target.vtable, nullptr);
+    const std::uintptr_t expected = Resolve(target.name, target.activate,
+                                            nullptr);
     if (!vtable || !expected) {
-        Log("activation: addresses unresolved -- NOT hooked, every activation "
-            "falls through to vanilla");
+        Log("activation:   %s -- address unresolved, NOT hooked", target.name);
         return false;
     }
-    if (g_speakers.empty()) {
-        Log("activation: no MWAC.txt actor index found -- NOT hooked");
-        return false;
-    }
-
     auto* slot = reinterpret_cast<void**>(vtable + ids::kActivateSlot);
-
-    // 🛑 Refuse a swap whose slot does not already hold what we expect. A
-    // vtable steals no bytes, so the prologue hazard does not arise -- but
-    // writing the wrong slot would hand the engine our function for some
-    // unrelated virtual, which fails in a way no log would explain.
     if (*slot != reinterpret_cast<void*>(expected)) {
-        Log("activation: slot 0x%zx holds %p, expected %p -- REFUSING to swap",
-            ids::kActivateSlot, *slot, reinterpret_cast<void*>(expected));
+        Log("activation:   %s slot holds %p, expected %p -- REFUSING",
+            target.name, *slot, reinterpret_cast<void*>(expected));
         return false;
     }
-
     DWORD old = 0;
     if (!VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old)) {
-        Log("activation: could not unprotect the vtable -- NOT hooked");
+        Log("activation:   %s -- could not unprotect, NOT hooked", target.name);
         return false;
     }
-    g_originalActivate = reinterpret_cast<ActivateFn>(*slot);
+    g_originalActivate[reinterpret_cast<void*>(vtable)] =
+        reinterpret_cast<ActivateFn>(*slot);
     *slot = reinterpret_cast<void*>(&ActivateHook);
     VirtualProtect(slot, sizeof(void*), old, &old);
-
-    g_installed = true;
-    Log("activation: hooked TESNPC::Activate; %zu speaker(s) across %zu "
-        "plugin slot(s)", g_speakers.size(), g_pluginMask.count());
     return true;
+}
+
+// 🛑 One swap PER TYPE: Activate is overridden, so the NPC vtable reaches only
+// actors and an object script sits on a BOOK or a WEAP as often as on an NPC.
+// See: docs/plans/morrowind_object_scripts.md#activate-is-per-type
+bool InstallActivation() {
+    if (g_speakers.empty() && !InstanceCount()) {
+        Log("activation: no actor index and no script instances -- NOT hooked");
+        return false;
+    }
+    std::size_t hooked = 0;
+    for (const ids::ActivateTarget& target : ids::kActivateTargets) {
+        if (SwapActivate(target)) ++hooked;
+    }
+    g_installed = hooked > 0;
+    Log("activation: hooked %zu of %zu Activate slot(s); %zu speaker(s) across "
+        "%zu plugin slot(s), %zu script instance(s)", hooked,
+        sizeof(ids::kActivateTargets) / sizeof(ids::kActivateTargets[0]),
+        g_speakers.size(), g_pluginMask.count(), InstanceCount());
+    return g_installed;
 }
 
 bool ActivationInstalled() { return g_installed; }

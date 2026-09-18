@@ -10,8 +10,6 @@ A phase reads the `ScriptContext` and returns lines; it never reaches into a
 later phase's state.
 """
 
-from script_convert.blocks_morrowind import (TES3_BLOCK_TYPE,
-                                             is_implicit_block)
 from script_convert.blocks import (BLOCK_MAP, COMBAT_STATE_GUARDS,
                                    block_filter_guard)
 from script_convert.constants import (
@@ -67,7 +65,6 @@ def _prepare(conv, name: str, source: str, extends: str, editor_id: str):
 
     conv._parse_source(source)
     tree = conv._tree
-    _retype_implicit_blocks(tree, editor_id or name)
     _load_symbols(conv, tree, editor_id)
     _load_facts(conv, tree)
     _promote_actor_locals(conv, tree)
@@ -715,20 +712,6 @@ def lifecycle(conv, tree, extends: str) -> list:
 # ---------------------------------------------------------------------------
 # Synthesised events
 # ---------------------------------------------------------------------------
-
-def _retype_implicit_blocks(tree, script_name: str) -> None:
-    """Give a TES3 script's one implicit block the type it behaves as.
-
-    TES3 names no event -- `begin <script name>` -- so the block matches no
-    entry in BLOCK_MAP and every phase downstream dropped it body and all.
-    The body runs every frame while loaded, which is `gamemode`.
-    See: docs/commentary/script_convert_morrowind.md#implicit-blocks
-    """
-    for block in (tree.blocks if tree else ()):
-        if is_implicit_block(block.btype, block.filter, script_name):
-            block.btype = TES3_BLOCK_TYPE
-            block.filter = ''
-
 
 def trap_hit(conv, tree, extends: str) -> list:
     """The contact-damage event TES4's ENGINE used to raise.

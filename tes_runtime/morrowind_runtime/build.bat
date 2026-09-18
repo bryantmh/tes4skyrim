@@ -32,7 +32,10 @@ set MW=%ROOT%\external\openmw
 REM OpenMW is C++20 upstream. /permissive- and /Zc:__cplusplus are required for
 REM the standard-conformance the sources assume; /EHsc because the interpreter
 REM uses exceptions for script errors.
-set CXXFLAGS=/nologo /c /EHsc /std:c++20 /permissive- /Zc:__cplusplus /O2 /MD /W3 /DNDEBUG
+REM /DNOMINMAX: windows.h defines min/max as MACROS, which breaks every
+REM std::min / std::max the vendored OpenMW headers use the moment a
+REM translation unit includes both. See esm/esmcommon.hpp:52.
+set CXXFLAGS=/nologo /c /EHsc /std:c++20 /permissive- /Zc:__cplusplus /O2 /MD /W3 /DNDEBUG /DNOMINMAX
 set INCLUDES=/I"%MW%" /I"%MW%\apps"
 
 cd /d "%~dp0"
@@ -68,6 +71,9 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\game_actor.cpp plugin\conversation.cpp ^
    plugin\script_context.cpp plugin\dialogue_state.cpp ^
    plugin\script_runner.cpp plugin\script_ops_world.cpp ^
+   plugin\script_ops_events.cpp plugin\script_ops_sound.cpp ^
+   plugin\object_script.cpp ^
+   plugin\object_tick.cpp ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
    plugin\conversation_persuasion.cpp ^
    plugin\game_calls.cpp plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
@@ -97,6 +103,9 @@ cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\log.cpp plugin\filter.cpp ^
    plugin\session_test.cpp plugin\game_actor.cpp ^
    plugin\dialogue_state.cpp plugin\script_context.cpp ^
    plugin\script_runner.cpp plugin\script_ops_world.cpp ^
+   plugin\script_ops_events.cpp plugin\script_ops_sound.cpp ^
+   plugin\object_script.cpp ^
+   plugin\object_tick.cpp plugin\main_thread.cpp ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
    plugin\script_test.cpp /Fo:objt\
 if errorlevel 1 (
@@ -128,6 +137,9 @@ if errorlevel 1 (
 link /nologo /OUT:script_test.exe objt\store.obj objt\log.obj ^
      objt\game_actor.obj objt\dialogue_state.obj objt\script_context.obj ^
      objt\script_runner.obj objt\script_ops_world.obj ^
+     objt\script_ops_events.obj objt\script_ops_sound.obj ^
+     objt\object_script.obj ^
+     objt\object_tick.obj objt\main_thread.obj ^
      objt\script_tables.obj objt\persuasion.obj objt\script_test.obj ^
      objt\filter.obj ^
      obj\mw\*.obj ^

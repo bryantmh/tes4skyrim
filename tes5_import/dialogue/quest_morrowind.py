@@ -34,7 +34,7 @@ from .objective_text import OBJECTIVE_MAX_CHARS
 from .quest import QUST_ALLOW_REPEATED_STAGES
 
 #: `quest id=Plugin.esm|FormID`, which is how the runtime finds the QUST to stage.
-QUESTS_TABLE = 'MWQS.txt'
+QUESTS_TABLE = 'quests_formid.txt'
 
 #: The derive_formid site; the key is the authored journal id, lowercased.
 _FORMID_SITE = 'MW_JOURNAL'

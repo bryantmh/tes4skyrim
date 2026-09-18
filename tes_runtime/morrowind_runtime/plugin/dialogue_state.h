@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <set>
 #include <string>
@@ -64,6 +65,19 @@ struct GameHooks {
     bool (*playerInInterior)() = nullptr;
     bool (*menuMode)() = nullptr;
     void (*forceGreeting)(const std::string& actor) = nullptr;
+    // A `MessageBox` raised OUTSIDE a conversation, which has no dialogue
+    // menu to render it: Skyrim's own corner notification.
+    void (*showMessage)(const std::string& text) = nullptr;
+    // `PlaceAtPC id count`: creates `count` of a base near the player. The new
+    // reference runs the base's script, so this also binds its instance.
+    void (*placeAtPlayer)(const std::string& base, int count) = nullptr;
+    // Whether the reference with this RUNTIME FormID is a DEAD actor, which
+    // the tick polls to raise `OnDeath`. False for anything that is not one.
+    //
+    // 🛑 The RUNTIME id, not a staged one: a reference created by `PlaceAtPC`
+    // has no staged placement at all, and it is exactly the spawned creature
+    // whose death a quest turns on.
+    bool (*isDead)(std::uint32_t runtimeFormId) = nullptr;
     // `axis`: 0 x, 1 y, 2 z. Position is world units, angle is DEGREES --
     // the engine stores radians and its getters convert, so these do not.
     float (*position)(const std::string& ref, int axis) = nullptr;
@@ -83,6 +97,15 @@ struct GameHooks {
     int   (*goldCount)(const std::string& actor) = nullptr;
     void  (*moveGold)(const std::string& from, const std::string& to,
                       int count) = nullptr;
+    // `sound` is a TES3 SOUN id, resolved through SOUN.txt to the SNDR the
+    // import minted. `ref` is what it plays from, "" for the player -- TES3's
+    // non-3D PlaySound is the same call on the listener.
+    //
+    // Playing RETURNS Skyrim's playback instance id, which is the only handle
+    // StopSound and GetSoundPlaying have; 0 means it did not start.
+    int   (*playSound)(const std::string& ref, const std::string& sound,
+                       bool loop, float volume) = nullptr;
+    void  (*stopSound)(int instance) = nullptr;
 };
 
 GameHooks& Hooks();

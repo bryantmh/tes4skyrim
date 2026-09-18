@@ -6,11 +6,11 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 
 | Status | Commands | Call sites |
 |---|---:|---:|
-| ported | 82 | 74322 |
+| ported | 85 | 77115 |
 | no-op | 5 | 2615 |
-| STUB | 400 | 14644 |
+| STUB | 397 | 11851 |
 
-🛑 **207 of the 400 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 193 command(s) below.
+🛑 **207 of the 397 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 190 command(s) below.
 
 ## Stubbed, and something calls it
 
@@ -19,9 +19,6 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `positioncell` | Transformation | `ffffczz` | 1232 |
 | `aiwander` | Ai | `fff/llllllllll` | 1207 |
 | `getsecondspassed` | Misc | — → `f` | 1005 |
-| `cellchanged` | Cell | — → `l` | 983 |
-| `ondeath` | Stats | — → `l` | 958 |
-| `onactivate` | Misc | — → `l` | 852 |
 | `playsound` | Sound | `cXX` | 804 |
 | `addspell` | Stats | `cz` | 570 |
 | `help` | Misc | — | 398 |
@@ -232,7 +229,10 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `menumode` | Misc | — → `l` | 1111 |
 | `startscript` | Misc | `c` | 1104 |
 | `getdeadcount` | Stats | `c` → `l` | 1074 |
+| `cellchanged` | Cell | — → `l` | 983 |
+| `ondeath` | Stats | — → `l` | 958 |
 | `getpos` | Transformation | `c` → `f` | 911 |
+| `onactivate` | Misc | — → `l` | 852 |
 | `getdistance` | Transformation | `c` → `f` | 782 |
 | `stopscript` | Misc | `c` | 695 |
 | `setpos` | Transformation | `cf` | 670 |

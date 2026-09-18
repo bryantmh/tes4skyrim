@@ -59,6 +59,12 @@ struct OpcodeInstaller {
     }
 
     // The segment-3 form: a command with optional arguments.
+    //
+    // 🛑 Which segment a command uses is a property of its REGISTRATION, not
+    // of its argument string. `placeatpc` has an optional `X` and is still
+    // segment 5. Guessing wrong installs the handler where nothing dispatches,
+    // and its stub answers instead -- silently.
+    // See: docs/plans/morrowind_object_scripts.md#check-the-segment
     template <class T>
     void Real3(int code) {
         interpreter.installSegment3<T>(code);
@@ -70,5 +76,13 @@ struct OpcodeInstaller {
 // locks, deletion, distance, the dynamic stats, equipping, the player's
 // cell, and the menu. script_ops_world.cpp.
 void InstallWorldOps(OpcodeInstaller& into);
+
+// The one-tick event flags an object script reads -- `OnActivate`, `OnDeath`,
+// `CellChanged`. script_ops_events.cpp.
+void InstallEventOps(OpcodeInstaller& into);
+
+// PlaySound and its 3D/looping/VP variants, StopSound and GetSoundPlaying.
+// Each names a TES3 SOUN id the sidecar maps to an SNDR. script_ops_sound.cpp.
+void InstallSoundOps(OpcodeInstaller& into);
 
 }  // namespace mwruntime

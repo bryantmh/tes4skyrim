@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 
 #include "store.h"
@@ -10,28 +11,50 @@ namespace mwruntime {
 
 namespace {
 
-constexpr const char* kFileGlobals = "MWGL.txt";
-constexpr const char* kFileLocals = "MWSV.txt";
-constexpr const char* kFileActorScripts = "MWOS.txt";
+constexpr const char* kFileGlobals = "GLOB.txt";
+constexpr const char* kFileLocals = "SCPT_locals.txt";
+constexpr const char* kFileActorScripts = "SCPT_objects.txt";
+
+// The bodies the object-script tick compiles, and one instance per placement.
+// See: docs/plans/morrowind_object_scripts.md#instances
+constexpr const char* kFileScriptBodies = "SCPT_source.txt";
+constexpr const char* kFileInstances = "SCPT_instances.txt";
 
 std::unordered_map<std::string, GlobalDef> g_globals;
 std::unordered_map<std::string, ScriptLocals> g_locals;
 std::unordered_map<std::string, std::string> g_actorScripts;
+std::unordered_map<std::string, std::string> g_sources;
+// Keyed by InstanceKey; the row keeps the plugin and local id apart so the
+// load-order pass does not have to take them back out of the key.
+std::unordered_map<std::string, InstanceRow> g_instances;
+
+// The same rows by plugin-LOCAL FormID, which is all an engine hook can offer.
+std::unordered_map<std::uint32_t, const InstanceRow*> g_instanceByLocal;
 std::unordered_map<std::string, ActorDef> g_actors;
 std::unordered_map<std::string, FormRef> g_items;
 std::unordered_map<std::string, FormRef> g_quests;
 std::unordered_map<std::string, FormRef> g_refs;
+std::unordered_map<std::string, FormRef> g_bases;
+std::unordered_map<std::string, FormRef> g_sounds;
 
-constexpr const char* kFileActors = "MWNP.txt";
-constexpr const char* kFileItems = "MWID.txt";
+constexpr const char* kFileActors = "NPC_.txt";
+constexpr const char* kFileItems = "items_formid.txt";
 
 // The PLACED reference behind a TES3 id, which `id->Command` acts on.
 // See: docs/commentary/morrowind_runtime.md#placed-references
-constexpr const char* kFileRefs = "MWRF.txt";
-constexpr const char* kFileQuests = "MWQS.txt";
-constexpr const char* kFileFactions = "MWFA.txt";
-constexpr const char* kFileGmsts = "MWGS.txt";
-constexpr const char* kFileSkills = "MWSK.txt";
+constexpr const char* kFileRefs = "refs_formid.txt";
+
+// The BASE record behind a TES3 id, which PlaceAtPC creates a reference from.
+// See: docs/plans/morrowind_object_scripts.md#placeatpc
+constexpr const char* kFileBases = "bases_formid.txt";
+constexpr const char* kFileQuests = "quests_formid.txt";
+constexpr const char* kFileFactions = "FACT.txt";
+constexpr const char* kFileGmsts = "GMST.txt";
+constexpr const char* kFileSkills = "SKIL.txt";
+
+// The SNDR a TES3 sound id names, for PlaySound3D and its kin.
+// See: docs/commentary/tes5_import_sound.md#the-runtime-sound-table
+constexpr const char* kFileSounds = "SOUN.txt";
 
 std::unordered_map<std::string, FactionDef> g_factions;
 std::unordered_map<std::string, GmstDef> g_gmsts;
@@ -189,6 +212,38 @@ bool Holds(const std::vector<std::string>& names, const std::string& name) {
     return std::find(names.begin(), names.end(), name) != names.end();
 }
 
+// The part of a FormID that is NOT the load-order index.
+constexpr std::uint32_t kLocalMask = 0x00FFFFFF;
+
+// The globals the ENGINE owns, which no GLOB record declares.
+//
+// 🛑 Without these the compiler answers "not a global" and a body that reads
+// the clock fails outright: 363 of TR_Mainland's 4,316 bodies name one, which
+// is most of what did not compile. Morrowind defines them itself; the value
+// here is only the starting one, and the game's clock overwrites it.
+// See: docs/plans/morrowind_object_scripts.md#built-in-globals
+void AddBuiltinGlobals() {
+    static const struct { const char* name; char type; } kBuiltins[] = {
+        {"gamehour", 'f'}, {"day", 's'},        {"month", 's'},
+        {"year", 's'},     {"dayspassed", 'l'}, {"timescale", 'f'},
+    };
+    for (const auto& builtin : kBuiltins) {
+        GlobalDef def;
+        def.type = builtin.type;
+        g_globals.emplace(builtin.name, def);
+    }
+}
+
+// An instance's key: the plugin that placed it and the placement's LOCAL id.
+//
+// 🛑 The index byte is dropped on both sides. The one a sidecar wrote is the
+// converting load order's, not the player's (project_sidecar_formids_need_runtime_index).
+std::string InstanceKey(const std::string& plugin, std::uint32_t formId) {
+    char id[9] = {0};
+    std::snprintf(id, sizeof(id), "%06X", formId & kLocalMask);
+    return Lower(plugin) + "|" + id;
+}
+
 }  // namespace
 
 char ScriptLocals::TypeOf(const std::string& name) const {
@@ -203,15 +258,55 @@ void ClearScriptTables() {
     g_globals.clear();
     g_locals.clear();
     g_actorScripts.clear();
+    g_sources.clear();
+    g_instances.clear();
+    g_instanceByLocal.clear();
     g_actors.clear();
     g_items.clear();
+    g_sounds.clear();
     g_quests.clear();
+    g_refs.clear();
+    g_bases.clear();
     g_factions.clear();
     g_gmsts.clear();
     g_skills.clear();
 }
 
+// The sidecar folder's own name, which is the plugin stem the placements in
+// the instances belong to: "...\MorrowindRuntime\TR_Mainland\" -> "TR_Mainland".
+std::string PluginOf(const std::string& pluginDir) {
+    std::string dir = pluginDir;
+    while (!dir.empty() && (dir.back() == '\\' || dir.back() == '/')) {
+        dir.pop_back();
+    }
+    const std::size_t slash = dir.find_last_of("\\/");
+    return slash == std::string::npos ? dir : dir.substr(slash + 1);
+}
+
 void LoadScriptTables(const std::string& pluginDir) {
+    const std::string plugin = PluginOf(pluginDir);
+    AddBuiltinGlobals();
+    ForEachRow(pluginDir + kFileScriptBodies,
+               [](const std::string& name, const std::string& value) {
+                   g_sources.emplace(Lower(name), Unescape(value));
+               });
+    ForEachRow(pluginDir + kFileInstances,
+               [](const std::string& formId, const std::string& value) {
+                   const std::vector<std::string> f = Split(value, '|');
+                   if (f.size() < 3) return;
+                   InstanceRow row;
+                   row.plugin = f[0];
+                   row.baseId = f[1];
+                   row.script = f[2];
+                   row.localFormId = static_cast<std::uint32_t>(
+                       std::strtoul(formId.c_str(), nullptr, 16));
+                   const auto added = g_instances.emplace(
+                       InstanceKey(row.plugin, row.localFormId), row);
+                   if (added.second) {
+                       g_instanceByLocal.emplace(
+                           row.localFormId & kLocalMask, &added.first->second);
+                   }
+               });
     ForEachRow(pluginDir + kFileGlobals,
                [](const std::string& name, const std::string& value) {
                    GlobalDef def;
@@ -243,9 +338,17 @@ void LoadScriptTables(const std::string& pluginDir) {
                [](const std::string& quest, const std::string& value) {
                    g_quests.emplace(Lower(quest), ParseFormRef(value));
                });
+    ForEachRow(pluginDir + kFileSounds,
+               [](const std::string& id, const std::string& value) {
+                   g_sounds.emplace(Lower(id), ParseFormRef(value));
+               });
     ForEachRow(pluginDir + kFileRefs,
                [](const std::string& id, const std::string& value) {
                    g_refs.emplace(Lower(id), ParseFormRef(value));
+               });
+    ForEachRow(pluginDir + kFileBases,
+               [](const std::string& id, const std::string& value) {
+                   g_bases.emplace(Lower(id), ParseFormRef(value));
                });
     ForEachRow(pluginDir + kFileFactions,
                [](const std::string& faction, const std::string& value) {
@@ -309,12 +412,26 @@ const FormRef* FindQuest(const std::string& quest) {
     return it == g_quests.end() ? nullptr : &it->second;
 }
 
+const FormRef* FindSound(const std::string& sound) {
+    const auto it = g_sounds.find(Lower(sound));
+    return it == g_sounds.end() ? nullptr : &it->second;
+}
+
+std::size_t SoundCount() { return g_sounds.size(); }
+
 const FormRef* FindRef(const std::string& id) {
     const auto it = g_refs.find(Lower(id));
     return it == g_refs.end() ? nullptr : &it->second;
 }
 
 std::size_t RefCount() { return g_refs.size(); }
+
+const FormRef* FindBase(const std::string& id) {
+    const auto it = g_bases.find(Lower(id));
+    return it == g_bases.end() ? nullptr : &it->second;
+}
+
+std::size_t BaseCount() { return g_bases.size(); }
 
 std::size_t ActorCount() { return g_actors.size(); }
 
@@ -338,6 +455,39 @@ const std::string& ScriptOf(const std::string& actor) {
     static const std::string kNone;
     const auto it = g_actorScripts.find(Lower(actor));
     return it == g_actorScripts.end() ? kNone : it->second;
+}
+
+const std::string& ScriptSource(const std::string& script) {
+    static const std::string kNone;
+    const auto it = g_sources.find(Lower(script));
+    return it == g_sources.end() ? kNone : it->second;
+}
+
+std::size_t ScriptSourceCount() { return g_sources.size(); }
+
+const std::unordered_map<std::string, std::string>& ScriptSources() {
+    return g_sources;
+}
+
+const std::string& InstanceScript(const std::string& plugin,
+                                  std::uint32_t localFormId) {
+    static const std::string kNone;
+    const auto it = g_instances.find(InstanceKey(plugin, localFormId));
+    return it == g_instances.end() ? kNone : it->second.script;
+}
+
+std::size_t InstanceCount() { return g_instances.size(); }
+
+const InstanceRow* InstanceByLocal(std::uint32_t localFormId) {
+    const auto it = g_instanceByLocal.find(localFormId & kLocalMask);
+    return it == g_instanceByLocal.end() ? nullptr : it->second;
+}
+
+std::vector<InstanceRow> Instances() {
+    std::vector<InstanceRow> out;
+    out.reserve(g_instances.size());
+    for (const auto& entry : g_instances) out.push_back(entry.second);
+    return out;
 }
 
 std::size_t ScriptCount() { return g_locals.size(); }

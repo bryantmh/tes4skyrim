@@ -288,6 +288,8 @@ def _take(out: dict, rec, topic: str) -> str:
         out['objects'][rec.record_id.lower()] = rec.record_id
     if rec.type in _ITEM_TYPES:
         out['items'][rec.record_id.lower()] = rec.record_id
+    if rec.type == 'SOUN':
+        out['sounds'][rec.record_id.lower()] = rec.record_id
     return topic
 
 
@@ -295,12 +297,13 @@ def gather(chain: list) -> dict:
     """The chain's tables, each plugin read ONCE and a later one overriding
     an earlier: `topics` `{lower id: DIAL rec}`, `infos` `{lower id: [entry]}`
     in merged order, `actors` / `factions` / `gmsts` `{lower id: line}`,
-    `skills` `{index: line}`, `items` / `objects` `{lower id: id}`. Actor
-    lines are made LAST, once every race, class and skill is known.
+    `skills` `{index: line}`, `items` / `objects` / `sounds`
+    `{lower id: id}`. Actor lines are made LAST, once every race, class and
+    skill is known.
     """
     out = {'topics': {}, 'infos': {}, 'npcs': {}, 'races': {}, 'classes': {},
            'skills': {}, 'gmsts': {}, 'factions': {}, 'items': {},
-           'objects': {}}
+           'objects': {}, 'sounds': {}}
     for _name, path in chain:
         topic = ''
         for rec in read_file(path)[1]:
@@ -313,7 +316,7 @@ def gather(chain: list) -> dict:
 
 
 def write_merged_dialogue(gathered: dict, out_dir: str) -> tuple:
-    """MWDI.txt and MWIN.txt for the merged chain. Returns their counts."""
+    """DIAL.txt and INFO.txt for the merged chain. Returns their counts."""
     dial_blocks, info_blocks = [], []
     for key, rec in gathered['topics'].items():
         dial_blocks.append(format_record(DIAL_SIG, rec.record_id,
@@ -322,7 +325,7 @@ def write_merged_dialogue(gathered: dict, out_dir: str) -> tuple:
             info_blocks.append(format_record(
                 INFO_SIG, entry['id'],
                 export_INFO(entry['rec'], ordinal, rec.record_id)))
-    for name, blocks in (('MWDI.txt', dial_blocks), ('MWIN.txt', info_blocks)):
+    for name, blocks in (('DIAL.txt', dial_blocks), ('INFO.txt', info_blocks)):
         with open(os.path.join(out_dir, name), 'w', encoding='utf-8') as fh:
             fh.write('\n\n'.join(blocks) + '\n')
     return len(dial_blocks), len(info_blocks)

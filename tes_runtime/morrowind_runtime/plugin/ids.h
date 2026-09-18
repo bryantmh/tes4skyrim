@@ -119,6 +119,27 @@ constexpr std::size_t kActivateSlot = 0x1b8;
 // against the running build's image so a wrong swap is caught before install.
 constexpr std::uint64_t kNpcActivate = 24715;
 
+// 🛑 Activate is OVERRIDDEN per form type, so the NPC swap above reaches only
+// actors. Read at vtable byte 0x1b8 out of the 1.6.659 image: nine DISTINCT
+// functions, of which 0x233b60 is the inherited TESBoundObject::Activate that
+// the plain item types share. An object script sits on a BOOK, a WEAP or an
+// ACTI as often as on an actor, so each is swapped separately.
+// See: docs/plans/morrowind_object_scripts.md#activate-is-per-type
+struct ActivateTarget {
+    const char* name;
+    std::uint64_t vtable;
+    std::uint64_t activate;
+};
+
+//: Every form type that can carry a TES3 script, with the Activate it holds.
+constexpr ActivateTarget kActivateTargets[] = {
+    {"TESNPC", 195816, 24715},          {"TESObjectBOOK", 189577, 17840},
+    {"TESObjectWEAP", 189786, 18101},   {"TESObjectACTI", 189485, 17702},
+    {"TESObjectCONT", 189633, 17887},   {"TESObjectDOOR", 189666, 17922},
+    {"TESObjectLIGH", 189414, 17615},   {"TESFlora", 189287, 17369},
+    {"TESObjectMISC", 189689, 17670},
+};
+
 // UIManager::AddMessage(this, BSFixedString* menu, u32 msgId, void* data)
 // (0x170730). Identified by its pool arithmetic: [rcx+0x378] is poolUsed,
 // compared against 0x40 = kPoolSize, and (poolUsed + 0x1c) << 5 lands on
@@ -238,6 +259,24 @@ constexpr std::uint64_t kRefSetAngle = 56224;
 //   void  Actor.RestoreActorValue(BSFixedString* name, float amount)          0x98ae80
 //   void  Actor.DamageActorValue(BSFixedString* name, float amount)           0x989050
 //   void  Actor.EquipItem(Form item, bool preventRemoval, bool silent)        0x989160
+// The Sound script's four natives, all registered against the class string
+// 'Sound' in one function at 0x9eaeb0 on 1.6.659. Each id was inverted from
+// the r9 pointer beside its name string and exists in all 12 shipped
+// versionlibs:
+//   int  Sound.Play(ObjectReference source)              0x9eaad0  member
+//   bool Sound.PlayAndWait(ObjectReference source)       0x9eabf0  member
+//   void Sound.StopInstance(int instance)                0x9ead70  global
+//   void Sound.SetInstanceVolume(int instance, float v)  0x9eadc0  global
+//
+// Play RETURNS the playback instance id, which is the only handle StopSound
+// and GetSoundPlaying have; without keeping it a sound can be started and
+// never stopped.
+// See: docs/commentary/morrowind_runtime.md#sound-opcodes
+constexpr std::uint64_t kSoundPlay = 56740;
+constexpr std::uint64_t kSoundPlayAndWait = 56741;
+constexpr std::uint64_t kSoundStopInstance = 56742;
+constexpr std::uint64_t kSoundSetInstanceVolume = 56743;
+
 constexpr std::uint64_t kRefActivate = 56139;
 constexpr std::uint64_t kRefLock = 56198;
 constexpr std::uint64_t kRefIsLocked = 56196;
@@ -251,6 +290,39 @@ constexpr std::uint64_t kActorSetValue = 54743;
 constexpr std::uint64_t kActorRestoreValue = 54737;
 constexpr std::uint64_t kActorDamageValue = 54660;
 constexpr std::uint64_t kActorEquipItem = 54661;
+
+// Debug.MessageBox(string) (0x9a8640), global: found at its registration,
+// `lea r8,['Debug'] / lea rdx,['MessageBox']`, the callback stored into
+// [rdi+0x50] AFTER the call. Takes the text in r9 as a BSFixedString.
+//
+// 🛑 The MESSAGE-BOX native, not Notification: TES3's `MessageBox` is modal and
+// may carry buttons. `Message.Show` cannot serve it -- that needs an authored
+// MESG record per string, and the corpus passes arbitrary runtime text.
+// See: docs/plans/morrowind_object_scripts.md#messagebox
+constexpr std::uint64_t kDebugMessageBox = 55376;
+
+// ObjectReference.PlaceAtMe(Form base, int count, bool persist, bool disabled)
+// (0x9cf630), found at its registration like the rest: `lea r8,
+// ['ObjectReference'] / lea rdx,['PlaceAtMe']`, callback into [r12+0x50].
+//
+// 🛑 It RETURNS the created reference, which is the only way a script instance
+// can attach to something the world never placed -- `PlaceAtPC` is how the
+// TR_m3 vermai enters the game at all.
+// See: docs/plans/morrowind_object_scripts.md#placeatpc
+constexpr std::uint64_t kRefPlaceAtMe = 56203;
+
+// Actor.IsDead() (0x989ff0), the r9 of its registration beside 'IsDead'.
+//
+// 🛑 `OnDeath` is POLLED from the tick rather than hooked. TES3 raises it for
+// one tick on the actor's own script, which a poll reproduces exactly, and the
+// tick already visits every bound instance -- a death hook would be a second
+// mechanism for no gain.
+constexpr std::uint64_t kActorIsDead = 54705;
+
+// Game.GetForm(int formId) (0x9b3990), global: a form by its RUNTIME FormID,
+// which is the only id a spawned reference has -- `PlaceAtPC` creates one with
+// no authored placement, so Game.GetFormFromFile can never name it.
+constexpr std::uint64_t kGameGetForm = 55566;
 
 // What barter and persuasion reach through, each the r9 of its registration
 // beside the name string (`lea r9,[callback]; lea r8,"Actor"; lea rdx,"<name>"`)

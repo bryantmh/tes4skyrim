@@ -16,8 +16,8 @@ namespace {
 
 constexpr const char* kSigTopic = "MWDI";
 constexpr const char* kSigInfo = "MWIN";
-constexpr const char* kFileTopics = "MWDI.txt";
-constexpr const char* kFileInfos = "MWIN.txt";
+constexpr const char* kFileTopics = "DIAL.txt";
+constexpr const char* kFileInfos = "INFO.txt";
 
 constexpr const char* kBegin = "---RECORD_BEGIN---";
 constexpr const char* kEnd = "---RECORD_END---";

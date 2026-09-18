@@ -281,7 +281,7 @@ def main():
     args = ap.parse_args()
 
     out_dir = sidecar_dir(args.plugin, args.export_root, args.output_root)
-    info_path = os.path.join(out_dir, 'MWIN.txt')
+    info_path = os.path.join(out_dir, 'INFO.txt')
     if not os.path.isfile(info_path):
         print('no staged sidecar at %s -- run the import first' % out_dir)
         return 1

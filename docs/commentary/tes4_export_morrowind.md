@@ -1295,6 +1295,52 @@ Morrowind's sounds are LOOSE files under `Data Files\Sound`, not in the BSA,
 so the extract stage copies that tree into `export/<plugin>/sound` where the
 audio stage expects to find every plugin's sounds.
 
+### <a id="which-sounds-a-plugin-ships"></a>Which sounds a plugin ships
+
+`Data Files\Sound` is SHARED: Morrowind, its expansions and every installed mod
+write into one tree, so presence on disk says nothing about ownership. Measured
+on the dev install, 1,810 non-voice files sit there but Morrowind.esm's records
+name only 378 of them -- the remaining 1,433 include whole folders (`tr` 456,
+`sky` 261, `va` 212, `pc` 76, `ac` 37) belonging to Tamriel Rebuilt and other
+mods. Copying the tree wholesale would make every plugin re-ship its neighbours'
+audio.
+
+A plugin therefore ships a file when **it names the file and no master of it
+does**. `SOUN.FNAM` is the only record-side path -- DOOR, LIGH and ACTI name a
+SOUN by ID, which resolves to that SOUN's own file -- so the reference set is
+one scan of `SOUN.txt` per plugin, minus the same scan over each converted
+master. An unconverted master contributes nothing, which keeps a standalone
+plugin self-sufficient.
+
+The `vo` tree is excluded and NOT yet converted: Morrowind has no voice-type
+record, and resolves NPC voice purely by path convention
+(`Vo\<race>\<sex>\<code><linekind><NN>.mp3`, 7,024 files on the dev install),
+so nothing on a record references it and this ownership rule cannot see it.
+The `Say` opcode names those paths literally (42 call sites in Morrowind.esm).
+Converting it needs its own pass.
+
+### <a id="creature-sound-generators"></a>SNDG: Moan is Aware, not Idle
+
+`SNDG` binds a creature to a sound by type (UESP `Mod File Format/SNDG`):
+0 Left Foot, 1 Right Foot, 2 Swim Left, 3 Swim Right, 4 Moan, 5 Roar, 6 Scream,
+7 Land. Morrowind.esm holds 168 of them over 43 creatures.
+
+Morrowind gives a creature ONE vocal triad, and the files name it: every
+generator resolves to `Cr\<creature>\moan.wav`, `roar.wav`, `scrm.wav`.
+Oblivion instead has TWO idle-ish slots, CSDT 4 Idle and 5 Aware, with distinct
+folders (`fx\npc\bear\idle\` beside `fx\npc\bear\aware\`). Moan therefore maps
+to **Aware (5)**, not Idle (4): slot 4 is deliberately never annotated onto a
+clip, because the idle clip LOOPS and an embedded `SoundPlay` fires every cycle
+-- the confirmed squeak-spam bug (`hkx_behavior.generate_creature_project`).
+Measured before the fix: Oblivion populated slot 5 on 40 of 42 creature folders
+while Morrowind populated it on 0 of 43, so all 47 Morrowind creature projects
+came out with empty `vocal_events` and zero `SoundPlay` annotations -- every
+creature silent.
+
+Swim Left/Right and Land reuse the back-foot and Death slots (2, 3, 8), which
+`CSDT_TO_CLIP` already annotates; before this they were dropped outright, which
+cost 5 of Morrowind.esm's 168 generators.
+
 ## <a id="tes3-bsa"></a>The TES3 BSA
 
 A different format from every later BSA: magic `0x00000100` (not `BSA\0`), a

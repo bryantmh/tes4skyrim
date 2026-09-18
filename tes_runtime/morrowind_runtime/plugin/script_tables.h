@@ -2,7 +2,7 @@
 // a global, which locals a script declares, and which script an actor runs.
 //
 // All three are authored data, staged into the sidecar beside the dialogue
-// (MWGL.txt, MWSV.txt, MWOS.txt) from the plugin's GLOB and SCPT records and
+// (GLOB.txt, SCPT_locals.txt, SCPT_objects.txt) from its GLOB and SCPT and
 // its TES3 masters'. The parser asks "is this a global?" BEFORE "is this an
 // id?", so guessing here breaks `player->...` and `Script.member` outright.
 // See: docs/commentary/morrowind_runtime.md#script-tables
@@ -35,7 +35,7 @@ struct ScriptLocals {
 
 // What an NPC_ record authors about an actor, which the filter compares by
 // NAME, and the stats persuasion and barter read -- authored in the 52-byte
-// NPDT or derived at import as OpenMW derives them: MWNP.txt, merged over
+// NPDT or derived at import as OpenMW derives them: NPC_.txt, merged over
 // the plugin's TES3 masters.
 // See: docs/commentary/morrowind_runtime.md#npc-stats
 struct ActorDef {
@@ -57,14 +57,14 @@ struct ActorDef {
     int  gold = 0;
 };
 
-// One GMST of the chain: MWGS.txt, `name=type,value`.
+// One GMST of the chain: GMST.txt, `name=type,value`.
 struct GmstDef {
     char  type = 'f';
     float number = 0.0f;
     std::string text;
 };
 
-// One SKIL record: MWSK.txt. `use` is how much a use of each kind advances
+// One SKIL record: SKIL.txt. `use` is how much a use of each kind advances
 // the skill, in OpenMW's UseType order.
 struct SkillDef {
     int   attribute = -1;
@@ -73,8 +73,8 @@ struct SkillDef {
 };
 
 // A Skyrim form behind a TES3 id: the plugin that owns it and its FormID
-// there, resolved through the RUNNING load order. MWID.txt (items) and
-// MWQS.txt (journal quests).
+// there, resolved through the RUNNING load order. items_formid.txt and
+// quests_formid.txt (journal quests).
 struct FormRef {
     std::string plugin;
     std::uint32_t formId = 0;
@@ -91,7 +91,7 @@ struct RankReq {
 
 // A FACT record's requirement side: the two attributes and up to seven skills
 // the faction judges by, a threshold row per rank, and the authored rank
-// names `%PCRank` prints. MWFA.txt.
+// names `%PCRank` prints. FACT.txt.
 struct FactionDef {
     // TES3 attribute indices, 0..7.
     int attribute[2] = {0, 0};
@@ -113,15 +113,69 @@ const ScriptLocals* FindScriptLocals(const std::string& script);
 // The script an actor runs, or "" -- by the actor's TES3 id.
 const std::string& ScriptOf(const std::string& actor);
 
+// One script's MWScript source, or "" -- SCPT_source.txt, by name. This is
+// what the object-script tick compiles; dialogue carries its own source.
+// See: docs/plans/morrowind_object_scripts.md#what-is-not-staged
+const std::string& ScriptSource(const std::string& script);
+std::size_t ScriptSourceCount();
+
+// Every staged body, for the corpus sweep that measures what compiles.
+const std::unordered_map<std::string, std::string>& ScriptSources();
+
+// A placed reference's script instance: the script that PLACEMENT runs, by
+// the placement's plugin-local FormID, or "" -- SCPT_instances.txt.
+//
+// 🛑 Keyed by the PLACEMENT, never the base: 798 scripted bases of TR_Mainland
+// are placed more than once and one is placed 116 times, so a base key would
+// give every copy one shared set of locals.
+// See: docs/plans/morrowind_object_scripts.md#instances
+const std::string& InstanceScript(const std::string& plugin,
+                                  std::uint32_t localFormId);
+std::size_t InstanceCount();
+
+// One staged instance: which plugin placed it, that placement's plugin-local
+// FormID, and the script it runs.
+struct InstanceRow {
+    std::string plugin;
+    std::uint32_t localFormId = 0;
+    // The TES3 id of the BASE it places, which a bare `Activate` acts on.
+    std::string baseId;
+    std::string script;
+};
+
+// Every staged instance, for the pass that resolves them through the running
+// load order once the game can answer.
+std::vector<InstanceRow> Instances();
+
+// The staged instance whose placement has this plugin-LOCAL FormID, or null.
+//
+// 🛑 Keyed by the local id ALONE. Only a persistent reference exists before its
+// cell loads, so an instance is found when the engine hands us a live ref, and
+// all we have then is its FormID -- whose low 24 bits are what was staged.
+// See: docs/plans/morrowind_object_scripts.md#only-persistent-refs-exist
+const InstanceRow* InstanceByLocal(std::uint32_t localFormId);
+
 const ActorDef* FindActor(const std::string& actor);
 const FormRef* FindItem(const std::string& item);
 const FormRef* FindQuest(const std::string& quest);
+
+// The SNDR a TES3 sound id names -- SOUN.txt. Null when the sound has no
+// descriptor, which the caller treats as silence rather than as an error.
+// See: docs/commentary/tes5_import_sound.md#the-runtime-sound-table
+const FormRef* FindSound(const std::string& sound);
+std::size_t SoundCount();
 
 // The PLACED reference a TES3 id names, which `id->Command` acts on. Null
 // when the plugin places none -- `player` is answered elsewhere.
 // See: docs/commentary/morrowind_runtime.md#placed-references
 const FormRef* FindRef(const std::string& id);
 std::size_t RefCount();
+
+// The BASE record a TES3 id names, which `PlaceAtPC` creates a reference from.
+// Null when the chain defines no such id.
+// See: docs/plans/morrowind_object_scripts.md#placeatpc
+const FormRef* FindBase(const std::string& id);
+std::size_t BaseCount();
 const FactionDef* FindFaction(const std::string& faction);
 
 // A GMST by name, or null when the chain staged none of that name.

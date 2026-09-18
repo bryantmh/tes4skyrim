@@ -18,6 +18,7 @@
 #include "log.h"
 #include "main_thread.h"
 #include "menu.h"
+#include "object_tick.h"
 #include "skse_abi.h"
 #include "store.h"
 
@@ -45,12 +46,15 @@ void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
     }
     const std::size_t actors = LoadActorIndex();
     Log("activation: %zu actor(s) indexed", actors);
+    // After the actor index, which is what resolves each plugin's live slot.
+    BindInstances();
     // The MenuManager singleton only exists once the game is up, so the menu
     // registers here rather than at plugin load.
     Log("menu: install %s", InstallMenu() ? "ok" : "FAILED");
     InstallConversation();
     InstallGameCalls();
     InstallActivation();
+    StartObjectTick();
 }
 
 // SKSE hands the Papyrus VM over here, before kMessage_DataLoaded, which is

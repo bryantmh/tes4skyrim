@@ -93,7 +93,7 @@ def _build_dialogue(st, voice_map: dict) -> set:
         master_index=st.ctx.master_index)
 
 
-def _patch_sounds(st) -> None:
+def _patch_sounds(st, export_dir: str = '') -> None:
     """Point every sound slot at an SNDR, not the TES4 SOUN id Phase 1 wrote.
 
     See: docs/commentary/tes5_import_pipeline.md#sound-slot-patching
@@ -143,6 +143,29 @@ def _patch_sounds(st) -> None:
     n_wsnd = patch_weather_sounds(st.writer, _own_souns)
     if n_wsnd:
         print(f"  Weather sound descriptors bound: {n_wsnd} weathers")
+    _stage_sound_table(st, export_dir)
+
+
+def _stage_sound_table(st, export_dir: str) -> None:
+    """Stage the runtime's sound table, for a TES3 source only.
+
+    Here rather than in the sidecar pass: the SNDR ids only exist once Phase 3
+    has run, and this is where every other sound slot is bound.
+
+    Measured on TR_Mainland: of the 99 sound ids its scripts name, 2 are its
+    own and 97 belong to masters, so a table of only this plugin's SOUNs is
+    empty of what the scripts actually ask for.
+    See: docs/commentary/tes5_import_sound.md#the-runtime-sound-table
+    """
+    from .dialogue.morrowind_sidecar import stage_sound_table
+    from .record_types.sound import get_sndr_for_soun
+    plugin = os.path.basename(st.output_path)
+    own = {(rec.get('EditorID') or '').strip():
+           get_sndr_for_soun(get_formid(rec, 'FormID'))
+           for rec in st.by_type.get('SOUN', [])}
+    named = stage_sound_table(export_dir, st.output_path, plugin, own)
+    if named:
+        print(f"  Runtime sound table: {named} sound(s)")
 
 
 def _patch_late_bindings(st, export_dir: str) -> None:
@@ -164,7 +187,7 @@ def _patch_late_bindings(st, export_dir: str) -> None:
     n_fg = patch_forcegreet_topics(st.writer)
     if n_fg:
         print(f"  ForceGreet packages bound to a greeting topic: {n_fg}")
-    _patch_sounds(st)
+    _patch_sounds(st, export_dir)
     _patch_creature_chains(st, export_dir)
 
 

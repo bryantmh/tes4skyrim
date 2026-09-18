@@ -16,6 +16,7 @@
 #include <components/compiler/exception.hpp>
 #include <components/compiler/extensions.hpp>
 #include <components/compiler/extensions0.hpp>
+#include <components/compiler/fileparser.hpp>
 #include <components/compiler/literals.hpp>
 #include <components/compiler/locals.hpp>
 #include <components/compiler/opcodes.hpp>
@@ -60,7 +61,14 @@ constexpr const char* kJournalUpdated = "Your journal has been updated.";
 // only reaches a command that reports it.
 class CompilerContext : public Compiler::Context {
 public:
-    bool canDeclareLocals() const override { return false; }
+    explicit CompilerContext(bool declareLocals = false)
+        : mDeclareLocals(declareLocals) {}
+
+    // 🛑 A dialogue result script may NOT declare locals; a whole SCPT body
+    // does nothing else on its first lines. False here turns every `short`
+    // line of an object script into a hard error.
+    // See: docs/plans/morrowind_object_scripts.md#instances
+    bool canDeclareLocals() const override { return mDeclareLocals; }
 
     char getGlobalType(const std::string& name) const override {
         const GlobalDef* def = FindGlobal(name);
@@ -78,6 +86,9 @@ public:
     }
 
     bool isId(const ESM::RefId&) const override { return true; }
+
+private:
+    bool mDeclareLocals = false;
 };
 
 // The speaker's own script locals, which a dialogue script may use bare.
@@ -547,6 +558,16 @@ int PushedCount(const std::string& args) {
 struct Machine : OpcodeInstaller {
     Compiler::Extensions extensions;
     CompilerContext compilerContext;
+    // The same tables, but allowed to declare locals: a whole SCPT body.
+    CompilerContext objectContext{true};
+    // One compiled program per script NAME, with the locals the body declared
+    // for itself. A body is compiled once however many placements run it,
+    // which is what makes 2,295 instances of one script cost one compile.
+    struct ObjectProgram {
+        Interpreter::Program program;
+        ScriptLocals locals;
+    };
+    std::map<std::string, ObjectProgram> objectPrograms;
 
     void InstallFactions();
     void InstallItemsAndScripts();
@@ -558,19 +579,27 @@ struct Machine : OpcodeInstaller {
         const unsigned tag = word >> 26;
         if (tag == kSegment5Tag) {
             const int code = static_cast<int>(word & 0x3ffffff);
+            emitted5.insert(code);
             if (segment5.insert(code).second) {
                 interpreter.installSegment5<Stub5>(code, shape);
             }
         } else if (tag == kSegment3Tag) {
             const int code = static_cast<int>((word >> 8) & 0x3ffff);
+            emitted3.insert(code);
             if (segment3.insert(code).second) {
                 interpreter.installSegment3<Stub3>(code, shape);
             }
         }
     }
 
+    // Every dispatch code the compiler can actually EMIT, which is what makes
+    // an unreachable real opcode detectable.
+    std::set<int> emitted5;
+    std::set<int> emitted3;
+
     void InstallReal();
     void InstallStubs();
+    void CheckRealOpcodesReachable();
     void StubKeyword(const std::string& keyword);
 };
 
@@ -604,6 +633,8 @@ void Machine::InstallReal() {
     InstallFactions();
     InstallItemsAndScripts();
     InstallWorldOps(*this);
+    InstallEventOps(*this);
+    InstallSoundOps(*this);
 }
 
 void Machine::InstallFactions() {
@@ -721,7 +752,40 @@ void Machine::StubKeyword(const std::string& keyword) {
         }
         StubShape placed = shape;
         placed.pops += withRef ? 1 : 0;
+        if (code.empty()) continue;
         Stub(code.back(), placed);
+    }
+}
+
+// 🛑 Every REAL opcode must be one the compiler can actually emit, or it is
+// unreachable and its command silently runs the stub instead. The generated
+// words are the ground truth: `StubKeyword` asks the extension table to emit
+// each command, so a real code absent from that set answers to nothing.
+//
+// This is a LOUD failure on purpose. The same divergence cost a full
+// build-and-play cycle while `PlaceAtPC` looked ported and did nothing.
+// See: docs/plans/morrowind_object_scripts.md#install-under-the-dispatch-code
+std::size_t ReportUnreachable(const std::set<int>& real,
+                              const std::set<int>& emitted, const char* seg,
+                              std::size_t reported) {
+    std::size_t lost = 0;
+    for (const int code : real) {
+        if (emitted.count(code)) continue;
+        ++lost;
+        if (reported + lost <= 8) {
+            Log("script: REAL segment-%s opcode %d is UNREACHABLE -- no "
+                "command emits it, so its stub answers instead", seg, code);
+        }
+    }
+    return lost;
+}
+
+void Machine::CheckRealOpcodesReachable() {
+    const std::size_t five = ReportUnreachable(segment5, emitted5, "5", 0);
+    const std::size_t three = ReportUnreachable(segment3, emitted3, "3", five);
+    if (five + three) {
+        Log("script: %zu real opcode(s) installed but UNREACHABLE",
+            five + three);
     }
 }
 
@@ -729,6 +793,7 @@ void Machine::InstallStubs() {
     std::vector<std::string> keywords;
     extensions.listKeywords(keywords);
     for (const std::string& keyword : keywords) StubKeyword(keyword);
+    CheckRealOpcodesReachable();
     Log("script: %zu command(s) registered; %zu opcode(s) answer, of which "
         "the dialogue set is real and the rest are logging stubs",
         keywords.size(), segment5.size() + segment3.size());
@@ -740,6 +805,7 @@ Machine& TheMachine() {
         machine = std::make_unique<Machine>();
         Compiler::registerExtensions(machine->extensions);
         machine->compilerContext.setExtensions(&machine->extensions);
+        machine->objectContext.setExtensions(&machine->extensions);
         Interpreter::installOpcodes(machine->interpreter);
         machine->InstallReal();
         machine->InstallStubs();
@@ -769,7 +835,74 @@ bool Compile(Machine& machine, const std::string& source,
     }
 }
 
+// A whole SCPT body, through FileParser -- which is what parses `begin`/`end`
+// and owns the locals the body declares for itself.
+bool CompileObject(Machine& machine, const std::string& source,
+                   Machine::ObjectProgram* out) {
+    LogErrors errors;
+    try {
+        std::istringstream input(source + "\n");
+        Compiler::Scanner scanner(errors, input, &machine.extensions);
+        Compiler::FileParser parser(errors, machine.objectContext);
+        scanner.scan(parser);
+        if (!errors.isGood()) return false;
+        out->program = parser.getProgram();
+        const Compiler::Locals& declared = parser.getLocals();
+        out->locals.shorts = declared.get('s');
+        out->locals.longs = declared.get('l');
+        out->locals.floats = declared.get('f');
+        return true;
+    } catch (const Compiler::SourceException&) {
+        return false;
+    } catch (const std::exception& error) {
+        Log("script: object compile failed: %s", error.what());
+        return false;
+    }
+}
+
+Machine::ObjectProgram& ObjectProgramFor(const std::string& script,
+                                         const std::string& source) {
+    Machine& machine = TheMachine();
+    auto it = machine.objectPrograms.find(script);
+    if (it != machine.objectPrograms.end()) return it->second;
+    Machine::ObjectProgram built;
+    if (!CompileObject(machine, source, &built)) {
+        Log("script: object '%s' did NOT compile -- it will not run",
+            script.c_str());
+        built = Machine::ObjectProgram();
+    }
+    return machine.objectPrograms.emplace(script, std::move(built))
+        .first->second;
+}
+
 }  // namespace
+
+void ClearObjectPrograms() { TheMachine().objectPrograms.clear(); }
+
+// 🛑 A body that does NOT compile is cached as an empty program, so a broken
+// script costs one compile per session rather than one per tick.
+bool EnsureObjectScript(const std::string& script, const std::string& source) {
+    return !ObjectProgramFor(script, source).program.mInstructions.empty();
+}
+
+const ScriptLocals* ObjectScriptLocals(const std::string& script) {
+    Machine& machine = TheMachine();
+    const auto it = machine.objectPrograms.find(script);
+    return it == machine.objectPrograms.end() ? nullptr : &it->second.locals;
+}
+
+bool RunObjectScript(const std::string& script, const std::string& source,
+                     Interpreter::Context& context) {
+    Machine::ObjectProgram& built = ObjectProgramFor(script, source);
+    if (built.program.mInstructions.empty()) return false;
+    try {
+        TheMachine().interpreter.run(built.program, context);
+        return true;
+    } catch (const std::exception& error) {
+        Log("script: object '%s' stopped: %s", script.c_str(), error.what());
+        return false;
+    }
+}
 
 // Most-reached first, each as "name xN".
 std::vector<std::string> UnportedCommandsSeen() {

@@ -28,7 +28,7 @@ RefId GameActor::Id() const { return mId; }
 
 bool GameActor::IsNpc() const { return true; }
 
-// Who the speaker IS comes from their NPC_ record, staged as MWNP.txt. An
+// Who the speaker IS comes from their NPC_ record, staged as NPC_.txt. An
 // actor the table does not know answers as an unaffiliated stranger.
 RefId GameActor::Race() const {
     const ActorDef* def = FindActor(mId);

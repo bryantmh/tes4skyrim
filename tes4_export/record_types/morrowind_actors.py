@@ -72,8 +72,8 @@ _FACTION_HIDDEN = 0x1
 #: CLDT: 2 attributes, specialization, 5 x 2 skills, playable, services.
 _CLDT_FORMAT = '<2ii10iii'
 
-#: SNDG type -> TES4 CSDT slot: left foot, right foot, Moan->Idle, Roar->Attack, Scream->Hit.
-_SOUND_GEN_SLOTS = {0: 0, 1: 1, 4: 4, 5: 6, 6: 7}
+#: SNDG type -> CSDT slot. See: docs/commentary/tes4_export_morrowind.md#creature-sound-generators
+_SOUND_GEN_SLOTS = {0: 0, 1: 1, 2: 2, 3: 3, 4: 5, 5: 6, 6: 7, 7: 8}
 
 #: The bones-only NIF the creature pipeline keys a folder on.
 _SKELETON_NIF = 'skeleton.nif'

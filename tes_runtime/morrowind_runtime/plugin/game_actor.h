@@ -1,7 +1,7 @@
 // The ActorView the MENU runs against, backed by what the runtime knows now.
 //
 // 🛑 PARTIAL BY DESIGN, and honest about it. Identity -- the TES3 id, which is
-// what MWAC.txt gives us -- is real; every stat, faction and world query still
+// the actor index gives us -- is real; every stat, faction and world query
 // returns a neutral default, so a filter rule that reads one passes rather than
 // silently excluding an actor who should have spoken.
 //

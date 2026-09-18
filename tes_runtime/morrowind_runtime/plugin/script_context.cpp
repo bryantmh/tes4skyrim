@@ -31,11 +31,17 @@ ESM::RefId DialogueContext::getTarget() const {
     return ESM::RefId::stringRefId(mActor.Id());
 }
 
+const ScriptLocals* DialogueContext::Layout() const {
+    return FindScriptLocals(ScriptOf(mActor.Id()));
+}
+
+std::string DialogueContext::OwnerKey() const { return mActor.Id(); }
+
 // Compiled code addresses a local by its index among the locals of its type,
 // in declaration order -- the order SpeakerLocals declared them in.
 const std::string& DialogueContext::LocalName(char type, int index) const {
     static const std::string kNone;
-    const ScriptLocals* locals = FindScriptLocals(ScriptOf(mActor.Id()));
+    const ScriptLocals* locals = Layout();
     if (!locals || index < 0) return kNone;
     const std::vector<std::string>& names =
         type == 's' ? locals->shorts : type == 'l' ? locals->longs
@@ -46,12 +52,12 @@ const std::string& DialogueContext::LocalName(char type, int index) const {
 }
 
 float DialogueContext::Local(char type, int index) const {
-    return State().Var(mActor.Id(), LocalName(type, index));
+    return State().Var(OwnerKey(), LocalName(type, index));
 }
 
 void DialogueContext::SetLocal(char type, int index, float value) {
     const std::string& name = LocalName(type, index);
-    if (!name.empty()) State().SetVar(mActor.Id(), name, value);
+    if (!name.empty()) State().SetVar(OwnerKey(), name, value);
 }
 
 int DialogueContext::getLocalShort(int index) const {

@@ -1,8 +1,17 @@
 # Morrowind scripts
 
-**Code:** `script_convert/blocks_morrowind.py`
+**Code:** NONE — `script_convert/blocks_morrowind.py` was DELETED.
 
-What TES3 script conversion does differently from TES4, and why.
+🛑 **TES3 scripts no longer go down the Papyrus path at all.** They run on the
+vendored OpenMW interpreter, from the sidecar's `SCPT_source.txt`, where 95% of
+them compile against the 30% that reached the game as `.pex`. Two engines
+writing the same object state is worse than one lossy engine, so this was a
+cutover rather than an addition.
+See: [../plans/morrowind_object_scripts.md](../plans/morrowind_object_scripts.md)
+
+This page is kept for the MEASUREMENT below: it is the evidence that the
+Papyrus path could not be fixed into correctness, and the reason not to try
+again.
 
 ## <a id="implicit-blocks"></a>A TES3 script is one implicit block
 
@@ -42,8 +51,15 @@ the output was a well-formed shell — the properties survive because variable
 declarations are hoisted in `parse()` before blocks are assembled.
 
 **A TES3 body runs every frame while its object is loaded**, which is exactly
-what `gamemode` means, so the implicit block routes to that type and reaches
-`Event OnUpdate()` through the existing map. No new event kind is introduced.
+what `gamemode` means, so the implicit block was routed to that type and reached
+`Event OnUpdate()` through the existing map.
+
+🛑 **That routing was necessary but never sufficient**, which is why the whole
+path is now gone. Retyping the block made the body survive conversion; it did
+not make it WORK. `OnActivate` still became a property nothing ever set, and
+`Rotate`/`SetAtStart` still had no emitter — so of the 3,569 bodies, 1,054
+produced a `.pex` and many of those were inert. The mismatch is structural: one
+block that runs every frame and branches on state has no Papyrus equivalent.
 
 ### Recognizing the implicit block
 

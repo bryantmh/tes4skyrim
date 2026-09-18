@@ -25,7 +25,9 @@ import sys
 REGISTRATIONS = 'external/openmw/components/compiler/extensions0.cpp'
 RUNNER = 'tes_runtime/morrowind_runtime/plugin/script_runner.cpp'
 #: Every other file that installs real opcodes into the same machine.
-RUNNER_PARTS = ('tes_runtime/morrowind_runtime/plugin/script_ops_world.cpp',)
+RUNNER_PARTS = ('tes_runtime/morrowind_runtime/plugin/script_ops_world.cpp',
+                'tes_runtime/morrowind_runtime/plugin/script_ops_events.cpp',
+                'tes_runtime/morrowind_runtime/plugin/script_ops_sound.cpp')
 SCRIPT_FIELD = 'ResultScript'
 
 #: The OTHER corpus: object scripts, whose body is SCPT's `SCTX`.

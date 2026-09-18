@@ -169,3 +169,25 @@ Callers hold a record dir, so wrap it: `assets_for(export_dir)`.
 
 Only needed to expand directory-valued FNAMs; a missing or None dir simply means
 such sounds fall back to the single literal path.
+
+## The runtime sound table
+<a id="the-runtime-sound-table"></a>
+
+TES3 script opcodes name a **SOUN id** -- `PlaySound3D "Door Stone Open"`,
+`GetSoundPlaying "Cave Drip"` (45 call sites in Morrowind.esm) -- but the record
+the engine plays is the **SNDR** this import mints, not the SOUN. So the sidecar
+table maps `TES3 sound id=Plugin.esm|SNDR FormID`, and the runtime resolves that
+pair through the running load order exactly as it does for items and refs.
+
+🛑 **It cannot be built from the export text.** The SNDR FormID is *derived*
+during Phase 3 (`record_sndr_for_soun`), whereas `write_script_tables` runs from
+the export alone, in the simple-records phase that precedes it. The table is
+therefore written from the WRITER's state in `_patch_sounds`, the same finalize
+pass that binds every other sound slot -- which is also why a restage with no
+import leaves an existing table alone, as the journal QUSTs do.
+
+Master-owned sounds resolve through the same `_master_sound_descriptor` the slot
+patcher uses (read the master's converted SOUN and take its `SDSC`), never by
+re-deriving, which would mint an id in this plugin's index space. A sound with
+no descriptor is omitted rather than written as 0: the runtime then falls
+through to silence instead of naming a record nothing wrote.

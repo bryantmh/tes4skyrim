@@ -17,6 +17,8 @@
 #include "filter.h"
 #include "game_actor.h"
 #include "log.h"
+#include "object_script.h"
+#include "object_tick.h"
 #include "persuasion.h"
 #include "script_context.h"
 #include "script_runner.h"
@@ -56,6 +58,33 @@ int RunFile(const char* path) {
     const bool ok = RunResultScript(text.str(), context);
     std::printf("%s\n", ok ? "ran" : "FAILED");
     PrintState();
+    return ok ? 0 : 1;
+}
+
+// Compiles one whole SCPT body -- `script_test --object <file>` -- and reports
+// the locals it declared, so a real object script can be checked against the
+// interpreter without a game.
+int CompileObjectFile(const char* path) {
+    std::ifstream in(path);
+    std::stringstream text;
+    text << in.rdbuf();
+    const bool ok = EnsureObjectScript(path, text.str());
+    std::printf("%s: %s\n", path, ok ? "compiles" : "FAILED to compile");
+    const ScriptLocals* locals = ObjectScriptLocals(path);
+    if (locals) {
+        for (const std::string& name : locals->shorts) {
+            std::printf("  short %s\n", name.c_str());
+        }
+        for (const std::string& name : locals->longs) {
+            std::printf("  long %s\n", name.c_str());
+        }
+        for (const std::string& name : locals->floats) {
+            std::printf("  float %s\n", name.c_str());
+        }
+    }
+    for (const std::string& cmd : UnportedCommandsSeen()) {
+        std::printf("  unported: %s\n", cmd.c_str());
+    }
     return ok ? 0 : 1;
 }
 
@@ -267,16 +296,198 @@ void PersuasionCases(DialogueContext& context) {
     State().SetDisposition("test_actor", 50);
 }
 
+// The staged bodies and instances: what the tick compiles, and one per
+// PLACEMENT rather than per base.
+// See: docs/plans/morrowind_object_scripts.md#instances
+void ObjectScriptTableCases() {
+    std::printf("object-script tables\n");
+    Check(ScriptSourceCount() == 2, "two bodies staged");
+    const std::string& body = ScriptSource("TestDoorScript");
+    Check(body.find("begin TestDoorScript") == 0,
+          "the body is unescaped back to real newlines");
+    Check(body.find('\n') != std::string::npos, "and it is multi-line");
+    Check(ScriptSource("NoSuchScript").empty(), "an unknown script is empty");
+
+    Check(InstanceCount() == 3, "three instances staged");
+    Check(InstanceScript("scripts.esm", 0x0300A001) == "TestDoorScript",
+          "a placement names its script");
+    Check(InstanceScript("scripts.esm", 0x0300A002) == "TestDoorScript",
+          "a SECOND placement of the same script is its own instance");
+    Check(InstanceScript("scripts.esm", 0x0000A001) == "TestDoorScript",
+          "the load-order index byte is not part of the key");
+    Check(InstanceScript("scripts.esm", 0x0300C000).empty(),
+          "an unplaced FormID has no instance");
+    Check(InstanceScript("other.esm", 0x0300A001).empty(),
+          "and the key is per PLUGIN");
+}
+
+// A whole SCPT body, compiled and run as an object script: it declares its own
+// locals, opens with `begin`, and reads the one-tick events.
+// See: docs/plans/morrowind_object_scripts.md#instances
+void ObjectScriptRunCases() {
+    std::printf("an object script runs a whole SCPT body\n");
+    ClearInstances();
+    ObjectScript* door = InstanceFor("scripts.esm", 0x0300A001, "test_door");
+    Check(door != nullptr, "a placement with a script gets an instance");
+    if (!door) return;
+    Check(InstanceFor("scripts.esm", 0x0300C000, "nothing") == nullptr,
+          "a placement with no script gets none");
+
+    Check(door->RunOnce(), "the body compiles and runs");
+    Check(State().Var(door->Key(), "open") == 0.0f,
+          "no activation, so the door stays shut");
+
+    door->Events().activated = true;
+    Check(door->RunOnce(), "runs again with OnActivate raised");
+    Check(State().Var(door->Key(), "open") == 1.0f, "and the door opened");
+
+    // The SECOND placement of the SAME script must not see the first's local.
+    ObjectScript* other = InstanceFor("scripts.esm", 0x0300A002, "test_door");
+    Check(other != nullptr && other->Key() != door->Key(),
+          "a second placement is a separate instance");
+    if (other) {
+        Check(other->RunOnce() &&
+              State().Var(other->Key(), "open") == 0.0f,
+              "and it has its OWN locals -- the first door's stayed shut");
+    }
+
+    // The event lives one tick: the next run must see it cleared.
+    Check(door->RunOnce() && !door->Events().activated,
+          "the event is cleared after the tick that read it");
+
+    std::printf("engine-written locals are set by NAME before the body\n");
+    ObjectScript* actorObj = InstanceFor("scripts.esm", 0x0300B001, "test_actor");
+    Check(actorObj != nullptr, "the actor placement has an instance");
+    if (actorObj) {
+        actorObj->Events().pcEquipped = true;
+        actorObj->RunOnce();
+        Check(State().Var(actorObj->Key(), "onpcequip") == 0.0f,
+              "a script that does NOT declare OnPCEquip never gets one");
+        Check(State().Var(actorObj->Key(), "met") == 1.0f,
+              "and its own body still ran");
+    }
+    ClearInstances();
+}
+
+// The tick: a FIXED rate, so the same elapsed time runs the same number of
+// bodies whatever the frame rate, and GetSecondsPassed answers its delta.
+// See: docs/plans/morrowind_object_scripts.md#tick-rate
+std::string TestCell() { return "Test Cell"; }
+
+void TickCases() {
+    std::printf("the tick runs bound instances at a fixed rate\n");
+    ClearInstances();
+    // A tick does nothing until a game is loaded, which a player cell means.
+    Hooks().playerCell = nullptr;
+    TickObjectScripts(TickDelta());
+    Check(LastTickCount() == 0, "nothing ticks with no game loaded");
+    Hooks().playerCell = TestCell;
+
+    const std::size_t before = TicksRun();
+    // Bound instances only: an unbound one has no reference to act on.
+    BindInstance(0x0A000001, "scripts.esm", 0x0300A001);
+    Check(BoundInstanceCount() == 1, "one instance bound to a live FormID");
+
+    TickObjectScripts(TickDelta() * 3.0f);
+    Check(TicksRun() == before + 3, "three deltas run three ticks");
+    Check(LastTickCount() == 1, "and each ran the one bound instance");
+
+    // Half a tick must not run one, and the remainder must not be lost.
+    const std::size_t after = TicksRun();
+    TickObjectScripts(TickDelta() * 0.5f);
+    Check(TicksRun() == after, "half a delta runs nothing");
+    TickObjectScripts(TickDelta() * 0.5f);
+    Check(TicksRun() == after + 1, "the two halves together run one");
+
+    // A stall must not run hundreds of ticks at once.
+    const std::size_t stalled = TicksRun();
+    TickObjectScripts(60.0f);
+    Check(TicksRun() - stalled < 20, "a long stall is clamped, not caught up");
+    Hooks().playerCell = nullptr;
+    ClearInstances();
+}
+
+// --- sound -----------------------------------------------------------------
+
+// What the fake sound hooks recorded: every start, and every instance stopped.
+std::vector<std::string> g_played;
+std::vector<int> g_stopped;
+int g_nextInstance = 0;
+
+int FakePlaySound(const std::string& ref, const std::string& sound, bool loop,
+                  float volume) {
+    char line[256];
+    std::snprintf(line, sizeof(line), "%s|%s|%d|%.2f", ref.c_str(),
+                  sound.c_str(), loop ? 1 : 0, volume);
+    g_played.push_back(line);
+    return ++g_nextInstance;
+}
+
+void FakeStopSound(int instance) { g_stopped.push_back(instance); }
+
+void SoundCases(DialogueContext& context) {
+    std::printf("the sound commands\n");
+    Hooks().playSound = FakePlaySound;
+    Hooks().stopSound = FakeStopSound;
+    g_played.clear();
+    g_stopped.clear();
+    g_nextInstance = 0;
+
+    Check(RunResultScript("PlaySound \"Cave Drip\"", context),
+          "PlaySound compiles and runs");
+    Check(g_played.size() == 1 && g_played[0] == "|cave drip|0|1.00",
+          "it plays on the listener, no reference, full volume");
+
+    Check(RunResultScript("PlaySound3DVP \"Flies\" 0.5 1.0", context),
+          "PlaySound3DVP compiles and runs");
+    Check(g_played.size() == 2 && g_played[1] == "test_actor|flies|0|0.50",
+          "the VP form plays on the speaker at the authored volume");
+
+    Check(RunResultScript("PlayLoopSound3D \"Machinery\"", context),
+          "PlayLoopSound3D compiles and runs");
+    Check(g_played.size() == 3 &&
+              g_played[2] == "test_actor|machinery|1|1.00",
+          "the looping form is flagged as a loop");
+
+    RunResultScript("if ( GetSoundPlaying \"Machinery\" == 1 )\n"
+                    "    set TestGlobal to 1\nendif", context);
+    Check(State().Global("TestGlobal") == 1.0f,
+          "GetSoundPlaying answers 1 for a loop this reference started");
+
+    RunResultScript("StopSound \"Machinery\"", context);
+    Check(g_stopped.size() == 1 && g_stopped[0] == 3,
+          "StopSound stops the instance that loop returned");
+
+    State().SetGlobal("TestGlobal", 0.0f);
+    RunResultScript("if ( GetSoundPlaying \"Machinery\" == 1 )\n"
+                    "    set TestGlobal to 1\nendif", context);
+    Check(State().Global("TestGlobal") == 0.0f,
+          "a stopped sound is no longer playing");
+
+    RunResultScript("StopSound \"Never Started\"", context);
+    Check(g_stopped.size() == 1,
+          "stopping what was never started calls nothing");
+
+    Hooks().playSound = nullptr;
+    Hooks().stopSound = nullptr;
+    Check(RunResultScript("PlaySound3D \"Cave Drip\"", context),
+          "with no hook the command still runs, it just makes no sound");
+}
+
 void Cases() {
     ClearScriptTables();
     LoadScriptTables("testdata\\scripts\\");
     GameActor actor("test_actor");
     DialogueContext context(actor, "Test Actor", "Player");
+    ObjectScriptTableCases();
+    ObjectScriptRunCases();
+    TickCases();
     FactionCases(context, actor);
     RankNameCases(context);
     CoSaveCases(context);
     AiAndDeathCases(context, actor);
     PersuasionCases(context);
+    SoundCases(context);
     TableCases(context, actor);
     State().BeginConversation();
 
@@ -361,11 +572,62 @@ int Sweep(const char* root) {
     return failed ? 1 : 0;
 }
 
+// Compiles EVERY staged object-script body, which is the measurement the
+// whole design rests on: the Papyrus path reached 30% of them.
+// See: docs/plans/morrowind_object_scripts.md
+int SweepObjects(const char* root) {
+    ClearScriptTables();
+    // Every sidecar under `root`, as the game loads them -- a plugin's body
+    // names its masters' globals, which live in the MASTER's sidecar.
+    // See: docs/plans/morrowind_object_scripts.md#masters-stage-themselves
+    std::string dir = root;
+    if (dir.back() != '\\' && dir.back() != '/') dir.push_back('\\');
+    const std::vector<std::string> plugins = SidecarPlugins(dir);
+    if (plugins.empty()) {
+        LoadScriptTables(dir);
+    } else {
+        for (const std::string& plugin : plugins) {
+            LoadScriptTables(dir + plugin + "\\");
+        }
+        std::printf("%zu sidecar(s)\n", plugins.size());
+    }
+    std::printf("%zu body(ies), %zu instance(s)\n", ScriptSourceCount(),
+                InstanceCount());
+    std::size_t total = 0, failed = 0;
+    for (const auto& entry : ScriptSources()) {
+        ++total;
+        if (!EnsureObjectScript(entry.first, entry.second) && ++failed <= 40) {
+            std::printf("--- FAILED %s\n", entry.first.c_str());
+            LogToStdout(true);
+            ClearObjectPrograms();
+            EnsureObjectScript(entry.first, entry.second);
+            LogToStdout(false);
+        }
+        if (total % 500 == 0) {
+            std::printf("... %zu compiled, %zu failed\n", total, failed);
+            std::fflush(stdout);
+        }
+    }
+    std::printf("%zu body(ies), %zu failed to compile\n", total, failed);
+    return failed ? 1 : 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc > 2 && std::string(argv[1]) == "--sweep") return Sweep(argv[2]);
+    if (argc > 2 && std::string(argv[1]) == "--sweep-objects") {
+        LogToStdout(false);
+        return SweepObjects(argv[2]);
+    }
     LogToStdout(true);
+    // `--object <file> [tableDir]`: the tables default to the test fixtures,
+    // but a real sidecar folder can be named so a shipped script is checked
+    // against the data it was authored against.
+    if (argc > 2 && std::string(argv[1]) == "--object") {
+        LoadScriptTables(argc > 3 ? argv[3] : "testdata\\scripts\\");
+        return CompileObjectFile(argv[2]);
+    }
     if (argc > 1) return RunFile(argv[1]);
     Cases();
     std::printf("%s\n", g_failed ? "FAILED" : "all passed");

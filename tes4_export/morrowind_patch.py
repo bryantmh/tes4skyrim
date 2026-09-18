@@ -222,6 +222,7 @@ def build_patch(data_dir: str, export_dir: str, morroblivion_exports,
 
     assets = _extract_assets(gaps.values(), esms, data_dir, export_dir,
                              progress)
+    assets += _copy_gap_sounds(gaps.values(), data_dir, export_dir, progress)
     out_dir = _write_records(gaps, export_dir, progress)
     _convert_assets(export_dir, out_root, progress)
     _convert_creatures(export_dir, out_root, progress)
@@ -229,6 +230,30 @@ def build_patch(data_dir: str, export_dir: str, morroblivion_exports,
     return {'ok': bool(plugin), 'records': len(gaps), 'assets': assets,
             'output': out_dir, 'plugin': plugin, 'error': error,
             'seconds': time.time() - start}
+
+
+def _copy_gap_sounds(records, data_dir: str, export_dir: str,
+                     progress) -> int:
+    """Copy the loose sounds the gap SOUNs name; how many files were new.
+
+    Sounds are the one asset class the BSA does not hold, so `_extract_assets`
+    cannot reach them. The gap records already ARE "what Morroblivion lacks",
+    so their filenames need no further subtraction.
+    See: docs/commentary/tes4_export_morrowind.md#which-sounds-a-plugin-ships
+    """
+    from asset_convert.sources.bsa_extract_morrowind import copy_loose_sounds
+    from asset_convert.sources.morrowind_sound_scope import normalize
+    owned = set()
+    for rec in records:
+        if rec.type != 'SOUN':
+            continue
+        sub = get_subrecord(rec, 'FNAM')
+        if sub is not None and get_string(sub).strip():
+            owned.add(normalize(get_string(sub).strip()))
+    copied = copy_loose_sounds(data_dir, asset_root(export_dir, PATCH_NAME),
+                               owned)
+    progress(f'  Copied {copied} of {len(owned)} gap sound file(s)')
+    return copied
 
 
 def _convert_creatures(export_dir: str, out_root, progress) -> None:

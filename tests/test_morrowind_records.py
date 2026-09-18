@@ -227,6 +227,25 @@ def _export(tmp_path, name: str, records, master_dirs=()) -> str:
     return out_dir
 
 
+def test_a_plugin_ships_only_the_sounds_no_master_names(tmp_path):
+    """The shared Data folder means ownership is per FILE, not per plugin.
+
+    See: docs/commentary/tes4_export_morrowind.md#which-sounds-a-plugin-ships
+    """
+    from asset_convert.sources.morrowind_sound_scope import owned_files
+    shared = _rec('SOUN', 'Door Open', _text('FNAM', 'Fx/door.wav'))
+    master = _export(tmp_path, 'Master.esm', [shared])
+    mine = _rec('SOUN', 'Bell', _text('FNAM', 'Fx/bell.wav'))
+    plugin = _export(tmp_path, 'Mine.esp', [shared, mine], [master])
+    door, bell = 'fx' + chr(92) + 'door.wav', 'fx' + chr(92) + 'bell.wav'
+
+    assert owned_files(master, []) == {door}
+    assert owned_files(plugin, [master]) == {bell},         'the master already ships the door, so this plugin must not'
+
+    alone = _export(tmp_path, 'Alone.esp', [shared, mine])
+    assert owned_files(alone, []) == {door, bell},         'with no converted master a plugin ships every sound it names'
+
+
 def _form_ids(path: str) -> set:
     """Every FormID= value in one export file."""
     with open(path, encoding='utf-8') as fh:
@@ -350,6 +369,31 @@ def test_creature_names_its_split_folder_and_sounds(tmp_path):
     assert _value(lines, 'MorrowindModel') == 'r' + chr(92) * 2 + 'Guar.NIF'
     assert 'SoundType[0].Type=6' in lines
     assert _value(lines, 'SoundType[0].Sound') == ctx.resolve('guar roar')
+
+
+def test_moan_becomes_aware_not_idle(tmp_path):
+    """Moan is the vocal the graph annotates; CSDT 4 is deliberately silent.
+
+    See: docs/commentary/tes4_export_morrowind.md#creature-sound-generators
+    """
+    moan = _rec('SOUN', 'guar moan', _text('FNAM', 'Cr/guar/moan.wav'))
+    land = _rec('SOUN', 'guar land', _text('FNAM', 'Cr/guar/land.wav'))
+    gens = [_rec('SNDG', 'guar moan gen', _sub('DATA', struct.pack('<i', 4)),
+                 _text('SNAM', 'guar moan'), _text('CNAM', 'guar')),
+            _rec('SNDG', 'guar land gen', _sub('DATA', struct.pack('<i', 7)),
+                 _text('SNAM', 'guar land'), _text('CNAM', 'guar'))]
+    guar = _rec('CREA', 'guar', _text('MODL', 'r/Guar.NIF'),
+                _sub('FLAG', struct.pack('<I', 0)))
+    ctx = MorrowindContext()
+    meshes = tmp_path / 'meshes'
+    (meshes / 'r').mkdir(parents=True)
+    (meshes / 'r' / 'Guar.NIF').write_bytes(b'')
+    ctx.morroblivion = MorroblivionModels(str(tmp_path), [],
+                                          str(tmp_path / 'none.esm'), meshes)
+    lines = convert_plugin([moan, land] + gens + [guar], ctx)['CREA'][0][1]
+    slots = {_value(lines, f'SoundType[{i}].Type') for i in range(2)}
+    assert slots == {'5', '8'}, 'Moan lands on Aware (5), Land on Death (8)'
+    assert '4' not in slots, 'CSDT 4 loops the idle clip and is never annotated'
 
 
 def test_creature_on_a_vanilla_mesh_binds_to_morroblivions(tmp_path):

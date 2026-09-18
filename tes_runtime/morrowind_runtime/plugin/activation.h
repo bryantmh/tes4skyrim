@@ -36,6 +36,9 @@ const char* PlayerName();
 // order, or null. The only correct way to reach a converted record.
 void* FormFromFile(const char* file, std::uint32_t local);
 
+// A form's own FormID, read at TESForm+0x14; 0 for null.
+std::uint32_t FormIdOf(void* form);
+
 // The Papyrus VM every native call is made against.
 void* PapyrusVm();
 
@@ -48,9 +51,14 @@ bool FixedString(void** out, const char* text);
 // plugin's CURRENT load-order index. Called from the SKSE Papyrus callback.
 void SetPapyrusVm(void* vm);
 
-// Reads every sidecar's MWAC.txt into the mask and the id map. Returns how
+// Reads every sidecar's NPC__index.txt into the mask and id map. Returns how
 // many actors were indexed.
 std::size_t LoadActorIndex();
+
+// Resolves every staged script instance through the running load order, so an
+// engine hook holding a live FormID can find the instance it belongs to.
+// Returns how many resolved.
+std::size_t BindInstances();
 
 // The same, from a caller-named root, so it is testable with no game install.
 std::size_t LoadActorIndexFrom(const std::string& root);

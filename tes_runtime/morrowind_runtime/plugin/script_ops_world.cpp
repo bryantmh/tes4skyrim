@@ -41,6 +41,27 @@ bool IStartsWith(const std::string& text, const std::string& prefix) {
            _strnicmp(text.c_str(), prefix.c_str(), prefix.size()) == 0;
 }
 
+// `PlaceAtPC id count distance direction`: creates references of a BASE record
+// near the player. The distance and direction are popped and dropped -- Skyrim
+// places at the player, which is where every authored call wants it anyway.
+//
+// 🛑 The created reference runs the base's script, and the hook binds its
+// instance from the FormID PlaceAtMe returns.
+// See: docs/plans/morrowind_object_scripts.md#placeatpc
+// 🛑 SEGMENT 5, not 3, though its `X` looks optional: the compiler emits
+// 0xCA00019C for it, whose tag is 0x32. The segment a command lands in is a
+// property of its REGISTRATION, not of its argument string -- read the word.
+class OpPlaceAtPc : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string base = PopString(runtime);
+        const int count = PopInt(runtime);
+        PopFloat(runtime);
+        PopInt(runtime);
+        Log("world: PlaceAtPC %s x%d", base.c_str(), count);
+        if (Hooks().placeAtPlayer) Hooks().placeAtPlayer(base, count);
+    }
+};
+
 // `Activate`: the player activates the target, as OpenMW's executeActivation
 // with the player as the actor.
 template <class R>
@@ -292,6 +313,7 @@ void InstallWorldOps(OpcodeInstaller& into) {
     into.Real<OpForceGreeting<Explicit>>(
         Compiler::Dialogue::opcodeForceGreetingExplicit);
     namespace T = Compiler::Transformation;
+    into.Real<OpPlaceAtPc>(T::opcodePlaceAtPc);
     into.Real<OpGetPos<Implicit>>(T::opcodeGetPos);
     into.Real<OpGetPos<Explicit>>(T::opcodeGetPosExplicit);
     into.Real<OpSetPos<Implicit>>(T::opcodeSetPos);

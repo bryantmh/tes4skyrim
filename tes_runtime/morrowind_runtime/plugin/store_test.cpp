@@ -1,7 +1,7 @@
 // Headless store test: parses real exported DIAL/INFO text with no game.
 //
 // Built by `build.bat test` into store_test.exe. Takes an export directory
-// (the one holding MWDI.txt and MWIN.txt) and reports what parsed, so the
+// (the one holding DIAL.txt and INFO.txt) and reports what parsed, so the
 // reader is checked against 23,693 real records rather than a fixture.
 
 #include <cstdio>
@@ -77,7 +77,7 @@ Corpus Walk(const std::string& dir) {
     std::unordered_map<std::string, std::vector<int>> ordinals;
     std::unordered_map<std::string, bool> topics;
 
-    for (const auto& rec : ParseExport(ReadFile(dir + "/MWDI.txt"))) {
+    for (const auto& rec : ParseExport(ReadFile(dir + "/DIAL.txt"))) {
         const auto it = rec.find("EditorID");
         if (it == rec.end()) continue;
         std::string id = Unescape(it->second);
@@ -86,7 +86,7 @@ Corpus Walk(const std::string& dir) {
         ++out.topics;
     }
 
-    for (const auto& rec : ParseExport(ReadFile(dir + "/MWIN.txt"))) {
+    for (const auto& rec : ParseExport(ReadFile(dir + "/INFO.txt"))) {
         ++out.infos;
         const auto idIt = rec.find("EditorID");
         if (idIt == rec.end() || idIt->second.empty()) ++out.emptyId;

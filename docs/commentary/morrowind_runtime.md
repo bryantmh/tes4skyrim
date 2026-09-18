@@ -475,14 +475,14 @@ file name (`feedback_never_classify_by_filename`).
 
 **Measured in-game: `TR_Mainland` converts at index `0x03` and the player's
 load order gives it `0x22`.** An NPC the log called `22C553BA` is stored in
-`MWAC.txt` as `03C553BA`. Comparing whole FormIDs matched nothing, every actor
+`NPC__index.txt` as `03C553BA`. Comparing whole FormIDs matched nothing, every actor
 fell through to vanilla, and — because a converted Morrowind NPC has no Skyrim
 dialogue either — activating one did nothing at all.
 
 This is `project_master_index_routing` again: **a raw FormID is meaningless
 across plugins.** The fix has two halves:
 
-- `MWAC.txt` is keyed by the **local** id (`formId & 0x00FFFFFF`); the stored
+- `NPC__index.txt` is keyed by the **local** id (`formId & 0x00FFFFFF`); the stored
   index byte is discarded on load, because it records only where the plugin sat
   on the converting machine.
 - The runtime index is resolved **once per plugin at load** by
@@ -501,7 +501,7 @@ failure names itself rather than presenting as silence.
 
 The runtime routes by **FormID** but filters dialogue by **TES3 id**, so
 without a map between them it can tell an actor is Morrowind's and still not
-know who they are. `MWAC.txt` is that map, `FormID=EditorID` per line, written
+know who they are. `NPC__index.txt` is that map, `FormID=EditorID` per line, written
 into the sidecar at import because the FormID is minted during import and does
 not exist at export time. A Morrowind NPC's `EditorID` *is* its TES3 string id,
 which is what `INFO.Actor` names.
@@ -762,8 +762,17 @@ which installs alongside every other converted asset, and which the DLL walks
 at `kMessage_DataLoaded` — one subfolder per plugin, so one plugin's dialogue
 can never be attributed to another's.
 
-The files are `MWDI.txt`, `MWIN.txt` and `MWAC.txt` (the
-[actor index](#activation)).
+Each file is named after the GRUP it holds — `DIAL.txt`, `INFO.txt`,
+`NPC__index.txt` (the [actor index](#activation)), `GLOB.txt`, `FACT.txt`,
+`GMST.txt`, `SKIL.txt`, `NPC_.txt`, `SCPT_source.txt`, `SCPT_locals.txt`,
+`SCPT_objects.txt`, `SCPT_instances.txt` — with `items_formid.txt`,
+`refs_formid.txt` and `quests_formid.txt` for the three id→FormID maps, which
+belong to no single record type.
+
+🛑 **A sidecar holds its OWN plugin's records only.** The DLL reads every
+sidecar into one set of tables, so a master's globals and scripts resolve from
+the MASTER's folder rather than being copied into each dependent.
+See: [../plans/morrowind_object_scripts.md#masters-stage-themselves](../plans/morrowind_object_scripts.md#masters-stage-themselves)
 
 ### 🛑 The root comes from THIS MODULE, not the host process
 
@@ -948,7 +957,7 @@ after `PNAM`, else before `NNAM`, else first when it names no predecessor).
 Measured on TR_Mainland: 69,270 responses alone, **106,958** merged over
 Morrowind, Tribunal, Bloodmoon and Tamriel_Data, in 15 s. "join the Fighters
 Guild" went from 2 responses to 29 — and still needed the speaker's faction,
-which the text export holds only as a minted FormID. `MWNP.txt` carries each
+which the text export holds only as a minted FormID. `NPC_.txt` carries each
 NPC's race, class, faction, rank, base disposition, gender and name as authored.
 
 ### <a id="unknown-functions"></a>🛑 A rule the runtime cannot judge REJECTS
@@ -995,7 +1004,7 @@ the flat "you don't meet our requirements" answer won every time.
 The skill test is not per-named-skill. `NpcStats::hasSkillsForRank` sorts the
 player's values for the faction's seven skills and measures the best three:
 one at `mPrimarySkill`, two more at `mFavouredSkill`. The requirement rows
-reach the runtime as `MWFA.txt`, staged from the FACT records of the plugin
+reach the runtime as `FACT.txt`, staged from the FACT records of the plugin
 and its masters.
 
 ### <a id="chargen-topics"></a>🛑 The universal topics come from ONE result script
@@ -1034,7 +1043,7 @@ was taught to look:
 **"You are now Prisoner the ␣ in the Fighters Guild."** `%PCRank` and
 `%NextPCRank` resolve through `Interpreter::Context`, and all three rank
 getters returned `""`. The names are the FACT record's ten `RNAM`
-subrecords, which the sidecar was not staging; they now ride in `MWFA.txt`
+subrecords, which the sidecar was not staging; they now ride in `FACT.txt`
 beside the requirement rows. A **non-member reads rank 0**, not "no rank" —
 Morrowind's own quirk, and exactly what makes the line read correctly in the
 INFO that admits the player. Only dialogue text goes through
@@ -1069,7 +1078,7 @@ got wrong and cost several rounds:
   pushed `0418E9F6` to `0518E9F6` -- one past the last master, resolving to
   nothing. `pack_record` takes the id as given.
 
-Verified on the built ESM: all 2,079 advertised ids in `MWQS.txt` resolve to a
+Verified on the built ESM: all 2,079 advertised ids in `quests_formid.txt` resolve to a
 real QUST, none missing, each with an objective per journal page.
 
 ### <a id="objectives-must-be-displayed"></a>🛑 A journal stage is the CONSOLE's `setstage`, then a wait for `IsRunning`
@@ -1200,7 +1209,7 @@ reads both corpora and expands the loops;
 
 ### <a id="reference-index-unlocked"></a>The reference index is what unblocked the object commands
 
-`MWRF.txt` ([placed references](#placed-references)) was the one missing piece
+`refs_formid.txt` ([placed references](#placed-references)) was the one missing piece
 under a whole tier of commands, because almost every one of them names a
 reference rather than a base record. Porting it plus the commands behind it
 moved the stubbed total from 20,489 call sites to **16,453**:
@@ -1227,7 +1236,7 @@ the `GetPos`/`SetPos`/`Rotate`/`MoveWorld` family — which is
 
 ### <a id="placed-references"></a>`id->Command` resolves through a placement table
 
-**Code:** `morrowind_sidecar.py:_ref_lines`, `MWRF.txt`, `plugin/game_calls.cpp`
+**Code:** `morrowind_sidecar.py:_ref_lines`, `refs_formid.txt`, `plugin/game_calls.cpp`
 
 `Disable`, `StartCombat` and the Transformation commands act on a PLACED
 reference named by its base id — `"TR_m3_Yak gro-Yam"->Enable`. The runtime
@@ -1235,9 +1244,9 @@ already mapped FormID→id for speakers (so a click finds the NPC); this is the
 other direction, and it needs its own table because a base record is not a
 thing in the world.
 
-`MWRF.txt` is `id=Plugin|FormID` where the id is the BASE record's EditorID
+`refs_formid.txt` is `id=Plugin|FormID` where the id is the BASE record's EditorID
 and the FormID is the PLACEMENT's, resolved through the running load order by
-`Game.GetFormFromFile` exactly as `MWID.txt` and `MWQS.txt` are.
+`Game.GetFormFromFile` exactly as `items_formid.txt` and `quests_formid.txt` are.
 
 🛑 **First placement wins, and that is very nearly unambiguous.** OpenMW's
 `searchPtr` tries active cells first, then every cell, taking the first match
@@ -1264,7 +1273,7 @@ that this plugin does not place — those correctly report and do nothing.
 
 Each TES3 Journal topic becomes one QUST: a stage per journal index, the page
 as the stage's log entry, the `QuestStatus=Name` page as FULL, `Finished` as
-the completes-quest bit. No objectives. `MWQS.txt` maps the authored id to
+the completes-quest bit. No objectives. `quests_formid.txt` maps the authored id to
 `Plugin|FormID`; `Journal` and `SetJournalIndex` call the
 `Quest.SetCurrentStageID` native. `AddJournalEntry` stages the ENTRY's index
 even when the quest's own index does not rise — a lower page added late is
@@ -1303,7 +1312,7 @@ bare and explicit) read and write. A persuasion's TEMPORARY change lives only
 inside the open conversation and is folded into the base when it ends (below),
 so a save never carries it.
 
-## <a id="npc-stats"></a>The speaker's stats: `MWNP.txt` carries what OpenMW derives
+## <a id="npc-stats"></a>The speaker's stats: `NPC_.txt` carries what OpenMW derives
 
 **Code:** `tes5_import/dialogue/morrowind_autocalc.py`,
 `morrowind_sidecar_source.py`, `plugin/script_tables.cpp`
@@ -1320,9 +1329,9 @@ id=race|class|faction|rank|disposition|female|name|level|reputation|personality|
 ```
 
 with `services` from AIDT, or from the CLASS when the NPC is autocalc, as
-`Npc::getServices` chooses. Two more tables ride beside it: `MWGS.txt`, every
+`Npc::getServices` chooses. Two more tables ride beside it: `GMST.txt`, every
 GMST of the chain as `name=type,value` (`s`/`i`/`f`), because the persuasion
-formula is nine GMSTs deep and none may be guessed; and `MWSK.txt`, the SKIL
+formula is nine GMSTs deep and none may be guessed; and `SKIL.txt`, the SKIL
 rows `index=attribute|specialization|use0,use1,use2,use3`, for the skill-use
 credit a persuasion pays.
 
@@ -1378,6 +1387,49 @@ hook inside Skyrim's menu and is not applied.
 
 Each was found at its registration (`lea r9,[callback]; lea r8,"Actor"; lea
 rdx,"<name>"`) and inverted through the Address Library.
+
+## <a id="sound-opcodes"></a>The sound commands
+
+TES3 scripts name a **SOUN id**; the record Skyrim plays is the **SNDR** the
+import minted, which `SOUN.txt` maps (see
+[tes5_import_sound.md](tes5_import_sound.md#the-runtime-sound-table)). Measured
+over the Tamriel Rebuilt chain: 9 of the 11 sound commands are ported, covering
+**1,536 call sites** — `playsound` 804, `playsound3d` 280, `getsoundplaying`
+120, `playsoundvp` 97, `playsound3dvp` 85, `stopsound` 72, `playloopsound3dvp`
+59, `playloopsound3d` 19.
+
+| Native | 1.6.659 | id |
+|---|---|---|
+| `Sound.Play` | `0x9eaad0` | 56740 |
+| `Sound.PlayAndWait` | `0x9eabf0` | 56741 |
+| `Sound.StopInstance` | `0x9ead70` | 56742 |
+| `Sound.SetInstanceVolume` | `0x9eadc0` | 56743 |
+
+All four register against the class string `'Sound'` in one function at
+`0x9eaeb0`, and each id exists in all 12 shipped versionlibs. `Play` and
+`PlayAndWait` are MEMBER functions, so the SNDR form is `self`; the other two
+are global and take a tag.
+
+🛑 **`Sound.Play` RETURNS the playback instance id, and that id is the whole
+mechanism.** Skyrim has no "is this instance playing" native, so `StopSound`
+and `GetSoundPlaying` answer from what this session started, keyed by
+`(reference, sound)` — `StopSound` stops what THIS reference started, and a
+stopped sound is forgotten in the same step so it stops reporting as playing.
+That matches the authored use: of 243 `GetSoundPlaying` sites, 157 test `== 0`
+immediately before starting a loop.
+
+🛑 **A `cXX` command is segment 5, not segment 3.** The segment is chosen by
+whether the argument string holds a `/` (`Extensions::registerInstruction`),
+and `X` is consumed by the COMPILER, which pushes nothing for it. Installing
+`playsound`/`playloopsound3d`/`stopsound` with `Real3` left all three as
+logging stubs while the `cff` forms worked, because the stub pass decodes a
+segment-3 word as `(word >> 8) & 0x3ffff` and the opcode constants are far
+larger than that field. The volume a script writes after a `cXX` command never
+reaches the stack; only the `VP` forms carry one.
+
+`say`, `saydone` and `streammusic` remain stubs: `Say` names a file under
+`Sound\Vo\`, which is not converted yet
+([the plan](../plans/morrowind_voice_tree.md)).
 
 ## <a id="licensing"></a>Licensing
 

@@ -1,0 +1,3 @@
+0300A001=scripts.esm|test_door|TestDoorScript
+0300A002=scripts.esm|test_door|TestDoorScript
+0300B001=scripts.esm|test_actor|TestActorScript

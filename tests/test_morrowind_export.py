@@ -13,6 +13,7 @@ import pytest
 from tes4_export import morrowind_land as land
 from tes4_export import tes3_reader as reader
 from tes4_export.export_morrowind import MorrowindContext, convert_plugin
+from tes4_export.record_types.morrowind_dialog import DIAL_SIG, INFO_SIG
 from tes4_export.morrowind_cell import parse_cell
 from tes4_export.morrowind_ids import IdIndex, encode_editor_id, marker_formid
 from tes4_export.morrowind_markers import classify, place_name
@@ -231,15 +232,36 @@ def test_cell_refs_parse_positionally(morrowind_records):
 
 @needs_morrowind
 def test_conversion_emits_no_duplicate_formids(morrowind_records):
-    """Every emitted record must own a distinct FormID."""
+    """Every emitted record must own a distinct FormID.
+
+    DIAL/INFO are excluded: they are keyed by topic name and INAM, neither of
+    which is a FormID, and INAM is unique only within its topic.
+    See: docs/reference/morrowind_dialogue_format.md#info-identity
+    """
     ctx = MorrowindContext()
     out = convert_plugin(morrowind_records, ctx)
     seen = set()
-    for records in out.values():
+    for signature, records in out.items():
+        if signature in (DIAL_SIG, INFO_SIG):
+            continue
         for form_id, _ in records:
             assert form_id not in seen, f'duplicate FormID {form_id}'
             seen.add(form_id)
     assert len(seen) > 300000
+
+
+@needs_morrowind
+def test_an_info_is_identified_by_its_topic_and_inam(morrowind_records):
+    """INAM alone is not an identity: Morrowind.esm reuses 99 across topics.
+
+    See: docs/reference/morrowind_dialogue_format.md#info-identity
+    """
+    infos = convert_plugin(morrowind_records, MorrowindContext())[INFO_SIG]
+    topic = [next(l for l in lines if l.startswith('Topic=')) for _i, lines in infos]
+    pairs = {(t, inam) for t, (inam, _lines) in zip(topic, infos)}
+    assert len(pairs) == len(infos), 'topic + INAM identifies a response'
+    assert len({inam for inam, _ in infos}) == len(infos) - 211, \
+        'the 211 reused-INAM records are authored data, not an export defect'
 
 
 @needs_morrowind

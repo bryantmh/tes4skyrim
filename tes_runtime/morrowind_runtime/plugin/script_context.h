@@ -16,6 +16,7 @@
 #include <components/interpreter/context.hpp>
 
 #include "actor.h"
+#include "script_tables.h"
 
 namespace mwruntime {
 
@@ -73,6 +74,15 @@ public:
                         bool global) override;
     void  setMemberFloat(ESM::RefId id, std::string_view name, float value,
                          bool global) override;
+
+protected:
+    // The layout the compiled local indices address, and which owner's values
+    // they read. A dialogue speaker takes both from its own script; an object
+    // script instance overrides them to bind its PLACEMENT and the layout the
+    // COMPILER built from the body.
+    // See: docs/plans/morrowind_object_scripts.md#instances
+    virtual const ScriptLocals* Layout() const;
+    virtual std::string OwnerKey() const;
 
 private:
     // The speaker's local at `index` among its locals of `type`.
