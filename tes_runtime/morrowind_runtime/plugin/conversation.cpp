@@ -691,7 +691,12 @@ void Barter() {
         return;
     }
     Log("conversation: barter with '%s'", g_speaker.c_str());
-    if (Hooks().showBarterMenu) Hooks().showBarterMenu(g_speaker);
+    if (!Hooks().showBarterMenu) return;
+    // The dialogue closes first: its close message is queued ahead of the
+    // posted barter open, so the speaker's menu never sits under this one.
+    const std::string speaker = g_speaker;
+    CloseMenu();
+    Hooks().showBarterMenu(speaker);
 }
 
 void SelectItem(int index) {

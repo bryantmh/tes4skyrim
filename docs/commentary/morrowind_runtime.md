@@ -1361,9 +1361,9 @@ title, delivered like any other topic so its result script runs.
 `DialogueWindow::updateTopics` lists it. Choosing it first asks `Service
 Refusal` with the choice set to `Barter` (1) and the disposition test
 INVERTED, as `checkServiceRefused` does; a refusal is delivered as a reply and
-nothing opens. Otherwise the `Actor.ShowBarterMenu` native runs on the speaker
-from the game thread, over the open dialogue -- the same stacking vanilla uses
-when a fragment opens it over "Dialogue Menu". The importer already gives every
+nothing opens. Otherwise the dialogue CLOSES and the `Actor.ShowBarterMenu`
+native runs on the speaker from the game thread: the close is posted before
+the barter open, so the two never stack. The importer already gives every
 actor with services a vendor faction, so the menu shows their stock and gold.
 
 OpenMW's per-trade disposition change (`applyBarterDispositionChange`) has no
