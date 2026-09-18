@@ -78,6 +78,9 @@ struct GameHooks {
     // has no staged placement at all, and it is exactly the spawned creature
     // whose death a quest turns on.
     bool (*isDead)(std::uint32_t runtimeFormId) = nullptr;
+    // Whether that reference's 3D is LOADED, which is the whole of TES3's rule
+    // for when a local script runs.
+    bool (*is3DLoaded)(std::uint32_t runtimeFormId) = nullptr;
     // `axis`: 0 x, 1 y, 2 z. Position is world units, angle is DEGREES --
     // the engine stores radians and its getters convert, so these do not.
     float (*position)(const std::string& ref, int axis) = nullptr;

@@ -189,6 +189,7 @@ MessageBoxFn   g_messageBox = nullptr;
 PlaceAtMeFn    g_placeAtMe = nullptr;
 RefQueryFn     g_isDead = nullptr;
 GetFormFn      g_getForm = nullptr;
+RefQueryFn     g_is3DLoaded = nullptr;
 SoundPlayFn      g_soundPlay = nullptr;
 StopInstanceFn   g_stopInstance = nullptr;
 InstanceVolumeFn g_instanceVolume = nullptr;
@@ -702,10 +703,10 @@ void StopSoundInstance(int instance) {
 // Whether a placement is a dead actor, for the tick's `OnDeath`. Reads at
 // once: the tick already runs on the game thread, so there is nothing to post.
 // 🛑 By RUNTIME FormID, so a reference `PlaceAtPC` created answers too -- it
-// has no authored placement for GetFormFromFile to name. The form is CACHED
-// because this runs for every bound instance 15 times a second.
-bool IsDeadRef(std::uint32_t runtimeFormId) {
-    if (!g_isDead || !g_getForm || !runtimeFormId) return false;
+// has no authored placement for GetFormFromFile to name. CACHED because the
+// tick asks for every bound instance 15 times a second.
+void* RefByRuntimeId(std::uint32_t runtimeFormId) {
+    if (!g_getForm || !runtimeFormId) return nullptr;
     static std::map<std::uint32_t, void*> cache;
     auto found = cache.find(runtimeFormId);
     if (found == cache.end()) {
@@ -714,7 +715,18 @@ bool IsDeadRef(std::uint32_t runtimeFormId) {
             g_getForm(PapyrusVm(), 0, nullptr,
                       static_cast<std::int32_t>(runtimeFormId))).first;
     }
-    return found->second && g_isDead(PapyrusVm(), 0, found->second);
+    return found->second;
+}
+
+bool IsDeadRef(std::uint32_t runtimeFormId) {
+    void* ref = RefByRuntimeId(runtimeFormId);
+    return ref && g_isDead && g_isDead(PapyrusVm(), 0, ref);
+}
+
+// TES3's whole rule for when a local script runs: while its object is loaded.
+bool Is3DLoadedRef(std::uint32_t runtimeFormId) {
+    void* ref = RefByRuntimeId(runtimeFormId);
+    return ref && g_is3DLoaded && g_is3DLoaded(PapyrusVm(), 0, ref);
 }
 
 // A `MessageBox` raised by an object script, which has no dialogue menu to
@@ -850,6 +862,8 @@ void InstallGameCalls() {
                                       ids::kRefPlaceAtMe);
     g_isDead = Native<RefQueryFn>("Actor.IsDead", ids::kActorIsDead);
     g_getForm = Native<GetFormFn>("Game.GetForm", ids::kGameGetForm);
+    g_is3DLoaded = Native<RefQueryFn>("ObjectReference.Is3DLoaded",
+                                      ids::kRefIs3DLoaded);
     g_advanceSkill = Native<AdvanceSkillFn>("Game.AdvanceSkill",
                                             ids::kGameAdvanceSkill);
     GameHooks& hooks = Hooks();
@@ -861,6 +875,7 @@ void InstallGameCalls() {
     hooks.showMessage = ShowMessage;
     hooks.placeAtPlayer = PlaceAtPlayer;
     hooks.isDead = IsDeadRef;
+    hooks.is3DLoaded = Is3DLoadedRef;
     hooks.playSound = PlaySoundAt;
     hooks.stopSound = StopSoundInstance;
     hooks.goldCount = GoldCount;

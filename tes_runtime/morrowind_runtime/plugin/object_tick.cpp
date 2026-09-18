@@ -62,13 +62,24 @@ void RunOneTick() {
     }
     const std::vector<ObjectScript*> live = BoundInstances();
     const bool cellChanged = PlayerCellChanged();
+    std::size_t ran = 0;
     for (ObjectScript* instance : live) {
+        // 🛑 TES3 runs a local script only while its object is LOADED. Without
+        // this an instance ticks forever once bound, for a thing that left the
+        // world -- and the bound set only ever grows.
+        // See: docs/plans/morrowind_object_scripts.md#unload-with-the-cell
+        if (Hooks().is3DLoaded &&
+            !Hooks().is3DLoaded(instance->RuntimeFormId())) {
+            UnbindInstance(instance->RuntimeFormId());
+            continue;
+        }
         // Before the body: both must already be raised when it reads them.
         instance->PollDeath();
         if (cellChanged) instance->Events().cellChanged = true;
         instance->RunOnce();
+        ++ran;
     }
-    g_lastCount = live.size();
+    g_lastCount = ran;
 }
 
 // 🛑 The wait SLEEPS OFF the game thread and only the tick itself is posted.

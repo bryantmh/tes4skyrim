@@ -6,11 +6,11 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 
 | Status | Commands | Call sites |
 |---|---:|---:|
-| ported | 85 | 77115 |
+| ported | 95 | 79784 |
 | no-op | 5 | 2615 |
-| STUB | 397 | 11851 |
+| STUB | 387 | 9182 |
 
-🛑 **207 of the 397 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 190 command(s) below.
+🛑 **207 of the 387 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 180 command(s) below.
 
 ## Stubbed, and something calls it
 
@@ -18,15 +18,12 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 |---|---|---|---:|
 | `positioncell` | Transformation | `ffffczz` | 1232 |
 | `aiwander` | Ai | `fff/llllllllll` | 1207 |
-| `getsecondspassed` | Misc | — → `f` | 1005 |
-| `playsound` | Sound | `cXX` | 804 |
 | `addspell` | Stats | `cz` | 570 |
 | `help` | Misc | — | 398 |
 | `moveworld` | Transformation | `cf` | 363 |
 | `cast` | Misc | `SS` | 310 |
 | `aitravel` | Ai | `fff/lx` | 292 |
 | `say` | Sound | `SS` | 292 |
-| `playsound3d` | Sound | `cXX` | 280 |
 | `aifollow` | Ai | `cffff/llllllll` | 266 |
 | `placeatme` | Transformation | `clflX` | 241 |
 | `getspell` | Stats | `c` → `l` | 207 |
@@ -37,21 +34,15 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `getaipackagedone` | Ai | — → `l` | 150 |
 | `move` | Transformation | `cf` | 136 |
 | `getbuttonpressed` | Gui | — → `l` | 131 |
-| `placeatpc` | Transformation | `clflX` | 128 |
 | `hassoulgem` | Container | `c` → `l` | 123 |
 | `geteffect` | Misc | `S` → `l` | 121 |
-| `getsoundplaying` | Sound | `c` → `l` | 120 |
 | `drop` | Misc | `cl` | 115 |
 | `explodespell` | Misc | `S` | 106 |
-| `playsoundvp` | Sound | `cff` | 97 |
 | `rotateworld` | Transformation | `cf` | 92 |
-| `playsound3dvp` | Sound | `cff` | 85 |
 | `getspelleffects` | Misc | `c` → `l` | 82 |
 | `getcurrentaipackage` | Ai | — → `l` | 75 |
 | `face` | Ai | `ffX` | 73 |
-| `stopsound` | Sound | `cXX` | 72 |
 | `removesoulgem` | Misc | `c/l` | 64 |
-| `playloopsound3dvp` | Sound | `cff` | 59 |
 | `getcurrentweather` | Sky | — → `l` | 55 |
 | `removeeffects` | Stats | `l` | 54 |
 | `getlos` | Ai | `c` → `l` | 50 |
@@ -83,7 +74,6 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `hasitemequipped` | Container | `c` → `l` | 20 |
 | `getstrength` | Stats | — → `f` | 19 |
 | `gotojail` | Misc | — | 19 |
-| `playloopsound3d` | Sound | `cXX` | 19 |
 | `resurrect` | Stats | — | 19 |
 | `setatstart` | Transformation | — | 19 |
 | `getcommondisease` | Stats | — → `l` | 18 |
@@ -207,6 +197,20 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `setwillpower` | Stats | `f` | 1 |
 | `streammusic` | Sound | `S` | 1 |
 
+## Blocked on EXPORT or IMPORT, not on the runtime
+
+Porting the opcode alone cannot fix these: the data it would name is not converted yet.
+
+| Calls | Needs | Commands | Why |
+|---:|---|---|---|
+| 1943 | PACK | `aiwander` `aitravel` `aifollow` `aiescort` `getaipackagedone` | `PACK.txt` IS exported but no package is staged, and Skyrim needs a real PACK record rather than a runtime call |
+| 1420 | CELL | `positioncell` `placeitemcell` `aifollowcell` `getpccell` | `CELL.txt` IS exported but no cell id -> FormID table is staged |
+| 978 | SPEL | `addspell` `removespell` `getspell` `hasspell` | no `SPEL.txt` is exported, so a spell id resolves to nothing |
+| 673 | MGEF/ENCH | `cast` `explodespell` `getspelleffects` `geteffect` `removeeffects` | no `MGEF.txt` or `ENCH.txt`; an effect has no FormID to name |
+| 215 | SLGM | `addsoulgem` `removesoulgem` `hassoulgem` `dropsoulgem` | TES3 soul gems export as MISC, so they are clutter in Skyrim |
+
+🛑 **A TES3 soul gem carries NO soul field.** OpenMW decides by id prefix -- `mwclass/misc.cpp:isSoulGem` is `getRefId().startsWith("misc_soulgem")` -- and the trapped soul lives on the CellRef, not the base record. Measured over TR_Mainland plus the Morroblivion patch: 6 MISC records match that prefix and 3 more merely contain "soulgem", so those 3 are NOT soul gems in Morrowind either. Converting them to SLGM means matching the prefix, never the name.
+
 ## Ported
 
 | Command | Domain | Signature | Calls |
@@ -229,10 +233,12 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `menumode` | Misc | — → `l` | 1111 |
 | `startscript` | Misc | `c` | 1104 |
 | `getdeadcount` | Stats | `c` → `l` | 1074 |
+| `getsecondspassed` | Misc | — → `f` | 1005 |
 | `cellchanged` | Cell | — → `l` | 983 |
 | `ondeath` | Stats | — → `l` | 958 |
 | `getpos` | Transformation | `c` → `f` | 911 |
 | `onactivate` | Misc | — → `l` | 852 |
+| `playsound` | Sound | `cXX` | 804 |
 | `getdistance` | Transformation | `c` → `f` | 782 |
 | `stopscript` | Misc | `c` | 695 |
 | `setpos` | Transformation | `cf` | 670 |
@@ -240,6 +246,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `activate` | Misc | `x` | 504 |
 | `getpccell` | Cell | `c` → `l` | 350 |
 | `unlock` | Misc | — | 332 |
+| `playsound3d` | Sound | `cXX` | 280 |
 | `stopcombat` | Ai | `x` | 276 |
 | `modreputation` | Dialogue | `l` | 262 |
 | `sethealth` | Stats | `f` | 245 |
@@ -252,16 +259,22 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `setdisposition` | Stats | `l` | 159 |
 | `setalarm` | Ai | `l` | 133 |
 | `setdelete` | Misc | `l` | 133 |
+| `placeatpc` | Transformation | `clflX` | 128 |
 | `equip` | Container | `cX` | 127 |
+| `getsoundplaying` | Sound | `c` → `l` | 120 |
 | `pcexpell` | Stats | `/S` | 119 |
 | `modpccrimelevel` | Stats | `f` | 114 |
 | `getpcrank` | Stats | `/S` → `l` | 110 |
 | `modfight` | Ai | `l` | 109 |
+| `playsoundvp` | Sound | `cff` | 97 |
 | `getpccrimelevel` | Stats | — → `f` | 91 |
 | `getdisposition` | Stats | — → `l` | 90 |
+| `playsound3dvp` | Sound | `cff` | 85 |
 | `getlocked` | Misc | — → `l` | 74 |
 | `scriptrunning` | Misc | `c` → `l` | 73 |
+| `stopsound` | Sound | `cXX` | 72 |
 | `getangle` | Transformation | `c` → `f` | 69 |
+| `playloopsound3dvp` | Sound | `cff` | 59 |
 | `setjournalindex` | Dialogue | `cl` | 59 |
 | `setfatigue` | Stats | `f` | 58 |
 | `getinterior` | Cell | — → `l` | 53 |
@@ -273,6 +286,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `setpccrimelevel` | Stats | `f` | 37 |
 | `setmagicka` | Stats | `f` | 33 |
 | `getfight` | Ai | — → `l` | 22 |
+| `playloopsound3d` | Sound | `cXX` | 19 |
 | `modfatigue` | Stats | `f` | 14 |
 | `getmagicka` | Stats | `x` → `f` | 12 |
 | `pcjoinfaction` | Stats | `/S` | 12 |

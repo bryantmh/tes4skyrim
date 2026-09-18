@@ -324,6 +324,13 @@ constexpr std::uint64_t kActorIsDead = 54705;
 // no authored placement, so Game.GetFormFromFile can never name it.
 constexpr std::uint64_t kGameGetForm = 55566;
 
+// ObjectReference.Is3DLoaded() (0x9ce880), the r9 of its registration beside
+// 'Is3DLoaded'. TES3 runs a local script only while its object is LOADED, and
+// this is that test -- without it an instance ticks forever once bound, for a
+// thing no longer in the world.
+// See: docs/plans/morrowind_object_scripts.md#unload-with-the-cell
+constexpr std::uint64_t kRefIs3DLoaded = 56188;
+
 // What barter and persuasion reach through, each the r9 of its registration
 // beside the name string (`lea r9,[callback]; lea r8,"Actor"; lea rdx,"<name>"`)
 // on 1.6.659:

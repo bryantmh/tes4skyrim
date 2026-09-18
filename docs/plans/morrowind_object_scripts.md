@@ -1,6 +1,56 @@
 # Object scripts on the Morrowind interpreter
 
-Status: PLAN — step 3's command port is largely DONE; the tick is not started.
+Status: **BUILT and CONFIRMED IN GAME** (2026-09-18). Object scripts run on the
+interpreter; the TES3 Papyrus path is deleted. Remaining gaps are individual
+COMMANDS, listed under [what is left](#what-is-left).
+
+## <a id="status"></a>Implementation status, measured
+
+| | Before | Now |
+|---|---:|---:|
+| SCPT bodies that compile | 1,054 of 3,569 (30%) | **3,395 of 3,569 (95.1%)** |
+| Ported commands / call sites | 82 / 74,322 | **95 / 77,115** |
+| Quests OK | 792 | **1,201** |
+| Quests BLOCKED by an object script | **699** | **0** |
+| Quests DEGRADED by an unported command | 186 | 476 |
+| Quests UNREACHABLE (nothing sets the stage) | 409 | 409 |
+
+The BLOCKED tier is gone: a stage an object script sets is now as reachable as
+one set from dialogue, which is what moved 699 quests. The DEGRADED count rose
+because those quests are no longer hidden behind BLOCKED — the same stages are
+now reported against the exact command they still need.
+
+✅ **CONFIRMED IN GAME**: Sharnoga gra-Mal's Fighters Guild line, all 6 quests
+`OK`. *Cursing Like a Witch* completes end to end — `PlaceAtPC` spawns the
+vermai, its script binds and ticks, `OnDeath` fires on the kill, the journal
+advances to 40 and Foedus's dialogue follows.
+
+### <a id="what-is-left"></a>What is left, ranked by stages it degrades
+
+`morrowind_quest_trace.py --all --blockers` over TR_Mainland:
+
+| Command family | Stages | Note |
+|---|---:|---|
+| `aiwander` `aifollow` `aitravel` `aifollowcell` | **444** | AI packages; the largest single win left |
+| `positioncell` | 149 | needs a cell -> FormID table, which is not staged |
+| `addspell` `removespell` `cast` `explodespell` | ~290 | needs a spell id -> FormID table |
+| `removesoulgem` `addsoulgem` | 39 | |
+| `modmercantile` `modalteration` `modalchemy` | 44 | skill mods |
+| `payfinethief` | 19 | |
+
+🛑 **Most of that is NOT runtime work.** Porting the opcode cannot help when
+the record it would name is never converted:
+[the audit's "Blocked on EXPORT or IMPORT" table](../audits/mwscript_opcodes.md#blocked-on-export-or-import-not-on-the-runtime)
+ranks them — PACK 1,943 calls, CELL 1,420, SPEL 978, MGEF/ENCH 673, SLGM 215.
+`SPEL.txt`, `MGEF.txt` and `ENCH.txt` are not exported at all; `CELL.txt` and
+`PACK.txt` ARE exported but nothing stages them into the sidecar.
+
+The skill mods (`modmercantile` and its kin) and `payfinethief` are the only
+sizeable families that are pure runtime work.
+
+🛑 **The 409 UNREACHABLE are NOT a runtime gap.** Nothing in either corpus sets
+those stages -- they are authored dead ends, or set by a mechanism TES3 itself
+does not expose as a `Journal` call.
 
 **Code it would change:** `tes_runtime/morrowind_runtime/plugin/`,
 `tes5_import/dialogue/morrowind_sidecar.py`
@@ -299,6 +349,23 @@ thread** and posts only the tick's work. The sleep is the rate.
 instance by trying `.esm` then `.esp`, which is **31,080** `Game.GetFormFromFile`
 calls for TR_Mainland's 15,540 rows, each interning a `BSFixedString`, all at
 `DataLoaded`. The extension is now resolved once per PLUGIN.
+
+#### <a id="unload-with-the-cell"></a>🛑 An instance must UNBIND when its object unloads
+
+TES3 runs a local script only while its object is loaded. Bindings are created
+lazily and were never removed, so the bound set only ever grew and instances
+kept ticking for things that had left the world.
+
+The tick now drops an instance whose `ObjectReference.Is3DLoaded()` (ID 56188)
+is false. **The binding goes; the INSTANCE stays** — its locals live in
+`DialogueState` under the instance's own key, which is what TES3 keeps across an
+unload, so a door left open is still open when the cell comes back.
+
+🛑 **KNOWN GAP: an instance binds only when a hook touches its reference** —
+an activation, or the `PlaceAtMe` return. A scripted object you merely walk
+past never ticks until you click it, so a body that acts on proximity
+(`GetDistance`) or on cell entry alone does not run yet. Closing this needs an
+enumeration of the loaded cell's references at cell-load, which is not built.
 
 #### <a id="spawned-refs-need-getform"></a>🛑 A SPAWNED reference is reachable only by its runtime FormID
 

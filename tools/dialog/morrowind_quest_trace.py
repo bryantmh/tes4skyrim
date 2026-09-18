@@ -3,8 +3,8 @@
 
 A TES3 journal quest advances by `Journal <id> <index>`, which is reached two
 ways: from an INFO's result script, which the MorrowindRuntime interpreter
-runs, or from an object script, which still goes down the lossy Papyrus path.
-A stage only object scripts set is UNREACHABLE today, and a stage whose script
+runs, or from an object script -- BOTH now run on the same interpreter, so
+neither is privileged. A stage nothing sets is UNREACHABLE, and one whose script
 needs an unported command runs but does not do what it says.
 
 So for each stage this reports who sets it, what its script needs, and the
@@ -35,6 +35,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 
 from asset_convert.sources import source_registry
 from tes5_import.dialogue.morrowind_sidecar import SIDECAR_DIR, plugin_stem
+from tools.script import mwscript_opcode_audit as opcode_audit
+
+
+#: Builtins the COMPILER emits, so no extension registers them.
+_BUILTINS = frozenset(('messagebox',))
+
+
+def implemented_commands():
+    """Every command with a real opcode, read from the runtime's own source.
+
+    🛑 DERIVED, never listed by hand. A hand-kept copy drifts silently: it
+    stood at 48 commands while the runtime had 95, so this tool reported
+    working stages as DEGRADED.
+    See: docs/plans/morrowind_object_scripts.md#the-work
+    """
+    root = os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
+    commands = opcode_audit.registrations(root)
+    real, noops = opcode_audit.installed(root)
+    ported = {c.key for c in commands.values()
+              if c.opcode.split('+')[0].rsplit('::', 1)[-1] in real}
+    return frozenset(ported | noops | _BUILTINS)
+
 
 #: `Journal <id> <index>`, the one statement that advances a quest.
 JOURNAL = re.compile(r'\bjournal\b[, \t]+"?([\w\-]+)"?[, \t]+(\d+)',
@@ -50,21 +73,8 @@ NOT_A_COMMAND = frozenset((
     'begin', 'end', 'if', 'elseif', 'else', 'endif', 'while', 'endwhile',
     'short', 'long', 'float', 'set', 'to', 'return', 'player'))
 
-#: Commands with a real opcode, plus the five no-ops that are deliberate.
-IMPLEMENTED = frozenset((
-    'journal', 'setjournalindex', 'getjournalindex', 'addtopic', 'goodbye',
-    'choice', 'messagebox', 'moddisposition', 'setdisposition',
-    'getdisposition', 'getreputation', 'setreputation', 'modreputation',
-    'getpcfacrep', 'setpcfacrep', 'modpcfacrep', 'pcjoinfaction',
-    'pcraiserank', 'pclowerrank', 'getpcrank', 'pcexpelled', 'pcexpell',
-    'pcclearexpelled', 'samefaction', 'getfactionreaction',
-    'setfactionreaction', 'modfactionreaction', 'getpccrimelevel',
-    'setpccrimelevel', 'modpccrimelevel', 'additem', 'removeitem',
-    'getitemcount', 'startscript', 'stopscript', 'scriptrunning',
-    'getdeadcount', 'getfight', 'setfight', 'modfight', 'gethello',
-    'sethello', 'modhello', 'getalarm', 'setalarm', 'modalarm', 'getflee',
-    'setflee', 'modflee',
-    'showmap', 'fadein', 'fadeout', 'fadeto', 'clearinfoactor'))
+#: Every command the runtime really implements, read from its source.
+IMPLEMENTED = implemented_commands()
 
 #: Worst-first, so a quest reports the weakest link in its chain.
 SEVERITY = {'OK': 0, 'DEGRADED': 1, 'BLOCKED': 2, 'UNREACHABLE': 3}
@@ -152,19 +162,24 @@ def scan_object_scripts(scpt_path):
 
 
 def verdict(stage_setters):
-    """`(mark, why)` for one stage, given everything that can set it."""
+    """`(mark, why)` for one stage, given everything that can set it.
+
+    🛑 An object script is a FIRST-CLASS setter: since the cutover both corpora
+    run on the same interpreter, so a stage only an object script sets is as
+    reachable as one set from dialogue. Only an unported COMMAND degrades it.
+    See: docs/plans/morrowind_object_scripts.md#the-work
+    """
     if not stage_setters:
         return 'UNREACHABLE', 'nothing sets this stage'
-    spoken = [s for s in stage_setters if s['source'] == 'dialogue']
-    if not spoken:
-        return 'BLOCKED', 'only an object script sets it (Papyrus path)'
     missing = set()
-    for setter in spoken:
+    for setter in stage_setters:
         missing |= {c for c in setter['commands'] if c not in IMPLEMENTED}
+    sources = {s['source'] for s in stage_setters}
+    how = ' and '.join(sorted(sources))
     if missing:
-        return 'DEGRADED', 'runs, but ' + ', '.join(
+        return 'DEGRADED', f'runs from {how}, but ' + ', '.join(
             sorted(missing)) + ' do nothing'
-    return 'OK', 'set from dialogue'
+    return 'OK', f'set from {how}'
 
 
 def stage_rows(quest, entries, setters):

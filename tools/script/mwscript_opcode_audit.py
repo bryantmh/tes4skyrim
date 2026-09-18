@@ -290,6 +290,54 @@ def _rows(fh, rows, header):
     fh.write('\n')
 
 
+#: Commands the RUNTIME cannot fix alone, and the data each one waits on.
+DATA_BLOCKED = (
+    ('addspell removespell getspell hasspell', 'SPEL',
+     'no `SPEL.txt` is exported, so a spell id resolves to nothing'),
+    ('cast explodespell getspelleffects geteffect removeeffects', 'MGEF/ENCH',
+     'no `MGEF.txt` or `ENCH.txt`; an effect has no FormID to name'),
+    ('positioncell placeitemcell aifollowcell getpccell', 'CELL',
+     '`CELL.txt` IS exported but no cell id -> FormID table is staged'),
+    ('aiwander aitravel aifollow aiescort getaipackagedone', 'PACK',
+     '`PACK.txt` IS exported but no package is staged, and Skyrim needs a '
+     'real PACK record rather than a runtime call'),
+    ('addsoulgem removesoulgem hassoulgem dropsoulgem', 'SLGM',
+     'TES3 soul gems export as MISC, so they are clutter in Skyrim'),
+)
+
+
+def _write_data_blocked(fh, live):
+    """The section naming which gaps need EXPORT or IMPORT work, not runtime.
+
+    Ranked by the call sites the audit just measured, so the cost of each is
+    the tool's own number rather than a recollection.
+    """
+    calls = {c.key: c.calls for c in live}
+    rows = []
+    for names, record, why in DATA_BLOCKED:
+        listed = names.split()
+        total = sum(calls.get(n, 0) for n in listed)
+        if total:
+            rows.append((total, listed, record, why))
+    if not rows:
+        return
+    fh.write('## Blocked on EXPORT or IMPORT, not on the runtime\n\n')
+    fh.write('Porting the opcode alone cannot fix these: the data it would '
+             'name is not converted yet.\n\n')
+    fh.write('| Calls | Needs | Commands | Why |\n|---:|---|---|---|\n')
+    for total, listed, record, why in sorted(rows, reverse=True):
+        shown = ' '.join(f'`{n}`' for n in listed)
+        fh.write(f'| {total} | {record} | {shown} | {why} |\n')
+    fh.write('\n🛑 **A TES3 soul gem carries NO soul field.** OpenMW decides '
+             'by id prefix -- `mwclass/misc.cpp:isSoulGem` is '
+             '`getRefId().startsWith("misc_soulgem")` -- and the trapped soul '
+             'lives on the CellRef, not the base record. Measured over '
+             'TR_Mainland plus the Morroblivion patch: 6 MISC records match '
+             'that prefix and 3 more merely contain "soulgem", so those 3 are '
+             'NOT soul gems in Morrowind either. Converting them to SLGM '
+             'means matching the prefix, never the name.\n\n')
+
+
 def write_markdown(path, commands, real, noops, export):
     """Writes the human-readable audit: the work that is left, then the rest.
 
@@ -323,6 +371,7 @@ def write_markdown(path, commands, real, noops, export):
                  f'work is the {len(live)} command(s) below.\n\n')
         fh.write('## Stubbed, and something calls it\n\n')
         _rows(fh, live, 'Command')
+        _write_data_blocked(fh, live)
         fh.write('## Ported\n\n')
         _rows(fh, _ranked(buckets['ported']), 'Command')
         fh.write('## Deliberate no-ops\n\n')

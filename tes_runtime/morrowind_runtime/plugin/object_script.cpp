@@ -150,14 +150,26 @@ void BindSpawnedInstance(std::uint32_t runtimeFormId,
         baseId.c_str());
 }
 
+// 🛑 The binding goes, the INSTANCE stays. Its locals live in DialogueState
+// under the instance's own key, which is what TES3 keeps across an unload --
+// a door that was opened is still open when you come back.
+void UnbindInstance(std::uint32_t runtimeFormId) {
+    g_byRuntimeId.erase(runtimeFormId);
+}
+
 void ClearInstanceBindings() { g_byRuntimeId.clear(); }
 
 std::size_t BoundInstanceCount() { return g_byRuntimeId.size(); }
 
+// Only the entries that ARE an instance: a reference the hooks asked about and
+// that runs no script is remembered as a null, so the answer is not looked up
+// again on every activation.
 std::vector<ObjectScript*> BoundInstances() {
     std::vector<ObjectScript*> out;
     out.reserve(g_byRuntimeId.size());
-    for (const auto& entry : g_byRuntimeId) out.push_back(entry.second);
+    for (const auto& entry : g_byRuntimeId) {
+        if (entry.second) out.push_back(entry.second);
+    }
     return out;
 }
 

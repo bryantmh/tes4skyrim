@@ -374,6 +374,8 @@ void ObjectScriptRunCases() {
 // See: docs/plans/morrowind_object_scripts.md#tick-rate
 std::string TestCell() { return "Test Cell"; }
 
+bool Never3DLoaded(std::uint32_t) { return false; }
+
 void TickCases() {
     std::printf("the tick runs bound instances at a fixed rate\n");
     ClearInstances();
@@ -403,6 +405,19 @@ void TickCases() {
     const std::size_t stalled = TicksRun();
     TickObjectScripts(60.0f);
     Check(TicksRun() - stalled < 20, "a long stall is clamped, not caught up");
+
+    // 🛑 An unloaded object stops ticking and is FORGOTTEN, or the bound set
+    // only ever grows. See #unload-with-the-cell.
+    std::printf("an unloaded object stops ticking\n");
+    Hooks().is3DLoaded = Never3DLoaded;
+    TickObjectScripts(TickDelta());
+    Check(LastTickCount() == 0, "an unloaded instance does not run");
+    Check(BoundInstanceCount() == 0, "and it is unbound, not kept forever");
+
+    // Its locals survive: TES3 keeps them across an unload.
+    Check(State().Var("scripts.esm|00A001", "open") == 1.0f,
+          "but its locals are kept for when the cell loads again");
+    Hooks().is3DLoaded = nullptr;
     Hooks().playerCell = nullptr;
     ClearInstances();
 }

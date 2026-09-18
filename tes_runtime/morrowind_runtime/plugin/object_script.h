@@ -141,6 +141,12 @@ void BindSpawnedInstance(std::uint32_t runtimeFormId,
 void ClearInstanceBindings();
 std::size_t BoundInstanceCount();
 
+// Forgets the binding for one reference, so it stops ticking. Its LOCALS are
+// kept: TES3 keeps a local script's variables across an unload, and the
+// instance rebinds with them intact the next time the cell loads.
+// See: docs/plans/morrowind_object_scripts.md#unload-with-the-cell
+void UnbindInstance(std::uint32_t runtimeFormId);
+
 // Every instance bound to a live reference, which is the set the tick runs.
 std::vector<ObjectScript*> BoundInstances();
 
