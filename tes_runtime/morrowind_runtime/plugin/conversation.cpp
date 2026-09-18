@@ -1,3 +1,4 @@
+#include "game_calls.h"
 #include "conversation.h"
 
 #include <algorithm>

@@ -113,7 +113,12 @@ int GameActor::AiSetting(int which) const {
     return State().AiSetting(mId, which);
 }
 
-int GameActor::ItemCount(const RefId&) const { return Stub(0); }
+// An Item rule asks what the PLAYER carries, never the speaker: TES3 writes
+// the bare item id and the subject is implicit.
+int GameActor::ItemCount(const RefId& id) const {
+    if (!Hooks().itemCount) return Stub(0);
+    return Hooks().itemCount("player", id);
+}
 
 int GameActor::JournalIndex(const RefId& quest) const {
     return State().JournalIndex(quest);

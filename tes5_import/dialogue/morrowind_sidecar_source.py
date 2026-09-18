@@ -25,7 +25,8 @@ from tes4_export.export_morrowind import format_record
 from tes4_export.record_types.morrowind_dialog import (DIAL_SIG, INFO_SIG,
                                                        export_DIAL,
                                                        export_INFO, info_id)
-from tes4_export.tes3_reader import get_string, get_subrecord, read_file
+from tes4_export.tes3_reader import (get_all_subrecords, get_string,
+                                       get_subrecord, read_file)
 
 #: NPDT comes in two sizes; (disposition, rank) byte offsets in each.
 _NPDT_FIELDS = {52: (44, 46), 12: (2, 4)}
@@ -113,10 +114,10 @@ def _actor_line(rec) -> str:
 
 
 def _faction_line(rec) -> str:
-    """`id=attr1,attr2|skills|a1,a2,primary,favoured,rep;...` for one FACT.
+    """`id=attr1,attr2|skills|rows|rank names` for one FACT.
 
-    The rank rows are what the filter's RankRequirement measures the player
-    against, so joining and promotion are authored data rather than a guess.
+    The rows are what RankRequirement measures the player against; the names
+    are what `%PCRank` and `%NextPCRank` print.
     See: docs/commentary/morrowind_runtime.md#rank-requirements
     """
     data = get_subrecord(rec, 'FADT')
@@ -130,8 +131,10 @@ def _faction_line(rec) -> str:
     skills = ','.join(
         str(value) for value in values[_FADT_SKILLS_AT:_FADT_SKILLS_AT + 7]
         if value >= 0)
+    names = ','.join(get_string(sub).replace(',', ' ').replace('|', ' ')
+                     for sub in get_all_subrecords(rec, 'RNAM'))
     return (f'{rec.record_id}={values[0]},{values[1]}|{skills}|'
-            + ';'.join(rows))
+            + ';'.join(rows) + '|' + names)
 
 
 def _take_dial(out: dict, rec, topic: str) -> str:

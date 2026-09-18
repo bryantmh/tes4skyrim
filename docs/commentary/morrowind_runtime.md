@@ -974,6 +974,111 @@ C++, so a total conversion with a different opening scene seeds from its own
 chargen INFO. Measured over the merged TR_Mainland chain: **9 topics**, and
 152 INFOs seed four or more.
 
+### <a id="rank-names"></a>🛑 A quest with no OBJECTIVES never shows, and `%PCRank` needs the FACT names
+
+Two in-game faults from one round, both invisible offline until the harness
+was taught to look:
+
+**"You are now Prisoner the ␣ in the Fighters Guild."** `%PCRank` and
+`%NextPCRank` resolve through `Interpreter::Context`, and all three rank
+getters returned `""`. The names are the FACT record's ten `RNAM`
+subrecords, which the sidecar was not staging; they now ride in `MWFA.txt`
+beside the requirement rows. A **non-member reads rank 0**, not "no rank" —
+Morrowind's own quirk, and exactly what makes the line read correctly in the
+INFO that admits the player. Only dialogue text goes through
+`fixDefinesDialog`; `MessageBox` still does not, which is a separate gap.
+
+**The journal stayed empty although `SetStage` returned ok.** `SetStage` is
+not the problem: the CK wiki is explicit that it *starts the quest itself*
+("Is latent and will wait for the quest to start if it has to start the
+quest"), so `Quest.Start()` was never needed. The cause is that
+`Quest_Data_Tab` states a quest **with no objectives never displays its name
+anywhere** — and the generator emitted none. Vanilla `DA13` carries 8
+`QOBJ`/`NNAM` pairs against this runtime's 0. One objective per stage is now
+derived from the page's first sentence, capped at `OBJECTIVE_MAX_CHARS` (71),
+so nothing has to be hand-authored.
+
+### <a id="one-quest-writer"></a>The journal QUST is written here, not by `convert_QUST`
+
+`quest_morrowind.py` writes its own QUST record. The shared `convert_QUST`
+reads a TES4 export shape this plugin has no source for -- a TES3 journal is
+DIAL/INFO, there is no QUST export, and these records are synthesized during
+import -- so routing through it meant building a fake TES4 record and then
+opting out of the parts that do not apply.
+
+Two things the bespoke writer has to get right, both of which a first attempt
+got wrong and cost several rounds:
+
+- **QOBJ/FNAM/NNAM per page.** A QUST with no objectives never displays its
+  name however its stages are set, so the journal stayed empty.
+- **The FormID is written VERBATIM.** `derive_formid` already returns this
+  plugin's final id; `get_formid` remaps ids that predate the new masters, so
+  routing a final id through it added the load-order offset a second time and
+  pushed `0418E9F6` to `0518E9F6` -- one past the last master, resolving to
+  nothing. `pack_record` takes the id as given.
+
+Verified on the built ESM: all 2,079 advertised ids in `MWQS.txt` resolve to a
+real QUST, none missing, each with an objective per journal page.
+
+### <a id="objectives-must-be-displayed"></a>🛑 A running quest at the right stage still shows NOTHING
+
+Measured in game: `sqv` reported the quest **running at stage 10**, its log
+entry written and its objectives present — and the journal was still empty
+with no "quest started" popup. Three separate things have to be true, and
+only the first two were:
+
+1. the stage is set — `SetStage` does this, and starts the quest itself
+2. the quest has objectives — a quest with none never displays its name
+3. **an objective is DISPLAYED** — `SetObjectiveDisplayed`
+
+Vanilla does the third from a stage script fragment. A generated QUST has no
+fragments, so nothing ever called it and every objective stayed hidden. The
+runtime now calls the native itself after each successful `SetStage`.
+
+🛑 **But NOT in the same task.** Displaying an objective in the same
+main-thread trip that STARTS the quest does nothing at all: starting a stopped
+quest initializes its objective states, and a display landing before that
+finishes is overwritten. Measured through the game bridge, calling the two
+natives directly on the same live quest:
+
+| Sequence | Result |
+|---|---|
+| `SetStage` + `SetObjectiveDisplayed`, one trip | `DORMANT` |
+| `SetStage`, pump tick, `SetObjectiveDisplayed` | `DISPLAYED` |
+| `SetObjectiveDisplayed` alone, quest already running | `DISPLAYED` |
+
+Posting a second SKSE task is NOT enough: tasks queued back to back drain in
+ONE `ProcessTasks` sweep, so both still land in the same frame. Measured in
+game -- both tasks logged in the same second, objective still `DORMANT`.
+
+So `SetQuestStage` queues the objective and `FlushJournalObjectives()`
+displays it when the dialogue menu CLOSES, called from `OnClosed`. That is
+vanilla's own timing for the same reason: a stage fragment runs once the
+conversation is over, not inside it.
+
+This cost several wrong theories worth recording, each disproved by
+measurement rather than argument: the argument layout (`SetCurrentStageID`
+uses `r8` for the quest and works, so the order was never wrong), the Papyrus
+VM pointer (the call works with the runtime's VM and with `nullptr` alike),
+the quest flag byte at `+0xdc` (`08` — bit 1 clear, so that gate never fired),
+and the objective node being missing (the runtime walked the quest's own list
+and found it). An unconditional "objective displayed" log line hid the failure
+for three rounds; the log now has to read the state back to claim anything.
+
+🛑 **The earlier step is COMPLETED, not hidden.** A Morrowind journal is a
+running log the player reads back, and hiding the previous objective erases
+that history. `SetObjectiveCompleted` keeps the entry and strikes it
+through, which is what Skyrim does for its own multi-step quests.
+
+Both natives were found the same way as the others, and the method checks
+out on a control — the same scan gives `SetCurrentStageID` → `0x9e7f90` →
+id 56684, the id already in `ids.h`:
+
+| Native | 1.6.659 | id |
+|---|---|---|
+| `Quest.SetObjectiveDisplayed` | `0x9e7d30` | 56682 |
+| `Quest.SetObjectiveCompleted` | `0x9e7c20` | 56681 |
+
 ### <a id="quest-trace"></a>Asking whether a quest can be FINISHED
 
 **Tool:** `python -m tools.dialog.morrowind_quest_trace --plugin <esm> --quest <id>`
@@ -1033,6 +1138,46 @@ Measured over the 44,950 authored result scripts, porting these moved the
 unported call total from **6,505 to 4,538** and the command count from 119 to
 108 — the largest single reduction available without an object reference,
 because `SetFight` alone is 1,405 calls.
+
+🛑 Those figures, and every other opcode count taken before 2026-09-17, cover
+the INFO result scripts ONLY. Object scripts (`SCPT.SCTX`) are the larger
+corpus and use a different command set, so counting both raises the total from
+54,189 call sites to **90,395**. `tools/script/mwscript_opcode_audit.py` now
+reads both; [mwscript_opcodes.md](../audits/mwscript_opcodes.md) is the
+current table.
+
+### <a id="placed-references"></a>`id->Command` resolves through a placement table
+
+**Code:** `morrowind_sidecar.py:_ref_lines`, `MWRF.txt`, `plugin/game_calls.cpp`
+
+`Disable`, `StartCombat` and the Transformation commands act on a PLACED
+reference named by its base id — `"TR_m3_Yak gro-Yam"->Enable`. The runtime
+already mapped FormID→id for speakers (so a click finds the NPC); this is the
+other direction, and it needs its own table because a base record is not a
+thing in the world.
+
+`MWRF.txt` is `id=Plugin|FormID` where the id is the BASE record's EditorID
+and the FormID is the PLACEMENT's, resolved through the running load order by
+`Game.GetFormFromFile` exactly as `MWID.txt` and `MWQS.txt` are.
+
+🛑 **First placement wins, and that is very nearly unambiguous.** OpenMW's
+`searchPtr` tries active cells first, then every cell, taking the first match
+in each — and it searches exteriors in REVERSE, with a comment naming the
+vanilla `chargen_plank` that is placed twice. We cannot replicate
+cell-activity ordering because Skyrim owns which cells are loaded, so the
+question is how much that costs. Measured over Tamriel Rebuilt, counting only
+the ids result scripts actually target:
+
+| Placements | ids | call sites |
+|---|---:|---:|
+| exactly one | 870 | 2,835 |
+| several | 2 | 2 |
+| none | 14 | 7,469 |
+
+So the tie-break decides **2 call sites**, and first-match is right. The
+"none" row is `player` (7,442 sites, answered by `OwnerRef` and never in this
+table) plus 13 ids from Morrowind proper or authored typos (`agronian guy`)
+that this plugin does not place — those correctly report and do nothing.
 
 ## <a id="journal-quests"></a>The journal is Skyrim quests
 

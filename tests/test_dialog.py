@@ -751,6 +751,31 @@ class TestQUST:
         dnam = _find_subrecord(out, b'DNAM')
         assert struct.unpack_from('<I', dnam, 8)[0] == 0
 
+    def test_morrowind_journal_quest_record(self):
+        """A journal QUST carries an objective per page and keeps its id.
+
+        Both are what kept the journal empty: a QUST with no objectives never
+        displays its name however its stages are set, and `derive_formid`
+        already returns a final id, so remapping it again pushed the record
+        past the plugin's own master index.
+        """
+        from tes5_import.dialogue.quest_morrowind import as_record
+        quest = {'id': 'TR_m3_FG', 'name': 'Cursing Like a Witch',
+                 'stages': {10: ('Sharnoga asked for help.', False),
+                            40: ('I dealt with the witch.', True)}}
+        set_formid_index_offset(1)
+        try:
+            out = as_record(quest, 0x0418E9F6)
+        finally:
+            set_formid_index_offset(0)
+        assert struct.unpack_from('<I', out, 12)[0] == 0x0418E9F6
+        qobj = _find_all_subrecords(out, b'QOBJ')
+        assert [struct.unpack('<H', q)[0] for q in qobj] == [10, 40]
+        assert len(_find_all_subrecords(out, b'NNAM')) == 2
+        assert struct.unpack_from('<I', _find_subrecord(out, b'DNAM'),
+                                  8)[0] == 8
+        assert _find_all_subrecords(out, b'QSDT')[1][0] == 0x01
+
     def test_non_sge_quest_not_start_enabled(self):
         out = convert_QUST({'FormID': '00010603', 'RecordFlags': '0',
                             'EditorID': 'LateQuest', 'DATA.Flags': '0',

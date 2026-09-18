@@ -68,7 +68,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\game_actor.cpp plugin\conversation.cpp ^
    plugin\script_context.cpp plugin\dialogue_state.cpp ^
    plugin\script_runner.cpp plugin\script_tables.cpp ^
-   plugin\game_calls.cpp plugin\cosave.cpp /Fo:obj\
+   plugin\game_calls.cpp plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
     exit /b 1
@@ -115,7 +115,8 @@ if errorlevel 1 (
 )
 link /nologo /OUT:session_test.exe objt\store.obj objt\log.obj ^
      objt\script_tables.obj objt\filter.obj objt\session.obj ^
-     objt\session_test.obj ^
+     objt\session_test.obj objt\script_context.obj ^
+     objt\dialogue_state.obj obj\mw\*.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
     echo [build] ERROR: session_test link failed

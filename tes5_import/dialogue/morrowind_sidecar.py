@@ -49,12 +49,18 @@ FACTIONS_TABLE = 'MWFA.txt'
 #: What AddItem and its kin need: `item id=Plugin.esm|FormID`.
 ITEMS_TABLE = 'MWID.txt'
 
+#: What `id->Command` needs: the PLACED reference, `id=Plugin.esm|FormID`.
+REFS_TABLE = 'MWRF.txt'
+
 #: The exports the tables are built from; `_SCRIPTED_EXPORTS` is every TES3 type that can carry a script.
 _NPC_EXPORT = 'NPC_.txt'
 _SCRIPTED_EXPORTS = ('NPC_.txt', 'CREA.txt', 'ACTI.txt', 'ALCH.txt', 'AMMO.txt',
                      'APPA.txt', 'ARMO.txt', 'BOOK.txt', 'CLOT.txt', 'CONT.txt',
                      'DOOR.txt', 'INGR.txt', 'KEYM.txt', 'LIGH.txt', 'MISC.txt',
                      'WEAP.txt')
+
+#: The exports holding PLACED references, which name their base by FormID.
+_PLACEMENT_EXPORTS = ('REFR.txt', 'ACHR.txt', 'ACRE.txt')
 
 #: The exports whose records can sit in an inventory.
 _ITEM_EXPORTS = ('ALCH.txt', 'AMMO.txt', 'APPA.txt', 'ARMO.txt', 'BOOK.txt',
@@ -234,6 +240,47 @@ def _item_lines(dirs: list) -> list:
     return list(seen.values())
 
 
+def _placed_refs(folder: str, owner: str) -> dict:
+    """`base FormID -> placement FormID` for the references `folder` OWNS.
+
+    First placement wins, which is what OpenMW's `searchPtr` does within a
+    cell store.
+    See: docs/commentary/morrowind_runtime.md#placed-references
+    """
+    placed = {}
+    for name in _PLACEMENT_EXPORTS:
+        for rec in export_records(os.path.join(folder, name),
+                                  ('FormID', 'NAME')):
+            base = rec.get('NAME', '')
+            formid = rec.get('FormID', '')
+            if base and formid[:2].upper() == owner and base not in placed:
+                placed[base] = formid
+    return placed
+
+
+def _ref_lines(dirs: list) -> list:
+    """`id=Plugin|FormID` for each TES3 id with a placed reference.
+
+    The id is the BASE record's EditorID and the FormID is the PLACEMENT's,
+    because `id->Disable` acts on the thing in the world, not its template.
+    See: docs/commentary/morrowind_runtime.md#placed-references
+    """
+    seen = {}
+    for folder, plugin in dirs:
+        owner = f'{len(masters_from_export_header(folder)):02X}'
+        placed = _placed_refs(folder, owner)
+        if not placed:
+            continue
+        for name in _SCRIPTED_EXPORTS:
+            for rec in export_records(os.path.join(folder, name),
+                                      ('FormID', 'EditorID')):
+                key = rec.get('EditorID', '').lower()
+                ref = placed.get(rec.get('FormID', ''))
+                if key and ref and key not in seen:
+                    seen[key] = f"{rec['EditorID']}={plugin}|{ref}"
+    return list(seen.values())
+
+
 def _write_lines(path: str, lines: list) -> int:
     """Write a table; 1 when it has anything in it, else 0 and no file."""
     if not lines:
@@ -255,7 +302,9 @@ def write_script_tables(export_dir: str, out_dir: str,
             + _write_lines(os.path.join(out_dir, ACTOR_SCRIPTS_TABLE),
                            _object_script_lines(export_dir, by_formid))
             + _write_lines(os.path.join(out_dir, ITEMS_TABLE),
-                           _item_lines(dirs)))
+                           _item_lines(dirs))
+            + _write_lines(os.path.join(out_dir, REFS_TABLE),
+                           _ref_lines(dirs)))
 
 
 def _stage_dialogue(export_dir: str, out_dir: str, plugin_name: str,

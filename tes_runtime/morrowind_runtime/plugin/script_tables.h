@@ -63,13 +63,15 @@ struct RankReq {
 };
 
 // A FACT record's requirement side: the two attributes and up to seven skills
-// the faction judges by, and a threshold row per rank. MWFA.txt.
+// the faction judges by, a threshold row per rank, and the authored rank
+// names `%PCRank` prints. MWFA.txt.
 struct FactionDef {
     // TES3 attribute indices, 0..7.
     int attribute[2] = {0, 0};
     // TES3 skill indices, 0..26; -1 for an unused slot.
     std::vector<int> skills;
     RankReq ranks[10];
+    std::vector<std::string> rankNames;
 };
 
 void ClearScriptTables();
@@ -87,6 +89,12 @@ const std::string& ScriptOf(const std::string& actor);
 const ActorDef* FindActor(const std::string& actor);
 const FormRef* FindItem(const std::string& item);
 const FormRef* FindQuest(const std::string& quest);
+
+// The PLACED reference a TES3 id names, which `id->Command` acts on. Null
+// when the plugin places none -- `player` is answered elsewhere.
+// See: docs/commentary/morrowind_runtime.md#placed-references
+const FormRef* FindRef(const std::string& id);
+std::size_t RefCount();
 const FactionDef* FindFaction(const std::string& faction);
 
 // Registers one faction's requirements directly, so the filter's rank rules

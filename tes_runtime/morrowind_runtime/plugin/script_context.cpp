@@ -6,6 +6,22 @@
 
 namespace mwruntime {
 
+namespace {
+
+// TES3 factions have ten ranks, 0..9.
+constexpr int kTopRank = 9;
+
+// The faction's authored name for a rank, or "" when the sidecar has none.
+std::string RankName(const std::string& faction, int rank) {
+    if (faction.empty() || rank < 0 || rank > kTopRank) return std::string();
+    const FactionDef* def = FindFaction(faction);
+    if (!def) return std::string();
+    const std::size_t at = static_cast<std::size_t>(rank);
+    return at < def->rankNames.size() ? def->rankNames[at] : std::string();
+}
+
+}  // namespace
+
 DialogueContext::DialogueContext(const ActorView& actor, std::string actorName,
                                  std::string playerName)
     : mActor(actor), mActorName(std::move(actorName)),
@@ -125,7 +141,10 @@ std::string_view DialogueContext::getNPCFaction() const {
     return mFaction;
 }
 
-std::string_view DialogueContext::getNPCRank() const { return ""; }
+std::string_view DialogueContext::getNPCRank() const {
+    mRank = RankName(mActor.PrimaryFaction(), mActor.PrimaryFactionRank());
+    return mRank;
+}
 
 std::string_view DialogueContext::getPCName() const { return mPlayerName; }
 
@@ -139,9 +158,24 @@ std::string_view DialogueContext::getPCClass() const {
     return mClass;
 }
 
-std::string_view DialogueContext::getPCRank() const { return ""; }
+// 🛑 A NON-MEMBER reads rank 0, not "no rank": Morrowind's own quirk, and
+// what makes "You are now %PCName the %NextPCRank" read correctly in the very
+// INFO that admits the player to the guild.
+std::string_view DialogueContext::getPCRank() const {
+    const RefId faction = mActor.PrimaryFaction();
+    if (faction.empty()) return "%";
+    const int rank = mActor.PlayerFactionRank(faction);
+    mRank = RankName(faction, rank < 0 ? 0 : rank);
+    return mRank;
+}
 
-std::string_view DialogueContext::getPCNextRank() const { return ""; }
+std::string_view DialogueContext::getPCNextRank() const {
+    const RefId faction = mActor.PrimaryFaction();
+    if (faction.empty()) return "%";
+    const int next = mActor.PlayerFactionRank(faction) + 1;
+    mRank = RankName(faction, next > kTopRank ? kTopRank : next);
+    return mRank;
+}
 
 int DialogueContext::getPCBounty() const { return mActor.PlayerCrimeLevel(); }
 

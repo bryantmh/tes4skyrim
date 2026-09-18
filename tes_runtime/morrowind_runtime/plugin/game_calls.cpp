@@ -2,24 +2,42 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
+#include <thread>
 
 #include "activation.h"
 #include "addresses.h"
 #include "dialogue_state.h"
 #include "ids.h"
 #include "log.h"
+#include "main_thread.h"
 #include "script_tables.h"
 
 namespace mwruntime {
 
 namespace {
 
+// 🛑 NOT the Papyrus native. The console's `setstage` starts a stopped quest
+// SYNCHRONOUSLY and then sets the stage directly; Quest.SetCurrentStageID only
+// queues the start, and the paused game never promotes it while the dialogue
+// menu is open.
+// See: docs/commentary/morrowind_runtime.md#objectives-must-be-displayed
+using EnsureStartedFn = bool (*)(void* quest, bool* justStarted, bool startNow);
+using GetStageFn = void* (*)(void* quest, std::uint32_t index);
+using SetStageFn = bool (*)(void* quest, std::uint32_t index);
+// The objective pair the console's `setobjectivedisplayed` calls directly;
+// a hook on the Papyrus Quest.SetObjectiveDisplayed recorded ZERO hits while
+// that command changed the state.
+//   BGSQuestObjective* TESQuest::GetObjective(quest, u16 index)
+//   void BGSQuestObjective::SetState(objective, u32 state)
+using GetObjectiveFn = void* (*)(void* quest, std::uint32_t index);
+using SetObjectiveStateFn = void (*)(void* objective, std::uint32_t state);
 // Papyrus natives, as the VM calls them: VM, stack id, self, then arguments.
-using SetStageFn = bool (*)(void* vm, std::uint32_t stack, void* quest,
-                            std::int32_t stage);
+using IsRunningFn = bool (*)(void* vm, std::uint32_t stack, void* quest);
 using AddItemFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                            void* item, std::int32_t count, bool silent);
 using RemoveItemFn = void (*)(void* vm, std::uint32_t stack, void* ref,
@@ -28,6 +46,12 @@ using RemoveItemFn = void (*)(void* vm, std::uint32_t stack, void* ref,
 using ItemCountFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* ref,
                                      void* item);
 using GetPlayerFn = void* (*)(void* vm, std::uint32_t stack, void* tag);
+using StartCombatFn = void (*)(void* vm, std::uint32_t stack, void* actor,
+                               void* target);
+using StopCombatFn = void (*)(void* vm, std::uint32_t stack, void* actor);
+using SetEnabledFn = void (*)(void* vm, std::uint32_t stack, void* ref,
+                              bool fade);
+using IsDisabledFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
 
 // TES3's gold, and the record Skyrim keeps for the same thing.
 constexpr const char* kTes3Gold = "gold_001";
@@ -38,14 +62,54 @@ constexpr const char* kPlayerId = "player";
 
 constexpr std::uint32_t kLocalMask = 0x00FFFFFF;
 
-SetStageFn   g_setStage = nullptr;
+// BGSQuestObjective states, read off the console handler and the natives:
+// `SetObjectiveDisplayed` passes 1, and `SetObjectiveCompleted` passes 3 when
+// the objective is currently displayed and 2 when it is not.
+constexpr std::uint32_t kObjectiveDisplayed = 1;
+constexpr std::uint32_t kObjectiveCompleted = 3;
+
+// The objective's current state, at BGSQuestObjective+0x1f.
+constexpr std::size_t kOffObjectiveState = 0x1f;
+
+// TESQuest+0xdc flag byte, bit 0 = running; TESQuest+0xe0 event scope, -1 =
+// none. A stopped quest with a scope belongs to the Story Manager, and the
+// console refuses to start it. A stage's flag byte at +2, bit 1 = start-up
+// stage, which TESQuest::Start has already run when the quest just started.
+constexpr std::size_t  kOffQuestFlags = 0xdc;
+constexpr std::uint8_t kQuestRunning = 1;
+constexpr std::size_t  kOffQuestEventScope = 0xe0;
+constexpr std::size_t  kOffStageFlags = 2;
+constexpr std::uint8_t kStageStartUp = 2;
+
+// How often a displayed objective re-checks that its quest has finished
+// starting, and how long it keeps checking. The wait sleeps OFF the game
+// thread: a task that reposts itself drains in the same pump sweep and never
+// lets a frame pass, which froze the game for the whole wait.
+constexpr int kStartPollMs = 50;
+constexpr int kStartWaitMs = 60000;
+
+IsRunningFn         g_isRunning = nullptr;
+EnsureStartedFn     g_ensureStarted = nullptr;
+GetStageFn          g_getStage = nullptr;
+SetStageFn          g_setStage = nullptr;
+GetObjectiveFn      g_getObjective = nullptr;
+SetObjectiveStateFn g_setObjectiveState = nullptr;
 AddItemFn    g_addItem = nullptr;
 RemoveItemFn g_removeItem = nullptr;
 ItemCountFn  g_itemCount = nullptr;
 GetPlayerFn  g_getPlayer = nullptr;
+StartCombatFn g_startCombat = nullptr;
+StopCombatFn  g_stopCombat = nullptr;
+SetEnabledFn  g_enable = nullptr;
+SetEnabledFn  g_disable = nullptr;
+IsDisabledFn  g_isDisabled = nullptr;
 
 std::string g_speakerId;
 void*       g_speakerRef = nullptr;
+
+// The objective each quest is currently showing, so the previous one can be
+// hidden when the quest moves on.
+std::map<std::string, int> g_shownObjective;
 
 // Ids already reported as unresolvable, so the log names each once.
 std::set<std::string> g_reported;
@@ -77,25 +141,143 @@ void* ItemForm(const std::string& item) {
     return form;
 }
 
-// The reference a command acts on: the player, or the NPC being spoken to.
+// The reference a command acts on: the player, the NPC being spoken to, or
+// any id the plugin places, so `"TR_m3_Yak gro-Yam"->Enable` reaches a real
+// reference rather than reporting.
+//
+// 🛑 The speaker is tried BEFORE the table. An actor placed more than once
+// resolves to its first placement there, which is the wrong one while you are
+// standing in front of a different instance of it.
+// See: docs/commentary/morrowind_runtime.md#placed-references
 void* OwnerRef(const std::string& owner) {
     if (Lower(owner) == kPlayerId) {
         return g_getPlayer ? g_getPlayer(PapyrusVm(), 0, nullptr) : nullptr;
     }
     if (g_speakerRef && Lower(owner) == Lower(g_speakerId)) return g_speakerRef;
+    if (void* placed = Form(FindRef(owner))) return placed;
     ReportOnce("reference", owner);
     return nullptr;
 }
 
+// Sets one objective's state, and reports the state it actually holds after.
+// Returns false when the quest carries no objective at that index.
+//
+// 🛑 The state is READ BACK from the objective rather than assumed. An earlier
+// version logged success unconditionally and hid a total failure for several
+// rounds.
+bool SetObjectiveState(void* form, int index, std::uint32_t state) {
+    if (!g_getObjective || !g_setObjectiveState) return false;
+    void* objective = g_getObjective(form, static_cast<std::uint32_t>(index));
+    if (!objective) return false;
+    g_setObjectiveState(objective, state);
+    return *(static_cast<std::uint8_t*>(objective) + kOffObjectiveState) ==
+           static_cast<std::uint8_t>(state);
+}
+
+// Starts a stopped quest on the spot, as the console's `setstage` handler
+// (0x30df30) does. Returns false for an event-scoped quest, which only the
+// Story Manager may start. `justStarted` reports whether this call started it.
+bool StartQuest(void* form, bool* justStarted) {
+    if (!g_ensureStarted || !g_getStage || !g_setStage) return false;
+    const auto* quest = static_cast<const std::uint8_t*>(form);
+    const bool running = quest[kOffQuestFlags] & kQuestRunning;
+    const auto scope =
+        *reinterpret_cast<const std::int32_t*>(quest + kOffQuestEventScope);
+    if (!running && scope != -1) return false;
+    return g_ensureStarted(form, justStarted, true);
+}
+
+// Sets the stage, unless the start already ran it as a start-up stage.
+// Returns false for a stage the quest does not have.
+bool SetStage(void* form, int stage, bool justStarted) {
+    const auto index = static_cast<std::uint32_t>(stage);
+    const auto* item = static_cast<const std::uint8_t*>(g_getStage(form, index));
+    if (!item) return false;
+    if (justStarted && (item[kOffStageFlags] & kStageStartUp)) return true;
+    return g_setStage(form, index);
+}
+
+// Displays the objective for a stage, completing the previous one.
+void ShowObjective(void* form, const std::string& quest, int stage) {
+    const auto previous = g_shownObjective.find(Lower(quest));
+    if (previous != g_shownObjective.end() && previous->second != stage) {
+        SetObjectiveState(form, previous->second, kObjectiveCompleted);
+    }
+    const bool shown = SetObjectiveState(form, stage, kObjectiveDisplayed);
+    g_shownObjective[Lower(quest)] = stage;
+    Log("game: objective %d for %s -> %s", stage, quest.c_str(),
+        shown ? "DISPLAYED" : "NOT displayed (state did not take)");
+}
+
+// 🛑 Sets the stage and displays its objective only once the quest reports
+// IsRunning, which is false from the synchronous start until the StoryTeller
+// finishes it on a later unpaused frame -- after the menu closes, since the
+// menu pauses the game. Both the stage's log entry and the objective are
+// filed under the quest's CURRENT instance: set in the start's own trip they
+// land on instance 0, the finished quest holds instance 1, and the journal
+// shows no text and lists the quest as done. Papyrus SetCurrentStageID defers
+// the stage the same way when it just started the quest.
+// See: docs/commentary/morrowind_runtime.md#objectives-must-be-displayed
+void StageOnceRunning(void* form, const std::string& quest, int stage,
+                      bool justStarted, int waited) {
+    if (!g_isRunning || g_isRunning(PapyrusVm(), 0, form)) {
+        const bool ok = SetStage(form, stage, justStarted);
+        Log("game: SetStage %s %d -> %s", quest.c_str(), stage,
+            ok ? "ok" : "no such stage");
+        if (ok) ShowObjective(form, quest, stage);
+        return;
+    }
+    if (waited >= kStartWaitMs) {
+        Log("game: quest '%s' never finished starting -- stage %d not set",
+            quest.c_str(), stage);
+        return;
+    }
+    std::thread([form, quest, stage, justStarted, waited]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kStartPollMs));
+        PostToMainThread([form, quest, stage, justStarted, waited]() {
+            StageOnceRunning(form, quest, stage, justStarted,
+                             waited + kStartPollMs);
+        });
+    }).detach();
+}
+
+// 🛑 Setting the stage SHOWS nothing on its own: an objective is invisible
+// until it is displayed, and vanilla does that from a stage fragment a
+// generated QUST does not have. The objective index is the journal index.
+//
+// 🛑 The earlier step is COMPLETED, never hidden. A Morrowind journal is a
+// running log the player reads back, so every entry stays -- completing it
+// strikes it through and keeps it, which is what Skyrim does for its own
+// multi-step quests.
+// See: docs/commentary/morrowind_runtime.md#objectives-must-be-displayed
 void SetQuestStage(const std::string& quest, int stage) {
-    void* form = Form(FindQuest(quest));
-    if (!form || !g_setStage) {
+    const FormRef* ref = FindQuest(quest);
+    if (!ref) {
         ReportOnce("journal quest", quest);
         return;
     }
-    const bool ok = g_setStage(PapyrusVm(), 0, form, stage);
-    Log("game: SetStage %s %d -> %s", quest.c_str(), stage,
-        ok ? "ok" : "refused");
+    // Resolved INSIDE the task: Game.GetFormFromFile is an engine call, and
+    // the dialogue menu's callbacks do not run on the game's thread.
+    const std::string named = quest;
+    const std::string plugin = ref->plugin;
+    const std::uint32_t local = ref->formId & kLocalMask;
+    const bool posted = PostToMainThread([plugin, local, named, stage]() {
+        void* form = FormFromFile(plugin.c_str(), local);
+        if (!form) {
+            Log("game: journal '%s' did not resolve on the game thread",
+                named.c_str());
+            return;
+        }
+        bool justStarted = false;
+        const bool ok = StartQuest(form, &justStarted);
+        Log("game: start %s -> %s (form %p, just started %d)", named.c_str(),
+            ok ? "ok" : "refused", form, justStarted);
+        if (ok) StageOnceRunning(form, named, stage, justStarted, 0);
+    });
+    if (!posted) {
+        Log("game: no task interface -- journal '%s' stage %d DROPPED",
+            quest.c_str(), stage);
+    }
 }
 
 void AddItem(const std::string& owner, const std::string& item, int count) {
@@ -114,6 +296,41 @@ void RemoveItem(const std::string& owner, const std::string& item, int count) {
     }
 }
 
+// 🛑 Posted to the game thread rather than called here: the dialogue menu's
+// callbacks do not run on it, and combat reaches deep into the AI process.
+// An empty `target` means StopCombat, which takes no target at all.
+void SetCombat(const std::string& attacker, const std::string& target) {
+    void* actor = OwnerRef(attacker);
+    void* foe = target.empty() ? nullptr : OwnerRef(target);
+    if (!actor || (!target.empty() && !foe)) return;
+    PostToMainThread([actor, foe]() {
+        if (foe) {
+            if (g_startCombat) g_startCombat(PapyrusVm(), 0, actor, foe);
+        } else if (g_stopCombat) {
+            g_stopCombat(PapyrusVm(), 0, actor);
+        }
+    });
+}
+
+// 🛑 Posted, like combat: enabling a reference moves it in and out of the
+// world, which is not safe from the menu's own thread. TES3 fades nothing,
+// so both pass false.
+void SetEnabled(const std::string& id, bool enabled) {
+    void* ref = OwnerRef(id);
+    if (!ref) return;
+    PostToMainThread([ref, enabled]() {
+        SetEnabledFn call = enabled ? g_enable : g_disable;
+        if (call) call(PapyrusVm(), 0, ref, false);
+    });
+}
+
+// Read directly rather than posted: a condition needs the answer NOW, and
+// reading the flag does not touch the world.
+bool IsDisabled(const std::string& id) {
+    void* ref = OwnerRef(id);
+    return ref && g_isDisabled && g_isDisabled(PapyrusVm(), 0, ref);
+}
+
 int ItemCount(const std::string& owner, const std::string& item) {
     void* ref = OwnerRef(owner);
     void* form = ItemForm(item);
@@ -129,19 +346,39 @@ Fn Native(const char* name, std::uint64_t id) {
 }  // namespace
 
 void InstallGameCalls() {
-    g_setStage = Native<SetStageFn>("Quest.SetCurrentStageID",
-                                    ids::kQuestSetCurrentStageId);
+    g_isRunning = Native<IsRunningFn>("Quest.IsRunning", ids::kQuestIsRunning);
+    g_ensureStarted = Native<EnsureStartedFn>("TESQuest::EnsureQuestStarted",
+                                              ids::kQuestEnsureStarted);
+    g_getStage = Native<GetStageFn>("TESQuest::GetStage", ids::kQuestGetStage);
+    g_setStage = Native<SetStageFn>("TESQuest::SetStage", ids::kQuestSetStage);
+    g_getObjective = Native<GetObjectiveFn>("TESQuest::GetObjective",
+                                            ids::kQuestGetObjective);
+    g_setObjectiveState = Native<SetObjectiveStateFn>(
+        "BGSQuestObjective::SetState", ids::kQuestObjectiveSetState);
     g_addItem = Native<AddItemFn>("ObjectReference.AddItem", ids::kRefAddItem);
     g_removeItem = Native<RemoveItemFn>("ObjectReference.RemoveItem",
                                         ids::kRefRemoveItem);
     g_itemCount = Native<ItemCountFn>("ObjectReference.GetItemCount",
                                       ids::kRefGetItemCount);
     g_getPlayer = Native<GetPlayerFn>("Game.GetPlayer", ids::kGameGetPlayer);
+    g_startCombat = Native<StartCombatFn>("Actor.StartCombat",
+                                          ids::kActorStartCombat);
+    g_stopCombat = Native<StopCombatFn>("Actor.StopCombat",
+                                        ids::kActorStopCombat);
+    g_enable = Native<SetEnabledFn>("ObjectReference.Enable", ids::kRefEnable);
+    g_disable = Native<SetEnabledFn>("ObjectReference.Disable",
+                                     ids::kRefDisable);
+    g_isDisabled = Native<IsDisabledFn>("ObjectReference.IsDisabled",
+                                        ids::kRefIsDisabled);
     GameHooks& hooks = Hooks();
     hooks.setQuestStage = SetQuestStage;
     hooks.addItem = AddItem;
     hooks.removeItem = RemoveItem;
     hooks.itemCount = ItemCount;
+    hooks.setCombat = SetCombat;
+    hooks.setEnabled = SetEnabled;
+    hooks.isDisabled = IsDisabled;
+    Log("game: %zu placed reference(s) resolvable by id", RefCount());
     Log("game: %zu journal quest(s) mapped to Skyrim quests", QuestCount());
 }
 

@@ -1,5 +1,6 @@
 #include "script_runner.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <exception>
@@ -403,6 +404,47 @@ class OpGetItemCount : public Interpreter::Opcode0 {
     }
 };
 
+// `StartCombat target` -- the target is an argument, not the implicit
+// reference, so a bare `StartCombat player` is the SPEAKER attacking.
+template <class R>
+class OpStartCombat : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string attacker = R::Target(runtime);
+        const std::string target = PopString(runtime);
+        Log("combat: %s attacks %s", attacker.c_str(), target.c_str());
+        if (Hooks().setCombat) Hooks().setCombat(attacker, target);
+    }
+};
+
+// `StopCombat` takes no target: the actor stops fighting everyone.
+template <class R>
+class OpStopCombat : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string actor = R::Target(runtime);
+        Log("combat: %s stops fighting", actor.c_str());
+        if (Hooks().setCombat) Hooks().setCombat(actor, std::string());
+    }
+};
+
+// `Enable` / `Disable`, and `GetDisabled` which quest dialogue reads back to
+// ask whether a step has happened.
+template <class R, bool Enabled>
+class OpSetEnabled : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        Log("world: %s %s", ref.c_str(), Enabled ? "enabled" : "disabled");
+        if (Hooks().setEnabled) Hooks().setEnabled(ref, Enabled);
+    }
+};
+
+template <class R>
+class OpGetDisabled : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        runtime.push(Hooks().isDisabled && Hooks().isDisabled(ref) ? 1 : 0);
+    }
+};
+
 template <class R>
 class OpStartScript : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
@@ -446,6 +488,15 @@ class OpModAiSetting : public Interpreter::Opcode0 {
         const std::string actor = R::Target(runtime);
         State().SetAiSetting(actor, Which,
                              State().AiSetting(actor, Which) + PopInt(runtime));
+    }
+};
+
+// `Random n` -> 0..n-1 as a float. MWScript's own generator is uniform over
+// the half-open range and answers 0 for a non-positive limit.
+class OpRandom : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const int limit = PopInt(runtime);
+        runtime.push(limit > 0 ? static_cast<float>(std::rand() % limit) : 0.0f);
     }
 };
 
@@ -644,6 +695,17 @@ void Machine::InstallItemsAndScripts() {
     Real<OpStopScript>(M::opcodeStopScript);
     Real<OpScriptRunning>(M::opcodeScriptRunning);
     Real<OpGetDeadCount>(Compiler::Stats::opcodeGetDeadCount);
+    Real<OpStartCombat<Implicit>>(Compiler::Ai::opcodeStartCombat);
+    Real<OpStartCombat<Explicit>>(Compiler::Ai::opcodeStartCombatExplicit);
+    Real<OpStopCombat<Implicit>>(Compiler::Ai::opcodeStopCombat);
+    Real<OpStopCombat<Explicit>>(Compiler::Ai::opcodeStopCombatExplicit);
+    Real<OpRandom>(M::opcodeRandom);
+    Real<OpSetEnabled<Implicit, true>>(M::opcodeEnable);
+    Real<OpSetEnabled<Explicit, true>>(M::opcodeEnableExplicit);
+    Real<OpSetEnabled<Implicit, false>>(M::opcodeDisable);
+    Real<OpSetEnabled<Explicit, false>>(M::opcodeDisableExplicit);
+    Real<OpGetDisabled<Implicit>>(M::opcodeGetDisabled);
+    Real<OpGetDisabled<Explicit>>(M::opcodeGetDisabledExplicit);
     InstallAiSettings();
 }
 

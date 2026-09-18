@@ -140,15 +140,67 @@ constexpr std::uint64_t kUIManagerSingleton = 400445;
 constexpr std::uint64_t kGetFormFromFile = 55465;
 
 // Papyrus natives, each the callback its registration loads beside the name
-// string (`lea rdx,["SetCurrentStageID"]` ... `lea rax,[callback]`), on
-// 1.6.659: 0x9e7f90, 0x9cd4b0, 0x9d0b30, 0x9ce530, 0x9adf00. All are called
-// as the VM calls them: (VM*, stack id, self, arguments...).
-//   bool  Quest.SetCurrentStageID(int stage)
+// string (`lea rdx,["AddItem"]` ... `lea rax,[callback]`), on 1.6.659:
+// 0x9cd4b0, 0x9d0b30, 0x9ce530, 0x9adf00. All are called as the VM calls
+// them: (VM*, stack id, self, arguments...).
 //   void  ObjectReference.AddItem(Form, int count, bool silent)
 //   void  ObjectReference.RemoveItem(Form, int count, bool silent, ObjectReference moveTo)
 //   int   ObjectReference.GetItemCount(Form)
 //   Actor Game.GetPlayer()
-constexpr std::uint64_t kQuestSetCurrentStageId = 56684;
+
+// 🛑 The stage path the ENGINE'S OWN CONSOLE COMMAND takes, NOT the Papyrus
+// native. `setstage` (0x30df30) calls these three in order: EnsureQuestStarted
+// with startNow = TRUE runs TESQuest::Start on the spot, then the stage is
+// set directly. Quest.SetCurrentStageID (id 56684) passes startNow = FALSE,
+// which only QUEUES the quest on BGSStoryTeller for promotion on a later
+// frame -- and the dialogue menu pauses the game, so the quest is still
+// stopped when its objective is displayed and the display is a no-op.
+//   bool   TESQuest::EnsureQuestStarted(quest, bool* justStarted, bool startNow)  0x38a020
+//   Stage* TESQuest::GetStage(quest, u16 index)                                  0x38ae70
+//   bool   TESQuest::SetStage(quest, u16 index)                                  0x38a130
+// See: docs/commentary/morrowind_runtime.md#objectives-must-be-displayed
+constexpr std::uint64_t kQuestEnsureStarted = 25003;
+constexpr std::uint64_t kQuestGetStage = 25028;
+constexpr std::uint64_t kQuestSetStage = 25004;
+
+// 🛑 The objective pair the ENGINE'S OWN CONSOLE COMMAND uses, NOT the Papyrus
+// natives. `setobjectivedisplayed` is handled at 0x31b5b0, which calls these
+// two directly; a hook on Quest.SetObjectiveDisplayed (id 56682) recorded ZERO
+// hits while that command changed the state, and the native does nothing when
+// called from this plugin.
+//   BGSQuestObjective* TESQuest::GetObjective(quest, u16 index)   0x389300
+//   void BGSQuestObjective::SetState(objective, u32 state)        0x354870
+// State: 0 dormant, 1 displayed, 2/3 completed.
+// See: docs/commentary/morrowind_runtime.md#objectives-must-be-displayed
+constexpr std::uint64_t kQuestGetObjective = 24981;
+constexpr std::uint64_t kQuestObjectiveSetState = 23933;
+
+// Quest.IsRunning (0x9ea9c0 on 1.6.659): bit 0 of TESQuest+0xdc set, bit 7
+// clear, and NO pending start at +0x248. A quest started this frame still
+// carries that pending start (`sqv` says "Waiting For Promotion") until the
+// StoryTeller finishes it on a later unpaused frame, and only then does its
+// instance id become final. An objective displayed before that is filed under
+// the OLD instance and the journal lists the quest as finished.
+// See: docs/commentary/morrowind_runtime.md#objectives-must-be-displayed
+constexpr std::uint64_t kQuestIsRunning = 56727;
+// Actor.StartCombat(Actor target) (0x98c1b0) and Actor.StopCombat()
+// (0x98c5a0), each found at its registration: `lea r9,[callback]` sits three
+// instructions above the `lea rdx,["StartCombat"]` that names it.
+//
+// 🛑 Both take the ACTOR in r8 and the target in r9, so a bare `StartCombat`
+// is the speaker attacking, not the player. Measured over Tamriel Rebuilt's
+// result scripts: 720 of the 1,150 call sites name `player` as the argument.
+constexpr std::uint64_t kActorStartCombat = 54768;
+constexpr std::uint64_t kActorStopCombat = 54770;
+
+// ObjectReference.Enable(bool fadeIn) (0x9cdfa0), .Disable(bool fadeOut)
+// (0x9cddc0) and .IsDisabled() (0x9e5b90). Enable/Disable register with the
+// callback stored AFTER the registration call (`lea rax,[cb]` into
+// `[rbx+0x50]`), not in r9 the way the argument-less natives do.
+constexpr std::uint64_t kRefEnable = 56158;
+constexpr std::uint64_t kRefDisable = 56155;
+constexpr std::uint64_t kRefIsDisabled = 56639;
+
 constexpr std::uint64_t kRefAddItem = 56145;
 constexpr std::uint64_t kRefRemoveItem = 56218;
 constexpr std::uint64_t kRefGetItemCount = 56173;

@@ -786,8 +786,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if out.get("failed") else 0
     else:
         for k, v in out.items():
-            print(f"{k}: {v}")
+            _print_value(k, v)
     return 0
+
+
+def _print_value(key: str, value) -> None:
+    """Print one response field, escaping bytes the console cannot encode."""
+    text = f"{key}: {value}"
+    encoding = sys.stdout.encoding or "utf-8"
+    print(text.encode(encoding, "backslashreplace").decode(encoding))
 
 
 if __name__ == "__main__":

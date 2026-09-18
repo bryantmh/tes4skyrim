@@ -20,9 +20,14 @@ std::unordered_map<std::string, std::string> g_actorScripts;
 std::unordered_map<std::string, ActorDef> g_actors;
 std::unordered_map<std::string, FormRef> g_items;
 std::unordered_map<std::string, FormRef> g_quests;
+std::unordered_map<std::string, FormRef> g_refs;
 
 constexpr const char* kFileActors = "MWNP.txt";
 constexpr const char* kFileItems = "MWID.txt";
+
+// The PLACED reference behind a TES3 id, which `id->Command` acts on.
+// See: docs/commentary/morrowind_runtime.md#placed-references
+constexpr const char* kFileRefs = "MWRF.txt";
 constexpr const char* kFileQuests = "MWQS.txt";
 constexpr const char* kFileFactions = "MWFA.txt";
 
@@ -79,6 +84,7 @@ FactionDef ParseFaction(const std::string& value) {
         out.ranks[r].favouredSkill = std::atoi(f[3].c_str());
         out.ranks[r].reputation = std::atoi(f[4].c_str());
     }
+    if (parts.size() > 3) out.rankNames = Split(parts[3], ',');
     return out;
 }
 
@@ -192,6 +198,10 @@ void LoadScriptTables(const std::string& pluginDir) {
                [](const std::string& quest, const std::string& value) {
                    g_quests.emplace(Lower(quest), ParseFormRef(value));
                });
+    ForEachRow(pluginDir + kFileRefs,
+               [](const std::string& id, const std::string& value) {
+                   g_refs.emplace(Lower(id), ParseFormRef(value));
+               });
     ForEachRow(pluginDir + kFileFactions,
                [](const std::string& faction, const std::string& value) {
                    g_factions.emplace(Lower(faction), ParseFaction(value));
@@ -223,6 +233,13 @@ const FormRef* FindQuest(const std::string& quest) {
     const auto it = g_quests.find(Lower(quest));
     return it == g_quests.end() ? nullptr : &it->second;
 }
+
+const FormRef* FindRef(const std::string& id) {
+    const auto it = g_refs.find(Lower(id));
+    return it == g_refs.end() ? nullptr : &it->second;
+}
+
+std::size_t RefCount() { return g_refs.size(); }
 
 std::size_t ActorCount() { return g_actors.size(); }
 

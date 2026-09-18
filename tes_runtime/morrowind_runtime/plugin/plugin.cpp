@@ -16,6 +16,7 @@
 #include "cosave.h"
 #include "game_calls.h"
 #include "log.h"
+#include "main_thread.h"
 #include "menu.h"
 #include "skse_abi.h"
 #include "store.h"
@@ -68,6 +69,9 @@ void QueryInterfaces(const SKSEInterface* skse) {
     auto* papyrus = static_cast<SKSEPapyrusInterface*>(
         skse->QueryInterface(kInterface_Papyrus));
     if (papyrus) papyrus->Register(CaptureVm);
+    auto* task = static_cast<SKSETaskInterface*>(
+        skse->QueryInterface(kInterface_Task));
+    SetTaskInterface(task);
     g_serialization = static_cast<SKSESerializationInterface*>(
         skse->QueryInterface(kInterface_Serialization));
     if (g_serialization) {
@@ -75,9 +79,9 @@ void QueryInterfaces(const SKSEInterface* skse) {
                                      kSerializationId);
     }
     InstallCoSave(g_serialization, skse->GetPluginHandle());
-    Log("interfaces: messaging %s, papyrus %s, serialization %s",
+    Log("interfaces: messaging %s, papyrus %s, serialization %s, task %s",
         msg ? "ok" : "MISSING", papyrus ? "ok" : "MISSING",
-        g_serialization ? "ok" : "MISSING");
+        g_serialization ? "ok" : "MISSING", task ? "ok" : "MISSING");
 }
 
 }  // namespace

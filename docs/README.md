@@ -124,6 +124,7 @@ A dated sweep over a corpus, with counts. Frozen once written; a re-audit is a N
 | [ck_warnings.md](audits/ck_warnings.md) | CK Warnings Audit — Oblivion.esm |
 | [fallout_nv_mesh_conversion.md](audits/fallout_nv_mesh_conversion.md) | Fallout NV / FO3 mesh conversion — what already works, and the particle-NIF defect |
 | [morroblivion_mesh_axis_rotation.md](audits/morroblivion_mesh_axis_rotation.md) | Morroblivion's hand-authored pitch and Z re-seat fixes, and which a dependent plugin must re-apply |
+| [mwscript_opcodes.md](audits/mwscript_opcodes.md) | Which of MWScript's 298 commands MorrowindRuntime implements, by call-site cost |
 | [package_conversion.md](audits/package_conversion.md) | PACK Conversion Audit — 2026-08-17 |
 | [quest.md](audits/quest.md) | Quest Completability Audit — Oblivion.esm conversion |
 | [quest_script_conversion.md](audits/quest_script_conversion.md) | Quest Script Conversion Audit |

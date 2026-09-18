@@ -15,7 +15,10 @@
 #include <string>
 #include <vector>
 
+#include <components/interpreter/defines.hpp>
+
 #include "filter.h"
+#include "script_context.h"
 #include "session.h"
 #include "store.h"
 
@@ -194,7 +197,8 @@ int main(int argc, char** argv) {
             std::printf("TOPIC '%s'  (no response passes)\n", wanted.c_str());
         } else {
             std::printf("TOPIC '%s'\n", reply.topic.c_str());
-            PrintWrapped(reply.text, 2);
+            DialogueContext context(actor, actor.id, "Player");
+            PrintWrapped(Interpreter::fixDefinesDialog(reply.text, context), 2);
             if (!reply.resultScript.empty()) {
                 std::printf("  result script:\n");
                 PrintWrapped(reply.resultScript, 4);

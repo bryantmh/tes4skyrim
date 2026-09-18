@@ -40,6 +40,11 @@ struct GameHooks {
                        int count) = nullptr;
     int  (*itemCount)(const std::string& owner,
                       const std::string& item) = nullptr;
+    // `attacker` attacks `target`; an empty `target` stops the fight instead.
+    void (*setCombat)(const std::string& attacker,
+                      const std::string& target) = nullptr;
+    void (*setEnabled)(const std::string& ref, bool enabled) = nullptr;
+    bool (*isDisabled)(const std::string& ref) = nullptr;
 };
 
 GameHooks& Hooks();

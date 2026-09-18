@@ -10,6 +10,8 @@
 #include <sstream>
 #include <string>
 
+#include <components/interpreter/defines.hpp>
+
 #include "dialogue_state.h"
 #include "filter.h"
 #include "game_actor.h"
@@ -167,12 +169,28 @@ void AiAndDeathCases(DialogueContext& context, const GameActor& actor) {
           "both survive a save and load");
 }
 
+// 🛑 `%PCRank` and `%NextPCRank` print the FACTION's authored rank name, and
+// returning "" left "You are now %PCName the  in the Fighters Guild." on
+// screen. A non-member reads rank 0, which is Morrowind's own quirk.
+// See: docs/commentary/morrowind_runtime.md#rank-names
+void RankNameCases(DialogueContext& context) {
+    std::printf("rank names in dialogue text\n");
+    FactionDef def;
+    def.rankNames = {"Associate", "Apprentice", "Journeyman"};
+    AddFactionForTest("Fighters Guild", def);
+    // FactionCases leaves the player at rank 1, so PCRank is the second name.
+    const std::string got = Interpreter::fixDefinesDialog(
+        "the %NextPCRank, was %PCRank", context);
+    Check(got == "the Journeyman, was Apprentice", got.c_str());
+}
+
 void Cases() {
     ClearScriptTables();
     LoadScriptTables("testdata\\scripts\\");
     GameActor actor("test_actor");
     DialogueContext context(actor, "Test Actor", "Player");
     FactionCases(context, actor);
+    RankNameCases(context);
     CoSaveCases(context);
     AiAndDeathCases(context, actor);
     TableCases(context, actor);

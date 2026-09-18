@@ -87,6 +87,7 @@ private:
     mutable std::string mRace;
     mutable std::string mClass;
     mutable std::string mFaction;
+    mutable std::string mRank;
 };
 
 }  // namespace mwruntime
