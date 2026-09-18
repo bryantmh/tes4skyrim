@@ -6774,12 +6774,12 @@ class TestWorldspaceParentFlags:
         rec.update(over)
         return rec
 
-    def test_tes4_child_borrows_only_the_map(self):
-        """A TES4 child (no authored PNAM) gets Use Map Data alone."""
+    def test_tes4_child_borrows_everything(self):
+        """A TES4 child (no authored PNAM) borrows land, LOD, map, water, climate."""
         from tes5_import.record_types.world import convert_WRLD
         pnam = _find_subrecord(convert_WRLD(self._rec()), b'PNAM')
-        assert pnam is not None, 'no PNAM = engine uses EVERYTHING from the parent'
-        assert struct.unpack('<H', pnam)[0] == 0x04
+        assert pnam is not None
+        assert struct.unpack('<H', pnam)[0] == 0x5F
 
     def test_fnv_pnam_is_authored_without_image_space_bit(self):
         """FNV bit 5 (Use Image Space) has no TES5 meaning and is masked."""

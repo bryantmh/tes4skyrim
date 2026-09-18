@@ -36,6 +36,33 @@ from .common import (
 )
 
 
+#: TES4 WRLD has no DNAM/NAM4; both its land and water planes are this.
+_TES4_DEFAULT_PLANE_HEIGHT = -2048.0
+
+
+# ---------------------------------------------------------------------------
+# WRLD water and fallback planes
+# ---------------------------------------------------------------------------
+def _world_water_and_planes(rec: dict) -> bytes:
+    """WRLD NAM2/NAM3 water types and the NAM4/DNAM fallback planes.
+
+    DNAM/NAM4 are authored only by FO3/FNV; TES4 falls back to its own plane
+    height for BOTH, never leaving water above land. NAM3 stays on
+    DefaultWater always: a null LOD water pointer CTDs as soon as a .btr
+    carries a WATER BSMultiBoundNode.
+    See: docs/commentary/tes5_import_world.md#wrld-land-and-water-defaults
+    """
+    subs = pack_formid_subrecord(
+        'NAM2', get_formid(rec, 'NAM2.Water') or 0x00000018)
+    subs += pack_formid_subrecord('NAM3', 0x00000018)
+    subs += pack_float_subrecord('NAM4', get_float(rec, 'NAM4.LODWaterHeight'))
+    subs += pack_subrecord('DNAM', struct.pack(
+        '<ff',
+        get_float(rec, 'DNAM.DefaultLandHeight', _TES4_DEFAULT_PLANE_HEIGHT),
+        get_float(rec, 'DNAM.DefaultWaterHeight', _TES4_DEFAULT_PLANE_HEIGHT)))
+    return subs
+
+
 # TES4 'DefaultClimate' (Oblivion.esm 0x0000015F).  The engine hardcodes this
 # form as the climate for any worldspace with no CNAM — see convert_WRLD.
 # Raw TES4 id: it MUST go through remap_formid before being written.
@@ -612,26 +639,7 @@ def convert_WRLD(rec: dict) -> bytes:
 
     subs += pack_formid_subrecord('CNAM', _world_climate(rec))
 
-    # Water: NAM2 (water type) and NAM3 (LOD water type).  WATR is converted
-    # (convert_WATR), so the authored TES4 pointer is honoured when there is
-    # one — 14 of Oblivion.esm's 84 worldspaces point NAM2 at lava, and
-    # hardcoding 0x18 here is what made every Oblivion realm render as
-    # ordinary blue water regardless of what its WATR said.  Worldspaces with
-    # no authored water fall back to Skyrim.esm's DefaultWater (0x18, master
-    # index 0), as vanilla Tamriel does.
-    #
-    # NAM3 stays on DefaultWater in all cases: it is the water drawn on
-    # distant terrain LOD, which vanilla always renders as ordinary water, and
-    # without a valid NAM3 the engine's terrain-LOD water codepath derefs a
-    # null WATR pointer and CTDs as soon as a .btr contains a WATER
-    # BSMultiBoundNode.  NAM4 = LOD water height; Oblivion's sea level is 0.
-    nam2 = get_formid(rec, 'NAM2.Water') or 0x00000018
-    subs += pack_formid_subrecord('NAM2', nam2)
-    subs += pack_formid_subrecord('NAM3', 0x00000018)
-    subs += pack_float_subrecord('NAM4', get_float(rec, 'NAM4.LODWaterHeight'))
-    subs += pack_subrecord('DNAM', struct.pack(
-        '<ff', get_float(rec, 'DNAM.DefaultLandHeight', -2048.0),
-        get_float(rec, 'DNAM.DefaultWaterHeight')))
+    subs += _world_water_and_planes(rec)
 
     # MODL — "Cloud Model", the mesh the WORLD MAP drapes over the terrain.
     # xEdit places the Cloud Model struct after the LOD/land data and before the
