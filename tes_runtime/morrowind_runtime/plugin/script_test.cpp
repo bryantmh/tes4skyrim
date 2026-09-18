@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <components/interpreter/defines.hpp>
 
@@ -16,6 +17,7 @@
 #include "filter.h"
 #include "game_actor.h"
 #include "log.h"
+#include "persuasion.h"
 #include "script_context.h"
 #include "script_runner.h"
 #include "script_tables.h"
@@ -184,6 +186,87 @@ void RankNameCases(DialogueContext& context) {
     Check(got == "the Journeyman, was Apprentice", got.c_str());
 }
 
+// The fakes the persuasion formula reads the game through.
+int g_roll = 0;
+int FixedRoll() { return g_roll; }
+int FakeLevel() { return 5; }
+float FakeValue(const std::string&, const char*) { return 50.0f; }
+float FakePercent(const std::string&, const char*) { return 1.0f; }
+int FakeGold(const std::string&) { return 1000; }
+
+struct GoldMove {
+    std::string from, to;
+    int count;
+};
+std::vector<GoldMove> g_goldMoves;
+void RecordGold(const std::string& from, const std::string& to, int count) {
+    g_goldMoves.push_back({from, to, count});
+}
+std::string g_advanced;
+float g_advancedBy = 0;
+void RecordAdvance(const char* skill, float amount) {
+    g_advanced = skill;
+    g_advancedBy = amount;
+}
+
+// OpenMW's persuasion formula on the fixture: with the fakes above the
+// player's Admire target is 58.75, so a roll of 0 succeeds and 99 fails.
+// fPerTempMult is 1, so every temporary change is kept whole on goodbye.
+void PersuasionCases(DialogueContext& context) {
+    std::printf("persuasion\n");
+    Hooks().goldCount = FakeGold;
+    Hooks().moveGold = RecordGold;
+    Hooks().actorValue = FakeValue;
+    Hooks().statPercent = FakePercent;
+    Hooks().playerLevel = FakeLevel;
+    Hooks().advanceSkill = RecordAdvance;
+    Check(!Persuade(Persuasion::Admire, FixedRoll).ok,
+          "no conversation, no persuasion");
+    State().SetDisposition("test_actor", 50);
+    State().BeginConversation("test_actor");
+    g_roll = 0;
+    PersuasionOutcome out = Persuade(Persuasion::Admire, FixedRoll);
+    Check(out.ok && out.success && out.topic == "Admire Success" &&
+              out.titleGmst == "sAdmireSuccess",
+          "a roll of 0 admires successfully");
+    Check(State().Disposition("test_actor") == 67,
+          "disposition 50 -> 67 for the conversation");
+    Check(g_advanced == "Speechcraft" && g_advancedBy == 1.0f,
+          "Speechcraft is credited the SKIL success use value");
+    g_roll = 99;
+    out = Persuade(Persuasion::Taunt, FixedRoll);
+    Check(out.ok && !out.success && out.topic == "Taunt Fail",
+          "a roll of 99 taunts and fails");
+    Check(State().Disposition("test_actor") == 48,
+          "and it fell to 48 (the 0.66 distance factor at 67 widens the miss)");
+    g_roll = 0;
+    out = Persuade(Persuasion::Bribe100, FixedRoll);
+    Check(out.success && g_goldMoves.size() == 1 &&
+              g_goldMoves[0].from == "player" &&
+              g_goldMoves[0].to == "test_actor" && g_goldMoves[0].count == 100,
+          "a bribe moves 100 of Skyrim's gold from the player to the speaker");
+    Check(State().Disposition("test_actor") == 91, "and it rose to 91");
+    Check(BribeCost(Persuasion::Bribe1000) == 1000 && PlayerGold() == 1000,
+          "bribe costs and the player's purse");
+    State().EndConversation();
+    Check(State().Disposition("test_actor") == 91,
+          "goodbye keeps the permanent part, which is all of it here");
+    const std::string saved = State().Serialize();
+    State().Reset();
+    State().Deserialize(saved);
+    Check(State().Disposition("test_actor") == 91,
+          "and the base survives the co-save");
+
+    State().BeginConversation("test_actor");
+    RunResultScript("SetDisposition 40", context);
+    Persuade(Persuasion::Admire, FixedRoll);
+    State().EndConversation();
+    Check(State().Disposition("test_actor") == 54,
+          "a script's SetDisposition mid-conversation resets the baseline");
+    Hooks() = GameHooks();
+    State().SetDisposition("test_actor", 50);
+}
+
 void Cases() {
     ClearScriptTables();
     LoadScriptTables("testdata\\scripts\\");
@@ -193,6 +276,7 @@ void Cases() {
     RankNameCases(context);
     CoSaveCases(context);
     AiAndDeathCases(context, actor);
+    PersuasionCases(context);
     TableCases(context, actor);
     State().BeginConversation();
 

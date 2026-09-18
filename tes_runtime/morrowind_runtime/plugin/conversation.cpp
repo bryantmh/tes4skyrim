@@ -12,13 +12,16 @@
 #include <components/interpreter/defines.hpp>
 
 #include "activation.h"
+#include "conversation_persuasion.h"
 #include "dialogue_state.h"
 #include "game_actor.h"
 #include "log.h"
 #include "menu.h"
 #include "menu_layout.h"
+#include "persuasion.h"
 #include "script_context.h"
 #include "script_runner.h"
+#include "script_tables.h"
 #include "session.h"
 
 namespace mwruntime {
@@ -51,7 +54,14 @@ constexpr int kWheelLines = 3;
 constexpr int kLineOffset = layout::kSeparatorHeight - 2;
 
 // What one row of the topic list is.
-enum class Kind { Persuasion, Separator, Topic };
+enum class Kind { Persuasion, Barter, Separator, Topic };
+
+// ESM::NPC::AllItems: any item class among the speaker's services lists
+// Barter, as DialogueWindow::updateTopics decides.
+constexpr std::uint32_t kAllItems = 0x2FFF;
+
+// The vanilla text of the row's GMST, used only when a chain stages none.
+constexpr const char* kBarterFallback = "Barter";
 
 struct Item {
     Kind kind;
@@ -509,11 +519,18 @@ int ItemAt(double x, double y) {
     return -1;
 }
 
-// The rows: Persuasion for an NPC, a rule, then every topic offered.
+// The rows: Persuasion for an NPC, Barter for a merchant, a rule, then
+// every topic offered.
 void RebuildItems() {
     g_items.clear();
     if (g_actor && g_actor->IsNpc()) {
-        g_items.push_back({Kind::Persuasion, layout::kPersuasion});
+        g_items.push_back({Kind::Persuasion,
+                           GmstText("sPersuasion", layout::kPersuasion)});
+        const ActorDef* def = FindActor(g_speaker);
+        if (def && (def->services & kAllItems)) {
+            g_items.push_back({Kind::Barter,
+                               GmstText("sBarter", kBarterFallback)});
+        }
         g_items.push_back({Kind::Separator, ""});
     }
     // DialogueManager::getKeywords: what the speaker can answer AND the
@@ -562,6 +579,7 @@ void PushAll() {
     PushHistory(false);
     PushTopics();
     PushBye();
+    PushPersuasionModal();
 }
 
 void Learn(const std::vector<std::string>& topics) {
@@ -643,12 +661,47 @@ void Goodbye() {
     CloseMenu();
 }
 
+// The chosen persuasion, resolved and answered: the `Admire Success` /
+// `Bribe Fail` topic under its GMST title, delivered like any other reply
+// so its result script runs and the bar shows the moved disposition.
+void OnPersuaded(Persuasion type) {
+    if (!g_actor) return;
+    const PersuasionOutcome outcome = Persuade(type);
+    if (outcome.ok) {
+        const Reply reply = Answer(outcome.topic, *g_actor, -1);
+        if (reply.text.empty()) {
+            Log("conversation: nothing answers '%s'", outcome.topic.c_str());
+        } else {
+            Deliver(GmstText(outcome.titleGmst, outcome.topic), reply);
+        }
+    }
+    PushAll();
+}
+
+// DialogueWindow::onSelectListItem for sBarter: the Service Refusal line
+// when the speaker refuses, else Skyrim's own barter menu over this one.
+// See: docs/commentary/morrowind_runtime.md#barter
+void Barter() {
+    if (!g_actor || ListLocked()) return;
+    const Reply refusal = ServiceRefusal(kServiceBarter, *g_actor);
+    if (!refusal.text.empty()) {
+        Log("conversation: '%s' refuses to barter", g_speaker.c_str());
+        Deliver(GmstText("sServiceRefusal", refusal.topic), refusal);
+        PushAll();
+        return;
+    }
+    Log("conversation: barter with '%s'", g_speaker.c_str());
+    if (Hooks().showBarterMenu) Hooks().showBarterMenu(g_speaker);
+}
+
 void SelectItem(int index) {
     const Item& item = g_items[static_cast<std::size_t>(index)];
     if (item.kind == Kind::Topic) {
         SelectTopic(item.text);
     } else if (item.kind == Kind::Persuasion) {
-        Log("conversation: persuasion is not built yet");
+        OpenPersuasionModal(OnPersuaded);
+    } else if (item.kind == Kind::Barter) {
+        Barter();
     }
 }
 
@@ -676,6 +729,10 @@ void ScrollList(int pixels) {
 }
 
 void OnHover(double x, double y) {
+    if (PersuasionModalOpen()) {
+        PersuasionModalHover(x, y);
+        return;
+    }
     const int item = ItemAt(x, y);
     const bool bye = kBye.Contains(x, y);
     const int hot = HotAt(x, y);
@@ -711,6 +768,10 @@ void ClickScrollbars(double x, double y) {
 }
 
 void OnClick(double x, double y) {
+    if (PersuasionModalOpen()) {
+        PersuasionModalClick(x, y);
+        return;
+    }
     if (kBye.Contains(x, y)) {
         Goodbye();
         return;
@@ -730,6 +791,7 @@ void OnClick(double x, double y) {
 }
 
 void OnWheel(double x, double y, double delta) {
+    if (PersuasionModalOpen()) return;
     if (kTopics.Contains(x, y) || kTopicScroll.Contains(x, y)) {
         ScrollList(-static_cast<int>(delta) * kListStep);
         g_hoverItem = ItemAt(x, y);
@@ -739,7 +801,15 @@ void OnWheel(double x, double y, double delta) {
     }
 }
 
-void OnCancel() { Goodbye(); }
+// Escape closes the modal first, as a MyGUI modal takes it; then it is
+// Goodbye.
+void OnCancel() {
+    if (PersuasionModalOpen()) {
+        ClosePersuasionModal();
+        return;
+    }
+    Goodbye();
+}
 
 void OnOpened() {
     g_open = true;
@@ -748,6 +818,8 @@ void OnOpened() {
 
 void OnClosed() {
     g_open = false;
+    ClosePersuasionModal();
+    State().EndConversation();
     g_actor.reset();
     g_history.clear();
     g_items.clear();
@@ -810,8 +882,8 @@ void BeginConversation(const char* speaker, const char* displayName,
                        const char* playerName) {
     OnClosed();
     SeedChargenTopics();
-    State().BeginConversation();
     g_speaker = speaker ? speaker : "";
+    State().BeginConversation(g_speaker);
     g_speakerName = displayName && *displayName ? displayName : g_speaker;
     g_playerName = playerName ? playerName : "";
     g_actor = std::make_unique<GameActor>(g_speaker);

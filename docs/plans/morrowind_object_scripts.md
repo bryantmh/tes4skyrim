@@ -1,6 +1,6 @@
 # Object scripts on the Morrowind interpreter
 
-Status: PLAN
+Status: PLAN — step 3's command port is largely DONE; the tick is not started.
 
 **Code it would change:** `tes_runtime/morrowind_runtime/plugin/`,
 `script_convert/blocks_morrowind.py`, `tes5_import/dialogue/morrowind_sidecar.py`
@@ -103,27 +103,95 @@ their object is loaded; global scripts run every frame, period. Neither exists
 in the runtime today: `StartScript` records that a script is running and nothing
 ever ticks it.
 
-The hook belongs in the DLL's main-thread update, not Papyrus. Budget matters —
-3,569 scripts at 60Hz is a real cost, so only loaded objects tick, which is the
-same rule Morrowind itself applies.
+The hook belongs in the DLL's main-thread update, not Papyrus. Only loaded
+objects tick, which is the same rule Morrowind itself applies.
+
+#### <a id="tick-rate"></a>Fixed rate, not per frame
+
+OpenMW runs local then global scripts once per RENDERED frame, uncapped
+(`engine.cpp`, `executeLocalScripts()` then `getGlobalScripts().run()`), and so
+does Morrowind. **We should not copy that**, for correctness rather than cost:
+TES3 scripts move things a fixed amount PER TICK, not scaled by the delta --
+`rotate z, -110` in `TR_Aimrah_6_CageDoor` is literal. At 144 fps that door
+spins 2.4x faster than the author saw at 60.
+
+A fixed 30 Hz accumulator with a small catch-up cap makes authored behaviour
+deterministic. 🛑 **`GetSecondsPassed` must then return the TICK delta**, not
+the frame delta: hand scripts a 144 fps frame time while ticking at 30 Hz and
+every integrating timer runs ~5x slow, silently.
+
+#### The budget, measured
+
+The working set the risk section asked for, over `TR_Mainland.esm`:
+
+| | |
+|---|---|
+| SCPT records with a body | 3,569 |
+| Code lines, median / p90 / max | 24 / 66 / 356 |
+| Placed references running a script | 15,932 |
+| Cells holding at least one | 3,520 |
+| Scripts per cell, median / p90 / max | **2 / 9 / 541** |
+
+So the population is 3,569 but the loaded set is single digits typically. Even
+the 541-script outlier is a fraction of a frame -- but it lands on one frame in
+four, and a periodic spike reads as judder. **Stagger the ticks across slots
+and cap the tick with a time budget**, resuming next frame: a 30 Hz script does
+not care which frame it lands on, and that bounds the cost whatever a cell
+holds.
+
+#### 🛑 Execution cannot be async
+
+Script bodies read and write game state (`GetPos`, `Rotate`, `Enable`,
+`GetDistance`), which Skyrim is not thread-safe for, and TES3 scripts assume a
+coherent world each tick. `SetCombat` and `SetEnabled` already `PostToMainThread`
+for exactly this reason. **Compilation** is the part that can go on a worker
+pool -- 3,569 scripts and 122,550 lines, touching no game state, and the only
+multi-second cost in the design.
+
+#### 🛑 Do not use the tick-need classification to SKIP a tick
+
+Classifying bodies as event-only vs polling vs timed suggests 14% could be
+driven purely by `OnActivate`/`OnDeath` with no tick. **Measured, that
+classification is wrong 43% of the time**: of 1,819 scripts containing an event
+keyword, 778 have statements OUTSIDE the event guard. `TR_m4_Malmas_script`
+sets a map flag unguarded; `TR_m4_NPC_FatherToMany` has `OnDeath` AND a
+`GetDistance` proximity greeting. A keyword scan picks one and is wrong about
+the other, and the failure is silent -- an NPC that never greets you, three
+hours in.
+
+Structural analysis does not rescue it either: a guard can be a variable set on
+a previous tick, which is dataflow, not syntax. **Tick everything; use the
+classification only to choose a RATE.** Being wrong then costs latency, not
+correctness.
 
 ### 3. The commands objects use that dialogue does not
 
-From the census, ranked by how often they lead a line:
+**Largely DONE.** These shipped once `MWRF.txt` gave the runtime an id ->
+placed-reference index, since almost all of them name a reference:
 
-| Command | Uses | Note |
-|---|---|---|
-| `StopScript` | 179 | ours |
-| `Disable` / `Enable` | 211 | native |
-| `Activate` | 69 | the engine's own activation |
-| `Rotate` / `SetPos` / `SetAngle` | 49 | native, currently dropped |
-| `SetAtStart` | — | needs the object's authored placement |
-| `GetSecondsPassed` | — | frame delta, trivial once there is a tick |
-| `PlaceAtMe`, `SetDelete` | 19 | native |
+| Command | Calls | Status |
+|---|---:|---|
+| `Enable` / `Disable` / `GetDisabled` | 6,031 | done |
+| `StartCombat` / `StopCombat` | 1,764 | done |
+| `MenuMode` | 1,111 | done |
+| `GetDistance` | 782 | done |
+| `ForceGreeting` | 579 | done |
+| `Activate` | 504 | done |
+| `GetPCCell` / `GetInterior` | 403 | done |
+| `Unlock` / `Lock` / `GetLocked` | 608 | done |
+| `GetRace` | 238 | done |
+| `SetDelete` | 133 | done |
+| `Equip` | 127 | done |
+| Health / Magicka / Fatigue: `Get`/`Set`/`Mod`/`ModCurrent` | — | done |
+| `StopScript` | 179 | done |
 
-`GetSecondsPassed` and `OnActivate` are the two that make the difference
-between a script that runs and a script that works, and both are free once the
-tick exists.
+Still open, and all of them want the tick rather than a reference:
+`GetSecondsPassed` (1,005), `CellChanged` (983), `OnDeath` (958),
+`OnActivate` (852), `GetPos`/`SetPos`/`MoveWorld`/`Rotate` (~2,150),
+`SetAtStart` (needs the authored placement).
+
+`GetSecondsPassed` and `OnActivate` remain the two that make the difference
+between a script that runs and a script that works.
 
 ### 4. Retire the Papyrus path for TES3
 
@@ -136,18 +204,42 @@ not safe to run both.
 ## Order
 
 1. Script instances keyed by RefNum, locals in the co-save
-2. The tick, loaded objects only, with a measured frame budget
-3. `OnActivate`, `GetSecondsPassed`, `StopScript`, `StartScript`
-4. The movement and state commands the census names
+2. The tick, loaded objects only, staggered and budget-capped, at a fixed rate
+3. `OnActivate`, `OnDeath`, `CellChanged`, `GetSecondsPassed`
+4. The movement commands: `GetPos`/`SetPos`/`Rotate`/`MoveWorld`/`SetAtStart`
 5. Delete the TES3 Papyrus path
 
-Steps 1–3 are what make the cage door open.
+Step 3 of the original plan — the commands objects use that dialogue does not —
+is largely done already, so the remaining path is shorter than it was.
+
+### <a id="sharnoga"></a>The shortest path to a playable quest line
+
+Sharnoga gra-Mal's Old Ebonheart Fighters Guild quests are the test case, and
+`morrowind_quest_trace.py --actor` says each blocks on exactly ONE stage set by
+one small object script:
+
+| Quest | Stage | Script |
+|---|---|---|
+| Cursing Like a Witch | 40 | `TR_m3_OE_FG_q_VermaiScr` |
+| A Champion Lost | 20 | `TR_m3_OE_FG_q_ConstJo1Scr` |
+| A Final Fate | 20 | `TR_m3_OE_FG_q_LenwynScr` |
+
+All three are under 25 lines, and every command they name is now ported except
+`OnActivate`, `OnDeath`, `CellChanged`, `SetFatigue`/`SetHealth` (done) and
+`MessageBox`. **They need almost none of the tick**: `LenwynScr` is pure
+`OnActivate`, `ConstJo1Scr` is `OnActivate` plus a visibility guard that only
+matters on cell load, and only `VermaiScr` wants a periodic check, for
+`CellChanged` — which fires on transition, not per frame.
+
+So steps 1 + 3 alone, with events hooked and no scheduler, make this quest line
+playable, and prove the design end to end before the expensive part is built.
 
 ## Risks
 
-- **Frame budget.** 3,569 scripts is the population, not the working set, but
-  the working set has never been measured. Step 2 must report it before step 5
-  removes the fallback.
+- **Frame budget.** MEASURED: median 2 scripts per cell, p90 9, worst 541. The
+  population is 3,569 but the loaded set is single digits typically, so the
+  cost is scheduling the 541-cell spike, not the total. See
+  [the budget](#tick-rate).
 - **The cutover is one-way.** Deleting the Papyrus path with the interpreter
   half-finished leaves objects with no script at all, which is worse than a
   lossy one. The delete is last for that reason.

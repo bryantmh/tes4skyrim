@@ -32,8 +32,10 @@ struct FilterResult {
 
 // The first INFO in the topic whose filters all pass, or a null result.
 // Order IS precedence: Morrowind takes the first match, never the best.
+// `invertDisposition` is Service Refusal's rule: the INFO answers when the
+// actor's disposition is BELOW its threshold, and 0 still always answers.
 FilterResult SelectInfo(const Topic& topic, const ActorView& actor,
-                        int choice);
+                        int choice, bool invertDisposition = false);
 
 // Every INFO that passes, in order. For the test harness and for barks, which
 // pick at random rather than taking the first.
@@ -41,7 +43,8 @@ std::vector<const Info*> ListInfos(const Topic& topic, const ActorView& actor,
                                    int choice);
 
 // One INFO against one actor; `why` says what rejected it.
-FilterResult TestInfo(const Info& info, const ActorView& actor, int choice);
+FilterResult TestInfo(const Info& info, const ActorView& actor, int choice,
+                      bool invertDisposition = false);
 
 // One condition. Exposed so the harness can exercise all 85 functions
 // without building a topic around each.

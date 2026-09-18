@@ -28,11 +28,28 @@ from tes4_export.record_types.morrowind_dialog import (DIAL_SIG, INFO_SIG,
 from tes4_export.tes3_reader import (get_all_subrecords, get_string,
                                        get_subrecord, read_file)
 
-#: NPDT comes in two sizes; (disposition, rank) byte offsets in each.
-_NPDT_FIELDS = {52: (44, 46), 12: (2, 4)}
+from .morrowind_autocalc import (autocalc_attributes, autocalc_skills,
+                                 parse_class, parse_race, parse_skill)
 
-#: NPC_ FLAG bit 0.
+#: The 52-byte NPDT: level, 8 attributes, 27 skills, health, magicka, fatigue, disposition, reputation, rank, gold.
+_NPDT_FULL = '<h8B27BxHHHBBBxi'
+
+#: The 12-byte autocalc NPDT: level, disposition, reputation, rank, gold.
+_NPDT_AUTOCALC = '<hBBB3xi'
+
+#: TES3 attribute and skill indices the persuasion formula reads.
+_PERSONALITY, _LUCK = 6, 7
+_MERCANTILE, _SPEECHCRAFT = 24, 25
+
+#: NPC_ FLAG bits: female, and autocalc (services come from the class).
 _FEMALE = 0x1
+_AUTOCALC = 0x10
+
+#: An unaffiliated stranger's disposition, when no NPDT says otherwise.
+_NEUTRAL_DISPOSITION = 50
+
+#: GMST value subrecords and the type letter each is staged under.
+_GMST_VALUES = (('STRV', 's'), ('INTV', 'i'), ('FLTV', 'f'))
 
 #: TES3 record types that can sit in an inventory, and every type that can be placed AND carry a script.
 _ITEM_TYPES = ('ALCH', 'APPA', 'ARMO', 'BOOK', 'CLOT', 'INGR', 'LIGH',
@@ -78,6 +95,12 @@ def _text(rec, sig: str) -> str:
     return get_string(sub) if sub is not None else ''
 
 
+def _escape(text: str) -> str:
+    """The export's escaping, which the runtime's `Unescape` reverses."""
+    return (text.replace('\\', '\\\\').replace('\n', '\\n')
+            .replace('\r', '\\r').replace('\t', '\\t'))
+
+
 def _place(order: list, entry: dict) -> None:
     """InfoOrder::insertInfo: replace in place, else after PNAM, else before
     NNAM, else first when it names no predecessor, else last."""
@@ -104,17 +127,68 @@ def _merge_info(order: list, rec) -> None:
         _place(order, entry)
 
 
-def _actor_line(rec) -> str:
-    """`id=race|class|faction|rank|disposition|female|name` for one NPC_."""
+def _npc_flags(rec) -> int:
+    """The NPC_ FLAG word, or 0."""
+    flag = get_subrecord(rec, 'FLAG')
+    return int.from_bytes(flag.data[:4], 'little') if flag is not None else 0
+
+
+def _npc_stats(rec, tables: dict) -> dict:
+    """`{level, disposition, reputation, rank, gold, attributes, skills}` for
+    one NPC_: authored from the 52-byte NPDT, else derived from its race and
+    class as OpenMW derives them for the 12-byte form.
+
+    See: docs/commentary/morrowind_runtime.md#npc-stats
+    """
     data = get_subrecord(rec, 'NPDT')
     raw = data.data if data is not None else b''
-    disposition_at, rank_at = _NPDT_FIELDS.get(len(raw), (None, None))
-    flag = get_subrecord(rec, 'FLAG')
-    flags = int.from_bytes(flag.data[:4], 'little') if flag is not None else 0
+    if len(raw) >= struct.calcsize(_NPDT_FULL):
+        fields = struct.unpack_from(_NPDT_FULL, raw)
+        return {'level': fields[0], 'attributes': list(fields[1:9]),
+                'skills': list(fields[9:36]), 'disposition': fields[39],
+                'reputation': fields[40], 'rank': fields[41],
+                'gold': fields[42]}
+    out = {'level': 1, 'disposition': _NEUTRAL_DISPOSITION, 'reputation': 0,
+           'rank': 0, 'gold': 0, 'attributes': [0] * 8, 'skills': [0] * 27}
+    if len(raw) >= struct.calcsize(_NPDT_AUTOCALC):
+        level, disposition, reputation, rank, gold = struct.unpack_from(
+            _NPDT_AUTOCALC, raw)
+        out.update(level=level, disposition=disposition,
+                   reputation=reputation, rank=rank, gold=gold)
+    race = tables['races'].get(_text(rec, 'RNAM').lower())
+    clazz = tables['classes'].get(_text(rec, 'CNAM').lower())
+    if race and clazz:
+        female = bool(_npc_flags(rec) & _FEMALE)
+        out['attributes'] = autocalc_attributes(race, clazz, tables['skills'],
+                                                out['level'], female)
+        out['skills'] = autocalc_skills(race, clazz, tables['skills'],
+                                        out['level'])
+    return out
+
+
+def _npc_services(rec, tables: dict) -> int:
+    """`Npc::getServices`: the class's services for an autocalc NPC, else
+    the AIDT's own."""
+    if _npc_flags(rec) & _AUTOCALC:
+        clazz = tables['classes'].get(_text(rec, 'CNAM').lower())
+        return clazz['services'] if clazz else 0
+    aidt = get_subrecord(rec, 'AIDT')
+    if aidt is None or len(aidt.data) < 12:
+        return 0
+    return struct.unpack_from('<i', aidt.data, 8)[0]
+
+
+def _actor_line(rec, tables: dict) -> str:
+    """`id=race|class|faction|rank|disposition|female|name|level|reputation|
+    personality|luck|speechcraft|mercantile|services|gold` for one NPC_."""
+    stats = _npc_stats(rec, tables)
     fields = (_text(rec, 'RNAM'), _text(rec, 'CNAM'), _text(rec, 'ANAM'),
-              raw[rank_at] if rank_at is not None else 0,
-              raw[disposition_at] if disposition_at is not None else 50,
-              1 if flags & _FEMALE else 0, _text(rec, 'FNAM'))
+              stats['rank'], stats['disposition'],
+              1 if _npc_flags(rec) & _FEMALE else 0, _text(rec, 'FNAM'),
+              stats['level'], stats['reputation'],
+              stats['attributes'][_PERSONALITY], stats['attributes'][_LUCK],
+              stats['skills'][_SPEECHCRAFT], stats['skills'][_MERCANTILE],
+              _npc_services(rec, tables), stats['gold'])
     return f'{rec.record_id}=' + '|'.join(str(field) for field in fields)
 
 
@@ -142,6 +216,34 @@ def _faction_line(rec) -> str:
             + ';'.join(rows) + '|' + names)
 
 
+def _gmst_line(rec) -> str:
+    """`name=type,value` for one GMST, or '' when it carries no value."""
+    for sig, kind in _GMST_VALUES:
+        sub = get_subrecord(rec, sig)
+        if sub is None:
+            continue
+        if kind == 's':
+            return f'{rec.record_id}=s,{_escape(get_string(sub))}'
+        if len(sub.data) < 4:
+            return ''
+        value = struct.unpack_from('<i' if kind == 'i' else '<f', sub.data)[0]
+        return f'{rec.record_id}={kind},{value}'
+    return ''
+
+
+def _skill_line(index: int, skill: dict) -> str:
+    """`index=attribute|specialization|use0,use1,use2,use3` for one SKIL."""
+    uses = ','.join(f'{value:g}' for value in skill['use'])
+    return f"{index}={skill['attribute']}|{skill['specialization']}|{uses}"
+
+
+#: Records staged as one table line each, by the function that writes it.
+_LINE_TABLES = {'GMST': ('gmsts', _gmst_line), 'FACT': ('factions', _faction_line)}
+
+#: Records parsed into the stat tables the autocalc reads.
+_STAT_TABLES = {'RACE': ('races', parse_race), 'CLAS': ('classes', parse_class)}
+
+
 def _take_dial(out: dict, rec, topic: str) -> str:
     """The DIAL/INFO half of `_take`, kept separate so neither nests deep."""
     if rec.type == 'DIAL':
@@ -155,18 +257,33 @@ def _take_dial(out: dict, rec, topic: str) -> str:
     return topic
 
 
+def _take_tables(out: dict, rec) -> None:
+    """One NPC_, RACE, CLAS, GMST or FACT into its table."""
+    key = rec.record_id.lower()
+    if rec.type == 'NPC_':
+        out['npcs'][key] = rec
+    elif rec.type in _STAT_TABLES:
+        table, parse = _STAT_TABLES[rec.type]
+        out[table][key] = parse(rec)
+    elif rec.type in _LINE_TABLES:
+        table, line_of = _LINE_TABLES[rec.type]
+        line = line_of(rec)
+        if line:
+            out[table][key] = line
+
+
 def _take(out: dict, rec, topic: str) -> str:
     """Fold one record into `out`; returns the topic INFOs now belong to."""
     if rec.type in ('DIAL', 'INFO'):
         return _take_dial(out, rec, topic)
+    if rec.type == 'SKIL':
+        index, skill = parse_skill(rec)
+        if index is not None:
+            out['skills'][index] = skill
+        return topic
     if not rec.record_id or rec.deleted:
         return topic
-    if rec.type == 'NPC_':
-        out['actors'][rec.record_id.lower()] = _actor_line(rec)
-    elif rec.type == 'FACT':
-        line = _faction_line(rec)
-        if line:
-            out['factions'][rec.record_id.lower()] = line
+    _take_tables(out, rec)
     if rec.type in _OBJECT_TYPES:
         out['objects'][rec.record_id.lower()] = rec.record_id
     if rec.type in _ITEM_TYPES:
@@ -175,21 +292,23 @@ def _take(out: dict, rec, topic: str) -> str:
 
 
 def gather(chain: list) -> dict:
-    """`{'topics', 'infos', 'actors', 'factions', 'items', 'objects'}` over
-    the whole chain, each plugin read ONCE, a later plugin overriding or
-    extending an earlier one.
-
-    `topics` is `{lower id: DIAL rec}`, `infos` `{lower id: [entry]}` in merged
-    order, `actors` and `factions` `{lower id: table line}`, `items` and
-    `objects` `{lower id: id}` for what can sit in an inventory and for what
-    can be placed and scripted.
+    """The chain's tables, each plugin read ONCE and a later one overriding
+    an earlier: `topics` `{lower id: DIAL rec}`, `infos` `{lower id: [entry]}`
+    in merged order, `actors` / `factions` / `gmsts` `{lower id: line}`,
+    `skills` `{index: line}`, `items` / `objects` `{lower id: id}`. Actor
+    lines are made LAST, once every race, class and skill is known.
     """
-    out = {'topics': {}, 'infos': {}, 'actors': {}, 'factions': {},
-           'items': {}, 'objects': {}}
+    out = {'topics': {}, 'infos': {}, 'npcs': {}, 'races': {}, 'classes': {},
+           'skills': {}, 'gmsts': {}, 'factions': {}, 'items': {},
+           'objects': {}}
     for _name, path in chain:
         topic = ''
         for rec in read_file(path)[1]:
             topic = _take(out, rec, topic)
+    out['actors'] = {key: _actor_line(rec, out)
+                     for key, rec in out['npcs'].items()}
+    out['skills'] = {index: _skill_line(index, skill)
+                     for index, skill in sorted(out['skills'].items())}
     return out
 
 

@@ -125,6 +125,21 @@ DISPOSITION = (398, 8, 166, 18)
 TOPICS = (398, 31, 166, 328)
 BYE_BUTTON = (398, 366, 166, 23)
 
+#: The persuasion modal, from `openmw_persuasion_dialog.layout`: 220 x 192, centered on the screen.
+MODAL_W = 220
+MODAL_H = 192
+
+#: Its parts in MODAL space: the title strip, the actions box, the gold label, Cancel (right edge at 204).
+MODAL_TITLE = (0, 4, MODAL_W, 24)
+MODAL_BOX = (8, 32, 196, 114)
+MODAL_GOLD = (8, 158, 102, 24)
+MODAL_CANCEL_W = 64
+MODAL_CANCEL = (204 - MODAL_CANCEL_W, 154, MODAL_CANCEL_W, 24)
+
+#: Six action rows at the list pitch, 4 px in from the box's left and 3 px down from its top.
+MODAL_ROWS = 6
+MODAL_ROW_INSET = (4, 3)
+
 #: MW_ScrollTrackV, the thumb: 9 px wide at x=2, at its skin default height.
 THUMB_W = 9
 THUMB_X = 2
@@ -165,6 +180,20 @@ CHAR_NAME, CHAR_HISTORY, CHAR_DISPOSITION, CHAR_BYE = 30, 31, 32, 33
 
 #: Topic rows take character ids from here up, one per row.
 CHAR_TOPIC_FIRST = 40
+
+#: The persuasion modal: its art (bitmap, shape, sprite), then its title, six rows, gold label and Cancel.
+CHAR_MODAL_BMP = 100
+CHAR_MODAL_TITLE = 103
+CHAR_MODAL_ROW_FIRST = 104
+CHAR_MODAL_GOLD = 110
+CHAR_MODAL_CANCEL = 111
+
+#: The modal's instance names; rows are `PersuadeRow0` .. `PersuadeRow5`.
+SPRITE_MODAL = 'Persuade'
+FIELD_MODAL_TITLE = 'PersuadeTitle'
+FIELD_MODAL_ROW = 'PersuadeRow'
+FIELD_MODAL_GOLD = 'PersuadeGold'
+FIELD_MODAL_CANCEL = 'PersuadeCancel'
 
 #: Instance names, which is how the plugin reaches every field and sprite.
 FIELD_NAME = 'Name'
@@ -352,6 +381,86 @@ def bye_text_rect() -> tuple:
                            w - 2 * BUTTON_INSET[0], h - 2 * BUTTON_INSET[1]))
 
 
+def modal_origin() -> tuple:
+    """The persuasion modal's top-left: screen-centered, as WindowModal is."""
+    return ((STAGE_W - MODAL_W) // 2, (STAGE_H - MODAL_H) // 2)
+
+
+def modal_stage_rect(rect: tuple) -> tuple:
+    """A MODAL-space rect moved onto the stage."""
+    ox, oy = modal_origin()
+    return (rect[0] + ox, rect[1] + oy, rect[2], rect[3])
+
+
+def modal_row_rect(index: int) -> tuple:
+    """Action row `index`'s hit box, in MODAL space, at the list pitch."""
+    x, y, w, _h = MODAL_BOX
+    return (x + MODAL_ROW_INSET[0], y + MODAL_ROW_INSET[1] + index * ROW_H,
+            w - 2 * MODAL_ROW_INSET[0], ROW_H)
+
+
+def modal_cancel_text_rect() -> tuple:
+    """The Cancel caption box, in MODAL space."""
+    x, y, w, h = MODAL_CANCEL
+    return centered_field((x + BUTTON_INSET[0], y + BUTTON_INSET[1],
+                           w - 2 * BUTTON_INSET[0], h - 2 * BUTTON_INSET[1]))
+
+
+def compose_modal(export_root):
+    """The persuasion modal's chrome as one image: frame, the actions box,
+    the Cancel button. Textless, like the window.
+    See: docs/commentary/morrowind_runtime.md#persuasion
+    """
+    panel = compose_frame(export_root, MODAL_W, MODAL_H,
+                          fill=COLOR_BACKGROUND)
+    bx, by, bw, bh = MODAL_BOX
+    panel.alpha_composite(compose_box(export_root, bw, bh), (bx, by))
+    cx, cy, cw, ch = MODAL_CANCEL
+    panel.alpha_composite(compose_button(export_root, cw, ch), (cx, cy))
+    return panel
+
+
+def _modal_field(character_id: int, rect: tuple, color: str = 'normal',
+                 align: int = _ALIGN_LEFT) -> Tag:
+    """A field at a MODAL-space rect, in the embedded face."""
+    return define_edit_text(character_id, *modal_stage_rect(rect), '', '',
+                            font_id=CHAR_MW_FONT, rgb=FONT_COLORS[color],
+                            height=BODY_HEIGHT_TWIPS, align=align)
+
+
+def _modal_fields() -> list:
+    """The modal's dynamic text fields as `(tag, instance_name)`."""
+    out = [(_modal_field(CHAR_MODAL_TITLE, centered_field(MODAL_TITLE),
+                         color='header', align=_ALIGN_CENTER),
+            FIELD_MODAL_TITLE)]
+    for row in range(MODAL_ROWS):
+        out.append((_modal_field(CHAR_MODAL_ROW_FIRST + row,
+                                 centered_field(modal_row_rect(row))),
+                    f'{FIELD_MODAL_ROW}{row}'))
+    out.append((_modal_field(CHAR_MODAL_GOLD, centered_field(MODAL_GOLD)),
+                FIELD_MODAL_GOLD))
+    out.append((_modal_field(CHAR_MODAL_CANCEL, modal_cancel_text_rect(),
+                             align=_ALIGN_CENTER), FIELD_MODAL_CANCEL))
+    return out
+
+
+def _modal_tags(export_root, depth: int) -> list:
+    """The modal's art sprite and fields, placed ABOVE the window from
+    `depth` up. The plugin hides them until Persuasion is chosen."""
+    art = compose_modal(export_root)
+    tags = _sprite(CHAR_MODAL_BMP, art, SPRITE_MODAL, (0, 0, MODAL_W, MODAL_H))
+    bitmap, shape, sprite, (char_id, name, _at) = tags
+    out = [bitmap, shape, sprite,
+           place_object2(depth=depth, character_id=char_id, name=name,
+                         translate=modal_origin())]
+    for field, name in _modal_fields():
+        depth += 1
+        out += [field, place_object2(depth=depth,
+                                     character_id=field.character_id,
+                                     name=name)]
+    return out
+
+
 def compose_window(export_root, disposition: int = 50):
     """The window CHROME as one image: both frames, caption plate, panes and
     the Goodbye button, every part where MW_Window and the layout put it.
@@ -506,6 +615,7 @@ def dialogue_window(export_root) -> Swf:
         tags.append(place_object2(depth=depth,
                                   character_id=field.character_id, name=name))
         depth += 1
+    tags += _modal_tags(export_root, depth)
     tags += [Tag(TAG_SHOW_FRAME, b''), Tag(TAG_END, b'')]
     return Swf(version=9,
                frame_size=pack_rect(0, STAGE_W * TWIP, 0, STAGE_H * TWIP),
@@ -536,11 +646,29 @@ def _path_lines() -> list:
         'SpriteTopicThumb': SPRITE_TOPIC_THUMB,
         'SpriteTopicLine': SPRITE_TOPIC_LINE,
     }
+    names.update({
+        'SpriteModal': SPRITE_MODAL, 'FieldModalTitle': FIELD_MODAL_TITLE,
+        'FieldModalRow': FIELD_MODAL_ROW, 'FieldModalGold': FIELD_MODAL_GOLD,
+        'FieldModalCancel': FIELD_MODAL_CANCEL,
+    })
     out = [f'constexpr const char* k{key} = "_root.{value}";'
            for key, value in names.items()]
     out.append(f'constexpr const char* kGoodbye = "{GOODBYE}";')
     out.append(f'constexpr const char* kPersuasion = "{PERSUASION}";')
     return out
+
+
+def _modal_lines() -> list:
+    """The modal's hit rects in STAGE pixels: the panel, row 0 (the rest
+    follow at kRowHeight), Cancel; and how many rows there are."""
+    lines = []
+    for prefix, rect in (('Modal', (0, 0, MODAL_W, MODAL_H)),
+                         ('ModalRow', modal_row_rect(0)),
+                         ('ModalCancel', MODAL_CANCEL)):
+        lines += [f'constexpr int k{prefix}{axis} = {value};'
+                  for axis, value in zip('XYWH', modal_stage_rect(rect))]
+    lines.append(f'constexpr int kModalRows = {MODAL_ROWS};')
+    return lines
 
 
 def _metric_lines() -> list:
@@ -594,6 +722,7 @@ def layout_header() -> str:
     lines += _rect_lines('TopicRow', topic_row_rect(0))
     lines += _rect_lines('TopicScroll', topic_scroll_rect())
     lines += _rect_lines('Bye', client_rect(BYE_BUTTON))
+    lines += _modal_lines()
     lines += [''] + _scalar_lines() + ['']
     for key, (r, g, b) in FONT_COLORS.items():
         lines.append(f'constexpr unsigned kColor{_camel(key)} = '

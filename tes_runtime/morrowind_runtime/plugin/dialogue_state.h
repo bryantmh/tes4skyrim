@@ -64,6 +64,25 @@ struct GameHooks {
     bool (*playerInInterior)() = nullptr;
     bool (*menuMode)() = nullptr;
     void (*forceGreeting)(const std::string& actor) = nullptr;
+    // `axis`: 0 x, 1 y, 2 z. Position is world units, angle is DEGREES --
+    // the engine stores radians and its getters convert, so these do not.
+    float (*position)(const std::string& ref, int axis) = nullptr;
+    void (*setPosition)(const std::string& ref, int axis, float value) = nullptr;
+    float (*angle)(const std::string& ref, int axis) = nullptr;
+    void (*setAngle)(const std::string& ref, int axis, float value) = nullptr;
+    // What persuasion and barter read and do in the game: the player's
+    // level, a Skyrim actor value by name, that value as a fraction of its
+    // maximum, a skill-use credit, and Skyrim's own barter menu on `actor`.
+    int   (*playerLevel)() = nullptr;
+    float (*actorValue)(const std::string& actor, const char* name) = nullptr;
+    float (*statPercent)(const std::string& actor, const char* name) = nullptr;
+    void  (*advanceSkill)(const char* skill, float amount) = nullptr;
+    void  (*showBarterMenu)(const std::string& actor) = nullptr;
+    // Skyrim's gold (form 0xF), never Morrowind's: what `actor` carries, and
+    // a bribe moving `count` of it from one actor to another.
+    int   (*goldCount)(const std::string& actor) = nullptr;
+    void  (*moveGold)(const std::string& from, const std::string& to,
+                      int count) = nullptr;
 };
 
 GameHooks& Hooks();
@@ -139,7 +158,24 @@ public:
     bool goodbye = false;
     int  choice = -1;
 
-    void BeginConversation();
+    // --- the conversation's disposition, DialogueManager's three numbers ---
+    // The base the conversation opened on, the base as persuasion has moved
+    // it (what the filter and the bar read), and the part that outlives it.
+    // See: docs/commentary/morrowind_runtime.md#persuasion
+    std::string speaker;
+    int originalDisposition = 0;
+    int currentDisposition = 0;
+    int permanentDispositionChange = 0;
+
+    // Opens a conversation with `speaker`; a persuasion's bookkeeping is
+    // kept until EndConversation folds it into the base.
+    void BeginConversation(const std::string& speaker = std::string());
+    // DialogueManager::persuade's disposition lines: `temp` moves the base
+    // the filter reads now, `perm` accumulates for EndConversation.
+    void ApplyPersuasion(int temp, int perm);
+    // DialogueManager::goodbyeSelected: the base becomes the original plus
+    // the permanent change, clamped to 0..100, and the three reset.
+    void EndConversation();
 
     // --- the co-save ---------------------------------------------------------
     // One tab-separated record per line under a version header. A line this

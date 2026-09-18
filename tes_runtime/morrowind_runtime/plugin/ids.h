@@ -201,6 +201,28 @@ constexpr std::uint64_t kRefEnable = 56158;
 constexpr std::uint64_t kRefDisable = 56155;
 constexpr std::uint64_t kRefIsDisabled = 56639;
 
+// ObjectReference.GetPositionX/Y/Z (0x9ce600/610/620) and GetAngleX/Y/Z
+// (0x9ce0c0/0e0/100), one instruction each: `movss xmm0,[r8+off]`, the angle
+// getters then multiplying by 180/pi. They never touch rcx, so the VM pointer
+// is irrelevant to them.
+//
+// 🛑 The ANGLE getters return DEGREES while the field holds radians, and
+// SetAngle takes degrees back -- so a get/set round trip needs no conversion,
+// but reading the field directly would.
+constexpr std::uint64_t kRefGetPositionX = 56178;
+constexpr std::uint64_t kRefGetPositionY = 56179;
+constexpr std::uint64_t kRefGetPositionZ = 56180;
+constexpr std::uint64_t kRefGetAngleX = 56162;
+constexpr std::uint64_t kRefGetAngleY = 56163;
+constexpr std::uint64_t kRefGetAngleZ = 56164;
+
+// ObjectReference.SetPosition(float x, y, z) (0x9d1c60) and SetAngle (0x9d12d0)
+// take ALL THREE axes, so a one-axis MWScript `SetPos` reads the other two
+// back first. Unlike the getters these DO use rcx, to report "Cannot move the
+// player because they are dead", so they need the real VM.
+constexpr std::uint64_t kRefSetPosition = 56234;
+constexpr std::uint64_t kRefSetAngle = 56224;
+
 // The world natives the result-script commands reach through, each the r9
 // argument of its registration helper beside the name string on 1.6.659:
 //   void  ObjectReference.Activate(ObjectReference actionRef, bool defaultOnly) 0x9ccfe0
@@ -229,6 +251,21 @@ constexpr std::uint64_t kActorSetValue = 54743;
 constexpr std::uint64_t kActorRestoreValue = 54737;
 constexpr std::uint64_t kActorDamageValue = 54660;
 constexpr std::uint64_t kActorEquipItem = 54661;
+
+// What barter and persuasion reach through, each the r9 of its registration
+// beside the name string (`lea r9,[callback]; lea r8,"Actor"; lea rdx,"<name>"`)
+// on 1.6.659:
+//   void  Actor.ShowBarterMenu()                                  0x98bef0
+//   int   Actor.GetLevel()                                        0x996650
+//   float Actor.GetActorValuePercentage(BSFixedString* name)      0x989740
+//   void  Game.AdvanceSkill(BSFixedString* skill, float amount)   0x9ace40
+// AdvanceSkill is a GLOBAL native: its self slot is a tag, and the float
+// rides fifth, on the stack.
+// See: docs/commentary/morrowind_runtime.md#barter
+constexpr std::uint64_t kActorShowBarterMenu = 54765;
+constexpr std::uint64_t kActorGetLevel = 54927;
+constexpr std::uint64_t kActorGetValuePercent = 54677;
+constexpr std::uint64_t kGameAdvanceSkill = 55449;
 
 // TESObjectCELL's TESFullName: the BSFixedString at +0x28, read as the
 // `const char*` it wraps.

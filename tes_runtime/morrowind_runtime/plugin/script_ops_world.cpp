@@ -4,6 +4,7 @@
 // The semantics follow OpenMW's mwscript extensions of the same name.
 // See: docs/commentary/morrowind_runtime.md#result-scripts
 
+#include <cctype>
 #include <cstring>
 #include <string>
 
@@ -135,6 +136,54 @@ class OpModDynamic : public Interpreter::Opcode0 {
     }
 };
 
+// `GetPos x` / `SetPos z 128` -- the axis is a STRING argument, not part of
+// the command name, so one opcode serves all three. An unknown axis answers
+// x, which is what OpenMW's own conversion does rather than failing.
+int AxisOf(const std::string& axis) {
+    if (axis.empty()) return 0;
+    const char letter = static_cast<char>(::tolower(axis[0]));
+    if (letter == 'y') return 1;
+    return letter == 'z' ? 2 : 0;
+}
+
+template <class R>
+class OpGetPos : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        const int axis = AxisOf(PopString(runtime));
+        runtime.push(Hooks().position ? Hooks().position(ref, axis) : 0.0f);
+    }
+};
+
+template <class R>
+class OpSetPos : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        const int axis = AxisOf(PopString(runtime));
+        const float value = PopFloat(runtime);
+        if (Hooks().setPosition) Hooks().setPosition(ref, axis, value);
+    }
+};
+
+template <class R>
+class OpGetAngle : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        const int axis = AxisOf(PopString(runtime));
+        runtime.push(Hooks().angle ? Hooks().angle(ref, axis) : 0.0f);
+    }
+};
+
+template <class R>
+class OpSetAngle : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        const int axis = AxisOf(PopString(runtime));
+        const float value = PopFloat(runtime);
+        if (Hooks().setAngle) Hooks().setAngle(ref, axis, value);
+    }
+};
+
 // `Equip item`: the engine adds one when the actor has none, as OpenMW does.
 template <class R>
 class OpEquip : public Interpreter::Opcode0 {
@@ -242,6 +291,15 @@ void InstallWorldOps(OpcodeInstaller& into) {
     into.Real<OpForceGreeting<Implicit>>(Compiler::Dialogue::opcodeForceGreeting);
     into.Real<OpForceGreeting<Explicit>>(
         Compiler::Dialogue::opcodeForceGreetingExplicit);
+    namespace T = Compiler::Transformation;
+    into.Real<OpGetPos<Implicit>>(T::opcodeGetPos);
+    into.Real<OpGetPos<Explicit>>(T::opcodeGetPosExplicit);
+    into.Real<OpSetPos<Implicit>>(T::opcodeSetPos);
+    into.Real<OpSetPos<Explicit>>(T::opcodeSetPosExplicit);
+    into.Real<OpGetAngle<Implicit>>(T::opcodeGetAngle);
+    into.Real<OpGetAngle<Explicit>>(T::opcodeGetAngleExplicit);
+    into.Real<OpSetAngle<Implicit>>(T::opcodeSetAngle);
+    into.Real<OpSetAngle<Explicit>>(T::opcodeSetAngleExplicit);
     InstallDynamic<kHealth>(into);
     InstallDynamic<kMagicka>(into);
     InstallDynamic<kFatigue>(into);

@@ -42,6 +42,15 @@ Reply Greet(const ActorView& actor);
 // The answer to one topic, or an empty reply when nothing passes.
 Reply Answer(const std::string& topic, const ActorView& actor, int choice);
 
+// MWBase::DialogueManager::ServiceType, the choice a Service Refusal INFO
+// is filtered under.
+constexpr int kServiceBarter = 1;
+
+// DialogueManager::checkServiceRefused: the Service Refusal line for
+// `service`, filtered with the disposition test INVERTED, or an empty reply
+// when the actor does not refuse.
+Reply ServiceRefusal(int service, const ActorView& actor);
+
 // Topic ids appearing as whole words in `text`, longest first, restricted to
 // topics the actor can actually answer. Morrowind's keyword discovery.
 std::vector<std::string> MentionedTopics(const std::string& text,

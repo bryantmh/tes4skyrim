@@ -34,7 +34,10 @@ struct ScriptLocals {
 };
 
 // What an NPC_ record authors about an actor, which the filter compares by
-// NAME: MWNP.txt, merged over the plugin's TES3 masters.
+// NAME, and the stats persuasion and barter read -- authored in the 52-byte
+// NPDT or derived at import as OpenMW derives them: MWNP.txt, merged over
+// the plugin's TES3 masters.
+// See: docs/commentary/morrowind_runtime.md#npc-stats
 struct ActorDef {
     std::string race;
     std::string clazz;
@@ -43,6 +46,30 @@ struct ActorDef {
     int  disposition = 50;
     bool female = false;
     std::string name;
+    int  level = 1;
+    int  reputation = 0;
+    int  personality = 0;
+    int  luck = 0;
+    int  speechcraft = 0;
+    int  mercantile = 0;
+    // ESM::NPC::Services bits; AllItems (0x2FFF) is what lists Barter.
+    std::uint32_t services = 0;
+    int  gold = 0;
+};
+
+// One GMST of the chain: MWGS.txt, `name=type,value`.
+struct GmstDef {
+    char  type = 'f';
+    float number = 0.0f;
+    std::string text;
+};
+
+// One SKIL record: MWSK.txt. `use` is how much a use of each kind advances
+// the skill, in OpenMW's UseType order.
+struct SkillDef {
+    int   attribute = -1;
+    int   specialization = 0;
+    float use[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 // A Skyrim form behind a TES3 id: the plugin that owns it and its FormID
@@ -96,6 +123,17 @@ const FormRef* FindQuest(const std::string& quest);
 const FormRef* FindRef(const std::string& id);
 std::size_t RefCount();
 const FactionDef* FindFaction(const std::string& faction);
+
+// A GMST by name, or null when the chain staged none of that name.
+const GmstDef* FindGmst(const std::string& name);
+// A GMST's float or int as a float, or `fallback` when absent.
+float GmstNumber(const std::string& name, float fallback);
+// A GMST's string, or `fallback` when absent.
+std::string GmstText(const std::string& name, const std::string& fallback);
+std::size_t GmstCount();
+
+// A SKIL by TES3 skill index, 0..26, or null.
+const SkillDef* FindSkill(int index);
 
 // Registers one faction's requirements directly, so the filter's rank rules
 // are testable without staging a sidecar.

@@ -260,7 +260,8 @@ bool TestCondition(const Condition& cond, const ActorView& actor, int choice) {
     }
 }
 
-FilterResult TestInfo(const Info& info, const ActorView& actor, int choice) {
+FilterResult TestInfo(const Info& info, const ActorView& actor, int choice,
+                      bool invertDisposition) {
     FilterResult out;
     out.info = &info;
     const bool isCreature = !actor.IsNpc();
@@ -336,11 +337,18 @@ FilterResult TestInfo(const Info& info, const ActorView& actor, int choice) {
         return out;
     }
 
-    // Disposition gates a topic response but never a journal entry.
-    if (!isCreature && info.type != DialType::Journal &&
-        actor.Disposition() < info.disposition) {
-        out.why = Reject::Disposition;
-        return out;
+    // Disposition gates a topic response but never a journal entry. Service
+    // Refusal inverts it: the line answers BELOW the threshold, 0 always.
+    if (!isCreature && info.type != DialType::Journal) {
+        const bool passes =
+            invertDisposition
+                ? (info.disposition == 0 ||
+                   actor.Disposition() < info.disposition)
+                : actor.Disposition() >= info.disposition;
+        if (!passes) {
+            out.why = Reject::Disposition;
+            return out;
+        }
     }
 
     for (std::size_t i = 0; i < info.conditions.size(); ++i) {
@@ -353,9 +361,9 @@ FilterResult TestInfo(const Info& info, const ActorView& actor, int choice) {
 }
 
 FilterResult SelectInfo(const Topic& topic, const ActorView& actor,
-                        int choice) {
+                        int choice, bool invertDisposition) {
     for (const Info& info : topic.infos) {
-        FilterResult result = TestInfo(info, actor, choice);
+        FilterResult result = TestInfo(info, actor, choice, invertDisposition);
         if (result.why == Reject::None) return result;
     }
     FilterResult none;

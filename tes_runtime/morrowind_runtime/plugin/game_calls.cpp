@@ -53,6 +53,10 @@ using StopCombatFn = void (*)(void* vm, std::uint32_t stack, void* actor);
 using SetEnabledFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                               bool fade);
 using IsDisabledFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
+// One axis of a reference's position or rotation; the setters take all three.
+using AxisGetFn = float (*)(void* vm, std::uint32_t stack, void* ref);
+using AxisSetFn = void (*)(void* vm, std::uint32_t stack, void* ref,
+                           float x, float y, float z);
 using ActivateFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                             void* actionRef, bool defaultOnly);
 using LockFn = void (*)(void* vm, std::uint32_t stack, void* ref, bool lock,
@@ -72,6 +76,12 @@ using SetValueFn = void (*)(void* vm, std::uint32_t stack, void* actor,
                             void* name, float value);
 using EquipItemFn = void (*)(void* vm, std::uint32_t stack, void* actor,
                              void* item, bool preventRemoval, bool silent);
+// Barter and persuasion: a call on an actor, an int read off one, and the
+// GLOBAL Game.AdvanceSkill, whose self is a tag and whose float rides fifth.
+using ActorCallFn = void (*)(void* vm, std::uint32_t stack, void* actor);
+using ActorIntFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* actor);
+using AdvanceSkillFn = void (*)(void* vm, std::uint32_t stack, void* tag,
+                                void* name, float amount);
 
 // Skyrim's actor values for OpenMW's dynamic stats, in OpenMW's order.
 constexpr const char* kDynamicNames[] = {"Health", "Magicka", "Stamina"};
@@ -133,6 +143,13 @@ SetLockLevelFn g_setLockLevel = nullptr;
 RefQueryFn     g_isLocked = nullptr;
 RefCallFn      g_delete = nullptr;
 DistanceFn     g_distance = nullptr;
+
+// x, y, z.
+constexpr int kAxisCount = 3;
+AxisGetFn g_getPosition[kAxisCount] = {nullptr, nullptr, nullptr};
+AxisGetFn g_getAngle[kAxisCount] = {nullptr, nullptr, nullptr};
+AxisSetFn g_setPosition = nullptr;
+AxisSetFn g_setAngle = nullptr;
 ParentCellFn   g_parentCell = nullptr;
 RefQueryFn     g_isInterior = nullptr;
 GetValueFn     g_getValue = nullptr;
@@ -140,6 +157,10 @@ SetValueFn     g_setValue = nullptr;
 SetValueFn     g_restoreValue = nullptr;
 SetValueFn     g_damageValue = nullptr;
 EquipItemFn    g_equipItem = nullptr;
+ActorCallFn    g_showBarterMenu = nullptr;
+ActorIntFn     g_getLevel = nullptr;
+GetValueFn     g_getValuePercent = nullptr;
+AdvanceSkillFn g_advanceSkill = nullptr;
 
 std::string g_speakerId;
 void*       g_speakerRef = nullptr;
@@ -420,6 +441,50 @@ float Distance(const std::string& from, const std::string& to) {
     return a && b && g_distance ? g_distance(PapyrusVm(), 0, a, b) : 0.0f;
 }
 
+// An axis index from a script, kept inside the array whatever it says.
+int SafeAxis(int axis) {
+    return axis < 0 || axis >= kAxisCount ? 0 : axis;
+}
+
+float Position(const std::string& id, int axis) {
+    void* ref = OwnerRef(id);
+    AxisGetFn get = g_getPosition[SafeAxis(axis)];
+    return ref && get ? get(PapyrusVm(), 0, ref) : 0.0f;
+}
+
+float Angle(const std::string& id, int axis) {
+    void* ref = OwnerRef(id);
+    AxisGetFn get = g_getAngle[SafeAxis(axis)];
+    return ref && get ? get(PapyrusVm(), 0, ref) : 0.0f;
+}
+
+// 🛑 The natives take ALL THREE axes, so the other two are read back first
+// and written unchanged. Posted, like every other call that moves something:
+// the menu's callbacks do not run on the game thread.
+void SetAxis(const std::string& id, int axis, float value, bool isAngle) {
+    void* ref = OwnerRef(id);
+    AxisSetFn set = isAngle ? g_setAngle : g_setPosition;
+    if (!ref || !set) return;
+    const AxisGetFn* get = isAngle ? g_getAngle : g_getPosition;
+    float xyz[kAxisCount];
+    for (int i = 0; i < kAxisCount; ++i) {
+        xyz[i] = get[i] ? get[i](PapyrusVm(), 0, ref) : 0.0f;
+    }
+    xyz[SafeAxis(axis)] = value;
+    const float x = xyz[0], y = xyz[1], z = xyz[2];
+    PostToMainThread([ref, set, x, y, z]() {
+        set(PapyrusVm(), 0, ref, x, y, z);
+    });
+}
+
+void SetPosition(const std::string& id, int axis, float value) {
+    SetAxis(id, axis, value, false);
+}
+
+void SetAngle(const std::string& id, int axis, float value) {
+    SetAxis(id, axis, value, true);
+}
+
 void* PlayerCell() {
     void* player = PlayerRef();
     return player && g_parentCell ? g_parentCell(PapyrusVm(), 0, player)
@@ -502,6 +567,75 @@ void ForceGreeting(const std::string& actor) {
     });
 }
 
+// ------------------------------------------------ barter and persuasion
+
+int PlayerLevel() {
+    void* player = PlayerRef();
+    return player && g_getLevel ? g_getLevel(PapyrusVm(), 0, player) : 1;
+}
+
+// A Skyrim actor value by name, read now: the formula wants the number.
+float ActorValue(const std::string& actor, const char* valueName) {
+    void* ref = OwnerRef(actor);
+    void* name = nullptr;
+    if (!ref || !g_getValue || !FixedString(&name, valueName)) return 0.0f;
+    return g_getValue(PapyrusVm(), 0, ref, &name);
+}
+
+// The same value as a fraction of its maximum, 0..1.
+float StatPercent(const std::string& actor, const char* valueName) {
+    void* ref = OwnerRef(actor);
+    void* name = nullptr;
+    if (!ref || !g_getValuePercent || !FixedString(&name, valueName)) {
+        return 1.0f;
+    }
+    return g_getValuePercent(PapyrusVm(), 0, ref, &name);
+}
+
+// Posted: advancing a skill can level the player up, with all that opens.
+void AdvanceSkill(const char* skill, float amount) {
+    if (!g_advanceSkill) return;
+    const std::string named = skill;
+    PostToMainThread([named, amount]() {
+        void* name = nullptr;
+        if (FixedString(&name, named.c_str())) {
+            g_advanceSkill(PapyrusVm(), 0, nullptr, &name, amount);
+        }
+    });
+}
+
+// Skyrim's own barter menu on the speaker, opened from the game thread over
+// the dialogue -- the stacking a vanilla fragment's ShowBarterMenu uses.
+// See: docs/commentary/morrowind_runtime.md#barter
+void ShowBarterMenu(const std::string& actor) {
+    void* ref = OwnerRef(actor);
+    if (!ref || !g_showBarterMenu) {
+        Log("game: barter with '%s' -- %s", actor.c_str(),
+            ref ? "ShowBarterMenu unresolved" : "no reference");
+        return;
+    }
+    PostToMainThread([ref]() { g_showBarterMenu(PapyrusVm(), 0, ref); });
+}
+
+// Skyrim's gold, form 0xF of Skyrim.esm -- a bribe never touches Morrowind's.
+void* GoldForm() { return FormFromFile(ids::kSkyrimMaster, kSkyrimGold); }
+
+int GoldCount(const std::string& owner) {
+    void* ref = OwnerRef(owner);
+    void* gold = GoldForm();
+    if (!ref || !gold || !g_itemCount) return 0;
+    return g_itemCount(PapyrusVm(), 0, ref, gold);
+}
+
+void MoveGold(const std::string& from, const std::string& to, int count) {
+    void* source = OwnerRef(from);
+    void* target = OwnerRef(to);
+    void* gold = GoldForm();
+    if (!source || !target || !gold || !g_removeItem || !g_addItem) return;
+    g_removeItem(PapyrusVm(), 0, source, gold, count, false, nullptr);
+    g_addItem(PapyrusVm(), 0, target, gold, count, false);
+}
+
 template <typename Fn>
 Fn Native(const char* name, std::uint64_t id) {
     return reinterpret_cast<Fn>(Resolve(name, id, nullptr));
@@ -554,7 +688,37 @@ void InstallGameCalls() {
     g_damageValue = Native<SetValueFn>("Actor.DamageActorValue",
                                        ids::kActorDamageValue);
     g_equipItem = Native<EquipItemFn>("Actor.EquipItem", ids::kActorEquipItem);
+    g_getPosition[0] = Native<AxisGetFn>("ObjectReference.GetPositionX",
+                                         ids::kRefGetPositionX);
+    g_getPosition[1] = Native<AxisGetFn>("ObjectReference.GetPositionY",
+                                         ids::kRefGetPositionY);
+    g_getPosition[2] = Native<AxisGetFn>("ObjectReference.GetPositionZ",
+                                         ids::kRefGetPositionZ);
+    g_getAngle[0] = Native<AxisGetFn>("ObjectReference.GetAngleX",
+                                      ids::kRefGetAngleX);
+    g_getAngle[1] = Native<AxisGetFn>("ObjectReference.GetAngleY",
+                                      ids::kRefGetAngleY);
+    g_getAngle[2] = Native<AxisGetFn>("ObjectReference.GetAngleZ",
+                                      ids::kRefGetAngleZ);
+    g_setPosition = Native<AxisSetFn>("ObjectReference.SetPosition",
+                                      ids::kRefSetPosition);
+    g_setAngle = Native<AxisSetFn>("ObjectReference.SetAngle",
+                                   ids::kRefSetAngle);
+    g_showBarterMenu = Native<ActorCallFn>("Actor.ShowBarterMenu",
+                                           ids::kActorShowBarterMenu);
+    g_getLevel = Native<ActorIntFn>("Actor.GetLevel", ids::kActorGetLevel);
+    g_getValuePercent = Native<GetValueFn>("Actor.GetActorValuePercentage",
+                                           ids::kActorGetValuePercent);
+    g_advanceSkill = Native<AdvanceSkillFn>("Game.AdvanceSkill",
+                                            ids::kGameAdvanceSkill);
     GameHooks& hooks = Hooks();
+    hooks.playerLevel = PlayerLevel;
+    hooks.actorValue = ActorValue;
+    hooks.statPercent = StatPercent;
+    hooks.advanceSkill = AdvanceSkill;
+    hooks.showBarterMenu = ShowBarterMenu;
+    hooks.goldCount = GoldCount;
+    hooks.moveGold = MoveGold;
     hooks.activate = Activate;
     hooks.setLocked = SetLocked;
     hooks.isLocked = IsLocked;
@@ -568,6 +732,10 @@ void InstallGameCalls() {
     hooks.playerInInterior = PlayerInInterior;
     hooks.menuMode = MenuMode;
     hooks.forceGreeting = ForceGreeting;
+    hooks.position = Position;
+    hooks.setPosition = SetPosition;
+    hooks.angle = Angle;
+    hooks.setAngle = SetAngle;
     hooks.setQuestStage = SetQuestStage;
     hooks.addItem = AddItem;
     hooks.removeItem = RemoveItem;

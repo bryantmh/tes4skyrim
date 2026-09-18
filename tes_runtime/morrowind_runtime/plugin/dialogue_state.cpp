@@ -233,12 +233,51 @@ void DialogueState::SetScriptRunning(const std::string& script, bool running) {
         running ? "started" : "stopped");
 }
 
-void DialogueState::BeginConversation() {
+// DialogueManager::updateOriginalDisposition: a script moved the base since
+// the conversation last looked, so the baseline follows it.
+void RefreshBaseline(DialogueState& state) {
+    const int base = state.Disposition(state.speaker);
+    if (base != state.currentDisposition) {
+        state.currentDisposition = base;
+        state.originalDisposition = base;
+    }
+}
+
+// The permanent change is deliberately NOT reset: OpenMW's startDialogue
+// keeps it too, so a conversation cut short still settles on the next end.
+void DialogueState::BeginConversation(const std::string& who) {
     choices.clear();
     addedTopics.clear();
     messages.clear();
     goodbye = false;
     choice = -1;
+    speaker = who;
+    RefreshBaseline(*this);
+}
+
+void DialogueState::ApplyPersuasion(int temp, int perm) {
+    RefreshBaseline(*this);
+    if (temp > 0 && perm > 0 &&
+        originalDisposition + perm + permanentDispositionChange < 0) {
+        perm = -(originalDisposition + permanentDispositionChange);
+    }
+    currentDisposition += temp;
+    SetDisposition(speaker, currentDisposition);
+    permanentDispositionChange += perm;
+}
+
+void DialogueState::EndConversation() {
+    if (!speaker.empty() && (permanentDispositionChange ||
+                             originalDisposition != currentDisposition)) {
+        RefreshBaseline(*this);
+        SetDisposition(speaker, std::clamp(originalDisposition +
+                                               permanentDispositionChange,
+                                           0, 100));
+    }
+    permanentDispositionChange = 0;
+    originalDisposition = 0;
+    currentDisposition = 0;
+    speaker.clear();
 }
 
 void DialogueState::Reset() {

@@ -9,7 +9,8 @@ import struct
 
 import pytest
 
-from tes4_export.record_types.morrowind_dialog import (DIAL_TYPES,
+from tes4_export.record_types.morrowind_dialog import (DIAL_SIG, DIAL_TYPES,
+                                                       INFO_SIG,
                                                        dialogue_records,
                                                        export_DIAL,
                                                        export_INFO, info_id)
@@ -85,7 +86,7 @@ def test_ordinal_is_position_within_topic_and_resets():
     records = [_dial('TopicA', 0), _info(inam='a0'), _info(inam='a1'),
                _dial('TopicB', 0), _info(inam='b0')]
     out = dialogue_records(records)
-    got = [(_kv(l)['Topic'], _kv(l)['Ordinal']) for _fid, l in out['INFO']]
+    got = [(_kv(l)['Topic'], _kv(l)['Ordinal']) for _fid, l in out[INFO_SIG]]
     assert got == [('TopicA', '0'), ('TopicA', '1'), ('TopicB', '0')]
 
 
@@ -94,7 +95,7 @@ def test_deleted_info_is_dropped():
     records = [_dial('TopicA', 0), _info(inam='a0')]
     records[1].deleted = True
     out = dialogue_records(records)
-    assert out['DIAL'] and out['INFO'] == []
+    assert out[DIAL_SIG] and out[INFO_SIG] == []
 
 
 def test_one_inam_may_appear_under_several_topics():
@@ -104,7 +105,7 @@ def test_one_inam_may_appear_under_several_topics():
     """
     records = [_dial('TopicA', 0), _info(inam='shared'),
                _dial('TopicB', 0), _info(inam='shared')]
-    rows = [_kv(l) for _fid, l in dialogue_records(records)['INFO']]
+    rows = [_kv(l) for _fid, l in dialogue_records(records)[INFO_SIG]]
     assert len(rows) == 2
     assert {r['EditorID'] for r in rows} == {'shared'}
     assert {r['Topic'] for r in rows} == {'TopicA', 'TopicB'}

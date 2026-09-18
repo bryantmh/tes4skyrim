@@ -1190,9 +1190,40 @@ because `SetFight` alone is 1,405 calls.
 🛑 Those figures, and every other opcode count taken before 2026-09-17, cover
 the INFO result scripts ONLY. Object scripts (`SCPT.SCTX`) are the larger
 corpus and use a different command set, so counting both raises the total from
-54,189 call sites to **90,395**. `tools/script/mwscript_opcode_audit.py` now
-reads both; [mwscript_opcodes.md](../audits/mwscript_opcodes.md) is the
-current table.
+54,189 call sites to **91,581**. A second undercount sat beside it: whole
+command families register in a LOOP over a name array with a COMPUTED name
+(`get + dynamics[i]`), so a literal-only scan of `extensions0.cpp` saw 298
+registrations where there are **487**, and called every dynamic-stat command
+unregistered while it was ported. `tools/script/mwscript_opcode_audit.py` now
+reads both corpora and expands the loops;
+[mwscript_opcodes.md](../audits/mwscript_opcodes.md) is the current table.
+
+### <a id="reference-index-unlocked"></a>The reference index is what unblocked the object commands
+
+`MWRF.txt` ([placed references](#placed-references)) was the one missing piece
+under a whole tier of commands, because almost every one of them names a
+reference rather than a base record. Porting it plus the commands behind it
+moved the stubbed total from 20,489 call sites to **16,453**:
+
+| Command | Calls |
+|---|---:|
+| `Enable` / `Disable` / `GetDisabled` | 6,031 |
+| `StartCombat` / `StopCombat` | 1,764 |
+| `MenuMode` | 1,111 |
+| `GetDistance` | 782 |
+| `Unlock` / `Lock` / `GetLocked` | 608 |
+| `ForceGreeting` | 579 |
+| `Activate` | 504 |
+| `GetPCCell` / `GetInterior` | 403 |
+| `GetRace` | 238 |
+| `SetDelete` | 133 |
+| `Equip` | 127 |
+| Health / Magicka / Fatigue `Get`/`Set`/`Mod`/`ModCurrent` | — |
+
+What remains is dominated by commands that need a TICK rather than a
+reference — `GetSecondsPassed`, `CellChanged`, `OnDeath`, `OnActivate`, and
+the `GetPos`/`SetPos`/`Rotate`/`MoveWorld` family — which is
+[the object-script plan](../plans/morrowind_object_scripts.md).
 
 ### <a id="placed-references"></a>`id->Command` resolves through a placement table
 
@@ -1265,6 +1296,88 @@ One SKSE record `MWST` v1 holding `DialogueState::Serialize()`: a format line
 then one tab-separated record per line (`J` journal, `E` entry, `D`
 disposition, `G` global, `L` local, `F` faction, `X` reaction, `S` running
 script, `R`, `C`). An unknown line is skipped; a foreign header is refused.
+
+The `D` line is the NPC's BASE disposition, which is what `ModDisposition`,
+`SetDisposition` and `GetDisposition` (opcodes `Stats::opcode*Disposition`,
+bare and explicit) read and write. A persuasion's TEMPORARY change lives only
+inside the open conversation and is folded into the base when it ends (below),
+so a save never carries it.
+
+## <a id="npc-stats"></a>The speaker's stats: `MWNP.txt` carries what OpenMW derives
+
+**Code:** `tes5_import/dialogue/morrowind_autocalc.py`,
+`morrowind_sidecar_source.py`, `plugin/script_tables.cpp`
+
+Persuasion reads the speaker's Personality, Luck, Speechcraft, Mercantile,
+level, reputation and fatigue; barter needs its service flags. The 52-byte
+NPDT authors them, but most NPCs carry the 12-byte autocalc form and the
+numbers exist only once `MWClass::Npc::autoCalculateAttributes/Skills` has
+run over the RACE, CLAS and SKIL records. That port runs at import, so the
+actor line grows to
+
+```
+id=race|class|faction|rank|disposition|female|name|level|reputation|personality|luck|speechcraft|mercantile|services|gold
+```
+
+with `services` from AIDT, or from the CLASS when the NPC is autocalc, as
+`Npc::getServices` chooses. Two more tables ride beside it: `MWGS.txt`, every
+GMST of the chain as `name=type,value` (`s`/`i`/`f`), because the persuasion
+formula is nine GMSTs deep and none may be guessed; and `MWSK.txt`, the SKIL
+rows `index=attribute|specialization|use0,use1,use2,use3`, for the skill-use
+credit a persuasion pays.
+
+The `player` NPC_ record -- Morrowind's own chargen actor -- is in the table
+too, and it is where the PLAYER's Personality and Luck come from: Skyrim has
+neither attribute, and that record is the only authored value a TES3 player
+ever starts with. Speechcraft and Mercantile both read Skyrim's `Speechcraft`
+actor value (the importer folds TES4 Mercantile onto it), level reads
+`Actor.GetLevel`, and the fatigue term reads `GetActorValuePercentage("Stamina")`
+for both sides.
+
+## <a id="persuasion"></a>Persuasion is OpenMW's own formula
+
+**Code:** `plugin/persuasion.cpp`, `plugin/conversation_persuasion.cpp`
+
+`getPersuasionRatings` and `getPersuasionDispositionChange` are ported line
+for line, with `roll0to99` as the one injected input so the headless gate can
+pin every branch. The modal is `openmw_persuasion_dialog.layout` drawn from the
+same art as the window -- Admire, Intimidate, Taunt, three bribes at the row
+pitch, the gold label, Cancel -- with a bribe row disabled when the player
+cannot pay it, as `PersuasionDialog::onOpen` does.
+
+Disposition bookkeeping is `DialogueManager`'s: the conversation remembers the
+base it opened on, applies each persuasion's TEMPORARY change to the base the
+filter and the bar read, accumulates the PERMANENT part, and on goodbye writes
+`clamp(original + permanent, 0, 100)` back. A script that moves disposition
+mid-conversation resets the baseline (`updateOriginalDisposition`). A success
+also moves gold, credits Speechcraft through `Game.AdvanceSkill` with the
+SKIL use value, and Intimidate/Taunt shift the Fight and Flee settings. The
+reply is the `Admire Success` / `Bribe Fail` topic under the `s<Topic>` GMST
+title, delivered like any other topic so its result script runs.
+
+## <a id="barter"></a>Barter is Skyrim's own menu
+
+`Barter` is listed when the speaker's services include any item class, as
+`DialogueWindow::updateTopics` lists it. Choosing it first asks `Service
+Refusal` with the choice set to `Barter` (1) and the disposition test
+INVERTED, as `checkServiceRefused` does; a refusal is delivered as a reply and
+nothing opens. Otherwise the `Actor.ShowBarterMenu` native runs on the speaker
+from the game thread, over the open dialogue -- the same stacking vanilla uses
+when a fragment opens it over "Dialogue Menu". The importer already gives every
+actor with services a vendor faction, so the menu shows their stock and gold.
+
+OpenMW's per-trade disposition change (`applyBarterDispositionChange`) has no
+hook inside Skyrim's menu and is not applied.
+
+| Native | 1.6.659 | id |
+|---|---|---|
+| `Actor.ShowBarterMenu` | `0x98bef0` | 54765 |
+| `Actor.GetLevel` | `0x996650` | 54927 |
+| `Actor.GetActorValuePercentage` | `0x989740` | 54677 |
+| `Game.AdvanceSkill` | `0x9ace40` | 55449 |
+
+Each was found at its registration (`lea r9,[callback]; lea r8,"Actor"; lea
+rdx,"<name>"`) and inverted through the Address Library.
 
 ## <a id="licensing"></a>Licensing
 

@@ -79,7 +79,9 @@ RefId GameActor::PlayerClass() const { return RefId(); }
 
 bool GameActor::PlayerIsFemale() const { return false; }
 
-int GameActor::PlayerLevel() const { return Stub(kFirstLevel); }
+int GameActor::PlayerLevel() const {
+    return Hooks().playerLevel ? Hooks().playerLevel() : Stub(kFirstLevel);
+}
 
 int GameActor::PlayerHealthPercent() const { return Stub(kAlive); }
 
@@ -101,7 +103,10 @@ std::string GameActor::PlayerCellName() const {
 
 int GameActor::Health() const { return Stub(kAlive); }
 
-int GameActor::Level() const { return Stub(kFirstLevel); }
+int GameActor::Level() const {
+    const ActorDef* def = FindActor(mId);
+    return def ? def->level : Stub(kFirstLevel);
+}
 
 bool GameActor::Detected() const { return true; }
 

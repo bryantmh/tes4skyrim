@@ -30,8 +30,12 @@ constexpr const char* kFileItems = "MWID.txt";
 constexpr const char* kFileRefs = "MWRF.txt";
 constexpr const char* kFileQuests = "MWQS.txt";
 constexpr const char* kFileFactions = "MWFA.txt";
+constexpr const char* kFileGmsts = "MWGS.txt";
+constexpr const char* kFileSkills = "MWSK.txt";
 
 std::unordered_map<std::string, FactionDef> g_factions;
+std::unordered_map<std::string, GmstDef> g_gmsts;
+std::unordered_map<int, SkillDef> g_skills;
 
 std::vector<std::string> Split(const std::string& text, char sep) {
     std::vector<std::string> out;
@@ -46,7 +50,8 @@ std::vector<std::string> Split(const std::string& text, char sep) {
     }
 }
 
-// `race|class|faction|rank|disposition|female|name`.
+// `race|class|faction|rank|disposition|female|name|level|reputation|
+// personality|luck|speechcraft|mercantile|services|gold`.
 ActorDef ParseActor(const std::string& value) {
     const std::vector<std::string> f = Split(value, '|');
     ActorDef out;
@@ -58,6 +63,44 @@ ActorDef ParseActor(const std::string& value) {
     out.disposition = std::atoi(f[4].c_str());
     out.female = f[5] == "1";
     out.name = f[6];
+    if (f.size() < 15) return out;
+    out.level = std::atoi(f[7].c_str());
+    out.reputation = std::atoi(f[8].c_str());
+    out.personality = std::atoi(f[9].c_str());
+    out.luck = std::atoi(f[10].c_str());
+    out.speechcraft = std::atoi(f[11].c_str());
+    out.mercantile = std::atoi(f[12].c_str());
+    out.services = static_cast<std::uint32_t>(std::strtoul(f[13].c_str(),
+                                                           nullptr, 10));
+    out.gold = std::atoi(f[14].c_str());
+    return out;
+}
+
+// `type,value`: 's' text (export-escaped), 'i' or 'f' a number.
+GmstDef ParseGmst(const std::string& value) {
+    GmstDef out;
+    if (value.size() < 2 || value[1] != ',') return out;
+    out.type = value[0];
+    const std::string body = value.substr(2);
+    if (out.type == 's') {
+        out.text = Unescape(body);
+    } else {
+        out.number = static_cast<float>(std::atof(body.c_str()));
+    }
+    return out;
+}
+
+// `attribute|specialization|use0,use1,use2,use3`.
+SkillDef ParseSkill(const std::string& value) {
+    const std::vector<std::string> f = Split(value, '|');
+    SkillDef out;
+    if (f.size() < 3) return out;
+    out.attribute = std::atoi(f[0].c_str());
+    out.specialization = std::atoi(f[1].c_str());
+    const std::vector<std::string> uses = Split(f[2], ',');
+    for (std::size_t i = 0; i < 4 && i < uses.size(); ++i) {
+        out.use[i] = static_cast<float>(std::atof(uses[i].c_str()));
+    }
     return out;
 }
 
@@ -164,6 +207,8 @@ void ClearScriptTables() {
     g_items.clear();
     g_quests.clear();
     g_factions.clear();
+    g_gmsts.clear();
+    g_skills.clear();
 }
 
 void LoadScriptTables(const std::string& pluginDir) {
@@ -206,11 +251,41 @@ void LoadScriptTables(const std::string& pluginDir) {
                [](const std::string& faction, const std::string& value) {
                    g_factions.emplace(Lower(faction), ParseFaction(value));
                });
+    ForEachRow(pluginDir + kFileGmsts,
+               [](const std::string& name, const std::string& value) {
+                   g_gmsts.emplace(Lower(name), ParseGmst(value));
+               });
+    ForEachRow(pluginDir + kFileSkills,
+               [](const std::string& index, const std::string& value) {
+                   g_skills.emplace(std::atoi(index.c_str()), ParseSkill(value));
+               });
 }
 
 const FactionDef* FindFaction(const std::string& faction) {
     const auto it = g_factions.find(Lower(faction));
     return it == g_factions.end() ? nullptr : &it->second;
+}
+
+const GmstDef* FindGmst(const std::string& name) {
+    const auto it = g_gmsts.find(Lower(name));
+    return it == g_gmsts.end() ? nullptr : &it->second;
+}
+
+float GmstNumber(const std::string& name, float fallback) {
+    const GmstDef* def = FindGmst(name);
+    return def && def->type != 's' ? def->number : fallback;
+}
+
+std::string GmstText(const std::string& name, const std::string& fallback) {
+    const GmstDef* def = FindGmst(name);
+    return def && def->type == 's' ? def->text : fallback;
+}
+
+std::size_t GmstCount() { return g_gmsts.size(); }
+
+const SkillDef* FindSkill(int index) {
+    const auto it = g_skills.find(index);
+    return it == g_skills.end() ? nullptr : &it->second;
 }
 
 std::size_t FactionCount() { return g_factions.size(); }

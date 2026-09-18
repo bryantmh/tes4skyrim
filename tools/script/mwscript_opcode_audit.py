@@ -37,10 +37,25 @@ _INSTR = re.compile(r'registerInstruction\s*\(\s*"([^"]+)"\s*,\s*"([^"]*)"'
 _FUNC = re.compile(r'registerFunction\s*\(\s*"([^"]+)"\s*,\s*\'(\w)\'\s*,'
                    r'\s*"([^"]*)"\s*,\s*([A-Za-z0-9_:]+)', re.S)
 _NAMESPACE = re.compile(r'namespace\s+(\w+)\s*\{')
-#: Matches `Real<OpJournal<Implicit>>(D::opcodeJournal)`; the arg list nests.
-_INSTALL = re.compile(r'\bReal3?\s*<.*?>\s*\(\s*([A-Za-z0-9_:]+)\s*\)')
+#: `Real<Op<Implicit>>(D::opcodeX)`, or `(S::opcodeX + Which)` for a family.
+_INSTALL = re.compile(r'\bReal3?\s*<.*?>\s*\(\s*\n?\s*([A-Za-z0-9_:]+)'
+                      r'(?:\s*\+\s*\w+)?\s*\)')
 #: `kDeliberateNoOps` in script_runner.cpp: nothing to port, by design.
 _NOOPS = re.compile(r'kDeliberateNoOps\[\]\s*=\s*\{(.*?)\}', re.S)
+
+#: `static const char* dynamics[...] = { "health", ... };` -- a name array.
+_ARRAY = re.compile(r'static\s+const\s+char\*\s+(\w+)\s*\[[^\]]*\]\s*='
+                    r'\s*\{(.*?)\}\s*;', re.S)
+#: `registerFunction(get + dynamics[i], 'f', "x", opcodeGetDynamic + i, ...)`
+_LOOP_FUNC = re.compile(r'registerFunction\s*\(\s*(\w+)\s*\+\s*(\w+)\[i\]'
+                        r'[^;]*?\'(\w)\'\s*,\s*"([^"]*)"\s*,'
+                        r'\s*([A-Za-z0-9_]+)\s*\+\s*i', re.S)
+#: The instruction form of the same loop, which has no return type.
+_LOOP_INSTR = re.compile(r'registerInstruction\s*\(\s*(\w+)\s*\+\s*(\w+)\[i\]'
+                         r'\s*,\s*"([^"]*)"\s*,'
+                         r'\s*([A-Za-z0-9_]+)\s*\+\s*i', re.S)
+#: The `std::string get("get");` prefixes those loops concatenate.
+_PREFIX = re.compile(r'std::string\s+(\w+)\s*\(\s*"([^"]*)"\s*\)\s*;')
 _WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
@@ -76,6 +91,34 @@ def _domain_at(spans, pos):
     return name
 
 
+def _expand_loops(text, spans, out):
+    """Add the families registered in a loop over a name array.
+
+    🛑 Whole families -- the dynamics, attributes, skills and controls --
+    register with a COMPUTED name (`get + dynamics[i]`), so there is no string
+    literal to match. Skipping them reported all 12 dynamic-stat commands as
+    unregistered while they were ported and working.
+    """
+    arrays = {m.group(1): re.findall(r'"([^"]+)"', m.group(2))
+              for m in _ARRAY.finditer(text)}
+    prefixes = {m.group(1): m.group(2) for m in _PREFIX.finditer(text)}
+    forms = ((_LOOP_FUNC, True), (_LOOP_INSTR, False))
+    for pattern, is_func in forms:
+        for m in pattern.finditer(text):
+            prefix = prefixes.get(m.group(1))
+            names = arrays.get(m.group(2))
+            if prefix is None or not names:
+                continue
+            ret = m.group(3) if is_func else '-'
+            args = m.group(4) if is_func else m.group(3)
+            opcode = m.group(5) if is_func else m.group(4)
+            domain = _domain_at(spans, m.start())
+            for offset, suffix in enumerate(names):
+                cmd = Command(domain, prefix + suffix, ret, args,
+                              f'{opcode}+{offset}')
+                out.setdefault(cmd.key, cmd)
+
+
 def registrations(root):
     """Every registered command, keyed by lowercased name."""
     path = os.path.join(root, REGISTRATIONS)
@@ -91,6 +134,7 @@ def registrations(root):
         cmd = Command(_domain_at(spans, m.start()), m.group(1), m.group(2),
                       m.group(3), m.group(4))
         out.setdefault(cmd.key, cmd)
+    _expand_loops(text, spans, out)
     return out
 
 
@@ -166,8 +210,13 @@ def count_calls(export_dir, commands):
 
 
 def _status(cmd, real, noops):
-    """'ported', 'no-op' (nothing to port by design) or 'STUB'."""
-    base = cmd.opcode.rsplit('::', 1)[-1]
+    """'ported', 'no-op' (nothing to port by design) or 'STUB'.
+
+    A family member carries a `+<offset>` tail that names its position in the
+    name array; the install site writes `+ Which`, so both sides compare on
+    the base constant.
+    """
+    base = cmd.opcode.rsplit('::', 1)[-1].split('+', 1)[0]
     if base in real or base + 'Explicit' in real:
         return 'ported'
     return 'no-op' if cmd.key in noops else 'STUB'

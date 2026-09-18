@@ -128,6 +128,13 @@ Reply Answer(const std::string& topic, const ActorView& actor, int choice) {
     return MakeReply(found->id, SelectInfo(*found, actor, choice).info, actor);
 }
 
+Reply ServiceRefusal(int service, const ActorView& actor) {
+    const Topic* found = FindTopic("Service Refusal");
+    if (!found) return Reply();
+    return MakeReply(found->id, SelectInfo(*found, actor, service, true).info,
+                     actor);
+}
+
 const char* ChargenActor() { return kChargenActor; }
 
 std::vector<std::string> ChargenTopics() {

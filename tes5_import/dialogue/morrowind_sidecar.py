@@ -41,11 +41,15 @@ GLOBALS_TABLE = 'MWGL.txt'
 SCRIPT_LOCALS_TABLE = 'MWSV.txt'
 ACTOR_SCRIPTS_TABLE = 'MWOS.txt'
 
-#: What the FILTER needs about each NPC: `id=race|class|faction|rank|disposition|female|name`.
+#: What the FILTER and persuasion need about each NPC; the columns are `_actor_line`'s.
 ACTORS_TABLE = 'MWNP.txt'
 
 #: FACT rank requirements, which the filter's RankRequirement reads.
 FACTIONS_TABLE = 'MWFA.txt'
+
+#: Every GMST of the chain, `name=type,value`, and the SKIL rows persuasion credits skill use from.
+GMST_TABLE = 'MWGS.txt'
+SKILLS_TABLE = 'MWSK.txt'
 
 #: What AddItem and its kin need: `item id=Plugin.esm|FormID`.
 ITEMS_TABLE = 'MWID.txt'
@@ -359,11 +363,12 @@ def _stage_dialogue(export_dir: str, out_dir: str, present: list,
     topics, infos = write_merged_dialogue(gathered, out_dir)
     print(f'    sidecar: {topics} topics, {infos} responses merged over '
           f'{", ".join(name for name, _path in chain)}')
-    staged = _write_lines(os.path.join(out_dir, ACTORS_TABLE),
-                          list(gathered['actors'].values()))
-    staged += _write_lines(os.path.join(out_dir, FACTIONS_TABLE),
-                           list(gathered['factions'].values()))
-    return len(DIALOGUE_FILES) + staged
+    staged = len(DIALOGUE_FILES)
+    for name, key in ((ACTORS_TABLE, 'actors'), (FACTIONS_TABLE, 'factions'),
+                      (GMST_TABLE, 'gmsts'), (SKILLS_TABLE, 'skills')):
+        staged += _write_lines(os.path.join(out_dir, name),
+                               list(gathered[key].values()))
+    return staged
 
 
 def _journal_quests(writer, out_dir: str, plugin_name: str) -> int:
