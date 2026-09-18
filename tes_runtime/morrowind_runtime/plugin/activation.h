@@ -39,6 +39,11 @@ void* FormFromFile(const char* file, std::uint32_t local);
 // The Papyrus VM every native call is made against.
 void* PapyrusVm();
 
+// Builds the engine's BSFixedString for `text` into `*out`, which a native
+// taking a string argument is handed by address. False when the constructor
+// did not resolve.
+bool FixedString(void** out, const char* text);
+
 // Hands over the Papyrus VM, which Game.GetFormFromFile needs to resolve a
 // plugin's CURRENT load-order index. Called from the SKSE Papyrus callback.
 void SetPapyrusVm(void* vm);

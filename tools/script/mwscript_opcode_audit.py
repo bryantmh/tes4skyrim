@@ -24,6 +24,8 @@ import sys
 
 REGISTRATIONS = 'external/openmw/components/compiler/extensions0.cpp'
 RUNNER = 'tes_runtime/morrowind_runtime/plugin/script_runner.cpp'
+#: Every other file that installs real opcodes into the same machine.
+RUNNER_PARTS = ('tes_runtime/morrowind_runtime/plugin/script_ops_world.cpp',)
 SCRIPT_FIELD = 'ResultScript'
 
 #: The OTHER corpus: object scripts, whose body is SCPT's `SCTX`.
@@ -94,9 +96,11 @@ def registrations(root):
 
 def installed(root):
     """`(opcode constants with a real handler, deliberate no-op names)`."""
-    with open(os.path.join(root, RUNNER), encoding='utf-8',
-              errors='replace') as fh:
-        text = fh.read()
+    text = ''
+    for name in (RUNNER,) + RUNNER_PARTS:
+        with open(os.path.join(root, name), encoding='utf-8',
+                  errors='replace') as fh:
+            text += fh.read()
     real = {m.group(1).rsplit('::', 1)[-1] for m in _INSTALL.finditer(text)}
     block = _NOOPS.search(text)
     noops = set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()

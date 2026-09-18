@@ -827,6 +827,58 @@ allocator is not the cause: the deleting destructor frees through
 from at `vt[0x50]`. The double release was not identified, so slot 0 keeps the
 menu and `MenuCreator` hands the same one back on every later open.
 
+### <a id="open-and-close-come-from-slot-4"></a>🛑 Open and close are MESSAGES, not slot 0
+
+**Slot 0 is called EVERY FRAME, not once at close.** Nulling `g_menu` there is
+what broke the second conversation of every session: from frame 1 of the reopen
+`g_menu` was null, so `LiveView()` was null, so `ApplyText`, `SetMenuNumber` and
+`GetMenuNumber` all returned early — every field write and every mouse-position
+lookup silently dropped. `MousePosition` returned false, `HandleScaleformEvent`
+never called `g_input.click`, and the window drew, advanced and held focus with
+nothing clickable and no way out but `hidemenu`.
+
+Restoring `g_menu` from slot 4/5 instead made it worse, because slot 0 kept
+nulling it: `MenuInput::opened` re-fired **7,645 times in one conversation**,
+`PushAll` rebuilt the pane every frame, and the menu showed no text at all.
+That count is what identified the per-frame call.
+
+The lifecycle therefore comes from the two UIMessages the engine delivers to
+slot 4 — `kMessage_Open` (**1**) and `kMessage_Close` (**3**) — guarded by one
+`g_open` bool so each fires once. `MenuCreator` only CONSTRUCTS (the manager
+skips it whenever it still holds an instance), and slot 0 does nothing at all.
+
+Measured on the frozen process through the bridge: the menu was on the render
+stack at depth 1 with `flags=00000455` and its movie still advancing, which is
+what ruled out the earlier stale-flags and occlusion theories.
+
+### <a id="the-engine-may-skip-the-creator"></a>The creator is NOT the open notification
+
+Keeping the menu means `MenuManager` still holds an instance under the name, and
+**a reopen then never calls `MenuCreator` at all**. Binding `g_menu` inside the
+creator therefore left it null across such a reopen, and with it `LiveView()`:
+`ApplyText`, `SetMenuNumber` and `GetMenuNumber` all return early on a null
+view, so every field write and every mouse-position lookup was silently dropped.
+`HandleScaleformEvent` got `known == false` from `MousePosition` and never
+called `g_input.click`, so the window drew, advanced and held focus with nothing
+in it clickable, and Tab could not leave. Only `hidemenu` recovered it.
+
+Read off the frozen process through the bridge, which is what settled it:
+
+| Menu | flags | depth | on the render stack |
+|---|---|---|---|
+| `HUD Menu` | `00018942` | 19 | yes |
+| **`MorrowindDialogueMenu`** | **`00000455`** | **1** | **yes, top interactive** |
+| `Cursor Menu` | `00008840` | 19 | yes |
+
+The flags were correct (`0x415` plus `0x40` the engine sets itself), the movie
+was still advancing, and nothing was stacked above it — so the earlier
+flags/occlusion theories were both wrong. The tell was in the log: the frozen
+open printed `posted open` and then **no creator line of any kind**.
+
+`AdoptMenu` therefore binds whatever menu the engine passes to `ProcessMessage`
+or `NextFrame`, and firing `MenuInput::opened` is its job, not the creator's.
+Both `MenuCreator` paths route through it.
+
 ### What a bare SWF cannot do
 
 | Trap | Rule |
@@ -1020,64 +1072,60 @@ got wrong and cost several rounds:
 Verified on the built ESM: all 2,079 advertised ids in `MWQS.txt` resolve to a
 real QUST, none missing, each with an objective per journal page.
 
-### <a id="objectives-must-be-displayed"></a>🛑 A running quest at the right stage still shows NOTHING
+### <a id="objectives-must-be-displayed"></a>🛑 A journal stage is the CONSOLE's `setstage`, then a wait for `IsRunning`
 
-Measured in game: `sqv` reported the quest **running at stage 10**, its log
-entry written and its objectives present — and the journal was still empty
-with no "quest started" popup. Three separate things have to be true, and
-only the first two were:
+**Code:** `game_calls.cpp` (`StartQuest`, `SetStage`, `StageOnceRunning`,
+`ShowObjective`). Confirmed in game: quest started, journal text and
+objective shown, quest listed as active.
 
-1. the stage is set — `SetStage` does this, and starts the quest itself
-2. the quest has objectives — a quest with none never displays its name
-3. **an objective is DISPLAYED** — `SetObjectiveDisplayed`
+A generated QUST has no stage fragments, so nothing displays its objectives
+and a quest can be running at the right stage with its journal empty. The
+runtime sets the stage and displays the objective itself, and three engine
+facts fix HOW, each read from the GOG 1.6.659 disassembly and measured live:
 
-Vanilla does the third from a stage script fragment. A generated QUST has no
-fragments, so nothing ever called it and every objective stayed hidden. The
-runtime now calls the native itself after each successful `SetStage`.
+**1. The Papyrus native only QUEUES a stopped quest.** `Quest.SetCurrentStageID`
+(`0x9e7f90`) calls `TESQuest::EnsureQuestStarted(quest, bool* justStarted,
+bool startNow)` (`0x38a020`, id 25003) with `startNow = 0`, which pushes the
+quest onto BGSStoryTeller's promotion queue (`0x4ec040`) and defers the stage
+through `0x951640`. `sqv` reports `Waiting For Promotion`. The console's
+`setstage` handler (`0x30df30`, from the SCRIPT_FUNCTION table) passes
+`startNow = 1`, which runs `TESQuest::Start` (`0x38d080`) on the spot, then
+calls `TESQuest::GetStage` (`0x38ae70`, id 25028) and `TESQuest::SetStage`
+(`0x38a130`, id 25004) directly, skipping a start-up stage the start already
+ran. The dialogue menu has `kFlagPausesGame`, so a queued promotion never
+happens while it is open; the runtime ports the console's sequence.
 
-🛑 **But NOT in the same task.** Displaying an objective in the same
-main-thread trip that STARTS the quest does nothing at all: starting a stopped
-quest initializes its objective states, and a display landing before that
-finishes is overwritten. Measured through the game bridge, calling the two
-natives directly on the same live quest:
+**2. The objective goes through the console's pair, not the Papyrus native.**
+`setobjectivedisplayed` (`0x31b5b0`) calls `TESQuest::GetObjective`
+(`0x389300`, id 24981) and `BGSQuestObjective::SetState` (`0x354870`,
+id 23933). A hook on `Quest.SetObjectiveDisplayed` (id 56682) recorded zero
+hits while that command changed the state. States, from the console
+handlers: 0 dormant, 1 displayed, 2/3 completed (3 = was displayed),
+4/5 failed. The previous step is COMPLETED, never hidden: a Morrowind journal
+is a running log the player reads back.
 
-| Sequence | Result |
-|---|---|
-| `SetStage` + `SetObjectiveDisplayed`, one trip | `DORMANT` |
-| `SetStage`, pump tick, `SetObjectiveDisplayed` | `DISPLAYED` |
-| `SetObjectiveDisplayed` alone, quest already running | `DISPLAYED` |
+**3. Stage and objective wait for the start to FINISH.** Both are filed under
+the quest's current instance (`TESQuest+0x50`), and so is the stage's log
+entry. Right after the synchronous start the quest still holds a pending
+start at `+0x248` and its instance is 0; the StoryTeller finishes the start
+on a later unpaused frame and the instance becomes 1. Set in the same trip,
+the player's `BGSInstancedQuestObjective` (`PlayerCharacter+0x588`, `{objective*,
+u32 instance, u32 state}`) records instance 0 and the log entry lands on the
+wrong instance: the journal builder (`0x92c3bf`) lists a quest whose
+instances differ as finished, and shows no text. The console's own
+`setstage` + `setobjectivedisplayed` batch reproduces the mismatch; vanilla
+never sees it because a fragment's call runs from the Papyrus VM afterwards.
+`Quest.IsRunning` (id 56727) is false exactly until the finish, so the
+runtime polls it once per ~50 ms from a detached sleeping thread that posts
+one task. 🛑 Never a self-reposting SKSE task: the pump drains reposts in the
+same sweep, so 120 retries expired inside one second and a 15 s wall-time
+bound froze the game for 15 s.
 
-Posting a second SKSE task is NOT enough: tasks queued back to back drain in
-ONE `ProcessTasks` sweep, so both still land in the same frame. Measured in
-game -- both tasks logged in the same second, objective still `DORMANT`.
-
-So `SetQuestStage` queues the objective and `FlushJournalObjectives()`
-displays it when the dialogue menu CLOSES, called from `OnClosed`. That is
-vanilla's own timing for the same reason: a stage fragment runs once the
-conversation is over, not inside it.
-
-This cost several wrong theories worth recording, each disproved by
-measurement rather than argument: the argument layout (`SetCurrentStageID`
-uses `r8` for the quest and works, so the order was never wrong), the Papyrus
-VM pointer (the call works with the runtime's VM and with `nullptr` alike),
-the quest flag byte at `+0xdc` (`08` — bit 1 clear, so that gate never fired),
-and the objective node being missing (the runtime walked the quest's own list
-and found it). An unconditional "objective displayed" log line hid the failure
-for three rounds; the log now has to read the state back to claim anything.
-
-🛑 **The earlier step is COMPLETED, not hidden.** A Morrowind journal is a
-running log the player reads back, and hiding the previous objective erases
-that history. `SetObjectiveCompleted` keeps the entry and strikes it
-through, which is what Skyrim does for its own multi-step quests.
-
-Both natives were found the same way as the others, and the method checks
-out on a control — the same scan gives `SetCurrentStageID` → `0x9e7f90` →
-id 56684, the id already in `ids.h`:
-
-| Native | 1.6.659 | id |
-|---|---|---|
-| `Quest.SetObjectiveDisplayed` | `0x9e7d30` | 56682 |
-| `Quest.SetObjectiveCompleted` | `0x9e7c20` | 56681 |
+Theories disproved on the way, each by measurement: the argument layout, the
+VM pointer (`nullptr` works too), the record's DNAM flags (280 of 396 vanilla
+objective-bearing quests clear bit 0 as well), a missing objective node, and
+"needs its own pump tick". An unconditional "objective displayed" log line
+hid the failure for three rounds; every log line now reads the state back.
 
 ### <a id="quest-trace"></a>Asking whether a quest can be FINISHED
 

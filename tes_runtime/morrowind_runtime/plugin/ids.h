@@ -201,6 +201,39 @@ constexpr std::uint64_t kRefEnable = 56158;
 constexpr std::uint64_t kRefDisable = 56155;
 constexpr std::uint64_t kRefIsDisabled = 56639;
 
+// The world natives the result-script commands reach through, each the r9
+// argument of its registration helper beside the name string on 1.6.659:
+//   void  ObjectReference.Activate(ObjectReference actionRef, bool defaultOnly) 0x9ccfe0
+//   void  ObjectReference.Lock(bool lock, bool asOffLimits)                  0x9cebd0
+//   bool  ObjectReference.IsLocked()                                          0x9ceb30
+//   void  ObjectReference.SetLockLevel(int level)                             0x9d1740
+//   void  ObjectReference.Delete()                                            0x9cdc10
+//   float ObjectReference.GetDistance(ObjectReference other)                  0x9ce3d0
+//   Cell  ObjectReference.GetParentCell()                                     0x9e5b20
+//   bool  Cell.IsInterior()                                                   0x9c8830
+//   float Actor.GetActorValue(BSFixedString* name)                            0x989600
+//   void  Actor.SetActorValue(BSFixedString* name, float value)               0x98b010
+//   void  Actor.RestoreActorValue(BSFixedString* name, float amount)          0x98ae80
+//   void  Actor.DamageActorValue(BSFixedString* name, float amount)           0x989050
+//   void  Actor.EquipItem(Form item, bool preventRemoval, bool silent)        0x989160
+constexpr std::uint64_t kRefActivate = 56139;
+constexpr std::uint64_t kRefLock = 56198;
+constexpr std::uint64_t kRefIsLocked = 56196;
+constexpr std::uint64_t kRefSetLockLevel = 56229;
+constexpr std::uint64_t kRefDelete = 56154;
+constexpr std::uint64_t kRefGetDistance = 56170;
+constexpr std::uint64_t kRefGetParentCell = 56632;
+constexpr std::uint64_t kCellIsInterior = 56056;
+constexpr std::uint64_t kActorGetValue = 54675;
+constexpr std::uint64_t kActorSetValue = 54743;
+constexpr std::uint64_t kActorRestoreValue = 54737;
+constexpr std::uint64_t kActorDamageValue = 54660;
+constexpr std::uint64_t kActorEquipItem = 54661;
+
+// TESObjectCELL's TESFullName: the BSFixedString at +0x28, read as the
+// `const char*` it wraps.
+constexpr std::size_t kOffCellFullName = 0x28;
+
 constexpr std::uint64_t kRefAddItem = 56145;
 constexpr std::uint64_t kRefRemoveItem = 56218;
 constexpr std::uint64_t kRefGetItemCount = 56173;

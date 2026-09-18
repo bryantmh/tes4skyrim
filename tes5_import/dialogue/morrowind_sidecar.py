@@ -22,6 +22,7 @@ import shutil
 from asset_convert.sources import source_registry
 from core.plugin_masters import (get_masters_from_binary,
                                  masters_from_export_header)
+from tes4_export.morrowind_ids import load_index
 
 from .morrowind_sidecar_source import (gather, plugin_chain,
                                        write_merged_dialogue)
@@ -66,6 +67,9 @@ _PLACEMENT_EXPORTS = ('REFR.txt', 'ACHR.txt', 'ACRE.txt')
 _ITEM_EXPORTS = ('ALCH.txt', 'AMMO.txt', 'APPA.txt', 'ARMO.txt', 'BOOK.txt',
                  'CLOT.txt', 'INGR.txt', 'KEYM.txt', 'LIGH.txt', 'MISC.txt',
                  'WEAP.txt')
+#: The same types as the index names them.
+_ITEM_TYPES = tuple(name[:-4] for name in _ITEM_EXPORTS)
+_SCRIPTED_TYPES = tuple(name[:-4] for name in _SCRIPTED_EXPORTS)
 _GLOBAL_EXPORT = 'GLOB.txt'
 _SCRIPT_EXPORT = 'SCPT.txt'
 _RECORD_MARK = '---RECORD_BEGIN---'
@@ -221,23 +225,55 @@ def _object_script_lines(export_dir: str, by_formid: dict) -> list:
     return lines
 
 
-def _item_lines(dirs: list) -> list:
-    """`item id=Plugin|FormID` for every inventory record each plugin OWNS.
+def _loaded_dirs(root: str, own_dir: str, plugin: str) -> list:
+    """`(record_dir, plugin, own index byte)` for this plugin and each
+    `_HEADER.txt` master that has an export: the files the GAME loads, in
+    the order it resolves them.
+
+    A table keyed by TES3 id has to point at THESE, not at the TES3 masters:
+    in Morroblivion mode the game never loads a converted Morrowind.esm, and
+    `p_restore_willpower_e` is Morrowind_ob.esm's `0pUrestoreUwillpowerUe`.
+    `load_index` answers a raw id through that escape.
+    See: docs/commentary/morrowind_runtime.md#sidecar
+    """
+    loaded = [(own_dir, plugin)] + [
+        (str(source_registry.record_dir(root, master)), master)
+        for master in masters_from_export_header(own_dir)]
+    return [(folder, name, len(masters_from_export_header(folder)))
+            for folder, name in loaded if os.path.isdir(folder)]
+
+
+def _wanted_ids(dirs: list, ids: dict, exports: tuple) -> dict:
+    """`{lower id: id}`: `ids` from the TES3 binaries, plus each record the
+    exported plugins in `dirs` define in `exports`."""
+    wanted = dict(ids)
+    for folder, _plugin in dirs:
+        for name in exports:
+            for rec in export_records(os.path.join(folder, name), ('EditorID',)):
+                edid = rec.get('EditorID', '')
+                if edid:
+                    wanted.setdefault(edid.lower(), edid)
+    return wanted
+
+
+def _item_lines(dirs: list, root: str, ids: dict) -> list:
+    """`item id=Plugin|FormID` for every inventory id a script can name,
+    resolved through the plugins the game loads.
 
     The runtime resolves the pair through the running load order, so the
     FormID is kept as its owner wrote it and never re-indexed here.
     """
-    seen = {}
-    for folder, plugin in dirs:
-        own = f'{len(masters_from_export_header(folder)):02X}'
-        for name in _ITEM_EXPORTS:
-            for rec in export_records(os.path.join(folder, name),
-                                      ('FormID', 'EditorID')):
-                key = rec.get('EditorID', '').lower()
-                formid = rec.get('FormID', '')
-                if key and key not in seen and formid[:2].upper() == own:
-                    seen[key] = f"{rec['EditorID']}={plugin}|{formid}"
-    return list(seen.values())
+    wanted = _wanted_ids(dirs, ids, _ITEM_EXPORTS)
+    indexes = [(plugin, load_index(folder, _ITEM_TYPES, {own: own}))
+               for folder, plugin, own in _loaded_dirs(root, *dirs[0])]
+    lines = []
+    for edid in wanted.values():
+        for plugin, index in indexes:
+            formid = index.lookup(edid)
+            if formid:
+                lines.append(f'{edid}={plugin}|{formid}')
+                break
+    return lines
 
 
 def _placed_refs(folder: str, owner: str) -> dict:
@@ -258,26 +294,27 @@ def _placed_refs(folder: str, owner: str) -> dict:
     return placed
 
 
-def _ref_lines(dirs: list) -> list:
-    """`id=Plugin|FormID` for each TES3 id with a placed reference.
+def _ref_lines(dirs: list, root: str, ids: dict) -> list:
+    """`id=Plugin|FormID` for each TES3 id with a placed reference, resolved
+    through the plugins the game loads: a placement counts when the same
+    plugin defines the base it names.
 
     The id is the BASE record's EditorID and the FormID is the PLACEMENT's,
     because `id->Disable` acts on the thing in the world, not its template.
     See: docs/commentary/morrowind_runtime.md#placed-references
     """
+    wanted = _wanted_ids(dirs, ids, _SCRIPTED_EXPORTS)
     seen = {}
-    for folder, plugin in dirs:
-        owner = f'{len(masters_from_export_header(folder)):02X}'
-        placed = _placed_refs(folder, owner)
+    for folder, plugin, own in _loaded_dirs(root, *dirs[0]):
+        placed = _placed_refs(folder, f'{own:02X}')
         if not placed:
             continue
-        for name in _SCRIPTED_EXPORTS:
-            for rec in export_records(os.path.join(folder, name),
-                                      ('FormID', 'EditorID')):
-                key = rec.get('EditorID', '').lower()
-                ref = placed.get(rec.get('FormID', ''))
-                if key and ref and key not in seen:
-                    seen[key] = f"{rec['EditorID']}={plugin}|{ref}"
+        index = load_index(folder, _SCRIPTED_TYPES, {own: own})
+        for key, edid in wanted.items():
+            base = index.lookup(edid) if key not in seen else None
+            ref = placed.get(base) if base else None
+            if ref:
+                seen[key] = f'{edid}={plugin}|{ref}'
     return list(seen.values())
 
 
@@ -290,10 +327,13 @@ def _write_lines(path: str, lines: list) -> int:
     return 1
 
 
-def write_script_tables(export_dir: str, out_dir: str,
-                        plugin_name: str) -> int:
-    """The export-built tables, into `out_dir`. Returns files written."""
+def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
+                        gathered: dict = None) -> int:
+    """The export-built tables, into `out_dir`. Returns files written.
+    `gathered` is what `gather` read from the TES3 binaries, when any."""
     dirs = table_dirs(export_dir, plugin_name)
+    root = _export_root(export_dir)
+    ids = gathered or {}
     locals_lines, by_formid = _script_tables(dirs)
     return (_write_lines(os.path.join(out_dir, GLOBALS_TABLE),
                          _global_lines(dirs))
@@ -302,22 +342,20 @@ def write_script_tables(export_dir: str, out_dir: str,
             + _write_lines(os.path.join(out_dir, ACTOR_SCRIPTS_TABLE),
                            _object_script_lines(export_dir, by_formid))
             + _write_lines(os.path.join(out_dir, ITEMS_TABLE),
-                           _item_lines(dirs))
+                           _item_lines(dirs, root, ids.get('items', {})))
             + _write_lines(os.path.join(out_dir, REFS_TABLE),
-                           _ref_lines(dirs)))
+                           _ref_lines(dirs, root, ids.get('objects', {}))))
 
 
-def _stage_dialogue(export_dir: str, out_dir: str, plugin_name: str,
-                    present: list) -> int:
+def _stage_dialogue(export_dir: str, out_dir: str, present: list,
+                    chain: list, gathered: dict) -> int:
     """The dialogue and the actor table, MERGED over the plugin's TES3 masters
     when its binary can be found; else this plugin's own export, copied."""
-    chain = plugin_chain(_export_root(export_dir), plugin_name)
     if not chain:
         for name in present:
             shutil.copyfile(os.path.join(export_dir, name),
                             os.path.join(out_dir, name))
         return len(present)
-    gathered = gather(chain)
     topics, infos = write_merged_dialogue(gathered, out_dir)
     print(f'    sidecar: {topics} topics, {infos} responses merged over '
           f'{", ".join(name for name, _path in chain)}')
@@ -357,8 +395,11 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
         return 0
     out_dir = sidecar_dir(output_path, plugin_name)
     os.makedirs(out_dir, exist_ok=True)
-    staged = (_stage_dialogue(export_dir, out_dir, plugin_name, present)
-              + write_script_tables(export_dir, out_dir, plugin_name)
+    chain = plugin_chain(_export_root(export_dir), plugin_name)
+    gathered = gather(chain) if chain else {}
+    staged = (_stage_dialogue(export_dir, out_dir, present, chain, gathered)
+              + write_script_tables(export_dir, out_dir, plugin_name,
+                                    gathered)
               + _journal_quests(writer, out_dir, plugin_name))
     index = _actor_index(export_dir)
     if not index:

@@ -32,6 +32,7 @@
 #include "dialogue_state.h"
 #include "filter.h"
 #include "log.h"
+#include "script_ops.h"
 #include "script_tables.h"
 
 namespace mwruntime {
@@ -99,34 +100,6 @@ class LogErrors : public Compiler::ErrorHandler {
     }
     void report(const std::string& message, Type) override {
         Log("script: %s", message.c_str());
-    }
-};
-
-// ------------------------------------------------------------- stack helpers
-
-std::string PopString(Interpreter::Runtime& runtime) {
-    std::string text(runtime.getStringLiteral(runtime[0].mInteger));
-    runtime.pop();
-    return text;
-}
-
-int PopInt(Interpreter::Runtime& runtime) {
-    const int value = runtime[0].mInteger;
-    runtime.pop();
-    return value;
-}
-
-// Who a command acts on: the speaker, or the id written before `->`, which
-// the compiler pushes LAST and so is popped first.
-struct Implicit {
-    static std::string Target(Interpreter::Runtime& runtime) {
-        return runtime.getContext().getTarget().getRefIdString();
-    }
-};
-
-struct Explicit {
-    static std::string Target(Interpreter::Runtime& runtime) {
-        return PopString(runtime);
     }
 };
 
@@ -256,12 +229,6 @@ class OpGetFactionReaction : public Interpreter::Opcode0 {
 };
 
 // ------------------------------------------------ the player's factions
-
-float PopFloat(Interpreter::Runtime& runtime) {
-    const float value = runtime[0].mFloat;
-    runtime.pop();
-    return value;
-}
 
 // The faction a command names, or its target's own when it names none. The
 // target is resolved FIRST, as MWScript's own opcodes do.
@@ -577,25 +544,9 @@ int PushedCount(const std::string& args) {
 
 // ------------------------------------------------------------ the machinery
 
-struct Machine {
+struct Machine : OpcodeInstaller {
     Compiler::Extensions extensions;
     CompilerContext compilerContext;
-    Interpreter::Interpreter interpreter;
-    std::set<int> segment5;
-    std::set<int> segment3;
-
-    template <class T>
-    void Real(int code) {
-        interpreter.installSegment5<T>(code);
-        segment5.insert(code);
-    }
-
-    // The segment-3 form: a command with optional arguments.
-    template <class T>
-    void Real3(int code) {
-        interpreter.installSegment3<T>(code);
-        segment3.insert(code);
-    }
 
     void InstallFactions();
     void InstallItemsAndScripts();
@@ -652,6 +603,7 @@ void Machine::InstallReal() {
     Real3<OpChoice>(D::opcodeChoice);
     InstallFactions();
     InstallItemsAndScripts();
+    InstallWorldOps(*this);
 }
 
 void Machine::InstallFactions() {

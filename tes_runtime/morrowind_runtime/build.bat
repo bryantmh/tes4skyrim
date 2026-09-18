@@ -67,7 +67,8 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\filter.cpp plugin\session.cpp plugin\activation.cpp ^
    plugin\game_actor.cpp plugin\conversation.cpp ^
    plugin\script_context.cpp plugin\dialogue_state.cpp ^
-   plugin\script_runner.cpp plugin\script_tables.cpp ^
+   plugin\script_runner.cpp plugin\script_ops_world.cpp ^
+   plugin\script_tables.cpp ^
    plugin\game_calls.cpp plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
@@ -94,8 +95,8 @@ cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\log.cpp plugin\filter.cpp ^
    plugin\session.cpp plugin\store_test.cpp plugin\filter_test.cpp ^
    plugin\session_test.cpp plugin\game_actor.cpp ^
    plugin\dialogue_state.cpp plugin\script_context.cpp ^
-   plugin\script_runner.cpp plugin\script_tables.cpp ^
-   plugin\script_test.cpp /Fo:objt\
+   plugin\script_runner.cpp plugin\script_ops_world.cpp ^
+   plugin\script_tables.cpp plugin\script_test.cpp /Fo:objt\
 if errorlevel 1 (
     echo [build] ERROR: test compilation failed
     exit /b 1
@@ -124,7 +125,8 @@ if errorlevel 1 (
 )
 link /nologo /OUT:script_test.exe objt\store.obj objt\log.obj ^
      objt\game_actor.obj objt\dialogue_state.obj objt\script_context.obj ^
-     objt\script_runner.obj objt\script_tables.obj objt\script_test.obj ^
+     objt\script_runner.obj objt\script_ops_world.obj ^
+     objt\script_tables.obj objt\script_test.obj ^
      objt\filter.obj ^
      obj\mw\*.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib

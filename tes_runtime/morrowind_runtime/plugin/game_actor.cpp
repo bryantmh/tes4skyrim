@@ -91,7 +91,13 @@ int GameActor::PlayerSkill(int) const { return Stub(kOpenSkill); }
 
 int GameActor::PlayerAttribute(int) const { return Stub(kOpenSkill); }
 
-std::string GameActor::PlayerCellName() const { return std::string(); }
+std::string GameActor::PlayerCellName() const {
+    if (!Hooks().playerCell) {
+        ++mStubbed;
+        return std::string();
+    }
+    return Hooks().playerCell();
+}
 
 int GameActor::Health() const { return Stub(kAlive); }
 

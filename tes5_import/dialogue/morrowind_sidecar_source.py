@@ -34,6 +34,11 @@ _NPDT_FIELDS = {52: (44, 46), 12: (2, 4)}
 #: NPC_ FLAG bit 0.
 _FEMALE = 0x1
 
+#: TES3 record types that can sit in an inventory, and every type that can be placed AND carry a script.
+_ITEM_TYPES = ('ALCH', 'APPA', 'ARMO', 'BOOK', 'CLOT', 'INGR', 'LIGH',
+               'LOCK', 'MISC', 'PROB', 'REPA', 'WEAP')
+_OBJECT_TYPES = _ITEM_TYPES + ('NPC_', 'CREA', 'ACTI', 'CONT', 'DOOR')
+
 #: FADT: 2 judged attributes, ten 5-int rank rows, 7 skills, flags.
 _FADT_INTS = 60
 _FADT_RANKS = 10
@@ -162,17 +167,25 @@ def _take(out: dict, rec, topic: str) -> str:
         line = _faction_line(rec)
         if line:
             out['factions'][rec.record_id.lower()] = line
+    if rec.type in _OBJECT_TYPES:
+        out['objects'][rec.record_id.lower()] = rec.record_id
+    if rec.type in _ITEM_TYPES:
+        out['items'][rec.record_id.lower()] = rec.record_id
     return topic
 
 
 def gather(chain: list) -> dict:
-    """`{'topics', 'infos', 'actors', 'factions'}` over the whole chain, each
-    plugin read ONCE, a later plugin overriding or extending an earlier one.
+    """`{'topics', 'infos', 'actors', 'factions', 'items', 'objects'}` over
+    the whole chain, each plugin read ONCE, a later plugin overriding or
+    extending an earlier one.
 
     `topics` is `{lower id: DIAL rec}`, `infos` `{lower id: [entry]}` in merged
-    order, `actors` and `factions` `{lower id: table line}`.
+    order, `actors` and `factions` `{lower id: table line}`, `items` and
+    `objects` `{lower id: id}` for what can sit in an inventory and for what
+    can be placed and scripted.
     """
-    out = {'topics': {}, 'infos': {}, 'actors': {}, 'factions': {}}
+    out = {'topics': {}, 'infos': {}, 'actors': {}, 'factions': {},
+           'items': {}, 'objects': {}}
     for _name, path in chain:
         topic = ''
         for rec in read_file(path)[1]:

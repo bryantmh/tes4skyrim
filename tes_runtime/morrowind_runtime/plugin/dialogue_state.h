@@ -45,6 +45,25 @@ struct GameHooks {
                       const std::string& target) = nullptr;
     void (*setEnabled)(const std::string& ref, bool enabled) = nullptr;
     bool (*isDisabled)(const std::string& ref) = nullptr;
+    // The player activates `ref`.
+    void (*activate)(const std::string& ref) = nullptr;
+    // Locks at `level`; a negative level unlocks.
+    void (*setLocked)(const std::string& ref, int level) = nullptr;
+    bool (*isLocked)(const std::string& ref) = nullptr;
+    void (*deleteRef)(const std::string& ref) = nullptr;
+    float (*distance)(const std::string& from, const std::string& to) = nullptr;
+    // `which`: 0 health, 1 magicka, 2 fatigue -- OpenMW's dynamic order.
+    float (*dynamicStat)(const std::string& actor, int which) = nullptr;
+    void (*setDynamicStat)(const std::string& actor, int which,
+                           float value) = nullptr;
+    void (*modDynamicStat)(const std::string& actor, int which,
+                           float delta) = nullptr;
+    void (*equipItem)(const std::string& actor, const std::string& item) = nullptr;
+    // The player's current cell as the game NAMES it, or "".
+    std::string (*playerCell)() = nullptr;
+    bool (*playerInInterior)() = nullptr;
+    bool (*menuMode)() = nullptr;
+    void (*forceGreeting)(const std::string& actor) = nullptr;
 };
 
 GameHooks& Hooks();

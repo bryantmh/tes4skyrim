@@ -152,11 +152,16 @@ void SetPapyrusVm(void* vm) { g_vm = vm; }
 
 void* PapyrusVm() { return g_vm; }
 
+bool FixedString(void** out, const char* text) {
+    *out = nullptr;
+    if (!g_fixedString) return false;
+    g_fixedString(out, text);
+    return *out != nullptr;
+}
+
 void* FormFromFile(const char* file, std::uint32_t local) {
-    if (!g_vm || !g_getFormFromFile || !g_fixedString) return nullptr;
     void* name = nullptr;
-    g_fixedString(&name, file);
-    if (!name) return nullptr;
+    if (!g_vm || !g_getFormFromFile || !FixedString(&name, file)) return nullptr;
     return g_getFormFromFile(g_vm, 0, nullptr, static_cast<std::int32_t>(local),
                              &name);
 }

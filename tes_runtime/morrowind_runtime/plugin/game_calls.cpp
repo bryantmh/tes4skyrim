@@ -11,6 +11,7 @@
 
 #include "activation.h"
 #include "addresses.h"
+#include "conversation.h"
 #include "dialogue_state.h"
 #include "ids.h"
 #include "log.h"
@@ -52,6 +53,29 @@ using StopCombatFn = void (*)(void* vm, std::uint32_t stack, void* actor);
 using SetEnabledFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                               bool fade);
 using IsDisabledFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
+using ActivateFn = void (*)(void* vm, std::uint32_t stack, void* ref,
+                            void* actionRef, bool defaultOnly);
+using LockFn = void (*)(void* vm, std::uint32_t stack, void* ref, bool lock,
+                        bool asOffLimits);
+using SetLockLevelFn = void (*)(void* vm, std::uint32_t stack, void* ref,
+                                std::int32_t level);
+using RefQueryFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
+using RefCallFn = void (*)(void* vm, std::uint32_t stack, void* ref);
+using DistanceFn = float (*)(void* vm, std::uint32_t stack, void* ref,
+                             void* other);
+using ParentCellFn = void* (*)(void* vm, std::uint32_t stack, void* ref);
+// The `name` is a BSFixedString handed by address, as Game.GetFormFromFile
+// takes its file name.
+using GetValueFn = float (*)(void* vm, std::uint32_t stack, void* actor,
+                             void* name);
+using SetValueFn = void (*)(void* vm, std::uint32_t stack, void* actor,
+                            void* name, float value);
+using EquipItemFn = void (*)(void* vm, std::uint32_t stack, void* actor,
+                             void* item, bool preventRemoval, bool silent);
+
+// Skyrim's actor values for OpenMW's dynamic stats, in OpenMW's order.
+constexpr const char* kDynamicNames[] = {"Health", "Magicka", "Stamina"};
+constexpr int kDynamicCount = 3;
 
 // TES3's gold, and the record Skyrim keeps for the same thing.
 constexpr const char* kTes3Gold = "gold_001";
@@ -103,6 +127,19 @@ StopCombatFn  g_stopCombat = nullptr;
 SetEnabledFn  g_enable = nullptr;
 SetEnabledFn  g_disable = nullptr;
 IsDisabledFn  g_isDisabled = nullptr;
+ActivateFn     g_activate = nullptr;
+LockFn         g_lock = nullptr;
+SetLockLevelFn g_setLockLevel = nullptr;
+RefQueryFn     g_isLocked = nullptr;
+RefCallFn      g_delete = nullptr;
+DistanceFn     g_distance = nullptr;
+ParentCellFn   g_parentCell = nullptr;
+RefQueryFn     g_isInterior = nullptr;
+GetValueFn     g_getValue = nullptr;
+SetValueFn     g_setValue = nullptr;
+SetValueFn     g_restoreValue = nullptr;
+SetValueFn     g_damageValue = nullptr;
+EquipItemFn    g_equipItem = nullptr;
 
 std::string g_speakerId;
 void*       g_speakerRef = nullptr;
@@ -338,6 +375,133 @@ int ItemCount(const std::string& owner, const std::string& item) {
     return g_itemCount(PapyrusVm(), 0, ref, form);
 }
 
+void* PlayerRef() {
+    return g_getPlayer ? g_getPlayer(PapyrusVm(), 0, nullptr) : nullptr;
+}
+
+// World mutations are POSTED, as Enable and combat are: the menu's callbacks
+// do not run on the game thread. Reads answer at once.
+void Activate(const std::string& id) {
+    void* ref = OwnerRef(id);
+    void* player = PlayerRef();
+    if (!ref || !player || !g_activate) return;
+    PostToMainThread([ref, player]() {
+        g_activate(PapyrusVm(), 0, ref, player, false);
+    });
+}
+
+// A positive level locks at that level, zero re-locks at the current one,
+// and a negative level unlocks -- OpenMW's `Lock`/`Unlock` in one call.
+void SetLocked(const std::string& id, int level) {
+    void* ref = OwnerRef(id);
+    if (!ref || !g_lock) return;
+    PostToMainThread([ref, level]() {
+        if (level > 0 && g_setLockLevel) {
+            g_setLockLevel(PapyrusVm(), 0, ref, level);
+        }
+        g_lock(PapyrusVm(), 0, ref, level >= 0, false);
+    });
+}
+
+bool IsLocked(const std::string& id) {
+    void* ref = OwnerRef(id);
+    return ref && g_isLocked && g_isLocked(PapyrusVm(), 0, ref);
+}
+
+void DeleteRef(const std::string& id) {
+    void* ref = OwnerRef(id);
+    if (!ref || !g_delete) return;
+    PostToMainThread([ref]() { g_delete(PapyrusVm(), 0, ref); });
+}
+
+float Distance(const std::string& from, const std::string& to) {
+    void* a = OwnerRef(from);
+    void* b = OwnerRef(to);
+    return a && b && g_distance ? g_distance(PapyrusVm(), 0, a, b) : 0.0f;
+}
+
+void* PlayerCell() {
+    void* player = PlayerRef();
+    return player && g_parentCell ? g_parentCell(PapyrusVm(), 0, player)
+                                  : nullptr;
+}
+
+std::string PlayerCellName() {
+    void* cell = PlayerCell();
+    if (!cell) return std::string();
+    const char* name = *reinterpret_cast<const char**>(
+        static_cast<char*>(cell) + ids::kOffCellFullName);
+    return name ? name : "";
+}
+
+bool PlayerInInterior() {
+    void* cell = PlayerCell();
+    return cell && g_isInterior && g_isInterior(PapyrusVm(), 0, cell);
+}
+
+float DynamicStat(const std::string& actor, int which) {
+    void* ref = OwnerRef(actor);
+    void* name = nullptr;
+    if (!ref || !g_getValue || which < 0 || which >= kDynamicCount ||
+        !FixedString(&name, kDynamicNames[which])) {
+        return 0.0f;
+    }
+    return g_getValue(PapyrusVm(), 0, ref, &name);
+}
+
+void SetDynamicStat(const std::string& actor, int which, float value) {
+    void* ref = OwnerRef(actor);
+    if (!ref || !g_setValue || which < 0 || which >= kDynamicCount) return;
+    PostToMainThread([ref, which, value]() {
+        void* name = nullptr;
+        if (FixedString(&name, kDynamicNames[which])) {
+            g_setValue(PapyrusVm(), 0, ref, &name, value);
+        }
+    });
+}
+
+// Skyrim keeps restore and damage apart where TES3 has one signed `Mod`.
+void ModDynamicStat(const std::string& actor, int which, float delta) {
+    void* ref = OwnerRef(actor);
+    if (!ref || !g_restoreValue || !g_damageValue || which < 0 ||
+        which >= kDynamicCount) {
+        return;
+    }
+    PostToMainThread([ref, which, delta]() {
+        void* name = nullptr;
+        if (!FixedString(&name, kDynamicNames[which])) return;
+        if (delta >= 0.0f) {
+            g_restoreValue(PapyrusVm(), 0, ref, &name, delta);
+        } else {
+            g_damageValue(PapyrusVm(), 0, ref, &name, -delta);
+        }
+    });
+}
+
+void EquipItem(const std::string& actor, const std::string& item) {
+    void* ref = OwnerRef(actor);
+    void* form = ItemForm(item);
+    if (!ref || !form || !g_equipItem) return;
+    PostToMainThread([ref, form]() {
+        g_equipItem(PapyrusVm(), 0, ref, form, false, false);
+    });
+}
+
+bool MenuMode() { return ConversationOpen(); }
+
+// Posted rather than begun here: BeginConversation tears the current one
+// down, and the script asking for it is still running against that actor.
+void ForceGreeting(const std::string& actor) {
+    void* ref = OwnerRef(actor);
+    if (!ref) return;
+    const ActorDef* def = FindActor(actor);
+    const std::string shown = def && !def->name.empty() ? def->name : actor;
+    PostToMainThread([actor, ref, shown]() {
+        SetSpeakerRef(actor.c_str(), ref);
+        BeginConversation(actor.c_str(), shown.c_str(), PlayerName());
+    });
+}
+
 template <typename Fn>
 Fn Native(const char* name, std::uint64_t id) {
     return reinterpret_cast<Fn>(Resolve(name, id, nullptr));
@@ -370,7 +534,40 @@ void InstallGameCalls() {
                                      ids::kRefDisable);
     g_isDisabled = Native<IsDisabledFn>("ObjectReference.IsDisabled",
                                         ids::kRefIsDisabled);
+    g_activate = Native<ActivateFn>("ObjectReference.Activate",
+                                    ids::kRefActivate);
+    g_lock = Native<LockFn>("ObjectReference.Lock", ids::kRefLock);
+    g_setLockLevel = Native<SetLockLevelFn>("ObjectReference.SetLockLevel",
+                                            ids::kRefSetLockLevel);
+    g_isLocked = Native<RefQueryFn>("ObjectReference.IsLocked",
+                                    ids::kRefIsLocked);
+    g_delete = Native<RefCallFn>("ObjectReference.Delete", ids::kRefDelete);
+    g_distance = Native<DistanceFn>("ObjectReference.GetDistance",
+                                    ids::kRefGetDistance);
+    g_parentCell = Native<ParentCellFn>("ObjectReference.GetParentCell",
+                                        ids::kRefGetParentCell);
+    g_isInterior = Native<RefQueryFn>("Cell.IsInterior", ids::kCellIsInterior);
+    g_getValue = Native<GetValueFn>("Actor.GetActorValue", ids::kActorGetValue);
+    g_setValue = Native<SetValueFn>("Actor.SetActorValue", ids::kActorSetValue);
+    g_restoreValue = Native<SetValueFn>("Actor.RestoreActorValue",
+                                        ids::kActorRestoreValue);
+    g_damageValue = Native<SetValueFn>("Actor.DamageActorValue",
+                                       ids::kActorDamageValue);
+    g_equipItem = Native<EquipItemFn>("Actor.EquipItem", ids::kActorEquipItem);
     GameHooks& hooks = Hooks();
+    hooks.activate = Activate;
+    hooks.setLocked = SetLocked;
+    hooks.isLocked = IsLocked;
+    hooks.deleteRef = DeleteRef;
+    hooks.distance = Distance;
+    hooks.dynamicStat = DynamicStat;
+    hooks.setDynamicStat = SetDynamicStat;
+    hooks.modDynamicStat = ModDynamicStat;
+    hooks.equipItem = EquipItem;
+    hooks.playerCell = PlayerCellName;
+    hooks.playerInInterior = PlayerInInterior;
+    hooks.menuMode = MenuMode;
+    hooks.forceGreeting = ForceGreeting;
     hooks.setQuestStage = SetQuestStage;
     hooks.addItem = AddItem;
     hooks.removeItem = RemoveItem;

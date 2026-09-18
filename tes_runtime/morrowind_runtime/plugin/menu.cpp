@@ -126,6 +126,9 @@ MorrowindMenu* g_menu = nullptr;
 // The one menu this session ever creates, reused across opens.
 MorrowindMenu* g_kept = nullptr;
 
+// Whether the menu is between its open and close messages.
+bool g_open = false;
+
 // What the fields should say, kept so a menu created later still gets it.
 std::map<std::string, std::string> g_pending;
 
@@ -182,6 +185,40 @@ void ApplyText(const char* variable, const char* text) {
 
 bool MousePosition(double* x, double* y) {
     return GetMenuNumber(kMouseX, x) && GetMenuNumber(kMouseY, y);
+}
+
+// The scalars the engine indexes while the menu is on its stack, written on
+// every open because the engine owns the object between them.
+void ArmMenu(MorrowindMenu* menu) {
+    menu->context = kMenuContext;
+    menu->flags = kMenuFlags;
+    menu->depth = kMenuDepth;
+}
+
+// 🛑 The OPEN, driven by the kMessage_Open the engine delivers to slot 4. It
+// is the only reliable one: MenuCreator is SKIPPED whenever the manager still
+// holds an instance under the name, and slot 0 is called every frame rather
+// than once at close, so neither brackets a session.
+// See: docs/commentary/morrowind_runtime.md#open-and-close-come-from-slot-4
+void OpenLive(MorrowindMenu* menu) {
+    if (g_open) return;
+    g_open = true;
+    g_menu = menu;
+    g_kept = menu;
+    ArmMenu(menu);
+    Log("menu: open, menu=%p view=%p flags=%08x", menu, menu->view,
+        menu->flags);
+    for (const auto& field : g_pending) {
+        ApplyText(field.first.c_str(), field.second.c_str());
+    }
+    if (g_input.opened) g_input.opened();
+}
+
+void CloseLive() {
+    if (!g_open) return;
+    g_open = false;
+    Log("menu: closed");
+    if (g_input.closed) g_input.closed();
 }
 
 void LogEventKindOnce(std::uint32_t type) {
@@ -257,18 +294,13 @@ std::uint32_t HandleUserEvent(char* data) {
     return ids::kResultPassOn;
 }
 
-// Slot 0. The engine "deletes" a closed menu through here. The menu and its
-// movie are KEPT and handed back by the next MenuCreator call: releasing the
-// movie the way IMenu's own destructor does crashed inside the movie's
-// teardown, freeing a 0x38-byte Scaleform object through the heap that never
-// held it. One movie per session sidesteps that path entirely.
-// See: docs/commentary/morrowind_runtime.md#one-movie-per-session
-void __fastcall Menu_Dtor(MorrowindMenu* menu, std::uint32_t) {
-    if (menu == g_menu) {
-        g_menu = nullptr;
-        if (g_input.closed) g_input.closed();
-    }
-}
+// 🛑 Slot 0. Does NOTHING, deliberately, on both counts. The menu and its movie
+// are KEPT: releasing the movie the way IMenu's own destructor does crashed
+// inside the movie's teardown. And this is NOT the close -- the engine calls it
+// every frame, so nulling g_menu here is what killed the second conversation of
+// every session. The close is kMessage_Close, in slot 4.
+// See: docs/commentary/morrowind_runtime.md#open-and-close-come-from-slot-4
+void __fastcall Menu_Dtor(MorrowindMenu*, std::uint32_t) {}
 
 void __fastcall Menu_Accept(MorrowindMenu*, void*) {}
 void __fastcall Menu_Nop(MorrowindMenu*) {}
@@ -280,6 +312,14 @@ std::uint32_t __fastcall Menu_ProcessMessage(MorrowindMenu* menu,
     if (!menu || !message) return ids::kResultPassOn;
     const std::uint32_t type = *reinterpret_cast<std::uint32_t*>(
         message + ids::kMessageTypeOffset);
+    if (type == ids::kMessageOpen) {
+        OpenLive(menu);
+        return ids::kResultPassOn;
+    }
+    if (type == ids::kMessageClose) {
+        CloseLive();
+        return ids::kResultPassOn;
+    }
     char* data = *reinterpret_cast<char**>(message + ids::kMessageDataOffset);
     if (type == ids::kMessageScaleformEvent) {
         return HandleScaleformEvent(menu, data);
@@ -294,6 +334,7 @@ std::uint32_t __fastcall Menu_ProcessMessage(MorrowindMenu* menu,
 void __fastcall Menu_NextFrame(MorrowindMenu* menu, float seconds,
                                std::uint32_t) {
     if (!menu || !menu->view) return;
+    g_menu = menu;
     VCall<AdvanceFn>(menu->view, ids::kMovieViewAdvanceSlot)(
         menu->view, seconds, kAdvanceCatchUp);
     if (g_input.tick) g_input.tick();
@@ -307,17 +348,10 @@ void __fastcall Menu_Render(MorrowindMenu* menu) {
     VCall<RenderFn>(menu->view, ids::kMovieViewRenderSlot)(menu->view);
 }
 
-// The creator MenuManager calls when the menu is opened. After the first
-// open it returns the SAME menu, movie and all.
+// The creator MenuManager calls to CONSTRUCT the menu, which after the first
+// open it skips entirely. It never notifies: kMessage_Open does that.
 void* MenuCreator() {
-    if (g_kept) {
-        g_menu = g_kept;
-        for (const auto& field : g_pending) {
-            ApplyText(field.first.c_str(), field.second.c_str());
-        }
-        if (g_input.opened) g_input.opened();
-        return g_menu;
-    }
+    if (g_kept) return g_kept;
     if (!g_loadMovie || !g_gfxLoader || !*g_gfxLoader) {
         Log("menu: creator called but LoadMovie is unresolved");
         return nullptr;
@@ -335,17 +369,11 @@ void* MenuCreator() {
     menu->vtable = g_vtable;
     const bool ok = g_loadMovie(*g_gfxLoader, menu, &menu->view, kMovieName,
                                 ids::kScaleModeShowAll, 0.0f);
-    menu->context = kMenuContext;
-    menu->flags = kMenuFlags;
-    menu->depth = kMenuDepth;
+    ArmMenu(menu);
     Log("menu: LoadMovie('%s') %s, view=%p flags=%08x", kMovieName,
         ok ? "ok" : "FAILED", menu->view, menu->flags);
     g_menu = menu;
     g_kept = ok ? menu : nullptr;
-    for (const auto& field : g_pending) {
-        ApplyText(field.first.c_str(), field.second.c_str());
-    }
-    if (g_input.opened) g_input.opened();
     return menu;
 }
 
