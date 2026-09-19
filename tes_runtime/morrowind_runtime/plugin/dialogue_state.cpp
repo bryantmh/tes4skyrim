@@ -181,6 +181,20 @@ void DialogueState::SetAiSetting(const std::string& actor, int which,
     if (Hooks().applyAiSetting) Hooks().applyAiSetting(actor, which, value);
 }
 
+bool DialogueState::MovementFlag(const std::string& actor, int which) const {
+    const auto it = mMovementFlags.find({Key(actor), which});
+    return it != mMovementFlags.end() && it->second;
+}
+
+void DialogueState::SetMovementFlag(const std::string& actor, int which,
+                                    bool on) {
+    mMovementFlags[{Key(actor), which}] = on;
+    Log("move: %s flag %d = %d", actor.c_str(), which, on ? 1 : 0);
+    if (Hooks().applyMovementFlag) {
+        Hooks().applyMovementFlag(actor, which, on);
+    }
+}
+
 const Membership& DialogueState::Faction(const std::string& faction) const {
     static const Membership kNone;
     const auto it = mFactions.find(Key(faction));
@@ -331,6 +345,10 @@ std::string DialogueState::Serialize() const {
         out << "A\t" << e.first.first << '\t' << e.first.second << '\t'
             << e.second << '\n';
     }
+    for (const auto& e : mMovementFlags) {
+        if (!e.second) continue;
+        out << "M\t" << e.first.first << '\t' << e.first.second << '\n';
+    }
     out << "R\t" << reputation << '\n' << "C\t" << crimeLevel << '\n';
     return out.str();
 }
@@ -355,6 +373,7 @@ std::size_t DialogueState::Deserialize(const std::string& text) {
         else if (kind == "S" && n >= 2) mRunning[f[1]] = n > 2 ? f[2] : "";
         else if (kind == "K" && n == 2) mKnownTopics.insert(f[1]);
         else if (kind == "A" && n == 4) mAiSettings[{f[1], Int(f[2])}] = Int(f[3]);
+        else if (kind == "M" && n == 3) mMovementFlags[{f[1], Int(f[2])}] = true;
         else if (kind == "R" && n == 2) reputation = Int(f[1]);
         else if (kind == "C" && n == 2) crimeLevel = Float(f[1]);
         else continue;

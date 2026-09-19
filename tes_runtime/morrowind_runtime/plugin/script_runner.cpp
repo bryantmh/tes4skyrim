@@ -490,8 +490,15 @@ class OpGetDeadCount : public Interpreter::Opcode0 {
 // Commands with nothing to do here by DESIGN, not for want of a port: the
 // map and screen fades are Morrowind's own presentation, and ClearInfoActor
 // edits a topic log this runtime does not keep.
-constexpr const char* kDeliberateNoOps[] = {"showmap", "fadein", "fadeout",
-                                            "fadeto", "clearinfoactor"};
+// 🛑 The gait commands are here because Skyrim exposes NO way to force one.
+// Porting them would latch a value nothing reads -- a command that counts as
+// ported and moves nothing, which hides worse than a stub does.
+// See: docs/commentary/morrowind_runtime.md#forced-movement-is-a-latch
+constexpr const char* kDeliberateNoOps[] = {
+    "showmap", "fadein", "fadeout", "fadeto", "clearinfoactor",
+    "forcerun", "clearforcerun", "getforcerun",
+    "forcejump", "clearforcejump", "getforcejump",
+    "forcemovejump", "clearforcemovejump", "getforcemovejump"};
 
 // How often each unported command has been reached.
 std::map<std::string, int> g_reported;

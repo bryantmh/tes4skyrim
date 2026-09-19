@@ -74,6 +74,13 @@ struct OpcodeInstaller {
     }
 };
 
+// One command's two opcodes: the bare form and the `id->` one.
+template <template <class> class Op>
+void InstallPair(OpcodeInstaller& into, int bare, int withRef) {
+    into.Real<Op<Implicit>>(bare);
+    into.Real<Op<Explicit>>(withRef);
+}
+
 // The commands that reach into the WORLD through GameHooks: activation,
 // locks, deletion, distance, the dynamic stats, equipping, the player's
 // cell, and the menu. script_ops_world.cpp.

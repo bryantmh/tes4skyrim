@@ -45,6 +45,17 @@ ClassificationFn g_classification = nullptr;
 RefQueryFn       g_weaponDrawn = nullptr;
 RefQueryFn       g_isSneaking = nullptr;
 RefQueryFn       g_actorRunning = nullptr;
+// Actor.IsEquipped(Form), Actor.GetSleepState(), Actor.GetEquippedSpell(int).
+using FormQueryFn = bool (*)(void* vm, std::uint32_t stack, void* ref,
+                             void* form);
+using StateFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* ref);
+using HandQueryFn = void* (*)(void* vm, std::uint32_t stack, void* ref,
+                              std::int32_t hand);
+using ActFn = void (*)(void* vm, std::uint32_t stack, void* ref);
+ActFn            g_startSneaking = nullptr;
+FormQueryFn      g_isEquipped = nullptr;
+StateFn          g_sleepState = nullptr;
+HandQueryFn      g_equippedSpell = nullptr;
 
 // `GetDeadCount id`: the ENGINE's own count for that base actor, which covers
 // every death, scripted or not, and is saved with the game.
@@ -139,6 +150,60 @@ bool ActorRunning(const std::string& actor) {
     return AskActor(g_actorRunning, actor);
 }
 
+// `HasItemEquipped "id"`: IsEquipped takes the FORM, so the id resolves
+// through the same item table AddItem and RemoveItem use.
+bool ItemIsEquipped(const std::string& actor, const std::string& item) {
+    void* ref = OwnerRef(actor);
+    void* form = ItemForm(item);
+    return ref && form && g_isEquipped &&
+           g_isEquipped(PapyrusVm(), 0, ref, form);
+}
+
+// `GetPCSleep`: GetSleepState is an ENUM -- 0 awake, 2 about to sleep,
+// 3 asleep, 4 waking. TES3 asks one yes/no question, which is state 3.
+constexpr std::int32_t kSleepStateAsleep = 3;
+
+bool PlayerIsSleeping() {
+    void* ref = PlayerRef();
+    return ref && g_sleepState &&
+           g_sleepState(PapyrusVm(), 0, ref) == kSleepStateAsleep;
+}
+
+// `GetSpellReadied`: TES3's third draw state. Skyrim has no drawstate
+// getter, but a readied spell IS an equipped spell, so the question is
+// whether either hand holds one.
+constexpr std::int32_t kHandLeft = 0;
+constexpr std::int32_t kHandRight = 1;
+
+bool SpellIsReadied(const std::string& actor) {
+    void* ref = OwnerRef(actor);
+    if (!ref || !g_equippedSpell) return false;
+    return g_equippedSpell(PapyrusVm(), 0, ref, kHandRight) ||
+           g_equippedSpell(PapyrusVm(), 0, ref, kHandLeft);
+}
+
+// `ForceSneak`/`ClearForceSneak`. TES3 reads the stance as
+// `Flag_Sneak || Flag_ForceSneak` (OpenMW `CreatureStats::getStance`), so the
+// latch forces the stance ON TOP of whatever the AI is doing rather than
+// replacing it. Skyrim's only lever is StartSneaking, which TOGGLES -- hence
+// the read-first, and hence nothing to do when the actor already agrees.
+//
+// 🛑 Run, Jump and MoveJump have NO Skyrim equivalent: the engine gives
+// Papyrus no way to force a gait. Those three latch and answer their getter
+// and do nothing else, which is all the engine allows.
+// See: docs/commentary/morrowind_runtime.md#forced-movement-is-a-latch
+constexpr int kFlagForceSneak = 1;
+
+void ApplyMovementFlag(const std::string& actor, int which, bool on) {
+    if (which != kFlagForceSneak) return;
+    void* ref = OwnerRef(actor);
+    if (!ref || !g_startSneaking || !g_isSneaking) return;
+    PostToMainThread([ref, on]() {
+        if (g_isSneaking(PapyrusVm(), 0, ref) == on) return;
+        g_startSneaking(PapyrusVm(), 0, ref);
+    });
+}
+
 void ResurrectActor(const std::string& actor) {
     void* ref = OwnerRef(actor);
     if (!ref || !g_resurrect) return;
@@ -189,9 +254,21 @@ void InstallQueryCalls(GameHooks& hooks) {
     hooks.hasLos = HasLosOn;
     hooks.detects = DetectsActor;
     hooks.fighting = FightingActor;
+    g_startSneaking = Native<ActFn>("Actor.StartSneaking",
+                                    ids::kActorStartSneaking);
+    g_isEquipped = Native<FormQueryFn>("Actor.IsEquipped",
+                                       ids::kActorIsEquipped);
+    g_sleepState = Native<StateFn>("Actor.GetSleepState",
+                                   ids::kActorGetSleepState);
+    g_equippedSpell = Native<HandQueryFn>("Actor.GetEquippedSpell",
+                                          ids::kActorEquippedSpell);
     hooks.weaponDrawn = WeaponIsDrawn;
     hooks.sneaking = ActorSneaking;
     hooks.running = ActorRunning;
+    hooks.itemEquipped = ItemIsEquipped;
+    hooks.playerSleeping = PlayerIsSleeping;
+    hooks.spellReadied = SpellIsReadied;
+    hooks.applyMovementFlag = ApplyMovementFlag;
     hooks.resurrect = ResurrectActor;
     hooks.dropItem = DropFromActor;
     hooks.weather = WeatherClassification;

@@ -121,6 +121,8 @@ caching, skipped record types, the export text format, and the directory layout.
 - Duplicated code is a big no-no. Check if something has been built first and if it has either point to that code instead or pull it out into a shared function
 - Avoid the chicken and egg problem when updating files. For example, adding an import without also adding its call in the same write will trigger the hook and prevent the write
 - If you want to use subagents, ASK first
+- If you do something that would cause a cache, such as the collision cache to generate differently, you MUST iterate its version
+- Morrowind conversion has TWO modes. One that uses its authored masters (Morrowind, Tribunal, Bloodmoon) and Morroblivion mode, which uses Morrowind_ob.esm and the Morroblivion-Morrowind compat patch. BOTH paths MUST be tested and verified when doing Morrowind work.
 
 ### <a id="regression-read-the-commits"></a>🛑 IF IT IS A REGRESSION, READ THE COMMITS
 
@@ -173,7 +175,8 @@ regenerate scripts, so a behavioural regression means reading
    memory) with RVAs matching the running build. Recipe:
    `project_refr_angle_normalize_hang`.
 10. Failing all the above, add thorough logging for the user's next run — one
-   wasted round trip costs them a full build-and-play cycle.
+   wasted round trip costs them a full build-and-play cycle. so this must be done sparingly and thoroghly to be worth it
+11. When working on Morrowind code, the FULL OpenMW source code is in the references folder
 
 Never attribute a bug to LE-vs-SSE mesh format differences — verify engine
 theories externally first.
@@ -344,8 +347,8 @@ real data, or a failing-then-passing test.
   resolve runtime assets through it.** Vanilla Skyrim files are fetched via
   `asset_convert/sources/skyrim_assets.py` (cache in `export/skyrim_assets/`, else
   auto-extracted from the SSE BSAs via registry-detected install).
-- `references/` subfolders (`NIFConverter/`, `xEdit/`, `UESP/`, `nifskope`) are
-  other projects — reference only. Note that these are not the ONLY references in that folder. Check before guessing
+- `references/` subfolders (`NIFConverter/`, `xEdit/`, `UESP/`, `nifskope`, `openmw`, etc.) are
+  other projects — reference only. Note that these are not the ONLY references in that folder. Check before guessing or assuming a reference doesn't exist
 - <a id="ck-wiki-offline"></a>**What a Papyrus native DOES: `references/SkyrimCKWiki_210522/skyrim/<Func>_-_<Script>.html`.
   Grep it before describing one — never invent semantics.** Oblivion:
   `references/cs_wiki/` (.txt).

@@ -57,19 +57,26 @@ public:
     const std::string& Key() const { return mKey; }
     const std::string& Script() const { return mScript; }
     const std::string& BaseId() const { return mBaseId; }
+    void SetBaseId(std::string baseId) { mBaseId = std::move(baseId); }
     std::uint32_t LocalFormId() const { return mLocalFormId; }
     const std::string& Plugin() const { return mPlugin; }
 
     ObjectEvents& Events() { return mEvents; }
 
-    // Raises `died` the FIRST time the reference is seen dead, so `OnDeath`
-    // fires once as TES3 has it rather than every tick of a corpse.
+    // Raises `died` on the live->dead TRANSITION, once, as TES3 has it. An
+    // actor already dead when first polled never raises it: a corpse placed
+    // dead in the cell did not die during play.
     void PollDeath();
 
     // The FormID this placement has in the RUNNING game, learned when the
     // engine first handed us the reference. 0 until then.
     std::uint32_t RuntimeFormId() const { return mRuntimeFormId; }
-    void SetRuntimeFormId(std::uint32_t id) { mRuntimeFormId = id; }
+    // Clears the loaded flag too: a rebind is a fresh appearance in the world,
+    // and a stale flag would let the tick unbind it again before its 3D exists.
+    void SetRuntimeFormId(std::uint32_t id) {
+        mRuntimeFormId = id;
+        mWasLoaded = false;
+    }
 
     // Whether the object has EVER been seen loaded. An instance that has not
     // cannot have unloaded, which is what keeps a just-spawned reference from
@@ -90,8 +97,11 @@ private:
     std::string mScript;
     std::string mKey;
     ObjectEvents mEvents;
-    // Whether the death has already been reported, so it is raised once.
+    // Whether the death has already been reported, so it is raised once, and
+    // whether life has been sampled at all -- the first poll only establishes
+    // which side the actor started on.
     bool mDeathSeen = false;
+    bool mLifeSampled = false;
     std::uint32_t mRuntimeFormId = 0;
     bool mWasLoaded = false;
 };
@@ -168,6 +178,11 @@ void BindSpawnedInstance(std::uint32_t runtimeFormId,
 
 void ClearInstanceBindings();
 std::size_t BoundInstanceCount();
+
+// Whether this PLACEMENT is currently bound to a live reference. An instance
+// outlives its binding, so this is not the same as it existing -- which is what
+// the discovery sweep must ask to rebind a cell the player re-enters.
+bool IsPlacementBound(const std::string& plugin, std::uint32_t localFormId);
 
 // Forgets the binding for one reference, so it stops ticking. Its LOCALS are
 // kept: TES3 keeps a local script's variables across an unload, and the

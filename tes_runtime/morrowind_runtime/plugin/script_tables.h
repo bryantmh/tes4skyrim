@@ -170,9 +170,9 @@ struct InstanceRow {
     std::string script;
 };
 
-// Every staged instance, for the pass that resolves them through the running
-// load order once the game can answer.
-std::vector<InstanceRow> Instances();
+// The staged instance at `index` in load order, or null past the end. The
+// tick's discovery sweep walks this a slice at a time.
+const InstanceRow* InstanceAt(std::size_t index);
 
 // The staged instance whose placement has this plugin-LOCAL FormID, or null.
 //

@@ -173,13 +173,6 @@ class OpRemoveSoulGem : public Interpreter::Opcode1 {
     }
 };
 
-// One command's two opcodes: the bare form and the `id->` one.
-template <template <class> class Op>
-void InstallPair(OpcodeInstaller& into, int bare, int withRef) {
-    into.Real<Op<Implicit>>(bare);
-    into.Real<Op<Explicit>>(withRef);
-}
-
 template <class R> using OpAddSpell = OpChangeSpell<R, true>;
 template <class R> using OpRemoveSpell = OpChangeSpell<R, false>;
 template <class R> using OpCastAt = OpCast<R, false>;

@@ -488,6 +488,12 @@ std::string PlayerCellName() {
     return name ? name : "";
 }
 
+// 🛑 Whether a GAME is loaded, which is the player standing in SOME cell --
+// never whether that cell has a NAME. An unnamed exterior is most of the
+// world: gating the tick on the name stopped every object script outdoors.
+// See: docs/commentary/morrowind_runtime.md#the-tick-is-gated-on-a-loaded-game
+bool PlayerInWorld() { return PlayerCell() != nullptr; }
+
 bool PlayerInInterior() {
     void* cell = PlayerCell();
     return cell && g_isInterior && g_isInterior(PapyrusVm(), 0, cell);
@@ -674,6 +680,15 @@ bool Is3DLoadedRef(std::uint32_t runtimeFormId) {
     return ref && g_is3DLoaded && g_is3DLoaded(PapyrusVm(), 0, ref);
 }
 
+// A staged placement's RUNTIME FormID once the engine has it in the world, or
+// 0 while it is not. `GetFormFromFile` answers for a non-persistent reference
+// only while its cell is loaded, so the null is "not here yet", not a failure.
+std::uint32_t LoadedRef(const std::string& plugin, std::uint32_t localFormId) {
+    void* ref = FormFromFile(plugin.c_str(), localFormId & kLocalMask);
+    if (!ref || !g_is3DLoaded || !g_is3DLoaded(PapyrusVm(), 0, ref)) return 0;
+    return FormIdOf(ref);
+}
+
 // A `MessageBox` raised by an object script, which has no dialogue menu to
 // render it. Debug.MessageBox is global, so it takes no `self`.
 // See: docs/plans/morrowind_object_scripts.md#messagebox
@@ -801,6 +816,7 @@ void InstallGameCalls() {
     hooks.showMessage = ShowMessage;
     hooks.isDead = IsDeadRef;
     hooks.is3DLoaded = Is3DLoadedRef;
+    hooks.loadedRef = LoadedRef;
     hooks.playSound = PlaySoundAt;
     hooks.stopSound = StopSoundInstance;
     hooks.goldCount = GoldCount;
@@ -815,6 +831,7 @@ void InstallGameCalls() {
     hooks.modDynamicStat = ModDynamicStat;
     hooks.equipItem = EquipItem;
     hooks.playerCell = PlayerCellName;
+    hooks.playerInWorld = PlayerInWorld;
     hooks.playerInInterior = PlayerInInterior;
     hooks.menuMode = MenuMode;
     hooks.forceGreeting = ForceGreeting;

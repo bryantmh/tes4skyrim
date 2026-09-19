@@ -36,17 +36,18 @@ advances to 40 and Foedus's dialogue follows.
 | `addspell` `removespell` `cast` `explodespell` | ~290 | needs a spell id -> FormID table |
 | `removesoulgem` `addsoulgem` | 39 | |
 | `modmercantile` `modalteration` `modalchemy` | 44 | skill mods |
-| `payfinethief` | 19 | |
+| `payfinethief` | 18 | |
 
-🛑 **Most of that is NOT runtime work.** Porting the opcode cannot help when
-the record it would name is never converted:
-[the audit's "Blocked on EXPORT or IMPORT" table](../audits/mwscript_opcodes.md#blocked-on-export-or-import-not-on-the-runtime)
-ranks them — PACK 1,943 calls, CELL 1,420, SPEL 978, MGEF/ENCH 673, SLGM 215.
-`SPEL.txt`, `MGEF.txt` and `ENCH.txt` are not exported at all; `CELL.txt` and
-`PACK.txt` ARE exported but nothing stages them into the sidecar.
+✅ **Every family above is now ported except `payfinethief`** — the AI packages,
+the cell and spell tables, the soul gems and the skill mods all landed, and the
+audit's "Blocked on EXPORT or IMPORT" section no longer emits because no
+data-blocked command is still stubbed. `payfinethief` (18 calls) is the largest
+pure-runtime gap left, ahead of `payfine` at 4.
 
-The skill mods (`modmercantile` and its kin) and `payfinethief` are the only
-sizeable families that are pure runtime work.
+🛑 The stub counts this table was first built from were inflated by prose: the
+audit scored quoted dialogue as calls until it learned to strip string
+literals, which put `Help` on top at 398. See
+[the audit's string rule](../commentary/morrowind_runtime.md#opcode-audit-strings).
 
 🛑 **The 409 UNREACHABLE are NOT a runtime gap.** Nothing in either corpus sets
 those stages -- they are authored dead ends, or set by a mechanism TES3 itself

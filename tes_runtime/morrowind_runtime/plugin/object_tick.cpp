@@ -10,6 +10,7 @@
 #include "log.h"
 #include "main_thread.h"
 #include "object_script.h"
+#include "script_tables.h"
 
 namespace mwruntime {
 
@@ -35,8 +36,60 @@ std::atomic<bool> g_running{false};
 // tick rather than a backlog that bursts when it resumes.
 std::atomic<bool> g_queued{false};
 
-// The player's cell as of the last tick, for CellChanged.
+// The player's cell as of the last tick, for CellChanged, and whether one has
+// been sampled at all -- an unnamed exterior is "" and is still a cell.
 std::string g_lastCell;
+bool g_cellSampled = false;
+
+// How many staged placements the discovery sweep tests per tick, and the
+// heartbeat between laps when nothing has happened.
+//
+// 🛑 The table is 15,639 rows and almost all of them sit in cells nowhere near
+// the player, so a CONTINUOUS sweep is 7,680 engine calls a second to learn
+// nothing. Only a cell LOADING changes an answer, so the sweep is driven by
+// the player changing cell and otherwise laps on a slow heartbeat -- exteriors
+// stream neighbours in without a cell change, which the heartbeat covers.
+constexpr std::size_t kDiscoverPerTick = 256;
+constexpr std::size_t kHeartbeatTicks = 150;
+
+// Where the next slice resumes -- 0 means no lap is in flight -- and how many
+// ticks of rest are left before the next one starts.
+std::size_t g_discoverAt = 0;
+std::size_t g_untilHeartbeat = 0;
+
+// Binds staged placements whose reference is now LOADED.
+//
+// 🛑 Without this the ONLY binding path is the Activate hook, so a script ran
+// only for an object the player had clicked: `OnDeath`, `OnPCHitMe` and every
+// proximity test (GetDistance/SetFight, ForceGreeting) were silently dead for
+// everything else -- measured, Ga'Nahiru neither turned aggressive nor advanced
+// its quest on death because nothing ever bound its instance.
+// See: docs/commentary/morrowind_runtime.md#instances-bind-from-the-world
+void DiscoverLoaded(bool cellChanged) {
+    if (!Hooks().loadedRef) return;
+    // A cell change restarts the lap at once, since that is when a batch of
+    // references appears; otherwise the heartbeat picks up whatever streamed
+    // in without one.
+    if (cellChanged) g_untilHeartbeat = 0;
+    if (g_discoverAt == 0 && g_untilHeartbeat) {
+        --g_untilHeartbeat;
+        return;
+    }
+    for (std::size_t n = 0; n < kDiscoverPerTick; ++n) {
+        const InstanceRow* row = InstanceAt(g_discoverAt++);
+        if (!row) {
+            g_discoverAt = 0;
+            g_untilHeartbeat = kHeartbeatTicks;
+            return;
+        }
+        if (IsPlacementBound(row->plugin, row->localFormId)) continue;
+        const std::uint32_t ref =
+            Hooks().loadedRef(row->plugin, row->localFormId);
+        if (!ref) continue;
+        BindInstance(ref, row->plugin, row->localFormId);
+        Log("object: %s bound from the world (%08X)", row->script.c_str(), ref);
+    }
+}
 
 // 🛑 `CellChanged` is raised on EVERY instance the tick that the player's cell
 // name differs from the last, which is what TES3 means by it: the script asks
@@ -44,18 +97,28 @@ std::string g_lastCell;
 bool PlayerCellChanged() {
     if (!Hooks().playerCell) return false;
     const std::string now = Hooks().playerCell();
-    if (now == g_lastCell) return false;
-    const bool moved = !g_lastCell.empty();
+    if (g_cellSampled && now == g_lastCell) return false;
+    // 🛑 "Have we sampled yet", not "is the last name empty": an unnamed
+    // exterior IS a cell, so an emptiness test swallowed every transition out
+    // of one and re-armed itself on the way back in.
+    const bool moved = g_cellSampled;
     g_lastCell = now;
+    g_cellSampled = true;
     return moved;
 }
 
 // 🛑 Nothing ticks before a game is LOADED. The main menu still runs the task
 // pump, so an ungated tick ran object scripts over the menu and popped their
 // MessageBoxes there -- measured 2026-09-18, three "You pry open the lock"
-// boxes on the title screen. An unloaded game has no player cell.
+// boxes on the title screen.
+//
+// 🛑 The test is that the player is in SOME cell, never that the cell has a
+// NAME. Gating on the name held for interiors and was false across every
+// unnamed exterior -- which is most of the world -- so no object script ticked
+// outdoors at all: no OnDeath, no proximity poll, no discovery sweep.
+// See: docs/commentary/morrowind_runtime.md#the-tick-is-gated-on-a-loaded-game
 bool SessionLive() {
-    return Hooks().playerCell && !Hooks().playerCell().empty();
+    return Hooks().playerInWorld && Hooks().playerInWorld();
 }
 
 void RunOneTick() {
@@ -65,8 +128,9 @@ void RunOneTick() {
         return;
     }
     if (Hooks().syncClock) Hooks().syncClock();
-    const std::vector<ObjectScript*> live = BoundInstances();
     const bool cellChanged = PlayerCellChanged();
+    DiscoverLoaded(cellChanged);
+    const std::vector<ObjectScript*> live = BoundInstances();
     std::size_t ran = 0;
     for (ObjectScript* instance : live) {
         // 🛑 TES3 runs a local script only while its object is LOADED. Without
@@ -79,9 +143,20 @@ void RunOneTick() {
         // and a spawn has no rebind path -- so treating "not loaded yet" as
         // "unloaded" drops the creature's script forever.
         // See: docs/commentary/morrowind_runtime.md#a-spawn-is-not-loaded-on-its-first-frame
+        //
+        // 🛑 Polled BEFORE the gate, so the ORDER cannot lose the event. TES3
+        // gives `OnDeath` one tick and the poll latches it once, so a gate that
+        // skips the instance on the tick the death is seen discards it for good.
+        // Corpses do NOT vanish -- they ragdoll and stay -- but the gate reads
+        // false whenever `Game.GetForm` stops answering for the reference, and
+        // the engine does free a dead one (see game_calls.cpp `RefByRuntimeId`).
+        // Polling first costs nothing and does not depend on which it is.
+        instance->PollDeath();
         if (Hooks().is3DLoaded) {
             if (Hooks().is3DLoaded(instance->RuntimeFormId())) {
                 instance->MarkLoaded();
+            } else if (instance->Events().died) {
+                UnbindInstance(instance->RuntimeFormId());
             } else if (instance->WasLoaded()) {
                 UnbindInstance(instance->RuntimeFormId());
                 continue;
@@ -89,8 +164,6 @@ void RunOneTick() {
                 continue;
             }
         }
-        // Before the body: both must already be raised when it reads them.
-        instance->PollDeath();
         if (cellChanged) instance->Events().cellChanged = true;
         instance->RunOnce();
         ++ran;
@@ -145,5 +218,13 @@ void StartObjectTick() {
 }
 
 void StopObjectTick() { g_running = false; }
+
+void ResetTickState() {
+    g_discoverAt = 0;
+    g_untilHeartbeat = 0;
+    g_lastCell.clear();
+    g_cellSampled = false;
+    g_accumulated = 0.0f;
+}
 
 }  // namespace mwruntime

@@ -1240,6 +1240,30 @@ unregistered while it was ported. `tools/script/mwscript_opcode_audit.py` now
 reads both corpora and expands the loops;
 [mwscript_opcodes.md](../audits/mwscript_opcodes.md) is the current table.
 
+### <a id="opcode-audit-strings"></a>🛑 A quoted string is PROSE, not a call
+
+The counter stripped `;` comments but not string literals, so any command whose
+name is an ordinary English word scored every line of dialogue that used it.
+`Help` — an OpenMW console command registered beside `ReloadLua` and
+`ToggleRecastMesh`, which no Morrowind script can call — topped the unported
+list on BOTH corpora, at 398 calls over TR_Mainland and 38 over Morrowind.esm,
+every one of them prose like `Choice "I will help you." 1`. Stripping quoted
+text drops the top stubs to their true counts (Morrowind.esm):
+
+| command | counted | real |
+|---|---|---|
+| `Help` | 38 | **0** |
+| `Show` | 11 | **0** |
+| `Say` | 7 | **0** |
+| `Ra` | 1 | **0** |
+| `PayFineThief` | 10 | 10 |
+
+Stubbed call sites fall from 73 to **16** on Morrowind.esm and from 1,706 to
+**1,137** on TR_Mainland; `Say` alone was 292 of TR's and is really 184. The
+real leader is `PayFineThief`. The lesson generalizes past this tool: the INFO
+corpus is majority prose, so ANY word-frequency scan over `ResultScript` must
+drop quoted text first or it measures the English language.
+
 ### <a id="ported-is-not-wired"></a>🛑 Ported is not wired
 
 **Code:** `tools/script/mwscript_opcode_audit.py:unwired`
@@ -1481,6 +1505,42 @@ that slot's own aliases -- 80 aliases and 40 PACKs on the one quest, with
   came back with a loaded save count.
 - A full pool logs `ai: no free <kind> slot` and the command is dropped.
 
+### <a id="forced-movement-is-a-latch"></a>Forced movement is a LATCH — and only SNEAK can be applied
+
+**Code:** `plugin/script_ops_query.cpp`, `plugin/game_calls_query.cpp`
+
+OpenMW implements all twelve `Force*` / `ClearForce*` / `GetForce*` commands as
+one movement FLAG on the actor's stats, and reads the STANCE as
+
+```
+Stance_Run   = Flag_Run   || Flag_ForceRun        (CreatureStats::getStance)
+Stance_Sneak = Flag_Sneak || Flag_ForceSneak
+```
+
+so the latch forces a stance ON TOP of what the AI is doing rather than
+replacing it. The DLL owns the flag the way it owns the AI settings.
+
+**Only `ForceSneak`/`ClearForceSneak`/`GetForceSneak` are ported.**
+`Actor.StartSneaking` (id 54778) is the one lever Skyrim gives Papyrus, and it
+TOGGLES, so `SetMovementFlag` reads `IsSneaking` first and calls only when the
+two disagree.
+
+🛑 **Run, Jump and MoveJump are `kDeliberateNoOps`, not latches.** Skyrim
+exposes no way to force a gait. Porting them would store a value nothing ever
+reads — a command that counts as **ported** in the audit, logs a plausible
+`move:` line, and moves nothing. That hides far better than a stub, which at
+least says "not ported yet". A command with no engine mechanism belongs in
+`kDeliberateNoOps`; `_status` now returns **CONFLICT** if one is installed
+anyway, so the two claims can never both stand.
+
+The sneak flag persists through the co-save under tag `M`, and only when set —
+a cleared latch writes nothing.
+
+🛑 **`WakeUpPC` has NO Skyrim native.** OpenMW implements it as
+`WindowManager::wakeUpPlayer()` — it interrupts the wait/sleep MENU, which
+Papyrus cannot reach. Its 9 call sites stay stubbed; the hook was removed
+rather than left declared and unbound.
+
 ### <a id="the-query-commands"></a>The query commands are one native each
 
 **Code:** `plugin/script_ops_query.cpp`, `plugin/game_calls.cpp`
@@ -1508,6 +1568,28 @@ backwards answers a different question and reads as a sneaking bug.
 🛑 **`GetTarget` is a comparison.** It asks whether the actor's combat target
 is one named reference, not what the target is, so the native's return value
 is compared rather than returned.
+
+<a id="two-registration-shapes"></a>**A native's id: TWO registration shapes,
+and reading only one finds nothing.** The ids for `IsEquipped` (54707),
+`GetSleepState` (54715), `GetEquippedItemType` (54685) and `GetEquippedSpell`
+(54683) were read out of `temp/skyrim_live.img`, the saved decrypted 1.6.1170
+image, by finding the name string, then the `lea rdx` that loads it, then
+inverting the function address through `tools/disasm/address_lib.py --rva`.
+All four exist in all 12 shipped versionlibs. The method was validated against
+`IsSneaking`, whose recovered id matched the 54953 already in `ids.h`.
+
+| shape | where the function is |
+|---|---|
+| `lea r9, <func>` beside the name | `IsEquipped` |
+| `xor r9d, r9d`, then `lea rax, <func>` → `[rbx+0x50]` AFTER the call | the other three |
+
+Reading only the `r9` form reports "no such native" for three of the four.
+
+🛑 **`GetSpellReadied` is not a draw-state read.** Skyrim exposes no drawstate
+getter, but a readied spell IS an equipped spell, so the question becomes
+whether either hand holds one — `GetEquippedSpell(1) || GetEquippedSpell(0)`.
+`GetSleepState` is likewise an ENUM (0 awake, 2 about to sleep, 3 asleep,
+4 waking) folded to TES3's single yes/no at state **3**.
 
 `GetCurrentWeather` needs a mapping, not a cast. TES3 returns a weather index
 (0 Clear, 1 Cloudy, 2 Foggy, 3 Overcast, 4 Rain, 5 Thunderstorm, 6 Ashstorm,
@@ -1630,6 +1712,162 @@ native's 5/20 -- the CK wiki notes the defaults make a follower run into its
 target). The Follow PACK supersedes it: it handles doors, combat breaks and
 repathing, which an offset does not.
 
+### <a id="the-tick-is-gated-on-a-loaded-game"></a>The tick is gated on a loaded GAME, not on a named cell
+
+**Code:** `plugin/object_tick.cpp` (`SessionLive`), `plugin/game_calls.cpp`
+(`PlayerInWorld`)
+
+`RunOneTick` must do nothing before a game is loaded: the main menu still runs
+the task pump, and an ungated tick popped script MessageBoxes over the title
+screen (measured 2026-09-18, three "You pry open the lock" boxes).
+
+That gate was written as "the player's cell has a name":
+
+```cpp
+return Hooks().playerCell && !Hooks().playerCell().empty();
+```
+
+`PlayerCellName` reads `cell + kOffCellFullName`. Interiors have a name.
+**Unnamed exterior wilderness cells return `""`** — so the gate was false across
+most of the world, and `RunOneTick` returned at its first line. No object script
+ticked outdoors at all: no `OnDeath`, no `OnPCHitMe`, no proximity poll, no
+discovery sweep.
+
+Measured 2026-09-19 over the game bridge, with the player beside Ga'Nahiru in
+the Armun Ashlands:
+
+- `player.getdistance 2157B5CA` → **511.54**, so the reference resolves and is
+  loaded.
+- `getav health` → **383.00**, alive and addressable.
+- The log shows `object: tick started at 30 Hz` and then **zero** object-script
+  output across 84 seconds — in a session that logged an activation.
+
+The activation line comes from the Activate *hook*, which is outside the tick,
+so it printed while the tick itself was inert. That is the discriminator: the
+hook fires, the tick does not.
+
+The gate now asks `PlayerCell() != nullptr` — the player is in *some* cell. It
+is not a worldspace or distance test and never looks at the cell's name; it
+separates "a game is loaded" from "the main menu", which is all it was ever
+meant to do.
+
+`PlayerCellChanged` carried the same family of bug: `moved` was
+`!g_lastCell.empty()`, so the first transition *out of* an unnamed exterior was
+swallowed and re-armed on the way back in. It now tracks "have we sampled yet"
+explicitly.
+
+### <a id="a-load-resets-the-instances"></a>A load resets the INSTANCES, not just the state
+
+**Code:** `plugin/cosave.cpp` (`OnRevert`)
+
+`OnRevert` is what SKSE calls before a new game or a load, and its comment said
+"nothing from the last game survives". It reset `DialogueState` and nothing
+else, so every `ObjectScript` instance lived on across the load, carrying:
+
+- `mDeathSeen`, the latched `OnDeath`
+- `mLifeSampled`, which side of life the actor started on
+- `mWasLoaded`, and the binding to a FormID from the torn-down session
+
+Script *locals* were never the leak — they live in `DialogueState`, which
+`Reset()` clears and `Deserialize` repopulates. The per-life flags were.
+
+Measured 2026-09-19: a save where Ga'Nahiru had already been killed, then a
+**new game**. The log shows `cosave: state reverted`, and eleven seconds later
+`TR_Mainland.esm|2863BF.tr_map = 4` — a local written by an instance that
+should not have existed yet. No `bound from the world` line appeared for the
+kagouti, because it was still bound from the previous session with
+`mDeathSeen` set, so `PollDeath` returned on its first guard forever. The quest
+softlocked at stage 10.
+
+The same applies to reloading an earlier save on one character: kill the
+creature, reload to before the kill, and it can never raise `OnDeath` again.
+
+`OnRevert` now calls `ClearInstances()` and `ResetTickState()`. Instances
+rebuild from the world through the discovery sweep, which is what makes
+throwing them away cheap. `StartStartupScripts` is safe after the clear: it
+only records names in `DialogueState`, and `RunGlobalScripts` builds those
+instances on the next tick.
+
+### <a id="instances-bind-from-the-world"></a>An instance binds from the WORLD, not from a click
+
+**Code:** `plugin/object_tick.cpp` (`DiscoverLoaded`), `plugin/game_calls.cpp`
+(`LoadedRef`)
+
+`BindInstances()` deliberately resolves nothing at load: `Game.GetFormFromFile`
+only answers for a form the engine has loaded, and 139 of TR_Mainland's 15,540
+placements are persistent. Instances therefore bind lazily. The defect was that
+the only lazy path was the **Activate hook** — so a placement's script ran only
+if the player had clicked it.
+
+Everything that does not involve clicking was silently dead: `OnDeath`,
+`OnPCHitMe`, and every proximity test a script polls for itself.
+
+Measured 2026-09-19 from `MorrowindRuntime.log`, on `TR_m4_wil_GaNahiru`
+(Tamriel Rebuilt). `TR_m4_AA_Ganahiru_Script` guards its whole body on
+`GetJournalIndex == 10` and advances the quest only inside `if ( OnDeath )`.
+The journal reached 10 (`journal: tr_m4_wil_ganahiru = 10`), the player killed
+Ga'Nahiru, and the log holds **no `object: ... died` line at all** — the poll
+never ran, because `PollDeath` returns on `!mRuntimeFormId` and nothing had
+bound the instance. The same unbound instance is why the creature never turned
+aggressive (`GetDistance player < 800` → `SetFight 90`) and why Shara-Ahhe
+never force-greeted at 2300 units: those are polls in a body that never ticked.
+The one line naming that script, `object: ... activated`, came from a player
+click and is the exception that proves the rule.
+
+So the tick sweeps the staged table and binds any placement whose reference
+`GetFormFromFile` now resolves *and* whose 3D is loaded. The null answer is the
+"not here yet" signal rather than a failure, which is exactly the window a
+local script should run in.
+
+The sweep is sliced at 256 rows per tick, and **rests between laps**. The table
+is 15,639 rows and each row costs a `GetFormFromFile` plus an `Is3DLoaded`, so
+sweeping continuously is 7,680 engine calls a second to learn nothing: almost
+every row is in a cell nowhere near the player, and only a cell LOADING changes
+an answer. A lap therefore starts when the player changes cell, and otherwise on
+a 5s heartbeat — exteriors stream neighbours in without a cell change, which the
+heartbeat covers. Once started a lap always finishes, so a placement that
+appears mid-lap is not missed.
+
+Guarded by counting calls into the `loadedRef` hook (`20 ticks cost about one
+lap, not twenty`): behaviour is identical with and without the rest, so only a
+call count catches a regression here.
+
+`PollDeath` also moved ABOVE the `Is3DLoaded` gate. TES3 gives `OnDeath` one
+tick and the poll latches it once, so a gate that skips the instance on the tick
+the death is seen discards the event permanently. A just-died instance now
+unbinds *and* still runs its body once.
+
+🛑 Not because corpses vanish — they ragdoll and stay. The gate reads false
+whenever `Game.GetForm` stops answering for the reference, which includes the
+engine freeing a dead one (measured 2026-09-18: a cached pointer to a dead
+`PlaceAtPC` creature crashed the poll 41s later, `RefByRuntimeId`). Polling
+first is free and does not depend on which case applies.
+
+Two things the sweep must carry that a click already had:
+
+- **The BASE id, from the staged row.** `BindInstance` passed `""`, so every
+  instance the sweep created had no base — and `Implicit::Target` resolves a
+  bare command through exactly that. Measured in-game as `combat:  attacks
+  tr_m4_armungreatkagouti` with an empty attacker: `StartCombat` with no `->`
+  is the object itself, and it was targeting nothing. `InstanceFor` now also
+  fills a missing base in, so whichever path reaches a placement first, bare
+  commands act on the object.
+- **`OnDeath` is a TRANSITION, not a state.** TES3 raises it on the tick an
+  actor dies. `PollDeath` latched on `IsDead` alone, so any body already dead
+  when first bound raised it — every pre-placed corpse on load, and every
+  corpse again whenever its cell reloads. The first poll now only records which
+  side the actor started on.
+
+Two consequences worth keeping:
+
+- The test must ask whether the **placement is bound**, not whether its instance
+  exists. An instance outlives its binding by design (locals survive an unload),
+  so an existence test would let a re-entered cell never rebind —
+  `IsPlacementBound`, not `FindInstance`.
+- `SetRuntimeFormId` clears `mWasLoaded`. A rebind is a fresh appearance in the
+  world, and a stale flag would let the gate below unbind it again before its
+  3D exists.
+
 ### <a id="a-spawn-is-not-loaded-on-its-first-frame"></a>Unloading is a TRANSITION, not a state
 
 **Code:** `plugin/object_tick.cpp`, `plugin/object_script.h`
@@ -1641,8 +1879,9 @@ the current state, that gate also fires on an object which has not loaded *yet*.
 A spawn binds on the frame `PlaceAtMe` returns the reference, several frames
 before its 3D exists. The first tick therefore read "not loaded" and unbound it
 — and **nothing ever rebinds a spawn**: `BindSpawnedInstance` is called once, at
-placement. A staged placement recovers when its cell reloads and a hook touches
-it again; a spawned creature has no such path, so the unbind is permanent.
+placement. A staged placement recovers when the discovery sweep next sees its
+reference loaded ([above](#instances-bind-from-the-world)); a spawned creature
+has no authored placement to rediscover, so its unbind is permanent.
 
 Measured 2026-09-18 on `TR_m3_OE_FG_q_VermaiScr` (Cursing Like a Witch): the
 creature spawned and its script never ran a single tick — no combat, no

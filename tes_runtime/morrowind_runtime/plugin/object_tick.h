@@ -51,4 +51,8 @@ float TickDelta();
 std::size_t LastTickCount();
 std::size_t TicksRun();
 
+// Forgets the discovery sweep's position, the last cell and the accumulator,
+// so one case cannot inherit the sweep's rest from the case before it.
+void ResetTickState();
+
 }  // namespace mwruntime

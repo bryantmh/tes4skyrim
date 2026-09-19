@@ -5,6 +5,13 @@
 //   script_test            the built-in cases
 //   script_test <file>     run one script from a file and print the state
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+// 🛑 16-bit relics windows.h still defines as EMPTY macros, which silently eat
+// any parameter named `near` or `far` -- `FakePlaceNear` has one.
+#undef near
+#undef far
+
 #include <cstdarg>
 #include <cstdio>
 #include <fstream>
@@ -224,6 +231,11 @@ void AiAndDeathCases(DialogueContext& context, const GameActor& actor) {
 }
 
 std::string TestCell();
+// 🛑 An UNNAMED cell -- what every exterior wilderness cell returns. The tick
+// must run there exactly as it does indoors.
+std::string UnnamedCell();
+bool InWorld();
+bool NotInWorld();
 
 // 🛑 Dialogue and the speaker's OWN object script must share one variable: a
 // result script that sets `met` and the NPC's script that reads it are the
@@ -373,6 +385,7 @@ void GlobalScriptCases(DialogueContext& context) {
     std::printf("global scripts tick\n");
     ClearInstances();
     Hooks().playerCell = TestCell;
+    Hooks().playerInWorld = InWorld;
     RunResultScript("StartScript TestCounterScript", context);
     Check(State().ScriptRunning("TestCounterScript"), "StartScript starts it");
     const std::string saved = State().Serialize();
@@ -391,6 +404,7 @@ void GlobalScriptCases(DialogueContext& context) {
     Check(State().Var("TestCounterScript", "count") == 2.0f,
           "and a stopped script no longer ticks");
     Hooks().playerCell = nullptr;
+    Hooks().playerInWorld = nullptr;
     State().Reset();
 }
 
@@ -495,14 +509,14 @@ void PersuasionCases(DialogueContext& context) {
 // See: docs/plans/morrowind_object_scripts.md#instances
 void ObjectScriptTableCases() {
     std::printf("object-script tables\n");
-    Check(ScriptSourceCount() == 3, "three bodies staged");
+    Check(ScriptSourceCount() == 4, "four bodies staged");
     const std::string& body = ScriptSource("TestDoorScript");
     Check(body.find("begin TestDoorScript") == 0,
           "the body is unescaped back to real newlines");
     Check(body.find('\n') != std::string::npos, "and it is multi-line");
     Check(ScriptSource("NoSuchScript").empty(), "an unknown script is empty");
 
-    Check(InstanceCount() == 3, "three instances staged");
+    Check(InstanceCount() == 4, "four instances staged");
     Check(InstanceScript("scripts.esm", 0x0300A001) == "TestDoorScript",
           "a placement names its script");
     Check(InstanceScript("scripts.esm", 0x0300A002) == "TestDoorScript",
@@ -567,20 +581,227 @@ void ObjectScriptRunCases() {
 // bodies whatever the frame rate, and GetSecondsPassed answers its delta.
 // See: docs/plans/morrowind_object_scripts.md#tick-rate
 std::string TestCell() { return "Test Cell"; }
+std::string UnnamedCell() { return std::string(); }
+bool InWorld() { return true; }
+bool NotInWorld() { return false; }
 
 bool Always3DLoaded(std::uint32_t) { return true; }
 bool Never3DLoaded(std::uint32_t) { return false; }
 
 void SpawnedTickCases();
+void DiscoveryTickCases();
+void DeathOnUnloadCases();
+void UnnamedCellTickCases();
+
+// The placement the fake `loadedRef` reports as being in the world, and the
+// runtime FormID it answers with. 0 means "nothing is loaded".
+std::uint32_t g_loadedLocal = 0;
+
+// How many times the sweep asked, which is what proves it rests between laps.
+std::size_t g_loadedRefCalls = 0;
+
+std::uint32_t FakeLoadedRef(const std::string& plugin,
+                            std::uint32_t localFormId) {
+    ++g_loadedRefCalls;
+    if (plugin != "scripts.esm" || localFormId != g_loadedLocal) return 0;
+    return 0x0A000000 | (localFormId & 0x00FFFFFF);
+}
+
+// 🛑 An instance must bind because its object is IN THE WORLD, never because
+// the player clicked it. Activation used to be the only binding path, so
+// `OnDeath` and every proximity poll were dead for anything unclicked.
+// See: docs/commentary/morrowind_runtime.md#instances-bind-from-the-world
+void DiscoveryTickCases() {
+    std::printf("a loaded placement binds without ever being activated\n");
+    ClearInstances();
+    ResetTickState();
+    Hooks().playerCell = TestCell;
+    Hooks().playerInWorld = InWorld;
+    Hooks().is3DLoaded = Always3DLoaded;
+    Hooks().loadedRef = FakeLoadedRef;
+
+    g_loadedLocal = 0;
+    TickObjectScripts(TickDelta());
+    Check(BoundInstanceCount() == 0, "nothing binds while nothing is loaded");
+
+    // The cell loads. No activation, no spawn -- the sweep alone must find it.
+    // A lap rests afterwards, so the reset is what the game's cell change does.
+    g_loadedLocal = 0x0300B001;
+    ResetTickState();
+    TickObjectScripts(TickDelta());
+    Check(BoundInstanceCount() == 1, "the loaded placement binds by itself");
+    Check(LastTickCount() == 1, "and its body runs");
+
+    // 🛑 The sweep must not rebind what it already bound, or one placement
+    // would be re-bound every lap of the table.
+    ResetTickState();
+    TickObjectScripts(TickDelta());
+    Check(BoundInstanceCount() == 1, "a bound placement is not bound twice");
+
+    // It leaves the world, then comes back: an instance outlives its binding,
+    // so an existence test here would never rebind.
+    Hooks().is3DLoaded = Never3DLoaded;
+    TickObjectScripts(TickDelta());
+    Check(BoundInstanceCount() == 0, "unloading unbinds it");
+    Hooks().is3DLoaded = Always3DLoaded;
+    ResetTickState();
+    TickObjectScripts(TickDelta());
+    Check(BoundInstanceCount() == 1, "re-entering the cell binds it AGAIN");
+
+    // 🛑 A swept instance must carry its BASE id. It is what a bare command
+    // inside the body acts on (`StartCombat` with no `->` is the object
+    // itself), and binding with "" made every implicit command target nothing
+    // -- measured in-game as `combat:  attacks ...` with an empty attacker.
+    ResetTickState();
+    g_loadedLocal = 0x0300B001;
+    TickObjectScripts(TickDelta());
+    const ObjectScript* swept = FindInstance("scripts.esm", 0x0300B001);
+    Check(swept && swept->BaseId() == "test_actor",
+          "a swept instance knows the base it places");
+
+    // 🛑 The sweep must REST between laps. 15,639 rows x 2 engine calls every
+    // tick is 7,680 calls a second to learn nothing, since only a cell load
+    // changes an answer. Counting calls is the only way to catch a regression
+    // here -- behaviour looks identical either way.
+    ResetTickState();
+    g_loadedLocal = 0;
+    g_loadedRefCalls = 0;
+    TickObjectScripts(TickDelta() * 20.0f);
+    Check(g_loadedRefCalls <= InstanceCount() * 2,
+          "20 ticks cost about one lap, not twenty");
+
+    Hooks().loadedRef = nullptr;
+    Hooks().is3DLoaded = nullptr;
+    Hooks().playerCell = nullptr;
+    Hooks().playerInWorld = nullptr;
+    g_loadedLocal = 0;
+    ClearInstances();
+}
+
+// What the fake engine reports for IsDead, so a test can kill something
+// mid-run rather than only describing a corpse.
+bool g_actorDead = false;
+bool FakeIsDead(std::uint32_t) { return g_actorDead; }
+
+// 🛑 THE bug behind Ga'Nahiru: the tick gated on the player's cell having a
+// NAME, and every exterior wilderness cell has none. Scripts ran indoors and
+// nowhere else, so no OnDeath, no proximity poll and no discovery sweep ever
+// ran in the open world -- where most of the game is.
+// See: docs/commentary/morrowind_runtime.md#the-tick-is-gated-on-a-loaded-game
+void UnnamedCellTickCases() {
+    std::printf("an UNNAMED exterior cell still ticks\n");
+    ClearInstances();
+    Hooks().is3DLoaded = Always3DLoaded;
+
+    // No game at all: the main menu still pumps tasks, and nothing may run.
+    Hooks().playerCell = UnnamedCell;
+    Hooks().playerInWorld = NotInWorld;
+    BindInstance(0x0A000001, "scripts.esm", 0x0300A001);
+    TickObjectScripts(TickDelta());
+    Check(LastTickCount() == 0, "nothing ticks on the main menu");
+
+    // A game IS loaded, outdoors, where the cell has no name.
+    Hooks().playerInWorld = InWorld;
+    TickObjectScripts(TickDelta());
+    Check(LastTickCount() == 1, "a bound instance ticks in an unnamed cell");
+
+    Hooks().is3DLoaded = nullptr;
+    Hooks().playerCell = nullptr;
+    Hooks().playerInWorld = nullptr;
+    ClearInstances();
+}
+
+// 🛑 `OnDeath` lives ONE tick, so gating before the poll can discard it for
+// good. This pins the order: a death seen on the same tick the gate reads
+// "gone" still runs its body once.
+// See: docs/commentary/morrowind_runtime.md#instances-bind-from-the-world
+void DeathOnUnloadCases() {
+    std::printf("a death seen as the 3D unloads still runs its body\n");
+    ClearInstances();
+    Hooks().playerCell = TestCell;
+    Hooks().playerInWorld = InWorld;
+
+    // Bound and loaded once ALIVE, so a later false is a real unload and the
+    // death below is a transition rather than a corpse's starting state.
+    BindInstance(0x0A00C001, "scripts.esm", 0x0300C001);
+    Hooks().is3DLoaded = Always3DLoaded;
+    g_actorDead = false;
+    Hooks().isDead = FakeIsDead;
+    TickObjectScripts(TickDelta());
+
+    // The kill: dead AND unloaded on the same tick.
+    g_actorDead = true;
+    Hooks().is3DLoaded = Never3DLoaded;
+    TickObjectScripts(TickDelta());
+    Check(State().Var("scripts.esm|00C001", "deaddone") == 1.0f,
+          "OnDeath ran on the tick the corpse unloaded");
+    Check(BoundInstanceCount() == 0, "and the instance is still unbound after");
+
+    // 🛑 `OnDeath` is a TRANSITION. A body placed dead in the cell never died
+    // during play, so binding it raises nothing -- and neither does rebinding
+    // any corpse when its cell reloads.
+    std::printf("a corpse bound already dead raises nothing\n");
+    ClearInstances();
+    State().Reset();
+    g_actorDead = true;
+    Hooks().is3DLoaded = Always3DLoaded;
+    BindInstance(0x0A00C001, "scripts.esm", 0x0300C001);
+    TickObjectScripts(TickDelta() * 3.0f);
+    Check(State().Var("scripts.esm|00C001", "deaddone") == 0.0f,
+          "a pre-placed body never raises OnDeath");
+
+    // 🛑 A LOAD must forget the per-life flags. The instance outlives the
+    // session, so a creature killed in one save kept `mDeathSeen` and could
+    // never raise `OnDeath` again -- in a new game, or after reloading a save
+    // from before the kill. Both softlock any quest that turns on the kill.
+    // See: docs/commentary/morrowind_runtime.md#a-load-resets-the-instances
+    std::printf("a load forgets that something already died\n");
+    ClearInstances();
+    State().Reset();
+    Hooks().is3DLoaded = Always3DLoaded;
+
+    // Session one: it is alive, then killed.
+    g_actorDead = false;
+    BindInstance(0x0A00C001, "scripts.esm", 0x0300C001);
+    TickObjectScripts(TickDelta());
+    g_actorDead = true;
+    TickObjectScripts(TickDelta());
+    Check(State().Var("scripts.esm|00C001", "deaddone") == 1.0f,
+          "it died in the first session");
+
+    // The load: everything from that session goes. State alone, as the old
+    // OnRevert did, is NOT enough -- the instance holds the flag.
+    ClearInstances();
+    State().Reset();
+    ResetTickState();
+
+    // Session two, the save from BEFORE the kill: alive again, killed again.
+    g_actorDead = false;
+    BindInstance(0x0A00C001, "scripts.esm", 0x0300C001);
+    TickObjectScripts(TickDelta());
+    g_actorDead = true;
+    TickObjectScripts(TickDelta());
+    Check(State().Var("scripts.esm|00C001", "deaddone") == 1.0f,
+          "and it can die AGAIN after a load");
+
+    g_actorDead = false;
+    Hooks().isDead = nullptr;
+    Hooks().is3DLoaded = nullptr;
+    Hooks().playerCell = nullptr;
+    Hooks().playerInWorld = nullptr;
+    ClearInstances();
+}
 
 void TickCases() {
     std::printf("the tick runs bound instances at a fixed rate\n");
     ClearInstances();
     // A tick does nothing until a game is loaded, which a player cell means.
     Hooks().playerCell = nullptr;
+    Hooks().playerInWorld = nullptr;
     TickObjectScripts(TickDelta());
     Check(LastTickCount() == 0, "nothing ticks with no game loaded");
     Hooks().playerCell = TestCell;
+    Hooks().playerInWorld = InWorld;
 
     const std::size_t before = TicksRun();
     // Bound instances only: an unbound one has no reference to act on.
@@ -620,8 +841,12 @@ void TickCases() {
           "but its locals are kept for when the cell loads again");
     Hooks().is3DLoaded = nullptr;
     Hooks().playerCell = nullptr;
+    Hooks().playerInWorld = nullptr;
     ClearInstances();
     SpawnedTickCases();
+    DiscoveryTickCases();
+    DeathOnUnloadCases();
+    UnnamedCellTickCases();
 }
 
 // 🛑 A spawn binds the frame `PlaceAtMe` returns, BEFORE its 3D exists. Reading
@@ -633,6 +858,7 @@ void SpawnedTickCases() {
     std::printf("a spawn survives the frames before its 3D loads\n");
     ClearInstances();
     Hooks().playerCell = TestCell;
+    Hooks().playerInWorld = InWorld;
     BindSpawnedInstance(0xFF001590, "test_actor");
     Check(BoundInstanceCount() == 1, "the spawn is bound");
 
@@ -656,6 +882,7 @@ void SpawnedTickCases() {
 
     Hooks().is3DLoaded = nullptr;
     Hooks().playerCell = nullptr;
+    Hooks().playerInWorld = nullptr;
     ClearInstances();
 }
 
@@ -1075,9 +1302,66 @@ void SpellStackDiscipline(DialogueContext& context) {
     }
 }
 
+// The forced-sneak latch: set, read back, clear, and stay per actor. The
+// getter must answer what the SETTER wrote, never what the body is doing,
+// which is the whole reason the DLL owns the flag.
+//
+// 🛑 Run, Jump and MoveJump are deliberate no-ops, not latches: Skyrim can
+// force no gait, so they must NOT answer their getter. A latch there would
+// read as ported and move nothing.
+void ForcedMovementCases(Interpreter::Context& context) {
+    std::printf("the forced sneak flag latches per actor\n");
+    State().SetDisposition("test_actor", 50);
+    Check(RunResultScript("ForceSneak\n", context) &&
+              State().MovementFlag("test_actor", 0),
+          "ForceSneak latches on");
+    Check(RunResultScript("if ( GetForceSneak == 1 )\n"
+                          "    ModDisposition 3\nendif\n", context) &&
+              State().Disposition("test_actor") == 53,
+          "GetForceSneak reads the latch back");
+    Check(RunResultScript("ClearForceSneak\n", context) &&
+              !State().MovementFlag("test_actor", 0),
+          "ClearForceSneak clears it");
+    State().SetDisposition("test_actor", 50);
+    Check(RunResultScript("ForceRun\n"
+                          "if ( GetForceRun == 0 )\n"
+                          "    ModDisposition 3\nendif\n", context) &&
+              State().Disposition("test_actor") == 53,
+          "ForceRun is a no-op: its getter stays 0");
+    Check(RunResultScript("\"other_npc\"->ForceSneak\n", context) &&
+              State().MovementFlag("other_npc", 0) &&
+              !State().MovementFlag("test_actor", 0),
+          "an explicit target latches only that actor");
+    // Reset() wipes the journal and dispositions the later cases were set up
+    // with, so the whole state is restored from its own serialization.
+    State().SetMovementFlag("save_me", 0, true);
+    const std::string before = State().Serialize();
+    State().Reset();
+    const bool kept = State().Deserialize(before) > 0 &&
+                      State().MovementFlag("save_me", 0);
+    State().SetMovementFlag("save_me", 0, false);
+    State().SetMovementFlag("other_npc", 0, false);
+    Check(kept, "a latch survives the co-save round trip");
+    // The cases after this one open on the fixture's own dispositions.
+    State().SetDisposition("test_actor", 50);
+    State().SetDisposition("other_npc", 50);
+}
+
+// The fixtures, beside the EXECUTABLE rather than the working directory: the
+// shell wrapper every command goes through runs from the repo root, so a
+// relative path loaded nothing and every table-backed case failed.
+std::string FixtureDir() {
+    char exe[MAX_PATH] = {0};
+    const DWORD n = GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    std::string path(exe, n);
+    const std::size_t slash = path.find_last_of('\\');
+    if (slash == std::string::npos) return "testdata\\scripts\\";
+    return path.substr(0, slash + 1) + "testdata\\scripts\\";
+}
+
 void Cases() {
     ClearScriptTables();
-    LoadScriptTables("testdata\\scripts\\");
+    LoadScriptTables(FixtureDir());
     GameActor actor("test_actor");
     DialogueContext context(actor, "Test Actor", "Player");
     ObjectScriptTableCases();
@@ -1097,6 +1381,7 @@ void Cases() {
     SoundCases(context);
     MoveCases(context);
     AiPackageCases(context);
+    ForcedMovementCases(context);
     TableCases(context, actor);
     State().BeginConversation();
 
@@ -1236,7 +1521,7 @@ int main(int argc, char** argv) {
     // but a real sidecar folder can be named so a shipped script is checked
     // against the data it was authored against.
     if (argc > 2 && std::string(argv[1]) == "--object") {
-        LoadScriptTables(argc > 3 ? argv[3] : "testdata\\scripts\\");
+        LoadScriptTables(argc > 3 ? std::string(argv[3]) : FixtureDir());
         return CompileObjectFile(argv[2]);
     }
     if (argc > 1) return RunFile(argv[1]);

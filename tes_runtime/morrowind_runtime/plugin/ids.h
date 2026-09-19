@@ -392,6 +392,27 @@ constexpr std::uint64_t kWeatherClassification = 56775;
 // count, the only native of that name.
 constexpr std::uint64_t kActorBaseDeadCount = 55987;
 
+// The equip and sleep queries, located the same way and present in all 12
+// shipped versionlibs. Live-image RVAs (1.6.1170), GOG 1.6.659 in brackets:
+//   bool  Actor.IsEquipped(Form)           0x9e8d20  [0x98a070]
+//   int   Actor.GetSleepState()            0x9e9030  [0x98a380]
+//   int   Actor.GetEquippedItemType(int)   0x9e8710  [0x989a60]
+//   Spell Actor.GetEquippedSpell(int)      0x9e8630  [0x989980]
+//
+// 🛑 Two registration SHAPES sit side by side. `IsEquipped` passes the
+// function in `lea r9` beside the name, but the other three `xor r9d, r9d`
+// and store it into `[rbx+0x50]` AFTER the registering call -- reading only
+// the `r9` form finds nothing and reads as "no such native".
+// See: docs/commentary/morrowind_runtime.md#the-query-commands
+// void Actor.StartSneaking() (0x9eb800 live, 0x98cb50 GOG): TOGGLES rather
+// than sets, so the caller must read `IsSneaking` first and call only when
+// the two disagree.
+constexpr std::uint64_t kActorStartSneaking = 54778;
+constexpr std::uint64_t kActorIsEquipped = 54707;
+constexpr std::uint64_t kActorGetSleepState = 54715;
+constexpr std::uint64_t kActorEquippedItemType = 54685;
+constexpr std::uint64_t kActorEquippedSpell = 54683;
+
 // The spell natives, each read off its registration site's `lea` beside the
 // name string, the owning script confirmed from the `lea r8` class string
 // (`Actor` for five, `Spell` for Cast), and inverted through the Address

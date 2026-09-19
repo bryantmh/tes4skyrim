@@ -32,6 +32,10 @@ std::unordered_map<std::string, InstanceRow> g_instances;
 
 // The same rows by plugin-LOCAL FormID, which is all an engine hook can offer.
 std::unordered_map<std::uint32_t, const InstanceRow*> g_instanceByLocal;
+
+// The same rows in a stable ORDER, so the tick's discovery sweep can resume at
+// an index rather than copying the whole table every frame.
+std::vector<const InstanceRow*> g_instanceList;
 std::unordered_map<std::string, ActorDef> g_actors;
 std::unordered_map<std::string, FormRef> g_items;
 std::unordered_map<std::string, FormRef> g_quests;
@@ -353,6 +357,7 @@ void ClearScriptTables() {
     g_sources.clear();
     g_instances.clear();
     g_instanceByLocal.clear();
+    g_instanceList.clear();
     g_actors.clear();
     g_items.clear();
     g_sounds.clear();
@@ -408,6 +413,7 @@ void LoadScriptTables(const std::string& pluginDir) {
                    if (added.second) {
                        g_instanceByLocal.emplace(
                            row.localFormId & kLocalMask, &added.first->second);
+                       g_instanceList.push_back(&added.first->second);
                    }
                });
     ForEachRow(pluginDir + kFileGlobals,
@@ -729,11 +735,8 @@ const InstanceRow* InstanceByLocal(std::uint32_t localFormId) {
     return it == g_instanceByLocal.end() ? nullptr : it->second;
 }
 
-std::vector<InstanceRow> Instances() {
-    std::vector<InstanceRow> out;
-    out.reserve(g_instances.size());
-    for (const auto& entry : g_instances) out.push_back(entry.second);
-    return out;
+const InstanceRow* InstanceAt(std::size_t index) {
+    return index < g_instanceList.size() ? g_instanceList[index] : nullptr;
 }
 
 std::size_t ScriptCount() { return g_locals.size(); }

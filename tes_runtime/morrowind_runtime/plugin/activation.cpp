@@ -239,8 +239,8 @@ bool SpeakerExists(const std::string& id) {
 // See: docs/plans/morrowind_object_scripts.md#only-persistent-refs-exist
 std::size_t BindInstances() {
     ClearInstanceBindings();
-    Log("object: %zu script instance(s) staged; each binds when the engine "
-        "first hands us its reference", InstanceCount());
+    Log("object: %zu script instance(s) staged; each binds when its reference "
+        "is in the world", InstanceCount());
     return InstanceCount();
 }
 

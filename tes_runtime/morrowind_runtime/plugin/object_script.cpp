@@ -109,7 +109,17 @@ bool ObjectScript::RunOnce() {
 
 void ObjectScript::PollDeath() {
     if (mDeathSeen || !mRuntimeFormId || !Hooks().isDead) return;
-    if (!Hooks().isDead(mRuntimeFormId)) return;
+    const bool dead = Hooks().isDead(mRuntimeFormId);
+    // 🛑 A TRANSITION, not a state. TES3 raises `OnDeath` on the tick an actor
+    // dies; a corpse placed dead in the cell never had that tick. The first
+    // poll only records which side it started on, so binding a pre-placed body
+    // -- or rebinding any corpse when its cell reloads -- raises nothing.
+    if (!mLifeSampled) {
+        mLifeSampled = true;
+        mDeathSeen = dead;
+        return;
+    }
+    if (!dead) return;
     mDeathSeen = true;
     mEvents.died = true;
     Log("object: %s died (%s)", mScript.c_str(), mBaseId.c_str());
@@ -166,9 +176,14 @@ ObjectScript* InstanceForRef(std::uint32_t runtimeFormId) {
     return made;
 }
 
+// 🛑 The BASE id must come from the staged row, not "". It is what a bare
+// command inside the body acts on -- `StartCombat` with no `->` is the object
+// itself -- so an empty one made every implicit command target nothing.
 void BindInstance(std::uint32_t runtimeFormId, const std::string& plugin,
                   std::uint32_t localFormId) {
-    ObjectScript* instance = InstanceFor(plugin, localFormId, std::string());
+    const InstanceRow* row = InstanceByLocal(localFormId);
+    ObjectScript* instance = InstanceFor(plugin, localFormId,
+                                         row ? row->baseId : std::string());
     if (!instance) return;
     instance->SetRuntimeFormId(runtimeFormId);
     g_byRuntimeId[runtimeFormId] = instance;
@@ -200,6 +215,15 @@ void UnbindInstance(std::uint32_t runtimeFormId) {
 }
 
 void ClearInstanceBindings() { g_byRuntimeId.clear(); }
+
+// 🛑 Asks whether the PLACEMENT is bound, not whether its instance exists: an
+// instance OUTLIVES its binding by design, so testing existence would let a
+// cell be re-entered and never rebind.
+bool IsPlacementBound(const std::string& plugin, std::uint32_t localFormId) {
+    const ObjectScript* instance = FindInstance(plugin, localFormId);
+    if (!instance || !instance->RuntimeFormId()) return false;
+    return g_byRuntimeId.count(instance->RuntimeFormId()) != 0;
+}
 
 std::size_t BoundInstanceCount() { return g_byRuntimeId.size(); }
 
@@ -248,7 +272,15 @@ ObjectScript* InstanceFor(const std::string& plugin,
                           const std::string& baseId) {
     const std::string key = OwnerFor(plugin, localFormId);
     const auto it = g_instances.find(key);
-    if (it != g_instances.end()) return &it->second;
+    if (it != g_instances.end()) {
+        // An instance made by a caller that had no base id learns it here, so
+        // whichever path reaches the placement first, bare commands still act
+        // on the object rather than on "".
+        if (it->second.BaseId().empty() && !baseId.empty()) {
+            it->second.SetBaseId(baseId);
+        }
+        return &it->second;
+    }
     const std::string& script = InstanceScript(plugin, localFormId);
     if (script.empty()) return nullptr;
     return &g_instances

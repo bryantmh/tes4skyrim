@@ -62,8 +62,13 @@ struct GameHooks {
     void (*modDynamicStat)(const std::string& actor, int which,
                            float delta) = nullptr;
     void (*equipItem)(const std::string& actor, const std::string& item) = nullptr;
-    // The player's current cell as the game NAMES it, or "".
+    // The player's current cell as the game NAMES it, or "". An unnamed
+    // exterior gives "" while a game is perfectly well loaded, so this answers
+    // CellChanged and never "is a game running" -- that is `playerInWorld`.
     std::string (*playerCell)() = nullptr;
+    // Whether a game is loaded at all: the player is in some cell, named or
+    // not. What the object tick gates on.
+    bool (*playerInWorld)() = nullptr;
     bool (*playerInInterior)() = nullptr;
     bool (*menuMode)() = nullptr;
     void (*forceGreeting)(const std::string& actor) = nullptr;
@@ -86,6 +91,12 @@ struct GameHooks {
     // Whether that reference's 3D is LOADED, which is the whole of TES3's rule
     // for when a local script runs.
     bool (*is3DLoaded)(std::uint32_t runtimeFormId) = nullptr;
+    // The RUNTIME FormID of the staged placement `(plugin, local)` once its 3D
+    // is loaded, or 0. This is how an instance the player never activates ever
+    // starts ticking -- the Activate hook used to be the only binding path.
+    // See: docs/commentary/morrowind_runtime.md#instances-bind-from-the-world
+    std::uint32_t (*loadedRef)(const std::string& plugin,
+                               std::uint32_t localFormId) = nullptr;
     // `axis`: 0 x, 1 y, 2 z. Position is world units, angle is DEGREES --
     // the engine stores radians and its getters convert, so these do not.
     float (*position)(const std::string& ref, int axis) = nullptr;
@@ -172,6 +183,19 @@ struct GameHooks {
     bool (*weaponDrawn)(const std::string& actor) = nullptr;
     bool (*sneaking)(const std::string& actor) = nullptr;
     bool (*running)(const std::string& actor) = nullptr;
+    // `GetSpellReadied`: TES3's third draw state, magic, which Skyrim reports
+    // as the equipped right-hand item being a spell rather than a weapon.
+    bool (*spellReadied)(const std::string& actor) = nullptr;
+    // `HasItemEquipped`: is that item in any of the actor's equip slots.
+    bool (*itemEquipped)(const std::string& actor,
+                         const std::string& item) = nullptr;
+    // `GetPCSleep`: TES3 asks only whether the player is asleep; Skyrim's
+    // sleep state is an enum the call folds down to that one bit.
+    bool (*playerSleeping)() = nullptr;
+    // `ForceSneak`/`ForceRun` and their Clear pair: puts the actor into the
+    // movement state the latch now holds. `which` is the MovementFlag enum.
+    void (*applyMovementFlag)(const std::string& actor, int which,
+                              bool on) = nullptr;
     void (*resurrect)(const std::string& actor) = nullptr;
     // `Drop item count`: puts them on the ground at the actor's feet.
     void (*dropItem)(const std::string& actor, const std::string& item,
@@ -299,6 +323,13 @@ public:
     int  AiSetting(const std::string& actor, int which) const;
     void SetAiSetting(const std::string& actor, int which, int value);
 
+    // --- the forced sneak latch, per actor ---------------------------------
+    // TES3 stores it ON the actor: ForceSneak sets, ClearForceSneak clears,
+    // GetForceSneak reads it back, and the stance is that flag OR the AI's
+    // own. The DLL owns it the way it owns the AI settings.
+    bool MovementFlag(const std::string& actor, int which) const;
+    void SetMovementFlag(const std::string& actor, int which, bool on);
+
     // --- reputation, crime, faction reactions, running scripts -------------
     int   reputation = 0;
     float crimeLevel = 0.0f;
@@ -363,6 +394,7 @@ private:
     std::map<std::string, std::string> mRunning;
     std::set<std::string> mKnownTopics;
     std::map<std::pair<std::string, int>, int> mAiSettings;
+    std::map<std::pair<std::string, int>, bool> mMovementFlags;
 };
 
 // The one state of this game session.

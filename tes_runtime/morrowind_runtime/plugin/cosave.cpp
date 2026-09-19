@@ -4,6 +4,8 @@
 
 #include "dialogue_state.h"
 #include "log.h"
+#include "object_script.h"
+#include "object_tick.h"
 
 namespace mwruntime {
 
@@ -48,8 +50,17 @@ void OnLoad(SKSESerializationInterface* intfc) {
 }
 
 // A new game or a load about to happen: nothing from the last game survives.
+//
+// 🛑 The INSTANCES go too, not just the state. They hold per-life flags -- the
+// latched `OnDeath`, whether the reference has been seen loaded -- and a
+// binding to a FormID from the session being torn down. Keeping them meant a
+// creature killed in one save could never raise `OnDeath` again in another,
+// which softlocked any quest that turns on killing it.
+// See: docs/commentary/morrowind_runtime.md#a-load-resets-the-instances
 void OnRevert(SKSESerializationInterface*) {
     State().Reset();
+    ClearInstances();
+    ResetTickState();
     State().StartStartupScripts();
     Log("cosave: state reverted");
 }

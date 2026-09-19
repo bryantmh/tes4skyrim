@@ -61,6 +61,8 @@ _LOOP_INSTR = re.compile(r'registerInstruction\s*\(\s*(\w+)\s*\+\s*(\w+)\[i\]'
 #: The `std::string get("get");` prefixes those loops concatenate.
 _PREFIX = re.compile(r'std::string\s+(\w+)\s*\(\s*"([^"]*)"\s*\)\s*;')
 _WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+#: A quoted literal -- dialogue prose, never a command name.
+_STRING = re.compile(r'"[^"\n]*"')
 
 
 class Command:
@@ -203,11 +205,15 @@ def count_calls(export_dir, commands):
     🛑 `ref->Command` puts the target FIRST, so every word on a line is
     considered, not just the leading one -- a leading-word match blames the
     reference and under-reports the command.
+
+    🛑 A quoted STRING is prose, never a call: `Choice "I will help you." 1`
+    scored 38 calls for `Help`, ranking a console command as the corpus's
+    biggest unported one. See: docs/commentary/morrowind_runtime.md#opcode-audit-strings
     """
     total = 0
     for body in _script_bodies(export_dir):
         for line in body.splitlines():
-            line = line.split(';', 1)[0]
+            line = _STRING.sub(' ', line.split(';', 1)[0])
             seen = set()
             for word in _WORD.findall(line):
                 key = word.lower()
@@ -220,14 +226,19 @@ def count_calls(export_dir, commands):
 
 
 def _status(cmd, real, noops):
-    """'ported', 'no-op' (nothing to port by design) or 'STUB'.
+    """'ported', 'no-op' (nothing to port by design), 'STUB' or 'CONFLICT'.
 
     A family member carries a `+<offset>` tail that names its position in the
     name array; the install site writes `+ Which`, so both sides compare on
-    the base constant.
+    the base constant. CONFLICT is installed AND declared unportable, which
+    is an op that cannot act yet counts as ported.
+    See: docs/commentary/morrowind_runtime.md#ported-is-not-wired
     """
     base = cmd.opcode.rsplit('::', 1)[-1].split('+', 1)[0]
-    if base in real or base + 'Explicit' in real:
+    installed = base in real or base + 'Explicit' in real
+    if installed and cmd.key in noops:
+        return 'CONFLICT'
+    if installed:
         return 'ported'
     return 'no-op' if cmd.key in noops else 'STUB'
 
@@ -265,6 +276,9 @@ def summarize(commands, real, noops):
     for label in ('ported', 'no-op', 'STUB'):
         calls = sum(c.calls for c in buckets[label])
         print(f'  {label:<7} {calls:>6} call site(s)')
+    for cmd in buckets['CONFLICT']:
+        print(f'🛑 CONFLICT {cmd.name}: installed AND in kDeliberateNoOps -- '
+              f'an op that cannot act still counts as ported')
     print('\nstubbed call sites by domain:')
     by_domain = collections.Counter(c.domain for c in todo)
     for domain, count in by_domain.most_common():
@@ -400,6 +414,11 @@ _HOOK_SET = re.compile(r'\bhooks\.(\w+)\s*=')
 _STATE_DECL = re.compile(r'^\s+[\w:<>,\s\*&]+?\b(\w+)\([^;{]*\)\s*(?:const)?;',
                          re.M)
 _STATE_CLASS = re.compile(r'class DialogueState \{(.*?)\n\};', re.S)
+#: The struct field a setter writes: `mFactions[k].reputation = value`.
+_STATE_WRITE = re.compile(r'\]\.(\w+)\s*=')
+#: `void DialogueState::SetX(...) { ... }` -- the whole body, to see inside.
+_STATE_SETTER = re.compile(r'\bDialogueState::(Set\w+|\w*Change\w*)\s*\('
+                           r'[^)]*\)\s*\{(.*?)\n\}', re.S)
 
 
 def _plugin_sources(root):
@@ -415,11 +434,40 @@ def _plugin_sources(root):
     return out
 
 
-def unwired(root):
-    """`(hooks used but never supplied, DialogueState methods nothing calls)`.
+def inert_setters(sources):
+    """State setters whose value never reaches the game.
 
-    A ported opcode whose hook the game never sets, or whose state no code
-    ever feeds, answers with a default forever and still reads as ported.
+    A `Set*` that touches no hook and whose value no file outside the OPCODES
+    reads is written and read back and acted on by nobody. The opcode files
+    are the writers, so a read there is the same loop closing. A consumer
+    counts whether it calls a getter of that name or reads the struct field
+    one returns -- `SetExpelled` is read as `Faction(f).expelled`.
+    See: docs/commentary/morrowind_runtime.md#ported-is-not-wired
+    """
+    impl = sources.get('dialogue_state.cpp', '')
+    consumers = '\n'.join(text for name, text in sources.items()
+                          if not name.startswith(('dialogue_state.',
+                                                  'script_ops')))
+    out = []
+    for m in _STATE_SETTER.finditer(impl):
+        name, body = m.group(1), m.group(2)
+        if 'Hooks()' in body:
+            continue
+        stem = name[3:] if name.startswith('Set') else name
+        reads = [r'\b' + stem + r'\w*\s*\(']
+        reads += [r'\.' + f + r'\b' for f in _STATE_WRITE.findall(body)]
+        if any(re.search(r, consumers) for r in reads):
+            continue
+        out.append(name)
+    return out
+
+
+def unwired(root):
+    """`(hooks never supplied, idle methods, setters the game never sees)`.
+
+    A ported opcode whose hook the game never sets, whose state no code ever
+    feeds, or whose setter writes a field nothing acts on, answers with a
+    default forever and still reads as ported.
     See: docs/commentary/morrowind_runtime.md#ported-is-not-wired
     """
     sources = _plugin_sources(root)
@@ -432,19 +480,23 @@ def unwired(root):
                         if not name.startswith('dialogue_state.'))
     idle = {name for name in declared
             if not re.search(r'[.>]' + name + r'\(', callers)}
-    return sorted(hooks), sorted(idle)
+    return sorted(hooks), sorted(idle), sorted(inert_setters(sources))
 
 
 def report_unwired(root):
     """Prints what `unwired` found; returns how many items that is."""
-    hooks, idle = unwired(root)
+    hooks, idle, inert = unwired(root)
     for name in hooks:
         print(f'UNWIRED hook      {name}: used, never supplied by the game')
     for name in idle:
         print(f'UNWIRED state     {name}: declared, nothing outside tests '
               f'calls it')
-    print(f'{len(hooks) + len(idle)} unwired item(s)')
-    return len(hooks) + len(idle)
+    for name in inert:
+        print(f'INERT setter      {name}: writes state no hook and no other '
+              f'file acts on')
+    total = len(hooks) + len(idle) + len(inert)
+    print(f'{total} unwired item(s)')
+    return total
 
 
 def main():
