@@ -208,7 +208,7 @@ def _prof_at(prof, pa, pb, x, y):
     return z0 + (z1 - z0) * (f - k), abs(z1 - z0) / run
 
 
-def _edge_station_rows(pa, pb, frame, k, prof, ei):
+def _edge_station_rows(pa, pb, frame, k, prof, ei, steep):
     """The 2(k+1) march rows of one edge: each station, both perpendiculars.
 
     A station's height and soft floor follow the profile where there is one:
@@ -219,7 +219,6 @@ def _edge_station_rows(pa, pb, frame, k, prof, ei):
     (ux, uy), (wx, wy), total = frame
     ramp = params.RIBBON_HALF_WIDTH
     lo0, lo1 = params.RIBBON_HALF_WIDTH, params.RIBBON_GROW_MIN_HALF
-    steep = _is_steep(pa, pb)
     rows = []
     for s in range(k + 1):
         t = s / k
@@ -239,7 +238,7 @@ def _edge_station_rows(pa, pb, frame, k, prof, ei):
     return rows
 
 
-def _edge_march_rows(nodes, edges, node_z, degree, profiles):
+def _edge_march_rows(nodes, edges, node_z, degree, profiles, flat=()):
     """(station rows, plan entries) for every edge, steep ones included.
 
     `profiles` maps each steep edge to its tread profile (or None).
@@ -258,7 +257,8 @@ def _edge_march_rows(nodes, edges, node_z, degree, profiles):
         ei = edge_index.get((i, j), -1)
         base = len(rows)
         rows += _edge_station_rows(pa, pb, ((ux, uy), (-uy, ux), total), k,
-                                   profiles.get((i, j)), ei)
+                                   profiles.get((i, j)), ei,
+                                   (i, j) not in flat and _is_steep(pa, pb))
         plan.append(('edge', (i, j), pa, pb, (ux, uy), (-uy, ux),
                      length, k, base))
     return rows, plan
@@ -294,9 +294,46 @@ def _bridge_blocked_stations(widths, plan):
                 widths[base + 2 * s + side] = w0 + (w1 - w0) * f
 
 
+#: Stations either side whose shortest rail bounds a rail past the cap (8u apart).
+FAR_WIDTH_WINDOW = 8
+
+
+def _eroded(w, win, wrap):
+    """Running minimum of `w` over +-`win` samples; `wrap` closes the ring."""
+    pad = np.pad(w, win, mode='wrap' if wrap else 'edge')
+    return np.lib.stride_tricks.sliding_window_view(
+        pad, 2 * win + 1).min(axis=1)
+
+
+def _erode_far_widths(widths, plan):
+    """Past the cap, hold each rail and disc ray to its shortest neighbour.
+
+    See: docs/commentary/tes5_import_navmesh.md#far-widths-are-eroded
+    """
+    cap = params.RIBBON_GROW_MAX_HALF
+    nrays = params.RIBBON_GROW_DISC_RAYS
+    for entry in plan:
+        base = entry[-1]
+        if entry[0] == 'disc':
+            runs = [(slice(base, base + nrays), 1, True)]
+        else:
+            end = base + 2 * (entry[7] + 1)
+            runs = [(slice(base + side, end, 2), FAR_WIDTH_WINDOW, False)
+                    for side in (0, 1)]
+        for sl, win, wrap in runs:
+            w = np.asarray(widths[sl], dtype=np.float64)
+            widths[sl] = np.minimum(w, np.maximum(cap, _eroded(w, win, wrap)))
+
+
+#: Disc station column-9 encoding: `_DISC_STATION - node_index` (always < 0).
+_DISC_STATION = -1
+
+
 def _disc_march_rows(nodes, node_z, degree, rows):
     """Append each node's radial fan to `rows`; returns the disc plan entries.
 
+    A disc's column-9 value encodes its NODE, not an edge: its rays start ON
+    the centerlines meeting there, which the crossing stop must not count.
     See: docs/commentary/tes5_import_navmesh.md#stair-nodes-get-discs-too
     """
     nrays = params.RIBBON_GROW_DISC_RAYS
@@ -310,26 +347,52 @@ def _disc_march_rows(nodes, node_z, degree, rows):
         for kk in range(nrays):
             ang = 2.0 * math.pi * kk / nrays
             ddx, ddy = math.cos(ang), math.sin(ang)
-            rows.append((nx, ny, nz, ddx, ddy, -ddy, ddx, 0.0, -1))
+            rows.append((nx, ny, nz, ddx, ddy, -ddy, ddx, 0.0,
+                         _DISC_STATION - ni))
         plan.append(('disc', ni, nx, ny, nz, base))
     return plan
 
 
-def _plan_stations(nodes, edges, node_z, degree, grow, profiles):
+def _stands_on_land(land, nodes, node_z, i, j):
+    """True when ribbon (i, j) -- or node disc (i, i) -- follows the LAND.
+
+    Each node must have snapped onto the terrain itself or lie in a
+    neighbouring cell.  Such an edge is never a staircase, however steep.
+    See: docs/commentary/tes5_import_navmesh.md#terrain-standing-ribbons-follow-the-land
+    """
+    if land is None:
+        return False
+    return all(not land.covers(nodes[n][0], nodes[n][1])
+               or abs(node_z[n] - land.z(nodes[n][0], nodes[n][1]))
+               <= NODE_SNAP_RADII[0]
+               for n in (i, j))
+
+
+def _plan_stations(nodes, edges, node_z, degree, grow, profiles, land=None,
+                   flat=()):
     """Every march station the grow needs, as a plan the native batch consumes.
 
-    Returns (stations, plan): an (N, 9) float64 array of
-    (cx, cy, cz, dirx, diry, tanx, tany, lo, edge_index) and the reassembly
-    plan (`edge` and `disc` entries).
+    Returns (stations, plan, on_land): an (N, 9) float64 array of
+    (cx, cy, cz, dirx, diry, tanx, tany, lo, edge_index), the reassembly plan
+    (`edge` and `disc` entries) and the per-station terrain-following flags.
     See: docs/commentary/tes5_import_navmesh.md#stations-are-planned-then-marched
     """
     if not grow:
-        return np.zeros((0, 9), dtype=np.float64), []
-    rows, plan = _edge_march_rows(nodes, edges, node_z, degree, profiles)
+        return np.zeros((0, 9), dtype=np.float64), [], np.zeros(0)
+    rows, plan = _edge_march_rows(nodes, edges, node_z, degree, profiles,
+                                  flat)
     plan.extend(_disc_march_rows(nodes, node_z, degree, rows))
     st = (np.asarray(rows, dtype=np.float64) if rows
           else np.zeros((0, 9), dtype=np.float64))
-    return st, plan
+    on_land = np.zeros(len(st), dtype=np.float64)
+    for at, entry in enumerate(plan):
+        i, j = entry[1] if entry[0] == 'edge' else (entry[1], entry[1])
+        end = plan[at + 1][-1] if at + 1 < len(plan) else len(st)
+        if _stands_on_land(land, nodes, node_z, i, j):
+            on_land[entry[-1]:end] = 1.0
+            for row in st[entry[-1]:end]:
+                row[2] = land.z(row[0], row[1])
+    return st, plan, on_land
 
 
 def _profile_stations(sample, pa, pb, n, half):
@@ -463,12 +526,12 @@ def _node_degrees(edges):
     return degree
 
 
-def _steep_counts(nodes, edges, node_z):
-    """How many STEEP runs touch each node."""
+def _steep_counts(nodes, edges, node_z, flat=()):
+    """How many STEEP runs touch each node; `flat` edges never count."""
     steep_count = {}
     for (i, j) in edges:
         got = _edge_frame(nodes, node_z, i, j)
-        if got is None:
+        if got is None or (i, j) in flat:
             continue
         (_a, _b, _u, run) = got
         if abs(node_z[j] - node_z[i]) / run > params.RIBBON_GROW_MAX_SLOPE:
@@ -489,15 +552,15 @@ def _ungrown_strip(strip, steep, prof):
     return strip
 
 
-def _steep_profiles(nodes, edges, node_z, degree, sample):
-    """{(i, j): tread profile or None} for every steep edge.
+def _steep_profiles(nodes, edges, node_z, degree, sample, flat=()):
+    """{(i, j): tread profile or None} for every steep edge not in `flat`.
 
     See: docs/commentary/tes5_import_navmesh.md#profile-samples-the-cross-section
     """
     out = {}
     for (i, j) in edges:
         got = _edge_frame(nodes, node_z, i, j)
-        if got is None:
+        if got is None or (i, j) in flat:
             continue
         pa, pb = _extended_ends(got, degree, i, j)
         if _is_steep(pa, pb):
@@ -530,7 +593,7 @@ def _grown_outline(strip, entry, widths, w, prof):
         cys = ppa[1] + (ppb[1] - ppa[1]) * t
         hl = float(widths[base + 2 * s])
         hr = float(widths[base + 2 * s + 1])
-        if _on_flight(prof, ppa, ppb, cxs, cys):
+        if strip.get('land') is None and _on_flight(prof, ppa, ppb, cxs, cys):
             hl = hr = params.RIBBON_STAIR_HALF_WIDTH
         left.append((cxs + wx * hl, cys + wy * hl))
         right.append((cxs - wx * hr, cys - wy * hr))
@@ -542,7 +605,8 @@ def _grown_outline(strip, entry, widths, w, prof):
     return strip
 
 
-def _edge_strip(nodes, node_z, i, j, degree, grown_edges, widths, profiles):
+def _edge_strip(nodes, node_z, i, j, degree, grown_edges, widths, profiles,
+                land=None):
     """The ribbon for one pathgrid edge, or None if the edge is unusable.
 
     See: docs/commentary/tes5_import_navmesh.md#only-dead-ends-extend
@@ -558,7 +622,9 @@ def _edge_strip(nodes, node_z, i, j, degree, grown_edges, widths, profiles):
         'a': pa, 'b': pb,
         'u': (ux, uy), 'w': (-uy, ux), 'len': length,
     }
-    steep = _is_steep(pa, pb)
+    if land is not None:
+        strip['land'] = land
+    steep = land is None and _is_steep(pa, pb)
     prof = profiles.get((i, j)) if steep else None
     entry = grown_edges.get((i, j)) if widths is not None else None
     if entry is None:
@@ -669,7 +735,7 @@ def _steep_strips(strips):
     """Every ribbon steeper than RIBBON_GROW_MAX_SLOPE."""
     out = []
     for s in strips:
-        if s.get('len', 0.0) < 1e-6:
+        if s.get('len', 0.0) < 1e-6 or s.get('land') is not None:
             continue
         if (abs(s['nb'][2] - s['na'][2]) / s['len']
                 > params.RIBBON_GROW_MAX_SLOPE):
@@ -679,7 +745,8 @@ def _steep_strips(strips):
 
 def _build_corridor_strips(nodes, edges, node_z, wall_hit=None,
                            walk_probe=None, field=None,
-                           blocking=None, walkable=None, sample=None):
+                           blocking=None, walkable=None, sample=None,
+                           land_from=None, land=None):
     """One corridor ribbon per pathgrid edge, plus a disc at every node.
 
     Each strip carries its centerline ends (after dead-end extension), the
@@ -690,21 +757,25 @@ def _build_corridor_strips(nodes, edges, node_z, wall_hit=None,
     """
     grow = params.RIBBON_GROW and blocking is not None
     degree = _node_degrees(edges)
-    steep_count = _steep_counts(nodes, edges, node_z)
-    profiles = _steep_profiles(nodes, edges, node_z, degree, sample)
+    flat = {e for e in edges if _stands_on_land(land, nodes, node_z, *e)}
+    steep_count = _steep_counts(nodes, edges, node_z, flat)
+    profiles = _steep_profiles(nodes, edges, node_z, degree, sample, flat)
 
-    stations, plan = _plan_stations(nodes, edges, node_z, degree, grow,
-                                    profiles)
+    stations, plan, on_land = _plan_stations(nodes, edges, node_z, degree,
+                                             grow, profiles, land, flat)
     widths = None
     if len(stations):
-        widths = corridor_grow.grow_batch(blocking, walkable, stations)
+        widths = corridor_grow.grow_batch(blocking, walkable, stations,
+                                          nodes, edges, node_z, land_from,
+                                          land, on_land)
         _bridge_blocked_stations(widths, plan)
+        _erode_far_widths(widths, plan)
     grown_edges = {p[1]: p for p in plan if p[0] == 'edge'}
 
     strips = []
     for (i, j) in edges:
         strip = _edge_strip(nodes, node_z, i, j, degree, grown_edges,
-                            widths, profiles)
+                            widths, profiles, land if (i, j) in flat else None)
         if strip is not None:
             strips.append(strip)
 
@@ -721,6 +792,8 @@ def _build_corridor_strips(nodes, edges, node_z, wall_hit=None,
         cap = max(params.RIBBON_HALF_WIDTH, reach.get(entry[1], 0.0))
         disc = _disc_strip(entry, widths, layers, steep, trim, cap)
         if disc is not None:
+            if _stands_on_land(land, nodes, node_z, entry[1], entry[1]):
+                disc['land'] = land
             strips.append(disc)
     return strips
 
@@ -908,15 +981,16 @@ def _simplify(pts, tol):
 
 def _cell_geometry(refr_recs, base_model_by_fid, get_collision, land_rec,
                    origin_x, origin_y, door_bases):
-    """(walkable, blocking) for a cell, with LAND folded into the walkable set."""
+    """(walkable, blocking, land_from): LAND is walkable[land_from:], or no rows."""
     walkable, blocking, land_walk = world.gather_cell_geometry(
         refr_recs or [], base_model_by_fid or {}, get_collision,
         land_rec=land_rec, origin_x=origin_x, origin_y=origin_y,
         split_land=True, skip_bases=door_bases)
+    land_from = len(walkable)
     if land_walk is not None and len(land_walk):
         walkable = (np.concatenate([walkable, land_walk])
-                    if len(walkable) else land_walk)
-    return walkable, blocking
+                    if land_from else land_walk)
+    return walkable, blocking, land_from
 
 
 def _quad_height_fn(poly, zb, zf, sweep, bm, fm):
@@ -1143,6 +1217,32 @@ def _outline_ground_ok(blocking, walkable):
     return ok
 
 
+def _land_slit_ok(blocking, land):
+    """f(polygon) -> True when no wall stands anywhere along a terrain gap.
+
+    See: docs/commentary/tes5_import_navmesh.md#land-slits-are-closed
+    """
+    if land is None:
+        return None
+    wall_hit = _lazy_wall_hit(blocking)
+
+    def ok(piece):
+        """Probe the gap's outline every RIBBON_GROW_STEP at actor height."""
+        ring = piece.exterior
+        n = max(1, int(ring.length // params.RIBBON_GROW_STEP))
+        for k in range(n):
+            pt = ring.interpolate(k / n, normalized=True)
+            z = land.z(pt.x, pt.y)
+            if wall_hit(pt.x, pt.y, 1.0, 0.0, 0.0, 1.0,
+                        z + params.RIBBON_GROW_SLAB_Z_BOTTOM,
+                        z + params.AGENT_HEIGHT, params.RIBBON_GROW_STEP,
+                        half_w=params.RIBBON_GROW_STEP):
+                return False
+        return True
+
+    return ok
+
+
 def _ledge_reach(blocking, walkable):
     """f(x, y, z, dx, dy, limit) -> (floor run, wall_first) from a ledge lip.
 
@@ -1193,7 +1293,7 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
         return [], [], []
     from . import corridor_clean, corridor_union
 
-    walkable, blocking = _cell_geometry(
+    walkable, blocking, land_from = _cell_geometry(
         refr_recs, base_model_by_fid, get_collision, land_rec,
         origin_x, origin_y, door_bases)
     sample = _surface_sampler(walkable)
@@ -1202,7 +1302,9 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
 
     corridors = _build_corridor_strips(nodes, edges, node_z,
                                        blocking=blocking, walkable=walkable,
-                                       sample=sample)
+                                       sample=sample, land_from=land_from,
+                                       land=world.land_field(
+                                           land_rec, origin_x, origin_y))
     cell_clip = None
     if land_rec is not None:
         cell_clip = (origin_x, origin_y, origin_x + 4096.0, origin_y + 4096.0)
@@ -1214,7 +1316,9 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
 
     verts, tris = corridor_union.build_union_mesh(
         corridors, extra_strips=door_strips, door_edges=door_edges,
-        cell_bounds=cell_clip, wall_cut=None)
+        cell_bounds=cell_clip, wall_cut=None,
+        slit_ok=_land_slit_ok(blocking, world.land_field(
+            land_rec, origin_x, origin_y)))
     if not tris:
         return [], [], []
 

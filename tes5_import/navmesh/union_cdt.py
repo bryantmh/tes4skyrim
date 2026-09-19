@@ -253,13 +253,15 @@ def _emit_door_triangles(door_tris, pid, tris_out):
     return ring_edges
 
 
-def _triangulate(poly, target_edge, fixed_edges=None, steep_seeds=None):
+def _triangulate(poly, target_edge, fixed_edges=None, steep_seeds=None,
+                 max_edge=None):
     """Triangulate a shapely polygon into UNIFORM, well-shaped triangles.
 
     Returns (verts2d, tris) in ONE shared vertex space.
 
     fixed_edges: [(p0, p1, apex), ...] door triangles, cut out and re-added as
     ordinary mesh.  steep_seeds: [(x, y, is_steep), ...] on stair centerlines.
+    max_edge: when set, EVERY longer edge is bisected (terrain sheets).
 
     See: docs/commentary/tes5_import_navmesh.md#cdt-is-a-true-constrained-delaunay
     """
@@ -293,6 +295,10 @@ def _triangulate(poly, target_edge, fixed_edges=None, steep_seeds=None):
     verts = [(float(x), float(y)) for (x, y) in pts]
     if not tris_out:
         return _earcut_fallback(poly)
+    if max_edge is not None:
+        verts, tris_out = _refine_steep(verts, tris_out, None,
+                                        protected=ring_edges, max_edge=max_edge)
+        tris_out = _flip2d(verts, tris_out)
     steep_pts = [(sx, sy) for (sx, sy, st) in (steep_seeds or ()) if st]
     if steep_pts:
         return _refine_steep(verts, tris_out, steep_pts, protected=ring_edges)
@@ -519,20 +525,25 @@ def _seed_grid(steep_pts, cell):
     return grid
 
 
-def _fan_split(t, split_edges):
+def _fan_split(t, split_edges, from_midpoint=False):
     """`t` split at each marked edge, fanned from corners + midpoints.
 
     Handles one, two or three marked edges in a single conforming pass.
+    `from_midpoint` fans from the first midpoint instead of corner 0.
+    See: docs/commentary/tes5_import_navmesh.md#land-sheets-bisect-long-edges
     """
-    ring = []
+    ring, first_mid = [], None
     for k in range(3):
         a, b = t[k], t[(k + 1) % 3]
         ring.append(a)
         m = split_edges.get((a, b) if a < b else (b, a))
         if m is not None:
+            first_mid = len(ring) if first_mid is None else first_mid
             ring.append(m)
     if len(ring) == 3:
         return [t]
+    if from_midpoint:
+        ring = ring[first_mid:] + ring[:first_mid]
     out = []
     for i in range(1, len(ring) - 1):
         tri = (ring[0], ring[i], ring[i + 1])
@@ -551,6 +562,12 @@ def _longest_edge(verts, t):
         if best is None or d2 > best[0]:
             best = (d2, a, b)
     return best
+
+
+def _has_plan_area(verts, t):
+    """False for a triangle whose corners are collinear in plan."""
+    (ax, ay), (bx, by), (cx, cy) = verts[t[0]], verts[t[1]], verts[t[2]]
+    return abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) >= 2.0
 
 
 def _carries_seed(verts, t, grid, cell):
@@ -573,26 +590,31 @@ def _carries_seed(verts, t, grid, cell):
     return False
 
 
-def _refine_steep(verts, tris, steep_pts, protected=()):
+def _refine_steep(verts, tris, steep_pts, protected=(),
+                  max_edge=STEEP_REFINE_EDGE):
     """Bisect triangles carrying steep centerline seeds until they are fine.
 
     Longest-edge bisection with the neighbour split at the same midpoint, so
     every split keeps the triangulation conforming.  Edges in `protected`
-    (door rings) are never split.
+    (door rings) are never split.  `steep_pts=None` refines EVERY triangle
+    whose longest edge exceeds `max_edge`.
 
     See: docs/commentary/tes5_import_navmesh.md#steep-refinement-keeps-stairs-alive
     """
     verts = [tuple(v) for v in verts]
     tris = [tuple(t) for t in tris]
-    if not steep_pts or not tris:
+    if (steep_pts is not None and not steep_pts) or not tris:
         return verts, tris
-    max_e2 = STEEP_REFINE_EDGE * STEEP_REFINE_EDGE
+    max_e2 = max_edge * max_edge
     cell = STEEP_REFINE_EDGE * 2.0
-    grid = _seed_grid(steep_pts, cell)
+    grid = _seed_grid(steep_pts or (), cell)
     for _round in range(6):
         split_edges = {}
         for t in tris:
-            if not _carries_seed(verts, t, grid, cell):
+            if steep_pts is None:
+                if not _has_plan_area(verts, t):
+                    continue
+            elif not _carries_seed(verts, t, grid, cell):
                 continue
             d2, a, b = _longest_edge(verts, t)
             key = (a, b) if a < b else (b, a)
@@ -603,7 +625,8 @@ def _refine_steep(verts, tris, steep_pts, protected=()):
             verts.append((0.5 * (pa[0] + pb[0]), 0.5 * (pa[1] + pb[1])))
         if not split_edges:
             break
-        tris = [x for t in tris for x in _fan_split(t, split_edges)]
+        tris = [x for t in tris
+                for x in _fan_split(t, split_edges, steep_pts is None)]
     return verts, tris
 
 
@@ -705,7 +728,8 @@ def _ribbon_seeds(strips, target_edge):
         wx, wy = s['w']
         h = s['half']
         rise = abs(bz - az)
-        steep = rise / run * target_edge > STOREY_GAP_Z * 0.5
+        steep = (s.get('land') is None
+                 and rise / run * target_edge > STOREY_GAP_Z * 0.5)
         if steep:
             climb_step = STOREY_GAP_Z * 0.33
             step = max(RIBBON_SEED_STEP, climb_step * run / max(rise, 1e-6))

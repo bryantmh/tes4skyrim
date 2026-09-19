@@ -118,6 +118,47 @@ def _land_tris(land_rec, origin_x, origin_y):
     return np.concatenate([t1, t2], axis=0)
 
 
+class LandField:
+    """A cell's LAND heights, interpolated on the same diagonal `_land_tris` cuts.
+
+    See: docs/commentary/tes5_import_navmesh.md#terrain-standing-ribbons-follow-the-land
+    """
+
+    __slots__ = ('grid', 'ox', 'oy')
+
+    def __init__(self, grid, origin_x, origin_y):
+        """`grid` is decode_vhgt's 33x33 array, row = y."""
+        self.grid = np.ascontiguousarray(grid, dtype=np.float64)
+        self.ox, self.oy = float(origin_x), float(origin_y)
+
+    def covers(self, x, y):
+        """True when (x, y) lies inside this cell's LAND square."""
+        span = (_LAND_VERTS - 1) * _LAND_SPACING
+        return (self.ox <= x <= self.ox + span
+                and self.oy <= y <= self.oy + span)
+
+    def z(self, x, y):
+        """Terrain height at (x, y); points outside the cell clamp to its rim."""
+        last = _LAND_VERTS - 1
+        fx = min(float(last), max(0.0, (x - self.ox) / _LAND_SPACING))
+        fy = min(float(last), max(0.0, (y - self.oy) / _LAND_SPACING))
+        ix, iy = min(last - 1, int(fx)), min(last - 1, int(fy))
+        tx, ty = fx - ix, fy - iy
+        g = self.grid
+        z00, z10 = g[iy, ix], g[iy, ix + 1]
+        z01, z11 = g[iy + 1, ix], g[iy + 1, ix + 1]
+        if tx >= ty:
+            return float(z00 + (z10 - z00) * tx + (z11 - z10) * ty)
+        return float(z00 + (z11 - z01) * tx + (z01 - z00) * ty)
+
+
+def land_field(land_rec, origin_x, origin_y):
+    """The cell's LandField, or None when it has no readable LAND."""
+    vhgt = get_str(land_rec, 'VHGT') if land_rec is not None else None
+    grid = decode_vhgt(vhgt) if vhgt else None
+    return None if grid is None else LandField(grid, origin_x, origin_y)
+
+
 def _split_by_slope(tris):
     """Split an (N,3,3) array into (walkable, blocking) by face normal."""
     if tris is None or len(tris) == 0:

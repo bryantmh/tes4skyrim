@@ -152,7 +152,9 @@ def _z_ranges(items):
     out = []
     for (s, _p) in items:
         prof = s.get('prof')
-        if prof and len(prof) >= 2:
+        if s.get('land') is not None:
+            out.append((float('-inf'), float('inf')))
+        elif prof and len(prof) >= 2:
             zs = [q[2] for q in prof]
             out.append((min(zs), max(zs)))
         else:

@@ -257,7 +257,8 @@ def test_creature_projects_are_inherited_from_a_master(tmp_path):
     Without them the CREA records reusing a master's creature folders fall
     through to `resolve_creature_race` and ship as BASE SKYRIM creatures.
     """
-    from tes5_import.actors.creature_races import _load_projects
+    from tes5_import.actors.creature_projects import (
+        folders_built_by_master, load_projects)
 
     exp = _fake_group(tmp_path, ['A.esm', 'B.esp'])
     rec = exp / 'My Pack' / 'A.esm'
@@ -274,8 +275,15 @@ def test_creature_projects_are_inherited_from_a_master(tmp_path):
                             'skeleton_nif': 'actors\rat\skeleton.nif',
                             'bodies': ['rat.nif']}})
 
-    got = _load_projects(str(rec))
+    got, owner_slot = load_projects(str(rec))
     assert 'rat' in got, got
+    assert owner_slot == {'rat': 0}
+
+    crea = {'Signature': 'CREA', 'Model.MODL': 'Creatures\\Rat\\Skeleton.NIF'}
+    assert folders_built_by_master({'00012345': crea}, got,
+                                   owner_slot) == {'rat'}
+    assert folders_built_by_master({'01012345': crea}, got,
+                                   owner_slot) == set()
 
 
 # ---------------------------------------------------------------------------

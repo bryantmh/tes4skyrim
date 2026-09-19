@@ -846,16 +846,19 @@ def test_auto_install_respects_download_opt_out(tmp_path, monkeypatch):
                            allow_download=False) is False
 
 
-def test_api_repo_falls_back_without_a_git_remote(monkeypatch):
-    """A source drop has no .git, and must still be able to download.
+def test_api_repo_never_spawns_git(monkeypatch):
+    """git is not a prerequisite, so the download path must never run it.
 
-    The README tells users to "paste a new download over your existing
-    folder", so most installs are an unzipped archive.  `git remote get-url
-    origin` fails there; api_repo() used to return '' and _api_releases()
-    then returned [] -- the download silently did nothing.
+    A machine with no `git` on PATH raised WinError 2 at spawn time, which
+    aborted auto_install() and disabled the download entirely.
+    See: docs/commentary/tes5_import_navmesh.md#the-download-path-never-runs-git
     """
-    monkeypatch.setattr(nc, 'gh_repo', lambda: [])
-    assert nc.api_repo() == nc.FALLBACK_REPO
+    def no_git(*a, **k):
+        """Stand in for a machine with no git executable."""
+        raise FileNotFoundError(2, 'The system cannot find the file specified')
+
+    monkeypatch.setattr(nc.subprocess, 'run', no_git)
+    assert nc.api_repo() == nc.CACHE_REPO
     assert '/' in nc.api_repo()
 
 

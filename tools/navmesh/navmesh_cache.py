@@ -270,26 +270,17 @@ def archive(plugin: str, out_dir: str, tag: str, quiet: bool = False) -> str | N
 # publish
 # ---------------------------------------------------------------------------
 
-# The repo the caches are published from.  Used when the origin remote cannot
-# be read, which is the NORMAL case for an end user: the README tells people to
-# "paste a new download over your existing folder", so most installs are an
-# unzipped source archive with no .git directory at all.  There `git remote
-# get-url origin` fails, gh_repo() returns [], api_repo() returned '' and
-# _api_releases() gave back [] -- the download silently did nothing and every
-# such user regenerated navmesh from scratch believing the feature was on.
-# A constant is correct here: the release assets genuinely live at this repo,
-# and a fork that republishes its own caches still wins via the remote.
-FALLBACK_REPO = 'bryantmh/tes4skyrim'
+#: Repo the caches are published from. See: docs/commentary/tes5_import_navmesh.md#the-download-path-never-runs-git
+CACHE_REPO = 'bryantmh/tes4skyrim'
 
 
 def api_repo() -> str:
-    """'owner/name' for the GitHub API, from the origin remote.
+    """'owner/name' for the GitHub API.
 
-    Falls back to FALLBACK_REPO for a non-git install (see that constant) so
-    downloading works from an unzipped source archive, not just a clone.
+    A CONSTANT: git must not be reachable from any end-user path.
+    See: docs/commentary/tes5_import_navmesh.md#the-download-path-never-runs-git
     """
-    got = gh_repo()
-    return got[1] if len(got) == 2 else FALLBACK_REPO
+    return CACHE_REPO
 
 
 def _api_releases(timeout: int = 20) -> list:
@@ -362,11 +353,10 @@ def _download(url: str, dest: str, quiet: bool = False,
 def gh_repo() -> list:
     """['--repo', 'owner/name'] for gh, or [] if it cannot be determined.
 
-    Every gh call names the repo explicitly instead of relying on the process
-    CWD.  `install` is the reason: it is the one command a downloader may run
-    from outside a checkout (or against a redirected repo root), and a bare
-    `gh release list` there reports "no releases found" rather than failing
-    loudly -- which is exactly how a working publish looked broken.
+    Names the repo explicitly rather than relying on the process CWD.  CALLERS
+    MUST ALREADY REQUIRE gh: this spawns git, which an end user need not have.
+    The automatic download uses api_repo() instead.
+    See: docs/commentary/tes5_import_navmesh.md#the-download-path-never-runs-git
     """
     out = subprocess.run(['git', 'remote', 'get-url', 'origin'],
                          capture_output=True, text=True, cwd=repo_root(),

@@ -158,6 +158,11 @@ def _poly_strip(poly2d, z):
         'poly': [(float(p[0]), float(p[1])) for p in poly2d],
     }
 
+def _land_of(strips):
+    """The LandField the group's terrain-standing strips follow, or None."""
+    return next((s['land'] for s in strips if s.get('land') is not None), None)
+
+
 def _height_on(s, px, py):
     """Height of strip `s` at (px, py), following its own slope.
 
@@ -190,6 +195,8 @@ def _height_on(s, px, py):
     d2 = dx * dx + dy * dy
     t = 0.0 if d2 < 1e-9 else max(0.0, min(1.0, ((px - ax) * dx +
                                                  (py - ay) * dy) / d2))
+    if s.get('land') is not None:
+        return s['land'].z(px, py)
     return az + (bz - az) * t
 
 def _distance_to(s, px, py):

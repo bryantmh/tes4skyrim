@@ -316,8 +316,5 @@ DECIMATE_PIN_NODE_RADIUS = 24.0
 # a neighbour centerline is closer, so a corridor squeezed between two close
 # obstacles still carries a walkable strip (the Phase-1 width was unconditional).
 RIBBON_GROW_MIN_HALF = 16.0
-# Hard cap on grown half-width.  A corridor in open space (no wall, no neighbour)
-# stops here rather than ballooning across a whole exterior cell.  ~1.5 doorways;
-# wide enough for room coverage, bounded enough that a doorway leak is a nub.
+#: Grown half-width cap: over BUILT floor always, over LAND only past another centerline.
 RIBBON_GROW_MAX_HALF = 160.0
-

@@ -19,8 +19,15 @@ stops one step before the FIRST of:
       there at all.  This is what stops the rail climbing onto a bed / table
       (its top is a step up) and what stops a ground-floor corridor widening
       sideways into the footprint of a different storey (the floor there is a
-      whole storey away, so it reads as departed).
-  (c) the hard cap RIBBON_GROW_MAX_HALF.
+      whole storey away, so it reads as departed).  It is also what ends the
+      march at a cell border: LAND covers exactly one cell, so "no walkable
+      surface" stops open terrain growing into the neighbour.
+  (c) THE CAP — RIBBON_GROW_MAX_HALF of BUILT floor.  LAND is free, so a rail
+      on open terrain runs until real geometry stops it; once it has crossed
+      another pathgrid centerline it ends at max(crossing, cap).  A
+      terrain-standing rail measures (a) and (b) above the LAND, not above its
+      own chord.
+      See: docs/commentary/tes5_import_navmesh.md#exterior-coverage-one-code-path
 
 The march measures against FIXED geometry (the same blocking/walkable soups
 every time), never against other corridors' already-grown width, so it is
@@ -43,14 +50,16 @@ _native = load_native('_navgrow_native')
 # Batched native march
 # ---------------------------------------------------------------------------
 
-def _native_params():
+def _native_params(land_from=None, land=None):
     """The tunables the native march needs, mirrored from params.py.
 
     See: docs/commentary/tes5_import_navmesh.md#grow-is-batched-into-one-native-call
     """
     return {
+        'land_from': float(2 ** 31 - 1 if land_from is None else land_from),
+        'land_ox': land.ox if land is not None else 0.0,
+        'land_oy': land.oy if land is not None else 0.0,
         'step': float(params.RIBBON_GROW_STEP),
-        'cap': float(params.RIBBON_GROW_MAX_HALF),
         'min_half': float(params.RIBBON_GROW_MIN_HALF),
         'half_width': float(params.RIBBON_HALF_WIDTH),
         'slab_half_w': float(params.RIBBON_GROW_SLAB_HALF_WIDTH),
@@ -58,16 +67,22 @@ def _native_params():
         'slab_z_bottom': float(params.RIBBON_GROW_SLAB_Z_BOTTOM),
         'agent_height': float(params.AGENT_HEIGHT),
         'max_climb': float(params.MAX_CLIMB),
+        'ztol': float(params.SEED_Z_TOLERANCE),
+        'cap': float(params.RIBBON_GROW_MAX_HALF),
         'bisect': float(params.RIBBON_GROW_BISECT),
     }
 
 
-def grow_batch(blocking, walkable, stations):
+def grow_batch(blocking, walkable, stations,
+               nodes=None, edges=None, node_z=None, land_from=None,
+               land=None, on_land=None):
     """Grown half-width for every march station, in ONE native call.
 
     stations: (N, 9) float64 -- cx, cy, cz, dirx, diry, tanx, tany, lo,
-    edge_index (the planner's own bookkeeping, unused by the march).
-    Returns an (N,) float64 array.
+    edge_index (an index into `edges`, or -1 - node_index for a node disc).
+    nodes/edges/node_z enable the crossing stop.  `land_from` is where LAND
+    starts in `walkable`; `land` (a world.LandField) and the per-station
+    `on_land` flags make those rails follow the terrain.
     See: docs/commentary/tes5_import_navmesh.md#grow-is-batched-into-one-native-call
     """
     if not len(stations):
@@ -77,7 +92,17 @@ def grow_batch(blocking, walkable, stations):
     wlk = (np.ascontiguousarray(walkable, dtype=np.float64).reshape(-1, 3, 3)
            if walkable is not None and len(walkable) else None)
     st = np.ascontiguousarray(stations, dtype=np.float64).reshape(-1, 9)
-    return _native.grow_strips(blk, wlk, st, _native_params())
+    nd = eg = nz = None
+    if nodes is not None and edges is not None and len(edges):
+        nd = np.ascontiguousarray(
+            [(float(p[0]), float(p[1])) for p in nodes],
+            dtype=np.float64).reshape(-1, 2)
+        eg = np.ascontiguousarray(edges, dtype=np.int32).reshape(-1, 2)
+        nz = np.ascontiguousarray(node_z, dtype=np.float64).reshape(-1)
+    return _native.grow_strips(blk, wlk, st, _native_params(land_from, land),
+                               nd, eg, nz,
+                               land.grid if land is not None else None,
+                               on_land if land is not None else None)
 
 
 # ---------------------------------------------------------------------------
@@ -235,103 +260,3 @@ def wall_slab_sampler(blocking):
         return False
 
     return hit
-
-
-# ---------------------------------------------------------------------------
-# Per-side outward march
-# ---------------------------------------------------------------------------
-
-def grow_node_disc(cx, cy, floor_z, exclude_nodes, wall_hit, walk_sample,
-                   field, lo):
-    """Radial fan around a pathgrid NODE -> a closed polygon (list of (x, y)).
-
-    Each ray's slab width axis is the perpendicular to that ray.
-    See: docs/commentary/tes5_import_navmesh.md#node-discs-fill-junction-notches
-    """
-    n = params.RIBBON_GROW_DISC_RAYS
-    pts = []
-    for k in range(n):
-        ang = 2.0 * math.pi * k / n
-        dx, dy = math.cos(ang), math.sin(ang)
-        d = grow_half_width(cx, cy, floor_z, dx, dy, -dy, dx, exclude_nodes,
-                            wall_hit, walk_sample, field, lo)
-        pts.append((cx + dx * d, cy + dy * d))
-    return pts
-
-
-def _wall_in_interval(wall_hit, cx, cy, dirx, diry, tanx, tany, z_lo, z_hi,
-                      prev, d):
-    """True if a wall stands anywhere in the swept interval (prev, d].
-
-    See: docs/commentary/tes5_import_navmesh.md#wall-probe-sweeps-the-interval
-    """
-    mid = 0.5 * (prev + d)
-    sweep = 0.5 * (d - prev) + params.RIBBON_GROW_SLAB_DEPTH
-    return wall_hit(cx + dirx * mid, cy + diry * mid, dirx, diry,
-                    tanx, tany, z_lo, z_hi, sweep)
-
-
-def _bisect_wall(wall_hit, cx, cy, dirx, diry, tanx, tany, z_lo, z_hi,
-                 prev, d):
-    """Distance at which the ribbon meets the wall known to lie in (prev, d].
-
-    See: docs/commentary/tes5_import_navmesh.md#wall-probe-sweeps-the-interval
-    """
-    lo_d, hi_d = prev, d
-    for _ in range(params.RIBBON_GROW_BISECT):
-        md = 0.5 * (lo_d + hi_d)
-        mm = 0.5 * (lo_d + md)
-        if wall_hit(cx + dirx * mm, cy + diry * mm, dirx, diry,
-                    tanx, tany, z_lo, z_hi,
-                    0.5 * (md - lo_d) + params.RIBBON_GROW_SLAB_DEPTH):
-            hi_d = md
-        else:
-            lo_d = md
-    return lo_d
-
-
-def _floor_departs(walk_sample, cx, cy, dirx, diry, floor_z, d, lo):
-    """True if the walkable floor has left the centerline plane by distance d.
-
-    Binds only BEYOND the soft floor `lo`.
-    See: docs/commentary/tes5_import_navmesh.md#soft-floor-never-beats-a-wall
-    """
-    if walk_sample is None or d <= lo:
-        return False
-    s = walk_sample(cx + dirx * d, cy + diry * d, floor_z)
-    return s is None or abs(s - floor_z) > params.MAX_CLIMB
-
-
-def grow_half_width(cx, cy, floor_z, dirx, diry, tanx, tany,
-                    wall_hit, walk_sample, lo=None):
-    """Grown half-width from center (cx,cy) outward along the unit perpendicular
-    (dirx,diry).  (tanx,tany) is the edge tangent (slab width axis).
-
-    Stops at the first of: wall slab, walkable-floor departure (> MAX_CLIMB or
-    no walkable there), or the cap.  `lo` is the caller's SOFT per-station
-    floor, which a wall overrides.
-    See: docs/commentary/tes5_import_navmesh.md#neighbour-cap-removed
-    """
-    step = params.RIBBON_GROW_STEP
-    cap = params.RIBBON_GROW_MAX_HALF
-    if lo is None:
-        lo = params.RIBBON_GROW_MIN_HALF
-    hard = max(lo, cap)
-
-    z_lo = floor_z + params.RIBBON_GROW_SLAB_Z_BOTTOM
-    z_hi = floor_z + params.AGENT_HEIGHT
-
-    grown = 0.0
-    d = 0.0
-    while d < hard:
-        prev = d
-        d += min(step, hard - d)
-        if _wall_in_interval(wall_hit, cx, cy, dirx, diry, tanx, tany,
-                             z_lo, z_hi, prev, d):
-            grown = max(grown, _bisect_wall(
-                wall_hit, cx, cy, dirx, diry, tanx, tany, z_lo, z_hi, prev, d))
-            break
-        if _floor_departs(walk_sample, cx, cy, dirx, diry, floor_z, d, lo):
-            break
-        grown = d
-    return grown

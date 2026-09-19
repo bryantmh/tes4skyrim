@@ -134,6 +134,7 @@ from .union_geom import (
     _distance_to as _distance_to,
     _has_edge as _has_edge,
     _height_on as _height_on,
+    _land_of as _land_of,
     _near as _near,
     _on_segment as _on_segment,
     _point_in_poly as _point_in_poly,
@@ -281,6 +282,29 @@ def _sheet_coverage(group, gi, ctx):
     return None if gmerged.is_empty else gmerged
 
 
+#: A terrain sheet's triangle edges are bisected down to this many target edges.
+LAND_MAX_EDGE_RATIO = 2.5
+
+#: Half the widest gap between terrain ribbons that is closed up.
+LAND_SLIT_HALF = 16.0
+
+
+def _close_land_slits(gmerged, group, slit_ok):
+    """`gmerged` with the wall-free hairline gaps between terrain ribbons filled.
+
+    See: docs/commentary/tes5_import_navmesh.md#land-slits-are-closed
+    """
+    if slit_ok is None or _land_of(group) is None:
+        return gmerged
+    from shapely.ops import unary_union
+    closed = gmerged.buffer(LAND_SLIT_HALF, join_style=2).buffer(
+        -LAND_SLIT_HALF, join_style=2)
+    fill = closed.difference(gmerged)
+    pieces = list(getattr(fill, 'geoms', [fill]))
+    keep = [p for p in pieces if not p.is_empty and p.area > 1.0 and slit_ok(p)]
+    return unary_union([gmerged] + keep) if keep else gmerged
+
+
 def _sheet_parts(gmerged, wall_cut):
     """The sheet's polygon list after the wall cut, or an empty list."""
     from shapely.geometry import Polygon
@@ -352,13 +376,16 @@ def _mesh_one_part(part, group, gseeds, door_edges, claimed_ids):
     See: docs/commentary/tes5_import_navmesh.md#door-apex-inherits-base-levels
     """
     fixed = _claim_door_edges(part, group, door_edges, claimed_ids)
+    land = _land_of(group)
     v2, t2 = _triangulate(part, params.TRI_TARGET_EDGE,
-                          fixed_edges=fixed, steep_seeds=gseeds)
+                          fixed_edges=fixed, steep_seeds=gseeds,
+                          max_edge=(LAND_MAX_EDGE_RATIO * params.TRI_TARGET_EDGE
+                                    if land is not None else None))
     if not t2:
         return [], []
     levels = _levels_batch(group, v2)
     _apply_door_apex_levels(v2, levels, fixed)
-    return _emit_surfaces(v2, t2, levels)
+    return _emit_surfaces(v2, t2, levels, land)
 
 
 def _mesh_sheets(sheets, ctx, door_edges):
@@ -373,6 +400,7 @@ def _mesh_sheets(sheets, ctx, door_edges):
         gmerged = _sheet_coverage(group, gi, ctx)
         if gmerged is None:
             continue
+        gmerged = _close_land_slits(gmerged, group, ctx['slit_ok'])
         ctx['claimed'].append((gmerged, group))
         parts = _sheet_parts(gmerged, ctx['wall_cut'])
         group = list(group) + ctx['junction_strips'].get(gi, [])
@@ -438,7 +466,8 @@ def _finish_union(verts, tris, strips, node_pts, node_half, stitch_nodes,
 
 
 def build_union_mesh(strips, extra_strips=None, door_edges=None,
-                     cell_bounds=None, wall_cut=None, probe_only=False):
+                     cell_bounds=None, wall_cut=None, probe_only=False,
+                     slit_ok=None):
     """Union the corridor ribbons per storey and retriangulate.
 
     Returns (verts, tris) with 3D vertices.  Coverage is the exact union of the
@@ -463,7 +492,7 @@ def build_union_mesh(strips, extra_strips=None, door_edges=None,
 
     ctx = {'junction_extra': junction_extra, 'junction_strips': junction_strips,
            'junction_drop': junction_drop, 'cell_bounds': cell_bounds,
-           'wall_cut': wall_cut, 'claimed': []}
+           'wall_cut': wall_cut, 'claimed': [], 'slit_ok': slit_ok}
     verts, tris, vert_src = _mesh_sheets(sheets, ctx, door_edges or [])
 
     stitch_nodes = [(node_pts[i][0], node_pts[i][1])
@@ -674,13 +703,16 @@ def _emit_triangles(state, keyed):
     return tris
 
 
-def _emit_surfaces(v2, t2, levels):
+def _emit_surfaces(v2, t2, levels, land=None):
     """Lift a 2D triangulation onto its walkable surfaces, WITHOUT tearing.
 
     Every 2D triangle is emitted once per surface beneath it; a triangle whose
-    corners share no storey is not emitted at all.
+    corners share no storey is not emitted at all.  Corners are compared in
+    heights ABOVE `land`, so a hillside is one surface.
     See: docs/commentary/tes5_import_navmesh.md#surface-emission
     """
+    ground = [land.z(p[0], p[1]) if land is not None else 0.0 for p in v2]
+    levels = [[z - g for z in lv] for lv, g in zip(levels, ground)]
     corner_bands = [_storeys_of(sorted(lv)) for lv in levels]
     reps_all = [[(min(b), max(b)) for b in bands] for bands in corner_bands]
     tri_surfaces = [_triangle_surfaces(reps_all, tri) for tri in t2]
@@ -696,6 +728,8 @@ def _emit_surfaces(v2, t2, levels):
     state = {'v2': v2, 'corner_bands': corner_bands,
              'bare_clusters': bare_clusters, 'vid': {}, 'verts': []}
     tris = _emit_triangles(state, keyed)
+    for v in state['verts']:
+        v[2] += land.z(v[0], v[1]) if land is not None else 0.0
     return state['verts'], tris
 
 def _walked_line_index(strips, cellsz):
@@ -911,6 +945,7 @@ def _levels_batch(strips, points):
     rows = []
     poly = []
     prof = []
+    land = _land_of(strips)
     for s_ in strips:
         p = s_.get('poly')
         off, n = 0, 0
@@ -925,16 +960,20 @@ def _levels_batch(strips, points):
         a_, b_ = s_['a'], s_['b']
         rows.append((a_[0], a_[1], a_[2], b_[0], b_[1], b_[2],
                      float(s_['half']), float(off), float(n),
-                     float(proff), float(prn)))
+                     float(proff), float(prn),
+                     float(s_.get('land') is not None)))
     sarr = (np.asarray(rows, dtype=np.float64) if rows
-            else np.zeros((0, 11), dtype=np.float64))
+            else np.zeros((0, 12), dtype=np.float64))
     parr = (np.asarray(poly, dtype=np.float64).reshape(-1, 2) if poly
             else np.zeros((0, 2), dtype=np.float64))
     farr = (np.asarray(prof, dtype=np.float64).reshape(-1, 3) if prof
             else np.zeros((0, 3), dtype=np.float64))
     qarr = (np.asarray(points, dtype=np.float64).reshape(-1, 2) if len(points)
             else np.zeros((0, 2), dtype=np.float64))
-    return native.levels_at(sarr, parr, qarr, float(SAME_SURFACE_Z), farr)
+    if land is None:
+        return native.levels_at(sarr, parr, qarr, float(SAME_SURFACE_Z), farr)
+    return native.levels_at(sarr, parr, qarr, float(SAME_SURFACE_Z), farr,
+                            land.grid, land.ox, land.oy)
 
 
 def _levels_at(strips, px, py):
@@ -944,16 +983,13 @@ def _levels_at(strips, px, py):
     a gap larger than SAME_SURFACE_Z starts a new surface.  A stair ribbon and
     the floor it meets fall in one cluster (they differ by a few units there),
     while the floor it flies over is hundreds away and forms its own.
+
+    A poly strip owns exactly its OUTLINE, so admission is containment; `half`
+    is a radius only for a fixed-width rectangle.
+    See: docs/commentary/tes5_import_navmesh.md#poly-strips-admit-by-containment
     """
     zs = []
     for s in strips:
-        # A poly strip (door quad, or a Phase-2 GROWN corridor) owns exactly its
-        # outline — admit only where the point is inside it.  Using the scalar
-        # 'half' as the admission radius is only correct for a fixed-width
-        # rectangle; for a grown ribbon 'half' is the MAX half-width (up to
-        # RIBBON_GROW_MAX_HALF), so 'distance <= half' would claim the point far
-        # OUTSIDE the actual ribbon and inject phantom surface levels that split
-        # the triangulation (Pinarus fragmented into 11 components).
         if s.get('poly') is not None:
             hit = _distance_to(s, px, py) <= 1e-6      # 0 == inside the outline
         else:

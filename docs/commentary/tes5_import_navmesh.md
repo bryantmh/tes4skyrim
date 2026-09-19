@@ -717,29 +717,139 @@ Verified on all 16 worst-offending cells from the shipped ESM (10 interior +
 6 exterior): every one now reports CLEAN under `tools/navmesh/check.py`'s rules,
 with coverage/steep/island metrics unchanged.
 
-### 🔴 Exterior coverage is UNSOLVED — the corridor rewrite lost it
+### Exterior coverage: the cap counts BUILT floor, ONE code path
+<a id="exterior-coverage-one-code-path"></a>
 
-**Open terrain gets a strip, not a cell.** The corridor generator grows each
-pathgrid edge sideways until a wall, a >`MAX_CLIMB` floor departure, or
-`RIBBON_GROW_MAX_HALF` (160u). On flat ground nothing else stops it, so a road
-through a 4096u cell yields a ~320u band — roughly 8% coverage — and the rest
-of the cell has no navmesh at all. Observed in `WrldMorrowind -17 -51`
-(TR_Mainland): flat land adjacent to the pathgrid, no mesh.
+**Code:** `native/src/navgrow/grow.cpp` (`grow_half_width`), `corridor._stands_on_land`, `world.LandField`. **NOT in-game verified.**
 
-The cap is an INTERIOR leak guard: indoors, a march that finds neither wall nor
-floor edge is a ribbon escaping a doorway or crossing a collision gap, and 160u
-turns the runaway into a nub. Outdoors the same condition means *a field*.
+A 160u half-width cap clipped exteriors: `WrldMorrowind -17 -51` (Tamriel
+Rebuilt) meshed **13.7%** of the cell; it now meshes **62.7%**. Interiors and
+exteriors run the SAME march — no cell-type branch. What differs is the ground
+under each step.
 
-**Raising the cap is not the fix.** The march runs perpendicular to ONE line, so
-a larger cap widens the band along the road's axis and still leaves corners and
-everything past the endpoints empty, while restoring the indoor runaway.
+**Why interiors must not change at all.** Every stop rule that altered interior
+widths scrambled the union downstream, moving cracks from cell to cell with no
+pattern (`tools/navmesh/sweep.py`, crack counts, HEAD first):
 
-Covering terrain needs a slope/collision-bounded AREA fill unioned with the
-corridor result, with the cap kept for interiors. The retired voxel path did
-this via `PGRD_XY_REACH_EXTERIOR` (8192u geodesic reach vs the 384u interior
-gate), recorded then as: vanilla exterior navmeshes cover essentially the whole
-cell, and a tight gate "carved open terrain into blobs around the road
-pathgrid". That capability did not survive the rewrite.
+| rule | ImperialDungeon01 | Leyawiin hall | AnvilFightersGuild |
+|---|---|---|---|
+| HEAD, cap 160 | 2 | 2 | 0 |
+| halfway line to the nearest centerline | 7, +4 miss | 1 | 0 |
+| wall + floor only | 7, +4 miss | 13, +29 miss, 2 comps | 3, 4 comps |
+| stop AT the first crossed centerline | 12 | 6, 2 comps | 0 |
+| cap 160 only after a crossing | 2 | 6, 2 comps | 0 |
+
+The mechanism behind the uncapped failures: a hall edge 1000u away threads a
+doorway and lays its ribbon over another room (AnvilFightersGuild, edges (1,2)
+and (4,16) covering the NW room). The rule shipped leaves all nine reference
+interiors IDENTICAL to HEAD (same triangle counts, components, miss, crack).
+
+**The cap is a budget of BUILT floor.** A step whose walkable sample is a LAND
+triangle (`land_from` marks where LAND starts in the walkable soup) is free; any
+other step spends `RIBBON_GROW_MAX_HALF`. A doorway leak is the cap's whole
+reason and terrain has no doorways. An interior has no LAND, so it is HEAD.
+
+**Past another centerline the cap binds on LAND too**
+(`NeighbourField::first_crossing`): the rail ends at max(crossing, cap). Ground
+beyond another corridor's line is that corridor's to cover. Measured on two
+exterior cells, removing this stop raised cracks 88 -> 195 and 437 -> 502.
+
+<a id="terrain-standing-ribbons-follow-the-land"></a>**A ribbon whose nodes
+stand on LAND follows the LAND** (`_stands_on_land`: each node snapped within
+`NODE_SNAP_RADII[0]` of the terrain, or lies in a neighbouring cell). The cap
+was not what clipped hilly exteriors — the flat-ribbon floor test was: a rail
+stopped once terrain left its chord by `MAX_CLIMB` (median rail 96u; 303u with
+that test off). For such a ribbon:
+
+- the march measures wall and floor above the LAND under each step, and its
+  stations start AT the land (`_plan_stations`);
+- its height at any point IS the land (`union_geom._height_on`, native
+  `levels_at` column 12). "Chord plus terrain rise" was tried first and shredded
+  slopes: chords float above or sink below a hillside by different amounts, so
+  overlapping ribbons disagreed;
+- it is never a staircase: a hill path over `RIBBON_GROW_MAX_SLOPE` otherwise
+  took a tread profile and sat 30u under the terrain;
+- the sheet splitter skips its node-height shortcut (`union_sheets._z_ranges`):
+  two terrain ribbons from different hill heights read as different storeys and
+  one cell fell into **59 sheets instead of 2**;
+- emission compares corners in heights ABOVE the land (`_emit_surfaces`), so a
+  hillside is one surface. At HEAD the same cell had **212 corners with
+  conflicting levels and 588 triangles emitted twice**; now 0 and 0.
+
+A ribbon with a node on built floor (bridge, porch) stays flat, as before.
+
+<a id="far-widths-are-eroded"></a>**Past the cap every rail and disc ray is held
+to its SHORTEST neighbour** (`_erode_far_widths`, +-`FAR_WIDTH_WINDOW` stations,
++-1 disc ray); interiors never reach it. Adjacent rays stopped by a rock or a
+steep LAND patch end at wildly different distances, and the sawtooth outline
+triangulates into fans of needles — in-game report, `AnvilAnvilExteriorCastle03`.
+Less coverage, clean outline.
+
+<a id="land-slits-are-closed"></a>**Hairline gaps between terrain ribbons are
+closed** (`corridor_union._close_land_slits`, `corridor._land_slit_ok`). Long
+ribbons from different edges run nearly parallel and leave slits under
+`2 * LAND_SLIT_HALF` wide that triangulate into needle fans. The sheet's union
+is buffered out and back; each filled piece is kept only if a wall probe along
+its outline, at actor height above the LAND, finds nothing — so a fence or a
+trunk standing in a gap keeps its gap. Terrain sheets only.
+
+<a id="land-sheets-bisect-long-edges"></a>**A terrain sheet bisects every edge
+over `LAND_MAX_EDGE_RATIO` target edges** (`union_cdt._refine_steep` with
+`steep_pts=None`, then `_flip2d`). The CDT fans a far vertex onto each 128u
+segment of a long straight ribbon side; those needles are too thin to contain a
+hex-lattice point, so `_hex_refine` never breaks them —
+`AnvilAnvilExteriorCastle03` emitted **427 needles in 1,602 triangles**.
+`_fan_split` fans from corner 0, which is only right when the marked edge is the
+one OPPOSITE it: with edge (a, b) marked it yields the collinear (a, m, b) plus
+the ORIGINAL triangle, i.e. no split at all (that cell's everywhere-refine made
+**44,974 zero-area triangles out of 46,791**). The terrain pass therefore fans
+from the first midpoint (`from_midpoint`). The stair pass keeps corner 0: its
+output is in-game verified and was left untouched — a KNOWN DEFECT, unfixed.
+For the same reason a terrain ribbon never seeds the stair refine
+(`_ribbon_seeds`): fed hill paths, that pass left T-junction cracks.
+
+<a id="cross-sheet-weld-spans-one-step"></a>**Two sheets' vertices on the SAME
+plan spot weld across one step of height** (`union_mesh._weld_match`). The weld
+is a 16u sphere, so two sheets that disagree by more than that at a shared
+outline corner each keep a vertex and the seam between them is a crack. Hand-
+corrected in `tests/navmesh_fixed/Oblivion.esm/imperialdungeon01.2.json`: the
+gate quad west of node 137 put (-112.5, -13.2) at **-61.8** (ground -64.3) while
+the room sheet, whose flat -84 ribbons lie under the stair flank, put it at
+**-84.8** — a 100u crack across the walked line. Vertices from DIFFERENT
+emissions within `SAME_PART_WELD_XY` in plan and `MAX_CLIMB` in height now fuse.
+Measured on seven interiors: ImperialDungeon01 cracks **2 -> 0** with 11 of 867
+triangles changed and the fused vertex at -61.8, the hand fix's own value; the
+other six cells changed **0 triangles**. Two things were tried first and
+rejected: dropping the far-side quad where the probe mesh already joins the two
+faces left a wedge-shaped gap at the same seam, and the quad's own height was
+the CORRECT one.
+
+<a id="land-triangles-are-never-walls"></a>**A triangle lying on the LAND is
+never a wall** (`union_mesh._steep_triangles`). A sliver's 3D tilt is
+ill-conditioned: three nearly collinear corners with a little terrain relief
+read as steeper than `WALL_SLOPE_COS`. Indoors slivers are flat and the test
+holds; on one Oblivion exterior cell `_drop_walls` deleted **1,135 of 12,205
+triangles, all with every corner exactly on the land, and cracks went 11 ->
+1,514**. Terrain steepness is already decided upstream — a steep LAND face is
+blocking (`world._split_by_slope`) and never gets mesh.
+
+**Measured result** (`tools/navmesh/sweep.py` invariants, eight Oblivion
+exterior cells): walked-line cracks **246 at HEAD -> 39**, coverage up 12-28
+points per cell. `AnvilAnvilExteriorCastle03` (in-game report: hovering
+triangles and long slivers): `tri_check.py` flags **315 at HEAD (JUT 216, SINK
+97), 113 on the first terrain-following build (NEEDLE 87), 8 now**; cracks 50
+-> 2. `WrldMorrowind -17 -51`: 13.7% -> 62.7%. Cost: the densest cell measured
+(143 nodes, 95% covered) builds in 15s against 5.5s; the rest are unchanged.
+Thin-obstacle "shadows" were tested as a crack source and ruled out (closing /
+opening the rail widths moved 88 to 72 / 85).
+
+<a id="poly-strips-admit-by-containment"></a>**A poly strip admits by
+CONTAINMENT, never by radius** (`union_geom._levels_at`). A door quad or a
+grown corridor owns exactly its outline. `half` is an admission radius only for
+a fixed-width rectangle; for a grown ribbon it is the widest that rail ever got
+anywhere along its length, so `distance <= half` claims points far outside the
+real ribbon and injects phantom surface levels that split the triangulation —
+**Pinarus fragmented into 11 components**.
 
 ### Geometry cache (the import-time fix)
 
@@ -1142,7 +1252,11 @@ exterior cells regenerate automatically.
 
 <a id="blocked-stations-are-bridged"></a>**A station blocked on BOTH sides at the centerline takes its neighbours' widths** (`_bridge_blocked_stations`). The wall slab straddles the line, so an object hanging over the pathgrid line at head height zeroes both rails: ImperialDungeon03's east corridor (n181-n182) lost **six consecutive stations, 48u of a 74u-wide corridor, to a 4x11x25u block at z 64-90 above the floor** -- the corridor came out as a point in the union. The pathgrid line is the author's assertion that actors pass there, so a station whose line is inside collision cannot be a wall; its widths are interpolated from the nearest stations along the edge that grew on at least one side.
 
-<a id="neighbour-cap-removed"></a>**There is no parallel-neighbour width cap** (`grow_half_width`, `grow.cpp`). Capping a rail at half the distance to a roughly-parallel other edge never changed the union in an open room (both ribbons reach each other either way), but it PINCHED corridor mouths: ImperialDungeon03's N-S corridor (n98-n99) had its right rail cut from 64u to 40u over its last 100u by edge n100-n101 in the room beyond, **27u short of the wall**, and the hand correction ran that rail straight to the wall. Walls, the floor test and the hard cap bound a rail; overlap between ribbons is the union's job.
+<a id="neighbour-cap-removed"></a>**No rail is capped by its DISTANCE to another centerline** (`grow_half_width`, `grow.cpp`). Two versions were built and both reverted. Precomputing `0.5 * distance-to-nearest-parallel-edge` PINCHED corridor mouths: ImperialDungeon03's N-S corridor (n98-n99) had its right rail cut from 64u to 40u over its last 100u by edge n100-n101 **in the room beyond**, 27u short of the wall, and the hand correction ran that rail straight to the wall. Restricting the query to roughly-PARALLEL edges did not fix it. Testing the halfway line DURING the march (so an edge behind a wall could not cap) was reported in-game as seams across walked paths and measured on ImperialDungeon01 as **cracks 2 -> 7 with 4 uncovered pathgrid samples**. The flaw is shared: a halfway line hands ground to the other corridor, and nothing makes that corridor's perpendicular rails cover it. What replaced both: [exterior-coverage-one-code-path](#exterior-coverage-one-code-path).
+
+<a id="the-grow-cap-is-load-bearing"></a>**`RIBBON_GROW_MAX_HALF` (160u) is load-bearing indoors.** Removing it while the march had only wall + floor tests took **40-48% of stations past 160u (max 2621u)** and through-wall triangles from **9 -> 41, 9 -> 59, 12 -> 19** (floating 4 -> 26 on ImperialDungeon01) -- collision alone does NOT bound a rail, because the floor test binds only beyond `lo` and a single ray threading a doorway or a gap in the blocking soup finds neither a wall nor a departure.
+
+**Coverage metrics cannot see this class of bug, in either direction.** A mesh sprawling through walls still covers the floor, so mean-uncovered IMPROVED while the mesh got worse; and a mesh with its node discs collapsed to nothing has FEWER through-wall triangles, because geometry that does not exist cannot cross a wall. Measure `tools/navmesh/grow_check.py` through-wall counts AND the width distribution per station class (edge rails vs disc rays) when changing a stop condition.
 
 <a id="disc-radius-capped-by-its-ribbons"></a>**A node disc reaches no further than the ribbons meeting at that node** (`_disc_strip`, `_node_reach`). Removing the neighbour cap let every disc ray run to `RIBBON_GROW_MAX_HALF` (160u) whenever walls and the floor test allowed, and the floor test allows ground a full step below: in-game verified discontinuities, both hand-corrected. ImperialDungeon01 node n74 (-1.7, 3019, z -805) at the top of a 27u flight grew a flat 160u disc over the -832/-840 floor 150u away, emitting a second vertex column at (-1.7, 3171) 30.7u above the corridor's own -- a crack an actor cannot cross (`ImperialDungeon01.json` welds them). ImperialDungeon02 nodes n74-n76 (1530, 5480-5709) each grew a 160u disc and the union of three overlapping fans plus the 57u ribbon between them was a fan of seven slivers (`ImperialDungeon02.2.json` collapses it to two triangles). The pre-change generator had neither, because the neighbour cap bounded discs at half the distance to the next edge. A disc exists to fill the notch between the ribbons that meet at its node, so past their reach it has no business unless the ground really is its own floor: its rays are clamped to the largest half-width any incident ribbon reached at that node's station (never below `RIBBON_HALF_WIDTH`), and may run on beyond that only while the walkable layers there hold a height within `DISC_LEVEL_TOL` (2u, the sampler's own layer dedupe) of the node's level (`_level_reach`). A plain clamp was tried first and split ImperialDungeon02's -992 mezzanine into two components (28 -> 12 + 9 triangles): it carries two pathgrid islands with no edge between them, and the discs running over the level floor between them were the only join. The n74 disc in ImperialDungeon01 stops at its ribbons because the floor beyond is 27u below its level; the mezzanine discs run on because the floor is exactly -992.
 
@@ -1338,7 +1452,7 @@ exterior cells regenerate automatically.
 
 <a id="soft-floor-never-beats-a-wall"></a>**A WALL always overrides the caller's soft floor** (`grow_half_width`, `lo`). `lo` keeps junctions overlapping, but forcing the ribbon out to a connectivity floor drove mesh straight through walls near every junction -- the same defect the Phase-1 unconditional width has. So the soft floor is marched too, from zero, and the wall test may cut it short. The walkable-floor test binds only BEYOND `lo`: inside it the pathgrid's own assertion wins (a node at a threshold or a ledge lip would otherwise collapse its corridor to nothing), and no wall was found there, so nothing can be on the far side of anything.
 
-<a id="only-parallel-edges-cap-a-width"></a>**The parallel-neighbour width cap is gone** -- see [neighbour-cap-removed](#neighbour-cap-removed). Its last form counted only edges within a parallel-dot of this one, because a crossing or diverging edge treated as an opposing wall pinched dense junctions; removing the cap outright fixed the corridor-mouth pinch the parallel test could not.
+<a id="only-parallel-edges-cap-a-width"></a>**There is no parallel-edge cap** -- see [neighbour-cap-removed](#neighbour-cap-removed).
 
 <a id="node-discs-fill-junction-notches"></a>**Pathgrid NODES grow radial discs to fill the corner notches** (`corridor._disc_march_rows`, `_disc_strip`). Ribbons grow only PERPENDICULAR to their own edge, so where two edges meet at an angle the outer corner is a notch no ribbon reaches -- a right-angle junction leaves a square bite out of the mesh. Marching outward on `RIBBON_GROW_DISC_RAYS` evenly-spaced bearings under the same stop rules as a rail, then closing the ray ends into a polygon, fills exactly that corner; it joins the union like any other strip.
 
@@ -1987,6 +2101,46 @@ never *incorrect*.
 **The pre-push gate only runs on direct pushes to master** (a PR merged in
 GitHub's UI runs no local hook) — CI cannot validate a cache built from
 gitignored `export/` data. Use `--run` for the PR case.
+
+
+## The download path never runs `git`
+<a id="the-download-path-never-runs-git"></a>
+
+**Code:** `navmesh_cache.api_repo`, `CACHE_REPO`.
+
+git is **not a prerequisite** for running the converter and must not be reachable
+from any end-user path. The README tells people to paste a source drop over their
+folder, so the usual install has no `.git` directory, and many such machines have
+no `git` executable on PATH at all.
+
+`api_repo()` used to derive `owner/name` by spawning
+`git remote get-url origin` (via `gh_repo()`), falling back to a constant when
+that returned non-zero. The fallback never fired on a machine without git:
+`subprocess.run` raises `FileNotFoundError` — `[WinError 2] The system cannot
+find the file specified` — at *launch*, before a return code exists. That
+exception propagated out of `_api_releases()` (whose own `try` starts after the
+`api_repo()` call) and was swallowed by `auto_install()`'s catch-all, which
+printed `Navmesh cache: skipped ([WinError 2] ...)` and regenerated navmesh from
+scratch — hours of work, silently, for precisely the population the shared cache
+exists to serve.
+
+The repo name is now the constant `CACHE_REPO`. Nothing about the download needs
+git or `gh`: the release listing and the ~115 MB asset transfer are both plain
+anonymous HTTPS through `urllib.request`. Deriving the name only ever helped a
+*fork's developers*, and cost every gitless end user the entire feature.
+
+`gh_repo()` still shells out to git and is still correct — it is used solely by
+the publish path and by `install`'s explicit-`--tag` branch, both of which gate
+on `have_gh()` first, so git is guaranteed there. It stays because every `gh`
+call must name the repo explicitly instead of relying on the process CWD:
+`install` is the one command a user may run from outside a checkout (or against
+a redirected repo root), and a bare `gh release list` there reports "no releases
+found" rather than failing loudly — which is exactly how a working publish once
+looked broken.
+
+**Do not reintroduce a git call on the download path**, guarded or otherwise.
+`version.py:_version_from_git_dir` makes the same choice for the same reason and
+reads `.git` ref files directly rather than spawning.
 
 
 ## Verifying a cache against fresh geometry

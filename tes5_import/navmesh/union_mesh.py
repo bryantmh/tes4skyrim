@@ -13,7 +13,7 @@ from itertools import product
 
 from . import params
 from .union_geom import (
-    STOREY_GAP_Z, WALL_SLOPE_COS, _height_on, _tri_area,
+    STOREY_GAP_Z, WALL_SLOPE_COS, _height_on, _land_of, _tri_area,
     _tri_components, _tri_edges, _tri_span,
 )
 
@@ -61,27 +61,26 @@ def _stacked_pairs(verts, tris, polys, geoms, gmap):
     Within 40u at the overlap: the tightest gap two REAL storeys ever have is
     STOREY_GAP_Z, so anything closer is a duplicate rather than a floor above.
     """
-    from shapely import STRtree
-    tree = STRtree(geoms)
+    import shapely
+    tree = shapely.STRtree(geoms)
+    left, right = tree.query(geoms, predicate='intersects')
+    cand = [(gmap[a], gmap[b]) for a, b in zip(left.tolist(), right.tolist())
+            if gmap[a] < gmap[b]
+            and not set(tris[gmap[a]]) & set(tris[gmap[b]])]
+    if not cand:
+        return []
+    inters = shapely.intersection([polys[ti] for ti, _tj in cand],
+                                  [polys[tj] for _ti, tj in cand])
     pairs = []
-    for ti in gmap:
-        cp = polys[ti]
-        for gj in tree.query(cp).tolist():
-            tj = gmap[gj]
-            if tj <= ti or set(tris[ti]) & set(tris[tj]):
-                continue
-            try:
-                inter = cp.intersection(polys[tj])
-                area = inter.area
-            except Exception:
-                continue
-            if area <= 4.0:
-                continue
-            cx, cy = inter.centroid.x, inter.centroid.y
-            if abs(_z_at(verts, tris[ti], cx, cy)
-                   - _z_at(verts, tris[tj], cx, cy)) > 40.0:
-                continue
-            pairs.append((-area, ti, tj))
+    for (ti, tj), inter, area in zip(cand, inters,
+                                     shapely.area(inters).tolist()):
+        if area <= 4.0:
+            continue
+        cx, cy = inter.centroid.x, inter.centroid.y
+        if abs(_z_at(verts, tris[ti], cx, cy)
+               - _z_at(verts, tris[tj], cx, cy)) > 40.0:
+            continue
+        pairs.append((-area, ti, tj))
     return pairs
 
 
@@ -200,11 +199,18 @@ def _carries_pathgrid(verts, t, pg_grid):
     return False
 
 
-def _steep_triangles(verts, tris, pg_grid):
-    """(cos_slope, index) for every wall-steep triangle, pathgrid ones spared."""
+def _steep_triangles(verts, tris, pg_grid, land=None):
+    """(cos_slope, index) for every wall-steep triangle, pathgrid ones spared.
+
+    A triangle whose corners all lie on `land` is spared too.
+    See: docs/commentary/tes5_import_navmesh.md#land-triangles-are-never-walls
+    """
     steep = []
     for ti, t in enumerate(tris):
         pa, pb, pc = verts[t[0]], verts[t[1]], verts[t[2]]
+        if land is not None and all(abs(p[2] - land.z(p[0], p[1])) < 0.5
+                                    for p in (pa, pb, pc)):
+            continue
         area2 = abs((pb[0] - pa[0]) * (pc[1] - pa[1]) -
                     (pb[1] - pa[1]) * (pc[0] - pa[0]))
         ux, uy, uz = (pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2])
@@ -234,7 +240,7 @@ def _drop_walls(verts, tris, strips=None):
     if not tris:
         return tris
     pg_grid = _pathgrid_samples(strips)
-    steep = _steep_triangles(verts, tris, pg_grid)
+    steep = _steep_triangles(verts, tris, pg_grid, _land_of(strips or ()))
     if not steep:
         return tris
     alive = [True] * len(tris)
@@ -681,14 +687,22 @@ def _weld_match(grid, v, isrc, gpos, has_src):
     """(rep index, risky) for the first vertex within WELD_R, else (None, False).
 
     `risky` marks a SAME-emission fuse that moves the vertex sideways past
-    SAME_PART_WELD_XY -- provisional until proven not to overlap.
+    SAME_PART_WELD_XY -- provisional until proven not to overlap.  Vertices of
+    DIFFERENT emissions on the same plan spot fuse across one step of height.
+    See: docs/commentary/tes5_import_navmesh.md#cross-sheet-weld-spans-one-step
     """
     gx, gy, gz = gpos
-    for (ddx, ddy, ddz) in product((-1, 0, 1), repeat=3):
+    reach = int(params.MAX_CLIMB // WELD_R) + 1
+    for (ddx, ddy, ddz) in product((-1, 0, 1), (-1, 0, 1),
+                                   range(-reach, reach + 1)):
         for (j, p, jsrc) in grid.get((gx + ddx, gy + ddy,
                                       gz + ddz), ()):
-            d2 = ((p[0] - v[0]) ** 2 + (p[1] - v[1]) ** 2
-                  + (p[2] - v[2]) ** 2)
+            dxy2 = (p[0] - v[0]) ** 2 + (p[1] - v[1]) ** 2
+            if (has_src and isrc != jsrc
+                    and dxy2 <= SAME_PART_WELD_XY ** 2
+                    and abs(p[2] - v[2]) <= params.MAX_CLIMB):
+                return j, False
+            d2 = dxy2 + (p[2] - v[2]) ** 2
             if d2 > WELD_R * WELD_R:
                 continue
             risky = False
