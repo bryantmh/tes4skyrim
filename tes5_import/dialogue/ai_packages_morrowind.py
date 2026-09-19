@@ -7,9 +7,11 @@ that hands an actor a package, so the only faithful route is the one the CK
 itself uses: the packages live on a QUEST ALIAS, and the runtime points that
 alias at whichever actor a script named.
 
-One quest carries one alias per package kind, plus the aliases those packages
-aim at. Every package's location and target are ALIAS-typed, so a single
-record serves every call site.
+One quest carries a POOL of slots per package kind: an alias for the actor,
+an alias for what the package aims at, and the PACK joining them. An alias
+holds one reference, so a slot is what lets several actors run one kind at
+once. Every package's location and target are ALIAS-typed, so a slot serves
+every call site.
 
 See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
 """
@@ -26,10 +28,10 @@ from ..record_types.common import (pack_formid_subrecord, pack_record,
                                    pack_uint32_subrecord)
 from .quest import QUST_ALLOW_REPEATED_STAGES
 
-#: `kind=Plugin.esm|FormID` and one alias index per line; the runtime fills it.
+#: The quest, `slots=N`, a PACK per slot and an alias index per line.
 ALIASES_TABLE = 'ai_aliases.txt'
 
-#: derive_formid sites, keyed by package kind so the ids never move.
+#: derive_formid sites, keyed by slot name so the ids never move.
 _QUEST_SITE = 'MW_AI_QUEST'
 _PACK_SITE = 'MW_AI_PACK'
 
@@ -57,9 +59,15 @@ _KINDS = (
     ('activate', ACTIVATE),
 )
 
-#: Two aliases per kind: who RUNS the package, and what it aims AT.
-_ALIAS_NAMES = tuple(name for kind, _t in _KINDS
-                     for name in (f'{kind}Actor', f'{kind}Target'))
+#: How many actors can run one package kind at the same time.
+_SLOTS = 8
+
+#: Every slot name, `<kind><n>`, in ALST order.
+_SLOT_NAMES = tuple(f'{kind}{n}' for kind, _t in _KINDS for n in range(_SLOTS))
+
+#: Two aliases per slot: who RUNS the package, and what it aims AT.
+_ALIAS_NAMES = tuple(name for slot in _SLOT_NAMES
+                     for name in (f'{slot}Actor', f'{slot}Target'))
 
 
 def _alias_index(name: str) -> int:
@@ -101,11 +109,11 @@ def quest_record(formid: int, pack_ids: dict) -> bytes:
     return pack_record('QUST', formid, 0, subs)
 
 
-def _inputs(kind: str, template) -> Inputs:
-    """The template's vanilla defaults with its alias slots pointed at this
-    kind's own aliases."""
+def _inputs(kind: str, slot: str, template) -> Inputs:
+    """The template's vanilla defaults with its alias inputs pointed at this
+    slot's own aliases."""
     inputs = Inputs(template)
-    target = _alias_index(f'{kind}Target')
+    target = _alias_index(f'{slot}Target')
     if kind == 'travel':
         inputs.set('location', build_alias_location(target, _AT_THE_REF))
     elif kind == 'wander':
@@ -114,7 +122,7 @@ def _inputs(kind: str, template) -> Inputs:
     elif kind == 'escort':
         inputs.set('target', build_alias_target(target))
         inputs.set('location', build_alias_location(
-            _alias_index('escortActor'), _AT_THE_REF))
+            _alias_index(f'{slot}Actor'), _AT_THE_REF))
     else:
         inputs.set('target', build_alias_target(target))
     return inputs
@@ -125,14 +133,15 @@ def _any_time() -> bytes:
     return struct.pack('<bbBbb3xi', -1, -1, 0, -1, -1, 0)
 
 
-def pack_record_for(kind: str, template, formid: int, quest_fid: int) -> bytes:
-    """One PACK instance for a package kind, at exactly `formid`.
+def pack_record_for(kind: str, slot: str, template, formid: int,
+                    quest_fid: int) -> bytes:
+    """One PACK instance for one slot of a package kind, at exactly `formid`.
 
     Order: EDID PKDT PSDT QNAM PKCU <inputs> POBA/POEA/POCA. MustComplete is
     set so the package survives to completion rather than being dropped at the
     actor's next evaluation, which is what a TES3 script expects.
     """
-    subs = pack_string_subrecord('EDID', f'MWAI{kind.capitalize()}')
+    subs = pack_string_subrecord('EDID', f'MWAI{slot.capitalize()}')
     subs += pack_subrecord('PKDT', build_pkdt(T5_MUST_COMPLETE, SPEED_WALK,
                                               interrupt=DEFAULT_INTERRUPT))
     subs += pack_subrecord('PSDT', _any_time())
@@ -140,7 +149,7 @@ def pack_record_for(kind: str, template, formid: int, quest_fid: int) -> bytes:
     subs += pack_subrecord('PKCU', struct.pack('<III', len(template.inputs),
                                                template.formid,
                                                template.version))
-    subs += _inputs(kind, template).emit()
+    subs += _inputs(kind, slot, template).emit()
     for marker in ('POBA', 'POEA', 'POCA'):
         subs += pack_subrecord(marker, b'')
         subs += pack_formid_subrecord('INAM', 0)
@@ -149,18 +158,20 @@ def pack_record_for(kind: str, template, formid: int, quest_fid: int) -> bytes:
 
 
 def write_ai_packages(writer, side_dir: str, plugin_name: str) -> int:
-    """Mint the AI quest, its aliases and one PACK per kind, and stage the
+    """Mint the AI quest, its aliases and one PACK per slot, and stage the
     alias table the runtime fills. Returns how many packages were written."""
     quest_fid = writer.derive_formid(_QUEST_SITE, _QUEST_EDID)
-    pack_ids = {kind: writer.derive_formid(_PACK_SITE, kind)
-                for kind, _t in _KINDS}
+    pack_ids = {slot: writer.derive_formid(_PACK_SITE, slot)
+                for slot in _SLOT_NAMES}
     for kind, template in _KINDS:
-        writer.add_record('PACK', pack_record_for(kind, template,
-                                                  pack_ids[kind], quest_fid))
+        for n in range(_SLOTS):
+            slot = f'{kind}{n}'
+            writer.add_record('PACK', pack_record_for(
+                kind, slot, template, pack_ids[slot], quest_fid))
     writer.add_record('QUST', quest_record(quest_fid, pack_ids))
-    lines = [f'quest={plugin_name}|{quest_fid:08X}']
-    lines += [f'pack.{kind}={plugin_name}|{pack_ids[kind]:08X}'
-              for kind, _t in _KINDS]
+    lines = [f'quest={plugin_name}|{quest_fid:08X}', f'slots={_SLOTS}']
+    lines += [f'pack.{slot}={plugin_name}|{pack_ids[slot]:08X}'
+              for slot in _SLOT_NAMES]
     lines += [f'{name}={index}' for index, name in enumerate(_ALIAS_NAMES)]
     with open(os.path.join(side_dir, ALIASES_TABLE), 'w',
               encoding='utf-8') as handle:

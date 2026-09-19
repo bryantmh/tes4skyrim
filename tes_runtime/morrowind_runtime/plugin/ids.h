@@ -345,6 +345,7 @@ constexpr std::uint64_t kRefSetScale = 56240;
 //   Alias  Quest.GetAlias(int aliasId)              0x9ea980
 //   void   ReferenceAlias.ForceRefTo(ObjectReference) 0x9a47c0
 //   void   ReferenceAlias.Clear()                    0x9a46f0
+//   ref    ReferenceAlias.GetReference()             0x9a4740
 //   Package Actor.GetCurrentPackage()                0x9898b0
 //
 // 🛑 A quest that is not RUNNING owns no alias instances, so `ForceRefTo` on
@@ -356,6 +357,7 @@ constexpr std::uint64_t kRefSetScale = 56240;
 constexpr std::uint64_t kQuestGetAlias = 56723;
 constexpr std::uint64_t kAliasForceRefTo = 55288;
 constexpr std::uint64_t kAliasClear = 55286;
+constexpr std::uint64_t kAliasGetReference = 55287;
 constexpr std::uint64_t kActorCurrentPackage = 54681;
 
 // The one-call world queries, each found at its registration and verified

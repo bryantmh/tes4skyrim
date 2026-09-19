@@ -118,6 +118,8 @@ using GetAliasFn = void* (*)(void* vm, std::uint32_t stack, void* quest,
                              std::int32_t aliasId);
 using ForceRefToFn = void (*)(void* vm, std::uint32_t stack, void* alias,
                               void* ref);
+// ReferenceAlias.GetReference() -> what the alias holds, or null.
+using AliasRefFn = void* (*)(void* vm, std::uint32_t stack, void* alias);
 
 // Actor.GetCurrentPackage() -> the PACK the actor runs, for
 // GetCurrentAiPackage.
@@ -266,6 +268,7 @@ ScaleGetFn   g_getScale = nullptr;
 ScaleSetFn   g_setScale = nullptr;
 GetAliasFn       g_questGetAlias = nullptr;
 ForceRefToFn     g_forceRefTo = nullptr;
+AliasRefFn       g_aliasReference = nullptr;
 RefCallFn        g_aliasClear = nullptr;
 CurrentPackageFn g_currentPackage = nullptr;
 PairQueryFn      g_hasLos = nullptr;
@@ -902,47 +905,87 @@ void* AiQuestForm() {
     return form && StartQuest(form, &justStarted) ? form : nullptr;
 }
 
-// Points one named alias of the AI quest at `ref`, or CLEARS it when `ref` is
-// null. Returns false when nothing could be filled.
-//
-// 🛑 ForceRefTo itself makes the actor re-evaluate its packages, so no
-// EvaluatePackage is needed after it -- and the wiki warns against calling it
-// repeatedly while a scene runs in the same quest, which is why this quest
-// owns nothing but these aliases.
-bool FillAiAlias(const std::string& name, void* ref) {
+// One named alias of the AI quest, or null.
+void* AiAlias(const std::string& name) {
     void* quest = AiQuestForm();
     const int index = AiAliasIndex(name);
-    if (!quest || index < 0 || !g_questGetAlias) return false;
-    void* alias = g_questGetAlias(PapyrusVm(), 0, quest, index);
-    if (!alias) return false;
-    if (ref) {
-        if (!g_forceRefTo) return false;
-        g_forceRefTo(PapyrusVm(), 0, alias, ref);
-    } else if (g_aliasClear) {
-        g_aliasClear(PapyrusVm(), 0, alias);
-    }
-    return true;
+    if (!quest || index < 0 || !g_questGetAlias) return nullptr;
+    return g_questGetAlias(PapyrusVm(), 0, quest, index);
 }
 
-// Starts one package kind on `actor`, aimed at `at`: both aliases are filled
-// and the engine picks the PACK up from the actor's alias.
+// What an alias holds right now, read off the ENGINE so a loaded save's
+// fills count without any bookkeeping of ours.
+void* AiAliasHolds(void* alias) {
+    return alias && g_aliasReference
+               ? g_aliasReference(PapyrusVm(), 0, alias)
+               : nullptr;
+}
+
+// A slot's name: the package kind and its number in the pool.
+std::string AiSlot(const char* kind, int n) {
+    return std::string(kind) + std::to_string(n);
+}
+
+// Calls `visit(slot, actorAlias)` for every slot of every kind until one
+// returns true, and reports whether one did.
+template <class Visit>
+bool AnyAiSlot(Visit visit) {
+    const int slots = AiAliasIndex("slots");
+    for (int kind = 0; kind < kAiKindCount; ++kind) {
+        for (int n = 0; n < slots; ++n) {
+            const std::string slot = AiSlot(kAiKinds[kind], n);
+            if (visit(slot, AiAlias(slot + "Actor"))) return true;
+        }
+    }
+    return false;
+}
+
+// Takes `ref` out of every slot it sits in, which ends those packages. A new
+// AI command replaces whatever the actor was given before.
+void ReleaseAiActor(void* ref) {
+    if (!g_aliasClear) return;
+    AnyAiSlot([ref](const std::string& slot, void* alias) {
+        if (AiAliasHolds(alias) != ref) return false;
+        g_aliasClear(PapyrusVm(), 0, alias);
+        if (void* target = AiAlias(slot + "Target")) {
+            g_aliasClear(PapyrusVm(), 0, target);
+        }
+        return false;
+    });
+}
+
+// Starts one package kind on `actor`, aimed at `at`: the first EMPTY slot of
+// that kind takes both, and the engine picks the PACK up from the actor's
+// alias. One alias holds one reference, so the pool is what lets several
+// actors run one kind at once.
 //
-// 🛑 POSTED, like every other engine call here. `ForceRefTo` re-evaluates the
-// actor's package stack SYNCHRONOUSLY, and a result script runs on the menu's
-// callback thread -- so calling it directly re-entered the AI system mid-frame
-// and the engine walked a list that was being mutated under it. Measured
-// 2026-09-18: an access violation reading a MESH PATH as an object pointer,
-// one frame after two follow packages fired.
+// 🛑 ForceRefTo itself makes the actor re-evaluate its packages, so no
+// EvaluatePackage is needed after it. POSTED, like every other engine call.
 // See: docs/commentary/morrowind_runtime.md#forcerefto-must-be-posted
 bool RunAiPackage(const char* kind, const std::string& actor, void* at) {
     void* ref = OwnerRef(actor);
-    if (!ref || !at) return false;
-    const std::string name(kind);
-    PostToMainThread([name, ref, at]() {
-        FillAiAlias(name + "Target", at);
-        FillAiAlias(name + "Actor", ref);
+    if (!ref || !at || !g_forceRefTo) return false;
+    PostToMainThread([kind, ref, at]() {
+        ReleaseAiActor(ref);
+        const int slots = AiAliasIndex("slots");
+        for (int n = 0; n < slots; ++n) {
+            const std::string slot = AiSlot(kind, n);
+            void* alias = AiAlias(slot + "Actor");
+            void* target = AiAlias(slot + "Target");
+            if (!alias || !target || AiAliasHolds(alias)) continue;
+            g_forceRefTo(PapyrusVm(), 0, target, at);
+            g_forceRefTo(PapyrusVm(), 0, alias, ref);
+            return;
+        }
+        Log("ai: no free %s slot of %d", kind, slots);
     });
     return true;
+}
+
+// An Ai command with an empty target ends what the actor was given.
+void StopAiPackage(const std::string& actor) {
+    void* ref = OwnerRef(actor);
+    if (ref) PostToMainThread([ref]() { ReleaseAiActor(ref); });
 }
 
 // `AiTravel x y z`: a package destination cannot be raw coordinates, so a
@@ -981,10 +1024,7 @@ void AiFollowActor(const std::string& actor, const std::string& target,
                    float duration, float x, float y, float z) {
     (void)x; (void)y; (void)z;
     if (target.empty()) {
-        PostToMainThread([]() {
-            FillAiAlias("followActor", nullptr);
-            FillAiAlias("followTarget", nullptr);
-        });
+        StopAiPackage(actor);
         return;
     }
     if (RunAiPackage("follow", actor, OwnerRef(target))) {
@@ -999,10 +1039,7 @@ void AiFollowActor(const std::string& actor, const std::string& target,
 void AiEscortActor(const std::string& actor, const std::string& target,
                    float duration, float x, float y, float z) {
     if (target.empty()) {
-        PostToMainThread([]() {
-            FillAiAlias("escortActor", nullptr);
-            FillAiAlias("escortTarget", nullptr);
-        });
+        StopAiPackage(actor);
         return;
     }
     (void)x; (void)y; (void)z;
@@ -1030,9 +1067,13 @@ int CurrentAiPackageOf(const std::string& actor) {
     void* running = g_currentPackage(PapyrusVm(), 0, ref);
     if (!running) return -1;
     const std::uint32_t id = FormIdOf(running);
+    const int slots = AiAliasIndex("slots");
     for (int i = 0; i < kAiKindCount; ++i) {
-        const FormRef* staged = FindAiPack(kAiKinds[i]);
-        if (staged && Form(staged) && FormIdOf(Form(staged)) == id) return i;
+        for (int n = 0; n < slots; ++n) {
+            const FormRef* staged = FindAiPack(AiSlot(kAiKinds[i], n));
+            void* pack = staged ? Form(staged) : nullptr;
+            if (pack && FormIdOf(pack) == id) return i;
+        }
     }
     return -1;
 }
@@ -1331,6 +1372,8 @@ void InstallGameCalls() {
                                          ids::kQuestGetAlias);
     g_forceRefTo = Native<ForceRefToFn>("ReferenceAlias.ForceRefTo",
                                         ids::kAliasForceRefTo);
+    g_aliasReference = Native<AliasRefFn>(
+        "ReferenceAlias.GetReference", ids::kAliasGetReference);
     g_aliasClear = Native<RefCallFn>("ReferenceAlias.Clear",
                                     ids::kAliasClear);
     g_currentPackage = Native<CurrentPackageFn>("Actor.GetCurrentPackage",

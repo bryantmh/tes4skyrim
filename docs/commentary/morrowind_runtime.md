@@ -1337,10 +1337,19 @@ script runs on the menu's callback thread, so the fills and clears are posted
 like every other engine call. This was NOT the cause of the crash above; an
 earlier version of this section said it was.
 
-🛑 **One alias holds ONE reference, so two actors cannot share a package
-kind.** A script that gives two actors `AiFollow` fills `followActor` twice and
-only the second follows. NOT YET FIXED: it needs an alias, and a PACK aimed at
-it, per concurrent actor rather than per kind.
+🛑 **One alias holds ONE reference, so each package kind gets a POOL of
+slots.** A script that gave two actors `AiFollow` filled one `followActor`
+twice and only the second followed. The import now writes 8 slots per kind
+(`follow0`..`follow7`): an actor alias, a target alias, and a PACK aimed at
+that slot's own aliases -- 80 aliases and 40 PACKs on the one quest, with
+`slots=8` in `ai_aliases.txt`.
+
+- A command first takes the actor out of EVERY slot it sits in, then fills
+  the first empty slot of its kind, so a new command replaces the old one.
+- Which slot is empty is read off the engine with
+  `ReferenceAlias.GetReference` (55287, 0x9a4740), not tracked, so fills that
+  came back with a loaded save count.
+- A full pool logs `ai: no free <kind> slot` and the command is dropped.
 
 ### <a id="the-query-commands"></a>The query commands are one native each
 
