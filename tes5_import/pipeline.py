@@ -695,37 +695,77 @@ def _prescan_vendor_trainer(by_type: dict, ctx, writer, _step_done):
     _step_done('vendor/trainer records')
 
 
-def _prescan_mesh_caches(export_dir: str, plugin_out_dir: str, _step_done):
-    """Load the mesh-bounds and collision caches, scanning them if stale.
+def _rescan_mesh_caches(export_dir, mesh_dir: str) -> bool:
+    """Rebuild one export's bounds+collision caches if either is stale.
 
-    One scan fills both, since they share the expensive NIF parse.  A
-    bounds cache predating the current entry schema counts as missing:
-    it would parse cleanly and read as all-zeroes for the new field.
+    True when a scan ran.  One scan fills both, since they share the expensive
+    NIF parse.  A bounds cache predating the current entry schema counts as
+    missing: it would parse cleanly and read as all-zeroes for the new field.
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-stale-bounds-cache
     """
-    from .base.mesh_bounds import load_mesh_bounds
-    from asset_convert.collision.collision_extract import (load_collision, scan_mesh_data,
-                                                 bounds_cache_is_current,
-                                                 collision_cache_is_current,
-                                                 door_axis_cache_is_current,
-                                                 scan_door_axes)
+    from asset_convert.collision.collision_extract import (
+        scan_mesh_data, bounds_cache_is_current, collision_cache_is_current)
     from asset_convert.collision.mesh_scan_fragments import (clear_fragments,
                                                              merge_fragments)
-    cache_path = str(assets_for(export_dir) / 'mesh_bounds_cache.json')
-    col_path = str(assets_for(export_dir) / 'collision_cache.bin')
-    axis_path = str(assets_for(export_dir) / 'door_panel_axis_cache.json')
-    mesh_dir = os.path.join(plugin_out_dir, 'meshes')
     assets_dir = assets_for(export_dir)
-    if (not bounds_cache_is_current(cache_path)
-            or not collision_cache_is_current(col_path)) \
-            and os.path.isdir(mesh_dir):
-        print(f"  Mesh bounds/collision cache missing or stale, "
-              f"scanning {mesh_dir}...")
-        seed_b, seed_c = merge_fragments(assets_dir)
-        scan_mesh_data(mesh_dir, col_path, cache_path,
-                       seed_bounds=seed_b, seed_collision=seed_c)
-        clear_fragments(assets_dir)
+    cache_path = str(assets_dir / 'mesh_bounds_cache.json')
+    col_path = str(assets_dir / 'collision_cache.bin')
+    if (bounds_cache_is_current(cache_path)
+            and collision_cache_is_current(col_path)) \
+            or not os.path.isdir(mesh_dir):
+        return False
+    print(f"  Mesh bounds/collision cache missing or stale, "
+          f"scanning {mesh_dir}...")
+    seed_b, seed_c = merge_fragments(assets_dir)
+    scan_mesh_data(mesh_dir, col_path, cache_path,
+                   seed_bounds=seed_b, seed_collision=seed_c)
+    clear_fragments(assets_dir)
+    return True
+
+
+def _refresh_master_mesh_caches(export_dir: str) -> None:
+    """Rescan every MASTER whose bounds/collision cache is stale.
+
+    A cache-format bump strands each master not re-run since: the chain loads
+    masters-first and skips a reject per-path, so the plugin navmeshes with
+    only the meshes it ships itself and master-owned statics carve nothing.
+
+    See: docs/commentary/tes5_import_pipeline.md#stale-master-asset-caches
+    """
+    from output_layout import paths as plugin_paths
+    from .overrides.nested import export_root, master_export_dir
+    header = os.path.join(export_dir, '_HEADER.txt')
+    if not os.path.isfile(header):
+        return
+    try:
+        with open(header, 'r', encoding='utf-8') as fh:
+            names = [line.partition('=')[2].strip() for line in fh
+                     if line.startswith('Master[')]
+    except OSError:
+        return
+    root = export_root(export_dir)
+    for name in names:
+        mdir = master_export_dir(root, name)
+        if os.path.isdir(mdir):
+            _rescan_mesh_caches(
+                mdir, os.path.join(str(plugin_paths(name).out), 'meshes'))
+
+
+def _prescan_mesh_caches(export_dir: str, plugin_out_dir: str, _step_done):
+    """Load the mesh-bounds and collision caches, scanning them if stale.
+
+    The MASTERS' caches are refreshed FIRST: the chain loads masters-first and
+    a stale entry is skipped rather than fatal.
+
+    See: docs/commentary/tes5_import_pipeline.md#stale-master-asset-caches
+    """
+    from .base.mesh_bounds import load_mesh_bounds
+    from asset_convert.collision.collision_extract import (
+        load_collision, door_axis_cache_is_current, scan_door_axes)
+    axis_path = str(assets_for(export_dir) / 'door_panel_axis_cache.json')
+    _refresh_master_mesh_caches(export_dir)
+    _rescan_mesh_caches(export_dir, os.path.join(plugin_out_dir, 'meshes'))
     if not door_axis_cache_is_current(axis_path):
         print("  Door threshold cache missing or stale, measuring door "
               "panels...")

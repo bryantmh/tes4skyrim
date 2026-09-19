@@ -1655,6 +1655,45 @@ mostly leaves at zero, so it buys nothing until an interior is shown to need
 it. The six-way directional-ambient block stays a replicated flat ambient for
 the same reason: Oblivion proves that reads fine.
 
+## <a id="region-weather"></a>Region weather
+
+**Code:** `tes4_export/morrowind_region.py`
+
+Morrowind authors no weather records. The engine hardcodes ten weather types
+and a region's `WEAT` subrecord is one chance byte per type, in the order
+OpenMW's `WeatherManager` registers them
+(`references/openmw/apps/openmw/mwworld/weather.cpp`): Clear, Cloudy, Foggy,
+Overcast, Rain, Thunderstorm, Ashstorm, Blight, Snow, Blizzard. The colors
+behind each live in `Morrowind.ini`, not the plugin.
+
+So in Morroblivion mode there is nothing to mint: Morroblivion already
+converted all ten as real WTHR (`mwClear` ... `mwBlizzard`, plus
+`mwWeatherAshstorm*`), and a region converts by naming them through the
+EditorID index. `WEATHER_EDITOR_IDS` is that whole mapping. This is why the
+region's NAME never has to match a Morroblivion region: the region is
+self-describing, and only the ten weather slots are shared vocabulary.
+
+Measured sources: `Morrowind.esm` 9 regions (8-byte `WEAT`, Bloodmoon widened
+it to 10), `TR_Mainland.esm` 1, `Tamriel_Data.esm` 80.
+
+**Slots 6 and 7 are NOT named after the weather.** Morroblivion calls them
+`mwAsh` and `mwWeatherAshstormBlight`, not `mwAshstorm`/`mwAshstormBlight`,
+and guessing the names silently drops ash and blight. The identity is pinned
+by real data, not the naming: Morrowind's `RedMountainRegion` authors
+`[0,0,0,0,0,0,0,100]` -- 100% at slot 7 -- and Morroblivion's own
+`RedMountainRegion` gives that entry `01F8B26B`
+(`mwWeatherAshstormBlight`).
+
+**A weather region needs a polygon.** All 53 of Skyrim.esm's weather-bearing
+REGN records carry `RPLD`, so `convert_REGN` rightly returns None without one
+-- and Morrowind, which assigns a region per CELL, authors none. The polygon
+is therefore synthesized as the bounding rectangle of the grid squares the
+region's own cells occupy. It is approximate on purpose: region weather
+reaches the sky through the CELL's `XCLR` list, exactly as it does in Skyrim,
+so the rectangle only has to make the record legal.
+
+`Override=1 Priority=95` matches vanilla Skyrim's own weather regions.
+
 ## <a id="magic"></a>Magic: an effect is an index, not a code
 
 TES4 gives every magic effect a four-character code and its own record, so the

@@ -26,13 +26,14 @@ from .morroblivion import (MORROBLIVION_PREFIX, MorroblivionModels,
 from .morroblivion_origin import OriginShifts
 from .morrowind_armor import load_body_models
 from .morrowind_cell import parse_cell
-from .morrowind_ids import (IdIndex, exterior_key, interior_key, land_key,
-                            load_master_doors, persistent_key,
-                            load_index, marker_formid)
+from .morrowind_ids import (IdIndex, encode_editor_id, exterior_key,
+                            interior_key, land_key, load_master_doors,
+                            persistent_key, load_index, marker_formid)
 from .morrowind_markers import MarkerBuilder, marker_lines
 from .morrowind_travel import travel_marker_records
 from .morrowind_pathgrid import pathgrid_records
 from .morrowind_patch import PATCH_NAME
+from .morrowind_region import region_records
 from .morrowind_grass import (GrassTally, grass_records, is_grass_model,
                               ltex_grass_lines, master_ltex_fields,
                               master_texture_grid)
@@ -57,7 +58,8 @@ from .record_types.morrowind_magic import (MORROWIND_MAGIC_EXPORTERS,
                                            effect_ranges,
                                            synthesized_effects)
 from .record_types.morrowind_scripts import MORROWIND_SCRIPT_EXPORTERS
-from .tes3_reader import get_subrecord, read_file, read_masters
+from .tes3_reader import (get_subrecord, is_tes3, read_file,
+                          read_masters)
 
 #: TES3 signature -> exporter, over every base record type this pass converts.
 EXPORTERS = {**MORROWIND_ITEM_EXPORTERS, **MORROWIND_ACTOR_EXPORTERS,
@@ -83,6 +85,9 @@ _MAX_REHASH = 64
 
 #: SkyrimClimate (0x812), the climate vanilla Tamriel itself uses.
 _SKYRIM_CLIMATE = '00000812'
+
+#: Morroblivion's converted Morrowind climate, holding the ten MW weathers.
+_MORROWIND_CLIMATE_EDID = 'mwMorrowindClimate'
 
 #: LAND DATA 0x1D (4,207 vanilla LANDs): normals, layers, unknown4, auto-calc.
 _LAND_FLAGS = 29
@@ -136,6 +141,8 @@ class MorrowindContext:
         self.interior_names = set()
         self.markers = MarkerBuilder()
         self.known_grids = set()
+        self.region_cells = {}
+        self._master_weat = None
         self.pending_teleports = []
         self.doors_by_cell = {}
         self.pending_packages = []
@@ -248,6 +255,46 @@ class MorrowindContext:
             self.markers.note_interior(cell)
         else:
             self.known_grids.update(tes3_cell_quadrants(*cell.grid))
+            if cell.region:
+                named = self.region_cells.setdefault(
+                    cell.region.lower(), (cell.region, set()))
+                named[1].update(tes3_cell_quadrants(*cell.grid))
+
+    def region_id(self, record_id: str) -> str:
+        """The FormID for a region: a converted master's, else derived.
+
+        See: docs/commentary/tes4_export_morrowind.md#region-weather
+        """
+        return (self.index.lookup_editor_id(encode_editor_id(record_id))
+                or self.index.lookup_region(record_id)
+                or self.derive('regn:' + record_id.lower()))
+
+    def region_grids(self, record_id: str) -> set:
+        """Every grid square whose cell names this region.
+
+        See: docs/commentary/tes4_export_morrowind.md#region-weather
+        """
+        named = self.region_cells.get(record_id.lower())
+        return named[1] if named else set()
+
+    def region_name(self, key: str) -> str:
+        """The authored spelling of a region, which its EditorID is cased on."""
+        named = self.region_cells.get(key)
+        return named[0] if named else key
+
+    def region_weather(self, rec) -> bytes:
+        """A REGN's WEAT chance bytes, one per hardcoded weather type."""
+        sub = get_subrecord(rec, 'WEAT')
+        return sub.data if sub else b''
+
+    def master_region_weather(self) -> dict:
+        """{lowercase region id: WEAT bytes} from every master's own source.
+
+        See: docs/commentary/tes4_export_morrowind.md#region-weather
+        """
+        if self._master_weat is None:
+            self._master_weat = _master_region_weather(self.master_dirs)
+        return self._master_weat
 
     def destination_cell(self, ref) -> str:
         """The FormID of the cell a door reference teleports into, or ''.
@@ -567,7 +614,7 @@ def convert_plugin(records, ctx: MorrowindContext) -> dict:
     register_sound_gens(records, ctx)
 
     out = {sig: [] for sig in
-           ('CELL', 'REFR', 'ACHR', 'ACRE', 'LAND', 'PGRD')}
+           ('CELL', 'REFR', 'ACHR', 'ACRE', 'LAND', 'PGRD', 'REGN')}
     out.update(dialogue_records(records))
     out['PGRD'] = pathgrid_records(_collect_records(records, ctx, out), ctx)
     teleport_records(ctx)
@@ -577,6 +624,7 @@ def convert_plugin(records, ctx: MorrowindContext) -> dict:
     out['REFR'].extend(travel_markers)
     out['REFR'].extend(map_marker_records(ctx))
     out['REFR'].extend(travel_marker_records(records, ctx, _is_convertible))
+    out['REGN'] = region_records(records, ctx)
     out['WRLD'] = worldspace_record(ctx)
     out['CELL'].extend(persistent_cell_record(ctx))
     out.setdefault('MGEF', []).extend(magic_effect_records(records, ctx))
@@ -788,9 +836,23 @@ def worldspace_record(ctx: MorrowindContext) -> list:
         return []
     return [(ctx.worldspace_id(),
              [f'EditorID={WORLDSPACE_EDID}', 'FULL=Morrowind',
-              f'CNAM.Vanilla={_SKYRIM_CLIMATE}', 'DATA.Flags=0',
+              _world_climate_line(ctx), 'DATA.Flags=0',
               f'NAM0.MinX={min_x}', f'NAM0.MinY={min_y}',
               f'NAM9.MaxX={max_x}', f'NAM9.MaxY={max_y}'])]
+
+
+def _world_climate_line(ctx: MorrowindContext) -> str:
+    """The worldspace's CNAM: Morrowind's own climate when a master has it.
+
+    Skyrim has no runtime climate fallback, so a worldspace must name one.
+    Morroblivion converted Morrowind's, and it carries the ten hardcoded
+    weathers; without it the sky falls back to Skyrim's own.
+    See: docs/commentary/tes4_export_morrowind.md#region-weather
+    """
+    climate = ctx.index.lookup_editor_id(_MORROWIND_CLIMATE_EDID)
+    if climate:
+        return f'CNAM.Climate={climate}'
+    return f'CNAM.Vanilla={_SKYRIM_CLIMATE}'
 
 
 def _is_convertible(rec, ctx: MorrowindContext) -> bool:
@@ -1010,6 +1072,8 @@ def _exterior_cells(cell, ctx: MorrowindContext) -> tuple:
         lines = [f'EditorID={edid}', 'DATA.Flags=2',
                  f'XCLC.X={grid[0]}', f'XCLC.Y={grid[1]}',
                  f'ParentWRLD={ctx.worldspace_id()}']
+        if cell.region:
+            lines.append(f'Region[0]={ctx.region_id(cell.region)}')
         if cell.name:
             lines.append(f'FULL={cell.name}')
         if not ctx.claim_exterior(grid):
@@ -1164,3 +1228,24 @@ def teleport_records(ctx: MorrowindContext) -> list:
         lines.extend(_placement_lines(ref.dest_pos, rot, 'XTEL.'))
         lines.append(f'RecordFlags={_PERSISTENT}')
         _rehome_persistent(lines, ctx)
+
+def _master_region_weather(master_dirs) -> dict:
+    """{lowercase region id: WEAT bytes} over every master's retained source.
+
+    See: docs/commentary/tes4_export_morrowind.md#region-weather
+    """
+    out = {}
+    for path, _remap in master_dirs or ():
+        source = os.path.join(path, '_source')
+        if not os.path.isdir(source):
+            continue
+        for name in sorted(os.listdir(source)):
+            if not is_tes3(os.path.join(source, name)):
+                continue
+            for rec in read_file(os.path.join(source, name))[1]:
+                if rec.type != 'REGN' or rec.deleted:
+                    continue
+                sub = get_subrecord(rec, 'WEAT')
+                if sub and rec.record_id.lower() not in out:
+                    out[rec.record_id.lower()] = sub.data
+    return out

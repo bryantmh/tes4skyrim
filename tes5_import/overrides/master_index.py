@@ -212,6 +212,11 @@ _FORMID_FIELDS = {
     #   XRGD / XRGB      (ragdoll/biped data blobs)
 }
 
+#: Per-signature FormID fields: WRLD CNAM is a CLMT, a CELL's is a colour.
+_FORMID_FIELDS_BY_SIG = {
+    b'WRLD': {b'CNAM': None, b'NAM2': None},
+}
+
 
 def _shift_formid(fid: int, index_map: dict) -> int:
     """Restate a FormID's index byte via `index_map`, leaving 0 (null) alone.
@@ -298,6 +303,42 @@ def _shift_vmad(payload: bytes, index_map: dict) -> bytes:
         return payload
 
 
+
+
+def _shift_payload(payload: bytearray, spots, index_map: dict) -> None:
+    """Restate the FormIDs at `spots` in place; None means the whole run."""
+    offsets = (range(0, len(payload) - 3, 4) if spots is None else spots)
+    for off in offsets:
+        if off + 4 <= len(payload):
+            value = struct.unpack_from('<I', payload, off)[0]
+            struct.pack_into('<I', payload, off,
+                             _shift_formid(value, index_map))
+
+
+def _shift_body_formids(body: bytes, index_map: dict, sig: bytes) -> bytearray:
+    """One record's subrecords, every known FormID restated for the child.
+
+    `sig` selects the fields whose meaning depends on the owning record, so a
+    WRLD's CNAM shifts as a climate while a CELL's stays a colour.
+    """
+    fields = dict(_FORMID_FIELDS)
+    fields.update(_FORMID_FIELDS_BY_SIG.get(sig, {}))
+    out = bytearray()
+    j = 0
+    while j + 6 <= len(body):
+        ssig = body[j:j + 4]
+        ssize = struct.unpack_from('<H', body, j + 4)[0]
+        payload = bytearray(body[j + 6:j + 6 + ssize])
+        if ssig == b'VMAD':
+            payload = bytearray(_shift_vmad(bytes(payload), index_map))
+        elif ssig in fields:
+            _shift_payload(payload, fields[ssig], index_map)
+        out += ssig + struct.pack('<H', ssize) + bytes(payload)
+        j += 6 + ssize
+    out += body[j:]
+    return out
+
+
 def _shift_record_formids(rec: bytes, index_map: dict) -> bytes:
     """A converted record restated in the child's load order.
 
@@ -321,26 +362,7 @@ def _shift_record_formids(rec: bytes, index_map: dict) -> bytes:
             return rec
         flags &= ~0x00040000
 
-    out = bytearray()
-    j = 0
-    while j + 6 <= len(body):
-        ssig = body[j:j + 4]
-        ssize = struct.unpack_from('<H', body, j + 4)[0]
-        payload = bytearray(body[j + 6:j + 6 + ssize])
-        if ssig == b'VMAD':
-            payload = bytearray(_shift_vmad(bytes(payload), index_map))
-        elif ssig in _FORMID_FIELDS:
-            spots = _FORMID_FIELDS[ssig]
-            offsets = (range(0, len(payload) - 3, 4) if spots is None
-                       else spots)
-            for off in offsets:
-                if off + 4 <= len(payload):
-                    v = struct.unpack_from('<I', payload, off)[0]
-                    struct.pack_into('<I', payload, off,
-                                     _shift_formid(v, index_map))
-        out += ssig + struct.pack('<H', ssize) + bytes(payload)
-        j += 6 + ssize
-    out += body[j:]        # any trailing bytes, untouched
+    out = _shift_body_formids(body, index_map, rec[:4])
 
     head = bytearray(rec[:_HEADER_SIZE])
     struct.pack_into('<I', head, 4, len(out))

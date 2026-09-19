@@ -22,6 +22,7 @@ The layer rules and the decision procedure are in
 - [Phase 0 — the cross-ref graph mirrors the CLI scan](#phase-0-xref-mirrors-cli-scan)
 - [Phase 0 — magic effects, and what must exist before items convert](#phase-0-magic-effect-prerequisites)
 - [Phase 0 — a stale bounds cache reads as all-zeroes](#phase-0-stale-bounds-cache)
+- [A cache bump strands the MASTERS, not the plugin](#stale-master-asset-caches)
 - [Phase 0 — hunt chains and script-forced packages](#phase-0-hunt-chains-and-script-packages)
 - [Phase 0 — hair lengths and race skin tones index the masters](#phase-0-hair-and-skin-index-masters)
 - [Phase 0c — combat music is reachable only through DOBJ BTMS](#phase-0c-dobj-btms)
@@ -273,6 +274,36 @@ unresolvable `<name>.spt.nif`. Which meshes a cell carves changed, so every
 cache written before the bump is regenerated rather than trusted — the magic
 and `COLLISION_SCHEMA_VERSION` move together, and the old blob is
 byte-compatible, so nothing but the version distinguishes them.
+
+## <a id="stale-master-asset-caches"></a>A cache bump strands the MASTERS, not the plugin
+
+**Code:** `pipeline._refresh_master_mesh_caches`
+
+The rescan gate above only ever looked at the plugin's OWN caches, but
+`load_collision` is handed a masters-first CHAIN and skips an unreadable entry
+per-path rather than failing. So a format bump splits a load: re-run the
+plugin and its own cache is rewritten at the new magic, while every master not
+re-run since stays at the old one and is silently dropped.
+
+Measured after `TESCOL06 -> TESCOL07`, on `TR_Mainland.esm` (masters
+`Morrowind_ob.esm`, the Morroblivion compat patch, `Tamriel_Data.esm`):
+
+```
+Collision: could not load cache (bad collision cache magic)   x3
+Collision: loaded 95 entries from 1 cache(s)
+```
+
+95 meshes instead of 28,349 — the three rejects held 3,954 and 24,300 keys.
+`WrldMorrowind (-17,-51)` places 104 refs of which **103 are master-owned**, so
+every one resolved to no collision, nothing carved, and the cell came out as an
+unbroken terrain sheet. The symptom reads as "the navmesh ignores all collision
+objects", which points at the carver; the cause is one rejected file three
+directories away.
+
+The masters' meshes are already converted under `output/<master>/meshes`, so
+the fix rescans them in place before the chain loads rather than failing with a
+list of manual re-runs. The plugin's own rescan and the masters' share
+`_rescan_mesh_caches`, so the staleness test cannot drift between them.
 See: [tes5_import_navmesh.md](tes5_import_navmesh.md#speedtree-model-keys).
 
 FURN MNAM/FNPR must index the converted NIF's clustered seat positions, and

@@ -17,6 +17,10 @@ See: docs/commentary/tes4_export_morrowind.md#morroblivion-editorid-escape
 """
 
 import os
+import re
+
+#: Everything a region name may differ by between the two games.
+_REGION_NOISE = re.compile(r'[^a-z0-9]')
 
 #: Non-alphanumeric -> the letter Morroblivion substitutes for it.
 _ESCAPES = {
@@ -90,6 +94,7 @@ class IdIndex:
         """Start empty; records are added as export dumps are scanned."""
         self._by_key = {}
         self._sig_by_key = {}
+        self._by_norm = {}
 
     def __len__(self):
         """How many converted records this index can resolve."""
@@ -105,6 +110,8 @@ class IdIndex:
         if key not in self._by_key:
             self._by_key[key] = form_id
             self._sig_by_key[key] = signature
+        if signature == 'REGN':
+            self._by_norm.setdefault(_REGION_NOISE.sub('', key), form_id)
 
     def _key_for(self, record_id: str):
         """The stored key a Morrowind ID answers under, or None."""
@@ -133,6 +140,20 @@ class IdIndex:
         """
         return self._by_key.get(editor_id.lower())
 
+    def lookup_region(self, name: str):
+        """A converted region's FormID, matched on letters and digits only.
+
+        See: docs/commentary/tes4_export_morrowind.md#region-weather
+        """
+        stem = _REGION_NOISE.sub('', name.lower())
+        bare = stem.removesuffix('region')
+        for key in (stem, stem + 'region', stem + 'regions', bare,
+                    bare + 'regions'):
+            found = self._by_norm.get(key)
+            if found:
+                return found
+        return None
+
     def lookup_interior(self, name: str):
         """The FormID of a master's interior cell, by name or escaped name."""
         return (self._by_key.get(interior_key(name))
@@ -157,9 +178,16 @@ class IdIndex:
         """Fold another index in; existing entries keep priority."""
         for key, form_id in other._by_key.items():
             self.add(key, form_id, other._sig_by_key.get(key, ''))
+        for key, form_id in other._by_norm.items():
+            self._by_norm.setdefault(key, form_id)
 
 
-def load_index(export_dir: str, types=BASE_TYPES, remap: dict = None) -> IdIndex:
+#: Weather-chain types: indexed for reference, never filled by the gap patch.
+WORLD_TYPES = ('REGN', 'CLMT', 'WTHR')
+
+
+def load_index(export_dir: str, types=BASE_TYPES + WORLD_TYPES,
+               remap: dict = None) -> IdIndex:
     """Index an existing export dump so its records can be referenced.
 
     Reads only the id lines of each record, so indexing Morroblivion's 421 MB

@@ -396,6 +396,49 @@ def test_wrld_climate_names_a_record_that_exists():
         set_formid_index_offset(0)
 
 
+def _regn(record_id: str, weat: bytes):
+    """A minimal TES3 REGN record carrying one WEAT subrecord."""
+    return reader.Tes3Record(
+        'REGN', 0, [reader.Subrecord(type='WEAT', data=weat)], record_id)
+
+
+def test_region_weather_names_morroblivion_weathers():
+    """A region's WEAT chance bytes become an RDWT list naming real WTHR.
+
+    Slot 7 is blight, pinned by Morrowind's own RedMountainRegion.
+    See: docs/commentary/tes4_export_morrowind.md#region-weather
+    """
+    from tes4_export.morrowind_region import WEATHER_EDITOR_IDS, region_records
+    ctx = MorrowindContext()
+    for i, edid in enumerate(WEATHER_EDITOR_IDS):
+        ctx.index.add(edid, '010000%02X' % i, 'WTHR')
+    ctx.region_cells['bitter coast region'] = (
+        'Bitter Coast Region', {(3, 4), (5, 6)})
+
+    weat = bytes([60, 0, 0, 0, 0, 0, 0, 40, 0, 0])
+    out = region_records([_regn('Bitter Coast Region', weat)], ctx)
+
+    assert len(out) == 1
+    lines = out[0][1]
+    assert 'EditorID=0BitterSCoastSRegion' in lines
+    assert 'RegionData[0].Type=3' in lines
+    assert 'RegionData[0].WeatherCount=2' in lines
+    assert 'RegionData[0].Weather[0].FormID=01000000' in lines
+    assert 'RegionData[0].Weather[0].Chance=60' in lines
+    assert 'RegionData[0].Weather[1].FormID=01000007' in lines
+    assert 'RegionData[0].Weather[1].Chance=40' in lines
+    assert any(l.startswith('Area[0].PointsHex=') for l in lines)
+
+
+def test_region_with_no_cells_is_dropped():
+    """A region no cell claims has no polygon and nowhere to apply."""
+    from tes4_export.morrowind_region import region_records
+    ctx = MorrowindContext()
+    ctx.index.add('mwClear', '01000000', 'WTHR')
+    assert region_records(
+        [_regn('Nowhere Region', bytes([100] + [0] * 9))], ctx) == []
+
+
 @needs_morrowind
 def test_collision_node_becomes_skyrim_collision():
     """A RootCollisionNode must build real collision and stop rendering.
