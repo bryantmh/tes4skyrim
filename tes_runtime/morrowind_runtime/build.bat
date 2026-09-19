@@ -78,7 +78,8 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\object_tick.cpp ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
    plugin\conversation_persuasion.cpp ^
-   plugin\game_calls.cpp plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
+   plugin\game_calls.cpp plugin\game_calls_move.cpp plugin\game_calls_ai.cpp ^
+   plugin\game_calls_query.cpp plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
     exit /b 1

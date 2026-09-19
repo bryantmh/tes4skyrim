@@ -77,10 +77,56 @@ def code_leas_near(binary, site_rva: int, window: int = 96) -> list:
         b = binary.read(tgt, 4)
         if len(b) < 4:
             continue
-        # crude code test: common prologue bytes
-        if b[0] in (0x40, 0x48, 0x4c, 0x55, 0x53, 0x56, 0x57, 0xe9, 0x8b, 0x33,
-                    0x0f, 0xf3, 0x66, 0xb8, 0xb0, 0xe8, 0x89, 0x85, 0x80, 0xc3):
+        if 0x40 <= b[0] <= 0x4f or b[0] in (
+                0x55, 0x53, 0x56, 0x57, 0xe9, 0x8b, 0x33, 0x0f, 0xf3, 0x66,
+                0xb8, 0xb0, 0xe8, 0x89, 0x85, 0x80, 0xc3):
             out.append((rva, tgt))
+    return out
+
+
+def class_at(binary, site_rva: int) -> str:
+    """The Papyrus SCRIPT a registration site names: the `lea r8, [rip+x]`
+    loaded immediately before the function-name `lea`, or '' when absent.
+
+    Several scripts register one function name (`Clear`, `ForceActive`), so
+    the name alone does not identify a native.
+    See: docs/commentary/morrowind_runtime.md#forceactive-is-a-weather-call
+    """
+    raw = binary.read(site_rva - 7, 7)
+    if len(raw) < 7 or raw[:3] != b'\x4c\x8d\x05':
+        return ''
+    target = site_rva + struct.unpack_from('<i', raw, 3)[0]
+    text = binary.read(target, 64)
+    return text.split(b'\0', 1)[0].decode('ascii', 'replace')
+
+
+def lea_sites_for(binary, targets: set) -> dict:
+    """`{target rva: [lea site rvas]}` for every target in `targets`, in ONE
+    pass over the image -- `rip_lea_sites` per target is a full scan each."""
+    data = binary.data
+    out = {target: [] for target in targets}
+    for m in re.finditer(rb'[\x48\x4c]\x8d[\x05\x0d\x15\x1d\x25\x2d\x35\x3d]', data):
+        rva = binary.off_to_rva(m.start())
+        if rva is None or m.start() + 7 > len(data):
+            continue
+        target = rva + 7 + struct.unpack_from('<i', data, m.start() + 3)[0]
+        if target in out:
+            out[target].append(rva)
+    return out
+
+
+def registrations(binary, name: str, sites_by_target: dict = None) -> list:
+    """`(script, site rva, [callback candidate rvas])` per registration of the
+    native called `name`. `sites_by_target` is a `lea_sites_for` result that
+    covers this name's strings, for a caller checking many names."""
+    out = []
+    for string_rva in find_strings(binary, name):
+        sites = (sites_by_target[string_rva] if sites_by_target is not None
+                 else rip_lea_sites(binary, string_rva))
+        for site in sites:
+            cands = sorted({t for _r, t in code_leas_near(binary, site)
+                            if t != string_rva})
+            out.append((class_at(binary, site), site, cands))
     return out
 
 
@@ -125,7 +171,8 @@ def main():
         sites = rip_lea_sites(binary, s)
         print(f'  lea sites -> {s:#x}: ' + ', '.join(f'{x:#x}' for x in sites))
         for site in sites:
-            print(f'  === registration site {site:#x} ===')
+            print(f'  === registration site {site:#x}  '
+                  f'script: {class_at(binary, site) or "?"} ===')
             for ins in binary.disasm(site - 32, 14):
                 r = ins.address - binary.base
                 print(f'    {r:#010x}  {ins.mnemonic:<7} {ins.op_str}')

@@ -126,6 +126,10 @@ void DialogueState::SetGlobal(const std::string& name, float value) {
     Log("global: %s = %g", name.c_str(), value);
 }
 
+void DialogueState::SyncGlobal(const std::string& name, float value) {
+    mGlobals[Key(name)] = value;
+}
+
 std::vector<std::string> DialogueState::Globals() const {
     std::vector<std::string> out;
     for (const auto& entry : mGlobals) out.push_back(entry.first);
@@ -156,23 +160,16 @@ void DialogueState::LearnTopic(const std::string& topic) {
 
 int DialogueState::AiSetting(const std::string& actor, int which) const {
     const auto it = mAiSettings.find({Key(actor), which});
-    return it == mAiSettings.end() ? 0 : it->second;
+    if (it != mAiSettings.end()) return it->second;
+    const ActorDef* def = FindActor(actor);
+    return def && which >= 0 && which < 4 ? def->aiSettings[which] : 0;
 }
 
 void DialogueState::SetAiSetting(const std::string& actor, int which,
                                  int value) {
     mAiSettings[{Key(actor), which}] = value;
     Log("ai: %s setting %d = %d", actor.c_str(), which, value);
-}
-
-int DialogueState::DeadCount(const std::string& actor) const {
-    const auto it = mDeaths.find(Key(actor));
-    return it == mDeaths.end() ? 0 : it->second;
-}
-
-void DialogueState::AddDeath(const std::string& actor) {
-    const int now = ++mDeaths[Key(actor)];
-    Log("dead: %s killed %d time(s)", actor.c_str(), now);
+    if (Hooks().applyAiSetting) Hooks().applyAiSetting(actor, which, value);
 }
 
 const Membership& DialogueState::Faction(const std::string& faction) const {
@@ -223,14 +220,19 @@ bool DialogueState::ScriptRunning(const std::string& script) const {
     return mRunning.count(Key(script)) != 0;
 }
 
-void DialogueState::SetScriptRunning(const std::string& script, bool running) {
-    if (running) {
-        mRunning.insert(Key(script));
-    } else {
-        mRunning.erase(Key(script));
-    }
-    Log("script: %s %s (global scripts do not tick yet)", script.c_str(),
-        running ? "started" : "stopped");
+void DialogueState::StartScript(const std::string& script,
+                                const std::string& target) {
+    mRunning[Key(script)] = target;
+    Log("script: %s started", script.c_str());
+}
+
+void DialogueState::StopScript(const std::string& script) {
+    if (mRunning.erase(Key(script))) Log("script: %s stopped", script.c_str());
+}
+
+std::vector<std::pair<std::string, std::string>>
+DialogueState::RunningScripts() const {
+    return {mRunning.begin(), mRunning.end()};
 }
 
 // DialogueManager::updateOriginalDisposition: a script moved the base since
@@ -304,14 +306,15 @@ std::string DialogueState::Serialize() const {
         out << "X\t" << e.first.first << '\t' << e.first.second << '\t'
             << e.second << '\n';
     }
-    for (const std::string& script : mRunning) out << "S\t" << script << '\n';
+    for (const auto& e : mRunning) {
+        out << "S\t" << e.first;
+        if (!e.second.empty()) out << '\t' << e.second;
+        out << '\n';
+    }
     for (const std::string& topic : mKnownTopics) out << "K\t" << topic << '\n';
     for (const auto& e : mAiSettings) {
         out << "A\t" << e.first.first << '\t' << e.first.second << '\t'
             << e.second << '\n';
-    }
-    for (const auto& e : mDeaths) {
-        out << "N\t" << e.first << '\t' << e.second << '\n';
     }
     out << "R\t" << reputation << '\n' << "C\t" << crimeLevel << '\n';
     return out.str();
@@ -334,10 +337,9 @@ std::size_t DialogueState::Deserialize(const std::string& text) {
         else if (kind == "L" && n == 4) mVars[{f[1], f[2]}] = Float(f[3]);
         else if (kind == "F" && n == 5) mFactions[f[1]] = {Int(f[2]), f[3] == "1", Int(f[4])};
         else if (kind == "X" && n == 4) mReactions[{f[1], f[2]}] = Int(f[3]);
-        else if (kind == "S" && n == 2) mRunning.insert(f[1]);
+        else if (kind == "S" && n >= 2) mRunning[f[1]] = n > 2 ? f[2] : "";
         else if (kind == "K" && n == 2) mKnownTopics.insert(f[1]);
         else if (kind == "A" && n == 4) mAiSettings[{f[1], Int(f[2])}] = Int(f[3]);
-        else if (kind == "N" && n == 3) mDeaths[f[1]] = Int(f[2]);
         else if (kind == "R" && n == 2) reputation = Int(f[1]);
         else if (kind == "C" && n == 2) crimeLevel = Float(f[1]);
         else continue;

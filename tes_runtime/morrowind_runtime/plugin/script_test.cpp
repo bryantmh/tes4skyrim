@@ -176,29 +176,79 @@ void CoSaveCases(DialogueContext& context) {
     State().Reset();
 }
 
-// The AI settings and GetDeadCount: the DLL's own numbers, so a script that
-// writes one and a filter that reads it back have to agree, and both have to
-// survive a save.
+// What the fake engine says has died, and what it was last told to apply.
+int TwoDead(const std::string& actor) {
+    return actor == "some_bandit" ? 2 : 0;
+}
+
+int g_appliedWhich = -1;
+int g_appliedValue = -1;
+void RecordApplied(const std::string&, int which, int value) {
+    g_appliedWhich = which;
+    g_appliedValue = value;
+}
+
+// The AI settings are the DLL's own numbers that START at the authored AIDT,
+// and every write is pushed to the engine. GetDeadCount is the engine's.
 void AiAndDeathCases(DialogueContext& context, const GameActor& actor) {
     std::printf("AI settings and dead count\n");
-    RunResultScript("SetFight 90\nModFight -10\nSetHello 30", context);
+    Check(State().AiSetting("gruff_actor", kAiFight) == 90 &&
+              State().AiSetting("gruff_actor", kAiHello) == 25 &&
+              State().AiSetting("gruff_actor", kAiFlee) == 10 &&
+              State().AiSetting("gruff_actor", kAiAlarm) == 5,
+          "an unset AI setting reads the authored AIDT");
+    Hooks().applyAiSetting = RecordApplied;
+    RunResultScript("SetFight 90\nModFight -10", context);
+    Check(g_appliedWhich == kAiFight && g_appliedValue == 80,
+          "a written AI setting is pushed to the engine");
+    Hooks().applyAiSetting = nullptr;
+    RunResultScript("SetHello 30", context);
     Check(actor.AiSetting(kAiFight) == 80, "SetFight then ModFight is 80");
     Check(actor.AiSetting(kAiHello) == 30, "SetHello is 30");
     RunResultScript("set TestGlobal to GetFight", context);
     Check(State().Global("TestGlobal") == 80.0f,
           "GetFight reads back what the script set");
 
-    State().AddDeath("some_bandit");
-    State().AddDeath("some_bandit");
+    Hooks().deadCount = TwoDead;
     RunResultScript("set TestGlobal to GetDeadCount \"some_bandit\"", context);
-    Check(State().Global("TestGlobal") == 2.0f, "GetDeadCount counts kills");
+    Check(State().Global("TestGlobal") == 2.0f,
+          "GetDeadCount answers with the engine's count");
+    Hooks().deadCount = nullptr;
 
     const std::string saved = State().Serialize();
     State().Reset();
     State().Deserialize(saved);
-    Check(State().AiSetting("test_actor", kAiFight) == 80 &&
-              State().DeadCount("some_bandit") == 2,
-          "both survive a save and load");
+    Check(State().AiSetting("test_actor", kAiFight) == 80,
+          "an AI setting survives a save and load");
+}
+
+std::string TestCell();
+
+// `StartScript` makes a global script TICK, under locals keyed by its name,
+// until it stops itself; the running set and its target survive a save.
+void GlobalScriptCases(DialogueContext& context) {
+    std::printf("global scripts tick\n");
+    ClearInstances();
+    Hooks().playerCell = TestCell;
+    RunResultScript("StartScript TestCounterScript", context);
+    Check(State().ScriptRunning("TestCounterScript"), "StartScript starts it");
+    const std::string saved = State().Serialize();
+    State().Reset();
+    State().Deserialize(saved);
+    const auto running = State().RunningScripts();
+    Check(running.size() == 1 && running[0].second == "test_actor",
+          "a running script and its target survive a save");
+    TickObjectScripts(TickDelta());
+    Check(State().Var("TestCounterScript", "count") == 1.0f,
+          "one tick runs the body once, under the script's own name");
+    TickObjectScripts(TickDelta());
+    Check(!State().ScriptRunning("TestCounterScript"),
+          "a script that stops itself stops");
+    TickObjectScripts(TickDelta());
+    Check(State().Var("TestCounterScript", "count") == 2.0f,
+          "and a stopped script no longer ticks");
+    Hooks().playerCell = nullptr;
+    State().Reset();
 }
 
 // 🛑 `%PCRank` and `%NextPCRank` print the FACTION's authored rank name, and
@@ -302,7 +352,7 @@ void PersuasionCases(DialogueContext& context) {
 // See: docs/plans/morrowind_object_scripts.md#instances
 void ObjectScriptTableCases() {
     std::printf("object-script tables\n");
-    Check(ScriptSourceCount() == 2, "two bodies staged");
+    Check(ScriptSourceCount() == 3, "three bodies staged");
     const std::string& body = ScriptSource("TestDoorScript");
     Check(body.find("begin TestDoorScript") == 0,
           "the body is unescaped back to real newlines");
@@ -815,6 +865,7 @@ void Cases() {
     RankNameCases(context);
     CoSaveCases(context);
     AiAndDeathCases(context, actor);
+    GlobalScriptCases(context);
     PersuasionCases(context);
     SoundCases(context);
     MoveCases(context);

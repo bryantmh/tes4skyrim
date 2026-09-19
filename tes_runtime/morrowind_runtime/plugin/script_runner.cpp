@@ -426,14 +426,14 @@ class OpGetDisabled : public Interpreter::Opcode0 {
 template <class R>
 class OpStartScript : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
-        R::Target(runtime);
-        State().SetScriptRunning(PopString(runtime), true);
+        const std::string target = R::Target(runtime);
+        State().StartScript(PopString(runtime), target);
     }
 };
 
 class OpStopScript : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
-        State().SetScriptRunning(PopString(runtime), false);
+        State().StopScript(PopString(runtime));
     }
 };
 
@@ -480,7 +480,8 @@ class OpRandom : public Interpreter::Opcode0 {
 
 class OpGetDeadCount : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
-        runtime.push(State().DeadCount(PopString(runtime)));
+        const std::string actor = PopString(runtime);
+        runtime.push(Hooks().deadCount ? Hooks().deadCount(actor) : 0);
     }
 };
 

@@ -1,9 +1,10 @@
 #include "game_calls.h"
 
+#include "game_calls_internal.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <map>
 #include <set>
@@ -22,7 +23,7 @@
 
 namespace mwruntime {
 
-namespace {
+namespace gamecalls {
 
 // 🛑 NOT the Papyrus native. The console's `setstage` starts a stopped quest
 // SYNCHRONOUSLY and then sets the stage directly; Quest.SetCurrentStageID only
@@ -55,10 +56,6 @@ using StopCombatFn = void (*)(void* vm, std::uint32_t stack, void* actor);
 using SetEnabledFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                               bool fade);
 using IsDisabledFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
-// One axis of a reference's position or rotation; the setters take all three.
-using AxisGetFn = float (*)(void* vm, std::uint32_t stack, void* ref);
-using AxisSetFn = void (*)(void* vm, std::uint32_t stack, void* ref,
-                           float x, float y, float z);
 using ActivateFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                             void* actionRef, bool defaultOnly);
 using LockFn = void (*)(void* vm, std::uint32_t stack, void* ref, bool lock,
@@ -74,8 +71,6 @@ using ParentCellFn = void* (*)(void* vm, std::uint32_t stack, void* ref);
 // takes its file name.
 using GetValueFn = float (*)(void* vm, std::uint32_t stack, void* actor,
                              void* name);
-using SetValueFn = void (*)(void* vm, std::uint32_t stack, void* actor,
-                            void* name, float value);
 using EquipItemFn = void (*)(void* vm, std::uint32_t stack, void* actor,
                              void* item, bool preventRemoval, bool silent);
 // Barter and persuasion: a call on an actor, an int read off one, and the
@@ -93,53 +88,11 @@ using MessageBoxFn = void (*)(void* vm, std::uint32_t stack, void* tag,
 using GetFormFn = void* (*)(void* vm, std::uint32_t stack, void* tag,
                             std::int32_t formId);
 
-// ObjectReference.PlaceAtMe(Form, int, bool, bool) -> the new reference.
-using PlaceAtMeFn = void* (*)(void* vm, std::uint32_t stack, void* self,
-                              void* base, std::int32_t count, bool persist,
-                              bool disabled);
 
-// ObjectReference.MoveTo(target, xOff, yOff, zOff, matchRotation): the only
-// call that crosses cells, and it aims at another REFERENCE.
-using MoveToFn = void (*)(void* vm, std::uint32_t stack, void* self,
-                          void* target, float x, float y, float z,
-                          bool matchRotation);
 
-// ObjectReference.GetScale() / .SetScale(float).
-using ScaleGetFn = float (*)(void* vm, std::uint32_t stack, void* ref);
-using ScaleSetFn = void (*)(void* vm, std::uint32_t stack, void* ref,
-                            float scale);
 
-// The alias plumbing the AI packages run on. `Quest.GetAlias(int)` hands back
-// the alias at an ALST index, `ReferenceAlias.ForceRefTo(ref)` fills it, and
-// `ReferenceAlias.Clear()` empties it. The quest must be RUNNING, or it owns
-// no alias instances at all.
-// See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
-using GetAliasFn = void* (*)(void* vm, std::uint32_t stack, void* quest,
-                             std::int32_t aliasId);
-using ForceRefToFn = void (*)(void* vm, std::uint32_t stack, void* alias,
-                              void* ref);
-// ReferenceAlias.GetReference() -> what the alias holds, or null.
-using AliasRefFn = void* (*)(void* vm, std::uint32_t stack, void* alias);
 
-// Actor.GetCurrentPackage() -> the PACK the actor runs, for
-// GetCurrentAiPackage.
-using CurrentPackageFn = void* (*)(void* vm, std::uint32_t stack, void* actor);
 
-// The one-call queries. `HasLOS`, `IsDetectedBy` and `GetCombatTarget` all
-// relate two actors; the rest ask about one.
-// See: docs/commentary/morrowind_runtime.md#the-query-commands
-using PairQueryFn = bool (*)(void* vm, std::uint32_t stack, void* actor,
-                             void* other);
-using CombatTargetFn = void* (*)(void* vm, std::uint32_t stack, void* actor);
-using ResurrectFn = void (*)(void* vm, std::uint32_t stack, void* actor);
-// ObjectReference.DropObject(Form item, int count) -> the dropped reference.
-using DropObjectFn = void* (*)(void* vm, std::uint32_t stack, void* ref,
-                               void* item, std::int32_t count);
-// Weather.GetCurrentWeather() is GLOBAL, so its self is a tag; the
-// classification is then read off the returned Weather form.
-using CurrentWeatherFn = void* (*)(void* vm, std::uint32_t stack, void* tag);
-using ClassificationFn = std::int32_t (*)(void* vm, std::uint32_t stack,
-                                          void* weather);
 
 // Sound.Play(ObjectReference) -> the playback instance id, 0 on failure. A
 // MEMBER function, so the SNDR form is `self`. Sound.StopInstance(int) and
@@ -154,16 +107,6 @@ using InstanceVolumeFn = void (*)(void* vm, std::uint32_t stack, void* tag,
 // Skyrim's actor values for OpenMW's dynamic stats, in OpenMW's order.
 constexpr const char* kDynamicNames[] = {"Health", "Magicka", "Stamina"};
 constexpr int kDynamicCount = 3;
-
-// XMarker, Skyrim.esm 0x3B: the invisible anchor a travel or sandbox package
-// aims at, since a package destination cannot be raw coordinates.
-constexpr std::uint32_t kXMarker = 0x3B;
-
-// The TES3 package kinds, in OpenMW's AiPackageTypeId order, which is what
-// `GetCurrentAiPackage` answers with. The alias prefix is the kind's name.
-constexpr const char* kAiKinds[] = {"wander", "travel", "escort", "follow",
-                                    "activate"};
-constexpr int kAiKindCount = 5;
 
 // TES3's gold, and the record Skyrim keeps for the same thing.
 constexpr const char* kTes3Gold = "gold_001";
@@ -222,32 +165,10 @@ RefQueryFn     g_isLocked = nullptr;
 RefCallFn      g_delete = nullptr;
 DistanceFn     g_distance = nullptr;
 
-// x, y, z.
-constexpr int kAxisCount = 3;
-AxisGetFn g_getPosition[kAxisCount] = {nullptr, nullptr, nullptr};
-// The rotation field's offset per axis; there is no native to call.
-// See: docs/commentary/morrowind_runtime.md#the-angle-getters-have-no-id
-constexpr std::size_t kRotOffset[kAxisCount] = {
-    ids::kOffRefRotX, ids::kOffRefRotY, ids::kOffRefRotZ};
-
-// Radians per degree, for the conversion the absent getters used to do.
-constexpr float kDegreesPerRadian = 57.2957795f;
-
-// One rotation axis in DEGREES, read straight off the reference. The axis is
-// clamped here rather than through SafeAxis, which is declared further down.
-float RefAngle(void* ref, int axis) {
-    if (!ref) return 0.0f;
-    const int which = axis < 0 || axis >= kAxisCount ? 0 : axis;
-    const float radians = *reinterpret_cast<const float*>(
-        static_cast<const char*>(ref) + kRotOffset[which]);
-    return radians * kDegreesPerRadian;
-}
-AxisSetFn g_setPosition = nullptr;
-AxisSetFn g_setAngle = nullptr;
 ParentCellFn   g_parentCell = nullptr;
 RefQueryFn     g_isInterior = nullptr;
 GetValueFn     g_getValue = nullptr;
-SetValueFn     g_setValue = nullptr;
+SetValueFn  g_setValue = nullptr;
 SetValueFn     g_restoreValue = nullptr;
 SetValueFn     g_damageValue = nullptr;
 EquipItemFn    g_equipItem = nullptr;
@@ -263,24 +184,6 @@ RefQueryFn     g_is3DLoaded = nullptr;
 SoundPlayFn      g_soundPlay = nullptr;
 StopInstanceFn   g_stopInstance = nullptr;
 InstanceVolumeFn g_instanceVolume = nullptr;
-MoveToFn     g_moveTo = nullptr;
-ScaleGetFn   g_getScale = nullptr;
-ScaleSetFn   g_setScale = nullptr;
-GetAliasFn       g_questGetAlias = nullptr;
-ForceRefToFn     g_forceRefTo = nullptr;
-AliasRefFn       g_aliasReference = nullptr;
-RefCallFn        g_aliasClear = nullptr;
-CurrentPackageFn g_currentPackage = nullptr;
-PairQueryFn      g_hasLos = nullptr;
-PairQueryFn      g_isDetectedBy = nullptr;
-CombatTargetFn   g_combatTarget = nullptr;
-RefQueryFn       g_weaponDrawn = nullptr;
-RefQueryFn       g_isSneaking = nullptr;
-RefQueryFn       g_actorRunning = nullptr;
-ResurrectFn      g_resurrect = nullptr;
-DropObjectFn     g_dropObject = nullptr;
-CurrentWeatherFn g_currentWeather = nullptr;
-ClassificationFn g_classification = nullptr;
 
 std::string g_speakerId;
 void*       g_speakerRef = nullptr;
@@ -327,9 +230,17 @@ void* ItemForm(const std::string& item) {
 // resolves to its first placement there, which is the wrong one while you are
 // standing in front of a different instance of it.
 // See: docs/commentary/morrowind_runtime.md#placed-references
+// 🛑 An object script's OWN id resolves to the reference RUNNING it. The
+// placement table holds one reference per id, so without this every copy of
+// a base placed many times acted on the same one.
 void* OwnerRef(const std::string& owner) {
     if (Lower(owner) == kPlayerId) {
         return g_getPlayer ? g_getPlayer(PapyrusVm(), 0, nullptr) : nullptr;
+    }
+    const ObjectScript* running = RunningInstance();
+    if (running && running->RuntimeFormId() &&
+        Lower(owner) == Lower(running->BaseId())) {
+        if (void* self = RefByRuntimeId(running->RuntimeFormId())) return self;
     }
     if (g_speakerRef && Lower(owner) == Lower(g_speakerId)) return g_speakerRef;
     if (void* placed = Form(FindRef(owner))) return placed;
@@ -461,17 +372,19 @@ void SetQuestStage(const std::string& quest, int stage) {
 void AddItem(const std::string& owner, const std::string& item, int count) {
     void* ref = OwnerRef(owner);
     void* form = ItemForm(item);
-    if (ref && form && g_addItem) {
+    if (!ref || !form || !g_addItem) return;
+    RunOnGameThread([ref, form, count]() {
         g_addItem(PapyrusVm(), 0, ref, form, count, false);
-    }
+    });
 }
 
 void RemoveItem(const std::string& owner, const std::string& item, int count) {
     void* ref = OwnerRef(owner);
     void* form = ItemForm(item);
-    if (ref && form && g_removeItem) {
+    if (!ref || !form || !g_removeItem) return;
+    RunOnGameThread([ref, form, count]() {
         g_removeItem(PapyrusVm(), 0, ref, form, count, false, nullptr);
-    }
+    });
 }
 
 // 🛑 Posted to the game thread rather than called here: the dialogue menu's
@@ -496,7 +409,7 @@ void SetCombat(const std::string& attacker, const std::string& target) {
 void SetEnabled(const std::string& id, bool enabled) {
     void* ref = OwnerRef(id);
     if (!ref) return;
-    PostToMainThread([ref, enabled]() {
+    RunOnGameThread([ref, enabled]() {
         SetEnabledFn call = enabled ? g_enable : g_disable;
         if (call) call(PapyrusVm(), 0, ref, false);
     });
@@ -536,7 +449,7 @@ void Activate(const std::string& id) {
 void SetLocked(const std::string& id, int level) {
     void* ref = OwnerRef(id);
     if (!ref || !g_lock) return;
-    PostToMainThread([ref, level]() {
+    RunOnGameThread([ref, level]() {
         if (level > 0 && g_setLockLevel) {
             g_setLockLevel(PapyrusVm(), 0, ref, level);
         }
@@ -559,50 +472,6 @@ float Distance(const std::string& from, const std::string& to) {
     void* a = OwnerRef(from);
     void* b = OwnerRef(to);
     return a && b && g_distance ? g_distance(PapyrusVm(), 0, a, b) : 0.0f;
-}
-
-// An axis index from a script, kept inside the array whatever it says.
-int SafeAxis(int axis) {
-    return axis < 0 || axis >= kAxisCount ? 0 : axis;
-}
-
-float Position(const std::string& id, int axis) {
-    void* ref = OwnerRef(id);
-    AxisGetFn get = g_getPosition[SafeAxis(axis)];
-    return ref && get ? get(PapyrusVm(), 0, ref) : 0.0f;
-}
-
-float Angle(const std::string& id, int axis) {
-    return RefAngle(OwnerRef(id), axis);
-}
-
-// 🛑 The natives take ALL THREE axes, so the other two are read back first
-// and written unchanged. Posted, like every other call that moves something:
-// the menu's callbacks do not run on the game thread.
-void SetAxis(const std::string& id, int axis, float value, bool isAngle) {
-    void* ref = OwnerRef(id);
-    AxisSetFn set = isAngle ? g_setAngle : g_setPosition;
-    if (!ref || !set) return;
-    float xyz[kAxisCount];
-    for (int i = 0; i < kAxisCount; ++i) {
-        xyz[i] = isAngle ? RefAngle(ref, i)
-                         : (g_getPosition[i]
-                                ? g_getPosition[i](PapyrusVm(), 0, ref)
-                                : 0.0f);
-    }
-    xyz[SafeAxis(axis)] = value;
-    const float x = xyz[0], y = xyz[1], z = xyz[2];
-    PostToMainThread([ref, set, x, y, z]() {
-        set(PapyrusVm(), 0, ref, x, y, z);
-    });
-}
-
-void SetPosition(const std::string& id, int axis, float value) {
-    SetAxis(id, axis, value, false);
-}
-
-void SetAngle(const std::string& id, int axis, float value) {
-    SetAxis(id, axis, value, true);
 }
 
 void* PlayerCell() {
@@ -637,7 +506,7 @@ float DynamicStat(const std::string& actor, int which) {
 void SetDynamicStat(const std::string& actor, int which, float value) {
     void* ref = OwnerRef(actor);
     if (!ref || !g_setValue || which < 0 || which >= kDynamicCount) return;
-    PostToMainThread([ref, which, value]() {
+    RunOnGameThread([ref, which, value]() {
         void* name = nullptr;
         if (FixedString(&name, kDynamicNames[which])) {
             g_setValue(PapyrusVm(), 0, ref, &name, value);
@@ -652,7 +521,7 @@ void ModDynamicStat(const std::string& actor, int which, float delta) {
         which >= kDynamicCount) {
         return;
     }
-    PostToMainThread([ref, which, delta]() {
+    RunOnGameThread([ref, which, delta]() {
         void* name = nullptr;
         if (!FixedString(&name, kDynamicNames[which])) return;
         if (delta >= 0.0f) {
@@ -667,7 +536,7 @@ void EquipItem(const std::string& actor, const std::string& item) {
     void* ref = OwnerRef(actor);
     void* form = ItemForm(item);
     if (!ref || !form || !g_equipItem) return;
-    PostToMainThread([ref, form]() {
+    RunOnGameThread([ref, form]() {
         g_equipItem(PapyrusVm(), 0, ref, form, false, false);
     });
 }
@@ -722,452 +591,6 @@ void AdvanceSkill(const char* skill, float amount) {
             g_advanceSkill(PapyrusVm(), 0, nullptr, &name, amount);
         }
     });
-}
-
-// `PlaceAtPC id count` and `PlaceAtMe`: creates references of a BASE record
-// beside `near` -- the player for the PC form, any reference for the other.
-//
-// 🛑 The new reference has no authored placement, so nothing in
-// SCPT_instances.txt names it. Its instance is bound from the FormID PlaceAtMe
-// RETURNS, which is the only way a spawned creature's script ever runs.
-// See: docs/plans/morrowind_object_scripts.md#placeatpc
-void PlaceNear(const std::string& near, const std::string& base, int count) {
-    const FormRef* ref = FindBase(base);
-    if (!ref || !g_placeAtMe) {
-        Log("game: place '%s' -- %s", base.c_str(),
-            ref ? "PlaceAtMe unresolved" : "no such base record");
-        return;
-    }
-    void* at = OwnerRef(near);
-    if (!at) return;
-    const FormRef target = *ref;
-    const std::string id = base;
-    PostToMainThread([target, id, count, at]() {
-        void* form = Form(&target);
-        if (!form) return;
-        void* made = g_placeAtMe(PapyrusVm(), 0, at, form,
-                                 count > 0 ? count : 1, false, false);
-        if (!made) {
-            Log("game: placing '%s' created nothing", id.c_str());
-            return;
-        }
-        BindSpawnedInstance(FormIdOf(made), id);
-    });
-}
-
-// Sets all three position axes at once, which every absolute move needs --
-// SetPosition takes the whole vector and SetAxis only ever changes one.
-void PlaceAt(void* ref, float x, float y, float z, float zRot) {
-    if (g_setPosition) g_setPosition(PapyrusVm(), 0, ref, x, y, z);
-    if (!g_setAngle) return;
-    const float ax = RefAngle(ref, 0);
-    const float ay = RefAngle(ref, 1);
-    g_setAngle(PapyrusVm(), 0, ref, ax, ay, zRot);
-}
-
-// `PositionCell x y z zRot "cell"`: the anchor carries the move across the
-// cell boundary and the position puts the reference where the script asked.
-//
-// 🛑 MoveTo is the ONLY call that changes an object's cell, and it aims at
-// another REFERENCE -- hence the staged anchor. Both steps are posted
-// together so the reference is never seen at the anchor's own spot.
-// See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
-void MoveRefToCell(const std::string& id, const std::string& cell, float x,
-                   float y, float z, float zRot) {
-    const FormRef* anchor = FindCellAnchor(cell);
-    if (!anchor || !g_moveTo) {
-        if (!anchor) ReportOnce("cell", cell);
-        return;
-    }
-    void* ref = OwnerRef(id);
-    if (!ref) return;
-    const FormRef target = *anchor;
-    PostToMainThread([ref, target, x, y, z, zRot]() {
-        void* to = Form(&target);
-        if (!to) return;
-        g_moveTo(PapyrusVm(), 0, ref, to, 0.0f, 0.0f, 0.0f, false);
-        PlaceAt(ref, x, y, z, zRot);
-    });
-}
-
-// `Position x y z zRot`: the same without the cell change.
-void MoveRefInCell(const std::string& id, float x, float y, float z,
-                   float zRot) {
-    void* ref = OwnerRef(id);
-    if (!ref) return;
-    PostToMainThread([ref, x, y, z, zRot]() {
-        PlaceAt(ref, x, y, z, zRot);
-    });
-}
-
-// `Move`/`MoveWorld`: adds `delta` along one axis. `local` rotates the offset
-// into the object's own frame, which is the whole difference between them --
-// a Z rotation is all an upright object has, so that is what is applied.
-void MoveRefBy(const std::string& id, int axis, float delta, bool local) {
-    void* ref = OwnerRef(id);
-    if (!ref || !g_setPosition) return;
-    float offset[kAxisCount] = {0.0f, 0.0f, 0.0f};
-    offset[SafeAxis(axis)] = delta;
-    PostToMainThread([ref, offset, local]() {
-        float x = offset[0], y = offset[1];
-        if (local) {
-            const float radians = RefAngle(ref, 2) / kDegreesPerRadian;
-            x = offset[0] * std::cos(radians) - offset[1] * std::sin(radians);
-            y = offset[0] * std::sin(radians) + offset[1] * std::cos(radians);
-        }
-        float at[kAxisCount];
-        for (int i = 0; i < kAxisCount; ++i) {
-            at[i] = g_getPosition[i] ? g_getPosition[i](PapyrusVm(), 0, ref)
-                                     : 0.0f;
-        }
-        g_setPosition(PapyrusVm(), 0, ref, at[0] + x, at[1] + y,
-                      at[2] + offset[2]);
-    });
-}
-
-// `Rotate`/`RotateWorld`: adds `degrees` to one Euler angle.
-void RotateRefBy(const std::string& id, int axis, float degrees) {
-    void* ref = OwnerRef(id);
-    if (!ref || !g_setAngle) return;
-    const int which = SafeAxis(axis);
-    PostToMainThread([ref, which, degrees]() {
-        float at[kAxisCount];
-        for (int i = 0; i < kAxisCount; ++i) {
-            at[i] = RefAngle(ref, i);
-        }
-        at[which] += degrees;
-        g_setAngle(PapyrusVm(), 0, ref, at[0], at[1], at[2]);
-    });
-}
-
-float RefScale(const std::string& id) {
-    void* ref = OwnerRef(id);
-    return ref && g_getScale ? g_getScale(PapyrusVm(), 0, ref) : 1.0f;
-}
-
-void SetRefScale(const std::string& id, float value) {
-    void* ref = OwnerRef(id);
-    if (!ref || !g_setScale) return;
-    PostToMainThread([ref, value]() {
-        g_setScale(PapyrusVm(), 0, ref, value);
-    });
-}
-
-// `PlaceItem`/`PlaceItemCell`: create the base at an absolute spot. An empty
-// cell means the player's own, which is what the cell-less form does.
-void PlaceBaseAt(const std::string& base, const std::string& cell, float x,
-                 float y, float z, float zRot) {
-    const FormRef* found = FindBase(base);
-    if (!found || !g_placeAtMe) {
-        if (!found) ReportOnce("base", base);
-        return;
-    }
-    const FormRef target = *found;
-    const FormRef* anchor = cell.empty() ? nullptr : FindCellAnchor(cell);
-    const FormRef into = anchor ? *anchor : FormRef();
-    const bool cross = anchor != nullptr;
-    const std::string id = base;
-    PostToMainThread([target, into, cross, id, x, y, z, zRot]() {
-        void* player = PlayerRef();
-        void* form = Form(&target);
-        if (!player || !form) return;
-        void* made = g_placeAtMe(PapyrusVm(), 0, player, form, 1, false,
-                                 false);
-        if (!made) return;
-        if (cross && g_moveTo) {
-            if (void* to = Form(&into)) {
-                g_moveTo(PapyrusVm(), 0, made, to, 0.0f, 0.0f, 0.0f, false);
-            }
-        }
-        PlaceAt(made, x, y, z, zRot);
-        BindSpawnedInstance(FormIdOf(made), id);
-    });
-}
-
-// The AI commands. Each fills the QUEST ALIAS that the import hung a real
-// PACK record off, and the engine runs an actual package from there -- so the
-// actor walks, follows and sandboxes for real.
-// See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
-
-// The AI quest, started so its aliases can hold references at all. Null when
-// it cannot be started.
-//
-// 🛑 A quest that is not running owns no alias instances, so ForceRefTo on one
-// silently does nothing.
-// 🛑 Papyrus has NO working `Quest.ForceActive`; the native of that name is
-// `Weather.ForceActive`, and handing it a quest makes the quest the sky's
-// weather.
-// See: docs/commentary/morrowind_runtime.md#forceactive-is-a-weather-call
-void* AiQuestForm() {
-    const FormRef* staged = AiQuest();
-    void* form = staged ? Form(staged) : nullptr;
-    bool justStarted = false;
-    return form && StartQuest(form, &justStarted) ? form : nullptr;
-}
-
-// One named alias of the AI quest, or null.
-void* AiAlias(const std::string& name) {
-    void* quest = AiQuestForm();
-    const int index = AiAliasIndex(name);
-    if (!quest || index < 0 || !g_questGetAlias) return nullptr;
-    return g_questGetAlias(PapyrusVm(), 0, quest, index);
-}
-
-// What an alias holds right now, read off the ENGINE so a loaded save's
-// fills count without any bookkeeping of ours.
-void* AiAliasHolds(void* alias) {
-    return alias && g_aliasReference
-               ? g_aliasReference(PapyrusVm(), 0, alias)
-               : nullptr;
-}
-
-// A slot's name: the package kind and its number in the pool.
-std::string AiSlot(const char* kind, int n) {
-    return std::string(kind) + std::to_string(n);
-}
-
-// Calls `visit(slot, actorAlias)` for every slot of every kind until one
-// returns true, and reports whether one did.
-template <class Visit>
-bool AnyAiSlot(Visit visit) {
-    const int slots = AiAliasIndex("slots");
-    for (int kind = 0; kind < kAiKindCount; ++kind) {
-        for (int n = 0; n < slots; ++n) {
-            const std::string slot = AiSlot(kAiKinds[kind], n);
-            if (visit(slot, AiAlias(slot + "Actor"))) return true;
-        }
-    }
-    return false;
-}
-
-// Takes `ref` out of every slot it sits in, which ends those packages. A new
-// AI command replaces whatever the actor was given before.
-void ReleaseAiActor(void* ref) {
-    if (!g_aliasClear) return;
-    AnyAiSlot([ref](const std::string& slot, void* alias) {
-        if (AiAliasHolds(alias) != ref) return false;
-        g_aliasClear(PapyrusVm(), 0, alias);
-        if (void* target = AiAlias(slot + "Target")) {
-            g_aliasClear(PapyrusVm(), 0, target);
-        }
-        return false;
-    });
-}
-
-// Starts one package kind on `actor`, aimed at `at`: the first EMPTY slot of
-// that kind takes both, and the engine picks the PACK up from the actor's
-// alias. One alias holds one reference, so the pool is what lets several
-// actors run one kind at once.
-//
-// 🛑 ForceRefTo itself makes the actor re-evaluate its packages, so no
-// EvaluatePackage is needed after it. POSTED, like every other engine call.
-// See: docs/commentary/morrowind_runtime.md#forcerefto-must-be-posted
-bool RunAiPackage(const char* kind, const std::string& actor, void* at) {
-    void* ref = OwnerRef(actor);
-    if (!ref || !at || !g_forceRefTo) return false;
-    PostToMainThread([kind, ref, at]() {
-        ReleaseAiActor(ref);
-        const int slots = AiAliasIndex("slots");
-        for (int n = 0; n < slots; ++n) {
-            const std::string slot = AiSlot(kind, n);
-            void* alias = AiAlias(slot + "Actor");
-            void* target = AiAlias(slot + "Target");
-            if (!alias || !target || AiAliasHolds(alias)) continue;
-            g_forceRefTo(PapyrusVm(), 0, target, at);
-            g_forceRefTo(PapyrusVm(), 0, alias, ref);
-            return;
-        }
-        Log("ai: no free %s slot of %d", kind, slots);
-    });
-    return true;
-}
-
-// An Ai command with an empty target ends what the actor was given.
-void StopAiPackage(const std::string& actor) {
-    void* ref = OwnerRef(actor);
-    if (ref) PostToMainThread([ref]() { ReleaseAiActor(ref); });
-}
-
-// `AiTravel x y z`: a package destination cannot be raw coordinates, so a
-// marker is spawned at the point and the destination alias holds IT.
-//
-// 🛑 The marker is XMarker (Skyrim.esm 0x3B), the same base the cell anchors
-// use. Without a reference to aim at, the Travel package falls back to its
-// "near editor location" default and walks the actor home.
-void AiTravelTo(const std::string& actor, float x, float y, float z) {
-    void* ref = OwnerRef(actor);
-    if (!ref || !g_placeAtMe) return;
-    void* marker = FormFromFile(ids::kSkyrimMaster, kXMarker);
-    if (!marker) return;
-    void* made = g_placeAtMe(PapyrusVm(), 0, ref, marker, 1, true, false);
-    if (!made) return;
-    PlaceAt(made, x, y, z, 0.0f);
-    RunAiPackage("travel", actor, made);
-}
-
-// `AiWander range duration`: the Sandbox package idles around a marker, so
-// one is dropped where the actor stands and its radius is the package's.
-void AiWanderAt(const std::string& actor, float range, float duration) {
-    void* ref = OwnerRef(actor);
-    if (!ref || !g_placeAtMe) return;
-    void* marker = FormFromFile(ids::kSkyrimMaster, kXMarker);
-    if (!marker) return;
-    void* made = g_placeAtMe(PapyrusVm(), 0, ref, marker, 1, true, false);
-    if (!made) return;
-    Log("ai: %s sandboxes range %g for %g h", actor.c_str(), range, duration);
-    RunAiPackage("wander", actor, made);
-}
-
-// `AiFollow id ...`: the Follow package handles distance, doors and pathing.
-// An empty `target` clears the alias, which ends the package.
-void AiFollowActor(const std::string& actor, const std::string& target,
-                   float duration, float x, float y, float z) {
-    (void)x; (void)y; (void)z;
-    if (target.empty()) {
-        StopAiPackage(actor);
-        return;
-    }
-    if (RunAiPackage("follow", actor, OwnerRef(target))) {
-        Log("ai: %s follows %s for %g h", actor.c_str(), target.c_str(),
-            duration);
-    }
-}
-
-// `AiEscort id duration x y z`: the Escort package walks the TARGET to a
-// destination, so the escorted actor goes in the target alias and the
-// destination marker is what the package's location input aims at.
-void AiEscortActor(const std::string& actor, const std::string& target,
-                   float duration, float x, float y, float z) {
-    if (target.empty()) {
-        StopAiPackage(actor);
-        return;
-    }
-    (void)x; (void)y; (void)z;
-    if (RunAiPackage("escort", actor, OwnerRef(target))) {
-        Log("ai: %s escorts %s for %g h", actor.c_str(), target.c_str(),
-            duration);
-    }
-}
-
-// `AiActivate id`: the Activate package walks there AND activates it, which
-// is exactly the TES3 command rather than an approximation of it.
-void AiActivateObject(const std::string& actor, const std::string& object) {
-    RunAiPackage("activate", actor, OwnerRef(object));
-}
-
-// `GetCurrentAiPackage`: which of OUR packages the actor is running, as
-// OpenMW's AiPackageTypeId, or -1.
-//
-// 🛑 Read off the ENGINE, by comparing the running PACK against the five this
-// plugin staged. Our own bookkeeping would only say what a script last asked
-// for, which is a different question once the engine drops a package.
-int CurrentAiPackageOf(const std::string& actor) {
-    void* ref = OwnerRef(actor);
-    if (!ref || !g_currentPackage) return -1;
-    void* running = g_currentPackage(PapyrusVm(), 0, ref);
-    if (!running) return -1;
-    const std::uint32_t id = FormIdOf(running);
-    const int slots = AiAliasIndex("slots");
-    for (int i = 0; i < kAiKindCount; ++i) {
-        for (int n = 0; n < slots; ++n) {
-            const FormRef* staged = FindAiPack(AiSlot(kAiKinds[i], n));
-            void* pack = staged ? Form(staged) : nullptr;
-            if (pack && FormIdOf(pack) == id) return i;
-        }
-    }
-    return -1;
-}
-
-// `GetAiPackageDone`: the actor no longer runs a package a script gave it.
-bool AiPackageDoneFor(const std::string& actor) {
-    return CurrentAiPackageOf(actor) < 0;
-}
-
-// The one-call queries. Each resolves both references and asks one native.
-// See: docs/commentary/morrowind_runtime.md#the-query-commands
-bool AskPair(PairQueryFn fn, const std::string& actor,
-             const std::string& other) {
-    void* a = OwnerRef(actor);
-    void* b = OwnerRef(other);
-    return a && b && fn && fn(PapyrusVm(), 0, a, b);
-}
-
-bool HasLosOn(const std::string& actor, const std::string& other) {
-    return AskPair(g_hasLos, actor, other);
-}
-
-// 🛑 The arguments SWAP. `x->GetDetected y` asks whether y is detected by x
-// (OpenMW's `isActorDetected(actor, observer)`, where the observer is the
-// command's target and the actor is its string argument), while Skyrim's
-// `self.IsDetectedBy(other)` asks whether SELF is detected by other. So the
-// named actor is self and the speaker is the observer.
-bool DetectsActor(const std::string& actor, const std::string& other) {
-    return AskPair(g_isDetectedBy, other, actor);
-}
-
-// `GetTarget "id"` is a COMPARISON, not a lookup: is the actor's combat
-// target that particular reference.
-bool FightingActor(const std::string& actor, const std::string& other) {
-    void* a = OwnerRef(actor);
-    void* b = OwnerRef(other);
-    if (!a || !b || !g_combatTarget) return false;
-    return g_combatTarget(PapyrusVm(), 0, a) == b;
-}
-
-bool AskActor(RefQueryFn fn, const std::string& actor) {
-    void* ref = OwnerRef(actor);
-    return ref && fn && fn(PapyrusVm(), 0, ref);
-}
-
-bool WeaponIsDrawn(const std::string& actor) {
-    return AskActor(g_weaponDrawn, actor);
-}
-
-bool ActorSneaking(const std::string& actor) {
-    return AskActor(g_isSneaking, actor);
-}
-
-bool ActorRunning(const std::string& actor) {
-    return AskActor(g_actorRunning, actor);
-}
-
-void ResurrectActor(const std::string& actor) {
-    void* ref = OwnerRef(actor);
-    if (!ref || !g_resurrect) return;
-    PostToMainThread([ref]() { g_resurrect(PapyrusVm(), 0, ref); });
-}
-
-void DropFromActor(const std::string& actor, const std::string& item,
-                   int count) {
-    void* ref = OwnerRef(actor);
-    void* form = ItemForm(item);
-    if (!ref || !form || !g_dropObject) return;
-    PostToMainThread([ref, form, count]() {
-        g_dropObject(PapyrusVm(), 0, ref, form, count);
-    });
-}
-
-// `GetCurrentWeather`: the global native hands back a Weather form, whose
-// classification is then read off it. The TES3 mapping is the opcode's.
-int WeatherClassification() {
-    if (!g_currentWeather || !g_classification) return -1;
-    void* weather = g_currentWeather(PapyrusVm(), 0, nullptr);
-    return weather ? g_classification(PapyrusVm(), 0, weather) : -1;
-}
-
-// `Face x y`: SetLookAt needs a REFERENCE to look at, and a bare point has
-// none, so the actor is turned by its Z angle instead -- the same thing TES3
-// means, since Face only ever turns an upright actor about Z.
-void AiFacePoint(const std::string& actor, float x, float y) {
-    void* ref = OwnerRef(actor);
-    if (!ref || !g_setAngle || !g_getPosition[0]) return;
-    const float dx = x - g_getPosition[0](PapyrusVm(), 0, ref);
-    const float dy = y - g_getPosition[1](PapyrusVm(), 0, ref);
-    if (dx == 0.0f && dy == 0.0f) return;
-    const float degrees = std::atan2(dx, dy) * 180.0f / 3.14159265f;
-    const float ax = RefAngle(ref, 0);
-    const float ay = RefAngle(ref, 1);
-    g_setAngle(PapyrusVm(), 0, ref, ax, ay, degrees);
 }
 
 // `PlaySound3D sound` and its kin: plays a TES3 SOUN through the SNDR the
@@ -1281,12 +704,9 @@ void MoveGold(const std::string& from, const std::string& to, int count) {
     g_addItem(PapyrusVm(), 0, target, gold, count, false);
 }
 
-template <typename Fn>
-Fn Native(const char* name, std::uint64_t id) {
-    return reinterpret_cast<Fn>(Resolve(name, id, nullptr));
-}
+}  // namespace gamecalls
 
-}  // namespace
+using namespace gamecalls;
 
 void InstallGameCalls() {
     g_isRunning = Native<IsRunningFn>("Quest.IsRunning", ids::kQuestIsRunning);
@@ -1333,16 +753,6 @@ void InstallGameCalls() {
     g_damageValue = Native<SetValueFn>("Actor.DamageActorValue",
                                        ids::kActorDamageValue);
     g_equipItem = Native<EquipItemFn>("Actor.EquipItem", ids::kActorEquipItem);
-    g_getPosition[0] = Native<AxisGetFn>("ObjectReference.GetPositionX",
-                                         ids::kRefGetPositionX);
-    g_getPosition[1] = Native<AxisGetFn>("ObjectReference.GetPositionY",
-                                         ids::kRefGetPositionY);
-    g_getPosition[2] = Native<AxisGetFn>("ObjectReference.GetPositionZ",
-                                         ids::kRefGetPositionZ);
-    g_setPosition = Native<AxisSetFn>("ObjectReference.SetPosition",
-                                      ids::kRefSetPosition);
-    g_setAngle = Native<AxisSetFn>("ObjectReference.SetAngle",
-                                   ids::kRefSetAngle);
     g_showBarterMenu = Native<ActorCallFn>("Actor.ShowBarterMenu",
                                            ids::kActorShowBarterMenu);
     g_getLevel = Native<ActorIntFn>("Actor.GetLevel", ids::kActorGetLevel);
@@ -1355,47 +765,12 @@ void InstallGameCalls() {
                                             ids::kSoundStopInstance);
     g_instanceVolume = Native<InstanceVolumeFn>("Sound.SetInstanceVolume",
                                                 ids::kSoundSetInstanceVolume);
-    g_placeAtMe = Native<PlaceAtMeFn>("ObjectReference.PlaceAtMe",
-                                      ids::kRefPlaceAtMe);
     g_isDead = Native<RefQueryFn>("Actor.IsDead", ids::kActorIsDead);
     g_getForm = Native<GetFormFn>("Game.GetForm", ids::kGameGetForm);
     g_is3DLoaded = Native<RefQueryFn>("ObjectReference.Is3DLoaded",
                                       ids::kRefIs3DLoaded);
     g_advanceSkill = Native<AdvanceSkillFn>("Game.AdvanceSkill",
                                             ids::kGameAdvanceSkill);
-    g_moveTo = Native<MoveToFn>("ObjectReference.MoveTo", ids::kRefMoveTo);
-    g_getScale = Native<ScaleGetFn>("ObjectReference.GetScale",
-                                    ids::kRefGetScale);
-    g_setScale = Native<ScaleSetFn>("ObjectReference.SetScale",
-                                    ids::kRefSetScale);
-    g_questGetAlias = Native<GetAliasFn>("Quest.GetAlias",
-                                         ids::kQuestGetAlias);
-    g_forceRefTo = Native<ForceRefToFn>("ReferenceAlias.ForceRefTo",
-                                        ids::kAliasForceRefTo);
-    g_aliasReference = Native<AliasRefFn>(
-        "ReferenceAlias.GetReference", ids::kAliasGetReference);
-    g_aliasClear = Native<RefCallFn>("ReferenceAlias.Clear",
-                                    ids::kAliasClear);
-    g_currentPackage = Native<CurrentPackageFn>("Actor.GetCurrentPackage",
-                                                ids::kActorCurrentPackage);
-    g_hasLos = Native<PairQueryFn>("Actor.HasLOS", ids::kActorHasLos);
-    g_isDetectedBy = Native<PairQueryFn>("Actor.IsDetectedBy",
-                                         ids::kActorIsDetectedBy);
-    g_combatTarget = Native<CombatTargetFn>("Actor.GetCombatTarget",
-                                            ids::kActorCombatTarget);
-    g_weaponDrawn = Native<RefQueryFn>("Actor.IsWeaponDrawn",
-                                       ids::kActorWeaponDrawn);
-    g_isSneaking = Native<RefQueryFn>("Actor.IsSneaking",
-                                      ids::kActorIsSneaking);
-    g_actorRunning = Native<RefQueryFn>("Actor.IsRunning",
-                                        ids::kActorIsRunning);
-    g_resurrect = Native<ResurrectFn>("Actor.Resurrect", ids::kActorResurrect);
-    g_dropObject = Native<DropObjectFn>("ObjectReference.DropObject",
-                                        ids::kRefDropObject);
-    g_currentWeather = Native<CurrentWeatherFn>("Weather.GetCurrentWeather",
-                                                ids::kWeatherCurrent);
-    g_classification = Native<ClassificationFn>("Weather.GetClassification",
-                                                ids::kWeatherClassification);
     GameHooks& hooks = Hooks();
     hooks.playerLevel = PlayerLevel;
     hooks.actorValue = ActorValue;
@@ -1403,7 +778,6 @@ void InstallGameCalls() {
     hooks.advanceSkill = AdvanceSkill;
     hooks.showBarterMenu = ShowBarterMenu;
     hooks.showMessage = ShowMessage;
-    hooks.placeNear = PlaceNear;
     hooks.isDead = IsDeadRef;
     hooks.is3DLoaded = Is3DLoadedRef;
     hooks.playSound = PlaySoundAt;
@@ -1423,10 +797,6 @@ void InstallGameCalls() {
     hooks.playerInInterior = PlayerInInterior;
     hooks.menuMode = MenuMode;
     hooks.forceGreeting = ForceGreeting;
-    hooks.position = Position;
-    hooks.setPosition = SetPosition;
-    hooks.angle = Angle;
-    hooks.setAngle = SetAngle;
     hooks.setQuestStage = SetQuestStage;
     hooks.addItem = AddItem;
     hooks.removeItem = RemoveItem;
@@ -1434,30 +804,9 @@ void InstallGameCalls() {
     hooks.setCombat = SetCombat;
     hooks.setEnabled = SetEnabled;
     hooks.isDisabled = IsDisabled;
-    hooks.moveToCell = MoveRefToCell;
-    hooks.moveInCell = MoveRefInCell;
-    hooks.moveBy = MoveRefBy;
-    hooks.rotateBy = RotateRefBy;
-    hooks.scale = RefScale;
-    hooks.setScale = SetRefScale;
-    hooks.placeAtCell = PlaceBaseAt;
-    hooks.aiTravel = AiTravelTo;
-    hooks.aiWander = AiWanderAt;
-    hooks.aiFollow = AiFollowActor;
-    hooks.aiEscort = AiEscortActor;
-    hooks.aiActivate = AiActivateObject;
-    hooks.aiFace = AiFacePoint;
-    hooks.currentPackage = CurrentAiPackageOf;
-    hooks.packageDone = AiPackageDoneFor;
-    hooks.hasLos = HasLosOn;
-    hooks.detects = DetectsActor;
-    hooks.fighting = FightingActor;
-    hooks.weaponDrawn = WeaponIsDrawn;
-    hooks.sneaking = ActorSneaking;
-    hooks.running = ActorRunning;
-    hooks.resurrect = ResurrectActor;
-    hooks.dropItem = DropFromActor;
-    hooks.weather = WeatherClassification;
+    InstallMoveCalls(hooks);
+    InstallAiCalls(hooks);
+    InstallQueryCalls(hooks);
     Log("game: %zu cell anchor(s) for PositionCell", CellCount());
     Log("game: %zu placed reference(s) resolvable by id", RefCount());
     Log("game: %zu journal quest(s) mapped to Skyrim quests", QuestCount());

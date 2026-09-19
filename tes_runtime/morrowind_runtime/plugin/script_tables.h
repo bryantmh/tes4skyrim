@@ -55,6 +55,9 @@ struct ActorDef {
     // ESM::NPC::Services bits; AllItems (0x2FFF) is what lists Barter.
     std::uint32_t services = 0;
     int  gold = 0;
+    // The AIDT's authored Fight, Hello, Alarm and Flee, by filter.h's index:
+    // what each reads until a script moves it.
+    int  aiSettings[4] = {0, 0, 0, 0};
 };
 
 // One GMST of the chain: GMST.txt, `name=type,value`.

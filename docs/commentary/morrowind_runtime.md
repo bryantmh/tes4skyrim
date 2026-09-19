@@ -150,6 +150,16 @@ interface, which is what lets the ported rules compile without `mwworld/` or
 Two implementations: one reads the running game, and the test harnesses answer
 from literal values, so every rule is checkable with no Skyrim running.
 
+### <a id="ported-is-not-wired"></a>Ported is not wired
+
+An opcode can be fully ported and still be dead: its hook is never set, or the
+`DialogueState` it reads is never fed. Either way it answers with a default
+forever while every audit that counts *ported* opcodes reads it as done, so the
+gap is invisible from the port side alone.
+
+`tools/script/mwscript_opcode_audit.py unwired` reports both halves — hooks
+used but never supplied, and `DialogueState` methods nothing calls.
+
 ## <a id="the-filter"></a>The filter
 
 `plugin/filter.{h,cpp}` ports the TES3 selection rules onto `ActorView`. The
@@ -1188,8 +1198,30 @@ crashed. They live beside disposition, in the co-save.
 `GetDeadCount` gates a great deal of quest dialogue — Old Ebonheart's "Cursing
 Like a Witch" branches its ending on `getDeadCount TR_m3_Margia_Sycora > 0`,
 choosing between the player having killed the witch and having lied about it.
-The count only rises when something records a kill, which no hook does yet, so
-that branch currently always takes the "lied" path.
+
+🛑 **`GetDeadCount` is the ENGINE's count, not ours.** `ActorBase.GetDeadCount`
+(55987, 0x9c5370, the only native of that name) counts every death of a base
+actor and saves it. The DLL's own counter was only ever fed by a test, so every
+kill check read 0; it is deleted, and the TES3 id resolves through
+`bases_formid.txt`.
+
+🛑 **An unset AI setting reads the authored AIDT**, not 0. `NPC_.txt` carries
+`hello|fight|flee|alarm` as its last four columns; before that a filter on
+`Fight >= 90` was false for every NPC no script had touched.
+
+🛑 **A written setting also moves the actor value the engine acts on**
+(`game_calls.cpp:ApplyAiSetting`), or `SetFight 100` changes a number and
+nobody attacks:
+
+| TES3 | Skyrim actor value | Rule |
+|---|---|---|
+| Fight | Aggression | 2 when OpenMW's `fight + (50 - disposition) * fFightDispMult + iFightDistanceBase >= 100` (the on-sight test at distance 0, GMSTs from `GMST.txt`), else 1, else 0 for Fight 0 |
+| Flee | Confidence | the import's tiers on `100 - flee`: >=100 4, >=70 3, >=40 2, >=15 1 |
+| Alarm | Assistance, Morality | the import's Responsibility mapping: >=30 assists; morality >=80 3, >=50 2, >=30 1 |
+| Hello | none | the number is kept for the filter only |
+
+Aggression 2 attacks neutrals, which the player is; 1 attacks enemies only.
+NOT in-game verified. Disposition moving later does not re-run the rule.
 
 Measured over the 44,950 authored result scripts, porting these moved the
 unported call total from **6,505 to 4,538** and the command count from 119 to
@@ -1206,6 +1238,75 @@ registrations where there are **487**, and called every dynamic-stat command
 unregistered while it was ported. `tools/script/mwscript_opcode_audit.py` now
 reads both corpora and expands the loops;
 [mwscript_opcodes.md](../audits/mwscript_opcodes.md) is the current table.
+
+### <a id="ported-is-not-wired"></a>🛑 Ported is not wired
+
+**Code:** `tools/script/mwscript_opcode_audit.py:unwired`
+
+Three commands read as ported while answering a default forever:
+
+- `StartScript`/`StopScript` (1,104 and 695 call sites) flipped a flag and no
+  code ran a global script.
+- `GetDeadCount` (1,074) read a counter only a test fed.
+- `GameHour`, `Day`, `Month`, `Year`, `DaysPassed`, `TimeScale` were declared
+  and never written.
+
+`--wiring` lists every `Hooks().x` the game never supplies and every
+`DialogueState` method nothing outside the tests calls. Run against the
+pre-fix sources it reports `AddDeath`; it reports nothing now. It cannot see a
+flag that is written and read but acted on by nobody, which is what
+`StartScript` was.
+
+### <a id="global-scripts"></a>Global scripts tick
+
+**Code:** `plugin/object_script.cpp:RunGlobalScripts`, `plugin/object_tick.cpp`
+
+A running global script is an `ObjectScript` with no placement: its locals
+live under the SCRIPT's name, which is how dialogue reads `ScriptName.var`, and
+its bare commands act on the target `StartScript` named (the speaker, for the
+bare form). They run after the local scripts, once per tick. The running set
+and each target are in the co-save (`S` rows), so a timer survives a save.
+
+NOT done: TES3 start scripts (`SSCR`) are not exported, so nothing starts at
+new game.
+
+### <a id="the-clock"></a>The clock globals are Skyrim's
+
+**Code:** `plugin/game_calls.cpp:SyncClock`
+
+Each tick copies Skyrim.esm's `GameHour` (0x38), `GameDay` (0x37), `GameMonth`
+(0x36), `GameYear` (0x35), `GameDaysPassed` (0x39) and `TimeScale` (0x3A) into
+the TES3 globals of the same meaning. The value is the float at `+0x34`, which
+is all `GlobalVariable.GetValue` (0x9c2b30) reads. Month is 0-based and Day
+1-based in both games. The year is Skyrim's.
+
+### <a id="run-on-game-thread"></a>A write a script reads back runs NOW
+
+**Code:** `plugin/main_thread.cpp:RunOnGameThread`
+
+Object scripts tick on the game thread, so a POSTED `SetPos` landed a frame
+after the `GetPos` that followed it. `RunOnGameThread` runs at once when the
+caller is already on the game thread (learned from the first task the game
+runs) and posts otherwise. It carries the writes with a getter: enable, lock,
+the dynamic stats, equip, position, move, rotate, scale, and `AddItem` /
+`RemoveItem`, which were called DIRECTLY from whatever thread the menu was on.
+Everything that opens a menu, stages a quest, deletes, spawns or fills an
+alias stays posted on purpose.
+
+### <a id="one-queued-tick"></a>At most one tick is queued
+
+The tick thread posts only while no posted tick is waiting. Alt-tabbing stops
+the task pump, and an unconditional post queued 30 ticks a second that all ran
+at once on return.
+
+### <a id="a-script-acts-on-its-own-reference"></a>🛑 A script's own id is the reference RUNNING it
+
+**Code:** `plugin/game_calls.cpp:OwnerRef`
+
+A bare command names its target by BASE id, and `refs_formid.txt` holds one
+placement per id -- so every copy of a base placed many times (one is placed
+116 times) acted on the same reference. While an instance runs, its own base
+id resolves to its runtime FormID.
 
 ### <a id="reference-index-unlocked"></a>The reference index is what unblocked the object commands
 
@@ -1318,8 +1419,11 @@ on the stack and a mesh path where an object should be.
   is 55286 (0x9a46f0).
 
 🛑 **`papyrus_native_locate.py` finds a native by NAME, and names repeat across
-scripts** (`Clear`, `ForceActive`, `IsRunning`). Read the class string loaded
-beside the name at the registration site before taking the address.
+scripts** (`Clear`, `ForceActive`, `IsRunning`). It now prints the script each
+registration site names, and `stable_id_check.py --identity` checks every
+`Native<>("Script.Function", id)` against it: replaying the two ids above
+reports `Weather` and `LocationAlias` as the real owners, and the current
+source reports 0.
 
 The quest is started by `StartQuest`, the same call the journal uses.
 

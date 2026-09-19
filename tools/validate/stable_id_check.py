@@ -16,6 +16,12 @@ Usage:
     python tools/validate/stable_id_check.py --header <ids.h> --played 1.6.1170
     python tools/validate/stable_id_check.py --dir <folder with versionlibs>
 
+    python tools/validate/stable_id_check.py --identity
+
+`--identity` answers a second question: is each id the function its `Native<>`
+call SAYS it is. Several Papyrus scripts register one function name, and the id
+of the wrong one resolves everywhere and crashes at runtime.
+
 Exit code is non-zero when any id is missing anywhere, so it can gate a build.
 See: docs/commentary/morrowind_runtime.md#the-angle-getters-have-no-id
 """
@@ -27,12 +33,26 @@ import re
 from pathlib import Path
 
 from tools.disasm import address_lib
+from tools.disasm.skyrim_disasm import Binary
+from tools.script import papyrus_native_locate as locate
 
 #: Every runtime header that declares stable ids.
 DEFAULT_HEADERS = (
     'tes_runtime/morrowind_runtime/plugin/ids.h',
     'tes_runtime/plugin/ids.h',
 )
+
+#: The sources whose `Native<>` calls pair a Papyrus name with an id.
+DEFAULT_SOURCES = tuple(
+    'tes_runtime/morrowind_runtime/plugin/game_calls%s.cpp' % part
+    for part in ('', '_move', '_ai', '_query'))
+
+#: The unpacked build the ids were found in, and its version.
+IDENTITY_EXE = 'D:/Other Games/Skyrim Anniversary Edition/SkyrimSE.exe'
+IDENTITY_VERSION = '1.6.659'
+
+#: `Native<Fn>("Script.Function", ids::kName)`; a `::` name is not Papyrus.
+_NATIVE = re.compile(r'Native<\w+>\(\s*"(\w+)\.(\w+)",\s*ids::(\w+)\)')
 
 #: `constexpr std::uint64_t kName = 12345;`
 _DECL = re.compile(r'constexpr\s+std::uint64_t\s+(\w+)\s*=\s*(\d+)\s*;')
@@ -65,16 +85,59 @@ def missing_by_build(ids: dict, libs: list) -> dict:
     return missing
 
 
-def main() -> int:
-    """Report ids missing from any build; non-zero when any is."""
+def wrong_identities(sources: list, ids: dict, exe: str) -> list:
+    """`(constant, claimed Script.Function, scripts that DO own the address)`
+    for every `Native<>` whose id is not that script's registration."""
+    claims = [claim for source in sources
+              for claim in _NATIVE.findall(
+                  Path(source).read_text(encoding='utf-8', errors='replace'))]
+    binary = Binary(exe)
+    table = address_lib.load(address_lib.find_versionlib(IDENTITY_VERSION))
+    strings = {rva for _s, name, _c in claims
+               for rva in locate.find_strings(binary, name)}
+    sites = locate.lea_sites_for(binary, strings)
+    wrong = []
+    for script, name, constant in claims:
+        rva = table.get(ids.get(constant, -1))
+        owners = [owner for owner, _site, callbacks
+                  in locate.registrations(binary, name, sites)
+                  if rva in callbacks]
+        if script not in owners:
+            wrong.append((constant, f'{script}.{name}', owners))
+    return wrong
+
+
+def report_identities(sources: list, ids: dict, exe: str) -> int:
+    """Print every misidentified native; non-zero when there is one."""
+    wrong = wrong_identities(sources, ids, exe)
+    for constant, claimed, owners in wrong:
+        print('   WRONG FUNCTION %-26s claims %s, address belongs to %s'
+              % (constant, claimed, ', '.join(owners) or 'no registration'))
+    print('%s: %d misidentified native(s)'
+          % ('FAIL' if wrong else 'OK', len(wrong)))
+    return 1 if wrong else 0
+
+
+def parse_args():
+    """The command line."""
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--header', action='append',
                         help='a header declaring stable ids (repeatable)')
     parser.add_argument('--dir', help='extra directory holding versionlibs')
+    parser.add_argument('--identity', action='store_true',
+                        help='check each Native<> id IS the function it names')
+    parser.add_argument('--source', action='append',
+                        help='a source holding Native<> calls (repeatable)')
+    parser.add_argument('--exe', default=IDENTITY_EXE,
+                        help='the unpacked %s exe' % IDENTITY_VERSION)
     parser.add_argument('--played', default='1.6.1170',
                         help='the build the user plays, flagged in the report')
-    args = parser.parse_args()
+    return parser.parse_args()
 
+
+def main() -> int:
+    """Report ids missing from any build; non-zero when any is."""
+    args = parse_args()
     headers = [Path(h) for h in (args.header or DEFAULT_HEADERS)]
     ids = {}
     for header in headers:
@@ -84,6 +147,10 @@ def main() -> int:
         print('no stable ids found in: %s'
               % ', '.join(str(h) for h in headers))
         return 1
+
+    if args.identity:
+        return report_identities(args.source or list(DEFAULT_SOURCES), ids,
+                                 args.exe)
 
     libs = versionlibs(args.dir)
     if not libs:

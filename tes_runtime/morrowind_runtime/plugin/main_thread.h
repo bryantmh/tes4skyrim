@@ -27,4 +27,10 @@ bool CanPostToMainThread();
 // Returns false when there is no task interface and `fn` was NOT run.
 bool PostToMainThread(std::function<void()> fn);
 
+// Runs `fn` NOW when the caller is already on the game's main thread, and
+// posts it otherwise. For a write a script reads back in the same run: an
+// object script ticks on the main thread, where a post would land a frame
+// after the read. Returns false when `fn` was neither run nor queued.
+bool RunOnGameThread(std::function<void()> fn);
+
 }  // namespace mwruntime

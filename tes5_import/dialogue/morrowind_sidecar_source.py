@@ -178,9 +178,18 @@ def _npc_services(rec, tables: dict) -> int:
     return struct.unpack_from('<i', aidt.data, 8)[0]
 
 
+def _ai_settings(rec) -> tuple:
+    """The AIDT's authored (hello, fight, flee, alarm), zeros without one."""
+    aidt = get_subrecord(rec, 'AIDT')
+    if aidt is None or len(aidt.data) < 5:
+        return (0, 0, 0, 0)
+    return struct.unpack_from('<HBBB', aidt.data, 0)
+
+
 def _actor_line(rec, tables: dict) -> str:
     """`id=race|class|faction|rank|disposition|female|name|level|reputation|
-    personality|luck|speechcraft|mercantile|services|gold` for one NPC_."""
+    personality|luck|speechcraft|mercantile|services|gold|hello|fight|flee|
+    alarm` for one NPC_."""
     stats = _npc_stats(rec, tables)
     fields = (_text(rec, 'RNAM'), _text(rec, 'CNAM'), _text(rec, 'ANAM'),
               stats['rank'], stats['disposition'],
@@ -188,7 +197,7 @@ def _actor_line(rec, tables: dict) -> str:
               stats['level'], stats['reputation'],
               stats['attributes'][_PERSONALITY], stats['attributes'][_LUCK],
               stats['skills'][_SPEECHCRAFT], stats['skills'][_MERCANTILE],
-              _npc_services(rec, tables), stats['gold'])
+              _npc_services(rec, tables), stats['gold'], *_ai_settings(rec))
     return f'{rec.record_id}=' + '|'.join(str(field) for field in fields)
 
 

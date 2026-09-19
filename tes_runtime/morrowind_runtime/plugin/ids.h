@@ -388,6 +388,14 @@ constexpr std::uint64_t kRefDropObject = 56157;
 constexpr std::uint64_t kWeatherCurrent = 56803;
 constexpr std::uint64_t kWeatherClassification = 56775;
 
+// int ActorBase.GetDeadCount() (0x9c5370): the engine's own per-base kill
+// count, the only native of that name.
+constexpr std::uint64_t kActorBaseDeadCount = 55987;
+
+// TESGlobal's value, the float `GlobalVariable.GetValue` (0x9c2b30) returns:
+// `movss xmm0,[r8+0x34]`, a two-instruction leaf, so the field is read.
+constexpr std::size_t kOffGlobalValue = 0x34;
+
 // Actor.IsDead() (0x989ff0), the r9 of its registration beside 'IsDead'.
 //
 // 🛑 `OnDeath` is POLLED from the tick rather than hooked. TES3 raises it for

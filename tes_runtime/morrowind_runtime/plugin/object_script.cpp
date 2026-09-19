@@ -28,6 +28,9 @@ std::map<std::string, ObjectScript> g_instances;
 // The instance whose body is executing, for the event opcodes to read.
 ObjectScript* g_running = nullptr;
 
+// The global scripts that have run this session, by script name.
+std::map<std::string, ObjectScript> g_globalScripts;
+
 // Instance by the FormID it has in THIS game, which is the only id an engine
 // hook is handed. Filled once at load, when the load order can be resolved.
 std::unordered_map<std::uint32_t, ObjectScript*> g_byRuntimeId;
@@ -64,6 +67,9 @@ ObjectScript::ObjectScript(std::string plugin, std::uint32_t localFormId,
     : mPlugin(std::move(plugin)), mLocalFormId(localFormId),
       mBaseId(std::move(baseId)), mScript(std::move(script)),
       mKey(OwnerFor(mPlugin, mLocalFormId)) {}
+
+ObjectScript::ObjectScript(std::string script, std::string target)
+    : mBaseId(std::move(target)), mScript(std::move(script)), mKey(mScript) {}
 
 // 🛑 The events are cleared whether the body ran or not. TES3 gives them a
 // one-tick life, so a script that fails to compile must not leave `OnActivate`
@@ -222,9 +228,29 @@ ObjectScript* FindInstance(const std::string& plugin,
 
 std::size_t LiveInstanceCount() { return g_instances.size(); }
 
+// 🛑 A retargeted `StartScript` replaces the instance: its target is part of
+// what the script acts on, while its locals are keyed by name and carry over.
+std::size_t RunGlobalScripts() {
+    std::size_t ran = 0;
+    for (const auto& running : State().RunningScripts()) {
+        auto it = g_globalScripts.find(running.first);
+        if (it == g_globalScripts.end() ||
+            it->second.BaseId() != running.second) {
+            it = g_globalScripts
+                     .insert_or_assign(running.first,
+                                       ObjectScript(running.first,
+                                                    running.second))
+                     .first;
+        }
+        if (it->second.RunOnce()) ++ran;
+    }
+    return ran;
+}
+
 void ClearInstances() {
     g_byRuntimeId.clear();
     g_instances.clear();
+    g_globalScripts.clear();
 }
 
 }  // namespace mwruntime

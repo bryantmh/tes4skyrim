@@ -387,6 +387,60 @@ def write_markdown(path, commands, real, noops, export):
     print(f'\nwrote {path}')
 
 
+#: `Hooks().name` is a use; `hooks.name =` is the game side supplying it.
+_HOOK_USE = re.compile(r'\bHooks\(\)\.(\w+)')
+_HOOK_SET = re.compile(r'\bhooks\.(\w+)\s*=')
+#: A DialogueState method's declaration, and any call of a method by name.
+_STATE_DECL = re.compile(r'^\s+[\w:<>,\s\*&]+?\b(\w+)\([^;{]*\)\s*(?:const)?;',
+                         re.M)
+_STATE_CLASS = re.compile(r'class DialogueState \{(.*?)\n\};', re.S)
+
+
+def _plugin_sources(root):
+    """`{file name: text}` for the runtime's sources, tests left out: a test
+    calling a method is not the game calling it."""
+    folder = os.path.join(root, os.path.dirname(RUNNER))
+    out = {}
+    for name in sorted(os.listdir(folder)):
+        if name.endswith(('.cpp', '.h')) and not name.endswith('_test.cpp'):
+            with open(os.path.join(folder, name), encoding='utf-8',
+                      errors='replace') as fh:
+                out[name] = fh.read()
+    return out
+
+
+def unwired(root):
+    """`(hooks used but never supplied, DialogueState methods nothing calls)`.
+
+    A ported opcode whose hook the game never sets, or whose state no code
+    ever feeds, answers with a default forever and still reads as ported.
+    See: docs/commentary/morrowind_runtime.md#ported-is-not-wired
+    """
+    sources = _plugin_sources(root)
+    everything = '\n'.join(sources.values())
+    hooks = set(_HOOK_USE.findall(everything)) - set(
+        _HOOK_SET.findall(everything))
+    body = _STATE_CLASS.search(sources.get('dialogue_state.h', ''))
+    declared = set(_STATE_DECL.findall(body.group(1))) if body else set()
+    callers = '\n'.join(text for name, text in sources.items()
+                        if not name.startswith('dialogue_state.'))
+    idle = {name for name in declared
+            if not re.search(r'[.>]' + name + r'\(', callers)}
+    return sorted(hooks), sorted(idle)
+
+
+def report_unwired(root):
+    """Prints what `unwired` found; returns how many items that is."""
+    hooks, idle = unwired(root)
+    for name in hooks:
+        print(f'UNWIRED hook      {name}: used, never supplied by the game')
+    for name in idle:
+        print(f'UNWIRED state     {name}: declared, nothing outside tests '
+              f'calls it')
+    print(f'{len(hooks) + len(idle)} unwired item(s)')
+    return len(hooks) + len(idle)
+
+
 def main():
     """Parses arguments, builds the table and prints it."""
     ap = argparse.ArgumentParser(
@@ -399,7 +453,11 @@ def main():
     ap.add_argument('--top', type=int, help='show only the first N rows')
     ap.add_argument('--tsv', help='also write the full table here')
     ap.add_argument('--markdown', help='write the readable audit here')
+    ap.add_argument('--wiring', action='store_true',
+                    help='list hooks and state nothing feeds, then exit')
     args = ap.parse_args()
+    if args.wiring:
+        sys.exit(1 if report_unwired(args.root) else 0)
 
     commands = registrations(args.root)
     real, noops = installed(args.root)

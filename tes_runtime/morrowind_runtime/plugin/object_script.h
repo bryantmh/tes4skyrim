@@ -47,6 +47,12 @@ public:
     ObjectScript(std::string plugin, std::uint32_t localFormId,
                  std::string baseId, std::string script);
 
+    // A GLOBAL script, which `StartScript` runs with no placement at all. Its
+    // locals live under the script's own name, which is how dialogue and other
+    // scripts read them (`ScriptName.variable`). `target` is the id its bare
+    // commands act on, or "" when it was started with none.
+    ObjectScript(std::string script, std::string target);
+
     // The owner string this instance's locals are stored under.
     const std::string& Key() const { return mKey; }
     const std::string& Script() const { return mScript; }
@@ -167,6 +173,11 @@ ObjectScript* InstanceFor(const std::string& plugin, std::uint32_t localFormId,
 // and nothing created, for the paths that only want to raise an event.
 ObjectScript* FindInstance(const std::string& plugin,
                            std::uint32_t localFormId);
+
+// Runs every global script `StartScript` left running, once each. A script
+// that stops itself, or starts another, takes effect on the NEXT tick.
+// Returns how many ran.
+std::size_t RunGlobalScripts();
 
 // How many instances this session has created.
 std::size_t LiveInstanceCount();

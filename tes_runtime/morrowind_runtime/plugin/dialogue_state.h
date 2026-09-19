@@ -176,6 +176,16 @@ struct GameHooks {
                      int count) = nullptr;
     // `GetCurrentWeather`: Skyrim's weather CLASSIFICATION, 0..4.
     int  (*weather)() = nullptr;
+    // `GetDeadCount id`: how many of that base actor have died, which the
+    // ENGINE counts and saves for every actor, scripted or not.
+    int  (*deadCount)(const std::string& actor) = nullptr;
+    // Copies the game's clock into GameHour, Day, Month, Year, DaysPassed and
+    // TimeScale, which TES3 scripts and dialogue read as plain globals.
+    void (*syncClock)() = nullptr;
+    // The four AI settings, pushed onto the actor: `which` is kAiFight..kAiFlee
+    // and `value` is TES3's 0..100.
+    void (*applyAiSetting)(const std::string& actor, int which,
+                           int value) = nullptr;
 };
 
 GameHooks& Hooks();
@@ -198,6 +208,9 @@ public:
     bool  HasGlobal(const std::string& name) const;
     float Global(const std::string& name) const;
     void  SetGlobal(const std::string& name, float value);
+    // The same write, unlogged: for a value the GAME owns and refreshes every
+    // tick, such as the clock.
+    void  SyncGlobal(const std::string& name, float value);
     std::vector<std::string> Globals() const;
 
     // --- script locals, by owner: an actor's id or a global script's -------
@@ -229,11 +242,6 @@ public:
     int  AiSetting(const std::string& actor, int which) const;
     void SetAiSetting(const std::string& actor, int which, int value);
 
-    // --- how many of a base actor the player has killed --------------------
-    // `GetDeadCount id`, which gates a great deal of quest dialogue.
-    int  DeadCount(const std::string& actor) const;
-    void AddDeath(const std::string& actor);
-
     // --- reputation, crime, faction reactions, running scripts -------------
     int   reputation = 0;
     float crimeLevel = 0.0f;
@@ -241,7 +249,12 @@ public:
     void SetFactionReaction(const std::string& a, const std::string& b,
                             int value);
     bool ScriptRunning(const std::string& script) const;
-    void SetScriptRunning(const std::string& script, bool running);
+    // `StartScript`: the global script ticks from now on. `target` is the id
+    // an explicit `ref->StartScript` named, which its bare commands act on.
+    void StartScript(const std::string& script, const std::string& target);
+    void StopScript(const std::string& script);
+    // Every running global script and its target, as (script, target).
+    std::vector<std::pair<std::string, std::string>> RunningScripts() const;
 
     // --- the conversation in progress --------------------------------------
     // Reset by BeginConversation; filled by result scripts as they run.
@@ -286,10 +299,9 @@ private:
     std::map<std::pair<std::string, std::string>, float> mVars;
     std::map<std::string, Membership> mFactions;
     std::map<std::pair<std::string, std::string>, int> mReactions;
-    std::set<std::string> mRunning;
+    std::map<std::string, std::string> mRunning;
     std::set<std::string> mKnownTopics;
     std::map<std::pair<std::string, int>, int> mAiSettings;
-    std::map<std::string, int> mDeaths;
 };
 
 // The one state of this game session.

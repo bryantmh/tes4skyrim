@@ -117,7 +117,7 @@ bool GameActor::Attacked() const { return false; }
 bool GameActor::TalkedToPlayer() const { return false; }
 
 int GameActor::DeadCount(const RefId& id) const {
-    return State().DeadCount(id);
+    return Hooks().deadCount ? Hooks().deadCount(id) : 0;
 }
 
 int GameActor::AiSetting(int which) const {

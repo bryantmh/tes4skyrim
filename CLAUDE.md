@@ -444,6 +444,10 @@ Deep reference material lives in `docs/`, sorted by KIND.
 live, returns the child's exit code, and gates the `.py` files the command
 WROTE. A bare command is refused: a heredoc writes a `.py` no gate ever sees.
 
+🛑 **SEARCH WITH THE GREP TOOL, NEVER `grep -r`.** It is ripgrep: honors
+`.gitignore`, so it skips `export/`/`output/`/`references/` (tens of GB) and
+finishes the whole repo in ~1s
+
 **`grep "a\|b"` silently finds NOTHING** — bash eats the backslash, so grep
 gets a literal `|` and still exits 0. Use `grep -E "a|b"` or `-e a -e b`. Zero
 matches is a broken query, never evidence about the tree.

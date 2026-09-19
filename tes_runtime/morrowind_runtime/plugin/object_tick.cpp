@@ -31,6 +31,10 @@ std::size_t g_ticks = 0;
 // Read by the tick thread and written by the game thread, so it is atomic.
 std::atomic<bool> g_running{false};
 
+// Set while a posted tick has not run yet, so a stalled task pump holds ONE
+// tick rather than a backlog that bursts when it resumes.
+std::atomic<bool> g_queued{false};
+
 // The player's cell as of the last tick, for CellChanged.
 std::string g_lastCell;
 
@@ -60,6 +64,7 @@ void RunOneTick() {
         g_lastCount = 0;
         return;
     }
+    if (Hooks().syncClock) Hooks().syncClock();
     const std::vector<ObjectScript*> live = BoundInstances();
     const bool cellChanged = PlayerCellChanged();
     std::size_t ran = 0;
@@ -90,7 +95,7 @@ void RunOneTick() {
         instance->RunOnce();
         ++ran;
     }
-    g_lastCount = ran;
+    g_lastCount = ran + RunGlobalScripts();
 }
 
 // 🛑 The wait SLEEPS OFF the game thread and only the tick itself is posted.
@@ -103,7 +108,11 @@ void TickThread() {
         std::this_thread::sleep_for(
             std::chrono::duration<float>(kTickDelta));
         if (!g_running) return;
-        PostToMainThread([]() { RunOneTick(); });
+        if (g_queued.exchange(true)) continue;
+        PostToMainThread([]() {
+            g_queued = false;
+            RunOneTick();
+        });
     }
 }
 

@@ -1,5 +1,7 @@
 #include "script_tables.h"
 
+#include "filter.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -95,7 +97,8 @@ std::vector<std::string> Split(const std::string& text, char sep) {
 }
 
 // `race|class|faction|rank|disposition|female|name|level|reputation|
-// personality|luck|speechcraft|mercantile|services|gold`.
+// personality|luck|speechcraft|mercantile|services|gold|hello|fight|flee|
+// alarm`.
 ActorDef ParseActor(const std::string& value) {
     const std::vector<std::string> f = Split(value, '|');
     ActorDef out;
@@ -117,6 +120,11 @@ ActorDef ParseActor(const std::string& value) {
     out.services = static_cast<std::uint32_t>(std::strtoul(f[13].c_str(),
                                                            nullptr, 10));
     out.gold = std::atoi(f[14].c_str());
+    if (f.size() < 19) return out;
+    out.aiSettings[kAiHello] = std::atoi(f[15].c_str());
+    out.aiSettings[kAiFight] = std::atoi(f[16].c_str());
+    out.aiSettings[kAiFlee] = std::atoi(f[17].c_str());
+    out.aiSettings[kAiAlarm] = std::atoi(f[18].c_str());
     return out;
 }
 
