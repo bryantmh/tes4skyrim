@@ -1,5 +1,6 @@
 #include "object_script.h"
 
+#include <cctype>
 #include <cstdio>
 #include <map>
 #include <unordered_map>
@@ -27,6 +28,17 @@ std::map<std::string, ObjectScript> g_instances;
 
 // The instance whose body is executing, for the event opcodes to read.
 ObjectScript* g_running = nullptr;
+
+// The conversation's speaker and the key its locals live under, or empty
+// when the speaker runs no script.
+std::string g_speakerId;
+std::string g_speakerKey;
+
+std::string LowerId(std::string text) {
+    for (char& c : text) c = static_cast<char>(std::tolower(
+                             static_cast<unsigned char>(c)));
+    return text;
+}
 
 // The global scripts that have run this session, by script name.
 std::map<std::string, ObjectScript> g_globalScripts;
@@ -104,6 +116,30 @@ void ObjectScript::PollDeath() {
 }
 
 ObjectScript* RunningInstance() { return g_running; }
+
+void SetSpeakerInstance(const std::string& id, std::uint32_t runtimeFormId) {
+    const ObjectScript* instance =
+        runtimeFormId ? InstanceForRef(runtimeFormId) : nullptr;
+    g_speakerId = LowerId(id);
+    g_speakerKey = instance ? instance->Key() : std::string();
+}
+
+std::string LocalsOwner(const std::string& id) {
+    const std::string lower = LowerId(id);
+    if (!g_speakerKey.empty() && lower == g_speakerId) return g_speakerKey;
+    if (g_running && g_running->RuntimeFormId() &&
+        lower == LowerId(g_running->BaseId())) {
+        return g_running->Key();
+    }
+    const FormRef* placed = FindRef(id);
+    if (placed) {
+        const std::uint32_t local = placed->formId & 0x00FFFFFF;
+        if (!InstanceScript(placed->plugin, local).empty()) {
+            return OwnerFor(placed->plugin, local);
+        }
+    }
+    return id;
+}
 
 // The instance a staged placement runs, created on first sight of it.
 ObjectScript* InstanceForLocal(std::uint32_t localFormId) {

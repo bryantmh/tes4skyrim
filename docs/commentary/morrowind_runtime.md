@@ -1215,13 +1215,14 @@ nobody attacks:
 
 | TES3 | Skyrim actor value | Rule |
 |---|---|---|
-| Fight | Aggression | 2 when OpenMW's `fight + (50 - disposition) * fFightDispMult + iFightDistanceBase >= 100` (the on-sight test at distance 0, GMSTs from `GMST.txt`), else 1, else 0 for Fight 0 |
+| Fight | Aggression | 2 when OpenMW's `fight + (50 - disposition) * fFightDispMult + iFightDistanceBase >= 100` (the on-sight test at distance 0, GMSTs from `GMST.txt`), else 1, else 0 for Fight <= 5 as the import has it |
 | Flee | Confidence | the import's tiers on `100 - flee`: >=100 4, >=70 3, >=40 2, >=15 1 |
 | Alarm | Assistance, Morality | the import's Responsibility mapping: >=30 assists; morality >=80 3, >=50 2, >=30 1 |
 | Hello | none | the number is kept for the filter only |
 
 Aggression 2 attacks neutrals, which the player is; 1 attacks enemies only.
-NOT in-game verified. Disposition moving later does not re-run the rule.
+NOT in-game verified. `SetDisposition` re-applies Fight, because the on-sight
+test reads both: `ModDisposition -100` provokes as surely as `SetFight 100`.
 
 Measured over the 44,950 authored result scripts, porting these moved the
 unported call total from **6,505 to 4,538** and the command count from 119 to
@@ -1267,8 +1268,33 @@ its bare commands act on the target `StartScript` named (the speaker, for the
 bare form). They run after the local scripts, once per tick. The running set
 and each target are in the co-save (`S` rows), so a timer survives a save.
 
-NOT done: TES3 start scripts (`SSCR`) are not exported, so nothing starts at
-new game.
+🛑 **Start scripts (`SSCR`) start by themselves, at new game AND on every
+load** (`DialogueState::StartStartupScripts`, from the co-save's revert and
+load callbacks). TES3 does the same, so a start script that stopped itself
+runs again after a reload. `SSCR.txt` is read from the TES3 binary by the
+sidecar's `gather`, not from the export, so no record type was added and no
+FormID moved. It lists the LAST plugin's own SSCR only: a master stages its own
+bodies, and a start script with no staged body cannot run. TR_Mainland's two
+(`TR_ScStart_Installed`, `TR_NecMQ_MainScript`) both compile headlessly with
+no unported command; the chain's other four belong to Tribunal, Bloodmoon and
+Tamriel_Data.
+
+### <a id="one-locals-key"></a>🛑 One locals key per reference
+
+**Code:** `plugin/object_script.cpp:LocalsOwner`
+
+Dialogue keyed a speaker's locals by its BASE id and the object script keyed
+them by PLACEMENT, so `set knockedout to 1` in a result script and the NPC's
+own script reading `knockedout` were two variables. Every reader and writer
+now goes through `LocalsOwner(id)`:
+
+1. the conversation's speaker, by the runtime FormID activation handed over,
+   so a base placed many times resolves to the copy being spoken to;
+2. the instance running right now, for a script naming its own id;
+3. the placement `refs_formid.txt` holds for that id, when it runs a script;
+4. otherwise the id itself -- a global script, or an actor with no script.
+
+🛑 Locals a save already holds under a scripted NPC's base id are orphaned.
 
 ### <a id="the-clock"></a>The clock globals are Skyrim's
 

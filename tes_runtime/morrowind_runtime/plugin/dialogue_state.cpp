@@ -1,4 +1,5 @@
 #include "dialogue_state.h"
+#include "filter.h"
 
 #include <algorithm>
 #include <cctype>
@@ -104,6 +105,9 @@ int DialogueState::Disposition(const std::string& actor) const {
 void DialogueState::SetDisposition(const std::string& actor, int value) {
     mDisposition[Key(actor)] = value;
     Log("disposition: %s = %d", actor.c_str(), value);
+    if (Hooks().applyAiSetting) {
+        Hooks().applyAiSetting(actor, kAiFight, AiSetting(actor, kAiFight));
+    }
 }
 
 void DialogueState::ModDisposition(const std::string& actor, int delta) {
@@ -228,6 +232,12 @@ void DialogueState::StartScript(const std::string& script,
 
 void DialogueState::StopScript(const std::string& script) {
     if (mRunning.erase(Key(script))) Log("script: %s stopped", script.c_str());
+}
+
+void DialogueState::StartStartupScripts() {
+    for (const std::string& script : StartScripts()) {
+        if (!ScriptRunning(script)) StartScript(script, std::string());
+    }
 }
 
 std::vector<std::pair<std::string, std::string>>

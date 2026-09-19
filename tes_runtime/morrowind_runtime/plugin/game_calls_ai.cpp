@@ -286,7 +286,7 @@ void ApplyAiSetting(const std::string& actor, int which, int value) {
     if (!ref) return;
     if (which == kAiFight) {
         const float tier = FightsOnSight(actor, value) ? 2.0f
-                           : value > 0                 ? 1.0f
+                           : value > 5                 ? 1.0f
                                                        : 0.0f;
         SetActorValue(ref, "Aggression", tier);
     } else if (which == kAiFlee) {

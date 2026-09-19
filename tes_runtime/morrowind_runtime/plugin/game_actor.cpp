@@ -2,6 +2,7 @@
 
 #include "dialogue_state.h"
 #include "script_tables.h"
+#include "object_script.h"
 
 namespace mwruntime {
 
@@ -140,7 +141,7 @@ int GameActor::JournalIndex(const RefId& quest) const {
 float GameActor::LocalVariable(const std::string& name, bool* found) const {
     const ScriptLocals* locals = FindScriptLocals(ScriptOf(mId));
     *found = locals && locals->TypeOf(name) != ' ';
-    return State().Var(mId, name);
+    return State().Var(LocalsOwner(mId), name);
 }
 
 float GameActor::GlobalVariable(const std::string& name, bool* found) const {

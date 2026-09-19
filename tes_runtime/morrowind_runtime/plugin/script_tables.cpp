@@ -43,6 +43,7 @@ std::unordered_map<std::string, FormRef> g_cells;
 FormRef g_aiQuest;
 bool g_haveAiQuest = false;
 std::unordered_map<std::string, int> g_aiAliases;
+std::vector<std::string> g_startScripts;
 std::unordered_map<std::string, FormRef> g_aiPacks;
 std::unordered_map<std::string, FormRef> g_sounds;
 
@@ -65,6 +66,7 @@ constexpr const char* kFileCells = "cells_formid.txt";
 // The AI package quest and its alias indices, which the AI commands fill.
 // See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
 constexpr const char* kFileAiAliases = "ai_aliases.txt";
+constexpr const char* kFileStartScripts = "SSCR.txt";
 
 // The row naming the quest itself, and the prefix on a PACK row; every other
 // row is an alias name and its ALST index.
@@ -298,6 +300,7 @@ void ClearScriptTables() {
     g_bases.clear();
     g_cells.clear();
     g_aiAliases.clear();
+    g_startScripts.clear();
     g_aiPacks.clear();
     g_haveAiQuest = false;
     g_factions.clear();
@@ -400,6 +403,10 @@ void LoadScriptTables(const std::string& pluginDir) {
                    } else {
                        g_aiAliases.emplace(key, std::atoi(value.c_str()));
                    }
+               });
+    ForEachRow(pluginDir + kFileStartScripts,
+               [](const std::string& script, const std::string&) {
+                   g_startScripts.push_back(script);
                });
     ForEachRow(pluginDir + kFileFactions,
                [](const std::string& faction, const std::string& value) {
@@ -532,6 +539,8 @@ const std::string& ScriptSource(const std::string& script) {
     const auto it = g_sources.find(Lower(script));
     return it == g_sources.end() ? kNone : it->second;
 }
+
+const std::vector<std::string>& StartScripts() { return g_startScripts; }
 
 std::size_t ScriptSourceCount() { return g_sources.size(); }
 

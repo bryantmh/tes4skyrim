@@ -815,6 +815,7 @@ void InstallGameCalls() {
 void SetSpeakerRef(const char* actorId, void* ref) {
     g_speakerId = actorId ? actorId : "";
     g_speakerRef = ref;
+    SetSpeakerInstance(g_speakerId, ref ? FormIdOf(ref) : 0);
 }
 
 }  // namespace mwruntime

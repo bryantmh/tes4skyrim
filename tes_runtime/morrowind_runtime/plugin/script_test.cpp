@@ -224,6 +224,55 @@ void AiAndDeathCases(DialogueContext& context, const GameActor& actor) {
 
 std::string TestCell();
 
+// 🛑 Dialogue and the speaker's OWN object script must share one variable: a
+// result script that sets `met` and the NPC's script that reads it are the
+// same local in TES3.
+void SharedLocalsCases(DialogueContext& context) {
+    std::printf("dialogue and the object script share locals\n");
+    ClearInstances();
+    BindInstance(0x0A00B001, "scripts.esm", 0x0300B001);
+    SetSpeakerInstance("test_actor", 0x0A00B001);
+    RunResultScript("set met to 7", context);
+    Check(State().Var("scripts.esm|00B001", "met") == 7.0f,
+          "a result script writes the speaker's PLACEMENT locals");
+    Check(LocalsOwner("test_actor") == "scripts.esm|00B001",
+          "and the speaker's id names that same owner");
+    Check(LocalsOwner("TestCounterScript") == "TestCounterScript",
+          "a global script still owns its locals by name");
+    SetSpeakerInstance("", 0);
+    ClearInstances();
+    State().Reset();
+}
+
+// SSCR scripts start by themselves, and start AGAIN after a load even when
+// they had stopped, which is TES3's own behaviour.
+void StartScriptCases() {
+    std::printf("start scripts\n");
+    State().Reset();
+    Check(StartScripts().size() == 1, "one SSCR staged");
+    State().StartStartupScripts();
+    Check(State().ScriptRunning("TestCounterScript"),
+          "a start script runs without anyone calling StartScript");
+    State().StopScript("TestCounterScript");
+    State().StartStartupScripts();
+    Check(State().ScriptRunning("TestCounterScript"),
+          "and a stopped one starts again on the next load");
+    State().Reset();
+}
+
+// Whether an actor attacks on sight depends on Fight AND disposition, so a
+// disposition write has to re-apply Fight.
+void DispositionReappliesFight(DialogueContext& context) {
+    std::printf("disposition re-applies Fight\n");
+    g_appliedWhich = -1;
+    Hooks().applyAiSetting = RecordApplied;
+    RunResultScript("ModDisposition -10", context);
+    Check(g_appliedWhich == kAiFight,
+          "a disposition write re-applies the Fight setting");
+    Hooks().applyAiSetting = nullptr;
+    State().Reset();
+}
+
 // `StartScript` makes a global script TICK, under locals keyed by its name,
 // until it stops itself; the running set and its target survive a save.
 void GlobalScriptCases(DialogueContext& context) {
@@ -866,6 +915,9 @@ void Cases() {
     CoSaveCases(context);
     AiAndDeathCases(context, actor);
     GlobalScriptCases(context);
+    SharedLocalsCases(context);
+    StartScriptCases();
+    DispositionReappliesFight(context);
     PersuasionCases(context);
     SoundCases(context);
     MoveCases(context);

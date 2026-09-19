@@ -3,6 +3,7 @@
 #include "dialogue_state.h"
 #include "log.h"
 #include "script_tables.h"
+#include "object_script.h"
 
 namespace mwruntime {
 
@@ -35,7 +36,9 @@ const ScriptLocals* DialogueContext::Layout() const {
     return FindScriptLocals(ScriptOf(mActor.Id()));
 }
 
-std::string DialogueContext::OwnerKey() const { return mActor.Id(); }
+std::string DialogueContext::OwnerKey() const {
+    return LocalsOwner(mActor.Id());
+}
 
 // Compiled code addresses a local by its index among the locals of its type,
 // in declaration order -- the order SpeakerLocals declared them in.
@@ -194,7 +197,8 @@ std::string_view DialogueContext::getCurrentCellName() const {
 // its variables live under its own id.
 int DialogueContext::getMemberShort(ESM::RefId id, std::string_view name,
                                     bool) const {
-    return static_cast<int>(State().Var(id.getRefIdString(), std::string(name)));
+    return static_cast<int>(
+        State().Var(LocalsOwner(id.getRefIdString()), std::string(name)));
 }
 
 int DialogueContext::getMemberLong(ESM::RefId id, std::string_view name,
@@ -204,12 +208,12 @@ int DialogueContext::getMemberLong(ESM::RefId id, std::string_view name,
 
 float DialogueContext::getMemberFloat(ESM::RefId id, std::string_view name,
                                       bool) const {
-    return State().Var(id.getRefIdString(), std::string(name));
+    return State().Var(LocalsOwner(id.getRefIdString()), std::string(name));
 }
 
 void DialogueContext::setMemberShort(ESM::RefId id, std::string_view name,
                                      int value, bool) {
-    State().SetVar(id.getRefIdString(), std::string(name),
+    State().SetVar(LocalsOwner(id.getRefIdString()), std::string(name),
                    static_cast<float>(value));
 }
 
@@ -220,7 +224,8 @@ void DialogueContext::setMemberLong(ESM::RefId id, std::string_view name,
 
 void DialogueContext::setMemberFloat(ESM::RefId id, std::string_view name,
                                      float value, bool) {
-    State().SetVar(id.getRefIdString(), std::string(name), value);
+    State().SetVar(LocalsOwner(id.getRefIdString()), std::string(name),
+                   value);
 }
 
 }  // namespace mwruntime

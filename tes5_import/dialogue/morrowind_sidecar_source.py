@@ -299,6 +299,8 @@ def _take(out: dict, rec, topic: str) -> str:
         out['items'][rec.record_id.lower()] = rec.record_id
     if rec.type == 'SOUN':
         out['sounds'][rec.record_id.lower()] = rec.record_id
+    if rec.type == 'SSCR':
+        out['start_scripts'][rec.record_id.lower()] = f'{rec.record_id}=1'
     return topic
 
 
@@ -308,13 +310,15 @@ def gather(chain: list) -> dict:
     in merged order, `actors` / `factions` / `gmsts` `{lower id: line}`,
     `skills` `{index: line}`, `items` / `objects` / `sounds`
     `{lower id: id}`. Actor lines are made LAST, once every race, class and
-    skill is known.
+    skill is known. `start_scripts` is the LAST plugin's SSCR alone: a master
+    stages, and so starts, its own.
     """
     out = {'topics': {}, 'infos': {}, 'npcs': {}, 'races': {}, 'classes': {},
            'skills': {}, 'gmsts': {}, 'factions': {}, 'items': {},
            'objects': {}, 'sounds': {}}
     for _name, path in chain:
         topic = ''
+        out['start_scripts'] = {}
         for rec in read_file(path)[1]:
             topic = _take(out, rec, topic)
     out['actors'] = {key: _actor_line(rec, out)

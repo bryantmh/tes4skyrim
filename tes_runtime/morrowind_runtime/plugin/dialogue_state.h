@@ -201,6 +201,8 @@ public:
 
     // --- disposition, 0..100: the NPC's authored value until moved ---------
     int  Disposition(const std::string& actor) const;
+    // Also re-applies Fight: whether an actor attacks on sight is a function
+    // of BOTH, so either one moving has to re-run it.
     void SetDisposition(const std::string& actor, int value);
     void ModDisposition(const std::string& actor, int delta);
 
@@ -253,6 +255,10 @@ public:
     // an explicit `ref->StartScript` named, which its bare commands act on.
     void StartScript(const std::string& script, const std::string& target);
     void StopScript(const std::string& script);
+    // Starts every SSCR script that is not running. TES3 does this at new
+    // game AND on every load, so a start script that stopped itself runs
+    // again after a reload.
+    void StartStartupScripts();
     // Every running global script and its target, as (script, target).
     std::vector<std::pair<std::string, std::string>> RunningScripts() const;
 

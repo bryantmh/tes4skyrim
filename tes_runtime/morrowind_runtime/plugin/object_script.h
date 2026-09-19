@@ -126,6 +126,20 @@ private:
     ObjectScript& mInstance;
 };
 
+// The owner string an id's script locals live under, which is what makes
+// dialogue, `id.variable` and the object's own script agree on ONE variable.
+// A reference that runs a script owns its locals by PLACEMENT; anything else
+// (a global script, an unscripted actor) owns them by its id.
+//
+// In order: the conversation's speaker, the instance running right now, the
+// placement `refs_formid.txt` names for that id, then the id itself.
+// See: docs/commentary/morrowind_runtime.md#one-locals-key
+std::string LocalsOwner(const std::string& id);
+
+// Names the reference the conversation is WITH, by its runtime FormID, so a
+// base placed many times resolves to the copy being spoken to. 0 clears it.
+void SetSpeakerInstance(const std::string& id, std::uint32_t runtimeFormId);
+
 // The instance whose body is running right now, or null outside a tick. The
 // event opcodes read their flags from it: `OnActivate` is not a world query
 // but a one-tick flag belonging to THIS placement.

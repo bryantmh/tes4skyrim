@@ -120,6 +120,9 @@ const std::string& ScriptOf(const std::string& actor);
 // what the object-script tick compiles; dialogue carries its own source.
 // See: docs/plans/morrowind_object_scripts.md#what-is-not-staged
 const std::string& ScriptSource(const std::string& script);
+
+// The global scripts TES3 starts by itself -- SSCR.txt, one per SSCR record.
+const std::vector<std::string>& StartScripts();
 std::size_t ScriptSourceCount();
 
 // Every staged body, for the corpus sweep that measures what compiles.

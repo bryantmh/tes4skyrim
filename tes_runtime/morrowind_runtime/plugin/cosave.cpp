@@ -44,11 +44,13 @@ void OnLoad(SKSESerializationInterface* intfc) {
         State().Reset();
         Log("cosave: this save carries no Morrowind state -- starting clean");
     }
+    State().StartStartupScripts();
 }
 
 // A new game or a load about to happen: nothing from the last game survives.
 void OnRevert(SKSESerializationInterface*) {
     State().Reset();
+    State().StartStartupScripts();
     Log("cosave: state reverted");
 }
 

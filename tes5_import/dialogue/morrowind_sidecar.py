@@ -54,6 +54,9 @@ SCRIPT_INSTANCES_TABLE = 'SCPT_instances.txt'
 #: What the FILTER and persuasion need about each NPC; the columns are `_actor_line`'s.
 ACTORS_TABLE = 'NPC_.txt'
 
+#: The global scripts an SSCR starts at new game and on every load, `script=1`.
+START_SCRIPTS_TABLE = 'SSCR.txt'
+
 #: FACT rank requirements, which the filter's RankRequirement reads.
 FACTIONS_TABLE = 'FACT.txt'
 
@@ -520,7 +523,8 @@ def _stage_dialogue(export_dir: str, out_dir: str, present: list,
           f'{", ".join(name for name, _path in chain)}')
     staged = len(DIALOGUE_FILES)
     for name, key in ((ACTORS_TABLE, 'actors'), (FACTIONS_TABLE, 'factions'),
-                      (GMST_TABLE, 'gmsts'), (SKILLS_TABLE, 'skills')):
+                      (GMST_TABLE, 'gmsts'), (SKILLS_TABLE, 'skills'),
+                      (START_SCRIPTS_TABLE, 'start_scripts')):
         staged += _write_lines(os.path.join(out_dir, name),
                                list(gathered[key].values()))
     return staged

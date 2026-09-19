@@ -133,7 +133,13 @@ if errorlevel 1 (
 link /nologo /OUT:session_test.exe objt\store.obj objt\log.obj ^
      objt\script_tables.obj objt\filter.obj objt\session.obj ^
      objt\session_test.obj objt\script_context.obj ^
-     objt\dialogue_state.obj obj\mw\*.obj ^
+     objt\dialogue_state.obj objt\game_actor.obj ^
+     objt\script_runner.obj objt\script_ops_world.obj ^
+     objt\script_ops_events.obj objt\script_ops_sound.obj ^
+     objt\script_ops_move.obj objt\script_ops_ai.obj ^
+     objt\script_ops_query.obj objt\object_script.obj ^
+     objt\object_tick.obj objt\main_thread.obj ^
+     objt\persuasion.obj obj\mw\*.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
     echo [build] ERROR: session_test link failed
