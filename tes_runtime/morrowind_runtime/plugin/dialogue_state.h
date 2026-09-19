@@ -68,9 +68,12 @@ struct GameHooks {
     // A `MessageBox` raised OUTSIDE a conversation, which has no dialogue
     // menu to render it: Skyrim's own corner notification.
     void (*showMessage)(const std::string& text) = nullptr;
-    // `PlaceAtPC id count`: creates `count` of a base near the player. The new
-    // reference runs the base's script, so this also binds its instance.
-    void (*placeAtPlayer)(const std::string& base, int count) = nullptr;
+    // `PlaceAtPC id count` and `id->PlaceAtMe ...`: creates `count` of a base
+    // beside `near` -- the player for the PC form, the named reference for the
+    // other. The new reference runs the base's script, so this also binds its
+    // instance.
+    void (*placeNear)(const std::string& near, const std::string& base,
+                      int count) = nullptr;
     // Whether the reference with this RUNTIME FormID is a DEAD actor, which
     // the tick polls to raise `OnDeath`. False for anything that is not one.
     //
@@ -109,6 +112,70 @@ struct GameHooks {
     int   (*playSound)(const std::string& ref, const std::string& sound,
                        bool loop, float volume) = nullptr;
     void  (*stopSound)(int instance) = nullptr;
+    // `PositionCell`: moves `ref` into the cell of that name and puts it at
+    // (x, y, z) with a Z rotation of `zRot` DEGREES. The cell is reached
+    // through the anchor reference the sidecar staged for it.
+    // See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
+    void (*moveToCell)(const std::string& ref, const std::string& cell,
+                       float x, float y, float z, float zRot) = nullptr;
+    // `Position`: the same, staying in the cell the reference is already in.
+    void (*moveInCell)(const std::string& ref, float x, float y, float z,
+                       float zRot) = nullptr;
+    // `Move`/`MoveWorld`/`Rotate`/`RotateWorld`: adds a DELTA to one axis.
+    // `local` rotates the offset into the object's own frame, which is what
+    // separates `Move` from `MoveWorld`.
+    void (*moveBy)(const std::string& ref, int axis, float delta,
+                   bool local) = nullptr;
+    void (*rotateBy)(const std::string& ref, int axis, float degrees) = nullptr;
+    // `SetScale` / `GetScale`: Skyrim's own scale, which is TES3's too.
+    float (*scale)(const std::string& ref) = nullptr;
+    void (*setScale)(const std::string& ref, float value) = nullptr;
+    // `PlaceItem`/`PlaceItemCell`: a base record placed at an absolute spot,
+    // and `PlaceAtMe`'s count form used for `PlaceAtPC`'s sibling.
+    void (*placeAtCell)(const std::string& base, const std::string& cell,
+                        float x, float y, float z, float zRot) = nullptr;
+    // The AI commands. Each fills the QUEST ALIAS that the import hung a real
+    // PACK record off, so the engine runs an actual package.
+    // See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
+    void (*aiTravel)(const std::string& actor, float x, float y,
+                     float z) = nullptr;
+    void (*aiWander)(const std::string& actor, float range,
+                     float duration) = nullptr;
+    // `target` is who to follow; an empty one CLEARS the alias, which ends it.
+    void (*aiFollow)(const std::string& actor, const std::string& target,
+                     float duration, float x, float y, float z) = nullptr;
+    void (*aiEscort)(const std::string& actor, const std::string& target,
+                     float duration, float x, float y, float z) = nullptr;
+    void (*aiActivate)(const std::string& actor,
+                       const std::string& object) = nullptr;
+    // `Face x y`: turns the actor toward a world point.
+    void (*aiFace)(const std::string& actor, float x, float y) = nullptr;
+    // `GetCurrentAiPackage`: OpenMW's AiPackageTypeId of the package the actor
+    // is running, or -1 -- read off the engine, not from our own bookkeeping.
+    int  (*currentPackage)(const std::string& actor) = nullptr;
+    // `GetAiPackageDone`: whether the actor has finished the package a script
+    // gave it, i.e. it no longer runs one of ours.
+    bool (*packageDone)(const std::string& actor) = nullptr;
+    // The one-call world QUERIES: each is a single Skyrim native on a
+    // reference, or on the player when the command names nobody.
+    // See: docs/commentary/morrowind_runtime.md#the-query-commands
+    //
+    // `GetLOS`, `GetDetected` and `GetTarget` all take a SECOND actor: does
+    // `actor` see / notice / fight `other`.
+    bool (*hasLos)(const std::string& actor, const std::string& other) = nullptr;
+    bool (*detects)(const std::string& actor, const std::string& other) = nullptr;
+    bool (*fighting)(const std::string& actor,
+                     const std::string& other) = nullptr;
+    // Draw state and movement, all on one actor.
+    bool (*weaponDrawn)(const std::string& actor) = nullptr;
+    bool (*sneaking)(const std::string& actor) = nullptr;
+    bool (*running)(const std::string& actor) = nullptr;
+    void (*resurrect)(const std::string& actor) = nullptr;
+    // `Drop item count`: puts them on the ground at the actor's feet.
+    void (*dropItem)(const std::string& actor, const std::string& item,
+                     int count) = nullptr;
+    // `GetCurrentWeather`: Skyrim's weather CLASSIFICATION, 0..4.
+    int  (*weather)() = nullptr;
 };
 
 GameHooks& Hooks();

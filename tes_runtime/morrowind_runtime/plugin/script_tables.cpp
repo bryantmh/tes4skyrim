@@ -35,6 +35,13 @@ std::unordered_map<std::string, FormRef> g_items;
 std::unordered_map<std::string, FormRef> g_quests;
 std::unordered_map<std::string, FormRef> g_refs;
 std::unordered_map<std::string, FormRef> g_bases;
+std::unordered_map<std::string, FormRef> g_cells;
+
+// The AI package quest, and each of its aliases by name -> ALST index.
+FormRef g_aiQuest;
+bool g_haveAiQuest = false;
+std::unordered_map<std::string, int> g_aiAliases;
+std::unordered_map<std::string, FormRef> g_aiPacks;
 std::unordered_map<std::string, FormRef> g_sounds;
 
 constexpr const char* kFileActors = "NPC_.txt";
@@ -47,6 +54,20 @@ constexpr const char* kFileRefs = "refs_formid.txt";
 // The BASE record behind a TES3 id, which PlaceAtPC creates a reference from.
 // See: docs/plans/morrowind_object_scripts.md#placeatpc
 constexpr const char* kFileBases = "bases_formid.txt";
+
+// A reference INSIDE the cell of that name, which PositionCell aims at --
+// Skyrim moves an object to another object, never to a cell.
+// See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
+constexpr const char* kFileCells = "cells_formid.txt";
+
+// The AI package quest and its alias indices, which the AI commands fill.
+// See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
+constexpr const char* kFileAiAliases = "ai_aliases.txt";
+
+// The row naming the quest itself, and the prefix on a PACK row; every other
+// row is an alias name and its ALST index.
+constexpr const char* kAiQuestRow = "quest";
+constexpr const char* kAiPackPrefix = "pack.";
 constexpr const char* kFileQuests = "quests_formid.txt";
 constexpr const char* kFileFactions = "FACT.txt";
 constexpr const char* kFileGmsts = "GMST.txt";
@@ -267,6 +288,10 @@ void ClearScriptTables() {
     g_quests.clear();
     g_refs.clear();
     g_bases.clear();
+    g_cells.clear();
+    g_aiAliases.clear();
+    g_aiPacks.clear();
+    g_haveAiQuest = false;
     g_factions.clear();
     g_gmsts.clear();
     g_skills.clear();
@@ -350,6 +375,24 @@ void LoadScriptTables(const std::string& pluginDir) {
                [](const std::string& id, const std::string& value) {
                    g_bases.emplace(Lower(id), ParseFormRef(value));
                });
+    ForEachRow(pluginDir + kFileCells,
+               [](const std::string& name, const std::string& value) {
+                   g_cells.emplace(Lower(name), ParseFormRef(value));
+               });
+    ForEachRow(pluginDir + kFileAiAliases,
+               [](const std::string& name, const std::string& value) {
+                   const std::string key = Lower(name);
+                   const std::string prefix(kAiPackPrefix);
+                   if (key == kAiQuestRow) {
+                       g_aiQuest = ParseFormRef(value);
+                       g_haveAiQuest = true;
+                   } else if (key.compare(0, prefix.size(), prefix) == 0) {
+                       g_aiPacks.emplace(key.substr(prefix.size()),
+                                         ParseFormRef(value));
+                   } else {
+                       g_aiAliases.emplace(key, std::atoi(value.c_str()));
+                   }
+               });
     ForEachRow(pluginDir + kFileFactions,
                [](const std::string& faction, const std::string& value) {
                    g_factions.emplace(Lower(faction), ParseFaction(value));
@@ -432,6 +475,25 @@ const FormRef* FindBase(const std::string& id) {
 }
 
 std::size_t BaseCount() { return g_bases.size(); }
+
+const FormRef* FindCellAnchor(const std::string& cell) {
+    const auto it = g_cells.find(Lower(cell));
+    return it == g_cells.end() ? nullptr : &it->second;
+}
+
+std::size_t CellCount() { return g_cells.size(); }
+
+const FormRef* AiQuest() { return g_haveAiQuest ? &g_aiQuest : nullptr; }
+
+int AiAliasIndex(const std::string& name) {
+    const auto it = g_aiAliases.find(Lower(name));
+    return it == g_aiAliases.end() ? -1 : it->second;
+}
+
+const FormRef* FindAiPack(const std::string& kind) {
+    const auto it = g_aiPacks.find(Lower(kind));
+    return it == g_aiPacks.end() ? nullptr : &it->second;
+}
 
 std::size_t ActorCount() { return g_actors.size(); }
 

@@ -24,10 +24,8 @@ import sys
 
 REGISTRATIONS = 'external/openmw/components/compiler/extensions0.cpp'
 RUNNER = 'tes_runtime/morrowind_runtime/plugin/script_runner.cpp'
-#: Every other file that installs real opcodes into the same machine.
-RUNNER_PARTS = ('tes_runtime/morrowind_runtime/plugin/script_ops_world.cpp',
-                'tes_runtime/morrowind_runtime/plugin/script_ops_events.cpp',
-                'tes_runtime/morrowind_runtime/plugin/script_ops_sound.cpp')
+#: The other installers, by SHAPE so a new `script_ops_*.cpp` is never missed.
+RUNNER_PARTS_GLOB = 'tes_runtime/morrowind_runtime/plugin/script_ops_*.cpp'
 SCRIPT_FIELD = 'ResultScript'
 
 #: The OTHER corpus: object scripts, whose body is SCPT's `SCTX`.
@@ -142,10 +140,14 @@ def registrations(root):
 
 def installed(root):
     """`(opcode constants with a real handler, deliberate no-op names)`."""
+    folder, pattern = os.path.split(RUNNER_PARTS_GLOB)
+    prefix, suffix = pattern.split('*')
+    here = os.path.join(root, folder)
+    parts = sorted(os.path.join(here, name) for name in os.listdir(here)
+                   if name.startswith(prefix) and name.endswith(suffix))
     text = ''
-    for name in (RUNNER,) + RUNNER_PARTS:
-        with open(os.path.join(root, name), encoding='utf-8',
-                  errors='replace') as fh:
+    for name in [os.path.join(root, RUNNER)] + parts:
+        with open(name, encoding='utf-8', errors='replace') as fh:
             text += fh.read()
     real = {m.group(1).rsplit('::', 1)[-1] for m in _INSTALL.finditer(text)}
     block = _NOOPS.search(text)

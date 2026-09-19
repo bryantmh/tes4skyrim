@@ -176,6 +176,26 @@ std::size_t RefCount();
 // See: docs/plans/morrowind_object_scripts.md#placeatpc
 const FormRef* FindBase(const std::string& id);
 std::size_t BaseCount();
+
+// A reference standing INSIDE the cell of that name, which `PositionCell`
+// moves its target to. Null when the chain staged no such cell, or when the
+// cell holds no placement to aim at.
+//
+// 🛑 A reference, not the CELL record: Skyrim's mover takes another object.
+// See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
+const FormRef* FindCellAnchor(const std::string& cell);
+std::size_t CellCount();
+
+// The quest that owns the AI package aliases, or null when none is staged.
+// See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
+const FormRef* AiQuest();
+
+// The ALST index of a named AI alias ("travelActor", "followTarget"), or -1.
+int AiAliasIndex(const std::string& name);
+
+// The PACK record staged for one kind ("travel", "follow"), or null --
+// `GetCurrentAiPackage` compares the running package against these.
+const FormRef* FindAiPack(const std::string& kind);
 const FactionDef* FindFaction(const std::string& faction);
 
 // A GMST by name, or null when the chain staged none of that name.

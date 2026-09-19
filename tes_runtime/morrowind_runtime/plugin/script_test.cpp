@@ -5,6 +5,7 @@
 //   script_test            the built-in cases
 //   script_test <file>     run one script from a file and print the state
 
+#include <cstdarg>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -374,7 +375,10 @@ void ObjectScriptRunCases() {
 // See: docs/plans/morrowind_object_scripts.md#tick-rate
 std::string TestCell() { return "Test Cell"; }
 
+bool Always3DLoaded(std::uint32_t) { return true; }
 bool Never3DLoaded(std::uint32_t) { return false; }
+
+void SpawnedTickCases();
 
 void TickCases() {
     std::printf("the tick runs bound instances at a fixed rate\n");
@@ -409,6 +413,10 @@ void TickCases() {
     // 🛑 An unloaded object stops ticking and is FORGOTTEN, or the bound set
     // only ever grows. See #unload-with-the-cell.
     std::printf("an unloaded object stops ticking\n");
+    // It has to have been LOADED first: unloading is a transition, and an
+    // instance that was never loaded has not unloaded.
+    Hooks().is3DLoaded = Always3DLoaded;
+    TickObjectScripts(TickDelta());
     Hooks().is3DLoaded = Never3DLoaded;
     TickObjectScripts(TickDelta());
     Check(LastTickCount() == 0, "an unloaded instance does not run");
@@ -417,6 +425,42 @@ void TickCases() {
     // Its locals survive: TES3 keeps them across an unload.
     Check(State().Var("scripts.esm|00A001", "open") == 1.0f,
           "but its locals are kept for when the cell loads again");
+    Hooks().is3DLoaded = nullptr;
+    Hooks().playerCell = nullptr;
+    ClearInstances();
+    SpawnedTickCases();
+}
+
+// 🛑 A spawn binds the frame `PlaceAtMe` returns, BEFORE its 3D exists. Reading
+// that as "unloaded" unbinds it on its first tick, and nothing ever rebinds a
+// spawn -- so the creature's script never runs and the quest that turns on
+// killing it cannot advance.
+// See: docs/commentary/morrowind_runtime.md#a-spawn-is-not-loaded-on-its-first-frame
+void SpawnedTickCases() {
+    std::printf("a spawn survives the frames before its 3D loads\n");
+    ClearInstances();
+    Hooks().playerCell = TestCell;
+    BindSpawnedInstance(0xFF001590, "test_actor");
+    Check(BoundInstanceCount() == 1, "the spawn is bound");
+
+    // The frames between PlaceAtMe and the 3D appearing.
+    Hooks().is3DLoaded = Never3DLoaded;
+    TickObjectScripts(TickDelta() * 3.0f);
+    Check(BoundInstanceCount() == 1, "it is NOT dropped before it ever loads");
+    Check(LastTickCount() == 0, "and it does not run while unloaded");
+
+    // The 3D arrives: now it ticks.
+    Hooks().is3DLoaded = Always3DLoaded;
+    TickObjectScripts(TickDelta());
+    Check(LastTickCount() == 1, "once loaded its body runs");
+    Check(State().Var("spawn:FF001590|001590", "met") == 1.0f,
+          "which wrote the spawn's OWN local, under its own key");
+
+    // Having been loaded, a later unload is real and drops the binding.
+    Hooks().is3DLoaded = Never3DLoaded;
+    TickObjectScripts(TickDelta());
+    Check(BoundInstanceCount() == 0, "unloading AFTER a load still unbinds");
+
     Hooks().is3DLoaded = nullptr;
     Hooks().playerCell = nullptr;
     ClearInstances();
@@ -489,6 +533,276 @@ void SoundCases(DialogueContext& context) {
           "with no hook the command still runs, it just makes no sound");
 }
 
+// --- movement and AI -------------------------------------------------------
+
+// What the fake movement hooks recorded, one line per call, and the position
+// the fake world reports back so ModScale and the arrival test have a value.
+std::vector<std::string> g_moved;
+float g_fakeScale = 1.0f;
+float g_fakePos[3] = {0.0f, 0.0f, 0.0f};
+
+void Record(const char* format, ...) {
+    char line[256];
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    g_moved.push_back(line);
+}
+
+void FakeMoveToCell(const std::string& ref, const std::string& cell, float x,
+                    float y, float z, float zRot) {
+    Record("cell|%s|%s|%g,%g,%g|%g", ref.c_str(), cell.c_str(), x, y, z, zRot);
+}
+
+void FakeMoveInCell(const std::string& ref, float x, float y, float z,
+                    float zRot) {
+    Record("pos|%s|%g,%g,%g|%g", ref.c_str(), x, y, z, zRot);
+}
+
+void FakeMoveBy(const std::string& ref, int axis, float delta, bool local) {
+    Record("by|%s|%d|%g|%d", ref.c_str(), axis, delta, local ? 1 : 0);
+}
+
+void FakeRotateBy(const std::string& ref, int axis, float degrees) {
+    Record("rot|%s|%d|%g", ref.c_str(), axis, degrees);
+}
+
+float FakeScale(const std::string&) { return g_fakeScale; }
+
+void FakeSetScale(const std::string& ref, float value) {
+    g_fakeScale = value;
+    Record("scale|%s|%g", ref.c_str(), value);
+}
+
+void FakePlaceAtCell(const std::string& base, const std::string& cell,
+                     float x, float y, float z, float zRot) {
+    Record("place|%s|%s|%g,%g,%g|%g", base.c_str(), cell.c_str(), x, y, z,
+           zRot);
+}
+
+void FakePlaceNear(const std::string& near, const std::string& base,
+                   int count) {
+    Record("near|%s|%s|%d", near.c_str(), base.c_str(), count);
+}
+
+float FakePosition(const std::string&, int axis) {
+    return g_fakePos[axis < 0 || axis > 2 ? 0 : axis];
+}
+
+void FakeAiTravel(const std::string& actor, float x, float y, float z) {
+    Record("travel|%s|%g,%g,%g", actor.c_str(), x, y, z);
+}
+
+void FakeAiWander(const std::string& actor, float range, float duration) {
+    Record("wander|%s|%g|%g", actor.c_str(), range, duration);
+}
+
+void FakeAiFollow(const std::string& actor, const std::string& target,
+                  float duration, float x, float y, float z) {
+    Record("follow|%s|%s|%g|%g,%g,%g", actor.c_str(), target.c_str(), duration,
+           x, y, z);
+}
+
+void FakeAiEscort(const std::string& actor, const std::string& target,
+                  float duration, float x, float y, float z) {
+    Record("escort|%s|%s|%g|%g,%g,%g", actor.c_str(), target.c_str(), duration,
+           x, y, z);
+}
+
+void FakeAiActivate(const std::string& actor, const std::string& object) {
+    Record("aiactivate|%s|%s", actor.c_str(), object.c_str());
+}
+
+void FakeAiFace(const std::string& actor, float x, float y) {
+    Record("face|%s|%g,%g", actor.c_str(), x, y);
+}
+
+void InstallMoveHooks() {
+    Hooks().moveToCell = FakeMoveToCell;
+    Hooks().moveInCell = FakeMoveInCell;
+    Hooks().moveBy = FakeMoveBy;
+    Hooks().rotateBy = FakeRotateBy;
+    Hooks().scale = FakeScale;
+    Hooks().setScale = FakeSetScale;
+    Hooks().placeAtCell = FakePlaceAtCell;
+    Hooks().position = FakePosition;
+    Hooks().aiTravel = FakeAiTravel;
+    Hooks().aiWander = FakeAiWander;
+    Hooks().aiFollow = FakeAiFollow;
+    Hooks().aiEscort = FakeAiEscort;
+    Hooks().aiActivate = FakeAiActivate;
+    Hooks().aiFace = FakeAiFace;
+}
+
+void ClearMoveHooks() {
+    Hooks().moveToCell = nullptr;
+    Hooks().moveInCell = nullptr;
+    Hooks().moveBy = nullptr;
+    Hooks().rotateBy = nullptr;
+    Hooks().scale = nullptr;
+    Hooks().setScale = nullptr;
+    Hooks().placeAtCell = nullptr;
+    Hooks().position = nullptr;
+    Hooks().aiTravel = nullptr;
+    Hooks().aiWander = nullptr;
+    Hooks().aiFollow = nullptr;
+    Hooks().aiEscort = nullptr;
+    Hooks().aiActivate = nullptr;
+    Hooks().aiFace = nullptr;
+}
+
+// The argument ORDER is what these pin down. Every one of these commands
+// takes its arguments in written order and the `->` target last, and getting
+// that backwards is silent -- the script runs and moves the wrong thing.
+void MoveCases(DialogueContext& context) {
+    std::printf("the movement commands\n");
+    InstallMoveHooks();
+    g_moved.clear();
+    g_fakeScale = 1.0f;
+
+    Check(RunResultScript("PositionCell 128 256 512 90 \"Balmora, Guild\"",
+                          context),
+          "PositionCell compiles and runs");
+    // The scanner lowercases every string literal, which is why the tables
+    // are keyed lowercase too -- same as the sound ids.
+    Check(g_moved.size() == 1 &&
+              g_moved[0] == "cell|test_actor|balmora, guild|128,256,512|90",
+          "x y z then rotation then the cell, acting on the speaker");
+
+    g_moved.clear();
+    RunResultScript("\"other_npc\"->PositionCell 1 2 3 4 \"Elsewhere\"",
+                    context);
+    Check(g_moved.size() == 1 &&
+              g_moved[0] == "cell|other_npc|elsewhere|1,2,3|4",
+          "the explicit form acts on the id before `->`");
+
+    g_moved.clear();
+    RunResultScript("Position 10 20 30 40", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "pos|test_actor|10,20,30|40",
+          "Position stays in the cell");
+
+    // 🛑 A rate, scaled by the TICK delta, not the literal argument.
+    g_moved.clear();
+    RunResultScript("MoveWorld Z 60", context);
+    char expected[64];
+    std::snprintf(expected, sizeof(expected), "by|test_actor|2|%g|0",
+                  60.0f * TickDelta());
+    Check(g_moved.size() == 1 && g_moved[0] == expected,
+          "MoveWorld is a per-second rate, tick-scaled, on the world axis");
+
+    g_moved.clear();
+    RunResultScript("Move X 30", context);
+    std::snprintf(expected, sizeof(expected), "by|test_actor|0|%g|1",
+                  30.0f * TickDelta());
+    Check(g_moved.size() == 1 && g_moved[0] == expected,
+          "Move is the same rate in the object's OWN frame");
+
+    g_moved.clear();
+    RunResultScript("Rotate Z -110", context);
+    std::snprintf(expected, sizeof(expected), "rot|test_actor|2|%g",
+                  -110.0f * TickDelta());
+    Check(g_moved.size() == 1 && g_moved[0] == expected,
+          "Rotate is degrees per second, tick-scaled");
+
+    g_moved.clear();
+    RunResultScript("SetScale 2.5", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "scale|test_actor|2.5",
+          "SetScale sets it");
+    g_moved.clear();
+    RunResultScript("ModScale 0.5", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "scale|test_actor|3",
+          "ModScale adds to the CURRENT scale");
+
+    RunResultScript("if ( GetScale == 3 )\n    set TestGlobal to 5\nendif",
+                    context);
+    Check(State().Global("TestGlobal") == 5.0f, "GetScale reads it back");
+
+    g_moved.clear();
+    RunResultScript("PlaceItemCell \"misc_cup\" \"Balmora\" 1 2 3 90",
+                    context);
+    Check(g_moved.size() == 1 &&
+              g_moved[0] == "place|misc_cup|balmora|1,2,3|90",
+          "PlaceItemCell takes the id, the cell, then the position");
+    g_moved.clear();
+    RunResultScript("PlaceItem \"misc_cup\" 4 5 6 12", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "place|misc_cup||4,5,6|12",
+          "PlaceItem names no cell, so the player's is used");
+
+    // 🛑 PlaceAtPC places at the PLAYER whoever runs it; PlaceAtMe places at
+    // the speaker, or at the `->` target. Confusing the two spawns in the
+    // wrong place and nothing reports it.
+    Hooks().placeNear = FakePlaceNear;
+    g_moved.clear();
+    RunResultScript("PlaceAtPC \"ex_rat\" 2 64 1", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "near|player|ex_rat|2",
+          "PlaceAtPC places at the player");
+    g_moved.clear();
+    RunResultScript("PlaceAtMe \"ex_rat\" 1 64 1", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "near|test_actor|ex_rat|1",
+          "PlaceAtMe places at the speaker instead");
+    g_moved.clear();
+    RunResultScript("\"other_npc\"->PlaceAtMe \"ex_rat\" 3 64 1", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "near|other_npc|ex_rat|3",
+          "and the explicit form at the id before `->`");
+    Hooks().placeNear = nullptr;
+}
+
+// The AI commands fill a quest alias and the ENGINE runs the package, so what
+// is testable headlessly is the argument order reaching each hook -- getting
+// that wrong sends the wrong actor somewhere and nothing reports it.
+void AiPackageCases(DialogueContext& context) {
+    std::printf("the AI package commands\n");
+    g_moved.clear();
+
+    Check(RunResultScript("AiTravel 100 200 300", context),
+          "AiTravel compiles and runs");
+    Check(g_moved.size() == 1 && g_moved[0] == "travel|test_actor|100,200,300",
+          "x y z in written order, on the speaker");
+
+    g_moved.clear();
+    RunResultScript("\"other_npc\"->AiTravel 1 2 3", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "travel|other_npc|1,2,3",
+          "the explicit form acts on the id before `->`");
+
+    g_moved.clear();
+    RunResultScript("AiWander 512 4 0", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "wander|test_actor|512|4",
+          "range and duration reach the hook, the idle chances do not");
+
+    g_moved.clear();
+    RunResultScript("AiFollow \"player\" 0 0 0 0", context);
+    Check(g_moved.size() == 1 &&
+              g_moved[0] == "follow|test_actor|player|0|0,0,0",
+          "the id comes FIRST, then the duration, then the point");
+
+    g_moved.clear();
+    RunResultScript("AiFollowCell \"player\" \"Balmora\" 2 1 2 3", context);
+    Check(g_moved.size() == 1 &&
+              g_moved[0] == "follow|test_actor|player|2|1,2,3",
+          "the Cell form drops the cell and keeps the rest in order");
+
+    g_moved.clear();
+    RunResultScript("AiEscort \"player\" 1 4 5 6", context);
+    Check(g_moved.size() == 1 &&
+              g_moved[0] == "escort|test_actor|player|1|4,5,6",
+          "AiEscort reaches its own hook, not follow's");
+
+    g_moved.clear();
+    RunResultScript("AiActivate \"a_door\" 0", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "aiactivate|test_actor|a_door",
+          "AiActivate names the object to use");
+
+    g_moved.clear();
+    RunResultScript("Face 500 600", context);
+    Check(g_moved.size() == 1 && g_moved[0] == "face|test_actor|500,600",
+          "Face turns the actor toward a point");
+
+    ClearMoveHooks();
+    Check(RunResultScript("AiTravel 1 2 3", context),
+          "with no hook the command still runs");
+}
+
 void Cases() {
     ClearScriptTables();
     LoadScriptTables("testdata\\scripts\\");
@@ -503,6 +817,8 @@ void Cases() {
     AiAndDeathCases(context, actor);
     PersuasionCases(context);
     SoundCases(context);
+    MoveCases(context);
+    AiPackageCases(context);
     TableCases(context, actor);
     State().BeginConversation();
 

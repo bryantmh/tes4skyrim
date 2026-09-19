@@ -72,6 +72,8 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\script_context.cpp plugin\dialogue_state.cpp ^
    plugin\script_runner.cpp plugin\script_ops_world.cpp ^
    plugin\script_ops_events.cpp plugin\script_ops_sound.cpp ^
+   plugin\script_ops_move.cpp plugin\script_ops_ai.cpp ^
+   plugin\script_ops_query.cpp ^
    plugin\object_script.cpp ^
    plugin\object_tick.cpp ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
@@ -104,6 +106,8 @@ cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\log.cpp plugin\filter.cpp ^
    plugin\dialogue_state.cpp plugin\script_context.cpp ^
    plugin\script_runner.cpp plugin\script_ops_world.cpp ^
    plugin\script_ops_events.cpp plugin\script_ops_sound.cpp ^
+   plugin\script_ops_move.cpp plugin\script_ops_ai.cpp ^
+   plugin\script_ops_query.cpp ^
    plugin\object_script.cpp ^
    plugin\object_tick.cpp plugin\main_thread.cpp ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
@@ -138,6 +142,8 @@ link /nologo /OUT:script_test.exe objt\store.obj objt\log.obj ^
      objt\game_actor.obj objt\dialogue_state.obj objt\script_context.obj ^
      objt\script_runner.obj objt\script_ops_world.obj ^
      objt\script_ops_events.obj objt\script_ops_sound.obj ^
+     objt\script_ops_move.obj objt\script_ops_ai.obj ^
+     objt\script_ops_query.obj ^
      objt\object_script.obj ^
      objt\object_tick.obj objt\main_thread.obj ^
      objt\script_tables.obj objt\persuasion.obj objt\script_test.obj ^

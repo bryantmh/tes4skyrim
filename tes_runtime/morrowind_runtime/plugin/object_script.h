@@ -65,6 +65,13 @@ public:
     std::uint32_t RuntimeFormId() const { return mRuntimeFormId; }
     void SetRuntimeFormId(std::uint32_t id) { mRuntimeFormId = id; }
 
+    // Whether the object has EVER been seen loaded. An instance that has not
+    // cannot have unloaded, which is what keeps a just-spawned reference from
+    // being dropped in the frames before its 3D exists.
+    // See: docs/commentary/morrowind_runtime.md#a-spawn-is-not-loaded-on-its-first-frame
+    bool WasLoaded() const { return mWasLoaded; }
+    void MarkLoaded() { mWasLoaded = true; }
+
     // Runs the body once. False when it did not compile or threw. Writes the
     // engine-written locals first and clears every event after, which is the
     // one-frame lifetime TES3 gives them.
@@ -80,6 +87,7 @@ private:
     // Whether the death has already been reported, so it is raised once.
     bool mDeathSeen = false;
     std::uint32_t mRuntimeFormId = 0;
+    bool mWasLoaded = false;
 };
 
 // Holds the GameActor that ObjectContext hands its own base class.
@@ -134,7 +142,7 @@ void BindInstance(std::uint32_t runtimeFormId, const std::string& plugin,
 // Gives a reference CREATED at runtime the script its base record runs, keyed
 // by the FormID the engine just minted for it. Does nothing when the base runs
 // no script. `ScriptOf` answers which script that is.
-// See: docs/plans/morrowind_object_scripts.md#placeatpc
+//
 void BindSpawnedInstance(std::uint32_t runtimeFormId,
                          const std::string& baseId);
 

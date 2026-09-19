@@ -6,64 +6,40 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 
 | Status | Commands | Call sites |
 |---|---:|---:|
-| ported | 95 | 79784 |
+| ported | 129 | 84921 |
 | no-op | 5 | 2615 |
-| STUB | 387 | 9182 |
+| STUB | 353 | 4045 |
 
-🛑 **207 of the 387 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 180 command(s) below.
+🛑 **206 of the 353 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 147 command(s) below.
 
 ## Stubbed, and something calls it
 
 | Command | Domain | Signature | Calls |
 |---|---|---|---:|
-| `positioncell` | Transformation | `ffffczz` | 1232 |
-| `aiwander` | Ai | `fff/llllllllll` | 1207 |
 | `addspell` | Stats | `cz` | 570 |
 | `help` | Misc | — | 398 |
-| `moveworld` | Transformation | `cf` | 363 |
 | `cast` | Misc | `SS` | 310 |
-| `aitravel` | Ai | `fff/lx` | 292 |
 | `say` | Sound | `SS` | 292 |
-| `aifollow` | Ai | `cffff/llllllll` | 266 |
-| `placeatme` | Transformation | `clflX` | 241 |
 | `getspell` | Stats | `c` → `l` | 207 |
-| `rotate` | Transformation | `cf` | 206 |
 | `removespell` | Stats | `cz` | 201 |
-| `placeitemcell` | Transformation | `ccffffX` | 179 |
 | `playgroup` | Animation | `c/l` | 178 |
-| `getaipackagedone` | Ai | — → `l` | 150 |
-| `move` | Transformation | `cf` | 136 |
 | `getbuttonpressed` | Gui | — → `l` | 131 |
 | `hassoulgem` | Container | `c` → `l` | 123 |
 | `geteffect` | Misc | `S` → `l` | 121 |
-| `drop` | Misc | `cl` | 115 |
 | `explodespell` | Misc | `S` | 106 |
-| `rotateworld` | Transformation | `cf` | 92 |
 | `getspelleffects` | Misc | `c` → `l` | 82 |
-| `getcurrentaipackage` | Ai | — → `l` | 75 |
-| `face` | Ai | `ffX` | 73 |
 | `removesoulgem` | Misc | `c/l` | 64 |
-| `getcurrentweather` | Sky | — → `l` | 55 |
 | `removeeffects` | Stats | `l` | 54 |
-| `getlos` | Ai | `c` → `l` | 50 |
-| `gettarget` | Ai | `c` → `l` | 49 |
 | `getattacked` | Misc | — → `l` | 45 |
-| `fall` | Misc | — | 44 |
 | `saydone` | Sound | — → `l` | 44 |
 | `modrestoration` | Stats | `f` | 43 |
-| `setscale` | Transformation | `f` | 42 |
 | `show` | Misc | `c` | 41 |
 | `getspeechcraft` | Stats | — → `f` | 40 |
-| `position` | Transformation | `ffffz` | 40 |
-| `getdetected` | Ai | `c` → `l` | 39 |
-| `getweapondrawn` | Misc | — → `l` | 38 |
 | `forcerun` | Control | — | 36 |
 | `modmercantile` | Stats | `f` | 33 |
-| `getpcsneaking` | Control | — → `l` | 31 |
 | `setparalysis` | Stats | `l` | 31 |
 | `getintelligence` | Stats | — → `f` | 30 |
 | `addsoulgem` | Misc | `ccX` | 28 |
-| `aiescort` | Ai | `cffff/l` | 28 |
 | `getpcsleep` | Misc | — → `l` | 26 |
 | `clearforcesneak` | Control | — | 25 |
 | `modwaterlevel` | Cell | `f` | 22 |
@@ -74,17 +50,13 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `hasitemequipped` | Container | `c` → `l` | 20 |
 | `getstrength` | Stats | — → `f` | 19 |
 | `gotojail` | Misc | — | 19 |
-| `resurrect` | Stats | — | 19 |
 | `setatstart` | Transformation | — | 19 |
 | `getcommondisease` | Stats | — → `l` | 18 |
 | `getspellreadied` | Misc | — → `l` | 18 |
 | `payfinethief` | Misc | — | 18 |
-| `placeitem` | Transformation | `cffffX` | 18 |
 | `clearforcerun` | Control | — | 17 |
-| `getsquareroot` | Misc | `f` → `f` | 16 |
 | `changeweather` | Sky | `Sl` | 15 |
 | `getlevel` | Stats | — → `l` | 15 |
-| `getscale` | Transformation | — → `f` | 15 |
 | `getwaterlevel` | Cell | — → `f` | 15 |
 | `raiserank` | Stats | `x` | 15 |
 | `setspeed` | Stats | `f` | 15 |
@@ -102,7 +74,6 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `getpcjumping` | Misc | — → `l` | 11 |
 | `getstandingpc` | Misc | — → `l` | 10 |
 | `hurtcollidingactor` | Misc | `f` | 10 |
-| `aifollowcell` | Ai | `ccffff/l` | 9 |
 | `getcollidingpc` | Misc | — → `l` | 9 |
 | `getsecurity` | Stats | — → `f` | 9 |
 | `removespelleffects` | Stats | `c` | 9 |
@@ -112,10 +83,8 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `setmarksman` | Stats | `f` | 8 |
 | `setmercantile` | Stats | `f` | 8 |
 | `setstrength` | Stats | `f` | 7 |
-| `aiactivate` | Ai | `c/l` | 6 |
 | `getalchemy` | Stats | — → `f` | 6 |
 | `getchameleon` | Stats | — → `l` | 6 |
-| `getpcrunning` | Control | — → `l` | 6 |
 | `getwillpower` | Stats | — → `f` | 6 |
 | `modalchemy` | Stats | `f` | 6 |
 | `resetactors` | Transformation | — | 6 |
@@ -131,7 +100,6 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `getforcerun` | Control | — → `l` | 4 |
 | `getpersonality` | Stats | — → `f` | 4 |
 | `getweapontype` | Container | — → `l` | 4 |
-| `modscale` | Transformation | `f` | 4 |
 | `payfine` | Misc | — | 4 |
 | `setathletics` | Stats | `f` | 4 |
 | `setaxe` | Stats | `f` | 4 |
@@ -171,7 +139,6 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `modspeechcraft` | Stats | `f` | 2 |
 | `setblock` | Stats | `f` | 2 |
 | `setwaterbreathing` | Stats | `l` | 2 |
-| `aiescortcell` | Ai | `ccffff/l` | 1 |
 | `disablelevitation` | Misc | — | 1 |
 | `enablelevitation` | Misc | — | 1 |
 | `getagility` | Stats | — → `f` | 1 |
@@ -203,8 +170,6 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 
 | Calls | Needs | Commands | Why |
 |---:|---|---|---|
-| 1943 | PACK | `aiwander` `aitravel` `aifollow` `aiescort` `getaipackagedone` | `PACK.txt` IS exported but no package is staged, and Skyrim needs a real PACK record rather than a runtime call |
-| 1420 | CELL | `positioncell` `placeitemcell` `aifollowcell` `getpccell` | `CELL.txt` IS exported but no cell id -> FormID table is staged |
 | 978 | SPEL | `addspell` `removespell` `getspell` `hasspell` | no `SPEL.txt` is exported, so a spell id resolves to nothing |
 | 673 | MGEF/ENCH | `cast` `explodespell` `getspelleffects` `geteffect` `removeeffects` | no `MGEF.txt` or `ENCH.txt`; an effect has no FormID to name |
 | 215 | SLGM | `addsoulgem` `removesoulgem` `hassoulgem` `dropsoulgem` | TES3 soul gems export as MISC, so they are clutter in Skyrim |
@@ -229,6 +194,8 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 | `startcombat` | Ai | `c` | 1764 |
 | `setfight` | Ai | `l` | 1759 |
 | `enable` | Misc | `x` | 1265 |
+| `positioncell` | Transformation | `ffffczz` | 1232 |
+| `aiwander` | Ai | `fff/llllllllll` | 1207 |
 | `modpcfacrep` | Stats | `l/c` | 1118 |
 | `menumode` | Misc | — → `l` | 1111 |
 | `startscript` | Misc | `c` | 1104 |
@@ -244,68 +211,100 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 | `setpos` | Transformation | `cf` | 670 |
 | `forcegreeting` | Dialogue | `z` | 579 |
 | `activate` | Misc | `x` | 504 |
+| `moveworld` | Transformation | `cf` | 363 |
 | `getpccell` | Cell | `c` → `l` | 350 |
 | `unlock` | Misc | — | 332 |
+| `aitravel` | Ai | `fff/lx` | 292 |
 | `playsound3d` | Sound | `cXX` | 280 |
 | `stopcombat` | Ai | `x` | 276 |
+| `aifollow` | Ai | `cffff/llllllll` | 266 |
 | `modreputation` | Dialogue | `l` | 262 |
 | `sethealth` | Stats | `f` | 245 |
+| `placeatme` | Transformation | `clflX` | 241 |
 | `getrace` | Stats | `c` → `l` | 238 |
 | `sethello` | Ai | `l` | 235 |
 | `random` | Misc | `l` → `f` | 215 |
 | `gethealth` | Stats | `x` → `f` | 211 |
+| `rotate` | Transformation | `cf` | 206 |
 | `lock` | Misc | `/l` | 202 |
+| `placeitemcell` | Transformation | `ccffffX` | 179 |
 | `setangle` | Transformation | `cf` | 159 |
 | `setdisposition` | Stats | `l` | 159 |
+| `getaipackagedone` | Ai | — → `l` | 150 |
+| `move` | Transformation | `cf` | 136 |
 | `setalarm` | Ai | `l` | 133 |
 | `setdelete` | Misc | `l` | 133 |
 | `placeatpc` | Transformation | `clflX` | 128 |
 | `equip` | Container | `cX` | 127 |
 | `getsoundplaying` | Sound | `c` → `l` | 120 |
 | `pcexpell` | Stats | `/S` | 119 |
+| `drop` | Misc | `cl` | 115 |
 | `modpccrimelevel` | Stats | `f` | 114 |
 | `getpcrank` | Stats | `/S` → `l` | 110 |
 | `modfight` | Ai | `l` | 109 |
 | `playsoundvp` | Sound | `cff` | 97 |
+| `rotateworld` | Transformation | `cf` | 92 |
 | `getpccrimelevel` | Stats | — → `f` | 91 |
 | `getdisposition` | Stats | — → `l` | 90 |
 | `playsound3dvp` | Sound | `cff` | 85 |
+| `getcurrentaipackage` | Ai | — → `l` | 75 |
 | `getlocked` | Misc | — → `l` | 74 |
+| `face` | Ai | `ffX` | 73 |
 | `scriptrunning` | Misc | `c` → `l` | 73 |
 | `stopsound` | Sound | `cXX` | 72 |
 | `getangle` | Transformation | `c` → `f` | 69 |
 | `playloopsound3dvp` | Sound | `cff` | 59 |
 | `setjournalindex` | Dialogue | `cl` | 59 |
 | `setfatigue` | Stats | `f` | 58 |
+| `getcurrentweather` | Sky | — → `l` | 55 |
 | `getinterior` | Cell | — → `l` | 53 |
 | `modcurrentfatigue` | Stats | `f` | 51 |
+| `getlos` | Ai | `c` → `l` | 50 |
 | `setflee` | Ai | `l` | 50 |
+| `gettarget` | Ai | `c` → `l` | 49 |
 | `modcurrenthealth` | Stats | `f` | 48 |
+| `fall` | Misc | — | 44 |
 | `getfatigue` | Stats | `x` → `f` | 43 |
+| `setscale` | Transformation | `f` | 42 |
+| `position` | Transformation | `ffffz` | 40 |
+| `getdetected` | Ai | `c` → `l` | 39 |
 | `pcraiserank` | Stats | `/S` | 39 |
+| `getweapondrawn` | Misc | — → `l` | 38 |
 | `setpccrimelevel` | Stats | `f` | 37 |
 | `setmagicka` | Stats | `f` | 33 |
+| `getpcsneaking` | Control | — → `l` | 31 |
+| `aiescort` | Ai | `cffff/l` | 28 |
 | `getfight` | Ai | — → `l` | 22 |
 | `playloopsound3d` | Sound | `cXX` | 19 |
+| `resurrect` | Stats | — | 19 |
+| `placeitem` | Transformation | `cffffX` | 18 |
+| `getsquareroot` | Misc | `f` → `f` | 16 |
+| `getscale` | Transformation | — → `f` | 15 |
 | `modfatigue` | Stats | `f` | 14 |
 | `getmagicka` | Stats | `x` → `f` | 12 |
 | `pcjoinfaction` | Stats | `/S` | 12 |
 | `modfactionreaction` | Dialogue | `ccl` | 11 |
 | `modcurrentmagicka` | Stats | `f` | 10 |
 | `modhealth` | Stats | `f` | 10 |
+| `aifollowcell` | Ai | `ccffff/l` | 9 |
 | `gethello` | Ai | — → `l` | 9 |
 | `pcclearexpelled` | Stats | `/S` | 9 |
+| `aiactivate` | Ai | `c/l` | 6 |
+| `getpcrunning` | Control | — → `l` | 6 |
 | `modflee` | Ai | `l` | 5 |
 | `pcexpelled` | Stats | `/S` → `l` | 5 |
 | `getalarm` | Ai | — → `l` | 4 |
+| `modscale` | Transformation | `f` | 4 |
 | `pclowerrank` | Stats | `/S` | 4 |
 | `samefaction` | Dialogue | — → `l` | 4 |
 | `setpcfacrep` | Stats | `l/c` | 3 |
 | `modalarm` | Ai | `l` | 2 |
 | `modmagicka` | Stats | `f` | 2 |
+| `aiescortcell` | Ai | `ccffff/l` | 1 |
 | `getflee` | Ai | — → `l` | 1 |
 | `getreputation` | Dialogue | — → `l` | 1 |
 | `getfactionreaction` | Dialogue | `ccX` → `l` |  |
+| `getlineofsight` | Ai | `c` → `l` |  |
 | `getpcfacrep` | Stats | `/c` → `l` |  |
 | `modhello` | Ai | `l` |  |
 | `setfactionreaction` | Dialogue | `ccl` |  |
@@ -327,4 +326,4 @@ Nothing to port: Morrowind's own presentation, or state this runtime does not ke
 
 Console, debug and chargen commands. Listed for completeness; none is reachable from dialogue.
 
-`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `dropsoulgem`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enableracemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `fixme`, `getacrobatics`, `getarmorbonus`, `getathletics`, `getattackbonus`, `getaxe`, `getblindness`, `getblock`, `getbluntweapon`, `getcastpenalty`, `getcollidingactor`, `getdefendbonus`, `getenchant`, `getflying`, `getforcejump`, `getheavyarmor`, `getlightarmor`, `getlineofsight`, `getmarksman`, `getmasserphase`, `getmediumarmor`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getresistblight`, `getresistcorprus`, `getresistdisease`, `getresistfire`, `getresistfrost`, `getresistnormalweapons`, `getresistparalysis`, `getresistpoison`, `getresistshock`, `getsecundaphase`, `getshortblade`, `getsilence`, `getstartingpos`, `getstat`, `getsuperjump`, `getswimspeed`, `getunarmored`, `getwaterbreathing`, `getwaterwalking`, `getwerewolfkills`, `hitattemptonme`, `iswerewolf`, `modarmorbonus`, `modarmorer`, `modathletics`, `modattackbonus`, `modblindness`, `modblock`, `modcastpenalty`, `moddefendbonus`, `modendurance`, `modflying`, `modhandtohand`, `modheavyarmor`, `modillusion`, `modintelligence`, `modinvisible`, `modlightarmor`, `modluck`, `modparalysis`, `modpcvisionbonus`, `modregion`, `modresistblight`, `modresistcorprus`, `modresistdisease`, `modresistfire`, `modresistfrost`, `modresistmagicka`, `modresistnormalweapons`, `modresistparalysis`, `modresistpoison`, `modresistshock`, `modsecurity`, `modsilence`, `modsneak`, `modspeed`, `modsuperjump`, `modswimspeed`, `modwaterbreathing`, `modwaterwalking`, `modwillpower`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setalchemy`, `setalteration`, `setarmorer`, `setattackbonus`, `setblindness`, `setcastpenalty`, `setconjuration`, `setdefendbonus`, `setenchant`, `setflying`, `setheavyarmor`, `setillusion`, `setintelligence`, `setinvisible`, `setlevel`, `setlightarmor`, `setmysticism`, `setnavmeshnumber`, `setpcvisionbonus`, `setpersonality`, `setresistblight`, `setresistcorprus`, `setresistdisease`, `setresistfire`, `setresistfrost`, `setresistmagicka`, `setresistnormalweapons`, `setresistparalysis`, `setresistpoison`, `setresistshock`, `setrestoration`, `setsecurity`, `setsilence`, `setspear`, `setspeechcraft`, `setsuperjump`, `setswimspeed`, `setunarmored`, `setwaterwalking`, `setwerewolfacrobatics`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`
+`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `dropsoulgem`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enableracemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `fixme`, `getacrobatics`, `getarmorbonus`, `getathletics`, `getattackbonus`, `getaxe`, `getblindness`, `getblock`, `getbluntweapon`, `getcastpenalty`, `getcollidingactor`, `getdefendbonus`, `getenchant`, `getflying`, `getforcejump`, `getheavyarmor`, `getlightarmor`, `getmarksman`, `getmasserphase`, `getmediumarmor`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getresistblight`, `getresistcorprus`, `getresistdisease`, `getresistfire`, `getresistfrost`, `getresistnormalweapons`, `getresistparalysis`, `getresistpoison`, `getresistshock`, `getsecundaphase`, `getshortblade`, `getsilence`, `getstartingpos`, `getstat`, `getsuperjump`, `getswimspeed`, `getunarmored`, `getwaterbreathing`, `getwaterwalking`, `getwerewolfkills`, `hitattemptonme`, `iswerewolf`, `modarmorbonus`, `modarmorer`, `modathletics`, `modattackbonus`, `modblindness`, `modblock`, `modcastpenalty`, `moddefendbonus`, `modendurance`, `modflying`, `modhandtohand`, `modheavyarmor`, `modillusion`, `modintelligence`, `modinvisible`, `modlightarmor`, `modluck`, `modparalysis`, `modpcvisionbonus`, `modregion`, `modresistblight`, `modresistcorprus`, `modresistdisease`, `modresistfire`, `modresistfrost`, `modresistmagicka`, `modresistnormalweapons`, `modresistparalysis`, `modresistpoison`, `modresistshock`, `modsecurity`, `modsilence`, `modsneak`, `modspeed`, `modsuperjump`, `modswimspeed`, `modwaterbreathing`, `modwaterwalking`, `modwillpower`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setalchemy`, `setalteration`, `setarmorer`, `setattackbonus`, `setblindness`, `setcastpenalty`, `setconjuration`, `setdefendbonus`, `setenchant`, `setflying`, `setheavyarmor`, `setillusion`, `setintelligence`, `setinvisible`, `setlevel`, `setlightarmor`, `setmysticism`, `setnavmeshnumber`, `setpcvisionbonus`, `setpersonality`, `setresistblight`, `setresistcorprus`, `setresistdisease`, `setresistfire`, `setresistfrost`, `setresistmagicka`, `setresistnormalweapons`, `setresistparalysis`, `setresistpoison`, `setresistshock`, `setrestoration`, `setsecurity`, `setsilence`, `setspear`, `setspeechcraft`, `setsuperjump`, `setswimspeed`, `setunarmored`, `setwaterwalking`, `setwerewolfacrobatics`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`

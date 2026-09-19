@@ -85,4 +85,19 @@ void InstallEventOps(OpcodeInstaller& into);
 // Each names a TES3 SOUN id the sidecar maps to an SNDR. script_ops_sound.cpp.
 void InstallSoundOps(OpcodeInstaller& into);
 
+// The Transformation commands that MOVE something: PositionCell, Position,
+// Move/MoveWorld, Rotate/RotateWorld, the scale pair and PlaceItem.
+// script_ops_move.cpp.
+void InstallMoveOps(OpcodeInstaller& into);
+
+// The AI package commands -- AiTravel, AiWander, AiFollow, AiEscort,
+// AiActivate, Face -- and the two queries that read the stack back.
+// script_ops_ai.cpp.
+void InstallAiOps(OpcodeInstaller& into);
+
+// The one-call world queries: GetLOS, GetDetected, GetTarget, GetWeaponDrawn,
+// the sneak/run pair, Resurrect, Drop, GetCurrentWeather, GetSquareRoot and
+// Fall. script_ops_query.cpp.
+void InstallQueryOps(OpcodeInstaller& into);
+
 }  // namespace mwruntime

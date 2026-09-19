@@ -70,6 +70,9 @@ REFS_TABLE = 'refs_formid.txt'
 #: What PlaceAtPC needs: the BASE record, `id=Plugin.esm|FormID`.
 BASES_TABLE = 'bases_formid.txt'
 
+#: What PositionCell needs: `cell name=Plugin.esm|anchor REFR FormID`.
+CELLS_TABLE = 'cells_formid.txt'
+
 #: What PlaySound3D and its kin need: `sound id=Plugin.esm|SNDR FormID`.
 SOUNDS_TABLE = 'SOUN.txt'
 
@@ -95,6 +98,8 @@ _ITEM_TYPES = tuple(name[:-4] for name in _ITEM_EXPORTS)
 _SCRIPTED_TYPES = tuple(name[:-4] for name in _SCRIPTED_EXPORTS)
 _GLOBAL_EXPORT = 'GLOB.txt'
 _SCRIPT_EXPORT = 'SCPT.txt'
+#: Where the cell names and their FormIDs come from, for the anchor table.
+_CELL_EXPORT = 'CELL.txt'
 _RECORD_MARK = '---RECORD_BEGIN---'
 
 #: What marks the export ROOT, as opposed to a record dir beneath it.
@@ -418,6 +423,35 @@ def _ref_lines(dirs: list, root: str, ids: dict) -> list:
     return list(seen.values())
 
 
+def _cell_lines(export_dir: str, plugin_name: str) -> list:
+    """`cell name=Plugin|anchor FormID` for each cell this plugin defines.
+
+    The value is a reference the cell CONTAINS, not the CELL record: Skyrim
+    moves an object to another object, never to a cell, so `PositionCell`
+    needs something inside the destination to aim at.
+
+    Both names a cell carries are keyed, because a script may write either:
+    the export keeps the cell's own name as its `EditorID`, while `FULL`
+    repeats that for an interior and names the REGION for an exterior.
+    See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
+    """
+    anchors = {}
+    for name in _PLACEMENT_EXPORTS:
+        for rec in export_records(os.path.join(export_dir, name),
+                                  ('FormID', 'ParentCELL')):
+            cell = rec.get('ParentCELL', '').upper()
+            if cell and rec.get('FormID'):
+                anchors.setdefault(cell, rec['FormID'])
+    lines = []
+    for rec in export_records(os.path.join(export_dir, _CELL_EXPORT),
+                              ('FormID', 'EditorID', 'FULL')):
+        anchor = anchors.get(rec.get('FormID', '').upper())
+        for key in ('EditorID', 'FULL'):
+            if anchor and rec.get(key):
+                lines.append(f'{rec[key]}={plugin_name}|{anchor}')
+    return sorted(set(lines))
+
+
 def _write_lines(path: str, lines: list) -> int:
     """Write a table; 1 when it has anything in it, else 0 and no file."""
     if not lines:
@@ -458,7 +492,9 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
             + _write_lines(os.path.join(out_dir, REFS_TABLE),
                            _ref_lines(dirs, root, ids.get('objects', {})))
             + _write_lines(os.path.join(out_dir, BASES_TABLE),
-                           _base_lines(dirs, root, ids.get('objects', {}))))
+                           _base_lines(dirs, root, ids.get('objects', {})))
+            + _write_lines(os.path.join(out_dir, CELLS_TABLE),
+                           _cell_lines(export_dir, plugin_name)))
 
 
 def _stage_dialogue(export_dir: str, out_dir: str, present: list,
@@ -502,6 +538,9 @@ def _journal_quests(writer, out_dir: str, plugin_name: str) -> int:
     from .quest_morrowind import write_journal_quests
     quests = write_journal_quests(writer, out_dir, plugin_name)
     print(f'    sidecar: {quests} journal quest(s) written as QUST')
+    from .ai_packages_morrowind import write_ai_packages
+    packages = write_ai_packages(writer, out_dir, plugin_name)
+    print(f'    sidecar: {packages} AI package(s) written as PACK')
     return 1 if quests else 0
 
 

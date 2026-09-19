@@ -229,13 +229,22 @@ constexpr std::uint64_t kRefIsDisabled = 56639;
 //
 // 🛑 The ANGLE getters return DEGREES while the field holds radians, and
 // SetAngle takes degrees back -- so a get/set round trip needs no conversion,
-// but reading the field directly would.
+// but reading the field directly does.
 constexpr std::uint64_t kRefGetPositionX = 56178;
 constexpr std::uint64_t kRefGetPositionY = 56179;
 constexpr std::uint64_t kRefGetPositionZ = 56180;
-constexpr std::uint64_t kRefGetAngleX = 56162;
-constexpr std::uint64_t kRefGetAngleY = 56163;
-constexpr std::uint64_t kRefGetAngleZ = 56164;
+
+// 🛑 THE ANGLE GETTERS HAVE NO STABLE ID ON A CURRENT BUILD. Ids 56162-56164
+// exist on 1.6.659 and are GONE on 1.6.1170 -- measured against both
+// versionlibs, and the live log showed all three UNRESOLVED, which silently
+// broke every rotation (Rotate, RotateWorld, PositionCell's zRot, Face).
+// Each is a 3-instruction leaf the Address Library stopped covering, so the
+// field is read directly instead: rotation x/y/z are floats at these offsets
+// on TESObjectREFR, immediately before the position triple at +0x54.
+// See: docs/commentary/morrowind_runtime.md#the-angle-getters-have-no-id
+constexpr std::size_t kOffRefRotX = 0x48;
+constexpr std::size_t kOffRefRotY = 0x4c;
+constexpr std::size_t kOffRefRotZ = 0x50;
 
 // ObjectReference.SetPosition(float x, y, z) (0x9d1c60) and SetAngle (0x9d12d0)
 // take ALL THREE axes, so a one-axis MWScript `SetPos` reads the other two
@@ -310,6 +319,72 @@ constexpr std::uint64_t kDebugMessageBox = 55376;
 // TR_m3 vermai enters the game at all.
 // See: docs/plans/morrowind_object_scripts.md#placeatpc
 constexpr std::uint64_t kRefPlaceAtMe = 56203;
+
+// What the movement and AI commands reach through. Each was found at its
+// registration by `tools/script/papyrus_native_locate.py` against the GOG
+// 1.6.659 exe and inverted through the Address Library; all seven exist in
+// every one of the 12 shipped versionlibs.
+//   void  ObjectReference.MoveTo(ref target, float x, y, z, bool match) 0x9cec80
+//   float ObjectReference.GetScale()                                    0x9e5b30
+//   void  ObjectReference.SetScale(float)                               0x9d23a0
+//
+// 🛑 `MoveTo` is the ONLY call that moves an object to another CELL, and it
+// aims at a REFERENCE -- which is why `PositionCell` needs a staged anchor.
+// `Cell.GetNthRef` cannot supply one: on an unloaded cell it returns only
+// PERSISTENT references, and a TES3 interior generally has none.
+// 🛑 `Actor.PathToReference` is the walking form of AiTravel and is LATENT --
+// it suspends its caller until the path ends. A hook cannot wait, so travel
+// places the actor instead.
+// See: docs/commentary/morrowind_runtime.md#ai-packages
+constexpr std::uint64_t kRefMoveTo = 56199;
+constexpr std::uint64_t kRefGetScale = 56633;
+constexpr std::uint64_t kRefSetScale = 56240;
+
+// The alias plumbing the AI packages run on, each found at its registration
+// and present in all 12 shipped versionlibs:
+//   Alias  Quest.GetAlias(int aliasId)              0x9ea980
+//   void   ReferenceAlias.ForceRefTo(ObjectReference) 0x9a47c0
+//   void   ReferenceAlias.Clear()                    0x9a46f0
+//   Package Actor.GetCurrentPackage()                0x9898b0
+//
+// 🛑 A quest that is not RUNNING owns no alias instances, so `ForceRefTo` on
+// one silently does nothing -- `StartQuest` is what makes the AI quest's
+// aliases fillable at all.
+// 🛑 `ForceRefTo` re-evaluates the actor's packages by itself, so no
+// `EvaluatePackage` is needed after it.
+// See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
+constexpr std::uint64_t kQuestGetAlias = 56723;
+constexpr std::uint64_t kAliasForceRefTo = 55288;
+constexpr std::uint64_t kAliasClear = 55286;
+constexpr std::uint64_t kActorCurrentPackage = 54681;
+
+// The one-call world queries, each found at its registration and verified
+// present in all 12 shipped versionlibs INCLUDING 1.6.1170:
+//   bool    Actor.HasLOS(Actor other)                    0x989df0
+//   bool    Actor.IsDetectedBy(Actor other)              0x98a010
+//   Actor   Actor.GetCombatTarget()                      0x989840
+//   bool    Actor.IsWeaponDrawn()                        0x996920
+//   bool    Actor.IsSneaking()                           0x996870
+//   bool    Actor.IsRunning()                            0x996860
+//   void    Actor.Resurrect()                            0x98ad40
+//   ref     ObjectReference.DropObject(Form, int)        0x9cde20
+//   Weather Weather.GetCurrentWeather()                  0x9ed570  global
+//   int     Weather.GetClassification()                  0x9ec210
+//
+// 🛑 `IsSneaking` (54953) and `IsRunning` (54952) are ADJACENT ids on
+// near-identical leaf functions -- the name locator matched one thunk for
+// both, so each was taken from its own registration site.
+// See: docs/commentary/morrowind_runtime.md#the-query-commands
+constexpr std::uint64_t kActorHasLos = 54697;
+constexpr std::uint64_t kActorIsDetectedBy = 54706;
+constexpr std::uint64_t kActorCombatTarget = 54680;
+constexpr std::uint64_t kActorWeaponDrawn = 54957;
+constexpr std::uint64_t kActorIsSneaking = 54953;
+constexpr std::uint64_t kActorIsRunning = 54952;
+constexpr std::uint64_t kActorResurrect = 54736;
+constexpr std::uint64_t kRefDropObject = 56157;
+constexpr std::uint64_t kWeatherCurrent = 56803;
+constexpr std::uint64_t kWeatherClassification = 56775;
 
 // Actor.IsDead() (0x989ff0), the r9 of its registration beside 'IsDead'.
 //

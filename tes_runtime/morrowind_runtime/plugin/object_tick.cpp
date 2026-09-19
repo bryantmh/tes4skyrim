@@ -15,8 +15,8 @@ namespace mwruntime {
 
 namespace {
 
-//: Ticks per second. See the header for why this is fixed, and why 15 is enough.
-constexpr float kTickRate = 15.0f;
+//: Ticks per second. See the header for why this is fixed, and why it is 30.
+constexpr float kTickRate = 30.0f;
 
 //: The seconds one tick covers, which GetSecondsPassed answers with.
 constexpr float kTickDelta = 1.0f / kTickRate;
@@ -68,10 +68,21 @@ void RunOneTick() {
         // this an instance ticks forever once bound, for a thing that left the
         // world -- and the bound set only ever grows.
         // See: docs/plans/morrowind_object_scripts.md#unload-with-the-cell
-        if (Hooks().is3DLoaded &&
-            !Hooks().is3DLoaded(instance->RuntimeFormId())) {
-            UnbindInstance(instance->RuntimeFormId());
-            continue;
+        //
+        // 🛑 UNLOADING is a transition, not a state: a reference binds the
+        // frame `PlaceAtMe` returns it, several frames BEFORE its 3D exists,
+        // and a spawn has no rebind path -- so treating "not loaded yet" as
+        // "unloaded" drops the creature's script forever.
+        // See: docs/commentary/morrowind_runtime.md#a-spawn-is-not-loaded-on-its-first-frame
+        if (Hooks().is3DLoaded) {
+            if (Hooks().is3DLoaded(instance->RuntimeFormId())) {
+                instance->MarkLoaded();
+            } else if (instance->WasLoaded()) {
+                UnbindInstance(instance->RuntimeFormId());
+                continue;
+            } else {
+                continue;
+            }
         }
         // Before the body: both must already be raised when it reads them.
         instance->PollDeath();

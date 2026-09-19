@@ -41,9 +41,11 @@ bool IStartsWith(const std::string& text, const std::string& prefix) {
            _strnicmp(text.c_str(), prefix.c_str(), prefix.size()) == 0;
 }
 
-// `PlaceAtPC id count distance direction`: creates references of a BASE record
-// near the player. The distance and direction are popped and dropped -- Skyrim
-// places at the player, which is where every authored call wants it anyway.
+// `PlaceAtPC/PlaceAtMe id count distance direction`: creates references of a
+// BASE record near an actor -- the PLAYER for `PlaceAtPC`, the named one for
+// `PlaceAtMe`, which is OpenMW's same `OpPlaceAt` under both names. The
+// distance and direction are popped and dropped -- Skyrim places beside the
+// actor, which is where every authored call wants it anyway.
 //
 // 🛑 The created reference runs the base's script, and the hook binds its
 // instance from the FormID PlaceAtMe returns.
@@ -51,14 +53,21 @@ bool IStartsWith(const std::string& text, const std::string& prefix) {
 // 🛑 SEGMENT 5, not 3, though its `X` looks optional: the compiler emits
 // 0xCA00019C for it, whose tag is 0x32. The segment a command lands in is a
 // property of its REGISTRATION, not of its argument string -- read the word.
-class OpPlaceAtPc : public Interpreter::Opcode0 {
+template <class R, bool AtPlayer>
+class OpPlaceAt : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
+        // 🛑 The `->` target is popped FIRST whatever the form, so the PC
+        // form has to consume it before the arguments even though it places
+        // at the player regardless.
+        const std::string named = R::Target(runtime);
         const std::string base = PopString(runtime);
         const int count = PopInt(runtime);
         PopFloat(runtime);
         PopInt(runtime);
-        Log("world: PlaceAtPC %s x%d", base.c_str(), count);
-        if (Hooks().placeAtPlayer) Hooks().placeAtPlayer(base, count);
+        const std::string near = AtPlayer ? std::string(kPlayerId) : named;
+        Log("world: place %s x%d beside %s", base.c_str(), count,
+            near.c_str());
+        if (Hooks().placeNear) Hooks().placeNear(near, base, count);
     }
 };
 
@@ -313,7 +322,9 @@ void InstallWorldOps(OpcodeInstaller& into) {
     into.Real<OpForceGreeting<Explicit>>(
         Compiler::Dialogue::opcodeForceGreetingExplicit);
     namespace T = Compiler::Transformation;
-    into.Real<OpPlaceAtPc>(T::opcodePlaceAtPc);
+    into.Real<OpPlaceAt<Implicit, true>>(T::opcodePlaceAtPc);
+    into.Real<OpPlaceAt<Implicit, false>>(T::opcodePlaceAtMe);
+    into.Real<OpPlaceAt<Explicit, false>>(T::opcodePlaceAtMeExplicit);
     into.Real<OpGetPos<Implicit>>(T::opcodeGetPos);
     into.Real<OpGetPos<Explicit>>(T::opcodeGetPosExplicit);
     into.Real<OpSetPos<Implicit>>(T::opcodeSetPos);

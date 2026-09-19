@@ -1267,6 +1267,263 @@ So the tie-break decides **2 call sites**, and first-match is right. The
 table) plus 13 ids from Morrowind proper or authored typos (`agronian guy`)
 that this plugin does not place — those correctly report and do nothing.
 
+### <a id="positioncell-needs-an-anchor"></a>`PositionCell` aims at a REFERENCE, not a cell
+
+**Code:** `morrowind_sidecar.py:_cell_lines`, `cells_formid.txt`,
+`plugin/game_calls.cpp:MoveRefToCell`
+
+`PositionCell x y z zRot "cell"` is the most-called stubbed command (1,232
+sites). Skyrim's mover is `ObjectReference.MoveTo(target)` — it crosses cells
+freely but takes another REFERENCE, never a cell. Disassembling the native
+(`0x9cec80`) shows why: it builds a queued move task holding the TARGET's cell
+handle, so the cell is only ever reached through something standing in it.
+
+`Cell.GetNthRef` looked like the way to find that something at runtime, and is
+not: on an UNLOADED cell it returns only persistent references, and a TES3
+interior generally has none. So the anchor is staged instead —
+`cells_formid.txt` maps the cell's authored name to any one reference the cell
+contains, and the runtime does `MoveTo(anchor)` then `SetPosition(x, y, z)`.
+
+🛑 **No marker record is minted, because the measurement said none was
+needed.** Over Tamriel Rebuilt's two corpora, of the cells its scripts name:
+
+| Named cells | Resolved in `CELL.txt` | ...holding a placement |
+|---:|---:|---:|
+| 379 | 332 | **331** |
+
+That is 677 of 678 resolvable call sites served by a reference that already
+exists. The 47 unresolved names are exterior REGIONS (where `PositionCell`
+means the worldspace, and vanilla Morrowind falls back to the exterior) plus
+cells belonging to masters this plugin does not re-export.
+
+Both the `EditorID` and the `FULL` name are staged as keys: an interior
+repeats its own name in both, and an exterior's `FULL` is its region, which is
+the name a script uses for it.
+
+### <a id="forceactive-is-a-weather-call"></a>🛑 `ForceActive` is a WEATHER call: two natives share one name
+
+**Code:** `plugin/game_calls.cpp:AiQuestForm`, `plugin/ids.h`
+
+The first AI command crashed the game one frame later: `mov rcx,[rbx]` in
+Address Library 26327, reached from `Sky` (26243 -> 26246), with the AI quest
+on the stack and a mesh path where an object should be.
+
+- 26246 reads `Sky+0x48` (the current weather), then `weather+0x8a0`, and 26327
+  walks the array inside it. The "weather" was the AI QUEST, so `+0x8a0` was
+  whatever heap followed it.
+- `kQuestForceActive` (56773, 0x9ec1b0) loads the Sky singleton and tail-calls
+  the force-weather routine. It is `Weather.ForceActive`. The CK wiki strikes
+  `Quest.ForceActive` out; it does not exist.
+- `kAliasClear` (55188, 0x99fd50) was `LocationAlias.Clear`. The reference form
+  is 55286 (0x9a46f0).
+
+🛑 **`papyrus_native_locate.py` finds a native by NAME, and names repeat across
+scripts** (`Clear`, `ForceActive`, `IsRunning`). Read the class string loaded
+beside the name at the registration site before taking the address.
+
+The quest is started by `StartQuest`, the same call the journal uses.
+
+🛑 **The aliases must be Optional (FNAM 0x02).** An alias with no fill type
+that is not Optional fails the quest start, and `ReferenceAlias.Clear` tests
+that same bit and refuses otherwise. Allow Reuse (0x08) lets the player sit in
+several target aliases at once.
+
+### <a id="forcerefto-must-be-posted"></a>`ForceRefTo` is POSTED, and one alias holds ONE actor
+
+**Code:** `plugin/game_calls.cpp:RunAiPackage`
+
+`ForceRefTo` re-evaluates the actor's packages synchronously and a result
+script runs on the menu's callback thread, so the fills and clears are posted
+like every other engine call. This was NOT the cause of the crash above; an
+earlier version of this section said it was.
+
+🛑 **One alias holds ONE reference, so two actors cannot share a package
+kind.** A script that gives two actors `AiFollow` fills `followActor` twice and
+only the second follows. NOT YET FIXED: it needs an alias, and a PACK aimed at
+it, per concurrent actor rather than per kind.
+
+### <a id="the-query-commands"></a>The query commands are one native each
+
+**Code:** `plugin/script_ops_query.cpp`, `plugin/game_calls.cpp`
+
+`GetLOS`, `GetDetected`, `GetTarget`, `GetWeaponDrawn`, `GetPCSneaking`,
+`GetPCRunning`, `Resurrect`, `Drop`, `GetCurrentWeather`, `GetSquareRoot` and
+`Fall` share one property: each is a single Skyrim native, so there is no
+mechanism to explain and they live together rather than beside the commands
+they resemble.
+
+Three of them relate two actors, and the direction matters:
+
+| TES3 | Skyrim | Direction |
+|---|---|---|
+| `x->GetLOS y` | `x.HasLOS(y)` | same |
+| `x->GetDetected y` | `y.IsDetectedBy(x)` | **SWAPPED** |
+| `x->GetTarget y` | `x.GetCombatTarget() == y` | a comparison, not a lookup |
+
+🛑 **`GetDetected` swaps its arguments.** OpenMW's
+`isActorDetected(actor, observer)` takes the command's TARGET as the observer
+and its string argument as the actor, while Skyrim's
+`self.IsDetectedBy(other)` asks whether SELF is detected. Getting this
+backwards answers a different question and reads as a sneaking bug.
+
+🛑 **`GetTarget` is a comparison.** It asks whether the actor's combat target
+is one named reference, not what the target is, so the native's return value
+is compared rather than returned.
+
+`GetCurrentWeather` needs a mapping, not a cast. TES3 returns a weather index
+(0 Clear, 1 Cloudy, 2 Foggy, 3 Overcast, 4 Rain, 5 Thunderstorm, 6 Ashstorm,
+7 Blight, 8 Snow, 9 Blizzard, from `weather.cpp`'s own registration order);
+Skyrim reports a CLASSIFICATION of -1..3 (none/pleasant/cloudy/rainy/snow).
+Ash and blight have no Skyrim equivalent and answer Cloudy, the nearest thing
+the classification can say.
+
+`Fall` is a **no-op in OpenMW too** — its opcode body is empty — so it is
+ported to stop the 44 call sites counting as unported, not to do anything.
+`GetSquareRoot` touches no game at all.
+
+`ChangeWeather` is NOT ported: it names a REGION, and the conversion has no
+region equivalent to hand it.
+
+### <a id="the-angle-getters-have-no-id"></a>🛑 The angle getters have NO stable id on a current build
+
+**Code:** `plugin/game_calls.cpp:RefAngle`, `plugin/ids.h`
+
+`ObjectReference.GetAngleX/Y/Z` are Address Library ids 56162-56164 on
+**1.6.659** and **absent from 1.6.1170**, the build being played. Measured
+against both versionlibs, and confirmed by the live log:
+
+```
+addresses: UNRESOLVED ObjectReference.GetAngleX (id 56162)
+```
+
+Each is a three-instruction leaf (`movss xmm0,[r8+off]; mulss xmm0,[180/pi];
+ret`), small enough that the database stopped covering it. `Resolve` returns 0,
+the hook is never called, and **every rotation silently reads 0** — `Rotate`,
+`RotateWorld`, `PositionCell`'s zRot and `Face` all depend on the getters.
+
+So the field is read directly: rotation x/y/z are floats at `+0x48/0x4c/0x50`
+on `TESObjectREFR`, immediately before the position triple at `+0x54`, taken
+from the getters' own disassembly.
+
+🛑 **The field holds RADIANS; the natives return DEGREES.** The getters exist
+only to multiply by 180/pi, and `SetAngle` takes degrees back — so a
+get/set round trip through the natives needs no conversion, and reading the
+field directly DOES.
+
+🛑 **A versionlib check on new ids is not enough.** The pre-existing ids were
+the broken ones, and a sweep that only asked about ids added this session
+would not have found it. Check every id a change DEPENDS on, against the build
+the user plays.
+
+### <a id="move-and-rotate-are-rates"></a>`Move` and `Rotate` are RATES, and that set the tick rate
+
+**Code:** `plugin/script_ops_move.cpp`, `plugin/object_tick.cpp`
+
+OpenMW multiplies both by the frame duration (`transformationextensions.cpp`,
+`OpMove` / `OpRotate`), so `rotate z -110` means **110 degrees per second** and
+the authoring convention is to call it every frame from a `GameMode` block. The
+runtime ticks at a fixed rate instead of per frame, so the factor here is
+`TickDelta()` — authored motion then plays at its authored speed whatever the
+frame rate.
+
+🛑 **That is why the tick left 15 Hz.** `object_tick.h` already carried the
+warning: at 15 Hz a rate command runs at half its authored speed unless it is
+delta-scaled, and both are now scaled and the rate is 30 Hz. Measured over both
+corpora — 326 `move`/`moveworld` sites and 86 `rotate`/`rotateworld` sites.
+
+`MoveWorld` and `Move` differ properly: the world form adds along a world axis,
+the plain form along the object's own, which is what `abMatchRotation` and a
+rotated offset give. `RotateWorld` and `Rotate` are the SAME call here, because
+Skyrim's `SetAngle` takes Euler degrees with no world-composed form. They agree
+on any single axis; of the 17 scripts that rotate anything, **2** turn more than
+one (`TR_m1_lud_cogspinner`, `TR_m7_HH_Alvynu_7_ShipSink_sc`) and are the only
+places the approximation can show.
+
+### <a id="ai-packages-are-real-packages"></a>The AI commands are real Skyrim packages
+
+**Code:** `tes5_import/dialogue/ai_packages_morrowind.py`,
+`plugin/script_ops_ai.cpp`, `plugin/game_calls.cpp`
+
+Skyrim has **no Papyrus call that gives an actor a package**. A package is a
+record the engine picks off a stack, and the stack is built from lists — on the
+actor, or on a quest alias. The CK's own documented best practice is the alias:
+put the packages on a quest alias's package list, point the alias at an actor
+with `ForceRefTo`, and the engine runs them ranked by quest priority.
+`ForceRefTo` re-evaluates the actor's packages by itself.
+
+Vanilla does this at scale — measured over `references/Skyrim.esm`: **365 of
+1,811 quests carry alias packages, 4,125 `ALPC` entries in total**, and **585
+of 6,838 `PLDT` locations are alias-typed** (type 8).
+
+So the import mints one quest per plugin, with two aliases per package kind
+(the actor running it, and what it aims at) and one `PACK` instance per kind
+hung off the actor's alias. Every package's location and target are
+alias-typed, so ONE record serves every call site: the destination is whatever
+reference the runtime dropped in the alias.
+
+🛑 **A travel destination cannot be raw coordinates.** The `PLDT` enum
+(`wbDefinitionsTES5.pas:3065`) offers reference, cell, object, keyword and
+alias — there is no XYZ form. `AiTravel x y z` therefore spawns an XMarker at
+the point and fills the destination alias with it, the same trick
+[the cell anchor](#positioncell-needs-an-anchor) uses. The actor then WALKS
+there, because it is a real travel package.
+
+🛑 **`Actor.PathToReference` is not the alternative.** It is latent — it
+suspends its caller until the path ends — and neither a script hook nor the
+tick may block.
+
+### <a id="ai-packages"></a>REVERTED: the hand-rolled package queue
+
+A first attempt kept a package stack in the DLL and drove it from the object
+tick, because no Papyrus call queues a package. That reasoning stopped one step
+short: packages are RECORDS on an alias list, which is
+[the mechanism above](#ai-packages-are-real-packages).
+
+What it cost, kept because each is a live hazard if the queue ever returns:
+`AiTravel` became a bare `SetPosition`, so the actor TELEPORTED in full view
+instead of walking; `AiWander` only cleared a follow offset and never idled;
+and `GetCurrentAiPackage` answered our own bookkeeping, which says what a
+script last asked for rather than what the engine is running -- a different
+question the moment a package is dropped.
+
+`Actor.KeepOffsetFromActor` was the one good part (radii 256/384, not the
+native's 5/20 -- the CK wiki notes the defaults make a follower run into its
+target). The Follow PACK supersedes it: it handles doors, combat breaks and
+repathing, which an offset does not.
+
+### <a id="a-spawn-is-not-loaded-on-its-first-frame"></a>Unloading is a TRANSITION, not a state
+
+**Code:** `plugin/object_tick.cpp`, `plugin/object_script.h`
+
+The tick drops an instance whose `ObjectReference.Is3DLoaded()` is false, so a
+script stops running when its object leaves the world. Written as a bare test of
+the current state, that gate also fires on an object which has not loaded *yet*.
+
+A spawn binds on the frame `PlaceAtMe` returns the reference, several frames
+before its 3D exists. The first tick therefore read "not loaded" and unbound it
+— and **nothing ever rebinds a spawn**: `BindSpawnedInstance` is called once, at
+placement. A staged placement recovers when its cell reloads and a hook touches
+it again; a spawned creature has no such path, so the unbind is permanent.
+
+Measured 2026-09-18 on `TR_m3_OE_FG_q_VermaiScr` (Cursing Like a Witch): the
+creature spawned and its script never ran a single tick — no combat, no
+`doonce`, no `died`, and the quest stayed at stage 30. The run before the gate
+shipped shows all four.
+
+So the instance remembers whether it has ever been seen loaded
+(`ObjectScript::WasLoaded`). Not-loaded-yet is skipped for that tick and kept
+bound; only a false *after* a true is an unload and unbinds. The regression
+test is the three-phase sequence: never-loaded survives, loaded runs, then
+unloaded drops.
+
+🛑 The earlier theory here — that `Game.GetForm` cannot resolve a `0xFF`
+reference because the CK wiki says it retrieves neither a temporary nor an id
+with the MSB set — is WRONG for this case, and a fix built on it did not work.
+`GetForm` (ID 55566) does resolve these: the `spawn:FF0017D8|0017D8.doonce`
+measurement in
+[the plan](../plans/morrowind_object_scripts.md#spawned-refs-need-getform) is a
+spawned body running through exactly that lookup.
+
 ## <a id="journal-quests"></a>The journal is Skyrim quests
 
 **Code:** `tes5_import/dialogue/quest_morrowind.py`, `plugin/game_calls.cpp`

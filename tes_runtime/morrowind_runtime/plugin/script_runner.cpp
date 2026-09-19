@@ -635,6 +635,9 @@ void Machine::InstallReal() {
     InstallWorldOps(*this);
     InstallEventOps(*this);
     InstallSoundOps(*this);
+    InstallMoveOps(*this);
+    InstallAiOps(*this);
+    InstallQueryOps(*this);
 }
 
 void Machine::InstallFactions() {

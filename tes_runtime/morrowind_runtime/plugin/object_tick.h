@@ -7,10 +7,10 @@
 // same everywhere.
 //
 // 🛑 The RATE is not a free performance dial: it sets how fast authored motion
-// plays. 15 Hz is enough today only because `rotate`/`move` are still stubs --
-// measured over TR_Mainland, 91 of 3,569 bodies (2.5%) call them, and at 15 Hz
-// each would run at HALF its authored speed. Raise this to 30, or scale those
-// commands by TickDelta, before porting them.
+// plays. `rotate`/`move` are now ported and BOTH are scaled by TickDelta, so
+// the rate no longer changes their speed -- but it does bound how finely they
+// step, which is why it is 30 rather than 15.
+// See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
 //
 // 🛑 `GetSecondsPassed` must then return the TICK delta, not the frame's --
 // hand a script a 144 fps frame time while ticking at 30 Hz and every
