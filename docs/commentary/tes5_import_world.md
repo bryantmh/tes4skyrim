@@ -14,6 +14,7 @@ owns it, and what it is linked to. Region decoration (REGN, LSCR, WATR) lives in
 - [Teleport doors bucketed by worldspace](#teleport-doors-by-worldspace)
 - [Nested interiors inherit a location](#nested-interiors-inherit-location)
 - [LAND DATA flags pass through VERBATIM](#land-data-flags-verbatim)
+- [WRLD land and water defaults](#wrld-land-and-water-defaults)
 
 ## <a id="xlkr-enable-parent-becomes-linked-ref"></a>XLKR — the enable parent becomes the linked ref
 
@@ -112,3 +113,38 @@ value `TWMP_ValenwoodImproved` uses.
 
 Rewriting the flags-12 pair to 28 looked like a fix only because a PARTIAL
 census missed it. `convert_LAND` writes `DATA.Flags` through unchanged.
+
+## <a id="wrld-land-and-water-defaults"></a>WRLD land and water defaults
+
+`DNAM` (Default Land Height, Default Water Height) and `NAM4` (LOD Water
+Height) are the planes the engine draws for a cell that has **no LAND record
+of its own**. Only FO3/FNV author them; TES4 WRLD has neither field —
+measured over `export/Oblivion.esm/WRLD.txt`: **0 `DNAM` lines, 0 `NAM4`
+lines** in 84 worldspaces.
+
+Reading them unconditionally therefore gave every TES4 worldspace
+`land=-2048, water=0`, because only the land read carried an explicit
+fallback. That inverts the two planes: water ended up **2048 units above**
+the fallback land, so every LAND-less cell rendered as open sea. It showed up
+first in the small Imperial City worldspaces, where most of the grid has no
+LAND — `ICImperialPalace` ships 47 LAND records over a footprint spanning
+(-2,-2)..(8,17) — while Tamriel hid it by having real LAND nearly everywhere.
+
+Vanilla always puts water at or below land: Skyrim's worldspaces run
+`DefaultLandHeight` -27000..9399 against `DefaultWaterHeight`
+-500000..9999999, and **no vanilla worldspace floats water above its land
+plane** the way the converted output did.
+
+`_world_water_and_planes()` writes both planes with
+`_TES4_DEFAULT_PLANE_HEIGHT` (-2048) as the fallback for EACH, so an absent
+field can never leave water above land, and writes this run together with the
+water types.
+**NAM2** honours the authored TES4 pointer — 14 of Oblivion.esm's 84
+worldspaces point it at lava, and hardcoding `0x18` made every Oblivion realm
+render as ordinary blue water regardless of its WATR. Worldspaces with no
+authored water fall back to Skyrim.esm's DefaultWater (`0x18`, master index
+0), as vanilla Tamriel does. **NAM3** stays on DefaultWater in all cases: it
+is the water drawn on distant terrain LOD, which vanilla always renders as
+ordinary water, and a null NAM3 makes the terrain-LOD water codepath deref a
+null WATR pointer and CTD as soon as a `.btr` contains a WATER
+`BSMultiBoundNode`.

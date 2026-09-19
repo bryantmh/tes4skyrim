@@ -128,12 +128,19 @@ def _node_name(node) -> str:
 
 
 def find_skeleton_root(nif_data):
-    """The first NiNode child of the file root that has NiNode children —
-    'Bip01' on every Oblivion creature skeleton (Scene Root itself is the
-    file node, not a bone)."""
+    """The rig root bone: the file root when it is one itself, else the first
+    NiNode child of the file root that has NiNode children — 'Bip01' on every
+    Oblivion creature skeleton (Scene Root itself is the file node, not a bone).
+
+    Morrowind authors some rigs with no scene node, so the file root IS the
+    bone.
+    See: docs/commentary/tes4_export_morrowind.md#rig-root-is-the-file-root
+    """
     for root in nif_data.roots:
         if not isinstance(root, NifFormat.NiNode):
             continue
+        if _node_name(root) in BONE_RENAMES:
+            return root
         candidates = [c for c in root.children
                       if isinstance(c, NifFormat.NiNode)]
         for c in candidates:

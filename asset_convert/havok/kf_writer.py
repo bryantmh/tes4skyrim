@@ -28,6 +28,9 @@ KF_VERSION = 0x14020007
 KF_USER_VERSION = 11      # what hkxcmd EXPORTKF emits (not 12)
 KF_USER_VERSION_2 = 83
 
+#: Gamebryo's -FLT_MAX marker: the interpolator has no static value for this channel.
+NO_STATIC_VALUE = -3.4028234663852886e+38
+
 KEY_LINEAR = 1
 KEY_QUADRATIC = 2
 
@@ -79,15 +82,14 @@ def write_skyrim_kf(clip: DecodedClip, out_path: str,
         td = NifFormat.NiTransformData()
         interp.data = td
 
-        # static transform on the interpolator = first sample (used by the
-        # engine before the first key / for missing channels)
-        if tr.translations is not None:
-            interp.translation.x, interp.translation.y, interp.translation.z = \
-                (float(v) for v in tr.translations[0])
-        if tr.rotations is not None:
-            (interp.rotation.w, interp.rotation.x,
-             interp.rotation.y, interp.rotation.z) = \
-                (float(v) for v in tr.rotations[0])
+        trans0 = tr.translations[0] if tr.translations is not None \
+            else [NO_STATIC_VALUE] * 3
+        rot0 = tr.rotations[0] if tr.rotations is not None \
+            else [NO_STATIC_VALUE] * 4
+        interp.translation.x, interp.translation.y, interp.translation.z = \
+            (float(v) for v in trans0)
+        (interp.rotation.w, interp.rotation.x,
+         interp.rotation.y, interp.rotation.z) = (float(v) for v in rot0)
         interp.scale = float(tr.scales[0]) if tr.scales is not None else 1.0
 
         if tr.rotations is not None:

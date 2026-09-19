@@ -676,7 +676,7 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
     from tes5_import.base.artifact_schema import write_artifact
 
     meshes_root = str(assets_for(export_dir) / 'meshes')
-    split_creatures(export_dir, meshes_root, log)
+    split_creatures(export_dir, meshes_root, log, workers)
     if not os.path.isdir(meshes_root):
         log(f'  No meshes folder at {meshes_root}')
         return {'projects': {}, 'errors': {}}

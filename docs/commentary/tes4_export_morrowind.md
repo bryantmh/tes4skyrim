@@ -990,6 +990,39 @@ written under the NonAccum name, where `split_root_motion` extracts the
 locomotion and keeps frame 0 (measured: NonAccum first sample (4.3, 28.1,
 50.1) at 90°, forward motion 107.8 units).
 
+### <a id="rig-root-is-the-file-root"></a>A rig authored with no scene node
+
+**Code:** `find_skeleton_root` (`hkx_skeleton.py`), `prepare_creature_rig`
+(`equipment_rig.py`).
+
+Most rigs wrap the bones in a scene node, so the file root is a filename
+(`udyrfrykte.NIF`) and the first NiNode child is `Bip01`. 9 of 151 Tamriel Data
+creature skeletons instead make `Bip01` itself the file root: `tr_vermai`,
+`tr_vermai_helmet`, `tr_velk`, `tr_nixmount`, `tr_nixrouge`, `tr_skylamp_01`
+through `_03`, `tr_skeleton_arise01`. No Oblivion creature does (0 of 43).
+
+Two passes assumed the scene node.
+
+`find_skeleton_root` skipped the file root and returned `Bip01 Pelvis`, one bone
+too deep, so `_insert_nonaccum` built the accum child under the pelvis and
+`skeleton.hkx` had no `NPC Root [Root]` bone at all. It now returns the file root
+when the root's own name is one `BONE_RENAMES` knows.
+
+The second is the one that made the actor INVISIBLE, and it is an ALIASING bug,
+not a naming rule. `_to_fade_node` wraps the NiNode root in a BSFadeNode, and
+`_copy_root_frame` did `fade.name = root.name` -- a pyffi string object copied by
+REFERENCE. Normally the old root is discarded and nothing notices. When the file
+root IS a bone it survives as the fade node's child, so the two share one name
+object and `prepare_creature_rig`'s `Bip01` -> `NPC Root [Root]` rename wrote
+through to BOTH: the file ended up with two `NPC Root [Root]` nodes (measured: 9
+of 278 converted creatures). The engine binds the actor through that name,
+reaches the scene node instead of a bone in the animated skeleton, and nothing
+renders -- collision, AI and sound all work.
+
+The fix is `fade.name = bytes(root.name)`. Renaming the root by hand instead
+leaves BOTH nodes named `Bip01` and no root bone at all -- the same invisible
+actor by the opposite route.
+
 ### <a id="morroblivion-creatures"></a>Who converts a creature mesh
 
 **Code:** `_emit_creature_model` (`morrowind_actors.py`),

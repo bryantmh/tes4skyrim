@@ -330,6 +330,9 @@ real data, or a failing-then-passing test.
 - **Report honestly.** If something is untested, say so; if you skipped part of
   the scope, say which part and why. Never describe an unverified change as
   working.
+- 🛑 **REPLY IN PLAIN, ORDINARY WORDS** — the way you would say it out loud.
+  "I keep my own list", not "the queue is DLL-owned state". Jargon in a short
+  sentence is not concise, just unreadable.
 - We aren't British. No "colour", "centre" or the like
 - No allowlist or blocklist, it's whitelist and blacklist
 - Never tell the user you can't look another session's transcript. They are files on disc. Yes you can.

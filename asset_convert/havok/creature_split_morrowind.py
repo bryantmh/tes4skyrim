@@ -12,6 +12,7 @@ See: docs/commentary/tes4_export_morrowind.md#creatures
 """
 
 import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,7 @@ from asset_convert.havok.kf_writer import write_skyrim_kf
 from asset_convert.nif.sse_nif import read_nif
 from asset_convert.sources import base_plugins
 from asset_convert.sources.morrowind_assets import resolve_mesh
+from core.worker_budget import worker_count
 from tes5_import.base.text_reader import parse_export_file
 
 #: Morrowind animation group -> the Oblivion clip stem the claim tables read.
@@ -87,7 +89,7 @@ def _text_keys(data) -> list:
 
 
 def _tracks(data, root_name: str) -> list:
-    """(node name, NiKeyframeData) per animated node, from a model or a .kf.
+    """(node name, `_key_arrays`) per animated node, from a model or a .kf.
 
     The root bone's track is named for its NonAccum child, where its
     transform now lives.
@@ -108,7 +110,7 @@ def _tracks(data, root_name: str) -> list:
             for c in _chain(node.controller, 'next_controller'):
                 if isinstance(c, NifFormat.NiKeyframeController) and c.data:
                     found.append((get_block_name(node), c.data))
-    return [(n + _NONACCUM_SUFFIX if n == root_name else n, kd)
+    return [(n + _NONACCUM_SUFFIX if n == root_name else n, _key_arrays(kd))
             for n, kd in found]
 
 
@@ -147,33 +149,52 @@ def _clip_range(events: dict):
     return start, stop, False
 
 
-def _interp(times: np.ndarray, keys, values: np.ndarray) -> np.ndarray:
-    """Linear interpolation of `values` (one row per key) at `times`."""
-    key_times = np.array([float(k.time) for k in keys], dtype=np.float64)
+def _interp(times: np.ndarray, channel: tuple) -> np.ndarray:
+    """Linear interpolation of a (key times, one value row per key) channel at `times`."""
+    key_times, values = channel
     return np.stack([np.interp(times, key_times, values[:, i])
                      for i in range(values.shape[1])], axis=1)
 
 
-def _sample(kd, times: np.ndarray) -> BoneTrack:
-    """One node's keyframe data sampled at `times`; euler tracks are skipped."""
-    track = BoneTrack(bone='')
+def _channel(keys, row):
+    """(key times, `row(value)` per key) of one keyframe channel, or None when it is empty."""
+    if not len(keys):
+        return None
+    return (np.array([float(k.time) for k in keys], dtype=np.float64),
+            np.array([row(k.value) for k in keys], dtype=np.float64))
+
+
+def _key_arrays(kd) -> tuple:
+    """(rotation, translation, scale) channels of one node, read once; euler rotations are skipped.
+
+    Quaternions are sign-aligned to their predecessor so interpolation
+    takes the short arc.
+    """
+    rotation = None
     if kd.rotation_type != 4 and kd.num_rotation_keys:
-        quats = np.array([[k.value.w, k.value.x, k.value.y, k.value.z]
-                          for k in kd.quaternion_keys], dtype=np.float64)
+        rotation = _channel(kd.quaternion_keys, lambda v: (v.w, v.x, v.y, v.z))
+        quats = rotation[1]
         for i in range(1, len(quats)):
             if np.dot(quats[i], quats[i - 1]) < 0:
                 quats[i] = -quats[i]
-        rots = _interp(times, kd.quaternion_keys, quats)
+    return (rotation,
+            _channel(kd.translations.keys, lambda v: (v.x, v.y, v.z)),
+            _channel(kd.scales.keys, lambda v: (v,)))
+
+
+def _sample(arrays: tuple, times: np.ndarray) -> BoneTrack:
+    """One node's `_key_arrays` sampled at `times`."""
+    rotation, translation, scale = arrays
+    track = BoneTrack(bone='')
+    if rotation is not None:
+        rots = _interp(times, rotation)
         norm = np.linalg.norm(rots, axis=1, keepdims=True)
         norm[norm == 0] = 1.0
         track.rotations = rots / norm
-    if kd.translations.num_keys:
-        values = np.array([[k.value.x, k.value.y, k.value.z]
-                           for k in kd.translations.keys], dtype=np.float64)
-        track.translations = _interp(times, kd.translations.keys, values)
-    if kd.scales.num_keys:
-        values = np.array([[k.value] for k in kd.scales.keys], dtype=np.float64)
-        track.scales = _interp(times, kd.scales.keys, values)[:, 0]
+    if translation is not None:
+        track.translations = _interp(times, translation)
+    if scale is not None:
+        track.scales = _interp(times, scale)[:, 0]
     return track
 
 
@@ -371,17 +392,35 @@ def _sources(rec_dir) -> dict:
 
 
 def _up_to_date(model_path: Path, out_dir: str) -> bool:
-    """Whether the folder's skeleton postdates the source model, its animation and this splitter."""
+    """Whether the folder's skeleton postdates the source model, its animation and the code that writes the folder."""
     skeleton = os.path.join(out_dir, SKELETON_NIF)
     if not os.path.isfile(skeleton):
         return False
     stamp = os.path.getmtime(skeleton)
     inputs = [model_path, Path(__file__),
+              Path(find_skeleton_root.__code__.co_filename),
+              Path(write_skyrim_kf.__code__.co_filename),
               model_path.with_name(_ANIMATED_PREFIX + model_path.stem + '.kf')]
     return all(p.stat().st_mtime <= stamp for p in inputs if p.is_file())
 
 
-def split_creatures(rec_dir, meshes_root, log=print) -> int:
+def _split_pool(todo: list, workers: int, log) -> int:
+    """Split every (source, folder, model path, out dir) in a process pool; how many failed."""
+    failed = 0
+    with ProcessPoolExecutor(max_workers=min(workers, len(todo))) as pool:
+        futs = {pool.submit(split_creature, path, out_dir): (source, folder)
+                for source, folder, path, out_dir in todo}
+        for fut in as_completed(futs):
+            source, folder = futs[fut]
+            try:
+                log(f'  {folder}: {len(fut.result())} clips')
+            except (OSError, ValueError, AttributeError) as exc:
+                failed += 1
+                log(f'  [skip] {source}: {type(exc).__name__}: {exc}')
+    return failed
+
+
+def split_creatures(rec_dir, meshes_root, log=print, workers: int = None) -> int:
     """Split every Morrowind creature the export names; how many folders were written.
 
     Runs at the head of the creature stage so the folders exist when it scans.
@@ -394,25 +433,19 @@ def split_creatures(rec_dir, meshes_root, log=print) -> int:
         return 0
     roots = [Path(meshes_root)] + [Path(d) / 'meshes'
                                    for d in base_plugins.export_dirs(rec_dir)]
-    done, failed, kept = 0, 0, 0
+    todo, failed, kept = [], 0, 0
     for source, folder in sorted(sources.items()):
         path = resolve_mesh(roots, source, paths.EXPORT)
         out_dir = os.path.join(str(meshes_root), folder)
         if path is None:
             failed += 1
             log(f'  [skip] {source}: not found')
-            continue
-        if _up_to_date(path, out_dir):
+        elif _up_to_date(path, out_dir):
             kept += 1
-            continue
-        try:
-            clips = split_creature(path, out_dir)
-        except (OSError, ValueError, AttributeError) as exc:
-            failed += 1
-            log(f'  [skip] {source}: {type(exc).__name__}: {exc}')
-            continue
-        done += 1
-        log(f'  {folder}: {len(clips)} clips')
+        else:
+            todo.append((source, folder, path, out_dir))
+    unsplit = _split_pool(todo, workers or worker_count(), log) if todo else 0
+    done, failed = len(todo) - unsplit, failed + unsplit
     log(f'  Morrowind creatures: {done} split, {kept} up to date'
         + (f', {failed} failed' if failed else ''))
     return done

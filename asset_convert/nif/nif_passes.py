@@ -373,19 +373,63 @@ def zero_fallout_root_rotation(root) -> None:
         root.rotation = _identity_matrix()
 
 
+def wrap_geometry_root(data, i, root, stats):
+    """Put a NiNode above a bare geometry root; the root to carry on with.
+
+    Skyrim never ships a geometry root -- a 400-mesh vanilla census found 0
+    (BSFadeNode 340, NiNode 55, BSMasterParticleSystem 2, BSLeafAnimNode 3) --
+    and LODGenx64 hard-crashes with "Unable to cast NiTriShape to NiNode",
+    abandoning the ENTIRE worldspace's object LOD rather than the one mesh.
+    The geometry keeps its transform, so the wrap is visually identity.
+    """
+    if not isinstance(root, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
+        return root
+    holder = NifFormat.NiNode()
+    holder.name = root.name
+    holder.flags = NIF_FLAGS
+    holder.num_children = 1
+    holder.children.update_size()
+    holder.children[0] = root
+    data.roots[i] = holder
+    stats['geometry_roots_wrapped'] = \
+        stats.get('geometry_roots_wrapped', 0) + 1
+    return holder
+
+
+def fade_above_rig_root(data, i, root, stats):
+    """Put a scene BSFadeNode ABOVE a rig root, keeping it a bone; the new root.
+
+    A rig authored with no scene node makes the bone the file root. Replacing
+    it, as the normal wrap does, leaves the FILE node holding the name the
+    engine binds the actor through, and no bone carries it.
+    See: docs/commentary/tes4_export_morrowind.md#rig-root-is-the-file-root
+    """
+    fade = NifFormat.BSFadeNode()
+    fade.name = b'Scene Root'
+    fade.flags = NIF_FLAGS
+    fade.num_children = 1
+    fade.children.update_size()
+    fade.children[0] = root
+    data.roots[i] = fade
+    stats['root_converted'] += 1
+    return fade
+
+
 def wrap_root_transform(root, has_skin, furn_shift):
     """Move a static root's rotation onto an inner NiNode; True when wrapped.
 
     Skyrim ignores a root rotation Oblivion honoured, so it moves down one
     level; collision stays on the root and its body absorbs the transform.
-    The furniture origin shift rides the same wrapper.  On a FO3/FNV root
-    only the weapon flip survives to here (`zero_fallout_root_rotation`).
-    See: docs/commentary/asset_convert_nif.md#root-rotation-wrapper
-    See: docs/commentary/asset_convert_falloutnv.md#fnv-weapon-flip
+    The furniture shift rides the same wrapper; on a FO3/FNV root only the
+    weapon flip survives. A rig root is exempt: the engine binds the actor by
+    that name, so the wrapper would be a second node carrying it.
+    See: docs/commentary/tes4_export_morrowind.md#rig-root-is-the-file-root
     """
     if has_skin or not (hasattr(root, 'rotation') and hasattr(root, 'children')):
         return False
     if _is_identity(root.rotation) and abs(furn_shift) <= 1e-4:
+        return False
+    if bytes(root.name).rstrip(b'\x00') == b'NPC Root [Root]':
         return False
 
     inner = NifFormat.NiNode()

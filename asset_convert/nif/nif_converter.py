@@ -67,6 +67,8 @@ from asset_convert.nif.nif_passes import (add_animobject_bged, wrap_root_transfo
                                           add_bsx_flags,
                                           collect_sequence_names,
                                           convert_sound_text_keys,
+                                          fade_above_rig_root,
+                                          wrap_geometry_root,
                                           fix_controller_flags,
                                           resolve_palette_strings,
                                           strip_empty_text_keys,
@@ -638,29 +640,6 @@ def _run_animation_passes(root, stats):
     normalize_blend_interpolators(root, stats)
 
 
-def _wrap_geometry_root(data, i, root, stats):
-    """Put a NiNode above a bare geometry root; the root to carry on with.
-
-    Skyrim never ships a geometry root -- a 400-mesh vanilla census found 0
-    (BSFadeNode 340, NiNode 55, BSMasterParticleSystem 2, BSLeafAnimNode 3) --
-    and LODGenx64 hard-crashes with "Unable to cast NiTriShape to NiNode",
-    abandoning the ENTIRE worldspace's object LOD rather than the one mesh.
-    The geometry keeps its transform, so the wrap is visually identity.
-    """
-    if not isinstance(root, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
-        return root
-    holder = NifFormat.NiNode()
-    holder.name = root.name
-    holder.flags = NIF_FLAGS
-    holder.num_children = 1
-    holder.children.update_size()
-    holder.children[0] = root
-    data.roots[i] = holder
-    stats['geometry_roots_wrapped'] = \
-        stats.get('geometry_roots_wrapped', 0) + 1
-    return holder
-
-
 def _demote_billboard_root(root, bb_mode):
     """A plain NiNode carrying the billboard root's children and transform.
 
@@ -984,6 +963,8 @@ def _to_fade_node(data, i, root, stats, src_path, wants_gnd_marker):
     See: docs/commentary/asset_convert_nif.md#dangling-root-back-references
     """
     old_root = root
+    if bytes(root.name).rstrip(b'\x00') == b'NPC Root [Root]':
+        return fade_above_rig_root(data, i, root, stats)
     fade = NifFormat.BSFadeNode()
     _copy_root_frame(fade, root)
     if hasattr(root, 'extra_data_list'):
@@ -1024,7 +1005,7 @@ def _convert_one_root(data, i, root, stats, fix_textures, src_path, creature,
     equivalent), the tree walk, the animation passes and the collision work,
     in the order each depends on the last.
     """
-    root = _wrap_geometry_root(data, i, root, stats)
+    root = wrap_geometry_root(data, i, root, stats)
     root = _normalize_billboard_root(data, i, root)
     zero_fallout_root_rotation(root)
 
