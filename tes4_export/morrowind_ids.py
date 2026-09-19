@@ -29,7 +29,7 @@ BASE_TYPES = (
     'STAT', 'ACTI', 'DOOR', 'CONT', 'LIGH', 'MISC', 'WEAP', 'ARMO',
     'BOOK', 'ALCH', 'INGR', 'CLOT', 'KEYM', 'FURN', 'FLOR', 'SLGM',
     'AMMO', 'APPA', 'NPC_', 'CREA', 'LVLI', 'LVLC', 'SOUN', 'GLOB',
-    'FACT', 'CLAS', 'SCPT', 'WRLD', 'CELL', 'LAND',
+    'FACT', 'CLAS', 'SCPT', 'SPEL', 'ENCH', 'MGEF', 'WRLD', 'CELL', 'LAND',
 )
 
 #: Export text delimiters the index scans between.

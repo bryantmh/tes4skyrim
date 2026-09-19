@@ -14,7 +14,8 @@ import os
 import struct
 
 from ..record_types.common import escape_value
-from ..tes3_reader import Tes3Record, get_string, get_subrecord
+from ..tes3_reader import (Tes3Record, get_all_subrecords, get_string,
+                           get_subrecord)
 from .morrowind import (MW_SKILL_TO_TES4, emit_inventory, emit_ref, emit_str,
                         unpack)
 from .morrowind_packages import emit_packages
@@ -162,6 +163,22 @@ def _emit_faction(lines: list, rec: Tes3Record, ctx, rank: int) -> None:
         lines.append(f'Faction[0].Rank={rank}')
 
 
+def _emit_spells(lines: list, rec: Tes3Record, ctx) -> None:
+    """Emit the NPCS spell list -- one fixed 32-byte ID per subrecord.
+
+    A spell this pass does not convert is left out rather than written as a
+    null FormID.
+    """
+    spells = []
+    for sub in get_all_subrecords(rec, 'NPCS'):
+        form_id = ctx.resolve(get_string(sub), 'SPEL')
+        if form_id:
+            spells.append(form_id)
+    lines.append(f'SpellCount={len(spells)}')
+    for index, form_id in enumerate(spells):
+        lines.append(f'Spell[{index}]={form_id}')
+
+
 def export_NPC_(rec: Tes3Record, ctx) -> list:
     """An NPC in TES4's actor vocabulary, raced by Oblivion FormID.
 
@@ -182,6 +199,7 @@ def export_NPC_(rec: Tes3Record, ctx) -> list:
     lines.append(f'RNAM.Race={RACE_FORMIDS.get(race_id, _DEFAULT_RACE):08X}')
     _emit_faction(lines, rec, ctx, rank)
     emit_inventory(lines, rec, ctx)
+    _emit_spells(lines, rec, ctx)
     _emit_aidt(lines, rec)
     emit_packages(lines, rec, ctx)
     emit_ref(lines, 'CNAM.Class', rec, 'CNAM', ctx, 'CLAS')
@@ -230,6 +248,7 @@ def export_CREA(rec: Tes3Record, ctx) -> list:
         lines.append(f'BNAM.BaseScale={scale[0]}')
     lines.append('FactionCount=0')
     emit_inventory(lines, rec, ctx)
+    _emit_spells(lines, rec, ctx)
     _emit_aidt(lines, rec)
     emit_packages(lines, rec, ctx)
     _emit_sound_slots(lines, rec, ctx)

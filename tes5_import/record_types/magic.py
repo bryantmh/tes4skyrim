@@ -459,7 +459,21 @@ SCHOOL_OVERRIDES = {
 _MARKER_CODES = frozenset({'POSN', 'DISE', 'DUMY', 'VAMP', 'DARK'})
 
 
-def resolve_actor_value(code: str, effect_av: int) -> int:
+def _is_derived(code: str, rec: dict) -> bool:
+    """Whether this effect takes its actor value from the spell carrying it.
+
+    Imported in-function: magic_morrowind reads this module's archetype and
+    actor-value constants, so the dependency only runs one way at import.
+    """
+    from .magic_morrowind import MW_EFFECT_ARCHETYPES
+
+    index = morrowind_index(rec)
+    if index >= 0:
+        return MW_EFFECT_ARCHETYPES.get(index, (None, None))[1] == DERIVE_AV
+    return EFFECT_ARCHETYPES.get(code, (None, None))[1] == DERIVE_AV
+
+
+def resolve_actor_value(code: str, effect_av: int, rec: dict = None) -> int:
     """TES5 actor value for an effect instance.
 
     ``effect_av`` is the per-effect EFIT ActorValue from the owning
@@ -468,6 +482,11 @@ def resolve_actor_value(code: str, effect_av: int) -> int:
     (DGAT+Strength and DGAT+Endurance are different effects in Skyrim); for
     every other code the table's fixed AV wins.
     """
+    from .magic_morrowind import mw_actor_value
+
+    index = morrowind_index(rec) if rec else -1
+    if index >= 0:
+        return mw_actor_value(index, effect_av)
     entry = EFFECT_ARCHETYPES.get(code)
     if entry is None:
         return AV_NONE
@@ -481,10 +500,59 @@ def resolve_actor_value(code: str, effect_av: int) -> int:
     return ATTRIBUTE_TO_AV.get(effect_av, AV_NONE)
 
 
-def get_archetype(code: str) -> int:
-    """TES5 archetype for a TES4 effect code (Value Modifier if unknown)."""
+def morrowind_index(rec: dict) -> int:
+    """This record's TES3 effect index, or -1 when it is not a Morrowind one."""
+    raw = rec.get('MorrowindEffectIndex')
+    return int(raw) if raw not in (None, '') else -1
+
+
+def get_archetype(code: str, rec: dict = None) -> int:
+    """TES5 archetype for one effect (Value Modifier if unknown).
+
+    Imported in-function to break the cycle with magic_morrowind, which
+    reads this module's archetype constants at import time.
+    """
+    from .magic_morrowind import mw_archetype
+
+    index = morrowind_index(rec) if rec else -1
+    if index >= 0:
+        return mw_archetype(index)
     entry = EFFECT_ARCHETYPES.get(code)
     return entry[0] if entry else A_VALUE_MODIFIER
+
+
+def _effect_flags(rec: dict) -> int:
+    """This record's DATA.Flags in the TES4 bit layout.
+
+    A Morrowind MGEF stores TES3's own bits, whose meanings diverge from the
+    range flags onward, so they are translated before any reader sees them.
+    """
+    from .magic_morrowind import mw_tes4_flags
+
+    flags = get_int(rec, 'DATA.Flags')
+    if morrowind_index(rec) >= 0:
+        return mw_tes4_flags(flags)
+    return flags
+
+
+def _base_actor_value(code: str, rec: dict) -> int:
+    """The MGEF's own actor value, or AV_NONE when each effect decides it.
+
+    An attribute/skill-targeted effect has no single actor value: it comes
+    from whichever spell carries it, which is what the per-AV variants exist
+    for.  The base record keeps AV_NONE so a variant is always what an item
+    actually references.
+    """
+    from .magic_morrowind import MW_EFFECT_ARCHETYPES, NATIVE_NONE
+
+    index = morrowind_index(rec)
+    if index >= 0:
+        entry = MW_EFFECT_ARCHETYPES.get(index)
+        if entry is None or entry[1] in (DERIVE_AV, NATIVE_NONE):
+            return AV_NONE
+        return entry[1]
+    entry = EFFECT_ARCHETYPES.get(code)
+    return entry[1] if entry and entry[1] != DERIVE_AV else AV_NONE
 
 
 def is_known_code(code: str) -> bool:
@@ -757,7 +825,7 @@ def _build_data(rec: dict, code: str, archetype: int, actor_value: int,
     Shared by the primary record and its per-actor-value variants, which differ
     only in the Actor Value field (offset 68).
     """
-    t4_flags = get_int(rec, 'DATA.Flags')
+    t4_flags = _effect_flags(rec)
     cast_type, delivery = _delivery_and_cast(t4_flags)
 
     data = bytearray(MGEF_DATA_SIZE)
@@ -808,6 +876,10 @@ def convert_MGEF(rec: dict, writer=None) -> bytes:
     """MGEF — Magic Effect.
 
     TES5 order: EDID VMAD FULL MDOB KSIZ/KWDA DATA ESCE* SNDD DNAM CTDA
+
+    MDOB, the effect's art in the magic menu, is absent by design: Oblivion's
+    cast art is a raw mesh path and Skyrim wants an ARTO, which has no writer.
+    See: docs/commentary/tes5_import_magic.md#phase-2--wire-the-art-back-in
     """
     from ..base.object_scripts import get_object_vmad
 
@@ -821,18 +893,8 @@ def convert_MGEF(rec: dict, writer=None) -> bytes:
     if full:
         subs += pack_string_subrecord('FULL', full)
 
-    # MDOB — the menu display object, i.e. the effect's art in the magic menu.
-    # Oblivion's Model.MODL is the cast art, which Skyrim keeps in an ARTO
-    # (Phase 2); pointing MDOB at a raw mesh path is not possible, so it is
-    # left absent until the ARTO writer lands.
-
-    archetype = get_archetype(code)
-    # An attribute/skill-targeted effect has no single actor value of its own
-    # — the AV comes from whichever spell carries it, which is what the
-    # per-AV variants below exist for.  The base record keeps None so a
-    # variant is always what an item actually references.
-    entry = EFFECT_ARCHETYPES.get(code)
-    base_av = entry[1] if entry and entry[1] != DERIVE_AV else AV_NONE
+    archetype = get_archetype(code, rec)
+    base_av = _base_actor_value(code, rec)
 
     counters = _counter_effect_fids(rec)
     # The projectile in this DATA — and, for bound items, the DATA a scripted
@@ -898,7 +960,7 @@ def build_av_variants(mgef_records: list, effect_records: list, writer) -> int:
     by_code = {}
     for rec in mgef_records:
         code = get_str(rec, 'EditorID')
-        if code and EFFECT_ARCHETYPES.get(code, (None, None))[1] == DERIVE_AV:
+        if code and _is_derived(code, rec):
             by_code[code] = rec
     if not by_code:
         return 0
@@ -915,14 +977,14 @@ def build_av_variants(mgef_records: list, effect_records: list, writer) -> int:
 
     written = 0
     for code, av in sorted(wanted):
-        tes5_av = resolve_actor_value(code, av)
+        tes5_av = resolve_actor_value(code, av, by_code[code])
         if tes5_av == AV_NONE:
             continue          # unmappable AV — the base record stands in
         src = by_code[code]
         name = _ATTR_NAMES.get(av) or _SKILL_NAMES.get(av)
         if not name:
             continue
-        archetype = get_archetype(code)
+        archetype = get_archetype(code, src)
         fid = writer.derive_formid('MGEF_AV', (code, av))
 
         subs = pack_string_subrecord('EDID', f'TES4{code}{name}')
@@ -1202,7 +1264,7 @@ def register_mgef_formids(mgef_records: list) -> None:
         fid = get_formid(rec, 'FormID')
         _code_to_fid[code] = fid
 
-        t4_flags = get_int(rec, 'DATA.Flags')
+        t4_flags = _effect_flags(rec)
         cast_type, delivery = _delivery_and_cast(t4_flags)
         school = SCHOOL_OVERRIDES.get(
             code, SCHOOL_TO_AV.get(get_int(rec, 'DATA.School', -1), AV_NONE))

@@ -615,3 +615,46 @@ armor record has no TES5 counterpart and is correctly discarded.
 The u16 clamp is real, not defensive: the field is 2 bytes on disk, so an
 authored `ANAM` above 65535 must saturate rather than wrap to a near-zero
 pool.
+
+## <a id="morrowind-effects"></a>Morrowind effects key on an index, not a code
+
+**Code:** `tes5_import/record_types/magic_morrowind.py`
+
+Morrowind has no four-character effect codes: its 143 effects are an
+engine-fixed table addressed by index, so `EFFECT_ARCHETYPES` cannot describe
+them and must not be extended to try. `MW_EFFECT_ARCHETYPES` is the parallel
+table, keyed by index, and nothing in it is reachable from the Oblivion path --
+`convert_MGEF` consults it only for a record carrying `MorrowindEffectIndex`.
+
+The export writes each effect's EditorID (`MW014FireDamage`) as the `EFID`,
+and `register_mgef_formids` already indexes `_code_to_fid` by EditorID, so
+`_resolve_mgef` resolves Morrowind effects with **no change at all**.
+
+### 114 of 143 are native; 19 await the runtime
+
+Most Morrowind effects are ordinary Skyrim ones -- fire damage is fire damage.
+The mapping was checked against `wbActorValueEnum` and against real vanilla
+records, which turned up actor values the Oblivion tables never needed and so
+never defined:
+
+| Effect | Actor value | Vanilla record proving it |
+|---|---|---|
+| Blind | 84 Blindness | `AbBlind` |
+| Sound | 92 Movement Noise Mult | `AbVampireMuffle` |
+| SpellAbsorption | 83 Absorb Chance | `RaceBretonAbsorbSpellChance` |
+| Reflect | 163 Reflect Damage | `PerkReflectBlows` |
+| Jump | 62 Jumping Bonus | `wbActorValueEnum` |
+
+Vampirism (index 133) is the instructive case, and it cuts both ways. Skyrim
+ships an entire vampire system, so reimplementing one would be waste -- but
+`VampireChangeEffect` is **archetype 1 (Script)** with a null Assoc. Item: the
+transformation lives in attached Papyrus, not in the archetype, so copying the
+archetype alone would convert to a no-op. What Skyrim *does* model natively is
+the drain, as `DisDamageHealthVampire` (archetype 34 on Health), and that is
+what Vampirism and Corprus map to. Attaching the full vampire quest chain is
+runtime work, not record work.
+
+The 19 with no Skyrim mechanism carry `NATIVE_NONE`. They convert today as an
+inert Value Modifier -- present, addressable by a script, doing nothing -- which
+is where the MorrowindRuntime effect table attaches. Only Levitate and SlowFall
+genuinely need new engine addresses; the rest are state the DLL can hold.

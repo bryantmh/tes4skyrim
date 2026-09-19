@@ -59,6 +59,9 @@ GAP_TYPES = frozenset(BASE_TYPES) - {'CELL', 'LAND', 'WRLD'}
 #: The patch declares no converted master, so its own records take byte 0x00.
 PATCH_INDEX = 0x00
 
+#: TES3 allocates this many magic effect indices.
+_MAGIC_EFFECT_COUNT = 143
+
 #: Derived ids live above Morroblivion's blocks, matching the export's own span.
 _DERIVED_BASE = 0x00200000
 _DERIVED_SPAN = 0x00D00000
@@ -333,12 +336,19 @@ def _write_records(gaps: dict, export_dir: str, progress) -> str:
     which needs PATCH_NAME from this module at its own import time.
     """
     from .export_morrowind import (MorrowindContext, export_record,
+                                   magic_effect_records, register_magic_effects,
                                    write_export, write_header)
     from .record_types.morrowind import tes4_signature
+    from .record_types.morrowind_magic import effect_editor_id
 
     ids = {key: patch_formid(key) for key in gaps}
     ctx = MorrowindContext(own_index=0)
     ctx.morroblivion = _patch_ownership(export_dir)
+    records = list(gaps.values())
+    register_magic_effects(records, ctx)
+    for index in range(_MAGIC_EFFECT_COUNT):
+        edid = effect_editor_id(index)
+        ctx.gap_ids[('MGEF', edid.lower())] = patch_formid(('MGEF', edid))
     for key, rec in gaps.items():
         signature = tes4_signature(rec)
         ctx.register_own(rec.record_id, signature)
@@ -348,6 +358,7 @@ def _write_records(gaps: dict, export_dir: str, progress) -> str:
         lines = export_record(rec, ctx)
         if lines:
             out.setdefault(tes4_signature(rec), []).append((ids[key], lines))
+    out['MGEF'] = magic_effect_records(records, ctx)
     out_dir = patch_dir(export_dir)
     counts = write_export(out, out_dir)
     write_header(out_dir, [], sum(counts.values()),

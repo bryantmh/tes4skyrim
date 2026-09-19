@@ -34,6 +34,7 @@ from tes5_import.record_types.magic import (
     EFFECT_ARCHETYPES,
     get_archetype,
 )
+from tes5_import.record_types.magic_morrowind import MW_EFFECT_ARCHETYPES
 from tes5_import.generated.vanilla_mgef_data import VANILLA_MGEF_DATA
 
 EFFECT_RECORD_TYPES = ('SPEL', 'ENCH', 'ALCH', 'INGR', 'SGST', 'LVSP')
@@ -103,7 +104,7 @@ def _fid(rec, key):
         return 0
 
 
-def resolve(code, av=-1):
+def resolve(code, av=-1, index=-1):
     """Non-zero when the converter has an MGEF for this effect.
 
     Since MGEF became a converted record type the plugin emits its OWN magic
@@ -112,6 +113,8 @@ def resolve(code, av=-1):
     for a plugin whose MGEFs were never exported.  (It used to be the only
     path, which is why 71 of 145 Oblivion effects were dropped.)
     """
+    if index >= 0:
+        return 1 if index in MW_EFFECT_ARCHETYPES else 0
     if code in EFFECT_ARCHETYPES:
         return 1
     per_av = MGEF_AV_CODE_TO_SKYRIM.get(code)
@@ -163,6 +166,7 @@ def audit_mgef(export_dir):
     rows = []
     for rec in mgefs:
         code = _get(rec, 'EditorID')
+        mw_index = int(_get(rec, 'MorrowindEffectIndex', '-1') or -1)
         flags = int(_get(rec, 'DATA.Flags', '0') or 0)
         rows.append({
             'code': code,
@@ -184,16 +188,20 @@ def audit_mgef(export_dir):
             'area_snd': _fid(rec, 'DATA.AreaSound'),
             'counters': int(_get(rec, 'CounterEffects', '0') or 0),
             'base_cost': float(_get(rec, 'DATA.BaseCost', '0') or 0),
-            'mapped': resolve(code),
+            'mapped': resolve(code, index=mw_index),
             'per_av': code in MGEF_AV_CODE_TO_SKYRIM,
-            'archetype': get_archetype(code) if code in EFFECT_ARCHETYPES else None,
+            'archetype': (MW_EFFECT_ARCHETYPES[mw_index][0]
+                          if mw_index in MW_EFFECT_ARCHETYPES
+                          else get_archetype(code)
+                          if code in EFFECT_ARCHETYPES else None),
             # An AssocItem the chosen archetype does not read is DISCARDED:
             # wbMGEFAssocItemDecider only reads it for Light/Bound/Summon/
             # Guide/Cloak/Werewolf/EnhanceWeapon/Hazard/PeakMod.
             'assoc_kept': bool(
                 _fid(rec, 'DATA.AssocItem')
                 and get_archetype(code) in ARCHETYPE_ASSOC_KIND
-                and code in EFFECT_ARCHETYPES),
+                and (code in EFFECT_ARCHETYPES
+                     or mw_index in MW_EFFECT_ARCHETYPES)),
         })
     return rows
 
@@ -218,8 +226,9 @@ def audit_effect_records(export_dir):
                 if not code:
                     continue
                 av = int(_get(rec, f'Effect[{i}].ActorValue', '-1') or -1)
+                mw = int(_get(rec, f'Effect[{i}].MorrowindIndex', '-1') or -1)
                 stats['effects'] += 1
-                if resolve(code, av):
+                if resolve(code, av, mw):
                     kept += 1
                 else:
                     drop += 1

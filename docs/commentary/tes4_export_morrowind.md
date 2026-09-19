@@ -1654,3 +1654,59 @@ Morroblivion's converted cells -- but it is a component vanilla Oblivion
 mostly leaves at zero, so it buys nothing until an interior is shown to need
 it. The six-way directional-ambient block stays a replicated flat ambient for
 the same reason: Oblivion proves that reads fine.
+
+## <a id="magic"></a>Magic: an effect is an index, not a code
+
+TES4 gives every magic effect a four-character code and its own record, so the
+import side keys its archetype table on `FIDG`, `SHLD` and the rest. TES3 has
+no such vocabulary: magic effects are an engine-fixed table of **143**, and a
+spell names one by its integer index. A plugin may override an effect's cost,
+flags or art, but it can never invent one.
+
+So the index is the authored datum. Every exported effect carries it as
+`Effect[i].MorrowindIndex`, beside a synthesized EditorID (`MW014FireDamage`)
+naming the MGEF record it resolves to. Keying on the index rather than minting
+four-character codes leaves the Oblivion tables untouched and keeps FormIDs
+derived from authored data.
+
+Measured across Morrowind, Tribunal and Bloodmoon: 990 SPEL, 708 ENCH, 137
+authored MGEF records, and **3,479 effect uses over 139 distinct effects**.
+
+### The name table is generated, and only LENGTH is enforced
+
+`tools/generators/gen_morrowind_mgef_table.py` reads the two index-ordered
+arrays OpenMW carries in `components/esm3/loadmgef.cpp` and writes
+`tes4_export/morrowind_mgef_names.py`.
+
+It requires both arrays to span `MagicEffect::Length`, and deliberately does
+**not** require them to agree on spelling: 13 entries differ by upstream style
+alone -- index 19 `DrainSpellpoints` vs `DrainMagicka`, 132 `Corpus` vs
+`Corprus`, 138-140 the Bloodmoon summons under generic vs real names. A length
+change would renumber every converted spell and must fail loudly; a spelling
+difference is cosmetic and must not.
+
+### Magnitude is the mean of the authored range
+
+A TES3 effect authors `magnMin` and `magnMax`; a TES5 EFIT holds one number.
+The export writes the mean, because taking the maximum would overstate every
+spell in the game.
+
+### An enchantment is a separate subrecord
+
+The int inside `AODT`/`CTDT`/`BKDT` that reads like an enchantment is the
+enchant-point **capacity**. The enchantment itself is a separate `ENAM` string
+subrecord naming an ENCH record, and until it was followed, **836 enchanted
+items** (83 ARMO, 309 CLOT, 315 WEAP, 129 BOOK) lost their magic on conversion.
+
+### Soul gems are identified by ID prefix
+
+TES3 has no soul-gem flag and no SLGM record type: a soul gem is a MISC whose
+ID starts `misc_soulgem`, which is the same test OpenMW makes
+(`mwclass/misc.cpp`, `isSoulGem`). `tes4_signature` routes those to SLGM and
+derives the TES5 capacity from the tier suffix -- petty 1 through grand 5, with
+Azura's Star, whose suffix names no tier, holding a grand soul.
+
+Vanilla Morrowind has six: petty, lesser, common, greater, grand and Azura.
+They ship empty (`SOUL=0`), because TES3 stores a captured soul on the
+inventory stack rather than on the base record, so there is no filled variant
+to carry across.

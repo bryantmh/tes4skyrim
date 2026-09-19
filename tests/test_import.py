@@ -5330,6 +5330,11 @@ class TestMgefConversion:
         Validated against the EXPORT, never against a plausible-looking name:
         17 of the old alias table's 100 keys were codes no Oblivion or Nehrim
         record uses, so the summons looked mapped and contributed nothing.
+
+        A Morrowind export is skipped by the vocabulary it carries, not by its
+        filename: TES3 effects key on an index and live in
+        MW_EFFECT_ARCHETYPES, so measuring them here would report every one as
+        missing.
         """
         import glob
         import re
@@ -5342,7 +5347,10 @@ class TestMgefConversion:
             if not _is_tes4_export(os.path.dirname(path)):
                 continue
             with open(path, encoding='utf-8', errors='replace') as f:
-                codes |= set(re.findall(r'^EditorID=(\S+)', f.read(), re.M))
+                text = f.read()
+            if 'MorrowindEffectIndex=' in text:
+                continue
+            codes |= set(re.findall(r'^EditorID=(\S+)', text, re.M))
         if not codes:
             pytest.skip('no MGEF export available')
 
@@ -5355,6 +5363,33 @@ class TestMgefConversion:
         assert not phantom, (
             f'{len(phantom)} table keys match no MGEF in any export — dead '
             f'coverage that can never fire: {" ".join(phantom)}')
+
+    def test_every_morrowind_effect_index_has_an_archetype(self):
+        """All 143 TES3 effect indices map, or a spell converts to nothing."""
+        from tes4_export.morrowind_mgef_names import MW_EFFECT_NAMES
+        from tes5_import.record_types.magic_morrowind import (
+            MW_EFFECT_ARCHETYPES)
+
+        missing = [i for i in range(len(MW_EFFECT_NAMES))
+                   if i not in MW_EFFECT_ARCHETYPES]
+        assert not missing, (
+            f'{len(missing)} TES3 effect indices have no archetype: {missing}')
+
+        stray = sorted(set(MW_EFFECT_ARCHETYPES) - set(range(len(MW_EFFECT_NAMES))))
+        assert not stray, f'table keys outside the effect range: {stray}'
+
+    def test_morrowind_flags_translate_to_the_tes4_layout(self):
+        """TES3 range bits differ from TES4's, so delivery depends on this.
+
+        Untranslated, TES3 CastTarget (0x100) reads as TES4 NoMagnitude and
+        every converted effect is delivered Self.
+        """
+        from tes5_import.record_types.magic import _delivery_and_cast
+        from tes5_import.record_types.magic_morrowind import mw_tes4_flags
+
+        assert _delivery_and_cast(mw_tes4_flags(0x100)) == (1, 2)
+        assert _delivery_and_cast(mw_tes4_flags(0x080)) == (1, 1)
+        assert _delivery_and_cast(mw_tes4_flags(0x040)) == (1, 0)
 
     def test_data_is_a_full_152_byte_struct(self):
         from tes5_import.record_types.magic import MGEF_DATA_SIZE, convert_MGEF

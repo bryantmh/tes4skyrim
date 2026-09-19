@@ -49,12 +49,20 @@ from .record_types.morrowind_actors import (MORROWIND_ACTOR_EXPORTERS,
 from .record_types.morrowind_packages import (package_records,
                                               prune_dropped_packages)
 from .record_types.morrowind_dialog import dialogue_records
+from .record_types.morrowind_magic import (MORROWIND_MAGIC_EXPORTERS,
+                                           authored_indices,
+                                           effect_editor_id,
+                                           effect_ranges,
+                                           synthesized_effects)
 from .record_types.morrowind_scripts import MORROWIND_SCRIPT_EXPORTERS
 from .tes3_reader import get_subrecord, read_file, read_masters
 
 #: TES3 signature -> exporter, over every base record type this pass converts.
 EXPORTERS = {**MORROWIND_ITEM_EXPORTERS, **MORROWIND_ACTOR_EXPORTERS,
-             **MORROWIND_SCRIPT_EXPORTERS}
+             **MORROWIND_MAGIC_EXPORTERS, **MORROWIND_SCRIPT_EXPORTERS}
+
+#: TES3 allocates this many magic effect indices.
+_MAGIC_EFFECT_COUNT = 143
 
 #: conversion_config.json key choosing which converted plugins a Morrowind mod borrows from.
 MORROWIND_SOURCE_KEY = 'morrowindSource'
@@ -139,6 +147,7 @@ class MorrowindContext:
         self.grass = None
         self.grass_models = {}
         self.grass_ltex = {}
+        self.effect_ranges = {}
 
     def grass_id(self, record_id: str, texture: str) -> str:
         """The FormID of the GRAS one static becomes on one land texture."""
@@ -548,6 +557,7 @@ def convert_plugin(records, ctx: MorrowindContext) -> dict:
     for rec in records:
         if rec.type in EXPORTERS and not rec.deleted:
             ctx.register_own(rec.record_id, tes4_signature(rec))
+    register_magic_effects(records, ctx)
     _register_land_textures(records, ctx)
     _register_land_grids(records, ctx)
     _register_groundcover(records, ctx)
@@ -565,6 +575,7 @@ def convert_plugin(records, ctx: MorrowindContext) -> dict:
     out['REFR'].extend(map_marker_records(ctx))
     out['WRLD'] = worldspace_record(ctx)
     out['CELL'].extend(persistent_cell_record(ctx))
+    out.setdefault('MGEF', []).extend(magic_effect_records(records, ctx))
     _emit_groundcover(out, ctx)
     return out
 
@@ -595,7 +606,21 @@ def _collect_base(rec, ctx: MorrowindContext, out: dict) -> None:
     """Add one converted base record to the bucket for its TES4 signature."""
     sig = tes4_signature(rec)
     out.setdefault(sig, []).append(
-        (ctx.resolve(rec.record_id, sig), export_record(rec, ctx)))
+        (ctx.resolve(_base_key(rec), sig), export_record(rec, ctx)))
+
+
+def _base_key(rec) -> str:
+    """The ID this base record resolves its own FormID under.
+
+    A TES3 MGEF carries no record ID -- it is addressed by index -- so it
+    resolves under the EditorID its synthesized record uses.
+    """
+    if rec.type != 'MGEF':
+        return rec.record_id
+    index = get_subrecord(rec, 'INDX')
+    if index is None or len(index.data) < 4:
+        return ''
+    return effect_editor_id(struct.unpack_from('<i', index.data, 0)[0])
 
 
 def _emit_groundcover(out: dict, ctx: MorrowindContext) -> None:
@@ -642,6 +667,22 @@ def map_marker_records(ctx: MorrowindContext) -> list:
     if out:
         ctx.rehomed_persistent += len(out)
         print(f"  Synthesized {len(out)} map markers")
+    return out
+
+
+def register_magic_effects(records, ctx: MorrowindContext) -> None:
+    """Register all 143 effect indices and the ranges spells use them at."""
+    ctx.effect_ranges = effect_ranges(records)
+    for index in range(_MAGIC_EFFECT_COUNT):
+        ctx.register_own(effect_editor_id(index), 'MGEF')
+
+
+def magic_effect_records(records, ctx: MorrowindContext) -> list:
+    """`(form_id, lines)` for the effects no MGEF record in this plugin supplies."""
+    out = []
+    for index, lines in synthesized_effects(authored_indices(records),
+                                           getattr(ctx, 'effect_ranges', None)):
+        out.append((ctx.resolve(effect_editor_id(index), 'MGEF'), lines))
     return out
 
 

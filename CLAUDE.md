@@ -120,6 +120,7 @@ caching, skipped record types, the export text format, and the directory layout.
 - Docstrings should contain real and important function information. Story content only and always belongs in a see: tag. See tags should ALWAYS have an anchor.
 - Duplicated code is a big no-no. Check if something has been built first and if it has either point to that code instead or pull it out into a shared function
 - Avoid the chicken and egg problem when updating files. For example, adding an import without also adding its call in the same write will trigger the hook and prevent the write
+- If you want to use subagents, ASK first
 
 ### <a id="regression-read-the-commits"></a>🛑 IF IT IS A REGRESSION, READ THE COMMITS
 
