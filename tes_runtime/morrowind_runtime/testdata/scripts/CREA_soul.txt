@@ -1,0 +1,2 @@
+test_rat=1
+test_golden_saint=5

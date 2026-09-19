@@ -996,6 +996,85 @@ void AiPackageCases(DialogueContext& context) {
           "with no hook the command still runs");
 }
 
+// Every spell command pops exactly its own arguments, with the hooks null.
+//
+// 🛑 This is what catches a WRONG SEGMENT before it costs a play cycle: a
+// handler installed where nothing dispatches leaves its arguments on the
+// stack, so the NEXT command reads them and the script derails silently.
+// `AddSpell`'s `z` is the sharp case -- the compiler discards it, so popping
+// it would take the spell id instead.
+// See: docs/commentary/morrowind_runtime.md#spell-commands
+void SpellStackDiscipline(DialogueContext& context) {
+    std::printf("the spell and effect tables load both their keys\n");
+    const SpellDef* spell = FindSpell("Fire Bite");
+    Check(spell && spell->form.formId == 0x801 &&
+              spell->effects.size() == 2 && spell->Has(14) && spell->Has(45),
+          "a spell resolves by id, case-folded, with EVERY effect index");
+    Check(spell && !spell->Has(16), "and reports an effect it does not carry");
+    Check(FindSpell("no effect spell") &&
+              FindSpell("no effect spell")->effects.empty(),
+          "a spell with no staged effect resolves and carries none");
+    // What RemoveEffects acts on: the spells CONTAINING one effect, which is
+    // "fire bite" for 45 and both spells for neither's 99.
+    Check(SpellsWithEffect(45).size() == 1 &&
+              SpellsWithEffect(14).size() == 1 &&
+              SpellsWithEffect(99).empty(),
+          "RemoveEffects selects the spells that CONTAIN an effect");
+
+    // The soul gem tables: a creature's soul, and the filled gem per size.
+    Check(CreatureSoul("TEST_RAT") == 1 &&
+              CreatureSoul("test_golden_saint") == 5 &&
+              CreatureSoul("no such creature") == 0,
+          "a creature's soul resolves, case-folded");
+    Check(FilledSoulGemId("Misc_SoulGem_Grand", 5) ==
+              "misc_soulgem_grand_filled5" &&
+              FilledSoulGemId("Misc_SoulGem_Grand", 3).empty(),
+          "a filled gem resolves per SOUL SIZE, and only when staged");
+    Check(FilledSoulGemIds(1).size() == 2 && FilledSoulGemIds(5).size() == 1,
+          "every gem holding one soul size is found");
+    Check(FindEffect("firedamage") && FindEffectByIndex(14) &&
+              FindEffect("firedamage")->formId == 0x901,
+          "an effect resolves by NAME and by TES3 INDEX alike");
+
+    std::printf("the spell commands pop exactly their arguments\n");
+    static const char* kScripts[] = {
+        "AddSpell \"fire bite\"\n",
+        "AddSpell \"fire bite\" 1\n",
+        "RemoveSpell \"fire bite\"\n",
+        "RemoveSpellEffects \"fire bite\"\n",
+        "RemoveEffects 14\n",
+        "Cast \"fire bite\" \"player\"\n",
+        "ExplodeSpell \"fire bite\"\n",
+        "\"other_npc\"->AddSpell \"fire bite\"\n",
+        "\"other_npc\"->RemoveSpell \"fire bite\"\n",
+        "AddSoulGem \"test_rat\" \"Misc_SoulGem_Petty\"\n",
+        "AddSoulGem \"test_rat\" \"Misc_SoulGem_Petty\" 1\n",
+        "RemoveSoulGem \"test_rat\"\n",
+        "RemoveSoulGem \"test_rat\" 2\n",
+        "DropSoulGem \"test_rat\"\n",
+        "\"other_npc\"->RemoveSoulGem \"test_rat\"\n",
+    };
+    for (const char* script : kScripts) {
+        const std::string source = std::string(script) + "ModDisposition 3\n";
+        State().SetDisposition("test_actor", 50);
+        Check(RunResultScript(source, context) &&
+                  State().Disposition("test_actor") == 53,
+              script);
+    }
+    static const char* kQueries[] = {
+        "if ( GetSpell \"fire bite\" == 0 )\n    ModDisposition 3\nendif\n",
+        "if ( GetEffect sEffectFireDamage == 0 )\n    ModDisposition 3\nendif\n",
+        "if ( GetSpellEffects \"fire bite\" == 0 )\n    ModDisposition 3\nendif\n",
+        "if ( HasSoulGem \"test_rat\" == 0 )\n    ModDisposition 3\nendif\n",
+    };
+    for (const char* script : kQueries) {
+        State().SetDisposition("test_actor", 50);
+        Check(RunResultScript(script, context) &&
+                  State().Disposition("test_actor") == 53,
+              script);
+    }
+}
+
 void Cases() {
     ClearScriptTables();
     LoadScriptTables("testdata\\scripts\\");
@@ -1063,6 +1142,8 @@ void Cases() {
     State().messages.clear();
     RunResultScript("MessageBox \"You feel watched.\"", context);
     Check(State().messages.size() == 1, "one notice");
+
+    SpellStackDiscipline(context);
 }
 
 // Every authored result script under a sidecar root: how many compile and

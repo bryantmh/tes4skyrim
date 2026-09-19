@@ -47,6 +47,15 @@ std::vector<std::string> g_startScripts;
 std::unordered_map<std::string, std::vector<TravelDest>> g_travel;
 std::unordered_map<std::string, FormRef> g_aiPacks;
 std::unordered_map<std::string, FormRef> g_sounds;
+std::unordered_map<std::string, SpellDef> g_spells;
+
+// The effects by both keys the commands use: the name and the TES3 index.
+std::unordered_map<std::string, FormRef> g_effects;
+std::unordered_map<int, FormRef> g_effectsByIndex;
+
+// The soul each creature carries, and the FILLED gems by `<gem>_Filled<n>`.
+std::unordered_map<std::string, int> g_souls;
+std::unordered_map<std::string, FormRef> g_filledGems;
 
 constexpr const char* kFileActors = "NPC_.txt";
 constexpr const char* kFileItems = "items_formid.txt";
@@ -82,6 +91,19 @@ constexpr const char* kFileSkills = "SKIL.txt";
 // The SNDR a TES3 sound id names, for PlaySound3D and its kin.
 // See: docs/commentary/tes5_import_sound.md#the-runtime-sound-table
 constexpr const char* kFileSounds = "SOUN.txt";
+
+// The SPEL a TES3 spell id names, and the MGEF behind an effect name or index.
+// See: docs/commentary/morrowind_runtime.md#spell-commands
+constexpr const char* kFileSpells = "SPEL.txt";
+constexpr const char* kFileEffects = "MGEF.txt";
+
+// What the soul gem commands need: each creature's soul, and the filled gems.
+// See: docs/commentary/morrowind_runtime.md#soul-gems
+constexpr const char* kFileSouls = "CREA_soul.txt";
+constexpr const char* kFileSoulGems = "SLGM.txt";
+
+// How a filled gem's staged id ends: `<gem id>_Filled<n>`.
+constexpr const char* kFilledSuffix = "_filled";
 
 std::unordered_map<std::string, FactionDef> g_factions;
 std::unordered_map<std::string, GmstDef> g_gmsts;
@@ -334,6 +356,11 @@ void ClearScriptTables() {
     g_actors.clear();
     g_items.clear();
     g_sounds.clear();
+    g_spells.clear();
+    g_effects.clear();
+    g_effectsByIndex.clear();
+    g_souls.clear();
+    g_filledGems.clear();
     g_quests.clear();
     g_refs.clear();
     g_bases.clear();
@@ -417,6 +444,35 @@ void LoadScriptTables(const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileSounds,
                [](const std::string& id, const std::string& value) {
                    g_sounds.emplace(Lower(id), ParseFormRef(value));
+               });
+    ForEachRow(pluginDir + kFileSpells,
+               [](const std::string& id, const std::string& value) {
+                   const std::vector<std::string> f = Split(value, '|');
+                   SpellDef def;
+                   def.form = ParseFormRef(value);
+                   if (f.size() > 2) {
+                       for (const std::string& n : Split(f[2], ',')) {
+                           if (!n.empty()) def.effects.push_back(
+                               std::atoi(n.c_str()));
+                       }
+                   }
+                   g_spells.emplace(Lower(id), def);
+               });
+    ForEachRow(pluginDir + kFileEffects,
+               [](const std::string& index, const std::string& value) {
+                   const std::vector<std::string> f = Split(value, '|');
+                   if (f.size() < 3) return;
+                   const FormRef form = ParseFormRef(value);
+                   g_effects.emplace(Lower(f[2]), form);
+                   g_effectsByIndex.emplace(std::atoi(index.c_str()), form);
+               });
+    ForEachRow(pluginDir + kFileSouls,
+               [](const std::string& creature, const std::string& soul) {
+                   g_souls.emplace(Lower(creature), std::atoi(soul.c_str()));
+               });
+    ForEachRow(pluginDir + kFileSoulGems,
+               [](const std::string& id, const std::string& value) {
+                   g_filledGems.emplace(Lower(id), ParseFormRef(value));
                });
     ForEachRow(pluginDir + kFileRefs,
                [](const std::string& id, const std::string& value) {
@@ -520,6 +576,68 @@ const FormRef* FindSound(const std::string& sound) {
 }
 
 std::size_t SoundCount() { return g_sounds.size(); }
+
+bool SpellDef::Has(int index) const {
+    return std::find(effects.begin(), effects.end(), index) != effects.end();
+}
+
+const SpellDef* FindSpell(const std::string& spell) {
+    const auto it = g_spells.find(Lower(spell));
+    return it == g_spells.end() ? nullptr : &it->second;
+}
+
+std::size_t SpellCount() { return g_spells.size(); }
+
+std::vector<std::string> SpellsWithEffect(int index) {
+    std::vector<std::string> out;
+    for (const auto& entry : g_spells) {
+        if (entry.second.Has(index)) out.push_back(entry.first);
+    }
+    return out;
+}
+
+const FormRef* FindEffect(const std::string& name) {
+    const auto it = g_effects.find(Lower(name));
+    return it == g_effects.end() ? nullptr : &it->second;
+}
+
+const FormRef* FindEffectByIndex(int index) {
+    const auto it = g_effectsByIndex.find(index);
+    return it == g_effectsByIndex.end() ? nullptr : &it->second;
+}
+
+std::size_t EffectCount() { return g_effects.size(); }
+
+int CreatureSoul(const std::string& creature) {
+    const auto it = g_souls.find(Lower(creature));
+    return it == g_souls.end() ? 0 : it->second;
+}
+
+// `<gem id>_Filled<n>`, the id the export staged the filled variant under.
+std::string FilledGemKey(const std::string& gem, int soul) {
+    return Lower(gem) + kFilledSuffix + std::to_string(soul);
+}
+
+std::string FilledSoulGemId(const std::string& gem, int soul) {
+    const std::string key = FilledGemKey(gem, soul);
+    return g_filledGems.count(key) ? key : std::string();
+}
+
+std::vector<std::string> FilledSoulGemIds(int soul) {
+    const std::string suffix = std::string(kFilledSuffix) +
+                               std::to_string(soul);
+    std::vector<std::string> out;
+    for (const auto& entry : g_filledGems) {
+        if (entry.first.size() > suffix.size() &&
+            entry.first.compare(entry.first.size() - suffix.size(),
+                                suffix.size(), suffix) == 0) {
+            out.push_back(entry.first);
+        }
+    }
+    return out;
+}
+
+std::size_t SoulGemCount() { return g_filledGems.size(); }
 
 const FormRef* FindRef(const std::string& id) {
     const auto it = g_refs.find(Lower(id));

@@ -1,0 +1,2 @@
+14=Test.esm|00000901|FireDamage
+45=Test.esm|00000902|Paralyze

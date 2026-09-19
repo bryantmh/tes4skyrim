@@ -194,6 +194,50 @@ const FormRef* FindQuest(const std::string& quest);
 const FormRef* FindSound(const std::string& sound);
 std::size_t SoundCount();
 
+// One TES3 spell: the SPEL the import minted, and every TES3 effect INDEX it
+// carries. `RemoveEffects` names one index and removes each spell containing
+// it, so the whole list is needed to decide whether a spell matches. A
+// Morroblivion-owned spell resolves but exports no effect data, leaving
+// `effects` empty.
+// See: docs/commentary/morrowind_runtime.md#spell-commands
+struct SpellDef {
+    FormRef form;
+    std::vector<int> effects;
+
+    bool Has(int index) const;
+};
+
+// The spell a TES3 id names -- SPEL.txt. Null when the chain defines none,
+// which AddSpell and its kin treat as nothing to do.
+const SpellDef* FindSpell(const std::string& spell);
+std::size_t SpellCount();
+
+// Every staged spell whose effect list holds `index`, by TES3 id -- what
+// `RemoveEffects` dispels.
+std::vector<std::string> SpellsWithEffect(int index);
+
+// A magic effect by the name `GetEffect` writes, or by the TES3 INDEX
+// `RemoveEffects` writes -- MGEF.txt carries both keys for that reason.
+const FormRef* FindEffect(const std::string& name);
+const FormRef* FindEffectByIndex(int index);
+std::size_t EffectCount();
+
+// The soul a creature carries, 1..5 in Skyrim's own enum, or 0 when the chain
+// defines no such creature -- CREA_soul.txt. `AddSoulGem` names the CREATURE,
+// so this is what picks which filled gem to add.
+// See: docs/commentary/morrowind_runtime.md#soul-gems
+int CreatureSoul(const std::string& creature);
+
+// The staged id of `gem`'s FILLED variant for a soul of that size, or "" --
+// SLGM.txt keys them `<gem id>_Filled<n>`. An ID, not a FormRef: every soul
+// gem hook goes through AddItem/GetItemCount, which take the TES3 id.
+std::string FilledSoulGemId(const std::string& gem, int soul);
+
+// Every staged filled gem id holding a soul of that size, for the commands
+// that search an inventory rather than name a gem.
+std::vector<std::string> FilledSoulGemIds(int soul);
+std::size_t SoulGemCount();
+
 // The PLACED reference a TES3 id names, which `id->Command` acts on. Null
 // when the plugin places none -- `player` is answered elsewhere.
 // See: docs/commentary/morrowind_runtime.md#placed-references

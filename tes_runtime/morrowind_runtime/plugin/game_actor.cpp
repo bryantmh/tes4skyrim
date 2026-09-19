@@ -1,5 +1,6 @@
 #include "game_actor.h"
 
+#include "actor_stats.h"
 #include "dialogue_state.h"
 #include "script_tables.h"
 #include "object_script.h"
@@ -12,9 +13,11 @@ namespace {
 // TES3 gates keep an under-qualified player out, and a stub that failed would
 // hide dialogue that should have shown.
 // See: docs/commentary/morrowind_runtime.md#the-seam
-constexpr int kOpenSkill = 100;
 constexpr int kAlive = 100;
 constexpr int kFirstLevel = 1;
+
+// Who the stat reads name: the player, as every hook spells them.
+constexpr const char* kPlayerId = "player";
 
 }  // namespace
 
@@ -90,9 +93,20 @@ int GameActor::PlayerCrimeLevel() const {
     return static_cast<int>(State().crimeLevel);
 }
 
-int GameActor::PlayerSkill(int) const { return Stub(kOpenSkill); }
+// The PLAYER's stats, by TES3 index -- the same read the Get commands make.
+//
+// 🛑 These were a constant 100 until measured for real, which passed EVERY
+// skill-gated line and EVERY faction rank requirement: `HasSkillsForRank`
+// compares the faction's three best skills against the rank row, so a flat
+// 100 promoted anyone who asked.
+// See: docs/commentary/morrowind_runtime.md#the-player-stats-are-real
+int GameActor::PlayerSkill(int tes3Index) const {
+    return static_cast<int>(ActorSkill(kPlayerId, tes3Index));
+}
 
-int GameActor::PlayerAttribute(int) const { return Stub(kOpenSkill); }
+int GameActor::PlayerAttribute(int tes3Index) const {
+    return static_cast<int>(ActorAttribute(kPlayerId, tes3Index));
+}
 
 std::string GameActor::PlayerCellName() const {
     if (!Hooks().playerCell) {

@@ -1,0 +1,3 @@
+Misc_SoulGem_Petty_Filled1=Test.esm|00000A01
+Misc_SoulGem_Grand_Filled1=Test.esm|00000A02
+Misc_SoulGem_Grand_Filled5=Test.esm|00000A03

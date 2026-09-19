@@ -80,6 +80,18 @@ CELLS_TABLE = 'cells_formid.txt'
 #: What PlaySound3D and its kin need: `sound id=Plugin.esm|SNDR FormID`.
 SOUNDS_TABLE = 'SOUN.txt'
 
+#: What AddSpell and its kin need: `spell id=Plugin.esm|SPEL FormID|effect indices`.
+SPELLS_TABLE = 'SPEL.txt'
+
+#: What GetEffect and RemoveEffects need: `TES3 index=Plugin.esm|MGEF FormID|Name`.
+EFFECTS_TABLE = 'MGEF.txt'
+
+#: What AddSoulGem needs: `gem id_Filled<n>=Plugin.esm|SLGM FormID`.
+SOULGEMS_TABLE = 'SLGM.txt'
+
+#: What AddSoulGem's creature argument needs: `creature id=soul size`.
+SOULS_TABLE = 'CREA_soul.txt'
+
 #: A TES5 record's body starts after its 24-byte header.
 _TES5_HEADER = slice(24, None)
 
@@ -97,9 +109,25 @@ _PLACEMENT_EXPORTS = ('REFR.txt', 'ACHR.txt', 'ACRE.txt')
 _ITEM_EXPORTS = ('ALCH.txt', 'AMMO.txt', 'APPA.txt', 'ARMO.txt', 'BOOK.txt',
                  'CLOT.txt', 'INGR.txt', 'KEYM.txt', 'LIGH.txt', 'MISC.txt',
                  'WEAP.txt')
+#: The exports holding spells, which AddSpell and GetSpell name by TES3 id.
+_SPELL_EXPORTS = ('SPEL.txt',)
+
+#: Where the soul sizes come from, and the filled gems AddSoulGem resolves.
+_CREATURE_EXPORT = 'CREA.txt'
+_SOULGEM_EXPORTS = ('SLGM.txt',)
+
+#: The magic effects, and what `MW038Recall` carries before the name itself.
+_EFFECT_EXPORT = 'MGEF.txt'
+_EFFECT_PREFIX = 'MW'
+_EFFECT_DIGITS = 3
+
+#: TES3's own cap on a spell's effects; measured max is 8 across the corpus.
+_MAX_EFFECTS = 8
+
 #: The same types as the index names them.
 _ITEM_TYPES = tuple(name[:-4] for name in _ITEM_EXPORTS)
 _SCRIPTED_TYPES = tuple(name[:-4] for name in _SCRIPTED_EXPORTS)
+_SPELL_TYPES = tuple(name[:-4] for name in _SPELL_EXPORTS)
 _GLOBAL_EXPORT = 'GLOB.txt'
 _SCRIPT_EXPORT = 'SCPT.txt'
 #: Where the cell names and their FormIDs come from, for the anchor table.
@@ -344,24 +372,123 @@ def _wanted_ids(dirs: list, ids: dict, exports: tuple) -> dict:
     return wanted
 
 
-def _item_lines(dirs: list, root: str, ids: dict) -> list:
-    """`item id=Plugin|FormID` for every inventory id a script can name,
-    resolved through the plugins the game loads.
+def _owned_lines(dirs: list, root: str, ids: dict, exports: tuple,
+                 types: tuple, extra: dict = None) -> list:
+    """`id=Plugin|FormID` for every id of `exports`, resolved through the
+    plugins the game loads -- the NEAREST one defining it wins. `extra` adds a
+    third field per id, for a table that carries one.
 
     The runtime resolves the pair through the running load order, so the
     FormID is kept as its owner wrote it and never re-indexed here.
     """
-    wanted = _wanted_ids(dirs, ids, _ITEM_EXPORTS)
-    indexes = [(plugin, load_index(folder, _ITEM_TYPES, {own: own}))
+    wanted = _wanted_ids(dirs, ids, exports)
+    indexes = [(plugin, load_index(folder, types, {own: own}))
                for folder, plugin, own in _loaded_dirs(root, *dirs[0])]
     lines = []
-    for edid in wanted.values():
+    for key, edid in wanted.items():
         for plugin, index in indexes:
             formid = index.lookup(edid)
-            if formid:
-                lines.append(f'{edid}={plugin}|{formid}')
-                break
+            if not formid:
+                continue
+            tail = (extra or {}).get(key, '')
+            lines.append(f'{edid}={plugin}|{formid}'
+                         + (f'|{tail}' if tail else ''))
+            break
     return lines
+
+
+def _spell_effects(dirs: list) -> dict:
+    """`{lower spell id: comma-joined TES3 effect indices}` over the chain.
+
+    EVERY effect, not just the first: `RemoveEffects` names one effect index
+    and removes each spell CONTAINING it, so the runtime has to know a spell's
+    whole effect list to decide whether that spell matches.
+    See: docs/commentary/morrowind_runtime.md#spell-commands
+    """
+    keys = tuple(f'Effect[{i}].MorrowindIndex' for i in range(_MAX_EFFECTS))
+    found = {}
+    for folder, _plugin, _own in dirs:
+        for rec in export_records(os.path.join(folder, _SPELL_EXPORTS[0]),
+                                  ('EditorID',) + keys):
+            edid = rec.get('EditorID', '')
+            indices = [rec[key] for key in keys if rec.get(key)]
+            if edid and indices:
+                found.setdefault(edid.lower(), ','.join(indices))
+    return found
+
+
+def _effect_lines(dirs: list) -> list:
+    """`index=Plugin|MGEF FormID|Name` for each magic effect of the chain.
+
+    BOTH directions are staged because the commands disagree: `GetEffect`
+    names an effect (`sEffectRecall` is the export's `MW038Recall` without the
+    prefix and index) while `RemoveEffects` names its TES3 INDEX.
+
+    🛑 Only a plugin's OWN records are staged, by the index byte matching its
+    master count: the same record is numbered differently in each dependent.
+    See: docs/commentary/morrowind_runtime.md#spell-commands
+    """
+    strip = len(_EFFECT_PREFIX) + _EFFECT_DIGITS
+    seen = {}
+    for folder, plugin, own in dirs:
+        for rec in export_records(
+                os.path.join(folder, _EFFECT_EXPORT),
+                ('FormID', 'EditorID', 'MorrowindEffectIndex')):
+            index = rec.get('MorrowindEffectIndex', '')
+            name = rec.get('EditorID', '')[strip:]
+            formid = rec.get('FormID', '')
+            if not index or not name or formid[:2].upper() != f'{own:02X}':
+                continue
+            seen.setdefault(index, f'{index}={plugin}|{formid}|{name}')
+    return [seen[key] for key in sorted(seen, key=int)]
+
+
+def _soul_lines(dirs: list, raw: dict) -> list:
+    """`creature id=soul size` for each CREA the chain defines, keyed by every
+    spelling a script may write. `raw` is the TES3 binaries' own creature ids.
+
+    🛑 In Morroblivion mode the export's id is ESCAPED -- `ogrim` is
+    `0Ogrim` -- so each raw id is encoded and looked up, never inverted.
+    See: docs/commentary/tes4_export_morrowind.md#masters
+    """
+    souls = {}
+    for folder, _plugin, _own in dirs:
+        for rec in export_records(os.path.join(folder, _CREATURE_EXPORT),
+                                  ('EditorID', 'DATA.Soul')):
+            edid = rec.get('EditorID', '')
+            soul = rec.get('DATA.Soul', '')
+            if not edid or not soul or soul == '0':
+                continue
+            souls.setdefault(edid.lower(), (edid, soul))
+    rows = {key: f'{edid}={soul}' for key, (edid, soul) in souls.items()}
+    for key, tes3 in raw.items():
+        found = souls.get(key) or souls.get(encode_editor_id(tes3).lower())
+        if found:
+            rows.setdefault(key, f'{tes3}={found[1]}')
+    return list(rows.values())
+
+
+def _soulgem_lines(dirs: list) -> list:
+    """`filled gem id=Plugin|FormID` for each gem of the chain.
+
+    🛑 Over the LOADED plugins, not this plugin's own export: the six vanilla
+    gems and their filled variants belong to the Morroblivion compatibility
+    patch, so a Tamriel Rebuilt conversion owns none and would stage nothing.
+    Each row is attributed to the plugin whose master count matches the id's
+    index byte, as `_effect_lines` does.
+    See: docs/commentary/morrowind_runtime.md#soul-gems
+    """
+    seen = {}
+    for folder, plugin, own in dirs:
+        for rec in export_records(os.path.join(folder, _SOULGEM_EXPORTS[0]),
+                                  ('FormID', 'EditorID', 'SOUL')):
+            edid = rec.get('EditorID', '')
+            formid = rec.get('FormID', '')
+            soul = rec.get('SOUL', '0')
+            if not edid or soul == '0' or formid[:2].upper() != f'{own:02X}':
+                continue
+            seen.setdefault(edid.lower(), f'{edid}={plugin}|{formid}')
+    return list(seen.values())
 
 
 def _placed_refs(folder: str, owner: str) -> dict:
@@ -383,24 +510,10 @@ def _placed_refs(folder: str, owner: str) -> dict:
 
 
 def _base_lines(dirs: list, root: str, ids: dict) -> list:
-    """`id=Plugin|FormID` for each TES3 id's BASE record.
-
-    🛑 The base, not a placement: `PlaceAtPC` creates a reference from a
-    template that the world may never place, which is the only way the TR_m3
-    vermai enters the game.
+    """`id=Plugin|FormID` for each TES3 id's BASE record, never a placement.
     See: docs/plans/morrowind_object_scripts.md#placeatpc
     """
-    wanted = _wanted_ids(dirs, ids, _SCRIPTED_EXPORTS)
-    indexes = [(plugin, load_index(folder, _SCRIPTED_TYPES, {own: own}))
-               for folder, plugin, own in _loaded_dirs(root, *dirs[0])]
-    lines = []
-    for edid in wanted.values():
-        for plugin, index in indexes:
-            formid = index.lookup(edid)
-            if formid:
-                lines.append(f'{edid}={plugin}|{formid}')
-                break
-    return lines
+    return _owned_lines(dirs, root, ids, _SCRIPTED_EXPORTS, _SCRIPTED_TYPES)
 
 
 def _ref_lines(dirs: list, root: str, ids: dict) -> list:
@@ -477,9 +590,20 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
     dirs = table_dirs(export_dir, plugin_name)
     root = _export_root(export_dir)
     ids = gathered or {}
+    loaded = _loaded_dirs(root, export_dir, plugin_name)
     locals_lines, body_lines, by_formid = _script_tables(dirs)
-    return (_write_lines(os.path.join(out_dir, GLOBALS_TABLE),
-                         _global_lines(dirs[:1]))
+    return (_write_lines(os.path.join(out_dir, SPELLS_TABLE),
+                         _owned_lines(dirs, root, ids.get('spells', {}),
+                                      _SPELL_EXPORTS, _SPELL_TYPES,
+                                      _spell_effects(loaded)))
+            + _write_lines(os.path.join(out_dir, EFFECTS_TABLE),
+                           _effect_lines(loaded))
+            + _write_lines(os.path.join(out_dir, SOULGEMS_TABLE),
+                           _soulgem_lines(loaded))
+            + _write_lines(os.path.join(out_dir, SOULS_TABLE),
+                           _soul_lines(loaded, ids.get('objects', {})))
+            + _write_lines(os.path.join(out_dir, GLOBALS_TABLE),
+                           _global_lines(dirs[:1]))
             + _write_lines(os.path.join(out_dir, SCRIPT_BODIES_TABLE),
                            body_lines)
             + _write_lines(os.path.join(out_dir, SCRIPT_LOCALS_TABLE),
@@ -492,7 +616,8 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
                                                            by_formid),
                                            plugin_name))
             + _write_lines(os.path.join(out_dir, ITEMS_TABLE),
-                           _item_lines(dirs, root, ids.get('items', {})))
+                           _owned_lines(dirs, root, ids.get('items', {}),
+                                        _ITEM_EXPORTS, _ITEM_TYPES))
             + _write_lines(os.path.join(out_dir, REFS_TABLE),
                            _ref_lines(dirs, root, ids.get('objects', {})))
             + _write_lines(os.path.join(out_dir, BASES_TABLE),

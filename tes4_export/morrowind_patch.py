@@ -338,7 +338,8 @@ def _write_records(gaps: dict, export_dir: str, progress) -> str:
     from .export_morrowind import (MorrowindContext, export_record,
                                    magic_effect_records, register_magic_effects,
                                    write_export, write_header)
-    from .record_types.morrowind import tes4_signature
+    from .record_types.morrowind import (filled_soulgem_id, filled_soulgems,
+                                         tes4_signature)
     from .record_types.morrowind_magic import effect_editor_id
 
     ids = {key: patch_formid(key) for key in gaps}
@@ -359,6 +360,10 @@ def _write_records(gaps: dict, export_dir: str, progress) -> str:
         if lines:
             out.setdefault(tes4_signature(rec), []).append((ids[key], lines))
     out['MGEF'] = magic_effect_records(records, ctx)
+    for gem_id, soul, lines in filled_soulgems(records):
+        edid = filled_soulgem_id(gem_id, soul)
+        out.setdefault('SLGM', []).append(
+            (patch_formid(('SLGM', edid)), lines))
     out_dir = patch_dir(export_dir)
     counts = write_export(out, out_dir)
     write_header(out_dir, [], sum(counts.values()),

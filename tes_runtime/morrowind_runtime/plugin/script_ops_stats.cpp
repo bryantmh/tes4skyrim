@@ -12,6 +12,7 @@
 #include <components/compiler/opcodes.hpp>
 #include <components/interpreter/opcodes.hpp>
 
+#include "actor_stats.h"
 #include "dialogue_state.h"
 #include "object_script.h"
 #include "script_ops.h"
@@ -167,7 +168,27 @@ void InstallFamily(OpcodeInstaller& into, const Stat* stats, int count,
     }
 }
 
+// One family's stat by TES3 index, bounds-checked: the filter passes an index
+// straight off a condition, so an out-of-range one must not read past the
+// table.
+float StatByIndex(const std::string& actor, const Stat* stats, int count,
+                  Family family, int index) {
+    if (index < 0 || index >= count) return 0.0f;
+    return ReadStat(actor, stats[index], family, index);
+}
+
 }  // namespace
+
+float ActorSkill(const std::string& actor, int tes3Index) {
+    return StatByIndex(actor, kSkills, Compiler::Stats::numberOfSkills,
+                       Family::Skill, tes3Index);
+}
+
+float ActorAttribute(const std::string& actor, int tes3Index) {
+    return StatByIndex(actor, kAttributes,
+                       Compiler::Stats::numberOfAttributes, Family::Attribute,
+                       tes3Index);
+}
 
 void InstallStatOps(OpcodeInstaller& into) {
     namespace S = Compiler::Stats;

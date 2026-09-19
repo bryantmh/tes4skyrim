@@ -200,6 +200,46 @@ struct GameHooks {
     // and `value` is TES3's 0..100.
     void (*applyAiSetting)(const std::string& actor, int which,
                            int value) = nullptr;
+    // The spell commands. `spell` is a TES3 SPEL id, resolved through SPEL.txt
+    // to the SPEL the import minted. AddSpell/RemoveSpell put it on the actor's
+    // spell list; HasSpell is what `GetSpell` answers.
+    // See: docs/commentary/morrowind_runtime.md#spell-commands
+    void (*addSpell)(const std::string& actor, const std::string& spell) = nullptr;
+    void (*removeSpell)(const std::string& actor,
+                        const std::string& spell) = nullptr;
+    bool (*hasSpell)(const std::string& actor,
+                     const std::string& spell) = nullptr;
+    // `Cast`/`ExplodeSpell`: `caster` casts at `target`; ExplodeSpell casts a
+    // spell on the target from itself, so both go through one call.
+    void (*castSpell)(const std::string& caster, const std::string& target,
+                      const std::string& spell) = nullptr;
+    // `RemoveSpellEffects`: dispels just that spell's effects.
+    void (*dispelSpell)(const std::string& actor,
+                        const std::string& spell) = nullptr;
+    // `RemoveEffects`: removes every spell affecting the actor that CONTAINS
+    // that TES3 effect index, which the staged effect lists identify.
+    // See: docs/commentary/morrowind_runtime.md#removeeffects-is-per-spell
+    void (*dispelByEffect)(const std::string& actor,
+                           int effectIndex) = nullptr;
+    // `GetEffect`: is that one magic effect active on the actor now. `effect`
+    // is the name MGEF.txt keys, already stripped of its `sEffect` prefix.
+    bool (*hasEffect)(const std::string& actor,
+                      const std::string& effect) = nullptr;
+    // `GetSpellEffects`: is the actor under the effect of that SPELL, answered
+    // through the effects the spell carries.
+    bool (*spellActive)(const std::string& actor,
+                        const std::string& spell) = nullptr;
+    // The soul gem commands. Each names the CREATURE whose soul is trapped,
+    // never the gem tier; `gem` is the container `AddSoulGem` fills.
+    // `soulGemCount` answers `HasSoulGem`, and `takeSoulGem` removes one --
+    // dropping it on the ground instead when `drop`.
+    // See: docs/commentary/morrowind_runtime.md#soul-gems
+    void (*addSoulGem)(const std::string& actor, const std::string& creature,
+                       const std::string& gem) = nullptr;
+    int  (*soulGemCount)(const std::string& actor,
+                         const std::string& creature) = nullptr;
+    void (*takeSoulGem)(const std::string& actor, const std::string& creature,
+                        bool drop) = nullptr;
 };
 
 GameHooks& Hooks();

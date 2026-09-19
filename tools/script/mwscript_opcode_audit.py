@@ -40,8 +40,9 @@ _NAMESPACE = re.compile(r'namespace\s+(\w+)\s*\{')
 #: `Real<Op<Implicit>>(D::opcodeX)`, or `(S::opcodeX + Which)` for a family.
 _INSTALL = re.compile(r'\bReal3?\s*<.*?>\s*\(\s*\n?\s*([A-Za-z0-9_:]+)'
                       r'(?:\s*\+\s*\w+)?\s*\)')
-#: `InstallFamily(into, ..., {{S::opcodeGetSkill, ...}})`: a whole family installed from its base opcodes.
-_FAMILY = re.compile(r'\bInstallFamily\s*\((.*?)\)\s*;', re.S)
+#: A helper whose ARGUMENTS name the opcodes: `InstallFamily` and `InstallPair<Op>`.
+_FAMILY = re.compile(r'\bInstall(?:Family|Pair)\s*(?:<.*?>)?\s*\((.*?)\)\s*;',
+                     re.S)
 _OPCODE = re.compile(r'\bopcode\w+')
 #: `kDeliberateNoOps` in script_runner.cpp: nothing to port, by design.
 _NOOPS = re.compile(r'kDeliberateNoOps\[\]\s*=\s*\{(.*?)\}', re.S)

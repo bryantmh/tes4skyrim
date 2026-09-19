@@ -211,6 +211,37 @@ def _soulgem_capacity(rec: Tes3Record) -> int:
     return _SOULGEM_CAPACITY.get(tier, _SOULGEM_CAPACITY['grand'])
 
 
+def filled_soulgem_id(gem_id: str, soul: int) -> str:
+    """The EditorID of one gem's FILLED variant, keyed on the gem's own id.
+    See: docs/commentary/tes4_export_morrowind.md#filled-soul-gems
+    """
+    return f'{gem_id}_Filled{soul}'
+
+
+def filled_soulgems(records) -> list:
+    """`(gem id, soul, lines)` per filled variant the chain's gems can hold.
+
+    🛑 TES3 keeps a captured soul on the INVENTORY STACK and authors no filled
+    record; Skyrim makes one a separate base record whose `SOUL` is the
+    trapped size, so `AddSoulGem` has nothing to add until these exist.
+    See: docs/commentary/tes4_export_morrowind.md#filled-soul-gems
+    """
+    out = []
+    for rec in records:
+        capacity = _soulgem_capacity(rec) if rec.type == 'MISC' else 0
+        if not capacity or rec.deleted:
+            continue
+        for soul in range(1, capacity + 1):
+            edid = filled_soulgem_id(rec.record_id, soul)
+            lines = [f'EditorID={escape_value(edid)}' if
+                     line.startswith('EditorID=') else line
+                     for line in export_MISC(rec, None)
+                     if not line.startswith('SOUL=')]
+            lines.append(f'SOUL={soul}')
+            out.append((rec.record_id, soul, lines))
+    return out
+
+
 def tes4_signature(rec: Tes3Record) -> str:
     """The TES4 record type this Morrowind record is exported as.
 

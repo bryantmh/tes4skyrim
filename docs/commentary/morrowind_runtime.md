@@ -1809,8 +1809,25 @@ commands to 307, and the stubbed call sites from 4,045 to 3,581.
 - The magic-effect family is typed `long` by the compiler, so it pushes and
   pops integers.
 
-NOT done: `SetLevel` (Skyrim has no setter), and the disease and spell
-queries, which need the SPEL table.
+NOT done: `SetLevel` (Skyrim has no setter).
+
+### <a id="the-player-stats-are-real"></a>🛑 The FILTER reads those same stats
+
+`ActorSkill` / `ActorAttribute` expose that one read by TES3 index, and
+`GameActor::PlayerSkill` / `PlayerAttribute` answer the dialogue filter
+through them. There is no second stat path and no second table.
+
+**Both returned a constant `100` before this.** That is not a small gap: the
+filter answers `PCSkill`/`PCAttribute` conditions with it, and
+`Filter::HasSkillsForRank` sorts the faction's skills and measures the best
+three against the rank row — so a flat 100 showed every skill-gated line and
+passed **every faction rank requirement in the game**, promoting anyone who
+asked. The neutral-answer rule that chose 100 (a stub should not HIDE
+dialogue) is right for a fact the runtime cannot know; it was wrong here,
+because the stat is knowable and the same file already read it.
+
+An index outside its family answers 0 rather than reading past the table: the
+filter passes an index straight off a condition record.
 
 ## <a id="travel"></a>Travel is OpenMW's TravelWindow
 
@@ -1930,6 +1947,143 @@ reaches the stack; only the `VP` forms carry one.
 `say`, `saydone` and `streammusic` remain stubs: `Say` names a file under
 `Sound\Vo\`, which is not converted yet
 ([the plan](../plans/morrowind_voice_tree.md)).
+
+## <a id="spell-commands"></a>The spell commands
+
+**Code:** `tes_runtime/morrowind_runtime/plugin/script_ops_spell.cpp`,
+`game_calls_spell.cpp`, and `tes5_import/dialogue/morrowind_sidecar.py`.
+
+A TES3 script names a **SPEL id**; the record Skyrim casts is the SPEL the
+import minted, which `SPEL.txt` maps the way `SOUN.txt` maps a sound:
+`id=Plugin|FormID|i,j,k`, where the trailing list is every TES3 effect INDEX
+the spell carries (TES3 allows at most 8; the measured corpus maximum is 8).
+`RemoveEffects` and `GetSpellEffects` both read that list.
+
+`MGEF.txt` is `index=Plugin|FormID|Name`, and it carries **both** keys on
+purpose: `GetEffect` names an effect (`sEffectRecall` is the export's
+`MW038Recall` with the `MW` and the three index digits taken off) while
+`RemoveEffects` names the TES3 **index**. One direction would leave the other
+command unable to resolve its argument.
+
+🛑 **A row is staged by the plugin that OWNS the record, never the plugin
+reading it.** A FormID's index byte is a position in *that* plugin's master
+list, so the same MGEF is `00986913` in the Morroblivion compatibility patch
+and `01986913` as TR_Mainland sees it. Pairing TR's own name with the id it
+reads sends `Game.GetFormFromFile` to the wrong file. The owner is the export
+whose master count equals the id's index byte — measured over the TR chain,
+all 143 effects belong to the compat patch, and none to TR_Mainland.
+
+Measured over the Tamriel Rebuilt chain (`export/Tamriel Rebuilt 25.08.12`):
+2,103 spell ids resolve to a SPEL and 143 effects to an MGEF. The built
+`TR_Mainland.esm` carries 425 SPEL, 114 MGEF and 617 ENCH records of its own;
+the rest resolve to `Morrowind_ob.esm`, which is why the table is built through
+the LOADED plugins and never from this plugin's export alone.
+
+🛑 **The earlier audit said this was blocked on the export, and it was wrong.**
+`docs/audits/mwscript_opcodes.md` listed 978 `addspell`/`removespell`/
+`getspell`/`hasspell` sites and 673 effect sites as "no `SPEL.txt` is
+exported". `tes4_export/record_types/morrowind_magic.py` has exported all
+three types for as long as the file has existed. Nothing needed building on
+the export side; only the sidecar table and the opcodes were missing.
+
+| Native | 1.6.659 | id |
+|---|---|---|
+| `Actor.AddSpell` | `0x988ad0` | 54652 |
+| `Actor.RemoveSpell` | `0x988940` | 54647 |
+| `Actor.HasSpell` | `0x988bc0` | 54653 |
+| `Actor.HasMagicEffect` | `0x988a00` | 54649 |
+| `Actor.DispelSpell` | `0x9889a0` | 54648 |
+| `Spell.Cast` | `0x9bb750` | 55747 |
+
+Each was read off its registration site's `lea` beside the name string, the
+class confirmed from the `lea r8` string (`Actor` for five, `Spell` for
+`Cast`), and inverted through the Address Library. All six exist in all 12
+shipped versionlibs — the check the angle getters failed
+([above](#the-angle-getters-have-no-id)).
+
+`Spell.Cast(caster, target)` is a MEMBER function on the SPEL, so the spell
+form is `self` and both actors ride as arguments. `ExplodeSpell` passes the
+same reference for both, which is exactly what it means: the object casts the
+spell at itself.
+
+🛑 **`addspell` is `"cz"`, and the `z` pushes NOTHING.** OpenMW's `'z'` runs a
+`DiscardParser`, so the optional second argument is consumed at compile time
+and never reaches the stack. Popping it would take the spell id off instead
+and every `AddSpell` would name the wrong form. `script_test.cpp` runs both
+`AddSpell "x"` and `AddSpell "x" 1` followed by a `ModDisposition`, so a
+handler that pops the wrong number of arguments fails the test rather than
+the play session.
+
+🛑 **The FIRST argument pops FIRST.** `ExprParser::parseArguments` parses left
+to right onto a `std::stack` and then emits it LIFO, so the last argument's
+code is written first and the first argument ends up on top at runtime. For
+`Cast spell target` that means the SPELL pops before the target — the reverse
+of the reading that "a stack reverses things" suggests. The same unwind is
+what puts an explicit `id->` target on top, which `Explicit::Target` relies on.
+
+### <a id="removeeffects-is-per-spell"></a>`RemoveEffects` removes SPELLS, not one effect
+
+`RemoveEffects index` is not "remove this one effect". UESP is explicit:
+it *"removes all spells currently affecting the calling actor that include
+the given effect"* — a set of SPELLS, selected by an effect they contain.
+`RemoveSpellEffects spell` is the same operation narrowed to one spell.
+
+Both map onto the engine exactly, with no widening. The sidecar stages every
+TES3 effect index a spell carries, so the runtime knows which spells qualify;
+each is then `DispelSpell`ed and `RemoveSpell`ed. The removal matters as much
+as the dispel: a TES3 ability re-applies itself while it is on the spell
+list, which is why `player.removespell` is the console's own way to end one.
+
+🛑 **An earlier build called `DispelAllSpells` here and claimed the engine
+could not dispel one effect. That was wrong** — `Actor.DispelSpell`,
+`Actor.RemoveSpell` and `ActiveMagicEffect.Dispel` all remove a single thing,
+and the console's `player.removespell` does it interactively. The native is
+no longer resolved at all.
+
+`GetEffect` and `GetSpellEffects` answer through `Actor.HasMagicEffect`:
+`GetEffect` on the named effect, `GetSpellEffects` on ANY effect the spell
+carries. A spell whose owner exported no effect data (every Morroblivion-owned
+one) answers false rather than guessing.
+
+## <a id="soul-gems"></a>The soul gem commands
+
+**Code:** `plugin/script_ops_spell.cpp`, `game_calls_spell.cpp`,
+`tes4_export/record_types/morrowind.py` (`filled_soulgems`).
+
+`AddSoulGem creature gem`, `RemoveSoulGem creature`, `HasSoulGem creature` and
+`DropSoulGem creature` all key on the **trapped creature**, never on the gem
+tier. Measured over the TR corpus, every one of the 215 call sites passes a
+creature id — `HasSoulGem "atronach_storm"`, `AddSoulGem "TR_m3_ATMG_terror"`.
+
+Two sidecar tables carry what that needs:
+
+- `CREA_soul.txt` — `creature id=soul size`, straight from the export's
+  `DATA.Soul`, which is already Skyrim's 1..5 enum.
+- `SLGM.txt` — `gem id_Filled<n>=Plugin|FormID`, the synthesized filled
+  variants ([why they are synthesized](tes4_export_morrowind.md#filled-soul-gems)).
+
+`AddSoulGem creature gem` therefore resolves the creature's soul size, picks
+that gem's `_Filled<n>` record, and adds it. The query and removal commands
+scan the actor's inventory for any filled gem whose `SOUL` equals that size.
+
+🛑 **A soul gem is recognised by its ID PREFIX**, `misc_soulgem`, exactly as
+OpenMW's `mwclass/misc.cpp:isSoulGem` does it — TES3 has no soul-gem flag.
+Measured over TR_Mainland plus the Morroblivion patch: 6 MISC records match
+that prefix and 3 more merely contain "soulgem", so matching the NAME would
+convert three things that are not soul gems in Morrowind either.
+
+🛑 **`CREA_soul.txt` is keyed by every spelling a script may write.** In
+Morroblivion mode the export's id is ESCAPED — `ogrim` is `0Ogrim` — so each
+raw TES3 creature id is ENCODED and looked up, never inverted: the escape maps
+`_` and ` ` onto `U` and `S`, so a real `U` is indistinguishable from an
+escaped `_`. This is the same rule `stage_sound_table` follows.
+
+Measured over the TR chain: 1,529 creatures carry a soul, and 37 of the 46
+creatures the corpus names resolve. **The other 9 resolve to nothing, and no
+table can fix it** — `atronach_storm`, `golden saint`, `winged twilight` and
+the rest are among the 79 meshes `MORROBLIVION_CREATURES` pairs to vanilla
+Oblivion creatures, so the gap patch deliberately supplies no CREA record for
+them and they have no `DATA.Soul` anywhere. A `HasSoulGem` on one answers 0.
 
 ## <a id="licensing"></a>Licensing
 

@@ -1,0 +1,3 @@
+fire bite=Test.esm|00000801|14,45
+no effect spell=Test.esm|00000802
+frost bite=Test.esm|00000803|16

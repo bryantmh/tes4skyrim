@@ -44,6 +44,7 @@ from .morrowind_land import (MAX_QUAD_LAYERS, decode_heights,
 from .morrowind_world import (TES4_CELL_SIZE, WORLDSPACE_EDID, cell_editor_id,
                               cell_grid, tes3_cell_quadrants)
 from .record_types.morrowind import (MORROWIND_ITEM_EXPORTERS, emit_ref,
+                                     filled_soulgem_id, filled_soulgems,
                                      tes4_signature)
 from .record_types.morrowind_actors import (MORROWIND_ACTOR_EXPORTERS,
                                             register_sound_gens)
@@ -559,6 +560,7 @@ def convert_plugin(records, ctx: MorrowindContext) -> dict:
         if rec.type in EXPORTERS and not rec.deleted:
             ctx.register_own(rec.record_id, tes4_signature(rec))
     register_magic_effects(records, ctx)
+    register_filled_soulgems(records, ctx)
     _register_land_textures(records, ctx)
     _register_land_grids(records, ctx)
     _register_groundcover(records, ctx)
@@ -578,6 +580,8 @@ def convert_plugin(records, ctx: MorrowindContext) -> dict:
     out['WRLD'] = worldspace_record(ctx)
     out['CELL'].extend(persistent_cell_record(ctx))
     out.setdefault('MGEF', []).extend(magic_effect_records(records, ctx))
+    out.setdefault('SLGM', []).extend(
+        filled_soulgem_records(records, ctx))
     _emit_groundcover(out, ctx)
     return out
 
@@ -677,6 +681,20 @@ def register_magic_effects(records, ctx: MorrowindContext) -> None:
     ctx.effect_ranges = effect_ranges(records)
     for index in range(_MAGIC_EFFECT_COUNT):
         ctx.register_own(effect_editor_id(index), 'MGEF')
+
+
+def register_filled_soulgems(records, ctx: MorrowindContext) -> None:
+    """Register one SLGM per soul size each of this plugin's gems can hold."""
+    for gem_id, soul, _lines in filled_soulgems(records):
+        ctx.register_own(filled_soulgem_id(gem_id, soul), 'SLGM')
+
+
+def filled_soulgem_records(records, ctx: MorrowindContext) -> list:
+    """`(form_id, lines)` for the FILLED variant of each gem.
+    See: docs/commentary/tes4_export_morrowind.md#filled-soul-gems
+    """
+    return [(ctx.resolve(filled_soulgem_id(gem_id, soul), 'SLGM'), lines)
+            for gem_id, soul, lines in filled_soulgems(records)]
 
 
 def magic_effect_records(records, ctx: MorrowindContext) -> list:

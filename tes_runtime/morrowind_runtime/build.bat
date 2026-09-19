@@ -74,13 +74,15 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\script_ops_events.cpp plugin\script_ops_sound.cpp ^
    plugin\script_ops_move.cpp plugin\script_ops_ai.cpp ^
    plugin\script_ops_query.cpp plugin\script_ops_stats.cpp ^
+   plugin\script_ops_spell.cpp ^
    plugin\object_script.cpp ^
    plugin\object_tick.cpp ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
    plugin\conversation_persuasion.cpp plugin\conversation_modal.cpp ^
    plugin\conversation_travel.cpp plugin\travel.cpp ^
    plugin\game_calls.cpp plugin\game_calls_move.cpp plugin\game_calls_ai.cpp ^
-   plugin\game_calls_query.cpp plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
+   plugin\game_calls_query.cpp plugin\game_calls_spell.cpp ^
+   plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
     exit /b 1
@@ -110,6 +112,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\log.cpp plugin\filter.cpp ^
    plugin\script_ops_events.cpp plugin\script_ops_sound.cpp ^
    plugin\script_ops_move.cpp plugin\script_ops_ai.cpp ^
    plugin\script_ops_query.cpp plugin\script_ops_stats.cpp ^
+   plugin\script_ops_spell.cpp ^
    plugin\object_script.cpp ^
    plugin\object_tick.cpp plugin\main_thread.cpp ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
@@ -138,7 +141,8 @@ link /nologo /OUT:session_test.exe objt\store.obj objt\log.obj ^
      objt\script_runner.obj objt\script_ops_world.obj ^
      objt\script_ops_events.obj objt\script_ops_sound.obj ^
      objt\script_ops_move.obj objt\script_ops_ai.obj ^
-     objt\script_ops_query.obj objt\script_ops_stats.obj objt\object_script.obj ^
+     objt\script_ops_query.obj objt\script_ops_stats.obj ^
+     objt\script_ops_spell.obj objt\object_script.obj ^
      objt\object_tick.obj objt\main_thread.obj ^
      objt\persuasion.obj obj\mw\*.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
@@ -152,7 +156,7 @@ link /nologo /OUT:script_test.exe objt\store.obj objt\log.obj ^
      objt\script_ops_events.obj objt\script_ops_sound.obj ^
      objt\script_ops_move.obj objt\script_ops_ai.obj ^
      objt\script_ops_query.obj objt\script_ops_stats.obj ^
-     objt\object_script.obj ^
+     objt\script_ops_spell.obj objt\object_script.obj ^
      objt\object_tick.obj objt\main_thread.obj ^
      objt\script_tables.obj objt\persuasion.obj objt\travel.obj ^
      objt\script_test.obj ^

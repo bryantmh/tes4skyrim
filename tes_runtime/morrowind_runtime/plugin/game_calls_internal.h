@@ -60,6 +60,9 @@ std::vector<void*> PlayerFollowers();
 void InstallMoveCalls(GameHooks& hooks);
 void InstallAiCalls(GameHooks& hooks);
 void InstallQueryCalls(GameHooks& hooks);
+// The spell natives: the actor's spell list, casting, and active effects.
+// See: docs/commentary/morrowind_runtime.md#spell-commands
+void InstallSpellCalls(GameHooks& hooks);
 
 }  // namespace gamecalls
 }  // namespace mwruntime

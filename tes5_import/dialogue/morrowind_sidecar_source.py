@@ -306,6 +306,8 @@ def _take(out: dict, rec, topic: str) -> str:
         out['items'][rec.record_id.lower()] = rec.record_id
     if rec.type == 'SOUN':
         out['sounds'][rec.record_id.lower()] = rec.record_id
+    if rec.type == 'SPEL':
+        out['spells'][rec.record_id.lower()] = rec.record_id
     if rec.type == 'SSCR':
         out['start_scripts'][rec.record_id.lower()] = f'{rec.record_id}=1'
     return topic
@@ -315,14 +317,15 @@ def gather(chain: list) -> dict:
     """The chain's tables, each plugin read ONCE and a later one overriding
     an earlier: `topics` `{lower id: DIAL rec}`, `infos` `{lower id: [entry]}`
     in merged order, `actors` / `factions` / `gmsts` `{lower id: line}`,
-    `skills` `{index: line}`, `items` / `objects` / `sounds`
+    `skills` `{index: line}`, `items` / `objects` / `sounds` / `spells`
     `{lower id: id}`. Actor lines are made LAST, once every race, class and
     skill is known. `start_scripts` is the LAST plugin's SSCR alone: a master
     stages, and so starts, its own.
     """
     out = {'topics': {}, 'infos': {}, 'npcs': {}, 'races': {}, 'classes': {},
            'skills': {}, 'gmsts': {}, 'factions': {}, 'items': {},
-           'objects': {}, 'sounds': {}, 'exteriors': {}, 'regions': {}}
+           'objects': {}, 'sounds': {}, 'spells': {}, 'exteriors': {},
+           'regions': {}}
     for _name, path in chain:
         topic = ''
         out['start_scripts'] = {}

@@ -6,35 +6,24 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 
 | Status | Commands | Call sites |
 |---|---:|---:|
-| ported | 307 | 85385 |
+| ported | 320 | 87260 |
 | no-op | 5 | 2615 |
-| STUB | 175 | 3581 |
+| STUB | 162 | 1706 |
 
-🛑 **101 of the 175 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 74 command(s) below.
+🛑 **100 of the 162 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 62 command(s) below.
 
 ## Stubbed, and something calls it
 
 | Command | Domain | Signature | Calls |
 |---|---|---|---:|
-| `addspell` | Stats | `cz` | 570 |
 | `help` | Misc | — | 398 |
-| `cast` | Misc | `SS` | 310 |
 | `say` | Sound | `SS` | 292 |
-| `getspell` | Stats | `c` → `l` | 207 |
-| `removespell` | Stats | `cz` | 201 |
 | `playgroup` | Animation | `c/l` | 178 |
 | `getbuttonpressed` | Gui | — → `l` | 131 |
-| `hassoulgem` | Container | `c` → `l` | 123 |
-| `geteffect` | Misc | `S` → `l` | 121 |
-| `explodespell` | Misc | `S` | 106 |
-| `getspelleffects` | Misc | `c` → `l` | 82 |
-| `removesoulgem` | Misc | `c/l` | 64 |
-| `removeeffects` | Stats | `l` | 54 |
 | `getattacked` | Misc | — → `l` | 45 |
 | `saydone` | Sound | — → `l` | 44 |
 | `show` | Misc | `c` | 41 |
 | `forcerun` | Control | — | 36 |
-| `addsoulgem` | Misc | `ccX` | 28 |
 | `getpcsleep` | Misc | — → `l` | 26 |
 | `clearforcesneak` | Control | — | 25 |
 | `modwaterlevel` | Cell | `f` | 22 |
@@ -62,7 +51,6 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `getstandingpc` | Misc | — → `l` | 10 |
 | `hurtcollidingactor` | Misc | `f` | 10 |
 | `getcollidingpc` | Misc | — → `l` | 9 |
-| `removespelleffects` | Stats | `c` | 9 |
 | `showrestmenu` | Gui | — | 9 |
 | `wakeuppc` | Misc | — | 9 |
 | `resetactors` | Transformation | — | 6 |
@@ -90,18 +78,6 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `getforcemovejump` | Control | — → `l` | 1 |
 | `hitonme` | Misc | `S` → `l` | 1 |
 | `streammusic` | Sound | `S` | 1 |
-
-## Blocked on EXPORT or IMPORT, not on the runtime
-
-Porting the opcode alone cannot fix these: the data it would name is not converted yet.
-
-| Calls | Needs | Commands | Why |
-|---:|---|---|---|
-| 978 | SPEL | `addspell` `removespell` `getspell` `hasspell` | no `SPEL.txt` is exported, so a spell id resolves to nothing |
-| 673 | MGEF/ENCH | `cast` `explodespell` `getspelleffects` `geteffect` `removeeffects` | no `MGEF.txt` or `ENCH.txt`; an effect has no FormID to name |
-| 215 | SLGM | `addsoulgem` `removesoulgem` `hassoulgem` `dropsoulgem` | TES3 soul gems export as MISC, so they are clutter in Skyrim |
-
-🛑 **A TES3 soul gem carries NO soul field.** OpenMW decides by id prefix -- `mwclass/misc.cpp:isSoulGem` is `getRefId().startsWith("misc_soulgem")` -- and the trapped soul lives on the CellRef, not the base record. Measured over TR_Mainland plus the Morroblivion patch: 6 MISC records match that prefix and 3 more merely contain "soulgem", so those 3 are NOT soul gems in Morrowind either. Converting them to SLGM means matching the prefix, never the name.
 
 ## Ported
 
@@ -137,10 +113,12 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 | `stopscript` | Misc | `c` | 695 |
 | `setpos` | Transformation | `cf` | 670 |
 | `forcegreeting` | Dialogue | `z` | 579 |
+| `addspell` | Stats | `cz` | 570 |
 | `activate` | Misc | `x` | 504 |
 | `moveworld` | Transformation | `cf` | 363 |
 | `getpccell` | Cell | `c` → `l` | 350 |
 | `unlock` | Misc | — | 332 |
+| `cast` | Misc | `SS` | 310 |
 | `aitravel` | Ai | `fff/lx` | 292 |
 | `playsound3d` | Sound | `cXX` | 280 |
 | `stopcombat` | Ai | `x` | 276 |
@@ -152,8 +130,10 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 | `sethello` | Ai | `l` | 235 |
 | `random` | Misc | `l` → `f` | 215 |
 | `gethealth` | Stats | `x` → `f` | 211 |
+| `getspell` | Stats | `c` → `l` | 207 |
 | `rotate` | Transformation | `cf` | 206 |
 | `lock` | Misc | `/l` | 202 |
+| `removespell` | Stats | `cz` | 201 |
 | `placeitemcell` | Transformation | `ccffffX` | 179 |
 | `setangle` | Transformation | `cf` | 159 |
 | `setdisposition` | Stats | `l` | 159 |
@@ -163,27 +143,33 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 | `setdelete` | Misc | `l` | 133 |
 | `placeatpc` | Transformation | `clflX` | 128 |
 | `equip` | Container | `cX` | 127 |
+| `hassoulgem` | Container | `c` → `l` | 123 |
+| `geteffect` | Misc | `S` → `l` | 121 |
 | `getsoundplaying` | Sound | `c` → `l` | 120 |
 | `pcexpell` | Stats | `/S` | 119 |
 | `drop` | Misc | `cl` | 115 |
 | `modpccrimelevel` | Stats | `f` | 114 |
 | `getpcrank` | Stats | `/S` → `l` | 110 |
 | `modfight` | Ai | `l` | 109 |
+| `explodespell` | Misc | `S` | 106 |
 | `playsoundvp` | Sound | `cff` | 97 |
 | `rotateworld` | Transformation | `cf` | 92 |
 | `getpccrimelevel` | Stats | — → `f` | 91 |
 | `getdisposition` | Stats | — → `l` | 90 |
 | `playsound3dvp` | Sound | `cff` | 85 |
+| `getspelleffects` | Misc | `c` → `l` | 82 |
 | `getcurrentaipackage` | Ai | — → `l` | 75 |
 | `getlocked` | Misc | — → `l` | 74 |
 | `face` | Ai | `ffX` | 73 |
 | `scriptrunning` | Misc | `c` → `l` | 73 |
 | `stopsound` | Sound | `cXX` | 72 |
 | `getangle` | Transformation | `c` → `f` | 69 |
+| `removesoulgem` | Misc | `c/l` | 64 |
 | `playloopsound3dvp` | Sound | `cff` | 59 |
 | `setjournalindex` | Dialogue | `cl` | 59 |
 | `setfatigue` | Stats | `f` | 58 |
 | `getcurrentweather` | Sky | — → `l` | 55 |
+| `removeeffects` | Stats | `l` | 54 |
 | `getinterior` | Cell | — → `l` | 53 |
 | `modcurrentfatigue` | Stats | `f` | 51 |
 | `getlos` | Ai | `c` → `l` | 50 |
@@ -205,6 +191,7 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 | `getpcsneaking` | Control | — → `l` | 31 |
 | `setparalysis` | Stats | `l` | 31 |
 | `getintelligence` | Stats | — → `f` | 30 |
+| `addsoulgem` | Misc | `ccX` | 28 |
 | `aiescort` | Ai | `cffff/l` | 28 |
 | `getfight` | Ai | — → `l` | 22 |
 | `getstrength` | Stats | — → `f` | 19 |
@@ -230,6 +217,7 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 | `gethello` | Ai | — → `l` | 9 |
 | `getsecurity` | Stats | — → `f` | 9 |
 | `pcclearexpelled` | Stats | `/S` | 9 |
+| `removespelleffects` | Stats | `c` | 9 |
 | `sethandtohand` | Stats | `f` | 8 |
 | `setmarksman` | Stats | `f` | 8 |
 | `setmercantile` | Stats | `f` | 8 |
@@ -303,6 +291,7 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 | `setluck` | Stats | `f` | 1 |
 | `setsneak` | Stats | `f` | 1 |
 | `setwillpower` | Stats | `f` | 1 |
+| `dropsoulgem` | Misc | `c` |  |
 | `getacrobatics` | Stats | — → `f` |  |
 | `getarmorbonus` | Stats | — → `l` |  |
 | `getathletics` | Stats | — → `f` |  |
@@ -431,4 +420,4 @@ Nothing to port: Morrowind's own presentation, or state this runtime does not ke
 
 Console, debug and chargen commands. Listed for completeness; none is reachable from dialogue.
 
-`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `dropsoulgem`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enableracemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `fixme`, `getcollidingactor`, `getforcejump`, `getmasserphase`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getsecundaphase`, `getstartingpos`, `getstat`, `getwerewolfkills`, `hitattemptonme`, `iswerewolf`, `modpcvisionbonus`, `modregion`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setlevel`, `setnavmeshnumber`, `setpcvisionbonus`, `setwerewolfacrobatics`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`
+`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enableracemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `fixme`, `getcollidingactor`, `getforcejump`, `getmasserphase`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getsecundaphase`, `getstartingpos`, `getstat`, `getwerewolfkills`, `hitattemptonme`, `iswerewolf`, `modpcvisionbonus`, `modregion`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setlevel`, `setnavmeshnumber`, `setpcvisionbonus`, `setwerewolfacrobatics`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`

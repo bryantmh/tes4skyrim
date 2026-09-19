@@ -106,4 +106,9 @@ void InstallQueryOps(OpcodeInstaller& into);
 // magnitudes, and GetLevel. script_ops_stats.cpp.
 void InstallStatOps(OpcodeInstaller& into);
 
+// AddSpell and its kin, Cast/ExplodeSpell, the two effect queries and the
+// RemoveEffects pair. script_ops_spell.cpp.
+// See: docs/commentary/morrowind_runtime.md#spell-commands
+void InstallSpellOps(OpcodeInstaller& into);
+
 }  // namespace mwruntime

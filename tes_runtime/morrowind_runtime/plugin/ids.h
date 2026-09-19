@@ -392,6 +392,29 @@ constexpr std::uint64_t kWeatherClassification = 56775;
 // count, the only native of that name.
 constexpr std::uint64_t kActorBaseDeadCount = 55987;
 
+// The spell natives, each read off its registration site's `lea` beside the
+// name string, the owning script confirmed from the `lea r8` class string
+// (`Actor` for five, `Spell` for Cast), and inverted through the Address
+// Library. All six exist in ALL 12 shipped versionlibs -- the check the angle
+// getters failed.
+//   bool Actor.AddSpell(Spell, bool verbose)     0x988ad0
+//   bool Actor.RemoveSpell(Spell)                0x988940
+//   bool Actor.HasSpell(Form)                    0x988bc0
+//   bool Actor.HasMagicEffect(MagicEffect)       0x988a00
+//   bool Actor.DispelSpell(Spell)                0x9889a0
+//   void Spell.Cast(ObjectReference source, ObjectReference target)  0x9bb750
+//
+// 🛑 `Spell.Cast` is a MEMBER function on the SPEL, so the spell form is
+// `self` and BOTH actors ride as arguments. `ExplodeSpell` passes the same
+// reference for both, which is what "explode on the calling object" means.
+// See: docs/commentary/morrowind_runtime.md#spell-commands
+constexpr std::uint64_t kActorAddSpell = 54652;
+constexpr std::uint64_t kActorRemoveSpell = 54647;
+constexpr std::uint64_t kActorHasSpell = 54653;
+constexpr std::uint64_t kActorHasMagicEffect = 54649;
+constexpr std::uint64_t kActorDispelSpell = 54648;
+constexpr std::uint64_t kSpellCast = 55747;
+
 // TESGlobal's value, the float `GlobalVariable.GetValue` (0x9c2b30) returns:
 // `movss xmm0,[r8+0x34]`, a two-instruction leaf, so the field is read.
 constexpr std::size_t kOffGlobalValue = 0x34;

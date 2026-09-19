@@ -1708,5 +1708,24 @@ Azura's Star, whose suffix names no tier, holding a grand soul.
 
 Vanilla Morrowind has six: petty, lesser, common, greater, grand and Azura.
 They ship empty (`SOUL=0`), because TES3 stores a captured soul on the
-inventory stack rather than on the base record, so there is no filled variant
-to carry across.
+inventory stack rather than on the base record.
+
+### <a id="filled-soul-gems"></a>The filled variants are SYNTHESIZED
+
+The two games disagree about where a trapped soul lives. TES3 keeps it on the
+inventory stack, so one `misc_soulgem_grand` record serves empty and full
+alike. **Skyrim makes a filled gem a separate base record** whose `SOUL` is
+the trapped size — `SoulGemGrand` has `SOUL=0` and `SoulGemGrandFilled` has
+`SOUL=5`, same `SLCP=5`, differing only in `SOUL` and value.
+
+So a filled variant is synthesized per gem per soul size it can hold:
+`<gem id>_Filled<n>`, capacity 1..N. Six vanilla gems yield 20 records
+(1+2+3+4+5+5). Without them `AddSoulGem` has nothing to add — the command
+names a creature, and the gem it must produce is the one holding **that
+creature's** soul.
+
+The soul size comes from the creature's own `DATA.Soul`, which the CREA
+exporter already emits in Skyrim's 1..5 enum, so no new mapping is needed.
+
+🛑 The key is the gem's **authored id**, never its capacity or an ordinal, so
+a derived FormID never moves ([the save-game contract](performance.md#formid-determinism--the-save-game-contract-rewritten-2026-08-17)).
