@@ -66,17 +66,20 @@ def init_worker_for(export_dir, im, door_fids, base_model_by_fid, offset):
 def load_export(export_dir, offset):
     """(text_reader, by_type, door_fids, base_model_by_fid, jobs) for a plugin.
 
-    The masters' export is loaded and passed to both index builders, exactly as
-    `pipeline_records` does: a DOOR or base object owned by a master otherwise
-    resolves to nothing, so every such door loses its panel measurement and the
-    geometry rebuilt here silently differs from the pipeline's.
+    Mirrors `pipeline_records`: the masters' export feeds both index builders,
+    and the mesh namespace is set first because model keys carry it.  Skip
+    either and the geometry rebuilt here silently differs from the import's.
+
+    See: docs/commentary/tes5_import_navmesh.md#verifying-a-cache-against-fresh-geometry
     """
+    from asset_convert.game_paths import namespace_for, set_namespace
     from tes5_import.base import text_reader as im
     from tes5_import.base.text_reader import (parse_export_directory,
                                          group_records_by_type,
                                          set_formid_index_offset)
     from tes5_import.overrides.nested import load_master_export
 
+    set_namespace(namespace_for(export_dir))
     set_formid_index_offset(offset)
     print(f'parsing {export_dir} ...', flush=True)
     t0 = time.time()

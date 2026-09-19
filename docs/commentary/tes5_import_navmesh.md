@@ -2004,6 +2004,13 @@ gate refusing with a geometry MISMATCH of 1-3 verts on scattered cells):
   (masters first). Master-owned meshes had no collision in the tool, so cell
   024802DC built 107 verts there against the import's 109, and 024802C1 354
   against 355. Both now go through `job_trace.init_worker_for`.
+- `job_trace.load_export` never called `set_namespace(namespace_for(...))`,
+  so model keys took the default `tes4/` prefix. Nehrim's are `nehrim/`: all
+  10,337 base-model keys differed from the import's and EVERY Nehrim cell
+  mismatched (011A575C 36 verts cached, 37 in the tool), while Oblivion, whose
+  namespace IS `tes4`, passed 40/40. It looked random because the old proof
+  was vacuous while the tag matched (a cache hit compared with itself) and
+  only really compared after a navmesh source edit.
 - A proving rebuild ran `run_job` with the live cache. Once the tag has moved
   every lookup misses, so the rebuild STORED over the entry being proven — a
   refused adoption left its wrong geometry behind under the new tag. Proving
