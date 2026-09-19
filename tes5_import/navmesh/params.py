@@ -15,9 +15,6 @@ CS_EXTERIOR = 32.0
 CH = 8.0
 
 # --- Agent ---------------------------------------------------------------------
-# Radius to erode the walkable set by, so the mesh keeps a correct standoff from
-# every wall.  This replaces the old hand-tuned EXCLUSION_MARGIN fudge.
-AGENT_RADIUS = 24.0
 # Required headroom.  Kills crawlspaces under stairs and low shelves.
 AGENT_HEIGHT = 128.0
 # Step height.  THE key constant: it decides stairs (connected) vs ledges
@@ -92,13 +89,6 @@ PGRD_XY_REACH = 384.0
 # climb cliffs steeper than MAX_CLIMB per step or cross water gaps, and roofs
 # remain unreachable, so the wrong-surface protection is intact).
 PGRD_XY_REACH_EXTERIOR = 8192.0
-# Radius of the flood barrier stamped over each TELEPORT door of an interior
-# cell.  The reach flood may arrive at these columns (the doorstep keeps its
-# mesh, so the Door Triangle exists) but never expands from them, so the mesh
-# ends at the threshold — like vanilla — instead of escaping through the open
-# doorway onto the decorative street outside the shell.  Must comfortably
-# exceed a doorway's half-width so the flood cannot slip around the corners.
-DOOR_BARRIER_RADIUS = 64.0
 # Half-width of the band stamped along every pathgrid line (voxel.stamp_pathgrid).
 # This band is UNCONDITIONAL navmesh: the pathgrid is the only part of the input
 # we know to be correct, so a strip of this width around every pathgrid line is
@@ -127,25 +117,9 @@ PGRD_SNAP_Z = 48.0
 # loses a climbing cave passage and stamps the ribbon inside the hill.
 
 # --- Door threshold quads -----------------------------------------------------------
-# Every door REFR (teleport or interior) gets an exact oriented quad stamped
-DOOR_QUAD_HALF_WIDTH = 48.0
-DOOR_QUAD_HALF_DEPTH = 32.0
 # Z window for claiming mesh vertices into the quad — a door only restructures
 # the floor it stands on, never a storey above/below.
 DOOR_QUAD_ZTOL = 128.0
-
-# --- Boundary cleanup ---------------------------------------------------------------
-# A triangle on the outline with at most one neighbour (a protruding flap/ear)
-EAR_MIN_AREA = 192.0
-# A flap is exempt when any densified pathgrid sample lies within this XY
-# distance of it.  Containment-only exemption still let the cull eat ribbon
-# ends and narrow cave ledges the pathgrid walks (2 wrong-floor nodes in
-# XPGloomstonePassage02); a distance buffer protects the walked line and its
-# fringe while still cleaning wall corners elsewhere.
-EAR_PGRD_RADIUS = 64.0
-# Cull rounds.  Each round exposes new boundary edges; more rounds chain-eat
-# the outline (a cave boundary is legitimately jagged).
-EAR_ROUNDS = 2
 
 # --- Island pruning ---------------------------------------------------------------
 # A disconnected component smaller than this is noise (a scrap behind a shelf, a
@@ -347,10 +321,3 @@ RIBBON_GROW_MIN_HALF = 16.0
 # wide enough for room coverage, bounded enough that a doorway leak is a nub.
 RIBBON_GROW_MAX_HALF = 160.0
 
-# --- Limits ----------------------------------------------------------------------
-# Hard cap on grid dimension per cell; beyond this CS is coarsened.  Guards
-# memory on huge exterior cells.
-MAX_GRID_DIM = 512
-# Per-cell wall-clock budget.  On overrun the cell is abandoned (the caller
-# falls back), so one pathological cell can never stall the whole run.
-CELL_TIME_BUDGET = 20.0

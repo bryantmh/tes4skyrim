@@ -30,7 +30,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from tools.navmesh import navmesh_cache as nc
+from tools.navmesh import job_trace, navmesh_cache as nc
 from tes5_import.navmesh import cache_audit as navm_verify
 
 ADOPT_OK = 0
@@ -93,18 +93,11 @@ def load_plugin(plugin: str, offset: int = 1):
     the per-cell hash, so every entry misses and adoption sees nothing to
     compare.
     """
-    from tools.navmesh.job_trace import _load
-    from output_layout import assets_for
-    from tes5_import.navmesh import worker as navm_worker
     export_dir = os.path.join('export', plugin)
-    im, _bt, door_fids, base_model_by_fid, jobs = _load(export_dir, offset)
-    collision = str(assets_for(export_dir) / 'collision_cache.bin')
-    from tes5_import.navmesh import pool as navm_pool
-    geom_cache = navm_pool.navmesh_geom_cache(collision)
-    dcc = str(assets_for(export_dir) / 'door_centers_cache.json')
-    navm_worker.init_worker(base_model_by_fid, door_fids, collision, offset,
-                            geom_cache, im.get_injected_formids(),
-                            disable_gc=False, door_centers_cache=dcc)
+    im, _bt, door_fids, base_model_by_fid, jobs = job_trace.load_export(
+        export_dir, offset)
+    geom_cache = job_trace.init_worker_for(export_dir, im, door_fids,
+                                           base_model_by_fid, offset)
     return im, jobs, geom_cache
 
 

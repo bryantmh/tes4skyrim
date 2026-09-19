@@ -41,13 +41,29 @@ import time
 import traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
-from output_layout import assets_for
-from tes5_import.navmesh import pool as navm_pool
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tes5_import.navmesh import cache_audit, pool as navm_pool
+from tes5_import.navmesh import worker as navm_worker
 
 
-def _load(export_dir, offset):
+def init_worker_for(export_dir, im, door_fids, base_model_by_fid, offset):
+    """Initialise the in-process navmesh worker as the import does; geom_cache.
+
+    Collision and door centers load as the MASTERS-FIRST chain: with only the
+    plugin's own file, master-owned meshes have no collision and a child
+    plugin's cells build different geometry than the import cached.
+
+    See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
+    """
+    collision = navm_pool.collision_cache_chain(export_dir)
+    geom_cache = navm_pool.navmesh_geom_cache(collision[-1])
+    navm_worker.init_worker(
+        base_model_by_fid, door_fids, collision, offset, geom_cache,
+        im.get_injected_formids(), disable_gc=False,
+        door_centers_cache=cache_audit.door_centers_cache_path(collision))
+    return geom_cache
+
+
+def load_export(export_dir, offset):
     """(text_reader, by_type, door_fids, base_model_by_fid, jobs) for a plugin.
 
     The masters' export is loaded and passed to both index builders, exactly as
@@ -119,21 +135,14 @@ def main():
         ap.error(f'no such export dir: {export_dir}')
 
     faulthandler.enable()
-    im, by_type, door_fids, base_model_by_fid, jobs = _load(export_dir,
-                                                            args.offset)
+    im, _by_type, door_fids, base_model_by_fid, jobs = load_export(
+        export_dir, args.offset)
     print(f'  {len(jobs)} navmesh jobs', flush=True)
 
-    collision_cache = str(assets_for(export_dir) / 'collision_cache.bin')
-    geom_cache = navm_pool.navmesh_geom_cache(collision_cache)
-    dcc = str(assets_for(export_dir) / 'door_centers_cache.json')
-
-    from tes5_import.navmesh import worker as navm_worker
     from tes5_import.navmesh.from_pgrd import convert_PGRD
 
-    navm_worker.init_worker(
-        base_model_by_fid, door_fids, collision_cache, args.offset, geom_cache,
-        im.get_injected_formids(), disable_gc=False,
-        door_centers_cache=dcc if os.path.exists(dcc) else None)
+    geom_cache = init_worker_for(export_dir, im, door_fids, base_model_by_fid,
+                                 args.offset)
 
     # Select the jobs to run.
     if args.cell:

@@ -157,7 +157,7 @@ def _sampled_with_entries(jobs: list, geom_cache, sample: int) -> tuple:
     for job in [j for j in picked if j.get('verify')]:
         got = cached_geometry(geom_cache, *job['key'])
         if got is not None:
-            todo.append(job)
+            todo.append(dict(job, prove=True))
             stored.append(got)
     return todo, stored
 

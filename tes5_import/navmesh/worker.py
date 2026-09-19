@@ -114,13 +114,12 @@ def _verify_against_cache(job: dict, result: tuple) -> tuple:
 def run_job(job: dict):
     """ProcessPool task: convert one PGRD to (navm_bytes, meta).
 
-    A failing cell must not abort the whole ex.map batch, so exceptions are
-    caught -- but the message is RETURNED, not printed: workers run under
-    pythonw.exe, where stdout goes nowhere. The parent prints what comes back
-    (see import_main._precompute_navmeshes).
+    Exceptions are caught and RETURNED in meta['error'], never printed: workers
+    run under pythonw.exe, where stdout goes nowhere.
 
     job['verify'] asks this cell to double-build and compare; the PARENT picks
-    which cells carry it.
+    which cells carry it.  job['prove'] builds with NO cache, so a prover never
+    stores over the entry it is comparing against.
     """
     try:
         navm_bytes, meta = convert_PGRD(
@@ -131,7 +130,7 @@ def run_job(job: dict):
             base_model_by_fid=_BASE_MODEL_BY_FID,
             door_fids=_DOOR_FIDS,
             navm_fid=job['navm_fid'],
-            geom_cache=_GEOM_CACHE,
+            geom_cache=None if job.get('prove') else _GEOM_CACHE,
             extra_door_refrs=job.get('extra_door_refrs'),
         )
         if job.get('verify') and meta and meta.get('geom_cached'):

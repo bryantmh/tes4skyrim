@@ -93,12 +93,17 @@ so defaults are recoverable exactly. All values are **game units**.
 
 ### `[Recast]` — the voxel generator
 
+> **Our column dates from the collision-voxel generator**, which the
+> corridor-ribbon rewrite replaced. `MAX_SIMPLIFY_ERR`, `MIN_REGION_VOXELS` and
+> `CH` still exist in `params.py` but nothing reads them; `AGENT_RADIUS` is
+> gone. The CK side of the table is unaffected — it is read out of the exe.
+
 | Setting | Default | `rcConfig` field | Our value (`navmesh/params.py`) |
 |---|---|---|---|
 | `fRecastCellSize` | **8.0** | `cs` | `CS = 16.0`, `CS_EXTERIOR = 32.0` |
 | `fRecastCellHeight` | **8.0** | `ch` | `CH = 8.0` ✅ |
 | `fRecastAgentHeight` | **128.0** | `walkableHeight` | `AGENT_HEIGHT = 128.0` ✅ |
-| `fRecastAgentRadius` | **32.0** | `walkableRadius` | `AGENT_RADIUS = 24.0` |
+| `fRecastAgentRadius` | **32.0** | `walkableRadius` | *(none — the corridor march measures a slab against collision instead of eroding)* |
 | `fRecastAgentMaxClimb` | **32.0** | `walkableClimb` | `MAX_CLIMB = 34.0` ≈ ✅ |
 | `fRecastAgentMaxSlope` | **45.0** | `walkableSlopeAngle` | `MAX_SLOPE_DEG = 46.0` ≈ ✅ |
 | `fRecastEdgeMaxLen` | **512.0** | `maxEdgeLen` | `TRI_TARGET_EDGE = 128.0` |
@@ -296,14 +301,14 @@ the dedicated sub-pipeline). We rely entirely on `MAX_CLIMB` during voxel
 filtering, which only connects steps that are *vertically adjacent within one
 climb* in the *same column neighbourhood*. Oblivion staircases with open risers,
 or treads separated by more than one voxel column, come out as disconnected
-islands — which we currently paper over with `stamp_pathgrid`'s unconditional
-band (`PGRD_BAND`, and the comment there explicitly notes staircases failing).
+islands — which we papered over with `stamp_pathgrid`'s unconditional band
+(`PGRD_BAND`, whose comment explicitly notes staircases failing).
 
-Recommended: after `build_mesh`, add a boundary-edge stair pass — for each pair
-of boundary edges within `fCellPortalXYVertDistance` (16u) in XY and
-`fStepHeight` (25u) in Z, and roughly antiparallel, weld/bridge them. This is
-a principled replacement for the pathgrid stamp hack, and would let
-`PGRD_BAND` shrink.
+> **Superseded by the corridor rewrite.** There is no voxel filtering and no
+> `stamp_pathgrid`; `PGRD_BAND` is now an unread constant. Stairs are handled
+> by `RIBBON_STAIR_HALF_WIDTH` + `RIBBON_STAIR_END_EXTEND` (the grow refuses
+> edges steeper than `RIBBON_GROW_MAX_SLOPE`). The CK's boundary-edge stair
+> pass may still be worth porting, but not as a way to shrink `PGRD_BAND`.
 
 ### 6. No cover-edge generation — MEDIUM (feature gap)
 
@@ -342,17 +347,19 @@ expected to agree in Z, and we may be rejecting valid portals with a tighter
 gate. (See [project_navmesh_edge_links] — we found 0/5825 exterior navmeshes
 had edge links; tolerance is a plausible contributor.)
 
-### 9. `fMinIslandArea = 150.0` vs our `MIN_ISLAND_TRIS = 5` — DONE
+### 9. `fMinIslandArea = 150.0` vs our `MIN_ISLAND_TRIS = 5` — ⚠️ REVERTED
 
-The CK prunes islands by **area** (150 sq units), we pruned by **triangle
+The CK prunes islands by **area** (150 sq units), we prune by **triangle
 count**. With item 4 applied (512u edges) a 5-triangle island can be an entire
 room, so a count means something different every time the tessellation changes.
-Now `MIN_ISLAND_AREA = 150.0`, applied in `build._prune_islands` and mirrored in
-`tools/navmesh/audit.py`'s TINY census.
 
-Note `MIN_REGION_VOXELS` (the `uRecastRegionMinSize` analogue) is **unused** and
-documented as such: our region pass keeps regions by PATHGRID SEEDING rather
-than by size, which is a stronger signal than area.
+> The `MIN_ISLAND_AREA = 150.0` replacement went out with the voxel generator.
+> `git log -S MIN_ISLAND_AREA -- tes5_import/navmesh/` finds no commit; the
+> tree still has `MIN_ISLAND_TRIS = 5`. The argument above stands and the
+> change is still worth making against the corridor generator.
+
+Note `MIN_REGION_VOXELS` (the `uRecastRegionMinSize` analogue) is **unread** —
+it belonged to the deleted region pass.
 
 ### 10. Adopt the CK's own validation rules — LOW effort, HIGH diagnostic value
 
@@ -383,18 +390,27 @@ we've chased before.
 
 1. ~~Params~~ **DONE (2026-07-22)** — see results below.
 2. ~~Port `CheckNavMesh`'s rule set~~ **DONE** — `tools/navmesh/check.py`.
-3. Boundary-edge stair connection (item 5); then reduce `PGRD_BAND` and see if
-   the mesh survives on its own merit.
+3. Boundary-edge stair connection (item 5). (The "then reduce `PGRD_BAND`"
+   half is void — no voxel stamp exists to shrink.)
 4. Water triangle flags (item 7) — mechanical, immediate AI benefit.
 5. Cover edges (item 6).
 6. Portal tolerance review against 4/16/64 (item 8).
 
-## Results — params pass (2026-07-22)
+## Results — params pass (2026-07-22) — ⚠️ REVERTED, NOT IN THE TREE
 <a id="results-params-pass"></a>
 
-Final values in `tes5_import/navmesh/params.py`:
+> **None of the values below are live.** They tuned the collision-voxel
+> generator, which the corridor-ribbon rewrite replaced; the pass was rolled
+> back with it. `MIN_ISLAND_AREA` was never committed (`git log -S` finds no
+> commit touching `tes5_import/navmesh/`). `AGENT_RADIUS` no longer exists —
+> the corridor march measures a slab against collision instead of eroding a
+> walkable set. Verified against the tree: `CS` is 16.0, `CS_EXTERIOR` 32.0,
+> `TRI_TARGET_EDGE` 128.0, `MAX_SIMPLIFY_ERR` 12.0, `MIN_ISLAND_TRIS` 5.
+> Kept as the record of the CK comparison and the units trap, which still hold.
 
-| Param | Was | Now | Source |
+Values this pass set (all since reverted):
+
+| Param | Was | Pass set | Source |
 |---|---|---|---|
 | `CS` | 16.0 | **8.0** | `fRecastCellSize` |
 | `CS_EXTERIOR` | 32.0 | **16.0** | one octave coarser (whole-worldspace runs) |

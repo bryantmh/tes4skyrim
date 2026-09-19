@@ -717,21 +717,29 @@ Verified on all 16 worst-offending cells from the shipped ESM (10 interior +
 6 exterior): every one now reports CLEAN under `tools/navmesh/check.py`'s rules,
 with coverage/steep/island metrics unchanged.
 
-### Exterior coverage (the "discontinuities with no obstacles" fixes)
+### 🔴 Exterior coverage is UNSOLVED — the corridor rewrite lost it
 
-- **Reach**: `PGRD_XY_REACH_EXTERIOR` (8192) replaces the interior 384u gate
-  outdoors — vanilla exterior navmeshes cover essentially the whole cell, and
-  the tight gate carved open terrain into blobs around the road pathgrid.
-  Geodesic flooding still can't climb >MAX_CLIMB per step or reach roofs.
-- **Ledge spread test scales with cs**: `filter_ledge_spans`' steep-slope test
-  `(max_drop - min_drop) > lim` must use `lim = max(MAX_CLIMB,
-  2*cs*tan(MAX_SLOPE_DEG))`. With raw MAX_CLIMB at CS_EXTERIOR=32 it un-walked
-  every hillside steeper than ~28° (2·32·tan28°≈34) — the mystery holes in open
-  terrain. At CS=16 the scaled value equals MAX_CLIMB, so interiors unchanged.
-- **Cell borders**: a neighbour column outside the exterior cell's LAND is
-  unknown terrain (it continues in the next cell), NOT a cliff — treating it as
-  a drop un-walked the border row and left a 2-column gap on every cell seam
-  (`ext_rect` threading through `apply_filters`).
+**Open terrain gets a strip, not a cell.** The corridor generator grows each
+pathgrid edge sideways until a wall, a >`MAX_CLIMB` floor departure, or
+`RIBBON_GROW_MAX_HALF` (160u). On flat ground nothing else stops it, so a road
+through a 4096u cell yields a ~320u band — roughly 8% coverage — and the rest
+of the cell has no navmesh at all. Observed in `WrldMorrowind -17 -51`
+(TR_Mainland): flat land adjacent to the pathgrid, no mesh.
+
+The cap is an INTERIOR leak guard: indoors, a march that finds neither wall nor
+floor edge is a ribbon escaping a doorway or crossing a collision gap, and 160u
+turns the runaway into a nub. Outdoors the same condition means *a field*.
+
+**Raising the cap is not the fix.** The march runs perpendicular to ONE line, so
+a larger cap widens the band along the road's axis and still leaves corners and
+everything past the endpoints empty, while restoring the indoor runaway.
+
+Covering terrain needs a slope/collision-bounded AREA fill unioned with the
+corridor result, with the cap kept for interiors. The retired voxel path did
+this via `PGRD_XY_REACH_EXTERIOR` (8192u geodesic reach vs the 384u interior
+gate), recorded then as: vanilla exterior navmeshes cover essentially the whole
+cell, and a tight gate "carved open terrain into blobs around the road
+pathgrid". That capability did not survive the rewrite.
 
 ### Geometry cache (the import-time fix)
 
@@ -1986,6 +1994,20 @@ gitignored `export/` data. Use `--run` for the PR case.
 
 **Code:** `pgrd_to_navm.geom_equal` / `geom_quantize`, `navm_worker.run_job`,
 `import_main._precompute_navmeshes`, `tools/navmesh/navmesh_cache.py adopt`.
+
+**A prover must build exactly as the import does, and must never store.** Two
+defects made a child plugin's cache look non-reproducible (Morrowind_ob, push
+gate refusing with a geometry MISMATCH of 1-3 verts on scattered cells):
+
+- `navmesh_adopt.load_plugin` and `job_trace` loaded only the plugin's OWN
+  `collision_cache.bin`, while the import loads `collision_cache_chain`
+  (masters first). Master-owned meshes had no collision in the tool, so cell
+  024802DC built 107 verts there against the import's 109, and 024802C1 354
+  against 355. Both now go through `job_trace.init_worker_for`.
+- A proving rebuild ran `run_job` with the live cache. Once the tag has moved
+  every lookup misses, so the rebuild STORED over the entry being proven — a
+  refused adoption left its wrong geometry behind under the new tag. Proving
+  jobs now carry `job['prove']`, which builds with `geom_cache=None`.
 
 The source tag is a *proxy* for "the generator's behaviour changed": it hashes
 the bytes of `tes5_import/navmesh/*.py` and `pgrd_to_navm.py`. It cannot tell a
