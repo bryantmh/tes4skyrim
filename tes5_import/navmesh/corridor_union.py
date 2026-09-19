@@ -289,6 +289,12 @@ LAND_MAX_EDGE_RATIO = 2.5
 LAND_SLIT_HALF = 16.0
 
 
+def _target_edge(group):
+    """Triangle target edge for a sheet: terrain sheets mesh coarser."""
+    return (params.LAND_TRI_TARGET_EDGE if _land_of(group) is not None
+            else params.TRI_TARGET_EDGE)
+
+
 def _close_land_slits(gmerged, group, slit_ok):
     """`gmerged` with the wall-free hairline gaps between terrain ribbons filled.
 
@@ -377,10 +383,9 @@ def _mesh_one_part(part, group, gseeds, door_edges, claimed_ids):
     """
     fixed = _claim_door_edges(part, group, door_edges, claimed_ids)
     land = _land_of(group)
-    v2, t2 = _triangulate(part, params.TRI_TARGET_EDGE,
-                          fixed_edges=fixed, steep_seeds=gseeds,
-                          max_edge=(LAND_MAX_EDGE_RATIO * params.TRI_TARGET_EDGE
-                                    if land is not None else None))
+    target = _target_edge(group)
+    v2, t2 = _triangulate(part, target, fixed_edges=fixed, steep_seeds=gseeds,
+                          land=land, max_edge=LAND_MAX_EDGE_RATIO * target)
     if not t2:
         return [], []
     levels = _levels_batch(group, v2)
@@ -404,7 +409,7 @@ def _mesh_sheets(sheets, ctx, door_edges):
         ctx['claimed'].append((gmerged, group))
         parts = _sheet_parts(gmerged, ctx['wall_cut'])
         group = list(group) + ctx['junction_strips'].get(gi, [])
-        gseeds = _ribbon_seeds(group, params.TRI_TARGET_EDGE)
+        gseeds = _ribbon_seeds(group, _target_edge(group))
         for part in parts:
             if not isinstance(part, Polygon) or part.area < 1.0:
                 continue

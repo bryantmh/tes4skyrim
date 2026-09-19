@@ -808,6 +808,23 @@ output is in-game verified and was left untouched — a KNOWN DEFECT, unfixed.
 For the same reason a terrain ribbon never seeds the stair refine
 (`_ribbon_seeds`): fed hill paths, that pass left T-junction cracks.
 
+<a id="land-sheets-mesh-coarse"></a>**A terrain sheet meshes at
+`LAND_TRI_TARGET_EDGE` (256u) and refines only where the LAND curves**
+(`corridor_union._target_edge`, `union_cdt._refine_land`, `_cuts_relief`). Most
+of a cell's build is spent AFTER triangulation and scales with triangle count,
+and the NVNM payload is ~16 bytes a triangle. Measured on 12 Oblivion exterior
+cells, target edge alone (time / triangles / payload / sample points over 16u
+off the ground): **128: 42.9s / 27,305 / 610 KB / 0.4%; 192: 25.4s / 14,156 /
+325 KB / 1.3%; 256: 21.4s / 8,983 / 213 KB / 3.2%; 384: 19.8s / 5,919 / 146 KB
+/ 8.1%** — the time curve is flat past 256 and the hover tail is not. So 256,
+plus a bisection of any triangle whose edge midpoint sits more than
+`LAND_RELIEF_TOL` (16u) off the chord between its ends (never below
+`LAND_MIN_EDGE`): **23.3s / 10,802 / 252 KB / 1.0%**, with p99 off-ground 25.9
+-> 16.2. `AnvilAnvilExteriorCastle03`: 2,269 -> 905 triangles. Walked-line
+cracks rise (60 -> 76 on the sample) — accepted by the author for open terrain.
+Interiors keep `TRI_TARGET_EDGE`: at 256 twelve interiors saved 8% build time
+and DOUBLED their uncovered pathgrid samples (26 -> 58).
+
 <a id="cross-sheet-weld-spans-one-step"></a>**Two sheets' vertices on the SAME
 plan spot weld across one step of height** (`union_mesh._weld_match`). The weld
 is a 16u sphere, so two sheets that disagree by more than that at a shared

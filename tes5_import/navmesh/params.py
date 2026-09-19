@@ -42,6 +42,8 @@ MAX_SIMPLIFY_ERR = 12.0
 MIN_REGION_VOXELS = 8
 #: Hex-lattice spacing and outline densify step (u); 192 was measured and rejected, see #tri-target-edge-192.
 TRI_TARGET_EDGE = 128.0
+#: Target edge for TERRAIN sheets; relief keeps them finer where the land curves.
+LAND_TRI_TARGET_EDGE = 256.0
 # Triangle shape bound during simplification: longest_edge^2 / (4 * area).  An
 # equilateral triangle scores 0.58; slivers score high.  A collapse or a smooth
 # move may not create a triangle worse than this.  (The old bound of 6 let

@@ -254,14 +254,15 @@ def _emit_door_triangles(door_tris, pid, tris_out):
 
 
 def _triangulate(poly, target_edge, fixed_edges=None, steep_seeds=None,
-                 max_edge=None):
+                 land=None, max_edge=None):
     """Triangulate a shapely polygon into UNIFORM, well-shaped triangles.
 
     Returns (verts2d, tris) in ONE shared vertex space.
 
     fixed_edges: [(p0, p1, apex), ...] door triangles, cut out and re-added as
     ordinary mesh.  steep_seeds: [(x, y, is_steep), ...] on stair centerlines.
-    max_edge: when set, EVERY longer edge is bisected (terrain sheets).
+    land: a terrain sheet's LandField; its triangles are bisected past
+    `max_edge` and wherever they cut through the land's relief.
 
     See: docs/commentary/tes5_import_navmesh.md#cdt-is-a-true-constrained-delaunay
     """
@@ -295,9 +296,9 @@ def _triangulate(poly, target_edge, fixed_edges=None, steep_seeds=None,
     verts = [(float(x), float(y)) for (x, y) in pts]
     if not tris_out:
         return _earcut_fallback(poly)
-    if max_edge is not None:
-        verts, tris_out = _refine_steep(verts, tris_out, None,
-                                        protected=ring_edges, max_edge=max_edge)
+    if land is not None:
+        verts, tris_out = _refine_land(verts, tris_out, land, max_edge,
+                                       protected=ring_edges)
         tris_out = _flip2d(verts, tris_out)
     steep_pts = [(sx, sy) for (sx, sy, st) in (steep_seeds or ()) if st]
     if steep_pts:
@@ -590,31 +591,26 @@ def _carries_seed(verts, t, grid, cell):
     return False
 
 
-def _refine_steep(verts, tris, steep_pts, protected=(),
-                  max_edge=STEEP_REFINE_EDGE):
+def _refine_steep(verts, tris, steep_pts, protected=()):
     """Bisect triangles carrying steep centerline seeds until they are fine.
 
     Longest-edge bisection with the neighbour split at the same midpoint, so
     every split keeps the triangulation conforming.  Edges in `protected`
-    (door rings) are never split.  `steep_pts=None` refines EVERY triangle
-    whose longest edge exceeds `max_edge`.
+    (door rings) are never split.
 
     See: docs/commentary/tes5_import_navmesh.md#steep-refinement-keeps-stairs-alive
     """
     verts = [tuple(v) for v in verts]
     tris = [tuple(t) for t in tris]
-    if (steep_pts is not None and not steep_pts) or not tris:
+    if not steep_pts or not tris:
         return verts, tris
-    max_e2 = max_edge * max_edge
+    max_e2 = STEEP_REFINE_EDGE * STEEP_REFINE_EDGE
     cell = STEEP_REFINE_EDGE * 2.0
-    grid = _seed_grid(steep_pts or (), cell)
+    grid = _seed_grid(steep_pts, cell)
     for _round in range(6):
         split_edges = {}
         for t in tris:
-            if steep_pts is None:
-                if not _has_plan_area(verts, t):
-                    continue
-            elif not _carries_seed(verts, t, grid, cell):
+            if not _carries_seed(verts, t, grid, cell):
                 continue
             d2, a, b = _longest_edge(verts, t)
             key = (a, b) if a < b else (b, a)
@@ -625,8 +621,51 @@ def _refine_steep(verts, tris, steep_pts, protected=(),
             verts.append((0.5 * (pa[0] + pb[0]), 0.5 * (pa[1] + pb[1])))
         if not split_edges:
             break
-        tris = [x for t in tris
-                for x in _fan_split(t, split_edges, steep_pts is None)]
+        tris = [x for t in tris for x in _fan_split(t, split_edges)]
+    return verts, tris
+
+
+#: A terrain triangle is split while the LAND leaves one of its edges by more than this.
+LAND_RELIEF_TOL = 16.0
+#: ...but never below this edge length.
+LAND_MIN_EDGE = 96.0
+
+
+def _cuts_relief(verts, t, land):
+    """True when the LAND bulges or dips past LAND_RELIEF_TOL along an edge of `t`."""
+    for k in range(3):
+        (ax, ay), (bx, by) = verts[t[k]], verts[t[(k + 1) % 3]]
+        chord = 0.5 * (land.z(ax, ay) + land.z(bx, by))
+        if abs(land.z(0.5 * (ax + bx), 0.5 * (ay + by)) - chord) > LAND_RELIEF_TOL:
+            return True
+    return False
+
+
+def _refine_land(verts, tris, land, max_edge, protected=()):
+    """Bisect a terrain sheet's triangles: over-long ones, and ones cutting relief.
+
+    Longest-edge bisection fanned from the midpoint, so it stays conforming.
+    See: docs/commentary/tes5_import_navmesh.md#land-sheets-bisect-long-edges
+    """
+    verts = [tuple(v) for v in verts]
+    tris = [tuple(t) for t in tris]
+    max_e2, min_e2 = max_edge * max_edge, LAND_MIN_EDGE * LAND_MIN_EDGE
+    for _round in range(6):
+        split_edges = {}
+        for t in tris:
+            d2, a, b = _longest_edge(verts, t)
+            key = (a, b) if a < b else (b, a)
+            if (key in protected or key in split_edges or d2 <= min_e2
+                    or not _has_plan_area(verts, t)):
+                continue
+            if d2 <= max_e2 and not _cuts_relief(verts, t, land):
+                continue
+            pa, pb = verts[a], verts[b]
+            split_edges[key] = len(verts)
+            verts.append((0.5 * (pa[0] + pb[0]), 0.5 * (pa[1] + pb[1])))
+        if not split_edges:
+            break
+        tris = [x for t in tris for x in _fan_split(t, split_edges, True)]
     return verts, tris
 
 
