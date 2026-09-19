@@ -267,6 +267,14 @@ The unit tests build their fixtures through `_serialize`, so a writer/reader pai
 that is self-consistent but disagrees with an on-disk file passes all of them —
 which is exactly how this shipped.
 
+**`TESCOL07` / schema 4.** Bumped when TREE bases began keying to their
+converted SpeedTree NIF (`<ns>/speedtrees/<name>.nif`) instead of the
+unresolvable `<name>.spt.nif`. Which meshes a cell carves changed, so every
+cache written before the bump is regenerated rather than trusted — the magic
+and `COLLISION_SCHEMA_VERSION` move together, and the old blob is
+byte-compatible, so nothing but the version distinguishes them.
+See: [tes5_import_navmesh.md](tes5_import_navmesh.md#speedtree-model-keys).
+
 FURN MNAM/FNPR must index the converted NIF's clustered seat positions, and
 REFRs of re-origined furniture models need z compensation (shared algorithm in
 `asset_convert/nif/furniture_markers.py`).

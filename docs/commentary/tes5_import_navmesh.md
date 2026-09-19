@@ -887,6 +887,57 @@ changes can't bake in.
 **Code:** `navmesh/pool.py`. The parent-side scheduling around `navm_worker` —
 gathering jobs, the indexes their carving needs, the cache tag, and the pool.
 
+#### <a id="refs-overhang-their-cell"></a>A quarter of exterior refs overhang their own cell
+
+**Code:** `navmesh/pool.py::_overhang_index`. A cell's geometry was gathered
+from `refr_by_cell[cell_fid]` alone — the refs whose `ParentCELL` is this cell.
+But an exterior placement is parented to the cell containing its ORIGIN, and
+large statics routinely extend well past that square.
+
+Measured over Oblivion.esm (`export/Oblivion.esm`, non-persistent exterior
+cells only, refs whose centre lies inside their own parent square):
+
+| | count |
+|---|---|
+| exterior cells | 33,540 |
+| placements with a bounding radius | 628,086 |
+| **reaching into a neighbouring cell** | **168,197 (26.8%)** |
+| centred outside their parent cell (excluded) | 31 |
+
+Reach past the border, in game units: 72,787 under 512; 24,675 at 512+;
+25,761 at 1024+; 23,274 at 1536+; 11,623 at 2048+; 4,727 at 2560+; 5,350 at
+3072+. The largest single reach is 9,864 units — more than two cells.
+
+Such a ref carved nothing in the cell it visually occupies. AnvilBayEast01
+(grid −47,−9) is the case that exposed it: `AnvilBoardwalkComplete01`
+(`MODB=1721.96`) is placed by refr `00014CFB` at X=−193042.2, whose origin
+sits in grid −48,−9 and whose `ParentCELL` is therefore `0000AC27`, the
+neighbour. The pier reaches to X=−191320 — 1,192 units into AnvilBayEast01 —
+yet none of its 189 walkable triangles were ever gathered there. The result
+was a pier-shaped hole in both the navmesh and the transplant render, with a
+completely healthy collision cache.
+
+Persistent (dummy) cells are excluded: their refs are scattered worldwide and
+their `XCLC` says nothing about placement, so they are not overhangs.
+
+#### <a id="speedtree-model-keys"></a>A TREE base names a `.spt`, not a NIF
+
+**Code:** `navmesh/pool.py::_model_key`. TREE bases carry a SpeedTree path —
+`\ShrubSeabuckthornSU.spt`, `\Dbush16.spt` — with a leading separator, no
+directory, and a `.spt` extension. The speedtree stage rebuilds each one as
+`<ns>/speedtrees/<name>.nif` (`asset_convert/asset_pipeline.py::convert_speedtrees`),
+so BOTH the directory and the extension differ from the authored path.
+
+The old key appended `.nif` rather than replacing `.spt` and never added the
+`speedtrees/` directory, producing `tes4/shrubseabuckthornsu.spt.nif`. No such
+entry exists, so `get_collision` returned None for **every TREE in the game**:
+Oblivion.esm ships 142 speedtree collision entries, all with non-empty soups,
+and all were unreachable. Trees carved nothing and drew nothing in the
+transplant editor. TREE is in `_BLOCKING_BASE_TYPES`, so this was silent — the
+index built happily, it just pointed at keys that could not resolve.
+
+Found via AnvilBayEast01, where every seabuckthorn was missing from the render.
+
 **Why the tag excludes collision.** It hashes the navmesh generator SOURCES
 only, so editing any navmesh code (params included) invalidates every entry
 automatically. Collision deliberately does NOT enter here. It used to, as

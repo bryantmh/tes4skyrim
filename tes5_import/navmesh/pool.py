@@ -77,11 +77,16 @@ def _model_key(model: str) -> str:
 
     Lowercase, forward slashes, game-namespace prefix, '.nif' suffix --
     e.g. 'Furniture\\ChairNoble01.NIF' -> 'tes4/furniture/chairnoble01.nif'.
+    A TREE's '.spt' resolves to '<ns>/speedtrees/<name>.nif', the path the
+    speedtree stage writes.
+    See: docs/commentary/tes5_import_navmesh.md#speedtree-model-keys
     """
     p = model.lower().replace('\\', '/').lstrip('/')
     if p.startswith('textures/'):
         p = p[len('textures/'):]
     ns = current_namespace() + '/'
+    if p.endswith('.spt'):
+        return '%sspeedtrees/%s.nif' % (ns, os.path.basename(p)[:-4])
     if not p.startswith(ns):
         p = ns + p
     if not p.endswith('.nif'):
@@ -133,6 +138,25 @@ def build_base_model_index(by_type: dict, master_export: dict = None) -> dict:
         low = _low_fid(rec) if model else None
         if low is not None:
             index[low] = _model_key(model)
+    return index
+
+
+def build_base_radius_index(by_type: dict, master_export: dict = None) -> dict:
+    """Map raw low-24 base FormID -> the model's bounding radius (MODB).
+
+    Only bases that carve are indexed, and only those declaring a radius, so
+    the overhang index never widens a cell's gather for a marker or a light.
+    `master_export` is REQUIRED for a plugin with masters, exactly as for
+    `build_base_model_index`.
+    """
+    index = {}
+    for rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
+        low = _low_fid(rec)
+        if low is None:
+            continue
+        radius = get_float(rec, 'Model.MODB', 0.0)
+        if radius > 0.0:
+            index[low] = radius
     return index
 
 
@@ -273,11 +297,67 @@ def _exterior_blocks(cells) -> dict:
     return blocks
 
 
+def _refr_reach(rec, radius_by_base) -> float:
+    """How far this placement's geometry extends from its own position.
+
+    The base model's bounding radius, scaled by the REFR.  0.0 when the base
+    has no radius, which drops the ref from the overhang index entirely.
+    """
+    name = rec.get('NAME')
+    if not name:
+        return 0.0
+    try:
+        radius = radius_by_base.get(int(name, 16) & 0x00FFFFFF, 0.0)
+    except ValueError:
+        return 0.0
+    return radius * (get_float(rec, 'XSCL.Scale', 1.0) or 1.0)
+
+
+def _foreign_squares(rec, gx, gy, radius_by_base):
+    """Grid squares this ref's geometry covers, EXCLUDING its own (gx, gy)."""
+    reach = _refr_reach(rec, radius_by_base)
+    if reach <= 0.0:
+        return ()
+    try:
+        x, y = float(rec['PosX']), float(rec['PosY'])
+    except (KeyError, TypeError, ValueError):
+        return ()
+    return [(nx, ny)
+            for nx in range(int((x - reach) // _CELL_SIZE),
+                            int((x + reach) // _CELL_SIZE) + 1)
+            for ny in range(int((y - reach) // _CELL_SIZE),
+                            int((y + reach) // _CELL_SIZE) + 1)
+            if nx != gx or ny != gy]
+
+
+def _overhang_index(cells, refr_by_cell, radius_by_base) -> dict:
+    """Map (wrld, gx, gy) -> refs from OTHER cells whose geometry reaches in.
+
+    27% of Oblivion's exterior placements extend past their own cell square,
+    and a cell gathered from its ParentCELL list alone sees none of them -- a
+    pier, wall or rock owned next door carves nothing and renders as a hole.
+
+    See: docs/commentary/tes5_import_navmesh.md#refs-overhang-their-cell
+    """
+    out = defaultdict(list)
+    for cell in cells:
+        wrld = get_formid(cell, 'ParentWRLD')
+        if not wrld or (get_int(cell, 'RecordFlags') & _PERSISTENT_FLAG):
+            continue
+        gx, gy = get_int(cell, 'XCLC.X'), get_int(cell, 'XCLC.Y')
+        for rec in refr_by_cell.get(get_formid(cell, 'FormID'), []):
+            for square in _foreign_squares(rec, gx, gy, radius_by_base):
+                out[(wrld,) + square].append(rec)
+    return out
+
+
 def _emit_jobs(jobs, cell_rec, land_rec, refr_by_cell, pgrd_by_cell,
-               extra_door_refrs=None) -> None:
+               extra_door_refrs=None, extra_refrs=None) -> None:
     """Append one job per PGRD in this cell."""
     cell_fid = get_formid(cell_rec, 'FormID')
     cell_refrs = refr_by_cell.get(cell_fid, [])
+    if extra_refrs:
+        cell_refrs = cell_refrs + list(extra_refrs)
     for pgrd_rec in pgrd_by_cell.get(cell_fid, []):
         jobs.append({
             'key': (cell_fid, get_formid(pgrd_rec, 'FormID')),
@@ -289,9 +369,11 @@ def _emit_jobs(jobs, cell_rec, land_rec, refr_by_cell, pgrd_by_cell,
         })
 
 
-def _gather_exteriors(jobs, by_type, cells, indexes, pers_doors) -> None:
+def _gather_exteriors(jobs, by_type, cells, indexes, pers_doors,
+                      overhang=None) -> None:
     """Append exterior jobs, per worldspace, in _build_world_groups order."""
     refr_by_cell, land_by_cell, pgrd_by_cell = indexes
+    overhang = overhang or {}
     ext_by_wrld = defaultdict(list)
     for cell in cells:
         wrld_fid = get_formid(cell, 'ParentWRLD')
@@ -314,11 +396,12 @@ def _gather_exteriors(jobs, by_type, cells, indexes, pers_doors) -> None:
                         key=lambda c: (get_int(c, 'XCLC.Y'),
                                        get_int(c, 'XCLC.X'))):
                     lands = land_by_cell.get(get_formid(cell_rec, 'FormID'), [])
+                    square = (wrld_fid, get_int(cell_rec, 'XCLC.X'),
+                              get_int(cell_rec, 'XCLC.Y'))
                     _emit_jobs(jobs, cell_rec, lands[0] if lands else None,
                                refr_by_cell, pgrd_by_cell,
-                               pers_doors.get(
-                                   (wrld_fid, get_int(cell_rec, 'XCLC.X'),
-                                    get_int(cell_rec, 'XCLC.Y')), []))
+                               pers_doors.get(square, []),
+                               overhang.get(square, []))
 
 
 def gather_navm_jobs(by_type: dict, door_fids: set = None,
@@ -341,6 +424,8 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
     indexes = (refr_by_cell, land_by_cell, pgrd_by_cell)
     pers_doors = _persistent_doors_by_grid(cells, refr_by_cell,
                                            door_fids or set())
+    overhang = _overhang_index(
+        cells, refr_by_cell, build_base_radius_index(by_type, master_export))
 
     jobs = []
     blocks = _interior_blocks(cells)
@@ -348,7 +433,7 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
         for sub in sorted(blocks[block]):
             for cell_rec in blocks[block][sub]:
                 _emit_jobs(jobs, cell_rec, None, refr_by_cell, pgrd_by_cell)
-    _gather_exteriors(jobs, by_type, cells, indexes, pers_doors)
+    _gather_exteriors(jobs, by_type, cells, indexes, pers_doors, overhang)
     return jobs
 
 

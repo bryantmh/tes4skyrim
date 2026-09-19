@@ -1362,6 +1362,60 @@ def test_prepare_is_a_noop_without_a_cache():
     assert not any(j.get('verify') for j in jobs)
 
 
+def test_speedtree_models_key_to_the_converted_nif():
+    """A TREE's '.spt' must resolve to <ns>/speedtrees/<name>.nif.
+
+    Appending '.nif' to the authored path yields
+    'tes4/shrubseabuckthornsu.spt.nif', which matches no cache entry, so every
+    TREE in the game carved nothing.
+    See: docs/commentary/tes5_import_navmesh.md#speedtree-model-keys
+    """
+    assert (navm_pool._model_key('\\ShrubSeabuckthornSU.spt')
+            == 'tes4/speedtrees/shrubseabuckthornsu.nif')
+    assert (navm_pool._model_key('Trees\\Mania\\ManiaTree01.spt')
+            == 'tes4/speedtrees/maniatree01.nif')
+    assert (navm_pool._model_key('Furniture\\ChairNoble01.NIF')
+            == 'tes4/furniture/chairnoble01.nif')
+
+
+def test_a_ref_reaching_past_its_cell_is_indexed_in_the_neighbour():
+    """A big static is gathered by every square its geometry covers.
+
+    AnvilBoardwalkComplete01 is parented to the cell holding its ORIGIN and
+    reaches 1,192 units into the next one, which saw none of it.
+    See: docs/commentary/tes5_import_navmesh.md#refs-overhang-their-cell
+    """
+    cell = {'FormID': '0000AC27', 'ParentWRLD': '0000003C',
+            'XCLC.X': '-48', 'XCLC.Y': '-9', 'RecordFlags': '0'}
+    refr = {'FormID': '00014CFB', 'NAME': '00014CF5',
+            'PosX': '-193042.25', 'PosY': '-33222.15'}
+    index = navm_pool._overhang_index(
+        [cell], {0xAC27: [refr]}, {0x14CF5: 1721.96})
+
+    assert index[(0x3C, -47, -9)] == [refr]
+    assert (0x3C, -48, -9) not in index, 'never re-indexed into its own square'
+
+
+def test_a_ref_inside_its_own_cell_is_not_indexed():
+    """A small static reaching nowhere adds no work to any neighbour."""
+    cell = {'FormID': '0000AC27', 'ParentWRLD': '0000003C',
+            'XCLC.X': '-48', 'XCLC.Y': '-9', 'RecordFlags': '0'}
+    refr = {'FormID': '00000001', 'NAME': '00000002',
+            'PosX': '-194560.0', 'PosY': '-35000.0'}
+    assert not navm_pool._overhang_index([cell], {0xAC27: [refr]},
+                                         {0x2: 32.0})
+
+
+def test_persistent_cells_never_enter_the_overhang_index():
+    """Their refs are scattered worldwide, so XCLC says nothing about place."""
+    cell = {'FormID': '0000AC27', 'ParentWRLD': '0000003C',
+            'XCLC.X': '0', 'XCLC.Y': '0', 'RecordFlags': str(0x400)}
+    refr = {'FormID': '00000001', 'NAME': '00000002',
+            'PosX': '-193042.25', 'PosY': '-33222.15'}
+    assert not navm_pool._overhang_index([cell], {0xAC27: [refr]},
+                                         {0x2: 1721.96})
+
+
 class _StubWriter:
     """Hands out one fixed NAVM FormID."""
 

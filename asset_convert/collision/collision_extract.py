@@ -806,10 +806,10 @@ def _worker_both(args: tuple):
 # ---------------------------------------------------------------------------
 
 #: Bumped when extraction or mesh conversion changes walkable/blocking output.
-COLLISION_SCHEMA_VERSION = 3
+COLLISION_SCHEMA_VERSION = 4
 
 #: Cache format id; its trailing digits carry COLLISION_SCHEMA_VERSION.
-_MAGIC = b'TESCOL06'
+_MAGIC = b'TESCOL07'
 _COLLISION: Dict[str, dict] = {}
 # path_key -> short collision digest, memoised by collision_digest().  Cleared
 # with _COLLISION so a reload cannot serve digests for the previous cache.
