@@ -79,6 +79,18 @@ void SyncClock() {
     }
 }
 
+// `advanceHours`: moves GameHour on, which is how Skyrim's own wait does
+// it -- the engine rolls a value past 24 into the day, month and year.
+void AdvanceHours(int hours) {
+    PostToMainThread([hours]() {
+        auto* hour = static_cast<std::uint8_t*>(
+            FormFromFile(ids::kSkyrimMaster, kClock[0].skyrim));
+        if (!hour) return;
+        *reinterpret_cast<float*>(hour + ids::kOffGlobalValue) +=
+            static_cast<float>(hours);
+    });
+}
+
 // The one-call queries. Each resolves both references and asks one native.
 // See: docs/commentary/morrowind_runtime.md#the-query-commands
 bool AskPair(PairQueryFn fn, const std::string& actor,
@@ -185,6 +197,7 @@ void InstallQueryCalls(GameHooks& hooks) {
     hooks.weather = WeatherClassification;
     hooks.deadCount = DeadCountOf;
     hooks.syncClock = SyncClock;
+    hooks.advanceHours = AdvanceHours;
 }
 
 }  // namespace gamecalls

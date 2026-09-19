@@ -1784,6 +1784,110 @@ hook inside Skyrim's menu and is not applied.
 Each was found at its registration (`lea r9,[callback]; lea r8,"Actor"; lea
 rdx,"<name>"`) and inverted through the Address Library.
 
+## <a id="stat-commands"></a>The stat commands: Skyrim's value where one exists
+
+**Code:** `plugin/script_ops_stats.cpp`
+
+`Get`/`Set`/`Mod` for the 8 attributes, the 27 skills and the 24 magic-effect
+magnitudes, plus `GetLevel`, are one class (`OpStat`) installed over OpenMW's
+six opcode bases per family. The audit over TR_Mainland went from 129 ported
+commands to 307, and the stubbed call sites from 4,045 to 3,581.
+
+- A stat Skyrim HAS reads and writes that actor value, so what a script sets
+  is what the engine acts on. `Mod` is a read plus a write of the current
+  value, which bakes in an active buff.
+- A stat Skyrim lacks -- every attribute, Athletics, Acrobatics, and the
+  effects with no actor value -- is the DLL's own number under the owner
+  `stat|<locals owner>`, in the co-save, starting at the NPC_ record's
+  authored value. `NPC_.txt` carries those as its last two columns, 8
+  attributes and 27 skills comma-joined in TES3's own order.
+- The weapon and armor folds are the import's (`MW_SKILL_TO_TES4` then
+  `TES4_SKILL_TO_TES5`), so a command reads the value the converted NPC was
+  given. Two depart from it on purpose: Enchant is Skyrim's Enchanting, and
+  Mercantile is Speechcraft, which is what persuasion and the fare formula
+  already read.
+- The magic-effect family is typed `long` by the compiler, so it pushes and
+  pops integers.
+
+NOT done: `SetLevel` (Skyrim has no setter), and the disease and spell
+queries, which need the SPEL table.
+
+## <a id="travel"></a>Travel is OpenMW's TravelWindow
+
+**Code:** `plugin/conversation_travel.cpp`, `tes5_import/dialogue/morrowind_travel.py`
+
+An NPC_ lists up to four destinations as `DODT` (position, rotation in
+radians), each optionally followed by a `DNAM` naming an INTERIOR cell. The
+sidecar stages them as `NPC_travel.txt`, read from the TES3 binaries of the
+whole chain so a TR NPC's line and a master's exterior names both resolve:
+
+`npc id=name|interior|x|y|z|zRot degrees;...`
+
+- A destination with no `DNAM` is outside and is NAMED after the exterior cell
+  its position falls in (8192-unit grid): the cell's own name, else its
+  region's `FNAM`. One that resolves to no name is dropped, as OpenMW drops a
+  destination whose cell it cannot find.
+- `Travel` is listed when the speaker has a line, which is OpenMW's own test
+  (`getTransport()` not empty); there is no service bit for it.
+- The fare is `TravelWindow::addDestination`: `fMagesGuildTravel` when the
+  SPEAKER stands in an interior, else 3D distance from the player divided by
+  `fTravelMult`; times one plus the player's followers; at least 1; then
+  `getBarterOffer` (`persuasion.cpp:BarterOffer`, buying). A fare the player
+  cannot pay is listed greyed.
+- Paying moves Skyrim gold to the NPC, advances `GameHour` by
+  `distance2D / fTravelTimeMult` whole hours when the speaker is outside, then
+  moves the player and every actor in a follow slot aimed at the player.
+  World positions are carried across unchanged by the export, so the authored
+  coordinates are used as they are.
+
+🛑 **Adding to `GameHour` is the whole time skip.** The engine's calendar
+update (0x5d9420 on 1.6.659) loops `while (hour > 24)` subtracting a day and
+rolling the day, month and year globals, then RECOMPUTES `GameDaysPassed` as
+`hour / 24` plus its own whole-day counter. So a value past 24 is rolled over
+on the next frame and days-passed follows; writing `GameDaysPassed` too would
+be overwritten.
+
+🛑 **One `MoveTo` with an offset, not a move then a reposition.** The player's
+cell change is a load, and a `SetPosition` issued in the same frame can land
+before it. `MoveTo`'s offsets are world-axis (the CK wiki's own example builds
+them from sin and cos), so the offset from the cell's anchor to the authored
+spot puts the player there in one call.
+
+NOT done: OpenMW also rests the player for the hours travelled and fades the
+screen; the cell change shows Skyrim's own loading screen instead.
+
+### <a id="travel-markers"></a>🛑 A destination is a PERSISTENT marker, not a cell anchor
+
+**Code:** `tes4_export/morrowind_travel.py`, `plugin/game_calls_move.cpp:SendToMarker`
+
+The first build paid the fare, moved the clock and left the player standing
+there. Travel aimed at the cell's ANCHOR from `cells_formid.txt`, which is
+just the first thing placed in the cell -- for `Vivec, Foreign Quarter` an
+ACHR with `RecordFlags=0`. A non-persistent reference does not exist until its
+cell loads, `GetFormFromFile` answered null, and the move returned without a
+word.
+
+So the export mints one XMarker (0x3B in Oblivion.esm and Skyrim.esm alike)
+per destination, `RecordFlags=1024`, standing on the authored position and
+rotation: in the interior cell for a `DNAM` destination, in the worldspace's
+persistent cell otherwise, exactly as the map markers are. Its FormID is
+`derive('travelmarker:<npc id>:<index>')`, hashed from authored data, so no
+existing id moves. The sidecar finds it by EditorID
+(`TES3Travel<npc><index>`) and stages it as the destination's last field, and
+the runtime does one `MoveTo(marker)` matching its rotation.
+
+A destination whose cell no plugin of the load order defines gets no marker,
+as a teleport door into one gets no link. Without a marker the runtime falls
+back to the anchor and now LOGS when that does not resolve.
+
+### <a id="the-list-modal"></a>Persuasion and Travel are one modal
+
+**Code:** `plugin/conversation_modal.cpp`
+
+Both are a title, the gold label, up to six rows and Cancel, so both drive
+the same SWF fields; rows past the ones in use are hidden. TES3 allows four
+destinations, which fits.
+
 ## <a id="sound-opcodes"></a>The sound commands
 
 TES3 scripts name a **SOUN id**; the record Skyrim plays is the **SNDR** the

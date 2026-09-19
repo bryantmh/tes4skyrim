@@ -25,3 +25,6 @@ sCancel=s,Cancel
 sServiceRefusal=s,Service Refusal
 sAdmireSuccess=s,Admire Success
 sAdmireFail=s,Admire Fail
+fTravelMult=f,4000.0
+fTravelTimeMult=f,16000.0
+fMagesGuildTravel=f,10.0

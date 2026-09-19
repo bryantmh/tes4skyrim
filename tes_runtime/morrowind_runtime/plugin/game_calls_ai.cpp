@@ -302,7 +302,28 @@ void ApplyAiSetting(const std::string& actor, int which, int value) {
 
 }  // namespace
 
+std::vector<void*> PlayerFollowers() {
+    std::vector<void*> out;
+    void* player = PlayerRef();
+    const int slots = AiAliasIndex("slots");
+    for (int n = 0; player && n < slots; ++n) {
+        const std::string slot = AiSlot("follow", n);
+        void* actor = AiAliasHolds(AiAlias(slot + "Actor"));
+        if (actor && AiAliasHolds(AiAlias(slot + "Target")) == player) {
+            out.push_back(actor);
+        }
+    }
+    return out;
+}
+
+namespace {
+
+int FollowerCount() { return static_cast<int>(PlayerFollowers().size()); }
+
+}  // namespace
+
 void InstallAiCalls(GameHooks& hooks) {
+    hooks.followerCount = FollowerCount;
     g_questGetAlias = Native<GetAliasFn>("Quest.GetAlias",
                                          ids::kQuestGetAlias);
     g_forceRefTo = Native<ForceRefToFn>("ReferenceAlias.ForceRefTo",

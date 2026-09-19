@@ -140,6 +140,11 @@ std::vector<std::string> DialogueState::Globals() const {
     return out;
 }
 
+bool DialogueState::HasVar(const std::string& owner,
+                           const std::string& name) const {
+    return mVars.count({Key(owner), Key(name)}) != 0;
+}
+
 float DialogueState::Var(const std::string& owner,
                          const std::string& name) const {
     const auto it = mVars.find({Key(owner), Key(name)});

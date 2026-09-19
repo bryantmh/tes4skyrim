@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "activation.h"
 #include "addresses.h"
@@ -43,6 +44,17 @@ template <typename Fn>
 Fn Native(const char* name, std::uint64_t id) {
     return reinterpret_cast<Fn>(Resolve(name, id, nullptr));
 }
+
+// Sends every reference to a spot in the named cell, `zRot` in degrees, in
+// ONE MoveTo each: the offset from the cell's anchor carries the position, so
+// the player's cell load cannot land between a move and a reposition.
+// game_calls_move.cpp.
+void SendToCell(const std::vector<void*>& refs, const std::string& cell,
+                float x, float y, float z, float zRot);
+// Sends every reference onto a persistent marker, taking its rotation.
+void SendToMarker(const std::vector<void*>& refs, const FormRef& marker);
+// The actors in a follow slot aimed at the player. game_calls_ai.cpp.
+std::vector<void*> PlayerFollowers();
 
 // Each file resolves its own natives and supplies its own hooks.
 void InstallMoveCalls(GameHooks& hooks);

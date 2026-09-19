@@ -58,6 +58,10 @@ struct ActorDef {
     // The AIDT's authored Fight, Hello, Alarm and Flee, by filter.h's index:
     // what each reads until a script moves it.
     int  aiSettings[4] = {0, 0, 0, 0};
+    // The eight attributes and 27 skills in TES3's own order, which is the
+    // order of OpenMW's Get/Set/Mod opcode families.
+    int  attributes[8] = {};
+    int  skills[27] = {};
 };
 
 // One GMST of the chain: GMST.txt, `name=type,value`.
@@ -81,6 +85,23 @@ struct SkillDef {
 struct FormRef {
     std::string plugin;
     std::uint32_t formId = 0;
+};
+
+// One place an NPC's travel service goes: NPC_travel.txt.
+// See: docs/commentary/morrowind_runtime.md#travel
+struct TravelDest {
+    // The interior's cell name, or the exterior cell's shown name. Both are
+    // keys of the cell anchor table.
+    std::string name;
+    bool  interior = false;
+    float x = 0, y = 0, z = 0;
+    // Degrees about Z, as the move hooks take it.
+    float zRot = 0;
+    // The persistent XMarker the export minted on this spot, when it did:
+    // the only kind of reference that exists while its cell is unloaded.
+    // See: docs/commentary/morrowind_runtime.md#travel-markers
+    bool    hasMarker = false;
+    FormRef marker;
 };
 
 // One row of FACT's rank table: what the player must reach to hold this rank.
@@ -162,6 +183,8 @@ std::vector<InstanceRow> Instances();
 const InstanceRow* InstanceByLocal(std::uint32_t localFormId);
 
 const ActorDef* FindActor(const std::string& actor);
+// Where `actor` offers to take the player, or null when it offers no travel.
+const std::vector<TravelDest>* FindTravel(const std::string& actor);
 const FormRef* FindItem(const std::string& item);
 const FormRef* FindQuest(const std::string& quest);
 

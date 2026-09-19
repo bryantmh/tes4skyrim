@@ -1,0 +1,1 @@
+test_actor=Far Place|0|40000|0|0|90|scripts.esm/0300C001;Guild Hall|1|10|20|30|0|

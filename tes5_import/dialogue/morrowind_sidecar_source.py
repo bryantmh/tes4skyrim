@@ -28,6 +28,7 @@ from tes4_export.record_types.morrowind_dialog import (DIAL_SIG, INFO_SIG,
 from tes4_export.tes3_reader import (get_all_subrecords, get_string,
                                        get_subrecord, read_file)
 
+from .morrowind_travel import take_place
 from .morrowind_autocalc import (autocalc_attributes, autocalc_skills,
                                  parse_class, parse_race, parse_skill)
 
@@ -189,7 +190,8 @@ def _ai_settings(rec) -> tuple:
 def _actor_line(rec, tables: dict) -> str:
     """`id=race|class|faction|rank|disposition|female|name|level|reputation|
     personality|luck|speechcraft|mercantile|services|gold|hello|fight|flee|
-    alarm` for one NPC_."""
+    alarm|8 attributes|27 skills` for one NPC_, the last two comma-joined in
+    TES3's own order."""
     stats = _npc_stats(rec, tables)
     fields = (_text(rec, 'RNAM'), _text(rec, 'CNAM'), _text(rec, 'ANAM'),
               stats['rank'], stats['disposition'],
@@ -197,7 +199,9 @@ def _actor_line(rec, tables: dict) -> str:
               stats['level'], stats['reputation'],
               stats['attributes'][_PERSONALITY], stats['attributes'][_LUCK],
               stats['skills'][_SPEECHCRAFT], stats['skills'][_MERCANTILE],
-              _npc_services(rec, tables), stats['gold'], *_ai_settings(rec))
+              _npc_services(rec, tables), stats['gold'], *_ai_settings(rec),
+              ','.join(str(value) for value in stats['attributes']),
+              ','.join(str(value) for value in stats['skills']))
     return f'{rec.record_id}=' + '|'.join(str(field) for field in fields)
 
 
@@ -285,6 +289,9 @@ def _take(out: dict, rec, topic: str) -> str:
     """Fold one record into `out`; returns the topic INFOs now belong to."""
     if rec.type in ('DIAL', 'INFO'):
         return _take_dial(out, rec, topic)
+    if rec.type in ('CELL', 'REGN') and not rec.deleted:
+        take_place(out, rec)
+        return topic
     if rec.type == 'SKIL':
         index, skill = parse_skill(rec)
         if index is not None:
@@ -315,7 +322,7 @@ def gather(chain: list) -> dict:
     """
     out = {'topics': {}, 'infos': {}, 'npcs': {}, 'races': {}, 'classes': {},
            'skills': {}, 'gmsts': {}, 'factions': {}, 'items': {},
-           'objects': {}, 'sounds': {}}
+           'objects': {}, 'sounds': {}, 'exteriors': {}, 'regions': {}}
     for _name, path in chain:
         topic = ''
         out['start_scripts'] = {}

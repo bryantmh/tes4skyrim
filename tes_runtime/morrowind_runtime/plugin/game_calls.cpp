@@ -571,6 +571,25 @@ float ActorValue(const std::string& actor, const char* valueName) {
     return g_getValue(PapyrusVm(), 0, ref, &name);
 }
 
+// Writes a Skyrim actor value by name, for the stat commands.
+void SetActorValueOf(const std::string& actor, const char* valueName,
+                     float value) {
+    void* ref = OwnerRef(actor);
+    if (!ref || !g_setValue) return;
+    RunOnGameThread([ref, valueName, value]() {
+        void* name = nullptr;
+        if (FixedString(&name, valueName)) {
+            g_setValue(PapyrusVm(), 0, ref, &name, value);
+        }
+    });
+}
+
+// Any actor's level; 1 for something that has none.
+int LevelOf(const std::string& actor) {
+    void* ref = OwnerRef(actor);
+    return ref && g_getLevel ? g_getLevel(PapyrusVm(), 0, ref) : 1;
+}
+
 // The same value as a fraction of its maximum, 0..1.
 float StatPercent(const std::string& actor, const char* valueName) {
     void* ref = OwnerRef(actor);
@@ -774,6 +793,8 @@ void InstallGameCalls() {
     GameHooks& hooks = Hooks();
     hooks.playerLevel = PlayerLevel;
     hooks.actorValue = ActorValue;
+    hooks.setActorValue = SetActorValueOf;
+    hooks.level = LevelOf;
     hooks.statPercent = StatPercent;
     hooks.advanceSkill = AdvanceSkill;
     hooks.showBarterMenu = ShowBarterMenu;

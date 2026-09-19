@@ -18,6 +18,8 @@
 
 namespace mwruntime {
 
+struct TravelDest;
+
 // One line a `Choice` command offers, and the index it answers with.
 struct ChoiceLine {
     std::string text;
@@ -176,6 +178,18 @@ struct GameHooks {
                      int count) = nullptr;
     // `GetCurrentWeather`: Skyrim's weather CLASSIFICATION, 0..4.
     int  (*weather)() = nullptr;
+    // Writes one Skyrim actor value by name, and any actor's level.
+    void (*setActorValue)(const std::string& actor, const char* name,
+                          float value) = nullptr;
+    int  (*level)(const std::string& actor) = nullptr;
+    // The travel service. `followerCount` is how many actors travel WITH
+    // the player, which multiplies the fare; `advanceHours` moves the game
+    // clock on; `travelTo` puts the player and those followers at the
+    // destination.
+    // See: docs/commentary/morrowind_runtime.md#travel
+    int  (*followerCount)() = nullptr;
+    void (*advanceHours)(int hours) = nullptr;
+    void (*travelTo)(const TravelDest& dest) = nullptr;
     // `GetDeadCount id`: how many of that base actor have died, which the
     // ENGINE counts and saves for every actor, scripted or not.
     int  (*deadCount)(const std::string& actor) = nullptr;
@@ -216,6 +230,7 @@ public:
     std::vector<std::string> Globals() const;
 
     // --- script locals, by owner: an actor's id or a global script's -------
+    bool  HasVar(const std::string& owner, const std::string& name) const;
     float Var(const std::string& owner, const std::string& name) const;
     void  SetVar(const std::string& owner, const std::string& name,
                  float value);

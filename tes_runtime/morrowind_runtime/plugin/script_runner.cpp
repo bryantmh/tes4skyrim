@@ -639,6 +639,7 @@ void Machine::InstallReal() {
     InstallMoveOps(*this);
     InstallAiOps(*this);
     InstallQueryOps(*this);
+    InstallStatOps(*this);
 }
 
 void Machine::InstallFactions() {

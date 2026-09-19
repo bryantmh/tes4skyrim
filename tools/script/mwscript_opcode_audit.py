@@ -40,6 +40,9 @@ _NAMESPACE = re.compile(r'namespace\s+(\w+)\s*\{')
 #: `Real<Op<Implicit>>(D::opcodeX)`, or `(S::opcodeX + Which)` for a family.
 _INSTALL = re.compile(r'\bReal3?\s*<.*?>\s*\(\s*\n?\s*([A-Za-z0-9_:]+)'
                       r'(?:\s*\+\s*\w+)?\s*\)')
+#: `InstallFamily(into, ..., {{S::opcodeGetSkill, ...}})`: a whole family installed from its base opcodes.
+_FAMILY = re.compile(r'\bInstallFamily\s*\((.*?)\)\s*;', re.S)
+_OPCODE = re.compile(r'\bopcode\w+')
 #: `kDeliberateNoOps` in script_runner.cpp: nothing to port, by design.
 _NOOPS = re.compile(r'kDeliberateNoOps\[\]\s*=\s*\{(.*?)\}', re.S)
 
@@ -150,6 +153,8 @@ def installed(root):
         with open(name, encoding='utf-8', errors='replace') as fh:
             text += fh.read()
     real = {m.group(1).rsplit('::', 1)[-1] for m in _INSTALL.finditer(text)}
+    for family in _FAMILY.finditer(text):
+        real.update(_OPCODE.findall(family.group(1)))
     block = _NOOPS.search(text)
     noops = set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()
     return real, noops

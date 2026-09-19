@@ -7,6 +7,7 @@
 
 #include <set>
 #include <string>
+#include <utility>
 
 #include <components/interpreter/interpreter.hpp>
 #include <components/interpreter/runtime.hpp>
@@ -52,9 +53,10 @@ struct OpcodeInstaller {
     std::set<int> segment5;
     std::set<int> segment3;
 
-    template <class T>
-    void Real(int code) {
-        interpreter.installSegment5<T>(code);
+    // `args` go to T's constructor, for one class serving a whole family.
+    template <class T, class... Args>
+    void Real(int code, Args&&... args) {
+        interpreter.installSegment5<T>(code, std::forward<Args>(args)...);
         segment5.insert(code);
     }
 
@@ -99,5 +101,9 @@ void InstallAiOps(OpcodeInstaller& into);
 // the sneak/run pair, Resurrect, Drop, GetCurrentWeather, GetSquareRoot and
 // Fall. script_ops_query.cpp.
 void InstallQueryOps(OpcodeInstaller& into);
+
+// Get/Set/Mod for the attributes, the skills and the magic-effect
+// magnitudes, and GetLevel. script_ops_stats.cpp.
+void InstallStatOps(OpcodeInstaller& into);
 
 }  // namespace mwruntime

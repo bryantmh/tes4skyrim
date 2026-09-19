@@ -44,6 +44,7 @@ FormRef g_aiQuest;
 bool g_haveAiQuest = false;
 std::unordered_map<std::string, int> g_aiAliases;
 std::vector<std::string> g_startScripts;
+std::unordered_map<std::string, std::vector<TravelDest>> g_travel;
 std::unordered_map<std::string, FormRef> g_aiPacks;
 std::unordered_map<std::string, FormRef> g_sounds;
 
@@ -67,6 +68,7 @@ constexpr const char* kFileCells = "cells_formid.txt";
 // See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
 constexpr const char* kFileAiAliases = "ai_aliases.txt";
 constexpr const char* kFileStartScripts = "SSCR.txt";
+constexpr const char* kFileTravel = "NPC_travel.txt";
 
 // The row naming the quest itself, and the prefix on a PACK row; every other
 // row is an alias name and its ALST index.
@@ -95,6 +97,14 @@ std::vector<std::string> Split(const std::string& text, char sep) {
                                              : end - start));
         if (end == std::string::npos) return out;
         start = end + 1;
+    }
+}
+
+// A comma-joined run of ints into `out[0..count)`; short runs leave zeros.
+void ParseInts(const std::string& text, int* out, std::size_t count) {
+    const std::vector<std::string> f = Split(text, ',');
+    for (std::size_t i = 0; i < count && i < f.size(); ++i) {
+        out[i] = std::atoi(f[i].c_str());
     }
 }
 
@@ -127,8 +137,12 @@ ActorDef ParseActor(const std::string& value) {
     out.aiSettings[kAiFight] = std::atoi(f[16].c_str());
     out.aiSettings[kAiFlee] = std::atoi(f[17].c_str());
     out.aiSettings[kAiAlarm] = std::atoi(f[18].c_str());
+    if (f.size() < 21) return out;
+    ParseInts(f[19], out.attributes, 8);
+    ParseInts(f[20], out.skills, 27);
     return out;
 }
+
 
 // `type,value`: 's' text (export-escaped), 'i' or 'f' a number.
 GmstDef ParseGmst(const std::string& value) {
@@ -193,6 +207,31 @@ FormRef ParseFormRef(const std::string& value) {
     out.plugin = value.substr(0, bar);
     out.formId = static_cast<std::uint32_t>(
         std::strtoul(value.c_str() + bar + 1, nullptr, 16));
+    return out;
+}
+
+// `name|interior|x|y|z|zRot|Plugin/FormID;...`, one destination per `;`
+// group. The marker spells its own separator `/`, since `|` parts the fields.
+std::vector<TravelDest> ParseTravel(const std::string& value) {
+    std::vector<TravelDest> out;
+    for (const std::string& group : Split(value, ';')) {
+        const std::vector<std::string> f = Split(group, '|');
+        if (f.size() < 6 || f[0].empty()) continue;
+        TravelDest dest;
+        dest.name = f[0];
+        dest.interior = f[1] == "1";
+        dest.x = static_cast<float>(std::atof(f[2].c_str()));
+        dest.y = static_cast<float>(std::atof(f[3].c_str()));
+        dest.z = static_cast<float>(std::atof(f[4].c_str()));
+        dest.zRot = static_cast<float>(std::atof(f[5].c_str()));
+        if (f.size() > 6 && !f[6].empty()) {
+            std::string marker = f[6];
+            std::replace(marker.begin(), marker.end(), '/', '|');
+            dest.marker = ParseFormRef(marker);
+            dest.hasMarker = true;
+        }
+        out.push_back(dest);
+    }
     return out;
 }
 
@@ -301,6 +340,7 @@ void ClearScriptTables() {
     g_cells.clear();
     g_aiAliases.clear();
     g_startScripts.clear();
+    g_travel.clear();
     g_aiPacks.clear();
     g_haveAiQuest = false;
     g_factions.clear();
@@ -403,6 +443,10 @@ void LoadScriptTables(const std::string& pluginDir) {
                    } else {
                        g_aiAliases.emplace(key, std::atoi(value.c_str()));
                    }
+               });
+    ForEachRow(pluginDir + kFileTravel,
+               [](const std::string& actor, const std::string& value) {
+                   g_travel[Lower(actor)] = ParseTravel(value);
                });
     ForEachRow(pluginDir + kFileStartScripts,
                [](const std::string& script, const std::string&) {
@@ -541,6 +585,11 @@ const std::string& ScriptSource(const std::string& script) {
 }
 
 const std::vector<std::string>& StartScripts() { return g_startScripts; }
+
+const std::vector<TravelDest>* FindTravel(const std::string& actor) {
+    const auto it = g_travel.find(Lower(actor));
+    return it == g_travel.end() || it->second.empty() ? nullptr : &it->second;
+}
 
 std::size_t ScriptSourceCount() { return g_sources.size(); }
 

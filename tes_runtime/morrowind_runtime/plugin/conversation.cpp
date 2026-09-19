@@ -12,7 +12,10 @@
 #include <components/interpreter/defines.hpp>
 
 #include "activation.h"
+#include "conversation_modal.h"
 #include "conversation_persuasion.h"
+#include "conversation_travel.h"
+#include "travel.h"
 #include "dialogue_state.h"
 #include "game_actor.h"
 #include "log.h"
@@ -54,7 +57,7 @@ constexpr int kWheelLines = 3;
 constexpr int kLineOffset = layout::kSeparatorHeight - 2;
 
 // What one row of the topic list is.
-enum class Kind { Persuasion, Barter, Separator, Topic };
+enum class Kind { Persuasion, Barter, Travel, Separator, Topic };
 
 // ESM::NPC::AllItems: any item class among the speaker's services lists
 // Barter, as DialogueWindow::updateTopics decides.
@@ -531,6 +534,9 @@ void RebuildItems() {
             g_items.push_back({Kind::Barter,
                                GmstText("sBarter", kBarterFallback)});
         }
+        if (OffersTravel(g_speaker)) {
+            g_items.push_back({Kind::Travel, GmstText("sTravel", "Travel")});
+        }
         g_items.push_back({Kind::Separator, ""});
     }
     // DialogueManager::getKeywords: what the speaker can answer AND the
@@ -579,7 +585,7 @@ void PushAll() {
     PushHistory(false);
     PushTopics();
     PushBye();
-    PushPersuasionModal();
+    PushListModal();
 }
 
 void Learn(const std::vector<std::string>& topics) {
@@ -699,6 +705,22 @@ void Barter() {
     Hooks().showBarterMenu(speaker);
 }
 
+// DialogueWindow::onSelectListItem for sTravel: the Service Refusal line
+// when the speaker refuses, else the destinations. The window closes once a
+// fare is paid, as OpenMW leaves dialogue before it teleports.
+// See: docs/commentary/morrowind_runtime.md#travel
+void Travel() {
+    if (!g_actor || ListLocked()) return;
+    const Reply refusal = ServiceRefusal(kServiceTravel, *g_actor);
+    if (!refusal.text.empty()) {
+        Log("conversation: '%s' refuses travel", g_speaker.c_str());
+        Deliver(GmstText("sServiceRefusal", refusal.topic), refusal);
+        PushAll();
+        return;
+    }
+    OpenTravelModal(g_speaker, CloseMenu);
+}
+
 void SelectItem(int index) {
     const Item& item = g_items[static_cast<std::size_t>(index)];
     if (item.kind == Kind::Topic) {
@@ -707,6 +729,8 @@ void SelectItem(int index) {
         OpenPersuasionModal(OnPersuaded);
     } else if (item.kind == Kind::Barter) {
         Barter();
+    } else if (item.kind == Kind::Travel) {
+        Travel();
     }
 }
 
@@ -734,8 +758,8 @@ void ScrollList(int pixels) {
 }
 
 void OnHover(double x, double y) {
-    if (PersuasionModalOpen()) {
-        PersuasionModalHover(x, y);
+    if (ListModalOpen()) {
+        ListModalHover(x, y);
         return;
     }
     const int item = ItemAt(x, y);
@@ -773,8 +797,8 @@ void ClickScrollbars(double x, double y) {
 }
 
 void OnClick(double x, double y) {
-    if (PersuasionModalOpen()) {
-        PersuasionModalClick(x, y);
+    if (ListModalOpen()) {
+        ListModalClick(x, y);
         return;
     }
     if (kBye.Contains(x, y)) {
@@ -796,7 +820,7 @@ void OnClick(double x, double y) {
 }
 
 void OnWheel(double x, double y, double delta) {
-    if (PersuasionModalOpen()) return;
+    if (ListModalOpen()) return;
     if (kTopics.Contains(x, y) || kTopicScroll.Contains(x, y)) {
         ScrollList(-static_cast<int>(delta) * kListStep);
         g_hoverItem = ItemAt(x, y);
@@ -809,8 +833,8 @@ void OnWheel(double x, double y, double delta) {
 // Escape closes the modal first, as a MyGUI modal takes it; then it is
 // Goodbye.
 void OnCancel() {
-    if (PersuasionModalOpen()) {
-        ClosePersuasionModal();
+    if (ListModalOpen()) {
+        CloseListModal();
         return;
     }
     Goodbye();
@@ -823,7 +847,7 @@ void OnOpened() {
 
 void OnClosed() {
     g_open = false;
-    ClosePersuasionModal();
+    CloseListModal();
     State().EndConversation();
     g_actor.reset();
     g_history.clear();

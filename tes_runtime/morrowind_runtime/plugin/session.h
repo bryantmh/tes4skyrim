@@ -45,6 +45,7 @@ Reply Answer(const std::string& topic, const ActorView& actor, int choice);
 // MWBase::DialogueManager::ServiceType, the choice a Service Refusal INFO
 // is filtered under.
 constexpr int kServiceBarter = 1;
+constexpr int kServiceTravel = 5;
 
 // DialogueManager::checkServiceRefused: the Service Refusal line for
 // `service`, filtered with the disposition test INVERTED, or an empty reply

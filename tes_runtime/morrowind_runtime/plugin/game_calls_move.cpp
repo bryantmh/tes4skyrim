@@ -278,7 +278,73 @@ void PlaceAt(void* ref, float x, float y, float z, float zRot) {
     g_setAngle(PapyrusVm(), 0, ref, ax, ay, zRot);
 }
 
+void SendToCell(const std::vector<void*>& refs, const std::string& cell,
+                float x, float y, float z, float zRot) {
+    const FormRef* anchor = FindCellAnchor(cell);
+    if (!anchor || !g_moveTo || !g_getPosition[0]) {
+        if (!anchor) ReportOnce("cell", cell);
+        return;
+    }
+    const FormRef target = *anchor;
+    const std::string named = cell;
+    PostToMainThread([refs, target, named, x, y, z, zRot]() {
+        void* to = Form(&target);
+        if (!to) {
+            Log("game: the anchor of cell '%s' does not exist while it is "
+                "unloaded -- nothing moved", named.c_str());
+            return;
+        }
+        const float dx = x - g_getPosition[0](PapyrusVm(), 0, to);
+        const float dy = y - g_getPosition[1](PapyrusVm(), 0, to);
+        const float dz = z - g_getPosition[2](PapyrusVm(), 0, to);
+        for (void* ref : refs) {
+            if (g_setAngle) {
+                g_setAngle(PapyrusVm(), 0, ref, RefAngle(ref, 0),
+                           RefAngle(ref, 1), zRot);
+            }
+            g_moveTo(PapyrusVm(), 0, ref, to, dx, dy, dz, false);
+        }
+    });
+}
+
+void SendToMarker(const std::vector<void*>& refs, const FormRef& marker) {
+    if (!g_moveTo) return;
+    const FormRef target = marker;
+    PostToMainThread([refs, target]() {
+        void* to = Form(&target);
+        if (!to) {
+            Log("game: travel marker %s|%08X does not resolve -- nothing "
+                "moved", target.plugin.c_str(), target.formId);
+            return;
+        }
+        for (void* ref : refs) {
+            g_moveTo(PapyrusVm(), 0, ref, to, 0.0f, 0.0f, 0.0f, true);
+        }
+    });
+}
+
+namespace {
+
+// `travelTo`: the player first, then whoever follows them, onto the
+// destination's marker -- or through the cell's anchor when the export
+// minted none.
+// See: docs/commentary/morrowind_runtime.md#travel-markers
+void TravelTo(const TravelDest& dest) {
+    std::vector<void*> refs = PlayerFollowers();
+    if (void* player = PlayerRef()) refs.insert(refs.begin(), player);
+    if (dest.hasMarker) {
+        SendToMarker(refs, dest.marker);
+    } else {
+        Log("game: '%s' has no travel marker -- trying the cell's anchor",
+            dest.name.c_str());
+        SendToCell(refs, dest.name, dest.x, dest.y, dest.z, dest.zRot);
+    }
+}
+
+}  // namespace
+
 void InstallMoveCalls(GameHooks& hooks) {
+    hooks.travelTo = TravelTo;
     g_getPosition[0] = Native<AxisGetFn>("ObjectReference.GetPositionX",
                                          ids::kRefGetPositionX);
     g_getPosition[1] = Native<AxisGetFn>("ObjectReference.GetPositionY",

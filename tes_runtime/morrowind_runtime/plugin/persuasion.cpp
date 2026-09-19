@@ -231,7 +231,27 @@ int UniformRoll() {
     return std::uniform_int_distribution<int>(0, 99)(engine);
 }
 
+// One side's `(mercantile + luck/10 + personality/5) * fatigueTerm`, each
+// term capped as getBarterOffer caps it.
+float BarterTerm(const Side& s, float disposition) {
+    const float fatigueTerm = GmstNumber("fFatigueBase", 1.0f) -
+                              GmstNumber("fFatigueMult", 0.0f) * (1 - s.fatigue);
+    return (disposition + std::min(s.mercantile, 100.0f) +
+            std::min(0.1f * s.luck, 10.0f) +
+            std::min(0.2f * s.personality, 10.0f)) * fatigueTerm;
+}
+
 }  // namespace
+
+int BarterOffer(const std::string& npc, int basePrice, bool buying) {
+    if (basePrice == 0) return 0;
+    const float pcTerm = BarterTerm(
+        PlayerSide(), static_cast<float>(State().Disposition(npc) - 50));
+    const float npcTerm = BarterTerm(NpcSide(npc), 0.0f);
+    const float term = buying ? 0.01f * (100 - 0.5f * (pcTerm - npcTerm))
+                              : 0.01f * (50 - 0.5f * (npcTerm - pcTerm));
+    return std::max(1, static_cast<int>(basePrice * term));
+}
 
 int BribeCost(Persuasion type) { return kBribeGold[static_cast<int>(type)]; }
 

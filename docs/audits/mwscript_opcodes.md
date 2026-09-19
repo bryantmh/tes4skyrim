@@ -6,11 +6,11 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 
 | Status | Commands | Call sites |
 |---|---:|---:|
-| ported | 129 | 84921 |
+| ported | 307 | 85385 |
 | no-op | 5 | 2615 |
-| STUB | 353 | 4045 |
+| STUB | 175 | 3581 |
 
-🛑 **206 of the 353 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 147 command(s) below.
+🛑 **101 of the 175 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 74 command(s) below.
 
 ## Stubbed, and something calls it
 
@@ -32,13 +32,8 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `removeeffects` | Stats | `l` | 54 |
 | `getattacked` | Misc | — → `l` | 45 |
 | `saydone` | Sound | — → `l` | 44 |
-| `modrestoration` | Stats | `f` | 43 |
 | `show` | Misc | `c` | 41 |
-| `getspeechcraft` | Stats | — → `f` | 40 |
 | `forcerun` | Control | — | 36 |
-| `modmercantile` | Stats | `f` | 33 |
-| `setparalysis` | Stats | `l` | 31 |
-| `getintelligence` | Stats | — → `f` | 30 |
 | `addsoulgem` | Misc | `ccX` | 28 |
 | `getpcsleep` | Misc | — → `l` | 26 |
 | `clearforcesneak` | Control | — | 25 |
@@ -48,7 +43,6 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `getarmortype` | Container | `l` → `l` | 21 |
 | `getwindspeed` | Misc | — → `f` | 21 |
 | `hasitemequipped` | Container | `c` → `l` | 20 |
-| `getstrength` | Stats | — → `f` | 19 |
 | `gotojail` | Misc | — | 19 |
 | `setatstart` | Transformation | — | 19 |
 | `getcommondisease` | Stats | — → `l` | 18 |
@@ -56,112 +50,45 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9158
 | `payfinethief` | Misc | — | 18 |
 | `clearforcerun` | Control | — | 17 |
 | `changeweather` | Sky | `Sl` | 15 |
-| `getlevel` | Stats | — → `l` | 15 |
 | `getwaterlevel` | Cell | — → `f` | 15 |
 | `raiserank` | Stats | `x` | 15 |
-| `setspeed` | Stats | `f` | 15 |
 | `getstandingactor` | Misc | — → `l` | 14 |
-| `getluck` | Stats | — → `f` | 13 |
 | `loopgroup` | Animation | `cl/l` | 13 |
 | `removefromlevcreature` | Misc | `ccl` | 13 |
 | `disableteleporting` | Misc | — | 12 |
-| `modalteration` | Stats | `f` | 12 |
 | `setwaterlevel` | Cell | `f` | 12 |
 | `forcesneak` | Control | — | 11 |
-| `getinvisible` | Stats | — → `l` | 11 |
-| `getmercantile` | Stats | — → `f` | 11 |
-| `getparalysis` | Stats | — → `l` | 11 |
 | `getpcjumping` | Misc | — → `l` | 11 |
 | `getstandingpc` | Misc | — → `l` | 10 |
 | `hurtcollidingactor` | Misc | `f` | 10 |
 | `getcollidingpc` | Misc | — → `l` | 9 |
-| `getsecurity` | Stats | — → `f` | 9 |
 | `removespelleffects` | Stats | `c` | 9 |
 | `showrestmenu` | Gui | — | 9 |
 | `wakeuppc` | Misc | — | 9 |
-| `sethandtohand` | Stats | `f` | 8 |
-| `setmarksman` | Stats | `f` | 8 |
-| `setmercantile` | Stats | `f` | 8 |
-| `setstrength` | Stats | `f` | 7 |
-| `getalchemy` | Stats | — → `f` | 6 |
-| `getchameleon` | Stats | — → `l` | 6 |
-| `getwillpower` | Stats | — → `f` | 6 |
-| `modalchemy` | Stats | `f` | 6 |
 | `resetactors` | Transformation | — | 6 |
-| `setchameleon` | Stats | `l` | 6 |
 | `dontsaveobject` | Misc | — | 5 |
 | `getforcesneak` | Control | — → `l` | 5 |
-| `getillusion` | Stats | — → `f` | 5 |
 | `hurtstandingactor` | Misc | `f` | 5 |
-| `modacrobatics` | Stats | `f` | 5 |
-| `setshortblade` | Stats | `f` | 5 |
-| `getconjuration` | Stats | — → `f` | 4 |
 | `getcurrenttime` | Misc | — → `f` | 4 |
 | `getforcerun` | Control | — → `l` | 4 |
-| `getpersonality` | Stats | — → `f` | 4 |
 | `getweapontype` | Container | — → `l` | 4 |
 | `payfine` | Misc | — | 4 |
-| `setathletics` | Stats | `f` | 4 |
-| `setaxe` | Stats | `f` | 4 |
-| `setlongblade` | Stats | `f` | 4 |
 | `togglemenus` | Gui | — | 4 |
 | `forcejump` | Control | — | 3 |
 | `forcemovejump` | Control | — | 3 |
-| `getalteration` | Stats | — → `f` | 3 |
 | `getblightdisease` | Stats | — → `l` | 3 |
-| `getendurance` | Stats | — → `f` | 3 |
-| `getsneak` | Stats | — → `f` | 3 |
-| `getspear` | Stats | — → `f` | 3 |
-| `getspeed` | Stats | — → `f` | 3 |
 | `getstartingangle` | Transformation | `c` → `f` | 3 |
 | `menutest` | Gui | `/l` | 3 |
-| `modshortblade` | Stats | `f` | 3 |
 | `onknockout` | Stats | — → `l` | 3 |
 | `onmurder` | Stats | — → `l` | 3 |
-| `setacrobatics` | Stats | `f` | 3 |
-| `setagility` | Stats | `f` | 3 |
-| `setbluntweapon` | Stats | `f` | 3 |
-| `setmediumarmor` | Stats | `f` | 3 |
 | `skipanim` | Animation | — | 3 |
 | `clearforcejump` | Control | — | 2 |
 | `clearforcemovejump` | Control | — | 2 |
-| `getdestruction` | Stats | — → `f` | 2 |
-| `gethandtohand` | Stats | — → `f` | 2 |
-| `getlongblade` | Stats | — → `f` | 2 |
-| `getmysticism` | Stats | — → `f` | 2 |
 | `lowerrank` | Stats | `x` | 2 |
-| `modagility` | Stats | `f` | 2 |
-| `modaxe` | Stats | `f` | 2 |
-| `moddestruction` | Stats | `f` | 2 |
-| `modenchant` | Stats | `f` | 2 |
-| `modlongblade` | Stats | `f` | 2 |
-| `modspear` | Stats | `f` | 2 |
-| `modspeechcraft` | Stats | `f` | 2 |
-| `setblock` | Stats | `f` | 2 |
-| `setwaterbreathing` | Stats | `l` | 2 |
 | `disablelevitation` | Misc | — | 1 |
 | `enablelevitation` | Misc | — | 1 |
-| `getagility` | Stats | — → `f` | 1 |
-| `getarmorer` | Stats | — → `f` | 1 |
 | `getforcemovejump` | Control | — → `l` | 1 |
-| `getresistmagicka` | Stats | — → `l` | 1 |
-| `getrestoration` | Stats | — → `f` | 1 |
 | `hitonme` | Misc | `S` → `l` | 1 |
-| `modbluntweapon` | Stats | `f` | 1 |
-| `modchameleon` | Stats | `l` | 1 |
-| `modconjuration` | Stats | `f` | 1 |
-| `modmarksman` | Stats | `f` | 1 |
-| `modmediumarmor` | Stats | `f` | 1 |
-| `modmysticism` | Stats | `f` | 1 |
-| `modpersonality` | Stats | `f` | 1 |
-| `modstrength` | Stats | `f` | 1 |
-| `modunarmored` | Stats | `f` | 1 |
-| `setarmorbonus` | Stats | `l` | 1 |
-| `setdestruction` | Stats | `f` | 1 |
-| `setendurance` | Stats | `f` | 1 |
-| `setluck` | Stats | `f` | 1 |
-| `setsneak` | Stats | `f` | 1 |
-| `setwillpower` | Stats | `f` | 1 |
 | `streammusic` | Sound | `S` | 1 |
 
 ## Blocked on EXPORT or IMPORT, not on the runtime
@@ -265,50 +192,228 @@ Porting the opcode alone cannot fix these: the data it would name is not convert
 | `modcurrenthealth` | Stats | `f` | 48 |
 | `fall` | Misc | — | 44 |
 | `getfatigue` | Stats | `x` → `f` | 43 |
+| `modrestoration` | Stats | `f` | 43 |
 | `setscale` | Transformation | `f` | 42 |
+| `getspeechcraft` | Stats | — → `f` | 40 |
 | `position` | Transformation | `ffffz` | 40 |
 | `getdetected` | Ai | `c` → `l` | 39 |
 | `pcraiserank` | Stats | `/S` | 39 |
 | `getweapondrawn` | Misc | — → `l` | 38 |
 | `setpccrimelevel` | Stats | `f` | 37 |
+| `modmercantile` | Stats | `f` | 33 |
 | `setmagicka` | Stats | `f` | 33 |
 | `getpcsneaking` | Control | — → `l` | 31 |
+| `setparalysis` | Stats | `l` | 31 |
+| `getintelligence` | Stats | — → `f` | 30 |
 | `aiescort` | Ai | `cffff/l` | 28 |
 | `getfight` | Ai | — → `l` | 22 |
+| `getstrength` | Stats | — → `f` | 19 |
 | `playloopsound3d` | Sound | `cXX` | 19 |
 | `resurrect` | Stats | — | 19 |
 | `placeitem` | Transformation | `cffffX` | 18 |
 | `getsquareroot` | Misc | `f` → `f` | 16 |
+| `getlevel` | Stats | — → `l` | 15 |
 | `getscale` | Transformation | — → `f` | 15 |
+| `setspeed` | Stats | `f` | 15 |
 | `modfatigue` | Stats | `f` | 14 |
+| `getluck` | Stats | — → `f` | 13 |
 | `getmagicka` | Stats | `x` → `f` | 12 |
+| `modalteration` | Stats | `f` | 12 |
 | `pcjoinfaction` | Stats | `/S` | 12 |
+| `getinvisible` | Stats | — → `l` | 11 |
+| `getmercantile` | Stats | — → `f` | 11 |
+| `getparalysis` | Stats | — → `l` | 11 |
 | `modfactionreaction` | Dialogue | `ccl` | 11 |
 | `modcurrentmagicka` | Stats | `f` | 10 |
 | `modhealth` | Stats | `f` | 10 |
 | `aifollowcell` | Ai | `ccffff/l` | 9 |
 | `gethello` | Ai | — → `l` | 9 |
+| `getsecurity` | Stats | — → `f` | 9 |
 | `pcclearexpelled` | Stats | `/S` | 9 |
+| `sethandtohand` | Stats | `f` | 8 |
+| `setmarksman` | Stats | `f` | 8 |
+| `setmercantile` | Stats | `f` | 8 |
+| `setstrength` | Stats | `f` | 7 |
 | `aiactivate` | Ai | `c/l` | 6 |
+| `getalchemy` | Stats | — → `f` | 6 |
+| `getchameleon` | Stats | — → `l` | 6 |
 | `getpcrunning` | Control | — → `l` | 6 |
+| `getwillpower` | Stats | — → `f` | 6 |
+| `modalchemy` | Stats | `f` | 6 |
+| `setchameleon` | Stats | `l` | 6 |
+| `getillusion` | Stats | — → `f` | 5 |
+| `modacrobatics` | Stats | `f` | 5 |
 | `modflee` | Ai | `l` | 5 |
 | `pcexpelled` | Stats | `/S` → `l` | 5 |
+| `setshortblade` | Stats | `f` | 5 |
 | `getalarm` | Ai | — → `l` | 4 |
+| `getconjuration` | Stats | — → `f` | 4 |
+| `getpersonality` | Stats | — → `f` | 4 |
 | `modscale` | Transformation | `f` | 4 |
 | `pclowerrank` | Stats | `/S` | 4 |
 | `samefaction` | Dialogue | — → `l` | 4 |
+| `setathletics` | Stats | `f` | 4 |
+| `setaxe` | Stats | `f` | 4 |
+| `setlongblade` | Stats | `f` | 4 |
+| `getalteration` | Stats | — → `f` | 3 |
+| `getendurance` | Stats | — → `f` | 3 |
+| `getsneak` | Stats | — → `f` | 3 |
+| `getspear` | Stats | — → `f` | 3 |
+| `getspeed` | Stats | — → `f` | 3 |
+| `modshortblade` | Stats | `f` | 3 |
+| `setacrobatics` | Stats | `f` | 3 |
+| `setagility` | Stats | `f` | 3 |
+| `setbluntweapon` | Stats | `f` | 3 |
+| `setmediumarmor` | Stats | `f` | 3 |
 | `setpcfacrep` | Stats | `l/c` | 3 |
+| `getdestruction` | Stats | — → `f` | 2 |
+| `gethandtohand` | Stats | — → `f` | 2 |
+| `getlongblade` | Stats | — → `f` | 2 |
+| `getmysticism` | Stats | — → `f` | 2 |
+| `modagility` | Stats | `f` | 2 |
 | `modalarm` | Ai | `l` | 2 |
+| `modaxe` | Stats | `f` | 2 |
+| `moddestruction` | Stats | `f` | 2 |
+| `modenchant` | Stats | `f` | 2 |
+| `modlongblade` | Stats | `f` | 2 |
 | `modmagicka` | Stats | `f` | 2 |
+| `modspear` | Stats | `f` | 2 |
+| `modspeechcraft` | Stats | `f` | 2 |
+| `setblock` | Stats | `f` | 2 |
+| `setwaterbreathing` | Stats | `l` | 2 |
 | `aiescortcell` | Ai | `ccffff/l` | 1 |
+| `getagility` | Stats | — → `f` | 1 |
+| `getarmorer` | Stats | — → `f` | 1 |
 | `getflee` | Ai | — → `l` | 1 |
 | `getreputation` | Dialogue | — → `l` | 1 |
+| `getresistmagicka` | Stats | — → `l` | 1 |
+| `getrestoration` | Stats | — → `f` | 1 |
+| `modbluntweapon` | Stats | `f` | 1 |
+| `modchameleon` | Stats | `l` | 1 |
+| `modconjuration` | Stats | `f` | 1 |
+| `modmarksman` | Stats | `f` | 1 |
+| `modmediumarmor` | Stats | `f` | 1 |
+| `modmysticism` | Stats | `f` | 1 |
+| `modpersonality` | Stats | `f` | 1 |
+| `modstrength` | Stats | `f` | 1 |
+| `modunarmored` | Stats | `f` | 1 |
+| `setarmorbonus` | Stats | `l` | 1 |
+| `setdestruction` | Stats | `f` | 1 |
+| `setendurance` | Stats | `f` | 1 |
+| `setluck` | Stats | `f` | 1 |
+| `setsneak` | Stats | `f` | 1 |
+| `setwillpower` | Stats | `f` | 1 |
+| `getacrobatics` | Stats | — → `f` |  |
+| `getarmorbonus` | Stats | — → `l` |  |
+| `getathletics` | Stats | — → `f` |  |
+| `getattackbonus` | Stats | — → `l` |  |
+| `getaxe` | Stats | — → `f` |  |
+| `getblindness` | Stats | — → `l` |  |
+| `getblock` | Stats | — → `f` |  |
+| `getbluntweapon` | Stats | — → `f` |  |
+| `getcastpenalty` | Stats | — → `l` |  |
+| `getdefendbonus` | Stats | — → `l` |  |
+| `getenchant` | Stats | — → `f` |  |
 | `getfactionreaction` | Dialogue | `ccX` → `l` |  |
+| `getflying` | Stats | — → `l` |  |
+| `getheavyarmor` | Stats | — → `f` |  |
+| `getlightarmor` | Stats | — → `f` |  |
 | `getlineofsight` | Ai | `c` → `l` |  |
+| `getmarksman` | Stats | — → `f` |  |
+| `getmediumarmor` | Stats | — → `f` |  |
 | `getpcfacrep` | Stats | `/c` → `l` |  |
+| `getresistblight` | Stats | — → `l` |  |
+| `getresistcorprus` | Stats | — → `l` |  |
+| `getresistdisease` | Stats | — → `l` |  |
+| `getresistfire` | Stats | — → `l` |  |
+| `getresistfrost` | Stats | — → `l` |  |
+| `getresistnormalweapons` | Stats | — → `l` |  |
+| `getresistparalysis` | Stats | — → `l` |  |
+| `getresistpoison` | Stats | — → `l` |  |
+| `getresistshock` | Stats | — → `l` |  |
+| `getshortblade` | Stats | — → `f` |  |
+| `getsilence` | Stats | — → `l` |  |
+| `getsuperjump` | Stats | — → `l` |  |
+| `getswimspeed` | Stats | — → `l` |  |
+| `getunarmored` | Stats | — → `f` |  |
+| `getwaterbreathing` | Stats | — → `l` |  |
+| `getwaterwalking` | Stats | — → `l` |  |
+| `modarmorbonus` | Stats | `l` |  |
+| `modarmorer` | Stats | `f` |  |
+| `modathletics` | Stats | `f` |  |
+| `modattackbonus` | Stats | `l` |  |
+| `modblindness` | Stats | `l` |  |
+| `modblock` | Stats | `f` |  |
+| `modcastpenalty` | Stats | `l` |  |
+| `moddefendbonus` | Stats | `l` |  |
+| `modendurance` | Stats | `f` |  |
+| `modflying` | Stats | `l` |  |
+| `modhandtohand` | Stats | `f` |  |
+| `modheavyarmor` | Stats | `f` |  |
 | `modhello` | Ai | `l` |  |
+| `modillusion` | Stats | `f` |  |
+| `modintelligence` | Stats | `f` |  |
+| `modinvisible` | Stats | `l` |  |
+| `modlightarmor` | Stats | `f` |  |
+| `modluck` | Stats | `f` |  |
+| `modparalysis` | Stats | `l` |  |
+| `modresistblight` | Stats | `l` |  |
+| `modresistcorprus` | Stats | `l` |  |
+| `modresistdisease` | Stats | `l` |  |
+| `modresistfire` | Stats | `l` |  |
+| `modresistfrost` | Stats | `l` |  |
+| `modresistmagicka` | Stats | `l` |  |
+| `modresistnormalweapons` | Stats | `l` |  |
+| `modresistparalysis` | Stats | `l` |  |
+| `modresistpoison` | Stats | `l` |  |
+| `modresistshock` | Stats | `l` |  |
+| `modsecurity` | Stats | `f` |  |
+| `modsilence` | Stats | `l` |  |
+| `modsneak` | Stats | `f` |  |
+| `modspeed` | Stats | `f` |  |
+| `modsuperjump` | Stats | `l` |  |
+| `modswimspeed` | Stats | `l` |  |
+| `modwaterbreathing` | Stats | `l` |  |
+| `modwaterwalking` | Stats | `l` |  |
+| `modwillpower` | Stats | `f` |  |
+| `setalchemy` | Stats | `f` |  |
+| `setalteration` | Stats | `f` |  |
+| `setarmorer` | Stats | `f` |  |
+| `setattackbonus` | Stats | `l` |  |
+| `setblindness` | Stats | `l` |  |
+| `setcastpenalty` | Stats | `l` |  |
+| `setconjuration` | Stats | `f` |  |
+| `setdefendbonus` | Stats | `l` |  |
+| `setenchant` | Stats | `f` |  |
 | `setfactionreaction` | Dialogue | `ccl` |  |
+| `setflying` | Stats | `l` |  |
+| `setheavyarmor` | Stats | `f` |  |
+| `setillusion` | Stats | `f` |  |
+| `setintelligence` | Stats | `f` |  |
+| `setinvisible` | Stats | `l` |  |
+| `setlightarmor` | Stats | `f` |  |
+| `setmysticism` | Stats | `f` |  |
+| `setpersonality` | Stats | `f` |  |
 | `setreputation` | Dialogue | `l` |  |
+| `setresistblight` | Stats | `l` |  |
+| `setresistcorprus` | Stats | `l` |  |
+| `setresistdisease` | Stats | `l` |  |
+| `setresistfire` | Stats | `l` |  |
+| `setresistfrost` | Stats | `l` |  |
+| `setresistmagicka` | Stats | `l` |  |
+| `setresistnormalweapons` | Stats | `l` |  |
+| `setresistparalysis` | Stats | `l` |  |
+| `setresistpoison` | Stats | `l` |  |
+| `setresistshock` | Stats | `l` |  |
+| `setrestoration` | Stats | `f` |  |
+| `setsecurity` | Stats | `f` |  |
+| `setsilence` | Stats | `l` |  |
+| `setspear` | Stats | `f` |  |
+| `setspeechcraft` | Stats | `f` |  |
+| `setsuperjump` | Stats | `l` |  |
+| `setswimspeed` | Stats | `l` |  |
+| `setunarmored` | Stats | `f` |  |
+| `setwaterwalking` | Stats | `l` |  |
 
 ## Deliberate no-ops
 
@@ -326,4 +431,4 @@ Nothing to port: Morrowind's own presentation, or state this runtime does not ke
 
 Console, debug and chargen commands. Listed for completeness; none is reachable from dialogue.
 
-`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `dropsoulgem`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enableracemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `fixme`, `getacrobatics`, `getarmorbonus`, `getathletics`, `getattackbonus`, `getaxe`, `getblindness`, `getblock`, `getbluntweapon`, `getcastpenalty`, `getcollidingactor`, `getdefendbonus`, `getenchant`, `getflying`, `getforcejump`, `getheavyarmor`, `getlightarmor`, `getmarksman`, `getmasserphase`, `getmediumarmor`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getresistblight`, `getresistcorprus`, `getresistdisease`, `getresistfire`, `getresistfrost`, `getresistnormalweapons`, `getresistparalysis`, `getresistpoison`, `getresistshock`, `getsecundaphase`, `getshortblade`, `getsilence`, `getstartingpos`, `getstat`, `getsuperjump`, `getswimspeed`, `getunarmored`, `getwaterbreathing`, `getwaterwalking`, `getwerewolfkills`, `hitattemptonme`, `iswerewolf`, `modarmorbonus`, `modarmorer`, `modathletics`, `modattackbonus`, `modblindness`, `modblock`, `modcastpenalty`, `moddefendbonus`, `modendurance`, `modflying`, `modhandtohand`, `modheavyarmor`, `modillusion`, `modintelligence`, `modinvisible`, `modlightarmor`, `modluck`, `modparalysis`, `modpcvisionbonus`, `modregion`, `modresistblight`, `modresistcorprus`, `modresistdisease`, `modresistfire`, `modresistfrost`, `modresistmagicka`, `modresistnormalweapons`, `modresistparalysis`, `modresistpoison`, `modresistshock`, `modsecurity`, `modsilence`, `modsneak`, `modspeed`, `modsuperjump`, `modswimspeed`, `modwaterbreathing`, `modwaterwalking`, `modwillpower`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setalchemy`, `setalteration`, `setarmorer`, `setattackbonus`, `setblindness`, `setcastpenalty`, `setconjuration`, `setdefendbonus`, `setenchant`, `setflying`, `setheavyarmor`, `setillusion`, `setintelligence`, `setinvisible`, `setlevel`, `setlightarmor`, `setmysticism`, `setnavmeshnumber`, `setpcvisionbonus`, `setpersonality`, `setresistblight`, `setresistcorprus`, `setresistdisease`, `setresistfire`, `setresistfrost`, `setresistmagicka`, `setresistnormalweapons`, `setresistparalysis`, `setresistpoison`, `setresistshock`, `setrestoration`, `setsecurity`, `setsilence`, `setspear`, `setspeechcraft`, `setsuperjump`, `setswimspeed`, `setunarmored`, `setwaterwalking`, `setwerewolfacrobatics`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`
+`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `dropsoulgem`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enableracemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `fixme`, `getcollidingactor`, `getforcejump`, `getmasserphase`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getsecundaphase`, `getstartingpos`, `getstat`, `getwerewolfkills`, `hitattemptonme`, `iswerewolf`, `modpcvisionbonus`, `modregion`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setlevel`, `setnavmeshnumber`, `setpcvisionbonus`, `setwerewolfacrobatics`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`

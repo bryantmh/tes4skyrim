@@ -25,6 +25,7 @@
 #include "script_runner.h"
 #include "script_tables.h"
 #include "store.h"
+#include "travel.h"
 
 using namespace mwruntime;
 
@@ -241,6 +242,99 @@ void SharedLocalsCases(DialogueContext& context) {
           "a global script still owns its locals by name");
     SetSpeakerInstance("", 0);
     ClearInstances();
+    State().Reset();
+}
+
+bool Indoors() { return true; }
+int OneFollower() { return 1; }
+int g_paid = 0;
+int g_hoursAdvanced = 0;
+std::string g_wentTo;
+void RecordFare(const std::string&, const std::string&, int count) {
+    g_paid = count;
+}
+int RichPlayer(const std::string&) { return 1000; }
+void RecordHours(int hours) { g_hoursAdvanced = hours; }
+void RecordTrip(const TravelDest& dest) { g_wentTo = dest.name; }
+
+// TravelWindow's fares. With the fixture's stats the haggle term is 1.1125:
+// player (5 + 3 + 6) * 1.25 = 17.5 against the actor's (20 + 4 + 8) * 1.25 =
+// 40, so buying costs 0.01 * (100 - 0.5 * (17.5 - 40)) of the base.
+void TravelCases() {
+    std::printf("travel\n");
+    Check(OffersTravel("test_actor") && !OffersTravel("gruff_actor"),
+          "an actor offers travel exactly when it lists destinations");
+    std::vector<Fare> fares = TravelFares("test_actor");
+    Check(fares.size() == 2 && fares[0].dest.name == "Far Place" &&
+              !fares[0].dest.interior && fares[1].dest.interior,
+          "both destinations parse, in order");
+    Check(fares[0].dest.hasMarker &&
+              fares[0].dest.marker.plugin == "scripts.esm" &&
+              (fares[0].dest.marker.formId & 0x00FFFFFF) == 0x00C001 &&
+              !fares[1].dest.hasMarker,
+          "a destination carries the marker the export minted, when it did");
+    Check(fares[0].price == 11,
+          "outdoors the fare is distance / fTravelMult, then haggled");
+    Check(TravelHours(fares[0].dest) == 2,
+          "and the trip takes distance / fTravelTimeMult whole hours");
+    Hooks().followerCount = OneFollower;
+    Check(TravelFares("test_actor")[0].price == 22,
+          "a follower doubles the base fare");
+    Hooks().followerCount = nullptr;
+    Hooks().playerInInterior = Indoors;
+    Check(TravelFares("test_actor")[0].price == 11 &&
+              TravelHours(fares[0].dest) == 0,
+          "indoors it is the flat fMagesGuildTravel and takes no time");
+    Hooks().playerInInterior = nullptr;
+
+    Check(!TakeTrip("test_actor", fares[0], nullptr),
+          "a player who cannot pay goes nowhere");
+    Hooks().goldCount = RichPlayer;
+    Hooks().moveGold = RecordFare;
+    Hooks().advanceHours = RecordHours;
+    Hooks().travelTo = RecordTrip;
+    Check(TakeTrip("test_actor", fares[0], nullptr) && g_paid == 11 &&
+              g_hoursAdvanced == 2 && g_wentTo == "Far Place",
+          "a trip pays, moves the clock on and sends the player");
+    Hooks().goldCount = nullptr;
+    Hooks().moveGold = nullptr;
+    Hooks().advanceHours = nullptr;
+    Hooks().travelTo = nullptr;
+}
+
+float g_liveSneak = 40.0f;
+float LiveStat(const std::string&, const char* name) {
+    return std::string(name) == "Sneak" ? g_liveSneak : 0.0f;
+}
+void SetLiveStat(const std::string&, const char* name, float value) {
+    if (std::string(name) == "Sneak") g_liveSneak = value;
+}
+int LiveLevel(const std::string&) { return 12; }
+
+// A stat Skyrim has is Skyrim's; one it lacks is ours and starts at the
+// authored NPC_ value.
+void StatCases(DialogueContext& context) {
+    std::printf("stat commands\n");
+    Hooks().actorValue = LiveStat;
+    Hooks().setActorValue = SetLiveStat;
+    Hooks().level = LiveLevel;
+    RunResultScript("ModSneak 5\nset TestGlobal to GetSneak", context);
+    Check(g_liveSneak == 45.0f && State().Global("TestGlobal") == 45.0f,
+          "a mapped skill reads and writes the Skyrim actor value");
+    RunResultScript("set TestGlobal to GetStrength", context);
+    Check(State().Global("TestGlobal") == 61.0f,
+          "an attribute starts at the authored NPC_ value");
+    RunResultScript("ModStrength -11\nset TestGlobal to GetStrength", context);
+    Check(State().Global("TestGlobal") == 50.0f,
+          "and is the DLL's own number once a script moves it");
+    RunResultScript("SetChameleon 30\nset TestGlobal to GetChameleon", context);
+    Check(State().Global("TestGlobal") == 30.0f,
+          "a magic-effect magnitude is an integer stat of the same kind");
+    RunResultScript("set TestGlobal to GetLevel", context);
+    Check(State().Global("TestGlobal") == 12.0f, "GetLevel asks the engine");
+    Hooks().actorValue = nullptr;
+    Hooks().setActorValue = nullptr;
+    Hooks().level = nullptr;
     State().Reset();
 }
 
@@ -917,6 +1011,8 @@ void Cases() {
     GlobalScriptCases(context);
     SharedLocalsCases(context);
     StartScriptCases();
+    TravelCases();
+    StatCases(context);
     DispositionReappliesFight(context);
     PersuasionCases(context);
     SoundCases(context);

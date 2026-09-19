@@ -35,6 +35,11 @@ using RollFn = int (*)();
 // response topic. Nothing is touched when `ok` comes back false.
 PersuasionOutcome Persuade(Persuasion type, RollFn roll = nullptr);
 
+// MechanicsManager::getBarterOffer: what `npc` asks (`buying`) or pays for
+// something worth `basePrice`, from both sides' Mercantile, Luck, Personality
+// and fatigue and the speaker's disposition. Never below 1; a base of 0 is 0.
+int BarterOffer(const std::string& npc, int basePrice, bool buying);
+
 // The gold a bribe of this kind costs; 0 for the other three.
 int BribeCost(Persuasion type);
 

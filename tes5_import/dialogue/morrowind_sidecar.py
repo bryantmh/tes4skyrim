@@ -27,6 +27,7 @@ from tes4_export.morrowind_ids import encode_editor_id, load_index
 
 from .morrowind_sidecar_source import (gather, plugin_chain,
                                        write_merged_dialogue)
+from .morrowind_travel import TRAVEL_TABLE, marker_index, travel_lines
 
 #: Where the runtime looks, relative to a plugin's output root.
 SIDECAR_DIR = os.path.join('SKSE', 'Plugins', 'MorrowindRuntime')
@@ -519,12 +520,17 @@ def _stage_dialogue(export_dir: str, out_dir: str, present: list,
                             os.path.join(out_dir, staged_as))
         return len(present)
     topics, infos = write_merged_dialogue(gathered, out_dir)
+    folders = [(folder, plugin) for folder, plugin, _own in _loaded_dirs(
+        _export_root(export_dir), export_dir, chain[-1][0])]
+    gathered['travel'] = travel_lines(gathered,
+                                      marker_index(folders, export_records))
     print(f'    sidecar: {topics} topics, {infos} responses merged over '
           f'{", ".join(name for name, _path in chain)}')
     staged = len(DIALOGUE_FILES)
     for name, key in ((ACTORS_TABLE, 'actors'), (FACTIONS_TABLE, 'factions'),
                       (GMST_TABLE, 'gmsts'), (SKILLS_TABLE, 'skills'),
-                      (START_SCRIPTS_TABLE, 'start_scripts')):
+                      (START_SCRIPTS_TABLE, 'start_scripts'),
+                      (TRAVEL_TABLE, 'travel')):
         staged += _write_lines(os.path.join(out_dir, name),
                                list(gathered[key].values()))
     return staged
