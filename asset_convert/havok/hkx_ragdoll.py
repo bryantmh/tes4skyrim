@@ -50,18 +50,21 @@ Unit/convention notes (all verified against the vanilla deer dump):
 
 import math
 import os
-import re
 import sys
 
 import numpy as np
 
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
-from asset_convert.havok.ragdoll_math import (bone_worlds, capsule_inertia,
+from asset_convert.havok.ragdoll_math import (OB_TO_GAME, bone_worlds,
+                                              capsule_inertia,
                                               mat_row_to_quat,
                                               quat_to_mat_row, unit, v4)
 from asset_convert.havok.hkx_xml import fmt_vec
 from asset_convert.havok import hkx_xml
+from asset_convert.havok.ragdoll_bone_words import (AXIAL_WORDS, bone_words,
+                                                    is_loose_bone)
+from asset_convert.havok.hkx_ragdoll_morrowind import attach_synthetic_bodies
 from pyffi.formats.nif import NifFormat
 
 hkx_xml.SIGNATURES.update({
@@ -79,8 +82,6 @@ hkx_xml.SIGNATURES.update({
     'hkMemoryResourceHandle': '0xbffac086',
     'hkpShapeInfo': '0xea7f1d08',
 })
-
-OB_TO_GAME = 7.0          # Oblivion Havok units → game units
 
 # Oblivion's authored ragdoll MASSES have to be divided by the same 7 (2026-08-08
 # "dead creatures weigh a million pounds — I can only move limbs a little" report).
@@ -511,6 +512,19 @@ def swap_joint_ends(kind, info):
     return out
 
 
+def _read_rig(skeleton_nif_path: str):
+    """The parsed skeleton.nif, with ragdoll bodies synthesized when the rig
+    authors none -- a Morrowind (NIF 4.0.0.2) skeleton carries no Havok at all.
+
+    See: docs/commentary/asset_convert_creature.md#morrowind-synthetic-ragdolls
+    """
+    data = NifFormat.Data()
+    with open(skeleton_nif_path, 'rb') as f:
+        data.read(f)
+    attach_synthetic_bodies(data, skeleton_nif_path)
+    return data
+
+
 def extract_ragdoll(skeleton_nif_path: str, bones: list):
     """Parse the Oblivion skeleton.nif into RagdollPart list (parent-before-
     child, constraints attached), or None when the skeleton has no ragdoll.
@@ -519,11 +533,7 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
     constrained tree; unconstrained bodies (atronach rocks, detached
     skeleton-creature clusters) get synthetic vanilla-template joints to
     their nearest body-carrying ancestor (see plan_ragdoll_tree)."""
-    data = NifFormat.Data()
-    with open(skeleton_nif_path, 'rb') as f:
-        data.read(f)
-
-    plan = plan_ragdoll_tree(data)
+    plan = plan_ragdoll_tree(_read_rig(skeleton_nif_path))
     if plan is None:
         return None
 
@@ -698,35 +708,6 @@ def extract_ragdoll(skeleton_nif_path: str, bones: list):
 
 
 
-# Bone-name WORDS identifying the chains vanilla leaves UNPINNED on a LIVE
-# actor: the tail wags and the head/neck bob under physics while the
-# locomotion body is keyframed to the animation.  Vanilla dog census
-# (`KeyframeLowerBody`, 17 of 22 bones) omits exactly Tail1/2/3, Neck2 and
-# Head — nothing else.
-#
-# Matched as whole WORDS, never as substrings: a plain `'ear' in name` test
-# also matches "For<ear>m", which set every forearm (and its hand subtree)
-# loose on a living creature.
-_LOOSE_WHILE_ALIVE = ('tail', 'neck', 'head', 'skull', 'scull',
-                      'ponytail', 'ear', 'jaw', 'tongue', 'wing')
-
-# Trailing digits/side letters are part of the chain, not the word:
-# 'Bip01 Tail3', 'Canine_Neck2', 'Bip01 L Ear01' all belong to their chain.
-_WORD_RE = re.compile(r'[^a-z]+')
-
-# The axial (trunk) chain: everything that is NOT a limb.  Used to find the
-# limb ROOTS for the contact-listener set — vanilla lists limb roots plus the
-# trunk's own links, never the toe/palm tips.
-_AXIAL_WORDS = {'pelvis', 'spine', 'chest', 'ribcage', 'neck', 'head',
-                'skull', 'scull', 'com', 'tail', 'nonaccum', 'torso',
-                'body', 'abdomen', 'thorax'}
-
-
-def _bone_words(name: str):
-    """Lower-case word set of a bone name, digits stripped."""
-    return {w for w in _WORD_RE.split(name.lower()) if w}
-
-
 def _keyframe_bone_sets(parts):
     """The three vanilla `hkbBoneIndexArray` sets, in ragdoll indices.
 
@@ -780,7 +761,7 @@ def _keyframe_bone_sets(parts):
     def _loose(i):
         j = i
         while j >= 0:
-            if _bone_words(parts[j].name) & set(_LOOSE_WHILE_ALIVE):
+            if is_loose_bone(parts[j].name):
                 return True
             j = parts[j].parent
         return False
@@ -799,7 +780,7 @@ def _keyframe_bone_sets(parts):
     # children" instead stops at the first spine node that also carries a
     # leg, which left the front limbs out of the contact set entirely.
     trunk = {0} | {i for i in range(n)
-                   if _bone_words(parts[i].name) & _AXIAL_WORDS}
+                   if bone_words(parts[i].name) & AXIAL_WORDS}
     # Limb roots: the first body of each chain hanging off the trunk that is
     # itself not a leaf (a lone leaf hanging off the spine is a fin/ear, not
     # a leg).
@@ -812,7 +793,7 @@ def _keyframe_bone_sets(parts):
     # `Ragdoll` release before the body has actually landed.
     spine_contacts = {i for i in trunk
                       if parts[i].parent >= 0
-                      and not (_bone_words(parts[i].name) & {'tail'})}
+                      and not (bone_words(parts[i].name) & {'tail'})}
     contact = sorted(limb_roots | spine_contacts)
     if not contact:
         contact = [i for i in range(n)

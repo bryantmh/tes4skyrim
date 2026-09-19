@@ -37,6 +37,8 @@ import struct
 from ..base.writer import (pack_record, pack_subrecord, pack_string_subrecord,
                      pack_formid_subrecord, pack_obnd)
 from ..base.text_reader import get_float, get_formid, get_int, get_str
+from .creature_projects import (bodies_of, folder_of,
+                                folders_built_by_master, load_projects)
 
 # GMST fNPCHealthLevelBonus (Skyrim.esm) — health the engine grants per level
 # above 1. Defined here rather than imported from record_types.actors because
@@ -1102,119 +1104,6 @@ def _build_skin(writer, folder: str, bodies: list, race_fid: int,
     writer.add_record('ARMO', pack_record('ARMO', skin_fid, 4, subs))
 
 
-def _load_projects(export_dir: str) -> dict:
-    """This plugin's creature projects, with its MASTERS' projects merged in
-    underneath.
-
-    A plugin with a TES4 master re-uses the master's creature folders wholesale
-    (Morrowind_ob.esm places 86 CREA records on Oblivion.esm's rat/skeleton/
-    goblin/... meshes, which its own BSA never ships, so the creatures step
-    extracts no folder for them and its creature_projects.json has no entry).
-    Without the master's projects those CREA records fell through to
-    resolve_creature_race and shipped as BASE SKYRIM creatures — a Skyrim
-    frostbite spider or a Nord standing in for the converted Oblivion actor.
-
-    The master's generated behavior project, skeleton and merged body NIFs all
-    live under ITS output dir and are loaded by path at runtime, so pointing
-    this plugin's generated RACE chain at them is correct: the assets exist and
-    are shared, exactly as the source plugin intended. Own projects win on
-    conflict — this plugin's own conversion of a folder is the authoritative
-    one for the records it ships — EXCEPT when the own project ships no body
-    mesh at all, which is never authoritative for anything: see _usable().
-
-    Projects are keyed on the model folder's LEAF name, so a plugin shipping
-    its own folder under a master's leaf name shadows the master's project
-    even when its CREA records point at the MASTER's path.
-
-    See: docs/commentary/tes5_import_mod_merge.md#master-export-resolution
-    """
-    from ..base.artifact_schema import read_artifact
-    own_path = os.path.join(export_dir, 'creature_projects.json')
-    own = {}
-    if os.path.exists(own_path):
-        # Raises StaleArtifactError (surfaced by convert.py) when this file
-        # predates a field the builders below subscript without a default.
-        own = read_artifact(
-            own_path, os.path.basename(os.path.normpath(export_dir)))
-
-    header = os.path.join(export_dir, '_HEADER.txt')
-    if not os.path.isfile(header):
-        return own
-    names = []
-    with open(header, 'r', encoding='utf-8') as f:
-        for line in f:
-            if line.startswith('Master['):
-                _, _, val = line.partition('=')
-                names.append(val.strip())
-
-    from ..overrides.nested import export_root, master_export_dir
-    root = export_root(export_dir)
-
-    def _usable(proj) -> bool:
-        """A project can serve a CREA record only if it merged at least one
-        body NIF.  One with none can never satisfy _bodies_of, so letting it
-        shadow a master's real project costs the record its generated race."""
-        return bool(proj.get('bodies') or proj.get('body_map'))
-
-    merged, inherited, rescued = {}, 0, []
-    for name in names:
-        mpath = os.path.join(master_export_dir(root, name),
-                             'creature_projects.json')
-        if not os.path.exists(mpath):
-            continue
-        # The MASTER's file, so the master is what has to be re-run -- pass it
-        # as the hint or a v0 file (no envelope, no plugin field) would blame
-        # whichever plugin happened to be converting.
-        for folder, proj in read_artifact(mpath, name).items():
-            if folder in merged:
-                continue
-            if folder in own and _usable(own[folder]):
-                continue
-            if folder in own and _usable(proj):
-                # Own project has no body mesh; the master's does. Take the
-                # master's — the own folder is dead assets sharing a leaf name.
-                rescued.append(folder)
-            merged[folder] = proj
-            inherited += 1
-    if inherited:
-        print(f'  Creature projects: inherited {inherited} from master(s) '
-              f'{", ".join(names)} (own: {len(own)})')
-    if rescued:
-        print(f'  Creature projects: {len(rescued)} bodyless own project(s) '
-              f'superseded by the master\'s: {", ".join(sorted(rescued))}')
-    for folder, proj in own.items():
-        if folder in merged and not _usable(proj):
-            continue        # keep the master's usable project
-        merged[folder] = proj
-    return merged
-
-
-def _folder_of(rec) -> str:
-    """The creature's mesh folder token: "Creatures\\Dog\\Skeleton.NIF" -> "dog"."""
-    model = (get_str(rec, 'Model.MODL') or '').replace('/', '\\')
-    parts = [p for p in model.lower().split('\\') if p]
-    return parts[-2] if len(parts) >= 2 else ''
-
-
-def _bodies_of(rec, proj):
-    """The merged body NIF(s) for one CREA, or None when the project has none.
-
-    The creature pipeline merged each CREA's NIFZ part set into ONE whole-animal
-    NIF and ships the exact set->file mapping as ``body_map``, so dog / wolf /
-    skeletal-hound (one folder) each point at the right mesh without re-deriving
-    names here.  Falls back to the folder's first merged NIF.
-    """
-    nifz = [(get_str(rec, f'NIFZ[{i}]') or '').lower()
-            for i in range(get_int(rec, 'NIFZCount', 0))]
-    nifz = [p for p in nifz if p.endswith('.nif')]
-    merged = (proj.get('body_map') or {}).get('|'.join(nifz))
-    if merged:
-        return [merged]
-    if proj['bodies']:
-        return [proj['bodies'][0]]
-    return None
-
-
 def _race_groups(by_type: dict) -> dict:
     """(folder, bodies) -> every CREA sharing it, in by_type order.
 
@@ -1225,11 +1114,11 @@ def _race_groups(by_type: dict) -> dict:
     """
     race_recs = {}
     for rec in by_type.get('CREA', []):
-        folder = _folder_of(rec)
+        folder = folder_of(rec)
         proj = _PROJECTS.get(folder)
         if proj is None:
             continue
-        bodies = _bodies_of(rec, proj)
+        bodies = bodies_of(rec, proj)
         if bodies is None:
             continue
         race_recs.setdefault((folder, tuple(bodies)), []).append(rec)
@@ -1291,7 +1180,7 @@ def build_creature_races(by_type: dict, writer, export_dir: str,
     _load_magicka_return(by_type, master_export)
     _index_crea_folders(by_type)
 
-    _PROJECTS = _load_projects(export_dir)
+    _PROJECTS, owner_slot = load_projects(export_dir)
     if not _PROJECTS:
         print('  Creature projects: none (creature_projects.json missing — '
               'run the creatures step); CREA falls back to race aliasing')
@@ -1300,17 +1189,18 @@ def build_creature_races(by_type: dict, writer, export_dir: str,
     race_recs = _race_groups(by_type)
 
     made = {}
-    movt_folders = set()
+    movt_folders = folders_built_by_master(master_export, _PROJECTS,
+                                           owner_slot)
     n_races = 0
     n_armed = 0
     for rec in by_type.get('CREA', []):
-        folder = _folder_of(rec)
+        folder = folder_of(rec)
         proj = _PROJECTS.get(folder)
         if proj is None:
             continue
         fid = get_formid(rec, 'FormID') & 0x00FFFFFF
 
-        bodies = _bodies_of(rec, proj)
+        bodies = bodies_of(rec, proj)
         if bodies is None:
             continue
 

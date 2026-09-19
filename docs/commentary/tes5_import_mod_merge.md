@@ -213,3 +213,26 @@ Without the master's projects at all, CREA records fall through to
 spider or a Nord standing in for the converted Oblivion actor. Morrowind_ob.esm
 places **86** CREA records on Oblivion.esm's rat/skeleton/goblin meshes, which
 its own BSA never ships.
+
+### <a id="inherited-creature-folders"></a>An inherited folder's MOVT + IDLE set is written ONCE, by the master
+
+**Code:** `tes5_import/actors/creature_projects.py` — `folders_built_by_master`.
+
+A plugin whose CREA records sit on a master's creature folder needs its own
+RACE / skin chain, but NOT a second copy of the folder's MOVT and IDLE
+records. Nothing references either by FormID: the engine binds a MOVT by
+`MNAM` against the graph's `iState_*` names and an IDLE tree by `DNAM` against
+the behavior path. A second copy only competes with the master's, and goes
+stale whenever the master's creature build changes and the dependent is not
+re-imported.
+
+Measured: after Tamriel_Data.esm was rebuilt with ragdolls its
+`TES4tr_vermaiDeathWait` sent `DeathAnimation`, while TR_Mainland.esm's older
+copy of the same record (same `DNAM`) still sent `deathStart` — the plain
+death clip, no ragdoll. Not yet confirmed in game as the cause.
+
+The master wrote the set exactly when one of ITS OWN CREA records uses the
+folder with a body, and the project is the master's own (`owner_slot` from
+`load_projects` equals the CREA's master slot). Anything else — a master that
+ships the meshes but no creature on them — still gets the set from the
+dependent.

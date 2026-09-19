@@ -15,6 +15,8 @@ import numpy as np
 
 #: Largest principal-axis ratio Havok's joint solver stays stable under.
 MAX_ANISO = 6.5
+#: Oblivion Havok units to game units.
+OB_TO_GAME = 7.0
 
 
 def quat_to_mat_row(q):

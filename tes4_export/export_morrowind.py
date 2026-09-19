@@ -30,6 +30,7 @@ from .morrowind_ids import (IdIndex, exterior_key, interior_key, land_key,
                             load_master_doors, persistent_key,
                             load_index, marker_formid)
 from .morrowind_markers import MarkerBuilder, marker_lines
+from .morrowind_travel import travel_marker_records
 from .morrowind_pathgrid import pathgrid_records
 from .morrowind_patch import PATCH_NAME
 from .morrowind_grass import (GrassTally, grass_records, is_grass_model,
@@ -573,6 +574,7 @@ def convert_plugin(records, ctx: MorrowindContext) -> dict:
         prune_dropped_packages(out.get(sig, []), ctx)
     out['REFR'].extend(travel_markers)
     out['REFR'].extend(map_marker_records(ctx))
+    out['REFR'].extend(travel_marker_records(records, ctx, _is_convertible))
     out['WRLD'] = worldspace_record(ctx)
     out['CELL'].extend(persistent_cell_record(ctx))
     out.setdefault('MGEF', []).extend(magic_effect_records(records, ctx))

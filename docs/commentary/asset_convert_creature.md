@@ -3231,6 +3231,69 @@ the nearest armed stance, else H2H: a converted actor can be handed a weapon
 class Oblivion never animated for it, and playing the wrong swing beats
 standing inert.
 
+### <a id="morrowind-synthetic-ragdolls"></a>Morrowind rigs get SYNTHESIZED ragdoll bodies
+
+**Code:** `asset_convert/havok/hkx_ragdoll_morrowind.py`
+
+Morrowind predates Havok. Its creature skeletons are NIF `0x4000002` (4.0.0.2)
+and carry **zero** collision objects, bodies and constraints — measured across
+all 51 rigs under `export/Morrowind.esm/meshes/r/*/skeleton.nif`. So
+`plan_ragdoll_tree` sees fewer than two bodies, `extract_ragdoll` returns
+`None`, and the creature never reaches the AnimateToRagdoll / Fully Ragdoll
+wrapper. Measured with `tools/creature/ragdoll_mass_census.py`: all 50 built
+Morrowind `skeleton.hkx` report `ragdoll bones: 0  bodies found: 0`, against
+the Oblivion bear's 107/18 and clannfear's 143/22.
+
+The symptom is the corpse holding its death clip's last frame with the
+character controller still under it, so it is never activatable — the
+"Morrowind creatures aren't lootable on death" report.
+
+The fix synthesizes the bodies rather than special-casing the death state,
+because everything downstream of "a body with a capsule and a mass" already
+works: joint templates, `capsule_inertia`, the DFS ordering, and the engine
+attach contract. With no authored constraint anywhere, every joint takes the
+case-3 synthetic vanilla-template branch at `_SYNTH_FRICTION = 0.0`.
+
+**The bodies go into BOTH files.** The engine attaches a ragdoll by pairing
+each hkx body with the same-named collision body in the shipped
+`skeleton.nif` (see `plan_ragdoll_tree`). `attach_synthetic_bodies` is
+therefore called from `hkx_ragdoll._read_rig` AND from
+`nif_converter_morrowind.run_morrowind_fixups`. A first version only fed the
+hkx: the vermai shipped a 39-part hkx ragdoll over a skeleton.nif with 0
+collision blocks (the Oblivion bear ships 18 bodies + 17 joints), and in game
+the corpse had no ragdoll, no collision and could not be looted. After the
+fix the converted vermai skeleton.nif carries 35 bodies + 34 joints against
+35 hkx parts.
+
+**Bodies are written as Oblivion authors them**: Havok units (the readers
+multiply by `OB_TO_GAME` = 7) and a body frame equal to the bone's bind WORLD
+transform, rotation included. The first version wrote game units and summed
+translations without rotations, so every capsule came out 7x oversized and
+displaced. Measured after the fix: each capsule starts at its joint and ends
+on the child bone to within 3e-5 units.
+
+**Which nodes get a body is AUTHORED: the bones the creature's own body mesh
+skins to**, plus their common ancestor as the shared trunk root. Unskinned
+nodes are exactly the non-anatomy (vermai: `Bip01`, `Bip01 NonAccum`,
+`Bip01 Pelvis`, `Bounding Box`; guar: 15 `Dummy*`; cliffracer: 18 `*Cap`;
+storm atronach: `FootHold`/`Gravity01`/`PArray01`). A body on the ground-level
+rig root is a tall bar the corpse cannot fall over, the same failure as
+[the bone-1 dead end](#ragdoll-root-bone1-dead-end).
+
+**Only pre-Havok NIFs (version <= 4.0.0.2) are touched.** An Oblivion rig with
+no collision is a ghost that must keep its dissolve; measured untouched: bear
+18 parts, rat 21, ghost none.
+
+Capsule proportions are measured off 176 authored bodies on 7 Morroblivion
+rigs of the same creatures (`temp/probe_capsule_ratios.py`), in game units:
+radius/length median 0.30, radius/extent p10 0.0084 and p90 0.047, source mass
+per cubic unit median 0.0066. The total is clamped into the vanilla band
+(wolf 29 .. dragon 4852) because these rigs are authored at scales spanning
+400x, and each body is floored at 10% of the mean to keep joint mass ratios
+solvable.
+
+NOT yet confirmed in game.
+
 ### <a id="ragdoll-less-creatures"></a>Ragdoll-less creatures keep their death animation
 
 A ghost, wraith or spectre has no bhk bodies in its source skeleton, so

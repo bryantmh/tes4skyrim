@@ -16,12 +16,15 @@ a strided sample of the corpus all carry an EMPTY name string.
 See: docs/commentary/asset_convert_nif.md#morrowind-collision
 """
 
+import os
+
 from pyffi.formats.nif import NifFormat
 
 from asset_convert.collision.cms_builder import build_cms_collision
 from asset_convert.collision.collision import GAME_UNITS_PER_HAVOK
 from asset_convert.collision.collision_hulls import build_clutter_hull
 from asset_convert.collision.clutter_plan import mesh_clutter_mass
+from asset_convert.havok.hkx_ragdoll_morrowind import attach_synthetic_bodies
 from asset_convert.nif.nif_passes import add_bsx_flags
 from asset_convert.nif.particles_morrowind import upgrade_legacy_particles
 
@@ -544,6 +547,9 @@ def run_morrowind_fixups(data, stats=None) -> None:
     for root in data.roots:
         if hasattr(root, 'children'):
             strip_helper_nodes(root, stats)
+    src_path = (stats or {}).get('_src_path', '')
+    if os.path.basename(src_path).lower() == 'skeleton.nif':
+        attach_synthetic_bodies(data, src_path)
 
 
 def is_morrowind(data) -> bool:
