@@ -51,8 +51,6 @@ using FormQueryFn = bool (*)(void* vm, std::uint32_t stack, void* ref,
 using StateFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* ref);
 using HandQueryFn = void* (*)(void* vm, std::uint32_t stack, void* ref,
                               std::int32_t hand);
-using ActFn = void (*)(void* vm, std::uint32_t stack, void* ref);
-ActFn            g_startSneaking = nullptr;
 FormQueryFn      g_isEquipped = nullptr;
 StateFn          g_sleepState = nullptr;
 HandQueryFn      g_equippedSpell = nullptr;
@@ -184,23 +182,30 @@ bool SpellIsReadied(const std::string& actor) {
 
 // `ForceSneak`/`ClearForceSneak`. TES3 reads the stance as
 // `Flag_Sneak || Flag_ForceSneak` (OpenMW `CreatureStats::getStance`), so the
-// latch forces the stance ON TOP of whatever the AI is doing rather than
-// replacing it. Skyrim's only lever is StartSneaking, which TOGGLES -- hence
-// the read-first, and hence nothing to do when the actor already agrees.
+// latch forces the stance ON TOP of whatever the AI is doing.
 //
-// 🛑 Run, Jump and MoveJump have NO Skyrim equivalent: the engine gives
-// Papyrus no way to force a gait. Those three latch and answer their getter
-// and do nothing else, which is all the engine allows.
+// 🛑 This is a FLAG WRITE, not a native call. `Actor.StartSneaking` compares
+// its target against the player singleton and only acts for the player, so it
+// did nothing for an NPC however it was called. The console's `SetForceSneak`
+// is the real mechanism and it just sets one bit on the actor.
 // See: docs/commentary/morrowind_runtime.md#forced-movement-is-a-latch
-constexpr int kFlagForceSneak = 1;
-
+//
+// 🛑 `which` is compared against the SHARED `MovementFlag` enum, never a
+// number copied here: a local `kFlagForceSneak = 1` outlived the enum being
+// cut to sneak-only at 0, so every call returned early and nobody sneaked.
 void ApplyMovementFlag(const std::string& actor, int which, bool on) {
-    if (which != kFlagForceSneak) return;
+    if (which != kForceSneak) return;
     void* ref = OwnerRef(actor);
-    if (!ref || !g_startSneaking || !g_isSneaking) return;
+    if (!ref) {
+        Log("sneak: %s has no loaded reference", actor.c_str());
+        return;
+    }
     PostToMainThread([ref, on]() {
-        if (g_isSneaking(PapyrusVm(), 0, ref) == on) return;
-        g_startSneaking(PapyrusVm(), 0, ref);
+        auto* flags = reinterpret_cast<std::uint32_t*>(
+            static_cast<std::uint8_t*>(ref) + ids::kOffActorMoveFlags);
+        *flags = on ? (*flags | ids::kActorFlagForceSneak)
+                    : (*flags & ~ids::kActorFlagForceSneak);
+        Log("sneak: %s -> %08X", on ? "on" : "off", *flags);
     });
 }
 
@@ -254,8 +259,6 @@ void InstallQueryCalls(GameHooks& hooks) {
     hooks.hasLos = HasLosOn;
     hooks.detects = DetectsActor;
     hooks.fighting = FightingActor;
-    g_startSneaking = Native<ActFn>("Actor.StartSneaking",
-                                    ids::kActorStartSneaking);
     g_isEquipped = Native<FormQueryFn>("Actor.IsEquipped",
                                        ids::kActorIsEquipped);
     g_sleepState = Native<StateFn>("Actor.GetSleepState",

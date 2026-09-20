@@ -83,8 +83,6 @@ class OpHasItemEquipped : public Interpreter::Opcode0 {
 // a command that looks ported and does nothing, which is worse than a stub
 // because the audit stops counting it.
 // See: docs/commentary/morrowind_runtime.md#forced-movement-is-a-latch
-enum MovementFlag { kForceSneak };
-
 template <class R, bool On>
 class OpSetMovementFlag : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {

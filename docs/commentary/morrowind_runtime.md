@@ -1520,10 +1520,22 @@ Stance_Sneak = Flag_Sneak || Flag_ForceSneak
 so the latch forces a stance ON TOP of what the AI is doing rather than
 replacing it. The DLL owns the flag the way it owns the AI settings.
 
-**Only `ForceSneak`/`ClearForceSneak`/`GetForceSneak` are ported.**
-`Actor.StartSneaking` (id 54778) is the one lever Skyrim gives Papyrus, and it
-TOGGLES, so `SetMovementFlag` reads `IsSneaking` first and calls only when the
-two disagree.
+**Only `ForceSneak`/`ClearForceSneak`/`GetForceSneak` are ported**, and the
+mechanism is a **flag write, not a call**: `[actor + 0xCC] |= 4` to set,
+`&= ~4` to clear.
+
+🛑 **`Actor.StartSneaking` is the wrong native and cost three build-and-play
+rounds.** Its first instructions compare the target against the player
+singleton and take a do-nothing branch for anyone else, so it silently fails
+for every NPC — the CK wiki's "has no effect on the player" says the opposite
+of what the code does. What works is the CONSOLE's `SetForceSneak`, whose
+handler (0x3552b0, reached from the command-table row at 0x1fdfc00) does
+nothing but set that bit and echo `SetForceSneak >> %0.2f`.
+
+Confirmed in game: `setforcesneak 1` on the hunter makes her sneak; the native
+never did. The lesson generalizes — when a Papyrus native and a console
+command share a name and a purpose, the console command is often the one the
+AI actually uses, and the exe settles it in a way the wiki does not.
 
 🛑 **Run, Jump and MoveJump are `kDeliberateNoOps`, not latches.** Skyrim
 exposes no way to force a gait. Porting them would store a value nothing ever

@@ -1302,6 +1302,15 @@ void SpellStackDiscipline(DialogueContext& context) {
     }
 }
 
+// What the last applyMovementFlag hook was handed.
+int  g_appliedFlag = -1;
+bool g_appliedOn = false;
+
+void RecordMovementFlag(const std::string&, int which, bool on) {
+    g_appliedFlag = which;
+    g_appliedOn = on;
+}
+
 // The forced-sneak latch: set, read back, clear, and stay per actor. The
 // getter must answer what the SETTER wrote, never what the body is doing,
 // which is the whole reason the DLL owns the flag.
@@ -1332,6 +1341,15 @@ void ForcedMovementCases(Interpreter::Context& context) {
               State().MovementFlag("other_npc", 0) &&
               !State().MovementFlag("test_actor", 0),
           "an explicit target latches only that actor");
+    // 🛑 The latch must REACH the game. A local copy of the flag number went
+    // stale when the enum was cut to sneak-only, so every apply returned
+    // early and the actors ran around as normal for a whole playthrough.
+    g_appliedFlag = -1;
+    Hooks().applyMovementFlag = RecordMovementFlag;
+    State().SetMovementFlag("test_actor", kForceSneak, true);
+    Hooks().applyMovementFlag = nullptr;
+    Check(g_appliedFlag == kForceSneak && g_appliedOn,
+          "the latch reaches the game with the SHARED flag value");
     // Reset() wipes the journal and dispositions the later cases were set up
     // with, so the whole state is restored from its own serialization.
     State().SetMovementFlag("save_me", 0, true);

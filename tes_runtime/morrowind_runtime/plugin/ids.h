@@ -404,10 +404,17 @@ constexpr std::uint64_t kActorBaseDeadCount = 55987;
 // and store it into `[rbx+0x50]` AFTER the registering call -- reading only
 // the `r9` form finds nothing and reads as "no such native".
 // See: docs/commentary/morrowind_runtime.md#the-query-commands
-// void Actor.StartSneaking() (0x9eb800 live, 0x98cb50 GOG): TOGGLES rather
-// than sets, so the caller must read `IsSneaking` first and call only when
-// the two disagree.
-constexpr std::uint64_t kActorStartSneaking = 54778;
+// `SetForceSneak` is a FLAG on the actor, not a call. Its console handler
+// (0x3552b0, from the command table row at 0x1fdfc00) reads `[actor+0xCC]`,
+// ORs 4 to set and ANDs ~4 to clear, then echoes `SetForceSneak >> %0.2f`.
+//
+// 🛑 `Actor.StartSneaking` is NOT this: it compares its target against the
+// player singleton and only acts for the player, so it silently did nothing
+// for every NPC. Verified in game -- the console command sneaks an NPC, the
+// native does not.
+// See: docs/commentary/morrowind_runtime.md#forced-movement-is-a-latch
+constexpr std::size_t kOffActorMoveFlags = 0xCC;
+constexpr std::uint32_t kActorFlagForceSneak = 4;
 constexpr std::uint64_t kActorIsEquipped = 54707;
 constexpr std::uint64_t kActorGetSleepState = 54715;
 constexpr std::uint64_t kActorEquippedItemType = 54685;

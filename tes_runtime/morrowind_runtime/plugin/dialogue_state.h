@@ -33,6 +33,11 @@ struct Membership {
     int  reputation = 0;
 };
 
+// The forced movement latches TES3 keeps on an actor. Only sneak is here:
+// Skyrim can force no gait, so Run/Jump/MoveJump are `kDeliberateNoOps`.
+// See: docs/commentary/morrowind_runtime.md#forced-movement-is-a-latch
+enum MovementFlag { kForceSneak };
+
 // What the game itself has to do when the state changes. Null in the
 // headless tests, where only the state is checked.
 struct GameHooks {
@@ -192,8 +197,8 @@ struct GameHooks {
     // `GetPCSleep`: TES3 asks only whether the player is asleep; Skyrim's
     // sleep state is an enum the call folds down to that one bit.
     bool (*playerSleeping)() = nullptr;
-    // `ForceSneak`/`ForceRun` and their Clear pair: puts the actor into the
-    // movement state the latch now holds. `which` is the MovementFlag enum.
+    // `ForceSneak`/`ClearForceSneak`: puts the actor into the movement state
+    // the latch now holds. `which` is a `MovementFlag`.
     void (*applyMovementFlag)(const std::string& actor, int which,
                               bool on) = nullptr;
     void (*resurrect)(const std::string& actor) = nullptr;
@@ -326,7 +331,9 @@ public:
     // --- the forced sneak latch, per actor ---------------------------------
     // TES3 stores it ON the actor: ForceSneak sets, ClearForceSneak clears,
     // GetForceSneak reads it back, and the stance is that flag OR the AI's
-    // own. The DLL owns it the way it owns the AI settings.
+    // own. The DLL owns it the way it owns the AI settings. `which` is a
+    // `MovementFlag`, declared beside GameHooks so the OP that writes it and
+    // the CALL that applies it cannot disagree about the number.
     bool MovementFlag(const std::string& actor, int which) const;
     void SetMovementFlag(const std::string& actor, int which, bool on);
 
