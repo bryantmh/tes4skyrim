@@ -94,6 +94,7 @@ import struct
 import logging
 
 from ..base.text_reader import get_int, get_float, get_str, get_formid
+from .world import base_fid
 from ..base.writer import pack_subrecord, pack_string_subrecord
 
 _log = logging.getLogger(__name__)
@@ -435,12 +436,7 @@ def collect_doors(refr_recs, door_fids):
     for refr in refr_recs:
         name = refr.get('NAME', '')
         is_teleport = bool(refr.get('XTEL.Door'))
-        base = None
-        if name:
-            try:
-                base = int(name, 16) & 0xFFFFFF
-            except ValueError:
-                base = None
+        base = base_fid(refr)
         base_is_door = base is not None and base in door_fids
         if not (is_teleport or base_is_door):
             continue
@@ -798,7 +794,7 @@ def geom_hash(tag, points, edges, refr_recs, base_model_by_fid, doors,
     for refr in refr_recs or ():
         name = refr.get('NAME', '')
         try:
-            key = base_model_by_fid.get(int(name, 16) & 0xFFFFFF, '')
+            key = base_model_by_fid.get(base_fid(refr), '')
         except ValueError:
             key = ''
         if key and key not in seen_models:

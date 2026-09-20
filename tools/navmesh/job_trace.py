@@ -66,11 +66,12 @@ def init_worker_for(export_dir, im, door_fids, base_model_by_fid, offset):
 def load_export(export_dir, offset):
     """(text_reader, by_type, door_fids, base_model_by_fid, jobs) for a plugin.
 
-    Mirrors `pipeline_records`: the masters' export feeds both index builders,
-    and the mesh namespace is set first because model keys carry it.  Skip
-    either and the geometry rebuilt here silently differs from the import's.
+    Every step the import performs between parsing and gathering is repeated
+    here -- namespace, index offset, the runtime-only exclusion, the deleted
+    records, and the leveled placements that become ACHR.  Skip one and the
+    geometry rebuilt here silently differs from the import's.
 
-    See: docs/commentary/tes5_import_navmesh.md#verifying-a-cache-against-fresh-geometry
+    See: docs/commentary/tes5_import_navmesh.md#leveled-placements-never-carve
     """
     from asset_convert.game_paths import namespace_for, set_namespace
     from tes5_import.base import text_reader as im
@@ -78,17 +79,25 @@ def load_export(export_dir, offset):
                                          group_records_by_type,
                                          set_formid_index_offset)
     from tes5_import.overrides.nested import load_master_export
+    from tes5_import.pipeline import drop_author_deleted_records
+    from tes5_import.registry import RUNTIME_ONLY_TYPES
 
     set_namespace(namespace_for(export_dir))
     set_formid_index_offset(offset)
     print(f'parsing {export_dir} ...', flush=True)
     t0 = time.time()
-    by_type = group_records_by_type(parse_export_directory(export_dir))
+    records = parse_export_directory(export_dir, exclude=RUNTIME_ONLY_TYPES)
+    by_type = group_records_by_type(
+        drop_author_deleted_records(records, None))
     print(f'  parsed in {time.time() - t0:.1f}s', flush=True)
 
     master_export = load_master_export(export_dir)
     if master_export:
         print(f'  {len(master_export)} master records', flush=True)
+    n_lvl = navm_pool.drop_leveled_placements(by_type, master_export)
+    if n_lvl:
+        print(f'  {n_lvl} leveled placements become ACHR (not carved)',
+              flush=True)
     door_fids = navm_pool.build_door_fid_set(by_type, master_export)
     base_model_by_fid = navm_pool.build_base_model_index(by_type,
                                                          master_export)

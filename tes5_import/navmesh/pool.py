@@ -21,6 +21,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 from core.worker_budget import worker_count
 from . import cache_audit as navm_verify, worker as navm_worker
+from .world import base_fid
 from ..overrides.nested import DELETED_FLAG
 from ..record_types.navm_falloutnv import precompute_fallout_navmeshes
 from ..base.text_reader import (get_float, get_formid, get_formid_index_offset,
@@ -95,27 +96,33 @@ def _model_key(model: str) -> str:
 
 
 def _records_of(by_type: dict, master_export: dict, sigs) -> list:
-    """This plugin's records of *sigs*, with the MASTERS' listed FIRST.
+    """(base_fid, record) of *sigs*, MASTERS FIRST, keyed as a REFR names them.
 
-    Masters first so an override in this plugin wins the key.
+    Masters first so an override in this plugin wins the key.  `master_export`
+    keys by the raw TES4 slot while `get_formid` shifts every reference by the
+    load-order offset, so a master's id is shifted here to match what a NAME
+    actually resolves to.
+
+    See: docs/commentary/tes5_import_navmesh.md#base-ids-carry-their-plugin-index
     """
     out = []
     if master_export:
-        out.append(r for r in master_export.values()
+        offset = get_formid_index_offset()
+        out.append((_shift_index(key, offset), r)
+                   for key, r in master_export.items()
                    if r.get('Signature') in sigs)
-    out.append(r for sig in sigs for r in by_type.get(sig, []))
-    return [r for src in out for r in src]
+    out.append((get_formid(r, 'FormID'), r)
+               for sig in sigs for r in by_type.get(sig, []))
+    return [(fid, r) for src in out for fid, r in src if fid]
 
 
-def _low_fid(rec: dict):
-    """A record's low-24 FormID, or None when it has none / is unparsable."""
-    fid_str = rec.get('FormID')
-    if not fid_str:
-        return None
+def _shift_index(fid_str: str, offset: int):
+    """A master-export key moved into the index space references use."""
     try:
-        return int(fid_str, 16) & 0x00FFFFFF
-    except ValueError:
+        raw = int(fid_str, 16)
+    except (TypeError, ValueError):
         return None
+    return ((((raw >> 24) & 0xFF) + offset) << 24) | (raw & 0x00FFFFFF)
 
 
 # ---------------------------------------------------------------------------
@@ -124,25 +131,24 @@ def _low_fid(rec: dict):
 
 
 def build_base_model_index(by_type: dict, master_export: dict = None) -> dict:
-    """Map raw low-24 base-object FormID -> normalized model key.
+    """Map base-object FormID (index byte included) -> normalized model key.
 
     Only blocking base types are indexed, so carving never removes triangles
     under doors, lights, markers or actors.  `master_export` is REQUIRED for a
     plugin with masters.
 
-    See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
+    See: docs/commentary/tes5_import_navmesh.md#base-ids-carry-their-plugin-index
     """
     index = {}
-    for rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
+    for fid, rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
         model = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
-        low = _low_fid(rec) if model else None
-        if low is not None:
-            index[low] = _model_key(model)
+        if model:
+            index[fid] = _model_key(model)
     return index
 
 
 def build_base_radius_index(by_type: dict, master_export: dict = None) -> dict:
-    """Map raw low-24 base FormID -> the model's bounding radius (MODB).
+    """Map base FormID (index byte included) -> bounding radius (MODB).
 
     Only bases that carve are indexed, and only those declaring a radius, so
     the overhang index never widens a cell's gather for a marker or a light.
@@ -150,18 +156,15 @@ def build_base_radius_index(by_type: dict, master_export: dict = None) -> dict:
     `build_base_model_index`.
     """
     index = {}
-    for rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
-        low = _low_fid(rec)
-        if low is None:
-            continue
+    for fid, rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
         radius = get_float(rec, 'Model.MODB', 0.0)
         if radius > 0.0:
-            index[low] = radius
+            index[fid] = radius
     return index
 
 
 def build_door_fid_set(by_type: dict, master_export: dict = None) -> dict:
-    """Map raw low-24 DOOR base FormID -> normalized model key (or None).
+    """Map DOOR base FormID (index byte included) -> model key (or None).
 
     The key matches door_centers_cache so `_collect_doors` can panel-center each
     door.  Membership of the map doubles as the "is this a DOOR base" test, so
@@ -170,12 +173,9 @@ def build_door_fid_set(by_type: dict, master_export: dict = None) -> dict:
     See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
     """
     out = {}
-    for rec in _records_of(by_type, master_export, ('DOOR',)):
-        base = _low_fid(rec)
-        if base is None:
-            continue
+    for fid, rec in _records_of(by_type, master_export, ('DOOR',)):
         model = rec.get('Model.MODL') or rec.get('MODL')
-        out[base] = _model_key(model) if model else None
+        out[fid] = _model_key(model) if model else None
     return out
 
 
@@ -188,14 +188,14 @@ def build_teleport_grid(by_type: dict, master_export: dict = None):
     left alone, so master blindness would silently disable the check.
     """
     grid_cells = set()
-    for cell in _records_of(by_type, master_export, ('CELL',)):
+    for _fid, cell in _records_of(by_type, master_export, ('CELL',)):
         wrld = get_formid(cell, 'ParentWRLD')
         if wrld and not get_int(cell, 'RecordFlags') & _PERSISTENT_FLAG:
             grid_cells.add((wrld, get_int(cell, 'XCLC.X'),
                             get_int(cell, 'XCLC.Y')))
 
     placement = {}
-    for ref in _records_of(by_type, master_export, ('REFR',)):
+    for _fid, ref in _records_of(by_type, master_export, ('REFR',)):
         if ref.get('XTEL.Door'):
             placement[get_formid(ref, 'FormID')] = (
                 get_formid(ref, 'ParentWRLD'),
@@ -243,13 +243,7 @@ def _is_door_ref(rec: dict, door_fids) -> bool:
     """Is this REFR a teleport door, or a placement of a DOOR base?"""
     if rec.get('XTEL.Door'):
         return True
-    name = rec.get('NAME')
-    if not name:
-        return False
-    try:
-        return (int(name, 16) & 0xFFFFFF) in door_fids
-    except ValueError:
-        return False
+    return base_fid(rec) in door_fids
 
 
 def _persistent_doors_by_grid(cells, refr_by_cell, door_fids) -> dict:
@@ -303,12 +297,8 @@ def _refr_reach(rec, radius_by_base) -> float:
     The base model's bounding radius, scaled by the REFR.  0.0 when the base
     has no radius, which drops the ref from the overhang index entirely.
     """
-    name = rec.get('NAME')
-    if not name:
-        return 0.0
-    try:
-        radius = radius_by_base.get(int(name, 16) & 0x00FFFFFF, 0.0)
-    except ValueError:
+    radius = radius_by_base.get(base_fid(rec), 0.0)
+    if not radius:
         return 0.0
     return radius * (get_float(rec, 'XSCL.Scale', 1.0) or 1.0)
 
@@ -402,6 +392,28 @@ def _gather_exteriors(jobs, by_type, cells, indexes, pers_doors,
                                refr_by_cell, pgrd_by_cell,
                                pers_doors.get(square, []),
                                overhang.get(square, []))
+
+
+def drop_leveled_placements(by_type: dict, ctx_master_export=None) -> int:
+    """Remove REFRs that place a leveled creature; return how many went.
+
+    `leveled_actors` rewrites these into ACHR before the group builders run, so
+    a navmesh gathered from the raw REFR list carves placements the import
+    never carves.  Callers that only need geometry (the cache checker) run this
+    instead of minting shells, so both paths gather the same refs.
+
+    See: docs/commentary/tes5_import_navmesh.md#leveled-placements-never-carve
+    """
+    from ..actors.leveled_actors import is_leveled_creature_base, register_from
+    register_from(by_type, ctx_master_export)
+    refrs = by_type.get('REFR')
+    if not refrs:
+        return 0
+    keep = [r for r in refrs if not is_leveled_creature_base(r)]
+    dropped = len(refrs) - len(keep)
+    if dropped:
+        by_type['REFR'] = keep
+    return dropped
 
 
 def gather_navm_jobs(by_type: dict, door_fids: set = None,

@@ -864,18 +864,12 @@ def _prescan_leveled_actors(by_type: dict, ctx, writer, _step_done):
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-ordering-constraints
     """
-    from .actors.leveled_actors import (build_leveled_actor_shells,
-                                 register_leveled_bases)
-    _lvlc_fids = {int(r['FormID'], 16) for r in by_type.get('LVLC', [])
-                  if r.get('FormID')}
-    if ctx is not None:
-        _lvlc_fids |= {int(k, 16)
-                       for k, r in (ctx.master_export or {}).items()
-                       if r.get('Signature') == 'LVLC'}
-    register_leveled_bases(_lvlc_fids)
+    from .actors.leveled_actors import build_leveled_actor_shells, register_from
+    n_bases = register_from(by_type,
+                            ctx.master_export if ctx is not None else None)
     n_lvl_achr = build_leveled_actor_shells(by_type, writer)
     print(f"  Leveled creature placements: {n_lvl_achr} REFR -> ACHR "
-          f"via generated shell NPCs ({len(_lvlc_fids)} LVLC bases known)")
+          f"via generated shell NPCs ({n_bases} LVLC bases known)")
     _step_done('leveled actor shells')
 
 
@@ -1000,7 +994,7 @@ def _prescan_music_records(by_type: dict, writer, export_dir: str, plugin_out_di
         print(f"  ERROR building music records: {e}")
 
 
-def _drop_author_deleted_records(all_records: list, ctx) -> list:
+def drop_author_deleted_records(all_records: list, ctx) -> list:
     """`all_records` without the plugin's OWN records the author deleted.
 
     There is nothing to remove for one of those, so converting it would emit a
@@ -1177,7 +1171,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     all_records = parse_export_directory(export_dir,
                                          exclude=RUNTIME_ONLY_TYPES)
-    all_records = _drop_author_deleted_records(all_records, ctx)
+    all_records = drop_author_deleted_records(all_records, ctx)
     by_type = group_records_by_type(all_records)
 
     t1 = time.time()

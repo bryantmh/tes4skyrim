@@ -311,6 +311,20 @@ def register_leveled_bases(fids) -> None:
     _LEVELED_BASES.update(fids)
 
 
+def register_from(by_type: dict, master_export: dict = None) -> int:
+    """Register every LVLC this plugin can place; return how many.
+
+    Ids stay RAW (this plugin's source space), which is what
+    `is_leveled_creature_base` compares a REFR's unremapped NAME against.
+    """
+    fids = {int(r['FormID'], 16) for r in by_type.get('LVLC', [])
+            if r.get('FormID')}
+    fids |= {int(k, 16) for k, r in (master_export or {}).items()
+             if r.get('Signature') == 'LVLC'}
+    register_leveled_bases(fids)
+    return len(fids)
+
+
 def is_leveled_creature_base(refr: dict) -> bool:
     """True when this REFR places a leveled creature (its NAME is an LVLC).
 

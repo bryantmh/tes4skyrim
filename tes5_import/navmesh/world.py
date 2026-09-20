@@ -18,7 +18,7 @@ import math
 
 import numpy as np
 
-from ..base.text_reader import get_float, get_str
+from ..base.text_reader import get_float, get_formid, get_str
 from ..record_types.world import shifted_position
 from . import params
 
@@ -174,6 +174,14 @@ def _split_by_slope(tris):
     return tris[walk], tris[ok & ~walk]
 
 
+def base_fid(rec: dict):
+    """The base id a REFR names, keyed as every carving index is.
+
+    See: docs/commentary/tes5_import_navmesh.md#base-ids-carry-their-plugin-index
+    """
+    return get_formid(rec, 'NAME') or None
+
+
 def _placed_soup(refr, base_model_by_fid, get_collision):
     """Return (walkable, blocking) placed arrays for one REFR, or (None, None).
 
@@ -184,14 +192,7 @@ def _placed_soup(refr, base_model_by_fid, get_collision):
     See: docs/commentary/tes5_import_navmesh.md#wild-placements-are-dropped
     See: docs/commentary/asset_convert_nif.md#furniture-shift-third-consumer
     """
-    name = refr.get('NAME')
-    if not name:
-        return None, None
-    try:
-        base_low = int(name, 16) & 0x00FFFFFF
-    except ValueError:
-        return None, None
-    key = base_model_by_fid.get(base_low)
+    key = base_model_by_fid.get(base_fid(refr))
     soup = get_collision(key) if key else None
     if not soup:
         return None, None
@@ -216,11 +217,7 @@ def _sort_refr_parts(refr_recs, base_model_by_fid, get_collision, skip_bases):
     """
     walk_parts, block_parts, door_walk_parts = [], [], []
     for refr in refr_recs or []:
-        name = refr.get('NAME')
-        try:
-            base_low = int(name, 16) & 0x00FFFFFF if name else None
-        except ValueError:
-            base_low = None
+        base_low = base_fid(refr)
         w, b = _placed_soup(refr, base_model_by_fid, get_collision)
         if w is None and b is None:
             continue

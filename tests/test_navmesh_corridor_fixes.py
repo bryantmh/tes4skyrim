@@ -218,3 +218,53 @@ def test_disc_ray_runs_on_only_over_level_ground():
 
     assert corridor._level_reach(layers, 0.0, 0.0, 0.0, 1.0, 0.0, 40.0, 160.0) == 96.0
     assert corridor._level_reach(layers, 0.0, 0.0, 0.0, 1.0, 0.0, 40.0, 80.0) == 80.0
+
+def _land_group():
+    """A sheet group the slit-closer treats as terrain."""
+    return [{'land': object()}]
+
+
+def test_land_slit_repairs_an_invalid_buffer_ring():
+    """An invalid buffered ring is repaired, not thrown out of.
+
+    The mitre round-trip self-intersects on spiky terrain outlines; GEOS then
+    throws out of `difference` and the whole CELL loses its navmesh -- measured
+    as 13 Oblivion exteriors and 1 TR_Mainland cell with no navmesh at all.
+
+    See: docs/commentary/tes5_import_navmesh.md#land-slit-buffer-must-be-repaired
+    """
+    from shapely.geometry import Polygon
+    from tes5_import.navmesh import corridor_union as cu
+
+    bowtie = Polygon([(0, 0), (100, 100), (100, 0), (0, 100)])
+    assert not bowtie.is_valid
+    calls = []
+    out = cu._close_land_slits(bowtie, _land_group(),
+                               lambda p: calls.append(p) or True)
+    assert out is not None and not out.is_empty
+
+
+def test_land_slit_failure_keeps_the_sheet():
+    """Any GEOS failure in the fill returns the sheet, never propagates.
+
+    Covers the cell whose polygons are both VALID and still fail inside GEOS's
+    overlay (Oblivion 01006879), where repairing the ring does not help.
+    """
+    from shapely.errors import GEOSException
+    from shapely.geometry import Polygon
+    from tes5_import.navmesh import corridor_union as cu
+
+    def boom(_p):
+        """Stand in for a shapely call that throws inside the fill."""
+        raise GEOSException('overlay failed')
+
+    poly = Polygon([(0, 0), (400, 0), (400, 90), (0, 90)])
+    assert cu._close_land_slits(poly, _land_group(), boom) is poly
+
+
+def test_land_slit_skips_non_terrain_sheets():
+    """A sheet with no LAND is returned untouched."""
+    from shapely.geometry import Polygon
+    from tes5_import.navmesh import corridor_union as cu
+    poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    assert cu._close_land_slits(poly, [{}], lambda _p: True) is poly

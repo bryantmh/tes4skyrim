@@ -87,6 +87,9 @@ and reconstructed — each ribbon already knows its Z everywhere along itself.
 import math
 
 import numpy as np
+from shapely.errors import GEOSException
+from shapely.ops import unary_union
+from shapely.validation import make_valid
 # Bound once at module scope: `_overlap_height_gap` is called ~30k times on a
 # large cell, and re-running `import shapely` per call is pure interpreter
 # overhead on an already-loaded module.
@@ -243,7 +246,6 @@ def _sheet_coverage(group, gi, ctx):
     See: docs/commentary/tes5_import_navmesh.md#sheets-claim-ground-exclusively
     """
     from shapely.geometry import box
-    from shapely.ops import unary_union
     gpolys = [p for p in (_ribbon_polygon(s) for s in group)
               if p.is_valid and not p.is_empty]
     gpolys.extend(ctx['junction_extra'].get(gi, ()))
@@ -298,17 +300,26 @@ def _target_edge(group):
 def _close_land_slits(gmerged, group, slit_ok):
     """`gmerged` with the wall-free hairline gaps between terrain ribbons filled.
 
+    Returns `gmerged` untouched when the fill cannot be computed: the slits are
+    cosmetic, and a cell with them beats a cell with no navmesh at all.
+
     See: docs/commentary/tes5_import_navmesh.md#land-slits-are-closed
     """
     if slit_ok is None or _land_of(group) is None:
         return gmerged
-    from shapely.ops import unary_union
     closed = gmerged.buffer(LAND_SLIT_HALF, join_style=2).buffer(
         -LAND_SLIT_HALF, join_style=2)
-    fill = closed.difference(gmerged)
-    pieces = list(getattr(fill, 'geoms', [fill]))
-    keep = [p for p in pieces if not p.is_empty and p.area > 1.0 and slit_ok(p)]
-    return unary_union([gmerged] + keep) if keep else gmerged
+    if not closed.is_valid:
+        closed = make_valid(closed)
+    try:
+        fill = closed.difference(gmerged)
+        pieces = list(getattr(fill, 'geoms', [fill]))
+        keep = [p for p in pieces
+                if p.geom_type in ('Polygon', 'MultiPolygon')
+                and not p.is_empty and p.area > 1.0 and slit_ok(p)]
+        return unary_union([gmerged] + keep) if keep else gmerged
+    except GEOSException:
+        return gmerged
 
 
 def _sheet_parts(gmerged, wall_cut):
@@ -428,7 +439,6 @@ def _merged_coverage(strips, cell_bounds, wall_cut):
     See: docs/commentary/tes5_import_navmesh.md#union-inputs-and-clipping
     """
     from shapely.geometry import box
-    from shapely.ops import unary_union
     polys = [p for p in (_ribbon_polygon(s) for s in strips)
              if p.is_valid and not p.is_empty]
     if not polys:

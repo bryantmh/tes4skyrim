@@ -4018,6 +4018,24 @@ class-level `_armed` records which export currently owns them, so the common
 single-export case still pays the load exactly once.
 
 
+## <a id="land-slit-buffer-must-be-repaired"></a>Land slits: repair the buffer, never kill the cell
+
+**The slit-closing buffer produces INVALID geometry, and a failed fill must never kill the cell** (`corridor_union._close_land_slits`). The mitre round-trip `buffer(+16, join_style=2).buffer(-16, join_style=2)` self-intersects on terrain sheets whose outline has sharp spurs, and the `difference` against it then throws out of the whole cell -- **13 Oblivion exteriors and 1 TR_Mainland cell produced NO navmesh at all**, as `TopologyException: found non-noded intersection` (9), `unable to assign free hole to a shell` (3), `side location conflict` (1) and one `AssertionFailedException: Should never reach here`.
+
+The input is valid every time; only the buffered ring is (measured on 0100604B: `in valid=True buffered valid=False`, self-intersection at 42882.0 13177.3). So the ring is repaired with `make_valid` before the difference, which rescues the topology cases and yields a sensible fill. One cell (01006879) has both polygons valid and fails inside GEOS's overlay anyway, where `make_valid` does NOT help -- so `GEOSException` is caught around both the difference and the union and `gmerged` is returned unchanged. **The slits are cosmetic; a cell with hairline gaps beats a cell with no navmesh.** All 14 cells build after the fix, and a 40-cell sample of already-working Oblivion cells is byte-identical, so the repair touches only what was crashing.
+
+## <a id="leveled-placements-never-carve"></a>Leveled placements never carve
+
+**A REFR placing a leveled creature is gone before the navmesh gathers** (`pool.drop_leveled_placements`). `leveled_actors.build_leveled_actor_shells` rewrites every such REFR into an ACHR aimed at a shell NPC_, and it runs in the pre-scan phase -- BEFORE phase 4a. A navmesh built from the raw REFR list therefore carves placements the import never carves.
+
+This is what made the pre-push gate refuse a cache the import had just written: `job_trace.load_export` parsed the export and gathered jobs directly, so Morroblivion cell 024C16D6 came to 48 refs in the checker against the import's 42 (**501 verts stored, 514 rebuilt**). The checker must run the same preparation as the import, so the filter lives here and BOTH paths call it; only the import also mints the shells. Every other step the import performs between parse and gather -- `exclude=RUNTIME_ONLY_TYPES`, `drop_author_deleted_records`, `set_namespace`, `set_formid_index_offset` -- is on the checker's path for the same reason.
+
+## <a id="base-ids-carry-their-plugin-index"></a>Base ids carry their plugin index
+
+**A carving base is keyed by its FULL FormID, never the low 24 bits** (`pool._records_of`). Morroblivion's LVLC `02000BC6` (`fbmw0bmUexUfelcoastU40`, a region spawn list) and Oblivion's TREE `00000BC6` (`TreeWillowOakFreeSU`) share the low bytes, so a low-24 index handed the leveled list an unrelated tree's collision and carved a phantom trunk. **16 low-24 ids in Morroblivion are claimed from two plugins at once, 7 of them by an LVLC.**
+
+The two id spaces must be aligned before they can be compared. `load_master_export` keys by the RAW TES4 slot (Oblivion = 0) while `get_formid` shifts every REFERENCE by the load-order offset, so a NAME of `01000BC6` names master key `00000BC6`; the master's key is shifted by the offset here to match. Masking to low bytes hid the mismatch by accident and resurrected the collision at the same time -- **offset-correcting raises exact REFR->base matches from 247,678 to 253,462 and drops low-only matches from 6,006 to 222**, the 222 being exactly the collisions that SHOULD miss.
+
 ## <a id="master-owned-cells"></a>Navmesh in a cell the plugin does not own
 
 **Code:** `navmesh/pool.py:gather_navm_jobs`, `overrides/master_index.py:navms`.
