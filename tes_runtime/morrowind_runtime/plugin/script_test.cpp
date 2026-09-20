@@ -1318,6 +1318,28 @@ void RecordMovementFlag(const std::string&, int which, bool on) {
 // 🛑 Run, Jump and MoveJump are deliberate no-ops, not latches: Skyrim can
 // force no gait, so they must NOT answer their getter. A latch there would
 // read as ported and move nothing.
+// 🛑 One log line per (stub, script), not per stub. The old rule was
+// `++count == 1` globally, so a second quest reaching the same unported
+// command was SILENT -- the log could say `Say` did nothing without saying
+// which of TR's 184 call sites it was.
+// See: docs/commentary/morrowind_runtime.md#logging-names-the-script
+void UnportedSiteCases(Interpreter::Context& context) {
+    std::printf("an unported command logs once per SITE\n");
+    const std::size_t before = UnportedSitesLogged();
+    SetRunningTopic("first topic");
+    RunResultScript("GetWindSpeed", context);
+    const std::size_t first = UnportedSitesLogged();
+    Check(first == before + 1, "a new stub logs a site");
+    RunResultScript("GetWindSpeed", context);
+    Check(UnportedSitesLogged() == first,
+          "the same stub in the same script does not log again");
+    SetRunningTopic("second topic");
+    RunResultScript("GetWindSpeed", context);
+    Check(UnportedSitesLogged() == first + 1,
+          "the same stub in ANOTHER script logs a second site");
+    SetRunningTopic("");
+}
+
 void ForcedMovementCases(Interpreter::Context& context) {
     std::printf("the forced sneak flag latches per actor\n");
     State().SetDisposition("test_actor", 50);
@@ -1400,6 +1422,7 @@ void Cases() {
     MoveCases(context);
     AiPackageCases(context);
     ForcedMovementCases(context);
+    UnportedSiteCases(context);
     TableCases(context, actor);
     State().BeginConversation();
 

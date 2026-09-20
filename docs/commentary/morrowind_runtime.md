@@ -1228,6 +1228,35 @@ Two covers are produced, because they answer different questions. The
 45 commands that are registered but do nothing, so the log shows exactly which
 silent no-op broke which stage. See [the audit](../audits/mwscript_opcodes.md#ported).
 
+What the run's log has to carry for any of this to be diagnosable is
+[the next section](#logging-names-the-script).
+
+### <a id="logging-names-the-script"></a>A log line names the script it came from
+
+A play-test log is only useful if an agent reading it afterwards can fix what
+it reports, and three gaps made that impossible. All three are about CONTEXT,
+not volume — the runtime already logged plenty, just nothing that said *where*.
+
+**`Journal` logged nothing at all.** It is the one statement that advances a
+quest, so without it no log can distinguish "the quest advanced" from "the
+quest silently stalled" — the single most important line in a quest test.
+
+**The unported-command warning fired once per command, globally**
+(`++g_reported[name] == 1`), naming the command but not the script. The second
+occurrence, in a different quest, was silent — so a log could say `say` did
+nothing without saying which of TR's 184 `Say` call sites it was. It is now
+deduplicated per *site* (command + script), and carries the script.
+
+**Nothing recorded which result script ran.** A script that runs but takes no
+branch produced no output, which reads exactly like one that never ran.
+
+🛑 **The script name is a scoped global, not a parameter.** The interpreter
+hands an opcode only its `Runtime`, so naming the script at the call site
+would mean threading it through all 326 handlers. `RunningScript` is an RAII
+guard that sets it for the duration of a run and restores the previous value,
+because a result script can `StartScript` another one; scripts run one at a
+time on the game thread.
+
 ### <a id="ai-settings"></a>The AI settings and `GetDeadCount` are the DLL's own
 
 `SetFight` / `SetHello` / `SetAlarm` / `SetFlee`, their `Mod` and `Get` forms,

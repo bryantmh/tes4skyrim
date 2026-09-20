@@ -604,7 +604,9 @@ void Deliver(const std::string& title, const Reply& reply) {
     g_history.push_back(entry);
     g_lastTopic = reply.topic;
 
+    SetRunningTopic(reply.topic);
     RunResultScript(reply.resultScript, context);
+    SetRunningTopic("");
     for (const std::string& message : State().messages) {
         Entry notice;
         notice.text = message;

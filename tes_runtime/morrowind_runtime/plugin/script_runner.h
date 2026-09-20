@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -58,5 +59,16 @@ const ScriptLocals* ObjectScriptLocals(const std::string& script);
 // Every unported command a script has reached so far, which is the port's
 // worklist as the content itself orders it.
 std::vector<std::string> UnportedCommandsSeen();
+
+// Names the topic whose reply is about to run, so the log says which line of
+// dialogue a journal entry or an unported command came from. Cleared with
+// "". The interpreter's Context has nowhere to carry this.
+// See: docs/commentary/morrowind_runtime.md#logging-names-the-script
+void SetRunningTopic(const std::string& topic);
+
+// How many distinct (unported command, script) pairs have been LOGGED, which
+// is one line each. Rises when a second script reaches a stub the first
+// already did; a per-command counter would not.
+std::size_t UnportedSitesLogged();
 
 }  // namespace mwruntime

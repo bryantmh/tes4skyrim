@@ -51,6 +51,33 @@ constexpr const char* kPushedArgs = "Sclsf";
 // GMST sJournalEntry.
 constexpr const char* kJournalUpdated = "Your journal has been updated.";
 
+// What is running right now, so a log line can name it. Empty between runs.
+//
+// A scoped global rather than a parameter: the interpreter hands an opcode
+// only its Runtime, so the alternative is threading a name through every one
+// of the 326 handlers. Scripts run one at a time on the game thread.
+// See: docs/commentary/morrowind_runtime.md#logging-names-the-script
+std::string g_running;
+
+// Names the running script for as long as it runs, and restores what was
+// running before -- a result script can `StartScript` another.
+class RunningScript {
+public:
+    explicit RunningScript(std::string what)
+        : mPrevious(g_running) { g_running = std::move(what); }
+    ~RunningScript() { g_running = mPrevious; }
+    RunningScript(const RunningScript&) = delete;
+    RunningScript& operator=(const RunningScript&) = delete;
+
+private:
+    std::string mPrevious;
+};
+
+// "in <script>" for a log line, or "" when nothing named itself.
+std::string Where() {
+    return g_running.empty() ? std::string() : " in " + g_running;
+}
+
 // ---------------------------------------------------------------- compiling
 
 // MWScript::CompilerContext, answered from the sidecar's tables. The parser
@@ -122,16 +149,20 @@ class OpJournal : public Interpreter::Opcode0 {
         R::Target(runtime);
         const std::string quest = PopString(runtime);
         const int index = PopInt(runtime);
-        if (State().AddJournalEntry(quest, index)) {
-            State().messages.push_back(kJournalUpdated);
-        }
+        const bool fresh = State().AddJournalEntry(quest, index);
+        Log("journal: %s = %d%s%s", quest.c_str(), index, Where().c_str(),
+            fresh ? "" : " (already at or past it)");
+        if (fresh) State().messages.push_back(kJournalUpdated);
     }
 };
 
 class OpSetJournalIndex : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
         const std::string quest = PopString(runtime);
-        State().SetJournalIndex(quest, PopInt(runtime));
+        const int index = PopInt(runtime);
+        Log("journal: %s set to %d%s", quest.c_str(), index,
+            Where().c_str());
+        State().SetJournalIndex(quest, index);
     }
 };
 
@@ -503,6 +534,19 @@ constexpr const char* kDeliberateNoOps[] = {
 // How often each unported command has been reached.
 std::map<std::string, int> g_reported;
 
+// The (command, script) pairs already logged: one line per SITE, so a second
+// quest reaching the same stub still says so. Keyed with a NUL between the
+// two, which neither a command name nor a script name can contain.
+std::set<std::string> g_reportedSites;
+
+// Object scripts that have run at least once, so each logs its first tick
+// and not the thousands after it.
+std::set<std::string> g_objectsRun;
+
+// The topic whose reply is being delivered, set by the conversation before it
+// runs the result script. The interpreter Context cannot carry it.
+std::string g_topic;
+
 // What an unported command does: consume what it was given, answer zero.
 struct StubShape {
     std::string name;
@@ -517,9 +561,12 @@ struct StubShape {
     }
 
     void Run(Interpreter::Runtime& runtime, int extra) const {
-        if (!Deliberate() && ++g_reported[name] == 1) {
-            Log("script: '%s' is not ported yet -- it did nothing",
-                name.c_str());
+        if (!Deliberate()) {
+            ++g_reported[name];
+            if (g_reportedSites.insert(name + '\0' + g_running).second) {
+                Log("script: '%s' is not ported yet -- it did nothing%s",
+                    name.c_str(), Where().c_str());
+            }
         }
         for (int i = 0; i < pops + extra; ++i) runtime.pop();
         if (returns == 'f') {
@@ -908,6 +955,12 @@ bool RunObjectScript(const std::string& script, const std::string& source,
                      Interpreter::Context& context) {
     Machine::ObjectProgram& built = ObjectProgramFor(script, source);
     if (built.program.mInstructions.empty()) return false;
+    // First run only: an object script ticks every frame, and one line per
+    // tick per script would bury everything else in the log.
+    if (g_objectsRun.insert(script).second) {
+        Log("script: object '%s' running", script.c_str());
+    }
+    RunningScript running("object script " + script);
     try {
         TheMachine().interpreter.run(built.program, context);
         return true;
@@ -931,21 +984,36 @@ std::vector<std::string> UnportedCommandsSeen() {
     return out;
 }
 
+void SetRunningTopic(const std::string& topic) {
+    g_topic = topic;
+}
+
+std::size_t UnportedSitesLogged() {
+    return g_reportedSites.size();
+}
+
 bool RunResultScript(const std::string& source,
                      Interpreter::Context& context) {
     if (source.find_first_not_of(" \t\r\n") == std::string::npos) return true;
     Machine& machine = TheMachine();
     Interpreter::Program program;
     const std::string speaker = context.getTarget().getRefIdString();
+    const std::string what = g_topic.empty()
+        ? "result script of " + speaker
+        : "'" + g_topic + "' from " + speaker;
     if (!Compile(machine, source, speaker, &program)) {
-        Log("script: NOT run -- it did not compile:\n%s", source.c_str());
+        Log("script: %s NOT run -- it did not compile:\n%s", what.c_str(),
+            source.c_str());
         return false;
     }
+    Log("script: running %s", what.c_str());
+    RunningScript running(what);
     try {
         machine.interpreter.run(program, context);
         return true;
     } catch (const std::exception& error) {
-        Log("script: stopped: %s\n%s", error.what(), source.c_str());
+        Log("script: %s stopped: %s\n%s", what.c_str(), error.what(),
+            source.c_str());
         return false;
     }
 }
