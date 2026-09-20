@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Pathgrid transplant editor</title>
+<title>Cellview</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -32,28 +32,45 @@
   #mode { left: 10px; top: 10px; background: rgba(44,92,196,.9); font-weight: 600; }
   #busy { position: absolute; inset: 0; display: grid; place-items: center;
           background: rgba(13,13,13,.72); font-size: 15px; z-index: 3; }
+  .errbox { max-width: 620px; padding: 14px 18px; text-align: center;
+            line-height: 1.6; background: #241a1a; border: 1px solid #6a3a3a;
+            border-radius: 6px; color: #f0c0c0; }
+  .errbox button { margin-top: 10px; }
   kbd { background: #262626; border: 1px solid #3a3a3a; border-radius: 3px;
         padding: 0 4px; font: 11px ui-monospace, monospace; }
   #help { color: #777; font-size: 12px; }
   label.chk { color: #9a9a9a; display: flex; align-items: center; gap: 4px; }
+  .grp.menu { position: relative; }
+  .drop { display: none; position: absolute; top: 100%; left: 8px; z-index: 5;
+          margin-top: 6px; padding: 8px 10px; background: #1c1c1c;
+          border: 1px solid #3a3a3a; border-radius: 5px; min-width: 150px;
+          box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+  .drop.open { display: block; }
+  .drop.wide { min-width: 230px; }
+  .drop .chk { padding: 3px 0; }
+  .phead { color: #9a9a9a; font-size: 11px; text-transform: uppercase;
+           letter-spacing: .06em; margin-bottom: 6px; }
+  .prow { display: flex; gap: 4px; margin-top: 6px; }
+  .pnote { color: #777; font-size: 11px; margin-top: 8px; line-height: 1.5; }
+  #corpusPanel select { width: 100%; }
+  .unavailable { color: #7a5a5a; }
 </style>
 </head>
 <body>
 
 <div id="bar">
-  <select id="cell"></select>
-  <div class="grp" id="anyCell">
+  <div class="grp">
     <select id="plugin" title="Export to browse"></select>
-    <input id="cellSearch" placeholder="any cell…" autocomplete="off"
-           list="cellList" size="18">
+    <input id="cellSearch" placeholder="cell, or: Tamriel 4 12" autocomplete="off"
+           list="cellList" size="20">
     <datalist id="cellList"></datalist>
-    <button id="openMesh">Open</button>
+    <button id="openMesh" class="primary">Open</button>
   </div>
   <div class="grp">
-    <button id="mSel" class="on" title="Q">Select</button>
-    <button id="mNode" title="W">+Node</button>
-    <button id="mEdge" title="E">+Edge</button>
-    <button id="mTri" title="T">Mesh</button>
+    <button id="mSel" title="Q">Select</button>
+    <button id="mTri" class="on" title="T">Mesh</button>
+    <button id="mNode" class="corpusOnly" title="W">+Node</button>
+    <button id="mEdge" class="corpusOnly" title="E">+Edge</button>
   </div>
   <div class="grp">
     <button id="vTop" title="1">Top</button>
@@ -61,24 +78,22 @@
     <button id="vSide" title="3">Side</button>
     <button id="vIso" title="4">Iso</button>
   </div>
-  <div class="grp">
-    <button id="srcBruma" class="on" title="Tab">Bruma</button>
-    <button id="srcOb" title="Tab">Oblivion</button>
-    <button id="srcBoth" title="Tab">Both</button>
+  <div class="grp menu">
+    <button id="layersBtn">Layers ▾</button>
+    <div id="layersMenu" class="drop">
+      <label class="chk"><input type="checkbox" id="cWall" checked>walls</label>
+      <label class="chk"><input type="checkbox" id="cFloor" checked>floor</label>
+      <label class="chk"><input type="checkbox" id="cPath" checked>pathgrid</label>
+      <label class="chk"><input type="checkbox" id="cTri" checked>navmesh</label>
+      <label class="chk corpusOnly"><input type="checkbox" id="cNav" checked>authored</label>
+      <label class="chk corpusOnly"><input type="checkbox" id="cGen">ours</label>
+    </div>
   </div>
   <div class="grp">
-    <label class="chk"><input type="checkbox" id="cWall" checked>walls</label>
-    <label class="chk"><input type="checkbox" id="cFloor" checked>floor</label>
-    <label class="chk"><input type="checkbox" id="cNav" checked>authored</label>
-    <label class="chk"><input type="checkbox" id="cGen">ours</label>
-    <label class="chk"><input type="checkbox" id="cPath" checked>pathgrid</label>
-    <label class="chk"><input type="checkbox" id="cTri" checked>navmesh</label>
-  </div>
-  <div class="grp" id="staleGrp" style="display:none">
-    <label class="chk"><input type="radio" name="src" id="srcLive"
-        checked>current mesh</label>
-    <label class="chk"><input type="radio" name="src" id="srcSaved">saved
-      result</label>
+    <select id="meshSrc" title="Which mesh to show">
+      <option value="live">Current mesh</option>
+      <option value="saved">Saved result</option>
+    </select>
   </div>
   <div class="grp">
     <button id="save" class="primary" disabled>Overwrite</button>
@@ -86,7 +101,21 @@
     <button id="undo" disabled>Undo</button>
     <button id="reset">Reload</button>
   </div>
-  <span id="stat">loading…</span>
+  <div class="grp menu">
+    <button id="corpusBtn">Transplant ▾</button>
+    <div id="corpusPanel" class="drop wide">
+      <div class="phead">Bruma transplant corpus</div>
+      <select id="cell"></select>
+      <div class="prow">
+        <button id="srcBruma" class="on">Bruma</button>
+        <button id="srcOb">Oblivion</button>
+        <button id="srcBoth">Both</button>
+      </div>
+      <div class="pnote">Fits our pathgrid onto a hand-authored Bruma cell.
+        +Node / +Edge edit the corpus entry.</div>
+    </div>
+  </div>
+  <span id="stat">ready</span>
   <span id="help" style="margin-left:auto"></span>
 </div>
 
@@ -122,6 +151,8 @@
 "use strict";
 
 const $ = id => document.getElementById(id);
+/* Export list with its `indexed` / `collision` tags. */
+let PLUGINS = [];
 const wrap = $('wrap');
 
 /* ---------------------------------------------------------------- scene -- */
@@ -492,6 +523,7 @@ function hoveredMeshName() {
 const dragPlane = new THREE.Plane();
 const hitPt = new THREE.Vector3();
 let dragging = false, dragVertical = false, orbiting = false, panning = false;
+let pendingTri = -1, downAt = null;
 let lastPtr = null;
 
 let dragFrom = null;
@@ -528,6 +560,8 @@ function dragTo(ev) {
 /* --------------------------------------------------------- interaction -- */
 el.addEventListener('pointerdown', ev => {
   lastPtr = [ev.clientX, ev.clientY];
+  downAt = [ev.clientX, ev.clientY];
+  pendingTri = -1;
   if (ev.button === 2) { orbiting = true; el.setPointerCapture(ev.pointerId); return; }
   if (ev.button === 1) { panning = true; el.setPointerCapture(ev.pointerId); return; }
 
@@ -638,6 +672,11 @@ el.addEventListener('pointermove', ev => {
 el.addEventListener('pointerleave', () => setHover(-1));
 
 function endPtr(ev) {
+  if (ev && pendingTri >= 0 && pickedOnRelease(ev)) {
+    mSelTri = pendingTri; mSelVert = -1;
+    meshRebuild(); status();
+  }
+  pendingTri = -1; downAt = null;
   if (mDragging) meshPointerUp();
   if (dragging) refreshScore();
   dragging = orbiting = panning = false; lastPtr = null;
@@ -738,11 +777,7 @@ async function loadCell(name, keepView) {
     $('busy').textContent = 'load FAILED: ' + err;
     return;
   }
-  if (G.error) {
-    $('busy').textContent = G.error;
-    setTimeout(() => { $('busy').style.display = 'none'; }, 2500);
-    return;
-  }
+  if (G.error) { showError(G.error); return; }
   /* Leaving mesh mode's geometry behind would show two cells at once. */
   meshDiscard();
   if (mode === 'tri') mode = 'sel';
@@ -767,18 +802,13 @@ async function loadMesh(plugin, cell) {
   const r = await fetch('/mesh?plugin=' + encodeURIComponent(plugin) +
                         '&cell=' + encodeURIComponent(cell));
   const d = await r.json();
-  if (d.error) {
-    $('busy').textContent = d.error;
-    setTimeout(() => { $('busy').style.display = 'none'; }, 2500);
-    return;
-  }
+  if (d.error) { showError(d.error); return; }
   /* Stale ops address a mesh the generator has since renumbered, so replaying
      them onto the current one silently mixes two different meshes. Load them
      only when they still apply; otherwise open the saved result instead. */
   M = d; mHistory = [];
   mOps = d.stale ? [] : d.ops.slice();
-  if ($('srcSaved')) $('srcSaved').checked = !!(d.stale && d.saved);
-  if ($('srcLive')) $('srcLive').checked = !(d.stale && d.saved);
+  $('meshSrc').value = (d.stale && d.saved) ? 'saved' : 'live';
   meshReset();
   /* One cell at a time: drop EVERY layer of the previous one, including the
      pathgrid and the authored underlay, not just the collision. */
@@ -803,9 +833,17 @@ async function loadMesh(plugin, cell) {
   $('busy').style.display = 'none';
 }
 
+/* Frame the COLLISION when there is no mesh to frame: an exterior cell with
+   no pathgrid generates no triangles, and framing only mVerts left the camera
+   wherever the previous cell put it -- the cell loaded, off-screen. */
 function frameMesh() {
   const box = new THREE.Box3();
   for (const p of mVerts) box.expandByPoint(new THREE.Vector3(...p));
+  if (box.isEmpty()) {
+    for (const k of ['walkable', 'blocking']) {
+      if (layers[k]) box.expandByObject(layers[k]);
+    }
+  }
   if (box.isEmpty()) return;
   box.getCenter(orbit.target);
   orbit.dist = Math.max(400, box.getSize(new THREE.Vector3()).length() * 0.95);
@@ -904,7 +942,7 @@ function meshReset() {
 }
 
 function showSaved() {
-  return !!(M && M.saved && $('srcSaved') && $('srcSaved').checked);
+  return $('meshSrc').value === 'saved' && !!(M && M.saved);
 }
 
 function meshApply(op) {
@@ -1107,15 +1145,20 @@ function meshPointerDown(ev) {
     meshRebuild(); status();
     return;
   }
-  const t = pickTri(ev);
-  if (t >= 0) {
-    mSelTri = t; mSelVert = -1;
-    meshRebuild(); status();
-    return;
-  }
+  /* Only vertices are editable, so a press on a TRIANGLE has to pan -- it
+     selects on release, and only if the pointer never really moved. */
+  pendingTri = pickTri(ev);
   panning = true;
   el.setPointerCapture(ev.pointerId);
   el.style.cursor = 'move';
+}
+
+//: A click and a drag start identically; this many px still counts as a click.
+const CLICK_SLOP = 4;
+
+function pickedOnRelease(ev) {
+  if (pendingTri < 0 || !downAt) return false;
+  return Math.hypot(ev.clientX - downAt[0], ev.clientY - downAt[1]) <= CLICK_SLOP;
 }
 
 function meshPointerMove(ev) {
@@ -1148,7 +1191,9 @@ function frameAll() {
 function meshStatus() {
   const live = mTris.length - mDead.size;
   const viewing = showSaved();
-  $('staleGrp').style.display = (M.saved && M.stale) ? '' : 'none';
+  $('meshSrc').disabled = !M.saved;
+  $('meshSrc').title = M.saved ? 'Which mesh to show'
+                               : 'no saved correction for this cell';
   $('stat').innerHTML =
     `<b>${live}</b> tris · ${mDoors.size} door · ${mLinks.size} drop link · ` +
     (mOps.length ? `<b>${mOps.length} ops</b>` : 'no edits') +
@@ -1159,6 +1204,7 @@ function meshStatus() {
   $('saveNew').disabled = mOps.length === 0 || viewing;
   $('undo').disabled = mHistory.length === 0 || viewing;
   $('mode').textContent = 'Mesh · ' + M.plugin + ' · ' + M.cell +
+    (M.nodes.length === 0 ? ' · NO PATHGRID (nothing to generate from)' : '') +
     (mBuild ? ' · BUILD ' + mRing.length + '/3' : '') +
     (mSelVert >= 0 ? ' · vert ' + mSelVert : '') +
     (mSelTri >= 0 ? ' · tri ' + mSelTri : '') +
@@ -1178,13 +1224,12 @@ function meshStatus() {
    cell PICKER always stays, or leaving corpus mode would be a one-way door. */
 function applyScope() {
   const corpus = !!G;
-  for (const id of ['srcBruma', 'srcOb', 'srcBoth']) {
-    $(id).parentElement.style.display = corpus ? '' : 'none';
+  for (const el of document.querySelectorAll('.corpusOnly')) {
+    const host = el.classList.contains('chk') ? el : el;
+    host.style.display = corpus ? '' : 'none';
   }
-  $('cNav').parentElement.style.display = corpus ? '' : 'none';
-  $('cGen').parentElement.style.display = corpus ? '' : 'none';
-  for (const id of ['mSel', 'mNode', 'mEdge']) $(id).disabled = !corpus;
   $('cell').value = corpus ? G.cell : '';
+  $('corpusBtn').classList.toggle('on', corpus);
 }
 
 function status() {
@@ -1243,17 +1288,65 @@ function setView(v) {
 $('mSel').onclick = () => setMode('sel');
 $('mNode').onclick = () => setMode('node');
 $('mEdge').onclick = () => setMode('edge');
-$('mTri').onclick = () => {
-  if (M) setMode('tri');
-  else if (G) loadMesh($('plugin').value, G.source_cell || G.cell);
+$('mTri').onclick = async () => {
+  if (M) { setMode('tri'); return; }
+  if (!G) return;
+  const plugin = $('plugin').value;
+  if (await ensureIndexed(plugin)) loadMesh(plugin, G.source_cell || G.cell);
 };
-$('openMesh').onclick = () => {
+/* An error that times out is an error the user never reads -- a slow lookup
+   can outlast the message.  It stays until dismissed. */
+function showError(msg) {
+  $('busy').style.display = 'grid';
+  $('busy').innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'errbox';
+  box.textContent = msg;
+  const btn = document.createElement('button');
+  btn.textContent = 'Dismiss';
+  btn.onclick = () => { $('busy').style.display = 'none'; };
+  box.appendChild(document.createElement('br'));
+  box.appendChild(btn);
+  $('busy').appendChild(box);
+}
+
+/* An un-indexed export costs ~78s to parse once.  Announce it and build
+   BEFORE the bake, or the page looks hung on its first open. */
+async function ensureIndexed(plugin) {
+  const p = PLUGINS.find(x => x.name === plugin);
+  if (!p || p.indexed) return true;
+  $('busy').style.display = 'grid';
+  $('busy').textContent = 'indexing ' + plugin + ' — first open only, ~1 min…';
+  const r = await fetch('/index?plugin=' + encodeURIComponent(plugin),
+                        { method: 'POST' });
+  const d = await r.json();
+  if (d.error) {
+    showError(d.error);
+    return false;
+  }
+  p.indexed = true;
+  $('plugin').innerHTML = PLUGINS.map(pluginOption).join('');
+  $('plugin').value = plugin;
+  return true;
+}
+
+$('openMesh').onclick = async () => {
   const c = $('cellSearch').value.trim();
-  if (c) loadMesh($('plugin').value, c);
+  if (!c) return;
+  const plugin = $('plugin').value;
+  if (await ensureIndexed(plugin)) loadMesh(plugin, c);
 };
+
+/* Indexing on SELECT, not on Open: cell search needs the index, so deferring
+   it would make the box silently match nothing on a fresh export. */
+$('plugin').onchange = () => ensureIndexed($('plugin').value);
 $('cellSearch').onkeydown = e => {
   if (e.key === 'Enter') $('openMesh').click();
 };
+
+/* A grid reference names an EXTERIOR cell, which has no EditorID to complete
+   against -- suppress the datalist so it does not fight the typing. */
+const COORD_RE = /^\s*\S+[\s,]+-?\d+[\s,]+-?\d+\s*$/;
 
 /* Cell names are fetched per keystroke prefix: an export has thousands, and
    shipping the whole list to a datalist would stall the page. */
@@ -1262,7 +1355,7 @@ $('cellSearch').oninput = () => {
   clearTimeout(cellSearchTimer);
   cellSearchTimer = setTimeout(async () => {
     const q = $('cellSearch').value.trim();
-    if (q.length < 2) return;
+    if (q.length < 2 || COORD_RE.test(q)) { $('cellList').innerHTML = ''; return; }
     const r = await fetch('/plugin_cells?plugin=' +
                           encodeURIComponent($('plugin').value) +
                           '&q=' + encodeURIComponent(q));
@@ -1271,6 +1364,19 @@ $('cellSearch').oninput = () => {
       names.slice(0, 40).map(n => '<option value="' + n + '">').join('');
   }, 180);
 };
+/* One menu open at a time, and a click anywhere else closes them. */
+function toggleMenu(id) {
+  for (const m of ['layersMenu', 'corpusPanel']) {
+    $(m).classList.toggle('open', m === id && !$(m).classList.contains('open'));
+  }
+}
+$('layersBtn').onclick = e => { e.stopPropagation(); toggleMenu('layersMenu'); };
+$('corpusBtn').onclick = e => { e.stopPropagation(); toggleMenu('corpusPanel'); };
+for (const m of ['layersMenu', 'corpusPanel']) {
+  $(m).onclick = e => e.stopPropagation();
+}
+document.addEventListener('click', () => toggleMenu(null));
+
 $('vTop').onclick = () => setView('top');
 $('vFront').onclick = () => setView('front');
 $('vSide').onclick = () => setView('side');
@@ -1282,9 +1388,7 @@ $('save').onclick = save;
 $('saveNew').onclick = () => meshSave('new');
 /* Switching source re-derives the mesh from scratch; ops are kept so that
    returning to the current mesh restores the edit in progress. */
-for (const id of ['srcLive', 'srcSaved']) {
-  $(id).onchange = () => { meshReset(); meshRebuild(); status(); };
-}
+$('meshSrc').onchange = () => { meshReset(); meshRebuild(); status(); };
 $('undo').onclick = undo;
 /* `G` is null in mesh mode, so Reload has to re-bake the mesh cell instead. */
 $('reset').onclick = () => (mode === 'tri' && M)
@@ -1399,18 +1503,28 @@ window.addEventListener('resize', resize);
   renderer.render(scene, camera);
 })();
 
+function pluginOption(p) {
+  const why = p.collision ? '' : ' (no collision)';
+  const idx = p.indexed ? '' : ' · needs index';
+  return `<option value="${p.name}"${p.collision ? '' : ' class="unavailable"'}>` +
+         `${p.name}${why}${idx}</option>`;
+}
+
 (async function init() {
   resize();
   const [names, plugs] = await Promise.all([
     (await fetch('/cells')).json(),
     (await fetch('/plugins')).json()
   ]);
+  PLUGINS = plugs;
   $('cell').innerHTML = '<option value="">corpus cell…</option>' +
     names.map(n => `<option>${n}</option>`).join('');
-  $('plugin').innerHTML = plugs.map(n => `<option>${n}</option>`).join('');
-  /* An empty corpus is normal: the mesh editor reads exports, not the
-     corpus, so leave the viewport idle rather than loading nothing. */
-  if (names.length) await loadCell(names[0], false);
+  $('plugin').innerHTML = plugs.map(pluginOption).join('');
+  const ready = plugs.find(p => p.collision && p.indexed) ||
+                plugs.find(p => p.collision);
+  if (ready) $('plugin').value = ready.name;
+  applyScope();
+  status();
   resize();
 })();
 </script>
