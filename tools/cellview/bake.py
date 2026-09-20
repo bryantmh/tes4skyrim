@@ -165,15 +165,20 @@ def resolve_cell(plugin, cell):
 
 
 def plugin_cells(plugin, prefix=''):
-    """EditorIDs in `plugin` that have a pathgrid, optionally filtered."""
+    """EditorIDs in `plugin` that have a pathgrid, optionally filtered.
+
+    Filters by NAME first: matching a 2-character prefix against 25k EditorIDs
+    is free, while asking which cells have a pathgrid is a full scan.
+    """
     idx = index_of(plugin)
     want = prefix.lower()
-    out = []
-    for rec in idx.cells:
-        eid = rec.get('EditorID') or ''
-        if eid and want in eid.lower() and idx.pgrd_by_cell.get(rec['FormID']):
-            out.append(eid)
-    return sorted(out)
+    named = [rec for rec in idx.cells
+             if (rec.get('EditorID') or '') and want in rec['EditorID'].lower()]
+    if not named:
+        return []
+    with_pgrd = idx.pathgrid_fids()
+    return sorted(rec['EditorID'] for rec in named
+                  if rec.get('FormID') in with_pgrd)
 
 
 def flatten(tris):

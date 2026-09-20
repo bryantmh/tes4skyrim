@@ -19,7 +19,6 @@ can be judged on the population rather than on one favourite room:
 import argparse
 import math
 import os
-import pickle
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -32,8 +31,9 @@ from asset_convert.collision import collision_extract as ce
 from tes5_import.navmesh import build, params
 from tes5_import.navmesh.from_pgrd import (collect_doors,
                                       load_door_centroids)
+from tools.navmesh import cell_index as cell_index_mod
 from tes5_import.overrides.nested import (
-    export_master_names, load_master_export,
+    export_master_names, export_root, master_export_dir,
 )
 from tes5_import.base.text_reader import (
     parse_export_directory, group_records_by_type, get_float, get_int, get_str,
@@ -289,61 +289,16 @@ def index_path(export):
 _TABLES = {}
 
 
-def _index_is_master_blind(export, tables):
-    """True when a cached index predates master merging and must be rebuilt.
+def _parse_tables(export):
+    """Parse one export into the six index tables -- its OWN records only.
 
-    Only a plugin WITH masters can be blind, so Oblivion's 2.1 GB index is
-    never invalidated by this check.
+    Masters are chained at lookup time, never copied in: a child that merged
+    them stored Morrowind_ob's 37,742 LAND records a second time.
 
-    See: docs/commentary/tes5_import_navmesh.md#cellview-master-owned-cells
+    See: docs/commentary/tes5_import_navmesh.md#cellview-cell-index
     """
-    if not export_master_names(export):
-        return False
-    cells = tables[5]
-    own = {(c.get('FormID') or '')[:2].upper() for c in cells}
-    return len(own) <= 1
-
-
-def _merge_masters(export, by_type):
-    """Fold the MASTERS' records into `by_type`, this plugin's own winning.
-
-    See: docs/commentary/tes5_import_navmesh.md#cellview-master-owned-cells
-    """
-    master = load_master_export(export)
-    if not master:
-        return
-    for sig in _TYPES:
-        own = by_type.get(sig) or []
-        own_fids = {(r.get('FormID') or '').upper() for r in own}
-        extra = [r for r in master.values()
-                 if r.get('Signature') == sig
-                 and (r.get('FormID') or '').upper() not in own_fids]
-        if extra:
-            by_type[sig] = extra + own
-
-
-def build_index(export, reindex=False):
-    """Build (or reuse) the cached export index; returns its six tables.
-
-    Parsing the export is ~78s single-threaded (1.1M records) and dwarfs the
-    actual navmesh work, so the slices every navmesh tool needs are cached to
-    disk. One builder only: a second would drift from this pickle's shape.
-
-    See: docs/commentary/tes5_import_navmesh.md#cellview-index-on-demand
-    """
-    key = os.path.normcase(os.path.normpath(export))
-    if key in _TABLES and not reindex:
-        return _TABLES[key]
-    cache = index_path(export)
-    if os.path.exists(cache) and not reindex:
-        with open(cache, 'rb') as fh:
-            tables = pickle.load(fh)
-        if not _index_is_master_blind(export, tables):
-            _TABLES[key] = tables
-            return tables
     recs = parse_export_directory(export, type_filter=_TYPES)
     by_type = group_records_by_type(recs)
-    _merge_masters(export, by_type)
     base_model = {}
     for t in _BASES:
         for rec in by_type.get(t, []):
@@ -354,14 +309,68 @@ def build_index(export, reindex=False):
     refr_by_cell = {}
     for r in by_type.get('REFR', []):
         refr_by_cell.setdefault((r.get('ParentCELL') or '').upper(), []).append(r)
-    tables = (base_model, refr_by_cell,
-              {(p.get('ParentCELL') or '').upper(): p
-               for p in by_type.get('PGRD', [])},
-              {(ld.get('ParentCELL') or '').upper(): ld
-               for ld in by_type.get('LAND', [])},
-              _door_model_map(by_type), by_type.get('CELL', []))
-    with open(cache, 'wb') as fh:
-        pickle.dump(tables, fh, pickle.HIGHEST_PROTOCOL)
+    return (base_model, refr_by_cell,
+            {(p.get('ParentCELL') or '').upper(): p
+             for p in by_type.get('PGRD', [])},
+            {(ld.get('ParentCELL') or '').upper(): ld
+             for ld in by_type.get('LAND', [])},
+            _door_model_map(by_type), by_type.get('CELL', []))
+
+
+def _ensure_store(export, reindex=False):
+    """Build `export`'s own index if it is missing or stale."""
+    if reindex or not cell_index_mod.is_current(export):
+        cell_index_mod.write(export, _parse_tables(export))
+        if os.path.exists(index_path(export)):
+            os.remove(index_path(export))
+
+
+def master_dirs(export):
+    """Every master export dir `export` depends on, nearest first.
+
+    Recursive: TR_Mainland -> Morrowind_ob -> Oblivion. A master with no
+    export on disk is skipped rather than failing the open.
+    """
+    root = export_root(export)
+    out = []
+    for name in export_master_names(export):
+        d = master_export_dir(root, name)
+        if not os.path.isdir(d) or d in out:
+            continue
+        out.append(d)
+        for deeper in master_dirs(d):
+            if deeper not in out:
+                out.append(deeper)
+    return out
+
+
+def cell_index(export, reindex=False):
+    """The per-cell index for `export`, with its master chain attached.
+
+    See: docs/commentary/tes5_import_navmesh.md#cellview-cell-index
+    """
+    _ensure_store(export, reindex)
+    masters = master_dirs(export)
+    for d in masters:
+        if os.path.isfile(os.path.join(d, 'CELL.txt')):
+            _ensure_store(d)
+    return cell_index_mod.CellIndex(export, masters)
+
+
+def build_index(export, reindex=False):
+    """Every index table for `export`; builds or migrates on first use.
+
+    Whole-plugin callers only. A tool that wants ONE cell should use
+    `cell_index`, which does not materialize the other 21,000.
+
+    See: docs/commentary/tes5_import_navmesh.md#cellview-cell-index
+    """
+    key = os.path.normcase(os.path.normpath(export))
+    if key in _TABLES and not reindex:
+        return _TABLES[key]
+    idx = cell_index(export, reindex)
+    tables = idx.tables()
+    idx.close()
     _TABLES[key] = tables
     return tables
 

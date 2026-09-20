@@ -15,7 +15,7 @@ export whose audit index already exists.
 Exterior cells need their grid origin, so pass those to navmesh/audit.py
 instead, or extend this with --formid.
 """
-import os, sys, pickle
+import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from asset_convert.collision import collision_extract as ce
@@ -23,6 +23,7 @@ from tes5_import.navmesh import build
 from tes5_import.navmesh.from_pgrd import (collect_doors, compute_adjacency,
                                       load_door_centroids)
 import tools.navmesh.audit as na
+from tools.navmesh.audit import build_index
 import tools.navmesh.check as nc
 
 
@@ -38,8 +39,8 @@ ce.load_collision(os.path.join(EXPORT,'collision_cache.bin'), quiet=True)
 # Without this the door panel centroids, threshold AXIS and doorway WIDTH are
 # all unset, so this tool would generate doors the pipeline never generates.
 load_door_centroids(os.path.join(EXPORT,'door_centers_cache.json'), quiet=True)
-with open(os.path.join(EXPORT,'audit_index3.pkl'),'rb') as fh:
-    base_model, refr_by_cell, pgrd_by_cell, land_by_cell, door_fids, cells = pickle.load(fh)
+(base_model, refr_by_cell, pgrd_by_cell, land_by_cell,
+ door_fids, cells) = build_index(EXPORT)
 
 class M: pass
 def check(verts,tris):

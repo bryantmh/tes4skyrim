@@ -3268,6 +3268,65 @@ Two details the measurement forced:
   for 42s -- which reads as a hang. It now approaches the stage boundary
   asymptotically and snaps to the true value when the stage ends.
 
+## <a id="cellview-cell-index"></a>The per-cell index (`cell_index.sqlite`)
+
+**Code:** `tools/navmesh/cell_index.py`, built by `audit.cell_index`.
+
+`audit_index3.pkl` was one pickle of the whole plugin. Measured on
+`TR_Mainland.esm` (1098 MB): `land_by_cell` 628 MB, `refr_by_cell` 378 MB
+(**1,598,079 REFRs**), `pgrd_by_cell` 80 MB, everything else 7 MB. Reading the
+bytes cost 0.6s; the remaining ~5s warm (**~60s COLD**, page-faulting a 1.1 GB
+allocation) was Python rebuilding 1.6M dicts. Opening one cell paid for all
+21,078.
+
+Every heavy table is keyed by cell FormID and only ever read as `.get(fid)`, so
+it stores as one row per cell in SQLite.
+
+**A child plugin does not copy its masters -- it reads them.** The first
+attempt merged the masters' records into the child's own index, and
+Morrowind_ob went from 379 MB to **2400 MB, 1767 MB of it duplicated LAND**.
+Each plugin now indexes only what it OWNS, and a lookup walks the chain
+(`TR_Mainland -> Morrowind_ob -> Oblivion -> ...`, resolved recursively) until
+one answers. The child's own record wins. Measured after: Morrowind_ob **383 MB**,
+TR_Mainland **725 MB**.
+
+Everything is deferred, because each of these was separately fatal to open time
+on a four-master chain:
+
+| what | eager | lazy |
+|---|---|---|
+| open the chain | 40.1s | **0.03s** |
+| `resolve_cell` (coordinates) | 28.9s | **0.85s** |
+| merge 61,181 CELL records | (at open) | 0.09s, on first `.cells` |
+
+- **Masters open on first need**, not at construction.
+- **`base_model` / `door_fids` / `cells` are properties**, merged across the
+  chain on first access. A caller that only wants one cell's geometry never
+  triggers it; `NavIndex` defers its EditorID/FormID lookup tables the same way.
+- **`ensure_index` opens the index instead of calling `build_index`**, which
+  would reassemble every REFR in the chain to answer one cell. This was the
+  entire remaining 28s.
+
+`build_index` still returns all six tables for the batch tools (`audit.py
+--interiors`, `sweep.py`, `render.py`, `cell_check.py`); reassembly measured
+4.70s against the 5.81s pickle, so they lose nothing.
+
+**One connection PER THREAD.** sqlite3 refuses a connection used from a thread
+that did not create it, and the server is threaded (for the progress poll), so
+a cached index outlives the request that opened it -- the second request on a
+different thread raised `ProgrammingError`. `_Store` keeps its connection in a
+`threading.local`, which is safe because the index is read-only once built.
+
+**`pathgrid_fids` reads an indexed column**, not every cell's pickle. The cell
+search box asks which cells have a pathgrid, and unpickling the chain to answer
+measured 10.8s; the stored `has_pgrd` flag answers in 0.1s.
+
+A single file, not ~21k loose shards: 21k files per plugin is hostile to
+Windows directory listing and to any future zip of the export. The build writes
+to a temp name and renames, so an interrupted build cannot leave a partial index
+that reads as complete. `SCHEMA` bumps force a rebuild rather than serving a
+stale shape.
+
 ## <a id="cellview-open-is-cached"></a>Cellview: why opening a cell was slow
 
 **Code:** `tools/navmesh/audit.py` (`_TABLES`), `tools/cellview/bake.py`.

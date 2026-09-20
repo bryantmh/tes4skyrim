@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from asset_convert.collision.collision_extract import collision_cache_is_current
 from asset_convert.sources import source_registry
 from output_layout import assets_for, record_dir
-from tools.navmesh.audit import build_index, index_path
+from tools.navmesh.audit import cell_index, index_path
 
 #: Where every export's record dump lives.
 EXPORT_ROOT = 'export'
@@ -94,7 +94,10 @@ def preconditions(plugin):
 
 
 def ensure_index(plugin):
-    """Build `plugin`'s index if absent (~78s once); returns its path."""
+    """Build `plugin`'s index if absent (~78s once); returns its path.
+
+    See: docs/commentary/tes5_import_navmesh.md#cellview-cell-index
+    """
     export = export_dir(plugin)
-    build_index(export)
+    cell_index(export).close()
     return index_path(export)

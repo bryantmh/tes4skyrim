@@ -29,7 +29,7 @@ from tes5_import.navmesh.from_pgrd import (
 )
 from tes5_import.base.text_reader import parse_export_file
 from tes5_import.record_types.items import load_furniture_models
-from tools.navmesh.audit import build_index
+from tools.navmesh.audit import cell_index
 from tes5_import.overrides.nested import (
     export_master_names, export_root, master_export_dir,
 )
@@ -73,14 +73,13 @@ class CellCtx(object):
         self.rec = rec
         self.name = rec.get('EditorID') or ''
         self.fid = (rec.get('FormID') or '').upper()
-        pg = index.pgrd_by_cell.get(self.fid)
+        self.refrs, pg, land = index.of_cell(self.fid)
         graph = (_cell_graph(pg, rec) if pg is not None
                  else (None, None, 0.0, 0.0, False))
         nodes, edges, self.origin_x, self.origin_y, self.exterior = graph
         self.nodes, self.edges = nodes or [], edges or []
-        self.refrs = index.refr_by_cell.get(self.fid, [])
         self.doors = collect_doors(self.refrs, index.door_fids)
-        self.land = index.land_by_cell.get(self.fid) if self.exterior else None
+        self.land = land if self.exterior else None
 
     @property
     def has_pathgrid(self):
@@ -163,14 +162,52 @@ class NavIndex(object):
         self.export = export
         self._quiet = quiet
         self.arm()
-        (self.base_model, self.refr_by_cell, self.pgrd_by_cell,
-         self.land_by_cell, self.door_fids, self.cells) = build_index(export)
-        self._by_name = {}
-        for c in self.cells:
-            eid = (c.get('EditorID') or '').lower()
-            if eid:
-                self._by_name.setdefault(eid, c)
-        self._by_fid = {(c.get('FormID') or '').upper(): c for c in self.cells}
+        self._idx = cell_index(export)
+        self._lookup = None
+
+    @property
+    def base_model(self):
+        """Base FormID -> model key, across the master chain."""
+        return self._idx.base_model
+
+    @property
+    def door_fids(self):
+        """DOOR base FormIDs, across the master chain."""
+        return self._idx.door_fids
+
+    @property
+    def cells(self):
+        """Every CELL record, across the master chain."""
+        return self._idx.cells
+
+    def _lookups(self):
+        """`(by EditorID, by FormID)` over the chain's cells, built once.
+
+        Deferred: indexing 61,181 records is wasted on a caller that only
+        opens one cell by FormID.
+
+        See: docs/commentary/tes5_import_navmesh.md#cellview-cell-index
+        """
+        if self._lookup is None:
+            by_name, by_fid = {}, {}
+            for c in self.cells:
+                eid = (c.get('EditorID') or '').lower()
+                if eid:
+                    by_name.setdefault(eid, c)
+                by_fid[(c.get('FormID') or '').upper()] = c
+            self._lookup = (by_name, by_fid)
+        return self._lookup
+
+    def of_cell(self, fid):
+        """`(refrs, pgrd, land)` for one cell, read on demand.
+
+        See: docs/commentary/tes5_import_navmesh.md#cellview-cell-index
+        """
+        return self._idx.of_cell(fid)
+
+    def pathgrid_fids(self):
+        """Cell FormIDs that have a pathgrid."""
+        return self._idx.pathgrid_fids()
 
     def arm(self):
         """Point the shared collision/door globals at THIS export's tables.
@@ -210,11 +247,12 @@ class NavIndex(object):
     def cell(self, name_or_fid):
         """Look up by EditorID (case-insensitive) or by FormID hex."""
         self.arm()
-        rec = self._by_name.get(str(name_or_fid).lower())
+        by_name, by_fid = self._lookups()
+        rec = by_name.get(str(name_or_fid).lower())
         if rec is None:
-            rec = self._by_fid.get(str(name_or_fid).upper().lstrip('0X').rjust(8, '0'))
+            rec = by_fid.get(str(name_or_fid).upper().lstrip('0X').rjust(8, '0'))
         if rec is None:
-            rec = self._by_fid.get(str(name_or_fid).upper())
+            rec = by_fid.get(str(name_or_fid).upper())
         if rec is None:
             return None
         return CellCtx(self, rec)
@@ -226,10 +264,10 @@ class NavIndex(object):
         turned straight into a cell + a bounding box, with no manual hunting.
         """
         key = str(refid).upper().lstrip('0X').rjust(8, '0')
-        for fid, refrs in self.refr_by_cell.items():
+        for fid, refrs, _pg, _ld in self._idx.iter_cells():
             for r in refrs:
                 if (r.get('FormID') or '').upper().lstrip('0X').rjust(8, '0') == key:
-                    rec = self._by_fid.get(fid)
+                    rec = self._lookups()[1].get(fid)
                     if rec is None:
                         return None, r
                     return CellCtx(self, rec), r
