@@ -188,7 +188,8 @@ def rtti_names(exe):
 def find_exe(explicit):
     if explicit:
         return explicit
-    for p in (r'D:\Other Games\Skyrim Anniversary Edition\SkyrimSE.exe',
+    for p in (r'C:\Program Files (x86)\Steam\steamapps\content\app_489830'
+              r'\depot_489833\SkyrimSE.1.6.659.unpacked.exe',
               r'C:\Program Files (x86)\Steam\steamapps\common'
               r'\Skyrim Special Edition\SkyrimSE.exe'):
         if os.path.exists(p):

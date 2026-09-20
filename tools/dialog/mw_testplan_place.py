@@ -68,18 +68,26 @@ def _cells(dirs):
     return out
 
 
+#: Every base record a quest can hang a script on, and the placements of each.
+BASE_KINDS = ('NPC_.txt', 'CREA.txt', 'ACTI.txt', 'CONT.txt', 'STAT.txt',
+              'DOOR.txt', 'MISC.txt', 'LIGH.txt', 'BOOK.txt', 'WEAP.txt',
+              'ARMO.txt')
+PLACEMENT_KINDS = ('ACHR.txt', 'ACRE.txt', 'REFR.txt')
+
+
 def _actor_ids(dirs):
-    """`{npc formid: [name]}` -- every name an actor answers to.
+    """`{formid: [name]}` -- every name a placeable base record answers to.
 
     🛑 Both the EditorID AND the display name, because Morroblivion MANGLES
     the id it imports (`caius cosades` becomes `0caiusScosades`) while
     leaving `FULL` alone, and the sidecar names actors the TES3 way. Keying
-    on the id alone left every master-owned giver unplaced.
+    on the id alone left every master-owned giver unplaced. Objects as well
+    as actors, so a quest driven by an object script can still be located.
     See: docs/commentary/morrowind_runtime.md#opcode-test-plan
     """
     by_form = {}
     for record_dir in dirs:
-        for kind in ('NPC_.txt', 'CREA.txt'):
+        for kind in BASE_KINDS:
             for rec in _read(record_dir, kind):
                 form = rec.get('FormID', '')
                 names = {rec.get('EditorID', ''), rec.get('FULL', '')}
@@ -90,10 +98,10 @@ def _actor_ids(dirs):
 
 
 def _placements(dirs, cells, by_form):
-    """`{lowercased actor editorid: [place dict]}`, from ACHR and ACRE."""
+    """`{lowercased base editorid: [cell]}`, from ACHR, ACRE and REFR."""
     out = {}
     for record_dir in dirs:
-        for kind in ('ACHR.txt', 'ACRE.txt'):
+        for kind in PLACEMENT_KINDS:
             for rec in _read(record_dir, kind):
                 names = by_form.get(rec.get('NAME', ''))
                 cell = cells.get(rec.get('ParentCELL', ''))
@@ -122,25 +130,63 @@ def describe(places):
     return ('%s (%s)' % (label, grid) if label else grid), 'exterior'
 
 
-def locate(record_dir, plan, export_root='export'):
+def script_owners(sidecar_dir):
+    """`{lowercased script: [object editorid]}` from the staged sidecar.
+
+    🛑 The reverse of `SCPT_objects.txt`, and the ONLY way to place a quest
+    driven by an object script: the converted export drops the base record's
+    script link, so nothing else says which boulder a boulder script is on.
+    See: docs/commentary/morrowind_runtime.md#opcode-test-plan
+    """
+    path = os.path.join(sidecar_dir, 'SCPT_objects.txt')
+    out = {}
+    if not os.path.isfile(path):
+        return out
+    with open(path, encoding='utf-8', errors='replace') as handle:
+        for line in handle:
+            if '=' not in line:
+                continue
+            obj, script = line.rstrip('\n').split('=', 1)
+            out.setdefault(script.strip().lower(), []).append(obj.strip())
+    return out
+
+
+def _by_script(row, owners, placements):
+    """`(giver, target, kind)` for a quest only an object script advances.
+
+    Resolves the script to the object it sits on, then that object to a cell,
+    so the row still names somewhere the tester can `coc` to.
+    """
+    for script in sorted(row.get('scripts', {})):
+        for obj in owners.get(script.lower(), []):
+            target, kind = describe(placements.get(obj.lower(), []))
+            if target:
+                return '%s (%s)' % (obj, script), target, kind
+        return 'script: ' + script, '', 'script'
+    return '', '', ''
+
+
+def locate(record_dir, plan, export_root='export', sidecar_dir=''):
     """`{quest: (giver, coc target, kind)}` for every quest in `plan`.
 
     The giver is the actor whose dialogue sets the EARLIEST stage -- the one
     the player has to find to start the quest at all. Resolved across the
-    plugin's masters, whose actors it inherits.
+    plugin's masters, whose actors it inherits; a quest with no dialogue
+    giver falls back to the object its script runs on.
     """
     dirs = master_dirs(record_dir, export_root)
     cells = _cells(dirs)
     placements = _placements(dirs, cells, _actor_ids(dirs))
+    owners = script_owners(sidecar_dir) if sidecar_dir else {}
     out = {}
     for quest, row in plan.items():
         givers = sorted(row['givers'].items(), key=lambda kv: (kv[1], kv[0]))
         if givers:
             giver = givers[0][0]
             target, kind = describe(placements.get(giver.lower(), []))
-            out[quest] = (giver, target, kind)
-            continue
-        scripts = sorted(row.get('scripts', {}))
-        out[quest] = (('script: ' + scripts[0]) if scripts else '',
-                      '', 'script')
+            if target:
+                out[quest] = (giver, target, kind)
+                continue
+        out[quest] = _by_script(row, owners, placements) if not givers else (
+            givers[0][0], '', '')
     return out

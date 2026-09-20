@@ -45,7 +45,8 @@ import sys
 
 CK_DEFAULT = (r'C:\Program Files (x86)\Steam\steamapps\common'
               r'\Skyrim Special Edition\CreationKit.exe')
-GAME_DEFAULT = r'D:\Other Games\Skyrim Anniversary Edition\SkyrimSE.exe'
+GAME_DEFAULT = (r'C:\Program Files (x86)\Steam\steamapps\content\app_489830'
+                r'\depot_489833\SkyrimSE.1.6.659.unpacked.exe')
 SEP = chr(92)
 TREE_ROOT = 'e:' + SEP + '_skyrimhd' + SEP
 

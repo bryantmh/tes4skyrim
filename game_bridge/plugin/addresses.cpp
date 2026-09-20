@@ -161,11 +161,10 @@ bool VersionDb::Load(std::uint32_t runtimeVersion) {
     const unsigned build = (runtimeVersion & 0x0000FFF0u) >> 4;
     const unsigned sub   = (runtimeVersion & 0x0000000Fu);
 
-    // Every id in ids.h is AE-space, and the pre-AE databases number the same
-    // functions differently: measured on 1.5.97, all 62 Native<> ids of the
-    // Morrowind runtime are PRESENT and every one resolves to the wrong
-    // function, by a delta that varies per id.
-    // See: docs/reference/address_library_formats.md#pre-ae-identity
+    // Every id in ids.h is AE-space, and AE renumbered the whole space: on
+    // 1.5.97 the same id names a different function. A hit there is a wrong
+    // address, not a missing one.
+    // See: docs/reference/address_library_formats.md#two-id-generations
     if (maj == 1 && min < 6) return false;
 
     // `sub` is the storefront (0 Bethesda/Steam, 1 GOG, 2 Epic). Address Library

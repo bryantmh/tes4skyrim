@@ -39,7 +39,8 @@ except ImportError:
     sys.exit('pefile required: pip install pefile')
 
 
-DEFAULT_EXE = r'D:\Other Games\Skyrim Anniversary Edition\SkyrimSE.exe'
+DEFAULT_EXE = (r'C:\Program Files (x86)\Steam\steamapps\content\app_489830'
+               r'\depot_489833\SkyrimSE.1.6.659.unpacked.exe')
 
 # Anchors located by cross-referencing the pointer to the "PlayerDialogue"
 # string literal into .data.  Both tables are plain static arrays.

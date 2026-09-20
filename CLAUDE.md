@@ -146,11 +146,14 @@ regenerate scripts, so a behavioural regression means reading
 
 **Always check theories against several of these** before acting:
 
-1. The Skyrim exe at `D:\Other Games\Skyrim Anniversary Edition\SkyrimSE.exe`
-   — GOG/AE, **not DRM-packed**, so it disassembles statically (the *Steam*
-   copy is encrypted). Crash logs map across via the Address Library.
+1. **Unpacked Skyrim exes — one per build**, in
+   `C:\Program Files (x86)\Steam\steamapps\content\app_489830\depot_489833`:
+   `SkyrimSE.<version>.unpacked.exe` (1.5.97, 1.6.659, 1.6.1170, 1.7.104) and
+   `SkyrimVR.exe.unpacked.exe` (1.4.15). All disassemble statically; a *retail*
+   Steam copy is encrypted. Crash logs map across via the Address Library.
    Disassembly is a first resort, not a last one.
-   The SkyrimVR exe is at `D:\SteamLibrary\steamapps\common\SkyrimVR\SkyrimVR.exe.unpacked.exe`
+   **For initial work, pick 1.6.1170, which is what the user plays** Use the others for additional verification. See
+   [address_library_formats.md](docs/reference/address_library_formats.md#two-id-generations).
 2. <a id="ck-is-a-source"></a>**`CreationKit.exe` (Steam) — NOT DRM-packed, and
    the BEST source for why a record is REJECTED.** Asserts carry file+line, and
    it keeps 1,114 Bethesda source paths, 17k diagnostic strings, and 433 record
@@ -228,7 +231,7 @@ real data, or a failing-then-passing test.
   Each external directory has ONE sanctioned purpose:
   | Path | Use it for | Not for |
   |---|---|---|
-  | `D:\Other Games\Skyrim Anniversary Edition\` (GOG/AE) | exe decompilation | assets, deployment checks |
+  | `...\content\app_489830\depot_489833\` (unpacked exes) | exe decompilation | assets, deployment checks |
   | Oblivion / Nehrim LE install | BSA files and NIFs | anything Skyrim-side |
   | The modded SSE install | **Papyrus logs, and reading `Skyrim.esm`** | everything else, especially verifying deployment |
 - **Never run the full pytest suite** — only the tests for files you changed.

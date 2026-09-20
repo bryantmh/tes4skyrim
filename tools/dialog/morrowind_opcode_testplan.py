@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 
 from asset_convert.sources import source_registry
 from tools.dialog import morrowind_quest_trace as trace
+from tools.dialog import mw_testplan_equiv as equiv
+from tools.dialog import mw_testplan_gates as mw_gates
 from tools.dialog import mw_testplan_place as place
 from tools.dialog import mw_testplan_report as report
 from tools.script import mwscript_opcode_audit as opcode_audit
@@ -96,56 +98,120 @@ def quest_commands(entries, setters, owned):
     return out
 
 
-def prerequisites(quest, plan, setters):
-    """Journal ids this quest gates on: another quest read by its scripts.
+def prerequisites(quest, plan, setters, gates):
+    """Quests that must run before `quest`'s opening line can be heard.
 
-    Excludes the quest itself, by id AND by display name -- neither is a
-    prerequisite, and both made quests list themselves.
-    See: docs/commentary/morrowind_runtime.md#opcode-test-plan
+    The authored gates first: a journal condition on its entry INFO, and a
+    result script's `GetJournalIndex`. Topic-teaching is the FALLBACK, used
+    only when neither exists, because a generic topic word drags in dozens of
+    unrelated quests. Excludes the quest itself by id AND display name.
+    See: docs/commentary/morrowind_runtime.md#prerequisites-are-conditions
     """
     mine = plan[quest]['name']
-    found = set()
+    entry, taught = gates
+    keep = lambda ids: {q for q in ids if q != quest and q in plan
+                        and plan[q]['name'] != mine}
+    found = set(entry.get(quest, {}).get('journal', ()))
     for setter in setters.get(quest, []):
-        for other in setter.get('reads', ()):
-            if other != quest and other in plan \
-                    and plan[other]['name'] != mine:
-                found.add(other)
-    return found
+        found |= set(setter.get('reads', ()))
+    found = keep(found)
+    if found:
+        return found
+    return keep(taught.get(entry.get(quest, {}).get('topic', ''), ()))
 
 
-def pick(plan, targets, budget):
-    """Greedy cover: repeatedly take the best new-commands-per-run quest.
+def chain_of(plan, quest, done):
+    """Every quest that must be played before `quest`, deepest first.
 
-    Ties break toward fewer prerequisites, then the earlier first stage (an
-    opening quest needs less of the game finished), then the id, so the plan
-    is deterministic.
+    The CLOSURE, not the direct list: a prerequisite has prerequisites of its
+    own and the tester plays all of them. `done` and `seen` also break the
+    cycles TES3 questlines form when two quests gate each other.
+    """
+    order, seen = [], set(done)
+    stack = [(q, False) for q in reversed(plan[quest]['prereqs'])]
+    while stack:
+        node, expanded = stack.pop()
+        if expanded:
+            order.append(node)
+            continue
+        if node in seen or node not in plan:
+            continue
+        seen.add(node)
+        stack.append((node, True))
+        stack.extend((q, False) for q in reversed(plan[node]['prereqs']))
+    return order
+
+
+def _cost(plan, quest, chain, remaining):
+    """`(new commands, stages)` for playing `chain` then `quest`."""
+    gain, stages = set(plan[quest]['commands']), len(plan[quest]['stages'])
+    for other in chain:
+        gain |= plan[other]['commands']
+        stages += len(plan[other]['stages'])
+    return gain & remaining, max(stages, 1)
+
+
+def prune(plan, chosen, targets):
+    """Drop picks whose commands a LATER pick already covers.
+
+    🛑 Greedy commits irrevocably, so it buys ~50 one-command quests before
+    meeting a chain that covers them all at once, and those picks are then
+    dead weight. Walking the result backwards and keeping a pick only when it
+    still contributes something is what removes the duplicated work.
+    See: docs/commentary/morrowind_runtime.md#opcode-test-plan
+    """
+    kept, seen = [], set()
+    for quest, chain in reversed(chosen):
+        gain = set()
+        for other in chain + [quest]:
+            gain |= plan[other]['commands'] & targets
+        if gain - seen:
+            seen |= gain
+            kept.append((quest, chain))
+    kept.reverse()
+    return kept
+
+
+def pick(plan, targets, budget, max_stages=0):
+    """Greedy cover ranked by new commands per STAGE the tester must play.
+
+    A prerequisite is neither free nor forbidden: its stages are added to the
+    cost and its own commands to the gain. `max_stages` rejects a pick whose
+    chain costs more than a tester will play, and only a quest with a `coc`
+    target is picked at all.
+    See: docs/commentary/morrowind_runtime.md#opcode-test-plan
     """
     remaining = set(targets)
     chosen, ran = [], set()
     while remaining and len(chosen) < budget:
-        best, best_score = None, None
-        for quest, row in plan.items():
-            if quest in ran:
+        best, best_score, best_chain = None, None, []
+        for quest in plan:
+            if quest in ran or not plan[quest]['reachable']:
                 continue
-            chain = [q for q in row['prereqs'] if q not in ran]
-            gain = set(row['commands'])
-            for other in chain:
-                gain |= plan[other]['commands']
-            gain &= remaining
-            if not gain:
+            chain = chain_of(plan, quest, ran)
+            gain, stages = _cost(plan, quest, chain, remaining)
+            if not gain or (max_stages and stages > max_stages):
                 continue
-            score = (-len(gain) / (len(chain) + 1), len(chain),
-                     row['first'], quest)
+            score = (-len(gain) / stages, stages, quest)
             if best_score is None or score < best_score:
-                best, best_score = quest, score
+                best, best_score, best_chain = quest, score, chain
         if best is None:
             break
-        chain = [q for q in plan[best]['prereqs'] if q not in ran]
-        for other in chain + [best]:
+        for other in best_chain + [best]:
             ran.add(other)
             remaining -= plan[other]['commands']
-        chosen.append((best, chain))
-    return chosen, remaining
+        chosen.append((best, best_chain))
+    chosen = prune(plan, chosen, targets)
+    return chosen, set(targets) - _covered(plan, chosen, targets)
+
+
+def _covered(plan, chosen, targets):
+    """Every target command the finished cover actually reaches."""
+    out = set()
+    for quest, chain in chosen:
+        for other in chain + [quest]:
+            out |= plan[other]['commands'] & targets
+    return out
 
 
 def build_plan(args):
@@ -169,9 +235,12 @@ def build_plan(args):
     report.attach_reads(info_path, record_dir, setters, ported | stubbed)
 
     plan = quest_commands(entries, setters, owned_quests(record_dir))
+    gates = (mw_gates.entries(info_path), mw_gates.teachers(info_path))
     for quest, row in plan.items():
-        row['prereqs'] = sorted(prerequisites(quest, plan, setters))
-    places = place.locate(record_dir, plan, args.export_root)
+        row['prereqs'] = sorted(prerequisites(quest, plan, setters, gates))
+    places = place.locate(record_dir, plan, args.export_root, out_dir)
+    for quest, row in plan.items():
+        row['reachable'] = bool(places.get(quest, ('', '', ''))[1])
     return plan, ported, stubbed, places, calls
 
 
@@ -183,8 +252,12 @@ def main():
                     help='most quests to pick (default 40)')
     ap.add_argument('--stubs', action='store_true',
                     help='also cover the called-but-stubbed commands')
+    ap.add_argument('--every-command', action='store_true',
+                    help='do not fold commands that share a handler')
     ap.add_argument('--marginal', action='store_true',
                     help='print what each extra quest buys')
+    ap.add_argument('--max-stages', type=int, default=0,
+                    help='reject a pick whose chain costs more; 0 = no cap')
     ap.add_argument('--markdown', help='write the plan here')
     ap.add_argument('--export-root', default='export')
     ap.add_argument('--output-root', default='output')
@@ -193,19 +266,34 @@ def main():
     plan, ported, stubbed, places, calls = build_plan(args)
     print('%d quest(s) with stages; %d ported and %d stubbed command(s) '
           'registered' % (len(plan), len(ported), len(stubbed)))
-    chosen, missed = pick(plan, ported, args.budget)
+    folded = {}
+    if not args.every_command:
+        root = os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))))
+        by_class = equiv.classes(root, {
+            k: v.opcode
+            for k, v in opcode_audit.registrations(root).items()})
+        reachable = set()
+        for row in plan.values():
+            reachable |= row['commands']
+        ported, folded = equiv.fold(by_class, ported, reachable)
+        stubbed, _ = equiv.fold(by_class, stubbed, reachable)
+        print('%d command(s) fold into a handler already tested; '
+              '%d representative(s) left' % (len(folded), len(ported)))
+    chosen, missed = pick(plan, ported, args.budget, args.max_stages)
     report.show(plan, places, chosen, missed, 'ported', ported)
     if args.marginal:
         report.show_marginal(plan, chosen, ported)
     called = {c for c in stubbed if calls.get(c)}
-    stub_pick = pick(plan, called, args.budget) if args.stubs else None
+    stub_pick = (pick(plan, called, args.budget, args.max_stages)
+                 if args.stubs else None)
     if stub_pick:
         report.show(plan, places, stub_pick[0], stub_pick[1], 'stubbed',
                     called)
     if args.markdown:
         report.write_markdown(args.markdown, args.plugin, plan, places,
                               (chosen, missed), stub_pick, ported, called,
-                              calls)
+                              calls, folded)
     return 0
 
 

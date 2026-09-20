@@ -123,9 +123,8 @@ int main(int argc, char** argv) {
     // 2 and 5 -- pass either versionlib and the matching probes run.
     const bool is17104 = (db.count() == 435162);
     // Format 1 (1.5.97, 778674 entries) parses, and is checked only for that:
-    // its ids name different functions, so VersionDb::Load refuses pre-AE
-    // runtimes and there are no RVAs worth asserting.
-    // See: docs/reference/address_library_formats.md#pre-ae-identity
+    // its ids are the SE generation, so the AE RVAs above do not apply.
+    // See: docs/reference/address_library_formats.md#two-id-generations
     if (db.count() == 778674) {
         std::printf("OK  format 1 parsed (1.5.97); pre-AE ids are not used\n");
         return decodeFailures ? 1 : 0;

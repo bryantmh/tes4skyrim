@@ -100,33 +100,51 @@ in the AE database — so a lookup looks valid while resolving nothing we need.
 VR therefore resolves by **signature only**, as `TESRuntime`'s `ids.h` does with
 `|`-separated prologue alternates.
 
-## <a id="pre-ae-identity"></a>Pre-AE ids are PRESENT and WRONG
+## <a id="two-id-generations"></a>There are TWO id generations
 
-1.5.97 looks usable: it covers 90 of `MorrowindRuntime`'s 91 ids
-(`kNpcVtable` 195816 is the exception) and 41 of `TESRuntime`'s 44. Presence is
-not identity, and here the two come apart completely.
+A stable id is stable **within a generation**, not across the AE boundary. AE
+inserted and removed functions, so the id space was regenerated; the SE-era
+databases kept the old numbers. Both are correct, and they are different
+dictionaries:
 
-Measured with `stable_id_check --identity --identity-version 1.5.97` against
-the unpacked 1.5.97 binary, resolving each `Native<>` id and comparing it with
-the address that script's own Papyrus registration uses:
+| Function | SE id (1.5.x) | AE id (1.6+) |
+|---|---|---|
+| `ObjectReference.GetPositionX` | 55649 | 56178 |
+| `Actor.GetCurrentPackage` | 53872 | 54681 |
+| `Game.AdvanceSkill` | 54817 | 55449 |
+| `TESNPC` vtable | 241857 | 195816 |
 
-| Build | Correct | Wrong | Absent |
-|---|---|---|---|
-| 1.7.104 | **62** | 0 | 0 |
-| 1.5.97 | **0** | **62** | 0 |
+`ids.h` holds AE ids. Looking one up in an SE database returns whichever SE-era
+function carries that number — a real function, the wrong one. Measured with
+`stable_id_check --identity --identity-version 1.5.97`, resolving each
+`Native<>` id and comparing it against that script's own Papyrus registration:
 
-Every id resolves to a real function, and every one is the wrong function.
-`ObjectReference.GetPositionX` (56178) gives `0x9aad70` where the native is
-actually at `0x994240`.
+| Build | Correct | Wrong |
+|---|---|---|
+| 1.7.104 (AE ids) | **62** | 0 |
+| 1.5.97 (AE ids) | **0** | **62** |
+| 1.5.97 (derived SE ids) | **62** | 0 |
 
-The ids are not shifted by a constant, so no correction recovers them — the
-delta between an AE id and the 1.5.97 id for the same function takes **26
-distinct values** across 62 natives (−825, −824, −823, −821, −815, −812, −810,
-−809, −800, −798, −796, −654 …). A rank comparison agrees: ids common to
-1.6.659 and 1.6.1179 preserve their relative order 100% of the time, while
-1.5.97 ↔ 1.6.659 manages 96.2%.
+The delta between the two generations is not a constant — it takes 26 distinct
+values across 62 natives, because it counts the functions inserted before each
+one. There is no shift to apply, so the mapping must be **derived per id**.
 
-🛑 **`VersionDb::Load` therefore refuses any pre-AE runtime outright** and falls
-back to signatures. A missing address is silent; a wrong one is called as a
-function pointer. Supporting 1.5.x means signature alternates, exactly as VR
-does — never the pre-AE database.
+🛑 **Never look up an AE id in an SE database.** `VersionDb` selects the
+generation from the runtime version; a wrong address is called as a function
+pointer, which is worse than no address at all.
+
+### <a id="deriving-the-se-ids"></a>Deriving the SE ids
+
+`tools/disasm/se_id_map.py` derives the whole map and emits `ids_se.h`, so an
+id added to `ids.h` costs a rerun rather than a research session. Each AE id is
+anchored to something both builds name identically:
+
+| Anchor | Covers | How |
+|---|---|---|
+| `papyrus` | Papyrus natives | the script's own registration site names the native; the AE id picks which candidate it is, and the same position on the SE build is that build's native |
+| `vtable` | RTTI classes | the class's type descriptor names its primary vtable on any build |
+| `slot` | virtuals (`Activate`) | read out of the anchored vtable |
+
+Every anchor is checked against the AE build before it is trusted on SE: the
+primary vtable must *be* the AE id, and the AE id must appear at its own
+registration. An anchor that fails that check is reported, never guessed at.

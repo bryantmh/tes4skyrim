@@ -138,11 +138,10 @@ bool VersionDb::Load(std::uint32_t runtimeVersion) {
     const unsigned min   = (runtimeVersion & 0x00FF0000u) >> 16;
     const unsigned build = (runtimeVersion & 0x0000FFF0u) >> 4;
     const unsigned sub   = (runtimeVersion & 0x0000000Fu);
-    // Every id in ids.h is AE-space, and the pre-AE databases number the same
-    // functions differently: measured on 1.5.97, all 62 Native<> ids are
-    // PRESENT and every one resolves to the wrong function, by a delta that
-    // varies per id. A hit there is a wrong address, not a missing one.
-    // See: docs/reference/address_library_formats.md#pre-ae-identity
+    // Every id in ids.h is AE-space, and AE renumbered the whole space: on
+    // 1.5.97 the same id names a different function. A hit there is a wrong
+    // address, not a missing one.
+    // See: docs/reference/address_library_formats.md#two-id-generations
     if (maj == 1 && min < 6) {
         Log("addresses: runtime %u.%u.%u is pre-AE; ids do not apply, "
             "signatures only", maj, min, build);

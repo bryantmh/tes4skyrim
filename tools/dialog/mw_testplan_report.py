@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Printing the opcode test plan, and reading the prerequisites it ranks by.
 
-A quest's prerequisite is authored, not named: a script that gates on another
-questline reads its journal index. So the chain comes from
-`GetJournalIndex "<other>"` in the same scripts the trace already scanned,
-which is why the read is attached to the setter rows rather than re-parsed.
+A quest's prerequisite is authored in its ENTRY INFO's conditions: a `J`
+condition naming another quest's journal index. A result script's
+`GetJournalIndex` says the same thing in script form, so both are read, and
+so is the topic the entry line sits on -- an unreachable topic gates a quest
+as firmly as an unmet journal index.
 
-See: docs/commentary/morrowind_runtime.md#opcode-test-plan
+See: docs/commentary/morrowind_runtime.md#prerequisites-are-conditions
 """
 
 import io
 import os
 import re
 
-from tools.dialog.morrowind_quest_trace import records, unescape
+from tools.dialog.morrowind_quest_trace import JOURNAL, records, unescape
 
 #: `GetJournalIndex "<id>"` -- the one statement that reads another quest.
 JOURNAL_READ = re.compile(r'\bgetjournalindex\b[, \t]+"?([\w\-]+)"?',
@@ -47,15 +48,24 @@ def _reads(script):
 
 
 def _attach(setters, quest_of, script, actor, wanted):
-    """Record one script's journal reads and commands on its setter rows."""
+    """Record one script's journal reads and commands on its setter rows.
+
+    🛑 Journal reads go ONLY to the quests this script actually advances,
+    while commands may go to every quest the actor touches. Spreading reads
+    the same way gave one Mages Guild quest 30 prerequisites from unrelated
+    questlines, because its giver also hands out bounty work.
+    See: docs/commentary/morrowind_runtime.md#prerequisites-are-conditions
+    """
     found = _reads(script)
     used = commands_used(script, wanted)
+    sets = {q.lower() for q, _index in JOURNAL.findall(unescape(script))}
     for quest in quest_of:
         for setter in setters.get(quest, []):
             if setter['actor'] != actor:
                 continue
-            setter.setdefault('reads', set()).update(found)
             setter.setdefault('used', set()).update(used)
+            if quest in sets:
+                setter.setdefault('reads', set()).update(found)
 
 
 def attach_reads(info_path, record_dir, setters, wanted):
@@ -97,82 +107,95 @@ def show(plan, places, chosen, missed, label, targets):
     Counts only the TARGET commands: a quest covers plenty of others too, and
     tallying those reported 163 of 45 stubs covered.
     """
+    rows = play_order(chosen)
     covered = set()
-    for quest, chain in chosen:
-        for other in chain + [quest]:
-            covered |= plan[other]['commands'] & targets
-    print('\n=== %s cover: %d quest(s), %d prerequisite run(s), '
-          '%d of %d command(s) covered, %d uncovered' % (
-              label, len(chosen), sum(len(c) for _q, c in chosen),
+    stages = 0
+    for quest, _gating in rows:
+        covered |= plan[quest]['commands'] & targets
+        stages += len(plan[quest]['stages'])
+    print('\n=== %s cover: %d quest(s) to play (%d of them prerequisites), '
+          '%d stages, %d of %d command(s) covered, %d uncovered' % (
+              label, len(rows), len(rows) - len(chosen), stages,
               len(covered), len(targets), len(missed)))
     gained = new_commands(plan, chosen, targets)
-    for quest, chain in chosen:
-        name, giver, target, stages = _row(plan, places, quest)
-        print('  %-40s %-24s %-26s %s stages' % (
-            name[:40], giver[:24], target[:26], stages))
-        for other in chain:
-            print('      prereq: %s' % plan[other]['name'])
+    for quest, gating in rows:
+        name, giver, target, count = _row(plan, places, quest)
+        mark = ' (unlocks %s)' % plan[gating]['name'][:24] if gating else ''
+        print('  %-38s %-22s %-24s %s stages%s' % (
+            name[:38], giver[:22], target[:24], count, mark))
         print('      tests: %s' % ', '.join(gained[quest]))
     if missed:
         print('  uncovered: ' + ', '.join(sorted(missed)[:25]))
 
 
+def play_order(chosen):
+    """`[(quest, gating_for)]` -- every quest to play, prerequisites included.
+
+    A prerequisite earns its own row, because the tester plays it like any
+    other quest; `gating_for` names the quest it was pulled in for, or "" when
+    the quest was chosen on its own merit.
+    """
+    rows = []
+    for quest, chain in chosen:
+        rows.extend((other, quest) for other in chain)
+        rows.append((quest, ''))
+    return rows
+
+
 def new_commands(plan, chosen, targets):
     """`{quest: sorted commands}` -- what each quest is the FIRST to cover.
 
-    Not everything a quest touches: by the tail of the cover most of that is
-    already tested, and listing it all would say `journal, choice, additem`
-    against every row. This is the reason the quest is in the plan, and a
-    prerequisite's own new commands are credited to the quest that pulled it
-    in, since the user runs them together.
+    Credited to the quest that actually runs them, prerequisite rows
+    included, so every command in the plan appears against exactly one row.
     """
     seen, out = set(), {}
-    for quest, chain in chosen:
-        gained = set()
-        for other in chain + [quest]:
-            gained |= (plan[other]['commands'] & targets) - seen
-            seen |= plan[other]['commands'] & targets
+    for quest, _gating in play_order(chosen):
+        gained = (plan[quest]['commands'] & targets) - seen
+        seen |= gained
         out[quest] = sorted(gained)
     return out
 
 
 def marginal(plan, chosen, targets):
-    """`[(quests, runs, covered, new, prereqs, name)]` down the cover.
+    """`[(picks, stages, covered, new, prereqs, name)]` down the cover.
 
-    What each additional quest actually buys, which is how a cutoff is chosen
-    rather than guessed: the tail of a greedy cover pays many prerequisite
-    runs for one or two commands.
+    What each pick actually buys for the STAGES it costs, prerequisites
+    included, which is how a cutoff is chosen rather than guessed.
     """
-    seen, runs, out = set(), 0, []
+    seen, stages, out = set(), 0, []
     for number, (quest, chain) in enumerate(chosen, 1):
         before = len(seen)
         for other in chain + [quest]:
             seen |= plan[other]['commands'] & targets
-        runs += len(chain) + 1
-        out.append((number, runs, len(seen), len(seen) - before,
+            stages += len(plan[other]['stages'])
+        out.append((number, stages, len(seen), len(seen) - before,
                     len(chain), plan[quest]['name']))
     return out
 
 
 def show_marginal(plan, chosen, targets):
     """Print the marginal-value curve of one cover."""
-    print('\n  quests runs  covered  new  prereq  quest')
+    print('\n   picks stages  covered  new  prereq  quest')
     for row in marginal(plan, chosen, targets):
         print('  %6d %4d  %7d  %3d  %6d  %s' % row)
 
 
 def _table(fh, plan, places, chosen, targets):
-    """Write one cover as a markdown table."""
+    """Write one cover as a markdown table, in the order it is PLAYED.
+
+    A prerequisite is its own numbered row, marked with what it unlocks, so
+    the stage count in the table is the real cost of the plan.
+    """
     gained = new_commands(plan, chosen, targets)
-    fh.write('| # | Quest | Quest giver | `coc` target / location | '
-             'Stages | Prerequisite | Commands it is first to test |\n')
+    fh.write('| # | Quest | Quest giver | `coc` target / location | Stages | '
+             'Why | Commands it is first to test |\n')
     fh.write('|--:|---|---|---|--:|---|---|\n')
-    for number, (quest, chain) in enumerate(chosen, 1):
+    for number, (quest, gating) in enumerate(play_order(chosen), 1):
         name, giver, target, stages = _row(plan, places, quest)
-        prereq = ', '.join(plan[q]['name'] for q in chain) or '—'
         tested = ', '.join('`%s`' % c for c in gained[quest]) or '—'
+        why = ('unlocks *%s*' % plan[gating]['name']) if gating else '—'
         fh.write('| %d | %s | %s | %s | %s | %s | %s |\n' % (
-            number, name, giver, target, stages, prereq, tested))
+            number, name, giver, target, stages, why, tested))
     fh.write('\n')
 
 
@@ -199,8 +222,29 @@ def _uncovered(fh, missed, calls):
         fh.write(', '.join('`%s`' % c for c in never) + '\n\n')
 
 
+def _folding_note(fh, folded):
+    """Say how many commands a representative stands in for, and why."""
+    if not folded:
+        return
+    reps = {}
+    for name, rep in sorted(folded.items()):
+        reps.setdefault(rep, []).append(name)
+    fh.write('**%d further command(s) share a handler with one of these and '
+             'are covered by testing it** -- `Enable` and `Disable` are one '
+             '`OpSetEnabled`, every attribute and skill command one '
+             '`OpStat`. The classes come from the runtime\'s own '
+             'registrations, and `OpStat` is split by verb and by whether '
+             'the stat maps to a Skyrim actor value, since those are '
+             'genuinely different code paths.\n\n' % len(folded))
+    fh.write('| Tested | Also covers |\n|---|---|\n')
+    for rep in sorted(reps, key=lambda r: (-len(reps[r]), r)):
+        fh.write('| `%s` | %s |\n' % (
+            rep, ', '.join('`%s`' % c for c in reps[rep])))
+    fh.write('\n')
+
+
 def write_markdown(path, plugin, plan, places, ported_pick, stub_pick,
-                   ported, stubbed, calls):
+                   ported, stubbed, calls, folded=None):
     """Write the whole plan, both covers, as a markdown document."""
     chosen, missed = ported_pick
     with io.open(path, 'w', encoding='utf-8') as fh:
@@ -208,12 +252,16 @@ def write_markdown(path, plugin, plan, places, ported_pick, stub_pick,
         fh.write('**Tool:** `python -m tools.dialog.'
                  'morrowind_opcode_testplan --plugin %s --stubs '
                  '--markdown <this file>`\n\n' % plugin)
-        fh.write('Measured over %d journal quest(s) with stages. The cover '
-                 'is greedy on new-commands-per-run, prerequisites '
-                 'included.\n\n' % len(plan))
+        fh.write('Measured over %d journal quest(s) with stages. Ranked by '
+                 'new commands per STAGE the tester must play, so short '
+                 'quests come first. **A prerequisite is its own row**, '
+                 'marked in *Why*, and its stages and commands both count '
+                 '-- the table is the whole play order, top to bottom.\n\n'
+                 % len(plan))
         fh.write('## Ported commands (%d of %d covered)\n\n' % (
             len(ported) - len(missed), len(ported)))
         _table(fh, plan, places, chosen, ported)
+        _folding_note(fh, folded)
         if missed:
             _uncovered(fh, missed, calls)
         if stub_pick:

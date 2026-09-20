@@ -45,6 +45,7 @@ What a format or contract IS. Stable; no dates, no status.
 | [script_convert_architecture.md](reference/script_convert_architecture.md) | `script_convert/` architecture — read this BEFORE writing any code here |
 | [skyrim_commands.md](reference/skyrim_commands.md) |  |
 | [skyrim_mountable_actor.md](reference/skyrim_mountable_actor.md) | What makes a Skyrim actor mountable |
+| [swf_as2_bytecode.md](reference/swf_as2_bytecode.md) | SWF tag stream and AVM1 actions; how to trace a UI data path |
 | [tes4_record_definitions.md](reference/tes4_record_definitions.md) | TES4 (Oblivion) Complete Binary Record Definitions |
 | [tes5_import_architecture.md](reference/tes5_import_architecture.md) | `tes5_import/` architecture — read this BEFORE writing any code here |
 | [tes5_binary_format.md](reference/tes5_binary_format.md) | Skyrim SE (TES5/SSE) Binary File Format — Exact Layout |

@@ -1,23 +1,23 @@
 """Address Library (versionlib) reader: map SKSE stable IDs <-> per-build RVAs.
 
-Why this exists: crash logs come from the user's *Steam* SkyrimSE.exe (1.6.1170),
-which is DRM-packed and cannot be disassembled.  The only statically readable
-build is the GOG/AE copy at 1.6.659.  A crash frame like
+Why this exists: a crash log names RVAs in whichever build the user plays, and
+a retail Steam SkyrimSE.exe is DRM-packed.  A crash frame like
 
     SkyrimSE.exe+14E0460 -> 107327+0x3A0
 
-names an Address Library *stable ID* (107327) plus an offset, so the same code can
-be located in the GOG exe by translating 107327 through both builds' versionlib
+names an Address Library *stable ID* (107327) plus an offset, so the same code
+can be located in an unpacked build by translating 107327 through both builds'
 databases.  Without that translation the raw RVA lands in unrelated code and any
 conclusion drawn from it is fiction.
 
-Format: SKSE64 Address Library v2 ("database version 2"), little-endian.
+Formats: 1 (SE 1.5.x), 2 (SE/AE 1.6.x) and 5 (AE 1.7.x), little-endian.
+See: docs/reference/address_library_formats.md#address-library-database-formats
 
 Usage:
     # translate an ENTIRE crash log's call stack in one shot (start here)
     python tools/disasm/address_lib.py --log "path/to/crash-....log"
 
-    # translate a single crash-log frame to the GOG (disassemblable) build
+    # translate a single crash-log frame to the build being disassembled
     python tools/disasm/address_lib.py --id 107327 --to 1.6.659 --offset 0x3A0
 
     # which stable ID owns a raw RVA in a given build?
@@ -40,8 +40,14 @@ DEFAULT_DIRS = [
     / "Data"
     / "SKSE"
     / "Plugins",
-    Path(r"D:\Other Games\Skyrim Anniversary Edition") / "Data" / "SKSE" / "Plugins",
 ]
+
+#: Where the unpacked per-build exes live, one per version.
+DEPOT = Path(r"C:\Program Files (x86)\Steam\steamapps\content\app_489830"
+             r"\depot_489833")
+
+#: The build disassembly examples point at.
+DISASM_EXE = DEPOT / "SkyrimSE.1.6.659.unpacked.exe"
 
 
 def find_versionlib(version: str, extra_dir: str | None = None) -> Path:
@@ -235,7 +241,7 @@ def translate_log(path: Path, src: str, dst: str, extra_dir: str | None) -> int:
     print(
         "\ndisassemble any of the above with:\n"
         "  python tools/disasm/skyrim_disasm.py "
-        '--exe "D:\\Other Games\\Skyrim Anniversary Edition\\SkyrimSE.exe" '
+        f'--exe "{DISASM_EXE}" '
         "--disasm <RVA> --count 200"
     )
     return 0
@@ -314,7 +320,7 @@ def main() -> int:
         print(f"{args.dst}  ID {sid} -> RVA {base:#x} (+{args.offset:#x} = "
               f"{base + args.offset:#x})")
         print(f"\ndisassemble with:\n  python tools/disasm/skyrim_disasm.py "
-              f'--exe "D:\\Other Games\\Skyrim Anniversary Edition\\SkyrimSE.exe" '
+              f'--exe "{DISASM_EXE}" '
               f"--disasm {base:#x} --count 200")
 
     return 0

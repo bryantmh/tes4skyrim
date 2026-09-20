@@ -48,7 +48,8 @@ DEFAULT_SOURCES = tuple(
     for part in ('', '_move', '_ai', '_query'))
 
 #: The unpacked build the ids were found in, and its version.
-IDENTITY_EXE = 'D:/Other Games/Skyrim Anniversary Edition/SkyrimSE.exe'
+IDENTITY_EXE = ('C:/Program Files (x86)/Steam/steamapps/content/app_489830'
+                '/depot_489833/SkyrimSE.1.6.659.unpacked.exe')
 IDENTITY_VERSION = '1.6.659'
 
 #: `Native<Fn>("Script.Function", ids::kName)`; a `::` name is not Papyrus.
@@ -67,10 +68,10 @@ def declared_ids(header: Path) -> dict:
 def versionlibs(extra: str | None) -> list:
     """Every installed AE-era database, oldest build first.
 
-    Only `versionlib-*.bin` (1.6+). The pre-AE `version-*.bin` files number the
-    same functions differently, so `VersionDb::Load` refuses them and the ids
-    here say nothing about those builds.
-    See: docs/reference/address_library_formats.md#pre-ae-identity
+    Only `versionlib-*.bin` (1.6+). The pre-AE `version-*.bin` files are a
+    different id generation, checked through their own derived map rather than
+    against the AE ids here.
+    See: docs/reference/address_library_formats.md#two-id-generations
     """
     folders = [Path(extra)] if extra else list(address_lib.DEFAULT_DIRS)
     found = []
