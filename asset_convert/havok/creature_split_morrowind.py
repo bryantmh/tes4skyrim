@@ -33,6 +33,7 @@ from asset_convert.havok.hkx_skeleton import find_skeleton_root
 from asset_convert.havok.kf_decode import (CYCLE_CLAMP, CYCLE_LOOP, DEFAULT_FPS,
                                            BoneTrack, DecodedClip)
 from asset_convert.havok.kf_writer import write_skyrim_kf
+from asset_convert.nif.particles_morrowind import LEGACY_EMITTERS
 from asset_convert.nif.sse_nif import read_nif
 from asset_convert.sources import base_plugins
 from asset_convert.sources.morrowind_assets import resolve_mesh
@@ -237,10 +238,17 @@ def _clip(stem: str, span: tuple, tracks: list, events: dict, cues: list,
 
 
 def _strip(data, keep_geometry: bool) -> None:
-    """Drop controllers and text keys from every node; optionally the geometry."""
+    """Drop controllers and text keys from every node; optionally the geometry.
+
+    A legacy particle emitter keeps its controller: that is the authored
+    emission, not an animation track, and the Morrowind pre-pass reads it to
+    build the NiParticleSystem once the file is at a version that can hold one.
+    See: docs/commentary/tes4_export_morrowind.md#creature-particle-emitters
+    """
     for block in data.roots[0].tree():
         if isinstance(block, NifFormat.NiObjectNET):
-            block.controller = None
+            if type(block).__name__ not in LEGACY_EMITTERS:
+                block.controller = None
             extras = [e for e in _chain(block.extra_data, 'next_extra_data')
                       if not isinstance(e, NifFormat.NiTextKeyExtraData)]
             block.extra_data = extras[0] if extras else None

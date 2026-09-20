@@ -1052,6 +1052,82 @@ each one's `x<name>.nif`/`.kf` pair beside the model and runs the creature
 stage, so it owns those projects once and every dependent plugin inherits
 them.
 
+### <a id="creature-particle-emitters"></a>The split must upgrade particle emitters before it strips controllers
+
+`NiAutoNormalParticles` has no Skyrim RTTI, and an actor skeleton carrying one
+CTDs the game during actor creation -- reported on the converted Ascended
+Sleeper under both `PlaceAtMe` and a player race change, and confirmed by a
+diagnostic patch that neutered only those blocks. Header version does not
+save it: the shipped `character assets/skeleton.nif` read 20.2.0.7 / uv2=83
+and still held 4 `NiAutoNormalParticles` + 4 `NiAutoNormalParticlesData`.
+
+`particles_morrowind.upgrade_legacy_particles` already converts these, and
+`convert_nif` runs it on the skeleton like any other creature mesh -- but it
+was reaching a tree the upgrade could no longer read. Two properties of the
+split combined:
+
+- `_strip` clears `controller` on every `NiObjectNET`, which is right for the
+  50 `NiKeyframeController`s the timeline holds but also removed each
+  emitter's `NiParticleSystemController` / `NiBSPArrayController`. The upgrade
+  reads the authored rate, speed, cone and lifetime off that controller, so
+  with it gone `_as_particle_system` returns None and the legacy block is left
+  exactly as it was. Measured on `r\ascendedsleeper.nif`: 4 emitters with
+  controllers in the source, 4 with `ctrl=NONE` in both split outputs.
+- `_strip(keep_geometry=False)` drops `NiTriBasedGeom` children, and
+  `NiAutoNormalParticles` derives from `NiParticles` -> `NiGeometry`, NOT
+  `NiTriBasedGeom` -- so the geometry cull never reached them either. The BODY
+  came out clean only because `convert_nif`'s geometry walk discards what it
+  cannot classify; the skeleton keeps its whole node tree by design.
+
+The fix is to keep the input the upgrade needs, not to evict the blocks:
+`_strip` spares a legacy emitter's controller, and `convert_nif` then upgrades
+it where it already did. One line, and the effect survives the conversion, so
+nothing has to be recreated later with a Skyrim-native system.
+
+Running the upgrade inside the split instead does NOT work, and was measured:
+`_write_nif` writes the intermediate at the SOURCE header (0x4000002), a
+version with no modifier array and no `NiPSysEmitterCtlr` interpolator, so a
+system built there round-trips back as `num_modifiers=0` with a null
+interpolator -- an emitter that cannot emit. The upgrade has to run downstream
+of the version bump, which is exactly where `run_morrowind_fixups` already
+sits.
+
+Measured on the Ascended Sleeper after the fix: 0 legacy blocks in the
+converted `skeleton.nif`, 4 `NiParticleSystem` with the full modifier chain,
+0 `NiBSParticleNode`, every `NiPSysEmitterCtlr.target` non-null (a null there
+is an access violation the moment the system updates), and the authored rates
+intact -- `PArray` 75.0/67.5, `SuperSpray` 112.5/112.5.
+
+Morroblivion mode was never affected: its creature meshes are Oblivion-era and
+already ship `NiParticleSystem`. Sweeps after the fix: 78 of 78 built creature
+meshes clean under `Morrowind.esm`, 155 of 155 under `Morrowind_ob.esm`.
+
+Tamriel Data owns 431 `MorrowindModel` creatures and takes the same path: 17
+of its 318 distinct models carry legacy emitters (42 in total, every one with
+a controller), backing 27 CREA records -- the ghosts, wraiths, liches, dremora
+and Dwemer spectres. Tamriel Rebuilt itself owns none and inherits those
+projects. The 9 that build a creature project all convert clean.
+
+### <a id="orphaned-split-folders"></a>An orphaned split folder is converted forever
+
+`split_creatures` writes only what `_sources` lists -- the `MorrowindModel`
+line, emitted only for a mesh the plugin OWNS -- while the conversion stage
+claims ANY folder holding a `skeleton.nif`. A folder left over from an older
+export is therefore re-converted from its frozen intermediate on every run and
+never re-splits, so an `[ok] <name>` line in the build log does NOT mean that
+creature was split this run.
+
+`Morrowind.esm` had 10 such folders (`byagram`, `dagothr`, `dremora`,
+`g_centurionspider`, `guar`, `guar_white`, `guar_withpack`, `heart_akulakhan`,
+`hunger`, `lordvivec`) against 41 live sources; none appeared in `CREA.txt` or
+`creature_projects.json`, so nothing could load them. Deleting them under both
+`export/` and `output/` dropped the creature stage from 4 errors to 2 -- the
+`dremora` and `lordvivec` "no idle clip" failures were purely the orphans. The
+2 that remain (`skeleton`, `r`) are live records and a separate problem.
+
+Check with `_sources` rather than by eye: a folder whose name is a substring of
+other records (`guar`) still greps as referenced when it is not.
+
 ## <a id="scripts"></a>Scripts
 
 **Code:** `tes4_export/record_types/morrowind_scripts.py`, `tes3_reader.script_name`.
