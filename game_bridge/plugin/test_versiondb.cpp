@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,20 @@ struct Expect {
     std::uint64_t id;
     std::uint64_t rva;
     const char*   label;
+};
+
+// Values cross-checked with:
+//   python tools/disasm/address_lib.py --id <id> --from 1.7.104
+// 1.7.x is format 5: a flat u32[count] of RVAs indexed by stable id, with a
+// fixed 64-byte name field instead of a length-prefixed one.
+const Expect kExpected17104[] = {
+    {21954,  0x347930,  "ConsoleExecute"},
+    {21964,  0x34a280,  "CompileAndRun"},
+    {21883,  0x3435e0,  "Script::SetText"},
+    {68115,  0xcde250,  "MemAlloc"},
+    {191694, 0x183ad68, "Script::vtable"},
+    {107327, 0x154c600, "AddressLib smoke test"},
+    {55469,  0xa24de0,  "Game.GetPlayer"},
 };
 
 // Values cross-checked with:
@@ -103,16 +118,35 @@ int main(int argc, char** argv) {
 
     std::printf("  %zu entries\n\n", db.count());
 
-    // Entry count from the Python reference parser (tools/address_lib.py).
-    if (db.count() != 428461) {
-        std::printf("FAIL  expected 428461 entries for 1.6.1170, got %zu\n", db.count());
+    // Entry counts from the Python reference parser (tools/disasm/address_lib.py).
+    // The database chooses the expectation set, so one harness covers formats
+    // 2 and 5 -- pass either versionlib and the matching probes run.
+    const bool is17104 = (db.count() == 435162);
+    // Format 1 (1.5.97, 778674 entries) parses, and is checked only for that:
+    // its ids name different functions, so VersionDb::Load refuses pre-AE
+    // runtimes and there are no RVAs worth asserting.
+    // See: docs/reference/address_library_formats.md#pre-ae-identity
+    if (db.count() == 778674) {
+        std::printf("OK  format 1 parsed (1.5.97); pre-AE ids are not used\n");
+        return decodeFailures ? 1 : 0;
+    }
+    if (!is17104 && db.count() != 428461) {
+        std::printf("FAIL  expected 428461 (1.6.1170), 435162 (1.7.104) or "
+                    "778674 (1.5.97) entries, got %zu\n", db.count());
         return 1;
     }
+    std::printf("  recognised as %s\n\n", is17104 ? "1.7.104 (format 5)"
+                                                  : "1.6.1170 (format 2)");
 
     int failures = 0;
     const auto base = ModuleBase();  // 0 in this harness; we compare RVAs
 
-    for (const auto& e : kExpected1170) {
+    const Expect* expected = is17104 ? kExpected17104 : kExpected1170;
+    const size_t  nexpected = is17104 ? std::size(kExpected17104)
+                                      : std::size(kExpected1170);
+
+    for (size_t i = 0; i < nexpected; ++i) {
+        const auto& e = expected[i];
         const auto addr = db.Get(e.id);
         const auto rva  = addr ? (addr - base) : 0;
         const bool ok = (rva == e.rva);

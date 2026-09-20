@@ -102,6 +102,49 @@ std::string DataPluginsDir() {
     return out;
 }
 
+using AddressMap = std::unordered_map<std::uint64_t, std::uint64_t>;
+
+// Formats 1 and 2: one control byte per entry, both halves delta-coded.
+bool DecodeDelta(Reader& r, AddressMap& map, std::int32_t ptrSize, std::int32_t count) {
+    map.reserve(static_cast<size_t>(count));
+    std::uint64_t prevId = 0, prevOff = 0;
+
+    for (std::int32_t i = 0; i < count && r.ok(); ++i) {
+        const std::uint8_t ctl = r.u8();
+        const std::uint8_t lo  = ctl & 0x0F;
+        const std::uint8_t hi  = (ctl >> 4) & 0x0F;
+
+        const std::uint64_t id = ReadKind(r, lo, prevId);
+
+        // Bit 3 of the high nibble scales against ptr_size: the PREVIOUS offset
+        // is divided before the delta and the result multiplied after. It is
+        // not a plain "scale the delta" -- that yields wrong RVAs for kinds
+        // 0/6/7, which are absolute.
+        const bool scaled = (hi & 0x08) != 0;
+        const std::uint64_t base = scaled ? (prevOff / static_cast<std::uint64_t>(ptrSize)) : prevOff;
+        std::uint64_t off = ReadKind(r, hi & 0x07, base);
+        if (scaled) off *= static_cast<std::uint64_t>(ptrSize);
+
+        map[id] = off;
+        prevId = id;
+        prevOff = off;
+    }
+
+    // A desynced stream yields plausible-but-wrong addresses, so refuse it
+    // outright rather than resolving garbage.
+    return r.ok() && r.pos() == r.size();
+}
+
+// Format 5: a flat u32[count] of RVAs indexed by stable id, 0 meaning absent.
+bool DecodeFlat(Reader& r, AddressMap& map, std::int32_t count) {
+    if (r.size() - r.pos() != static_cast<size_t>(count) * 4u) return false;
+    map.reserve(static_cast<size_t>(count));
+    for (std::int32_t id = 0; id < count && r.ok(); ++id) {
+        if (const std::uint32_t off = r.u32()) map[static_cast<std::uint64_t>(id)] = off;
+    }
+    return r.ok() && r.pos() == r.size();
+}
+
 }  // namespace
 
 bool VersionDb::Load(std::uint32_t runtimeVersion) {
@@ -117,6 +160,13 @@ bool VersionDb::Load(std::uint32_t runtimeVersion) {
     const unsigned min   = (runtimeVersion & 0x00FF0000u) >> 16;
     const unsigned build = (runtimeVersion & 0x0000FFF0u) >> 4;
     const unsigned sub   = (runtimeVersion & 0x0000000Fu);
+
+    // Every id in ids.h is AE-space, and the pre-AE databases number the same
+    // functions differently: measured on 1.5.97, all 62 Native<> ids of the
+    // Morrowind runtime are PRESENT and every one resolves to the wrong
+    // function, by a delta that varies per id.
+    // See: docs/reference/address_library_formats.md#pre-ae-identity
+    if (maj == 1 && min < 6) return false;
 
     // `sub` is the storefront (0 Bethesda/Steam, 1 GOG, 2 Epic). Address Library
     // ships the Steam database as -0 and GOG/Epic under their own suffix, so try
@@ -142,42 +192,30 @@ bool VersionDb::LoadFile(const std::string& path) {
     if (data.empty()) return false;
 
     Reader r(data.data(), data.size());
-    if (r.i32() != 2) return false;          // format
+    const std::int32_t format = r.i32();
     for (int i = 0; i < 4; ++i) r.i32();     // build quad
-    const std::int32_t nameLen = r.i32();
-    if (nameLen < 0) return false;
-    r.skip(static_cast<size_t>(nameLen));
-    const std::int32_t ptrSize = r.i32();
-    const std::int32_t count   = r.i32();
+    // Format 5 (1.7.x) replaced the length-prefixed name with a fixed 64-byte
+    // NUL-padded field and a u32 pad, then dropped delta coding entirely.
+    // See: docs/reference/address_library_formats.md#format-5--flat-array
+    std::int32_t ptrSize = 0, count = 0;
+    if (format == 5) {
+        r.skip(64);
+        ptrSize = r.i32();
+        r.i32();                             // pad, always 0
+        count = r.i32();
+    } else if (format == 1 || format == 2) {
+        const std::int32_t nameLen = r.i32();
+        if (nameLen < 0) return false;
+        r.skip(static_cast<size_t>(nameLen));
+        ptrSize = r.i32();
+        count   = r.i32();
+    } else {
+        return false;
+    }
     if (ptrSize <= 0 || count < 0 || !r.ok()) return false;
 
-    map_.reserve(static_cast<size_t>(count));
-    std::uint64_t prevId = 0, prevOff = 0;
-
-    for (std::int32_t i = 0; i < count && r.ok(); ++i) {
-        const std::uint8_t ctl = r.u8();
-        const std::uint8_t lo  = ctl & 0x0F;
-        const std::uint8_t hi  = (ctl >> 4) & 0x0F;
-
-        const std::uint64_t id = ReadKind(r, lo, prevId);
-
-        // Bit 3 of the high nibble scales against ptr_size: the PREVIOUS offset
-        // is divided before the delta and the result multiplied after. It is
-        // not a plain "scale the delta" -- that yields wrong RVAs for kinds
-        // 0/6/7, which are absolute.
-        const bool scaled = (hi & 0x08) != 0;
-        const std::uint64_t base = scaled ? (prevOff / static_cast<std::uint64_t>(ptrSize)) : prevOff;
-        std::uint64_t off = ReadKind(r, hi & 0x07, base);
-        if (scaled) off *= static_cast<std::uint64_t>(ptrSize);
-
-        map_[id] = off;
-        prevId = id;
-        prevOff = off;
-    }
-
-    // A desynced stream yields plausible-but-wrong addresses, so refuse it
-    // outright rather than resolving garbage.
-    if (!r.ok() || r.pos() != r.size()) {
+    if (!(format == 5 ? DecodeFlat(r, map_, count)
+                      : DecodeDelta(r, map_, ptrSize, count))) {
         map_.clear();
         return false;
     }

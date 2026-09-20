@@ -45,16 +45,20 @@ DEFAULT_DIRS = [
 
 
 def find_versionlib(version: str, extra_dir: str | None = None) -> Path:
-    """Locate versionlib-<a>-<b>-<c>-0.bin for a dotted version string."""
-    stem = "versionlib-" + version.replace(".", "-") + "-0"
+    """Locate the database for a dotted version string.
+
+    1.5.x ships as `version-<a>-<b>-<c>-0.bin`, 1.6+ as `versionlib-...`.
+    """
+    stems = [p + version.replace(".", "-") + "-0" for p in ("versionlib-", "version-")]
     dirs = [Path(extra_dir)] if extra_dir else []
     dirs += DEFAULT_DIRS
     for d in dirs:
-        cand = d / (stem + ".bin")
-        if cand.is_file():
-            return cand
+        for stem in stems:
+            cand = d / (stem + ".bin")
+            if cand.is_file():
+                return cand
     searched = ", ".join(str(d) for d in dirs)
-    raise SystemExit(f"no {stem}.bin found in: {searched}")
+    raise SystemExit(f"no {' or '.join(s + '.bin' for s in stems)} found in: {searched}")
 
 
 class Reader:
@@ -92,86 +96,106 @@ class Reader:
         self.p += n
         return v
 
+    def skip(self, n: int) -> None:
+        """Advance the cursor over n bytes without decoding them."""
+        self.p += n
 
-def load(path: Path) -> dict[int, int]:
-    """Parse a versionlib v2 database into {stable_id: rva}.
 
-    Format (per CommonLibSSE ``REL::IDDB::unpack_file``): each entry starts with
-    one control byte split into two nibbles -- the LOW nibble selects how the
-    stable id is encoded, the HIGH nibble how the offset is.  Both nibbles use
-    the same kind table:
+def _read_kind(r: Reader, kind: int, prev: int) -> int:
+    """One delta-coded field. Kinds 6 and 7 are u16/u32, NOT u64.
 
-        0 = absolute u64      4 = prev + u16
-        1 = prev + 1          5 = prev - u16
-        2 = prev + u8         6 = absolute u16
-        3 = prev - u8         7 = absolute u32
-
-    Note kinds 6 and 7 are u16/u32 -- reading them as u64 desyncs the whole
-    stream, since every entry is delta-coded against the previous one.
-
-    Bit 3 of the HIGH nibble (0x80 in the control byte) is the pointer-size
-    flag: the *previous* offset is divided by ptr_size before the delta is
-    applied, and the result multiplied back afterwards.  It is not a plain
-    "multiply the delta" scale -- that yields wrong RVAs for kinds 0/6/7.
+    See: docs/reference/address_library_formats.md#formats-1-and-2--delta-coded
     """
-    r = Reader(path.read_bytes())
-    fmt = r.i32()
-    if fmt != 2:
-        raise SystemExit(f"{path.name}: unsupported database format {fmt} (expected 2)")
+    if kind == 0:
+        return r.u64()
+    if kind == 1:
+        return prev + 1
+    if kind == 2:
+        return prev + r.u8()
+    if kind == 3:
+        return prev - r.u8()
+    if kind == 4:
+        return prev + r.u16()
+    if kind == 5:
+        return prev - r.u16()
+    if kind == 6:
+        return r.u16()
+    if kind == 7:
+        return r.u32()
+    raise ValueError(f"bad kind {kind}")
 
-    [r.i32() for _ in range(4)]  # build version quad
-    name_len = r.i32()
-    r.string(name_len)
+
+def _load_delta(r: Reader, path: Path) -> dict[int, int]:
+    """Format 1/2 body: length-prefixed name, then one control byte per entry.
+
+    Bit 3 of the high nibble divides the PREVIOUS offset by ptr_size before the
+    delta and multiplies the result back after.
+    See: docs/reference/address_library_formats.md#formats-1-and-2--delta-coded
+    """
+    r.string(r.i32())
     ptr_size = r.i32()
     count = r.i32()
-
-    def read_kind(kind: int, prev: int) -> int:
-        if kind == 0:
-            return r.u64()
-        if kind == 1:
-            return prev + 1
-        if kind == 2:
-            return prev + r.u8()
-        if kind == 3:
-            return prev - r.u8()
-        if kind == 4:
-            return prev + r.u16()
-        if kind == 5:
-            return prev - r.u16()
-        if kind == 6:
-            return r.u16()
-        if kind == 7:
-            return r.u32()
-        raise ValueError(f"bad kind {kind}")
-
     out: dict[int, int] = {}
     prev_id = 0
     prev_off = 0
-
     for _ in range(count):
         ctl = r.u8()
         lo = ctl & 0x0F
         hi = (ctl >> 4) & 0x0F
-
-        cur_id = read_kind(lo, prev_id)
-
+        cur_id = _read_kind(r, lo, prev_id)
         scaled = bool(hi & 0x08)
         base = (prev_off // ptr_size) if scaled else prev_off
-        cur_off = read_kind(hi & 0x07, base)
+        cur_off = _read_kind(r, hi & 0x07, base)
         if scaled:
             cur_off *= ptr_size
-
         out[cur_id] = cur_off
         prev_id = cur_id
         prev_off = cur_off
-
     if r.p != len(r.d):
         raise SystemExit(
             f"{path.name}: parsed {len(out)} entries but consumed {r.p} of "
             f"{len(r.d)} bytes -- the stream desynced, results are unusable"
         )
-
     return out
+
+
+def _load_flat(r: Reader, path: Path) -> dict[int, int]:
+    """Format 5 body: fixed 64-byte name, pointer size, pad, then u32[count].
+
+    The array is indexed by stable id. Id 0 and an id this build does not cover
+    both store 0, so both stay absent.
+    See: docs/reference/address_library_formats.md#format-5--flat-array
+    """
+    r.skip(64)
+    ptr_size = r.i32()
+    r.i32()
+    count = r.u32()
+    if ptr_size <= 0:
+        raise SystemExit(f"{path.name}: bad pointer size {ptr_size}")
+    if len(r.d) - r.p != count * 4:
+        raise SystemExit(
+            f"{path.name}: {len(r.d) - r.p} body bytes for {count} entries "
+            f"-- expected {count * 4}, the header is not format 5"
+        )
+    rvas = struct.unpack_from(f"<{count}I", r.d, r.p)
+    return {i: off for i, off in enumerate(rvas) if off}
+
+
+def load(path: Path) -> dict[int, int]:
+    """Parse an Address Library database into {stable_id: rva}.
+
+    Formats 1 (SE 1.5.x) and 2 (SE/AE 1.6.x) are delta-coded; 5 (AE 1.7.x) is a
+    flat u32[count] indexed by id. The four i32s after the format are the build
+    version quad. Raises SystemExit on an unknown format, or on a body that does
+    not consume the file exactly.
+    See: docs/reference/address_library_formats.md#address-library-database-formats
+    """
+    r = Reader(path.read_bytes())
+    fmt = r.i32()
+    if fmt not in (1, 2, 5):
+        raise SystemExit(f"{path.name}: unsupported database format {fmt} (expected 1, 2 or 5)")
+    [r.i32() for _ in range(4)]
+    return _load_flat(r, path) if fmt == 5 else _load_delta(r, path)
 
 
 FRAME_RE = re.compile(r"->\s*(\d+)\+0x([0-9A-Fa-f]+)")

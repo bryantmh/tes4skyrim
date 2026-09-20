@@ -65,7 +65,13 @@ def declared_ids(header: Path) -> dict:
 
 
 def versionlibs(extra: str | None) -> list:
-    """Every installed versionlib, oldest build first."""
+    """Every installed AE-era database, oldest build first.
+
+    Only `versionlib-*.bin` (1.6+). The pre-AE `version-*.bin` files number the
+    same functions differently, so `VersionDb::Load` refuses them and the ids
+    here say nothing about those builds.
+    See: docs/reference/address_library_formats.md#pre-ae-identity
+    """
     folders = [Path(extra)] if extra else list(address_lib.DEFAULT_DIRS)
     found = []
     for folder in folders:
@@ -85,14 +91,19 @@ def missing_by_build(ids: dict, libs: list) -> dict:
     return missing
 
 
-def wrong_identities(sources: list, ids: dict, exe: str) -> list:
+def wrong_identities(sources: list, ids: dict, exe: str,
+                     version: str = IDENTITY_VERSION) -> list:
     """`(constant, claimed Script.Function, scripts that DO own the address)`
-    for every `Native<>` whose id is not that script's registration."""
+    for every `Native<>` whose id is not that script's registration.
+
+    `exe` must be the unpacked binary for `version`, since the ids are read
+    through that build's database.
+    """
     claims = [claim for source in sources
               for claim in _NATIVE.findall(
                   Path(source).read_text(encoding='utf-8', errors='replace'))]
     binary = Binary(exe)
-    table = address_lib.load(address_lib.find_versionlib(IDENTITY_VERSION))
+    table = address_lib.load(address_lib.find_versionlib(version))
     strings = {rva for _s, name, _c in claims
                for rva in locate.find_strings(binary, name)}
     sites = locate.lea_sites_for(binary, strings)
@@ -107,9 +118,11 @@ def wrong_identities(sources: list, ids: dict, exe: str) -> list:
     return wrong
 
 
-def report_identities(sources: list, ids: dict, exe: str) -> int:
+def report_identities(sources: list, ids: dict, exe: str,
+                      version: str = IDENTITY_VERSION) -> int:
     """Print every misidentified native; non-zero when there is one."""
-    wrong = wrong_identities(sources, ids, exe)
+    wrong = wrong_identities(sources, ids, exe, version)
+    print('identity on %s (%s)' % (version, exe))
     for constant, claimed, owners in wrong:
         print('   WRONG FUNCTION %-26s claims %s, address belongs to %s'
               % (constant, claimed, ', '.join(owners) or 'no registration'))
@@ -129,7 +142,10 @@ def parse_args():
     parser.add_argument('--source', action='append',
                         help='a source holding Native<> calls (repeatable)')
     parser.add_argument('--exe', default=IDENTITY_EXE,
-                        help='the unpacked %s exe' % IDENTITY_VERSION)
+                        help='the unpacked exe to read registrations from')
+    parser.add_argument('--identity-version', default=IDENTITY_VERSION,
+                        help='the build --exe is, whose database the ids are '
+                             'read through (default %s)' % IDENTITY_VERSION)
     parser.add_argument('--played', default='1.6.1170',
                         help='the build the user plays, flagged in the report')
     return parser.parse_args()
@@ -150,7 +166,7 @@ def main() -> int:
 
     if args.identity:
         return report_identities(args.source or list(DEFAULT_SOURCES), ids,
-                                 args.exe)
+                                 args.exe, args.identity_version)
 
     libs = versionlibs(args.dir)
     if not libs:
