@@ -312,7 +312,7 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
     """
     _step_t = time.time()
     from .record_types.actor_common import (create_origin_faction, reset_origin_faction)
-    reset_origin_faction()
+    reset_origin_faction(getattr(ctx, 'master_index', None))
     if not ctx:
         create_vtyp_records(writer, export_dir, by_type)
 

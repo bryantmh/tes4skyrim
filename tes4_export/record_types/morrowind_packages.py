@@ -13,7 +13,7 @@ import struct
 
 from ..morrowind_ids import encode_editor_id
 from ..morrowind_world import cell_grid
-from ..tes3_reader import Tes3Record
+from ..tes3_reader import Tes3Record, get_subrecord
 
 #: TES4 PKDT.Type per Morrowind package: Find, Follow, Escort, Wander, Travel.
 _FIND, _FOLLOW, _ESCORT, _WANDER, _TRAVEL = 0, 1, 2, 5, 6
@@ -91,11 +91,24 @@ def package_id(actor_id: str, index: int) -> str:
     return 'pack:%s:%d' % (actor_id.lower(), index)
 
 
+def _hello(rec: Tes3Record) -> int:
+    """The actor's AIDT Hello setting; 0 means it never greets or chatters.
+
+    See: docs/commentary/tes4_export_morrowind.md#when-a-bark-fires
+    """
+    aidt = get_subrecord(rec, 'AIDT')
+    if aidt is None or len(aidt.data) < 2:
+        return 0
+    return struct.unpack_from('<H', aidt.data, 0)[0]
+
+
 def emit_packages(lines: list, rec: Tes3Record, ctx) -> None:
     """List the actor's packages by FormID and queue them for emission."""
     packages = _packages(rec)
+    hello = _hello(rec)
     lines.append(f'AIPackageCount={len(packages)}')
     for index, (kind, fields) in enumerate(packages):
+        fields['hello'] = hello
         form_id = ctx.derive(package_id(rec.record_id, index))
         lines.append(f'AIPackage[{index}]={form_id}')
         ctx.pending_packages.append((rec.record_id, form_id, kind, fields))
@@ -149,7 +162,7 @@ def _package_lines(ctx, actor_id: str, form_id: str, kind: str, fields: dict,
                    markers: list):
     """The TES4 PACK lines for one queued package, or None when it cannot resolve."""
     lines = [f'EditorID={encode_editor_id(actor_id)}Pack{form_id[-6:]}',
-             'PKDT.Flags=0']
+             'PKDT.Flags=0', f'MorrowindHello={fields.get("hello", 0)}']
     if kind == 'wander':
         lines += [f'PKDT.Type={_WANDER}', f'PLDT.Type={_NEAR_EDITOR_LOCATION}',
                   'PLDT.Location=0', f'PLDT.Radius={max(0, fields["distance"])}']

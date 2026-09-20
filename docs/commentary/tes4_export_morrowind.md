@@ -1404,6 +1404,170 @@ Morrowind's sounds are LOOSE files under `Data Files\Sound`, not in the BSA,
 so the extract stage copies that tree into `export/<plugin>/sound` where the
 audio stage expects to find every plugin's sounds.
 
+### <a id="voiced-barks"></a>Voiced barks leave the sidecar
+
+Morrowind is barely voiced, and everything it DOES voice is a bark. Measured
+over Morrowind.esm + Tamriel Rebuilt + Tamriel Data: **8,549 voiced INFOs, every
+one of topic type `Voice`** -- Hello 6,338, Attack 724, Hit 699, Idle 440, Flee
+157, Thief 151, Intruder 39, Alarm 1. There is no voiced conversation at all.
+Each names its audio outright in `SNAM` (6,152 distinct files, ~118 MB), and all
+8,549 carry `Response` text, so every line can have a lip track generated.
+
+These alone are exported as TES4 `DIAL`/`INFO` instead of `MWDI`/`MWIN`, because
+**the engine moves an actor's mouth only for a voice line it plays itself**, from
+a `.fuz` carrying lip data. A SNDR played through `Sound.Play` is audio with a
+closed mouth. Taking the ordinary TES4 road gets the rest for free: the eight
+channels already have entries in `_EDID_SUBTYPE` (Hello->`HELO`, Attack->`ATCK`,
+Hit->`HIT_`, Idle->`IDLE`, Flee->`FLEE`, Thief->`STEA`, Intruder->`TRES`,
+Alarm->`ASSA`), and `build_info_gates` already adds the voice-type gate.
+
+#### The audience is authored; the folder means nothing
+
+**Code:** `tes4_export/record_types/morrowind_audience.py`
+
+A TES3 INFO states its speaker outright -- `ONAM` one actor, `RNAM`/`CNAM`/
+`FNAM` a race, class and faction, `DATA` the rank and gender -- and
+`MWDialogue::Filter` tests those fields and nothing else. So the audience is
+read off the record by porting the identity half of that filter
+(`filter.cpp TestInfo`, mirrored in `Audience.accepts`) over the actors the
+export can see: this plugin's own, plus every converted master's, loaded from
+their `NPC_.txt`/`CREA.txt` dumps.
+
+🛑 **The folder a recording sits in is NOT its audience.** Measured across the
+chain: `Vo\ord\` and `Vo\at_ord\` hold Ordinator lines whose records say
+`class=guard, faction=temple` -- Ashlanders are Dark Elves with
+`faction=ashlanders`, not a race; `Vo\v\` holds vampire grunts whose records
+NAME each vampire (`actor=aundae vampire 1`); `Vo\ay\` is `race=t_cyr_ayleid`
+and `Vo\ogr\` is `race=t_hr_ogre`; and 393 of Tamriel Rebuilt's `Vo\k\`
+lines state a gender and no race at all. A hand-written folder table got
+`Vo\v\` wrong in the worst direction -- mapping it to Dark Elf would have put
+vampire grunts on every Dark Elf in the game.
+
+Signatures memoise the work: 6,264 vanilla barks share **333 distinct filter
+signatures**, so every audience in Morrowind.esm resolves in 0.01s.
+
+#### Which gate each audience gets
+
+| The record states | Gate emitted | Why |
+|---|---|---|
+| a vanilla race | that race's VTYP (`BarkRace`) | plugin-owned, so it cannot bleed |
+| a class / a faction | `GetIsClass` / `GetInFaction` | each has its own TES4 function |
+| a faction rank | `GetFactionRank >= n` | alongside the faction |
+| a custom race, or one named actor | `GetIsID` over the real speakers | every custom race exports as Imperial |
+| nothing | nothing | the record leaves it open on purpose |
+
+🛑 **Race is NOT exported as a condition**, though 7,743 barks carry one.
+`convert_ctda` rewrites `GetIsRace`'s parameter to a VANILLA Skyrim race, so
+the condition stops scoping to the converting plugin and every bark bleeds
+across plugins. The VOICE TYPE carries race and gender instead, is plugin-owned,
+and is gated by `GetIsVoiceType` (426).
+
+A CUSTOM race cannot ride a VTYP: `RNAM.Race` collapses every unknown race onto
+Imperial, so an Ayleid gate would catch every Imperial. Those name their
+speakers instead, which always fits -- measured largest custom-race audience is
+**9 actors**, largest of any id-gated audience **14**.
+
+#### Script locals are CONDITIONS, not identity
+
+🛑 **A script local is runtime state and never an audience.** `T_Local_NPC` is
+declared by **1,553 Tamriel Rebuilt scripts across 21 races**, and the companion
+script SETS `T_Local_Khajiit` to 1 or -1 as it runs -- so the actors declaring a
+variable are not the ones speaking the line. Treating declarers as the audience
+was wrong in both directions.
+
+Each local travels as its own condition: the export emits TES4
+`GetScriptVariable` (53) with the authored name beside it
+(`Condition[i].Variable`), and `convert_script_var_ctda` turns that into
+`GetVMScriptVariable` (630) plus a `CIS2` naming the mangled Papyrus property.
+The name is stated because a bark names no reference, so the usual
+REFR->base->SCRI chain has nothing to walk. Built output carries
+`::TR_abomination_var` on 20 grunts, `::TR_Map_var` on 116 regional lines and
+`::TR_NecromOrd_var` on 49.
+
+#### Measured result
+
+Built ESMs, both conversion modes:
+
+| Plugin | Barks | With no gate | Worst CTDA count |
+|---|---|---|---|
+| Morrowind.esm | 4,608 | 0 | 17 |
+| Tamriel_Data | 3,792 | 0 | 5 |
+| TR_Mainland | 391 | 0 | 8 |
+
+The engine drops a line past ~22 conditions (vanilla max 22, max OR-run 20), so
+every one fits. Checked separately, **no bark admits an actor TES3 would not
+have given it** in either mode, with one stated exception: a `factionless`
+filter has no single TES4 equivalent and becomes one `GetInFaction == 0` per
+faction the speakers could hold. That fits in vanilla (15 exclusions) but needs
+25 under Tamriel Rebuilt, past the ceiling, so 41 generic Imperial greetings
+fall back to the race VTYP alone and may also reach faction Imperials -- who
+already share 104 unrestricted greetings from the same pool.
+
+#### <a id="the-patch-owns-vanilla-barks"></a>The patch owns vanilla's barks
+
+**Code:** `tes4_export/morrowind_patch.py`
+
+In Morroblivion mode vanilla's 4,608 voiced barks have no owner. Morrowind.esm
+is not a conversion target -- Morrowind_ob.esm replaces it -- and Morroblivion
+converted **19,610 INFOs, not one of them voiced**: it reuses Morrowind's audio
+files but never carried the bark records across. A dependent plugin only ever
+exports its OWN dialogue, so nothing supplies them.
+
+The compatibility patch does, for the same reason it owns the gap sounds: one
+shared master, converted once, declared by every Morroblivion-mode conversion.
+`GAP_TYPES` cannot express this -- it filters base objects by record id, while
+DIAL/INFO are a sequential stream whose INFOs are identified by `INAM` and
+belong to the last DIAL seen -- so `collect_bark_records` walks the vanilla
+ESMs separately, keeping the topic order the exporter depends on and carrying
+the NPC_/CREA/SCPT records the audience resolver needs.
+
+Nothing is duplicated: a voiced line exists in exactly one place, and
+Morroblivion has none of them.
+
+#### <a id="an-audience-that-cannot-be-named"></a>An audience that cannot be named drops the LINE, never the filter
+
+The patch declares no converted master, so it can name only the forms it ships
+itself: the gap records. A vanilla bark filtered on a class, a faction or an
+actor that Morroblivion holds has nothing to point a condition at.
+
+The exporter used to skip the unresolvable test and keep the line. Measured on
+the vanilla ESMs: 192 voiced barks state a faction (183 of them hellos) and the
+patch export kept **0** positive `GetInFaction` tests, so every one of those
+lines fell back to its race and sex alone. TES3 topics put their specific lines
+FIRST, and Skyrim also takes the first INFO that passes, so an Ordinator's
+`faction=temple` greeting would have beaten the generic Dark Elf pool on every
+Dark Elf male.
+
+`_audience_lines` now returns None for such a bark and `dialogue_records`
+counts it under `unresolved['bark audience']`. With Morrowind's authored masters
+every name resolves and nothing is dropped.
+
+#### <a id="when-a-bark-fires"></a>When a bark fires: the package has to allow it
+
+**Code:** `tes4_export/record_types/morrowind_packages.py`,
+`tes5_import/packages/interrupt_morrowind.py`
+
+A correct bark record is not enough. Skyrim asks the actor's RUNNING PACKAGE
+whether it may speak unprompted (PKDT interrupt flags; CK wiki `Package_Flags`:
+"Hellos to player: Allow the actor to say hello to the player", "Allow Idle
+Chatter"). Every converted package carried `DEFAULT_INTERRUPT` (0x0044, the
+combat bits only), which is why Attack/Hit/Flee were audible and Hello/Idle
+never were.
+
+OpenMW decides the same thing from authored data (`actors.cpp`
+`updateGreetingState` / `playIdleDialogue`), so the flags are derived, not
+guessed:
+
+| OpenMW rule | Skyrim interrupt flag |
+|---|---|
+| greets only with AIDT `Hello` > 0, and only under Wander, Travel or no package | 0x01 Hellos to player on wander/travel packages |
+| idle voice needs `Hello` != 0 and no Follow/Escort package | 0x80 Allow Idle Chatter on everything but follow/escort |
+| thief / intruder are not package-gated | 0x10 Reaction to player actions on every package |
+
+The export writes the actor's `Hello` onto each of its PACKs as
+`MorrowindHello`; a PACK without that field is not Morrowind's and keeps the
+default.
+
 ### <a id="which-sounds-a-plugin-ships"></a>Which sounds a plugin ships
 
 `Data Files\Sound` is SHARED: Morrowind, its expansions and every installed mod

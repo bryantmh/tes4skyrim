@@ -551,8 +551,8 @@ def build_conversation_plan(by_type: dict, script_vars: dict = None,
     if not by_type.get('DIAL') or not by_type.get('INFO'):
         return plan
 
-    from .converter import (build_say_topic_dispositions, CONV_KEEP_EDIDS,
-                            DIAL_TYPE_CONVERSATION)
+    from .converter import CONV_KEEP_EDIDS, DIAL_TYPE_CONVERSATION
+    from .say_topics import build_say_topic_dispositions
     idx = _ConvIndexes(by_type, CONV_KEEP_EDIDS, DIAL_TYPE_CONVERSATION,
                        set(build_say_topic_dispositions(by_type).keys()))
     if not idx.hello_fid:

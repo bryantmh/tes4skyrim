@@ -230,10 +230,17 @@ NEGATIVE `GetIsID`), and conversion rewrites `GetIsRace` to a VANILLA Skyrim
 race every plugin shares, so Nehrim NPCs passed them. Race was Oblivion's
 plugin boundary only because Oblivion was the only file loaded.
 
-ONLY a root master (no TES4 masters of its own) creates and applies this. A
-DLC/plugin must stay ungated so it can extend and override its master's
-dialogue exactly as it does in Oblivion — its own actors are already members
-via the master's NPC records it inherits or overrides.
+ONLY a root master (no TES4 masters of its own) creates one and gates its
+dialogue on it. A DLC/plugin's own dialogue stays ungated so it can extend and
+override its master's exactly as it does in Oblivion.
+
+A dependent's actors JOIN the origin faction of every converted master that
+has one (`origin_memberships`, found by EditorID through
+`ChainedMasterIndex.find_all_by_edid`). They used to join none, so a master's
+generic lines could never play on an actor a dependent ADDS: measured on
+TR_Mainland, 0 of 9,264 NPCs carried the compatibility patch's origin faction
+while 4,322 of the patch's 4,647 voiced barks were gated on it — nearly every
+vanilla Morrowind bark was silent on every Tamriel Rebuilt actor.
 
 It is a plain membership marker: no flags, no relations, no vendor data, so it
 can never affect crime, combat reaction, or the barter menu.

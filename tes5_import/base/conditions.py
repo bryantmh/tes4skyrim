@@ -726,9 +726,10 @@ def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
 
         func = struct.unpack_from('<H', raw + b'\0' * 24, 8)[0]
         if func in _VM_VAR_FUNCS:
-            pair = convert_script_var_ctda(raw, script_vars, offset,
-                                            run_on_target_ref,
-                                            drop_run_on_target)
+            pair = convert_script_var_ctda(
+                raw, script_vars, offset, run_on_target_ref,
+                drop_run_on_target,
+                rec.get(f'{prefix}Condition[{i - 1}].Variable', ''))
             if pair is not None:
                 out.append(pair)
             continue
@@ -797,9 +798,14 @@ def sort_vm_conditions_last(pairs: list) -> list:
 
 def convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int,
                              run_on_target_ref: 'int | None' = None,
-                             drop_run_on_target: bool = False):
+                             drop_run_on_target: bool = False,
+                             authored_name: str = ''):
     """GetScriptVariable(ref, varIdx) -> GetVMScriptVariable(ref, '::var_var');
-    GetQuestVariable(quest, varIdx) -> GetVMQuestVariable(quest, '::var_var')."""
+    GetQuestVariable(quest, varIdx) -> GetVMQuestVariable(quest, '::var_var').
+
+    `authored_name` is the variable name an export states outright, for a
+    condition that names no reference to resolve an index against.
+    """
     data = raw + b'\x00' * max(0, 24 - len(raw))
     type_byte = data[0]
     comp_raw = struct.unpack_from('<I', data, 4)[0]
@@ -808,7 +814,8 @@ def convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int,
     param2 = struct.unpack_from('<I', data, 16)[0]   # script-local var index
 
     ref = _remap_formid(param1, offset)
-    name = script_vars.get(param1 & 0x00FFFFFF, {}).get(param2)
+    name = (authored_name
+            or script_vars.get(param1 & 0x00FFFFFF, {}).get(param2))
     if name:
         cis2 = papyrus_var_name(name)
     else:

@@ -104,6 +104,11 @@ using StopInstanceFn = void (*)(void* vm, std::uint32_t stack, void* tag,
 using InstanceVolumeFn = void (*)(void* vm, std::uint32_t stack, void* tag,
                                   std::int32_t instance, float volume);
 
+// ObjectReference.Say(Topic, Actor speakAs, bool inPlayersHead), a MEMBER
+// function, so the speaking reference is `self`.
+using RefSayFn = void (*)(void* vm, std::uint32_t stack, void* self,
+                          void* topic, void* speakAs, bool inPlayersHead);
+
 // Skyrim's actor values for OpenMW's dynamic stats, in OpenMW's order.
 constexpr const char* kDynamicNames[] = {"Health", "Magicka", "Stamina"};
 constexpr int kDynamicCount = 3;
@@ -184,6 +189,7 @@ RefQueryFn     g_is3DLoaded = nullptr;
 SoundPlayFn      g_soundPlay = nullptr;
 StopInstanceFn   g_stopInstance = nullptr;
 InstanceVolumeFn g_instanceVolume = nullptr;
+RefSayFn         g_refSay = nullptr;
 
 std::string g_speakerId;
 void*       g_speakerRef = nullptr;
@@ -647,6 +653,81 @@ int PlaySoundAt(const std::string& ref, const std::string& sound, bool loop,
     return instance;
 }
 
+// When each speaker's current line is expected to end. Keyed by the reference
+// because that is what `SayDone` names, and cleared as each one is read.
+std::map<void*, double> g_saying;
+
+// Seconds since the plugin loaded; only differences are ever used.
+double Now() {
+    using Clock = std::chrono::steady_clock;
+    static const Clock::time_point start = Clock::now();
+    return std::chrono::duration<double>(Clock::now() - start).count();
+}
+
+// How long a line of `text` takes to speak, for a recording the converter
+// could not measure: estimated from the subtitle, with a floor for a line too
+// short to time.
+// See: docs/commentary/morrowind_runtime.md#scripted-say
+double SpokenSeconds(const std::string& text) {
+    constexpr double kCharsPerSecond = 14.0;
+    constexpr double kShortestLine = 1.0;
+    const double spoken = static_cast<double>(text.size()) / kCharsPerSecond;
+    return spoken < kShortestLine ? kShortestLine : spoken;
+}
+
+// `Say file text`: the scripted VOICE channel. The engine moves a mouth only
+// for a line it plays as DIALOGUE, so the file is turned back into the TOPIC
+// the export minted for it -- one topic per line, holding that single INFO --
+// and spoken through ObjectReference.Say, which takes a topic and nothing else.
+//
+// Nothing is queued: Skyrim DROPS a Say aimed at an actor already speaking,
+// and the CK wiki records a crash when a line overlaps a greeting, so a
+// refused line is simply reported and the script's own SayDone poll retries.
+// See: docs/commentary/morrowind_runtime.md#scripted-say
+bool SayLine(const std::string& ref, const std::string& file,
+             const std::string& text) {
+    const SayLineDef* line = FindSayLine(file);
+    if (!line) {
+        ReportOnce("say line", file);
+        return false;
+    }
+    void* speaker = ref.empty() ? PlayerRef() : OwnerRef(ref);
+    if (!speaker) return false;
+    // Only an actor has a mouth; a door, an activator or the player's own
+    // head plays the same recording as a sound from where it stands.
+    void* topic = FindActor(ref) && line->topic.formId && g_refSay
+                      ? Form(&line->topic) : nullptr;
+    if (topic) {
+        g_refSay(PapyrusVm(), 0, speaker, topic, nullptr, false);
+    } else if (line->sound.empty() ||
+               !PlaySoundAt(ref, line->sound, false, 1.0f)) {
+        ReportOnce("say line without a voice", file);
+        return false;
+    }
+    g_saying[speaker] = Now() + (line->seconds > 0 ? line->seconds
+                                                   : SpokenSeconds(text));
+    Log("game: '%s' says '%s'", ref.c_str(), file.c_str());
+    return true;
+}
+
+// `SayDone`: whether the line this session started for that actor has ended.
+//
+// Skyrim exposes no "is this actor speaking" NATIVE -- `IsTalking` is a
+// condition function, and the CK wiki does not settle what it reports -- so
+// the end is taken from the line's own expected length, the way the say
+// timer does. Nothing started means done, which is what OpenMW answers too
+// (`SoundManager::sayDone` is true whenever no stream is playing).
+// See: docs/commentary/morrowind_runtime.md#scripted-say
+bool SayFinished(const std::string& ref) {
+    void* speaker = ref.empty() ? PlayerRef() : OwnerRef(ref);
+    if (!speaker) return true;
+    const auto it = g_saying.find(speaker);
+    if (it == g_saying.end()) return true;
+    if (Now() < it->second) return false;
+    g_saying.erase(it);
+    return true;
+}
+
 void StopSoundInstance(int instance) {
     if (g_stopInstance && instance) {
         g_stopInstance(PapyrusVm(), 0, nullptr, instance);
@@ -794,6 +875,7 @@ void InstallGameCalls() {
                                            ids::kActorGetValuePercent);
     g_messageBox = Native<MessageBoxFn>("Debug.MessageBox",
                                         ids::kDebugMessageBox);
+    g_refSay = Native<RefSayFn>("ObjectReference.Say", ids::kRefSay);
     g_soundPlay = Native<SoundPlayFn>("Sound.Play", ids::kSoundPlay);
     g_stopInstance = Native<StopInstanceFn>("Sound.StopInstance",
                                             ids::kSoundStopInstance);
@@ -817,6 +899,8 @@ void InstallGameCalls() {
     hooks.isDead = IsDeadRef;
     hooks.is3DLoaded = Is3DLoadedRef;
     hooks.loadedRef = LoadedRef;
+    hooks.say = SayLine;
+    hooks.sayDone = SayFinished;
     hooks.playSound = PlaySoundAt;
     hooks.stopSound = StopSoundInstance;
     hooks.goldCount = GoldCount;

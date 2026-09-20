@@ -14,7 +14,7 @@ from ..actors.outfits import split_inventory
 from ..packages.actor_wiring import CSTY_DEFAULT, DPLT_NPC_LIST, npc_packages
 from ..base.equivalents import map_hair_color
 from .actor_common import (GOLD001_FID, NAM5_UNKNOWN, SOUND_LEVEL_NORMAL,
-                           build_aidt, build_outfit, get_origin_faction_fid,
+                           build_aidt, build_outfit, origin_memberships,
                            get_trainer_class_fid, get_trainer_faction_fid,
                            get_vendor_faction_fids_for_actor, read_items,
                            resolve_actor_voice, resolve_npc_race)
@@ -163,8 +163,8 @@ def _npc_snams(rec: dict, vendor_fids: list, trainer_clas_fid: int) -> bytes:
         subs += _pack_snam(vfid)
     if trainer_clas_fid and get_trainer_faction_fid():
         subs += _pack_snam(get_trainer_faction_fid())
-    if get_origin_faction_fid():
-        subs += _pack_snam(get_origin_faction_fid())
+    for origin_fid in origin_memberships():
+        subs += _pack_snam(origin_fid)
     return subs
 
 

@@ -56,6 +56,9 @@ PATCH_ARCHIVES = ('Morrowind.bsa', 'Tribunal.bsa', 'Bloodmoon.bsa')
 #: Base object types a placement can name; cells and terrain are never filled.
 GAP_TYPES = frozenset(BASE_TYPES) - {'CELL', 'LAND', 'WRLD'}
 
+#: The records a voiced bark needs: its topic stream, and who may speak it.
+BARK_TYPES = frozenset({'DIAL', 'INFO', 'NPC_', 'CREA'})
+
 #: The patch declares no converted master, so its own records take byte 0x00.
 PATCH_INDEX = 0x00
 
@@ -148,6 +151,35 @@ def _paired_creature(rec) -> bool:
     return sub is not None and archive_path(get_string(sub)) in MORROBLIVION_CREATURES
 
 
+def _info_identity(rec) -> str:
+    """An INFO's own INAM, which is what makes it unique; '' for other types."""
+    sub = get_subrecord(rec, 'INAM') if rec.type == 'INFO' else None
+    return get_string(sub) if sub is not None else ''
+
+
+def collect_bark_records(sources) -> list:
+    """Every vanilla record the voiced-bark export needs, in file order.
+
+    The DIAL/INFO stream the exporter walks, plus the actors its
+    audiences resolve against.
+    See: docs/commentary/tes4_export_morrowind.md#the-patch-owns-vanilla-barks
+    """
+    out, seen = [], set()
+    for path in sources:
+        if not os.path.isfile(path):
+            continue
+        for rec in read_file(path)[1]:
+            if rec.type not in BARK_TYPES or rec.deleted:
+                continue
+            key = (rec.type, (rec.record_id or '').lower(),
+                   _info_identity(rec))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(rec)
+    return out
+
+
 def gap_assets(records) -> set:
     """Every archive path the gap records name, lowercased and backslashed.
 
@@ -226,7 +258,10 @@ def build_patch(data_dir: str, export_dir: str, morroblivion_exports,
     assets = _extract_assets(gaps.values(), esms, data_dir, export_dir,
                              progress)
     assets += _copy_gap_sounds(gaps.values(), data_dir, export_dir, progress)
-    out_dir = _write_records(gaps, export_dir, progress)
+    progress('Collecting vanilla voiced barks...')
+    barks = collect_bark_records(esms)
+    out_dir = _write_records(gaps, export_dir, progress, barks)
+    assets += _stage_bark_voices(data_dir, export_dir, progress)
     _convert_assets(export_dir, out_root, progress)
     _convert_creatures(export_dir, out_root, progress)
     plugin, error = _import_records(export_dir, out_root, progress)
@@ -234,6 +269,26 @@ def build_patch(data_dir: str, export_dir: str, morroblivion_exports,
             'output': out_dir, 'plugin': plugin, 'error': error,
             'seconds': time.time() - start}
 
+
+
+def _stage_bark_voices(data_dir: str, export_dir: str, progress) -> int:
+    """Copy the recordings the patch's barks name; how many files were staged.
+
+    A bark record without its audio is a silent line with a moving mouth, so
+    this runs off the INFO dump `_write_records` just produced.
+    See: docs/commentary/tes4_export_morrowind.md#the-patch-owns-vanilla-barks
+    """
+    from pathlib import Path
+
+    from asset_convert.audio.morrowind_voice import stage_bark_voices
+    from asset_convert.sources.bsa_extract_morrowind_sounds import (
+        collect_bark_voices)
+    staged = stage_bark_voices(
+        collect_bark_voices(export_dir, PATCH_NAME),
+        Path(data_dir) / 'Sound', asset_root(export_dir, PATCH_NAME),
+        PATCH_NAME)
+    progress(f'  Staged {staged} bark recording(s)')
+    return staged
 
 def _copy_gap_sounds(records, data_dir: str, export_dir: str,
                      progress) -> int:
@@ -329,7 +384,8 @@ def _patch_ownership(export_dir: str) -> MorroblivionModels:
                               asset_root(export_dir, PATCH_NAME) / 'meshes')
 
 
-def _write_records(gaps: dict, export_dir: str, progress) -> str:
+def _write_records(gaps: dict, export_dir: str, progress,
+                   barks=()) -> str:
     """Export every gap record under its shared derived FormID.
 
     Imported inside the function to break the cycle with `export_morrowind`,
@@ -364,6 +420,7 @@ def _write_records(gaps: dict, export_dir: str, progress) -> str:
         edid = filled_soulgem_id(gem_id, soul)
         out.setdefault('SLGM', []).append(
             (patch_formid(('SLGM', edid)), lines))
+    _add_barks(out, ctx, barks, progress)
     out_dir = patch_dir(export_dir)
     counts = write_export(out, out_dir)
     write_header(out_dir, [], sum(counts.values()),
@@ -371,6 +428,28 @@ def _write_records(gaps: dict, export_dir: str, progress) -> str:
     progress(f'  Wrote {sum(counts.values())} records to {out_dir}')
     return out_dir
 
+
+
+def _add_barks(out: dict, ctx, barks, progress) -> None:
+    """Merge the vanilla voiced barks into the patch's own records.
+
+    The audience resolves against the bark records' OWN actors -- vanilla's,
+    which the patch carries -- so the gate names the same speakers Morrowind
+    filtered on.
+    See: docs/commentary/tes4_export_morrowind.md#the-patch-owns-vanilla-barks
+    """
+    from .record_types.morrowind_dialog import dialogue_records
+    if not barks:
+        return
+    produced = dialogue_records(barks, ctx, say=False)
+    for sig in ('DIAL', 'INFO'):
+        rows = produced.get(sig) or []
+        if rows:
+            out.setdefault(sig, []).extend(rows)
+    progress(f"  Voiced barks: {len(produced.get('INFO') or [])} lines "
+             f"under {len(produced.get('DIAL') or [])} topic(s); "
+             f"{ctx.unresolved['bark audience']} name a class, faction or "
+             f"actor only Morroblivion holds")
 
 def orphan_meshes(sources, data_dir: str) -> set:
     """Archive meshes no vanilla record names, as `meshes\\...` keys.

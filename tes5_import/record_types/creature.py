@@ -20,7 +20,7 @@ from .actor_common import (GOLD001_FID, NAM5_UNKNOWN, SOUND_LEVEL_NORMAL,
                            T4C_NO_BLOOD_SPRAY, T4C_PC_LEVEL_OFFSET,
                            T4C_RESPAWN, T5_AUTOCALC, T5_DOESNT_BLEED,
                            T5_ESSENTIAL, T5_PC_LEVEL_MULT, T5_RESPAWN,
-                           build_aidt, build_outfit, get_origin_faction_fid,
+                           build_aidt, build_outfit, origin_memberships,
                            get_vendor_faction_fids_for_actor, npc_vtyp,
                            read_items)
 from .common import (
@@ -315,9 +315,9 @@ def _crea_snams(rec: dict, vendor_fids: list) -> bytes:
             get_int(rec, f'Faction[{i}].Rank'), 0, 0, 0))
     for vfid in vendor_fids:
         subs += pack_subrecord('SNAM', struct.pack('<IbBBB', vfid, 0, 0, 0, 0))
-    if get_origin_faction_fid():
+    for origin_fid in origin_memberships():
         subs += pack_subrecord('SNAM', struct.pack(
-            '<IbBBB', get_origin_faction_fid(), 0, 0, 0, 0))
+            '<IbBBB', origin_fid, 0, 0, 0, 0))
     return subs
 
 

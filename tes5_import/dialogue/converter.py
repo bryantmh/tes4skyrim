@@ -47,6 +47,7 @@ from collections import defaultdict
 from ..base.text_reader import (get_formid_index_offset, info_result_script,
                                 remap_formid)
 from ..base.constants import ENGINE_GLOBAL_FORMIDS
+from .say_topics import SAY_TOPIC_DISPOSITIONS
 from ..base.equivalents import TES4_ITEM_FORMID_TO_SKYRIM
 from ..record_types.common import (
     get_formid,
@@ -859,132 +860,11 @@ def collect_tclt_target_fids(by_type: dict) -> set:
     return targets
 
 
-#: Say-driven topics: raw24 DIAL fid -> ('ref', fid) or ('drop', None) for RunOn=Target.
-SAY_TOPIC_DISPOSITIONS: dict = {}
-
 # owner quest fid -> converted GREETING topic fid, filled while bark topics are
 # split per quest.  A ForceGreet PACKAGE must name the topic it opens (PDTO),
 # and Skyrim keeps one bark topic per subtype per quest, so the package needs
 # THIS quest's greeting rather than a single global one.
 GREET_TOPIC_BY_QUEST: dict = {}
-
-_SAYTO_RE = re.compile(r'\bsayto[\s,]+(\w+)[\s,]+(\w+)', re.IGNORECASE)
-_SAY_RE = re.compile(r'\bsay[\s,]+(\w+)', re.IGNORECASE)
-_STARTCONV_RE = re.compile(r'\bstartconversation[\s,]+(\w+)(?:[\s,]+(\w+))?',
-                           re.IGNORECASE)
-
-
-def build_say_topic_dispositions(by_type: dict) -> dict:
-    """Map script-driven (Say/SayTo/StartConversation) topics to how their
-    RunOn=Target conditions must be converted.
-
-    Skyrim's Actor.Say() has no dialogue target, so a converted RunOn=Target
-    condition in a Say-driven topic evaluates against nothing and can never
-    pass — CharacterGen's Valen Dreth taunts (race-of-target picks the line)
-    froze the whole intro this way, and 1,900+ INFOs across every scripted
-    conversation share the defect.  The script call sites tell us who the
-    target actually is: when it's unique (usually the player), the condition
-    is retargeted to RunOn=Reference on that ref — equivalent semantics, and
-    equally valid if the topic is also reachable as menu dialogue (there the
-    target IS the player).  Topics with mixed/unresolvable targets drop their
-    target conditions instead: the Oblivion call sites already select
-    speaker+topic, so auto-pass is closer to intent than never-pass.
-    """
-    votes = _scan_say_votes(_collect_script_texts(by_type),
-                            *_index_say_targets(by_type))
-    out = {}
-    for dfid, tgts in votes.items():
-        real = {t for t in tgts if t is not None}
-        if len(real) == 1:
-            out[dfid] = ('ref', next(iter(real)))
-        else:
-            out[dfid] = ('drop', None)
-    return out
-
-
-def _collect_script_texts(by_type: dict) -> list:
-    """Every script body that can hold a call site: SCPT sources, INFO result
-    scripts, and each QUST stage log's result script, in that order."""
-    texts = [get_str(r, 'SCTX') or '' for r in by_type.get('SCPT', [])]
-    for r in by_type.get('INFO', []):
-        texts.append(info_result_script(r))
-    for r in by_type.get('QUST', []):
-        i = 0
-        while f'Stage[{i}].Index' in r:
-            j = 0
-            while (t := r.get(f'Stage[{i}].Log[{j}].ResultScript')) is not None:
-                texts.append(t)
-                j += 1
-            i += 1
-    return texts
-
-
-def _index_say_targets(by_type: dict) -> tuple:
-    """(lowercased DIAL EditorID -> raw24 fid, token -> target ref fid).
-
-    The second resolves a call site's target token: 'player'/'playerref' to the
-    player ref, any ACHR/ACRE/REFR EditorID to that ref's FormID, and anything
-    else to None (unresolvable).
-    """
-    dial_by_edid = {get_str(d, 'EditorID', '').lower():
-                    get_formid(d, 'FormID') & 0xFFFFFF
-                    for d in by_type.get('DIAL', [])
-                    if get_str(d, 'EditorID')}
-    ref_by_edid = {}
-    for sig in ('ACHR', 'ACRE', 'REFR'):
-        for r in by_type.get(sig, []):
-            e = get_str(r, 'EditorID')
-            if e:
-                ref_by_edid[e.lower()] = get_formid(r, 'FormID')
-    return dial_by_edid, ref_by_edid
-
-
-def _scan_say_votes(texts: list, dial_by_edid: dict,
-                    ref_by_edid: dict) -> dict:
-    """raw24 DIAL fid -> the set of targets its call sites name (None = none).
-
-    SayTo/StartConversation vote their target ref; plain Say votes None because
-    it has no target at all. SayTo matches are stripped before the Say scan so
-    one call site is never counted as both.
-    """
-    def target_fid(token: str):
-        """The ref FormID a target token names, or None when unresolvable."""
-        t = token.lower()
-        if t in ('player', 'playerref'):
-            return _PLAYER_FORMID
-        return ref_by_edid.get(t)
-
-    votes = defaultdict(set)
-    for text in texts:
-        if not text:
-            continue
-        for raw in text.replace('\\r\\n', '\n').splitlines():
-            line = raw.split(';', 1)[0]
-            low = line.lower()
-            if 'say' not in low and 'startconversation' not in low:
-                continue
-            _scan_say_line(line, votes, dial_by_edid, target_fid)
-    return votes
-
-
-def _scan_say_line(line: str, votes: dict, dial_by_edid: dict,
-                   target_fid) -> None:
-    """Add one script line's SayTo / StartConversation / Say votes to `votes`."""
-    for m in _SAYTO_RE.finditer(line):
-        d = dial_by_edid.get(m.group(2).lower())
-        if d is not None:
-            votes[d].add(target_fid(m.group(1)))
-    for m in _STARTCONV_RE.finditer(line):
-        if m.group(2):
-            d = dial_by_edid.get(m.group(2).lower())
-            if d is not None:
-                votes[d].add(target_fid(m.group(1)))
-    stripped = _SAYTO_RE.sub(' ', line)
-    for m in _SAY_RE.finditer(stripped):
-        d = dial_by_edid.get(m.group(1).lower())
-        if d is not None:
-            votes[d].add(None)
-
 
 def _index_race_voices(by_type: dict) -> tuple:
     """(RACE fid24 -> per-gender voice race, RACE fid24 -> the plugin's EditorID).

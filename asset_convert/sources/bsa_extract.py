@@ -20,7 +20,9 @@ import struct
 import zlib
 from pathlib import Path
 from asset_convert.sources.bsa_extract_morrowind import (
-    copy_loose_sounds, is_morrowind_bsa, iter_bsa as iter_morrowind_bsa)
+    is_morrowind_bsa, iter_bsa as iter_morrowind_bsa)
+from asset_convert.sources.bsa_extract_morrowind_sounds import (
+    extract_loose_audio)
 from asset_convert.audio.audio_converter import (
     organize_voice_files,
 )
@@ -517,29 +519,9 @@ def extract_assets_for_file(source_file, data_path, extract_dir, force=False):
     totals['music'] = extract_loose_music(source_file, data_path, extract_dir,
                                           asset_dir_name, force=force)
     if any(is_morrowind_bsa(b) for b in bsa_files):
-        owned = _owned_sounds(extract_dir, source_file)
-        totals['sounds'] = copy_loose_sounds(
-            data_path, Path(extract_dir) / asset_dir_name, owned)
-        print(f"Loose Morrowind sounds: {totals['sounds']} of {len(owned)} "
-              f"owned files copied")
+        totals.update(extract_loose_audio(data_path, extract_dir,
+                                          asset_dir_name, source_file))
     return totals
-
-
-def _owned_sounds(extract_dir, source_file) -> set:
-    """The loose sounds this plugin ships: what it names, less what a master names.
-
-    Replaces the masterless gate loose music still uses: music is folder-scanned
-    by the engine and has no per-file owner, but every sound is named by a SOUN,
-    so an expansion ships exactly the files it adds.
-    See: docs/commentary/tes4_export_morrowind.md#which-sounds-a-plugin-ships
-    """
-    from output_layout import record_dir
-    from asset_convert.lod.terrain_lod import master_names
-    from asset_convert.sources.morrowind_sound_scope import owned_files
-    own = str(record_dir(str(extract_dir), source_file))
-    masters = [str(record_dir(str(extract_dir), name))
-               for name in master_names(own)]
-    return owned_files(own, masters)
 
 
 # ---------------------------------------------------------------------------

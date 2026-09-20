@@ -28,6 +28,7 @@ from tes4_export.morrowind_ids import encode_editor_id, load_index
 from .morrowind_sidecar_source import (gather, plugin_chain,
                                        write_merged_dialogue)
 from .morrowind_travel import TRAVEL_TABLE, marker_index, travel_lines
+from .say_morrowind import SAY_TABLE, say_rows
 
 #: Where the runtime looks, relative to a plugin's output root.
 SIDECAR_DIR = os.path.join('SKSE', 'Plugins', 'MorrowindRuntime')
@@ -782,6 +783,9 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
     staged = (_stage_dialogue(export_dir, out_dir, present, chain, gathered)
               + write_script_tables(export_dir, out_dir, plugin_name,
                                     gathered)
+              + _write_lines(os.path.join(out_dir, SAY_TABLE),
+                             say_rows(export_dir,
+                                      os.path.basename(plugin_name)))
               + _journal_quests(writer, out_dir, plugin_name))
     index = _actor_index(export_dir)
     if not index:

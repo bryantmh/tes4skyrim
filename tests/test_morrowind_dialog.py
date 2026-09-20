@@ -5,6 +5,7 @@ Every test builds its records by hand, so none needs Morrowind installed.
 The format is recorded in docs/reference/morrowind_dialogue_format.md.
 """
 
+import collections
 import struct
 
 import pytest
@@ -186,3 +187,302 @@ def test_multiline_text_survives_escaping():
     assert '\n' not in kv['Response'] and '\n' not in kv['ResultScript']
     assert 'line two' in kv['Response']
     assert 'set a to 1' in kv['ResultScript']
+
+
+class _Ctx:
+    """The little of MorrowindContext the bark exporter asks for."""
+
+    def derive(self, key: str) -> str:
+        """A stable id for a derivation key, as the real context mints one."""
+        return f'{abs(hash(key)) & 0xFFFFFF:08X}'
+
+    master_dirs = ()
+
+    def __init__(self):
+        """The bark state `dialogue_records` fills in and the exporter reads."""
+        self.bark_speakers = []
+        self.bark_audiences = {}
+
+    def resolve(self, record_id: str, signature: str = '') -> str:
+        """Nothing resolves: a bare context has no id index."""
+        return ''
+
+
+def _voiced(topic: str, path: str, **kw) -> Tes3Record:
+    """A voiced bark INFO of `topic`, naming `path` as its recording."""
+    rec = _info(kind=1, **kw)
+    rec.subrecords.append(_sub('SNAM', _cstr(path)))
+    return rec
+
+
+def test_a_voiced_bark_leaves_the_sidecar_as_dial_and_info():
+    """Only the VOICED lines become TES4 records; the rest stay MWDI/MWIN.
+
+    See: docs/commentary/tes4_export_morrowind.md#voiced-barks
+    """
+    records = [_dial('Hello', 1),
+               _voiced('Hello', 'Vo\\d\\m\\Hlo_DM008.mp3',
+                       response='Good day.'),
+               _dial('Chargen', 0),
+               _info(inam='plain', response='Not voiced.')]
+    out = dialogue_records(records, _Ctx())
+    assert [_kv(l)['EditorID'] for _f, l in out['DIAL']] == ['HELLO'], \
+        'the Hello channel becomes the topic _EDID_SUBTYPE routes'
+    assert len(out['INFO']) == 1, 'only the voiced line leaves the sidecar'
+    assert len(out[INFO_SIG]) == 2, 'both still reach the runtime'
+    kv = _kv(out['INFO'][0][1])
+    assert kv['Response[0].ResponseText'] == 'Good day.', 'the transcript rides along'
+    assert 'Hlo_DM008' in kv['MorrowindVoice']
+
+
+def test_a_bark_takes_the_race_its_RECORD_states_not_its_folder():
+    """The record names the race; the folder is never consulted.
+
+    `Vo\\ord\\` holds Ordinator lines whose records say class=guard, so a
+    folder-derived race would be wrong wherever it disagreed.
+    See: docs/commentary/tes4_export_morrowind.md#voiced-barks
+    """
+    bark = _voiced('Hit', 'Vo\\ord\\Hit_OM002.mp3', response='Woh!',
+                   gender=0)
+    bark.subrecords.append(_sub('RNAM', _cstr('Imperial')))
+    kv = _kv(dialogue_records([_dial('Hit', 1), bark], _Ctx())['INFO'][0][1])
+    assert kv['BarkRace'] == '00000907', 'the RECORD says Imperial'
+    assert kv['BarkSex'] == '0', 'DATA carries the gender'
+
+
+def test_a_bark_stating_no_speaker_is_left_open():
+    """An open bark gets no invented audience.
+
+    The werewolf scream states no identity because `Fn_Werewolf` gates it;
+    giving it a folder-derived race would put it on every NPC of that race.
+    See: docs/commentary/tes4_export_morrowind.md#voiced-barks
+    """
+    bark = _voiced('Hit', 'Vo\\ww\\scrm.mp3', response='', gender=-1)
+    kv = _kv(dialogue_records([_dial('Hit', 1), bark], _Ctx())['INFO'][0][1])
+    assert 'BarkRace' not in kv, 'no race is stated, so none is invented'
+    assert 'ConditionCount' not in kv, 'and no audience is invented either'
+
+
+class _SayCtx(_Ctx):
+    """A context that knows one actor, `speaker`, and nothing else."""
+
+    def base_signature(self, record_id: str, want: str = '') -> str:
+        """`NPC_` for the one actor this context converts."""
+        return 'NPC_' if record_id.lower() == 'speaker' else ''
+
+    def resolve(self, record_id: str, signature: str = '') -> str:
+        """The actor's FormID; nothing else resolves."""
+        return '00ABCDEF' if record_id.lower() == 'speaker' else ''
+
+
+def _say_script(script_id: str) -> Tes3Record:
+    """A script whose body says one line."""
+    script = Tes3Record(type='SCPT', flags=0, subrecords=[
+        _sub('SCTX', _cstr('Say "Vo\\Misc\\x.mp3" "Hear me."'))])
+    script.record_id = script_id
+    return script
+
+
+def test_an_actors_say_gets_a_topic_of_its_own_gated_on_that_actor():
+    """`ObjectReference.Say` takes a TOPIC, so each line needs its own.
+
+    A shared topic would let the engine pick any of its lines, and a bark
+    topic would let every actor speak it unprompted.
+    See: docs/commentary/morrowind_runtime.md#scripted-say
+    """
+    npc = Tes3Record(type='NPC_', flags=0, subrecords=[
+        _sub('SCRI', _cstr('lineScript'))])
+    npc.record_id = 'speaker'
+    out = dialogue_records([npc, _say_script('lineScript')], _SayCtx())
+    assert len(out['INFO']) == 1 and len(out['DIAL']) == 1
+    dial_id, dial = out['DIAL'][0]
+    kv = _kv(dial)
+    assert kv['MorrowindSay'] == '1' and kv['DATA.Type'] == '1', (
+        'a hidden conversation topic, never a bark channel')
+    info = _kv(out['INFO'][0][1])
+    assert info['ParentDIAL'] == dial_id
+    assert info['Response[0].ResponseText'] == 'Hear me.'
+    raw = bytes.fromhex(info['Condition[0].Raw'])
+    assert raw[8] == 72 and raw[12:16] == bytes.fromhex('EFCDAB00'), (
+        'GetIsID on the actor carrying the script')
+    assert not out.get('SOUN'), 'an actor needs no sound stand-in'
+
+
+def test_a_say_with_no_mouth_becomes_a_sound():
+    """A script no actor carries speaks through a SOUN, not a topic.
+
+    See: docs/commentary/morrowind_runtime.md#scripted-say
+    """
+    out = dialogue_records([_say_script('doorScript')], _SayCtx())
+    assert not out['INFO'] and not out['DIAL']
+    kv = _kv(out['SOUN'][0][1])
+    assert kv['MorrowindSay'] == '1'
+    assert kv['FNAM.Filename'].replace(chr(92) * 2, chr(92)) == (
+        'Vo' + chr(92) + 'Misc' + chr(92) + 'x.mp3')
+
+
+def test_a_custom_race_bark_names_its_real_speakers():
+    """A race the importer cannot voice gates on the actors that HAVE it.
+
+    Every custom Morrowind race exports as Imperial, so a race gate would put
+    an Ayleid line on every Imperial. The speakers are resolved by running
+    TES3's own filter over the actors instead.
+    See: docs/commentary/tes4_export_morrowind.md#voiced-barks
+    """
+    npc = Tes3Record(type='NPC_', flags=0, subrecords=[
+        _sub('RNAM', _cstr('T_Cyr_Ayleid')), _sub('FLAG', b'\x00' * 4)])
+    npc.record_id = 'T_Cyr_Ayleid_Guard'
+    other = Tes3Record(type='NPC_', flags=0, subrecords=[
+        _sub('RNAM', _cstr('Imperial')), _sub('FLAG', b'\x00' * 4)])
+    other.record_id = 'Ordinary_Imperial'
+
+    bark = _voiced('Hit', 'Vo\\ay\\m\\Hit_AyM001.mp3', response='Ungh.',
+                   gender=0)
+    bark.subrecords.append(_sub('RNAM', _cstr('T_Cyr_Ayleid')))
+
+    class _Resolving(_Ctx):
+        def resolve(self, record_id, signature=''):
+            """Every actor in this fixture resolves to a distinct id."""
+            return {'T_Cyr_Ayleid_Guard': '0004B1A5',
+                    'Ordinary_Imperial': '0004B1A6'}.get(record_id, '')
+
+    out = dialogue_records([npc, other, _dial('Hit', 1), bark], _Resolving())
+    kv = _kv(out['INFO'][0][1])
+    assert 'BarkRace' not in kv, 'a custom race cannot ride a vanilla VTYP'
+    assert kv['ConditionCount'] == '2', 'the Ayleid, plus the gender test'
+    assert 'a5b10400' in kv['Condition[0].Raw'], 'names the Ayleid speaker'
+    assert 'a6b10400' not in kv['Condition[0].Raw'], 'never the Imperial'
+
+
+def test_a_vampire_grunt_reaches_only_the_named_vampires():
+    """`Vo\\v\\` lines NAME their speakers; no Dark Elf ever inherits them.
+
+    The recordings sit in a vampire folder, but the records name each vampire
+    outright, so the folder is never consulted and the gate is exact.
+    See: docs/commentary/tes4_export_morrowind.md#voiced-barks
+    """
+    vampire = Tes3Record(type='NPC_', flags=0, subrecords=[
+        _sub('RNAM', _cstr('Dark Elf')), _sub('FLAG', b'\x00' * 4)])
+    vampire.record_id = 'aundae vampire 1'
+    ordinary = Tes3Record(type='NPC_', flags=0, subrecords=[
+        _sub('RNAM', _cstr('Dark Elf')), _sub('FLAG', b'\x00' * 4)])
+    ordinary.record_id = 'ordinary dunmer'
+
+    bark = _voiced('Hit', 'Vo\\v\\Hit_vDM004.mp3', response='Ughn.')
+    bark.subrecords.append(_sub('ONAM', _cstr('aundae vampire 1')))
+
+    class _Resolving(_Ctx):
+        def resolve(self, record_id, signature=''):
+            """Both actors resolve, so a wrong gate would be visible."""
+            return {'aundae vampire 1': '0004B1A5',
+                    'ordinary dunmer': '0004B1A6'}.get(record_id.lower(), '')
+
+    out = dialogue_records([vampire, ordinary, _dial('Hit', 1), bark],
+                           _Resolving())
+    kv = _kv(out['INFO'][0][1])
+    assert 'BarkRace' not in kv, 'a vampire line is not a Dark Elf line'
+    assert kv['ConditionCount'] == '1', 'exactly the one named vampire'
+    assert 'a5b10400' in kv['Condition[0].Raw'], 'names the vampire'
+    assert 'a6b10400' not in kv['Condition[0].Raw'], 'never the ordinary Dunmer'
+
+
+def _say_export(tmp_path, body: str) -> str:
+    """An `INFO.txt` holding `body`, laid out as the export writes one."""
+    (tmp_path / 'INFO.txt').write_text(body, encoding='utf-8')
+    return str(tmp_path)
+
+
+def test_say_table_maps_the_path_a_script_wrote_to_its_topic(tmp_path):
+    """The runtime holds a FILE; `ObjectReference.Say` takes the line's TOPIC.
+
+    Handing it the INFO instead passes the engine the wrong form type.
+    See: docs/commentary/morrowind_runtime.md#scripted-say
+    """
+    from tes5_import.dialogue.say_morrowind import say_rows
+    (tmp_path / 'DIAL.txt').write_text(
+        '---RECORD_BEGIN---\n'
+        'Signature=DIAL\n'
+        'FormID=01001234\n'
+        'MorrowindSay=1\n'
+        '---RECORD_END---\n', encoding='utf-8')
+    body = ('---RECORD_BEGIN---\n'
+            'Signature=INFO\n'
+            'FormID=0100ABCD\n'
+            'ParentDIAL=01001234\n'
+            'MorrowindVoice=Vo\\\\Misc\\\\X.mp3\n'
+            '---RECORD_END---\n')
+    rows = say_rows(_say_export(tmp_path, body), 'Morrowind.esm')
+    assert rows == ['vo\\misc\\x.mp3=Morrowind.esm|00001234|0.00|'], (
+        'keyed lowercase, naming the TOPIC without its master index')
+
+
+def test_say_table_names_the_sound_of_a_line_with_no_mouth(tmp_path):
+    """A door's or an activator's line plays as a SOUN, so the row names one.
+
+    See: docs/commentary/morrowind_runtime.md#scripted-say
+    """
+    from tes5_import.dialogue.say_morrowind import say_rows
+    (tmp_path / 'SOUN.txt').write_text(
+        '---RECORD_BEGIN---\n'
+        'Signature=SOUN\n'
+        'FormID=01005678\n'
+        'EditorID=MWSaySound005678\n'
+        'FNAM.Filename=Vo\\\\Misc\\\\Door.wav\n'
+        'MorrowindVoice=Vo\\\\Misc\\\\Door.wav\n'
+        'MorrowindSay=1\n'
+        '---RECORD_END---\n', encoding='utf-8')
+    rows = say_rows(str(tmp_path), 'Morrowind.esm')
+    assert rows == [
+        'vo\\misc\\door.wav=Morrowind.esm|00000000|0.00|MWSaySound005678']
+
+
+def test_say_table_leaves_barks_out(tmp_path):
+    """A bark is picked off the engine's own channel, never named by path.
+
+    See: docs/commentary/morrowind_runtime.md#scripted-say
+    """
+    from tes5_import.dialogue.say_morrowind import say_rows
+    body = ('---RECORD_BEGIN---\n'
+            'Signature=INFO\n'
+            'FormID=01000001\n'
+            'MorrowindInfo=some_bark_id\n'
+            'MorrowindVoice=Vo\\\\a\\\\m\\\\Hlo.mp3\n'
+            '---RECORD_END---\n')
+    assert say_rows(_say_export(tmp_path, body), 'Morrowind.esm') == []
+
+
+def test_a_package_allows_the_speech_openmw_would():
+    """Hello and idle voice follow the actor's Hello setting and package kind.
+
+    See: docs/commentary/tes4_export_morrowind.md#when-a-bark-fires
+    """
+    from tes5_import.packages.interrupt_morrowind import morrowind_interrupt
+    wander = {'PKDT.Type': '5', 'MorrowindHello': '30'}
+    follow = {'PKDT.Type': '1', 'MorrowindHello': '30'}
+    mute = {'PKDT.Type': '5', 'MorrowindHello': '0'}
+    assert morrowind_interrupt(wander, 0x44) == 0x44 | 0x01 | 0x10 | 0x80
+    assert morrowind_interrupt(follow, 0x44) == 0x44 | 0x10, (
+        'OpenMW neither greets nor chatters under a follow package')
+    assert morrowind_interrupt(mute, 0x44) == 0x44 | 0x10
+    assert morrowind_interrupt({'PKDT.Type': '5'}, 0x44) == 0x44, (
+        'a package Morrowind did not author keeps the default')
+
+
+def test_a_bark_whose_faction_names_no_form_is_dropped():
+    """An unnameable audience drops the LINE; keeping it would widen it.
+
+    See: docs/commentary/tes4_export_morrowind.md#an-audience-that-cannot-be-named
+    """
+    bark = _voiced('Hello', 'Vo/ord/Hlo_ORM001.mp3', response='Move along.',
+                   gender=0)
+    bark.subrecords.append(_sub('RNAM', _cstr('Dark Elf')))
+    bark.subrecords.append(_sub('FNAM', _cstr('Temple')))
+    dial = Tes3Record(type='DIAL', flags=0, subrecords=[
+        _sub('DATA', bytes([1]))])
+    dial.record_id = 'Hello'
+    ctx = _Ctx()
+    ctx.unresolved = collections.Counter()
+    out = dialogue_records([dial, bark], ctx)
+    assert not out['INFO'] and not out['DIAL']
+    assert ctx.unresolved['bark audience'] == 1
+

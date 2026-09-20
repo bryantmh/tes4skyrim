@@ -14,6 +14,9 @@ import struct
 
 from ..record_types.common import escape_value
 from ..tes3_reader import Tes3Record, get_string, get_subrecord
+from .morrowind_audience import index_speakers, master_speakers
+from .morrowind_barks import bark_topics, export_bark, is_bark
+from .morrowind_say import say_lines
 
 #: DIAL.DATA type byte -> the name the runtime filters on.
 DIAL_TYPES = {0: 'Topic', 1: 'Voice', 2: 'Greeting', 3: 'Persuasion',
@@ -166,17 +169,23 @@ def export_INFO(rec: Tes3Record, ordinal: int, topic: str) -> list:
     return lines
 
 
-def dialogue_records(records: list) -> dict:
-    """{'MWDI': [...], 'MWIN': [...]} over the whole plugin, in file order.
+def dialogue_records(records: list, ctx=None, say: bool = True) -> dict:
+    """{'MWDI': [...], 'MWIN': [...], 'DIAL': [...], 'INFO': [...]}, in file order.
 
-    DIAL and INFO are a sequential stream rather than independent records --
-    every INFO belongs to the last DIAL seen -- so this walks the file itself
-    instead of being dispatched per record.
-    See: docs/reference/morrowind_dialogue_format.md#signatures
+    Walks the file itself: every INFO belongs to the last DIAL seen. With a
+    `ctx` a VOICED bark is also emitted as TES4 DIAL/INFO, the only road that
+    gives it a lip track, and `say` adds the scripted `Say` lines, which only
+    a plugin whose scripts the runtime RUNS has any use for.
+    See: docs/commentary/tes4_export_morrowind.md#voiced-barks
     """
-    out = {DIAL_SIG: [], INFO_SIG: []}
+    out = {DIAL_SIG: [], INFO_SIG: [], 'DIAL': [], 'INFO': []}
+    if ctx is not None:
+        ctx.bark_speakers = (index_speakers(records)
+                             + master_speakers(ctx.master_dirs))
+        ctx.bark_audiences = {}
     topic = ''
     ordinal = 0
+    voiced = set()
     for rec in records:
         if rec.type == 'DIAL':
             if not rec.deleted:
@@ -186,7 +195,21 @@ def dialogue_records(records: list) -> dict:
             continue
         if rec.type != 'INFO' or rec.deleted or not topic:
             continue
+        if ctx is not None and is_bark(rec, topic):
+            own = info_id(rec)
+            bark = export_bark(rec, ctx, topic, own)
+            if bark is None:
+                ctx.unresolved['bark audience'] += 1
+            else:
+                voiced.add(topic.lower())
+                out['INFO'].append(
+                    (ctx.derive(f'barkinfo:{topic.lower()}:{own.lower()}'),
+                     bark))
         out[INFO_SIG].append(
             (info_id(rec), export_INFO(rec, ordinal, topic)))
         ordinal += 1
+    out['DIAL'] = bark_topics(voiced, ctx) if ctx is not None else []
+    if ctx is not None and say:
+        for sig, rows in say_lines(records, ctx).items():
+            out.setdefault(sig, []).extend(rows)
     return out

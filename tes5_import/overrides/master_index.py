@@ -589,6 +589,12 @@ class ChainedMasterIndex:
                 else fid
                 for fid in idx.navms(own)]
 
+    def find_all_by_edid(self, signature: bytes, edid: str) -> list:
+        """Each master's own record with this signature + EditorID, in load order."""
+        found = ((idx, idx.find_by_edid(signature, edid))
+                 for idx in self._indices)
+        return [self._to_child(idx, fid) for idx, fid in found if fid]
+
     def find_by_edid(self, signature: bytes, edid: str) -> int:
         """Later masters win, matching load order."""
         for idx in reversed(self._indices):

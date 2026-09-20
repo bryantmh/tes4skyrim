@@ -14,6 +14,7 @@ from ..base.text_reader import get_formid_index_offset, info_result_script
 from .quest import (bark_choice_gate_bytes, compute_quest_priorities,
                     has_quest_state_condition, quest_state_ctdas)
 from ..base.writer import pack_group
+from .barks_morrowind import bark_voice_types
 from ..record_types.common import (get_formid, get_int, get_str,
                                    pack_record, pack_string_subrecord,
                                    pack_subrecord)
@@ -40,11 +41,11 @@ from .converter import (DIAL_TYPE_CONVERSATION, SERVICE_MENU_SCRIPTS,
     SERVICE_MENU_TOPICS, CONV_KEEP_EDIDS,
     is_npc_to_npc_conversation, make_conversation_quest,
     make_generic_quest, register_conversation_chains,
-    build_say_topic_dispositions, classify_topic, collect_tclt_target_fids,
+    classify_topic, collect_tclt_target_fids,
     convert_DIAL, convert_INFO, make_dlbr, make_dlvw, service_menu_kind,
     should_skip_dial, voice_file_prefix,
-    GREET_TOPIC_BY_QUEST, EMPTY_DIAL_FIDS, SAY_TOPIC_DISPOSITIONS,
-    lip_texts, startable_quests)
+    GREET_TOPIC_BY_QUEST, EMPTY_DIAL_FIDS, lip_texts, startable_quests)
+from .say_topics import SAY_TOPIC_DISPOSITIONS, build_say_topic_dispositions
 
 
 def _scan_startable_quests(by_type: dict) -> set:
@@ -894,6 +895,62 @@ def _ctdas_scope_audience(ctda_bytes: bytes) -> bool:
     return False
 
 
+def _bark_owner_quest(info_rec, snam, writer, bark_generic_quests, ctx,
+                      sge_extra):
+    """The quest a bark INFO belongs to, making the synthetic one on demand.
+
+    🛑 The synthetic quest's EditorID is registered in `quest_edid_by_fid`:
+    the voice-file prefix is built from it, and without the entry every
+    Morrowind bark filed as `_hello_<fid>` instead of `tes4generichelo_...`,
+    naming a path the engine never asks for. Oblivion never hit this because
+    its barks carry a real QSTI.
+    See: docs/commentary/tes5_import_dialogue.md#voice-files-lip-sync-audio
+    """
+    raw_q = get_formid(info_rec, 'QSTI.Quest')
+    if raw_q:
+        return raw_q
+    qkey = f'TES4Generic{snam.decode("latin1")}'
+    if qkey not in bark_generic_quests:
+        qfid = make_generic_quest(writer, qkey,
+                                  f'TES4 Generic {snam.decode("latin1")}')
+        bark_generic_quests[qkey] = qfid
+        ctx['quest_edid_by_fid'][qfid] = qkey
+        sge_extra.add(qfid)
+    return bark_generic_quests[qkey]
+
+
+def _group_bark_infos(bark_dials, info_by_dial, writer, bark_generic_quests,
+                      ctx):
+    """`(groups, order, sge_extra)` keyed by (owning quest, subtype).
+
+    GREETING and HELLO are both HELO, so INFOs of either owned by one quest
+    share a single topic -- which is why the regroup is global rather than
+    per-DIAL. INFOs sort by quest priority, highest first, matching the
+    conversation-topic sort so Skyrim's physical order is Oblivion's, and the
+    first source DIAL seen for a key donates its record and, if free, its id.
+    """
+    groups, order, sge_extra = {}, [], set()
+    for dial_rec in bark_dials:
+        dial_fid = get_formid(dial_rec, 'FormID')
+        edid = get_str(dial_rec, 'EditorID', '')
+        category, subtype, snam, _is_bark = classify_topic(
+            edid, get_int(dial_rec, 'DATA.Type'))
+        child_infos = sorted(
+            info_by_dial.get(dial_fid, []),
+            key=lambda r: -ctx['quest_priority'].get(
+                get_formid(r, 'QSTI.Quest'), 0))
+        for info_rec in child_infos:
+            owner_qfid = _bark_owner_quest(info_rec, snam, writer,
+                                           bark_generic_quests, ctx, sge_extra)
+            key = (owner_qfid, subtype)
+            if key not in groups:
+                groups[key] = {'infos': [], 'src': dial_rec, 'cat': category,
+                               'snam': snam, 'edid': edid, 'src_fid': dial_fid}
+                order.append(key)
+            groups[key]['infos'].append(info_rec)
+    return groups, order, sge_extra
+
+
 def _build_bark_pass(bark_dials, info_by_dial, writer,
                      bark_generic_quests, ctx):
     """Emit bark topics grouped by (owning quest, subtype) across ALL bark DIALs.
@@ -913,47 +970,8 @@ def _build_bark_pass(bark_dials, info_by_dial, writer,
     Returns (dial_group_bytes, sge_quest_fids) — the synthetic generic quests
     are StartGameEnabled and must be added to the .seq file to run from a new
     game."""
-    # (owner_qfid, subtype) -> {'infos': [...], 'src': dial_rec,
-    #                           'cat': category, 'snam': snam, 'dial_fid': fid}
-    groups = {}
-    order = []
-    sge_extra = set()
-
-    for dial_rec in bark_dials:
-        dial_fid = get_formid(dial_rec, 'FormID')
-        edid = get_str(dial_rec, 'EditorID', '')
-        dtype = get_int(dial_rec, 'DATA.Type')
-        category, subtype, snam, _is_bark = classify_topic(edid, dtype)
-        child_infos = info_by_dial.get(dial_fid, [])
-        # Priority-order the INFOs (highest quest priority first), matching the
-        # conversation-topic sort so Skyrim's physical order == Oblivion's.
-        child_infos = sorted(
-            child_infos,
-            key=lambda r: -ctx['quest_priority'].get(
-                get_formid(r, 'QSTI.Quest'), 0))
-        for info_rec in child_infos:
-            raw_q = get_formid(info_rec, 'QSTI.Quest')
-            if raw_q:
-                owner_qfid = raw_q
-            else:
-                # Synthetic per-subtype generic quest (created once).
-                snam_code = snam.decode('latin1')
-                qkey = f'TES4Generic{snam_code}'
-                if qkey not in bark_generic_quests:
-                    qfid = make_generic_quest(
-                        writer, qkey, f'TES4 Generic {snam_code}')
-                    bark_generic_quests[qkey] = qfid
-                    sge_extra.add(qfid)
-                owner_qfid = bark_generic_quests[qkey]
-            key = (owner_qfid, subtype)
-            if key not in groups:
-                # Prefer a real DIAL FormID for the group's topic; the first
-                # source DIAL seen for this key donates its record + (if unused)
-                # its FormID.
-                groups[key] = {'infos': [], 'src': dial_rec, 'cat': category,
-                               'snam': snam, 'edid': edid, 'src_fid': dial_fid}
-                order.append(key)
-            groups[key]['infos'].append(info_rec)
+    groups, order, sge_extra = _group_bark_infos(
+        bark_dials, info_by_dial, writer, bark_generic_quests, ctx)
 
     # Assign FormIDs: each group tries to reuse the original FormID of its
     # donor source DIAL, but a DIAL FormID can be claimed by only one group —
@@ -1212,8 +1230,9 @@ def _build_injected_ctdas(info_rec, is_bark, npc_to_vtyp, topic_vtyps,
     _speak_as_info = is_speak_as_record(info_rec)
     if _speak_as_info:
         vtyps = set()
-    elif own_npcs:
-        vtyps = {npc_to_vtyp[n] for n in own_npcs if n in npc_to_vtyp}
+    elif own_npcs or bark_voice_types(info_rec):
+        vtyps = ({npc_to_vtyp[n] for n in own_npcs if n in npc_to_vtyp}
+                 or bark_voice_types(info_rec))
     else:
         # Generic INFO: inherit the topic's voice types (greetings included).
         vtyps = set(topic_vtyps)

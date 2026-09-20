@@ -286,6 +286,17 @@ constexpr std::uint64_t kSoundPlayAndWait = 56741;
 constexpr std::uint64_t kSoundStopInstance = 56742;
 constexpr std::uint64_t kSoundSetInstanceVolume = 56743;
 
+// ObjectReference.Say(Topic topic, Actor speakAs, bool inPlayersHead), member.
+// Found at its registration the same way as the Sound natives: the callback is
+// the `lea rax,[rip-N]` stored into [r12+0x50] beside the name string
+// `Say` (rva 0x167fe08 on 1.6.659) -> 0x9d0de0 -> id 56220, present in every
+// shipped versionlib. Calibrated against GetItemCount, whose same-shaped site
+// gives 0x9ce530 -> 56173, matching kRefGetItemCount.
+//
+// A TES3 `Say` names a FILE, so the topic comes from `say_formid.txt`.
+// See: docs/commentary/morrowind_runtime.md#scripted-say
+constexpr std::uint64_t kRefSay = 56220;
+
 constexpr std::uint64_t kRefActivate = 56139;
 constexpr std::uint64_t kRefLock = 56198;
 constexpr std::uint64_t kRefIsLocked = 56196;

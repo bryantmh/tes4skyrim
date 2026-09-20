@@ -179,6 +179,21 @@ def _emit_spells(lines: list, rec: Tes3Record, ctx) -> None:
         lines.append(f'Spell[{index}]={form_id}')
 
 
+def _emit_authored_identity(lines: list, rec: Tes3Record, rank: int) -> None:
+    """The TES3 race, class and faction strings a dialogue filter tests.
+
+    `RNAM.Race` is a converted FormID and collapses every custom race onto
+    Imperial, so a dependent plugin cannot tell an Ayleid speaker from an
+    Imperial one by reading it. The authored strings survive alongside it,
+    letting a bark resolve its real audience across masters.
+    See: docs/commentary/tes4_export_morrowind.md#voiced-barks
+    """
+    for sig, key in (('RNAM', 'MorrowindRace'), ('CNAM', 'MorrowindClass'),
+                     ('ANAM', 'MorrowindFaction')):
+        emit_str(lines, key, rec, sig)
+    lines.append(f'MorrowindRank={rank}')
+
+
 def export_NPC_(rec: Tes3Record, ctx) -> list:
     """An NPC in TES4's actor vocabulary, raced by Oblivion FormID.
 
@@ -197,6 +212,7 @@ def export_NPC_(rec: Tes3Record, ctx) -> list:
     race = get_subrecord(rec, 'RNAM')
     race_id = get_string(race).lower() if race else ''
     lines.append(f'RNAM.Race={RACE_FORMIDS.get(race_id, _DEFAULT_RACE):08X}')
+    _emit_authored_identity(lines, rec, rank)
     _emit_faction(lines, rec, ctx, rank)
     emit_inventory(lines, rec, ctx)
     _emit_spells(lines, rec, ctx)

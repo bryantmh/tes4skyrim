@@ -130,6 +130,12 @@ struct GameHooks {
     int   (*playSound)(const std::string& ref, const std::string& sound,
                        bool loop, float volume) = nullptr;
     void  (*stopSound)(int instance) = nullptr;
+    // `Say ref file text`: a VOICE line, named by its path under Sound\ rather
+    // than by a SOUN id, so it carries a lip track and moves the actor's mouth.
+    // True when it started; `sayDone` reports whether it has finished.
+    bool  (*say)(const std::string& ref, const std::string& file,
+                 const std::string& text) = nullptr;
+    bool  (*sayDone)(const std::string& ref) = nullptr;
     // `PositionCell`: moves `ref` into the cell of that name and puts it at
     // (x, y, z) with a Z rotation of `zRot` DEGREES. The cell is reached
     // through the anchor reference the sidecar staged for it.

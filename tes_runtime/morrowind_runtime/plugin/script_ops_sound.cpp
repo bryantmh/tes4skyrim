@@ -161,10 +161,39 @@ class OpGetSoundPlaying : public Interpreter::Opcode0 {
     }
 };
 
+// `Say file text`: the scripted VOICE channel. OpenMW pops the target, then
+// the file, then the subtitle text, plays the file on the actor and shows the
+// text; this does the same through the hook, which routes it to the engine's
+// own voice channel so the mouth moves.
+template <class R>
+class OpSay : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        const std::string file = PopString(runtime);
+        const std::string text = PopString(runtime);
+        Log("sound: %s says '%s'", ref.c_str(), file.c_str());
+        if (Hooks().say) Hooks().say(ref, file, text);
+    }
+};
+
+// `SayDone`: 1 once the actor's say has finished, which is what a script
+// waits on before moving to its next line.
+template <class R>
+class OpSayDone : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        runtime.push(Hooks().sayDone ? (Hooks().sayDone(ref) ? 1 : 0) : 1);
+    }
+};
+
 }  // namespace
 
 void InstallSoundOps(OpcodeInstaller& into) {
     namespace S = Compiler::Sound;
+    into.Real<OpSay<Implicit>>(S::opcodeSay);
+    into.Real<OpSay<Explicit>>(S::opcodeSayExplicit);
+    into.Real<OpSayDone<Implicit>>(S::opcodeSayDone);
+    into.Real<OpSayDone<Explicit>>(S::opcodeSayDoneExplicit);
     into.Real<OpPlaySound>(S::opcodePlaySound);
     into.Real<OpPlaySoundVp>(S::opcodePlaySoundVP);
 

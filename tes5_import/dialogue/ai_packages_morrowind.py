@@ -22,6 +22,7 @@ import struct
 from ..packages.converter import (build_alias_location, build_alias_target,
                                   build_pkdt, DEFAULT_INTERRUPT, Inputs,
                                   SPEED_WALK, T5_MUST_COMPLETE)
+from ..packages.interrupt_morrowind import interrupt_for_kind
 from ..packages.templates import ACTIVATE, ESCORT, FOLLOW, SANDBOX, TRAVEL
 from ..record_types.common import (pack_formid_subrecord, pack_record,
                                    pack_string_subrecord, pack_subrecord,
@@ -49,6 +50,13 @@ _AT_THE_REF = 0
 
 #: How far a wander package sandboxes around its marker, in units.
 _WANDER_RADIUS = 512
+
+#: TES4 PKDT.Type per kind, which is what decides the speech a package allows.
+_TES4_TYPE = {'travel': 6, 'wander': 5, 'follow': 1, 'escort': 2,
+              'activate': 0}
+
+#: A pooled slot serves any actor, so it takes the Hello 2,278 of 2,673 Morrowind.esm NPCs ship.
+_POOLED_HELLO = 30
 
 #: Each package kind and the vanilla template it instances.
 _KINDS = (
@@ -142,8 +150,10 @@ def pack_record_for(kind: str, slot: str, template, formid: int,
     actor's next evaluation, which is what a TES3 script expects.
     """
     subs = pack_string_subrecord('EDID', f'MWAI{slot.capitalize()}')
-    subs += pack_subrecord('PKDT', build_pkdt(T5_MUST_COMPLETE, SPEED_WALK,
-                                              interrupt=DEFAULT_INTERRUPT))
+    subs += pack_subrecord('PKDT', build_pkdt(
+        T5_MUST_COMPLETE, SPEED_WALK,
+        interrupt_for_kind(_TES4_TYPE[kind], _POOLED_HELLO,
+                           DEFAULT_INTERRUPT)))
     subs += pack_subrecord('PSDT', _any_time())
     subs += pack_formid_subrecord('QNAM', quest_fid)
     subs += pack_subrecord('PKCU', struct.pack('<III', len(template.inputs),

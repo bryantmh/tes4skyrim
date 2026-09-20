@@ -39,6 +39,7 @@ std::vector<const InstanceRow*> g_instanceList;
 std::unordered_map<std::string, ActorDef> g_actors;
 std::unordered_map<std::string, FormRef> g_items;
 std::unordered_map<std::string, FormRef> g_quests;
+std::unordered_map<std::string, SayLineDef> g_sayLines;
 std::unordered_map<std::string, FormRef> g_refs;
 std::unordered_map<std::string, FormRef> g_bases;
 std::unordered_map<std::string, FormRef> g_cells;
@@ -88,6 +89,9 @@ constexpr const char* kFileTravel = "NPC_travel.txt";
 constexpr const char* kAiQuestRow = "quest";
 constexpr const char* kAiPackPrefix = "pack.";
 constexpr const char* kFileQuests = "quests_formid.txt";
+// `Say` names a FILE and ObjectReference.Say takes a TOPIC; this maps
+// one to the other. See: docs/commentary/morrowind_runtime.md#scripted-say
+constexpr const char* kFileSayLines = "say_formid.txt";
 constexpr const char* kFileFactions = "FACT.txt";
 constexpr const char* kFileGmsts = "GMST.txt";
 constexpr const char* kFileSkills = "SKIL.txt";
@@ -367,6 +371,7 @@ void ClearScriptTables() {
     g_souls.clear();
     g_filledGems.clear();
     g_quests.clear();
+    g_sayLines.clear();
     g_refs.clear();
     g_bases.clear();
     g_cells.clear();
@@ -446,6 +451,17 @@ void LoadScriptTables(const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileQuests,
                [](const std::string& quest, const std::string& value) {
                    g_quests.emplace(Lower(quest), ParseFormRef(value));
+               });
+    ForEachRow(pluginDir + kFileSayLines,
+               [](const std::string& path, const std::string& value) {
+                   const std::vector<std::string> f = Split(value, '|');
+                   SayLineDef def;
+                   def.topic = ParseFormRef(value);
+                   if (f.size() > 2) {
+                       def.seconds = static_cast<float>(std::atof(f[2].c_str()));
+                   }
+                   if (f.size() > 3) def.sound = f[3];
+                   g_sayLines.emplace(Lower(path), def);
                });
     ForEachRow(pluginDir + kFileSounds,
                [](const std::string& id, const std::string& value) {
@@ -574,6 +590,19 @@ const FormRef* FindItem(const std::string& item) {
 const FormRef* FindQuest(const std::string& quest) {
     const auto it = g_quests.find(Lower(quest));
     return it == g_quests.end() ? nullptr : &it->second;
+}
+
+// The topic carrying one scripted `Say` line, by the path the script wrote.
+// A script may spell the same file either way round, so the separator is
+// folded before the lookup, exactly as the table's key was built.
+// See: docs/commentary/morrowind_runtime.md#scripted-say
+const SayLineDef* FindSayLine(const std::string& file) {
+    std::string key = Lower(file);
+    for (char& c : key) {
+        if (c == '/') c = '\\';
+    }
+    const auto it = g_sayLines.find(key);
+    return it == g_sayLines.end() ? nullptr : &it->second;
 }
 
 const FormRef* FindSound(const std::string& sound) {

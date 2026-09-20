@@ -1196,17 +1196,34 @@ at least once?** That is a set-cover over quests, because a quest exercises the
 union of every command its stage setters call — its INFO result scripts and its
 actors' object scripts alike.
 
-Cost is not uniform. A quest gated behind earlier stages costs the user those
-runs too, so the greedy rank is *new opcodes per quest run*, with the chain
-length in the denominator and the chain's own opcodes in the numerator. A long
-prerequisite chain that tests a lot on the way in is therefore cheap, which is
-the behaviour the plan wants.
+**The cost of a quest is its STAGE COUNT, not one "run".** A 30-stage quest is
+far longer to play than a 5-stage one, so the greedy rank is *new commands per
+stage*. Ranking per run put the longest quests first, since a long quest
+naturally touches more commands.
 
-🛑 **A prerequisite is read from `GetJournalIndex "<other>"`, never from the
-name.** That is the only authored statement of "this quest gates on that one";
-TR's `TR_m3_FG_OE_*` prefixes group quests by guild and questline, not by
-order, so inferring a chain from the prefix invents dependencies that do not
-exist.
+**A prerequisite is neither free nor forbidden.** Its stages are added to the
+cost and its own commands to the gain, so a chain that tests plenty on the way
+in competes fairly with a short standalone quest, and every quest the plan
+implies appears as its own row.
+
+🛑 **A quest with no `coc` target is never picked** — a row the tester cannot
+travel to is not a test. Resolving one takes the object as well as the actor:
+a quest advanced only by an object script is placed by reversing the sidecar's
+`SCPT_objects.txt` to find the object the script sits on, then that object's
+REFR placement, because the converted export drops the base record's script
+link and nothing else says which boulder a boulder script is on. That, plus
+scanning REFR alongside ACHR/ACRE, took the plan's untargeted rows from 11 to
+0. A prerequisite pulled in by a chain is exempt: it is reached by playing the
+questline, not by console.
+
+🛑 **Greedy commits irrevocably, so the result needs a backward PRUNE.** It
+buys dozens of one-command quests before meeting a chain that covers them all
+at once; measured on TR, one chain covered 195 of the 202 reachable commands
+and left **61 of the 65 earlier picks (328 stages) entirely redundant**.
+Walking the finished cover backwards and dropping any pick that still
+contributes nothing is what removes that duplicated work.
+
+Which quest gates which is [its own problem](#prerequisites-are-conditions).
 
 Two reads are **not** prerequisites and both produced quests listing
 themselves. A script reading its OWN journal index is just asking "how far
@@ -1230,6 +1247,81 @@ silent no-op broke which stage. See [the audit](../audits/mwscript_opcodes.md#po
 
 What the run's log has to carry for any of this to be diagnosable is
 [the next section](#logging-names-the-script).
+
+### <a id="prerequisites-are-conditions"></a>A prerequisite is a CONDITION, not a script read
+
+🛑 **A TES3 quest states its prerequisite in its entry INFO's CONDITIONS,
+where `VarType` is `J`** — "this line is only reachable once that quest has
+reached that index". TR_Mainland has **51,825** such conditions. A result
+script's `GetJournalIndex` says the same thing in script form and is also
+read, but it is the RARE form and cannot be the only one consulted.
+
+Reading only `GetJournalIndex` reported **Caught Off-Guard**
+(`TR_m3_Bo_Burglar2`) as having no prerequisite, and the plan sent the player
+to Relamus Saravyne — who offers *The Company We Keep*
+(`TR_m3_Bo_Burglar1`) instead, exactly as an in-game check found. The 33
+INFOs that set `Burglar2` read no journal at all in script.
+
+The real chain is subtler than a journal condition alone, and is worth stating
+because it generalises: Burglar2's entry INFO is on the topic **"cunning
+plan"**, which no `AddTopic` ever grants. It is learned the way Morrowind
+learns most topics — by being MENTIONED in a response — and the response that
+mentions it is on `burglaries` at `Burglar1 = 100`, the predecessor's
+COMPLETION stage. So the gate is "finish Burglar1, hear the phrase, get the
+topic".
+
+**Topic reachability, not just journal state, is what decides whether a quest
+can be started**, so a plan that models only the journal will keep proposing
+quests whose opening line the player can never see. Never infer a chain from a
+name: TR's prefixes group by guild and questline, not order.
+
+🛑 **Match a topic as WHOLE WORDS, and ignore one that too many quests teach.**
+Morrowind topic names include bare words — `rat`, `good`, `little secret`. A
+substring match made every quest whose response contains "good" a prerequisite
+of *Krieps the Weak*, giving it **551** of them and a **7,047-stage** chain;
+*Fighters Guild: More Rats?* collected 405 the same way off `rat`. Both
+numbers are artifacts, and they dominated the cover until the match was fixed:
+the plan spent its picks on ~50 one-command quests and then met a chain that
+subsumed 61 of them. A topic taught by more than one quest is a common word,
+not a gate.
+
+🛑 **Count QUESTS, not speakers.** Filtering on how many speakers mention a
+topic looks like the same rule and is not: the single response teaching
+`cunning plan` shares its speaker with the rest of that questline, so a
+speaker threshold of 1 silently dropped the Burglar1→Burglar2 gate — the case
+this whole mechanism exists to find.
+
+### <a id="equivalence-classes"></a>Commands that share a handler test as one
+
+The runtime does not implement 328 commands 328 times. `Enable` and `Disable`
+are one class, `OpSetEnabled<R, bool>`, differing by a template argument;
+every attribute, skill and magic-effect command — 177 of them — is one
+`OpStat` differing by a table row and a `Verb`. Where the class is the same
+and only a constant differs, the second command runs no code the first did
+not, so **one representative per class proves the class works**.
+
+The class is read out of the `Real<...>` registrations rather than guessed
+from names, because names mislead in both directions: `GetScale` and
+`SetScale` look like a pair and are separate classes, while `ModHealth` and
+`ModCurrentHealth` look distinct and are the same `OpModDynamic`.
+
+🛑 **`OpStat` must be split further, and the split is not cosmetic.** It
+branches on whether the stat maps to a Skyrim actor value: `SetBlock` writes
+through `setActorValue` into the engine, while `SetPersonality` writes the
+DLL's own number, because Skyrim has no personality. Those are different code
+paths, and a plan that tested only one would claim coverage it does not have.
+The verb splits too — `Get` only reads, so it proves nothing about a writer.
+
+🛑 **The representative must be one a quest can REACH.** Choosing
+alphabetically picked commands no quest calls, stranding their whole class and
+claiming coverage the plan never delivers.
+
+Measured on TR_Mainland: 328 registered commands fold to **119
+representatives**, and the plan drops from 104 quests / 834 stages to **54
+quests / 347 stages** while still covering all 202 reachable commands. The
+largest classes are `OpStat/write/skyrim` (27 commands),
+`OpStat/read/skyrim` (16) and `OpStat/write/own` (14). `--every-command`
+turns the folding off.
 
 ### <a id="logging-names-the-script"></a>A log line names the script it came from
 
@@ -2232,8 +2324,9 @@ destinations, which fits.
 TES3 scripts name a **SOUN id**; the record Skyrim plays is the **SNDR** the
 import minted, which `SOUN.txt` maps (see
 [tes5_import_sound.md](tes5_import_sound.md#the-runtime-sound-table)). Measured
-over the Tamriel Rebuilt chain: 9 of the 11 sound commands are ported, covering
-**1,536 call sites** — `playsound` 804, `playsound3d` 280, `getsoundplaying`
+over the Tamriel Rebuilt chain: 10 of the 11 sound commands are ported,
+covering **1,764 call sites** — `playsound` 804, `playsound3d` 280, `say` 184,
+`saydone` 44, `getsoundplaying`
 120, `playsoundvp` 97, `playsound3dvp` 85, `stopsound` 72, `playloopsound3dvp`
 59, `playloopsound3d` 19.
 
@@ -2266,9 +2359,57 @@ segment-3 word as `(word >> 8) & 0x3ffff` and the opcode constants are far
 larger than that field. The volume a script writes after a `cXX` command never
 reaches the stack; only the `VP` forms carry one.
 
-`say`, `saydone` and `streammusic` remain stubs: `Say` names a file under
-`Sound\Vo\`, which is not converted yet
-([the plan](../plans/morrowind_voice_tree.md)).
+`say` and `saydone` are ported through their own hooks rather than through a
+SNDR: a voice line moves the actor's mouth only when the engine plays it as
+DIALOGUE. See [scripted Say](#scripted-say).
+
+`streammusic` (1 call site) is the only sound command left stubbed.
+
+### <a id="scripted-say"></a>`Say` names a FILE; the engine needs a TOPIC
+
+**Code:** `tes4_export/record_types/morrowind_say.py`,
+`tes5_import/dialogue/say_morrowind.py`, `say_topics.py`,
+`game_calls.cpp:SayLine`.
+
+`say "Vo\Misc\x.mp3" "text"` names a recording. `ObjectReference.Say` takes a
+**Topic** and lets the engine pick the INFO, so:
+
+* **Each distinct line gets a topic of its own holding one INFO.** Saying the
+  topic can then only say that line. The first version hung every line under
+  one shared topic and handed `Say` the INFO's FormID: a `TESTopicInfo` where
+  the native reads a `TESTopic`, and had it been the topic the engine would
+  have picked the same first-passing line every time.
+* **The topic is a Conversation topic marked `MorrowindSay`**, which
+  `say_topics.build_say_topic_dispositions` files with Oblivion's script-driven
+  topics: kept, `CUST`, on a Normal (non-top-level) branch so it never reaches
+  the player's menu. The first version used the `Idle` bark EditorID, which put
+  all 134 vanilla scripted lines on the ambient idle channel.
+* **The INFO is gated by `GetIsID` on its authored speakers** -- the actors
+  carrying the script, the reference a call names with `->`, or a result
+  script's `ONAM`. `_record_voice_entry` reads those ids to file the recording
+  under each speaker's OWN voice-type folder, which is where the engine looks.
+* **A speaker with no mouth plays the file as a sound.** Doors, activators, a
+  script no actor carries and `Player->Say` cannot lip-sync, so the export also
+  mints a SOUN (`MWSaySound<id>`) for such a line and `SayLine` falls back to
+  `Sound.Play` at the reference. Measured in the exports: Morrowind.esm mints
+  92 Say topics and 3 Say sounds, TR_Mainland 144 and 3.
+
+`say_formid.txt` carries the way back:
+`path=Plugin.esm|TOPIC FormID|seconds|SOUN id`, keyed by the path lowercased
+with `/` folded to `\`. The topic is `00000000` for a line no actor speaks.
+
+`SayDone` has no engine counterpart, so it is answered from `seconds` -- the
+recording's real length, read at import from the staged file
+(`asset_convert/audio/mp3_length.py`, or `wave` for a PCM wav) -- and only
+falls back to a subtitle-length estimate when that is 0.
+
+🛑 **An actor must not greet while a `Say` is in flight** -- the CK wiki records
+a crash to desktop for exactly that overlap, which is why `sayDone` is answered
+from the line actually started rather than assumed finished.
+
+A voiced line on a TOPIC, greeting or persuasion INFO is not played: 0 of
+78,096 such lines carry a recording across Morrowind.esm, Tamriel Rebuilt and
+Tamriel Data, and OpenMW leaves the same spot a `// TODO play sound`.
 
 ## <a id="spell-commands"></a>The spell commands
 

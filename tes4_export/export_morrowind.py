@@ -153,10 +153,23 @@ class MorrowindContext:
         self.unlinked_doors = 0
         self.vtex_by_cell = {}
         self.master_dirs = []
+        self.effect_ranges = {}
+        self._init_groundcover()
+        self._init_barks()
+
+    def _init_groundcover(self) -> None:
+        """The groundcover plugin's own state, empty until one is loaded."""
         self.grass = None
         self.grass_models = {}
         self.grass_ltex = {}
-        self.effect_ranges = {}
+
+    def _init_barks(self) -> None:
+        """Who can speak a voiced bark, and the audiences already resolved.
+
+        See: docs/commentary/tes4_export_morrowind.md#voiced-barks
+        """
+        self.bark_speakers = []
+        self.bark_audiences = {}
 
     def grass_id(self, record_id: str, texture: str) -> str:
         """The FormID of the GRAS one static becomes on one land texture."""
@@ -615,7 +628,7 @@ def convert_plugin(records, ctx: MorrowindContext) -> dict:
 
     out = {sig: [] for sig in
            ('CELL', 'REFR', 'ACHR', 'ACRE', 'LAND', 'PGRD', 'REGN')}
-    out.update(dialogue_records(records))
+    out.update(dialogue_records(records, ctx))
     out['PGRD'] = pathgrid_records(_collect_records(records, ctx, out), ctx)
     teleport_records(ctx)
     out['PACK'], travel_markers = package_records(ctx)

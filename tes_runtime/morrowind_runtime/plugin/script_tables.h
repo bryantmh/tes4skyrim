@@ -191,6 +191,18 @@ const FormRef* FindQuest(const std::string& quest);
 // The SNDR a TES3 sound id names -- SOUN.txt. Null when the sound has no
 // descriptor, which the caller treats as silence rather than as an error.
 // See: docs/commentary/tes5_import_sound.md#the-runtime-sound-table
+// One scripted `Say` line -- say_formid.txt. `topic` is a DIAL holding that
+// single INFO, which is what ObjectReference.Say takes, and is 0 for a line no
+// actor speaks; `sound` is the SOUN id a speaker with no mouth plays instead;
+// `seconds` is the recording's measured length, 0 when it was not measurable.
+// See: docs/commentary/morrowind_runtime.md#scripted-say
+struct SayLineDef {
+    FormRef topic;
+    float seconds = 0;
+    std::string sound;
+};
+const SayLineDef* FindSayLine(const std::string& file);
+
 const FormRef* FindSound(const std::string& sound);
 std::size_t SoundCount();
 
@@ -287,6 +299,7 @@ const SkillDef* FindSkill(int index);
 void AddFactionForTest(const std::string& faction, const FactionDef& def);
 std::size_t ActorCount();
 std::size_t QuestCount();
+
 std::size_t FactionCount();
 
 // How many scripts and actor bindings are loaded, for the log.

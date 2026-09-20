@@ -494,6 +494,26 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
 # Phase 2: EXTRACT TES4 ARCHIVES
 # ===========================================================================
 
+def _stage_morrowind_voices(file_name: str, extract_dir: str) -> None:
+    """Copy each exported bark's voice file into the TES4 voice layout.
+
+    Runs for BOTH extract paths: a mod archive carries no Sound tree of its
+    own, but its barks still play Morrowind's audio.
+    See: docs/commentary/asset_convert_audio.md#morrowind-barks
+    """
+    from asset_convert.audio.morrowind_voice import find_sound_dir
+    from asset_convert.sources.bsa_extract_morrowind_sounds import (
+        stage_voices)
+    from output_layout import asset_root, record_dir
+    own = os.path.join(str(record_dir(extract_dir, file_name)), 'INFO.txt')
+    sound_dir = find_sound_dir(extract_dir) if os.path.isfile(own) else None
+    if not sound_dir:
+        return
+    staged = stage_voices(extract_dir, file_name, sound_dir,
+                          asset_root(extract_dir, file_name))
+    print(f"[{file_name}] Bark and Say recordings staged: {staged}")
+
+
 def phase_extract(file_name: str, tes4_data: str, config: dict,
                   output_dir: str = None):
     """Get a plugin's assets into export/<name>/.
@@ -515,6 +535,7 @@ def phase_extract(file_name: str, tes4_data: str, config: dict,
         except mod_ingest.IngestError as exc:
             print(f"[{file_name}] ERROR: {exc}")
             return False
+        _stage_morrowind_voices(file_name, extract_dir)
         return True
 
     from asset_convert.asset_pipeline import extract_bsas

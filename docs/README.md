@@ -112,7 +112,6 @@ Designed, NOT yet built. Opens with `Status: PLAN`. Becomes commentary when buil
 |---|---|
 | [horse_rideability.md](plans/horse_rideability.md) | Rideable Horse Conversion: Oblivion CREA → Skyrim Mountable Actor |
 | [morrowind_object_scripts.md](plans/morrowind_object_scripts.md) | Move TES3 object scripts off the lossy Papyrus path onto the vendored interpreter |
-| [morrowind_voice_tree.md](plans/morrowind_voice_tree.md) | Convert `Sound\Vo`: Morrowind voice is path convention, not a record |
 | [in_app_update.md](plans/in_app_update.md) | In-app update: download only what changed — design plan |
 | [vanilla_creature_swap.md](plans/vanilla_creature_swap.md) | Plan — "Vanilla Creature Swap" ESP generator + GUI |
 | [vanilla_item_swap.md](plans/vanilla_item_swap.md) | Plan — "Vanilla Item Swap" (ingredients, food, clutter) + preview renderer |

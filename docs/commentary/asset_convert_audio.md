@@ -1,6 +1,33 @@
 # asset_convert/audio/audio_converter.py - sound and music
 
-**Code:** `asset_convert/audio/audio_converter.py`, `asset_convert/audio/music_convert.py`, `asset_convert/audio/door_sounds.py`
+**Code:** `asset_convert/audio/audio_converter.py`, `asset_convert/audio/music_convert.py`, `asset_convert/audio/door_sounds.py`, `asset_convert/audio/morrowind_voice.py`
+
+## Morrowind barks
+<a id="morrowind-barks"></a>
+
+Morrowind is barely voiced, and every line it DOES voice is a bark: 8,549 INFOs
+over Morrowind.esm + Tamriel Rebuilt + Tamriel Data, all of topic type `Voice`,
+naming 6,152 distinct files (~118 MB). All 8,549 carry response text, so every
+one can have a lip track.
+
+The only difference from the Oblivion layout is the FILENAME. Morrowind names
+its audio outright (`Vo\d\m\Hlo_DM008.mp3`) while `organize_voice_files` matches
+`<prefix>_<infoFID>_<n>.<ext>` under `sound/Voice/<plugin>/<Race>/<Gender>/`. So
+`morrowind_voice.stage_bark_voices` copies each referenced file into that layout
+under its INFO FormID, and the ordinary pipeline supplies lip, xWMA and fuz
+unchanged.
+
+A bark names its file by STEM, not extension: a record or script may say `.wav`
+where the tree ships `.mp3`, and Morrowind resolves either way. Measured over
+the 87 scripted `Say` targets: 39 match exactly, 48 only once the extension is
+ignored, none are missing.
+
+A scripted `Say` line names no race, so it is staged in a neutral bucket
+(`Imperial/M`) and the importer's voicemap sends it to the voice-type folder of
+each authored speaker. A line spoken by something with no mouth is copied under
+`sound/` by `stage_say_sounds`, keeping the SOURCE's extension under the name
+the script wrote, so the sound stage transcodes an `.mp3` a script called
+`.wav`. See [scripted Say](morrowind_runtime.md#scripted-say).
 
 ## Contents
 

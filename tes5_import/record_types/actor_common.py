@@ -299,9 +299,25 @@ _merchant_faction_by_npc: dict[int, int] = {}
 _origin_faction_fid = 0
 
 
+#: The converted masters' origin FACTs, which a dependent's actors join.
+_master_origin_fids: list = []
+
+#: EditorID of the plugin-origin marker FACT, the same in every root master.
+_ORIGIN_EDID = 'TES4PluginOriginFaction'
+
+
 def get_origin_faction_fid() -> int:
     """The plugin-origin marker FACT, or 0 when this file isn't gated."""
     return _origin_faction_fid
+
+
+def origin_memberships() -> list:
+    """Every plugin-origin FACT this file's actors join: its own, else its masters'.
+
+    See: docs/commentary/tes5_import_actors.md#origin-faction
+    """
+    return ([_origin_faction_fid] if _origin_faction_fid
+            else list(_master_origin_fids))
 
 
 def create_origin_faction(writer) -> int:
@@ -310,17 +326,23 @@ def create_origin_faction(writer) -> int:
     See: docs/commentary/tes5_import_actors.md#origin-faction
     """
     global _origin_faction_fid
-    _origin_faction_fid = writer.derive_formid('FACT', 'TES4PluginOriginFaction')
-    subs = pack_string_subrecord('EDID', 'TES4PluginOriginFaction')
+    _origin_faction_fid = writer.derive_formid('FACT', _ORIGIN_EDID)
+    subs = pack_string_subrecord('EDID', _ORIGIN_EDID)
     subs += pack_subrecord('DATA', struct.pack('<I', 0))
     writer.add_record('FACT', pack_record('FACT', _origin_faction_fid, 0, subs))
     return _origin_faction_fid
 
 
-def reset_origin_faction() -> None:
-    """Clear origin-faction state (per-run isolation for tests/batch runs)."""
+def reset_origin_faction(master_index=None) -> None:
+    """Clear origin-faction state, then adopt the converted masters' FACTs.
+
+    See: docs/commentary/tes5_import_actors.md#origin-faction
+    """
     global _origin_faction_fid
     _origin_faction_fid = 0
+    _master_origin_fids[:] = (
+        master_index.find_all_by_edid(b'FACT', _ORIGIN_EDID)
+        if master_index is not None else [])
 
 
 def _keywords_for_services(services: int) -> list[int]:

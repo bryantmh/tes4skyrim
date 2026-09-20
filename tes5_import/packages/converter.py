@@ -52,6 +52,7 @@ from .templates import (
     Template,
 )
 from ..base.conditions import convert_ctda_list_with_strings
+from .interrupt_morrowind import morrowind_interrupt
 from ..base.text_reader import (get_formid, get_int, get_str, remap_formid,
                           PLAYER_REF_FID, PLAYER_BASE_FID)
 
@@ -1303,7 +1304,8 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
         subs += pack_subrecord('PKDT', build_pkdt(flags, SPEED_RUN,
                                                   interrupt=0xFFFF))
     else:
-        subs += pack_subrecord('PKDT', build_pkdt(flags, speed))
+        subs += pack_subrecord('PKDT', build_pkdt(
+            flags, speed, morrowind_interrupt(rec, DEFAULT_INTERRUPT)))
     subs += pack_subrecord('PSDT', build_psdt(rec))
 
     # Conditions carry the activation logic and ARE the package's gate.  A
