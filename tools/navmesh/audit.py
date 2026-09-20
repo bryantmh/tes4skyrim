@@ -32,6 +32,9 @@ from asset_convert.collision import collision_extract as ce
 from tes5_import.navmesh import build, params
 from tes5_import.navmesh.from_pgrd import (collect_doors,
                                       load_door_centroids)
+from tes5_import.overrides.nested import (
+    export_master_names, load_master_export,
+)
 from tes5_import.base.text_reader import (
     parse_export_directory, group_records_by_type, get_float, get_int, get_str,
 )
@@ -277,6 +280,92 @@ def _door_model_map(by_type):
     return out
 
 
+def index_path(export):
+    """Where `export`'s cached navmesh index lives."""
+    return os.path.join(export, 'audit_index3.pkl')
+
+
+#: Unpickled tables per export; a 2 GB re-read costs 6.2s every time.
+_TABLES = {}
+
+
+def _index_is_master_blind(export, tables):
+    """True when a cached index predates master merging and must be rebuilt.
+
+    Only a plugin WITH masters can be blind, so Oblivion's 2.1 GB index is
+    never invalidated by this check.
+
+    See: docs/commentary/tes5_import_navmesh.md#cellview-master-owned-cells
+    """
+    if not export_master_names(export):
+        return False
+    cells = tables[5]
+    own = {(c.get('FormID') or '')[:2].upper() for c in cells}
+    return len(own) <= 1
+
+
+def _merge_masters(export, by_type):
+    """Fold the MASTERS' records into `by_type`, this plugin's own winning.
+
+    See: docs/commentary/tes5_import_navmesh.md#cellview-master-owned-cells
+    """
+    master = load_master_export(export)
+    if not master:
+        return
+    for sig in _TYPES:
+        own = by_type.get(sig) or []
+        own_fids = {(r.get('FormID') or '').upper() for r in own}
+        extra = [r for r in master.values()
+                 if r.get('Signature') == sig
+                 and (r.get('FormID') or '').upper() not in own_fids]
+        if extra:
+            by_type[sig] = extra + own
+
+
+def build_index(export, reindex=False):
+    """Build (or reuse) the cached export index; returns its six tables.
+
+    Parsing the export is ~78s single-threaded (1.1M records) and dwarfs the
+    actual navmesh work, so the slices every navmesh tool needs are cached to
+    disk. One builder only: a second would drift from this pickle's shape.
+
+    See: docs/commentary/tes5_import_navmesh.md#cellview-index-on-demand
+    """
+    key = os.path.normcase(os.path.normpath(export))
+    if key in _TABLES and not reindex:
+        return _TABLES[key]
+    cache = index_path(export)
+    if os.path.exists(cache) and not reindex:
+        with open(cache, 'rb') as fh:
+            tables = pickle.load(fh)
+        if not _index_is_master_blind(export, tables):
+            _TABLES[key] = tables
+            return tables
+    recs = parse_export_directory(export, type_filter=_TYPES)
+    by_type = group_records_by_type(recs)
+    _merge_masters(export, by_type)
+    base_model = {}
+    for t in _BASES:
+        for rec in by_type.get(t, []):
+            f = rec.get('FormID')
+            m = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
+            if f and m:
+                base_model[int(f, 16) & 0xFFFFFF] = _model_key(m)
+    refr_by_cell = {}
+    for r in by_type.get('REFR', []):
+        refr_by_cell.setdefault((r.get('ParentCELL') or '').upper(), []).append(r)
+    tables = (base_model, refr_by_cell,
+              {(p.get('ParentCELL') or '').upper(): p
+               for p in by_type.get('PGRD', [])},
+              {(ld.get('ParentCELL') or '').upper(): ld
+               for ld in by_type.get('LAND', [])},
+              _door_model_map(by_type), by_type.get('CELL', []))
+    with open(cache, 'wb') as fh:
+        pickle.dump(tables, fh, pickle.HIGHEST_PROTOCOL)
+    _TABLES[key] = tables
+    return tables
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--export', default='export/Oblivion.esm')
@@ -299,38 +388,11 @@ def main():
     load_door_centroids(os.path.join(a.export, 'door_centers_cache.json'),
                         quiet=True)
 
-    cache = os.path.join(a.export, 'audit_index3.pkl')
-    if os.path.exists(cache) and not a.reindex:
-        with open(cache, 'rb') as fh:
-            (base_model, refr_by_cell, pgrd_by_cell, land_by_cell,
-             door_fids, cells) = pickle.load(fh)
-    else:
-        t0 = time.time()
-        recs = parse_export_directory(a.export, type_filter=_TYPES)
-        by_type = group_records_by_type(recs)
-
-        base_model = {}
-        for t in _BASES:
-            for rec in by_type.get(t, []):
-                f = rec.get('FormID')
-                m = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
-                if f and m:
-                    base_model[int(f, 16) & 0xFFFFFF] = _model_key(m)
-
-        refr_by_cell = {}
-        for r in by_type.get('REFR', []):
-            refr_by_cell.setdefault((r.get('ParentCELL') or '').upper(), []).append(r)
-        pgrd_by_cell = {(p.get('ParentCELL') or '').upper(): p
-                        for p in by_type.get('PGRD', [])}
-        land_by_cell = {(ld.get('ParentCELL') or '').upper(): ld
-                        for ld in by_type.get('LAND', [])}
-        door_fids = _door_model_map(by_type)
-        cells = by_type.get('CELL', [])
-
-        with open(cache, 'wb') as fh:
-            pickle.dump((base_model, refr_by_cell, pgrd_by_cell, land_by_cell,
-                         door_fids, cells), fh, pickle.HIGHEST_PROTOCOL)
-        print('indexed export in %.0fs -> %s' % (time.time() - t0, cache))
+    t0 = time.time()
+    (base_model, refr_by_cell, pgrd_by_cell, land_by_cell,
+     door_fids, cells) = build_index(a.export, a.reindex)
+    if not os.path.exists(index_path(a.export)) or a.reindex:
+        print('indexed export in %.0fs' % (time.time() - t0))
 
     def _is_exterior(c):
         return bool(c.get('ParentWRLD') and c.get('ParentWRLD') != '00000000')

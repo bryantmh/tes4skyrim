@@ -18,7 +18,6 @@ number the tool prints a lie.
 import contextlib
 import math
 import os
-import pickle
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -30,8 +29,19 @@ from tes5_import.navmesh.from_pgrd import (
 )
 from tes5_import.base.text_reader import parse_export_file
 from tes5_import.record_types.items import load_furniture_models
+from tools.navmesh.audit import build_index
+from tes5_import.overrides.nested import (
+    export_master_names, export_root, master_export_dir,
+)
+from output_layout import assets_for
 
 DEFAULT_EXPORT = 'export/Oblivion.esm'
+
+
+def master_export_dirs_of(export):
+    """Each TES4 master's export directory, in _HEADER.txt order."""
+    root = export_root(export)
+    return [master_export_dir(root, n) for n in export_master_names(export)]
 
 
 def load_origin_shifts(export, quiet=True):
@@ -153,9 +163,8 @@ class NavIndex(object):
         self.export = export
         self._quiet = quiet
         self.arm()
-        with open(os.path.join(export, 'audit_index3.pkl'), 'rb') as fh:
-            (self.base_model, self.refr_by_cell, self.pgrd_by_cell,
-             self.land_by_cell, self.door_fids, self.cells) = pickle.load(fh)
+        (self.base_model, self.refr_by_cell, self.pgrd_by_cell,
+         self.land_by_cell, self.door_fids, self.cells) = build_index(export)
         self._by_name = {}
         for c in self.cells:
             eid = (c.get('EditorID') or '').lower()
@@ -175,13 +184,28 @@ class NavIndex(object):
         key = os.path.normcase(os.path.normpath(self.export))
         if NavIndex._armed == key:
             return
-        ce.load_collision(os.path.join(self.export, 'collision_cache.bin'),
-                          quiet=self._quiet)
+        ce.load_collision(self.collision_caches(), quiet=self._quiet)
         load_door_centroids(
-            os.path.join(self.export, 'door_centers_cache.json'),
+            os.path.join(str(assets_for(self.export)),
+                         'door_centers_cache.json'),
             quiet=self._quiet)
         load_origin_shifts(self.export, quiet=self._quiet)
         NavIndex._armed = key
+
+    def collision_caches(self):
+        """Every collision cache this export needs, MASTERS FIRST.
+
+        A child plugin caches only the meshes it ships, so loading its own
+        cache alone leaves every master-owned static uncarved.
+
+        See: docs/commentary/tes5_import_navmesh.md#cellview-master-owned-cells
+        """
+        out = []
+        for d in master_export_dirs_of(self.export) + [self.export]:
+            path = os.path.join(str(assets_for(d)), 'collision_cache.bin')
+            if path not in out:
+                out.append(path)
+        return out
 
     def cell(self, name_or_fid):
         """Look up by EditorID (case-insensitive) or by FormID hex."""

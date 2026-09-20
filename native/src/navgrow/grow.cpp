@@ -413,6 +413,10 @@ struct NeighbourField {
 struct Land {
     const double* g = nullptr;
     double ox = 0.0, oy = 0.0;
+    // True inside this cell's own 4096u LAND square.
+    bool covers(double x, double y) const {
+        return x >= ox && x <= ox + 4096.0 && y >= oy && y <= oy + 4096.0;
+    }
     double z(double x, double y) const {
         const double fx = std::min(32.0, std::max(0.0, (x - ox) / 128.0));
         const double fy = std::min(32.0, std::max(0.0, (y - oy) / 128.0));
@@ -449,7 +453,7 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
                     : floor_z;
     };
 
-    double grown = 0.0, d = 0.0, limit = -1.0, built = 0.0;
+    double grown = 0.0, d = 0.0, limit = -1.0, built = 0.0, beyond = 0.0;
     for (;;) {
         const double nd_step = P.step;
         const double prev = d;
@@ -487,7 +491,16 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
             limit = std::max(prev + t * nd_step, std::max(P.cap, lo));
         const bool last = limit >= 0.0 && limit <= d;
         if (last) d = limit;
-        // (c) walkable floor edge -- binds only BEYOND the soft floor `lo`.
+        // (c) past the cell's own LAND the neighbour's terrain carries on: a
+        // terrain rail overshoots the cell plane by one cap, so the sheet is
+        // CUT on the plane by the cell clip instead of ending short of it.
+        if (land && !land->covers(cx + dirx * d, cy + diry * d)) {
+            beyond += nd_step;
+            grown = d;
+            if (last || beyond >= P.cap) break;
+            continue;
+        }
+        // (d) walkable floor edge -- binds only BEYOND the soft floor `lo`.
         const double ref = level(d);
         double s = ref;
         int tri = -1;
@@ -496,7 +509,7 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
         if (walk && d > lo && (!ground || std::fabs(s - ref) > P.max_climb))
             break;
         grown = d;
-        // (d) the BUILT-floor budget: terrain is free, authored floor is not.
+        // (e) the BUILT-floor budget: terrain is free, authored floor is not.
         if (!(ground && tri >= P.land_from)) built += nd_step;
         if (last || built >= std::max(P.cap, lo)) break;
     }

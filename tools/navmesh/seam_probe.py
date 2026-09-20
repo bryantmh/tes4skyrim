@@ -1,7 +1,7 @@
 """Probe cross-cell seam coverage for exterior PGRDs before a full rebuild.
 
-Builds the corridor navmesh for a set of exterior cells (by worldspace grid
-coords, or by PGRD FormID) straight from the export, then reports for each:
+Replays the import's own navmesh jobs for a set of exterior cells (by
+worldspace grid coords, or by PGRD FormID), then reports for each:
   * verts / tris produced,
   * how many triangle border edges land ON each of the four cell seams
     (within navm_edge_links.SEAM_BAND of the boundary plane),
@@ -24,13 +24,27 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from tes5_import.base.text_reader import (parse_export_directory,
-                                      group_records_by_type,
-                                      set_formid_index_offset)
 from tes5_import.navmesh import from_pgrd as pgrd_to_navm
+from tools.navmesh import job_trace
 from tes5_import.navmesh.edge_links import build_edge_links, NavMeshView, extract_nvnm, SEAM_BAND
 
 _CELL = 4096.0
+
+
+def _seam_gaps(view):
+    """{'x_lo':d, ...} distance from each cell plane to the nearest vertex.
+
+    A seam with no border edges is either walled off or simply not reached:
+    the gap separates the two.  A gap far larger than SEAM_BAND means the mesh
+    stops short of the boundary, so no edge can ever land in the band.
+    """
+    if not view.exterior or len(view.verts) == 0:
+        return {}
+    gx, gy = view.grid
+    xs = [v[0] for v in view.verts]
+    ys = [v[1] for v in view.verts]
+    return {'x_lo': min(xs) - gx * _CELL, 'x_hi': (gx + 1) * _CELL - max(xs),
+            'y_lo': min(ys) - gy * _CELL, 'y_hi': (gy + 1) * _CELL - max(ys)}
 
 
 def _seam_border_counts(view):
@@ -59,71 +73,65 @@ def _seam_border_counts(view):
     return counts
 
 
-def main():
+def _parse_args():
+    """The probe's command line."""
     ap = argparse.ArgumentParser()
     ap.add_argument('--export', default='export/Oblivion.esm')
     ap.add_argument('--wrld', help='worldspace FormID (hex) to filter PGRDs')
     ap.add_argument('--gx', type=int, nargs=2, help='grid X range (inclusive)')
     ap.add_argument('--gy', type=int, nargs=2, help='grid Y range (inclusive)')
     ap.add_argument('--pgrd', nargs='*', help='explicit PGRD FormIDs (hex)')
-    args = ap.parse_args()
+    return ap.parse_args()
 
-    # Match the real pipeline: exterior meshes are built with formid offset 1
-    # (one prepended master, Skyrim.esm).  The probe only needs geometry, so the
-    # exact offset does not affect seam edges, but set it so get_formid works.
-    set_formid_index_offset(1)
-    want_types = {'PGRD', 'CELL', 'LAND', 'REFR'}
-    records = parse_export_directory(args.export, type_filter=want_types)
-    recs = group_records_by_type(records)
-    pgrds = recs.get('PGRD', [])
-    cells = {c.get('FormID'): c for c in recs.get('CELL', [])}
-    lands = {l.get('ParentCELL'): l for l in recs.get('LAND', [])}
-    refr_by_cell = {}
-    for r in recs.get('REFR', []):
-        refr_by_cell.setdefault(r.get('ParentCELL'), []).append(r)
 
+def _in_range(rng, value):
+    """True when `value` is inside the inclusive range, or no range was given."""
+    return not rng or rng[0] <= value <= rng[1]
+
+
+def _select(jobs, args):
+    """[(job, gx, gy)] of the import's own exterior jobs matching the filters."""
     want = set(x.upper() for x in (args.pgrd or []))
     wrld = args.wrld.upper() if args.wrld else None
-
-    selected = []
-    for rec in pgrds:
+    out = []
+    for job in jobs:
+        rec, cell = job['pgrd_rec'], job['cell_rec']
         wf = rec.get('ParentWRLD')
-        if wf in (None, '00000000'):
+        if (wf in (None, '00000000') or cell is None
+                or (wrld and (wf or '').upper() != wrld)):
             continue
-        if wrld and (wf or '').upper() != wrld:
-            continue
-        cf = rec.get('ParentCELL')
-        cell = cells.get(cf)
-        gx = int(cell.get('XCLC.X', 0)) if cell else None
-        gy = int(cell.get('XCLC.Y', 0)) if cell else None
+        gx, gy = int(cell.get('XCLC.X', 0)), int(cell.get('XCLC.Y', 0))
         if want:
             if (rec.get('FormID') or '').upper() not in want:
                 continue
-        else:
-            if args.gx and not (args.gx[0] <= gx <= args.gx[1]):
-                continue
-            if args.gy and not (args.gy[0] <= gy <= args.gy[1]):
-                continue
-        selected.append((rec, cell, cf, gx, gy))
+        elif not (_in_range(args.gx, gx) and _in_range(args.gy, gy)):
+            continue
+        out.append((job, gx, gy))
+    return out
 
-    print(f"selected {len(selected)} exterior PGRDs")
+
+def _intercell_points(rec, gx, gy):
+    """(collected intercell links, the PGRD's declared InterCellCount)."""
+    pts = [(pgrd_to_navm.get_float(rec, f'Point[{i}].X'),
+            pgrd_to_navm.get_float(rec, f'Point[{i}].Y'),
+            pgrd_to_navm.get_float(rec, f'Point[{i}].Z'))
+           for i in range(pgrd_to_navm.get_int(rec, 'DATA.PointCount', 0))
+           if rec.get(f'Point[{i}].X') is not None]
+    return (pgrd_to_navm._collect_intercell(rec, pts, gx * _CELL, gy * _CELL),
+            pgrd_to_navm.get_int(rec, 'InterCellCount', 0))
+
+
+def _build_meshes(selected, base_model_by_fid, door_fids):
+    """Convert each selected job, printing its seam profile; returns the cache."""
     navm_cache = {}
-    fid = 0x01900000
-    for (rec, cell, cf, gx, gy) in selected:
-        fid += 1
-        land = lands.get(cf)
-        refrs = refr_by_cell.get(cf, [])
-        ic = pgrd_to_navm._collect_intercell(
-            rec,
-            [(pgrd_to_navm.get_float(rec, f'Point[{i}].X'),
-              pgrd_to_navm.get_float(rec, f'Point[{i}].Y'),
-              pgrd_to_navm.get_float(rec, f'Point[{i}].Z'))
-             for i in range(pgrd_to_navm.get_int(rec, 'DATA.PointCount', 0))
-             if rec.get(f'Point[{i}].X') is not None],
-            gx * _CELL, gy * _CELL)
-        raw_ic = pgrd_to_navm.get_int(rec, 'InterCellCount', 0)
+    for (job, gx, gy) in selected:
+        rec, fid = job['pgrd_rec'], job['navm_fid']
+        ic, raw_ic = _intercell_points(rec, gx, gy)
         navm_bytes, meta = pgrd_to_navm.convert_PGRD(
-            rec, navm_fid=fid, land_rec=land, cell_rec=cell, refr_recs=refrs)
+            rec, navm_fid=fid, land_rec=job['land_rec'],
+            cell_rec=job['cell_rec'], refr_recs=job['refr_recs'],
+            base_model_by_fid=base_model_by_fid, door_fids=door_fids,
+            extra_door_refrs=job.get('extra_door_refrs'))
         if not navm_bytes:
             print(f"  grid({gx},{gy}) PGRD {rec.get('FormID')}: NO MESH "
                   f"(intercell {len(ic)}/{raw_ic})")
@@ -131,17 +139,22 @@ def main():
         navm_cache[fid] = (navm_bytes, meta)
         blob, _, _ = extract_nvnm(navm_bytes)
         view = NavMeshView(fid, blob)
-        sb = _seam_border_counts(view)
+        gaps = _seam_gaps(view)
         print(f"  grid({gx},{gy}) fid={fid:#x}: {len(view.verts)}v "
-              f"{len(view.tris)}t  seam_edges={sb}  "
-              f"intercell={len(ic)}/{raw_ic}")
+              f"{len(view.tris)}t  seam_edges={_seam_border_counts(view)}  "
+              f"intercell={len(ic)}/{raw_ic}", flush=True)
+        print("      plane gaps: %s  (band=%.0f)"
+              % (' '.join('%s=%.0f' % (k, gaps[k]) for k in sorted(gaps)),
+                 SEAM_BAND))
+    return navm_cache
 
-    made = build_edge_links(navm_cache, verbose=True)
-    print(f"\nTOTAL portals stitched across the selected set: {made}")
 
-    # Connectivity across the stitched set: union-find over mesh FormIDs joined
-    # by any Portal link.  One component == every selected cell is mutually
-    # reachable at the mesh level (the precondition for cross-cell pathing).
+def _report_connectivity(navm_cache):
+    """Union-find over Portal links: one component == mutually reachable.
+
+    The precondition for cross-cell pathing, so a split here is the mesh-level
+    form of "the NPC will not walk from one cell into the next".
+    """
     parent = {f: f for f in navm_cache}
 
     def find(a):
@@ -151,28 +164,43 @@ def main():
         return a
 
     grid_of = {}
-    reciprocal_ok = True
     link_pairs = set()
     for f, (nb, meta) in navm_cache.items():
         grid_of[f] = (meta.get('grid_x'), meta.get('grid_y'))
         blob, _, _ = extract_nvnm(nb)
-        view = NavMeshView(f, blob)
-        for typ, other, _tri in view.links:
+        for _typ, other, _tri in NavMeshView(f, blob).links:
             if other in parent:
                 ra, rb = find(f), find(other)
                 if ra != rb:
                     parent[ra] = rb
                 link_pairs.add((f, other))
-    for (a, b) in link_pairs:
-        if (b, a) not in link_pairs:
-            reciprocal_ok = False
+    reciprocal_ok = all((b, a) in link_pairs for (a, b) in link_pairs)
     comps = {}
     for f in navm_cache:
         comps.setdefault(find(f), []).append(grid_of[f])
     print(f"reciprocal links: {'OK' if reciprocal_ok else 'MISMATCH'}")
     print(f"connected components ({len(comps)}):")
-    for root, grids in sorted(comps.items(), key=lambda kv: -len(kv[1])):
+    for _root, grids in sorted(comps.items(), key=lambda kv: -len(kv[1])):
         print(f"  {len(grids)} cells: {sorted(grids)}")
+
+
+def main():
+    """Build the selected cells' meshes, stitch them, and report connectivity.
+
+    Jobs come from `job_trace.load_export`, the import's own loader: a plugin's
+    masters and its neighbours' overhanging refs decide the geometry.
+    See: docs/commentary/tes5_import_navmesh.md#seam-probe-replays-real-jobs
+    """
+    args = _parse_args()
+    im, _by_type, door_fids, base_model_by_fid, jobs = job_trace.load_export(
+        args.export, 1)
+    job_trace.init_worker_for(args.export, im, door_fids, base_model_by_fid, 1)
+    selected = _select(jobs, args)
+    print(f"selected {len(selected)} exterior PGRDs")
+    navm_cache = _build_meshes(selected, base_model_by_fid, door_fids)
+    made = build_edge_links(navm_cache, verbose=True)
+    print(f"\nTOTAL portals stitched across the selected set: {made}")
+    _report_connectivity(navm_cache)
 
 
 if __name__ == '__main__':

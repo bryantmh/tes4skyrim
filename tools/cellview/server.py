@@ -19,13 +19,15 @@ import mimetypes
 import os
 import sys
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote_plus
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from tools.cellview import corpus, plugins
-from tools.cellview.bake import mesh_bake, mesh_save, plugin_cells
+from tools.cellview import corpus, plugins, progress
+from tools.cellview.bake import (
+    mesh_bake, mesh_save, plugin_cells, seams_for,
+)
 
 #: Files the page is built from; nothing outside this folder is served.
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
@@ -47,11 +49,43 @@ def query_params(query):
 def index_plugin(params):
     """Build one export's index on demand; the page shows the wait."""
     plugin = params.get('plugin', DEFAULT_PLUGIN)
+    job = params.get('job', '')
     why = plugins.preconditions(plugin)
     if why:
         return {'error': why}
-    plugins.ensure_index(plugin)
+    progress.start(job, 'index')
+    try:
+        progress.step(job, 0)
+        plugins.ensure_index(plugin)
+        progress.step(job, 2, 1.0)
+    finally:
+        progress.finish(job)
     return {'ok': True, 'plugin': plugin}
+
+
+def mesh_job(params):
+    """Bake one cell, publishing progress under the page's job id."""
+    job = params.get('job', '')
+    progress.start(job, 'mesh')
+    error = ''
+    try:
+        out = mesh_bake(params.get('plugin', DEFAULT_PLUGIN),
+                        params.get('cell', ''), job=job)
+        error = out.get('error', '')
+        return out
+    finally:
+        progress.finish(job, error)
+
+
+def seams_job(params):
+    """Compute one cell's seam links, publishing progress."""
+    job = params.get('job', '')
+    progress.start(job, 'seams')
+    try:
+        return seams_for(params.get('plugin', DEFAULT_PLUGIN),
+                         params.get('cell', ''), job=job)
+    finally:
+        progress.finish(job)
 
 
 def _routes():
@@ -61,8 +95,9 @@ def _routes():
         '/plugins': lambda q: plugins.candidates(),
         '/plugin_cells': lambda q: plugin_cells(
             q.get('plugin', DEFAULT_PLUGIN), q.get('q', '')),
-        '/mesh': lambda q: mesh_bake(q.get('plugin', DEFAULT_PLUGIN),
-                                     q.get('cell', '')),
+        '/mesh': mesh_job,
+        '/progress': lambda q: progress.poll(q.get('job', '')),
+        '/seams': seams_job,
         '/geometry': lambda q: corpus.bake(q.get('cell', '')),
         '/score': lambda q: corpus.score(q.get('cell', '')),
     }
@@ -80,7 +115,12 @@ _GET_ROUTES, _POST_ROUTES = _routes()
 
 
 class Handler(BaseHTTPRequestHandler):
-    """Serves the editor page and the geometry/edit JSON endpoints."""
+    """Serves the editor page and the geometry/edit JSON endpoints.
+
+    Served THREADED: a bake holds the handler for tens of seconds, and a
+    single-threaded server could not answer the `/progress` poll that is
+    meant to be tracking it.
+    """
 
     def log_message(self, fmt, *args):
         """Quiet: one line per request would bury the startup banner."""
@@ -148,7 +188,7 @@ def main():
              ', '.join(corpus.cells()) or '(none fitted -- mesh editor only)'))
     if not a.no_browser:
         webbrowser.open(url)
-    HTTPServer(('127.0.0.1', a.port), Handler).serve_forever()
+    ThreadingHTTPServer(('127.0.0.1', a.port), Handler).serve_forever()
     return 0
 
 

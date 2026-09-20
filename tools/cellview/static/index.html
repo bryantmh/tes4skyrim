@@ -36,9 +36,17 @@
             line-height: 1.6; background: #241a1a; border: 1px solid #6a3a3a;
             border-radius: 6px; color: #f0c0c0; }
   .errbox button { margin-top: 10px; }
+  .prog { width: 380px; max-width: 70vw; text-align: center; }
+  .prog .track { height: 8px; margin: 10px 0 6px; background: #262626;
+                 border-radius: 5px; overflow: hidden; }
+  .prog .fill { height: 100%; width: 0; background: #2c5cc4;
+                border-radius: 5px; transition: width .25s ease; }
+  .prog .sub { color: #8a8a8a; font-size: 12px;
+               font-variant-numeric: tabular-nums; }
   kbd { background: #262626; border: 1px solid #3a3a3a; border-radius: 3px;
         padding: 0 4px; font: 11px ui-monospace, monospace; }
   #help { color: #777; font-size: 12px; }
+  .dim { color: #777; }
   label.chk { color: #9a9a9a; display: flex; align-items: center; gap: 4px; }
   .grp.menu { position: relative; }
   .drop { display: none; position: absolute; top: 100%; left: 8px; z-index: 5;
@@ -85,6 +93,8 @@
       <label class="chk"><input type="checkbox" id="cFloor" checked>floor</label>
       <label class="chk"><input type="checkbox" id="cPath" checked>pathgrid</label>
       <label class="chk"><input type="checkbox" id="cTri" checked>navmesh</label>
+      <label class="chk"><input type="checkbox" id="cSeam" checked>edge links</label>
+      <label class="chk"><input type="checkbox" id="cNbr" checked>adjacent cells</label>
       <label class="chk corpusOnly"><input type="checkbox" id="cNav" checked>authored</label>
       <label class="chk corpusOnly"><input type="checkbox" id="cGen">ours</label>
     </div>
@@ -136,6 +146,9 @@
         style="background:#7ee0a0"></i>selected / <i
         style="background:#ffd24a"></i>welding</div>
     <div><i style="background:#ffa500"></i>drop link (ledge up/down)</div>
+    <div><i style="background:#46d07a"></i>seam linked / <i
+        style="background:#ff3b30"></i>DANGLING (cannot cross)</div>
+    <div><i style="background:#4a5a6a"></i>adjacent cell mesh</div>
     <div><i style="background:#3ba0ff"></i>pathgrid / <i
         style="background:#b46cff"></i>in mesh mode</div>
     <div><i style="background:#7ee0a0"></i>edited / added</div>
@@ -289,6 +302,9 @@ function applyVisibility() {
   for (const o of [mFill, mWire, mVertMesh, mLinkLines]) {
     if (o) o.visible = showTri;
   }
+  const showSeam = $('cSeam').checked;
+  for (const o of [seamOk, seamBad]) if (o) o.visible = showSeam;
+  if (nbMesh) nbMesh.visible = $('cNbr').checked;
   needsRender = true;
 }
 
@@ -797,11 +813,15 @@ async function loadCell(name, keepView) {
 /* Any cell of any export can be opened for mesh work; only the seven corpus
    cells have a Bruma counterpart, so the authored layers simply stay empty. */
 async function loadMesh(plugin, cell) {
-  $('busy').style.display = 'grid';
-  $('busy').textContent = 'baking ' + cell + ' …';
-  const r = await fetch('/mesh?plugin=' + encodeURIComponent(plugin) +
-                        '&cell=' + encodeURIComponent(cell));
-  const d = await r.json();
+  const job = newJob();
+  showProgress('Opening ' + cell);
+  pollProgress(job);
+  let d;
+  try {
+    d = await (await fetch('/mesh?plugin=' + encodeURIComponent(plugin) +
+                           '&cell=' + encodeURIComponent(cell) +
+                           '&job=' + encodeURIComponent(job))).json();
+  } finally { stopPoll(); }
   if (d.error) { showError(d.error); return; }
   /* Stale ops address a mesh the generator has since renumbered, so replaying
      them onto the current one silently mixes two different meshes. Load them
@@ -831,11 +851,95 @@ async function loadMesh(plugin, cell) {
   setMode('tri');
   frameMesh();
   $('busy').style.display = 'none';
+  loadSeams(plugin, cell);
+}
+
+/* Fetched separately, and never awaited by the open: each neighbour is a full
+   navmesh generation, so the cell draws first and the seams arrive after. */
+async function loadSeams(plugin, cell) {
+  if (!M || M.grid === null || M.grid === undefined) return;
+  const job = newJob();
+  $('stat').innerHTML += ' · <span class="dim">matching seams…</span>';
+  let d;
+  try {
+    d = await (await fetch('/seams?plugin=' + encodeURIComponent(plugin) +
+                           '&cell=' + encodeURIComponent(cell) +
+                           '&job=' + encodeURIComponent(job))).json();
+  } catch (e) { return; }
+  if (!M || M.cell !== cell || d.error) { status(); return; }
+  M.seams = d.seams || [];
+  M.neighbours = d.neighbours || [];
+  buildSeams();
+  buildNeighbours();
+  applyVisibility();
+  status();
 }
 
 /* Frame the COLLISION when there is no mesh to frame: an exterior cell with
    no pathgrid generates no triangles, and framing only mVerts left the camera
    wherever the previous cell put it -- the cell loaded, off-screen. */
+/* A dangling border edge is a cell an actor can never leave, and it looks
+   exactly like a matched one in a single-cell view -- hence two colours. */
+let seamOk = null, seamBad = null, nbMesh = null;
+
+function clearSeams() {
+  for (const o of [seamOk, seamBad, nbMesh]) {
+    if (o) { scene.remove(o); o.geometry.dispose(); }
+  }
+  seamOk = seamBad = nbMesh = null;
+}
+
+/* The adjacent cells are generated for seam matching anyway, so drawing them
+   is nearly free -- and a dangling edge is only legible against the mesh it
+   was supposed to meet.  Dimmed, so ours stays the subject. */
+function buildNeighbours() {
+  if (!M || !M.neighbours || !M.neighbours.length) return;
+  const flat = [];
+  for (const n of M.neighbours) flat.push(...n.tris);
+  if (!flat.length) return;
+  nbMesh = triLayer(flat, 0x4a5a6a, 0.30);
+  scene.add(nbMesh);
+}
+
+/* A border edge lies IN the surface that owns it, so it z-fights the fill and
+   disappears under the neighbour mesh.  Lift it clear and disable depth
+   testing: this is an annotation, meant to be readable from any angle. */
+function seamLines(flat, color) {
+  const lifted = flat.slice();
+  for (let i = 2; i < lifted.length; i += 3) lifted[i] += SEAM_LIFT;
+  const o = lineSet(lifted, color);
+  o.material.depthTest = false;
+  o.material.transparent = true;
+  o.renderOrder = 4;
+  return o;
+}
+
+//: Game units to raise seam markers above the mesh so they never z-fight.
+const SEAM_LIFT = 12;
+
+/* `lineSet` feeds a Float32BufferAttribute, which wants FLAT NUMBERS -- the
+   server already sends them that way.  Wrapping them in Vector3 first made
+   every coordinate NaN, so the lines existed and drew nothing. */
+function buildSeams() {
+  clearSeams();
+  if (!M || !M.seams || !M.seams.length) return;
+  const ok = [], bad = [];
+  for (const s of M.seams) {
+    ok.push(...s.matched);
+    bad.push(...s.dangling);
+  }
+  if (ok.length) { seamOk = seamLines(ok, 0x46d07a); scene.add(seamOk); }
+  if (bad.length) { seamBad = seamLines(bad, 0xff3b30); scene.add(seamBad); }
+  applyVisibility();
+}
+
+function seamCounts() {
+  if (!M || !M.seams) return null;
+  let ok = 0, bad = 0;
+  for (const s of M.seams) { ok += s.matched.length / 6; bad += s.dangling.length / 6; }
+  return { ok, bad, sides: M.seams.length };
+}
+
 function frameMesh() {
   const box = new THREE.Box3();
   for (const p of mVerts) box.expandByPoint(new THREE.Vector3(...p));
@@ -919,6 +1023,7 @@ function meshDiscard() {
     if (o) { scene.remove(o); o.geometry.dispose(); }
   }
   mWire = mVertMesh = mFill = mLinkLines = null;
+  clearSeams();
   M = null; mOps = []; mHistory = [];
   mVerts = []; mTris = []; mDoors = new Set(); mDead = new Set();
   mSelVert = mSelTri = mSnapFrom = -1; mRing = [];
@@ -1194,8 +1299,14 @@ function meshStatus() {
   $('meshSrc').disabled = !M.saved;
   $('meshSrc').title = M.saved ? 'Which mesh to show'
                                : 'no saved correction for this cell';
+  const sc = seamCounts();
+  const seamTxt = sc
+    ? ` · seam ${sc.ok} linked` +
+      (sc.bad ? `, <span class="warn">${sc.bad} dangling</span>` : '')
+    : '';
   $('stat').innerHTML =
-    `<b>${live}</b> tris · ${mDoors.size} door · ${mLinks.size} drop link · ` +
+    `<b>${live}</b> tris · ${mDoors.size} door · ${mLinks.size} drop link` +
+    seamTxt + ' · ' +
     (mOps.length ? `<b>${mOps.length} ops</b>` : 'no edits') +
     (M.stale ? ` · <span class="warn">${M.ops.length} ops STALE, ` +
                'not replayed</span>' : '') +
@@ -1294,6 +1405,43 @@ $('mTri').onclick = async () => {
   const plugin = $('plugin').value;
   if (await ensureIndexed(plugin)) loadMesh(plugin, G.source_cell || G.cell);
 };
+/* A determinate bar: the server publishes which stage it is in, weighted by
+   measured share of wall time, so this tracks elapsed work rather than
+   animating a guess. */
+let jobSeq = 0, pollTimer = null;
+
+function newJob() { return 'j' + (++jobSeq) + '-' + Date.now(); }
+
+function showProgress(title) {
+  $('busy').style.display = 'grid';
+  $('busy').innerHTML =
+    '<div class="prog"><div id="pTitle"></div>' +
+    '<div class="track"><div class="fill" id="pFill"></div></div>' +
+    '<div class="sub" id="pSub">starting…</div></div>';
+  $('pTitle').textContent = title;
+}
+
+function stopPoll() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+function pollProgress(job) {
+  stopPoll();
+  pollTimer = setInterval(async () => {
+    let d;
+    try {
+      d = await (await fetch('/progress?job=' + encodeURIComponent(job))).json();
+    } catch (e) { return; }
+    if (d.missing || !$('pFill')) return;
+    $('pFill').style.width = d.percent + '%';
+    $('pSub').textContent = d.done
+      ? 'done in ' + d.elapsed + 's'
+      : d.label + '  ·  ' + d.percent.toFixed(0) + '%  ·  ' +
+        d.elapsed + 's';
+    if (d.done) stopPoll();
+  }, 250);
+}
+
 /* An error that times out is an error the user never reads -- a slow lookup
    can outlast the message.  It stays until dismissed. */
 function showError(msg) {
@@ -1315,11 +1463,15 @@ function showError(msg) {
 async function ensureIndexed(plugin) {
   const p = PLUGINS.find(x => x.name === plugin);
   if (!p || p.indexed) return true;
-  $('busy').style.display = 'grid';
-  $('busy').textContent = 'indexing ' + plugin + ' — first open only, ~1 min…';
-  const r = await fetch('/index?plugin=' + encodeURIComponent(plugin),
-                        { method: 'POST' });
-  const d = await r.json();
+  const job = newJob();
+  showProgress('Indexing ' + plugin);
+  pollProgress(job);
+  let d;
+  try {
+    d = await (await fetch('/index?plugin=' + encodeURIComponent(plugin) +
+                           '&job=' + encodeURIComponent(job),
+                           { method: 'POST' })).json();
+  } finally { stopPoll(); }
   if (d.error) {
     showError(d.error);
     return false;
@@ -1395,7 +1547,8 @@ $('reset').onclick = () => (mode === 'tri' && M)
   ? loadMesh(M.plugin, M.cell)
   : loadCell(G.cell, false);
 $('cell').onchange = e => { if (e.target.value) loadCell(e.target.value, false); };
-for (const id of ['cWall', 'cFloor', 'cNav', 'cGen', 'cPath', 'cTri'])
+for (const id of ['cWall', 'cFloor', 'cNav', 'cGen', 'cPath', 'cTri', 'cSeam',
+                  'cNbr'])
   $(id).onchange = applyVisibility;
 
 /* Mesh-mode keys, returning true when the event was consumed there. */

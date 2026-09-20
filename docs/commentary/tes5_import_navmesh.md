@@ -808,6 +808,31 @@ output is in-game verified and was left untouched — a KNOWN DEFECT, unfixed.
 For the same reason a terrain ribbon never seeds the stair refine
 (`_ribbon_seeds`): fed hill paths, that pass left T-junction cracks.
 
+<a id="seam-probe-replays-real-jobs"></a>**`tools/navmesh/seam_probe.py` replays
+the import's REAL jobs** (`job_trace.load_export`). It used to parse the
+plugin's own export only, so for a plugin with masters it resolved no master
+bases and saw none of the neighbours' overhanging refs: TR_Mainland (-17,-51)
+probed as **728 verts / 1,297 tris over open ground with 104 refs**, where the
+import builds **258 / 360 from 122 refs and 10,620 blocking triangles** — every
+conclusion drawn from the old probe was about a mesh that does not exist.
+
+<a id="land-rails-overshoot-the-cell"></a>**A terrain rail overshoots its
+cell's LAND by one cap, so the cell clip cuts the sheet ON the plane**
+(`grow.cpp`, `Land::covers`). LAND covers exactly one cell, so a rail used to
+end on its last 8u step INSIDE the cell, and the far-width erosion, the 12u rail
+simplify and decimation then pulled the outline further in: the sheet came
+within a few dozen units of the seam without lying on it. `edge_links` pairs
+border edges whose ends are both within `SEAM_BAND` and whose midpoints agree
+within `SEAM_TOLERANCE`, and both cells put seam vertices on the same world grid
+ONLY where the clip made the boundary. Measured on the real jobs for TR_Mainland
+(-17,-51)/(-17,-50), plane y=-204800: border edges **5 vs 0, 0 matched -> 7 vs
+7, 4 matched**. At 128u target edges a near-miss outline still scattered enough
+short edges into the band to pair by luck; at 256u it did not, which is why the
+coarse terrain sheets exposed it. Rejected: raising the cap to the cell edge for
+every terrain rail (it also lifted the crossing limit and the BUILT-floor
+budget), densifying near the seam, dilating the polygon, loosening
+`_match_seam`.
+
 <a id="land-sheets-mesh-coarse"></a>**A terrain sheet meshes at
 `LAND_TRI_TARGET_EDGE` (256u) and refines only where the LAND curves**
 (`corridor_union._target_edge`, `union_cdt._refine_land`, `_cuts_relief`). Most
@@ -1969,6 +1994,26 @@ entry silently restores geometry the current build would never produce:
   only the cells that actually place that mesh miss. This is also what lets a
   published cache survive a user's own mesh edits — see
   `collision_extract.collision_digest` and `tools/navmesh/navmesh_cache.py`.
+
+### <a id="the-tag-covers-the-native-march"></a>The tag hashes the native march too, by SOURCE
+
+**Code:** `_native_tag_sources` / `navmesh_geom_cache` in `tes5_import/navmesh/pool.py`
+
+The tag globbed `tes5_import/navmesh/*.py` only, but the width-grow march that
+decides a cell's geometry lives in `native/src/navgrow/grow.cpp`. Editing it
+changed every exterior mesh while leaving the tag — and therefore every cached
+entry — untouched: the cache stayed *valid* and became *wrong*, which is worse
+than a miss because nothing reports it. `_TAG_NATIVE` names the native sources
+that decide geometry, and `NAVMESH_PATHS` in `navmesh_cache_hook.py` carries the
+same path so a push republishes.
+
+It hashes the **`.cpp`, never the built `.pyd`**: a different compiler or flag
+gives identical source a different binary, so hashing the artifact would miss
+every downloader's cache for no semantic reason. The lookup is anchored on the
+repo rather than on `pool.__file__` — `test_tag_ignores_line_endings` copies the
+navmesh package to a temp dir, and a path derived from that copy finds no native
+tree. A native source that is missing entirely drops out of the hash instead of
+voiding the tag, so a source-only checkout still tags.
 
 ### <a id="cache-tag-steps-in-its-own-scheme"></a>`previous_tag` steps in the tag's OWN width
 
@@ -3188,6 +3233,97 @@ and replayed in each child's init; without it their `get_formid()` calls
 mis-map every PathingCell parent FormID, which the engine meets as a
 navmesh-load null deref.
 
+## <a id="cellview-progress"></a>Cellview: a progress bar with measured weights
+
+**Code:** `tools/cellview/progress.py`, polled by `GET /progress`.
+
+Opening a cell is not a short wait, so an indeterminate spinner cannot tell
+"working" from "hung". Measured on `Oblivion.esm` / `ImperialDungeon01`, a cold
+open costs **43.9s**, split:
+
+| stage | seconds | share |
+|---|---|---|
+| load the export index | 21.6 | 49% |
+| arm collision + resolve cell | 15.5 | 35% |
+| generate the navmesh | 6.7 | 15% |
+| gather collision, name sources | 0.11 | <1% |
+
+The weights in `STAGES` are those shares, so the bar tracks elapsed time
+instead of jumping 0 -> 90 -> done. Gathering collision is effectively free
+once the cache is armed (0.01s for 13,862 triangles) and is folded into its
+neighbour rather than given a visible stage of its own.
+
+Progress is per JOB, keyed by an id the page generates, because two tabs on one
+server would otherwise overwrite each other's state. `read` reports completed
+stage weights plus the fraction of the current stage, so it never rewinds.
+
+Two details the measurement forced:
+
+- **The server is `ThreadingHTTPServer`.** A bake holds its handler for a
+  minute or more, and the single-threaded default could not answer the
+  `/progress` poll that is meant to be tracking it. Verified: 34 polls
+  answered during one 75s bake, advancing 0 -> 49 -> 85%.
+- **`creep` advances within a stage on a time estimate.** Unpickling a 2 GB
+  index is one opaque call with no checkpoints, so the bar sat at a dead 0%
+  for 42s -- which reads as a hang. It now approaches the stage boundary
+  asymptotically and snaps to the true value when the stage ends.
+
+## <a id="cellview-edge-links"></a>Cellview: showing cross-cell edge links
+
+**Code:** `tools/cellview/seams.py`.
+
+An exterior navmesh with no links to its neighbours is an island: actors path
+inside the cell and can never leave it (the failure documented under
+[edge links](#edge-links)). In a single-cell view a missing link looks exactly
+like a correct one, so the editor draws the seam itself -- matched border edges
+in green, dangling ones in red, per side.
+
+It reuses production's own `border_edges` and `match_seam` (promoted from
+`_`-private for this; `edge_links.py` is excluded from the geometry cache tag,
+so touching it invalidates nobody's cache). A second seam predicate here would
+be free to disagree with the writer, which is the one thing this view must not
+do.
+
+The generator emits corner indices only, while `border_edges` needs the
+neighbour columns to tell a border edge from an interior one, so `seams.py`
+derives them from shared edges and presents the same row shape `NavMeshView`
+exposes.
+
+**Seams load on their own request, after the cell is on screen.** Each of the
+four neighbours costs a full navmesh generation: measured on `Tamriel 4 12`,
+44s for the cell alone against 178s with its seams folded in. `GET /seams` is
+therefore separate from `GET /mesh`, and neighbour geometry is cached per
+session -- walking a worldspace re-uses what the last cell already built.
+
+Since those neighbour meshes are generated anyway, they ship with the report
+and draw dimmed behind the cell: a dangling edge is only legible against the
+mesh it was meant to meet. Measured on that cell, all four neighbours resolve
+(355/893/809/1022 triangles) and the seam pairing is 19 matched against 31
+dangling.
+
+## <a id="navmeshview-decode-is-vectorised"></a>NavMeshView decode: why numpy, why float64
+
+**Code:** `tes5_import/navmesh/edge_links.py` (`NavMeshView.__init__`, `pack`).
+
+The per-element `struct.unpack_from` loops this replaces were **39% of the whole
+edge-link pass** (15.3M calls over 6.5k meshes).
+
+`verts`/`tris` stay NUMPY ARRAYS rather than being converted back to Python
+lists: `add_link` mutates a triangle row in place, so a list form would have to
+be re-converted with `np.asarray` on every seam scan -- measured, 103k asarray
+calls and 11.9s, more than the decode it was meant to save. Arrays are mutated
+directly and `border_edges` reads them with no conversion at all.
+
+`verts` are float64 for the same reason the seam midpoints are: the original
+scalar code did that arithmetic on Python floats (doubles), and computing it in
+float32 shifts midpoints enough to reorder near-ties in the greedy pairing
+(measured: 4 extra links).
+
+The triangle record is 6 signed + 2 unsigned shorts. Reading it as int16 would
+make the two trailing unsigned fields negative, so it widens to int32 and
+restores the sign of the last two columns only. `pack` is byte-for-byte
+identical to the per-element `struct.pack` loop it replaces.
+
 ## <a id="renderer-colour-contract"></a>The renderer as an instrument (`tools/navmesh/render.py`, `draw.py`)
 
 **Code:** `tools/navmesh/draw.py` (layers), `tools/navmesh/render.py` (CLI).
@@ -3353,13 +3489,107 @@ install, which CLAUDE.md permits for Papyrus logs and Skyrim.esm specifically.
 A vanilla base carries a `00` master index here only because Bruma lists
 Skyrim.esm first; never assume that index across other plugins.
 
-## <a id="transplant-editor"></a>The transplant editor
+## <a id="transplant-editor"></a>Cellview: the whole-cell editor
 
-**Code:** `tools/navmesh/transplant_server.py`, `tools/navmesh/transplant_editor.html`.
+**Code:** `tools/cellview/` (`server.py`, `bake.py`, `corpus.py`, `plugins.py`,
+`static/`).
 
 ```bash
-python tools/navmesh/transplant_server.py
+python tools/cellview/server.py
 ```
+
+Named `transplant_editor` while its only job was hand-fitting Bruma pathgrids.
+It is now a whole-cell preview and editor; the transplant corpus is one feature
+inside it, reached from a secondary panel rather than the main toolbar, and the
+mesh editor is the default view.
+
+### <a id="cellview-index-on-demand"></a>Any cell of any export
+
+A plugin used to appear only if `export/<p>/audit_index3.pkl` already existed,
+which was true of three exports out of the fourteen that have a `CELL.txt`.
+The limit was never a whitelist — it was a missing artifact.
+
+`tools/cellview/plugins.py` lists every export with a `CELL.txt` and builds the
+index on first open (`audit.build_index`, the same builder `audit.py` uses; a
+second one would drift from the pickle's six-tuple shape).
+
+**Collision is a precondition, not a nicety.** `ce.load_collision` returns 0 for
+a missing cache instead of raising, so a cell of a plugin with no
+`collision_cache.bin` used to open with a pathgrid, no walls and no floor, and
+looked merely broken. `preconditions()` refuses those cells by name and says
+which stage to run. Measured at the time of writing: 5 of 14 exports have both
+`collision_cache.bin` and `meshes/`.
+
+The test is `collision_extract.collision_cache_is_current`, not
+`os.path.isfile`: existence is not usability. Measured while building this --
+Morrowind.esm's cache is a 0-byte placeholder, and Nehrim.esm (`TESCOL06`) and
+FalloutNV.esm (`TESCOL05`) predate the current `TESCOL07` magic. All three load
+as ZERO entries, so those cells drew no walls at all under the old editor and
+looked like a generation bug. They now say so and name the stage to re-run.
+
+Cache paths resolve through `output_layout.assets_for`, so an imported mod
+nested as `export/<Mod>/<plugin>/` finds its assets one level up.
+
+### <a id="cellview-exterior-coordinates"></a>Opening an exterior cell
+
+Measured on Oblivion.esm: 33,639 of 35,494 cells are exterior, and **not one
+of them has an EditorID**. The cell search box matches EditorIDs, so until now
+an exterior cell simply could not be opened -- the overwhelming majority of the
+plugin was unreachable.
+
+An exterior cell is named the way the engine names it, by worldspace and grid:
+
+```
+wrldmorrowind -17 -51
+Tamriel 4 12
+```
+
+The worldspace is matched by EditorID, case-insensitively, and the numbers are
+the cell's own `XCLC.X`/`XCLC.Y` exactly as authored -- no scaling, which
+matters because a Morrowind-derived worldspace does not share Oblivion's cell
+size. A comma between them is accepted, since the CK prints them that way.
+
+The name-to-FormID map is read from `WRLD.txt` (84 records, 0.01s) rather than
+from the cached index: an exterior CELL record carries only a `ParentWRLD`
+FormID, and adding a seventh table to `audit_index3.pkl` would invalidate every
+index already on disk, including Oblivion's 2.1 GB one.
+
+A miss reports the worldspace's actual grid extent, because the common cause of
+one is a coordinate outside it. The grid is indexed once per worldspace: the
+original linear scan measured 8.5s per lookup on a 35k-cell export, and a miss
+is exactly what a mistyped coordinate produces.
+
+### <a id="cellview-master-owned-cells"></a>Master-owned worldspaces and cells
+
+**A child plugin need not own the worldspace it builds in.** Measured:
+`TR_Mainland.esm` has ZERO WRLD records of its own, and every one of its
+exteriors sits in `wrldmorrowind`, owned by `Morrowind_ob.esm`. Reading only
+the plugin's own `WRLD.txt` resolves nothing, and its cells and their collision
+read as absent -- the master-export blindness CLAUDE.md warns about.
+
+Cellview therefore reads worldspaces and cells from `load_master_export` first
+and lets the plugin's own records override by FormID, the same order
+`navmesh/pool.py:_merge_master_cell_records` uses. `load_master_export` re-keys
+each master id into THIS plugin's index space, which is what makes a
+master-owned FormID comparable to one of the plugin's own.
+
+Three places had to learn this, and each was separately fatal:
+
+- `audit.build_index` now merges the masters' records into `by_type`
+  (`_merge_masters`) before indexing base models, doors and LAND.
+- `NavIndex.arm` passes `collision_caches()` -- masters first -- to
+  `ce.load_collision`, which already took a LIST for exactly this reason.
+- `plugins.export_dir` resolves through `output_layout.record_dir`, because an
+  imported mod's plugin lives at `export/<Mod>/<plugin>/`, not `export/<plugin>/`.
+
+Measured on `TR_Mainland.esm` cell `wrldmorrowind -17 -52`, before -> after:
+base models 3,723 -> 34,007; collision cache entries 95 -> 29,163; REFRs whose
+base model resolves 0/27 -> 27/27; collision triangles 0 -> 316 walkable +
+2,999 blocking. Before the fix the cell drew nothing at all.
+
+A cell with no pathgrid generates no navmesh, which is not an error -- the
+camera frames the COLLISION in that case, and the mode badge says
+`NO PATHGRID`, rather than leaving an empty viewport unexplained.
 
 Hand-placing nodes by reading coordinates off a rendered grid and issuing
 `transplant.py move` commands is slow and error-prone; dragging them is the
@@ -3425,7 +3655,7 @@ for the life of the process, which takes that to milliseconds.
 The cache key is the NORMALIZED path. The same export reaches `index_for`
 spelled two ways -- `export/Oblivion.esm` from the corpus JSON, and
 `export\\Oblivion.esm` from `os.path.join('export', plugin)` in
-`transplant_server.mesh_bake` -- which are different dict keys. That built two
+`cellview.bake.mesh_bake` -- which are different dict keys. That built two
 NavIndex objects for one export and paid the 10 s load twice on startup. It
 also broke `NavIndex.arm`, whose `_armed` check compared the two spellings and
 reloaded the collision tables on every alternation.
@@ -3465,7 +3695,7 @@ references → SSE BSAs**, and the LE copies sidestep the whole class.
 
 ## <a id="hand-corrected-navmesh-corpus"></a>The hand-corrected navmesh corpus
 
-**Code:** `tools/navmesh/meshedit.py`, served by `tools/navmesh/transplant_server.py`; read back by `tools/navmesh/fix_analyze.py`.
+**Code:** `tools/navmesh/meshedit.py`, served by `tools/cellview/bake.py`; read back by `tools/navmesh/fix_analyze.py`.
 
 <a id="a-correction-is-read-off-its-result-only"></a>**A correction is read off `result` against `base`; `ops` are keystrokes and mean nothing** (`make_entry`, `fix_analyze.py`). The first two corrections (ImperialDungeon02/03) carried 152 ops for 58 net vertex moves -- one vertex was dragged seven times -- and reading the ops as decisions measured the human's fight with the editor, not the mesh they wanted. `base` (the generator mesh the human edited) is stored in the file so the diff survives the generator moving; without it an index-based diff against a fresh build reads every vertex as changed. The analysis is scoped to the touched region: the two corrections changed 25-45 triangles of 600-940, so cell-wide percentages read as noise ("+0.2% area") while inside the region the human moved **13 of 85 and 45 of 101 vertices** and covered **3.4-3.6% more floor**. What they encoded, measured with the tool: the boundary sat 10-60u inside the real floor edge (steep-edge approaches never grew, a hanging object zeroed a corridor, the neighbour cap pinched a mouth), corridors were zigzag-triangulated where rows of quads belong, and a mid-stair pathgrid node snapped 44u down through a tread seam sank the ramp 32u into the floor. After the fixes the generator covers **326 of the 361 floor samples the human added in ImperialDungeon02 and 249 of 374 in ImperialDungeon03**; what it still does worse than the human is the flight itself, which the profile places where the pathgrid line climbs (compressed to 45u where the line cuts the foot of the stairs) rather than along the flight's own 90u axis, so the stair-mouth triangles run 50-56 degrees against the human's 33.
 
@@ -3683,7 +3913,7 @@ from a second plugin re-armed the globals and every later Oblivion cell then
 found no collision for its meshes -- `get_collision` returned `None` for every
 path key, and the page drew a navmesh floating in empty space with "walls" and
 "floor" both ticked. Cells baked BEFORE the switch kept working, because
-`transplant_server._CACHE` had already stored their geometry, which made the
+`cellview.bake.CACHE` had already stored their geometry, which made the
 failure look specific to one cell.
 
 Measured on the running editor: of five cells requested, only

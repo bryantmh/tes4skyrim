@@ -61,7 +61,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from tools.navmesh import navmesh_cache as nc
 
 #: Sources whose bytes feed the cache tag; a test asserts they match pool.
-NAVMESH_PATHS = ('tes5_import/navmesh/',)
+NAVMESH_PATHS = ('tes5_import/navmesh/', 'native/src/navgrow/grow.cpp')
 #: Under the prefix but NOT a tag source -- see pool._TAG_EXCLUDE.
 NAVMESH_EXCLUDE = ('tes5_import/navmesh/edge_links.py',)
 

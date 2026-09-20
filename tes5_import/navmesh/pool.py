@@ -445,6 +445,32 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
 #: Runs AFTER geometry leaves the cache, so it cannot invalidate an entry.
 _TAG_EXCLUDE = frozenset({'edge_links.py'})
 
+#: Native SOURCES deciding cell geometry; hashed with the Python, never the .pyd.
+_TAG_NATIVE = ('navgrow/grow.cpp',)
+
+
+def _native_tag_sources() -> list:
+    """Each `_TAG_NATIVE` file's bytes, newline-normalized; missing ones drop.
+
+    Anchored on the REPO, not on this module's `__file__`: the tag tests copy
+    the navmesh package to a temp dir, and a path derived from the copy would
+    find no native tree and void the whole tag.
+
+    See: docs/commentary/tes5_import_navmesh.md#the-tag-covers-the-native-march
+    """
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    out = []
+    for name in _TAG_NATIVE:
+        path = os.path.join(root, 'native', 'src',
+                            name.replace('/', os.sep))
+        try:
+            with open(path, 'rb') as fh:
+                out.append(fh.read().replace(b'\r\n', b'\n'))
+        except OSError:
+            continue
+    return out
+
 
 def master_navm_grid(master_export: dict, master_index) -> dict:
     """{(wrld_fid, grid_x, grid_y): navm_fid} for the MASTERS' exterior cells.
@@ -489,11 +515,11 @@ def collision_cache_chain(export_dir: str) -> tuple:
 def navmesh_geom_cache(collision_cache: str):
     """(cache_dir, tag) for the on-disk navmesh geometry cache, or None.
 
-    The tag hashes the navmesh generator SOURCES only, so editing any navmesh
-    code (params included) invalidates every entry automatically.  Collision
-    enters per-cell via `from_pgrd._geom_hash`, never here.  Newlines are
-    normalized to LF so the tag is a property of the CONTENT, not of the
-    checkout's line-ending mode.
+    The tag hashes the navmesh generator SOURCES, so editing any navmesh code
+    (params and the native march included) invalidates every entry
+    automatically.  Collision enters per-cell via `from_pgrd._geom_hash`, never
+    here.  Newlines are normalized to LF so the tag is a property of the
+    CONTENT, not of the checkout's line-ending mode.
 
     See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
     """
@@ -509,6 +535,8 @@ def navmesh_geom_cache(collision_cache: str):
                 h.update(fh.read().replace(b'\r\n', b'\n'))
         except OSError:
             return None
+    for body in _native_tag_sources():
+        h.update(body)
     cache_dir = os.path.join(os.path.dirname(collision_cache),
                              'navmesh_geom_cache')
     os.makedirs(cache_dir, exist_ok=True)

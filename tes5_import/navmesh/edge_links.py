@@ -70,6 +70,10 @@ class NavMeshView:
                  'exterior', 'grid', 'dirty')
 
     def __init__(self, fid, blob):
+        """Decode one NVNM blob into mutable numpy arrays.
+
+        See: docs/commentary/tes5_import_navmesh.md#navmeshview-decode-is-vectorised
+        """
         self.fid = fid
         self.dirty = False
         p = 8                                    # version + crc
@@ -84,21 +88,6 @@ class NavMeshView:
             self.grid = None
             p += 4                               # interior: cell FormID
         head_end = p
-        # Vectorised decode.  The per-element struct.unpack_from loops this
-        # replaces were 39% of the whole edge-link pass (15.3M calls over 6.5k
-        # meshes).
-        #
-        # verts/tris stay NUMPY ARRAYS rather than being converted back to
-        # Python lists: add_link mutates a triangle row in place, so a list
-        # form would have to be re-converted with np.asarray on every seam scan
-        # (measured: 103k asarray calls, 11.9s — more than the decode it was
-        # meant to save).  Arrays are mutated directly and _border_edges reads
-        # them with no conversion at all.
-        #
-        # verts are float64 for the same reason the seam midpoints are: the
-        # original scalar code did that arithmetic on Python floats (doubles),
-        # and computing it in float32 shifts midpoints enough to reorder
-        # near-ties in the greedy pairing (measured: 4 extra links).
         nv = struct.unpack_from('<I', blob, p)[0]
         p += 4
         self.verts = np.frombuffer(blob, dtype='<f4', count=nv * 3,
@@ -106,9 +95,6 @@ class NavMeshView:
         p += nv * 12
         nt = struct.unpack_from('<I', blob, p)[0]
         p += 4
-        # Triangle record is 6 signed + 2 unsigned shorts.  Reading it as int16
-        # would make the two trailing unsigned fields negative, so widen to
-        # int32 and restore the sign of the last two columns only.
         self.tris = np.frombuffer(blob, dtype='<i2', count=nt * 8,
                                   offset=p).reshape(nt, 8).astype(np.int32)
         if nt:
@@ -181,7 +167,7 @@ def _prune_links(view: NavMeshView, live_fids: set) -> None:
     view.dirty = True
 
 
-def _border_edges(view: NavMeshView, axis: int, coord: float):
+def border_edges(view: NavMeshView, axis: int, coord: float):
     """[(tri_index, edge_slot, midpoint, z)] for border edges lying on a seam.
 
     A border edge is one whose neighbour field is -1 (nothing local adjoins it).
@@ -237,7 +223,7 @@ def _seam_sort_key(e):
     return (e[2], e[3], e[0], e[1])
 
 
-def _match_seam(edges_a, edges_b):
+def match_seam(edges_a, edges_b):
     """Greedy nearest-neighbour pairing of border edges across one seam.
 
     Deterministic: both sides are sorted once up front and each edge on side B
@@ -403,11 +389,11 @@ def build_edge_links(navm_cache: dict, verbose: bool = True,
                 continue
             # The shared plane: cell A's upper edge on that axis.
             coord = ((gx + 1) * CELL_SIZE) if axis == 0 else ((gy + 1) * CELL_SIZE)
-            edges_a = _border_edges(view_a, axis, coord)
-            edges_b = _border_edges(view_b, axis, coord)
+            edges_a = border_edges(view_a, axis, coord)
+            edges_b = border_edges(view_b, axis, coord)
             if not edges_a or not edges_b:
                 continue
-            for ea, eb in _match_seam(edges_a, edges_b):
+            for ea, eb in match_seam(edges_a, edges_b):
                 view_a.add_link(ea[0], ea[1], view_b.fid, eb[0])
                 view_b.add_link(eb[0], eb[1], view_a.fid, ea[0])
                 made += 2

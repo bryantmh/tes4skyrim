@@ -50,3 +50,7 @@ conversion_config.json
 # Renames the gate saw before they were staged.  Bridges a local write to a
 # local stage, after which git's own rename detection takes over.
 .claude/renames.json
+
+# Hand-editing artifacts from tools/cellview (local ground truth, not shipped)
+tests/navmesh_authored/
+tests/navmesh_fixed/
