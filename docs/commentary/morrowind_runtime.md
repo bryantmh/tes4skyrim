@@ -1186,6 +1186,48 @@ unescaping only newlines hides every indented statement — that alone had
 target first, so a naive leading-word match blames the reference
 (`TR_m3_q_Gerardus`) instead of the command.
 
+### <a id="opcode-test-plan"></a>The fewest quests that exercise every opcode
+
+**Tool:** `python -m tools.dialog.morrowind_opcode_testplan --plugin <esm> --stubs`
+
+`morrowind_quest_trace` answers "can this quest finish?". The inverse question
+is the play-testing one: **which quests must be run to see every opcode fire
+at least once?** That is a set-cover over quests, because a quest exercises the
+union of every command its stage setters call — its INFO result scripts and its
+actors' object scripts alike.
+
+Cost is not uniform. A quest gated behind earlier stages costs the user those
+runs too, so the greedy rank is *new opcodes per quest run*, with the chain
+length in the denominator and the chain's own opcodes in the numerator. A long
+prerequisite chain that tests a lot on the way in is therefore cheap, which is
+the behaviour the plan wants.
+
+🛑 **A prerequisite is read from `GetJournalIndex "<other>"`, never from the
+name.** That is the only authored statement of "this quest gates on that one";
+TR's `TR_m3_FG_OE_*` prefixes group quests by guild and questline, not by
+order, so inferring a chain from the prefix invents dependencies that do not
+exist.
+
+Two reads are **not** prerequisites and both produced quests listing
+themselves. A script reading its OWN journal index is just asking "how far
+along am I?", which every stage-guarded script does. And TR reuses one DISPLAY
+NAME across a questline's parts — `Mages Guild: Mystic Erratum` is four
+journal ids — so the self-check has to compare names as well as ids, or the
+plan prints the same quest as its own prerequisite three times over.
+
+🛑 **A command is counted from EVERY word on a line, not the leading one.** A
+query is almost always an argument (`if ( GetHealth < 50 )`,
+`player->AddItem`), so the leading-word scan `morrowind_quest_trace` uses to
+find unported *statements* saw only 141 of the 326 ported commands here and
+reported the other 185 as untestable. This is the same trap the audit
+documents under [a quoted string is prose](#opcode-audit-strings).
+
+Two covers are produced, because they answer different questions. The
+**ported** cover proves the 326 implemented commands really work. The
+**stubbed** cover is the opposite: it deliberately routes the user through the
+45 commands that are registered but do nothing, so the log shows exactly which
+silent no-op broke which stage. See [the audit](../audits/mwscript_opcodes.md#ported).
+
 ### <a id="ai-settings"></a>The AI settings and `GetDeadCount` are the DLL's own
 
 `SetFight` / `SetHello` / `SetAlarm` / `SetFlee`, their `Mod` and `Get` forms,

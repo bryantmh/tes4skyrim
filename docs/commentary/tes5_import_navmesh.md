@@ -3268,6 +3268,37 @@ Two details the measurement forced:
   for 42s -- which reads as a hang. It now approaches the stage boundary
   asymptotically and snaps to the true value when the stage ends.
 
+## <a id="cellview-open-is-cached"></a>Cellview: why opening a cell was slow
+
+**Code:** `tools/navmesh/audit.py` (`_TABLES`), `tools/cellview/bake.py`.
+
+The generator was never the problem. Profiled on `TR_Mainland.esm`
+`wrldmorrowind -17 -51`, before -> after:
+
+| step | before | after |
+|---|---|---|
+| `build_index` (warm) | 6.17s | **0.00s** |
+| `resolve_cell` (warm) | 7.73s | **0.00s** |
+| `grid_of` | 8.62s | **0.01s** |
+| `worlds()` | 5.51s | **~0s** |
+| `src.build()` (real work) | 1.08s | 0.56s |
+
+Three separate re-reads, all ours:
+
+- **`build_index` had no in-process memo.** It re-unpickled the whole index
+  from disk on EVERY call -- and `index_of` called it per request, after
+  `index_for` had already cached a `NavIndex` holding those same tables.
+  `_TABLES` keyed on the normalized export path fixes it.
+- **`index_of` re-ran the existence check every call.** `_READY` records the
+  plugins this process already ensured.
+- **`worlds()` loaded the full master export** (476k records, 5.5s) to read
+  six WRLD records. The masters' own `WRLD.txt` is 2.3 KB, so it reads those
+  directly.
+
+What remains on a cold open is the one unavoidable unpickle (~5s) plus the
+navmesh generation itself. Everything after the first cell of a plugin is
+effectively instant.
+
 ## <a id="cellview-edge-links"></a>Cellview: showing cross-cell edge links
 
 **Code:** `tools/cellview/seams.py`.

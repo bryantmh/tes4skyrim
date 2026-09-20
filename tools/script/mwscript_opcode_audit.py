@@ -225,7 +225,7 @@ def count_calls(export_dir, commands):
     return total
 
 
-def _status(cmd, real, noops):
+def status_of(cmd, real, noops):
     """'ported', 'no-op' (nothing to port by design), 'STUB' or 'CONFLICT'.
 
     A family member carries a `+<offset>` tail that names its position in the
@@ -253,7 +253,7 @@ def report(commands, real, noops, args):
     """Prints the command table, filtered by `--todo` and `--top`."""
     rows = _ranked(commands)
     if args.todo:
-        rows = [c for c in rows if _status(c, real, noops) == 'STUB']
+        rows = [c for c in rows if status_of(c, real, noops) == 'STUB']
     if args.top:
         rows = rows[:args.top]
     width = max((len(c.name) for c in rows), default=4)
@@ -261,14 +261,14 @@ def report(commands, real, noops, args):
     for cmd in rows:
         print(f'{cmd.name:<{width}}  {cmd.domain:<12} {cmd.ret:<3} '
               f'{cmd.args or "-":<9} {cmd.calls:>6}  '
-              f'{_status(cmd, real, noops)}')
+              f'{status_of(cmd, real, noops)}')
 
 
 def summarize(commands, real, noops):
     """Prints the ported/stubbed totals and the stubbed domains, worst first."""
     buckets = collections.defaultdict(list)
     for cmd in commands.values():
-        buckets[_status(cmd, real, noops)].append(cmd)
+        buckets[status_of(cmd, real, noops)].append(cmd)
     todo = buckets['STUB']
     print(f'\n{len(commands)} registered command(s): '
           f"{len(buckets['ported'])} ported, {len(buckets['no-op'])} "
@@ -293,7 +293,7 @@ def write_tsv(path, commands, real, noops):
         for cmd in _ranked(commands):
             fh.write(f'{cmd.domain}\t{cmd.name}\t{cmd.ret}\t{cmd.args}\t'
                      f'{cmd.pushed()}\t{cmd.calls}\t'
-                     f'{_status(cmd, real, noops)}\n')
+                     f'{status_of(cmd, real, noops)}\n')
     print(f'\nwrote {path}')
 
 
@@ -369,7 +369,7 @@ def write_markdown(path, commands, real, noops, export):
     """
     buckets = collections.defaultdict(list)
     for cmd in commands.values():
-        buckets[_status(cmd, real, noops)].append(cmd)
+        buckets[status_of(cmd, real, noops)].append(cmd)
     live = [c for c in _ranked(buckets['STUB']) if c.calls]
     dead = sorted(buckets['STUB'], key=lambda c: c.name)
     dead = [c for c in dead if not c.calls]
