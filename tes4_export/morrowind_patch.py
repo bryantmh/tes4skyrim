@@ -59,9 +59,6 @@ GAP_TYPES = frozenset(BASE_TYPES) - {'CELL', 'LAND', 'WRLD'}
 #: The records a voiced bark needs: its topic stream, and who may speak it.
 BARK_TYPES = frozenset({'DIAL', 'INFO', 'NPC_', 'CREA'})
 
-#: The patch declares no converted master, so its own records take byte 0x00.
-PATCH_INDEX = 0x00
-
 #: TES3 allocates this many magic effect indices.
 _MAGIC_EFFECT_COUNT = 143
 
@@ -70,19 +67,20 @@ _DERIVED_BASE = 0x00200000
 _DERIVED_SPAN = 0x00D00000
 
 
-def patch_formid(key) -> str:
+def patch_formid(key, own_index: int = 0) -> str:
     """The FormID of one gap fill, hashed from its (type, id) authored key.
 
     Keyed on authored data alone, so an id survives a rebuild and a plugin
     exported against an earlier patch still resolves. The type is part of the
-    key because Morrowind's ids are unique only within one.
+    key because Morrowind's ids are unique only within one. `own_index` is the
+    patch's load-order byte: how many Morroblivion plugins it declares.
     See: docs/commentary/tes4_export_morrowind.md#per-type-id-namespaces
     """
     signature, record_id = key
     payload = ('%s\x00%s\x00%s' % (PATCH_SITE, signature,
                                    record_id.lower())).encode('utf-8')
     offset = int.from_bytes(hashlib.md5(payload).digest()[:4], 'little')
-    return '%08X' % ((PATCH_INDEX << 24)
+    return '%08X' % ((own_index << 24)
                      | (_DERIVED_BASE + offset % _DERIVED_SPAN))
 
 
@@ -260,7 +258,8 @@ def build_patch(data_dir: str, export_dir: str, morroblivion_exports,
     assets += _copy_gap_sounds(gaps.values(), data_dir, export_dir, progress)
     progress('Collecting vanilla voiced barks...')
     barks = collect_bark_records(esms)
-    out_dir = _write_records(gaps, export_dir, progress, barks)
+    out_dir = _write_records(gaps, export_dir, progress, barks,
+                             morroblivion_exports)
     assets += _stage_bark_voices(data_dir, export_dir, progress)
     _convert_assets(export_dir, out_root, progress)
     _convert_creatures(export_dir, out_root, progress)
@@ -385,27 +384,36 @@ def _patch_ownership(export_dir: str) -> MorroblivionModels:
 
 
 def _write_records(gaps: dict, export_dir: str, progress,
-                   barks=()) -> str:
+                   barks=(), morroblivion=()) -> str:
     """Export every gap record under its shared derived FormID.
+
+    The Morroblivion plugins are declared as MASTERS, so a gap record or a bark
+    can name the factions, classes and actors only Morroblivion holds. The
+    gap ids are reserved first: they share the derived span a bark is minted in.
+    See: docs/commentary/tes4_export_morrowind.md#the-patch-masters-morroblivion
 
     Imported inside the function to break the cycle with `export_morrowind`,
     which needs PATCH_NAME from this module at its own import time.
     """
-    from .export_morrowind import (MorrowindContext, export_record,
+    from .export_morrowind import (export_record, load_context,
                                    magic_effect_records, register_magic_effects,
                                    write_export, write_header)
     from .record_types.morrowind import (filled_soulgem_id, filled_soulgems,
                                          tes4_signature)
     from .record_types.morrowind_magic import effect_editor_id
 
-    ids = {key: patch_formid(key) for key in gaps}
-    ctx = MorrowindContext(own_index=0)
+    masters = [(name, str(record_dir(export_dir, name)))
+               for name in morroblivion]
+    ctx = load_context(export_dir, masters)
+    ids = {key: patch_formid(key, ctx.own_index) for key in gaps}
+    ctx.taken.update(ids.values())
     ctx.morroblivion = _patch_ownership(export_dir)
     records = list(gaps.values())
     register_magic_effects(records, ctx)
     for index in range(_MAGIC_EFFECT_COUNT):
         edid = effect_editor_id(index)
-        ctx.gap_ids[('MGEF', edid.lower())] = patch_formid(('MGEF', edid))
+        ctx.gap_ids[('MGEF', edid.lower())] = patch_formid(
+            ('MGEF', edid), ctx.own_index)
     for key, rec in gaps.items():
         signature = tes4_signature(rec)
         ctx.register_own(rec.record_id, signature)
@@ -419,11 +427,12 @@ def _write_records(gaps: dict, export_dir: str, progress,
     for gem_id, soul, lines in filled_soulgems(records):
         edid = filled_soulgem_id(gem_id, soul)
         out.setdefault('SLGM', []).append(
-            (patch_formid(('SLGM', edid)), lines))
+            (patch_formid(('SLGM', edid), ctx.own_index), lines))
+    ctx.taken.update(fid for rows in out.values() for fid, _lines in rows)
     _add_barks(out, ctx, barks, progress)
     out_dir = patch_dir(export_dir)
     counts = write_export(out, out_dir)
-    write_header(out_dir, [], sum(counts.values()),
+    write_header(out_dir, list(morroblivion), sum(counts.values()),
                  'Objects Morroblivion does not convert')
     progress(f'  Wrote {sum(counts.values())} records to {out_dir}')
     return out_dir

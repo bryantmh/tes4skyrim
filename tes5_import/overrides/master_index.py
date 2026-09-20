@@ -163,6 +163,12 @@ class MasterIndex:
         return 0
 
 
+    def find_all_by_edid(self, signature: bytes, edid: str) -> list:
+        """`find_by_edid` as a list, the shape `ChainedMasterIndex` answers in."""
+        fid = self.find_by_edid(signature, edid)
+        return [fid] if fid else []
+
+
 # GRUP types whose 4-byte label is a FormID (the owning record), not a
 # block/sub-block coordinate pair. xEdit wbImplementation: 1=World Children,
 # 6=Cell Children, 7=Topic Children, 8/9/10=the cell's persistent/temporary/

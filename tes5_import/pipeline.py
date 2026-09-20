@@ -42,6 +42,7 @@ from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         OverrideContext, detect_injected_records)
 from .actors.magic_effects import set_tes4_effect_names
 from .dialogue.converter import build_npc_to_vtyp_map
+from .base.adopted_records import adopt_master_special_records
 from .base.owned_records import (
     WELL_KNOWN_PROPERTIES,
     create_ambient_gmst_overrides,
@@ -76,15 +77,6 @@ from .pipeline_finalize import run_finalize_phases
 
 #: Record types an MGEF Assoc. Item can name; LVLC covers summon indirection.
 _ASSOC_ITEM_SIGS = ('CREA', 'NPC_', 'WEAP', 'ARMO', 'CLOT', 'LIGH', 'LVLC')
-
-#: Synthesized stand-in records -> signature; a mastered plugin adopts the master's.
-_TES4_SPECIAL_RECORD_SIGS = {
-    'TES4Fame': b'GLOB',
-    'TES4Infamy': b'GLOB',
-    'TES4GoldFenced': b'GLOB',
-    'TES4ControlsDisabled': b'GLOB',
-    'TES4CyrodiilCrimeFaction': b'FACT',
-}
 
 class ImportState:
     """Everything one import run shares across its phases.
@@ -214,74 +206,6 @@ def master_export_dirs(ctx) -> list:
     return [d for d in dirs if os.path.isdir(d)]
 
 
-def _adopt_master_special_records(ctx) -> None:
-    """Point the well-known registry at the MASTER's synthesized records.
-
-    `create_tes4_special_records` runs only for a root master, so a dependent
-    plugin's registry is empty — yet its converted scripts still declare
-    TES4ControlsDisabled / TES4Fame / … properties. An unbound property is None
-    at runtime and the first call on it aborts the entire Papyrus function
-    (Morroblivion's chargen stage 1 died on `TES4ControlsDisabled.SetValue(1)`
-    before it could set JiubSpeak). These records have no TES4 source FormID,
-    so the companion manifest cannot name them — find_by_edid exists for
-    exactly this case.
-    """
-    index = getattr(ctx, 'master_index', None)
-    if index is None:
-        return
-    found = 0
-    for edid, sig in _TES4_SPECIAL_RECORD_SIGS.items():
-        try:
-            fid = index.find_by_edid(sig, edid)
-        except Exception:
-            continue
-        if fid:
-            WELL_KNOWN_PROPERTIES[edid] = fid
-            found += 1
-    if found:
-        print(f"  Adopted {found} synthesized master records "
-              f"(TES4ControlsDisabled, TES4Fame, ...)")
-
-    from .base.equivalents import CUSTOM_VTYP_EDIDS, set_voice_type
-    voices = 0
-
-    def _adopt(vtyp_edid: str, race_edid: str, gender: str) -> bool:
-        try:
-            fid = index.find_by_edid(b'VTYP', vtyp_edid)
-        except Exception:
-            return False
-        if not fid:
-            return False
-        set_voice_type(race_edid, gender, fid)
-        return True
-
-    for vtyp_edid, (race_edid, gender) in CUSTOM_VTYP_EDIDS.items():
-        if _adopt(vtyp_edid, race_edid, gender):
-            voices += 1
-
-    derived = 0
-    try:
-        from asset_convert.audio.voice_races import load_race_voices
-        from asset_convert.audio.voice_races import vtyp_edid as _vtyp_edid
-    except ImportError:
-        load_race_voices = None     # asset_convert unavailable — fixed set only
-    if load_race_voices is not None:
-        for mdir in master_export_dirs(ctx):
-            try:
-                races = load_race_voices(mdir)
-            except OSError:
-                continue
-            for race_edid, key in sorted(races.by_race_edid.items()):
-                for gender in ('Male', 'Female'):
-                    if _adopt(_vtyp_edid(key, gender), race_edid, gender):
-                        derived += 1
-    if voices or derived:
-        extra = f"; {derived} from the master's own races" if derived else ''
-        print(f"  Adopted {voices + derived} master voice types (VTYP){extra}")
-
-
-
-
 def _reconcile_masters(masters: list, tes4_master_names: list) -> list:
     """`masters` reduced to the export header's list, plus Skyrim.esm.
 
@@ -304,16 +228,17 @@ def _reconcile_masters(masters: list, tes4_master_names: list) -> list:
 def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_done):
     """Create the VTYP/GLOB/FACT support records, or adopt the master's.
 
-    A root master creates them; a plugin WITH TES4 masters adopts the
-    master's FormIDs instead, since re-creating them duplicates master
-    content and the duplicates compete with the originals.
+    A plugin adopts the FormIDs a master supplies, since re-creating them
+    makes duplicates that compete with the originals, and creates them when no
+    master in its list does -- a root master, or the Morroblivion patch.
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-dependent-skips-support-records
     """
     _step_t = time.time()
     from .record_types.actor_common import (create_origin_faction, reset_origin_faction)
     reset_origin_faction(getattr(ctx, 'master_index', None))
-    if not ctx:
+    if not ctx or not adopt_master_special_records(
+            ctx, master_export_dirs(ctx)):
         create_vtyp_records(writer, export_dir, by_type)
 
         _origin_fact = create_origin_faction(writer)
@@ -323,8 +248,6 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
         create_tes4_special_records(writer)
 
         create_ambient_gmst_overrides(writer, by_type)
-    else:
-        _adopt_master_special_records(ctx)
     _step_done('vtyp/special records')
 
 
@@ -683,13 +606,13 @@ def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict, 
 def _prescan_vendor_trainer(by_type: dict, ctx, writer, _step_done):
     """Create vendor factions and the trainer faction + CLAS clones.
 
-    Root masters only: these are support records a dependent plugin
-    inherits from its master rather than duplicating.
+    Only for a plugin no master supplies them to: a dependent inherits these
+    from its master rather than duplicating them.
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-dependent-skips-support-records
     """
-    if not ctx:
-        from .record_types.actor_common import (create_trainer_records, create_vendor_factions)
+    from .record_types.actor_common import (create_trainer_records, create_vendor_factions, is_support_root)
+    if is_support_root():
         create_vendor_factions(by_type, writer)
         create_trainer_records(by_type, writer)
     _step_done('vendor/trainer records')

@@ -311,6 +311,14 @@ def get_origin_faction_fid() -> int:
     return _origin_faction_fid
 
 
+def is_support_root() -> bool:
+    """Whether THIS import created the support records, as no master supplies them.
+
+    See: docs/commentary/tes5_import_pipeline.md#phase-0-dependent-skips-support-records
+    """
+    return bool(_origin_faction_fid)
+
+
 def origin_memberships() -> list:
     """Every plugin-origin FACT this file's actors join: its own, else its masters'.
 

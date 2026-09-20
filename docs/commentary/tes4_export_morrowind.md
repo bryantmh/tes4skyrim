@@ -724,8 +724,9 @@ Three things hid it:
 
 So `ok` now means the plugin FILE exists: a build that wrote records and assets
 but no plugin reports failure and says the records survived in `export/`. The
-patch declares no TES4 master and its export carries no `Master[N]=` line, so
-`_reconcile_masters` leaves the list at `Skyrim.esm` and it builds standalone.
+patch declares the converted Morroblivion plugins as its masters
+([why](#the-patch-masters-morroblivion)), so `_reconcile_masters` builds its
+list from the export header like any other dependent's.
 
 The build has two doors, because the refusal that sends a user to it fires on
 the command line too: the GUI menu, and `convert.py --build-morrowind-patch
@@ -1524,23 +1525,40 @@ the NPC_/CREA/SCPT records the audience resolver needs.
 Nothing is duplicated: a voiced line exists in exactly one place, and
 Morroblivion has none of them.
 
+#### <a id="the-patch-masters-morroblivion"></a>The patch masters Morroblivion
+
+**Code:** `tes4_export/morrowind_patch.py` `_write_records`,
+`tes5_import/pipeline.py` `_prescan_special_records`
+
+The patch is useless without Morroblivion, so it declares every converted
+`Morrowind_ob*` export as a master and resolves names through `load_context`
+exactly as Tamriel Rebuilt does. Its own records take the load-order byte that
+follows them; only the byte moved, the hashed low 24 bits did not, and the
+engine identifies a form by plugin plus those 24 bits, so no save is affected.
+
+It was masterless at first, which left it unable to name any faction, class or
+actor Morroblivion holds. Measured on the vanilla ESMs: 192 voiced barks state
+a faction and the masterless export kept **0** positive `GetInFaction` tests,
+and 494 of 4,572 barks named something it could not reach.
+
+It still CREATES its own voice types, origin faction and `TES4*` support
+records. Those live in Oblivion.esm, which is not in its master list, so
+`_adopt_master_special_records` finds none to adopt and the import falls back
+to creating them -- the rule is "adopt what a master supplies, create what none
+does", not "a plugin with masters never creates". Tamriel Data and Tamriel
+Rebuilt keep adopting the patch's.
+
 #### <a id="an-audience-that-cannot-be-named"></a>An audience that cannot be named drops the LINE, never the filter
 
-The patch declares no converted master, so it can name only the forms it ships
-itself: the gap records. A vanilla bark filtered on a class, a faction or an
-actor that Morroblivion holds has nothing to point a condition at.
+A bark filtered on a class, a faction or an actor that NO converted plugin in
+the chain defines has nothing to point a condition at. Skipping the test and
+keeping the line would widen it to its race and sex alone, and TES3 topics put
+their specific lines FIRST -- as does Skyrim, which takes the first INFO that
+passes -- so an Ordinator's `faction=temple` greeting would beat the generic
+Dark Elf pool on every Dark Elf male.
 
-The exporter used to skip the unresolvable test and keep the line. Measured on
-the vanilla ESMs: 192 voiced barks state a faction (183 of them hellos) and the
-patch export kept **0** positive `GetInFaction` tests, so every one of those
-lines fell back to its race and sex alone. TES3 topics put their specific lines
-FIRST, and Skyrim also takes the first INFO that passes, so an Ordinator's
-`faction=temple` greeting would have beaten the generic Dark Elf pool on every
-Dark Elf male.
-
-`_audience_lines` now returns None for such a bark and `dialogue_records`
-counts it under `unresolved['bark audience']`. With Morrowind's authored masters
-every name resolves and nothing is dropped.
+`_audience_lines` returns None for such a bark and `dialogue_records` counts it
+under `unresolved['bark audience']`.
 
 #### <a id="when-a-bark-fires"></a>When a bark fires: the package has to allow it
 

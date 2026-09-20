@@ -132,7 +132,7 @@ class MorrowindContext:
         self.derived = {}
         self.unresolved = Counter()
         self.own_ids = {}
-        self._taken = set(self.index.form_ids())
+        self.taken = set(self.index.form_ids())
         self._exterior_cells = set()
         self.exterior_cell_ids = set()
         self.rehomed_persistent = 0
@@ -399,8 +399,8 @@ class MorrowindContext:
             offset = int.from_bytes(digest[:4], 'little') % _DERIVED_SPAN
             candidate = '%08X' % ((self.own_index << 24)
                                   | (_DERIVED_BASE + offset))
-            if candidate not in self._taken:
-                self._taken.add(candidate)
+            if candidate not in self.taken:
+                self.taken.add(candidate)
                 self.derived[key] = candidate
                 return candidate
         raise RuntimeError('no free derived FormID for %r' % record_id)

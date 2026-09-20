@@ -492,6 +492,20 @@ def _tes3_records(path, records, masters=()) -> str:
     return str(path)
 
 
+#: A Morroblivion stand-in named so no stage resolves the REAL converted plugin.
+_FIXTURE_MASTER = 'Morrowind_ob_fixture.esm'
+
+
+def _convert_morroblivion(export, out_root) -> None:
+    """Import the stand-in Morroblivion export, which the patch masters."""
+    from tes5_import.pipeline import import_plugin
+    dest = out_root / _FIXTURE_MASTER / _FIXTURE_MASTER
+    dest.parent.mkdir(parents=True)
+    import_plugin(export_dir=str(export / _FIXTURE_MASTER),
+                  output_path=str(dest), masters=['Skyrim.esm'],
+                  output_root=str(out_root))
+
+
 def test_gap_patch_holds_what_morroblivion_lacks(tmp_path):
     """The patch fills exactly the objects the converted index cannot supply.
 
@@ -508,9 +522,10 @@ def test_gap_patch_holds_what_morroblivion_lacks(tmp_path):
     for name in ('Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm'):
         _tes3_records(data / name, [_rec('STAT', 'ex_scrapwood01'),
                                     _rec('STAT', 'covered_rock')])
-    _export(export, 'Morrowind_ob.esm', [_rec('STAT', 'covered_rock')])
+    _export(export, _FIXTURE_MASTER, [_rec('STAT', 'covered_rock')])
+    _convert_morroblivion(export, tmp_path / 'output')
 
-    result = build_patch(str(data), str(export), ['Morrowind_ob.esm'],
+    result = build_patch(str(data), str(export), [_FIXTURE_MASTER],
                          progress=lambda *_: None,
                          out_root=tmp_path / 'output')
 
@@ -518,12 +533,14 @@ def test_gap_patch_holds_what_morroblivion_lacks(tmp_path):
     assert result['records'] == 1, 'only the object Morroblivion lacks'
     body = (export / PATCH_NAME / 'STAT.txt').read_text(encoding='utf-8')
     assert 'EditorID=ex_scrapwood01' in body
-    fid = patch_formid(('STAT', 'ex_scrapwood01'))
+    fid = patch_formid(('STAT', 'ex_scrapwood01'), 1)
     assert f'FormID={fid}' in body
-    assert fid.startswith('00'), 'a shared fill never sits in a plugin id space'
-    assert patch_formid(('STAT', 'EX_ScrapWood01')) == fid, (
+    assert fid.startswith('01'), 'the byte after its one Morroblivion master'
+    assert fid[2:] == patch_formid(('STAT', 'ex_scrapwood01'))[2:], (
+        'the master count moves the index byte and never the hashed id')
+    assert patch_formid(('STAT', 'EX_ScrapWood01'), 1) == fid, (
         'ids are case-insensitive')
-    assert patch_formid(('SOUN', 'ex_scrapwood01')) != fid, (
+    assert patch_formid(('SOUN', 'ex_scrapwood01'), 1) != fid, (
         'one id under two types is two records')
 
 
@@ -545,10 +562,11 @@ def test_gap_patch_builds_the_plugin_itself(tmp_path):
     for name in ('Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm'):
         _tes3_records(data / name, [_rec('STAT', 'ex_scrapwood01'),
                                     _rec('STAT', 'covered_rock')])
-    _export(export, 'Morrowind_ob.esm', [_rec('STAT', 'covered_rock')])
+    _export(export, _FIXTURE_MASTER, [_rec('STAT', 'covered_rock')])
     out_root = tmp_path / 'output'
+    _convert_morroblivion(export, out_root)
 
-    result = build_patch(str(data), str(export), ['Morrowind_ob.esm'],
+    result = build_patch(str(data), str(export), [_FIXTURE_MASTER],
                          progress=lambda *_: None, out_root=out_root)
 
     assert result['ok'], result.get('error')
@@ -558,7 +576,8 @@ def test_gap_patch_builds_the_plugin_itself(tmp_path):
     assert plugin.read_bytes()[:4] == b'TES4', 'a real plugin, not a stub'
 
     flags, masters = read_header(str(plugin))
-    assert masters == ['Skyrim.esm'], 'a standalone patch masters nothing else'
+    assert masters == ['Skyrim.esm', _FIXTURE_MASTER], (
+        'it names what Morroblivion holds, so it masters Morroblivion')
     assert flags & 0x1, 'ESM-flagged: dependent plugins declare it a master'
     assert PATCH_NAME.lower().endswith('.esp'), 'the .esp extension is kept'
     assert PATCH_NAME in converted_plugins(out_root), (

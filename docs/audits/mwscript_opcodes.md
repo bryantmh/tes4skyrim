@@ -6,21 +6,18 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 
 | Status | Commands | Call sites |
 |---|---:|---:|
-| ported | 326 | 86845 |
+| ported | 329 | 87204 |
 | no-op | 14 | 2683 |
-| STUB | 147 | 964 |
+| STUB | 144 | 605 |
 
-🛑 **102 of the 147 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 45 command(s) below.
+🛑 **102 of the 144 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 42 command(s) below.
 
 ## Stubbed, and something calls it
 
 | Command | Domain | Signature | Calls |
 |---|---|---|---:|
-| `say` | Sound | `SS` | 184 |
 | `playgroup` | Animation | `c/l` | 178 |
-| `getbuttonpressed` | Gui | — → `l` | 131 |
 | `getattacked` | Misc | — → `l` | 45 |
-| `saydone` | Sound | — → `l` | 44 |
 | `modwaterlevel` | Cell | `f` | 22 |
 | `enableteleporting` | Misc | — | 21 |
 | `getarmortype` | Container | `l` → `l` | 21 |
@@ -115,6 +112,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `getspell` | Stats | `c` → `l` | 207 |
 | `rotate` | Transformation | `cf` | 206 |
 | `removespell` | Stats | `cz` | 201 |
+| `say` | Sound | `SS` | 184 |
 | `placeitemcell` | Transformation | `ccffffX` | 179 |
 | `setangle` | Transformation | `cf` | 159 |
 | `setdisposition` | Stats | `l` | 159 |
@@ -122,6 +120,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `getaipackagedone` | Ai | — → `l` | 150 |
 | `setalarm` | Ai | `l` | 133 |
 | `setdelete` | Misc | `l` | 133 |
+| `getbuttonpressed` | Gui | — → `l` | 131 |
 | `placeatpc` | Transformation | `clflX` | 128 |
 | `equip` | Container | `cX` | 126 |
 | `hassoulgem` | Container | `c` → `l` | 123 |
@@ -158,6 +157,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `setflee` | Ai | `l` | 50 |
 | `gettarget` | Ai | `c` → `l` | 49 |
 | `modcurrenthealth` | Stats | `f` | 48 |
+| `saydone` | Sound | — → `l` | 44 |
 | `getfatigue` | Stats | `x` → `f` | 43 |
 | `modrestoration` | Stats | `f` | 43 |
 | `setscale` | Transformation | `f` | 42 |
