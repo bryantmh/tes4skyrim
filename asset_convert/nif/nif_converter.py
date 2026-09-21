@@ -138,6 +138,7 @@ from asset_convert.nif.mesh_scan_emit import (record_scan_alias,
                                               record_scan_removal)
 from asset_convert.collision.collision import (hoist_collision,
                                                remove_empty_collision_nodes)
+from asset_convert.collision.collision_anim import node_transform_is_animated
 from asset_convert.collision.collision_falloutnv import (
     is_fallout_source, latch_source, merge_static_parts)
 from asset_convert.collision.collision_constraints import (enforce_ragdoll_tree,
@@ -826,19 +827,33 @@ def _hide_helper_geometry(root, stats):
     _hide_uvless_lit_shapes(root, stats)
 
 
-def _hoist_root_collision(root, wrapped, root_is_animated, has_constraints,
-                          creature):
+def _collision_owner(root):
+    """The descendant owning a collision object, or None when none does."""
+    stack = [c for c in (getattr(root, 'children', None) or []) if c is not None]
+    while stack:
+        node = stack.pop()
+        if getattr(node, 'collision_object', None) is not None:
+            return node
+        stack.extend(c for c in (getattr(node, 'children', None) or [])
+                     if c is not None)
+    return None
+
+
+def _hoist_root_collision(data, root, wrapped, has_constraints, creature):
     """Move a child's collision onto the root, where Skyrim wants it.
 
-    Skipped when the root was wrapped (hoisting from under the wrapper would
-    have to compose the WRAPPER's transform too, and the wrap path already
-    absorbs it), for animated objects (the keyframed body must follow the
-    animated child), for constrained NIFs (the spatial relationship is the
-    constraint), and for creatures (ragdoll collision lives on the bones).
+    Skipped for a wrapped root (the wrap path already absorbs the transform),
+    when the COLLISION NODE is really moved by animation, for constrained NIFs
+    (the constraint IS the spatial relationship), and for creatures (ragdoll
+    collision lives on the bones).  A keyless stub is not animation.
+    See: docs/commentary/asset_convert_collision.md#keyless-transform-stubs
     """
-    if wrapped or root_is_animated or has_constraints or creature:
+    if wrapped or has_constraints or creature:
         return
     if not hasattr(root, 'collision_object') or root.collision_object is not None:
+        return
+    owner = _collision_owner(root)
+    if owner is not None and node_transform_is_animated(data, owner):
         return
     if (is_fallout_source() and merge_static_parts(root)) or hoist_collision(root):
         remove_empty_collision_nodes(root)
@@ -1038,12 +1053,9 @@ def _convert_one_root(data, i, root, stats, fix_textures, src_path, creature,
     _run_animation_passes(root, stats)
     _hide_helper_geometry(root, stats)
 
-    root_is_animated = isinstance(getattr(root, 'controller', None),
-                                  NifFormat.NiControllerManager)
     has_constraints = any(isinstance(b, NifFormat.bhkConstraint)
                           for b in data.blocks)
-    _hoist_root_collision(root, wrapped, root_is_animated, has_constraints,
-                          creature)
+    _hoist_root_collision(data, root, wrapped, has_constraints, creature)
     convert_root_collision(data, root, creature, nif_basename,
                             has_constraints)
 

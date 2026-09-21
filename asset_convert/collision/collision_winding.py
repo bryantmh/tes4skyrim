@@ -27,6 +27,18 @@ _TWIN_QUANTUM = 0.02 / 69.9904
 #: A render face must align with the collision face by at least this much.
 _PARALLEL = 0.70
 
+#: Slack (1 game unit) for "the skin is on the side its normal claims".
+_SLAB_EPS = 1.0 / 7.0
+
+#: A plank is THIN: a skin further than this (8 game units) is another surface.
+_MAX_SLAB_DZ = 8.0 / 7.0
+
+#: Candidates within this much of the nearest must agree, or the face abstains.
+_CONSENSUS_MARGIN = 0.05
+
+#: A render face further than this many triangle-widths away is another surface.
+_MAX_MATCH_WIDTHS = 2.0
+
 
 def face_normal(tri):
     """Normalized face normal for a triangle given as three xyz tuples."""
@@ -56,6 +68,24 @@ def _render_faces(visual_tris):
         if n[0] or n[1] or n[2]:
             out.append((t, n))
     return out
+
+
+def _render_states_a_floor(faces):
+    """Whether the render mesh has any up-facing horizontal surface.
+
+    A mesh whose horizontal faces ALL point down is itself wound backwards,
+    so it cannot be the orientation oracle: trusting it inverts collision
+    that was correct.  `inuvelothismalludju01` ships 0 up / 40 down and lost
+    all 62 of its standable cells to it.
+    See: docs/commentary/asset_convert_collision.md#round-4b-the-rule-must-abstain
+    """
+    up = down = 0
+    for _t, n in faces:
+        if n[2] > 0.5:
+            up += 1
+        elif n[2] < -0.5:
+            down += 1
+    return up > 0 or down == 0
 
 
 def _twin_index(faces):
@@ -98,6 +128,15 @@ def _projected_overlap(ctri, cn, rtri):
     return True
 
 
+def _triangle_width(t):
+    """Mean edge length: the triangle's own scale, for a relative distance cap."""
+    e = 0.0
+    for i in range(3):
+        p, q = t[i], t[(i + 1) % 3]
+        e += math.sqrt((p[0]-q[0])**2 + (p[1]-q[1])**2 + (p[2]-q[2])**2)
+    return e / 3.0
+
+
 def _vertex_set_distance(a, b):
     """Least total corner-to-corner distance over the six pairings."""
     best = None
@@ -112,24 +151,54 @@ def _vertex_set_distance(a, b):
     return best
 
 
+def _wrong_side_of_slab(tri, n, rtri):
+    """Whether `rtri` sits on the side `n` does not face.
+
+    A thin plank's two skins are both within any usable distance, so nearest
+    alone picks between them at random.  A skin may only decide a face it
+    could BE: an up-facing face by a skin at or above it, a down-facing face
+    by one at or below, and within `_MAX_SLAB_DZ` either way -- a plank is
+    thin, so a skin further off is a different surface entirely.
+    See: docs/commentary/asset_convert_collision.md#round-4b-the-rule-must-abstain
+    """
+    if abs(n[2]) < 0.5:
+        return False
+    dz = (sum(p[2] for p in rtri) / 3.0) - (sum(p[2] for p in tri) / 3.0)
+    if abs(dz) > _MAX_SLAB_DZ:
+        return True
+    if n[2] > 0 and dz < -_SLAB_EPS:
+        return True
+    return n[2] < 0 and dz > _SLAB_EPS
+
+
 def _nearest_says_inverted(tri, n, faces):
     """Whether the closest coincident render surface is opposed.
 
     Nearest by VERTEX SET, for collision that is a simplification of the
-    render mesh rather than a copy of it.
-    See: docs/commentary/asset_convert_collision.md#morroblivion-collision-is-copied-render
+    render mesh rather than a copy of it.  None when the candidates tied for
+    nearest disagree: a coarse shell far from any skin has no evidence, and
+    guessing there turns a solid floor into a fall-through.
+    See: docs/commentary/asset_convert_collision.md#round-4b-the-rule-must-abstain
     """
-    best = None
+    cands = []
     for rtri, rn in faces:
         align = n[0]*rn[0] + n[1]*rn[1] + n[2]*rn[2]
         if abs(align) < _PARALLEL:
             continue
+        if _wrong_side_of_slab(tri, n, rtri):
+            continue
         if not _projected_overlap(tri, n, rtri):
             continue
-        d = _vertex_set_distance(tri, rtri)
-        if best is None or d < best[0]:
-            best = (d, align)
-    return None if best is None else best[1] < 0
+        cands.append((_vertex_set_distance(tri, rtri), align))
+    if not cands:
+        return None
+    cands.sort()
+    if cands[0][0] > _MAX_MATCH_WIDTHS * _triangle_width(tri):
+        return None
+    limit = cands[0][0] * (1.0 + _CONSENSUS_MARGIN) + 1e-9
+    if len({c[1] < 0 for c in cands if c[0] <= limit}) > 1:
+        return None
+    return cands[0][1] < 0
 
 
 def _authored_flips(tris, authored_normals):
@@ -197,6 +266,6 @@ def repair_inverted_floors(tris, visual_tris=None, groups=None,
         return _rewound(tris, flip)
 
     faces = _render_faces(visual_tris)
-    if faces:
+    if faces and _render_states_a_floor(faces):
         flip = _render_flips(tris, faces)
     return _rewound(tris, flip)

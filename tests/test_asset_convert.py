@@ -4475,6 +4475,90 @@ class TestCollisionWindingRepair:
         assert checked, 'expected a mesh collision shape in seisland.nif'
 
 
+class TestWindingRepairNeverRemovesFloor:
+    r"""A mesh solid at source must stay solid: the repair may add standable
+    surface, never take it away.
+
+    User report (2026-09-20): "I just fell through 0inuaru08".  The arch
+    raycasts 0 fall-through at source and 152 after conversion, because the
+    rule could not ABSTAIN -- its two nearest render candidates sat within one
+    unit of each other pointing opposite ways, and it guessed 30 times.  Only
+    3 of the mesh's 48 horizontal faces are decidable at all.
+    See: docs/commentary/asset_convert_collision.md#round-4b-the-rule-must-abstain
+    """
+
+    MORRO = Path('export/Morrowind_ob.esm/meshes/morro/i')
+
+    def _standable(self, tris, n=12):
+        """Cells with an UP-facing face under them; down-faces pass through."""
+        from asset_convert.collision import collision_winding as W
+        xs = [v[0] for t in tris for v in t]
+        ys = [v[1] for t in tris for v in t]
+        out = set()
+        for i in range(n):
+            for j in range(n):
+                ox = min(xs) + (max(xs) - min(xs)) * (i + 0.5) / n
+                oy = min(ys) + (max(ys) - min(ys)) * (j + 0.5) / n
+                for t in tris:
+                    if W.face_normal(t)[2] <= 0:
+                        continue
+                    (ax, ay, _az), (bx, by, _bz), (cx, cy, _cz) = t
+                    d1 = (bx-ax)*(oy-ay) - (by-ay)*(ox-ax)
+                    d2 = (cx-bx)*(oy-by) - (cy-by)*(ox-bx)
+                    d3 = (ax-cx)*(oy-cy) - (ay-cy)*(ox-cx)
+                    neg = d1 < -1e-9 or d2 < -1e-9 or d3 < -1e-9
+                    pos = d1 > 1e-9 or d2 > 1e-9 or d3 > 1e-9
+                    if not (neg and pos):
+                        out.add((i, j))
+                        break
+        return out
+
+    def _soups(self, path):
+        """`(collision, render)` triangles, both in Oblivion havok units."""
+        from asset_convert.nif import sse_nif
+        data = sse_nif.read_nif(str(path))
+        root = data.blocks[0] if data.blocks else None
+        coll, vis = [], []
+        for b in data.blocks:
+            if b.__class__.__name__ == 'hkPackedNiTriStripsData':
+                v = [(x.x, x.y, x.z) for x in b.vertices]
+                coll += [(v[t.triangle.v_1], v[t.triangle.v_2],
+                          v[t.triangle.v_3]) for t in b.triangles]
+        for b in data.blocks:
+            if b.__class__.__name__ != 'NiTriShape':
+                continue
+            d = getattr(b, 'data', None)
+            if d is None:
+                continue
+            m = b.get_transform(root)
+            v = [((p.x*m.m_11 + p.y*m.m_21 + p.z*m.m_31 + m.m_41) / 7.0,
+                  (p.x*m.m_12 + p.y*m.m_22 + p.z*m.m_32 + m.m_42) / 7.0,
+                  (p.x*m.m_13 + p.y*m.m_23 + p.z*m.m_33 + m.m_43) / 7.0)
+                 for p in d.vertices]
+            vis += [(v[t.v_1], v[t.v_2], v[t.v_3]) for t in d.triangles]
+        return coll, vis
+
+    @pytest.mark.parametrize('name', ['inuaru03', 'inuaru04', 'inuaru05',
+                                      'inuaru07', 'inuaru08', 'inuaru09',
+                                      'inuaru10'])
+    def test_solid_source_stays_solid(self, name, monkeypatch):
+        """No cell standable at source may lose its surface to the repair."""
+        from asset_convert.collision import collision_winding as W
+        src = self.MORRO / f'{name}.nif'
+        if not src.exists():
+            pytest.skip(f'{name}.nif not exported')
+        monkeypatch.setenv('TESCONV_COLLISION_WINDING_FIX', '1')
+        coll, vis = self._soups(src)
+        assert coll and vis, 'fixture must have both collision and render'
+        before = self._standable(coll)
+        repaired, _n = W.repair_inverted_floors(list(coll), vis, None, None)
+        after = self._standable(repaired)
+        lost = before - after
+        assert not lost, (
+            f'{name}: repair removed {len(lost)} standable cells of '
+            f'{len(before)} -- a hole in a floor that was solid at source')
+
+
 class TestLuminanceGlowMapsBecomeRGB:
     r"""Oblivion's L8 glow maps must not reach Skyrim as single-channel.
 

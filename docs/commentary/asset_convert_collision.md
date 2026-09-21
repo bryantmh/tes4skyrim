@@ -493,6 +493,114 @@ confident wrong answers (a vanilla-Skyrim sweep reporting ~47% down-facing
 faces invites the conclusion that winding is irrelevant, which the oracle
 disproves). The oracle is the only admissible evidence.
 
+### <a id="round-4b-the-rule-must-abstain"></a>Round 4b — the rule MUST be able to abstain
+
+Round 4 as first shipped broke `inuaru08` (a cave arch): source raycasts **0
+fall-through**, the shipped output **152**. It had no abstain path, so on a
+coarse shell far from any render skin it flipped 30 triangles on what were
+coin flips — the two nearest candidates sat **within 1 unit of each other
+pointing opposite ways** (t8: dist 164.2 align -0.998 vs 165.1 align +0.999).
+Only 3 of its 48 horizontal faces are decidable at all by the directional skin
+test; 45 have no evidence.
+
+Three additions:
+
+- **Directional slab gate** (`_wrong_side_of_slab`) — a skin may only decide a
+  face it could BE: an up-facing face by a skin at or above it, a down-facing
+  face by one at or below. This is the rule `collision_winding_truth.py`
+  already documents as the THIN-SLAB TRAP; round 4 simply failed to carry it
+  over. These are thin PLANKS, so both skins are real surfaces a thickness
+  apart, and raw proximity picks between them at random.
+- **Consensus abstain** (`_CONSENSUS_MARGIN` 0.05) — when the candidates within
+  5% of the nearest disagree, return None and leave the source winding alone.
+- **`_SLAB_EPS` IS IN GAME UNITS, AND THIS CODE IS IN HAVOK UNITS.** The 0.005
+  slack was copied from `collision_winding_truth.py`, which works in game
+  units; the repair works in havok units (7x smaller), so the tolerance meant
+  to absorb float noise was effectively ZERO. The gate then rejected the truly
+  coincident skins 1.6-3.8 units below a near-flat face and left only a face
+  **7x further away** to decide it unopposed — `inuaru09` lost 3 cells to
+  exactly that. At **1.0 game unit** it is right, and fixing it improved BOTH
+  metrics at once: oracle wrong **20 -> 12**, cells lost **22 -> 18**, gained
+  518 -> 527. It also dissolved an apparent tradeoff (dz 8 vs 10) that was
+  never real — raising dz had only been compensating for the broken gate.
+- **Absolute slab thickness** (`_MAX_SLAB_DZ`, 8 game units) — a plank is
+  THIN, so a skin further than this along z is a different surface even when
+  it is on the side the directional test wants. `exuvelothiustriderportu01`
+  lost 87 of 96 standable cells to a skin 46 units above it: its authored
+  oracle stands at z 66.9 with 196 cells, the repair put it at z -138.3 with
+  12. Measured over `morro`, 8 beats both 10 (88 lost) and uncapped (94).
+- **Relative distance cap** (`_MAX_MATCH_WIDTHS` 2.0) — a winner further than
+  two of the collision triangle's own mean edge lengths is a DIFFERENT
+  surface. Relative, not absolute, so it scales from a 26-unit plank to a
+  1000-unit floor slab. On `morro/i` by raycast this removes every regression:
+  standable cells **lost 105 -> 0**, net **+288 -> +393**, keeping all 393
+  gains.
+
+Result: `inuaru08`/`09`/`10` lose **0 standable cells**, and the oracle key
+wrong answers go **41 -> 12** (81 abstaining). Over 60 `morro` meshes,
+standable cells **lost 138 -> 18, gained 527, net +509**, regressing files
+13 -> 6. Abstaining is the right trade: a wrong flip is a hole in the floor,
+an abstention is the source winding, which is mostly right.
+
+### <a id="round-4c-the-render-mesh-can-be-wrong-too"></a>Round 4c — the render mesh is not always an oracle
+
+Checking the SHIPPED files (not a simulation) found two more, both invisible
+to the oracle key because the key only covers 24 meshes:
+
+- **`inuvelothismalludju01` lost all 62 standable cells.** Its render mesh has
+  **0 up-facing and 40 down-facing** horizontal triangles — the visible
+  geometry is itself wound backwards, so it cannot be the orientation oracle.
+  64 of its 129 collision faces twin-match a render face pointing the opposite
+  way, and the twin rule dutifully inverted a floor that was correct.
+  `_render_states_a_floor` now refuses a render mesh with no up-facing floor
+  at all. Across the whole oracle corpus every mesh has real up-faces (lowest
+  ratio 0.05, `furnucomushelfu01`), so this is categorical, not a threshold.
+- **`inudweuend00uexp`'s "196 of 196 lost" was a MEASUREMENT bug**, not a
+  pipeline one: source and shipped are identical (2 triangles, normal
+  (0,-1,0), a vertical wall). The probe counted vertical faces as floors
+  because `-0.0 <= 0`. A standable-cell probe must require a real upward
+  slope (`n[2] > 0.05`), not merely a non-negative one.
+
+**Ranking candidates by |dz| instead of vertex distance is WORSE** — tried
+because the arch family's bad winners sat at dz +6.93 while a dz +1.27 face
+pointed the other way. Measured: cells lost **26 vs 18**, net +491 vs +509,
+abstentions 154 vs 81, oracle unchanged at 12 bad. Rejected; whole-triangle
+vertex distance stays.
+
+**Not every "lost" cell is a defect.** `inumusewerucapu02` loses all 31 of
+its standable cells, and that is CORRECT: its authored Morrowind collision
+has 0 up-faces and 0 standable cells of its own — a sewer cap is a ceiling.
+Check the oracle before treating a loss as a regression. The `inuaru*` arch
+family is the opposite case: 18 cells lost of 653 with **0 gained**, so the
+repair has nothing to offer there and every flip is neutral or harmful; they
+are the regression fixture in `TestWindingRepairNeverRemovesFloor`.
+
+**What the cap does NOT fix**: `barracks01` (FNV) stays at -117 net. Its
+collision triangles are over 1000 units across against a 6423-triangle render
+mesh, so two triangle-widths is a huge allowance and the cap never binds; its
+15 bad up-face flips are decided by render faces 469-739 units away that all
+agree with each other, so the consensus check passes too. Left as measured
+rather than tuned away with an absolute threshold, which would cost the
+Morroblivion gains. FNV overall is still net **+288**.
+
+**FO3/FNV get the same rules** — no special case. The first FNV numbers said
+otherwise (0 -> 150) but were measured with a scorer that CALLS
+`_nearest_says_inverted`, so adding the slab gate moved the instrument and the
+before/after were not comparable across runs (the "before" itself shifted
+815 -> 728). Re-measured two ways, gated wins on both: residual inversions
+**137 vs 150**, and by raycast — which shares no code with the repair —
+**146 standable cells lost vs 205**. Score a winding change with a raycast,
+never with the repair's own predicate.
+
+**A raycast probe must ignore down-facing faces.** Taking the highest hit of
+any orientation counts a legitimate underside sitting above the walkway as a
+fall-through, which reported the ramp as 900/900 broken when it was correct.
+The engine's question is "descending from above, is there an up-facing face to
+land on?". With that fixed, the repaired ramp's walkable surface is
+z -379.7..-132.3 over 900 cells — **identical to the authored Morrowind
+collision**, while the Morroblivion source floats ~145 units above its own
+visible ramp (render walkable z -384.0..-30.2).
+
 **Scope.** The render-mesh repair sits behind the same `winding_fix_enabled()`
 gate the removed steps 1-3 did, and `WINDING_FIX_DEFAULT_PLUGINS` holds only
 `morrowind_ob`, so it is unreachable for Oblivion, Nehrim, Morrowind (native
@@ -508,7 +616,15 @@ the whole repair when the gate is off or the node has no render geometry.
 Re-measured on the PRODUCTION soups (`_shape_tri_soup` +
 `_bake_body_transform_into_tris` + `_visual_tri_soup`, i.e. the exact inputs
 `repair_inverted_floors` receives): **3,092 / 3,106 correct (99.55%), 0
-undecided**, same failure set.
+undecided**, same failure set. (That figure predates round 4b; the shipped
+rule scores 20 wrong on the oracle key with 96 abstaining.)
+
+**Score a winding change by RAYCAST, not by the repair's own predicate.** The
+first FNV numbers here were measured with a scorer that calls
+`_nearest_says_inverted`, so each rule change moved the instrument and the
+before/after were not comparable between runs — the "before" itself drifted
+815 -> 728 -> 630. The standable-cell raycast in `walk2.py` shares no code
+with the repair and is the metric that matched the user's in-game report.
 
 ### <a id="welding-is-per-group"></a>Welding is scoped PER GROUP
 
@@ -778,3 +894,49 @@ the CMS path, measured 0.997-1.010 on the same test and were never affected.
 collision shape and were all extracted undersized.
 
 <a id="body-placement"></a>**A rigid body is placed at its OWNING NODE's world transform** (`collision_from_data`, `_body_placements`). The extractor read every `bhkRigidBody` out of `data.blocks` and emitted its triangles in the body's own frame, on the stated assumption that conversion moves collision to the root node. That holds for most meshes but not all: `tes4/dungeons/chargen/prisonsecretwall01.nif` keeps its two boxes on the child nodes `bed` (translation 12.8, 170.0, -125.8) and `wall` (-61.6, 214.7, -64.0), so both were emitted ~200u from where they belong -- a phantom 171x94x227u box at the mesh origin that the navmesh then built against, while IN GAME the collision sits correctly because the engine honours the node chain. The walk accumulates rotation, uniform scale and translation per node and records a placer only for a chain that is not the identity, so the common root-mounted body pays nothing. The shape's own transform is already baked in by `_primitive_tris` / `decode_cms` and is not re-applied.
+
+## <a id="keyless-transform-stubs"></a>Keyless transform stubs must not count as animation
+
+**Code:** `asset_convert/collision/collision_anim.py` (`node_transform_is_animated`)
+
+Oblivion's exporter writes a `NiTransformController` entry into the `Idle`
+sequence for the root and `NonAccum` node of nearly every mesh, whether or not
+the node ever moves. On a static the entry's `NiTransformInterpolator` has
+`data = None` -- no rotation, translation or scale keys at all -- so it only
+restates the node's fixed base transform.
+
+`_hoist_root_collision` skipped any mesh whose root owned a
+`NiControllerManager`, which those stubs guarantee. The collision then stayed
+on the child `NonAccum` node instead of moving to the root, where Skyrim
+expects a static's `bhkCollisionObject` (vanilla `candlehornfloor01.nif` puts
+it on the root `BSFadeNode`).
+
+Measured over 500 source NIFs that keep collision on a child node: 13 carry
+REAL transform keys (a correct skip), 6 are keyless stubs (a wrong skip), and
+28 have no transform entry at all. In converted output, 21 of 400 meshes
+(5%) kept collision on a child while their body was not keyframed.
+
+`ctrapswingmacelong01.nif` is the case that proves the test must be the KEYS
+and not the entry: its transform interpolators are keyless stubs too, because
+the mace swings on a `bhkRagdollConstraint` rather than an animation. It stays
+unhoisted through the separate `has_constraints` gate, not this one.
+
+### Why it crashed the game
+
+The camera's collision sweep (`hkpWorld::linearCast`, string `TtworldLinCast`
+at 1.6.659 RVA `0xab20dc`) fills an `hkpAllCdPointTempCollector`, then sorts
+the hits with a recursive introsort (`0x77a790`, entered via `sort(hkArray&)`
+at `0xe42610`). Elements are `0x40` bytes and the sort key is the float at
+`+0x1C`. The partition loop at `0x77a831` scans downward with `comiss` + `jb`
+and no bound check, and `comiss` sets CF=1 for unordered operands -- so a NaN
+PIVOT makes `jb` always taken and the scan runs off the array. A NaN merely
+present in the data terminates normally; only the pivot is fatal.
+
+Measured from `crash-2026-09-20-21-07-16.log`: `R13 = 2` (3 elements), array
+base `R15 = RSP+0x750`. Element 2 is a real hit (position 63.75, 62.46,
+227.39; normal -0.999978, 0.00667, 0.00333; key 0.5656), while elements 0 and
+1 hold `0xFFFFFFFF` geometry with live heap pointers at `+0x20`/`+0x30`. The
+midpoint `(0+2)>>1 = 1` is therefore the NaN element, and
+`R15 + 0x1C + (-16080 * 0x40)` lands exactly on the faulting address `RCX`.
+Windows reports `EXCEPTION_STACK_OVERFLOW` because the underrun walks about
+1 MB below `RSP` into the stack guard page.
