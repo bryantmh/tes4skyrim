@@ -15,6 +15,7 @@ and the FormID behind each item id.
 See: docs/commentary/morrowind_runtime.md#sidecar
 """
 
+import math
 import os
 import re
 import shutil
@@ -306,27 +307,44 @@ def _scripted_bases(export_dir: str, by_formid: dict) -> dict:
     return bases
 
 
-def _instance_lines(export_dir: str, bases: dict, plugin_name: str) -> list:
-    """`placement FormID=Plugin.esm|base id|script` per placed ref running one.
+#: The authored placement `SetAtStart` restores, as the export spells it.
+_PLACEMENT_KEYS = ('PosX', 'PosY', 'PosZ', 'RotX', 'RotY', 'RotZ')
 
-    One line per placement, not per base: 798 scripted bases of TR_Mainland are
-    placed more than once and 303 of those declare locals, so a table keyed by
-    the base would give 116 doors one shared variable set.
+
+def _placement(rec: dict) -> str:
+    """`x,y,z,rx,ry,rz` for a placed ref, the angles in DEGREES.
+
+    The runtime's SetAngle hook takes degrees; the record stores radians.
+    """
+    out = []
+    for key in _PLACEMENT_KEYS:
+        value = float(rec.get(key) or 0.0)
+        if key.startswith('Rot'):
+            value = math.degrees(value)
+        out.append(f'{value:g}')
+    return ','.join(out)
+
+
+def _instance_lines(export_dir: str, bases: dict, plugin_name: str) -> list:
+    """`placement FormID=Plugin.esm|base id|script|x,y,z,rx,ry,rz` per placed
+    ref running one.
+
+    One line per placement, not per base: a table keyed by the base would give
+    every door of a kind one shared variable set.
 
     🛑 The plugin's FULL file name rides in the row, exactly as
-    `refs_formid.txt` carries it. Rebuilding it from the sidecar FOLDER name
-    and appending `.esm` bound 0 of 15,540 instances in game.
+    `refs_formid.txt` carries it, never rebuilt from the sidecar FOLDER name.
     See: docs/plans/morrowind_object_scripts.md#instances
     """
     lines = []
     for name in _PLACEMENT_EXPORTS:
         for rec in export_records(os.path.join(export_dir, name),
-                                  ('FormID', 'NAME')):
+                                  ('FormID', 'NAME') + _PLACEMENT_KEYS):
             found = bases.get(rec.get('NAME', '').upper())
             if found and rec.get('FormID'):
                 base_id, script = found
                 lines.append(f"{rec['FormID']}={plugin_name}|{base_id}|"
-                             f"{script}")
+                             f"{script}|{_placement(rec)}")
     return lines
 
 

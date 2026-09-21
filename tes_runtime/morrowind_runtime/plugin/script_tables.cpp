@@ -130,6 +130,17 @@ std::vector<std::string> Split(const std::string& text, char sep) {
     }
 }
 
+// `x,y,z,rx,ry,rz` into `row`. A row short of all six keeps none of it, so a
+// half-written placement can never teleport an object into the void.
+void ReadPlacement(const std::string& text, InstanceRow& row) {
+    const std::vector<std::string> parts = Split(text, ',');
+    if (parts.size() != std::size(row.placement)) return;
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        row.placement[i] = static_cast<float>(std::atof(parts[i].c_str()));
+    }
+    row.hasPlacement = true;
+}
+
 // A comma-joined run of ints into `out[0..count)`; short runs leave zeros.
 void ParseInts(const std::string& text, int* out, std::size_t count) {
     const std::vector<std::string> f = Split(text, ',');
@@ -411,6 +422,7 @@ void LoadScriptTables(const std::string& pluginDir) {
                    row.plugin = f[0];
                    row.baseId = f[1];
                    row.script = f[2];
+                   if (f.size() > 3) ReadPlacement(f[3], row);
                    row.localFormId = static_cast<std::uint32_t>(
                        std::strtoul(formId.c_str(), nullptr, 16));
                    const auto added = g_instances.emplace(
@@ -575,6 +587,13 @@ std::size_t FactionCount() { return g_factions.size(); }
 
 void AddFactionForTest(const std::string& faction, const FactionDef& def) {
     g_factions[Lower(faction)] = def;
+}
+
+const float* FindPlacement(const std::string& id) {
+    const FormRef* ref = FindRef(id);
+    if (!ref) return nullptr;
+    const InstanceRow* row = InstanceByLocal(ref->formId & kLocalMask);
+    return row && row->hasPlacement ? row->placement : nullptr;
 }
 
 const ActorDef* FindActor(const std::string& actor) {

@@ -1399,6 +1399,63 @@ std::string FixtureDir() {
     return path.substr(0, slash + 1) + "testdata\\scripts\\";
 }
 
+// `GetCurrentTime` is the `gamehour` global, which the game refreshes every
+// tick -- not a number of its own that could drift from the clock conditions.
+void CurrentTimeCases(DialogueContext& context) {
+    std::printf("GetCurrentTime reads the game hour\n");
+    State().SyncGlobal("gamehour", 14.0f);
+    State().SetDisposition("test_actor", 50);
+    Check(RunResultScript("if ( GetCurrentTime == 14 )\n"
+                          "    ModDisposition 3\nendif\n", context) &&
+              State().Disposition("test_actor") == 53,
+          "the hour the clock holds is the hour it answers");
+    State().SetDisposition("test_actor", 50);
+}
+
+// The authored placement the sidecar carries, which SetAtStart restores and
+// GetStartingPos/GetStartingAngle read. A row written before the columns
+// existed keeps none, rather than reporting the origin as its home.
+void PlacementCases(DialogueContext& context) {
+    std::printf("the authored placement is read back\n");
+    const float* at = FindPlacement("test_door");
+    Check(at && at[0] == 10.0f && at[2] == 30.0f, "position comes from the row");
+    Check(at && at[5] == 90.0f, "the angle is the row's, in degrees");
+    Check(FindPlacement("test_actor") == nullptr,
+          "a row without the columns has no placement");
+    State().SetDisposition("test_actor", 50);
+    Check(RunResultScript("if ( \"test_door\"->GetStartingPos z == 30 )\n"
+                          "    ModDisposition 3\nendif\n", context) &&
+              State().Disposition("test_actor") == 53,
+          "GetStartingPos answers the authored z");
+    State().SetDisposition("test_actor", 50);
+    Check(RunResultScript("if ( \"test_door\"->GetStartingAngle z == 90 )\n"
+                          "    ModDisposition 3\nendif\n", context) &&
+              State().Disposition("test_actor") == 53,
+          "GetStartingAngle answers the authored rotation");
+    State().SetDisposition("test_actor", 50);
+}
+
+// `RaiseRank`/`LowerRank` move the NPC's OWN rank, starting from the one its
+// record authors, and LowerRank stops at 0 rather than resigning.
+void ActorRankCases(DialogueContext& context) {
+    std::printf("RaiseRank and LowerRank move the NPC's own rank\n");
+    Check(State().ActorRank("test_actor") == 8, "starts at the authored rank");
+    Check(RunResultScript("RaiseRank\n", context) &&
+              State().ActorRank("test_actor") == 9,
+          "RaiseRank promotes from the authored rank");
+    Check(RunResultScript("LowerRank\n", context) &&
+              State().ActorRank("test_actor") == 8,
+          "LowerRank demotes from the moved rank");
+    State().SetActorRank("test_actor", 0);
+    Check(RunResultScript("LowerRank\n", context) &&
+              State().ActorRank("test_actor") == 0,
+          "LowerRank stops at 0");
+    Check(RunResultScript("\"player\"->RaiseRank\n", context) &&
+              State().ActorRank("player") == -1,
+          "the player has no rank of its own to raise");
+    State().SetActorRank("test_actor", 8);
+}
+
 // `GetButtonPressed` hands the click out ONCE: a script polls it every tick,
 // so a value that stayed set would re-fire the branch on the next frame.
 void ButtonPressedCases(DialogueContext& context) {
@@ -1442,6 +1499,9 @@ void Cases() {
     ForcedMovementCases(context);
     UnportedSiteCases(context);
     ButtonPressedCases(context);
+    ActorRankCases(context);
+    PlacementCases(context);
+    CurrentTimeCases(context);
     TableCases(context, actor);
     State().BeginConversation();
 

@@ -148,6 +148,25 @@ class OpGetLevel : public Interpreter::Opcode0 {
     }
 };
 
+// `RaiseRank` / `LowerRank`: the TARGET's rank in its OWN primary faction,
+// which is the only faction an NPC_ record carries -- not the player's, which
+// is `PCRaiseRank`. LowerRank stops at 0 rather than resigning.
+//
+// The player needs no special case: it has no NPC_ record, so `FindActor`
+// answers null and the faction guard already returns.
+// See: docs/commentary/morrowind_runtime.md#npc-rank
+template <class R, int Delta>
+class OpChangeRank : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string actor = R::Target(runtime);
+        const ActorDef* def = FindActor(actor);
+        if (!def || def->faction.empty()) return;
+        const int rank = State().ActorRank(actor);
+        if (Delta < 0 && rank <= 0) return;
+        State().SetActorRank(actor, rank + Delta);
+    }
+};
+
 // The six opcode bases of one family, in Get, Set, Mod order, each bare then
 // explicit.
 struct FamilyCodes {
@@ -209,6 +228,10 @@ void InstallStatOps(OpcodeInstaller& into) {
                     S::opcodeModMagicEffectExplicit}});
     into.Real<OpGetLevel<Implicit>>(S::opcodeGetLevel);
     into.Real<OpGetLevel<Explicit>>(S::opcodeGetLevelExplicit);
+    into.Real<OpChangeRank<Implicit, 1>>(S::opcodeRaiseRank);
+    into.Real<OpChangeRank<Explicit, 1>>(S::opcodeRaiseRankExplicit);
+    into.Real<OpChangeRank<Implicit, -1>>(S::opcodeLowerRank);
+    into.Real<OpChangeRank<Explicit, -1>>(S::opcodeLowerRankExplicit);
 }
 
 }  // namespace mwruntime

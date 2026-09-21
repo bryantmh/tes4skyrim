@@ -168,6 +168,12 @@ struct InstanceRow {
     // The TES3 id of the BASE it places, which a bare `Activate` acts on.
     std::string baseId;
     std::string script;
+    // The AUTHORED placement `SetAtStart` restores: x, y, z then the three
+    // angles in DEGREES, which is what the SetAngle hook takes. All zero for a
+    // row a sidecar wrote before the columns existed.
+    // See: docs/commentary/morrowind_runtime.md#setatstart
+    float placement[6] = {};
+    bool hasPlacement = false;
 };
 
 // The staged instance at `index` in load order, or null past the end. The
@@ -181,6 +187,12 @@ const InstanceRow* InstanceAt(std::size_t index);
 // all we have then is its FormID -- whose low 24 bits are what was staged.
 // See: docs/plans/morrowind_object_scripts.md#only-persistent-refs-exist
 const InstanceRow* InstanceByLocal(std::uint32_t localFormId);
+
+// The AUTHORED placement of the reference `id` names, or null when that id is
+// not a placed reference or its row predates the placement columns. What
+// `SetAtStart` restores.
+// See: docs/commentary/morrowind_runtime.md#setatstart
+const float* FindPlacement(const std::string& id);
 
 const ActorDef* FindActor(const std::string& actor);
 // Where `actor` offers to take the player, or null when it offers no travel.

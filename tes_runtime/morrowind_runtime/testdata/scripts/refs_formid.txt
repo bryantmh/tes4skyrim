@@ -1,0 +1,1 @@
+test_door=scripts.esm|0300A001

@@ -1487,6 +1487,75 @@ pre-fix sources it reports `AddDeath`; it reports nothing now. It cannot see a
 flag that is written and read but acted on by nobody, which is what
 `StartScript` was.
 
+### <a id="setatstart"></a>The authored placement: `SetAtStart` and its readers
+
+**Code:** `plugin/script_ops_world.cpp:OpSetAtStart`, `script_tables.cpp:FindPlacement`
+
+`SetAtStart` puts an object back where the CELL RECORD placed it, position and
+rotation both -- OpenMW's `transformationextensions.cpp:OpSetAtStart` reads
+`getCellRef().getPosition()`, not anything runtime. `GetStartingPos` and
+`GetStartingAngle` read the same values without moving anything, which is how a
+script measures how far its own mechanism has travelled.
+
+The runtime had no authored placement at all, so `SCPT_instances.txt` gained a
+fourth column: `x,y,z,rx,ry,rz`. 🛑 **The angles are written in DEGREES.** The
+export stores the record's radians, `_placement` converts, and the SetAngle
+hook takes degrees -- the getters convert the other way, so a raw radian would
+be off by 57x with nothing to say so. A row from an older sidecar has no fourth
+column and answers null rather than claiming the origin as its home.
+
+`ResetActors` is the same restore over every LOADED placed actor, standing in
+for OpenMW's sweep of the active cells. It reaches only SCRIPTED placements,
+which is what the instance table holds -- measured, all 13 placed actors of the
+two cells that call it are scripted, so the limit costs nothing on the real
+corpus.
+
+`fixme` joins `kDeliberateNoOps`: it nudges the PLAYER up to 128 units by
+probing collision for a free spot, it is a console command, and no corpus calls
+it.
+
+`DontSaveObject` (5 sites) is a no-op too, and OpenMW's own implementation is
+the reason: an empty body whose comment says the incompatibility from ignoring
+it is marginal at most. It asks that an object be left out of the save, which
+is not a request Skyrim's save format can carry.
+
+`GetCurrentTime` reads the `gamehour` global rather than a number of its own.
+That global is Skyrim's, refreshed by `SyncClock` every tick, so the hour this
+answers cannot drift from the one a clock CONDITION sees.
+See: [the clock globals](#the-clock).
+
+Guarded by `script_test.cpp:PlacementCases`.
+
+### <a id="npc-rank"></a>`RaiseRank` / `LowerRank`: the NPC's own rank
+
+**Code:** `plugin/script_ops_stats.cpp:OpChangeRank`, `DialogueState::ActorRank`
+
+These move the TARGET's rank, not the player's -- `PCRaiseRank` is the player's
+and was already ported. The distinction is in the signature: `raiserank` takes
+`x` (no argument) because an NPC_ record carries exactly ONE faction, so there
+is no faction to name; `pcraiserank` takes `/S`, the faction.
+
+Ported from OpenMW's `statsextensions.cpp:OpRaiseRank`, which is the contract:
+
+- no faction on the record -> no-op;
+- a rank already moved this session -> move it again from there;
+- otherwise start from the record's AUTHORED rank and move from that.
+
+`LowerRank` additionally stops at 0 rather than resigning the NPC.
+
+The state is `mActorRank`, keyed by actor and falling back to `ActorDef::rank`
+-- the same shape as `mDisposition`. The player needs no special case: it has
+no NPC_ record, so `FindActor` answers null and the faction guard returns.
+
+🛑 **`GameActor::PrimaryFactionRank` reads it**, which is what makes a
+promotion visible: that is the one function the dialogue filter asks for a
+`Rank` condition, so a script that promotes an NPC changes which lines it
+offers. Reading `ActorDef::rank` directly there, as the first version did,
+would have left the promotion invisible to the only thing that consumes it.
+
+Persisted in the cosave as the `N` record; guarded by
+`script_test.cpp:ActorRankCases`.
+
 ### <a id="messagebox-buttons"></a>`MessageBox` buttons and `GetButtonPressed`
 
 **Code:** `plugin/game_calls_message.cpp`, `plugin/script_ops_world.cpp:OpGetButtonPressed`

@@ -169,6 +169,9 @@ class OpModDynamic : public Interpreter::Opcode0 {
 // `GetPos x` / `SetPos z 128` -- the axis is a STRING argument, not part of
 // the command name, so one opcode serves all three. An unknown axis answers
 // x, which is what OpenMW's own conversion does rather than failing.
+//: x, y, z -- and the three angles that follow them in a placement row.
+constexpr int kAxisCount = 3;
+
 int AxisOf(const std::string& axis) {
     if (axis.empty()) return 0;
     const char letter = static_cast<char>(::tolower(axis[0]));
@@ -192,6 +195,63 @@ class OpSetPos : public Interpreter::Opcode0 {
         const int axis = AxisOf(PopString(runtime));
         const float value = PopFloat(runtime);
         if (Hooks().setPosition) Hooks().setPosition(ref, axis, value);
+    }
+};
+
+// `GetStartingPos x` / `GetStartingAngle z`: the AUTHORED placement rather
+// than where the object stands now, which is what a script compares against to
+// see how far its own mechanism has travelled. `Offset` picks the half of the
+// row: 0 for the position, kAxisCount for the angles, already in degrees.
+// See: docs/commentary/morrowind_runtime.md#setatstart
+template <class R, int Offset>
+class OpGetStarting : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        const int axis = AxisOf(PopString(runtime));
+        const float* at = FindPlacement(ref);
+        runtime.push(at ? at[Offset + axis] : 0.0f);
+    }
+};
+
+// `SetAtStart`: back to the placement the cell record authors, position and
+// rotation both. The scenery scripts pair it with MoveWorld/rotate to re-arm a
+// trap or re-close a door, usually on CellChanged.
+// See: docs/commentary/morrowind_runtime.md#setatstart
+template <class R>
+class OpSetAtStart : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string ref = R::Target(runtime);
+        const float* at = FindPlacement(ref);
+        if (!at || !Hooks().setPosition || !Hooks().setAngle) return;
+        for (int axis = 0; axis < kAxisCount; ++axis) {
+            Hooks().setPosition(ref, axis, at[axis]);
+            Hooks().setAngle(ref, axis, at[kAxisCount + axis]);
+        }
+    }
+};
+
+// `ResetActors`: every LOADED placed actor back to its authored spot, which is
+// how a scene puts its cast back on their marks. Takes no target and no
+// argument -- OpenMW sweeps the active cells, and the loaded check is what
+// stands in for that here.
+//
+// Scripted placements only, which the instance table is: measured, all 13
+// placed actors of the two cells that call this are scripted.
+// See: docs/commentary/morrowind_runtime.md#setatstart
+class OpResetActors : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime&) override {
+        if (!Hooks().loadedRef || !Hooks().setPosition || !Hooks().setAngle) {
+            return;
+        }
+        for (std::size_t at = 0; const InstanceRow* row = InstanceAt(at); ++at) {
+            if (!row->hasPlacement) continue;
+            if (!Hooks().loadedRef(row->plugin, row->localFormId)) continue;
+            for (int axis = 0; axis < kAxisCount; ++axis) {
+                Hooks().setPosition(row->baseId, axis, row->placement[axis]);
+                Hooks().setAngle(row->baseId, axis,
+                                 row->placement[kAxisCount + axis]);
+            }
+        }
     }
 };
 
@@ -240,6 +300,16 @@ class OpGetInterior : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
         runtime.push(Hooks().playerInInterior && Hooks().playerInInterior()
                          ? 1 : 0);
+    }
+};
+
+// `GetCurrentTime`: the hour of day, 0..24. OpenMW reads its own timestamp;
+// ours is the `gamehour` global, which SyncClock refreshes from Skyrim's own
+// GLOB every tick, so this is the same number the clock conditions see.
+// See: docs/commentary/morrowind_runtime.md#the-clock
+class OpGetCurrentTime : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        runtime.push(State().Global("gamehour"));
     }
 };
 
@@ -322,6 +392,7 @@ void InstallWorldOps(OpcodeInstaller& into) {
     into.Real<OpSetDelete<Implicit>>(M::opcodeSetDelete);
     into.Real<OpSetDelete<Explicit>>(M::opcodeSetDeleteExplicit);
     into.Real<OpMenuMode>(M::opcodeMenuMode);
+    into.Real<OpGetCurrentTime>(M::opcodeGetCurrentTime);
     into.Real<OpGetButtonPressed>(G::opcodeGetButtonPressed);
     into.Real<OpGetPCCell>(C::opcodeGetPCCell);
     into.Real<OpGetInterior>(C::opcodeGetInterior);
@@ -347,6 +418,14 @@ void InstallWorldOps(OpcodeInstaller& into) {
     into.Real<OpGetAngle<Explicit>>(T::opcodeGetAngleExplicit);
     into.Real<OpSetAngle<Implicit>>(T::opcodeSetAngle);
     into.Real<OpSetAngle<Explicit>>(T::opcodeSetAngleExplicit);
+    into.Real<OpSetAtStart<Implicit>>(T::opcodeSetAtStart);
+    into.Real<OpSetAtStart<Explicit>>(T::opcodeSetAtStartExplicit);
+    into.Real<OpResetActors>(T::opcodeResetActors);
+    into.Real<OpGetStarting<Implicit, 0>>(T::opcodeGetStartingPos);
+    into.Real<OpGetStarting<Explicit, 0>>(T::opcodeGetStartingPosExplicit);
+    into.Real<OpGetStarting<Implicit, kAxisCount>>(T::opcodeGetStartingAngle);
+    into.Real<OpGetStarting<Explicit, kAxisCount>>(
+        T::opcodeGetStartingAngleExplicit);
     InstallDynamic<kHealth>(into);
     InstallDynamic<kMagicka>(into);
     InstallDynamic<kFatigue>(into);

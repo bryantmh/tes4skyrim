@@ -55,8 +55,7 @@ RefId GameActor::PrimaryFaction() const {
 }
 
 int GameActor::PrimaryFactionRank() const {
-    const ActorDef* def = FindActor(mId);
-    return def && !def->faction.empty() ? def->rank : -1;
+    return State().ActorRank(mId);
 }
 
 int GameActor::PlayerFactionRank(const RefId& faction) const {

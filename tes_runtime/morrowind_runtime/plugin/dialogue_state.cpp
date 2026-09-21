@@ -114,6 +114,18 @@ void DialogueState::ModDisposition(const std::string& actor, int delta) {
     SetDisposition(actor, Disposition(actor) + delta);
 }
 
+int DialogueState::ActorRank(const std::string& actor) const {
+    const auto it = mActorRank.find(Key(actor));
+    if (it != mActorRank.end()) return it->second;
+    const ActorDef* def = FindActor(actor);
+    return def && !def->faction.empty() ? def->rank : -1;
+}
+
+void DialogueState::SetActorRank(const std::string& actor, int rank) {
+    mActorRank[Key(actor)] = rank;
+    Log("rank: %s = %d", actor.c_str(), rank);
+}
+
 bool DialogueState::HasGlobal(const std::string& name) const {
     return mGlobals.find(Key(name)) != mGlobals.end() || FindGlobal(name);
 }
@@ -321,6 +333,7 @@ std::string DialogueState::Serialize() const {
     for (const auto& e : mJournal) out << "J\t" << e.first << '\t' << e.second << '\n';
     for (const auto& e : mEntries) out << "E\t" << e.first << '\t' << e.second << '\n';
     for (const auto& e : mDisposition) out << "D\t" << e.first << '\t' << e.second << '\n';
+    for (const auto& e : mActorRank) out << "N\t" << e.first << '\t' << e.second << '\n';
     for (const auto& e : mGlobals) out << "G\t" << e.first << '\t' << e.second << '\n';
     for (const auto& e : mVars) {
         out << "L\t" << e.first.first << '\t' << e.first.second << '\t'
@@ -366,6 +379,7 @@ std::size_t DialogueState::Deserialize(const std::string& text) {
         if (kind == "J" && n == 3) mJournal[f[1]] = Int(f[2]);
         else if (kind == "E" && n == 3) mEntries.push_back({f[1], Int(f[2])});
         else if (kind == "D" && n == 3) mDisposition[f[1]] = Int(f[2]);
+        else if (kind == "N" && n == 3) mActorRank[f[1]] = Int(f[2]);
         else if (kind == "G" && n == 3) mGlobals[f[1]] = Float(f[2]);
         else if (kind == "L" && n == 4) mVars[{f[1], f[2]}] = Float(f[3]);
         else if (kind == "F" && n == 5) mFactions[f[1]] = {Int(f[2]), f[3] == "1", Int(f[4])};

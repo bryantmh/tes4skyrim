@@ -6,11 +6,11 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 
 | Status | Commands | Call sites |
 |---|---:|---:|
-| ported | 329 | 87204 |
-| no-op | 14 | 2683 |
-| STUB | 144 | 605 |
+| ported | 337 | 87253 |
+| no-op | 16 | 2688 |
+| STUB | 134 | 551 |
 
-🛑 **102 of the 144 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 42 command(s) below.
+🛑 **99 of the 134 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 35 command(s) below.
 
 ## Stubbed, and something calls it
 
@@ -23,12 +23,10 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `getarmortype` | Container | `l` → `l` | 21 |
 | `getwindspeed` | Misc | — → `f` | 21 |
 | `gotojail` | Misc | — | 19 |
-| `setatstart` | Transformation | — | 19 |
 | `getcommondisease` | Stats | — → `l` | 18 |
 | `payfinethief` | Misc | — | 18 |
 | `changeweather` | Sky | `Sl` | 15 |
 | `getwaterlevel` | Cell | — → `f` | 15 |
-| `raiserank` | Stats | `x` | 15 |
 | `getstandingactor` | Misc | — → `l` | 14 |
 | `loopgroup` | Animation | `cl/l` | 13 |
 | `removefromlevcreature` | Misc | `ccl` | 13 |
@@ -40,20 +38,15 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `getcollidingpc` | Misc | — → `l` | 9 |
 | `showrestmenu` | Gui | — | 9 |
 | `wakeuppc` | Misc | — | 9 |
-| `resetactors` | Transformation | — | 6 |
-| `dontsaveobject` | Misc | — | 5 |
 | `hurtstandingactor` | Misc | `f` | 5 |
-| `getcurrenttime` | Misc | — → `f` | 4 |
 | `getweapontype` | Container | — → `l` | 4 |
 | `payfine` | Misc | — | 4 |
 | `togglemenus` | Gui | — | 4 |
 | `getblightdisease` | Stats | — → `l` | 3 |
-| `getstartingangle` | Transformation | `c` → `f` | 3 |
 | `menutest` | Gui | `/l` | 3 |
 | `onknockout` | Stats | — → `l` | 3 |
 | `onmurder` | Stats | — → `l` | 3 |
 | `skipanim` | Animation | — | 3 |
-| `lowerrank` | Stats | `x` | 2 |
 | `disablelevitation` | Misc | — | 1 |
 | `enablelevitation` | Misc | — | 1 |
 | `hitonme` | Misc | `S` → `l` | 1 |
@@ -182,11 +175,13 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `getstrength` | Stats | — → `f` | 19 |
 | `playloopsound3d` | Sound | `cXX` | 19 |
 | `resurrect` | Stats | — | 19 |
+| `setatstart` | Transformation | — | 19 |
 | `getspellreadied` | Misc | — → `l` | 18 |
 | `placeitem` | Transformation | `cffffX` | 18 |
 | `getsquareroot` | Misc | `f` → `f` | 16 |
 | `getlevel` | Stats | — → `l` | 15 |
 | `getscale` | Transformation | — → `f` | 15 |
+| `raiserank` | Stats | `x` | 15 |
 | `setspeed` | Stats | `f` | 15 |
 | `modfatigue` | Stats | `f` | 14 |
 | `getluck` | Stats | — → `f` | 13 |
@@ -216,6 +211,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `getpcrunning` | Control | — → `l` | 6 |
 | `getwillpower` | Stats | — → `f` | 6 |
 | `modalchemy` | Stats | `f` | 6 |
+| `resetactors` | Transformation | — | 6 |
 | `setchameleon` | Stats | `l` | 6 |
 | `getforcesneak` | Control | — → `l` | 5 |
 | `getillusion` | Stats | — → `f` | 5 |
@@ -225,6 +221,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `setshortblade` | Stats | `f` | 5 |
 | `getalarm` | Ai | — → `l` | 4 |
 | `getconjuration` | Stats | — → `f` | 4 |
+| `getcurrenttime` | Misc | — → `f` | 4 |
 | `getpersonality` | Stats | — → `f` | 4 |
 | `modscale` | Transformation | `f` | 4 |
 | `pclowerrank` | Stats | `/S` | 4 |
@@ -237,6 +234,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `getsneak` | Stats | — → `f` | 3 |
 | `getspear` | Stats | — → `f` | 3 |
 | `getspeed` | Stats | — → `f` | 3 |
+| `getstartingangle` | Transformation | `c` → `f` | 3 |
 | `modshortblade` | Stats | `f` | 3 |
 | `setacrobatics` | Stats | `f` | 3 |
 | `setagility` | Stats | `f` | 3 |
@@ -247,6 +245,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `gethandtohand` | Stats | — → `f` | 2 |
 | `getlongblade` | Stats | — → `f` | 2 |
 | `getmysticism` | Stats | — → `f` | 2 |
+| `lowerrank` | Stats | `x` | 2 |
 | `modagility` | Stats | `f` | 2 |
 | `modalarm` | Ai | `l` | 2 |
 | `modaxe` | Stats | `f` | 2 |
@@ -311,6 +310,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `getresistshock` | Stats | — → `l` |  |
 | `getshortblade` | Stats | — → `f` |  |
 | `getsilence` | Stats | — → `l` |  |
+| `getstartingpos` | Transformation | `c` → `f` |  |
 | `getsuperjump` | Stats | — → `l` |  |
 | `getswimspeed` | Stats | — → `l` |  |
 | `getunarmored` | Stats | — → `f` |  |
@@ -354,6 +354,7 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `modwaterbreathing` | Stats | `l` |  |
 | `modwaterwalking` | Stats | `l` |  |
 | `modwillpower` | Stats | `f` |  |
+| `ra` | Transformation | — |  |
 | `setalchemy` | Stats | `f` |  |
 | `setalteration` | Stats | `f` |  |
 | `setarmorer` | Stats | `f` |  |
@@ -405,6 +406,7 @@ Nothing to port: Morrowind's own presentation, or state this runtime does not ke
 | `fadein` | Misc | `f` | 120 |
 | `forcerun` | Control | — | 36 |
 | `clearforcerun` | Control | — | 17 |
+| `dontsaveobject` | Misc | — | 5 |
 | `getforcerun` | Control | — → `l` | 4 |
 | `forcejump` | Control | — | 3 |
 | `forcemovejump` | Control | — | 3 |
@@ -412,10 +414,11 @@ Nothing to port: Morrowind's own presentation, or state this runtime does not ke
 | `clearforcemovejump` | Control | — | 2 |
 | `getforcemovejump` | Control | — → `l` | 1 |
 | `fadeto` | Misc | `ff` |  |
+| `fixme` | Transformation | — |  |
 | `getforcejump` | Control | — → `l` |  |
 
 ## Stubbed, but nothing calls it
 
 Console, debug and chargen commands. Listed for completeness; none is reachable from dialogue.
 
-`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enableracemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `fixme`, `getcollidingactor`, `getmasserphase`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getsecundaphase`, `getstartingpos`, `getstat`, `getwerewolfkills`, `help`, `hitattemptonme`, `iswerewolf`, `modpcvisionbonus`, `modregion`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `ra`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setlevel`, `setnavmeshnumber`, `setpcvisionbonus`, `setwerewolfacrobatics`, `show`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`
+`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enableracemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `getcollidingactor`, `getmasserphase`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getsecundaphase`, `getstat`, `getwerewolfkills`, `help`, `hitattemptonme`, `iswerewolf`, `modpcvisionbonus`, `modregion`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setlevel`, `setnavmeshnumber`, `setpcvisionbonus`, `setwerewolfacrobatics`, `show`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`

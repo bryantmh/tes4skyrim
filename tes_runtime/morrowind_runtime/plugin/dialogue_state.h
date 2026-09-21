@@ -298,6 +298,13 @@ public:
     void SetDisposition(const std::string& actor, int value);
     void ModDisposition(const std::string& actor, int delta);
 
+    // --- an NPC's OWN rank: its authored rank until RaiseRank moves it -----
+    // Keyed by actor, not by faction: TES3 promotes within the NPC's PRIMARY
+    // faction, which is the only one an NPC record carries.
+    // See: docs/commentary/morrowind_runtime.md#npc-rank
+    int  ActorRank(const std::string& actor) const;
+    void SetActorRank(const std::string& actor, int rank);
+
     // --- script globals: a GLOB record's value until a script sets it ------
     bool  HasGlobal(const std::string& name) const;
     float Global(const std::string& name) const;
@@ -409,6 +416,7 @@ private:
     std::map<std::string, int> mJournal;
     std::vector<std::pair<std::string, int>> mEntries;
     std::map<std::string, int> mDisposition;
+    std::map<std::string, int> mActorRank;
     std::map<std::string, float> mGlobals;
     std::map<std::pair<std::string, std::string>, float> mVars;
     std::map<std::string, Membership> mFactions;

@@ -529,7 +529,13 @@ constexpr const char* kDeliberateNoOps[] = {
     "showmap", "fadein", "fadeout", "fadeto", "clearinfoactor",
     "forcerun", "clearforcerun", "getforcerun",
     "forcejump", "clearforcejump", "getforcejump",
-    "forcemovejump", "clearforcemovejump", "getforcemovejump"};
+    "forcemovejump", "clearforcemovejump", "getforcemovejump",
+    // The console's unstuck command: nudges the PLAYER up to 128 units by
+    // probing collision for a free spot. No call sites in any corpus.
+    "fixme",
+    // Asks that an object be left out of the save. OpenMW ignores it too, on
+    // the grounds that the incompatibility is marginal.
+    "dontsaveobject"};
 
 // How often each unported command has been reached.
 std::map<std::string, int> g_reported;
