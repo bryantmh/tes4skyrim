@@ -62,6 +62,38 @@ def collect_cell_bases(export_dir, cell_fids):
     return out
 
 
+def read_masters(export_dir):
+    """Master plugin names of an export, in load order, from its _HEADER.txt."""
+    masters = []
+    header = os.path.join(export_dir, "_HEADER.txt")
+    if os.path.isfile(header):
+        with open(header, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("Master["):
+                    masters.append(line.split("=", 1)[1].strip())
+    return masters
+
+
+def build_master_aware_index(export_dir, wanted_fids):
+    """build_base_index over the plugin AND its masters, keyed by the plugin's own FormIDs.
+
+    A base whose index byte names master k is looked up in export/<master k>
+    under that master's own index byte (its master count).
+    """
+    masters = read_masters(export_dir)
+    index = build_base_index(export_dir, wanted_fids)
+    for k, master in enumerate(masters):
+        master_dir = os.path.join(os.path.dirname(os.path.abspath(export_dir)), master)
+        if not os.path.isdir(master_dir):
+            continue
+        own = len(read_masters(master_dir))
+        remap = {"%02X%s" % (own, fid[2:]): fid
+                 for fid in wanted_fids if int(fid[:2], 16) == k}
+        for mfid, entry in build_base_index(master_dir, set(remap)).items():
+            index[remap[mfid]] = entry
+    return index
+
+
 def build_base_index(export_dir, wanted_fids):
     """Scan every export file once; return {fid: (signature, edid, [model paths])}."""
     index = {}
@@ -97,7 +129,7 @@ def main():
     all_bases = set()
     for d in bases_by_cell.values():
         all_bases.update(d)
-    index = build_base_index(args.export_dir, all_bases)
+    index = build_master_aware_index(args.export_dir, all_bases)
 
     mesh_sets = {}
     for label, fid in zip(args.cell, cell_fids):

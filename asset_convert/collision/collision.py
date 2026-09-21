@@ -35,6 +35,8 @@ GAME_UNITS_PER_HAVOK = 69.9904
 # skeleton.hkx describe the SAME bodies and vanilla ships identical masses in
 # both (dog total 74.00 either side).  See _convert_blend_collision.
 _OB_MASS_DIV = 7.0
+#: Vanilla's velocity ceiling for every engine-driven keyframed door and gate.
+_KEYFRAMED_VELOCITY_CAP = 1000002.0
 NIF_FLAGS = 14  # Standard Skyrim NiAVObject flags (SelectiveUpdate bits 1-3)
 
 # ---------------------------------------------------------------------------
@@ -1408,8 +1410,8 @@ def _convert_collision(node, actual_root=None, keep_blend=False):
         rb.restitution      = 0.40
         rb.linear_damping   = 0.0996
         rb.angular_damping  = 0.0498
-        rb.max_linear_velocity  = 104.4
-        rb.max_angular_velocity = 31.57
+        rb.max_linear_velocity  = _KEYFRAMED_VELOCITY_CAP
+        rb.max_angular_velocity = _KEYFRAMED_VELOCITY_CAP
         # Scripts can switch keyframed trap bodies to dynamic at runtime
         # (swinging traps activate that way), so inertia must be in Skyrim
         # units even though keyframed motion ignores it.  ×0.01, same as the

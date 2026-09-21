@@ -187,7 +187,7 @@ def _add_big_tris(data, big):
                 big_vert_index[key] = i
                 big_verts.append(key)
             idx.append(i)
-        if idx[0] == idx[1] or idx[1] == idx[2] or idx[0] == idx[2]:
+        if len(set(idx)) < 3 or _float32_collinear([big_verts[i] for i in idx]):
             continue
         big_tri_rows.append(idx)
 
@@ -210,9 +210,42 @@ def _f32(value):
     return struct.unpack('<f', struct.pack('<f', value))[0]
 
 
+#: float64 sin^2 below which a corner gets the exact float32 replay; float32 noise on the determinant is ~1e-6
+_COLLINEAR_SIN2 = 1e-5
+
+
+def _dot_f32(u, v):
+    """u.v summed in float32, in the order Havok's SIMD dot3 adds the lanes."""
+    return _f32(_f32(_f32(u[0] * v[0]) + _f32(u[1] * v[1])) + _f32(u[2] * v[2]))
+
+
+def _float32_collinear(tri):
+    """True when Havok's float32 triangle determinant |Q|^2|R|^2 - (Q.R)^2
+    is not positive at some corner, so the engine cannot tell `tri` from a
+    line.  `tri` holds the vertices as the engine decodes them.
+    See: docs/commentary/asset_convert_collision.md#float32-collinear-triangles
+    """
+    a, b, c = tri
+    for p, o, n in ((a, b, c), (b, c, a), (c, a, b)):
+        q = [p[i] - o[i] for i in range(3)]
+        r = [n[i] - o[i] for i in range(3)]
+        qq = q[0] * q[0] + q[1] * q[1] + q[2] * q[2]
+        rr = r[0] * r[0] + r[1] * r[1] + r[2] * r[2]
+        qr = q[0] * r[0] + q[1] * r[1] + q[2] * r[2]
+        if qq * rr - qr * qr > _COLLINEAR_SIN2 * qq * rr:
+            continue
+        q = [_f32(_f32(p[i]) - _f32(o[i])) for i in range(3)]
+        r = [_f32(_f32(n[i]) - _f32(o[i])) for i in range(3)]
+        qr = _dot_f32(r, q)
+        if _f32(_dot_f32(q, q) * _dot_f32(r, r)) - _f32(qr * qr) <= 0.0:
+            return True
+    return False
+
+
 def _quantize_bucket(bucket):
     """(base, flat_u16_offsets, indices) of a chunk; triangles collapsed by
-    quantization are dropped.
+    quantization, or collinear at float32 precision once quantized, are
+    dropped.
 
     The base is rounded to float32 first, because that is the precision the
     NIF field holds: quantizing against the float64 minimum offsets every
@@ -224,21 +257,21 @@ def _quantize_bucket(bucket):
     offs = []
     indices = []
     for t in bucket:
-        idx = []
-        for v in t:
-            q = tuple(
-                max(0, min(65535, int(round((v[i] - base[i]) * _QUANT))))
-                for i in range(3)
-            )
+        quant = [
+            tuple(max(0, min(65535, int(round((v[i] - base[i]) * _QUANT))))
+                  for i in range(3))
+            for v in t
+        ]
+        if len(set(quant)) < 3 or _float32_collinear(
+                [[base[i] + q[i] / _QUANT for i in range(3)] for q in quant]):
+            continue
+        for q in quant:
             i = vert_index.get(q)
             if i is None:
                 i = len(vert_index)
                 vert_index[q] = i
                 offs.extend(q)
-            idx.append(i)
-        if idx[0] == idx[1] or idx[1] == idx[2] or idx[0] == idx[2]:
-            continue
-        indices.extend(idx)
+            indices.append(i)
     return base, offs, indices
 
 

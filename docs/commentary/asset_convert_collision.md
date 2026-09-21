@@ -921,10 +921,39 @@ and not the entry: its transform interpolators are keyless stubs too, because
 the mace swings on a `bhkRagdollConstraint` rather than an animation. It stays
 unhoisted through the separate `has_constraints` gate, not this one.
 
-### Why it crashed the game
+This was found while chasing the Bosmora Temple doorway CTD but did NOT cause
+it; the cause is [float32-collinear triangles](#float32-collinear-triangles).
 
-The camera's collision sweep (`hkpWorld::linearCast`, string `TtworldLinCast`
-at 1.6.659 RVA `0xab20dc`) fills an `hkpAllCdPointTempCollector`, then sorts
+## <a id="float32-collinear-triangles"></a>A triangle collinear at float32 precision crashes the crosshair pick
+
+**Code:** `asset_convert/collision/cms_builder.py` (`_float32_collinear`, called from `_quantize_bucket` and `_add_big_tris`)
+
+Havok's closest-point-on-triangle (`hkpCollideTriangleUtil`, cache setup at
+1.6.1170 RVA `0xc79720`) computes `det = |Q|^2 |R|^2 - (Q.R)^2` in float32 and
+stores `1/det` with no guard. For `inumhudoorjambu02.nif` shape key
+`0x00040054` -- vertices (-0.7607, 0.1783, 0.0004), (-1.4857, 0.1783, -1.8286),
+(-0.5627, 0.1783, 0.5014), a 2.5 hu sliver 0.0004 hu tall -- the exact det is
++1.17e-6 but the float32 replay gives **-1.9e-6**, so `1/det = -524288` and the
+engine sees the triangle inside out. Every one of the six crash logs carries
+that key at `+0x38` (`shapeKeyB`) of both garbage collector entries:
+`0x40054 = (chunk 0 + 1) << 18 | index offset 84`.
+
+Census, float32 det at all three corners: vanilla
+`references/Skyrim Meshes/meshes/architecture` **0 of 174,261** triangles (439
+meshes) are non-positive; converted `Morrowind_ob.esm/.../morro/i` had 7 of
+302,423. Thinness alone is NOT the invariant -- vanilla ships 13 triangles with
+altitude under the 0.001 hu CMS quantum (`hhlgbaylangle` 0.000433) and all of
+them keep a positive float32 det.
+
+The builder drops such a triangle where it already drops ones collapsed by
+quantization, testing the vertices as the engine decodes them. The hole is
+narrower than the 0.005 hu shell radius.
+
+### How the bad triangle becomes a crash
+
+The crosshair pick (`CrosshairPickData::Pick`, 1.6.1170 RVA `0x402c60`) sweeps
+a phantom with `hkpWorld::linearCast` (string `TtworldLinCast`
+at 1.6.659 RVA `0xab20dc`), which fills an `hkpAllCdPointTempCollector`, then sorts
 the hits with a recursive introsort (`0x77a790`, entered via `sort(hkArray&)`
 at `0xe42610`). Elements are `0x40` bytes and the sort key is the float at
 `+0x1C`. The partition loop at `0x77a831` scans downward with `comiss` + `jb`
@@ -940,3 +969,26 @@ midpoint `(0+2)>>1 = 1` is therefore the NaN element, and
 `R15 + 0x1C + (-16080 * 0x40)` lands exactly on the faulting address `RCX`.
 Windows reports `EXCEPTION_STACK_OVERFLOW` because the underrun walks about
 1 MB below `RSP` into the stack guard page.
+
+## <a id="keyframed-velocity-caps"></a>Keyframed doors need the UNLIMITED velocity cap
+
+**Code:** `asset_convert/collision/collision.py` (keyframed branch of `_convert_collision`)
+
+A keyframed body is moved by the engine, not the solver, so vanilla removes the
+solver's velocity ceiling on it: `max_linear_velocity` and
+`max_angular_velocity` are both `1000002.0`.
+
+Census of `references/Skyrim Meshes/meshes` (2000 NIFs, 78 keyframed bodies):
+every one of the 37 CLAMPED bodies (104.4 / 31.57) is a `bhkCapsuleShape` in a
+`skeleton.nif` -- an actor ragdoll bone. Every non-skeleton keyframed body --
+`wrcastledoor01`, `shouseintdoor01`, `ruinsmediumdoor01`, `dweptndoor01`,
+`riftenrwdoorspecial01`, `spatiogate01`, `rtmercerramp01`,
+`trapstonepressureplate01` and the rest -- uses `1000002.0`. There is no
+vanilla door with 104.4.
+
+Our keyframed branch wrote the ragdoll pair onto everything, so 0 of the
+converted doors carried the unlimited cap: `inumhudooru02`, `inuciudooru01`,
+`exusudoorudouble`, `inumhujaildooru01` and ~30 more all shipped 104.4.
+
+The skeleton case is handled separately in `_convert_blend_collision`, which is
+why the door branch can take the unlimited pair unconditionally.
