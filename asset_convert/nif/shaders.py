@@ -626,7 +626,7 @@ class _ShaderInputs:
                  'alpha_prop', 'tex_apply_mode', 'emissive_r', 'emissive_g',
                  'emissive_b', 'material_alpha', 'emissive_animated',
                  'vertex_lighting_mode', 'flip_ctrl', 'tex_transforms',
-                 'shader_declared_unlit')
+                 'shader_declared_unlit', 'is_refraction')
 
     def __init__(self, tex_transforms):
         """Start from the no-properties defaults, carrying the UV transforms in."""
@@ -645,6 +645,7 @@ class _ShaderInputs:
         self.flip_ctrl = None
         self.tex_transforms = tex_transforms
         self.shader_declared_unlit = False
+        self.is_refraction = False
 
 
 def _harvest_texturing(prop, out):
@@ -655,12 +656,18 @@ def _harvest_texturing(prop, out):
     out.flip_ctrl = find_flip_controller(prop) or out.flip_ctrl
 
 
+#: Bethesda's material name on every TES4 refraction surface.
+REFRACTION_MATERIAL = 'refractf'
+
+
 def _harvest_material(prop, out):
-    """Fold one NiMaterialProperty's emissive and alpha in."""
+    """Fold one NiMaterialProperty's emissive, alpha and refraction flag in."""
     color = prop.emissive_color
     out.emissive_r, out.emissive_g, out.emissive_b = color.r, color.g, color.b
     out.material_alpha = prop.alpha
     out.emissive_animated = _has_emissive_animation(prop)
+    name = bytes(prop.name).rstrip(b'\x00').decode('latin-1', 'replace')
+    out.is_refraction = name.lower() == REFRACTION_MATERIAL
 
 
 def collect_shader_inputs(src, uv_transforms):

@@ -469,6 +469,18 @@ def _set_emissive(shader, sf1, r, g, b, animated):
     shader.emissive_multiple = 1.0
 
 
+def _make_refractive(sf1, sf2):
+    """Turn the lighting preset into a refraction distortion surface.
+
+    See: docs/commentary/asset_convert_shader.md#refraction-surfaces
+    """
+    sf1.slsf_1_refraction = 1
+    sf1.slsf_1_fire_refraction = 1
+    sf1.slsf_1_cast_shadows = 0
+    sf1.slsf_1_recieve_shadows = 0
+    sf2.slsf_2_z_buffer_write = 0
+
+
 def _build_lighting_shader(ts, tex_set, si, has_double_sided):
     """The BSLightingShaderProperty preset every ordinary world surface gets.
 
@@ -492,6 +504,8 @@ def _build_lighting_shader(ts, tex_set, si, has_double_sided):
         sf2.slsf_2_double_sided = 1
     if ts.data.has_vertex_colors:
         sf2.slsf_2_vertex_colors = 1
+    if si.is_refraction:
+        _make_refractive(sf1, sf2)
 
     shader.texture_clamp_mode = 3
     shader.uv_scale.u = 1.0

@@ -973,6 +973,21 @@ The attachment node still matters for REST visibility: the authored hidden bit
 is carried onto the shape (the shrink blob must not show on a living ghost)
 without moving it.
 
+### <a id="vis-gated-effect-shapes"></a>The merge drops parent `NiVisController`s
+
+The merge lifts shapes to the root and drops every parent, so a
+`NiVisController` sitting on a shape's PARENT node does not survive.
+
+**This is NOT what made the ancestor ghost's black sphere** — that was the
+missing refraction shader
+([asset_convert_shader.md](asset_convert_shader.md#refraction-surfaces)).
+Carrying the controller onto the shape was tried and REVERTED: it changed
+nothing on screen, because nothing binds the interpolator. Neither the source
+NIF nor the `.kf` files contain a `NiControllerManager` or any visibility
+track, so the blend interpolator stays unbound (`bool_value 2`) forever.
+Vanilla drives these from an embedded `NiControllerManager` we have no source
+for. Do not re-try this without first finding what would bind it.
+
 **The 80-bone cap runs after grafting.** SSE renders a skinned shape by
 memcpy'ing one 3x4 matrix per skin bone into a fixed 80-matrix buffer (shadow
 pass), so >80 bones is a CTD (imp: 85, in-game verified 2026-07-10). The merge

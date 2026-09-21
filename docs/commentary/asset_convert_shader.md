@@ -309,6 +309,31 @@ Specular strength is uniform on purpose: the modulation belongs in the normal
 map's alpha, not here. The spec-mask check still runs, because its per-category
 counters are what tell the texture stage how much it had to synthesise.
 
+## Refraction surfaces
+<a id="refraction-surfaces"></a>
+
+**Code:** `_make_refractive` in `asset_convert/nif/geometry_shader.py`
+
+TES4 marks a refraction surface with the material NAME `refractF` — Bethesda's
+own convention, authored, not a filename guess. Census of `export/Oblivion.esm`
+`meshes/oblivion`: **17** shapes carry a refraction diffuse and **all 17** are
+named `refractF`/`RefractF` (Oblivion gates, sigil stones, the siege crawler);
+Morroblivion's ancestor ghost and dwarven spectre use the same name.
+
+Without the refraction bits these ship as ordinary lit geometry, so a
+refraction texture — a dark distortion map — draws as a solid dark surface. The
+ancestor ghost's `RefractiveSphere` is a **90-unit radius** sphere, reported in
+game as a large black ball covering the actor.
+
+Vanilla census of `meshes/magic`: **93** shapes set `slsf_1_refraction`, **50**
+of them also `slsf_1_fire_refraction`. `boundswordencheffects`'s `RefrectHit01`
+is the same shape doing the same job, and pairs the refraction bits with
+shadows OFF and `slsf_2_z_buffer_write` OFF — a distortion pass writes no depth
+and casts nothing. Those five bits are what `_make_refractive` sets.
+
+Note the shape keeps `BSLightingShaderProperty` and needs no `NiAlphaProperty`:
+vanilla's refraction shapes carry neither an effect shader nor alpha blending.
+
 ## The emissive color, and when `own_emit` is cleared
 <a id="emissive-own-emit"></a>
 
