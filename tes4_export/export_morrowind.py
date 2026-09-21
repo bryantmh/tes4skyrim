@@ -23,6 +23,7 @@ from core.plugin_masters import masters_from_export_header
 
 from .morroblivion import (MORROBLIVION_PREFIX, MorroblivionModels,
                            remap_vanilla_models)
+from .morrowind_patch import PATCH_NAME, blacklisted_bases
 from .morroblivion_origin import OriginShifts
 from .morrowind_armor import load_body_models
 from .morrowind_cell import parse_cell
@@ -406,6 +407,21 @@ class MorrowindContext:
         raise RuntimeError('no free derived FormID for %r' % record_id)
 
 
+def _refused_ids(export_root: str, masters) -> frozenset:
+    """Morrowind ids whose Morroblivion base wears a mesh we refuse.
+
+    Only when the compatibility patch is a master, because it is what supplies
+    the vanilla record in their place.
+    See: docs/audits/morroblivion_mesh_axis_rotation.md#base-objects-not-meshes
+    """
+    names = [n for n, _p in masters]
+    if not any(n == PATCH_NAME for n in names):
+        return frozenset()
+    morroblivion = [n for n in names
+                    if n.lower().startswith(MORROBLIVION_PREFIX)]
+    return frozenset(blacklisted_bases(export_root, morroblivion))
+
+
 def load_context(export_root: str, masters=()) -> MorrowindContext:
     """Build a context from the converted masters, in master-list order.
 
@@ -421,14 +437,16 @@ def load_context(export_root: str, masters=()) -> MorrowindContext:
     index = IdIndex()
     master_doors = []
     master_remaps = []
-    for slot, path in enumerate(paths):
+    refused = _refused_ids(export_root, masters)
+    for slot, (name, path) in enumerate(zip(_master_list(masters), paths)):
         own = masters_from_export_header(path)
         remap = {len(own): slot}
         for k, sub in enumerate(own):
             target = slot_of.get(sub.lower())
             if target is not None:
                 remap[k] = target
-        index.merge(load_index(path, remap=remap))
+        drop = refused if name.lower().startswith(MORROBLIVION_PREFIX) else ()
+        index.merge(load_index(path, remap=remap, skip=drop))
         master_doors.append(load_master_doors(path, remap))
         master_remaps.append((path, remap))
     ctx = MorrowindContext(index, own_index=len(paths))

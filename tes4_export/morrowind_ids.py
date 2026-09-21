@@ -187,16 +187,12 @@ WORLD_TYPES = ('REGN', 'CLMT', 'WTHR')
 
 
 def load_index(export_dir: str, types=BASE_TYPES + WORLD_TYPES,
-               remap: dict = None) -> IdIndex:
+               remap: dict = None, skip=()) -> IdIndex:
     """Index an existing export dump so its records can be referenced.
 
-    Reads only the id lines of each record, so indexing Morroblivion's 421 MB
-    dump costs a scan and not a parse. An absent directory yields an empty
-    index, which is what makes the Morroblivion tier optional.
-
-    `remap` translates each FormID's load-order byte into the borrowing
-    plugin's master list; a record whose byte it does not map names a file the
-    borrower does not load and is left out.
+    Reads only the id lines, so indexing Morroblivion's 421 MB dump costs a
+    scan, not a parse. `remap` re-keys each FormID's load-order byte into the
+    borrower's master list; `skip` holds ids this master must NOT supply.
     See: docs/commentary/tes4_export_morrowind.md#masters
     """
     index = IdIndex()
@@ -205,7 +201,7 @@ def load_index(export_dir: str, types=BASE_TYPES + WORLD_TYPES,
     for sig in types:
         path = os.path.join(export_dir, f'{sig}.txt')
         if os.path.exists(path):
-            _index_file(path, index, sig, remap)
+            _index_file(path, index, sig, remap, skip)
     return index
 
 
@@ -262,7 +258,8 @@ def remap_form_id(form_id: str, remap: dict):
     return '%08X' % ((mapped << 24) | (raw & 0x00FFFFFF))
 
 
-def _index_file(path: str, index: IdIndex, signature: str, remap) -> None:
+def _index_file(path: str, index: IdIndex, signature: str, remap,
+                skip=()) -> None:
     """Register every record of one export file under its key."""
     fields = {}
     with open(path, encoding='utf-8', errors='replace') as fh:
@@ -270,7 +267,7 @@ def _index_file(path: str, index: IdIndex, signature: str, remap) -> None:
             if line.startswith(_RECORD_BEGIN):
                 fields = {}
             elif line.startswith(_RECORD_END):
-                _add_record(fields, index, signature, remap)
+                _add_record(fields, index, signature, remap, skip)
             else:
                 _keep_field(fields, line)
 
@@ -299,7 +296,8 @@ def _add_cell(fields: dict, form_id: str, index: IdIndex, remap) -> None:
     index.add(exterior_key(grid), form_id, 'CELL')
 
 
-def _add_record(fields: dict, index: IdIndex, signature: str, remap) -> None:
+def _add_record(fields: dict, index: IdIndex, signature: str, remap,
+                skip=()) -> None:
     """Add one scanned record: by EditorID, or by cell grid / parent cell."""
     form_id = remap_form_id(fields.get('FormID', ''), remap)
     if form_id is None:
@@ -313,12 +311,23 @@ def _add_record(fields: dict, index: IdIndex, signature: str, remap) -> None:
         _add_cell(fields, form_id, index, remap)
         return
     edid = fields.get('EditorID')
-    if not edid:
+    if not edid or (skip and _unmangled(edid) in skip):
         return
     if signature == 'CELL':
         edid = interior_key(edid)
     index.add(edid, form_id, signature)
 
+
+def _unmangled(editor_id: str) -> str:
+    """A Morroblivion EditorID reduced to the Morrowind id behind it.
+
+    See: docs/audits/morroblivion_mesh_axis_rotation.md#pairing-the-bases
+    """
+    return _EDID_SEP.sub('', editor_id.lower()).lstrip('0')
+
+
+#: Morroblivion writes '_' as 'U' and prefixes '0'; both drop out.
+_EDID_SEP = re.compile(r'[_u]')
 
 #: Morrowind marker name -> the TES4 FormID for the same engine marker.
 ENGINE_MARKERS = {

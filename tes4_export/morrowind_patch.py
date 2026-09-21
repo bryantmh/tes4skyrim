@@ -26,6 +26,7 @@ See: docs/commentary/tes4_export_morrowind.md#morroblivion-gap-patch
 
 import hashlib
 import os
+import re
 import time
 
 from asset_convert.sources.bsa_extract_morrowind import (is_morrowind_bsa,
@@ -34,12 +35,17 @@ from asset_convert.sources.bsa_extract_morrowind import (is_morrowind_bsa,
 from asset_convert.sources.source_registry import asset_root
 from output_layout import (DEFAULT_OUTPUT, plugin_esm, plugin_out_root,
                            record_dir)
+from tes5_import.base.text_reader import parse_export_file
 
 from .morroblivion import (MORROBLIVION_CREATURES, MorroblivionModels,
                            archive_path)
+from .morroblivion_axis import SUBSTITUTION_BLACKLIST
 from .morrowind_ids import BASE_TYPES, IdIndex, load_index
 from .record_types.morrowind import as_dds
 from .tes3_reader import get_string, get_subrecord, read_file
+
+#: Morroblivion's EditorID separators: a leading '0' and '_' written 'U'.
+_EDID_SEP = re.compile(r'[_u]')
 
 #: Derivation site for a gap fill; fixed so ids never move between builds.
 PATCH_SITE = 'mwpatch'
@@ -55,6 +61,9 @@ PATCH_ARCHIVES = ('Morrowind.bsa', 'Tribunal.bsa', 'Bloodmoon.bsa')
 
 #: Base object types a placement can name; cells and terrain are never filled.
 GAP_TYPES = frozenset(BASE_TYPES) - {'CELL', 'LAND', 'WRLD'}
+
+#: Filled from vanilla even where Morroblivion supplies the id: read, not placed.
+ALWAYS_FILLED = frozenset({'GLOB'})
 
 #: What a voiced bark needs -- its topic stream and who may speak it -- plus the creature sound generators.
 BARK_TYPES = frozenset({'DIAL', 'INFO', 'NPC_', 'CREA', 'SNDG'})
@@ -119,15 +128,47 @@ def supplied_index(export_dir: str, exports) -> IdIndex:
     return index
 
 
-def collect_gap_records(sources, index: IdIndex) -> dict:
+def blacklisted_bases(export_dir: str, exports) -> set:
+    """Normalized ids Morroblivion supplies wearing a mesh we refuse.
+
+    The base belongs to Morroblivion, so no mesh substitution reaches it; the
+    only way to ship the authored object is to fill it from vanilla instead.
+    See: docs/audits/morroblivion_mesh_axis_rotation.md#base-objects-not-meshes
+    """
+    out = set()
+    for name in exports:
+        directory = str(record_dir(export_dir, name))
+        if not os.path.isdir(directory):
+            continue
+        for entry in os.listdir(directory):
+            if not entry.endswith('.txt') or entry.startswith('_'):
+                continue
+            for rec in parse_export_file(os.path.join(directory, entry)):
+                mesh = archive_path(rec.get('Model.MODL') or '')
+                if mesh.replace(chr(92), chr(47)) in SUBSTITUTION_BLACKLIST \
+                        and rec.get('EditorID'):
+                    out.add(_unmangle(rec['EditorID']))
+    return out
+
+
+def _unmangle(editor_id: str) -> str:
+    """Morroblivion's EditorID reduced to the Morrowind id it was made from.
+
+    See: docs/audits/morroblivion_mesh_axis_rotation.md#pairing-the-bases
+    """
+    return _EDID_SEP.sub('', editor_id.lower()).lstrip('0')
+
+
+def collect_gap_records(sources, index: IdIndex, refused=()) -> dict:
     """{(type, record_id): TES3 record} for every object `index` cannot supply.
 
-    Judged against the same index a conversion resolves against. Earlier
-    sources win, so Tribunal and Bloodmoon add only what Morrowind.esm lacks.
-    Keyed by type as well as id because Morrowind's ids are unique only within
-    a type, so a bare-name key drops one of the pair. A creature whose mesh
-    the Morroblivion table pairs is supplied whatever its id resolves to.
+    Earlier sources win, and the key carries the type because Morrowind's ids
+    are unique only within one. A creature the Morroblivion table pairs is
+    skipped; an id in `refused` is filled although Morroblivion supplies it,
+    as is every `ALWAYS_FILLED` type.
     See: docs/commentary/tes4_export_morrowind.md#per-type-id-namespaces
+    See: docs/commentary/tes4_export_morrowind.md#globals-are-always-filled
+    See: docs/audits/morroblivion_mesh_axis_rotation.md#base-objects-not-meshes
     """
     found = {}
     for path in sources:
@@ -138,7 +179,11 @@ def collect_gap_records(sources, index: IdIndex) -> dict:
             key = (rec.type, name)
             if rec.deleted or not name or key in found or _paired_creature(rec):
                 continue
-            if rec.type in GAP_TYPES and index.lookup(rec.record_id) is None:
+            if rec.type not in GAP_TYPES:
+                continue
+            if (rec.type in ALWAYS_FILLED
+                    or index.lookup(rec.record_id) is None
+                    or _unmangle(name) in refused):
                 found[key] = rec
     return found
 
@@ -245,9 +290,12 @@ def build_patch(data_dir: str, export_dir: str, morroblivion_exports,
              f'plugin(s)...')
     index = supplied_index(export_dir, morroblivion_exports)
     progress(f'  {len(index)} objects already supplied')
+    refused = blacklisted_bases(export_dir, morroblivion_exports)
+    if refused:
+        progress(f'  {len(refused)} supplied on a mesh we refuse, filled here')
 
     progress(f'Scanning {len(esms)} vanilla master(s) for gaps...')
-    gaps = collect_gap_records(esms, index)
+    gaps = collect_gap_records(esms, index, refused)
     progress(f'  {len(gaps)} base records Morroblivion does not supply')
     if not gaps:
         return {'ok': True, 'records': 0, 'assets': 0, 'output': '',

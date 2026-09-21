@@ -1,21 +1,10 @@
 Major Issues for V1:
 	1 - Iterate on quest and dialog conversion until everything is playable starting with Oblivion Main Quest
-		Morroblivion: can't get fighters guild quest after joining
-		sqv charactergen 74 - Assassin fails to become hostile and kill the emperor
-		I should not be able to loot the emperor's body
 		Arena: corpse of the previous combatant is not removed on re-entry (TES4 ResetInterior cleared it; Skyrim Cell.Reset() leaves non-respawning corpses)
 		Arena: second combatant not hostile after a completed match
 		Arena: speak-as subtitles (announcer, Daedric shrines) never clear - a scripted Say() on a non-actor never retires its subtitle; no verified fix, see docs/reference/dialogue_engine_contracts.md
 
 	2 - Havok feels off. Items don't move like they should. Specifically, there seems to be too much inertia on small items, like I'm dragging a heavy object when it is something as small as a cup, Animated signs will get stuck in a position after swinging a bit, defying gravicty
-
-	3 - Navmesh refinement
-		ensure corridors connect pathgrid islands
-		allow growth even on slopes
-		trim triangles along edges
-		fix slim corridors like vaults in anvilcastlegreathall
-		fix occasional crack (vilvern near entrance)
-		Fix wrong side of door like the upstairs in anvilfightersguild
 
 	5 - Need new skyrim body mesh to actually work to allow leg skin to appear
 	
@@ -23,13 +12,9 @@ Major Issues for V1:
 
 	7 - Crime system
 
-	8 - Still a lot of reversed collision in morroblivion
-
 	10 - Imperials get all fallback race lines (like reiklings)
 
 	11 - All-in-one installer that people can just click and expect to work
-
-	12 - Quest stages aren't properly closed (MS48)
 
 	13 - Weather particle conversion (snow, rain) SPGD
 
@@ -75,8 +60,6 @@ Minor Issues:
 
 	4 - Harvested plants don't make a sound. Intentional?
 
-	6 - Convert Skyrim LE meshes to Skyrim SE format
-
 	7 - Flame atronach animated section not properly converted
 
 	12 - Minor issues with 44 patch plugin
@@ -85,22 +68,11 @@ Minor Issues:
 
 	16 - Tripwire doesn't visibly break. and Log trap doesn't visibly roll
 
-	17 - Pandora compatibility
-
 	19 - Leaving a force-greet conversation can soft-lock
-
-	20 - Tree LOD as real Skyrim billboards (.btt instance tables) instead of baked + cards
 
 	21 - FaceGen: Oblivion.exe statically links the FaceGen SDK (matrixVT.hpp, BSFaceGenModelMap, EGM/EGT basis load+apply). Use it like the SpeedTree engine harness to turn FGGS/FGGA coefficients into real vertex deltas
 
 	22 - OblivionBloodFountain01: geyser (SpecialIdle) never plays as the default state
-
-	23 - safe_run.py must REVERT a rule-breaking write, not just report it. Snapshot the bytes of every first-party .py before running, gate the changed set with --gate-file after, then restore (or delete, if newly created) only the files that broke a rule - clean files the same command wrote stay. Exit 2 naming each restored path, and say the write did NOT stand, because the child has already printed its own success. Same contract Edit/Write already gets from gate_pre; the Bash path reports instead of blocking, which is how union_mesh.py landed with 26 violations.
-		touching docstring should note make the entire file owned
-
-	24 - Bounds + Collision scanning should happen during the Meshes step to avoid having to do it twice
-
-	25 - SKSE dll to automatically merge multiple creature animation projects at runtime
 
 Guns (FalloutNV):
 	G1 - HUD magazine readout: the counter text field path is a guess and the hook is disabled (hud.cpp, InstallHud not called); find the field in the loaded HUD movie and re-enable
@@ -127,3 +99,6 @@ Guns (FalloutNV):
 	G22 - Gun sounds beyond dry fire: fire sound is the engine's arrow release path; check the WEAP SNAM/XNAM per-shot and reload sounds are the FNV ones
 	G23 - NPC iron sights and hip fire: NPCs never zoom; the iGunZoom / fGunZoom variables are only written for the player
 
+Morrowind:
+	1) NPCs have voice lines that should be gated by quest 
+	2) xxBDDE6F ancestor ghost has a large black sphere

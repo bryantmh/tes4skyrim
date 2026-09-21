@@ -19,7 +19,8 @@ from output_layout import record_dir
 from source_paths import resolve_plugin_path
 from tes5_import.base.text_reader import parse_export_file
 
-from .morroblivion_axis import pitch_for_model, z_reseat_for_base
+from .morroblivion_axis import (SUBSTITUTION_BLACKLIST, pitch_for_model,
+                                z_reseat_for_base)
 from .tes3_reader import get_string, get_subrecord, read_file
 
 #: Prefix of the converted Morroblivion plugins whose records supply the models.
@@ -172,11 +173,17 @@ class MorroblivionModels:
 
 
     def replacement(self, path: str, index) -> str:
-        """Morroblivion's model for vanilla mesh `path`, resolved through `index`, or ''."""
+        """Morroblivion's model for vanilla mesh `path`, resolved through `index`, or ''.
+
+        A blacklisted replacement resolves to '' so the vanilla mesh survives
+        and the compatibility patch converts it.
+        See: docs/audits/morroblivion_mesh_axis_rotation.md#substitution-blacklist
+        """
         for record_id in self.owners.get(archive_path(path), ()):
             form_id = index.lookup(record_id)
             model = self.models.get(str(form_id).lower()[2:]) if form_id else None
-            if model:
+            if model and archive_path(model).replace(chr(92), chr(47)) \
+                    not in SUBSTITUTION_BLACKLIST:
                 return model
         return ''
 

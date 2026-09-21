@@ -43,6 +43,19 @@ broken query it was.
 
 With the pairing fixed, **247,156 references** pair across the two exports.
 
+## <a id="pairing-the-bases"></a>Pairing the bases
+
+Morroblivion mangles the Morrowind EditorID: it prefixes `0` and writes `_` as
+`U`, so `misc_com_bucket_metal` becomes `0MiscUComUBucketUMetal`. Reducing both
+sides by dropping `_`, `u` and any leading `0` joins them.
+
+The reduction also folds the `u` INSIDE a word (`bucket` → `bcket`), which is
+harmless while it runs identically on both sides but does collide distinct
+EditorIDs. A collision must be **counted and reported, never resolved by
+overwriting**: a base that loses the race is absent from the census entirely,
+which reads as "needs no correction" rather than "never measured". The first
+census overwrote silently and had no way to show it.
+
 ## The mechanism
 
 Geometry of the affected meshes (vertex bounds via `sse_nif.read_nif`):
@@ -148,3 +161,189 @@ are untouched, so the correction is scoped. In the built `TR_Mainland.esm`, all
 36 references to base `012C0134` read RotX=270°.
 
 **Not yet verified in-game.**
+
+## <a id="regenerating"></a>Regenerating the tables
+
+**Tool:** `tools/audit/morroblivion_placement_audit.py`.
+**Results:** [morroblivion_placement_results.txt](morroblivion_placement_results.txt),
+rewritten in place by every run. The first census was a
+pile of scratchpad scripts that were thrown away, so the tables could not be
+re-measured and a newly-reported bad object had to be chased by hand. The tool
+replaces them and fixes what they got wrong:
+
+- All **three** rotation axes. The old pass read RotX only and therefore saw a
+  third of the corrections — `inulavaurocku14/16/17/18` and `inumoldurocku17`
+  each carry a RotY and RotZ delta as well.
+- The spike search runs over the **real histogram**, not a fixed 90/180/270
+  candidate list.
+- Candidates that miss the threshold print under **HELD with their
+  histograms**; the old pass dropped them, so "no row" was indistinguishable
+  from "no correction needed".
+- EditorID pairing **collisions are counted**. The old `norm_edid` overwrote on
+  collision, silently removing a base from the census entirely.
+- REFR, ACHR and ACRE, not REFR alone.
+
+Re-measured 2026-09-20: 5,976 bases and 138,520 references pair, giving 48
+rotation corrections (was 33), 126 Z re-seats (was 15) and 232 held candidates.
+
+### <a id="a-swap-is-a-missing-mesh"></a>A swap is found by the mesh tree, not the path prefix
+
+A record Morroblivion repointed at a stock Oblivion mesh is identified by the
+replacement being **absent from Morroblivion's own extracted `meshes/` tree**.
+Testing the `morroblivion\` prefix alone is wrong: `morro/`, `mip/` and
+`clutter/` are Morroblivion's own prefixes too, and treating them as foreign
+reports 3,188 swaps instead of the real **22 meshes over 62 bases**.
+
+The fix is to **skip the substitution**, not to apply the offset: leave the
+Morrowind mesh in place and let the compatibility patch convert it. Applying
+the measured dZ would only move the wrong object.
+
+### <a id="base-objects-not-meshes"></a>The substitution is a BASE OBJECT, not a mesh
+
+**Code:** `blacklisted_bases` / `collect_gap_records` in
+`tes4_export/morrowind_patch.py`.
+
+A blacklist in `remap_vanilla_models` only reaches a converted mod's OWN
+records — the ones naming a vanilla mesh path. It cannot reach a placement of
+a Morroblivion base: `0lightUdeUlampU03U64` is a record in `Morrowind_ob.esm`
+already carrying `Lights\MiddleCandlestickFloor02.NIF`, and a converted mod
+merely references it. There is no model line of ours to rewrite, and
+Morroblivion itself is fixed input that is never re-exported.
+
+So the fix is not to replace the MESH but to stop borrowing the BASE OBJECT.
+`collect_gap_records` asks whether Morroblivion supplies an object; a base
+wearing a blacklisted mesh now answers NO, so the compatibility patch builds
+the real Morrowind record and every converted Morrowind mod references that
+instead. This is the same exclusion `_paired_creature` already applies.
+
+Measured: **328** Morroblivion bases wear a blacklisted mesh (158 LIGH,
+145 CONT, 7 FURN, 7 STAT, 6 MISC, 3 ACTI, 2 INGR); **324** map back to a
+vanilla record the patch can build. The remaining 4 have no Morrowind
+counterpart and keep Morroblivion's object.
+
+### <a id="geometry-beats-the-threshold"></a>Geometry is evidence; the spike is a proxy
+
+`candle_15` shipped upright-less because its reference agreement measured
+**35/44 = 0.7955**, just under `MIN_SHARE = 0.80`, while `candle_17` at
+**32/40 = 0.8000** passed. The report prints both as "80%", so the two look
+identical and the half-percent that separated them is invisible.
+
+The geometry is not ambiguous at all: Morrowind `(6.4, 6.4, 29.9)` against
+Morroblivion `(6.4, 25.8, 6.4)` — sorted ratio 1.00/1.00/0.86, the long axis
+moved from Z to Y. The mesh is plainly mis-built.
+
+So a threshold on how many references agree must never overrule a direct
+measurement of the mesh. `candle_15` and `lantern_06s` (ratio 1.76 on one
+axis) are blacklisted on their geometry; `furnucolonyuhook01` stays held
+because it has no Morrowind counterpart to measure against.
+
+### <a id="why-blacklist-wins"></a>Why a swap beats a correction
+
+**The blacklisted mesh is the only option we can be certain about.** The
+Morrowind mesh at its authored placement is the original object at the original
+coordinates — both known-good. A pitch or a dZ is a value fitted to a
+histogram, and none of them is in-game verified. So where a mesh is both
+"rebuilt" and "carries a measured rotation", the mesh wins: shipping the real
+object beats rotating a rebuilt one.
+
+That rule removed 20 entries from `AXIS_PITCH_DEG` and 6 from `Z_RESEAT`, which
+now describe only meshes that still reach the output.
+`test_no_correction_targets_a_blacklisted_mesh` keeps them disjoint.
+
+### <a id="permutation-test"></a>Compare SORTED extents, never raw Z
+
+A mesh authored on the wrong axis has the SAME extents, permuted: a 55-unit
+lantern lying down is 55 units on Y instead of Z. Comparing raw Z calls that a
+size change and blacklists a mesh a rotation would have fixed — it reported
+`candle_17` as x0.21 when the sorted ratio is 1.00/1.00/0.86.
+
+Sorting both meshes' extents before comparing separates the two cases:
+
+| Mesh | Sorted ratio | Reading |
+|---|---|---|
+| `morro/i/inulavaurocku14` | 1.00/1.00/1.00 | identical — the 180° pitch is real |
+| `dunmer/candle_16`, `candle_17` | 1.00/1.00/0.86 | same object, wrong axis — pitch fits |
+| `common/candle_10` | 1.00/1.00/**0.81** | rebuilt shorter — blacklist |
+| `common/lantern_01/02` | 1.00/0.86/**0.70** | rebuilt shorter — blacklist |
+| `dunmer/lamp_05` | 0.95/0.95/**0.63** | chain gone — blacklist |
+| `dunmer/candle_blue_01` | 1.03/**4.29**/1.09 | different object — blacklist |
+
+Of the 33 meshes the first census pitched, **20 are rebuilt objects** rather
+than mis-authored axes, including `common/candle_10` — the Silver Candlestick
+this audit was originally written about.
+
+### <a id="substitution-blacklist"></a>Which swaps are blacklisted
+
+`SUBSTITUTION_BLACKLIST` in `tes4_export/morroblivion_axis.py`. Judged on
+measured vertex bounds of both meshes, never on the filename: a replacement
+stays only when it is the same kind of object at roughly the same size.
+
+Blacklisted — 15 meshes, 54 references:
+
+| Oblivion mesh | Morrowind original | OB size | MW size | Why |
+|---|---|---|---|---|
+| `lights/middlecandlestickfloor02.nif` | `light_de_lamp_03` | 25×21×109 | 55×55×188 | floor stand for a HANGING lamp |
+| `lights/candlefat02.nif` | `light_de_candle_11` | 8×8×10 | 15×11×21 | half size |
+| `lights/candleskinny01.nif` | `light_de_candle_09` | 2×2×15 | 18×18×15 | taper for a wide candelabra |
+| `lights/torch01fake.nif` | `light_com_torch_01` | 5×5×28 | 10×9×49 | unlit prop, half height |
+| `fire/fireopenmedium.nif` | `light_fire_nosmoke` | 150×216×69 | 18×17×114 | campfire for a standing fire |
+| `fire/fireopenmediumsmoke.nif` | `light_fire` | 150×216×69 | 12×23×115 | same |
+| `dungeons/misc/fx/fxmist01.nif` | `ex_waterfall_mist_s_01` | 41×192×**0** | 350×275×164 | flat plane for a volume |
+| `dungeons/misc/fx/fxcloudthick01.nif` | `furn_mist256` | 415×1055×159 | 242×224×67 | 4x too big |
+| `dungeons/misc/cobweb04.nif` | `furn_web10` | 192×**0**×192 | 128×128×256 | flat plane |
+| `dungeons/misc/root03.nif` | `in_cavern_roots00` | 105×89×224 | 218×261×438 | half size every axis |
+| `clutter/sack01.nif` | `contain_com_sack_02` | 24×24×31 | 42×46×76 | under half |
+| `clutter/ingredskooma.nif` | `potion_skooma_01` | 3×3×5 | 7×7×20 | ~4x too short |
+| `clutter/morro/n/nbbread01.nif` | `ingred_bread_01` | — | 26×10×7 | **mesh ships in NO game** |
+| `clutter/morro/m/misculwucup.nif` | `misc_lw_cup` | — | 12×12×17 | **mesh ships in NO game** |
+| `mip/container/crates/common_chest01.nif` | `contain_com_chest_01` | — | 81×39×49 | **mesh ships in NO game** |
+
+Kept — the replacement is the same object at a comparable size:
+`clutter/goldcoin01.nif`, `clutter/middleclass/middlecrate04.nif` (75³ vs 64³),
+`lights/torch02.nif` (48 vs 49 tall, axes permuted),
+`clutter/soulgemlesser01.nif`, `clutter/lowerclass/broomlower01.nif`,
+`clutter/bread01.nif`, `dungeons/misc/root08.nif`.
+
+The three meshes present in neither Morroblivion, Oblivion nor Skyrim are the
+strongest entries: those bases currently render **nothing at all**.
+
+### <a id="needs-verification"></a>🛑 NEEDS IN-GAME VERIFICATION
+
+**49 blacklist entries, none verified in game.** The blacklist is the safer
+default ([why](#why-blacklist-wins)), not a confirmed result, and it now
+governs far more objects than the 22 stock-mesh swaps it started as.
+
+Watch for these when testing:
+
+- **Every Dunmer lantern and most candles** now render the Morrowind mesh
+  instead of Morroblivion's. If they look worse, the rebuilt mesh was the
+  better object and the entry should come out.
+- **`common/candle_10`** — the Silver Candlestick this audit began with. It is
+  blacklisted rather than pitched, which is the opposite of what the first pass
+  shipped.
+- **`torchnohavok`** (331 refs) and **`tikilamp`** (265 refs) are the widest
+  changes by reference count.
+- **`morro/f/furnudeutableu01`** (145 refs) and **`furnudeubookshelfu02`**
+  (178 refs) — furniture, where a wrong pivot is obvious.
+
+The 13 surviving pitches are the 6 lava rocks (ratio 1.00/1.00/1.00, the
+strongest evidence in the table) and 7 candles that measure as genuine axis
+permutations.
+
+### <a id="zero-delta-objects"></a>A floating object is not always a missing correction
+
+Three objects reported floating or inverted in-game (2026-09-20) measure a
+delta of **zero** on every axis, so Morroblivion never corrected them and no
+table row is missing:
+
+| Base | Refs | dZ | Rotation delta |
+|---|---|---|---|
+| `0barrelU02Upants` (`mwbarrel10.nif`) | 4 | −5.0 on 3 of 4 | 0° on all 230 refs of the mesh |
+| `0MiscUComUBucketUMetal` | 15 | **0.0 on 15 of 15** | **0° on all three axes** |
+| `0lightUdeUlampU03U64` | — | — | 0° on all 1,351 refs of the mesh |
+
+Morroblivion placed these exactly where Morrowind did. The defect is therefore
+either present in Morroblivion itself or introduced downstream in our own
+conversion — it is **not** an uncopied hand-fix, and adding a table row would
+be inventing a correction no authored data supports. `0lightUdeUlampU03U64` is
+a mesh swap (above), which is a separate matter from its height.

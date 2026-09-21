@@ -452,7 +452,7 @@ WROTE. A bare command is refused: a heredoc writes a `.py` no gate ever sees.
 
 🛑 **SEARCH WITH THE GREP TOOL, NEVER `grep -r`.** It is ripgrep: honors
 `.gitignore`, so it skips `export/`/`output/`/`references/` (tens of GB) and
-finishes the whole repo in ~1s
+finishes the whole repo in ~1s. Never grep entire directories. These include large files like meshes and take minutes to complete. Properly scope
 
 **`grep "a\|b"` silently finds NOTHING** — bash eats the backslash, so grep
 gets a literal `|` and still exits 0. Use `grep -E "a|b"` or `-e a -e b`. Zero
