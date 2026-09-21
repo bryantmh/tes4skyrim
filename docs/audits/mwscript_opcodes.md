@@ -59,7 +59,6 @@ Not opcodes, so no call site names them: a script declares `short OnPCEquip` and
 | Local | Flag | Scripts declaring it |
 |---|---|---:|
 | `onpchitme` | `pcHitMe` | 160 |
-| `onpcequip` | `pcEquipped` | 111 |
 | `onpcadd` | `pcAdded` | 43 |
 | `onpcdrop` | `pcDropped` | 6 |
 

@@ -281,6 +281,26 @@ def declared_locals(source: str) -> list:
     return out
 
 
+def _resolution_dirs(dirs: list, loaded: list) -> list:
+    """`dirs[0]` first, then every OTHER plugin the game loads.
+
+    🛑 A SCRI is resolved across the whole load order but STAGED only from
+    `dirs[0]`, so the head must stay this plugin's own dir. In Morroblivion
+    mode a TES3 plugin masters neither Morrowind_ob nor the patch, yet its
+    items carry their scripts: `T_De_Necrom_Cuirass_01`'s SCRI is the patch's
+    `OrdinatorUniform`, and without it the armor stages no script at all.
+    See: docs/commentary/morrowind_runtime.md#sidecar
+    """
+    out = list(dirs)
+    seen = {os.path.normcase(os.path.abspath(f)) for f, _p in out}
+    for folder, plugin, _own in loaded:
+        key = os.path.normcase(os.path.abspath(folder))
+        if key not in seen:
+            seen.add(key)
+            out.append((folder, plugin))
+    return out
+
+
 def _script_tables(dirs: list) -> tuple:
     """`(locals_lines, body_lines, script_name_by_formid)`.
 
@@ -643,7 +663,8 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
     root = _export_root(export_dir)
     ids = gathered or {}
     loaded = _loaded_dirs(root, export_dir, plugin_name)
-    locals_lines, body_lines, by_formid = _script_tables(dirs)
+    locals_lines, body_lines, by_formid = _script_tables(
+        _resolution_dirs(dirs, loaded))
     return (_write_lines(os.path.join(out_dir, SPELLS_TABLE),
                          _owned_lines(dirs, root, ids.get('spells', {}),
                                       _SPELL_EXPORTS, _SPELL_TYPES,

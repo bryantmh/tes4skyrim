@@ -24,6 +24,9 @@ constexpr const char* kOnPcAdd = "onpcadd";
 constexpr const char* kOnPcDrop = "onpcdrop";
 constexpr const char* kOnPcHitMe = "onpchitme";
 
+// Whose inventory `OnPCEquip` asks about; the hooks take a TES3 id.
+constexpr const char* kPlayerId = "player";
+
 std::map<std::string, ObjectScript> g_instances;
 
 // The instance whose body is executing, for the event opcodes to read.
@@ -68,7 +71,7 @@ void WriteEventLocal(const ObjectScript& instance, const char* name,
 }  // namespace
 
 bool ObjectEvents::Any() const {
-    return activated || died || cellChanged || pcEquipped || pcAdded ||
+    return activated || died || cellChanged || pcAdded ||
            pcDropped || pcHitMe;
 }
 
@@ -94,7 +97,9 @@ bool ObjectScript::RunOnce() {
         mEvents.Clear();
         return false;
     }
-    WriteEventLocal(*this, kOnPcEquip, mEvents.pcEquipped);
+    // 🛑 `OnPCEquip` is NOT written here. It is a STATE `PollEquipped` keeps,
+    // and an event write would clear it every tick -- the unequip branch
+    // `if ( OnPCEquip == 0 )` would then fire while the item is still worn.
     WriteEventLocal(*this, kOnPcAdd, mEvents.pcAdded);
     WriteEventLocal(*this, kOnPcDrop, mEvents.pcDropped);
     WriteEventLocal(*this, kOnPcHitMe, mEvents.pcHitMe);
@@ -123,6 +128,25 @@ void ObjectScript::PollDeath() {
     mDeathSeen = true;
     mEvents.died = true;
     Log("object: %s died (%s)", mScript.c_str(), mBaseId.c_str());
+}
+
+bool ObjectScript::PollEquipped(const std::string& baseId) {
+    if (baseId.empty() || !Hooks().itemCount) return false;
+    if (Hooks().itemCount(kPlayerId, baseId) <= 0) return false;
+    // The id that answered is the one a bare command in the body acts on.
+    mBaseId = baseId;
+    const ScriptLocals* locals = ObjectScriptLocals(mScript);
+    if (!locals || locals->TypeOf(kOnPcEquip) == ' ') return true;
+    const bool worn = Hooks().itemEquipped &&
+                      Hooks().itemEquipped(kPlayerId, baseId);
+    const float was = State().Var(mKey, kOnPcEquip);
+    if (!worn && was != 0.0f && mWornId != baseId) return true;
+    if ((was != 0.0f) == worn) return true;
+    mWornId = worn ? baseId : std::string();
+    State().SetVar(mKey, kOnPcEquip, worn ? 1.0f : 0.0f);
+    Log("object: %s OnPCEquip = %d (%s)", mScript.c_str(), worn ? 1 : 0,
+        baseId.c_str());
+    return true;
 }
 
 ObjectScript* RunningInstance() { return g_running; }
@@ -266,6 +290,23 @@ const ScriptLocals* ObjectContext::Layout() const {
 }
 
 std::string ObjectContext::OwnerKey() const { return mInstance.Key(); }
+
+// 🛑 One instance per SCRIPT, not per item record. The two-argument
+// constructor keys locals by the script name, and OpenMW writes `OnPCEquip`
+// the same way (`setVarByInt(script, ...)`), so a second instance for a second
+// cuirass would be a duplicate writing the same locals.
+ObjectScript* CarriedInstance(const std::string& baseId,
+                              const std::string& script) {
+    if (baseId.empty() || script.empty()) return nullptr;
+    const std::string key = LowerId(script);
+    const auto it = g_instances.find(key);
+    if (it != g_instances.end()) {
+        if (it->second.BaseId().empty()) it->second.SetBaseId(baseId);
+        return &it->second;
+    }
+    return &g_instances.emplace(key, ObjectScript(script, baseId))
+                .first->second;
+}
 
 ObjectScript* InstanceFor(const std::string& plugin,
                           std::uint32_t localFormId,

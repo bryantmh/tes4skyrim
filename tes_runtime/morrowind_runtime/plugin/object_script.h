@@ -29,7 +29,9 @@ struct ObjectEvents {
     bool cellChanged = false;
     // The engine-written LOCALS, which are not opcodes: a script declares
     // `short OnPCEquip` itself and the engine writes the variable.
-    bool pcEquipped = false;
+    //
+    // 🛑 `OnPCEquip` is NOT among them: it is a persistent STATE, kept by
+    // `PollEquipped`, not a one-tick event this struct would clear.
     bool pcAdded = false;
     bool pcDropped = false;
     bool pcHitMe = false;
@@ -68,6 +70,20 @@ public:
     // dead in the cell did not die during play.
     void PollDeath();
 
+    // Writes `OnPCEquip` from whether the player wears `baseId`. Returns
+    // whether they carry it at all.
+    //
+    // 🛑 A STATE, not an event: OpenMW sets the local to 1 on equip and 0 on
+    // unequip and leaves it, which is what `if ( OnPCEquip == 0 )` unequip
+    // branches read.
+    //
+    // 🛑 The id is a PARAMETER because locals belong to the SCRIPT, and several
+    // item records share one -- `OrdinatorUniform` is worn by three. Testing
+    // only `mBaseId` asked about whichever record was seen first, so wearing
+    // any of the others answered 0.
+    // See: docs/commentary/morrowind_runtime.md#engine-written-locals
+    bool PollEquipped(const std::string& baseId);
+
     // The FormID this placement has in the RUNNING game, learned when the
     // engine first handed us the reference. 0 until then.
     std::uint32_t RuntimeFormId() const { return mRuntimeFormId; }
@@ -104,6 +120,9 @@ private:
     bool mLifeSampled = false;
     std::uint32_t mRuntimeFormId = 0;
     bool mWasLoaded = false;
+    // Which of the script's item records is currently worn, so a sibling
+    // record polled afterwards cannot clear the flag this one set.
+    std::string mWornId;
 };
 
 // Holds the GameActor that ObjectContext hands its own base class.
@@ -202,6 +221,13 @@ ObjectScript* InstanceFor(const std::string& plugin, std::uint32_t localFormId,
 // and nothing created, for the paths that only want to raise an event.
 ObjectScript* FindInstance(const std::string& plugin,
                            std::uint32_t localFormId);
+
+// The instance a CARRIED object runs, created on first use. Keyed by the base
+// id, because an inventory item has no placement to key on and every copy of
+// one base shares TES3's single set of locals.
+// See: docs/commentary/morrowind_runtime.md#engine-written-locals
+ObjectScript* CarriedInstance(const std::string& baseId,
+                              const std::string& script);
 
 // Runs every global script `StartScript` left running, once each. A script
 // that stops itself, or starts another, takes effect on the NEXT tick.

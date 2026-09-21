@@ -750,6 +750,22 @@ const std::string& ScriptOf(const std::string& actor) {
     return it == g_actorScripts.end() ? kNone : it->second;
 }
 
+const std::vector<std::pair<std::string, std::string>>& EquipWatchList() {
+    static std::vector<std::pair<std::string, std::string>> list;
+    static std::size_t builtFrom = 0;
+    if (builtFrom != g_actorScripts.size()) {
+        builtFrom = g_actorScripts.size();
+        list.clear();
+        for (const auto& entry : g_actorScripts) {
+            const ScriptLocals* locals = FindScriptLocals(entry.second);
+            if (locals && locals->TypeOf("onpcequip") != ' ') {
+                list.emplace_back(entry.first, entry.second);
+            }
+        }
+    }
+    return list;
+}
+
 const std::string& ScriptSource(const std::string& script) {
     static const std::string kNone;
     const auto it = g_sources.find(Lower(script));

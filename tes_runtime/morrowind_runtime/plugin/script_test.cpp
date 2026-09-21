@@ -567,7 +567,8 @@ void ObjectScriptRunCases() {
     ObjectScript* actorObj = InstanceFor("scripts.esm", 0x0300B001, "test_actor");
     Check(actorObj != nullptr, "the actor placement has an instance");
     if (actorObj) {
-        actorObj->Events().pcEquipped = true;
+        actorObj->Events().pcHitMe = true;
+        actorObj->PollEquipped("test_actor");
         actorObj->RunOnce();
         Check(State().Var(actorObj->Key(), "onpcequip") == 0.0f,
               "a script that does NOT declare OnPCEquip never gets one");

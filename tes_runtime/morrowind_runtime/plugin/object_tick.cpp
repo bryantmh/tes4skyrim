@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -121,6 +122,39 @@ bool SessionLive() {
     return Hooks().playerInWorld && Hooks().playerInWorld();
 }
 
+// Runs the script of every scripted object the PLAYER carries whose body reads
+// `OnPCEquip`. An inventory item has no placement, so the world-discovery
+// sweep above can never reach it.
+//
+// 🛑 The watch list is the objects whose script DECLARES the local, which is
+// the only set that can answer; asking the engine about all 1,547 scripted
+// objects every tick would not be affordable.
+// See: docs/commentary/morrowind_runtime.md#engine-written-locals
+std::size_t RunCarriedScripts(bool cellChanged) {
+    std::size_t ran = 0;
+    static std::size_t announced = 0;
+    if (announced != EquipWatchList().size()) {
+        announced = EquipWatchList().size();
+        Log("object: %zu carried object(s) watch OnPCEquip", announced);
+    }
+    // 🛑 Every record is polled, and the instance runs at most once per tick.
+    // Several item records share one script, so stopping at the first carried
+    // one would miss the sibling actually worn; running per record would run
+    // the body once per record.
+    std::set<ObjectScript*> carried;
+    for (const auto& entry : EquipWatchList()) {
+        ObjectScript* instance = CarriedInstance(entry.first, entry.second);
+        if (instance && instance->PollEquipped(entry.first)) {
+            carried.insert(instance);
+        }
+    }
+    for (ObjectScript* instance : carried) {
+        if (cellChanged) instance->Events().cellChanged = true;
+        if (instance->RunOnce()) ++ran;
+    }
+    return ran;
+}
+
 void RunOneTick() {
     ++g_ticks;
     if (!SessionLive()) {
@@ -168,7 +202,7 @@ void RunOneTick() {
         instance->RunOnce();
         ++ran;
     }
-    g_lastCount = ran + RunGlobalScripts();
+    g_lastCount = ran + RunGlobalScripts() + RunCarriedScripts(cellChanged);
 }
 
 // 🛑 The wait SLEEPS OFF the game thread and only the tick itself is posted.

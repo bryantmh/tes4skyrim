@@ -150,15 +150,16 @@ interface, which is what lets the ported rules compile without `mwworld/` or
 Two implementations: one reads the running game, and the test harnesses answer
 from literal values, so every rule is checkable with no Skyrim running.
 
-### <a id="ported-is-not-wired"></a>Ported is not wired
+### <a id="wired-not-just-ported"></a>Ported is not wired
 
 An opcode can be fully ported and still be dead: its hook is never set, or the
 `DialogueState` it reads is never fed. Either way it answers with a default
 forever while every audit that counts *ported* opcodes reads it as done, so the
 gap is invisible from the port side alone.
 
-`tools/script/mwscript_opcode_audit.py unwired` reports both halves — hooks
-used but never supplied, and `DialogueState` methods nothing calls.
+`mwscript_opcode_audit.py --wiring` reports all four halves — hooks used but
+never supplied, `DialogueState` methods nothing calls, setters writing state
+nothing acts on, and [event flags nothing raises](#engine-written-locals).
 
 ## <a id="the-filter"></a>The filter
 
@@ -1519,6 +1520,48 @@ Three commands read as ported while answering a default forever:
 pre-fix sources it reports `AddDeath`; it reports nothing now. It cannot see a
 flag that is written and read but acted on by nobody, which is what
 `StartScript` was.
+
+### <a id="engine-written-locals"></a>🛑 The engine-written locals an opcode audit CANNOT see
+
+**Code:** `plugin/object_script.cpp`, `plugin/equip.cpp`
+
+`OnPCEquip`, `PCSkipEquip`, `OnPCAdd`, `OnPCDrop` and `OnPCHitMe` are **not
+opcodes**. A script declares `short OnPCEquip` and reads the variable the
+engine writes, so there is no registration and no call site — an opcode audit
+scans for command invocations and cannot see any of them. `OnActivate` looks
+like the same thing but IS a registered function, which is what made the
+family read as covered.
+
+Measured over TR_Mainland, Tamriel_Data and the patch: 152 scripts declare
+`OnPCEquip`, 193 `OnPCHitMe`, 169 `PCSkipEquip`, 48 `OnPCAdd`, 7 `OnPCDrop`.
+
+`--wiring` now reports any `ObjectEvents` flag no shipped file raises, which
+is how this was found: four of seven flags were declared, read and cleared,
+and nothing ever set them. The symptom was an Ordinator greeting whose only
+condition is `WearingOrdinatorUni == 1` never firing, because the armor's
+`OrdinatorUniform` script could not observe being equipped.
+
+`OnPCEquip` is a poll, not a hook: `PollEquipped` asks `Actor.IsEquipped` once
+per tick for each of the 147 carried objects whose script declares the local.
+A hook would be needed only for `PCSkipEquip`, which lets a script REFUSE an
+equip (143 scripts set it) — that is checked at the inventory-USE layer, not
+inside `EquipObject`, and is still unimplemented. `kEquipObject` /
+`kUnequipObject` are recorded in `ids.h` for when it is built.
+
+🛑 **The id is a PARAMETER of the poll.** Locals belong to the SCRIPT, so one
+instance serves every item record sharing it — `OrdinatorUniform` is worn by
+three. Testing only the instance's own `mBaseId` asked about whichever record
+was seen first (`T_De_AlmaRula_Helm_UNI`), so wearing the Necrom cuirass
+answered 0 and the greeting never fired. The tick polls every record and runs
+the body once, with `mWornId` stopping a sibling record from clearing the flag
+another one set.
+
+🛑 **`SetGlobal` and `SetVar` log only on a CHANGE.** An object script re-runs
+its whole body every tick, so an unconditional line is ~30 writes a second of
+a value that already held: measured, 2,300 lines of `wearingordinatoruni = 1`
+from one equipped cuirass, burying the rest of the log. `SetGlobal` compares
+against what a READER would get, since an absent entry falls back to the GLOB's
+declared value.
 
 ### <a id="setatstart"></a>The authored placement: `SetAtStart` and its readers
 

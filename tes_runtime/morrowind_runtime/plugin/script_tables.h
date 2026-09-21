@@ -137,6 +137,13 @@ const ScriptLocals* FindScriptLocals(const std::string& script);
 // The script an actor runs, or "" -- by the actor's TES3 id.
 const std::string& ScriptOf(const std::string& actor);
 
+// `(object id, script)` for every object whose script declares `OnPCEquip`.
+//
+// 🛑 Precomputed because the alternative is asking the engine about all 1,547
+// scripted objects every tick. Only these can answer the question at all.
+// See: docs/commentary/morrowind_runtime.md#engine-written-locals
+const std::vector<std::pair<std::string, std::string>>& EquipWatchList();
+
 // One script's MWScript source, or "" -- SCPT_source.txt, by name. This is
 // what the object-script tick compiles; dialogue carries its own source.
 // See: docs/plans/morrowind_object_scripts.md#what-is-not-staged

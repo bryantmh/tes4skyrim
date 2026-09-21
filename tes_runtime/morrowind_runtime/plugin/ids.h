@@ -311,6 +311,22 @@ constexpr std::uint64_t kActorRestoreValue = 54737;
 constexpr std::uint64_t kActorDamageValue = 54660;
 constexpr std::uint64_t kActorEquipItem = 54661;
 
+// ActorEquipManager::EquipObject (0x97a5e0) and UnequipObject (0x97a9e0) on
+// 1.6.1170: the chokepoint EVERY equip passes, menu and script alike, which
+// `Actor.EquipItem` itself reaches.
+//
+// 🛑 Hooked rather than POLLED because `PCSkipEquip` lets a script REFUSE an
+// equip, and 143 scripts in the corpus set it. A poll sees an equip that has
+// already happened and cannot veto one.
+//
+// 🛑 Both prologues were checked RELOCATABLE before choosing a detour: pushes
+// then an rsp-relative `sub`/`lea`, no `mov rax,rsp`, no rip-relative operand
+// and no relative jump in the stolen range. 52934 is NOT UnequipObject -- it
+// opens `cmp [rcx+0x30],1 / jnz rel8`, which a detour would have cut.
+// See: docs/commentary/morrowind_runtime.md#engine-written-locals
+constexpr std::uint64_t kEquipObject = 52933;
+constexpr std::uint64_t kUnequipObject = 52937;
+
 // Debug.MessageBox(string) (0x9a8640), global: found at its registration,
 // `lea r8,['Debug'] / lea rdx,['MessageBox']`, the callback stored into
 // [rdi+0x50] AFTER the call. Takes the text in r9 as a BSFixedString.
