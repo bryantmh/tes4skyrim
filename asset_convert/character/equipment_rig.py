@@ -337,7 +337,123 @@ def convert_prn(root, fade, src_path):
 # Creature rigs
 # ---------------------------------------------------------------------------
 
-def prepare_creature_rig(data, strip_bone_controllers, add_equip_nodes):
+#: (name, anchors, transform source). See: docs/commentary/asset_convert_creature.md#equip-node-synthesis
+_CREATURE_EQUIP_NODES = (
+    ('WeaponSword',  ('Bip01 Pelvis', 'Bip01 Spine'),           'WEAPON'),
+    ('WeaponDagger', ('Bip01 Pelvis', 'Bip01 Spine'),           'WEAPON'),
+    ('WeaponAxe',    ('Bip01 Pelvis', 'Bip01 Spine'),           'WEAPON'),
+    ('WeaponMace',   ('Bip01 Pelvis', 'Bip01 Spine'),           'WEAPON'),
+    ('WeaponBack',   ('Bip01 Spine2', 'Bip01 Spine1',
+                      'Bip01 Spine'),                           'QUIVER'),
+    ('WeaponBow',    ('Bip01 Spine2', 'Bip01 Spine1',
+                      'Bip01 Spine'),                           'QUIVER'),
+    ('WeaponStaff',  ('Bip01 Spine2', 'Bip01 Spine1',
+                      'Bip01 Spine'),                           'QUIVER'),
+)
+
+#: Spell-cast attach points: one per hand plus a body-center node, as vanilla rigs carry.
+_CREATURE_MAGIC_NODES = (
+    ('NPC L MagicNode [LMag]', ('Bip01 L Hand',),               'SHIELD'),
+    ('NPC R MagicNode [RMag]', ('Bip01 R Hand',),               'WEAPON'),
+    ('MagicEffectsNode',       ('Bip01 Spine', 'Bip01 Spine1'), None),
+)
+
+
+def add_creature_equip_nodes(data):
+    """Give a converted creature rig the equip/sheath nodes Skyrim expects.
+
+    Returns the number of nodes added.  Runs AFTER the BONE_RENAMES pass so the
+    renamed WEAPON/SHIELD/QUIVER nodes are available as transform sources, and
+    is a no-op for any node the rig already has (so re-running is safe and a rig
+    that legitimately ships one keeps its own).
+    """
+    added = 0
+    for root in data.roots:
+        if root is None:
+            continue
+        by_name, parent_of = {}, {}
+        for block in root.tree():
+            if not isinstance(block, NifFormat.NiNode):
+                continue
+            by_name.setdefault(
+                bytes(block.name).rstrip(b'\x00').decode(
+                    'cp1252', 'replace'), block)
+            for child in block.children or []:
+                if isinstance(child, NifFormat.NiNode):
+                    parent_of[id(child)] = block
+
+        for name, anchors, source in (_CREATURE_EQUIP_NODES
+                                      + _CREATURE_MAGIC_NODES):
+            if name in by_name:
+                continue
+            parent = next((by_name[a] for a in anchors if a in by_name), None)
+            if parent is None:
+                continue
+            node = NifFormat.NiNode()
+            node.name = name.encode('latin-1')
+            src = by_name.get(source) if source else None
+            if src is not None and parent_of.get(id(src)) is parent:
+                node.translation.x = src.translation.x
+                node.translation.y = src.translation.y
+                node.translation.z = src.translation.z
+                node.rotation = src.rotation
+            node.scale = 1.0
+            node.flags = parent.flags
+            parent.add_child(node)
+            by_name[name] = node
+            added += 1
+    return added
+
+
+def _is_dead_controller(ctrl) -> bool:
+    """Whether this controller is an Oblivion-runtime leftover Skyrim drives.
+
+    A NiTransformController carrying an interpolator is real embedded
+    animation and survives.
+    See: docs/commentary/asset_convert_creature.md#dead-bone-controllers
+    """
+    return isinstance(ctrl, (NifFormat.bhkBlendController,
+                             NifFormat.NiBSBoneLODController)) \
+        or (isinstance(ctrl, NifFormat.NiTransformController)
+            and getattr(ctrl, 'interpolator', None) is None)
+
+
+def _strip_controller_chain(block) -> int:
+    """Drop every dead controller from one block's chain; how many went."""
+    removed = 0
+    prev = None
+    ctrl = getattr(block, 'controller', None)
+    while ctrl is not None:
+        nxt = getattr(ctrl, 'next_controller', None)
+        if _is_dead_controller(ctrl):
+            if prev is None:
+                block.controller = nxt
+            else:
+                prev.next_controller = nxt
+            removed += 1
+        else:
+            prev = ctrl
+        ctrl = nxt
+    return removed
+
+
+def strip_creature_bone_controllers(data):
+    """Remove Oblivion-runtime controllers from creature NIF node chains.
+
+    Returns the number of controllers removed.
+    See: docs/commentary/asset_convert_creature.md#dead-bone-controllers
+    """
+    removed = 0
+    for root in data.roots:
+        if root is None:
+            continue
+        for block in root.tree():
+            if hasattr(block, 'controller'):
+                removed += _strip_controller_chain(block)
+    return removed
+
+
+def prepare_creature_rig(data):
     """Rename the rig to Skyrim's contract and add the equip nodes.
 
     The rig root MUST be 'NPC Root [Root]': the engine binds the graph to the
@@ -346,7 +462,7 @@ def prepare_creature_rig(data, strip_bone_controllers, add_equip_nodes):
     Oblivion-runtime bone controllers go first: vanilla Skyrim creature assets
     have none, because the behaviour graph drives the bones.
     """
-    strip_bone_controllers(data)
+    strip_creature_bone_controllers(data)
     renames = {k.encode('latin-1'): v.encode('latin-1')
                for k, v in BONE_RENAMES.items()}
     for root in data.roots:
@@ -359,7 +475,7 @@ def prepare_creature_rig(data, strip_bone_controllers, add_equip_nodes):
             key = bytes(nm).rstrip(b'\x00')
             if key in renames:
                 block.name = renames[key]
-    add_equip_nodes(data)
+    add_creature_equip_nodes(data)
 
 
 def rigid_skin_creature_parts(data):

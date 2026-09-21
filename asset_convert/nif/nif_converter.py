@@ -41,8 +41,9 @@ from asset_convert import paths
 from asset_convert.nif.geometry_sanitize import sanitize_geometry_data
 from asset_convert.nif.nif_materials_morrowind import carry_havok_material
 from asset_convert.nif.nif_converter_morrowind import (
-    attach_morrowind_collision, build_skin_partitions, disable_specular,
-    is_morrowind, run_morrowind_fixups, strip_collision_nodes)
+    animate_doors, attach_morrowind_collision, build_skin_partitions,
+    disable_specular, is_morrowind, run_morrowind_fixups,
+    strip_collision_nodes)
 from asset_convert.nif.tex_paths import rewrite_tex_path
 from asset_convert.nif.shaders import (ALPHA_BLEND_ENABLED,
                                        ALPHA_DST_ONE, ALPHA_DST_SHIFT,
@@ -88,6 +89,7 @@ from asset_convert.character.wearable_plan_falloutnv import shield_flags
 from asset_convert.havok.hkx_skeleton import BONE_RENAMES
 from asset_convert.character import wearable_plan as wp
 from asset_convert.collision.clutter_plan import latch_clutter_mass
+from asset_convert.nif.door_plan import latch_door_model
 from asset_convert.character.body_wrap import morph_converted_to_weight1
 from asset_convert.havok.hkx_animobject import generate_animobject_project
 from asset_convert.nif.gun_parts_falloutnv import add_gun_part_sequences
@@ -360,154 +362,6 @@ def _prune_orphan_roots(data):
         return 0
 
     data.roots = keep
-    return removed
-
-
-# Equip/sheath nodes Skyrim looks up by hard-coded name, and where each one
-# hangs on a vanilla weapon-using creature rig (Draugr skeleton.nif node order:
-# WeaponAxe/Sword/Mace sit by the pelvis, WeaponBack/Bow/QUIVER after the left
-# pauldron on the upper spine, WEAPON under the right hand, SHIELD under the
-# left).
-#
-# Oblivion rigs have only three attachment points — Weapon, Torch, Quiver —
-# which the BONE_RENAMES pass turns into WEAPON/SHIELD/QUIVER.  The per-type
-# SHEATH nodes have no Oblivion counterpart at all, so the converted rig simply
-# lacked them: a converted weapon carries Prn=WeaponMace (the sheathed node,
-# which is what vanilla Skyrim weapon meshes use), the engine could not find a
-# node by that name, and the mesh fell back to the actor root — the weapon
-# visibly slid around at the creature's feet instead of sitting in its hand,
-# and no draw animation could ever reparent it.
-#
-# 'anchor' is the node to hang it under, in preference order (the first that
-# exists on this rig wins); 'source' is the node whose LOCAL transform is
-# copied, so the new node lands somewhere sensible for a rig of any size
-# rather than at a hardcoded human offset.
-#
-# Oblivion creatures do NOT sheathe: every one of the 41 armed creature folders
-# ships equip/unequip clips whose text keys are `attach`/`detach` (the AnimObject
-# mechanism) -- the weapon is created in the hand and destroyed, never parked on
-# the body.  38 of those 41 rigs accordingly carry NO Quiver/Shield/BackWeapon
-# node at all.  So the per-type SHEATH nodes below exist only to give the ENGINE
-# a node of the name it looks up; nothing is ever displayed at them, and the
-# creature's own rig is the authority on what it needs.
-#
-# An earlier pass synthesized "proportionate" offsets for them from vanilla
-# Skyrim ratios.  That was wrong on two counts: the placements disagreed with
-# vanilla anyway (axe/mace hang on the RIGHT hip in Skyrim, the guessed offset
-# put them on the left), and no Oblivion creature has anything to place there.
-# The node is created at the anchor's origin, which is what a node nothing
-# renders at should be.
-_CREATURE_EQUIP_NODES = (
-    # name,           anchors (first match wins),               source
-    ('WeaponSword',  ('Bip01 Pelvis', 'Bip01 Spine'),           'WEAPON'),
-    ('WeaponDagger', ('Bip01 Pelvis', 'Bip01 Spine'),           'WEAPON'),
-    ('WeaponAxe',    ('Bip01 Pelvis', 'Bip01 Spine'),           'WEAPON'),
-    ('WeaponMace',   ('Bip01 Pelvis', 'Bip01 Spine'),           'WEAPON'),
-    ('WeaponBack',   ('Bip01 Spine2', 'Bip01 Spine1',
-                      'Bip01 Spine'),                           'QUIVER'),
-    ('WeaponBow',    ('Bip01 Spine2', 'Bip01 Spine1',
-                      'Bip01 Spine'),                           'QUIVER'),
-    ('WeaponStaff',  ('Bip01 Spine2', 'Bip01 Spine1',
-                      'Bip01 Spine'),                           'QUIVER'),
-)
-
-#: Spell-cast attach points: one per hand plus a body-center node, as vanilla rigs carry.
-_CREATURE_MAGIC_NODES = (
-    ('NPC L MagicNode [LMag]', ('Bip01 L Hand',),               'SHIELD'),
-    ('NPC R MagicNode [RMag]', ('Bip01 R Hand',),               'WEAPON'),
-    ('MagicEffectsNode',       ('Bip01 Spine', 'Bip01 Spine1'), None),
-)
-
-
-def _add_creature_equip_nodes(data):
-    """Give a converted creature rig the equip/sheath nodes Skyrim expects.
-
-    Returns the number of nodes added.  Runs AFTER the BONE_RENAMES pass so the
-    renamed WEAPON/SHIELD/QUIVER nodes are available as transform sources, and
-    is a no-op for any node the rig already has (so re-running is safe and a rig
-    that legitimately ships one keeps its own).
-    """
-    added = 0
-    for root in data.roots:
-        if root is None:
-            continue
-        by_name, parent_of = {}, {}
-        for block in root.tree():
-            if not isinstance(block, NifFormat.NiNode):
-                continue
-            by_name.setdefault(
-                bytes(block.name).rstrip(b'\x00').decode(
-                    'cp1252', 'replace'), block)
-            for child in block.children or []:
-                if isinstance(child, NifFormat.NiNode):
-                    parent_of[id(child)] = block
-
-        for name, anchors, source in (_CREATURE_EQUIP_NODES
-                                      + _CREATURE_MAGIC_NODES):
-            if name in by_name:
-                continue
-            parent = next((by_name[a] for a in anchors if a in by_name), None)
-            if parent is None:
-                continue
-            node = NifFormat.NiNode()
-            node.name = name.encode('latin-1')
-            # Copy a sibling attachment point's local transform where we have
-            # one; otherwise sit at the anchor's origin.  Either way the node
-            # is scaled to THIS creature, not to a human.
-            src = by_name.get(source) if source else None
-            if src is not None and parent_of.get(id(src)) is parent:
-                node.translation.x = src.translation.x
-                node.translation.y = src.translation.y
-                node.translation.z = src.translation.z
-                node.rotation = src.rotation
-            node.scale = 1.0
-            node.flags = parent.flags
-            parent.add_child(node)
-            by_name[name] = node
-            added += 1
-    return added
-
-
-def _strip_creature_bone_controllers(data):
-    """Remove Oblivion-runtime controllers from creature NIF node chains.
-
-    Oblivion creature skeletons carry an active (flags=12) but DATALESS
-    NiTransformController on every bone plus a bhkBlendController on every
-    ragdoll bone and a NiBSBoneLODController on Bip01 — all driven by
-    Oblivion's engine at runtime.  Vanilla Skyrim creature skeletons ship
-    NONE of these (bhkBlendController: 0 of all vanilla actor meshes; their
-    only NiTransformControllers have a real interpolator+data — e.g. the
-    dog's jaw/tongue idle).  Skyrim drives bones from the behavior graph, so
-    these leftovers are at best dead weight and at worst engine hazards
-    (an active controller with a null interpolator on every bone).
-
-    Keeps NiTransformControllers that have an interpolator (real embedded
-    animation).  Returns the number of controllers removed.
-    """
-    removed = 0
-    for root in data.roots:
-        if root is None:
-            continue
-        for block in root.tree():
-            if not hasattr(block, 'controller'):
-                continue
-            prev = None
-            ctrl = getattr(block, 'controller', None)
-            while ctrl is not None:
-                nxt = getattr(ctrl, 'next_controller', None)
-                dead = isinstance(ctrl, (NifFormat.bhkBlendController,
-                                         NifFormat.NiBSBoneLODController)) \
-                    or (isinstance(ctrl, NifFormat.NiTransformController)
-                        and getattr(ctrl, 'interpolator', None) is None)
-                if dead:
-                    if prev is None:
-                        block.controller = nxt
-                    else:
-                        prev.next_controller = nxt
-                    removed += 1
-                else:
-                    prev = ctrl
-                ctrl = nxt
     return removed
 
 
@@ -1091,8 +945,7 @@ def _prepare_rig(data, creature, is_gnd, in_armor_dir, is_shield,
         strip_gnd_skin(data)
         has_skin = False
     if creature:
-        prepare_creature_rig(data, _strip_creature_bone_controllers,
-                             _add_creature_equip_nodes)
+        prepare_creature_rig(data)
     if creature and not has_skin:
         rigid_skin_creature_parts(data)
         has_skin = _has_skin(data)
@@ -1120,6 +973,7 @@ def _convert_roots(data, stats, fix_textures, src_path, creature,
     if was_morrowind:
         strip_collision_nodes(data, stats)
         disable_specular(data, stats)
+        animate_doors(data, stats)
 
 
 def _convert_nif(data, fix_textures=True, src_path='', weight=0,
@@ -1259,6 +1113,7 @@ def _authored_wear(src_path, src_meshes_dir, wearable_plan, creature, hair):
     wp.latch_variants(plan, src_path, src_meshes_dir)
     latch_clutter_mass(wearable_plan if not creature else None,
                        src_path, src_meshes_dir)
+    latch_door_model(wearable_plan, src_path, src_meshes_dir)
     if plan is None:
         return bool(hair), 0x02 if hair else 0
     return (wp.is_worn(plan, src_path, src_meshes_dir),

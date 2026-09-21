@@ -2954,6 +2954,54 @@ generated graph had `weaponDraw`/`weaponSheathe` EVENTS but no equip STATE, so
 nothing ever reparented the weapon: it stayed on the sheath node — or, before
 those nodes existed, on the actor root, sliding around at the creature's feet.
 
+### <a id="equip-node-synthesis"></a>The sheath nodes are synthesised, at the anchor's origin
+
+**Code:** `add_creature_equip_nodes` / `strip_creature_bone_controllers` in
+`asset_convert/character/equipment_rig.py`, both run by `prepare_creature_rig`.
+
+Skyrim looks these nodes up by hard-coded name. A vanilla weapon-using rig
+places them as the Draugr skeleton does: `WeaponAxe`/`Sword`/`Mace` by the
+pelvis, `WeaponBack`/`Bow`/`QUIVER` after the left pauldron on the upper spine,
+`WEAPON` under the right hand, `SHIELD` under the left.
+
+Oblivion rigs have only three attachment points — Weapon, Torch, Quiver — which
+the `BONE_RENAMES` pass turns into WEAPON/SHIELD/QUIVER. The per-type SHEATH
+nodes have no Oblivion counterpart, so the converted rig simply lacked them: a
+converted weapon carries `Prn=WeaponMace`, the engine found no node by that
+name, and the mesh fell back to the actor root — the weapon visibly slid around
+at the creature's feet and no draw animation could reparent it.
+
+Each entry names the anchor to hang under (first that exists on this rig wins)
+and the node whose LOCAL transform is copied, so the new node lands somewhere
+sensible for a rig of any size rather than at a hardcoded human offset.
+
+**The nodes are empty by design.** Oblivion creatures do not sheathe: all 41
+armed creature folders ship equip/unequip clips whose text keys are
+`attach`/`detach` (the AnimObject mechanism) — the weapon is created in the hand
+and destroyed, never parked on the body — and 38 of those 41 rigs carry no
+Quiver/Shield/BackWeapon node at all. The SHEATH nodes therefore exist only to
+give the engine a node of the name it looks up. An earlier pass synthesised
+"proportionate" offsets from vanilla Skyrim ratios; that was wrong twice over —
+the placements disagreed with vanilla anyway (axe and mace hang on the RIGHT hip
+in Skyrim, the guessed offset put them on the left) and no Oblivion creature has
+anything to place there. The node is created at the anchor's origin, which is
+what a node nothing renders at should be.
+
+### <a id="dead-bone-controllers"></a>Oblivion's runtime bone controllers are stripped
+
+Oblivion creature skeletons carry an active (flags=12) but DATALESS
+`NiTransformController` on every bone, a `bhkBlendController` on every ragdoll
+bone, and a `NiBSBoneLODController` on Bip01 — all driven by Oblivion's engine
+at runtime. Vanilla Skyrim creature skeletons ship none of these
+(`bhkBlendController`: 0 across all vanilla actor meshes; their only
+`NiTransformController`s carry a real interpolator and data, such as the dog's
+jaw and tongue idle). Skyrim drives bones from the behaviour graph, so these
+leftovers are at best dead weight and at worst engine hazards — an active
+controller with a null interpolator on every bone.
+
+A `NiTransformController` that HAS an interpolator is real embedded animation
+and is kept.
+
 ### <a id="combat-idle-clips"></a>The combat-ready idle
 
 `COMBAT_IDLE_CANDIDATES` is in weapon-class priority order. Oblivion stores the

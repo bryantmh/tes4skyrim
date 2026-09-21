@@ -2097,6 +2097,97 @@ longer offsets the shape. Every mesh goes through the same Havok bridge, so
 the generated case is a real MOPP + CMS too.
 
 
+
+<a id="morrowind-door-animation"></a>
+
+## Morrowind doors: the swing lives in the ENGINE, not the mesh (2026-09-21)
+
+**Code:** `asset_convert/nif/door_anim_morrowind.py`, `asset_convert/nif/door_plan.py`;
+`animate_morrowind_door` is called from `_convert_roots` after
+`attach_morrowind_collision`.
+
+Converted Morrowind doors behaved as statics: activating one played the sound
+and swapped the lock state, but the panel never moved.
+
+### The two games disagree about where a door's motion is stored
+
+Morrowind stores none of it in the mesh. `World::rotateDoor`
+(`references/openmw/apps/openmw/mwworld/worldimp.cpp:1419`) rotates the
+REFERENCE itself:
+
+```cpp
+float minRot = door.getCellRef().getPosition().rot[2];
+float maxRot = minRot + osg::DegreesToRadians(90.f);
+float diff = duration * osg::DegreesToRadians(90.f) * (state == Opening ? 1 : -1);
+```
+
+90 degrees about Z, over one second (`duration` is seconds and the rate is
+90 deg/s), applied to every non-teleport door uniformly. A teleport door never
+swings at all — `Door::activate` returns an `ActionTeleport` before reaching
+the `// animated door` branch (`mwclass/door.cpp:184-200`).
+
+Skyrim has no equivalent. Its doors carry `Open` and `Close`
+`NiControllerSequence` blocks inside the NIF and the engine plays them by name.
+Measured on the corpus: **0 of 76** converted Morrowind door meshes contain any
+`NiControllerManager`, `NiControllerSequence`, `NiKeyframeController` or
+`NiTransformController` block, and a byte scan of the 76 *source* TES3 meshes
+finds no `NiKeyframeController` either — the animation was never there to lose.
+So the sequences have to be synthesised.
+
+### The sign of the rotation
+
+Morrowind's `rot[2]` turns about the NEGATIVE Z axis. OpenMW builds the node
+attitude as `osg::Quat(rot.z(), osg::Vec3f(0, 0, -1))`
+(`mwrender/objectpaging.cpp:820`), so Morrowind's +90 deg is **-90 deg about
+NIF +Z**. Vanilla Skyrim agrees independently: `farmhouseanimdoor01.nif` ends
+its `Open` sequence at Z = -1.6057 rad (-92 deg), and `mrkdoor01.nif`'s two
+leaves likewise open negative. The synthesised key is therefore -pi/2.
+
+### The contract, read off vanilla
+
+`farmhouseanimdoor01.nif` and `mrkdoor01.nif`:
+
+| Piece | Value |
+|---|---|
+| Root controller | `NiControllerManager`, flags 76 (0x4C), `cumulative` false |
+| Object palette | `NiDefaultAVObjectPalette` naming the hinge node and its geometry |
+| Sequences | `Open`, `Close`; `start_time` 0.0, `stop_time` 1.0, `cycle_type` 2 (CLAMP), `frequency` 1.0, `weight` 1.0 |
+| Text keys | `start` at 0.0, `end` at 1.0 |
+| Controlled block | `controller_type` `NiTransformController`, `priority` 0, driven by one shared `NiMultiTargetTransformController` |
+| Interpolator | `NiTransformInterpolator` whose `NiTransformData` has `rotation_type` 4 (XYZ_ROTATION_KEY) and Z keys only |
+| Hinge node | `NiNode`, flags 142 (0x8E) — the physics-sync bit the keyframed body needs |
+| Hinge body | `bhkCollisionObject` flags 137, `bhkRigidBodyT` motion system 4 (KEYFRAMED), layer 2 (SKYL_ANIMSTATIC), quality 1, solver deactivation 1, mass 0 |
+| Root BSXFlags | animated + havok + complex |
+
+Sound is NOT carried as a `Sound:` text key. Vanilla writes one, but Skyrim
+also honours the record channel, and the converted DOOR records already carry
+`SNAM`/`ANAM` resolved to sound descriptors, so the mesh channel would only
+double it.
+
+### The hinge is the mesh origin, because Morrowind's is
+
+Morrowind rotates the reference, so the pivot is the REFR origin and the
+authored hinge is wherever the mesh meets it. A census of the 91 models
+`DOOR.txt` names (`--bbox` world extents, classified by which horizontal axis
+is thin) finds 29 authored hinge-at-origin (`In_impsmall_door_01` spans
+y[-118.4, 0.1]) and 62 centred on it (`Ex_common_door_01` spans
+x[-67.9, 67.9]). The converter re-pivots NEITHER: rotating about the mesh
+origin is exactly what Morrowind does, so a centred panel spins about its
+middle in Skyrim precisely as it did in Morrowind. Re-pivoting would be a
+change of behaviour, not a fix — and the centred set is overwhelmingly the
+teleport doors, grates and doorway frames, which never swing in either game.
+
+### Every door mesh gets the sequences, including the load doors
+
+A base is not reliably one kind or the other. Splitting the 139 DOOR bases by
+whether their REFRs carry `XTEL`: 27 bases are swing-only, 81 teleport-only and
+**23 are BOTH** — `In_velothismall_ndoor_01` alone has 438 plain and 516
+teleport references. The mesh cannot encode the distinction, and it does not
+need to: a Skyrim teleport door ignores its `Open`/`Close` sequences, exactly
+as vanilla does. `orcdoorload01.nif` — a vanilla Skyrim LOAD door — ships the
+sequences anyway, which settles it.
+
+
 ## Morrowind surface materials
 <a id="morrowind-surface-materials"></a>
 

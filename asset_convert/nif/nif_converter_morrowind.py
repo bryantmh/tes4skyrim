@@ -24,6 +24,8 @@ from asset_convert.collision.cms_builder import build_cms_collision
 from asset_convert.collision.collision import GAME_UNITS_PER_HAVOK
 from asset_convert.collision.collision_hulls import build_clutter_hull
 from asset_convert.collision.clutter_plan import mesh_clutter_mass
+from asset_convert.nif.door_anim_morrowind import animate_morrowind_door
+from asset_convert.nif.door_plan import mesh_is_door
 from asset_convert.havok.hkx_ragdoll_morrowind import attach_synthetic_bodies
 from asset_convert.nif.nif_materials_morrowind import (
     havok_material, sample_materials)
@@ -358,6 +360,25 @@ def attach_morrowind_collision(root, stats=None) -> bool:
     _count(stats, 'mw_collision_built', int(built))
     _count(stats, 'mw_collision_generated', int(built and generated))
     return built
+
+
+def animate_doors(data, stats=None) -> int:
+    """Swing every root of a DOOR model on Open/Close sequences; how many.
+
+    Runs after the collision is attached, because the pass hands that body to
+    the hinge node and re-keys it keyframed, and the BSXFlags are recomputed
+    afterwards so the root earns the Animated bit the manager now justifies.
+    See: docs/commentary/asset_convert_nif.md#morrowind-door-animation
+    """
+    if not mesh_is_door():
+        return 0
+    animated = 0
+    for root in data.roots:
+        if root is not None and animate_morrowind_door(root):
+            _recompute_bsx(root)
+            animated += 1
+    _count(stats, 'mw_doors_animated', animated)
+    return animated
 
 
 def strip_helper_nodes(root, stats=None) -> int:
