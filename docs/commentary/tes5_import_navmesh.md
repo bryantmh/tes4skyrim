@@ -3750,6 +3750,22 @@ NavIndex objects for one export and paid the 10 s load twice on startup. It
 also broke `NavIndex.arm`, whose `_armed` check compared the two spellings and
 reloaded the collision tables on every alternation.
 
+**The cache is LOCKED, because the server is threaded.** `ThreadingHTTPServer`
+handles each request on its own thread, and `index_for` was an unguarded
+check-then-build: two requests that missed the same key each constructed a
+`NavIndex`, so both ran `arm()` and interleaved their writes to the shared
+collision, door and namespace globals. Observed as a `/plugin_cells` and a
+`/mesh` request racing on one export, surfacing as `ValueError: I/O operation
+on closed file`.
+
+That exception came from `load_origin_shifts`, which silenced its callee by
+wrapping it in `contextlib.redirect_stdout(open(os.devnull))` -- a swap of the
+PROCESS-GLOBAL `sys.stdout`. Thread B exiting the `with` closed the devnull
+handle and restored stdout while thread A was still inside, so A's `print`
+wrote to a closed file. **A threaded caller cannot mute a callee by redirecting
+`sys.stdout`**; `load_furniture_models` takes a `quiet` flag instead and the
+redirect is gone.
+
 The page-side half of the same problem: the canvas prototype redrew all ~22,000
 collision triangles per mouse-move. The WebGL version uploads each static layer
 to the GPU once, and a drag patches only the moved node's instance matrix and
@@ -4016,6 +4032,37 @@ cells baked correctly in a fresh process.
 `cell()`, so whichever index is used is the one whose tables are live. A
 class-level `_armed` records which export currently owns them, so the common
 single-export case still pays the load exactly once.
+
+### The asset namespace is one of those globals
+
+**A model key carries the game namespace, so arming must set it too.** Every
+key is `<namespace>/<model path>` (`pool.model_key`, off `current_namespace()`),
+and only the conversion pipeline used to call `set_namespace`. A diagnostic left
+the process default `tes4` in force, so `Morrowind.esm` -- namespace `morrowind`
+-- looked its meshes up as `tes4/o/contain_crate_01.nif` against a cache keyed
+`morrowind/o/contain_crate_01.nif`, and `get_collision` returned `None` for all
+4,509 of its base models. Cellview drew the pathgrid in an empty room.
+
+`audit.py` made it permanent: it carried its OWN copy of `model_key` with
+`'tes4/'` HARDCODED, so the miss was baked into the persisted `cell_index`
+rather than recomputed per process. That duplicate is deleted -- the one
+namespace-aware implementation is shared -- and `_parse_tables` and
+`NavIndex.arm()` both call `set_namespace(namespace_for(export))`. `SCHEMA` is
+bumped to 4 so indexes written with `tes4/` keys rebuild instead of being
+served.
+
+Measured on `Imperial Prison Ship` (Morrowind.esm): `walk 0 block 0` before,
+14,949 walkable and 49,023 blocking triangles after. Oblivion is unaffected --
+its namespace IS `tes4`.
+
+### An EMPTY collision cache read as current
+
+**`_entry_table_is_intact` accepted `count == 0`** (`collision_extract`), so a
+20-byte `export/Morrowind.esm/collision_cache.bin` -- valid `TESCOL07` magic,
+zero entries, table consuming the blob exactly -- pinned itself as fresh. The
+rescan in `_rescan_mesh_caches` is gated on that check, so it never fired again
+and the empty cache survived every run. An empty table is now never current;
+the rescan found 4,732 of 6,978 NIFs with collision.
 
 
 ## <a id="land-slit-buffer-must-be-repaired"></a>Land slits: repair the buffer, never kill the cell

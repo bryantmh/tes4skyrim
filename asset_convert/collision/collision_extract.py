@@ -834,13 +834,17 @@ def collision_cache_is_current(collision_cache: str) -> bool:
 def _entry_table_is_intact(data: bytes) -> bool:
     """True if *data* has the current magic and entries consuming it exactly.
 
-    Reads only the lengths, so no float data is decoded.
+    Reads only the lengths, so no float data is decoded.  An EMPTY table is
+    never current: it parses perfectly, so a run that scanned the wrong mesh
+    dir pins itself as fresh and the rescan never fires again.
     See: docs/commentary/tes5_import_pipeline.md#phase-0-stale-bounds-cache
     """
     if data[:8] != _MAGIC:
         return False
     try:
         (count,) = struct.unpack_from('<I', data, 8)
+        if not count:
+            return False
         off = 12
         for _ in range(count):
             (klen,) = struct.unpack_from('<H', data, off)

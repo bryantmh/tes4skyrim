@@ -462,15 +462,14 @@ def _load_marker_seats(mesh_dirs) -> tuple:
     return resolved, model_shift
 
 
-def load_furniture_models(meshes_dir, by_type, ctx=None) -> int:
+def load_furniture_models(meshes_dir, by_type, ctx=None, quiet=False) -> int:
     """Compute seat lists + origin shifts for every marker-bearing model.
 
-    meshes_dir is <export_dir>/meshes; by_type maps sig -> records.  Both the
-    meshes and the base records of `ctx`'s masters are indexed too, so a
-    plugin that only PLACES a master's furniture still compensates.  A model
-    whose NIF is unreadable is skipped, leaving its REFRs unshifted.  The
-    base sweep runs even with no marker model anywhere, because a record may
-    carry an authored `Model.OriginShift` instead.
+    meshes_dir is <export_dir>/meshes; by_type maps sig -> records.  `ctx`'s
+    masters are indexed too.  An unreadable NIF is skipped, leaving its REFRs
+    unshifted.  The base sweep runs even with no marker model, for an authored
+    `Model.OriginShift`.  `quiet` drops the summary for a threaded caller,
+    which cannot redirect `sys.stdout` here without racing.
 
     See: docs/commentary/asset_convert_nif.md#master-owned-furniture
     """
@@ -484,8 +483,9 @@ def load_furniture_models(meshes_dir, by_type, ctx=None) -> int:
     shifted_bases += _index_origin_shifts(
         ((get_str(rec, 'FormID'), rec)
          for recs in by_type.values() for rec in recs), model_shift)
-    print(f"  Furniture seats: {resolved} marker models resolved, "
-          f"{shifted_bases} base records need REFR z compensation")
+    if not quiet:
+        print(f"  Furniture seats: {resolved} marker models resolved, "
+              f"{shifted_bases} base records need REFR z compensation")
     return resolved
 
 

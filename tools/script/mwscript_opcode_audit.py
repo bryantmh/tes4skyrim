@@ -23,6 +23,8 @@ import re
 import sys
 
 REGISTRATIONS = 'external/openmw/components/compiler/extensions0.cpp'
+#: Declares the name arrays a loop registration sits too far from, `controls[]`.
+OPCODE_HEADER = 'external/openmw/components/compiler/opcodes.hpp'
 RUNNER = 'tes_runtime/morrowind_runtime/plugin/script_runner.cpp'
 #: The other installers, by SHAPE so a new `script_ops_*.cpp` is never missed.
 RUNNER_PARTS_GLOB = 'tes_runtime/morrowind_runtime/plugin/script_ops_*.cpp'
@@ -47,15 +49,18 @@ _OPCODE = re.compile(r'\bopcode\w+')
 #: `kDeliberateNoOps` in script_runner.cpp: nothing to port, by design.
 _NOOPS = re.compile(r'kDeliberateNoOps\[\]\s*=\s*\{(.*?)\}', re.S)
 
-#: `static const char* dynamics[...] = { "health", ... };` -- a name array.
-_ARRAY = re.compile(r'static\s+const\s+char\*\s+(\w+)\s*\[[^\]]*\]\s*='
-                    r'\s*\{(.*?)\}\s*;', re.S)
+#: A name array a loop indexes: `static` beside its loop, or `inline constexpr`.
+_ARRAY = re.compile(r'(?:static|inline\s+constexpr)\s+const\s+char\*\s+(\w+)'
+                    r'\s*\[[^\]]*\]\s*=\s*\{(.*?)\}\s*;', re.S)
+#: The name a loop builds: a prefix, the array element, an optional suffix.
+_LOOP_NAME = (r'(?:std::string\s*\(\s*"([^"]*)"\s*\)|(\w+))\s*\+\s*(\w+)\[i\]'
+              r'(?:\s*\+\s*std::string\s*\(\s*"([^"]*)"\s*\))?')
 #: `registerFunction(get + dynamics[i], 'f', "x", opcodeGetDynamic + i, ...)`
-_LOOP_FUNC = re.compile(r'registerFunction\s*\(\s*(\w+)\s*\+\s*(\w+)\[i\]'
+_LOOP_FUNC = re.compile(r'registerFunction\s*\(\s*' + _LOOP_NAME +
                         r'[^;]*?\'(\w)\'\s*,\s*"([^"]*)"\s*,'
                         r'\s*([A-Za-z0-9_]+)\s*\+\s*i', re.S)
 #: The instruction form of the same loop, which has no return type.
-_LOOP_INSTR = re.compile(r'registerInstruction\s*\(\s*(\w+)\s*\+\s*(\w+)\[i\]'
+_LOOP_INSTR = re.compile(r'registerInstruction\s*\(\s*' + _LOOP_NAME +
                          r'\s*,\s*"([^"]*)"\s*,'
                          r'\s*([A-Za-z0-9_]+)\s*\+\s*i', re.S)
 #: The `std::string get("get");` prefixes those loops concatenate.
@@ -97,30 +102,35 @@ def _domain_at(spans, pos):
     return name
 
 
-def _expand_loops(text, spans, out):
+def _expand_loops(text, spans, out, array_text=''):
     """Add the families registered in a loop over a name array.
 
     🛑 Whole families -- the dynamics, attributes, skills and controls --
-    register with a COMPUTED name (`get + dynamics[i]`), so there is no string
-    literal to match. Skipping them reported all 12 dynamic-stat commands as
-    unregistered while they were ported and working.
+    register with a COMPUTED name, so there is no string literal to match.
+    Skipping them reported all 12 dynamic-stat commands as unregistered while
+    they were ported and working.
+
+    A name is a prefix, the array element, and sometimes a suffix, as in
+    `get + controls[i] + "disabled"`.
     """
     arrays = {m.group(1): re.findall(r'"([^"]+)"', m.group(2))
-              for m in _ARRAY.finditer(text)}
+              for m in _ARRAY.finditer(text + array_text)}
     prefixes = {m.group(1): m.group(2) for m in _PREFIX.finditer(text)}
     forms = ((_LOOP_FUNC, True), (_LOOP_INSTR, False))
     for pattern, is_func in forms:
         for m in pattern.finditer(text):
-            prefix = prefixes.get(m.group(1))
-            names = arrays.get(m.group(2))
+            inline, named, array, tail = m.groups()[:4]
+            prefix = inline if inline is not None else prefixes.get(named)
+            names = arrays.get(array)
             if prefix is None or not names:
                 continue
-            ret = m.group(3) if is_func else '-'
-            args = m.group(4) if is_func else m.group(3)
-            opcode = m.group(5) if is_func else m.group(4)
+            rest = m.groups()[4:]
+            ret = rest[0] if is_func else '-'
+            args = rest[1] if is_func else rest[0]
+            opcode = rest[2] if is_func else rest[1]
             domain = _domain_at(spans, m.start())
-            for offset, suffix in enumerate(names):
-                cmd = Command(domain, prefix + suffix, ret, args,
+            for offset, name in enumerate(names):
+                cmd = Command(domain, prefix + name + (tail or ''), ret, args,
                               f'{opcode}+{offset}')
                 out.setdefault(cmd.key, cmd)
 
@@ -140,7 +150,9 @@ def registrations(root):
         cmd = Command(_domain_at(spans, m.start()), m.group(1), m.group(2),
                       m.group(3), m.group(4))
         out.setdefault(cmd.key, cmd)
-    _expand_loops(text, spans, out)
+    with open(os.path.join(root, OPCODE_HEADER), encoding='utf-8',
+              errors='replace') as fh:
+        _expand_loops(text, spans, out, fh.read())
     return out
 
 

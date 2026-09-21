@@ -15,7 +15,6 @@ number the tool prints a lie.
     verts, tris = cell.build()
 """
 
-import contextlib
 import math
 import os
 import sys
@@ -23,6 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from asset_convert.collision import collision_extract as ce
+from asset_convert.game_paths import namespace_for, set_namespace
 from tes5_import.navmesh import build
 from tes5_import.navmesh.from_pgrd import (
     _cell_graph, collect_doors, load_door_centroids,
@@ -57,12 +57,8 @@ def load_origin_shifts(export, quiet=True):
     for sig in ('FURN', 'STAT'):
         path = os.path.join(export, sig + '.txt')
         by_type[sig] = parse_export_file(path) if os.path.isfile(path) else []
-    if quiet:
-        with open(os.devnull, 'w') as null:
-            with contextlib.redirect_stdout(null):
-                return load_furniture_models(os.path.join(export, 'meshes'),
-                                             by_type)
-    return load_furniture_models(os.path.join(export, 'meshes'), by_type)
+    return load_furniture_models(os.path.join(export, 'meshes'), by_type,
+                                 quiet=quiet)
 
 
 class CellCtx(object):
@@ -216,11 +212,16 @@ class NavIndex(object):
         two NavIndex objects in one process share one table and the last one
         built wins -- every cell of the other export then finds no collision.
 
+        The asset namespace is one of those globals: `model_key` prefixes
+        every model path with it, so without this a non-Oblivion export looks
+        its meshes up under `tes4/` and finds no collision at all.
+
         See: docs/commentary/tes5_import_navmesh.md#navindex-arms-shared-tables
         """
         key = os.path.normcase(os.path.normpath(self.export))
         if NavIndex._armed == key:
             return
+        set_namespace(namespace_for(self.export))
         ce.load_collision(self.collision_caches(), quiet=self._quiet)
         load_door_centroids(
             os.path.join(str(assets_for(self.export)),

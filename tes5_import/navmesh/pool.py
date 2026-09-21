@@ -73,7 +73,7 @@ def ensure_cell_grid(cell: dict) -> None:
     cell['XCLC.Y'] = '0'
 
 
-def _model_key(model: str) -> str:
+def model_key(model: str) -> str:
     """Normalize a TES4 model path to the mesh_bounds cache key.
 
     Lowercase, forward slashes, game-namespace prefix, '.nif' suffix --
@@ -143,7 +143,7 @@ def build_base_model_index(by_type: dict, master_export: dict = None) -> dict:
     for fid, rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
         model = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
         if model:
-            index[fid] = _model_key(model)
+            index[fid] = model_key(model)
     return index
 
 
@@ -175,7 +175,7 @@ def build_door_fid_set(by_type: dict, master_export: dict = None) -> dict:
     out = {}
     for fid, rec in _records_of(by_type, master_export, ('DOOR',)):
         model = rec.get('Model.MODL') or rec.get('MODL')
-        out[fid] = _model_key(model) if model else None
+        out[fid] = model_key(model) if model else None
     return out
 
 

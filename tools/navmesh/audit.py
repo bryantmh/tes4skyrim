@@ -28,7 +28,9 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from asset_convert.collision import collision_extract as ce
+from asset_convert.game_paths import namespace_for, set_namespace
 from tes5_import.navmesh import build, params
+from tes5_import.navmesh.pool import model_key
 from tes5_import.navmesh.from_pgrd import (collect_doors,
                                       load_door_centroids)
 from tools.navmesh import cell_index as cell_index_mod
@@ -46,11 +48,6 @@ from output_layout import assets_for
 _TYPES = {'CELL', 'REFR', 'PGRD', 'LAND', 'STAT', 'CONT', 'FURN', 'ACTI',
           'TREE', 'DOOR', 'WRLD'}
 _BASES = ('STAT', 'CONT', 'FURN', 'ACTI', 'TREE', 'DOOR')
-
-
-def _model_key(model):
-    k = 'tes4/' + model.lower().replace('\\', '/').lstrip('/')
-    return k if k.endswith('.nif') else k + '.nif'
 
 
 def _pgrd_nodes(pgrd):
@@ -276,7 +273,7 @@ def _door_model_map(by_type):
         f = d.get('FormID')
         m = get_str(d, 'Model.MODL') or get_str(d, 'MODL')
         if f and m:
-            out[int(f, 16) & 0xFFFFFF] = _model_key(m)
+            out[int(f, 16) & 0xFFFFFF] = model_key(m)
     return out
 
 
@@ -295,8 +292,13 @@ def _parse_tables(export):
     Masters are chained at lookup time, never copied in: a child that merged
     them stored Morrowind_ob's 37,742 LAND records a second time.
 
+    `model_key` prefixes each path with the ACTIVE namespace, so the namespace
+    is set from `export` first: a default-`tes4` index stores keys no
+    non-Oblivion collision cache holds, and every lookup misses.
+
     See: docs/commentary/tes5_import_navmesh.md#cellview-cell-index
     """
+    set_namespace(namespace_for(export))
     recs = parse_export_directory(export, type_filter=_TYPES)
     by_type = group_records_by_type(recs)
     base_model = {}
@@ -305,7 +307,7 @@ def _parse_tables(export):
             f = rec.get('FormID')
             m = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
             if f and m:
-                base_model[int(f, 16) & 0xFFFFFF] = _model_key(m)
+                base_model[int(f, 16) & 0xFFFFFF] = model_key(m)
     refr_by_cell = {}
     for r in by_type.get('REFR', []):
         refr_by_cell.setdefault((r.get('ParentCELL') or '').upper(), []).append(r)

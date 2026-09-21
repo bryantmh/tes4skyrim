@@ -1370,11 +1370,11 @@ def test_speedtree_models_key_to_the_converted_nif():
     TREE in the game carved nothing.
     See: docs/commentary/tes5_import_navmesh.md#speedtree-model-keys
     """
-    assert (navm_pool._model_key('\\ShrubSeabuckthornSU.spt')
+    assert (navm_pool.model_key('\\ShrubSeabuckthornSU.spt')
             == 'tes4/speedtrees/shrubseabuckthornsu.nif')
-    assert (navm_pool._model_key('Trees\\Mania\\ManiaTree01.spt')
+    assert (navm_pool.model_key('Trees\\Mania\\ManiaTree01.spt')
             == 'tes4/speedtrees/maniatree01.nif')
-    assert (navm_pool._model_key('Furniture\\ChairNoble01.NIF')
+    assert (navm_pool.model_key('Furniture\\ChairNoble01.NIF')
             == 'tes4/furniture/chairnoble01.nif')
 
 

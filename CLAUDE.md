@@ -285,6 +285,11 @@ real data, or a failing-then-passing test.
   whether they tested something, and never rebut a reported result with file
   timestamps or a reconstructed timeline. (Reading Papyrus logs to *diagnose* is
   encouraged — using them to dispute the user's report is not.)
+- 🛑 **A USER REPORT IS ABOUT THEIR BUILD — NEVER DIAGNOSE IT FROM MY
+  `export/` OR `output/`.** Mine is a different build, so "absent from the
+  export" is a fact about MY tree and says NOTHING about their bug. Diagnose
+  from the log they gave plus the SOURCE (`tes_runtime/`, `tes5_import/`,
+  `external/`);
 - **On a hang, ask EARLY for the game to be left running with the bug onscreen**
   ("don't close it, I can attach to it") — nearly free for the user, and it pins
   the exact faulting state. See [the live game process](#attach-to-the-live-game).

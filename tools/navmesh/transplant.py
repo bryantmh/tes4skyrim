@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -43,16 +44,24 @@ _ROTS = (0, 90, 180, 270)
 #: NavIndex by export path; see index_for.
 _INDEX = {}
 
+#: Serializes index_for; the cellview server builds indexes on N threads.
+_INDEX_LOCK = threading.Lock()
+
 
 def index_for(export):
     """The shared NavIndex for `export`, keyed on its normalized path.
 
+    Locked: the cellview server is threaded, so an unguarded check-then-build
+    lets two requests construct an index at once and interleave `arm`'s writes
+    to the shared collision/namespace globals.
+
     See: docs/commentary/tes5_import_navmesh.md#editor-navindex-cache
     """
     key = os.path.normcase(os.path.normpath(export))
-    if key not in _INDEX:
-        _INDEX[key] = NavIndex(export)
-    return _INDEX[key]
+    with _INDEX_LOCK:
+        if key not in _INDEX:
+            _INDEX[key] = NavIndex(export)
+        return _INDEX[key]
 
 
 def corpus_path(cell):
