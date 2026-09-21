@@ -3,19 +3,30 @@
 Split out of collision.py.  A collision triangle whose winding points the
 wrong way is one-sided the wrong side, so the player falls through it.  The
 repair works purely on triangle index tuples and vertex lists -- it never
-touches a NIF block -- and uses the VISUAL mesh as its orientation oracle.
+touches a NIF block -- and uses the RENDER mesh as its orientation oracle.
 
 See: docs/commentary/asset_convert_collision.md#inverted-collision-winding-i-fall
+See: docs/commentary/asset_convert_collision.md#morroblivion-collision-is-copied-render
 """
 
 import math
-from collections import deque
+from itertools import permutations
 
 from core.collision_options import winding_fix_enabled
 from asset_convert.collision.collision_falloutnv import is_fallout_source
 
 #: An authored normal must oppose the face normal by this much to count.
 AUTHORED_NORMAL_DOT = -0.3
+
+#: Triangles rewound so far; a list so process workers can mutate it.
+INVERTED_FLOOR_FLIPS = [0]
+
+#: Vertex-set quantum for the twin match, in Skyrim havok units (~0.02 game).
+_TWIN_QUANTUM = 0.02 / 69.9904
+
+#: A render face must align with the collision face by at least this much.
+_PARALLEL = 0.70
+
 
 def face_normal(tri):
     """Normalized face normal for a triangle given as three xyz tuples."""
@@ -31,221 +42,94 @@ def face_normal(tri):
     return nx, ny, nz
 
 
-#: Triangles rewound so far; a list so process workers can mutate it.
-INVERTED_FLOOR_FLIPS = [0]
-
-#: Step-2 tuning in Skyrim havok units. See: docs/commentary/asset_convert_collision.md#winding-repair-steps
-_VIS_RADIUS = 0.30
-_VIS_PARALLEL = 0.95
-_VIS_MARGIN = 3.0
-_SIGN_MIN_TRIS = 4
+def _vertex_key(tri):
+    """Order-independent quantized key for a triangle's three corners."""
+    return tuple(sorted(tuple(round(c / _TWIN_QUANTUM) for c in v)
+                        for v in tri))
 
 
-def _tri_centroid(t):
-    """The triangle's centroid as an xyz tuple."""
-    return ((t[0][0] + t[1][0] + t[2][0]) / 3.0,
-            (t[0][1] + t[1][1] + t[2][1]) / 3.0,
-            (t[0][2] + t[1][2] + t[2][2]) / 3.0)
+def _render_faces(visual_tris):
+    """[(tri, normal)] for each render face with a usable normal."""
+    out = []
+    for t in visual_tris or ():
+        n = face_normal(t)
+        if n[0] or n[1] or n[2]:
+            out.append((t, n))
+    return out
 
 
-def _traverses_opposite(nt, a, b):
-    """Whether neighbour `nt` agrees with edge (a, b); None when unshared.
+def _twin_index(faces):
+    """{vertex_key: [normal, ...]} over the render faces."""
+    idx = {}
+    for tri, n in faces:
+        idx.setdefault(_vertex_key(tri), []).append(n)
+    return idx
 
-    Two triangles sharing an edge are consistently wound if and only if they
-    traverse it in OPPOSITE directions.
+
+def _twin_says_inverted(tri, n, twins):
+    """Whether the render face this collision face COPIES is opposed.
+
+    None when no render face shares this exact vertex set.
+    See: docs/commentary/asset_convert_collision.md#morroblivion-collision-is-copied-render
     """
-    edges = ((nt[0], nt[1]), (nt[1], nt[2]), (nt[2], nt[0]))
-    if (b, a) in edges:
-        return True
-    if (a, b) in edges:
-        return False
-    return None
+    got = twins.get(_vertex_key(tri))
+    if not got:
+        return None
+    best = max(got, key=lambda o: abs(n[0]*o[0] + n[1]*o[1] + n[2]*o[2]))
+    dot = n[0]*best[0] + n[1]*best[1] + n[2]*best[2]
+    return dot < 0 if abs(dot) > 0.5 else None
 
 
-def _orient_components(idx):
-    """Step 1: make every triangle agree with its edge-neighbours.
-
-    Returns `(flip:set, comps:list[list[int]])`.
-    See: docs/commentary/asset_convert_collision.md#winding-repair-steps
-    """
-    edge_map = {}
-    for k, t in enumerate(idx):
-        for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
-            edge_map.setdefault((a, b) if a < b else (b, a), []).append(k)
-
-    flip = set()
-    seen = [False] * len(idx)
-    comps = []
-    for start in range(len(idx)):
-        if seen[start]:
-            continue
-        seen[start] = True
-        comps.append(_settle_component(start, idx, edge_map, flip, seen))
-    return flip, comps
+def _projected_overlap(ctri, cn, rtri):
+    """Whether the two triangles overlap projected along cn's dominant axis."""
+    ax = max(range(3), key=lambda i: abs(cn[i]))
+    u, v = [i for i in range(3) if i != ax]
+    a = [(p[u], p[v]) for p in ctri]
+    b = [(p[u], p[v]) for p in rtri]
+    for poly, other in ((a, b), (b, a)):
+        for i in range(3):
+            x1, y1 = poly[i]
+            x2, y2 = poly[(i + 1) % 3]
+            nx, ny = -(y2 - y1), (x2 - x1)
+            pa = [nx * (px - x1) + ny * (py - y1) for px, py in poly]
+            pb = [nx * (px - x1) + ny * (py - y1) for px, py in other]
+            if max(pb) < min(pa) - 1e-6 or min(pb) > max(pa) + 1e-6:
+                return False
+    return True
 
 
-def _settle_component(start, idx, edge_map, flip, seen):
-    """BFS one connected component from `start`, flipping what disagrees.
-
-    Mutates `flip` and `seen`; returns the component's triangle indices.
-    """
-    comp = [start]
-    queue = deque([start])
-    while queue:
-        k = queue.popleft()
-        t = idx[k]
-        if k in flip:
-            t = (t[0], t[2], t[1])
-        for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
-            edge = (a, b) if a < b else (b, a)
-            for nb in edge_map.get(edge, ()):
-                if nb == k or seen[nb]:
-                    continue
-                agrees = _traverses_opposite(idx[nb], a, b)
-                if agrees is None:
-                    continue
-                if not agrees:
-                    flip.add(nb)
-                seen[nb] = True
-                comp.append(nb)
-                queue.append(nb)
-    return comp
-
-
-def _component_is_closed(comp, idx):
-    """True when every edge of the component is shared by exactly 2 faces."""
-    cnt = {}
-    for k in comp:
-        t = idx[k]
-        for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
-            e = (a, b) if a < b else (b, a)
-            cnt[e] = cnt.get(e, 0) + 1
-    return all(c == 2 for c in cnt.values())
-
-
-def _component_volume(comp, idx, verts, flip):
-    """Signed volume of the component (positive when wound outward)."""
-    v = 0.0
-    for k in comp:
-        a, b, c = idx[k]
-        p, q, r = verts[a], verts[b], verts[c]
-        if k in flip:
-            q, r = r, q
-        v += (p[0] * (q[1]*r[2] - q[2]*r[1])
-              - p[1] * (q[0]*r[2] - q[2]*r[0])
-              + p[2] * (q[0]*r[1] - q[1]*r[0]))
-    return v / 6.0
-
-
-#: Step-3 coincidence tuning. See: docs/commentary/asset_convert_collision.md#step-3-walkable-repair
-_FLOOR_FLAT = 0.85
-_FLOOR_PLANE_DZ = 0.05
-_FLOOR_XY = 0.05
-
-
-def _floor_skin_index(vdata):
-    """Near-horizontal visual faces bucketed into an XY grid for lookup.
-
-    Returns `{(gx, gy): [(cx, cy, cz, nz), ...]}` at _FLOOR_XY cell size.
-    See: docs/commentary/asset_convert_collision.md#step-3-walkable-repair
-    """
-    grid = {}
-    for vc, vn in vdata:
-        if abs(vn[2]) < _FLOOR_FLAT:
-            continue
-        gx = int(vc[0] // _FLOOR_XY)
-        gy = int(vc[1] // _FLOOR_XY)
-        grid.setdefault((gx, gy), []).append((vc[0], vc[1], vc[2], vn[2]))
-    return grid
-
-
-def _coincident_skin_faces_up(grid, centroid):
-    """Whether the render skin COINCIDENT with `centroid` points up.
-
-    The coincident skin IS this surface, so its normal is the artist's
-    statement of which way the surface faces.  False when no skin is
-    coincident at all, which means a real underside or overhang.
-    """
-    cx, cy, cz = centroid
-    gx, gy = int(cx // _FLOOR_XY), int(cy // _FLOOR_XY)
+def _vertex_set_distance(a, b):
+    """Least total corner-to-corner distance over the six pairings."""
     best = None
-    for ox in (-1, 0, 1):
-        for oy in (-1, 0, 1):
-            for vx, vy, vz, vnz in grid.get((gx + ox, gy + oy), ()):
-                if abs(vz - cz) > _FLOOR_PLANE_DZ:
-                    continue
-                d2 = (vx - cx)**2 + (vy - cy)**2
-                if d2 > _FLOOR_XY * _FLOOR_XY:
-                    continue
-                if best is None or d2 < best[0]:
-                    best = (d2, vnz)
-    return best is not None and best[1] > 0
+    for p in permutations(range(3)):
+        d = 0.0
+        for i in range(3):
+            q = b[p[i]]
+            d += math.sqrt((a[i][0]-q[0])**2 + (a[i][1]-q[1])**2
+                           + (a[i][2]-q[2])**2)
+        if best is None or d < best:
+            best = d
+    return best
 
 
-def _repair_inverted_walkables(tris, flip, verts, idx, vdata):
-    """Step 3: flip down-facing floor faces the render mesh says are up.
+def _nearest_says_inverted(tri, n, faces):
+    """Whether the closest coincident render surface is opposed.
 
-    Only near-horizontal faces are considered, and only where a COINCIDENT
-    render skin settles the question.  Returns the number flipped.
-    See: docs/commentary/asset_convert_collision.md#step-3-walkable-repair
+    Nearest by VERTEX SET, for collision that is a simplification of the
+    render mesh rather than a copy of it.
+    See: docs/commentary/asset_convert_collision.md#morroblivion-collision-is-copied-render
     """
-    if not vdata:
-        return 0
-    grid = _floor_skin_index(vdata)
-    if not grid:
-        return 0
-
-    flipped = 0
-    for k in range(len(idx)):
-        a, b, c = idx[k]
-        p, q, r = verts[a], verts[b], verts[c]
-        if k in flip:
-            q, r = r, q
-        n = face_normal((p, q, r))
-        if n[2] > -_FLOOR_FLAT:
+    best = None
+    for rtri, rn in faces:
+        align = n[0]*rn[0] + n[1]*rn[1] + n[2]*rn[2]
+        if abs(align) < _PARALLEL:
             continue
-        centroid = ((p[0] + q[0] + r[0]) / 3.0,
-                    (p[1] + q[1] + r[1]) / 3.0,
-                    (p[2] + q[2] + r[2]) / 3.0)
-        if _coincident_skin_faces_up(grid, centroid):
-            if k in flip:
-                flip.discard(k)
-            else:
-                flip.add(k)
-            flipped += 1
-    return flipped
-
-
-def _component_visual_vote(comp, idx, verts, flip, vdata):
-    """(agree, oppose, covered) for the component against the render mesh."""
-    agree = oppose = 0.0
-    covered = 0
-    for k in comp:
-        a, b, c = idx[k]
-        p, q, r = verts[a], verts[b], verts[c]
-        if k in flip:
-            q, r = r, q
-        n = face_normal((p, q, r))
-        cx = (p[0] + q[0] + r[0]) / 3.0
-        cy = (p[1] + q[1] + r[1]) / 3.0
-        cz = (p[2] + q[2] + r[2]) / 3.0
-        hit = False
-        for vc, vn in vdata:
-            algn = n[0]*vn[0] + n[1]*vn[1] + n[2]*vn[2]
-            if abs(algn) < _VIS_PARALLEL:
-                continue
-            dd = ((cx - vc[0])**2 + (cy - vc[1])**2 + (cz - vc[2])**2)
-            if dd > _VIS_RADIUS * _VIS_RADIUS:
-                continue
-            hit = True
-            w = 1.0 / (dd + 1e-9)
-            if algn > 0:
-                agree += w
-            else:
-                oppose += w
-        if hit:
-            covered += 1
-    return agree, oppose, covered
+        if not _projected_overlap(tri, n, rtri):
+            continue
+        d = _vertex_set_distance(tri, rtri)
+        if best is None or d < best[0]:
+            best = (d, align)
+    return None if best is None else best[1] < 0
 
 
 def _authored_flips(tris, authored_normals):
@@ -270,80 +154,20 @@ def _authored_flips(tris, authored_normals):
     return out
 
 
-def _weld(tris, groups):
-    """Shared vertex indices per group, as `(verts, idx)`.
-
-    Without welding no two triangles share an edge and step 1 is a no-op;
-    welding ACROSS a group seam would fuse independent pieces into one
-    component and force a single orientation on both.
-    See: docs/commentary/asset_convert_collision.md#welding-is-per-group
-    """
-    if not groups or sum(groups) != len(tris):
-        groups = [len(tris)]
-    vmap, verts, idx, base = {}, [], [], 0
-    for gsize in groups:
-        vmap.clear()
-        for t in tris[base:base + gsize]:
-            tri_i = []
-            for v in t:
-                k = (round(v[0], 4), round(v[1], 4), round(v[2], 4))
-                i = vmap.get(k)
-                if i is None:
-                    i = len(verts)
-                    vmap[k] = i
-                    verts.append(v)
-                tri_i.append(i)
-            idx.append(tuple(tri_i))
-        base += gsize
-    return verts, idx
-
-
-def _visual_data(visual_tris):
-    """(centroid, normal) for each render face with a usable normal."""
-    vdata = []
-    for t in visual_tris or ():
+def _render_flips(tris, faces):
+    """Indices the render mesh says are wound backwards."""
+    twins = _twin_index(faces)
+    flip = set()
+    for i, t in enumerate(tris):
         n = face_normal(t)
-        if n[0] or n[1] or n[2]:
-            vdata.append((_tri_centroid(t), n))
-    return vdata
-
-
-def _component_sign(comp, idx, verts, flip, vdata):
-    """Step 2: True when the whole component is inside-out, else None.
-
-    A CLOSED component must enclose positive volume; otherwise the render
-    mesh decides, subject to a coverage quorum.
-    See: docs/commentary/asset_convert_collision.md#winding-repair-steps
-    """
-    if _component_is_closed(comp, idx):
-        v = _component_volume(comp, idx, verts, flip)
-        if abs(v) > 1e-6:
-            return v < 0
-    if not vdata:
-        return None
-    agree, oppose, covered = _component_visual_vote(comp, idx, verts, flip,
-                                                    vdata)
-    if covered * 2 < len(comp):
-        return None
-    if oppose > agree * _VIS_MARGIN:
-        return True
-    if agree > oppose * _VIS_MARGIN:
-        return False
-    return None
-
-
-def _apply_component_signs(comps, idx, verts, flip, vdata):
-    """Flip every component step 2 judges inside-out."""
-    for comp in comps:
-        if len(comp) < _SIGN_MIN_TRIS:
+        if not (n[0] or n[1] or n[2]):
             continue
-        if not _component_sign(comp, idx, verts, flip, vdata):
-            continue
-        for k in comp:
-            if k in flip:
-                flip.discard(k)
-            else:
-                flip.add(k)
+        verdict = _twin_says_inverted(t, n, twins)
+        if verdict is None:
+            verdict = _nearest_says_inverted(t, n, faces)
+        if verdict:
+            flip.add(i)
+    return flip
 
 
 def _rewound(tris, flip):
@@ -359,22 +183,20 @@ def repair_inverted_floors(tris, visual_tris=None, groups=None,
                            authored_normals=None):
     """Rewind collision triangles wound backwards; `(repaired_tris, n_flipped)`.
 
-    Step 0 reads the authored normal and is ungated; steps 1-3 infer from
-    adjacency, volume and the render mesh, gated per plugin except for
-    FO3/FNV sources, whose winding is random.
-    See: docs/commentary/asset_convert_collision.md#winding-repair-steps
+    Step 0 (the authored normal) is ungated; the render-mesh repair is gated
+    per plugin except for FO3/FNV sources, and supersedes step 0 where it
+    reaches a verdict.  `groups` is accepted for call compatibility only.
+    See: docs/commentary/asset_convert_collision.md#morroblivion-collision-is-copied-render
     See: docs/commentary/asset_convert_falloutnv.md#two-sided-welding
     """
     if not tris:
         return tris, 0
 
-    authored_flip = _authored_flips(tris, authored_normals)
+    flip = _authored_flips(tris, authored_normals)
     if not (winding_fix_enabled() or is_fallout_source()):
-        return _rewound(tris, authored_flip)
+        return _rewound(tris, flip)
 
-    verts, idx = _weld(tris, groups)
-    flip, comps = _orient_components(idx)
-    vdata = _visual_data(visual_tris)
-    _apply_component_signs(comps, idx, verts, flip, vdata)
-    _repair_inverted_walkables(tris, flip, verts, idx, vdata)
+    faces = _render_faces(visual_tris)
+    if faces:
+        flip = _render_flips(tris, faces)
     return _rewound(tris, flip)

@@ -291,10 +291,18 @@ files, so its Havok collides both sides. Skyrim's CMS carries a welding type
 NONE 6) and vanilla writes 0 in all 346 sampled blocks. Writing TWO_SIDED (5)
 was tried first and the player still fell through roads and floors, so the
 engine does not honour the byte; it is back to 0. FO3/FNV sources instead
-always run the inference winding repair (steps 1-3, `repair_inverted_floors`),
-which is otherwise gated per plugin; the render mesh is the authored surface.
-Scored offline: roads 133 inverted to 0, nv_rocks 295 to 0, office/hallsmall
-2 to 0.
+always run the winding repair (`repair_inverted_floors`), which is otherwise
+gated per plugin; the render mesh is the authored surface. Scored offline:
+roads 133 inverted to 0, nv_rocks 295 to 0, office/hallsmall 2 to 0.
+
+**Round 4 rebased this onto the twin/nearest rule** that replaced steps 1-3
+([why](asset_convert_collision.md#morroblivion-collision-is-copied-render)).
+The principle is the one this section already relied on — the render mesh is
+the authored surface — so the rebase is a change of matching method, not of
+evidence, and it matters more here than anywhere: FO3 packed data carries no
+per-triangle normal, so step 0 is structurally inert and the render mesh is
+the ONLY signal. Re-scored on 44 architecture meshes: **815 inverted -> 0**,
+no residual on any mesh.
 
 ### <a id="static-collection-parts"></a>Static-collection parts
 

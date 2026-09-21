@@ -371,12 +371,22 @@ whichever variant matched the source version, which is why the write loops over
 
 **Code:** `asset_convert/collision/collision_winding.py`
 
+> **⚠ Steps 1-3 below were REPLACED in round 4** by the render-mesh twin/nearest
+> rule ([Morroblivion round 4](#morroblivion-collision-is-copied-render)), which
+> scores 99.87% against the Morrowind oracle where these scored far worse and
+> actively damaged correct input. `_orient_components`, `_component_sign`,
+> `_repair_inverted_walkables` and the welding they needed are DELETED. The
+> shipped steps are now **0 (authored normal, ungated)** and **the render-mesh
+> repair (gated)**. The rest of this section is kept for the false-positive
+> measurements, which still constrain any future detector.
+
 | Step | Question it answers | Gated |
 |---|---|---|
 | 0 — authored normal | Does this triangle contradict its own recorded normal? | no |
-| 1 — relative orientation | Do edge-neighbours traverse the shared edge in opposite directions? | yes |
-| 2 — absolute sign | Which way does this whole COMPONENT face? | yes |
-| 3 — walkable repair | Which way does this ONE floor triangle face? | yes |
+| ~~1 — relative orientation~~ | ~~Do edge-neighbours traverse the shared edge in opposite directions?~~ | removed |
+| ~~2 — absolute sign~~ | ~~Which way does this whole COMPONENT face?~~ | removed |
+| ~~3 — walkable repair~~ | ~~Which way does this ONE floor triangle face?~~ | removed |
+| render twin / nearest | Which render face is this collision face a copy of, or nearest to? | yes |
 
 Step 1 is exact and threshold-free: two triangles sharing an edge are
 consistently wound if and only if they traverse it in opposite directions, so a
@@ -482,6 +492,23 @@ here — collision-winding censuses over these trees have repeatedly produced
 confident wrong answers (a vanilla-Skyrim sweep reporting ~47% down-facing
 faces invites the conclusion that winding is irrelevant, which the oracle
 disproves). The oracle is the only admissible evidence.
+
+**Scope.** The render-mesh repair sits behind the same `winding_fix_enabled()`
+gate the removed steps 1-3 did, and `WINDING_FIX_DEFAULT_PLUGINS` holds only
+`morrowind_ob`, so it is unreachable for Oblivion, Nehrim, Morrowind (native
+mode) and plugin ESPs — measured per plugin, flips 0 for each. Those keep step
+0 alone, which is what took Nehrim dungeons 2710 inverted -> 14. FO3/FNV still
+reach it through `is_fallout_source()`.
+
+**It supersedes step 0 where it reaches a verdict**, because a normal the
+Morroblivion exporter recomputed from the winding is not evidence, while the
+render face the collision was copied from is. Step 0 still runs first and is
+the whole repair when the gate is off or the node has no render geometry.
+
+Re-measured on the PRODUCTION soups (`_shape_tri_soup` +
+`_bake_body_transform_into_tris` + `_visual_tri_soup`, i.e. the exact inputs
+`repair_inverted_floors` receives): **3,092 / 3,106 correct (99.55%), 0
+undecided**, same failure set.
 
 ### <a id="welding-is-per-group"></a>Welding is scoped PER GROUP
 

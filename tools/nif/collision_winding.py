@@ -36,8 +36,8 @@ Usage:
     # Control test — should report very few hits:
     python tools/nif/collision_winding.py ../TESConversion/export/Oblivion.esm/meshes/dungeons
 
-See docs/commentary/asset_convert_nif.md "Inverted collision winding in Nehrim source
-meshes" for the repair (`asset_convert.collision.collision.repair_inverted_floors`).
+The repair is `asset_convert.collision.collision_winding.repair_inverted_floors`.
+See: docs/commentary/asset_convert_collision.md#morroblivion-collision-is-copied-render
 """
 import argparse
 import math

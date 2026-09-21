@@ -14,12 +14,13 @@ controls**:
   OWN RECORD.  That is read off the file — no adjacency, no oracle, no
   threshold — so it is inert wherever the two agree and safe everywhere.
 
-* **Steps 1-3 — inference. GATED, and that is what lives here.**  A BFS over
-  shared edges, an enclosed-volume sign test, and a render-mesh vote.  These
-  GUESS the answer, and guessing costs false positives: step 1 seeds each
-  welded component from an arbitrary triangle, so a component seeded inward
-  inverts wholesale (leyawiincastle02 lost 274 of 284 triangles, 806 walkable
-  raycast cells, on a *vanilla* mesh).
+* **The render-mesh repair. GATED, and that is what lives here.**  Each
+  collision face is matched to the render face it was COPIED from (identical
+  vertex set), else to the nearest coincident one, and that face's winding is
+  the answer.  Scored 99.87% against the Morrowind authored collision.  It
+  replaced a BFS/volume/vote inference whose component seeding inverted
+  wholesale on a *vanilla* mesh (leyawiincastle02: 274 of 284 triangles, 806
+  walkable raycast cells).
 
 Vanilla Oblivion is NOT clean, which is why step 0 is unconditional:
 seIsland.nif ships 1480 of 3590 collision triangles contradicting their own
@@ -29,10 +30,15 @@ leaves already-correct meshes untouched.
 
 The gate exists for corruption that is SELF-CONSISTENT — an exporter that
 rewrote the normals to match the winding it emitted.  Both sources then agree
-while both are wrong, step 0 has nothing to detect, and inference is the only
-thing left.  Morroblivion is that case and is the only default member; see
-:data:`WINDING_FIX_DEFAULT_PLUGINS` for the measurements and for why Nehrim
-was removed.
+while both are wrong, step 0 has nothing to detect, and the render mesh is the
+only evidence left.  Morroblivion is that case and the only default member:
+across ``morro/i`` the authored normals change 0 of 5496 inverted faces, and
+``inuhlaaluuroomuside.nif``'s 10 triangles all score dot +1.0 over a floor you
+fall straight through.  Nehrim is deliberately NOT a member — its exporter left
+the normals intact, so step 0 alone takes dungeons 2710 inverted to 14 and
+architecture 669 to 34.  Re-add a plugin only with a measurement against
+authored collision.  FO3/FNV reach the repair through ``is_fallout_source()``
+instead, because their packed data has no per-triangle normal at all.
 
 Numbers here come from ``tools/nif/collision_winding_truth.py``, which compares
 each near-horizontal collision face against the render face coincident with
@@ -66,23 +72,7 @@ __all__ = [
 
 WINDING_FIX_ENV_VAR = "TESCONV_COLLISION_WINDING_FIX"
 
-# Plugins that need the INFERRED repair steps on top of the authored-normal
-# rewind, matched on the plugin's stem, case-insensitively (so "Morrowind_ob.esm"
-# and "Morrowind_ob.esp" both hit).
-#
-# Morroblivion's exporter rewrote each triangle's stored normal to match the
-# winding it emitted, so both agree while both are wrong and step 0 has nothing
-# to detect: inuhlaaluuroomuside.nif's 10 triangles ALL score dot +1.0 over a
-# floor you fall straight through, and across morro/i the authored normals
-# change 0 of 5496 inverted faces.  Only the inferred steps recover those
-# (5496 -> 20 with steps 1-3).
-#
-# Nehrim is deliberately NOT here any more.  Its exporter left the normals
-# intact, so step 0 alone takes morro-scale damage down to a handful (dungeons
-# 2710 inverted -> 14, architecture 669 -> 34) without inference -- and the
-# inferred steps are the part that costs false positives on correctly authored
-# meshes.  Re-add it only with a measurement showing the remainder is worth
-# that risk.
+#: Plugins needing the render-mesh repair, by stem, case-insensitively.
 WINDING_FIX_DEFAULT_PLUGINS = frozenset({
     "morrowind_ob",
 })
