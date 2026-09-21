@@ -140,9 +140,7 @@ struct GameHooks {
                  const std::string& text) = nullptr;
     bool  (*sayDone)(const std::string& ref) = nullptr;
     // `PositionCell`: moves `ref` into the cell of that name and puts it at
-    // (x, y, z) with a Z rotation of `zRot` DEGREES. The cell is reached
-    // through the anchor reference the sidecar staged for it.
-    // See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
+    // (x, y, z) with a Z rotation of `zRot` DEGREES.
     void (*moveToCell)(const std::string& ref, const std::string& cell,
                        float x, float y, float z, float zRot) = nullptr;
     // `Position`: the same, staying in the cell the reference is already in.

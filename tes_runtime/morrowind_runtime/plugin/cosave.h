@@ -17,4 +17,9 @@ namespace mwruntime {
 void InstallCoSave(SKSESerializationInterface* serialization,
                    PluginHandle plugin);
 
+// Clears every per-game state and starts the startup scripts again. SKSE's
+// revert callback does NOT fire for a new game chosen from the main menu, so
+// kMessage_NewGame calls this too.
+void RevertState();
+
 }  // namespace mwruntime

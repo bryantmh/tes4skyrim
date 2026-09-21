@@ -101,4 +101,4 @@ Guns (FalloutNV):
 
 Morrowind:
 	1) NPCs have voice lines that should be gated by quest 
-	2) xxBDDE6F ancestor ghost has a large black sphere
+	3) Message box appearing while pause menu is up locks the game 

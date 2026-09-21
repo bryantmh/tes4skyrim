@@ -19,6 +19,7 @@ String Property OblivionPlugin     = "Oblivion.esm"     Auto
 String Property NehrimPlugin       = "Nehrim.esm"       Auto
 String Property MorroblivionPlugin = "Morrowind_ob.esm" Auto
 String Property FalloutNVPlugin     = "FalloutNV.esm"   Auto
+String Property MorrowindPlugin     = "Morrowind.esm"   Auto
 
 ; ---------------------------------------------------------------------------
 ; Per-game entry points. GetFormFromFile takes a form's ID *within its own
@@ -56,6 +57,25 @@ Int Property MorroChargenStage     = 1          Auto
 Int Property FalloutNVChargenID     = 0x00102037 Auto
 Int Property FalloutNVStartMarkerID = 0x00103E6B Auto
 Int Property FalloutNVChargenStage  = 0          Auto
+
+; Vanilla Morrowind has NO chargen quest and NO start marker to move to: the
+; opening is object scripts, set running by the TES3 global CharGenState. The
+; `Main` start script polls `CharGenState == 1` and launches `CharGen`, which
+; positions the player itself (`PositionCell ... "Imperial Prison Ship"`).
+; See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
+;
+; 🛑 The probe must be a BASE record, like every other game's chargen quest —
+; MWJ_A1_1_FindSpymaster, the main quest's opening journal. GetFormFromFile
+; resolves a non-persistent REFR only while its cell is loaded, and the
+; selector runs from Skyrim's holding cell, so a placed reference (the first
+; version of this probe used CharGen_Bed) answers None however the load order
+; looks and the game is never offered.
+Int Property MorrowindProbeID       = 0x00192940 Auto
+
+; CharGenState, the GLOB `Main` polls to launch `CharGen`. Setting it to 1 IS
+; the start of vanilla Morrowind, which is what the TES3 engine did on a new
+; game and what Skyrim's never does.
+Int Property MorrowindChargenStateID = 0x006472DD Auto
 
 ; ---------------------------------------------------------------------------
 ; Starting equipment. On a new game the player carries Skyrim's base-record
@@ -103,8 +123,8 @@ Int Property NehrimNoteID          = 0x00000AED Auto
 ; The prompt, one variant per subset of the gated games. A MESG's DESC prologue
 ; names each game in turn and carries no condition, so the variant whose text
 ; names exactly the installed set is chosen at runtime by MenuFor(). Bit 0 is
-; Oblivion, bit 1 Morroblivion, bit 2 Nehrim, bit 3 FalloutNV — the gated
-; BUTTONS order in make_game_select_esp.py.
+; Oblivion, bit 1 Morroblivion, bit 2 Nehrim, bit 3 FalloutNV, bit 4 Morrowind
+; — the gated BUTTONS order in make_game_select_esp.py.
 Message Property Menu00 Auto
 Message Property Menu01 Auto
 Message Property Menu02 Auto
@@ -121,12 +141,29 @@ Message Property Menu12 Auto
 Message Property Menu13 Auto
 Message Property Menu14 Auto
 Message Property Menu15 Auto
+Message Property Menu16 Auto
+Message Property Menu17 Auto
+Message Property Menu18 Auto
+Message Property Menu19 Auto
+Message Property Menu20 Auto
+Message Property Menu21 Auto
+Message Property Menu22 Auto
+Message Property Menu23 Auto
+Message Property Menu24 Auto
+Message Property Menu25 Auto
+Message Property Menu26 Auto
+Message Property Menu27 Auto
+Message Property Menu28 Auto
+Message Property Menu29 Auto
+Message Property Menu30 Auto
+Message Property Menu31 Auto
 
 GlobalVariable Property HasSkyrim       Auto
 GlobalVariable Property HasOblivion     Auto
 GlobalVariable Property HasNehrim       Auto
 GlobalVariable Property HasMorroblivion Auto
 GlobalVariable Property HasFalloutNV    Auto
+GlobalVariable Property HasMorrowind    Auto
 
 ; Set true the moment the menu has been shown, so a second entry (quest
 ; restart, re-add on an existing save, a stray SetStage) can never re-ask.
@@ -143,6 +180,7 @@ Int Property GAME_OBLIVION     = 1 AutoReadOnly
 Int Property GAME_MORROBLIVION = 2 AutoReadOnly
 Int Property GAME_NEHRIM       = 3 AutoReadOnly
 Int Property GAME_FALLOUTNV    = 4 AutoReadOnly
+Int Property GAME_MORROWIND    = 5 AutoReadOnly
 
 ; Number of games offered, counting Skyrim. 1 means "Skyrim only" — no menu.
 Int gameCount
@@ -183,7 +221,7 @@ Function RunSelection()
 
   ; An unexpected index (a mod-added button, a cancelled menu) is treated as
   ; Skyrim: the safe direction, since it leaves the vanilla start intact.
-  If game < GAME_OBLIVION || game > GAME_FALLOUTNV
+  If game < GAME_OBLIVION || game > GAME_MORROWIND
     game = GAME_SKYRIM
   EndIf
   ChosenGame = game
@@ -208,9 +246,16 @@ Function BeginChosenGame()
     BeginMorroblivion()
   ElseIf ChosenGame == GAME_FALLOUTNV
     BeginFalloutNV()
+  ElseIf ChosenGame == GAME_MORROWIND
+    BeginMorrowind()
   EndIf
 
-  If ChoseSkyrim() || ChosenGame == GAME_FALLOUTNV
+  ; FalloutNV and Morrowind show their own race menus — FalloutNV at VCG01
+  ; stage 36 (Doc Mitchell's reflectron), Morrowind from CharGenRaceNPC, the
+  ; dock guard, who calls EnableRaceMenu once he has asked where you are from.
+  ; Asking here too would put one up before either had spoken.
+  If ChoseSkyrim() || ChosenGame == GAME_FALLOUTNV \
+     || ChosenGame == GAME_MORROWIND
     Return
   EndIf
 
@@ -245,6 +290,14 @@ Function DetectInstalledGames()
   SetGate(HasNehrim, IsPluginPresent(NehrimPlugin, NehrimChargenID), 4)
   SetGate(HasFalloutNV, \
           IsPluginPresent(FalloutNVPlugin, FalloutNVChargenID), 8)
+  SetGate(HasMorrowind, \
+          IsPluginPresent(MorrowindPlugin, MorrowindProbeID), 16)
+
+  ; One line naming what was found. A menu that never appeared, or appeared
+  ; with the wrong buttons, is ALWAYS this pass: gameCount 1 means nothing was
+  ; detected and the takeover runs the vanilla opening with no prompt at all.
+  Debug.Trace("[TESGameSelect] detected " + gameCount + " game(s), mask " \
+              + installedMask)
 EndFunction
 
 Function SetGate(GlobalVariable gate, Bool present, Int maskBit)
@@ -267,6 +320,13 @@ EndFunction
 ; has no array of properties, so the 16 are bound individually and selected
 ; here; the build emits one per mask value, so every branch is filled.
 Message Function MenuFor(Int mask)
+  If mask < 16
+    Return MenuLow(mask)
+  EndIf
+  Return MenuHigh(mask - 16)
+EndFunction
+
+Message Function MenuLow(Int mask)
   If mask == 0
     Return Menu00
   ElseIf mask == 1
@@ -301,10 +361,54 @@ Message Function MenuFor(Int mask)
   Return Menu15
 EndFunction
 
+Message Function MenuHigh(Int mask)
+  If mask == 0
+    Return Menu16
+  ElseIf mask == 1
+    Return Menu17
+  ElseIf mask == 2
+    Return Menu18
+  ElseIf mask == 3
+    Return Menu19
+  ElseIf mask == 4
+    Return Menu20
+  ElseIf mask == 5
+    Return Menu21
+  ElseIf mask == 6
+    Return Menu22
+  ElseIf mask == 7
+    Return Menu23
+  ElseIf mask == 8
+    Return Menu24
+  ElseIf mask == 9
+    Return Menu25
+  ElseIf mask == 10
+    Return Menu26
+  ElseIf mask == 11
+    Return Menu27
+  ElseIf mask == 12
+    Return Menu28
+  ElseIf mask == 13
+    Return Menu29
+  ElseIf mask == 14
+    Return Menu30
+  EndIf
+  Return Menu31
+EndFunction
+
 Bool Function IsPluginPresent(String plugin, Int probeID)
   ; GetFormFromFile returns None when the file is not in the load order, so a
   ; successful lookup of a form we know that file defines proves it is loaded.
-  Return Game.GetFormFromFile(probeID, plugin) != None
+  ;
+  ; It takes the form's id WITHIN ITS OWN FILE — the low 24 bits — so a plugin
+  ; that masters Skyrim.esm still probes as 0x00xxxxxx even though its records
+  ; carry index 01 on disk.
+  Bool found = Game.GetFormFromFile(probeID, plugin) != None
+  If !found
+    Debug.Trace("[TESGameSelect] " + plugin + " not found (probe " \
+                + probeID + ")")
+  EndIf
+  Return found
 EndFunction
 
 ; ---------------------------------------------------------------------------
@@ -399,6 +503,32 @@ Function BeginFalloutNV()
 
   HandOff(chargen, FalloutNVChargenStage, \
           GetRefFrom(FalloutNVStartMarkerID, FalloutNVPlugin))
+EndFunction
+
+; Vanilla Morrowind, the one game with no chargen quest: its opening is object
+; scripts gated on the TES3 global CharGenState, and setting that to 1 is the
+; whole start. `Main` — already running, start scripts start themselves —
+; then launches `CharGen`, which positions the player in the Imperial Prison
+; Ship itself, so no marker is moved to and no stage is set.
+;
+; The global is a real GLOB in the converted plugin, which is why this is a
+; plain SetValue: MorrowindRuntime mirrors it back into its own global space
+; each tick, so a write here reaches the scripts polling it.
+;
+; Morrowind's player record carries no inventory (the gear comes from the
+; census office stuff room), so stripping Skyrim's debug items is the rest.
+; See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
+Function BeginMorrowind()
+  GlobalVariable chargen = Game.GetFormFromFile(MorrowindChargenStateID, \
+                                                MorrowindPlugin) as GlobalVariable
+  If chargen == None
+    FallBackToSkyrim()
+    Return
+  EndIf
+
+  StripPlayer()
+  chargen.SetValue(1.0)
+  Debug.Trace("[TESGameSelect] Morrowind CharGenState " + chargen + " set to 1")
 EndFunction
 
 Function FallBackToSkyrim()

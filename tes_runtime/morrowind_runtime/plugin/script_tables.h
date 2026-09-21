@@ -16,10 +16,22 @@
 
 namespace mwruntime {
 
+// A Skyrim form behind a TES3 id: the plugin that owns it and its FormID
+// there, resolved through the RUNNING load order. items_formid.txt and
+// quests_formid.txt (journal quests).
+struct FormRef {
+    std::string plugin;
+    std::uint32_t formId = 0;
+};
+
 // A GLOB record: 's', 'l' or 'f', and the value it starts at.
 struct GlobalDef {
     char  type = 'f';
     float value = 0.0f;
+    // The converted plugin's GLOB mirroring this one, so a value Papyrus
+    // writes reaches the scripts polling it. Empty plugin when unknown.
+    // See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
+    FormRef form;
 };
 
 // A script's declared locals, lowercased, in declaration order per type --
@@ -77,14 +89,6 @@ struct SkillDef {
     int   attribute = -1;
     int   specialization = 0;
     float use[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-};
-
-// A Skyrim form behind a TES3 id: the plugin that owns it and its FormID
-// there, resolved through the RUNNING load order. items_formid.txt and
-// quests_formid.txt (journal quests).
-struct FormRef {
-    std::string plugin;
-    std::uint32_t formId = 0;
 };
 
 // One place an NPC's travel service goes: NPC_travel.txt.
@@ -281,13 +285,10 @@ std::size_t RefCount();
 const FormRef* FindBase(const std::string& id);
 std::size_t BaseCount();
 
-// A reference standing INSIDE the cell of that name, which `PositionCell`
-// moves its target to. Null when the chain staged no such cell, or when the
-// cell holds no placement to aim at.
-//
-// 🛑 A reference, not the CELL record: Skyrim's mover takes another object.
-// See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
-const FormRef* FindCellAnchor(const std::string& cell);
+// Where the cell of that name IS, which `PositionCell` moves its target
+// into: the CELL record of an interior, the WORLDSPACE of an exterior. Null
+// when the chain staged no such cell.
+const FormRef* FindCell(const std::string& cell);
 std::size_t CellCount();
 
 // The quest that owns the AI package aliases, or null when none is staged.

@@ -367,15 +367,29 @@ constexpr std::uint64_t kRefPlaceAtMe = 56203;
 //   float ObjectReference.GetScale()                                    0x9e5b30
 //   void  ObjectReference.SetScale(float)                               0x9d23a0
 //
-// 🛑 `MoveTo` is the ONLY call that moves an object to another CELL, and it
-// aims at a REFERENCE -- which is why `PositionCell` needs a staged anchor.
-// `Cell.GetNthRef` cannot supply one: on an unloaded cell it returns only
-// PERSISTENT references, and a TES3 interior generally has none.
+// 🛑 `MoveTo` aims at a REFERENCE, and a non-persistent one does not exist
+// while its cell is unloaded -- 4,502 of Morrowind.esm's 5,635 cells hold no
+// persistent reference at all. A move into a named cell goes through
+// `kRefMoveToCell` instead; `MoveTo` is kept for travel MARKERS only.
 // 🛑 `Actor.PathToReference` is the walking form of AiTravel and is LATENT --
 // it suspends its caller until the path ends. A hook cannot wait, so travel
 // places the actor instead.
 // See: docs/commentary/morrowind_runtime.md#ai-packages
 constexpr std::uint64_t kRefMoveTo = 56199;
+
+// TESObjectREFR::MoveTo_Impl(this, const ObjectRefHandle& target,
+//     TESObjectCELL* cell, TESWorldSpace* world, const NiPoint3& position,
+//     const NiPoint3& rotation) (0xa447f0), rotation in RADIANS. It takes the
+// destination CELL itself, or a worldspace and lets the position pick the
+// cell, so nothing inside the destination has to exist yet. Read from its
+// own body: `[r8 + 0x40] & 1` is the cell's interior flag, and the two stack
+// arguments are dereferenced as vectors.
+constexpr std::uint64_t kRefMoveToCell = 56626;
+
+// TESForm::formType, and the two types a move's destination can be.
+constexpr std::size_t kOffFormType = 0x1A;
+constexpr std::uint8_t kFormTypeCell = 0x3C;
+constexpr std::uint8_t kFormTypeWorld = 0x47;
 constexpr std::uint64_t kRefGetScale = 56633;
 constexpr std::uint64_t kRefSetScale = 56240;
 

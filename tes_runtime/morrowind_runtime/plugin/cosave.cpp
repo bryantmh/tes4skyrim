@@ -57,15 +57,17 @@ void OnLoad(SKSESerializationInterface* intfc) {
 // creature killed in one save could never raise `OnDeath` again in another,
 // which softlocked any quest that turns on killing it.
 // See: docs/commentary/morrowind_runtime.md#a-load-resets-the-instances
-void OnRevert(SKSESerializationInterface*) {
+void OnRevert(SKSESerializationInterface*) { RevertState(); }
+
+}  // namespace
+
+void RevertState() {
     State().Reset();
     ClearInstances();
     ResetTickState();
     State().StartStartupScripts();
     Log("cosave: state reverted");
 }
-
-}  // namespace
 
 void InstallCoSave(SKSESerializationInterface* serialization,
                    PluginHandle plugin) {

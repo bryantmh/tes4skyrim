@@ -1,4 +1,5 @@
 TestActorScript=begin TestActorScript\n\nshort mood\nfloat timer\nshort met\n\nset met to 1\n\nend
 TestDoorScript=begin TestDoorScript\n\nshort open\n\nif ( OnActivate == 1 )\n\tset open to 1\nendif\n\nend
 TestCounterScript=begin TestCounterScript\n\nshort count\n\nset count to ( count + 1 )\nif ( count >= 2 )\n\tStopScript TestCounterScript\nendif\n\nend
+Main=begin Main\n\nend
 TestDeathScript=begin TestDeathScript\n\nshort deadDone\n\nif ( OnDeath )\n\tset deadDone to 1\nendif\n\nend

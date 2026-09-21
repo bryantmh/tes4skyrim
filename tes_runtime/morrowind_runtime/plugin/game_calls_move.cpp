@@ -21,11 +21,15 @@ namespace {
 using AxisGetFn = float (*)(void* vm, std::uint32_t stack, void* ref);
 using AxisSetFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                            float x, float y, float z);
-// ObjectReference.MoveTo(target, xOff, yOff, zOff, matchRotation): the only
-// call that crosses cells, and it aims at another REFERENCE.
+// ObjectReference.MoveTo(target, xOff, yOff, zOff, matchRotation): aims at
+// another REFERENCE, so it serves travel markers only.
 using MoveToFn = void (*)(void* vm, std::uint32_t stack, void* self,
                           void* target, float x, float y, float z,
                           bool matchRotation);
+// TESObjectREFR::MoveTo_Impl: the move into a CELL or a WORLDSPACE.
+using MoveToCellFn = void (*)(void* self, const std::uint32_t* targetHandle,
+                              void* cell, void* world, const float* position,
+                              const float* rotation);
 // ObjectReference.GetScale() / .SetScale(float).
 using ScaleGetFn = float (*)(void* vm, std::uint32_t stack, void* ref);
 using ScaleSetFn = void (*)(void* vm, std::uint32_t stack, void* ref,
@@ -54,6 +58,7 @@ float RefAngle(void* ref, int axis) {
 AxisSetFn g_setPosition = nullptr;
 AxisSetFn g_setAngle = nullptr;
 MoveToFn     g_moveTo = nullptr;
+MoveToCellFn g_moveToCell = nullptr;
 ScaleGetFn   g_getScale = nullptr;
 ScaleSetFn   g_setScale = nullptr;
 
@@ -132,29 +137,32 @@ void PlaceNear(const std::string& near, const std::string& base, int count) {
     });
 }
 
-// `PositionCell x y z zRot "cell"`: the anchor carries the move across the
-// cell boundary and the position puts the reference where the script asked.
+// Puts `ref` at a spot inside `place`, a CELL or a WORLDSPACE form; false when
+// it is neither. Game thread only.
 //
-// 🛑 MoveTo is the ONLY call that changes an object's cell, and it aims at
-// another REFERENCE -- hence the staged anchor. Both steps are posted
-// together so the reference is never seen at the anchor's own spot.
-// See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
+// 🛑 An interior is named by its CELL and an exterior by its WORLDSPACE, where
+// the position picks the cell -- an unloaded exterior CELL is not a live form.
+bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot) {
+    if (!g_moveToCell || !ref || !place) return false;
+    const std::uint8_t type =
+        static_cast<const std::uint8_t*>(place)[ids::kOffFormType];
+    if (type != ids::kFormTypeCell && type != ids::kFormTypeWorld) return false;
+    const bool interior = type == ids::kFormTypeCell;
+    const std::uint32_t noTarget = 0;
+    const float position[kAxisCount] = {x, y, z};
+    const float rotation[kAxisCount] = {
+        RefAngle(ref, 0) / kDegreesPerRadian,
+        RefAngle(ref, 1) / kDegreesPerRadian, zRot / kDegreesPerRadian};
+    g_moveToCell(ref, &noTarget, interior ? place : nullptr,
+                 interior ? nullptr : place, position, rotation);
+    return true;
+}
+
+// `PositionCell x y z zRot "cell"`.
 void MoveRefToCell(const std::string& id, const std::string& cell, float x,
                    float y, float z, float zRot) {
-    const FormRef* anchor = FindCellAnchor(cell);
-    if (!anchor || !g_moveTo) {
-        if (!anchor) ReportOnce("cell", cell);
-        return;
-    }
     void* ref = OwnerRef(id);
-    if (!ref) return;
-    const FormRef target = *anchor;
-    PostToMainThread([ref, target, x, y, z, zRot]() {
-        void* to = Form(&target);
-        if (!to) return;
-        g_moveTo(PapyrusVm(), 0, ref, to, 0.0f, 0.0f, 0.0f, false);
-        PlaceAt(ref, x, y, z, zRot);
-    });
+    if (ref) SendToCell({ref}, cell, x, y, z, zRot);
 }
 
 // `Position x y z zRot`: the same without the cell change.
@@ -230,9 +238,9 @@ void PlaceBaseAt(const std::string& base, const std::string& cell, float x,
         return;
     }
     const FormRef target = *found;
-    const FormRef* anchor = cell.empty() ? nullptr : FindCellAnchor(cell);
-    const FormRef into = anchor ? *anchor : FormRef();
-    const bool cross = anchor != nullptr;
+    const FormRef* place = cell.empty() ? nullptr : FindCell(cell);
+    const FormRef into = place ? *place : FormRef();
+    const bool cross = place != nullptr;
     const std::string id = base;
     PostToMainThread([target, into, cross, id, x, y, z, zRot]() {
         void* player = PlayerRef();
@@ -241,12 +249,9 @@ void PlaceBaseAt(const std::string& base, const std::string& cell, float x,
         void* made = g_placeAtMe(PapyrusVm(), 0, player, form, 1, false,
                                  false);
         if (!made) return;
-        if (cross && g_moveTo) {
-            if (void* to = Form(&into)) {
-                g_moveTo(PapyrusVm(), 0, made, to, 0.0f, 0.0f, 0.0f, false);
-            }
+        if (!cross || !MoveInto(made, Form(&into), x, y, z, zRot)) {
+            PlaceAt(made, x, y, z, zRot);
         }
-        PlaceAt(made, x, y, z, zRot);
         BindSpawnedInstance(FormIdOf(made), id);
     });
 }
@@ -280,29 +285,22 @@ void PlaceAt(void* ref, float x, float y, float z, float zRot) {
 
 void SendToCell(const std::vector<void*>& refs, const std::string& cell,
                 float x, float y, float z, float zRot) {
-    const FormRef* anchor = FindCellAnchor(cell);
-    if (!anchor || !g_moveTo || !g_getPosition[0]) {
-        if (!anchor) ReportOnce("cell", cell);
+    const FormRef* place = FindCell(cell);
+    if (!place) {
+        ReportOnce("cell", cell);
         return;
     }
-    const FormRef target = *anchor;
+    const FormRef target = *place;
     const std::string named = cell;
     PostToMainThread([refs, target, named, x, y, z, zRot]() {
-        void* to = Form(&target);
-        if (!to) {
-            Log("game: the anchor of cell '%s' does not exist while it is "
-                "unloaded -- nothing moved", named.c_str());
-            return;
-        }
-        const float dx = x - g_getPosition[0](PapyrusVm(), 0, to);
-        const float dy = y - g_getPosition[1](PapyrusVm(), 0, to);
-        const float dz = z - g_getPosition[2](PapyrusVm(), 0, to);
+        void* into = Form(&target);
         for (void* ref : refs) {
-            if (g_setAngle) {
-                g_setAngle(PapyrusVm(), 0, ref, RefAngle(ref, 0),
-                           RefAngle(ref, 1), zRot);
+            if (!MoveInto(ref, into, x, y, z, zRot)) {
+                Log("game: cell '%s' (%s|%08X) is not a cell or worldspace "
+                    "in this load order -- nothing moved", named.c_str(),
+                    target.plugin.c_str(), target.formId);
+                return;
             }
-            g_moveTo(PapyrusVm(), 0, ref, to, dx, dy, dz, false);
         }
     });
 }
@@ -358,6 +356,8 @@ void InstallMoveCalls(GameHooks& hooks) {
     g_placeAtMe = Native<PlaceAtMeFn>("ObjectReference.PlaceAtMe",
                                       ids::kRefPlaceAtMe);
     g_moveTo = Native<MoveToFn>("ObjectReference.MoveTo", ids::kRefMoveTo);
+    g_moveToCell = Native<MoveToCellFn>("TESObjectREFR::MoveTo_Impl",
+                                        ids::kRefMoveToCell);
     g_getScale = Native<ScaleGetFn>("ObjectReference.GetScale",
                                     ids::kRefGetScale);
     g_setScale = Native<ScaleSetFn>("ObjectReference.SetScale",

@@ -46,9 +46,8 @@ Fn Native(const char* name, std::uint64_t id) {
 }
 
 // Sends every reference to a spot in the named cell, `zRot` in degrees, in
-// ONE MoveTo each: the offset from the cell's anchor carries the position, so
-// the player's cell load cannot land between a move and a reposition.
-// game_calls_move.cpp.
+// ONE engine move each, so the player's cell load cannot land between a move
+// and a reposition. game_calls_move.cpp.
 void SendToCell(const std::vector<void*>& refs, const std::string& cell,
                 float x, float y, float z, float zRot);
 // Sends every reference onto a persistent marker, taking its rotation.

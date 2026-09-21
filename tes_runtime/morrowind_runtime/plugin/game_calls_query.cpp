@@ -3,6 +3,7 @@
 
 #include "game_calls_internal.h"
 
+#include <map>
 #include <string>
 
 #include "ids.h"
@@ -73,6 +74,41 @@ constexpr struct {
 } kClock[] = {{"gamehour", 0x38}, {"day", 0x37},        {"month", 0x36},
               {"year", 0x35},     {"dayspassed", 0x39}, {"timescale", 0x3A}};
 
+// TES3 globals a converted GLOB mirrors, read back each tick so a value
+// PAPYRUS writes reaches the scripts polling it. `CharGenState` is the case
+// that needs it: vanilla Morrowind's opening is started by setting it to 1,
+// which the TES3 engine did on a new game and TESGameSelect does instead.
+//
+// 🛑 Only globals a script READS as an input belong here. A write-back would
+// fight the object scripts, which own every other global's value.
+// See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
+constexpr const char* kMirrored[] = {"chargenstate"};
+
+// The value each mirrored GLOB held when last read.
+std::map<std::string, float> g_mirrorSeen;
+
+void SyncMirroredGlobals() {
+    for (const char* name : kMirrored) {
+        const GlobalDef* def = FindGlobal(name);
+        if (!def || def->form.plugin.empty()) continue;
+        const auto* form = static_cast<const std::uint8_t*>(
+            FormFromFile(def->form.plugin.c_str(),
+                         def->form.formId & 0x00FFFFFF));
+        if (!form) continue;
+        // 🛑 Only a CHANGE of the GLOB crosses over, and the first sight is
+        // never one. The scripts own the value from then on (`CharGen` sets
+        // it to 10) and the co-save owns it after a load, so copying a
+        // standing 1 would relaunch `CharGen` every tick and on every load.
+        const float value =
+            *reinterpret_cast<const float*>(form + ids::kOffGlobalValue);
+        const auto [seen, first] = g_mirrorSeen.try_emplace(name, value);
+        if (first || seen->second == value) continue;
+        seen->second = value;
+        Log("global: %s mirrored from its GLOB = %g", name, value);
+        State().SetGlobal(name, value);
+    }
+}
+
 // A Skyrim.esm GLOB never unloads, so each form is looked up once.
 void SyncClock() {
     static const std::uint8_t* forms[6] = {};
@@ -86,6 +122,7 @@ void SyncClock() {
                            *reinterpret_cast<const float*>(
                                forms[i] + ids::kOffGlobalValue));
     }
+    SyncMirroredGlobals();
 }
 
 // `advanceHours`: moves GameHour on, which is how Skyrim's own wait does

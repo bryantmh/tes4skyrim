@@ -13,6 +13,21 @@ Supported starts:
 | Cyrodiil | Oblivion's `Charactergen` stage 5 — the Imperial Prison cell | `Oblivion.esm` |
 | Nehrim | Nehrim's `Charactergen` stage 5 + `MQ00` | `Nehrim.esm` |
 | Vvardenfell | Morroblivion's `fbmwChargen` stage 1 — the prison ship | `Morrowind_ob.esm` |
+| Mojave | FalloutNV's `VCG00` stage 0 — the shallow grave | `FalloutNV.esm` |
+| Morrowind | vanilla Morrowind's own opening — the Imperial Prison Ship | `Morrowind.esm` |
+
+**Morrowind is the odd one out.** Every other game is started by setting a
+stage on its character-generation quest. Vanilla Morrowind has no such quest:
+its opening is object scripts on placed references, and the thing that sets
+them running is a TES3 global, `CharGenState`. The `Main` start script polls
+`CharGenState == 1` and launches `CharGen`, which moves the player into the
+Imperial Prison Ship itself — so there is no marker to move to and no stage to
+set. The TES3 engine set that global when NEW GAME was picked; Skyrim's engine
+never does, which is why `MorrowindRuntime.dll` does it instead. It reads this
+plugin's `TESGS_Chosen` global on a new game and writes `CharGenState` only
+when the player chose Morrowind. That needs `MorrowindRuntime.dll` (shipped in
+`TESRuntime.zip`, built by `tools/release/package_runtime_dll.py`); with the
+ESP alone, the button appears but the opening does not begin.
 
 A game whose plugin is not in your load order simply never appears in the menu.
 
@@ -80,7 +95,7 @@ The takeover, in order:
    after it (the "popup appears twice" bug).
 2. Installed games are detected with `Game.GetFormFromFile()`, which returns
    `None` when a plugin is not loaded. That is why the plugin needs no masters.
-3. The menu is a single MESG with all four buttons. Each converted game's
+3. The menu is a single MESG with every button. Each converted game's
    button carries a `GetGlobalValue(...) == 1` condition, set from the
    detection pass, so absent games are not drawn. Skyrim's button is
    unconditional, so the menu can never appear with nothing to click. A hidden
@@ -111,6 +126,8 @@ The TES4 player base record's own inventory, worn:
 | Oblivion | Sack Cloth Shirt / Pants / Sandals + Wrist Irons (`Oblivion.esm` NPC 00000007) |
 | Nehrim | Flickweste, Geschnürte Lederhose, Jägermokassins, plus torch, Tagebuch and the anonymous MQ00 note (`Nehrim.esm` NPC 00000007) |
 | Vvardenfell | Oblivion's set — Morroblivion does not override the player record, so a TES4 Morroblivion prisoner inherited its master file's |
+| Mojave | nothing — `VCG00` stage 0 strips the Pip-Boy the player record carries |
+| Morrowind | nothing — Morrowind's player record carries no inventory; the gear comes from the census office stuff room |
 
 ### Why not just stop MQ101 afterwards
 
@@ -132,6 +149,9 @@ plugins.
 | Property | Default |
 |---|---|
 | `OblivionPlugin` / `NehrimPlugin` / `MorroblivionPlugin` | `Oblivion.esm` / `Nehrim.esm` / `Morrowind_ob.esm` |
+| `FalloutNVPlugin` / `MorrowindPlugin` | `FalloutNV.esm` / `Morrowind.esm` |
+| `FalloutNVChargenID` / `FalloutNVStartMarkerID` / `FalloutNVChargenStage` | `00102037` / `00103E6B` / `0` |
+| `MorrowindProbeID` (detection only — Morrowind starts itself) | `009D7E5D` |
 | `OblivionChargenID` / `OblivionStartMarkerID` / `OblivionChargenStage` | `0002466E` / `00032AB5` / `5` |
 | `NehrimChargenID` / `NehrimStartMarkerID` / `NehrimMainQuestID` / `NehrimChargenStage` | `0002466E` / `00000D33` / `00000811` / `5` |
 | `MorroChargenID` / `MorroStartMarkerID` / `MorroChargenStage` | `00F0A28C` / `00F0A278` / `1` |

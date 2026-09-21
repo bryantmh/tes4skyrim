@@ -256,17 +256,25 @@ def _global_value(kind: str, raw: str) -> str:
 
 
 def _global_lines(dirs: list) -> list:
-    """`name=type,value` per GLOB, the plugin's own definition winning."""
+    """`name=type,value,plugin|formid` per GLOB, the plugin's own winning.
+
+    The FormID is what lets the runtime read the LIVE value out of the
+    converted plugin's GLOB, so a global Papyrus writes -- `CharGenState`, the
+    one that starts Morrowind's chargen -- reaches the scripts polling it.
+    See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
+    """
     seen = {}
-    for folder, _plugin in dirs:
+    for folder, plugin in dirs:
         for rec in export_records(os.path.join(folder, _GLOBAL_EXPORT),
-                                  ('EditorID', 'FNAM.Type', 'FLTV.Value')):
+                                  ('EditorID', 'FNAM.Type', 'FLTV.Value',
+                                   'FormID')):
             name = rec.get('EditorID', '')
             if name and name.lower() not in seen:
                 kind = rec.get('FNAM.Type', 'f')
                 seen[name.lower()] = (
                     f"{name}={kind},"
-                    f"{_global_value(kind, rec.get('FLTV.Value', '0'))}")
+                    f"{_global_value(kind, rec.get('FLTV.Value', '0'))},"
+                    f"{plugin}|{rec.get('FormID', '')}")
     return list(seen.values())
 
 
@@ -606,31 +614,27 @@ def _ref_lines(dirs: list, root: str, ids: dict) -> list:
 
 
 def _cell_lines(export_dir: str, plugin_name: str) -> list:
-    """`cell name=Plugin|anchor FormID` for each cell this plugin defines.
-
-    The value is a reference the cell CONTAINS, not the CELL record: Skyrim
-    moves an object to another object, never to a cell, so `PositionCell`
-    needs something inside the destination to aim at.
+    """`cell name=Plugin|FormID` for each cell this plugin defines: the CELL
+    of an interior, the WORLDSPACE of an exterior, attributed to the loaded
+    plugin its index byte names.
 
     Both names a cell carries are keyed, because a script may write either:
     the export keeps the cell's own name as its `EditorID`, while `FULL`
     repeats that for an interior and names the REGION for an exterior.
-    See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
+    See: docs/commentary/morrowind_runtime.md#positioncell-moves-into-the-cell
     """
-    anchors = {}
-    for name in _PLACEMENT_EXPORTS:
-        for rec in export_records(os.path.join(export_dir, name),
-                                  ('FormID', 'ParentCELL')):
-            cell = rec.get('ParentCELL', '').upper()
-            if cell and rec.get('FormID'):
-                anchors.setdefault(cell, rec['FormID'])
+    masters = masters_from_export_header(export_dir)
     lines = []
     for rec in export_records(os.path.join(export_dir, _CELL_EXPORT),
-                              ('FormID', 'EditorID', 'FULL')):
-        anchor = anchors.get(rec.get('FormID', '').upper())
+                              ('FormID', 'EditorID', 'FULL', 'ParentWRLD')):
+        place = rec.get('ParentWRLD') or rec.get('FormID', '')
+        if not place:
+            continue
+        index = int(place[:2], 16)
+        owner = masters[index] if index < len(masters) else plugin_name
         for key in ('EditorID', 'FULL'):
-            if anchor and rec.get(key):
-                lines.append(f'{rec[key]}={plugin_name}|{anchor}')
+            if rec.get(key):
+                lines.append(f'{rec[key]}={owner}|{place}')
     return sorted(set(lines))
 
 

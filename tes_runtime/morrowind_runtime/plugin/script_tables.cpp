@@ -73,9 +73,7 @@ constexpr const char* kFileRefs = "refs_formid.txt";
 // See: docs/plans/morrowind_object_scripts.md#placeatpc
 constexpr const char* kFileBases = "bases_formid.txt";
 
-// A reference INSIDE the cell of that name, which PositionCell aims at --
-// Skyrim moves an object to another object, never to a cell.
-// See: docs/commentary/morrowind_runtime.md#positioncell-needs-an-anchor
+// The CELL of each named interior and the WORLDSPACE of each named exterior.
 constexpr const char* kFileCells = "cells_formid.txt";
 
 // The AI package quest and its alias indices, which the AI commands fill.
@@ -442,6 +440,11 @@ void LoadScriptTables(const std::string& pluginDir) {
                        def.value = static_cast<float>(
                            std::atof(value.c_str() + comma + 1));
                    }
+                   // `plugin|formid`, the converted GLOB this global mirrors.
+                   const std::size_t second = value.find(',', comma + 1);
+                   if (second != std::string::npos) {
+                       def.form = ParseFormRef(value.substr(second + 1));
+                   }
                    g_globals.emplace(Lower(name), def);
                });
     ForEachRow(pluginDir + kFileLocals,
@@ -707,7 +710,7 @@ const FormRef* FindBase(const std::string& id) {
 
 std::size_t BaseCount() { return g_bases.size(); }
 
-const FormRef* FindCellAnchor(const std::string& cell) {
+const FormRef* FindCell(const std::string& cell) {
     const auto it = g_cells.find(Lower(cell));
     return it == g_cells.end() ? nullptr : &it->second;
 }

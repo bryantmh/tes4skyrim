@@ -36,6 +36,10 @@ SKSESerializationInterface* g_serialization = nullptr;
 // The sidecars are only readable once the engine knows its own data path, so
 // the store loads on kMessage_DataLoaded rather than at plugin load.
 void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
+    if (msg && msg->type == SKSEMessagingInterface::kMessage_NewGame) {
+        RevertState();
+        return;
+    }
     if (!msg || msg->type != SKSEMessagingInterface::kMessage_DataLoaded) return;
     const StoreStats stats = LoadStore();
     Log("store: %zu topics, %zu responses, %zu scripts from %zu sidecar(s)",

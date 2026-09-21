@@ -68,8 +68,10 @@ FID_GLOB_OBLIVION     = 0x01000801
 FID_GLOB_NEHRIM       = 0x01000802
 FID_GLOB_MORROBLIVION = 0x01000803
 FID_GLOB_FALLOUTNV    = 0x01000804
+FID_GLOB_MORROWIND    = 0x01000805
+#: 2**gated CONSECUTIVE ids from here, a block that GROWS with each gated game.
 FID_MESG              = 0x01000810
-FID_QUST              = 0x01000820
+FID_QUST              = 0x01000A00
 
 # --- Vanilla Skyrim.esm forms we override or reference -----------------------
 # MQ101 "Unbound", the opening. We OVERRIDE this record: the only point where a
@@ -109,16 +111,18 @@ PROLOGUE_CLOSE = "Where does fate bind you?"
 
 #: (button text, gate global, prologue line). INDEX IS THE GAME ID — append only.
 BUTTONS = [
-    ("Skyrim  -  Your name is written upon the executioner's block", None,
+    ("Skyrim", None,
      "A cart of prisoners rolls toward death."),
-    ("Cyrodiil  -  The Emperor has dreamt of you", FID_GLOB_OBLIVION,
+    ("Cyrodiil", FID_GLOB_OBLIVION,
      "An Emperor dreams of a stranger in a cell."),
-    ("Vvardenfell  -  A prophecy of old foretold your birth", FID_GLOB_MORROBLIVION,
+    ("Vvardenfell", FID_GLOB_MORROBLIVION,
      "A ship makes port in a land of ash."),
-    ("Nehrim  -  You were not chosen. You must make for yourself a name", FID_GLOB_NEHRIM,
+    ("Nehrim", FID_GLOB_NEHRIM,
      "A godless land waits for no one."),
-    ("Mojave  -  Your life was miraculously spared", FID_GLOB_FALLOUTNV,
+    ("Mojave", FID_GLOB_FALLOUTNV,
      "A shallow grave stirs beneath a desert sky."),
+    ("Vvardenfell", FID_GLOB_MORROWIND,
+     "A ship makes port in a land of ash."),
 ]
 
 #: One MESG per subset of the gated games, so each prologue names only those.
@@ -130,6 +134,7 @@ GLOBALS = [
     (FID_GLOB_NEHRIM,       'TESGS_HasNehrim'),
     (FID_GLOB_MORROBLIVION, 'TESGS_HasMorroblivion'),
     (FID_GLOB_FALLOUTNV,    'TESGS_HasFalloutNV'),
+    (FID_GLOB_MORROWIND,    'TESGS_HasMorrowind'),
 ]
 
 
@@ -148,10 +153,13 @@ def prologue_for(mask: int) -> str:
 
     Skyrim's line is unconditional, like its button; every other line appears
     only when its bit is set, so an absent game is never described.
+
+    A line prints ONCE however many installed games claim it: Morroblivion and
+    vanilla Morrowind share one, being the same world.
     """
     lines = [PROLOGUE_OPEN, '']
     for idx, (_text, gate, line) in enumerate(BUTTONS):
-        if gate is None or mask & (1 << (idx - 1)):
+        if (gate is None or mask & (1 << (idx - 1))) and line not in lines:
             lines.append(line)
     return '\n'.join(lines + ['', PROLOGUE_CLOSE])
 

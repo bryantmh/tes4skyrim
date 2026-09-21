@@ -105,6 +105,14 @@ caching, skipped record types, the export text format, and the directory layout.
   Grep the source before claiming a mechanism exists, and fix the doc.
 - Test scripts must print as they go, so a 120s timeout still yields output.
 - **LISTEN CAREFULLY to EXACTLY what the user's prompt says**. Seek to understand any implementation ideas instead of using your pre-conceived notions
+- 🛑 **DO THE TASK ASKED, AT THE SIZE ASKED. NEVER OVERSCOPE.** Size the work by
+  the request, never by what you don't know. A small ask stays small: a UI
+  change is a UI change, not an investigation of the subsystem behind it.
+  Feeling a task is too big to do directly is the signal you have inflated it —
+  re-read the prompt and cut back.
+- 🛑 **A FACT THE USER STATES IS GROUND TRUTH — NEVER SEARCH TO CONFIRM IT.**
+  Search ONLY for what they did not tell you. If the code later contradicts it,
+  say so in the final report; never stop to investigate first.
 - **A MECHANISM THE USER NAMES IS THE LEAD. BUILD IT TO COMPLETION.**
   Never abandon it for a cheaper substitute, and never because it is
   "invasive" / "touches too much" / "needs new records" — **COST IS NEVER A
@@ -120,7 +128,8 @@ caching, skipped record types, the export text format, and the directory layout.
 - Docstrings should contain real and important function information. Story content only and always belongs in a see: tag. See tags should ALWAYS have an anchor.
 - Duplicated code is a big no-no. Check if something has been built first and if it has either point to that code instead or pull it out into a shared function
 - Avoid the chicken and egg problem when updating files. For example, adding an import without also adding its call in the same write will trigger the hook and prevent the write
-- If you want to use subagents, ASK first
+- 🛑 **NEVER CALL THE `Agent` TOOL WITHOUT ASKING FIRST.** No exception for
+  `Explore`, read-only, or "just a search".
 - If you do something that would cause a cache, such as the collision cache to generate differently, you MUST iterate its version
 - Morrowind conversion has TWO modes. One that uses its authored masters (Morrowind, Tribunal, Bloodmoon) and Morroblivion mode, which uses Morrowind_ob.esm and the Morroblivion-Morrowind compat patch. BOTH paths MUST be tested and verified when doing Morrowind work.
 

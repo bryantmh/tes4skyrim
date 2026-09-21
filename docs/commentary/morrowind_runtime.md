@@ -1688,6 +1688,117 @@ No locking: the engine reports the click on the main thread, and object scripts
 tick on the main thread too (`main_thread.h:RunOnGameThread`), so the write and
 the poll never race.
 
+### <a id="vanilla-morrowind-chargen"></a>🛑 Vanilla Morrowind's opening is a GLOBAL, not a quest
+
+**Code:** `plugin/game_calls_query.cpp:SyncMirroredGlobals`,
+`tes5_import/dialogue/morrowind_sidecar.py:_global_lines`,
+`TESGameSelect/scripts/source/TESGameSelectQuest.psc:BeginMorrowind`
+
+Morrowind has no chargen quest — `quests_formid.txt` carries no row for one,
+unlike Oblivion's `Charactergen` and Morroblivion's `fbmwChargen`. The whole
+opening is object scripts on placed references, and the thing that sets them
+running is one global.
+
+The `Main` start script polls it, and its own comment names the mechanism:
+
+```
+;start character generation
+if  ( CharGenState == 1 )    ;the game sets CharGenState to 1 when NEW GAME is selected
+    StartScript Startup
+    StartScript VampireCheck
+    if ( ScriptRunning, CharGen == 0 )
+        StartScript CharGen
+    endif
+endif
+```
+
+`CharGen` then does everything itself — disables controls, `Player->PositionCell
+61,-135, 24, 340, "Imperial Prison Ship"`, sets the Bitter Coast weather, sets
+`CharGenState` to 10 and stops itself. So there is **no marker to move the
+player to and no stage to set**: placing the player is the opening's own job.
+`CharGenDoorExitCaptain` ends chargen with `set CharGenState to -1`, which is
+what the tutorial scripts test to fall silent.
+
+The one thing missing under Skyrim is the sentence in that comment: the TES3
+engine set `CharGenState` to 1, and Skyrim's engine never does. `Main` is
+already running — start scripts start themselves on a new game
+([start scripts](#global-scripts)) — so it is polling a global nothing ever
+sets, and the opening simply never begins.
+
+Verified against OpenMW, which does the same write from the same moment:
+`World::startNewGame` runs `mGlobalVariables[Globals::sCharGenState].setInteger(1)`
+for a normal new game and `-1` for `bypass`, the skip-chargen path that
+`CharGenDoorExitCaptain` also writes when the census office is done
+(`references/openmw/apps/openmw/mwworld/worldimp.cpp:289`). The name is
+lowercase `"chargenstate"` (`mwworld/globals.hpp:47`), which is the key
+`SetGlobal` lowercases to, and the value is read back with `getGlobalFloat`
+(`mwinput/actionmanager.cpp:246`) — an ESM `Variant` converts between the two,
+so a float-typed GLOB holding 1.0 is what OpenMW produces as well. Morrowind's
+own `GLOB.txt` declares it `f`.
+
+🛑 `CharGen`'s `ChangeWeather "Bitter Coast Region" 1` is UNPORTED, so it
+stubs out and the opening starts under whatever weather is up. Only cosmetic:
+`PositionCell` and `set CharGenState to 10` are on the following lines and
+still run. OpenMW rebuilds its WeatherManager just before chargen for exactly
+this call's sake, which is why the line exists at all.
+
+`CharGenState` is a REAL GLOB in the converted plugin, so Papyrus sets it
+directly -- `TESGameSelectQuest.BeginMorrowind` resolves it with
+`GetFormFromFile` and calls `SetValue(1.0)`. There is no handshake, no message
+and no runtime entry point.
+
+The one piece the runtime owes: it keeps TES3 globals in its own map and would
+never see that write. `SyncMirroredGlobals` reads the listed globals back out
+of their converted GLOB each tick, beside `SyncClock`, which is why `GLOB.txt`
+now carries `name=type,value,plugin|formid`. Only globals a script READS as an
+input belong in `kMirrored`; a write-back would fight the object scripts, which
+own every other global's value.
+
+🛑 An earlier design had the runtime read the CHOICE from TESGameSelect.esp on
+`kMessage_NewGame` and set `CharGenState` itself. Two reasons it could not
+work, both measured 2026-09-21. `kMessage_NewGame` fires BEFORE the selector's
+menu exists -- the runtime logged `chargen: selector chose game 0` at 11:40:08
+and Papyrus logged `detected 3 game(s), mask 17` at 11:40:14, six seconds
+later. And the runtime is SIDECAR-DRIVEN: it enumerates sidecar folders and
+resolves each plugin's load-order index from a sample FormID inside that
+sidecar, so TESGameSelect.esp -- which has no sidecar -- is outside its world
+model entirely.
+
+Verified against OpenMW, which does the same write from the same moment:
+`World::startNewGame` runs `mGlobalVariables[Globals::sCharGenState].setInteger(1)`
+for a normal new game and `-1` for `bypass`, the skip-chargen path that
+`CharGenDoorExitCaptain` also writes when the census office is done
+(`references/openmw/apps/openmw/mwworld/worldimp.cpp:289`). The name is
+lowercase `"chargenstate"` (`mwworld/globals.hpp:47`), which is the key
+`SetGlobal` lowercases to, and the value is read back with `getGlobalFloat`
+(`mwinput/actionmanager.cpp:246`) — an ESM `Variant` converts between the two,
+so a float-typed GLOB holding 1.0 is what OpenMW produces as well. Morrowind's
+own `GLOB.txt` declares it `f`.
+
+🛑 `CharGen`'s `ChangeWeather "Bitter Coast Region" 1` is UNPORTED, so it
+stubs out and the opening starts under whatever weather is up. Only cosmetic:
+`PositionCell` and `set CharGenState to 10` are on the following lines and
+still run. OpenMW rebuilds its WeatherManager just before chargen for exactly
+this call's sake, which is why the line exists at all.
+
+🛑 `kMessage_NewGame` fires BEFORE the selector's menu exists — measured
+2026-09-21, the runtime logged `chargen: selector chose game 0` at 11:40:08 and
+Papyrus logged `detected 3 game(s), mask 17` at 11:40:14, six seconds later. So
+the choice cannot be READ there. `ArmChargenWatch` only arms; `PollChargenChoice`
+runs from the object tick (registered with `SetPreTick`, before the bodies, so
+`Main` sees the write on the same tick) and re-reads the global until it is
+non-zero. Zero cannot settle it: it is both the unset value and `GAME_SKYRIM`,
+and waiting through it costs nothing, since choosing Skyrim leaves
+`CharGenState` alone exactly as an unanswered watch does.
+
+It reads TESGameSelect.esp's `TESGS_Chosen` global through `FormFromFile` and
+`kOffGlobalValue` (the `SyncClock` pattern), and sets `CharGenState` to 1 only
+when that names Morrowind. Reading a GLOB out of another plugin is what keeps
+the gate one-directional: the runtime registers no Papyrus natives, so the
+selector cannot call into it, but any plugin's globals are readable. An absent
+TESGameSelect.esp resolves to null, which is the honest no-op — Morrowind
+launched on its own is a new game whose only game IS Morrowind, so chargen runs.
+
 ### <a id="global-scripts"></a>Global scripts tick
 
 **Code:** `plugin/object_script.cpp:RunGlobalScripts`, `plugin/object_tick.cpp`
@@ -1824,34 +1935,33 @@ So the tie-break decides **2 call sites**, and first-match is right. The
 table) plus 13 ids from Morrowind proper or authored typos (`agronian guy`)
 that this plugin does not place — those correctly report and do nothing.
 
-### <a id="positioncell-needs-an-anchor"></a>`PositionCell` aims at a REFERENCE, not a cell
+<a id="positioncell-needs-an-anchor"></a>
+### <a id="positioncell-moves-into-the-cell"></a>`PositionCell` moves into the CELL itself
 
 **Code:** `morrowind_sidecar.py:_cell_lines`, `cells_formid.txt`,
-`plugin/game_calls.cpp:MoveRefToCell`
+`plugin/game_calls_move.cpp:MoveInto` / `SendToCell`, `ids::kRefMoveToCell`
 
-`PositionCell x y z zRot "cell"` is the most-called stubbed command (1,232
-sites). Skyrim's mover is `ObjectReference.MoveTo(target)` — it crosses cells
-freely but takes another REFERENCE, never a cell. Disassembling the native
-(`0x9cec80`) shows why: it builds a queued move task holding the TARGET's cell
-handle, so the cell is only ever reached through something standing in it.
+`PositionCell x y z zRot "cell"` is the most-called command (1,232 sites).
+It goes through `TESObjectREFR::MoveTo_Impl` (Address Library 56626,
+`0xa447f0` on 1.6.1170), which takes the destination CELL or WORLDSPACE, the
+position and the rotation (radians) in one call. Read from its body: `rcx` is
+tested for form type `0x3E` and against the player singleton, `[r8+0x40] & 1`
+is the cell's interior flag, and the two stack arguments are dereferenced as
+vectors. `cells_formid.txt` maps each authored cell name to the interior's
+CELL or the exterior's WORLDSPACE; an exterior is NOT named by its CELL,
+because an unloaded exterior cell is not a live form, and the position picks
+the cell.
 
-`Cell.GetNthRef` looked like the way to find that something at runtime, and is
-not: on an UNLOADED cell it returns only persistent references, and a TES3
-interior generally has none. So the anchor is staged instead —
-`cells_formid.txt` maps the cell's authored name to any one reference the cell
-contains, and the runtime does `MoveTo(anchor)` then `SetPosition(x, y, z)`.
-
-🛑 **No marker record is minted, because the measurement said none was
-needed.** Over Tamriel Rebuilt's two corpora, of the cells its scripts name:
-
-| Named cells | Resolved in `CELL.txt` | ...holding a placement |
-|---:|---:|---:|
-| 379 | 332 | **331** |
-
-That is 677 of 678 resolvable call sites served by a reference that already
-exists. The 47 unresolved names are exterior REGIONS (where `PositionCell`
-means the worldspace, and vanilla Morrowind falls back to the exterior) plus
-cells belonging to masters this plugin does not re-export.
+🛑 **REVERTED: an anchor reference plus `ObjectReference.MoveTo`.** The table
+staged "any one reference the cell contains" and the runtime did
+`MoveTo(anchor)` then `SetPosition`. A NON-persistent reference does not
+resolve while its cell is unloaded, so the move silently did nothing: vanilla
+Morrowind's `CharGen` never reached the Imperial Prison Ship, whose staged
+anchor `00BC6402` is non-persistent. Measured over Morrowind.esm
+(`temp` probe over `REFR`/`ACHR` `RecordFlags & 0x400`): 5,635 cells hold a
+placement and only **1,133** hold a persistent one. `Cell.GetNthRef` fails the
+same way. The earlier "331 of 332 named cells hold a placement" measurement
+counted placements, not PERSISTENT placements, which is why it looked served.
 
 Both the `EditorID` and the `FULL` name are staged as keys: an interior
 repeats its own name in both, and an exterior's `FULL` is its region, which is

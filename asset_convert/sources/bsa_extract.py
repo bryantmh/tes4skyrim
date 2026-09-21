@@ -107,6 +107,8 @@ def read_bsa_files(bsa_path, wanted_names):
 _EXTRA_BSA_BASES = {
     "nehrim": ["N", "L"],
     "falloutnv": ["Fallout", "Update"],
+    "Arktwend_English": ["Morrowind", "Bloodmoon", "Tribunal"],
+    "Arktwend 2.0.0 (DE)": ["Morrowind", "Bloodmoon", "Tribunal"]
 }
 
 # GOTY Oblivion.esm has Shivering Isles MERGED INTO IT: every SI record lives

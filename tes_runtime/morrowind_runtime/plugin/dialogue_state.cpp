@@ -23,6 +23,9 @@ constexpr int kTopRank = 9;
 // The co-save's first line; a save with another header is left alone.
 constexpr const char* kFormat = "MWSTATE\t1";
 
+// The global script the TES3 engine starts by name (OpenMW `addStartup`).
+constexpr const char* kMainScript = "Main";
+
 std::string Key(std::string id) {
     std::transform(id.begin(), id.end(), id.begin(),
                    [](unsigned char c) { return static_cast<char>(::tolower(c)); });
@@ -276,7 +279,13 @@ void DialogueState::StopScript(const std::string& script) {
     if (mRunning.erase(Key(script))) Log("script: %s stopped", script.c_str());
 }
 
+// 🛑 `Main` is started by NAME, not by an SSCR: Morrowind.esm carries no SSCR
+// at all, and `Main` is what launches `CharGen`.
+// See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
 void DialogueState::StartStartupScripts() {
+    if (!ScriptSource(kMainScript).empty() && !ScriptRunning(kMainScript)) {
+        StartScript(kMainScript, std::string());
+    }
     for (const std::string& script : StartScripts()) {
         if (!ScriptRunning(script)) StartScript(script, std::string());
     }

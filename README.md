@@ -212,11 +212,15 @@ can't be resolved.
 The intended way in is the **TESGameSelect** plugin (*Threads of Prophecy*), a
 small standalone Skyrim SE plugin built separately from the conversion itself.
 It takes over Skyrim's opening quest so that starting a **new game** shows a
-menu asking which world to begin in: Skyrim, Cyrodiil, Vvardenfell, Nehrim or the Mojave.
+menu asking which world to begin in: Skyrim, Cyrodiil, Vvardenfell, Nehrim,
+the Mojave or Morrowind.
 Choosing Skyrim runs the vanilla Helgen opening untouched; choosing a converted
 game hands off to that game's own character generation, with its real starting
 equipment and start location. Games whose plugin is not in your load order are
 detected at runtime and simply never appear in the menu, so any subset works.
+Vanilla Morrowind is the exception to the handoff: it has no chargen quest, so
+`MorrowindRuntime.dll` starts its opening by setting the TES3 global the game's
+own `Main` script waits on.
 
 Build it with the **Pack Start Mod** button (or `python
 tools/release/package_start_mod.py`) to get

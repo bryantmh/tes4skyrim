@@ -359,6 +359,8 @@ void StartScriptCases() {
     State().StartStartupScripts();
     Check(State().ScriptRunning("TestCounterScript"),
           "a start script runs without anyone calling StartScript");
+    Check(State().ScriptRunning("Main"),
+          "and so does Main, which no SSCR names");
     State().StopScript("TestCounterScript");
     State().StartStartupScripts();
     Check(State().ScriptRunning("TestCounterScript"),
@@ -509,7 +511,7 @@ void PersuasionCases(DialogueContext& context) {
 // See: docs/plans/morrowind_object_scripts.md#instances
 void ObjectScriptTableCases() {
     std::printf("object-script tables\n");
-    Check(ScriptSourceCount() == 4, "four bodies staged");
+    Check(ScriptSourceCount() == 5, "five bodies staged");
     const std::string& body = ScriptSource("TestDoorScript");
     Check(body.find("begin TestDoorScript") == 0,
           "the body is unescaped back to real newlines");

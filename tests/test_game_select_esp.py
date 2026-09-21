@@ -36,16 +36,24 @@ def test_every_installed_set_has_a_menu_variant(built):
 
 def test_prologue_names_only_installed_games():
     """A game absent from the mask must not be described; Skyrim's line is
-    unconditional and always present."""
+    unconditional and always present.
+
+    Two games may share a line — Morroblivion and vanilla Morrowind are the
+    same world, deliberately presented identically — so the invariant is per
+    LINE rather than per button: it shows when any game using it is installed,
+    and is absent only when none of them are.
+    """
     gated = [i for i, b in enumerate(BUTTONS) if b[1] is not None]
     for mask in range(MESG_VARIANTS):
         text = prologue_for(mask)
         assert BUTTONS[0][2] in text, 'Skyrim line is unconditional'
-        for bit, idx in enumerate(gated):
-            present = bool(mask & (1 << bit))
-            assert (BUTTONS[idx][2] in text) == present, (
-                f'mask {mask}: {BUTTONS[idx][2]!r} should '
-                f'{"appear" if present else "be hidden"}')
+        for idx in gated:
+            line = BUTTONS[idx][2]
+            users = [b for j, b in enumerate(gated) if BUTTONS[b][2] == line]
+            shown = any(mask & (1 << gated.index(u)) for u in users)
+            assert (line in text) == shown, (
+                f'mask {mask}: {line!r} should '
+                f'{"appear" if shown else "be hidden"}')
 from tes5_import.base.tes5_reader import records
 
 
@@ -137,7 +145,7 @@ def test_button_order_matches_game_ids(built):
     subs = recs[('MESG', FID_MESG)]
     texts = [p.rstrip(b'\0').decode() for t, p in subs if t == 'ITXT']
     assert texts == [b[0] for b in BUTTONS]
-    assert len(texts) == len(BUTTONS) == 5
+    assert len(texts) == len(BUTTONS) == 6
     assert BUTTONS[0][1] is None
     assert texts[0].startswith('Skyrim')
 
@@ -376,7 +384,7 @@ def test_script_source_declares_matching_game_constants():
                      for fid, edid in GLOBALS}
     glob_to_const[None] = 'GAME_SKYRIM'
     expected = {glob_to_const[b[1]]: idx for idx, b in enumerate(BUTTONS)}
-    assert len(expected) == len(BUTTONS) == 5
+    assert len(expected) == len(BUTTONS) == 6
 
     for name, value in sorted(expected.items(), key=lambda kv: kv[1]):
         assert f'Property {name}' in text
@@ -384,3 +392,42 @@ def test_script_source_declares_matching_game_constants():
         assert f'= {value}' in line, (
             f'{name} must equal {value} -- it is button {value} in '
             f'make_game_select_esp.BUTTONS, and Show() returns that index')
+
+
+def test_morrowind_chargen_global_matches_the_conversion():
+    """Vanilla Morrowind is started by setting its CharGenState GLOB to 1, so
+    the .psc must name the FormID the conversion actually gives that record.
+
+    Unlike every other game there is no chargen quest to SetStage -- the
+    opening is object scripts polling this one global.
+    See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    psc = os.path.join(root, 'TESGameSelect', 'scripts', 'source',
+                       SCRIPT_NAME + '.psc')
+    text = open(psc, encoding='utf-8').read()
+
+    line = next((ln for ln in text.splitlines()
+                 if 'MorrowindChargenStateID' in ln and 'Property' in ln), None)
+    assert line, 'the .psc must declare MorrowindChargenStateID'
+    assert 'SetValue(1.0)' in text, (
+        'BeginMorrowind must set CharGenState to 1 -- that IS the start')
+
+
+def test_no_two_records_share_a_formid(built):
+    """Every record in the file must have its own FormID.
+
+    The MESG block is 2**gated CONSECUTIVE ids and GROWS when a gated game is
+    added -- going from four gated games to five doubled it from 16 to 32 and
+    ran it straight through FID_QUST, so the selector quest and menu variant 16
+    were the same record and the plugin was broken outright.
+    """
+    _data, _count, recs = built
+    ids = [fid for _sig, fid in recs if fid]
+    assert len(ids) == len(set(ids)), 'duplicate FormID in the plugin'
+
+    block = range(FID_MESG, FID_MESG + MESG_VARIANTS)
+    for fid in [FID_QUST] + [g[0] for g in GLOBALS]:
+        assert fid not in block, (
+            f'0x{fid:08X} sits inside the MESG block '
+            f'0x{FID_MESG:08X}..0x{FID_MESG + MESG_VARIANTS - 1:08X}')

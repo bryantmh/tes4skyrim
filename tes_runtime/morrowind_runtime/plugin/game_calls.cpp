@@ -942,7 +942,7 @@ void InstallGameCalls() {
     InstallMessageCalls();
     Log("game: %zu spell(s) and %zu magic effect(s) resolvable by id",
         SpellCount(), EffectCount());
-    Log("game: %zu cell anchor(s) for PositionCell", CellCount());
+    Log("game: %zu named cell(s) for PositionCell", CellCount());
     Log("game: %zu placed reference(s) resolvable by id", RefCount());
     Log("game: %zu journal quest(s) mapped to Skyrim quests", QuestCount());
 }
