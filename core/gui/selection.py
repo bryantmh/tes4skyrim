@@ -471,6 +471,24 @@ def capabilities_for_selection(app):
         return None
 
 
+#: Steps a Morrowind source cannot run, and the label that replaces the tip.
+_TES3_UNAVAILABLE = {"scripts": "Morrowind scripts run on their own interpreter"}
+
+
+def selection_is_tes3(app) -> bool:
+    """True when the selected plugin is a Morrowind binary."""
+    from source_paths import resolve_plugin_path
+    from tes4_export.tes3_reader import is_tes3
+    name = app.file_var.get()
+    if not name:
+        return False
+    try:
+        return is_tes3(resolve_plugin_path(name, app.tes4_var.get(),
+                                           str(EXPORT_DIR)))
+    except Exception:
+        return False
+
+
 def why_unavailable(key: str, caps) -> str:
     """Why a step is greyed, in the user's terms rather than "disabled"."""
     if key == "extract":
@@ -484,6 +502,18 @@ def why_unavailable(key: str, caps) -> str:
     return f"no {missing}" if missing else "nothing to convert"
 
 
+def _grey_step(app, key: str, reason: str) -> None:
+    """Untick and disable one step, replacing its tip with `reason`.
+
+    Untick as well as disable: a step left ticked is still collected when the
+    run gathers its selection.
+    """
+    cb, lbl, _tip = app.step_widgets[key]
+    app.step_vars[key].set(False)
+    cb.configure(state="disabled")
+    lbl.configure(text=reason)
+
+
 def _enable_all_steps(app) -> None:
     """Restore every step to its normal label and enabled state."""
     for _key, (cb, lbl, tip) in app.step_widgets.items():
@@ -492,30 +522,29 @@ def _enable_all_steps(app) -> None:
 
 
 def apply_step_availability(app) -> None:
-    """Grey out steps the selected source has no content for.
+    """Grey out steps the selected source cannot run.
 
-    A greyed step is UNTICKED as well as disabled: one left ticked would still
-    be collected when the run gathers its selection.
+    See: docs/commentary/morrowind_runtime.md#why-not-record-conversion
     """
     caps = capabilities_for_selection(app)
     if caps is None:
         _enable_all_steps(app)
-        app.update_run_btn()
-        return
-    try:
-        from asset_convert.sources import mod_ingest
-        usable = mod_ingest.available_steps(caps)
-    except Exception:
-        return
+    else:
+        try:
+            from asset_convert.sources import mod_ingest
+            usable = mod_ingest.available_steps(caps)
+        except Exception:
+            return
+        for key, (cb, lbl, tip) in app.step_widgets.items():
+            if key in usable:
+                cb.configure(state="normal")
+                lbl.configure(text=tip)
+            else:
+                _grey_step(app, key, why_unavailable(key, caps))
 
-    for key, (cb, lbl, tip) in app.step_widgets.items():
-        if key in usable:
-            cb.configure(state="normal")
-            lbl.configure(text=tip)
-        else:
-            app.step_vars[key].set(False)
-            cb.configure(state="disabled")
-            lbl.configure(text=why_unavailable(key, caps))
+    if selection_is_tes3(app):
+        for key, reason in _TES3_UNAVAILABLE.items():
+            _grey_step(app, key, reason)
     app.update_run_btn()
 
 
