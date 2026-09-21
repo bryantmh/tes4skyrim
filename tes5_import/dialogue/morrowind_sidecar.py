@@ -231,6 +231,30 @@ def _formid_here(formid: str, folder: str, master: str, header: list):
     return f'{names.index(master.lower()):02X}{formid[2:]}'
 
 
+#: What an out-of-range or NaN FLTV reads as; the engine clamps to this.
+_INT32_MIN = -2147483648
+_INT32_MAX = 2147483647
+
+
+def _global_value(kind: str, raw: str) -> str:
+    """A GLOB's FLTV as its FNAM type reads it: `s`/`l` TRUNCATE toward zero.
+
+    TES3 stores every global's value as a float, so vanilla short globals carry
+    uninitialized junk -- `WearingOrdinatorUni` holds 7.1e-31, which must read
+    as 0 the way the engine reads it.
+    See: docs/commentary/tes4_export_morrowind.md#globals-are-always-filled
+    """
+    if kind.lower() not in ('s', 'l'):
+        return raw
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return '0'
+    if math.isnan(value) or not _INT32_MIN <= value <= _INT32_MAX:
+        return str(_INT32_MIN)
+    return str(int(value))
+
+
 def _global_lines(dirs: list) -> list:
     """`name=type,value` per GLOB, the plugin's own definition winning."""
     seen = {}
@@ -239,8 +263,10 @@ def _global_lines(dirs: list) -> list:
                                   ('EditorID', 'FNAM.Type', 'FLTV.Value')):
             name = rec.get('EditorID', '')
             if name and name.lower() not in seen:
-                seen[name.lower()] = (f"{name}={rec.get('FNAM.Type', 'f')},"
-                                      f"{rec.get('FLTV.Value', '0')}")
+                kind = rec.get('FNAM.Type', 'f')
+                seen[name.lower()] = (
+                    f"{name}={kind},"
+                    f"{_global_value(kind, rec.get('FLTV.Value', '0'))}")
     return list(seen.values())
 
 
@@ -589,8 +615,15 @@ def _cell_lines(export_dir: str, plugin_name: str) -> list:
 
 
 def _write_lines(path: str, lines: list) -> int:
-    """Write a table; 1 when it has anything in it, else 0 and no file."""
+    """Write a table; 1 when it has anything in it, else 0 and NO file.
+
+    An empty table DELETES any file left by an earlier build: the runtime
+    merges every sidecar folder first-write-wins, so a stale table silently
+    beats the plugin that owns the rows now.
+    """
     if not lines:
+        if os.path.isfile(path):
+            os.remove(path)
         return 0
     with open(path, 'w', encoding='utf-8') as handle:
         handle.write('\n'.join(lines) + '\n')
@@ -787,12 +820,16 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
     """Stage this plugin's dialogue and tables into its SKSE sidecar folder,
     and with a `writer`, add its journal quests to the plugin being written.
 
-    Returns the number of files staged; 0 when the plugin has no dialogue,
-    which is every non-TES3 source and any TES3 plugin that defines none.
+    Returns files staged; 0 without dialogue or a table dialogue resolves
+    against. A plugin with no TES3 dialogue still stages when it defines
+    GLOBs: the patch alone carries vanilla's, and a global no sidecar holds
+    makes the condition testing it PASS.
+    See: docs/commentary/tes4_export_morrowind.md#globals-are-always-filled
     """
     present = [name for name in _EXPORT_DIALOGUE
                if os.path.isfile(os.path.join(export_dir, name))]
-    if not present:
+    if not present and not os.path.isfile(os.path.join(export_dir,
+                                                       _GLOBAL_EXPORT)):
         return 0
     out_dir = sidecar_dir(output_path, plugin_name)
     os.makedirs(out_dir, exist_ok=True)

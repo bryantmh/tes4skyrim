@@ -826,6 +826,39 @@ sidecar into one set of tables, so a master's globals and scripts resolve from
 the MASTER's folder rather than being copied into each dependent.
 See: [../plans/morrowind_object_scripts.md#masters-stage-themselves](../plans/morrowind_object_scripts.md#masters-stage-themselves)
 
+### <a id="the-patch-stages-a-sidecar"></a>🛑 The patch stages a sidecar although it has no TES3 dialogue
+
+The staging gate used to be "this plugin exported `MWDI.txt`/`MWIN.txt`". The
+compatibility patch exports neither — its dialogue is already converted
+DIAL/INFO — so it staged nothing, and **the 143 globals and 1,204 script
+bodies only it carries reached the runtime nowhere.**
+
+The gate is therefore dialogue **or** `GLOB.txt`. The patch is the sole source
+of vanilla Morrowind's globals in Morroblivion mode: Morroblivion itself is an
+Oblivion plugin holding no TES3 data, so its same-named GLOB is an Oblivion
+record the Morrowind runtime never reads.
+
+A global no sidecar carries does not read as 0 — it makes the filter IGNORE
+the condition testing it, matching OpenMW's `filter.cpp`, which returns true
+when `getGlobalVariableType == ' '`. So `Greeting 0` ordinal 25 —
+"The armor you wear is sacred to our Order" — passed its only condition for
+every player, and Ordinators set fight 100 and attacked on sight. A `set`
+cannot repair it either: the compiler's `getGlobalType` returns `' '` for an
+unknown global, so `OrdinatorUniform` fails to compile.
+
+### <a id="short-globals-truncate"></a>🛑 A `short`/`long` global TRUNCATES its FLTV
+
+TES3 stores every global's value as a float whatever its FNAM type, and
+vanilla leaves junk in several. `WearingOrdinatorUni` holds `7.1e-31` and
+`wearingHelmHHDA` holds `2.29e+20` — authored bytes, reproduced faithfully by
+the export.
+
+The engine does not read them as floats. OpenMW's `readESMVariantValue` runs a
+`short`/`long` global's FLTV through `floatCast`, which truncates toward zero
+and clamps NaN or anything outside int32 to int32's lowest. `_global_value`
+matches that, so the sidecar writes `WearingOrdinatorUni=s,0`. Writing the raw
+float instead would leave the global nonzero at load.
+
 ### 🛑 The root comes from THIS MODULE, not the host process
 
 `SidecarDir()` resolves `GetModuleHandleEx(FROM_ADDRESS)` on one of its own

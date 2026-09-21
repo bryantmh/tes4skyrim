@@ -674,6 +674,33 @@ states for every other generated record.
 The patch is generated only in Morroblivion mode. With all masters converted
 the index is complete, no gap exists, and no patch is written.
 
+### <a id="globals-are-always-filled"></a>GLOB is filled even where Morroblivion supplies it
+
+The "absent from the index" test is right for a base object: a STAT the index
+resolves is a STAT the game can place, whoever owns it. **It is wrong for a
+GLOB**, because a global is not placed -- it is READ, by TES3 dialogue
+conditions and MWScript, through the runtime's sidecar.
+
+Morroblivion's global is an OBLIVION record. Morroblivion carries no TES3 data
+and gets no Morrowind sidecar, so a global only it defines reaches the runtime
+nowhere. Only the patch stages a sidecar the runtime reads, so the patch must
+carry every vanilla GLOB whether or not Morroblivion also declares one.
+
+Measured: `WearingOrdinatorUni` is declared by Morrowind.esm AND by
+Morrowind_ob.esm (`01F2A3C9`). The index found Morroblivion's copy, the gap
+scan skipped it, and the patch shipped 139 GLOBs instead of 140 -- while its
+siblings `WearingLegionUni` and `wearingHelmHHDA`, which Morroblivion does not
+define, were filled.
+
+The consequence is not a missing value but an INVERTED condition. A global the
+sidecar lacks makes the dialogue filter IGNORE the condition testing it
+(matching OpenMW's `filter.cpp`, which returns true when
+`getGlobalVariableType == ' '`), so `Greeting 0` ordinal 25 --
+"The armor you wear is sacred to our Order" -- passed its only condition for
+every player, and Ordinators set fight 100 and attacked on sight. A `set`
+cannot repair it either: the compiler's `getGlobalType` returns `' '` for an
+unknown global, so the patch's own `OrdinatorUniform` script fails to compile.
+
 ### Textures are extracted WHOLESALE, meshes are not
 
 Meshes are pulled per gap record; textures cannot be, and the difference is not
