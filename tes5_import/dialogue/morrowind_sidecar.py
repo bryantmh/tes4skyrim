@@ -25,6 +25,7 @@ from asset_convert.sources import source_registry
 from core.plugin_masters import (get_masters_from_binary,
                                  masters_from_export_header)
 from tes4_export.morrowind_ids import encode_editor_id, load_index
+from tes4_export.morrowind_patch import PATCH_NAME
 
 from .morrowind_sidecar_source import (gather, plugin_chain,
                                        write_merged_dialogue)
@@ -845,17 +846,16 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
     """Stage this plugin's dialogue and tables into its SKSE sidecar folder,
     and with a `writer`, add its journal quests to the plugin being written.
 
-    Returns files staged; 0 without dialogue or a table dialogue resolves
-    against. A plugin with no TES3 dialogue still stages when it defines
-    GLOBs: the patch alone carries vanilla's, and a global no sidecar holds
-    makes the condition testing it PASS.
+    Returns files staged; 0 for a source that is not TES3. The compat patch
+    holds no dialogue of its own yet stages anyway: it alone carries vanilla's
+    GLOBs, and a global no sidecar holds makes the condition testing it PASS.
     See: docs/commentary/tes4_export_morrowind.md#globals-are-always-filled
     """
+    if not (is_tes3_export(export_dir)
+            or os.path.basename(plugin_name) == PATCH_NAME):
+        return 0
     present = [name for name in _EXPORT_DIALOGUE
                if os.path.isfile(os.path.join(export_dir, name))]
-    if not present and not os.path.isfile(os.path.join(export_dir,
-                                                       _GLOBAL_EXPORT)):
-        return 0
     out_dir = sidecar_dir(output_path, plugin_name)
     os.makedirs(out_dir, exist_ok=True)
     chain = plugin_chain(_export_root(export_dir), plugin_name)
