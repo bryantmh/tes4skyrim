@@ -56,9 +56,18 @@ using GetFormFromFileFn = void* (*)(void* vm, std::uint32_t stack, void* tag,
                                     std::int32_t local, void* fileName);
 using FixedStringFn = void* (*)(void* out, const char* text);
 
+// The `Actor.IsDead` Papyrus native, which IGNORES the VM and the stack: it is
+// a four-instruction thunk that tail-calls the reference's own virtual --
+// `mov rax,[r8] / mov dl,1 / mov rcx,r8 / jmp [rax+0x4c8]`, identical on
+// 1.6.659 and 1.6.1170. So it answers from inside the Activate vtable call,
+// where re-entering the VM is not an option.
+// See: docs/commentary/morrowind_runtime.md#a-corpse-is-looted-not-talked-to
+using IsDeadFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
+
 void*             g_vm = nullptr;
 GetFormFromFileFn g_getFormFromFile = nullptr;
 FixedStringFn     g_fixedString = nullptr;
+IsDeadFn          g_isDead = nullptr;
 
 // A FormID's load-order index is its high byte.
 inline std::uint8_t PluginIndex(std::uint32_t formId) {
@@ -107,20 +116,32 @@ void RaiseActivated(void* ref) {
     Log("object: %s activated (%08X)", instance->Script().c_str(), refId);
 }
 
+// Whether this PLACEMENT is a dead actor. The base form cannot answer it: life
+// is state on the reference, and one base serves every corpse and every living
+// copy of that NPC alike.
+//
+// Unknown counts as alive, so a hook that cannot reach the engine keeps the
+// dialogue it has always opened rather than silently losing every speaker.
+// See: docs/commentary/morrowind_runtime.md#a-corpse-is-looted-not-talked-to
+bool IsCorpse(void* ref) {
+    return ref && g_isDead && g_isDead(nullptr, 0, ref);
+}
+
 // Our Activate. The FIRST test is one bit on the ref's load-order
 // index, so a vanilla or Oblivion-converted NPC reaches the engine's own
 // Activate having cost nothing measurable.
 //
 // Returning TRUE without calling the original is what suppresses Skyrim's
 // activation entirely -- no vanilla dialogue menu, no "this person has nothing
-// to say". Anything we do not claim falls through untouched.
+// to say". Anything we do not claim falls through untouched, which is how a
+// CORPSE reaches the engine's own Activate and opens as a container.
 bool ActivateHook(void* base, void* ref, void* activator, std::uint8_t unk,
                   void* object, std::int32_t count) {
     // `base` is the BASE form, which the actor index keys on; `ref` is the
     // placed instance, whose own FormID belongs to whichever plugin placed it.
     // Checking the base is what makes one indexed NPC match all its refs.
     const std::uint32_t baseId = FormIdOf(base);
-    if (baseId && IsMorrowindSpeaker(baseId)) {
+    if (baseId && IsMorrowindSpeaker(baseId) && !IsCorpse(ref)) {
         Log("activation: %08X is '%s' (\"%s\") -- opening the Morrowind menu",
             baseId, SpeakerId(baseId), DisplayName(base));
         SetSpeakerRef(SpeakerId(baseId), ref);
@@ -254,6 +275,8 @@ std::size_t LoadActorIndexFrom(const std::string& rootIn) {
         Resolve("Game.GetFormFromFile", ids::kGetFormFromFile, nullptr));
     g_fixedString = reinterpret_cast<FixedStringFn>(
         Resolve("BSFixedString ctor", ids::kBSFixedStringCtor, nullptr));
+    g_isDead = reinterpret_cast<IsDeadFn>(
+        Resolve("Actor.IsDead", ids::kActorIsDead, nullptr));
     std::string root = rootIn;
     if (root.back() != '\\' && root.back() != '/') root.push_back('\\');
     std::size_t total = 0;

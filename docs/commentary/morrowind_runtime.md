@@ -758,6 +758,48 @@ Vanilla creators allocate through the allocator singleton at `0x3292490`
 `HeapAlloc` is a crash when the menu closes rather than when it opens — the
 worst kind, because the open looks like it worked.
 
+### <a id="a-corpse-is-looted-not-talked-to"></a>A corpse is looted, not talked to
+
+`ActivateHook` claims an activation from the BASE form's identity —
+`IsMorrowindSpeaker(baseId)`, one bit on the plugin index plus a map lookup. A
+base form has no life state, so a corpse matched exactly as well as a living
+NPC, and the `return true` that suppresses Skyrim's own `Activate` also
+suppressed the loot container. Activating any dead Morrowind speaker opened the
+dialogue menu.
+
+The guard has to read the REFERENCE, because that is where life lives and one
+base serves every copy of that NPC.
+
+🛑 **It cannot go through `Hooks().isDead`.** That is `IsDeadRef`, which takes a
+RUNTIME FormID and resolves it back to a pointer through `Game.GetForm` — a
+Papyrus VM call. `PollDeath` may do that because the object tick runs at a safe
+point on the game thread; `ActivateHook` runs INSIDE the engine's own `Activate`
+vtable dispatch, and re-entering the VM there answered for nobody. Measured: the
+first build of this guard suppressed the menu for every speaker, alive or dead,
+with no `activation:` line logged at all.
+
+Call the native directly on the pointer the hook already holds. `Actor.IsDead`
+(id 54705) needs neither the VM nor the stack — it is a four-instruction thunk
+that tail-calls the reference's own virtual:
+
+```asm
+mov rax, qword ptr [r8]       ; r8 = the reference; rax = its vtable
+mov dl, 1                     ; the actor flag SKSE's header documents
+mov rcx, r8                   ; this = the reference
+jmp qword ptr [rax + 0x4c8]   ; IsDead's slot
+```
+
+Byte-identical at 1.6.659 (`0x989ff0`) and 1.6.1170 (`0x9e8ca0`), so passing a
+null VM and a zero stack is not a trick — those arguments are never read.
+
+Unknown counts as ALIVE. A hook that cannot reach the VM keeps the dialogue it
+has always opened rather than silently losing every speaker.
+
+This is Morrowind's own rule, not a Skyrim convenience: OpenMW's
+`Npc::activate` short-circuits on `stats.isDead()` into `ActionOpen` and only
+reaches `ActionTalk` in the live-actor `else` branch (`mwclass/npc.cpp:846`,
+same shape in `creature.cpp:451`).
+
 ## <a id="sidecar"></a>The sidecar: how dialogue reaches the runtime
 
 The runtime is an SKSE plugin in the player's Skyrim install. **It never sees
