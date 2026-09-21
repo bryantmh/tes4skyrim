@@ -24,7 +24,16 @@ from tools.release.make_game_select_esp import (BUTTONS, FID_MESG, FID_QUST, FID
                                         FUNC_GET_GLOBAL_VALUE, SCRIPT_NAME,
                                         MQ101_SCRIPT_NAME, build_plugin,
                                         MESG_VARIANTS, prologue_for,
-                                        _skip_script_entry)
+                                        FID_FLST_MENUS, _skip_script_entry)
+
+
+def test_menu_list_holds_every_variant_in_mask_order(built):
+    """The script shows `Menus.GetAt(installedMask)`, so entry N must be the
+    MESG for mask N."""
+    _data, _count, recs = built
+    listed = [struct.unpack('<I', data)[0]
+              for sig, data in recs[('FLST', FID_FLST_MENUS)] if sig == 'LNAM']
+    assert listed == [FID_MESG + mask for mask in range(MESG_VARIANTS)]
 
 
 def test_every_installed_set_has_a_menu_variant(built):
@@ -103,11 +112,12 @@ def test_header_declares_only_skyrim_master(built):
 def test_hedr_count_matches_contents(built):
     """HEDR must count records + GRUPs; the engine walks the file by it, so an
     undercount silently drops records. One GLOB per game, one MESG per
-    installed-game set, two QUST (selector + MQ101), three top-level GRUPs."""
+    installed-game set, the FLST listing them, two QUST (selector + MQ101),
+    four top-level GRUPs."""
     data, count, recs = built
     hedr = dict(recs[('TES4', 0)])['HEDR']
     assert struct.unpack('<I', hedr[4:8])[0] == count
-    assert count == len(GLOBALS) + MESG_VARIANTS + 2 + 3
+    assert count == len(GLOBALS) + MESG_VARIANTS + 1 + 2 + 4
 
 
 def test_selector_quest_is_not_start_game_enabled(built):
@@ -145,7 +155,7 @@ def test_button_order_matches_game_ids(built):
     subs = recs[('MESG', FID_MESG)]
     texts = [p.rstrip(b'\0').decode() for t, p in subs if t == 'ITXT']
     assert texts == [b[0] for b in BUTTONS]
-    assert len(texts) == len(BUTTONS) == 6
+    assert len(texts) == len(BUTTONS) == 7
     assert BUTTONS[0][1] is None
     assert texts[0].startswith('Skyrim')
 
@@ -220,8 +230,7 @@ def test_vmad_binds_every_script_property(built):
         props[pname] = fid
 
     expected = {edid.replace('TESGS_', ''): fid for fid, edid in GLOBALS}
-    for mask in range(MESG_VARIANTS):
-        expected[f'Menu{mask:02d}'] = FID_MESG + mask
+    expected['Menus'] = FID_FLST_MENUS
     assert props == expected
     assert pos == len(vmad), 'VMAD must be fully consumed'
 
@@ -384,7 +393,7 @@ def test_script_source_declares_matching_game_constants():
                      for fid, edid in GLOBALS}
     glob_to_const[None] = 'GAME_SKYRIM'
     expected = {glob_to_const[b[1]]: idx for idx, b in enumerate(BUTTONS)}
-    assert len(expected) == len(BUTTONS) == 6
+    assert len(expected) == len(BUTTONS) == 7
 
     for name, value in sorted(expected.items(), key=lambda kv: kv[1]):
         assert f'Property {name}' in text

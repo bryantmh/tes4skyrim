@@ -69,6 +69,9 @@ FID_GLOB_NEHRIM       = 0x01000802
 FID_GLOB_MORROBLIVION = 0x01000803
 FID_GLOB_FALLOUTNV    = 0x01000804
 FID_GLOB_MORROWIND    = 0x01000805
+FID_GLOB_ARKTWEND     = 0x01000806
+#: The MESG variants in mask order, which the script indexes by installed mask.
+FID_FLST_MENUS        = 0x0100080F
 #: 2**gated CONSECUTIVE ids from here, a block that GROWS with each gated game.
 FID_MESG              = 0x01000810
 FID_QUST              = 0x01000A00
@@ -123,6 +126,8 @@ BUTTONS = [
      "A shallow grave stirs beneath a desert sky."),
     ("Vvardenfell", FID_GLOB_MORROWIND,
      "A ship makes port in a land of ash."),
+    ("Arktwend", FID_GLOB_ARKTWEND,
+     "A forgotten realm stirs behind monastery walls."),
 ]
 
 #: One MESG per subset of the gated games, so each prologue names only those.
@@ -135,6 +140,7 @@ GLOBALS = [
     (FID_GLOB_MORROBLIVION, 'TESGS_HasMorroblivion'),
     (FID_GLOB_FALLOUTNV,    'TESGS_HasFalloutNV'),
     (FID_GLOB_MORROWIND,    'TESGS_HasMorrowind'),
+    (FID_GLOB_ARKTWEND,     'TESGS_HasArktwend'),
 ]
 
 
@@ -187,6 +193,14 @@ def build_mesg(mask: int) -> bytes:
     return pack_record('MESG', FID_MESG + mask, 0, subs)
 
 
+def build_menu_list() -> bytes:
+    """The FLST of every MESG variant, entry N being the variant for mask N."""
+    subs = pack_string_subrecord('EDID', 'TESGSGameSelectMenus')
+    for mask in range(MESG_VARIANTS):
+        subs += pack_formid_subrecord('LNAM', FID_MESG + mask)
+    return pack_record('FLST', FID_FLST_MENUS, 0, subs)
+
+
 def build_qust() -> bytes:
     """The selector quest: script-only, no stages, no aliases, no objectives.
 
@@ -196,8 +210,7 @@ def build_qust() -> bytes:
     whenever the quest restarts or is re-added to a save.
     """
     props = {edid.replace('TESGS_', ''): fid for fid, edid in GLOBALS}
-    for mask in range(MESG_VARIANTS):
-        props[f'Menu{mask:02d}'] = FID_MESG + mask
+    props['Menus'] = FID_FLST_MENUS
     vmad = build_vmad_object_script(SCRIPT_NAME, object_props=props)
 
     subs = pack_string_subrecord('EDID', 'TESGSGameSelect')
@@ -389,6 +402,7 @@ def build_plugin(skyrim_esm: str) -> bytes:
     """
     groups = [
         pack_top_group('GLOB', b''.join(build_glob(f, e) for f, e in GLOBALS)),
+        pack_top_group('FLST', build_menu_list()),
         pack_top_group('MESG', b''.join(build_mesg(m)
                                         for m in range(MESG_VARIANTS))),
         pack_top_group('QUST', build_qust() + build_mq101_override(skyrim_esm)),

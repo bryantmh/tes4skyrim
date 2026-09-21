@@ -20,6 +20,7 @@ String Property NehrimPlugin       = "Nehrim.esm"       Auto
 String Property MorroblivionPlugin = "Morrowind_ob.esm" Auto
 String Property FalloutNVPlugin     = "FalloutNV.esm"   Auto
 String Property MorrowindPlugin     = "Morrowind.esm"   Auto
+String Property ArktwendPlugin      = "Arktwend_English.esm" Auto
 
 ; ---------------------------------------------------------------------------
 ; Per-game entry points. GetFormFromFile takes a form's ID *within its own
@@ -77,6 +78,11 @@ Int Property MorrowindProbeID       = 0x00192940 Auto
 ; game and what Skyrim's never does.
 Int Property MorrowindChargenStateID = 0x006472DD Auto
 
+; Arktwend is a TES3 total conversion and starts the same way: its own `Main`
+; polls its own CharGenState, and its `CharGen` moves the player to
+; "Melee, Monastery". The GLOB is a base record, so it is the probe as well.
+Int Property ArktwendChargenStateID = 0x006472DD Auto
+
 ; ---------------------------------------------------------------------------
 ; Starting equipment. On a new game the player carries Skyrim's base-record
 ; inventory (16 debug items) — vanilla clears it with RemoveAllItems at MQ101
@@ -122,41 +128,11 @@ Int Property NehrimNoteID          = 0x00000AED Auto
 ; ---------------------------------------------------------------------------
 ; The prompt, one variant per subset of the gated games. A MESG's DESC prologue
 ; names each game in turn and carries no condition, so the variant whose text
-; names exactly the installed set is chosen at runtime by MenuFor(). Bit 0 is
-; Oblivion, bit 1 Morroblivion, bit 2 Nehrim, bit 3 FalloutNV, bit 4 Morrowind
-; — the gated BUTTONS order in make_game_select_esp.py.
-Message Property Menu00 Auto
-Message Property Menu01 Auto
-Message Property Menu02 Auto
-Message Property Menu03 Auto
-Message Property Menu04 Auto
-Message Property Menu05 Auto
-Message Property Menu06 Auto
-Message Property Menu07 Auto
-Message Property Menu08 Auto
-Message Property Menu09 Auto
-Message Property Menu10 Auto
-Message Property Menu11 Auto
-Message Property Menu12 Auto
-Message Property Menu13 Auto
-Message Property Menu14 Auto
-Message Property Menu15 Auto
-Message Property Menu16 Auto
-Message Property Menu17 Auto
-Message Property Menu18 Auto
-Message Property Menu19 Auto
-Message Property Menu20 Auto
-Message Property Menu21 Auto
-Message Property Menu22 Auto
-Message Property Menu23 Auto
-Message Property Menu24 Auto
-Message Property Menu25 Auto
-Message Property Menu26 Auto
-Message Property Menu27 Auto
-Message Property Menu28 Auto
-Message Property Menu29 Auto
-Message Property Menu30 Auto
-Message Property Menu31 Auto
+; names exactly the installed set is entry [installedMask] of this list. Bit 0
+; is Oblivion, bit 1 Morroblivion, bit 2 Nehrim, bit 3 FalloutNV, bit 4
+; Morrowind, bit 5 Arktwend — the gated BUTTONS order in
+; make_game_select_esp.py.
+FormList Property Menus Auto
 
 GlobalVariable Property HasSkyrim       Auto
 GlobalVariable Property HasOblivion     Auto
@@ -164,6 +140,7 @@ GlobalVariable Property HasNehrim       Auto
 GlobalVariable Property HasMorroblivion Auto
 GlobalVariable Property HasFalloutNV    Auto
 GlobalVariable Property HasMorrowind    Auto
+GlobalVariable Property HasArktwend     Auto
 
 ; Set true the moment the menu has been shown, so a second entry (quest
 ; restart, re-add on an existing save, a stray SetStage) can never re-ask.
@@ -181,12 +158,14 @@ Int Property GAME_MORROBLIVION = 2 AutoReadOnly
 Int Property GAME_NEHRIM       = 3 AutoReadOnly
 Int Property GAME_FALLOUTNV    = 4 AutoReadOnly
 Int Property GAME_MORROWIND    = 5 AutoReadOnly
+Int Property GAME_ARKTWEND     = 6 AutoReadOnly
 
 ; Number of games offered, counting Skyrim. 1 means "Skyrim only" — no menu.
 Int gameCount
 
 ; Bitmask of the installed gated games, picking the MESG variant whose prologue
-; names exactly them: bit 0 Oblivion, 1 Morroblivion, 2 Nehrim, 3 FalloutNV.
+; names exactly them: bit 0 Oblivion, 1 Morroblivion, 2 Nehrim, 3 FalloutNV,
+; 4 Morrowind, 5 Arktwend.
 Int installedMask
 
 ; ---------------------------------------------------------------------------
@@ -217,11 +196,11 @@ Function RunSelection()
 
   ; The returned index is the button's own index in the MESG, unaffected by
   ; which buttons the conditions hid — so it IS the game id.
-  Int game = MenuFor(installedMask).Show()
+  Int game = (Menus.GetAt(installedMask) as Message).Show()
 
   ; An unexpected index (a mod-added button, a cancelled menu) is treated as
   ; Skyrim: the safe direction, since it leaves the vanilla start intact.
-  If game < GAME_OBLIVION || game > GAME_MORROWIND
+  If game < GAME_OBLIVION || game > GAME_ARKTWEND
     game = GAME_SKYRIM
   EndIf
   ChosenGame = game
@@ -247,15 +226,18 @@ Function BeginChosenGame()
   ElseIf ChosenGame == GAME_FALLOUTNV
     BeginFalloutNV()
   ElseIf ChosenGame == GAME_MORROWIND
-    BeginMorrowind()
+    BeginTes3(MorrowindPlugin, MorrowindChargenStateID)
+  ElseIf ChosenGame == GAME_ARKTWEND
+    BeginTes3(ArktwendPlugin, ArktwendChargenStateID)
   EndIf
 
-  ; FalloutNV and Morrowind show their own race menus — FalloutNV at VCG01
+  ; FalloutNV and the TES3 games show their own menus — FalloutNV at VCG01
   ; stage 36 (Doc Mitchell's reflectron), Morrowind from CharGenRaceNPC, the
-  ; dock guard, who calls EnableRaceMenu once he has asked where you are from.
-  ; Asking here too would put one up before either had spoken.
+  ; dock guard, who calls EnableRaceMenu once he has asked where you are from,
+  ; and Arktwend from its own `CharGen`. Asking here too would put one up
+  ; before any of them had spoken.
   If ChoseSkyrim() || ChosenGame == GAME_FALLOUTNV \
-     || ChosenGame == GAME_MORROWIND
+     || ChosenGame == GAME_MORROWIND || ChosenGame == GAME_ARKTWEND
     Return
   EndIf
 
@@ -292,6 +274,8 @@ Function DetectInstalledGames()
           IsPluginPresent(FalloutNVPlugin, FalloutNVChargenID), 8)
   SetGate(HasMorrowind, \
           IsPluginPresent(MorrowindPlugin, MorrowindProbeID), 16)
+  SetGate(HasArktwend, \
+          IsPluginPresent(ArktwendPlugin, ArktwendChargenStateID), 32)
 
   ; One line naming what was found. A menu that never appeared, or appeared
   ; with the wrong buttons, is ALWAYS this pass: gameCount 1 means nothing was
@@ -314,86 +298,6 @@ Function SetGate(GlobalVariable gate, Bool present, Int maskBit)
     gameCount += 1
     installedMask += maskBit
   EndIf
-EndFunction
-
-; The MESG variant whose prologue names exactly the installed games. Papyrus
-; has no array of properties, so the 16 are bound individually and selected
-; here; the build emits one per mask value, so every branch is filled.
-Message Function MenuFor(Int mask)
-  If mask < 16
-    Return MenuLow(mask)
-  EndIf
-  Return MenuHigh(mask - 16)
-EndFunction
-
-Message Function MenuLow(Int mask)
-  If mask == 0
-    Return Menu00
-  ElseIf mask == 1
-    Return Menu01
-  ElseIf mask == 2
-    Return Menu02
-  ElseIf mask == 3
-    Return Menu03
-  ElseIf mask == 4
-    Return Menu04
-  ElseIf mask == 5
-    Return Menu05
-  ElseIf mask == 6
-    Return Menu06
-  ElseIf mask == 7
-    Return Menu07
-  ElseIf mask == 8
-    Return Menu08
-  ElseIf mask == 9
-    Return Menu09
-  ElseIf mask == 10
-    Return Menu10
-  ElseIf mask == 11
-    Return Menu11
-  ElseIf mask == 12
-    Return Menu12
-  ElseIf mask == 13
-    Return Menu13
-  ElseIf mask == 14
-    Return Menu14
-  EndIf
-  Return Menu15
-EndFunction
-
-Message Function MenuHigh(Int mask)
-  If mask == 0
-    Return Menu16
-  ElseIf mask == 1
-    Return Menu17
-  ElseIf mask == 2
-    Return Menu18
-  ElseIf mask == 3
-    Return Menu19
-  ElseIf mask == 4
-    Return Menu20
-  ElseIf mask == 5
-    Return Menu21
-  ElseIf mask == 6
-    Return Menu22
-  ElseIf mask == 7
-    Return Menu23
-  ElseIf mask == 8
-    Return Menu24
-  ElseIf mask == 9
-    Return Menu25
-  ElseIf mask == 10
-    Return Menu26
-  ElseIf mask == 11
-    Return Menu27
-  ElseIf mask == 12
-    Return Menu28
-  ElseIf mask == 13
-    Return Menu29
-  ElseIf mask == 14
-    Return Menu30
-  EndIf
-  Return Menu31
 EndFunction
 
 Bool Function IsPluginPresent(String plugin, Int probeID)
@@ -505,11 +409,11 @@ Function BeginFalloutNV()
           GetRefFrom(FalloutNVStartMarkerID, FalloutNVPlugin))
 EndFunction
 
-; Vanilla Morrowind, the one game with no chargen quest: its opening is object
-; scripts gated on the TES3 global CharGenState, and setting that to 1 is the
-; whole start. `Main` — already running, start scripts start themselves —
-; then launches `CharGen`, which positions the player in the Imperial Prison
-; Ship itself, so no marker is moved to and no stage is set.
+; A TES3 game (vanilla Morrowind, Arktwend) has no chargen quest: its opening
+; is object scripts gated on the TES3 global CharGenState, and setting that to
+; 1 is the whole start. `Main` — which the runtime starts by itself — then
+; launches `CharGen`, which positions the player itself (the Imperial Prison
+; Ship; Arktwend's monastery), so no marker is moved to and no stage is set.
 ;
 ; The global is a real GLOB in the converted plugin, which is why this is a
 ; plain SetValue: MorrowindRuntime mirrors it back into its own global space
@@ -518,9 +422,9 @@ EndFunction
 ; Morrowind's player record carries no inventory (the gear comes from the
 ; census office stuff room), so stripping Skyrim's debug items is the rest.
 ; See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
-Function BeginMorrowind()
-  GlobalVariable chargen = Game.GetFormFromFile(MorrowindChargenStateID, \
-                                                MorrowindPlugin) as GlobalVariable
+Function BeginTes3(String plugin, Int chargenStateID)
+  GlobalVariable chargen = \
+      Game.GetFormFromFile(chargenStateID, plugin) as GlobalVariable
   If chargen == None
     FallBackToSkyrim()
     Return
@@ -528,7 +432,8 @@ Function BeginMorrowind()
 
   StripPlayer()
   chargen.SetValue(1.0)
-  Debug.Trace("[TESGameSelect] Morrowind CharGenState " + chargen + " set to 1")
+  Debug.Trace("[TESGameSelect] " + plugin + " CharGenState " + chargen \
+              + " set to 1")
 EndFunction
 
 Function FallBackToSkyrim()
