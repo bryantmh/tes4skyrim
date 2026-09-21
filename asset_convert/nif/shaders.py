@@ -61,6 +61,9 @@ DEFAULT_GLOSSINESS = 80.0
 #: Uniform for every shape. See: docs/commentary/asset_convert_shader.md#spec-strength-uniform
 SPEC_STRENGTH = 1.0
 
+#: Unfaded-group median. See: docs/commentary/asset_convert_shader.md#refraction-surfaces
+REFRACTION_STRENGTH = 0.25
+
 #: Slot and shader type for a glow map. See: docs/commentary/asset_convert_shader.md#glow-shader
 GLOW_SLOT = 2
 SHADER_TYPE_GLOWMAP = 2

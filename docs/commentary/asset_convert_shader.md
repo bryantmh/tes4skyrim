@@ -325,11 +325,42 @@ refraction texture — a dark distortion map — draws as a solid dark surface. 
 ancestor ghost's `RefractiveSphere` is a **90-unit radius** sphere, reported in
 game as a large black ball covering the actor.
 
-Vanilla census of `meshes/magic`: **93** shapes set `slsf_1_refraction`, **50**
-of them also `slsf_1_fire_refraction`. `boundswordencheffects`'s `RefrectHit01`
-is the same shape doing the same job, and pairs the refraction bits with
-shadows OFF and `slsf_2_z_buffer_write` OFF — a distortion pass writes no depth
-and casts nothing. Those five bits are what `_make_refractive` sets.
+Vanilla census of `meshes/magic`: **93** shapes set `slsf_1_refraction`.
+
+**Split them by vertex alpha — it decides every other flag.** A refraction
+surface fades at the silhouette either by per-vertex alpha or by the shader.
+The 80 shapes WITH vertex colors are split on every flag (fire 37/43, cast
+42/38, zwrite 72/8, median strength **0.0**) because the vertex ramp does the
+work — `boundswordencheffects`'s `RefrectHit01` ramps alpha 0.0→1.0. The **13
+WITHOUT** vertex colors are unanimous: fire refraction **13/13**, cast shadows
+**13/13**, receive shadows **13/13**, z-write 10/13, median strength **0.25**.
+`slowtimehiteffect`'s `GeoSphere01` is that case exactly — a refraction sphere
+with no vertex data.
+
+**TES4 belongs in the unfaded group.** Of 20 `refractF` shapes across
+`Oblivion.esm` and Morroblivion's creatures, 13 carry no vertex colors and the
+other 7 carry alpha that is flat **1.0** (distinct=1) — no gradient anywhere,
+so there is no rim fade to port and setting `slsf_1_vertex_alpha` would only
+risk erasing the shape. Hence the single unfaded path.
+
+Copying `RefrectHit01` instead — shadows off, z-write off, strength 0.6, no
+fire bit — was the FIRST attempt and was reported in game as the sphere
+refracting but showing a hard visible outline. That shape has a vertex ramp;
+ours does not, so it was the wrong comparison group.
+
+**The distortion lives in the NORMAL map, not the diffuse.** nif.xml calls bit
+15 "Use normal map for refraction effect", and all **93** vanilla refraction
+shapes bind a real normal map — none uses a flat default. Oblivion's
+`magic/refract.dds` is a **1x1** 132-byte placeholder while `refract_n.dds` is
+a real **128x128 DXT1**, so binding the flat default threw the effect away
+entirely. The creature pipeline now passes `master_texture_roots` as
+`tex_fallback`, without which a Morroblivion creature cannot resolve a texture
+that lives in Oblivion.esm's tree (Morroblivion ships no `textures/magic/`).
+
+**Strength is not authored in TES4.** `Refraction Strength` is `#BSVER# #GT# 14`
+(FO3 and later), so Oblivion stores none and the value comes from vanilla's
+unfaded group: median **0.25** (range 0.15–0.6 over 13). The whole-corpus
+median of 0.6 is the wrong number — it is dominated by vertex-faded shapes.
 
 Note the shape keeps `BSLightingShaderProperty` and needs no `NiAlphaProperty`:
 vanilla's refraction shapes carry neither an effect shader nor alpha blending.

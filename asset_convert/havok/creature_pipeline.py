@@ -87,6 +87,37 @@ def _clear_stale_nifs(proj_dir):
             pass
 
 
+def _convert_parts(creature_dir, proj_dir, parts_dir, tex_fallback,
+                   converted, attachments, nif_failures):
+    """Convert every source NIF: skeletons in place, parts into staging.
+
+    Attachment nodes are read from the SOURCE first, because convert_nif
+    strips the `Prn` extra data the merge needs.
+    """
+    from asset_convert.nif.nif_converter import convert_nif
+    from asset_convert.havok.creature_mesh import source_attachment_node
+
+    for fn in sorted(os.listdir(creature_dir)):
+        if not fn.lower().endswith('.nif'):
+            continue
+        src = os.path.join(creature_dir, fn)
+        if fn.lower().startswith('skeleton'):
+            dst = os.path.join(proj_dir, 'character assets', fn.lower())
+            convert_nif(src, dst, creature=True, tex_fallback=tex_fallback)
+            continue
+        dst = os.path.join(parts_dir, fn.lower())
+        try:
+            attachments[dst] = source_attachment_node(src)
+        except Exception:
+            pass
+        res = convert_nif(src, dst, creature=True,
+                          tex_fallback=tex_fallback)
+        if res.get('error'):
+            nif_failures.append((fn, res['error']))
+            continue
+        converted[fn.lower()] = dst
+
+
 def _convert_creature(creature_dir: str, name: str, out_meshes_dir: str,
                       part_sets: list = None, fps: float = 30.0,
                       sound_slots: dict = None,
@@ -104,6 +135,7 @@ def _convert_creature(creature_dir: str, name: str, out_meshes_dir: str,
     from asset_convert.havok.hkx_behavior import generate_creature_project
     from asset_convert.havok.hkx_xml import convert_hkx_to_amd64
     from asset_convert.nif.nif_converter import convert_nif
+    from asset_convert.nif.shaders import master_texture_roots
     from asset_convert.havok.creature_mesh import (
         extract_death_pile, merge_creature_body, source_attachment_node,
         source_hidden_attachment_nodes)
@@ -114,6 +146,7 @@ def _convert_creature(creature_dir: str, name: str, out_meshes_dir: str,
                                          attr_speed=attr_speed,
                                          namespace=namespace)
     proj_dir = os.path.join(out_meshes_dir, manifest['dir'])
+    tex_fallback = master_texture_roots(creature_dir)
 
     _widen_hkx_to_amd64(proj_dir, convert_hkx_to_amd64)
     _clear_stale_nifs(proj_dir)
@@ -161,7 +194,8 @@ def _convert_creature(creature_dir: str, name: str, out_meshes_dir: str,
                     holder_offsets=manifest.get('death_offsets')):
                 res = convert_nif(raw_pile,
                                   os.path.join(proj_dir, pile_name),
-                                  creature=True)
+                                  creature=True,
+                                  tex_fallback=tex_fallback)
                 if os.path.exists(os.path.join(proj_dir, pile_name)):
                     death_pile = pile_name
                 else:
@@ -171,28 +205,8 @@ def _convert_creature(creature_dir: str, name: str, out_meshes_dir: str,
         except Exception as e:
             nif_failures.append((pile_name, f'{type(e).__name__}: {e}'))
     manifest['death_pile'] = death_pile
-    for fn in sorted(os.listdir(creature_dir)):
-        if not fn.lower().endswith('.nif'):
-            continue
-        if fn.lower().startswith('skeleton'):
-            dst = os.path.join(proj_dir, 'character assets', fn.lower())
-            convert_nif(os.path.join(creature_dir, fn), dst, creature=True)
-            continue
-        dst = os.path.join(parts_dir, fn.lower())
-        # Read the part's attachment node from the SOURCE, before
-        # convert_nif strips the `Prn` extra data.  The death animation
-        # hides these nodes (kf_decode NiVisController -> bone scale), so
-        # the merge has to hang each shape off the right one.
-        try:
-            attachments[dst] = source_attachment_node(
-                os.path.join(creature_dir, fn))
-        except Exception:
-            pass
-        res = convert_nif(os.path.join(creature_dir, fn), dst, creature=True)
-        if res.get('error'):
-            nif_failures.append((fn, res['error']))
-            continue
-        converted[fn.lower()] = dst
+    _convert_parts(creature_dir, proj_dir, parts_dir, tex_fallback,
+                   converted, attachments, nif_failures)
 
     # A single Oblivion creature folder holds several DISTINCT creatures (dog,
     # wolf, skeletal-hound) each with its own NIFZ part set.  Merge EACH set
