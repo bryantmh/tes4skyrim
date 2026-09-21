@@ -78,8 +78,11 @@ struct GameHooks {
     bool (*menuMode)() = nullptr;
     void (*forceGreeting)(const std::string& actor) = nullptr;
     // A `MessageBox` raised OUTSIDE a conversation, which has no dialogue
-    // menu to render it: Skyrim's own corner notification.
-    void (*showMessage)(const std::string& text) = nullptr;
+    // menu to render it: Skyrim's own message box. With buttons it is the
+    // modal the player clicks, and the click lands in `buttonPressed`.
+    // See: docs/commentary/morrowind_runtime.md#messagebox-buttons
+    void (*showMessage)(const std::string& text,
+                        const std::vector<std::string>& buttons) = nullptr;
     // `PlaceAtPC id count` and `id->PlaceAtMe ...`: creates `count` of a base
     // beside `near` -- the player for the PC form, the named reference for the
     // other. The new reference runs the base's script, so this also binds its
@@ -368,6 +371,12 @@ public:
     std::vector<std::string> messages;
     bool goodbye = false;
     int  choice = -1;
+
+    // The button a `MessageBox` with buttons is waiting on, read back once by
+    // `GetButtonPressed` and -1 from then on. Not part of the conversation:
+    // an object script raises one with no menu open.
+    // See: docs/commentary/morrowind_runtime.md#messagebox-buttons
+    int  buttonPressed = -1;
 
     // --- the conversation's disposition, DialogueManager's three numbers ---
     // The base the conversation opened on, the base as persuasion has moved

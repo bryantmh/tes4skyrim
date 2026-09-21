@@ -321,6 +321,18 @@ constexpr std::uint64_t kActorEquipItem = 54661;
 // See: docs/plans/morrowind_object_scripts.md#messagebox
 constexpr std::uint64_t kDebugMessageBox = 55376;
 
+// The message box Debug.MessageBox is a one-button WRAPPER over
+// (0xa072f0 tail-calls it): it builds the MessageBoxData, so it takes the
+// BUTTON NAMES and reports the click. Identical prologue on 1.6.1170
+// (0x94b280) and 1.6.659 (0x8ec2f0).
+//
+// ShowMessageBox(const char* text, Callback* cb, bool, u32 kind,
+//                ... , const char** buttons): the wrapper passes a
+// one-entry array holding "OK" (0x1ad18f0), r9d=4 and 0xa at [rsp+0x20],
+// which is what a buttoned call varies.
+// See: docs/commentary/morrowind_runtime.md#messagebox-buttons
+constexpr std::uint64_t kShowMessageBox = 52269;
+
 // ObjectReference.PlaceAtMe(Form base, int count, bool persist, bool disabled)
 // (0x9cf630), found at its registration like the rest: `lea r8,
 // ['ObjectReference'] / lea rdx,['PlaceAtMe']`, callback into [r12+0x50].

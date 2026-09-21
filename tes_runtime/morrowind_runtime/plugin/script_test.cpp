@@ -1399,6 +1399,24 @@ std::string FixtureDir() {
     return path.substr(0, slash + 1) + "testdata\\scripts\\";
 }
 
+// `GetButtonPressed` hands the click out ONCE: a script polls it every tick,
+// so a value that stayed set would re-fire the branch on the next frame.
+void ButtonPressedCases(DialogueContext& context) {
+    std::printf("GetButtonPressed answers once, then -1\n");
+    State().buttonPressed = 1;
+    State().SetDisposition("test_actor", 50);
+    const char* kPoll =
+        "if ( GetButtonPressed == 1 )\n    ModDisposition 3\nendif\n";
+    Check(RunResultScript(kPoll, context) &&
+              State().Disposition("test_actor") == 53,
+          "the clicked button is read back");
+    Check(State().buttonPressed == -1, "reading it clears it");
+    State().SetDisposition("test_actor", 50);
+    Check(RunResultScript(kPoll, context) &&
+              State().Disposition("test_actor") == 50,
+          "a second poll sees no button");
+}
+
 void Cases() {
     ClearScriptTables();
     LoadScriptTables(FixtureDir());
@@ -1423,6 +1441,7 @@ void Cases() {
     AiPackageCases(context);
     ForcedMovementCases(context);
     UnportedSiteCases(context);
+    ButtonPressedCases(context);
     TableCases(context, actor);
     State().BeginConversation();
 

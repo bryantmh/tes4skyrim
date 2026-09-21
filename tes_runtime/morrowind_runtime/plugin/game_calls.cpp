@@ -772,8 +772,17 @@ std::uint32_t LoadedRef(const std::string& plugin, std::uint32_t localFormId) {
 
 // A `MessageBox` raised by an object script, which has no dialogue menu to
 // render it. Debug.MessageBox is global, so it takes no `self`.
+//
+// With buttons it goes one layer down instead, to the builder Debug.MessageBox
+// itself wraps: that one takes the button names, which the wrapper hard-codes
+// to a lone "OK". The click is not collected -- see ShowButtonMessage.
 // See: docs/plans/morrowind_object_scripts.md#messagebox
-void ShowMessage(const std::string& text) {
+void ShowMessage(const std::string& text,
+                 const std::vector<std::string>& buttons) {
+    if (!buttons.empty()) {
+        ShowButtonMessage(text, buttons);
+        return;
+    }
     if (!g_messageBox) {
         Log("game: MessageBox \"%s\" -- Debug.MessageBox unresolved",
             text.c_str());
@@ -930,6 +939,7 @@ void InstallGameCalls() {
     InstallAiCalls(hooks);
     InstallQueryCalls(hooks);
     InstallSpellCalls(hooks);
+    InstallMessageCalls();
     Log("game: %zu spell(s) and %zu magic effect(s) resolvable by id",
         SpellCount(), EffectCount());
     Log("game: %zu cell anchor(s) for PositionCell", CellCount());

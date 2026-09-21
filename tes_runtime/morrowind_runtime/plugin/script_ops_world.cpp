@@ -251,6 +251,18 @@ class OpMenuMode : public Interpreter::Opcode0 {
     }
 };
 
+// `GetButtonPressed`: which button of the last `MessageBox` the player
+// clicked, POLLED from a script's body rather than waited on -- the box does
+// not block, so this answers -1 every tick until the click lands. TES3 hands
+// the answer out ONCE, so reading it clears it.
+// See: docs/commentary/morrowind_runtime.md#messagebox-buttons
+class OpGetButtonPressed : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        runtime.push(State().buttonPressed);
+        State().buttonPressed = -1;
+    }
+};
+
 // `GetRace "name"`: the target's authored race, the player's from the
 // context; a creature or unknown actor answers 0.
 template <class R>
@@ -297,6 +309,7 @@ void InstallDynamic(OpcodeInstaller& into) {
 void InstallWorldOps(OpcodeInstaller& into) {
     namespace M = Compiler::Misc;
     namespace C = Compiler::Cell;
+    namespace G = Compiler::Gui;
     namespace S = Compiler::Stats;
     into.Real<OpActivate<Implicit>>(M::opcodeActivate);
     into.Real<OpActivate<Explicit>>(M::opcodeActivateExplicit);
@@ -309,6 +322,7 @@ void InstallWorldOps(OpcodeInstaller& into) {
     into.Real<OpSetDelete<Implicit>>(M::opcodeSetDelete);
     into.Real<OpSetDelete<Explicit>>(M::opcodeSetDeleteExplicit);
     into.Real<OpMenuMode>(M::opcodeMenuMode);
+    into.Real<OpGetButtonPressed>(G::opcodeGetButtonPressed);
     into.Real<OpGetPCCell>(C::opcodeGetPCCell);
     into.Real<OpGetInterior>(C::opcodeGetInterior);
     into.Real<OpGetRace<Implicit>>(S::opcodeGetRace);

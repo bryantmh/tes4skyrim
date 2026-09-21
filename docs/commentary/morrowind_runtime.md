@@ -1445,6 +1445,62 @@ pre-fix sources it reports `AddDeath`; it reports nothing now. It cannot see a
 flag that is written and read but acted on by nobody, which is what
 `StartScript` was.
 
+### <a id="messagebox-buttons"></a>`MessageBox` buttons and `GetButtonPressed`
+
+**Code:** `plugin/game_calls_message.cpp`, `plugin/script_ops_world.cpp:OpGetButtonPressed`
+
+`MessageBox` is a compiler BUILTIN (`opMessageBox`, `segment3(0, buttons)`),
+so it never appears in `extensions0.cpp` and the opcode audit cannot see it.
+The interpreter pops the text, then `arg0` button names, reverses them, runs
+`formatMessage` for the `%d`/`%s` specifiers, and calls `Context::messageBox`.
+Both our contexts took that call and DISCARDED the buttons into an unnamed
+parameter, so all 131 `GetButtonPressed` call sites polled a value nothing
+ever set.
+
+**`Debug.MessageBox` cannot carry buttons.** It is documented single-button OK,
+and the disassembly agrees: 0xa072f0 is a WRAPPER that passes the literal
+`"OK"` and tail-calls 0x94b280, the real builder. It is stable id 52269, with
+an identical prologue on 1.6.1170 (0x94b280) and 1.6.659 (0x8ec2f0).
+
+🛑 **The buttons are VARIADIC arguments, not an array.** The signature is
+`(text, callback, bool, kind, arg5, button...)` with a null after the last
+name: argument 6 is the FIRST button's `const char*` -- the wrapper's
+0x1ad18f0 is the bytes `"OK"` themselves, not a pointer to them -- and the
+callee walks the stack upward from argument 7 (`[rbp+0x7f]`, which is
+`rsp+0x30` at entry). Measured on a real two-button caller at 0x93cd51:
+`[rsp+0x28]` holds `"Ok"` and `[rsp+0x30]` holds a SECOND string
+("You cannot change shouts while shouting."), where a terminator would sit if
+the argument were an array.
+
+**Passing an array instead draws ONE garbled button**, because the engine reads
+the pointer VALUES as text. That was the first shipped attempt; the log showed
+the correct text and a correct `button = 0` readback, which is what localizes
+the fault to the call rather than to the script or the poll.
+
+`Message.Show` is NOT the mechanism here, for the reason already recorded for
+the button-less case: `Show` needs an authored MESG per string and the corpus
+passes arbitrary runtime text.
+
+🛑 **The callback is a PLAIN FUNCTION POINTER, not an object.** The builder's
+second argument looks like it needs an `IMessageBoxCallback`: non-null makes it
+allocate 0x18 bytes, store the vtable 0x18fdab0 at +0, a refcount at +8 and the
+argument at +0x10. But that adapter's own handler is five instructions --
+`mov rax,[rcx+0x10] / test / movzx ecx,dl / jmp rax` -- so the engine wraps a
+bare `void(*)(unsigned int button)` for us and tail-calls it with the clicked
+index. Its vtable has exactly TWO slots (0x94cec0 destructor, 0x94cdd0
+handler); slots past that read as string data, which is how a blind vtable dump
+overstates it.
+
+The click lands in `buttonPressed`, and `GetButtonPressed` hands it out ONCE.
+That matters because the command is a POLL, not a wait: 131 of its 132 call
+sites are `set <var> to GetButtonPressed` read from a per-frame body, so a
+value left set would re-fire the branch on the next tick. Guarded by
+`script_test.cpp:ButtonPressedCases`.
+
+No locking: the engine reports the click on the main thread, and object scripts
+tick on the main thread too (`main_thread.h:RunOnGameThread`), so the write and
+the poll never race.
+
 ### <a id="global-scripts"></a>Global scripts tick
 
 **Code:** `plugin/object_script.cpp:RunGlobalScripts`, `plugin/object_tick.cpp`

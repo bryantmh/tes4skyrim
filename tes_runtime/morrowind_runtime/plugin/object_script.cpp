@@ -252,10 +252,10 @@ ESM::RefId ObjectContext::getTarget() const {
 
 // No dialogue menu is open, so the notice goes to the game's own.
 void ObjectContext::messageBox(std::string_view message,
-                               const std::vector<std::string>&) {
+                               const std::vector<std::string>& buttons) {
     Log("object: %s says \"%.*s\"", mInstance.Script().c_str(),
         static_cast<int>(message.size()), message.data());
-    if (Hooks().showMessage) Hooks().showMessage(std::string(message));
+    if (Hooks().showMessage) Hooks().showMessage(std::string(message), buttons);
 }
 
 // 🛑 The COMPILER's layout, not the staged one: a body declares locals inline

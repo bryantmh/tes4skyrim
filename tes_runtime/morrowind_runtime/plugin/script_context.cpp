@@ -88,9 +88,16 @@ void DialogueContext::setLocalFloat(int index, float value) {
 }
 
 // A message box raised during dialogue is shown IN the dialogue, as a notice.
+// Without buttons this is a notice the dialogue window lists. WITH them it is
+// a modal the player has to answer, which that window cannot draw, so it goes
+// to the game's own message box exactly as an object script's would.
 void DialogueContext::messageBox(std::string_view message,
-                                 const std::vector<std::string>&) {
-    State().messages.emplace_back(message);
+                                 const std::vector<std::string>& buttons) {
+    if (buttons.empty()) {
+        State().messages.emplace_back(message);
+        return;
+    }
+    if (Hooks().showMessage) Hooks().showMessage(std::string(message), buttons);
 }
 
 void DialogueContext::report(const std::string& message) {
