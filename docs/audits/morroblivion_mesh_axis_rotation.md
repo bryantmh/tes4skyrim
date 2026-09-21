@@ -286,8 +286,6 @@ Blacklisted — 15 meshes, 54 references:
 | `lights/candlefat02.nif` | `light_de_candle_11` | 8×8×10 | 15×11×21 | half size |
 | `lights/candleskinny01.nif` | `light_de_candle_09` | 2×2×15 | 18×18×15 | taper for a wide candelabra |
 | `lights/torch01fake.nif` | `light_com_torch_01` | 5×5×28 | 10×9×49 | unlit prop, half height |
-| `fire/fireopenmedium.nif` | `light_fire_nosmoke` | 150×216×69 | 18×17×114 | campfire for a standing fire |
-| `fire/fireopenmediumsmoke.nif` | `light_fire` | 150×216×69 | 12×23×115 | same |
 | `dungeons/misc/fx/fxmist01.nif` | `ex_waterfall_mist_s_01` | 41×192×**0** | 350×275×164 | flat plane for a volume |
 | `dungeons/misc/fx/fxcloudthick01.nif` | `furn_mist256` | 415×1055×159 | 242×224×67 | 4x too big |
 | `dungeons/misc/cobweb04.nif` | `furn_web10` | 192×**0**×192 | 128×128×256 | flat plane |
@@ -306,6 +304,14 @@ Kept — the replacement is the same object at a comparable size:
 
 The three meshes present in neither Morroblivion, Oblivion nor Skyrim are the
 strongest entries: those bases currently render **nothing at all**.
+
+**The `fire/` meshes are NOT blacklisted**, although they measure as swaps
+(150×216×69 for a 18×17×114 standing fire). Confirmed in game as looking
+correct, so the geometric test is overruled by the observation. They keep their
+measured corrections instead: 270° pitch (92% / 87%) and +13.30 on the six
+`0lightUFire*` bases (100%). A fire is a particle effect whose vertex bounds
+describe its emitter volume, not an object's silhouette, which is why the
+size comparison misreads it.
 
 ### <a id="needs-verification"></a>🛑 NEEDS IN-GAME VERIFICATION
 

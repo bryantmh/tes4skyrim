@@ -30,6 +30,8 @@ import math
 
 #: Mesh (archive path, lowercase '/') -> pitch degrees the refs gained.
 AXIS_PITCH_DEG: dict = {
+    'fire/fireopenmedium.nif': 270,
+    'fire/fireopenmediumsmoke.nif': 270,
     'morro/i/inulavaurocku14.nif': 180,
     'morro/i/inulavaurocku16.nif': 180,
     'morro/i/inulavaurocku17.nif': 180,
@@ -48,6 +50,12 @@ AXIS_PITCH_DEG: dict = {
 #: Base EditorID (lowercase) -> Z offset its references gained.
 Z_RESEAT: dict = {
     '0barrelu02umarshmerrow': -25.00,
+    '0lightufireu400': 13.30,
+    '0lightufire': 13.30,
+    '0lightufireunosmokeu400': 13.30,
+    '0lightufireunosmokeu177': 13.30,
+    '0lightufireunosmokeu128': 13.30,
+    '0lightufireunosmoke': 13.30,
     '0barrelu01udeupos1': 3.00,
     '0barrelu01ucheapfood5': 3.00,
     '0barrelu01ucheapfood20': 3.00,
@@ -64,8 +72,6 @@ SUBSTITUTION_BLACKLIST: frozenset = frozenset((
     'lights/candlefat02.nif',
     'lights/candleskinny01.nif',
     'lights/torch01fake.nif',
-    'fire/fireopenmedium.nif',
-    'fire/fireopenmediumsmoke.nif',
     'dungeons/misc/fx/fxmist01.nif',
     'dungeons/misc/fx/fxcloudthick01.nif',
     'dungeons/misc/cobweb04.nif',
