@@ -36,8 +36,11 @@ from .common import (
 )
 
 
-#: TES4 WRLD has no DNAM/NAM4; both its land and water planes are this.
-_TES4_DEFAULT_PLANE_HEIGHT = -2048.0
+#: TES4 WRLD has no DNAM; its land fallback plane sits far below the terrain.
+_TES4_DEFAULT_LAND_HEIGHT = -2048.0
+
+#: TES4 sea level: the default water plane for any worldspace with no DNAM.
+_TES4_DEFAULT_WATER_HEIGHT = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -46,10 +49,11 @@ _TES4_DEFAULT_PLANE_HEIGHT = -2048.0
 def _world_water_and_planes(rec: dict) -> bytes:
     """WRLD NAM2/NAM3 water types and the NAM4/DNAM fallback planes.
 
-    DNAM/NAM4 are authored only by FO3/FNV; TES4 falls back to its own plane
-    height for BOTH, never leaving water above land. NAM3 stays on
-    DefaultWater always: a null LOD water pointer CTDs as soon as a .btr
-    carries a WATER BSMultiBoundNode.
+    DNAM/NAM4 are authored only by FO3/FNV. TES4 falls back to a land plane
+    far below the terrain and a water plane at sea level; equalizing them
+    sinks every unauthored water surface. NAM3 stays on DefaultWater always:
+    a null LOD water pointer CTDs as soon as a .btr carries a WATER
+    BSMultiBoundNode.
     See: docs/commentary/tes5_import_world.md#wrld-land-and-water-defaults
     """
     subs = pack_formid_subrecord(
@@ -58,8 +62,8 @@ def _world_water_and_planes(rec: dict) -> bytes:
     subs += pack_float_subrecord('NAM4', get_float(rec, 'NAM4.LODWaterHeight'))
     subs += pack_subrecord('DNAM', struct.pack(
         '<ff',
-        get_float(rec, 'DNAM.DefaultLandHeight', _TES4_DEFAULT_PLANE_HEIGHT),
-        get_float(rec, 'DNAM.DefaultWaterHeight', _TES4_DEFAULT_PLANE_HEIGHT)))
+        get_float(rec, 'DNAM.DefaultLandHeight', _TES4_DEFAULT_LAND_HEIGHT),
+        get_float(rec, 'DNAM.DefaultWaterHeight', _TES4_DEFAULT_WATER_HEIGHT)))
     return subs
 
 
