@@ -434,6 +434,55 @@ a collision face tests the handful of visual faces above and below it rather
 than all of them — the whole-mesh scan is O(collision × visual) and this runs
 inside the per-mesh worker.
 
+### <a id="morroblivion-collision-is-copied-render"></a>Morroblivion round 4 — the collision triangle IS a render triangle
+
+**Measured against the Morrowind authored `RootCollisionNode`**, which is the
+only ground truth for Morroblivion: 24 oracle-matched meshes, 12,882 collision
+triangles matched to an oracle face by exact vertex set (5,948 of them, 46%,
+wound against it).
+
+The per-triangle fields say nothing. Every candidate scores at chance against
+that key: `triangles[i].normal` (the round-3 signal) **53.8%** — it agrees with
+the winding in all 12,882 cases, so step 0 is inert here; every `welding_info`
+bit 50.2–53.8%; triangle-index parity 47.3/47.1; within-strip-run parity
+46.9/47.6. Morroblivion's exporter recomputed the normal from the winding, so
+the round-3 contradiction never exists.
+
+**The authored signal is the RENDER mesh, matched by identity rather than
+proximity.** Morroblivion built collision by copying render triangles, so:
+
+1. **Twin** — the collision triangle's vertex set IS a render triangle's
+   (quantized 0.02). That render face's winding is the answer. Resolves
+   **9,700 / 12,882 (75%)** with **0 genuine errors**.
+2. **Nearest surface** — otherwise the collision is an independent
+   simplification; the parallel, projection-overlapping render face at least
+   **vertex-set** distance decides. Resolves the remaining 3,181.
+
+Combined: **99.868%** (17 genuine errors; 6 further mismatches are answer-key
+artifacts where the oracle itself carries both windings on one vertex set).
+21 of 24 files are perfect; 15 of the 17 errors are in `exubmutombu03`, whose
+collision is a coarse remodel sharing no vertices with its render mesh.
+
+Three measurement traps, each of which cost a wrong conclusion:
+
+- **Node transforms must be applied to render vertices.** `NiTriShapeData`
+  vertices are in the shape's own frame; collision is in the root's.
+  `exuggu02` has 6 of 8 nodes translated, putting its render mesh at
+  x[-797..-217] against collision at x[-284..295] — 254 of its 300 triangles
+  read as unmatched until `get_transform(root)` is applied, then 300/300.
+- **Area voting among coincident faces is wrong.** A large distant face at
+  plane offset 0.0071 outweighs the exact coincident face at 0.0000. Switching
+  the fallback from area vote to nearest-vertex-set took 41 errors to 22.
+- **Proximity matching on centroids fails on coarse collision.** A 25–58 havok
+  unit collision triangle's centroid is ~6.7 units from the nearest render
+  centroid, against `_VIS_RADIUS` 0.30, so steps 2 and 3 abstain.
+
+Do NOT reach for a census of vanilla or Morroblivion meshes to support a claim
+here — collision-winding censuses over these trees have repeatedly produced
+confident wrong answers (a vanilla-Skyrim sweep reporting ~47% down-facing
+faces invites the conclusion that winding is irrelevant, which the oracle
+disproves). The oracle is the only admissible evidence.
+
 ### <a id="welding-is-per-group"></a>Welding is scoped PER GROUP
 
 The packed triangle list stores each triangle's corners independently, so

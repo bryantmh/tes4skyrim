@@ -56,8 +56,8 @@ PATCH_ARCHIVES = ('Morrowind.bsa', 'Tribunal.bsa', 'Bloodmoon.bsa')
 #: Base object types a placement can name; cells and terrain are never filled.
 GAP_TYPES = frozenset(BASE_TYPES) - {'CELL', 'LAND', 'WRLD'}
 
-#: The records a voiced bark needs: its topic stream, and who may speak it.
-BARK_TYPES = frozenset({'DIAL', 'INFO', 'NPC_', 'CREA'})
+#: What a voiced bark needs -- its topic stream and who may speak it -- plus the creature sound generators.
+BARK_TYPES = frozenset({'DIAL', 'INFO', 'NPC_', 'CREA', 'SNDG'})
 
 #: TES3 allocates this many magic effect indices.
 _MAGIC_EFFECT_COUNT = 143
@@ -158,8 +158,8 @@ def _info_identity(rec) -> str:
 def collect_bark_records(sources) -> list:
     """Every vanilla record the voiced-bark export needs, in file order.
 
-    The DIAL/INFO stream the exporter walks, plus the actors its
-    audiences resolve against.
+    The DIAL/INFO stream the exporter walks, the actors its audiences resolve
+    against, and the SNDG generators a gap creature's sound slots come from.
     See: docs/commentary/tes4_export_morrowind.md#the-patch-owns-vanilla-barks
     """
     out, seen = [], set()
@@ -383,33 +383,28 @@ def _patch_ownership(export_dir: str) -> MorroblivionModels:
                               asset_root(export_dir, PATCH_NAME) / 'meshes')
 
 
-def _write_records(gaps: dict, export_dir: str, progress,
-                   barks=(), morroblivion=()) -> str:
-    """Export every gap record under its shared derived FormID.
+def _patch_context(gaps: dict, export_dir: str, vanilla, morroblivion) -> tuple:
+    """`(ctx, ids)`: a context that resolves through Morroblivion, and each gap's id.
 
-    The Morroblivion plugins are declared as MASTERS, so a gap record or a bark
-    can name the factions, classes and actors only Morroblivion holds. The
-    gap ids are reserved first: they share the derived span a bark is minted in.
+    Gap ids are reserved before anything is derived, since they share the span
+    a bark is minted in; `vanilla` supplies the SNDG generators a gap creature's
+    sound slots come from.
     See: docs/commentary/tes4_export_morrowind.md#the-patch-masters-morroblivion
 
     Imported inside the function to break the cycle with `export_morrowind`,
     which needs PATCH_NAME from this module at its own import time.
     """
-    from .export_morrowind import (export_record, load_context,
-                                   magic_effect_records, register_magic_effects,
-                                   write_export, write_header)
-    from .record_types.morrowind import (filled_soulgem_id, filled_soulgems,
-                                         tes4_signature)
+    from .export_morrowind import load_context, register_magic_effects
+    from .record_types.morrowind import tes4_signature
+    from .record_types.morrowind_actors import register_sound_gens
     from .record_types.morrowind_magic import effect_editor_id
 
-    masters = [(name, str(record_dir(export_dir, name)))
-               for name in morroblivion]
-    ctx = load_context(export_dir, masters)
+    ctx = load_context(export_dir, [(name, str(record_dir(export_dir, name)))
+                                    for name in morroblivion])
     ids = {key: patch_formid(key, ctx.own_index) for key in gaps}
     ctx.taken.update(ids.values())
     ctx.morroblivion = _patch_ownership(export_dir)
-    records = list(gaps.values())
-    register_magic_effects(records, ctx)
+    register_magic_effects(list(gaps.values()), ctx)
     for index in range(_MAGIC_EFFECT_COUNT):
         edid = effect_editor_id(index)
         ctx.gap_ids[('MGEF', edid.lower())] = patch_formid(
@@ -418,6 +413,28 @@ def _write_records(gaps: dict, export_dir: str, progress,
         signature = tes4_signature(rec)
         ctx.register_own(rec.record_id, signature)
         ctx.gap_ids[(signature, key[1])] = ids[key]
+    register_sound_gens(vanilla, ctx)
+    return ctx, ids
+
+
+def _write_records(gaps: dict, export_dir: str, progress,
+                   barks=(), morroblivion=()) -> str:
+    """Export every gap record under its shared derived FormID.
+
+    The Morroblivion plugins are declared as MASTERS, so a gap record or a bark
+    can name the factions, classes and actors only Morroblivion holds.
+    See: docs/commentary/tes4_export_morrowind.md#the-patch-masters-morroblivion
+
+    Imported inside the function to break the cycle with `export_morrowind`,
+    which needs PATCH_NAME from this module at its own import time.
+    """
+    from .export_morrowind import (export_record, magic_effect_records,
+                                   write_export, write_header)
+    from .record_types.morrowind import (filled_soulgem_id, filled_soulgems,
+                                         tes4_signature)
+
+    ctx, ids = _patch_context(gaps, export_dir, barks, morroblivion)
+    records = list(gaps.values())
     out = {}
     for key, rec in sorted(gaps.items()):
         lines = export_record(rec, ctx)

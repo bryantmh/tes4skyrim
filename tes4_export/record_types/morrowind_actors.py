@@ -302,13 +302,33 @@ def _emit_creature_model(lines: list, rec: Tes3Record, ctx) -> None:
         lines.append(f'MorrowindModel={escape_value(path)}')
 
 
+def _sound_source(source: str, ctx) -> str:
+    """The FormID of the creature `source` names, or of Morroblivion's stand-in for it."""
+    found = ctx.resolve(source, 'CREA')
+    if found or ctx.morroblivion is None:
+        return found
+    return ctx.morroblivion.paired_creature(source, ctx.index)
+
+
 def _emit_sound_slots(lines: list, rec: Tes3Record, ctx) -> None:
-    """The creature's SNDG sound generators as TES4 CSDT slots."""
-    slots = ctx.sound_gens.get(rec.record_id.lower(), {})
+    """The creature's SNDG sound generators as TES4 CSDT slots.
+
+    TES3 looks generators up under the creature's `CNAM` sound-gen creature
+    before its own id. When that creature's generators are not this plugin's,
+    it is named as TES4's `CSCR` inherit-sound source, which the creature
+    pipeline follows into the master that holds them.
+    See: docs/commentary/tes4_export_morrowind.md#creature-sound-generators
+    """
+    original = get_subrecord(rec, 'CNAM')
+    source = (get_string(original) if original is not None else '')         or rec.record_id
+    slots = ctx.sound_gens.get(source.lower(), {})
     lines.append(f'SoundTypeCount={len(slots)}')
     for index, (slot, form_id) in enumerate(sorted(slots.items())):
         lines.append(f'SoundType[{index}].Type={slot}')
         lines.append(f'SoundType[{index}].Sound={form_id}')
+    inherited = '' if slots or source == rec.record_id         else _sound_source(source, ctx)
+    if inherited:
+        lines.append(f'CSCR.InheritSound={inherited}')
 
 
 def register_sound_gens(records, ctx) -> None:

@@ -180,6 +180,20 @@ class MorroblivionModels:
                 return model
         return ''
 
+    def paired_creature(self, record_id: str, index) -> str:
+        """The FormID of the Morroblivion creature standing in for vanilla `record_id`, or ''.
+
+        Morroblivion renames its creatures, so a vanilla id finds its stand-in
+        through the MESH the two share, the pairing the creature table records.
+        See: docs/commentary/tes4_export_morrowind.md#sound-gen-creature
+        """
+        wanted = record_id.lower()
+        for path, owners in self.owners.items():
+            editor_id = MORROBLIVION_CREATURES.get(path)
+            if editor_id and wanted in (owner.lower() for owner in owners):
+                return index.lookup(editor_id) or ''
+        return ''
+
     def creature(self, path: str):
         """(Model.MODL, [NIFZ]) of the Morroblivion creature on vanilla `path`, or None."""
         editor_id = MORROBLIVION_CREATURES.get(archive_path(path))

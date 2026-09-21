@@ -28,6 +28,7 @@ from asset_convert.havok.behavior_vocabulary import movement_type_names
 import re
 import shutil
 
+from asset_convert.havok.creature_sounds import sound_data_by_folder
 from asset_convert.havok.creature_split_morrowind import split_creatures
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -317,80 +318,6 @@ def foot_enum_map(slots: dict) -> dict:
             'backleft': 'FootBack', 'backright': 'FootBack'}
 
 
-def _sound_data_by_folder(export_dir: str) -> dict:
-    """folder(lower) -> {csdt_type: (SOUN EditorID, chance)}, from the CREA
-    export.
-
-    Resolves CSCR inheritance (817 of Oblivion's 909 CREA records inherit their
-    sounds from another creature rather than defining their own), and takes the
-    richest slot set in a folder: one behavior project serves every creature
-    sharing that mesh folder, so the annotations have to be the union.
-
-    chance is the authored CSDC play-chance (0-100); 100 when the export
-    predates the field.
-    """
-    from tes5_import.base.text_reader import parse_export_file
-
-    crea_path = os.path.join(export_dir, 'CREA.txt')
-    soun_path = os.path.join(export_dir, 'SOUN.txt')
-    if not os.path.exists(crea_path):
-        return {}
-
-    soun_edid = {}
-    if os.path.exists(soun_path):
-        for rec in parse_export_file(soun_path):
-            fid = (rec.get('FormID') or '').upper()
-            edid = rec.get('EditorID')
-            if fid and edid:
-                soun_edid[fid] = edid
-
-    recs = list(parse_export_file(crea_path))
-    by_fid = {(r.get('FormID') or '').upper(): r for r in recs}
-
-    def slots_of(rec, depth=0):
-        """{type: (SOUN fid, chance)} for a CREA, following CSCR
-        inheritance."""
-        n = int(rec.get('SoundTypeCount', 0) or 0)
-        if n:
-            out = {}
-            for i in range(n):
-                t = rec.get(f'SoundType[{i}].Type')
-                s = rec.get(f'SoundType[{i}].Sound')
-                c = rec.get(f'SoundType[{i}].Sound.Chance')
-                if t is not None and s:
-                    out[int(t)] = (s.upper(),
-                                   int(c) if c is not None else 100)
-            return out
-        if depth < 4:
-            src = (rec.get('CSCR.InheritSound') or '').upper()
-            if src and src in by_fid:
-                return slots_of(by_fid[src], depth + 1)
-        return {}
-
-    out = {}
-    for rec in recs:
-        model = (rec.get('Model.MODL') or '').replace('/', '\\')
-        parts = [p for p in model.lower().split('\\') if p]
-        folder = parts[-2] if len(parts) >= 2 else ''
-        if not folder:
-            continue
-        slots = {t: (soun_edid[s], c) for t, (s, c) in slots_of(rec).items()
-                 if s in soun_edid}
-        if not slots:
-            continue
-        # Richest set wins — the project is shared across the whole folder.
-        if len(slots) > len(out.get(folder, {})):
-            out[folder] = slots
-    return out
-
-
-def sound_slots_by_folder(export_dir: str) -> dict:
-    """folder(lower) -> {csdt_type: SOUN EditorID} (see
-    _sound_data_by_folder; this is the chance-less view most callers use)."""
-    return {folder: {t: edid for t, (edid, _c) in slots.items()}
-            for folder, slots in _sound_data_by_folder(export_dir).items()}
-
-
 def _speed_attr_by_folder(export_dir: str) -> dict:
     """folder(lower) -> MAX TES4 DATA.Speed attribute across its CREA records.
 
@@ -600,7 +527,7 @@ def _convert_pool(dirs, export_dir, out_meshes_dir, workers, namespace,
     sound slots are replayed as annotations and vocal idle states.
     """
     part_sets = _part_sets_by_folder(export_dir)
-    sound_data = _sound_data_by_folder(export_dir)
+    sound_data = sound_data_by_folder(export_dir)
     sound_slots = {f: {t: e for t, (e, _c) in s.items()}
                    for f, s in sound_data.items()}
     sound_chances = {f: {t: c for t, (_e, c) in s.items()}

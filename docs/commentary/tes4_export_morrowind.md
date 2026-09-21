@@ -1632,6 +1632,47 @@ Swim Left/Right and Land reuse the back-foot and Death slots (2, 3, 8), which
 `CSDT_TO_CLIP` already annotates; before this they were dropped outright, which
 cost 5 of Morrowind.esm's 168 generators.
 
+### <a id="sound-gen-creature"></a>The sound-gen creature is TES4's inherit-sound source
+
+**Code:** `tes4_export/record_types/morrowind_actors.py` `_emit_sound_slots`,
+`asset_convert/havok/creature_sounds.py`
+
+OpenMW (`mwclass/creature.cpp` `getSoundIdFromSndGen`) looks a generator up
+under the creature's `CNAM` sound-gen creature BEFORE its own id, and failing
+that under any creature sharing its model. The exporter looked only under the
+creature's own id, in its own plugin. Measured with OpenMW's rule against the
+old export: Morrowind.esm voices 236 of 260 creatures (43 by own id, 176 through
+`CNAM`, 17 through a shared model); TR_Mainland voices 714 of 721, **679 of them
+through `CNAM`** -- and its export gave 0 of 721 a sound slot.
+
+TES4 has the same indirection natively: `CSCR` names a creature to inherit
+sounds from, and 817 of Oblivion's 909 CREA records use it. So `CNAM` is
+exported as `CSCR.InheritSound` whenever the generators are not this plugin's
+own, and the shared-model rule is already what "the richest slot set in a mesh
+folder wins" does.
+
+The creature pipeline's lookup was master-blind: it read only the plugin's own
+`CREA.txt` and `SOUN.txt`, so an inherit source or a SOUN owned by a master
+resolved to nothing. `creature_sounds` now folds each master's resolved view in
+first, re-keyed into the borrower's id space. Old against new lookup on the
+real exports: Oblivion.esm 42 folders and Nehrim.esm 59, every entry identical;
+Morrowind_ob.esm 60 -> 94 folders (its sounds live in Oblivion.esm), Tamriel
+Data 76 -> 173, and the compatibility patch and TR_Mainland 0 -> 94 and 0 -> 173.
+
+Two Morroblivion-mode gaps remained after that, both measured on TR_Mainland's
+721 creatures:
+
+* **The patch never read vanilla's SNDG records.** Its 19 gap creatures -- the
+  `dremora` many others inherit from among them -- exported with no slot at
+  all. `collect_bark_records` now carries `SNDG` and `_patch_context` registers
+  them: 14 of the 19 sit in a voiced folder, and TR went 616 -> 653.
+* **Morroblivion renames its creatures**, so a sound-gen creature such as
+  `skeleton` (88 TR creatures name it) or `ancestor_ghost` (66) resolves to
+  nothing by id. `MorroblivionModels.paired_creature` finds the stand-in
+  through the MESH the two share, the pairing `MORROBLIVION_CREATURES` already
+  records; all 76 EditorIDs in that table resolve in the Morrowind_ob index.
+  TR went 653 -> 721 of 721, Tamriel Data 372 -> 469 of 527.
+
 ## <a id="tes3-bsa"></a>The TES3 BSA
 
 A different format from every later BSA: magic `0x00000100` (not `BSA\0`), a

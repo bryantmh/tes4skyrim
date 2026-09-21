@@ -411,7 +411,7 @@ def _creature_sound_slots(export_dir: str) -> dict:
     so a missing/unimportable pipeline is simply "no footsteps".
     """
     try:
-        from asset_convert.havok.creature_pipeline import sound_slots_by_folder
+        from asset_convert.havok.creature_sounds import sound_slots_by_folder
     except ImportError:
         return {}
     try:
