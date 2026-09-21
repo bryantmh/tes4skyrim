@@ -14,6 +14,7 @@ import struct
 
 from ..morrowind_armor import emit_worn_models
 from ..record_types.common import escape_value
+from ..record_types.morrowind_materials import material_of, matt_formid
 from ..tes3_reader import Tes3Record, get_string, get_subrecord
 
 #: Source extensions that always ship as DDS, whatever a record calls them.
@@ -434,10 +435,21 @@ def export_LTEX(rec: Tes3Record, ctx) -> list:
     The ICON carries the full `textures\\` path: Morrowind stores a bare file
     name and ships it flat, where Oblivion's is relative to a Landscape
     subfolder the import stage prepends.
+
+    `HNAM.Material` is inferred, because TES3 LTEX has no material field; the
+    authored EditorID ("Road Dirt") beats the file name, which is the tiebreak
+    for the records whose EditorID is itself a filename.
     See: docs/commentary/tes4_export_morrowind.md#land-terrain
     """
     lines = [f'EditorID={escape_value(rec.record_id)}']
     emit_icon(lines, rec, 'DATA', prefix='textures' + chr(92))
+    texture = get_subrecord(rec, 'DATA')
+    material = material_of(
+        rec.record_id, get_string(texture) if texture is not None else '')
+    matt = matt_formid(material)
+    lines.append(f'HNAM.Material={max(material, 0)}')
+    if matt:
+        lines.append(f'HNAM.MaterialFormID={matt:08X}')
     intv = unpack(rec, 'INTV', '<I')
     if intv:
         lines.append(f'TextureIndex={intv[0]}')

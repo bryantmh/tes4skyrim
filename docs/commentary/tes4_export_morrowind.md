@@ -2067,3 +2067,62 @@ exporter already emits in Skyrim's 1..5 enum, so no new mapping is needed.
 
 🛑 The key is the gem's **authored id**, never its capacity or an ordinal, so
 a derived FormID never moves ([the save-game contract](performance.md#formid-determinism--the-save-game-contract-rewritten-2026-08-17)).
+
+## <a id="surface-materials"></a>Surface materials
+
+**Code:** `tes4_export/record_types/morrowind_materials.py`
+
+Morrowind records no material anywhere, so footsteps and impacts had nothing
+to read and every Morrowind surface converted as stone.
+
+This was confirmed against OpenMW rather than assumed:
+
+- TES3 LTEX accepts only `NAME`, `INTV`, `DATA` and its loader's `default:`
+  case is `esm.fail("Unknown subrecord")`
+  (`references/openmw/components/esm3/loadltex.cpp:36`) — a material field
+  could not exist without breaking vanilla loading.
+- LAND carries normals, heights, world-map colours, vertex colours and texture
+  indices; the "material palette" comment at `loadland.hpp:48` means the LTEX
+  index table.
+- `bulletnifloader.cpp` assigns no material to any shape, and `grep -i
+  material` over `apps/openmw/mwphysics/` returns nothing.
+- Both NIF candidates are version-gated above Morrowind: `mMaterialHash` needs
+  >= 10.0.1.0 **and** Bethesda-version > FO3 (`nif/data.cpp:116`), and
+  `NiGeometry::MaterialData` early-returns below 10.0.1.0 (`nif/node.cpp:236`).
+  `NiMaterialProperty` holds only ambient/diffuse/specular/emissive/gloss/alpha
+  (`nif/property.cpp:505`).
+- Morrowind's own footsteps come from swim state plus the armor SKILL of the
+  equipped boots — 12 sound ids, ground never consulted
+  (`apps/openmw/mwclass/npc.cpp:71,1161`).
+
+So there is **no faithful port available**; a material assignment here is new
+authored intent, not a reproduction of engine behaviour.
+
+### The signal is the texture name
+
+The one authored, semantic, per-surface string is the texture name, in
+Bethesda's `tx_<material>_<detail>` scheme. `NiMaterialProperty.name` was
+measured and rejected: over a 60-file sample its values are 3ds-Max defaults
+and typos (`Material #1` x22, `core` x8, `bttom`, `k./kl'kjl'`).
+
+Measured coverage of `material_of`:
+
+| Corpus | LTEX | resolved |
+|---|---|---|
+| Morrowind.esm | 107 | 107 = 100% |
+| Tamriel Rebuilt | 325 | 300 = 92.3% |
+| Tamriel Data (HD) | 358 | 321 = 89.7% |
+
+Vanilla's 107 land textures resolve to 33 Stone / 29 Grass / 18 Dirt /
+13 BrokenStone / 7 Sand / 6 Mud / 1 Gravel — close to vanilla Skyrim's own
+terrain distribution. The residual misses are dungeon FLOOR textures
+(`T_Imp_DngRuinCyr_TxFloor_01`), for which the Stone fallback is right anyway.
+
+**Match anywhere in the name, never by position.** Vanilla puts the material
+second (`tx_wood_siding`), but Tamriel Rebuilt prepends a province
+(`tx_skyrim_wood_brown_03`, the single most common prefix at 361/1871 refs);
+a positional read scores those as material "skyrim" and returns nothing.
+
+LTEX classifies from its EditorID first — the authored `NAME` field, e.g.
+`Sand`, `Road Dirt`, `AI_Grass_Cobbles` — with the texture file name as
+tiebreak for the records whose EditorID is itself a filename.

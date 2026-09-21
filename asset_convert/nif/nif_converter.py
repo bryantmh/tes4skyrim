@@ -39,6 +39,7 @@ import numpy as np
 
 from asset_convert import paths
 from asset_convert.nif.geometry_sanitize import sanitize_geometry_data
+from asset_convert.nif.nif_materials_morrowind import carry_havok_material
 from asset_convert.nif.nif_converter_morrowind import (
     attach_morrowind_collision, build_skin_partitions, disable_specular,
     is_morrowind, run_morrowind_fixups, strip_collision_nodes)
@@ -901,12 +902,18 @@ def _capture_bow_masks(data, nif_basename, is_gnd, in_armor_dir):
 
 
 def _copy_root_frame(fade, root):
-    """Copy the root's transform, children, controller and collision across."""
+    """Copy the root's transform, children, controller and collision across.
+
+    The Morrowind havok material rides along: it is sampled pre-upgrade onto
+    the OLD root, so without this collision falls back to stone.
+    See: docs/commentary/asset_convert_nif.md#morrowind-surface-materials
+    """
     fade.name = root.name
     fade.flags = NIF_FLAGS
     fade.translation = root.translation
     fade.rotation = root.rotation
     fade.scale = root.scale
+    carry_havok_material(root, fade)
     if hasattr(root, 'collision_object'):
         fade.collision_object = root.collision_object
         if fade.collision_object is not None:

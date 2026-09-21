@@ -143,19 +143,40 @@ SKYRIM_MAP_MARKER_LCRT = 0x0010F63C
 # Oblivion uses the same FormID for its MapMarker static.
 SKYRIM_MAP_MARKER_STAT = 0x00000010
 
-# LTEX material type → Skyrim MATT FormID
+#: TES4 LTEX HNAM.Material enum -> Skyrim MATT FormID. See: docs/commentary/tes5_import_landscape.md#ltex-material-types
 MATT_MAP = {
-    0: 0x00012F34,   # Stone
-    1: 0x00012F38,   # Dirt
-    2: 0x00012F3A,   # Grass
-    3: 0x00012F42,   # HeavyWood (Glass approximation)
-    4: 0x00012F3B,   # Metal
-    5: 0x00012F3F,   # Wood
-    6: 0x00012F3C,   # Organic
-    7: 0x00012F3D,   # Skin
-    8: 0x00012F3E,   # Water
-    9: 0x00012F37,   # Cloth (Book approximation)
-    10: 0x00012F44,  # Snow
+    0: 0x00012F34,   # Stone       → MaterialStone
+    1: 0x00012F37,   # Cloth       → MaterialCloth
+    2: 0x00012F38,   # Dirt        → MaterialDirt
+    3: 0x00012F39,   # Glass       → MaterialGlass
+    4: 0x00012F46,   # Grass       → MaterialGrass
+    5: 0x00012F3C,   # Metal       → MaterialSolidMetal
+    6: 0x00012F3D,   # Organic     → MaterialOrganic
+    7: 0x00012F3F,   # Skin        → MaterialSkin
+    8: 0x00012F40,   # Water       → MaterialWater
+    9: 0x00043DCC,   # Wood        → MaterialWoodMedium
+    10: 0x00012F36,  # Heavy Stone → MaterialHeavyStone
+    11: 0x00012F3B,  # Heavy Metal → MaterialHeavyMetal
+    12: 0x00012F42,  # Heavy Wood  → MaterialWoodHeavy
+    13: 0x00012F3A,  # Chain       → MaterialChainMetal
+    14: 0x00012F45,  # Snow        → MaterialSnow
+    15: 0x0002EE2C,  # Stone Stairs  → MaterialStairsStone
+    16: 0x0002EE2D,  # Cloth Stairs  → MaterialStairsWood (carpeted)
+    17: 0x0002EE2C,  # Dirt Stairs   → MaterialStairsStone
+    18: 0x000C6FB1,  # Glass Stairs  → MaterialGlassStairs
+    19: 0x0002EE2C,  # Grass Stairs  → MaterialStairsStone
+    20: 0x0002EE2C,  # Metal Stairs  → MaterialStairsStone
+    21: 0x0002EE2D,  # Organic Stairs → MaterialStairsWood
+    22: 0x0002EE2D,  # Skin Stairs   → MaterialStairsWood
+    23: 0x0002EE2C,  # Water Stairs  → MaterialStairsStone
+    24: 0x0002EE2D,  # Wood Stairs   → MaterialStairsWood
+    25: 0x0002EE2C,  # Heavy Stone Stairs → MaterialStairsStone
+    26: 0x0002EE2C,  # Heavy Metal Stairs → MaterialStairsStone
+    27: 0x0002EE2D,  # Heavy Wood Stairs  → MaterialStairsWood
+    28: 0x0002EE2C,  # Chain Stairs  → MaterialStairsStone
+    29: 0x00052ED0,  # Snow Stairs   → MaterialStairsSnow
+    30: 0x00012F3C,  # Elevator      → MaterialSolidMetal
+    31: 0x00012F3D,  # Rubber        → MaterialOrganic
 }
 
 # TES4 skill index → TES5 skill name for NPC DNAM

@@ -283,6 +283,19 @@ def set_cell_locations(cell_to_location: dict,
     _WORLD_LOCATION.update(world_to_location or {})
 
 
+def _direct_matt(rec: dict) -> int:
+    """A MATT FormID the source named outright, or 0.
+
+    A vanilla Skyrim FormID is a literal constant, so it must NOT go through
+    `get_formid`, whose load-order remapping would rewrite its index byte.
+    """
+    raw = rec.get('HNAM.MaterialFormID')
+    try:
+        return int(raw, 16) if raw else 0
+    except (TypeError, ValueError):
+        return 0
+
+
 def convert_LTEX(rec: dict, writer=None) -> tuple:
     """LTEX — needs companion TXST record in TES5.
     Returns (ltex_bytes, txst_bytes_or_None, txst_formid)."""
@@ -293,7 +306,7 @@ def convert_LTEX(rec: dict, writer=None) -> tuple:
 
     icon_path = get_str(rec, 'ICON')
     material = get_int(rec, 'HNAM.Material')
-    matt_fid = MATT_MAP.get(material, 0x00012F34)
+    matt_fid = _direct_matt(rec) or MATT_MAP.get(material, 0x00012F34)
 
     # Create TXST record
     txst_fid = 0

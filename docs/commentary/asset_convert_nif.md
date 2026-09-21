@@ -2069,9 +2069,10 @@ The rigid body is the vanilla static block already established by the
 SpeedTree generator -- identity transform, mass 0, layer 1 (`SKYL_STATIC`),
 motion system 5 -- and the triangles go through the real Havok bridge
 (`cms_builder.build_cms_collision`), so the result is a genuine
-`bhkMoppBvTreeShape` + CMS rather than an approximation. Material is
-`SKY_HAV_MAT_STONE`, the same fallback `convert_materials` uses for an unknown
-material: Morrowind records no havok material, so nothing finer is recoverable.
+`bhkMoppBvTreeShape` + CMS rather than an approximation. The material comes
+from the mesh's own texture names ([surface materials](#morrowind-surface-materials)),
+falling back to `SKY_HAV_MAT_STONE` — the same fallback `convert_materials`
+uses for an unknown Oblivion material.
 
 The node is stripped whether or not a shape was built -- it must never render.
 
@@ -2094,6 +2095,59 @@ the root carries an `MRK` extra. Triangles are taken in the ROOT frame
 (`get_transform(root)`), not the collision node's, so a transformed node no
 longer offsets the shape. Every mesh goes through the same Havok bridge, so
 the generated case is a real MOPP + CMS too.
+
+
+## Morrowind surface materials
+<a id="morrowind-surface-materials"></a>
+
+**Code:** `asset_convert/nif/nif_materials_morrowind.py`
+
+Morrowind authors no havok material, so every converted mesh collided as stone
+— a wooden crate thudded like rock. The classification itself, and the proof
+that no better signal exists, is in
+[surface materials](tes4_export_morrowind.md#surface-materials); this section
+covers only the two mesh-side traps.
+
+### Sample BEFORE the upgrade
+
+`attach_morrowind_collision` runs after `_convert_one_root`, which has already
+replaced `NiTexturingProperty` with a `BSLightingShaderProperty`. Reading the
+diffuse there would mean reading converted data, so `sample_materials` runs in
+`run_morrowind_fixups` — pre-upgrade, on real TES3 blocks — and stashes the
+result on the root as `_mw_havok_material`, the same pattern
+`_mw_no_collision` already uses.
+
+### Sample the RENDER geometry, never the collision shapes
+
+A mesh with an authored `RootCollisionNode` collides with an **untextured
+proxy**: its shapes carry no `NiTexturingProperty` at all, and the texture
+lives only on the render geometry.
+
+```
+ex_common_plat_cent.nif
+  collision shapes (RootCollisionNode)
+     tris=10   <no NiTexturingProperty, 0 props>
+  render shapes
+     Tri Ex_common_plat_Cent 0   tris=4    Tx_wood_siding.tga
+     Tri Ex_common_plat_Cent 3   tris=80   Tx_wood_docks_01.tga
+```
+
+That is 190 of 447 collidable vanilla meshes (43%). Sampling the collision
+shapes scores those at 0% and drags whole static folders to 2-10%; sampling
+render geometry instead takes them to 83.2%, ABOVE the auto-generated case
+(74.3%), because a mesh that earned a hand-authored proxy is usually
+substantial architecture with clear textures.
+
+The proxy decides WHERE collision is, never what it is made of.
+
+Measured over collidable meshes, area-weighted vote per root:
+
+| Corpus | collidable | resolved |
+|---|---|---|
+| Morrowind (1,011 nifs) | 447 | 349 = 78.1% |
+| Tamriel Data (HD) | 490 | 322 = 65.7% |
+
+Shapes vote by triangle area so a one-triangle decal cannot outvote a wall.
 
 
 ## Morrowind specular

@@ -25,14 +25,13 @@ from asset_convert.collision.collision import GAME_UNITS_PER_HAVOK
 from asset_convert.collision.collision_hulls import build_clutter_hull
 from asset_convert.collision.clutter_plan import mesh_clutter_mass
 from asset_convert.havok.hkx_ragdoll_morrowind import attach_synthetic_bodies
+from asset_convert.nif.nif_materials_morrowind import (
+    havok_material, sample_materials)
 from asset_convert.nif.nif_passes import add_bsx_flags
 from asset_convert.nif.particles_morrowind import upgrade_legacy_particles
 
 #: Render units to Skyrim havok units; Morrowind authors collision in render units.
 _HAVOK_SCALE = 1.0 / GAME_UNITS_PER_HAVOK
-
-#: SKY_HAV_MAT_STONE, the fallback for a material Morrowind never records.
-_SKY_MAT_STONE = 3741512247
 
 #: The biggest real collision mesh in the sampled corpus is 2,219 triangles.
 _MAX_COLLISION_TRIS = 20000
@@ -241,11 +240,13 @@ def build_collision(root, tris, mass=None):
     establishes for a generated CMS: identity transform, mass 0, and the
     collision layer every immovable object uses.  With one it is simulated
     clutter, which needs a CONVEX shape -- havok will not simulate the
-    concave MOPP the static path builds.
-    See: docs/commentary/asset_convert_collision.md#morrowind-dynamic-clutter
+    concave MOPP the static path builds.  The material was sampled from the
+    render geometry before the upgrade.
+    See: docs/commentary/asset_convert_nif.md#morrowind-surface-materials
     """
-    shape = (build_clutter_hull(tris, _SKY_MAT_STONE) if mass
-             else build_cms_collision(tris, _SKY_MAT_STONE, NifFormat))
+    material = havok_material(root)
+    shape = (build_clutter_hull(tris, material) if mass
+             else build_cms_collision(tris, material, NifFormat))
     if shape is None:
         return None
     if not mass:
@@ -542,6 +543,7 @@ def disable_specular(data, stats=None) -> int:
 def run_morrowind_fixups(data, stats=None) -> None:
     """Apply the Morrowind-only repairs that must precede the version upgrade."""
     raise_triangle_flags(data, stats)
+    sample_materials(data, stats)
     upgrade_legacy_particles(data, stats)
     convert_legacy_nodes(data, stats)
     for root in data.roots:

@@ -226,3 +226,39 @@ catches our own computed bounds.
 check each REFR/ACHR `NAME`. After these fixes only the FO3/FNV
 engine-hardcoded ids remain unresolved (`0x20`, 851 refs; `0x17`, 71 refs),
 which are not records in any plugin.
+
+## <a id="ltex-material-types"></a>LTEX material types — the MATT_MAP correction
+
+**Code:** `tes5_import/base/constants.py:MATT_MAP`, `tes5_import/record_types/world.py:convert_LTEX`
+
+TES4 LTEX carries `HNAM.Material`, a u8 enum; TES5 replaced it with `MNAM`, a
+FormID pointing at a MATT record. `MATT_MAP` bridges the two. The table was
+wrong on 10 of its 11 entries, in two independent ways.
+
+**The enum indices did not match TES4.** xEdit's definition
+(`references/xEdit/Core/wbDefinitionsTES4.pas:2727`) is 0 Stone, 1 Cloth,
+2 Dirt, 3 Glass, 4 Grass, 5 Metal, 6 Organic, 7 Skin, 8 Water, 9 Wood,
+10 Heavy Stone. The old table labelled index 1 "Dirt", 2 "Grass", 4 "Metal",
+5 "Wood", 9 "Cloth" and 10 "Snow".
+
+**The FormIDs did not match their own labels either.** Checked against
+`references/Skyrim.esm/MATT.txt`: `00012F3A` is MaterialChainMetal, not Grass;
+`00012F3F` is MaterialSkin, not Wood; `00012F3C` is MaterialSolidMetal, not
+Organic; `00012F3D` is MaterialOrganic, not Skin; `00012F3E` is MaterialSand,
+not Water; `00012F44` is MaterialBottle, not Snow.
+
+Net effect on shipped output: only index 0 resolved correctly. Oblivion grass
+terrain wrote MaterialHeavyMetal, dirt wrote MaterialChainMetal, and heavy
+stone wrote MaterialBottle. Every TES4 plugin was affected.
+
+The corrected table covers all 32 indices. Skyrim has only four stairs
+materials against TES4's fifteen, so the stairs range collapses onto
+StairsStone / StairsWood / StairsGlass / StairsSnow by underlying material —
+the same lossy grouping `OB_TO_SK_MATERIAL` uses for the NIF-side havok enum
+([havok material CRC](asset_convert_collision.md#havok-material-crc)).
+
+Wood maps to `MaterialWoodMedium` (`00043DCC`) rather than WoodLight or
+WoodHeavy: it is the MATT vanilla LTEX uses for plain wood, and the
+light/heavy split exists for objects.
+
+No FormID drift — every value is a vanilla Skyrim FormID, not a derived one.
