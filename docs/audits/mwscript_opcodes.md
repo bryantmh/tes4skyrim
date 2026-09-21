@@ -52,6 +52,17 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `hitonme` | Misc | `S` → `l` | 1 |
 | `streammusic` | Sound | `S` | 1 |
 
+## Engine-written locals nothing raises
+
+Not opcodes, so no call site names them: a script declares `short OnPCEquip` and the ENGINE writes the variable. Every script below reads a local that is always 0.
+
+| Local | Flag | Scripts declaring it |
+|---|---|---:|
+| `onpchitme` | `pcHitMe` | 160 |
+| `onpcequip` | `pcEquipped` | 111 |
+| `onpcadd` | `pcAdded` | 43 |
+| `onpcdrop` | `pcDropped` | 6 |
+
 ## Ported
 
 | Command | Domain | Signature | Calls |

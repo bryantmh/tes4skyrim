@@ -360,7 +360,29 @@ def _write_data_blocked(fh, live):
              'means matching the prefix, never the name.\n\n')
 
 
-def write_markdown(path, commands, real, noops, export):
+def _write_unraised(fh, root, export):
+    """The section naming ENGINE-WRITTEN LOCALS nothing raises.
+
+    No call-site count can rank these: a script declares `short OnPCEquip` and
+    reads the variable, so the cost is the scripts DECLARING it.
+    """
+    events = unwired(root)[3]
+    if not events:
+        return
+    declaring = _event_local_counts(export) if os.path.isdir(export) else {}
+    fh.write('## Engine-written locals nothing raises\n\n')
+    fh.write('Not opcodes, so no call site names them: a script declares '
+             '`short OnPCEquip` and the ENGINE writes the variable. Every '
+             'script below reads a local that is always 0.\n\n')
+    fh.write('| Local | Flag | Scripts declaring it |\n|---|---|---:|\n')
+    rows = [(declaring.get(EVENT_LOCALS.get(n, ''), 0), n) for n in events]
+    for count, name in sorted(rows, reverse=True):
+        fh.write(f'| `{EVENT_LOCALS.get(name, "?")}` | `{name}` | '
+                 f'{count} |\n')
+    fh.write('\n')
+
+
+def write_markdown(path, commands, real, noops, export, root='.'):
     """Writes the human-readable audit: the work that is left, then the rest.
 
     Split by whether anything CALLS a command, because the registration table
@@ -393,6 +415,7 @@ def write_markdown(path, commands, real, noops, export):
                  f'work is the {len(live)} command(s) below.\n\n')
         fh.write('## Stubbed, and something calls it\n\n')
         _rows(fh, live, 'Command')
+        _write_unraised(fh, root, export)
         _write_data_blocked(fh, live)
         fh.write('## Ported\n\n')
         _rows(fh, _ranked(buckets['ported']), 'Command')
@@ -419,6 +442,19 @@ _STATE_WRITE = re.compile(r'\]\.(\w+)\s*=')
 #: `void DialogueState::SetX(...) { ... }` -- the whole body, to see inside.
 _STATE_SETTER = re.compile(r'\bDialogueState::(Set\w+|\w*Change\w*)\s*\('
                            r'[^)]*\)\s*\{(.*?)\n\}', re.S)
+#: `struct ObjectEvents { ... };` and each `bool flag = false;` inside it.
+_EVENTS_STRUCT = re.compile(r'struct ObjectEvents \{(.*?)\n\};', re.S)
+_EVENT_FLAG = re.compile(r'\bbool\s+(\w+)\s*=\s*false\s*;')
+#: `x.pcEquipped = true` / `Events().died = true` -- something RAISING a flag.
+_EVENT_RAISE = re.compile(r'\.(\w+)\s*=\s*true\b')
+#: Each ObjectEvents flag and the MWScript local the engine writes for it.
+EVENT_LOCALS = {'activated': 'onactivate', 'died': 'ondeath',
+                'pcEquipped': 'onpcequip', 'pcAdded': 'onpcadd',
+                'pcDropped': 'onpcdrop', 'pcHitMe': 'onpchitme'}
+#: `short OnPCEquip` in a script body: a DECLARATION, never a call.
+_EVENT_DECL = re.compile(r'(?:short|long|float)[ \t]+(' +
+                         '|'.join(sorted(set(EVENT_LOCALS.values()))) +
+                         r')\b', re.I)
 
 
 def _plugin_sources(root):
@@ -462,8 +498,25 @@ def inert_setters(sources):
     return out
 
 
+def unraised_events(sources):
+    """ObjectEvents flags no shipped file ever sets to true.
+
+    These are the ENGINE-WRITTEN LOCALS -- `OnPCEquip` and its kin -- which an
+    opcode audit cannot see: a script declares `short OnPCEquip` and reads the
+    variable, so there is no command to register and no call site to count. A
+    flag nothing raises leaves every script reading it dead.
+    See: docs/commentary/morrowind_runtime.md#ported-is-not-wired
+    """
+    body = _EVENTS_STRUCT.search(sources.get('object_script.h', ''))
+    if not body:
+        return []
+    declared = _EVENT_FLAG.findall(body.group(1))
+    raised = set(_EVENT_RAISE.findall('\n'.join(sources.values())))
+    return [name for name in declared if name not in raised]
+
+
 def unwired(root):
-    """`(hooks never supplied, idle methods, setters the game never sees)`.
+    """`(hooks, idle methods, inert setters, event flags never raised)`.
 
     A ported opcode whose hook the game never sets, whose state no code ever
     feeds, or whose setter writes a field nothing acts on, answers with a
@@ -480,12 +533,27 @@ def unwired(root):
                         if not name.startswith('dialogue_state.'))
     idle = {name for name in declared
             if not re.search(r'[.>]' + name + r'\(', callers)}
-    return sorted(hooks), sorted(idle), sorted(inert_setters(sources))
+    return (sorted(hooks), sorted(idle), sorted(inert_setters(sources)),
+            unraised_events(sources))
 
 
-def report_unwired(root):
+def _event_local_counts(export_dir):
+    """`{local name: scripts declaring it}` over the export's object scripts.
+
+    The cost of an unraised flag is the scripts that read its local, which no
+    call-site count can reach: the name is DECLARED, never called.
+    """
+    out = collections.Counter()
+    for body in _script_bodies(export_dir):
+        for name in set(m.lower() for m in _EVENT_DECL.findall(body)):
+            out[name] += 1
+    return out
+
+
+def report_unwired(root, export=None):
     """Prints what `unwired` found; returns how many items that is."""
-    hooks, idle, inert = unwired(root)
+    hooks, idle, inert, events = unwired(root)
+    declaring = _event_local_counts(export) if export else {}
     for name in hooks:
         print(f'UNWIRED hook      {name}: used, never supplied by the game')
     for name in idle:
@@ -494,7 +562,11 @@ def report_unwired(root):
     for name in inert:
         print(f'INERT setter      {name}: writes state no hook and no other '
               f'file acts on')
-    total = len(hooks) + len(idle) + len(inert)
+    for name in events:
+        scripts = declaring.get(EVENT_LOCALS.get(name, ''), 0)
+        cost = f'; {scripts} script(s) declare it' if scripts else ''
+        print(f'UNRAISED event    {name}: no shipped file sets it true{cost}')
+    total = len(hooks) + len(idle) + len(inert) + len(events)
     print(f'{total} unwired item(s)')
     return total
 
@@ -515,7 +587,7 @@ def main():
                     help='list hooks and state nothing feeds, then exit')
     args = ap.parse_args()
     if args.wiring:
-        sys.exit(1 if report_unwired(args.root) else 0)
+        sys.exit(1 if report_unwired(args.root, args.export) else 0)
 
     commands = registrations(args.root)
     real, noops = installed(args.root)
@@ -530,7 +602,7 @@ def main():
         write_tsv(args.tsv, commands, real, noops)
     if args.markdown:
         write_markdown(args.markdown, commands, real, noops,
-                       args.export or '(no export)')
+                       args.export or '(no export)', args.root)
 
 
 if __name__ == '__main__':
