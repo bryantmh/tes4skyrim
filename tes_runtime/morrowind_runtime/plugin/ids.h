@@ -259,6 +259,11 @@ constexpr std::size_t kOffRefRotZ = 0x50;
 constexpr std::uint64_t kRefSetPosition = 56234;
 constexpr std::uint64_t kRefSetAngle = 56224;
 
+// ObjectReference.TranslateTo(x, y, z, ax, ay, az, speed, maxRotSpeed)
+// (0x9d1f70, the latent native registered beside the "TranslateTo" string at
+// 0x9d760d). Angles in degrees; it glides the loaded 3D without reloading it.
+constexpr std::uint64_t kRefTranslateTo = 56237;
+
 // The world natives the result-script commands reach through, each the r9
 // argument of its registration helper beside the name string on 1.6.659:
 //   void  ObjectReference.Activate(ObjectReference actionRef, bool defaultOnly) 0x9ccfe0

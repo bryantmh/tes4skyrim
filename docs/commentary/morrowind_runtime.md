@@ -2210,10 +2210,29 @@ corpora — 326 `move`/`moveworld` sites and 86 `rotate`/`rotateworld` sites.
 `MoveWorld` and `Move` differ properly: the world form adds along a world axis,
 the plain form along the object's own, which is what `abMatchRotation` and a
 rotated offset give. `RotateWorld` and `Rotate` are the SAME call here, because
-Skyrim's `SetAngle` takes Euler degrees with no world-composed form. They agree
+Skyrim's `TranslateTo` takes Euler degrees with no world-composed form. They agree
 on any single axis; of the 17 scripts that rotate anything, **2** turn more than
 one (`TR_m1_lud_cogspinner`, `TR_m7_HH_Alvynu_7_ShipSink_sc`) and are the only
 places the approximation can show.
+
+🛑 **Each step is a `TranslateTo` glide, never `SetPosition`/`SetAngle`.**
+Those two reload the reference's 3D, which fades back in; called every tick,
+the object never finishes fading and reads as nearly invisible (Arktwend's
+`ex_de_constr_06` intro door). `game_calls_move.cpp:GlideTo` instead aims
+`TranslateTo` (id 56237, `0x9d1f70` on 1.6.659) at the tick's goal with
+speed = distance / `TickDelta()`, so it arrives as the next tick starts —
+confirmed smooth in-game. Details that matter:
+
+- The goal CHAINS from the previous goal while calls come every tick, and
+  same-tick calls add into it, so a two-axis rotate is one glide, not the last
+  axis alone. Absolute `SetPos`/`Position` drop the chain.
+- A rotation cannot finish before the position does, so a pure rotate adds a
+  0.01-unit Z nudge (alternating up/down) to give the glide a duration.
+- Target angles are taken the short way from the current ones, since the
+  reference stores normalized radians.
+
+The absolute setters (`SetPos`, `SetAngle`, `Position`, `PositionCell`) stay
+on the instant natives — they are single teleports.
 
 ### <a id="ai-packages-are-real-packages"></a>The AI commands are real Skyrim packages
 

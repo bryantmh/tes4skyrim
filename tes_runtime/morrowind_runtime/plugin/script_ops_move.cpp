@@ -89,7 +89,7 @@ class OpMove : public Interpreter::Opcode0 {
 // 🛑 Both are the same call here. OpenMW's `RotateWorld` composes a quaternion
 // on the object's world attitude while `Rotate` adds to its Euler angles, and
 // the two differ only for an object already tilted on two axes. Skyrim's
-// SetAngle takes Euler degrees and has no world-composed form, so the
+// TranslateTo takes Euler degrees and has no world-composed form, so the
 // distinction cannot be kept. Measured over both corpora: 86 rotate call sites
 // across 17 scripts, of which 2 turn more than one axis
 // (`TR_m1_lud_cogspinner`, `TR_m7_HH_Alvynu_7_ShipSink_sc`) and so are the

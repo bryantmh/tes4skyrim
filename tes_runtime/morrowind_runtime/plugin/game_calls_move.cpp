@@ -6,11 +6,13 @@
 
 #include <cmath>
 #include <string>
+#include <unordered_map>
 
 #include "ids.h"
 #include "log.h"
 #include "main_thread.h"
 #include "object_script.h"
+#include "object_tick.h"
 
 namespace mwruntime {
 namespace gamecalls {
@@ -30,6 +32,10 @@ using MoveToFn = void (*)(void* vm, std::uint32_t stack, void* self,
 using MoveToCellFn = void (*)(void* self, const std::uint32_t* targetHandle,
                               void* cell, void* world, const float* position,
                               const float* rotation);
+// ObjectReference.TranslateTo(x, y, z, ax, ay, az, speed, maxRotSpeed).
+using TranslateToFn = bool (*)(void* vm, std::uint32_t stack, void* ref,
+                               float x, float y, float z, float ax, float ay,
+                               float az, float speed, float maxRotSpeed);
 // ObjectReference.GetScale() / .SetScale(float).
 using ScaleGetFn = float (*)(void* vm, std::uint32_t stack, void* ref);
 using ScaleSetFn = void (*)(void* vm, std::uint32_t stack, void* ref,
@@ -59,8 +65,27 @@ AxisSetFn g_setPosition = nullptr;
 AxisSetFn g_setAngle = nullptr;
 MoveToFn     g_moveTo = nullptr;
 MoveToCellFn g_moveToCell = nullptr;
+TranslateToFn g_translateTo = nullptr;
 ScaleGetFn   g_getScale = nullptr;
 ScaleSetFn   g_setScale = nullptr;
+
+// Where a Move/Rotate chain has asked a reference to be, and the tick it last
+// asked. Game thread only.
+struct Goal {
+    float at[kAxisCount];
+    float angle[kAxisCount];
+    std::size_t tick;
+};
+std::unordered_map<void*, Goal> g_goals;
+
+// The smallest glide TranslateTo is handed, since a rotation cannot finish
+// before the position does.
+constexpr float kNudge = 0.01f;
+
+float RefPosition(void* ref, int axis) {
+    AxisGetFn get = g_getPosition[axis];
+    return get ? get(PapyrusVm(), 0, ref) : 0.0f;
+}
 
 // An axis index from a script, kept inside the array whatever it says.
 int SafeAxis(int axis) {
@@ -94,6 +119,7 @@ void SetAxis(const std::string& id, int axis, float value, bool isAngle) {
     xyz[SafeAxis(axis)] = value;
     const float x = xyz[0], y = xyz[1], z = xyz[2];
     PostToMainThread([ref, set, x, y, z]() {
+        g_goals.erase(ref);
         set(PapyrusVm(), 0, ref, x, y, z);
     });
 }
@@ -175,43 +201,77 @@ void MoveRefInCell(const std::string& id, float x, float y, float z,
     });
 }
 
+// The goal this tick's Move/Rotate adds to: the chain's own when it asked last
+// tick or this one, else wherever the reference is now.
+Goal& GoalFor(void* ref) {
+    const std::size_t tick = TicksRun();
+    auto [it, fresh] = g_goals.try_emplace(ref);
+    Goal& goal = it->second;
+    if (fresh || goal.tick + 1 < tick || goal.tick > tick) {
+        for (int i = 0; i < kAxisCount; ++i) {
+            goal.at[i] = RefPosition(ref, i);
+            goal.angle[i] = RefAngle(ref, i);
+        }
+    }
+    goal.tick = tick;
+    return goal;
+}
+
+// Glides `ref` to `goal`, arriving as the next tick starts. SetPosition and
+// SetAngle reload the 3D, which fades it back in on every tick of a chain.
+// See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
+void GlideTo(void* ref, const Goal& goal) {
+    float to[kAxisCount];
+    float angle[kAxisCount];
+    float distance = 0.0f;
+    for (int i = 0; i < kAxisCount; ++i) {
+        to[i] = goal.at[i];
+        const float from = RefAngle(ref, i);
+        angle[i] = from + std::remainder(goal.angle[i] - from, 360.0f);
+        const float step = to[i] - RefPosition(ref, i);
+        distance += step * step;
+    }
+    distance = std::sqrt(distance);
+    if (distance < kNudge * 0.5f) {
+        to[2] += kNudge;
+        distance = kNudge;
+    }
+    g_translateTo(PapyrusVm(), 0, ref, to[0], to[1], to[2], angle[0],
+                  angle[1], angle[2], distance / TickDelta(), 0.0f);
+}
+
 // `Move`/`MoveWorld`: adds `delta` along one axis. `local` rotates the offset
 // into the object's own frame, which is the whole difference between them --
 // a Z rotation is all an upright object has, so that is what is applied.
 void MoveRefBy(const std::string& id, int axis, float delta, bool local) {
     void* ref = OwnerRef(id);
-    if (!ref || !g_setPosition) return;
+    if (!ref || !g_translateTo) return;
     float offset[kAxisCount] = {0.0f, 0.0f, 0.0f};
     offset[SafeAxis(axis)] = delta;
     RunOnGameThread([ref, offset, local]() {
+        Goal& goal = GoalFor(ref);
         float x = offset[0], y = offset[1];
         if (local) {
-            const float radians = RefAngle(ref, 2) / kDegreesPerRadian;
+            const float radians = goal.angle[2] / kDegreesPerRadian;
             x = offset[0] * std::cos(radians) - offset[1] * std::sin(radians);
             y = offset[0] * std::sin(radians) + offset[1] * std::cos(radians);
         }
-        float at[kAxisCount];
-        for (int i = 0; i < kAxisCount; ++i) {
-            at[i] = g_getPosition[i] ? g_getPosition[i](PapyrusVm(), 0, ref)
-                                     : 0.0f;
-        }
-        g_setPosition(PapyrusVm(), 0, ref, at[0] + x, at[1] + y,
-                      at[2] + offset[2]);
+        goal.at[0] += x;
+        goal.at[1] += y;
+        goal.at[2] += offset[2];
+        GlideTo(ref, goal);
     });
 }
 
 // `Rotate`/`RotateWorld`: adds `degrees` to one Euler angle.
 void RotateRefBy(const std::string& id, int axis, float degrees) {
     void* ref = OwnerRef(id);
-    if (!ref || !g_setAngle) return;
+    if (!ref || !g_translateTo) return;
     const int which = SafeAxis(axis);
     RunOnGameThread([ref, which, degrees]() {
-        float at[kAxisCount];
-        for (int i = 0; i < kAxisCount; ++i) {
-            at[i] = RefAngle(ref, i);
-        }
-        at[which] += degrees;
-        g_setAngle(PapyrusVm(), 0, ref, at[0], at[1], at[2]);
+        Goal& goal = GoalFor(ref);
+        goal.angle[which] = std::remainder(goal.angle[which] + degrees, 360.0f);
+        GlideTo(ref, goal);
     });
 }
 
@@ -276,6 +336,7 @@ void AiFacePoint(const std::string& actor, float x, float y) {
 // Sets all three position axes at once, which every absolute move needs --
 // SetPosition takes the whole vector and SetAxis only ever changes one.
 void PlaceAt(void* ref, float x, float y, float z, float zRot) {
+    g_goals.erase(ref);
     if (g_setPosition) g_setPosition(PapyrusVm(), 0, ref, x, y, z);
     if (!g_setAngle) return;
     const float ax = RefAngle(ref, 0);
@@ -358,6 +419,8 @@ void InstallMoveCalls(GameHooks& hooks) {
     g_moveTo = Native<MoveToFn>("ObjectReference.MoveTo", ids::kRefMoveTo);
     g_moveToCell = Native<MoveToCellFn>("TESObjectREFR::MoveTo_Impl",
                                         ids::kRefMoveToCell);
+    g_translateTo = Native<TranslateToFn>("ObjectReference.TranslateTo",
+                                          ids::kRefTranslateTo);
     g_getScale = Native<ScaleGetFn>("ObjectReference.GetScale",
                                     ids::kRefGetScale);
     g_setScale = Native<ScaleSetFn>("ObjectReference.SetScale",
