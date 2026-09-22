@@ -63,7 +63,7 @@ from .from_pgrd import (
 _TRI_EDGE_LINK_BITS = (0x0001, 0x0002, 0x0004)
 
 
-class _Nvnm:
+class Nvnm:
     """Full decode of one of OUR interior NVNM blobs (see pack_nvnm)."""
 
     def __init__(self, blob):
@@ -343,8 +343,8 @@ def _split_one_mesh(nv, comp, ncomp, key, meta, writer) -> tuple:
     return root_rec, meta
 
 
-def _decode_record(navm_bytes) -> _Nvnm:
-    """Decode a packed (compressed) NAVM record into an _Nvnm, or None."""
+def _decode_record(navm_bytes) -> Nvnm:
+    """Decode a packed (compressed) NAVM record into an Nvnm, or None."""
     flags = struct.unpack_from('<I', navm_bytes, 8)[0]
     subs = {}
     for tag, payload in subrecords(decompress(navm_bytes[REC_HDR:], flags)):
@@ -354,7 +354,7 @@ def _decode_record(navm_bytes) -> _Nvnm:
     edid = None if edid is None else edid.rstrip(b'\0').decode('latin1')
     if nvnm is None:
         return None
-    nv = _Nvnm(nvnm)
+    nv = Nvnm(nvnm)
     nv.edid = edid
     nv.onam = onam
     return nv

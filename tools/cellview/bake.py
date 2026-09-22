@@ -20,8 +20,9 @@ from tes5_import.navmesh import corridor
 from tools.cellview import plugins, progress, seams
 from tools.navmesh.draw import tri_class
 from tools.navmesh.meshedit import (
-    free_cell_name, is_stale, load_fix, make_entry, save_fix,
+    free_cell_name, is_stale, load_fix, make_entry, replay, save_fix,
 )
+from tools.navmesh.navm_patch import patch as navm_patch
 from tools.navmesh.index import master_export_dirs_of
 from tools.navmesh.transplant import index_for
 
@@ -383,3 +384,29 @@ def mesh_save(plugin, cell, payload):
     CACHE.pop(('mesh', plugin, cell), None)
     return {'saved': path, 'ops': len(ops), 'cell': target,
             'tris': len(entry['result']['tris'])}
+
+
+def mesh_to_esm(plugin, cell, payload):
+    """Apply the page's ops to the live mesh and patch it into the built ESM.
+
+    Replays against a FRESH build rather than the saved correction's result, so
+    the button ships exactly the mesh on screen -- including edits not yet
+    saved, and without a correction's stored base standing in for what the
+    generator produces now.
+
+    See: docs/commentary/tes5_import_navmesh.md#patching-a-navmesh-into-a-built-esm
+    """
+    src, why = resolve_cell(plugin, cell)
+    if src is None:
+        return {'error': why}
+    ledges = []
+    verts, tris = (src.build(ledges_out=ledges) if src.has_pathgrid
+                   else ([], []))
+    if not tris:
+        return {'error': '%s has no generated navmesh to patch' % cell}
+    rv, rt, rd, rl = replay(verts, tris, payload.get('ops') or [],
+                            our_doors(src, verts, tris),
+                            [(int(a), int(b)) for (a, b, _d) in ledges])
+    result = {'verts': rv, 'tris': rt, 'doors': rd, 'links': rl}
+    return navm_patch(plugin, int(src.fid, 16), cell, result,
+                      export=plugins.export_dir(plugin))

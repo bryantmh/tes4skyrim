@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from tools.cellview import corpus, plugins, progress
 from tools.cellview.bake import (
-    mesh_bake, mesh_save, plugin_cells, seams_for,
+    mesh_bake, mesh_save, mesh_to_esm, plugin_cells, seams_for,
 )
 
 #: Files the page is built from; nothing outside this folder is served.
@@ -88,6 +88,24 @@ def seams_job(params):
         progress.finish(job)
 
 
+
+def esm_patch_job(params, payload):
+    """Patch the edited mesh into the built ESM, publishing progress.
+
+    See: docs/commentary/tes5_import_navmesh.md#patching-a-navmesh-into-a-built-esm
+    """
+    job = params.get('job', '')
+    progress.start(job, 'mesh')
+    error = ''
+    try:
+        out = mesh_to_esm(params.get('plugin', DEFAULT_PLUGIN),
+                          params.get('cell', ''), payload)
+        error = out.get('error', '')
+        return out
+    finally:
+        progress.finish(job, error)
+
+
 def _routes():
     """`(GET, POST)` endpoint tables, each `{path: fn(params[, payload])}`."""
     get = {
@@ -107,6 +125,7 @@ def _routes():
         '/score': lambda q, p: corpus.score(q.get('cell', ''), p),
         '/mesh_save': lambda q, p: mesh_save(q.get('plugin', DEFAULT_PLUGIN),
                                              q.get('cell', ''), p),
+        '/esm_patch': lambda q, p: esm_patch_job(q, p),
     }
     return get, post
 

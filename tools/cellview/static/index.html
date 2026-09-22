@@ -108,6 +108,9 @@
   <div class="grp">
     <button id="save" class="primary" disabled>Overwrite</button>
     <button id="saveNew" disabled>Save new</button>
+    <button id="toEsm" class="meshOnly"
+            title="Write this mesh into output/&lt;plugin&gt; so it loads in-game"
+            disabled>To ESM</button>
     <button id="undo" disabled>Undo</button>
     <button id="reset">Reload</button>
   </div>
@@ -975,6 +978,31 @@ async function meshSave(mode) {
   status();
 }
 
+/* Ships the mesh on screen to output/<plugin>, so the edit can be tested
+   in-game without a full --import-only.  The server rebuilds the cell to
+   replay onto, which is a bake -- hence the same progress bar as opening one.
+   See: docs/commentary/tes5_import_navmesh.md#patching-a-navmesh-into-a-built-esm */
+async function meshToEsm() {
+  const job = newJob();
+  showProgress('Patching ' + M.cell + ' into the ESM');
+  pollProgress(job);
+  let d;
+  try {
+    d = await (await fetch('/esm_patch?plugin=' + encodeURIComponent(M.plugin) +
+                           '&cell=' + encodeURIComponent(M.cell) +
+                           '&job=' + encodeURIComponent(job), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ops: mOps })
+    })).json();
+  } catch (err) { stopPoll(); showError('patch FAILED: ' + err); return;
+  } finally { stopPoll(); }
+  if (d.error) { showError(d.error); return; }
+  $('busy').textContent = 'wrote NAVM ' + d.navm + ' (' + d.tris +
+    ' tris) to ' + d.esm +
+    (d.restitched ? ' · ' + d.restitched + ' neighbours restitched' : '');
+  setTimeout(() => { $('busy').style.display = 'none'; }, 3000);
+}
+
 async function save() {
   if (mode === 'tri') { await meshSave('overwrite'); return; }
   $('busy').style.display = 'grid';
@@ -1314,6 +1342,9 @@ function meshStatus() {
   $('save').disabled = mOps.length === 0 || viewing;
   $('saveNew').disabled = mOps.length === 0 || viewing;
   $('undo').disabled = mHistory.length === 0 || viewing;
+  /* Unlike the corpus saves this needs no edits: shipping a freshly generated
+     mesh is how you check the generator itself in-game. */
+  $('toEsm').disabled = viewing || live === 0;
   $('mode').textContent = 'Mesh · ' + M.plugin + ' · ' + M.cell +
     (M.nodes.length === 0 ? ' · NO PATHGRID (nothing to generate from)' : '') +
     (mBuild ? ' · BUILD ' + mRing.length + '/3' : '') +
@@ -1338,6 +1369,9 @@ function applyScope() {
   for (const el of document.querySelectorAll('.corpusOnly')) {
     const host = el.classList.contains('chk') ? el : el;
     host.style.display = corpus ? '' : 'none';
+  }
+  for (const el of document.querySelectorAll('.meshOnly')) {
+    el.style.display = corpus ? 'none' : '';
   }
   $('cell').value = corpus ? G.cell : '';
   $('corpusBtn').classList.toggle('on', corpus);
@@ -1538,6 +1572,7 @@ $('srcOb').onclick = () => setSource('ob');
 $('srcBoth').onclick = () => setSource('both');
 $('save').onclick = save;
 $('saveNew').onclick = () => meshSave('new');
+$('toEsm').onclick = meshToEsm;
 /* Switching source re-derives the mesh from scratch; ops are kept so that
    returning to the current mesh restores the edit in progress. */
 $('meshSrc').onchange = () => { meshReset(); meshRebuild(); status(); };

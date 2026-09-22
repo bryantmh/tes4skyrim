@@ -4281,3 +4281,52 @@ edited ones replace rather than add).
 `(cell_fid, pgrd_fid)` keys, stay driven by the plugin's own pathgrids — merging
 there would invent jobs and move every derived NAVM id. Verified on UL: job
 count is 1,865 before and after, and the probe cell keeps pathgrid `000392E8`.
+
+
+## <a id="patching-a-navmesh-into-a-built-esm"></a>Patching one corrected navmesh into a built ESM
+
+**Code:** `tools/navmesh/navm_patch.py`, reached from cellview's "To ESM" button
+(`/esm_patch` in `tools/cellview/server.py`).
+
+A correction in `tests/navmesh_fixed/` was a scoring target and nothing else:
+testing one in-game meant a whole `--import-only`. This writes the corrected
+geometry into `output/<plugin>/<plugin>.esm` in place instead, so the edit loads
+on the next launch.
+
+**Only the NVNM geometry moves.** The record keeps its FormID, its EDID and its
+ONAM, so NAVI's NVMI entry, every REFR's XNDP and every neighbour's edge link
+still name something real. `pack_nvnm` reproduces a shipped NVNM **byte for
+byte** from its own decode — verified on 3 interior and 2 exterior records of
+`output/Oblivion.esm` — which is what makes repacking with new triangles safe:
+the only difference in the blob is the geometry the human changed.
+
+**Doors and water flags are carried over, not recomputed.** A retriangulation
+renumbers every triangle, so each Door Triangle is re-aimed at whichever new
+triangle is nearest the old one's centroid, keeping the door REFR's FormID (and
+therefore its XNDP) intact. The water flag is a height test against the cell's
+water plane; reading that plane back as the highest Z any water triangle reached
+reproduces the test without re-reading the CELL record.
+
+**An exterior cell's seams are re-stitched, both sides.** Cross-cell Portal
+links name triangle indices, so the neighbours' links into a rewritten mesh are
+all stale. Each of the four orthogonal neighbours has its links to this mesh
+dropped and renumbered, the seam is matched again with the import's own
+`border_edges`/`match_seam`, and the neighbour record is rewritten too. Measured
+on `output/Oblivion.esm`, 1,000 of 1,002 exterior navmeshes sampled carry edge
+links, so skipping this would strand the edited cell.
+
+**A split cell is refused.** `split.py` cuts an interior with a same-cell
+teleport pair into one NAVM per component; re-splitting mints new FormIDs and
+moves door XNDPs, which only a real import can do. Measured on
+`output/Oblivion.esm`: 8,183 of 8,203 navmeshed cells hold exactly one NAVM, 20
+hold more, so the refusal costs almost nothing.
+
+**Resizing a record means fixing every GRUP above it.** A GRUP's size covers its
+children, so a record that grows or shrinks changes the size of each GRUP
+enclosing it; `splice` collects those headers by walking down to the record's
+offset, applies the delta to each, and then does the byte replacements back to
+front so the earlier offsets stay valid.
+
+The load-order shift is read back off the two files rather than reconstructed:
+the output's master list is the TES4 one with new masters prepended, so the
+difference in their lengths IS the shift every FormID's index byte took.
