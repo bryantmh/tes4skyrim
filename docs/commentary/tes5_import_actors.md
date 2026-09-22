@@ -21,6 +21,7 @@ them does.
 - [FACT relations: Ally and Friend are not interchangeable](#faction-relations)
 - [Trainers](#trainers)
 - [Health is written as an OFFSET, not a pool](#health-offset)
+- [Morrowind health is absolute, so its level term is dropped](#morrowind-health-is-absolute)
 - [Hair color: a generated CLFM per authored RGB](#hair-color)
 - [NAM5/NAM6/NAM7/NAM8 are all required](#required-nam-subrecords)
 - [Head parts: RNAM decides who can see the hair](#hdpt-valid-races)
@@ -372,6 +373,43 @@ DNAM offsets 36/38/40 are the engine's calculated Health/Magicka/Stamina cache,
 not authored stats. The TES4 totals are written there so the cache agrees with
 what the engine computes from the offsets (it recomputes on load regardless).
 Magicka is Oblivion's SpellPoints; stamina is Fatigue.
+
+## <a id="morrowind-health-is-absolute"></a>Morrowind health is absolute, so its level term is dropped
+
+**Code:** `tes5_import/record_types/npc_morrowind.py`
+
+The offset formula above solves `pool - base - (Level-1)*5` because TES4 derives
+an actor's pool from its level. TES3 does not. OpenMW's `MWClass::Npc::ensureCustomData`
+(`apps/openmw/mwclass/npc.cpp`) takes the two NPDT layouts apart:
+
+| NPDT | branch | health |
+|---|---|---|
+| 52-byte (authored) | `setHealth(mNpdt.mHealth)` | used verbatim |
+| 12-byte (autocalc) | `autoCalculateAttributes` | `floor(0.5*(Str+End)) + multiplier*(Level-1)` |
+
+An authored TES3 NPC's health is the whole final pool and carries no level term
+at all — the level term exists only in the autocalc branch, which computes the
+pool the exporter then writes as `DATA.Health`. Either way the exported number
+is already final, so subtracting a second, Skyrim-shaped level bonus from it
+double-counts.
+
+The damage is proportional to level. High Bishop Derminus (Arktwend intro,
+health 397, level 100) solved to `397 - 50 - 99*5 = -148`, i.e. −98 effective
+health: dead on load, before the intro's force-greet. Across Arktwend,
+652 of 2,053 NPCs converted to ≤ 0 health, city guards and quest actors
+included (a further 50 are authored corpses, which stay dead).
+
+Vanilla Skyrim corroborates that a large negative offset is not how the format
+is used: of 5,118 NPC_ records, 395 carry a negative offset, all small and all
+on actors meant to be weak or already dead (`CurweDead`, `VeezaraDead`,
+`MS06Victim`, the summons). `MS13FrostbiteSpider` sits at level 1200 with offset
+−90, which only makes sense if the level term is not being relied on to add
+6,000 health back.
+
+So a Morrowind-sourced NPC_ keeps the race-base subtraction and passes its level
+through untouched. `is_morrowind_npc` gates this on the exporter's authored
+`MorrowindRace` key, which no TES4 export emits, leaving Oblivion conversion
+byte-identical.
 
 ## <a id="hair-color"></a>Hair color: a generated CLFM per authored RGB
 

@@ -31,9 +31,8 @@ from .common import (
     pack_uint32_subrecord,
     prefix_path,
 )
-
-#: Starting Health on all 11 RACE_MAP target races in Skyrim.esm.
-TES5_RACE_BASE_HEALTH = 50
+from .npc_morrowind import (TES5_RACE_BASE_HEALTH, is_morrowind_npc,
+                            morrowind_health_and_level)
 
 #: TES4 NPC_ ACBS bits that mean the same thing in TES5, Female included.
 _NPC_COMPATIBLE_FLAGS = 0x4C9B
@@ -117,10 +116,11 @@ def npc_acbs(rec: dict) -> bytes:
     authored ACBS/attribute change patches the exact bytes conversion writes.
 
     Layout per xEdit wbDefinitionsTES5. Magicka and Stamina offsets are deltas
-    from the race base, taken from Oblivion's real pools (SpellPoints and
-    Fatigue). A PC-levelled actor defaults to the 1.0x PCLevelMult.
+    from the race base (SpellPoints, Fatigue). A Morrowind actor solves health
+    without TES4's level term.
 
     See: docs/commentary/tes5_import_actors.md#health-offset
+    See: docs/commentary/tes5_import_actors.md#morrowind-health-is-absolute
     """
     tes4_flags = get_int(rec, 'ACBS.Flags')
     level = get_int(rec, 'ACBS.Level', 1)
@@ -128,8 +128,12 @@ def npc_acbs(rec: dict) -> bytes:
     calc_max = get_int(rec, 'ACBS.CalcMax', 100)
     tes5_acbs_flags = tes4_flags & _NPC_COMPATIBLE_FLAGS
     is_pc_level = bool(tes4_flags & _T4N_PC_LEVEL_OFFSET)
-    health_offset, tes5_level = _health_and_level(
-        get_int(rec, 'DATA.Health', 50), level, is_pc_level)
+    if is_morrowind_npc(rec):
+        health_offset, tes5_level = morrowind_health_and_level(
+            get_int(rec, 'DATA.Health', 50), level)
+    else:
+        health_offset, tes5_level = _health_and_level(
+            get_int(rec, 'DATA.Health', 50), level, is_pc_level)
     magicka_offset = max(-32768, min(
         get_int(rec, 'ACBS.SpellPoints', 0) - TES5_RACE_BASE_HEALTH, 32767))
     stamina_offset = max(-32768, min(
