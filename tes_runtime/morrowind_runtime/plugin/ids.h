@@ -535,6 +535,20 @@ constexpr std::uint64_t kActorGetLevel = 54927;
 constexpr std::uint64_t kActorGetValuePercent = 54677;
 constexpr std::uint64_t kGameAdvanceSkill = 55449;
 
+// The character-creation and control natives, each the registration callback
+// beside its name string under script `Game` on 1.6.1170:
+//   void Game.ShowRaceMenu()                                      0xa12780
+//   void Game.DisablePlayerControls(8 bools, int povType)         0xa0bcb0
+//   void Game.EnablePlayerControls(8 bools, int povType)          0xa0bd90
+// All three are GLOBAL natives: the self slot is a tag. The eight bools ride
+// abMovement in r9b and the rest on the stack, in the order abFighting,
+// abCamSwitch, abLooking, abSneaking, abMenu, abActivate, abJournalTabs --
+// read off the callback, which tests them at [rsp+0x50] through [rsp+0x80].
+// See: docs/commentary/morrowind_runtime.md#the-control-switches
+constexpr std::uint64_t kGameShowRaceMenu = 55580;
+constexpr std::uint64_t kGameDisableControls = 55454;
+constexpr std::uint64_t kGameEnableControls = 55455;
+
 // TESObjectCELL's TESFullName: the BSFixedString at +0x28, read as the
 // `const char*` it wraps.
 constexpr std::size_t kOffCellFullName = 0x28;

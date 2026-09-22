@@ -701,6 +701,7 @@ void Machine::InstallReal() {
     InstallQueryOps(*this);
     InstallStatOps(*this);
     InstallSpellOps(*this);
+    InstallControlOps(*this);
 }
 
 void Machine::InstallFactions() {

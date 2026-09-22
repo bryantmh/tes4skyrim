@@ -1521,6 +1521,33 @@ pre-fix sources it reports `AddDeath`; it reports nothing now. It cannot see a
 flag that is written and read but acted on by nobody, which is what
 `StartScript` was.
 
+#### Three ways the install scan under-reported
+
+Each of these made a command read as ported that was not, and each was found
+by a command whose status was known independently:
+
+1. **The opcode had to be the only argument.** `_INSTALL` ended at `\)`, so
+   `Real<Op>(base + i, i, true)` — an install whose handler takes constructor
+   arguments — matched nothing. It now ends at `[,)]`.
+2. **The namespace was discarded.** Install sites write aliases (`C::`, `M::`)
+   whose meaning is per-file, so the scan kept only the tail. But
+   `opcodeEnable`, `opcodeDisable` and `opcodeGetDisabled` exist in **both**
+   `Control` and `Misc` — the only three bases in the whole table that two
+   domains declare. Installing `Misc::opcodeEnable` (object `Enable`) marked
+   every `Control` switch ported. Each file's `namespace X = Compiler::Y;`
+   now resolves the alias, and `AMBIGUOUS_BASES` qualifies just those three.
+3. **A family was all-or-nothing.** The `+N` offset was stripped before
+   matching, so installing `opcodeEnable + 0` marked all seven switches
+   ported. A loop over a literal list — `for (int i : {kPlayerControls, ...})`
+   — is now read as a PARTIAL family and recorded per member as `base+N`;
+   a loop over `0..count` still records the base alone and covers the family
+   whole. `_subset_offsets` **raises** rather than falling back if an
+   enumerator in that list has no explicit `= <int>`, because a silent
+   fallback reads the loop as whole and restores defect 3 unnoticed.
+
+Measured: fixing all three moved exactly 9 commands (the control switches
+Skyrim has no flag for) from ported to STUB, and nothing else.
+
 ### <a id="engine-written-locals"></a>🛑 The engine-written locals an opcode audit CANNOT see
 
 **Code:** `plugin/object_script.cpp`, `plugin/equip.cpp`
@@ -2900,6 +2927,84 @@ table can fix it** — `atronach_storm`, `golden saint`, `winged twilight` and
 the rest are among the 79 meshes `MORROBLIVION_CREATURES` pairs to vanilla
 Oblivion creatures, so the gap patch deliberately supplies no CREA record for
 them and they have no `DATA.Soul` anywhere. A `HasSoulGem` on one answers 0.
+
+## <a id="the-control-switches"></a>The player-control switches
+
+**Code:** `plugin/script_ops_control.cpp`, `plugin/game_calls_control.cpp`,
+`DialogueState::SetControlEnabled`.
+
+TES3 keeps seven booleans and a script flips each by name: `playercontrols`,
+`playerfighting`, `playerjumping`, `playerlooking`, `playermagic`,
+`playerviewswitch`, `vanitymode`. All seven start **enabled** — OpenMW's
+`ControlSwitch::clear()` — and they persist across a save, so they live in
+`DialogueState` and round-trip through the co-save as `W` records.
+
+The compiler registers all 21 commands (enable, disable, getdisabled) in a
+**loop** over its own `controls[]` table, `opcodeEnable + i` and its two
+siblings. The install mirrors that with a runtime loop over the same indices,
+because an index that drifts lands a handler on a neighbouring switch and
+fails silently — the command runs and the wrong boolean moves. A
+`static_assert` pins `kControlSwitchCount` to `Compiler::Control::numberOfControls`.
+
+### Skyrim takes them eight at a time
+
+`Game.DisablePlayerControls` and `Game.EnablePlayerControls` each take eight
+bools and a POV int, so a change pushes the WHOLE set rather than one flag.
+The mapping, from the callback's own stack reads at `[rsp+0x50]`..`[rsp+0x80]`:
+
+A switch is mapped ONLY where the engine flag does the same thing:
+
+| TES3 switch | Skyrim flag |
+|---|---|
+| `playercontrols` | `abMovement` |
+| `playerfighting` | `abFighting` |
+| `playerlooking` | `abLooking` |
+| `playerviewswitch` | `abCamSwitch` |
+| `playermagic`, `playerjumping`, `vanitymode` | none — NOT INSTALLED |
+
+🛑 Those three reach no flag, so they are not installed at all. `playermagic`
+is TES3's SPELL-drawing switch — OpenMW writes it to `mSpellDrawingDisabled`,
+beside `playerfighting` as `mWeaponDrawingDisabled` — while the CK wiki
+defines `abFighting` as "the player's combat controls", one flag for all of
+it, so honouring magic through it would block melee too.
+
+A flag reaches only the call that ACTS on it — enable takes the flags that are
+on, disable the flags that are off — so the pair never overwrites what the
+other just wrote. `abSneaking`, `abActivate`, `abMenu` and `abJournalTabs` are
+passed false to both, which leaves them exactly as the player had them.
+`abActivate` is not passed even with `abMovement`: the wiki records that
+disabling movement already disables activation, and our own hook gates on the
+switch directly.
+
+### `playercontrols` gates our own activation hook
+
+🛑 `ActivateHook` answers **before** the engine sees the activation, so
+Skyrim's `abActivate` never gets the chance to stop one we have already
+claimed. Without an explicit gate, a Morrowind speaker opens the dialogue menu
+during a tutorial that has taken the player's controls away — which is exactly
+what Arktwend's monastery chargen does. The hook tests the switch and returns
+true without opening, claiming the activation either way so the speaker cannot
+fall through to Skyrim's own dialogue menu. OpenMW gates identically, in
+`ActionManager::activate()`.
+
+### Only `EnableRaceMenu` has an equivalent
+
+`Game.ShowRaceMenu()` is the one chargen menu Skyrim can open. Name, class,
+birthsign, the stat review and the levelup menu have none, so they stay stubs
+that say so. Address Library ids, verified on 1.6.1170 and 1.6.659: 55580
+(`ShowRaceMenu`), 55454 (`DisablePlayerControls`), 55455
+(`EnablePlayerControls`), each the registration callback under script `Game`.
+
+### The audit could not see any of this
+
+`mwscript_opcode_audit.py` read only `extensions0.cpp` for name arrays, but
+`controls[]` is declared in `opcodes.hpp` as `inline constexpr`, and the
+getter's name carries a **suffix** (`get + controls[i] + "disabled"`) the loop
+patterns did not model. All 21 commands were absent from the registration list
+entirely, so the audit reported 487 commands rather than 508 and could not
+report the family either way. Fixed by widening `_ARRAY` to the
+`inline constexpr` form, threading the header in beside `extensions0.cpp`, and
+letting a loop name carry an inline prefix and a trailing suffix.
 
 ## <a id="licensing"></a>Licensing
 

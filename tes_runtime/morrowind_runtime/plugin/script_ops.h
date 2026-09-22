@@ -118,4 +118,9 @@ void InstallStatOps(OpcodeInstaller& into);
 // See: docs/commentary/morrowind_runtime.md#spell-commands
 void InstallSpellOps(OpcodeInstaller& into);
 
+// The seven player-control switches -- enable, disable and getdisabled for
+// each -- and EnableRaceMenu. script_ops_control.cpp.
+// See: docs/commentary/morrowind_runtime.md#the-control-switches
+void InstallControlOps(OpcodeInstaller& into);
+
 }  // namespace mwruntime

@@ -939,6 +939,7 @@ void InstallGameCalls() {
     InstallAiCalls(hooks);
     InstallQueryCalls(hooks);
     InstallSpellCalls(hooks);
+    InstallControlCalls(hooks);
     InstallMessageCalls();
     Log("game: %zu spell(s) and %zu magic effect(s) resolvable by id",
         SpellCount(), EffectCount());

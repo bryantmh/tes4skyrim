@@ -39,13 +39,19 @@ _INSTR = re.compile(r'registerInstruction\s*\(\s*"([^"]+)"\s*,\s*"([^"]*)"'
 _FUNC = re.compile(r'registerFunction\s*\(\s*"([^"]+)"\s*,\s*\'(\w)\'\s*,'
                    r'\s*"([^"]*)"\s*,\s*([A-Za-z0-9_:]+)', re.S)
 _NAMESPACE = re.compile(r'namespace\s+(\w+)\s*\{')
-#: `Real<Op<Implicit>>(D::opcodeX)`, or `(S::opcodeX + Which)` for a family.
+#: `Real<Op>(D::opcodeX)` / `(S::opcodeX + Which, ...)`: opcode then offset.
 _INSTALL = re.compile(r'\bReal3?\s*<.*?>\s*\(\s*\n?\s*([A-Za-z0-9_:]+)'
-                      r'(?:\s*\+\s*\w+)?\s*\)')
+                      r'(?:\s*\+\s*(\w+))?\s*[,)]')
+#: `for (int i : {kA, kB})` -- the literal offsets a PARTIAL family installs.
+_SUBSET_LOOP = re.compile(r'for\s*\(\s*int\s+(\w+)\s*:\s*\{([^}]*)\}\s*\)')
+#: `kPlayerLooking = 3` -- an explicitly-numbered enumerator, so an offset.
+_ENUMERATOR = re.compile(r'\b(k\w+)\s*=\s*(\d+)\s*[,}]')
 #: A helper whose ARGUMENTS name the opcodes: `InstallFamily` and `InstallPair<Op>`.
 _FAMILY = re.compile(r'\bInstall(?:Family|Pair)\s*(?:<.*?>)?\s*\((.*?)\)\s*;',
                      re.S)
 _OPCODE = re.compile(r'\bopcode\w+')
+#: `namespace C = Compiler::Control;` -- resolves the alias an install writes.
+_ALIAS = re.compile(r'\bnamespace\s+(\w+)\s*=\s*Compiler::(\w+)\s*;')
 #: `kDeliberateNoOps` in script_runner.cpp: nothing to port, by design.
 _NOOPS = re.compile(r'kDeliberateNoOps\[\]\s*=\s*\{(.*?)\}', re.S)
 
@@ -156,20 +162,100 @@ def registrations(root):
     return out
 
 
+def _read(path):
+    """One source file's text, with undecodable bytes replaced."""
+    with open(path, encoding='utf-8', errors='replace') as fh:
+        return fh.read()
+
+
+def _enum_values(headers):
+    """`{name: value}` for every `= <int>` enumerator the headers declare.
+
+    Only explicitly-numbered ones, which is what a partial family install
+    indexes with; an implicit enumerator carries no offset worth resolving.
+    """
+    out = {}
+    for text in headers:
+        for name, value in _ENUMERATOR.findall(text):
+            out[name] = int(value)
+    return out
+
+
+def _subset_offsets(body, values):
+    """`{loop variable: {offset, ...}}` for each `for (int i : {kA, kB})`.
+
+    A loop over a literal list installs only THOSE offsets, so its family is
+    partial; every other loop runs `0..count` and covers the family whole.
+
+    🛑 Raises when a name in the list has no known value. Falling back would
+    read the loop as a WHOLE family and silently re-report every member it
+    skips as ported, which is the defect this resolution exists to fix.
+    """
+    out = {}
+    for var, items in _SUBSET_LOOP.findall(body):
+        names = _WORD.findall(items)
+        missing = [n for n in names if n not in values]
+        if missing:
+            raise SystemExit(f'subset install over unknown {missing}: an '
+                             'enumerator must carry an explicit `= <int>`')
+        if names:
+            out[var] = {values[n] for n in names}
+    return out
+
+
+def _domain_of(ref, aliases):
+    """`Domain::opcodeName` for one install reference, resolving its alias."""
+    head, _, tail = ref.rpartition('::')
+    return f'{aliases.get(head.rsplit("::", 1)[-1], head)}::{tail}'
+
+
+def _qualified(body, values):
+    """Every opcode one installer file installs, bare AND `Domain::opcode`.
+
+    Both forms, because a registration's own namespace is often not the one
+    holding the constant -- `getsecondspassed` registers under `Misc` and
+    installs from `Cell`. Only an ambiguous base is looked up qualified.
+
+    An install whose offset is a PARTIAL family's loop variable is recorded
+    per member, as `base+N`, so the members it skips stay unported.
+    """
+    aliases = {m.group(1): m.group(2) for m in _ALIAS.finditer(body)}
+    subsets = _subset_offsets(body, values)
+    refs = [(m.group(1), m.group(2)) for m in _INSTALL.finditer(body)]
+    for family in _FAMILY.finditer(body):
+        args = family.group(1)
+        for name in _OPCODE.findall(args):
+            found = re.search(r'([\w:]*::)?' + name, args)
+            refs.append(((found.group(1) or '') + name, None))
+    out = set()
+    for ref, offset in refs:
+        for form in (ref.rsplit('::', 1)[-1], _domain_of(ref, aliases)):
+            out.update(f'{form}+{n}' for n in subsets.get(offset, ()))
+            if offset not in subsets:
+                out.add(form)
+    return out
+
+
 def installed(root):
-    """`(opcode constants with a real handler, deliberate no-op names)`."""
+    """`(opcode constants with a real handler, deliberate no-op names)`.
+
+    Each constant is qualified with the domain its file's `namespace X =
+    Compiler::Domain;` alias names, because `opcodeEnable`, `opcodeDisable`
+    and `opcodeGetDisabled` each exist in BOTH `Control` and `Misc`.
+    See: docs/commentary/morrowind_runtime.md#ported-is-not-wired
+    """
     folder, pattern = os.path.split(RUNNER_PARTS_GLOB)
     prefix, suffix = pattern.split('*')
     here = os.path.join(root, folder)
     parts = sorted(os.path.join(here, name) for name in os.listdir(here)
                    if name.startswith(prefix) and name.endswith(suffix))
-    text = ''
+    values = _enum_values(_read(os.path.join(here, name))
+                          for name in os.listdir(here) if name.endswith('.h'))
+    real, text = set(), ''
     for name in [os.path.join(root, RUNNER)] + parts:
-        with open(name, encoding='utf-8', errors='replace') as fh:
-            text += fh.read()
-    real = {m.group(1).rsplit('::', 1)[-1] for m in _INSTALL.finditer(text)}
-    for family in _FAMILY.finditer(text):
-        real.update(_OPCODE.findall(family.group(1)))
+        body = _read(name)
+        text += body
+        real.update(_qualified(body, values))
     block = _NOOPS.search(text)
     noops = set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()
     return real, noops
@@ -237,17 +323,24 @@ def count_calls(export_dir, commands):
     return total
 
 
+#: Bases TWO domains declare, so a bare name cannot say which is installed.
+AMBIGUOUS_BASES = frozenset(
+    {'opcodeEnable', 'opcodeDisable', 'opcodeGetDisabled'})
+
+
 def status_of(cmd, real, noops):
     """'ported', 'no-op' (nothing to port by design), 'STUB' or 'CONFLICT'.
 
-    A family member carries a `+<offset>` tail that names its position in the
-    name array; the install site writes `+ Which`, so both sides compare on
-    the base constant. CONFLICT is installed AND declared unportable, which
-    is an op that cannot act yet counts as ported.
+    A family member carries a `+<offset>` tail naming its position in the name
+    array. A PARTIAL family is recorded per member, so `base+N` is tried
+    first; a whole family records the base alone and every member matches it.
+    CONFLICT is installed AND declared unportable.
     See: docs/commentary/morrowind_runtime.md#ported-is-not-wired
     """
-    base = cmd.opcode.rsplit('::', 1)[-1].split('+', 1)[0]
-    installed = base in real or base + 'Explicit' in real
+    bare, _, offset = cmd.opcode.rsplit('::', 1)[-1].partition('+')
+    heads = [f'{cmd.domain}::{bare}'] if bare in AMBIGUOUS_BASES else [bare]
+    forms = [f'{h}+{offset}' for h in heads if offset] + heads
+    installed = any(f in real or f + 'Explicit' in real for f in forms)
     if installed and cmd.key in noops:
         return 'CONFLICT'
     if installed:

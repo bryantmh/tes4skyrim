@@ -12,6 +12,7 @@
 
 #include "addresses.h"
 #include "conversation.h"
+#include "dialogue_state.h"
 #include "game_calls.h"
 #include "ids.h"
 #include "log.h"
@@ -116,6 +117,15 @@ void RaiseActivated(void* ref) {
     Log("object: %s activated (%08X)", instance->Script().c_str(), refId);
 }
 
+// Says once per actor that its dialogue was held back. Once, because the
+// player mashing activate at a tutorial NPC would otherwise fill the log.
+void ReportSuppressed(std::uint32_t baseId) {
+    static std::set<std::uint32_t> reported;
+    if (!reported.insert(baseId).second) return;
+    Log("activation: %08X is '%s' -- player controls are off, no dialogue",
+        baseId, SpeakerId(baseId));
+}
+
 // Whether this PLACEMENT is a dead actor. The base form cannot answer it: life
 // is state on the reference, and one base serves every corpse and every living
 // copy of that NPC alike.
@@ -135,6 +145,13 @@ bool IsCorpse(void* ref) {
 // activation entirely -- no vanilla dialogue menu, no "this person has nothing
 // to say". Anything we do not claim falls through untouched, which is how a
 // CORPSE reaches the engine's own Activate and opens as a container.
+//
+// 🛑 `playercontrols` gates the whole hook, because we answer BEFORE the
+// engine does: Skyrim's own abActivate flag never gets the chance to stop an
+// activation we have already claimed. A tutorial that takes the player's
+// controls away means the NPCs there open nothing, which is exactly what
+// OpenMW's ActionManager::activate() does with the same switch.
+// See: docs/commentary/morrowind_runtime.md#the-control-switches
 bool ActivateHook(void* base, void* ref, void* activator, std::uint8_t unk,
                   void* object, std::int32_t count) {
     // `base` is the BASE form, which the actor index keys on; `ref` is the
@@ -142,6 +159,12 @@ bool ActivateHook(void* base, void* ref, void* activator, std::uint8_t unk,
     // Checking the base is what makes one indexed NPC match all its refs.
     const std::uint32_t baseId = FormIdOf(base);
     if (baseId && IsMorrowindSpeaker(baseId) && !IsCorpse(ref)) {
+        // Claimed either way: a speaker must not fall through to Skyrim's own
+        // dialogue menu just because our side declined to open.
+        if (!State().ControlEnabled(kPlayerControls)) {
+            ReportSuppressed(baseId);
+            return true;
+        }
         Log("activation: %08X is '%s' (\"%s\") -- opening the Morrowind menu",
             baseId, SpeakerId(baseId), DisplayName(base));
         SetSpeakerRef(SpeakerId(baseId), ref);

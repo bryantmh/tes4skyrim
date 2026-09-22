@@ -202,9 +202,26 @@ int DialogueState::AiSetting(const std::string& actor, int which) const {
 
 void DialogueState::SetAiSetting(const std::string& actor, int which,
                                  int value) {
+    const bool changed = AiSetting(actor, which) != value;
     mAiSettings[{Key(actor), which}] = value;
-    Log("ai: %s setting %d = %d", actor.c_str(), which, value);
+    if (changed) Log("ai: %s setting %d = %d", actor.c_str(), which, value);
     if (Hooks().applyAiSetting) Hooks().applyAiSetting(actor, which, value);
+}
+
+bool DialogueState::ControlEnabled(int which) const {
+    return which >= 0 && which < kControlSwitchCount ? mControls[which] : true;
+}
+
+// Logged and pushed only on a CHANGE, for the reason SetGlobal gives: a
+// chargen script re-runs `EnablePlayerControls` every tick it is in state 2.
+void DialogueState::SetControlEnabled(int which, bool on) {
+    if (which < 0 || which >= kControlSwitchCount) return;
+    if (mControls[which] == on) return;
+    mControls[which] = on;
+    Log("control: switch %d = %d", which, on ? 1 : 0);
+    if (Hooks().applyControlSwitches) {
+        Hooks().applyControlSwitches(mControls, kControlSwitchCount);
+    }
 }
 
 bool DialogueState::MovementFlag(const std::string& actor, int which) const {
@@ -382,6 +399,9 @@ std::string DialogueState::Serialize() const {
         if (!e.second) continue;
         out << "M\t" << e.first.first << '\t' << e.first.second << '\n';
     }
+    for (int i = 0; i < kControlSwitchCount; ++i) {
+        if (!mControls[i]) out << "W\t" << i << '\n';
+    }
     out << "R\t" << reputation << '\n' << "C\t" << crimeLevel << '\n';
     return out.str();
 }
@@ -408,6 +428,10 @@ std::size_t DialogueState::Deserialize(const std::string& text) {
         else if (kind == "K" && n == 2) mKnownTopics.insert(f[1]);
         else if (kind == "A" && n == 4) mAiSettings[{f[1], Int(f[2])}] = Int(f[3]);
         else if (kind == "M" && n == 3) mMovementFlags[{f[1], Int(f[2])}] = true;
+        else if (kind == "W" && n == 2 && Int(f[1]) >= 0 &&
+                 Int(f[1]) < kControlSwitchCount) {
+            mControls[Int(f[1])] = false;
+        }
         else if (kind == "R" && n == 2) reputation = Int(f[1]);
         else if (kind == "C" && n == 2) crimeLevel = Float(f[1]);
         else continue;

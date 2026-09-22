@@ -2,15 +2,15 @@
 
 **Tool:** `python tools/script/mwscript_opcode_audit.py --export "export/Tamriel Rebuilt 25.08.12" --markdown <this file>`
 
-Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 90492 call site(s) across BOTH corpora -- the INFO result scripts in `MWIN.txt` and the object scripts in `SCPT.txt`.
+Measured over `export/Tamriel Rebuilt 25.08.12`: 508 registered command(s), 90557 call site(s) across BOTH corpora -- the INFO result scripts in `MWIN.txt` and the object scripts in `SCPT.txt`.
 
 | Status | Commands | Call sites |
 |---|---:|---:|
-| ported | 337 | 87253 |
+| ported | 350 | 87313 |
 | no-op | 16 | 2688 |
-| STUB | 134 | 551 |
+| STUB | 142 | 556 |
 
-🛑 **99 of the 134 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 35 command(s) below.
+🛑 **102 of the 142 stubbed commands have ZERO call sites in either corpus** — OpenMW's console (`tgm`, `coc`, every `toggle*`), the chargen menu toggles, the Bloodmoon werewolf commands and OpenMW's own hooks (`reloadlua`, `setnavmeshnumber`). The real remaining work is the 40 command(s) below.
 
 ## Stubbed, and something calls it
 
@@ -48,7 +48,12 @@ Measured over `export/Tamriel Rebuilt 25.08.12`: 487 registered command(s), 9049
 | `onmurder` | Stats | — → `l` | 3 |
 | `skipanim` | Animation | — | 3 |
 | `disablelevitation` | Misc | — | 1 |
+| `disableplayerjumping` | Control | — | 1 |
+| `disableplayermagic` | Control | — | 1 |
 | `enablelevitation` | Misc | — | 1 |
+| `enableplayerjumping` | Control | — | 1 |
+| `enableplayermagic` | Control | — | 1 |
+| `enablevanitymode` | Control | — | 1 |
 | `hitonme` | Misc | `S` → `l` | 1 |
 | `streammusic` | Sound | `S` | 1 |
 
@@ -173,11 +178,13 @@ Not opcodes, so no call site names them: a script declares `short OnPCEquip` and
 | `modmercantile` | Stats | `f` | 33 |
 | `position` | Transformation | `ffffz` | 33 |
 | `setmagicka` | Stats | `f` | 33 |
+| `enableplayercontrols` | Control | — | 31 |
 | `getpcsneaking` | Control | — → `l` | 31 |
 | `setparalysis` | Stats | `l` | 31 |
 | `getintelligence` | Stats | — → `f` | 30 |
 | `addsoulgem` | Misc | `ccX` | 28 |
 | `aiescort` | Ai | `cffff/l` | 28 |
+| `disableplayercontrols` | Control | — | 26 |
 | `getpcsleep` | Misc | — → `l` | 26 |
 | `clearforcesneak` | Control | — | 25 |
 | `getfight` | Ai | — → `l` | 22 |
@@ -268,6 +275,9 @@ Not opcodes, so no call site names them: a script declares `short OnPCEquip` and
 | `setblock` | Stats | `f` | 2 |
 | `setwaterbreathing` | Stats | `l` | 2 |
 | `aiescortcell` | Ai | `ccffff/l` | 1 |
+| `disableplayerfighting` | Control | — | 1 |
+| `enableplayerfighting` | Control | — | 1 |
+| `enableplayerviewswitch` | Control | — | 1 |
 | `getagility` | Stats | — → `f` | 1 |
 | `getarmorer` | Stats | — → `f` | 1 |
 | `getflee` | Ai | — → `l` | 1 |
@@ -289,7 +299,11 @@ Not opcodes, so no call site names them: a script declares `short OnPCEquip` and
 | `setluck` | Stats | `f` | 1 |
 | `setsneak` | Stats | `f` | 1 |
 | `setwillpower` | Stats | `f` | 1 |
+| `disableplayerlooking` | Control | — |  |
+| `disableplayerviewswitch` | Control | — |  |
 | `dropsoulgem` | Misc | `c` |  |
+| `enableplayerlooking` | Control | — |  |
+| `enableracemenu` | Gui | — |  |
 | `getacrobatics` | Stats | — → `f` |  |
 | `getarmorbonus` | Stats | — → `l` |  |
 | `getathletics` | Stats | — → `f` |  |
@@ -309,6 +323,10 @@ Not opcodes, so no call site names them: a script declares `short OnPCEquip` and
 | `getmarksman` | Stats | — → `f` |  |
 | `getmediumarmor` | Stats | — → `f` |  |
 | `getpcfacrep` | Stats | `/c` → `l` |  |
+| `getplayercontrolsdisabled` | Control | — → `l` |  |
+| `getplayerfightingdisabled` | Control | — → `l` |  |
+| `getplayerlookingdisabled` | Control | — → `l` |  |
+| `getplayerviewswitchdisabled` | Control | — → `l` |  |
 | `getresistblight` | Stats | — → `l` |  |
 | `getresistcorprus` | Stats | — → `l` |  |
 | `getresistdisease` | Stats | — → `l` |  |
@@ -431,4 +449,4 @@ Nothing to port: Morrowind's own presentation, or state this runtime does not ke
 
 Console, debug and chargen commands. Listed for completeness; none is reachable from dialogue.
 
-`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enableracemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `getcollidingactor`, `getmasserphase`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getsecundaphase`, `getstat`, `getwerewolfkills`, `help`, `hitattemptonme`, `iswerewolf`, `modpcvisionbonus`, `modregion`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setlevel`, `setnavmeshnumber`, `setpcvisionbonus`, `setwerewolfacrobatics`, `show`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`
+`addtolevcreature`, `addtolevitem`, `bc`, `becomewerewolf`, `betacomment`, `centeroncell`, `centeronexterior`, `coc`, `coe`, `disablevanitymode`, `enablebirthmenu`, `enableclassmenu`, `enableinventorymenu`, `enablelevelupmenu`, `enablemagicmenu`, `enablemapmenu`, `enablenamemenu`, `enablerest`, `enablestatreviewmenu`, `enablestatsmenu`, `filljournal`, `fillmap`, `getcollidingactor`, `getmasserphase`, `getpcinjail`, `getpctraveling`, `getpcvisionbonus`, `getplayerjumpingdisabled`, `getplayermagicdisabled`, `getsecundaphase`, `getstat`, `getvanitymodedisabled`, `getwerewolfkills`, `help`, `hitattemptonme`, `iswerewolf`, `modpcvisionbonus`, `modregion`, `ori`, `outputrefinfo`, `pcforce1stperson`, `pcforce3rdperson`, `pcget3rdperson`, `playbink`, `reloadlua`, `removefromlevitem`, `repairedonme`, `setlevel`, `setnavmeshnumber`, `setpcvisionbonus`, `setwerewolfacrobatics`, `show`, `showscenegraph`, `showvars`, `ssg`, `sv`, `t3d`, `tai`, `tap`, `tb`, `tcb`, `tcg`, `tcl`, `testcells`, `testinteriorcells`, `testmodels`, `tfh`, `tfow`, `tgm`, `tm`, `toggleactorspaths`, `toggleai`, `toggleborders`, `togglecollision`, `togglecollisionboxes`, `togglecollisiongrid`, `togglefogofwar`, `togglefullhelp`, `togglegodmode`, `togglenavmesh`, `togglepathgrid`, `togglerecastmesh`, `togglescripts`, `togglesky`, `togglevanitymode`, `togglewater`, `togglewireframe`, `toggleworld`, `tpg`, `ts`, `turnmoonred`, `turnmoonwhite`, `tvm`, `tw`, `twa`, `twf`, `undowerewolf`, `user1`, `user2`, `user3`, `user4`, `xbox`

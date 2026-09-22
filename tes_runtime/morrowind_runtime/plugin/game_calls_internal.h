@@ -62,6 +62,9 @@ void InstallQueryCalls(GameHooks& hooks);
 // The spell natives: the actor's spell list, casting, and active effects.
 // See: docs/commentary/morrowind_runtime.md#spell-commands
 void InstallSpellCalls(GameHooks& hooks);
+// The seven player-control switches and Game.ShowRaceMenu.
+// See: docs/commentary/morrowind_runtime.md#the-control-switches
+void InstallControlCalls(GameHooks& hooks);
 // The engine's buttoned message box, which Debug.MessageBox cannot raise.
 // Hooked through ShowMessage rather than a hook of its own.
 // See: docs/commentary/morrowind_runtime.md#messagebox-buttons

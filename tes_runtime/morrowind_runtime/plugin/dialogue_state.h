@@ -38,6 +38,19 @@ struct Membership {
 // See: docs/commentary/morrowind_runtime.md#forced-movement-is-a-latch
 enum MovementFlag { kForceSneak };
 
+// The player-control switches Skyrim has a matching flag for, numbered as the
+// compiler numbers them: `opcodeEnable + i` walks its `controls[]` table, so
+// the value IS the opcode offset. Jumping (2), magic (4) and vanity mode (6)
+// have no Skyrim flag and are not ported.
+// See: docs/commentary/morrowind_runtime.md#the-control-switches
+enum ControlSwitch {
+    kPlayerControls = 0,
+    kPlayerFighting = 1,
+    kPlayerLooking = 3,
+    kPlayerViewSwitch = 5,
+    kControlSwitchCount = 7
+};
+
 // What the game itself has to do when the state changes. Null in the
 // headless tests, where only the state is checked.
 struct GameHooks {
@@ -208,6 +221,12 @@ struct GameHooks {
     // the latch now holds. `which` is a `MovementFlag`.
     void (*applyMovementFlag)(const std::string& actor, int which,
                               bool on) = nullptr;
+    // Pushes the whole control-switch set to the engine, which takes them as
+    // one call rather than one flag at a time. `on[i]` is a `ControlSwitch`.
+    void (*applyControlSwitches)(const bool* on, int count) = nullptr;
+    // `EnableRaceMenu`: Skyrim's own race/sex menu, the one TES3 command with
+    // a real equivalent. The other chargen menus have none.
+    void (*showRaceMenu)() = nullptr;
     void (*resurrect)(const std::string& actor) = nullptr;
     // `Drop item count`: puts them on the ground at the actor's feet.
     void (*dropItem)(const std::string& actor, const std::string& item,
@@ -351,6 +370,13 @@ public:
     bool MovementFlag(const std::string& actor, int which) const;
     void SetMovementFlag(const std::string& actor, int which, bool on);
 
+    // --- the player-control switches ---------------------------------------
+    // Seven booleans the whole game shares, all true until a script says
+    // otherwise. `which` is a `ControlSwitch`. Writing one pushes the whole
+    // set to the engine, because Skyrim takes them in one call.
+    bool ControlEnabled(int which) const;
+    void SetControlEnabled(int which, bool on);
+
     // --- reputation, crime, faction reactions, running scripts -------------
     int   reputation = 0;
     float crimeLevel = 0.0f;
@@ -423,6 +449,11 @@ private:
     std::set<std::string> mKnownTopics;
     std::map<std::pair<std::string, int>, int> mAiSettings;
     std::map<std::pair<std::string, int>, bool> mMovementFlags;
+    // Indexed by the opcode offset, so the unported switches keep their slots.
+    // All start ENABLED, which is TES3's own default, so a plugin that never
+    // touches them behaves as if the switches did not exist.
+    bool mControls[kControlSwitchCount] = {true, true, true, true,
+                                           true, true, true};
 };
 
 // The one state of this game session.

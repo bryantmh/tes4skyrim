@@ -1390,6 +1390,83 @@ void ForcedMovementCases(Interpreter::Context& context) {
     State().SetDisposition("other_npc", 50);
 }
 
+// The last control-switch set the hook was handed, and how many times.
+bool g_pushed[kControlSwitchCount] = {true, true, true, true, true, true, true};
+int  g_pushCount = 0;
+
+void RecordControlSwitches(const bool* on, int count) {
+    for (int i = 0; i < count && i < kControlSwitchCount; ++i) {
+        g_pushed[i] = on[i];
+    }
+    ++g_pushCount;
+}
+
+// The seven player-control switches. Each is registered by the compiler in a
+// LOOP -- `opcodeEnable + i` -- so an install that gets the index wrong lands
+// the handler on a NEIGHBOURING switch and the failure is silent: the command
+// runs, and the wrong boolean moves.
+//
+// 🛑 The getter asks the NEGATIVE (`GetPlayerControlsDisabled`), so a switch
+// that is enabled must answer 0.
+// See: docs/commentary/morrowind_runtime.md#the-control-switches
+void ControlSwitchCases(Interpreter::Context& context) {
+    std::printf("the player-control switches latch per switch\n");
+    Check(State().ControlEnabled(kPlayerControls) &&
+              State().ControlEnabled(kPlayerViewSwitch),
+          "every switch starts enabled");
+    Check(RunResultScript("DisablePlayerControls\n", context) &&
+              !State().ControlEnabled(kPlayerControls),
+          "DisablePlayerControls turns its own switch off");
+    // The index is what a loop install gets wrong, so prove the OTHERS did
+    // not move with it.
+    Check(State().ControlEnabled(kPlayerFighting) &&
+              State().ControlEnabled(kPlayerViewSwitch),
+          "and moves no neighbouring switch");
+    State().SetDisposition("test_actor", 50);
+    Check(RunResultScript("if ( GetPlayerControlsDisabled == 1 )\n"
+                          "    ModDisposition 3\nendif\n", context) &&
+              State().Disposition("test_actor") == 53,
+          "the getter answers the NEGATIVE of the switch");
+    Check(RunResultScript("EnablePlayerControls\n", context) &&
+              State().ControlEnabled(kPlayerControls),
+          "EnablePlayerControls turns it back on");
+    // Each INSTALLED switch must reach its own slot, which is the whole of
+    // what the loop install can get wrong.
+    const std::pair<int, const char*> kDisable[] = {
+        {kPlayerControls, "DisablePlayerControls\n"},
+        {kPlayerFighting, "DisablePlayerFighting\n"},
+        {kPlayerLooking, "DisablePlayerLooking\n"},
+        {kPlayerViewSwitch, "DisablePlayerViewSwitch\n"}};
+    bool eachHitsItsOwn = true;
+    for (const auto& one : kDisable) {
+        RunResultScript(one.second, context);
+        if (!State().ControlEnabled(one.first)) continue;
+        eachHitsItsOwn = false;
+    }
+    Check(eachHitsItsOwn, "each mapped disable reaches its own switch");
+    // 🛑 The set must REACH the game, and only on a CHANGE: a chargen script
+    // re-runs `EnablePlayerControls` every tick it is in state 2.
+    g_pushCount = 0;
+    Hooks().applyControlSwitches = RecordControlSwitches;
+    State().SetControlEnabled(kPlayerControls, true);
+    const int afterChange = g_pushCount;
+    State().SetControlEnabled(kPlayerControls, true);
+    Hooks().applyControlSwitches = nullptr;
+    Check(afterChange == 1 && g_pushCount == 1 && g_pushed[kPlayerControls],
+          "the set reaches the game once per CHANGE");
+    const std::string before = State().Serialize();
+    State().Reset();
+    const bool kept = State().Deserialize(before) > 0 &&
+                      !State().ControlEnabled(kPlayerViewSwitch) &&
+                      State().ControlEnabled(kPlayerControls);
+    Check(kept, "the switches survive the co-save round trip");
+    for (int i = 0; i < kControlSwitchCount; ++i) {
+        State().SetControlEnabled(i, true);
+    }
+    State().SetDisposition("test_actor", 50);
+    State().SetDisposition("other_npc", 50);
+}
+
 // The fixtures, beside the EXECUTABLE rather than the working directory: the
 // shell wrapper every command goes through runs from the repo root, so a
 // relative path loaded nothing and every table-backed case failed.
@@ -1500,6 +1577,7 @@ void Cases() {
     MoveCases(context);
     AiPackageCases(context);
     ForcedMovementCases(context);
+    ControlSwitchCases(context);
     UnportedSiteCases(context);
     ButtonPressedCases(context);
     ActorRankCases(context);
