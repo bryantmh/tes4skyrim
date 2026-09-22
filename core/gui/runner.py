@@ -69,6 +69,7 @@ from core.gui.config import (
     run_process,
     step_names,
 )
+from core.gui.selection import runnable
 
 # ---------------------------------------------------------------------------
 #  Classifying a log line
@@ -930,7 +931,8 @@ def validate_run(app, info):
     """
     fname = app.file_var.get()
     out_dir = app.output_var.get().strip()
-    steps = [key for key, *_ in STEPS if app.step_vars[key].get()]
+    steps = [key for key, *_ in STEPS
+             if app.step_vars[key].get() and runnable(app, key)]
     if not steps:
         info("No Steps", "Select at least one pipeline step.")
         return None

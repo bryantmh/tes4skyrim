@@ -46,6 +46,7 @@ from core.gui.config import (
     scan_converted,
 )
 from core.gui.morrowind import add_source_menu
+from core.gui.selection import runnable
 from core.gui.widgets import open_url
 from core.subprocess_flags import POPEN_FLAGS
 from core.worker_budget import worker_count
@@ -99,7 +100,7 @@ def _add_pack_default(app, settings_menu) -> None:
         on = bool(app.pack_default_var.get())
         save_setting(PACK_DEFAULT_CONFIG_KEY, on)
         for key in PACKING_STEPS:
-            app.step_vars[key].set(on)
+            app.step_vars[key].set(on and runnable(app, key))
         app.update_run_btn()
 
     settings_menu.add_checkbutton(

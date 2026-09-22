@@ -155,7 +155,7 @@ def apply_upgrade_plan(app) -> None:
         return
     wanted = set(plan["steps"]) & default_on_steps(app.pack_default_var.get())
     for key, v in app.step_vars.items():
-        v.set(key in wanted)
+        v.set(key in wanted and runnable(app, key))
     app.update_run_btn()
 
 
@@ -472,7 +472,10 @@ def capabilities_for_selection(app):
 
 
 #: Steps a Morrowind source cannot run, and the label that replaces the tip.
-_TES3_UNAVAILABLE = {"scripts": "Morrowind scripts run on their own interpreter"}
+_TES3_UNAVAILABLE = {
+    "scripts": "Morrowind scripts run on their own interpreter",
+    "speedtrees": "Morrowind has no SpeedTree models",
+}
 
 
 def selection_is_tes3(app) -> bool:
