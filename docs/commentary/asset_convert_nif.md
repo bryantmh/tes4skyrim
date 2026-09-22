@@ -2011,6 +2011,10 @@ mesh parked under a `RootCollisionNode`, which the engine consumes and never
 draws. Left alone that node ships to Skyrim as *visible* geometry and the
 object gets no collision at all -- both halves wrong at once.
 
+One exception replaces the node with the render geometry: a single-box node
+the plugin places items inside, a stand-in that would eject them. See
+[stand-in boxes](asset_convert_collision.md#morrowind-stand-in-boxes).
+
 ### Detection is by BLOCK TYPE, never by name
 
 The 217 collision nodes found in a strided sample of the corpus **all carry an

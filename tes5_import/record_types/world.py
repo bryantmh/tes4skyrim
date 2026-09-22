@@ -13,7 +13,7 @@ from ..base.locations import WORLD_NAMES
 from ..base.equivalents import TES4_MARKER_FORMID_TO_SKYRIM
 from .world_falloutnv import (marker_substitute, parent_use_flags,
                               tes5_world_flags, world_map_offset)
-from .world_morrowind import is_tes3_source, lock_is_exit_only
+from .world_morrowind import is_tes3_source, lock_is_exit_only, tes3_refr_flags
 from .items import get_base_origin_shift
 from ..base.text_reader import remap_formid
 from .common import (
@@ -1037,7 +1037,7 @@ def convert_REFR(rec: dict) -> bytes:
         # Map markers must be persistent references — the map/fast-travel system
         # resolves them outside the loaded cell.  All 397 vanilla markers set it.
         flags |= REFR_PERSISTENT_FLAG
-    return pack_record('REFR', get_formid(rec, 'FormID'), flags, subs)
+    return pack_record('REFR', get_formid(rec, 'FormID'), tes3_refr_flags(flags), subs)
 
 
 def convert_ACHR(rec: dict) -> bytes:

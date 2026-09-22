@@ -34,6 +34,7 @@ from asset_convert.texture import texture_prune
 from asset_convert.character.morrowind_armor import assemble_armor
 from asset_convert.character import wearable_plan
 from asset_convert.collision import clutter_plan
+from asset_convert.collision import resting_items_plan
 from asset_convert.nif import door_plan
 from asset_convert.nif import fixture_plan
 
@@ -178,6 +179,10 @@ def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, rec_dir, mesh_subdirs,
     fixtures = fixture_plan.build_fixture_models(rec_dir)
     plan[fixture_plan.FIXTURE_KEY] = fixtures
     print(f"  Placed fixture plan: {len(fixtures)} scenery models")
+    resting, stocked = resting_items_plan.write_index(rec_dir)
+    plan[resting_items_plan.RESTING_KEY] = resting
+    print(f"  Resting items plan: {stocked} fixture models share a cell "
+          f"with an item")
     mesh_scan_fragments.clear_fragments(asset_dir)
     return nif_batch.batch_convert(
         str(mesh_src), output_dir=str(mesh_dst),

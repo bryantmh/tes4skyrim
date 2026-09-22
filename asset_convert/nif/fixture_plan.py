@@ -27,37 +27,49 @@ FIXTURE_TYPES = ('STAT.txt', 'ACTI.txt', 'LIGH.txt', 'CONT.txt', 'DOOR.txt')
 FIXTURE_KEY = '*fixture_models*'
 
 
-def build_fixture_models(export_dir) -> set:
-    """Every mesh-relative NIF path a placed-fixture record names."""
-    out = set()
+def fixture_model_ids(export_dir) -> dict:
+    """Map placed-fixture record FormID -> mesh-relative NIF path."""
+    out = {}
     export_dir = Path(export_dir)
     for name in FIXTURE_TYPES:
         for rec in iter_records(export_dir / name):
             model = rec.get('Model.MODL', '').strip()
             if model:
-                out.add(norm_model_path(model))
+                out[rec.get('FormID', '')] = norm_model_path(model)
     return out
 
 
-def is_fixture_model(plan: dict, src_path, meshes_root) -> bool:
-    """Whether a placed-fixture record names this source NIF."""
+def build_fixture_models(export_dir) -> set:
+    """Every mesh-relative NIF path a placed-fixture record names."""
+    return set(fixture_model_ids(export_dir).values())
+
+
+def _fixture_key(plan: dict, src_path, meshes_root):
+    """The source NIF's mesh-relative path when a fixture names it, else None."""
     if not plan:
-        return False
+        return None
     try:
         rel = os.path.relpath(str(src_path), str(meshes_root))
     except (ValueError, TypeError):
-        return False
-    return norm_model_path(rel) in plan.get(FIXTURE_KEY, ())
+        return None
+    key = norm_model_path(rel)
+    return key if key in plan.get(FIXTURE_KEY, ()) else None
 
 
-_LATCH = [False]
+_LATCH = [None]
 
 
 def latch_fixture_model(plan: dict, src_path, meshes_root) -> None:
-    """Record whether the NIF about to convert is scenery, for the collision pass."""
-    _LATCH[0] = is_fixture_model(plan, src_path, meshes_root)
+    """Record the (key, plan) of the NIF about to convert when it is scenery."""
+    key = _fixture_key(plan, src_path, meshes_root)
+    _LATCH[0] = (key, plan) if key else None
 
 
 def mesh_is_fixture() -> bool:
     """Whether the NIF being converted is named by a placed-fixture record."""
+    return _LATCH[0] is not None
+
+
+def latched_fixture():
+    """(mesh-relative path, plan) of the fixture being converted, or None."""
     return _LATCH[0]

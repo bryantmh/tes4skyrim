@@ -7,6 +7,7 @@
 - [NIF bhkRigidBody field mapping (PyFFI ↔ newer nif.xml)](#nif-bhkrigidbody-field-mapping)
 - [NIF dynamic clutter physics (Havok)](#nif-dynamic-clutter-physics)
 - [Morrowind dynamic clutter: synthesizing Havok from nothing](#morrowind-dynamic-clutter)
+- [Morrowind stand-in boxes: a shelf's collision that ejects its own books](#morrowind-stand-in-boxes)
 - [MO_SYS_FIXED (7) statics simulated as clutter — "floating / spinning / on its side" (SOLVED 2026-07-28)](#mosysfixed-statics-simulated-as-clutter)
 - [Skyrim APPLIES rotation/translation on non-T bhkRigidBody (THE fundamental havok bug, found 2026-07-15)](#skyrim-applies-rotationtranslation-non-t)
 - [Hoisted collision dropped the child node's ROTATION (SOLVED 2026-08-27)](#hoisted-collision-dropped-child-nodes)
@@ -89,6 +90,63 @@ weight 1000, which is a real authored value but ten times heavier than anything
 Havok simulates in vanilla. Convex shapes (ConvexVertices + List = 128 of 248)
 dominate; the 15 Mopp entries are the reason a synthesized dynamic body is built
 from `build_clutter_hull` rather than the static MOPP path.
+
+## Morrowind stand-in boxes: a shelf's collision that ejects its own books
+<a id="morrowind-stand-in-boxes"></a>
+**Code:** `asset_convert/collision/resting_items_plan.py`,
+`nif_converter_morrowind.collision_source`.
+
+Many Morrowind RootCollisionNodes are ONE closed box -- 8 corners, 12
+triangles -- over a whole model. `furn_com_bookshelf_01` collides as a single
+158 x 37 x 181 box. Morrowind never simulates items, so the books placed inside
+it never noticed; converted items are dynamic clutter
+([above](#morrowind-dynamic-clutter)), and Havok pushes every one out of the
+solid box.
+
+**The box's shape cannot say whether its volume is open.** Census of the 266
+single-box nodes in `Morrowind.esm`'s 6,342 meshes:
+
+- 224 stay inside the model's outline and cover its center -- bookshelves,
+  tables, benches, beds, wine racks -- but so do the ramps over
+  `ex_de_docks_steps` / `_01`.
+- 7 do not cover the model's center: they collide one part only, like a tree
+  trunk (`furn_web00`/`10` anchor the web, `in_cave_plant00`/`10` the stem).
+- 35 stick out past the model: `torchfire`, `chimney_smoke02` and `lavasteam`
+  are deliberate blockers around particles; the stair meshes
+  (`in_t_stairs_strt_256`, `in_cavern_stairs00`, `ex_ship_stair`) are ramps.
+- How much of the outline a box fills runs continuously from 0.0 to 1.0
+  (bookshelf 0.79, dock-steps ramp 0.88), and how far it sticks out runs
+  continuously through any tolerance (a tapestry 0.97 units, shack steps 1.15),
+  so every threshold is a tuning knob.
+
+**The authored answer is the placements.** An item whose origin lies inside a
+placed fixture's box proves the author treated that space as open, so a
+single-box collision with an item inside it is replaced by the collision the
+render geometry builds (the path a mesh with no RootCollisionNode already
+takes). Every other box -- ramps, anchors, blockers, and shelves nobody stocks --
+ships as authored. A false positive costs nothing: render-geometry collision is
+the shape the player sees.
+
+Measured on `Morrowind.esm` (2,680 meshes with a RootCollisionNode, 289 of them
+a single 12-triangle node -- the 266 above plus those whose corners are not
+exactly 8 distinct points): **85 replaced** -- beds, benches, bookshelves, tables, stools, wine
+racks, altars, chests, closets, drawers, sacks, corpses and the
+`in_de_shack_02`-`05` interiors. Unchanged: `furn_web00`, the stair and
+dock-steps ramps, `torchfire`, `flora_tree_gl_01`, `in_r_l_int_bridge_02`. The
+one ramp replaced, `ex_de_shack_steps`, has an item placed on a step inside it.
+
+- Only the converting plugin's OWN placements are read. A dependent's refs
+  name the base by a FormID that does not resolve in the master's export (TR:
+  887k of its REFR bases do not match Tamriel Data's records by raw id), and
+  the shelf's mesh is converted with its owner.
+- `Morrowind.esm`: 312,901 REFRs, 264,524 of them fixtures and 35,734 items,
+  parsed in 0.9 s. Fixture-by-item pairs sharing a cell come to 4.3 million,
+  which is why the index is written once beside the record dump
+  (`resting_items.pkl`) and loaded per worker on first use instead of riding
+  in the per-task plan.
+- Placement frame: `tes5_import.navmesh.world.rot_matrix`, the transform the
+  navmesh already applies to these refs; the box is taken relative to the
+  converted root, whose own transform Skyrim replaces with the ref's.
 
 ## MO_SYS_FIXED (7) statics simulated as clutter — "floating / spinning / on its side" (SOLVED 2026-07-28)
 <a id="mosysfixed-statics-simulated-as-clutter"></a>

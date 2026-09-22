@@ -29,6 +29,7 @@ from tes5_import.record_types.items import (
     convert_MISC,
     convert_STAT,
 )
+from tes5_import.record_types import world_morrowind
 from tes5_import.record_types.world import (
     convert_CELL,
     convert_LAND,
@@ -832,6 +833,25 @@ class TestConverters:
         assert self._has_subrecord(result, 'DATA')
         data = self._get_subrecord_data(result, 'DATA')
         assert len(data) == 24  # 6 floats
+
+    def test_tes3_refr_ships_dont_havok_settle(self):
+        """A Morrowind placement is an unsettled pose; only TES3 sets the flag.
+
+        See: docs/commentary/tes5_import_world.md#tes3-dont-havok-settle
+        """
+        rec = {'Signature': 'REFR', 'FormID': '00001000', 'RecordFlags': '1024',
+               'NAME': '00012345', 'PosX': '0.0', 'PosY': '0.0',
+               'PosZ': '0.0', 'RotX': '0.0', 'RotY': '0.0', 'RotZ': '0.0'}
+        before = world_morrowind.tes3_lock_state()
+        try:
+            world_morrowind.set_tes3_lock_state((True, ()))
+            tes3 = struct.unpack_from('<I', convert_REFR(rec), 8)[0]
+            world_morrowind.set_tes3_lock_state((False, ()))
+            tes4 = struct.unpack_from('<I', convert_REFR(rec), 8)[0]
+        finally:
+            world_morrowind.set_tes3_lock_state(before)
+        assert tes3 == 1024 | world_morrowind.REFR_DONT_HAVOK_SETTLE
+        assert tes4 == 1024
 
     def test_refr_trigger_primitive_round_trips(self):
         """An FO3/FNV XPRM (trigger volume) is copied verbatim after NAME: the

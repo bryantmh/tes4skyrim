@@ -24,6 +24,7 @@ from asset_convert.collision.cms_builder import build_cms_collision
 from asset_convert.collision.collision import GAME_UNITS_PER_HAVOK
 from asset_convert.collision.collision_hulls import build_clutter_hull
 from asset_convert.collision.clutter_plan import mesh_clutter_mass
+from asset_convert.collision.resting_items_plan import items_rest_inside
 from asset_convert.nif.door_anim_morrowind import (animate_morrowind_door,
                                                    strip_hingeless_swing)
 from asset_convert.nif.door_plan import mesh_is_door
@@ -152,7 +153,8 @@ def collision_source(root) -> tuple:
     `subtree` is None when the mesh has no collision: an `NC`/`NCC` root
     extra on a placed FIXTURE, or an EMPTY RootCollisionNode, which the
     engine treats as camera-only. `generated` is True when the render mesh
-    itself is the collision, because no RootCollisionNode exists.
+    itself is the collision: no RootCollisionNode exists, or it is one box
+    the plugin places items inside.
     See: docs/commentary/asset_convert_nif.md#morrowind-collision
     """
     flags = source_root_flags() or root_flag_extras(root)
@@ -160,9 +162,27 @@ def collision_source(root) -> tuple:
             s.startswith(_NO_COLLISION_PREFIX) for s in flags):
         return None, False
     node = find_collision_node(source_children_owner(root))
-    if node is not None:
-        return (node if getattr(node, 'num_children', 0) else None), False
-    return root, True
+    if node is None or _box_holds_items(node, root):
+        return root, True
+    return (node if getattr(node, 'num_children', 0) else None), False
+
+
+def _box_holds_items(node, root) -> bool:
+    """Whether `node` is one closed box that authored items rest inside.
+
+    Such a box is a stand-in for an open model -- a bookshelf, a table -- and
+    the render geometry replaces it.
+    See: docs/commentary/asset_convert_collision.md#morrowind-stand-in-boxes
+    """
+    shapes = list(_collision_shapes(node, False))
+    if len(shapes) != 1 or shapes[0].data is None:
+        return False
+    data = shapes[0].data
+    verts = _transformed_verts(shapes[0], root, data, 1.0)
+    tris = [(verts[a], verts[b], verts[c]) for a, b, c in data.get_triangles()
+            if a != b and b != c and a != c]
+    corners = {tuple(round(x, 3) for x in v) for v in verts}
+    return len(tris) == 12 and len(corners) == 8 and items_rest_inside(tris)
 
 
 def _collision_shapes(node, skip_markers: bool):
@@ -182,7 +202,7 @@ def _collision_shapes(node, skip_markers: bool):
             yield node
         return
     children = [c for c in (getattr(node, 'children', None) or [])
-                if c is not None]
+                if c is not None and not is_collision_node(c)]
     if type_name in _FIRST_CHILD_ONLY:
         children = children[:1]
     for child in children:

@@ -13,6 +13,7 @@ owns it, and what it is linked to. Region decoration (REGN, LSCR, WATR) lives in
 - [Exclusive LCEC cell ownership](#exclusive-lcec-cell-ownership)
 - [Teleport doors bucketed by worldspace](#teleport-doors-by-worldspace)
 - [TES3 exit-only door locks](#tes3-exit-only-door-locks)
+- [TES3 refs ship Don't Havok Settle](#tes3-dont-havok-settle)
 - [Nested interiors inherit a location](#nested-interiors-inherit-location)
 - [LAND DATA flags pass through VERBATIM](#land-data-flags-verbatim)
 - [WRLD land and water defaults](#wrld-land-and-water-defaults)
@@ -129,6 +130,44 @@ census-office pair (`0181D2D9` / `0181BCE5`) carries no lock at all, and it
 re-authored locks throughout — 232 locked pairs against Morrowind's 108, with
 the interior/exterior balance inverted. There is no algorithm in its data to
 copy.
+
+## <a id="tes3-dont-havok-settle"></a>TES3 refs ship Don't Havok Settle
+
+**Code:** `tes5_import/record_types/world_morrowind.py:tes3_refr_flags`
+
+Morrowind simulates no physics, so every placed item holds exactly the pose its
+author gave it: books overlapping a shelf, a cup floating a unit above a table.
+Converted items are dynamic Havok clutter, and Skyrim settles dynamic refs when
+their cell loads, so those poses fall, slide and get pushed out of whatever
+they overlap.
+
+Skyrim has an authored, per-reference answer: REFR record flag `0x20000000`,
+*Don't Havok Settle* (xEdit `wbDefinitionsTES5.pas`; the Creation Kit's
+reference dialog carries the checkbox). The CK wiki's Reference page:
+*"This object, if havokable, doesn't initially settle itself when the cell is
+finished loading. Note that if any objects near the object settle, this object
+will settle regardless of this flag. (For Arrows in targets, etc...)"*
+Bethesda's clutter tutorial recommends it for making objects look mounted on
+walls, and the Unofficial Patch fixed a dead goat stuck in Glenmoril Coven's
+table by ticking it.
+
+Vanilla census, Skyrim.esm REFRs carrying it: MISC 724 of 33,570, WEAP 321 of
+2,597, ALCH 245 of 15,941, ARMO 159 of 2,080, AMMO 141 of 468, BOOK 87 of
+4,682 -- a per-ref placement choice, used where the pose matters.
+
+Every TES3 placement is by construction an unsettled pose, so `convert_REFR`
+sets the flag on all of them (`is_tes3_source`). Setting it on every ref also
+removes the caveat above: no neighbor settles to drag a flagged item along. On
+a non-havok base it does nothing. The item stays an ordinary dynamic body; per
+the CK wiki the flag only skips the settle at cell load.
+
+Not verified: the game-side code that reads the bit. A scan of the 1.6.1170
+exe for `test`/`bt`/`shr` of bit 29 at `TESForm+0x10` found no site, so the
+read is compiled some other way; the evidence above is the CK's and the
+community's, not a disassembly.
+
+Morroblivion mode is untouched: `Morrowind_ob.esm` is a TES4 source whose
+placements its authors made under Oblivion's own settling.
 
 ## <a id="nested-interiors-inherit-location"></a>Nested interiors inherit a location
 

@@ -1,15 +1,22 @@
-"""Morrowind-specific placed-reference conversion: the exit-only door lock.
+"""Morrowind-specific placed-reference conversion.
 
 TES3 locks the door face the player activates; TES4 and TES5 lock the doorway,
 resolving the lock through the teleport pair.  A TES3 pair locked on its
 interior face alone is therefore passable inward in Morrowind and sealed in
 both directions here.
 
+TES3 simulates no physics, so every placed item holds the pose its author gave
+it; each ref ships with Skyrim's Don't Havok Settle flag.
+
 See: docs/commentary/tes5_import_world.md#tes3-exit-only-door-locks
+See: docs/commentary/tes5_import_world.md#tes3-dont-havok-settle
 """
 
 from ..dialogue.morrowind_sidecar import is_tes3_export
 from .common import get_formid, get_int
+
+#: REFR record flag: the ref is not settled by Havok when its cell loads.
+REFR_DONT_HAVOK_SETTLE = 0x20000000
 
 #: Placed refs whose authored TES3 lock is exit-only; see register_tes3_locks.
 _EXIT_ONLY_LOCKS: set = set()
@@ -93,6 +100,14 @@ def set_tes3_lock_state(state: tuple) -> None:
 def is_tes3_source() -> bool:
     """True when this run's source plugin is Morrowind."""
     return bool(_IS_TES3_SOURCE)
+
+
+def tes3_refr_flags(flags: int) -> int:
+    """REFR record `flags`, plus Don't Havok Settle for a Morrowind source.
+
+    See: docs/commentary/tes5_import_world.md#tes3-dont-havok-settle
+    """
+    return flags | REFR_DONT_HAVOK_SETTLE if is_tes3_source() else flags
 
 
 def lock_is_exit_only(rec: dict) -> bool:
