@@ -11,6 +11,7 @@
 - [Per-game asset namespace](#per-game-asset-namespace)
   - [A master is resolved by `record_dir`, never by joining its name](#master-resolved-by-record-dir)
     - [...and the ROOT it resolves against is found by marker, not by `.parent`](#export-root-by-marker)
+- [Loose .tga/.bmp textures are transcoded, not just copied](#loose-tgabmp-textures)
 - [The blacklist prune](#the-blacklist-prune)
 
 ## Oblivion parallax → Skyrim height maps (`asset_convert/texture/parallax.py`, opt-in, 2026-08-15)
@@ -939,3 +940,46 @@ dumping ground of `bell.dds`, `cube.dds`, `elevator01.dds`) is genuinely dead,
 but the rule to catch it would name one plugin's folder. Both are accepted
 dead weight: shipping a few hundred MB nothing reads is strictly cheaper than
 one texture that fails to ship.
+
+<a id="loose-tgabmp-textures"></a>
+## Loose .tga/.bmp textures are transcoded, not just copied
+
+**Code:** `asset_convert/texture/image_transcode.py`
+
+`tex_paths.as_dds` rewrites every `.tga`/`.bmp` reference in a converted NIF to
+`.dds`, because Morrowind and Oblivion both name the artist's source file while
+their archives ship the DDS and substitute the extension at load. Skyrim does
+not substitute, and it cannot read TGA or BMP at all.
+
+The rewrite is therefore only half a fix. A plugin that ships its art LOOSE
+rather than in a BSA has no DDS for the mesh's rewritten path to find, so the
+mesh renders untextured. Measured on Arktwend: 5,589 DDS ship, but 179 `.tga`
+and 78 `.bmp` do too, and **251 of those have no DDS twin** — every mesh naming
+one of them lost its diffuse. `arktwendenglish\a pmelise.tga` was the reported
+case; `pmelisenstrauch.NIF` asks for `a pmelise.dds`, which was never written.
+
+So the copy is followed by a transcode: any `.tga`/`.bmp` with no `.dds`
+sibling gets one written beside it, mip chain included. Skipping when the twin
+exists keeps the pass idempotent and, more importantly, stops it clobbering
+the DDS the plugin shipped itself or one the L8/specular/parallax repairs
+rewrote — which is also why it runs FIRST, before those passes, so they see
+the new files.
+
+`.jpg` is deliberately left alone (1 file on Arktwend). `as_dds` does not
+rewrite `.jpg`, so transcoding it would write a DDS nothing names while the
+mesh still points at a file Skyrim cannot read; the fix there is a path rewrite,
+not an encode.
+
+### DXT5 only when the alpha is real
+
+Format is picked from the pixels, not the source extension: DXT5 when any
+alpha sample is under 250, DXT1 otherwise. TGA authors habitually save 32-bit
+with a fully opaque alpha channel — 94 of the 172 orphaned TGAs read as RGBA —
+and taking those as DXT5 would double their size for nothing.
+
+Both block encoders already existed for the terrain LOD bake. A DXT5 block is
+a BC4 alpha block followed by an unmodified DXT1 color block, so
+`encode_bc4_channel` and `encode_dxt1_quality` compose into one without a new
+codec. The only gap was the header: `dds_header` writes one side into both
+dimensions, and 44 of these textures are non-square, so the width word is
+patched after the fact rather than duplicating the 128-byte layout.

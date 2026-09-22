@@ -25,6 +25,7 @@ from asset_convert.sources import bsa_extract
 from asset_convert.nif import grass_profile
 from asset_convert.character import hair_pipeline
 from asset_convert.texture import landscape_normals
+from asset_convert.texture import image_transcode
 from asset_convert.texture import luminance_textures
 from asset_convert.collision import mesh_scan_fragments
 from asset_convert.nif import nif_batch
@@ -295,6 +296,13 @@ def _copy_and_fix_textures(asset_dir, plugin_dir, ns, stats, rec_dir):
     tex_dst = plugin_dir / 'textures' / ns
     stats['textures_copied'] = _copy_tree(tex_src, tex_dst)
     print(f"  Textures: {stats['textures_copied']} files -> {tex_dst}")
+
+    tc_found, tc_written, tc_failed = image_transcode.run(tex_dst)
+    stats['tga_transcoded'] = tc_written
+    if tc_found:
+        print(f"  Loose TGA/BMP: {tc_found} found, {tc_written} "
+              f"transcoded to DDS"
+              + (f", {tc_failed} failed" if tc_failed else ""))
 
     lum_checked, lum_fixed = luminance_textures.run(tex_dst)
     stats['luminance_textures_fixed'] = lum_fixed

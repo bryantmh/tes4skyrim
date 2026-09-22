@@ -29,7 +29,7 @@ def bs_pp_texture_slots(prop):
 
 
 #: Source extensions that always ship as DDS, whatever the mesh calls them.
-_IMAGE_EXTS = ('tga', 'bmp')
+IMAGE_EXTS = ('tga', 'bmp')
 
 
 def rewrite_tex_path(raw_bytes):
@@ -68,6 +68,6 @@ def as_dds(path: str) -> str:
     load; without this every converted path names a file that does not exist.
     """
     stem, dot, ext = path.rpartition('.')
-    if dot and ext.lower() in _IMAGE_EXTS:
+    if dot and ext.lower() in IMAGE_EXTS:
         return stem + '.dds'
     return path
