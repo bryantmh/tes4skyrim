@@ -4,7 +4,8 @@ Morrowind stores no animation in a door mesh: the engine swings the whole
 REFERENCE 90 degrees about Z over one second. Skyrim has no such mechanism --
 its doors carry `Open`/`Close` sequences inside the NIF -- so a converted
 Morrowind door is a static prop until the sequences are synthesised, and the
-record type is the authored answer to "is this mesh a door?".
+record type is the authored answer to "is this mesh a door?". Whether a door
+CAN swing is a separate question the geometry answers, in `door_anim_morrowind`.
 See: docs/commentary/asset_convert_nif.md#morrowind-door-animation
 """
 

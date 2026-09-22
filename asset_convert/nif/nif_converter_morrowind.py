@@ -24,7 +24,8 @@ from asset_convert.collision.cms_builder import build_cms_collision
 from asset_convert.collision.collision import GAME_UNITS_PER_HAVOK
 from asset_convert.collision.collision_hulls import build_clutter_hull
 from asset_convert.collision.clutter_plan import mesh_clutter_mass
-from asset_convert.nif.door_anim_morrowind import animate_morrowind_door
+from asset_convert.nif.door_anim_morrowind import (animate_morrowind_door,
+                                                   strip_hingeless_swing)
 from asset_convert.nif.door_plan import mesh_is_door
 from asset_convert.havok.hkx_ragdoll_morrowind import attach_synthetic_bodies
 from asset_convert.nif.nif_materials_morrowind import (
@@ -360,6 +361,23 @@ def attach_morrowind_collision(root, stats=None) -> bool:
     _count(stats, 'mw_collision_built', int(built))
     _count(stats, 'mw_collision_generated', int(built and generated))
     return built
+
+
+def strip_spinning_doors(data, stats=None) -> int:
+    """Drop any authored swing whose panel has no hinge; how many.
+
+    Morroblivion baked a 92 degree rotation onto Morrowind's centred load
+    doors, which spins them through their own frame.
+    See: docs/commentary/asset_convert_nif.md#a-door-turns-about-its-edge
+    """
+    if not mesh_is_door():
+        return 0
+    stripped = 0
+    for root in data.roots:
+        if root is not None and strip_hingeless_swing(root):
+            stripped += 1
+    _count(stats, 'mw_doors_unspun', stripped)
+    return stripped
 
 
 def animate_doors(data, stats=None) -> int:

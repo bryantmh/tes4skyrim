@@ -43,7 +43,7 @@ from asset_convert.nif.nif_materials_morrowind import carry_havok_material
 from asset_convert.nif.nif_converter_morrowind import (
     animate_doors, attach_morrowind_collision, build_skin_partitions,
     disable_specular, is_morrowind, run_morrowind_fixups,
-    strip_collision_nodes)
+    strip_collision_nodes, strip_spinning_doors)
 from asset_convert.nif.tex_paths import rewrite_tex_path
 from asset_convert.nif.shaders import (ALPHA_BLEND_ENABLED,
                                        ALPHA_DST_ONE, ALPHA_DST_SHIFT,
@@ -89,6 +89,7 @@ from asset_convert.character.wearable_plan_falloutnv import shield_flags
 from asset_convert.havok.hkx_skeleton import BONE_RENAMES
 from asset_convert.character import wearable_plan as wp
 from asset_convert.collision.clutter_plan import latch_clutter_mass
+from asset_convert.nif.door_anim_morrowind import latch_source_hinge
 from asset_convert.nif.door_plan import latch_door_model
 from asset_convert.character.body_wrap import morph_converted_to_weight1
 from asset_convert.havok.hkx_animobject import generate_animobject_project
@@ -974,6 +975,8 @@ def _convert_roots(data, stats, fix_textures, src_path, creature,
         strip_collision_nodes(data, stats)
         disable_specular(data, stats)
         animate_doors(data, stats)
+    else:
+        strip_spinning_doors(data, stats)
 
 
 def _convert_nif(data, fix_textures=True, src_path='', weight=0,
@@ -1177,6 +1180,7 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         return result
     _worn, _biped_flags = _authored_wear(src_path, src_meshes_dir, wearable_plan,
                                          creature, hair)
+    latch_source_hinge(data)
 
     stats = _convert_nif(data, fix_textures=fix_textures,
                          src_path=str(src_path), creature=creature,

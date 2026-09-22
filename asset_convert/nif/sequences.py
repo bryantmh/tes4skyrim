@@ -378,8 +378,8 @@ def _seq_name_resolver(palette):
                 return palette.get_string(val)
             except Exception:
                 pass
-        return _palette_lookup(
-            _palette_bytes(getattr(seq, 'string_palette', None)),
+        return palette_lookup(
+            palette_bytes(getattr(seq, 'string_palette', None)),
             getattr(blk, attr + '_offset', None))
     return resolve
 
@@ -650,18 +650,18 @@ def _hide_named_nodes(root, name):
 
 def _vis_entries(block):
     """(entry, node name) for each NiVisController entry in a sequence."""
-    raw = _palette_bytes(getattr(block, 'string_palette', None))
+    raw = palette_bytes(getattr(block, 'string_palette', None))
     out = []
     for cb in block.controlled_blocks:
         ctrl_type = bytes(getattr(cb, 'controller_type', b'') or b'')
         if not ctrl_type:
-            ctrl_type = _palette_lookup(
+            ctrl_type = palette_lookup(
                 raw, getattr(cb, 'controller_type_offset', None))
         if ctrl_type != b'NiVisController':
             continue
         name = bytes(getattr(cb, 'node_name', b'') or b'')
         if not name:
-            name = _palette_lookup(raw, getattr(cb, 'node_name_offset', None))
+            name = palette_lookup(raw, getattr(cb, 'node_name_offset', None))
         if name:
             out.append((cb, name))
     return out
@@ -730,14 +730,14 @@ def attach_seq_shader_controllers(root, stats=None):
     for block in root.tree():
         if not isinstance(block, NifFormat.NiControllerSequence):
             continue
-        raw = _palette_bytes(getattr(block, 'string_palette', None))
+        raw = palette_bytes(getattr(block, 'string_palette', None))
         for cb in block.controlled_blocks:
             ctrl = cb.controller
             if ctrl is None or 'ShaderProperty' not in ctrl.__class__.__name__:
                 continue
             name = bytes(getattr(cb, 'node_name', b'') or b'')
             if not name:
-                name = _palette_lookup(raw, getattr(cb, 'node_name_offset', None))
+                name = palette_lookup(raw, getattr(cb, 'node_name_offset', None))
             shader = shaders.get(name)
             if shader is None or _already_chained(shader, ctrl):
                 continue
@@ -809,7 +809,7 @@ def autoplay_ambient_sequences(root, stats=None):
     return renamed
 
 
-def _palette_bytes(string_palette):
+def palette_bytes(string_palette):
     """Raw NUL-separated blob out of a NiStringPalette ref, or b''.
 
     PyFFI nests it: NiStringPalette.palette is a StringPalette struct whose own
@@ -827,7 +827,7 @@ def _palette_bytes(string_palette):
         return b''
 
 
-def _palette_lookup(raw, offset):
+def palette_lookup(raw, offset):
     """Read the NUL-terminated string at `offset` in a palette blob."""
     if not raw or offset is None or offset == 0xFFFFFFFF or offset >= len(raw):
         return b''
@@ -927,13 +927,13 @@ def match_seq_shader_types(root):
     for blk in root.tree():
         if not isinstance(blk, NifFormat.NiControllerSequence):
             continue
-        raw = _palette_bytes(getattr(blk, 'string_palette', None))
+        raw = palette_bytes(getattr(blk, 'string_palette', None))
         for cb in blk.controlled_blocks:
             if cb.controller is None:
                 continue
             name = bytes(getattr(cb, 'node_name', b'') or b'')
             if not name:
-                name = _palette_lookup(raw, getattr(cb, 'node_name_offset', None))
+                name = palette_lookup(raw, getattr(cb, 'node_name_offset', None))
             _restamp_entry(cb, name, shader_of, shader_block_of)
 
     _normalize_shader_cb_strings(root)
@@ -973,7 +973,7 @@ def _retarget_geometry_suffix_entries(root):
     for blk in root.tree():
         if not isinstance(blk, NifFormat.NiControllerSequence):
             continue
-        raw = _palette_bytes(getattr(blk, 'string_palette', None))
+        raw = palette_bytes(getattr(blk, 'string_palette', None))
         for cb in blk.controlled_blocks:
             ctrl = cb.controller
             cn = ctrl.__class__.__name__ if ctrl is not None else ''
@@ -983,7 +983,7 @@ def _retarget_geometry_suffix_entries(root):
                 continue
             name = bytes(getattr(cb, 'node_name', b'') or b'')
             if not name:
-                name = _palette_lookup(raw, getattr(cb, 'node_name_offset', None))
+                name = palette_lookup(raw, getattr(cb, 'node_name_offset', None))
             shader = _resolve_geometry_suffix(root, name)
             if shader is None:
                 continue

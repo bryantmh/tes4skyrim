@@ -2167,25 +2167,106 @@ double it.
 ### The hinge is the mesh origin, because Morrowind's is
 
 Morrowind rotates the reference, so the pivot is the REFR origin and the
-authored hinge is wherever the mesh meets it. A census of the 91 models
-`DOOR.txt` names (`--bbox` world extents, classified by which horizontal axis
-is thin) finds 29 authored hinge-at-origin (`In_impsmall_door_01` spans
-y[-118.4, 0.1]) and 62 centred on it (`Ex_common_door_01` spans
-x[-67.9, 67.9]). The converter re-pivots NEITHER: rotating about the mesh
-origin is exactly what Morrowind does, so a centred panel spins about its
-middle in Skyrim precisely as it did in Morrowind. Re-pivoting would be a
-change of behaviour, not a fix — and the centred set is overwhelmingly the
-teleport doors, grates and doorway frames, which never swing in either game.
+authored hinge is wherever the mesh meets it. The converter re-pivots nothing:
+turning about the mesh origin is exactly what Morrowind does.
 
-### Every door mesh gets the sequences, including the load doors
+<a id="a-door-turns-about-its-edge"></a>
 
-A base is not reliably one kind or the other. Splitting the 139 DOOR bases by
-whether their REFRs carry `XTEL`: 27 bases are swing-only, 81 teleport-only and
-**23 are BOTH** — `In_velothismall_ndoor_01` alone has 438 plain and 516
-teleport references. The mesh cannot encode the distinction, and it does not
-need to: a Skyrim teleport door ignores its `Open`/`Close` sequences, exactly
-as vanilla does. `orcdoorload01.nif` — a vanilla Skyrim LOAD door — ships the
-sequences anyway, which settles it.
+### A door turns about its EDGE, so a centred panel gets no swing
+
+Not every door mesh can be swung about that origin. A hinged door's panel lies
+entirely to one side of its pivot; a panel wrapped AROUND the pivot would sweep
+through its own frame, which is a revolving door, and neither game ships one.
+Such a mesh has no hinge, and synthesising a rotation for it invents motion
+that the source never had — in Morrowind a load door does not rotate at all,
+because `Door::activate` returns its `ActionTeleport` first.
+
+`hinge_offset` measures the panel's centre against its own half-width, **in the
+ROOT's frame**, because that is where the synthesised `Door01` hinge is inserted
+and where its sequences turn.
+
+The frame is the whole point. `In_CI_door_01`'s shapes sit at translation
+(59.2, −2.7) carrying geometry centred at (−59.2, 0.0): measured in each shape's
+own space that is a ratio of 0.532, and an earlier version animated it — but the
+two cancel at the root, where the ratio is 0.015. Synthesis re-parents every
+child under one hinge at the mesh origin, so a swing built there sweeps the panel
+through its own middle. 13 Morrowind doors were spinning in game for exactly
+this reason.
+
+| Mesh | Ratio at root | Verdict |
+|---|---|---|
+| `In_impsmall_door_01` | 1.005 | hinged |
+| `Ex_t_door_01` | 0.641 | hinged |
+| `Ex_nord_door_01` | 0.180 | no hinge |
+| `Ex_common_door_01` | 0.181 | no hinge |
+| `In_CI_door_01` | 0.015 | no hinge |
+
+`strip_hingeless_swing` measures per DRIVEN NODE instead, since an authored
+sequence turns a node the root cannot see: `DEMdoorAnim01Door` sits at (48.8,
+2.9) with its panel beneath it, invisible from a root at the origin.
+
+### The verdict is latched on the SOURCE mesh
+
+`latch_source_hinge` runs in `convert_nif` immediately after `_read_source`,
+before any pass alters the tree, and `animate_morrowind_door` reads that latch
+rather than re-measuring. Measuring later disagrees with the authored geometry:
+`strip_collision_nodes` runs first, and `Ex_nord_door_01`'s collision node is
+half the mesh's width, so dropping it took the measured total from 195.4 to
+114.5 and flipped the door from hingeless to hinged. Any measure relative to
+the tree is unstable while passes add and remove siblings.
+
+`strip_spinning_doors` runs only on the non-Morrowind branch, so it can never
+remove the swing synthesis has just built.
+
+Measured across the corpus at a 0.25 cutoff, **every door that swings is
+hinged, with no exception**: 8/8 Morrowind, 18/18 Morroblivion, 66/66 Oblivion.
+The 15 Oblivion non-teleport meshes that score below it are portcullises and
+iron gates, which lift rather than turn and carry translation sequences, not
+rotations. On the other side, 30 Morrowind and 53 Morroblivion door models are
+centred on their pivot and get no synthesised swing.
+
+Morroblivion re-exported those same centred Morrowind meshes with a 92 degree Z
+rotation baked in, so its load doors visibly spin about their middle in game.
+`Ex_common_door_01` scores 0.181 from either plugin — the identical mesh, the
+identical verdict — so the authored geometry settles it without reference to
+which plugin supplied it.
+
+### Every hinged door mesh gets the sequences, including the load doors
+
+Among hinged meshes a base is not reliably one kind or the other. Splitting the
+139 DOOR bases by whether their REFRs carry `XTEL`: 27 bases are swing-only, 81
+teleport-only and **23 are BOTH** — `In_velothismall_ndoor_01` alone has 438
+plain and 516 teleport references. The mesh cannot encode that distinction, and
+it does not need to: a Skyrim teleport door ignores its `Open`/`Close`
+sequences, exactly as vanilla does. `orcdoorload01.nif` — a vanilla Skyrim LOAD
+door — ships the sequences anyway, which settles it.
+
+
+
+<a id="teleport-door-static-twin"></a>
+
+### REJECTED: a per-reference static twin keyed on XTEL
+
+An earlier fix read the swing as a property of the REFERENCE, since both source
+games gate it there — `Door::activate` returns its `ActionTeleport` before
+reaching the `// animated door` branch (`mwclass/door.cpp:183`), so an `XTEL`
+reference never rotates, and Skyrim has no such gate. Because the same base
+routinely serves both uses (`in_velothismall_ndoor_01`: 438 plain against 516
+teleport), the decision could not sit on the base, so the build minted a twin
+DOOR base per teleport-used model, naming a `*Static.nif` with the sequences
+stripped, and `_refr_base_formid` retargeted teleport references to it.
+
+It was removed. Rewriting REFR base pointers modifies Oblivion by construction
+— 287 bases and 162 meshes — and Oblivion's doors were already correct. The
+mechanism answered "which references must not swing" when the defect was
+narrower: **which meshes cannot swing at all.** That is a property of the
+geometry, so it is settled in the mesh by
+[the hinge measurement](#a-door-turns-about-its-edge), no record-level
+machinery and no `XTEL` read. A hinged door that also teleports keeps its
+swing, which is what Oblivion ships: `AnvilDoorMCAnim01` is a hand-authored
+teleport swing, as are 16 teleport-only and 18 mixed bases, with durations from
+1.43s to 5.67s, multi-node drives, overshoot and settle, and double doors
+turning opposite ways (`CDoor03`: −86.7 and +91.9 degrees).
 
 
 ## Morrowind surface materials
