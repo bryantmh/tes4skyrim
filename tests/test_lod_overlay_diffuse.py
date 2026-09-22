@@ -134,9 +134,21 @@ class TestRedirectOverlayDiffuses:
         _dxt5(_rock(tmp_path))
         data, prop = _nif_with(nif, OVERLAY)
         assert lod_far_gen.redirect_overlay_diffuses(
-            data, tmp_path, OVERLAYS) == 1
+            data, (tmp_path,), OVERLAYS) == 1
         assert _slot0(prop).lower().endswith('greatforestrock03_lod.dds')
         assert _fourcc(_rock(tmp_path, 'greatforestrock03_lod.dds')) == b'DXT1'
+
+    def test_the_copy_is_written_to_the_lod_mod_only(self, tmp_path, nif):
+        """The plugin's tree is read, never written: a BSA packs it earlier."""
+        lod, plugin = tmp_path / 'lod', tmp_path / 'plugin'
+        _dxt5(_rock(plugin))
+        data, prop = _nif_with(nif, OVERLAY)
+        assert lod_far_gen.redirect_overlay_diffuses(
+            data, (lod, plugin), OVERLAYS) == 1
+        assert _rock(lod, 'greatforestrock03_lod.dds').is_file()
+        assert sorted(p.name for p in plugin.rglob('*.dds')) == [
+            'greatforestrock03.dds']
+        assert _slot0(prop).lower().endswith('greatforestrock03_lod.dds')
 
     def test_the_original_keeps_its_alpha(self, tmp_path, nif):
         """The full-size mesh still needs it as a detail blend weight."""
@@ -144,7 +156,7 @@ class TestRedirectOverlayDiffuses:
         _dxt5(src)
         before = src.read_bytes()
         data, _prop = _nif_with(nif, OVERLAY)
-        lod_far_gen.redirect_overlay_diffuses(data, tmp_path, OVERLAYS)
+        lod_far_gen.redirect_overlay_diffuses(data, (tmp_path,), OVERLAYS)
         assert src.read_bytes() == before
 
     def test_a_diffuse_outside_the_manifest_is_left_alone(self, tmp_path, nif):
@@ -153,7 +165,7 @@ class TestRedirectOverlayDiffuses:
         _dxt5(mask)
         data, prop = _nif_with(nif, MASK)
         assert lod_far_gen.redirect_overlay_diffuses(
-            data, tmp_path, OVERLAYS) == 0
+            data, (tmp_path,), OVERLAYS) == 0
         assert _slot0(prop).lower().endswith('treedeodar.dds')
         assert not mask.with_name('treedeodar_lod.dds').exists()
 
@@ -161,7 +173,7 @@ class TestRedirectOverlayDiffuses:
         """A plugin that authored no overlays must not gain _lod copies."""
         _dxt5(_rock(tmp_path))
         data, prop = _nif_with(nif, OVERLAY)
-        assert lod_far_gen.redirect_overlay_diffuses(data, tmp_path, set()) == 0
+        assert lod_far_gen.redirect_overlay_diffuses(data, (tmp_path,), set()) == 0
         assert _slot0(prop).lower().endswith('greatforestrock03.dds')
 
     def test_a_diffuse_with_no_alpha_is_left_alone(self, tmp_path, nif):
@@ -169,7 +181,7 @@ class TestRedirectOverlayDiffuses:
         _dxt1(_rock(tmp_path))
         data, prop = _nif_with(nif, OVERLAY)
         assert lod_far_gen.redirect_overlay_diffuses(
-            data, tmp_path, OVERLAYS) == 0
+            data, (tmp_path,), OVERLAYS) == 0
         assert _slot0(prop).lower().endswith('greatforestrock03.dds')
         assert not _rock(tmp_path, 'greatforestrock03_lod.dds').exists()
 
@@ -177,14 +189,14 @@ class TestRedirectOverlayDiffuses:
         """No file to copy means no redirect -- never a dangling reference."""
         data, prop = _nif_with(nif, OVERLAY)
         assert lod_far_gen.redirect_overlay_diffuses(
-            data, tmp_path, OVERLAYS) == 0
+            data, (tmp_path,), OVERLAYS) == 0
         assert _slot0(prop).lower().endswith('greatforestrock03.dds')
 
     def test_every_mip_level_survives(self, tmp_path, nif):
         """The old LOD-local copy was written mipless; this one is not."""
         _dxt5(_rock(tmp_path), blocks=4)
         data, _prop = _nif_with(nif, OVERLAY)
-        lod_far_gen.redirect_overlay_diffuses(data, tmp_path, OVERLAYS)
+        lod_far_gen.redirect_overlay_diffuses(data, (tmp_path,), OVERLAYS)
         blob = _rock(tmp_path, 'greatforestrock03_lod.dds').read_bytes()
         assert struct.unpack_from('<I', blob, _OFF_MIPS)[0] == 1
         assert len(blob) - 128 == 4 * 8
@@ -193,12 +205,12 @@ class TestRedirectOverlayDiffuses:
         """A second pass must not rewrite a file another worker may be using."""
         _dxt5(_rock(tmp_path))
         data, _prop = _nif_with(nif, OVERLAY)
-        lod_far_gen.redirect_overlay_diffuses(data, tmp_path, OVERLAYS)
+        lod_far_gen.redirect_overlay_diffuses(data, (tmp_path,), OVERLAYS)
         lod = _rock(tmp_path, 'greatforestrock03_lod.dds')
         stamp = lod.read_bytes()
         data2, prop2 = _nif_with(nif, OVERLAY)
         assert lod_far_gen.redirect_overlay_diffuses(
-            data2, tmp_path, OVERLAYS) == 1
+            data2, (tmp_path,), OVERLAYS) == 1
         assert lod.read_bytes() == stamp
         assert _slot0(prop2).lower().endswith('greatforestrock03_lod.dds')
 
@@ -212,5 +224,5 @@ class TestRedirectOverlayDiffuses:
         _dxt5(_rock(tmp_path))
         data, prop = _nif_with(nif, OVERLAY, raw=raw)
         assert lod_far_gen.redirect_overlay_diffuses(
-            data, tmp_path, OVERLAYS) == 1
+            data, (tmp_path,), OVERLAYS) == 1
         assert _slot0(prop).lower().endswith('greatforestrock03_lod.dds')

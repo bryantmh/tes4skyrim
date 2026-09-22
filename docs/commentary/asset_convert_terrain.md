@@ -530,6 +530,33 @@ uncompressed DDS and put 192 paths in two mods at once; that fix has been
 removed entirely. See
 [asset_convert_shader.md](asset_convert_shader.md#detail-overlay-diffuses).
 
+### <a id="the-bake-never-writes-a-plugin-folder"></a>The bake never writes into a plugin's folder
+
+Everything the bake GENERATES goes here, textures included: the opaque
+`<name>_lod.dds` overlay copies, rendered tree billboards, and the flat
+`<tree>_n.dds` billboard normals. Each has a path of its own, so none shadows a
+plugin file. Plugin folders are read-only inputs (`find_texture` searches
+`tex_roots` in order; only `tex_roots[0]`, this mod, is written).
+
+They used to land in `output/<plugin>/textures/`. That tree is what `--pack-only`
+archives, and the bake runs after it, so a BSA install lacked them while a loose
+install had them: the "missing rock / distant tree texture" reports. Measured in
+the plugin folders before the move: Oblivion 25 `_lod` copies (18 rocks) and 117
+flat normals, FalloutNV 130, TWMP 72, Unique Landscapes 63, ElsweyrAnequina 41,
+Morrowind_ob 16. `tools/lod/render_tree_billboard.py` writes here for the same
+reason.
+
+### <a id="render-a-missing-billboard"></a>A tree without a billboard gets one rendered, never decimated
+
+Decimating a canopy is catastrophic at LOD scale: the card is 8 verts, the
+decimated tree is 25-330 KB, and it is baked once per placement. Censused across
+the load order, 113 such trees accounted for 3.35 GB of baked geometry that
+becomes 0.05 GB as cards (63x lighter); `dementiatree10l` alone, 8,006
+placements in one level-16 tile, drove that tile to 663 MB. So
+`_far_nif_worker` renders the missing billboard and decimates only if rendering
+fails. The render resolves leaf textures against every sibling output folder, so
+a plugin's trees find their master's textures.
+
 Measured before the change. Scanning 28,828 non-`_far` files (meshes, `.bto`
 tiles, records) across FalloutNV, Oblivion and AutoConvertLOD for any reference
 to a `_far`/`_far8`/`_far16`/`_lod` mesh found **one** hit: `Oblivion.esm`

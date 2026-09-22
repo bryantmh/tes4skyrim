@@ -1103,7 +1103,7 @@ def _derive_far_meshes(stats, output_dir, referenced_models, far_nif_dirs,
         generate_missing_far_nifs(stats, output_dir / 'meshes',
                                   referenced_models=referenced_models,
                                   force_regen_generated=True,
-                                  tex_root=output_dir / 'textures')
+                                  tex_roots=(output_dir / 'textures',))
         return
     overlays = _overlays_by_asset_dir(far_nif_dirs, overlay_manifest_dirs)
     by_dir = _far_owner_dirs(referenced_models, far_nif_dirs)
@@ -1111,7 +1111,8 @@ def _derive_far_meshes(stats, output_dir, referenced_models, far_nif_dirs,
     for d, models in by_dir.items():
         made += generate_missing_far_nifs(
             stats, d / 'meshes', referenced_models=models,
-            force_regen_generated=True, tex_root=d / 'textures',
+            force_regen_generated=True,
+            tex_roots=(output_dir / 'textures', d / 'textures'),
             gen_meshes_dir=output_dir / 'meshes',
             overlay_diffuses=overlays.get(Path(d)))
         for model in models:

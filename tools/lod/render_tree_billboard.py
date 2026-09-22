@@ -4,7 +4,9 @@ The rendering itself lives in `asset_convert/lod/tree_billboard.py`, because the
 LOD pipeline calls it directly: `lod_far_gen._far_nif_worker` renders a missing
 billboard on the spot so no tree ever reaches the geometry simplifier.  This
 wrapper exists for ad-hoc runs — filling in a whole load order up front, or
-re-rendering after changing the shading constants.
+re-rendering after changing the shading constants.  Renders land in the LOD
+mod's textures, never a plugin's.
+See: docs/commentary/asset_convert_terrain.md#the-bake-never-writes-a-plugin-folder
 
 Usage:
     python -m tools.lod.render_tree_billboard --all [--workers N] [--dry-run]
@@ -26,10 +28,17 @@ from core.worker_budget import worker_count
 from asset_convert.game_paths import win_join
 from asset_convert.lod.esm_scan import parse_esm
 from asset_convert.lod.lod_far_gen import is_tree_model
+from asset_convert.lod.sibling_lod import LOD_DIR_NAME
 from asset_convert.lod.tree_billboard import (billboard_dir, BS, render_billboard,
                                           write_dds_rgba)
 
 configure_multiprocessing()
+
+
+def billboard_dst(out_root: Path, stem: str) -> Path:
+    """Where a render is written: the LOD mod's textures, never a plugin's."""
+    return win_join(out_root / LOD_DIR_NAME / 'textures',
+                    billboard_dir() + BS + stem + '.dds')
 
 
 def tree_models(plugin_dirs):
@@ -138,7 +147,7 @@ def main():
         if not src.exists():
             nomesh += 1
             continue
-        dst = win_join(base / 'textures', billboard_dir() + BS + stem + '.dds')
+        dst = billboard_dst(out_root, stem)
         tasks.append((str(src), str(dst), [str(t) for t in tex_roots], a.size))
 
     print('to render: %d   already had: %d   no mesh shipped: %d'

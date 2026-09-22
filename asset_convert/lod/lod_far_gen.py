@@ -73,6 +73,18 @@ def billboard_tex_dir() -> str:
     return current_namespace() + '\\trees\\billboards'
 
 
+def find_texture(tex_roots, rel) -> 'Path | None':
+    """`rel` under the first of `tex_roots` holding it, else None.
+
+    `tex_roots[0]` is the LOD mod's textures dir, the ONLY one the bake writes.
+    """
+    for root in tex_roots:
+        p = win_join(root, rel)
+        if p.exists():
+            return p
+    return None
+
+
 _SKYRIM_VER = 0x14020007
 _NIF_FLAGS  = 14
 
@@ -465,15 +477,15 @@ def _billboard_geometry(width: float, z_bottom: float, z_top: float):
 
 
 def generate_tree_billboard_far(dst_path: Path, obnd, model_rel: str,
-                                tex_root: Path) -> bool:
+                                tex_roots) -> bool:
     """Write a crossed-quad billboard _far.nif for a TREE model.
 
     Uses Oblivion's own shipped billboard render
-    (textures\\tes4\\trees\\billboards\\<model stem>.dds â€” a full-tree render
-    including the trunk).  Card size comes from OBND, which the importer
-    derived from the billboard dimensions, so proportions match.  Returns
-    False if the billboard texture doesn't exist (caller falls back to
-    geometry decimation).
+    (textures\\tes4\\trees\\billboards\\<model stem>.dds, trunk included),
+    found through `find_texture(tex_roots)`; a missing flat normal is written
+    into `tex_roots[0]`.  Card size comes from OBND, which the importer
+    derived from the billboard dimensions.  Returns False if the billboard
+    texture doesn't exist (caller falls back to geometry decimation).
     """
     stem = os.path.splitext(os.path.basename(
         model_rel.replace('\\', '/')))[0].lower()
@@ -489,17 +501,16 @@ def generate_tree_billboard_far(dst_path: Path, obnd, model_rel: str,
     if _bare and _bare != stem:
         candidates.append(_bare)
     for _cand in candidates:
-        if win_join(tex_root, f'{billboard_tex_dir()}\\{_cand}.dds').exists():
+        if find_texture(tex_roots, f'{billboard_tex_dir()}\\{_cand}.dds'):
             stem = _cand
             break
     else:
         return False
     diffuse_rel = f'{billboard_tex_dir()}\\{stem}.dds'
     normal_rel = f'{billboard_tex_dir()}\\{stem}_n.dds'
-    normal_path = win_join(tex_root, normal_rel)
-    if not normal_path.exists():
+    if find_texture(tex_roots, normal_rel) is None:
         try:
-            _write_billboard_flat_normal(normal_path)
+            _write_billboard_flat_normal(win_join(tex_roots[0], normal_rel))
         except Exception:
             return False
 
@@ -632,7 +643,7 @@ def generate_far_nif(src_path: Path, dst_path: Path,
                      decimate_ratio: float = _DECIMATE_RATIO,
                      cap: int = _NO_CAP,
                      max_dev_frac: float = MAX_DEV_FRAC,
-                     tex_root=None, overlays=None) -> bool:
+                     tex_roots=None, overlays=None) -> bool:
     """Generate dst_path (_far.nif) by decimating each shape in src_path.
 
     Only processes NIFs already in Skyrim format (v20.2.0.7).
@@ -651,7 +662,7 @@ def generate_far_nif(src_path: Path, dst_path: Path,
         return False
     return _decimate_and_write(nif_data, src_path.stem, dst_path,
                                decimate_ratio, cap, max_dev_frac,
-                               tex_root, overlays)
+                               tex_roots, overlays)
 
 
 def _read_skyrim_nif(src_path: Path):
@@ -764,13 +775,14 @@ def _shader_properties(nif_data):
                 yield block
 
 
-def redirect_overlay_diffuses(nif_data, tex_root: Path, overlays) -> int:
+def redirect_overlay_diffuses(nif_data, tex_roots, overlays) -> int:
     """Point a LOD mesh at opaque copies of its detail-overlay diffuses.
 
     `overlays` is the AUTHORED APPLY_HILIGHT2 set mesh conversion recorded,
     whose diffuse alpha is a blend weight the LOD object shader would read as
     opacity. The copy takes its OWN `_lod.dds` name rather than shadowing the
     plugin's texture, which one-file-per-path would hand to full meshes too.
+    The source is found through `find_texture`; the copy goes to `tex_roots[0]`.
     See: docs/commentary/asset_convert_shader.md#detail-overlay-diffuses
     """
     pre = 'textures' + BS
@@ -786,8 +798,8 @@ def redirect_overlay_diffuses(nif_data, tex_root: Path, overlays) -> int:
         if key.replace(BS, '/') not in overlays:
             continue
         lod_rel = lod_diffuse_rel(key)
-        if _write_opaque_copy(win_join(tex_root, key),
-                              win_join(tex_root, lod_rel)):
+        src = find_texture(tex_roots, key)
+        if src and _write_opaque_copy(src, win_join(tex_roots[0], lod_rel)):
             ts.textures[0] = (pre + lod_rel).encode('latin-1')
             done += 1
     return done
@@ -795,15 +807,15 @@ def redirect_overlay_diffuses(nif_data, tex_root: Path, overlays) -> int:
 
 def _decimate_and_write(nif_data, src_stem: str, dst_path: Path,
                         decimate_ratio: float, cap: int,
-                        max_dev_frac: float, tex_root=None,
+                        max_dev_frac: float, tex_roots=None,
                         overlays=None) -> bool:
     """Decimate an already-parsed NIF in place and write it to dst_path."""
     if not _decimate_nif_inplace(nif_data, decimate_ratio, cap, max_dev_frac):
         return False
-    return _write_decimated(nif_data, src_stem, dst_path, tex_root, overlays)
+    return _write_decimated(nif_data, src_stem, dst_path, tex_roots, overlays)
 
 
-def _write_decimated(nif_data, src_stem: str, dst_path: Path, tex_root=None,
+def _write_decimated(nif_data, src_stem: str, dst_path: Path, tex_roots=None,
                      overlays=None) -> bool:
     """Write an already-decimated NIF to dst_path (+ its .generated marker).
 
@@ -813,8 +825,8 @@ def _write_decimated(nif_data, src_stem: str, dst_path: Path, tex_root=None,
     coarser `_far8`/`_far16` tiers are written straight through this.
     """
     strip_parallax(nif_data)
-    if tex_root is not None and overlays:
-        redirect_overlay_diffuses(nif_data, tex_root, overlays)
+    if tex_roots and overlays:
+        redirect_overlay_diffuses(nif_data, tex_roots, overlays)
 
     # Rename root to <stem>_far
     for root in nif_data.roots:
@@ -862,7 +874,7 @@ def has_authored_lod(src_meshes_dir, far_rel) -> bool:
 
 
 def _plan_far_tasks(stats, src_meshes_dir, gen_meshes_dir, referenced_models,
-                    force_regen_generated, tex_root, overlays=None):
+                    force_regen_generated, tex_roots, overlays=None):
     """(_far_nif_worker task tuples, models seen) for one plugin tree.
 
     Full models and AUTHORED _far.nif resolve against `src_meshes_dir`; the
@@ -899,7 +911,7 @@ def _plan_far_tasks(stats, src_meshes_dir, gen_meshes_dir, referenced_models,
         if not src.exists() and not tree:
             continue
         need8 = need16 = (not tree) and obnd_max_dim(stat) >= LOD8_MIN_SIZE
-        tasks.append((src, dst, tree, stat.get('obnd'), rel, tex_root,
+        tasks.append((src, dst, tree, stat.get('obnd'), rel, tex_roots,
                       need8, need16, overlays))
     return tasks, seen
 
@@ -908,18 +920,17 @@ def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
                                referenced_models: 'set | None' = None,
                                workers: int = None,
                                force_regen_generated: bool = False,
-                               tex_root: 'Path | None' = None,
+                               tex_roots=None,
                                gen_meshes_dir: 'Path | None' = None,
                                overlay_diffuses: 'set | None' = None) -> int:
     """Generate _far.nif files for all LOD-flagged stats that lack one.
 
-    TREE-type stats get a billboard card; everything else is QEM-decimated.
-    `output_meshes_dir` is the SOURCE tree; `gen_meshes_dir` receives the
-    GENERATED ones and defaults to it. `tex_root` defaults to
-    <output_meshes_dir>/../textures. `force_regen_generated` rewrites files
-    with a .nif.generated marker; authored files are never overwritten.
-    `overlay_diffuses` is this plugin's APPLY_HILIGHT2 set, redirected by
-    `redirect_overlay_diffuses`. Returns the number created.
+    TREE stats get a billboard card; everything else is QEM-decimated.
+    `output_meshes_dir` is the SOURCE tree; `gen_meshes_dir` (default: it)
+    receives what is GENERATED. `tex_roots` (see `find_texture`) defaults to
+    the textures beside `gen_meshes_dir`, then `output_meshes_dir`.
+    `force_regen_generated` rewrites marked files, never authored ones.
+    `overlay_diffuses` is the plugin's APPLY_HILIGHT2 set. Returns the count.
 
     See: docs/commentary/asset_convert_terrain.md#generated-far-nif-belong-to-the-lod-mod
     """
@@ -927,14 +938,15 @@ def generate_missing_far_nifs(stats: dict, output_meshes_dir: Path,
 
     if workers is None:
         workers = worker_count()
-    if tex_root is None:
-        tex_root = output_meshes_dir.parent / 'textures'
     if gen_meshes_dir is None:
         gen_meshes_dir = output_meshes_dir
+    if tex_roots is None:
+        tex_roots = (gen_meshes_dir.parent / 'textures',
+                     output_meshes_dir.parent / 'textures')
 
     tasks, seen = _plan_far_tasks(stats, output_meshes_dir, gen_meshes_dir,
                                   referenced_models, force_regen_generated,
-                                  tex_root, overlay_diffuses)
+                                  tex_roots, overlay_diffuses)
 
     if not tasks:
         print(f'  LOD: all {len(seen)} unique models already have _far.nif')
@@ -980,13 +992,13 @@ def tier_path(far_path: Path, suffix: str) -> Path:
     return far_path.with_name(stem + suffix + '.nif')
 
 
-def _render_missing_billboard(src: Path, model_rel: str, tex_root: Path) -> bool:
+def _render_missing_billboard(src: Path, model_rel: str, tex_roots) -> bool:
     """Render the billboard texture for a tree that ships none.
 
-    Oblivion ships these; plugins often do not, and a tree without one used to
-    be decimated as full geometry.  Rendering it here keeps the billboard path
-    whole, so no tree ever reaches the simplifier.  Written next to the shipped
-    ones, lowercased like every lookup, so the next call finds it.
+    Written into `tex_roots[0]` at the lowercased shipped-billboard path, so
+    the next `find_texture` finds it.  Leaves resolve against `tex_roots` and
+    then every sibling output folder's textures.
+    See: docs/commentary/asset_convert_terrain.md#render-a-missing-billboard
     """
     from asset_convert.lod.tree_billboard import (render_billboard, write_dds_rgba,
                                  billboard_dir)
@@ -994,21 +1006,20 @@ def _render_missing_billboard(src: Path, model_rel: str, tex_root: Path) -> bool
         return False
     stem = os.path.splitext(os.path.basename(
         str(model_rel).replace('\\', '/')))[0].lower()
-    dst = win_join(tex_root, billboard_dir() + '\\' + stem + '.dds')
-    if dst.exists():
+    rel = billboard_dir() + '\\' + stem + '.dds'
+    if find_texture(tex_roots, rel):
         return True
     try:
-        # Sibling texture trees resolve a plugin's leaves against its master's.
-        roots = [Path(tex_root)]
-        parent = Path(tex_root).parent.parent
+        roots = [Path(r) for r in tex_roots]
+        parent = roots[-1].parent.parent
         if parent.is_dir():
             roots += [d / 'textures' for d in sorted(parent.iterdir())
                       if (d / 'textures').is_dir()
-                      and (d / 'textures') != Path(tex_root)]
+                      and (d / 'textures') not in roots]
         img = render_billboard(Path(src), roots, 512)
         if img is None:
             return False
-        write_dds_rgba(img, dst)
+        write_dds_rgba(img, win_join(tex_roots[0], rel))
         return True
     except Exception as exc:
         _report_far_nif_error('billboard %s' % stem, exc)
@@ -1016,27 +1027,22 @@ def _render_missing_billboard(src: Path, model_rel: str, tex_root: Path) -> bool
 
 
 def _far_nif_worker(args: tuple) -> bool:
-    """Top-level worker for multiprocessing.Pool â€” must be picklable."""
-    src, dst, tree, obnd, model_rel, tex_root, need8, need16, overlays = args
+    """Top-level worker for multiprocessing.Pool; must be picklable.
+
+    A tree with no billboard gets one rendered, and is decimated only if that
+    fails. See: docs/commentary/asset_convert_terrain.md#render-a-missing-billboard
+    """
+    src, dst, tree, obnd, model_rel, tex_roots, need8, need16, overlays = args
     if tree:
-        if generate_tree_billboard_far(dst, obnd, model_rel, tex_root):
+        if generate_tree_billboard_far(dst, obnd, model_rel, tex_roots):
             return True
-        # No shipped billboard for this tree â€” RENDER one rather than falling
-        # through to decimation.  Decimating a canopy is catastrophic at LOD
-        # scale: the card is 8 verts, the decimated tree is 25-330 KB, and it
-        # is baked once per placement.  Censused across the load order, 113
-        # such trees accounted for 3.35 GB of baked geometry that becomes
-        # 0.05 GB as cards â€” 63x lighter â€” and one of them
-        # (`dementiatree10l`, 8,006 placements in a single level-16 tile)
-        # drove that tile to 663 MB on its own.
-        if _render_missing_billboard(src, model_rel, tex_root):
-            if generate_tree_billboard_far(dst, obnd, model_rel, tex_root):
+        if _render_missing_billboard(src, model_rel, tex_roots):
+            if generate_tree_billboard_far(dst, obnd, model_rel, tex_roots):
                 return True
-        # Still nothing to draw with â€” fall back to decimation.
     if not dst.exists() or _is_generated(dst):
         if not src.exists():
             return False
-        if not generate_far_nif(src, dst, tex_root=tex_root,
+        if not generate_far_nif(src, dst, tex_roots=tex_roots,
                                 overlays=overlays):
             return False
 
@@ -1107,7 +1113,7 @@ def _far_nif_worker(args: tuple) -> bool:
                 except OSError:
                     pass
             continue
-        _write_decimated(nif_data, dst.stem, dst_tier, tex_root, overlays)
+        _write_decimated(nif_data, dst.stem, dst_tier, tex_roots, overlays)
     return True
 
 
