@@ -119,6 +119,17 @@ def test_starter_mod_repackages_itself_only(path):
     assert steps(path) == ["Package Start Mod"]
 
 
+@pytest.mark.parametrize("path", [
+    "tes_runtime/MorrowindRuntime.dll",
+    "tes_runtime/morrowind_runtime/plugin/game_calls.cpp",
+    "tes_runtime/morrowind_runtime/plugin/ids.h",
+    "tes_runtime/morrowind_runtime/build.bat",
+])
+def test_skse_runtime_repackages_itself_only(path):
+    """The committed SKSE plugin re-runs only its own packaging action."""
+    assert steps(path) == ["Package SKSE Mod"]
+
+
 # ── Shared plumbing legitimately means everything ─────────────────────────
 
 @pytest.mark.parametrize("path", [

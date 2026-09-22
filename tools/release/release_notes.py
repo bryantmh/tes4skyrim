@@ -60,6 +60,12 @@ output, so they stale nothing.  The bare `^core/` tail of the GUI rule is the
 safety net: a new module added there reads as a GUI change (which costs the
 user no re-runs) instead of falling through to the unmatched bucket, which asks
 for every step.
+
+tes_runtime/ (TESRuntime.dll, HavokWorldSize, and the MorrowindRuntime
+submodule beside it) is the same shape as TESGameSelect/: a committed,
+prebuilt SKSE plugin no conversion phase reads, packaged on its own by
+package_runtime_dll.py.  A change anywhere under it re-runs only "Package SKSE
+Mod", never a per-plugin step.
 """
 from __future__ import annotations
 
@@ -85,6 +91,11 @@ PACKAGING_STEPS = ["9. Pack BSAs", "10. Pack Mod Zip"]
 # that step alone instead of by anything at all being rebuilt.
 LOD_PACKAGING_STEP = "Pack LOD"
 LOD_PRODUCING_STEP = "Create LOD"
+
+#: Global actions packaging their own standalone artefact, never read by 9./10.
+STANDALONE_STEPS = frozenset(
+    {"Patch Skyrim", "Package Start Mod", "Package SKSE Mod",
+     LOD_PRODUCING_STEP, LOD_PACKAGING_STEP})
 
 # (regex over the repo-relative path, steps it forces).  First match wins per
 # rule list order, but every matching rule contributes -- a path may need
@@ -139,6 +150,7 @@ RULES: list[tuple[str, list[str]]] = [
     (r"^tools/release/create_lod\.py$",       ["Create LOD"]),
     (r"^tools/release/pack_lod\.py$",         ["Pack LOD"]),
     (r"^tools/release/package_start_mod\.py$", ["Package Start Mod"]),
+    (r"^tools/release/package_runtime_dll\.py$", ["Package SKSE Mod"]),
     (r"^tools/misc/convert_ui\.py$",          ["Convert UI"]),
     (r"^tools/",                  []),
     (r"^references/",             []),
@@ -149,6 +161,7 @@ RULES: list[tuple[str, list[str]]] = [
     # pipeline. Changing it makes the shipped zip stale, so it re-runs the
     # packaging action and nothing else -- no per-plugin step reads it.
     (r"^TESGameSelect/",          ["Package Start Mod"]),
+    (r"^tes_runtime/",            ["Package SKSE Mod"]),
     # Dependency preflight: gates the run before any phase starts and produces
     # no conversion output of its own, so a change here re-runs nothing.
     (r"^preflight\.py$",          []),
@@ -310,6 +323,7 @@ def steps_for_paths(paths: list[str],
 
     `gui_only_change` is True when the GUI itself changed but nothing that
     alters conversion output did -- the user needs a fresh GUI, not a re-run.
+    Unrecognised paths select no steps and are returned separately.
     """
     steps: set[str] = set()
     unmatched: list[str] = []
@@ -340,21 +354,9 @@ def steps_for_paths(paths: list[str],
     if run_all:
         steps.update(STEP_ORDER)
 
-    # Unrecognised paths select no steps.  They are reported separately so the
-    # reader decides what (if anything) they imply -- ticking all twelve boxes
-    # over one unmapped file made the checklist useless.
-
-    # Packaging only matters once something it packages was rebuilt.  Global
-    # actions each write a STANDALONE artefact the BSA/zip steps never read --
-    # "Patch Skyrim" its ARMA patch, "Package Start Mod" its own zip, "Create
-    # LOD" its own mod folder -- so none may drag per-plugin packaging in on
-    # its own.
-    if steps - {"Patch Skyrim", "Package Start Mod", LOD_PRODUCING_STEP,
-                LOD_PACKAGING_STEP}:
+    if steps - STANDALONE_STEPS:
         steps.update(PACKAGING_STEPS)
 
-    # A rebaked LOD folder makes its zip stale, exactly as a rebuilt plugin
-    # makes the per-plugin zip stale.
     if LOD_PRODUCING_STEP in steps:
         steps.add(LOD_PACKAGING_STEP)
 
