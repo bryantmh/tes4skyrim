@@ -148,3 +148,26 @@ is the water drawn on distant terrain LOD, which vanilla always renders as
 ordinary water, and a null NAM3 makes the terrain-LOD water codepath deref a
 null WATR pointer and CTD as soon as a `.btr` contains a WATER
 `BSMultiBoundNode`.
+
+
+## <a id="every-cell-gets-an-xcll"></a>Every CELL gets an XCLL
+
+**Code:** `build_cell_xcll` in `tes5_import/record_types/world.py`
+
+`build_cell_xcll` used to return `None` when the source authored no ambient
+color, so the CELL shipped with no lighting block at all. **All 590 of
+Skyrim.esm's interior cells carry an XCLL** — there is no vanilla precedent
+for omitting it, and a converted cell without one does not render like a
+vanilla cell.
+
+That bites hardest on a Morrowind quasi exterior
+([Show Sky](tes4_export_morrowind.md#quasi-exterior-interiors)): those cells
+carry no `AMBI`, so they reached the engine with no XCLL, and their water did
+not appear even with Has Water and a valid height set.
+
+The fallback is a real vanilla block rather than zeros — the most common XCLL
+among Skyrim's own Show Sky interiors, shared verbatim by 61 of them: ambient
+`1E1E28`, black directional and fog colors, fog near/far 0, fog power, scale
+and fog max 1.0, the six directional-ambient colors it ships with, and
+inherit flags `0x9F`. An authored source still overrides every field it
+states; the block only fills in what TES3/TES4 never authored.

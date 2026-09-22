@@ -365,21 +365,39 @@ def convert_LTEX(rec: dict, writer=None) -> tuple:
     return ltex_bytes, txst_bytes, txst_fid
 
 
+#: Vanilla XCLL for a cell that authored none. See: docs/commentary/tes5_import_world.md#every-cell-gets-an-xcll
+_GENERIC_XCLL = bytes.fromhex(
+    '32323c0000000000b0dcf7000000aa4300c05a4600000000000000000'
+    '0000000000000000000803f2c24180023241500282517002822170013'
+    '110a003c362300b0dcf7000000803fb0dcf7000000803f0000000000'
+    '0000009f000000')
+
+
+def _cell_flags(rec: dict) -> int:
+    """TES5 CELL DATA flags: drop TES4 bits 3/6, add bit 8 to a Show Sky interior.
+
+    See: docs/commentary/tes5_import_world.md#every-cell-gets-an-xcll
+    """
+    flags = get_int(rec, 'DATA.Flags') & ~0x08 & ~0x40
+    if flags & 0x01 and flags & 0x80:
+        flags |= 0x100
+    return flags & 0xFFFF
+
+
 def build_cell_xcll(rec: dict):
-    """TES5 XCLL payload (92 bytes) from a TES4 CELL record, or None.
+    """TES5 XCLL payload (92 bytes) from a TES4 CELL record; never None.
 
-    Shared by convert_CELL and the override path (override_builder), so an
-    authored lighting change patches the exact bytes conversion writes.
+    Shared by convert_CELL and the override path, so an authored lighting
+    change patches the exact bytes conversion writes.  A source that authored
+    no lighting gets `_GENERIC_XCLL`.
 
-    TES5 XCLL layout (per xEdit wbDefinitionsTES5):
-     0 ambient, 4 directional, 8 fog near color, 12 fog near, 16 fog far,
-     20 dir rot XY, 24 dir rot Z, 28 dir fade, 32 fog clip, 36 fog power,
-     40 directional ambient X+/X-/Y+/Y-/Z+/Z- (6 colors), 64 specular,
-     68 scale, 72 fog far color, 76 fog max, 80/84 light fade begin/end,
-     88 inherit flags.
+    Layout (xEdit wbDefinitionsTES5): 0 ambient, 4 directional, 8 fog near
+    color, 12 fog near, 16 fog far, 20/24 dir rot XY/Z, 28 dir fade, 32 fog
+    clip, 36 fog power, 40 six directional-ambient colors, 64 specular, 68
+    scale, 72 fog far color, 76 fog max, 80/84 fade begin/end, 88 inherit.
     """
     if not get_str(rec, 'XCLL.AmbientR'):
-        return None
+        return _GENERIC_XCLL
     ar = get_int(rec, 'XCLL.AmbientR')
     ag = get_int(rec, 'XCLL.AmbientG')
     ab = get_int(rec, 'XCLL.AmbientB')
@@ -571,11 +589,7 @@ def convert_CELL(rec: dict) -> bytes:
     if full:
         subs += pack_string_subrecord('FULL', full)
 
-    # DATA — TES5 uses uint16 flags (not uint8)
-    flags = get_int(rec, 'DATA.Flags')
-    flags &= ~0x08  # Remove Oblivion interior flag
-    flags &= ~0x40  # Remove Hand Changed flag
-    subs += pack_subrecord('DATA', struct.pack('<H', flags & 0xFFFF))
+    subs += pack_subrecord('DATA', struct.pack('<H', _cell_flags(rec)))
 
     # XCLC — grid coordinates (exterior cells)
     x = get_int(rec, 'XCLC.X', None)
@@ -584,10 +598,7 @@ def convert_CELL(rec: dict) -> bytes:
         land = get_int(rec, 'XCLC.LandFlags', 0)
         subs += pack_subrecord('XCLC', struct.pack('<iiI', x, y, land))
 
-    # Interior lighting (XCLL) — shared with the override path
-    xcll_payload = build_cell_xcll(rec)
-    if xcll_payload is not None:
-        subs += pack_subrecord('XCLL', xcll_payload)
+    subs += pack_subrecord('XCLL', build_cell_xcll(rec))
 
     subs += pack_formid_subrecord('LTMP', 0)
 
@@ -1277,6 +1288,8 @@ def _cell_pointers(rec: dict) -> bytes:
     XEZN exists only in FO3/FNV sources; XCWT overrides the worldspace NAM2.
     XCIM is deliberately NOT written: TES5 HNAM has no FNV source, so the
     imagespace HDR block is approximated and darkened every interior.
+    XCCM names the region a "Show Sky" interior takes its sky and weather
+    from, and follows the music exactly as vanilla Skyrim writes it.
 
     See: docs/commentary/tes5_import_landscape.md#cell-water-and-music
     """
@@ -1288,7 +1301,11 @@ def _cell_pointers(rec: dict) -> bytes:
     xcwt = get_formid(rec, 'XCWT.Water')
     if xcwt:
         subs += pack_formid_subrecord('XCWT', xcwt)
-    return subs + _cell_music(rec)
+    subs += _cell_music(rec)
+    xccm = get_formid(rec, 'XCCM.Climate')
+    if xccm and region_was_emitted(xccm):
+        subs += pack_formid_subrecord('XCCM', xccm)
+    return subs
 
 
 # ---------------------------------------------------------------------------

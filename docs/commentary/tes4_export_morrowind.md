@@ -1981,6 +1981,44 @@ mostly leaves at zero, so it buys nothing until an interior is shown to need
 it. The six-way directional-ambient block stays a replicated flat ambient for
 the same reason: Oblivion proves that reads fine.
 
+### <a id="quasi-exterior-interiors"></a>A quasi-exterior interior keeps its sky
+
+`_interior_cell` hardcoded `DATA.Flags=1`, discarding every other authored bit.
+Two of them matter, and all three games agree on their meaning -- TES3
+`QuasiEx = 0x80` (`components/esm3/loadcell.hpp`, "Behave like exterior
+(Tribunal+), with skybox and weather") is bit 7 in TES4's "Behave Like
+Exterior" and TES5's "Show Sky"; bit 1 is "Has Water" in all three.
+
+Arktwend's opening cell `Melee Monastery` authors `DATA 830000...` -- interior
++ has water + quasi-exterior -- and carries neither `AMBI` nor `WHGT`, because
+a quasi exterior takes its light, sky and water from the world rather than
+from per-cell fields. Dropping bit 7 left Skyrim rendering the default black
+interior void through the cell's windows, and dropping bit 1 left it dry.
+
+Vanilla Skyrim does exactly this at scale: **229 of 590 interior cells set
+Show Sky**, 73 of them with Has Water, normally alongside an `XCCM` and an
+ordinary `XCLL`. "Use Sky Lighting" (bit 8) is set on **1** cell in the whole
+master, so it is deliberately not synthesized. The flags pass through the
+import unchanged -- `convert_CELL` only strips TES4 bits 3 and 6 -- so
+carrying them in the export is the whole fix.
+
+`XCCM` names the region a show-sky interior draws its sky and weather from,
+which is the same `RGNN` the cell already authored, and it is emitted only for
+quasi exteriors.
+
+A Has Water cell with no `WHGT` gets `XCLW.WaterHeight=0.0`. That is what
+Morrowind itself reads — `mWater` is initialized to 0 and only overwritten by
+an authored `WHGT`/`INTV` (`components/esm3/loadcell.cpp`) — and sea level is
+0 in both games, since the conversion applies no Z offset.
+
+Of Arktwend's 8 quasi exteriors, **7 author no height at all**. Level 0 is
+still right for them: Melee Monastery places 46 of its 718 references below
+Z=0 with the bulk just above, which is a shoreline sitting at sea level.
+
+The height alone is not sufficient — the cell also needs an `XCLL`, which
+these cells have no `AMBI` to supply
+([why](tes5_import_world.md#every-cell-gets-an-xcll)).
+
 ## <a id="region-weather"></a>Region weather
 
 **Code:** `tes4_export/morrowind_region.py`

@@ -101,7 +101,7 @@ Remapping is what makes a separate key necessary: `get_formid` shifts every id
 by the new-master offset, so an exported `CNAM.Climate=00000812` arrives as
 `01000812` — this plugin's own space, where no climate exists.
 
-## CELL water and music
+## <a id="cell-water-and-music"></a>CELL water and music
 
 **Code:** `_cell_pointers` in `tes5_import/record_types/world.py`
 
@@ -109,6 +109,27 @@ Every CELL subrecord naming another record is built here, in vanilla's own
 order: `LTMP XCLW XNAM XCLR XCIM XLCN XEZN XCWT XCMO`. `XCIM` (imagespace) and
 `XEZN` (encounter zone) exist only in FO3/FNV sources; see
 [the reference-only types](tes4_export_falloutnv.md#reference-only-types).
+
+### <a id="interior-water-sentinel"></a>`XCLW` — an interior's only real height is 0
+
+The worldspace-default sentinel, `0xCF000000` = `-2147483648.0`, does NOT mean
+"this cell has water somewhere sensible". Censused over Skyrim.esm's interiors
+it is spread almost evenly across wet and dry cells — 104 of the Has Water
+interiors carry it, but so do 246 cells with no water flag at all — so it
+carries no height and no water.
+
+What every wet interior that states a height states is the same number:
+**all 71 interiors with a real `XCLW` height use exactly `0`**, and none uses
+any other value. Among Show Sky interiors with water the split is 53 writing
+`0` against 20 carrying the sentinel.
+
+So a Has Water interior with nothing authored gets `0.0`, not the sentinel.
+`build_cell_xclw` keeps its original rule — pass a real height through, omit
+the sentinel — because the sentinel never conveyed a usable interior height in
+the first place.
+
+`LTMP` is not part of this. It is the lighting template, and 5 vanilla Has
+Water interiors leave it null, so a null `LTMP` does not suppress water.
 
 ### <a id="cell-xclr-regions"></a>`XCLR` — how region weather reaches the sky
 

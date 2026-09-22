@@ -26,7 +26,8 @@ from .morroblivion import (MORROBLIVION_PREFIX, MorroblivionModels,
 from .morrowind_patch import PATCH_NAME, blacklisted_bases
 from .morroblivion_origin import OriginShifts
 from .morrowind_armor import load_body_models
-from .morrowind_cell import parse_cell
+from .morrowind_cell import (FLAG_HAS_WATER, FLAG_INTERIOR,
+                             FLAG_QUASI_EXTERIOR, parse_cell)
 from .morrowind_ids import (IdIndex, encode_editor_id, exterior_key,
                             interior_key, land_key, load_master_doors,
                             persistent_key, load_index, marker_formid)
@@ -1069,11 +1070,30 @@ def _emit_cell_lighting(lines: list, ambient: tuple) -> None:
 
 
 def _interior_cell(cell, ctx: MorrowindContext) -> tuple:
-    """One interior cell and every placement it holds."""
+    """One interior cell and every placement it holds.
+
+    TES3, TES4 and TES5 agree on DATA bit 1 (has water) and bit 7 (Morrowind
+    QuasiEx / Skyrim "Show Sky"), so the authored flags carry through and a
+    cell that renders the skybox keeps doing so.  A quasi exterior draws its
+    sky and weather from its region, which is what XCCM names.
+
+    A Has Water cell with no WHGT takes level 0, which is what Morrowind
+    itself reads (`mWater` defaults to 0) and is sea level in both games.
+
+    See: docs/commentary/tes4_export_morrowind.md#quasi-exterior-interiors
+    """
     form_id = ctx.interior_cell_id(cell.name)
-    lines = [f'EditorID={cell.name}', f'FULL={cell.name}', 'DATA.Flags=1']
+    flags = cell.flags & (FLAG_HAS_WATER | FLAG_QUASI_EXTERIOR)
+    lines = [f'EditorID={cell.name}', f'FULL={cell.name}',
+             f'DATA.Flags={flags | FLAG_INTERIOR}']
+    if cell.region:
+        lines.append(f'Region[0]={ctx.region_id(cell.region)}')
+        if flags & FLAG_QUASI_EXTERIOR:
+            lines.append(f'XCCM.Climate={ctx.region_id(cell.region)}')
     if cell.water_height is not None:
         lines.append(f'XCLW.WaterHeight={cell.water_height}')
+    elif flags & FLAG_HAS_WATER:
+        lines.append('XCLW.WaterHeight=0.0')
     if cell.ambient is not None:
         _emit_cell_lighting(lines, cell.ambient)
     return [(form_id, lines)], _emit_refs(cell.refs, form_id, ctx)
