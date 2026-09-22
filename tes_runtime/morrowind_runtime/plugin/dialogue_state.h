@@ -88,6 +88,10 @@ struct GameHooks {
     // not. What the object tick gates on.
     bool (*playerInWorld)() = nullptr;
     bool (*playerInInterior)() = nullptr;
+    // Whether the ENGINE has the game paused by a menu OTHER than our own
+    // dialogue window, which pauses too but must not stop the tick.
+    // See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
+    bool (*gamePaused)() = nullptr;
     bool (*menuMode)() = nullptr;
     void (*forceGreeting)(const std::string& actor) = nullptr;
     // A `MessageBox` raised OUTSIDE a conversation, which has no dialogue

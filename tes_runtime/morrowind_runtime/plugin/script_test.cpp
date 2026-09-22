@@ -591,10 +591,14 @@ bool NotInWorld() { return false; }
 bool Always3DLoaded(std::uint32_t) { return true; }
 bool Never3DLoaded(std::uint32_t) { return false; }
 
+bool g_gamePaused = false;
+bool FakeGamePaused() { return g_gamePaused; }
+
 void SpawnedTickCases();
 void DiscoveryTickCases();
 void DeathOnUnloadCases();
 void UnnamedCellTickCases();
+void PausedTickCases();
 
 // The placement the fake `loadedRef` reports as being in the world, and the
 // runtime FormID it answers with. 0 means "nothing is loaded".
@@ -850,6 +854,45 @@ void TickCases() {
     DiscoveryTickCases();
     DeathOnUnloadCases();
     UnnamedCellTickCases();
+    PausedTickCases();
+}
+
+// 🛑 A paused game must not tick, and the runtime clock must not advance
+// through the pause. A Say line aged on wall-clock while a menu held the game
+// was freed while the engine still had it, which stranded the subtitle and
+// made the engine DROP the next line at that actor.
+// See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
+void PausedTickCases() {
+    std::printf("a menu that pauses the game stops the tick and its clock\n");
+    ClearInstances();
+    ResetTickState();
+    Hooks().is3DLoaded = Always3DLoaded;
+    Hooks().playerCell = TestCell;
+    Hooks().playerInWorld = InWorld;
+    Hooks().gamePaused = FakeGamePaused;
+
+    BindInstance(0x0A000001, "scripts.esm", 0x0300A001);
+    g_gamePaused = false;
+    TickObjectScripts(TickDelta());
+    Check(LastTickCount() == 1, "an unpaused tick runs its instance");
+    const double ranTo = GameSeconds();
+    Check(ranTo > 0.0, "and the clock advanced with it");
+
+    g_gamePaused = true;
+    TickObjectScripts(TickDelta() * 10.0f);
+    Check(LastTickCount() == 0, "nothing ticks while a menu holds the game");
+    Check(GameSeconds() == ranTo, "and the clock did not move through it");
+
+    g_gamePaused = false;
+    TickObjectScripts(TickDelta());
+    Check(LastTickCount() == 1, "the tick resumes when the menu closes");
+    Check(GameSeconds() > ranTo, "and the clock resumes with it");
+
+    Hooks().gamePaused = nullptr;
+    Hooks().is3DLoaded = nullptr;
+    Hooks().playerCell = nullptr;
+    Hooks().playerInWorld = nullptr;
+    ClearInstances();
 }
 
 // 🛑 A spawn binds the frame `PlaceAtMe` returns, BEFORE its 3D exists. Reading

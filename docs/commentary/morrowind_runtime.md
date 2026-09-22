@@ -2311,6 +2311,73 @@ meant to do.
 swallowed and re-armed on the way back in. It now tracks "have we sampled yet"
 explicitly.
 
+### <a id="the-tick-stops-while-the-game-is-paused"></a>The tick stops while the game is PAUSED, and the runtime clock stops with it
+
+**Code:** `plugin/object_tick.cpp` (`GameHeldByMenu`, `GameSeconds`),
+`plugin/game_calls.cpp` (`GamePaused`, `Now`), `plugin/menu.cpp`
+(`PausingMenuCount`)
+
+The tick is driven by a detached thread that sleeps one delta and posts a task,
+so it is paced by WALL time and nothing about a paused game stops it. The SKSE
+task pump keeps draining while a menu holds the game — that is the same fact
+the objective wait relies on, and why it sleeps off-thread rather than
+reposting. `SessionLive` separates the main menu from a loaded game and says
+nothing about a pause.
+
+So through an open inventory the tick kept running: timers integrated,
+`rotate`/`move` stepped, and `Say` lines aged out on `steady_clock` behind an
+engine that had stopped playing them.
+
+The Say case is the one that is visible. `ObjectReference.Say` (id 56220,
+`0xa2fb40` on 1.6.1170) does not play a sound — it installs the line into the
+actor's high process (`mov qword ptr [rsi+0x128], rbp` at `0x6d72e9`, reached
+through `0x6d71e0` with the process from `[rdi+0xf8]`) and stamps it with a
+counter read from `0x20f699c`. A frame-driven update retires it. Pause before
+the line ends and that update never runs, so the subtitle stays on screen; our
+own bookkeeping meanwhile aged past its deadline, freed the speaker and let the
+script issue the next `Say` — which Skyrim DROPS at an actor it still has
+mid-line. Stranded subtitle, and the line after it never spoken.
+
+**The pause flag is the engine's own.** `MenuManager+0x160` (SKSE's
+`numPauseGame`) counts the OPEN menus carrying `IMenu` flag `0x1`. Verified in
+1.6.1170: of 275 sites that load the MenuManager singleton (`0x20f6a00`,
+Address Library id 400327, already resolved for menu registration), **75 read
+it as `cmp dword ptr [rax+0x160], 0` and branch past their work**.
+
+**Our own dialogue menu sets that flag** (`kMenuFlags` includes
+`kFlagPausesGame`), so it counts itself. TES3 runs scripts through a
+conversation — `MenuMode` exists for them to branch on, and the opcode census
+counts 1,111 uses — so `GamePaused` discounts the conversation's own
+contribution rather than testing for zero:
+
+```cpp
+return PausingMenuCount() > (ConversationOpen() ? 1u : 0u);
+```
+
+Comparing against a COUNT, not a boolean, is what makes a menu opened *over* a
+conversation still stop the tick.
+
+**Events are not lost to the gate.** `activated`, `died` and `cellChanged` are
+sticky until a body reads them, so anything raised during a pause is delivered
+on the first tick after it. `PollDeath` still runs before the loaded gate for
+the separate reason recorded in `object_tick.cpp`.
+
+**The clock had to move with the tick.** Gating alone does not fix the Say bug:
+`Now()` was `steady_clock`, which runs through a pause whether or not we tick,
+so the claim would still age past its deadline and be erased on the first tick
+back. `GameSeconds()` accumulates one delta per tick that actually RUNS, and
+`Now()` reads it. Every runtime timer derives from that one clock.
+
+🛑 This is stricter than Morrowind. OpenMW runs local and global scripts while
+paused (`engine.cpp`, gated only on `GM_MainMenu`) and does not treat the
+inventory as a pause at all (`DateTimeManager::updateIsPaused` counts only Lua
+pause tags, the console, the post-processor HUD and interactive message boxes).
+Its audio does not pause either — `SoundManager::update` checks only
+`mPlaybackPaused`, and `sayDone` asks the stream. We diverge because Skyrim's
+engine freezes the world around the script either way.
+
+Guarded by `PausedTickCases` in `script_test.cpp`.
+
 ### <a id="a-load-resets-the-instances"></a>A load resets the INSTANCES, not just the state
 
 **Code:** `plugin/cosave.cpp` (`OnRevert`)

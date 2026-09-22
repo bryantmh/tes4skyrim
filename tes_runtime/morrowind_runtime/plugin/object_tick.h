@@ -47,6 +47,15 @@ void StopObjectTick();
 // The seconds ONE tick covers, which is what GetSecondsPassed answers.
 float TickDelta();
 
+// Seconds of UNPAUSED play since load, advanced one delta per tick that runs.
+//
+// 🛑 Never wall-clock: a timer kept on `steady_clock` runs through a menu that
+// has the game stopped. A Say line aged that way is freed while the engine is
+// still holding it, and the next Say at that actor is silently dropped.
+// See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
+double GameSeconds();
+void AdvanceGameSeconds(double seconds);
+
 // How many instances the last tick ran, and how many ticks have run.
 std::size_t LastTickCount();
 std::size_t TicksRun();

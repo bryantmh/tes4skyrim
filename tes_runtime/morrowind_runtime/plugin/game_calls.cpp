@@ -18,7 +18,9 @@
 #include "ids.h"
 #include "log.h"
 #include "main_thread.h"
+#include "menu.h"
 #include "object_script.h"
+#include "object_tick.h"
 #include "script_tables.h"
 
 namespace mwruntime {
@@ -555,6 +557,15 @@ void EquipItem(const std::string& actor, const std::string& item) {
 
 bool MenuMode() { return ConversationOpen(); }
 
+// 🛑 Our OWN dialogue menu carries the pause flag and so counts itself here,
+// but TES3 runs scripts through a conversation -- `MenuMode` exists for them
+// to branch on. Its own contribution is discounted, so a menu opened OVER the
+// conversation still stops the tick.
+// See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
+bool GamePaused() {
+    return PausingMenuCount() > (ConversationOpen() ? 1u : 0u);
+}
+
 // Posted rather than begun here: BeginConversation tears the current one
 // down, and the script asking for it is still running against that actor.
 void ForceGreeting(const std::string& actor) {
@@ -657,12 +668,13 @@ int PlaySoundAt(const std::string& ref, const std::string& sound, bool loop,
 // because that is what `SayDone` names, and cleared as each one is read.
 std::map<void*, double> g_saying;
 
-// Seconds since the plugin loaded; only differences are ever used.
-double Now() {
-    using Clock = std::chrono::steady_clock;
-    static const Clock::time_point start = Clock::now();
-    return std::chrono::duration<double>(Clock::now() - start).count();
-}
+// Seconds of UNPAUSED play; only differences are ever used.
+//
+// 🛑 Not wall-clock. A menu that pauses the game stops the engine playing the
+// line but not `steady_clock`, so a line would be declared finished while the
+// engine still held it -- and the next Say at that actor is DROPPED.
+// See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
+double Now() { return GameSeconds(); }
 
 // How long a line of `text` takes to speak, for a recording the converter
 // could not measure: estimated from the subtitle, with a floor for a line too
@@ -926,6 +938,7 @@ void InstallGameCalls() {
     hooks.playerCell = PlayerCellName;
     hooks.playerInWorld = PlayerInWorld;
     hooks.playerInInterior = PlayerInInterior;
+    hooks.gamePaused = GamePaused;
     hooks.menuMode = MenuMode;
     hooks.forceGreeting = ForceGreeting;
     hooks.setQuestStage = SetQuestStage;

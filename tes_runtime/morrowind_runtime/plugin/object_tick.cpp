@@ -28,6 +28,8 @@ constexpr float kTickDelta = 1.0f / kTickRate;
 constexpr float kMaxCatchUp = 0.25f;
 
 float g_accumulated = 0.0f;
+// Seconds of unpaused play, which is the clock every runtime timer reads.
+double g_gameSeconds = 0.0;
 std::size_t g_lastCount = 0;
 std::size_t g_ticks = 0;
 // Read by the tick thread and written by the game thread, so it is atomic.
@@ -122,6 +124,20 @@ bool SessionLive() {
     return Hooks().playerInWorld && Hooks().playerInWorld();
 }
 
+// 🛑 A PAUSED game must not tick. The task pump keeps draining while a menu
+// holds the game -- that is why the objective wait sleeps off-thread -- so
+// nothing else stops us: timers integrated, `rotate`/`move` stepped and Say
+// lines aged out behind an engine that had stopped playing them, which left a
+// subtitle on screen forever and the line after it never spoken.
+//
+// 🛑 Events are NOT lost to this. They latch (`activated`, `died`,
+// `cellChanged` are sticky until a body reads them), so whatever happens
+// while paused is delivered on the first tick after.
+// See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
+bool GameHeldByMenu() {
+    return Hooks().gamePaused && Hooks().gamePaused();
+}
+
 // Runs the script of every scripted object the PLAYER carries whose body reads
 // `OnPCEquip`. An inventory item has no placement, so the world-discovery
 // sweep above can never reach it.
@@ -157,10 +173,11 @@ std::size_t RunCarriedScripts(bool cellChanged) {
 
 void RunOneTick() {
     ++g_ticks;
-    if (!SessionLive()) {
+    if (!SessionLive() || GameHeldByMenu()) {
         g_lastCount = 0;
         return;
     }
+    AdvanceGameSeconds(kTickDelta);
     if (Hooks().syncClock) Hooks().syncClock();
     const bool cellChanged = PlayerCellChanged();
     DiscoverLoaded(cellChanged);
@@ -227,6 +244,10 @@ void TickThread() {
 
 float TickDelta() { return kTickDelta; }
 
+double GameSeconds() { return g_gameSeconds; }
+
+void AdvanceGameSeconds(double seconds) { g_gameSeconds += seconds; }
+
 std::size_t LastTickCount() { return g_lastCount; }
 
 std::size_t TicksRun() { return g_ticks; }
@@ -259,6 +280,7 @@ void ResetTickState() {
     g_lastCell.clear();
     g_cellSampled = false;
     g_accumulated = 0.0f;
+    g_gameSeconds = 0.0;
 }
 
 }  // namespace mwruntime

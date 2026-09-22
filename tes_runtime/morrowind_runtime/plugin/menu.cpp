@@ -436,6 +436,12 @@ bool InstallMenu() {
 
 bool MenuInstalled() { return g_installed; }
 
+std::uint32_t PausingMenuCount() {
+    if (!g_menuManager || !*g_menuManager) return 0;
+    return *reinterpret_cast<const std::uint32_t*>(
+        static_cast<char*>(*g_menuManager) + ids::kOffMenuNumPauseGame);
+}
+
 void SetMenuInput(const MenuInput& input) { g_input = input; }
 
 // A menu is opened by posting a UIMessage, which is what the console's

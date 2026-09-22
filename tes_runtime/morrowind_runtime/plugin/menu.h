@@ -12,6 +12,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace mwruntime {
 
@@ -60,6 +61,10 @@ void SetMenuInput(const MenuInput& input);
 
 // True once Register accepted the menu.
 bool MenuInstalled();
+
+// How many OPEN menus pause the game, ours included. 0 before InstallMenu.
+// See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
+std::uint32_t PausingMenuCount();
 
 // The name it registered under, for UI.OpenMenu from Papyrus or the console.
 const char* MenuName();

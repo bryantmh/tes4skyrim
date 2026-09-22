@@ -27,6 +27,12 @@ namespace mwruntime::ids {
 // See: docs/commentary/morrowind_runtime.md#menu-registration
 constexpr std::uint64_t kMenuManagerSingleton = 400327;
 
+// MenuManager::numPauseGame: how many OPEN menus carry IMenu flag 0x1, so
+// nonzero is the engine's own "the game is paused". 75 sites read it as
+// `cmp dword ptr [rax+0x160], 0` and branch past their work.
+// See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
+constexpr std::size_t kOffMenuNumPauseGame = 0x160;
+
 // MenuManager::Register(this, const char* name, IMenu* (*creator)())
 // (0xfa5480). Found as the jmp target shared by 10 distinct menu-name call
 // sites; identical to the RVA SKSE hardcodes.
