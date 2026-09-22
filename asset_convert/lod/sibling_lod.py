@@ -535,6 +535,22 @@ def _defined_edids(esm: Path) -> frozenset:
         return frozenset()
 
 
+def defined_worldspaces_by_plugin(names: list[str], export_root: Path,
+                                  out_root: Path) -> dict[str, list[str]]:
+    """{plugin: [EDID, ...]} for every worldspace its converted ESM defines.
+
+    Ignores shipped LOD, so it also lists worldspaces the source never gave
+    distant LOD. `owner_map`'s pass 2 resolves exactly these, so each is
+    bakeable when named explicitly.
+    """
+    out: dict[str, list[str]] = {}
+    for name in names:
+        esm = _out_root(out_root, name, export_root) / name
+        out[name] = (sorted(_defined_edids(esm), key=str.lower)
+                     if esm.is_file() else [])
+    return out
+
+
 def owner_map(edids, order: list[str], export_root: Path,
               out_root: Path = None) -> dict:
     """{worldspace EDID: owning plugin}, resolved in ONE pass over the order.

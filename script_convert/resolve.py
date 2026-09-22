@@ -4,6 +4,8 @@ Lookups against the plugin graph, moved out of `constants.py` so that stays
 data.
 """
 
+from core.worldspace_names import source_worldspace_edid
+
 
 def resolve_property_formid(xref, prop_name: str) -> str:
     """EditorID lookup for a (possibly sanitized) property name.
@@ -13,13 +15,11 @@ def resolve_property_formid(xref, prop_name: str) -> str:
     scheme, the reserved-word `my` prefix, and the `<Name>Base` ActorBase
     de-collision.  An unreversed rename leaves the property None at runtime.
 
-    `TES4Tamriel` is reversed first, to the TES4 name it was renamed from.
+    A renamed worldspace (`TES4Tamriel`) is reversed first, to the source name.
 
     See: docs/commentary/script_convert.md#worldspace-property-rename
     """
-    low = prop_name.lower()
-    if low == 'tes4tamriel':
-        low = 'tamriel'
+    low = source_worldspace_edid(prop_name, xref.worldspace_renames)
     fid = ''
     if low.startswith('d') and len(low) > 1 and low[1].isdigit():
         fid = xref.edid_to_formid.get(low[1:], '')

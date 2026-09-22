@@ -377,8 +377,7 @@ def manage_mods(ui: ModsUI) -> None:
 
     card = _card(ui, "Imported Mods")
     close = _closer(card)
-    body = ttk.Frame(card, style="Panel.TFrame")
-    body.pack(fill=tk.BOTH, padx=16)
+    body = _card_body(ui, card)
     for _gid, label, plugs in groups:
         _mod_row(ui, body, label, list(plugs), close)
     ttk.Button(card, text="Close", command=close).pack(anchor="e", padx=16,
@@ -389,7 +388,7 @@ def manage_mods(ui: ModsUI) -> None:
 def _mod_row(ui: ModsUI, body, label: str, plugs: list, close) -> None:
     """One mod's row: its plugins, plus Re-import and Remove."""
     row = ttk.Frame(body, style="Panel.TFrame")
-    row.pack(fill=tk.X, pady=3)
+    row.pack(fill=tk.X, padx=16, pady=3)
     tk.Label(row, text=f"{label}\n  " + "\n  ".join(plugs),
              bg=ui.CLR["panel"], fg=ui.CLR["subtext"], font=("Segoe UI", 9),
              justify=tk.LEFT, anchor="w").pack(side=tk.LEFT, fill=tk.X,

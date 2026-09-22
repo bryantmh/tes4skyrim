@@ -591,21 +591,24 @@ def _lod_initial_order(app, all_names) -> tuple:
 
 
 def _scan_lod_inputs(app, all_names) -> tuple:
-    """(dependents, worldspaces-by-plugin, why-empty, merge fn).
+    """(dependents, worldspaces-by-plugin, why-empty, merge fn, all-by-plugin).
 
     Scanned ONCE because both reads walk every export dir, so each subsequent
-    tick is a dict lookup rather than a rescan.
+    tick is a dict lookup rather than a rescan. The last item is every
+    worldspace each converted ESM defines, offered only under Force.
     """
     try:
-        from asset_convert.lod.sibling_lod import dependents_of, merge_worldspaces, worldspaces_by_plugin_diagnosed
+        from asset_convert.lod.sibling_lod import defined_worldspaces_by_plugin, dependents_of, merge_worldspaces, worldspaces_by_plugin_diagnosed
         deps = dependents_of(all_names, EXPORT_DIR)
         ws_by, ws_why = worldspaces_by_plugin_diagnosed(
             all_names, EXPORT_DIR, app.out_root())
-        return deps, ws_by, ws_why, merge_worldspaces
+        all_by = defined_worldspaces_by_plugin(all_names, EXPORT_DIR,
+                                               app.out_root())
+        return deps, ws_by, ws_why, merge_worldspaces, all_by
     except Exception as exc:
         return ({n: set() for n in all_names}, {n: [] for n in all_names},
                 {"": f"Worldspace scan failed: {exc}"},
-                lambda names, by_plugin: [])
+                lambda names, by_plugin: [], {})
 
 
 def _why_no_worldspaces(names, ws_why) -> str:
@@ -629,10 +632,13 @@ class _LodState:
     """The mutable state the two LOD columns share."""
 
     __slots__ = ("ordered", "wanted", "checked", "disabled", "deps", "ws_by",
-                 "ws_why", "merge", "ws_state", "ws_vars", "listbox", "inner")
+                 "ws_why", "merge", "all_by", "force", "ws_state", "ws_vars",
+                 "listbox", "inner")
 
-    def __init__(self, ordered, wanted, deps, ws_by, ws_why, merge):
+    def __init__(self, ordered, wanted, deps, ws_by, ws_why, merge, all_by):
         """Seed from the saved selection and the one-time scan."""
+        self.all_by = all_by
+        self.force = None
         self.ordered = ordered
         self.wanted = wanted
         self.checked = set(wanted)
@@ -820,6 +826,9 @@ def _refresh_worldspaces(st) -> None:
                          for i in range(st.listbox.size()))
              if n in st.checked]
     live = st.merge(names, st.ws_by)
+    authored = set(live)
+    if st.force.get():
+        live += [w for w in st.merge(names, st.all_by) if w not in authored]
 
     for child in st.inner.winfo_children():
         child.destroy()
@@ -834,7 +843,7 @@ def _refresh_worldspaces(st) -> None:
 
     _lost_export_warning(st, names)
     for wname in live:
-        var = tk.BooleanVar(value=st.ws_state.get(wname, True))
+        var = tk.BooleanVar(value=st.ws_state.get(wname, wname in authored))
         st.ws_vars.append((wname, var))
         ttk.Checkbutton(st.inner, text=wname, variable=var,
                         style="TCheckbutton").pack(anchor="w", padx=4, pady=1)
@@ -861,6 +870,10 @@ def _build_worldspace_column(parent, card, st, bound) -> None:
     wcanvas.configure(yscrollcommand=wsb.set)
     wcanvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     wsb.pack(side=tk.RIGHT, fill=tk.Y)
+    ttk.Checkbutton(right, text="Force: offer every worldspace,\neven ones "
+                                "with no original LOD", variable=st.force,
+                    command=lambda: _refresh_worldspaces(st),
+                    style="TCheckbutton").pack(anchor="w", pady=(4, 0))
     card.bind_all("<MouseWheel>",
                   lambda e: wcanvas.yview_scroll(-1 if e.delta > 0 else 1,
                                                  "units"))
@@ -898,8 +911,10 @@ def _lod_buttons(app, card, st, all_names, redraw, close, on_generate) -> None:
             st.listbox.insert(tk.END, n)
         st.wanted.clear()
         st.wanted.update(all_names)
-        for w in st.ws_state:
-            st.ws_state[w] = True
+        authored = set(st.merge(all_names, st.ws_by))
+        st.ws_state = {w: True for w in authored}
+        st.ws_vars.clear()
+        st.force.set(False)
         redraw()
 
     def _generate():
@@ -954,9 +969,11 @@ def open_create_lod_panel(app, on_generate=None) -> None:
     ordered, wanted = _lod_initial_order(app, all_names)
     st = _LodState(ordered, wanted, *_scan_lod_inputs(app, all_names))
     st.ws_state = {w: True for w in default_lod_worldspaces(app, all_names)}
-    if app.selection.lod_worldspaces:
-        for w in st.ws_state:
-            st.ws_state[w] = w in app.selection.lod_worldspaces
+    saved = app.selection.lod_worldspaces
+    st.force = tk.BooleanVar(value=any(w not in st.ws_state for w in saved))
+    if saved:
+        for w in set(st.ws_state) | set(saved):
+            st.ws_state[w] = w in saved
 
     card, close, bound = _card(app)
     _lod_header(card)

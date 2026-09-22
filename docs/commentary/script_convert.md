@@ -3562,8 +3562,22 @@ not need the gate.
 
 The importer renames Oblivion's `Tamriel` worldspace to `TES4Tamriel`
 (`tes5_import/record_types/world.py`, `convert_WRLD`): its FormID 0x3C remaps to
-0x0100003C, which would otherwise override Skyrim's own Tamriel. No other
-worldspace is renamed.
+0x0100003C, which would otherwise override Skyrim's own Tamriel.
+
+Arktwend is a Morrowind-engine game, so the TES3 exporter gives it the same
+synthesized `WrldMorrowind` as Morrowind itself; when Arktwend (or a master of
+it) is in the plugin chain, the importer writes `WrldArktwend` instead so the two
+never share an EditorID. Its persistent cell (`<worldspace>Persistent`) follows,
+and its display name becomes "Arktwend" in place of the exporter's hardcoded
+"Morrowind" (which also names its Location, `TES4ArktwendLocation`). Morrowind,
+both modes, keeps `WrldMorrowind`.
+
+Every rename lives in ONE table, `core/worldspace_names.py`. An import run sets
+the chain (`set_worldspace_plugins`) from the plugin and its export's masters;
+`CrossRefGraph` carries its own copy (`worldspace_renames`) because script
+conversion ships the graph to pool workers, where a module global would reset.
+The shipped-LOD lookup in `terrain_lod.shipped_lod_worldspaces` still has its
+own Tamriel-only copy.
 
 A `GetInCell` family whose members include EXTERIOR cells compares them by
 worldspace plus grid square, because a Papyrus `Cell` property cannot bind to an

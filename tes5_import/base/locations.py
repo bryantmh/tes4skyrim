@@ -39,6 +39,8 @@ for "the wilds of <worldspace>".
 import struct
 from collections import defaultdict
 
+from core.worldspace_names import converted_worldspace_name
+
 from .text_reader import get_float, get_formid, get_int, get_str
 from .writer import (
     pack_float_subrecord,
@@ -100,16 +102,15 @@ def _is_dev_name(name: str) -> bool:
 def _worldspace_name(rec: dict, marker_names: dict = None) -> str:
     """Player-facing name for a worldspace.
 
-    Prefers the worldspace's own FULL, but falls back to the name of the map
-    marker inside it when that FULL is missing or a dev placeholder.  A
-    worldspace holding exactly one marker *is* that place — the Anvil castle
-    courtyard contains only the "Castle Anvil" marker — so the marker names it,
-    and we never have to hardcode a name that was already in the data.
+    Order: a renamed worldspace's table name (`core/worldspace_names.py`), its
+    own FULL, then its sole map marker's name when FULL is missing or a dev
+    placeholder (the Anvil courtyard holds only "Castle Anvil").
 
     Returns '' when nothing usable is available (the unreachable test worlds),
     in which case the worldspace gets no location and no name.
     """
-    full = get_str(rec, 'FULL')
+    full = converted_worldspace_name(get_str(rec, 'EditorID'),
+                                     get_str(rec, 'FULL'))
     if full and not _is_dev_name(full):
         return full
 

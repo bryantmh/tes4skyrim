@@ -7,7 +7,7 @@ from pathlib import Path
 
 from script_convert.constants import (
     PLACED_REF_SIGS, PLAYER_ALIAS_EXTENDS, SCHOOL_ENCHANT_SHADER, TYPE_MAP,
-    converted_worldspace_edid, papyrus_script_name
+    papyrus_script_name
 )
 from script_convert.command_rows import (
     ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
@@ -15,6 +15,7 @@ from script_convert.command_rows import (
 from tes5_import.base.text_reader import parse_export_file
 from asset_convert.game_paths import current_namespace
 from core.worker_budget import worker_count
+from core.worldspace_names import converted_worldspace_edid, renames_for
 
 # ===========================================================================
 # Cross-reference graph builder
@@ -43,6 +44,12 @@ def master_names(export_dir) -> list:
             if val:
                 names.append(val)
     return names
+
+
+def _scan_chain(export_dir: str) -> tuple:
+    """(`_export_dirs_with_masters`, the worldspace renames that chain applies)."""
+    dirs = _export_dirs_with_masters(export_dir)
+    return dirs, renames_for(dirs)
 
 
 def _export_dirs_with_masters(export_dir: str) -> list:
@@ -270,6 +277,8 @@ class CrossRefGraph:
     def __init__(self):
         self.formid_to_edid: dict[str, str] = {}
         self.edid_to_formid: dict[str, str] = {}
+        #: Source worldspace EDID -> converted EDID; see core/worldspace_names.py.
+        self.worldspace_renames: dict[str, str] = renames_for()
         self.script_formid_to_edid: dict[str, str] = {}
         self.script_formid_to_type: dict[str, int] = {}
         self.record_scri: dict[str, str] = {}  # record FormID -> SCRI FormID
@@ -363,7 +372,8 @@ class CrossRefGraph:
             return
 
         jobs = []
-        for d in _export_dirs_with_masters(export_dir):
+        dirs, self.worldspace_renames = _scan_chain(export_dir)
+        for d in dirs:
             for fname in sorted(os.listdir(d)):
                 if not fname.endswith('.txt'):
                     continue
@@ -616,7 +626,7 @@ class CrossRefGraph:
                 interior.append(edid)
                 continue
             wrld_edid = converted_worldspace_edid(
-                self.formid_to_edid.get(wrld_fid, ''))
+                self.formid_to_edid.get(wrld_fid, ''), self.worldspace_renames)
             if x is None or y is None:
                 # An exterior with no XCLC is the worldspace's own persistent
                 # "dummy cell". It holds no grid square, so the faithful test is

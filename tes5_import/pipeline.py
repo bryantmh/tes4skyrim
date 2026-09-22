@@ -35,6 +35,7 @@ import sys
 import time
 
 from core.plugin_masters import masters_from_export_header
+from core.worldspace_names import set_worldspace_plugins
 from asset_convert.game_paths import namespace_for, set_namespace
 from .registry import IMPORT_DISPATCH, RUNTIME_ONLY_TYPES, SKIP_TYPES
 from .navmesh.pool import collision_cache_chain
@@ -77,6 +78,12 @@ from .pipeline_finalize import run_finalize_phases
 
 #: Record types an MGEF Assoc. Item can name; LVLC covers summon indirection.
 _ASSOC_ITEM_SIGS = ('CREA', 'NPC_', 'WEAP', 'ARMO', 'CLOT', 'LIGH', 'LVLC')
+
+
+def _begin_worldspace_chain(output_path: str, export_dir: str) -> None:
+    """Make this plugin and its source masters the run's worldspace renames."""
+    set_worldspace_plugins([os.path.basename(output_path),
+                            *masters_from_export_header(export_dir)])
 
 class ImportState:
     """Everything one import run shares across its phases.
@@ -1007,6 +1014,7 @@ def _open_import_run(masters, skip_types, output_path: str,
     from .base.artifact_schema import preflight_artifacts
     preflight_artifacts(export_dir)
     set_cloud_bank_output(plugin_out_dir)
+    _begin_worldspace_chain(output_path, export_dir)
     return masters, all_skip, output_path, plugin_out_dir
 
 

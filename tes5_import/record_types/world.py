@@ -3,6 +3,8 @@
 import math
 import struct
 
+from core.worldspace_names import converted_worldspace_edid
+
 from ..base.constants import (
     MAP_MARKER_TYPE_MAP,
     MATT_MAP,
@@ -47,6 +49,14 @@ _TES4_DEFAULT_WATER_HEIGHT = 0.0
 # ---------------------------------------------------------------------------
 # WRLD water and fallback planes
 # ---------------------------------------------------------------------------
+def _wrld_edid(rec: dict) -> str:
+    """This WRLD's EditorID as the converted plugin names it.
+
+    See: docs/commentary/script_convert.md#worldspace-property-rename
+    """
+    return converted_worldspace_edid(get_str(rec, 'EditorID'))
+
+
 def _world_water_and_planes(rec: dict) -> bytes:
     """WRLD NAM2/NAM3 water types and the NAM4/DNAM fallback planes.
 
@@ -545,9 +555,7 @@ def build_wrld_cloud_modl(rec: dict, edid: str = None):
     if not _CLOUD_BANK_ROOT:
         return None
     if edid is None:
-        edid = get_str(rec, 'EditorID')
-        if edid == 'Tamriel':
-            edid = 'TES4Tamriel'      # matches convert_WRLD's rename
+        edid = _wrld_edid(rec)
     if not edid or not get_str(rec, 'NAM0.MinX'):
         return None
     from asset_convert.lod.worldmap_clouds import (generate_cloud_bank,
@@ -583,7 +591,7 @@ def convert_CELL(rec: dict) -> bytes:
     See: docs/commentary/tes4_export_falloutnv.md#reference-only-types
     """
     subs = b''
-    edid = get_str(rec, 'EditorID')
+    edid = converted_worldspace_edid(get_str(rec, 'EditorID'))
     if edid:
         subs += pack_string_subrecord('EDID', edid)
     full = get_str(rec, 'FULL')
@@ -624,14 +632,7 @@ def convert_CELL(rec: dict) -> bytes:
 
 def convert_WRLD(rec: dict) -> bytes:
     subs = b''
-    edid = get_str(rec, 'EditorID')
-
-    # Oblivion's Tamriel (FormID 0x3C) conflicts with Skyrim's Tamriel.
-    # After load-order remapping it becomes 0x0100003C which overrides Skyrim's
-    # worldspace. Rename to avoid the override.
-    if edid == 'Tamriel':
-        edid = 'TES4Tamriel'
-
+    edid = _wrld_edid(rec)
     if edid:
         subs += pack_string_subrecord('EDID', edid)
 
