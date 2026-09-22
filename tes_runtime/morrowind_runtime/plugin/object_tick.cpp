@@ -192,8 +192,9 @@ void TraceLoadState(const ObjectScript& instance) {
     last[id] = now;
     static const char* kNames[] = {"loaded", "UNLOADED", "UNRESOLVED",
                                    "unknown"};
-    Log("object: %s (%08X) load reading -> %s (tick %zu)",
-        instance.Script().c_str(), id, kNames[static_cast<int>(now)], g_ticks);
+    LogVerbose("object: %s (%08X) load reading -> %s (tick %zu)",
+               instance.Script().c_str(), id,
+               kNames[static_cast<int>(now)], g_ticks);
 }
 
 void ReportUnbind(const ObjectScript& instance, const char* why) {
@@ -205,9 +206,9 @@ void ReportUnbind(const ObjectScript& instance, const char* why) {
     if (state == LoadState::kUnloaded) reading = "Is3DLoaded said NO";
     if (state == LoadState::kUnresolved) reading = "GetForm did not answer";
     if (state == LoadState::kLoaded) reading = "loaded again since the test";
-    Log("object: %s (%08X) unbound -- %s, %s; ran %zu tick(s), cell '%s'",
-        instance.Script().c_str(), id, why, reading, g_ticks,
-        g_lastCell.c_str());
+    LogVerbose("object: %s (%08X) unbound -- %s, %s; ran %zu tick(s), "
+               "cell '%s'", instance.Script().c_str(), id, why, reading,
+               g_ticks, g_lastCell.c_str());
 }
 
 void RunOneTick() {

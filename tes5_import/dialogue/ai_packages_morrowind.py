@@ -73,9 +73,10 @@ _SLOTS = 8
 #: Every slot name, `<kind><n>`, in ALST order.
 _SLOT_NAMES = tuple(f'{kind}{n}' for kind, _t in _KINDS for n in range(_SLOTS))
 
-#: Two aliases per slot: who RUNS the package, and what it aims AT.
+#: Per slot: who RUNS the package, what it aims AT, and WHERE it is going.
 _ALIAS_NAMES = tuple(name for slot in _SLOT_NAMES
-                     for name in (f'{slot}Actor', f'{slot}Target'))
+                     for name in (f'{slot}Actor', f'{slot}Target',
+                                  f'{slot}Where'))
 
 
 def _alias_index(name: str) -> int:
@@ -119,7 +120,14 @@ def quest_record(formid: int, pack_ids: dict) -> bytes:
 
 def _inputs(kind: str, slot: str, template) -> Inputs:
     """The template's vanilla defaults with its alias inputs pointed at this
-    slot's own aliases."""
+    slot's own aliases.
+
+    Escort alone needs three: it walks its TARGET to a destination, so the
+    destination takes the slot's `Where` alias. Aiming it at the escorting
+    actor instead means "walk them to where you already stand", which wins
+    the package stack and never moves anyone.
+    See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
+    """
     inputs = Inputs(template)
     target = _alias_index(f'{slot}Target')
     if kind == 'travel':
@@ -130,7 +138,7 @@ def _inputs(kind: str, slot: str, template) -> Inputs:
     elif kind == 'escort':
         inputs.set('target', build_alias_target(target))
         inputs.set('location', build_alias_location(
-            _alias_index(f'{slot}Actor'), _AT_THE_REF))
+            _alias_index(f'{slot}Where'), _AT_THE_REF))
     else:
         inputs.set('target', build_alias_target(target))
     return inputs

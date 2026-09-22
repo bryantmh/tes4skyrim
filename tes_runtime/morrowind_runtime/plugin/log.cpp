@@ -7,6 +7,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <string>
 
@@ -42,18 +43,32 @@ void LogToStdout(bool on) {
     g_file = on ? stdout : nullptr;
 }
 
-void Log(const char* fmt, ...) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+void Write(const char* fmt, va_list args) {
     if (!g_file) return;
     SYSTEMTIME st;
     GetLocalTime(&st);
     std::fprintf(g_file, "[%02d:%02d:%02d] ", st.wHour, st.wMinute, st.wSecond);
-    va_list args;
-    va_start(args, fmt);
     std::vfprintf(g_file, fmt, args);
-    va_end(args);
     std::fputc('\n', g_file);
     std::fflush(g_file);
+}
+
+void Log(const char* fmt, ...) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    va_list args;
+    va_start(args, fmt);
+    Write(fmt, args);
+    va_end(args);
+}
+
+void LogVerbose(const char* fmt, ...) {
+    static const bool on = std::getenv("MWRUNTIME_VERBOSE") != nullptr;
+    if (!on) return;
+    std::lock_guard<std::mutex> lk(g_mutex);
+    va_list args;
+    va_start(args, fmt);
+    Write(fmt, args);
+    va_end(args);
 }
 
 }  // namespace mwruntime

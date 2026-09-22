@@ -140,17 +140,19 @@ float DialogueState::Global(const std::string& name) const {
     return def ? def->value : 0.0f;
 }
 
-// 🛑 Logged only on a CHANGE. An object script re-runs its whole body every
-// tick, so an unconditional line here is 30 writes a second of the value the
-// global already held -- measured, 2,300 lines of `wearingordinatoruni = 1`
-// from one equipped cuirass, which buries everything else in the log.
+// 🛑 Logged only on a CHANGE, and only when verbose. An object script re-runs
+// its whole body every tick, so an unconditional line here is 30 writes a
+// second of the value the global already held -- measured, 2,300 lines of
+// `wearingordinatoruni = 1` from one equipped cuirass. A timer or a random
+// roll changes every tick by definition, so the change test alone does not
+// thin those; `LogVerbose` is what keeps them out of an ordinary run.
 void DialogueState::SetGlobal(const std::string& name, float value) {
     // Against what a READER would get, not against the slot: an absent entry
     // falls back to the GLOB's declared value, so the first write is a change
     // only when it differs from that.
     const bool changed = Global(name) != value;
     mGlobals[Key(name)] = value;
-    if (changed) Log("global: %s = %g", name.c_str(), value);
+    if (changed) LogVerbose("global: %s = %g", name.c_str(), value);
 }
 
 void DialogueState::SyncGlobal(const std::string& name, float value) {
@@ -174,13 +176,16 @@ float DialogueState::Var(const std::string& owner,
     return it == mVars.end() ? 0.0f : it->second;
 }
 
-// Logged only on a CHANGE, for the reason SetGlobal gives.
+// Logged only on a CHANGE, and only when verbose, for the reason SetGlobal
+// gives.
 void DialogueState::SetVar(const std::string& owner, const std::string& name,
                            float value) {
     float& slot = mVars[{Key(owner), Key(name)}];
     const bool changed = slot != value;
     slot = value;
-    if (changed) Log("local: %s.%s = %g", owner.c_str(), name.c_str(), value);
+    if (changed) {
+        LogVerbose("local: %s.%s = %g", owner.c_str(), name.c_str(), value);
+    }
 }
 
 bool DialogueState::KnowsTopic(const std::string& topic) const {

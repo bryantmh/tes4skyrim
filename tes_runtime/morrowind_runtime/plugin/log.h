@@ -20,4 +20,11 @@ void OpenLog();
 void LogToStdout(bool on);
 void Log(const char* fmt, ...);
 
+// A line worth writing only while chasing a bug: script variables and globals
+// that a script rewrites every tick. A timer or a random roll CHANGES every
+// tick by definition, so "log on change" does not thin them -- measured over
+// one chargen run, 19,000 of 21,022 lines. Off unless `MWRUNTIME_VERBOSE` is
+// set in the environment.
+void LogVerbose(const char* fmt, ...);
+
 }  // namespace mwruntime

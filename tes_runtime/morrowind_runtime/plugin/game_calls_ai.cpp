@@ -42,6 +42,9 @@ constexpr const char* kAiKinds[] = {"wander", "travel", "escort", "follow",
                                     "activate"};
 constexpr int kAiKindCount = 5;
 
+//: Aliases per slot: who runs the package, what it aims at, where it is going.
+constexpr int kAiAliasesPerSlot = 3;
+
 GetAliasFn       g_questGetAlias = nullptr;
 ForceRefToFn     g_forceRefTo = nullptr;
 AliasRefFn       g_aliasReference = nullptr;
@@ -79,11 +82,26 @@ void* AiQuestForm() {
 }
 
 // One named alias of the AI quest, or null.
+//
+// 🛑 Says ONCE when an alias the sidecar names is not in the quest. The index
+// comes from the sidecar and is resolved against the ESM, so a sidecar
+// deployed without its ESM silently reads the alias that now sits at that
+// index -- a DIFFERENT slot of a DIFFERENT kind, which then runs the wrong
+// package with no other symptom.
+// See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
 void* AiAlias(const std::string& name) {
     void* quest = AiQuestForm();
     const int index = AiAliasIndex(name);
     if (!quest || index < 0 || !g_questGetAlias) return nullptr;
-    return g_questGetAlias(PapyrusVm(), 0, quest, index);
+    void* alias = g_questGetAlias(PapyrusVm(), 0, quest, index);
+    static bool reported = false;
+    if (!alias && !reported) {
+        reported = true;
+        Log("ai: alias '%s' is index %d in the sidecar but the ESM has no "
+            "such alias -- the ESM and sidecar are from different builds",
+            name.c_str(), index);
+    }
+    return alias;
 }
 
 // What an alias holds right now, read off the ENGINE so a loaded save's
@@ -123,6 +141,9 @@ void ReleaseAiActor(void* ref) {
         if (void* target = AiAlias(slot + "Target")) {
             g_aliasClear(PapyrusVm(), 0, target);
         }
+        if (void* spot = AiAlias(slot + "Where")) {
+            g_aliasClear(PapyrusVm(), 0, spot);
+        }
         return false;
     });
 }
@@ -135,7 +156,8 @@ void ReleaseAiActor(void* ref) {
 // 🛑 ForceRefTo itself makes the actor re-evaluate its packages, so no
 // EvaluatePackage is needed after it. POSTED, like every other engine call.
 // See: docs/commentary/morrowind_runtime.md#forcerefto-must-be-posted
-bool RunAiPackage(const char* kind, const std::string& actor, void* at) {
+bool RunAiPackage(const char* kind, const std::string& actor, void* at,
+                  void* where = nullptr) {
     void* ref = OwnerRef(actor);
     if (!ref || !at || !g_forceRefTo) {
         Log("ai: %s cannot %s -- %s", actor.c_str(), kind,
@@ -148,7 +170,7 @@ bool RunAiPackage(const char* kind, const std::string& actor, void* at) {
     // the engine re-evaluate packages, so anything the actor does in reaction
     // happens here, not at the call site. The 3D reload that drops an instance
     // would land in this window.
-    PostToMainThread([kind, ref, at]() {
+    PostToMainThread([kind, ref, at, where]() {
         ReleaseAiActor(ref);
         const int slots = AiAliasIndex("slots");
         for (int n = 0; n < slots; ++n) {
@@ -157,8 +179,19 @@ bool RunAiPackage(const char* kind, const std::string& actor, void* at) {
             void* target = AiAlias(slot + "Target");
             if (!alias || !target || AiAliasHolds(alias)) continue;
             g_forceRefTo(PapyrusVm(), 0, target, at);
+            // 🛑 The destination is filled BEFORE the actor's alias, which is
+            // what makes the engine evaluate packages: a package that starts
+            // with an empty destination walks the actor to its fallback.
+            if (where) {
+                if (void* spot = AiAlias(slot + "Where")) {
+                    g_forceRefTo(PapyrusVm(), 0, spot, where);
+                }
+            }
             g_forceRefTo(PapyrusVm(), 0, alias, ref);
-            Log("ai: %08X took %s slot %d", FormIdOf(ref), kind, n);
+            const FormRef* staged = FindAiPack(slot);
+            void* pack = staged ? Form(staged) : nullptr;
+            Log("ai: %08X took %s slot %d, whose PACK is %08X",
+                FormIdOf(ref), kind, n, pack ? FormIdOf(pack) : 0);
             return;
         }
         Log("ai: no free %s slot of %d", kind, slots);
@@ -297,11 +330,12 @@ void AiEscortActor(const std::string& actor, const std::string& target,
         StopAiPackage(actor);
         return;
     }
-    if (void* made = SpawnAiMarker("escort", actor)) {
+    void* made = SpawnAiMarker("escort", actor);
+    if (made) {
         PlaceAt(made, x, y, z, 0.0f);
         RememberAiDestination(actor, made);
     }
-    if (RunAiPackage("escort", actor, OwnerRef(target))) {
+    if (RunAiPackage("escort", actor, OwnerRef(target), made)) {
         Log("ai: %s escorts %s to (%g, %g, %g) for %g h", actor.c_str(),
             target.c_str(), x, y, z, duration);
     }
@@ -356,8 +390,13 @@ bool AiPackageDoneFor(const std::string& actor) {
     auto seen = last.find(actor);
     if (seen == last.end() || seen->second != done) {
         last[actor] = done;
-        Log("ai: %s package -> %s", actor.c_str(),
-            done ? "DONE" : (running < 0 ? "none" : kAiKinds[running]));
+        void* ref = OwnerRef(actor);
+        void* now = ref && g_currentPackage
+                        ? g_currentPackage(PapyrusVm(), 0, ref)
+                        : nullptr;
+        Log("ai: %s package -> %s (engine runs %08X)", actor.c_str(),
+            done ? "DONE" : (running < 0 ? "none" : kAiKinds[running]),
+            now ? FormIdOf(now) : 0);
     }
     return done;
 }
@@ -438,6 +477,29 @@ int FollowerCount() { return static_cast<int>(PlayerFollowers().size()); }
 
 }  // namespace
 
+// Whether the ESM's alias list is the one the sidecar was written against.
+// The sidecar names three aliases per slot; an ESM built before that used two,
+// and every index past the first slot then names a DIFFERENT slot of a
+// DIFFERENT kind -- the actor runs a package nobody asked for and nothing else
+// looks wrong. Checked once, by asking for the alias one PAST the last the
+// sidecar names: it must not exist.
+// See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
+void ReportAliasLayoutMismatch() {
+    void* quest = AiQuestForm();
+    const int slots = AiAliasIndex("slots");
+    if (!quest || slots <= 0 || !g_questGetAlias) return;
+    const int expected = slots * kAiKindCount * kAiAliasesPerSlot;
+    if (g_questGetAlias(PapyrusVm(), 0, quest, expected)) {
+        Log("ai: the ESM has MORE than the %d aliases this sidecar names -- "
+            "the two are from different builds, so every package will run "
+            "from the wrong slot", expected);
+    } else if (!g_questGetAlias(PapyrusVm(), 0, quest, expected - 1)) {
+        Log("ai: the ESM has FEWER than the %d aliases this sidecar names -- "
+            "the two are from different builds, so every package will run "
+            "from the wrong slot", expected);
+    }
+}
+
 void InstallAiCalls(GameHooks& hooks) {
     hooks.followerCount = FollowerCount;
     g_questGetAlias = Native<GetAliasFn>("Quest.GetAlias",
@@ -458,6 +520,7 @@ void InstallAiCalls(GameHooks& hooks) {
     hooks.currentPackage = CurrentAiPackageOf;
     hooks.packageDone = AiPackageDoneFor;
     hooks.applyAiSetting = ApplyAiSetting;
+    ReportAliasLayoutMismatch();
 }
 
 }  // namespace gamecalls

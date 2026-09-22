@@ -810,9 +810,10 @@ void ReportRebindMiss(const std::string& plugin, std::uint32_t localFormId,
     std::size_t& said = lastSaid[localFormId];
     if (said && now - said < 150) return;
     said = now;
-    Log("object: %s|%06X will not rebind -- %s", plugin.c_str(), localFormId,
-        resolved ? "GetFormFromFile answered but Is3DLoaded said NO"
-                 : "GetFormFromFile did not answer");
+    LogVerbose("object: %s|%06X will not rebind -- %s", plugin.c_str(),
+               localFormId,
+               resolved ? "GetFormFromFile answered but Is3DLoaded said NO"
+                        : "GetFormFromFile did not answer");
 }
 
 // A staged placement's RUNTIME FormID once the engine has it in the world, or
