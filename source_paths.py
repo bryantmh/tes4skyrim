@@ -87,7 +87,8 @@ def load_config(config_path: str = None) -> dict:
         return {}
 
 
-def _registered_source(export_dir: str, file_name: str) -> str:
+def _registered_source(export_dir: str, file_name: str,
+                       search_directories: bool) -> str:
     """The plugin's own retained binary or owning game directory, else "".
 
     A missing or broken registry returns "" so a default-directory conversion
@@ -98,27 +99,27 @@ def _registered_source(export_dir: str, file_name: str) -> str:
         imported = source_registry.plugin_binary(export_dir, file_name)
         if imported:
             return str(imported)
-        owner = source_registry.directory_for(export_dir, file_name)
+        owner = (source_registry.directory_for(export_dir, file_name)
+                 if search_directories else None)
     except Exception:
         return ""
-    if not owner:
-        return ""
-    candidate = os.path.join(owner, file_name)
-    return candidate if os.path.isfile(candidate) else ""
+    return os.path.join(owner, file_name) if owner else ""
 
 
 def resolve_plugin_path(file_name: str, tes4_data: str,
                         export_dir: str = None) -> str:
     """Absolute path to a plugin's TES4 binary.
 
-    Tries an imported mod's retained binary, then the registered game
-    directory owning the plugin, then the default Data directory.  EVERY
-    `os.path.join(tes4_data, name)` must go through here.
+    Tries an imported mod's retained binary, then the selected Data directory
+    `tes4_data`, then the first registered directory holding the plugin.
+    EVERY `os.path.join(tes4_data, name)` must go through here.
     See: docs/reference/pipeline.md#plugin-source-resolution
     """
     export_dir = export_dir or str(SCRIPT_DIR / "export")
-    return (_registered_source(export_dir, file_name)
-            or os.path.join(tes4_data or "", file_name))
+    selected = os.path.join(tes4_data or "", file_name)
+    in_selected = bool(tes4_data) and os.path.isfile(selected)
+    return (_registered_source(export_dir, file_name, not in_selected)
+            or selected)
 
 
 def is_asset_only(file_name: str, export_dir: str) -> bool:

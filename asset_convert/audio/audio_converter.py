@@ -722,12 +722,13 @@ def _find_voice_tools(convert_audio, voice_root, ffmpeg_path,
     """
     if not convert_audio:
         return None, None, None
-    ffmpeg = find_ffmpeg(ffmpeg_path, need_decoder=_voice_decoder(voice_root))
+    decoder = _voice_decoder(voice_root)
+    ffmpeg = find_ffmpeg(ffmpeg_path, need_decoder=decoder)
     if not ffmpeg:
         raise RuntimeError(
-            'ffmpeg not found but convert_audio=True.  '
-            'Install ffmpeg and make sure it is on PATH, or pass '
-            'ffmpeg_path= explicitly.')
+            f'no ffmpeg with the {decoder or "mp3"} decoder: '
+            'external/ffmpeg/ffmpeg.exe is missing or stale -- rebuild it '
+            'with python tools/generators/build_ffmpeg.py')
     xwmaencode = xwmaencode_path or find_xwmaencode()
     if xwmaencode:
         print('  ffmpeg + xWMAEncode found -- converting MP3 -> WAV -> XWM '

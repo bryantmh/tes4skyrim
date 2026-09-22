@@ -759,8 +759,7 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
     os.makedirs(plugin_dir, exist_ok=True)
     output_path = os.path.join(plugin_dir, file_name)
 
-    # Auto-detect masters from binary, prepend Skyrim.esm
-    source = os.path.join(tes4_data, file_name)
+    source = resolve_plugin_path(file_name, tes4_data, export_dir)
     tes4_masters = get_masters_from_binary(source) if os.path.isfile(source) else []
     masters = ['Skyrim.esm'] + tes4_masters
 

@@ -202,13 +202,14 @@ def _ffmpeg() -> 'Missing | None':
     """ffmpeg ships with the repo (external/ffmpeg/), so absence is a broken
     checkout rather than a missing user install -- same as the other bundled
     exes.  PATH is still searched as a fallback, so a user who deleted the
-    bundled copy but has their own ffmpeg keeps working."""
+    bundled copy but has their own ffmpeg keeps working.  The build must
+    decode Vorbis, the codec of every FO3/FNV voice line."""
     from asset_convert.audio.audio_converter import find_ffmpeg
-    if find_ffmpeg():
+    if find_ffmpeg(need_decoder='vorbis'):
         return None
     return Missing(
         'ffmpeg',
-        'Decoding Oblivion MP3/WAV audio before re-encoding',
+        'Decoding MP3/WAV/Ogg Vorbis audio before re-encoding',
         'This binary ships with the repo. Restore it:\n'
         'git checkout -- external/ffmpeg/ffmpeg.exe\n'
         '(if that does not restore it, your antivirus may have quarantined '

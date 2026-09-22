@@ -75,13 +75,20 @@ build" because no ESP references it** — check `--list-mods` first.
 
 1. **An imported mod's retained binary** — `export/<plugin>/_source/<plugin>`,
    written by `mod_ingest.py` when the plugin came from a mod archive.
-2. **The registered game directory that owns it** — `source_registry`
+2. **The selected Data directory** (`tes4_data` = `tes4DataPath`, which the
+   GUI rewrites whenever a directory source is picked), if it holds the plugin.
+3. **The first registered game directory that holds it** — `source_registry`
    records each source Data folder as `kind: "directory"` (Oblivion, Nehrim,
-   Fallout New Vegas), and `directory_for()` maps a plugin name back to its
-   own folder.
-3. **The default Data directory** (`tes4_data`), for anything unregistered.
+   Fallout New Vegas), and `directory_for()` maps a plugin name back to a
+   folder. This is how a master living in another install is found.
 
-Step 2 is what lets a second or third game convert at all. Without it every
+Step 2 must come before step 3 because plugin NAMES are not unique across
+installs: Tale of Two Wastelands puts its own `Fallout3.esm` (masters
+FalloutNV.esm + the FNV DLCs) in the New Vegas Data folder. With the registry
+consulted first, picking the "Fallout 3 goty" source still exported the TTW
+copy whenever New Vegas was registered earlier.
+
+Step 3 is what lets a second or third game convert at all. Without it every
 plugin resolves against the *default* Data directory, so `-f FalloutNV.esm`
 looked for `FalloutNV.esm` inside the Oblivion folder and failed with
 "Source file not found" — even though the registry held the correct path all

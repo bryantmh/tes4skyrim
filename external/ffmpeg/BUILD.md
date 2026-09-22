@@ -1,7 +1,7 @@
 # ffmpeg.exe — minimal LGPL build
 
 `ffmpeg.exe` here is **not** a stock download. It is a purpose-built binary
-containing only the codecs this pipeline uses, which is why it is 1.05 MB
+containing only the codecs this pipeline uses, which is why it is 1.54 MB
 instead of the ~120 MB a stock Windows build costs (a shared build's
 `ffmpeg.exe` is small, but it load-time links seven DLLs totalling ~120 MB —
 none can be omitted, so the whole set would have to ship).
@@ -11,7 +11,7 @@ none can be omitted, so the whole set would have to ship).
 | Version | FFmpeg 7.1.2 (release tarball, not master) |
 | License | **LGPL v2.1 or later** — no `--enable-gpl`, no `--enable-version3` |
 | Linkage | Static; no DLLs, no external runtime |
-| Size | 1.05 MB |
+| Size | 1.54 MB |
 
 ## What it can do
 
