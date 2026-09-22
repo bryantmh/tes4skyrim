@@ -15,6 +15,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from tes5_import.base.navmesh_pins import (
+    cell_key, pins_for, save as save_pins, welds_for,
+)
 from tes5_import.base.text_reader import parse_export_file
 from tes5_import.navmesh import corridor
 from tools.cellview import plugins, progress, seams
@@ -313,16 +316,33 @@ def neighbour_meshes(plugin, wfid, grid):
     return out
 
 
-def mesh_bake(plugin, cell, job=''):
+def cell_corrections(plugin, src, cell):
+    """`(pins, welds, key)` committed for this cell, or empty lists.
+
+    See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
+    """
+    grid = cell_grid(src)
+    wrld = int(src.rec.get('ParentWRLD') or '0', 16)
+    key = cell_key(src.rec, wrld, grid)
+    if not key:
+        return [], [], ''
+    return pins_for(plugin, key), welds_for(plugin, key), key
+
+
+def mesh_bake(plugin, cell, job='', pinned=True):
     """Our mesh, its collision and any saved correction, in the CELL's frame.
 
     Refuses a plugin whose collision cache is missing: the cell would open
     with a pathgrid and no walls at all, which reads as a generation bug.
+    `pinned` false rebuilds WITHOUT the committed corrections, which is how
+    the page shows what they actually changed.
+
+    See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
     """
     why = plugins.preconditions(plugin)
     if why:
         return {'error': why}
-    ck = ('mesh', plugin, cell)
+    ck = ('mesh', plugin, cell, bool(pinned))
     if ck in CACHE:
         return CACHE[ck]
     progress.step(job, 0)
@@ -333,8 +353,11 @@ def mesh_bake(plugin, cell, job=''):
         return {'error': why}
     progress.step(job, 2)
     ledges = []
-    verts, tris = (src.build(ledges_out=ledges) if src.has_pathgrid
-                   else ([], []))
+    pins, welds, pin_key = cell_corrections(plugin, src, cell)
+    verts, tris = (src.build(ledges_out=ledges,
+                             pins=pins if pinned else None,
+                             welds=welds if pinned else None)
+                   if src.has_pathgrid else ([], []))
     walk, block = src.collision()
     progress.step(job, 3)
     fix = load_fix(plugin, cell)
@@ -357,6 +380,10 @@ def mesh_bake(plugin, cell, job=''):
         'stale': is_stale(fix, verts, tris) if fix else False,
         'saved': (fix or {}).get('result'),
         'grid': cell_grid(src),
+        'pinned': bool(pinned),
+        'pin_key': pin_key,
+        'pin_tris': len(pins) // 3,
+        'pin_welds': len(welds),
     }
     CACHE[ck] = out
     return out
@@ -381,7 +408,8 @@ def mesh_save(plugin, cell, payload):
                        our_doors(src, verts, tris),
                        [(int(a), int(b)) for (a, b, _d) in ledges])
     path = save_fix(plugin, target, entry)
-    CACHE.pop(('mesh', plugin, cell), None)
+    for variant in (True, False):
+        CACHE.pop(('mesh', plugin, cell, variant), None)
     return {'saved': path, 'ops': len(ops), 'cell': target,
             'tris': len(entry['result']['tris'])}
 
@@ -410,3 +438,89 @@ def mesh_to_esm(plugin, cell, payload):
     result = {'verts': rv, 'tris': rt, 'doors': rd, 'links': rl}
     return navm_patch(plugin, int(src.fid, 16), cell, result,
                       export=plugins.export_dir(plugin))
+
+
+def touched_verts(ops, nbase):
+    """Indices of every vertex the ops moved, welded or created.
+
+    A vertex added by build mode has no index until replay appends it, so the
+    appended positions are counted forward from the base vertex count.
+    """
+    out = set()
+    added = nbase
+    for op in ops or ():
+        out.update(_op_verts(op, added))
+        if op.get('op') == 'add_vert':
+            added += 1
+    return out
+
+
+def _op_verts(op, added):
+    """Vertices one op touches; `added` is the index an `add_vert` takes."""
+    kind = op.get('op')
+    if kind == 'add_vert':
+        return (added,)
+    if kind == 'move_vert':
+        return (int(op['v']),)
+    if kind == 'snap_vert':
+        return (int(op['v']), int(op['to_v']))
+    if kind == 'add_tri':
+        return tuple(int(k) for k in op['verts'])
+    return ()
+
+
+def changed_triangles(rv, rt, ops, nbase):
+    """Edited result triangles, as corner positions; no ops pins the lot."""
+    hot = touched_verts(ops, nbase)
+    keep = [t for t in rt if not hot or any(v in hot for v in t)]
+    return [tuple(rv[v]) for t in keep for v in t]
+
+
+def weld_pairs(verts, ops):
+    """Each snap_vert as a (from, to) position pair the GENERATOR will have.
+
+    BOTH endpoints come from the pre-replay verts.  Reading either one after
+    replay records where the human dragged it, which no fresh build reproduces
+    -- measured, a target read post-replay landed 59u from the nearest
+    generated vertex and the weld silently never applied.
+
+    See: docs/commentary/tes5_import_navmesh.md#weld-pins
+    """
+    out = []
+    for op in ops or ():
+        if op.get('op') != 'snap_vert':
+            continue
+        i, j = int(op['v']), int(op['to_v'])
+        if 0 <= i < len(verts) and 0 <= j < len(verts):
+            out.append((tuple(verts[i]), tuple(verts[j])))
+    return out
+
+
+def mesh_pin(plugin, cell, payload):
+    """Pin the edited triangles of this cell to the committable pin file.
+
+    See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
+    """
+    src, why = resolve_cell(plugin, cell)
+    if src is None:
+        return {'error': why}
+    ledges = []
+    verts, tris = (src.build(ledges_out=ledges) if src.has_pathgrid
+                   else ([], []))
+    if not tris:
+        return {'error': '%s has no generated navmesh to pin' % cell}
+    ops = payload.get('ops') or []
+    rv, rt, _rd, _rl = replay(verts, tris, ops,
+                              our_doors(src, verts, tris),
+                              [(int(a), int(b)) for (a, b, _d) in ledges])
+    pts = changed_triangles(rv, rt, ops, len(verts))
+    welds = weld_pairs(verts, ops)
+    key = cell_key(src.rec, int(src.rec.get('ParentWRLD') or '0', 16),
+                   cell_grid(src))
+    if not key:
+        return {'error': 'cannot name %s for the pin file' % cell}
+    path, n, nw = save_pins(plugin, key, pts, welds)
+    for variant in (True, False):
+        CACHE.pop(('mesh', plugin, cell, variant), None)
+    return {'pinned': path, 'key': key, 'points': n, 'welds': nw,
+            'tris': n // 3, 'ops': len(ops)}

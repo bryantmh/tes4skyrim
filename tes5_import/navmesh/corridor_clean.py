@@ -172,20 +172,66 @@ def _make_manifold(verts, tris, pin_xy=None):
     return tris
 
 
+
+def apply_welds(verts, tris, welds, tol):
+    """Fuse each weld pair's nearest vertices into ONE index.
+
+    A crack closes only when two triangles share a vertex index, so a hand
+    weld cannot be expressed as a position to protect -- it is re-found here
+    by matching each stored endpoint to the nearest generated vertex within
+    `tol` and rewriting every triangle that referenced the first.
+
+    See: docs/commentary/tes5_import_navmesh.md#weld-pins
+    """
+    if not welds or not verts:
+        return verts, tris
+    verts = [list(v) for v in verts]
+    remap = {}
+    for (src, dst) in welds:
+        i = _nearest_vert(verts, src, tol)
+        j = _nearest_vert(verts, dst, tol)
+        if i is None or j is None or i == j:
+            continue
+        j = remap.get(j, j)
+        remap[i] = j
+        verts[i] = list(verts[j])
+    if not remap:
+        return verts, tris
+    out = []
+    for t in tris:
+        a, b, c = (remap.get(int(k), int(k)) for k in t[:3])
+        if a != b and b != c and a != c:
+            out.append((a, b, c))
+    return verts, out
+
+
+def _nearest_vert(verts, pt, tol):
+    """Index of the vertex nearest `pt` within `tol`, else None."""
+    best = None
+    best_d = tol * tol
+    for i, v in enumerate(verts):
+        d = ((v[0] - pt[0]) ** 2 + (v[1] - pt[1]) ** 2 + (v[2] - pt[2]) ** 2)
+        if d <= best_d:
+            best_d = d
+            best = i
+    return best
+
+
 def finalize(verts, tris, cs=None, pinned=None, doors=None, cell_bounds=None,
              pin_xy=None, door_pins=None, node_pins=None, ground_ok=None,
-             ledge_reach=None, surface=None):
+             ledge_reach=None, surface=None, welds=None, weld_tol=8.0):
     """V1 cleanup: weld, guarantee manifold, drop stray islands, compact.
 
-    Ledges come back as MARKS (centroids) because later passes shift indices;
-    the caller resolves them with `_resolve_ledges` LAST.  Returns (verts,
-    tris) as numpy arrays (float verts, int32 tris).  `ground_ok` is the
-    collision oracle `decimate` straightens concave notches with;
-    `ledge_reach` the one `find_ledge_links` pushes lips with; `surface` the
-    walkable height a needle split sits on.
+    Returns (verts, tris) as numpy arrays, plus ledges as MARKS (centroids),
+    which the caller resolves with `_resolve_ledges` LAST because later passes
+    shift indices.  Oracles: `ground_ok` straightens concave notches,
+    `ledge_reach` pushes lips, `surface` heights a needle split.  `welds` are
+    hand-recorded cracks, closed before anything reads adjacency.
     See: docs/commentary/tes5_import_navmesh.md#finalize-is-a-backstop
+    See: docs/commentary/tes5_import_navmesh.md#weld-pins
     """
     verts, tris = _weld_coincident(verts, tris)
+    verts, tris = apply_welds(verts, tris, welds, weld_tol)
     tris = _make_manifold(verts, tris, pin_xy=pin_xy)
     # Plan-degenerate triangles (three corners collinear in plan) are walls or
     # zero-width seam slivers — no actor can stand on them, and the CK flags

@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from tools.cellview import corpus, plugins, progress
 from tools.cellview.bake import (
-    mesh_bake, mesh_save, mesh_to_esm, plugin_cells, seams_for,
+    mesh_bake, mesh_pin, mesh_save, mesh_to_esm, plugin_cells, seams_for,
 )
 
 #: Files the page is built from; nothing outside this folder is served.
@@ -70,7 +70,8 @@ def mesh_job(params):
     error = ''
     try:
         out = mesh_bake(params.get('plugin', DEFAULT_PLUGIN),
-                        params.get('cell', ''), job=job)
+                        params.get('cell', ''), job=job,
+                        pinned=params.get('pinned', '1') != '0')
         error = out.get('error', '')
         return out
     finally:
@@ -106,6 +107,24 @@ def esm_patch_job(params, payload):
         progress.finish(job, error)
 
 
+
+def pin_job(params, payload):
+    """Pin the edited triangles to the committable pin file.
+
+    See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
+    """
+    job = params.get('job', '')
+    progress.start(job, 'mesh')
+    error = ''
+    try:
+        out = mesh_pin(params.get('plugin', DEFAULT_PLUGIN),
+                       params.get('cell', ''), payload)
+        error = out.get('error', '')
+        return out
+    finally:
+        progress.finish(job, error)
+
+
 def _routes():
     """`(GET, POST)` endpoint tables, each `{path: fn(params[, payload])}`."""
     get = {
@@ -126,6 +145,7 @@ def _routes():
         '/mesh_save': lambda q, p: mesh_save(q.get('plugin', DEFAULT_PLUGIN),
                                              q.get('cell', ''), p),
         '/esm_patch': lambda q, p: esm_patch_job(q, p),
+        '/pin_save': lambda q, p: pin_job(q, p),
     }
     return get, post
 

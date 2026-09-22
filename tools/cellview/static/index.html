@@ -95,6 +95,9 @@
       <label class="chk"><input type="checkbox" id="cTri" checked>navmesh</label>
       <label class="chk"><input type="checkbox" id="cSeam" checked>edge links</label>
       <label class="chk"><input type="checkbox" id="cNbr" checked>adjacent cells</label>
+      <label class="chk meshOnly"
+             title="Rebuild honoring navmesh_pins/ — uncheck for the RAW generator">
+        <input type="checkbox" id="cPin" checked>pinned edits</label>
       <label class="chk corpusOnly"><input type="checkbox" id="cNav" checked>authored</label>
       <label class="chk corpusOnly"><input type="checkbox" id="cGen">ours</label>
     </div>
@@ -111,6 +114,9 @@
     <button id="toEsm" class="meshOnly"
             title="Write this mesh into output/&lt;plugin&gt; so it loads in-game"
             disabled>To ESM</button>
+    <button id="pin" class="meshOnly"
+            title="Commit the edited triangles to navmesh_pins/ so the generator never cuts them"
+            disabled>Pin edits</button>
     <button id="undo" disabled>Undo</button>
     <button id="reset">Reload</button>
   </div>
@@ -814,8 +820,10 @@ async function loadCell(name, keepView) {
 }
 
 /* Any cell of any export can be opened for mesh work; only the seven corpus
-   cells have a Bruma counterpart, so the authored layers simply stay empty. */
-async function loadMesh(plugin, cell) {
+   cells have a Bruma counterpart, so the authored layers simply stay empty.
+   `keepCamera` re-bakes the cell already on screen -- the A/B is a comparison
+   of one spot, so reframing it would throw away what you were looking at. */
+async function loadMesh(plugin, cell, keepCamera) {
   const job = newJob();
   showProgress('Opening ' + cell);
   pollProgress(job);
@@ -823,15 +831,18 @@ async function loadMesh(plugin, cell) {
   try {
     d = await (await fetch('/mesh?plugin=' + encodeURIComponent(plugin) +
                            '&cell=' + encodeURIComponent(cell) +
+                           '&pinned=' + ($('cPin').checked ? '1' : '0') +
                            '&job=' + encodeURIComponent(job))).json();
   } finally { stopPoll(); }
   if (d.error) { showError(d.error); return; }
-  /* Stale ops address a mesh the generator has since renumbered, so replaying
-     them onto the current one silently mixes two different meshes. Load them
-     only when they still apply; otherwise open the saved result instead. */
-  M = d; mHistory = [];
-  mOps = d.stale ? [] : d.ops.slice();
-  $('meshSrc').value = (d.stale && d.saved) ? 'saved' : 'live';
+  /* "Current mesh" is the GENERATOR'S OUTPUT and nothing else: a saved
+     correction is never replayed onto it, or the page shows a fix the build
+     does not have and every A/B against it reads as "no change".  The
+     correction has its own dropdown entry; `mOps` holds only edits made in
+     THIS session.
+     See: docs/commentary/tes5_import_navmesh.md#current-mesh-is-the-generator */
+  M = d; mHistory = []; mOps = [];
+  $('meshSrc').value = 'live';
   meshReset();
   /* One cell at a time: drop EVERY layer of the previous one, including the
      pathgrid and the authored underlay, not just the collision. */
@@ -852,7 +863,7 @@ async function loadMesh(plugin, cell) {
   applyScope();
   applyVisibility();
   setMode('tri');
-  frameMesh();
+  if (!keepCamera) frameMesh();
   $('busy').style.display = 'none';
   loadSeams(plugin, cell);
 }
@@ -1003,6 +1014,30 @@ async function meshToEsm() {
   setTimeout(() => { $('busy').style.display = 'none'; }, 3000);
 }
 
+/* Commits the edited triangles as PINS: world positions the generator may
+   never cut away, unlike a correction keyed on indices it will renumber.
+   See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor */
+async function meshPin() {
+  const job = newJob();
+  showProgress('Pinning ' + M.cell);
+  pollProgress(job);
+  let d;
+  try {
+    d = await (await fetch('/pin_save?plugin=' + encodeURIComponent(M.plugin) +
+                           '&cell=' + encodeURIComponent(M.cell) +
+                           '&job=' + encodeURIComponent(job), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ops: mOps })
+    })).json();
+  } catch (err) { stopPoll(); showError('pin FAILED: ' + err); return;
+  } finally { stopPoll(); }
+  if (d.error) { showError(d.error); return; }
+  $('busy').textContent = 'pinned ' + d.tris + ' tris' +
+    (d.welds ? ' + ' + d.welds + ' weld' + (d.welds > 1 ? 's' : '') : '') +
+    ' as "' + d.key + '" in ' + d.pinned;
+  setTimeout(() => { $('busy').style.display = 'none'; }, 3000);
+}
+
 async function save() {
   if (mode === 'tri') { await meshSave('overwrite'); return; }
   $('busy').style.display = 'grid';
@@ -1058,9 +1093,10 @@ function meshDiscard() {
   needsRender = true;
 }
 
-/* Stale ops address vertices the generator has since renumbered, so replaying
-   them paints nonsense. The saved `result` is the correction's real record --
-   view it directly instead, read-only, because ops cannot extend it. */
+/* Rebuilds the editable copy from whichever mesh the dropdown names, then
+   replays THIS SESSION'S edits over it. A saved correction is never among
+   them: it is its own dropdown entry, read-only, because ops cannot extend
+   a stored result. */
 function meshReset() {
   const saved = showSaved() ? M.saved : null;
   mVerts = (saved ? saved.verts : M.verts).map(p => p.slice());
@@ -1320,6 +1356,22 @@ function frameAll() {
   applyCamera();
 }
 
+/* Which half of the A/B is on screen.  A cell with nothing committed says so
+   rather than claiming "pinned", or the toggle looks broken when both sides
+   render identically -- which is exactly what an unpinned cell does. */
+function pinTxt() {
+  /* A snapshot is frozen geometry the pins never touched, so claiming they
+     are APPLIED or DISABLED there would describe a mesh nobody is looking at. */
+  if (showSaved()) return '';
+  const n = (M.pin_tris || 0) + (M.pin_welds || 0);
+  if (!n) return ' · <span class="warn">no pins committed</span>';
+  const what = `${M.pin_tris} pinned tris` +
+               (M.pin_welds ? `, ${M.pin_welds} weld` +
+                              (M.pin_welds > 1 ? 's' : '') : '');
+  return M.pinned ? ` · ${what} APPLIED`
+                  : ` · <span class="warn">${what} DISABLED</span>`;
+}
+
 /* -------------------------------------------------------------- status -- */
 function meshStatus() {
   const live = mTris.length - mDead.size;
@@ -1336,8 +1388,8 @@ function meshStatus() {
     `<b>${live}</b> tris · ${mDoors.size} door · ${mLinks.size} drop link` +
     seamTxt + ' · ' +
     (mOps.length ? `<b>${mOps.length} ops</b>` : 'no edits') +
-    (M.stale ? ` · <span class="warn">${M.ops.length} ops STALE, ` +
-               'not replayed</span>' : '') +
+    (M.stale ? ' · <span class="warn">saved correction is STALE</span>' : '') +
+    pinTxt() +
     (viewing ? ' · <span class="warn">viewing SAVED result</span>' : '');
   $('save').disabled = mOps.length === 0 || viewing;
   $('saveNew').disabled = mOps.length === 0 || viewing;
@@ -1345,6 +1397,7 @@ function meshStatus() {
   /* Unlike the corpus saves this needs no edits: shipping a freshly generated
      mesh is how you check the generator itself in-game. */
   $('toEsm').disabled = viewing || live === 0;
+  $('pin').disabled = viewing || live === 0;
   $('mode').textContent = 'Mesh · ' + M.plugin + ' · ' + M.cell +
     (M.nodes.length === 0 ? ' · NO PATHGRID (nothing to generate from)' : '') +
     (mBuild ? ' · BUILD ' + mRing.length + '/3' : '') +
@@ -1573,14 +1626,26 @@ $('srcBoth').onclick = () => setSource('both');
 $('save').onclick = save;
 $('saveNew').onclick = () => meshSave('new');
 $('toEsm').onclick = meshToEsm;
+$('pin').onclick = meshPin;
 /* Switching source re-derives the mesh from scratch; ops are kept so that
    returning to the current mesh restores the edit in progress. */
 $('meshSrc').onchange = () => { meshReset(); meshRebuild(); status(); };
 $('undo').onclick = undo;
-/* `G` is null in mesh mode, so Reload has to re-bake the mesh cell instead. */
+/* `G` is null in mesh mode, so Reload has to re-bake the mesh cell instead.
+   It is the SAME cell, so the camera stays where you left it. */
 $('reset').onclick = () => (mode === 'tri' && M)
-  ? loadMesh(M.plugin, M.cell)
+  ? loadMesh(M.plugin, M.cell, true)
   : loadCell(G.cell, false);
+/* Pins change the GEOMETRY, so this is a re-bake, not a visibility toggle:
+   the A/B is the whole point of the switch.  Edits in progress are dropped
+   because their indices address the mesh that is being replaced.
+   See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor */
+$('cPin').onchange = () => {
+  /* A saved snapshot is frozen geometry the pins never touched, so the A/B
+     has to look at the generated mesh or the toggle shows nothing. */
+  $('meshSrc').value = 'live';
+  if (mode === 'tri' && M) loadMesh(M.plugin, M.cell, true);
+};
 $('cell').onchange = e => { if (e.target.value) loadCell(e.target.value, false); };
 for (const id of ['cWall', 'cFloor', 'cNav', 'cGen', 'cPath', 'cTri', 'cSeam',
                   'cNbr'])

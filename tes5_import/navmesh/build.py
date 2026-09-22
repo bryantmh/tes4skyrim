@@ -54,13 +54,15 @@ def teleport_door_positions(refr_recs):
 
 def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
                   land_rec=None, origin_x=0.0, origin_y=0.0, budget=None,
-                  doors=None, ledges_out=None, door_bases=None):
+                  doors=None, ledges_out=None, door_bases=None, pins=None, welds=None, weld_tol=8.0):
     """Build a navmesh for one cell.  Returns (verts3d, tris) or ([], []).
 
     doors: [(x, y, z, rot_z, is_teleport, width), ...] door REFRs (teleport AND
     interior).  When None, teleport doors are recovered from XTEL alone.
     door_bases: low-24 DOOR base FormIDs, whose panel collision is EXCLUDED.
+    pins: hand-declared walkable (x, y, z).  welds: hand-recorded cracks.
     See: docs/commentary/tes5_import_navmesh.md#ledges-are-returned-out-of-band
+    See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
     """
     if not nodes:
         return [], []
@@ -69,7 +71,7 @@ def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
     verts, tris, ledges = corridor.build_corridors(
         refr_recs, base_model_by_fid, get_collision, nodes, edges,
         land_rec=land_rec, origin_x=origin_x, origin_y=origin_y, doors=doors,
-        door_bases=door_bases)
+        door_bases=door_bases, pins=pins, welds=welds, weld_tol=weld_tol)
     # Drop-down (Ledge Up/Down) pairs are reported OUT-OF-BAND so the long-
     # standing (verts, tris) return stays intact for the many callers that
     # only want geometry.  pgrd_to_navm reads this to write the edge links.

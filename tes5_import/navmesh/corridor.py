@@ -1281,13 +1281,15 @@ LIP_MARCH_STEP = 4.0
 
 def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
                     land_rec=None, origin_x=0.0, origin_y=0.0, doors=None,
-                    door_bases=None):
+                    door_bases=None, pins=None, welds=None, weld_tol=8.0):
     """Phase-1 corridor navmesh for one cell: (verts, tris, ledges) lists.
 
     doors: [(x, y, z, rot_z, is_teleport, width), ...] pivot-corrected door
     centers.  door_bases: low-24 DOOR base FormIDs contributing no collision.
     ledges: [(upper_tri, lower_tri, drop), ...] for NVNM Ledge Up/Down links.
+    pins: hand-declared walkable (x, y, z).  welds: hand-recorded cracks.
     See: docs/commentary/tes5_import_navmesh.md#ribbon-construction
+    See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
     """
     if not nodes or not edges:
         return [], [], []
@@ -1324,7 +1326,8 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
 
     door_xy = [(x, y, z) for (x, y, z, r, tp, w) in door_list]
     pin_xy = (list(door_xy) + door_pins
-              + _centerline_samples(nodes, edges, node_z))
+              + _centerline_samples(nodes, edges, node_z)
+              + [tuple(p) for p in (pins or ())])
     verts, tris, ledge_marks = corridor_clean.finalize(
         verts, tris, cs=(params.CS_EXTERIOR if land_rec is not None
                          else params.CS),
@@ -1332,7 +1335,8 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
         door_pins=door_pins,
         node_pins=[(nodes[i][0], nodes[i][1]) for i in range(len(nodes))],
         ground_ok=_outline_ground_ok(blocking, walkable),
-        ledge_reach=_ledge_reach(blocking, walkable), surface=sample)
+        ledge_reach=_ledge_reach(blocking, walkable), surface=sample,
+        welds=welds, weld_tol=weld_tol)
 
     verts = [tuple(float(c) for c in v) for v in verts]
     tris = [tuple(int(i) for i in t) for t in tris]

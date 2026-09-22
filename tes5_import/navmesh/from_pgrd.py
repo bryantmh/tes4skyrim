@@ -93,6 +93,8 @@ import pickle
 import struct
 import logging
 
+from ..base.navmesh_pins import (WELD_TOLERANCE, cell_key, digest, pins_for,
+                                 plugin_of, welds_for)
 from ..base.text_reader import get_int, get_float, get_str, get_formid
 from .world import base_fid
 from ..base.writer import pack_subrecord, pack_string_subrecord
@@ -773,13 +775,17 @@ def pack_navm_record(form_id: int, subrecords: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 def geom_hash(tag, points, edges, refr_recs, base_model_by_fid, doors,
-              land_rec, origin_x, origin_y):
+              land_rec, origin_x, origin_y, pin_digest=''):
     """Hash of everything the geometry build consumes.
 
     The `geom-vN` literal is bumped when the CACHED PAYLOAD's shape changes,
     not only when its inputs do, so an older entry cannot silently restore
     geometry the current build would not produce.
+
+    An UNPINNED cell contributes no `pin_digest`, so its hash is byte-identical
+    to what it was before pins existed and its cached entry stays valid.
     See: docs/commentary/tes5_import_navmesh.md#geom-payload-version
+    See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
     """
     from asset_convert.collision.collision_extract import collision_digest
     h = hashlib.sha1()
@@ -813,6 +819,8 @@ def geom_hash(tag, points, edges, refr_recs, base_model_by_fid, doors,
         h.update(repr((x, y, z, r, tp, w)).encode())
     if land_rec is not None:
         h.update((get_str(land_rec, 'VHGT') or '').encode())
+    if pin_digest:
+        h.update(('PIN|%s' % pin_digest).encode())
     return h.hexdigest()
 
 
@@ -940,6 +948,30 @@ def _cell_graph(rec, cell_rec):
     return points, edges, origin_x, origin_y, is_exterior
 
 
+def cell_pins(rec, cell_rec, geom_cache):
+    """(pin points, welds, digest) a human recorded for this cell.
+
+    Both the hash and the build read pins through here, so the value that
+    invalidates a cached cell is exactly the value the build then honors.
+
+    See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
+    """
+    if geom_cache is None:
+        return [], [], ''
+    plugin = plugin_of(geom_cache[0])
+    if not plugin:
+        return [], [], ''
+    grid = None
+    wrld_fid = get_formid(rec, 'ParentWRLD')
+    if wrld_fid and cell_rec is not None:
+        grid = (get_int(cell_rec, 'XCLC.X', 0), get_int(cell_rec, 'XCLC.Y', 0))
+    key = cell_key(cell_rec, wrld_fid, grid)
+    if not key:
+        return [], [], ''
+    return (pins_for(plugin, key), welds_for(plugin, key),
+            digest(plugin, key))
+
+
 def cell_geom_key(rec, land_rec, cell_rec, refr_recs, base_model_by_fid,
                   door_fids, geom_cache, extra_door_refrs=None):
     """This cell's cache hash, derived from its INPUTS with no geometry build.
@@ -965,7 +997,8 @@ def cell_geom_key(rec, land_rec, cell_rec, refr_recs, base_model_by_fid,
         doors += collect_doors(extra_door_refrs, door_fids)
     return geom_hash(geom_cache[1], points, edges, refr_recs,
                      base_model_by_fid, doors,
-                     land_rec if is_exterior else None, origin_x, origin_y)
+                     land_rec if is_exterior else None, origin_x, origin_y,
+                     pin_digest=cell_pins(rec, cell_rec, geom_cache)[2])
 
 
 def cached_geometry(geom_cache, cell_fid, pgrd_fid):
@@ -1031,7 +1064,7 @@ def _cell_frame(rec, cell_rec):
 
 def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
                    is_exterior, land_rec, refr_recs, base_model_by_fid,
-                   door_fids, doors, geom_cache):
+                   door_fids, doors, geom_cache, cell_rec=None):
     """(verts, tris, ledges, geom_cached, geom_key) from real Havok collision.
 
     Serves a cache hit matching this cell's input hash, else builds the corridor
@@ -1043,12 +1076,13 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
     geom_key = cache_path = None
     verts3d = tris = None
     ledges = []
+    pins, welds, pin_digest = cell_pins(rec, cell_rec, geom_cache)
     if geom_cache is not None:
         cache_dir, tag = geom_cache
         geom_key = geom_hash(tag, points, edges, refr_recs,
                              base_model_by_fid, doors,
                              land_rec if is_exterior else None,
-                             origin_x, origin_y)
+                             origin_x, origin_y, pin_digest=pin_digest)
         cache_path = os.path.join(
             cache_dir, '%08X_%08X.pkl' % (cell_fid, get_formid(rec, 'FormID')))
         cached = _geom_cache_load(cache_path, geom_key)
@@ -1067,6 +1101,7 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
         origin_x=origin_x, origin_y=origin_y,
         doors=[(x, y, z, r, tp, w) for (x, y, z, r, _f, tp, w) in doors],
         ledges_out=ledges,
+        pins=pins, welds=welds, weld_tol=WELD_TOLERANCE,
         door_bases=(set(door_fids.keys())
                     if isinstance(door_fids, dict)
                     else set(door_fids or ())))
@@ -1118,7 +1153,8 @@ def convert_PGRD(rec: dict, writer=None,
 
     verts3d, tris, ledges, geom_cached, geom_key = _cell_geometry(
         rec, cell_fid, points, edges, origin_x, origin_y, is_exterior,
-        land_rec, refr_recs, base_model_by_fid, door_fids, doors, geom_cache)
+        land_rec, refr_recs, base_model_by_fid, door_fids, doors, geom_cache,
+        cell_rec=cell_rec)
     if verts3d is None or len(verts3d) < 3 or not tris:
         return None, None
 

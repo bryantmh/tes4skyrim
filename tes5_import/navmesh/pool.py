@@ -454,8 +454,11 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
 # ---------------------------------------------------------------------------
 
 
-#: Runs AFTER geometry leaves the cache, so it cannot invalidate an entry.
-_TAG_EXCLUDE = frozenset({'edge_links.py'})
+#: Cannot reach the cached payload; see #the-tag-hashes-geometry-only.
+_TAG_EXCLUDE = frozenset({
+    'edge_links.py', 'navi.py', 'split.py', 'cache_audit.py', 'pool.py',
+    'worker.py', '__init__.py',
+})
 
 #: Native SOURCES deciding cell geometry; hashed with the Python, never the .pyd.
 _TAG_NATIVE = ('navgrow/grow.cpp',)

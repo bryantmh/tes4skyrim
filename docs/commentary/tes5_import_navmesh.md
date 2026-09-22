@@ -4354,3 +4354,233 @@ front so the earlier offsets stay valid.
 The load-order shift is read back off the two files rather than reconstructed:
 the output's master list is the TES4 one with new masters prepended, so the
 difference in their lengths IS the shift every FormID's index byte took.
+
+
+## <a id="pinned-navmesh-floor"></a>Pinned navmesh floor: a correction that survives the generator
+
+**Code:** `tes5_import/base/navmesh_pins.py`, written by cellview's **Pin edits**
+button, consumed in `from_pgrd._cell_geometry` and `corridor.build_corridors`.
+
+A correction in `tests/navmesh_fixed/` records triangle and vertex INDICES, so
+it is meaningless the moment the generator renumbers anything — `is_stale`
+exists only to refuse replaying one. The corpus census shows the decay
+directly: of five corrections on disk, three (`ImperialDungeon01/02/03`) have
+**zero ops and identical base/result**, having already collapsed into snapshots.
+The files are also gitignored, so nothing a human decided ever reaches another
+machine.
+
+A pin is the durable half of the same intent. It stores the **world positions**
+a human declared walkable — not indices — so it survives any retriangulation,
+and it is small enough to commit and read in a diff.
+
+**Pins ride a mechanism that already existed.** `corridor_clean.finalize` takes
+`pin_xy`, a list of `(x, y, z)` points, and `_covers_any_sample` keeps any
+triangle containing one at its own height. Every destructive stage already
+consults it: `_make_manifold` (three times), `cull_boundary_slivers` (twice),
+`cull_open_flaps` and `_drop_unreachable_islands`. Pathgrid samples and doors
+already ride it, and the docs record that a walked line "outranks every other
+candidate on an edge." A hand pin is one more point in that list.
+
+**Pins go to `pin_xy`, never to `_pins`.** The decimator's own pin list is
+deliberately limited to doors and nodes — `finalize`'s comment states that
+pinning all of `pin_xy` there would disable decimation everywhere. A pinned
+triangle is therefore protected from being CUT, while the mesh over it may
+still be re-triangulated. That is the intended reading: the human declared the
+space walkable, not the tessellation sacred.
+
+**What a pin cannot do.** It protects floor that the generator produces; it does
+not make the generator REACH ground it never grew. Forcing coverage is the
+`build_union_mesh(extra_strips=...)` path that door footprints already use, and
+it is deliberately not part of this.
+
+**The key is plugin plus cell name.** One committable file per source plugin,
+`navmesh_pins/<plugin>.json`, keyed by cell EditorID — or, for an exterior cell,
+by the `"<worldspace> X Y"` grid reference cellview opens it with, since an
+exterior CELL has no EditorID. Lookup is case-insensitive: the name is one a
+human typed.
+
+**The loader lives outside `tes5_import/navmesh/`.** That folder's bytes ARE the
+geometry cache tag (`pool.navmesh_geom_cache` hashes every `.py` in it), so a
+loader placed there would invalidate all ~8,200 cached cells on every edit. In
+`tes5_import/base/` it is free to change. The pin DATA still enters
+`geom_hash` per cell, so a pinned cell's stored hash stops matching while every
+unpinned cell's hash is byte-identical to what it was before pins existed.
+
+> Note: a changed hash makes a cell's cached geometry stale, which is not the
+> same as making the converter skip the others. Regenerating only the cells
+> whose pins moved is separate, unbuilt behavior.
+
+
+### <a id="weld-pins"></a>Weld pins: the crack a position pin cannot express
+
+**Code:** `corridor_clean.apply_welds`, stored in the `welds` section of
+`navmesh_pins/<plugin>.json`.
+
+A floor pin protects a PLACE, and that covers most hand corrections. It cannot
+express the commonest one of all. Measured on the two real corrections that
+carry any ops at all, both are welds: `Imperial Prison Ship` is one
+`move_vert` plus one `snap_vert`, and `imperialdungeon01.2` is one move plus
+two snaps.
+
+A crack is not missing floor. Two triangles can meet at identical coordinates
+and still leave a crack, because the engine joins them only when they **share a
+vertex index** — the reason `meshedit._snap_vert` rewrites indices rather than
+just moving a vertex. Nothing about that is a position to protect, so a floor
+pin is silently a no-op: rebuilding the Imperial Prison Ship with and without
+its floor pins gave byte-identical results, 145 verts and 171 tris either way,
+with the crack still open (v95 and v124 sitting 33u apart, one triangle each).
+
+A weld pin therefore stores the two PLACES whose vertices must become one.
+`apply_welds` re-finds each endpoint as the nearest generated vertex within
+`WELD_TOLERANCE`, points the first at the second, and drops any triangle the
+merge leaves degenerate — the same three steps `_snap_vert` performs, but keyed
+on geometry that survives regeneration instead of indices that do not.
+
+**8 units is unambiguous.** Measured on the Imperial Prison Ship, the closest
+two generated vertices sit 17u apart, the 10th percentile at 32u and the median
+at 64u; no vertex has a neighbour within 8u. An endpoint therefore cannot match
+the wrong vertex, and a weld whose endpoint has drifted further than that
+matches nothing and is skipped rather than guessed at.
+
+It runs inside `finalize`, immediately after `_weld_coincident` and before
+anything reads adjacency — `_make_manifold`, the decimator and the cull passes
+all reason about shared edges, so a weld applied later would be invisible to
+every one of them.
+
+A weld is applied ONCE, at the position it was recorded. If a later generator
+moves that floor wholesale the weld simply stops matching; it never drags
+unrelated geometry together, because both endpoints must independently land
+within tolerance.
+
+
+### <a id="pin-ab-toggle"></a>The pinned-edits toggle is a RE-BAKE
+
+Cellview's **pinned edits** checkbox re-fetches `/mesh?pinned=0|1` rather than
+hiding a layer. Pins change what the generator PRODUCES, so there is no
+pinned-vs-unpinned geometry sitting in the page to show or hide — the only
+honest A/B is to run the generator both ways. The bake cache is keyed on the
+flag so flipping back is instant, and both variants are dropped whenever the
+pin file is written, or the first bake after pinning would serve the mesh from
+before the pin.
+
+Until this landed `CellCtx.build` passed no pins at all, so the editor rendered
+the RAW generator while the pipeline rendered the corrected one — the viewer
+silently disagreed with the build it claims to mirror.
+
+**An unpinned cell says so.** Both halves of the A/B are identical when nothing
+is committed, which reads exactly like a broken switch, so the status line
+distinguishes "no pins committed" from "2 pinned tris, 1 weld APPLIED" and
+"… DISABLED". Measured on the Imperial Prison Ship: 171 tris / 145 verts with
+pins disabled, 170 / 143 with them applied.
+
+Edits in progress are dropped on a flip, because their triangle and vertex
+indices address the mesh being replaced.
+
+The camera is NOT reframed. A re-bake of the cell already on screen keeps
+the view (`loadMesh`'s `keepCamera`), for the pin toggle and for Reload:
+the A/B is a comparison of one spot, and reframing throws away the spot.
+Opening a DIFFERENT cell still frames it.
+
+
+### <a id="current-mesh-is-the-generator"></a>"Current mesh" is the GENERATOR'S output, never a replay
+
+Cellview's mesh dropdown names two different things, and they must stay
+different:
+
+* **Current mesh** — what the generator produces for this cell, right now,
+  plus any edits made in THIS session. Nothing else.
+* **Saved result** — the frozen `result` from `tests/navmesh_fixed/`, read-only,
+  because ops cannot extend a stored mesh.
+
+The page used to seed `mOps` from the saved correction on every load and replay
+it onto the live mesh. Both dropdown entries then drew the same picture, and
+every comparison against the generator was worthless: the pinned/unpinned A/B
+changed the geometry underneath and the replay painted the correction straight
+back over both halves, so the toggle read as doing nothing at all. The bug
+survived three wrong diagnoses (the dropdown, a `hasPins` guard, the weld
+endpoints) because each was reasoned from the code rather than from what the
+page draws.
+
+So `mOps` now holds only this session's edits, and the view opens on **Current
+mesh** regardless of whether a correction exists. A correction is reached by
+choosing it, never by having it applied invisibly.
+
+Measured on `Morrowind.esm` / `Imperial Prison Ship`, vertex 95 is the tell:
+Current mesh has it at `(-61.63, 1175.06)` with the crack open, Saved result at
+`(-80.96, 1147.73)` welded. With the cell's pins committed, Current mesh drops
+to 170 triangles as the weld collapses one.
+
+
+### <a id="the-tag-hashes-geometry-only"></a>The cache tag hashes the GEOMETRY code, not the whole folder
+
+**Code:** `pool._TAG_EXCLUDE`, consumed by `navmesh_geom_cache`.
+
+The geometry cache key is per-cell inputs plus a **tag**: a SHA-1 over the bytes
+of every `.py` in `tes5_import/navmesh/`. The tag is identical for every cell,
+so one edit anywhere in that folder invalidates all ~8,200 entries at once.
+That is correct for code that decides geometry and pure waste for code that
+does not.
+
+The cached payload is `(verts, tris, ledges)` and nothing else. Seven modules
+in that folder cannot reach it: `edge_links`, `navi`, `split`, `cache_audit`,
+`pool`, `worker` and `__init__`. They orchestrate the run, or rewrite records
+AFTER geometry has left the cache. Editing `navi.py` used to cost a full
+rebuild of every cell to produce byte-identical output.
+
+Verified three independent ways, all agreeing:
+
+* **Import-graph reachability** from `from_pgrd`/`build` — none of the seven is
+  reachable.
+* **A runtime trace** (`sys.setprofile`) over real builds of ImperialDungeon01,
+  ImperialDungeon02 and AnvilCastleGreatHall — 14 files execute, none of the
+  seven among them.
+* **Direct reference search** — the only edges are `pool → cache_audit, worker`
+  and `cache_audit → worker`, all orchestration. No geometry module names any
+  of them.
+
+**Two files that look inert and are NOT.** `params.py` never *calls* anything —
+it is constants — but its values drive every stage, so it stays in the tag. And
+`from_pgrd.py` did not appear in the trace only because `CellCtx.build` calls
+`build_navmesh` directly; the real pipeline runs it, and it computes the hash
+itself. Neither may be excluded, and "it did not execute in the trace" is not
+sufficient grounds on its own.
+
+Measured cost of the tag being all-or-nothing: a cache **hit** costs 12-18ms
+against a **miss** at 1.4-5.5s, so a full warm pass is ~129s of CPU over 8,218
+cells plus ~1.2 GB of job records pickled out to workers. An edit to one of the
+seven used to pay a full rebuild for zero change in output.
+
+
+### <a id="mixed-separators-lost-the-pins"></a>Mixed separators made every pin a no-op
+
+**Code:** `navmesh_pins.plugin_of`.
+
+Pins are looked up by plugin, and the plugin is derived from the geometry cache
+directory rather than threaded through every navmesh worker's signature. That
+directory is built by `os.path.join(os.path.dirname(collision_cache),
+'navmesh_geom_cache')`, and the collision cache path arrives with FORWARD
+slashes, so the result is mixed:
+
+    export/Morrowind.esm\navmesh_geom_cache
+
+`os.path.dirname` on Windows splits at the last separator it recognises, which
+here is the backslash, leaving `export/Morrowind.esm`; `os.path.basename` of
+that is the whole string, and the original code's `basename(dirname(...))`
+answered **`export`**. `pins_for('export', ...)` finds nothing, so every pin and
+every weld silently did not apply — including in a full `--import-only` run,
+where the cell rebuilt for an unrelated reason (a tag change) and the operator
+saw a fresh mesh with no correction in it.
+
+The failure is silent by construction: a missing pin file is not an error,
+because a conversion must never abort over one. That makes the wrong plugin
+name indistinguishable from "nobody pinned anything".
+
+`plugin_of` now normalizes to forward slashes before splitting, so both path
+forms answer the same. Verified against all three spellings — pure forward,
+pure backslash, and the mixed form the pipeline actually produces.
+
+**How it was found:** the shipped NAVM had 145 verts / 171 tris with the
+crack-open vertex still present, while calling `build_navmesh` directly with
+the same pins gave 143 / 170. Same code, same inputs, different answer — which
+located the difference in how the pins were fetched, not in how they were
+applied.
