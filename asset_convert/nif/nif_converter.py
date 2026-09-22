@@ -42,8 +42,8 @@ from asset_convert.nif.geometry_sanitize import sanitize_geometry_data
 from asset_convert.nif.nif_materials_morrowind import carry_havok_material
 from asset_convert.nif.nif_converter_morrowind import (
     animate_doors, attach_morrowind_collision, build_skin_partitions,
-    disable_specular, is_morrowind, run_morrowind_fixups,
-    strip_collision_nodes, strip_spinning_doors)
+    disable_specular, is_morrowind, latch_root_flags,
+    run_morrowind_fixups, strip_collision_nodes, strip_spinning_doors)
 from asset_convert.nif.tex_paths import rewrite_tex_path
 from asset_convert.nif.shaders import (ALPHA_BLEND_ENABLED,
                                        ALPHA_DST_ONE, ALPHA_DST_SHIFT,
@@ -91,6 +91,7 @@ from asset_convert.character import wearable_plan as wp
 from asset_convert.collision.clutter_plan import latch_clutter_mass
 from asset_convert.nif.door_anim_morrowind import latch_source_hinge
 from asset_convert.nif.door_plan import latch_door_model
+from asset_convert.nif.fixture_plan import latch_fixture_model
 from asset_convert.character.body_wrap import morph_converted_to_weight1
 from asset_convert.havok.hkx_animobject import generate_animobject_project
 from asset_convert.nif.gun_parts_falloutnv import add_gun_part_sequences
@@ -886,6 +887,7 @@ def _convert_one_root(data, i, root, stats, fix_textures, src_path, creature,
     root = _normalize_billboard_root(data, i, root)
     zero_fallout_root_rotation(root)
 
+    latch_root_flags(root)
     is_sky = stats.get('_sky_type') is not None
     if type(root).__name__ == 'NiNode' and not is_worn_armor and not is_sky:
         root = _to_fade_node(data, i, root, stats, src_path, wants_gnd_marker)
@@ -1117,6 +1119,7 @@ def _authored_wear(src_path, src_meshes_dir, wearable_plan, creature, hair):
     latch_clutter_mass(wearable_plan if not creature else None,
                        src_path, src_meshes_dir)
     latch_door_model(wearable_plan, src_path, src_meshes_dir)
+    latch_fixture_model(wearable_plan, src_path, src_meshes_dir)
     if plan is None:
         return bool(hair), 0x02 if hair else 0
     return (wp.is_worn(plan, src_path, src_meshes_dir),

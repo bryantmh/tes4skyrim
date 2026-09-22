@@ -27,6 +27,7 @@ from asset_convert.collision.clutter_plan import mesh_clutter_mass
 from asset_convert.nif.door_anim_morrowind import (animate_morrowind_door,
                                                    strip_hingeless_swing)
 from asset_convert.nif.door_plan import mesh_is_door
+from asset_convert.nif.fixture_plan import mesh_is_fixture
 from asset_convert.havok.hkx_ragdoll_morrowind import attach_synthetic_bodies
 from asset_convert.nif.nif_materials_morrowind import (
     havok_material, sample_materials)
@@ -110,6 +111,25 @@ def _extra_strings(node) -> list:
             if getattr(extra, 'string_data', None) is not None]
 
 
+def root_flag_extras(root) -> list:
+    """The Morrowind collision-flag texts on a root, lower-cased."""
+    return [text for text in _extra_strings(root)
+            if text.startswith(_NO_COLLISION_PREFIX) or text == _MARKER_EXTRA]
+
+
+_FLAG_LATCH: list = [[]]
+
+
+def latch_root_flags(root) -> None:
+    """Remember the SOURCE root's flags; the swap discards the blocks."""
+    _FLAG_LATCH[0] = root_flag_extras(root)
+
+
+def source_root_flags() -> list:
+    """The flags latched off the source root of the NIF being converted."""
+    return _FLAG_LATCH[0]
+
+
 def source_children_owner(root):
     """The node that holds the SOURCE root's children.
 
@@ -130,12 +150,14 @@ def collision_source(root) -> tuple:
     """(subtree, generated) naming the geometry Morrowind collides with.
 
     `subtree` is None when the mesh has no collision: an `NC`/`NCC` root
-    extra, or an EMPTY RootCollisionNode, which the engine treats as
-    camera-only. `generated` is True when the render mesh itself is the
-    collision, because no RootCollisionNode exists.
+    extra on a placed FIXTURE, or an EMPTY RootCollisionNode, which the
+    engine treats as camera-only. `generated` is True when the render mesh
+    itself is the collision, because no RootCollisionNode exists.
     See: docs/commentary/asset_convert_nif.md#morrowind-collision
     """
-    if any(s.startswith(_NO_COLLISION_PREFIX) for s in _extra_strings(root)):
+    flags = source_root_flags() or root_flag_extras(root)
+    if mesh_is_fixture() and any(
+            s.startswith(_NO_COLLISION_PREFIX) for s in flags):
         return None, False
     node = find_collision_node(source_children_owner(root))
     if node is not None:
@@ -174,7 +196,8 @@ def collision_triangles(node, root=None, scale: float = _HAVOK_SCALE) -> list:
     `_MAX_COLLISION_TRIS`, which is treated as no collision.
     """
     root = node if root is None else root
-    skip_markers = _MARKER_EXTRA in _extra_strings(root)
+    skip_markers = _MARKER_EXTRA in (source_root_flags()
+                                     or root_flag_extras(root))
     out = []
     for block in _collision_shapes(node, skip_markers):
         data = block.data

@@ -2096,6 +2096,77 @@ the root carries an `MRK` extra. Triangles are taken in the ROOT frame
 longer offsets the shape. Every mesh goes through the same Havok bridge, so
 the generated case is a real MOPP + CMS too.
 
+### The flag extras must be READ before the root swap (2026-09-21)
+
+Both rows that depend on a string extra read it off the root that
+`attach_morrowind_collision` is handed, which is the POST-swap
+`BSFadeNode`. `_to_fade_node` rebuilds the root and carries extra data
+selectively — a bulk copy breaks animated objects — and `_copy_root_frame`
+forwards name, flags, transform, havok material, collision object, children
+and controller, but not `extra_data_list`. `NC`/`NCC`/`NCO` and `MRK` stayed
+on the discarded `NiNode`:
+
+```
+BEFORE swap: old root NiNode     ['nco']
+AFTER  swap: new root BSFadeNode []
+```
+
+So every flagged mesh fell through to the "no node" row and collided with its
+own render geometry. `Arktwend/lichtstrahl.NIF`, a light shaft, shipped a MOPP
++ CMS over its alpha-blended plane and read in-game as an invisible wall
+(`mw_collision_generated = 1`). A byte scan of Arktwend's 9,705 NIFs found
+**510** roots carrying an `NC` variant and **16** carrying `MRK`, all losing
+the flag.
+
+**Latch them, do NOT copy them.** The obvious fix — appending those blocks to
+the new root beside `_carry_bsbound` / `_carry_furniture_markers` — ships a
+Morrowind flag into a Skyrim mesh. Morrowind identifies these extras by their
+VALUE and leaves `name` empty; Skyrim identifies an extra by `name`
+(`equipment_rig.py:232` finds `Prn` that way), and of 4,002 vanilla meshes
+scanned, 117 carry a `NiStringExtraData` and every one is `Prn` or
+`AnimObjectR` — none is `NC`/`NCC`/`MRK`. Copying them put an unreadable block
+on 519 shipped NIFs, clothing and castle pieces among them.
+
+So `latch_root_flags` records the flags off the SOURCE root before any
+replacement, and `collision_source` / `collision_triangles` read
+`source_root_flags()`. The latch sits before the whole root-normalization
+branch, so worn armor — which skips the swap entirely — is covered too. The
+blocks themselves are simply dropped with the old root, and nothing
+Morrowind-specific reaches the output.
+
+### `NC` means "actors pass through", NOT "no physics"
+
+Carrying the flag is only half the rule, because honoring it everywhere
+breaks item pickup. OpenMW never skips shape generation for `NC`: it builds
+the collision and then downgrades the object to `CollisionType_VisualOnly`
+(`mwphysics/physicssystem.cpp:423`), which `collisiontype.hpp:20` leaves out
+of `CollisionType_AnyPhysical`. The body exists; actors and projectiles just
+do not test against it.
+
+Skyrim has no equivalent collision class, so the closest translation —
+shipping no `bhkCollisionObject` — costs more than it buys. Morrowind
+activates an item through its REFERENCE, Skyrim through its collision, so a
+bodyless MISC/APPA is unlootable. Of Arktwend's 526 flagged meshes, **20 are
+named by item records** (every alembic/retort/calcinator, a kwama egg, a
+redware pot, a muck shovel).
+
+The gate is therefore a WHITELIST of record types that are placed scenery —
+`fixture_plan.FIXTURE_TYPES` = STAT/ACTI/LIGH/CONT/DOOR, latched per mesh
+exactly as `door_plan` latches doors. The record type is the authored answer
+to "is this scenery?"; a mesh no fixture record names keeps its body whatever
+extras it carries. Counts by type over the flagged set:
+
+| Type | Flagged meshes | Honors `NC` |
+|---|---|---|
+| STAT | 178 | yes |
+| ACTI | 115 | yes |
+| LIGH | 98 | yes |
+| CONT | 73 | yes |
+| DOOR | 1 | yes |
+| APPA / MISC / INGR | 20 | **no** — keeps its body |
+
+Guarded by `tests/test_morrowind_nc_flag_survives_root_swap.py`.
+
 
 
 <a id="morrowind-door-animation"></a>
