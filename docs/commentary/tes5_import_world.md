@@ -12,6 +12,7 @@ owns it, and what it is linked to. Region decoration (REGN, LSCR, WATR) lives in
 - [ACHR VMAD — scripts relocated onto the placed reference](#achr-vmad-relocated-actor-scripts)
 - [Exclusive LCEC cell ownership](#exclusive-lcec-cell-ownership)
 - [Teleport doors bucketed by worldspace](#teleport-doors-by-worldspace)
+- [TES3 exit-only door locks](#tes3-exit-only-door-locks)
 - [Nested interiors inherit a location](#nested-interiors-inherit-location)
 - [LAND DATA flags pass through VERBATIM](#land-data-flags-verbatim)
 - [WRLD land and water defaults](#wrld-land-and-water-defaults)
@@ -84,6 +85,50 @@ doors are persistent, and a worldspace stores every persistent ref in one dummy
 cell (Tamriel's `00023777`), so a single exterior entry hands its location to
 EVERY persistent ref in that worldspace. That was the CK's "Ref is not in its
 persistence location 'TES4SkingradWestGateLocation'" spam across the whole map.
+
+## <a id="tes3-exit-only-door-locks"></a>TES3 exit-only door locks
+
+**Code:** `tes5_import/record_types/world_morrowind.py`
+
+TES3 locks the door face the player activates. OpenMW's `Door::activate` tests
+`ptr.getCellRef().isLocked()` on that reference alone and never consults the
+teleport partner, so a Morrowind pair can be open inward and locked outward.
+
+TES4 and TES5 lock the DOORWAY: one `XLOC` on either face seals both
+directions. Vanilla Skyrim's *With Friends Like These* is the proof — the
+Abandoned Shack pair carries no `XLOC` on the interior ref `00050F28` and lock
+level 255 with key `0002E3F8` on the EXTERIOR ref `00050F1F`, and that single
+exterior lock is what holds the player inside. Across Skyrim.esm no teleport
+pair is locked on both faces; all 239 locked pairs carry exactly one `XLOC`.
+
+So copying a TES3 lock faithfully converts a one-way lock into a sealed
+doorway. In Morrowind.esm the Seyda Neen census office is the visible casualty:
+`00D9C433`, the office's inside face, is locked at level 100 with no key, which
+in Morrowind only stops the player leaving. Converted, it stops them entering,
+and the chargen dock guard repeats "Head on in" at a door that reports Requires
+Key. The ref has no EditorID, so no script can name it — nothing ever unlocks
+it.
+
+`register_tes3_locks` drops a lock when its pair is locked on ONE face, that
+face stands in an interior cell, and it has no key. A keyed lock opens from
+either side, so doorway-wide semantics leave it intact; a keyless lock on the
+exit face can only be picked or scripted.
+
+Of Morrowind.esm's 108 one-sided pairs, 27 lock the interior face and 19 of
+those are keyed. The rule matches 9 references: the census office `00D9C433`,
+plus Chun-Ook Upper Level, Falensarano Upper Level, Murberius Harmevus' House,
+Tel Naga Upper Tower, Vivec Arena Storage, Vivec Office of the Watch, Simine
+Fralinie Bookseller, and St. Olms Haunted Manor.
+
+The gate is `is_tes3_export`. TES4 sources are untouched: Oblivion.esm authors
+680 interior-only locks under doorway semantics already, and the number is an
+editing habit, not a different mechanic.
+
+Morroblivion hit this same wall and solved it by hand, not by a transform. Its
+census-office pair (`0181D2D9` / `0181BCE5`) carries no lock at all, and it
+re-authored locks throughout — 232 locked pairs against Morrowind's 108, with
+the interior/exterior balance inverted. There is no algorithm in its data to
+copy.
 
 ## <a id="nested-interiors-inherit-location"></a>Nested interiors inherit a location
 

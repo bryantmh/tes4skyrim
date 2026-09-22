@@ -19,7 +19,7 @@ def init_worker(formid_offset: int, cell_loc: dict, grid_loc: dict,
                 world_loc: dict, world_names: dict, origin_shift: dict,
                 mesh_bounds_path: str, injected_formids: dict = None,
                 door_links: dict = None, teleport_grid=None,
-                door_placement: dict = None):
+                door_placement: dict = None, tes3_locks: tuple = None):
     """Pool initializer: replay parent-process module state into this child."""
     # Join the parent's containment job so this worker cannot outlive a parent
     # that dies without cleanup (crash / external kill). No-op off Windows.
@@ -42,6 +42,8 @@ def init_worker(formid_offset: int, cell_loc: dict, grid_loc: dict,
     # that never receives it writes every door REFR without its navmesh link,
     # which silently kills pathing through every teleport door it converts.
     set_door_navmesh_links(door_links)
+    from ..record_types.world_morrowind import set_tes3_lock_state
+    set_tes3_lock_state(tes3_locks)
 
     from .locations import WORLD_NAMES
     WORLD_NAMES.clear()

@@ -13,6 +13,7 @@ from ..base.locations import WORLD_NAMES
 from ..base.equivalents import TES4_MARKER_FORMID_TO_SKYRIM
 from .world_falloutnv import (marker_substitute, parent_use_flags,
                               tes5_world_flags, world_map_offset)
+from .world_morrowind import is_tes3_source, lock_is_exit_only
 from .items import get_base_origin_shift
 from ..base.text_reader import remap_formid
 from .common import (
@@ -852,13 +853,16 @@ def _refr_xloc(rec: dict):
 
     Returns (bytes, barrier_door).  XLOC is 20 bytes in TES5 and the lock is
     transferred faithfully -- TES4 level 100 becomes Requires Key (255).  AI
-    passage through a locked barrier door is granted by OWNERSHIP, never by
-    weakening the lock.
+    passes a locked barrier door by OWNERSHIP, never a weakened lock.  A TES3
+    lock sealing only the way out is dropped: TES5 locks the doorway.
 
     See: docs/commentary/tes5_import_actors.md#barrier-door-ownership
+    See: docs/commentary/tes5_import_world.md#tes3-exit-only-door-locks
     """
     lock_level = get_int(rec, 'XLOC.Level', -1)
     if lock_level < 0:
+        return b'', False
+    if is_tes3_source() and lock_is_exit_only(rec):
         return b'', False
     barrier_door = False
     lock_key = get_formid(rec, 'XLOC.Key')
