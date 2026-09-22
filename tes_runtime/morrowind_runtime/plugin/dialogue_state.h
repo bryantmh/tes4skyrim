@@ -51,6 +51,19 @@ enum ControlSwitch {
     kControlSwitchCount = 7
 };
 
+// Why a reference's 3D did not report itself loaded. Only `kUnloaded` says
+// the object left the world; the other two say the question could not be
+// answered, which is NOT grounds to unbind a running script.
+// See: docs/commentary/morrowind_runtime.md#instances-bind-from-the-world
+enum class LoadState {
+    kLoaded,
+    kUnloaded,
+    // `Game.GetForm` did not answer for the FormID this tick.
+    kUnresolved,
+    // The native was never resolved, so nothing was asked at all.
+    kUnknown,
+};
+
 // What the game itself has to do when the state changes. Null in the
 // headless tests, where only the state is checked.
 struct GameHooks {
@@ -116,6 +129,10 @@ struct GameHooks {
     // Whether that reference's 3D is LOADED, which is the whole of TES3's rule
     // for when a local script runs.
     bool (*is3DLoaded)(std::uint32_t runtimeFormId) = nullptr;
+    // The same question, keeping the reason a `false` came back: only
+    // `kUnloaded` is an unload, and the tick must not drop an instance over
+    // `kUnresolved` or `kUnknown`.
+    LoadState (*load3DState)(std::uint32_t runtimeFormId) = nullptr;
     // The RUNTIME FormID of the staged placement `(plugin, local)` once its 3D
     // is loaded, or 0. This is how an instance the player never activates ever
     // starts ticking -- the Activate hook used to be the only binding path.

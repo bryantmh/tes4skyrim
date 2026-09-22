@@ -3,6 +3,7 @@
 
 #include "game_calls_internal.h"
 
+#include <map>
 #include <string>
 
 #include "ids.h"
@@ -65,7 +66,16 @@ void* AiQuestForm() {
     const FormRef* staged = AiQuest();
     void* form = staged ? Form(staged) : nullptr;
     bool justStarted = false;
-    return form && StartQuest(form, &justStarted) ? form : nullptr;
+    if (form && StartQuest(form, &justStarted)) return form;
+    // Once: every alias lookup comes through here, so a missing quest would
+    // otherwise repeat this line for every slot of every package kind.
+    static bool reported = false;
+    if (!reported) {
+        reported = true;
+        Log("ai: the AI quest %s -- no package can run",
+            form ? "will not start" : "is missing from this load order");
+    }
+    return nullptr;
 }
 
 // One named alias of the AI quest, or null.
@@ -127,7 +137,17 @@ void ReleaseAiActor(void* ref) {
 // See: docs/commentary/morrowind_runtime.md#forcerefto-must-be-posted
 bool RunAiPackage(const char* kind, const std::string& actor, void* at) {
     void* ref = OwnerRef(actor);
-    if (!ref || !at || !g_forceRefTo) return false;
+    if (!ref || !at || !g_forceRefTo) {
+        Log("ai: %s cannot %s -- %s", actor.c_str(), kind,
+            !ref ? "no reference for it"
+                 : (!at ? "nothing to aim at"
+                        : "ForceRefTo was never resolved"));
+        return false;
+    }
+    // 🛑 Runs a TICK OR MORE after the call above: the alias fill is what makes
+    // the engine re-evaluate packages, so anything the actor does in reaction
+    // happens here, not at the call site. The 3D reload that drops an instance
+    // would land in this window.
     PostToMainThread([kind, ref, at]() {
         ReleaseAiActor(ref);
         const int slots = AiAliasIndex("slots");
@@ -138,6 +158,7 @@ bool RunAiPackage(const char* kind, const std::string& actor, void* at) {
             if (!alias || !target || AiAliasHolds(alias)) continue;
             g_forceRefTo(PapyrusVm(), 0, target, at);
             g_forceRefTo(PapyrusVm(), 0, alias, ref);
+            Log("ai: %08X took %s slot %d", FormIdOf(ref), kind, n);
             return;
         }
         Log("ai: no free %s slot of %d", kind, slots);
@@ -145,39 +166,103 @@ bool RunAiPackage(const char* kind, const std::string& actor, void* at) {
     return true;
 }
 
-// An Ai command with an empty target ends what the actor was given.
+// How close counts as arrived. The Travel package steers to the marker's own
+// radius and then stops walking, so the actor parks a little short of the
+// point rather than on it; this is that slack, not a search radius.
+constexpr float kArrivedDistance = 128.0f;
+
+// The RUNTIME FormID of the marker each actor was last sent to, so arrival can
+// be measured. Only the kinds that HAVE a destination appear here -- follow
+// and activate track a moving target and end on their own terms.
+//
+// 🛑 The id, not the pointer: the engine frees a reference, and a cached
+// pointer outlives it while this is polled every tick.
+std::map<std::string, std::uint32_t>& AiDestinations() {
+    static std::map<std::string, std::uint32_t> destinations;
+    return destinations;
+}
+
+void RememberAiDestination(const std::string& actor, void* marker) {
+    if (marker) AiDestinations()[actor] = FormIdOf(marker);
+}
+
+void ForgetAiDestination(const std::string& actor) {
+    AiDestinations().erase(actor);
+}
+
+// Whether the actor has reached the destination its package was given. False
+// for an actor with no tracked destination, which is every kind that ends on
+// its own and every actor we never sent anywhere.
+bool ReachedAiDestination(const std::string& actor) {
+    const auto it = AiDestinations().find(actor);
+    if (it == AiDestinations().end()) return false;
+    void* ref = OwnerRef(actor);
+    void* marker = RefByRuntimeId(it->second);
+    if (!ref || !marker) return false;
+    // Negative is "could not measure", which must not read as arrived.
+    const float apart = DistanceBetween(ref, marker);
+    return apart >= 0.0f && apart <= kArrivedDistance;
+}
+
+// An Ai command with an empty target ends what the actor was given. The
+// destination goes with it: a package that is over has no goal left to reach,
+// and a stale one would report the NEXT package done the moment it started.
 void StopAiPackage(const std::string& actor) {
+    ForgetAiDestination(actor);
     void* ref = OwnerRef(actor);
     if (ref) PostToMainThread([ref]() { ReleaseAiActor(ref); });
 }
 
-// `AiTravel x y z`: a package destination cannot be raw coordinates, so a
-// marker is spawned at the point and the destination alias holds IT.
+// An XMarker spawned on `actor`, for a package to aim at. Null when any step
+// fails, and each failure says which -- a package that never starts otherwise
+// goes completely silent, which is what hid the stalled chargen guard.
 //
 // 🛑 The marker is XMarker (Skyrim.esm 0x3B), the same base the cell anchors
 // use. Without a reference to aim at, the Travel package falls back to its
 // "near editor location" default and walks the actor home.
-void AiTravelTo(const std::string& actor, float x, float y, float z) {
+void* SpawnAiMarker(const char* kind, const std::string& actor) {
     void* ref = OwnerRef(actor);
-    if (!ref || !g_placeAtMe) return;
+    if (!ref) {
+        Log("ai: %s cannot %s -- no reference for it", actor.c_str(), kind);
+        return nullptr;
+    }
+    if (!g_placeAtMe) {
+        Log("ai: %s cannot %s -- PlaceAtMe was never resolved", actor.c_str(),
+            kind);
+        return nullptr;
+    }
     void* marker = FormFromFile(ids::kSkyrimMaster, kXMarker);
-    if (!marker) return;
+    if (!marker) {
+        Log("ai: %s cannot %s -- XMarker %02X missing from %s", actor.c_str(),
+            kind, kXMarker, ids::kSkyrimMaster);
+        return nullptr;
+    }
     void* made = g_placeAtMe(PapyrusVm(), 0, ref, marker, 1, true, false);
+    if (!made) Log("ai: %s cannot %s -- PlaceAtMe made no marker",
+                   actor.c_str(), kind);
+    return made;
+}
+
+// `AiTravel x y z`: a package destination cannot be raw coordinates, so a
+// marker is spawned at the point and the destination alias holds IT.
+void AiTravelTo(const std::string& actor, float x, float y, float z) {
+    void* made = SpawnAiMarker("travel", actor);
     if (!made) return;
     PlaceAt(made, x, y, z, 0.0f);
+    Log("ai: %s travels to (%g, %g, %g)", actor.c_str(), x, y, z);
+    RememberAiDestination(actor, made);
     RunAiPackage("travel", actor, made);
 }
 
 // `AiWander range duration`: the Sandbox package idles around a marker, so
 // one is dropped where the actor stands and its radius is the package's.
 void AiWanderAt(const std::string& actor, float range, float duration) {
-    void* ref = OwnerRef(actor);
-    if (!ref || !g_placeAtMe) return;
-    void* marker = FormFromFile(ids::kSkyrimMaster, kXMarker);
-    if (!marker) return;
-    void* made = g_placeAtMe(PapyrusVm(), 0, ref, marker, 1, true, false);
+    void* made = SpawnAiMarker("wander", actor);
     if (!made) return;
     Log("ai: %s sandboxes range %g for %g h", actor.c_str(), range, duration);
+    // Sandboxing has no destination to arrive at, and a stale one from an
+    // earlier Travel would report this package done the moment it started.
+    ForgetAiDestination(actor);
     RunAiPackage("wander", actor, made);
 }
 
@@ -190,6 +275,9 @@ void AiFollowActor(const std::string& actor, const std::string& target,
         StopAiPackage(actor);
         return;
     }
+    // Following ends when the script says so, never by arriving: the target
+    // moves, so there is no point to measure against.
+    ForgetAiDestination(actor);
     if (RunAiPackage("follow", actor, OwnerRef(target))) {
         Log("ai: %s follows %s for %g h", actor.c_str(), target.c_str(),
             duration);
@@ -198,23 +286,32 @@ void AiFollowActor(const std::string& actor, const std::string& target,
 
 // `AiEscort id duration x y z`: the Escort package walks the TARGET to a
 // destination, so the escorted actor goes in the target alias and the
-// destination marker is what the package's location input aims at.
+// destination marker is what arrival is measured against.
+//
+// 🛑 The coordinates are the POINT the pair is walking to. Discarding them
+// left the package with no goal, so it could never report itself done and the
+// script waiting on it stalled exactly as a Travel with no marker would.
 void AiEscortActor(const std::string& actor, const std::string& target,
                    float duration, float x, float y, float z) {
     if (target.empty()) {
         StopAiPackage(actor);
         return;
     }
-    (void)x; (void)y; (void)z;
+    if (void* made = SpawnAiMarker("escort", actor)) {
+        PlaceAt(made, x, y, z, 0.0f);
+        RememberAiDestination(actor, made);
+    }
     if (RunAiPackage("escort", actor, OwnerRef(target))) {
-        Log("ai: %s escorts %s for %g h", actor.c_str(), target.c_str(),
-            duration);
+        Log("ai: %s escorts %s to (%g, %g, %g) for %g h", actor.c_str(),
+            target.c_str(), x, y, z, duration);
     }
 }
 
 // `AiActivate id`: the Activate package walks there AND activates it, which
 // is exactly the TES3 command rather than an approximation of it.
 void AiActivateObject(const std::string& actor, const std::string& object) {
+    // Activating ends when the engine has done it, not by distance.
+    ForgetAiDestination(actor);
     RunAiPackage("activate", actor, OwnerRef(object));
 }
 
@@ -241,9 +338,28 @@ int CurrentAiPackageOf(const std::string& actor) {
     return -1;
 }
 
-// `GetAiPackageDone`: the actor no longer runs a package a script gave it.
+// `GetAiPackageDone`: whether the package a script gave this actor has met its
+// goal. TES3 answers "has it FINISHED"; Skyrim's `GetCurrentPackage` answers
+// "what is assigned", and an actor in the world always has something assigned
+// -- our own pack keeps winning while its alias holds, so asking the engine
+// alone can never go true. The goal test is ours, and reaching it RELEASES the
+// actor, which is what makes the engine's answer agree from then on.
+// See: docs/commentary/morrowind_runtime.md#a-package-finishes-when-it-arrives
 bool AiPackageDoneFor(const std::string& actor) {
-    return CurrentAiPackageOf(actor) < 0;
+    const int running = CurrentAiPackageOf(actor);
+    bool done = running < 0;
+    if (!done && ReachedAiDestination(actor)) {
+        StopAiPackage(actor);
+        done = true;
+    }
+    static std::map<std::string, bool> last;
+    auto seen = last.find(actor);
+    if (seen == last.end() || seen->second != done) {
+        last[actor] = done;
+        Log("ai: %s package -> %s", actor.c_str(),
+            done ? "DONE" : (running < 0 ? "none" : kAiKinds[running]));
+    }
+    return done;
 }
 
 // Writes one Skyrim actor value on `ref`.

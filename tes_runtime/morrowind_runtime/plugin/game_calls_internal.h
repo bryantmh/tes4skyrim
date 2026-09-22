@@ -36,6 +36,10 @@ void* ItemForm(const std::string& item);
 void* OwnerRef(const std::string& owner);
 void* PlayerRef();
 void* RefByRuntimeId(std::uint32_t runtimeFormId);
+// World units between two references, or -1 when either cannot be measured.
+// The string form `Distance` resolves ids; this one takes what the caller
+// already holds.
+float DistanceBetween(void* from, void* to);
 bool StartQuest(void* form, bool* justStarted);
 // Puts `ref` at a position with a Z rotation in degrees. game_calls_move.cpp.
 void PlaceAt(void* ref, float x, float y, float z, float zRot);

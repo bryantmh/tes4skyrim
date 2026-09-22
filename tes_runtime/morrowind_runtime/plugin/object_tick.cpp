@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <map>
 #include <set>
 #include <string>
 #include <thread>
@@ -171,6 +172,44 @@ std::size_t RunCarriedScripts(bool cellChanged) {
     return ran;
 }
 
+// Why an instance stopped ticking, which is otherwise invisible: a dropped
+// instance simply never appears in the log again, and the rebind sweep gates
+// on the SAME reading, so a misread drops a script for the whole session.
+//
+// 🛑 Names which half of the old combined test was false. `kUnresolved` means
+// `Game.GetForm` did not answer, which is NOT an unload for a persistent
+// reference -- that distinction is the open question this logging settles.
+// Every CHANGE in an instance's load reading, so the ticks leading into a drop
+// are visible rather than only the drop itself. Silent while the answer holds
+// steady, which is almost always -- a steady reading prints nothing.
+void TraceLoadState(const ObjectScript& instance) {
+    if (!Hooks().load3DState) return;
+    static std::map<std::uint32_t, LoadState> last;
+    const std::uint32_t id = instance.RuntimeFormId();
+    const LoadState now = Hooks().load3DState(id);
+    const auto seen = last.find(id);
+    if (seen != last.end() && seen->second == now) return;
+    last[id] = now;
+    static const char* kNames[] = {"loaded", "UNLOADED", "UNRESOLVED",
+                                   "unknown"};
+    Log("object: %s (%08X) load reading -> %s (tick %zu)",
+        instance.Script().c_str(), id, kNames[static_cast<int>(now)], g_ticks);
+}
+
+void ReportUnbind(const ObjectScript& instance, const char* why) {
+    const std::uint32_t id = instance.RuntimeFormId();
+    const LoadState state = Hooks().load3DState
+                                ? Hooks().load3DState(id)
+                                : LoadState::kUnknown;
+    const char* reading = "unknown -- the native was never resolved";
+    if (state == LoadState::kUnloaded) reading = "Is3DLoaded said NO";
+    if (state == LoadState::kUnresolved) reading = "GetForm did not answer";
+    if (state == LoadState::kLoaded) reading = "loaded again since the test";
+    Log("object: %s (%08X) unbound -- %s, %s; ran %zu tick(s), cell '%s'",
+        instance.Script().c_str(), id, why, reading, g_ticks,
+        g_lastCell.c_str());
+}
+
 void RunOneTick() {
     ++g_ticks;
     if (!SessionLive() || GameHeldByMenu()) {
@@ -203,12 +242,15 @@ void RunOneTick() {
         // the engine does free a dead one (see game_calls.cpp `RefByRuntimeId`).
         // Polling first costs nothing and does not depend on which it is.
         instance->PollDeath();
+        TraceLoadState(*instance);
         if (Hooks().is3DLoaded) {
             if (Hooks().is3DLoaded(instance->RuntimeFormId())) {
                 instance->MarkLoaded();
             } else if (instance->Events().died) {
+                ReportUnbind(*instance, "died");
                 UnbindInstance(instance->RuntimeFormId());
             } else if (instance->WasLoaded()) {
+                ReportUnbind(*instance, "unloaded");
                 UnbindInstance(instance->RuntimeFormId());
                 continue;
             } else {

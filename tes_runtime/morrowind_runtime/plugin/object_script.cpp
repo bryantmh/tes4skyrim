@@ -95,6 +95,12 @@ bool ObjectScript::RunOnce() {
     // layout the compiler builds, which does not exist until the body parses.
     if (source.empty() || !EnsureObjectScript(mScript, source)) {
         mEvents.Clear();
+        if (!mRunFailed) {
+            mRunFailed = true;
+            Log("object: %s (%08X) %s -- it never runs", mScript.c_str(),
+                mRuntimeFormId,
+                source.empty() ? "has no source" : "will not compile");
+        }
         return false;
     }
     // 🛑 `OnPCEquip` is NOT written here. It is a STATE `PollEquipped` keeps,
@@ -109,6 +115,14 @@ bool ObjectScript::RunOnce() {
     const bool ok = RunObjectScript(mScript, source, context);
     g_running = previous;
     mEvents.Clear();
+    // Once per instance, on the transition: a body that starts throwing stops
+    // advancing its state while still bound and ticking, which otherwise looks
+    // exactly like an unbind from the log.
+    if (!ok && !mRunFailed) {
+        mRunFailed = true;
+        Log("object: %s (%08X) FAILED to run -- it stops advancing here",
+            mScript.c_str(), mRuntimeFormId);
+    }
     return ok;
 }
 

@@ -476,10 +476,14 @@ void DeleteRef(const std::string& id) {
     PostToMainThread([ref]() { g_delete(PapyrusVm(), 0, ref); });
 }
 
+float DistanceBetween(void* from, void* to) {
+    if (!from || !to || !g_distance) return -1.0f;
+    return g_distance(PapyrusVm(), 0, from, to);
+}
+
 float Distance(const std::string& from, const std::string& to) {
-    void* a = OwnerRef(from);
-    void* b = OwnerRef(to);
-    return a && b && g_distance ? g_distance(PapyrusVm(), 0, a, b) : 0.0f;
+    const float apart = DistanceBetween(OwnerRef(from), OwnerRef(to));
+    return apart < 0.0f ? 0.0f : apart;
 }
 
 void* PlayerCell() {
@@ -768,9 +772,47 @@ bool IsDeadRef(std::uint32_t runtimeFormId) {
 }
 
 // TES3's whole rule for when a local script runs: while its object is loaded.
-bool Is3DLoadedRef(std::uint32_t runtimeFormId) {
+//
+// 🛑 The two halves mean DIFFERENT things and only one is an unload. `GetForm`
+// answers for a persistent reference whether or not its 3D is loaded, so a
+// null there is "could not ask", not "gone" -- and `Is3DLoaded` answering
+// false is the only real unload. Collapsing them into one bool is what let a
+// chargen guard who never leaves his cell be unbound forever.
+// See: docs/commentary/morrowind_runtime.md#instances-bind-from-the-world
+LoadState Load3DStateRef(std::uint32_t runtimeFormId) {
+    if (!g_is3DLoaded) return LoadState::kUnknown;
     void* ref = RefByRuntimeId(runtimeFormId);
-    return ref && g_is3DLoaded && g_is3DLoaded(PapyrusVm(), 0, ref);
+    if (!ref) return LoadState::kUnresolved;
+    return g_is3DLoaded(PapyrusVm(), 0, ref) ? LoadState::kLoaded
+                                             : LoadState::kUnloaded;
+}
+
+bool Is3DLoadedRef(std::uint32_t runtimeFormId) {
+    return Load3DStateRef(runtimeFormId) == LoadState::kLoaded;
+}
+
+// Why a placement the sweep WANTED did not rebind. The sweep tests 256 rows a
+// tick over a 15,639-row table, almost all of them far from the player, so
+// only a placement that has already been bound once this session is worth a
+// line -- that is the set that can have been dropped and lost.
+//
+// Rate-limited to one line per placement per 150 ticks (5s), which is the
+// sweep's own heartbeat: a permanently stuck instance prints every 5 seconds
+// instead of 256 times a tick.
+void ReportRebindMiss(const std::string& plugin, std::uint32_t localFormId,
+                      bool resolved) {
+    // An instance carrying a runtime id is one the engine handed us before,
+    // so this placement HAS been in the world this session.
+    const ObjectScript* had = FindInstance(plugin, localFormId);
+    if (!had || !had->RuntimeFormId()) return;
+    static std::map<std::uint32_t, std::size_t> lastSaid;
+    const std::size_t now = TicksRun();
+    std::size_t& said = lastSaid[localFormId];
+    if (said && now - said < 150) return;
+    said = now;
+    Log("object: %s|%06X will not rebind -- %s", plugin.c_str(), localFormId,
+        resolved ? "GetFormFromFile answered but Is3DLoaded said NO"
+                 : "GetFormFromFile did not answer");
 }
 
 // A staged placement's RUNTIME FormID once the engine has it in the world, or
@@ -778,7 +820,10 @@ bool Is3DLoadedRef(std::uint32_t runtimeFormId) {
 // only while its cell is loaded, so the null is "not here yet", not a failure.
 std::uint32_t LoadedRef(const std::string& plugin, std::uint32_t localFormId) {
     void* ref = FormFromFile(plugin.c_str(), localFormId & kLocalMask);
-    if (!ref || !g_is3DLoaded || !g_is3DLoaded(PapyrusVm(), 0, ref)) return 0;
+    if (!ref || !g_is3DLoaded || !g_is3DLoaded(PapyrusVm(), 0, ref)) {
+        ReportRebindMiss(plugin, localFormId, ref != nullptr);
+        return 0;
+    }
     return FormIdOf(ref);
 }
 
@@ -919,6 +964,7 @@ void InstallGameCalls() {
     hooks.showMessage = ShowMessage;
     hooks.isDead = IsDeadRef;
     hooks.is3DLoaded = Is3DLoadedRef;
+    hooks.load3DState = Load3DStateRef;
     hooks.loadedRef = LoadedRef;
     hooks.say = SayLine;
     hooks.sayDone = SayFinished;

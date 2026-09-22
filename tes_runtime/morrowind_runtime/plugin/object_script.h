@@ -120,6 +120,9 @@ private:
     bool mLifeSampled = false;
     std::uint32_t mRuntimeFormId = 0;
     bool mWasLoaded = false;
+    // Whether the body has already been reported as failing, so a script that
+    // throws every tick says so once rather than 30 times a second.
+    bool mRunFailed = false;
     // Which of the script's item records is currently worn, so a sibling
     // record polled afterwards cannot clear the flag this one set.
     std::string mWornId;
