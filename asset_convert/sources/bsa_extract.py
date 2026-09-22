@@ -180,6 +180,7 @@ def get_bsa_files(data_path, source_file):
     for base in bases:
         # Split BSAs (Oblivion - Meshes.bsa, N - Textures1.bsa, etc.)
         for pattern in [
+            f"{base} - Main.bsa",  # Fallout 3 DLC (Anchorage - Main.bsa)
             f"{base} - Meshes.bsa",
             f"{base} - Meshes2.bsa",
             f"{base} - Textures - Compressed.bsa",
