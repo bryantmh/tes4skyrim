@@ -115,23 +115,23 @@ class CellCtx(object):
 
         The renderer labels each triangle with the mesh it came from, so a
         surface that should not be there can be named instead of guessed at.
+        Keyed by `base_fid`, the SAME full FormID `_placed_soup` resolves, so
+        a plugin with masters does not name every mesh '?'.
+
+        See: docs/commentary/tes5_import_navmesh.md#base-ids-carry-their-plugin-index
         """
         from tes5_import.navmesh import world
         skip = set(self.index.door_fids.keys())
         out = []
         for refr in self.refrs:
-            name = refr.get('NAME')
-            try:
-                base_low = int(name, 16) & 0x00FFFFFF if name else None
-            except ValueError:
-                continue
-            if base_low is None or base_low in skip:
+            base = world.base_fid(refr)
+            if base is None or base in skip:
                 continue
             w, b = world._placed_soup(refr, self.index.base_model,
                                       ce.get_collision)
             if (w is None or not len(w)) and (b is None or not len(b)):
                 continue
-            out.append((self.index.base_model.get(base_low) or '?', w, b))
+            out.append((self.index.base_model.get(base) or '?', w, b))
         return out
 
     def walked_samples(self, step=16.0):

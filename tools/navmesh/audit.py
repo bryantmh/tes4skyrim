@@ -38,7 +38,8 @@ from tes5_import.overrides.nested import (
     export_master_names, export_root, master_export_dir,
 )
 from tes5_import.base.text_reader import (
-    parse_export_directory, group_records_by_type, get_float, get_int, get_str,
+    parse_export_directory, group_records_by_type, get_float, get_formid,
+    get_int, get_str,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
@@ -260,20 +261,22 @@ def _run_cell(job):
 
 
 def _door_model_map(by_type):
-    """Return a MAP of low-24 DOOR FormID -> model key, never a bare set.
+    """Return a MAP of DOOR FormID -> model key, never a bare set.
 
-    Matches import_main._build_door_fid_set.  A bare set makes _collect_doors
-    take its legacy membership-only path, which skips panel centering AND the
-    per-model threshold axis/width -- so every debug tool measured doors with
-    width 0 and the default orientation while the real pipeline used the
-    measured ones.
+    Keyed by the FULL FormID, as `pool.build_base_model_index` keys the
+    pipeline's.  A bare set makes _collect_doors take its legacy
+    membership-only path, which skips panel centering AND the per-model
+    threshold axis/width -- so every debug tool measured doors with width 0
+    and the default orientation while the real pipeline used the measured ones.
+
+    See: docs/commentary/tes5_import_navmesh.md#base-ids-carry-their-plugin-index
     """
     out = {}
     for d in by_type.get('DOOR', []):
-        f = d.get('FormID')
+        f = get_formid(d, 'FormID')
         m = get_str(d, 'Model.MODL') or get_str(d, 'MODL')
         if f and m:
-            out[int(f, 16) & 0xFFFFFF] = model_key(m)
+            out[f] = model_key(m)
     return out
 
 
@@ -304,10 +307,10 @@ def _parse_tables(export):
     base_model = {}
     for t in _BASES:
         for rec in by_type.get(t, []):
-            f = rec.get('FormID')
+            f = get_formid(rec, 'FormID')
             m = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
             if f and m:
-                base_model[int(f, 16) & 0xFFFFFF] = model_key(m)
+                base_model[f] = model_key(m)
     refr_by_cell = {}
     for r in by_type.get('REFR', []):
         refr_by_cell.setdefault((r.get('ParentCELL') or '').upper(), []).append(r)

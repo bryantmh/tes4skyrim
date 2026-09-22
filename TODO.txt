@@ -101,4 +101,9 @@ Guns (FalloutNV):
 
 Morrowind:
 	1) NPCs have voice lines that should be gated by quest 
+	2) Water missing in interiors with it flagged
 	3) Message box appearing while pause menu is up locks the game 
+	4) Object animation appears invisible. Need a new mechanism
+	6) NPC say fix Morrowind charactergen
+	7) Disable player controls
+	8) Include base Morrowind in quest coverage

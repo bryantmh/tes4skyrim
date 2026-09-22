@@ -4083,6 +4083,30 @@ This is what made the pre-push gate refuse a cache the import had just written: 
 
 The two id spaces must be aligned before they can be compared. `load_master_export` keys by the RAW TES4 slot (Oblivion = 0) while `get_formid` shifts every REFERENCE by the load-order offset, so a NAME of `01000BC6` names master key `00000BC6`; the master's key is shifted by the offset here to match. Masking to low bytes hid the mismatch by accident and resurrected the collision at the same time -- **offset-correcting raises exact REFR->base matches from 247,678 to 253,462 and drops low-only matches from 6,006 to 222**, the 222 being exactly the collisions that SHOULD miss.
 
+### The debug tools kept their own low-24 copies
+
+**Three tools rebuilt the carving index with `int(f, 16) & 0xFFFFFF` while the
+pipeline keys the FULL FormID**, so every lookup done through them missed on a
+plugin with masters. `audit.py:_parse_tables` and `_door_model_map` persist
+theirs into `cell_index.sqlite`, so the miss was BAKED IN rather than recomputed
+per process; `probe.py` built a third copy; and `index.py:collision_sources`
+masked the key a fourth time, one line away from the `base_fid` that
+`_placed_soup` actually resolves with.
+
+Morroblivion is the case that shows it, because its REFRs name bases in two id
+spaces at once: of 275 refs in `ImperialSPrisonSShip` (`Morrowind_ob.esm`), 259
+are `01xxxxxx` and 16 are Oblivion's `00xxxxxx`. Measured on that cell,
+`base_model.get(base_fid(refr))` hit **7** of 275 while the masked key hit 178 --
+the index was keyed one way and queried the other, so cellview drew the pathgrid
+in an empty room exactly as the `tes4/` namespace bug did.
+
+All four copies now key by `get_formid`, and `cell_index.SCHEMA` is bumped to 5
+so indexes written with masked keys rebuild instead of being served. Measured on
+`ImperialSPrisonSShip`: `walk 0 block 0`, 0 named collision sources before;
+**16,080 walkable, 51,475 blocking, 167/167 sources named** after. `Morrowind.esm`
+(no masters) and `Oblivion.esm` are unchanged -- with one plugin in the chain the
+two keyings agree.
+
 ## <a id="master-owned-cells"></a>Navmesh in a cell the plugin does not own
 
 **Code:** `navmesh/pool.py:gather_navm_jobs`, `overrides/master_index.py:navms`.

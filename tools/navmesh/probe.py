@@ -19,7 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from asset_convert.collision import collision_extract as ce
 from tes5_import.navmesh import world
 from tes5_import.base.text_reader import (
-    parse_export_directory, group_records_by_type, get_float, get_int, get_str,
+    parse_export_directory, group_records_by_type, get_float, get_formid,
+    get_int, get_str,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
@@ -181,10 +182,10 @@ def load_cell(export_dir, cell_arg, load_collision=True):
     base_model = {}
     for t in _BLOCKING_BASES:
         for rec in by_type.get(t, []):
-            f = rec.get('FormID')
+            f = get_formid(rec, 'FormID')
             m = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
             if f and m:
-                base_model[int(f, 16) & 0xFFFFFF] = model_key(m)
+                base_model[f] = model_key(m)
 
     nodes, edges = [], []
     if pgrd is not None:
@@ -214,11 +215,11 @@ def load_cell(export_dir, cell_arg, load_collision=True):
 
     door_fids = {}
     for d in by_type.get('DOOR', []):
-        f = d.get('FormID')
+        f = get_formid(d, 'FormID')
         if not f:
             continue
         m = get_str(d, 'Model.MODL') or get_str(d, 'MODL')
-        door_fids[int(f, 16) & 0xFFFFFF] = model_key(m) if m else None
+        door_fids[f] = model_key(m) if m else None
 
     from tes5_import.navmesh.from_pgrd import collect_doors, load_door_centroids
     load_door_centroids(
@@ -275,7 +276,7 @@ def probe_point(ctx, px, py, radius=64.0):
         except (TypeError, ValueError):
             continue
         if abs(rx - px) < radius * 2 and abs(ry - py) < radius * 2:
-            base = int(r.get('NAME', '0'), 16) & 0xFFFFFF
+            base = get_formid(r, 'NAME')
             print('  REFR %s base=%06X model=%s pos=(%.0f,%.0f,%.0f) scale=%s'
                   % (r.get('FormID'), base,
                      ctx['base_model'].get(base, '?'),

@@ -22,7 +22,7 @@ import threading
 SHARED = ('base_model', 'door_fids', 'cells')
 
 #: Schema marker; a mismatch rebuilds rather than serving stale shapes.
-SCHEMA = 4
+SCHEMA = 5
 
 
 def db_path(export):
