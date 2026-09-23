@@ -68,7 +68,7 @@ def _attach(setters, quest_of, script, actor, wanted):
                 setter.setdefault('reads', set()).update(found)
 
 
-def attach_reads(info_path, record_dir, setters, wanted):
+def attach_reads(info_path, record_dirs, setters, wanted):
     """Give every setter row the journal ids and commands its script uses.
 
     Walks both corpora once and matches on the actor the trace already
@@ -84,13 +84,14 @@ def attach_reads(info_path, record_dir, setters, wanted):
         actor = rec.get('Actor', '')
         if script and actor in by_actor:
             _attach(setters, by_actor[actor], script, actor, wanted)
-    scpt = os.path.join(record_dir, 'SCPT.txt')
-    if not os.path.isfile(scpt):
-        return
-    for rec in records(scpt):
-        body, edid = rec.get('SCTX', ''), rec.get('EditorID', '')
-        if body and edid in by_actor:
-            _attach(setters, by_actor[edid], body, edid, wanted)
+    for record_dir in record_dirs:
+        scpt = os.path.join(record_dir, 'SCPT.txt')
+        if not os.path.isfile(scpt):
+            continue
+        for rec in records(scpt):
+            body, edid = rec.get('SCTX', ''), rec.get('EditorID', '')
+            if body and edid in by_actor:
+                _attach(setters, by_actor[edid], body, edid, wanted)
 
 
 def _row(plan, places, quest):
@@ -199,7 +200,7 @@ def _table(fh, plan, places, chosen, targets):
     fh.write('\n')
 
 
-def _uncovered(fh, missed, calls):
+def _uncovered(fh, missed, calls, where):
     """Split what no quest reaches into 'never called' and 'called elsewhere'.
 
     The split is the whole point: a command with no call site in the plugin
@@ -210,15 +211,15 @@ def _uncovered(fh, missed, calls):
     elsewhere = sorted(((calls.get(c, 0), c) for c in missed
                         if calls.get(c)), reverse=True)
     if elsewhere:
-        fh.write('**Called by TR, but never from a quest** — these sit on '
+        fh.write('**Called by %s, but never from a quest** — these sit on '
                  'ambient object scripts (doors, cranks, lights), so they '
-                 'need a hand-written probe rather than a quest:\n\n')
+                 'need a hand-written probe rather than a quest:\n\n' % where)
         fh.write(', '.join('`%s` (%d)' % (c, n) for n, c in elsewhere))
         fh.write('\n\n')
     if never:
-        fh.write('**No call site anywhere in this plugin** (%d) — untestable '
-                 'from TR at all; they need a different plugin:\n\n' %
-                 len(never))
+        fh.write('**No call site anywhere in %s** (%d) — untestable '
+                 'from it at all; they need a different plugin:\n\n' %
+                 (where, len(never)))
         fh.write(', '.join('`%s`' % c for c in never) + '\n\n')
 
 
@@ -243,15 +244,16 @@ def _folding_note(fh, folded):
     fh.write('\n')
 
 
-def write_markdown(path, plugin, plan, places, ported_pick, stub_pick,
+def write_markdown(path, plugins, plan, places, ported_pick, stub_pick,
                    ported, stubbed, calls, folded=None):
     """Write the whole plan, both covers, as a markdown document."""
     chosen, missed = ported_pick
+    where = ' + '.join(plugins)
     with io.open(path, 'w', encoding='utf-8') as fh:
-        fh.write('# MorrowindRuntime opcode test plan — %s\n\n' % plugin)
+        fh.write('# MorrowindRuntime opcode test plan — %s\n\n' % where)
         fh.write('**Tool:** `python -m tools.dialog.'
                  'morrowind_opcode_testplan --plugin %s --stubs '
-                 '--markdown <this file>`\n\n' % plugin)
+                 '--markdown <this file>`\n\n' % ' '.join(plugins))
         fh.write('Measured over %d journal quest(s) with stages. Ranked by '
                  'new commands per STAGE the tester must play, so short '
                  'quests come first. **A prerequisite is its own row**, '
@@ -263,7 +265,7 @@ def write_markdown(path, plugin, plan, places, ported_pick, stub_pick,
         _table(fh, plan, places, chosen, ported)
         _folding_note(fh, folded)
         if missed:
-            _uncovered(fh, missed, calls)
+            _uncovered(fh, missed, calls, where)
         if stub_pick:
             picks, left = stub_pick
             fh.write('## Stubbed commands — registered but doing nothing '
@@ -273,5 +275,5 @@ def write_markdown(path, plugin, plan, places, ported_pick, stub_pick,
                      'compile and dispatch but do nothing, so the log names '
                      'the silent no-op behind each broken stage.\n\n')
             _table(fh, plan, places, picks, stubbed)
-            _uncovered(fh, left, calls)
+            _uncovered(fh, left, calls, where)
     print('\nwrote %s' % path)

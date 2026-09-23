@@ -82,9 +82,11 @@ def worn_model_path(record_id: str, female: bool = False) -> str:
 def emit_worn_models(lines: list, rec, biped: int, ctx) -> None:
     """The biped flags, the worn models, and the body parts they are assembled from.
 
-    Only a piece with a slot names a worn model.
+    Every piece with body parts names a worn model, a pauldron included
+    although no Oblivion slot holds one.
+    See: docs/commentary/asset_convert_armor.md#body-slot-layout
     """
-    parts = wearable_parts(rec, ctx.body_models) if biped else []
+    parts = wearable_parts(rec, ctx.body_models)
     lines.append(f'BMDT.BipedFlags={_covered_biped(biped, parts)}')
     if not parts:
         return

@@ -821,6 +821,11 @@ clothing's its `CTDT` type. Each maps onto TES4's `BMDT.BipedFlags`:
 | Amulet | Amulet (0x100) |
 | Pauldron, Belt | none -- no slot exists in either later game |
 
+The raw type is exported too (`MorrowindWearableType`), because TES4's one
+Hand bit cannot say which hand: the importer gives one-sided pieces their
+own Skyrim slot from it (left gauntlet/bracer/glove 33, right 59, pauldrons
+57/58; [body slots](asset_convert_armor.md#body-slot-layout)).
+
 A helmet keeps the Head bit only when its part list fills the Head part
 (`_covered_biped` in `tes4_export/morrowind_armor.py`); an open helm fills only
 Hair and must not hide the face. OpenMW draws the head model unless an item
@@ -855,9 +860,9 @@ masters, names a synthetic worn model per record
 (`armor\morrowind\m\<escaped id>.nif`, `f\` when any female part exists) as
 `Male/Female.BipedModel.MODL`, and lists the parts as
 `MorrowindPart[i].Slot/.Male/.Female`. Because the biped key is present the
-importer builds an ARMA exactly as for Oblivion armor. Parts are listed only
-for records with a biped slot; pauldrons and belts have none in either later
-game.
+importer builds an ARMA exactly as for Oblivion armor. Every record with parts
+lists them and names a worn model, pauldrons included, although their
+`BMDT.BipedFlags` stay 0.
 
 The mesh stage assembles the model before the ordinary conversion runs
 (`assemble_armor`, called from `asset_pipeline.convert_meshes`), reproducing
@@ -1542,7 +1547,7 @@ TR_Mainland (10,300 barks), the rules that were being dropped:
 | Health % / PcHealth % | 419 / 416 | `GetHealthPercentage` (TES5 430) |
 | PcExpelled | 415 | `GetPCExpelled` on the stated faction |
 | PcClothingModifier | 257 | `GetClothingValue`, naked-or-not only |
-| journal | ~250 | runtime GLOB `journal:<id>` |
+| journal | 252 | runtime GLOB `journal:<id>` |
 | PcCrimeLevel | 190 | `GetCrimeGold` |
 | SameFaction / SameSex / SameRace | 139 / 88 / 51 | `Same*AsPC` |
 | Weather | 139 | `GetIsCurrentWeather` over `mw*` WTHRs where loaded, else runtime GLOB `weather`; outdoors only |
@@ -1565,6 +1570,11 @@ is always 0 in Skyrim), Reputation (43), Werewolf (7), Alarm (7),
 RankRequirement (7), FacReaction (6), the eight attributes, and a
 speaker-faction rule (PcExpelled, FactionRankDifference, PC rank) on a bark
 that states no faction.
+
+Built: Morrowind.esm keeps 4,306 of 4,513 barks, the patch 3,812 (207 drop
+on a rule in each); the most conditions on one line is 21, under the 22
+ceiling. Every GetDisease, HasMagicEffect and player GetFactionRank lands as
+Run On Reference = PlayerRef.
 
 #### Measured result
 

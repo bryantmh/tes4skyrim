@@ -404,6 +404,7 @@ def export_ARMO(rec: Tes3Record, ctx) -> list:
     heavy = weight > _ARMOR_CLASS_WEIGHT.get(atype, 0.0) * _LIGHT_MAX_MOD
     _emit_wearable(lines, rec, _ARMOR_SLOTS.get(atype, 0),
                    _HEAVY_ARMOR if heavy else 0, ctx)
+    lines.append(f'MorrowindWearableType={atype}')
     lines.append(f'DATA.ArmorRating={armor * _RATING_SCALE}')
     lines.append(f'ANAM={enchant_points}')
     lines.append(f'DATA.Value={value}')
@@ -421,6 +422,7 @@ def export_CLOT(rec: Tes3Record, ctx) -> list:
         return lines
     ctype, weight, value, enchant_points = data
     _emit_wearable(lines, rec, _CLOTHING_SLOTS.get(ctype, 0), 0, ctx)
+    lines.append(f'MorrowindWearableType={ctype}')
     emit_value_weight(lines, value, weight)
     lines.append(f'ANAM={enchant_points}')
     return lines

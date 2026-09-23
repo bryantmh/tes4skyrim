@@ -281,8 +281,9 @@ def test_dependent_plugin_borrows_its_masters_records(tmp_path):
 
 
 def test_wearable_names_its_body_parts():
-    """A slotted piece names a synthetic worn model and lists its BODY parts.
+    """A piece with parts names a synthetic worn model, lists its BODY parts and its type.
 
+    A pauldron has no Oblivion slot but is worn all the same.
     See: docs/commentary/tes4_export_morrowind.md#worn-models
     """
     ctx = MorrowindContext()
@@ -296,10 +297,13 @@ def test_wearable_names_its_body_parts():
         + chr(92) * 2 + '0ironscuirass.nif')
     assert 'MorrowindPartCount=1' in lines and 'MorrowindPart[0].Slot=3' in lines
     assert 'Female.BipedModel.MODL' not in ''.join(lines)
+    assert 'MorrowindWearableType=1' in lines
     pauldron = _rec('ARMO', 'iron pauldron', _sub('AODT', struct.pack(
         '<ifiiii', 2, 5.0, 10, 100, 0, 5)), _sub('INDX', b'\x0d'),
         _text('BNAM', 'a_iron_cuirass'))
-    assert not any(l.startswith('Male.BipedModel') for l in export_ARMO(pauldron, ctx))
+    lines = export_ARMO(pauldron, ctx)
+    assert any(l.startswith('Male.BipedModel') for l in lines)
+    assert 'BMDT.BipedFlags=0' in lines and 'MorrowindWearableType=2' in lines
 
 
 def test_helmet_hides_the_head_only_when_it_fills_the_head_part():

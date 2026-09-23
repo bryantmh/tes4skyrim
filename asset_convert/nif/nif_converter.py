@@ -733,12 +733,11 @@ def _classify_wearable(src_path, nif_basename, worn, biped_flags):
     """What the plugin says this mesh IS: armor, shield, and which slots.
 
     The wearing record's biped flags are AUTHORED data and always beat the
-    filename or the folder.  Folder alone is never enough -- Nehrim files its
-    armor under eyren/, spinat/, nehrim/ and skeletonk/, and would lose the
-    dismember skin, the NiNode root and the retarget on all 88 of them.
-    Bit 13 of BMDT is Shield, and it catches what a filename check misses:
-    'towersheild.nif' is misspelled.
+    filename or the folder (Nehrim files 88 worn meshes under its own
+    folders); bit 13 is Shield, which catches the misspelled
+    'towersheild.nif'. A one-sided Morrowind piece's own slot beats the flags.
     See: docs/commentary/asset_convert_armor.md#armor-offset-slot
+    See: docs/commentary/asset_convert_armor.md#body-slot-layout
     """
     lowered = src_path.lower().replace('\\', '/')
     in_armor_dir = worn or 'armor' in lowered or 'clothes' in lowered
@@ -746,6 +745,9 @@ def _classify_wearable(src_path, nif_basename, worn, biped_flags):
                  else 'shield' in nif_basename)
     authored_bp = body_part_for_flags(biped_flags) if biped_flags else None
     allowed = body_parts_for_flags(biped_flags) if biped_flags else None
+    sided = wp.mesh_sided_slot()
+    if sided:
+        authored_bp, allowed = sided, [sided]
     single_slot = allowed is not None and len(allowed) == 1
     return {
         'in_armor_dir': in_armor_dir,

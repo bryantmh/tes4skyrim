@@ -615,7 +615,7 @@ Everything installable is collected in `output/Finished Mods/` instead:
 | `<plugin>.zip` | `convert.py --pack-zip-only` (`phase_pack_zip`) |
 | `AutoConvertLOD.zip` | `tools/release/pack_lod.py` |
 | `TESGameSelect.zip` | `tools/release/package_start_mod.py` |
-| `Slot44 Patch.esp` | `convert.py --modify-body-meshes` (loose — one plugin with no assets is not worth an archive) |
+| `Body Slots Patch.zip` | `convert.py --modify-body-meshes` (the patch plugin and the split skin meshes it points at; see [body slots](../commentary/asset_convert_armor.md#body-slot-layout)) |
 
 The folder name lives in `output_layout.py` (`FINISHED_DIR_NAME`), spelled once
 because it contains a space and is user-facing. Its `finished_dir(out_root)`

@@ -49,7 +49,7 @@ from asset_convert.character.skyrim_overrides import (
     SBP_33_HANDS,
     SBP_37_FEET,
     SBP_38_CALVES,
-    SBP_44_LOWERBODY,
+    SBP_49_LOWER_BODY,
     SBP_32_BODY,
     SBP_131_HAIR,
 )
@@ -236,7 +236,7 @@ _BONE_REGION_RULES = [
     (('finger', 'hand'), SBP_33_HANDS),
     (('toe', 'foot'), SBP_37_FEET),
     (('calf',), SBP_38_CALVES),
-    (('thigh', 'pelvis'), SBP_44_LOWERBODY),
+    (('thigh', 'pelvis'), SBP_49_LOWER_BODY),
     (('head',), SBP_131_HAIR),
     (('spine', 'clavicle', 'neck', 'upperarm', 'forearm'), SBP_32_BODY),
 ]
@@ -1107,6 +1107,12 @@ def _rebind(skinned_geoms, skel_root, targets, prn_out, authored) -> int:
     return len(skinned_geoms)
 
 
+def _reweight_morrowind_arms(skinned_geoms, skel_root, sk_skel, female, weight) -> None:
+    """Phase B2, morrowind_weights; imported late as it imports this module."""
+    from asset_convert.character.morrowind_weights import reweight_arms
+    reweight_arms(skinned_geoms, skel_root, sk_skel, female, weight)
+
+
 def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None,
                             allow_wrap: bool = True, weight: int = 0,
                             authored_body_part: int | None = None,
@@ -1143,5 +1149,7 @@ def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None
     _deform_vertices(skinned_geoms, skel_root, ob_skel, female, morrowind,
                      (allow_wrap, weight, race))
     _place_bones(skinned_geoms, bone_nodes, skel_root, sk_skel, src_map)
+    if morrowind:
+        _reweight_morrowind_arms(skinned_geoms, skel_root, sk_skel, female, weight)
     return _rebind(skinned_geoms, skel_root, (sk_skel, src_map), prn_out,
                    (authored_body_part, authored_allowed))

@@ -697,6 +697,27 @@ lacks a `<class>forward`, filled with that class' aim and named
 67 selected + 40 stand-in first-person clips, 138 clip generators in the
 FirstPerson project against 310 in DefaultMale/DefaultFemale.
 
+<a id="first-person-hands-spread"></a>**The rotation retarget spreads the
+hands and moves the sight.** Measured in each rig's `Camera1st` frame, frame
+0 (scratch script, FNV source vs `retarget_gun_clip` output): FNV's own
+iron-sight poses already center the `##SightingNode` side to side (0.03
+units off in `1hpattackleftis` with `9mm.nif` and in `2hraimis` with
+`varmintrifle.nif`) and stack the hands (5.8 and 24.9 units apart). After
+the retarget each hand sits 2-3.5 units further to its own side (hand-to-hand
+error 4.7-5.5 in all four clips measured), and the sight moves with the right
+hand, 2.9 units (pistol) and 8.8 (rifle), because `Weapon` keeps FNV's
+offset from the Skyrim hand. Every arm segment pushes outward: Skyrim's
+clavicle-to-shoulder offset is 14.04 against FNV's 11.24 and points
+outward, the upper arm is 20.26 against 17.36, and the forearm, the segment
+that brings each hand in towards the middle, is 16.05 against 18.13. The
+rifle adds a whole-torso shift: Skyrim's spine starts 6.7-7.6 units behind
+FNV's from the same COM, which the aim's torso twist turns into a sideways
+move of both shoulders. So both the sight offset and the loose left hand are
+the retarget keeping Skyrim's proportions, not a missing runtime step.
+`_fill_clip` also fills an iron-sight attack from the HIP aim: `1hpattack3is`
+has no left forearm or hand track, so its left hand drops 41 units below the
+camera.
+
 ## <a id="gun-parts"></a>Gun parts: the magazine, slide and bolt
 
 **Code:** `asset_convert/nif/gun_parts_falloutnv.py`,

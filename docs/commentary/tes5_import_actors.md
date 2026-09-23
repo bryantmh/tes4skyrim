@@ -15,6 +15,7 @@ them does.
 - [Aggression and confidence are TIERS, not scalars](#aggression-tiers)
 - [Confidence: why converted actors used to flee](#confidence-tiers)
 - [Vendor factions](#vendor-factions)
+- [A vendor faction without PLVD is never selected](#vendor-faction-needs-plvd)
 - [The merchant marker faction: a CTDA ceiling](#barter-gate-ctda-limit)
 - [The plugin-origin marker faction](#origin-faction)
 - [It also unlocks AI barrier doors](#barrier-door-ownership)
@@ -205,6 +206,22 @@ for merchants with no dedicated merchant chest — they trade from their carried
 inventory only. `_merchant_faction_by_npc` holds the per-merchant factions,
 which carry a VENC (Merchant Container) pointing at the actor's own converted
 Oblivion merchant chest so the barter menu stocks its full merchandise.
+
+### <a id="vendor-faction-needs-plvd"></a>A vendor faction without PLVD is never selected
+
+`Actor::CalculateCurrentVendorFaction` (ID 37383, 1.6.1170 RVA `0x66c250`)
+walks the actor's factions and takes the FIRST vendor faction whose VENV hours
+contain the current hour, whose conditions (+0xC0) pass, and whose PLVD
+location (+0xB8, written by `TESFaction::Load` at `0x3acdab`) is non-null and
+within the VENV radius. **A null PLVD skips the faction outright.** All 145
+vanilla vendor factions carry PLVD. A faction the selector skips leaves the
+actor with no vendor faction: the barter menu still opens, but only on the
+actor's carried inventory and gold, so its VENC chest is never read.
+
+A dependent plugin (Morroblivion, the ESPs) skips `create_vendor_factions`
+(`_prescan_vendor_trainer` gates on `is_support_root()`) and adopts nothing,
+so its merchants get no vendor faction, and `ACBS.BarterGold` is dropped because
+it is only written when a vendor faction exists.
 
 ### <a id="barter-gate-ctda-limit"></a>The merchant marker faction: a CTDA ceiling
 

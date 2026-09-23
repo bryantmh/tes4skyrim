@@ -257,7 +257,7 @@ def converted_plugins(out_root: Path) -> list[str]:
     and are found by their `<name>.manifest.json`.
 
     Either way the plugin file itself must be present — output/ also collects
-    the shared `Slot44 Patch.esp`, this step's own merged folder, and whatever
+    the `Finished Mods` folder, this step's own merged folder, and whatever
     else the pipeline drops at the root.
     """
     if not out_root.is_dir():

@@ -7,7 +7,9 @@ A field fits a source game's reference body -- FK-posed through the very
 retarget its armor gets -- exactly onto the Skyrim body (both weight-slider
 targets) and saves what body_wrap interpolates at runtime: src (rest pose),
 fkp (posed), dst0/dst1 (fitted), tris, vert_bc (skin-weight bone centroids in
-Oblivion skeleton space) and part (0 body, 1 hands/feet, 2 head). Oblivion's
+Oblivion skeleton space), part (0 body, 1 hands/feet, 2 head) and each
+vertex's body-part label (ob_slot: its body file's Skyrim slot; mw_slot: its
+INDX slot). Oblivion's
 reference body is its body part meshes plus the imperial head; Morrowind's is
 the reference race's skin parts (morrowind_body).
 
@@ -38,9 +40,34 @@ from asset_convert.character.wrap_mesh import (build_adjacency, closest_point_on
                                                weld_groups)
 from asset_convert.sources.skyrim_assets import get_body_nif_bytes
 from asset_convert.character.morrowind_body import part_slot_labels
+from asset_convert.character.skyrim_overrides import (SBP_130_HEAD, SBP_32_BODY, SBP_33_HANDS,
+                                                      SBP_37_FEET, SBP_49_LOWER_BODY)
 
-#: morrowind -> the reference body's per-vertex part labeler; Oblivion's body carries none.
-_LABELERS = {True: part_slot_labels, False: None}
+
+# ---------------------------------------------------------------------------
+# Reference body labels
+# ---------------------------------------------------------------------------
+
+#: Oblivion body file -> the Skyrim slot of the section it is.
+_OB_FILE_SLOTS = {'upperbody.nif': SBP_32_BODY, 'femaleupperbody.nif': SBP_32_BODY,
+                  'lowerbody.nif': SBP_49_LOWER_BODY, 'femalelowerbody.nif': SBP_49_LOWER_BODY,
+                  'hand.nif': SBP_33_HANDS, 'femalehand.nif': SBP_33_HANDS,
+                  'foot.nif': SBP_37_FEET, 'femalefoot.nif': SBP_37_FEET,
+                  'headhuman.nif': SBP_130_HEAD, 'earshuman.nif': SBP_130_HEAD}
+
+
+def _oblivion_slot_labels(name, _block, verts):
+    """Every vertex of an Oblivion body file labeled with that file's Skyrim slot."""
+    return np.full(len(verts), _OB_FILE_SLOTS[Path(name).name.lower()], dtype=np.int16)
+
+
+def _morrowind_slot_labels(_name, block, verts):
+    """Every vertex of a Morrowind skin part labeled with its INDX slot."""
+    return part_slot_labels(block, verts)
+
+
+#: morrowind -> (the reference body's per-vertex labeler, the npz key its labels are saved under).
+_LABELERS = {True: (_morrowind_slot_labels, 'mw_slot'), False: (_oblivion_slot_labels, 'ob_slot')}
 
 #: Oblivion's exported male body part folder.
 _OB_BODY_DIR = paths.EXPORT / 'Oblivion.esm' / 'meshes' / 'characters' / '_male'
@@ -216,16 +243,16 @@ def _oblivion_groups(gender: str) -> dict:
 def _group_arrays(items, labeler=None):
     """{'v0', 'tris', 'bones'[, 'labels']} over every skinned shape of a group, or None.
 
-    `labeler(block, verts)` gives each vertex its source body-part label.
+    `labeler(name, block, verts)` gives each vertex its source body-part label.
     """
     v_parts, t_parts, l_parts, bone_acc, offset = [], [], [], {}, 0
-    for _name, factory in items:
+    for name, factory in items:
         for block, skel_root in iter_skinned_geoms(factory()):
             verts, _G = geom_world(block, skel_root)
             v_parts.append(verts)
             t_parts.append(geom_triangles(block) + offset)
             if labeler is not None:
-                l_parts.append(labeler(block, verts))
+                l_parts.append(labeler(name, block, verts))
             for bone, (idx, w) in geom_bone_weights(block).items():
                 bone_acc.setdefault(bone, []).append((idx + offset, w))
             offset += len(verts)
@@ -432,7 +459,7 @@ def _fit_all(gender, groups, posed, skels, verbose):
                                _part_ids(group, gd['v0'], body_v0))):
             acc[key].append(value)
         if 'labels' in gd:
-            acc.setdefault('mw_slot', []).append(gd['labels'])
+            acc.setdefault('labels', []).append(gd['labels'])
         offset += len(gd['v0'])
     return acc, head
 
@@ -465,13 +492,13 @@ def _apply_head_fit(acc, head, gender, skels, verbose) -> dict:
     return hf
 
 
-def _save(out, acc, hf, has_head, verbose) -> None:
+def _save(out, acc, hf, has_head, verbose, label_key) -> None:
     """Write the field npz, arrays in the order the runtime has always read them."""
     out.parent.mkdir(parents=True, exist_ok=True)
     stacked = {key: np.vstack(acc[key]).astype(np.int32 if key == 'tris' else np.float32)
                for key in _STACKED}
-    labels = ({'mw_slot': np.concatenate(acc['mw_slot']).astype(np.int16)}
-              if 'mw_slot' in acc else {})
+    labels = ({label_key: np.concatenate(acc['labels']).astype(np.int16)}
+              if 'labels' in acc else {})
     np.savez_compressed(out, **stacked, part=np.concatenate(acc['part']),
                         has_head=np.array([1 if has_head else 0], dtype=np.int8), **hf,
                         **labels)
@@ -490,8 +517,9 @@ def build_field(gender: str, source: str = 'oblivion', verbose: bool = True) -> 
         print(f'  [{gender}] skeleton JSONs missing — cannot build')
         return False
     sources = body_groups(gender) if morrowind else _oblivion_groups(gender)
+    labeler, label_key = _LABELERS[morrowind]
     groups = {g: a for g, items in sources.items()
-              if (a := _group_arrays(items, _LABELERS[morrowind])) is not None}
+              if (a := _group_arrays(items, labeler)) is not None}
     posed = {g: p for g, items in sources.items()
              if (p := _posed_verts(items, gender, morrowind)) is not None}
     if not groups or set(groups) != set(posed):
@@ -503,7 +531,7 @@ def build_field(gender: str, source: str = 'oblivion', verbose: bool = True) -> 
         return False
     acc, head = fit
     hf = _apply_head_fit(acc, head, gender, skels, verbose)
-    _save(field_path(female, morrowind), acc, hf, 'head' in groups, verbose)
+    _save(field_path(female, morrowind), acc, hf, 'head' in groups, verbose, label_key)
     return True
 
 

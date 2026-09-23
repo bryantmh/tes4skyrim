@@ -27,32 +27,54 @@ ground-model fallback changes there, change it here too.
 import os
 from pathlib import Path
 
-from asset_convert.character.morrowind_coverage import (BODY_PARTITIONS, SkinFill,
-                                                        covered_partitions,
-                                                        part_slots)
+from asset_convert.character.morrowind_coverage import (SkinFill, covered_partitions, hidden_skin,
+                                                        part_slots, sided_slot)
 from asset_convert.character.wearable_plan_falloutnv import biped_bit_body_parts
+
+
+def _worn_models(rec: dict) -> list:
+    """The normalized worn model paths a wearable record names."""
+    return [norm_model_path(model) for key in ('Male.BipedModel.MODL', 'Female.BipedModel.MODL')
+            if (model := rec.get(key, '').strip())]
+
+
+def _wearables(export_dir):
+    """Every ARMO and CLOT record of the export."""
+    for name in ('ARMO.txt', 'CLOT.txt'):
+        yield from iter_records(Path(export_dir) / name)
 
 
 def build_skin_fill(export_dir) -> dict:
     """Morrowind worn mesh path -> its SkinFill (partitions its ARMA hides, parts it covers).
 
-    The hidden partitions are the ARMO's own body slots plus the partitions
-    its parts overlap, as `equipment._arma_bod2` writes them.
+    The hidden partitions are every section of the skin files the ARMA hides:
+    the ARMO's own body slots (a one-sided piece's own slot) plus the
+    partitions its parts overlap, as `equipment._arma_bod2` writes them.
     See: docs/commentary/asset_convert_armor.md#morrowind-skin-fill
     """
     out = {}
-    for name in ('ARMO.txt', 'CLOT.txt'):
-        for rec in iter_records(Path(export_dir) / name):
-            slots = part_slots(rec)
-            if not slots:
-                continue
-            flags = int(rec.get('BMDT.BipedFlags', '0') or 0)
-            hidden = (covered_partitions(slots) | frozenset(
-                body_parts_for_flags(flags))) & BODY_PARTITIONS
-            for key in ('Male.BipedModel.MODL', 'Female.BipedModel.MODL'):
-                model = rec.get(key, '').strip()
-                if model and hidden:
-                    out[norm_model_path(model)] = SkinFill(hidden, frozenset(slots))
+    for rec in _wearables(export_dir):
+        slots = part_slots(rec)
+        if not slots:
+            continue
+        sided = sided_slot(rec)
+        own = {sided} if sided else body_parts_for_flags(int(rec.get('BMDT.BipedFlags', '0') or 0))
+        hidden = hidden_skin(covered_partitions(slots) | frozenset(own))
+        for model in _worn_models(rec) if hidden else ():
+            out[model] = SkinFill(hidden, frozenset(slots))
+    return out
+
+
+def build_sided_slots(export_dir) -> dict:
+    """Morrowind worn mesh path -> the Skyrim slot of the one-sided piece wearing it.
+
+    See: docs/commentary/asset_convert_armor.md#body-slot-layout
+    """
+    out = {}
+    for rec in _wearables(export_dir):
+        slot = sided_slot(rec)
+        for model in _worn_models(rec) if slot else ():
+            out[model] = slot
     return out
 
 # TES4 BMDT biped bits 2=UpperBody 3=LowerBody 4=Hand 5=Foot — the gear the
@@ -81,7 +103,7 @@ MORROWIND_WEAPON_PRN = {0: 'WeaponDagger', 1: 'WeaponSword', 2: 'BackWeapon',
 # Bit 0 Head, 1 Hair, 2 UpperBody, 3 LowerBody, 4 Hand, 5 Foot.
 _SBP_131_HAIR = 131
 _SBP_32_BODY = 32
-_SBP_44_LOWERBODY = 44
+_SBP_49_LOWER_BODY = 49
 _SBP_33_HANDS = 33
 _SBP_37_FEET = 37
 _SBP_36_RING = 36
@@ -90,7 +112,7 @@ _BIPED_BIT_BODY_PART = [
     (0, _SBP_131_HAIR),        # Head  -> helmets ride Skyrim's hair slot
     (1, _SBP_131_HAIR),        # Hair
     (2, _SBP_32_BODY),
-    (3, _SBP_44_LOWERBODY),
+    (3, _SBP_49_LOWER_BODY),
     (4, _SBP_33_HANDS),
     (5, _SBP_37_FEET),
     # Jewellery.  Bit meanings per xEdit wbBipedFlags (wbDefinitionsTES4.pas):
@@ -180,8 +202,11 @@ WEAPON_PRN_KEY = '*weapon_prn*'
 #: Skin-fill sub-map key: a Morrowind worn mesh -> the body partitions its ARMA hides.
 SKIN_FILL_KEY = '*skin_fill*'
 
+#: Sided-slot sub-map key: a Morrowind one-sided piece's worn mesh -> its Skyrim slot.
+SIDED_SLOT_KEY = '*sided_slot*'
+
 #: Sub-maps a base's plan merges into instead of replacing.
-_NESTED_KEYS = (BIPED_FLAGS_KEY, WEAPON_PRN_KEY, SKIN_FILL_KEY)
+_NESTED_KEYS = (BIPED_FLAGS_KEY, WEAPON_PRN_KEY, SKIN_FILL_KEY, SIDED_SLOT_KEY)
 
 
 def biped_flags_for(plan: dict, src_path, meshes_root) -> int:
@@ -327,6 +352,7 @@ def build_plan(export_dir, _seen=None) -> dict:
     plan.setdefault(BIPED_FLAGS_KEY, {}).update(build_biped_flags(export_dir))
     plan.setdefault(WEAPON_PRN_KEY, {}).update(build_weapon_prns(export_dir))
     plan.setdefault(SKIN_FILL_KEY, {}).update(build_skin_fill(export_dir))
+    plan.setdefault(SIDED_SLOT_KEY, {}).update(build_sided_slots(export_dir))
     return plan
 
 
@@ -343,14 +369,15 @@ def variants_for(plan: dict, src_path, meshes_root) -> int:
     return plan.get(norm_model_path(rel), BASE)
 
 
-_LATCH = [0, None, None]
+_LATCH = [0, None, None, None]
 
 
 def latch_variants(plan: dict, src_path, meshes_root):
-    """Latch the plugin's variants, weapon Prn and skin fill for the NIF to convert."""
+    """Latch the plugin's variants, weapon Prn, skin fill and sided slot for the NIF to convert."""
     _LATCH[0] = variants_for(plan, src_path, meshes_root) if plan else 0
     _LATCH[1] = weapon_prn_for(plan, src_path, meshes_root) if plan else None
     _LATCH[2] = _sub_map_entry(plan, SKIN_FILL_KEY, src_path, meshes_root, None)
+    _LATCH[3] = _sub_map_entry(plan, SIDED_SLOT_KEY, src_path, meshes_root, None)
 
 
 def _sub_map_entry(plan, key: str, src_path, meshes_root, default):
@@ -365,6 +392,11 @@ def _sub_map_entry(plan, key: str, src_path, meshes_root, default):
 def mesh_skin_fill() -> SkinFill:
     """Body partitions to fill with skin in the NIF being converted."""
     return _LATCH[2]
+
+
+def mesh_sided_slot():
+    """The Skyrim slot of the one-sided Morrowind piece being converted, or None."""
+    return _LATCH[3]
 
 
 def weapon_prn_for(plan: dict, src_path, meshes_root):

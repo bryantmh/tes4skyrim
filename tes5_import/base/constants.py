@@ -37,7 +37,7 @@ BIPED_SLOT_MAP = {
     0: 0,    # Head → 30-Head
     1: 1,    # Hair → 31-Hair
     2: 2,    # Upper Body → 32-Body
-    3: 14,   # Lower Body → 44-LowerBody (greaves get their own slot)
+    3: 19,   # Lower Body → 49-Pelvis primary (greaves get their own slot)
     4: 3,    # Hand → 33-Hands
     5: 7,    # Foot → 37-Feet
     6: 6,    # Right Ring → 36-Ring
@@ -61,22 +61,15 @@ BIPED_SLOT_MAP = {
 BIPED_SLOT_EXTRA = {
     0: [1, 11, 12, 13],  # Head (full-face) → also Hair(31)+LongHair(41)+Circlet(42)+Ears(43)
     1: [11, 12],         # Hair (open-face helm) → also LongHair(41)+Circlet(42)
+    3: [29],             # Hands (both) → also the right hand(59); 33 alone is the left
 }
 
-# Extra TES5 slots for ARMA body coverage.  ARMA records need to declare
-# which body regions the mesh covers (beyond the primary equipment slot).
-# This controls which body NIF partitions are HIDDEN when armor is equipped.
-# Derived from vanilla Skyrim:
-#   IronCuirassAA ARMA: Body(32) + ForeArms(34) + Calves(38)
-#   IronBootsAA ARMA:   Feet(37) + Calves(38)
-#   IronGlovesAA ARMA:  Hands(33) + ForeArms(34)
-#   GreavesAA ARMA:     LowerBody(44) + Calves(38)
-#   IronHelmetAA ARMA:  Hair(31) + Ears(43)  (hides character ears through helm)
+#: ARMA-only body coverage beyond the equip slot. See: docs/commentary/asset_convert_armor.md#biped-slot-conversion
 ARMA_BODY_COVERAGE_EXTRA = {
     2: [4],      # Body (cuirass) → also 34-ForeArms
     3: [4],      # Hands (gauntlets) → also 34-ForeArms
     7: [8],      # Feet (boots) → also 38-Calves
-    14: [8],     # LowerBody (greaves) → also 38-Calves
+    19: [8],     # LowerBody (greaves) → also 38-Calves
     # Hair (helmet ARMA slot) → also 41-LongHair + 43-Ears.  LongHair hides
     # the hairline headpart / long-hair strands (partition 141) that slot 31
     # alone leaves visible — they clip through tight Oblivion helm shells.

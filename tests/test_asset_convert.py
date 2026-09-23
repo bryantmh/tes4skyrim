@@ -4908,7 +4908,7 @@ class TestFalloutMeshSideSlots:
         assert wearable_plan.body_part_for_flags(1 << 10) == 131
         assert not wearable_plan_falloutnv.shield_flags(1 << 13)
         collision_falloutnv._SOURCE[0] = False
-        assert wearable_plan.body_part_for_flags(1 << 3) == 44
+        assert wearable_plan.body_part_for_flags(1 << 3) == 49
         assert wearable_plan_falloutnv.shield_flags(1 << 13)
 
     def test_fallout_only_bones_are_renamed(self):

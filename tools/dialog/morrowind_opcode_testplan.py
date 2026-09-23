@@ -10,6 +10,8 @@ set-cover over quests, and a short cover is a test plan.
     python -m tools.dialog.morrowind_opcode_testplan --plugin TR_Mainland.esm
     python -m tools.dialog.morrowind_opcode_testplan --plugin TR_Mainland.esm \\
         --stubs --markdown docs/audits/morrowind_opcode_testplan.md
+    python -m tools.dialog.morrowind_opcode_testplan \\
+        --plugin Morrowind.esm TR_Mainland.esm --stubs
 
 See: docs/commentary/morrowind_runtime.md#opcode-test-plan
 """
@@ -30,16 +32,17 @@ from tools.dialog import mw_testplan_report as report
 from tools.script import mwscript_opcode_audit as opcode_audit
 
 
-def command_status(root, export_dir):
+def command_status(root, export_dirs):
     """`(ported, stubbed, calls)` -- the two name sets and each one's uses.
 
     Derived exactly as the audit derives them, so this plan and the audit can
-    never disagree.
+    never disagree. `calls` sums over every export in `export_dirs`.
     See: docs/audits/mwscript_opcodes.md#ported
     """
     commands = opcode_audit.registrations(root)
     real, noops = opcode_audit.installed(root)
-    opcode_audit.count_calls(export_dir, commands)
+    for export_dir in export_dirs:
+        opcode_audit.count_calls(export_dir, commands)
     ported, stubbed = set(), set()
     for cmd in commands.values():
         status = opcode_audit.status_of(cmd, real, noops)
@@ -50,8 +53,8 @@ def command_status(root, export_dir):
     return ported, stubbed, {c.key: c.calls for c in commands.values()}
 
 
-def owned_quests(record_dir):
-    """The journal ids THIS plugin authors, from its own `MWDI.txt`.
+def owned_quests(record_dirs):
+    """The journal ids these plugins author, from each one's own `MWDI.txt`.
 
     🛑 The sidecar is CUMULATIVE -- it merges the masters' dialogue, so a
     TR_Mainland sidecar carries vanilla Morrowind's 760 quests too, and a
@@ -60,10 +63,11 @@ def owned_quests(record_dir):
     prefix is a guess that also drops TR's own `hh_`/`pc_m0_` quests.
     See: docs/commentary/morrowind_runtime.md#opcode-test-plan
     """
-    path = os.path.join(record_dir, 'MWDI.txt')
-    if not os.path.isfile(path):
+    paths = [os.path.join(d, 'MWDI.txt') for d in record_dirs]
+    if not all(os.path.isfile(p) for p in paths):
         return None
-    return {rec['EditorID'].lower() for rec in trace.records(path)
+    return {rec['EditorID'].lower() for path in paths
+            for rec in trace.records(path)
             if rec.get('DialType') == 'Journal' and rec.get('EditorID')}
 
 
@@ -215,26 +219,33 @@ def _covered(plan, chosen, targets):
 
 
 def build_plan(args):
-    """Read every source and return `(plan, ported, stubbed, places, calls)`."""
+    """Read every source and return `(plan, ported, stubbed, places, calls)`.
+
+    The LAST plugin supplies the dialogue and placements: its sidecar is
+    cumulative and its placement lookup walks its masters, so it must depend
+    on every other plugin named.
+    """
     root = os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__))))
-    out_dir = trace.sidecar_dir(args.plugin, args.export_root,
+    out_dir = trace.sidecar_dir(args.plugin[-1], args.export_root,
                                 args.output_root)
     info_path = os.path.join(out_dir, 'INFO.txt')
     if not os.path.isfile(info_path):
         raise SystemExit('no staged sidecar at %s -- run the import or '
                          'tools.dialog.mw_sidecar first' % out_dir)
-    record_dir = str(source_registry.record_dir(args.export_root,
-                                                args.plugin))
-    ported, stubbed, calls = command_status(root, record_dir)
+    record_dirs = [str(source_registry.record_dir(args.export_root, p))
+                   for p in args.plugin]
+    ported, stubbed, calls = command_status(root, record_dirs)
 
     entries, setters = trace.scan_dialogue(info_path)
-    for quest, rows in trace.scan_object_scripts(
-            os.path.join(record_dir, 'SCPT.txt')).items():
-        setters.setdefault(quest, []).extend(rows)
-    report.attach_reads(info_path, record_dir, setters, ported | stubbed)
+    for record_dir in record_dirs:
+        for quest, rows in trace.scan_object_scripts(
+                os.path.join(record_dir, 'SCPT.txt')).items():
+            setters.setdefault(quest, []).extend(rows)
+    report.attach_reads(info_path, record_dirs, setters, ported | stubbed)
 
-    plan = quest_commands(entries, setters, owned_quests(record_dir))
+    plan = quest_commands(entries, setters, owned_quests(record_dirs))
+    record_dir = record_dirs[-1]
     gates = (mw_gates.entries(info_path), mw_gates.teachers(info_path))
     for quest, row in plan.items():
         row['prereqs'] = sorted(prerequisites(quest, plan, setters, gates))
@@ -247,7 +258,9 @@ def build_plan(args):
 def main():
     """CLI: print the cover, and optionally write it as markdown."""
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    ap.add_argument('--plugin', required=True)
+    ap.add_argument('--plugin', required=True, nargs='+',
+                    help='one or more plugins, the dependent one LAST; '
+                         'several merge into one plan')
     ap.add_argument('--budget', type=int, default=40,
                     help='most quests to pick (default 40)')
     ap.add_argument('--stubs', action='store_true',

@@ -542,7 +542,7 @@ silently puts armor in the wrong slot rather than failing.
 | Bit | FNV | Oblivion | Skyrim slot chosen |
 |---:|---|---|---|
 | 3 | Left Hand | Lower Body | 33-Hands |
-| 4 | Right Hand | Hand | 33-Hands |
+| 4 | Right Hand | Hand | 59-Right hand ([body slots](asset_convert_armor.md#body-slot-layout)) |
 | 5 | Weapon | Foot | *dropped — not a wearable slot* |
 | 6 | PipBoy | Right Ring | 34-Forearms |
 | 7 | Backpack | Left Ring | 46-Unnamed |
@@ -554,7 +554,7 @@ silently puts armor in the wrong slot rather than failing.
 | 13 | Earrings | Shield | 43-Ears |
 | 14 | Mask | Torch | 30-Head |
 | 15 | Choker | Tail | 35-Amulet |
-| 16-19 | Mouth Object, Body AddOn 1-3 | — | 43-Ears, 47-49 |
+| 16-19 | Mouth Object, Body AddOn 1-3 | — | 43-Ears, 47, 48, 60 (49 is the lower body) |
 
 Censused over all 393 FNV ARMO records, the bits actually authored and what
 the Oblivion table made of them:

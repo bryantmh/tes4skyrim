@@ -15,6 +15,8 @@ from tes5_import.record_types.creature import convert_CREA
 from tes5_import.record_types.items import (convert_LVLC, convert_LVLI)
 from tes5_import.record_types.npc import convert_NPC_
 from tes5_import.record_types.common import _convert_biped_flags
+from tes5_import.record_types.equipment import armo_slots
+from asset_convert.character.morrowind_coverage import part_slots
 from tes5_import.record_types.equipment import (
     convert_ARMO,
     convert_BOOK,
@@ -341,29 +343,39 @@ class TestConverters:
         assert sig == 'ARMO'
 
     def test_biped_slot_mapping(self):
-        # _convert_biped_flags returns PRIMARY equip slots plus equipment-conflict
-        # extras (helmets block Circlet/Ears so they can't be worn simultaneously).
-        # Body-coverage extras (ForeArms, Calves, etc.) go on ARMA, not ARMO.
-        # Head (bit 0) â†’ 30 (bit 0) + Hair(1) + LongHair(11) + Circlet(12) + Ears(13)
-        # - full-face helm.  LongHair(41) also covered so the hairline headpart
-        # (partition 141) is hidden, not just swapped in (see BIPED_SLOT_EXTRA).
+        """TES4 biped bits -> ARMO BOD2: primary slots plus equipment-conflict extras.
+
+        Head: 30 + Hair, LongHair, Circlet, Ears (full-face helm; LongHair hides
+        the hairline headpart). Hair: 31 + LongHair, Circlet. Upper body 32,
+        lower body 49, hands 33 plus the right hand 59, foot 37, amulet 35,
+        shield 39. Body coverage (forearms, calves) goes on the ARMA, not here.
+        """
         assert _convert_biped_flags(0x01) == (1 | (1 << 1) | (1 << 11) | (1 << 12) | (1 << 13))
-        # Hair (bit 1) â†’ 31 (bit 1) + LongHair(11) + Circlet(12) - open-face helm
         assert _convert_biped_flags(0x02) == ((1 << 1) | (1 << 11) | (1 << 12))
-        # Upper body (bit 2) â†’ 32 (bit 2) - no extra equipment conflicts
         assert _convert_biped_flags(0x04) == 0x04
-        # Lower body (bit 3) â†’ 44-LowerBody (bit 14)
-        assert _convert_biped_flags(0x08) == (1 << 14)
-        # Hand (bit 4) â†’ 33-Hands (bit 3)
-        assert _convert_biped_flags(0x10) == (1 << 3)
-        # Foot (bit 5) â†’ 37 (bit 7)
+        assert _convert_biped_flags(0x08) == (1 << 19)
+        assert _convert_biped_flags(0x10) == (1 << 3) | (1 << 29)
         assert _convert_biped_flags(0x20) == 0x80
-        # Amulet (bit 8) â†’ 35 (bit 5)
         assert _convert_biped_flags(0x100) == 0x20
-        # Shield (bit 13) â†’ 39 (bit 9)
         assert _convert_biped_flags(0x2000) == 0x200
-        # Upper+Lower body combined
-        assert _convert_biped_flags(0x0C) == 0x04 | (1 << 14)
+        assert _convert_biped_flags(0x0C) == 0x04 | (1 << 19)
+
+    def test_morrowind_one_sided_pieces_take_their_own_slot(self):
+        """A right gauntlet takes 59 and a left one 33; a pauldron takes 57/58 and hides nothing."""
+        def piece(sig, kind, parts=()):
+            """An exported Morrowind wearable record of the given type and parts."""
+            rec = {'Signature': sig, 'MorrowindWearableType': str(kind), 'BMDT.BipedFlags': '16',
+                   'MorrowindPartCount': str(len(parts))}
+            rec.update({f'MorrowindPart[{i}].Slot': str(p) for i, p in enumerate(parts)})
+            return rec
+        assert armo_slots(piece('ARMO', 7)) == 1 << 29
+        assert armo_slots(piece('ARMO', 6)) == 1 << 3
+        assert armo_slots(piece('CLOT', 5)) == 1 << 29
+        assert armo_slots(piece('ARMO', 2)) == 1 << 27
+        assert armo_slots(piece('ARMO', 3)) == 1 << 28
+        assert part_slots(piece('ARMO', 2, (14, 24))) == []
+        assert part_slots(piece('ARMO', 6, (7, 9))) == [7, 9]
+        assert armo_slots({'BMDT.BipedFlags': '16'}) == (1 << 3) | (1 << 29)
 
     def test_armo_armor_type_enum(self):
         """ArmorType: 0=Light, 1=Heavy, 2=Clothing per wbArmorTypeEnum."""

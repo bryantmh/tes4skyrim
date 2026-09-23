@@ -111,8 +111,8 @@ _EQUIPPED_PRN_VALUES = frozenset({
 })
 
 #: Biped slot -> the offset table entry that fits a piece on that slot.
-_BP_TO_PIECE = {131: 'helmet', 32: 'cuirass', 44: 'greaves',
-                33: 'gauntlets', 37: 'boots'}
+_BP_TO_PIECE = {131: 'helmet', 32: 'cuirass', 49: 'greaves',
+                33: 'gauntlets', 59: 'gauntlets', 37: 'boots'}
 
 #: Vanilla creature skeleton BSXFlags: Havok | Ragdoll | Dynamic | Articulated.
 _CREATURE_SKELETON_BSX = 198

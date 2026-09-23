@@ -61,8 +61,6 @@ Minor Issues:
 	4 - Harvested plants don't make a sound. Intentional?
 
 	7 - Flame atronach animated section not properly converted
-
-	12 - Minor issues with 44 patch plugin
 	
 	15 - Missing location topics (Anvil)
 
@@ -100,10 +98,4 @@ Guns (FalloutNV):
 	G23 - NPC iron sights and hip fire: NPCs never zoom; the iGunZoom / fGunZoom variables are only written for the player
 
 Morrowind:
-	1) NPCs have voice lines that should be gated by quest 
 	2) Water missing in interiors with it flagged
-	3) Message box appearing while pause menu is up locks the game 
-	4) Object animation appears invisible. Need a new mechanism
-	6) NPC say fix Morrowind charactergen
-	7) Disable player controls
-	8) Include base Morrowind in quest coverage

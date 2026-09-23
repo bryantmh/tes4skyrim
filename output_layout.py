@@ -8,8 +8,8 @@ the same level, so finding the four files that actually ship meant knowing which
 of a dozen entries were products and which were scaffolding.
 
 Everything installable is collected here instead: every mod zip
-(`<plugin>.zip`, `TESGameSelect.zip`, `AutoConvertLOD.zip`) and the standalone
-`Slot44 Patch.esp`, which ships as a loose plugin rather than an archive.
+(`<plugin>.zip`, `TESGameSelect.zip`, `AutoConvertLOD.zip`, and
+`Body Slots Patch.zip`, the Skyrim load-order patch with its split skin meshes).
 
 Deliberately its own tiny module: four independent producers write here —
 convert.py's zip and body-patch phases, tools/release/package_start_mod.py and
@@ -29,6 +29,9 @@ never mistaken for a converted plugin.
 from pathlib import Path
 
 FINISHED_DIR_NAME = "Finished Mods"
+
+#: The Skyrim body-slot patch: its plugin, and the zip shipping it with the split skin meshes.
+BODY_SLOTS_PATCH = "Body Slots Patch"
 
 # Marks the export ROOT. Used to tell `export/<mod>/<plugin>/`
 # (records nested inside a mod) from a plain `export/<plugin>/`.

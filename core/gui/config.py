@@ -359,7 +359,7 @@ def scan_converted(output_path: str) -> list:
     """Plugins already converted into `output_path`, sorted.
 
     Keyed on the manifests `phase_import` writes, never on directory names:
-    `output/` also accumulates the standalone `Slot44 Patch.esp`, the
+    `output/` also accumulates the `Finished Mods` folder, the
     `TESGameSelect` folder and `<plugin>.zip` archives, none of which can be
     re-run.
     """

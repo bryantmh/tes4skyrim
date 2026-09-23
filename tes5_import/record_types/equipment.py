@@ -57,7 +57,7 @@ from .common import (
 from output_layout import assets_for
 from asset_convert.character.morrowind_coverage import (BODY_PARTITIONS,
                                                         coverage_bits,
-                                                        part_slots)
+                                                        part_slots, sided_slot)
 
 #: Biped slot of BOD2 bit 0.
 _FIRST_SLOT = 30
@@ -66,6 +66,17 @@ _FIRST_SLOT = 30
 # ---------------------------------------------------------------------------
 # Shared record helpers
 # ---------------------------------------------------------------------------
+
+def armo_slots(rec: dict) -> int:
+    """The ARMO's BOD2 slots: a one-sided Morrowind piece's own, else the converted flags.
+
+    See: docs/commentary/asset_convert_armor.md#body-slot-layout
+    """
+    sided = sided_slot(rec)
+    if sided:
+        return 1 << (sided - _FIRST_SLOT)
+    return _convert_biped_flags(get_int(rec, 'BMDT.BipedFlags'))
+
 
 def _arma_bod2(rec: dict, tes5_biped: int, armor_type: int) -> int:
     """The ARMA's BOD2: the ARMO's slots plus the body regions its mesh covers.
@@ -459,8 +470,7 @@ def build_armo_bod2(rec: dict, is_clothing: bool) -> bytes:
     (The ARMA companion's BOD2 stays the master's — companions are never
     re-minted by an override.)
     """
-    tes5_biped = _convert_biped_flags(get_int(rec, 'BMDT.BipedFlags'))
-    return struct.pack('<II', tes5_biped, _armo_armor_type(rec, is_clothing))
+    return struct.pack('<II', armo_slots(rec), _armo_armor_type(rec, is_clothing))
 
 
 def convert_ARMO(rec: dict, is_clothing: bool = False, writer=None) -> bytes:
@@ -499,7 +509,7 @@ def convert_ARMO(rec: dict, is_clothing: bool = False, writer=None) -> bytes:
 
     # BOD2 (Biped Object Data) replaces BMDT — shared with the override path
     tes4_biped = get_int(rec, 'BMDT.BipedFlags')
-    tes5_biped = _convert_biped_flags(tes4_biped)
+    tes5_biped = armo_slots(rec)
     armor_type = _armo_armor_type(rec, is_clothing)
     subs += pack_subrecord('BOD2', struct.pack('<II', tes5_biped, armor_type))
 
@@ -594,106 +604,91 @@ def _beast_arma_races(rec: dict) -> tuple:
     return tuple(ARMA_BEAST_RACES)
 
 
-def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
-                is_shield: bool = False, beast_race=None,
-                exclude_beast_races: bool = False) -> bytes:
-    """Build an ARMA (Armor Addon) companion record for an ARMO.
+#: BOD2 bits of slots 32 and 49, the body and lower body.
+_BODY_SLOTS = (1 << 2) | (1 << 19)
 
-    ARMA holds the actual worn mesh models.
-    Order: EDID BOD2 RNAM DNAM MOD2 MOD3 [SNDD] MODL[]
+#: TES4 biped bits of the body, hand and foot slots, whose gear is weight-morphed; bit 5 is the foot.
+_TES4_BODY_BITS, _TES4_FOOT = 0b111100, 1 << 5
 
-    `beast_race` builds the KHAJIIT or ARGONIAN armature instead of the
-    default one: its RNAM is that race, its MODL[] that race's vampire
-    variant, and its meshes are the per-race NIFs asset_convert fitted to
-    that race's own skull.  `exclude_beast_races` drops the beast races
-    from the DEFAULT armature's additional-race list, so the engine cannot
-    satisfy a khajiit with the human-fitted mesh and skip the beast one.
-    Both mirror vanilla -- see skyrim_overrides.ARMA_BEAST_RACES.
+#: ARMA DNAM priority of body and lower-body armor. See: docs/commentary/asset_convert_armor.md#biped-slot-conversion
+_BODY_PRIORITY = 5
+
+#: ARMA DNAM priority of every other armor addon (vanilla gauntlets, boots, helmets).
+_ITEM_PRIORITY = 10
+
+#: Armor type (0 light, 1 heavy, 2 clothing) -> the footstep set its boots use.
+_FOOTSTEP_SETS = {0: LIGHT_ARMOR_FOOTSTEP_SET, 1: HEAVY_ARMOR_FOOTSTEP_SET, 2: CLOTHING_FOOTSTEP_SET}
+
+
+def _arma_dnam(use_slider: bool, tes5_biped: int) -> bytes:
+    """ARMA DNAM: both priorities, both weight sliders (2 = enabled), zero padding and sound.
+
+    Body and lower-body armor draw at 5 so gloves win 34 and boots 38, as in vanilla.
+    See: docs/commentary/asset_convert_armor.md#biped-slot-conversion
     """
-    subs = b''
-    edid = get_str(rec, 'EditorID', '')
-    if beast_race:
-        subs += pack_string_subrecord(
-            'EDID', edid + '_' + beast_race.capitalize() + 'AA')
-    else:
-        subs += pack_string_subrecord('EDID', edid + '_AA')
-
-    subs += pack_subrecord('BOD2', struct.pack(
-        '<II', _arma_bod2(rec, tes5_biped, armor_type), armor_type))
-
-    # RNAM — Race (must match parent ARMO)
-    if beast_race:
-        subs += pack_formid_subrecord(
-            'RNAM', ARMA_BEAST_RACES[beast_race][0])
-    else:
-        subs += pack_formid_subrecord('RNAM', 0x00000019)
-
-    # Weight-slider morphing follows the vanilla convention: ONLY gear
-    # covering body/hands/feet uses it (ARMA path <name>_1.nif + slider
-    # enabled; engine lerps the _0/_1 pair by actor weight).  Vanilla
-    # helmets and shields have the slider DISABLED and a plain path
-    # (IronShieldAA / IronHelmetAA), and rigid PRN pieces must never be
-    # weight-morphed.  TES4 biped bits: 2=UpperBody 3=LowerBody 4=Hand 5=Foot.
-    tes4_biped_flags = get_int(rec, 'BMDT.BipedFlags')
-    use_slider = bool(tes4_biped_flags & 0b111100)
-
-    # DNAM — ARMA-specific data (12 bytes)
-    # Priority M(U8) + Priority F(U8) + WeightSlider M(U8) + WeightSlider F(U8)
-    # + pad(2) + DetectionSoundValue(U8) + pad(U8) + WeaponAdjust(float)
-    # Weight slider: 0x02=enabled (vanilla convention)
-    # Priority: 10 matches vanilla Skyrim iron armor
     slider = 2 if use_slider else 0
-    dnam = struct.pack('<BBBBHBBf', 10, 10, slider, slider, 0, 0, 0, 0.0)
-    subs += pack_subrecord('DNAM', dnam)
+    priority = _BODY_PRIORITY if tes5_biped & _BODY_SLOTS else _ITEM_PRIORITY
+    return pack_subrecord('DNAM', struct.pack('<BBBBHBBf', priority, priority, slider, slider,
+                                              0, 0, 0, 0.0))
 
+
+def _arma_models(rec: dict, beast_race, use_slider: bool) -> bytes:
+    """MOD2/MOD3: the worn meshes, female falling back to male.
+
+    A beast armature wears the per-race mesh fitted to its skull; weight-morphed
+    gear names its `_1` variant.
+    """
     def _weighted(path: str) -> str:
         p = prefix_path(path)
         if not p.lower().endswith('.nif'):
             return p
         if beast_race:
-            # The per-race mesh asset_convert fitted to THIS race's skull.
-            # Head gear never sets the weight slider (vanilla helmets ship a
-            # plain path), so the two suffixes can never both apply.
             return p[:-4] + ARMA_BEAST_RACES[beast_race][2] + '.nif'
-        if use_slider:
-            return p[:-4] + '_1.nif'
-        return p
+        return p[:-4] + '_1.nif' if use_slider else p
 
-    # MOD2 — Male biped model (the actual worn mesh)
     male_model = get_str(rec, 'Male.BipedModel.MODL')
-    if male_model:
-        subs += pack_string_subrecord('MOD2', _weighted(male_model))
-
-    # MOD3 — Female biped model
-    female_model = get_str(rec, 'Female.BipedModel.MODL')
+    female_model = get_str(rec, 'Female.BipedModel.MODL') or male_model
+    subs = pack_string_subrecord('MOD2', _weighted(male_model)) if male_model else b''
     if female_model:
         subs += pack_string_subrecord('MOD3', _weighted(female_model))
-    elif male_model:
-        # Fall back to male model for female
-        subs += pack_string_subrecord('MOD3', _weighted(male_model))
+    return subs
 
-    # MODL[] — Additional Races that can equip this armor addon.
-    # Per TES5 record definition: MODL (Additional Races) comes BEFORE SNDD.
+
+def _arma_races(beast_race, exclude_beast_races: bool) -> bytes:
+    """MODL[]: the additional races that can wear the armature."""
     if beast_race:
         race_list = ARMA_BEAST_RACES[beast_race][1]
     elif exclude_beast_races:
         race_list = ARMA_ADDITIONAL_RACES_NONBEAST
     else:
         race_list = ARMA_ADDITIONAL_RACES
-    for race_fid in race_list:
-        subs += pack_formid_subrecord('MODL', race_fid)
+    return b''.join(pack_formid_subrecord('MODL', race_fid) for race_fid in race_list)
 
-    # SNDD — Footstep sound (boots need footstep set)
+
+def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
+                is_shield: bool = False, beast_race=None,
+                exclude_beast_races: bool = False) -> bytes:
+    """An ARMO's companion ARMA: EDID BOD2 RNAM DNAM MOD2 MOD3 MODL[] [SNDD].
+
+    `beast_race` builds that race's armature (its RNAM, vampire variant and
+    skull-fitted meshes); `exclude_beast_races` drops the beast races from
+    the default one's list, as vanilla does (skyrim_overrides.ARMA_BEAST_RACES).
+    Only body, hand and foot gear is weight-morphed; boots get a footstep set.
+    """
+    edid = get_str(rec, 'EditorID', '')
+    suffix = '_' + beast_race.capitalize() + 'AA' if beast_race else '_AA'
+    subs = pack_string_subrecord('EDID', edid + suffix)
+    subs += pack_subrecord('BOD2', struct.pack(
+        '<II', _arma_bod2(rec, tes5_biped, armor_type), armor_type))
+    subs += pack_formid_subrecord(
+        'RNAM', ARMA_BEAST_RACES[beast_race][0] if beast_race else 0x00000019)
     tes4_biped = get_int(rec, 'BMDT.BipedFlags')
-    is_feet = bool(tes4_biped & (1 << 5))   # TES4 bit 5 = Foot
-    if is_feet:
-        if armor_type == 1:  # Heavy
-            subs += pack_formid_subrecord('SNDD', HEAVY_ARMOR_FOOTSTEP_SET)
-        elif armor_type == 0:  # Light
-            subs += pack_formid_subrecord('SNDD', LIGHT_ARMOR_FOOTSTEP_SET)
-        else:  # Clothing
-            subs += pack_formid_subrecord('SNDD', CLOTHING_FOOTSTEP_SET)
-
+    use_slider = bool(tes4_biped & _TES4_BODY_BITS)
+    subs += _arma_dnam(use_slider, tes5_biped)
+    subs += _arma_models(rec, beast_race, use_slider)
+    subs += _arma_races(beast_race, exclude_beast_races)
+    if tes4_biped & _TES4_FOOT:
+        subs += pack_formid_subrecord('SNDD', _FOOTSTEP_SETS.get(armor_type, CLOTHING_FOOTSTEP_SET))
     return pack_record('ARMA', arma_fid, 0, subs)
 
 

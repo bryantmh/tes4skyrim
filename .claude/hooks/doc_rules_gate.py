@@ -271,8 +271,8 @@ def main():
             return 2
     if not gate_written(edited_paths(payload)):
         return 0
-    sys.stderr.write('\nThese violations are on code YOUR edit owns. '
-                     'The code rules are a REQUIREMENT, not a guideline.\n')
+    sys.stderr.write('\nThese violations are in lines your edit changed. '
+                     'Fix them, then retry the edit.\n')
     return 2
 
 

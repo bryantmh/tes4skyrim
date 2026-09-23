@@ -127,6 +127,8 @@ A dated sweep over a corpus, with counts. Frozen once written; a re-audit is a N
 | [fallout_nv_mesh_conversion.md](audits/fallout_nv_mesh_conversion.md) | Fallout NV / FO3 mesh conversion — what already works, and the particle-NIF defect |
 | [morroblivion_mesh_axis_rotation.md](audits/morroblivion_mesh_axis_rotation.md) | Morroblivion's hand-authored pitch and Z re-seat fixes, and which a dependent plugin must re-apply |
 | [morrowind_opcode_testplan.md](audits/morrowind_opcode_testplan.md) | The fewest TR_Mainland quests that exercise every MWScript opcode, with quest giver and `coc` target |
+| [morrowind_opcode_testplan_morrowind.md](audits/morrowind_opcode_testplan_morrowind.md) | The same opcode test plan over Morrowind.esm's journal quests |
+| [morrowind_opcode_testplan_merged.md](audits/morrowind_opcode_testplan_merged.md) | One opcode test plan over Morrowind.esm and TR_Mainland.esm's quests together |
 | [mwscript_opcodes.md](audits/mwscript_opcodes.md) | Which of MWScript's 298 commands MorrowindRuntime implements, by call-site cost |
 | [package_conversion.md](audits/package_conversion.md) | PACK Conversion Audit — 2026-08-17 |
 | [quest.md](audits/quest.md) | Quest Completability Audit — Oblivion.esm conversion |

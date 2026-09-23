@@ -94,10 +94,13 @@ SBP_33_HANDS     = 33   # Hands (gloves, gauntlets inner)
 SBP_34_FOREARMS  = 34   # Forearms (gauntlets outer, vambraces)
 SBP_37_FEET      = 37   # Feet (boots)
 SBP_38_CALVES    = 38   # Calves / lower legs (boots)
-SBP_44_LOWERBODY = 44   # Lower body: hips + upper legs (greaves).  Requires the
-                         # character body mesh to have a matching partition
-                         # (asset_convert/character/modify_body_meshes.py) AND the wearing
-                         # ARMA to claim slot 44 (tools/creature/patch_body_slots.py).
+#: Lower body: pelvis and thighs (greaves, pants). See: docs/commentary/asset_convert_armor.md#body-slot-layout
+SBP_49_LOWER_BODY = 49
+#: Left and right pauldron, which hide no body section.
+SBP_57_LEFT_PAULDRON = 57
+SBP_58_RIGHT_PAULDRON = 58
+#: Right hand; slot 33 is the left once the hands mesh is split.
+SBP_59_RIGHT_HAND = 59
 SBP_130_HEAD     = 130  # Head skin (character's head mesh)
 SBP_131_HAIR     = 131  # Hair / headwear (helmets, hoods, circlets)
 
@@ -118,9 +121,9 @@ ARMOR_GEOMETRY_BODY_PARTS: list[tuple[str, int, list[int] | None]] = [
     ('hood',      SBP_131_HAIR,    None),
     ('upperbody', SBP_32_BODY,     None),
     ('torso',     SBP_32_BODY,     None),
-    ('lowerbody', SBP_44_LOWERBODY, None),   # greaves / upper leg armour
-    ('thigh',     SBP_44_LOWERBODY, None),
-    ('greave',    SBP_44_LOWERBODY, None),
+    ('lowerbody', SBP_49_LOWER_BODY, None),
+    ('thigh',     SBP_49_LOWER_BODY, None),
+    ('greave',    SBP_49_LOWER_BODY, None),
     ('calf',      SBP_38_CALVES,   None),   # lower-leg / calves
     ('foot',      SBP_37_FEET,     None),
     ('boot',      SBP_37_FEET,     None),

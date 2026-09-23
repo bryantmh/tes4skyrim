@@ -19,7 +19,7 @@ separately inside the retarget.
 
 The same rule governs the body-splice fill: a fill partition takes the piece's
 primary biped slot, because an ARMA only renders partitions for slots it claims
-— a slot-44 pants ARMA culls a partition-32 fill, leaving invisible skin holes.
+— a slot-49 pants ARMA culls a partition-32 fill, leaving invisible skin holes.
 
 ## <a id="biped-slot-conversion"></a>Biped slots: equipment conflicts vs body coverage
 
@@ -32,7 +32,23 @@ the Circlet slot so the two cannot be worn together (`BIPED_SLOT_EXTRA`).
 **Body-coverage** extras are deliberately NOT added here — a cuirass covering
 the forearms goes on the ARMA via `ARMA_BODY_COVERAGE_EXTRA` instead. Putting
 coverage on the ARMO would make the ARMO occupy slots it does not equip, so it
-would conflict with every other item using them.
+would conflict with every other item using them. The ARMA slots decide which
+body partitions are hidden; vanilla derives them the same way: IronCuirassAA
+Body(32) + ForeArms(34) + Calves(38), IronBootsAA Feet(37) + Calves(38),
+IronGlovesAA Hands(33) + ForeArms(34), IronHelmetAA Hair(31) + Ears(43).
+Converted lower-body pieces take LowerBody(49) + Calves(38).
+
+When two worn addons claim one slot, the higher ARMA DNAM priority draws it
+(CK wiki `ArmorAddon`: naked body 0, torso 5, gloves over sleeves 10).
+Skyrim.esm: 111 body-armor ARMAs at 5 and 92 skins at 0, against 51 hand
+ARMAs at 10. Every converted ARMA was written at 10, so a converted cuirass
+tied a vanilla gauntlet for ForeArms(34) and won it, hiding the gauntlet's
+forearm; body and lower-body armor (slots 32, 49) are now written at 5, so
+gloves win 34 and boots win Calves(38).
+
+Oblivion hands claim both hands (33 and the right hand, 59) as an equip
+conflict, so a glove hides both split hand files
+([body slots](#body-slot-layout)).
 
 Which table supplies the bits depends on the source game: Oblivion's 16-bit
 set uses `BIPED_SLOT_MAP`, FO3/FNV's 20-bit set `FNV_BIPED_SLOT_MAP` — they
@@ -271,7 +287,7 @@ post-morphing the finished mesh, which is what keeps the pair
 topology-identical (see [weight-slider variants](#weight-slider-variants)).
 
 **The fill partition takes the piece's primary biped slot.** An ARMA only renders
-partitions for the slots it claims, so a slot-44 pants ARMA culls a partition-32
+partitions for the slots it claims, so a slot-49 pants ARMA culls a partition-32
 fill and leaves invisible skin holes. The slot is resolved by the same rule as
 the offset: a single-slot record states it, a multi-slot one is resolved from
 where the skinned vertex mass sits.
@@ -333,7 +349,18 @@ The attach rules are OpenMW's `SceneUtil::attach`, reproduced per part:
   from the bone pivot (`v_world - pivot`), turned by the rotation that takes
   the bone's rest direction (pivot to first bone child) onto the Skyrim
   bone's, because Morrowind rests with the arms down where Skyrim's A-pose
-  does not. The first attempt stored bone-LOCAL vertices under the same
+  does not. The pelvis (the bone directly under `Bip01`) is never turned:
+  it stands upright in both rests, but Skyrim's `NPC Spine` sits 5.24 behind
+  and 3.79 above `NPC Pelvis` where Morrowind's is 7.61 straight above, so
+  the pivot-to-child rule tilted every groin piece 54 degrees backwards and
+  opened the pants' waist toward the camera. The turned offsets are then
+  stretched along the bone (`RestSkeleton.stretch`): between pivot and
+  child joint by Skyrim's segment length over Morrowind's, past the child
+  joint keeping their offset from it. Morrowind's calf is 37.36 to the ankle
+  against Skyrim's 27.95, so an unstretched ankle piece hung about 9 units
+  below the Skyrim ankle -- boots sank below the ground, the foot left
+  floating above them (thigh x1.10, upper arm x1.27, forearm x0.95).
+  The first attempt stored bone-LOCAL vertices under the same
   identity bind, and every piece floated: `_bake_shape_into_bone_frame`
   composes the stored verts with the bone's TRANSLATION only. The one-bone
   skin is a plain `NiSkinInstance` on a flat bone node under the root; a
@@ -375,8 +402,9 @@ in game.
 
 ## <a id="morrowind-skin-fill"></a>Morrowind skin fill: the part list is the coverage
 
-**Code:** `asset_convert/character/morrowind_coverage.py`, `_arma_bod2` in
-`tes5_import/record_types/equipment.py`, `morrowind_skin_info` in
+**Code:** `asset_convert/character/morrowind_coverage.py`,
+`asset_convert/character/morrowind_fill.py`, `_arma_bod2` in
+`tes5_import/record_types/equipment.py`, `partition_skin_info` in
 `asset_convert/character/skin_replacement.py`.
 
 Morrowind draws the actor's own skin part in every body-part slot no equipped
@@ -393,32 +421,152 @@ The record's part list is the authored coverage:
   (`PART_PARTITIONS`), in place of the Oblivion body-coverage extras (which
   hid forearms under every cuirass). Head extras (LongHair, Ears) still apply.
 - **The fill** is Skyrim body skin only where Morrowind would draw the
-  actor's own skin: a point is kept when its partition is hidden by the ARMA,
-  AND the Morrowind body part under it is one the record does NOT list, AND
-  that part belongs to a hidden partition (`SkinFill.keep`). The part under a
-  Skyrim point is the nearest vertex of the Morrowind reference body fitted
-  onto the Skyrim body; the wrap field stores each reference vertex's INDX
-  slot (`mw_slot`, from the shape's attach-node name, side by +X). So a left
-  glove fills only the right hand, and a chest-only cuirass fills neck,
-  clavicles and arms but never its own chest nor the thighs -- even on a body
-  whose partition 32 still holds them. Skinned armor sunk behind the fill at
-  a seam is then seated 0.2 outside it (`SkinFill.seat`, twins welded).
+  actor's own skin: inside the partitions the ARMA hides, over the Morrowind
+  parts the record does NOT list whose partitions are hidden
+  (`SkinFill.shown`). The parts come from the Morrowind reference body fitted
+  onto the Skyrim body, whose wrap field stores each reference vertex's INDX
+  slot (`mw_slot`, from the shape's attach-node name, side by +X), and the
+  fill draws from every section of each skin file the ARMA hides
+  (`hidden_skin`): a chest-only cuirass claims 32 alone, but that hides the
+  whole torso file, forearm ring 34 included, and a fill drawn from 32 only
+  left the lower arm above the wrist invisible in game. The
+  fill is cut exactly along their borders ([exact cut](#exact-skin-cut),
+  `morrowind_fill.skin_field`). So a chest-only cuirass fills neck, clavicles
+  and arms but never its own chest nor the thighs. Skinned armor sunk behind
+  the fill at a seam is then seated 0.2 outside it (`morrowind_fill.seat`,
+  twins welded).
 
   Replaced, measured: filling each hidden partition WHOLE and trusting the
   occlusion trim left the Aryon left glove "almost completely hidden by skin"
   (in game) and gave cuirasses leg skin; the chitin cuirass fill fell 1275 ->
   402 verts. Armor sunk behind the fill (>0.1 within 2 units): chitin 12 ->
-  0, bonemold 14 -> 0, robe 49 (1.94 deep) -> 4 (0.64).
+  0, bonemold 14 -> 0, robe 49 (1.94 deep) -> 4 (0.64). The nearest-vertex
+  label that followed kept or dropped whole Skyrim triangles, and still
+  left holes and skin poking through in game on many clothes.
+
+  Reverted, in game: splitting the fill into one shape per hidden partition,
+  each keeping its own partition, hung every save load with Morrowind armor
+  in view (black loading screen, main thread rendering, every worker idle)
+  although every mesh passed the NaN, partition and bone-limit checks.
+  Cutting against every part the record does not list (hands, feet, knees
+  included) added 262 lower-thigh triangles under chest-only robes
+  (`common_robe_05`) that clipped through the skirt, and changed none of
+  the 44 forearm-ring vertices it was meant to reach.
 
 `PART_PARTITIONS` was measured on `malebody_0.nif`: Skyrim's 34 is only the
 ForearmTwist2 ring above the wrist (44 verts), the rest of the forearm, the
 upper arm, torso and clavicle are 32; calf-weighted verts are 38 (knee and
-ankle parts), foot 37, hand 33. Groin and upper leg go to 44, the lower-body
-partition `modify_body_meshes` splits out of 32.
+ankle parts), foot 37, left hand 33, right hand 59. Groin and upper leg go
+to 49, the lower-body section [the body slots](#body-slot-layout) cut from
+32. A one-sided piece (gauntlet, bracer, glove, pauldron) takes its own slot
+from its armor/clothing type (`MorrowindWearableType`), and a pauldron lists
+no coverage, so it hides nothing and carries no fill.
 
 Helmets: an open helm fills only the Hair part (18 of 58 vanilla helmets), so
 the exporter drops the Head bit and the ARMA stops hiding the face
 ([equipment slots](tes4_export_morrowind.md#equipment-slots)).
+
+## <a id="exact-skin-cut"></a>Exact cut along a reference body's part border
+
+**Code:** `asset_convert/character/mesh_cut.py`.
+
+A reference body fitted onto the Skyrim body labels every one of its
+vertices with the part it belongs to (Morrowind: the INDX slot, `mw_slot`;
+Oblivion: the Skyrim slot of the body file it came from, `ob_slot`). A Skyrim
+point's field is its distance to the reference triangles in a label set less
+its distance to the rest, so the zero line is the reference body's own part
+border. Skyrim triangles straddling it are split at the edge crossings, every
+vertex attribute (position, normal, UV, skin weights) interpolated there, so
+the kept side ends exactly on the border.
+
+The nearest-vertex test it replaces kept or dropped whole Skyrim triangles:
+the kept skin's edge wandered a triangle either side of the part border,
+leaving holes on one side and skin poking through armor on the other.
+
+## <a id="body-slot-layout"></a>Skyrim body slots shared by all three games
+
+**Code:** `asset_convert/character/body_slots.py`,
+`tools/creature/patch_body_slots.py`.
+
+| Slot | Body section | Skyrim | Oblivion | Morrowind |
+|---|---|---|---|---|
+| 32 | torso, forearm ring (34) | cuirass, clothes | upper body | cuirass, shirt, robe |
+| 49 | pelvis, thighs, calves (38) | slot-32 items, by the patch | lower body | greaves, pants, skirt, robe |
+| 33 | left hand | gauntlets | hands | left gauntlet, bracer, glove |
+| 59 | right hand | gauntlets, by the patch | hands | right gauntlet, bracer, glove |
+| 57 / 58 | none | -- | -- | left / right pauldron |
+
+49, 57, 58 and 59 are the CK wiki's recommended mod nodes (pelvis primary,
+shoulder, left arm, right arm); 44 is face/mouth there, so the lower body left
+it. Pauldrons rest on the shoulders and hide nothing.
+
+An equipped item that claims a skin addon's first (lowest) slot drops that
+addon whole; any other slot it claims hides only that partition of the file
+(`morrowind_coverage.hidden_skin`). Vanilla gloves (33 + 34) and boots
+(37 + 38) leave `NakedTorso` (32/34/35/36, its file holding 38 too) drawing
+bar the forearm ring or calves, while a Morrowind chest-only cuirass (32
+alone) took the forearm ring with the torso in game. So each independently
+hidden section is its own file and addon: torso (32 + 34) and legs (49 + 38)
+from the body, left (33) and right (59) from the hands, first person
+included, and the calves (38) are a third body file and addon. A partition
+draws only where its own addon claims the slot (vanilla `NakedTorso` claims
+38 for the calves its file holds): a Legs addon on 49 alone left naked calves
+invisible, and one on 38 + 49 made 38 its first slot, so boots dropped the
+whole leg skin and greaves carried calf skin over boots. The
+earlier patch cloned NakedTorso into Thighs/Calves addons that still pointed
+at the unsplit vanilla body, whose thighs are partition 32, so pants hid the
+Thighs addon while the torso addon went on drawing the legs.
+
+An addon draws only when its slots share a bit with its ARMO's own slots, so
+the patch also gives each skin ARMO 49 / 59 (not 38: `SkinNaked` itself lists
+only 30/32/33/37 while its addons carry 34/38). Measured on Skyrim.esm: of
+4298 ARMO -> ARMA links, 23 share no bit, and every one is an addon for a
+race the ARMO is never worn by (`NakedDogAA` on horse skins,
+`NakedTailArgonian` on `SkinNaked`). Without the skin bits the split Legs and
+RightHand addons -- and the old Thighs/Calves clones -- never drew: naked
+actors showed no legs and no right hand.
+
+In first person a slot also has to be in the RACE's own BOD2: the addon
+loop at 1.6.1170 RVA 0x213430 (reached from `TESObjectARMA::
+InitWornArmorAddon`, 0x2775d0) tests `race + 0x60` (its
+`BGSBipedObjectForm`) per slot for the first-person biped only. Every
+playable race lists 32/33/34/36/39/61, so slot 59 -- skin, gauntlet or
+glove -- never drew in first person. The patch gives every race listing 33
+slot 59 too, and nothing else: an addon with no first-person model falls
+back to its third-person one, so adding 49 would put greaves in the
+first-person view. A race override is only as late as the patch: a mod
+overriding the races later in the load order takes 59 away again, so the
+patch is built over the whole load order and loads last. Every FormID a
+race holds is translated into the patch's master list (xEdit's RACE
+definition: FormID lists, the ATKD attack spell at offset 8, alternate-
+texture lists). Records wait in their own plugin's master space until the
+final master list is known: a real load order merges more than 255 masters
+before the unreferenced ones are dropped, and renumbering early overflowed
+the 8-bit index (`struct.error` in `pack_record`).
+
+The waist is cut along the border between Oblivion's `upperbody` and
+`lowerbody` fitted onto the Skyrim body; the hands split by the side of the
+bones each triangle is weighted to.
+
+## <a id="morrowind-hand-weights"></a>Morrowind hands and forearms take the Skyrim skin's weights
+
+**Code:** `asset_convert/character/morrowind_weights.py`.
+
+Morrowind's hand has three finger chains (`Finger0/01`, `Finger1/11`,
+`Finger2/21`) rooted inside the palm, and its forearm has no twist bones.
+Renamed onto Skyrim's bones, a converted glove disagreed with the Skyrim hand
+skin under it (nearest vertex, `0commonugloveuleftu01_1` vs `malehands_1`):
+46 palm vertices on `Finger20` where Skyrim has `Hand`, finger vertices on
+`Finger21` over Skyrim's index and ring fingers, and the iron gauntlet's cuff
+(74 vertices) on `Forearm` where Skyrim twists `ForearmTwist2`. In game the
+fingers and lower arm were mangled, worst in first person, where the hand
+animates most. Each vertex's share on a hand, finger or forearm bone now
+takes the weights at its closest point on the Skyrim body and hand skin
+(barycentric over that triangle's corners); bones the piece lacks are added
+at their Skyrim rest frame. A first cut blended the 4 nearest skin vertices,
+which mixed neighbouring fingers and left the gauntlet fingers still
+mangled in game. It runs after the bones are placed and before the bind
+data is rebuilt.
 
 ## <a id="morrowind-pose-cache"></a>Morrowind rest skeleton and pose cache
 

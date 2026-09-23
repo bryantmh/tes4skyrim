@@ -10,7 +10,7 @@ Pipeline steps (each runnable via --<step>-only):
   sounds          Convert sound files to XWM
   scripts         Convert TES4 scripts to Papyrus .psc and compile to .pex
   lod             Generate object & terrain LOD meshes
-  modify-body-meshes  Add greaves partition to character body NIFs
+  modify-body-meshes  Write the body-slot patch over a Skyrim load order
   pack            Pack assets into Skyrim SE BSA archives (textures nothing
                   references are left out of the archive, never deleted)
   pack-zip        Zip converted plugin/BSA files for distribution
@@ -39,6 +39,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 import time
 from pathlib import Path
 
@@ -61,13 +62,7 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
 
-# Shared-folder resolution. Plugins imported together from one mod archive
-# share ONE asset tree, so a plugin name maps to a folder through these
-# resolvers and never by joining a name onto a root by hand -- that is the only
-# reason export/ and output/ agree. `output_layout` imports nothing but
-# pathlib, so this is safe at module scope despite convert.py being the entry
-# point every package imports from.
-from output_layout import record_dir, plugin_out_root
+from output_layout import BODY_SLOTS_PATCH, finished_dir, record_dir, plugin_out_root
 from papyrus_compile import phase_compile
 from tes4_export.tes3_reader import is_tes3
 from core.plugin_masters import get_masters_from_binary, topological_order
@@ -859,64 +854,53 @@ def phase_scripts(file_name: str, config: dict, output_dir: str = None):
 
 
 # ===========================================================================
-# Phase 10: PATCH SKYRIM (SLOT 44 BODY MESHES)
+# Phase 10: PATCH SKYRIM (BODY SLOTS)
 # ===========================================================================
 
 def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
                              output_dir: str = None):
-    """Add greaves partition to vanilla Skyrim character body NIFs, then
-    generate ONE merged companion slot-44 patch covering `plugins`.
+    """Write the body-slot patch over the selected Skyrim load order, as one zip.
 
-    The patch (tools/creature/patch_body_slots.py) is mandatory alongside the split
-    body meshes: without slot 44 on the NakedTorso ARMA the new lower-body
-    skin partition never renders and naked thighs are invisible.
-
-    `plugins` defaults to just Skyrim.esm; the GUI passes the user's whole
-    selected load order (Skyrim.esm + DLCs + Update.esm + any chosen mods)
-    so every installed armor mod is folded into the same "Slot44 Patch.esp",
-    with unused masters cleaned once across the merged result. Each plugin
-    not present in tes5_data is skipped with a warning rather than failing
-    the whole step.
+    The zip holds the patch plugin (tools/creature/patch_body_slots.py) and
+    the split skin meshes it points the vanilla skin addons at. `plugins`
+    defaults to Skyrim.esm; the GUI passes the whole selected load order, and
+    a plugin missing from tes5_data is skipped with a warning. It patches the
+    load order, not a conversion, so the zip goes into Finished Mods.
+    See: docs/commentary/asset_convert_armor.md#body-slot-layout
     """
     if not tes5_data:
-        print("WARNING: Skyrim data path not found - slot-44 patch not "
-              "generated (run tools/creature/patch_body_slots.py manually)")
+        print("WARNING: Skyrim data path not found - body-slot patch not generated")
         return True
-
-    plugins = plugins or ["Skyrim.esm"]
-    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
-    # Into "Finished Mods", NOT a per-plugin folder. This step takes no `-f` and
-    # patches the vanilla Skyrim body records for the whole load order, so it
-    # belongs to no single conversion. Hardcoding "Oblivion.esm" put it
-    # somewhere `--pack-only -f <other plugin>` never looks: converting Nehrim
-    # created an otherwise-empty output/Oblivion.esm/ holding just this file,
-    # and it shipped with nothing. It is installed loose rather than zipped —
-    # one plugin with no assets is not worth an archive — so it sits beside the
-    # zips as a finished artefact in its own right.
-    from output_layout import finished_dir
-    out_path = finished_dir(out_root) / "Slot44 Patch.esp"
-
     plugin_paths = []
-    for name in plugins:
-        plugin_path = Path(tes5_data) / name
-        if not plugin_path.exists():
+    for name in plugins or ["Skyrim.esm"]:
+        if (Path(tes5_data) / name).exists():
+            plugin_paths.append(str(Path(tes5_data) / name))
+        else:
             print(f"WARNING: {name} not found - skipping")
-            continue
-        plugin_paths.append(str(plugin_path))
     if not plugin_paths:
-        print("WARNING: none of the selected plugins were found - slot-44 "
-              "patch not generated")
+        print("WARNING: none of the selected plugins were found - body-slot patch not generated")
         return True
-
-    patch_script = SCRIPT_DIR / "tools" / "creature" / "patch_body_slots.py"
+    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    stage = out_root / f"_{BODY_SLOTS_PATCH}"
+    shutil.rmtree(stage, ignore_errors=True)
     ret = subprocess.run(
-        [sys.executable, str(patch_script), *plugin_paths, "-o", str(out_path)],
+        [sys.executable, str(SCRIPT_DIR / "tools" / "creature" / "patch_body_slots.py"),
+         *plugin_paths, "-o", str(stage / f"{BODY_SLOTS_PATCH}.esp"),
+         "--meshes-root", str(stage / "meshes")],
         cwd=str(SCRIPT_DIR), capture_output=True, text=True, **_POPEN_FLAGS)
-    if ret.stdout:
-        print(ret.stdout, end="")
-    if ret.stderr:
-        print(ret.stderr, end="")
+    print(ret.stdout + ret.stderr, end="")
+    if ret.returncode == 0:
+        _zip_tree(stage, finished_dir(out_root) / f"{BODY_SLOTS_PATCH}.zip")
+    shutil.rmtree(stage, ignore_errors=True)
     return ret.returncode == 0
+
+
+def _zip_tree(root: Path, zip_path: Path) -> None:
+    """Zip every file under `root`, at its path relative to it."""
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for src in sorted(root.rglob("*")):
+            if src.is_file():
+                zf.write(src, arcname=str(src.relative_to(root)))
 
 
 # ===========================================================================
@@ -966,9 +950,7 @@ def phase_pack_zip(file_name: str, config: dict, output_dir: str = None):
     kept loose in the archive, at their paths relative to the mod root.
     See: docs/reference/tes_runtime_fragments.md#never-packed
     """
-    import zipfile
     from asset_convert.sources.bsa_pack import LOOSE_ONLY_DIRS
-    from output_layout import finished_dir
 
     out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
     src_root = plugin_out_root(out_root, file_name,
@@ -1057,7 +1039,7 @@ def _run_pipeline():
     parser.add_argument("--lod-only",            action="store_true",
                         help="Generate object & terrain LOD meshes")
     parser.add_argument("--modify-body-meshes",  action="store_true",
-                        help="Add greaves partition to character body NIFs")
+                        help="Write the body-slot patch over a Skyrim load order")
     parser.add_argument("--scripts-only",        action="store_true",
                         help="Convert TES4 scripts to Papyrus .psc source")
     parser.add_argument("--pack-only",           action="store_true",
@@ -1184,13 +1166,6 @@ def _run_pipeline():
 
     order = _plugins_to_convert(args, config, tes4_data, export_dir)
     if not order and not args.modify_body_meshes:
-        # "10. Patch Skyrim" is the one step that converts no plugin: it patches
-        # the user's SKYRIM load order and writes a single shared
-        # `Slot44 Patch.esp`, so the GUI runs it with no `-f` at all.  Bailing
-        # here left it silently not running -- and therefore never recorded --
-        # for anyone whose config lacks the legacy "files" list, which is every
-        # end user (nothing writes that key any more; this repo only still has
-        # one by hand).  The GUI then re-ticked the box on every check.
         print("No files to process.")
         return 0
     if not _owned_by_a_parent_run():
@@ -1413,17 +1388,11 @@ def _run_pipeline():
 
     if do_skyrim_patch:
         print("=" * 54)
-        print("  Phase 10: PATCH SKYRIM (SLOT 44 BODY MESHES)")
+        print("  Phase 10: PATCH SKYRIM (BODY SLOTS)")
         print("=" * 54)
         ok = phase_modify_body_meshes(
             tes5_data, plugins=getattr(args, 'patch_plugins', None),
             output_dir=output_dir)
-        # Patches the user's load order, not a converted plugin, so it is
-        # recorded ONCE under the shared key rather than stamped onto whichever
-        # plugins this run happened to include.  Recording it per-plugin left
-        # every other plugin looking like it had never run the step, so the GUI
-        # re-ticked "10. Patch Skyrim" forever even though the one shared
-        # `Slot44 Patch.esp` already existed.
         _mark('modify_body_meshes', _version.GLOBAL_PLUGIN_KEY, ok)
         if not ok:
             success = False

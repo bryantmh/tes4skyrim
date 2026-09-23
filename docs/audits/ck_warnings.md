@@ -18,7 +18,7 @@ Prior sweep (2026-07-16) is recorded at the bottom under
 | 2 | MGEF invalid primary Actor Value → HEALTH | 14 | MAGIC | trivial | **WONTFIX** — vanilla-legal |
 | 3 | MGEF counter-effect invalid FormID | 25 | FORMS | trivial | **FIXED** 2026-08-22 |
 | 4 | Shader effect sound `01800000` not found | 102 | MASTERFILE | easy | **FIXED** 2026-08-22 |
-| 5 | Biped Object slot 44 invalid for DefaultRace | 596 | MASTERFILE | — | **NOT A BUG** — `Slot44 Patch.esp` |
+| 5 | Biped Object slot 44 invalid for DefaultRace | 596 | MASTERFILE | — | **NOT A BUG** — the body-slot patch (now slots 49/59) |
 | 6 | One-way faction Friend/Ally relations | 105 | DEFAULT | easy | open |
 | 7 | Duplicate EditorIDs → `…DUPLICATE001` | 270 | EDITOR | — | **DEFERRED** — cosmetic; QUST/DIAL feed voice paths |
 | 8 | "cannot be scripted, but has scripts attached" | 136 | SCRIPTS | moderate | open |

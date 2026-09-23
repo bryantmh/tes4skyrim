@@ -11,7 +11,7 @@
 
 ---
 
-**This project is pre-alpha. Expect issues.** Conversions are incomplete, and some features are only half implemented. Bugs are common across every stage, and output can change or break between releases. Make sure to back up your saves before installing converted content
+**This project is pre-alpha. Expect issues.** Conversions are incomplete, and some features are only half implemented. Bugs are common across every stage, and output can change or break between releases. Updates will likely break your saves from converted games, so expect to start a new game after updating. Back up your saves before installing converted content.
 
 ---
 
@@ -26,7 +26,7 @@
 
 ## What it does
 
-This is a full data-conversion pipeline. It takes an `.esm`/`.esp` (plus its BSA or loose file assets) and produces a working Skyrim mod. Plugin, meshes, animations, everything. Ready to drop into your `Data` folder. It's in early alpha with a long bug list, but each individual part is already more fully featured than most equivalent tools and is self-contained all in one package.
+This is a full data-conversion pipeline. It takes an `.esm`/`.esp` (plus its BSA or loose file assets) and produces a working Skyrim mod. Plugin, meshes, animations, everything. Ready to drop into your `Data` folder. It's in early alpha with a long bug list, but every part of the conversion is handled in one package.
 
 ### Which games
 
@@ -36,18 +36,18 @@ Morrowind is the odd one out and has [its own section](#morrowind) below.
 
 - **Record conversion** — Every record type is remapped to its Skyrim equivalent, with all the structural fixups Skyrim
   requires and the companion records it expects alongside them.
-- **Creatures** — Creature records become real Skyrim actors: skeletons and skinned meshes are ported, animations are recompiled to Havok `.hkx`, and, since the source games have no equivalent, a full Havok **behavior graph is generated from scratch** per creature (locomotion state machine, ragdoll, attack events, foot IK) based on the original data instead of reusing a donor from Skyrim. There are a lot of bugs here, but nothing like this has been done before.
+- **Creatures** — Creature records become real Skyrim actors: skeletons and skinned meshes are ported, animations are recompiled to Havok `.hkx`, and, since the source games have no equivalent, a full Havok **behavior graph is generated from scratch** per creature (locomotion state machine, ragdoll, attack events, foot IK) based on the original data instead of reusing a donor from Skyrim. There are still a lot of bugs here.
 - **Mesh conversion** — Source NIFs → Skyrim NIFs (v20.2.0.7): NiTriStrips→NiTriShape, shader system upgrade, texture path rewriting, bone remapping, and root-node conversion. Only a handful of meshes are currently unsupported or buggy.
 - **Havok collision** — Full rigid-body, constraint, and mesh-collision conversion with real MOPP generation via a bundled Havok bridge. No crash-prone collision like the original Skyblivion generator.
 - **Skeleton retargeting** — Armor and clothing meshes are re-posed from the source
-  skeleton onto the Skyrim skeleton using an animation-corpus + optimization solver. Weapons, armor, and clothing (including pants/greaves) are fully functional and wearable alongside your existin Skyrim outfits without major clipping — a few meshes still clip slightly, and the torso/legs can currently go invisible when only one is equipped.
+  skeleton onto the Skyrim skeleton using an animation-corpus + optimization solver. Weapons, armor, and clothing (including pants/greaves) are fully functional and wearable alongside your existing Skyrim outfits without major clipping — a few meshes still clip slightly, and the torso/legs can currently go invisible when only one is equipped.
 - **Navmesh generation** — Skyrim has no equivalent to the older games' pathgrids, so navmeshes are built from scratch:  Collision is voxelized and triangulated per-cell into Skyrim `NAVM`/`NAVI` data using the original pathgrid as a guide so NPCs can actually path around the world. Could use a bit more refinement, but it mostly works well.
 - **Particles, fire & animated objects** — Particle systems, flame nodes, flip-book fire, and keyframed collision are all converted to their Skyrim equivalents.
-- **SpeedTree conversion** — `.spt` trees are procedurally rebuilt as Skyrim flora NIFs. The converter hooks directly into your Oblivion.exe so they are faithful replicas, but with leaves in an X shape instead of billboards
+- **SpeedTree conversion** — `.spt` trees are procedurally rebuilt as Skyrim flora NIFs. The converter hooks directly into your Oblivion.exe so they are faithful replicas, but with leaves in an X shape instead of billboards.
 - **Dialogue & quests** — Converted into Skyrim's branch/voice-type architecture, including voice-file renaming, topic/quest restructuring so NPCs greet and respond correctly, and barter/training menu hookup.
 - **Scripts** — Source scripts are transpiled to Papyrus (`.psc`) source and compiled,
   which combined with the dialogue work means many quests are already playable.
-- **Guns (Fallout)** — Guns get a purpose-built animation graph using faithfully converted animations
+- **Guns (Fallout)** — Guns get a purpose-built animation graph using faithfully converted animations.
 - **Sounds** — Voice and sound files are converted (via ffmpeg + xWMAEncode), and lip-sync
   tracks are generated for every transcribed line using the Creation Kit's LipGenerator
   (voice ships as `.fuz`). Expect the occasional silent line.
@@ -75,7 +75,7 @@ plugin (`MorrowindRuntime.dll`) with a Morrowind-style menu. It is set up automa
 | **Vanilla** | Your own converted `Morrowind.esm`, `Tribunal.esm` and `Bloodmoon.esm`. |
 | **Morroblivion + patch** | [Morroblivion](https://morroblivion.com/), the fan remake of Morrowind in Oblivion, converted through the normal Oblivion path. |
 
-Morroblivion mode needs a compatibility patch, which the same menu builds for you from your Morrowind `Data Files`
+Morroblivion mode needs a compatibility patch, which the same menu builds for you from your Morrowind `Data Files`.
 
 On the command line:
 
@@ -90,49 +90,27 @@ python convert.py --build-morrowind-patch "C:\path\to\Morrowind\Data Files"
 
 ## Requirements
 
-A decent PC. The more cores and ram the better. The more cores, the more ram it uses. Validated with a 7950X3D and 32GB of system ram (uses a peak of ~16 GB RAM converting Oblivion.esm)
+A decent PC. More cores make it faster, but each core also uses more RAM. Tested on a 7950X3D with 32 GB of RAM (converting Oblivion.esm peaks at about 16 GB).
 
-First, make sure you have Python 3.14 installed
+You need four things:
 
-> **Note** Make sure your installed python version is **3.14** or you will run into issues
-> The navmesh build requires a compiled module, for **CPython 3.14 / 64-bit Windows**
-> A `.pyd` only loads in a matching interpreter, so you run with any other version you would need to rebuild
-> That can be done with `python native/build.py`
-> which needs "Build Tools for Visual Studio" with the C++ workload installed.
->See `native/dist/README.md`.
+1. **Python 3.14.** Use exactly 3.14. Other versions need you to compile the navmesh module yourself (see `native/dist/README.md`).
+2. **The Python packages.** Open PowerShell and paste:
 
-Once you have python, open powershell and paste the following line:
+   ```bash
+   pip install PyFFI numpy scipy shapely Pillow lz4 mapbox_earcut setuptools
+   ```
 
-```bash
-pip install PyFFI numpy scipy shapely Pillow lz4 mapbox_earcut setuptools
-```
-
-This will install most of the following dependencies:
-
-| Dependency | Purpose | Install |
-|------------|---------|---------|
-| **Python 3.14** | Runs the whole pipeline | — |
-| **[PyFFI](https://pyffi.sourceforge.net/)** | NIF mesh reading/writing | `pip install PyFFI` |
-| **[numpy](https://numpy.org/)** | Skin retargeting math | `pip install numpy` |
-| **[scipy](https://scipy.org/)** | Navmesh triangulation, collision hulls, trees | `pip install scipy` |
-| **[shapely](https://shapely.readthedocs.io/)** | Navmesh corridor boolean union | `pip install shapely` |
-| **[Pillow](https://pypi.org/project/pillow/)** | Terrain-LOD texture compositing, object-LOD atlas normals, book inventory art. **Terrain LOD produces no tiles at all without it** | `pip install Pillow` |
-| **[lz4](https://pypi.org/project/lz4/)** | Reading Skyrim SE BSAs (v105) — how vanilla assets are fetched when `export/skyrim_assets/` has no cached copy yet | `pip install lz4` |
-| **[mapbox_earcut](https://pypi.org/project/mapbox-earcut/)** | Navmesh triangulation fallback when Delaunay fails on a piece | `pip install mapbox_earcut` |
-| **[setuptools](https://pypi.org/project/setuptools/)** | Supplies `distutils`, which PyFFI imports, but Python **removed from the stdlib in 3.12**. | `pip install setuptools` |
-| **[tkinterdnd2](https://pypi.org/project/tkinterdnd2/)** | *Optional.* Dragging a mod archive onto the GUI; **Mods ▸ Import** works without it | `pip install tkinterdnd2` |
-| **Skyrim SE Creation Kit** | Supplies `LipGenerator.exe` (lip sync) and the Papyrus source headers every converted script compiles against | Free on Steam |
-| **xWMAEncode.exe** | xWMA voice compression | See note below |
-
-Once that is done, there are two more things you need to do. First, install the Skyrim SE Creation Kit on Steam, and then acquire xWMAEncode.exe
+   Optionally add `tkinterdnd2` to drag mod archives onto the GUI.
+3. **The Skyrim SE Creation Kit**, free on Steam. It provides lip sync and the files scripts are compiled against.
+4. **xWMAEncode.exe**, for voice files. See the note below.
 
 > **xWMAEncode.exe** ships with the [Microsoft DirectX SDK (June 2010)](https://www.microsoft.com/en-us/download/details.aspx?id=6812)
 > and cannot be redistributed. You should extract it from the SDK installer using 7-zip to avoid having to do a full install.
 > Then, copy it to `external/xwmaencode/`. (If you choose to install the SDK instead, find it in `Utilities\bin\x86\`.)
 
-The pipeline checks each phase's dependencies before it starts: anything missing
-stops that phase and every phase after it, and says what to install at the bottom
-of the console. Run `python preflight.py` to check without starting a conversion.
+If anything is missing, the conversion stops and tells you what to install.
+Run `python preflight.py` to check without starting a conversion.
 
 ---
 
@@ -144,18 +122,26 @@ The easiest way to run a conversion is the GUI. Either double click gui.pyw or i
 python gui.py
 ```
 
-The GUI:
+Or run the full conversion from the command line:
 
-- Auto-detects your Oblivion data directory from the Windows registry. Morrowind and
-  Fallout installs are added by hand with `+`
-- **Source** lists every game folder (Morrowind, Oblivion, Nehrim, Fallout New Vegas, ...)
-  and every imported mod; `+` and `−` add and remove folders
-- Scans the selected source for all `.esm` / `.esp` plugins
-- Lets you pick an output directory (saved to `conversion_config.json`)
-- Offers per-step checkboxes with **All** / **Default** shortcuts
-- Streams the pipeline log live
-- **Settings ▸ Download navmesh cache** toggles the prebuilt-cache download
-- **Tools ▸ Check Dependencies** reports what's missing before you start a run
+```bash
+python convert.py -f Oblivion.esm
+```
+
+In the GUI:
+
+- Your Oblivion install is found automatically. Add Morrowind and Fallout installs
+  with `+` under **Source**.
+- Pick a plugin, tick the steps you want (**Default** is the usual choice), and run.
+- **Tools ▸ Check Dependencies** tells you what's missing before you start.
+
+If you'd like to use modded source-game models or textures, run the **Extract** step
+first, then copy your modded files into `export/<plugin name>/`, overwriting what's there.
+
+The Import step downloads a [prebuilt navmesh cache](https://github.com/bryantmh/tes4skyrim/releases)
+automatically, which turns minutes of work into seconds. It only saves time and
+never changes the result. To skip the download, untick **Settings ▸ Download
+navmesh cache**. Offline, drop the release's `.zip` into `navmesh_cache/`.
 
 ### Converting a downloaded mod
 
@@ -176,36 +162,24 @@ python convert.py --list-mods
 python convert.py --remove-mod SomeMod.esp
 ```
 
+### What to install
 
-Or run the full pipeline from the command line:
+Everything you install ends up in **`output/Finished Mods/`**. Install these with
+your mod manager:
 
-```bash
-python convert.py -f Oblivion.esm
-```
+- One `.zip` per converted game or mod
+- `TESRuntime.zip`, required (see [TESRuntime](#tesruntime-skse-plugin))
+- `TESGameSelect.zip`, the new-game menu (see [Starting a converted game](#starting-a-converted-game))
+- `AutoConvertLOD.zip`, the distant-view LOD. Install it after the mods it covers.
+- `Slot44 Patch.esp`
 
-The output plugin and assets are written to `output/` (override with `--output-dir`).
-
-Everything you actually **install** is collected in **`output/Finished Mods/`** —
-each converted plugin's `.zip`, the LOD archive, the starter mod, and the loose
-`Slot44 Patch.esp`. The rest of `output/` is the working area the pipeline builds
-them from (one folder per plugin, the baked `AutoConvertLOD/`, caches and
-manifests); you do not need to install anything from there directly.
-
-The Import step downloads a [prebuilt navmesh cache](https://github.com/bryantmh/tes4skyrim/releases)
-for you, turning minutes of navmesh generation into seconds. Each cache serves the
-version it was built for **and every version above it**, until a newer cache
-replaces it. Offline, drop the release's `.zip` into `navmesh_cache/` and Import
-picks it up. To skip the download on a metered connection, untick
-**Settings ▸ Download navmesh cache** in the GUI. The conversion is
-identical either way — a cache only ever saves time, never changes the result.
+The rest of `output/` is working space. Don't install anything from it directly.
 
 ### Upgrading
 
-Paste a new download over your existing folder. The version is in the title bar,
-and the **Upgrade** button ticks only the steps that changed since the version
-you last converted with — usually three or four instead of twelve. It greys out
-to **Up to date** when nothing is owed, and selects everything if the range
-can't be resolved.
+Paste a new download over your existing folder. The **Upgrade** button ticks only
+the steps that changed since your last conversion. If you're already current it
+says **Up to date**. If it can't tell, it selects every step.
 
 ### Starting a converted game
 
@@ -218,9 +192,6 @@ Choosing Skyrim runs the vanilla Helgen opening untouched; choosing a converted
 game hands off to that game's own character generation, with its real starting
 equipment and start location. Games whose plugin is not in your load order are
 detected at runtime and simply never appear in the menu, so any subset works.
-Vanilla Morrowind is the exception to the handoff: it has no chargen quest, so
-`MorrowindRuntime.dll` starts its opening by setting the TES3 global the game's
-own `Main` script waits on.
 
 Build it with the **Pack Start Mod** button (or `python
 tools/release/package_start_mod.py`) to get
@@ -241,11 +212,6 @@ or simply teleport to the worldspace with a command like
 ```bash
 cow tes4tamriel 20 20
 ```
-
-If you'd like to use any modded source-game assets such as models or textures, first complete the "extract" step and then place your modded assets in the export/"plugin you are trying to convert" directory and overwrite
-
-**IMPORTANT NOTE** This project is still under rapid development and it's possible that Formids can change from underneath you. Updates WILL likely break your save file and you'll have to start anew
-
 
 ### TESRuntime (SKSE plugin)
 
@@ -312,7 +278,6 @@ python convert.py -f Oblivion.esm --speedtrees-only    # Convert SpeedTree (.spt
 python convert.py -f Oblivion.esm --creatures-only     # Convert creature models & animations
 python convert.py -f Oblivion.esm --sounds-only        # Copy/convert sound files
 python convert.py -f Oblivion.esm --scripts-only       # Transpile scripts → Papyrus
-python convert.py -f Oblivion.esm --lod-only           # Generate object & terrain LOD (slow)
 python convert.py -f Oblivion.esm --pack-only          # Pack output assets into Skyrim BSAs
 python convert.py -f Oblivion.esm --pack-zip-only      # Zip plugin + BSAs → output/Finished Mods/
 python convert.py --modify-body-meshes                 # Build ARMA slot-44 patch (takes no -f)
@@ -394,9 +359,6 @@ everything you have converted:
 | **Package SKSE Mod** | Zip the three runtime plugins (see *TESRuntime*) to `output/Finished Mods/TESRuntime.zip`. |
 | **Convert to Master** | Flag converted plugins as masters. A non-master plugin has every reference treated as always-active, and the engine hangs on the main menu past about a million of them. Applies to a whole master chain at once. |
 | **Convert UI** | *(Tools menu)* Build a standalone mod that reskins Skyrim's message boxes and cursor with Oblivion's artwork, read from your Oblivion install. |
-
-A Global button greys out with a check once its result is current, and lights up
-again when something it depends on changes.
 
 > **Design principle:** the export is a *pure* dump of TES4 data — no type mapping, no path
 > prefixing, no derived fields. **All** transformations live in the import and asset steps.

@@ -5,7 +5,7 @@
 > **Asked a QUESTION? Answer it. Don't write code.** Me proposing an approach
 > is not permission to build it. Build only on "do it" / "implement" / "fix".
 >
-> **Given a TASK? Finish it — fixed, built, verified.** No mid-task status,
+> **Given a TASK? Finish it — fixed, built, verified.** No ending the turn to report,
 > no "want me to X?", no diagnosis without the fix. Low confidence and being
 > wrong repeatedly oblige you to keep going; they never earn a check-in.
 > A stop dressed as honesty is still a stop. Report uncertainty at the END.
@@ -46,7 +46,7 @@ caching, skipped record types, the export text format, and the directory layout.
 - **All fixes must be generic.** Never patch to satisfy a single record or file.
   Oblivion and Nehrim are only the test files — we never know what plugin this
   runs on.
-- 🛑 **FO3/FNV-SPECIFIC CODE GOES IN ITS OWN FILE.** Put it in `<stage>_<game>.py` beside the stage — `tes4_export/export_falloutnv.py` — and leave the main file a call site.
+- **FO3/FNV-SPECIFIC CODE GOES IN ITS OWN FILE.** Put it in `<stage>_<game>.py` beside the stage — `tes4_export/export_falloutnv.py` — and leave the main file a call site.
 - **The goal is COMPLETE conversion.** Don't strip things out because the
   conversion would be complicated.
 - **If you don't see the problem described, the test data is not stale** — there
@@ -104,13 +104,13 @@ caching, skipped record types, the export text format, and the directory layout.
 - Docs can be wrong: they sometimes describe fixes that were never implemented.
   Grep the source before claiming a mechanism exists, and fix the doc.
 - Test scripts must print as they go, so a 120s timeout still yields output.
-- **LISTEN CAREFULLY to EXACTLY what the user's prompt says**. Seek to understand any implementation ideas instead of using your pre-conceived notions
-- 🛑 **DO THE TASK ASKED, AT THE SIZE ASKED. NEVER OVERSCOPE.** Size the work by
+- Build the implementation idea the user describes, not your own preconception of it.
+- **DO THE TASK ASKED, AT THE SIZE ASKED. NEVER OVERSCOPE.** Size the work by
   the request, never by what you don't know. A small ask stays small: a UI
   change is a UI change, not an investigation of the subsystem behind it.
   Feeling a task is too big to do directly is the signal you have inflated it —
   re-read the prompt and cut back.
-- 🛑 **A FACT THE USER STATES IS GROUND TRUTH — NEVER SEARCH TO CONFIRM IT.**
+- **A FACT THE USER STATES IS GROUND TRUTH — NEVER SEARCH TO CONFIRM IT.**
   Search ONLY for what they did not tell you. If the code later contradicts it,
   say so in the final report; never stop to investigate first.
 - **A MECHANISM THE USER NAMES IS THE LEAD. BUILD IT TO COMPLETION.**
@@ -128,12 +128,12 @@ caching, skipped record types, the export text format, and the directory layout.
 - Docstrings should contain real and important function information. Story content only and always belongs in a see: tag. See tags should ALWAYS have an anchor.
 - Duplicated code is a big no-no. Check if something has been built first and if it has either point to that code instead or pull it out into a shared function
 - Avoid the chicken and egg problem when updating files. For example, adding an import without also adding its call in the same write will trigger the hook and prevent the write
-- 🛑 **NEVER CALL THE `Agent` TOOL WITHOUT ASKING FIRST.** No exception for
+- **NEVER CALL THE `Agent` TOOL WITHOUT ASKING FIRST.** No exception for
   `Explore`, read-only, or "just a search".
 - If you do something that would cause a cache, such as the collision cache to generate differently, you MUST iterate its version
 - Morrowind conversion has TWO modes. One that uses its authored masters (Morrowind, Tribunal, Bloodmoon) and Morroblivion mode, which uses Morrowind_ob.esm and the Morroblivion-Morrowind compat patch. BOTH paths MUST be tested and verified when doing Morrowind work.
 
-### <a id="regression-read-the-commits"></a>🛑 IF IT IS A REGRESSION, READ THE COMMITS
+### <a id="regression-read-the-commits"></a>IF IT IS A REGRESSION, READ THE COMMITS
 
 **"This used to work" means the cause is ON A `+` LINE IN A RECENT DIFF.**
 
@@ -196,7 +196,7 @@ theories externally first.
 **A "CLEAN" audit is not an alibi** — if every check passes and the symptom is
 real, suspect a VALUE the engine chokes on, not a STRUCTURE it rejects.
 
-### <a id="code-review"></a>🛑 Code review: RUN THE CLAIM, DON'T READ IT
+### <a id="code-review"></a>Code review: RUN THE CLAIM, DON'T READ IT
 
 **An unexecuted finding is a GUESS. Delete it — never soften it** to "possible
 issue" / "may not handle". Ship it only with a reproduction, a query against
@@ -257,8 +257,10 @@ real data, or a failing-then-passing test.
 
 ### Working with the user
 
-- **NEVER STOP TO GIVE A MID-SESSION STATUS REPORT.** Not "here's where I am",
-  not "should I continue?", not a summary of progress so far. Finish the whole task, then report once. A status update mid-task is a failure, not politeness. If something the user has asked for remains unsolved, YOU ARE NOT DONE!
+- **Never end your turn to report progress.** Not "should I continue?", not a
+  summary that hands the task back. A one-line note between tool calls while you
+  keep working is fine. Finish the whole task, then give the full report once.
+  If something the user asked for remains unsolved, you are not done.
 
   <a id="no-stopping"></a>**Low confidence is NOT an exception.** The tradeoff
   is already decided: **the user would rather you finish and be wrong than stop
@@ -285,7 +287,7 @@ real data, or a failing-then-passing test.
   whether they tested something, and never rebut a reported result with file
   timestamps or a reconstructed timeline. (Reading Papyrus logs to *diagnose* is
   encouraged — using them to dispute the user's report is not.)
-- 🛑 **A USER REPORT IS ABOUT THEIR BUILD — NEVER DIAGNOSE IT FROM MY
+- **A USER REPORT IS ABOUT THEIR BUILD — NEVER DIAGNOSE IT FROM MY
   `export/` OR `output/`.** Mine is a different build, so "absent from the
   export" is a fact about MY tree and says NOTHING about their bug. Diagnose
   from the log they gave plus the SOURCE (`tes_runtime/`, `tes5_import/`,
@@ -327,10 +329,10 @@ real data, or a failing-then-passing test.
   change affects. Reserve the full stage for changes that genuinely touch every
   mesh, and say so when you run one.
 - **Build the mesh the user named, in the PLUGIN the user named** If they say a mesh is a Nehrim issue, rebuild it under `Nehrim.esm` even if there is a same-named mesh under `Oblivion.esm`
-- 🛑 **A `--*-only` FLAG IS A STAGE, NOT A SCOPE** — `--lod-only` bakes every
+- **A `--*-only` FLAG IS A STAGE, NOT A SCOPE** — `--lod-only` bakes every
   qualifying worldspace, masters' included. Confirm the target from the first
   output lines before calling a build running; a banner is not progress.
-- 🛑 **LOD BUILDS ONLY VIA `tools/release/create_lod.py --worldspaces <EDID>`,
+- **LOD BUILDS ONLY VIA `tools/release/create_lod.py --worldspaces <EDID>`,
   NEVER `--lod-only`** — a worldspace bakes once from its owner plus every
   plugin as an overlay. `--dry-run` first; the plan names owner and overlays.
 - **Never run two CPU-saturating jobs at once.** The order is **targeted tests
@@ -351,7 +353,7 @@ real data, or a failing-then-passing test.
 - **Report honestly.** If something is untested, say so; if you skipped part of
   the scope, say which part and why. Never describe an unverified change as
   working.
-- 🛑 **REPLY IN PLAIN, ORDINARY WORDS** — the way you would say it out loud.
+- **REPLY IN PLAIN, ORDINARY WORDS** — the way you would say it out loud.
   "I keep my own list", not "the queue is DLL-owned state". Jargon in a short
   sentence is not concise, just unreadable.
 - We aren't British. No "colour", "centre" or the like
@@ -389,7 +391,7 @@ real data, or a failing-then-passing test.
 - Use multiprocessing, not threads, for pure-Python work; **ThreadPoolExecutor is
   only for I/O and subprocesses.** The output ESM must stay byte-reproducible.
   Rules and measured results: [docs/commentary/performance.md](docs/commentary/performance.md).
-- 🛑 **EVERY `subprocess` CALL IN THE PIPELINE PASSES `**POPEN_FLAGS`**
+- **EVERY `subprocess` CALL IN THE PIPELINE PASSES `**POPEN_FLAGS`**
   (`subprocess_flags.py`). Without it a per-file stage opens one console window
   per file under `pythonw`. Loose assets in a shared Data folder belong to the
   MASTERLESS plugin only — gate on `_is_masterless`, or every expansion
@@ -464,7 +466,7 @@ Deep reference material lives in `docs/`, sorted by KIND.
 live, returns the child's exit code, and gates the `.py` files the command
 WROTE. A bare command is refused: a heredoc writes a `.py` no gate ever sees.
 
-🛑 **SEARCH WITH THE GREP TOOL, NEVER `grep -r`.** It is ripgrep: honors
+**SEARCH WITH THE GREP TOOL, NEVER `grep -r`.** It is ripgrep: honors
 `.gitignore`, so it skips `export/`/`output/`/`references/` (tens of GB) and
 finishes the whole repo in ~1s. Never grep entire directories. These include large files like meshes and take minutes to complete. Properly scope
 
@@ -472,12 +474,12 @@ finishes the whole repo in ~1s. Never grep entire directories. These include lar
 gets a literal `|` and still exits 0. Use `grep -E "a|b"` or `-e a -e b`. Zero
 matches is a broken query, never evidence about the tree.
 
-🛑 **A BASH HEREDOC EATS BACKSLASHES** — `\a`, `\1`, `\_` become bell, byte 1,
+**A BASH HEREDOC EATS BACKSLASHES** — `\a`, `\1`, `\_` become bell, byte 1,
 `_`. Never write a Windows path, regex or doc text through `cat <<'EOF'` /
 `python - <<'EOF'`. Use the Write tool for the file, and build paths with
 `chr(92)` or forward slashes. Applies to the doc-gate hook too.
 
-🛑 <a id="doc-rules"></a>**THE CODE RULES ARE A REQUIREMENT, NOT A GUIDELINE.**
+<a id="doc-rules"></a>**The code rules are enforced by a hook.**
 `.claude/hooks/doc_rules_gate.py` runs `--gate-diff` BEFORE an Edit lands and
 REFUSES it, charging the lines you changed plus the comments above them.
 `--gate-file` scores a WHOLE file, including debt you did not write; use it only
@@ -498,7 +500,7 @@ removing or relocating CODE.
   class-level `dict`/`list`/`set`.
 - **No dead code:** no unused import or variable, no undefined name, nothing
   unreachable. `code_rules.py --dead-code` is the whole-program sweep.
-- 🛑 **IMPORTS GO AT MODULE SCOPE.** A function-local import is a code smell —
+- **IMPORTS GO AT MODULE SCOPE.** A function-local import is a code smell —
   hoist it. Keep one inside a function ONLY to break a real import cycle, and
   say which one in the docstring.
 - **Compress, never delete:** keep every measured count, script name and
@@ -507,13 +509,6 @@ removing or relocating CODE.
 
 ### Scripts
 
-🛑 **Before writing ANY `script_convert/` code, run the decision procedure in [script_convert_architecture.md](docs/reference/script_convert_architecture.md) §3** and score the change with `python tools/script/arch_fitness.py --fail-on-regression`.
+**Before writing ANY `script_convert/` code, run the decision procedure in [script_convert_architecture.md](docs/reference/script_convert_architecture.md) §3** and score the change with `python tools/script/arch_fitness.py --fail-on-regression`.
 
 ### World, meshes & navmesh
-
-### Skills
-| Skill | Covers |
-|---|---|
-| `oblivion-dialog-system` | Vanilla TES4 dialogue/voice/quest records |
-| `skyrim-dialog-system` | Vanilla TES5 dialogue/voice/quest records |
-| `oblivion-to-skyrim-dialog` | TES4→TES5 dialogue/quest/voice mapping |

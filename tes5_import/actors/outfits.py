@@ -47,6 +47,7 @@ one of the two channels.
 """
 
 from ..base.text_reader import get_int
+from ..record_types.equipment import armo_slots
 
 # Record types Skyrim's outfit system accepts directly. LVLI is allowed too,
 # but only when the whole list resolves to these (see _lvli_is_wearable).
@@ -236,10 +237,8 @@ def is_outfit_eligible(fid: int) -> bool:
     return False
 
 
-# Jewelry bits: 6/7 = rings (an NPC legitimately wears one per hand), 8 =
-# amulet. These never contend with armor, so they're excluded from conflict
-# resolution and every jewelry item is kept.
-_JEWELRY_BITS = 0b1_1100_0000
+#: Skyrim amulet (35) and ring (36) bits: jewelry never contends, so every piece is kept.
+_JEWELRY_BITS = 0b110_0000
 
 
 def _resolve_wearables(fid: int, depth: int = 0, path=()) -> list:
@@ -279,14 +278,14 @@ def _resolve_wearables(fid: int, depth: int = 0, path=()) -> list:
 
 
 def _equip_slots(fid: int) -> int:
-    """TES4 biped-slot mask this item claims (0 = contends for no slot).
+    """Skyrim slot mask this item will claim (0 = contends for no slot).
 
     Weapons, ammo and torches return 0 and so are always kept. A leveled list
     claims the union of the slots its leaves can fill.
     """
     mask = 0
     for rec in _resolve_wearables(fid & 0x00FFFFFF):
-        mask |= get_int(rec, 'BMDT.BipedFlags')
+        mask |= armo_slots(rec)
     return mask & ~_JEWELRY_BITS
 
 

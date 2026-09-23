@@ -362,33 +362,39 @@ class TestTorsoSkinOverride:
 
 class TestLoadBodyGeom:
     def test_malebody_loads(self):
-        entries = load_body_geom("malebody_0.nif")
-        assert len(entries) > 0
+        assert len(load_body_geom("malebody_0.nif")) > 0
 
     def test_malebody_has_body_mesh(self):
-        entries = load_body_geom("malebody_0.nif")
-        names = [bytes(geom.name).rstrip(b"\x00").decode("latin-1")
-                 for geom, _ in entries if geom.name]
-        # Should have the main body mesh (MaleUnderwearBody:0)
-        body_meshes = [n for n in names if "Body" in n or "body" in n]
-        assert len(body_meshes) > 0, f"Expected body mesh, got: {names}"
+        names = [bytes(ss.shape.name).rstrip(b"\x00").decode("latin-1")
+                 for ss in load_body_geom("malebody_0.nif") if ss.shape.name]
+        assert any("body" in n.lower() for n in names), f"Expected body mesh, got: {names}"
 
     def test_malehands_loads(self):
-        entries = load_body_geom("malehands_0.nif")
-        assert len(entries) > 0
+        assert len(load_body_geom("malehands_0.nif")) > 0
 
     def test_malefeet_loads(self):
-        entries = load_body_geom("malefeet_0.nif")
-        assert len(entries) > 0
+        assert len(load_body_geom("malefeet_0.nif")) > 0
 
-    def test_bone_index_mapping(self):
-        entries = load_body_geom("malebody_0.nif")
-        for _, bi_to_name in entries:
-            assert len(bi_to_name) > 0, "Should have bone index to name mapping"
-            # All values should be non-empty strings
-            for bi, name in bi_to_name.items():
-                assert isinstance(bi, int)
-                assert isinstance(name, str) and len(name) > 0
+    def test_bone_names(self):
+        """Every skin bone is named and weighted per vertex."""
+        for ss in load_body_geom("malebody_0.nif"):
+            assert ss.bones and all(isinstance(n, str) and n for n in ss.bones)
+            assert ss.arrays['weights'].shape == (len(ss.arrays['verts']), len(ss.bones))
+
+    def test_body_is_cut_into_torso_and_lower_body(self):
+        """The body carries 32/34 above Oblivion's waist and 49/38 below it."""
+        parts = set()
+        for ss in load_body_geom("malebody_0.nif"):
+            parts |= set(ss.parts.tolist())
+        assert {32, 34, 38, 49} <= parts
+
+    def test_hands_split_by_side(self):
+        """Right-bone triangles are the right hand (59); the rest stay the left (33)."""
+        for ss in load_body_geom("malehands_0.nif"):
+            assert set(ss.parts.tolist()) == {33, 59}
+            right_x = ss.arrays['verts'][ss.tris[ss.parts == 59]][..., 0]
+            left_x = ss.arrays['verts'][ss.tris[ss.parts == 33]][..., 0]
+            assert (right_x > 0).all() and (left_x < 0).all()
 
 
 # ===========================================================================
@@ -398,36 +404,32 @@ class TestLoadBodyGeom:
 class TestClipBodyGeom:
     def test_no_section_verts_keeps_all_verts(self):
         """With no section_verts, clip_body_geom must keep every vertex."""
-        entries = load_body_geom("malebody_0.nif")
-        for src_geom, bi_to_name in entries:
-            name = bytes(src_geom.name).rstrip(b"\x00").decode("latin-1") if src_geom.name else ""
-            if is_underwear_only(src_geom.name if src_geom.name else b""):
+        for ss in load_body_geom("malebody_0.nif"):
+            if is_underwear_only(ss.shape.name if ss.shape.name else b""):
                 continue
-            result = clip_body_geom(src_geom, bi_to_name, set(), section_verts=None)
-            assert result is not None, f"No section_verts should not return None for {name}"
-            verts, _, _, tris, _, _ = result
-            assert len(verts) == src_geom.data.num_vertices
-            assert len(tris) > 0
+            verts, _, _, tris, _, _ = clip_body_geom(ss, section_verts=None)
+            assert len(verts) == len(ss.arrays['verts'])
+            assert len(tris) == len(ss.tris)
 
     def test_section_verts_clips_spatially(self):
-        entries = load_body_geom("malebody_0.nif")
-        for src_geom, bi_to_name in entries:
-            if is_underwear_only(src_geom.name if src_geom.name else b""):
-                continue
-            # Full clip (no section_verts) — all verts
-            full = clip_body_geom(src_geom, bi_to_name, set(), section_verts=None)
-            if full is None:
-                continue
-            # Tight single-point cloud near a small area — should clip significantly
-            tx = src_geom.translation.x
-            ty = src_geom.translation.y
-            tz = src_geom.translation.z + 120.0  # near head — far from arm/neck region
-            tight_cloud = [[(tx, ty, tz)]]
-            tight = clip_body_geom(src_geom, bi_to_name, set(),
-                                   section_verts=tight_cloud, proximity_threshold=3.0)
-            if tight is not None:
-                assert len(tight[0]) < len(full[0]), "Tight cloud should reduce verts"
-            break  # one geometry block is sufficient
+        ss = next(s for s in load_body_geom("malebody_0.nif")
+                  if not is_underwear_only(s.shape.name if s.shape.name else b""))
+        full = clip_body_geom(ss, section_verts=None)
+        t = ss.shape.translation
+        tight = clip_body_geom(ss, section_verts=[[(t.x, t.y, t.z + 120.0)]],
+                               proximity_threshold=3.0)
+        assert tight is None or len(tight[0]) < len(full[0]), "Tight cloud should reduce verts"
+
+    def test_field_cuts_exactly(self):
+        """A field cut keeps only the negative side, with new vertices on its zero line."""
+        ss = next(s for s in load_body_geom("malebody_0.nif")
+                  if not is_underwear_only(s.shape.name if s.shape.name else b""))
+        t = ss.shape.translation
+        level = float(np.median(ss.arrays['verts'][:, 2] + t.z))
+        verts = clip_body_geom(ss, field=lambda pts: pts[:, 2] - level)[0]
+        z = np.array(verts)[:, 2] + t.z
+        assert z.max() <= level + 1e-4
+        assert np.isclose(z, level, atol=1e-4).sum() > 10
 
 
 # ===========================================================================
@@ -874,11 +876,9 @@ class TestSplicedBoots:
 def _get_full_body_vert_count(body_nif_name: str) -> int:
     """Return total vertex count of non-underwear geometry in a Skyrim body NIF."""
     total = 0
-    entries = load_body_geom(body_nif_name)
-    for src_geom, _ in entries:
-        if is_underwear_only(src_geom.name if src_geom.name else b""):
-            continue
-        total += src_geom.data.num_vertices
+    for ss in load_body_geom(body_nif_name):
+        if not is_underwear_only(ss.shape.name if ss.shape.name else b""):
+            total += len(ss.arrays['verts'])
     return total
 
 

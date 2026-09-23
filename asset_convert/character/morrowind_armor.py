@@ -321,21 +321,45 @@ class RestSkeleton:
         """The bone's skinned rest frame: the bind skeleton's, else base_anim's, else None."""
         return self.bind.get(name, self.world.get(name))
 
-    def direction_delta(self, bone: str) -> np.ndarray:
-        """Rotation turning the bone's rest direction onto the Skyrim bone's.
+    def _segment(self, bone):
+        """(Morrowind, Skyrim) vectors from the bone's pivot to its bone child's, or None.
 
-        Identity for a bone without a mapped bone child (the head), or when
-        both skeletons already agree.
+        None for a bone without a mapped bone child (the head) and for the
+        body's root bone (the pelvis), which stands upright in both rests.
+        See: docs/commentary/asset_convert_armor.md#morrowind-armor-assembly
         """
         child = self.child.get(bone)
         sk_bone = OBLIVION_TO_SKYRIM_BONE_MAP.get(bone)
         sk_child = OBLIVION_TO_SKYRIM_BONE_MAP.get(child)
-        if child is None or sk_bone not in self.skyrim \
+        if child is None or self.parent.get(bone) not in self.parent or sk_bone not in self.skyrim \
                 or sk_child not in self.skyrim:
-            return np.eye(3)
-        return _rotation_between(
-            self.world[child][3, :3] - self.world[bone][3, :3],
-            self.skyrim[sk_child][3, :3] - self.skyrim[sk_bone][3, :3])
+            return None
+        return (self.world[child][3, :3] - self.world[bone][3, :3],
+                self.skyrim[sk_child][3, :3] - self.skyrim[sk_bone][3, :3])
+
+    def direction_delta(self, bone: str) -> np.ndarray:
+        """Rotation turning the bone's segment onto the Skyrim one; else identity."""
+        segment = self._segment(bone)
+        return np.eye(3) if segment is None else _rotation_between(*segment)
+
+    def stretch(self, bone: str, verts: np.ndarray) -> np.ndarray:
+        """Pivot offsets turned onto the Skyrim bone, stretched along it to its length.
+
+        Between the pivot and the child joint, distance along the bone scales
+        by Skyrim's segment length over Morrowind's; past the child joint it
+        keeps its offset from that joint, so a piece meets both joints.
+        Unchanged where direction_delta is identity.
+        See: docs/commentary/asset_convert_armor.md#morrowind-armor-assembly
+        """
+        segment = self._segment(bone)
+        if segment is None:
+            return verts
+        mw_len, sk_len = (float(np.linalg.norm(v)) for v in segment)
+        axis = segment[1] / sk_len
+        along = verts @ axis
+        moved = np.where(along > mw_len, along - mw_len + sk_len,
+                         np.where(along > 0.0, along * (sk_len / mw_len), along))
+        return verts + np.outer(moved - along, axis)
 
     def hierarchy(self) -> tuple:
         """(fresh Data of the bone tree posed at `rest_world`, {lower-case bone name: node}).
@@ -368,8 +392,8 @@ def _adopt_rigid(shape, part_root, frame, bone, skel, root, flat) -> None:
     """
     full = _full_transform(shape, part_root) @ frame
     turn = skel.direction_delta(bone)
-    verts = (shape_vertices(shape) @ full[:3, :3] + full[3, :3]
-             - skel.world[bone][3, :3]) @ turn
+    verts = skel.stretch(bone, (shape_vertices(shape) @ full[:3, :3] + full[3, :3]
+                                - skel.world[bone][3, :3]) @ turn)
     normals = shape_normals(shape)
     if normals is not None:
         normals = normals @ full[:3, :3] @ turn

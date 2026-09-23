@@ -70,6 +70,7 @@ from core.gui.config import (
     step_names,
 )
 from core.gui.selection import runnable
+from output_layout import BODY_SLOTS_PATCH
 
 # ---------------------------------------------------------------------------
 #  Classifying a log line
@@ -686,7 +687,7 @@ _ARTIFACTS = {
     "package_runtime_dll": lambda: "TESRuntime.zip",
     "convert_ui": _artifact_convert_ui,
     "pack_lod": _artifact_pack_lod,
-    "modify_body_meshes": lambda: "Slot44 Patch.esp",
+    "modify_body_meshes": lambda: f"{BODY_SLOTS_PATCH}.zip",
 }
 
 

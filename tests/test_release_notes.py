@@ -106,8 +106,8 @@ def test_packaging_follows_a_producing_step():
 
 
 def test_patch_skyrim_alone_does_not_drag_in_packaging():
-    """Patch Skyrim writes a standalone ARMA patch that BSA/zip never read."""
-    assert steps("asset_convert/character/modify_body_meshes.py") == ["Patch Skyrim"]
+    """Patch Skyrim writes a standalone patch zip that BSA/zip never read."""
+    assert steps("tools/creature/patch_body_slots.py") == ["Patch Skyrim"]
 
 
 @pytest.mark.parametrize("path", [

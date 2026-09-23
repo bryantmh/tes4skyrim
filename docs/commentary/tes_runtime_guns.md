@@ -280,7 +280,9 @@ flicker between the two poses while the key was held. The task now only
 logs the measurement once a second (`zoom: blend .. sight (x y z)`, the
 node's offset in the root's frame). The alignment needs a hook after the
 engine places the first-person model and a node under the camera, still
-to be found.
+to be found. Most of the visible offset is not this step: FNV's iron-sight
+clips already center the sight side to side, and the retarget moves it
+([hands spread](asset_convert_falloutnv.md#first-person-hands-spread)).
 
 `SetActorGraphInt` writes the variable to every graph of the actor's
 BSAnimationGraphManager. The player has two, third and first person; a
