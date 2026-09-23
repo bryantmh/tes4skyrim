@@ -16,6 +16,7 @@
 #include "conversation.h"
 #include "cosave.h"
 #include "game_calls.h"
+#include "journal_objectives.h"
 #include "log.h"
 #include "main_thread.h"
 #include "menu.h"
@@ -91,6 +92,7 @@ void QueryInterfaces(const SKSEInterface* skse) {
                                      kSerializationId);
     }
     InstallCoSave(g_serialization, skse->GetPluginHandle());
+    InstallJournal();
     Log("interfaces: messaging %s, papyrus %s, serialization %s, task %s",
         msg ? "ok" : "MISSING", papyrus ? "ok" : "MISSING",
         g_serialization ? "ok" : "MISSING", task ? "ok" : "MISSING");

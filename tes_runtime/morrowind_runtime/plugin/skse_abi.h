@@ -121,6 +121,38 @@ struct SKSESerializationInterface {
     bool (*ResolveFormId)(UInt32 formId, UInt32* formIdOut);
 };
 
+// A Scaleform value: 0x18 bytes, type at +8, data at +0x10.
+struct GFxValue {
+    void*  objectInterface = nullptr;
+    UInt32 type = 0;
+    UInt32 pad = 0;
+    union {
+        double      number;
+        const char* string;
+        void*       object;
+    } data = {0};
+};
+
+// What the movie hands a native function when AS2 calls it.
+struct GFxFunctionArgs {
+    GFxValue* result;
+    void*     movie;
+    GFxValue* thisObject;
+    GFxValue* unused;
+    GFxValue* args;
+    UInt32    numArgs;
+    void*     refCon;
+};
+
+// A native function the movie can call: Scaleform's GFxFunctionHandler, a
+// ref-counted object whose vtable is the destructor then Invoke.
+class GFxFunctionHandler {
+public:
+    virtual ~GFxFunctionHandler() = default;
+    virtual void Invoke(GFxFunctionArgs* args) = 0;
+    volatile std::int32_t refCount = 1;
+};
+
 struct SKSEPluginVersionData {
     enum { kVersion = 1 };
     enum {

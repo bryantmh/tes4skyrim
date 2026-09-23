@@ -53,6 +53,19 @@ void* SwapVtableSlot(const char* debugName, std::uintptr_t vtable,
                      std::size_t slotOffset, std::uintptr_t expected,
                      void* replacement);
 
+// Virtual call by INDEX into an engine object's vtable.
+template <typename Fn>
+Fn VCall(void* object, std::size_t slot) {
+    void** vtable = *reinterpret_cast<void***>(object);
+    return reinterpret_cast<Fn>(vtable[slot]);
+}
+
+// The field of type T at byte `offset` into an engine object.
+template <typename T>
+T& At(void* base, std::size_t offset) {
+    return *reinterpret_cast<T*>(static_cast<char*>(base) + offset);
+}
+
 extern VersionDb g_versionDb;
 
 }  // namespace mwruntime

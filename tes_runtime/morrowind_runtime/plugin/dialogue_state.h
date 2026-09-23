@@ -105,6 +105,10 @@ struct GameHooks {
     // dialogue window, which pauses too but must not stop the tick.
     // See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
     bool (*gamePaused)() = nullptr;
+    // Records objectives shown since the last tick against their journal text.
+    // Runs paused too: dialogue shows objectives with the game held.
+    // See: docs/commentary/morrowind_runtime.md#journal-stage-text
+    void (*pollJournal)() = nullptr;
     bool (*menuMode)() = nullptr;
     void (*forceGreeting)(const std::string& actor) = nullptr;
     // A `MessageBox` raised OUTSIDE a conversation, which has no dialogue

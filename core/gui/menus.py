@@ -26,6 +26,7 @@ from tkinter import ttk
 
 import version as version_info
 from core.collision_options import WINDING_FIX_DEFAULT_PLUGINS
+from core.gui import journal as gui_journal
 from core.gui import mods as gui_mods
 from core.gui.config import (
     CLR,
@@ -302,7 +303,7 @@ def _open_folder(app, path: str, what: str) -> None:
 
 
 def _build_tools_menu(app, menubutton, _menu_opts) -> None:
-    """Tools: dependency check, the global actions, and folder shortcuts.
+    """Tools: dependency check, global actions, journal patch, folder shortcuts.
 
     The global entries are late-bound: `app.run_global_action` is wired with
     the rest of the run logic, so the lambda resolves it at click time.
@@ -316,6 +317,9 @@ def _build_tools_menu(app, menubutton, _menu_opts) -> None:
     for gkey, glabel, _gtip, _gshort, _grow in GLOBAL_ACTIONS:
         tools_menu.add_command(
             label=glabel, command=(lambda k=gkey: app.run_global_action(k)))
+    tools_menu.add_separator()
+    tools_menu.add_command(label=gui_journal.TITLE,
+                           command=lambda: gui_journal.run_patch(app))
     tools_menu.add_separator()
     tools_menu.add_command(
         label="Open Output Folder",

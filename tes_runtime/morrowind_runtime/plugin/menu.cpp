@@ -139,13 +139,6 @@ double g_lastX = 0, g_lastY = 0;
 std::uint32_t g_seenEvents[32] = {0};
 std::size_t g_seenCount = 0;
 
-// Virtual call by INDEX into an engine object's vtable.
-template <typename Fn>
-Fn VCall(void* object, std::size_t slot) {
-    void** vtable = *reinterpret_cast<void***>(object);
-    return reinterpret_cast<Fn>(vtable[slot]);
-}
-
 // A GFxValue on the stack, typed as a number.
 struct alignas(8) NumberValue {
     char raw[ids::kGfxValueSize];

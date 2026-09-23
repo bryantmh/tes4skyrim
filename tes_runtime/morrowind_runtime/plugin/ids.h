@@ -734,4 +734,82 @@ constexpr std::size_t kOffEffectBaseCost = 0x6c;
 constexpr const char* kInventoryMenuName = "InventoryMenu";
 constexpr const char* kCraftingMenuName = "Crafting Menu";
 
+// ---------------------------------------------------------------------------
+// Journal stage text. Everything below was read off the journal's objective
+// builder (0x98a6a0 on 1.6.1170, 0x92b5f0 on 1.6.659 -- same offsets in both).
+// See: docs/commentary/morrowind_runtime.md#journal-stage-text
+
+// The PlayerCharacter singleton POINTER (0x31874f8), read, never called.
+constexpr std::uint64_t kPlayerSingleton = 403521;
+
+// The player's objective array: every objective ever shown, oldest first, 16
+// bytes each -- BGSQuestObjective* at +0, instance id at +8, state at +0xc.
+// The journal walks it newest first.
+constexpr std::size_t kOffPlayerObjectives = 0x588;
+constexpr std::size_t kOffPlayerObjectiveCount = 0x598;
+constexpr std::size_t kShownObjectiveSize = 0x10;
+constexpr std::size_t kOffShownInstance = 0x8;
+constexpr std::size_t kOffShownState = 0xc;
+
+// BGSQuestObjective: owning TESQuest* at +8, its authored index at +0x1c, and
+// flags at +0x20, whose bit 0 is ORed With Previous.
+constexpr std::size_t kOffObjectiveQuest = 0x8;
+constexpr std::size_t kOffObjectiveIndex = 0x1c;
+constexpr std::size_t kOffObjectiveFlags = 0x20;
+constexpr std::uint8_t kObjectiveFlagOr = 0x1;
+
+// TESForm's FormID at +0x14; form type 0x4d (at kOffFormType) is QUST.
+constexpr std::size_t kOffFormId = 0x14;
+constexpr std::uint8_t kFormTypeQuest = 0x4d;
+
+// TESQuest: DNAM quest type at +0xdf (6 is Miscellaneous), and an array of
+// per-instance records at +0x38 with its count at +0x48.
+constexpr std::size_t kOffQuestType = 0xdf;
+constexpr std::uint8_t kQuestTypeMisc = 6;
+constexpr std::size_t kOffQuestInstances = 0x38;
+constexpr std::size_t kOffQuestInstanceCount = 0x48;
+
+// A per-instance record: its instance id at +0, and the CURRENT journal text
+// as the stage index at +0x38 and which of that stage's log entries at +0x3a.
+// The engine overwrites the pair at every stage that has a log entry.
+constexpr std::size_t kOffInstanceStage = 0x38;
+constexpr std::size_t kOffInstanceLogEntry = 0x3a;
+constexpr std::size_t kInstanceRecordSize = 0x40;
+
+// LookupFormByID(formId) -> TESForm* (0x1e01a0).
+constexpr std::uint64_t kLookupFormById = 14617;
+
+// The journal description builder (0x392ab0): (record, quest, BSString* out).
+// Reads ONLY the record's instance id, stage and log entry, fetches that
+// stage's text (0x3d1c70) and fills in alias names (0x392c80).
+constexpr std::uint64_t kQuestInstanceText = 23896;
+
+// GFxValue::ObjectInterface::SetMember(this, obj, name, value, isDisplayObj)
+// (0xfae210) and ReleaseManaged(this, value, data) (0xfac750).
+constexpr std::uint64_t kGfxSetMember = 82292;
+constexpr std::uint64_t kGfxReleaseManaged = 82270;
+
+// GFxMovieView slots, as INDICES: CreateString(value, text),
+// CreateObject(value, className, args, count) and
+// CreateFunction(value, handler, refcon).
+constexpr std::size_t kMovieViewCreateStringSlot = 0x0b;
+constexpr std::size_t kMovieViewCreateObjectSlot = 0x0d;
+constexpr std::size_t kMovieViewCreateFunctionSlot = 0x0f;
+
+// MenuManager's open menus: IMenu* array at +0x110, count at +0x120 (read in
+// 0xfa3e95 on 1.6.1170 and 0xf16d05 on 1.6.659). A menu's movie view is at
+// IMenu+0x10, as the runtime's own menu lays out.
+constexpr std::size_t kOffMenuStack = 0x110;
+constexpr std::size_t kOffMenuStackCount = 0x120;
+constexpr std::size_t kOffMenuView = 0x10;
+
+// What asset_convert/ui/journal_patch.py sets on a patched movie's root, and
+// where the runtime puts the object carrying its functions.
+constexpr const char* kJournalPatchMarker = "_root.MWRT_Patched";
+constexpr const char* kJournalFunctionsPath = "_root.MWRT_Runtime";
+
+// GFxValue type bit marking a value the movie owns and must be released.
+constexpr std::uint32_t kGfxValueManaged = 0x40;
+constexpr std::uint32_t kGfxValueDisplayObject = 8;
+
 }  // namespace mwruntime::ids

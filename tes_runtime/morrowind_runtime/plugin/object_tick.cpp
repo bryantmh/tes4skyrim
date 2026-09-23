@@ -213,7 +213,9 @@ void ReportUnbind(const ObjectScript& instance, const char* why) {
 
 void RunOneTick() {
     ++g_ticks;
-    if (!SessionLive() || GameHeldByMenu()) {
+    const bool inWorld = SessionLive();
+    if (inWorld && Hooks().pollJournal) Hooks().pollJournal();
+    if (!inWorld || GameHeldByMenu()) {
         g_lastCount = 0;
         return;
     }

@@ -134,6 +134,11 @@ In the GUI:
   with `+` under **Source**.
 - Pick a plugin, tick the steps you want (**Default** is the usual choice), and run.
 - **Tools ▸ Check Dependencies** tells you what's missing before you start.
+- **Tools ▸ Patch Quest Journal** makes a quest's objectives clickable in Skyrim's journal: clicking one
+  shows the journal text the quest had when that objective appeared, and clicking it again returns to the
+  current text. It works for every quest, converted or not, and patches whichever journal you run (vanilla,
+  SkyUI or Quest Journal Overhaul), keeping the original beside it as `.mwrt-backup`. Needs
+  **MorrowindRuntime.dll**, and covers objectives that appear after it is installed.
 
 If you'd like to use modded source-game models or textures, run the **Extract** step
 first, then copy your modded files into `export/<plugin name>/`, overwriting what's there.

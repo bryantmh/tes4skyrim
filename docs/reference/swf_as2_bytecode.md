@@ -68,3 +68,27 @@ how a hit is mapped back to a class.
 Symbols reaching the movie from the game arrive through Scaleform's invoke
 path rather than any tag, so a symbol that appears in a pool but is never
 pushed by movie code is a candidate for one the host sets.
+
+## <a id="writing-bytecode"></a>Writing bytecode
+
+**Tool:** `asset_convert/ui/avm1.py` assembles an instruction list; branches
+name labels, so no offset is written by hand.
+
+- **If / Jump** (`0x9D` / `0x99`) carry a signed 16-bit offset counted from
+  the byte AFTER the branch. Both are always 5 bytes, which is what lets a
+  two-pass assembler place labels before encoding any branch.
+- **DefineFunction** (`0x9B`): its length field covers only the name, the
+  parameter count, the parameter names and a u16 code size; the body follows
+  the record and is NOT inside that length. An empty name makes it anonymous
+  and pushes the function object.
+- **Call order.** `obj.m(a, b)` is: push `b`, push `a`, push 2, push `obj`,
+  push `"m"`, `CallMethod`. `SetMember` pops value, name, object, so the object
+  is pushed first. `DefineLocal` and `SetVariable` take name then value.
+- **for..in** is `Enumerate2`, which pushes `null` then every key;
+  `StoreRegister 0` / push `null` / `Equals2` / `If end` peels one key per loop.
+- **Doubles** (push type 6) store their two 32-bit halves swapped.
+
+A movie's own code stays untouched when a patch appends one DoAction to frame
+1: frame actions run after every DoInitAction in the frame, and AS2 resolves a
+method by name at call time, so a replaced prototype method is what existing
+instances and name-keyed listeners call.

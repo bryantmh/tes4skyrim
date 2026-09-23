@@ -105,15 +105,6 @@ bool g_active = false;
 Toolset g_tools;
 AlchemyInputs g_inputs;
 
-template <typename Fn>
-Fn VCall(void* object, std::size_t slot) {
-    return reinterpret_cast<Fn>((*reinterpret_cast<void***>(object))[slot]);
-}
-
-template <typename T>
-T& At(void* base, std::size_t offset) {
-    return *reinterpret_cast<T*>(static_cast<char*>(base) + offset);
-}
 
 // ------------------------------------------------------------ the session ----
 

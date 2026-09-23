@@ -96,7 +96,8 @@ class Image:
 
 def build_index(img, cache_dir):
     """Disassemble .text with resync, return {target_rva: [(rva, mnem, ops)]}
-    for every RIP-relative memory operand, plus a list of call targets."""
+    for every RIP-relative memory operand. Direct call and jump targets are
+    immediates, not memory operands, so a function's callers are NOT indexed."""
     tva, tve, tpr = img.text()
     size = tve - tva
     key = '%s-%d-%x' % (os.path.basename(img.path),
