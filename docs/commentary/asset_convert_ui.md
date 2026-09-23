@@ -28,7 +28,7 @@ other menu — most of them on missing DATA, not on missing art.
 
 This is a SILOED pipeline. It takes no `-f` plugin, because Oblivion's UI lives
 in loose menu files and BSAs rather than inside any ESM, so there is nothing
-per-plugin to convert. It runs once as a global action — the GUI's "Convert UI"
+per-plugin to convert. It runs once as a global action — the GUI's "Convert Oblivion UI"
 button, next to "Create LOD" and "Pack Start Mod" — and writes its own mod:
 
 ```

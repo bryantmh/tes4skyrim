@@ -75,7 +75,9 @@ plugin (`MorrowindRuntime.dll`) with a Morrowind-style menu. It is set up automa
 | **Vanilla** | Your own converted `Morrowind.esm`, `Tribunal.esm` and `Bloodmoon.esm`. |
 | **Morroblivion + patch** | [Morroblivion](https://morroblivion.com/), the fan remake of Morrowind in Oblivion, converted through the normal Oblivion path. |
 
-Morroblivion mode needs a compatibility patch, which the same menu builds for you from your Morrowind `Data Files`.
+Morroblivion mode needs a compatibility patch. Choosing **Settings ▸ Morrowind source ▸ Morroblivion + patch** builds it
+for you from your Morrowind `Data Files` if it doesn't exist yet (convert `Morrowind_ob.esm` first). Choose it again while
+it's selected to rebuild the patch.
 
 On the command line:
 
@@ -133,12 +135,13 @@ In the GUI:
 - Your Oblivion install is found automatically. Add Morrowind and Fallout installs
   with `+` under **Source**.
 - Pick a plugin, tick the steps you want (**Default** is the usual choice), and run.
-- **Tools ▸ Check Dependencies** tells you what's missing before you start.
-- **Tools ▸ Patch Quest Journal** makes a quest's objectives clickable in Skyrim's journal: clicking one
-  shows the journal text the quest had when that objective appeared, and clicking it again returns to the
-  current text. It works for every quest, converted or not, and patches whichever journal you run (vanilla,
-  SkyUI or Quest Journal Overhaul), keeping the original beside it as `.mwrt-backup`. Needs
-  **MorrowindRuntime.dll**, and covers objectives that appear after it is installed.
+- **Help ▸ Check Dependencies** tells you what's missing before you start.
+- **Build ▸ Quest Journal Stage Text** makes a quest's objectives clickable in Skyrim's journal: clicking
+  one shows the journal text the quest had when that objective appeared, and clicking it again returns to
+  the current text. It works for every quest, converted or not. It patches whichever journal you run
+  (vanilla, SkyUI or Quest Journal Overhaul) into `output/Finished Mods/Quest Journal Stage Text.zip`;
+  install that after your UI mod. Needs **MorrowindRuntime.dll**, and covers objectives that appear after
+  it is installed.
 
 If you'd like to use modded source-game models or textures, run the **Extract** step
 first, then copy your modded files into `export/<plugin name>/`, overwriting what's there.
@@ -150,14 +153,14 @@ navmesh cache**. Offline, drop the release's `.zip` into `navmesh_cache/`.
 
 ### Converting a downloaded mod
 
-Drag a `.zip` / `.7z` / `.rar` onto the left panel, or use **Mods ▸ Import Mod
+Drag a `.zip` / `.7z` / `.rar` onto the left panel, or use **Plugins ▸ Import Mod
 Archive…**, and it becomes a source like any folder in the list. Loose files,
 BSAs and nested archives are all handled; nothing is written to your game
 install. A mod with no plugin (a texture pack) imports too — the steps that need
 one are greyed out.
 
 A copy of the archive is kept under `export/<plugin>/_source/` so steps can be
-re-run after you delete the download. **Mods ▸ Manage Imported Mods…** removes
+re-run after you delete the download. **Plugins ▸ Manage Imported Mods…** removes
 them. If a master has not been converted yet, the import says so.
 
 ```bash
@@ -359,11 +362,11 @@ everything you have converted:
 |--------|--------------|
 | **Create LOD** | Generate all object and terrain LOD in one pass, into a standalone `output/AutoConvertLOD/` mod. The button opens a panel choosing which plugins and worldspaces to include; the plugin order decides which one wins a contested tile (defaults to your `plugins.txt` order). **Install it after the mods it covers.** |
 | **Pack LOD** | Zip `output/AutoConvertLOD/` into `output/Finished Mods/AutoConvertLOD.zip` for installation. |
-| **Patch Skyrim** | Build the ARMA slot-44 body patch for your whole Skyrim load order (*select plugins...* chooses which), as `output/Finished Mods/Slot44 Patch.esp`. |
+| **Body Slot Patch** | Build the ARMA slot-44 body patch for your whole Skyrim load order (*select plugins...* chooses which), as `output/Finished Mods/Body Slots Patch.zip`. |
 | **Start Mod** | Zip the prebuilt TESGameSelect starter mod (see *Starting a converted game*) to `output/Finished Mods/TESGameSelect.zip`. |
 | **Package SKSE Mod** | Zip the three runtime plugins (see *TESRuntime*) to `output/Finished Mods/TESRuntime.zip`. |
 | **Convert to Master** | Flag converted plugins as masters. A non-master plugin has every reference treated as always-active, and the engine hangs on the main menu past about a million of them. Applies to a whole master chain at once. |
-| **Convert UI** | *(Tools menu)* Build a standalone mod that reskins Skyrim's message boxes and cursor with Oblivion's artwork, read from your Oblivion install. |
+| **Convert Oblivion UI** | *(Build menu)* Build a standalone mod that reskins Skyrim's message boxes and cursor with Oblivion's artwork, read from your Oblivion install. |
 
 > **Design principle:** the export is a *pure* dump of TES4 data — no type mapping, no path
 > prefixing, no derived fields. **All** transformations live in the import and asset steps.

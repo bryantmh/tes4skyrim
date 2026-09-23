@@ -39,7 +39,7 @@ is 613 MB), 0.01s -> 1.63s before the window first paints.
 EXECUTING. The one-process fast path fires when the selection IS the default,
 computed the way the checkboxes are. It lists its steps explicitly rather than
 using a bare `convert.py -f <plugin>`, which would take convert's own default
-path and switch Patch Skyrim on -- rewriting the shared patch behind the user's
+path and switch Body Slot Patch on -- rewriting the shared patch behind the user's
 back. The summary is emitted by the DRAIN, never the worker: the worker finishes
 while its last lines are still queued.
 

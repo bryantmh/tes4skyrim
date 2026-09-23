@@ -150,7 +150,7 @@ def lod_detail_labels() -> tuple:
 #: Distant-LOD triangle multiplier per preset, measured against preset 0.
 LOD_DETAIL_STEPS = (1.00, 1.35, 2.60, 3.04, 3.48, 3.95, 4.74)
 
-#: (key, label, tooltip, short, row); `row` None means Tools menu, no button.
+#: (key, label, tooltip, short, row); `row` None means Build menu only, no button.
 GLOBAL_ACTIONS = [
     ("create_lod", "Create LOD",
      "Generate distant LOD for the whole load order in one pass, into the "
@@ -172,20 +172,20 @@ GLOBAL_ACTIONS = [
      "converted plugin. Needs Skyrim installed: the MQ101 override is "
      "spliced from its Skyrim.esm",
      "Pack Start Mod", 1),
-    ("modify_body_meshes", "Patch Skyrim",
+    ("modify_body_meshes", "Body Slot Patch",
      "Build the ARMA slot-44 body patch for your Skyrim load order",
-     "Patch Skyrim", 2),
+     "Body Slot Patch", 2),
     ("package_runtime_dll", "Package SKSE Mod",
      "Zip the built TESRuntime.dll (the SKSE plugin that registers every "
      "converted plugin's creature animations at load) into "
      "output/Finished Mods, ready to install like any converted plugin",
      "Pack SKSE Mod", 2),
-    ("convert_ui", "Convert UI",
+    ("convert_ui", "Convert Oblivion UI",
      "Build the standalone Oblivion UI mod: Skyrim's message boxes and menu "
      "cursor reskinned with Oblivion's own art, read from your Oblivion "
      "install. Replaces two files "
      "(Interface\\messagebox.swf, Interface\\cursormenu.swf)",
-     "Convert UI", None),
+     "Convert Oblivion UI", None),
 ]
 
 

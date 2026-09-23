@@ -38,7 +38,6 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -62,7 +61,8 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
 
-from output_layout import BODY_SLOTS_PATCH, finished_dir, record_dir, plugin_out_root
+from output_layout import (BODY_SLOTS_PATCH, finished_dir, plugin_out_root,
+                           record_dir, tree_members, write_mod_zip)
 from papyrus_compile import phase_compile
 from tes4_export.tes3_reader import is_tes3
 from core.plugin_masters import (get_masters_from_binary, is_master_export,
@@ -911,17 +911,10 @@ def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
         cwd=str(SCRIPT_DIR), capture_output=True, text=True, **_POPEN_FLAGS)
     print(ret.stdout + ret.stderr, end="")
     if ret.returncode == 0:
-        _zip_tree(stage, finished_dir(out_root) / f"{BODY_SLOTS_PATCH}.zip")
+        write_mod_zip(finished_dir(out_root) / f"{BODY_SLOTS_PATCH}.zip",
+                      tree_members(stage))
     shutil.rmtree(stage, ignore_errors=True)
     return ret.returncode == 0
-
-
-def _zip_tree(root: Path, zip_path: Path) -> None:
-    """Zip every file under `root`, at its path relative to it."""
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for src in sorted(root.rglob("*")):
-            if src.is_file():
-                zf.write(src, arcname=str(src.relative_to(root)))
 
 
 # ===========================================================================
@@ -998,21 +991,17 @@ def phase_pack_zip(file_name: str, config: dict, output_dir: str = None):
     # three different names for a three-plugin pack.
     zip_path = finished_dir(out_root) / f"{src_root.name}.zip"
 
-    packed = 0
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for ext in ("*.esm", "*.esl", "*.esp", "*.bsa"):
-            for src in sorted(src_root.glob(ext)):
-                zf.write(src, arcname=src.name)
-                packed += 1
-        for src in _loose_files():
-            zf.write(src, arcname=str(src.relative_to(src_root)))
-            packed += 1
-
-    if packed == 0:
+    members = [(src.name, src)
+               for ext in ("*.esm", "*.esl", "*.esp", "*.bsa")
+               for src in sorted(src_root.glob(ext))]
+    members += [(str(src.relative_to(src_root)), src)
+                for src in _loose_files()]
+    if not members:
         zip_path.unlink(missing_ok=True)
         print(f"[{file_name}] No plugin/BSA files found, skipping zip pack")
         return False
 
+    packed = write_mod_zip(zip_path, members)
     print(f"[{file_name}] Zip pack complete -> {zip_path} ({packed} files)")
     return True
 

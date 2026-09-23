@@ -2,9 +2,10 @@
 Settings ▸ Morrowind source: the GUI half of the Morrowind master switch.
 
 The export stage reads the chosen set from `conversion_config.json`, so the
-radio group saves on every change and nothing else has to be plumbed. The same
-menu builds the compatibility patch, because that is what makes Morroblivion
-mode usable: without it every conversion in that mode is refused.
+radio group saves on every change and nothing else has to be plumbed. Choosing
+Morroblivion also builds the compatibility patch when it is missing, because
+that mode refuses every conversion without it; choosing it again while it is
+already selected rebuilds the patch.
 
 See: docs/commentary/tes4_export_morrowind.md#masters
 """
@@ -14,6 +15,8 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
+from asset_convert.sources import source_registry
+from core.gui.menubar_behavior import enable_tips
 from tes4_export.export_morrowind import MORROWIND_SOURCE_KEY, SOURCE_MORROBLIVION, SOURCE_VANILLA, morroblivion_exports
 from tes4_export.morrowind_patch import PATCH_NAME, PATCH_SOURCES, build_patch, patch_exists, source_paths
 
@@ -22,6 +25,15 @@ _LABELS = (
     (SOURCE_VANILLA, "Vanilla  (Morrowind + Tribunal + Bloodmoon)"),
     (SOURCE_MORROBLIVION, "Morroblivion + patch"),
 )
+
+#: Title of every dialog the patch build raises.
+_TITLE = "Morroblivion compatibility patch"
+
+#: Menu tip on the Morroblivion entry.
+MORROBLIVION_TIP = (
+    f"Convert Morrowind plugins against Morroblivion and {PATCH_NAME}. "
+    "Builds the patch if it is missing (convert Morrowind_ob.esm first); "
+    "choose it again while selected to rebuild the patch")
 
 
 def source_default(cfg: dict) -> str:
@@ -39,27 +51,65 @@ def add_source_menu(settings_menu, menu_opts: dict, cfg: dict,
     output directory after the menu is built.
     """
     var = tk.StringVar(value=source_default(cfg))
+    chosen = {"mode": var.get()}
 
     def _save():
-        """Persist the chosen set the moment it is picked."""
+        """Persist the chosen set and remember it as the current one."""
+        chosen["mode"] = var.get()
         updated = load_config()
         updated[MORROWIND_SOURCE_KEY] = var.get()
         save_config(updated)
 
+    def _pick_morroblivion():
+        """Switch, building the patch first when it is missing or asked for."""
+        was = chosen["mode"]
+        if patch_exists(str(export_dir)):
+            if was != SOURCE_MORROBLIVION:
+                _save()
+                return
+            if not messagebox.askyesno(_TITLE, f"Rebuild {PATCH_NAME}?"):
+                return
+        if build_patch_dialog(settings_menu, str(export_dir), out_root()):
+            _save()
+        else:
+            var.set(was)
+
     menu = tk.Menu(settings_menu, **menu_opts)
-    for mode, label in _LABELS:
-        menu.add_radiobutton(label=label, value=mode, variable=var,
-                             command=_save)
-    menu.add_separator()
-    menu.add_command(label="Build compatibility patch...",
-                     command=lambda: build_patch_dialog(
-                         settings_menu, str(export_dir), out_root()))
+    enable_tips(menu)
+    menu.add_radiobutton(label=dict(_LABELS)[SOURCE_VANILLA],
+                         value=SOURCE_VANILLA, variable=var, command=_save)
+    menu.add_radiobutton(label=dict(_LABELS)[SOURCE_MORROBLIVION],
+                         value=SOURCE_MORROBLIVION, variable=var,
+                         command=_pick_morroblivion)
+    menu.entry_tips[menu.index("end")] = MORROBLIVION_TIP
     settings_menu.add_cascade(label="Morrowind source", menu=menu)
     return var
 
 
-def build_patch_dialog(parent, export_dir: str, out_root) -> None:
-    """Ask for the Morrowind Data folder, then build the patch in a window.
+def _morrowind_data_dir(export_dir: str) -> str:
+    """The Morrowind Data Files folder: the registered install, else asked for.
+
+    Returns "" when the user cancels or picks a folder without the masters.
+    """
+    known = source_registry.directory_for(export_dir, PATCH_SOURCES[0])
+    if known and not source_paths(known, PATCH_SOURCES)[1]:
+        return known
+    data_dir = filedialog.askdirectory(
+        title="Select your Morrowind 'Data Files' folder")
+    if not data_dir:
+        return ""
+    _, missing = source_paths(data_dir, PATCH_SOURCES)
+    if missing:
+        messagebox.showerror(
+            _TITLE,
+            "That folder is not a Morrowind Data Files directory.\n\n"
+            f"Looked in:\n{data_dir}\n\nMissing:\n  " + "\n  ".join(missing))
+        return ""
+    return data_dir
+
+
+def build_patch_dialog(parent, export_dir: str, out_root) -> bool:
+    """Start building the patch in a window; False when it could not start.
 
     Morroblivion has to be converted first -- the patch holds what it does NOT
     supply, so without it there is no gap to measure.
@@ -67,31 +117,16 @@ def build_patch_dialog(parent, export_dir: str, out_root) -> None:
     exports = morroblivion_exports(export_dir)
     if not exports:
         messagebox.showerror(
-            "Build compatibility patch",
+            _TITLE,
             "No converted Morroblivion plugin was found.\n\n"
-            "The patch holds the objects Morroblivion does NOT convert, so "
-            "Morroblivion has to be converted first.")
-        return
-
-    if patch_exists(export_dir) and not messagebox.askyesno(
-            "Build compatibility patch",
-            f"{PATCH_NAME} already exists.\n\nRebuild it?"):
-        return
-
-    data_dir = filedialog.askdirectory(
-        title="Select your Morrowind 'Data Files' folder")
+            f"{PATCH_NAME} holds the objects Morroblivion does NOT convert, so "
+            "convert Morrowind_ob.esm first, then choose Morroblivion again.")
+        return False
+    data_dir = _morrowind_data_dir(export_dir)
     if not data_dir:
-        return
-    _, missing = source_paths(data_dir, PATCH_SOURCES)
-    if missing:
-        messagebox.showerror(
-            "Build compatibility patch",
-            "That folder is not a Morrowind Data Files directory.\n\n"
-            f"Looked in:\n{data_dir}\n\nMissing:\n  "
-            + "\n  ".join(missing))
-        return
-
+        return False
     _run_build_window(parent, data_dir, export_dir, exports, out_root)
+    return True
 
 
 def _run_build_window(parent, data_dir: str, export_dir: str,

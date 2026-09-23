@@ -536,7 +536,10 @@ FormID with the union bounds, which the importer applies as an override.
 Morrowind source in the GUI): `vanilla` borrows from the declared masters;
 `morroblivion` puts every converted `Morrowind_ob*` export first and drops the
 three vanilla ESMs from the list, so a mod shares Morroblivion's objects
-instead of shipping a second copy of every static. Morroblivion's cells and
+instead of shipping a second copy of every static. Choosing Morroblivion in
+the GUI builds the [gap patch](#morroblivion-gap-patch) when it is missing,
+and choosing it again while selected rebuilds it; the mode refuses every
+conversion without the patch, so the two are one choice. Morroblivion's cells and
 worldspace use its own EditorIDs, so in that mode doors into vanilla interiors
 link only where the escaped name matches, and exteriors do not link at all.
 

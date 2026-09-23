@@ -1,4 +1,4 @@
-"""The dark top menu bar: Settings, Converted, Mods, Tools, About, Updates.
+"""The dark top menu bar: Plugins, Settings, Build, Help.
 
 Windows renders a NATIVE (white) bar for `root.configure(menu=...)` and ignores
 tk colors on it, so the bar is built from dark Menubuttons whose dropdown
@@ -8,8 +8,8 @@ popups -- which DO honour color options -- are tk.Menu instances.
 `app.info`, `app.commit_plugin`, `app.run_global_action` and friends through
 the carrier, so those have to be bound first.
 
-Two entries are deliberately not automatic. Converted rebuilds on `<Map>`,
-the menu's own "about to be shown" signal, because output/ gains entries as
+Two entries are deliberately not automatic. Plugins > Converted rebuilds in
+its `postcommand`, run each time it is about to be shown, because output/ gains entries as
 conversions finish and a menu built once at startup goes stale within the
 session. Check for Updates is a network call, so a GUI that phoned home on
 launch would stall startup and do it unasked.
@@ -56,6 +56,9 @@ from core.worker_budget import worker_count
 
 DISCORD_URL = "https://discord.gg/NTkCDfYUru"
 YOUTUBE_URL = "https://www.youtube.com/@bryanthinton"
+
+#: The one global action that edits converted plugins instead of building a mod.
+MAKE_MASTER = "make_master"
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +172,7 @@ def _build_settings_menu(app, menubutton, menu_opts) -> None:
 
 
 # ---------------------------------------------------------------------------
-#  Converted
+#  Plugins
 # ---------------------------------------------------------------------------
 
 def _select_converted(app, name: str) -> None:
@@ -191,28 +194,29 @@ def _select_converted(app, name: str) -> None:
     app.file_combo.selection_clear()
 
 
-def _build_converted_menu(app, menubutton, _menu_opts) -> None:
-    """Converted: re-select a plugin already present in output/."""
-    app.converted_menu = menubutton("Converted")
+def _add_converted_menu(app, plugins_menu, menu_opts) -> None:
+    """Plugins > Converted: re-select a plugin already present in output/."""
+    converted = tk.Menu(plugins_menu, **menu_opts)
 
     def _rebuild():
         """Re-read output/ so the list is current every time it opens."""
-        app.converted_menu.delete(0, tk.END)
+        converted.delete(0, tk.END)
         names = scan_converted(app.output_var.get().strip())
         if not names:
-            app.converted_menu.add_command(label="(nothing converted yet)",
-                                           state="disabled")
+            converted.add_command(label="(nothing converted yet)",
+                                  state="disabled")
             return
         for name in names:
-            app.converted_menu.add_command(
+            converted.add_command(
                 label=name, command=lambda n=name: _select_converted(app, n))
 
-    app.converted_menu.bind("<Map>", lambda _e: _rebuild())
+    converted.configure(postcommand=_rebuild)
     _rebuild()
+    plugins_menu.add_cascade(label="Converted", menu=converted)
 
 
 # ---------------------------------------------------------------------------
-#  Tools
+#  Dependency check, folders and Build
 # ---------------------------------------------------------------------------
 
 def _probe_phases(preflight) -> tuple:
@@ -304,45 +308,54 @@ def _open_folder(app, path: str, what: str) -> None:
         app.info(f"Open {what}", f"Could not open:\n\n{path}\n\n{exc}")
 
 
-def _build_tools_menu(app, menubutton, _menu_opts) -> None:
-    """Tools: dependency check, global actions, journal patch, folder shortcuts.
+def _add_global_action(app, menu, key: str) -> None:
+    """One GLOBAL_ACTIONS entry, resolving `app.run_global_action` at click."""
+    _key, label, tip, _short, _row = next(a for a in GLOBAL_ACTIONS
+                                          if a[0] == key)
+    add_tipped_command(menu, label, lambda: app.run_global_action(key), tip)
 
-    The global entries are late-bound: `app.run_global_action` is wired with
-    the rest of the run logic, so the lambda resolves it at click time.
+
+def _build_plugins_menu(app, menubutton, menu_opts, mods_ui) -> None:
+    """Plugins: import mods, pick a converted plugin, flag masters, folders.
+
     Rotation is worthless if nobody knows the log files are there, hence the
     Logs shortcut.
     """
-    tools_menu = menubutton("Tools")
-    enable_tips(tools_menu)
+    plugins_menu = menubutton("Plugins")
+    enable_tips(plugins_menu)
+    gui_mods.add_mods_menu(plugins_menu, mods_ui)
+    plugins_menu.add_separator()
+    _add_converted_menu(app, plugins_menu, menu_opts)
+    _add_global_action(app, plugins_menu, MAKE_MASTER)
+    plugins_menu.add_separator()
     add_tipped_command(
-        tools_menu, "Check Dependencies", lambda: _check_dependencies(app),
-        "List what each pipeline phase needs that is missing -- Python "
-        "packages, bundled tools, game installs -- without running anything")
-    tools_menu.add_separator()
-    for gkey, glabel, gtip, _gshort, _grow in GLOBAL_ACTIONS:
-        add_tipped_command(tools_menu, glabel,
-                           lambda k=gkey: app.run_global_action(k), gtip)
-    tools_menu.add_separator()
-    add_tipped_command(tools_menu, gui_journal.TITLE,
-                       lambda: gui_journal.run_patch(app), gui_journal.TIP)
-    tools_menu.add_separator()
-    add_tipped_command(
-        tools_menu, "Open Output Folder",
+        plugins_menu, "Open Output Folder",
         lambda: _open_folder(app, app.output_var.get().strip(),
                              "Output folder"),
         "Open the folder converted plugins and finished mods are written to")
     add_tipped_command(
-        tools_menu, "Open Logs Folder",
+        plugins_menu, "Open Logs Folder",
         lambda: _open_folder(app, str(REPO_ROOT / "logs"), "Logs folder"),
         "Open the folder holding each run's log files")
 
 
+def _build_build_menu(app, menubutton, _menu_opts) -> None:
+    """Build: every action that makes a mod in output/, and the journal patch."""
+    build_menu = menubutton("Build")
+    enable_tips(build_menu)
+    for key, *_rest in GLOBAL_ACTIONS:
+        if key != MAKE_MASTER:
+            _add_global_action(app, build_menu, key)
+    add_tipped_command(build_menu, gui_journal.MOD_NAME,
+                       lambda: gui_journal.run_patch(app), gui_journal.TIP)
+
+
 # ---------------------------------------------------------------------------
-#  About and Check for Updates
+#  Help
 # ---------------------------------------------------------------------------
 
 def _flat_menubutton(parent, text: str):
-    """A bar entry that is a plain click target, not a dropdown."""
+    """A dark top-level bar entry."""
     mb = tk.Menubutton(parent, text=text,
                        bg=CLR["panel"], fg=CLR["text"],
                        activebackground=CLR["btn_hover"],
@@ -372,9 +385,8 @@ def _about(app) -> None:
                     ("Discord — community and support", DISCORD_URL)))
 
 
-def _show_update_result(app, update_mb, result: dict) -> None:
+def _show_update_result(app, result: dict) -> None:
     """Report a finished check. UI thread only, via `root.after`."""
-    update_mb.configure(text="Check for Updates", state="normal")
     if not result["reachable"]:
         app.info("Update Check Failed",
                  "Could not reach GitHub to check for updates.\n\n"
@@ -396,37 +408,47 @@ def _show_update_result(app, update_mb, result: dict) -> None:
         open_url(version_info.RELEASES_URL)
 
 
-def _build_about_menu(app, _menubutton, _menu_opts) -> None:
-    """About and Check for Updates, the two right-hand bar entries.
+def _check_for_updates(app, help_menu, index: int) -> None:
+    """Run the version check on a worker, unless one is in flight."""
+    if str(help_menu.entrycget(index, "state")) == "disabled":
+        return
+    help_menu.entryconfigure(index, label="Checking for Updates...",
+                             state="disabled")
 
-    About is top-level rather than under Help: it is currently the only such
-    item, and a one-entry menu is a worse click than a direct button.
-    """
-    about_mb = _flat_menubutton(app.menubar, "About")
-    about_mb.bind("<Button-1>", lambda _e: _about(app))
+    def _done(result):
+        """Re-arm the entry and report; runs on the UI thread."""
+        help_menu.entryconfigure(index, label="Check for Updates",
+                                 state="normal")
+        _show_update_result(app, result)
 
-    app.update_mb = _flat_menubutton(app.menubar, "Check for Updates")
+    def _worker():
+        """Ask GitHub, then hop back: tkinter is not thread-safe."""
+        try:
+            result = version_info.check_for_update()
+        except Exception:
+            result = {"current": version_info.current_version(),
+                      "latest": None, "available": False,
+                      "reachable": False}
+        app.root.after(0, lambda: _done(result))
 
-    def _check():
-        """Run the version check on a worker, unless one is in flight."""
-        if str(app.update_mb.cget("state")) == "disabled":
-            return
-        app.update_mb.configure(text="Checking...", state="disabled")
+    threading.Thread(target=_worker, daemon=True).start()
 
-        def _worker():
-            """Ask GitHub, then hop back: tkinter is not thread-safe."""
-            try:
-                result = version_info.check_for_update()
-            except Exception:
-                result = {"current": version_info.current_version(),
-                          "latest": None, "available": False,
-                          "reachable": False}
-            app.root.after(
-                0, lambda: _show_update_result(app, app.update_mb, result))
 
-        threading.Thread(target=_worker, daemon=True).start()
-
-    app.update_mb.bind("<Button-1>", lambda _e: _check())
+def _build_help_menu(app, menubutton, _menu_opts) -> None:
+    """Help: dependency check, update check and About."""
+    help_menu = menubutton("Help")
+    enable_tips(help_menu)
+    add_tipped_command(
+        help_menu, "Check Dependencies", lambda: _check_dependencies(app),
+        "List what each pipeline phase needs that is missing -- Python "
+        "packages, bundled tools, game installs -- without running anything")
+    add_tipped_command(
+        help_menu, "Check for Updates",
+        lambda: _check_for_updates(app, help_menu, updates_index),
+        "Ask GitHub whether a newer release is out")
+    updates_index = help_menu.index("end")
+    help_menu.add_separator()
+    help_menu.add_command(label="About", command=lambda: _about(app))
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +456,7 @@ def _build_about_menu(app, _menubutton, _menu_opts) -> None:
 # ---------------------------------------------------------------------------
 
 def build_menubar(app):
-    """Build the whole bar; binds `app.menubar`, `converted_menu`, `update_mb`.
+    """Build the whole bar and bind it to `app.menubar`.
 
     Returns the `ModsUI` carrier the Mods dialogs need, which `gui_main` fills
     in once the rest of the window exists.
@@ -461,11 +483,10 @@ def build_menubar(app):
         bar.append((mb, menu))
         return menu
 
-    _build_settings_menu(app, _menubutton, menu_opts)
-    _build_converted_menu(app, _menubutton, menu_opts)
     mods_ui = gui_mods.ModsUI(app.root, None, CLR, EXPORT_DIR, None, None)
-    gui_mods.add_mods_menu(_menubutton("Mods"), mods_ui)
-    _build_tools_menu(app, _menubutton, menu_opts)
-    _build_about_menu(app, _menubutton, menu_opts)
+    _build_plugins_menu(app, _menubutton, menu_opts, mods_ui)
+    _build_settings_menu(app, _menubutton, menu_opts)
+    _build_build_menu(app, _menubutton, menu_opts)
+    _build_help_menu(app, _menubutton, menu_opts)
     enable_hover_switch(app.root, bar)
     return mods_ui

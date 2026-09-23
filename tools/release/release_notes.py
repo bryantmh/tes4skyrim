@@ -94,7 +94,7 @@ LOD_PRODUCING_STEP = "Create LOD"
 
 #: Global actions packaging their own standalone artefact, never read by 9./10.
 STANDALONE_STEPS = frozenset(
-    {"Patch Skyrim", "Package Start Mod", "Package SKSE Mod",
+    {"Body Slot Patch", "Package Start Mod", "Package SKSE Mod",
      LOD_PRODUCING_STEP, LOD_PACKAGING_STEP})
 
 # (regex over the repo-relative path, steps it forces).  First match wins per
@@ -119,15 +119,15 @@ RULES: list[tuple[str, list[str]]] = [
      r"terrain_lod_textures|landscape_normals)\.py",
                                                ["Create LOD"]),
     (r"^asset_convert/(?:\w+/)*worldmap_clouds\.py",    ["6. Import", "Create LOD"]),
-    (r"^asset_convert/(?:\w+/)*(body_slots|mesh_cut)\.py", ["3. Meshes", "Patch Skyrim"]),
-    (r"^tools/creature/patch_body_slots\.py",           ["Patch Skyrim"]),
-    (r"^asset_convert/(?:\w+/)*skin_replacement\.py",   ["3. Meshes", "Patch Skyrim"]),
+    (r"^asset_convert/(?:\w+/)*(body_slots|mesh_cut)\.py", ["3. Meshes", "Body Slot Patch"]),
+    (r"^tools/creature/patch_body_slots\.py",           ["Body Slot Patch"]),
+    (r"^asset_convert/(?:\w+/)*skin_replacement\.py",   ["3. Meshes", "Body Slot Patch"]),
     (r"^asset_convert/(?:\w+/)*(bsa_pack)\.py",         ["9. Pack BSAs"]),
     (r"^asset_convert/(?:\w+/)*texture_prune\.py",      ["3. Meshes"]),
     (r"^asset_convert/(?:\w+/)*skyrim_assets\.py",
                                                ["3. Meshes", "5. Creatures",
-                                                "Patch Skyrim"]),
-    (r"^asset_convert/ui/(?:ui_menus|ui_cursor|swf)\.py$", ["Convert UI"]),
+                                                "Body Slot Patch"]),
+    (r"^asset_convert/ui/(?:ui_menus|ui_cursor|swf)\.py$", ["Convert Oblivion UI"]),
     (r"^asset_convert/(?:\w+/)*",                       ["3. Meshes"]),
 
     # ── Native / shared code: conservatively wide ─────────────────────────
@@ -152,7 +152,7 @@ RULES: list[tuple[str, list[str]]] = [
     (r"^tools/release/pack_lod\.py$",         ["Pack LOD"]),
     (r"^tools/release/package_start_mod\.py$", ["Package Start Mod"]),
     (r"^tools/release/package_runtime_dll\.py$", ["Package SKSE Mod"]),
-    (r"^tools/misc/convert_ui\.py$",          ["Convert UI"]),
+    (r"^tools/misc/convert_ui\.py$",          ["Convert Oblivion UI"]),
     (r"^tools/",                  []),
     (r"^references/",             []),
     (r"^external/",               []),
@@ -200,7 +200,7 @@ PHASE_STEPS: dict[str, list[str]] = {
     # phase_lod was deleted when LOD stopped being per-plugin work; the entry
     # stays so a diff against an older revision still attributes correctly.
     "phase_lod":                ["Create LOD"],
-    "phase_modify_body_meshes": ["Patch Skyrim"],
+    "phase_modify_body_meshes": ["Body Slot Patch"],
     "phase_pack":               ["9. Pack BSAs"],
     "phase_pack_zip":           ["10. Pack Mod Zip"],
 }

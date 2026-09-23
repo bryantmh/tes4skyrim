@@ -3249,7 +3249,7 @@ letting a loop name carry an inline prefix and a trailing suffix.
 
 **Code:** `plugin/journal_objectives.cpp`, `plugin/journal_log.cpp`,
 `asset_convert/ui/journal_patch.py`, `asset_convert/ui/avm1.py`,
-`core/gui/journal.py` (Tools > Patch Quest Journal). **Confirmed in game with
+`core/gui/journal.py` (Build > Quest Journal Stage Text). **Confirmed in game with
 Quest Journal Overhaul**; the vanilla and SkyUI `QuestsPage` patch is not yet
 played.
 
@@ -3335,9 +3335,13 @@ QJO also ships a rebuilt SkyUI `quest_journal.swf` whose Quests tab closes the
 journal and opens QJO's own menu, so its `QuestsPage` is never seen; patching
 it too is harmless. The patcher recognises each class by its constant-pool
 strings, finds the copy the game loads (loose file, else the archive whose
-plugin loads last), and writes the result loose, keeping an unpatched loose
-original as `<name>.mwrt-backup`. QJO's rows are mouse-only; its movie gives
-them no gamepad focus.
+plugin loads last), and zips the result into `Finished Mods` as a mod that
+must load after the UI mod it patches. The game folder is never written, so
+uninstalling the mod is the undo. Patching replaces an earlier copy of the
+patch, so reading the mod's own deployed output still works, but it keeps the
+journal it was first built from: a QJO or SkyUI update needs the mod disabled
+while it is rebuilt. QJO's rows are mouse-only; its movie gives them no
+gamepad focus.
 
 ## <a id="licensing"></a>Licensing
 

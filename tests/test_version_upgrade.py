@@ -265,12 +265,7 @@ def test_step_keys_match_the_gui_step_table():
 
 
 def test_every_global_action_is_a_global_step():
-    """A GUI global button must be recorded plugin-independently.
-
-    Recording one per-plugin is the bug that made "Patch Skyrim" re-tick
-    forever: the single shared artefact already covered every plugin, but the
-    planner saw no record of it for the ones it had not run alongside.
-    """
+    """A GUI global action is recorded once, not per plugin."""
     import gui
     for key, *_ in gui.GLOBAL_ACTIONS:
         assert key in v.GLOBAL_STEPS
@@ -350,12 +345,9 @@ def test_unknown_plugin_has_no_installed_version(state):
     assert v.installed_version_for("Never.esm") is None
 
 
-# ── Plugin-independent steps ──────────────────────────────────────────────
-# "Patch Skyrim" takes no `-f`: it patches the vanilla Skyrim body records
-# for the whole load order and writes ONE shared `Slot44 Patch.esp` at the root
-# of output/.  Running it once covers every plugin.  Recording it per-plugin
-# meant patching while converting Oblivion left Nehrim with no record, so the
-# planner saw a step that "never ran" and re-ticked it forever.
+# ---------------------------------------------------------------------------
+#  Plugin-independent steps
+# ---------------------------------------------------------------------------
 
 def test_a_global_step_is_recorded_once_not_per_plugin(state):
     v.record_step_run("modify_body_meshes", "Oblivion.esm", "0.586")
@@ -365,7 +357,7 @@ def test_a_global_step_is_recorded_once_not_per_plugin(state):
 
 
 def test_a_global_step_counts_for_a_plugin_that_never_ran_it(state, monkeypatch):
-    """THE bug: Patch Skyrim re-selected for every plugin but the one it ran
+    """THE bug: Body Slot Patch re-selected for every plugin but the one it ran
     alongside, even though the single shared patch already existed."""
     monkeypatch.setattr(v, "current_version", lambda: "0.586")
     _table(monkeypatch, {"0.586": []})
@@ -380,7 +372,7 @@ def test_a_global_step_counts_for_a_plugin_that_never_ran_it(state, monkeypatch)
 def test_a_global_step_is_still_owed_when_its_own_code_changed(state, monkeypatch):
     """Sharing the record must not make the step un-re-runnable."""
     monkeypatch.setattr(v, "current_version", lambda: "0.586")
-    _table(monkeypatch, {"0.586": ["Patch Skyrim"]})
+    _table(monkeypatch, {"0.586": ["Body Slot Patch"]})
     for key, _ in v.STEP_KEYS:
         v.record_step_run(key, "Nehrim.esm", "0.585")
     v.record_step_run("modify_body_meshes", "Oblivion.esm", "0.585")
@@ -870,7 +862,7 @@ def test_parser_agrees_with_what_release_notes_actually_writes(monkeypatch):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     import tools.release.release_notes as rn
 
-    steps = ["3. Meshes", "8. Scripts"]
+    steps = ["3. Meshes", "8. Scripts", "Create LOD", "Body Slot Patch"]
     monkeypatch.setattr(rn, "commits_between", lambda a, b: [("abc1234", "x")])
     monkeypatch.setattr(rn, "changed_files", lambda a, b: [])
     monkeypatch.setattr(rn, "convert_py_steps", lambda a, b: None)

@@ -576,12 +576,8 @@ def _get_json(url: str, timeout: int):
         return json.load(fh)
 
 
-# The checklist release_notes.py writes into every annotated tag message:
-#   Steps to re-run in the GUI:
-#
-#     [x] 3. Meshes
-#     [x] 8. Scripts
-_STEP_LINE = re.compile(r"^\s*\[[xX ]\]\s*(\d+\.\s*.+?)\s*$")
+#: One checklist line of a tag message: `[x] 3. Meshes`, or a global `[x] Create LOD`.
+_STEP_LINE = re.compile(r"^\s*\[[xX ]\]\s*(.+?)\s*$")
 
 # Proves the tag was cut by the release workflow and its checklist is therefore
 # authoritative -- including when the checklist is empty.  Must stay in step

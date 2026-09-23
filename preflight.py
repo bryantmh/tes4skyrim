@@ -408,7 +408,7 @@ PHASE_LABELS = {
     'sounds':       'Sounds',
     'scripts':      'Scripts',
     'lod':          'LOD',
-    'skyrim_patch': 'Patch Skyrim',
+    'skyrim_patch': 'Body Slot Patch',
     'pack_bsa':     'Pack BSAs',
     'pack_zip':     'Pack Mod Zip',
     'pack_lod':     'Pack LOD',

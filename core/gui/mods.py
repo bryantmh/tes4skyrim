@@ -1,5 +1,5 @@
 """
-Mods menu: importing a mod archive, and re-importing it with a new selection.
+Plugins menu import entries: importing a mod archive, and re-importing it with a new selection.
 
 Split out of `gui.py` because mod import is a self-contained feature with its
 own dialogs -- the confirm card, the BAIN sub-package picker and the manage
@@ -57,7 +57,7 @@ class ModsUI:
 
 
 def add_mods_menu(menu, ui: ModsUI) -> None:
-    """Add the Mods menu: import an archive or folder, re-import, manage."""
+    """Add the import entries to Plugins: import an archive or folder, re-import, manage."""
 
     def _archive_cmd():
         """Pick a mod archive and start its import."""
@@ -371,7 +371,7 @@ def manage_mods(ui: ModsUI) -> None:
     if not groups:
         ui.info("Imported Mods",
                 "No mods imported yet.\n\n"
-                "Use Mods > Import Mod Archive…, or drag an archive onto "
+                "Use Plugins > Import Mod Archive…, or drag an archive onto "
                 "the left panel.")
         return
 

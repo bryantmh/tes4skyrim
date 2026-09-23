@@ -18,13 +18,12 @@ Usage:
 
 import argparse
 import sys
-import zipfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from output_layout import finished_dir
+from output_layout import finished_dir, write_mod_zip
 
 MOD_NAME = "TESRuntime"
 
@@ -71,16 +70,13 @@ def package(out_root: Path) -> int:
     print(f"  Output: {zip_path}")
     print()
 
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for src, arc in REQUIRED:
-            zf.write(src, arcname=str(arc))
-            print(f"  + {arc}")
-        for src, arc in OPTIONAL:
-            if src.is_file():
-                zf.write(src, arcname=str(arc))
-                print(f"  + {arc}")
-            else:
-                print(f"  - {arc} (not built, skipped)")
+    members = [(str(arc), src) for src, arc in REQUIRED]
+    for src, arc in OPTIONAL:
+        if src.is_file():
+            members.append((str(arc), src))
+        else:
+            print(f"  - {arc} (not built, skipped)")
+    write_mod_zip(zip_path, members, lambda _i, arc: print(f"  + {arc}"))
 
     size = zip_path.stat().st_size
     print()

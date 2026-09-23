@@ -7,7 +7,7 @@ off the machine this runs on, exactly like the rest of the pipeline.
 
 Unlike every other stage this takes NO `-f` plugin: Oblivion's UI lives in
 loose menu files and BSAs, not inside any ESM, so there is nothing per-plugin
-to convert. It is a GLOBAL action (the GUI's "Convert UI" button), run once,
+to convert. It is a GLOBAL action (the GUI's "Convert Oblivion UI" button), run once,
 producing one shared artefact.
 
     output/Oblivion UI/Interface/messagebox.swf     working copy, loose
@@ -33,7 +33,6 @@ game. See docs/commentary/asset_convert_ui.md for what was measured before that 
 import argparse
 import os
 import sys
-import zipfile
 from pathlib import Path
 
 # tools/misc/<this file> -> three levels up is the repo root, the same reach
@@ -44,7 +43,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from asset_convert.ui import ui_cursor
 from asset_convert.ui import ui_menus
 from asset_convert.sources.bsa_extract import read_bsa_files
-from output_layout import finished_dir
+from output_layout import finished_dir, write_mod_zip
 
 MOD_NAME = "Oblivion UI"
 MESSAGE_BOX_SWF = r'interface\messagebox.swf'
@@ -226,10 +225,8 @@ def convert(out_root: Path, oblivion_data=None, skyrim_data=None,
         (interface / name).write_bytes(data)
 
     zip_path = finished_dir(out_root) / f'{MOD_NAME}.zip'
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for name in built:
-            zf.write(interface / name,
-                     arcname=str(Path('Interface') / name))
+    write_mod_zip(zip_path, [(str(Path('Interface') / name), interface / name)
+                             for name in built])
 
     if preview and messagebox:
         png = mod_root / 'preview.png'

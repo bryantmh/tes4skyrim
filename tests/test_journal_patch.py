@@ -5,7 +5,9 @@ identifying strings, so nothing here needs a game install.
 See: docs/commentary/morrowind_runtime.md#journal-stage-text
 """
 
+import os
 import struct
+import zipfile
 
 from asset_convert.ui.avm1 import UNDEFINED, Register, assemble
 from asset_convert.ui.journal_patch import (KIND_QJO, KIND_QUESTS_PAGE, MARKER,
@@ -13,8 +15,9 @@ from asset_convert.ui.journal_patch import (KIND_QJO, KIND_QUESTS_PAGE, MARKER,
 from asset_convert.ui.swf import (TAG_DO_ACTION, TAG_DO_INIT_ACTION, TAG_END,
                                   TAG_SHOW_FRAME, TWIPS, Swf, Tag, pack_rect)
 from core.gui.config import CLR
-from core.gui.journal import (FAILED, PATCHED, SKIPPED, _archive_rank,
-                              report_status)
+from core.gui.journal import (FAILED, MOD_NAME, PATCHED, SKIPPED,
+                              _archive_rank, build_journal_mod, report_status)
+from output_layout import write_mod_zip
 from tools.disasm.swf_as2_disasm import disassemble
 
 #: Skyrim's 1280x720 menu stage.
@@ -110,10 +113,53 @@ def test_other_movies_untouched():
 
 def test_report_headline():
     """A failure reads red, any patch green, and all-skipped yellow."""
-    assert report_status([PATCHED, FAILED]) == ('Patch Failed', CLR['red'])
-    assert report_status([PATCHED, SKIPPED]) == ('Patched Successfully',
+    assert report_status([PATCHED, FAILED]) == ('Build Failed', CLR['red'])
+    assert report_status([PATCHED, SKIPPED]) == ('Built Successfully',
                                                  CLR['green'])
     assert report_status([SKIPPED]) == ('Nothing Patched', CLR['yellow'])
+
+
+def test_mod_zip_holds_the_patched_journal(tmp_path):
+    """The loaded journal is zipped under Interface/, and the game folder is
+    left exactly as it was."""
+    data, out = tmp_path / 'Data', tmp_path / 'output'
+    (data / 'Interface').mkdir(parents=True)
+    original = _quests_page_movie()
+    (data / 'Interface' / 'quest_journal.swf').write_bytes(original)
+    results, zip_path = build_journal_mod(str(data), out)
+    assert [o for o, _ in results] == [PATCHED, SKIPPED]
+    assert zip_path == out / 'Finished Mods' / f'{MOD_NAME}.zip'
+    with zipfile.ZipFile(zip_path) as zf:
+        assert zf.namelist() == ['Interface/quest_journal.swf']
+        assert is_patched(zf.read('Interface/quest_journal.swf'))
+    assert os.listdir(data / 'Interface') == ['quest_journal.swf']
+    assert (data / 'Interface' / 'quest_journal.swf').read_bytes() == original
+
+
+def test_nothing_to_patch_writes_no_zip(tmp_path):
+    """With no journal installed there is no mod to write."""
+    (tmp_path / 'Data').mkdir()
+    results, zip_path = build_journal_mod(str(tmp_path / 'Data'), tmp_path)
+    assert zip_path is None and [o for o, _ in results] == [SKIPPED, SKIPPED]
+    assert not (tmp_path / 'Finished Mods').exists()
+
+
+def test_mod_zip_swaps_in_whole(tmp_path):
+    """A failed write leaves the previous zip and no temporary file."""
+    zip_path = tmp_path / 'Mod.zip'
+    assert write_mod_zip(zip_path, [('a.txt', b'old')]) == 1
+
+    def _boom(_count, _name):
+        """Fail after the first member, as an interrupted run would."""
+        raise KeyboardInterrupt
+
+    try:
+        write_mod_zip(zip_path, [('a.txt', b'new'), ('b.txt', b'x')], _boom)
+    except KeyboardInterrupt:
+        pass
+    assert os.listdir(tmp_path) == ['Mod.zip']
+    with zipfile.ZipFile(zip_path) as zf:
+        assert zf.read('a.txt') == b'old'
 
 
 def test_archive_belongs_to_its_plugin():

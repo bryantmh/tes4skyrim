@@ -483,8 +483,8 @@ def _missing_master_message(plugin: str, missing: list) -> str:
              "would claim their load-order slots as its own.", '', 'Missing:']
     lines += [f'  {name}' for name in missing]
     if PATCH_NAME in missing:
-        lines += ['', f'Build {PATCH_NAME} from Settings > Morrowind source > '
-                      'Build compatibility patch, or run:', '',
+        lines += ['', f'Build {PATCH_NAME} by choosing Settings > Morrowind '
+                      'source > Morroblivion + patch, or run:', '',
                   '  python convert.py --build-morrowind-patch '
                   '"<Morrowind>/Data Files"']
     others = [n for n in missing if n != PATCH_NAME]

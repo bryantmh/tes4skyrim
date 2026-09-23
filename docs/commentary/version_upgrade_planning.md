@@ -46,18 +46,18 @@ Why each member qualifies:
 
 | Step | Why it belongs to no plugin |
 |---|---|
-| `modify_body_meshes` ("10. Patch Skyrim") | Takes no `-f`. Patches the vanilla Skyrim body records for the user's whole load order and writes ONE shared `Body Slots Patch.zip` (the plugin plus the split skin meshes) into Finished Mods, not into any per-plugin folder. `main()` must not bail with "No files to process" when only this step is asked for (an end user's config has no `files` list, so it never ran and the GUI re-ticked it), and it is recorded once under the global key, since stamping it per plugin left every other plugin looking like it had never run. |
+| `modify_body_meshes` ("Body Slot Patch") | Takes no `-f`. Patches the vanilla Skyrim body records for the user's whole load order and writes ONE shared `Body Slots Patch.zip` (the plugin plus the split skin meshes) into Finished Mods, not into any per-plugin folder. `main()` must not bail with "No files to process" when only this step is asked for (an end user's config has no `files` list, so it never ran and the GUI re-ticked it), and it is recorded once under the global key, since stamping it per plugin left every other plugin looking like it had never run. |
 | `create_lod` | LOD tiles are files on a fixed grid shared by every plugin that edits a worldspace, so baking them per plugin generates the contested tiles once per sibling and then discards all but one. It reconciles SEVERAL plugins against each other. This is why LOD is no longer a numbered per-plugin step at all. |
 | `pack_lod` | Inherits it: zips that one shared folder into one shared archive, so it is no more per-plugin than the bake it packages. |
 | `make_master` ("Convert to Master") | The ESM flag has to be applied to a whole dependency CHAIN at once, since an ESM may not master a plain ESP. |
-| `convert_ui` ("Convert UI") | The purest case: `tools/misc/convert_ui.py` takes no plugin argument at all. It reads the Oblivion and Skyrim installs and writes one `Oblivion UI` zip. |
+| `convert_ui` ("Convert Oblivion UI") | The purest case: `tools/misc/convert_ui.py` takes no plugin argument at all. It reads the Oblivion and Skyrim installs and writes one `Oblivion UI` zip. |
 
 `make_master` and `convert_ui` were each absent from this set while listed in
 `GLOBAL_ACTIONS`, and two tests in `tests/test_version_upgrade.py` assert the two
 tables agree precisely because that divergence is invisible at runtime — the step
 still works, it just never stops being offered.
 
-## <a id="what-selects-convert-ui"></a>What selects "Convert UI" in the release notes
+## <a id="what-selects-convert-ui"></a>What selects "Convert Oblivion UI" in the release notes
 
 `release_notes.RULES` maps a changed path to the steps it makes stale. Three
 patterns feed this action, each listed BEFORE a blanket rule that would otherwise

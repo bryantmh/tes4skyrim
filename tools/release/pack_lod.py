@@ -22,14 +22,13 @@ Usage:
 
 import argparse
 import sys
-import zipfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from asset_convert.lod.sibling_lod import LOD_DIR_NAME
-from output_layout import finished_dir
+from output_layout import finished_dir, tree_members, write_mod_zip
 
 
 def package(out_root: Path) -> int:
@@ -38,7 +37,7 @@ def package(out_root: Path) -> int:
         print(f"ERROR: {src_root} not found — run Create LOD first.")
         return 1
 
-    files = sorted(p for p in src_root.rglob('*') if p.is_file())
+    files = tree_members(src_root)
     if not files:
         print(f"ERROR: {src_root} is empty — run Create LOD first.")
         return 1
@@ -53,24 +52,12 @@ def package(out_root: Path) -> int:
     print(f"  Files:  {len(files):,}")
     print()
 
-    # Written to a temp name and moved into place, so an interrupted run never
-    # leaves a truncated archive sitting where the GUI reads "already packed".
-    tmp_path = zip_path.with_suffix(".zip.part")
-    try:
-        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for i, src in enumerate(files, 1):
-                # Relative to AutoConvertLOD/, so the archive root IS the Data
-                # folder: meshes\ and textures\ sit at top level.
-                zf.write(src, arcname=str(src.relative_to(src_root)))
-                # Thousands of tiles: a line each would bury the log, so report
-                # progress periodically instead.
-                if i % 500 == 0 or i == len(files):
-                    print(f"  {i:,}/{len(files):,} packed", flush=True)
-        zip_path.unlink(missing_ok=True)
-        tmp_path.replace(zip_path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    def _progress(i, _arcname):
+        """Thousands of tiles: report every 500th rather than each one."""
+        if i % 500 == 0 or i == len(files):
+            print(f"  {i:,}/{len(files):,} packed", flush=True)
+
+    write_mod_zip(zip_path, files, _progress)
 
     size = zip_path.stat().st_size
     print()

@@ -11,10 +11,11 @@ Everything installable is collected here instead: every mod zip
 (`<plugin>.zip`, `TESGameSelect.zip`, `AutoConvertLOD.zip`, and
 `Body Slots Patch.zip`, the Skyrim load-order patch with its split skin meshes).
 
-Deliberately its own tiny module: four independent producers write here —
-convert.py's zip and body-patch phases, tools/release/package_start_mod.py and
-tools/release/pack_lod.py — and the tools must not import the whole pipeline to learn
-one folder name.
+Deliberately its own tiny module: independent producers write here —
+convert.py's zip and body-patch phases, the tools/release packagers,
+tools/misc/convert_ui.py and the GUI's journal patch — all through
+`write_mod_zip`, and they must not import the whole pipeline to learn one
+folder name.
 
 The name has a SPACE in it and is user-facing, so it is spelled exactly once,
 here. Note for scanners: nothing in here is a converted plugin. `output/` is
@@ -26,6 +27,7 @@ and a loose .esp but no manifest, so it still satisfies neither test and is
 never mistaken for a converted plugin.
 """
 
+import zipfile
 from pathlib import Path
 
 FINISHED_DIR_NAME = "Finished Mods"
@@ -47,6 +49,44 @@ def finished_dir(out_root) -> Path:
     d = Path(out_root) / FINISHED_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+# ---------------------------------------------------------------------------
+#  Writing a mod zip
+# ---------------------------------------------------------------------------
+
+def tree_members(root) -> list:
+    """[(archive name, file)] for every file under `root`, relative to it."""
+    root = Path(root)
+    return [(str(p.relative_to(root)), p)
+            for p in sorted(root.rglob("*")) if p.is_file()]
+
+
+def write_mod_zip(zip_path, members, on_file=None) -> int:
+    """Zip `members` -- (archive name, file path or bytes) -- to `zip_path`.
+
+    Written under a temporary name and swapped in, so an interrupted run never
+    leaves a truncated archive where the GUI looks for a finished one.
+    `on_file(count, archive name)` runs after each member. Returns the count.
+    """
+    zip_path = Path(zip_path)
+    tmp = zip_path.with_name(zip_path.name + ".part")
+    count = 0
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            for arcname, source in members:
+                if isinstance(source, bytes):
+                    zf.writestr(arcname, source)
+                else:
+                    zf.write(source, arcname=arcname)
+                count += 1
+                if on_file is not None:
+                    on_file(count, arcname)
+        tmp.replace(zip_path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return count
 
 
 # --- Shared-folder resolution ----------------------------------------------

@@ -1,4 +1,4 @@
-"""The modal panels: mesh subfolders, Skyrim patch plugins, Convert UI.
+"""The modal panels: mesh subfolders, Skyrim patch plugins, Convert Oblivion UI.
 
 Every panel is a card placed directly over `app.outer` -- no Toplevel, so it
 stays inside the one window. A full-size backdrop is deliberately avoided: it
@@ -14,7 +14,7 @@ click, so one Listbox carries both the order and the on/off state without the
 two fighting over the mouse.
 
 Three of these panels gate a global action rather than merely editing a
-setting: Create LOD, Convert to Master and Convert UI each rewrite something
+setting: Create LOD, Convert to Master and Convert Oblivion UI each rewrite something
 shared -- tiles on a fixed grid, plugins in place, or the installed UI -- so
 the selection is a decision to confirm before anything runs, not a default to
 fire off.
@@ -474,7 +474,7 @@ def open_make_master_panel(app, on_apply=None) -> None:
 
 
 # ---------------------------------------------------------------------------
-#  Convert UI
+#  Convert Oblivion UI
 # ---------------------------------------------------------------------------
 
 UI_BLURB = ("Build a standalone mod that reskins Skyrim's UI with Oblivion's "
@@ -502,7 +502,7 @@ def _ui_body(card) -> None:
 
 
 def open_convert_ui_panel(app, on_continue=None) -> None:
-    """The Convert UI options card: pick which movies to reskin.
+    """The Convert Oblivion UI options card: pick which movies to reskin.
 
     Both boxes are on by default, and Continue greys out when NEITHER is
     checked -- there would be nothing to build. Reached from a MENU, where

@@ -227,7 +227,7 @@ class GuiApp:
         self.file_combo = self.scope_combo = None
         self.run_btn = self.cancel_btn = self.upgrade_btn = None
         self.prog_bar = self.status_row = None
-        self.menubar = self.converted_menu = self.update_mb = None
+        self.menubar = None
         self.style = None
         self.global_btns = {}
         self.step_widgets = {}
@@ -623,7 +623,7 @@ def _global_button_grid(app, parent, attach_tooltip) -> None:
 def _global_links(app, parent, on_patch_plugins) -> None:
     """The sub-links under the Global buttons, sharing their two columns.
 
-    Column 0 sits under "Patch Skyrim", the only action with a selection to
+    Column 0 sits under "Body Slot Patch", the only action with a selection to
     make from here. Create LOD needs no sub-link -- its button opens the
     selection dialog itself -- and neither packaging action has a choice.
     Stacked on separate rows they would read as two options of the left-hand
@@ -836,7 +836,7 @@ def _build_fields(app, sb_body, mods_ui, refresh, apply_scope, sep, path_row):
 def _bind_global_actions(app) -> None:
     """Bind the global-action callbacks, and the confirm panels they use.
 
-    Create LOD, Convert to Master and Convert UI each rewrite something shared,
+    Create LOD, Convert to Master and Convert Oblivion UI each rewrite something shared,
     so their selection is confirmed in a panel before anything runs.
     """
     def _stamp_of(key):

@@ -1,14 +1,16 @@
-"""Tools > Patch Quest Journal: patch the journal movies the game really loads.
+"""Build > Quest Journal Stage Text: the journal movies the game loads, patched
+into an installable mod zip.
 
 For each journal movie name the copy the game would load is found -- a loose
 file in `Data/Interface` beats every archive, and among archives the one whose
-plugin loads last wins -- patched, and written back as a LOOSE file, so it wins
-over whatever it was read from. A loose original that is not already patched
-is kept beside it as `<name>.mwrt-backup`; a movie read from an archive has no
-loose original, and deleting the written file undoes the patch.
+plugin loads last wins -- patched, and zipped into `Finished Mods` with the
+archive root as the Data folder. Nothing in the game folder is written;
+uninstalling the mod is the undo.
 
-The write replaces the directory entry instead of writing through it, so a
-mod manager's hard-linked copy of the original is left untouched.
+The patch replaces any earlier copy of itself, so a movie that is already this
+mod's output patches cleanly, but it carries the journal it was first built
+from: picking up a Quest Journal Overhaul or SkyUI update needs this mod
+disabled while it is rebuilt.
 
 See: docs/commentary/morrowind_runtime.md#journal-stage-text
 """
@@ -22,16 +24,16 @@ from asset_convert.sources.bsa_extract import read_bsa_files
 from asset_convert.sources.skyrim_assets import find_skyrim_data
 from asset_convert.ui.journal_patch import is_patched, patch_movie
 from core.gui.config import CLR, scan_skyrim_load_order
+from output_layout import finished_dir, write_mod_zip
 
 #: The journal movies: vanilla's and SkyUI's, and Quest Journal Overhaul's.
 MOVIE_NAMES = ('quest_journal.swf', 'questjournal.swf')
-BACKUP_SUFFIX = '.mwrt-backup'
-TITLE = 'Patch Quest Journal'
+MOD_NAME = 'Quest Journal Stage Text'
 TIP = ("Make quest objectives clickable in Skyrim's journal: clicking one shows "
        "the journal text its stage had, clicking it again the current text. "
        "Patches the journal your game loads (vanilla, SkyUI or Quest Journal "
-       "Overhaul) in your Skyrim Data folder and keeps a .mwrt-backup of the "
-       "original. Needs MorrowindRuntime.dll")
+       f"Overhaul) into output/Finished Mods/{MOD_NAME}.zip; install it after "
+       "that UI mod. Needs MorrowindRuntime.dll")
 
 #: What happened to one movie, which picks the dialog's headline.
 PATCHED, SKIPPED, FAILED = 'patched', 'skipped', 'failed'
@@ -72,76 +74,91 @@ def _archived_movie(data_dir: str, name: str) -> tuple:
     return best, best_name
 
 
-def _write_replacing(path: str, data: bytes) -> None:
-    """Write `data` to a new file and swap it in for `path`."""
-    temp = path + '.tmp'
-    with open(temp, 'wb') as fh:
-        fh.write(data)
-    os.replace(temp, path)
+def _loaded_movie(data_dir: str, name: str) -> tuple:
+    """(bytes, where it came from) for the copy the game loads, or (None, None)."""
+    loose = os.path.join(data_dir, 'Interface', name)
+    if os.path.isfile(loose):
+        with open(loose, 'rb') as fh:
+            return fh.read(), 'loose file'
+    return _archived_movie(data_dir, name)
 
 
 def patch_one(data_dir: str, name: str) -> tuple:
-    """Patch the effective copy of one movie: (outcome, report line).
+    """(outcome, report line, patched bytes or None) for one movie name.
 
     The outcome is PATCHED or SKIPPED; a failure raises instead.
     """
-    target = os.path.join(data_dir, 'Interface', name)
-    if os.path.isfile(target):
-        with open(target, 'rb') as fh:
-            raw = fh.read()
-        source = 'loose file'
-    else:
-        raw, source = _archived_movie(data_dir, name)
-        if raw is None:
-            return SKIPPED, f'{name}: not installed -- skipped'
+    raw, source = _loaded_movie(data_dir, name)
+    if raw is None:
+        return SKIPPED, f'{name}: not installed -- skipped', None
     patched, kinds = patch_movie(raw)
     if patched is None:
         return SKIPPED, (f'{name} (from {source}): not a journal this patch '
-                         'knows -- skipped')
-    if source == 'loose file' and not is_patched(raw):
-        _write_replacing(target + BACKUP_SUFFIX, raw)
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    _write_replacing(target, patched)
-    return PATCHED, f'{name} (from {source}): patched {", ".join(kinds)}'
+                         'knows -- skipped'), None
+    line = f'{name} (from {source}): patched {", ".join(kinds)}'
+    if is_patched(raw):
+        line += (f' -- read from an earlier {MOD_NAME}; disable it and build '
+                 'again to pick up a UI mod update')
+    return PATCHED, line, patched
 
 
-def patch_installed_journals(data_dir: str) -> list:
-    """Patch every journal movie the game would load: [(outcome, line)]."""
-    results = []
+def build_journal_mod(data_dir: str, out_root) -> tuple:
+    """Patch every loaded journal movie and zip them: ([(outcome, line)], zip).
+
+    The zip path is None when nothing was patched or anything failed, so a
+    partial mod is never written over a good one.
+    """
+    results, members = [], []
     for name in MOVIE_NAMES:
         try:
-            results.append(patch_one(data_dir, name))
+            outcome, line, data = patch_one(data_dir, name)
         except (OSError, ValueError, struct.error) as exc:
-            results.append((FAILED, f'{name}: FAILED -- {exc}'))
-    return results
+            outcome, line, data = FAILED, f'{name}: FAILED -- {exc}', None
+        results.append((outcome, line))
+        if data is not None:
+            members.append(('Interface/' + name, data))
+    if not members or any(outcome == FAILED for outcome, _ in results):
+        return results, None
+    zip_path = finished_dir(out_root) / f'{MOD_NAME}.zip'
+    write_mod_zip(zip_path, members)
+    return results, zip_path
 
 
 def report_status(outcomes: list) -> tuple:
     """The dialog's (headline, color): any failure wins, then any patch."""
     if FAILED in outcomes:
-        return 'Patch Failed', CLR['red']
+        return 'Build Failed', CLR['red']
     if PATCHED in outcomes:
-        return 'Patched Successfully', CLR['green']
+        return 'Built Successfully', CLR['green']
     return 'Nothing Patched', CLR['yellow']
 
 
+def _report_body(results: list, zip_path) -> str:
+    """The dialog text: one line per movie, then where the mod went."""
+    body = '\n'.join(line for _, line in results)
+    if zip_path is None:
+        return body
+    return (body + f'\n\nWrote {zip_path}\n\nInstall it with your mod manager '
+            'and load it after your UI mod (SkyUI or Quest Journal Overhaul). '
+            'Clicking an objective then shows the journal text its stage had; '
+            'click it again for the current text. Needs MorrowindRuntime.dll, '
+            'and works for objectives shown after it was installed.')
+
+
 def run_patch(app) -> None:
-    """The menu command: patch on a worker, then report on the UI thread."""
+    """The menu command: build on a worker, then report on the UI thread."""
     data_dir = app.tes5_var.get().strip() or find_skyrim_data()
     if not data_dir or not os.path.isdir(data_dir):
-        app.info(TITLE, 'Could not find the Skyrim Special Edition Data '
-                        'folder. Set the Skyrim SE Data Directory first.')
+        app.info(MOD_NAME, 'Could not find the Skyrim Special Edition Data '
+                           'folder. Set the Skyrim SE Data Directory first.')
         return
+    out_root = app.out_root()
 
     def _worker():
-        """Patch, then hop back: tkinter is not thread-safe."""
-        results = patch_installed_journals(data_dir)
+        """Build, then hop back: tkinter is not thread-safe."""
+        results, zip_path = build_journal_mod(data_dir, out_root)
         status = report_status([outcome for outcome, _ in results])
-        body = ('\n'.join(line for _, line in results)
-                + '\n\nClicking an objective now shows the journal text its '
-                'stage had; click it again for the current text. Needs '
-                'MorrowindRuntime.dll, and works for objectives shown after '
-                'it was installed.')
-        app.root.after(0, lambda: app.info(TITLE, body, status=status))
+        body = _report_body(results, zip_path)
+        app.root.after(0, lambda: app.info(MOD_NAME, body, status=status))
 
     threading.Thread(target=_worker, daemon=True).start()

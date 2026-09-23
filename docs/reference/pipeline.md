@@ -227,7 +227,7 @@ opening every file. Two runs starting inside the same second get a `-2` suffix
 rather than one overwriting the other. `logRunsKept` in
 `conversion_config.json` sets how many are kept (default 20); `0` disables run
 logging entirely. A new run deletes only the surplus oldest, so an existing
-log's name never changes under a reader. Tools ▸ Open Logs Folder opens the
+log's name never changes under a reader. Plugins ▸ Open Logs Folder opens the
 directory, and each run prints its own log path into the log.
 `TESCONV_LOGS_DIR` overrides the directory (the test suite uses it so it never
 writes beside a live run).
@@ -506,7 +506,7 @@ TESConversion/
       selection.py        # sources, step checkboxes, Upgrade, drop zone
       panels.py           # the five modal panels
       runner.py           # log, run state, commands, stamps, execution
-      mods.py             # Mods menu
+      mods.py             # Plugins ▸ import mod entries
       morrowind.py        # Settings > Morrowind source
 
   logs/                   # run-<timestamp>-<plugin>.log (gitignored)

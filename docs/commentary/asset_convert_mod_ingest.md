@@ -131,10 +131,10 @@ apply to every path — the archive is never trusted to write where it likes.
 
 | Package | Purpose | Install |
 |---|---|---|
-| `tkinterdnd2` | Drag-and-drop onto the GUI. **Optional** — without it the window still opens and **Mods ▸ Import…** still works | `pip install tkinterdnd2` |
+| `tkinterdnd2` | Drag-and-drop onto the GUI. **Optional** — without it the window still opens and **Plugins ▸ Import…** still works | `pip install tkinterdnd2` |
 
 Registered via the existing `_pip` helper ([preflight.py:114](../../preflight.py#L114))
-and `7za.exe` via `_bundled_exe`, so **Tools ▸ Check Dependencies** reports both
+and `7za.exe` via `_bundled_exe`, so **Help ▸ Check Dependencies** reports both
 like everything else. Add the `tkinterdnd2` row to the README's optional table
 ([README.md:78-85](../../README.md#L78-L85)) and its `pip install` line
 ([README.md:70](../../README.md#L70)).
@@ -253,7 +253,7 @@ size and offers "Free space (drop archive copy)".
 
 ### 3.4 Folder import — first class
 
-`Mods ▸ Import Mod Folder…` takes an already-extracted mod directory. Same
+`Plugins ▸ Import Mod Folder…` takes an already-extracted mod directory. Same
 layout rule, same routing, no archive dependency at all. This is the
 `.rar`-without-`unrar` answer and the manual-install answer, so it is a real
 feature, not a fallback. `kind: "folder"` records the source path; there is no
@@ -425,7 +425,7 @@ The drop target is the **entire sidebar** ([gui.py:1099](../../gui.py#L1099)).
 
 `tkinterdnd2` requires `TkinterDnD.Tk()` as the root class — the one change
 touching GUI startup, guarded to fall back to plain `tk.Tk()`. If it is absent
-the window still opens, drag-and-drop is inert, **Mods ▸ Import…** still works,
+the window still opens, drag-and-drop is inert, **Plugins ▸ Import…** still works,
 and a one-line hint names the package.
 
 ### 4.3 Toolbar — `Mods` menu, and re-running imported plugins
@@ -434,7 +434,7 @@ New menubutton beside `Settings` / `Converted`
 ([gui.py:716-732](../../gui.py#L716-L732)):
 
 ```
-Mods ▸ Import Mod Archive…       (.zip / .7z / .rar)
+Plugins ▸ Import Mod Archive…       (.zip / .7z / .rar)
      ▸ Import Mod Folder…
      ▸ Manage Imported Mods…     (list, retained size, re-import, remove)
 ```
