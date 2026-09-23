@@ -54,13 +54,63 @@ from .common import (
 )
 
 
-from output_layout import assets_for
 from asset_convert.character.morrowind_coverage import (BODY_PARTITIONS,
                                                         coverage_bits,
                                                         part_slots, sided_slot)
+from asset_convert.ui.book_inam import (find_source_mesh, inv_basename,
+                                        inv_basename_map, reads_as_book)
 
 #: Biped slot of BOD2 bit 0.
 _FIRST_SLOT = 30
+#: Vanilla note reading rig (Clutter\Books\Note01\Note02.nif), the INAM of 77 vanilla notes.
+HIGH_POLY_NOTE02 = 0x0001541B
+#: Vanilla bound-book reading rig (BookSkyrim01.nif).
+HIGH_POLY_SKYRIM_BOOK = 0x000E894C
+
+
+# ---------------------------------------------------------------------------
+# Book inventory art
+# ---------------------------------------------------------------------------
+
+def _book_inventory_art(writer, model: str) -> int:
+    """INAM FormID (never 0: BookMenu null-derefs) for a BOOK with world model `model`.
+
+    A bound book: its generated rig (asset_convert/ui/book_inam.py), one STAT
+    per model keyed on the authored model path, named by the asset side's
+    collision-aware basename.  A note, parchment or scroll: vanilla
+    HighPolyNote02's clean paper.  A model no asset tree ships, or none: the
+    vanilla book.  A writer without `book_roots` takes every model to be a
+    book.  Cached per writer.
+    """
+    if writer is None or not model:
+        return HIGH_POLY_SKYRIM_BOOK
+    cache = getattr(writer, '_book_inam_fids', None)
+    if cache is None:
+        cache = writer._book_inam_fids = {}
+    key = model.lower()
+    if key not in cache:
+        cache[key] = _resolve_book_inventory_art(writer, model)
+    return cache[key]
+
+
+def _resolve_book_inventory_art(writer, model: str) -> int:
+    """Uncached body of _book_inventory_art."""
+    roots = getattr(writer, 'book_roots', None)
+    if roots is not None:
+        src = find_source_mesh(roots, model)
+        if src is None:
+            return HIGH_POLY_SKYRIM_BOOK
+        if not reads_as_book(src):
+            return HIGH_POLY_NOTE02
+    bmap = getattr(writer, '_book_inam_names', None)
+    if bmap is None:
+        models = sorted(getattr(writer, 'book_models', None) or [], key=str.lower)
+        bmap = writer._book_inam_names = inv_basename_map(models)
+    base = bmap.get(model) or inv_basename(model)
+    fid = writer.derive_formid('BOOK_INVART', model.lower())
+    writer.add_record('STAT', _build_model_stat(
+        'InvArt_' + base, prefix_path('clutter\\books\\inv\\' + base + '.nif'), fid))
+    return fid
 
 
 # ---------------------------------------------------------------------------
@@ -272,29 +322,6 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
         subs += pack_subrecord('EFIT', struct.pack('<fII', mag, area, dur))
     return subs
 
-
-def _book_source_mesh_missing(writer, model: str) -> bool:
-    """True when the plugin's BOOK MODL has no source mesh in the export.
-
-    asset_convert/ui/book_inam.py skips those models ("source mesh missing"), so
-    the INAM STAT must not point at a mesh that will never be generated.
-    Cached per writer; unknown export dir → assume present (old behaviour).
-    """
-    import os
-    export_dir = getattr(writer, 'export_dir', None)
-    if not export_dir or not model:
-        return False
-    cache = getattr(writer, '_book_src_missing', None)
-    if cache is None:
-        cache = writer._book_src_missing = {}
-    key = model.lower()
-    hit = cache.get(key)
-    if hit is None:
-        parts = model.replace('/', '\\').split('\\')
-        hit = not os.path.isfile(
-        os.path.join(str(assets_for(export_dir)), 'meshes', *parts))
-        cache[key] = hit
-    return hit
 
 
 def _build_model_stat(edid: str, model_path: str, stat_fid: int) -> bytes:
@@ -884,54 +911,7 @@ def convert_BOOK(rec: dict, writer=None) -> bytes:
     data = struct.pack('<BBHiIf', tes5_flags, book_type, 0, teaches_tes5, value, weight)
     subs += pack_subrecord('DATA', data)
 
-    # INAM — Inventory Art (STAT).  BookMenu null-derefs without it (in-game
-    # crash on reading any book), so it must always be present.  It also must
-    # point at one of the rigged Skyrim reading meshes: the open animation and
-    # page text come from the template's behavior graph + skinned page bones +
-    # PageText quad, so a static mesh here opens invisible with no text.
-    # asset_convert/ui/book_inam.py bakes each distinct TES4 book model's cover
-    # textures onto the vanilla book/note rig and writes it to
-    # meshes\tes4\clutter\books\inv\<inv_basename(model)>.nif; one STAT per
-    # model is synthesised here (cached on the writer — BOOKs convert
-    # serially).  The basename rule is imported from book_inam so the STAT
-    # target and the generated mesh cannot drift apart.
-    inam_fid = 0x000E894C  # HighPolySkyrimBook — fallback for model-less books
-    if writer is not None and model:
-        # Resolve through the plugin-wide collision-aware map, exactly as the
-        # asset side does: two BOOK models can share a leaf filename across
-        # different directories, and only the map knows which one keeps the
-        # bare name.  Built once per writer (BOOKs convert serially).
-        from asset_convert.ui.book_inam import inv_basename, inv_basename_map
-        bmap = getattr(writer, '_book_inam_names', None)
-        if bmap is None:
-            models = sorted(getattr(writer, 'book_models', None) or [],
-                            key=lambda m: m.lower())
-            bmap = writer._book_inam_names = inv_basename_map(models)
-        base = bmap.get(model) or inv_basename(model)
-        # The asset stage skips models whose source mesh the plugin never
-        # ships, so pointing a STAT at the mesh it would have generated
-        # leaves BookMenu loading a file that does not exist.  Fall back to
-        # the vanilla reading rig for those, same as a model-less book.
-        if _book_source_mesh_missing(writer, model):
-            base = None
-        if base is not None:
-            cache = getattr(writer, '_book_inam_stats', None)
-            if cache is None:
-                cache = writer._book_inam_stats = {}
-            inam_fid = cache.get(base)
-            if inam_fid is None:
-                # SHARED across every book using this mesh, so it cannot key
-                # off one book's FormID. `base` is derived (inv_basename_map
-                # resolves collisions against the whole model list), so key on
-                # the authored source model path instead — that is TES4 data
-                # and does not move when our naming logic changes.
-                inam_fid = writer.derive_formid('BOOK_INVART', model.lower())
-                inv_model = 'clutter\\books\\inv\\' + base + '.nif'
-                stat_bytes = _build_model_stat('InvArt_' + base,
-                                               prefix_path(inv_model), inam_fid)
-                writer.add_record('STAT', stat_bytes)
-                cache[base] = inam_fid
-    subs += pack_formid_subrecord('INAM', inam_fid)
+    subs += pack_formid_subrecord('INAM', _book_inventory_art(writer, model))
 
     # CNAM — Description (string, empty like vanilla non-descriptive books).
     subs += pack_string_subrecord('CNAM', '')

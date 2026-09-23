@@ -159,7 +159,7 @@ def test_book_ownership_is_decided_on_the_asset_root(tmp_path):
     (mod / 'meshes' / 'clutter' / 'books' / 'mine.nif').write_bytes(b'x')
     mine = BS.join(['clutter', 'books', 'mine.nif'])
 
-    own, deferred = split_master_owned([mine], str(mod), [str(mod)])
+    own, deferred = split_master_owned([mine], str(mod), [str(mod)], set())
     assert deferred == 0 and len(own) == 1
 
     # A master's book is still correctly deferred to that master.
@@ -168,8 +168,23 @@ def test_book_ownership_is_decided_on_the_asset_root(tmp_path):
     (master / 'meshes' / 'clutter' / 'books' / 'theirs.nif').write_bytes(b'x')
     theirs = BS.join(['clutter', 'books', 'theirs.nif'])
     own2, deferred2 = split_master_owned([theirs], str(mod),
-                                          [str(mod), str(master)])
+                                          [str(mod), str(master)], {theirs})
     assert deferred2 == 1 and own2 == []
+
+
+def test_a_master_mesh_no_master_book_uses_is_baked_here(tmp_path):
+    """A master bakes only its own BOOKs' models, so an unused mesh it ships is ours."""
+    from asset_convert.ui.book_inam import split_master_owned
+
+    mod = tmp_path / 'export' / 'My Pack'
+    mod.mkdir(parents=True)
+    master = tmp_path / 'export' / 'Master.esm'
+    (master / 'meshes' / 'clutter' / 'books').mkdir(parents=True)
+    (master / 'meshes' / 'clutter' / 'books' / 'theirs.nif').write_bytes(b'x')
+    theirs = BS.join(['clutter', 'books', 'theirs.nif'])
+    own, deferred = split_master_owned([theirs], str(mod),
+                                       [str(mod), str(master)], set())
+    assert deferred == 0 and own == [theirs]
 
 
 def test_sound_source_dir_is_the_asset_root(tmp_path):

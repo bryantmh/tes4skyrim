@@ -622,21 +622,14 @@ def phase_assets(file_name: str, config: dict, output_dir: str = None,
 
     _, tes5_data = get_paths(config)
     print(f"[{file_name}] Generating book inventory-art meshes...")
-    # A plugin places its MASTERS' book models too, and those meshes/textures
-    # were extracted into the master's export dir only.
-    # base_plugins, not terrain_lod's master_names: the latter reads only
-    # _HEADER.txt, which an asset-only merge does not have, so its books
-    # would find no BOOK records and ship no inventory art at all.
-    from asset_convert.sources import base_plugins as _bp
     bstats = generate_book_inams(
         source_file=file_name,
         extract_dir=extract_dir,
         output_dir=out_dir,
         skyrim_data=tes5_data or None,
-        master_names=_bp.names_for(record_dir(extract_dir, file_name)),
     )
     print(f"[{file_name}] Book INAM complete: ok={bstats['ok']} "
-          f"skip={bstats['skip']} fail={bstats['fail']}")
+          f"note={bstats['note']} skip={bstats['skip']} fail={bstats['fail']}")
     return True
 
 # ===========================================================================

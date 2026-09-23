@@ -15,13 +15,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from asset_convert.ui.book_inam import (
     CANVAS,
-    Calibration,
     Island,
     bake_atlas,
     calibrate,
     inv_basename,
     write_dds,
-    bbox_fit,
 )
 
 REFS = os.path.join(os.path.dirname(__file__), '..', 'references', 'Skyrim Meshes')
@@ -84,7 +82,7 @@ def _synthetic_sheet():
 
 def test_calibrate_book_finds_cover_and_spine():
     cal = calibrate(_synthetic_book())
-    assert cal.kind == 'book'
+    assert cal is not None
     assert cal.cover_tex == 'textures\\t\\cover.dds'
     # front cover fit maps normalized (x,y) into the art rect
     uv = cal.cover.uv_from_n(np.array([[0.0, 0.0], [1.0, 1.0]]))
@@ -96,14 +94,13 @@ def test_calibrate_book_finds_cover_and_spine():
     assert 0.0 <= suv[0, 0] <= 0.18
 
 
-def test_calibrate_sheet():
-    cal = calibrate(_synthetic_sheet())
-    assert cal.kind == 'sheet'
-    assert cal.cover_tex == 'textures\\t\\sheet.dds'
+def test_a_sheet_is_not_a_book():
+    """Notes have no binding to remap: they read on the vanilla note rig."""
+    assert calibrate(_synthetic_sheet()) is None
 
 
-def test_calibrate_unfittable_falls_back_to_identity():
-    # a full-wrap cylinder whose uv is NOT an affine function of position
+def test_a_rolled_scroll_is_not_a_book():
+    """A full-wrap cylinder (rolled scroll) has no cover spanning its footprint."""
     n = 24
     ang = np.linspace(0, 2 * np.pi, n)
     verts, uvs, tris = [], [], []
@@ -116,8 +113,7 @@ def test_calibrate_unfittable_falls_back_to_identity():
     shape = {'name': 's', 'verts': np.array(verts, dtype=float),
              'uvs': np.array(uvs, dtype=float), 'norms': None,
              'tris': tris, 'texs': ['textures\\t\\scroll.dds']}
-    cal = calibrate([shape])
-    assert cal.kind == 'identity'
+    assert calibrate([shape]) is None
 
 
 def test_island_uv_wrap_normalization():
@@ -156,23 +152,6 @@ def test_bake_book_atlas_regions():
     assert spx[0] <= int(0.20 * 255)
 
 
-def test_bake_sheet_is_uv_space_copy():
-    """Sheets bake as a plain uv rect copy (no mesh-axis rotation), so a
-    source gradient must arrive unrotated regardless of mesh orientation."""
-    # sheet lying in the XY plane but with uv rotated 90 deg vs position
-    sheet = _quad([(-4, -5, 0), (4, -5, 0), (4, 5, 0), (-4, 5, 0)],
-                  [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)])
-    obl = calibrate([_merge([sheet], 'textures\\t\\s.dds')])
-    assert obl.kind == 'sheet'
-    tpl = Calibration('sheet', cover=bbox_fit((0, 0), (1, 1)))
-    src = _gradient_img()
-    atlas = bake_atlas(obl, tpl, src, None)
-    # left edge of atlas = left edge of source (red channel low), even though
-    # the mesh-space fit would have rotated it
-    assert atlas[CANVAS // 2, 2, 0] < 30
-    assert atlas[CANVAS // 2, CANVAS - 3, 0] > 225
-
-
 # ---------------------------------------------------------------------------
 # DDS writer
 # ---------------------------------------------------------------------------
@@ -201,12 +180,8 @@ def test_inv_basename():
 @pytest.mark.skipif(not os.path.isdir(REFS), reason='Skyrim meshes refs not present')
 def test_template_calibration():
     from asset_convert.ui.book_inam import (
-        BOOK_TEMPLATE, NOTE_TEMPLATE, calibrate_book_template,
-        calibrate_note_template, read_shapes)
+        BOOK_TEMPLATE, calibrate_book_template, read_shapes)
     book = calibrate_book_template(
         read_shapes(os.path.join(REFS, *BOOK_TEMPLATE.split('\\'))))
-    assert book.kind == 'book' and book.spine is not None
+    assert book.spine is not None
     assert book.pages_islands, 'page-edge strips must be found'
-    note = calibrate_note_template(
-        read_shapes(os.path.join(REFS, *NOTE_TEMPLATE.split('\\'))))
-    assert note.kind == 'sheet'

@@ -1025,7 +1025,8 @@ def _new_plugin_writer(masters: list, is_esm: bool, export_dir: str):
     `convert_BOOK` resolves inventory-art basenames through the same
     collision-aware map the asset side uses: two BOOK models can share a leaf
     filename across directories, and only the whole-plugin view can tell which
-    one keeps the bare name.
+    one keeps the bare name.  `book_roots` are the asset trees a BOOK model's
+    source mesh may live in: this plugin's, then its masters'.
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-ordering-constraints
     """
@@ -1036,6 +1037,8 @@ def _new_plugin_writer(masters: list, is_esm: bool, export_dir: str):
     writer = PluginWriter(masters=masters, is_esm=is_esm,
                           description="Converted from TES4 by tes4_export")
     writer.export_dir = export_dir
+    writer.book_roots = [str(assets_for(d)) for d in
+                         [export_dir] + master_export_dirs(writer)]
     from .record_types.sound import set_sound_source_dir
     set_sound_source_dir(str(assets_for(export_dir)))
     try:
