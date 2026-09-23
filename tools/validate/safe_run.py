@@ -80,7 +80,7 @@ def run(spawn) -> int:
     """The child's exit code; NOT_FOUND, with a hint, for a missing program."""
     args, shell = spawn
     try:
-        return subprocess.run(args, shell=shell, cwd=CR.ROOT).returncode
+        return subprocess.run(args, shell=shell).returncode
     except FileNotFoundError:
         print('safe_run: no program %r -- a shell builtin, pipe or chain '
               'needs -c "<command>"' % args[0], file=sys.stderr)

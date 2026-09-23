@@ -516,6 +516,8 @@ CONTAINED = [
     RUN + ' git log | Select-Object -First 5',
     'P=1 ' + RUN + ' true > out.py',
     RUN + ' a; ' + RUN + ' b',
+    'cd C:/tmp && python C:/repo/tools/validate/safe_run.py -c "pwd"',
+    'python "C:\\repo\\tools\\validate\\safe_run.py" ls C:/x',
 ]
 
 
@@ -538,11 +540,11 @@ def test_the_hook_names_why_a_chain_was_refused():
     assert code == 2 and '`cp a.py b.py` runs outside' in err and '-c' in err
 
 
-def _wrapped(*args):
+def _wrapped(*args, cwd=ROOT):
     """The finished `safe_run.py` process for `args`, with no outer shell."""
     return subprocess.run(
         [sys.executable, str(ROOT / 'tools' / 'validate' / 'safe_run.py')]
-        + list(args), cwd=ROOT, capture_output=True, text=True)
+        + list(args), cwd=cwd, capture_output=True, text=True)
 
 
 def test_the_wrapper_passes_arguments_verbatim():
@@ -561,6 +563,15 @@ def test_dash_c_runs_one_string_through_a_shell():
                    'read().strip()[::-1])"' % sys.executable.replace('\\', '/'))
     assert got.returncode == 0, got.stderr
     assert got.stdout.strip() == 'cba'
+
+
+def test_the_command_runs_in_the_callers_directory(tmp_path):
+    """A relative write lands where the caller `cd`-ed, not in the repo root."""
+    got = _wrapped(sys.executable, '-c', 'open("marker.txt", "w").close()',
+                   cwd=tmp_path)
+    assert got.returncode == 0, got.stderr
+    assert (tmp_path / 'marker.txt').exists()
+    assert not (ROOT / 'marker.txt').exists()
 
 
 def test_a_missing_program_says_to_use_dash_c():

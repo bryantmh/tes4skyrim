@@ -611,6 +611,15 @@ A pipe, chain or builtin that must run inside the gated region goes through
 unchanged, and its author owns the quoting, as with `bash -c`. A program that
 is not on PATH (`cd`, `for`) exits 127 with a hint to use `-c`.
 
+#### The command runs in the caller's directory
+
+The wrapper does not change directory. It used to run every command in the
+repo root, which silently undid a leading `cd`: `cd <scratchpad> && python
+<repo>/tools/validate/safe_run.py -c '...'` unpacked a download into the repo
+instead of the scratchpad. Gating does not need the repo root, because it hashes
+files by absolute path. A command that `cd`s away and still uses repo-relative
+paths now fails with "file not found" instead of writing into the repo.
+
 #### Every command runs inside the wrapper
 
 The hook used to pass any command whose text contained the wrapper's path, so in

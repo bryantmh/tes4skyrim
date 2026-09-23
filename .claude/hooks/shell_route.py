@@ -68,6 +68,7 @@ def segments(text: str) -> list:
     """Each simple command as a list of words, split on control operators."""
     lex = shlex.shlex(text, posix=True, punctuation_chars=PUNCTUATION)
     lex.whitespace = ' \t\r'
+    lex.whitespace_split = True
     out, words = [], []
     for token in lex:
         if token and _is_separator(token):
