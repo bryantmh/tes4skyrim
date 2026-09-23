@@ -65,7 +65,7 @@ _SOULGEM_PREFIX = 'misc_soulgem'
 _SOULGEM_CAPACITY = {'petty': 1, 'lesser': 2, 'common': 3, 'greater': 4,
                      'grand': 5, 'azura': 5}
 
-#: CONT FLAG respawn bit; TES4 DATA.Flags puts it at 0x01.
+#: CONT FLAG respawn bit (TES3), and TES4 DATA.Flags Respawns -- both 0x02.
 _CONT_RESPAWN = 0x2
 
 #: ALDT autocalc bit; TES4 ENIT 0x01 means "no auto-calc", the inverse.
@@ -292,8 +292,7 @@ def export_CONT(rec: Tes3Record, ctx) -> list:
     emit_common(lines, rec)
     weight = unpack(rec, 'CNDT', '<f')
     flags = unpack(rec, 'FLAG', '<I')
-    respawns = bool(flags and flags[0] & _CONT_RESPAWN)
-    lines.append(f'DATA.Flags={int(respawns)}')
+    lines.append(f'DATA.Flags={flags[0] & _CONT_RESPAWN if flags else 0}')
     lines.append(f'DATA.Weight={weight[0] if weight else 0.0}')
     emit_inventory(lines, rec, ctx)
     return lines

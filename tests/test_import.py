@@ -1920,6 +1920,38 @@ class TestServiceConversion:
                    for f in writer._top_groups['FACT']}
         assert written == {created}
 
+    def test_morrowind_merchant_owned_stock_joins_in_cell_faction(self, tmp_path):
+        """A TES3 merchant sells the containers and loose items it owns: they
+        are re-owned to its own vendor faction, whose PLVD is In Cell at the
+        merchant's placement cell. Zero-capacity containers, fixed lights and
+        statics stay with the NPC."""
+        from tes5_import.record_types.actor_common import (create_vendor_factions, get_vendor_faction_fids_for_actor)
+        from tes5_import.record_types.vendor_stock_morrowind import (owned_stock, stock_owner)
+        (tmp_path / 'MWDI.txt').write_text('')
+        npc = self._merchant_npc(fid='00000501', services='3')
+        by_type = {
+            'NPC_': [npc],
+            'ACHR': [{'Signature': 'ACHR', 'FormID': '00000600',
+                      'NAME': '00000501', 'ParentCELL': '00000900'}],
+            'CONT': [{'Signature': 'CONT', 'FormID': '00000A01', 'DATA.Weight': '100.0'},
+                     {'Signature': 'CONT', 'FormID': '00000A02', 'DATA.Weight': '0.0'}],
+            'WEAP': [{'Signature': 'WEAP', 'FormID': '00000A03'}],
+            'LIGH': [{'Signature': 'LIGH', 'FormID': '00000A04', 'DATA.Flags': '1'}],
+            'STAT': [{'Signature': 'STAT', 'FormID': '00000A05'}],
+            'REFR': [{'Signature': 'REFR', 'FormID': f'00000B0{i}',
+                      'NAME': f'00000A0{i}', 'XOWN.Owner': '00000501'}
+                     for i in range(1, 6)]}
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        create_vendor_factions(by_type, writer, None,
+                               owned_stock(by_type, {}, str(tmp_path)))
+
+        fact_fid = get_vendor_faction_fids_for_actor(0x00000501, 3)[0]
+        assert [stock_owner(0x00000B00 + i) for i in range(1, 6)] == [
+            fact_fid, 0, fact_fid, 0, 0]
+        fact = next(f for f in writer._top_groups['FACT']
+                    if struct.unpack_from('<I', f, 12)[0] == fact_fid)
+        assert struct.unpack('<iIi', self._subrecords(fact)['PLVD'][0]) == (1, 0x00000900, 0)
+
     def test_trainer_unmappable_skill_skipped(self):
         from tes5_import.record_types.actor_common import (create_trainer_records, get_trainer_class_fid)
         writer = PluginWriter(masters=['Skyrim.esm'])
@@ -7145,6 +7177,24 @@ class TestFalloutReferenceOnlyRecords:
         assert data[6:10] == (50.0, 75.0, 256.0, 512.0)
         assert data[11:] == (1, 3)
         assert _find_subrecord(out, b'MNAM') is None
+
+    def test_addon_node_moves_to_its_converted_index(self):
+        """A FNV ADDN and a mesh's AddOnNode leave the vanilla index range
+        together; DNAM flags 0 become 1."""
+        from types import SimpleNamespace
+        from asset_convert.nif.addon_nodes_falloutnv import (
+            addon_index, remap_addon_nodes)
+        from tes5_import.record_types.impact_falloutnv import convert_ADDN
+        out = convert_ADDN({'FormID': '0010000E', 'RecordFlags': '0',
+                            'EditorID': 'MPSGunSparks01', 'DATA.Index': '22',
+                            'DNAM': '05000000'})
+        assert struct.unpack('<I', _find_subrecord(out, b'DATA'))[0] == addon_index(22)
+        assert struct.unpack('<HH', _find_subrecord(out, b'DNAM')) == (5, 1)
+        node = type('BSValueNode', (), {})()
+        node.name, node.value = b'AddOnNode22', 22
+        assert remap_addon_nodes(SimpleNamespace(blocks=[node])) == 1
+        assert (node.name, node.value) == (b'AddOnNode20022', addon_index(22))
+        assert remap_addon_nodes(SimpleNamespace(blocks=[node])) == 0
 
     def test_bullet_drops_hitscan_and_flies_straight(self):
         """A hitscan FNV bullet is a plain Missile: no Hitscan, no gravity."""

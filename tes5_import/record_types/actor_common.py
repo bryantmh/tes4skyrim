@@ -28,6 +28,7 @@ from .common import (
     pack_subrecord,
 )
 from .race_falloutnv import fallout_race_edid
+from .vendor_stock_morrowind import claim_stock, owned_stock, plvd_in_cell
 from .world_falloutnv import is_fallout_source
 
 # ---------------------------------------------------------------------------
@@ -295,7 +296,7 @@ _merchant_marker_faction_fid = 0
 #: EditorID of the merchant marker FACT; a dependent adopts its master's by it.
 _MERCHANT_MARKER_EDID = 'TES4MerchantFaction'
 
-#: (remapped) actor FormID -> its own VENC-carrying merchant FACT.
+#: (remapped) actor FormID -> its own merchant FACT (VENC chest or In Cell stock).
 _merchant_faction_by_npc: dict[int, int] = {}
 
 #: "Belongs to this converted plugin" marker FACT; root masters only.
@@ -406,12 +407,13 @@ _VENV_ALWAYS_OPEN = struct.pack('<HHI4x', 0, 24, 0)
 _PLVD_NEAR_SELF = struct.pack('<iIi', 12, 0, 0)
 
 
-def _write_vendor_faction(writer, edid: str, flst_fid: int, venc_fid: int = 0) -> int:
+def _write_vendor_faction(writer, edid: str, flst_fid: int, venc_fid: int = 0,
+                          plvd: bytes = _PLVD_NEAR_SELF) -> int:
     """Create a vendor FACT and return its FormID.
 
     `edid` must be unique per faction and derived from authored data. Fields
-    follow vanilla ServicesDBBabette (trades anywhere, any hour); subrecord
-    order is VEND, VENC, VENV, PLVD.
+    follow vanilla ServicesDBBabette (trades any hour; anywhere unless `plvd`
+    names a location); subrecord order is VEND, VENC, VENV, PLVD.
 
     See: docs/commentary/tes5_import_actors.md#vendor-faction-needs-plvd
     """
@@ -424,7 +426,7 @@ def _write_vendor_faction(writer, edid: str, flst_fid: int, venc_fid: int = 0) -
     if venc_fid:
         subs += pack_formid_subrecord('VENC', venc_fid)
     subs += pack_subrecord('VENV', _VENV_ALWAYS_OPEN)
-    subs += pack_subrecord('PLVD', _PLVD_NEAR_SELF)
+    subs += pack_subrecord('PLVD', plvd)
     writer.add_record('FACT', pack_record('FACT', fact_fid, 0, subs))
     return fact_fid
 
@@ -435,14 +437,15 @@ def _adopted(master_index, signature: bytes, edid: str) -> int:
             else master_index.find_by_edid(signature, edid))
 
 
-def create_vendor_factions(by_type: dict, writer, master_index=None) -> None:
+def create_vendor_factions(by_type: dict, writer, master_index=None,
+                           stock: dict = None) -> None:
     """Phase 0c: Pre-scan NPC_/CREA for services and create vendor FACTs + FLSTs.
 
-    A shared per-bitmask faction serves chest-less merchants; a dedicated one
-    (VEND + VENC) serves each merchant whose placed ref links a chest. Both
-    share one FLST per bitmask. With `master_index`, a keyword list, shared
-    faction or marker faction a master already defines is adopted by EditorID
-    and only the missing ones are created.
+    A shared per-bitmask faction serves most merchants; a dedicated one serves
+    each merchant whose placed ref links a chest, or who owns Morrowind `stock`
+    (see `owned_stock`). All share one FLST per bitmask. With `master_index`,
+    a keyword list, shared faction or marker faction a master already defines
+    is adopted by EditorID and only the missing ones are created.
 
     See: docs/commentary/tes5_import_actors.md#vendor-factions
     """
@@ -462,14 +465,15 @@ def create_vendor_factions(by_type: dict, writer, master_index=None) -> None:
             _adopted(master_index, b'FACT', edid)
             or _write_vendor_faction(writer, edid, flst_fid))
 
-    n_chest = _write_merchant_factions(
-        writer, vendor_actors, flst_by_svc, _build_merchant_chest_map(by_type))
+    n_dedicated = _write_merchant_factions(
+        writer, vendor_actors, flst_by_svc, _build_merchant_chest_map(by_type),
+        stock or {})
     _merchant_marker_faction_fid = (
         _adopted(master_index, b'FACT', _MERCHANT_MARKER_EDID)
         or _write_merchant_marker(writer))
 
     print(f"  Vendor factions: {len(flst_by_svc)} shared service combos, "
-          f"{n_chest} chest-backed merchants, merchant marker "
+          f"{n_dedicated} chest/stock merchants, merchant marker "
           f"{_merchant_marker_faction_fid:08X}")
 
 
@@ -506,18 +510,31 @@ def _vendor_lists(writer, unique_services: set, master_index) -> dict:
 
 
 def _write_merchant_factions(writer, vendor_actors: list, flst_by_svc: dict,
-                             chest_by_npc: dict) -> int:
-    """Emit a dedicated VENC faction per merchant owning a chest; return the count."""
-    n_chest = 0
+                             chest_by_npc: dict, stock: dict) -> int:
+    """Emit a dedicated faction per merchant with a chest or owned stock; return the count.
+
+    A chest merchant's faction carries VENC; a Morrowind merchant owning stock
+    gets PLVD In Cell (its placement cell) and the stock is re-owned to it.
+
+    See: docs/commentary/tes5_import_actors.md#morrowind-merchant-stock
+    """
+    n_dedicated = 0
     for actor_fid, bits in vendor_actors:
         chest = chest_by_npc.get(actor_fid)
+        owned = stock.get(actor_fid)
         flst_fid = flst_by_svc.get(bits)
-        if not chest or not flst_fid:
+        if not (chest or owned) or not flst_fid:
             continue
-        _merchant_faction_by_npc[actor_fid] = _write_vendor_faction(
-            writer, f'TES4Merchant_{actor_fid & 0xFFFFFF:06X}', flst_fid, chest)
-        n_chest += 1
-    return n_chest
+        edid = f'TES4Merchant_{actor_fid & 0xFFFFFF:06X}'
+        if chest:
+            fact = _write_vendor_faction(writer, edid, flst_fid, chest)
+        else:
+            fact = _write_vendor_faction(writer, edid, flst_fid,
+                                         plvd=plvd_in_cell(owned[0]))
+            claim_stock(owned[1], fact)
+        _merchant_faction_by_npc[actor_fid] = fact
+        n_dedicated += 1
+    return n_dedicated
 
 
 def _write_merchant_marker(writer) -> int:
@@ -658,20 +675,22 @@ def create_trainer_records(by_type: dict, writer, master_index=None,
         _trainer_class_by_npc[npc_fid] = clone_fid
 
 
-def create_service_records(by_type: dict, writer, ctx) -> None:
+def create_service_records(by_type: dict, writer, ctx, export_dir: str) -> None:
     """Phase 0c: the vendor factions, then the trainer faction and CLAS clones.
 
     A plugin that creates its own support records makes all of them; a
     dependent adopts what its masters define by EditorID, creates the rest, and
-    finds its trainers' classes in its masters' export.
+    finds its trainers' classes in its masters' export. A Morrowind source's
+    merchants also get the stock they own.
 
     See: docs/commentary/tes5_import_actors.md#vendor-factions-in-a-dependent
     """
+    master_export = getattr(ctx, 'master_export', None) or {}
     index = None if is_support_root() else getattr(ctx, 'master_index', None)
-    master_export = ({} if index is None
-                     else getattr(ctx, 'master_export', None) or {})
-    classes = [r for r in master_export.values() if r.get('Signature') == 'CLAS']
-    create_vendor_factions(by_type, writer, index)
+    classes = ([] if index is None else
+               [r for r in master_export.values() if r.get('Signature') == 'CLAS'])
+    create_vendor_factions(by_type, writer, index,
+                           owned_stock(by_type, master_export, export_dir))
     create_trainer_records(by_type, writer, index, classes)
 
 

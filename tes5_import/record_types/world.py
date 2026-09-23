@@ -16,6 +16,7 @@ from ..base.equivalents import TES4_MARKER_FORMID_TO_SKYRIM
 from .world_falloutnv import (marker_substitute, parent_use_flags,
                               tes5_world_flags, world_map_offset)
 from .world_morrowind import is_tes3_source, lock_is_exit_only, tes3_refr_flags
+from .vendor_stock_morrowind import stock_owner
 from .items import get_base_origin_shift
 from ..base.text_reader import remap_formid
 from .common import (
@@ -1013,8 +1014,8 @@ def convert_REFR(rec: dict) -> bytes:
     if xesp_ref and base_uses_parent_ref(rec.get('NAME', '')):
         subs += pack_subrecord('XLKR', struct.pack('<II', 0, xesp_ref))
 
-    # Ownership (XOWN)
-    xown = get_formid(rec, 'XOWN.Owner')
+    xown = (stock_owner(get_formid(rec, 'FormID'))
+            or get_formid(rec, 'XOWN.Owner'))
     if not xown and barrier_door:
         from .actor_common import get_origin_faction_fid
         xown = get_origin_faction_fid()

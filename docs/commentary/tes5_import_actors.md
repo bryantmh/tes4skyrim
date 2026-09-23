@@ -16,6 +16,7 @@ them does.
 - [Confidence: why converted actors used to flee](#confidence-tiers)
 - [Vendor factions](#vendor-factions)
 - [A vendor faction without PLVD is never selected](#vendor-faction-needs-plvd)
+- [A Morrowind merchant sells what it owns nearby](#morrowind-merchant-stock)
 - [A dependent adopts its masters' vendor factions](#vendor-factions-in-a-dependent)
 - [The merchant marker faction: a CTDA ceiling](#barter-gate-ctda-limit)
 - [The plugin-origin marker faction](#origin-faction)
@@ -228,6 +229,35 @@ match, and the chest-less shared faction used to sit ahead of it.
 The barter menu copies the merchant's own inventory (`0x1bcd40` → `0x237860`)
 and counts form `0xF` in it (`0x234350`), and adds the VENC chest's only when a
 vendor faction resolved. Carried gold is therefore vendor gold either way.
+
+### <a id="morrowind-merchant-stock"></a>A Morrowind merchant sells what it owns nearby
+
+**Code:** `record_types/vendor_stock_morrowind.py`
+
+TES3 trades the merchant's inventory plus every container with capacity > 0 and
+every loose item in the loaded cells whose owner is the merchant (OpenMW
+`TradeWindow::setPtr` → `World::getContainersOwnedBy` / `getItemsOwnedBy`). A TR
+smith like TR_m4_Ulran_Teryon carries 8 items and owns 115 refs, 16 of them
+containers; 611 of TR's 680 ref-owning merchants own a container.
+
+Skyrim's barter builder (`0x1bcd40`, 1.6.1170) has the same rule. When the
+resolved vendor faction's PLVD is Near Reference (type 0) or In Cell (type 1)
+it walks refs within 10000 units of the merchant (`0x177d728`) and, through the
+callback `0x1bd630`, keeps each ref OWNED BY THE VENDOR FACTION (not the VENC
+chest): a CONT adds its contents, a loose ARMO/BOOK/INGR/LIGH/MISC/APPA/WEAP/
+AMMO/KEYM/ALCH adds itself, anything else is skipped. Near Self (type 12)
+walks nothing.
+
+So each merchant of a TES3 source (`is_tes3_export`) that owns stock gets its
+own `TES4Merchant_<id>` vendor faction with PLVD In Cell at its placement cell,
+and its owned containers (capacity > 0), carriable lights and loose items are
+re-owned from the NPC to that faction (`stock_owner`, read by `convert_REFR`).
+The merchant is a member, so taking them is still theft. Away from that cell
+the faction does not resolve and the Morrowind runtime's ShowBarterMenu trades
+the carried inventory only, as TES3 does when the shop is not loaded.
+
+TES3 restocks through respawning containers; the exporter writes their FLAG
+0x02 as TES4 `DATA.Flags` Respawns 0x02, which Skyrim reads as the same bit.
 
 ### <a id="vendor-factions-in-a-dependent"></a>A dependent adopts its masters' vendor factions
 

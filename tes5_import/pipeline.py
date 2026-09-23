@@ -610,10 +610,10 @@ def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict, 
     _step_done('magic effect plans')
 
 
-def _prescan_vendor_trainer(by_type: dict, ctx, writer, _step_done):
+def _prescan_vendor_trainer(by_type: dict, ctx, writer, export_dir: str, _step_done):
     """Create the vendor factions and the trainer faction + CLAS clones."""
     from .record_types.actor_common import create_service_records
-    create_service_records(by_type, writer, ctx)
+    create_service_records(by_type, writer, ctx, export_dir)
     _step_done('vendor/trainer records')
 
 
@@ -1154,7 +1154,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
     _prescan_magic_effects(by_type, ctx, writer, xref, fid_to_edid,
                            _scpt_master_export, _step_done)
 
-    _prescan_vendor_trainer(by_type, ctx, writer, _step_done)
+    _prescan_vendor_trainer(by_type, ctx, writer, export_dir, _step_done)
 
     _prescan_mesh_caches(export_dir, plugin_out_dir, _step_done)
 

@@ -396,6 +396,21 @@ def test_wrld_climate_names_a_record_that_exists():
         set_formid_index_offset(0)
 
 
+def test_container_respawn_is_tes4_bit_0x02():
+    """TES4 CONT DATA.Flags Respawns is 0x02 (xEdit; Oblivion.esm writes 2).
+
+    Exporting it as 1 lands on Skyrim's Allow Sounds When Animation, and the
+    restocking containers Morrowind merchants sell from never respawn.
+    """
+    from tes4_export.record_types.morrowind import export_CONT
+    rec = reader.Tes3Record('CONT', 0, [
+        reader.Subrecord(type='FLAG', data=struct.pack('<I', 0x0B)),
+        reader.Subrecord(type='CNDT', data=struct.pack('<f', 50.0))],
+        'shop_chest')
+    lines = export_CONT(rec, MorrowindContext())
+    assert 'DATA.Flags=2' in lines
+
+
 def _regn(record_id: str, weat: bytes):
     """A minimal TES3 REGN record carrying one WEAT subrecord."""
     return reader.Tes3Record(
