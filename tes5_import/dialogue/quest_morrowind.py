@@ -17,6 +17,8 @@ result script names its masters' quests freely.
 See: docs/commentary/morrowind_runtime.md#journal-quests
 """
 
+import functools
+import json
 import os
 import re
 import struct
@@ -52,6 +54,13 @@ _NOT_IDENTIFIER = re.compile(r'[^A-Za-z0-9_]')
 #: The INFO fields a journal page is built from.
 _PAGE_KEYS = ('Topic', 'InfoType', 'JournalIndex', 'Response', 'QuestStatus')
 
+#: Names for journals that author none, hand-written first, then UESP's.
+_NAME_TABLES = tuple(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 'generated', name)
+    for name in ('morrowind_quest_names_authored.json',
+                 'morrowind_quest_names.json'))
+
 
 def journal_quests(side_dir: str) -> dict:
     """`{lower id: {'id', 'name', 'stages': {index: (text, finished)}}}` from
@@ -76,6 +85,25 @@ def journal_quests(side_dir: str) -> dict:
         quest['stages'].setdefault(
             index, (text, rec.get('QuestStatus') == 'Finished'))
     return quests
+
+
+@functools.lru_cache(maxsize=None)
+def _table_names() -> dict:
+    """`{lower journal id: name}` over `_NAME_TABLES`, the first one winning."""
+    names = {}
+    for path in reversed(_NAME_TABLES):
+        with open(path, encoding='utf-8') as handle:
+            names.update(json.load(handle)['entries'])
+    return names
+
+
+def quest_name(quest: dict) -> str:
+    """FULL: the journal's QSTN name, else a table's, else its raw id.
+
+    See: docs/commentary/morrowind_runtime.md#quest-names
+    """
+    return (quest['name'] or _table_names().get(quest['id'].lower())
+            or quest['id'])
 
 
 def editor_id(quest_id: str) -> str:
@@ -144,7 +172,7 @@ def as_record(quest: dict, formid: int) -> bytes:
     written as given -- `derive_formid` already returns this plugin's final id.
     """
     subs = pack_string_subrecord('EDID', editor_id(quest['id']))
-    subs += pack_string_subrecord('FULL', quest['name'] or quest['id'])
+    subs += pack_string_subrecord('FULL', quest_name(quest))
     subs += pack_subrecord('DNAM', struct.pack(
         '<HBBII', QUST_ALLOW_REPEATED_STAGES, _PRIORITY, 0, 0,
         _QUEST_TYPE_SIDE))

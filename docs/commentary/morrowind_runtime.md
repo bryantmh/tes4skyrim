@@ -2581,7 +2581,8 @@ spawned body running through exactly that lookup.
 
 Each TES3 Journal topic becomes one QUST: a stage per journal index, the page
 as the stage's log entry, the `QuestStatus=Name` page as FULL, `Finished` as
-the completes-quest bit. No objectives. `quests_formid.txt` maps the authored id to
+the completes-quest bit, and an objective per page (see
+[objectives-must-be-displayed](#objectives-must-be-displayed)). `quests_formid.txt` maps the authored id to
 `Plugin|FormID`; `Journal` and `SetJournalIndex` call the
 `Quest.SetCurrentStageID` native. `AddJournalEntry` stages the ENTRY's index
 even when the quest's own index does not rise — a lower page added late is
@@ -2590,6 +2591,33 @@ still a new page.
 🛑 The quests are generated for every journal topic in the MERGED sidecar,
 masters' included, into the plugin being imported. Two TES3 plugins sharing a
 master would each mint that master's quests.
+
+### <a id="quest-names"></a>A journal with no QSTN takes its name from UESP
+
+**Code:** `quest_morrowind.py:quest_name`, `tools/generators/gen_morrowind_quest_names.py`
+
+A TES3 journal's display name is the INFO flagged `QSTN`
+(`QuestStatus=Name`), which Tribunal introduced. Morrowind.esm authors none:
+all 629 of its journals with pages are nameless, and a Morrowind.esm-only
+build showed `A1_1_FindSpymaster` in the quest list. Tribunal and Bloodmoon
+re-edit Morrowind.esm's journals to add most names, so a merged chain is
+mostly named -- TR_Mainland's chain (MW, TR, BM, Tamriel_Data, TR_Mainland)
+names 1,970 of 2,079 -- but trackers (`IC0_*_token`, `MT_S_*`,
+`11111 test journal`) and a few quests that put their title in page 0
+instead (`VA_VampChild` = "Blood Ties", Bloodmoon's `CO_*`) stay nameless.
+OpenMW's `Quest::getName()` reads only the QSTN INFO, so this is faithful
+data, not an export bug.
+
+FULL is, in order: the chain's QSTN name, `morrowind_quest_names_authored.json`
+(hand-written), `morrowind_quest_names.json` (UESP), the raw id. An authored
+QSTN always wins. The UESP table pairs each `{{Quest Header}}` page's `|ID=`
+journal ids with the page title (minus namespace and a trailing
+`(quest)`-style disambiguator), over the Morrowind, Tribunal, Bloodmoon,
+Morrowind Mod, Tamriel Rebuilt and Project Tamriel namespaces. An id a page
+lists FIRST beats the same id in another page's `also` list.
+
+The authored file covers only what UESP misses and a player would see -- it
+is hand-written and has no generator.
 
 ### <a id="game-calls"></a>Natives, found at their registrations
 

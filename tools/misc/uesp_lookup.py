@@ -37,7 +37,7 @@ def _reconfigure_stdout():
             pass
 
 
-def _pages(path):
+def pages(path=DUMP):
     """Yield (title, text) streaming, clearing elements as we go."""
     ns = None
     for event, elem in ET.iterparse(path, events=('start', 'end')):
@@ -74,7 +74,7 @@ def main():
     tfilt = re.compile(args.title_filter, re.I) if args.title_filter else None
 
     n = 0
-    for title, text in _pages(args.dump):
+    for title, text in pages(args.dump):
         if args.page:
             if title.lower() == args.page.lower():
                 print(f'=== {title} ===')

@@ -776,6 +776,31 @@ class TestQUST:
                                   8)[0] == 8
         assert _find_all_subrecords(out, b'QSDT')[1][0] == 0x01
 
+    def test_morrowind_quest_name_fallbacks(self):
+        """FULL: the QSTN name, else the hand-written table, else UESP's,
+        else the raw id -- Morrowind.esm authors no QSTN at all."""
+        from tes5_import.dialogue.quest_morrowind import quest_name
+        named = {'id': 'A1_1_FindSpymaster', 'name': 'Own Name'}
+        assert quest_name(named) == 'Own Name'
+        assert quest_name({**named, 'name': ''}) == 'Report to Caius Cosades'
+        assert (quest_name({'id': 'TR_m7_Shin_NasarKill', 'name': ''})
+                == 'Enemy of the Nasar')
+        assert quest_name({'id': 'NoSuch_Journal', 'name': ''}) == 'NoSuch_Journal'
+
+    def test_uesp_quest_id_field_spellings(self):
+        """The `|ID=` field is free text; every spelling the dump uses parses."""
+        from tools.generators.gen_morrowind_quest_names import (
+            display_name, journal_ids)
+        assert journal_ids("IC_8_Nord_alms ''(also IC8_Briring, IC8_Eiruki)''") \
+            == ['IC_8_Nord_alms', 'IC8_Briring', 'IC8_Eiruki']
+        assert journal_ids('MS_BarbarianBook, MS_BarbarianBook_B, and MS_C') \
+            == ['MS_BarbarianBook', 'MS_BarbarianBook_B', 'MS_C']
+        assert journal_ids('CO_8 or CO_8a') == ['CO_8', 'CO_8a']
+        assert journal_ids('B1_Urshilaku Kill') == ['B1_Urshilaku Kill']
+        assert journal_ids("''none''") == []
+        assert journal_ids('MG_Telvanni*') == []
+        assert display_name('Morrowind:Ienas Sarandas (quest)') == 'Ienas Sarandas'
+
     def test_non_sge_quest_not_start_enabled(self):
         out = convert_QUST({'FormID': '00010603', 'RecordFlags': '0',
                             'EditorID': 'LateQuest', 'DATA.Flags': '0',

@@ -1,0 +1,26 @@
+{
+ "__doc__": "HAND-WRITTEN. TES3 journal id (lowercase) -> quest name, for journals that author no QSTN name and that UESP's table (morrowind_quest_names.json) does not cover. Wins over the UESP table. Each name was composed from the journal's own pages, reusing a sibling journal's UESP name where it is the same quest. No generator exists: see docs/commentary/morrowind_runtime.md#quest-names.",
+ "entries": {
+  "t_rules_itinerant_priests": "Rules of the Itinerant Priests",
+  "t_rules_janatta": "Rules of the Ja-Natta Syndicate",
+  "t_rules_king_anv": "Rules of the Kingdom of Anvil",
+  "tr_m1_ht_rathravmithras": "Rathra or Mithras",
+  "tr_m1_mqt_a2": "Main Quest Placeholder",
+  "tr_m2_fg_akastat": "The Akamora Fighters Guild",
+  "tr_m3_tg_at_q0_a": "Find Gordol the Scrivener",
+  "tr_m3_tg_rane1": "Medemilian Rane's Signet Ring",
+  "tr_m4_and_andasguest": "An Audience with Tholer Andas",
+  "tr_m4_bal3_arvsshadan_a": "The Sorceress of Arvs-Shadan",
+  "tr_m4_hh_and_ulvysquests": "Ulvys Ules' Business",
+  "tr_m7_ho_tt_m": "Consequences in Hlan Oek",
+  "tr_m7_jns_theboss_meet": "Meeting the Boss",
+  "tr_m7_ns_arenagenfight": "Winning Back the Crowd",
+  "tr_m7_ns_casino_key": "Keys to the Fortuna",
+  "tr_m7_ns_casino_prisoner": "The Tong's Prisoner",
+  "tr_m7_shin_ganettukill": "Enemy of the Gan-Ettu",
+  "tr_m7_shin_hunzakill": "Enemy of the Hunza",
+  "tr_m7_shin_nasarkill": "Enemy of the Nasar",
+  "tr_m7_shin_ussirankill": "Enemy of the Ussiran",
+  "tr_m7_wil_jns_nasarslave": "The Nasar Prisoner"
+ }
+}
