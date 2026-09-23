@@ -574,14 +574,28 @@ void PushCaption() {
     g_captionDirty = false;
 }
 
+// The number, and the bar filled to it: the movie draws the bar full and
+// this covers the part past the value.
+void PushDisposition() {
+    const int value =
+        std::clamp(g_actor ? g_actor->Disposition() : 0, 0, 100);
+    SetMenuText(Path(layout::kFieldDisposition, ".text").c_str(),
+                (std::to_string(value) + "/100").c_str());
+    const double filled = layout::kDispositionFillW * value / 100.0;
+    const double rest = layout::kDispositionFillW - filled;
+    SetMenuNumber(Path(layout::kSpriteBarCover, "._x").c_str(),
+                  layout::kDispositionFillX + filled);
+    SetMenuNumber(Path(layout::kSpriteBarCover, "._width").c_str(),
+                  std::max(rest, 1.0));
+    SetMenuNumber(Path(layout::kSpriteBarCover, "._visible").c_str(),
+                  rest > 0 ? 1 : 0);
+}
+
 void PushAll() {
     SetMenuText(Path(layout::kFieldName, ".text").c_str(),
                 g_speakerName.c_str());
     g_captionDirty = true;
-    const std::string disposition =
-        std::to_string(g_actor ? g_actor->Disposition() : 0) + "/100";
-    SetMenuText(Path(layout::kFieldDisposition, ".text").c_str(),
-                disposition.c_str());
+    PushDisposition();
     PushHistory(false);
     PushTopics();
     PushBye();

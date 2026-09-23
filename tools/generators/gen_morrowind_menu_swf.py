@@ -29,11 +29,12 @@ import os
 import struct
 
 from asset_convert.ui import ttf_glyphs
-from asset_convert.ui.morrowind_menu_art import (SCROLL_END, SCROLL_TRACK,
-                                                 SCROLL_W, compose_bar,
-                                                 compose_box, compose_button,
-                                                 compose_cap, compose_frame,
-                                                 compose_head, compose_line,
+from asset_convert.ui.morrowind_menu_art import (BOX_BORDER, SCROLL_END,
+                                                 SCROLL_TRACK, SCROLL_W,
+                                                 compose_bar, compose_box,
+                                                 compose_button, compose_cap,
+                                                 compose_frame, compose_head,
+                                                 compose_line,
                                                  compose_scrollbar,
                                                  compose_thumb)
 from asset_convert.ui.swf import (Swf, Tag, define_bits_lossless2,
@@ -122,6 +123,11 @@ HISTORY_BOX = (8, 8, 381, 381)
 HISTORY_PAGE = (15, 15, 364, 370)
 HISTORY_SCROLL = (370, 13, 14, 371)
 DISPOSITION = (398, 8, 166, 18)
+
+#: The disposition bar's fill, inside its box border; the plugin covers the part past the value.
+DISPOSITION_FILL = (DISPOSITION[0] + BOX_BORDER, DISPOSITION[1] + BOX_BORDER,
+                    DISPOSITION[2] - 2 * BOX_BORDER,
+                    DISPOSITION[3] - 2 * BOX_BORDER)
 TOPICS = (398, 31, 166, 328)
 BYE_BUTTON = (398, 366, 166, 23)
 
@@ -167,9 +173,10 @@ BUTTON_INSET = (4, 3)
 GOODBYE = 'Goodbye'
 PERSUASION = 'Persuasion'
 
-#: Character ids for the real menu's composed art and the caption cover (shape, then its sprite).
+#: Character ids for the real menu's composed art and the two covers (shape, then its sprite).
 CHAR_WINDOW_BMP, CHAR_WINDOW_SHAPE = 20, 21
 CHAR_COVER = 22
+CHAR_BAR_COVER = 26
 
 #: Sprites take character ids from here up, three per sprite (bitmap, shape, sprite).
 CHAR_SPRITE_FIRST = 60
@@ -202,6 +209,7 @@ FIELD_DISPOSITION = 'Disposition'
 FIELD_BYE = 'Bye'
 FIELD_TOPIC = 'Topic'
 SPRITE_COVER = 'Cover'
+SPRITE_BAR_COVER = 'BarCover'
 SPRITE_CAP_LEFT = 'CapLeft'
 SPRITE_CAP_RIGHT = 'CapRight'
 SPRITE_HISTORY_SCROLL = 'HistoryScroll'
@@ -461,9 +469,10 @@ def _modal_tags(export_root, depth: int) -> list:
     return out
 
 
-def compose_window(export_root, disposition: int = 50):
-    """The window CHROME as one image: both frames, caption plate, panes and
-    the Goodbye button, every part where MW_Window and the layout put it.
+def compose_window(export_root):
+    """The window CHROME as one image: both frames, caption plate, panes, a
+    FULL disposition bar and the Goodbye button, every part where MW_Window
+    and the layout put it.
 
     Deliberately textless. Every string the player reads is a DefineEditText
     field the plugin fills at runtime, so nothing here is baked but the art.
@@ -483,8 +492,7 @@ def compose_window(export_root, disposition: int = 50):
     tx, ty, tw, th = client_rect(TOPICS)
     panel.alpha_composite(compose_box(export_root, tw, th), (tx, ty))
     dx, dy, dw, dh = client_rect(DISPOSITION)
-    panel.alpha_composite(compose_bar(export_root, dw, dh, disposition / 100.0),
-                          (dx, dy))
+    panel.alpha_composite(compose_bar(export_root, dw, dh, 1.0), (dx, dy))
     bx, by, bw, bh = client_rect(BYE_BUTTON)
     panel.alpha_composite(compose_button(export_root, bw, bh), (bx, by))
     return panel
@@ -533,6 +541,18 @@ def _sprite(char_id: int, image, name: str, rect: tuple) -> list:
         define_sprite(char_id + 2,
                       [place_object2(depth=1, character_id=char_id + 1)]),
         (char_id + 2, name, (x, y)),
+    ]
+
+
+def _cover(char_id: int, name: str, rect: tuple, depth: int) -> list:
+    """A 1 px wide opaque black sprite `rect[3]` tall at a WINDOW-space rect's
+    top-left, placed at `depth`; the plugin sets its `_x` and `_width`."""
+    x, y, _w, h = stage_rect(rect)
+    return [
+        define_shape3_solid_rects(char_id, [(0, 0, 1, h)], (0, 0, 0, 255)),
+        define_sprite(char_id + 1, [place_object2(depth=1, character_id=char_id)]),
+        place_object2(depth=depth, character_id=char_id + 1, name=name,
+                      translate=(x, y)),
     ]
 
 
@@ -586,7 +606,6 @@ def dialogue_window(export_root) -> Swf:
     """
     window = compose_window(export_root)
     ox, oy = window_origin()
-    cx, cy, cw, ch = CAPTION
     tags = [
         Tag(TAG_FILE_ATTRIBUTES, struct.pack('<I', 0)),
         Tag(TAG_SET_BACKGROUND_COLOR, bytes([0, 0, 0])),
@@ -598,13 +617,11 @@ def dialogue_window(export_root) -> Swf:
             [(CHAR_WINDOW_BMP, ox, oy, WINDOW_W, WINDOW_H)]),
         place_object2(depth=1, character_id=CHAR_WINDOW_SHAPE,
                       name='Window_mc'),
-        define_shape3_solid_rects(CHAR_COVER, [(0, 0, 1, ch)], (0, 0, 0, 255)),
-        define_sprite(CHAR_COVER + 1,
-                      [place_object2(depth=1, character_id=CHAR_COVER)]),
-        place_object2(depth=2, character_id=CHAR_COVER + 1, name=SPRITE_COVER,
-                      translate=(cx + ox, cy + oy)),
     ]
-    depth = 3
+    tags += _cover(CHAR_COVER, SPRITE_COVER, CAPTION, 2)
+    tags += _cover(CHAR_BAR_COVER, SPRITE_BAR_COVER,
+                   client_rect(DISPOSITION_FILL), 3)
+    depth = 4
     for bitmap, shape, sprite, (char_id, name, at) in _sprites(export_root):
         tags += [bitmap, shape, sprite,
                  place_object2(depth=depth, character_id=char_id, name=name,
@@ -639,6 +656,7 @@ def _path_lines() -> list:
         'FieldName': FIELD_NAME, 'FieldHistory': FIELD_HISTORY,
         'FieldDisposition': FIELD_DISPOSITION, 'FieldBye': FIELD_BYE,
         'FieldTopic': FIELD_TOPIC, 'SpriteCover': SPRITE_COVER,
+        'SpriteBarCover': SPRITE_BAR_COVER,
         'SpriteCapLeft': SPRITE_CAP_LEFT, 'SpriteCapRight': SPRITE_CAP_RIGHT,
         'SpriteHistoryScroll': SPRITE_HISTORY_SCROLL,
         'SpriteHistoryThumb': SPRITE_HISTORY_THUMB,
@@ -722,6 +740,7 @@ def layout_header() -> str:
     lines += _rect_lines('TopicRow', topic_row_rect(0))
     lines += _rect_lines('TopicScroll', topic_scroll_rect())
     lines += _rect_lines('Bye', client_rect(BYE_BUTTON))
+    lines += _rect_lines('DispositionFill', client_rect(DISPOSITION_FILL))
     lines += _modal_lines()
     lines += [''] + _scalar_lines() + ['']
     for key, (r, g, b) in FONT_COLORS.items():
