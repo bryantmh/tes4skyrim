@@ -32,8 +32,26 @@ they are written to `../build/` and gitignored, along with every `.obj`.
 It maps the user's own `Oblivion.exe` and calls the SpeedTreeRT 4.x code
 statically linked into it. That image is i386 with its relocations **stripped**,
 so it can only load at its fixed base `0x400000` — which only a 32-bit host can
-address. The harness is therefore built `/BASE:0x20000000 /FIXED
-/DYNAMICBASE:NO` to keep itself out of that range.
+address. By the time any host code runs, Windows has already put its own
+startup data in that range, so the harness claims it through its own image:
+it is linked `/BASE:0x200000 /FIXED /DYNAMICBASE:NO /SAFESEH:NO` with an empty
+`.oblimg` section (no file bytes) spanning `0x400000–0xD00000`, and copies
+Oblivion.exe into it.
+
+### Antivirus
+
+Defender quarantined the earlier build as `Trojan:Win32/Wacatac.B!ml` (a
+machine-learning verdict, not a signature). That build relaunched itself
+suspended and reserved `0x400000` in the child with `VirtualAllocEx` — the
+process-hollowing pattern — and mapped the image read-write-execute. Both are
+gone: the range comes from `.oblimg`, and each mapped section gets its own
+header's protection. The exe also carries a version resource and an
+`asInvoker` manifest.
+
+The verdict was attached to that exact file: a fresh rebuild of the same old
+source scanned clean with `MpCmdRun -Scan -ScanType 3 -File`, so a clean local
+scan of a new build proves nothing on its own. If a build is flagged again,
+submit it as a false positive at microsoft.com/wdsi/filesubmission.
 
 **No Bethesda code is redistributed.** The harness contains none of
 Oblivion.exe; it maps the copy the user already owns, at runtime, as data (the

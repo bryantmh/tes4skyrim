@@ -41,57 +41,47 @@ static void logf(const char* fmt, ...);
 static HANDLE g_crtheap = nullptr;
 
 // The mapped image must land at 0x400000 (Oblivion.exe has its relocations
-// stripped), but by the time ANY user code runs -- even a static initialiser
-// with init_seg(compiler) -- the CRT heap has already scattered committed
-// pages across that range.  VirtualAlloc then fails with ERROR_INVALID_ADDRESS
-// (487) and the pages cannot be freed, since they belong to the heap we are
-// running on.
+// stripped), but by the time ANY of our code runs -- even a custom /ENTRY
+// ahead of the CRT -- WoW64 and the loader have already mapped NLS tables,
+// heaps and stacks across that range, so VirtualAlloc there fails with
+// ERROR_INVALID_ADDRESS (487).
 //
-// Solution: re-launch ourselves SUSPENDED, reserve 0x400000 in the child from
-// the parent (before the child's CRT has started), then resume it.  The child
-// finds the range already reserved and simply commits into it.
-static const size_t RESERVE_SIZE = 0x900000;  // > any Oblivion.exe SizeOfImage
-static const char*  RELAUNCH_ENV = "SPT_ENGINE_CHILD";
+// The one thing laid out before all of that is the exe image itself.  So the
+// host reserves the range as part of its OWN image: an uninitialised section
+// (.oblimg, no file bytes) sized so that, with the host linked at /BASE:
+// 0x200000 (build.bat), it spans 0x400000..0x400000+ORIGINAL_IMAGE_MAX
+// whatever the size of the sections the linker puts ahead of it.
+// map_image checks that and copies Oblivion.exe into it.
+//
+// This replaced relaunching ourselves suspended and reserving the range with
+// VirtualAllocEx: that is the process-hollowing pattern, and Defender
+// quarantined the exe as Trojan:Win32/Wacatac.B!ml for it.
+static const size_t ORIGINAL_IMAGE_MAX = 0x900000;  // > any Oblivion.exe SizeOfImage
+static const size_t IMAGE_SPACE        = 0xB00000;  // 0x200000 slack for the host
+#pragma bss_seg(".oblimg")
+static uint8_t g_image_space[IMAGE_SPACE];
+#pragma bss_seg()
 
-// Re-exec self suspended with 0x400000 pre-reserved.  Returns the child's exit
-// code, or -1 if the relaunch itself failed.
-static int relaunch_with_reservation(int argc, char** argv)
+// Give each mapped section the protection its own header asks for, as the
+// Windows loader would.  Later code patches (write_jmp etc.) VirtualProtect
+// around themselves, so nothing needs the image left writable+executable.
+static void protect_sections(uint8_t* mem, IMAGE_NT_HEADERS32* nt)
 {
-    std::string cmd;
-    for (int i = 0; i < argc; ++i) {
-        cmd += '"';
-        cmd += argv[i];
-        cmd += '"';
-        if (i + 1 < argc) cmd += ' ';
+    IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (int i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        DWORD size = sec[i].Misc.VirtualSize ? sec[i].Misc.VirtualSize
+                                             : sec[i].SizeOfRawData;
+        if (!size) continue;
+        DWORD c = sec[i].Characteristics;
+        bool x = (c & IMAGE_SCN_MEM_EXECUTE) != 0;
+        bool w = (c & IMAGE_SCN_MEM_WRITE) != 0;
+        DWORD prot = x ? (w ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ)
+                       : (w ? PAGE_READWRITE : PAGE_READONLY);
+        DWORD old = 0;
+        if (!VirtualProtect(mem + sec[i].VirtualAddress, size, prot, &old))
+            logf("[spt_engine]   protect sec %d failed (err %lu)\n", i,
+                 GetLastError());
     }
-    SetEnvironmentVariableA(RELAUNCH_ENV, "1");
-
-    STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
-    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
-    std::vector<char> mut(cmd.begin(), cmd.end()); mut.push_back('\0');
-    if (!CreateProcessA(nullptr, mut.data(), nullptr, nullptr, TRUE,
-                        CREATE_SUSPENDED, nullptr, nullptr, &si, &pi)) {
-        fprintf(stderr, "relaunch failed (err %lu)\n", GetLastError());
-        return -1;
-    }
-    // Reserve the range in the suspended child before its CRT can touch it.
-    LPVOID r = VirtualAllocEx(pi.hProcess, (LPVOID)IMAGE_BASE, RESERVE_SIZE,
-                              MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!r) {
-        fprintf(stderr, "VirtualAllocEx(child, 0x%x) failed (err %lu)\n",
-                (unsigned)IMAGE_BASE, GetLastError());
-        TerminateProcess(pi.hProcess, 1);
-        CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
-        return -1;
-    }
-    ResumeThread(pi.hThread);
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD code = 1;
-    GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
-    if (code >= 0xC0000000u)
-        fprintf(stderr, "[spt_engine] child crashed, exit 0x%08lx\n", code);
-    return (int)code;
 }
 
 static bool map_image(const char* path)
@@ -112,39 +102,20 @@ static bool map_image(const char* path)
     }
     DWORD image_size = nt->OptionalHeader.SizeOfImage;
 
-    // Must land exactly at 0x400000: relocations are stripped.
-    // Commit inside the range reserved by g_early_reserve.  If that reservation
-    // succeeded this always works; the MEM_RESERVE fallback covers the case
-    // where it did not.
-    void* mem = VirtualAlloc((LPVOID)IMAGE_BASE, image_size,
-                             MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-    if (!mem)
-        mem = VirtualAlloc((LPVOID)IMAGE_BASE, image_size,
-                           MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-    if (!mem) {
-        DWORD err = GetLastError();
-        fprintf(stderr, "VirtualAlloc at 0x%x (size 0x%x) failed (err %lu)\n",
-                (unsigned)IMAGE_BASE, (unsigned)image_size, err);
-        // Report what is squatting on the range so the cause is visible
-        // rather than guessed at.
-        MEMORY_BASIC_INFORMATION mbi;
-        uintptr_t probe = IMAGE_BASE;
-        while (probe < IMAGE_BASE + image_size &&
-               VirtualQuery((LPCVOID)probe, &mbi, sizeof(mbi))) {
-            char name[MAX_PATH] = {0};
-            if (mbi.State != MEM_FREE)
-                GetModuleFileNameA((HMODULE)mbi.AllocationBase, name, MAX_PATH);
-            fprintf(stderr, "  0x%08x len=0x%08x state=%s %s\n",
-                    (unsigned)(uintptr_t)mbi.BaseAddress, (unsigned)mbi.RegionSize,
-                    mbi.State == MEM_FREE ? "FREE" :
-                    mbi.State == MEM_RESERVE ? "RESERVE" : "COMMIT",
-                    name);
-            if (!mbi.RegionSize) break;
-            probe = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
-        }
+    // Must land exactly at 0x400000: relocations are stripped.  The range is
+    // our own zero-filled, read-write .oblimg section; protect_sections()
+    // applies each section's own protection once the imports are bound.
+    uintptr_t space = (uintptr_t)g_image_space;
+    if (image_size > ORIGINAL_IMAGE_MAX || space > IMAGE_BASE ||
+        space + IMAGE_SPACE < IMAGE_BASE + image_size) {
+        fprintf(stderr, ".oblimg 0x%x..0x%x does not cover 0x%x..0x%x "
+                "(check /BASE in build.bat)\n", (unsigned)space,
+                (unsigned)(space + IMAGE_SPACE), (unsigned)IMAGE_BASE,
+                (unsigned)(IMAGE_BASE + image_size));
         return false;
     }
-    logf("[spt_engine] committed 0x%x bytes at 0x%p\n", (unsigned)image_size, mem);
+    void* mem = (void*)IMAGE_BASE;
+    logf("[spt_engine] mapping 0x%x bytes at 0x%p\n", (unsigned)image_size, mem);
     memcpy(mem, raw.data(), nt->OptionalHeader.SizeOfHeaders);
     IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
     for (int i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
@@ -184,6 +155,7 @@ static bool map_image(const char* path)
         }
     }
     logf("[spt_engine] imports resolved\n");
+    protect_sections((uint8_t*)mem, nt);
     g_image = mem;
     return true;
 }
@@ -702,13 +674,13 @@ static LONG WINAPI fault_reporter(EXCEPTION_POINTERS* ep)
     // pointer; the return address on top of the stack names the call site.
     // Probe the stack before reading it -- it may itself be the bad pointer.
     uintptr_t eip = ep->ContextRecord->Eip;
-    if (eip < IMAGE_BASE || eip >= IMAGE_BASE + RESERVE_SIZE) {
+    if (eip < IMAGE_BASE || eip >= IMAGE_BASE + ORIGINAL_IMAGE_MAX) {
         uint32_t* sp = (uint32_t*)(uintptr_t)ep->ContextRecord->Esp;
         if (!IsBadReadPtr(sp, 6 * sizeof(uint32_t))) {
             logf("           dispatched from:\n");
             for (int i = 0; i < 6; ++i) {
                 uint32_t v = sp[i];
-                if (v >= IMAGE_BASE && v < IMAGE_BASE + RESERVE_SIZE)
+                if (v >= IMAGE_BASE && v < IMAGE_BASE + ORIGINAL_IMAGE_MAX)
                     logf("             esp+%02x = 0x%08x  <- in image\n", i * 4, v);
             }
         }
@@ -948,7 +920,7 @@ static LONG WINAPI step_tracer(EXCEPTION_POINTERS* ep)
     // Record ONLY addresses inside the mapped image.  Logging every step would
     // also trace our own logging code (and the ntdll it calls), which both
     // swamps the output and recurses.
-    if (eip >= IMAGE_BASE && eip < IMAGE_BASE + RESERVE_SIZE) {
+    if (eip >= IMAGE_BASE && eip < IMAGE_BASE + ORIGINAL_IMAGE_MAX) {
         g_ring[g_ring_n++ & 63] = eip;
         // Write through: the process dies without unwinding, so anything left
         // buffered in memory is lost.
@@ -1230,11 +1202,6 @@ int main(int argc, char** argv)
           "GOG/Nehrim and Steam executables are byte-identical.\n");
         return 2;
     }
-    // First invocation: re-exec suspended so a parent can reserve 0x400000
-    // before this process's CRT claims pages there.
-    if (!GetEnvironmentVariableA(RELAUNCH_ENV, nullptr, 0))
-        return relaunch_with_reservation(argc, argv);
-
     const char* exe  = argv[1];
     const char* spt  = argv[2];
     const char* outp = argv[3];
@@ -1255,7 +1222,7 @@ int main(int argc, char** argv)
     // first, before any frame-based handler.
     AddVectoredExceptionHandler(1, fault_reporter);
     SetUnhandledExceptionFilter(fault_reporter);
-    logf("[spt_engine] child start\n");
+    logf("[spt_engine] start\n");
 
     if (!map_image(exe)) return 1;
     // Redirect the game's two allocator wrappers to the HOST CRT.

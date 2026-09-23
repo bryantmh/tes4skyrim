@@ -217,6 +217,17 @@ else if (seed != 1) { this->seed = seed; }
 ```
 Stored at `[esi+0x48]`. Seed 1 is a sentinel meaning "leave current".
 
+**Seed 0 is not reproducible under `spt_engine_dump.exe`.** `rand_range` first
+calls `0x78ea30(-1)`, which divides an uninitialized stack slot (`fild [esp]`
+at `0x78ea91` — the `push ecx` at entry, i.e. whatever `ecx` held) by
+`time(NULL)` and seeds the RNG from that. The result depends on heap addresses
+and the clock. Measured 2026-09-23 on the 2 seed-0 dumps in
+`export/Oblivion.esm/trees/spt_engine_dumps/` (`shrubvinemaplesu_0`,
+`treesugarmapleforestsu_0`): neither the old nor the rebuilt harness reproduces
+the cached file. The old build repeated itself run to run; the rebuilt one
+does not. The 143 dumps with a non-zero seed are byte-identical across both
+builds.
+
 ### 3.4 Scale — `WORLD_SCALE = 10.0` CONFIRMED
 
 ck-cmd (`references/ck-cmd-master/src/spt/sptconvert.cpp:2446`):
