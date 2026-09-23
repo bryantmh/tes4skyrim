@@ -202,9 +202,13 @@ def read_shapes(source):
     return shapes
 
 
-def _islands(tris, nverts):
-    """Connected components over shared vertices -> list of triangle-id lists."""
-    parent = list(range(nverts))
+#: Face normals meeting at a sharper angle than ~45 degrees start a new island.
+CREASE_COS = 0.7
+
+
+def _union_roots(count, links):
+    """Union-find over `count` items joined by (a, b) links -> root of each item."""
+    parent = list(range(count))
 
     def find(a):
         while parent[a] != a:
@@ -212,13 +216,48 @@ def _islands(tris, nverts):
             a = parent[a]
         return a
 
-    for a, b, c in tris:
-        ra, rb, rc = find(a), find(b), find(c)
-        parent[ra] = rb
-        parent[find(rb)] = find(rc)
+    for a, b in links:
+        parent[find(a)] = find(b)
+    return [find(i) for i in range(count)]
+
+
+def _islands(tris, nverts):
+    """Connected components over shared vertices -> list of triangle-id lists."""
+    roots = _union_roots(nverts, ((t[i], t[i + 1]) for t in tris for i in (0, 1)))
     groups = {}
     for i, t in enumerate(tris):
-        groups.setdefault(find(t[0]), []).append(i)
+        groups.setdefault(roots[t[0]], []).append(i)
+    return list(groups.values())
+
+
+def _welded_tris(shape):
+    """Triangles re-indexed so vertices equal in position AND uv share one index."""
+    key = np.round(np.hstack([shape['verts'], shape['uvs']]), 4)
+    _, first, inverse = np.unique(key, axis=0, return_index=True, return_inverse=True)
+    canon = first[inverse.reshape(-1)]
+    return [tuple(int(canon[i]) for i in t) for t in shape['tris']]
+
+
+def _facets(v, tris, tri_ids):
+    """Split one island at creases -> list of triangle-id lists.
+
+    Triangles stay together only when they share a vertex AND their face
+    normals agree within CREASE_COS, so a cover skinned continuously round
+    the spine (Morrowind) separates into front, spine and back exactly as an
+    Oblivion cover with split seam vertices already does.
+    """
+    t = np.asarray([tris[i] for i in tri_ids])
+    n = np.cross(v[t[:, 1]] - v[t[:, 0]], v[t[:, 2]] - v[t[:, 0]])
+    n /= np.linalg.norm(n, axis=1, keepdims=True) + 1e-12
+    by_vert = {}
+    for k, tri in enumerate(t):
+        for vid in tri:
+            by_vert.setdefault(vid, []).append(k)
+    links = ((a, b) for ks in by_vert.values() for i, a in enumerate(ks)
+             for b in ks[i + 1:] if n[a] @ n[b] > CREASE_COS)
+    groups = {}
+    for k, root in enumerate(_union_roots(len(t), links)):
+        groups.setdefault(root, []).append(tri_ids[k])
     return list(groups.values())
 
 
@@ -305,21 +344,27 @@ class Calibration:
         self.pages_tex = pages_tex
 
 
-def _all_islands(shapes):
+def _all_islands(shapes, split=True, weld=False):
+    """Every shape's islands, crease-split into flat facets unless `split` is False.
+
+    `weld` joins vertices equal in position and uv first, so a mesh stored as
+    loose triangles still forms islands.
+    """
     out = []
     for shape in shapes:
-        for tri_ids in _islands(shape['tris'], len(shape['verts'])):
-            out.append(Island(shape, tri_ids))
+        tris = _welded_tris(shape) if weld else shape['tris']
+        for tri_ids in _islands(tris, len(shape['verts'])):
+            parts = _facets(shape['verts'], tris, tri_ids) if split else [tri_ids]
+            out += [Island(shape, part) for part in parts]
     return out
 
 
 def calibrate(shapes):
     """Classify a mesh's UV islands into book regions.
 
-    Books: a large flat +Z island (front cover, book lying face-up) plus a
-    tall |n_x| island on the same texture (spine).  Flat sheets: one dominant
-    flat island.  Anything unfittable (rolled scrolls, crumpled paper) falls
-    back to an identity full-texture map.
+    Books lying closed (_closed_book) or open (_open_book) calibrate as
+    'book'.  Flat sheets: one dominant flat island.  Anything unfittable
+    (rolled scrolls, crumpled paper) falls back to an identity full-texture map.
     """
     islands = _all_islands(shapes)
     if not islands:
@@ -327,62 +372,113 @@ def calibrate(shapes):
     all_min = np.min([i.pos_min for i in islands], axis=0)
     all_max = np.max([i.pos_max for i in islands], axis=0)
     total_span = np.maximum(all_max - all_min, 1e-6)
-    z_mid = (all_min[2] + all_max[2]) / 2.0
+    return (_closed_book(shapes, islands, total_span, (all_min[2] + all_max[2]) / 2.0)
+            or _open_book(_all_islands(shapes, weld=True), total_span)
+            or _sheet(shapes))
 
-    # front cover: largest flat island facing up, centered above the midplane
+
+def _closed_book(shapes, islands, total_span, z_mid):
+    """Calibrate a book lying CLOSED, face-up, or None.
+
+    Front cover: the largest flat +Z island above the midplane, spanning the
+    footprint.  Spine: the largest tall |n_x| island on the same texture.
+    Page edges: the largest island of the first shape on another texture
+    (matched by id(): shapes hold numpy arrays, so `in` would compare them).
+    """
     flats = [i for i in islands if i.normal[2] > 0.85
              and (i.pos_min[2] + i.pos_max[2]) / 2.0 >= z_mid]
-    front = max(flats, key=lambda i: i.area) if flats else None
+    front = max(flats, key=lambda i: i.area, default=None)
+    if front is None or not _spans_footprint(front, total_span) or total_span[2] <= 1.0:
+        return None
+    front_tex = _tex_of(front.shape)
+    spines = [i for i in islands
+              if abs(i.normal[0]) > 0.7
+              and i.span()[1] > 0.6 * total_span[1]
+              and _tex_of(i.shape) == front_tex]
+    if not spines:
+        return None
+    page_shapes = [s for s in shapes if s['texs'] and s['texs'][0] != front_tex]
+    page_ids = {id(s) for s in page_shapes}
+    big = max((i for i in islands if id(i.shape) in page_ids),
+              key=lambda i: i.area, default=None)
+    return Calibration(
+        'book',
+        cover=RegionFit(front, (0, 1)),
+        spine=RegionFit(max(spines, key=lambda i: i.area), (1, 2)),
+        pages=big and RegionFit(big, (int(np.argmax(big.span()[:2])), 2)),
+        cover_tex=front_tex,
+        pages_tex=page_shapes[0]['texs'][0] if page_shapes else None,
+    )
 
-    spine = None
-    if front is not None:
-        front_tex = front.shape['texs'][0] if front.shape['texs'] else None
-        spines = [i for i in islands
-                  if abs(i.normal[0]) > 0.7
-                  and i.span()[1] > 0.6 * total_span[1]
-                  and (i.shape['texs'][0] if i.shape['texs'] else None) == front_tex]
-        spine = max(spines, key=lambda i: i.area) if spines else None
 
-    if front is not None and spine is not None and total_span[2] > 1.0:
-        pages_tex = None
-        pages_fit = None
-        front_tex = front.shape['texs'][0] if front.shape['texs'] else None
-        page_shapes = [s for s in shapes
-                       if s['texs'] and s['texs'][0] != front_tex]
-        if page_shapes:
-            pages_tex = page_shapes[0]['texs'][0]
-            # Identity, not `in`: shapes are dicts holding numpy arrays, so
-            # `i.shape in page_shapes` runs dict __eq__ -> element-wise array
-            # comparison, which raises as soon as two shapes have different
-            # vertex counts ("operands could not be broadcast together").
-            # Uniform-vertex-count books hid it; mixed ones failed to bake.
-            page_ids = {id(s) for s in page_shapes}
-            page_isles = [i for i in islands if id(i.shape) in page_ids]
-            if page_isles:
-                big = max(page_isles, key=lambda i: i.area)
-                long_axis = int(np.argmax(big.span()[:2]))
-                pages_fit = RegionFit(big, (long_axis, 2))
-        return Calibration(
-            'book',
-            cover=RegionFit(front, (0, 1)),
-            spine=RegionFit(spine, (1, 2)),
-            pages=pages_fit,
-            cover_tex=front.shape['texs'][0] if front.shape['texs'] else None,
-            pages_tex=pages_tex,
-        )
+def _sheet(shapes):
+    """Calibrate a flat sheet, or 'identity' when its UVs are not affine.
 
-    # flat sheet: largest island, plane = the two axes orthogonal to the
-    # dominant normal axis (x before z / y before z keeps width-then-height)
-    big = max(islands, key=lambda i: i.area)
+    The sheet is the largest island, its plane the two axes orthogonal to its
+    dominant normal axis (x before z / y before z keeps width-then-height).
+    Judged on whole connected islands, never crease-split facets: a crumpled
+    page's single facet is flat, the page as a whole is not.  Non-affine UVs
+    (rolled scroll, crumpled paper) show the source texture as-is.
+    """
+    big = max(_all_islands(shapes, split=False), key=lambda i: i.area)
     d = int(np.argmax(np.abs(big.normal)))
     axes = tuple(a for a in (0, 1, 2) if a != d)
     fit = RegionFit(big, axes)
-    tex = big.shape['texs'][0] if big.shape['texs'] else None
+    tex = _tex_of(big.shape)
     if fit.rms > 0.08:
-        # UV not an affine function of the surface (rolled scroll, crumpled
-        # paper): show the source texture as-is on the sheet template.
         return Calibration('identity', cover_tex=tex)
     return Calibration('sheet', cover=fit, cover_tex=tex)
+
+
+def _spans_footprint(isle, total_span):
+    """True when `isle` covers >= 75% of the mesh footprint on both horizontal axes."""
+    return bool(np.all(isle.span()[:2] >= 0.75 * total_span[:2]))
+
+
+def _open_book(islands, total_span):
+    """Calibrate a book lying OPEN, or None.
+
+    Cover: one flat down-facing island (back | spine | front) whose inner
+    vertex rows bound the spine; front = the higher-u side.  Requires an
+    up-facing page spread on another texture of >= half the cover's area
+    (a folded note has none).  Fits follow the closed-book convention in
+    texture space: cover n = (spine -> fore-edge, bottom -> top), spine
+    n = (length, back -> front).
+    """
+    unders = [i for i in islands
+              if i.normal[2] < -0.85 and _spans_footprint(i, total_span)]
+    if not unders:
+        return None
+    under = max(unders, key=lambda i: i.area)
+    spread = sum(i.area for i in islands if i.normal[2] > 0.85
+                 and _tex_of(i.shape) not in (None, _tex_of(under.shape)))
+    if spread < 0.5 * under.area:
+        return None
+    across = int(np.argmax(np.abs(RegionFit(under, (0, 1)).M[0])))
+    rows = {}
+    for pos, u in zip(under.verts[:, across], under.uvs[:, 0]):
+        rows.setdefault(round(float(pos), 1), []).append(u)
+    us = [float(np.mean(rows[k])) for k in sorted(rows)]
+    if len(us) < 4:
+        return None
+    spine_lo, spine_hi = sorted((us[1], us[-2]))
+    v_bot, v_top = under.uv_max[1], under.uv_min[1]
+    edges = [i for i in islands
+             if abs(i.normal[2]) < 0.5 and i.shape is not under.shape]
+    pages = max(edges, key=lambda i: i.area, default=None)
+    return Calibration(
+        'book',
+        cover=bbox_fit((spine_hi, v_bot), (max(us[0], us[-1]), v_top)),
+        spine=_SpineFit((spine_lo, v_bot), (spine_hi, v_top)),
+        pages=pages and RegionFit(pages, (int(np.argmax(pages.span()[:2])), 2)),
+        cover_tex=_tex_of(under.shape),
+        pages_tex=pages and _tex_of(pages.shape),
+    )
+
+
+def _tex_of(shape):
+    """First texture path of a read_shapes() shape, or None."""
+    return shape['texs'][0] if shape['texs'] else None
 
 
 def _tex_basename(path: str) -> str:
@@ -540,6 +636,13 @@ class _BBoxFit:
     def n_from_uv(self, uv):
         rng = np.maximum(self.uv_max - self.uv_min, 1e-9)
         return np.clip((uv - self.uv_min) / rng, 0.0, 1.0)
+
+
+class _SpineFit(_BBoxFit):
+    """Rect map with the axes crossed: n = (along uv v, along uv u)."""
+
+    def uv_from_n(self, n):
+        return super().uv_from_n(n[..., ::-1])
 
 
 def bbox_fit(lo, hi):

@@ -218,10 +218,15 @@ vanilla vendor factions carry PLVD. A faction the selector skips leaves the
 actor with no vendor faction: the barter menu still opens, but only on the
 actor's carried inventory and gold, so its VENC chest is never read.
 
-A dependent plugin (Morroblivion, the ESPs) skips `create_vendor_factions`
-(`_prescan_vendor_trainer` gates on `is_support_root()`) and adopts nothing,
-so its merchants get no vendor faction, and `ACBS.BarterGold` is dropped because
-it is only written when a vendor faction exists.
+A dependent plugin (Tribunal, Bloodmoon, TR_Mainland, Morrowind_ob, the ESPs)
+skips `create_vendor_factions` (`_prescan_vendor_trainer` gates on
+`is_support_root()`) and adopts nothing, so its merchants get no vendor faction,
+and `ACBS.BarterGold` is dropped because it is only written when a vendor
+faction exists: 20/20 Tribunal, 11/11 Bloodmoon and 778/778 TR_Mainland
+merchants with authored gold carry none, against 303/303 in Morrowind.esm. The
+barter menu copies the merchant's own inventory (`0x1bcd40` → `0x237860`) and
+counts form `0xF` in it (`0x234350`), so carried gold is the vendor's gold even
+with no vendor faction.
 
 ### <a id="barter-gate-ctda-limit"></a>The merchant marker faction: a CTDA ceiling
 
