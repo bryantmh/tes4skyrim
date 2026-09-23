@@ -4470,7 +4470,7 @@ class TestCollisionWindingRepair:
                 normals = C._shape_tri_normals(inner)
                 if normals is None:
                     continue
-                assert len(normals) == len(soup[0])
+                assert len(normals) == len(soup[0]) == len(soup[1])
                 checked += 1
         assert checked, 'expected a mesh collision shape in seisland.nif'
 

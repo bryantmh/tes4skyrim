@@ -1,6 +1,6 @@
 # asset_convert/collision/collision.py — Havok collision
 
-**Code:** `asset_convert/collision/collision.py`, `asset_convert/collision/collision_constraints.py`, `asset_convert/collision/collision_winding.py`, `asset_convert/collision/collision_hulls.py`, `asset_convert/collision/collision_material.py`, `asset_convert/collision/collision_extract.py`, `asset_convert/collision/mopp.py`
+**Code:** `asset_convert/collision/collision.py`, `asset_convert/collision/collision_constraints.py`, `asset_convert/collision/collision_winding.py`, `asset_convert/collision/collision_hulls.py`, `asset_convert/collision/collision_material.py`, `asset_convert/collision/collision_stairs.py`, `asset_convert/collision/collision_extract.py`, `asset_convert/collision/mopp.py`
 
 ## Contents
 
@@ -16,6 +16,7 @@
 - [Constrained objects: chains, swinging traps, gates, trigger phantoms (2026-07-15)](#constrained-objects-chains-swinging-traps)
 - [Activation pick region (HUD rollover "too big" on clutter) — SOLVED 2026-07](#activation-pick-region)
 - [NIF bhkMultiSphereShape (dead in Skyrim, fixed 2026-07-05)](#nif-bhkmultisphereshape)
+- [Stepped stairs need the stairs material on their treads](#stairs-material)
 
 ## NIF bhkRigidBody field mapping (PyFFI ↔ newer nif.xml)
 <a id="nif-bhkrigidbody-field-mapping"></a>
@@ -1050,3 +1051,89 @@ converted doors carried the unlimited cap: `inumhudooru02`, `inuciudooru01`,
 
 The skeleton case is handled separately in `_convert_blend_collision`, which is
 why the door branch can take the unlimited pair unconditionally.
+
+## <a id="stairs-material"></a>Stepped stairs need the stairs material on their treads
+
+**Code:** `asset_convert/collision/collision_stairs.py`, `_shape_tri_soup` / `cms_builder.build_cms_collision` (per-triangle materials)
+
+**Symptom:** Oblivion stairs, and Morroblivion's stepped stairs, are not smoothly
+walkable by the player or NPCs; Morrowind.esm stairs are.
+
+**Mechanism.** A Skyrim MATT record has a `Stair Material` flag (FNAM bit 0).
+The CK wiki: it "allows proper IK movement when walking up or down stair
+collision. (Note: Failing to do this will result in stuttering)". The CK names
+the lookup `bhkUtilFunctions::GetMaterialIsStairs()`. Oblivion's own character
+controller climbed steps without any marker, so its authors never set one.
+
+**Vanilla does one of two things** (census of the 75 `*stair*` NIFs under
+`references/Skyrim Meshes/meshes/architecture`):
+
+- stepped collision with a stairs material on the treads (`hhstairs01`: 24u
+  rises, all StairsStone; `walkwaystairs*`, `rtcanalsstairs01`,
+  `whintstairs01`). Stairs material sits on 6.95M u² of flat treads.
+- a ramp with a plain material (`sovintstairsmain01/02`, `wrcastlestairs01`,
+  `wrpondstairs01/02`).
+
+Stairs material on a ramp is also legal: `mrkdocksideplatforms03stairs` is a 40°
+StairsStone ramp. Do not strip it.
+
+**What we shipped.**
+
+- Oblivion: **150 of 155** `*stair*` NIFs carry no stairs material and no
+  OL_STAIRS layer, and their collision is stepped (`castlestairs01`: 12-13u
+  rises, HAV_MAT_STONE). Stepped + plain = the stutter.
+- Morroblivion: 27 of 78 `*stair*` NIFs are stepped, 19 of those with no stairs
+  material (`exutustair*`, `exuimpuwallustairs*`, `inudaeuhallulstair*`). Their
+  Morrowind.esm originals (`ex_t_stair_01`, `ex_imp_wall_stairs_01`,
+  `in_dae_hall_l_stairs_01`) are RAMPS, which is why Morrowind.esm works. The
+  Morroblivion ramps are the same ramps and material as Morrowind's.
+- Every packed shape lost its per-sub-shape materials: `_shape_tri_soup` took
+  `sub_shapes[0]` for the whole shape and the CMS held one material
+  (`inucustairuplainutallu01`: source parts 24/9/0/12 all shipped StairsWood).
+
+**Fix.** Triangles keep their own sub-shape's material (the CMS carries one
+chunk material per distinct value, and a chunk or big tri indexes it, as
+vanilla does: `wrjorvaskr01` big tris index 0 of [Wood, StairsStone]).
+`cms_builder.build_cms_collision` then runs `stairs_materials`, so every static
+CMS the converter writes (TES4 mesh collision, Morrowind render-geometry
+collision, SpeedTree) gets it. It switches the treads of every stepped flight
+to the stairs variant of their material, using TES4's own enum pairing
+(i → i + 15):
+
+- a tread is up-facing triangles tilted < 10°, joined when they touch and sit
+  < 4u apart in height (a nosing lip, a rug);
+- two treads are one step apart when they rise 4-48u (Morroblivion's
+  `exutustairu01` rises 31-44u), sit no farther apart horizontally than 8u plus
+  the rise (a riser at 45° or steeper: `exutustairu90ulushort`'s chamfered
+  risers leave 28-32u between 32u steps), and share at most half
+  the smaller tread's footprint. Overlap is summed per TREAD, not per
+  triangle: a shelf board is a quad split on its diagonal, and the halves of
+  two stacked boards touch along it without overlapping;
+- a flight needs at least two inner treads (a step both below and above), so
+  a bed's mattress-pillow-headboard (one inner) is not one;
+- only treads up to twice the flight's median inner tread are tagged, which
+  leaves a room floor or a wide landing at a flight's foot or head plain;
+- the RISERS are tagged too: every non-level face whose height lies within
+  one step of the flight (± 4u), within 8u of one of its treads and within
+  8u plus the rise of the other (a chamfered step's riser sits a rise from
+  the lower tread). The steps onto the floor above and below count. Vanilla
+  does the same: on the 43 vanilla stair NIFs with stairs treads, short
+  (≤ 40u) vertical faces carry 3.17M u² of stairs material against 1.63M
+  plain, and pure stair pieces (`hhstairs01`, `whintstairs01`,
+  `rttempleplazastairs01`, `skyhaventmpextplatstairmid01`) have no plain
+  riser at all. Tagging treads alone made `anvilhousemcinterior02`'s lower
+  flight easier but the player still caught on the steps in-game; tagging the
+  risers as well cured it (confirmed in-game).
+
+Measured on converted output: every flight in `castlestairs01`,
+`bravilintstair01`, `stackstairsmid01`, `kvatchspiralstair01`, `arstairs01`,
+`exutustairu01`, `exuimpuwallustairsu01`, `inudaeuhallulustairsu01` and vanilla
+`hhstairs01` / `walkwaystairs8` is tagged; the Morrowind-style ramp
+`inutustairsustrtu256` and Oblivion's authored ramp `rfwstairs01` get nothing.
+In `furniture/` (142 NIFs) only `middlebrewersteps01` (real steps),
+`middlechair04/05` and `middledesk01` are tagged. After a rebuild, 90 of the
+101 stepped `*stair*` NIFs in Oblivion, 26 of 27 in Morroblivion and 2 of 4 in
+Morrowind.esm carry the stairs material. The misses are two-step pieces (one
+inner tread, the same shape as a bed) and the Telvanni pod stair, whose 4u
+rises make it a ramp. The Anvil interiors (76 NIFs) tag only their
+built-in staircases, at 0.00-0.02 s per mesh.

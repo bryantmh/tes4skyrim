@@ -1,6 +1,8 @@
 import math
 import sys
+from bisect import bisect_right
 from collections import deque
+from itertools import accumulate, groupby
 from pathlib import Path
 
 # Apply all PyFFI patches (time.clock fix, nif.xml condition fixes) before import
@@ -28,8 +30,6 @@ from asset_convert.collision.collision_winding import (
 # ---------------------------------------------------------------------------
 
 _HAVOK_SCALE = 0.1
-#: Skyrim: one Havok unit is this many game units.
-GAME_UNITS_PER_HAVOK = 69.9904
 # Oblivion->game unit scale, used to divide authored ragdoll MASS on creature
 # blend bodies.  Must stay equal to hkx_ragdoll._OB_MASS_DIV: skeleton.nif and
 # skeleton.hkx describe the SAME bodies and vanilla ships identical masses in
@@ -202,52 +202,41 @@ def shape_tri_groups(shape):
         return [len(list(_triangulate_strips(sd)))
                 for sd in shape.strips_data if sd is not None]
 
-    if isinstance(shape, NifFormat.bhkPackedNiTriStripsShape):
-        data = getattr(shape, 'data', None)
-        if data is None:
-            return []
-        subs = getattr(shape, 'sub_shapes', None) or []
-        if len(subs) < 2:
-            return []
-        # Sub-shapes partition the VERTEX array; a triangle belongs to the
-        # sub-shape owning its vertices.  Walk the triangles in order and cut
-        # whenever the owning sub-shape changes.
-        bounds, run = [], 0
-        for s in subs:
-            run += s.num_vertices
-            bounds.append(run)
-
-        def owner(vi):
-            for gi, hi in enumerate(bounds):
-                if vi < hi:
-                    return gi
-            return len(bounds) - 1
-
-        groups, cur, prev = [], 0, None
-        for t in data.triangles:
-            a, b, c = t.triangle.v_1, t.triangle.v_2, t.triangle.v_3
-            if a == b or b == c or a == c:
-                continue
-            g = owner(a)
-            if prev is not None and g != prev:
-                groups.append(cur)
-                cur = 0
-            prev = g
-            cur += 1
-        if cur:
-            groups.append(cur)
-        return groups
+    if (isinstance(shape, NifFormat.bhkPackedNiTriStripsShape)
+            and getattr(shape, 'data', None) is not None
+            and len(getattr(shape, 'sub_shapes', None) or []) >= 2):
+        return [len(list(run)) for _owner, run in groupby(_packed_tri_owners(shape))]
 
     return []
 
 
+def _packed_tri_owners(shape):
+    """Sub-shape index owning each non-degenerate triangle of a
+    bhkPackedNiTriStripsShape, in _shape_tri_soup order.  Sub-shapes
+    partition the VERTEX array; a triangle belongs to the sub-shape owning
+    its first vertex (the last one past the end, 0 when there are none)."""
+    bounds = list(accumulate(s.num_vertices for s in getattr(shape, 'sub_shapes', None) or []))
+    last = max(len(bounds) - 1, 0)
+    return [min(bisect_right(bounds, t.triangle.v_1), last)
+            for t in shape.data.triangles
+            if len({t.triangle.v_1, t.triangle.v_2, t.triangle.v_3}) == 3]
+
+
+def _sk_material(hm):
+    """Skyrim material CRC of HavokMaterial `hm`, mapping a TES4 enum index (<= 31)."""
+    cur = get_havok_material(hm)
+    return OB_TO_SK_MATERIAL.get(cur, 3741512247) if 0 <= cur <= 31 else cur
+
+
 def _shape_tri_soup(shape):
-    """Extract (triangles_hu, sk_material) from a mesh collision shape.
+    """Extract (triangles_hu, sk_materials) from a mesh collision shape:
+    one Skyrim material CRC per triangle, from its own packed sub-shape.
 
     bhkNiTriStripsShape data is at game-unit scale (÷7 → Oblivion havok,
     ×_HAVOK_SCALE → Skyrim havok).  hkPackedNiTriStripsData is at 1/7
     game-unit scale already (×_HAVOK_SCALE only).  Returns None for
     non-mesh shapes (caller uses the primitive conversion path).
+    See: docs/commentary/asset_convert_collision.md#stairs-material
     """
     if isinstance(shape, NifFormat.bhkNiTriStripsShape):
         scale = _HAVOK_SCALE / 7.0
@@ -261,10 +250,7 @@ def _shape_tri_soup(shape):
                         for a, b, c in _triangulate_strips(sd))
         if not tris:
             return None
-        material = get_havok_material(shape.material)
-        if 0 <= material <= 31:
-            material = OB_TO_SK_MATERIAL.get(material, 3741512247)
-        return tris, material
+        return tris, [_sk_material(shape.material)] * len(tris)
 
     if isinstance(shape, NifFormat.bhkPackedNiTriStripsShape):
         data = getattr(shape, 'data', None)
@@ -280,12 +266,8 @@ def _shape_tri_soup(shape):
             tris.append((verts[a], verts[b], verts[c]))
         if not tris:
             return None
-        material = 3741512247  # stone default
-        if shape.num_sub_shapes > 0:
-            material = get_havok_material(shape.sub_shapes[0].material)
-            if 0 <= material <= 31:
-                material = OB_TO_SK_MATERIAL.get(material, 3741512247)
-        return tris, material
+        materials = [_sk_material(s.material) for s in shape.sub_shapes] or [3741512247]
+        return tris, [materials[o] for o in _packed_tri_owners(shape)]
 
     return None
 
@@ -572,84 +554,75 @@ def _rebuild_mesh_collision(rb, target_node):
     bhkRigidBody).
 
     Returns True when handled, False → caller uses the primitive-shape
-    conversion path, or 'drop' → caller removes the collision object
-    entirely.  'drop' covers a sub-viable hull (see _MIN_HULL_EXTENT) and a
-    MOPP build that failed outright: the old fallback shipped a
-    bhkPackedNiTriStripsShape in that case, which Skyrim cannot load at all.
+    conversion path, or 'drop' → caller removes the collision object: a
+    sub-viable hull (_MIN_HULL_EXTENT) or a failed MOPP build, since a
+    packed-shape fallback crashes Skyrim on load.
+    See: docs/commentary/asset_convert_nif.md#bhkpackednitristripsshape-reaching-output-2-gb
     """
     shape = rb.shape
     inner = shape.shape if isinstance(shape, NifFormat.bhkMoppBvTreeShape) else shape
-    soup = _shape_tri_soup(inner)
+    soup = _finite_soup(inner)
     if soup is None:
         return False
-    tris, sk_material = soup
+    tris, materials, groups, authored_normals = soup
+    lo = [min(v[i] for t in tris for v in t) for i in range(3)]
+    hi = [max(v[i] for t in tris for v in t) for i in range(3)]
+    if max(hi[i] - lo[i] for i in range(3)) < _MIN_HULL_EXTENT:
+        _DEGENERATE_HULLS_DROPPED[0] += 1
+        return 'drop'
+    authored_normals = _normals_in_body_frame(rb, authored_normals)
+    tris = _bake_body_transform_into_tris(rb, tris)
+    tris, n_flipped = repair_inverted_floors(
+        tris, _visual_tri_soup(target_node), groups, authored_normals)
+    if n_flipped:
+        INVERTED_FLOOR_FLIPS[0] += n_flipped
+    mopp = build_cms_collision(tris, materials, NifFormat)
+    if mopp is not None:
+        mopp.shape.target = target_node
+        rb.shape = mopp
+        return True
+    _DEGENERATE_HULLS_DROPPED[0] += 1
+    return 'drop'
+
+
+def _finite_soup(inner):
+    """(tris, materials, groups, authored_normals) of mesh shape `inner` with
+    every non-finite triangle removed and the parallel lists cut to match;
+    None when it is not a mesh shape or nothing finite is left.  `groups`
+    and `authored_normals` are [] / None when they do not line up with the soup."""
+    soup = _shape_tri_soup(inner)
+    if soup is None:
+        return None
+    tris, materials = soup
     groups = shape_tri_groups(inner)
     authored_normals = _shape_tri_normals(inner)
     if authored_normals is not None and len(authored_normals) != len(tris):
         authored_normals = None
     keep = [all(math.isfinite(c) for v in t for c in v) for t in tris]
     if groups and sum(groups) == len(tris) and not all(keep):
-        adj, base = [], 0
-        for g in groups:
-            adj.append(sum(1 for i in range(base, base + g) if keep[i]))
-            base += g
-        groups = adj
-    if authored_normals is not None and not all(keep):
+        bounds = [0, *accumulate(groups)]
+        groups = [sum(keep[bounds[g]:bounds[g + 1]]) for g in range(len(groups))]
+    if authored_normals is not None:
         authored_normals = [n for n, k in zip(authored_normals, keep) if k]
     tris = [t for t, k in zip(tris, keep) if k]
-    if not tris:
-        return False
+    materials = [m for m, k in zip(materials, keep) if k]
+    return (tris, materials, groups, authored_normals) if tris else None
 
-    # Degenerate hull: too small for Havok to build a MOPP over, and far too
-    # small to collide with anything.  Drop it instead of shipping a shape
-    # that crashes the MOPP builder and lands on the packed fallback.
-    lo = [min(v[i] for t in tris for v in t) for i in range(3)]
-    hi = [max(v[i] for t in tris for v in t) for i in range(3)]
-    if max(hi[i] - lo[i] for i in range(3)) < _MIN_HULL_EXTENT:
-        _DEGENERATE_HULLS_DROPPED[0] += 1
-        return 'drop'
 
-    # The authored normals live in the SHAPE's frame; _bake_body_transform
-    # rotates the triangles into the node's.  Rotate the normals by the same
-    # matrix first or every comparison is made across two different frames --
-    # a 180-degree body would then read every face as reversed.  (The rotation
-    # comes from a quaternion, so it never mirrors and never itself changes
-    # which way a triangle winds.)
-    if authored_normals and isinstance(rb, NifFormat.bhkRigidBodyT):
-        q = rb.rotation
-        R = _m3_from_quat_xyzw(q.x, q.y, q.z, q.w)
-        authored_normals = [
-            None if n is None else
+def _normals_in_body_frame(rb, authored_normals):
+    """`authored_normals` (shape frame) rotated by a bhkRigidBodyT's rotation,
+    the same rotation _bake_body_transform_into_tris applies to the triangles,
+    so both are compared in the node's frame.  A quaternion never mirrors, so
+    the rotation never itself changes which way a triangle winds."""
+    if not authored_normals or not isinstance(rb, NifFormat.bhkRigidBodyT):
+        return authored_normals
+    q = rb.rotation
+    R = _m3_from_quat_xyzw(q.x, q.y, q.z, q.w)
+    return [None if n is None else
             (R[0][0]*n[0] + R[0][1]*n[1] + R[0][2]*n[2],
              R[1][0]*n[0] + R[1][1]*n[1] + R[1][2]*n[2],
              R[2][0]*n[0] + R[2][1]*n[1] + R[2][2]*n[2])
-            for n in authored_normals
-        ]
-    tris = _bake_body_transform_into_tris(rb, tris)
-    tris, n_flipped = repair_inverted_floors(
-        tris, _visual_tri_soup(target_node), groups, authored_normals)
-    if n_flipped:
-        INVERTED_FLOOR_FLIPS[0] += n_flipped
-    mopp = build_cms_collision(tris, sk_material, NifFormat)
-    if mopp is not None:
-        mopp.shape.target = target_node
-        rb.shape = mopp
-        return True
-    # MOPP failed.  Shipping _packed_from_tris here was a LOAD CRASH: Skyrim
-    # does not support bhkPackedNiTriStripsShape (0 of 17,216 vanilla meshes
-    # carry it or hkPackedNiTriStripsData), so the engine mis-sizes its
-    # sub-part allocation and memcpys the payload with a garbage 32-bit
-    # length -- measured live at 2.03 GB out of a 2.25 GB tbbmalloc block,
-    # with 49.2 GB committed and the resulting 0x0000000100000001 fill
-    # crashing whatever allocated next.  An unsupported shape is never a
-    # safer outcome than no collision, so the collision is dropped instead.
-    #
-    # In practice MOPP only fails on geometry that is not a surface at all:
-    # romanhanginglamp01.nif's collision is 8 vertices with X=Y=0 -- a bare
-    # line segment on the Z axis, zero area, which quantises to two distinct
-    # points and yields no chunk.  Dropping it costs nothing real.
-    _DEGENERATE_HULLS_DROPPED[0] += 1
-    return 'drop'
+            for n in authored_normals]
 
 
 # ---------------------------------------------------------------------------
@@ -940,16 +913,16 @@ def _convert_shape(shape, root_node):
         # memcpy the payload over unmapped memory (crash on load).
         soup = _shape_tri_soup(shape)
         if soup is not None:
-            tris, sk_material = soup
-            tris = [t for t in tris
-                    if all(math.isfinite(c) for v in t for c in v)]
-            if tris:
-                lo = [min(v[i] for t in tris for v in t) for i in range(3)]
-                hi = [max(v[i] for t in tris for v in t) for i in range(3)]
+            tris, materials = soup
+            finite = [t for t in tris
+                      if all(math.isfinite(c) for v in t for c in v)]
+            if finite:
+                lo = [min(v[i] for t in finite for v in t) for i in range(3)]
+                hi = [max(v[i] for t in finite for v in t) for i in range(3)]
                 if max(hi[i] - lo[i] for i in range(3)) < _MIN_HULL_EXTENT:
                     _DEGENERATE_HULLS_DROPPED[0] += 1
                     return None
-                mopp = build_cms_collision(tris, sk_material, NifFormat)
+                mopp = build_cms_collision(tris, materials, NifFormat)
                 if mopp is not None:
                     mopp.shape.target = root_node
                     return mopp

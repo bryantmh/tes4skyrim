@@ -275,7 +275,7 @@ def _make_collision(root, geo: TreeGeometry):
             tris_hu.append((tuple(v[a]), tuple(v[b]), tuple(v[c])))
     if tris_hu:
         try:
-            mopp = build_cms_collision(tris_hu, _SKY_MAT_WOOD, NifFormat)
+            mopp = build_cms_collision(tris_hu, [_SKY_MAT_WOOD] * len(tris_hu), NifFormat)
         except Exception:
             mopp = None
         if mopp is not None:

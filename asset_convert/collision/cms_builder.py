@@ -23,6 +23,8 @@ Layout conventions (verified field-by-field against vanilla Skyrim meshes):
     (float verts, key = big-tri index)
   - welding u16 per triangle stored at the triangle's first index slot in
     the chunk welding array (indices_2), matching the key offset
+  - one chunk material per distinct material; a chunk and a big tri each
+    carry an index into that list
 
 Input triangles must be in Skyrim havok units in the FINAL shape frame:
 the caller bakes any bhkRigidBodyT transform into the vertices and ships a
@@ -42,12 +44,15 @@ import uuid
 from pathlib import Path
 
 from asset_convert.collision.cms import decode_cms
+from asset_convert.collision.collision_stairs import stairs_materials
 from asset_convert.collision.mopp import walk_mopp
 
 from core.subprocess_flags import POPEN_FLAGS, windows_cmd
 from asset_convert import paths
 
 _MOPP_BRIDGE = str(paths.MOPP_BRIDGE)
+#: Skyrim: one Havok unit is this many game units.
+GAME_UNITS_PER_HAVOK = 69.9904
 
 _BITS_PER_INDEX = 17
 _BITS_PER_W_INDEX = 18
@@ -114,7 +119,8 @@ def _split_buckets(tris):
 
     Splits by triangle centroid at the AABB midpoint of the longest axis
     until every bucket's vertex AABB fits the u16 quantization span and the
-    triangle count stays in the vanilla chunk range.
+    triangle count stays in the vanilla chunk range.  A split that leaves
+    one side empty (all centroids equal) is forced at the bucket's middle.
     """
     out = []
     stack = [tris]
@@ -134,7 +140,7 @@ def _split_buckets(tris):
              if (t[0][axis] + t[1][axis] + t[2][axis]) / 3.0 <= mid]
         b = [t for t in bucket
              if (t[0][axis] + t[1][axis] + t[2][axis]) / 3.0 > mid]
-        if not a or not b:  # degenerate split (all centroids equal) — force
+        if not a or not b:
             half = len(bucket) // 2
             a, b = bucket[:half], bucket[half:]
         stack.append(a)
@@ -142,9 +148,10 @@ def _split_buckets(tris):
     return out
 
 
-def _new_data(NifFormat, sk_material):
-    """A bhkCompressedMeshShapeData with the vanilla header, one material
-    (SKYL_STATIC) and one identity transform."""
+def _new_data(NifFormat, palette):
+    """A bhkCompressedMeshShapeData with the vanilla header, one chunk material
+    (SKYL_STATIC) per Skyrim material CRC in `palette`, and one identity
+    transform."""
     data = NifFormat.bhkCompressedMeshShapeData()
     data.bits_per_index = _BITS_PER_INDEX
     data.bits_per_w_index = _BITS_PER_W_INDEX
@@ -153,13 +160,13 @@ def _new_data(NifFormat, sk_material):
     data.error = 1.0 / _QUANT
     data.unknown_int_3 = 1
 
-    data.num_materials = 1
+    data.num_materials = len(palette)
     data.chunk_materials.update_size()
-    mat = data.chunk_materials[0]
-    mat.material = int(sk_material)
-    mat.layer = 1
-    mat.byte_set_to_0 = 0
-    mat.short_set_to_0 = 0
+    for mat, crc in zip(data.chunk_materials, palette):
+        mat.material = int(crc)
+        mat.layer = 1
+        mat.byte_set_to_0 = 0
+        mat.short_set_to_0 = 0
 
     data.num_transforms = 1
     data.chunk_transforms.update_size()
@@ -172,12 +179,12 @@ def _new_data(NifFormat, sk_material):
 
 
 def _add_big_tris(data, big):
-    """Store `big` as float-vertex big triangles (key = index); welding is
-    filled from the bridge later."""
+    """Store `big` (triangle, material index) pairs as float-vertex big
+    triangles (key = index); welding is filled from the bridge later."""
     big_vert_index = {}
     big_verts = []
     big_tri_rows = []
-    for t in big:
+    for t, mi in big:
         idx = []
         for v in t:
             key = (round(v[0], 6), round(v[1], 6), round(v[2], 6))
@@ -189,7 +196,7 @@ def _add_big_tris(data, big):
             idx.append(i)
         if len(set(idx)) < 3 or _float32_collinear([big_verts[i] for i in idx]):
             continue
-        big_tri_rows.append(idx)
+        big_tri_rows.append((idx, mi))
 
     data.num_big_verts = len(big_verts)
     data.big_verts.update_size()
@@ -198,10 +205,10 @@ def _add_big_tris(data, big):
         bv.x, bv.y, bv.z, bv.w = float(x), float(y), float(z), 0.0
     data.num_big_tris = len(big_tri_rows)
     data.big_tris.update_size()
-    for i, (a, b, c) in enumerate(big_tri_rows):
+    for i, ((a, b, c), mi) in enumerate(big_tri_rows):
         bt = data.big_tris[i]
         bt.triangle_1, bt.triangle_2, bt.triangle_3 = a, b, c
-        bt.unknown_int_1 = 0
+        bt.unknown_int_1 = mi
         bt.unknown_short_1 = 0
 
 
@@ -276,17 +283,21 @@ def _quantize_bucket(bucket):
 
 
 def _add_chunks(data, small):
-    """Store `small` as u16-quantized chunks of independent index triples;
-    the welding array parallels the indices and starts zeroed."""
-    buckets = _split_buckets(small)
+    """Store `small` (triangle, material index) pairs as u16-quantized chunks
+    of independent index triples, one material per chunk; the welding array
+    parallels the indices and starts zeroed."""
+    by_material = {}
+    for t, mi in small:
+        by_material.setdefault(mi, []).append(t)
+    buckets = [(mi, b) for mi in sorted(by_material) for b in _split_buckets(by_material[mi])]
     data.num_chunks = len(buckets)
     data.chunks.update_size()
-    for ci, bucket in enumerate(buckets):
+    for ci, (mi, bucket) in enumerate(buckets):
         ch = data.chunks[ci]
         base, offs, indices = _quantize_bucket(bucket)
         ch.translation.x, ch.translation.y, ch.translation.z = base
         ch.translation.w = 0.0
-        ch.material_index = 0
+        ch.material_index = mi
         ch.transform_index = 0
         ch.unknown_short_1 = 65535
         ch.num_vertices = len(offs)
@@ -402,25 +413,30 @@ def _wrap_shapes(NifFormat, data, report, code):
     return mopp
 
 
-def build_cms_collision(tris, sk_material, NifFormat):
+def build_cms_collision(tris, materials, NifFormat):
     """Build a complete bhkMoppBvTreeShape+CMS from a triangle soup.
 
     tris: [((x,y,z), (x,y,z), (x,y,z)), ...] in Skyrim havok units, final
-    shape frame (identity rigid body).  sk_material: Skyrim material CRC.
-    Returns the bhkMoppBvTreeShape (caller sets the CMS target node), or
-    None on failure.  The MOPP is verified with the symbolic VM: a clean
-    walk whose terminal keys equal the CMS key set.
+    shape frame (identity rigid body), walkable faces wound up.  materials:
+    Skyrim material CRC per triangle; stepped flights' treads take their
+    stairs variant.  Returns the bhkMoppBvTreeShape (caller sets the CMS
+    target node), or None on failure.  The MOPP is verified: a clean walk
+    whose terminal keys equal the CMS key set.
     """
-    tris = [t for t in tris
+    kept = [(t, m) for t, m in zip(tris, materials)
             if all(math.isfinite(c) for v in t for c in v)
             and _tri_extent(t) > 0.0]
-    if not tris:
+    if not kept:
         return None
+    tris = [t for t, _m in kept]
+    materials = stairs_materials(tris, [m for _t, m in kept], GAME_UNITS_PER_HAVOK)
+    palette = list(dict.fromkeys(materials))
+    index = {m: i for i, m in enumerate(palette)}
     big, small = [], []
-    for t in tris:
-        (big if _tri_extent(t) >= _MAX_CHUNK_EXTENT else small).append(t)
+    for t, m in zip(tris, materials):
+        (big if _tri_extent(t) >= _MAX_CHUNK_EXTENT else small).append((t, index[m]))
 
-    data = _new_data(NifFormat, sk_material)
+    data = _new_data(NifFormat, palette)
     _add_big_tris(data, big)
     _add_chunks(data, small)
     keyed = decode_cms(data)

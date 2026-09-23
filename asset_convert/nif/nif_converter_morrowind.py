@@ -20,8 +20,7 @@ import os
 
 from pyffi.formats.nif import NifFormat
 
-from asset_convert.collision.cms_builder import build_cms_collision
-from asset_convert.collision.collision import GAME_UNITS_PER_HAVOK
+from asset_convert.collision.cms_builder import GAME_UNITS_PER_HAVOK, build_cms_collision
 from asset_convert.collision.collision_hulls import build_clutter_hull
 from asset_convert.collision.clutter_plan import mesh_clutter_mass
 from asset_convert.collision.resting_items_plan import items_rest_inside
@@ -292,7 +291,7 @@ def build_collision(root, tris, mass=None):
     """
     material = havok_material(root)
     shape = (build_clutter_hull(tris, material) if mass
-             else build_cms_collision(tris, material, NifFormat))
+             else build_cms_collision(tris, [material] * len(tris), NifFormat))
     if shape is None:
         return None
     if not mass:
