@@ -37,22 +37,25 @@ def get_masters_from_binary(filepath: str) -> list:
 
 
 def masters_from_export_header(record_dir: str) -> list:
-    """The `Master[N]=` names an export's `_HEADER.txt` declares, in order.
+    """The `Master[N]=` names an export's `_HEADER.txt` declares, in order."""
+    return [value for key, value in _export_header(record_dir)
+            if key.startswith('Master[') and value]
 
-    Empty when the export has no header, which is also what a plugin with no
-    masters writes.
-    """
+
+def is_master_export(record_dir: str) -> bool:
+    """Whether the export's `_HEADER.txt` Flags carry the source's ESM bit."""
+    return any(key == 'Flags' and int(value or 0) & 1
+               for key, value in _export_header(record_dir))
+
+
+def _export_header(record_dir: str) -> list:
+    """(key, value) for every line of an export's `_HEADER.txt`; [] if none."""
     header = os.path.join(record_dir, '_HEADER.txt')
     if not os.path.isfile(header):
         return []
-    names = []
     with open(header, encoding='utf-8') as fh:
-        for line in fh:
-            if line.startswith('Master['):
-                name = line.partition('=')[2].strip()
-                if name:
-                    names.append(name)
-    return names
+        return [(key, value.strip()) for key, _eq, value
+                in (line.partition('=') for line in fh)]
 
 
 def _tes4_masters(data: bytes) -> list:

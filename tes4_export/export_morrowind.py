@@ -60,7 +60,7 @@ from .record_types.morrowind_magic import (MORROWIND_MAGIC_EXPORTERS,
                                            effect_ranges,
                                            synthesized_effects)
 from .record_types.morrowind_scripts import MORROWIND_SCRIPT_EXPORTERS
-from .tes3_reader import (get_subrecord, is_tes3, read_file,
+from .tes3_reader import (file_type, get_subrecord, is_tes3, read_file,
                           read_masters)
 
 #: TES3 signature -> exporter, over every base record type this pass converts.
@@ -570,7 +570,7 @@ def export_plugin(source_path: str, export_dir: str, masters=()) -> dict:
     """
     plugin = os.path.basename(source_path)
     ctx = load_context(export_dir, masters)
-    records = read_file(source_path)[1]
+    header, records = read_file(source_path)
     ctx.body_models = load_body_models(source_path, records, export_dir)
     own_meshes = assets_for(record_dir(export_dir, plugin)) / 'meshes'
     ctx.morroblivion = MorroblivionModels(
@@ -591,7 +591,7 @@ def export_plugin(source_path: str, export_dir: str, masters=()) -> dict:
     out_dir = str(record_dir(export_dir, plugin))
     counts = write_export(out, out_dir)
     write_header(out_dir, _master_list(masters), sum(counts.values()),
-                 f'Converted from {plugin}')
+                 f'Converted from {plugin}', file_type(header) & 1)
     return {'plugin': plugin, 'output': out_dir, 'counts': counts,
             'dropped': sum(ctx.unresolved.values()),
             'unlinked_doors': ctx.unlinked_doors}
@@ -952,14 +952,14 @@ def write_export(out: dict, output_dir: str) -> dict:
 
 
 def write_header(output_dir: str, masters: list, num_records: int,
-                 description: str = 'Converted from Morrowind') -> None:
-    """Write the _HEADER.txt the import stage reads for the master list."""
+                 description: str, flags: int) -> None:
+    """Write the _HEADER.txt the import stage reads for masters and ESM flag."""
     lines = ['HEDR.Version=1.0', f'HEDR.NumRecords={num_records}',
              'HEDR.NextObjectID=2048',
              'CNAM.Author=TESConversion',
              f'SNAM.Description={description}']
     lines.extend(f'Master[{i}]={name}' for i, name in enumerate(masters))
-    lines.append('Flags=1')
+    lines.append(f'Flags={flags}')
     with open(os.path.join(output_dir, '_HEADER.txt'), 'w',
               encoding='utf-8') as fh:
         fh.write('\n'.join(lines) + '\n')

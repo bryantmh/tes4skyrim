@@ -8,6 +8,7 @@ The invariants are recorded in docs/commentary/tes4_export_morrowind.md.
 import os
 import struct
 
+from core.plugin_masters import is_master_export
 from tes4_export import tes3_reader as reader
 from tes4_export.export_morrowind import (MorrowindContext, convert_plugin,
                                           converted_master_dirs, load_context,
@@ -223,7 +224,8 @@ def _export(tmp_path, name: str, records, master_dirs=()) -> str:
     ctx = load_context(str(tmp_path), masters)
     out_dir = os.path.join(str(tmp_path), name)
     counts = write_export(convert_plugin(records, ctx), out_dir)
-    write_header(out_dir, [n for n, _d in masters], sum(counts.values()))
+    write_header(out_dir, [n for n, _d in masters], sum(counts.values()),
+                 'fixture', flags=1)
     return out_dir
 
 
@@ -490,9 +492,12 @@ def test_export_refuses_a_master_that_is_not_converted(tmp_path, capsys):
     assert load_context(str(export), found).own_index == 2
 
 
-def _tes3_records(path, records, masters=()) -> str:
+def _tes3_records(path, records, masters=(), file_type=None) -> str:
     """Write `records` as a real TES3 file declaring `masters`; its path."""
     subs = b''
+    if file_type is not None:
+        hedr = struct.pack('<fi32s256si', 1.3, file_type, b'', b'', 0)
+        subs += b'HEDR' + struct.pack('<I', len(hedr)) + hedr
     for name in masters:
         payload = name.encode('cp1252') + b'\x00'
         subs += b'MAST' + struct.pack('<I', len(payload)) + payload
@@ -507,6 +512,17 @@ def _tes3_records(path, records, masters=()) -> str:
                  + b'\x00' * 8 + body)
     path.write_bytes(blob)
     return str(path)
+
+
+def test_export_carries_the_source_esm_flag_not_the_extension(tmp_path):
+    """HEDR type 1 exports as a master and 0 as a plugin, whatever the name."""
+    export = tmp_path / 'export'
+    export.mkdir()
+    for name, file_type in (('Flagged.esp', 1), ('Plain.esm', 0)):
+        source = _tes3_records(tmp_path / name, [_rec('STAT', 'rock')],
+                               file_type=file_type)
+        assert run_export(name, source, str(export)) is True
+        assert is_master_export(str(export / name)) == bool(file_type)
 
 
 #: A Morroblivion stand-in named so no stage resolves the REAL converted plugin.
@@ -597,6 +613,8 @@ def test_gap_patch_builds_the_plugin_itself(tmp_path):
         'it names what Morroblivion holds, so it masters Morroblivion')
     assert flags & 0x1, 'ESM-flagged: dependent plugins declare it a master'
     assert PATCH_NAME.lower().endswith('.esp'), 'the .esp extension is kept'
+    assert is_master_export(str(export / PATCH_NAME)), (
+        'a later -f import of the patch must keep the ESM flag too')
     assert PATCH_NAME in converted_plugins(out_root), (
         'the patch registers as a converted plugin like any other')
 

@@ -36,6 +36,7 @@ The layer rules and the decision procedure are in
 - [Why the patch pass runs after the records are written](#patch-pass-runs-last)
 - [Sound-slot records carry TES4 SOUN ids until patched](#sound-slot-patching)
 - [The manifest names the PLUGIN, not the export folder](#manifest-names-the-plugin)
+- [The ESM flag comes from the source header, not the extension](#the-esm-flag-comes-from-the-source-header)
 
 ## <a id="speak-as-needs-a-voiced-standin"></a>Phase 0 — speak-as topics need gates dropped AND a voiced stand-in
 
@@ -709,3 +710,23 @@ re-run.
 Derived-FormID collisions are expected to be a fraction of a percent; a spike
 means the derived region is filling up or a key has gone non-unique, both worth
 seeing before shipping.
+
+## <a id="the-esm-flag-comes-from-the-source-header"></a>The ESM flag comes from the source header, not the extension
+
+`convert.py` `phase_import` sets `is_esm` from bit 0 of the `Flags=` line in the
+export's `_HEADER.txt` (`core/plugin_masters.py:is_master_export`), never from
+the file name. It used to test `.endswith('.esm')`, which cleared the flag on
+`Morrowind-Morroblivion-Compatibility.esp` whenever the patch went through a
+normal `-f` import. `build_patch` sets the flag itself, so the patch was a
+master only when that function was the last thing to write it. An ESM-flagged
+`.esp` is legal and loads as a master (see `tools/esm/make_master.py`).
+
+Each exporter writes the real flag:
+
+- TES4/FO3/FNV: `export_header` copies the TES4 record flags.
+- Morrowind: `write_header` takes the HEDR `type` field (0 = esp, 1 = esm;
+  OpenMW `loadtes3.hpp`). Across the 32 plugins in a real Morrowind Data Files
+  folder, every `.esm` is 1 and every `.esp` is 0. Before this change the
+  exporter always wrote `Flags=1`, so any Morrowind `.esp` exported earlier must
+  be re-exported to lose the flag.
+- The compatibility patch always writes `Flags=1`.

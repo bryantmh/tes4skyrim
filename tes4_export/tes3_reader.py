@@ -159,6 +159,12 @@ def read_masters(filepath: str) -> list:
     return [get_string(s) for s in get_all_subrecords(header, "MAST")]
 
 
+def file_type(header: Tes3Record) -> int:
+    """The TES3 HEDR file type: 0 = esp, 1 = esm, 32 = ess."""
+    hedr = get_subrecord(header, "HEDR")
+    return struct.unpack_from("<i", hedr.data, 4)[0] if hedr else 0
+
+
 def _read_header_only(filepath: str) -> tuple:
     """(header record, its data size) without walking the whole file."""
     with open(filepath, "rb") as fh:

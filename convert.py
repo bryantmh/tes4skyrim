@@ -65,7 +65,8 @@ SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 from output_layout import BODY_SLOTS_PATCH, finished_dir, record_dir, plugin_out_root
 from papyrus_compile import phase_compile
 from tes4_export.tes3_reader import is_tes3
-from core.plugin_masters import get_masters_from_binary, topological_order
+from core.plugin_masters import (get_masters_from_binary, is_master_export,
+                                 topological_order)
 import core.run_log as run_log
 
 
@@ -751,7 +752,7 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
     tes4_masters = get_masters_from_binary(source) if os.path.isfile(source) else []
     masters = ['Skyrim.esm'] + tes4_masters
 
-    is_esm = file_name.lower().endswith('.esm')
+    is_esm = is_master_export(export_subdir)
 
     print(f"[{file_name}] Importing...")
     print(f"  Masters: {', '.join(masters)}")
