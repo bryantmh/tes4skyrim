@@ -51,6 +51,7 @@ mistake surfaces before the release rather than after.
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import re
 import subprocess
@@ -62,8 +63,23 @@ from tools.navmesh import navmesh_cache as nc
 
 #: Sources whose bytes feed the cache tag; a test asserts they match pool.
 NAVMESH_PATHS = ('tes5_import/navmesh/', 'native/src/navgrow/grow.cpp')
-#: Under the prefix but NOT a tag source -- see pool._TAG_EXCLUDE.
-NAVMESH_EXCLUDE = ('tes5_import/navmesh/edge_links.py',)
+
+
+def _tag_exclude() -> tuple[str, ...]:
+    """pool._TAG_EXCLUDE as repo paths, read from source so the hook stays import-free."""
+    pool = os.path.join(nc.repo_root(), 'tes5_import', 'navmesh', 'pool.py')
+    with open(pool, encoding='utf-8') as fh:
+        tree = ast.parse(fh.read())
+    for node in tree.body:
+        if (isinstance(node, ast.Assign)
+                and getattr(node.targets[0], 'id', None) == '_TAG_EXCLUDE'):
+            names = ast.literal_eval(node.value.args[0])
+            return tuple(sorted('tes5_import/navmesh/' + n for n in names))
+    raise LookupError('_TAG_EXCLUDE not found in ' + pool)
+
+
+#: Under the prefix but NOT a tag source -- mirrors pool._TAG_EXCLUDE.
+NAVMESH_EXCLUDE = _tag_exclude()
 
 #: Non-tag files that change caching. See: docs/commentary/tes5_import_navmesh.md#what-gates-a-push
 NAVMESH_FUNCS = {

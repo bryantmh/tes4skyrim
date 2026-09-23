@@ -115,6 +115,10 @@ ALLOWED = {
 }
 
 
+# ---------------------------------------------------------------------------
+#  A plugin name is never joined onto a root
+# ---------------------------------------------------------------------------
+
 def _py_files():
     for dp, dns, fns in os.walk(ROOT):
         dns[:] = [d for d in dns if d not in SKIP_DIRS and
@@ -178,32 +182,130 @@ def _walk_bound_names(tree) -> set:
     return out
 
 
-def _is_plugin_expr(node) -> bool:
-    """Does `node` evaluate to a PLUGIN NAME (as opposed to a filename)?
+def _plugin_var(node):
+    """The PLUGIN_NAMES variable `node` evaluates from, or None.
 
-    A bare `ast.Name` in PLUGIN_NAMES is the obvious case. The subtle one is a
-    CALL: `os.path.join(root, val.strip())` is the exact idiom this test bans,
-    and reading only `ast.Name` let it through in
-    `import_main._master_export_dirs` for a whole release. So a method call is
-    followed to the value it is called ON -- `val.strip()` is judged by `val`.
-
-    Deliberately NOT flagged: a string constant (a fixed subfolder like
-    'meshes'), and any name outside PLUGIN_NAMES. `os.path.join(root, fname)`
-    inside an os.walk loop is the overwhelmingly common shape of a join onto a
-    variable called `root`, and it is always correct.
+    A cleaning call is judged by the value it is called on: `val.strip()` is
+    `val`. A string constant and any name outside PLUGIN_NAMES are not plugins.
     """
     if isinstance(node, ast.Name):
-        return node.id in PLUGIN_NAMES
-    if isinstance(node, ast.Call):
-        fn = node.func
-        # `x.strip()` / `x.lower()` -- judge by `x`, the value being cleaned.
-        if isinstance(fn, ast.Attribute) and fn.attr in (
-                'strip', 'lstrip', 'rstrip', 'lower', 'upper'):
-            return _is_plugin_expr(fn.value)
-    return False
+        return node.id if node.id in PLUGIN_NAMES else None
+    fn = getattr(node, 'func', None)
+    if isinstance(node, ast.Call) and isinstance(fn, ast.Attribute) and fn.attr in (
+            'strip', 'lstrip', 'rstrip', 'lower', 'upper'):
+        return _plugin_var(fn.value)
+    return None
 
 
-def _violations_in(path):
+#: A literal ending in one of these names a plugin, so a loop over it stays banned.
+PLUGIN_EXTENSIONS = ('.esm', '.esp', '.esl')
+
+#: Wrappers that keep the strings of their single argument.
+_KEEPS_STRINGS = frozenset({'sorted', 'tuple', 'list', 'set', 'frozenset'})
+
+
+def _parsed(path):
+    """The module at `path`, or an empty one when it cannot be read or parsed."""
+    try:
+        with open(path, encoding='utf-8') as fh:
+            return ast.parse(fh.read())
+    except (OSError, SyntaxError):
+        return ast.Module(body=[], type_ignores=[])
+
+
+def _literal_strings(node, consts):
+    """Every string `node` can evaluate to, or None when that is not fixed in source."""
+    if isinstance(node, ast.Constant):
+        return [node.value] if isinstance(node.value, str) else None
+    if isinstance(node, ast.Name):
+        return consts.get(node.id)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        parts = [_literal_strings(e, consts) for e in node.elts]
+        return None if any(p is None for p in parts) else sum(parts, [])
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _literal_strings(ast.Tuple(elts=[node.left, node.right]), consts)
+    if (isinstance(node, ast.Call) and getattr(node.func, 'id', None) in _KEEPS_STRINGS
+            and len(node.args) == 1):
+        return _literal_strings(node.args[0], consts)
+    if isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
+        gen = node.generators[0]
+        if (len(node.generators) == 1 and isinstance(node.elt, ast.Name)
+                and getattr(gen.target, 'id', None) == node.elt.id):
+            return _literal_strings(gen.iter, consts)
+    return None
+
+
+def _string_constants(trees) -> dict:
+    """{variable: strings} for names every assignment in the repo binds to fixed strings.
+
+    One definition that is not fixed withdraws the name everywhere.
+    """
+    defs = {}
+    for tree in trees:
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)):
+                defs.setdefault(node.targets[0].id, []).append(node.value)
+    consts = {}
+    for _ in range(3):
+        for var, values in defs.items():
+            got = [_literal_strings(v, consts) for v in values]
+            if all(g is not None for g in got):
+                consts[var] = sum(got, [])
+    return consts
+
+
+def _loop_strings(target, it, consts):
+    """The strings `target` takes over `it`: a first tuple slot takes each row's head."""
+    if isinstance(target, ast.Tuple) and isinstance(it, (ast.Tuple, ast.List)):
+        if not all(isinstance(e, ast.Tuple) and e.elts for e in it.elts):
+            return None
+        return _literal_strings(ast.Tuple(elts=[e.elts[0] for e in it.elts]), consts)
+    return _literal_strings(it, consts)
+
+
+def _lists_a_directory(it) -> bool:
+    """Is `it` a directory listing, whose entries already exist under the root?"""
+    if isinstance(it, ast.IfExp):
+        return _lists_a_directory(it.body) and _literal_strings(it.orelse, {}) == []
+    while (isinstance(it, ast.Call) and getattr(it.func, 'id', None) in _KEEPS_STRINGS
+           and it.args):
+        it = it.args[0]
+    fn = getattr(it, 'func', None)
+    return isinstance(it, ast.Call) and 'listdir' in (
+        getattr(fn, 'id', None), getattr(fn, 'attr', None))
+
+
+def _loops(tree):
+    """(lineno, target, iterable) for every for-loop and comprehension clause."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            yield node.lineno, node.target, node.iter
+        elif isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.SetComp, ast.DictComp)):
+            for gen in node.generators:
+                yield node.lineno, gen.target, gen.iter
+
+
+def _file_bound_names(tree, owner, consts) -> set:
+    """{(function, name)} for loop variables that range over files, never plugins.
+
+    The values are fixed strings none of which is a plugin
+    (`for name in ('ARMO.txt', 'CLOT.txt')`), or entries read from a directory.
+    """
+    out = set()
+    for lineno, target, it in _loops(tree):
+        head = target.elts[0] if isinstance(target, ast.Tuple) and target.elts else target
+        if not isinstance(head, ast.Name):
+            continue
+        values = _loop_strings(target, it, consts)
+        files = values is not None and not any(
+            v.lower().endswith(PLUGIN_EXTENSIONS) for v in values)
+        if files or _lists_a_directory(it):
+            out.add((owner.get(lineno, '<module>'), head.id))
+    return out
+
+
+def _violations_in(path, consts):
     rel = os.path.relpath(path, ROOT).replace(os.sep, '/')
     try:
         src = open(path, encoding='utf-8').read()
@@ -212,13 +314,15 @@ def _violations_in(path):
         return []
     owner = _enclosing_functions(tree)
     walked = _walk_bound_names(tree)
+    file_bound = _file_bound_names(tree, owner, consts)
     lines = src.splitlines()
     out = []
 
     def flag(node, right):
-        if not _is_plugin_expr(right):
-            return
+        var = _plugin_var(right)
         fn = owner.get(node.lineno, '<module>')
+        if var is None or (fn, var) in file_bound:
+            return
         if (rel, fn) in ALLOWED:
             return
         # Per-line opt-out for a join that is genuinely not a plugin folder
@@ -246,9 +350,11 @@ def _violations_in(path):
 
 
 def test_no_module_joins_a_plugin_name_onto_a_root():
+    paths = list(_py_files())
+    consts = _string_constants(_parsed(p) for p in paths)
     found = []
-    for path in _py_files():
-        found.extend(_violations_in(path))
+    for path in paths:
+        found.extend(_violations_in(path, consts))
     if found:
         report = "\n".join(
             f"  {rel}:{ln}  in {fn}()\n      {txt}"
@@ -259,6 +365,23 @@ def test_no_module_joins_a_plugin_name_onto_a_root():
             "this path does not exist for them and the lookup silently fails.\n"
             "Use output_layout.record_dir / asset_root / plugin_out_root /\n"
             "plugin_esm / master_record_dir instead.\n\n" + report)
+
+
+def test_a_loop_over_record_files_is_not_a_plugin_join(tmp_path):
+    """Fixed .txt names and directory entries pass; fixed plugin names still fail."""
+    src = tmp_path / 'probe.py'
+    src.write_text(
+        "import os\n"
+        "TYPES = ('ARMO.txt', 'CLOT.txt')\n"
+        "def files(export_dir):\n"
+        "    return [os.path.join(export_dir, name) for name in TYPES]\n"
+        "def listed(export_dir):\n"
+        "    return [os.path.join(export_dir, name) for name in os.listdir(export_dir)]\n"
+        "def plugins(export_dir):\n"
+        "    return [os.path.join(export_dir, name) for name in ('Oblivion.esm',)]\n",
+        encoding='utf-8')
+    consts = _string_constants([_parsed(src)])
+    assert [v[2] for v in _violations_in(str(src), consts)] == ['plugins']
 
 
 def test_the_resolvers_agree_on_a_plugin_with_no_registry_entry(tmp_path):

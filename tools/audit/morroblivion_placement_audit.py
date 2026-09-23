@@ -32,6 +32,7 @@ from collections import Counter, defaultdict
 sys.path.insert(0, os.path.abspath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), '..', '..')))
 
+from output_layout import asset_root, record_dir
 from tes4_export.tes3_reader import get_string, get_subrecord, read_file
 from tes5_import.base.text_reader import parse_export_file
 
@@ -96,7 +97,7 @@ def norm_name(value: str) -> str:
 
 def _records(export_root: str, plugin: str, sig: str):
     """Every record of one type from a plugin's export, or nothing."""
-    path = os.path.join(export_root, plugin, sig + '.txt')
+    path = os.path.join(record_dir(export_root, plugin), sig + '.txt')
     return parse_export_file(path) if os.path.isfile(path) else ()
 
 
@@ -289,7 +290,7 @@ def measure(export_root: str, source: str, target_esm: str) -> dict:
     mb = placements(export_root, source, set(pairs),
                     cell_keys(export_root, source))
     mw = tes3_placements(records, set(pairs.values()))
-    tree = os.path.join(export_root, source, MESH_TREE)
+    tree = os.path.join(asset_root(export_root, source), MESH_TREE)
 
     rot = defaultdict(lambda: [Counter() for _ in ROT_FIELDS])
     dz, swaps, paired = defaultdict(Counter), {}, 0

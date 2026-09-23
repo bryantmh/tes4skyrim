@@ -2080,10 +2080,12 @@ suppress checks.
 **`navmesh/edge_links.py` is excluded from the tag** (`pool._TAG_EXCLUDE`).
 `build_edge_links` stitches cross-cell portals into the NVNM *after* geometry
 comes out of the cache, so editing it changes the written mesh but never the
-cached geometry. Note that the restructure moved this file **under the
-`tes5_import/navmesh/` prefix**, so every edit to it now gates a push via
-`NAVMESH_PATHS` unless `NAVMESH_EXCLUDE` keeps listing it. That is a permanent,
-low-grade cost — an unnecessary tag bump per edit — and never a wrong mesh.
+cached geometry. The same holds for every other file in `_TAG_EXCLUDE`. They
+all sit **under the `tes5_import/navmesh/` prefix** that `NAVMESH_PATHS` gates,
+so the hook's `NAVMESH_EXCLUDE` must carry the same set. It reads
+`_TAG_EXCLUDE` from `pool.py`'s source (no import, so the pre-push hook stays
+light). A hand-kept copy once listed only `edge_links.py`, so edits to `pool.py`,
+`worker.py`, `cache_audit.py` and the rest blocked pushes for no reason.
 
 ### <a id="publishable-plugins"></a>`PUBLISHABLE_PLUGINS` — why a whitelist
 
