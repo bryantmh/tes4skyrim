@@ -53,7 +53,8 @@ def _init_dispatch() -> None:
     from .record_types.magic import convert_MGEF
     from .record_types.message_falloutnv import convert_MESG
     from .record_types.projectile_falloutnv import convert_PROJ
-    from .record_types.impact_falloutnv import convert_IPCT, convert_IPDS
+    from .record_types.impact_falloutnv import (convert_EXPL, convert_IPCT,
+                                                convert_IPDS)
     from .record_types.music_falloutnv import convert_MUSC
     from .record_types.reference_falloutnv import (
         convert_ECZN,
@@ -99,6 +100,7 @@ def _init_dispatch() -> None:
     IMPORT_DISPATCH['PROJ'] = convert_PROJ
     IMPORT_DISPATCH['IPCT'] = convert_IPCT
     IMPORT_DISPATCH['IPDS'] = convert_IPDS
+    IMPORT_DISPATCH['EXPL'] = convert_EXPL
     IMPORT_DISPATCH['FLST'] = convert_FLST
     IMPORT_DISPATCH['TXST'] = convert_TXST
     IMPORT_DISPATCH['IMGS'] = convert_IMGS

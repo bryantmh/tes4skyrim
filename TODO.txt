@@ -5,8 +5,6 @@ Major Issues for V1:
 		Arena: speak-as subtitles (announcer, Daedric shrines) never clear - a scripted Say() on a non-actor never retires its subtitle; no verified fix, see docs/reference/dialogue_engine_contracts.md
 
 	2 - Havok feels off. Items don't move like they should. Specifically, there seems to be too much inertia on small items, like I'm dragging a heavy object when it is something as small as a cup, Animated signs will get stuck in a position after swinging a bit, defying gravicty
-
-	5 - Need new skyrim body mesh to actually work to allow leg skin to appear
 	
 	6 - Shops missing full inventory of items
 
@@ -26,11 +24,7 @@ Later Issues:
 	3 - Ajust zip step to pack loose files if bsas are out of date or not generated
 		Also zip should work on mod without plugin
 
-	4 - Fix walking up stairs
-
 	5 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting (maybe just scale them?)
-
-	6 - Some converted books (scrolls) are using the wrong Skyrim base mesh
 
 	7 - Restore Oblivion's remaining NPC-to-NPC conversations (see docs/commentary/tes5_import_dialogue.md)
 		DONE 2026-08-07: the 15 QUEST-ADVANCING chains are replayed by a generated driver quest
@@ -74,10 +68,6 @@ Minor Issues:
 
 Guns (FalloutNV):
 	G1 - HUD magazine readout: the counter text field path is a guess and the hook is disabled (hud.cpp, InstallHud not called); find the field in the loaded HUD movie and re-enable
-	G2 - Iron sights off-center: FNV aligns ##SightingNode to the camera axis at runtime; needs a hook after the engine places the first-person model, the root is stomped every frame (tes_runtime_guns.md#sight-alignment)
-	G3 - Left hand holds air beside the gun (hands should stack on a 1h iron sight, both grip a 2h): the hands are wrong relative to EACH OTHER, not a model offset like G2. Rotation-only retarget from the FNV first-person skeleton keeps FNV arm lengths/shoulder width; needs the left hand constrained to the weapon grip after retarget (IK to the gun's left-hand grip node in gun_anim_falloutnv, or positional retarget of the hand bones)
-	G4 - Gun range: the 9mm only hits at point-blank; check the PROJ speed/range/gravity and the WEAP DNAM range conversion against FNV values
-	G5 - Impact effects: explosions (grenades, missiles) and bullet impact data (IPDS/IPCT) not converted; projectiles hit silently
 	G6 - Animated gun parts (magazine, slide, bolt) untested since the DLL-driven NiControllerSequence build; parts.cpp logs nothing when no sequence starts
 	G7 - Ammo models under clutter/ammo (50MG box etc.) not rebuilt with Prn=QUIVER, still attach at the feet
 	G8 - Ammo on a bow/melee holder: FNV rounds equipped with a non-gun still hang on QUIVER and show

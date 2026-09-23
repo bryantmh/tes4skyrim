@@ -54,7 +54,7 @@ def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
     n_locks = register_tes3_locks(by_type, export_dir, master_export)
     if n_locks:
         print(f'  TES3 door locks: {n_locks} exit-only lock(s) dropped')
-    index_convertible_records(by_type, IMPORT_DISPATCH, SKIP_TYPES)
+    index_convertible_records(by_type, IMPORT_DISPATCH, SKIP_TYPES, master_export)
     n_ammo = index_gun_projectiles(by_type, master_export)
     if n_ammo:
         print(f'  FO3/FNV gun projectiles: {n_ammo} ammo type(s) indexed')

@@ -185,8 +185,8 @@ def _emit_proj_deltas(lines: list, rec: Record):
 
     DATA offsets (wbDefinitionsFNV): 0 flags u16, 2 type u16, 4 gravity,
     8 speed, 12 range, 16 light, 20 muzzle flash light, 24 tracer chance,
-    36 explosion, 40 sound, 44 muzzle flash duration, 48 fade duration,
-    52 impact force, 64 default weapon.
+    28/32 alt-trigger proximity/timer, 36 explosion, 40 sound, 44 muzzle
+    flash duration, 48 fade duration, 52 impact force, 64 default weapon.
     See: docs/commentary/tes4_export_falloutnv.md#projectiles
     """
     emit_string(lines, "FULL", get_subrecord(rec, "FULL"))
@@ -197,7 +197,8 @@ def _emit_proj_deltas(lines: list, rec: Record):
         lines.append(f"DATA.Flags={struct.unpack_from('<H', d, 0)[0]}")
         lines.append(f"DATA.Type={struct.unpack_from('<H', d, 2)[0]}")
         for key, off in (("Gravity", 4), ("Speed", 8), ("Range", 12),
-                         ("TracerChance", 24), ("MuzzleFlashDuration", 44),
+                         ("TracerChance", 24), ("AltTriggerProximity", 28),
+                         ("AltTriggerTimer", 32), ("MuzzleFlashDuration", 44),
                          ("FadeDuration", 48), ("ImpactForce", 52)):
             emit_float(lines, f"DATA.{key}", data, off)
         for key, off in (("Light", 16), ("MuzzleFlashLight", 20),
@@ -656,13 +657,16 @@ IMPACT_MATERIALS = ("Stone", "Dirt", "Grass", "Glass", "Metal", "Wood",
 
 
 def export_IMPACT(rec: Record) -> list:
-    """An IPCT: model, the 24-byte DATA as hex, and its two SOUN links.
+    """An IPCT: model, the 24-byte DATA and 36-byte DODT decal data as hex,
+    its decal TXST (`DNAM`) and its two SOUN links.
     See: docs/commentary/tes4_export_falloutnv.md#impacts
     """
     lines = []
     emit_string(lines, "EditorID", get_subrecord(rec, "EDID"))
     emit_model(lines, "Model", rec)
     emit_raw_hex(lines, "DATA", get_subrecord(rec, "DATA"))
+    emit_raw_hex(lines, "DODT", get_subrecord(rec, "DODT"))
+    emit_formid(lines, "DNAM", get_subrecord(rec, "DNAM"))
     emit_formid(lines, "SNAM", get_subrecord(rec, "SNAM"))
     emit_formid(lines, "NAM1", get_subrecord(rec, "NAM1"))
     return lines
@@ -679,6 +683,34 @@ def export_IMPACTSET(rec: Record) -> list:
         for i, key in enumerate(IMPACT_MATERIALS[:len(data.data) // 4]):
             fid = struct.unpack_from("<I", data.data, 4 * i)[0]
             lines.append(f"DATA.{key}={get_formid_str(fid)}")
+    return lines
+
+
+#: FNV EXPL DATA (wbDefinitionsFNV): (key, offset, kind) for every field TES5 keeps.
+EXPLOSION_FIELDS = (("Force", 0, "f"), ("Damage", 4, "f"), ("Radius", 8, "f"),
+                    ("Light", 12, "id"), ("Sound1", 16, "id"), ("Flags", 20, "u"),
+                    ("ISRadius", 24, "f"), ("ImpactDataSet", 28, "id"),
+                    ("Sound2", 32, "id"), ("SoundLevel", 48, "u"))
+
+
+def export_EXPLOSION(rec: Record) -> list:
+    """An EXPL: bounds, name, model, enchantment (`EITM`), image-space
+    modifier (`MNAM`), the DATA fields TES5 shares and the placed impact
+    object (`INAM`). FNV's radiation block has no TES5 field.
+    See: docs/commentary/tes4_export_falloutnv.md#explosions
+    """
+    lines = []
+    emit_string(lines, "EditorID", get_subrecord(rec, "EDID"))
+    _emit_obnd(lines, rec)
+    emit_string(lines, "FULL", get_subrecord(rec, "FULL"))
+    emit_model(lines, "Model", rec)
+    for sig in ("EITM", "MNAM", "INAM"):
+        emit_formid(lines, sig, get_subrecord(rec, sig))
+    data = get_subrecord(rec, "DATA")
+    if data and len(data.data) >= 52:
+        for key, off, kind in EXPLOSION_FIELDS:
+            val = struct.unpack_from("<f" if kind == "f" else "<I", data.data, off)[0]
+            lines.append(f"DATA.{key}={get_formid_str(val) if kind == 'id' else val}")
     return lines
 
 
@@ -720,6 +752,7 @@ FALLOUT_BASE_EXPORTERS = {
     "MUSC": export_MUSICTYPE,
     "IPCT": export_IMPACT,
     "IPDS": export_IMPACTSET,
+    "EXPL": export_EXPLOSION,
     "NAVM": export_NAVMESH,
     "NAVI": export_NAVMESH,
     "MSTT": export_STATIC_BASE,

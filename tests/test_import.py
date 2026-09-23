@@ -7084,7 +7084,7 @@ class TestFalloutReferenceOnlyRecords:
         assert tnam == pytest.approx((0.9, 0.25, 0.5, 0.75))
 
     def test_formlist_drops_a_member_whose_type_never_converts(self):
-        """FNV lists reach ARMA/IMOD/EXPL; a dangling LNAM breaks the engine."""
+        """FNV lists reach ARMA/IMOD; a dangling LNAM breaks the engine."""
         from tes5_import.record_types.reference_falloutnv import (
             convert_FLST, index_convertible_records)
         by_type = {'WEAP': [{'FormID': '0000000A'}],
@@ -7095,6 +7095,49 @@ class TestFalloutReferenceOnlyRecords:
         members = _find_all_subrecords(convert_FLST(rec), b'LNAM')
         assert [struct.unpack('<I', m)[0] & 0xFFFFFF for m in members] == [0xA]
         index_convertible_records({}, {}, set())
+
+    def test_explosion_reorders_data_and_nulls_unwritten_links(self):
+        """FNV EXPL DATA fields land in TES5 order; an IMAD link is dropped."""
+        from tes5_import.record_types.impact_falloutnv import convert_EXPL
+        from tes5_import.record_types.reference_falloutnv import (
+            index_convertible_records)
+        index_convertible_records({'IPDS': [{'FormID': '0000000C'}]},
+                                  {'IPDS': object()}, set())
+        rec = {'FormID': '0010000A', 'RecordFlags': '0', 'EditorID': 'X',
+               'MNAM': '0000000D', 'DATA.ImpactDataSet': '0000000C',
+               'DATA.Light': '0000000E', 'DATA.Force': '50.0',
+               'DATA.Damage': '75.0', 'DATA.Radius': '256.0',
+               'DATA.ISRadius': '512.0', 'DATA.Flags': '1',
+               'DATA.SoundLevel': '3'}
+        out = convert_EXPL(rec)
+        index_convertible_records({}, {}, set())
+        data = struct.unpack('<6I5f2I', _find_subrecord(out, b'DATA'))
+        assert data[0] == 0 and data[3] & 0xFFFFFF == 0xC
+        assert data[6:10] == (50.0, 75.0, 256.0, 512.0)
+        assert data[11:] == (1, 3)
+        assert _find_subrecord(out, b'MNAM') is None
+
+    def test_bullet_drops_hitscan_and_flies_straight(self):
+        """A hitscan FNV bullet is a plain Missile: no Hitscan, no gravity."""
+        from tes5_import.record_types.projectile_falloutnv import convert_PROJ
+        rec = {'FormID': '0010000C', 'RecordFlags': '0', 'EditorID': 'B',
+               'DATA.Flags': '137', 'DATA.Type': '1', 'DATA.Gravity': '3.0',
+               'DATA.Speed': '23680.0', 'DATA.AltTriggerTimer': '2.5'}
+        data = _find_subrecord(convert_PROJ(rec), b'DATA')
+        flags, ptype, gravity, speed = struct.unpack_from('<HHff', data)
+        assert (flags & 1, ptype, gravity, speed) == (0, 1, 0.0, 23680.0)
+        assert struct.unpack_from('<f', data, 32)[0] == 2.5
+
+    def test_impact_keeps_its_decal_when_authored(self):
+        """IPCT with DODT + TXST writes both and clears No Decal Data."""
+        from tes5_import.record_types.impact_falloutnv import convert_IPCT
+        rec = {'FormID': '0010000B', 'RecordFlags': '0', 'EditorID': 'I',
+               'DATA': (b'\0' * 24).hex(), 'DODT': (b'\1' * 36).hex(),
+               'DNAM': '0000000F'}
+        out = convert_IPCT(rec)
+        assert _find_subrecord(out, b'DATA')[20] & 1 == 0
+        assert _find_subrecord(out, b'DODT') == b'\1' * 36
+        assert _find_subrecord(convert_IPCT({**rec, 'DNAM': ''}), b'DATA')[20] & 1
 
     def test_lighting_template_extends_40_bytes_to_92(self):
         """FNV DATA is 40 bytes; TES5 needs 92 plus a DALC."""

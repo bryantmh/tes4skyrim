@@ -18,9 +18,9 @@ from .common import get_float, get_formid, get_int, get_str, prefix_path
 
 #: FNV PROJ DATA type Continuous Beam, which TES5 lacks -> TES5 Beam (0x04).
 _FNV_TYPE_CONTINUOUS_BEAM = 0x10
-#: PROJ DATA flags meaning the same in both games (Hitscan..Pass Through Small Transparent).
-_SHARED_FLAGS = 0x01 | 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200
-#: FNV PROJ DATA flag bit 0: the shot is instant, so its gravity is unused.
+#: PROJ flags kept, never Hitscan. See: docs/commentary/tes4_export_falloutnv.md#no-hitscan
+_SHARED_FLAGS = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200
+#: FNV PROJ DATA flag bit 0: the shot is instant, so it flies straight (no gravity).
 _FNV_FLAG_HITSCAN = 0x01
 #: TES5 WEAP sound subrecords a FNV gun fills, in TES5 order (all SNDR links).
 GUN_SOUND_SIGS = ('SNAM', 'XNAM', 'NAM7', 'TNAM', 'UNAM')
@@ -111,8 +111,9 @@ def convert_PROJ(rec: dict, writer=None) -> bytes:
 
     TES5 DATA (92 bytes, wbDefinitionsTES5): 0 flags u16, 2 type u16,
     4 gravity, 8 speed, 12 range, 16 light, 20 muzzle flash light, 24 tracer
-    chance, 36 explosion, 40 sound, 44 muzzle flash duration, 48 fade,
-    52 impact force, 72 collision radius, 80 relaunch interval.
+    chance, 28/32 alt-trigger proximity/timer, 36 explosion, 40 sound,
+    44 muzzle flash duration, 48 fade, 52 impact force, 72 collision radius,
+    80 relaunch interval.
     See: docs/commentary/tes4_export_falloutnv.md#formlists
     """
     subs = pack_string_subrecord('EDID', get_str(rec, 'EditorID'))
@@ -135,7 +136,9 @@ def convert_PROJ(rec: dict, writer=None) -> bytes:
                      get_float(rec, 'DATA.Speed', 3600.0),
                      max(get_float(rec, 'DATA.Range'), 60000.0))
     struct.pack_into('<II', data, 16, get_formid(rec, 'DATA.Light'), 0)
-    struct.pack_into('<f', data, 24, get_float(rec, 'DATA.TracerChance'))
+    struct.pack_into('<fff', data, 24, get_float(rec, 'DATA.TracerChance'),
+                     get_float(rec, 'DATA.AltTriggerProximity'),
+                     get_float(rec, 'DATA.AltTriggerTimer'))
     struct.pack_into('<II', data, 36, get_formid(rec, 'DATA.Explosion'),
                      sndr_of(writer, get_formid(rec, 'DATA.Sound')))
     struct.pack_into('<fff', data, 44,
