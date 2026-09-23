@@ -11,6 +11,7 @@ import numpy as np
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from asset_convert import paths
+from asset_convert.character.skin_retarget import load_skeleton, regen_skin_partition
 
 try:
     from pyffi.formats.nif import NifFormat
@@ -54,6 +55,13 @@ _SKIN_TEX_TO_BODY_NIF = [
     ('foot',      'malefeet_0.nif',  'femalefeet_0.nif'),
     ('underwear', 'malebody_0.nif',  'femalebody_0.nif'),
 ]
+
+#: (male NIF, female NIF, the body partitions it holds) for the Skyrim body, hands and feet.
+_BODY_NIF_PARTITIONS = (
+    ('malebody_0.nif', 'femalebody_0.nif', frozenset({32, 34, 38, 44})),
+    ('malehands_0.nif', 'femalehands_0.nif', frozenset({33})),
+    ('malefeet_0.nif', 'femalefeet_0.nif', frozenset({37})),
+)
 
 _HANDS_FEET_NIFS = frozenset({
     'malehands_0.nif', 'femalehands_0.nif',
@@ -301,95 +309,111 @@ def load_body_geom(nif_basename: str) -> list:
     return result
 
 
+def partition_skin_info(fill, female: bool) -> dict:
+    """Splice input for a Morrowind piece's SkinFill, or {} without one.
+
+    Shaped like `collect_skin_info`'s result, with no proximity cloud: the
+    hidden partitions to draw from and the fill's `keep` test, which leaves
+    only skin the actor's own uncovered body parts would show.
+    See: docs/commentary/asset_convert_armor.md#morrowind-skin-fill
+    """
+    out = {}
+    for male_nif, female_nif, held in (_BODY_NIF_PARTITIONS if fill else ()):
+        if held & fill.partitions:
+            out[female_nif if female else male_nif] = {
+                'bones': set(), 'sections': [], 'section_verts': [],
+                'partitions': held & fill.partitions,
+                'keep': lambda pts, fill=fill: fill.keep(pts, female)}
+    return out
+
+
+def _partition_mask(src_geom, partitions) -> list:
+    """Per vertex: whether it lies in a skin partition whose body part is in `partitions`."""
+    skin = src_geom.skin_instance
+    keep = [False] * src_geom.data.num_vertices
+    blocks = skin.skin_partition.skin_partition_blocks if skin.skin_partition else []
+    for block, info in zip(blocks, getattr(skin, 'partitions', [])):
+        if info.body_part in partitions:
+            for index in block.vertex_map:
+                keep[int(index)] = True
+    return keep
+
+
+def _vertex_weights(skin_data, num_verts: int) -> list:
+    """Per vertex {bone index: summed positive weight}, read from NiSkinData.bone_list."""
+    weights: list = [{} for _ in range(num_verts)]
+    for bi in range(skin_data.num_bones):
+        bone = skin_data.bone_list[bi]
+        for vwi in range(bone.num_vertices):
+            vw = bone.vertex_weights[vwi]
+            w = float(vw.weight)
+            if vw.index < num_verts and w > 0.0:
+                weights[vw.index][bi] = weights[vw.index].get(bi, 0.0) + w
+    return weights
+
+
+def _triangles(src_geom) -> list:
+    """The shape's triangles as index triples; empty when it has none."""
+    try:
+        return [(tri.v_1, tri.v_2, tri.v_3) for tri in src_geom.data.triangles]
+    except Exception:
+        return []
+
+
+#: Cloud points compared per chunk in the proximity clip, bounding its memory.
+_CLOUD_CHUNK = 256
+
+
+def _proximity_mask(src_geom, section_verts, threshold: float) -> list:
+    """Per vertex: within `threshold` of the sections' point cloud; all True without one."""
+    num_verts = src_geom.data.num_vertices
+    if not section_verts:
+        return [True] * num_verts
+    cloud = np.array([p for sec in section_verts for p in sec], dtype=np.float32)
+    t = src_geom.translation
+    sk_pos = np.array([[v.x + t.x, v.y + t.y, v.z + t.z]
+                       for v in src_geom.data.vertices], dtype=np.float32)
+    min_dist_sq = np.full(num_verts, np.inf, dtype=np.float32)
+    for start in range(0, len(cloud), _CLOUD_CHUNK):
+        diff = sk_pos[:, np.newaxis, :] - cloud[np.newaxis, start:start + _CLOUD_CHUNK, :]
+        np.minimum(min_dist_sq, (diff * diff).sum(axis=2).min(axis=1), out=min_dist_sq)
+    return (min_dist_sq < threshold ** 2).tolist()
+
+
 def clip_body_geom(src_geom, bi_to_name: dict, keep_bones: set,
-                    section_verts: list = None, proximity_threshold: float = 6.0):
-    """Clip a Skyrim body NiTriShape to the region matching removed OB body skin.
+                    section_verts: list = None, proximity_threshold: float = 6.0,
+                    partitions=None, keep=None):
+    """Clip a Skyrim body NiTriShape to the region matching removed body skin.
 
-    When section_verts is provided (list of per-section vertex-position lists):
-        Build a combined point cloud from all OB skin sections (post-retarget world
-        positions).  Keep each SK body vert whose nearest-neighbour distance to the
-        cloud is below proximity_threshold.  This is geometrically tight — the cloud
-        exactly traces the shape of each gap even when the AABB would be far too large.
-
-    When not provided, all vertices are kept.
-
-    bi_to_name / keep_bones: retained for API compatibility, not used for filtering.
+    `section_verts` (per-section vertex-position lists, post-retarget) keeps
+    each vert within `proximity_threshold` of their combined cloud; without
+    them every vert is kept. `partitions` further keeps only verts in those
+    body partitions, and `keep(points)` only the points it passes.
+    bi_to_name / keep_bones are not used for filtering.
     Returns (verts, normals, uvs, tris, kept_weights, bi_to_name) or None.
     """
     skin = getattr(src_geom, 'skin_instance', None)
-    if skin is None or src_geom.data is None:
+    if skin is None or src_geom.data is None or getattr(skin, 'data', None) is None:
         return None
-
-    skin_data = getattr(skin, 'data', None)
-    if skin_data is None:
-        return None
-
-    # Read weights from NiSkinData.bone_list — always present in both Oblivion and
-    # Skyrim NIFs, unlike NiSkinPartition which is absent in vanilla Skyrim NIFs.
-    num_verts = src_geom.data.num_vertices
-    vert_weights: list = [{} for _ in range(num_verts)]
-    for bi in range(skin_data.num_bones):
-        be = skin_data.bone_list[bi]
-        for vwi in range(be.num_vertices):
-            vw = be.vertex_weights[vwi]
-            vi = vw.index
-            w = float(vw.weight)
-            if vi < num_verts and w > 0.0:
-                vert_weights[vi][bi] = vert_weights[vi].get(bi, 0.0) + w
-
-    # Triangles come directly from NiTriShapeData
-    all_tris: list = []
-    try:
-        for tri in src_geom.data.triangles:
-            all_tris.append((tri.v_1, tri.v_2, tri.v_3))
-    except Exception:
-        pass
-
+    all_tris = _triangles(src_geom)
     if not all_tris:
         return None
+    keep_vert = _proximity_mask(src_geom, section_verts, proximity_threshold)
+    if partitions:
+        keep_vert = [a and b for a, b in zip(keep_vert, _partition_mask(src_geom, partitions))]
+    if keep is not None:
+        t = src_geom.translation
+        pts = np.array([[v.x + t.x, v.y + t.y, v.z + t.z] for v in src_geom.data.vertices])
+        keep_vert = [a and bool(b) for a, b in zip(keep_vert, keep(pts))]
+    return _compact(src_geom.data, keep_vert, all_tris,
+                    _vertex_weights(skin.data, src_geom.data.num_vertices),
+                    bi_to_name)
 
-    # Precompute translation offset (body NIF local → skeleton space)
-    tx = src_geom.translation.x
-    ty = src_geom.translation.y
-    tz = src_geom.translation.z
 
-    src_data = src_geom.data
-
-    # ---- Build the vertex keep-mask ----------------------------------------
-    # Primary: point-cloud proximity against retargeted OB skin vertices.
-    # Fallback: expanded per-section AABB.
-    # When neither filter is supplied, keep all verts.
-    if section_verts:
-        # Flatten all per-section vertex clouds into one (M, 3) array.
-        flat: list = []
-        for sec in section_verts:
-            flat.extend(sec)
-        cloud = np.array(flat, dtype=np.float32)       # (M, 3)
-
-        # Collect all SK body world positions in one (N, 3) array.
-        sk_pos = np.empty((num_verts, 3), dtype=np.float32)
-        for vi in range(num_verts):
-            v = src_data.vertices[vi]
-            sk_pos[vi, 0] = v.x + tx
-            sk_pos[vi, 1] = v.y + ty
-            sk_pos[vi, 2] = v.z + tz
-
-        # Min-distance from each SK vert to the cloud. Process in chunks of
-        # 256 cloud points to stay inside reasonable memory usage.
-        thr_sq = proximity_threshold ** 2
-        min_dist_sq = np.full(num_verts, np.inf, dtype=np.float32)
-        CHUNK = 256
-        for start in range(0, len(cloud), CHUNK):
-            diff = sk_pos[:, np.newaxis, :] - cloud[np.newaxis, start:start + CHUNK, :]
-            d_sq = (diff * diff).sum(axis=2)           # (N, chunk)
-            chunk_min = d_sq.min(axis=1)               # (N,)
-            np.minimum(min_dist_sq, chunk_min, out=min_dist_sq)
-
-        keep_vert = (min_dist_sq < thr_sq).tolist()
-
-    else:
-        keep_vert = [True] * num_verts
-
+def _compact(src_data, keep_vert: list, all_tris: list, vert_weights: list,
+             bi_to_name: dict):
+    """The kept verts and the triangles wholly inside them, reindexed; None when empty."""
+    num_verts = src_data.num_vertices
     old_to_new = {}
     new_idx = 0
     for vi in range(num_verts):
@@ -927,25 +951,8 @@ def _recompute_body_binds(geom, armor_root):
         write_skin_transform(skin_data.bone_list[i].skin_transform, B)
 
 
-def splice_body_geometry(data, skin_info: dict, fill_body_part: int = 32) -> int:
-    """Attach clipped Skyrim body geometry into an armor NIF after retarget+rename.
-
-    skin_info: {nif_basename -> {'bones': set[str], 'sections': [set, ...]}}
-    Bounding boxes are computed from bone NiNode world positions in the converted
-    armor NIF (post-retarget), ensuring correct coordinate space matching with
-    the Skyrim body NIF vertices.  Each section (disconnected removed skin block)
-    produces its own bbox for fine-grained clipping.
-    Must be called AFTER retarget_skin_to_skyrim() and remap_bone_names().
-
-    fill_body_part: BSDismember body part assigned to every spliced fill
-    partition.  MUST be a biped slot the item's ARMA claims or the engine
-    culls the fill (a slot-44 pants ARMA never renders a partition-32 fill).
-    Callers pass the piece's primary slot: 32 cuirass/shirt, 44 greaves/pants,
-    37 boots, 33 gauntlets.
-    """
-    if not skin_info or not _PYFFI:
-        return 0
-
+def _armor_bone_map(data) -> tuple:
+    """(last non-None root, {node name: NiNode}) of the armor NIF."""
     bone_map: dict = {}
     armor_root = None
     for root in data.roots:
@@ -956,86 +963,105 @@ def splice_body_geometry(data, skin_info: dict, fill_body_part: int = 32) -> int
             if isinstance(block, NifFormat.NiNode):
                 raw = bytes(block.name).rstrip(b'\x00').decode('latin-1', errors='replace')
                 bone_map[raw] = block
+    return armor_root, bone_map
 
-    if armor_root is None or not bone_map:
-        return 0
 
-    # Armor surface for the occlusion trim — built once per NIF; the original
-    # OB body skin is already stripped, so every trishape present is armor.
-    armor_surf = _armor_surface(armor_root)
-
-    sk_skel_m, sk_skel_f = {}, {}
+def _skyrim_skeletons() -> tuple:
+    """(male, female) Skyrim bone maps; empty dicts when unavailable."""
     try:
-        from asset_convert.character.skin_retarget import load_skeleton
-        sk_skel_m = load_skeleton(paths.GENERATED / 'skeleton_bones_skyrim_male.json')
-        sk_skel_f = load_skeleton(paths.GENERATED / 'skeleton_bones_skyrim_female.json')
+        return (load_skeleton(paths.GENERATED / 'skeleton_bones_skyrim_male.json'),
+                load_skeleton(paths.GENERATED / 'skeleton_bones_skyrim_female.json'))
+    except Exception:
+        return {}, {}
+
+
+def _spliceable(src_geom) -> bool:
+    """A dismember-skinned body shape with data that is not an underwear overlay."""
+    skin = getattr(src_geom, 'skin_instance', None)
+    if not isinstance(skin, NifFormat.BSDismemberSkinInstance) or src_geom.data is None:
+        return False
+    return not is_underwear_only(bytes(src_geom.name) if src_geom.name else b'')
+
+
+def _attach_fill(new_geom, armor_root, fill_body_part: int) -> None:
+    """Parent a fill shape, rebind it to the armor's bones, and slot its partitions."""
+    old_n = armor_root.num_children
+    armor_root.num_children = old_n + 1
+    armor_root.children.update_size()
+    armor_root.children[old_n] = new_geom
+    _recompute_body_binds(new_geom, armor_root)
+    try:
+        geom_name_str = bytes(new_geom.name).rstrip(b'\x00').decode('latin-1', errors='replace')
+        regen_skin_partition(new_geom, new_geom.skin_instance, geom_name_str)
     except Exception:
         pass
+    fill_skin = new_geom.skin_instance
+    if isinstance(fill_skin, NifFormat.BSDismemberSkinInstance):
+        for pi in range(fill_skin.num_partitions):
+            fill_skin.partitions[pi].body_part = fill_body_part
 
-    spliced = 0
-    for nif_name, info in sorted(skin_info.items()):
-        keep_bones = info['bones']
-        sections = info.get('sections', [])
 
-        # Detect gender from body NIF name
-        is_female = nif_name.lower().startswith('female')
-        sk_skel = sk_skel_f if is_female else sk_skel_m
-        section_verts  = info.get('section_verts',  []) or None
+def _splice_nif(nif_name: str, info: dict, armor, sk_skel, fill_body_part) -> list:
+    """Splice one Skyrim body NIF's clipped, trimmed shapes; the shapes added.
 
-        geom_entries = load_body_geom(nif_name)
-        for src_geom, bi_to_name in geom_entries:
-            skin = getattr(src_geom, 'skin_instance', None)
-            if skin is None or not isinstance(skin, NifFormat.BSDismemberSkinInstance):
-                continue
-            if src_geom.data is None:
-                continue
-            # Skip actual underwear overlay meshes (e.g. MaleUnderwear_1) but
-            # keep the body mesh (MaleUnderwearBody:0) which IS the main body.
-            geom_name_raw = bytes(src_geom.name) if src_geom.name else b''
-            if is_underwear_only(geom_name_raw):
-                continue
-            clip_result = clip_body_geom(src_geom, bi_to_name, keep_bones,
-                                           section_verts=section_verts,
-                                           proximity_threshold=3.8)
-            if clip_result is None:
-                continue
-            # Drop the fill's fully-hidden interior (see FILL_COVER_ALONG):
-            # skin buried under the armor is never visible and only clips
-            # through it once animation moves the two meshes apart.
-            clip_result = drop_armor_covered_tris(
-                clip_result, armor_surf,
-                (src_geom.translation.x, src_geom.translation.y,
-                 src_geom.translation.z))
-            geom_name = geom_name_raw if geom_name_raw else b'BodyFill'
-            new_geom = build_clipped_geom(
-                src_geom, clip_result, armor_root, bone_map, geom_name,
-                sk_skel=sk_skel)
-            if new_geom is None:
-                continue
-            old_n = armor_root.num_children
-            armor_root.num_children = old_n + 1
-            armor_root.children.update_size()
-            armor_root.children[old_n] = new_geom
-            # Vertices were baked to skeleton space (geom.translation=0).
-            # Recompute NiSkinData bind matrices for the armor's flat bone layout.
-            _recompute_body_binds(new_geom, armor_root)
-            # Regenerate NiSkinPartition using PyFFI's update_skin_partition so
-            # bone indices are correct (0-based into the skin instance bone array).
-            try:
-                from asset_convert.character.skin_retarget import regen_skin_partition
-                geom_name_str = bytes(new_geom.name).rstrip(b'\x00').decode('latin-1', errors='replace')
-                regen_skin_partition(new_geom, new_geom.skin_instance, geom_name_str)
-            except Exception:
-                pass
-            # Fill partitions must carry a slot the item's ARMA claims —
-            # otherwise the engine culls them (invisible skin holes).
-            fill_skin = new_geom.skin_instance
-            if isinstance(fill_skin, NifFormat.BSDismemberSkinInstance):
-                for pi in range(fill_skin.num_partitions):
-                    fill_skin.partitions[pi].body_part = fill_body_part
-            spliced += 1
-
+    `armor` is (root, bone map, occlusion surface).
+    """
+    armor_root, bone_map, armor_surf = armor
+    section_verts = info.get('section_verts', []) or None
+    spliced = []
+    for src_geom, bi_to_name in load_body_geom(nif_name):
+        if not _spliceable(src_geom):
+            continue
+        clip_result = clip_body_geom(src_geom, bi_to_name, info['bones'],
+                                     section_verts=section_verts,
+                                     proximity_threshold=3.8,
+                                     partitions=info.get('partitions'),
+                                     keep=info.get('keep'))
+        if clip_result is None:
+            continue
+        clip_result = drop_armor_covered_tris(
+            clip_result, armor_surf,
+            (src_geom.translation.x, src_geom.translation.y,
+             src_geom.translation.z))
+        new_geom = build_clipped_geom(
+            src_geom, clip_result, armor_root, bone_map,
+            bytes(src_geom.name) if src_geom.name else b'BodyFill', sk_skel=sk_skel)
+        if new_geom is not None:
+            _attach_fill(new_geom, armor_root, fill_body_part)
+            spliced.append(new_geom)
     return spliced
+
+
+def splice_body_geometry(data, skin_info: dict, fill_body_part: int = 32,
+                         fill=None, female: bool = False) -> int:
+    """Attach clipped Skyrim body geometry into an armor NIF after retarget+rename.
+
+    skin_info: `collect_skin_info`'s result. Without one, `fill` is a Morrowind
+    piece's SkinFill (`partition_skin_info`, gendered by `female`).
+    fill_body_part: the body part every fill partition takes; it MUST be a
+    slot the item's ARMA claims or the engine culls the fill. A SkinFill then
+    seats the piece's skinned armor outside the skin it added.
+    See: docs/commentary/asset_convert_armor.md#body-splice-fill-partition
+    See: docs/commentary/asset_convert_armor.md#morrowind-skin-fill
+    """
+    seat = not skin_info and fill
+    skin_info = skin_info or partition_skin_info(fill, female)
+    if not skin_info or not _PYFFI:
+        return 0
+    armor_root, bone_map = _armor_bone_map(data)
+    if armor_root is None or not bone_map:
+        return 0
+    armor_shapes = [b for b in armor_root.tree() if isinstance(b, NifFormat.NiTriShape)
+                    and b.skin_instance is not None and b.skin_instance.num_bones > 1]
+    armor = (armor_root, bone_map, _armor_surface(armor_root))
+    sk_skel_m, sk_skel_f = _skyrim_skeletons()
+    spliced = []
+    for nif_name, info in sorted(skin_info.items()):
+        sk_skel = sk_skel_f if nif_name.lower().startswith('female') else sk_skel_m
+        spliced += _splice_nif(nif_name, info, armor, sk_skel, fill_body_part)
+    if seat:
+        fill.seat(armor_shapes, spliced)
+    return len(spliced)
 
 
 def is_body_skin_geometry(block) -> bool:

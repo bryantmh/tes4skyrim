@@ -26,10 +26,106 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 #: Source plugin whose skeleton and .kf corpus this run reads; set from --plugin.
 PLUGIN = ['Oblivion.esm']
 
+#: The Morrowind rig instead of a plugin's, and which gender; set from --morrowind / --female.
+SOURCE = {'morrowind': False, 'female': False}
+
+sys.path.insert(0, str(PROJECT_ROOT))
+from asset_convert.character.skyrim_overrides_falloutnv import bone_map_for
+from scipy.optimize import minimize as sp_minimize
+from tools.generators.kf_morrowind import (is_morrowind_kf, morrowind_sources,
+                                           parse_morrowind_kf, pose_to_bind)
+
+#: Largest per-axis rotation, in radians, the refinement may add to a corpus frame.
+_THETA_MAX = 0.35
+
+
+# ---------------------------------------------------------------------------
+# Source rig and pose-search primitives
+# ---------------------------------------------------------------------------
 
 def _plugin_slug():
-    """The source plugin's lowercase stem, used to name generated files."""
+    """The source's lowercase stem, used to name generated files.
+
+    See: docs/commentary/asset_convert_armor.md#morrowind-pose-cache
+    """
+    if SOURCE['morrowind']:
+        return 'morrowind_female' if SOURCE['female'] else 'morrowind'
     return PLUGIN[0].rsplit('.', 1)[0].lower()
+
+
+def _source_files():
+    """(skeleton NIF, .kf clips) this run reads."""
+    if SOURCE['morrowind']:
+        return morrowind_sources(PROJECT_ROOT / 'export', SOURCE['female'])
+    return (_character_dir() / 'skeleton.nif',
+            sorted(Path(_character_dir()).rglob('*.kf')))
+
+
+def _source_hierarchy(skel_path) -> dict:
+    """The skeleton the corpus animates, at the rest its pose deltas start from.
+
+    Morrowind's is base_anim re-posed onto the bind skeleton skinned parts
+    are authored in.
+    See: docs/commentary/asset_convert_armor.md#morrowind-pose-cache
+    """
+    bones = load_skeleton_hierarchy(skel_path)
+    if SOURCE['morrowind']:
+        pose_to_bind(bones, _source_skeleton_json())
+    return bones
+
+
+def _read_clip(kf_path):
+    """One .kf's {bone: {time: (translation, rotation)}}; {} when it cannot be read.
+
+    See: docs/commentary/asset_convert_armor.md#morrowind-pose-cache
+    """
+    try:
+        if is_morrowind_kf(kf_path):
+            return parse_morrowind_kf(kf_path)
+        return parse_kf_file(kf_path)
+    except Exception:
+        return {}
+
+
+def _axis_angle_to_mat3(ax):
+    """Axis-angle vector (3,) to 3x3 rotation matrix."""
+    theta = np.linalg.norm(ax)
+    if theta < 1e-12:
+        return np.eye(3)
+    k = ax / theta
+    K = np.array([[0, -k[2], k[1]],
+                  [k[2], 0, -k[0]],
+                  [-k[1], k[0], 0]])
+    return np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * (K @ K)
+
+
+def _trial_cost(params, active_bones, base, bones, parent_worlds, targets):
+    """Squared target error of a chain whose `base` locals are turned by `params`.
+
+    `targets` is [(source bone, Skyrim target position)].
+    """
+    worlds = {}
+    for i, bname in enumerate(active_bones):
+        loc = base[bname].copy()
+        loc[:3, :3] = _axis_angle_to_mat3(params[i*3:(i+1)*3]) @ loc[:3, :3]
+        parent = bones[bname]['parent']
+        worlds[bname] = loc @ worlds.get(parent, parent_worlds.get(parent, np.eye(4)))
+    cost = 0.0
+    for bone, target in targets:
+        if bone in worlds:
+            cost += np.sum((worlds[bone][3, :3] - target) ** 2)
+    return cost
+
+
+def _run_trial(frame_locals, active_bones, bones, parent_worlds, targets):
+    """(L-BFGS-B result, base locals) refining one corpus frame of a chain."""
+    base = {b: frame_locals.get(b, bones[b]['local']).copy() for b in active_bones}
+    n_params = len(active_bones) * 3
+    result = sp_minimize(_trial_cost, np.zeros(n_params),
+                         args=(active_bones, base, bones, parent_worlds, targets),
+                         method='L-BFGS-B', bounds=[(-_THETA_MAX, _THETA_MAX)] * n_params,
+                         options={'maxiter': 500, 'ftol': 1e-12, 'gtol': 1e-8})
+    return result, base
 
 
 def _source_skeleton_json():
@@ -50,9 +146,6 @@ def _pose_out_path():
     if _plugin_slug() == 'oblivion':
         return gen / 'best_animation_pose.json'
     return gen / ('best_animation_pose_%s.json' % _plugin_slug())
-sys.path.insert(0, str(PROJECT_ROOT))
-from asset_convert.character.skyrim_overrides import OBLIVION_TO_SKYRIM_BONE_MAP
-from asset_convert.character.skyrim_overrides_falloutnv import bone_map_for
 
 
 def _m33_to_np(r):
@@ -311,7 +404,8 @@ def get_skyrim_targets_in_ob_space():
     Actually from Procrustes analysis, bone POSITIONS are already in the same coordinate
     system (only 1.8° difference). So let's just load them directly and see.
     """
-    sk_json = PROJECT_ROOT / 'asset_convert' / 'generated' / 'skeleton_bones_skyrim_male.json'
+    sk_json = PROJECT_ROOT / 'asset_convert' / 'generated' / (
+        'skeleton_bones_skyrim_%s.json' % ('female' if SOURCE['female'] else 'male'))
     ob_json = _source_skeleton_json()
     for path in (sk_json, ob_json):
         if not path.exists():
@@ -549,488 +643,380 @@ def _mat3_to_quat_rv(R):
 
 
 # ---------------------------------------------------------------------------
-# BRAINSTORM: Better use of the animation corpus in the cache builder
+# Pose cache builder
+# ---------------------------------------------------------------------------
 
-def _parse_kf_safe(kf_path):
-    """Thread/process-safe wrapper around parse_kf_file."""
-    try:
-        return parse_kf_file(kf_path)
-    except Exception:
-        return {}
+#: Limb chains blended as whole coherent frames; the spine keeps its rest pose.
+_CHAINS = {
+    'left_arm':  ['Bip01 L Clavicle', 'Bip01 L UpperArm', 'Bip01 L UpperArmTwist',
+                  'Bip01 L Forearm', 'Bip01 L ForearmTwist', 'Bip01 L Hand',
+                  'Bip01 L Finger0', 'Bip01 L Finger01', 'Bip01 L Finger02',
+                  'Bip01 L Finger1', 'Bip01 L Finger11', 'Bip01 L Finger12',
+                  'Bip01 L Finger2', 'Bip01 L Finger21', 'Bip01 L Finger22',
+                  'Bip01 L Finger3', 'Bip01 L Finger31', 'Bip01 L Finger32',
+                  'Bip01 L Finger4', 'Bip01 L Finger41', 'Bip01 L Finger42'],
+    'right_arm': ['Bip01 R Clavicle', 'Bip01 R UpperArm', 'Bip01 R UpperArmTwist',
+                  'Bip01 R Forearm', 'Bip01 R ForearmTwist', 'Bip01 R Hand',
+                  'Bip01 R Finger0', 'Bip01 R Finger01', 'Bip01 R Finger02',
+                  'Bip01 R Finger1', 'Bip01 R Finger11', 'Bip01 R Finger12',
+                  'Bip01 R Finger2', 'Bip01 R Finger21', 'Bip01 R Finger22',
+                  'Bip01 R Finger3', 'Bip01 R Finger31', 'Bip01 R Finger32',
+                  'Bip01 R Finger4', 'Bip01 R Finger41', 'Bip01 R Finger42'],
+    'left_leg':  ['Bip01 L Thigh', 'Bip01 L Calf', 'Bip01 L Foot', 'Bip01 L Toe0'],
+    'right_leg': ['Bip01 R Thigh', 'Bip01 R Calf', 'Bip01 R Foot', 'Bip01 R Toe0'],
+}
+
+#: Order the chains are blended and refined in.
+_CHAIN_ORDER = ('left_arm', 'right_arm', 'left_leg', 'right_leg')
+
+#: Softmax sharpness of the chain-level frame blend.
+_TEMPERATURE = 1.0
+
+#: Corpus frames each chain's refinement starts from, best first.
+_MULTI_START_K = 50
+
+#: X mirror between the left and right side's deltas.
+_M4 = np.diag([-1.0, 1.0, 1.0, 1.0])
+
+#: Distance one side must win by before it is mirrored onto the other.
+_MIRROR_THRESHOLD = 0.01
 
 
-def build_cache(args):
-    """Build animation pose cache using Approach A: softmax-weighted delta blending.
+class _Pose:
+    """The pose being built: every bone's chosen local and world transform."""
 
-    For each bone (root-to-leaf), blends ALL animation corpus frames using
-    softmax weights based on descendant position errors.  Uses analytical
-    translation to place every mapped bone at its exact Skyrim target position.
-    Rotation is blended from the corpus (weighted toward candidates that also
-    position descendants well) then SVD-projected to nearest proper rotation.
-    """
-    skel_path = _character_dir() / 'skeleton.nif'
-    kf_dir = _character_dir()
+    def __init__(self, skeleton_bones):
+        """Start from the rest pose of `skeleton_bones`."""
+        self.bones = skeleton_bones
+        self.local = {n: b['local'].copy() for n, b in skeleton_bones.items()}
+        self.world = {n: b['world'].copy() for n, b in skeleton_bones.items()}
 
-    print("Loading OB skeleton...")
-    skeleton_bones = load_skeleton_hierarchy(skel_path)
+    def recompute_subtree(self, name):
+        """Rebuild the world transforms below `name` from their locals."""
+        for child in self.bones[name]['children']:
+            if child in self.local:
+                self.world[child] = self.local[child] @ self.world[name]
+                self.recompute_subtree(child)
 
-    print("Loading target positions...")
-    ob_positions, sk_positions = get_skyrim_targets_in_ob_space()
+    def refresh(self, names):
+        """Rebuild `names` root-to-leaf from their locals, then their subtrees."""
+        for bname in names:
+            if bname not in self.bones:
+                continue
+            parent = self.bones[bname]['parent']
+            self.world[bname] = self.local[bname] @ self.world.get(parent, np.eye(4))
+            self.recompute_subtree(bname)
 
-    # Build OB→SK name mapping
-    mapped_bones = {}
-    for ob_name, sk_name in bone_map_for(skeleton_bones).items():
-        if ob_name in skeleton_bones and sk_name in sk_positions:
-            mapped_bones[ob_name] = sk_name
 
-    # ── Step 1: Parse ALL .kf files in parallel ─────────────────────────
-    kf_files = sorted(Path(kf_dir).rglob('*.kf'))
+def _parse_corpus(kf_files) -> list:
+    """Every clip's keyframes, read on a thread pool."""
     workers = max(1, (os.cpu_count() or 4) - 1)
     print(f"Parsing {len(kf_files)} .kf files ({workers} threads)...")
     t0 = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        all_parsed = list(pool.map(_parse_kf_safe, kf_files))
+        all_parsed = list(pool.map(_read_clip, kf_files))
     print(f"  Parsed in {time.perf_counter() - t0:.1f}s")
+    return all_parsed
 
-    # ── Step 2: Build per-bone local transform library ──────────────────
+
+def _print_candidates(all_parsed, skeleton_bones) -> None:
+    """Print how many per-bone local transforms the corpus offers."""
     print("Building per-bone transform library...")
-    bone_locals_list: dict[str, list[np.ndarray]] = {}
-
+    counts = {}
     for bone_keyframes in all_parsed:
         for bname, kfs in bone_keyframes.items():
-            if bname not in skeleton_bones:
-                continue
-            rest = skeleton_bones[bname]['local']
-            if bname not in bone_locals_list:
-                bone_locals_list[bname] = []
-            for _t, (trans, rot) in kfs.items():
-                local = rest.copy()
-                if rot is not None:
-                    local[:3, :3] = _quat_to_mat3(*rot)
-                if trans is not None:
-                    local[3, :3] = np.array(trans)
-                bone_locals_list[bname].append(local)
+            if bname in skeleton_bones:
+                counts[bname] = counts.get(bname, 0) + len(kfs)
+    print(f"  {len(counts)} bones, {sum(counts.values())} total candidates")
 
-    # Convert to numpy arrays for vectorised operations
-    bone_locals_np: dict[str, np.ndarray] = {}
-    for bname, lst in bone_locals_list.items():
-        bone_locals_np[bname] = np.array(lst)
-    del bone_locals_list
 
-    total_transforms = sum(a.shape[0] for a in bone_locals_np.values())
-    print(f"  {len(bone_locals_np)} bones, {total_transforms} total candidates")
+def _keyed_local(rest, kfs, t):
+    """`rest` with the key nearest `t` (within 0.01) applied; an exact key needs no search."""
+    local = rest.copy()
+    key = kfs.get(t)
+    if key is None:
+        closest_t = min(sorted(kfs.keys()), key=lambda x: abs(x - t))
+        key = kfs[closest_t] if abs(closest_t - t) < 0.01 else None
+    if key is not None:
+        trans, rot = key
+        if rot is not None:
+            local[:3, :3] = _quat_to_mat3(*rot)
+        if trans is not None:
+            local[3, :3] = np.array(trans)
+    return local
 
-    # ── Helper: descendant relative transforms ──────────────────────────
-    _desc_cache: dict[str, dict[str, np.ndarray]] = {}
 
-    def _get_descendants_relative(bone_name):
-        """Precompute rest-pose relative transforms for all descendants.
-        desc_world = desc_relative @ bone_world for any bone_world."""
-        if bone_name in _desc_cache:
-            return _desc_cache[bone_name]
-        result = {}
-
-        def _walk(name, cumulative):
-            for child in skeleton_bones[name]['children']:
-                if child not in skeleton_bones:
-                    continue
-                child_rel = skeleton_bones[child]['local'] @ cumulative
-                result[child] = child_rel
-                _walk(child, child_rel)
-        _walk(bone_name, np.eye(4))
-        _desc_cache[bone_name] = result
-        return result
-
-    # ── Initialise with rest pose ───────────────────────────────────────
-    chosen_local  = {n: b['local'].copy() for n, b in skeleton_bones.items()}
-    chosen_world  = {n: b['world'].copy() for n, b in skeleton_bones.items()}
-
-    def _recompute_subtree(n):
-        for c in skeleton_bones[n]['children']:
-            if c in chosen_local:
-                chosen_world[c] = chosen_local[c] @ chosen_world[n]
-                _recompute_subtree(c)
-
-    # ── Step 3: Per-bone Approach A optimisation ────────────────────────
-    CHAINS = {
-        'left_arm':  ['Bip01 L Clavicle', 'Bip01 L UpperArm', 'Bip01 L UpperArmTwist',
-                      'Bip01 L Forearm', 'Bip01 L ForearmTwist', 'Bip01 L Hand',
-                      'Bip01 L Finger0', 'Bip01 L Finger01', 'Bip01 L Finger02',
-                      'Bip01 L Finger1', 'Bip01 L Finger11', 'Bip01 L Finger12',
-                      'Bip01 L Finger2', 'Bip01 L Finger21', 'Bip01 L Finger22',
-                      'Bip01 L Finger3', 'Bip01 L Finger31', 'Bip01 L Finger32',
-                      'Bip01 L Finger4', 'Bip01 L Finger41', 'Bip01 L Finger42'],
-        'right_arm': ['Bip01 R Clavicle', 'Bip01 R UpperArm', 'Bip01 R UpperArmTwist',
-                      'Bip01 R Forearm', 'Bip01 R ForearmTwist', 'Bip01 R Hand',
-                      'Bip01 R Finger0', 'Bip01 R Finger01', 'Bip01 R Finger02',
-                      'Bip01 R Finger1', 'Bip01 R Finger11', 'Bip01 R Finger12',
-                      'Bip01 R Finger2', 'Bip01 R Finger21', 'Bip01 R Finger22',
-                      'Bip01 R Finger3', 'Bip01 R Finger31', 'Bip01 R Finger32',
-                      'Bip01 R Finger4', 'Bip01 R Finger41', 'Bip01 R Finger42'],
-        'left_leg':  ['Bip01 L Thigh', 'Bip01 L Calf', 'Bip01 L Foot', 'Bip01 L Toe0'],
-        'right_leg': ['Bip01 R Thigh', 'Bip01 R Calf', 'Bip01 R Foot', 'Bip01 R Toe0'],
-    }
-
-    TEMPERATURE = 1.0  # Softmax sharpness for chain-level blending
-    chain_order_list = ['left_arm', 'right_arm', 'left_leg', 'right_leg']
-
-    # Storage for corpus frame data (needed by multi-start refinement)
-    chain_corpus_data = {}  # chain_name -> (costs_arr, all_per_bone_locals)
-
-    print(f"\nChain-level softmax blend over entire corpus (T={TEMPERATURE})")
-
-    for chain_name in chain_order_list:
-        chain_bones = CHAINS[chain_name]
-        chain_mapped = [(b, mapped_bones[b]) for b in chain_bones if b in mapped_bones]
-
-        if not chain_mapped:
+def _frame_locals(bone_keyframes, t, chain_bones, bones) -> dict:
+    """Each chain bone's local at time `t` of one clip; rest where it is unkeyed."""
+    out = {}
+    for bname in chain_bones:
+        if bname not in bones:
             continue
+        kfs = bone_keyframes.get(bname)
+        rest = bones[bname]['local']
+        out[bname] = rest.copy() if kfs is None else _keyed_local(rest, kfs, t)
+    return out
 
-        print(f"\n  Chain: {chain_name}")
 
-        # Collect ALL coherent chain poses and their costs ────────────
-        # Each "pose" is per-bone locals from the SAME animation frame,
-        # preserving FK consistency. Different frames from different .kf
-        # files are separate poses.
-        all_costs = []          # list of float
-        all_per_bone_locals = []  # list of dict[bone_name -> 4x4]
-
-        for bone_keyframes in all_parsed:
-            if not bone_keyframes:
-                continue
-
-            # Get all unique timestamps across all bones
-            all_times = set()
-            for bkf in bone_keyframes.values():
-                all_times.update(bkf.keys())
-
-            for t in all_times:
-                # Build per-bone locals for this frame (from same animation)
-                frame_locals = {}
-                for bname in chain_bones:
-                    if bname not in skeleton_bones:
-                        continue
-                    local = skeleton_bones[bname]['local'].copy()
-                    if bname in bone_keyframes:
-                        kfs = bone_keyframes[bname]
-                        times_list = sorted(kfs.keys())
-                        closest_t = min(times_list, key=lambda x: abs(x - t))
-                        if abs(closest_t - t) < 0.01:
-                            trans, rot = kfs[closest_t]
-                            if rot is not None:
-                                local[:3, :3] = _quat_to_mat3(*rot)
-                            if trans is not None:
-                                local[3, :3] = np.array(trans)
-                    frame_locals[bname] = local
-
-                # Compute FK world transforms for chain, using the current
-                # chosen_world for the chain root's parent
-                frame_worlds = {}
-                for bname in chain_bones:
-                    if bname not in skeleton_bones:
-                        continue
-                    parent = skeleton_bones[bname]['parent']
-                    pw = frame_worlds.get(parent, chosen_world.get(parent, np.eye(4)))
-                    frame_worlds[bname] = frame_locals.get(bname, skeleton_bones[bname]['local']) @ pw
-
-                # Cost = sum of squared position errors for mapped chain bones
-                cost = 0.0
-                for ob_bone, sk_bone in chain_mapped:
-                    if ob_bone in frame_worlds:
-                        cost += np.sum((frame_worlds[ob_bone][3, :3] - sk_positions[sk_bone]) ** 2)
-
-                all_costs.append(cost)
-                all_per_bone_locals.append(frame_locals)
-
-        N_frames = len(all_costs)
-        if N_frames == 0:
+def _frame_cost(frame_locals, chain_bones, chain_mapped, pose, sk_positions) -> float:
+    """Squared target error of one frame's chain, hung from the pose built so far."""
+    worlds = {}
+    for bname in chain_bones:
+        if bname not in pose.bones:
             continue
+        parent = pose.bones[bname]['parent']
+        pw = worlds.get(parent, pose.world.get(parent, np.eye(4)))
+        worlds[bname] = frame_locals.get(bname, pose.bones[bname]['local']) @ pw
+    cost = 0.0
+    for ob_bone, sk_bone in chain_mapped:
+        if ob_bone in worlds:
+            cost += np.sum((worlds[ob_bone][3, :3] - sk_positions[sk_bone]) ** 2)
+    return cost
 
-        costs_arr = np.array(all_costs)
-        best_cost = costs_arr.min()
-        best_idx = int(np.argmin(costs_arr))
 
-        # Save for multi-start refinement
-        chain_corpus_data[chain_name] = (costs_arr, all_per_bone_locals)
+def _chain_frames(all_parsed, chain_bones, chain_mapped, pose, sk_positions):
+    """([cost], [frame locals]) over every coherent frame of every clip."""
+    costs, frames = [], []
+    for bone_keyframes in all_parsed:
+        if not bone_keyframes:
+            continue
+        all_times = set()
+        for bkf in bone_keyframes.values():
+            all_times.update(bkf.keys())
+        for t in all_times:
+            locs = _frame_locals(bone_keyframes, t, chain_bones, pose.bones)
+            costs.append(_frame_cost(locs, chain_bones, chain_mapped, pose, sk_positions))
+            frames.append(locs)
+    return costs, frames
 
-        # Softmax blend — weight each coherent frame pose by its chain cost
-        log_w = -costs_arr / TEMPERATURE
-        log_w -= log_w.max()
-        alpha = np.exp(log_w)
-        alpha /= alpha.sum()
 
-        # Effective number of frames (how many really contribute)
-        eff_n = 1.0 / np.sum(alpha ** 2) if np.sum(alpha ** 2) > 0 else 1.0
-
-        # Weighted blend of per-bone locals
-        for bname in chain_bones:
-            if bname not in skeleton_bones:
-                continue
-            blended = np.zeros((4, 4), dtype=np.float64)
-            for i, frame_locs in enumerate(all_per_bone_locals):
-                local = frame_locs.get(bname, skeleton_bones[bname]['local'])
-                blended += alpha[i] * local
-
-            # SVD → nearest proper rotation
-            U, _S, Vt = np.linalg.svd(blended[:3, :3])
+def _blend_chain(chain_bones, pose, costs_arr, frames) -> float:
+    """Softmax-blend every frame's chain locals into the pose; the effective frame count."""
+    log_w = -costs_arr / _TEMPERATURE
+    log_w -= log_w.max()
+    alpha = np.exp(log_w)
+    alpha /= alpha.sum()
+    eff_n = 1.0 / np.sum(alpha ** 2) if np.sum(alpha ** 2) > 0 else 1.0
+    for bname in chain_bones:
+        if bname not in pose.bones:
+            continue
+        blended = np.zeros((4, 4), dtype=np.float64)
+        for i, frame_locs in enumerate(frames):
+            blended += alpha[i] * frame_locs.get(bname, pose.bones[bname]['local'])
+        U, _S, Vt = np.linalg.svd(blended[:3, :3])
+        R = U @ Vt
+        if np.linalg.det(R) < 0:
+            U[:, -1] *= -1
             R = U @ Vt
-            if np.linalg.det(R) < 0:
-                U[:, -1] *= -1
-                R = U @ Vt
-            blended[:3, :3] = R
+        blended[:3, :3] = R
+        pose.local[bname] = blended
+    return eff_n
 
-            chosen_local[bname] = blended
 
-        # Recompute FK for chain (root-to-leaf)
-        for bname in chain_bones:
-            if bname not in skeleton_bones:
-                continue
-            parent = skeleton_bones[bname]['parent']
-            parent_world = chosen_world.get(parent, np.eye(4))
-            chosen_world[bname] = chosen_local[bname] @ parent_world
-            _recompute_subtree(bname)
+def _softmax_chain(chain_name, all_parsed, pose, mapped_bones, sk_positions):
+    """Blend one chain from the whole corpus; its (costs, frames), or None without any."""
+    chain_bones = _CHAINS[chain_name]
+    chain_mapped = [(b, mapped_bones[b]) for b in chain_bones if b in mapped_bones]
+    if not chain_mapped:
+        return None
+    print(f"\n  Chain: {chain_name}")
+    costs, frames = _chain_frames(all_parsed, chain_bones, chain_mapped, pose, sk_positions)
+    if not costs:
+        return None
+    costs_arr = np.array(costs)
+    best_cost = costs_arr.min()
+    eff_n = _blend_chain(chain_bones, pose, costs_arr, frames)
+    pose.refresh(chain_bones)
+    chain_cost = sum(np.sum((pose.world[ob][3, :3] - sk_positions[sk]) ** 2)
+                     for ob, sk in chain_mapped if ob in pose.world)
+    print(f"  {chain_name:12s}: corpus RMSD={math.sqrt(chain_cost / len(chain_mapped)):.3f}  "
+          f"(best_frame={math.sqrt(best_cost / len(chain_mapped)):.3f}, eff_N={eff_n:.1f})")
+    return costs_arr, frames
 
-        # Chain RMSD (before refinement)
-        chain_cost_val = sum(np.sum((chosen_world[ob][3, :3] - sk_positions[sk]) ** 2)
-                         for ob, sk in chain_mapped if ob in chosen_world)
-        chain_rmsd = math.sqrt(chain_cost_val / len(chain_mapped))
-        best_rmsd = math.sqrt(best_cost / len(chain_mapped))
-        print(f"  {chain_name:12s}: corpus RMSD={chain_rmsd:.3f}  (best_frame={best_rmsd:.3f}, eff_N={eff_n:.1f})")
 
-    # ── Step 3b: Multi-start L-BFGS-B refinement ─────────────────────────
-    # For each chain, try L-BFGS-B from the top-K corpus frames and pick
-    # the result with the lowest post-refinement cost.  This avoids local
-    # minima inherent to a single starting point.
-    from scipy.optimize import minimize as sp_minimize
+def _best_trial(corpus, active_bones, pose, targets):
+    """(start indices, (cost, result, base locals, trial)) of the best refinement."""
+    costs, frames = corpus
+    sorted_indices = np.argsort(costs)[:_MULTI_START_K]
+    best = (float('inf'), None, None, 0)
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(_MULTI_START_K, os.cpu_count() or 4)) as pool:
+        futures = [pool.submit(_run_trial, frames[int(idx)], active_bones,
+                               pose.bones, pose.world, targets)
+                   for idx in sorted_indices]
+        for trial, future in enumerate(concurrent.futures.as_completed(futures)):
+            result, base = future.result()
+            if result.fun < best[0]:
+                best = (result.fun, result, base, trial)
+    return sorted_indices, best
 
-    THETA_MAX = 0.35  # Max rotation per axis in radians (~20°)
-    MULTI_START_K = 50  # Number of starting corpus frames to try
 
-    def _axis_angle_to_mat3(ax):
-        """Axis-angle vector (3,) to 3x3 rotation matrix."""
-        theta = np.linalg.norm(ax)
-        if theta < 1e-12:
-            return np.eye(3)
-        k = ax / theta
-        K = np.array([[0, -k[2], k[1]],
-                       [k[2], 0, -k[0]],
-                       [-k[1], k[0], 0]])
-        return np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * (K @ K)
+def _refine_chain(chain_name, corpus, pose, mapped_bones, sk_positions) -> None:
+    """Multi-start L-BFGS-B from the chain's best corpus frames; keep it if it wins."""
+    active_bones = [b for b in _CHAINS[chain_name] if b in pose.bones]
+    targets = [(b, sk_positions[mapped_bones[b]]) for b in active_bones if b in mapped_bones]
+    if not targets or not corpus:
+        return
+    sorted_indices, (cost, result, base, start) = _best_trial(corpus, active_bones, pose, targets)
+    pre_cost = corpus[0][sorted_indices[0]]
+    pre_rmsd = math.sqrt(pre_cost / len(targets))
+    if not cost < pre_cost:
+        print(f"  {chain_name:12s}: {pre_rmsd:.3f} -> no improvement")
+        return
+    for i, bname in enumerate(active_bones):
+        pose.local[bname] = base[bname].copy()
+        pose.local[bname][:3, :3] = (_axis_angle_to_mat3(result.x[i*3:(i+1)*3])
+                                     @ pose.local[bname][:3, :3])
+    pose.refresh(active_bones)
+    max_angle = max(np.linalg.norm(result.x[i*3:(i+1)*3]) for i in range(len(active_bones)))
+    start_label = f"start#{start}" if start > 0 else "best_frame"
+    print(f"  {chain_name:12s}: {pre_rmsd:.3f} -> {math.sqrt(cost / len(targets)):.3f}  "
+          f"(max_rot={math.degrees(max_angle):.1f}°, {start_label})")
 
-    print(f"\n  Multi-start L-BFGS-B refinement (K={MULTI_START_K}, theta_max={THETA_MAX:.2f} rad)")
 
-    for chain_name in chain_order_list:
-        chain_bones_list = CHAINS[chain_name]
-        active_bones = [b for b in chain_bones_list if b in skeleton_bones]
-        chain_mapped_refine = [(b, mapped_bones[b]) for b in active_bones if b in mapped_bones]
-        if not chain_mapped_refine:
-            continue
-
-        n_params = len(active_bones) * 3
-        bounds_list = [(-THETA_MAX, THETA_MAX)] * n_params
-
-        corpus_data = chain_corpus_data.get(chain_name)
-        if not corpus_data:
-            continue
-        c_costs, c_frame_locals = corpus_data
-
-        sorted_indices = np.argsort(c_costs)[:MULTI_START_K]
-
-        # Run all trials in parallel using threads (numpy releases GIL)
-        def _run_trial(frame_idx):
-            bl = {}
-            for bname in active_bones:
-                bl[bname] = c_frame_locals[frame_idx].get(
-                    bname, skeleton_bones[bname]['local']).copy()
-
-            def _cost(params):
-                worlds = {}
-                for i, bname in enumerate(active_bones):
-                    loc = bl[bname].copy()
-                    ax = params[i*3:(i+1)*3]
-                    R_delta = _axis_angle_to_mat3(ax)
-                    loc[:3, :3] = R_delta @ loc[:3, :3]
-                    parent = skeleton_bones[bname]['parent']
-                    pw = worlds.get(parent, chosen_world.get(parent, np.eye(4)))
-                    worlds[bname] = loc @ pw
-                c = 0.0
-                for ob_bone, sk_bone in chain_mapped_refine:
-                    if ob_bone in worlds:
-                        c += np.sum((worlds[ob_bone][3, :3] - sk_positions[sk_bone]) ** 2)
-                return c
-
-            x0 = np.zeros(n_params)
-            result = sp_minimize(_cost, x0, method='L-BFGS-B', bounds=bounds_list,
-                                 options={'maxiter': 500, 'ftol': 1e-12, 'gtol': 1e-8})
-            return result, bl
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(MULTI_START_K, os.cpu_count() or 4)) as pool:
-            futures = [pool.submit(_run_trial, int(idx)) for idx in sorted_indices]
-            best_overall_cost = float('inf')
-            best_overall_result = None
-            best_overall_base_locals = None
-            best_start_idx = 0
-            for trial, future in enumerate(concurrent.futures.as_completed(futures)):
-                result, bl = future.result()
-                if result.fun < best_overall_cost:
-                    best_overall_cost = result.fun
-                    best_overall_result = result
-                    best_overall_base_locals = bl
-                    best_start_idx = trial
-
-        # Apply the best result
-        pre_cost_single = c_costs[sorted_indices[0]]
-        pre_rmsd = math.sqrt(pre_cost_single / len(chain_mapped_refine))
-        post_rmsd = math.sqrt(best_overall_cost / len(chain_mapped_refine))
-
-        if best_overall_cost < pre_cost_single:
-            for i, bname in enumerate(active_bones):
-                ax = best_overall_result.x[i*3:(i+1)*3]
-                R_delta = _axis_angle_to_mat3(ax)
-                chosen_local[bname] = best_overall_base_locals[bname].copy()
-                chosen_local[bname][:3, :3] = R_delta @ chosen_local[bname][:3, :3]
-
-            for bname in active_bones:
-                parent = skeleton_bones[bname]['parent']
-                parent_world = chosen_world.get(parent, np.eye(4))
-                chosen_world[bname] = chosen_local[bname] @ parent_world
-                _recompute_subtree(bname)
-
-            max_angle = max(np.linalg.norm(best_overall_result.x[i*3:(i+1)*3])
-                           for i in range(len(active_bones)))
-            start_label = f"start#{best_start_idx}" if best_start_idx > 0 else "best_frame"
-            print(f"  {chain_name:12s}: {pre_rmsd:.3f} -> {post_rmsd:.3f}  "
-                  f"(max_rot={math.degrees(max_angle):.1f}°, {start_label})")
-        else:
-            print(f"  {chain_name:12s}: {pre_rmsd:.3f} -> no improvement")
-
-    # Overall RMSD before mirroring
-    total_sq = 0
-    n = 0
+def _pose_rmsd(pose, mapped_bones, sk_positions) -> float:
+    """RMS distance of the mapped bones from their Skyrim targets."""
+    total, n = 0, 0
     for ob_name, sk_name in mapped_bones.items():
-        if ob_name in chosen_world:
-            total_sq += np.sum((chosen_world[ob_name][3, :3] - sk_positions[sk_name]) ** 2)
+        if ob_name in pose.world:
+            total += np.sum((pose.world[ob_name][3, :3] - sk_positions[sk_name]) ** 2)
             n += 1
-    pre_mirror_rmsd = math.sqrt(total_sq / n) if n > 0 else 0
-    print(f"\n  Pre-mirror RMSD: {pre_mirror_rmsd:.4f}")
+    return math.sqrt(total / n) if n > 0 else 0
 
-    # ── Step 4: Build cache dict ────────────────────────────────────────
-    cache = {
-        'info': f'Approach A softmax T={TEMPERATURE}, RMSD={pre_mirror_rmsd:.4f}',
-        'rmsd': float(pre_mirror_rmsd),
-        'bone_transforms': {},
-        'world_positions': {},
-        'delta_matrices': {},
-    }
 
-    for bname in skeleton_bones:
-        local = chosen_local[bname]
-        rest_local = skeleton_bones[bname]['local']
-        if not np.allclose(local, rest_local, atol=1e-4):
-            R = local[:3, :3]
-            q = _mat3_to_quat_rv(R)
-            t = local[3, :3]
+def _cache_dict(pose, rmsd) -> dict:
+    """The cache: changed locals, world positions and rest->pose delta per bone."""
+    cache = {'info': f'Approach A softmax T={_TEMPERATURE}, RMSD={rmsd:.4f}',
+             'rmsd': float(rmsd), 'bone_transforms': {}, 'world_positions': {},
+             'delta_matrices': {}}
+    for bname, bone in pose.bones.items():
+        local = pose.local[bname]
+        if not np.allclose(local, bone['local'], atol=1e-4):
             cache['bone_transforms'][bname] = {
-                'translation': [float(x) for x in t],
-                'rotation': [float(x) for x in q],
+                'translation': [float(x) for x in local[3, :3]],
+                'rotation': [float(x) for x in _mat3_to_quat_rv(local[:3, :3])],
             }
-        if bname in chosen_world:
-            cache['world_positions'][bname] = [float(x) for x in chosen_world[bname][3, :3]]
+        anim_world = pose.world.get(bname)
+        if anim_world is None:
+            continue
+        cache['world_positions'][bname] = [float(x) for x in anim_world[3, :3]]
+        delta = np.linalg.inv(bone['world']) @ anim_world
+        if not np.allclose(delta, np.eye(4), atol=1e-4):
+            cache['delta_matrices'][bname] = [float(x) for x in delta.flatten()]
+    return cache
 
-        rest_world = skeleton_bones[bname]['world']
-        anim_world = chosen_world.get(bname)
-        if anim_world is not None:
-            delta = np.linalg.inv(rest_world) @ anim_world
-            if not np.allclose(delta, np.eye(4), atol=1e-4):
-                cache['delta_matrices'][bname] = [float(x) for x in delta.flatten()]
 
-    # ── Step 5: L/R rotation-only mirroring ────────────────────────────
-    # Mirror only the ROTATION part of deltas for L/R symmetry.
-    # Average the translation too (mirrored), preserving the blended positions.
-    M4 = np.diag([-1.0, 1.0, 1.0, 1.0])
-    LR_PAIRS = []
-    seen_lr = set()
+def _lr_pairs(skeleton_bones) -> list:
+    """Every (left bone, right bone) pair, by name."""
+    pairs, seen = [], set()
     for name in sorted(skeleton_bones.keys()):
-        if ' L ' in name:
-            rname = name.replace(' L ', ' R ')
-            if rname in skeleton_bones and name not in seen_lr:
-                LR_PAIRS.append((name, rname))
-                seen_lr.add(name)
-                seen_lr.add(rname)
+        rname = name.replace(' L ', ' R ')
+        if ' L ' in name and rname in skeleton_bones and name not in seen:
+            pairs.append((name, rname))
+            seen.update((name, rname))
+    return pairs
 
-    mirror_count = 0
-    for lbone, rbone in LR_PAIRS:
+
+def _cached_delta(cache, bone):
+    """The bone's cached delta as 4x4, identity when it has none."""
+    return np.array(cache['delta_matrices'].get(bone, list(np.eye(4).flatten())),
+                    dtype=np.float64).reshape(4, 4)
+
+
+def _copy_side(cache, dst, src, rest_dst, delta_src, target, dist) -> bool:
+    """Mirror `src`'s delta onto `dst` when that brings `dst` nearer its target."""
+    delta_new = _M4 @ delta_src @ _M4
+    new_world = rest_dst @ delta_new
+    if not np.linalg.norm(new_world[3, :3] - target) < dist:
+        return False
+    cache['delta_matrices'][dst] = [float(x) for x in delta_new.flatten()]
+    cache['world_positions'][dst] = [float(x) for x in new_world[3, :3]]
+    cache['delta_matrices'][src] = [float(x) for x in delta_src.flatten()]
+    return True
+
+
+def _average_pair(cache, lbone, rbone, rests, deltas) -> None:
+    """Make a pair symmetric by averaging its left delta with the mirrored right."""
+    avg_l = 0.5 * (deltas[0] + _M4 @ deltas[1] @ _M4)
+    U, _, Vt = np.linalg.svd(avg_l[:3, :3])
+    avg_l[:3, :3] = U @ Vt
+    avg_r = _M4 @ avg_l @ _M4
+    cache['delta_matrices'][lbone] = [float(x) for x in avg_l.flatten()]
+    cache['delta_matrices'][rbone] = [float(x) for x in avg_r.flatten()]
+    cache['world_positions'][lbone] = [float(x) for x in (rests[0] @ avg_l)[3, :3]]
+    cache['world_positions'][rbone] = [float(x) for x in (rests[1] @ avg_r)[3, :3]]
+
+
+def _mirror_pair(cache, lbone, rbone, bones, targets) -> bool:
+    """Carry the nearer side onto the other, or average them; whether the pair changed."""
+    rest_l, rest_r = bones[lbone]['world'], bones[rbone]['world']
+    delta_l, delta_r = _cached_delta(cache, lbone), _cached_delta(cache, rbone)
+    l_dist = np.linalg.norm((rest_l @ delta_l)[3, :3] - targets[0])
+    r_dist = np.linalg.norm((rest_r @ delta_r)[3, :3] - targets[1])
+    if r_dist < l_dist - _MIRROR_THRESHOLD:
+        return _copy_side(cache, lbone, rbone, rest_l, delta_r, targets[0], l_dist)
+    if l_dist < r_dist - _MIRROR_THRESHOLD:
+        return _copy_side(cache, rbone, lbone, rest_r, delta_l, targets[1], r_dist)
+    _average_pair(cache, lbone, rbone, (rest_l, rest_r), (delta_l, delta_r))
+    return True
+
+
+def _mirror(cache, skeleton_bones, mapped_bones, sk_positions) -> int:
+    """L/R-symmetrise the cached deltas; how many pairs changed."""
+    count = 0
+    for lbone, rbone in _lr_pairs(skeleton_bones):
         if lbone not in mapped_bones or rbone not in mapped_bones:
             continue
         lsk, rsk = mapped_bones[lbone], mapped_bones[rbone]
-        if lsk not in sk_positions or rsk not in sk_positions:
-            continue
+        if lsk in sk_positions and rsk in sk_positions:
+            count += _mirror_pair(cache, lbone, rbone, skeleton_bones,
+                                  (sk_positions[lsk], sk_positions[rsk]))
+    return count
 
-        rest_world_l = skeleton_bones[lbone]['world']
-        rest_world_r = skeleton_bones[rbone]['world']
 
-        delta_l = np.array(cache['delta_matrices'].get(lbone, list(np.eye(4).flatten())),
-                           dtype=np.float64).reshape(4, 4)
-        delta_r = np.array(cache['delta_matrices'].get(rbone, list(np.eye(4).flatten())),
-                           dtype=np.float64).reshape(4, 4)
-
-        l_world = rest_world_l @ delta_l
-        r_world = rest_world_r @ delta_r
-        l_dist = np.linalg.norm(l_world[3, :3] - sk_positions[lsk])
-        r_dist = np.linalg.norm(r_world[3, :3] - sk_positions[rsk])
-
-        mirror_threshold = 0.01
-        if r_dist < l_dist - mirror_threshold:
-            delta_l_new = M4 @ delta_r @ M4
-            new_world = rest_world_l @ delta_l_new
-            new_dist = np.linalg.norm(new_world[3, :3] - sk_positions[lsk])
-            if new_dist < l_dist:
-                cache['delta_matrices'][lbone] = [float(x) for x in delta_l_new.flatten()]
-                cache['world_positions'][lbone] = [float(x) for x in new_world[3, :3]]
-                cache['delta_matrices'][rbone] = [float(x) for x in delta_r.flatten()]
-                mirror_count += 1
-        elif l_dist < r_dist - mirror_threshold:
-            delta_r_new = M4 @ delta_l @ M4
-            new_world = rest_world_r @ delta_r_new
-            new_dist = np.linalg.norm(new_world[3, :3] - sk_positions[rsk])
-            if new_dist < r_dist:
-                cache['delta_matrices'][rbone] = [float(x) for x in delta_r_new.flatten()]
-                cache['world_positions'][rbone] = [float(x) for x in new_world[3, :3]]
-                cache['delta_matrices'][lbone] = [float(x) for x in delta_l.flatten()]
-                mirror_count += 1
-        else:
-            # Enforce symmetry by averaging the full delta
-            delta_l_from_r = M4 @ delta_r @ M4
-            avg_delta_l = 0.5 * (delta_l + delta_l_from_r)
-            U, _, Vt = np.linalg.svd(avg_delta_l[:3, :3])
-            avg_delta_l[:3, :3] = U @ Vt
-            avg_delta_r = M4 @ avg_delta_l @ M4
-            cache['delta_matrices'][lbone] = [float(x) for x in avg_delta_l.flatten()]
-            cache['delta_matrices'][rbone] = [float(x) for x in avg_delta_r.flatten()]
-            new_l = (rest_world_l @ avg_delta_l)[3, :3]
-            new_r = (rest_world_r @ avg_delta_r)[3, :3]
-            cache['world_positions'][lbone] = [float(x) for x in new_l]
-            cache['world_positions'][rbone] = [float(x) for x in new_r]
-            mirror_count += 1
-
-    print(f"  Mirrored {mirror_count} L/R pairs")
-
-    # ── Step 6: Recompute RMSD ─────────────────────────────────────────
-
-    # Recompute RMSD with mirrored deltas
-    total_sq_m = 0
-    n_m = 0
+def _cache_rmsd(cache, mapped_bones, sk_positions) -> float:
+    """RMS distance of the cached world positions from their Skyrim targets."""
+    total, n = 0, 0
     for ob_name, sk_name in mapped_bones.items():
         pos_list = cache['world_positions'].get(ob_name)
         if pos_list is not None:
-            pos = np.array(pos_list)
-            total_sq_m += np.sum((pos - sk_positions[sk_name]) ** 2)
-            n_m += 1
-    mirror_rmsd = math.sqrt(total_sq_m / n_m) if n_m > 0 else 0
-    cache['rmsd'] = float(mirror_rmsd)
-    cache['info'] = f'Approach A softmax T={TEMPERATURE}, RMSD={mirror_rmsd:.4f}'
-    print(f"  Post-mirror RMSD:  {mirror_rmsd:.4f}")
+            total += np.sum((np.array(pos_list) - sk_positions[sk_name]) ** 2)
+            n += 1
+    return math.sqrt(total / n) if n > 0 else 0
 
+
+def build_cache(args):
+    """Build the animation pose cache by softmax-weighted corpus blending.
+
+    Each limb chain blends every coherent corpus frame by its target error,
+    SVD-projected to a proper rotation, then multi-start L-BFGS-B refines it
+    and the left/right deltas are symmetrised.
+    See: docs/commentary/asset_convert_armor.md#nif-skin-retargeting
+    """
+    skel_path, kf_files = _source_files()
+    print("Loading OB skeleton...")
+    skeleton_bones = _source_hierarchy(skel_path)
+    print("Loading target positions...")
+    _ob_positions, sk_positions = get_skyrim_targets_in_ob_space()
+    mapped_bones = {ob: sk for ob, sk in bone_map_for(skeleton_bones).items()
+                    if ob in skeleton_bones and sk in sk_positions}
+    all_parsed = _parse_corpus(kf_files)
+    _print_candidates(all_parsed, skeleton_bones)
+    pose = _Pose(skeleton_bones)
+    print(f"\nChain-level softmax blend over entire corpus (T={_TEMPERATURE})")
+    corpus = {name: _softmax_chain(name, all_parsed, pose, mapped_bones, sk_positions)
+              for name in _CHAIN_ORDER}
+    print(f"\n  Multi-start L-BFGS-B refinement (K={_MULTI_START_K}, theta_max={_THETA_MAX:.2f} rad)")
+    for name in _CHAIN_ORDER:
+        _refine_chain(name, corpus[name], pose, mapped_bones, sk_positions)
+    pre_mirror = _pose_rmsd(pose, mapped_bones, sk_positions)
+    print(f"\n  Pre-mirror RMSD: {pre_mirror:.4f}")
+    cache = _cache_dict(pose, pre_mirror)
+    print(f"  Mirrored {_mirror(cache, skeleton_bones, mapped_bones, sk_positions)} L/R pairs")
+    rmsd = _cache_rmsd(cache, mapped_bones, sk_positions)
+    cache['rmsd'] = float(rmsd)
+    cache['info'] = f'Approach A softmax T={_TEMPERATURE}, RMSD={rmsd:.4f}'
+    print(f"  Post-mirror RMSD:  {rmsd:.4f}")
     out_path = _pose_out_path()
     out_path.parent.mkdir(exist_ok=True)
     with open(out_path, 'w') as f:
@@ -1050,9 +1036,14 @@ if __name__ == '__main__':
     
     parser.add_argument('--plugin', default='Oblivion.esm',
                         help='Source plugin whose skeleton and .kf clips to read')
+    parser.add_argument('--morrowind', action='store_true',
+                        help='Read the vanilla Morrowind rig (base_anim + xbase_anim.kf)')
+    parser.add_argument('--female', action='store_true',
+                        help='With --morrowind: the female rig, fitted to the female Skyrim skeleton')
 
     args = parser.parse_args()
     PLUGIN[0] = args.plugin
+    SOURCE.update(morrowind=args.morrowind, female=args.female)
     
     if args.skeleton:
         dump_skeleton(args)

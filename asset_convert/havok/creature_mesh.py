@@ -438,8 +438,8 @@ def _cap_skin_bones(root):
     invalidates the parts' NiSkinPartitions.
     See: docs/commentary/asset_convert_creature.md#merged-shapes-stay-at-the-root
     """
-    from asset_convert.character.skin_retarget import (
-        merge_oversized_skin_bones, regen_skin_partition)
+    from asset_convert.character.skin_bone_cap import merge_oversized_skin_bones
+    from asset_convert.character.skin_retarget import regen_skin_partition
     if not merge_oversized_skin_bones(root):
         return
     for shape in _shape_blocks(root):

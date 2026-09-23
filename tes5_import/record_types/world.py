@@ -376,18 +376,18 @@ def convert_LTEX(rec: dict, writer=None) -> tuple:
     return ltex_bytes, txst_bytes, txst_fid
 
 
-#: Vanilla XCLL for a cell that authored none. See: docs/commentary/tes5_import_world.md#every-cell-gets-an-xcll
+#: Vanilla XCLL for an interior that authored none. See: docs/commentary/tes5_import_world.md#every-interior-gets-an-xcll
 _GENERIC_XCLL = bytes.fromhex(
-    '32323c0000000000b0dcf7000000aa4300c05a4600000000000000000'
-    '0000000000000000000803f2c24180023241500282517002822170013'
-    '110a003c362300b0dcf7000000803fb0dcf7000000803f0000000000'
-    '0000009f000000')
+    '1e1e2800000000000000000000000000000000000000000000000000'
+    '00000000000000000000803f211e29001a1e26001e1f28001e1c2800'
+    '0e0e12002d2d3d00000000000000803f000000000000803f00000000'
+    '000000009f000000')
 
 
 def _cell_flags(rec: dict) -> int:
     """TES5 CELL DATA flags: drop TES4 bits 3/6, add bit 8 to a Show Sky interior.
 
-    See: docs/commentary/tes5_import_world.md#every-cell-gets-an-xcll
+    See: docs/commentary/tes5_import_world.md#every-interior-gets-an-xcll
     """
     flags = get_int(rec, 'DATA.Flags') & ~0x08 & ~0x40
     if flags & 0x01 and flags & 0x80:
@@ -396,11 +396,10 @@ def _cell_flags(rec: dict) -> int:
 
 
 def build_cell_xcll(rec: dict):
-    """TES5 XCLL payload (92 bytes) from a TES4 CELL record; never None.
+    """TES5 XCLL payload (92 bytes) from a TES4 CELL record, or None.
 
-    Shared by convert_CELL and the override path, so an authored lighting
-    change patches the exact bytes conversion writes.  A source that authored
-    no lighting gets `_GENERIC_XCLL`.
+    Shared by convert_CELL and the override path.  No authored lighting:
+    `_GENERIC_XCLL` for an interior, None for an exterior.
 
     Layout (xEdit wbDefinitionsTES5): 0 ambient, 4 directional, 8 fog near
     color, 12 fog near, 16 fog far, 20/24 dir rot XY/Z, 28 dir fade, 32 fog
@@ -408,7 +407,7 @@ def build_cell_xcll(rec: dict):
     scale, 72 fog far color, 76 fog max, 80/84 fade begin/end, 88 inherit.
     """
     if not get_str(rec, 'XCLL.AmbientR'):
-        return _GENERIC_XCLL
+        return _GENERIC_XCLL if get_int(rec, 'DATA.Flags') & 0x01 else None
     ar = get_int(rec, 'XCLL.AmbientR')
     ag = get_int(rec, 'XCLL.AmbientG')
     ab = get_int(rec, 'XCLL.AmbientB')
@@ -607,7 +606,9 @@ def convert_CELL(rec: dict) -> bytes:
         land = get_int(rec, 'XCLC.LandFlags', 0)
         subs += pack_subrecord('XCLC', struct.pack('<iiI', x, y, land))
 
-    subs += pack_subrecord('XCLL', build_cell_xcll(rec))
+    xcll = build_cell_xcll(rec)
+    if xcll is not None:
+        subs += pack_subrecord('XCLL', xcll)
 
     subs += pack_formid_subrecord('LTMP', 0)
 

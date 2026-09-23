@@ -1061,7 +1061,7 @@ def test_head_fit_reaches_the_skyrim_crown():
     if head is None:
         pytest.skip('head component not identifiable')
 
-    from asset_convert.character.body_wrap import (head_uv_geometry, SK_HEAD_SETS)
+    from asset_convert.character.body_wrap_build import head_uv_geometry, SK_HEAD_SETS
     from asset_convert.sources.skyrim_assets import get_body_nif_bytes
     raw = get_body_nif_bytes(SK_HEAD_SETS['male'])
     if raw is None:
@@ -1107,7 +1107,7 @@ def test_dynamic_trishape_uvs_come_from_the_skin_partition():
     partition.  Returning the inline buffer's None dropped the head's UVs
     and normals entirely, which is what starved the head fit."""
     pytest.importorskip('scipy')
-    from asset_convert.character.body_wrap import head_uv_geometry, SK_HEAD_SETS
+    from asset_convert.character.body_wrap_build import head_uv_geometry, SK_HEAD_SETS
     from asset_convert.sources.skyrim_assets import get_body_nif_bytes
     raw = get_body_nif_bytes(SK_HEAD_SETS['male'])
     if raw is None:

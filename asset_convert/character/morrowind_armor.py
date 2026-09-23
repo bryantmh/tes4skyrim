@@ -5,12 +5,14 @@ Morrowind dresses an actor from BODY meshes hung on named nodes of its
 skeleton; Skyrim wants one skinned mesh per armor addon. The export lists each
 wearable's parts (`MorrowindPart[i].Slot/.Male/.Female`) and names the worn
 model it expects; this module builds that model from the parts and the
-rest-pose skeleton, at Morrowind's own NIF version, shaped exactly like the
-Oblivion armor the worn-armor conversion already handles: a rigid part becomes
-a one-bone Prn piece, a skinned part is re-posed into Oblivion's rest pose,
-and a shield sits in Oblivion's shield attach frame.
+rest-pose skeleton, at Morrowind's own NIF version: a rigid part becomes a
+one-bone Prn piece hung from base_anim's attach node, a skinned part is bound
+to the T-posed bind skeleton every vanilla skinned part shares (the retarget
+then runs from Morrowind's own rig), and a shield sits in Oblivion's shield
+attach frame.
 
 See: docs/commentary/asset_convert_armor.md#morrowind-armor-assembly
+See: docs/commentary/asset_convert_armor.md#morrowind-pose-cache
 """
 
 import io
@@ -27,7 +29,7 @@ from asset_convert import paths
 from asset_convert.character.prn_skin import (rigid_skin_data,
                                               rigid_skin_instance)
 from asset_convert.character.skin_retarget import (
-    SKEL_OBLIVION, SKEL_SKYRIM_FEMALE, SKEL_SKYRIM_MALE, get_block_name,
+    SKEL_MORROWIND, SKEL_SKYRIM_FEMALE, SKEL_SKYRIM_MALE, get_block_name,
     load_skeleton, local_for_world, m44_to_np, manual_update_bind_position,
     skin_transform_to_np, write_node_transform)
 from asset_convert.character.skyrim_overrides import OBLIVION_TO_SKYRIM_BONE_MAP
@@ -109,6 +111,13 @@ def _world_in(node, root) -> np.ndarray:
 def _full_transform(node, part_root) -> np.ndarray:
     """The node's transform in the part file's frame, root transform included."""
     return _world_in(node, part_root) @ m44_to_np(part_root.get_transform())
+
+
+def bind_worlds(path) -> dict:
+    """{Bip01 bone: 4x4} of a part file's bind skeleton, root transform included."""
+    root = read_nif(str(path)).roots[0]
+    return {get_block_name(n): _full_transform(n, root) for n in root.tree()
+            if isinstance(n, NifFormat.NiNode) and get_block_name(n).startswith(_BONE_PREFIX)}
 
 
 def _rotation_between(here, there) -> np.ndarray:
@@ -264,20 +273,21 @@ def _bone_tree(data, old_root) -> bytes:
     return buffer.getvalue()
 
 
-class _Skeleton:
+class RestSkeleton:
     """A rest-pose skeleton: bone frames, attach nodes, and a bones-only tree.
 
-    `world` holds every bone's world frame, `attach` every attach node as
-    (bone name, node world frame), and `tree` the bone hierarchy as NIF bytes
-    a record can load fresh.
+    `world` holds every bone's frame in base_anim's animation rest (where
+    rigid parts hang), `bind` the T-posed bind skeleton skinned parts are
+    authored in, `attach` every attach node as (bone name, node world frame),
+    and `tree` the bone hierarchy as NIF bytes a record can load fresh.
+    See: docs/commentary/asset_convert_armor.md#morrowind-pose-cache
     """
 
-    def __init__(self, path, skyrim: dict):
-        """Index `path` against the Skyrim skeleton `skyrim` (name -> world 4x4)."""
+    def __init__(self, path, skyrim: dict, bind: dict = None):
+        """Index `path` against the Skyrim skeleton `skyrim` and the bind skeleton `bind`."""
         data = read_nif(str(path))
         old_root = data.roots[0]
-        self.skyrim = skyrim
-        self.oblivion = load_skeleton(SKEL_OBLIVION)
+        self.skyrim, self.bind = skyrim, bind or {}
         self.world, self.parent, self.child, self.attach = {}, {}, {}, {}
         for node in old_root.tree():
             if isinstance(node, NifFormat.NiNode) \
@@ -307,6 +317,10 @@ class _Skeleton:
             if isinstance(kid, NifFormat.NiNode):
                 self._index_attach(kid, bone, old_root)
 
+    def rest_world(self, name: str):
+        """The bone's skinned rest frame: the bind skeleton's, else base_anim's, else None."""
+        return self.bind.get(name, self.world.get(name))
+
     def direction_delta(self, bone: str) -> np.ndarray:
         """Rotation turning the bone's rest direction onto the Skyrim bone's.
 
@@ -323,8 +337,8 @@ class _Skeleton:
             self.world[child][3, :3] - self.world[bone][3, :3],
             self.skyrim[sk_child][3, :3] - self.skyrim[sk_bone][3, :3])
 
-    def hierarchy(self, oblivion_rest: bool) -> tuple:
-        """(fresh Data of the bone tree, {lower-case bone name: node}), posed like Oblivion on request.
+    def hierarchy(self) -> tuple:
+        """(fresh Data of the bone tree posed at `rest_world`, {lower-case bone name: node}).
 
         Keyed lower-case because Morrowind binds skins to bones by
         case-insensitive name (`Bip01 R Upperarm` on a shirt, `UpperArm` on
@@ -334,14 +348,13 @@ class _Skeleton:
         bones = {get_block_name(b).lower(): b for b in data.roots[0].tree()
                  if isinstance(b, NifFormat.NiNode)
                  and get_block_name(b).startswith(_BONE_PREFIX)}
-        if oblivion_rest:
-            for node in bones.values():
-                name = get_block_name(node)
-                world = self.oblivion.get(name)
-                parent_world = self.oblivion.get(self.parent.get(name))
-                if world is not None:
-                    write_node_transform(node, world if parent_world is None
-                                         else local_for_world(world, parent_world))
+        for node in bones.values():
+            name = get_block_name(node)
+            world = self.rest_world(name)
+            parent = self.parent.get(name)
+            if world is not None:
+                write_node_transform(node, world if parent is None
+                                     else local_for_world(world, self.rest_world(parent)))
         return data, bones
 
 
@@ -371,12 +384,12 @@ def _adopt_rigid(shape, part_root, frame, bone, skel, root, flat) -> None:
 
 
 def _adopt_skinned(shape, part_root, skel, root, bones) -> list:
-    """Re-bind a skinned part to the shared skeleton in Oblivion's rest pose.
+    """Re-bind a skinned part to the shared skeleton at its rest (bind) pose.
 
-    Bind-pose vertices are moved to Oblivion's rest bone by bone (linear
-    blend over the part's own bind skeleton), then bound to the shared tree,
-    which `hierarchy(True)` already posed the same way. Returns the shared
-    bones the shape now uses.
+    Bind-pose vertices are moved from the part's own bind skeleton onto the
+    shared rest bone by bone (linear blend; a no-op for the vanilla parts,
+    which share one bind skeleton), then bound to the tree `hierarchy` builds
+    in that pose. Returns the shared bones the shape now uses.
     """
     skin = shape.skin_instance
     weights = _weights(shape, skin)
@@ -388,8 +401,8 @@ def _adopt_skinned(shape, part_root, skel, root, bones) -> list:
             raise ValueError(f'skinned part names unknown bone '
                              f'{get_block_name(skin.bones[i])!r}')
         rest = _full_transform(skin.bones[i], part_root)
-        deltas.append(np.linalg.inv(rest)
-                      @ skel.oblivion.get(get_block_name(node), rest))
+        target = skel.rest_world(get_block_name(node))
+        deltas.append(np.linalg.inv(rest) @ (rest if target is None else target))
         shared.append(node)
     verts, normals = _blend(np.hstack([verts, np.ones((len(verts), 1))]),
                             normals, weights, deltas)
@@ -424,22 +437,66 @@ def _adopt_shield(shape, part_root, frame, skel, root) -> None:
     root.add_child(shape)
 
 
-def _adopt_part(slot, node_name, part_root, skel, root, bones, flat, used) -> None:
-    """Move one part's shapes onto the worn root by their kind."""
-    bone, node_world = skel.attach[node_name]
-    frame = _attach_frame(part_root, node_name, node_world)
-    for shape in _geometries(part_root):
-        if slot == _SHIELD_SLOT:
-            _adopt_shield(shape, part_root, frame, skel, root)
-        elif shape.skin_instance is None:
-            _adopt_rigid(shape, part_root, frame, bone, skel, root, flat)
-            used.append(flat[bone])
-        elif _wears(shape, node_name):
-            used.extend(_adopt_skinned(shape, part_root, skel, root, bones))
+def _adopt_rigid_world(shape, part_root, frame, bone, skel, place) -> list:
+    """Skin a rigid part fully to its real bone, carried from base_anim onto the rest pose.
+
+    The reference body the Morrowind wrap field is fitted from needs its
+    rigid parts where the skinned rest holds their bone.
+    See: docs/commentary/asset_convert_armor.md#morrowind-wrap-field
+    """
+    root, bones = place[1], place[2]
+    full = (_full_transform(shape, part_root) @ frame @ np.linalg.inv(skel.world[bone])
+            @ skel.rest_world(bone))
+    normals = shape_normals(shape)
+    write_geometry(shape, shape_vertices(shape) @ full[:3, :3] + full[3, :3],
+                   None if normals is None else normals @ full[:3, :3])
+    if np.linalg.det(full[:3, :3]) < 0:
+        _reverse_winding(shape)
+    shape.skin_instance = rigid_skin_instance(
+        root, bones[bone.lower()], rigid_skin_data(shape.data), 0, True)
+    root.add_child(shape)
+    manual_update_bind_position(shape, shape.skin_instance, root)
+    return [bones[bone.lower()]]
 
 
-def _assemble(skel: _Skeleton, parts, roots, out_name: str) -> NifFormat.Data:
-    """One worn NIF from `parts`, each (slot, mesh path relative to a root)."""
+def _is_skinned_file(part_root) -> bool:
+    """Whether any shape of the part file is skinned, which makes the file a rig."""
+    return any(shape.skin_instance is not None for shape in _geometries(part_root))
+
+
+def _adopt_shape(shape, part, place) -> list:
+    """Move one shape onto the worn root by its kind; the bones it now uses.
+
+    A rig file (any skinned shape) wears only its skinned shapes named for
+    the attach node (OpenMW `CopyRigVisitor`); a file with no skin hangs
+    whole on the node. `part` is (slot, attach node, part root, frame, rig),
+    `rig` judged before any shape is adopted; `place` is (skeleton, worn
+    root, shared bones, flat Prn bones, rigid_world).
+    See: docs/commentary/asset_convert_armor.md#morrowind-armor-assembly
+    """
+    slot, node_name, part_root, frame, rig = part
+    skel, root, bones, flat, rigid_world = place
+    bone = skel.attach[node_name][0]
+    if slot == _SHIELD_SLOT:
+        _adopt_shield(shape, part_root, frame, skel, root)
+        return []
+    if rig:
+        if shape.skin_instance is None or not _wears(shape, node_name):
+            return []
+        return _adopt_skinned(shape, part_root, skel, root, bones)
+    if rigid_world:
+        return _adopt_rigid_world(shape, part_root, frame, bone, skel, place)
+    _adopt_rigid(shape, part_root, frame, bone, skel, root, flat)
+    return [flat[bone]]
+
+
+def assemble(skel: RestSkeleton, parts, roots, out_name: str,
+             rigid_world: bool = False) -> NifFormat.Data:
+    """One worn NIF from `parts`, each (slot, mesh path relative to a root).
+
+    `rigid_world` binds rigid parts to their real bones at the rest pose
+    instead of as Prn pieces, keeping the bone tree.
+    """
     loaded = []
     for slot, rel in parts:
         path = resolve_mesh(roots, rel, paths.EXPORT)
@@ -449,18 +506,22 @@ def _assemble(skel: _Skeleton, parts, roots, out_name: str) -> NifFormat.Data:
         if node_name not in skel.attach:
             raise ValueError(f'slot {slot} has no attach node in the skeleton')
         loaded.append((slot, node_name, read_nif(str(path)).roots[0]))
-    skinned = any(slot != _SHIELD_SLOT and shape.skin_instance is not None
-                  for slot, _node, part_root in loaded
-                  for shape in _geometries(part_root))
-    data, bones = skel.hierarchy(skinned)
+    skinned = rigid_world or any(
+        slot != _SHIELD_SLOT and shape.skin_instance is not None
+        for slot, _node, part_root in loaded for shape in _geometries(part_root))
+    data, bones = skel.hierarchy()
     root = data.roots[0]
     root.name = out_name.encode('latin-1', 'replace')
     if not skinned:
         root.num_children = 0
         root.children.update_size()
-    flat, used = {}, []
+    place, used = (skel, root, bones, {}, rigid_world), []
     for slot, node_name, part_root in loaded:
-        _adopt_part(slot, node_name, part_root, skel, root, bones, flat, used)
+        part = (slot, node_name, part_root,
+                _attach_frame(part_root, node_name, skel.attach[node_name][1]),
+                _is_skinned_file(part_root))
+        for shape in _geometries(part_root):
+            used.extend(_adopt_shape(shape, part, place))
     if skinned:
         _prune_bones(root, used)
     return data
@@ -484,14 +545,19 @@ def _worn_specs(rec_dir):
                 yield female_out, [(s, f or m) for s, m, f in parts], True
 
 
+def rest_skeleton(nif, female: bool) -> RestSkeleton:
+    """The gender's rest skeleton from base_anim `nif` and the generated bind skeleton."""
+    return RestSkeleton(nif, load_skeleton(SKEL_SKYRIM_FEMALE if female else SKEL_SKYRIM_MALE),
+                        load_skeleton(SKEL_MORROWIND[female]))
+
+
 def _skeletons(roots) -> dict:
-    """{female: _Skeleton} for both genders; the female file falls back to the male."""
+    """{female: RestSkeleton} for both genders; the female file falls back to the male."""
     male = resolve_mesh(roots, SKELETON_NIFS[False], paths.EXPORT)
     if male is None:
         return {}
     female = resolve_mesh(roots, SKELETON_NIFS[True], paths.EXPORT) or male
-    return {False: _Skeleton(male, load_skeleton(SKEL_SKYRIM_MALE)),
-            True: _Skeleton(female, load_skeleton(SKEL_SKYRIM_FEMALE))}
+    return {False: rest_skeleton(male, False), True: rest_skeleton(female, True)}
 
 
 def assemble_armor(rec_dir, meshes_root, log=print) -> int:
@@ -515,7 +581,7 @@ def assemble_armor(rec_dir, meshes_root, log=print) -> int:
     for out_rel, parts, female in specs:
         stem = os.path.splitext(os.path.basename(out_rel.replace(chr(92), '/')))[0]
         try:
-            data = _assemble(skeletons[female], parts, roots, stem)
+            data = assemble(skeletons[female], parts, roots, stem)
         except (OSError, ValueError, KeyError) as exc:
             failed += 1
             log(f'  [skip] {out_rel}: {exc}')

@@ -14,6 +14,8 @@ Usage:
 Output:
     asset_convert/generated/skeleton_bones_oblivion.json
     asset_convert/generated/skeleton_bones_falloutnv.json
+    asset_convert/generated/skeleton_bones_morrowind.json
+    asset_convert/generated/skeleton_bones_morrowind_female.json
     asset_convert/generated/skeleton_bones_skyrim_male.json
     asset_convert/generated/skeleton_bones_skyrim_female.json
 """
@@ -23,6 +25,7 @@ import os
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from asset_convert import paths
+from asset_convert.character.morrowind_body import bind_skeleton
 
 from pyffi.formats.nif import NifFormat
 
@@ -40,6 +43,10 @@ SKYRIM_SKELETON_MALE = ('meshes\\actors\\character\\character assets\\'
                         'skeleton.nif')
 SKYRIM_SKELETON_FEMALE = ('meshes\\actors\\character\\'
                           'character assets female\\skeleton_female.nif')
+
+#: female -> the JSON the Morrowind bind skeleton is saved as.
+MORROWIND_SKELETONS = ((False, 'skeleton_bones_morrowind.json'),
+                       (True, 'skeleton_bones_morrowind_female.json'))
 
 
 def _m44_to_list(m):
@@ -148,6 +155,23 @@ def _print_comparison(ob_bones, sk_male):
             print(f"  {ob_name:30s} -> {sk_name:30s}  ** MISSING in Skyrim **")
 
 
+def _emit_morrowind(out_dir):
+    """Save both Morrowind bind skeletons, when the Morrowind install is registered.
+
+    The skinned rest is the T-posed bind skeleton every vanilla skinned part
+    shares, read from the reference body's chest part.
+    See: docs/commentary/asset_convert_armor.md#morrowind-pose-cache
+    """
+    for female, out_name in MORROWIND_SKELETONS:
+        try:
+            bones = bind_skeleton(female)
+        except FileNotFoundError:
+            return
+        if bones:
+            save_json({n: m.tolist() for n, m in bones.items()},
+                      os.path.join(out_dir, out_name))
+
+
 def main():
     out_dir = os.path.join(str(paths.REPO), 'asset_convert', 'generated')
     os.makedirs(out_dir, exist_ok=True)
@@ -157,6 +181,7 @@ def main():
     if os.path.isfile(FALLOUT_SKELETON):
         _emit(out_dir, 'Reading FO3/FNV skeleton', FALLOUT_SKELETON,
               'skeleton_bones_falloutnv.json', _OB_SAMPLES)
+    _emit_morrowind(out_dir)
     sk_male = _emit(out_dir, 'Reading Skyrim male skeleton',
                     SKYRIM_SKELETON_MALE, 'skeleton_bones_skyrim_male.json',
                     _SK_SAMPLES)

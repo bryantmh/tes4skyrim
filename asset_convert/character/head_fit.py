@@ -18,7 +18,7 @@ MEASURED GROUND TRUTH (2026-08-23, after an in-game round trip):
 
 THE MECHANISM (v3) — one smooth scalp-to-scalp displacement field:
 
-  At BUILD time (body_wrap.build_field -> build_arrays) a per-scalp-vertex
+  At BUILD time (body_wrap_build.build_field -> build_arrays) a per-scalp-vertex
   displacement field is computed once per gender/race: for every vertex of
   the OB head, where the matching point on the SK head is.  It initialises
   from NEAREST POINT over the identity carrier (the shared FaceGen UV
@@ -50,7 +50,7 @@ THE MECHANISM (v3) — one smooth scalp-to-scalp displacement field:
   hair sides exactly as vanilla hair allows.
 
 Build data lives in body_wrap's generated npz (hf_*/hfr_* arrays, written by
-body_wrap.build_field via build_arrays below; 'hf_v4' marks the field
+body_wrap_build.build_field via build_arrays below; 'hf_v4' marks the field
 format).  Surfaces are stored in WORLD coordinates; O_OB / O_SK translate
 face space to and from it.  The same field also replaces the wrap's ICP head
 surface (build_field), so skinned head gear takes the identical mapping.
@@ -580,7 +580,7 @@ def _sample_fields(P, src_v, src_t, tree, dv_list, k=None):
 
 
 # ---------------------------------------------------------------------------
-# Build (called from body_wrap.build_field)
+# Build (called from body_wrap_build.build_field)
 # ---------------------------------------------------------------------------
 
 # EARS ARE EXCLUDED FROM EVERY SURFACE, both sides (2026-08-23, in-game).
@@ -851,7 +851,7 @@ def beast_races_available(female: bool) -> tuple:
 
 def _load_unskinned(char_dir, rel):
     """(verts_face_local, tris) of an unskinned OB face-part mesh, or None."""
-    from asset_convert.character.body_wrap import read_nif, geom_triangles
+    from asset_convert.character.wrap_mesh import read_nif, geom_triangles
     from asset_convert.nif.pyffi_monkey_patch import apply_patches
     apply_patches()
     from pyffi.formats.nif import NifFormat
@@ -898,7 +898,7 @@ def _neck_surfaces(gender):
     field, the refinement and the ear-cover floor all see real skin there.
     """
     try:
-        from asset_convert.character.body_wrap import load_ob_group, load_sk_surface
+        from asset_convert.character.body_wrap_build import load_ob_group, load_sk_surface
         g = load_ob_group(gender)
         if 'body' not in g:
             return None
@@ -969,7 +969,7 @@ def _relax_field(src_v, src_t, targets, sk_v, sk_t):
 
 def build_arrays(head_v0, head_tris, sk_surface, char_dir,
                  o_ob, o_sk, gender='male') -> dict:
-    """The hf_* arrays body_wrap.build_field stores in the field npz.
+    """The hf_* arrays body_wrap_build.build_field stores in the field npz.
 
     head_v0 / head_tris   OB head group, authored T-pose, WORLD coords
     sk_surface            (verts, tris) of the real Skyrim head, WORLD
@@ -1116,7 +1116,7 @@ def _build_race_pack(race, char_dir, gender, o_ob, o_sk):
     field.  A race whose own SK mesh cannot be fetched is skipped entirely —
     the runtime then falls back to the human field.
     """
-    from asset_convert.character.body_wrap import head_uv_geometry
+    from asset_convert.character.body_wrap_build import head_uv_geometry
     head_rel, sk_names, ear_box = _RACE_PACKS[race]
     o_ob = np.asarray(o_ob, dtype=np.float64)
     o_sk = np.asarray(o_sk, dtype=np.float64)

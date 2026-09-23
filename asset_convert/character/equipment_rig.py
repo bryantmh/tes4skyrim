@@ -618,11 +618,13 @@ def _apply_head_and_offsets(data, src_path, piece_type, prn_block_ids,
 
 def retarget_worn_armor(data, stats, src_path, weight, race, hair, has_skin,
                         authored_bp, authored_allowed, single_slot,
-                        slot_for_offset):
+                        slot_for_offset, morrowind=False):
     """Retarget a worn piece onto the Skyrim skeleton; (slot, body splices).
 
     Bones are renamed only AFTER the skin transforms are correct, and the body
     skin is collected after that, when the verts sit in Skyrim space.
+    `morrowind` (the source was Morrowind's NIF version) retargets from
+    Morrowind's rig.
     See: docs/commentary/asset_convert_armor.md#head-gear-fit
     """
     slot_for_offset = _offset_slot(data, single_slot, slot_for_offset,
@@ -632,7 +634,8 @@ def retarget_worn_armor(data, stats, src_path, weight, race, hair, has_skin,
     prn_block_ids = set()
     retarget_skin_to_skyrim(data, src_path=src_path, prn_out=prn_block_ids,
                             weight=weight, authored_body_part=authored_bp,
-                            authored_allowed=authored_allowed, race=race)
+                            authored_allowed=authored_allowed, race=race,
+                            morrowind=morrowind)
     stats['bones_remapped'] += remap_bone_names(data)
 
     body_nibs = collect_skin_info(data, src_path=src_path)

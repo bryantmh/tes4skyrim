@@ -55,6 +55,44 @@ from .common import (
 
 
 from output_layout import assets_for
+from asset_convert.character.morrowind_coverage import (BODY_PARTITIONS,
+                                                        coverage_bits,
+                                                        part_slots)
+
+#: Biped slot of BOD2 bit 0.
+_FIRST_SLOT = 30
+
+
+# ---------------------------------------------------------------------------
+# Shared record helpers
+# ---------------------------------------------------------------------------
+
+def _arma_bod2(rec: dict, tes5_biped: int, armor_type: int) -> int:
+    """The ARMA's BOD2: the ARMO's slots plus the body regions its mesh covers.
+
+    A Morrowind wearable states its body coverage in its part list; every
+    other record takes `ARMA_BODY_COVERAGE_EXTRA`, less forearms for clothing
+    and calves for shoes. Head extras apply to both.
+    See: docs/commentary/asset_convert_armor.md#morrowind-skin-fill
+    """
+    slots = part_slots(rec)
+    arma_biped = tes5_biped | coverage_bits(slots)
+    is_clothing = (armor_type == 2)
+    is_boot = ('boot' in (get_str(rec, 'Male.BipedModel.MODL', '')
+                          or get_str(rec, 'Female.BipedModel.MODL', '')).lower())
+    for bit, extras in ARMA_BODY_COVERAGE_EXTRA.items():
+        if not arma_biped & (1 << bit):
+            continue
+        for extra_bit in extras:
+            if slots and extra_bit + _FIRST_SLOT in BODY_PARTITIONS:
+                continue
+            if is_clothing and extra_bit == 4:
+                continue
+            if extra_bit == 8 and bit == 7 and not is_boot and is_clothing:
+                continue
+            arma_biped |= (1 << extra_bit)
+    return arma_biped
+
 
 def _resolve_mgef(code: str, actor_value: int = -1, script_fid: str = '',
                   effect_type: str = '') -> int:
@@ -580,28 +618,8 @@ def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
     else:
         subs += pack_string_subrecord('EDID', edid + '_AA')
 
-    # BOD2 — body coverage flags (may be wider than the ARMO's equipment slot).
-    # ARMA declares which body regions the mesh covers, e.g. a cuirass mesh
-    # covers Body + ForeArms + Calves even though the ARMO only claims "Body".
-    arma_biped = tes5_biped
-    # Clothing shirts should NOT claim ForeArms — their sleeves are SBP_32_BODY
-    # geometry that should remain visible when gloves are equipped.
-    # Shoes should NOT claim Calves — only boots (armor foot items) should.
-    is_clothing = (armor_type == 2)
-    # Either gender's path — a female-only boot is still a boot.
-    is_boot = ('boot' in (get_str(rec, 'Male.BipedModel.MODL', '')
-                          or get_str(rec, 'Female.BipedModel.MODL', '')).lower())
-    for bit, extras in ARMA_BODY_COVERAGE_EXTRA.items():
-        if arma_biped & (1 << bit):
-            for extra_bit in extras:
-                # Skip ForeArms(4) for clothing — sleeves stay visible with gloves
-                if is_clothing and extra_bit == 4:
-                    continue
-                # Skip Calves(8) for shoes (foot items without 'boot' in path)
-                if extra_bit == 8 and bit == 7 and not is_boot and is_clothing:
-                    continue
-                arma_biped |= (1 << extra_bit)
-    subs += pack_subrecord('BOD2', struct.pack('<II', arma_biped, armor_type))
+    subs += pack_subrecord('BOD2', struct.pack(
+        '<II', _arma_bod2(rec, tes5_biped, armor_type), armor_type))
 
     # RNAM — Race (must match parent ARMO)
     if beast_race:

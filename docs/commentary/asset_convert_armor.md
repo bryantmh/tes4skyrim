@@ -339,18 +339,24 @@ The attach rules are OpenMW's `SceneUtil::attach`, reproduced per part:
   skin is a plain `NiSkinInstance` on a flat bone node under the root; a
   `BSDismemberSkinInstance` with the head's slot 131 is a FO3 gore cap to
   `hide_dismember_caps`, which runs before the worn path, and hid every helm.
-- **Skinned part** (cuirasses, shirts, robes): only the shapes whose name
-  starts with the attach node's name, case-insensitively and past a `Tri `
-  prefix, belong to that slot (`CopyRigVisitor::filterMatches`); the iron
-  cuirass file also carries both hands, which the gauntlet records take. The
-  part carries its own bind skeleton (T-posed, `Bip01` as the file root or a
-  child of an unnamed one, and the skin's `skeleton_root` may be an arm
-  bone). Bind-pose vertices come from the skinning contract itself
-  (`v @ G @ S @ B_i @ W_i`, blended), are moved bone by bone into Oblivion's
-  rest pose (`inv(part bone) @ oblivion bone`) and bound to the shared
-  `Bip01` tree, itself posed like Oblivion's rest and pruned to the bones
-  used, so the FK deltas and body wrap run exactly as on Oblivion armor.
-  Bone names match case-insensitively (`Bip01 R Upperarm` on a shirt).
+- **Skinned part** (cuirasses, shirts, robes): a part FILE holding any
+  skinned shape is a rig (OpenMW loads it as a `SceneUtil::Skeleton`,
+  `nifloader.cpp` `getUseSkinning`), and `CopyRigVisitor` copies ONLY its
+  skinned shapes whose name starts with the attach node's name,
+  case-insensitively and past a `Tri ` prefix -- its UNSKINNED shapes are
+  dropped (`attach.cpp`: `if (!isRig) return;`). Every vanilla `B_N_*` body
+  part is the whole skinned body plus four 3-vertex unskinned stubs (`Tri
+  Left Ankle/Foot/Knee/Upper Leg`), and the `Tri Right` leg and foot shapes
+  hold BOTH legs; judging per shape instead wore those stubs as rigid Prn
+  pieces. The part carries its own bind skeleton (T-posed, `Bip01` as the
+  file root or a child of an unnamed one, and the skin's `skeleton_root` may
+  be an arm bone). Bind-pose vertices come from the skinning contract itself
+  (`v @ G @ S @ B_i @ W_i`, blended), are moved bone by bone onto the
+  shared bind skeleton (`inv(part bone) @ bind bone`, identity for vanilla
+  parts) and bound to the `Bip01` tree in that pose, pruned to the bones
+  used; the retarget then runs from Morrowind's own rig
+  ([pose cache](#morrowind-pose-cache)). Bone names match
+  case-insensitively (`Bip01 R Upperarm` on a shirt).
 - **Shield**: geometry in the `Bip01 L Forearm` local frame. Measured on the
   iron shields of both games, Morrowind's forearm frame carries the shield
   exactly as Oblivion's `Bip01 L ForearmTwist` frame does (X along the arm,
@@ -366,6 +372,121 @@ converted rigid shape carries flags 14, its bone node at the Skyrim position
 and its record slot; the gauntlet's hand shapes span 7 units at the Skyrim
 hand; the cuirass torso sits at z 72-106 like Oblivion's. Not yet confirmed
 in game.
+
+## <a id="morrowind-skin-fill"></a>Morrowind skin fill: the part list is the coverage
+
+**Code:** `asset_convert/character/morrowind_coverage.py`, `_arma_bod2` in
+`tes5_import/record_types/equipment.py`, `morrowind_skin_info` in
+`asset_convert/character/skin_replacement.py`.
+
+Morrowind draws the actor's own skin part in every body-part slot no equipped
+item fills (OpenMW `npcanimation.cpp`: the head model is added only when
+`mPartPriorities[PRT_Head] < 1`). Skyrim instead hides a whole body partition
+per ARMA slot, and vanilla armor carries the skin left showing inside it. The
+Oblivion splice finds that skin by the body-skin shapes an Oblivion armor
+embeds; Morrowind parts embed none, so nothing was spliced and a chest-only
+cuirass (41 of 280 vanilla ARMO) left the arms invisible.
+
+The record's part list is the authored coverage:
+
+- **ARMA BOD2** = the ARMO's slots plus the partitions its parts overlap
+  (`PART_PARTITIONS`), in place of the Oblivion body-coverage extras (which
+  hid forearms under every cuirass). Head extras (LongHair, Ears) still apply.
+- **The fill** is Skyrim body skin only where Morrowind would draw the
+  actor's own skin: a point is kept when its partition is hidden by the ARMA,
+  AND the Morrowind body part under it is one the record does NOT list, AND
+  that part belongs to a hidden partition (`SkinFill.keep`). The part under a
+  Skyrim point is the nearest vertex of the Morrowind reference body fitted
+  onto the Skyrim body; the wrap field stores each reference vertex's INDX
+  slot (`mw_slot`, from the shape's attach-node name, side by +X). So a left
+  glove fills only the right hand, and a chest-only cuirass fills neck,
+  clavicles and arms but never its own chest nor the thighs -- even on a body
+  whose partition 32 still holds them. Skinned armor sunk behind the fill at
+  a seam is then seated 0.2 outside it (`SkinFill.seat`, twins welded).
+
+  Replaced, measured: filling each hidden partition WHOLE and trusting the
+  occlusion trim left the Aryon left glove "almost completely hidden by skin"
+  (in game) and gave cuirasses leg skin; the chitin cuirass fill fell 1275 ->
+  402 verts. Armor sunk behind the fill (>0.1 within 2 units): chitin 12 ->
+  0, bonemold 14 -> 0, robe 49 (1.94 deep) -> 4 (0.64).
+
+`PART_PARTITIONS` was measured on `malebody_0.nif`: Skyrim's 34 is only the
+ForearmTwist2 ring above the wrist (44 verts), the rest of the forearm, the
+upper arm, torso and clavicle are 32; calf-weighted verts are 38 (knee and
+ankle parts), foot 37, hand 33. Groin and upper leg go to 44, the lower-body
+partition `modify_body_meshes` splits out of 32.
+
+Helmets: an open helm fills only the Hair part (18 of 58 vanilla helmets), so
+the exporter drops the Head bit and the ARMA stops hiding the face
+([equipment slots](tes4_export_morrowind.md#equipment-slots)).
+
+## <a id="morrowind-pose-cache"></a>Morrowind rest skeleton and pose cache
+
+**Code:** `tools/generators/kf_morrowind.py`,
+`asset_convert/havok/extract_skeleton_bones.py`.
+
+Morrowind's skeleton is not Oblivion's rescaled: `base_anim.nif` has 33 bones
+(no twist bones) with the same `Bip01` names, but its segments differ per
+bone -- Calf->Foot 37.36 vs 27.33, Spine1->Spine2 11.47 vs 8.93,
+Spine2->Neck 10.43 vs 13.92, UpperArm->Forearm 18.01 vs 21.85. Carrying a
+skinned part through Oblivion's rest pose rescales every weight boundary by
+those ratios, so Morrowind gets its own `skeleton_bones_morrowind[_female].json`
+and `best_animation_pose_morrowind[_female].json`.
+
+`xbase_anim.kf` is one 348.4 s clip of every animation group, a 4.0.0.2
+`NiSequenceStreamHelper`: a NiStringExtraData chain names, in order, the bone
+of each NiKeyframeController, and each bone is keyed at its own times (linear
+quaternion keys, median spacing 1/15 s). The pose search compares
+whole-body frames, so every bone is resampled onto one 1/15 s grid. The female
+rig is `base_anim_female.nif` playing `xbase_anim_female.kf` over
+`xbase_anim.kf`, as OpenMW loads it.
+
+**The skinned rest is the BIND skeleton, not base_anim's.** Every vanilla
+skinned part -- the `B_N_*_Skins` body of each race and armor such as
+`A_M_Chitin_skinned` -- is bound to one T-posed skeleton (root transform
+included, the imperial body, nord body and chitin cuirass agree to 0.01:
+left hand at x -46.55 z 110.28), while base_anim's animation rest hangs the
+arms down (left hand x -15.12 z 75.70). `skeleton_bones_morrowind[_female].json`
+is that bind skeleton, read from the reference race's chest part
+(`morrowind_body.bind_skeleton`); the assembler binds skinned parts to it (a
+no-op for vanilla), rigid parts still hang from base_anim's attach nodes, and
+the pose generator animates base_anim's hierarchy but measures its deltas
+from the bind pose (`kf_morrowind.pose_to_bind`).
+
+Measured against the SAME bind-pose source (`armor_fit_metrics --morrowind`;
+the old pipeline's own "source" was already re-posed into Oblivion's rest,
+which hid that step's distortion), old Oblivion-rig pipeline -> this one, main
+torso shape: new clipping chitin 43.9% -> 16.3%, bonemold 21.6% -> 7.1%,
+common shirt 39.6% -> 11.0%; worst edge stretch 292% -> 165%, 290% -> 104%,
+347% -> 135%; max displacement ~12.6 -> ~8. Edges stretched >15% rise
+(chitin 45% -> 53%) because the armor now FOLLOWS the body onto Skyrim's
+shape: the Morrowind reference body itself stretches 65.8% of its edges >15%
+to become the Skyrim body (Oblivion's: 30.2%). Re-posing onto base_anim's
+arms-down rest instead of the bind skeleton measured no better on edges and
+is a needless ~60 degree round trip through linear blend.
+
+The converter hands `was_morrowind` -- the 4.0.0.2 version read before the
+upgrade -- to the retarget, which then takes the Morrowind skeleton, pose
+cache and wrap field. The bone names are Oblivion's, so the file version is
+the authored marker, not the names (unlike FO3/FNV).
+
+## <a id="morrowind-wrap-field"></a>Morrowind wrap field
+
+**Code:** `asset_convert/character/body_wrap_build.py`,
+`asset_convert/character/morrowind_body.py`.
+
+The wrap keeps each armor vertex's AUTHORED clearance from the body it was
+modelled around; for a Morrowind piece that is the Morrowind body, not
+Oblivion's. Morrowind has no body mesh: an actor wears its race's skin BODY
+parts on the skeleton, chosen as OpenMW `NpcAnimation::getBodyParts` does
+(skin type, playable, third person, the actor's gender first with male parts
+as the female fallback, each part hung on both sides). The reference body is
+those parts assembled like armor, rigid parts bound to their real bones at
+the rest pose, and `body_wrap_build` fits it exactly as it fits Oblivion's
+(`body_wrap_morrowind_{gender}.npz`, no head group). Two choices keep the
+runtime unchanged: segment rescaling measures Morrowind's own bone lengths,
+and the per-vertex bone centroids are taken in Oblivion skeleton space by bone
+name, the space `deform_geoms_wrap` computes the armor's in.
 
 ## Morrowind weapons
 <a id="morrowind-weapons"></a>
@@ -441,13 +562,13 @@ every downstream stage sees the same shape of input it always has.
 
 ## Body-wrap armor fitting (2026-07-10/11, `asset_convert/character/body_wrap.py`)
 <a id="body-wrap-armor-fitting"></a>
-- **Architecture: FK base + measured-error correction field.** FK (animation DQS) is locally smooth but lands armor 0.5-2.5 units off the SK body (the in-game clipping). The wrap field measures FK's error EXACTLY by running the actual OB body meshes (upperbody/lowerbody/hand/foot) through the very same FK retarget, then fitting them onto the real Skyrim body NIFs via iterative closest-point projection with topology-aware delta smoothing (never bleeds between the legs) + limb-segment length prescaling. Fits BOTH weight-slider targets (`malebody_0` AND `malebody_1` etc.); cached per gender in `generated/body_wrap_{male,female}.npz` (src/fkp/dst0/dst1/tris/vert_bc/part). Runtime: FK first, then each armor vertex gets `delta = dst[w] - fkp` interpolated from the K=40 nearest body triangles (Gaussian distance + skin-weight bone-centroid gating + wrong-side penalty), then a clearance-enforcement push. Rebuild with `python -m asset_convert.character.body_wrap` (uses `allow_wrap=False` internally -- the field must never bootstrap from a previous field).
+- **Architecture: FK base + measured-error correction field.** FK (animation DQS) is locally smooth but lands armor 0.5-2.5 units off the SK body (the in-game clipping). The wrap field measures FK's error EXACTLY by running the actual OB body meshes (upperbody/lowerbody/hand/foot) through the very same FK retarget, then fitting them onto the real Skyrim body NIFs via iterative closest-point projection with topology-aware delta smoothing (never bleeds between the legs) + limb-segment length prescaling. Fits BOTH weight-slider targets (`malebody_0` AND `malebody_1` etc.); cached per gender in `generated/body_wrap_{male,female}.npz` (src/fkp/dst0/dst1/tris/vert_bc/part). Runtime: FK first, then each armor vertex gets `delta = dst[w] - fkp` interpolated from the K=40 nearest body triangles (Gaussian distance + skin-weight bone-centroid gating + wrong-side penalty), then a clearance-enforcement push. Rebuild with `python -m asset_convert.character.body_wrap_build` (uses `allow_wrap=False` internally -- the field must never bootstrap from a previous field).
 - **_0/_1 weight variants (2026-07-11)**: `convert_nif` writes `<name>_0.nif`/`<name>_1.nif` for every biped wearable (any non-`_gnd` mesh the wearable plan names — see the folder-vs-plugin note below). **The _1 file is NEVER a second independent conversion** — the engine lerps the pair per-vertex, so the pair must be topology-identical; a reconversion clips the body splice differently and mid-slider values vertex-explode (observed in game). Instead `body_wrap.morph_converted_to_weight1` post-morphs the finished _0 mesh with the fitted `dst1 - dst0` body morph (built from the REFERENCE Skyrim bodies — the modified output bodies have bugs and are never used for weights); spliced fill lies on the _0 surface so it gets the exact body morph, rigid PRN blocks are untouched. tes5_import ARMA enables the weight slider + `<name>_1.nif` path ONLY for gear covering TES4 biped bits 2-5 (upper/lower body, hand, foot) — vanilla helmets (IronHelmetAA) and shields (IronShieldAA) have the slider DISABLED and a plain path, and slider-on shields misbehaved in game.
 - **What counts as worn gear is the PLUGIN's call, not the folder's (2026-08-08)**: `_convert_nif` used to decide with `'armor' in src_path or 'clothes' in src_path`. That holds for vanilla Oblivion, which files every wearable under `meshes\armor` or `meshes\clothes`, but it is a guess about a naming convention. Nehrim files 88 worn meshes under its own folders (`eyren/`, `spinat/`, `nehrim/`, `skeletonk/`, `dwemertechnology/`, `ttbeards/`, `mr_siika/`, `suedland_set/`) and every one of them was converted as a **world object**: BSFadeNode root instead of NiNode, plain NiSkinInstance instead of BSDismemberSkinInstance, no retarget onto the Skyrim skeleton — and, because the same substring gated the variant writer, no `_0`/`_1` pair, so 52 of the 61 unresolvable ARMA paths were simply never written and the engine drew nothing (guards with a head and hands but no torso). The authored answer is the plugin's own biped model references: `wearable_plan` now sets a `WORN` bit on every path an ARMO/CLOT names as a biped model, and `wearable_plan.is_worn` answers the question. The folder test survives only as the fallback for meshes no record references. Verified byte-identical output for `armor/` and `clothes/` controls (mesh conversion is **not reproducible across processes** unless `PYTHONHASHSEED` is fixed — set/dict iteration order leaks into the written bytes, so any A/B of NIF output must pin it). The remaining 9 misses are dead references: those meshes exist in no Nehrim BSA and no loose file, i.e. they were broken in the original game too.
 - **🔴 Body-skin identity comes from the BONES, not the texture name (2026-08-09)**: Oblivion bakes the wearer's skin into a wearable; the converter strips it and splices Skyrim body geometry back, choosing which body NIF by a keyword in the texture path (`_SKIN_TEX_TO_BODY_NIF`). That is the author's *label*, not what the geometry *is*. Nehrim ships 18 wearables whose torso skin carries a foot or hand texture — the Silverlight cuirass (`Foot:Body`, 3321 verts, weighted to Spine/Spine1/Spine2/Clavicle/Neck/Pelvis, textured `characters\imperial\female\footfemale.dds`) and the entire female Eyren set (four battledresses at 3321 verts plus four greaves). The keyword picked `femalefeet_0.nif`, which contains no torso, so the stripped chest was never spliced back: the armour renders as plates with see-through gaps and the actor looks half-invisible rather than naked. `collect_skin_info` now overrides a hands/feet classification when the skin instance is weighted to **spine, clavicle or neck**. Those three are deliberately the only test — a gauntlet legitimately reaches the forearm and a boot the calf, so including those bones produced 9 false positives on correctly-named vanilla gauntlets; spine/clavicle/neck produced zero. Survey any plugin with `python tools/body_skin_audit.py [plugin] [--all]`. **Diagnostic trap:** the symptom reads as a texture or alpha problem — the source NIF genuinely does have `NiAlphaProperty flags=0x00ed blend=True` on several shapes — so it invites an alpha investigation. Compare the source's shape list against the converted one first; a missing body shape is instantly visible and the alpha is a red herring.
 - **Cross-block solve is mandatory**: `deform_geoms_wrap` concatenates ALL non-PRN blocks into ONE weld/correction/diffusion system. Per-block solving gave coincident seam verts across blocks (cuirass/pauldron boundary) different corrections — visible seam splits. `weld_groups` is true distance welding (KDTree pairs + union-find), not grid rounding (rounding-boundary twins split).
 - **Head gear (hair, Prn helmets, AND skinned helmets/hoods) is fitted by `asset_convert/character/head_fit.py`'s scalp displacement field (v3, 2026-08-24, after two in-game round trips)**: rigid head gear's verts are **bone-local (face-space)** while the wrap field lives in world space, so a field query for them lands on nothing. The v1 fit oversized every mesh in game — its affine carrier was measured from a WORLD-frame ICP fit and claimed sx 1.18 / sz 1.24; the x was ICP stretching the earless OB head over the SK EARS, the z conflated bone placement with head size. **Measured in head-LOCAL frames the two human skulls are the SAME width (OB x ±5.59, SK ±5.51 male / ±5.58 female earless) with local scalp deltas of only mean 0.96 / max 2.8** (crown ~2 DOWN, occiput/nape ~2-3.4 further back). Vanilla SK head parts (hair01.nif etc.) are stored head-bone-local, same convention as our output. NEVER fit a carrier in world frames.
-  - **The v3 mechanism — one smooth scalp-to-scalp displacement field, sampled per vertex.** At BUILD (`build_arrays`, run by `python -m asset_convert.character.body_wrap`): for every OB head vertex, where its matching SK skin point is. Init = NEAREST POINT from the identity carrier; then FIELD_CYCLES of graph smoothing + reprojection ALONG THE OB VERTEX NORMALS (`_project_ray` — nearest-point reprojection exits sideways from inside the SK nape bulge; normal rays reach it and cannot drift laterally). The final step is a projection, so **every field target lies exactly ON the SK skin**. At RUNTIME (`fit_head_gear`/`field_deltas`): each vertex samples the field at its closest scalp point (Gaussian blend that widens with standoff — exact on the skin, smooth far off), so by construction: a vertex ON the skin lands ON the new skin (hairline edges exactly at the skin line), a vertex N units off stays exactly N off (helmets keep authored standoff), and everything over one scalp region moves identically (headbands/eye-coverings never stretch; the only deformation is the real anatomy gradient). Verts >4 units off (ponytails, domes) take their deltas by graph DIFFUSION from the near verts — per-vertex re-sampling at range measured 19% edge stretch on the lengthened style01 tail; diffusion restores 0%. Sweep over all 57 hairs x genders + every PRN helmet (164 meshes): flush err mean 0.05-0.08 / p95 <=0.25, |dlen| p99 <=1.0 human.
+  - **The v3 mechanism — one smooth scalp-to-scalp displacement field, sampled per vertex.** At BUILD (`build_arrays`, run by `python -m asset_convert.character.body_wrap_build`): for every OB head vertex, where its matching SK skin point is. Init = NEAREST POINT from the identity carrier; then FIELD_CYCLES of graph smoothing + reprojection ALONG THE OB VERTEX NORMALS (`_project_ray` — nearest-point reprojection exits sideways from inside the SK nape bulge; normal rays reach it and cannot drift laterally). The final step is a projection, so **every field target lies exactly ON the SK skin**. At RUNTIME (`fit_head_gear`/`field_deltas`): each vertex samples the field at its closest scalp point (Gaussian blend that widens with standoff — exact on the skin, smooth far off), so by construction: a vertex ON the skin lands ON the new skin (hairline edges exactly at the skin line), a vertex N units off stays exactly N off (helmets keep authored standoff), and everything over one scalp region moves identically (headbands/eye-coverings never stretch; the only deformation is the real anatomy gradient). Verts >4 units off (ponytails, domes) take their deltas by graph DIFFUSION from the near verts — per-vertex re-sampling at range measured 19% edge stretch on the lengthened style01 tail; diffusion restores 0%. Sweep over all 57 hairs x genders + every PRN helmet (164 meshes): flush err mean 0.05-0.08 / p95 <=0.25, |dlen| p99 <=1.0 human.
   - **Landmark ground truth (measured on the raw local-frame meshes)**: scalps SAME width, but the SK jaw/cheek is 1-1.6 WIDER per side (OB max|x| 3.0-4.5 vs SK 4.6-5.4 band-by-band), the SK nose tip and crown sit 2.1 LOWER, the occiput/nape 2-3.5 further BACK, and the under-occiput hollow and lip profiles differ by ~3 at fixed heights. So converted gear legitimately widens at cheek guards and deepens at the nape — that is flush-to-skin, not oversizing.
   - **The FaceGen UV correspondence is an ICP SEED, never a field init.** Tried and REJECTED for v3: the two layouts' v-coordinates differ by up to 0.042 at the same landmark (back of head OB v 0.506 vs SK 0.464), which read as a systematic ~2-unit downward drag on top of the real anatomy (field dz mean -3.9 vs a measured landmark shift of -2.1) — and vanilla SK helmets sit at the same local heights as OB ones, so the drag is parameterization bias, not anatomy.
   - **The OB head's INTERIOR geometry (mouth bag, inner structures) is excluded from the field domain** (`_visible_exterior`, radial occlusion test): its correspondences form +-3-unit dipoles (bag maps forward onto the lips, inner column backward onto the skull) that tore 4.9-unit edge strain into face-covering masks (darkbrotherhood cowl). Interior verts get their dv in-filled from the exterior field.
@@ -614,6 +735,14 @@ every downstream stage sees the same shape of input it always has.
   user 2026-08-26): clothes and armour female 100% correct nodes, armour male
   99.1%, clothes male 94.1%; the reported shirt 14/22 → 0. `weight_pair_check`
   unchanged at 587/587, so nothing that worked before regressed.
+- **Ancestor-only nodes are placed too.** Phase A used to move only the
+  bones some skin references, so a tree node kept only as an ancestor (a
+  robe's `Neck`, and the clavicles under it) stayed at its source frame while
+  its children moved; the body splice then bound fill skin to it by name and
+  tore it away. Every node with a Skyrim target is now placed, root first:
+  skin-bone world frames, vertices and binds are unchanged (Oblivion iron
+  armor and shirt byte-identical), and Morrowind worn meshes with a
+  misplaced node fell 232 -> 2 of 842.
 - **Not yet diagnosed**: about a dozen male meshes keep 1–2 misplaced nodes
   each (`upperclass\01|03|05\m\shirt`, `middleclass\02\m\pants`,
   `middleclass\mcshirtsneaky\m\shirt`, `nehrimsoldier\m\cuirass03`), offsets
@@ -635,7 +764,7 @@ every downstream stage sees the same shape of input it always has.
   TOTAL is the limit. Vanilla max: dragon, 77. The crash needs the shadow
   path, so >80-bone actors can *appear* fine where no shadow-casting light
   hits them (mehrunesdagon/spiderdaedra initially seemed unaffected).
-- **Fix (in-game verified)**: `skin_retarget.merge_oversized_skin_bones()` —
+- **Fix (in-game verified)**: `skin_bone_cap.merge_oversized_skin_bones()` —
   merge the lowest-total-weight LEAF bones into their parents until ≤78
   (SSE_MAX_SKIN_BONES; vanilla max is 77 and splitting at exactly 80 froze the
   game, so stay clearly under). Bind pose is exact (B·W=I at rest); only tip

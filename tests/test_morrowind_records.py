@@ -302,6 +302,19 @@ def test_wearable_names_its_body_parts():
     assert not any(l.startswith('Male.BipedModel') for l in export_ARMO(pauldron, ctx))
 
 
+def test_helmet_hides_the_head_only_when_it_fills_the_head_part():
+    """An open helm (Hair part only) keeps the face; a closed helm (Head part) hides it.
+
+    See: docs/commentary/tes4_export_morrowind.md#equipment-slots
+    """
+    ctx = MorrowindContext()
+    ctx.body_models = {'helm': 'a' + chr(92) + 'helm.nif'}
+    aodt = _sub('AODT', struct.pack('<ifiiii', 0, 5.0, 10, 100, 0, 5))
+    for part, flags in ((b'\x01', '2'), (b'\x00', '3')):
+        helm = _rec('ARMO', 'helm', aodt, _sub('INDX', part), _text('BNAM', 'helm'))
+        assert _value(export_ARMO(helm, ctx), 'BMDT.BipedFlags') == flags
+
+
 def test_ai_packages_become_pack_records():
     """Inline AI_* subrecords become listed PACKs; travel gets a marker.
 

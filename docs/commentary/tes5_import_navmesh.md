@@ -1757,7 +1757,7 @@ outright: **4.2 s** for the whole export.
 - No DNAM: vanilla Skyrim LTEX TXSTs omit DNAM. The 0x0001Fa "No Specular Map" flag only applies to the object (BSLightingShader) path, NOT the landscape shader. Writing it has no positive effect.
 - TX00 = diffuse (`tes4\landscape\<icon>.dds`)
 - TX01 = normal map (`tes4\landscape\<icon>_n.dds`)
-- LTEX SNAM specular exponent: **pass through the TES4 value**. SNAM is a Phong exponent used directly by the landscape shader. Setting SNAM=0 gives `pow(NdotH, 0) = 1.0` everywhere → whole landscape appears blindingly bright white. TES4 landscape textures use ~30 (moderate gloss). Do NOT write SNAM=0.
+- LTEX SNAM specular exponent: **pass through the TES4 value**. SNAM is a Phong exponent used directly by the landscape shader. Setting SNAM=0 gives `pow(NdotH, 0) = 1.0` everywhere → whole landscape appears blindingly bright white. TES4 landscape textures use ~30 (moderate gloss). Do NOT write SNAM=0. An ABSENT SNAM is safe: the `TESLandTexture` constructor (1.6.1170, RVA 0x2b0950) writes 30 at +0x38, the value all 68 vanilla LTEX author, so a TES3 source with no specular exponent renders at vanilla gloss.
 
 ## OBND (Object Bounds) defaults
 <a id="obnd-defaults"></a>

@@ -981,6 +981,23 @@ def _convert_roots(data, stats, fix_textures, src_path, creature,
         strip_spinning_doors(data, stats)
 
 
+def _splice_worn_body(data, src_path, body_nibs, cls, slot_for_offset) -> None:
+    """Splice Skyrim body skin into a retargeted worn piece.
+
+    `body_nibs` is None when the piece was not retargeted. The embedded skin it
+    names wins; otherwise the plan's skin fill fills whole partitions.
+    See: docs/commentary/asset_convert_armor.md#body-splice-fill-partition
+    See: docs/commentary/asset_convert_armor.md#morrowind-skin-fill
+    """
+    if body_nibs is None:
+        return
+    fill = wp.mesh_skin_fill()
+    if body_nibs or fill:
+        fill_bp = (cls['authored_bp'] if cls['single_slot'] else slot_for_offset) or 32
+        splice_body_geometry(data, body_nibs, fill_body_part=fill_bp, fill=fill,
+                             female=mesh_is_female(src_path))
+
+
 def _convert_nif(data, fix_textures=True, src_path='', weight=0,
                  creature=False, worn=False, parallax=False, biped_flags=0,
                  tex_fallback=(), hair=False, race=None):
@@ -1025,7 +1042,7 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
         data, nif_basename, _is_gnd, _in_armor_dir)
     has_skin = _prepare_rig(data, creature, _is_gnd, _in_armor_dir,
                             _is_shield, _authored_bp)
-    _body_nibs_to_splice: dict = {}
+    _body_nibs_to_splice = None
 
     was_morrowind = _upgrade_version(data, stats)
 
@@ -1042,11 +1059,10 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
     if not creature and not _is_gnd and _in_armor_dir and has_skin:
         _slot_for_offset, _body_nibs_to_splice = retarget_worn_armor(
             data, stats, src_path, weight, race, hair, has_skin,
-            _authored_bp, _authored_allowed, _single_slot, _slot_for_offset)
+            _authored_bp, _authored_allowed, _single_slot, _slot_for_offset,
+            morrowind=was_morrowind)
 
-    if _body_nibs_to_splice:
-        _fill_bp = (_authored_bp if _single_slot else _slot_for_offset) or 32
-        splice_body_geometry(data, _body_nibs_to_splice, fill_body_part=_fill_bp)
+    _splice_worn_body(data, src_path, _body_nibs_to_splice, _cls, _slot_for_offset)
 
     if _is_bow_weapon:
         add_bow_bend_rig(data, stats, _bow_string_masks)

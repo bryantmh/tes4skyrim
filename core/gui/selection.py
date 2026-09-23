@@ -495,7 +495,7 @@ def selection_is_tes3(app) -> bool:
 def why_unavailable(key: str, caps) -> str:
     """Why a step is greyed, in the user's terms rather than "disabled"."""
     if key == "extract":
-        return "already extracted on import"
+        return "Already extracted on import"
     from asset_convert.sources import mod_ingest
 
     needs = mod_ingest.STEP_REQUIREMENTS.get(key, ())

@@ -19,6 +19,12 @@ from .tes3_reader import get_string, get_subrecord, read_file, read_masters
 #: Folder the assembled worn models live in, under meshes\.
 WORN_DIR = 'armor' + chr(92) + 'morrowind'
 
+#: INDX body-part slot of the head; only a piece filling it hides the actor's head.
+_HEAD_PART = 0
+
+#: TES4 BMDT Head biped bit.
+_HEAD_BIT = 0x1
+
 
 def load_body_models(source_path: str, records, export_dir: str) -> dict:
     """BODY id -> mesh path, from `records` and every declared master's own install.
@@ -57,15 +63,29 @@ def wearable_parts(rec, body_models: dict) -> list:
     return [tuple(p) for p in parts if p[1] or p[2]]
 
 
+def _covered_biped(biped: int, parts: list) -> int:
+    """`biped` without the Head bit when a part list exists and fills no Head part.
+
+    See: docs/commentary/tes4_export_morrowind.md#equipment-slots
+    """
+    if parts and not any(slot == _HEAD_PART for slot, _m, _f in parts):
+        return biped & ~_HEAD_BIT
+    return biped
+
+
 def worn_model_path(record_id: str, female: bool = False) -> str:
     """The synthetic worn mesh a record names, under WORN_DIR by gender."""
     return '%s%s%s%s%s.nif' % (WORN_DIR, chr(92), 'f' if female else 'm',
                                chr(92), encode_editor_id(record_id).lower())
 
 
-def emit_worn_models(lines: list, rec, ctx) -> None:
-    """Name the worn models and list the body parts they are assembled from."""
-    parts = wearable_parts(rec, ctx.body_models)
+def emit_worn_models(lines: list, rec, biped: int, ctx) -> None:
+    """The biped flags, the worn models, and the body parts they are assembled from.
+
+    Only a piece with a slot names a worn model.
+    """
+    parts = wearable_parts(rec, ctx.body_models) if biped else []
+    lines.append(f'BMDT.BipedFlags={_covered_biped(biped, parts)}')
     if not parts:
         return
     lines.append('Male.BipedModel.MODL='

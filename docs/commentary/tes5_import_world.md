@@ -234,7 +234,7 @@ null WATR pointer and CTD as soon as a `.btr` contains a WATER
 `BSMultiBoundNode`.
 
 
-## <a id="every-cell-gets-an-xcll"></a>Every CELL gets an XCLL
+## <a id="every-interior-gets-an-xcll"></a>Every interior CELL gets an XCLL
 
 **Code:** `build_cell_xcll` in `tes5_import/record_types/world.py`
 
@@ -243,6 +243,11 @@ color, so the CELL shipped with no lighting block at all. **All 590 of
 Skyrim.esm's interior cells carry an XCLL** — there is no vanilla precedent
 for omitting it, and a converted cell without one does not render like a
 vanilla cell.
+
+**Exteriors are the opposite: 0 of Skyrim.esm's 16,978 exterior cells carry
+an XCLL**, so an exterior that authored none still gets none. Writing the
+fallback on every cell put it on all 5,333 Arktwend exteriors, which then
+rendered extremely bright.
 
 That bites hardest on a Morrowind quasi exterior
 ([Show Sky](tes4_export_morrowind.md#quasi-exterior-interiors)): those cells
@@ -253,5 +258,7 @@ The fallback is a real vanilla block rather than zeros — the most common XCLL
 among Skyrim's own Show Sky interiors, shared verbatim by 61 of them: ambient
 `1E1E28`, black directional and fog colors, fog near/far 0, fog power, scale
 and fog max 1.0, the six directional-ambient colors it ships with, and
-inherit flags `0x9F`. An authored source still overrides every field it
+inherit flags `0x9F`. An earlier constant was a different block that only 2
+vanilla cells use, with pale blue `B0DCF7` fog from 340 to 14,000 units; it
+did not match this description. An authored source still overrides every field it
 states; the block only fills in what TES3/TES4 never authored.

@@ -27,7 +27,33 @@ ground-model fallback changes there, change it here too.
 import os
 from pathlib import Path
 
+from asset_convert.character.morrowind_coverage import (BODY_PARTITIONS, SkinFill,
+                                                        covered_partitions,
+                                                        part_slots)
 from asset_convert.character.wearable_plan_falloutnv import biped_bit_body_parts
+
+
+def build_skin_fill(export_dir) -> dict:
+    """Morrowind worn mesh path -> its SkinFill (partitions its ARMA hides, parts it covers).
+
+    The hidden partitions are the ARMO's own body slots plus the partitions
+    its parts overlap, as `equipment._arma_bod2` writes them.
+    See: docs/commentary/asset_convert_armor.md#morrowind-skin-fill
+    """
+    out = {}
+    for name in ('ARMO.txt', 'CLOT.txt'):
+        for rec in iter_records(Path(export_dir) / name):
+            slots = part_slots(rec)
+            if not slots:
+                continue
+            flags = int(rec.get('BMDT.BipedFlags', '0') or 0)
+            hidden = (covered_partitions(slots) | frozenset(
+                body_parts_for_flags(flags))) & BODY_PARTITIONS
+            for key in ('Male.BipedModel.MODL', 'Female.BipedModel.MODL'):
+                model = rec.get(key, '').strip()
+                if model and hidden:
+                    out[norm_model_path(model)] = SkinFill(hidden, frozenset(slots))
+    return out
 
 # TES4 BMDT biped bits 2=UpperBody 3=LowerBody 4=Hand 5=Foot — the gear the
 # vanilla weight slider applies to.  Mirrors _build_arma's `use_slider`.
@@ -151,6 +177,12 @@ BIPED_FLAGS_KEY = '*biped_flags*'
 #: Weapon Prn sub-map key; norm_model_path can never emit it either.
 WEAPON_PRN_KEY = '*weapon_prn*'
 
+#: Skin-fill sub-map key: a Morrowind worn mesh -> the body partitions its ARMA hides.
+SKIN_FILL_KEY = '*skin_fill*'
+
+#: Sub-maps a base's plan merges into instead of replacing.
+_NESTED_KEYS = (BIPED_FLAGS_KEY, WEAPON_PRN_KEY, SKIN_FILL_KEY)
+
 
 def biped_flags_for(plan: dict, src_path, meshes_root) -> int:
     """BMDT biped flags for a source NIF, or 0 when no record wears it.
@@ -215,7 +247,7 @@ def _want_ammo(export_dir: Path, want):
 def _inherit(plan: dict, inherited: dict) -> None:
     """Lay a base's plan under `plan`; the nested maps merge instead of replacing."""
     for k, v in inherited.items():
-        if k in (BIPED_FLAGS_KEY, WEAPON_PRN_KEY):
+        if k in _NESTED_KEYS:
             plan.setdefault(k, {}).update(v)
         else:
             plan[k] = v
@@ -294,6 +326,7 @@ def build_plan(export_dir, _seen=None) -> dict:
     # per entry rather than replacing the map wholesale.
     plan.setdefault(BIPED_FLAGS_KEY, {}).update(build_biped_flags(export_dir))
     plan.setdefault(WEAPON_PRN_KEY, {}).update(build_weapon_prns(export_dir))
+    plan.setdefault(SKIN_FILL_KEY, {}).update(build_skin_fill(export_dir))
     return plan
 
 
@@ -310,13 +343,28 @@ def variants_for(plan: dict, src_path, meshes_root) -> int:
     return plan.get(norm_model_path(rel), BASE)
 
 
-_LATCH = [0, None]
+_LATCH = [0, None, None]
 
 
 def latch_variants(plan: dict, src_path, meshes_root):
-    """Record the plugin's variant flags and weapon Prn for the NIF about to convert."""
+    """Latch the plugin's variants, weapon Prn and skin fill for the NIF to convert."""
     _LATCH[0] = variants_for(plan, src_path, meshes_root) if plan else 0
     _LATCH[1] = weapon_prn_for(plan, src_path, meshes_root) if plan else None
+    _LATCH[2] = _sub_map_entry(plan, SKIN_FILL_KEY, src_path, meshes_root, None)
+
+
+def _sub_map_entry(plan, key: str, src_path, meshes_root, default):
+    """`src_path`'s entry in the plan's `key` sub-map, or `default`."""
+    try:
+        rel = os.path.relpath(str(src_path), str(meshes_root))
+    except (ValueError, TypeError):
+        return default
+    return (plan or {}).get(key, {}).get(norm_model_path(rel), default)
+
+
+def mesh_skin_fill() -> SkinFill:
+    """Body partitions to fill with skin in the NIF being converted."""
+    return _LATCH[2]
 
 
 def weapon_prn_for(plan: dict, src_path, meshes_root):

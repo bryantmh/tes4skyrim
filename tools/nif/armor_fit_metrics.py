@@ -16,6 +16,7 @@ reports, per matching geometry block:
 Usage:
   python -m tools.nif.armor_fit_metrics <src.nif> <converted.nif> [--gender male]
   python -m tools.nif.armor_fit_metrics --pair export/...cuirass.nif temp/out.nif
+  --morrowind measures an assembled Morrowind source against the Morrowind field.
 """
 
 import argparse
@@ -30,9 +31,10 @@ from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from pyffi.formats.nif import NifFormat
 
-from asset_convert.character.body_wrap import (get_field, closest_point_on_triangles,
-                                     iter_skinned_geoms, geom_world,
-                                     geom_triangles, block_name)
+from asset_convert.character.body_wrap import get_field
+from asset_convert.character.wrap_mesh import (block_name, closest_point_on_triangles,
+                                               geom_triangles, geom_world,
+                                               iter_skinned_geoms)
 
 _SPLICE_PREFIXES = ('MaleUnderwear', 'FemaleUnderwear', 'HandMale',
                     'HandFemale', 'MaleFeet', 'FemaleFeet', 'BodyFill')
@@ -80,7 +82,8 @@ def _surface(verts, tris):
     return cKDTree(verts[tris].mean(axis=1)), n
 
 
-def main():
+def _parse_args():
+    """The command line."""
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('src')
     ap.add_argument('out')
@@ -90,73 +93,77 @@ def main():
     ap.add_argument('--weight', type=int, choices=[0, 1], default=0,
                     help='which weight-slider body target the converted NIF '
                          'was fitted to (_0 or _1)')
-    args = ap.parse_args()
+    ap.add_argument('--morrowind', action='store_true',
+                    help='the source is an assembled Morrowind NIF: measure against '
+                         'the Morrowind reference body field')
+    return ap.parse_args()
 
-    female = (args.gender == 'female') if args.gender else \
-        ('/f/' in args.src.replace('\\', '/').lower())
-    field = get_field(female)
-    if field is None:
-        print('NOTE: no wrap field — clearance metrics unavailable')
 
-    src_blocks = _load_blocks(args.src)
-    out_blocks = _load_blocks(args.out)
+def _edge_report(sv, ov, st, tol):
+    """(text, edges measured, edges over `tol`) for one source/converted pair.
 
-    if field is not None:
-        src_tree, src_tri_n = _surface(field.src, field.tris)
-        dst_tree, dst_tri_n = _surface(field.dst[args.weight], field.tris)
+    hf is the per-triangle SPREAD of the three edge stretch ratios: smooth
+    reshaping keeps it near zero, crumpling or shearing makes it large.
+    """
+    if not len(st):
+        return '', 0, 0
+    e = np.vstack([st[:, [0, 1]], st[:, [1, 2]], st[:, [0, 2]]])
+    l0 = np.linalg.norm(sv[e[:, 0]] - sv[e[:, 1]], axis=1)
+    l1 = np.linalg.norm(ov[e[:, 0]] - ov[e[:, 1]], axis=1)
+    ok = l0 > 0.01
+    ratio = np.abs(l1[ok] / l0[ok] - 1.0)
+    bad = int((ratio > tol).sum())
+    r_tri = np.where(ok, l1 / np.maximum(l0, 0.01), 1.0).reshape(3, -1).T
+    hf = r_tri.max(axis=1) - r_tri.min(axis=1)
+    text = (f'edges>{tol*100:.0f}%: {bad}/{ok.sum()} ({bad/max(ok.sum(),1)*100:5.2f}%) '
+            f'p95={np.percentile(ratio, 95)*100:5.1f}% max={ratio.max()*100:5.1f}% '
+            f'hf_mean={hf.mean()*100:4.1f}% hf_p95={np.percentile(hf, 95)*100:5.1f}%  ')
+    return text, int(ok.sum()), bad
 
-    grand_edges = grand_bad = 0
+
+def _clearance_report(sv, ov, field, surfaces, weight):
+    """Clearance change from the source body to the fitted body, as text."""
+    (src_tree, src_tri_n), (dst_tree, dst_tri_n) = surfaces
+    c_src = _signed_clearance(sv, field.src, field.tris, src_tree, src_tri_n)
+    c_out = _signed_clearance(ov, field.dst[weight], field.tris, dst_tree, dst_tri_n)
+    dc = c_out - c_src
+    new_clip = (dc < -0.3) & (c_out < -0.1)
+    return (f'clearance dmean={dc.mean():+5.2f} dmin={dc.min():+5.2f} '
+            f'newclip={new_clip.sum()}/{len(sv)} ({new_clip.mean()*100:4.1f}%)')
+
+
+def _pairs(src_blocks, out_blocks):
+    """(name, source verts, source tris, converted verts) per matched geometry."""
     for name, src_list in sorted(src_blocks.items()):
         if name.startswith(_SPLICE_PREFIXES):
             continue
-        out_list = out_blocks.get(name, [])
         for sv, st in src_list:
-            match = [(ov, ot) for ov, ot in out_list if len(ov) == len(sv)]
-            if not match:
-                continue
-            ov, ot = match[0]
+            match = [ov for ov, _ot in out_blocks.get(name, []) if len(ov) == len(sv)]
+            if match:
+                yield name, sv, st, match[0]
 
-            disp = np.linalg.norm(ov - sv, axis=1)
 
-            # edge failures
-            e = np.vstack([st[:, [0, 1]], st[:, [1, 2]], st[:, [0, 2]]]) \
-                if len(st) else np.zeros((0, 2), dtype=int)
-            line = f'{name:32s} verts={len(sv):5d} '
-            if len(e):
-                l0 = np.linalg.norm(sv[e[:, 0]] - sv[e[:, 1]], axis=1)
-                l1 = np.linalg.norm(ov[e[:, 0]] - ov[e[:, 1]], axis=1)
-                ok = l0 > 0.01
-                ratio = np.abs(l1[ok] / l0[ok] - 1.0)
-                bad = int((ratio > args.edge_tol).sum())
-                grand_edges += int(ok.sum())
-                grand_bad += bad
-                # High-frequency distortion: per-triangle SPREAD of the three
-                # edge stretch ratios.  Smooth reshaping (bigger body) keeps
-                # this near zero; crumpling/shearing makes it large.
-                r_full = np.where(l0 > 0.01, l1 / np.maximum(l0, 0.01), 1.0)
-                r_tri = r_full.reshape(3, -1).T          # (T, 3)
-                hf = r_tri.max(axis=1) - r_tri.min(axis=1)
-                line += (f'edges>{args.edge_tol*100:.0f}%: '
-                         f'{bad}/{ok.sum()} ({bad/max(ok.sum(),1)*100:5.2f}%) '
-                         f'p95={np.percentile(ratio, 95)*100:5.1f}% '
-                         f'max={ratio.max()*100:5.1f}% '
-                         f'hf_mean={hf.mean()*100:4.1f}% '
-                         f'hf_p95={np.percentile(hf, 95)*100:5.1f}%  ')
-            line += f'maxdisp={disp.max():6.2f} '
-
-            if field is not None:
-                c_src = _signed_clearance(sv, field.src, field.tris,
-                                          src_tree, src_tri_n)
-                c_out = _signed_clearance(ov, field.dst[args.weight],
-                                          field.tris, dst_tree, dst_tri_n)
-                dc = c_out - c_src
-                new_clip = (dc < -0.3) & (c_out < -0.1)
-                line += (f'clearance dmean={dc.mean():+5.2f} '
-                         f'dmin={dc.min():+5.2f} '
-                         f'newclip={new_clip.sum()}/{len(sv)} '
-                         f'({new_clip.mean()*100:4.1f}%)')
-            print(line)
-
+def main():
+    """Print the per-geometry fit metrics and the edge-failure total."""
+    args = _parse_args()
+    female = (args.gender == 'female') if args.gender else \
+        ('/f/' in args.src.replace('\\', '/').lower())
+    field = get_field(female, args.morrowind)
+    surfaces = None
+    if field is None:
+        print('NOTE: no wrap field — clearance metrics unavailable')
+    else:
+        surfaces = (_surface(field.src, field.tris),
+                    _surface(field.dst[args.weight], field.tris))
+    grand_edges = grand_bad = 0
+    for name, sv, st, ov in _pairs(_load_blocks(args.src), _load_blocks(args.out)):
+        text, edges, bad = _edge_report(sv, ov, st, args.edge_tol)
+        grand_edges, grand_bad = grand_edges + edges, grand_bad + bad
+        line = f'{name:32s} verts={len(sv):5d} {text}'
+        line += f'maxdisp={np.linalg.norm(ov - sv, axis=1).max():6.2f} '
+        if surfaces is not None:
+            line += _clearance_report(sv, ov, field, surfaces, args.weight)
+        print(line)
     if grand_edges:
         print(f'{"TOTAL":32s} edges>{args.edge_tol*100:.0f}%: '
               f'{grand_bad}/{grand_edges} '

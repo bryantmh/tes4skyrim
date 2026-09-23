@@ -382,16 +382,13 @@ def _emit_wearable(lines: list, rec: Tes3Record, biped: int,
                    general: int, ctx) -> None:
     """The TES4 wearable header: models, icon and biped flags.
 
-    The worn model and its body parts are named only for a piece with a slot.
     See: docs/commentary/tes4_export_morrowind.md#worn-models
     """
     lines.append(f'EditorID={escape_value(rec.record_id)}')
     emit_str(lines, 'FULL', rec, 'FNAM')
-    lines.append(f'BMDT.BipedFlags={biped}')
     lines.append(f'BMDT.GeneralFlags={general}')
     emit_model(lines, rec, 'Male.WorldModel.MODL')
-    if biped:
-        emit_worn_models(lines, rec, ctx)
+    emit_worn_models(lines, rec, biped, ctx)
     emit_icon(lines, rec, key='Male.Icon')
     emit_ref(lines, 'EITM', rec, 'ENAM', ctx, 'ENCH')
 

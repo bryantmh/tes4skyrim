@@ -821,6 +821,13 @@ clothing's its `CTDT` type. Each maps onto TES4's `BMDT.BipedFlags`:
 | Amulet | Amulet (0x100) |
 | Pauldron, Belt | none -- no slot exists in either later game |
 
+A helmet keeps the Head bit only when its part list fills the Head part
+(`_covered_biped` in `tes4_export/morrowind_armor.py`); an open helm fills only
+Hair and must not hide the face. OpenMW draws the head model unless an item
+fills `PRT_Head`, and removes the hair for any helmet
+(`npcanimation.cpp` `updateParts`). Vanilla: 40 helmets fill Head, 18 only
+Hair.
+
 Weight class is not stored either; Morrowind derives it from weight against a
 per-type GMST (`iHelmWeight` 5, `iPauldronWeight` 10, `iCuirassWeight` 30,
 `iGauntletWeight` 5, `iGreavesWeight` 15, `iBootsWeight` 20, `iShieldWeight`
@@ -2017,7 +2024,7 @@ Z=0 with the bulk just above, which is a shoreline sitting at sea level.
 
 The height alone is not sufficient — the cell also needs an `XCLL`, which
 these cells have no `AMBI` to supply
-([why](tes5_import_world.md#every-cell-gets-an-xcll)).
+([why](tes5_import_world.md#every-interior-gets-an-xcll)).
 
 ## <a id="region-weather"></a>Region weather
 
