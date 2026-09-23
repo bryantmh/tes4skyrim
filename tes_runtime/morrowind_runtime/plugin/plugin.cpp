@@ -42,6 +42,7 @@ void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
         return;
     }
     if (!msg || msg->type != SKSEMessagingInterface::kMessage_DataLoaded) return;
+    SetSidecarLoadedCheck(SidecarPluginLoaded);
     const StoreStats stats = LoadStore();
     Log("store: %zu topics, %zu responses, %zu scripts from %zu sidecar(s)",
         stats.topics, stats.infos, stats.scripts, stats.files);

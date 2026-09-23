@@ -5320,24 +5320,10 @@ class TestVanillaMgefDataSize:
 
 
 def _is_tes4_export(export_dir: str) -> bool:
-    """True when an export tree came from a TES4 plugin rather than FO3/FNV.
-
-    EFFECT_ARCHETYPES covers Oblivion's effect vocabulary; Fallout's chem and
-    radiation effects are out of the converter's scope, so a Fallout tree must
-    not be measured against it. FO3/FNV report HEDR 1.32-1.34, TES4 reports
-    0.8 or 1.0.
-    """
-    header = os.path.join(export_dir, '_HEADER.txt')
-    if not os.path.isfile(header):
-        return True
-    with open(header, encoding='utf-8', errors='replace') as f:
-        for line in f:
-            if line.startswith('HEDR.Version='):
-                try:
-                    return float(line.split('=', 1)[1]) < 1.2
-                except ValueError:
-                    return True
-    return True
+    """True unless the tree holds a record type only FO3/FNV author."""
+    from tes5_import.record_types.world_falloutnv import FALLOUT_ONLY_SIGS
+    return not any(os.path.isfile(os.path.join(export_dir, sig + '.txt'))
+                   for sig in FALLOUT_ONLY_SIGS)
 
 
 class TestMgefConversion:

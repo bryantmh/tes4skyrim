@@ -357,6 +357,22 @@ def get(export_dir, plugin: str):
     return None
 
 
+def mod_plugins(export_dir, name: str) -> list:
+    """The plugins a mod ships when `name` is that MOD's folder or label, not
+    a plugin; [] for a plugin name, an asset-only mod, or an unknown name.
+
+    See: docs/reference/pipeline.md#-f-takes-the-plugin
+    """
+    if get(export_dir, name):
+        return []
+    want = _key(name)
+    return sorted((entry['plugin'] for entry in _sources(export_dir).values()
+                   if isinstance(entry, dict) and entry.get('plugin')
+                   and want in (_key(entry.get('group_dir')),
+                                _key(entry.get('group_label')))),
+                  key=str.lower)
+
+
 def put(export_dir, plugin: str, entry: dict) -> None:
     """Insert or replace one plugin's entry."""
     data = load(export_dir)

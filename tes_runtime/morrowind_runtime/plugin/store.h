@@ -100,8 +100,20 @@ std::vector<std::unordered_map<std::string, std::string>> ParseExport(
 std::string SidecarDir();
 
 // The per-plugin subfolder names under `root`, which is where each plugin's
-// own dialogue and actor index live.
+// own dialogue and actor index live. A folder the loaded-check rejects is left
+// out.
 std::vector<std::string> SidecarPlugins(const std::string& root);
+
+// Whether the sidecar folder `plugin` under `root` belongs to a plugin in this
+// load order. With none set (the headless tests) every folder counts.
+//
+// 🛑 Every table keeps the FIRST row per id, so a stale folder for a plugin
+// that is not loaded shadows the live one and every id in it resolves to
+// nothing -- the journal never starts, `->AIFollow` finds no reference.
+// See: docs/commentary/morrowind_runtime.md#load-order
+using SidecarLoadedFn = bool (*)(const std::string& root,
+                                 const std::string& plugin);
+void SetSidecarLoadedCheck(SidecarLoadedFn check);
 
 // A whole file as text, or "" when it cannot be read.
 std::string ReadFile(const std::string& path);

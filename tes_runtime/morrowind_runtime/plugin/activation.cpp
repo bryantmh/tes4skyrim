@@ -191,6 +191,15 @@ std::uint8_t ResolveIndex(const std::string& plugin, std::uint32_t sample) {
     return 0xFF;
 }
 
+void ResolveNatives() {
+    g_getFormFromFile = reinterpret_cast<GetFormFromFileFn>(
+        Resolve("Game.GetFormFromFile", ids::kGetFormFromFile, nullptr));
+    g_fixedString = reinterpret_cast<FixedStringFn>(
+        Resolve("BSFixedString ctor", ids::kBSFixedStringCtor, nullptr));
+    g_isDead = reinterpret_cast<IsDeadFn>(
+        Resolve("Actor.IsDead", ids::kActorIsDead, nullptr));
+}
+
 // Reads one plugin's index. `sample` receives any of its FormIDs, which is
 // what ResolveIndex needs to ask the engine where the plugin now sits.
 std::size_t LoadOneIndex(const std::string& dir, std::uint32_t* sample) {
@@ -288,16 +297,31 @@ std::size_t BindInstances() {
 
 std::size_t LoadActorIndex() { return LoadActorIndexFrom(SidecarDir()); }
 
+// Asked once per folder and remembered: the load order cannot change while
+// the game runs. A folder with no actors, or an engine that cannot be asked
+// yet, counts as loaded -- only a proven miss is dropped.
+bool SidecarPluginLoaded(const std::string& root, const std::string& plugin) {
+    static std::unordered_map<std::string, bool> known;
+    const auto it = known.find(plugin);
+    if (it != known.end()) return it->second;
+    if (!g_getFormFromFile) ResolveNatives();
+    if (!g_vm || !g_getFormFromFile || !g_fixedString) return true;
+    const std::uint32_t sample = std::strtoul(
+        ReadFile(root + plugin + "\\" + kFileActors).c_str(), nullptr, 16);
+    const bool loaded = !sample || ResolveIndex(plugin, sample) != 0xFF;
+    if (!loaded) {
+        Log("store:   %s is staged for a plugin NOT in this load order -- "
+            "skipped", plugin.c_str());
+    }
+    known.emplace(plugin, loaded);
+    return loaded;
+}
+
 std::size_t LoadActorIndexFrom(const std::string& rootIn) {
     g_pluginMask.reset();
     g_speakers.clear();
     if (rootIn.empty()) return 0;
-    g_getFormFromFile = reinterpret_cast<GetFormFromFileFn>(
-        Resolve("Game.GetFormFromFile", ids::kGetFormFromFile, nullptr));
-    g_fixedString = reinterpret_cast<FixedStringFn>(
-        Resolve("BSFixedString ctor", ids::kBSFixedStringCtor, nullptr));
-    g_isDead = reinterpret_cast<IsDeadFn>(
-        Resolve("Actor.IsDead", ids::kActorIsDead, nullptr));
+    if (!g_getFormFromFile) ResolveNatives();
     std::string root = rootIn;
     if (root.back() != '\\' && root.back() != '/') root.push_back('\\');
     std::size_t total = 0;

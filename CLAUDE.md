@@ -265,7 +265,12 @@ Check theories against several of these before acting:
   Several areas means several stages. Other flags: `--creatures-only`,
   `--extract-only`, `--prune-textures-only`, `--pack-zip-only`. Report what you
   built and any failures verbatim; if a stage can't be run, say which and why.
-- An asset-only mod (no ESP/ESM) is still a `-f` target: `--import-mod` registers
+- 🛑 **`-f` takes the plugin's filename, never the mod or folder name:**
+  `-f TR_Mainland.esm`, not `-f "Tamriel Rebuilt 25.08.12"`. A wrong name
+  builds a phantom plugin whose sidecar breaks the real one in game
+  ([pipeline.md](docs/reference/pipeline.md#-f-takes-the-plugin)).
+  `--list-mods` shows each mod's plugins.
+- An asset-only mod (no ESP/ESM) is the one exception and is still a `-f` target: `--import-mod` registers
   a pseudo-plugin, so its asset stages run normally (`python convert.py -f
   "Tamriel Landscape Pack" --speedtrees-only`); only record stages are skipped.
   `--list-mods` shows them.

@@ -157,14 +157,14 @@ class TestPreflight(unittest.TestCase):
 
     def _patch_layout(self, td):
         import tes5_import.overrides.nested as ov
-        self._saved = (ov._export_root, ov._master_export_dir)
-        ov._export_root = lambda d: td
-        ov._master_export_dir = lambda root, name: os.path.join(root, name)
+        self._saved = (ov.export_root, ov.master_export_dir)
+        ov.export_root = lambda d: td
+        ov.master_export_dir = lambda root, name: os.path.join(root, name)
         self.addCleanup(self._restore)
 
     def _restore(self):
         import tes5_import.overrides.nested as ov
-        ov._export_root, ov._master_export_dir = self._saved
+        ov.export_root, ov.master_export_dir = self._saved
 
     def test_missing_artifacts_are_not_an_error(self):
         """Plenty of plugins ship no creatures and no music."""

@@ -1013,3 +1013,28 @@ def test_missing_master_check_sees_group_folder_masters(tmp_path, monkeypatch):
     missing = convert._missing_master_exports(
         ['MapMarkers.esp'], str(export), '')
     assert missing == {}, f'falsely reported missing: {missing}'
+
+
+def test_mod_name_is_refused_as_a_plugin(tmp_path):
+    """-f with a mod's folder name builds a phantom plugin, so it is refused.
+
+    See: docs/reference/pipeline.md#-f-takes-the-plugin
+    """
+    import convert
+
+    export = tmp_path / 'export'
+    source_registry.put(export, 'TR_Mainland.esm', {
+        'plugin': 'TR_Mainland.esm', 'group_dir': 'Tamriel Rebuilt 25.08.12',
+        'group_label': 'Tamriel Rebuilt 25.08.12'})
+    source_registry.put(export, 'Tamriel Landscape Pack', {
+        'group_dir': 'Tamriel Landscape Pack',
+        'group_label': 'Tamriel Landscape Pack'})
+
+    assert source_registry.mod_plugins(
+        export, 'tamriel rebuilt 25.08.12') == ['TR_Mainland.esm']
+    assert source_registry.mod_plugins(export, 'TR_Mainland.esm') == []
+    assert source_registry.mod_plugins(export, 'Tamriel Landscape Pack') == []
+
+    args = type('Args', (), {'files': ['Tamriel Rebuilt 25.08.12']})()
+    with pytest.raises(SystemExit, match='-f TR_Mainland.esm'):
+        convert._plugins_to_convert(args, {}, '', str(export))

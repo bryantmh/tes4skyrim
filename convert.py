@@ -98,6 +98,7 @@ create_pool_job()
 
 from source_paths import (get_paths, is_asset_only,
                           load_config, resolve_plugin_path)
+from asset_convert.sources import source_registry
 
 
 def _mod_commands(args, export_dir: str, tes4_data: str) -> int:
@@ -107,7 +108,6 @@ def _mod_commands(args, export_dir: str, tes4_data: str) -> int:
     never touch the pipeline.
     """
     from asset_convert.sources import mod_ingest
-    from asset_convert.sources import source_registry
 
     if args.list_mods:
         groups = source_registry.groups(export_dir)
@@ -376,7 +376,6 @@ def _missing_master_exports(results, export_dir: str, tes4_data: str) -> dict:
 
     See: docs/commentary/tes5_import_mod_merge.md#master-export-resolution
     """
-    from asset_convert.sources import source_registry
 
     missing = {}
     for name in results:
@@ -430,11 +429,20 @@ def _plugins_to_convert(args, config: dict, tes4_data: str,
     """The plugins to convert, masters first.
 
     Files always come from -f/--files, which is also how the GUI passes the
-    selected plugins; `config["files"]` is a legacy fallback only.
+    selected plugins; `config["files"]` is a legacy fallback only. A mod's
+    folder or label is refused when the mod ships plugins.
+
+    See: docs/reference/pipeline.md#-f-takes-the-plugin
     """
+    files = args.files or config.get("files", [])
+    for name in files:
+        shipped = source_registry.mod_plugins(export_dir, name)
+        if shipped:
+            raise SystemExit(
+                f'ERROR: "{name}" is a mod, not a plugin. Convert its '
+                f'plugin(s) instead: -f {" ".join(shipped)}')
     return topological_order(
-        args.files or config.get("files", []),
-        lambda name: resolve_plugin_path(name, tes4_data, export_dir))
+        files, lambda name: resolve_plugin_path(name, tes4_data, export_dir))
 
 
 def phase_export(file_name: str, tes4_data: str, export_dir: str,
@@ -522,7 +530,6 @@ def phase_extract(file_name: str, tes4_data: str, config: dict,
     """
     extract_dir = str(SCRIPT_DIR / "export")
 
-    from asset_convert.sources import source_registry
     if source_registry.get(extract_dir, file_name):
         from asset_convert.sources import mod_ingest
         print(f"[{file_name}] Re-importing mod archive...")

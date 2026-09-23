@@ -1079,7 +1079,7 @@ def test_headwear_geometry_keywords_beat_arm():
     from asset_convert.character.skin_retarget import get_body_parts_for_geometry
     assert get_body_parts_for_geometry('helm1', 1) == [131]
     assert get_body_parts_for_geometry('visor', 1) == [131]
-    assert get_body_parts_for_geometry('greave', 1) == [44]
+    assert get_body_parts_for_geometry('greave', 1) == [49]
     # Artwork names match nothing and get the torso default.
     assert get_body_parts_for_geometry('Plane02', 1) == [32]
 

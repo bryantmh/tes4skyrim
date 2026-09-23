@@ -225,6 +225,12 @@ std::string ReadFile(const std::string& path) {
     return ss.str();
 }
 
+namespace {
+SidecarLoadedFn g_sidecarLoaded = nullptr;
+}  // namespace
+
+void SetSidecarLoadedCheck(SidecarLoadedFn check) { g_sidecarLoaded = check; }
+
 std::vector<std::string> SidecarPlugins(const std::string& root) {
     std::vector<std::string> plugins;
     WIN32_FIND_DATAA find;
@@ -234,6 +240,7 @@ std::vector<std::string> SidecarPlugins(const std::string& root) {
         if (!(find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
         const std::string name = find.cFileName;
         if (name == "." || name == "..") continue;
+        if (g_sidecarLoaded && !g_sidecarLoaded(root, name)) continue;
         plugins.push_back(name);
     } while (FindNextFileA(handle, &find));
     FindClose(handle);

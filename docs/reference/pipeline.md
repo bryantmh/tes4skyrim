@@ -67,6 +67,22 @@ After `--import-mod`, the tool prints the exact command with the applicable
 flags already filled in. **Never conclude that an asset has "no plugin to
 build" because no ESP references it** — check `--list-mods` first.
 
+### <a id="-f-takes-the-plugin"></a>🛑 A mod WITH a plugin takes the plugin, never the mod name
+
+The mod-name form above is only for asset-only mods. A mod that ships a plugin
+is converted by that plugin's filename: `-f TR_Mainland.esm`, never
+`-f "Tamriel Rebuilt 25.08.12"`. The mod name used to be accepted and silently
+build the wrong thing. `splitext` read `.12` as an extension, so the import
+staged a second MorrowindRuntime sidecar, `Tamriel Rebuilt 25.08/`, with every
+row naming a plugin that does not exist. The runtime keeps the first row per id,
+so that folder shadowed the real one and the journal and follower ids resolved
+to nothing in game.
+
+`convert.py` now refuses a `-f` name that matches an imported mod's folder or
+label when the mod ships plugins, and names the plugins to use instead
+(`source_registry.mod_plugins`). `python convert.py --list-mods` lists every
+mod with its plugins.
+
 ### <a id="plugin-source-resolution"></a>Where a plugin's binary comes from
 
 **Code:** `convert.py` `resolve_plugin_path`
