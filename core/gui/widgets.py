@@ -254,24 +254,28 @@ def section(parent, text: str) -> None:
     ttk.Label(f, text=text, style="PanelSub.TLabel").pack(anchor="w")
 
 
-def _tooltip_window(widget, state, width) -> None:
-    """Create the popup below-right of the cursor, clamped to the screen."""
+def tooltip_window(widget, text: str, width: int, at=None):
+    """Create a tip popup and return it, clamped to the screen.
+
+    `at` is the screen (x, y) of its top-left corner; by default it sits
+    below-right of the cursor. Topmost, so it shows over a native popup menu.
+    """
     win = tk.Toplevel(widget)
     win.wm_overrideredirect(True)
+    win.attributes("-topmost", True)
     win.configure(bg=CLR["border"])
     tk.Label(
-        win, text=state["text"], justify="left", wraplength=width,
+        win, text=text, justify="left", wraplength=width,
         bg=CLR["log_bg"], fg=CLR["text"],
         font=("Segoe UI", 9), padx=8, pady=6,
     ).pack(padx=1, pady=1)
-    x = widget.winfo_pointerx() + 14
-    y = widget.winfo_pointery() + 18
+    x, y = at or (widget.winfo_pointerx() + 14, widget.winfo_pointery() + 18)
     win.update_idletasks()
     sw = win.winfo_screenwidth()
     if x + win.winfo_width() > sw:
         x = max(0, sw - win.winfo_width() - 4)
     win.wm_geometry(f"+{x}+{y}")
-    state["win"] = win
+    return win
 
 
 def attach_tooltip(widget, text: str, width: int = 340):
@@ -296,7 +300,7 @@ def attach_tooltip(widget, text: str, width: int = 340):
         """Put the popup up, unless one already is."""
         state["after"] = None
         if state["win"] is None:
-            _tooltip_window(widget, state, width)
+            state["win"] = tooltip_window(widget, state["text"], width)
 
     def _enter(_=None):
         """Arm the brief hover delay before showing."""

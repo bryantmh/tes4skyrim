@@ -46,6 +46,8 @@ from core.gui.config import (
     save_setting,
     scan_converted,
 )
+from core.gui.menubar_behavior import (add_tipped_command, enable_hover_switch,
+                                       enable_tips)
 from core.gui.morrowind import add_source_menu
 from core.gui.selection import runnable
 from core.gui.widgets import open_url
@@ -311,24 +313,28 @@ def _build_tools_menu(app, menubutton, _menu_opts) -> None:
     Logs shortcut.
     """
     tools_menu = menubutton("Tools")
-    tools_menu.add_command(label="Check Dependencies",
-                           command=lambda: _check_dependencies(app))
+    enable_tips(tools_menu)
+    add_tipped_command(
+        tools_menu, "Check Dependencies", lambda: _check_dependencies(app),
+        "List what each pipeline phase needs that is missing -- Python "
+        "packages, bundled tools, game installs -- without running anything")
     tools_menu.add_separator()
-    for gkey, glabel, _gtip, _gshort, _grow in GLOBAL_ACTIONS:
-        tools_menu.add_command(
-            label=glabel, command=(lambda k=gkey: app.run_global_action(k)))
+    for gkey, glabel, gtip, _gshort, _grow in GLOBAL_ACTIONS:
+        add_tipped_command(tools_menu, glabel,
+                           lambda k=gkey: app.run_global_action(k), gtip)
     tools_menu.add_separator()
-    tools_menu.add_command(label=gui_journal.TITLE,
-                           command=lambda: gui_journal.run_patch(app))
+    add_tipped_command(tools_menu, gui_journal.TITLE,
+                       lambda: gui_journal.run_patch(app), gui_journal.TIP)
     tools_menu.add_separator()
-    tools_menu.add_command(
-        label="Open Output Folder",
-        command=lambda: _open_folder(app, app.output_var.get().strip(),
-                                     "Output folder"))
-    tools_menu.add_command(
-        label="Open Logs Folder",
-        command=lambda: _open_folder(app, str(REPO_ROOT / "logs"),
-                                     "Logs folder"))
+    add_tipped_command(
+        tools_menu, "Open Output Folder",
+        lambda: _open_folder(app, app.output_var.get().strip(),
+                             "Output folder"),
+        "Open the folder converted plugins and finished mods are written to")
+    add_tipped_command(
+        tools_menu, "Open Logs Folder",
+        lambda: _open_folder(app, str(REPO_ROOT / "logs"), "Logs folder"),
+        "Open the folder holding each run's log files")
 
 
 # ---------------------------------------------------------------------------
@@ -445,11 +451,14 @@ def build_menubar(app):
     app.menubar.pack(side=tk.TOP, fill=tk.X)
     ttk.Separator(app.root, orient=tk.HORIZONTAL).pack(side=tk.TOP, fill=tk.X)
 
+    bar = []
+
     def _menubutton(text: str) -> tk.Menu:
         """Add a dark top-level menu button; return its dropdown Menu."""
         mb = _flat_menubutton(app.menubar, text)
         menu = tk.Menu(mb, **menu_opts)
         mb.configure(menu=menu)
+        bar.append((mb, menu))
         return menu
 
     _build_settings_menu(app, _menubutton, menu_opts)
@@ -458,4 +467,5 @@ def build_menubar(app):
     gui_mods.add_mods_menu(_menubutton("Mods"), mods_ui)
     _build_tools_menu(app, _menubutton, menu_opts)
     _build_about_menu(app, _menubutton, menu_opts)
+    enable_hover_switch(app.root, bar)
     return mods_ui

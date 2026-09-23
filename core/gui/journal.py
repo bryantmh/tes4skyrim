@@ -27,6 +27,11 @@ from core.gui.config import CLR, scan_skyrim_load_order
 MOVIE_NAMES = ('quest_journal.swf', 'questjournal.swf')
 BACKUP_SUFFIX = '.mwrt-backup'
 TITLE = 'Patch Quest Journal'
+TIP = ("Make quest objectives clickable in Skyrim's journal: clicking one shows "
+       "the journal text its stage had, clicking it again the current text. "
+       "Patches the journal your game loads (vanilla, SkyUI or Quest Journal "
+       "Overhaul) in your Skyrim Data folder and keeps a .mwrt-backup of the "
+       "original. Needs MorrowindRuntime.dll")
 
 #: What happened to one movie, which picks the dialog's headline.
 PATCHED, SKIPPED, FAILED = 'patched', 'skipped', 'failed'
