@@ -5,6 +5,8 @@ Each test names a bypass that was measured before the rules moved into
 subprocess -- so the whole file runs in well under a second.
 """
 
+import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -427,6 +429,14 @@ def test_folding_a_temp_into_the_return_does_not_pay():
 # ---------------------------------------------------------------------------
 
 
+def test_a_tiny_function_needs_no_docstring():
+    """Two statements are the whole contract; a third makes one owed."""
+    tiny = '"""M."""\n\n\ndef f(x):\n    y = x + 1\n    return y\n'
+    grown = '"""M."""\n\n\ndef f(x):\n    y = x + 1\n    y *= 2\n    return y\n'
+    assert sites(tiny, 'missing-docstrings') == []
+    assert sites(grown, 'missing-docstrings') == [4]
+
+
 def test_unparsable_python_is_a_violation():
     """Every other rule walks the tree, so a parse failure scored zero."""
     assert sites('def f(:\n    pass\n', 'broken-syntax') == [1]
@@ -448,7 +458,6 @@ BAD_SRC = ('"""M."""\n\n\ndef f(x) -> int:\n    """D."""\n'
 
 def _hook(tool, tool_input):
     """(exit code, stderr) for one PreToolUse payload."""
-    import json
     hook = ROOT / '.claude' / 'hooks' / 'doc_rules_gate.py'
     payload = {'hook_event_name': 'PreToolUse', 'tool_name': tool,
                'tool_input': tool_input}
@@ -479,6 +488,143 @@ def test_a_shell_command_must_name_the_wrapper():
     code, err = _hook('Bash', {'command': 'python - <<PY\npass\nPY'})
     assert code == 2 and 'safe_run.py' in err
     assert _hook('Bash', {'command': 'python tools/validate/safe_run.py ls'})[0] == 0
+
+
+RUN = 'python tools/validate/safe_run.py'
+
+#: Commands that run code outside the wrapper, each a route that once passed.
+ESCAPES = [
+    RUN + " true && python - <<'PY'\nopen('x.py', 'w')\nPY",
+    RUN + ' true; cp a.py b.py',
+    'cp a.py b.py; ' + RUN + ' true',
+    RUN + ' echo $(python evil.py)',
+    RUN + ' echo "`python evil.py`"',
+    '(python evil.py); ' + RUN + ' true',
+    'echo x > a.py; ' + RUN + ' true',
+    RUN + " python - <<'PY'\nx = 1\nPY\npython evil.py",
+    'for f in a b; do ' + RUN + ' true; done',
+    RUN + ' true | tee a.py',
+]
+
+#: Commands that stay inside it, including every shape this session used.
+CONTAINED = [
+    'cd /c/repo && ' + RUN + ' python -m pytest -q 2>&1 | tail -3; echo "exit $?"',
+    RUN + " python - <<'PY'\nprint('a && b; $(x) `y`')\nPY",
+    RUN + " -c 'cp a.py b.py && python x.py | tail'",
+    RUN + " grep -E '(a|b)' f.py",
+    RUN + " echo '$(literal)'",
+    RUN + ' git log | Select-Object -First 5',
+    'P=1 ' + RUN + ' true > out.py',
+    RUN + ' a; ' + RUN + ' b',
+]
+
+
+def test_every_escape_is_refused():
+    """Code after `&&`, in a subshell, or in `$(...)` never saw the gate."""
+    sys.path.insert(0, str(ROOT / '.claude' / 'hooks'))
+    try:
+        import shell_route
+    finally:
+        sys.path.pop(0)
+    for command in ESCAPES:
+        assert shell_route.escape(command), command
+    for command in CONTAINED:
+        assert shell_route.escape(command) is None, command
+
+
+def test_the_hook_names_why_a_chain_was_refused():
+    """The refusal says which piece escaped and how to wrap it."""
+    code, err = _hook('Bash', {'command': ESCAPES[1]})
+    assert code == 2 and '`cp a.py b.py` runs outside' in err and '-c' in err
+
+
+def _wrapped(*args):
+    """The finished `safe_run.py` process for `args`, with no outer shell."""
+    return subprocess.run(
+        [sys.executable, str(ROOT / 'tools' / 'validate' / 'safe_run.py')]
+        + list(args), cwd=ROOT, capture_output=True, text=True)
+
+
+def test_the_wrapper_passes_arguments_verbatim():
+    """A second shell re-read `(` as syntax and expanded `$HOME` in quotes."""
+    tricky = ['(a|b)', '$HOME x', 'say "hi" now', "it's", 'a\\b']
+    got = _wrapped(sys.executable, '-c',
+                   'import sys, json; print(json.dumps(sys.argv[1:]))',
+                   *tricky)
+    assert got.returncode == 0, got.stderr
+    assert json.loads(got.stdout) == tricky
+
+
+def test_dash_c_runs_one_string_through_a_shell():
+    """Pipes inside the gated region are the `-c` form's job."""
+    got = _wrapped('-c', 'echo abc | "%s" -c "import sys; print(sys.stdin.'
+                   'read().strip()[::-1])"' % sys.executable.replace('\\', '/'))
+    assert got.returncode == 0, got.stderr
+    assert got.stdout.strip() == 'cba'
+
+
+def test_a_missing_program_says_to_use_dash_c():
+    """A builtin has no executable; the hint names the form that runs it."""
+    got = _wrapped('no_such_program_xyz')
+    assert got.returncode == 127 and '-c' in got.stderr
+
+
+# ---------------------------------------------------------------------------
+# An import and its use: deferred per edit, enforced when the turn ends
+# ---------------------------------------------------------------------------
+
+
+HALF_PAIR = '"""M."""\n\nimport os\n'
+
+
+def _turn_hook(event, session, **extra):
+    """(exit code, stderr) for one hook `event` in the test's own session."""
+    hook = ROOT / '.claude' / 'hooks' / 'doc_rules_gate.py'
+    payload = dict(hook_event_name=event, session_id=session, **extra)
+    got = subprocess.run([sys.executable, str(hook)], input=json.dumps(payload),
+                         capture_output=True, text=True, cwd=ROOT)
+    return got.returncode, got.stderr
+
+
+def test_an_import_alone_is_deferred_not_refused():
+    """One Edit cannot write an import and a far-off use; neither half is refused."""
+    probe = ROOT / 'tools' / 'validate' / '_pair_probe_tmp.py'
+    probe.write_text(HALF_PAIR, encoding='utf-8')
+    try:
+        assert _run_gate(str(probe)).returncode == 1
+        assert _run_gate(str(probe), '--defer-paired').returncode == 0
+    finally:
+        probe.unlink()
+
+
+def test_a_citation_ahead_of_its_doc_is_deferred():
+    """The docstring may cite a section the next edit writes."""
+    probe = ROOT / 'tools' / 'validate' / '_pair_probe_tmp.py'
+    probe.write_text('"""M.\n\nSee: docs/reference/pipeline.md#no-such-anchor\n"""\n',
+                     encoding='utf-8')
+    try:
+        assert 'dead-citations' in _run_gate(str(probe)).stderr
+        assert _run_gate(str(probe), '--defer-paired').returncode == 0
+    finally:
+        probe.unlink()
+
+
+def test_the_turn_cannot_end_on_half_a_pair():
+    """The Post hook remembers the file; Stop re-gates it with every rule."""
+    probe = ROOT / 'tools' / 'validate' / '_pair_probe_tmp.py'
+    session = 'test_pair_%d' % os.getpid()
+    probe.write_text(HALF_PAIR, encoding='utf-8')
+    try:
+        code, _ = _turn_hook('PostToolUse', session, tool_name='Write',
+                             tool_input={'file_path': str(probe)})
+        assert code == 0
+        code, err = _turn_hook('Stop', session)
+        assert code == 2 and 'F401' in err
+        probe.write_text('"""M."""\n\nimport os\n\nHOME = os.sep\n',
+                         encoding='utf-8')
+        assert _turn_hook('Stop', session)[0] == 0
+    finally:
+        probe.unlink()
 
 
 # ---------------------------------------------------------------------------

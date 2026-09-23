@@ -255,7 +255,7 @@ Measured by `tools/script/arch_fitness.py`; the metric id is in brackets.
 11. **Command knowledge in one table**: `set(COMMAND_ROWS) & set(registry)` is
     empty; their union defines "known command". [satellite-cmd-sets]
 12. **No satellite per-command flag sets** — flags are fields on the row. [satellite-cmd-sets]
-13. **No `.py` over 1,000 code lines.** [oversized-files]
+13. **No `.py` over 1,200 code lines.** [oversized-files]
 14. **The compatibility surface is frozen** (§5).
 15. **Comments compress, knowledge does not.** Prose that must survive moves
     to a `docs/` file cited by `See:`. [`stray-comments`, `inline-comments`,
@@ -350,15 +350,32 @@ test name, never reasoned about whole. Applying a cognitive-load rule to a flat
 list of 10-line functions charges a cost that is not being paid.
 
 Excluding `tests/` drops the violator count 26 → 20 and leaves the pressure on
-the files where splitting genuinely helps. The threshold stays 1000 for source:
-raising it to 1500 would absolve `record_types/actors.py` (1,101) and
-`pipeline.py` (1,104), which are exactly the marginal cases the rule is for.
+the files where splitting genuinely helps.
 
 Every other rule still judges `tests/` — only `oversized-files` is lifted.
 
+### Why the file cap is 1200, not 1000
+
+A census of 633 non-test files on 2026-09-23 found the cap was shaping the tree
+rather than describing it: **7 files sat at 900-999 code lines and none at
+1000-1099**, a gap that only forced splits produce. Only 4 files were over 1000
+(`quest_labtest.py` 1,319, `converter.py` 1,169, `dialog_emulator.py` 1,168,
+`tes5_esm_reader.py` 1,114). At 1200 three of those pass and the 14 files at
+800-999 get room to grow without splitting coherent modules like `convert.py`
+(989) and `collision.py` (975). The cap still counts code lines only, so 1200 is
+a real limit.
+
+### A tiny function needs no docstring
+
+`missing-docstrings` skips a function of at most `TINY_BODY_LINES` (2)
+statements. For those, the name and the one or two lines below it are the whole
+contract, and the required docstring came out as boilerplate like "The command
+line.". A tiny function that has a docstring is still held to
+`TINY_DOC_CHARS`.
+
 ### Splitting a legacy file: sparingly
 
-`oversized-files` is charged only when a file GROWS or CROSSES 1000 (the site
+`oversized-files` is charged only when a file GROWS or CROSSES 1200 (the site
 detail keys `_worsened` by name, so a shrink or a same-size edit is absolved).
 That is deliberate: a file already far over is meant to be chipped at, not
 rewritten to clear the gate.
@@ -370,7 +387,7 @@ regression cannot be bisected to it. Land the fix; leave the file long.
 
 Split when the split IS the task, or when the responsibility you are adding
 genuinely belongs in its own module. Otherwise the correct response to a
-1,000-line file you had to touch is to leave it no longer than you found it.
+1,200-line file you had to touch is to leave it no longer than you found it.
 
 ### Length is counted in statements
 
@@ -550,10 +567,67 @@ used to write the candidate over the real file and restore it in `finally`, so
 being killed mid-write (the harness caps the hook at 120s) left unvalidated,
 possibly truncated code on disk. It scores a temp copy instead.
 
+**An import and its use are judged at the end of the turn, not per edit.**
+F401 (unused import), F811 (redefinition) and F821 (undefined name) are about
+two sites that can sit hundreds of lines apart. The agent's `Edit` changes one
+contiguous span, so adding the import first charges F401 to that edit, and
+adding the call first charges F821 to it. Both orders were refused, and the only
+edit that passed covered the whole span between them, so the agent avoided the
+change altogether. Now the Pre and Post hooks pass `--defer-paired`, and the
+Post hook records each `.py` it saw in a per-session list under the system temp
+dir. A `Stop` hook re-gates those files with every rule and exits 2 if a pair is
+still open. The rule is as strict as before, since no half-pair survives a
+turn, but the two halves may land in separate edits. The Stop hook ignores
+`stop_hook_active`, because the fix is always one edit away. `safe_run.py`
+still gates shell writes in full, since they have no turn-end check.
+
+`dead-citations` is deferred the same way. A docstring's `See: docs/...#anchor`
+and the doc section it names are a pair in two files, and gating per edit forced
+the doc to be written before the code that cites it.
+
 Bash cannot be gated before it runs, because a shell command's effect is not
 predictable. `tools/validate/safe_run.py` is the one allowed entry point: it
 hashes tracked `.py` files, runs the command with the streams inherited,
 re-hashes, and gates whatever changed.
+
+#### The wrapper never re-quotes
+
+`safe_run.py <program> args...` runs `sys.argv[1:]` directly, with no inner
+shell. The caller's shell has already done the shell's work (quoting, `$`,
+pipes, redirects, heredocs), so its argv is exactly what was meant.
+
+The wrapper used to read the raw Windows command line (`GetCommandLineW`) and
+pass it to `bash -c`. That line is not the text the caller typed: Git Bash
+rebuilds it from argv, adding double quotes only around arguments that contain
+a space. The inner shell then re-read what the outer one had already unquoted:
+
+| Argument | Arrived as |
+|---|---|
+| `'(a\|b)'` | bash syntax error near `(`, exit 2 |
+| `'$HOME x'` | `C:/Users/<user> x`, silently expanded |
+
+A pipe, chain or builtin that must run inside the gated region goes through
+`safe_run.py -c '<command>'`. That one string reaches the caller's shell
+unchanged, and its author owns the quoting, as with `bash -c`. A program that
+is not on PATH (`cd`, `for`) exits 127 with a hint to use `-c`.
+
+#### Every command runs inside the wrapper
+
+The hook used to pass any command whose text contained the wrapper's path, so in
+`safe_run.py true && python - <<'PY' ...` everything after `&&` ran unwrapped
+and its writes were never gated. `.claude/hooks/shell_route.py` now splits the
+line on `&&`, `||`, `;`, `|`, `&` and newlines. Every piece must be a wrapper
+call or a `READ_ONLY` helper (`cd`, `echo`, `tail`, `grep`, `Select-Object`
+and a few more) that cannot write code. It also refuses:
+
+- `$(...)` and backticks outside single quotes, which run before the wrapper
+  starts, so their writes land before its first hash;
+- subshells and loops (`(`, `for`, `while`), which are not helpers;
+- a helper redirecting into a `.py` (`echo x > a.py`).
+
+Heredoc bodies are skipped as data. A redirect on the wrapper call itself is
+fine, since the shell truncates the file before the wrapper's first hash and the
+change is gated. Anything else goes inside `safe_run.py -c '...'`.
 
 **The routing rule lives in the HOOK, not in `permissions`.** Rules evaluate
 deny, then ask, then allow, and the first match wins — specificity never

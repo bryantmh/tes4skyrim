@@ -25,6 +25,9 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+
+import shell_route
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GATE = os.path.join(ROOT, 'tools', 'validate', 'code_rules.py')
@@ -36,7 +39,7 @@ SETUP = ('  SET UP THIS REPO FIRST:  python -m pip install -e ".[dev]"\n'
          '  It puts the repo on sys.path and installs ruff, vulture, pytest.\n')
 
 #: The one shell entry point: it gates every first-party `.py` its child wrote.
-WRAPPER = 'tools/validate/safe_run.py'
+WRAPPER = shell_route.WRAPPER
 
 #: Trees the rules do not judge: scratch, vendored code, and generated output.
 SKIP_PARTS = ('temp', 'references', 'external', 'output', 'export', 'build',
@@ -82,20 +85,20 @@ def edited_paths(payload):
     return []
 
 
-def gate(path, candidate=None):
+def gate(path, candidate=None, defer=True):
     """(exit code, report) for one file; code 0 means it passed.
 
-    `candidate` names a copy holding the text an edit WOULD write, while
-    `path` stays the file git scopes the blame to.
-
-    A gate that cannot RUN fails closed: a silent 0 is indistinguishable from a
-    clean file, which is how a crash became a pass.  Only a missing checker is
-    absolved, and only when the child says so on its own exit code.
+    `candidate` holds the text an edit WOULD write; `path` scopes the blame.
+    `defer` leaves import/use and citation/doc pairs to turn end.  A gate that
+    cannot RUN fails closed; only a missing checker, reported by the child's
+    own exit code, is absolved.
     See: docs/reference/script_convert_architecture.md#what-the-gate-must-see
     """
     argv = [sys.executable, GATE, '--gate-diff', path]
     if candidate:
         argv += ['--candidate', candidate]
+    if defer:
+        argv.append('--defer-paired')
     try:
         got = subprocess.run(
             argv, cwd=ROOT, capture_output=True, text=True, encoding='utf-8',
@@ -208,12 +211,15 @@ def gate_bash(payload):
     See: docs/reference/script_convert_architecture.md#what-the-gate-must-see
     """
     command = ((payload.get('tool_input') or {}).get('command') or '').strip()
-    if not command or WRAPPER in command.replace('\\', '/'):
+    why = shell_route.escape(command) if command else None
+    if not why:
         return 0
     sys.stderr.write(
-        'Shell commands run through the wrapper, which gates what they '
-        'write:\n\n    python %s %s\n\nA bare command can write a '
-        'first-party .py that no gate ever sees.\n' % (WRAPPER, command))
+        'Every part of a shell command runs through the wrapper, which gates '
+        'what it writes -- here %s.\n\n    python %s <program> [args...]\n'
+        '    python %s -c "<chain, pipe, loop or builtin>"\n\nOnly %s may sit '
+        'beside it.\n' % (why, WRAPPER, WRAPPER,
+                          ', '.join(sorted(shell_route.READ_ONLY))))
     return 2
 
 
@@ -235,11 +241,11 @@ def gate_pre(payload):
     return 2
 
 
-def gate_written(paths):
+def gate_written(paths, defer=True):
     """True when any already-written path owns a violation, reporting each."""
     broke = False
     for path in paths:
-        code, report = gate(path)
+        code, report = gate(path, defer=defer)
         if report and code == 0 and 'could not run' in report:
             sys.stderr.write(report)
             return False
@@ -247,6 +253,46 @@ def gate_written(paths):
             sys.stderr.write(report)
             broke = True
     return broke
+
+
+def turn_record(payload):
+    """The file listing every `.py` this session's edits wrote this turn."""
+    session = os.path.basename(str(payload.get('session_id') or 'default'))
+    return os.path.join(tempfile.gettempdir(), 'claude_doc_rules_gate',
+                        session + '.txt')
+
+
+def remember(payload, paths):
+    """Add `paths` to this turn's record, for `gate_turn` to judge."""
+    if not paths:
+        return
+    record = turn_record(payload)
+    os.makedirs(os.path.dirname(record), exist_ok=True)
+    with open(record, 'a', encoding='utf-8') as fh:
+        fh.writelines(os.path.realpath(p) + '\n' for p in paths)
+
+
+def gate_turn(payload):
+    """Block ending a turn that leaves an import without its use, or the reverse.
+
+    Never lets `stop_hook_active` through: the fix is always one edit away,
+    and passing the second try would make the rule optional.
+    See: docs/reference/script_convert_architecture.md#what-the-gate-must-see
+    """
+    record = turn_record(payload)
+    try:
+        with open(record, encoding='utf-8') as fh:
+            paths = sorted({l.strip() for l in fh if judged(l.strip())})
+    except OSError:
+        return 0
+    if gate_written(paths, defer=False):
+        sys.stderr.write('\nThe turn cannot end with an unused import, an '
+                         'undefined name or a dead citation in lines you '
+                         'changed. Finish the pair, or delete the half you '
+                         'wrote.\n')
+        return 2
+    os.remove(record)
+    return 0
 
 
 def main():
@@ -258,10 +304,13 @@ def main():
     event = payload.get('hook_event_name')
     if not os.path.isfile(GATE):
         return 0
+    if event == 'Stop':
+        return gate_turn(payload)
     if event == 'PreToolUse':
         if payload.get('tool_name') in ('Bash', 'PowerShell'):
             return gate_bash(payload)
         return gate_pre(payload)
+    remember(payload, edited_paths(payload))
     if touched_docs(payload) and os.path.isfile(LINKS):
         code, report = gate_docs()
         if code:

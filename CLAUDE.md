@@ -52,7 +52,10 @@ These protect things that are hard or impossible to get back.
 - 🛑 <a id="safe-run"></a>**Run every shell command through
   `python tools/validate/safe_run.py <command>`.** It streams output, returns the
   child's exit code, and gates the `.py` files the command wrote. The hook refuses
-  bare commands, because a heredoc can write a `.py` no gate ever sees.
+  bare commands, because a heredoc can write a `.py` no gate ever sees. Arguments
+  pass through verbatim. Beside the wrapper only read-only helpers (`cd`, `echo`,
+  `tail`, `grep`, …) may run; any other chain, loop or builtin goes inside
+  `safe_run.py -c '<command>'`.
 - 🛑 **Unlink every junction before removing a worktree.** Linking live
   `export/`/`output/` into a worktree is fine; `git worktree remove --force` and
   `rmtree` both follow junctions and delete the real tree, and both dirs are
@@ -298,7 +301,7 @@ Check theories against several of these before acting:
   needed.
 - FO3/FNV-specific code goes in its own `<stage>_<game>.py` beside the stage
   (e.g. `tes4_export/export_falloutnv.py`); the main file stays a call site.
-- Keep files under ~1000 lines; split by responsibility when one grows.
+- Keep files under ~1200 lines; split by responsibility when one grows.
 - <a id="tools-first"></a>**Check `tools/` before building anything bespoke.**
   ~147 tools exist — catalogue in
   [docs/reference/python_tools.md](docs/reference/python_tools.md). Folders:
@@ -344,8 +347,8 @@ refactoring.
 - `oversized-files` is a ratchet: it fires only when your edit raises the count.
   It counts code lines, so trimming comments can't clear it — remove or relocate
   code.
-- Avoid chicken-and-egg writes: e.g. adding an import without its call in the same
-  write trips the hook.
+- An import and its use may land in separate edits. Unused imports and undefined
+  names are checked when the turn ends, not per edit.
 - **Prose:** only a docstring, a one-line 120-char `#:` attribute doc, or a
   `# ----` heading. A docstring states the contract, never the story; rationale
   and measurements go in `docs/`, cited by `See: docs/<file>.md#anchor` (the gate
@@ -354,7 +357,7 @@ refactoring.
   placement hides nothing, and `# noqa`/`# pragma`/`# type:` count too. An inline
   comment means the code can't state its intent — fix the code.
 - **Shape:** per function ≤35 statements (not lines), complexity ≤25, nesting ≤4,
-  ≤10 returns; ≤1000 lines per file; no class-level `dict`/`list`/`set`.
+  ≤10 returns; ≤1200 lines per file; no class-level `dict`/`list`/`set`.
 - **No dead code:** no unused import or variable, no undefined name, nothing
   unreachable. `code_rules.py --dead-code` is the whole-program sweep.
 - **Imports go at module scope.** Keep one inside a function only to break a real

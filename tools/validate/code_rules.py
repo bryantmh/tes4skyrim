@@ -39,6 +39,12 @@ SKIP_PARTS = ('temp', 'references', 'external', 'output', 'export', 'build',
 #: Dataflow facts, not heuristics: ruff reports these with no false positives.
 RUFF_CODES = 'F401,F811,F841,F821'
 
+#: An import and its use, which one edit cannot always write together.
+PAIRED_CODES = ('F401', 'F811', 'F821')
+
+#: Whole rules whose other half lives elsewhere: a citation and its doc.
+PAIRED_RULES = ('dead-citations',)
+
 #: Only 100% confidence; at 60 the `@command` registry alone cries wolf.
 VULTURE_CONFIDENCE = '100'
 VULTURE_IGNORE_DECORATORS = '@command,@command.*'
@@ -63,7 +69,8 @@ EXPLAIN = {
     'comment-blocks': 'comment block over %d chars' % D.MAX_DOC_CHARS,
     'bloated-docstrings': 'docstring over %d chars (%d on a 1-2 line body)'
                           % (D.MAX_DOC_CHARS, D.TINY_DOC_CHARS),
-    'missing-docstrings': 'function with no docstring at all',
+    'missing-docstrings': 'function over %d statements with no docstring'
+                          % D.TINY_BODY_LINES,
     'fat-attr-docs': 'a `#:` doc running past one %d-char line'
                      % D.MAX_ATTR_DOC_CHARS,
     'fat-sections': 'section heading over %d chars of prose' % D.MAX_DOC_CHARS,
@@ -115,7 +122,8 @@ REMEDY = {
     'mutable-class-state':
         'a class-level dict/list/set is a global; make it an instance field',
     'oversized-files':
-        'split the file by responsibility (CLAUDE.md: keep files under ~1000 CODE lines, comments are NOT counted)',
+        'split the file by responsibility (CLAUDE.md: keep files under ~%d '
+        'CODE lines, comments are NOT counted)' % D.MAX_FILE_LINES,
     'dead-imports':
         'delete it; an unused name is indistinguishable from a mistake',
     'dead-code':
@@ -542,12 +550,23 @@ def _blame(now: dict, was: dict, touched, text: str, tree) -> dict:
     return owned
 
 
-def gate_diff(path: Path, limit: int = 10, source: Path = None) -> int:
+def _unpaired(sites: dict) -> dict:
+    """`sites` without PAIRED_CODES and PAIRED_RULES, judged at turn end."""
+    kept = [s for s in sites.get('dead-imports', ())
+            if str(s[2]).split()[0] not in PAIRED_CODES]
+    out = dict(sites, **{'dead-imports': kept})
+    return {k: v for k, v in out.items() if v and k not in PAIRED_RULES}
+
+
+def gate_diff(path: Path, limit: int = 10, source: Path = None,
+              defer: bool = False) -> int:
     """1 when the agent's own edit owns a violation; else 0.
 
     `source` holds the CANDIDATE text while `path` names the file it would
     become: the hook scores an edit before applying it, and git must still
-    scope the blame to the real file's diff.
+    scope the blame to the real file's diff.  `defer` leaves out the
+    PAIRED_CODES.
+    See: docs/reference/script_convert_architecture.md#what-the-gate-must-see
     """
     read = source or path
     if not read.exists() or read.suffix != '.py':
@@ -560,6 +579,8 @@ def gate_diff(path: Path, limit: int = 10, source: Path = None) -> int:
     if touched == set():
         return 0
     now = rule_sites(read, text, tree=tree)
+    if defer:
+        now = _unpaired(now)
     before = _baseline_source(origin)
     was = rule_sites(path, before, with_tools=False) if before else {}
     headline = ('NEW FILE -- all of it is yours' if touched is None
@@ -641,6 +662,9 @@ def _parser() -> argparse.ArgumentParser:
                         help='score only what THIS edit owns (the hook path)')
     parser.add_argument('--candidate', metavar='PATH',
                         help='read the text from here, blame --gate-diff PATH')
+    parser.add_argument('--defer-paired', action='store_true',
+                        help='skip unused imports, undefined names and '
+                             'dead citations')
     parser.add_argument('--sweep', action='store_true',
                         help='gate every first-party file')
     parser.add_argument('--dead-code', action='store_true',
@@ -671,7 +695,8 @@ def main(argv=None) -> int:
                    for n in args.gate_file)
     if args.gate_diff:
         cand = Path(args.candidate).resolve() if args.candidate else None
-        return max(gate_diff(Path(n).resolve(), args.limit, cand)
+        return max(gate_diff(Path(n).resolve(), args.limit, cand,
+                             args.defer_paired)
                    for n in args.gate_diff)
     _parser().print_help()
     return 0

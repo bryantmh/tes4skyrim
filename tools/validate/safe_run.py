@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Run a shell command, then gate every first-party `.py` it wrote.
+"""Run a command, then gate every first-party `.py` it wrote.
 
-    python tools/validate/safe_run.py <command...>
+    python tools/validate/safe_run.py <program> [args...]   # argv, verbatim
+    python tools/validate/safe_run.py -c '<shell command>'  # pipes, builtins
 
 Bash is denied at the permission layer because a command's effect cannot be
 predicted before it runs, which is how a `python - <<'PY'` heredoc wrote files
@@ -28,42 +29,27 @@ from tools.validate import code_rules as CR
 #: Exit code the harness reads as "blocked"; the child's own code otherwise.
 BLOCKED = 2
 
-#: The caller's own shell, so the command runs in the dialect it was written in.
+#: The shell's own code for "command not found".
+NOT_FOUND = 127
+
+#: The caller's own shell, so a `-c` string runs in the dialect it was written in.
 SHELL = os.environ.get('SHELL') or os.environ.get('COMSPEC') or ''
 
 
-def shell_argv(command: str) -> list:
-    """`[shell, -c, command]`, or None to take the platform default shell.
+def spawn_args(argv: list):
+    """`(args, shell)` for `subprocess.run`, or None for a malformed `-c`.
 
-    See: docs/reference/script_convert_architecture.md#what-the-gate-must-see
+    Plain arguments run as-is with no inner shell: the caller's shell already
+    removed the quoting, so a second shell would re-read `(`, `|` and `$`.
+    See: docs/reference/script_convert_architecture.md#the-wrapper-never-re-quotes
     """
-    if not SHELL or SHELL.lower().endswith('cmd.exe'):
+    if argv[0] != '-c':
+        return argv, False
+    if len(argv) != 2:
         return None
-    return [SHELL, '-c', command]
-
-
-def raw_tail() -> str:
-    """The command line after this script's name, with quoting intact.
-
-    `sys.argv` has already had one layer of quoting removed, so rejoining it
-    is lossy in both directions: a plain join drops the quotes around
-    `-k "a or b"`, and `list2cmdline` adds a second layer that the inner shell
-    then takes literally.  The untouched line is read from the OS instead.
-    See: docs/reference/script_convert_architecture.md#what-the-gate-must-see
-    """
-    if os.name != 'nt':
-        return ' '.join(sys.argv[1:])
-    import ctypes
-    get = ctypes.windll.kernel32.GetCommandLineW
-    get.restype = ctypes.c_wchar_p
-    get.argtypes = []
-    line = get() or ''
-    stem = os.path.basename(__file__)
-    cut = line.find(stem)
-    tail = line[cut + len(stem):].strip() if cut >= 0 else ''
-    if len(tail) > 1 and tail[0] == tail[-1] and tail[0] in '"\'':
-        return tail[1:-1]
-    return tail
+    if not SHELL or SHELL.lower().endswith('cmd.exe'):
+        return argv[1], True
+    return [SHELL, '-c', argv[1]], False
 
 
 def digests() -> dict:
@@ -90,28 +76,32 @@ def gate_paths(paths: list) -> int:
     return worst
 
 
-def main(argv: list) -> int:
-    """Run the command in `argv` and gate what it wrote.
+def run(spawn) -> int:
+    """The child's exit code; NOT_FOUND, with a hint, for a missing program."""
+    args, shell = spawn
+    try:
+        return subprocess.run(args, shell=shell, cwd=CR.ROOT).returncode
+    except FileNotFoundError:
+        print('safe_run: no program %r -- a shell builtin, pipe or chain '
+              'needs -c "<command>"' % args[0], file=sys.stderr)
+        return NOT_FOUND
 
-    The command is taken VERBATIM from the raw command line, never re-joined
-    from `sys.argv`: the shell has already removed one layer of quoting, so
-    `-k "a or b"` re-joins into three bare words and a heredoc loses its
-    newlines.  Everything after the script name is passed through untouched.
-    """
-    if not argv:
+
+def main(argv: list) -> int:
+    """Run the command in `argv` and gate what it wrote."""
+    spawn = spawn_args(argv) if argv else None
+    if spawn is None:
         print(__doc__, file=sys.stderr)
         return BLOCKED
     before = digests()
-    spawn = shell_argv(argv)
-    done = (subprocess.run(spawn, cwd=CR.ROOT) if spawn
-            else subprocess.run(argv, shell=True, cwd=CR.ROOT))
+    code = run(spawn)
     changed = written(before, digests())
     if not changed:
-        return done.returncode
+        return code
     print('\n  safe_run: %d file(s) written -- gating them'
           % len(changed), file=sys.stderr)
     if not gate_paths(changed):
-        return done.returncode
+        return code
     print('\nTHE COMMAND WROTE CODE THAT BREAKS THE RULES. Fix the violations '
           'above; the write has already landed, so the file is dirty until '
           'you do.', file=sys.stderr)
@@ -119,4 +109,4 @@ def main(argv: list) -> int:
 
 
 if __name__ == '__main__':
-    sys.exit(main(raw_tail()))
+    sys.exit(main(sys.argv[1:]))

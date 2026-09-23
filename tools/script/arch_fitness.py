@@ -82,9 +82,6 @@ BASELINE = Path(__file__).resolve().parent / 'script_convert_fitness.json'
 #: Scratch and vendored trees, excluded from every rule.
 REPO_SKIP = ('temp', 'references', 'external', 'output', 'export', 'build')
 
-MAX_DOC_CHARS = D.MAX_DOC_CHARS
-MAX_FUNCTION_LINES = D.MAX_FUNCTION_LINES
-
 #: 'le': lower is better.  'ge': higher is better.
 LOWER, HIGHER = 'le', 'ge'
 
@@ -124,43 +121,25 @@ METRICS = [
     ('dead-citations', 0, LOWER, 'doc'),
 ]
 
-#: One line each, printed by `--legend`.  A name says WHAT; this says WHY.
+#: One line each, printed by `--legend`; shared rules take `code_rules`' text.
 EXPLAIN = {
+    **CR.EXPLAIN,
     'text-repair-fns': 'takes emitted Papyrus back as input (fix the NODE)',
-    'god-functions': 'cyclomatic complexity over 25',
     'branch-points': 'total branches; splitting a function cannot move it',
     'private-reach-ins': 'emit/commands/assemble touching conv._ / ctx._',
     'code-lines': 'package implementation lines (docstrings excluded)',
-    'oversized-files': 'files over 1000 code lines',
     'reparse-round-trip': 'a node flattened to TES4 text and re-parsed',
     'source-rescans': 'feature flags regexed from raw source after parse',
-    'mutable-class-state': 'class-level dict/list/set as a global channel',
     'stray-constants': 'data tables living outside constants.py',
     'satellite-cmd-sets': 'per-command flag sets shadowing COMMAND_ROWS',
     'logic-in-constants': 'constants.py taking a graph, or reading at import',
     'psc-readback': 'a symbol table rebuilt by grepping generated .psc',
     'duplicate-literals': 'redundant copies of one string-literal collection',
-    'long-functions': 'over %d physical lines' % MAX_FUNCTION_LINES,
-    'multi-return-fns': 'over 10 return points -- a dispatch chain',
-    'deep-nesting': 'if/for/while/with/try nested over 4 deep',
     'local-imports': 'function-local imports (they hide layering breaks)',
     'regex-ops': 'the string-era footprint in one number',
     'ms-per-script': 'median ms on the frozen fixture, vs baseline',
     'duck-typed-nodes': 'getattr on an AST node instead of a real field',
     'return-annotations': 'pct of public functions with one',
-    'comment-blocks': 'module-level comment block over %d chars'
-                      % MAX_DOC_CHARS,
-    'inline-comments': 'a prose comment inside a function body',
-    'unsectioned-defs': 'a def above the first heading in a sectioned file',
-    'fat-sections': 'section heading over %d chars of prose'
-                    % MAX_DOC_CHARS,
-    'missing-docstrings': 'function with no docstring at all',
-    'bloated-docstrings': 'docstring over %d chars (%d on a 1-2 line body)'
-                          % (D.MAX_DOC_CHARS, D.TINY_DOC_CHARS),
-    'fat-attr-docs': 'a `#:` doc running past one 120-char line',
-    'stray-comments': 'a prose comment outside every function',
-    'dead-imports': 'an unused import, variable, or undefined name',
-    'dead-citations': 'a `docs/` path or anchor that does not exist',
 }
 
 #: The doc-rule keys; scoped to the package, they read 2,857 / 1,617 / 57.
@@ -349,13 +328,10 @@ def _speed() -> float:
 
     Deliberately NOT a corpus run: converting anything real takes seconds and
     the suite would stop being run on every edit.  One script, no plugin, no
-    export index, no I/O.
+    export index, no I/O.  An import failure raises, never scores 0.0.
     """
-    try:
-        from script_convert.converter import ScriptConverter
-        from script_convert.cross_ref import CrossRefGraph
-    except Exception:
-        return 0.0
+    from script_convert.converter import ScriptConverter
+    from script_convert.cross_ref import CrossRefGraph
     conv = ScriptConverter(CrossRefGraph())
     runs = []
     for _ in range(FIXTURE_RUNS):
@@ -498,41 +474,6 @@ def measure(pkg: Path = PKG, with_speed: bool = True,
         / max(len(public), 1))
     out['ms-per-script'] = _speed() if with_speed else 0.0
     return out
-
-
-#: How to FIX each gated rule; the locator says where, this says what to do.
-REMEDY = {
-    'stray-comments':
-        'move the prose into the nearest docstring, or delete it',
-    'inline-comments':
-        'lift it into the function docstring, or name a helper after it',
-    'comment-blocks':
-        'move it into the module docstring',
-    'fat-docstrings':
-        'compress: keep every count, name and mechanism, cut the narration',
-    'bloated-docstrings':
-        'the body is short -- one line of docstring is enough',
-    'missing-docstrings':
-        'add a one-line docstring saying what it returns',
-    'fat-attr-docs':
-        'a `#:` doc is ONE line of 120 chars; longer goes in a docstring',
-    'fat-sections':
-        'a section heading is a LABEL; move the prose to a docstring',
-    'unsectioned-defs':
-        'this file uses `# ----` sections; move the def under one',
-    'god-functions':
-        'split it: extract the branch arms, or drive them from a table',
-    'long-functions':
-        'split it into named phases',
-    'deep-nesting':
-        'invert the guards and return early, or extract the inner block',
-    'multi-return-fns':
-        'a dispatch chain -- make it a table lookup',
-    'mutable-class-state':
-        'a class-level dict/list/set is a global; make it an instance field',
-    'oversized-files':
-        'split the file by responsibility (CLAUDE.md: keep files under ~1000)',
-}
 
 
 def _print_sites(keys: str, limit: int) -> int:

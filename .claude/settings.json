@@ -28,6 +28,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc_rules_gate.py\"",
+            "timeout": 120
+          }
+        ]
+      }
     ]
   }
 }

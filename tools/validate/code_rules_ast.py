@@ -29,7 +29,7 @@ MAX_FUNCTION_LINES = 35
 MAX_COMPLEXITY = 25
 MAX_NESTING = 4
 MAX_RETURNS = 10
-MAX_FILE_LINES = 1000
+MAX_FILE_LINES = 1200
 
 #: A section heading is a `# ----` or `# ====` rule above and below a title.
 BANNER_RE = re.compile(r'^#\s*(?:-{4,}|={4,})\s*$')
@@ -328,9 +328,13 @@ def anchorless_citations(path, tree) -> list:
 
 
 def missing_docstrings(path, tree) -> list:
-    """Functions carrying no docstring; no exemption for closures."""
+    """Functions over TINY_BODY_LINES statements carrying no docstring.
+
+    See: docs/reference/script_convert_architecture.md#a-tiny-function-needs-no-docstring
+    """
     return [(path, n.lineno, n.name) for n in functions(tree)
-            if ast.get_docstring(n) is None]
+            if ast.get_docstring(n) is None
+            and statements(n) > TINY_BODY_LINES]
 
 
 def unsectioned_defs(path, text: str, tree) -> list:
