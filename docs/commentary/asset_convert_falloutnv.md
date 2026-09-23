@@ -714,9 +714,24 @@ rifle adds a whole-torso shift: Skyrim's spine starts 6.7-7.6 units behind
 FNV's from the same COM, which the aim's torso twist turns into a sideways
 move of both shoulders. So both the sight offset and the loose left hand are
 the retarget keeping Skyrim's proportions, not a missing runtime step.
-`_fill_clip` also fills an iron-sight attack from the HIP aim: `1hpattack3is`
-has no left forearm or hand track, so its left hand drops 41 units below the
-camera.
+
+The first-person retarget now ends with a two-bone IK per arm
+(`FIRST_PERSON_ARMS`, `clip_retarget._chain_fix`): after the rotation pass,
+each Skyrim upper arm and forearm bend and swing so the hand reaches the
+FNV hand's position (look-node anchored, like the camera), then roll about
+the shoulder-to-hand line so the elbow points the way FNV's does, projected
+onto that line's plane (the unprojected elbow direction rolled the hand off
+target by 5-6 units). The hands keep their own rotation, so `Weapon` and
+the sight follow. Measured after: hands, `Weapon` and `##SightingNode` at
+0.00 units from FNV's camera-relative positions in `1hpattackleftis`,
+`1hpattack3is`, `2hraimis` (frames 0 and 20) and `2hraim`; the pass adds
+0.13 s to a 91-frame clip. The third-person rig has no camera anchor and
+keeps the rotation-only retarget.
+
+An iron-sight clip is composed over its own stance first (`_fill_clips`:
+iron aim, then hip aim), as is a synthesized iron aim; the hip-only fill
+dropped `1hpattack3is`'s left forearm and hand (no tracks) 41 units below
+the camera. That clip's authored left upper arm still hangs, as in FNV.
 
 ## <a id="gun-parts"></a>Gun parts: the magazine, slide and bolt
 

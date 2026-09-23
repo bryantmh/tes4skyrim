@@ -57,6 +57,26 @@ def mat_to_quat_wxyz(m) -> np.ndarray:
     return q / np.linalg.norm(q)
 
 
+def axis_angle(axis, angle) -> np.ndarray:
+    """Row-convention 3x3 turning vectors `angle` radians about `axis`."""
+    k = np.asarray(axis, dtype=np.float64)
+    k = k / np.linalg.norm(k)
+    skew = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    col = np.eye(3) + np.sin(angle) * skew + (1 - np.cos(angle)) * skew @ skew
+    return col.T
+
+
+def rotation_between(u, v, fallback_axis) -> np.ndarray:
+    """Row-convention 3x3 turning direction `u` onto `v`; a half turn about
+    `fallback_axis` when they are opposite."""
+    un, vn = u / np.linalg.norm(u), v / np.linalg.norm(v)
+    axis = np.cross(un, vn)
+    s, c = np.linalg.norm(axis), float(np.dot(un, vn))
+    if s > 1e-9:
+        return axis_angle(axis, np.arctan2(s, c))
+    return np.eye(3) if c > 0 else axis_angle(fallback_axis, np.pi)
+
+
 def compose(translation, rot3, scale=1.0) -> np.ndarray:
     """Row-convention 4x4 from a translation, a 3x3 rotation and a scale."""
     m = np.eye(4)
@@ -265,11 +285,15 @@ def _anchor_shift(src: Skeleton, dst: Skeleton, src_pose, mapped: dict,
                  + src_pose[si][3, :3]) for di, si in mapped.items()}
 
 
-def _pose_frame(rig: dict, src_world, rots, trans, f: int) -> None:
-    """Write frame `f` of every mapped bone's local rotation/translation.
+def _pose_frame(rig: dict, src_world, rots, trans, f: int,
+                fix: dict = None) -> np.ndarray:
+    """Write frame `f` of every mapped bone's local rotation/translation;
+    returns the posed world matrices. `fix` post-multiplies the world
+    rotation of the mapped bones it names (the arm IK's correction).
 
     See: docs/commentary/asset_convert_falloutnv.md#weapon-bone-verbatim
     """
+    fix = fix or {}
     dst, mapped, shift = rig['dst'], rig['mapped'], rig['shift']
     src_pose, src_pose_rot_inv = rig['src_pose'], rig['src_pose_rot_inv']
     dst_world = np.empty_like(dst.world)
@@ -285,6 +309,8 @@ def _pose_frame(rig: dict, src_world, rots, trans, f: int) -> None:
         else:
             dev = src_pose_rot_inv[si] @ src_world[si][:3, :3]
             rot = dst.world[di][:3, :3] @ dev
+            if di in fix:
+                rot = rot @ fix[di]
         t = rest[3, :3] @ parent_rot + parent_t
         if di in rig['verbatim']:
             t = parent_t + src_world[si][3, :3] - src_world[
@@ -297,18 +323,96 @@ def _pose_frame(rig: dict, src_world, rots, trans, f: int) -> None:
         dst_world[di] = compose(t, rot)
         if si is not None:
             rots[di][f] = mat_to_quat_wxyz(rot @ np.linalg.inv(parent_rot))
+    return dst_world
+
+
+def _ik_setup(src: Skeleton, dst: Skeleton, mapped: dict, verbatim: set,
+              bone_map: dict, chains) -> list:
+    """Per arm chain (source upper arm, forearm, hand): the source and target
+    indices and the mapped target bones each IK segment rotates.
+
+    A segment owns the mapped, non-verbatim bones whose nearest chain
+    ancestor is its joint; bones under the hand keep their own rotation.
+    """
+    out = []
+    for names in chains:
+        if not all(n in src.index and bone_map.get(n) in dst.index
+                   for n in names):
+            continue
+        s = [src.index[n] for n in names]
+        d = [dst.index[bone_map[n]] for n in names]
+        owner = {}
+        for di in range(len(dst.names)):
+            a = di
+            while a >= 0 and a not in d:
+                a = dst.parents[a]
+            if a in d[:2] and di in mapped and di not in verbatim:
+                owner[di] = d.index(a)
+        out.append({'src': s, 'dst': d, 'owner': owner})
+    return out
+
+
+def _perp(v, axis) -> np.ndarray:
+    """`v` without its component along `axis`."""
+    n = axis / np.linalg.norm(axis)
+    return v - n * np.dot(v, n)
+
+
+def _chain_fix(chain: dict, src_world, dst_world, offset) -> tuple:
+    """(upper arm, forearm) world corrections putting the hand on the
+    source hand's position (+ `offset`), elbow on the source elbow's side.
+
+    Two-bone IK over the target's own segment lengths: bend the elbow to
+    the reach, swing the chain onto the target, roll it about the
+    shoulder-to-hand line to the source's elbow direction.
+    See: docs/commentary/asset_convert_falloutnv.md#first-person-hands-spread
+    """
+    (su, sf, sh), (du, df, dh) = chain['src'], chain['dst']
+    S, E, H = (dst_world[i][3, :3] for i in (du, df, dh))
+    target = src_world[sh][3, :3] + offset - S
+    a, b = E - S, H - E
+    la, lb = np.linalg.norm(a), np.linalg.norm(b)
+    reach = np.clip(np.linalg.norm(target), abs(la - lb) + 1e-4,
+                    la + lb - 1e-4)
+    bend = np.eye(3)
+    n = np.cross(-a, b)
+    if np.linalg.norm(n) > 1e-9:
+        cur = np.arccos(np.clip(np.dot(-a, b) / (la * lb), -1, 1))
+        want = np.arccos(np.clip((la * la + lb * lb - reach * reach)
+                                 / (2 * la * lb), -1, 1))
+        bend = axis_angle(n, want - cur)
+    swing = rotation_between(a + b @ bend, target, n)
+    pole_src = _perp(_perp(src_world[sf][3, :3] - src_world[su][3, :3],
+                           src_world[sh][3, :3] - src_world[su][3, :3]),
+                     target)
+    pole_cur = _perp(a @ swing, target)
+    roll = np.eye(3)
+    if np.linalg.norm(pole_src) > 1e-6 and np.linalg.norm(pole_cur) > 1e-6:
+        roll = rotation_between(pole_cur, pole_src, target)
+    return swing @ roll, bend @ swing @ roll
+
+
+def _arm_fix(rig: dict, src_world, dst_world) -> dict:
+    """{target bone: world correction} for every IK chain's segments."""
+    fix = {}
+    for chain in rig['ik']:
+        seg = _chain_fix(chain, src_world, dst_world, rig['ik_offset'])
+        for di, k in chain['owner'].items():
+            fix[di] = seg[k]
+    return fix
 
 
 def retarget_clip(clip: DecodedClip, src: Skeleton, dst: Skeleton,
                   bone_map: dict, deltas: dict = None, name: str = None,
-                  translated=TRANSLATED_BONES, anchor=None) -> DecodedClip:
-    """`clip` (source bone names) as a clip over `dst`'s bones.
+                  translated=TRANSLATED_BONES, anchor=None,
+                  ik_chains=()) -> DecodedClip:
+    """`clip` (source names, root motion split off) over `dst`'s bones.
 
-    bone_map: source bone -> target bone. Unmapped target bones and the
-    root keep their rest local; the source's root-motion split must already
-    have happened. `translated` names the target bones that take the
-    source's world translation deviation; `anchor` (source bone, target
-    bone) makes that deviation anchor-relative.
+    bone_map: source -> target bone; unmapped bones and the root keep their
+    rest local. `translated` bones take the source's world translation
+    deviation, anchor-relative with `anchor` (source bone, target bone).
+    `ik_chains` (source upper arm, forearm, hand) bend each arm so the hand
+    reaches the source hand, anchor-relative likewise.
     See: docs/commentary/asset_convert_falloutnv.md#accum-root-identity
     """
     pairs = [(src.index[s], dst.index[d]) for s, d in bone_map.items()
@@ -327,9 +431,17 @@ def retarget_clip(clip: DecodedClip, src: Skeleton, dst: Skeleton,
            'src_pose_rot_inv': np.array([np.linalg.inv(w[:3, :3])
                                          for w in src_pose]),
            'shift': _anchor_shift(src, dst, src_pose,
-                                  {di: mapped[di] for di in trans}, anchor)}
+                                  {di: mapped[di] for di in trans}, anchor),
+           'ik': _ik_setup(src, dst, mapped, verbatim, bone_map, ik_chains),
+           'ik_offset': (np.zeros(3) if anchor is None else
+                         dst.world[dst.index[anchor[1]]][3, :3]
+                         - src.world[src.index[anchor[0]]][3, :3])}
     for f in range(n_frames):
-        _pose_frame(rig, src.fk(_source_locals(clip, src, f)), rots, trans, f)
+        src_world = src.fk(_source_locals(clip, src, f))
+        world = _pose_frame(rig, src_world, rots, trans, f)
+        if rig['ik']:
+            _pose_frame(rig, src_world, rots, trans, f,
+                        _arm_fix(rig, src_world, world))
 
     tracks = []
     for di in sorted(mapped):

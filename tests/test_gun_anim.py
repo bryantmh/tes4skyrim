@@ -133,3 +133,44 @@ class TestRetarget:
             assert all(v < 12.0 for v in err.values()), (frame, err)
         if stem == '1hpreloada':
             assert any(a.startswith('SoundPlay.TES4_') for _t, a in ann)
+
+
+FNV_FIRST = os.path.join(os.path.dirname(FNV_MALE), '_1stperson')
+
+
+@needs_fnv
+class TestFirstPersonHands:
+    """First-person hands land where FNV put them relative to the camera."""
+
+    @pytest.mark.parametrize('stem', ['1hpattackleftis', '2hraimis'])
+    def test_hands_reach_the_source_hands(self, stem):
+        """The arm IK puts both hands (and so the gun's sight) on FNV's
+        camera-relative positions, which the rotation retarget missed by
+        2-8 units."""
+        from asset_convert.havok.clip_retarget import world_positions
+        from asset_convert.havok.gun_anim_falloutnv import (
+            _rig, retarget_gun_clip)
+        skel = os.path.join(FNV_FIRST, 'skeleton.nif')
+        src_clip, clip, *_ = retarget_gun_clip(
+            os.path.join(FNV_FIRST, stem + '.kf'), skel)
+        rig = _rig(skel)
+        s, d = rig['src'], rig['dst']
+        sw, dw = (world_positions(src_clip, s, 0),
+                  world_positions(clip, d, 0))
+        scam = sw[s.index['Camera1st']]
+        dcam = dw[d.index['Camera1st [Cam1]']]
+        for src_bone in ('Bip01 R Hand', 'Bip01 L Hand', 'Weapon'):
+            a = (sw[s.index[src_bone]] @ np.linalg.inv(scam))[3, :3]
+            b = (dw[d.index[rig['bone_map'][src_bone]]]
+                 @ np.linalg.inv(dcam))[3, :3]
+            assert np.linalg.norm(a - b) < 0.05, (src_bone, a, b)
+
+    def test_iron_clip_fills_from_the_iron_aim_first(self):
+        """An iron-sight fire clip is composed over the iron aim, then the
+        hip aim; a hip aim is composed over nothing."""
+        from asset_convert.havok.gun_anim_falloutnv import _fill_clips
+        corpus = {'1hpaim': 'aim.kf', '1hpattackleftis': 'leftis.kf',
+                  '1hpattack3is': '3is.kf'}
+        assert _fill_clips(corpus, '1hpattack3is') == ('leftis.kf', 'aim.kf')
+        assert _fill_clips(corpus, '1hpaimis') == ('leftis.kf', 'aim.kf')
+        assert _fill_clips(corpus, '1hpaim') == ()
