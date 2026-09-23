@@ -57,6 +57,21 @@ def _wrld_edid(rec: dict) -> str:
     return converted_worldspace_edid(get_str(rec, 'EditorID'))
 
 
+def _world_parent(rec: dict) -> bytes:
+    """WRLD WNAM, plus PNAM only when the source authored one.
+
+    See: docs/commentary/tes4_export_falloutnv.md#child-worldspaces
+    """
+    wnam = get_formid(rec, 'WNAM.Parent')
+    if not wnam:
+        return b''
+    pnam = parent_use_flags(rec)
+    subs = pack_formid_subrecord('WNAM', wnam)
+    if pnam is not None:
+        subs += pack_uint16_subrecord('PNAM', pnam)
+    return subs
+
+
 def _world_water_and_planes(rec: dict) -> bytes:
     """WRLD NAM2/NAM3 water types and the NAM4/DNAM fallback planes.
 
@@ -663,11 +678,7 @@ def convert_WRLD(rec: dict) -> bytes:
     if world_lctn:
         subs += pack_formid_subrecord('XLCN', world_lctn)
 
-    wnam = get_formid(rec, 'WNAM.Parent')
-    if wnam:
-        subs += pack_formid_subrecord('WNAM', wnam)
-        subs += pack_uint16_subrecord('PNAM', parent_use_flags(rec))
-
+    subs += _world_parent(rec)
     subs += pack_formid_subrecord('CNAM', _world_climate(rec))
 
     subs += _world_water_and_planes(rec)

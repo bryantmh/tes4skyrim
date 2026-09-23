@@ -53,22 +53,17 @@ def marker_substitute(name_raw: int):
 #: TES5 PNAM bits: land, LOD, map, water, climate, sky cell (bit 5 is FO3-only).
 TES5_PARENT_USE_MASK = 0x5F
 
-#: What a child worldspace borrows when its source authored no PNAM: everything.
-DEFAULT_PARENT_USE = TES5_PARENT_USE_MASK
-
 #: DATA bits TES4, FO3/FNV and TES5 all define: Small World, Can't Fast Travel.
 _SHARED_WORLD_FLAGS = 0x03
 
 
-def parent_use_flags(rec: dict) -> int:
-    """PNAM for a child worldspace: the authored FO3/FNV bits, else everything.
+def parent_use_flags(rec: dict):
+    """PNAM for a child worldspace: the authored FO3/FNV bits, else None.
 
     See: docs/commentary/tes4_export_falloutnv.md#child-worldspaces
     """
     flags = get_int(rec, 'PNAM.Flags', None)
-    if flags is None:
-        return DEFAULT_PARENT_USE
-    return flags & TES5_PARENT_USE_MASK
+    return None if flags is None else flags & TES5_PARENT_USE_MASK
 
 
 def world_map_offset(rec: dict) -> tuple:

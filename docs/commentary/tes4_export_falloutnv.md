@@ -654,7 +654,7 @@ nothing.
 | Field | FNV authored | TES5 written |
 |---|---|---|
 | PNAM | `0x0004` Use Map Data, on all 10 children | authored `& 0x5F` (FO3 bit 5 *Use Image Space* has no TES5 bit) |
-| PNAM | absent (TES4 has no PNAM) | `0x005F`, every bit: Oblivion draws the PARENT's land under a child, and the child's own LAND is unfinished (ICImperialPalace: 47 LAND over 58 cells, 35 with flags `0x401` and no texture layers, heights differing from Tamriel's at the same grid). Writing `0x0004` here rendered that junk land and open water in the IC palace and arena worlds |
+| PNAM | absent (TES4 has no PNAM) | absent, so the engine's `0xFFFF` applies: Oblivion draws the PARENT's land under a child, and the child's own LAND is unfinished (ICImperialPalace: 47 LAND over 58 cells, 35 with flags `0x401` and no texture layers, heights differing from Tamriel's at the same grid). Writing `0x0004` here rendered that junk land and open water in the IC palace and arena worlds; writing `0x005F` lost the parent's distant LOD in AnvilWorld and the other city worlds |
 | ONAM | scale 0.7, offset (-16000, 103000) for the Freeside worlds | authored (scale, x, y, 0); was a constant (1, 0, 0, 0) |
 | NAM4 | -2300 on WastelandNV | authored; TES4 sea level stays 0 |
 | DNAM | authored land/water defaults | authored; TES4 keeps (-2048, 0) |
@@ -665,10 +665,11 @@ ONAM is how FNV places a child on the parent's map: Freeside's gate at
 gate's (-9815, 102729). The identity ONAM put the marker at raw child
 coordinates instead.
 
-Oblivion's own children must NOT get `0x0004`: Tamriel's terrain under an
-IC district is what Oblivion itself renders. They keep the engine-default
-reading (`0x005F`), so terrain LOD still treats them as borrowing the parent's
-grid; see
+Oblivion's own children get no PNAM at all, never a Fallout-derived value.
+`0x005F` is NOT the engine default: it drops bit 5, which vanilla sets on the
+cities that show Tamriel's LOD (WhiterunWorld and WindhelmWorld author `0x7F`,
+RiftenWorld `0x77`). Only the authored FO3/FNV PNAM is written. With no PNAM,
+terrain LOD still treats a TES4 child as borrowing the parent's grid; see
 [asset_convert_terrain.md](asset_convert_terrain.md#child-worldspaces-with-their-own-lod).
 
 
