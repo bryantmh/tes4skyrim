@@ -26,6 +26,7 @@ apply_patches()
 from pyffi.formats.nif import NifFormat
 
 from asset_convert import paths
+from asset_convert.character.body_wrap import field_path
 from asset_convert.character.prn_skin import (rigid_skin_data,
                                               rigid_skin_instance)
 from asset_convert.character.skin_retarget import (
@@ -71,6 +72,12 @@ _BONE_PREFIX = 'Bip01'
 
 #: Record files that carry wearables.
 _WEARABLE_FILES = ('ARMO.txt', 'CLOT.txt')
+
+#: Row-vector mirror in X, as a 4x4: a left part's correction is its right twin's mirrored.
+_MIRROR_X = np.diag([-1.0, 1.0, 1.0, 1.0])
+
+#: Leg slots (ankle, knee, upper leg) whose rigid parts take the twist-and-shift correction; arms looked worse.
+_CORRECTED_SLOTS = (17, 18, 19, 20, 21, 22)
 
 
 def shape_vertices(shape) -> np.ndarray:
@@ -134,6 +141,28 @@ def _rotation_between(here, there) -> np.ndarray:
                      [axis[2], 0, -axis[0]],
                      [-axis[1], axis[0], 0]])
     return (np.eye(3) + sine * skew + (1 - cosine) * skew @ skew).T
+
+
+def _twist_shift(placed: np.ndarray, target: np.ndarray, axis: np.ndarray) -> np.ndarray:
+    """4x4 turning `placed` about `axis` through its centre and shifting it across `axis`, best onto `target`.
+
+    Only the components across the axis are fitted (2D Procrustes); nothing
+    moves along it.
+    """
+    axis = axis / np.linalg.norm(axis)
+    side = np.cross(axis, [0.0, 0.0, 1.0] if abs(axis[2]) < 0.9 else [0.0, 1.0, 0.0])
+    side /= np.linalg.norm(side)
+    frame = np.stack([side, np.cross(axis, side), axis], axis=1)
+    a, b = placed @ frame[:, :2], target @ frame[:, :2]
+    h = (a - a.mean(axis=0)).T @ (b - b.mean(axis=0))
+    angle = np.arctan2(h[0, 1] - h[1, 0], h[0, 0] + h[1, 1])
+    turn = np.eye(3)
+    turn[:2, :2] = [[np.cos(angle), np.sin(angle)], [-np.sin(angle), np.cos(angle)]]
+    out = np.eye(4)
+    out[:3, :3] = frame @ turn @ frame.T
+    centre = placed.mean(axis=0)
+    out[3, :3] = centre - centre @ out[:3, :3] + (b.mean(axis=0) - a.mean(axis=0)) @ frame[:, :2].T
+    return out
 
 
 def _geometries(root) -> list:
@@ -283,11 +312,11 @@ class RestSkeleton:
     See: docs/commentary/asset_convert_armor.md#morrowind-pose-cache
     """
 
-    def __init__(self, path, skyrim: dict, bind: dict = None):
+    def __init__(self, path, skyrim: dict, bind: dict = None, female: bool = False):
         """Index `path` against the Skyrim skeleton `skyrim` and the bind skeleton `bind`."""
         data = read_nif(str(path))
         old_root = data.roots[0]
-        self.skyrim, self.bind = skyrim, bind or {}
+        self.skyrim, self.bind, self.female, self._corrections = skyrim, bind or {}, female, None
         self.world, self.parent, self.child, self.attach = {}, {}, {}, {}
         for node in old_root.tree():
             if isinstance(node, NifFormat.NiNode) \
@@ -361,6 +390,54 @@ class RestSkeleton:
                          np.where(along > 0.0, along * (sk_len / mw_len), along))
         return verts + np.outer(moved - along, axis)
 
+    def pivot(self, bone: str) -> np.ndarray:
+        """The Skyrim rest position of the bone a Morrowind bone is renamed onto."""
+        return self.skyrim[OBLIVION_TO_SKYRIM_BONE_MAP[bone]][3, :3]
+
+    def _placed(self, slot: int, points: np.ndarray) -> np.ndarray:
+        """Bind-rest points on `slot`'s bone placed as its rigid parts are: turned, stretched, at the Skyrim pivot."""
+        bone = self.attach[PART_ATTACH_NODES[slot]][0]
+        carry = np.linalg.inv(self.rest_world(bone)) @ self.world[bone]
+        base = points @ carry[:3, :3] + carry[3, :3] - self.world[bone][3, :3]
+        return self.stretch(bone, base @ self.direction_delta(bone)) + self.pivot(bone)
+
+    def _fit_corrections(self) -> dict:
+        """{INDX slot: 4x4} twisting and shifting each placed reference part onto its fitted Skyrim place.
+
+        A right slot is fitted together with its mirrored left twin, and the
+        left takes the mirrored result. Empty without the Morrowind wrap field.
+        See: docs/commentary/asset_convert_armor.md#morrowind-armor-assembly
+        """
+        path = field_path(self.female, True)
+        if not path.exists():
+            return {}
+        with np.load(path, allow_pickle=False) as z:
+            if 'mw_slot' not in z:
+                return {}
+            labels, src, dst = z['mw_slot'], z['src'].astype(np.float64), z['dst0'].astype(np.float64)
+        out = {}
+        for slot, node in ((s, PART_ATTACH_NODES[s]) for s in _CORRECTED_SLOTS):
+            twin = next((s for s, n in PART_ATTACH_NODES.items() if 'Right' in node
+                         and n == node.replace('Right', 'Left')), None)
+            segment = self._segment(self.attach[node][0]) if node in self.attach else None
+            if _LEFT in node or segment is None or not (labels == slot).any():
+                continue
+            pairs = [(self._placed(slot, src[labels == slot]), dst[labels == slot])]
+            if twin is not None:
+                pairs.append((self._placed(twin, src[labels == twin]) * [-1.0, 1.0, 1.0],
+                              dst[labels == twin] * [-1.0, 1.0, 1.0]))
+            out[slot] = _twist_shift(np.vstack([p for p, _t in pairs]), np.vstack([t for _p, t in pairs]),
+                                     segment[1])
+            if twin is not None:
+                out[twin] = _MIRROR_X @ out[slot] @ _MIRROR_X
+        return out
+
+    def correction(self, slot: int) -> np.ndarray:
+        """4x4 moving a placed rigid part of `slot` across its bone; else identity."""
+        if self._corrections is None:
+            self._corrections = self._fit_corrections()
+        return self._corrections.get(slot, np.eye(4))
+
     def hierarchy(self) -> tuple:
         """(fresh Data of the bone tree posed at `rest_world`, {lower-case bone name: node}).
 
@@ -382,18 +459,25 @@ class RestSkeleton:
         return data, bones
 
 
-def _adopt_rigid(shape, part_root, frame, bone, skel, root, flat) -> None:
+def _adopt_rigid(shape, part, bone, skel, root, flat) -> None:
     """Skin a rigid part onto a flat bone node as upright offsets from the pivot.
 
     The stored vertices are what `add_prn_skin` leaves for an Oblivion helmet:
     the bone pivot's position with the world's orientation, turned so the part
-    hangs along the Skyrim bone's rest direction.
+    hangs along the Skyrim bone's rest direction, then twisted and shifted
+    across it by the slot's `correction`. `part` is (slot, part root, frame).
     See: docs/commentary/asset_convert_armor.md#morrowind-armor-assembly
     """
+    slot, part_root, frame = part
     full = _full_transform(shape, part_root) @ frame
     turn = skel.direction_delta(bone)
     verts = skel.stretch(bone, (shape_vertices(shape) @ full[:3, :3] + full[3, :3]
                                 - skel.world[bone][3, :3]) @ turn)
+    fix = skel.correction(slot)
+    if not np.array_equal(fix, np.eye(4)):
+        pivot = skel.pivot(bone)
+        verts = (verts + pivot) @ fix[:3, :3] + fix[3, :3] - pivot
+        turn = turn @ fix[:3, :3]
     normals = shape_normals(shape)
     if normals is not None:
         normals = normals @ full[:3, :3] @ turn
@@ -510,7 +594,7 @@ def _adopt_shape(shape, part, place) -> list:
         return _adopt_skinned(shape, part_root, skel, root, bones)
     if rigid_world:
         return _adopt_rigid_world(shape, part_root, frame, bone, skel, place)
-    _adopt_rigid(shape, part_root, frame, bone, skel, root, flat)
+    _adopt_rigid(shape, (slot, part_root, frame), bone, skel, root, flat)
     return [flat[bone]]
 
 
@@ -572,7 +656,7 @@ def _worn_specs(rec_dir):
 def rest_skeleton(nif, female: bool) -> RestSkeleton:
     """The gender's rest skeleton from base_anim `nif` and the generated bind skeleton."""
     return RestSkeleton(nif, load_skeleton(SKEL_SKYRIM_FEMALE if female else SKEL_SKYRIM_MALE),
-                        load_skeleton(SKEL_MORROWIND[female]))
+                        load_skeleton(SKEL_MORROWIND[female]), female)
 
 
 def _skeletons(roots) -> dict:

@@ -360,6 +360,23 @@ The attach rules are OpenMW's `SceneUtil::attach`, reproduced per part:
   against Skyrim's 27.95, so an unstretched ankle piece hung about 9 units
   below the Skyrim ankle -- boots sank below the ground, the foot left
   floating above them (thigh x1.10, upper arm x1.27, forearm x0.95).
+  Leg parts (ankle, knee, upper leg; `_CORRECTED_SLOTS`) then take one
+  twist about the Skyrim bone and one shift across it
+  (`RestSkeleton.correction`): a 2D fit of the reference body's skin of that
+  slot, placed the same way, onto where the wrap field fitted it (`dst0`),
+  across the bone only, each right slot fitted with its mirrored left twin.
+  Knee plates had sat 1.7 units forward of the shin, boot shafts ~1 off
+  centre; after, 0.6 and 0.1, and greaves and boots sit right in game.
+  Measured and rejected in game: the same correction on the arms (upper
+  arm twist ~30 degrees, forearm/wrist shift 3-5 units) looked worse on
+  pauldrons, bracers and gauntlets. Fitting rigid parts whole through the
+  body wrap (skinned to their real bone at the rest pose), or one
+  similarity per slot straight onto `dst0`, both follow the wrap field's
+  heights, which ignore the joints: Morrowind's knee skin (z 27.6-50.1, knee
+  joint 43.5) lands at z 29.6-48.4 on Skyrim, whose knee is at 33.5, so knee
+  plates sat ~10 units high; in game pauldrons popped and warped. A full
+  bone-frame match cannot fix the twist: Skyrim bones run along local Z,
+  Morrowind's along X, with side axes that differ between arms and legs.
   The first attempt stored bone-LOCAL vertices under the same
   identity bind, and every piece floated: `_bake_shape_into_bone_frame`
   composes the stored verts with the bone's TRANSLATION only. The one-bone
@@ -451,7 +468,11 @@ The record's part list is the authored coverage:
   Cutting against every part the record does not list (hands, feet, knees
   included) added 262 lower-thigh triangles under chest-only robes
   (`common_robe_05`) that clipped through the skirt, and changed none of
-  the 44 forearm-ring vertices it was meant to reach.
+  the 44 forearm-ring vertices it was meant to reach. A second ARMA per
+  knee-covering piece (calves 38 + the ARMO's slots, priority 1, holding
+  only the calf fill in its own `_calves` mesh, the main ARMA dropping 38)
+  made those greaves invisible in game. Knee greaves still carry ankle skin
+  over boots: every shape of the worn mesh, fill included, is partition 49.
 
 `PART_PARTITIONS` was measured on `malebody_0.nif`: Skyrim's 34 is only the
 ForearmTwist2 ring above the wrist (44 verts), the rest of the forearm, the
@@ -567,6 +588,12 @@ at their Skyrim rest frame. A first cut blended the 4 nearest skin vertices,
 which mixed neighbouring fingers and left the gauntlet fingers still
 mangled in game. It runs after the bones are placed and before the bind
 data is rebuilt.
+
+Reverted, in game: merging each Morrowind finger chain onto the mean of the
+Skyrim fingers under it (the common glove's `Finger21` lies across index,
+middle and ring: 14/14/12 vertices) plus one smoothing pass looked worse
+than the plain closest-point weights. The glove itself sits 0.2-0.6 units
+off the Skyrim hand, so the fit is not what mangles the fingers.
 
 ## <a id="morrowind-pose-cache"></a>Morrowind rest skeleton and pose cache
 
