@@ -601,7 +601,17 @@ def _convert_flags(t4: int, code: str, archetype: int) -> int:
     if code in _MARKER_CODES:
         out |= F_HIDE_IN_UI
 
-    return out
+    return out | _power_affects(out)
+
+
+def _power_affects(flags: int) -> int:
+    """The Power Affects bit for magnitude, else for duration, else none.
+
+    See: docs/commentary/tes5_import_magic.md#power-affects
+    """
+    if not flags & F_NO_MAGNITUDE:
+        return F_POWER_AFFECTS_MAGNITUDE
+    return 0 if flags & F_NO_DURATION else F_POWER_AFFECTS_DURATION
 
 
 def _delivery_and_cast(t4_flags: int) -> tuple:

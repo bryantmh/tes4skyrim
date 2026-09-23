@@ -42,6 +42,17 @@ std::uintptr_t ScanSignature(const char* pattern);
 std::uintptr_t Resolve(const char* debugName, std::uint64_t stableId,
                        const char* signature);
 
+// Swaps the virtual at byte `slotOffset` of `vtable` for `replacement`, when
+// that slot holds `expected`. Returns the function it held, or null when
+// either address is 0 or the slot holds anything else -- nothing is written.
+//
+// 🛑 A slot holding the wrong function is REFUSED: writing it would hand the
+// engine our function for some unrelated virtual, which fails in a way no log
+// would explain. A vtable steals no bytes, so no prologue hazard arises.
+void* SwapVtableSlot(const char* debugName, std::uintptr_t vtable,
+                     std::size_t slotOffset, std::uintptr_t expected,
+                     void* replacement);
+
 extern VersionDb g_versionDb;
 
 }  // namespace mwruntime

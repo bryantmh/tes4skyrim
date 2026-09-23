@@ -1,9 +1,10 @@
 """
-Restage a TES3 plugin's MorrowindRuntime sidecar without re-running import.
+Restage a plugin's MorrowindRuntime sidecar without re-running import.
 
 The sidecar -- dialogue, the actor index, and the result-script compiler's
 tables -- is built from the EXPORT alone, so when only the sidecar's contents
-change there is no reason to pay for a full `--import-only`.
+change there is no reason to pay for a full `--import-only`. A TES4-format
+plugin stages its apparatus table and nothing else.
 
     python -m tools.dialog.mw_sidecar --plugin TR_Mainland.esm
 
@@ -23,7 +24,7 @@ def main() -> int:
     """CLI: stage one plugin's sidecar into its output folder."""
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     ap.add_argument('--plugin', required=True,
-                    help='the TES3 plugin, e.g. TR_Mainland.esm')
+                    help='the plugin, e.g. TR_Mainland.esm or Oblivion.esm')
     ap.add_argument('--export-root', default='export')
     ap.add_argument('--output-root', default='output')
     args = ap.parse_args()

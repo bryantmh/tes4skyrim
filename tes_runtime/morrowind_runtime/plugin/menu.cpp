@@ -523,6 +523,10 @@ void CloseMenuNamed(const char* name) {
     PostMenuMessage(name, ids::kMessageClose);
 }
 
+void OpenMenuNamed(const char* name) {
+    PostMenuMessage(name, ids::kMessageOpen);
+}
+
 const char* MenuName() { return kMenuName; }
 
 }  // namespace mwruntime

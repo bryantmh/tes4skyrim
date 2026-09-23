@@ -616,6 +616,26 @@ The u16 clamp is real, not defensive: the field is 2 bytes on disk, so an
 authored `ANAM` above 65535 must saturate rather than wrap to a near-zero
 pool.
 
+## <a id="power-affects"></a>Power Affects Magnitude / Duration
+
+**Code:** `tes5_import/record_types/magic.py` (`_power_affects`)
+
+TES5 MGEF flags `0x200000` and `0x400000` decide what skill, perks, alchemy
+effectiveness and dual-casting scale. Neither TES3 nor TES4 has them, and the
+import set neither, so a potion brewed from converted ingredients ignored the
+player's Alchemy and every perk: `AlchemyMenu::ModEffectivenessFunctor`
+(`0x906e90` on 1.6.1170) applies entry point 66 and the skill factor only
+behind those two bits.
+
+Census over the 950 MGEFs of Skyrim.esm: an effect WITH magnitude carries
+Power Affects Magnitude (438 + 151) far more than Duration (100 + 14, mostly
+summon, bound, invisibility and paralysis archetypes, which the import already
+marks No Magnitude); an effect with NO magnitude carries Power Affects
+Duration (87 of 94). Both at once is 4 records. So the rule is magnitude when
+the effect has one, else duration when it has one. The rest are authored
+one-offs -- perk abilities, diseases, fixed-strength armor spells -- that a
+converted effect has no field to express.
+
 ## <a id="morrowind-effects"></a>Morrowind effects key on an index, not a code
 
 **Code:** `tes5_import/record_types/magic_morrowind.py`

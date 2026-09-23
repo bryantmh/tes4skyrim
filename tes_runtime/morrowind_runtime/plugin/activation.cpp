@@ -1,7 +1,5 @@
 #include "activation.h"
 
-#include <windows.h>
-
 #include <bitset>
 #include <cstdlib>
 #include <cstring>
@@ -326,37 +324,17 @@ std::size_t LoadActorIndexFrom(const std::string& rootIn) {
     return total;
 }
 
-// Swaps one type's Activate slot. False when an address did not resolve or the
-// slot does not already hold what it should, which is never fatal: the other
-// types still hook and that type simply keeps vanilla behaviour.
-//
-// 🛑 Refuse a swap whose slot does not already hold what we expect. A vtable
-// steals no bytes, so the prologue hazard does not arise -- but writing the
-// wrong slot would hand the engine our function for some unrelated virtual,
-// which fails in a way no log would explain.
+// Swaps one type's Activate slot. False when it did not swap, which is never
+// fatal: the other types still hook and that type keeps vanilla behaviour.
 bool SwapActivate(const ids::ActivateTarget& target) {
     const std::uintptr_t vtable = Resolve(target.name, target.vtable, nullptr);
-    const std::uintptr_t expected = Resolve(target.name, target.activate,
-                                            nullptr);
-    if (!vtable || !expected) {
-        Log("activation:   %s -- address unresolved, NOT hooked", target.name);
-        return false;
-    }
-    auto* slot = reinterpret_cast<void**>(vtable + ids::kActivateSlot);
-    if (*slot != reinterpret_cast<void*>(expected)) {
-        Log("activation:   %s slot holds %p, expected %p -- REFUSING",
-            target.name, *slot, reinterpret_cast<void*>(expected));
-        return false;
-    }
-    DWORD old = 0;
-    if (!VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old)) {
-        Log("activation:   %s -- could not unprotect, NOT hooked", target.name);
-        return false;
-    }
+    void* original = SwapVtableSlot(
+        target.name, vtable, ids::kActivateSlot,
+        Resolve(target.name, target.activate, nullptr),
+        reinterpret_cast<void*>(&ActivateHook));
+    if (!original) return false;
     g_originalActivate[reinterpret_cast<void*>(vtable)] =
-        reinterpret_cast<ActivateFn>(*slot);
-    *slot = reinterpret_cast<void*>(&ActivateHook);
-    VirtualProtect(slot, sizeof(void*), old, &old);
+        reinterpret_cast<ActivateFn>(original);
     return true;
 }
 

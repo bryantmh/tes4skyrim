@@ -12,6 +12,7 @@
 
 #include "activation.h"
 #include "addresses.h"
+#include "alchemy.h"
 #include "conversation.h"
 #include "cosave.h"
 #include "game_calls.h"
@@ -58,6 +59,8 @@ void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
     InstallConversation();
     InstallGameCalls();
     InstallActivation();
+    // After the game calls, whose player reference the census reads.
+    InstallAlchemy();
     StartObjectTick();
 }
 

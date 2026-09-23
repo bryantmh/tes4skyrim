@@ -260,4 +260,28 @@ std::uintptr_t Resolve(const char* debugName, std::uint64_t stableId,
     return a;
 }
 
+void* SwapVtableSlot(const char* debugName, std::uintptr_t vtable,
+                     std::size_t slotOffset, std::uintptr_t expected,
+                     void* replacement) {
+    if (!vtable || !expected) {
+        Log("addresses: %s -- address unresolved, NOT hooked", debugName);
+        return nullptr;
+    }
+    auto* slot = reinterpret_cast<void**>(vtable + slotOffset);
+    if (*slot != reinterpret_cast<void*>(expected)) {
+        Log("addresses: %s slot holds %p, expected %p -- REFUSING", debugName,
+            *slot, reinterpret_cast<void*>(expected));
+        return nullptr;
+    }
+    DWORD old = 0;
+    if (!VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old)) {
+        Log("addresses: %s -- could not unprotect, NOT hooked", debugName);
+        return nullptr;
+    }
+    void* original = *slot;
+    *slot = replacement;
+    VirtualProtect(slot, sizeof(void*), old, &old);
+    return original;
+}
+
 }  // namespace mwruntime

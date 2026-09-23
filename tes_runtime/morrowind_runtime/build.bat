@@ -15,7 +15,8 @@ REM
 REM Usage:  build.bat            full plugin -> MorrowindRuntime.dll
 REM         build.bat openmw     compile the vendored OpenMW subset ONLY
 REM                              (the Phase 0 gate: does it build standalone?)
-REM         build.bat test       store_test.exe, the headless parser gate
+REM         build.bat test       the headless gates: store, filter, session,
+REM                              script and alchemy
 
 setlocal
 
@@ -84,6 +85,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\game_calls_query.cpp plugin\game_calls_spell.cpp ^
    plugin\game_calls_message.cpp plugin\game_calls_control.cpp ^
    plugin\game_calls_state.cpp ^
+   plugin\alchemy.cpp plugin\alchemy_hooks.cpp ^
    plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
@@ -118,7 +120,8 @@ cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\log.cpp plugin\filter.cpp ^
    plugin\object_script.cpp ^
    plugin\object_tick.cpp plugin\main_thread.cpp ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
-   plugin\travel.cpp plugin\script_test.cpp /Fo:objt\
+   plugin\travel.cpp plugin\script_test.cpp ^
+   plugin\alchemy.cpp plugin\alchemy_test.cpp /Fo:objt\
 if errorlevel 1 (
     echo [build] ERROR: test compilation failed
     exit /b 1
@@ -171,7 +174,14 @@ if errorlevel 1 (
     echo [build] ERROR: script_test link failed
     exit /b 1
 )
-echo [build] OK -^> %~dp0store_test.exe, filter_test.exe, session_test.exe, script_test.exe
+link /nologo /OUT:alchemy_test.exe objt\alchemy.obj objt\alchemy_test.obj ^
+     objt\store.obj objt\log.obj objt\script_tables.obj ^
+     kernel32.lib user32.lib shell32.lib ole32.lib
+if errorlevel 1 (
+    echo [build] ERROR: alchemy_test link failed
+    exit /b 1
+)
+echo [build] OK -^> %~dp0store_test.exe, filter_test.exe, session_test.exe, script_test.exe, alchemy_test.exe
 
 :done
 

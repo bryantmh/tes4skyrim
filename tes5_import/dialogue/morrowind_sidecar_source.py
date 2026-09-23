@@ -64,7 +64,7 @@ _FADT_RANK_AT = 2
 _FADT_SKILLS_AT = 52
 
 
-def _binary(root: str, plugin: str):
+def source_binary(root: str, plugin: str):
     """Where `plugin`'s binary is: an imported mod's copy, else a game dir."""
     found = source_registry.plugin_binary(root, plugin)
     if found:
@@ -76,12 +76,12 @@ def _binary(root: str, plugin: str):
 def plugin_chain(root: str, plugin: str) -> list:
     """`(name, path)` for each TES3 master that can be found, then `plugin`,
     in load order. A master that is not installed is reported and skipped."""
-    own = _binary(root, plugin)
+    own = source_binary(root, plugin)
     if not own:
         return []
     chain = []
     for master in get_masters_from_binary(own):
-        path = _binary(root, master)
+        path = source_binary(root, master)
         if path:
             chain.append((master, path))
         else:

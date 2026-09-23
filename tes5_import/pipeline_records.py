@@ -159,7 +159,7 @@ def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
                                      os.path.basename(st.output_path),
                                      writer=st.writer)
     if staged:
-        print(f'  Staged {staged} dialogue file(s) for MorrowindRuntime')
+        print(f'  Staged {staged} sidecar file(s) for MorrowindRuntime')
     phase_done(f'simple records ({len(work_items)})')
 
 
