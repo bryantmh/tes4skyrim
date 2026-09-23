@@ -414,6 +414,33 @@ vanilla records. A link to a type this run does not write is nulled: the
 97 image-space modifiers (`MNAM`, IMAD is not converted) go, the 98 lights,
 81 impact sets and 22 enchantments stay.
 
+### <a id="addon-nodes"></a>Addon nodes: the muzzle flash's sparks and smoke
+
+**Code:** `tes4_export/record_types/falloutnv.py` (`export_ADDON`),
+`tes5_import/record_types/impact_falloutnv.py` (`convert_ADDN`),
+`asset_convert/nif/addon_nodes_falloutnv.py` (`remap_addon_nodes`).
+
+A FNV effect mesh spawns its particles through `BSValueNode`s named
+`AddOnNode<N>` whose value N is an ADDN's `DATA` index: the SMG's
+`MinigunMuzzleFlash01.nif` carries 22 (`MPSGunSparks01`) and 5
+(`MPSSmokeMetalBurn01`). ADDN was unexported (37 records in FalloutNV.esm,
+indexes 0-36), and Skyrim.esm owns 0-88, so every converted mesh spawned
+the vanilla addon at its index instead: the SMG's flash played
+`MPSPushGrass01` and `MPSFireBallSparkTrail`. SkyrimSE 1.6.1170 has no
+"AddOnNode" string at all; `BGSAddonNode`'s loader (vtable slot 6, 0x255fa0)
+reads `DATA` into +0x68 as a u32, so the value, not the name, selects the
+record. Both sides now move by `ADDON_INDEX_BASE` (20000): the converted
+ADDN's `DATA`, and every FO3/FNV mesh's addon node value and name. The
+record is otherwise the same in both games (model, sound as SNDR, `DNAM`
+particle cap u16 + flags u16); FNV's one flags-0 record (`FireSmall01`)
+becomes 1, since all 89 vanilla ADDNs carry 1 or 3.
+
+Where the flash sits: the projectile's muzzle-flash setup (id 44056,
+0x7e0b40) takes the flash 3D the projectile loaded from `NAM1` and attaches
+it to the firing weapon's `ProjectileNode` (the static-init string at
+0x185d4 for the global the lookup 0x286b00 uses), which the converted FNV
+gun meshes keep.
+
 ## Navmesh: authored, not generated
 
 **Code:** `tes4_export/record_types/falloutnv.py` (`_emit_navm_deltas`,

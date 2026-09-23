@@ -714,6 +714,22 @@ def export_EXPLOSION(rec: Record) -> list:
     return lines
 
 
+def export_ADDON(rec: Record) -> list:
+    """An ADDN: bounds, model, node index (`DATA`), sound and the 4-byte DNAM.
+    See: docs/commentary/tes4_export_falloutnv.md#addon-nodes
+    """
+    lines = []
+    emit_string(lines, "EditorID", get_subrecord(rec, "EDID"))
+    _emit_obnd(lines, rec)
+    emit_model(lines, "Model", rec)
+    data = get_subrecord(rec, "DATA")
+    if data and len(data.data) >= 4:
+        lines.append(f"DATA.Index={struct.unpack_from('<i', data.data)[0]}")
+    emit_formid(lines, "SNAM", get_subrecord(rec, "SNAM"))
+    emit_raw_hex(lines, "DNAM", get_subrecord(rec, "DNAM"))
+    return lines
+
+
 def export_LEVELED_NPC(rec: Record) -> list:
     """A FO3/FNV LVLN, which Skyrim carries as the same record type.
 
@@ -753,6 +769,7 @@ FALLOUT_BASE_EXPORTERS = {
     "IPCT": export_IMPACT,
     "IPDS": export_IMPACTSET,
     "EXPL": export_EXPLOSION,
+    "ADDN": export_ADDON,
     "NAVM": export_NAVMESH,
     "NAVI": export_NAVMESH,
     "MSTT": export_STATIC_BASE,

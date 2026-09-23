@@ -1,13 +1,17 @@
-"""FO3/FNV impacts and explosions: IPCT, IPDS and EXPL records, so a gun's
-`INAM` names its own ballistic impact set and a projectile its explosion.
+"""FO3/FNV impacts and effects: IPCT, IPDS, EXPL and ADDN records, so a gun's
+`INAM` names its own ballistic impact set, a projectile its explosion and a
+mesh's addon node its own particle effect.
 
 FNV's IPCT `DATA` (24 bytes) and `DODT` (36) are byte-compatible with
 TES5's; the IPDS is twelve IPCT slots in a fixed material order that map to
-Skyrim MATTs; EXPL keeps every DATA field but reorders them.
+Skyrim MATTs; EXPL keeps every DATA field but reorders them; ADDN moves to
+its converted index.
 See: docs/commentary/tes4_export_falloutnv.md#impacts
 """
 
 import struct
+
+from asset_convert.nif.addon_nodes_falloutnv import addon_index
 
 from ..base.text_reader import get_hex_bytes
 from ..base.writer import (pack_formid_subrecord, pack_obnd, pack_record,
@@ -99,6 +103,29 @@ def convert_EXPL(rec: dict, writer=None) -> bytes:
         get_float(rec, 'DATA.Radius'), get_float(rec, 'DATA.ISRadius'), 0.0,
         get_int(rec, 'DATA.Flags'), get_int(rec, 'DATA.SoundLevel', 1)))
     return pack_record('EXPL', get_formid(rec, 'FormID'),
+                       get_int(rec, 'RecordFlags'), subs)
+
+
+def convert_ADDN(rec: dict, writer=None) -> bytes:
+    """A FNV ADDN as a TES5 ADDN at its moved index (`addon_index`), the
+    sound as an SNDR; DNAM keeps the particle cap, flags 0 become 1 (every
+    vanilla ADDN has 1 or 3).
+    See: docs/commentary/tes4_export_falloutnv.md#addon-nodes
+    """
+    subs = pack_string_subrecord('EDID', get_str(rec, 'EditorID'))
+    subs += pack_obnd(*(get_int(rec, f'OBND.{k}') for k in
+                        ('X1', 'Y1', 'Z1', 'X2', 'Y2', 'Z2')))
+    model = get_str(rec, 'Model.MODL')
+    if model:
+        subs += pack_string_subrecord('MODL', prefix_path(model))
+    subs += pack_subrecord('DATA', struct.pack(
+        '<I', addon_index(get_int(rec, 'DATA.Index'))))
+    sound = sndr_of(writer, get_formid(rec, 'SNAM'))
+    if sound:
+        subs += pack_formid_subrecord('SNAM', sound)
+    cap, flags = struct.unpack('<HH', get_hex_bytes(rec, 'DNAM').ljust(4, b'\0')[:4])
+    subs += pack_subrecord('DNAM', struct.pack('<HH', cap, flags or 1))
+    return pack_record('ADDN', get_formid(rec, 'FormID'),
                        get_int(rec, 'RecordFlags'), subs)
 
 

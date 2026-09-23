@@ -69,7 +69,6 @@ Minor Issues:
 Guns (FalloutNV):
 	G1 - HUD magazine readout: the counter text field path is a guess and the hook is disabled (hud.cpp, InstallHud not called); find the field in the loaded HUD movie and re-enable
 	G6 - Animated gun parts (magazine, slide, bolt) untested since the DLL-driven NiControllerSequence build; parts.cpp logs nothing when no sequence starts
-	G7 - Ammo models under clutter/ammo (50MG box etc.) not rebuilt with Prn=QUIVER, still attach at the feet
 	G8 - Ammo on a bow/melee holder: FNV rounds equipped with a non-gun still hang on QUIVER and show
 	G9 - Spare ammo, spread, VATS, weapon condition and weapon-specific reload speeds not implemented
 	G10 - NPC gun use: iGunShots is written per actor but AI never reloads or picks rounds; combat style for guns unverified
@@ -80,7 +79,7 @@ Guns (FalloutNV):
 	G15 - Dual-wield 1h guns: mirror the FNV 1hp clips for the left hand (left-hand type 13 in the graph, mirrored clip set, per-hand ammo and shot counts in the DLL, left click = left gun)
 	G16 - Melee/bash key: FNV guns have their own bash (attackbash / 1hpattackbash clips); bind a key that sends a gun bash event instead of the dropped ActionLeftAttack
 	G17 - Holster/draw blend: equip and unequip clips cut to the aim pose with no crossfade
-	G18 - Muzzle flash and shell casings: FNV plays the ##FlashNode light/particle and ejects the casing model on each shot; neither is converted
+	G18 - Shell casings: FNV ejects the WEAP's MOD2 casing model from ShellCasingNode on each shot; Skyrim has no equivalent (needs a casing projectile launched by the DLL)
 	G19 - Recoil: an SMG kicks far harder per shot than FNV. Something already applies a kick, probably the fire clip's camera track (FNV scales the Camera1st animation per weapon / fCameraAnim settings, the retarget plays it at full amplitude every shot) or the engine's bow/crossbow release kick firing on arrowRelease; find which, then apply FNV's WEAP DNAM recoil values and the ADS sway
 	G20 - Third-person aiming pitch: the AimPitchCurrent pitch blend exists but the torso twist toward the crosshair is unverified
 	G21 - Weapon mods (WMOD) and scoped weapons: scope zoom uses a scope overlay in FNV, not iron sights; the sight FOV path shows the mesh instead

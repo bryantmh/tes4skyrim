@@ -94,6 +94,7 @@ from asset_convert.nif.door_plan import latch_door_model
 from asset_convert.nif.fixture_plan import latch_fixture_model
 from asset_convert.character.body_wrap import morph_converted_to_weight1
 from asset_convert.havok.hkx_animobject import generate_animobject_project
+from asset_convert.nif.addon_nodes_falloutnv import remap_addon_nodes
 from asset_convert.nif.gun_parts_falloutnv import add_gun_part_sequences
 from asset_convert.nif.particles import (convert_particle_system,
                                         skyrimize_billboard,
@@ -1346,6 +1347,8 @@ def _run_post_passes(data, stats, result, src_path, dst_path, textures_only):
             convert_flame_nodes(root, src_path, _convert_nif, stats)
     _build_flip_atlases(stats, dst_path)
     _build_height_maps(stats, dst_path)
+    if is_fallout_source():
+        stats['addon_nodes'] = remap_addon_nodes(data)
     if not textures_only:
         parts = add_gun_part_sequences(data, src_path) if is_fallout_source() else []
         if parts:

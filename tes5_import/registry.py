@@ -53,8 +53,8 @@ def _init_dispatch() -> None:
     from .record_types.magic import convert_MGEF
     from .record_types.message_falloutnv import convert_MESG
     from .record_types.projectile_falloutnv import convert_PROJ
-    from .record_types.impact_falloutnv import (convert_EXPL, convert_IPCT,
-                                                convert_IPDS)
+    from .record_types.impact_falloutnv import (convert_ADDN, convert_EXPL,
+                                                convert_IPCT, convert_IPDS)
     from .record_types.music_falloutnv import convert_MUSC
     from .record_types.reference_falloutnv import (
         convert_ECZN,
@@ -96,18 +96,19 @@ def _init_dispatch() -> None:
 
     IMPORT_DISPATCH.update({sig: (convert_STAT if kind == 'STAT' else convert_ACTI)
                             for sig, kind in FALLOUT_BASE_TYPES.items()})
-    IMPORT_DISPATCH['MESG'] = convert_MESG
-    IMPORT_DISPATCH['PROJ'] = convert_PROJ
-    IMPORT_DISPATCH['IPCT'] = convert_IPCT
-    IMPORT_DISPATCH['IPDS'] = convert_IPDS
-    IMPORT_DISPATCH['EXPL'] = convert_EXPL
-    IMPORT_DISPATCH['FLST'] = convert_FLST
-    IMPORT_DISPATCH['TXST'] = convert_TXST
-    IMPORT_DISPATCH['IMGS'] = convert_IMGS
-    IMPORT_DISPATCH['LGTM'] = convert_LGTM
-    IMPORT_DISPATCH['ECZN'] = convert_ECZN
-    IMPORT_DISPATCH['MUSC'] = convert_MUSC
     IMPORT_DISPATCH.update({
+        'MESG': convert_MESG,
+        'PROJ': convert_PROJ,
+        'IPCT': convert_IPCT,
+        'IPDS': convert_IPDS,
+        'EXPL': convert_EXPL,
+        'ADDN': convert_ADDN,
+        'FLST': convert_FLST,
+        'TXST': convert_TXST,
+        'IMGS': convert_IMGS,
+        'LGTM': convert_LGTM,
+        'ECZN': convert_ECZN,
+        'MUSC': convert_MUSC,
         'STAT': convert_STAT,
         'ACTI': convert_ACTI,
         'MISC': convert_MISC,

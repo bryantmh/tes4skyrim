@@ -108,7 +108,7 @@ def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
 
     _WRITER_TYPES = {'ARMO', 'CLOT', 'WEAP', 'AMMO', 'NPC_', 'CREA', 'BOOK',
                      'ENCH', 'SPEL', 'SGST', 'HAIR', 'PROJ', 'IPCT', 'IPDS',
-                     'EXPL', 'MUSC'}
+                     'EXPL', 'ADDN', 'MUSC'}
 
     st.converted = 0
     st.errors = 0

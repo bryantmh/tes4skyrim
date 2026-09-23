@@ -1115,7 +1115,7 @@ class PluginWriter:
             'STAT', 'MSTT', 'ACTI', 'TACT', 'CONT', 'DOOR',
             'FLOR', 'FURN', 'GRAS', 'TREE', 'LIGH', 'MISC', 'KEYM', 'ARMO',
             'ARMA', 'BOOK', 'AMMO', 'ENCH', 'SPEL', 'ALCH', 'INGR', 'SCRL',
-            'PROJ', 'EXPL',
+            'PROJ', 'EXPL', 'ADDN',
             'SLGM', 'VTYP', 'OTFT', 'NPC_', 'LVLN', 'LVLI', 'LVSP',
             # IMGS before WTHR: a weather's IMSP points at the imagespaces
             # carrying its HDR tone mapping, and CLMT/REGN then point at WTHR.
