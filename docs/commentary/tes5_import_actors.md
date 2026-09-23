@@ -16,6 +16,7 @@ them does.
 - [Confidence: why converted actors used to flee](#confidence-tiers)
 - [Vendor factions](#vendor-factions)
 - [A vendor faction without PLVD is never selected](#vendor-faction-needs-plvd)
+- [A dependent adopts its masters' vendor factions](#vendor-factions-in-a-dependent)
 - [The merchant marker faction: a CTDA ceiling](#barter-gate-ctda-limit)
 - [The plugin-origin marker faction](#origin-faction)
 - [It also unlocks AI barrier doors](#barrier-door-ownership)
@@ -218,15 +219,28 @@ vanilla vendor factions carry PLVD. A faction the selector skips leaves the
 actor with no vendor faction: the barter menu still opens, but only on the
 actor's carried inventory and gold, so its VENC chest is never read.
 
-A dependent plugin (Tribunal, Bloodmoon, TR_Mainland, Morrowind_ob, the ESPs)
-skips `create_vendor_factions` (`_prescan_vendor_trainer` gates on
-`is_support_root()`) and adopts nothing, so its merchants get no vendor faction,
-and `ACBS.BarterGold` is dropped because it is only written when a vendor
-faction exists: 20/20 Tribunal, 11/11 Bloodmoon and 778/778 TR_Mainland
-merchants with authored gold carry none, against 303/303 in Morrowind.esm. The
-barter menu copies the merchant's own inventory (`0x1bcd40` → `0x237860`) and
-counts form `0xF` in it (`0x234350`), so carried gold is the vendor's gold even
-with no vendor faction.
+So every vendor faction copies vanilla's anywhere-vendors (ServicesDBBabette,
+the caravans, the hunters — 26 factions use PLVD type 12 Near Self): VENV open
+0-24h, PLVD Near Self. Oblivion merchants barter wherever you talk to them. A
+chest-backed merchant joins ONLY its VENC faction: the selector takes the first
+match, and the chest-less shared faction used to sit ahead of it.
+
+The barter menu copies the merchant's own inventory (`0x1bcd40` → `0x237860`)
+and counts form `0xF` in it (`0x234350`), and adds the VENC chest's only when a
+vendor faction resolved. Carried gold is therefore vendor gold either way.
+
+### <a id="vendor-factions-in-a-dependent"></a>A dependent adopts its masters' vendor factions
+
+`ACBS.BarterGold` is written only for an actor in a vendor faction, so a plugin
+that built none lost every merchant's gold: 20/20 Tribunal, 11/11 Bloodmoon and
+778/778 TR_Mainland (Morroblivion mode) merchants with authored gold carried
+none. `create_service_records` now runs for every plugin. A support root
+(`is_support_root()`: a root master, or the Morroblivion patch) creates all its
+records as before, so its FormIDs do not move. A dependent adopts each keyword
+FLST, shared vendor FACT, the merchant marker and the trainer FACT by EditorID
+from its masters and creates only what they lack — its masters' shared factions
+cover 7-12 of TR's 77 service combos — plus its own per-merchant VENC factions.
+Trainer classes are also looked up in the masters' export.
 
 ### <a id="barter-gate-ctda-limit"></a>The merchant marker faction: a CTDA ceiling
 

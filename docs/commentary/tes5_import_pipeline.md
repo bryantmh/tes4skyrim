@@ -114,6 +114,9 @@ a dependent plugin duplicates master content — **27 spurious VTYP, 35 GLOB, 27
 FACT** — and the duplicates then compete with the originals the overrides use.
 So creation is gated on `not ctx`, and a dependent plugin ADOPTS the master's
 FormIDs into the well-known registry instead (`_adopt_master_special_records`).
+Vendor and trainer factions are adopted per EditorID, and a dependent creates
+the ones its masters lack, since its merchants use service combos theirs don't
+([vendor factions in a dependent](tes5_import_actors.md#vendor-factions-in-a-dependent)).
 
 Its own converted scripts still reference those records by name (Morroblivion's
 chargen writes `TES4ControlsDisabled`), and an unbound property is None, which

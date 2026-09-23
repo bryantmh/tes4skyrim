@@ -47,6 +47,7 @@ class MasterIndex:
         self._paths = {}        # formid -> ((grup_type, label), ...)
         self._land_by_cell = {}  # cell formid -> LAND formid
         self._navm_by_cell = {}
+        self._edid_tables = {}
         self.masters = []
         self.own_index = 0
         self._load()
@@ -145,9 +146,17 @@ class MasterIndex:
         companion manifest (keyed by source FormID) cannot name them — the
         generic dialogue quest is the case that matters. EDID is always the
         first subrecord of the records this is used for, so this stops at the
-        first one rather than parsing the whole body.
+        first one rather than parsing the whole body. The first record in file
+        order wins; each signature is scanned once and cached.
         """
-        want = edid.encode('ascii', 'replace')
+        table = self._edid_tables.get(signature)
+        if table is None:
+            table = self._edid_tables[signature] = self._scan_edids(signature)
+        return table.get(edid.encode('ascii', 'replace'), 0)
+
+    def _scan_edids(self, signature: bytes) -> dict:
+        """{EditorID bytes: FormID} for one signature's uncompressed records."""
+        table = {}
         for fid, (sig, off, size) in self._offsets.items():
             if sig != signature:
                 continue
@@ -158,9 +167,9 @@ class MasterIndex:
             if body[:4] != b'EDID':
                 continue
             got = first_sub(body, b'EDID')
-            if got is not None and got.rstrip(b'\0') == want:
-                return fid
-        return 0
+            if got is not None:
+                table.setdefault(got.rstrip(b'\0'), fid)
+        return table
 
 
     def find_all_by_edid(self, signature: bytes, edid: str) -> list:

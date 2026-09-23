@@ -611,17 +611,9 @@ def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict, 
 
 
 def _prescan_vendor_trainer(by_type: dict, ctx, writer, _step_done):
-    """Create vendor factions and the trainer faction + CLAS clones.
-
-    Only for a plugin no master supplies them to: a dependent inherits these
-    from its master rather than duplicating them.
-
-    See: docs/commentary/tes5_import_pipeline.md#phase-0-dependent-skips-support-records
-    """
-    from .record_types.actor_common import (create_trainer_records, create_vendor_factions, is_support_root)
-    if is_support_root():
-        create_vendor_factions(by_type, writer)
-        create_trainer_records(by_type, writer)
+    """Create the vendor factions and the trainer faction + CLAS clones."""
+    from .record_types.actor_common import create_service_records
+    create_service_records(by_type, writer, ctx)
     _step_done('vendor/trainer records')
 
 

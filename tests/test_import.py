@@ -1877,6 +1877,49 @@ class TestServiceConversion:
         assert len(n_ctda) == 1, f'barter gate must be 1 CTDA, got {len(n_ctda)}'
         assert struct.unpack_from('<I', n_ctda[0], 12)[0] == get_merchant_faction_fid()
 
+    def test_chest_merchant_joins_only_its_near_self_chest_faction(self):
+        """The engine takes the first vendor faction whose PLVD resolves, and
+        skips one with no PLVD, so every vendor faction carries PLVD Near Self
+        and a chest merchant must not also sit in the chest-less shared one."""
+        from tes5_import.record_types.actor_common import (create_vendor_factions, get_merchant_faction_fid, get_vendor_faction_fids_for_actor)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        npc = self._merchant_npc(fid='00000501', services='3')
+        achr = {'Signature': 'ACHR', 'FormID': '00000700', 'NAME': '00000501',
+                'XMRC.MerchantContainer': '00000800'}
+        create_vendor_factions({'NPC_': [npc], 'ACHR': [achr]}, writer)
+
+        fids = get_vendor_faction_fids_for_actor(0x00000501, 3)
+        assert len(fids) == 2 and fids[1] == get_merchant_faction_fid()
+        fact = next(f for f in writer._top_groups['FACT']
+                    if struct.unpack_from('<I', f, 12)[0] == fids[0])
+        subs = self._subrecords(fact)
+        assert struct.unpack('<I', subs['VENC'][0])[0] == 0x00000800
+        assert struct.unpack('<iIi', subs['PLVD'][0]) == (12, 0, 0)
+        assert struct.unpack_from('<HH', subs['VENV'][0]) == (0, 24)
+
+    def test_dependent_adopts_master_vendor_factions(self):
+        """A dependent reuses the service factions, keyword lists and marker its
+        master defines, and creates only the service combos the master lacks."""
+        from types import SimpleNamespace
+        from tes5_import.record_types.actor_common import (create_vendor_factions, get_merchant_faction_fid, get_vendor_faction_fids_for_actor)
+        recs = {(b'FACT', 'TES4VendorFaction_000003'): 0x01000A01,
+                (b'FLST', 'TES4VendorList_000003'): 0x01000A02,
+                (b'FACT', 'TES4MerchantFaction'): 0x01000A03}
+        master = SimpleNamespace(
+            find_by_edid=lambda sig, edid: recs.get((sig, edid), 0))
+
+        writer = PluginWriter(masters=['Skyrim.esm', 'Master.esm'])
+        a = self._merchant_npc(fid='02000501', services='3')
+        b = self._merchant_npc(fid='02000502', services='4')
+        create_vendor_factions({'NPC_': [a, b]}, writer, master)
+
+        assert get_merchant_faction_fid() == 0x01000A03
+        assert get_vendor_faction_fids_for_actor(0x02000501, 3)[0] == 0x01000A01
+        created = get_vendor_faction_fids_for_actor(0x02000502, 4)[0]
+        written = {struct.unpack_from('<I', f, 12)[0]
+                   for f in writer._top_groups['FACT']}
+        assert written == {created}
+
     def test_trainer_unmappable_skill_skipped(self):
         from tes5_import.record_types.actor_common import (create_trainer_records, get_trainer_class_fid)
         writer = PluginWriter(masters=['Skyrim.esm'])
