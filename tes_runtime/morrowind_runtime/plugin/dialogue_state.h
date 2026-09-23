@@ -276,6 +276,11 @@ struct GameHooks {
     // and `value` is TES3's 0..100.
     void (*applyAiSetting)(const std::string& actor, int which,
                            int value) = nullptr;
+    // The player's rank (-1: not a member) and expulsion in one TES3 faction,
+    // pushed onto the converted FACT so conditions can read them.
+    // See: docs/commentary/morrowind_runtime.md#player-factions
+    void (*applyPlayerFaction)(const std::string& faction, int rank,
+                               bool expelled) = nullptr;
     // The spell commands. `spell` is a TES3 SPEL id, resolved through SPEL.txt
     // to the SPEL the import minted. AddSpell/RemoveSpell put it on the actor's
     // spell list; HasSpell is what `GetSpell` answers.

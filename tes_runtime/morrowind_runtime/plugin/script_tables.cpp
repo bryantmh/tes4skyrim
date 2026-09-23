@@ -111,6 +111,13 @@ constexpr const char* kFileSoulGems = "SLGM.txt";
 // How a filled gem's staged id ends: `<gem id>_Filled<n>`.
 constexpr const char* kFilledSuffix = "_filled";
 
+// The converted FACT behind a TES3 faction id, and the GLOBs barks test.
+// See: docs/commentary/morrowind_runtime.md#published-state
+constexpr const char* kFileFactionForms = "factions_formid.txt";
+constexpr const char* kFileStates = "state_formid.txt";
+std::unordered_map<std::string, FormRef> g_factionForms;
+std::vector<StateRow> g_states;
+
 std::unordered_map<std::string, FactionDef> g_factions;
 std::unordered_map<std::string, GmstDef> g_gmsts;
 std::unordered_map<int, SkillDef> g_skills;
@@ -390,6 +397,8 @@ void ClearScriptTables() {
     g_aiPacks.clear();
     g_haveAiQuest = false;
     g_factions.clear();
+    g_factionForms.clear();
+    g_states.clear();
     g_gmsts.clear();
     g_skills.clear();
 }
@@ -549,6 +558,14 @@ void LoadScriptTables(const std::string& pluginDir) {
                [](const std::string& faction, const std::string& value) {
                    g_factions.emplace(Lower(faction), ParseFaction(value));
                });
+    ForEachRow(pluginDir + kFileFactionForms,
+               [](const std::string& faction, const std::string& value) {
+                   g_factionForms.emplace(Lower(faction), ParseFormRef(value));
+               });
+    ForEachRow(pluginDir + kFileStates,
+               [](const std::string& key, const std::string& value) {
+                   g_states.push_back({Lower(key), ParseFormRef(value)});
+               });
     ForEachRow(pluginDir + kFileGmsts,
                [](const std::string& name, const std::string& value) {
                    g_gmsts.emplace(Lower(name), ParseGmst(value));
@@ -563,6 +580,13 @@ const FactionDef* FindFaction(const std::string& faction) {
     const auto it = g_factions.find(Lower(faction));
     return it == g_factions.end() ? nullptr : &it->second;
 }
+
+const FormRef* FindFactionForm(const std::string& faction) {
+    const auto it = g_factionForms.find(Lower(faction));
+    return it == g_factionForms.end() ? nullptr : &it->second;
+}
+
+const std::vector<StateRow>& StateRows() { return g_states; }
 
 const GmstDef* FindGmst(const std::string& name) {
     const auto it = g_gmsts.find(Lower(name));

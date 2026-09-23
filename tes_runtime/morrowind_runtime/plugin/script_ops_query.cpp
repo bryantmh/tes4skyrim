@@ -19,6 +19,30 @@
 
 namespace mwruntime {
 
+// TES3 weather ids, in OpenMW's own registration order (`weather.cpp`), to
+// Skyrim's weather CLASSIFICATION, which is all its native reports:
+// -1 none, 0 pleasant, 1 cloudy, 2 rainy, 3 snow.
+//
+// 🛑 The two schemes do NOT line up, so this is a mapping and not a cast.
+// Skyrim has no ash or blight, and a script testing for one is asking about
+// Morrowind's own hazard weather; those answer Cloudy, the nearest thing the
+// classification can say.
+constexpr int kTes3Clear = 0;
+constexpr int kTes3Cloudy = 1;
+constexpr int kTes3Foggy = 2;
+constexpr int kTes3Rain = 4;
+constexpr int kTes3Snow = 8;
+
+int Tes3Weather(int classification) {
+    switch (classification) {
+        case 0: return kTes3Clear;
+        case 1: return kTes3Cloudy;
+        case 2: return kTes3Rain;
+        case 3: return kTes3Snow;
+        default: return kTes3Foggy;
+    }
+}
+
 namespace {
 
 // A query of one actor against ANOTHER, named as a string argument:
@@ -118,30 +142,6 @@ class OpDrop : public Interpreter::Opcode0 {
         }
     }
 };
-
-// TES3 weather ids, in OpenMW's own registration order (`weather.cpp`), to
-// Skyrim's weather CLASSIFICATION, which is all its native reports:
-// -1 none, 0 pleasant, 1 cloudy, 2 rainy, 3 snow.
-//
-// 🛑 The two schemes do NOT line up, so this is a mapping and not a cast.
-// Skyrim has no ash or blight, and a script testing for one is asking about
-// Morrowind's own hazard weather; those answer Cloudy, the nearest thing the
-// classification can say.
-constexpr int kTes3Clear = 0;
-constexpr int kTes3Cloudy = 1;
-constexpr int kTes3Foggy = 2;
-constexpr int kTes3Rain = 4;
-constexpr int kTes3Snow = 8;
-
-int Tes3Weather(int classification) {
-    switch (classification) {
-        case 0: return kTes3Clear;
-        case 1: return kTes3Cloudy;
-        case 2: return kTes3Rain;
-        case 3: return kTes3Snow;
-        default: return kTes3Foggy;
-    }
-}
 
 class OpGetCurrentWeather : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {

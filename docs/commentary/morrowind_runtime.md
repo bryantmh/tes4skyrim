@@ -1874,6 +1874,38 @@ the TES3 globals of the same meaning. The value is the float at `+0x34`, which
 is all `GlobalVariable.GetValue` (0x9c2b30) reads. Month is 0-based and Day
 1-based in both games. The year is Skyrim's.
 
+### <a id="published-state"></a>What a converted bark tests, the runtime writes into a GLOB
+
+**Code:** `plugin/game_calls_state.cpp:PublishState`,
+`tes4_export/record_types/morrowind_bark_conditions.py`
+
+A voiced bark is a real Skyrim INFO, so its conditions are evaluated by the
+engine, which cannot see anything this DLL owns. Each tick the runtime copies
+that state out, writing only a value that changed:
+
+* every TES3 global into the converted GLOB `GLOB.txt` names for it;
+* each row of `state_formid.txt` -- GLOBs the export MINTED for the barks --
+  `journal:<id>` (the journal index), `cell:<prefix>` (1 while the player's
+  cell name starts with it, TES3's prefix match), `reputation`, and
+  `weather` (`Tes3Weather` of Skyrim's classification, used only where
+  Morroblivion's `mw*` WTHRs are not loaded).
+
+A journal is published rather than read off its QUST because every dependent
+plugin writes its own copy of a master's journal quests and only the first
+sidecar folder's copy is staged.
+
+### <a id="player-factions"></a>The player's factions are real Skyrim factions
+
+**Code:** `plugin/game_calls_state.cpp:ApplyPlayerFaction`
+
+`PCJoinFaction`, `PCRaiseRank`/`PCLowerRank` and `PCExpell`/`PCClearExpelled`
+also call `Actor.SetFactionRank` (id 54750, 1.6.1170 0x9ea340) on the player
+and `Faction.SetPlayerExpelled` (id 55843, 0xa1dc80) on the converted FACT
+that `factions_formid.txt` names, so `GetFactionRank`, `GetPCExpelled`,
+`SameFactionAsPC` and `GetFactionRankDifference` answer natively. Rank -1
+(left the faction) is written as -1, which Skyrim reads as not a member.
+Every membership is pushed again after a co-save load.
+
 ### <a id="run-on-game-thread"></a>A write a script reads back runs NOW
 
 **Code:** `plugin/main_thread.cpp:RunOnGameThread`

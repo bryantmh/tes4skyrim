@@ -66,6 +66,11 @@ void InstallQueryCalls(GameHooks& hooks);
 // The spell natives: the actor's spell list, casting, and active effects.
 // See: docs/commentary/morrowind_runtime.md#spell-commands
 void InstallSpellCalls(GameHooks& hooks);
+// The player's factions onto the converted FACTs, and the tick's copy of the
+// state barks test into their GLOBs. game_calls_state.cpp.
+// See: docs/commentary/morrowind_runtime.md#published-state
+void InstallStateCalls(GameHooks& hooks);
+void PublishState();
 // The seven player-control switches and Game.ShowRaceMenu.
 // See: docs/commentary/morrowind_runtime.md#the-control-switches
 void InstallControlCalls(GameHooks& hooks);

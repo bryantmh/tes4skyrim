@@ -64,6 +64,12 @@ START_SCRIPTS_TABLE = 'SSCR.txt'
 #: FACT rank requirements, which the filter's RankRequirement reads.
 FACTIONS_TABLE = 'FACT.txt'
 
+#: What the player's faction pushes need: `faction id=Plugin.esm|FACT FormID`.
+FACTION_FORMS_TABLE = 'factions_formid.txt'
+
+#: The GLOBs the runtime publishes bark state into: `journal:<id>=Plugin.esm|FormID`.
+STATE_TABLE = 'state_formid.txt'
+
 #: Every GMST of the chain, `name=type,value`, and the SKIL rows persuasion credits skill use from.
 GMST_TABLE = 'GMST.txt'
 SKILLS_TABLE = 'SKIL.txt'
@@ -115,6 +121,9 @@ _ITEM_EXPORTS = ('ALCH.txt', 'AMMO.txt', 'APPA.txt', 'ARMO.txt', 'BOOK.txt',
 #: The exports holding spells, which AddSpell and GetSpell name by TES3 id.
 _SPELL_EXPORTS = ('SPEL.txt',)
 
+#: The factions `PCJoinFaction` and its kin name by TES3 id.
+_FACTION_EXPORTS = ('FACT.txt',)
+
 #: Where the soul sizes come from, and the filled gems AddSoulGem resolves.
 _CREATURE_EXPORT = 'CREA.txt'
 _SOULGEM_EXPORTS = ('SLGM.txt',)
@@ -131,6 +140,7 @@ _MAX_EFFECTS = 8
 _ITEM_TYPES = tuple(name[:-4] for name in _ITEM_EXPORTS)
 _SCRIPTED_TYPES = tuple(name[:-4] for name in _SCRIPTED_EXPORTS)
 _SPELL_TYPES = tuple(name[:-4] for name in _SPELL_EXPORTS)
+_FACTION_TYPES = tuple(name[:-4] for name in _FACTION_EXPORTS)
 _GLOBAL_EXPORT = 'GLOB.txt'
 _SCRIPT_EXPORT = 'SCPT.txt'
 #: Where the cell names and their FormIDs come from, for the anchor table.
@@ -256,20 +266,35 @@ def _global_value(kind: str, raw: str) -> str:
     return str(int(value))
 
 
+def _state_lines(dirs: list) -> list:
+    """`state key=plugin|formid` per GLOB the export minted for bark state.
+
+    See: docs/commentary/morrowind_runtime.md#published-state
+    """
+    return [f"{rec['MorrowindState']}={plugin}|{rec['FormID']}"
+            for folder, plugin in dirs
+            for rec in export_records(os.path.join(folder, _GLOBAL_EXPORT),
+                                      ('MorrowindState', 'FormID'))
+            if rec.get('MorrowindState') and rec.get('FormID')]
+
+
 def _global_lines(dirs: list) -> list:
     """`name=type,value,plugin|formid` per GLOB, the plugin's own winning.
 
     The FormID is what lets the runtime read the LIVE value out of the
     converted plugin's GLOB, so a global Papyrus writes -- `CharGenState`, the
     one that starts Morrowind's chargen -- reaches the scripts polling it.
+    A bark-state GLOB is no TES3 global and stays out.
     See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
     """
     seen = {}
     for folder, plugin in dirs:
         for rec in export_records(os.path.join(folder, _GLOBAL_EXPORT),
                                   ('EditorID', 'FNAM.Type', 'FLTV.Value',
-                                   'FormID')):
+                                   'FormID', 'MorrowindState')):
             name = rec.get('EditorID', '')
+            if rec.get('MorrowindState'):
+                continue
             if name and name.lower() not in seen:
                 kind = rec.get('FNAM.Type', 'f')
                 seen[name.lower()] = (
@@ -583,6 +608,12 @@ def _placed_refs(folder: str, owner: str) -> dict:
     return placed
 
 
+def _line_ids(gathered: dict, table: str) -> dict:
+    """`{lower id: id}` for a gathered table whose values are `id=...` lines."""
+    return {key: line.split('=', 1)[0]
+            for key, line in gathered.get(table, {}).items() if line}
+
+
 def _base_lines(dirs: list, root: str, ids: dict) -> list:
     """`id=Plugin|FormID` for each TES3 id's BASE record, never a placement.
     See: docs/plans/morrowind_object_scripts.md#placeatpc
@@ -682,6 +713,11 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
                            _soul_lines(loaded, ids.get('objects', {})))
             + _write_lines(os.path.join(out_dir, GLOBALS_TABLE),
                            _global_lines(dirs[:1]))
+            + _write_lines(os.path.join(out_dir, STATE_TABLE),
+                           _state_lines(dirs[:1]))
+            + _write_lines(os.path.join(out_dir, FACTION_FORMS_TABLE),
+                           _owned_lines(dirs, root, _line_ids(ids, 'factions'),
+                                        _FACTION_EXPORTS, _FACTION_TYPES))
             + _write_lines(os.path.join(out_dir, SCRIPT_BODIES_TABLE),
                            body_lines)
             + _write_lines(os.path.join(out_dir, SCRIPT_LOCALS_TABLE),

@@ -516,14 +516,15 @@ def _add_barks(out: dict, ctx, barks, progress) -> None:
     if not barks:
         return
     produced = dialogue_records(barks, ctx, say=False)
-    for sig in ('DIAL', 'INFO'):
+    for sig in ('DIAL', 'INFO', 'GLOB'):
         rows = produced.get(sig) or []
         if rows:
             out.setdefault(sig, []).extend(rows)
     progress(f"  Voiced barks: {len(produced.get('INFO') or [])} lines "
              f"under {len(produced.get('DIAL') or [])} topic(s); "
              f"{ctx.unresolved['bark audience']} name a class, faction or "
-             f"actor only Morroblivion holds")
+             f"actor only Morroblivion holds, "
+             f"{ctx.unresolved['bark rule']} state a rule Skyrim cannot ask")
 
 def orphan_meshes(sources, data_dir: str) -> set:
     """Archive meshes no vanilla record names, as `meshes\\...` keys.

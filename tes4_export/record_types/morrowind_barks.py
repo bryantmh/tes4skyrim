@@ -14,17 +14,17 @@ So the barks alone leave the sidecar and take the ordinary TES4 road, where
 conversational topics stay where they are, interpreted by MorrowindRuntime.
 
 Who may speak a line is resolved in `morrowind_audience` from the record's own
-filters, never from the folder its recording sits in.
+filters, never from the folder its recording sits in; every other rule it
+states is translated in `morrowind_bark_conditions`.
 
 See: docs/commentary/tes4_export_morrowind.md#voiced-barks
 """
-
-import struct
 
 from ..record_types.common import escape_value
 from ..tes3_reader import Tes3Record, get_string, get_subrecord
 from .morrowind_actors import RACE_FORMIDS
 from .morrowind_audience import Audience, resolve
+from .morrowind_bark_conditions import Cond, bark_conditions, ctda
 
 #: TES3 `Voice` topic id -> the TES4 topic EditorID `_EDID_SUBTYPE` keys on.
 BARK_TOPICS = {
@@ -46,40 +46,14 @@ _FUNC_GET_FACTION_RANK = 73
 #: CTDA comparison `>=`, for a rank threshold; the high nibble of the type byte.
 _OP_AT_LEAST = 0x60
 
-#: CTDA comparison operator `==`, in the high nibble of the type byte.
-_OP_EQUAL = 0x00
-
-#: A 24-byte TES4 CTDA: type, pad, comparison float, function, two params, pad.
-_CTDA = struct.Struct('<B3xfH2xII4x')
-
 #: Most conditions one INFO may carry; past this the engine drops the line.
 _MAX_CONDITIONS = 22
-
-#: TES4 `GetScriptVariable`; the importer turns it into GetVMScriptVariable.
-_FUNC_GET_SCRIPT_VARIABLE = 53
-
-#: SCVR rule kinds whose variable names a SCRIPT LOCAL: local, not-local.
-_LOCAL_VAR_FUNCS = ('3', 'C')
-
-#: Where a SCVR rule's comparison byte and variable name start.
-_RULE_COMPARISON_AT = 4
-_RULE_VAR_AT = 5
-
-#: TES3 SCVR comparison digit -> the TES4 CTDA operator nibble.
-_SCVR_OPERATORS = {'0': 0x00, '1': 0x20, '2': 0x40, '3': 0x60, '4': 0x80,
-                   '5': 0xA0}
 
 
 def is_bark(rec: Tes3Record, topic: str) -> bool:
     """True when this INFO is a voiced bark of a `Voice` topic."""
     return (topic.lower() in BARK_TOPICS
             and get_subrecord(rec, 'SNAM') is not None)
-
-
-def ctda(function: int, param1: int, value: float = 1.0,
-          operator: int = _OP_EQUAL) -> str:
-    """One TES4 condition as the hex blob `Condition[i].Raw` carries."""
-    return _CTDA.pack(operator, value, function, param1, 0).hex()
 
 
 def bark_dial_id(edid: str, ctx) -> str:
@@ -160,34 +134,6 @@ def _voiceable_race(audience: Audience) -> 'int | None':
     return RACE_FORMIDS.get(audience.race)
 
 
-def _script_local_conditions(rec: Tes3Record) -> list:
-    """`(raw, variable name)` for each script local this bark tests.
-
-    A local is RUNTIME STATE, never identity: 1,553 Tamriel Rebuilt scripts
-    across 21 races declare `T_Local_NPC`, and the companion script SETS
-    `T_Local_Khajiit` as it runs. So it travels as a condition, which is what
-    keeps an abomination's grunt on abominations.
-    See: docs/commentary/tes4_export_morrowind.md#voiced-barks
-    """
-    out = []
-    subs = rec.subrecords
-    for index, sub in enumerate(subs):
-        if sub.type != 'SCVR':
-            continue
-        rule = get_string(sub)
-        if len(rule) <= _RULE_VAR_AT or rule[1] not in _LOCAL_VAR_FUNCS:
-            continue
-        nxt = subs[index + 1] if index + 1 < len(subs) else None
-        value = 0.0
-        if nxt is not None and nxt.type in ('INTV', 'FLTV') and nxt.data[:4]:
-            value = float(struct.unpack('<i' if nxt.type == 'INTV' else '<f',
-                                        nxt.data[:4])[0])
-        operator = _SCVR_OPERATORS.get(rule[_RULE_COMPARISON_AT], _OP_EQUAL)
-        out.append((ctda(_FUNC_GET_SCRIPT_VARIABLE, 0, value, operator),
-                    rule[_RULE_VAR_AT:]))
-    return out
-
-
 def _membership_conditions(audience: Audience, ctx) -> 'list | None':
     """The class and faction tests a bark states; None when one names no form.
 
@@ -206,7 +152,7 @@ def _membership_conditions(audience: Audience, ctx) -> 'list | None':
         out.append(ctda(_FUNC_GET_IN_FACTION, int(form_id, 16)))
         if audience.rank > 0:
             out.append(ctda(_FUNC_GET_FACTION_RANK, int(form_id, 16),
-                             float(audience.rank), _OP_AT_LEAST))
+                            float(audience.rank), _OP_AT_LEAST))
     return out
 
 
@@ -237,15 +183,36 @@ def _audience_lines(audience: Audience, ctx) -> 'tuple | None':
     if audience.gender in (0, 1):
         lines.append(f'BarkSex={audience.gender}')
         conditions.append(ctda(_FUNC_GET_IS_SEX, audience.gender))
-    return lines, conditions
+    return lines, [Cond(raw) for raw in conditions]
+
+
+def _condition_lines(conditions: list) -> list:
+    """`Condition[i].*` for each `Cond`, with the count after them."""
+    lines = []
+    for index, cond in enumerate(conditions):
+        lines.append(f'Condition[{index}].Raw={cond.raw}')
+        if cond.run_on:
+            lines.append(f'Condition[{index}].RunOn={cond.run_on}')
+        if cond.variable:
+            lines.append(f'Condition[{index}].Variable='
+                         + escape_value(cond.variable))
+    if conditions:
+        lines.append(f'ConditionCount={len(conditions)}')
+    return lines
 
 
 def export_bark(rec: Tes3Record, ctx, topic: str,
                 info_id: str) -> 'list | None':
-    """One voiced bark as a TES4 INFO, or None when nobody here can speak it."""
+    """One voiced bark as a TES4 INFO, or None when nobody here can speak it
+    or one of its rules has no Skyrim equivalent."""
     audience = Audience(rec).bind(ctx, RACE_FORMIDS)
     gated = _audience_lines(audience, ctx)
     if gated is None:
+        ctx.unresolved['bark audience'] += 1
+        return None
+    rules = bark_conditions(rec, audience, ctx)
+    if rules is None:
+        ctx.unresolved['bark rule'] += 1
         return None
     gate, conditions = gated
     edid = BARK_TOPICS[topic.lower()]
@@ -264,13 +231,4 @@ def export_bark(rec: Tes3Record, ctx, topic: str,
                   'Response[0].ResponseText='
                   + escape_value(get_string(response) if response else '')])
     lines.extend(gate)
-    named = [(raw, '') for raw in conditions]
-    named.extend(_script_local_conditions(rec))
-    for index, (raw, variable) in enumerate(named):
-        lines.append(f'Condition[{index}].Raw={raw}')
-        if variable:
-            lines.append(f'Condition[{index}].Variable='
-                         + escape_value(variable))
-    if named:
-        lines.append(f'ConditionCount={len(named)}')
-    return lines
+    return lines + _condition_lines(conditions + rules)

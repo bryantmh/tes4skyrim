@@ -1519,6 +1519,53 @@ REFR->base->SCRI chain has nothing to walk. Built output carries
 `::TR_abomination_var` on 20 grunts, `::TR_Map_var` on 116 regional lines and
 `::TR_NecromOrd_var` on 49.
 
+A `NotLocal` rule (kind `C`) is the local rule NEGATED -- its comparison is
+inverted on export.
+
+#### <a id="bark-conditions"></a>🛑 Every other rule is a condition too, or the line goes
+
+**Code:** `tes4_export/record_types/morrowind_bark_conditions.py`
+
+The identity gate alone let every Hello play to everyone: "Diseased! Go away.
+You make us sick!" (`PcCommonDisease == 1`), "Hiss!" (`PcVampire == 1`) and
+the guild-rank greetings (`DNAM` + PC rank) all reached healthy, unaffiliated
+players. Measured over Morrowind + Tribunal + Bloodmoon + Tamriel_Data +
+TR_Mainland (10,300 barks), the rules that were being dropped:
+
+| Rule | Barks | Becomes |
+|---|---|---|
+| `Random100` | 6,458 | `GetRandomPercent` |
+| disposition (DATA) | 6,028 | `GetDisposition` -> relationship rank |
+| `PCRace` | 1,437 | `GetPCIsRace`, the set `RaceCheck` numbers 1..10 |
+| cell (`ANAM`) | 1,334 | runtime GLOB `cell:<prefix>` |
+| PC faction (`DNAM`) / PC rank | 725 / 693 | `GetFactionRank` on the player |
+| Health % / PcHealth % | 419 / 416 | `GetHealthPercentage` (TES5 430) |
+| PcExpelled | 415 | `GetPCExpelled` on the stated faction |
+| PcClothingModifier | 257 | `GetClothingValue`, naked-or-not only |
+| journal | ~250 | runtime GLOB `journal:<id>` |
+| PcCrimeLevel | 190 | `GetCrimeGold` |
+| SameFaction / SameSex / SameRace | 139 / 88 / 51 | `Same*AsPC` |
+| Weather | 139 | `GetIsCurrentWeather` over `mw*` WTHRs where loaded, else runtime GLOB `weather`; outdoors only |
+| FactionRankDifference | 122 | `GetFactionRankDifference(F, PlayerRef)`, sides swapped |
+| FriendHit | 113 | `GetFriendHit(PlayerRef)` |
+| PcCommonDisease | 88 | `GetDisease` on the player |
+| PcVampire / PcCorprus | 39 / 2 | `HasMagicEffect` of `MW133Vampirism` / `MW132Corpus` |
+
+A player-side rule sets the run-on-target bit and `Condition[i].RunOn=Player`;
+the importer points it at PlayerRef. `GetFactionRankDifference` was read off
+the 1.6.1170 condition callback (0x32bd80): SUBJECT rank minus the parameter's,
+so TES3's player-minus-speaker swaps sides.
+
+`GetClothingValue` scores worn clothing 0..100 by coverage while TES3 sums its
+gold value, so only a rule that splits naked from dressed (`<= 0`, 95 barks)
+carries across; a gold threshold drops the line.
+
+**Dropped, because Skyrim cannot ask:** CreatureTarget (134; `GetIsCreature`
+is always 0 in Skyrim), Reputation (43), Werewolf (7), Alarm (7),
+RankRequirement (7), FacReaction (6), the eight attributes, and a
+speaker-faction rule (PcExpelled, FactionRankDifference, PC rank) on a bark
+that states no faction.
+
 #### Measured result
 
 Built ESMs, both conversion modes:

@@ -15,6 +15,7 @@ import struct
 from ..record_types.common import escape_value
 from ..tes3_reader import Tes3Record, get_string, get_subrecord
 from .morrowind_audience import index_speakers, master_speakers
+from .morrowind_bark_conditions import state_records
 from .morrowind_barks import bark_topics, export_bark, is_bark
 from .morrowind_say import say_lines
 
@@ -170,7 +171,8 @@ def export_INFO(rec: Tes3Record, ordinal: int, topic: str) -> list:
 
 
 def dialogue_records(records: list, ctx=None, say: bool = True) -> dict:
-    """{'MWDI': [...], 'MWIN': [...], 'DIAL': [...], 'INFO': [...]}, in file order.
+    """{'MWDI': [...], 'MWIN': [...], 'DIAL': [...], 'INFO': [...]}, in file order,
+    plus with a `ctx` the 'GLOB's the runtime publishes bark state into.
 
     Walks the file itself: every INFO belongs to the last DIAL seen. With a
     `ctx` a VOICED bark is also emitted as TES4 DIAL/INFO, the only road that
@@ -183,6 +185,7 @@ def dialogue_records(records: list, ctx=None, say: bool = True) -> dict:
         ctx.bark_speakers = (index_speakers(records)
                              + master_speakers(ctx.master_dirs))
         ctx.bark_audiences = {}
+        ctx.bark_states = {}
     topic = ''
     ordinal = 0
     voiced = set()
@@ -198,9 +201,7 @@ def dialogue_records(records: list, ctx=None, say: bool = True) -> dict:
         if ctx is not None and is_bark(rec, topic):
             own = info_id(rec)
             bark = export_bark(rec, ctx, topic, own)
-            if bark is None:
-                ctx.unresolved['bark audience'] += 1
-            else:
+            if bark is not None:
                 voiced.add(topic.lower())
                 out['INFO'].append(
                     (ctx.derive(f'barkinfo:{topic.lower()}:{own.lower()}'),
@@ -208,7 +209,9 @@ def dialogue_records(records: list, ctx=None, say: bool = True) -> dict:
         out[INFO_SIG].append(
             (info_id(rec), export_INFO(rec, ordinal, topic)))
         ordinal += 1
-    out['DIAL'] = bark_topics(voiced, ctx) if ctx is not None else []
+    if ctx is not None:
+        out['DIAL'] = bark_topics(voiced, ctx)
+        out['GLOB'] = state_records(ctx)
     if ctx is not None and say:
         for sig, rows in say_lines(records, ctx).items():
             out.setdefault(sig, []).extend(rows)

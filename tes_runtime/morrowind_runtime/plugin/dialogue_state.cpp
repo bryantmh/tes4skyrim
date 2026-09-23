@@ -61,6 +61,14 @@ float Float(const std::string& text) {
     return static_cast<float>(std::atof(text.c_str()));
 }
 
+// The player's standing in one faction, pushed into the game's own faction.
+// See: docs/commentary/morrowind_runtime.md#player-factions
+void PushFaction(const std::string& faction, const Membership& member) {
+    if (Hooks().applyPlayerFaction) {
+        Hooks().applyPlayerFaction(faction, member.rank, member.expelled);
+    }
+}
+
 }  // namespace
 
 GameHooks& Hooks() {
@@ -254,6 +262,7 @@ void DialogueState::JoinFaction(const std::string& faction) {
     Membership& member = mFactions[Key(faction)];
     if (member.rank < 0) member.rank = 0;
     Log("faction: joined %s at rank %d", faction.c_str(), member.rank);
+    PushFaction(faction, member);
 }
 
 void DialogueState::ChangeRank(const std::string& faction, int delta) {
@@ -261,12 +270,15 @@ void DialogueState::ChangeRank(const std::string& faction, int delta) {
     Membership& member = mFactions[Key(faction)];
     member.rank = std::clamp(member.rank + delta, -1, kTopRank);
     Log("faction: %s rank %d", faction.c_str(), member.rank);
+    PushFaction(faction, member);
 }
 
 void DialogueState::SetExpelled(const std::string& faction, bool expelled) {
     if (faction.empty()) return;
-    mFactions[Key(faction)].expelled = expelled;
+    Membership& member = mFactions[Key(faction)];
+    member.expelled = expelled;
     Log("faction: %s %s", faction.c_str(), expelled ? "EXPELLED" : "readmitted");
+    PushFaction(faction, member);
 }
 
 void DialogueState::SetFactionReputation(const std::string& faction,
@@ -442,6 +454,9 @@ std::size_t DialogueState::Deserialize(const std::string& text) {
         else continue;
         ++taken;
     }
+    // A save made before the factions were pushed holds memberships the
+    // game never heard of.
+    for (const auto& e : mFactions) PushFaction(e.first, e.second);
     return taken;
 }
 

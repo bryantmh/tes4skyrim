@@ -123,6 +123,8 @@ void SyncClock() {
                                forms[i] + ids::kOffGlobalValue));
     }
     SyncMirroredGlobals();
+    // After the mirror, so a value Papyrus just wrote reaches the state first.
+    PublishState();
 }
 
 // `advanceHours`: moves GameHour on, which is how Skyrim's own wait does

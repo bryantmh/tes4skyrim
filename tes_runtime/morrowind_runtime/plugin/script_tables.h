@@ -303,6 +303,22 @@ int AiAliasIndex(const std::string& name);
 const FormRef* FindAiPack(const std::string& kind);
 const FactionDef* FindFaction(const std::string& faction);
 
+// The converted FACT a TES3 faction id names -- factions_formid.txt -- which
+// the player is made a member of. Null when the chain defines none.
+// See: docs/commentary/morrowind_runtime.md#player-factions
+const FormRef* FindFactionForm(const std::string& faction);
+
+// One GLOB the export minted for a bark to test: `key` is `journal:<id>`,
+// `cell:<prefix>`, `reputation` or `weather`, and the runtime writes that
+// value into `form` -- state_formid.txt. Every plugin's rows are kept: two
+// plugins testing the same thing each carry their own GLOB.
+// See: docs/commentary/morrowind_runtime.md#published-state
+struct StateRow {
+    std::string key;
+    FormRef form;
+};
+const std::vector<StateRow>& StateRows();
+
 // A GMST by name, or null when the chain staged none of that name.
 const GmstDef* FindGmst(const std::string& name);
 // A GMST's float or int as a float, or `fallback` when absent.

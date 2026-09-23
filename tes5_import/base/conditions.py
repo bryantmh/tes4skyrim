@@ -696,15 +696,12 @@ def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
                                    drop_run_on_target: bool = False) -> list:
     """Like convert_ctda_list, but returns [(ctda_bytes, cis2_or_None)].
 
-    A TES4 GetScriptVariable condition carries its variable NAME as a script-
-    local index we cannot see in the CTDA itself — the name lives in the target
-    ref's script.  `script_vars` maps ref_fid -> {var_index: var_name} (built by
-    the caller from the SCPT records), letting us re-emit the condition as
-    GetVMScriptVariable + a CIS2 naming the Papyrus property.
-
-    Conditions whose variable we cannot resolve are emitted against a sentinel
-    name that no script declares, so they read 0 — exactly what TES4 returns
-    for a missing variable (see convert_script_var_ctda).
+    GetScriptVariable becomes GetVMScriptVariable + a CIS2 naming the Papyrus
+    property; `script_vars` maps ref_fid -> {var_index: var_name}, and an
+    unresolved variable reads a sentinel no script declares, so 0.
+    `[prefix]Condition[i].RunOn=Player` retargets that one run-on-target
+    condition onto PlayerRef, overriding `run_on_target_ref`.
+    See: docs/commentary/tes4_export_morrowind.md#bark-conditions
     """
     if offset is None:
         offset = get_formid_index_offset()
@@ -725,18 +722,18 @@ def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
             continue
 
         func = struct.unpack_from('<H', raw + b'\0' * 24, 8)[0]
+        ref = (_PLAYER_REF_FORMID if rec.get(f'{prefix}Condition[{i - 1}].RunOn')
+               == 'Player' else run_on_target_ref)
         if func in _VM_VAR_FUNCS:
             pair = convert_script_var_ctda(
-                raw, script_vars, offset, run_on_target_ref,
-                drop_run_on_target,
+                raw, script_vars, offset, ref, drop_run_on_target,
                 rec.get(f'{prefix}Condition[{i - 1}].Variable', ''))
             if pair is not None:
                 out.append(pair)
             continue
 
         try:
-            ctda = convert_ctda(raw, offset,
-                                run_on_target_ref=run_on_target_ref,
+            ctda = convert_ctda(raw, offset, run_on_target_ref=ref,
                                 drop_run_on_target=drop_run_on_target,
                                 in_speak_as_topic=speak_as)
         except (ValueError, struct.error):

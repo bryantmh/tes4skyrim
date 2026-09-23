@@ -511,6 +511,17 @@ constexpr std::uint64_t kSpellCast = 55747;
 // `movss xmm0,[r8+0x34]`, a two-instruction leaf, so the field is read.
 constexpr std::size_t kOffGlobalValue = 0x34;
 
+// The player's faction standing, pushed onto the converted FACT. Live-image
+// RVAs (1.6.1170), GOG 1.6.659 in brackets:
+//   void Actor.SetFactionRank(Faction, int)   0x9ea340  [0x98b690]
+//        `lea r9` form; the rank rides at [rsp+0x28] and is read as a byte.
+//        Adds the actor to the faction when it is not already in it.
+//   void Faction.SetPlayerExpelled(bool)      0xa1dc80  [0x9befc0]
+//        stored-after form; sets or clears bit 4 of the faction's +0x58 flags.
+// See: docs/commentary/morrowind_runtime.md#player-factions
+constexpr std::uint64_t kActorSetFactionRank = 54750;
+constexpr std::uint64_t kFactionSetPlayerExpelled = 55843;
+
 // Actor.IsDead() (0x989ff0), the r9 of its registration beside 'IsDead'.
 //
 // 🛑 `OnDeath` is POLLED from the tick rather than hooked. TES3 raises it for
