@@ -22,7 +22,7 @@ import shutil
 import struct
 
 from asset_convert.sources import source_registry
-from core.plugin_masters import (get_masters_from_binary,
+from core.plugin_masters import (export_source, get_masters_from_binary,
                                  masters_from_export_header)
 from tes4_export.morrowind_ids import encode_editor_id, load_index
 from tes4_export.morrowind_patch import PATCH_NAME
@@ -860,9 +860,8 @@ def _journal_quests(writer, out_dir: str, plugin_name: str) -> int:
 
 
 def is_tes3_export(export_dir: str) -> bool:
-    """True when this export came from TES3, by its dialogue signatures."""
-    return any(os.path.isfile(os.path.join(export_dir, name))
-               for name in _EXPORT_DIALOGUE)
+    """True when this export came from TES3, by its `_HEADER.txt` source."""
+    return export_source(export_dir) == 'TES3'
 
 
 def _converted_sounds(esm_path: str) -> dict:

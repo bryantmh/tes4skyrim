@@ -13,8 +13,7 @@ from tes5_import.dialogue.morrowind_sidecar import (APPARATUS_TABLE,
 
 
 def _export(tmp_path, records, tes3=False):
-    """An export dir holding `records` as APPA.txt, plus a TES3 dialogue file
-    when `tes3`."""
+    """An export dir holding `records` as APPA.txt, marked TES3 when `tes3`."""
     folder = tmp_path / 'export' / 'Plugin.esm'
     folder.mkdir(parents=True)
     body = ''.join('---RECORD_BEGIN---\n'
@@ -22,7 +21,7 @@ def _export(tmp_path, records, tes3=False):
                    + '---RECORD_END---\n' for rec in records)
     (folder / 'APPA.txt').write_text(body, encoding='utf-8')
     if tes3:
-        (folder / 'MWDI.txt').write_text('', encoding='utf-8')
+        (folder / '_HEADER.txt').write_text('Source=TES3\n', encoding='utf-8')
     return str(folder)
 
 

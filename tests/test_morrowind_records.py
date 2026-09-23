@@ -229,6 +229,21 @@ def _export(tmp_path, name: str, records, master_dirs=()) -> str:
     return out_dir
 
 
+def test_a_tes3_export_without_dialogue_is_still_tes3(tmp_path):
+    """The header, not a dialogue file, marks the source; the patch opts out.
+
+    See: docs/commentary/tes5_import_world.md#tes3-dont-havok-settle
+    """
+    from tes5_import.dialogue.morrowind_sidecar import is_tes3_export
+    plugin = _export(tmp_path, 'Groundcover.esp', [_rec('STAT', 'grass')])
+    assert not os.path.isfile(os.path.join(plugin, 'MWDI.txt'))
+    assert is_tes3_export(plugin)
+    patch = tmp_path / 'Patch'
+    patch.mkdir()
+    write_header(str(patch), [], 0, 'fixture', flags=1, source='')
+    assert not is_tes3_export(str(patch))
+
+
 def test_a_plugin_ships_only_the_sounds_no_master_names(tmp_path):
     """The shared Data folder means ownership is per FILE, not per plugin.
 

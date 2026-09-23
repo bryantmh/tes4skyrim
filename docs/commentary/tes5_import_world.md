@@ -135,6 +135,13 @@ copy.
 
 **Code:** `tes5_import/record_types/world_morrowind.py:tes3_refr_flags`
 
+The flag goes on every REFR of a TES3-sourced plugin, whatever plugin defines
+the base — a TR ref to a `Morrowind_ob.esm` sword gets it. "TES3-sourced" is
+the `Source=TES3` line the Morrowind exporter writes to `_HEADER.txt`
+(`is_tes3_export`). It used to be the presence of `MWDI.txt`/`MWIN.txt`,
+which missed every dialogue-less plugin: groundcover, `Sky_Main.esm`. The
+Morroblivion gap patch writes no `Source=` line.
+
 Morrowind simulates no physics, so every placed item holds exactly the pose its
 author gave it: books overlapping a shelf, a cup floating a unit above a table.
 Converted items are dynamic Havok clutter, and Skyrim settles dynamic refs when

@@ -952,14 +952,17 @@ def write_export(out: dict, output_dir: str) -> dict:
 
 
 def write_header(output_dir: str, masters: list, num_records: int,
-                 description: str, flags: int) -> None:
-    """Write the _HEADER.txt the import stage reads for masters and ESM flag."""
+                 description: str, flags: int, source: str = 'TES3') -> None:
+    """Write the _HEADER.txt the import stage reads for masters, ESM flag and
+    source game; an empty `source` writes no `Source=` line."""
     lines = ['HEDR.Version=1.0', f'HEDR.NumRecords={num_records}',
              'HEDR.NextObjectID=2048',
              'CNAM.Author=TESConversion',
              f'SNAM.Description={description}']
     lines.extend(f'Master[{i}]={name}' for i, name in enumerate(masters))
     lines.append(f'Flags={flags}')
+    if source:
+        lines.append(f'Source={source}')
     with open(os.path.join(output_dir, '_HEADER.txt'), 'w',
               encoding='utf-8') as fh:
         fh.write('\n'.join(lines) + '\n')

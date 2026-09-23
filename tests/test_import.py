@@ -1927,7 +1927,7 @@ class TestServiceConversion:
         statics stay with the NPC."""
         from tes5_import.record_types.actor_common import (create_vendor_factions, get_vendor_faction_fids_for_actor)
         from tes5_import.record_types.vendor_stock_morrowind import (owned_stock, stock_owner)
-        (tmp_path / 'MWDI.txt').write_text('')
+        (tmp_path / '_HEADER.txt').write_text('Source=TES3\n')
         npc = self._merchant_npc(fid='00000501', services='3')
         by_type = {
             'NPC_': [npc],

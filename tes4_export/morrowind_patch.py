@@ -498,7 +498,7 @@ def _write_records(gaps: dict, export_dir: str, progress,
     out_dir = patch_dir(export_dir)
     counts = write_export(out, out_dir)
     write_header(out_dir, list(morroblivion), sum(counts.values()),
-                 'Objects Morroblivion does not convert', flags=1)
+                 'Objects Morroblivion does not convert', flags=1, source='')
     progress(f'  Wrote {sum(counts.values())} records to {out_dir}')
     return out_dir
 

@@ -48,6 +48,12 @@ def is_master_export(record_dir: str) -> bool:
                for key, value in _export_header(record_dir))
 
 
+def export_source(record_dir: str) -> str:
+    """The `Source=` game an export's `_HEADER.txt` names; '' for a TES4 dump."""
+    return next((value for key, value in _export_header(record_dir)
+                 if key == 'Source'), '')
+
+
 def _export_header(record_dir: str) -> list:
     """(key, value) for every line of an export's `_HEADER.txt`; [] if none."""
     header = os.path.join(record_dir, '_HEADER.txt')
