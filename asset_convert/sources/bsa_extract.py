@@ -107,6 +107,7 @@ def read_bsa_files(bsa_path, wanted_names):
 _EXTRA_BSA_BASES = {
     "nehrim": ["N", "L"],
     "falloutnv": ["Fallout", "Update"],
+    "fallout3": ["Fallout"],
     "Arktwend_English": ["Morrowind", "Bloodmoon", "Tribunal"],
     "Arktwend 2.0.0 (DE)": ["Morrowind", "Bloodmoon", "Tribunal"]
 }
@@ -194,6 +195,7 @@ def get_bsa_files(data_path, source_file):
             f"{base} - Voices.bsa",
             f"{base} - Voices1.bsa",  # Oblivion splits voices across two BSAs
             f"{base} - Voices2.bsa",
+            f"{base} - MenuVoices.bsa",
         ]:
             _try(pattern)
 
@@ -251,7 +253,11 @@ def categorize(filepath):
     return '/'.join([category] + parts)
 
 
-# Manifest file tracks what BSAs have been extracted
+# ---------------------------------------------------------------------------
+# Extraction manifest
+# ---------------------------------------------------------------------------
+
+#: Records each extracted BSA's path, size and file count in the folder it filled.
 MANIFEST_NAME = '.bsa_extract_manifest.json'
 
 
@@ -270,6 +276,31 @@ def save_manifest(extract_dir, manifest):
     os.makedirs(extract_dir, exist_ok=True)
     with open(manifest_path, 'w') as f:
         json.dump(manifest, f, indent=2)
+
+
+def extracted_from(base_dir, bsa_files) -> list:
+    """Where `base_dir`'s earlier archives came from, when not among `bsa_files`.
+
+    An entry written before paths were recorded is named by its archive alone.
+    """
+    current = {os.path.normcase(str(b)) for b in bsa_files}
+    names = {Path(b).name for b in bsa_files}
+    out = set()
+    for name, row in load_manifest(base_dir)['extracted_bsas'].items():
+        path = row.get('path')
+        if path and os.path.normcase(path) not in current:
+            out.add(str(Path(path).parent))
+        elif not path and name not in names:
+            out.add(f'{name} (folder not recorded)')
+    return sorted(out)
+
+
+def _warn_mixed_sources(base_dir, data_path, bsa_files) -> None:
+    """Say where extraction reads from, and warn when `base_dir` already holds other archives' files."""
+    print(f"Extracting from {data_path} into {base_dir}")
+    for other in extracted_from(base_dir, bsa_files):
+        print(f"  WARNING: {base_dir} also holds files extracted from {other}; "
+              f"clear it for a clean extraction from {data_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +429,7 @@ def extract_bsa(bsa_path, extract_dir, force=False, source_name=None):
 
     if not force and bsa_key in manifest['extracted_bsas']:
         prev = manifest['extracted_bsas'][bsa_key]
-        if prev.get('size') == bsa_size:
+        if prev.get('size') == bsa_size and prev.get('path', str(bsa_path)) == str(bsa_path):
             print(f"  Skipping {bsa_key} (already extracted, {prev['file_count']} files)")
             return {'total_files': 0, 'extracted': 0, 'skipped_cached': True,
                     'skipped': 0, 'errors': 0}
@@ -452,6 +483,7 @@ def extract_bsa(bsa_path, extract_dir, force=False, source_name=None):
                 print(f"    ERROR writing {filepath}: {e}")
 
     manifest['extracted_bsas'][bsa_key] = {
+        'path': str(bsa_path),
         'size': bsa_size,
         'file_count': stats['extracted'],
         'total_in_bsa': stats['total_files'],
@@ -489,7 +521,7 @@ def extract_assets_for_file(source_file, data_path, extract_dir, force=False):
         print(f"No BSA files found for {source_file} in {data_path}")
         return {'bsas_found': 0}
 
-    print(f"Found {len(bsa_files)} BSA(s) for {source_file}:")
+    print(f"Found {len(bsa_files)} BSA(s) for {source_file} in {data_path}:")
     for b in bsa_files:
         print(f"  {b.name} ({b.stat().st_size / 1024 / 1024:.1f} MB)")
 
@@ -504,6 +536,7 @@ def extract_assets_for_file(source_file, data_path, extract_dir, force=False):
         asset_dir_name = asset_root(extract_dir, source_file).name
     except ImportError:
         asset_dir_name = source_file
+    _warn_mixed_sources(Path(extract_dir) / asset_dir_name, data_path, bsa_files)
 
     for bsa_file in bsa_files:
         stats = extract_bsa(bsa_file, extract_dir, force=force,

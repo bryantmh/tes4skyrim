@@ -91,12 +91,16 @@ mod with its plugins.
 
 1. **An imported mod's retained binary** — `export/<plugin>/_source/<plugin>`,
    written by `mod_ingest.py` when the plugin came from a mod archive.
-2. **The selected Data directory** (`tes4_data` = `tes4DataPath`, which the
-   GUI rewrites whenever a directory source is picked), if it holds the plugin.
-3. **The first registered game directory that holds it** — `source_registry`
-   records each source Data folder as `kind: "directory"` (Oblivion, Nehrim,
-   Fallout New Vegas), and `directory_for()` maps a plugin name back to a
-   folder. This is how a master living in another install is found.
+2. **The selected Data directory** (`tes4_data` = `--data-dir`, else
+   `tes4DataPath`, which the GUI rewrites whenever a directory source is
+   picked), if it holds the plugin.
+3. **The plugin's home, then the first registered game directory that holds
+   it** — `source_registry` records each source Data folder as
+   `kind: "directory"` (Oblivion, Nehrim, Fallout New Vegas), and
+   `directory_for()` maps a plugin name back to a folder. This is how a master
+   living in another install is found. The home comes first so a second copy
+   of the same name never wins by registration order; see
+   [same-named plugins](../commentary/asset_convert_mod_ingest.md#same-named-plugins).
 
 Step 2 must come before step 3 because plugin NAMES are not unique across
 installs: Tale of Two Wastelands puts its own `Fallout3.esm` (masters

@@ -636,6 +636,7 @@ for Oblivion but not for every game:
 | `Knights.esp` | `Knights.bsa` (one archive, smaller DLCs) |
 | `Nehrim.esm` | `N - Meshes/Textures1/Textures2/Sounds/Misc.bsa`, `L - Voices/Misc.bsa` |
 | `FalloutNV.esm` | `Fallout - Meshes/Meshes2/Misc/Sound/Textures/Textures2/Voices1.bsa`, `Update.bsa` |
+| `Fallout3.esm` | `Fallout - Meshes/Textures/Sound/Voices/Misc/MenuVoices.bsa` (a TTW copy in the New Vegas folder also has `Fallout3 - *.bsa`) |
 
 **FO3/FNV name their archives after the GAME, not the plugin.** The stem
 `FalloutNV` matches nothing, so discovery returned **0 of the 47 BSAs** in a
@@ -646,7 +647,46 @@ converted normally.
 
 `_EXTRA_BSA_BASES` is the fix for exactly this shape of problem: it maps a
 plugin stem to the extra prefixes its archives really use, and FalloutNV
-registers `Fallout` the way Nehrim registers `N` and `L`.
+registers `Fallout` the way Nehrim registers `N` and `L`. Fallout3 registers
+`Fallout` too: without it a real Fallout 3 GOTY install matched **0** archives
+(its eight are all `Fallout - *` or `Anchorage - *`), and the only Fallout 3
+assets ever extracted were Tale of Two Wastelands' `Fallout3 - *.bsa` from the
+New Vegas folder, which leave out every file New Vegas already ships.
+
+### <a id="same-named-plugins"></a>Same-named plugins from different Data folders
+
+**Code:** `home_directory`, `claim_home`, `directory_for`, `variant_folder`,
+`copies` in `asset_convert/sources/source_registry.py`; `_announce` and
+`_list_sources` in `convert.py`; `extracted_from` in `bsa_extract.py`
+
+A plugin name is not unique across installs. Tale of Two Wastelands puts its
+own `Fallout3.esm` in the New Vegas Data folder: 347 MB, HEDR 1.34, 792,785
+records, against the real Fallout 3 GOTY file's 289 MB, HEDR 0.94, 808,699
+records. They are different plugins that share a name.
+
+- **Which copy converts** is the selected Data folder (`--data-dir`, else
+  `tes4DataPath`, which the GUI's Source dropdown sets). `convert.py` exports
+  it as `TESCONV_SOURCE_DIR` so every phase process and pool worker resolves the
+  same copy. A master not in the selected folder resolves to its home.
+- **The home** is the first folder a run read the plugin from, pinned in
+  `sources.json` under `homes`. It keeps the plain `export/<plugin>/` and
+  `output/<plugin>/` folders, so pinning never moves an existing tree.
+- **Any other copy** gets `export/<plugin> (<install>)/` and the matching
+  `output/` folder, through `asset_root_name`, so the export, extraction,
+  caches and output of each copy stay apart. Dots are removed from the install
+  label so the folder's `Path.stem` is still the plugin stem, which keeps the
+  asset namespace the same for both copies.
+- **Listing:** each run prints every plugin's Data folder and export folder;
+  `--list-mods` lists each Data folder and every plugin found in more than one,
+  with the folder each copy converts into.
+- **Extraction** records each archive's full path in
+  `.bsa_extract_manifest.json`, prints the folder it reads from, re-extracts an
+  archive of the same name from a different folder, and warns when the target
+  already holds files from another folder. It never deletes them; clearing the
+  folder is left to the user.
+
+A tool run outside `convert.py` has no selected folder, so it resolves every
+plugin to its home copy.
 
 <a id="update-bsa"></a>**`Update.bsa` is FNV's official patch archive** and
 the last entry of the game's `SArchiveList`; its 86 files override the base

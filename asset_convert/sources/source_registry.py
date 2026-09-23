@@ -56,6 +56,9 @@ REGISTRY_VERSION = 2
 # parse_export_directory from ever seeing a stray .esp.
 SOURCE_SUBDIR = '_source'
 
+#: Carries the selected Data folder into every phase process and pool worker.
+SELECTED_DIR_ENV = 'TESCONV_SOURCE_DIR'
+
 
 # ---------------------------------------------------------------------------
 #  Reading, upgrading and writing the registry file
@@ -243,19 +246,85 @@ def remove_directory(export_dir, path) -> bool:
     return True
 
 
-def directory_for(export_dir, plugin: str):
-    """The registered directory containing `plugin`, or None.
+def _norm(path) -> str:
+    """`path` in the form two spellings of one folder compare equal in."""
+    return os.path.normcase(os.path.normpath(str(path)))
 
-    Resolves a plugin to its OWN install rather than to whichever directory a
-    path field happens to hold, which is what made Oblivion.esm get recorded
-    against the Nehrim folder.
+
+def select_directory(path) -> None:
+    """Make `path` the Data folder same-named plugins resolve to, here and in child processes.
+
+    See: docs/commentary/asset_convert_mod_ingest.md#same-named-plugins
+    """
+    if path:
+        os.environ[SELECTED_DIR_ENV] = str(path)
+    else:
+        os.environ.pop(SELECTED_DIR_ENV, None)
+
+
+def home_directory(export_dir, plugin: str):
+    """The Data folder whose copy of `plugin` owns the plain folders, or None."""
+    return (_load_raw(export_dir).get('homes') or {}).get(_key(plugin))
+
+
+def claim_home(export_dir, plugin: str) -> None:
+    """Pin the folder this run reads `plugin` from as its home, unless one is pinned.
+
+    An imported mod has its own folder and never takes a home.
+    """
+    if home_directory(export_dir, plugin) or get(export_dir, plugin):
+        return
+    here = directory_for(export_dir, plugin)
+    if here:
+        data = load(export_dir)
+        data.setdefault('homes', {})[_key(plugin)] = str(here)
+        save(export_dir, data)
+
+
+def directory_for(export_dir, plugin: str):
+    """The Data folder this run reads `plugin` from, or None.
+
+    The selected folder when it holds `plugin`, else the plugin's home, else
+    the first registered folder holding it -- so a second copy elsewhere
+    never wins by registration order.
     """
     if not plugin:
         return None
-    for row in directories(export_dir):
-        if os.path.isfile(os.path.join(row['path'], plugin)):
-            return row['path']
-    return None
+    candidates = [os.environ.get(SELECTED_DIR_ENV),
+                  home_directory(export_dir, plugin)]
+    candidates += [row['path'] for row in directories(export_dir)]
+    return next((d for d in candidates
+                 if d and os.path.isfile(os.path.join(d, plugin))), None)
+
+
+def variant_folder(export_dir, plugin: str):
+    """`<plugin> (<install>)` when this run reads `plugin` away from its home, else None.
+
+    Dots leave the install label so `Path(folder).stem` is still the plugin's stem.
+    See: docs/commentary/asset_convert_mod_ingest.md#same-named-plugins
+    """
+    home = home_directory(export_dir, plugin)
+    if not home:
+        return None
+    here = directory_for(export_dir, plugin)
+    if not here or _norm(here) == _norm(home):
+        return None
+    label = label_for_directory(here).replace('.', ' ')
+    return _sanitize_folder(f'{plugin} ({label})')
+
+
+def copies(export_dir, plugin: str) -> list:
+    """Every registered Data folder holding `plugin`, as [(path, folder name)], home first."""
+    saved = os.environ.get(SELECTED_DIR_ENV)
+    out = []
+    try:
+        for row in directories(export_dir):
+            if os.path.isfile(os.path.join(row['path'], plugin)):
+                select_directory(row['path'])
+                out.append((row['path'], asset_root_name(export_dir, plugin)))
+    finally:
+        select_directory(saved)
+    return sorted(out, key=lambda row: row[1] != plugin)
 
 
 def migrate_known_directories(export_dir, extra_dirs=(),
@@ -452,14 +521,15 @@ def _sanitize_folder(name: str) -> str:
 def asset_root_name(export_dir, plugin: str) -> str:
     """The folder name holding `plugin`'s ASSETS.
 
-    The mod's group folder for an imported mod, else the plugin's own name.
+    The mod's group folder for an imported mod, a variant folder for a copy
+    read away from its home Data folder, else the plugin's own name.
     Returned as a bare name rather than a path so both `export/` and `output/`
     can build their own root from it -- the two must agree, and they only do
     that reliably if the name is computed once.
     """
     entry = get(export_dir, plugin)
     if not entry:
-        return plugin
+        return variant_folder(export_dir, plugin) or plugin
     label = _sanitize_folder(entry.get('group_label') or '')
     return label or plugin
 

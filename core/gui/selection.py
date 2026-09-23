@@ -46,6 +46,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import version as version_info
+from asset_convert.sources import source_registry
 from core.gui import mods as gui_mods
 from core.gui.config import CLR, EXPORT_DIR, STEPS, default_on_steps, parse_dropped_paths, scan_plugins
 
@@ -428,6 +429,7 @@ def _scope_plugins(app, row, save_dirs) -> list:
     if app.tes4_var.get() != row["path"]:
         app.tes4_var.set(row["path"])
         save_dirs()
+    source_registry.select_directory(row["path"])
     return scan_plugins(row["path"])
 
 
