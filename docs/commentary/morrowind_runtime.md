@@ -2320,14 +2320,19 @@ confirmed smooth in-game. Details that matter:
 
 - The goal CHAINS from the previous goal while calls come every tick, and
   same-tick calls add into it, so a two-axis rotate is one glide, not the last
-  axis alone. Absolute `SetPos`/`Position` drop the chain.
+  axis alone. `Position` drops the chain; `SetPos`/`SetAngle` join it (below).
 - A rotation cannot finish before the position does, so a pure rotate adds a
   0.01-unit Z nudge (alternating up/down) to give the glide a duration.
 - Target angles are taken the short way from the current ones, since the
   reference stores normalized radians.
 
 The absolute setters (`SetPos`, `SetAngle`, `Position`, `PositionCell`) stay
-on the instant natives — they are single teleports.
+on the instant natives — they are single teleports — with one exception:
+`SetPos`/`SetAngle` on a reference whose glide chain is live (it asked last
+tick or this one) become that glide's goal instead. Scripts close a
+`Rotate` loop with an absolute reset — the shop-sign `SignRotate` swings
++2/−4/+2 degrees and then runs `SetAngle, y, GetStartingAngle, y` — and the
+native there faded the sign out and back in once per loop. Confirmed in-game.
 
 ### <a id="ai-packages-are-real-packages"></a>The AI commands are real Skyrim packages
 

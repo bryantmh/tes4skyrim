@@ -102,36 +102,6 @@ float Angle(const std::string& id, int axis) {
     return RefAngle(OwnerRef(id), axis);
 }
 
-// 🛑 The natives take ALL THREE axes, so the other two are read back first
-// and written unchanged. Posted, like every other call that moves something:
-// the menu's callbacks do not run on the game thread.
-void SetAxis(const std::string& id, int axis, float value, bool isAngle) {
-    void* ref = OwnerRef(id);
-    AxisSetFn set = isAngle ? g_setAngle : g_setPosition;
-    if (!ref || !set) return;
-    float xyz[kAxisCount];
-    for (int i = 0; i < kAxisCount; ++i) {
-        xyz[i] = isAngle ? RefAngle(ref, i)
-                         : (g_getPosition[i]
-                                ? g_getPosition[i](PapyrusVm(), 0, ref)
-                                : 0.0f);
-    }
-    xyz[SafeAxis(axis)] = value;
-    const float x = xyz[0], y = xyz[1], z = xyz[2];
-    PostToMainThread([ref, set, x, y, z]() {
-        g_goals.erase(ref);
-        set(PapyrusVm(), 0, ref, x, y, z);
-    });
-}
-
-void SetPosition(const std::string& id, int axis, float value) {
-    SetAxis(id, axis, value, false);
-}
-
-void SetAngle(const std::string& id, int axis, float value) {
-    SetAxis(id, axis, value, true);
-}
-
 // `PlaceAtPC id count` and `PlaceAtMe`: creates references of a BASE record
 // beside `near` -- the player for the PC form, any reference for the other.
 //
@@ -201,19 +171,29 @@ void MoveRefInCell(const std::string& id, float x, float y, float z,
     });
 }
 
-// The goal this tick's Move/Rotate adds to: the chain's own when it asked last
-// tick or this one, else wherever the reference is now.
-Goal& GoalFor(void* ref) {
+// The chain `ref` is gliding in when it asked last tick or this one, else null.
+Goal* LiveGoal(void* ref) {
     const std::size_t tick = TicksRun();
-    auto [it, fresh] = g_goals.try_emplace(ref);
-    Goal& goal = it->second;
-    if (fresh || goal.tick + 1 < tick || goal.tick > tick) {
+    auto it = g_goals.find(ref);
+    if (it == g_goals.end() || it->second.tick + 1 < tick ||
+        it->second.tick > tick) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
+// The goal this tick's Move/Rotate adds to: the live chain's own, else
+// wherever the reference is now.
+Goal& GoalFor(void* ref) {
+    Goal* live = LiveGoal(ref);
+    Goal& goal = live ? *live : g_goals[ref];
+    if (!live) {
         for (int i = 0; i < kAxisCount; ++i) {
             goal.at[i] = RefPosition(ref, i);
             goal.angle[i] = RefAngle(ref, i);
         }
     }
-    goal.tick = tick;
+    goal.tick = TicksRun();
     return goal;
 }
 
@@ -273,6 +253,41 @@ void RotateRefBy(const std::string& id, int axis, float degrees) {
         goal.angle[which] = std::remainder(goal.angle[which] + degrees, 360.0f);
         GlideTo(ref, goal);
     });
+}
+
+// `SetPos`/`SetAngle`: one axis, absolute. A reference mid-glide takes it as
+// its glide's goal, since the natives reload the 3D and fade it back in.
+// 🛑 The natives take ALL THREE axes, so the other two are read back first
+// and written unchanged.
+// See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
+void SetAxis(const std::string& id, int axis, float value, bool isAngle) {
+    void* ref = OwnerRef(id);
+    AxisSetFn set = isAngle ? g_setAngle : g_setPosition;
+    if (!ref || !set) return;
+    const int which = SafeAxis(axis);
+    RunOnGameThread([ref, set, which, value, isAngle]() {
+        if (Goal* live = g_translateTo ? LiveGoal(ref) : nullptr) {
+            (isAngle ? live->angle : live->at)[which] = value;
+            live->tick = TicksRun();
+            GlideTo(ref, *live);
+            return;
+        }
+        g_goals.erase(ref);
+        float xyz[kAxisCount];
+        for (int i = 0; i < kAxisCount; ++i) {
+            xyz[i] = isAngle ? RefAngle(ref, i) : RefPosition(ref, i);
+        }
+        xyz[which] = value;
+        set(PapyrusVm(), 0, ref, xyz[0], xyz[1], xyz[2]);
+    });
+}
+
+void SetPosition(const std::string& id, int axis, float value) {
+    SetAxis(id, axis, value, false);
+}
+
+void SetAngle(const std::string& id, int axis, float value) {
+    SetAxis(id, axis, value, true);
 }
 
 float RefScale(const std::string& id) {
