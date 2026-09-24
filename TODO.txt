@@ -28,7 +28,14 @@ Later Issues:
 		DONE 2026-08-07: the 15 QUEST-ADVANCING chains are replayed by a generated driver quest
 		REMAINING: the ~240 pure-flavor chatter families are still dropped; they need SCEN synthesis with invented actor pairing.
 
-	8 - Magic and Spell Conversion including effects (see magic conversion md)
+	8 - Magic and Spell Conversion
+		Mixed-range spells: check the Self half of a Target+Self spell lands on the caster
+		pme (PlayMagicEffectVisuals) plays only the effect shader, not the hit art
+		Creature casters have no magic/hand nodes, so casting art cannot attach
+		DLC ESPs: effects cloned from a master get no art (lookup reads only the plugin's own meshes)
+		Rebuild and test Nehrim (its own codes: BA01-BA10, DISE, DUMY)
+		Vanilla-effect clones and scripted bound-item clones have no name or menu art
+		Later: spell selling, spellmaking, enchanting altar
 
 	9 - Make horses rideable
 
@@ -64,7 +71,7 @@ Minor Issues:
 
 Guns (FalloutNV):
 	G1 - HUD magazine readout: the counter text field path is a guess and the hook is disabled (hud.cpp, InstallHud not called); find the field in the loaded HUD movie and re-enable
-	G6 - Animated gun parts (magazine, slide, bolt) untested since the DLL-driven NiControllerSequence build; parts.cpp logs nothing when no sequence starts
+	G6 - Animated gun parts: the reload magazine swap works every reload; slide, hammer and bolt motion on fire and equip not yet checked in game
 	G8 - Ammo on a bow/melee holder: FNV rounds equipped with a non-gun still hang on QUIVER and show
 	G9 - Spare ammo, spread, VATS, weapon condition and weapon-specific reload speeds not implemented
 	G10 - NPC gun use: iGunShots is written per actor but AI never reloads or picks rounds; combat style for guns unverified
@@ -76,11 +83,14 @@ Guns (FalloutNV):
 	G16 - Melee/bash key: FNV guns have their own bash (attackbash / 1hpattackbash clips); bind a key that sends a gun bash event instead of the dropped ActionLeftAttack
 	G17 - Holster/draw blend: equip and unequip clips cut to the aim pose with no crossfade
 	G18 - Shell casings: FNV ejects the WEAP's MOD2 casing model from ShellCasingNode on each shot; Skyrim has no equivalent (needs a casing projectile launched by the DLL)
-	G19 - Recoil on 1hp automatics (10mm SMG): base FNV ships no first-person 1hpattackloop (only the third-person pitched loops; GunRunnersArsenal adds the level clip), so the first-person graph falls back to another attack at weaponSpeedMult = shots/s (9x speed, violent); a still aim-pose loop is built but unstaged. Find what FNV plays in first person for that class
+	G19 - Recoil on 1hp automatics (10mm SMG): base FNV ships no first-person 1hpattackloop (only the third-person pitched loops; GunRunnersArsenal adds the level clip), so the first-person graph falls back to another attack at weaponSpeedMult = shots/s (9x speed, violent); a still aim-pose loop now plays instead, so the first-person SMG holds still while firing. Find what FNV plays in first person for that class
 	G20 - Third-person aiming pitch: the AimPitchCurrent pitch blend exists but the torso twist toward the crosshair is unverified
 	G21 - Weapon mods (WMOD) and scoped weapons: scope zoom uses a scope overlay in FNV, not iron sights; the sight FOV path shows the mesh instead
 	G22 - Gun sounds beyond dry fire: fire sound is the engine's arrow release path; check the WEAP SNAM/XNAM per-shot and reload sounds are the FNV ones
 	G23 - NPC iron sights and hip fire: NPCs never zoom; the iGunZoom / fGunZoom variables are only written for the player
+	G24 - Strafe snap: strafing in first person shifts the whole skeleton and gun ~22 units toward the strafe direction against the render camera, almost at once (vanilla may do it slower). Not the direction blend: the clips' root/look/camera bones are static, and BSCyclicBlendTransitionGenerator never eases Direction (its duration runs only on CyclicCrossBlend). Next: record a vanilla sword vs the pistol strafing, weapon against the render camera (the WorldRoot Camera under PlayerCamera+0x20) with Direction
 
 Morrowind:
 	2) Water missing in interiors with it flagged
+	3) Magic effect visuals: remap from Skyrim; shields have the same cloak bug
+	4) 19 magic effects with no Skyrim mechanism await the MorrowindRuntime

@@ -35,6 +35,7 @@ from asset_convert.havok.creature_pipeline import foot_enum_map
 from asset_convert.havok.gun_vocabulary_falloutnv import (ANIM_TYPE_CLASS,
                                                           ATTACK_ACTIONS,
                                                           ATTACK_ANIMS,
+                                                          LOOP_ACTION,
                                                           PART_PREFIX,
                                                           RELOAD_LETTERS)
 from asset_convert.havok.hkx_anim import (decode_clip, event_annotations,
@@ -413,6 +414,22 @@ def _synthesized_aims(corpus: dict, classes) -> list:
     return out
 
 
+def _synthesized_loops(bindings, corpus: dict) -> list:
+    """[(loop stem, aim kf)] for a class whose guns fire in a loop but that
+    ships no loop clip at any pitch (FNV's first-person `1hp`): the class'
+    level aim pose, hip and iron sights, is the loop.
+    See: docs/commentary/asset_convert_falloutnv.md#automatic-fire-rate
+    """
+    out = []
+    for cls in sorted({b['cls'] for b in bindings if b['attack'] == LOOP_ACTION}):
+        for iron in ('', 'is'):
+            stem = f'{cls}{LOOP_ACTION}{iron}'
+            kf = _level_aim(corpus, '', cls, iron)
+            if kf and not any(stem + p in corpus for p in ('', 'up', 'down')):
+                out.append((stem, kf))
+    return out
+
+
 def _plan_view(bindings, corpus: dict, names) -> list:
     """[(stem, kf, fill kf, pose only)] to convert: the selected clips, the
     level aims synthesized from an attack clip, and the base `mt`
@@ -428,7 +445,8 @@ def _plan_view(bindings, corpus: dict, names) -> list:
         return plan
     classes = sorted({b['cls'] for b in bindings})
     plan += [(s, kf, _fill_clips(corpus, s), True)
-             for s, kf in _synthesized_aims(corpus, classes)]
+             for s, kf in (_synthesized_aims(corpus, classes)
+                           + _synthesized_loops(bindings, corpus))]
     for cls in classes:
         aim = _level_aim(corpus, '', cls)
         if f'{cls}forward' in corpus or not aim:

@@ -14,12 +14,11 @@ from asset_convert.havok.gun_anim_falloutnv import classify_stem
 from asset_convert.havok.gun_vocabulary_falloutnv import PART_PREFIX
 from asset_convert.havok.kf_decode import decode_kf
 from asset_convert.havok.kf_writer import KEY_LINEAR, KEY_QUADRATIC
+from asset_convert.nif.sequences import transform_manager
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from pyffi.formats.nif import NifFormat
 
-#: NiTimeController flags of a managed transform controller: active, cycle clamp.
-MANAGED_CONTROLLER_FLAGS = 0x4C
 #: NiControllerSequence cycle type CLAMP.
 CYCLE_CLAMP = 2
 _NODE_NAME_RE = re.compile(rb'##[A-Za-z0-9_:.]{1,40}')
@@ -73,22 +72,6 @@ def _part_nodes(root) -> dict:
             and b.name.startswith(PART_PREFIX.encode())}
 
 
-def _transform_controller(node):
-    """The node's managed NiTransformController, added when absent."""
-    for c in node.get_controllers():
-        if isinstance(c, NifFormat.NiTransformController):
-            return c
-    ctrl = NifFormat.NiTransformController()
-    ctrl.flags = MANAGED_CONTROLLER_FLAGS
-    ctrl.frequency = 1.0
-    ctrl.phase = 0.0
-    ctrl.start_time = 3.402823e38
-    ctrl.stop_time = -3.402823e38
-    ctrl.target = node
-    node.add_controller(ctrl)
-    return ctrl
-
-
 def _interpolator(track, times):
     """A NiTransformInterpolator holding the track's sampled keys."""
     interp = NifFormat.NiTransformInterpolator()
@@ -125,7 +108,7 @@ def _interpolator(track, times):
     return interp
 
 
-def _sequence(stem: str, clip, tracks: list, nodes: dict, root, manager):
+def _sequence(stem: str, clip, tracks: list, root, manager, controller):
     """One NiControllerSequence named `stem` over the given part tracks."""
     seq = NifFormat.NiControllerSequence()
     seq.name = stem.encode('latin-1')
@@ -149,21 +132,13 @@ def _sequence(stem: str, clip, tracks: list, nodes: dict, root, manager):
         cb.node_name = tr.bone.encode('latin-1')
         cb.controller_type = b'NiTransformController'
         cb.priority = 0
-        cb.controller = _transform_controller(nodes[tr.bone])
+        cb.controller = controller
         cb.interpolator = _interpolator(tr, clip.times)
     return seq
 
 
 def _manager(root, nodes: dict):
-    """The root's NiControllerManager with a palette of the part nodes."""
-    for c in root.get_controllers():
-        if isinstance(c, NifFormat.NiControllerManager):
-            return c
-    mgr = NifFormat.NiControllerManager()
-    mgr.flags = MANAGED_CONTROLLER_FLAGS
-    mgr.frequency = 1.0
-    mgr.cumulative = False
-    mgr.target = root
+    """(manager, controller) on the root moving the part nodes."""
     palette = NifFormat.NiDefaultAVObjectPalette()
     palette.scene = root
     entries = [root] + list(nodes.values())
@@ -172,9 +147,7 @@ def _manager(root, nodes: dict):
     for i, av in enumerate(entries):
         palette.objs[i].name = av.name
         palette.objs[i].av_object = av
-    mgr.object_palette = palette
-    root.add_controller(mgr)
-    return mgr
+    return transform_manager(root, palette, list(nodes.values()))
 
 
 def add_gun_part_sequences(data, src_path: str) -> list:
@@ -194,13 +167,13 @@ def add_gun_part_sequences(data, src_path: str) -> list:
         stems = set().union(*(index.get(n, set()) for n in nodes))
         if not stems:
             continue
-        mgr = _manager(root, nodes)
+        mgr, ctrl = _manager(root, nodes)
         for stem in sorted(stems):
             clip = _decoded(os.path.join(clip_dir, stem + '.kf'))
             tracks = [t for t in (clip.tracks if clip else []) if t.bone in nodes]
             if not tracks:
                 continue
-            seq = _sequence(stem, clip, tracks, nodes, root, mgr)
+            seq = _sequence(stem, clip, tracks, root, mgr, ctrl)
             mgr.num_controller_sequences += 1
             mgr.controller_sequences.update_size()
             mgr.controller_sequences[-1] = seq

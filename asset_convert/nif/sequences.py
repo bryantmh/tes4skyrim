@@ -57,6 +57,12 @@ TEX_TRANSFORM_VARS = {
 #: NiMaterialColorController.target_color 3 = TC_SELF_ILLUM, the only channel with a Skyrim analogue.
 MATERIAL_COLOR_EMISSIVE = 3
 
+#: NiTimeController flags of a sequence-driven controller: active, clamp, compute scaled time.
+MANAGED_CONTROLLER_FLAGS = 0x4C
+
+#: NiMultiTargetTransformController flags on all 157 vanilla animated door/activator meshes.
+VANILLA_MTTC_FLAGS = 0x6C
+
 #: Emissive color-controller type, (lighting, effect). See: docs/commentary/asset_convert_shader.md#ob-enums
 _SHADER_COLOR_EMISSIVE = (1, 0)
 
@@ -1028,3 +1034,33 @@ def _resolve_geometry_suffix(root, name):
     node, shader = geoms[want]
     shader._owner_name = bytes(getattr(node, 'name', b'') or b'')
     return shader
+
+
+def _managed(ctrl, target, flags):
+    """Fill a NiTimeController as a sequence-driven one on `target`."""
+    ctrl.flags = flags
+    ctrl.frequency = 1.0
+    ctrl.phase = 0.0
+    ctrl.start_time = 3.402823e38
+    ctrl.stop_time = -3.402823e38
+    ctrl.target = target
+    return ctrl
+
+
+def transform_manager(root, palette, targets, target_flags=VANILLA_MTTC_FLAGS):
+    """(manager, controller): a NiControllerManager on `root` over `palette`
+    whose sequences move `targets` through one NiMultiTargetTransformController,
+    vanilla's layout for in-mesh transform animation.
+    See: docs/commentary/asset_convert_falloutnv.md#gun-parts
+    """
+    manager = _managed(NifFormat.NiControllerManager(), root, MANAGED_CONTROLLER_FLAGS)
+    manager.cumulative = False
+    manager.object_palette = palette
+    controller = _managed(NifFormat.NiMultiTargetTransformController(), root, target_flags)
+    controller.num_extra_targets = len(targets)
+    controller.extra_targets.update_size()
+    for i, node in enumerate(targets):
+        controller.extra_targets[i] = node
+    manager.next_controller = controller
+    root.add_controller(manager)
+    return manager, controller

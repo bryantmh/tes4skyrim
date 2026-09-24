@@ -25,10 +25,12 @@ constexpr int kSequencePriority = 0;
 using HashFn = void (*)(std::uint32_t* out, std::uint64_t key);
 using ActivateFn = bool (*)(void* seq, int priority, bool startOver, float weight,
                             float easeIn, void* timeSync, bool);
+using DeactivateFn = bool (*)(void* seq, float easeOut, bool transition);
 using ObjectByNameFn = void* (*)(void* root, void** name, bool recurse);
 
 HashFn         g_hash = nullptr;
 ActivateFn     g_activate = nullptr;
+DeactivateFn   g_deactivate = nullptr;
 ObjectByNameFn g_objectByName = nullptr;
 void*          g_managerVtable = nullptr;
 std::unique_ptr<FixedString> g_weaponNode;
@@ -63,6 +65,7 @@ int PlayUnder(void* object, void* tag, int depth) {
     int n = 0;
     if (void* mgr = ManagerOf(node)) {
         if (void* seq = SequenceOf(mgr, tag)) {
+            g_deactivate(seq, 0.0f, false);
             g_activate(seq, kSequencePriority, true, 1.0f, 0.0f, nullptr, false);
             ++n;
         }
@@ -80,11 +83,13 @@ int PlayUnder(void* object, void* tag, int depth) {
 bool InstallParts() {
     const std::uintptr_t hash = Resolve("BSFixedString hash", ids::kFixedStringHash, nullptr);
     const std::uintptr_t activate = Resolve("NiControllerSequence::Activate", ids::kSequenceActivate, nullptr);
+    const std::uintptr_t deactivate = Resolve("NiControllerSequence::Deactivate", ids::kSequenceDeactivate, nullptr);
     const std::uintptr_t vtable = Resolve("NiControllerManager vtable", ids::kControllerManagerVtable, nullptr);
     const std::uintptr_t byName = Resolve("NiAVObject::GetObjectByName", ids::kObjectByName, nullptr);
-    if (!hash || !activate || !vtable || !byName) return false;
+    if (!hash || !activate || !deactivate || !vtable || !byName) return false;
     g_hash = reinterpret_cast<HashFn>(hash);
     g_activate = reinterpret_cast<ActivateFn>(activate);
+    g_deactivate = reinterpret_cast<DeactivateFn>(deactivate);
     g_managerVtable = reinterpret_cast<void*>(vtable);
     g_objectByName = reinterpret_cast<ObjectByNameFn>(byName);
     g_weaponNode.reset(new FixedString("WEAPON"));

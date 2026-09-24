@@ -347,9 +347,10 @@ class GraphBuilder:
             ch.param('weight', f'{anchor:.6f}')
             ch.param('worldFromModelWeight', '1.000000')
             children.append(ch)
-        bind = self.binding_set([('blendParameter', bind_var)])
+        bind = (self.binding_set([('blendParameter', bind_var)]).ref if bind_var
+                else 'null')
         blender = self.pf.add('hkbBlenderGenerator')
-        blender.param('variableBindingSet', bind.ref)
+        blender.param('variableBindingSet', bind)
         blender.param('userData', 0)
         blender.param('name', name)
         blender.param('referencePoseWeightThreshold', '0.000000')

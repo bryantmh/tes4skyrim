@@ -24,6 +24,7 @@ from asset_convert.havok.behavior_nodes import (F_LOCAL, GraphBuilder,
                                                 TRIGGER_TMPL)
 from asset_convert.havok.gun_vocabulary_falloutnv import (ATTACK_ACTIONS,
                                                           GUN_CLASSES,
+                                                          LOOP_ACTION,
                                                           RELOAD_LETTERS)
 
 #: The hand type TESRuntime writes for a gun (vanilla stops at 12, crossbow).
@@ -40,8 +41,6 @@ ZOOM_BLEND_VAR = 'fGunZoom'
 PARAMETRIC_BLEND = 17
 #: REAL variable: the automatic loop clip's playbackSpeed, weaponSpeedMult x loop duration.
 LOOP_SPEED_VAR = 'fGunLoopSpeed'
-#: The attack action that fires once per loop pass (automatic weapons).
-LOOP_ACTION = 'attackloop'
 #: Events the gun clips raise for their own machines.
 GUN_EVENTS = ('TES4GunFireEnd', 'TES4GunReloadStart', 'TES4GunReloadEnd',
               'TES4GunAttackEnd', 'TES4GunReloadRequest', 'reloadStart',
@@ -155,9 +154,18 @@ class GunClips:
         have = {c['cls'] for c in self.classes.values()}
         return [c for c in GUN_CLASSES if c in have and self.attacks_of(c)]
 
+    def timing_stem(self, cls, action, iron=False):
+        """The clip an attack's triggers are timed on: its level clip, else
+        its down clip when both pitched clips exist (the pitch blend's
+        midpoint is the level pose), else None."""
+        level = self.find(cls, action, iron=iron)
+        down = self.find(cls, action, pitch='down', iron=iron)
+        up = self.find(cls, action, pitch='up', iron=iron)
+        return level or (down if up else None)
+
     def attacks_of(self, cls) -> list:
-        """The attack actions the class has a level clip for."""
-        return [a for a in ATTACK_ACTIONS if self.find(cls, a)]
+        """The attack actions the class can play (level or both pitches)."""
+        return [a for a in ATTACK_ACTIONS if self.timing_stem(cls, a)]
 
     def reloads_of(self, cls) -> list:
         """The reload letters the class has a clip for."""
@@ -273,6 +281,24 @@ class GunGraphBuilder(GraphBuilder):
         t.param('pDefaultGenerator', gen_ref)
         t.param('iStateToSetAs', istate)
         t.param('iPriority', prio)
+        return t
+
+    def eased_direction_blend(self, name, kids):
+        """The direction blend under a BSCyclicBlendTransitionGenerator on
+        `Direction`, a smooth ease between directions."""
+        blend = self._blender(f'{name}_Blend', kids, None, '0.000000', 49)
+        t = self.add('BSCyclicBlendTransitionGenerator')
+        t.param('variableBindingSet',
+                self.binding_set([('fBlendParameter', 'Direction')]).ref)
+        t.param('userData', 0)
+        t.param('name', name)
+        t.param('pBlenderGenerator', blend.ref)
+        for member, event in (('EventToFreezeBlendValue', 'CyclicFreeze'),
+                              ('EventToCrossBlend', 'CyclicCrossBlend')):
+            t.param_raw(member, _EVENT_TMPL.format(eid=self.eid.get(event, -1)))
+        t.param('fBlendParameter', '0.000000')
+        t.param('fTransitionDuration', f'{DIRECTION_EASE_SECONDS:.6f}')
+        t.param('eBlendCurve', 'BLEND_CURVE_SMOOTH')
         return t
 
     def eem_assign(self, name, items):
@@ -513,9 +539,9 @@ def _attack_blend(gb: GunGraphBuilder, cls, action, name, iron):
     shot triggers; the loop attack plays at the class' loop speed.
     See: docs/commentary/asset_convert_falloutnv.md#automatic-fire-rate
     """
-    level = gb.clips.find(cls, action, iron=iron)
-    trig = fire_triggers(gb.clips.entries[level])
-    stems = (gb.clips.find(cls, action, pitch='down', iron=iron), level,
+    trig = fire_triggers(gb.clips.entries[gb.clips.timing_stem(cls, action, iron)])
+    stems = (gb.clips.find(cls, action, pitch='down', iron=iron),
+             gb.clips.find(cls, action, iron=iron),
              gb.clips.find(cls, action, pitch='up', iron=iron))
     speed = LOOP_SPEED_VAR if action == LOOP_ACTION else 'weaponSpeedMult'
     return gb.pitch_blend(name, stems, trig, looping=False, speed_var=speed)
@@ -528,7 +554,7 @@ def _attack_gen(gb: GunGraphBuilder, cls, action, tag):
     """
     name = f'TES4Gun_{cls}_{action}{tag}'
     hip = _attack_blend(gb, cls, action, name, False)
-    if not gb.clips.find(cls, action, iron=True):
+    if not gb.clips.timing_stem(cls, action, iron=True):
         return hip
     iron = _attack_blend(gb, cls, action, f'{name}_IS', True)
     return gb.msg(f'{name}_ZoomMSG', [hip.ref, iron.ref], ZOOM_VAR)
@@ -538,7 +564,7 @@ def _fire_gen(gb: GunGraphBuilder, cls, letter):
     """The fire clip selector, under a per-frame loop-speed assignment when
     the class has a loop attack."""
     gen = fire_msg(gb, cls, letter)
-    loop = gb.clips.find(cls, LOOP_ACTION)
+    loop = gb.clips.timing_stem(cls, LOOP_ACTION)
     if not loop:
         return gen
     dur = gb.clips.entries[loop]['duration']
@@ -679,6 +705,10 @@ def class_selector(gb: GunGraphBuilder, name, build):
 # ---------------------------------------------------------------------------
 
 _DIRS = (('forward', 0.0), ('right', 0.25), ('backward', 0.5), ('left', 0.75))
+#: fTransitionDuration of every vanilla direction BSCyclicBlendTransitionGenerator.
+DIRECTION_EASE_SECONDS = 0.2
+_EVENT_TMPL = ('<hkobject>\n\t<hkparam name="id">{eid}</hkparam>\n'
+               '\t<hkparam name="payload">null</hkparam>\n</hkobject>')
 
 
 def _gait(gb: GunGraphBuilder, cls, direction, name):
@@ -704,8 +734,8 @@ def loco_machine(gb: GunGraphBuilder, cls):
         g = _gait(gb, cls, d, f'TES4Gun_{cls}_{d}')
         if g is not None:
             kids.append((g, anchor))
-    blend = (gb.direction_blend(f'TES4Gun_{cls}_DirectionBlend',
-                                [(g.ref, a) for g, a in kids])
+    blend = (gb.eased_direction_blend(f'TES4Gun_{cls}_DirectionBlend',
+                                      [(g.ref, a) for g, a in kids])
              if len(kids) > 1 else kids[0][0])
     return gb.istate(f'TES4Gun_{cls}_iStateGen', blend.ref, RANGED_ISTATE,
                      RANGED_PRIORITY)

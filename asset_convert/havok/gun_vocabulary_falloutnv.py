@@ -33,3 +33,5 @@ ATTACK_ANIMS = {
 ATTACK_ACTIONS = ('attackleft', 'attackright', 'attack3', 'attack4',
                   'attack5', 'attack6', 'attack7', 'attack8', 'attack9',
                   'attackloop', 'attackspin', 'attackspin2')
+#: The attack action that fires once per loop pass (automatic weapons).
+LOOP_ACTION = 'attackloop'

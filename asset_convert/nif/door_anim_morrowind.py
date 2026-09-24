@@ -17,16 +17,14 @@ import math
 from pyffi.formats.nif import NifFormat
 
 from asset_convert.nif.nif_passes import add_bsx_flags
-from asset_convert.nif.sequences import palette_bytes, palette_lookup
+from asset_convert.nif.sequences import (MANAGED_CONTROLLER_FLAGS, palette_bytes,
+                                         palette_lookup, transform_manager)
 
 #: How far a Morrowind door swings, as a NIF +Z rotation.
 OPEN_ANGLE = -math.pi / 2.0
 
 #: Seconds the swing takes; OpenMW's rotateDoor runs at 90 deg/s.
 SWING_SECONDS = 1.0
-
-#: NiTimeController flags of a managed controller: active, cycle clamp.
-MANAGED_CONTROLLER_FLAGS = 0x4C
 
 #: NiControllerSequence cycle type CLAMP.
 CYCLE_CLAMP = 2
@@ -159,28 +157,8 @@ def _object_palette(root, hinge):
 
 def _manager(root, hinge):
     """A NiControllerManager on `root` driving `hinge` through one controller."""
-    manager = NifFormat.NiControllerManager()
-    manager.flags = MANAGED_CONTROLLER_FLAGS
-    manager.frequency = 1.0
-    manager.phase = 0.0
-    manager.start_time = 3.402823e38
-    manager.stop_time = -3.402823e38
-    manager.cumulative = False
-    manager.target = root
-    manager.object_palette = _object_palette(root, hinge)
-    controller = NifFormat.NiMultiTargetTransformController()
-    controller.flags = MANAGED_CONTROLLER_FLAGS
-    controller.frequency = 1.0
-    controller.phase = 0.0
-    controller.start_time = 3.402823e38
-    controller.stop_time = -3.402823e38
-    controller.target = root
-    controller.num_extra_targets = 1
-    controller.extra_targets.update_size()
-    controller.extra_targets[0] = hinge
-    manager.next_controller = controller
-    root.add_controller(manager)
-    return manager, controller
+    return transform_manager(root, _object_palette(root, hinge), [hinge],
+                             MANAGED_CONTROLLER_FLAGS)
 
 
 def _move_children(root, hinge) -> None:
