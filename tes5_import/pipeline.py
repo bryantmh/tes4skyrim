@@ -44,6 +44,7 @@ from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
 from .actors.magic_effects import set_tes4_effect_names
 from .dialogue.converter import build_npc_to_vtyp_map
 from .base.adopted_records import adopt_master_special_records
+from .base.cell_family import set_cell_families
 from .base.owned_records import (
     WELL_KNOWN_PROPERTIES,
     create_ambient_gmst_overrides,
@@ -230,6 +231,13 @@ def _reconcile_masters(masters: list, tes4_master_names: list) -> list:
     merged = kept + tes4_master_names
     print(f"  Masters (from export header): {', '.join(merged)}")
     return merged
+
+
+def _register_run_tables(by_type: dict, ctx, writer) -> None:
+    """Register the name tables record conversion reads: MGEF names, cell families."""
+    set_tes4_effect_names(by_type.get('MGEF', []))
+    set_cell_families(by_type, ctx.master_export if ctx else None, writer,
+                      getattr(ctx, 'master_index', None))
 
 
 def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_done):
@@ -1129,7 +1137,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
             print(f"  Injected records: {len(injected)} moved out of the "
                   f"master's FormID space into ours")
 
-    set_tes4_effect_names(by_type.get('MGEF', []))
+    _register_run_tables(by_type, ctx, writer)
 
     _prescan_special_records(by_type, ctx, writer, export_dir,
                              _step_done)

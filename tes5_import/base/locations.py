@@ -41,6 +41,7 @@ from collections import defaultdict
 
 from core.worldspace_names import converted_worldspace_name
 
+from .cell_family import exterior_family_cells
 from .text_reader import get_float, get_formid, get_int, get_str
 from .writer import (
     pack_float_subrecord,
@@ -294,138 +295,171 @@ def _resolve_cell_ownership(markers: list) -> dict:
     return marker_cells
 
 
+class _LocationBuild:
+    """The maps one build_marker_locations run fills, shared by its phases."""
+
+    def __init__(self, by_type: dict, writer):
+        """Index markers, interiors and doors; write the worldspace Locations."""
+        refrs = by_type.get('REFR', [])
+        self.writer = writer
+        self.refrs = refrs
+        self.markers = [r for r in refrs if get_str(r, 'MapMarker') == '1']
+        self.interior_cells = {get_formid(rec, 'FormID')
+                               for rec in by_type.get('CELL', [])
+                               if get_int(rec, 'DATA.Flags') & 1}
+        self.used_edids = set()
+        self.world_to_location = _build_worldspace_locations(
+            by_type, _marker_names_by_world(self.markers), writer,
+            self.used_edids)
+        self.lctn_meta = {lctn: (WORLD_NAMES.get(w, ''), 0)
+                          for w, lctn in self.world_to_location.items()}
+        self.grid_to_location = {}
+        self.cell_to_location = {}
+        self.doors_by_world, self.cell_of_door = _bucket_teleport_doors(refrs)
+        self.family = exterior_family_cells()
+
+
 def build_marker_locations(by_type: dict, writer) -> tuple:
-    """Build the Locations and return (cell_to_location, grid_to_location).
+    """Build the Locations; return (cell_to_location, grid_to_location, world_to_location).
 
-    ``cell_to_location`` maps an interior CELL FormID to the Location it belongs
-    to; ``grid_to_location`` maps an exterior ``(world_fid, gx, gy)`` cell square
-    to the Location that names it.  Both are consumed by the CELL converter,
-    which turns them into XLCN — the subrecord that both discovers a location
-    and gives an exterior cell the name shown on a load door.
-
-    Must run before the CELL/WRLD groups are built, since those need the XLCN
-    targets, and it allocates its FormIDs up front so output stays
-    deterministic.
+    Interior CELL FormID -> Location, and exterior ``(world_fid, gx, gy)``
+    square -> Location; the CELL converter writes both as XLCN (discovery and
+    the load-door name).  Must run before the CELL/WRLD groups are built.
     """
-    refrs = by_type.get('REFR', [])
-    markers = [r for r in refrs if get_str(r, 'MapMarker') == '1']
-
-    interior_cells = {
-        get_formid(rec, 'FormID')
-        for rec in by_type.get('CELL', [])
-        if get_int(rec, 'DATA.Flags') & 1
-    }
-
-    used_edids = set()
-    world_to_location = _build_worldspace_locations(
-        by_type, _marker_names_by_world(markers), writer, used_edids)
-
-    grid_to_location = {}
-
-    doors_by_world, cell_of_door = _bucket_teleport_doors(refrs)
-
-    cell_to_location = {}
-    count = 0
-
-    marker_cells = _resolve_cell_ownership(markers)
-
-    for rec in sorted(markers, key=lambda r: get_formid(r, 'FormID')):
-        marker_fid = get_formid(rec, 'FormID')
-        if not marker_fid:
-            continue
-
-        name = get_str(rec, 'MapMarker.FULL')
-        lctn_fid = writer.derive_formid('LCTN_MARKER', marker_fid)
-
-        edid_base = ''.join(c for c in name if c.isalnum()) or f'{marker_fid:08X}'
-        edid = f'TES4{edid_base}Location'
-        # Marker names repeat ("A Gate to Oblivion" x50, one per random gate);
-        # EditorIDs may not — the CK renames every duplicate with a warning.
-        if edid in used_edids:
-            edid = f'TES4{edid_base}{marker_fid & 0xFFFFFF:06X}Location'
-        used_edids.add(edid)
-        subs = pack_string_subrecord('EDID', edid)
-
-        world_fid = get_formid(rec, 'ParentWRLD')
-        cells = []
-        if world_fid:
-            # Only the squares this marker actually won (see cell_owner above);
-            # sorted so the subrecord is byte-reproducible.
-            cells = sorted(marker_cells.get(marker_fid, ()))
-            if cells:
-                subs += _pack_lcec(world_fid, cells)
-
-        if name:
-            subs += pack_string_subrecord('FULL', name)
-
-        # PNAM — parent location.  Vanilla nests every place inside the hold
-        # that contains it, which is what lets "Whiterun Hold" name the ground
-        # between its landmarks.  Per xEdit's LCTN def, PNAM precedes MNAM/RNAM.
-        parent = world_to_location.get(world_fid)
-        if parent:
-            subs += pack_formid_subrecord('PNAM', parent)
-
-        # MNAM — "World Location Marker Ref".  This is the link the engine
-        # follows to reveal the marker once the location is discovered.
-        subs += pack_formid_subrecord('MNAM', marker_fid)
-        subs += pack_float_subrecord('RNAM', DEFAULT_LOCATION_RADIUS)
-
-        writer.add_record('LCTN', pack_record('LCTN', lctn_fid, 0, subs))
-        count += 1
-
-        # The marker names the cells it OWNS.  This is the same exclusive set
-        # written to LCEC above, which is what keeps a cell's XLCN and its
-        # location's LCEC pointing at each other.
-        for gy, gx in cells:
-            grid_to_location[(world_fid, gx, gy)] = lctn_fid
-
-        # Claim the interior behind the nearest teleport door, so entering the
-        # dungeon discovers it even if the player never crossed the marker.
-        interior = _interior_for_marker(rec, doors_by_world, cell_of_door)
-        if interior in interior_cells and interior not in cell_to_location:
-            cell_to_location[interior] = lctn_fid
-
-    marker_linked = len(cell_to_location)
-
-    # Every OTHER teleport-reachable interior (city houses, shops, guild halls —
-    # anything whose entrance door isn't sitting on a map marker) still needs an
-    # XLCN, or Skyrim can't place a quest marker for a target inside it: the
-    # journal objective shows but no compass/map arrow appears, because the
-    # marker system resolves an interior ref's map position through its cell's
-    # Location. Fall the interior back to the Location of the exterior grid cell
-    # its entrance door stands in, then to that door's worldspace location.
-    # Doors are processed nearest-to-worldspace-origin first only for
-    # determinism; first writer wins so the marker links above are never
-    # overwritten.
-    for rec in sorted(refrs, key=lambda r: get_formid(r, 'FormID')):
-        dest_door = get_formid(rec, 'XTEL.Door')
-        if not dest_door:
-            continue
-        interior = cell_of_door.get(dest_door, 0)
-        if interior not in interior_cells or interior in cell_to_location:
-            continue
-        world_fid = get_formid(rec, 'ParentWRLD')
-        if not world_fid:
-            continue                      # door itself is in an interior; skip
-        gx = _grid(get_float(rec, 'PosX'))
-        gy = _grid(get_float(rec, 'PosY'))
-        loc = (grid_to_location.get((world_fid, gx, gy))
-               or world_to_location.get(world_fid))
-        if loc:
-            cell_to_location[interior] = loc
-
-    door_linked = len(cell_to_location) - marker_linked
-
-    _propagate_nested_interiors(refrs, cell_of_door, interior_cells,
-                                cell_to_location)
-
-    nested_linked = len(cell_to_location) - marker_linked - door_linked
-    print(f"  Created {len(world_to_location)} LCTN worldspace locations, "
+    b = _LocationBuild(by_type, writer)
+    count = _write_marker_locations(b)
+    marker_linked = len(b.cell_to_location)
+    _link_door_interiors(b)
+    door_linked = len(b.cell_to_location) - marker_linked
+    _propagate_nested_interiors(b.refrs, b.cell_of_door, b.interior_cells,
+                                b.cell_to_location)
+    _build_family_locations(b)
+    nested_linked = len(b.cell_to_location) - marker_linked - door_linked
+    print(f"  Created {len(b.world_to_location)} LCTN worldspace locations, "
           f"{count} LCTN map-marker locations "
           f"({marker_linked} interiors linked to a marker, "
           f"{door_linked} via their entrance door, "
-          f"{nested_linked} nested interiors)")
-    return cell_to_location, grid_to_location, world_to_location
+          f"{nested_linked} nested interiors, "
+          f"{len(b.family)} GetInCell-family exterior cells)")
+    return b.cell_to_location, b.grid_to_location, b.world_to_location
+
+
+def _marker_location_subrecords(b: _LocationBuild, rec: dict, marker_fid: int,
+                                cells: list) -> bytes:
+    """EDID, LCEC, FULL, PNAM, MNAM, RNAM of one map marker's Location.
+
+    Marker names repeat ("A Gate to Oblivion" x50), so a duplicate EditorID
+    is suffixed with the marker id.  LCEC lists only the squares this marker
+    won, minus those a GetInCell-family cell Location claims.  PNAM nests the
+    place in its worldspace's location, as vanilla nests places in holds; MNAM
+    is the marker the engine reveals once the location is discovered.
+    """
+    name = get_str(rec, 'MapMarker.FULL')
+    edid_base = ''.join(c for c in name if c.isalnum()) or f'{marker_fid:08X}'
+    edid = f'TES4{edid_base}Location'
+    if edid in b.used_edids:
+        edid = f'TES4{edid_base}{marker_fid & 0xFFFFFF:06X}Location'
+    b.used_edids.add(edid)
+    subs = pack_string_subrecord('EDID', edid)
+    world_fid = get_formid(rec, 'ParentWRLD')
+    lcec = [c for c in cells if (world_fid, c[1], c[0]) not in b.family]
+    if lcec:
+        subs += _pack_lcec(world_fid, lcec)
+    if name:
+        subs += pack_string_subrecord('FULL', name)
+    parent = b.world_to_location.get(world_fid)
+    if parent:
+        subs += pack_formid_subrecord('PNAM', parent)
+    subs += pack_formid_subrecord('MNAM', marker_fid)
+    return subs + pack_float_subrecord('RNAM', DEFAULT_LOCATION_RADIUS)
+
+
+def _write_marker_locations(b: _LocationBuild) -> int:
+    """One Location per map marker; returns how many were written.
+
+    Each names the squares it OWNS (the exclusive set from
+    _resolve_cell_ownership, so a cell's XLCN and its location's LCEC agree)
+    and claims the interior behind the nearest teleport door, so entering the
+    dungeon discovers it even if the player never crossed the marker.
+    """
+    marker_cells = _resolve_cell_ownership(b.markers)
+    count = 0
+    for rec in sorted(b.markers, key=lambda r: get_formid(r, 'FormID')):
+        marker_fid = get_formid(rec, 'FormID')
+        if not marker_fid:
+            continue
+        world_fid = get_formid(rec, 'ParentWRLD')
+        cells = sorted(marker_cells.get(marker_fid, ())) if world_fid else []
+        lctn_fid = b.writer.derive_formid('LCTN_MARKER', marker_fid)
+        b.writer.add_record('LCTN', pack_record(
+            'LCTN', lctn_fid, 0,
+            _marker_location_subrecords(b, rec, marker_fid, cells)))
+        count += 1
+        b.lctn_meta[lctn_fid] = (get_str(rec, 'MapMarker.FULL'), marker_fid)
+        for gy, gx in cells:
+            b.grid_to_location[(world_fid, gx, gy)] = lctn_fid
+        interior = _interior_for_marker(rec, b.doors_by_world, b.cell_of_door)
+        if interior in b.interior_cells and interior not in b.cell_to_location:
+            b.cell_to_location[interior] = lctn_fid
+    return count
+
+
+def _link_door_interiors(b: _LocationBuild) -> None:
+    """Give every other teleport-reachable interior its entrance door's Location.
+
+    Without an XLCN Skyrim cannot place a quest marker for a target inside
+    (the marker system resolves an interior ref's map position through its
+    cell's Location).  The door's grid square Location wins, then its
+    worldspace location; first writer wins, so marker links stay.
+    """
+    for rec in sorted(b.refrs, key=lambda r: get_formid(r, 'FormID')):
+        dest_door = get_formid(rec, 'XTEL.Door')
+        interior = b.cell_of_door.get(dest_door, 0) if dest_door else 0
+        world_fid = get_formid(rec, 'ParentWRLD')
+        if (interior not in b.interior_cells or interior in b.cell_to_location
+                or not world_fid):
+            continue
+        gx = _grid(get_float(rec, 'PosX'))
+        gy = _grid(get_float(rec, 'PosY'))
+        loc = (b.grid_to_location.get((world_fid, gx, gy))
+               or b.world_to_location.get(world_fid))
+        if loc:
+            b.cell_to_location[interior] = loc
+
+
+def _build_family_locations(b: _LocationBuild) -> None:
+    """One Location per exterior cell of a GetInCell family, in the grid map.
+
+    It is a child of the square's previous Location with that Location's name
+    and marker (vanilla shares MNAM between a place and its child 24 times),
+    owns the square's LCEC exclusively, and carries the family keywords
+    `LocationHasKeyword` tests.  Runs after the door pass, so an interior
+    keeps its entrance's ordinary Location.
+
+    See: docs/commentary/tes5_import_conditions.md#getincell-prefix-family
+    """
+    for (world, gx, gy), (source, edid, kws) in sorted(b.family.items()):
+        parent = (b.grid_to_location.get((world, gx, gy))
+                  or b.world_to_location.get(world))
+        name, marker = b.lctn_meta.get(parent, ('', 0))
+        loc_edid = f'TES4{edid}CellLocation'
+        if loc_edid in b.used_edids:
+            loc_edid = f'TES4{edid}{source}CellLocation'
+        b.used_edids.add(loc_edid)
+        subs = pack_string_subrecord('EDID', loc_edid)
+        subs += _pack_lcec(world, [(gy, gx)])
+        if name:
+            subs += pack_string_subrecord('FULL', name)
+        subs += pack_subrecord('KSIZ', struct.pack('<I', len(kws)))
+        subs += pack_subrecord('KWDA', struct.pack(f'<{len(kws)}I', *kws))
+        if parent:
+            subs += pack_formid_subrecord('PNAM', parent)
+        if marker:
+            subs += pack_formid_subrecord('MNAM', marker)
+            subs += pack_float_subrecord('RNAM', DEFAULT_LOCATION_RADIUS)
+        fid = b.writer.derive_formid('LCTN_CELL_FAMILY', source)
+        b.writer.add_record('LCTN', pack_record('LCTN', fid, 0, subs))
+        b.grid_to_location[(world, gx, gy)] = fid
 
 
 def _interior_for_marker(rec: dict, doors_by_world: dict,

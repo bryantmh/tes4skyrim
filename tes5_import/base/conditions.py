@@ -18,7 +18,9 @@ conditions reference for the methodology.
 
 import struct
 
+from .cell_family import expand_cell_families, or_groups
 from .constants import ENGINE_GLOBAL_FORMIDS
+from .ctda_bool import bool_outcomes
 from .conditions_falloutnv import (FALLOUT_CTDA_SIZE, fallout_function,
                                    fallout_run_on)
 from ..generated.ctda_param_types import CTDA_FORMID_PARAMS
@@ -458,17 +460,6 @@ def disposition_to_rank(disposition: float) -> int:
     return 2
 
 
-# Comparison operator encoded in the top 3 bits of a CTDA's type byte.
-_COMPARE = {
-    0: lambda a, b: a == b,
-    1: lambda a, b: a != b,
-    2: lambda a, b: a > b,
-    3: lambda a, b: a >= b,
-    4: lambda a, b: a < b,
-    5: lambda a, b: a <= b,
-}
-
-
 # --------------------------------------------------------------------------
 # Chargen-identity conditions -> menu-choice globals
 # --------------------------------------------------------------------------
@@ -489,14 +480,10 @@ def _chargen_choice_ctda(type_byte: int, data: bytes, func_idx: int,
     idx = index_map.get(param1 & 0xFFFFFF)
     if idx is None:
         return None
-    op = (type_byte >> 5) & 0x7
-    if type_byte & CTDA_USE_GLOBAL or op not in _COMPARE:
+    outcomes = bool_outcomes(type_byte, struct.unpack_from('<I', data, 4)[0])
+    if outcomes is None:
         return None
-    comp = struct.unpack_from('<f', data, 4)[0]
-    # The TES4 condition compares a 0/1 identity result; find which outcomes
-    # pass and re-express against the choice global.
-    truth_passes = _COMPARE[op](1.0, comp)
-    false_passes = _COMPARE[op](0.0, comp)
+    truth_passes, false_passes = outcomes
     choice = float(idx + 1)
     if truth_passes and false_passes:
         new_op, comp_val = 3, 0.0          # >= 0: always true, keeps OR groups
@@ -744,7 +731,7 @@ def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
     if out and (out[-1][0][0] & CTDA_OR):
         fixed = bytes([out[-1][0][0] & ~CTDA_OR]) + out[-1][0][1:]
         out[-1] = (fixed, out[-1][1])
-    return sort_vm_conditions_last(out)
+    return sort_vm_conditions_last(expand_cell_families(out))
 
 
 def sort_vm_conditions_last(pairs: list) -> list:
@@ -770,14 +757,7 @@ def sort_vm_conditions_last(pairs: list) -> list:
     """
     if len(pairs) < 2:
         return pairs
-    groups, cur = [], []
-    for pair in pairs:
-        cur.append(pair)
-        if not (pair[0][0] & CTDA_OR):
-            groups.append(cur)
-            cur = []
-    if cur:  # defensive: a trailing Or-flagged run is closed by the caller
-        groups.append(cur)
+    groups = or_groups(pairs)
 
     def _has_vm_read(group):
         for ctda, _cis2 in group:

@@ -14,6 +14,62 @@ Parameter remapping and the crash rule are in
 - [Actor-value indices diverge from the BOOK skill table](#actor-value-vs-book-skill-table)
 - [Chargen-identity conditions become menu-choice globals](#chargen-identity-to-menu-globals)
 - [Speak-as topics drop the actor-interrogating conditions](#non-actor-speaker-drop)
+- [GetInCell names a prefix family, not a cell](#getincell-prefix-family)
+
+## <a id="getincell-prefix-family"></a>GetInCell names a prefix family, not a cell
+
+**Code:** `tes5_import/base/cell_family.py`, `tes5_import/base/locations.py`
+(`_build_family_locations`).
+
+TES4 matches the `GetInCell` argument as an EditorID **prefix**:
+`GetInCell Anvil` is true in `AnvilTheCountsArms` and in the exterior
+`AnvilBayWest01`. The named cell is often an empty dummy that exists only to
+anchor the family. The script-side fix for the same semantics is
+[tes5_import_quest.md](tes5_import_quest.md#1-getincell-matched-one-cell-instead-of-the-whole-prefix-family).
+
+TES5 tests one exact cell. The condition handler (1.6.659 RVA `0x2ED0E0`)
+requires the param to be a CELL (form type `0x3C`) and compares it with the
+subject's parent cell (`+0x60`). There is no name comparison. Converted
+verbatim, every family condition passed only in the empty dummy cell, so
+"Anvil" and the other city topics vanished. On Oblivion.esm that affected
+2,879 dialogue conditions: 692 on the INFOs themselves, and 2,187 copied from
+10 `NQD<City>` quests. 95 families were affected; the largest are IC (431
+cells), Anvil (91) and Chorrol (86).
+
+**An exterior cell cannot be a condition parameter.** It is not a form until
+its grid loads. Measured live with `TESForm::LookupByID`: the interior
+`AnvilTheCountsArms` resolved to a CELL, but the exteriors `AnvilBayWest01` and
+`AnvilExteriorLighthouse02` returned null. Vanilla agrees: all 919 of
+Skyrim.esm's `GetInCell` params are interiors. The family's exterior cells are
+never whole worldspaces either (0 of 61 family/worldspace pairs), so
+`GetInWorldspace` cannot stand in for them.
+
+**Re-expression.**
+
+- Each interior member gets an exact `GetInCell(member)`.
+- The exterior members are tested with `LocationHasKeyword(TES4InCell_<anchor>)`.
+  That handler (`0x2F3EC0`) checks only the subject's *current* location, with
+  no parent walk. For an actor, the current location comes from its parent
+  cell's own XLCN before any worldspace fallback (`0x275840`).
+- So every exterior member gets its own Location
+  (`TES4<Cell>CellLocation`). It is a child of the square's former location,
+  with that location's name, marker and radius, so the load-door name and map
+  discovery are unchanged. Vanilla shares MNAM between a place and its child 24
+  times. The child owns the square's LCEC exclusively, and its KWDA lists every
+  family keyword the cell belongs to.
+- Interiors keep their ordinary Location, because the child locations are
+  built after the door pass.
+
+"In the family" becomes an OR over those tests, and "not in the family" an AND.
+The rewrite runs per OR group in conjunctive form: `X OR not-in-F` becomes the
+AND over members m of `X OR not-in-m`, so an existing OR group keeps its
+meaning.
+
+A keyword is created only for an anchor that some condition in the plugin
+names and whose family holds one of this plugin's own exterior cells. A
+dependent plugin adopts its master's keyword by EditorID. That plugin's own
+exterior family cells are tagged only when it builds Locations (i.e. when it
+owns a new worldspace).
 
 ## <a id="chargen-identity-to-menu-globals"></a>Chargen-identity conditions become menu-choice globals
 
