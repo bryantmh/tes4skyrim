@@ -1,12 +1,17 @@
 # tes5_import/record_types/magic.py - magic conversion
 
-**Code:** `tes5_import/record_types/equipment.py`, `tes5_import/record_types/magic.py`, `tes5_import/generated/vanilla_mgef_data.py`, `asset_convert/character/skyrim_overrides.py`
+**Code:** `tes5_import/record_types/equipment.py`, `tes5_import/record_types/magic.py`, `tes5_import/record_types/magic_variants.py`, `tes5_import/record_types/magic_art.py`, `tes5_import/generated/vanilla_mgef_data.py`, `asset_convert/character/skyrim_overrides.py`
 
 ## Contents
 
 - [The problem Phase 1 solved](#problem-phase-1)
 - [The four defects, in priority order](#four-defects-priority-order)
 - [Path to complete conversion](#path-complete-conversion)
+- [Casting type and delivery follow the owner](#owner-casting-type)
+- [Magic art](#magic-art)
+- [Effect shader particle counts](#effect-shader-particles)
+- [Impact data](#impact-data)
+- [Menu display object](#menu-display-object)
 - [Rules for working in this area](#rules-working-this-area)
 - [Enchantment charge (ANAM to EAMT)](#enchantment-charge-eamt)
 
@@ -308,17 +313,18 @@ Verification: `magic_audit.py` unmapped count → 0; no record falls back to
 filler; dump a converted summon MGEF and diff its DATA field-by-field against
 `SummonFlameAtronach` from the Skyrim.esm dump.
 
-### Phase 2 — Wire the art back in
+### Phase 2 — Wire the art back in — DONE (user-confirmed in-game)
 
-1. **`ARTO` writer** — one art object per distinct MGEF `Model.MODL`; point
-   `Casting Art` (92) / `Hit Effect Art` (96) at it. The meshes are already
-   converted in `output/.../meshes/tes4/magiceffects/`.
-2. **Sounds** — emit `SNDD` from the four TES4 sound FormIDs (casting/bolt/hit/
-   area) via the existing SOUN→SNDR conversion.
-3. **`ESCE`** — counter effects are MGEF→MGEF references; trivially convertible
-   once MGEF records exist (41 effects carry them). The count field at offset 20
-   must match.
-4. Complete the `EFSH` DATA beyond offset 44.
+Covered in the sections below:
+
+- [Magic art](#magic-art): the ARTO, PROJ, EXPL and STAT companions, and the
+  SNDD sounds.
+- [Casting type and delivery follow the owner](#owner-casting-type).
+- [Effect shader particle counts](#effect-shader-particles).
+- [Impact data](#impact-data).
+- [Menu display object](#menu-display-object).
+
+ESCE counter effects landed with Phase 1.
 
 ### Phase 3 — Projectiles and delivery — DONE 2026-08-01 (projectile half)
 
@@ -376,11 +382,10 @@ SPEL, Nehrim 366 + 263 — **1,291 records that all previously carried a null
 projectile, now 0 exceptions.** Projectiles are assigned selectively (159/349
 Nehrim MGEFs, 161/323 Oblivion), not blanket-applied.
 
-Still open in this phase: a **`PROJ` writer** so effects fly their own TES4
-`DATA.ProjectileSpeed` art rather than borrowing a vanilla bolt, and `EXPL` for
-area effects (TES4 `Area` is packed into EFIT but no explosion is ever created).
-`aimed_variant` still covers effects that resolve to a *vanilla* projectile-less
-MGEF, so it cannot be retired yet.
+The `PROJ` and `EXPL` writers have since landed ([Magic art](#magic-art)).
+`aimed_variant` is retired: every effect slot, filler included, is now cloned
+onto its owner's delivery, and `fit_delivery` gives any Aimed clone a
+projectile ([Cleanup](#phase-5-cleanup)).
 
 ### Phase 4 — Script effects (`SEFF`) — DONE 2026-07-31 (with Phase 1)
 
@@ -511,26 +516,219 @@ vanilla's own majority choice per type:
 keeps them out** — the *spell type* is, which the engine handles. All 13 vanilla
 diseases carry `ETYP=EitherHand`, so omitting it for them would be the deviation.
 The field that does track "not menu-facing" is `MDOB` (the menu icon): diseases
-are the only type with zero (0/13). We emit no `MDOB` anywhere, which is
-consistent with diseases and a cosmetic gap elsewhere, not a functional one.
+are the only type with zero (0/13). Every other spell type now gets one
+([Menu display object](#menu-display-object)).
 
 The same trap was already known for `SCRL`, where the converter has always
 written `ETYP` — `convert_SPEL` was simply never given it.
 
-### Phase 5 — Cleanup
+<a id="phase-5-cleanup"></a>
+### Phase 5 — Cleanup — DONE
 
-No record loses all its effects any more (audit: 0 for both plugins), so the
-`_FILLER_EFFECTS` machinery in `record_types/equipment.py` is now dead weight
-for its original purpose. It is **deliberately left in place**: it is still the
-only thing standing between a null `EFID` and an inventory-menu crash if a
-future plugin uses an effect code no export has seen, and INGR still needs
-`pad_to=4` regardless. Delete the `filler_dur` duration-faking path — that one
-existed only so a dropped `SEFF` still answered `HasMagicEffectByID`, and SEFF
-is no longer dropped.
+- **`tes5_import/actors/magic_effects.py` is deleted.**
+  - `aimed_variant`, `has_projectile` and `set_tes4_effect_names` are gone,
+    and so is the projectile registry in `magic.py` that fed them.
+  - Built Oblivion.esm had **0** aimed clones left before the removal. Every
+    aimed slot already reached a projectile through `delivery_variant`.
+- **Vanilla effects clone like ours.** `magic_variants._parts_of` falls back
+  to `vanilla_mgef_data.py` for a vanilla FormID. This covers the filler
+  effects and the `MGEF_CODE_TO_SKYRIM` fallback, so the same
+  `delivery_variant` fits them to their owner.
+- **Fillers take the owner's pair.** The filler for a dropped effect is now
+  cloned onto the owner's casting type and delivery. Before, an Aimed spell
+  whose only effect dropped carried a Self filler, the null-projectile crash
+  above. The fillers are still needed: Oblivion.esm has 6 spells whose only
+  codes (`RSWD`, `DUMY`) no Oblivion MGEF defines, and 36 ingredients padded
+  to 4 effects.
+- **`filler_dur` is deleted.** It kept a dropped effect's duration on the
+  filler only so a dropped `SEFF` still answered `HasMagicEffectByID`, and
+  SEFF is no longer dropped.
+- **`bound_item_assoc` checks the archetype.** It returned the Assoc. Item of
+  any effect, so a summon on an ability would have been scripted as a bound
+  item. It now answers only for archetype 17.
 
-Also still open: `magic_effects.aimed_variant()` should retire once Phase 3
-gives every aimed item's own effects a projectile (its clones are now the only
-consumer of `vanilla_mgef_data.py`).
+## <a id="owner-casting-type"></a>Casting type and delivery follow the owner
+
+**Code:** `tes5_import/record_types/magic_variants.py` (`delivery_variant`), `record_types/equipment.py` (`_slot_mgef`)
+
+Skyrim keeps the casting type (Constant, Fire and Forget, Concentration) and
+the delivery (Self, Contact, Aimed, ...) on the MGEF. The engine applies an
+effect the way *the effect* says, whatever the spell holding it says.
+Oblivion has neither field: the item decides.
+
+**The rule, from a census of every vanilla effect slot:** casting type and
+delivery match the owner on **2,138 of 2,146** slots.
+
+| Owner | Effect casting type / delivery |
+|---|---|
+| Ability | Constant / Self |
+| Disease | Constant / Contact |
+| Apparel enchantment | Constant / Self |
+| Potion, poison, ingredient | Fire and Forget / Self (803 of 803) |
+| Scroll (owner cast type 3) | Fire and Forget, the owner's delivery |
+| Spell, power, weapon, staff | the owner's casting type and delivery |
+
+**This was the "effects die after a few milliseconds" bug.** On the build
+before the fix, 3,097 of about 4,300 effect slots did not match their owner.
+Every ability carried Fire-and-Forget effects, so the engine applied them
+once and they expired at once. Script-called spells died the same way.
+
+Each slot is re-pointed at a clone of its MGEF carrying the owner's pair.
+`delivery_variant` returns the effect itself when it already matches.
+Otherwise it writes one clone per (source, casting type, delivery, burst),
+hashed at site `MGEF_DELIVERY`, so existing FormIDs are untouched. A spell
+whose effects have different ranges gives each effect its own TES4 range; the
+spell takes the farthest (`owner_delivery`).
+
+Measured on the rebuilt Oblivion.esm:
+
+- 600 of 601 ability slots are Constant/Self.
+- All 1,782 worn-enchantment slots match.
+- Every spell slot matches.
+- What still differs is intended: the scroll ENCH records, and the Self half
+  of mixed-range spells.
+
+**Dual casting needs nothing extra.** 944 of 950 vanilla effects carry no Dual
+Cast Art. Dual Cast Scale 1.0 and the either-hand `ETYP` were already written.
+
+## <a id="magic-art"></a>Magic art
+
+**Code:** `tes5_import/record_types/magic_art.py`; meshes in [asset_convert_magic_art.md](asset_convert_magic_art.md#phase-meshes)
+
+Each TES4 MGEF's `Model.MODL` is split per phase on the asset side. The import
+writes one companion record per phase the **source** NIF authors, keyed on the
+authored model path, so effects sharing a mesh share the record:
+
+| MGEF DATA field | Companion | Mesh | Values with no Oblivion source |
+|---|---|---|---|
+| Casting Art (92) | ARTO, DNAM 0 | `_cast` | - |
+| Hit Effect Art (96) | ARTO, DNAM 1 | `_hit`, else `_summon` | - |
+| Projectile (72) | PROJ, Missile | `_projectile` | FireboltProjectile01's fade 0.5, impact force 1.5, collision radius 10, relaunch 0.25, VNAM 1 |
+| Explosion (76) | EXPL | `_area` | FireBallExp01's radius 320, image-space radius 1024, flags 0x41, sound level 1; force 0 |
+
+A few PROJ and EXPL fields do have Oblivion sources:
+
+- **Projectile speed** is 1000 × `DATA.ProjectileSpeed`. 1000 is Oblivion.exe's
+  `fMagicProjectileBaseSpeed` default, and no plugin overrides it.
+- **Projectile range** is 10000, Oblivion.exe's `fMagicProjectileMaxDistance`.
+- **Projectile light** is `DATA.Light`, and its sound is the `BoltSound` SNDR.
+- **Explosion sound** is the `AreaSound` SNDR.
+
+An explosion is written only for an effect slot with a TES4 area on an aimed
+delivery. That area burst belongs to that use of the effect alone, so it is
+part of the `delivery_variant` key.
+
+**Sounds** go in `SNDD`: the casting sound as Release (3) and the hit sound as
+On Hit (5). An SNDR exists only for a SOUN carrying `FNAM.Filename`; its FormID
+is `derive_formid('SNDR', soun)`.
+
+Measured on Oblivion.esm, out of 703 emitted effects:
+
+| Field | Effects |
+|---|---|
+| casting art | 581 |
+| hit art | 564 |
+| an explosion | 44 |
+| their own projectile | 182 |
+| an SNDD | 702 |
+
+## <a id="effect-shader-particles"></a>Effect shader particle counts
+
+**Code:** `tes5_import/record_types/world.py` (`convert_EFSH`)
+
+EFSH DATA offsets 124 and 128 are ratios (0 to 1) in TES4. TES5 reads them as
+**counts**: Full Particle Birth Ratio and Persistent Particle Count. Vanilla
+writes 40 to 150 for these.
+
+Copied as-is, a ratio of 1.0 spawned about one particle, so hit shaders barely
+showed. Bethesda's own port of `LifeDetected` maps 1.0 to 300, and that factor
+is `EFSH_PARTICLES_PER_RATIO`. After it, all 102 Oblivion EFSH records carry
+counts of 100 or more.
+
+## <a id="impact-data"></a>Impact data
+
+**Code:** `tes5_import/record_types/magic.py` (`fit_delivery`, `IMPACT_BY_PROJECTILE`)
+
+Oblivion has no impact data sets, so the decals and impact sounds a bolt
+leaves on the world are borrowed from vanilla. Vanilla puts an impact set on
+140 of 199 Aimed and 34 of 36 Target Location effects. It follows the
+projectile, and each vanilla bolt's MGEFs almost always share one set:
+
+| Vanilla projectile | Impact set | MGEFs flying it that carry the set |
+|---|---|---|
+| FireboltProjectile01 | MAGFirebolt01ImpactSet | 12 of 20 |
+| FlamesProjectile | MAGFlames01ImpactSet | 6 of 7 |
+| FrostIcicleProjectile01 | MAGFrostBolt01ImpactSet | 5 of 6 |
+| FrostSprayProjectile01 | MAGFrost01ImpactSet | 4 of 4 |
+| ShockBoltAim | MAGShock02ImpactSet | 5 of 5 |
+| ShockBoltConAim | MAGShock01ImpactSet | 11 of 12 |
+| AbsorbBeam01 | MAGAbsorbRedImpactSet | 8 of 8 |
+| SpiderSpitProjectile | MAGSpiderSpitImpactSet | 6 of 6 |
+| Illusion01Projectile | MAGIllusionImpactSet | 13 of 14 |
+| IllusionNeg01Projectile | MAGIllusionNegImpactSet | 10 of 14 |
+| ReanimateProjectile | MAGReanimatelImpactSet | 10 of 11 |
+| TurnUndeadProjectile | MAGTurnUnlImpactSet | 10 of 10 |
+| HealFakeProjectile, ParalyzeProjectile | none (the majority) | - |
+
+`fit_delivery` gives every aimed MGEF the impact set of the vanilla bolt its
+element and school call for. It does this even when the effect flies its own
+Oblivion projectile, so a converted fireball leaves the Firebolt scorch.
+Non-aimed deliveries get none, matching the projectile rule.
+
+## <a id="menu-display-object"></a>Menu display object
+
+**Code:** `tes5_import/record_types/magic.py` (`menu_display_object`), `magic_variants.menu_object`, `equipment.convert_SPEL`
+
+`MDOB` names the STAT the magic menu shows for a spell or an effect.
+Census of Skyrim.esm:
+
+- **SPEL:** every type carries MDOB except Disease (0 of 13). That is 342 of
+  407 spells, 28 of 28 powers, 3 of 3 lesser powers, 122 of 250 abilities and
+  112 of 115 shouts. All 618 targets are STATs.
+- **MGEF:** 835 of 950 carry one. `MagicHatMarker` (0x000435A5) is the most
+  common: 646 MGEFs and 275 spells.
+- **The specific art lives on the spell.** 292 of 618 spells show different
+  art from their first effect.
+
+**Menu art is vanilla Skyrim's, picked the way vanilla picks it.** Our own
+Cast-phase meshes were invisible and then flickered in the menu
+([asset_convert_magic_art.md](asset_convert_magic_art.md#menu-art)).
+
+The rule comes from vanilla spells of types 0, 2 and 3, grouped by their first
+effect. The first rule that matches wins:
+
+1. **By archetype.** The vanilla majority for that archetype:
+
+   | Archetype | Menu STAT |
+   |---|---|
+   | Summon | MAGINVSummon (16 of 17) |
+   | Reanimate | MAGINVReanimate (18 of 19) |
+   | Turn Undead | MAGINVTurnUndead (10 of 11) |
+   | Invisibility | MAGINVInvisibility (6 of 6) |
+   | Paralysis | MAGInvParalyze (6 of 7) |
+   | Bound Weapon | MAGINVBoundWeapon (5 of 5) |
+   | Detect Life | MAGInvDetectLife |
+   | Light | MAGINVLightSpellArt |
+   | Telekinesis | MAGINVTelekinesis |
+   | Calm, Rally | MAGINVIllusionLight01 |
+   | Demoralize, Frenzy | MAGINVIllusionDarkt01 |
+   | Command Summoned, Soul Trap | MAGINVBanish |
+
+2. **By element (resist actor value).**
+   - Fire: FireballInvArt (52 of 59 Destruction fire spells).
+   - Frost: IceSpellArt.
+   - Shock: ShockSpellArt.
+   - Magic: MAGINVAbsorb.
+3. **By school.** Alteration (and Mysticism, which folds into it): MAGINVAlteration
+   (10 of 11). Restoration: HealSpellArt (15 of 19).
+4. **Otherwise** `MagicHatMarker`.
+
+A spell takes the art its first **written** effect calls for: the clone the
+slot resolved to, filler included. Every type gets one but Disease. Each
+converted MGEF (base, per-AV and script variants) carries the same rule's
+answer.
+
+No STAT is written, so no FormID is derived for menu art.
 
 ## Rules for working in this area
 <a id="rules-working-this-area"></a>

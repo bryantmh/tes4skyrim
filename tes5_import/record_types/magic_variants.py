@@ -12,13 +12,15 @@ import struct
 import threading
 
 from ..base.text_reader import get_int, get_str
-from ..base.writer import pack_record, pack_string_subrecord, pack_subrecord
+from ..base.writer import (pack_formid_subrecord, pack_record,
+                           pack_string_subrecord, pack_subrecord)
+from ..generated.vanilla_mgef_data import VANILLA_MGEF_DATA
 from .magic import (
-    A_SCRIPT, AV_NONE, O_ARCHETYPE, O_ASSOC_ITEM, O_CASTING_TYPE,
-    O_COUNTER_COUNT, O_EXPLOSION, O_PROJECTILE, build_data, code_to_fid, data_projectile,
-    get_archetype, is_derived, known_sigs, mgef_parts, mgef_tail,
-    register_emitted_projectile, resolve_actor_value, source_record)
-from .magic_art import explosion, sound_set
+    A_BOUND_WEAPON, A_SCRIPT, AV_NONE, MENU_ART_GENERIC, O_ARCHETYPE, O_ASSOC_ITEM,
+    O_CASTING_TYPE, O_COUNTER_COUNT, O_EXPLOSION, build_data, code_to_fid,
+    fit_delivery, get_archetype, is_derived, known_sigs, menu_display_object,
+    mgef_parts, mgef_tail, resolve_actor_value, source_record)
+from .magic_art import explosion, projectile, sound_set
 
 #: {output MGEF FormID: (EditorID, subrecords before DATA, DATA, subrecords after)} of every emitted MGEF.
 _parts: dict = {}
@@ -52,13 +54,19 @@ def reset() -> None:
 
 
 def _parts_of(fid: int):
-    """The parts of an emitted MGEF, building a base record's on first use."""
+    """The parts of an MGEF a clone can start from, built on first use.
+
+    A base record of this plugin, a variant already emitted, or a vanilla
+    effect the fallback tables name (its DATA only, from vanilla_mgef_data).
+    """
     got = _parts.get(fid)
     if got is None:
         rec = source_record(fid)
-        if rec is None:
-            return None
-        got = _parts[fid] = mgef_parts(rec)
+        if rec is not None:
+            got = _parts[fid] = mgef_parts(rec)
+        elif fid in VANILLA_MGEF_DATA:
+            edid, data_hex = VANILLA_MGEF_DATA[fid]
+            got = _parts[fid] = (edid, b'', bytes.fromhex(data_hex), b'')
     return got
 
 
@@ -73,7 +81,6 @@ def _emit(writer, fid: int, edid: str, head: bytes, data: bytes,
     subs = pack_string_subrecord('EDID', edid) + head
     subs += pack_subrecord('DATA', data) + tail
     writer.add_record('MGEF', pack_record('MGEF', fid, 0, subs))
-    register_emitted_projectile(fid, struct.unpack_from('<I', data, O_PROJECTILE)[0])
     _parts[fid] = (edid, head, data, tail)
     if rec is not None:
         _recs[fid] = rec
@@ -85,7 +92,7 @@ def clone(src_fid: int, site: str, key, edid: str, patch, writer,
 
     The clone keeps the source's other subrecords (VMAD, FULL, DNAM) unless
     ``head`` replaces the ones before DATA, and carries no ESCE.  Returns 0
-    when the source is not an MGEF this plugin emits.
+    when there is no source to clone (see _parts_of).
     """
     if writer is None:
         return 0
@@ -118,6 +125,12 @@ def owner_delivery(rec: dict) -> int:
     return max(ranges, default=0)
 
 
+def menu_object(first_effect: int) -> int:
+    """A spell's MDOB: the vanilla menu art its first effect's MGEF calls for."""
+    parts = _parts_of(first_effect)
+    return menu_display_object(parts[2]) if parts else MENU_ART_GENERIC
+
+
 def delivery_variant(fid: int, cast: int, delivery: int, writer,
                      area: bool = False) -> int:
     """``fid`` itself when it already matches its slot, else a matching clone.
@@ -131,15 +144,15 @@ def delivery_variant(fid: int, cast: int, delivery: int, writer,
     if src is None:
         return fid
     rec = _source_rec(fid)
-    burst = explosion(rec) if area and delivery in (2, 4) and rec else 0
+    own_art = delivery in (2, 4) and rec is not None
+    burst = explosion(rec) if area and own_art else 0
     if (struct.unpack_from('<II', src[2], O_CASTING_TYPE) == (cast, delivery)
             and struct.unpack_from('<I', src[2], O_EXPLOSION)[0] == burst):
         return fid
 
     def patch(data):
-        """Set the pair, the projectile that pair needs, and the burst."""
-        struct.pack_into('<II', data, O_CASTING_TYPE, cast, delivery)
-        struct.pack_into('<I', data, O_PROJECTILE, data_projectile(data))
+        """Set the pair, the projectile and impact set that pair needs, and the burst."""
+        fit_delivery(data, cast, delivery, projectile(rec) if own_art else 0)
         struct.pack_into('<I', data, O_EXPLOSION, burst)
 
     edid = (f'TES4{src[0].removeprefix("TES4")}{_CAST_NAMES[cast]}'
@@ -199,6 +212,7 @@ def build_av_variants(mgef_records: list, effect_records: list, writer) -> int:
         full = get_str(src, 'FULL')
         head = pack_string_subrecord('FULL', _variant_name(full, name)) if full else b''
         data = build_data(src, code, get_archetype(code, src), tes5_av, 0)
+        head += pack_formid_subrecord('MDOB', menu_display_object(data))
         _emit(writer, fid, f'TES4{code}{name}', head, data, mgef_tail(src), src)
         _av_variants[(code, av)] = fid
         written += 1
@@ -249,10 +263,10 @@ def build_seff_variants(mgef_records: list, effect_records: list, writer,
         if not vmad:
             continue
         data = bytearray(build_data(seff, 'SEFF', A_SCRIPT, AV_NONE, 0))
-        struct.pack_into('<II', data, O_CASTING_TYPE, 1, RANGE_DELIVERY.get(etype, 0))
-        struct.pack_into('<I', data, O_PROJECTILE, data_projectile(data))
+        fit_delivery(data, 1, RANGE_DELIVERY.get(etype, 0))
         fid = writer.derive_formid('MGEF_SEFF', (scpt, etype))
         head = vmad + (pack_string_subrecord('FULL', full) if full else b'')
+        head += pack_formid_subrecord('MDOB', menu_display_object(data))
         name = fid_to_edid.get(scpt, scpt)
         _emit(writer, fid, f'TES4SEFF{name}{etype or "Self"}', head, bytes(data),
               sound_set(seff), seff)
@@ -279,7 +293,7 @@ UNCASTABLE_SPELL_TYPES = frozenset({3, 4})
 def bound_item_assoc(mgef_fid: int) -> int:
     """Output WEAP/ARMO an emitted bound-item MGEF equips (0 if not one)."""
     src = _parts_of(mgef_fid)
-    if src is None:
+    if src is None or struct.unpack_from('<I', src[2], O_ARCHETYPE)[0] != A_BOUND_WEAPON:
         return 0
     return struct.unpack_from('<I', src[2], O_ASSOC_ITEM)[0]
 
@@ -306,8 +320,7 @@ def bound_script_variant(mgef_fid: int, assoc_item: int, writer) -> int:
         """Script archetype, no Assoc. Item, Fire and Forget on Self."""
         struct.pack_into('<I', data, O_ARCHETYPE, A_SCRIPT)
         struct.pack_into('<I', data, O_ASSOC_ITEM, 0)
-        struct.pack_into('<II', data, O_CASTING_TYPE, 1, 0)
-        struct.pack_into('<I', data, O_PROJECTILE, 0)
+        fit_delivery(data, 1, 0)
 
     vmad = pack_subrecord('VMAD', build_vmad_object_script(
         BOUND_ITEM_SCRIPT, {'BoundItem': assoc_item}))

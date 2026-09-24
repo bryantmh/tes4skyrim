@@ -704,21 +704,48 @@ _PROJ_BY_SCHOOL = {
 }
 
 
-# {output MGEF FormID: projectile FormID} for every MGEF this module emits.
-# equipment._pack_effects consults it (through magic_effects.has_projectile) to
-# decide whether an Aimed item already reaches a projectile; without it the
-# converter's own effects are invisible to that check and every Aimed item made
-# of them ships with the null-deref described above.
-_emitted_projectiles: dict = {}
+#: Vanilla projectile -> the Impact Data Set most vanilla MGEFs flying it carry (HealFake and Paralyze carry none).
+IMPACT_BY_PROJECTILE = {
+    _PROJ_FIREBOLT: 0x0001C2AF, _PROJ_FLAMES: 0x00026113,
+    _PROJ_FROST_ICICLE: 0x00032DA7, _PROJ_FROST_SPRAY: 0x00018A2E,
+    _PROJ_SHOCK_BOLT: 0x00059ED9, _PROJ_SHOCK_CONC: 0x00038B05,
+    _PROJ_ABSORB_BEAM: 0x000ABF01, _PROJ_SPIDER_SPIT: 0x00046008,
+    _PROJ_ILLUSION: 0x00073320, _PROJ_ILLUSION_NEG: 0x00074798,
+    _PROJ_REANIMATE: 0x00075346, _PROJ_TURN_UNDEAD: 0x0004C6DA,
+}
+
+#: Vanilla MagicHatMarker STAT: the generic menu art, on 646 of 950 vanilla MGEFs.
+MENU_ART_GENERIC = 0x000435A5
+#: Archetype -> the vanilla menu STAT spells led by that effect show (Skyrim.esm spells by first effect).
+MENU_ART_BY_ARCHETYPE = {
+    A_CALM: 0x000A59AD, A_RALLY: 0x000A59AD,
+    A_DEMORALIZE: 0x000A59AE, A_FRENZY: 0x000A59AE,
+    A_COMMAND_SUMMONED: 0x001097CD, A_SOUL_TRAP: 0x001097CD,
+    A_INVISIBILITY: 0x00109AC3, A_LIGHT: 0x000A0E7F,
+    A_BOUND_WEAPON: 0x0010AB43, A_SUMMON_CREATURE: 0x000A6459,
+    A_DETECT_LIFE: 0x00104F70, A_TELEKINESIS: 0x001097CB,
+    A_PARALYSIS: 0x0010A046, A_REANIMATE: 0x001097CC, A_TURN_UNDEAD: 0x001097CA,
+}
+#: Resist actor value (the element) -> vanilla menu STAT: FireballInvArt, IceSpellArt, ShockSpellArt, Absorb.
+MENU_ART_BY_RESIST = {AV_RESIST_FIRE: 0x0004E264, AV_RESIST_FROST: 0x0009DB72,
+                      AV_RESIST_SHOCK: 0x0009FA64, AV_RESIST_MAGIC: 0x0010FEF4}
+#: Magic school -> vanilla menu STAT when neither archetype nor element names one: Alteration, HealSpellArt.
+MENU_ART_BY_SCHOOL = {AV_ALTERATION: 0x00109AC2, AV_RESTORATION: 0x000A0E7D}
+
+
+def menu_display_object(data) -> int:
+    """The vanilla menu STAT for an MGEF DATA: by archetype, then element, then school.
+
+    See: docs/commentary/tes5_import_magic.md#menu-display-object
+    """
+    archetype = struct.unpack_from('<I', data, O_ARCHETYPE)[0]
+    school, resist = struct.unpack_from('<ii', data, O_MAGIC_SKILL)
+    return (MENU_ART_BY_ARCHETYPE.get(archetype) or MENU_ART_BY_RESIST.get(resist)
+            or MENU_ART_BY_SCHOOL.get(school) or MENU_ART_GENERIC)
+
 
 #: {output MGEF FormID: its source record}, so a variant can clone any base MGEF before the MGEF pass writes it.
 _mgef_sources: dict = {}
-
-
-def register_emitted_projectile(fid: int, projectile: int) -> None:
-    """Record the projectile written into one emitted MGEF's DATA."""
-    if fid:
-        _emitted_projectiles[fid] = projectile
 
 
 def source_record(fid: int):
@@ -726,31 +753,31 @@ def source_record(fid: int):
     return _mgef_sources.get(fid)
 
 
-def data_projectile(data: bytes) -> int:
-    """The projectile an MGEF DATA needs for its delivery: the one it carries, else a vanilla bolt."""
-    delivery = struct.unpack_from('<I', data, O_DELIVERY)[0]
-    if delivery not in (2, 4):
-        return 0
-    carried = struct.unpack_from('<I', data, O_PROJECTILE)[0]
-    if carried:
-        return carried
+def _vanilla_projectile(data) -> int:
+    """The vanilla bolt an MGEF DATA's delivery, casting type, school and element call for."""
     flags = struct.unpack_from('<I', data, O_FLAGS)[0]
     return _resolve_projectile(
-        delivery,
+        struct.unpack_from('<I', data, O_DELIVERY)[0],
         struct.unpack_from('<I', data, O_CASTING_TYPE)[0],
         struct.unpack_from('<i', data, O_MAGIC_SKILL)[0],
         struct.unpack_from('<i', data, O_RESIST_VALUE)[0],
         bool(flags & F_HOSTILE))
 
 
-def emitted_projectile(fid: int) -> int:
-    """Projectile of an MGEF this module emitted (0 if none / not ours)."""
-    return _emitted_projectiles.get(fid, 0)
+def fit_delivery(data: bytearray, cast: int, delivery: int, own_bolt: int = 0) -> None:
+    """Give an MGEF DATA a casting type and delivery, and the projectile and impact set they need.
 
-
-def is_emitted_mgef(fid: int) -> bool:
-    """True when ``fid`` is an MGEF this converter emitted."""
-    return fid in _emitted_projectiles
+    An aimed delivery flies ``own_bolt``, else the projectile the DATA
+    carries, else the vanilla bolt for its element; its impact set is that
+    vanilla bolt's.  Other deliveries carry neither.
+    See: docs/commentary/tes5_import_magic.md#impact-data
+    """
+    struct.pack_into('<II', data, O_CASTING_TYPE, cast, delivery)
+    vanilla = _vanilla_projectile(data)
+    carried = struct.unpack_from('<I', data, O_PROJECTILE)[0]
+    bolt = (own_bolt or carried or vanilla) if vanilla else 0
+    struct.pack_into('<I', data, O_PROJECTILE, bolt)
+    struct.pack_into('<I', data, O_IMPACT_DATA, IMPACT_BY_PROJECTILE.get(vanilla, 0))
 
 
 def _resolve_projectile(delivery: int, cast_type: int, school: int,
@@ -871,9 +898,6 @@ def build_data(rec: dict, code: str, archetype: int, actor_value: int,
     resist = TES4_RESIST_AV_TO_TES5.get(
         get_int(rec, 'DATA.ResistValue', 0xFFFFFFFF), AV_NONE)
     struct.pack_into('<i', data, O_RESIST_VALUE, resist)
-    own_bolt = magic_art.projectile(rec) if delivery in (2, 4) else 0
-    struct.pack_into('<I', data, O_PROJECTILE, own_bolt or _resolve_projectile(
-        delivery, cast_type, school, resist, bool(t4_flags & T4_HOSTILE)))
     struct.pack_into('<II', data, O_CASTING_ART, magic_art.casting_art(rec),
                      magic_art.hit_art(rec))
     struct.pack_into('<H', data, O_COUNTER_COUNT, counter_count)
@@ -883,8 +907,8 @@ def build_data(rec: dict, code: str, archetype: int, actor_value: int,
     struct.pack_into('<f', data, O_SPELLMAKING_TIME, 0.5)
     struct.pack_into('<I', data, O_ARCHETYPE, archetype)
     struct.pack_into('<i', data, O_ACTOR_VALUE, actor_value)
-    struct.pack_into('<I', data, O_CASTING_TYPE, cast_type)
-    struct.pack_into('<I', data, O_DELIVERY, delivery)
+    fit_delivery(data, cast_type, delivery,
+                 magic_art.projectile(rec) if delivery in (2, 4) else 0)
     second_av = SECOND_ACTOR_VALUES.get(code, AV_NONE)
     struct.pack_into('<i', data, O_SECOND_AV, second_av)
     if second_av != AV_NONE:
@@ -909,6 +933,7 @@ def mgef_parts(rec: dict) -> tuple:
     data = build_data(rec, code, get_archetype(code, rec),
                        _base_actor_value(code, rec),
                        len(_counter_effect_fids(rec)))
+    head += pack_formid_subrecord('MDOB', menu_display_object(data))
     return code, head, data, mgef_tail(rec)
 
 
@@ -919,11 +944,7 @@ def mgef_tail(rec: dict) -> bytes:
 
 
 def convert_MGEF(rec: dict, writer=None) -> bytes:
-    """MGEF — Magic Effect, packed from `mgef_parts` plus its ESCE array.
-
-    The projectile in this DATA was already registered by
-    register_mgef_formids: ENCH and SPEL convert before MGEF.
-    """
+    """MGEF — Magic Effect, packed from `mgef_parts` plus its ESCE array."""
     code, head, data, tail = mgef_parts(rec)
     subs = pack_string_subrecord('EDID', code) if code else b''
     subs += head + pack_subrecord('DATA', data)
@@ -942,25 +963,21 @@ def register_mgef_formids(mgef_records: list) -> None:
     """Index every source MGEF by code and FormID, and reset the per-plugin registries.
 
     Phase 1 converts types alphabetically, so ENCH and SPEL run before MGEF:
-    their projectile check and every variant clone read what is indexed here,
-    never a side effect of convert_MGEF.  magic_variants is imported here, not
+    every variant clone reads what is indexed here, never a side effect of
+    convert_MGEF.  magic_variants is imported here, not
     at module scope, because it imports this module.
     """
     from .magic_variants import reset
 
     reset()
     code_to_fid.clear()
-    _emitted_projectiles.clear()
     _mgef_sources.clear()
     for rec in mgef_records:
         code = get_str(rec, 'EditorID')
-        if not code:
-            continue
-        fid = get_formid(rec, 'FormID')
-        code_to_fid[code] = fid
-        _mgef_sources[fid] = rec
-        register_emitted_projectile(fid, data_projectile(
-            build_data(rec, code, get_archetype(code, rec), AV_NONE, 0)))
+        if code:
+            fid = get_formid(rec, 'FormID')
+            code_to_fid[code] = fid
+            _mgef_sources[fid] = rec
 
 
 def _counter_effect_fids(rec: dict) -> list:

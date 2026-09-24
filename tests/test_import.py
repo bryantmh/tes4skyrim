@@ -3044,14 +3044,14 @@ class TestCKWarningFixes:
         assert struct.unpack_from('<I', spit, 16)[0] == 3  # CastType Scroll
 
     def test_aimed_ench_gets_projectile_mgef(self):
-        """An aimed ENCH over projectile-less MGEFs gets a synthesized clone.
+        """An aimed ENCH over a projectile-less VANILLA MGEF gets an aimed clone of it.
 
-        Such an enchantment fires NOTHING in game, so the converter
-        must mint an aimed MGEF clone with a projectile and swap it in.
+        The vanilla-alias fallback (no MGEF of ours registered) must still
+        reach a projectile, or the engine null-derefs on the item.
         """
-        from tes5_import.actors import magic_effects as magic_effects
         from tes5_import.record_types.equipment import convert_ENCH
-        magic_effects.set_tes4_effect_names([])   # reset cache
+        from tes5_import.record_types.magic import register_mgef_formids
+        register_mgef_formids([])
         writer = PluginWriter(masters=['Skyrim.esm'])
         writer.next_object_id = 0x01100000
         rec = {'Signature': 'ENCH', 'FormID': '00001234', 'RecordFlags': '0',
@@ -3078,20 +3078,18 @@ class TestCKWarningFixes:
         """An aimed ENCH over CONVERTED MGEFs still reaches a projectile.
 
         This is the normal path since convert_MGEF landed, and is
-        what shipped broken; the test above exercises the vanilla-
-        alias fallback instead, because it registers no converted
-        MGEFs.  The failure is an unconditional null-deref, not a
-        dud cast.
+        what shipped broken.  The failure is an unconditional null-deref,
+        not a dud cast.  FRDG is written exactly as Nehrim and Oblivion
+        export it (Destruction, Frost resist, Hostile|Detrimental|Target),
+        which vanilla flies on FrostIcicleProjectile01 with
+        MAGFrostBolt01ImpactSet.
 
         See: docs/commentary/tes5_import_magic.md#aimed-ench-null-projectile
         """
-        from tes5_import.actors import magic_effects as magic_effects
         from tes5_import.record_types.equipment import convert_ENCH
         from tes5_import.record_types.magic import (convert_MGEF,
                                                     register_mgef_formids)
-        magic_effects.set_tes4_effect_names([])
-        # FRDG exactly as Nehrim/Oblivion export it: Destruction, Frost resist,
-        # Hostile|Detrimental|Target.
+        from tes5_import.record_types.magic_variants import get_mgef_formid
         mgef = {'Signature': 'MGEF', 'FormID': '0000187B', 'RecordFlags': '0',
                 'EditorID': 'FRDG', 'FULL': 'Frost Damage',
                 'DATA.Flags': str(0x00000001 | 0x00000004 | 0x00000040),
@@ -3113,16 +3111,11 @@ class TestCKWarningFixes:
         enit = _find_subrecord(out, b'ENIT')
         assert struct.unpack_from('<I', enit, 16)[0] == 2, 'expected Aimed'
         efid = struct.unpack('<I', _find_subrecord(out, b'EFID'))[0]
-
-        # The effect must resolve to our converted MGEF, and that MGEF's DATA
-        # must carry a projectile.
-        assert magic_effects.has_projectile(efid), \
-            'aimed ENCH reaches no projectile — engine null-derefs on it'
+        assert efid == get_mgef_formid('FRDG'), 'the base MGEF already fits a staff slot'
         data = _find_subrecord(convert_MGEF(mgef), b'DATA')
-        assert struct.unpack_from('<I', data, 84)[0] == 2      # delivery Aimed
-        # Frost + Destruction + fire-and-forget -> FrostIcicleProjectile01,
-        # the projectile vanilla uses for that exact combination.
+        assert struct.unpack_from('<I', data, 84)[0] == 2
         assert struct.unpack_from('<I', data, 72)[0] == 0x0002F774
+        assert struct.unpack_from('<I', data, 100)[0] == 0x00032DA7
 
     def test_non_aimed_mgef_keeps_null_projectile(self):
         # Only Aimed/Target-Location deliveries fly a projectile; vanilla
@@ -5333,10 +5326,15 @@ class TestVanillaMgefDataSize:
                 f'{edid} ({fid:08X}) DATA is {n} bytes, expected '
                 f'{MGEF_DATA_SIZE} — regenerate the table')
 
-    def test_aimed_variant_writes_a_full_length_data(self):
-        """The synthesized clone must be a complete, correctly-patched MGEF."""
-        from tes5_import.actors import magic_effects as magic_effects
+    def test_vanilla_clone_writes_a_full_length_data(self):
+        """A clone of a vanilla effect must be a complete, correctly-patched MGEF.
+
+        Fire and Forget, Aimed, a real projectile, no counter-effect slots
+        (the clone carries no ESCE), and DualCastScale 1.0 at offset 112,
+        past the old 96-byte cut.
+        """
         from tes5_import.generated.vanilla_mgef_data import MGEF_DATA_SIZE
+        from tes5_import.record_types import magic, magic_variants
 
         class _Writer:
             def __init__(self):
@@ -5359,39 +5357,20 @@ class TestVanillaMgefDataSize:
             def add_record(self, rec_type, data):
                 self.records.append((rec_type, data))
 
-        magic_effects.set_tes4_effect_names(
-            [{'EditorID': 'FIDG', 'FULL': 'Fire Damage'}])
+        magic.register_mgef_formids([])
         writer = _Writer()
-        # FireDamageFFAimed — a vanilla effect that already has a projectile.
-        assert magic_effects.aimed_variant(0x00012F03, 'FIDG', writer)
+        restore_health = 0x0003EB15
+        fid = magic_variants.delivery_variant(restore_health, 1, 2, writer)
+        assert fid != restore_health
 
         rec_type, blob = writer.records[0]
         assert rec_type == 'MGEF'
         data = _find_subrecord(blob, b'DATA')
         assert len(data) == MGEF_DATA_SIZE
-
-        # The patched fields: Fire and Forget + Aimed + a real projectile, and
-        # no counter-effect slots (the clone carries no ESCE subrecords).
-        assert struct.unpack_from('<I', data, 80)[0] == 1   # Casting Type
-        assert struct.unpack_from('<I', data, 84)[0] == 2   # Delivery = Aimed
-        assert struct.unpack_from('<I', data, 72)[0] != 0   # Projectile
-        assert struct.unpack_from('<I', data, 20)[0] == 0   # Counter count
-
-        # A field that only exists past the old 96-byte cut, proving the tail
-        # is present: vanilla FireDamageFFAimed has DualCastScale == 1.0.
+        assert struct.unpack_from('<II', data, magic.O_CASTING_TYPE) == (1, 2)
+        assert struct.unpack_from('<I', data, magic.O_PROJECTILE)[0] != 0
+        assert struct.unpack_from('<H', data, magic.O_COUNTER_COUNT)[0] == 0
         assert struct.unpack_from('<f', data, 112)[0] == pytest.approx(1.0)
-
-    def test_short_blob_is_rejected_rather_than_written(self):
-        from tes5_import.actors import magic_effects as magic_effects
-        original = magic_effects.VANILLA_MGEF_DATA.get(0x00012F03)
-        magic_effects.VANILLA_MGEF_DATA[0x00012F03] = ('Truncated', '00' * 96)
-        magic_effects._cache.clear()
-        try:
-            with pytest.raises(ValueError, match='expected 152'):
-                magic_effects.aimed_variant(0x00012F03, 'FIDG', object())
-        finally:
-            magic_effects.VANILLA_MGEF_DATA[0x00012F03] = original
-            magic_effects._cache.clear()
 
 
 def _is_tes4_export(export_dir: str) -> bool:
@@ -5724,6 +5703,111 @@ class TestMgefConversion:
                 _s.unpack_from('<i', data, 68)[0]
         assert avs[strength] == magic.AV_CARRY_WEIGHT
         assert avs[endurance] == magic.AV_HEALTH
+
+    def test_ability_effects_are_constant_on_self(self):
+        """Every effect slot carries its owner's casting type and delivery.
+
+        Vanilla matches them on 2138 of 2146 slots; an ability whose effects
+        stay Fire and Forget applies them once and lets them expire, which is
+        how converted abilities and script-called spells died in game.
+        See: docs/commentary/tes5_import_magic.md#owner-casting-type
+        """
+        from tes5_import.record_types import equipment, magic
+
+        magic.register_mgef_formids([{'EditorID': 'FOAT', 'FormID': '00001234',
+                                      'DATA.Flags': str(magic.T4_SELF),
+                                      'DATA.School': '5'}])
+        spell = {'EditorID': 'AbTest', 'SPIT.Type': '4', 'EffectCount': '1',
+                 'Effect[0].EFID': 'FOAT', 'Effect[0].Type': 'Self',
+                 'Effect[0].Magnitude': '5'}
+        writer = _RecordingWriter()
+        out = equipment.convert_SPEL(spell, writer=writer)
+        assert struct.unpack_from('<II', _find_subrecord(out, b'SPIT'), 16) == (0, 0)
+        [(sig, clone)] = writer.records
+        data = _find_subrecord(clone, b'DATA')
+        assert sig == 'MGEF'
+        assert struct.unpack_from('<II', data, magic.O_CASTING_TYPE) == (0, 0)
+        assert struct.unpack('<I', _find_subrecord(out, b'EFID'))[0] == \
+            struct.unpack_from('<I', clone, 12)[0]
+
+    def test_aimed_spell_with_no_convertible_effect_reaches_a_projectile(self):
+        """The filler standing in for a dropped effect takes the owner's delivery.
+
+        An Aimed item none of whose effects flies a projectile null-derefs
+        in the combat AI, so the filler is cloned onto the item's delivery.
+        See: docs/commentary/tes5_import_magic.md#aimed-ench-null-projectile
+        """
+        from tes5_import.record_types import equipment, magic
+
+        magic.register_mgef_formids([])
+        spell = {'EditorID': 'OddSpell', 'SPIT.Type': '0', 'EffectCount': '1',
+                 'Effect[0].EFID': 'ZZZZ', 'Effect[0].Type': 'Target'}
+        writer = _RecordingWriter()
+        out = equipment.convert_SPEL(spell, writer=writer)
+        assert struct.unpack_from('<I', _find_subrecord(out, b'SPIT'), 20)[0] == 2
+        [(_, clone)] = writer.records
+        data = _find_subrecord(clone, b'DATA')
+        assert struct.unpack_from('<II', data, magic.O_CASTING_TYPE) == (1, 2)
+        assert struct.unpack_from('<I', data, magic.O_PROJECTILE)[0] != 0
+
+    def test_spell_menu_art_is_the_vanilla_art_its_first_effect_calls_for(self):
+        """Vanilla menu art by archetype, then element, then school; none on a disease.
+
+        Frost damage shows MAGINVIceSpellArt, a summon MAGINVSummon, an effect
+        naming neither MagicHatMarker; 0 of 13 vanilla diseases carry MDOB.
+        See: docs/commentary/tes5_import_magic.md#menu-display-object
+        """
+        from tes5_import.record_types import equipment, magic
+
+        magic.register_mgef_formids([
+            {'EditorID': 'FRDG', 'FormID': '00001234', 'DATA.School': '2',
+             'DATA.ResistValue': '62', 'DATA.Flags': str(magic.T4_TARGET)},
+            {'EditorID': 'ZSKE', 'FormID': '00001235', 'DATA.School': '1',
+             'DATA.Flags': str(magic.T4_SELF)},
+            {'EditorID': 'SEFF', 'FormID': '00001236', 'DATA.School': '3',
+             'DATA.Flags': str(magic.T4_SELF)}])
+        for code, spit_type, wanted in (('FRDG', '0', 0x0009DB72), ('ZSKE', '0', 0x000A6459),
+                                        ('SEFF', '0', magic.MENU_ART_GENERIC), ('FRDG', '1', None)):
+            spell = {'EditorID': 'S', 'SPIT.Type': spit_type, 'EffectCount': '1',
+                     'Effect[0].EFID': code, 'Effect[0].Type': 'Self'}
+            mdob = _find_subrecord(equipment.convert_SPEL(spell), b'MDOB')
+            assert (mdob and struct.unpack('<I', mdob)[0]) == wanted, code
+
+    def test_efsh_particle_ratios_become_counts(self):
+        """TES4 stores a 0-1 birth ratio where TES5 wants a particle count.
+
+        A ratio of 1.0 written as-is spawned about one particle, so shaders
+        barely showed; Bethesda's own port of LifeDetected maps 1.0 to 300.
+        See: docs/commentary/tes5_import_magic.md#effect-shader-particles
+        """
+        from tes5_import.record_types.world import convert_EFSH
+
+        rec = {'EditorID': 'Glow', 'FormID': '00001234',
+               'DATA.PartFullBirthRatio': '0.5', 'DATA.PartPersistBirthRatio': '1.0'}
+        data = _find_subrecord(convert_EFSH(rec), b'DATA')
+        assert struct.unpack_from('<ff', data, 124) == (150.0, 300.0)
+
+
+class _RecordingWriter:
+    """Writer double: derived FormIDs stable per (site, key), records kept in order."""
+
+    def __init__(self):
+        """Start with no FormIDs derived and no records."""
+        self.next_fid = 0x01000000
+        self.derived = {}
+        self.records = []
+
+    def derive_formid(self, site, key):
+        """A distinct FormID per (site, key)."""
+        k = (site, repr(key))
+        if k not in self.derived:
+            self.next_fid += 1
+            self.derived[k] = self.next_fid
+        return self.derived[k]
+
+    def add_record(self, sig, data):
+        """Keep the record."""
+        self.records.append((sig, data))
 
 
 class TestEnchantedBookIsAScroll:

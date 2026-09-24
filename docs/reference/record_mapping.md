@@ -769,12 +769,11 @@ must stay in step. CNAM.CrimeGold carries across as the Steal Multiplier.
 - **AIMED magic needs a projectile effect**: an aimed ENCH/SPEL/SCRL whose
   effects all resolve to projectile-less Alch* MGEFs casts NOTHING in game
   (CK: "is AIMED but has no Magic Effects with Projectiles assigned", 369x).
-  Skyrim ships no aimed variants of plain value modifiers, so
-  `tes5_import/actors/magic_effects.py` synthesizes a companion MGEF per (vanilla
-  effect, TES4 code): clone of the vanilla 152-byte DATA (baked in
-  `vanilla_mgef_data.py`, regen with `tools/generators/gen_vanilla_mgef_table.py`),
-  patched to CastType=FF(1)/Delivery=Aimed(2) + a projectile (spectral arrow
-  for hostile, sunfire for beneficial), swapped in for the first effect.
+  Every effect slot is now cloned onto its owner's casting type and delivery
+  (`magic_variants.delivery_variant`), and `magic.fit_delivery` gives an Aimed
+  clone a projectile; a vanilla effect clones from its 152-byte DATA baked in
+  `vanilla_mgef_data.py` (regen with `tools/generators/gen_vanilla_mgef_table.py`).
+  See [tes5_import_magic.md](../commentary/tes5_import_magic.md#owner-casting-type).
   MGEF DATA offsets: archetype 0x40, AV 0x44, projectile 0x48, cast 0x50,
   delivery 0x54, counter-count 0x14 (zero it — clones carry no ESCE).
 - **SPEL/SCRL SPIT CastType**: wbCastEnum 0=Constant, **1=Fire and Forget**,

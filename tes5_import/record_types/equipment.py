@@ -5,7 +5,6 @@ import re
 import struct
 
 from ..base.constants import ENCH_CAST_TYPE_MAP, ENCH_TYPE_MAP, WEAPON_TYPE_MAP, ARMA_BODY_COVERAGE_EXTRA
-from ..actors.magic_effects import aimed_variant, has_projectile
 from ..base.equivalents import (
     ARMA_ADDITIONAL_RACES,
     ARMA_ADDITIONAL_RACES_NONBEAST,
@@ -35,7 +34,7 @@ from .magic_variants import (MGEF_CAST_FOR_OWNER, RANGE_DELIVERY,
                              UNCASTABLE_SPELL_TYPES, bound_assoc_is_armor,
                              bound_item_assoc, bound_script_variant,
                              delivery_variant, get_mgef_formid,
-                             get_seff_variant, owner_delivery)
+                             get_seff_variant, menu_object, owner_delivery)
 from .equipment_falloutnv import ammo_flags, gun_speed
 from .equipment_falloutnv import refine_anim_type as refine_fallout_anim_type
 from .projectile_falloutnv import (ammo_projectile, gun_sheathe_sounds,
@@ -252,6 +251,10 @@ _FILLER_EFFECTS = (0x0003EB15, 0x0003EB17, 0x0003EB16, 0x0003EAF3)  # AlchRestor
 OWNER_CONSUMED = (1, 0)
 #: TES5 spell type -> (casting type, delivery): abilities Constant on Self, diseases Constant on Contact.
 SPELL_TYPE_CAST = {4: (0, 0), 1: (0, 1)}
+#: The spell type both games number 1.
+SPELL_TYPE_DISEASE = 1
+#: A subrecord's type and size precede its data: 6 bytes.
+_SUBRECORD_HEADER = 6
 #: (TES4 SPIT flag, TES5 SPIT flag) pairs with one meaning in both games (xEdit SPIT definitions).
 SPELL_FLAG_MAP = ((0x01, 0x000001), (0x04, 0x020000), (0x10, 0x080000),
                   (0x20, 0x100000), (0x40, 0x200000))
@@ -288,10 +291,10 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
     effects are dropped, or pad_to demands more (e.g. 4 for INGR), real
     zero-magnitude filler effects are used.
 
-    ``delivery`` is the owning record's delivery (2 = Aimed): an aimed magic
-    item fires the projectile of its effects' MGEFs, so if none of them has
-    one the item casts NOTHING in game.  In that case the first effect is
-    swapped for a synthesized aimed clone (see magic_effects.aimed_variant).
+    Every slot, filler included, is fitted to ``owner`` (see _slot_mgef).
+    ``delivery`` is the owning record's own, which a filler takes when the
+    owner fixes none, so an aimed item always reaches a projectile.
+    See: docs/commentary/tes5_import_magic.md#aimed-ench-null-projectile
 
     Bound-item effects are re-pointed at a scripted stand-in whenever the
     engine's own archetype 17 cannot serve them — always for bound ARMOR
@@ -301,44 +304,26 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
     _bound_script_for and magic.bound_script_variant.
     """
     effects = []
-    effect_count = get_int(rec, count_key)
-    dropped_dur = 0
-    for i in range(effect_count):
+    for i in range(get_int(rec, count_key)):
         if pad_to and len(effects) >= pad_to:
             break
         code = get_str(rec, f'Effect[{i}].EFID')
         mgef_fid = _slot_mgef(rec, i, code, writer, uncastable, owner) if code else 0
-        if not mgef_fid:
-            dropped_dur = max(dropped_dur, get_int(rec, f'Effect[{i}].Duration'))
-            continue
-        mag = get_int(rec, f'Effect[{i}].Magnitude')
-        area = get_int(rec, f'Effect[{i}].Area')
-        dur = get_int(rec, f'Effect[{i}].Duration')
-        effects.append((mgef_fid, float(mag), area, dur, code))
+        if mgef_fid:
+            effects.append((mgef_fid, float(get_int(rec, f'Effect[{i}].Magnitude')),
+                            get_int(rec, f'Effect[{i}].Area'),
+                            get_int(rec, f'Effect[{i}].Duration')))
 
-    # Every effect-bearing record needs at least one real effect; INGR needs
-    # exactly pad_to. Fill with distinct harmless zero-magnitude effects.
-    # When EVERY effect dropped (pure script-effect spells), the first filler
-    # keeps the longest dropped duration: the spell then still registers as an
-    # active magic effect for as long as the TES4 spell did, which is what the
-    # converted IsSpellTarget checks (TES4Polyfill.HasMagicEffectByID) look for.
-    want = max(pad_to, 1)
-    used = {fid for fid, _, _, _, _ in effects}
+    used = {fid for fid, *_ in effects}
     fillers = iter(fid for fid in _FILLER_EFFECTS if fid not in used)
-    filler_dur = dropped_dur if not effects else 0
-    while len(effects) < want:
-        effects.append((next(fillers, _FILLER_EFFECTS[0]), 0.0, 0, filler_dur, ''))
-        filler_dur = 0
-
-    if delivery == 2 and not any(has_projectile(fid) for fid, *_ in effects):
-        for idx, (fid, mag, area, dur, code) in enumerate(effects):
-            variant = aimed_variant(fid, code, writer)
-            if variant:
-                effects[idx] = (variant, mag, area, dur, code)
-                break
+    filler_delivery = delivery if owner[1] is None else owner[1]
+    while len(effects) < max(pad_to, 1):
+        filler = next(fillers, _FILLER_EFFECTS[0])
+        effects.append((delivery_variant(filler, owner[0], filler_delivery, writer),
+                        0.0, 0, 0))
 
     subs = b''
-    for mgef_fid, mag, area, dur, _code in effects:
+    for mgef_fid, mag, area, dur in effects:
         subs += pack_formid_subrecord('EFID', mgef_fid)
         subs += pack_subrecord('EFIT', struct.pack('<fII', mag, area, dur))
     return subs
@@ -987,7 +972,13 @@ def convert_ENCH(rec: dict, writer=None) -> bytes:
 def convert_SPEL(rec: dict, writer=None) -> bytes:
     """SPEL — Spell. SPIT restructured for TES5.
 
-    TES5 order: EDID OBND FULL KWDA MDOB ETYP DESC SPIT EFID/EFIT*
+    TES5 order: EDID OBND FULL KWDA MDOB ETYP DESC SPIT EFID/EFIT*.  The
+    spell types 0-4 mean the same in both games.  ETYP is mandatory: a spell
+    without one never appears in the magic menu (827/827 vanilla carry it).  MDOB is the
+    vanilla menu art the first effect calls for, on every type but Disease.
+    SPIT is Cost, Flags, Type, Charge Time, Cast Type, Target Type, then 12
+    unused bytes.
+    See: docs/commentary/tes5_import_magic.md#menu-display-object
     """
     subs = b''
     edid = get_str(rec, 'EditorID')
@@ -998,47 +989,30 @@ def convert_SPEL(rec: dict, writer=None) -> bytes:
     if full:
         subs += pack_string_subrecord('FULL', full)
 
-    # SPIT (36 bytes in TES5)
-    cost = get_int(rec, 'SPIT.Cost')
     tes4_flags = get_int(rec, 'SPIT.Flags')
     tes4_type = get_int(rec, 'SPIT.Type')
-
-    # TES5 spell types: 0=Spell, 1=Disease, 2=Power, 3=Lesser Power, 4=Ability, 10=Addiction, 11=Voice
-    # TES4: 0=Spell, 1=Disease, 2=Power, 3=Lesser Power, 4=Ability
     tes5_type = tes4_type if tes4_type <= 4 else 0
-
-    # ETYP — Equip Type.  MANDATORY: it names the slot the magic menu files the
-    # spell under, and a spell without one never appears in the menu at all
-    # (converted Bound Dagger/Mace were addable by console but invisible and
-    # uncastable).  Oblivion has no equivalent field, so it is derived from the
-    # spell type exactly as vanilla does.  Census: 827/827 vanilla spells carry
-    # ETYP, no exceptions.
-    subs += pack_formid_subrecord(
-        'ETYP', SPELL_TYPE_EQUIP_TYPE.get(tes5_type, SPELL_EQUIP_EITHER_HAND))
-
     cast_type, target_type = SPELL_TYPE_CAST.get(tes5_type, (1, None))
     if target_type is None:
         target_type = owner_delivery(rec)
+    effects = _pack_effects(rec, delivery=target_type, writer=writer,
+                            uncastable=tes5_type in UNCASTABLE_SPELL_TYPES,
+                            owner=(cast_type, target_type if cast_type == 0 else None))
+
+    if tes5_type != SPELL_TYPE_DISEASE:
+        first_effect = struct.unpack_from('<I', effects, _SUBRECORD_HEADER)[0]
+        subs += pack_formid_subrecord('MDOB', menu_object(first_effect))
+    subs += pack_formid_subrecord(
+        'ETYP', SPELL_TYPE_EQUIP_TYPE.get(tes5_type, SPELL_EQUIP_EITHER_HAND))
 
     tes5_flags = 0
     for tes4_bit, tes5_bit in SPELL_FLAG_MAP:
         if tes4_flags & tes4_bit:
             tes5_flags |= tes5_bit
-
-    spit = bytearray(36)
-    struct.pack_into('<I', spit, 0, cost)          # Cost
-    struct.pack_into('<I', spit, 4, tes5_flags)    # Flags
-    struct.pack_into('<I', spit, 8, tes5_type)     # Type
-    struct.pack_into('<f', spit, 12, 0.0)          # Charge Time
-    struct.pack_into('<I', spit, 16, cast_type)
-    struct.pack_into('<I', spit, 20, target_type)
-    subs += pack_subrecord('SPIT', bytes(spit))
-
-    fixed = target_type if cast_type == 0 else None
-    subs += _pack_effects(rec, delivery=target_type, writer=writer,
-                          uncastable=tes5_type in UNCASTABLE_SPELL_TYPES,
-                          owner=(cast_type, fixed))
-
+    subs += pack_subrecord('SPIT', struct.pack(
+        '<IIIfII12x', get_int(rec, 'SPIT.Cost'), tes5_flags, tes5_type, 0.0,
+        cast_type, target_type))
+    subs += effects
     return pack_record('SPEL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 

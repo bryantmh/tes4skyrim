@@ -41,7 +41,6 @@ from .registry import IMPORT_DISPATCH, RUNTIME_ONLY_TYPES, SKIP_TYPES
 from .navmesh.pool import collision_cache_chain
 from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         OverrideContext, detect_injected_records)
-from .actors.magic_effects import set_tes4_effect_names
 from .record_types import magic_art
 from .dialogue.converter import build_npc_to_vtyp_map
 from .base.adopted_records import adopt_master_special_records
@@ -235,8 +234,7 @@ def _reconcile_masters(masters: list, tes4_master_names: list) -> list:
 
 
 def _register_run_tables(by_type: dict, ctx, writer) -> None:
-    """Register the name tables record conversion reads: MGEF names, cell families."""
-    set_tes4_effect_names(by_type.get('MGEF', []))
+    """Register the name tables record conversion reads: cell families."""
     set_cell_families(by_type, ctx.master_export if ctx else None, writer,
                       getattr(ctx, 'master_index', None))
 

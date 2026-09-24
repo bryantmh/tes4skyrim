@@ -248,9 +248,9 @@ Do not re-diagnose these.
   (~195 below `0x800`) and must remap. Pass-through set is exactly `{0x14}`
   (`_ENGINE_FIXED_FORMIDS` in `text_reader.py`).
 - **Aimed magic needs projectiles** — an AIMED ENCH/SPEL whose effects have no
-  projectile MGEF casts nothing. `magic_effects.py` synthesizes companion MGEFs
-  (clone vanilla DATA from `vanilla_mgef_data.py`, regen via
-  `tools/generators/gen_vanilla_mgef_table.py`; patch cast=FF/delivery=aimed/projectile).
+  projectile MGEF casts nothing (in fact it crashes). Every slot is now cloned
+  onto its owner's delivery, and an Aimed clone always gets a projectile
+  ([tes5_import_magic.md](tes5_import_magic.md#owner-casting-type)).
   MGEF DATA offsets: proj `0x48`, arch `0x40`, AV `0x44`, cast `0x50`,
   delivery `0x54`.
 - **SPEL cast type** — `convert_SPEL` packed CastType=2 (Concentration) for every

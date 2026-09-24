@@ -66,6 +66,7 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [asset_convert_creature.md](commentary/asset_convert_creature.md) | asset_convert/havok/creature_pipeline.py - creature conversion |
 | [asset_convert_facegen.md](commentary/asset_convert_facegen.md) | asset_convert/character/facegen_tri.py - faces, skin tone and tints |
 | [asset_convert_falloutnv.md](commentary/asset_convert_falloutnv.md) | asset_convert/collision/collision_material_falloutnv.py — FO3/FNV meshes |
+| [asset_convert_magic_art.md](commentary/asset_convert_magic_art.md) | asset_convert/nif/magic_art.py - spell effect meshes per phase and hand loops |
 | [asset_convert_mod_ingest.md](commentary/asset_convert_mod_ingest.md) | asset_convert/sources/mod_ingest.py - mod archive ingest |
 | [asset_convert_nif.md](commentary/asset_convert_nif.md) | asset_convert/nif/nif_converter.py — NIF conversion |
 | [asset_convert_shader.md](commentary/asset_convert_shader.md) | asset_convert/nif/nif_converter.py - shader values |
