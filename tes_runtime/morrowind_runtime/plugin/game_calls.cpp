@@ -83,6 +83,9 @@ using ActorCallFn = void (*)(void* vm, std::uint32_t stack, void* actor);
 using ActorIntFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* actor);
 using AdvanceSkillFn = void (*)(void* vm, std::uint32_t stack, void* tag,
                                 void* name, float amount);
+// Game.ShowTrainingMenu(Actor), global: the trainer rides after the tag.
+using ShowTrainingMenuFn = void (*)(void* vm, std::uint32_t stack, void* tag,
+                                    void* trainer);
 
 // Debug.MessageBox(string), global: no `self`, the text in the last argument.
 using MessageBoxFn = void (*)(void* vm, std::uint32_t stack, void* tag,
@@ -184,6 +187,7 @@ SetValueFn     g_restoreValue = nullptr;
 SetValueFn     g_damageValue = nullptr;
 EquipItemFn    g_equipItem = nullptr;
 ActorCallFn    g_showBarterMenu = nullptr;
+ShowTrainingMenuFn g_showTrainingMenu = nullptr;
 ActorIntFn     g_getLevel = nullptr;
 GetValueFn     g_getValuePercent = nullptr;
 AdvanceSkillFn g_advanceSkill = nullptr;
@@ -885,6 +889,21 @@ void ShowBarterMenu(const std::string& actor) {
     PostToMainThread([ref]() { g_showBarterMenu(PapyrusVm(), 0, ref); });
 }
 
+// Skyrim's own training menu on the speaker, which teaches the skill its
+// class names up to the class's cap -- the trainer class the import gave it.
+// See: docs/commentary/morrowind_runtime.md#barter
+void ShowTrainingMenu(const std::string& actor) {
+    void* ref = OwnerRef(actor);
+    if (!ref || !g_showTrainingMenu) {
+        Log("game: training with '%s' -- %s", actor.c_str(),
+            ref ? "ShowTrainingMenu unresolved" : "no reference");
+        return;
+    }
+    PostToMainThread([ref]() {
+        g_showTrainingMenu(PapyrusVm(), 0, nullptr, ref);
+    });
+}
+
 // Skyrim's gold, form 0xF of Skyrim.esm -- a bribe never touches Morrowind's.
 void* GoldForm() { return FormFromFile(ids::kSkyrimMaster, kSkyrimGold); }
 
@@ -959,6 +978,8 @@ void InstallGameCalls() {
     g_equipItem = Native<EquipItemFn>("Actor.EquipItem", ids::kActorEquipItem);
     g_showBarterMenu = Native<ActorCallFn>("Actor.ShowBarterMenu",
                                            ids::kActorShowBarterMenu);
+    g_showTrainingMenu = Native<ShowTrainingMenuFn>("Game.ShowTrainingMenu",
+                                                    ids::kGameShowTrainingMenu);
     g_getLevel = Native<ActorIntFn>("Actor.GetLevel", ids::kActorGetLevel);
     g_getValuePercent = Native<GetValueFn>("Actor.GetActorValuePercentage",
                                            ids::kActorGetValuePercent);
@@ -984,6 +1005,7 @@ void InstallGameCalls() {
     hooks.statPercent = StatPercent;
     hooks.advanceSkill = AdvanceSkill;
     hooks.showBarterMenu = ShowBarterMenu;
+    hooks.showTrainingMenu = ShowTrainingMenu;
     hooks.showMessage = ShowMessage;
     hooks.isDead = IsDeadRef;
     hooks.is3DLoaded = Is3DLoadedRef;

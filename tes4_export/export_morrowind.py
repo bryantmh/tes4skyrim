@@ -537,11 +537,12 @@ def converted_master_dirs(export_dir: str, plugin: str, source_path: str,
     The plugin's own MAST chain, in its order. In Morroblivion mode every
     converted `Morrowind_ob*` export comes first, then the compatibility patch
     supplying what Morroblivion lacks, and the three vanilla ESMs it replaces
-    are dropped, so those three are never reported missing.
+    are dropped, so those three are never reported missing. One of those three
+    is itself always built on its own masters.
     See: docs/commentary/tes4_export_morrowind.md#masters
     """
     names = read_masters(source_path)
-    if mode == SOURCE_MORROBLIVION:
+    if mode == SOURCE_MORROBLIVION and plugin.lower() not in VANILLA_MASTERS:
         names = morroblivion_exports(export_dir) + [PATCH_NAME] + [
             n for n in names if n.lower() not in VANILLA_MASTERS]
     found, missing = [], []

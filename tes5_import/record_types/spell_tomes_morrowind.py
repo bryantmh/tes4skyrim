@@ -18,6 +18,7 @@ from tes4_export.tes3_reader import (get_all_subrecords, get_string,
                                        get_subrecord, read_file)
 
 from ..dialogue.morrowind_autocalc import parse_class, parse_race, parse_skill
+from ..dialogue.morrowind_sidecar import export_root, is_tes3_export
 from ..dialogue.morrowind_sidecar_source import (aidt_services, npc_is_autocalc,
                                                  npc_services, npc_stats,
                                                  plugin_chain)
@@ -205,6 +206,15 @@ def read_tables(chain: list) -> dict:
                         if spell is not None}
     tables['gmsts'] = {**_GMST_DEFAULTS, **tables['gmsts']}
     return tables
+
+
+def chain_tables(export_dir: str, plugin: str):
+    """`read_tables` over the TES3 chain ending in `plugin`; None when the
+    export is not a TES3 one or its binary cannot be found."""
+    if not is_tes3_export(export_dir):
+        return None
+    chain = plugin_chain(export_root(export_dir), plugin)
+    return read_tables(chain) if chain else None
 
 
 # ---------------------------------------------------------------------------
@@ -408,14 +418,9 @@ def _school(spell: dict, tables: dict) -> int:
     return tables['effects'].get(spell['effects'][0][0], _NO_EFFECT)[0]
 
 
-def morrowind_sales(root: str, plugin: str, wanted: set) -> dict:
+def morrowind_sales(tables: dict, wanted: set) -> dict:
     """{lowercased actor id: [(lowercased spell id, base price, school index)]}
-    for each spell merchant in `wanted`, as the TES3 chain ending in `plugin`
-    defines it."""
-    chain = plugin_chain(root, plugin)
-    if not chain:
-        return {}
-    tables = read_tables(chain)
+    for each spell merchant in `wanted`, as the chain's `tables` define it."""
     costs = {key: spell_cost(spell, tables)
              for key, spell in tables['spells'].items()}
     mult = np.float32(tables['gmsts']['fspellvaluemult'])

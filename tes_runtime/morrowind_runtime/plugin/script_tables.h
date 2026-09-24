@@ -66,7 +66,7 @@ struct ActorDef {
     int  luck = 0;
     int  speechcraft = 0;
     int  mercantile = 0;
-    // ESM::NPC::Services bits; AllItems (0x2FFF) is what lists Barter.
+    // ESM::NPC::Services bits; AllItems (0x27FF) is what lists Barter.
     std::uint32_t services = 0;
     int  gold = 0;
     // The AIDT's authored Fight, Hello, Alarm and Flee, by filter.h's index:

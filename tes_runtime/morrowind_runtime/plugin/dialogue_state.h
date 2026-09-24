@@ -162,12 +162,14 @@ struct GameHooks {
     void (*setAngle)(const std::string& ref, int axis, float value) = nullptr;
     // What persuasion and barter read and do in the game: the player's
     // level, a Skyrim actor value by name, that value as a fraction of its
-    // maximum, a skill-use credit, and Skyrim's own barter menu on `actor`.
+    // maximum, a skill-use credit, and Skyrim's own barter and training menus
+    // on `actor`.
     int   (*playerLevel)() = nullptr;
     float (*actorValue)(const std::string& actor, const char* name) = nullptr;
     float (*statPercent)(const std::string& actor, const char* name) = nullptr;
     void  (*advanceSkill)(const char* skill, float amount) = nullptr;
     void  (*showBarterMenu)(const std::string& actor) = nullptr;
+    void  (*showTrainingMenu)(const std::string& actor) = nullptr;
     // Skyrim's gold (form 0xF), never Morrowind's: what `actor` carries, and
     // a bribe moving `count` of it from one actor to another.
     int   (*goldCount)(const std::string& actor) = nullptr;

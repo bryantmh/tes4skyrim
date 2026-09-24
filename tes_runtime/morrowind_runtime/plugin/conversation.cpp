@@ -15,6 +15,7 @@
 #include "conversation_modal.h"
 #include "conversation_persuasion.h"
 #include "conversation_travel.h"
+#include "crafting.h"
 #include "travel.h"
 #include "dialogue_state.h"
 #include "game_actor.h"
@@ -58,11 +59,17 @@ constexpr int kWheelLines = 3;
 constexpr int kLineOffset = layout::kSeparatorHeight - 2;
 
 // What one row of the topic list is.
-enum class Kind { Persuasion, Barter, Travel, Separator, Topic };
+enum class Kind {
+    Persuasion, Barter, Spells, Travel, Enchanting, Training, Separator, Topic
+};
 
-// ESM::NPC::AllItems: any item class among the speaker's services lists
-// Barter, as DialogueWindow::updateTopics decides.
-constexpr std::uint32_t kAllItems = 0x2FFF;
+// ESM::NPC::Services bits, as DialogueWindow::updateTopics tests them: any
+// item class lists Barter, and one bit each lists Spells, Enchanting and
+// Training.
+constexpr std::uint32_t kAllItems = 0x27FF;
+constexpr std::uint32_t kSpells = 0x800;
+constexpr std::uint32_t kTraining = 0x4000;
+constexpr std::uint32_t kEnchanting = 0x10000;
 
 // The vanilla text of the row's GMST, used only when a chain stages none.
 constexpr const char* kBarterFallback = "Barter";
@@ -548,8 +555,13 @@ void UpdateCrimeGlobals() {
     State().SetGlobal("PCHasTurnIn", flag(turnIn));
 }
 
-// The rows: Persuasion for an NPC, Barter for a merchant, a rule, then
-// every topic offered.
+void AddRowIf(bool offered, Kind kind, const char* gmst, const char* fallback) {
+    if (offered) g_items.push_back({kind, GmstText(gmst, fallback)});
+}
+
+// The rows: Persuasion for an NPC, then each service it offers in
+// DialogueWindow::updateTopics' order, a rule, then every topic offered.
+// Spellmaking and Repair have no row yet.
 void RebuildItems() {
     UpdateCrimeGlobals();
     g_items.clear();
@@ -557,13 +569,14 @@ void RebuildItems() {
         g_items.push_back({Kind::Persuasion,
                            GmstText("sPersuasion", layout::kPersuasion)});
         const ActorDef* def = FindActor(g_speaker);
-        if (def && (def->services & kAllItems)) {
-            g_items.push_back({Kind::Barter,
-                               GmstText("sBarter", kBarterFallback)});
-        }
-        if (OffersTravel(g_speaker)) {
-            g_items.push_back({Kind::Travel, GmstText("sTravel", "Travel")});
-        }
+        const std::uint32_t services = def ? def->services : 0;
+        AddRowIf(services & kAllItems, Kind::Barter, "sBarter", kBarterFallback);
+        AddRowIf(services & kSpells, Kind::Spells, "sSpells", "Spells");
+        AddRowIf(OffersTravel(g_speaker), Kind::Travel, "sTravel", "Travel");
+        AddRowIf(services & kEnchanting, Kind::Enchanting, "sEnchanting",
+                 "Enchanting");
+        AddRowIf(services & kTraining, Kind::Training, "sServiceTrainingTitle",
+                 "Training");
         g_items.push_back({Kind::Separator, ""});
     }
     // DialogueManager::getKeywords: what the speaker can answer AND the
@@ -727,53 +740,71 @@ void OnPersuaded(Persuasion type) {
     PushAll();
 }
 
-// DialogueWindow::onSelectListItem for sBarter: the Service Refusal line
-// when the speaker refuses, else Skyrim's own barter menu over this one.
-// See: docs/commentary/morrowind_runtime.md#barter
-void Barter() {
-    if (!g_actor || ListLocked()) return;
-    const Reply refusal = ServiceRefusal(kServiceBarter, *g_actor);
-    if (!refusal.text.empty()) {
-        Log("conversation: '%s' refuses to barter", g_speaker.c_str());
-        Deliver(GmstText("sServiceRefusal", refusal.topic), refusal);
-        PushAll();
-        return;
-    }
-    Log("conversation: barter with '%s'", g_speaker.c_str());
-    if (!Hooks().showBarterMenu) return;
-    // The dialogue closes first: its close message is queued ahead of the
-    // posted barter open, so the speaker's menu never sits under this one.
-    const std::string speaker = g_speaker;
-    CloseMenu();
-    Hooks().showBarterMenu(speaker);
+// DialogueManager::checkServiceRefused for a service row: true, with the
+// Service Refusal line delivered, when the speaker refuses `service`.
+bool Refused(int service) {
+    if (!g_actor || ListLocked()) return true;
+    const Reply refusal = ServiceRefusal(service, *g_actor);
+    if (refusal.text.empty()) return false;
+    Log("conversation: '%s' refuses service %d", g_speaker.c_str(), service);
+    Deliver(GmstText("sServiceRefusal", refusal.topic), refusal);
+    PushAll();
+    return true;
 }
 
-// DialogueWindow::onSelectListItem for sTravel: the Service Refusal line
-// when the speaker refuses, else the destinations. The window closes once a
-// fare is paid, as OpenMW leaves dialogue before it teleports.
+// Skyrim's own `menu` on the speaker, over this one. The dialogue closes
+// first: its close message is queued ahead of the posted open, so the
+// speaker's menu never sits under this one.
+void OpenSpeakerMenu(void (*menu)(const std::string& actor)) {
+    Log("conversation: service menu with '%s'", g_speaker.c_str());
+    if (!menu) return;
+    const std::string speaker = g_speaker;
+    CloseMenu();
+    menu(speaker);
+}
+
+// DialogueWindow::onSelectListItem for sBarter and sSpells: Skyrim's barter
+// menu, where a spell merchant's spells are sold as tomes.
+// See: docs/commentary/morrowind_runtime.md#barter
+void Barter(int service) {
+    if (!Refused(service)) OpenSpeakerMenu(Hooks().showBarterMenu);
+}
+
+// DialogueWindow::onSelectListItem for sServiceTrainingTitle: Skyrim's
+// training menu, on the trainer class the import gave the speaker.
+// See: docs/commentary/morrowind_runtime.md#barter
+void Training() {
+    if (!Refused(kServiceTraining)) OpenSpeakerMenu(Hooks().showTrainingMenu);
+}
+
+// DialogueWindow::onSelectListItem for sEnchanting: Skyrim's enchanting
+// menu, the player enchanting as at a table.
+// See: docs/commentary/morrowind_runtime.md#alchemy-apparatus
+void Enchanting() {
+    if (Refused(kServiceEnchanting) || !CraftingInstalled()) return;
+    Log("conversation: enchanting with '%s'", g_speaker.c_str());
+    CloseMenu();
+    OpenBench(Bench::kEnchanting);
+}
+
+// DialogueWindow::onSelectListItem for sTravel: the destinations. The window
+// closes once a fare is paid, as OpenMW leaves dialogue before it teleports.
 // See: docs/commentary/morrowind_runtime.md#travel
 void Travel() {
-    if (!g_actor || ListLocked()) return;
-    const Reply refusal = ServiceRefusal(kServiceTravel, *g_actor);
-    if (!refusal.text.empty()) {
-        Log("conversation: '%s' refuses travel", g_speaker.c_str());
-        Deliver(GmstText("sServiceRefusal", refusal.topic), refusal);
-        PushAll();
-        return;
-    }
-    OpenTravelModal(g_speaker, CloseMenu);
+    if (!Refused(kServiceTravel)) OpenTravelModal(g_speaker, CloseMenu);
 }
 
 void SelectItem(int index) {
     const Item& item = g_items[static_cast<std::size_t>(index)];
-    if (item.kind == Kind::Topic) {
-        SelectTopic(item.text);
-    } else if (item.kind == Kind::Persuasion) {
-        OpenPersuasionModal(OnPersuaded);
-    } else if (item.kind == Kind::Barter) {
-        Barter();
-    } else if (item.kind == Kind::Travel) {
-        Travel();
+    switch (item.kind) {
+        case Kind::Topic: SelectTopic(item.text); break;
+        case Kind::Persuasion: OpenPersuasionModal(OnPersuaded); break;
+        case Kind::Barter: Barter(kServiceBarter); break;
+        case Kind::Spells: Barter(kServiceSpells); break;
+        case Kind::Travel: Travel(); break;
+        case Kind::Enchanting: Enchanting(); break;
+        case Kind::Training: Training(); break;
+        case Kind::Separator: break;
     }
 }
 

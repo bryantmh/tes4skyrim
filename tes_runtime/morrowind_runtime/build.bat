@@ -85,7 +85,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\scope.cpp ^
    plugin\game_calls_query.cpp plugin\game_calls_spell.cpp ^
    plugin\game_calls_message.cpp plugin\game_calls_control.cpp ^
    plugin\game_calls_state.cpp plugin\game_calls_crime.cpp ^
-   plugin\alchemy.cpp plugin\alchemy_hooks.cpp ^
+   plugin\alchemy.cpp plugin\alchemy_hooks.cpp plugin\crafting.cpp ^
    plugin\journal_log.cpp plugin\journal_objectives.cpp ^
    plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
 if errorlevel 1 (

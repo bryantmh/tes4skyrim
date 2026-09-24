@@ -44,6 +44,7 @@ from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
 from .record_types import magic_art
 from .record_types.crime import plan_crime
 from .record_types.spell_tomes import create_spell_tomes
+from .record_types.spell_tomes_morrowind import chain_tables
 from .dialogue.converter import build_npc_to_vtyp_map
 from .dialogue.morrowind_sidecar import is_tes3_export
 from .base.adopted_records import adopt_master_special_records
@@ -643,8 +644,9 @@ def _prescan_vendor_trainer(by_type: dict, ctx, writer, export_dir: str,
                             plugin: str, _step_done):
     """Create the vendor factions, the trainer faction + CLAS clones, and the spell tomes."""
     from .record_types.actor_common import create_service_records
-    create_service_records(by_type, writer, ctx, export_dir)
-    create_spell_tomes(by_type, writer, ctx, export_dir, plugin)
+    tes3_tables = chain_tables(export_dir, plugin)
+    create_service_records(by_type, writer, ctx, export_dir, tes3_tables)
+    create_spell_tomes(by_type, writer, ctx, export_dir, tes3_tables)
     _step_done('vendor/trainer records')
 
 

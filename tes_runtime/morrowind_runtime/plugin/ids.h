@@ -583,6 +583,13 @@ constexpr std::uint64_t kActorGetLevel = 54927;
 constexpr std::uint64_t kActorGetValuePercent = 54677;
 constexpr std::uint64_t kGameAdvanceSkill = 55449;
 
+// Game.ShowTrainingMenu(Actor) (0xa127a0 on 1.6.1170, 0x9b3af0 on 1.6.659),
+// the r9 of its registration beside 'ShowTrainingMenu' under 'Game'. GLOBAL:
+// the self slot is a tag, and the callback hands its fourth argument, the
+// trainer, on as rcx.
+// See: docs/commentary/morrowind_runtime.md#barter
+constexpr std::uint64_t kGameShowTrainingMenu = 55582;
+
 // The character-creation and control natives, each the registration callback
 // beside its name string under script `Game` on 1.6.1170:
 //   void Game.ShowRaceMenu()                                      0xa12780
@@ -708,12 +715,18 @@ constexpr std::uint64_t kDebugNotification = 55377;
 // AlchemyMenu constructor (0x903120) with (this+0x10 movie, furniture base).
 // It stores the sub-menu at +0x30, calls 0x96fe40(0xf6), registers the
 // sub-menu with the FxDelegate at +0x28 (0xfbe870) and calls its slot 2.
+// Bench types 3 and 4 (Enchanting, Enchant Experiment) share one case: 0x220
+// bytes, the EnchantConstructMenu constructor (0x904f90; 0x8a6ee0 on 1.6.659)
+// with the same arguments, help id 0xf3.
 constexpr std::uint64_t kCraftingMenuVtable = 215111;
 constexpr std::uint64_t kCraftingMenuProcessMessage = 51200;
 constexpr std::size_t kProcessMessageSlot = 0x20;
 constexpr std::uint64_t kAlchemyMenuCtor = 51239;
+constexpr std::uint64_t kEnchantMenuCtor = 51242;
 constexpr std::uint64_t kCraftingHelpId = 52692;
 constexpr std::uint32_t kAlchemyHelp = 0xf6;
+constexpr std::uint32_t kEnchantHelp = 0xf3;
+constexpr std::size_t kEnchantMenuSize = 0x220;
 constexpr std::uint64_t kDelegateAddHandler = 82638;
 constexpr std::size_t kAlchemyMenuSize = 0x1a0;
 constexpr std::size_t kOffCraftingMovie = 0x10;
@@ -734,6 +747,10 @@ constexpr std::size_t kOffUserEventCraft = 0x300;
 // Vanilla CraftingAlchemyWorkbench (Skyrim.esm 000BAD0C), WBDT 05 10: bench
 // Alchemy, skill Alchemy. The furniture base the alchemy sub-menu is built on.
 constexpr std::uint32_t kAlchemyWorkbench = 0x000BAD0C;
+
+// Vanilla CraftingEnchantingWorkbench (Skyrim.esm 000BAD0D), WBDT 03 17: bench
+// Enchanting, skill Enchanting.
+constexpr std::uint32_t kEnchantingWorkbench = 0x000BAD0D;
 
 // AlchemyMenu::ModEffectivenessFunctor's vtable (0x18f5840) and its slot 1
 // (0x906e90), which sets each effect's final magnitude and duration: entry

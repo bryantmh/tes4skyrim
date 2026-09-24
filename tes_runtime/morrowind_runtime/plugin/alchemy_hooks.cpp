@@ -1,9 +1,7 @@
-// The engine side of the alchemy apparatus: four vtable swaps, no bytes
-// patched.
+// The engine side of the alchemy apparatus: three vtable swaps, no bytes
+// patched, on top of crafting.cpp's bench opener.
 //   InventoryMenu::Accept     -- `ItemSelect` on an apparatus closes the
-//                                inventory and opens the crafting menu.
-//   CraftingMenu slot 4       -- that open, with no furniture to read, builds
-//                                the alchemy sub-menu the way bench type 5 does.
+//                                inventory and opens the alchemy bench.
 //   AlchemyMenu slot 5        -- the craft event is refused with no mortar.
 //   ModEffectivenessFunctor 1 -- after Skyrim sets an effect's magnitude and
 //                                duration, the carried tools scale them.
@@ -19,6 +17,7 @@
 
 #include "activation.h"
 #include "addresses.h"
+#include "crafting.h"
 #include "dialogue_state.h"
 #include "game_calls_internal.h"
 #include "ids.h"
@@ -38,12 +37,6 @@ using SelectedItemFn = void* (*)(void* itemList);
 using CombatFn = bool (*)(void* vm, std::uint32_t stack, void* actor);
 using ItemCountFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* ref,
                                      void* item);
-using ProcessMessageFn = std::uint32_t (*)(void* menu, char* message);
-using AllocFn = void* (*)(void* allocator, std::size_t size, void* tag);
-using AlchemyCtorFn = void* (*)(void* self, void* movie, void* furniture);
-using HelpFn = void (*)(std::uint32_t id);
-using DelegateAddFn = void (*)(void* delegate, void* handler);
-using ShowFn = void (*)(void* subMenu);
 using EffectFn = bool (*)(void* functor, void* effect);
 using GetMagnitudeFn = float (*)(void* effect);
 using SetMagnitudeFn = bool (*)(void* effect, float value);
@@ -83,20 +76,12 @@ void**          g_userEvents = nullptr;
 SelectedItemFn  g_selectedItem = nullptr;
 CombatFn        g_isInCombat = nullptr;
 ItemCountFn     g_itemCount = nullptr;
-ProcessMessageFn g_craftingOriginal = nullptr;
-void**          g_allocator = nullptr;
-AlchemyCtorFn   g_alchemyCtor = nullptr;
-HelpFn          g_help = nullptr;
-DelegateAddFn   g_delegateAdd = nullptr;
-void*           g_workbench = nullptr;
 EffectFn        g_effectOriginal = nullptr;
 GetMagnitudeFn  g_getMagnitude = nullptr;
 SetMagnitudeFn  g_setMagnitude = nullptr;
 GetDurationFn   g_getDuration = nullptr;
 SetDurationFn   g_setDuration = nullptr;
 
-// An apparatus asked for the crafting menu, and the next open is that one.
-bool g_pending = false;
 // The open crafting menu is an apparatus's, so its effects are scaled.
 bool g_active = false;
 Toolset g_tools;
@@ -142,6 +127,8 @@ void BeginSession() {
         g_inputs.luck);
 }
 
+void EndSession() { g_active = false; }
+
 // ------------------------------------------------------ potion strength ----
 
 std::int32_t RoundHalfUp(float value) {
@@ -173,42 +160,7 @@ bool ApplyEffectiveness(void* functor, void* effect) {
     return result;
 }
 
-// ------------------------------------------------------- crafting menu ----
-
-// What CraftingMenu's bench-type-5 branch does, on vanilla's alchemy bench.
-bool BuildAlchemyMenu(void* menu) {
-    void* allocator = g_allocator ? *g_allocator : nullptr;
-    if (!allocator || !g_workbench) {
-        Log("alchemy: cannot build the sub-menu -- allocator %p bench %p",
-            allocator, g_workbench);
-        return false;
-    }
-    void* memory = VCall<AllocFn>(allocator, ids::kScaleformAllocSlot /
-                                                 sizeof(void*))(
-        allocator, ids::kAlchemyMenuSize, nullptr);
-    if (!memory) return false;
-    void* movie = static_cast<char*>(menu) + ids::kOffCraftingMovie;
-    void* sub = g_alchemyCtor(memory, movie, g_workbench);
-    At<void*>(menu, ids::kOffCraftingSubMenu) = sub;
-    g_help(ids::kAlchemyHelp);
-    g_delegateAdd(At<void*>(menu, ids::kOffCraftingDelegate), sub);
-    VCall<ShowFn>(sub, ids::kSubMenuShowSlot)(sub);
-    return true;
-}
-
-std::uint32_t CraftingProcessMessage(void* menu, char* message) {
-    const std::uint32_t type =
-        *reinterpret_cast<std::uint32_t*>(message + ids::kMessageTypeOffset);
-    const std::uint32_t result = g_craftingOriginal(menu, message);
-    if (type == ids::kMessageClose) g_active = false;
-    if (type != ids::kMessageOpen) return result;
-    const bool wanted = g_pending;
-    g_pending = false;
-    if (!wanted || At<void*>(menu, ids::kOffCraftingSubMenu)) return result;
-    if (!BuildAlchemyMenu(menu)) return result;
-    BeginSession();
-    return ids::kResultHandled;
-}
+// ---------------------------------------------------------- the brew gate ----
 
 // Whether `event` (a BSFixedString*) is the one that starts a brew.
 bool IsCraftEvent(void* event) {
@@ -240,10 +192,9 @@ void UseApparatus(void* args) {
         gamecalls::Notify(GmstText(kInCombatGmst, ""));
         return;
     }
-    g_pending = true;
     g_closeTween(args);
     CloseMenuNamed(ids::kInventoryMenuName);
-    OpenMenuNamed(ids::kCraftingMenuName);
+    OpenBench(Bench::kAlchemy, {BeginSession, EndSession});
 }
 
 // The form of the entry the inventory has highlighted, or null.
@@ -321,13 +272,6 @@ void ResolveNatives() {
     g_isInCombat = Address<CombatFn>("Actor.IsInCombat", ids::kActorIsInCombat);
     g_itemCount = Address<ItemCountFn>("ObjectReference.GetItemCount",
                                        ids::kRefGetItemCount);
-    g_allocator = Address<void**>("Scaleform allocator",
-                                  ids::kScaleformAllocator);
-    g_alchemyCtor = Address<AlchemyCtorFn>("AlchemyMenu ctor",
-                                           ids::kAlchemyMenuCtor);
-    g_help = Address<HelpFn>("crafting help", ids::kCraftingHelpId);
-    g_delegateAdd = Address<DelegateAddFn>("FxDelegate add handler",
-                                           ids::kDelegateAddHandler);
     g_getMagnitude = Address<GetMagnitudeFn>("Effect::GetMagnitude",
                                              ids::kEffectGetMagnitude);
     g_setMagnitude = Address<SetMagnitudeFn>("Effect::SetMagnitude",
@@ -336,7 +280,6 @@ void ResolveNatives() {
                                            ids::kEffectGetDuration);
     g_setDuration = Address<SetDurationFn>("Effect::SetDuration",
                                            ids::kEffectSetDuration);
-    g_workbench = FormFromFile(ids::kSkyrimMaster, ids::kAlchemyWorkbench);
 }
 
 void* Swap(const char* name, std::uint64_t vtable, std::size_t slot,
@@ -349,8 +292,8 @@ void* Swap(const char* name, std::uint64_t vtable, std::size_t slot,
 // a crafting menu we cannot fill, or cannot gate, would strand the player.
 // The inventory's swap goes LAST, since only it can start a session.
 bool InstallMenus() {
-    if (!g_itemSelect || !g_closeTween || !g_selectedItem || !g_alchemyCtor ||
-        !g_help || !g_delegateAdd || !g_workbench || !g_userEvents) {
+    if (!g_itemSelect || !g_closeTween || !g_selectedItem || !g_userEvents ||
+        !CraftingInstalled()) {
         return false;
     }
     g_userEventOriginal = reinterpret_cast<UserEventFn>(Swap(
@@ -358,11 +301,6 @@ bool InstallMenus() {
         ids::kUserEventSlot, ids::kAlchemyMenuUserEvent,
         reinterpret_cast<void*>(&AlchemyUserEvent)));
     if (!g_userEventOriginal) return false;
-    g_craftingOriginal = reinterpret_cast<ProcessMessageFn>(Swap(
-        "CraftingMenu::ProcessMessage", ids::kCraftingMenuVtable,
-        ids::kProcessMessageSlot, ids::kCraftingMenuProcessMessage,
-        reinterpret_cast<void*>(&CraftingProcessMessage)));
-    if (!g_craftingOriginal) return false;
     g_acceptOriginal = reinterpret_cast<AcceptFn>(Swap(
         "InventoryMenu::Accept", ids::kInventoryMenuVtable, ids::kAcceptSlot,
         ids::kInventoryMenuAccept, reinterpret_cast<void*>(&InventoryAccept)));

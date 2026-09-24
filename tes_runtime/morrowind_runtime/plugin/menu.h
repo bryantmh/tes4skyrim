@@ -30,8 +30,8 @@ void CloseMenu();
 // dialogue menu when a Morrowind speaker takes over.
 void CloseMenuNamed(const char* name);
 
-// Posts kMessage_Open for ANY registered menu by name -- the crafting menu an
-// alchemy apparatus opens.
+// Posts kMessage_Open for ANY registered menu by name -- the crafting menu a
+// bench opens.
 void OpenMenuNamed(const char* name);
 
 // Writes one of the movie's dynamic text fields by its VARIABLE path. Held

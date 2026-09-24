@@ -16,6 +16,7 @@ from ..base.constants import (DEFAULT_RACE, RACE_MAP, TES4_SKILL_TO_TES5,
                          TES5_SKILL_ORDER)
 from ..base.equivalents import (ATTRIBUTE_SKILL_MAP, TES4_RACE_FID_TO_EDID,
                                 VOICE_TYPE_MAP)
+from ..dialogue.morrowind_sidecar import is_tes3_export
 from .actors_falloutnv import aidt_tiers
 from .common import (
     get_float,
@@ -28,6 +29,7 @@ from .common import (
     pack_subrecord,
 )
 from .race_falloutnv import fallout_race_edid
+from .trainers_morrowind import morrowind_trainers
 from .vendor_stock_morrowind import claim_stock, owned_stock, plvd_in_cell
 from .world_falloutnv import is_fallout_source
 
@@ -632,13 +634,14 @@ def _write_trainer_faction(writer) -> int:
 
 
 def create_trainer_records(by_type: dict, writer, master_index=None,
-                           master_classes=()) -> None:
+                           master_classes=(), params_of=_npc_trainer_params) -> None:
     """Phase 0c2: trainer FACT + per-trainer CLAS clones for NPC_ trainers.
 
     One faction marks every trainer and the Training topic gates on it; with
-    `master_index` a master's is adopted by EditorID. CLAS clones are deduped
-    per (source class, skill, cap), the class found in this plugin or
-    `master_classes`; an NPC with no resolvable class gets a minimal default.
+    `master_index` a master's is adopted by EditorID. `params_of` names each
+    NPC's (skill, cap). CLAS clones are deduped per (source class, skill, cap),
+    the class found in this plugin or `master_classes`; an NPC with no
+    resolvable class gets a minimal default.
 
     See: docs/commentary/tes5_import_actors.md#trainers
     """
@@ -652,7 +655,7 @@ def create_trainer_records(by_type: dict, writer, master_index=None,
 
     trainers = []
     for rec in by_type.get('NPC_', []):
-        params = _npc_trainer_params(rec)
+        params = params_of(rec)
         if not params:
             continue
         clas_rec = clas_by_fid.get(get_formid(rec, 'CNAM.Class'))
@@ -682,13 +685,22 @@ def create_trainer_records(by_type: dict, writer, master_index=None,
         _trainer_class_by_npc[npc_fid] = clone_fid
 
 
-def create_service_records(by_type: dict, writer, ctx, export_dir: str) -> None:
+def _tes3_trainer_params(by_type: dict, tes3_tables):
+    """`params_of` for a TES3 source: `morrowind_trainers` by EditorID."""
+    wanted = {get_str(rec, 'EditorID').lower() for rec in by_type.get('NPC_', [])}
+    trainers = morrowind_trainers(tes3_tables, wanted) if tes3_tables else {}
+    return lambda rec: trainers.get(get_str(rec, 'EditorID').lower())
+
+
+def create_service_records(by_type: dict, writer, ctx, export_dir: str,
+                           tes3_tables=None) -> None:
     """Phase 0c: the vendor factions, then the trainer faction and CLAS clones.
 
     A plugin that creates its own support records makes all of them; a
     dependent adopts what its masters define by EditorID, creates the rest, and
     finds its trainers' classes in its masters' export. A Morrowind source's
-    merchants also get the stock they own.
+    merchants also get the stock they own, and its trainers are read from
+    `tes3_tables`, the chain `chain_tables` read.
 
     See: docs/commentary/tes5_import_actors.md#vendor-factions-in-a-dependent
     """
@@ -698,7 +710,9 @@ def create_service_records(by_type: dict, writer, ctx, export_dir: str) -> None:
                [r for r in master_export.values() if r.get('Signature') == 'CLAS'])
     create_vendor_factions(by_type, writer, index,
                            owned_stock(by_type, master_export, export_dir))
-    create_trainer_records(by_type, writer, index, classes)
+    params_of = (_tes3_trainer_params(by_type, tes3_tables)
+                 if is_tes3_export(export_dir) else _npc_trainer_params)
+    create_trainer_records(by_type, writer, index, classes, params_of)
 
 
 def get_trainer_faction_fid() -> int:

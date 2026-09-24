@@ -106,7 +106,7 @@ def test_oblivion_merchant_sells_its_spells_at_cost_times_gold_mult(tmp_path):
                   'DATA.Value': '3.0'}],
     }
     writer = _Writer()
-    spell_tomes.create_spell_tomes(by_type, writer, None, str(tmp_path), 'Fixture.esm')
+    spell_tomes.create_spell_tomes(by_type, writer, None, str(tmp_path), None)
 
     assert len(writer.records) == 1, 'the ability is never sold'
     subs = _subrecords(writer.records[0][1])

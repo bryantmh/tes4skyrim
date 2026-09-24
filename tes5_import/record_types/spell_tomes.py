@@ -13,7 +13,7 @@ import struct
 from tes4_export.morrowind_ids import encode_editor_id
 
 from ..base.text_reader import remap_formid
-from ..dialogue.morrowind_sidecar import export_root, is_tes3_export
+from ..dialogue.morrowind_sidecar import is_tes3_export
 from .common import (VENDOR_KYWD, get_float, get_formid, get_int, get_str,
                      pack_formid_subrecord, pack_keywords, pack_obnd,
                      pack_record, pack_string_subrecord, pack_subrecord)
@@ -106,19 +106,20 @@ def _oblivion_sales(by_type: dict, spells: dict, mult: float,
     return sales
 
 
-def _tes3_sales(by_type: dict, spells: dict, export_dir: str, plugin: str) -> dict:
-    """{merchant FormID: [(spell key, price, school)]} from the TES3 chain's own records.
+def _tes3_sales(by_type: dict, spells: dict, tables) -> dict:
+    """{merchant FormID: [(spell key, price, school)]} from the TES3 chain's `tables`.
 
     A spell a Morroblivion-mode master defines is found by its escaped EditorID.
     The school is the authored MEDT one: a synthesized MGEF carries none.
     """
+    if tables is None:
+        return {}
     actors = {get_str(rec, 'EditorID').lower(): get_formid(rec, 'FormID')
               for sig in ('NPC_', 'CREA') for rec in by_type.get(sig, [])}
     by_edid = {get_str(rec, 'EditorID').lower(): key
                for key, rec in spells.items()}
     sales = {}
-    for actor, offered in morrowind_sales(export_root(export_dir), plugin,
-                                          set(actors)).items():
+    for actor, offered in morrowind_sales(tables, set(actors)).items():
         keys = [(by_edid.get(spell) or by_edid.get(encode_editor_id(spell).lower()),
                  price, SCHOOL_TO_AV.get(school, AV_NONE))
                 for spell, price, school in offered]
@@ -160,11 +161,12 @@ def _tome(writer, sale: tuple, spell: dict, prefix: str, master_index) -> int:
 
 
 def create_spell_tomes(by_type: dict, writer, ctx, export_dir: str,
-                       plugin: str) -> None:
+                       tes3_tables) -> None:
     """Phase 0c: a tome for every spell this plugin's merchants sell.
 
     Oblivion-format merchants sell the ordinary spells in their own list at
-    SPIT.Cost x fSpellmakingGoldMult; TES3 ones follow `morrowind_sales`.
+    SPIT.Cost x fSpellmakingGoldMult; TES3 ones follow `morrowind_sales` over
+    `tes3_tables`, the chain `chain_tables` read.
     """
     _tomes_by_actor.clear()
     master_export = getattr(ctx, 'master_export', None) or {}
@@ -172,7 +174,7 @@ def create_spell_tomes(by_type: dict, writer, ctx, export_dir: str,
     spells = indexes['SPEL']
     tes3 = is_tes3_export(export_dir)
     if tes3:
-        sales = _tes3_sales(by_type, spells, export_dir, plugin)
+        sales = _tes3_sales(by_type, spells, tes3_tables)
     else:
         effects = {get_str(rec, 'EditorID').lower(): rec
                    for rec in indexes['MGEF'].values()}
