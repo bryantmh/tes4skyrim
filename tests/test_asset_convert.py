@@ -375,6 +375,16 @@ class TestBsaPack:
         from asset_convert.sources.bsa_pack import bin_files
         assert bin_files([], limit=1000) == []
 
+    def test_os_junk_files_are_not_packed(self, tmp_path):
+        """Thumbs.db/desktop.ini are skipped; every other file still packs."""
+        from asset_convert.sources.bsa_pack import _collect_files
+        meshes = tmp_path / 'meshes' / 'sub'
+        meshes.mkdir(parents=True)
+        for name in ('a.nif', 'Thumbs.db', 'desktop.ini', 'notes.txt'):
+            (meshes / name).write_bytes(b'x')
+        packed = {rel.name for _, rel, _ in _collect_files(tmp_path, ['meshes'])}
+        assert packed == {'a.nif', 'notes.txt'}
+
     def test_loader_stem_naming(self):
         """Overflow loaders are <stem>_loader, <stem>_loader_1, ..."""
         from asset_convert.sources.bsa_pack import loader_stem

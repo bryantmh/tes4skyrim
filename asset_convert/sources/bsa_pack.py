@@ -64,6 +64,10 @@ BSA_HARD_LIMIT = 2_147_483_648
 BSA_OVERHEAD_BUDGET = 64 * 1024 * 1024          # 64 MiB
 BSA_SIZE_LIMIT = BSA_HARD_LIMIT - BSA_OVERHEAD_BUDGET   # ~2.0 GiB of payload
 
+#: Lowercased OS-generated file names (Explorer/Finder metadata) never packed.
+OS_JUNK_NAMES = frozenset(
+    ('thumbs.db', 'ehthumbs.db', 'ehthumbs_vista.db', 'desktop.ini', '.ds_store'))
+
 
 # ---------------------------------------------------------------------------
 # Staging helpers
@@ -113,7 +117,7 @@ def _collect_files(plugin_dir: Path, subdir_names: 'list[str]'
             continue
         is_textures = name.lower() == 'textures'
         for f in src.rglob('*'):
-            if not f.is_file():
+            if not f.is_file() or f.name.lower() in OS_JUNK_NAMES:
                 continue
             if is_textures and texture_prune.is_excluded(
                     f.relative_to(src).as_posix().lower()):
