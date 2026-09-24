@@ -20,13 +20,14 @@ from script_convert import resolve_name as _resolve_name
 from script_convert.constants import (
     ACTOR_VALUE_MAP, ANIM_GROUP_EVENTS, ATTRIBUTE_STUB_VALUE, CASTABLE,
     PLACED_REF_SIGS, TES4_ASSAULT_BOUNTY, TES4_ATTRIBUTES, TES4_MURDER_BOUNTY,
-    TES4_STEAL_BOUNTY, is_generated_script_type, safe_property_name,
-    papyrus_script_name
+    TES4_STEAL_BOUNTY, is_generated_script_type, mgef_family_keyword_name,
+    safe_property_name, papyrus_script_name
 )
 from script_convert.command_rows import (
-    COMMAND_ROWS, GMST_TO_ACTOR_VALUE, ACTOR_VALUE_FUNCTIONS,
-    ACTOR_VALUE_READ_FUNCTIONS, param_types
+    ACTOR, COMMAND_ROWS, GMST_TO_ACTOR_VALUE, ACTOR_VALUE_FUNCTIONS,
+    ACTOR_VALUE_READ_FUNCTIONS, Cmd, param_types
 )
+from script_convert.emit.commands import emit_row
 from script_convert.commands_falloutnv import FALLOUT_HANDLERS
 from script_convert.message_menus import PAGE_OPTIONS
 from script_convert.constants import typed_already
@@ -616,24 +617,46 @@ def magic_effect_visuals(ctx, call) -> str:
     return f'{safe}.Play({ref}, {call.arg(1, "-1.0")})'
 
 
+def _is_mgef(xref, edid: str) -> bool:
+    """True when an EditorID names a magic effect."""
+    fid = xref.edid_to_formid.get(edid.lower(), '') if xref else ''
+    return bool(fid) and xref.record_type.get(fid) == 'MGEF'
+
+
+def _effect_family_test(ctx, call, effect_edid: str) -> str:
+    """`<actor>.HasMagicEffectWithKeyword(<family>)`: true while any copy of the MGEF is on the actor.
+
+    See: docs/commentary/tes5_import_magic.md#effect-families
+    """
+    kw = mgef_family_keyword_name(effect_edid)
+    row = Cmd(f'{{ref}}.HasMagicEffectWithKeyword({kw})', ACTOR,
+              self_type=(kw, 'Keyword'))
+    return emit_row(ctx, row, call.ref, call.raw_name, call.src, call.extends)
+
+
 @command('isspelltarget')
 def is_spell_target(ctx, call) -> str:
-    """IsSpellTarget -- "is ref currently affected by spell X".
+    """IsSpellTarget X -- the family test of X's first effect that is an MGEF.
 
-    Papyrus has no per-spell test, but HasMagicEffect on the effect the
-    converted SPEL actually carries (resolved through the importer's own
-    code->MGEF mapping) answers the same question at runtime.
+    Papyrus has no per-spell test; the effect the spell applies is the
+    nearest one.
     """
-    spell = call.source(0, '')
-    fid = (ctx.xref.get_spell_first_skyrim_mgef(spell)
-           if (ctx.xref and spell) else 0)
-    if not fid:
+    effects = ctx.xref.spell_effects.get(call.source(0, '').strip('"').lower(),
+                                         ()) if ctx.xref else ()
+    code = next((c for c, _ in effects if _is_mgef(ctx.xref, c)), '')
+    if not code:
         return ctx.note(f'{call.written()} (spell has no convertible effect)',
                         value='False')
-    ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)
-    if ref == 'Self' and call.extends != 'Actor':
-        ref = '(Self as Actor)'
-    return f'TES4Polyfill.HasMagicEffectByID({ref}, 0x{fid:08X})'
+    return _effect_family_test(ctx, call, code)
+
+
+@command('hasmagiceffect')
+def has_magic_effect(ctx, call) -> str:
+    """HasMagicEffect X -- the family test of MGEF X; declines for anything else."""
+    edid = call.source(0, '').strip('"')
+    if not _is_mgef(ctx.xref, edid):
+        return None
+    return _effect_family_test(ctx, call, edid)
 
 
 @command('getiscurrentpackage')

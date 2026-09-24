@@ -488,20 +488,6 @@ EndFunction
 ; Magic / Actor State
 ; ==========================================================================
 
-; TES4 IsSpellTarget: "is this actor currently affected by spell X".  The
-; converter resolves X to the Skyrim MGEF the imported spell actually carries
-; and passes its Skyrim.esm FormID here.
-Bool Function HasMagicEffectByID(Actor akActor, Int aiFormID) Global
-  If akActor == None
-    Return False
-  EndIf
-  MagicEffect fx = Game.GetFormFromFile(aiFormID, "Skyrim.esm") as MagicEffect
-  If fx == None
-    Return False
-  EndIf
-  Return akActor.HasMagicEffect(fx)
-EndFunction
-
 ; TES4 GetIsCreature: Skyrim marks people with the ActorTypeNPC keyword
 ; (Skyrim.esm 0x00013794) on their race; converted creatures use generated
 ; races without it.

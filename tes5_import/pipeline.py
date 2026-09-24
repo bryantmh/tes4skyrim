@@ -580,6 +580,19 @@ def _prescan_script_plans(by_type: dict, ctx, xref, fid_to_edid: dict, _step_don
     return _scpt_master_export
 
 
+def _prescan_effect_families(by_type: dict, ctx, writer) -> None:
+    """Index every MGEF and settle its family keyword, before any script plan binds one.
+
+    See: docs/commentary/tes5_import_magic.md#effect-families
+    """
+    from .record_types.magic import register_mgef_formids, settle_family_keywords
+
+    register_mgef_formids(_mgef_records_with_masters(by_type, ctx))
+    n_fam = settle_family_keywords(by_type.get('MGEF', []), writer,
+                                   getattr(ctx, 'master_index', None))
+    print(f"  Magic effect families: {n_fam} keywords written")
+
+
 def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict,
                            _scpt_master_export, _step_done, export_dir):
     """Register MGEF ids and art, the AssocItem index, AV/script variants and ENCH.
@@ -591,13 +604,12 @@ def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict,
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-magic-effect-prerequisites
     """
-    from .record_types.magic import register_mgef_formids, set_assoc_item_index
+    from .record_types.magic import set_assoc_item_index
     from .record_types.magic_variants import build_av_variants, build_seff_variants
     from .base.object_scripts import build_magic_effect_script_plan
 
     magic_art.begin(writer, assets_for(export_dir) / 'meshes', by_type.get('SOUN', []))
     _mgefs = _mgef_records_with_masters(by_type, ctx)
-    register_mgef_formids(_mgefs)
     set_assoc_item_index(*_build_assoc_item_index(by_type, ctx))
 
     _effect_recs = [r for sig in ('SPEL', 'ENCH', 'ALCH', 'INGR', 'SGST')
@@ -1069,6 +1081,7 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
     st.fid_to_edid = _prescan_fid_to_edid(all_records, ctx, _step_done)
     st.xref = _prescan_cross_ref_graph(all_records, ctx, export_dir,
                                        _step_done)
+    _prescan_effect_families(by_type, ctx, writer)
     _scpt_master_export = _prescan_script_plans(by_type, ctx, st.xref,
                                                 st.fid_to_edid, _step_done)
     _prescan_magic_effects(by_type, ctx, writer, st.xref, st.fid_to_edid,

@@ -462,6 +462,14 @@ def safe_property_name(name: str) -> str:
     return safe
 
 
+def mgef_family_keyword_name(effect_edid: str) -> str:
+    """EditorID and script property name of the KYWD every copy of one MGEF carries.
+
+    See: docs/commentary/tes5_import_magic.md#effect-families
+    """
+    return 'TES4FX_' + effect_edid.strip().strip('"').lower()
+
+
 def _canonical_global(name: str) -> str:
     """Return the canonical property name for a known global."""
     return _GLOBAL_CANONICAL.get(name.lower(), name)

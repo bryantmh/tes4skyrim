@@ -24,6 +24,7 @@ from .ctda_bool import bool_outcomes
 from .conditions_falloutnv import (FALLOUT_CTDA_SIZE, fallout_function,
                                    fallout_run_on)
 from ..generated.ctda_param_types import CTDA_FORMID_PARAMS
+from .owned_records import MGEF_FAMILY_KEYWORDS
 from .text_reader import (_ENGINE_FIXED_FORMIDS, get_formid_index_offset,
                           remap_formid)
 
@@ -64,6 +65,8 @@ FUNC_GET_STAGE_DONE = 59       # GetStageDone(quest, stage)
 FUNC_GET_QUEST_RUNNING = 56    # GetQuestRunning(quest)
 FUNC_GET_GLOBAL_VALUE = 74     # GetGlobalValue(glob)
 FUNC_GET_IS_VOICE_TYPE = 426   # GetIsVoiceType(vtyp)  — TES5-only, no TES4 source
+FUNC_HAS_MAGIC_EFFECT = 214
+FUNC_HAS_MAGIC_EFFECT_KEYWORD = 699
 
 #: Speaker-as-actor conditions. See: docs/commentary/tes5_import_conditions.md#non-actor-speaker-drop
 NON_ACTOR_SPEAKER_DROP = frozenset({
@@ -558,6 +561,12 @@ def _convert_params(func_idx: int, param1: int, param2: int,
     return param1, param2
 
 
+def _effect_family(func_idx: int, param1: int) -> tuple:
+    """HasMagicEffect X -> HasMagicEffectKeyword on X's family keyword."""
+    kw = MGEF_FAMILY_KEYWORDS.get(param1) if func_idx == FUNC_HAS_MAGIC_EFFECT else 0
+    return (FUNC_HAS_MAGIC_EFFECT_KEYWORD, kw) if kw else (func_idx, param1)
+
+
 def _target_run_on(func_idx: int, run_on_target_ref: 'int | None',
                    drop_run_on_target: bool) -> 'tuple | None':
     """(run_on, reference) for a run-on-target condition, or None to drop it.
@@ -653,7 +662,8 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
                             run_on_target_ref, drop_run_on_target)
     if params is None or fields is None:
         return None
-    param1, param2 = params
+    func_idx, param1 = _effect_family(func_idx, params[0])
+    param2 = params[1]
     type_byte, run_on, reference = fields
 
     return struct.pack('<B3xIHHIIII I',

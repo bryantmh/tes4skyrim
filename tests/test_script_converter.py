@@ -1665,7 +1665,8 @@ class TestQuestObjectiveCompletion:
 @pytest.fixture
 def xref_magic():
     """CrossRefGraph stocked with MGEF/EFSH/SPEL/PACK records the new
-    handlers resolve through."""
+    handlers resolve through.  DRHE is the one MGEF record, so SEFF is an
+    effect code with no record and TestScriptSpell has no MGEF effect."""
     x = CrossRefGraph()
     # EFSH records (converted, so bindable as EffectShader properties)
     for fid, edid in [('0014A0A2', 'effectSoulTrap'),
@@ -1679,7 +1680,9 @@ def xref_magic():
     x.mgef_shaders['strp'] = ('0014A0A2', '0018B57B', 4)
     x.mgef_shaders['dspl'] = ('00000000', '0018B57B', 4)
     x.mgef_shaders['babo'] = ('00000000', '00000000', 1)
-    # Spells: first effect DRHE -> AlchDamageHealth; pure-SEFF spell -> filler
+    x.formid_to_edid['00001234'] = 'DRHE'
+    x.edid_to_formid['drhe'] = '00001234'
+    x.record_type['00001234'] = 'MGEF'
     x.spell_effects['testdrainspell'] = [('SEFF', 69), ('DRHE', 8)]
     x.spell_effects['testscriptspell'] = [('SEFF', 69)]
     # A PACK record for GetIsCurrentPackage/GetCurrentAIPackage
@@ -1724,20 +1727,41 @@ class TestMagicEffectVisuals:
 
 
 class TestIsSpellTarget:
-    def test_resolves_first_surviving_effect(self, xref_magic):
-        # SEFF drops, DRHE -> AlchDamageHealth 0x0003EB42
-        assert xref_magic.get_spell_first_skyrim_mgef('TestDrainSpell') == 0x0003EB42
-
-    def test_pure_script_spell_uses_filler(self, xref_magic):
-        # matches the importer's first filler (AlchRestoreHealth)
-        assert xref_magic.get_spell_first_skyrim_mgef('TestScriptSpell') == 0x0003EB15
-
-    def test_emits_polyfill_call(self, xref_magic):
+    def test_tests_first_mgef_effect_family(self, xref_magic):
+        """The spell's first effect with an MGEF record is tested by its family keyword."""
         conv = ScriptConverter(xref_magic)
         result = conv_line(conv, 'if player.IsSpellTarget TestDrainSpell',
                                     'ObjectReference')
-        assert 'TES4Polyfill.HasMagicEffectByID(Game.GetPlayer(), 0x0003EB42)' in result
+        assert 'Game.GetPlayer().HasMagicEffectWithKeyword(TES4FX_drhe)' in result
+        assert conv.get_property_refs()['TES4FX_drhe'] == 'Keyword'
         assert ';TODO' not in result
+
+    def test_spell_without_mgef_reads_false(self, xref_magic):
+        """A spell none of whose effects has an MGEF record tests nothing."""
+        conv = ScriptConverter(xref_magic)
+        result = conv_line(conv, 'if player.IsSpellTarget TestScriptSpell',
+                                    'ObjectReference')
+        assert 'HasMagicEffectWithKeyword' not in result
+
+
+class TestHasMagicEffect:
+    """Every copy of an MGEF carries its family keyword; the script tests that."""
+
+    def test_mgef_tests_family_keyword(self, xref_magic):
+        """HasMagicEffect on an MGEF becomes HasMagicEffectWithKeyword on its family."""
+        conv = ScriptConverter(xref_magic)
+        result = conv_line(conv, 'if player.HasMagicEffect DRHE == 0',
+                                    'ObjectReference')
+        assert '!(Game.GetPlayer().HasMagicEffectWithKeyword(TES4FX_drhe))' in result
+        assert conv.get_property_refs()['TES4FX_drhe'] == 'Keyword'
+
+    def test_non_mgef_keeps_plain_call(self, xref_magic):
+        """An argument that is not an MGEF keeps the plain HasMagicEffect call."""
+        conv = ScriptConverter(xref_magic)
+        result = conv_line(conv, 'if player.HasMagicEffect SEFF',
+                                    'ObjectReference')
+        assert 'HasMagicEffect(' in result
+        assert 'WithKeyword' not in result
 
 
 class TestAnimAndPackage:

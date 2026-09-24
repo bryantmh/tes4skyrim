@@ -26,7 +26,11 @@ TES5 record order: EDID VMAD FULL MDOB KSIZ/KWDA DATA ESCE* SNDD DNAM CTDA
 
 import struct
 
+from script_convert.constants import mgef_family_keyword_name
+
 from . import magic_art
+from .common import pack_keywords
+from ..base.owned_records import MGEF_FAMILY_KEYWORDS, WELL_KNOWN_PROPERTIES
 from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..base.writer import (
     pack_formid_subrecord,
@@ -946,13 +950,14 @@ def mgef_tail(rec: dict) -> bytes:
 def convert_MGEF(rec: dict, writer=None) -> bytes:
     """MGEF — Magic Effect, packed from `mgef_parts` plus its ESCE array."""
     code, head, data, tail = mgef_parts(rec)
+    fid = get_formid(rec, 'FormID')
     subs = pack_string_subrecord('EDID', code) if code else b''
-    subs += head + pack_subrecord('DATA', data)
-    for fid in _counter_effect_fids(rec):
-        subs += pack_formid_subrecord('ESCE', fid)
+    subs += head + pack_keywords([MGEF_FAMILY_KEYWORDS.get(fid)])
+    subs += pack_subrecord('DATA', data)
+    for counter in _counter_effect_fids(rec):
+        subs += pack_formid_subrecord('ESCE', counter)
     subs += tail
-    return pack_record('MGEF', get_formid(rec, 'FormID'),
-                       get_int(rec, 'RecordFlags'), subs)
+    return pack_record('MGEF', fid, get_int(rec, 'RecordFlags'), subs)
 
 
 #: TES4 effect code -> this plugin's MGEF FormID (output space), filled before the MGEF pass.
@@ -978,6 +983,31 @@ def register_mgef_formids(mgef_records: list) -> None:
             fid = get_formid(rec, 'FormID')
             code_to_fid[code] = fid
             _mgef_sources[fid] = rec
+
+
+def settle_family_keywords(own_records: list, writer, master_index=None) -> int:
+    """Give every indexed MGEF its family KYWD; returns how many this plugin wrote.
+
+    The keyword is what a converted HasMagicEffect tests, since the effect's
+    copies do not share its FormID.  A master's keyword is adopted by
+    EditorID; this plugin writes one only for its own effects the masters lack.
+    See: docs/commentary/tes5_import_magic.md#effect-families
+    """
+    MGEF_FAMILY_KEYWORDS.clear()
+    own = {get_str(r, 'EditorID') for r in own_records}
+    written = 0
+    for code, fid in sorted(code_to_fid.items()):
+        edid = mgef_family_keyword_name(code)
+        kw = master_index.find_by_edid(b'KYWD', edid) if master_index else 0
+        if not kw and code in own and writer is not None:
+            kw = writer.derive_formid('KYWD_MGEF_FAMILY', code)
+            writer.add_record('KYWD', pack_record(
+                'KYWD', kw, 0, pack_string_subrecord('EDID', edid)))
+            written += 1
+        if kw:
+            MGEF_FAMILY_KEYWORDS[fid] = kw
+            WELL_KNOWN_PROPERTIES[edid] = kw
+    return written
 
 
 def _counter_effect_fids(rec: dict) -> list:

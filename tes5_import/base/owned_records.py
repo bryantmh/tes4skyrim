@@ -23,6 +23,9 @@ from .writer import (
 #: EditorID -> FormID for VMAD name binding; a SINGLE shared instance.
 WELL_KNOWN_PROPERTIES: dict[str, int] = {}
 
+#: Output MGEF FormID -> the family KYWD it and every copy of it carry.
+MGEF_FAMILY_KEYWORDS: dict[int, int] = {}
+
 
 #: Conversion-owned globals: EditorID -> FNAM type char ('f' float, 's' short).
 _OWNED_GLOBALS = (

@@ -11,6 +11,7 @@ script variant, then its Constant clone.
 import struct
 import threading
 
+from ..base.owned_records import MGEF_FAMILY_KEYWORDS
 from ..base.text_reader import get_int, get_str
 from ..base.writer import (pack_formid_subrecord, pack_record,
                            pack_string_subrecord, pack_subrecord)
@@ -20,6 +21,7 @@ from .magic import (
     O_CASTING_TYPE, O_COUNTER_COUNT, O_EXPLOSION, build_data, code_to_fid,
     fit_delivery, get_archetype, is_derived, known_sigs, menu_display_object,
     mgef_parts, mgef_tail, resolve_actor_value, source_record)
+from .common import pack_keywords
 from .magic_art import explosion, projectile, sound_set
 
 #: {output MGEF FormID: (EditorID, subrecords before DATA, DATA, subrecords after)} of every emitted MGEF.
@@ -76,9 +78,15 @@ def _source_rec(fid: int):
 
 
 def _emit(writer, fid: int, edid: str, head: bytes, data: bytes,
-          tail: bytes = b'', rec: dict = None) -> None:
-    """Write one variant MGEF of source ``rec`` and register it for later clones."""
-    subs = pack_string_subrecord('EDID', edid) + head
+          tail: bytes = b'', rec: dict = None, family: int = 0) -> None:
+    """Write one variant MGEF of source ``rec`` and register it for later clones.
+
+    It carries the family keyword of ``family``, the MGEF it was copied from.
+    """
+    kw = MGEF_FAMILY_KEYWORDS.get(family)
+    if kw:
+        MGEF_FAMILY_KEYWORDS[fid] = kw
+    subs = pack_string_subrecord('EDID', edid) + head + pack_keywords([kw])
     subs += pack_subrecord('DATA', data) + tail
     writer.add_record('MGEF', pack_record('MGEF', fid, 0, subs))
     _parts[fid] = (edid, head, data, tail)
@@ -109,7 +117,7 @@ def clone(src_fid: int, site: str, key, edid: str, patch, writer,
         patch(data)
         fid = writer.derive_formid(site, key)
         _emit(writer, fid, edid, src_head if head is None else head, bytes(data),
-              tail, _source_rec(src_fid))
+              tail, _source_rec(src_fid), src_fid)
         _clones[(site, key)] = fid
         return fid
 
@@ -213,7 +221,8 @@ def build_av_variants(mgef_records: list, effect_records: list, writer) -> int:
         head = pack_string_subrecord('FULL', _variant_name(full, name)) if full else b''
         data = build_data(src, code, get_archetype(code, src), tes5_av, 0)
         head += pack_formid_subrecord('MDOB', menu_display_object(data))
-        _emit(writer, fid, f'TES4{code}{name}', head, data, mgef_tail(src), src)
+        _emit(writer, fid, f'TES4{code}{name}', head, data, mgef_tail(src), src,
+              code_to_fid.get(code, 0))
         _av_variants[(code, av)] = fid
         written += 1
     return written
@@ -269,7 +278,7 @@ def build_seff_variants(mgef_records: list, effect_records: list, writer,
         head += pack_formid_subrecord('MDOB', menu_display_object(data))
         name = fid_to_edid.get(scpt, scpt)
         _emit(writer, fid, f'TES4SEFF{name}{etype or "Self"}', head, bytes(data),
-              sound_set(seff), seff)
+              sound_set(seff), seff, code_to_fid.get('SEFF', 0))
         _seff_variants[(scpt, etype)] = fid
         written += 1
     return written

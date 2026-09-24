@@ -8,6 +8,7 @@
 - [The four defects, in priority order](#four-defects-priority-order)
 - [Path to complete conversion](#path-complete-conversion)
 - [Casting type and delivery follow the owner](#owner-casting-type)
+- [Effect families: HasMagicEffect tests a keyword](#effect-families)
 - [Magic art](#magic-art)
 - [Effect shader particle counts](#effect-shader-particles)
 - [Impact data](#impact-data)
@@ -590,6 +591,42 @@ Measured on the rebuilt Oblivion.esm:
 
 **Dual casting needs nothing extra.** 944 of 950 vanilla effects carry no Dual
 Cast Art. Dual Cast Scale 1.0 and the either-hand `ETYP` were already written.
+
+## <a id="effect-families"></a>Effect families: HasMagicEffect tests a keyword
+
+**Code:** `tes5_import/record_types/magic.py` (`settle_family_keywords`), `record_types/magic_variants.py` (`_emit`), `tes5_import/base/conditions.py` (`_effect_family`), `script_convert/commands.py` (`has_magic_effect`, `is_spell_target`)
+
+One source effect becomes several MGEFs: the base, a copy per owner casting
+type and delivery, per actor value, per script, and scripted bound items.
+A spell carries a copy, but `HasMagicEffect` compares one exact MGEF. So a
+script asking for the base effect never saw the copy on the actor.
+
+The failure that exposed it: New Vegas's `GenericScript` ends with
+`If Player.HasMagicEffect Concussion == 0` → `CastImmediateOnSelf
+PlayerConcussed`. The spell is Fire and Forget / Self, so its effect is the
+copy `TES4ConcussionFFSelf`, not `Concussion`. The test never passed, and the
+converted poll re-cast the spell every 0.5 s. The player piled up dozens of
+"Concussion" and "Reduced Perception" entries, each 315,360,000 s (87,600 h).
+
+**The fix:** every MGEF a plugin can reference gets one keyword,
+`TES4FX_<effect EditorID, lowercase>`. The base and every copy carry it in
+`KWDA`.
+- The keyword is written in the magic pre-scan, before any record converts. It
+  is hashed at site `KYWD_MGEF_FAMILY` on the effect's EditorID, so no existing
+  FormID moves.
+- A master's effect adopts the master's keyword by EditorID. A dependent
+  plugin writes keywords only for its own effects that the masters lack.
+- Scripts: `HasMagicEffect X`, where X is an MGEF, becomes
+  `HasMagicEffectWithKeyword(TES4FX_x)`. The property binds through
+  `WELL_KNOWN_PROPERTIES`. Any other argument keeps the plain call.
+- `IsSpellTarget S` tests the family of S's first effect that has an MGEF
+  record. It used to test the vanilla Skyrim alias of that effect, which no
+  converted spell carries since MGEF became a converted record, so it always
+  read false.
+- Conditions: `HasMagicEffect` (214) on an effect with a family becomes
+  `HasMagicEffectKeyword` (699) with the keyword.
+
+Not yet confirmed in-game.
 
 ## <a id="magic-art"></a>Magic art
 

@@ -5336,29 +5336,8 @@ class TestVanillaMgefDataSize:
         from tes5_import.generated.vanilla_mgef_data import MGEF_DATA_SIZE
         from tes5_import.record_types import magic, magic_variants
 
-        class _Writer:
-            def __init__(self):
-                self.fid = 0x01000000
-                self.records = []
-
-            def alloc_formid(self):
-                self.fid += 1
-                return self.fid
-
-            def derive_formid(self, site, key):
-                # Test double: derived ids need only be stable per
-                # (site, key) and distinct, like the real allocator.
-                if not hasattr(self, '_derived'):
-                    self._derived = {}
-                k = (site, repr(key))
-                if k not in self._derived:
-                    self._derived[k] = self.alloc_formid()
-                return self._derived[k]
-            def add_record(self, rec_type, data):
-                self.records.append((rec_type, data))
-
         magic.register_mgef_formids([])
-        writer = _Writer()
+        writer = _DerivingWriter()
         restore_health = 0x0003EB15
         fid = magic_variants.delivery_variant(restore_health, 1, 2, writer)
         assert fid != restore_health
@@ -5371,6 +5350,58 @@ class TestVanillaMgefDataSize:
         assert struct.unpack_from('<I', data, magic.O_PROJECTILE)[0] != 0
         assert struct.unpack_from('<H', data, magic.O_COUNTER_COUNT)[0] == 0
         assert struct.unpack_from('<f', data, 112)[0] == pytest.approx(1.0)
+
+    def test_copies_share_the_family_keyword(self):
+        """The base MGEF and its delivery copy carry one family KYWD, and HasMagicEffect tests it.
+
+        See: docs/commentary/tes5_import_magic.md#effect-families
+        """
+        from tes5_import.base.conditions import convert_ctda
+        from tes5_import.base.owned_records import WELL_KNOWN_PROPERTIES
+        from tes5_import.record_types import magic, magic_variants
+
+        other = {'Signature': 'MGEF', 'FormID': '00065340', 'EditorID': 'Other'}
+        rec = {'Signature': 'MGEF', 'FormID': '00065339', 'EditorID': 'Concussion',
+               'DATA.Flags': '368', 'CounterEffects': '1', 'ESCE[0]': 'Other'}
+        magic.register_mgef_formids([other, rec])
+        writer = _DerivingWriter()
+        assert magic.settle_family_keywords([other, rec], writer) == 2
+        base = magic.code_to_fid['Concussion']
+        kw = WELL_KNOWN_PROPERTIES['TES4FX_concussion']
+        assert writer.records[0][0] == 'KYWD'
+
+        base_blob = magic.convert_MGEF(rec, writer)
+        assert struct.unpack_from('<I', base_blob, 12)[0] == base
+        copy = magic_variants.delivery_variant(base, 1, 0, writer)
+        assert copy != base
+        for blob in (base_blob, writer.records[-1][1]):
+            assert struct.unpack('<I', _find_subrecord(blob, b'KWDA'))[0] == kw
+
+        raw = struct.pack('<B3xfHHII', 0, 1.0, 214, 0, base, 0)
+        ctda = convert_ctda(raw, offset=0)
+        assert struct.unpack_from('<HHI', ctda, 8) == (699, 0, kw)
+
+
+class _DerivingWriter:
+    """Test double for PluginWriter: derived ids are stable per (site, key) and distinct."""
+
+    def __init__(self):
+        """Start empty, allocating from 0x01000001."""
+        self.fid = 0x01000000
+        self.records = []
+        self._derived = {}
+
+    def derive_formid(self, site, key):
+        """A fresh id the first time (site, key) is seen, the same one after."""
+        k = (site, repr(key))
+        if k not in self._derived:
+            self.fid += 1
+            self._derived[k] = self.fid
+        return self._derived[k]
+
+    def add_record(self, rec_type, data):
+        """Keep each written record."""
+        self.records.append((rec_type, data))
 
 
 def _is_tes4_export(export_dir: str) -> bool:

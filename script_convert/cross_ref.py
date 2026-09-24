@@ -490,32 +490,6 @@ class CrossRefGraph:
             return self.formid_to_edid.get(self.edid_to_formid[fallback], '')
         return ''
 
-    def get_spell_first_skyrim_mgef(self, spell_name: str) -> int:
-        """Skyrim MGEF FormID the converted spell's first surviving effect uses.
-
-        IsSpellTarget has no Papyrus equivalent, but HasMagicEffect on the
-        effect the imported SPEL actually carries is the same runtime test.
-        Resolution MUST mirror tes5_import's _pack_effects: first effect whose
-        code maps to a Skyrim MGEF wins; if every effect drops (script-effect
-        spells), the importer substitutes its first filler effect, so detect
-        that instead.  Returns 0 for an unknown spell.
-        """
-        effects = self.spell_effects.get(spell_name.lower())
-        if not effects:
-            return 0
-        from tes5_import.base.equivalents import (MGEF_CODE_TO_SKYRIM,
-                                                  MGEF_AV_CODE_TO_SKYRIM)
-        for code, av in effects:
-            if not code:
-                continue
-            per_av = MGEF_AV_CODE_TO_SKYRIM.get(code)
-            fid = per_av.get(av, 0) if per_av is not None else 0
-            fid = fid or MGEF_CODE_TO_SKYRIM.get(code, 0)
-            if fid:
-                return fid
-        from tes5_import.record_types.equipment import _FILLER_EFFECTS
-        return _FILLER_EFFECTS[0]
-
     def is_quest_ref(self, name: str) -> bool:
         """Check if a name refers to a known quest."""
         return name.lower() in self.quest_edids

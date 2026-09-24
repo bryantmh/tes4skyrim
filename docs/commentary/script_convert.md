@@ -1692,11 +1692,11 @@ assignment to a field whose name says it selects the next talker.
   code → TES4 MGEF → its `DATA.EffectShader` (else EnchantEffect, else school
   enchant glow) → converted EFSH, and emit `<shader>.Play(ref, dur)`. EFSH
   records are converted, so the property binds.
-- `IsSpellTarget X` → `TES4Polyfill.HasMagicEffectByID(ref, <Skyrim MGEF fid>)`
-  where the MGEF is the spell's first effect surviving import (same mapping as
-  `_pack_effects`); pure script-effect spells are detected via the importer's
-  first filler effect, which keeps the dropped effect's duration for exactly
-  this reason.
+- `HasMagicEffect X` on an MGEF → `ref.HasMagicEffectWithKeyword(TES4FX_x)`,
+  and `IsSpellTarget S` → the same test on S's first effect with an MGEF
+  record: the converted spell carries a copy of the effect, and only the
+  family keyword is shared
+  ([effect families](tes5_import_magic.md#effect-families)).
 
 ## Reaching 100% compile (2026-07-28, 42 → 0 failures)
 <a id="reaching-100-compile"></a>
