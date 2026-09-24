@@ -4,8 +4,10 @@ A Morrowind RootCollisionNode is often one closed box over a whole model: a
 bookshelf, a table, a wine rack. Morrowind never simulates items, so the books
 inside that box sit undisturbed; Skyrim simulates them and ejects them. The
 box's shape cannot say whether its volume is open -- a ramp over steps is the
-same kind of box -- but the plugin's placements can: an item whose origin lies
-inside a placed fixture's box proves the author treated that space as open.
+same kind of box -- but the placements can: an item whose origin lies inside a
+placed fixture's box proves the author treated that space as open. The
+placements come from the plugin AND the plugins that master it, since a patch
+can define a shelf that only the plugins it patches place.
 
 The index is too large to ride in the per-task plan, so the parent writes it
 beside the record dump and each worker loads it once, on first use.
@@ -13,14 +15,17 @@ See: docs/commentary/asset_convert_collision.md#morrowind-stand-in-boxes
 """
 
 import pickle
+import re
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 
-from asset_convert.character.wearable_plan import iter_records
 from asset_convert.collision.clutter_plan import CLUTTER_TYPES, WEARABLE_TYPES
 from asset_convert.nif.fixture_plan import fixture_model_ids, latched_fixture
+from core.plugin_masters import masters_from_export_header
+from output_layout import record_dir
+from tes4_export.morrowind_patch import PATCH_NAME, PATCH_SOURCES
 from tes5_import.navmesh.world import rot_matrix
 
 #: Resting-items sub-map key inside the wearable plan: the index file's path.
@@ -32,6 +37,13 @@ _INDEX_NAME = 'resting_items.pkl'
 #: REFR export fields of a placement: position, rotation (radians), scale.
 _PLACE_FIELDS = ('PosX', 'PosY', 'PosZ', 'RotX', 'RotY', 'RotZ', 'XSCL.Scale')
 
+#: The placement lines of a REFR whose base the index wants.
+_REF_LINE = re.compile(r'^(%s)=(.*?)\s*$' % '|'.join(
+    re.escape(f) for f in _PLACE_FIELDS), re.M)
+
+#: A record's FormID line.
+_FORMID_LINE = re.compile(r'^FormID=([0-9A-Fa-f]{8})\s*$', re.M)
+
 _LOADED: dict = {}
 
 
@@ -42,43 +54,126 @@ def _placement(rec) -> list:
     return out
 
 
-def build_index(export_dir) -> dict:
+def _field(chunk: str, name: str) -> str:
+    """The raw FormID a record's `name` line holds, upper-cased; '' if absent."""
+    at = chunk.find('\n%s=' % name) + len(name) + 2
+    return chunk[at:at + 8].upper() if at > len(name) + 1 else ''
+
+
+def _refs(path: Path):
+    """(raw base FormID, raw cell FormID, record text) of each REFR."""
+    if path.is_file():
+        body = path.read_text(encoding='utf-8', errors='replace')
+        for chunk in body.split('---RECORD_BEGIN---')[1:]:
+            yield _field(chunk, 'NAME'), _field(chunk, 'ParentCELL'), chunk
+
+
+def _dependents(export_root, plugin: str) -> list:
+    """Record dumps under `export_root` whose header names `plugin` a master.
+
+    The generated Morroblivion patch is a patch OF its source ESMs, so only
+    their dumps are read for it.
+    """
+    root, want = Path(export_root), plugin.lower()
+    if want == PATCH_NAME.lower():
+        return [d for d in (Path(record_dir(root, s)) for s in PATCH_SOURCES)
+                if (d / '_HEADER.txt').is_file()]
+    headers = [*root.glob('*/_HEADER.txt'), *root.glob('*/*/_HEADER.txt')]
+    return sorted(h.parent for h in headers
+                  if want in (m.lower() for m in
+                              masters_from_export_header(h.parent)))
+
+
+def _owners(rec_dir, names: dict) -> list:
+    """The plugin each raw FormID index byte of a dump names, own last."""
+    owners = [m.lower() for m in masters_from_export_header(rec_dir)]
+    owners.append(names.get(Path(rec_dir).resolve(), Path(rec_dir).name.lower()))
+    return owners
+
+
+def _global(owners: list, fid: str):
+    """A dump's raw FormID as (owning plugin, object id); '' as None."""
+    if not fid:
+        return None
+    return owners[min(int(fid[:2], 16), len(owners) - 1)], fid[2:].upper()
+
+
+def _local(owners: list, keys) -> dict:
+    """{raw FormID in a dump: global key} for each of `keys` the dump can name."""
+    slot = {owner: '%02X' % i for i, owner in enumerate(owners)}
+    return {slot[owner] + oid: (owner, oid) for owner, oid in keys if owner in slot}
+
+
+def _dump_names(export_root, own, plugin: str, dumps: list) -> dict:
+    """{resolved dump dir: plugin name} for `own` and every master of `dumps`."""
+    names = {Path(own).resolve(): plugin.lower()}
+    for d in dumps:
+        for m in masters_from_export_header(d):
+            names.setdefault(Path(record_dir(export_root, m)).resolve(), m.lower())
+    return names
+
+
+def _item_keys(dumps: list, names: dict) -> set:
+    """Global keys of every item record `dumps` or their masters define."""
+    keys = set()
+    for d in sorted({Path(d).resolve() for d in dumps} | set(names)):
+        owners = _owners(d, names)
+        for name in CLUTTER_TYPES + WEARABLE_TYPES:
+            if (d / name).is_file():
+                body = (d / name).read_text(encoding='utf-8', errors='replace')
+                keys.update(_global(owners, fid) for fid in _FORMID_LINE.findall(body))
+    return keys
+
+
+def _placements(dumps: list, names: dict, wanted, cells=None):
+    """(base global key, cell global key, placement) of each wanted REFR.
+
+    `wanted` holds global base keys; `cells`, when given, the only cells kept.
+    """
+    for d in dumps:
+        owners = _owners(d, names)
+        local = _local(owners, wanted)
+        for base, cell, chunk in _refs(d / 'REFR.txt'):
+            if base in local and (cells is None or _global(owners, cell) in cells):
+                yield (local[base], _global(owners, cell),
+                       _placement(dict(_REF_LINE.findall(chunk))))
+
+
+def build_index(export_root, plugin: str) -> dict:
     """Fixture placements that share a cell with an item, and those items.
 
-    `cells` maps a cell to an (N,3) array of item origins; `models` maps a
-    mesh-relative NIF path to (cells, (K,7) array of placements).
+    Placements are read from `plugin` and every exported plugin mastering it.
+    `cells` maps a cell's (plugin, id) to an (N,3) array of item origins;
+    `models` maps a mesh-relative NIF path to (cells, (K,7) placements).
     """
-    export_dir = Path(export_dir)
-    fixtures = fixture_model_ids(export_dir)
-    items = {rec.get('FormID') for name in CLUTTER_TYPES + WEARABLE_TYPES
-             for rec in iter_records(export_dir / name)}
+    own = Path(record_dir(export_root, plugin))
+    dumps = [own, *_dependents(export_root, plugin)]
+    names = _dump_names(export_root, own, plugin, dumps)
+    owners = _owners(own, names)
+    fixtures = {_global(owners, fid): model
+                for fid, model in fixture_model_ids(own).items() if fid}
     points, placed = defaultdict(list), defaultdict(list)
-    for rec in iter_records(export_dir / 'REFR.txt'):
-        base, cell = rec.get('NAME'), rec.get('ParentCELL')
-        if base in items:
-            points[cell].append(_placement(rec)[:3])
-        elif base in fixtures:
-            placed[fixtures[base]].append((cell, _placement(rec)))
+    for _base, cell, place in _placements(dumps, names, _item_keys(dumps, names)):
+        points[cell].append(place[:3])
+    for base, cell, place in _placements(dumps, names, fixtures, points):
+        placed[fixtures[base]].append((cell, place))
+    models = {model: ([cell for cell, _ in refs],
+                      np.array([p for _, p in refs], dtype=np.float64))
+              for model, refs in placed.items()}
     cells = {cell: np.array(p, dtype=np.float64) for cell, p in points.items()}
-    models = {}
-    for model, refs in placed.items():
-        refs = [(cell, p) for cell, p in refs if cell in cells]
-        if refs:
-            models[model] = ([cell for cell, _ in refs],
-                             np.array([p for _, p in refs], dtype=np.float64))
     return {'cells': cells, 'models': models}
 
 
-def write_index(export_dir) -> tuple:
-    """Build and write the index into `export_dir`; (path, fixture models).
+def write_index(export_root, plugin: str) -> tuple:
+    """Build and write `plugin`'s index beside its records; (path, fixture models).
 
     Writes nothing and returns (None, 0) when no fixture shares a cell with
     an item.
     """
-    index = build_index(export_dir)
+    index = build_index(export_root, plugin)
     if not index['models']:
         return None, 0
-    path = Path(export_dir) / _INDEX_NAME
+    path = Path(record_dir(export_root, plugin)) / _INDEX_NAME
     with open(path, 'wb') as fh:
         pickle.dump(index, fh, protocol=pickle.HIGHEST_PROTOCOL)
     return str(path), len(index['models'])

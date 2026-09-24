@@ -155,8 +155,8 @@ def _persist_mesh_manifests(mesh_stats, manifest_dir, partial: bool) -> None:
         texture_prune.write_manifest(manifest_dir, refs, name)
 
 
-def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, rec_dir, mesh_subdirs,
-                       parallax, textures_only):
+def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, export_root, plugin,
+                       mesh_subdirs, parallax, textures_only):
     """Run the NIF batch over `mesh_src`; return its stats dict.
 
     The wearable plan names which _0/_1/plain variants each mesh is actually
@@ -167,6 +167,7 @@ def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, rec_dir, mesh_subdirs,
     cleared first.
     See: docs/commentary/tes5_import_pipeline.md#producer-emitted-mesh-entries
     """
+    rec_dir = record_dir(export_root, plugin)
     plan = wearable_plan.build_plan(rec_dir)
     print(f"  Wearable variant plan: {len(plan)} meshes referenced by "
           f"ARMO/CLOT")
@@ -179,7 +180,7 @@ def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, rec_dir, mesh_subdirs,
     fixtures = fixture_plan.build_fixture_models(rec_dir)
     plan[fixture_plan.FIXTURE_KEY] = fixtures
     print(f"  Placed fixture plan: {len(fixtures)} scenery models")
-    resting, stocked = resting_items_plan.write_index(rec_dir)
+    resting, stocked = resting_items_plan.write_index(export_root, plugin)
     plan[resting_items_plan.RESTING_KEY] = resting
     print(f"  Resting items plan: {stocked} fixture models share a cell "
           f"with an item")
@@ -247,8 +248,8 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
     assemble_armor(rec_dir, mesh_src)
     if mesh_src.exists():
         stats['mesh_conversion'] = _convert_mesh_tree(
-            mesh_src, plugin_dir / 'meshes' / ns, asset_dir, rec_dir,
-            mesh_subdirs, parallax, textures_only)
+            mesh_src, plugin_dir / 'meshes' / ns, asset_dir, extract_dir,
+            source_name, mesh_subdirs, parallax, textures_only)
         if parallax:
             _write_parallax_notice(plugin_dir)
         _persist_mesh_manifests(stats['mesh_conversion'], mesh_manifest_dir,

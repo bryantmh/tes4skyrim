@@ -136,10 +136,26 @@ racks, altars, chests, closets, drawers, sacks, corpses and the
 dock-steps ramps, `torchfire`, `flora_tree_gl_01`, `in_r_l_int_bridge_02`. The
 one ramp replaced, `ex_de_shack_steps`, has an item placed on a step inside it.
 
-- Only the converting plugin's OWN placements are read. A dependent's refs
-  name the base by a FormID that does not resolve in the master's export (TR:
-  887k of its REFR bases do not match Tamriel Data's records by raw id), and
-  the shelf's mesh is converted with its owner.
+- **Placements come from the plugin AND the plugins that master it**
+  (`_dependents`: any `export/*/_HEADER.txt` or `export/*/*/_HEADER.txt`
+  naming it). The mesh converts with the plugin whose record names it, and that
+  plugin may place none of it: `Furn_De_R_Bookshelf_02` is a STAT the
+  Morroblivion compatibility patch defines (`029EE724`) and places 0 times;
+  Morrowind.esm places it 196 times (as `019EE724`), Tribunal 39, and the
+  books on it are Morrowind_ob.esm BOOKs. Reading the patch alone kept the box.
+- The generated patch reads only `PATCH_SOURCES` (Morrowind, Tribunal,
+  Bloodmoon): it is a patch OF those ESMs, and every other plugin mastering it
+  (Tamriel Rebuilt, Tamriel Data, ...) is a third-party mod that does not
+  decide the vanilla meshes' collision. Patch index: 113 fixture models from
+  the three sources, in 1.0 s.
+- A raw FormID's index byte counts into ITS dump's master list, so every id is
+  compared as (owning plugin, object id): the byte names `Master[i]`, or the
+  dump itself when it equals the master count. Items are the CLUTTER/WEARABLE
+  records of every dump read and of each one's masters. A dependent overriding
+  the fixture's model is not followed; the fixtures are the plugin's own records.
+- Cost, measured under other load: Oblivion.esm 12.5 s (8 dependents) against 7.9 s own-only. Only a REFR whose
+  base is wanted is parsed; its base and cell are sliced out by `str.find`, and
+  fixtures are parsed in a second pass only in cells an item occupies.
 - `Morrowind.esm`: 312,901 REFRs, 264,524 of them fixtures and 35,734 items,
   parsed in 0.9 s. Fixture-by-item pairs sharing a cell come to 4.3 million,
   which is why the index is written once beside the record dump
