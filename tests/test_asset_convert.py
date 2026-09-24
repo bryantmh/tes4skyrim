@@ -4936,3 +4936,52 @@ class TestFalloutBipedSlotsAreNotOblivions:
         world_falloutnv.register_fallout_source({'TERM': [1]})
         assert _convert_biped_flags(1 << 5) == 0
 
+
+class TestMorrowindParticlesRender:
+    """A legacy Morrowind emitter must come out simulating and visible, not just loadable.
+
+    See: docs/commentary/asset_convert_nif.md#morrowind-particles-invisible
+    """
+
+    def _upgraded(self, color_extra=None):
+        """The NiParticleSystem one synthetic legacy emitter upgrades to."""
+        from asset_convert.nif.particles_morrowind import upgrade_legacy_particles
+        root, frame = NifFormat.NiNode(), NifFormat.NiNode()
+        legacy = NifFormat.NiRotatingParticles()
+        legacy.data = NifFormat.NiRotatingParticlesData()
+        ctrl = NifFormat.NiParticleSystemController()
+        ctrl.frequency = 1.0
+        ctrl.emitter = frame
+        ctrl.particle_extra = color_extra
+        legacy.controller = ctrl
+        root.num_children = 2
+        root.children.update_size()
+        root.children[0], root.children[1] = frame, legacy
+        data = NifFormat.Data()
+        data.roots = [root]
+        data.blocks = [root, frame, legacy, ctrl] + ([color_extra] if color_extra else [])
+        assert upgrade_legacy_particles(data) == 1
+        return root.children[1]
+
+    def test_clock_runs_and_particles_are_born_visible(self):
+        """The update clock runs at the authored rate and particles are born opaque."""
+        psys = self._upgraded()
+        update = psys.controller.next_controller
+        assert isinstance(update, NifFormat.NiPSysUpdateCtlr)
+        assert update.frequency == 1.0
+        emitter = next(m for m in psys.modifiers if isinstance(m, NifFormat.NiPSysEmitter))
+        assert emitter.initial_color.a == 1.0
+
+    def test_every_system_carries_a_color_modifier(self):
+        mods = self._upgraded().modifiers
+        assert any(isinstance(m, NifFormat.NiPSysColorModifier) for m in mods)
+
+    def test_authored_color_curve_is_kept(self):
+        """Morrowind's own color curve rides through instead of being dropped."""
+        curve = NifFormat.NiColorData()
+        legacy = NifFormat.NiParticleColorModifier()
+        legacy.color_data = curve
+        mods = self._upgraded(legacy).modifiers
+        colors = [m for m in mods if isinstance(m, NifFormat.NiPSysColorModifier)]
+        assert len(colors) == 1 and colors[0].data is curve
+

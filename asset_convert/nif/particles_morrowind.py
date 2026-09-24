@@ -87,6 +87,13 @@ def _gravity_from(extra, frame):
     return mod
 
 
+def _color_from(extra=None):
+    """A NiPSysColorModifier on the legacy color curve; none means neutral."""
+    mod = NifFormat.NiPSysColorModifier()
+    mod.data = getattr(extra, 'color_data', None)
+    return mod
+
+
 def _translate_extra(extra, frame):
     """The Skyrim modifier a legacy affector becomes, or None when unmapped."""
     name = type(extra).__name__
@@ -96,6 +103,8 @@ def _translate_extra(extra, frame):
         return _gravity_from(extra, frame)
     if name == 'NiParticleRotation':
         return NifFormat.NiPSysRotationModifier()
+    if name == 'NiParticleColorModifier':
+        return _color_from(extra)
     return None
 
 
@@ -132,6 +141,8 @@ def _emitter_from(ctrl, frame):
     emitter.height = _POINT_EMITTER_EXTENT
     emitter.depth = _POINT_EMITTER_EXTENT
     emitter.initial_radius = ctrl.size
+    emitter.initial_color.r = emitter.initial_color.g = 1.0
+    emitter.initial_color.b = emitter.initial_color.a = 1.0
     return emitter
 
 
@@ -166,6 +177,8 @@ def _build_modifiers(ctrl, frame):
         translated = _translate_extra(extra, frame)
         if translated is not None:
             mods.append(translated)
+    if not any(isinstance(m, NifFormat.NiPSysColorModifier) for m in mods):
+        mods.append(_color_from())
     mods.append(NifFormat.NiPSysPositionModifier())
     mods.append(NifFormat.NiPSysBoundUpdateModifier())
     return mods, emitter
@@ -221,6 +234,7 @@ def _as_particle_system(node, parents):
     ectlr = _emitter_ctlr(ctrl, emitter, psys)
     update = NifFormat.NiPSysUpdateCtlr()
     update.flags = _UPDATE_CTRL_FLAGS
+    update.frequency = ctrl.frequency
     update.target = psys
     ectlr.next_controller = update
     psys.controller = ectlr
