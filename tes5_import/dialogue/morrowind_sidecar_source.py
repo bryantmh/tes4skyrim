@@ -134,16 +134,26 @@ def _npc_flags(rec) -> int:
     return int.from_bytes(flag.data[:4], 'little') if flag is not None else 0
 
 
-def _npc_stats(rec, tables: dict) -> dict:
+def _npdt(rec) -> bytes:
+    """The NPC_'s NPDT bytes, or b''."""
+    data = get_subrecord(rec, 'NPDT')
+    return data.data if data is not None else b''
+
+
+def npc_is_autocalc(rec) -> bool:
+    """Whether OpenMW derives this NPC_'s stats: its NPDT is not the 52-byte form."""
+    return len(_npdt(rec)) < struct.calcsize(_NPDT_FULL)
+
+
+def npc_stats(rec, tables: dict) -> dict:
     """`{level, disposition, reputation, rank, gold, attributes, skills}` for
     one NPC_: authored from the 52-byte NPDT, else derived from its race and
     class as OpenMW derives them for the 12-byte form.
 
     See: docs/commentary/morrowind_runtime.md#npc-stats
     """
-    data = get_subrecord(rec, 'NPDT')
-    raw = data.data if data is not None else b''
-    if len(raw) >= struct.calcsize(_NPDT_FULL):
+    raw = _npdt(rec)
+    if not npc_is_autocalc(rec):
         fields = struct.unpack_from(_NPDT_FULL, raw)
         return {'level': fields[0], 'attributes': list(fields[1:9]),
                 'skills': list(fields[9:36]), 'disposition': fields[39],
@@ -167,12 +177,17 @@ def _npc_stats(rec, tables: dict) -> dict:
     return out
 
 
-def _npc_services(rec, tables: dict) -> int:
+def npc_services(rec, tables: dict) -> int:
     """`Npc::getServices`: the class's services for an autocalc NPC, else
     the AIDT's own."""
     if _npc_flags(rec) & _AUTOCALC:
         clazz = tables['classes'].get(_text(rec, 'CNAM').lower())
         return clazz['services'] if clazz else 0
+    return aidt_services(rec)
+
+
+def aidt_services(rec) -> int:
+    """The services an NPC_ or CREA's AIDT authors, or 0."""
     aidt = get_subrecord(rec, 'AIDT')
     if aidt is None or len(aidt.data) < 12:
         return 0
@@ -192,14 +207,14 @@ def _actor_line(rec, tables: dict) -> str:
     personality|luck|speechcraft|mercantile|services|gold|hello|fight|flee|
     alarm|8 attributes|27 skills` for one NPC_, the last two comma-joined in
     TES3's own order."""
-    stats = _npc_stats(rec, tables)
+    stats = npc_stats(rec, tables)
     fields = (_text(rec, 'RNAM'), _text(rec, 'CNAM'), _text(rec, 'ANAM'),
               stats['rank'], stats['disposition'],
               1 if _npc_flags(rec) & _FEMALE else 0, _text(rec, 'FNAM'),
               stats['level'], stats['reputation'],
               stats['attributes'][_PERSONALITY], stats['attributes'][_LUCK],
               stats['skills'][_SPEECHCRAFT], stats['skills'][_MERCANTILE],
-              _npc_services(rec, tables), stats['gold'], *_ai_settings(rec),
+              npc_services(rec, tables), stats['gold'], *_ai_settings(rec),
               ','.join(str(value) for value in stats['attributes']),
               ','.join(str(value) for value in stats['skills']))
     return f'{rec.record_id}=' + '|'.join(str(field) for field in fields)

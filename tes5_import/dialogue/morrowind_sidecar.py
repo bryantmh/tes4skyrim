@@ -187,7 +187,7 @@ def tes3_quality(quality: float) -> float:
 
 def _source_is_tes3(export_dir: str, plugin: str) -> bool:
     """True when the plugin's binary is TES3; its export decides without one."""
-    binary = source_binary(_export_root(export_dir), plugin)
+    binary = source_binary(export_root(export_dir), plugin)
     if binary and os.path.isfile(binary):
         return is_tes3(binary)
     return is_tes3_export(export_dir)
@@ -272,7 +272,7 @@ def _actor_index(export_dir: str) -> str:
     return '\n'.join(lines) + ('\n' if lines else '')
 
 
-def _export_root(export_dir: str) -> str:
+def export_root(export_dir: str) -> str:
     """The folder holding the source registry, at or above `export_dir`."""
     path = os.path.abspath(export_dir)
     while not os.path.isfile(os.path.join(path, _REGISTRY_FILE)):
@@ -286,7 +286,7 @@ def _export_root(export_dir: str) -> str:
 def table_dirs(export_dir: str, plugin_name: str) -> list:
     """`(record_dir, plugin)` for this plugin, then each TES3 master that has
     been exported -- a dialogue script names its masters' globals freely."""
-    root = _export_root(export_dir)
+    root = export_root(export_dir)
     binary = source_registry.plugin_binary(root, plugin_name)
     masters = get_masters_from_binary(str(binary)) if binary else []
     dirs = [(export_dir, plugin_name)]
@@ -765,7 +765,7 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
     See: docs/plans/morrowind_object_scripts.md#masters-stage-themselves
     """
     dirs = table_dirs(export_dir, plugin_name)
-    root = _export_root(export_dir)
+    root = export_root(export_dir)
     ids = gathered or {}
     loaded = _loaded_dirs(root, export_dir, plugin_name)
     locals_lines, body_lines, by_formid = _script_tables(
@@ -829,7 +829,7 @@ def _stage_dialogue(export_dir: str, out_dir: str, present: list,
         return len(present)
     topics, infos = write_merged_dialogue(gathered, out_dir)
     folders = [(folder, plugin) for folder, plugin, _own in _loaded_dirs(
-        _export_root(export_dir), export_dir, chain[-1][0])]
+        export_root(export_dir), export_dir, chain[-1][0])]
     gathered['travel'] = travel_lines(gathered,
                                       marker_index(folders, export_records))
     print(f'    sidecar: {topics} topics, {infos} responses merged over '
@@ -900,7 +900,7 @@ def _sound_owners(export_dir: str, output_root: str) -> list:
     See: docs/commentary/tes4_export_morrowind.md#masters
     """
     from output_layout import plugin_esm
-    root = _export_root(export_dir)
+    root = export_root(export_dir)
     owners = []
     for master in masters_from_export_header(export_dir):
         esm = str(plugin_esm(output_root, master, root))
@@ -924,7 +924,7 @@ def stage_sound_table(export_dir: str, output_path: str, plugin_name: str,
     if not is_tes3_export(export_dir):
         return 0
     plugin = os.path.basename(plugin_name)
-    chain = plugin_chain(_export_root(export_dir), plugin)
+    chain = plugin_chain(export_root(export_dir), plugin)
     ids = gather(chain)['sounds'] if chain else {}
     rows = {edid.lower(): f'{edid}={plugin}|{sndr:08X}'
             for edid, sndr in own.items() if edid and sndr}
@@ -970,7 +970,7 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
                if os.path.isfile(os.path.join(export_dir, name))]
     out_dir = sidecar_dir(output_path, plugin_name)
     os.makedirs(out_dir, exist_ok=True)
-    chain = plugin_chain(_export_root(export_dir), plugin_name)
+    chain = plugin_chain(export_root(export_dir), plugin_name)
     gathered = gather(chain) if chain else {}
     staged = (apparatus
               + _stage_dialogue(export_dir, out_dir, present, chain, gathered)

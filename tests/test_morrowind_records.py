@@ -592,6 +592,52 @@ def test_gap_patch_holds_what_morroblivion_lacks(tmp_path):
         'one id under two types is two records')
 
 
+def _mgef(index: int, school: int, base_cost: float) -> reader.Tes3Record:
+    """A TES3 MGEF, addressed by INDX rather than a record id."""
+    rec = reader.Tes3Record(type='MGEF', flags=0)
+    medt = struct.pack('<ifiiiifff', school, base_cost, 0x7C0, 0, 0, 0,
+                       1.0, 1.0, 1.0)
+    rec.subrecords = [_sub('INDX', struct.pack('<i', index)),
+                      _sub('MEDT', medt)]
+    return rec
+
+
+def test_gap_patch_carries_vanillas_authored_magic_effects(tmp_path):
+    """Every Morroblivion-mode spell names the patch's effects, so they carry
+    vanilla's school and cost; a later master's copy wins, and no stub is
+    written over an effect a master already supplies.
+
+    See: docs/commentary/tes4_export_morrowind.md#effects-come-from-the-patch
+    """
+    export = tmp_path / 'export'
+    export.mkdir()
+    data = tmp_path / 'Data Files'
+    data.mkdir()
+    for name, cost in (('Morrowind.esm', 5.0), ('Tribunal.esm', 7.0),
+                       ('Bloodmoon.esm', None)):
+        records = [_rec('STAT', 'ex_scrapwood01')]
+        if cost is not None:
+            records.append(_mgef(75, 5, cost))
+        _tes3_records(data / name, records)
+    _export(export, _FIXTURE_MASTER, [_rec('STAT', 'covered_rock')])
+    _convert_morroblivion(export, tmp_path / 'output')
+
+    result = build_patch(str(data), str(export), [_FIXTURE_MASTER],
+                         progress=lambda *_: None,
+                         out_root=tmp_path / 'output')
+
+    assert result['ok'], result.get('error')
+    body = (export / PATCH_NAME / 'MGEF.txt').read_text(encoding='utf-8')
+    blocks = {b.split('EditorID=')[1].split('\n')[0]: b
+              for b in body.split('---RECORD_BEGIN---') if 'EditorID=' in b}
+    assert 'DATA.School=5' in blocks['MW075RestoreHealth']
+    assert 'DATA.BaseCost=7.0' in blocks['MW075RestoreHealth'], 'Tribunal wins'
+    assert f"FormID={patch_formid(('MGEF', 'MW075RestoreHealth'), 1)}" in \
+        blocks['MW075RestoreHealth'], 'the id every dependent already names'
+    assert set(blocks) == {'MW075RestoreHealth'}, (
+        'the stand-in master, a TES3 export, already supplies the other 142')
+
+
 def test_gap_patch_builds_the_plugin_itself(tmp_path):
     """A build reports success only when the installable plugin EXISTS.
 

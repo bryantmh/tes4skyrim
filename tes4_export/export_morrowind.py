@@ -780,11 +780,13 @@ def filled_soulgem_records(records, ctx: MorrowindContext) -> list:
 
 
 def magic_effect_records(records, ctx: MorrowindContext) -> list:
-    """`(form_id, lines)` for the effects no MGEF record in this plugin supplies."""
+    """`(form_id, lines)` for the effects neither this plugin's MGEF records
+    nor a master supplies; a stub over a master's authored effect would hide it."""
     out = []
     for index, lines in synthesized_effects(authored_indices(records),
                                            getattr(ctx, 'effect_ranges', None)):
-        out.append((ctx.resolve(effect_editor_id(index), 'MGEF'), lines))
+        if not ctx.index.lookup(effect_editor_id(index)):
+            out.append((ctx.resolve(effect_editor_id(index), 'MGEF'), lines))
     return out
 
 

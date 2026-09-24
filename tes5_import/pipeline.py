@@ -43,6 +43,7 @@ from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         OverrideContext, detect_injected_records)
 from .record_types import magic_art
 from .record_types.crime import plan_crime
+from .record_types.spell_tomes import create_spell_tomes
 from .dialogue.converter import build_npc_to_vtyp_map
 from .base.adopted_records import adopt_master_special_records
 from .base.cell_family import set_cell_families
@@ -632,10 +633,12 @@ def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict,
     _step_done('magic effect plans')
 
 
-def _prescan_vendor_trainer(by_type: dict, ctx, writer, export_dir: str, _step_done):
-    """Create the vendor factions and the trainer faction + CLAS clones."""
+def _prescan_vendor_trainer(by_type: dict, ctx, writer, export_dir: str,
+                            plugin: str, _step_done):
+    """Create the vendor factions, the trainer faction + CLAS clones, and the spell tomes."""
     from .record_types.actor_common import create_service_records
     create_service_records(by_type, writer, ctx, export_dir)
+    create_spell_tomes(by_type, writer, ctx, export_dir, plugin)
     _step_done('vendor/trainer records')
 
 
@@ -1086,7 +1089,8 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
                                                 st.fid_to_edid, _step_done)
     _prescan_magic_effects(by_type, ctx, writer, st.xref, st.fid_to_edid,
                            _scpt_master_export, _step_done, export_dir)
-    _prescan_vendor_trainer(by_type, ctx, writer, export_dir, _step_done)
+    _prescan_vendor_trainer(by_type, ctx, writer, export_dir,
+                            os.path.basename(st.output_path), _step_done)
     plan_crime(by_type, ctx, writer, export_dir, st.plugin_out_dir,
                st.output_path, st.output_root)
     _prescan_mesh_caches(export_dir, st.plugin_out_dir, _step_done)

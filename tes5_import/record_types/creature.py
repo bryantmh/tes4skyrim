@@ -23,6 +23,7 @@ from .actor_common import (GOLD001_FID, NAM5_UNKNOWN, SOUND_LEVEL_NORMAL,
                            build_aidt, build_outfit, origin_memberships,
                            get_vendor_faction_fids_for_actor, npc_vtyp,
                            read_items)
+from .spell_tomes import tome_items
 from .common import (
     get_float,
     get_formid,
@@ -513,7 +514,7 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     full = get_str(rec, 'FULL')
     outfit_fids, carried = split_inventory(read_items(rec))
     subs += _crea_inventory_subs(
-        carried,
+        carried + tome_items(get_formid(rec, 'FormID')),
         get_int(rec, 'ACBS.BarterGold') if crea_vendor_fid else 0)
 
     subs += pack_subrecord('AIDT', build_aidt(rec))

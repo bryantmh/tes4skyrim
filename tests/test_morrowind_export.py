@@ -12,7 +12,9 @@ import pytest
 
 from tes4_export import morrowind_land as land
 from tes4_export import tes3_reader as reader
-from tes4_export.export_morrowind import MorrowindContext, convert_plugin
+from tes4_export.export_morrowind import (MorrowindContext, convert_plugin,
+                                          magic_effect_records,
+                                          register_magic_effects)
 from tes4_export.record_types.morrowind_dialog import DIAL_SIG, INFO_SIG
 from tes4_export.morrowind_cell import parse_cell
 from tes4_export.morrowind_ids import IdIndex, encode_editor_id, marker_formid
@@ -111,6 +113,21 @@ def test_unconverted_base_object_is_never_referenced():
     assert ctx.resolve('some_npc_we_do_not_convert') == ''
     ctx.register_own('a_static_we_do_convert')
     assert ctx.resolve('a_static_we_do_convert') != ''
+
+
+def test_an_effect_a_master_supplies_is_not_stubbed_over():
+    """A stub override would hide the master's authored school, cost and flags.
+
+    See: docs/commentary/tes4_export_morrowind.md#effects-come-from-the-patch
+    """
+    ctx = MorrowindContext()
+    ctx.index.add('MW075RestoreHealth', '0140EBAA', 'MGEF')
+    register_magic_effects([], ctx)
+    names = {line for _fid, lines in magic_effect_records([], ctx)
+             for line in lines if line.startswith('EditorID=')}
+    assert 'EditorID=MW075RestoreHealth' not in names
+    assert 'EditorID=MW076RestoreSpellPoints' in names, (
+        'an effect no master supplies is still synthesized')
 
 
 def test_land_height_round_trip_is_exact():

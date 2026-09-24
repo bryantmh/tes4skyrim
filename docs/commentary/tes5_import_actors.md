@@ -19,6 +19,7 @@ them does.
 - [A Morrowind merchant sells what it owns nearby](#morrowind-merchant-stock)
 - [A dependent adopts its masters' vendor factions](#vendor-factions-in-a-dependent)
 - [The merchant marker faction: a CTDA ceiling](#barter-gate-ctda-limit)
+- [Spell merchants sell tomes](#spell-tomes)
 - [The plugin-origin marker faction](#origin-faction)
 - [It also unlocks AI barrier doors](#barrier-door-ownership)
 - [FACT relations: Ally and Friend are not interchangeable](#faction-relations)
@@ -289,6 +290,44 @@ while Training (a 1-condition gate) kept working.
 
 Membership in the marker is what the dialogue asks about; the per-service
 factions still do the actual vending via the VEND keyword filter and VENC chest.
+
+### <a id="spell-tomes"></a>Spell merchants sell tomes
+
+**Code:** `record_types/spell_tomes.py`, `record_types/spell_tomes_morrowind.py`
+
+Both games sell a spell straight into the spellbook from a service menu Skyrim
+lacks, so every spell a merchant offered becomes a BOOK with DATA flag Teaches
+Spell (0x04) in the merchant's CARRIED inventory -- the barter menu always
+lists that, chest or no chest. The shape copies vanilla's tomes: FULL
+`Spell Tome: <spell>`, KWDA VendorItemBook + VendorItemSpellTome, weight 1.0,
+and the model and INAM of the first effect's school
+(`SpellTome<School>LowPoly.nif`, `0002FBB3`-`0002FBB7`). Mysticism folds to
+Alteration, as the effects do. The value is the spell's base price in its own
+game; Skyrim's barter markup then applies as to every other converted item.
+
+**Oblivion rule:** the ordinary spells (SPIT.Type 0) in the merchant's own
+list, at `SPIT.Cost x fSpellmakingGoldMult`. Oblivion.esm sets 3.0, which is
+UESP's "three times the magicka cost"; `Oblivion.exe` constructs the setting
+from `fld1`, so a chain that sets none (Nehrim) prices at 1.0. It is the only
+GMST in the executable tying spells to gold. Measured: Oblivion.esm 36 spell
+merchants, 588 list entries, all SPEL (one ability); Nehrim has 2 LVSP entries,
+which are not sold.
+
+**Morrowind rule:** OpenMW `SpellBuyingWindow::setPtr` -- the merchant's known
+spells of type Spell, minus its race's powers, at
+`calcSpellCost x fSpellValueMult`. An NPC whose NPDT is the 12-byte form also
+knows what `autoCalcNpcSpells` picks from the whole spell store in store order,
+so the chain's binaries are read (the export keeps only mean magnitudes). The
+cost port, in float32, reproduces the CS-stored cost of all 708 autocalc spells
+of Morrowind.esm and 715 of the TR chain. TR_Mainland has 23 autocalc spell
+merchants with no list of their own; every autocalc NPC's AIDT services equal
+its class's (6,712 of 6,712), so the vendor factions need no change.
+
+A tome's EditorID is `TES4SpellTome_` or `TES3SpellTome_` plus the spell's, and
+a dependent adopts its masters' tome only under its own rule: TR's merchants
+price vanilla spells by Morrowind's rule, Morrowind_ob's by Oblivion's.
+Measured: Oblivion.esm 311 tomes / 33 merchants, Morrowind_ob.esm 350 / 94,
+TR_Mainland 452 / 154.
 
 ## <a id="origin-faction"></a>The plugin-origin marker faction
 

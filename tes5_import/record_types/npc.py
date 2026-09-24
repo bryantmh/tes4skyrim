@@ -33,6 +33,7 @@ from .common import (
     prefix_path,
 )
 from .crime import IS_GUARD_FACTION, crime_faction, is_guard_class
+from .spell_tomes import tome_items
 from .npc_morrowind import (TES5_RACE_BASE_HEALTH, is_morrowind_npc,
                             morrowind_health_and_level)
 
@@ -330,6 +331,7 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
     vendor_fid = vendor_fids[0] if vendor_fids else 0
 
     outfit_fids, carried = split_inventory(read_items(rec))
+    carried += tome_items(get_formid(rec, 'FormID'))
     subs += _identity_subs(rec, skyrim_race, gender, carried,
                            vendor_fid, trainer_clas_fid)
 

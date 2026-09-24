@@ -2249,6 +2249,24 @@ alone -- index 19 `DrainSpellpoints` vs `DrainMagicka`, 132 `Corpus` vs
 change would renumber every converted spell and must fail loudly; a spelling
 difference is cosmetic and must not.
 
+### <a id="effects-come-from-the-patch"></a>Effects come from the patch, with vanilla's authored data
+
+**Code:** `morrowind_patch.py:collect_magic_effects`, `export_morrowind.py:magic_effect_records`
+
+A TES3 MGEF has no record id, so `collect_gap_records` never collected one and
+the compat patch shipped all 143 effects as stubs: name, index and range flags,
+no school, base cost or description. Every TES3 plugin exported in Morroblivion
+mode then wrote its OWN stub over each of them (TR's `MW075RestoreHealth` is
+`0140EBAA`, the patch's id), so TR's and Tamriel_Data's spells converted with
+no school at all.
+
+The patch now exports vanilla's authored MGEFs through `export_MGEF`, a later
+master's copy winning as TES3 loads them, under the ids dependents already
+name, and synthesizes only the indices no vanilla master authors. A plugin
+synthesizes an effect only when no master supplies it: a stub loaded after the
+patch hides the authored record. An effect a plugin itself authors is still
+exported as its override.
+
 ### Magnitude is the mean of the authored range
 
 A TES3 effect authors `magnMin` and `magnMax`; a TES5 EFIT holds one number.

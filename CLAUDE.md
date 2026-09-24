@@ -159,6 +159,12 @@ These protect things that are hard or impossible to get back.
 - **Morrowind has two modes, and both must be tested:** authored masters
   (Morrowind, Tribunal, Bloodmoon), and Morroblivion (Morrowind_ob.esm plus the
   Morroblivion-Morrowind compat patch). The full OpenMW source is in `references/`.
+  - 🛑 **Morrowind.esm is always exported in authored mode, never Morroblivion
+    mode.** An export whose `_HEADER.txt` lists `Morrowind_ob.esm` or the compat
+    patch as masters is wrong — flag it; it is not the user's setup.
+  - Tamriel_Data and TR_Mainland are built in Morroblivion mode. Never convert
+    Tribunal.esm or Bloodmoon.esm; a TR export that demands them means the
+    wrong mode was picked.
 
 ### When an idea isn't working
 

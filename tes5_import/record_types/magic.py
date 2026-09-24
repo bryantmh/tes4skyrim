@@ -877,6 +877,12 @@ def _resolve_assoc_item(fid: int, archetype: int, t4_flags: int) -> int:
     return 0
 
 
+def mgef_school(rec: dict, code: str) -> int:
+    """The TES5 magic-skill actor value an MGEF's TES4 school converts to."""
+    return SCHOOL_OVERRIDES.get(
+        code, SCHOOL_TO_AV.get(get_int(rec, 'DATA.School', -1), AV_NONE))
+
+
 def build_data(rec: dict, code: str, archetype: int, actor_value: int,
                 counter_count: int) -> bytes:
     """The 152-byte TES5 MGEF DATA for one effect.
@@ -896,9 +902,7 @@ def build_data(rec: dict, code: str, archetype: int, actor_value: int,
     struct.pack_into('<I', data, O_ASSOC_ITEM,
                      _resolve_assoc_item(get_formid(rec, 'DATA.AssocItem'),
                                          archetype, t4_flags))
-    school = SCHOOL_OVERRIDES.get(
-        code, SCHOOL_TO_AV.get(get_int(rec, 'DATA.School', -1), AV_NONE))
-    struct.pack_into('<i', data, O_MAGIC_SKILL, school)
+    struct.pack_into('<i', data, O_MAGIC_SKILL, mgef_school(rec, code))
     resist = TES4_RESIST_AV_TO_TES5.get(
         get_int(rec, 'DATA.ResistValue', 0xFFFFFFFF), AV_NONE)
     struct.pack_into('<i', data, O_RESIST_VALUE, resist)

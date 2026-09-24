@@ -48,6 +48,7 @@ from .morroblivion_pairs import (find_pairs, holder_overrides, left_half,
 from .morrowind_armor import body_models_from
 from .morrowind_ids import BASE_TYPES, IdIndex, load_index
 from .record_types.morrowind import as_dds, tes4_signature
+from .record_types.morrowind_magic import effect_ranges
 from .tes3_reader import get_string, get_subrecord, read_file
 
 #: Morroblivion's EditorID separators: a leading '0' and '_' written 'U'.
@@ -219,6 +220,29 @@ def _info_identity(rec) -> str:
     """An INFO's own INAM, which is what makes it unique; '' for other types."""
     sub = get_subrecord(rec, 'INAM') if rec.type == 'INFO' else None
     return get_string(sub) if sub is not None else ''
+
+
+def collect_magic_effects(sources) -> tuple:
+    """({effect index: TES3 MGEF}, {effect index: range bits}) over the vanilla masters.
+
+    A TES3 MGEF has no record id, so `collect_gap_records` never sees one; the
+    patch carries them so every Morroblivion-mode spell reads authored school,
+    cost and flags instead of a stub. A later master's copy wins, and the
+    ranges are every one vanilla casts the effect at, as a TES3 export adds.
+    See: docs/commentary/tes4_export_morrowind.md#effects-come-from-the-patch
+    """
+    found, casters = {}, []
+    for path in sources:
+        if not os.path.isfile(path):
+            continue
+        for rec in read_file(path)[1]:
+            if rec.deleted:
+                continue
+            casters += [rec] if rec.type in ('SPEL', 'ENCH', 'ALCH') else []
+            index = get_subrecord(rec, 'INDX') if rec.type == 'MGEF' else None
+            if index is not None and len(index.data) >= 4:
+                found[int.from_bytes(index.data[:4], 'little', signed=True)] = rec
+    return found, effect_ranges(casters)
 
 
 def collect_bark_records(sources) -> list:
@@ -531,8 +555,7 @@ def _write_records(gaps: dict, export_dir: str, progress,
     Imported inside the function to break the cycle with `export_morrowind`,
     which needs PATCH_NAME from this module at its own import time.
     """
-    from .export_morrowind import (export_record, magic_effect_records,
-                                   write_export, write_header)
+    from .export_morrowind import export_record, write_export, write_header
     from .record_types.morrowind import filled_soulgem_id, filled_soulgems
 
     ctx, ids = _patch_context(gaps, export_dir, barks, morroblivion, esms)
@@ -545,7 +568,7 @@ def _write_records(gaps: dict, export_dir: str, progress,
             lines = left_half(lines, halves[key])
         if lines:
             out.setdefault(tes4_signature(rec), []).append((ids[key], lines))
-    out['MGEF'] = magic_effect_records(records, ctx)
+    out['MGEF'] = _magic_effects(*collect_magic_effects(esms), records, ctx)
     for gem_id, soul, lines in filled_soulgems(records):
         edid = filled_soulgem_id(gem_id, soul)
         out.setdefault('SLGM', []).append(
@@ -562,6 +585,26 @@ def _write_records(gaps: dict, export_dir: str, progress,
     progress(f'  Wrote {sum(counts.values())} records to {out_dir}')
     return out_dir, scripts
 
+
+
+def _magic_effects(authored: dict, ranges: dict, records: list, ctx) -> list:
+    """`(form_id, lines)` for all 143 effects: vanilla's authored ones, then stubs for the rest.
+
+    Imported inside the function to break the cycle with `export_morrowind`,
+    which needs PATCH_NAME from this module at its own import time.
+    """
+    from .export_morrowind import export_record, magic_effect_records
+    from .record_types.morrowind_magic import effect_editor_id
+
+    for index, bits in ranges.items():
+        ctx.effect_ranges[index] = ctx.effect_ranges.get(index, 0) | bits
+    out = []
+    for index, rec in sorted(authored.items()):
+        lines = export_record(rec, ctx)
+        if lines:
+            out.append((ctx.gap_ids[('MGEF', effect_editor_id(index).lower())],
+                        lines))
+    return out + magic_effect_records(records + list(authored.values()), ctx)
 
 
 def _add_pair_halves(out: dict, pairs, esms, ctx, left_fids: dict) -> dict:
