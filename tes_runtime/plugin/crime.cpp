@@ -1,5 +1,6 @@
 #include "crime.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -10,6 +11,7 @@
 
 #include "addresses.h"
 #include "engine.h"
+#include "hook.h"
 #include "ids.h"
 #include "json.h"
 #include "log.h"
@@ -198,6 +200,39 @@ void Update() {
     if (jail) PointFactions(*jail);
 }
 
+using ServeTimeFn = void (*)(void* player);
+using PayCrimeGoldFn = void (*)(void* player, void* faction, bool goToJail, bool removeStolen);
+ServeTimeFn g_serveTime = nullptr;
+
+// The engine's own confiscation, run once the sentence is served.
+class ConfiscateTask : public TaskDelegate {
+public:
+    explicit ConfiscateTask(void* faction) : faction_(faction) {}
+    void Run() override {
+        void* player = g_n.player(g_api.vm, 0, nullptr);
+        if (!player) return;
+        VCall<PayCrimeGoldFn>(player, ids::kVtPayCrimeGold)(player, faction_, false, true);
+        Log("crime: sentence served -- stolen goods kept by faction %08X", IdOf(faction_));
+    }
+    void Dispose() override { delete this; }
+
+private:
+    void* faction_;
+};
+
+// ServeTime hands back the whole player-inventory chest, which is the same
+// evidence chest the stolen goods went into; both source games keep those.
+// See: docs/commentary/tes_runtime_crime.md#serve-time
+void ServeTimeHook(void* player) {
+    void* faction = At<void*>(player, ids::kPlayerJailFaction);
+    g_serveTime(player);
+    const bool fading = At<std::uint8_t>(player, ids::kPlayerServeFlags) & ids::kServeFadePending;
+    if (faction && !fading &&
+        std::find(g_pools.begin(), g_pools.end(), faction) != g_pools.end()) {
+        RunOnMainThread(new ConfiscateTask(faction));
+    }
+}
+
 class UpdateTask : public TaskDelegate {
 public:
     void Run() override {
@@ -247,6 +282,11 @@ void ResolveCrimeForms() {
     }
     Log("crime: %zu faction(s), %zu of %zu jail(s), %zu anchor(s) resolved",
         g_pools.size(), g_jails.size(), g_pendingJails.size(), g_anchors.size());
+    if (!g_pools.empty() && !g_serveTime) {
+        auto* vt = reinterpret_cast<void**>(Resolve("PlayerCharacter vtable", ids::kPlayerVtable, nullptr));
+        g_serveTime = reinterpret_cast<ServeTimeFn>(PatchVtableSlot(
+            vt, ids::kVtServeTime, reinterpret_cast<void*>(&ServeTimeHook), "ServeTime"));
+    }
 }
 
 void StartCrimeTick() {

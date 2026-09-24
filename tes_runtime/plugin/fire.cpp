@@ -321,18 +321,9 @@ int PlayerProcessEvent(void* sink, void* evn, void* src) {
 
 bool PatchSlot(int which, std::uint64_t id, const char* name, void* replacement) {
     auto* vt = reinterpret_cast<void**>(Resolve(name, id, nullptr));
-    if (!vt) return false;
-    g_origProcessEvent[which] = reinterpret_cast<ProcessEventFn>(vt[1]);
-    DWORD old = 0;
-    if (!VirtualProtect(&vt[1], sizeof(void*), PAGE_READWRITE, &old)) {
-        Log("fire: %s slot 1 is not writable", name);
-        return false;
-    }
-    vt[1] = replacement;
-    VirtualProtect(&vt[1], sizeof(void*), old, &old);
-    FlushInstructionCache(GetCurrentProcess(), &vt[1], sizeof(void*));
-    Log("fire: %s slot 1 %p -> hook", name, g_origProcessEvent[which]);
-    return true;
+    g_origProcessEvent[which] =
+        reinterpret_cast<ProcessEventFn>(PatchVtableSlot(vt, 1, replacement, name));
+    return g_origProcessEvent[which] != nullptr;
 }
 
 void* PlayerWithGun() {

@@ -45,6 +45,7 @@ from .record_types import magic_art
 from .record_types.crime import plan_crime
 from .record_types.spell_tomes import create_spell_tomes
 from .dialogue.converter import build_npc_to_vtyp_map
+from .dialogue.morrowind_sidecar import is_tes3_export
 from .base.adopted_records import adopt_master_special_records
 from .base.cell_family import set_cell_families
 from .base.owned_records import (
@@ -560,22 +561,26 @@ def _prescan_cross_ref_graph(all_records: list, ctx, export_dir: str, _step_done
     return xref
 
 
-def _prescan_script_plans(by_type: dict, ctx, xref, fid_to_edid: dict, _step_done):
+def _prescan_script_plans(by_type: dict, ctx, xref, fid_to_edid: dict,
+                          export_dir: str, _step_done):
     """Plan object + quest script VMADs; returns the master export or None.
 
     Each scriptable record gets a VMAD naming its compiled Papyrus
     script plus FormID bindings.  The MASTERS' SCPTs are indexed: a
     SCRI that misses the index drops the record's VMAD entirely.
+    A Morrowind source plans none: the Morrowind runtime runs its scripts.
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-master-key-not-formid
+    See: docs/commentary/tes5_import_pipeline.md#phase-0-tes3-no-papyrus-scripts
     """
     _scpt_master_export = ctx.master_export if ctx else None
+    planned, masters = by_type, _scpt_master_export
+    if is_tes3_export(export_dir):
+        planned, masters = {}, None
     from .base.object_scripts import build_object_script_plan, build_quest_script_plan
-    n_obj_scripts = build_object_script_plan(by_type, xref, fid_to_edid,
-                                             _scpt_master_export)
+    n_obj_scripts = build_object_script_plan(planned, xref, fid_to_edid, masters)
     print(f"  Object scripts: attached {n_obj_scripts} SCPT scripts to records via VMAD")
-    n_qust_scripts = build_quest_script_plan(by_type, xref, fid_to_edid,
-                                             _scpt_master_export)
+    n_qust_scripts = build_quest_script_plan(planned, xref, fid_to_edid, masters)
     print(f"  Quest scripts: planned {n_qust_scripts} SCRI attachments for QUST VMADs")
     _step_done('object/quest script plans')
     return _scpt_master_export
@@ -1086,7 +1091,8 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
                                        _step_done)
     _prescan_effect_families(by_type, ctx, writer)
     _scpt_master_export = _prescan_script_plans(by_type, ctx, st.xref,
-                                                st.fid_to_edid, _step_done)
+                                                st.fid_to_edid, export_dir,
+                                                _step_done)
     _prescan_magic_effects(by_type, ctx, writer, st.xref, st.fid_to_edid,
                            _scpt_master_export, _step_done, export_dir)
     _prescan_vendor_trainer(by_type, ctx, writer, export_dir,

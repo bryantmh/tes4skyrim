@@ -132,4 +132,20 @@ bool PatchCall(std::uintptr_t callAddr, void* replacement, const char* what) {
     return true;
 }
 
+void* PatchVtableSlot(void** vtable, std::size_t slot, void* replacement, const char* what) {
+    if (!vtable) return nullptr;
+    void** at = vtable + slot;
+    void* original = *at;
+    DWORD old = 0;
+    if (!VirtualProtect(at, sizeof(void*), PAGE_READWRITE, &old)) {
+        Log("hook(%s): slot %zu is not writable", what, slot);
+        return nullptr;
+    }
+    *at = replacement;
+    VirtualProtect(at, sizeof(void*), old, &old);
+    FlushInstructionCache(GetCurrentProcess(), at, sizeof(void*));
+    Log("hook(%s): slot %zu %p -> %p", what, slot, original, replacement);
+    return original;
+}
+
 }  // namespace tesruntime

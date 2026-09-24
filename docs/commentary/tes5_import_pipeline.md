@@ -18,6 +18,7 @@ The layer rules and the decision procedure are in
 - [Phase 0 — a dependent plugin does not re-create support records](#phase-0-dependent-skips-support-records)
 - [Phase 0 — the voice map reads the MASTERS' races and actors](#phase-0-voice-map-reads-masters)
 - [Phase 0 — chargen menus sit at fixed ids in the reserved gap](#phase-0-chargen-menu-ids)
+- [Phase 0 — a Morrowind source binds no Papyrus object scripts](#phase-0-tes3-no-papyrus-scripts)
 - [Phase 0 — a master's id must be keyed on its export KEY](#phase-0-master-key-not-formid)
 - [Phase 0 — the cross-ref graph mirrors the CLI scan](#phase-0-xref-mirrors-cli-scan)
 - [Phase 0 — magic effects, and what must exist before items convert](#phase-0-magic-effect-prerequisites)
@@ -154,6 +155,20 @@ pass's `GetIsVoiceType` gates never plays its lines.
 shared-plan contract as the button menus. Their records live at FIXED ids in the
 reserved FormID gap (`writer.chargen_fid_base`) because the page/button block
 must be contiguous and ordered.
+
+## <a id="phase-0-tes3-no-papyrus-scripts"></a>Phase 0 — a Morrowind source binds no Papyrus object scripts
+
+The object-script plan (`build_object_script_plan`) attaches a VMAD naming
+`TES4_<script>` to every record whose `SCRI` resolves, masters' scripts
+included. A Morrowind export writes `SCRI` too, but its scripts run in the
+Morrowind runtime and no Papyrus is compiled for it, so each such VMAD names a
+script that never exists. On TR_Mainland and Tamriel_Data (the bedroll
+`T_Com_Furn_Bedroll_01` → the compat patch's `Bed_Standard`), Papyrus logged
+"Unable to bind script" and "missing file" for every placed one. The plan
+predates Morrowind support (f640f18, 2026-07-11, against 60a9334,
+2026-09-01), and nothing had excluded it since. `_prescan_script_plans` hands
+both builders nothing for a Morrowind source (`is_tes3_export`), which also
+clears the plan an earlier plugin in the same run left behind.
 
 ## <a id="phase-0-master-key-not-formid"></a>Phase 0 — a master's id must be keyed on its export KEY
 

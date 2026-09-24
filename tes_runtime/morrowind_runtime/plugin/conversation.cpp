@@ -526,9 +526,32 @@ int ItemAt(double x, double y) {
     return -1;
 }
 
+// World::updateDialogueGlobals: the globals the engine keeps for a guard's
+// crime lines to test and print (%CrimeGoldTurnIn), refreshed when dialogue
+// starts and after every answer. The fallbacks are OpenMW's defaultgmsts.
+void UpdateCrimeGlobals() {
+    const int bounty = static_cast<int>(PlayerCrimeLevelNow());
+    const int gold = PlayerGold();
+    int discount = static_cast<int>(
+        bounty * GmstNumber("fCrimeGoldDiscountMult", 0.5f));
+    int turnIn = static_cast<int>(
+        bounty * GmstNumber("fCrimeGoldTurnInMult", 0.9f));
+    if (bounty > 0) {
+        discount = std::max(1, discount);
+        turnIn = std::max(1, turnIn);
+    }
+    const auto flag = [gold](int cost) { return cost <= gold ? 1.0f : 0.0f; };
+    State().SetGlobal("PCHasCrimeGold", flag(bounty));
+    State().SetGlobal("PCHasGoldDiscount", flag(discount));
+    State().SetGlobal("CrimeGoldDiscount", static_cast<float>(discount));
+    State().SetGlobal("CrimeGoldTurnIn", static_cast<float>(turnIn));
+    State().SetGlobal("PCHasTurnIn", flag(turnIn));
+}
+
 // The rows: Persuasion for an NPC, Barter for a merchant, a rule, then
 // every topic offered.
 void RebuildItems() {
+    UpdateCrimeGlobals();
     g_items.clear();
     if (g_actor && g_actor->IsNpc()) {
         g_items.push_back({Kind::Persuasion,
@@ -963,6 +986,7 @@ void BeginConversation(const char* speaker, const char* displayName,
     g_speakerName = displayName && *displayName ? displayName : g_speaker;
     g_playerName = playerName ? playerName : "";
     g_actor = std::make_unique<GameActor>(g_speaker);
+    UpdateCrimeGlobals();
     const Reply hello = Greet(*g_actor);
     if (hello.text.empty()) {
         RebuildItems();

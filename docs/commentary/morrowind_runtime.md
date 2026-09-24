@@ -2837,6 +2837,18 @@ because the stat is knowable and the same file already read it.
 An index outside its family answers 0 rather than reading past the table: the
 filter passes an index straight off a condition record.
 
+## <a id="show-rest-menu"></a>`ShowRestMenu` is a Skyrim bed
+
+A TES3 bed is an activator whose script calls `ShowRestMenu` on activation
+(`Bed_Standard`). OpenMW's `OpShowRestMenu` asks `sleepInBed` first and opens
+the rest menu only if that did not refuse. The runtime does what activating a
+Skyrim bed does (1.6.1170 id 17420 `+0x16a`): PlayerCharacter's can-sleep-here
+check (`0x731350`, id 40443), which given a bed also refuses one the player does
+not own, with the engine's own message, then the Sleep/Wait menu toggle
+(`0x95e0d0`, id 52490) with `sleeping` set. The wait key calls the same toggle
+with false. Where Morrowind would charge `iCrimeTresspass` for a witnessed
+sleep in an owned bed, Skyrim refuses the bed.
+
 ## <a id="travel"></a>Travel is OpenMW's TravelWindow
 
 **Code:** `plugin/conversation_travel.cpp`, `tes5_import/dialogue/morrowind_travel.py`
@@ -3328,6 +3340,15 @@ the one the guards' `Greeting 0` lines test. `SetPCCrimeLevel`/`ModPCCrimeLevel`
 write it (violent part cleared, the rest set). The `DialogueState` copy only
 stands in when no faction resolves.
 
+The guards' lines also test and print five globals the engine keeps
+(`PCHasCrimeGold`, `PCHasGoldDiscount`, `CrimeGoldDiscount`,
+`CrimeGoldTurnIn`, `PCHasTurnIn`). `UpdateCrimeGlobals` in `conversation.cpp`
+refreshes them the way OpenMW's `World::updateDialogueGlobals` does: when
+dialogue opens and after every answer. `%Global` in a line looks through every
+global the speaker's plugin declares, not only the ones written so far. The
+vendored `defines.cpp` no longer caches that list, because which globals are
+visible depends on the speaker's plugin.
+
 The fine and jail opcodes follow OpenMW (`miscextensions.cpp`): `PayFine`
 clears the bounty and confiscates stolen goods -- the dialogue has already
 taken the gold with `Player->RemoveItem Gold_001`, so `PlayerPayCrimeGold(true,
@@ -3336,8 +3357,16 @@ bounty, and `GoToJail` is `SendPlayerToJail(false, true)`: TES3's jail keeps
 the player's inventory. The jail itself is TESRuntime's nearest one
 ([tes_runtime_crime.md](tes_runtime_crime.md#nearest-jail)).
 
+As in OpenMW's `World::goToJail`, `GoToJail` only marks the player for jail,
+and the crime tick sends them once the conversation has closed, so the
+guard's line can be read first. TES3 then serves the whole sentence at once
+(OpenMW's `JailScreen`), so the tick calls `Game.ServeTime` as soon as
+PlayerCharacter `+0x720` names the faction. TESRuntime then keeps the stolen goods
+([tes_runtime_crime.md](tes_runtime_crime.md#serve-time)).
+
 | Native | id |
 |---|---:|
+| `Game.ServeTime` | 55573 |
 | `Actor.GetCrimeFaction` | 54921 |
 | `Faction.GetCrimeGold` | 55794 |
 | `Faction.SetCrimeGold` | 55809 |

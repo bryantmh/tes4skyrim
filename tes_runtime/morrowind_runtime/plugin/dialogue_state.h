@@ -90,6 +90,8 @@ struct GameHooks {
     bool (*isDisabled)(const std::string& ref) = nullptr;
     // The player activates `ref`.
     void (*activate)(const std::string& ref) = nullptr;
+    // `ShowRestMenu`: sleep in `bed` as in a Skyrim bed; empty rests in place.
+    void (*showRestMenu)(const std::string& bed) = nullptr;
     // Locks at `level`; a negative level unlocks.
     void (*setLocked)(const std::string& ref, int level) = nullptr;
     bool (*isLocked)(const std::string& ref) = nullptr;
@@ -304,10 +306,11 @@ struct GameHooks {
     // clear the bounty. GoToJail is the engine's own SendPlayerToJail.
     void (*payFine)(bool confiscate) = nullptr;
     void (*goToJail)() = nullptr;
-    // When Skyrim's own dialogue menu has opened on a Morrowind speaker -- a
-    // guard force-greeting to arrest -- closes it and opens the Morrowind
-    // conversation. Polled by the tick, on the main thread.
-    void (*divertDialogue)() = nullptr;
+    // Polled by the tick, on the main thread: when Skyrim's own dialogue menu
+    // has opened on a Morrowind speaker -- a guard force-greeting to arrest --
+    // closes it and opens the Morrowind conversation; once the engine has
+    // jailed the player for GoToJail, serves the sentence.
+    void (*crimeTick)() = nullptr;
     // The spell commands. `spell` is a TES3 SPEL id, resolved through SPEL.txt
     // to the SPEL the import minted. AddSpell/RemoveSpell put it on the actor's
     // spell list; HasSpell is what `GetSpell` answers.

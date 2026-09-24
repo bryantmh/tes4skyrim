@@ -430,7 +430,8 @@ def _jails(world: _World, doors: list, anchors: dict, cell_realm) -> list:
             continue
         spot = _jail_spot(world, ref, src, anchors)
         if spot:
-            jails.append({'marker': _raw(ref, 'FormID'), 'chest': chests.get(dst, 0),
+            jails.append({'marker': _raw(ref, 'FormID'), 'door': _raw(ref, 'XTEL.Door'),
+                          'cell': dst, 'chest': chests.get(dst, 0),
                           'world': spot[0], 'x': spot[1], 'y': spot[2],
                           'realm': cell_realm(src)})
     return sorted(jails, key=lambda j: j['marker'])
@@ -647,6 +648,49 @@ def _make_persistent(plan: _Plan) -> int:
     return exterior
 
 
+def _links_back(world: _World, refs: dict, jail: dict) -> bool:
+    """Whether the ref a jail marker teleports to teleports back to that marker."""
+    door = jail['door']
+    own = refs.get(door)
+    if own is not None:
+        return _raw(own, 'XTEL.Door') == jail['marker']
+    back = _raw(world.m.get(door), 'XTEL.Door')
+    return world.m.rekey(back, door >> 24) == jail['marker']
+
+
+def _return_marker(marker: dict, raw: int, cell: int) -> dict:
+    """A persistent copy of `marker` at its landing spot, teleporting back to it."""
+    rec = {'Signature': 'REFR', 'FormID': '%08X' % raw, 'NAME': marker['NAME'],
+           'RecordFlags': str(_PERSISTENT_FLAG), 'ParentCELL': '%08X' % cell,
+           'XTEL.Door': marker['FormID']}
+    for axis in ('PosX', 'PosY', 'PosZ', 'RotX', 'RotY', 'RotZ'):
+        rec[axis] = marker.get(f'XTEL.{axis}', '0')
+        rec[f'XTEL.{axis}'] = marker.get(axis, '0')
+    return rec
+
+
+def _link_jail_returns(plan: _Plan, by_type: dict, writer) -> int:
+    """Pair every jail marker with a marker that teleports back, as vanilla's do.
+
+    ServeTime releases the prisoner through that return teleport, and its
+    loading screen closes only when the move lands; a TES3 jail marker leads
+    to a door that goes nowhere. Keyed on the authored jail marker.
+    See: docs/commentary/tes_runtime_crime.md#return-marker
+    """
+    refs = {_raw(r, 'FormID'): r for r in plan.world.refs}
+    added = []
+    for jail in plan.jails:
+        if _links_back(plan.world, refs, jail):
+            continue
+        marker = refs[jail['marker']]
+        fid = writer.derive_formid('JAIL_RETURN', marker['FormID'])
+        raw = (plan.world.own << 24) | (fid & 0xFFFFFF)
+        added.append(_return_marker(marker, raw, jail['cell']))
+        marker['XTEL.Door'] = '%08X' % raw
+    by_type.setdefault('REFR', []).extend(added)
+    return len(added)
+
+
 def plan_crime(by_type: dict, ctx, writer, export_dir: str, plugin_out_dir: str,
                output_path: str, output_root: str) -> None:
     """Decide realms, write their factions, assign NPCs and write the sidecar."""
@@ -670,9 +714,11 @@ def plan_crime(by_type: dict, ctx, writer, export_dir: str, plugin_out_dir: str,
                         else plan.world.plugin, default] if default else [])
     _collect_guards(by_type, masters)
     loose = _make_persistent(plan)
+    returns = _link_jail_returns(plan, by_type, writer)
     _write_sidecar(plan, plugin_out_dir)
     print(f"  Crime: realms {plan.owned or [plan.default]}, "
-          f"{len(plan.jails)} jail(s) ({loose} exterior ref(s) not persistent), "
+          f"{len(plan.jails)} jail(s) ({loose} exterior ref(s) not persistent, "
+          f"{returns} return marker(s) added), "
           f"{len(_NPC_POOL)} NPC(s) assigned, {len(_GUARD_CLASSES)} guard class(es)")
 
 

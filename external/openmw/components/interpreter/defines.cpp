@@ -24,7 +24,6 @@ namespace
         return found;
     }
 
-    std::vector<std::string> globals;
     const std::initializer_list<std::tuple<std::string_view, std::string_view>> sActionBindings{
         { "actionslideright", "#{sRight}" },
         { "actionreadymagic", "#{sReady_Magic}" },
@@ -115,12 +114,9 @@ namespace
                     /* Not a builtin, try global variables */
                     if (!found)
                     {
-                        /* if list of globals is empty, grab it and sort it by descending string length */
-                        if (globals.empty())
-                        {
-                            globals = context.getGlobals();
-                            sort(globals.begin(), globals.end(), longerStr);
-                        }
+                        /* the visible globals change with the speaker's plugin, so they are not cached */
+                        std::vector<std::string> globals = context.getGlobals();
+                        sort(globals.begin(), globals.end(), longerStr);
 
                         for (const std::string& global : globals)
                         {

@@ -62,6 +62,8 @@ using ActivateFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                             void* actionRef, bool defaultOnly);
 using LockFn = void (*)(void* vm, std::uint32_t stack, void* ref, bool lock,
                         bool asOffLimits);
+using CanSleepHereFn = bool (*)(void* player, void* bed);
+using ToggleSleepMenuFn = void (*)(bool sleeping);
 using SetLockLevelFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                                 std::int32_t level);
 using RefQueryFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
@@ -166,6 +168,8 @@ SetEnabledFn  g_enable = nullptr;
 SetEnabledFn  g_disable = nullptr;
 IsDisabledFn  g_isDisabled = nullptr;
 ActivateFn     g_activate = nullptr;
+CanSleepHereFn g_canSleepHere = nullptr;
+ToggleSleepMenuFn g_toggleSleepMenu = nullptr;
 LockFn         g_lock = nullptr;
 SetLockLevelFn g_setLockLevel = nullptr;
 RefQueryFn     g_isLocked = nullptr;
@@ -450,6 +454,19 @@ void Activate(const std::string& id) {
     PostToMainThread([ref, player]() {
         const ScriptActivationScope byScript(ref);
         g_activate(PapyrusVm(), 0, ref, player, false);
+    });
+}
+
+// `ShowRestMenu` does what activating a Skyrim bed does: the player's
+// can-sleep-here check, which refuses a bed someone else owns, then the
+// Sleep/Wait menu opened for sleeping. No `bed` is a rest on the spot.
+// See: docs/commentary/morrowind_runtime.md#show-rest-menu
+void ShowRestMenu(const std::string& bedId) {
+    void* bed = bedId.empty() ? nullptr : OwnerRef(bedId);
+    if (!g_canSleepHere || !g_toggleSleepMenu) return;
+    PostToMainThread([bed]() {
+        void* player = PlayerRef();
+        if (player && g_canSleepHere(player, bed)) g_toggleSleepMenu(true);
     });
 }
 
@@ -918,6 +935,10 @@ void InstallGameCalls() {
                                         ids::kRefIsDisabled);
     g_activate = Native<ActivateFn>("ObjectReference.Activate",
                                     ids::kRefActivate);
+    g_canSleepHere = Native<CanSleepHereFn>("PlayerCharacter::CanSleepHere",
+                                            ids::kPlayerCanSleepHere);
+    g_toggleSleepMenu = Native<ToggleSleepMenuFn>("SleepWaitMenu toggle",
+                                                  ids::kToggleSleepWaitMenu);
     g_lock = Native<LockFn>("ObjectReference.Lock", ids::kRefLock);
     g_setLockLevel = Native<SetLockLevelFn>("ObjectReference.SetLockLevel",
                                             ids::kRefSetLockLevel);
@@ -975,6 +996,7 @@ void InstallGameCalls() {
     hooks.goldCount = GoldCount;
     hooks.moveGold = MoveGold;
     hooks.activate = Activate;
+    hooks.showRestMenu = ShowRestMenu;
     hooks.setLocked = SetLocked;
     hooks.isLocked = IsLocked;
     hooks.deleteRef = DeleteRef;

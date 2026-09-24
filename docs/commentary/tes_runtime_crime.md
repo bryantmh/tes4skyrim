@@ -75,6 +75,56 @@ same root worldspace -- inside, from the spot the interior's door opens onto --
 and writes that marker and chest into every converted crime faction. The
 markers and chests are persistent, so they resolve at any distance.
 
+The ref a marker's `XTEL` names must be persistent too. `SendPlayerToJail`
+(1.6.1170 `0x747200`, id 40655) reads the marker's `ExtraTeleport` (extra type
+`0x2B`, `0x2faa90`) and dereferences it unchecked. The engine resolves that
+linked ref when it loads the marker (CK: "Could not find linked door (%08X) in
+teleport data init."), and a temporary ref in an unloaded interior does not
+exist yet, so the marker ends up with no teleport and the arrest crashes at
+`+0x1FE`. Vanilla, Oblivion and Morroblivion pair two persistent prison
+markers. TR_Mainland sends 13 of its 16 markers to the jail's temporary door,
+so the import gives each one a persistent partner
+([below](#return-marker)).
+
+## <a id="serve-time"></a>Serving time keeps the stolen goods
+
+Both source games keep confiscated stolen goods in the evidence chest and hand
+everything else back when the sentence is served (UESP, *Oblivion:Crime*;
+OpenMW `World::confiscateStolenItems`). Skyrim splits the two at the arrest
+instead: `0x74cc90` moves stolen items to the faction's stolen-goods chest
+(`+0x70`) and the rest to its player-inventory chest (`+0x78`), and ServeTime
+hands back all of `+0x78`. Both authored games have one chest, so both slots
+name it, and ServeTime handed the stolen goods back too.
+
+ServeTime is PlayerCharacter vtable slot 186 (1.6.1170 `0x747740`, id 40657).
+Nothing calls it directly: `Game.ServeTime` tail-calls the slot, and so does
+sleeping in jail. Its first call fades out and sets bit `0x10` of `+0xbe5`,
+and its second passes the days and releases the player. TESRuntime swaps the
+slot. After a second call for one of its crime factions, it runs the engine's
+own confiscation, `PayCrimeGold(faction, goToJail=false, removeStolen=true)`
+(slot 187, `0x747a10`), which with the bounty already cleared takes no gold.
+
+### <a id="return-marker"></a>A jail marker needs a partner that teleports back
+
+ServeTime's first call raises the loading screen (`0x1a1150(1, location, ...)`).
+Its release (`0x747e00`) takes the jail marker's linked ref and queues a move
+to that ref's OWN teleport target, and the move's load is what takes the
+screen down again (`0x1a1150(0, null, 0, 1)`). When the linked ref has no
+teleport, there is no move and the screen stays up for good. The release has
+no other exit.
+
+Vanilla pairs two persistent prison markers that teleport to each other, and
+so do Oblivion's jails. Of TR_Mainland's 16 jail markers, 13 lead to a jail
+door with no teleport. For TR's Bal Foyen garrison, the live game showed the
+sentence served (PlayerCharacter `+0x720` cleared, `+0x728` 0), the player at
+the marker's landing spot, no move queued, and the loading screen still up.
+
+So the import (`_link_jail_returns`) gives every jail marker whose target does
+not teleport back a new persistent marker: a copy of it at its landing spot,
+teleporting back to it. It then points the marker's XTEL at the copy. The
+released prisoner lands at the jail marker, as in Skyrim. The id is keyed on
+the authored marker.
+
 ## <a id="arrest-force-greet"></a>The arrest
 
 Skyrim's pursuing guard opens dialogue through a ForceGreet-subtype topic

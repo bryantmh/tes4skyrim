@@ -327,6 +327,14 @@ constexpr std::uint64_t kSoundSetInstanceVolume = 56743;
 constexpr std::uint64_t kRefSay = 56220;
 
 constexpr std::uint64_t kRefActivate = 56139;
+
+// What activating a Skyrim bed runs (1.6.1170 id 17420 +0x16a): the player's
+// can-sleep-here check (0x731350; with a bed it also refuses one the player
+// does not own, with the engine's own message), then the Sleep/Wait menu
+// toggle (0x95e0d0) with `sleeping` set; the wait key passes false.
+// See: docs/commentary/morrowind_runtime.md#show-rest-menu
+constexpr std::uint64_t kPlayerCanSleepHere = 40443;
+constexpr std::uint64_t kToggleSleepWaitMenu = 52490;
 constexpr std::uint64_t kRefLock = 56198;
 constexpr std::uint64_t kRefIsLocked = 56196;
 constexpr std::uint64_t kRefSetLockLevel = 56229;
@@ -840,6 +848,12 @@ constexpr std::uint64_t kFactionSetCrimeGold = 55809;
 constexpr std::uint64_t kFactionSetCrimeGoldViolent = 55810;
 constexpr std::uint64_t kFactionPlayerPayCrimeGold = 55805;
 constexpr std::uint64_t kFactionSendPlayerToJail = 55807;
+// Game.ServeTime (1.6.1170 0xa126b0): PlayerCharacter's ServeTime, which
+// passes the sentence's days and releases the player. kOffPlayerJailFaction is
+// the faction whose jail holds the player; SendPlayerToJail sets it only once
+// no menu is open.
+constexpr std::uint64_t kGameServeTime = 55573;
+constexpr std::size_t kOffPlayerJailFaction = 0x720;
 
 // TESObjectREFR's base form, which TESObjectREFR::ActivateRef dispatches on.
 constexpr std::size_t kOffRefBase = 0x40;

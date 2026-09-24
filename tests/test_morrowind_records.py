@@ -244,6 +244,34 @@ def test_a_tes3_export_without_dialogue_is_still_tes3(tmp_path):
     assert not is_tes3_export(str(patch))
 
 
+class _ExtendsOnly:
+    """The one CrossRefGraph question the object-script plan asks first."""
+
+    def get_extends_class(self, _fid):
+        """Every script extends ObjectReference."""
+        return 'ObjectReference'
+
+
+def test_a_tes3_export_binds_no_papyrus_object_scripts(tmp_path):
+    """Its scripts run in the Morrowind runtime; a VMAD names a script never compiled.
+
+    See: docs/commentary/tes5_import_pipeline.md#phase-0-tes3-no-papyrus-scripts
+    """
+    from tes5_import.base.object_scripts import get_object_vmad
+    from tes5_import.pipeline import _prescan_script_plans
+    by_type = {'SCPT': [{'FormID': '00000800', 'EditorID': 'Bed_Standard',
+                         'SCTX': 'begin Bed_Standard\nShowRestMenu\nend'}],
+               'ACTI': [{'FormID': '00000801', 'SCRI': '00000800'}]}
+    oblivion = tmp_path / 'Oblivion'
+    oblivion.mkdir()
+    write_header(str(oblivion), [], 2, 'fixture', flags=1, source='')
+    _prescan_script_plans(by_type, None, _ExtendsOnly(), {}, str(oblivion), print)
+    assert get_object_vmad(0x801)
+    morrowind = _export(tmp_path, 'Beds.esp', [_rec('STAT', 'bed')])
+    _prescan_script_plans(by_type, None, _ExtendsOnly(), {}, morrowind, print)
+    assert get_object_vmad(0x801) == b''
+
+
 def test_a_plugin_ships_only_the_sounds_no_master_names(tmp_path):
     """The shared Data folder means ownership is per FILE, not per plugin.
 

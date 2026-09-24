@@ -37,6 +37,7 @@ using SetGoldFn = void (*)(void* vm, std::uint32_t stack, void* faction,
 using TwoFlagFn = void (*)(void* vm, std::uint32_t stack, void* faction,
                            bool first, bool second);
 using GetSpeakerFn = bool (*)(void* manager, void** out);
+using ServeTimeFn = void (*)(void* vm, std::uint32_t stack, void* tag);
 
 GetCrimeFactionFn g_getCrimeFaction = nullptr;
 GetGoldFn g_getCrimeGold = nullptr;
@@ -44,12 +45,18 @@ SetGoldFn g_setCrimeGold = nullptr;
 SetGoldFn g_setCrimeGoldViolent = nullptr;
 TwoFlagFn g_payCrimeGold = nullptr;
 TwoFlagFn g_sendToJail = nullptr;
+ServeTimeFn g_serveTime = nullptr;
 GetSpeakerFn g_getSpeaker = nullptr;
 void** g_topicManager = nullptr;
 
 // The engine speaker last handed to the Morrowind menu, so one force-greet
 // diverts once; cleared when the engine has no speaker.
 void* g_diverted = nullptr;
+
+// The crime faction GoToJail named, until the dialogue closes; then the one
+// the player was sent to jail for, until served.
+void* g_toJail = nullptr;
+void* g_sentenced = nullptr;
 
 // The speaker's crime faction, else the realm's from crime_formid.txt.
 void* CrimeFaction() {
@@ -93,16 +100,32 @@ void PayFine(bool confiscate) {
     });
 }
 
-// TES3's jail keeps the player's inventory, so only the stolen goods go.
+// OpenMW's World::goToJail: the player goes once the dialogue has closed, so
+// its text can be read first. TES3's jail keeps the player's inventory and
+// serves the whole sentence at once (OpenMW's JailScreen), so the engine's
+// ServeTime follows as soon as the engine has jailed the player.
 void GoToJail() {
-    void* faction = CrimeFaction();
-    PostToMainThread([faction]() {
-        if (!faction || !g_sendToJail) {
-            Log("crime: GoToJail -- no crime faction or native");
-            return;
-        }
-        g_sendToJail(PapyrusVm(), 0, faction, false, true);
-    });
+    g_toJail = CrimeFaction();
+    if (!g_toJail || !g_sendToJail || !g_serveTime) {
+        Log("crime: GoToJail -- no crime faction or native");
+        g_toJail = nullptr;
+    }
+}
+
+void ServeSentence() {
+    if (g_toJail && !ConversationOpen()) {
+        g_sendToJail(PapyrusVm(), 0, g_toJail, false, true);
+        g_sentenced = g_toJail;
+        g_toJail = nullptr;
+    }
+    void* player = g_sentenced ? PlayerRef() : nullptr;
+    if (!player || *reinterpret_cast<void**>(static_cast<char*>(player) +
+                                             ids::kOffPlayerJailFaction) != g_sentenced) {
+        return;
+    }
+    g_sentenced = nullptr;
+    Log("crime: jailed -- serving the sentence");
+    g_serveTime(PapyrusVm(), 0, nullptr);
 }
 
 void DivertEngineDialogue() {
@@ -126,6 +149,11 @@ void DivertEngineDialogue() {
     BeginConversation(SpeakerId(baseId), DisplayName(base), PlayerName());
 }
 
+void CrimeTick() {
+    DivertEngineDialogue();
+    ServeSentence();
+}
+
 }  // namespace
 
 void InstallCrimeCalls(GameHooks& hooks) {
@@ -141,6 +169,7 @@ void InstallCrimeCalls(GameHooks& hooks) {
                                        ids::kFactionPlayerPayCrimeGold);
     g_sendToJail = Native<TwoFlagFn>("Faction.SendPlayerToJail",
                                      ids::kFactionSendPlayerToJail);
+    g_serveTime = Native<ServeTimeFn>("Game.ServeTime", ids::kGameServeTime);
     g_getSpeaker = Native<GetSpeakerFn>("MenuTopicManager::GetSpeaker",
                                         ids::kGetSpeaker);
     g_topicManager = Native<void**>("MenuTopicManager singleton",
@@ -149,7 +178,7 @@ void InstallCrimeCalls(GameHooks& hooks) {
     hooks.setCrimeGold = SetCrimeGold;
     hooks.payFine = PayFine;
     hooks.goToJail = GoToJail;
-    hooks.divertDialogue = DivertEngineDialogue;
+    hooks.crimeTick = CrimeTick;
 }
 
 }  // namespace gamecalls

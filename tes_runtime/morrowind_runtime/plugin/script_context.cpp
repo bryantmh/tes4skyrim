@@ -128,8 +128,12 @@ void DialogueContext::setGlobalFloat(std::string_view name, float value) {
     State().SetGlobal(std::string(name), value);
 }
 
+// Every GLOB this layer declares, never written or not, and the ones only the
+// runtime writes (the crime globals).
 std::vector<std::string> DialogueContext::getGlobals() const {
-    return State().Globals();
+    std::vector<std::string> names = VisibleGlobalNames();
+    for (std::string& name : State().Globals()) names.push_back(std::move(name));
+    return names;
 }
 
 char DialogueContext::getGlobalType(std::string_view name) const {

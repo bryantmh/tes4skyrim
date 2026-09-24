@@ -82,6 +82,16 @@ class OpActivate : public Interpreter::Opcode0 {
     }
 };
 
+// `ShowRestMenu`: OpenMW's OpShowRestMenu, whose bed is the target.
+template <class R>
+class OpShowRestMenu : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string bed = R::Target(runtime);
+        Log("world: rest menu for bed '%s'", bed.c_str());
+        if (Hooks().showRestMenu) Hooks().showRestMenu(bed);
+    }
+};
+
 // `Lock [level]`: the level comes off AFTER the target, as OpenMW pops it.
 template <class R>
 class OpLock : public Interpreter::Opcode1 {
@@ -383,6 +393,8 @@ void InstallWorldOps(OpcodeInstaller& into) {
     namespace S = Compiler::Stats;
     into.Real<OpActivate<Implicit>>(M::opcodeActivate);
     into.Real<OpActivate<Explicit>>(M::opcodeActivateExplicit);
+    into.Real<OpShowRestMenu<Implicit>>(G::opcodeShowRestMenu);
+    into.Real<OpShowRestMenu<Explicit>>(G::opcodeShowRestMenuExplicit);
     into.Real3<OpLock<Implicit>>(M::opcodeLock);
     into.Real3<OpLock<Explicit>>(M::opcodeLockExplicit);
     into.Real<OpUnlock<Implicit>>(M::opcodeUnlock);

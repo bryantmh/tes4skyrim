@@ -126,6 +126,41 @@ class TestJails:
         assert anchors[0x30][0] in (0x10, 0x11)
 
 
+class _Writer:
+    """The one PluginWriter call the return-marker pass makes."""
+
+    def derive_formid(self, site, key):
+        """A fixed derived id, recording what it was keyed on."""
+        self.keyed = (site, key)
+        return 0x00ABCDEF
+
+
+class TestReturnMarkers:
+    def test_paired_markers_get_no_return_marker(self):
+        """A jail marker whose target teleports back already releases the prisoner."""
+        by_type = _world_with_isles()
+        count = len(by_type['REFR'])
+        assert crime._link_jail_returns(_plan(by_type), by_type, _Writer()) == 0
+        assert len(by_type['REFR']) == count
+
+    def test_one_way_marker_gets_a_persistent_return_marker(self):
+        """ServeTime's release needs the target to teleport back, or its loading screen stays up."""
+        by_type = _world_with_isles()
+        marker = next(r for r in by_type['REFR'] if r['FormID'] == _fid(0x60))
+        marker.update({'XTEL.PosX': '7', 'XTEL.PosY': '8', 'XTEL.PosZ': '9'})
+        del next(r for r in by_type['REFR'] if r['FormID'] == _fid(0x61))['XTEL.Door']
+        writer = _Writer()
+        assert crime._link_jail_returns(_plan(by_type), by_type, writer) == 1
+        added = by_type['REFR'][-1]
+        assert writer.keyed == ('JAIL_RETURN', _fid(0x60))
+        assert marker['XTEL.Door'] == added['FormID'] == _fid(0xABCDEF)
+        assert added['ParentCELL'] == _fid(0x31)
+        assert int(added['RecordFlags']) & 0x400
+        assert added['XTEL.Door'] == _fid(0x60)
+        assert (added['PosX'], added['PosY'], added['PosZ']) == ('7', '8', '9')
+        assert (added['XTEL.PosX'], added['XTEL.PosY']) == ('1000', '2000')
+
+
 def _ctda(func: int, op: int = 0x00, value: float = 1.0) -> str:
     """A raw TES4 CTDA as the export prints it."""
     return struct.pack('<B3xfHH4x4x', op, value, func, 0).hex()
