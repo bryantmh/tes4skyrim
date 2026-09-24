@@ -165,7 +165,7 @@ def _recursive_hull_split(pts, depth):
             + _recursive_hull_split(best[2], depth - 1))
 
 
-def _build_piece_convex_shape(pts, radius, sk_material):
+def build_convex_shape(pts, radius, sk_material):
     """A bhkConvexVerticesShape over one piece's points (Havok units).
 
     Face planes are pushed out by the convex radius, matching vanilla.
@@ -236,6 +236,29 @@ def _collect_visual_vertices(node):
 #: Convex radius (Havok units) for a synthesized clutter hull, vanilla's clutter value.
 _SYNTH_HULL_RADIUS = 0.01
 
+#: Inertia floor (havok units) so a flat item still resists rotation.
+_MIN_INERTIA_EXTENT = 0.02
+
+
+def set_box_inertia(body, tris, mass) -> None:
+    """Solid-box inertia over the AABB of `tris` (groups of points), about its center, in the points' units.
+
+    For a source that authors no tensor, so it is computed rather than rescaled.
+    """
+    xs = [v[0] for t in tris for v in t]
+    ys = [v[1] for t in tris for v in t]
+    zs = [v[2] for t in tris for v in t]
+    dx = max(max(xs) - min(xs), _MIN_INERTIA_EXTENT)
+    dy = max(max(ys) - min(ys), _MIN_INERTIA_EXTENT)
+    dz = max(max(zs) - min(zs), _MIN_INERTIA_EXTENT)
+    k = mass / 12.0
+    body.center.x = (max(xs) + min(xs)) / 2.0
+    body.center.y = (max(ys) + min(ys)) / 2.0
+    body.center.z = (max(zs) + min(zs)) / 2.0
+    body.inertia.m_11 = k * (dy * dy + dz * dz)
+    body.inertia.m_22 = k * (dx * dx + dz * dz)
+    body.inertia.m_33 = k * (dx * dx + dy * dy)
+
 
 def build_clutter_hull(tris_hk, sk_material):
     """A convex shape over triangles ALREADY in Havok units, or None.
@@ -255,11 +278,11 @@ def build_clutter_hull(tris_hk, sk_material):
         return None
     pieces = (_recursive_hull_split(pts, _DECOMP_MAX_DEPTH)
               if len(pts) >= 24 else [pts])
-    shapes = [s for s in (_build_piece_convex_shape(p, _SYNTH_HULL_RADIUS,
+    shapes = [s for s in (build_convex_shape(p, _SYNTH_HULL_RADIUS,
                                                     sk_material)
                           for p in pieces) if s is not None]
     if not shapes:
-        shapes = [s for s in [_build_piece_convex_shape(
+        shapes = [s for s in [build_convex_shape(
             pts, _SYNTH_HULL_RADIUS, sk_material)] if s is not None]
     if not shapes:
         return None
@@ -296,7 +319,7 @@ def decompose_clutter_hull(node, hull_shape):
     sk_material = get_havok_material(hull_shape.material)
     piece_shapes = []
     for piece in pieces:
-        s = _build_piece_convex_shape(piece, radius, sk_material)
+        s = build_convex_shape(piece, radius, sk_material)
         if s is None:
             return None
         piece_shapes.append(s)

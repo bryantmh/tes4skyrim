@@ -42,7 +42,7 @@ _RECORD_END = '---RECORD_END---'
 
 #: Lines the scan keeps from each record.
 _INDEXED_KEYS = ('FormID', 'EditorID', 'XCLC.X', 'XCLC.Y', 'ParentCELL',
-                 'ParentWRLD', 'RecordFlags')
+                 'ParentWRLD', 'RecordFlags', 'FULL')
 
 #: CELL RecordFlags bit marking a worldspace's persistent-reference cell.
 _PERSISTENT_FLAG = 0x400
@@ -155,9 +155,18 @@ class IdIndex:
         return None
 
     def lookup_interior(self, name: str):
-        """The FormID of a master's interior cell, by name or escaped name."""
-        return (self._by_key.get(interior_key(name))
-                or self._by_key.get(interior_key(encode_editor_id(name))))
+        """The FormID of a master's interior cell, by name or escaped name.
+
+        Morroblivion escapes a cell's name WITHOUT the leading `0` its base
+        objects carry, and keeps some cells only under their display name.
+        See: docs/commentary/tes4_export_morrowind.md#interior-cells-by-name
+        """
+        escaped = encode_editor_id(name)
+        for key in (name, escaped, escaped[1:]):
+            found = self._by_key.get(interior_key(key))
+            if found:
+                return found
+        return None
 
     def lookup_exterior(self, grid: tuple):
         """The FormID of a master's exterior cell at this TES4 grid."""
@@ -298,7 +307,12 @@ def _add_cell(fields: dict, form_id: str, index: IdIndex, remap) -> None:
 
 def _add_record(fields: dict, index: IdIndex, signature: str, remap,
                 skip=()) -> None:
-    """Add one scanned record: by EditorID, or by cell grid / parent cell."""
+    """Add one scanned record: by EditorID, or by cell grid / parent cell.
+
+    An interior cell is also filed under its display name, the one name
+    Morroblivion carries over verbatim.
+    See: docs/commentary/tes4_export_morrowind.md#interior-cells-by-name
+    """
     form_id = remap_form_id(fields.get('FormID', ''), remap)
     if form_id is None:
         return
@@ -313,9 +327,12 @@ def _add_record(fields: dict, index: IdIndex, signature: str, remap,
     edid = fields.get('EditorID')
     if not edid or (skip and _unmangled(edid) in skip):
         return
-    if signature == 'CELL':
-        edid = interior_key(edid)
-    index.add(edid, form_id, signature)
+    if signature != 'CELL':
+        index.add(edid, form_id, signature)
+        return
+    index.add(interior_key(edid), form_id, signature)
+    if fields.get('FULL'):
+        index.add(interior_key(fields['FULL']), form_id, signature)
 
 
 def _unmangled(editor_id: str) -> str:

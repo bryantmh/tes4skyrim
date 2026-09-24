@@ -22,9 +22,12 @@ from collections import Counter, namedtuple
 
 from .diff import diff_records
 from .manifest import load_master_manifests
-from .builder import (RECONVERT_KEYS, apply_changes, rebuild_sndr_override,
-                      soun_companion_changes, split_subrecords)
+from .builder import (RECONVERT_KEYS, apply_changes, join_subrecords,
+                      rebuild_sndr_override, soun_companion_changes,
+                      split_subrecords)
 from .master_index import load_master_index
+from ..actors.outfits import split_inventory
+from ..record_types.actor_common import read_items
 from ..record_types.world import restamp_wrld_mnam
 from ..base.text_reader import parse_export_directory, remap_formid
 from ..base.writer import (PluginWriter, RECORD_HEADER_SIZE, pack_group)
@@ -447,6 +450,29 @@ class OverrideContext:
                     for key in changes:
                         self.unmapped_keys.pop(key, None)
                 return out
+        return b''
+
+    def build_outfit_companion(self, rec: dict) -> bytes:
+        """Override of the master's OTFT when an actor's authored inventory changes what it wears.
+
+        Returns b'' when the worn set is unchanged or the master's outfit
+        cannot be located. The OTFT keeps the master's FormID, so the actor's
+        DOFT still names it.
+        See: docs/commentary/tes5_import_override.md#worn-inventory-changes
+        """
+        master_rec = self.master_record(rec)
+        if rec.get('Signature') not in ('NPC_', 'CREA') or master_rec is None:
+            return b''
+        worn = split_inventory(read_items(rec))[0]
+        if worn == split_inventory(read_items(master_rec))[0]:
+            return b''
+        for fid in self.master_manifest.companions((rec.get('FormID') or '').upper()):
+            base = self.master_index.record(fid)
+            if base[:4] == b'OTFT':
+                self.stats['outfit-companion'] += 1
+                return join_subrecords(base, [
+                    (sig, struct.pack(f'<{len(worn)}I', *worn) if sig == b'INAM' else payload)
+                    for sig, payload in split_subrecords(base)])
         return b''
 
     def report(self):

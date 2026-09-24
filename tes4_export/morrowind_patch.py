@@ -33,6 +33,8 @@ from asset_convert.sources.bsa_extract_morrowind import (is_morrowind_bsa,
                                                          read_index,
                                                          iter_bsa)
 from asset_convert.sources.source_registry import asset_root
+from core.plugin_masters import masters_from_export_header
+from papyrus_compile import phase_compile
 from output_layout import (DEFAULT_OUTPUT, plugin_esm, plugin_out_root,
                            record_dir)
 from tes5_import.base.text_reader import parse_export_file
@@ -40,8 +42,12 @@ from tes5_import.base.text_reader import parse_export_file
 from .morroblivion import (MORROBLIVION_CREATURES, MorroblivionModels,
                            archive_path)
 from .morroblivion_axis import SUBSTITUTION_BLACKLIST
+from .morroblivion_pair_scripts import pair_scripts, swap_lines
+from .morroblivion_pairs import (find_pairs, holder_overrides, left_half,
+                                 restored_placements, right_half, split_pairs)
+from .morrowind_armor import body_models_from
 from .morrowind_ids import BASE_TYPES, IdIndex, load_index
-from .record_types.morrowind import as_dds
+from .record_types.morrowind import as_dds, tes4_signature
 from .tes3_reader import get_string, get_subrecord, read_file
 
 #: Morroblivion's EditorID separators: a leading '0' and '_' written 'U'.
@@ -82,7 +88,7 @@ def patch_formid(key, own_index: int = 0) -> str:
     Keyed on authored data alone, so an id survives a rebuild and a plugin
     exported against an earlier patch still resolves. The type is part of the
     key because Morrowind's ids are unique only within one. `own_index` is the
-    patch's load-order byte: how many Morroblivion plugins it declares.
+    patch's load-order byte: how many masters it declares (`patch_masters`).
     See: docs/commentary/tes4_export_morrowind.md#per-type-id-namespaces
     """
     signature, record_id = key
@@ -91,6 +97,21 @@ def patch_formid(key, own_index: int = 0) -> str:
     offset = int.from_bytes(hashlib.md5(payload).digest()[:4], 'little')
     return '%08X' % ((own_index << 24)
                      | (_DERIVED_BASE + offset % _DERIVED_SPAN))
+
+
+def patch_masters(export_dir: str, morroblivion) -> list:
+    """The patch's master list: each Morroblivion plugin after its own masters.
+
+    The patch overrides Morroblivion's records, which name its masters'
+    objects, so it declares them too -- as xEdit's copy-as-override does.
+    See: docs/commentary/tes4_export_morrowind.md#the-patch-masters-morroblivion
+    """
+    names = []
+    for name in morroblivion:
+        for master in masters_from_export_header(str(record_dir(export_dir, name))) + [name]:
+            if master.lower() not in (n.lower() for n in names):
+                names.append(master)
+    return names
 
 
 def patch_dir(export_dir: str) -> str:
@@ -304,18 +325,49 @@ def build_patch(data_dir: str, export_dir: str, morroblivion_exports,
     assets = _extract_assets(gaps.values(), esms, data_dir, export_dir,
                              progress)
     assets += _copy_gap_sounds(gaps.values(), data_dir, export_dir, progress)
+    pairs = _split_pairs(esms, index, export_dir, morroblivion_exports, gaps,
+                         progress)
     progress('Collecting vanilla voiced barks...')
     barks = collect_bark_records(esms)
-    out_dir = _write_records(gaps, export_dir, progress, barks,
-                             morroblivion_exports)
+    out_dir, scripts = _write_records(gaps, export_dir, progress, barks,
+                                      morroblivion_exports, esms, pairs)
     assets += _stage_bark_voices(data_dir, export_dir, progress)
     _convert_assets(export_dir, out_root, progress)
     _convert_creatures(export_dir, out_root, progress)
+    _compile_pair_scripts(scripts, export_dir, out_root, progress)
     plugin, error = _import_records(export_dir, out_root, progress)
     return {'ok': bool(plugin), 'records': len(gaps), 'assets': assets,
             'output': out_dir, 'plugin': plugin, 'error': error,
             'seconds': time.time() - start}
 
+
+
+def _split_pairs(esms, index, export_dir: str, morroblivion, gaps,
+                 progress) -> list:
+    """The left/right pairs Morroblivion merged, each whose worn models split written as two halves.
+
+    See: docs/commentary/tes4_export_morrowind.md#split-pairs
+    """
+    found = find_pairs(esms, index, export_dir, morroblivion, gaps)
+    pairs = split_pairs(found, asset_root(export_dir, PATCH_NAME) / 'meshes',
+                        progress)
+    progress(f'  Split {len(pairs)} of {len(found)} merged left/right pairs')
+    return pairs
+
+
+def _compile_pair_scripts(scripts: dict, export_dir: str, out_root,
+                          progress) -> None:
+    """Write the split pairs' child scripts into the patch's output and compile them.
+
+    See: docs/commentary/tes4_export_morrowind.md#split-pair-scripts
+    """
+    source = plugin_out_root(out_root, PATCH_NAME, export_dir) / 'scripts' / 'source'
+    source.mkdir(parents=True, exist_ok=True)
+    for name, text in sorted(scripts.items()):
+        (source / f'{name}.psc').write_text(text + chr(10), encoding='utf-8')
+    progress(f'  {len(scripts)} split-pair child script(s)')
+    if scripts:
+        phase_compile(PATCH_NAME, {}, str(out_root))
 
 
 def _stage_bark_voices(data_dir: str, export_dir: str, progress) -> int:
@@ -431,27 +483,29 @@ def _patch_ownership(export_dir: str) -> MorroblivionModels:
                               asset_root(export_dir, PATCH_NAME) / 'meshes')
 
 
-def _patch_context(gaps: dict, export_dir: str, vanilla, morroblivion) -> tuple:
+def _patch_context(gaps: dict, export_dir: str, vanilla, morroblivion,
+                   esms=()) -> tuple:
     """`(ctx, ids)`: a context that resolves through Morroblivion, and each gap's id.
 
     Gap ids are reserved before anything is derived, since they share the span
     a bark is minted in; `vanilla` supplies the SNDG generators a gap creature's
-    sound slots come from.
+    sound slots come from, `esms` the BODY meshes a gap wearable is dressed in.
     See: docs/commentary/tes4_export_morrowind.md#the-patch-masters-morroblivion
 
     Imported inside the function to break the cycle with `export_morrowind`,
     which needs PATCH_NAME from this module at its own import time.
     """
     from .export_morrowind import load_context, register_magic_effects
-    from .record_types.morrowind import tes4_signature
     from .record_types.morrowind_actors import register_sound_gens
     from .record_types.morrowind_magic import effect_editor_id
 
     ctx = load_context(export_dir, [(name, str(record_dir(export_dir, name)))
-                                    for name in morroblivion])
+                                    for name in morroblivion],
+                       patch_masters(export_dir, morroblivion))
     ids = {key: patch_formid(key, ctx.own_index) for key in gaps}
     ctx.taken.update(ids.values())
     ctx.morroblivion = _patch_ownership(export_dir)
+    ctx.body_models = body_models_from(esms)
     register_magic_effects(list(gaps.values()), ctx)
     for index in range(_MAGIC_EFFECT_COUNT):
         edid = effect_editor_id(index)
@@ -466,11 +520,12 @@ def _patch_context(gaps: dict, export_dir: str, vanilla, morroblivion) -> tuple:
 
 
 def _write_records(gaps: dict, export_dir: str, progress,
-                   barks=(), morroblivion=()) -> str:
+                   barks=(), morroblivion=(), esms=(), pairs=()) -> str:
     """Export every gap record under its shared derived FormID.
 
     The Morroblivion plugins are declared as MASTERS, so a gap record or a bark
-    can name the factions, classes and actors only Morroblivion holds.
+    can name the factions, classes and actors only Morroblivion holds. Split
+    pairs are written too. Returns (export folder, {child script: .psc}).
     See: docs/commentary/tes4_export_morrowind.md#the-patch-masters-morroblivion
 
     Imported inside the function to break the cycle with `export_morrowind`,
@@ -478,14 +533,16 @@ def _write_records(gaps: dict, export_dir: str, progress,
     """
     from .export_morrowind import (export_record, magic_effect_records,
                                    write_export, write_header)
-    from .record_types.morrowind import (filled_soulgem_id, filled_soulgems,
-                                         tes4_signature)
+    from .record_types.morrowind import filled_soulgem_id, filled_soulgems
 
-    ctx, ids = _patch_context(gaps, export_dir, barks, morroblivion)
+    ctx, ids = _patch_context(gaps, export_dir, barks, morroblivion, esms)
     records = list(gaps.values())
+    halves = {(p.left.type, p.left.record_id.lower()): p for p in pairs}
     out = {}
     for key, rec in sorted(gaps.items()):
         lines = export_record(rec, ctx)
+        if lines and key in halves:
+            lines = left_half(lines, halves[key])
         if lines:
             out.setdefault(tes4_signature(rec), []).append((ids[key], lines))
     out['MGEF'] = magic_effect_records(records, ctx)
@@ -493,15 +550,49 @@ def _write_records(gaps: dict, export_dir: str, progress,
         edid = filled_soulgem_id(gem_id, soul)
         out.setdefault('SLGM', []).append(
             (patch_formid(('SLGM', edid), ctx.own_index), lines))
+    scripts = _add_pair_halves(
+        out, pairs, esms, ctx,
+        {p.left.record_id.lower(): ids[key] for key, p in halves.items()})
     ctx.taken.update(fid for rows in out.values() for fid, _lines in rows)
     _add_barks(out, ctx, barks, progress)
     out_dir = patch_dir(export_dir)
     counts = write_export(out, out_dir)
-    write_header(out_dir, list(morroblivion), sum(counts.values()),
+    write_header(out_dir, patch_masters(export_dir, morroblivion), sum(counts.values()),
                  'Objects Morroblivion does not convert', flags=1, source='')
     progress(f'  Wrote {sum(counts.values())} records to {out_dir}')
-    return out_dir
+    return out_dir, scripts
 
+
+
+def _add_pair_halves(out: dict, pairs, esms, ctx, left_fids: dict) -> dict:
+    """Add every split pair's records; return the child scripts they bind.
+
+    The right half, the holders re-listed with the left and the records
+    swapped to a child script override Morroblivion's; the left's restored
+    placements are keyed on their authoring file and reference number.
+    See: docs/commentary/tes4_export_morrowind.md#split-pairs
+
+    Imported inside the function to break the cycle with `export_morrowind`,
+    which needs PATCH_NAME from this module at its own import time.
+    """
+    from .export_morrowind import export_record, ref_lines
+
+    for pair in pairs:
+        out.setdefault(tes4_signature(pair.right), []).append(
+            right_half(pair, export_record(pair.right, ctx), ctx))
+    overrides = {(sig, fid): lines for sig, fid, lines
+                 in holder_overrides(esms, pairs, ctx, left_fids)}
+    scripts, swaps = pair_scripts(ctx, pairs, left_fids, PATCH_NAME)
+    for key, (rec, swap) in swaps.items():
+        overrides[key] = swap_lines(overrides.get(key), rec, swap)
+    for (sig, fid), lines in sorted(overrides.items()):
+        out.setdefault(sig, []).append((fid, lines))
+    for key, ref, parent in restored_placements(esms, pairs, ctx):
+        lines = ref_lines(ref, parent, ctx)
+        if lines:
+            out.setdefault('REFR', []).append(
+                (patch_formid(('REFR', '%s:%d' % key), ctx.own_index), lines))
+    return scripts
 
 
 def _add_barks(out: dict, ctx, barks, progress) -> None:

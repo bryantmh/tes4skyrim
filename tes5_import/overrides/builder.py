@@ -43,6 +43,7 @@ import struct
 
 from ..base.text_reader import get_float, get_formid, get_int
 from ..actors.outfits import split_inventory
+from .vmad_swap import SCRIPT_SWAP_KEY, SCRIPTED_TYPES, swap_vmad_script
 
 from ..base.writer import RECORD_HEADER_SIZE
 _COMPRESSED_FLAG = 0x00040000
@@ -443,11 +444,7 @@ _reg('LAND', 'VNML', _RB_LAND_VNML)
 _reg('LAND', 'VHGT', _RB_LAND_VHGT)
 _reg('LAND', 'VCLR', _RB_LAND_VCLR)
 _reg('LAND', 'DATA.Flags', _RB_LAND_DATA)
-# Every type whose converter attaches object scripts via get_object_vmad
-# (record_types/common._common_header_subs + NPC_/CREA/STAT paths).
-for _scripted in ('ACTI', 'ALCH', 'APPA', 'ARMO', 'BOOK', 'CLOT', 'CONT',
-                  'CREA', 'DOOR', 'FLOR', 'FURN', 'INGR', 'KEYM', 'LIGH',
-                  'MISC', 'NPC_', 'SGST', 'SLGM', 'STAT', 'WEAP'):
+for _scripted in SCRIPTED_TYPES:
     _reg(_scripted, 'SCRI', _RB_SCRI_VMAD)
 
 # Authored changes to a spell's EFFECT LIST cannot be spliced into the
@@ -462,6 +459,8 @@ RECONVERT_KEYS = frozenset({
     ('SPEL', 'ScriptEffect[]'),
     ('ENCH', 'Effect[]'),
     ('ENCH', 'ScriptEffect[]'),
+    *((sig, f'{gender}.BipedModel.MODL') for sig in ('ARMO', 'CLOT')
+      for gender in ('Male', 'Female')),
 })
 
 
@@ -692,6 +691,8 @@ for _sig in ('REFR', 'ACHR', 'ACRE'):
         _PATCHERS[(_sig, _key)] = (_out.encode(), _fn)
 _PATCHERS[('SPEL', 'SPIT.Cost')] = (b'SPIT', _patch_spit_cost)
 _PATCHERS[('PACK', 'PKDT.Flags')] = (b'PKDT', _patch_pkdt_flags)
+for _sig in SCRIPTED_TYPES + ('INFO', 'REFR', 'ACHR', 'ACRE'):
+    _PATCHERS[(_sig, SCRIPT_SWAP_KEY)] = (b'VMAD', swap_vmad_script)
 
 
 # --------------------------------------------------------------------------
@@ -713,9 +714,8 @@ def _rebuild_inventory(plugin_rec, master_rec, old_subs):
     """New COCT+CNTO run for an authored Item[] change.
 
     Actors split wearables into the OTFT companion, so only the carried
-    part lives in CNTO.  That companion is the master's and is never
-    re-minted, so an authored change to a WORN item cannot be expressed;
-    the carried part still applies.
+    part lives in CNTO; a change to what an actor WEARS overrides the
+    master's OTFT instead (`OverrideContext.build_outfit_companion`).
     """
     sig = plugin_rec.get('Signature')
     if sig in ('NPC_', 'CREA'):

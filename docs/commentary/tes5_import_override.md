@@ -184,7 +184,26 @@ that is the same unchecked assumption this function exists to remove.
   for repeated-subrecord families (CNTO/SPLO/PKID) that preserve
   converter-ADDED entries (vendor gold, quest-package filtering) by deriving
   them from master-export-vs-master-output. Effect-list changes (SPEL/ENCH)
-  RECONVERT the whole record instead — clone companions can't be spliced.
+  RECONVERT the whole record instead — clone companions can't be spliced —
+  and so do worn-model changes (ARMO/CLOT `BipedModel`): the model lives in
+  the ARMA companion, which the reconversion mints anew in the plugin.
+- <a id="script-swap"></a>**A script swap rebinds a master record to a child
+  of its script.** `VMAD.ScriptSwap=<parent>><child>` on an override renames
+  every length-prefixed occurrence of the parent in the master's VMAD -- the
+  script entry and an INFO fragment's file name -- to the child
+  (`vmad_swap.swap_vmad_script`). The child extends the parent, so every
+  property the master bound still binds and the master's own code still runs
+  through `Parent`; the Morroblivion patch uses it to add split pairs' left
+  halves wherever a Morroblivion script hands out the pair item.
+- <a id="worn-inventory-changes"></a>**An actor's worn items live in its
+  OTFT companion, so a change to what it WEARS overrides that OTFT.** The
+  inventory run rebuild writes only the carried CNTO part
+  (`split_inventory`); a worn item the author adds or removes changes the
+  outfit, which the master minted and the manifest names. The override is
+  the master's OTFT with its INAM replaced by the plugin's worn set, under
+  the master's FormID, so the actor's DOFT still resolves. The Morroblivion
+  patch's restored left gauntlets depend on it: a gauntlet is always worn,
+  never carried.
 - **TES4 QSTA 'Flags' is a u8 + 3 bytes of uninitialized CS garbage** — diff
   it masked (`export_diff._LIST_FIELD_NORMALIZERS`) or 58 quests report
   phantom Target[] changes. Expect more TES4 fields like this; the fix

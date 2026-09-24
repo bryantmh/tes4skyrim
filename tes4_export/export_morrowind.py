@@ -423,25 +423,27 @@ def _refused_ids(export_root: str, masters) -> frozenset:
     return frozenset(blacklisted_bases(export_root, morroblivion))
 
 
-def load_context(export_root: str, masters=()) -> MorrowindContext:
+def load_context(export_root: str, masters=(), declared=()) -> MorrowindContext:
     """Build a context from the converted masters, in master-list order.
 
     Each master's ids are re-keyed into THIS plugin's master list: the
     master's own byte (its header's master count) becomes its slot here and
     each of its masters is translated by name, exactly as the importer's
-    `load_master_export` does.
+    `load_master_export` does. `declared` is that list when it names more
+    files than `masters`, whose ids alone are indexed.
     See: docs/commentary/tes4_export_morrowind.md#masters
     """
     paths = [p if os.path.isabs(p) else os.path.join(export_root, p)
              for _n, p in masters]
-    slot_of = {n.lower(): i for i, n in enumerate(_master_list(masters))}
+    names = list(declared) or _master_list(masters)
+    slot_of = {n.lower(): i for i, n in enumerate(names)}
     index = IdIndex()
     master_doors = []
     master_remaps = []
     refused = _refused_ids(export_root, masters)
-    for slot, (name, path) in enumerate(zip(_master_list(masters), paths)):
+    for name, path in zip(_master_list(masters), paths):
         own = masters_from_export_header(path)
-        remap = {len(own): slot}
+        remap = {len(own): slot_of[name.lower()]}
         for k, sub in enumerate(own):
             target = slot_of.get(sub.lower())
             if target is not None:
@@ -450,7 +452,7 @@ def load_context(export_root: str, masters=()) -> MorrowindContext:
         index.merge(load_index(path, remap=remap, skip=drop))
         master_doors.append(load_master_doors(path, remap))
         master_remaps.append((path, remap))
-    ctx = MorrowindContext(index, own_index=len(paths))
+    ctx = MorrowindContext(index, own_index=len(names))
     for doors in master_doors:
         for cell, entries in doors.items():
             ctx.doors_by_cell.setdefault(cell, []).extend(entries)
@@ -1152,7 +1154,7 @@ def _emit_refs(refs, parent_cell: str, ctx: MorrowindContext) -> list:
         if ctx.grass is not None and ref.record_id in ctx.grass_models:
             ctx.grass.add(ref.record_id, ref.pos, ref.scale)
             continue
-        lines = _ref_lines(ref, parent_cell, ctx)
+        lines = ref_lines(ref, parent_cell, ctx)
         if not lines:
             continue
         form_id = ctx.next_ref_id(parent_cell)
@@ -1182,7 +1184,7 @@ def _placement_lines(pos: tuple, rot: tuple, prefix: str = '') -> list:
             f'{prefix}RotY={rot[1]}', f'{prefix}RotZ={rot[2]}']
 
 
-def _ref_lines(ref, parent_cell: str, ctx: MorrowindContext):
+def ref_lines(ref, parent_cell: str, ctx: MorrowindContext):
     """One placed reference, or None when its base object cannot resolve.
 
     A reference whose base record is missing crashes the engine, so an

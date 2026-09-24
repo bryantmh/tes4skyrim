@@ -30,8 +30,8 @@ from asset_convert.character.mesh_cut import LabeledSurface, cut
 from asset_convert.character.morrowind_coverage import SKIN_FILES
 from asset_convert.character.skyrim_overrides import (SBP_32_BODY, SBP_33_HANDS, SBP_49_LOWER_BODY,
                                                       SBP_59_RIGHT_HAND)
-from asset_convert.character.wrap_mesh import (block_name, geom_world, iter_skinned_geoms, read_nif,
-                                               weld_groups)
+from asset_convert.character.wrap_mesh import (block_name, geom_triangles, geom_world,
+                                               iter_skinned_geoms, read_nif, weld_groups)
 from asset_convert.sources.skyrim_assets import get_body_nif_bytes
 
 #: Vanilla skin mesh stem -> the kind of file it is split as.
@@ -81,8 +81,8 @@ def _vectors(items, fields) -> np.ndarray:
     return np.array([[getattr(v, f) for f in fields] for v in items], dtype=np.float64)
 
 
-def _shape_arrays(shape) -> dict:
-    """The per-vertex arrays of a vanilla skin shape."""
+def vertex_arrays(shape) -> dict:
+    """The per-vertex arrays of a shape, shape-local: 'verts', 'uvs' and those of `_UNIT_ATTRS` and 'colors' it has."""
     d = shape.data
     n = d.num_vertices
     out = {'verts': _vectors(d.vertices, 'xyz'), 'uvs': _vectors(d.uv_sets[0], 'uv')}
@@ -91,19 +91,22 @@ def _shape_arrays(shape) -> dict:
             out[attr] = _vectors(getattr(d, attr), 'xyz')
     if d.has_vertex_colors:
         out['colors'] = _vectors(d.vertex_colors, 'rgba')
-    sd = shape.skin_instance.data
-    weights = np.zeros((n, sd.num_bones))
-    for bi in range(sd.num_bones):
-        for vw in sd.bone_list[bi].vertex_weights:
-            weights[vw.index, bi] += vw.weight
-    out['weights'] = weights
     return out
 
 
-def _triangles(shape) -> np.ndarray:
-    """A shape's triangles as (n, 3)."""
-    return np.array([[t.v_1, t.v_2, t.v_3] for t in shape.data.triangles],
-                    dtype=np.int64).reshape(-1, 3)
+def skin_weights(shape) -> np.ndarray:
+    """A skin shape's (vertex x skin bone) weights."""
+    sd = shape.skin_instance.data
+    weights = np.zeros((shape.data.num_vertices, sd.num_bones))
+    for bi in range(sd.num_bones):
+        for vw in sd.bone_list[bi].vertex_weights:
+            weights[vw.index, bi] += vw.weight
+    return weights
+
+
+def _shape_arrays(shape) -> dict:
+    """The per-vertex arrays of a skin shape, its weights included."""
+    return {**vertex_arrays(shape), 'weights': skin_weights(shape)}
 
 
 def _triangle_parts(shape, tris) -> np.ndarray:
@@ -121,7 +124,7 @@ def _triangle_parts(shape, tris) -> np.ndarray:
 
 def _slot_shape(shape) -> SlotShape:
     """A vanilla skin shape with its own partitions."""
-    tris = _triangles(shape)
+    tris = geom_triangles(shape)
     return SlotShape(shape, [block_name(b) for b in shape.skin_instance.bones],
                      _shape_arrays(shape), tris, _triangle_parts(shape, tris))
 
@@ -139,13 +142,18 @@ def _waist(female: bool):
     return surface.subset((SBP_32_BODY, SBP_49_LOWER_BODY))
 
 
-def _whole_pieces(verts, tris, field) -> np.ndarray:
-    """`field` replaced by +-1 per connected piece, by the side most of the piece lies on."""
+def piece_ids(verts, tris) -> np.ndarray:
+    """Per vertex, the connected piece it belongs to, coincident vertices welded."""
     groups = weld_groups(verts)
     edges = groups[tris]
     adjacency = coo_matrix((np.ones(edges.size), (edges.ravel(), edges[:, [1, 2, 0]].ravel())),
                            shape=(groups.max() + 1,) * 2)
-    piece = connected_components(adjacency, directed=False)[1][groups]
+    return connected_components(adjacency, directed=False)[1][groups]
+
+
+def _whole_pieces(verts, tris, field) -> np.ndarray:
+    """`field` as +-1 per connected piece: the side most of the piece lies on."""
+    piece = piece_ids(verts, tris)
     votes = np.bincount(piece, weights=np.sign(field))
     return np.where(votes[piece] < 0, -1.0, 1.0)
 
@@ -164,7 +172,7 @@ def _waist_cuts(stem: str) -> tuple:
         return ()
     cuts = []
     for shape, skel in iter_skinned_geoms(read_nif(raw)):
-        verts, tris = geom_world(shape, skel)[0], _triangles(shape)
+        verts, tris = geom_world(shape, skel)[0], geom_triangles(shape)
         field = waist.field(verts, (SBP_49_LOWER_BODY,))
         if set(_triangle_parts(shape, tris).tolist()) == {SBP_32_BODY}:
             field = _whole_pieces(verts, tris, field)
@@ -186,13 +194,41 @@ def _apply_cut(ss: SlotShape, c) -> SlotShape:
     return ss._replace(arrays=arrays, tris=c.tris, parts=parts)
 
 
+def right_triangles(bones, weights, tris) -> np.ndarray:
+    """Per triangle: do two of its vertices weigh most on a right-side bone?"""
+    right_bone = np.array([' R ' in name for name in bones])
+    return right_bone[np.argmax(weights, axis=1)][tris].sum(axis=1) >= 2
+
+
 def _split_hands(ss: SlotShape) -> SlotShape:
     """`ss` with the triangles weighted to right-side bones made the right hand."""
-    right_bone = np.array([' R ' in name for name in ss.bones])
-    right = right_bone[np.argmax(ss.arrays['weights'], axis=1)]
     parts = ss.parts.copy()
-    parts[(right[ss.tris].sum(axis=1) >= 2) & (parts == SBP_33_HANDS)] = SBP_59_RIGHT_HAND
+    right = right_triangles(ss.bones, ss.arrays['weights'], ss.tris)
+    parts[right & (parts == SBP_33_HANDS)] = SBP_59_RIGHT_HAND
     return ss._replace(parts=parts)
+
+
+def write_hand_side(source, target, right: bool) -> bool:
+    """Write one hand of the two-handed skinned wearable `source` to `target`; False if that hand is empty.
+
+    Each triangle goes to the side of the bones it is weighted to, exactly as
+    the split skin hands do; a shape with none of that side's triangles is
+    dropped.
+    See: docs/commentary/asset_convert_armor.md#split-pair-gauntlets
+    """
+    side = SBP_59_RIGHT_HAND if right else SBP_33_HANDS
+    data = read_nif(source)
+    shapes = []
+    for shape, _skel in iter_skinned_geoms(data):
+        arrays, tris = _shape_arrays(shape), geom_triangles(shape)
+        bones = [block_name(b) for b in shape.skin_instance.bones]
+        parts = np.where(right_triangles(bones, arrays['weights'], tris),
+                         SBP_59_RIGHT_HAND, SBP_33_HANDS)
+        shapes.append(SlotShape(shape, bones, arrays, tris, parts))
+    if not any((ss.parts == side).any() for ss in shapes):
+        return False
+    _write_shapes(data, shapes, {side}, target)
+    return True
 
 
 def _stem(basename: str) -> str:
@@ -259,30 +295,37 @@ def write_weights(sd, weights) -> None:
             vw.index, vw.weight = row, float(weights[row, bi])
 
 
+def write_geometry(shape, arrays: dict, tris) -> np.ndarray:
+    """Rewrite `shape`'s data to hold only `tris` over the rows of `arrays`; the rows kept, in order."""
+    used, local = np.unique(tris, return_inverse=True)
+    _write_arrays(shape.data, arrays, used)
+    shape.data.set_triangles(local.reshape(-1, 3).tolist())
+    shape.data.update_center_radius()
+    return used
+
+
 def _write_section(ss: SlotShape, sections) -> bool:
     """Rewrite `ss.shape` to hold only the triangles in `sections`; False if none are.
 
-    The shape's skin partitions are rebuilt with each triangle's body part.
+    A dismember skin's partitions are rebuilt with each triangle's body part,
+    an Oblivion skin's plainly; tangents the data block does not hold are
+    regenerated where the shape keeps them.
     """
     keep = np.isin(ss.parts, list(sections))
     if not keep.any():
         return False
-    used, local = np.unique(ss.tris[keep], return_inverse=True)
-    tris = local.reshape(-1, 3)
-    shape, d = ss.shape, ss.shape.data
-    _write_arrays(d, ss.arrays, used)
-    d.num_triangles, d.num_triangle_points = len(tris), 3 * len(tris)
-    d.triangles.update_size()
-    for t, (a, b, c) in zip(d.triangles, tris.tolist()):
-        t.v_1, t.v_2, t.v_3 = a, b, c
-    d.update_center_radius()
-    write_weights(shape.skin_instance.data, ss.arrays['weights'][used])
-    shape.skin_instance.skin_partition = None
+    shape, skin = ss.shape, ss.shape.skin_instance
+    used = write_geometry(shape, ss.arrays, ss.tris[keep])
+    write_weights(skin.data, ss.arrays['weights'][used])
+    skin.skin_partition = None
+    dismember = hasattr(skin, 'partitions')
     shape.update_skin_partition(maxbonesperpartition=_BONES_PER_PARTITION,
                                 maxbonespervertex=_BONES_PER_VERTEX, stripify=False,
-                                trianglepartmap=ss.parts[keep].tolist())
-    for part in shape.skin_instance.partitions:
+                                trianglepartmap=ss.parts[keep].tolist() if dismember else None)
+    for part in getattr(skin, 'partitions', ()):
         part.part_flag.pf_editor_visible = 1
+    if 'tangents' not in ss.arrays:
+        shape.update_tangent_space()
     return True
 
 
@@ -293,10 +336,15 @@ def _detach(data, shape) -> None:
             children = list(getattr(node, 'children', ()))
             if shape in children:
                 children.remove(shape)
-                node.num_children = len(children)
-                node.children.update_size()
-                for i, child in enumerate(children):
-                    node.children[i] = child
+                set_children(node, children)
+
+
+def set_children(node, children) -> None:
+    """Make `children` the whole of `node`'s child list."""
+    node.num_children = len(children)
+    node.children.update_size()
+    for i, child in enumerate(children):
+        node.children[i] = child
 
 
 def _write_file(source: str, target, sections) -> bool:
@@ -304,13 +352,18 @@ def _write_file(source: str, target, sections) -> bool:
     data, shapes = _slotted(source)
     if data is None:
         return False
+    _write_shapes(data, shapes, sections, target)
+    return True
+
+
+def _write_shapes(data, shapes, sections, target) -> None:
+    """Write `data` to `target` with each of `shapes` cut to its `sections`, empty ones removed."""
     for ss in shapes:
         if not _write_section(ss, sections):
             _detach(data, ss.shape)
-    os.makedirs(os.path.dirname(target), exist_ok=True)
+    os.makedirs(os.path.dirname(str(target)), exist_ok=True)
     with open(target, 'wb') as f:
         data.write(f)
-    return True
 
 
 def split_mesh_path(stem: str, weight: int, suffix: str) -> str:

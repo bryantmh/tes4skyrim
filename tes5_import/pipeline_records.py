@@ -87,6 +87,15 @@ _LAND_CHUNK = 24
 
 WORLD_EXTENT_CACHE = 'world_extents.json'
 
+def _emit_override(st, ov, rec: dict) -> None:
+    """Write an override's record and the master outfit it changes, when either exists."""
+    for record_bytes in (ov.record_bytes, st.ctx.build_outfit_companion(rec)):
+        if record_bytes:
+            st.writer.add_record(record_bytes[:4].decode('ascii', 'replace'),
+                                 record_bytes)
+            st.converted += 1
+
+
 def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
     """Phase 1: convert every flat top-level record type.
 
@@ -133,11 +142,7 @@ def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
 
             ov = st.ctx.build(rec, sig) if st.ctx else None
             if ov is not None and ov.status != 'reconvert':
-                if ov.record_bytes:
-                    st.writer.add_record(
-                        ov.record_bytes[:4].decode('ascii', 'replace'),
-                        ov.record_bytes)
-                    st.converted += 1
+                _emit_override(st, ov, rec)
                 continue
 
             with st.writer.converting(src_fid, get_formid(rec, 'FormID')):

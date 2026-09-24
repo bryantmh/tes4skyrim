@@ -174,6 +174,26 @@ records (9,366 of 10,486); most of the remainder are engine markers, which are
 named rather than converted and handed to the existing
 `skyrim_overrides.TES4_MARKER_FORMID_TO_SKYRIM` table.
 
+### <a id="interior-cells-by-name"></a>Interior cells escape without the `0`
+
+**Code:** `IdIndex.lookup_interior`, `_add_record` in `tes4_export/morrowind_ids.py`.
+
+Cells do not follow the base-object escape. Across the 1,328 vanilla interior
+names, Morroblivion's CELL EditorID is the escape WITHOUT the leading `0` for
+1,061 (`Vivec, Alusaron: Smith` -> `VivecVSAlusaronXSSmith`), the raw name for
+104, and something else for 175 -- mostly names with a hyphen
+(`Ald-ruhn, ...`). Its `FULL`, the display name, is the vanilla name for all
+but 8 of those, and drops the town prefix for others (`Balmora, Caius
+Cosades' House` is `FULL=Caius Cosades' House`).
+
+The lookup tried only the raw name and the `0`-escape, so **92% of vanilla
+interiors resolved to nothing** in Morroblivion mode, and anything placed in
+one was parented to a freshly derived cell of the same name instead of
+Morroblivion's. The index now also files an interior under its `FULL`, and
+the lookup tries the escape without the `0`: 1,320 of 1,328 resolve. The 8
+left are Mournhold's open-air districts, two Ald-ruhn guard towers, a Gnaar
+Mok house and `Sotha Sil,`, which Morroblivion carries under other names.
+
 ## <a id="per-type-id-namespaces"></a>Morrowind namespaces IDs by type; FormIDs do not
 
 A TES3 string ID is unique only *within* a record type, so one name may denote
@@ -703,6 +723,76 @@ sidecar lacks makes the dialogue filter IGNORE the condition testing it
 every player, and Ordinators set fight 100 and attacked on sight. A `set`
 cannot repair it either: the compiler's `getGlobalType` returns `' '` for an
 unknown global, so the patch's own `OrdinatorUniform` script fails to compile.
+
+### <a id="split-pairs"></a>Two-handed pairs are split back into left and right
+
+**Code:** `tes4_export/morroblivion_pairs.py`.
+
+Morroblivion keeps the RIGHT id of every Morrowind left/right gauntlet, bracer
+and glove pair as one two-handed item, and drops the left: of 41 vanilla pairs
+it keeps the right in 22 and neither half in 19, and never the left. Every
+left placement in those cells is gone (31 interior placements), and every
+inventory holding both halves holds only the pair item.
+
+The pair is found from the AUTHORED id: swap the side word in the left's id
+(`left`/`right`, or a lone or trailing `l`/`r`) and look the result up.
+Morroblivion's EditorID is that right id under its escape
+(`steel_gauntlet_right` -> `0steelUgauntletUright`), so the lookup names the
+pair item directly; 49 of vanilla's 61 lefts pair this way. Bethesda's typos
+(`left gauntlet of the horny fist` vs `right gauntlet of horny fist`) do not,
+and stay unsplit.
+
+For each pair whose worn models split
+([meshes](asset_convert_armor.md#split-pair-gauntlets)) the patch:
+
+- keeps the vanilla LEFT record it already fills, under its own FormID, and
+  gives it the left half's models -- so any plugin placing the vanilla left id
+  gets the new model;
+- overrides Morroblivion's pair item as the right half, under the vanilla
+  right's name;
+- gives each half HALF the pair's armor rating, so a worn pair totals
+  Morroblivion's, and its own vanilla weight and value;
+- restores every vanilla placement of the left into Morroblivion's cell,
+  keyed on the placement's authored file and reference number.
+
+The override changes the worn model, which lives in the ARMA companion, so it
+is reconverted rather than spliced (`RECONVERT_KEYS`).
+
+Morroblivion also dropped the left from every inventory that held both: 474
+of its NPCs, 27 containers and 11 leveled item lists hold a pair item. Each
+one whose VANILLA counterpart held the left is overridden with every entry
+naming the pair item doubled for the left, same count or level
+(`holder_overrides`). An NPC wears a gauntlet, so the change lands in its
+outfit ([worn-inventory-changes](tes5_import_override.md#worn-inventory-changes)).
+162 of those NPCs also carry Oblivion.esm items, gold among them, so the
+patch declares Morroblivion's own masters too (`patch_masters`): a copied
+record then means the same thing in the patch, as xEdit's copy-as-override
+adds the masters a record needs.
+
+#### <a id="split-pair-scripts"></a>Scripts that hand out a pair item bind a child
+
+**Code:** `tes4_export/morroblivion_pair_scripts.py`.
+
+Morroblivion's reward lines and object scripts hand out the pair item
+(`player.additem 0BMUIceUgauntletR 1`; Heart-Fang's death script adds the
+Nordic mail set), so after the split they would give only the right. Their
+converted scripts cannot be regenerated in the patch's run: it does not know
+Morroblivion's dialogue plan, and the snow-bear order's fragment alone also
+sets three topic-unlock globals and a quest flag the regeneration would drop.
+
+So each such script keeps its code and the patch binds a CHILD of it
+(`<parent>_Pairs extends <parent>`). Every function whose TES4 source adds or
+removes a pair item -- found in the parse tree, the INFO's End fragment or the
+block's `BLOCK_MAP` event -- is overridden to read the holder's count of the
+pair item, call `Parent`, and add or remove as many lefts as that count
+changed. Both forms come from `Game.GetFormFromFile`, so the child declares no
+property the master's VMAD would leave unbound. The record binding the
+script -- the INFO, or every record whose SCRI attaches it AND every
+placement of such a record -- is overridden with a script swap
+([script-swap](tes5_import_override.md#script-swap)). The placements matter:
+an actor script handling a reference event is moved onto the placed ACHR, so
+Heart-Fang's base NPC carries no VMAD at all and a swap on it alone renamed
+nothing.
 
 ### Textures are extracted WHOLESALE, meshes are not
 
@@ -1635,12 +1725,16 @@ actor Morroblivion holds. Measured on the vanilla ESMs: 192 voiced barks state
 a faction and the masterless export kept **0** positive `GetInFaction` tests,
 and 494 of 4,572 barks named something it could not reach.
 
-It still CREATES its own voice types, origin faction and `TES4*` support
-records. Those live in Oblivion.esm, which is not in its master list, so
-`_adopt_master_special_records` finds none to adopt and the import falls back
-to creating them -- the rule is "adopt what a master supplies, create what none
-does", not "a plugin with masters never creates". Tamriel Data and Tamriel
-Rebuilt keep adopting the patch's.
+It declares Morroblivion's OWN masters too (`patch_masters`: Oblivion.esm,
+then Morrowind_ob.esm), because it overrides Morroblivion records that name
+Oblivion.esm objects ([split pairs](#split-pairs)). So it now ADOPTS
+Oblivion's voice types (85) and `TES4*` support records rather than creating
+its own -- the rule is "adopt what a master supplies, create what none does".
+Adding the master moved the patch's own load-order byte, which renumbered 497
+of its generated records once (179 outfits, 83 projectiles, 80 sound
+descriptors, 77 statics renumbered; 47 voice types, 12 factions, 9 form
+lists, 5 globals, 4 game settings and 1 quest now adopted); the gap fills
+themselves keep their low 24 bits.
 
 #### <a id="an-audience-that-cannot-be-named"></a>An audience that cannot be named drops the LINE, never the filter
 

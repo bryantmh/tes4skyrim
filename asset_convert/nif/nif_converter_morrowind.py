@@ -21,7 +21,7 @@ import os
 from pyffi.formats.nif import NifFormat
 
 from asset_convert.collision.cms_builder import GAME_UNITS_PER_HAVOK, build_cms_collision
-from asset_convert.collision.collision_hulls import build_clutter_hull
+from asset_convert.collision.collision_hulls import build_clutter_hull, set_box_inertia
 from asset_convert.collision.clutter_plan import mesh_clutter_mass
 from asset_convert.collision.resting_items_plan import items_rest_inside
 from asset_convert.nif.door_anim_morrowind import (animate_morrowind_door,
@@ -42,9 +42,6 @@ _MAX_COLLISION_TRIS = 20000
 
 #: SKYL_CLUTTER, the layer every loose simulated prop uses.
 _SKYL_CLUTTER = 4
-
-#: Inertia floor (havok units) so a flat item still resists rotation.
-_MIN_INERTIA_EXTENT = 0.02
 
 #: Helper nodes Morrowind uses that must never reach Skyrim as geometry.
 _HELPER_TYPES = ('AvoidNode',)
@@ -243,34 +240,13 @@ def _transformed_verts(block, root, data, scale: float) -> list:
     return out
 
 
-def _set_box_inertia(body, tris, mass) -> None:
-    """Solid-box inertia over the triangles' AABB, about the center of mass.
-
-    Morrowind authors no tensor, so it is computed rather than rescaled: these
-    triangles are already in Skyrim havok units and need no _HAVOK_SCALE**2.
-    """
-    xs = [v[0] for t in tris for v in t]
-    ys = [v[1] for t in tris for v in t]
-    zs = [v[2] for t in tris for v in t]
-    dx = max(max(xs) - min(xs), _MIN_INERTIA_EXTENT)
-    dy = max(max(ys) - min(ys), _MIN_INERTIA_EXTENT)
-    dz = max(max(zs) - min(zs), _MIN_INERTIA_EXTENT)
-    k = mass / 12.0
-    body.center.x = (max(xs) + min(xs)) / 2.0
-    body.center.y = (max(ys) + min(ys)) / 2.0
-    body.center.z = (max(zs) + min(zs)) / 2.0
-    body.inertia.m_11 = k * (dy * dy + dz * dz)
-    body.inertia.m_22 = k * (dx * dx + dz * dz)
-    body.inertia.m_33 = k * (dx * dx + dy * dy)
-
-
 def _set_clutter_motion(body, tris, mass) -> None:
     """Make `body` a simulated clutter prop of `mass` kilograms.
 
     See: docs/commentary/asset_convert_collision.md#nif-dynamic-clutter-physics
     """
     body.mass = mass
-    _set_box_inertia(body, tris, mass)
+    set_box_inertia(body, tris, mass)
     body.motion_system = 3
     body.quality_type = 4
     body.solver_deactivation = 2

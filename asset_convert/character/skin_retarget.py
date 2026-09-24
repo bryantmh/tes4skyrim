@@ -612,138 +612,97 @@ def load_animation_deltas(src_skel: dict = None):
     return result
 
 
-def _bake_geoms_to_bind_pose(skinned_geoms, skel_root):
-    """Rewrite skinned geometry so stored vertices sit in skeleton space.
+def bake_geoms_to_bind_pose(skinned_geoms, skel_root) -> int:
+    """Rewrite skinned geometry so stored vertices sit in skeleton space; how many shapes moved.
 
-    For each vertex the bind pose is the weighted blend of
-    ``skin_transform_i @ bone_world_i`` (the standard skinning contract, cf.
-    NifSkope ``glmesh.cpp``).  When that blend already equals the stored
-    coordinates the mesh is left byte-identical; otherwise vertices and
-    normals are moved onto it and the per-bone ``skin_transform`` matrices are
-    reset to ``inv(bone_world)`` so the mesh still binds to the same pose.
-
-    Returns the number of geometries actually rewritten.
+    A shape already there is left byte-identical; a moved one keeps binding
+    to the same pose. `skinned_geoms` holds (shape, is Prn, Prn bone); Prn
+    shapes are skipped.
+    See: docs/commentary/asset_convert_armor.md#skin-bind-pose-bake
     """
     baked = 0
     for block, is_prn, _prn_bone in skinned_geoms:
-        if is_prn:
-            continue
-        skin = getattr(block, 'skin_instance', None)
-        geom_data = getattr(block, 'data', None)
-        if skin is None or skin.data is None or geom_data is None:
-            continue
-        num_verts = geom_data.num_vertices
-        if not num_verts:
-            continue
-
-        try:
-            G = m44_to_np(block.get_transform(skel_root))
-        except (ValueError, RuntimeError):
-            G = np.eye(4)
-        G_is_identity = np.allclose(G, np.eye(4), atol=1e-6)
-
-        verts = np.array([[v.x, v.y, v.z] for v in geom_data.vertices],
-                         dtype=np.float64)
-        verts_world = verts if G_is_identity else verts @ G[:3, :3] + G[3, :3]
-
-        # Per-vertex blended bind matrix (full 4x4 so normals get the same
-        # rotation the positions received).  The engine chain is
-        # S @ B_i @ W_i applied to the G-transformed vertex, where the overall
-        # S is normally inv(G) — so G cancels and the bind pose is driven by
-        # the RAW stored coordinates.  S must therefore be part of the blend.
-        skin_data = skin.data
-        S = np.eye(4, dtype=np.float64)
-        _s = skin_data.skin_transform
-        _sr = _s.rotation
-        S[:3, :3] = [[_sr.m_11, _sr.m_12, _sr.m_13],
-                     [_sr.m_21, _sr.m_22, _sr.m_23],
-                     [_sr.m_31, _sr.m_32, _sr.m_33]]
-        S[3, :3] = [_s.translation.x, _s.translation.y, _s.translation.z]
-        acc = np.zeros((num_verts, 4, 4), dtype=np.float64)
-        wsum = np.zeros(num_verts, dtype=np.float64)
-        bone_worlds = {}
-        for bi in range(min(skin_data.num_bones, skin.num_bones)):
-            bone_node = skin.bones[bi]
-            if bone_node is None:
-                continue
-            bone_data = skin_data.bone_list[bi]
-            st = bone_data.skin_transform
-            r = st.rotation
-            B = np.eye(4, dtype=np.float64)
-            B[:3, :3] = [[r.m_11, r.m_12, r.m_13],
-                         [r.m_21, r.m_22, r.m_23],
-                         [r.m_31, r.m_32, r.m_33]]
-            B[3, :3] = [st.translation.x, st.translation.y, st.translation.z]
-            try:
-                W = m44_to_np(bone_node.get_transform(skel_root))
-            except (ValueError, RuntimeError):
-                continue
-            bone_worlds[bi] = W
-            M = S @ B @ W
-            n = bone_data.num_vertices
-            if not n:
-                continue
-            idx = np.fromiter((vw.index for vw in bone_data.vertex_weights),
-                              dtype=np.int64, count=n)
-            wts = np.fromiter((vw.weight for vw in bone_data.vertex_weights),
-                              dtype=np.float64, count=n)
-            keep = (idx >= 0) & (idx < num_verts) & (wts > 0.0)
-            if not keep.any():
-                continue
-            idx = idx[keep]; wts = wts[keep]
-            np.add.at(acc, idx, wts[:, None, None] * M[None, :, :])
-            np.add.at(wsum, idx, wts)
-
-        ok = wsum > 1e-6
-        if not ok.any():
-            continue
-        Mv = acc[ok] / wsum[ok, None, None]
-        bind_world = verts_world.copy()
-        bind_world[ok] = np.einsum('vi,vij->vj', verts_world[ok], Mv[:, :3, :3]) \
-            + Mv[:, 3, :3]
-
-        if np.allclose(bind_world[ok], verts_world[ok], atol=1e-3):
-            continue    # already skeleton space — leave byte-identical
-
-        # bind_world is SKELETON space.  Store it as-is and neutralise the
-        # geometry node, rather than pushing it back through inv(G) — the
-        # renderer would otherwise re-apply G on top of coordinates that
-        # already contain it.
-        new_verts = bind_world
-        for vi in range(num_verts):
-            geom_data.vertices[vi].x = float(new_verts[vi, 0])
-            geom_data.vertices[vi].y = float(new_verts[vi, 1])
-            geom_data.vertices[vi].z = float(new_verts[vi, 2])
-
-        if getattr(geom_data, 'has_normals', False) and geom_data.normals:
-            norms = np.array([[n.x, n.y, n.z] for n in geom_data.normals],
-                             dtype=np.float64)
-            nw = norms if G_is_identity else norms @ G[:3, :3]
-            new_nw = nw.copy()
-            new_nw[ok] = np.einsum('vi,vij->vj', nw[ok], Mv[:, :3, :3])
-            ln = np.linalg.norm(new_nw, axis=1, keepdims=True)
-            ln[ln < 1e-6] = 1.0
-            new_nw /= ln
-            for vi in range(num_verts):
-                geom_data.normals[vi].x = float(new_nw[vi, 0])
-                geom_data.normals[vi].y = float(new_nw[vi, 1])
-                geom_data.normals[vi].z = float(new_nw[vi, 2])
-
-        # Vertices are now skeleton-space, so the geometry node must no longer
-        # contribute anything — otherwise the renderer applies it a second time
-        # (observed as a rest pose shifted by exactly the node translation,
-        # 102.45 / 71.58 units, on meshes whose nodes are off the origin).
-        # With G neutralised the chain S @ B_i @ W_i reduces to S = identity
-        # and B_i = inv(W_i).
-        if not G_is_identity:
-            write_node_transform(block, np.eye(4))
-        write_skin_transform(skin_data.skin_transform, np.eye(4))
-        for bi, W in bone_worlds.items():
-            write_skin_transform(skin_data.bone_list[bi].skin_transform,
-                                  np.linalg.inv(W))
-        baked += 1
-
+        if not is_prn and _bake_to_bind_pose(block, skel_root):
+            baked += 1
     return baked
+
+
+def _bake_to_bind_pose(block, skel_root) -> bool:
+    """Move one skinned shape's vertices and normals onto its bind pose; False when it has none or is already there."""
+    skin = getattr(block, 'skin_instance', None)
+    geom_data = getattr(block, 'data', None)
+    if skin is None or skin.data is None or geom_data is None or not geom_data.num_vertices:
+        return False
+    try:
+        node = m44_to_np(block.get_transform(skel_root))
+    except (ValueError, RuntimeError):
+        node = np.eye(4)
+    moved_node = not np.allclose(node, np.eye(4), atol=1e-6)
+    node = node if moved_node else np.eye(4)
+    verts = np.array([[v.x, v.y, v.z] for v in geom_data.vertices], dtype=np.float64)
+    verts = verts @ node[:3, :3] + node[3, :3]
+    blend, ok, bone_worlds = _bind_blend(skin, skel_root, geom_data.num_vertices)
+    bind = verts.copy()
+    bind[ok] = np.einsum('vi,vij->vj', verts[ok], blend[:, :3, :3]) + blend[:, 3, :3]
+    if not ok.any() or np.allclose(bind[ok], verts[ok], atol=1e-3):
+        return False
+    for vert, row in zip(geom_data.vertices, bind.tolist()):
+        vert.x, vert.y, vert.z = row
+    if getattr(geom_data, 'has_normals', False) and geom_data.normals:
+        _bake_normals(geom_data, node, blend, ok)
+    if moved_node:
+        write_node_transform(block, np.eye(4))
+    write_skin_transform(skin.data.skin_transform, np.eye(4))
+    for bi, world in bone_worlds.items():
+        write_skin_transform(skin.data.bone_list[bi].skin_transform, np.linalg.inv(world))
+    return True
+
+
+def _bind_blend(skin, skel_root, num_verts) -> tuple:
+    """(blended bind matrix per weighted vertex, which vertices are weighted, {bone index: bone world})."""
+    skin_data = skin.data
+    overall = _skin_matrix(skin_data.skin_transform)
+    acc = np.zeros((num_verts, 4, 4), dtype=np.float64)
+    wsum = np.zeros(num_verts, dtype=np.float64)
+    bone_worlds = {}
+    for bi in range(min(skin_data.num_bones, skin.num_bones)):
+        bone_node, bone_data = skin.bones[bi], skin_data.bone_list[bi]
+        if bone_node is None:
+            continue
+        try:
+            world = m44_to_np(bone_node.get_transform(skel_root))
+        except (ValueError, RuntimeError):
+            continue
+        bone_worlds[bi] = world
+        idx = np.fromiter((vw.index for vw in bone_data.vertex_weights), dtype=np.int64,
+                          count=bone_data.num_vertices)
+        wts = np.fromiter((vw.weight for vw in bone_data.vertex_weights), dtype=np.float64,
+                          count=bone_data.num_vertices)
+        keep = (idx >= 0) & (idx < num_verts) & (wts > 0.0)
+        matrix = overall @ _skin_matrix(bone_data.skin_transform) @ world
+        np.add.at(acc, idx[keep], wts[keep, None, None] * matrix[None, :, :])
+        np.add.at(wsum, idx[keep], wts[keep])
+    ok = wsum > 1e-6
+    return acc[ok] / wsum[ok, None, None], ok, bone_worlds
+
+
+def _skin_matrix(st) -> np.ndarray:
+    """A NiSkinData transform as a row-vector 4x4."""
+    r = st.rotation
+    out = np.eye(4, dtype=np.float64)
+    out[:3, :3] = [[r.m_11, r.m_12, r.m_13], [r.m_21, r.m_22, r.m_23], [r.m_31, r.m_32, r.m_33]]
+    out[3, :3] = [st.translation.x, st.translation.y, st.translation.z]
+    return out
+
+
+def _bake_normals(geom_data, node, blend, ok) -> None:
+    """Carry the shape's normals through its node transform and the bind blend, renormalized."""
+    normals = np.array([[n.x, n.y, n.z] for n in geom_data.normals], dtype=np.float64) @ node[:3, :3]
+    normals[ok] = np.einsum('vi,vij->vj', normals[ok], blend[:, :3, :3])
+    length = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals /= np.where(length < 1e-6, 1.0, length)
+    for normal, row in zip(geom_data.normals, normals.tolist()):
+        normal.x, normal.y, normal.z = row
 
 
 def deform_vertices_animation_fk(skinned_geoms, skel_root, bone_deltas):
@@ -1145,7 +1104,7 @@ def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None
     skel_root, bone_nodes, skinned_geoms = _collect_skin_targets(data)
     if not skel_root or not skinned_geoms:
         return 0
-    _bake_geoms_to_bind_pose(skinned_geoms, skel_root)
+    bake_geoms_to_bind_pose(skinned_geoms, skel_root)
     _deform_vertices(skinned_geoms, skel_root, ob_skel, female, morrowind,
                      (allow_wrap, weight, race))
     _place_bones(skinned_geoms, bone_nodes, skel_root, sk_skel, src_map)

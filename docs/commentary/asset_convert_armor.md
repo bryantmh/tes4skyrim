@@ -569,6 +569,88 @@ The waist is cut along the border between Oblivion's `upperbody` and
 `lowerbody` fitted onto the Skyrim body; the hands split by the side of the
 bones each triangle is weighted to.
 
+## <a id="split-pair-gauntlets"></a>Two-handed wearables split into left and right halves
+
+**Code:** `body_slots.write_hand_side`, `asset_convert/character/hand_pairs.py`.
+
+Morroblivion replaced each Morrowind left/right pair with ONE two-handed item.
+The gap patch splits that item's meshes back into halves
+([why](tes4_export_morrowind.md#split-pairs)).
+
+- **Worn models split by bone side**, the same rule the split skin hands use:
+  a triangle goes to the right when two of its vertices weigh most on a
+  ` R ` bone. Measured on the 21 pair items' worn models: every triangle falls
+  cleanly to one side (steel: 446/446, 277/277, 1374/1374 across three
+  shapes; no mixed triangle anywhere). Dark Brotherhood's worn model holds
+  only a right hand (651/0) and Bound Gauntlets name no model, so neither
+  splits; their left stays the vanilla piece.
+- **Ground models are halved too** -- see below.
+
+Each half converts like any worn piece: the record's `MorrowindWearableType`
+gives it slot 33 or 59 in `_classify_wearable`.
+
+### <a id="split-pair-ground-models"></a>Ground models: split by piece, else built from the worn hand
+
+**Code:** `asset_convert/character/ground_halves.py`.
+
+Each half is written as `armor\split\<model>_left_gnd.nif` / `_right_gnd.nif`
+(the `gnd.nif` ending makes it convert as a ground model).
+
+- **A piece names its hand through its texture.** The ground model's pieces
+  (welded connected components) share UVs with the worn model, so matching
+  vertices by UV gives exact correspondences, and a rigid fit onto the worn
+  LEFT hand either keeps the piece's handedness (a left) or needs a mirror (a
+  right). Earlier attempts that guessed correspondences failed: handedness by
+  third moments was undecidable, and nearest-point ICP separated the sides by
+  only 1-4%. With UV correspondences the margins are 1.6x to 4,587x (fit error
+  of the wrong hand over the right one; Netch 1.6x, bear 1.8-2.1x, Daedric Lord
+  22x and 4,587x, High Indoril 133x).
+- **Split only when every piece names a hand and both hands are there.**
+  Geometry cannot prove a model shows ONE gauntlet: a second gauntlet with its
+  own UV layout, stacked or end to end, looks the same. So anything that does
+  not divide cleanly is rebuilt instead. Of the 19 pair entries, 5 split
+  (Daedric Lord, bear, snow bear, Netch, and High Indoril, whose ground model
+  is its worn mesh), and 14 are rebuilt:
+  - Helseth and Indoril: both pieces fit as LEFT hands (12x, 35x);
+  - the iron-based family (iron, ice, Skaal, silver, Morrowind Imperial): both
+    fit as left;
+  - AUWolf: one RIGHT gauntlet in two pieces (2,326x, 4,595x);
+  - bonemold: both pieces fit as right;
+  - steel: two stacked copies whose small pieces share no UVs with the worn
+    model;
+  - AUSteel: shares no UVs with its worn model.
+- **Rebuilt halves come from the worn model's hand**: the worn model baked to
+  its bind pose ([bake](#skin-bind-pose-bake)), bare-skin shapes
+  (`is_body_skin_geometry`, e.g. dwemer's `handmale.dds` hand) left out, the
+  hand's triangles unskinned. Oblivion's worn meshes sit in a T-pose (hands at
+  x = +-52.5, z = 99, long axis along X, thinnest axis vertical, palms down),
+  so the half is laid flat on its principal axes with the thinnest one kept
+  pointing at +Z: back of the hand up, the same way for both halves.
+- **Every half rests on the ground plane, centered**, and gets ONE convex
+  body over its own geometry. The source ground model's collision covered
+  both gauntlets: one hull, a capsule list, a transformed box list, or two
+  bodies joined by a hinge (Netch, bear). The half keeps the source's rigid
+  body (mass, layer, material) and swaps in the hull, written in Oblivion
+  Havok units, so the ordinary collision conversion scales it and splits it
+  into tighter pieces like any Oblivion clutter hull. A source without
+  collision (High Indoril's worn-as-ground mesh) stays without.
+
+### <a id="skin-bind-pose-bake"></a>Baking a skinned mesh to its bind pose
+
+**Code:** `skin_retarget.bake_geoms_to_bind_pose`.
+
+A vertex's bind pose is its stored position through the shape's node
+transform G, blended over its bones' `S @ B_i @ W_i`: S the overall skin
+transform, B_i the bone's skin transform, W_i the bone's world transform
+(NifSkope `glmesh.cpp`). S is normally inv(G), so G cancels and the RAW
+stored coordinates drive the pose; S must therefore be in the blend. A shape
+whose blend equals its stored coordinates (within 1e-3) is left
+byte-identical. A moved shape stores the skeleton-space result directly and
+its node transform is reset to identity -- pushing it back through inv(G)
+would have the renderer apply G twice, observed as a rest pose shifted by
+exactly the node translation (102.45 / 71.58 units) on meshes whose nodes sit
+off the origin. S is then identity and each B_i is inv(W_i).
+
 ## <a id="morrowind-hand-weights"></a>Morrowind hands and forearms take the Skyrim skin's weights
 
 **Code:** `asset_convert/character/morrowind_weights.py`.

@@ -26,6 +26,7 @@ _ZERO_LOCK = 0x7FFFFFFF
 @dataclass
 class CellRef:
     """One placed reference from inside a CELL."""
+    ref_num: int = 0
     record_id: str = ''
     pos: tuple = (0.0, 0.0, 0.0)
     rot: tuple = (0.0, 0.0, 0.0)
@@ -72,7 +73,7 @@ def parse_cell(rec: Tes3Record) -> Cell:
     seen_data = False
     for sub in rec.subrecords:
         if sub.type == 'FRMR':
-            ref = CellRef()
+            ref = CellRef(ref_num=int.from_bytes(sub.data[:4], 'little'))
             cell.refs.append(ref)
             continue
         if ref is None:

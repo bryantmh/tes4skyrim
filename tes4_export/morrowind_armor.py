@@ -31,13 +31,19 @@ def load_body_models(source_path: str, records, export_dir: str) -> dict:
 
     See: docs/commentary/tes4_export_morrowind.md#vanilla-assets
     """
+    models = body_models_from(
+        resolve_plugin_path(master, os.path.dirname(source_path), export_dir)
+        for master in read_masters(source_path))
+    _add_body_models(models, records)
+    return models
+
+
+def body_models_from(paths) -> dict:
+    """BODY id -> mesh path over the plugin files at `paths`, later files overriding."""
     models = {}
-    for master in read_masters(source_path):
-        path = resolve_plugin_path(master, os.path.dirname(source_path),
-                                   export_dir)
+    for path in paths:
         if os.path.isfile(path):
             _add_body_models(models, read_file(path)[1])
-    _add_body_models(models, records)
     return models
 
 
