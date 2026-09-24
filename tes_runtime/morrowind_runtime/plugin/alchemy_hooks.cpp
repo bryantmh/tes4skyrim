@@ -36,8 +36,6 @@ using ProcessFn = void (*)(void* processor, void* name, void* callback);
 using CallbackFn = void (*)(void* args);
 using SelectedItemFn = void* (*)(void* itemList);
 using CombatFn = bool (*)(void* vm, std::uint32_t stack, void* actor);
-using NotificationFn = void (*)(void* vm, std::uint32_t stack, void* tag,
-                                void* text);
 using ItemCountFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* ref,
                                      void* item);
 using ProcessMessageFn = std::uint32_t (*)(void* menu, char* message);
@@ -84,7 +82,6 @@ UserEventFn     g_userEventOriginal = nullptr;
 void**          g_userEvents = nullptr;
 SelectedItemFn  g_selectedItem = nullptr;
 CombatFn        g_isInCombat = nullptr;
-NotificationFn  g_notification = nullptr;
 ItemCountFn     g_itemCount = nullptr;
 ProcessMessageFn g_craftingOriginal = nullptr;
 void**          g_allocator = nullptr;
@@ -213,15 +210,6 @@ std::uint32_t CraftingProcessMessage(void* menu, char* message) {
     return ids::kResultHandled;
 }
 
-void Notify(const std::string& text) {
-    void* message = nullptr;
-    if (text.empty() || !g_notification ||
-        !FixedString(&message, text.c_str())) {
-        return;
-    }
-    g_notification(PapyrusVm(), 0, nullptr, &message);
-}
-
 // Whether `event` (a BSFixedString*) is the one that starts a brew.
 bool IsCraftEvent(void* event) {
     void* events = g_userEvents ? *g_userEvents : nullptr;
@@ -234,7 +222,7 @@ bool IsCraftEvent(void* event) {
 bool AlchemyUserEvent(void* subMenu, void* event) {
     if (g_active && !g_tools.has[kMortarPestle] && IsCraftEvent(event)) {
         Log("alchemy: brew refused -- no mortar and pestle carried");
-        Notify(GmstText(kNoMortarGmst, ""));
+        gamecalls::Notify(GmstText(kNoMortarGmst, ""));
         return true;
     }
     return g_userEventOriginal(subMenu, event);
@@ -249,7 +237,7 @@ void UseApparatus(void* args) {
     void* player = gamecalls::PlayerRef();
     if (player && g_isInCombat && g_isInCombat(PapyrusVm(), 0, player)) {
         Log("alchemy: apparatus used in combat -- refused");
-        Notify(GmstText(kInCombatGmst, ""));
+        gamecalls::Notify(GmstText(kInCombatGmst, ""));
         return;
     }
     g_pending = true;
@@ -331,8 +319,6 @@ void ResolveNatives() {
     g_selectedItem = Address<SelectedItemFn>("ItemList::GetSelectedItem",
                                              ids::kItemListSelected);
     g_isInCombat = Address<CombatFn>("Actor.IsInCombat", ids::kActorIsInCombat);
-    g_notification = Address<NotificationFn>("Debug.Notification",
-                                             ids::kDebugNotification);
     g_itemCount = Address<ItemCountFn>("ObjectReference.GetItemCount",
                                        ids::kRefGetItemCount);
     g_allocator = Address<void**>("Scaleform allocator",

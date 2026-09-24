@@ -71,6 +71,14 @@ public:
 
     ObjectEvents& Events() { return mEvents; }
 
+    // Whether the script has taken this placement's activation over. Reading
+    // `OnActivate` takes it, for the session, and from then on activating the
+    // object only raises the event: the script's own `Activate` is what does
+    // the default thing. OpenMW's RefData::onActivate and ::activate.
+    // See: docs/commentary/morrowind_runtime.md#onactivate-claims-the-activation
+    void ClaimActivation() { mActivationClaimed = true; }
+    bool ActivationClaimed() const { return mActivationClaimed; }
+
     // Raises `died` on the live->dead TRANSITION, once, as TES3 has it. An
     // actor already dead when first polled never raises it: a corpse placed
     // dead in the cell did not die during play.
@@ -120,6 +128,7 @@ private:
     std::string mKey;
     int mLayer = kEveryLayer;
     ObjectEvents mEvents;
+    bool mActivationClaimed = false;
     // Whether the death has already been reported, so it is raised once, and
     // whether life has been sampled at all -- the first poll only establishes
     // which side the actor started on.

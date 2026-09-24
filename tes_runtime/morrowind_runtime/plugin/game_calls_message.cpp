@@ -43,6 +43,12 @@ using ShowMessageBoxFn = void (*)(const char* text, ResultFn callback,
 
 ShowMessageBoxFn g_showMessageBox = nullptr;
 
+// Debug.Notification(string), global, so its self slot is a tag.
+using NotificationFn = void (*)(void* vm, std::uint32_t stack, void* tag,
+                                void* text);
+
+NotificationFn g_notification = nullptr;
+
 // The engine reports the click on the game thread, and a script only ever
 // reads it from its own tick, so the plain store is enough.
 void OnButton(unsigned int button) {
@@ -79,9 +85,20 @@ void ShowButtonMessage(const std::string& text,
     });
 }
 
+void Notify(const std::string& text) {
+    void* message = nullptr;
+    if (text.empty() || !g_notification ||
+        !FixedString(&message, text.c_str())) {
+        return;
+    }
+    g_notification(PapyrusVm(), 0, nullptr, &message);
+}
+
 void InstallMessageCalls() {
     g_showMessageBox = Native<ShowMessageBoxFn>("ShowMessageBox",
                                                 ids::kShowMessageBox);
+    g_notification = Native<NotificationFn>("Debug.Notification",
+                                            ids::kDebugNotification);
 }
 
 }  // namespace gamecalls

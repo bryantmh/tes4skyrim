@@ -12,6 +12,7 @@
 #include "conversation.h"
 #include "dialogue_state.h"
 #include "game_calls.h"
+#include "game_calls_internal.h"
 #include "ids.h"
 #include "log.h"
 #include "object_script.h"
@@ -70,14 +71,27 @@ using FixedStringFn = void* (*)(void* out, const char* text);
 // a four-instruction thunk that tail-calls the reference's own virtual --
 // `mov rax,[r8] / mov dl,1 / mov rcx,r8 / jmp [rax+0x4c8]`, identical on
 // 1.6.659 and 1.6.1170. So it answers from inside the Activate vtable call,
-// where re-entering the VM is not an option.
+// where re-entering the VM is not an option. `Actor.IsSneaking` (a test of
+// actorState1) and `Actor.GetCombatTarget` (a handle lookup) read only r8 too.
 // See: docs/commentary/morrowind_runtime.md#a-corpse-is-looted-not-talked-to
-using IsDeadFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
+using RefTestFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
+using CombatTargetFn = void* (*)(void* vm, std::uint32_t stack, void* actor);
+// ContainerMenu's open(ref, mode), as TESNPC::Activate calls it.
+using OpenContainerFn = void (*)(void* ref, std::int32_t mode);
 
 void*             g_vm = nullptr;
 GetFormFromFileFn g_getFormFromFile = nullptr;
 FixedStringFn     g_fixedString = nullptr;
-IsDeadFn          g_isDead = nullptr;
+RefTestFn         g_isDead = nullptr;
+RefTestFn         g_isSneaking = nullptr;
+CombatTargetFn    g_combatTarget = nullptr;
+OpenContainerFn   g_openContainer = nullptr;
+
+// The reference a script's `Activate` is activating right now, or null.
+void* g_scriptActivation = nullptr;
+
+// The GMST OpenMW's Npc::activate shows for an actor fighting the player.
+constexpr const char* kInCombatGmst = "sActorInCombat";
 
 // A FormID's load-order index is its high byte.
 inline std::uint8_t PluginIndex(std::uint32_t formId) {
@@ -127,15 +141,30 @@ ActivateFn OriginalActivate(void* form) {
     return it == g_originalActivate.end() ? nullptr : it->second;
 }
 
-// Raises OnActivate on the instance this PLACEMENT runs, when it runs one.
-// Silent for every other reference, which is the overwhelming majority.
-void RaiseActivated(void* ref) {
+// The instance this PLACEMENT runs, or null for every other reference, which
+// is the overwhelming majority.
+ObjectScript* ScriptInstance(void* ref) {
     const std::uint32_t refId = FormIdOf(ref);
-    if (!refId || !g_pluginMask.test(PluginIndex(refId))) return;
-    ObjectScript* instance = InstanceForRef(refId);
-    if (!instance) return;
+    if (!refId || !g_pluginMask.test(PluginIndex(refId))) return nullptr;
+    return InstanceForRef(refId);
+}
+
+// Whether the object's script has taken this activation, which then only
+// raises `OnActivate` -- OpenMW's RefData::activate. A script's own `Activate`
+// is never taken, or it could not do the default thing it exists to do.
+//
+// 🛑 Only the PLAYER's. Skyrim's NPCs activate every door they path through,
+// and TES3 has no such thing: taken, the door's `if ( OnActivate == 1 )` would
+// fire for the NPC and its `Activate` would then act as the player.
+bool ScriptTakesActivation(void* ref, void* activator) {
+    if (ref == g_scriptActivation) return false;
+    ObjectScript* instance = ScriptInstance(ref);
+    if (!instance || activator != gamecalls::PlayerRef()) return false;
+    if (!instance->ActivationClaimed()) return false;
     instance->Events().activated = true;
-    Log("object: %s activated (%08X)", instance->Script().c_str(), refId);
+    Log("object: %s activated (%08X) -- its script handles it",
+        instance->Script().c_str(), FormIdOf(ref));
+    return true;
 }
 
 // Says once per actor that its dialogue was held back. Once, because the
@@ -158,6 +187,69 @@ bool IsCorpse(void* ref) {
     return ref && g_isDead && g_isDead(nullptr, 0, ref);
 }
 
+// Whether the actor is fighting the player -- OpenMW's
+// `aiSequence.isInCombat(player)`, which is Skyrim's combat target. An actor
+// fighting someone else still talks, as it does in OpenMW.
+bool FightingPlayer(void* ref, void* player) {
+    return player && g_combatTarget && g_combatTarget(nullptr, 0, ref) == player;
+}
+
+// Whether the actor is down -- knocked over, or knocked out -- which TES3
+// reads as `getKnockedDown`. Standing is knock state 0 and life state alive.
+bool KnockedDown(void* ref) {
+    const std::uint32_t state = *reinterpret_cast<const std::uint32_t*>(
+        static_cast<const char*>(ref) + ids::kOffActorState1);
+    return (state & ids::kKnockStateMask) != 0 ||
+           (state & ids::kLifeStateMask) == ids::kLifeUnconscious;
+}
+
+bool PlayerSneaking(void* player) {
+    return player && g_isSneaking && g_isSneaking(nullptr, 0, player);
+}
+
+// Opens the conversation with this placement of the speaker.
+void Converse(void* base, void* ref, std::uint32_t baseId) {
+    Log("activation: %08X is '%s' (\"%s\") -- opening the Morrowind menu",
+        baseId, SpeakerId(baseId), DisplayName(base));
+    const LayerScope scope(SpeakerLayer(baseId));
+    SetSpeakerRef(SpeakerId(baseId), ref);
+    BeginConversation(SpeakerId(baseId), DisplayName(base), PlayerName());
+}
+
+// What activating a LIVING speaker does, in the order OpenMW's Npc::activate
+// decides it. True when it is handled here; false hands it to Skyrim's own
+// Activate, which is what pickpockets.
+//
+// Everything else is claimed either way: a speaker must not fall through to
+// Skyrim's own dialogue menu just because our side declined to open.
+//
+// 🛑 `playercontrols` gates the player's activation, because we answer BEFORE
+// the engine does: Skyrim's own abActivate flag never gets the chance to stop
+// an activation we have already claimed. A script's `Activate` is not the
+// player's and passes, as OpenMW's executeActivation does.
+// See: docs/commentary/morrowind_runtime.md#the-control-switches
+bool ActivateSpeaker(void* base, void* ref, std::uint32_t baseId) {
+    if (ref != g_scriptActivation && !State().ControlEnabled(kPlayerControls)) {
+        ReportSuppressed(baseId);
+        return true;
+    }
+    void* player = gamecalls::PlayerRef();
+    const bool fighting = FightingPlayer(ref, player);
+    if (!fighting && KnockedDown(ref) && g_openContainer) {
+        Log("activation: %08X is down -- opening its inventory", baseId);
+        g_openContainer(ref, ids::kContainerLoot);
+        return true;
+    }
+    if (!fighting && PlayerSneaking(player)) return false;
+    if (fighting) {
+        Log("activation: %08X is fighting the player -- no dialogue", baseId);
+        gamecalls::Notify(GmstText(kInCombatGmst, ""));
+        return true;
+    }
+    Converse(base, ref, baseId);
+    return true;
+}
+
 // Our Activate. The FIRST test is one bit on the ref's load-order
 // index, so a vanilla or Oblivion-converted NPC reaches the engine's own
 // Activate having cost nothing measurable.
@@ -166,37 +258,17 @@ bool IsCorpse(void* ref) {
 // activation entirely -- no vanilla dialogue menu, no "this person has nothing
 // to say". Anything we do not claim falls through untouched, which is how a
 // CORPSE reaches the engine's own Activate and opens as a container.
-//
-// 🛑 `playercontrols` gates the whole hook, because we answer BEFORE the
-// engine does: Skyrim's own abActivate flag never gets the chance to stop an
-// activation we have already claimed. A tutorial that takes the player's
-// controls away means the NPCs there open nothing, which is exactly what
-// OpenMW's ActionManager::activate() does with the same switch.
-// See: docs/commentary/morrowind_runtime.md#the-control-switches
 bool ActivateHook(void* base, void* ref, void* activator, std::uint8_t unk,
                   void* object, std::int32_t count) {
+    if (ScriptTakesActivation(ref, activator)) return true;
     // `base` is the BASE form, which the actor index keys on; `ref` is the
     // placed instance, whose own FormID belongs to whichever plugin placed it.
     // Checking the base is what makes one indexed NPC match all its refs.
     const std::uint32_t baseId = FormIdOf(base);
-    if (baseId && IsMorrowindSpeaker(baseId) && !IsCorpse(ref)) {
-        // Claimed either way: a speaker must not fall through to Skyrim's own
-        // dialogue menu just because our side declined to open.
-        if (!State().ControlEnabled(kPlayerControls)) {
-            ReportSuppressed(baseId);
-            return true;
-        }
-        Log("activation: %08X is '%s' (\"%s\") -- opening the Morrowind menu",
-            baseId, SpeakerId(baseId), DisplayName(base));
-        const LayerScope scope(SpeakerLayer(baseId));
-        SetSpeakerRef(SpeakerId(baseId), ref);
-        BeginConversation(SpeakerId(baseId), DisplayName(base), PlayerName());
+    if (baseId && IsMorrowindSpeaker(baseId) && !IsCorpse(ref) &&
+        ActivateSpeaker(base, ref, baseId)) {
         return true;
     }
-    // An object running a TES3 script raises OnActivate on THIS placement and
-    // still activates normally: TES3's own `Activate` inside the body is what
-    // opens the container or the book.
-    RaiseActivated(ref);
     const ActivateFn original = OriginalActivate(base);
     return original ? original(base, ref, activator, unk, object, count)
                     : false;
@@ -220,8 +292,14 @@ void ResolveNatives() {
         Resolve("Game.GetFormFromFile", ids::kGetFormFromFile, nullptr));
     g_fixedString = reinterpret_cast<FixedStringFn>(
         Resolve("BSFixedString ctor", ids::kBSFixedStringCtor, nullptr));
-    g_isDead = reinterpret_cast<IsDeadFn>(
+    g_isDead = reinterpret_cast<RefTestFn>(
         Resolve("Actor.IsDead", ids::kActorIsDead, nullptr));
+    g_isSneaking = reinterpret_cast<RefTestFn>(
+        Resolve("Actor.IsSneaking", ids::kActorIsSneaking, nullptr));
+    g_combatTarget = reinterpret_cast<CombatTargetFn>(
+        Resolve("Actor.GetCombatTarget", ids::kActorCombatTarget, nullptr));
+    g_openContainer = reinterpret_cast<OpenContainerFn>(
+        Resolve("ContainerMenu open", ids::kOpenContainerMenu, nullptr));
 }
 
 // Reads one plugin's index as (local id, TES3 id) rows.
@@ -418,5 +496,14 @@ bool InstallActivation() {
 }
 
 bool ActivationInstalled() { return g_installed; }
+
+ScriptActivationScope::ScriptActivationScope(void* ref)
+    : mPrevious(g_scriptActivation) {
+    g_scriptActivation = ref;
+}
+
+ScriptActivationScope::~ScriptActivationScope() {
+    g_scriptActivation = mPrevious;
+}
 
 }  // namespace mwruntime

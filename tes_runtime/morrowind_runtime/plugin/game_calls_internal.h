@@ -86,6 +86,9 @@ void InstallControlCalls(GameHooks& hooks);
 void InstallMessageCalls();
 void ShowButtonMessage(const std::string& text,
                        const std::vector<std::string>& buttons);
+// Skyrim's corner notification, which is what OpenMW's buttonless message box
+// is: the line a refused action shows. Nothing for empty text.
+void Notify(const std::string& text);
 
 }  // namespace gamecalls
 }  // namespace mwruntime

@@ -25,15 +25,26 @@ namespace mwruntime {
 
 namespace {
 
-// Reads one flag off the running instance and CLEARS it, which is the whole
-// of TES3's event contract: a flag survives exactly one read.
+// Reads one flag off an instance and CLEARS it, which is the whole of TES3's
+// event contract: a flag survives exactly one read.
+//
+// 🛑 Reading `OnActivate` also CLAIMS the object's activation, as OpenMW's
+// RefData::onActivate does. That is how a script with `if ( OnActivate == 1 )
+// return` makes an NPC impossible to talk to -- every chargen guard does it.
+// See: docs/commentary/morrowind_runtime.md#onactivate-claims-the-activation
+template <bool ObjectEvents::*Flag>
+bool TakeEvent(ObjectScript* instance) {
+    if (!instance) return false;
+    if constexpr (Flag == &ObjectEvents::activated) instance->ClaimActivation();
+    const bool raised = instance->Events().*Flag;
+    instance->Events().*Flag = false;
+    return raised;
+}
+
 template <bool ObjectEvents::*Flag>
 class OpEvent : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
-        ObjectScript* instance = RunningInstance();
-        const bool raised = instance && instance->Events().*Flag;
-        if (instance) instance->Events().*Flag = false;
-        runtime.push(raised ? 1 : 0);
+        runtime.push(TakeEvent<Flag>(RunningInstance()) ? 1 : 0);
     }
 };
 
@@ -46,9 +57,7 @@ class OpEventExplicit : public Interpreter::Opcode0 {
         ObjectScript* instance = RunningInstance();
         const bool mine = instance && _stricmp(instance->BaseId().c_str(),
                                                target.c_str()) == 0;
-        const bool raised = mine && instance->Events().*Flag;
-        if (mine) instance->Events().*Flag = false;
-        runtime.push(raised ? 1 : 0);
+        runtime.push(TakeEvent<Flag>(mine ? instance : nullptr) ? 1 : 0);
     }
 };
 

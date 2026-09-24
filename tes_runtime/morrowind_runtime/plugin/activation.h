@@ -80,6 +80,22 @@ std::size_t SpeakerCount();
 // conversion does not include.
 bool SpeakerExists(const std::string& id);
 
+// Marks the activation of `ref` made inside this scope as a SCRIPT's `Activate`,
+// which OpenMW's executeActivation runs past both the claim `OnActivate` holds
+// and the player-control switch. ObjectReference.Activate calls ActivateRef
+// directly, so the hook sees the mark before the scope ends.
+// See: docs/commentary/morrowind_runtime.md#onactivate-claims-the-activation
+class ScriptActivationScope {
+public:
+    explicit ScriptActivationScope(void* ref);
+    ~ScriptActivationScope();
+    ScriptActivationScope(const ScriptActivationScope&) = delete;
+    ScriptActivationScope& operator=(const ScriptActivationScope&) = delete;
+
+private:
+    void* mPrevious;
+};
+
 // True once the routing table loaded. NOT yet a guarantee that activations
 // are diverted -- the event sink is still to come.
 bool ActivationInstalled();

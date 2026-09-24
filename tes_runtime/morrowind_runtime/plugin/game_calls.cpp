@@ -448,6 +448,7 @@ void Activate(const std::string& id) {
     void* player = PlayerRef();
     if (!ref || !player || !g_activate) return;
     PostToMainThread([ref, player]() {
+        const ScriptActivationScope byScript(ref);
         g_activate(PapyrusVm(), 0, ref, player, false);
     });
 }

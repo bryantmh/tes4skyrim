@@ -146,6 +146,24 @@ constexpr ActivateTarget kActivateTargets[] = {
     {"TESObjectMISC", 189689, 17670},
 };
 
+// ContainerMenu's open(ref, mode) (0x8fbff0 on 1.6.1170), which TESNPC::Activate
+// itself calls from inside Activate: mode 0 on a corpse, 2 to pickpocket, and
+// Actor.OpenInventory passes 3 for a teammate. Mode 0 is TES3's ActionOpen --
+// OpenMW opens a knocked-down actor with the very action it loots a corpse with.
+// See: docs/commentary/morrowind_runtime.md#a-corpse-is-looted-not-talked-to
+constexpr std::uint64_t kOpenContainerMenu = 51140;
+constexpr std::int32_t kContainerLoot = 0;
+
+// Actor::actorState1, the flag word at +0xC8 (IActorState at +0xC0, flags at
+// +8). Actor.IsSneaking tests bit 9 of it and Actor.IsBleedingOut masks
+// 0x1E00000 for life states 7 and 8, which fixes the layout: the life state is
+// bits 21-24 and the knock state the three bits above it, 0 while standing.
+// Life state 3 is UNCONSCIOUS, which TESNPC::Activate refuses an NPC activator.
+constexpr std::size_t kOffActorState1 = 0xC8;
+constexpr std::uint32_t kLifeStateMask = 0x01E00000;
+constexpr std::uint32_t kLifeUnconscious = 0x00600000;
+constexpr std::uint32_t kKnockStateMask = 0x0E000000;
+
 // UIManager::AddMessage(this, BSFixedString* menu, u32 msgId, void* data)
 // (0x170730). Identified by its pool arithmetic: [rcx+0x378] is poolUsed,
 // compared against 0x40 = kPoolSize, and (poolUsed + 0x1c) << 5 lands on

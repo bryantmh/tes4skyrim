@@ -543,7 +543,13 @@ void ObjectScriptRunCases() {
     Check(InstanceFor("scripts.esm", 0x0300C000, "nothing") == nullptr,
           "a placement with no script gets none");
 
+    // Reading OnActivate is what claims the activation, as OpenMW's
+    // RefData::onActivate -- how every chargen guard is made mute.
+    // See: docs/commentary/morrowind_runtime.md#onactivate-claims-the-activation
+    Check(!door->ActivationClaimed(), "nothing is claimed before the body runs");
     Check(door->RunOnce(), "the body compiles and runs");
+    Check(door->ActivationClaimed(),
+          "reading OnActivate claims the placement's activation");
     Check(State().Var(door->Key(), "open") == 0.0f,
           "no activation, so the door stays shut");
 
@@ -556,6 +562,8 @@ void ObjectScriptRunCases() {
     Check(other != nullptr && other->Key() != door->Key(),
           "a second placement is a separate instance");
     if (other) {
+        Check(!other->ActivationClaimed(),
+              "the first door's claim is not the second's");
         Check(other->RunOnce() &&
               State().Var(other->Key(), "open") == 0.0f,
               "and it has its OWN locals -- the first door's stayed shut");
@@ -743,6 +751,9 @@ void DeathOnUnloadCases() {
     Check(State().Var("scripts.esm|00C001", "deaddone") == 1.0f,
           "OnDeath ran on the tick the corpse unloaded");
     Check(BoundInstanceCount() == 0, "and the instance is still unbound after");
+    const ObjectScript* victim = FindInstance("scripts.esm", 0x0300C001);
+    Check(victim && !victim->ActivationClaimed(),
+          "reading OnDeath claims no activation -- only OnActivate does");
 
     // 🛑 `OnDeath` is a TRANSITION. A body placed dead in the cell never died
     // during play, so binding it raises nothing -- and neither does rebinding

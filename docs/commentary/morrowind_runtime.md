@@ -801,6 +801,69 @@ This is Morrowind's own rule, not a Skyrim convenience: OpenMW's
 reaches `ActionTalk` in the live-actor `else` branch (`mwclass/npc.cpp:846`,
 same shape in `creature.cpp:451`).
 
+### <a id="onactivate-claims-the-activation"></a>Reading `OnActivate` claims the activation
+
+Confirmed in-game 2026-09-24. Before this, a Morrowind speaker opened dialogue
+in combat and throughout vanilla `Morrowind.esm` chargen. The hook opened the
+menu for any living speaker once `playercontrols` was on, and `CharGenWalkNPC`
+turns controls back on at state 40, so the player could talk to Jiub and every
+boat and dock guard.
+
+**Vanilla makes those NPCs mute through their scripts, not through the control
+switch.** Seven of the eight chargen NPCs run a script that reads `OnActivate`.
+Jiub (`CharGenNameNPC`), the three boat guards and the dock guard
+(`CharGenRaceNPC`) all open with `if ( OnActivate == 1 ) return`. The class
+officer (`CharGenClassNPC`) plays his speech on `OnActivate`, and only at state
+−1 calls `Activate` to let you talk. The captain's script never reads it, so he
+talks.
+
+That works through OpenMW's `RefData` flags (`mwworld/refdata.cpp`):
+
+- `onActivate()`, the `OnActivate` opcode, sets `Flag_SuppressActivate` the
+  first time a script reads it.
+- `activate()` (from `_runStandardActivationAction`) refuses while that flag is
+  set, and buffers an `OnActivate` for the script instead.
+- `activateByScript()`, the `Activate` opcode, clears the flag, so the
+  script's own `Activate` performs the default action. The flag is not saved.
+
+The runtime mirrors it:
+
+- `TakeEvent` (`script_ops_events.cpp`) calls `ObjectScript::ClaimActivation`
+  whenever `OnActivate` is read.
+- `ActivateHook` checks first. While the placement is claimed, it only raises
+  `OnActivate` and returns true.
+- The runtime's `Activate` wraps `ObjectReference.Activate` in a
+  `ScriptActivationScope`. That call reaches `ActivateRef` (0x2eac20) directly
+  (id 56139 is a nine-instruction wrapper), so the hook sees the mark before
+  the scope ends. The scope also lets a script's activation past the
+  `playercontrols` gate, as OpenMW's `executeActivation` does.
+- 🛑 The claim applies only to the **player's** activation. Skyrim NPCs
+  activate every door they path through, and TES3 has nothing like that. If an
+  NPC's activation were claimed, a door's `if ( OnActivate == 1 )` would fire
+  for that NPC, and the script's `Activate` would then act on the player.
+
+The rest of OpenMW's `Npc::activate`, in its order, for a living speaker:
+
+| Case | OpenMW | Here |
+|---|---|---|
+| Combat target is the player | `FailedAction("#{sActorInCombat}")` | Notification with the `sActorInCombat` GMST, claimed |
+| Knocked down, not fighting the player | `ActionOpen` | Container menu opener (id 51140), mode 0, the loot mode `TESNPC::Activate` itself uses |
+| Player sneaking, not being fought | `ActionOpen` (pickpocket) | Falls through to Skyrim's `TESNPC::Activate`, which pickpockets |
+| Otherwise | `ActionTalk` | The Morrowind conversation |
+
+`GetCombatTarget` (id 54680) and `IsSneaking` (id 54953) read only r8 on
+1.6.1170, as `IsDead` does, so they are safe to call inside the vtable call.
+Down means knock state ≠ 0 or life state 3 (unconscious), read from
+actorState1 at `actor+0xC8`. `IsBleedingOut` masks `0x1E00000` there, which
+places the life state at bits 21–24; the knock state is the three bits above.
+
+Open gaps:
+
+- Looting a knocked-down NPC is not theft here. OpenMW records a crime if you
+  are seen, but no engine caller opens an actor's inventory in steal mode.
+- Werewolf refusals are skipped, because the runtime never models TES3
+  werewolf state (`Fn_Werewolf` always answers 0).
+
 ## <a id="sidecar"></a>The sidecar: how dialogue reaches the runtime
 
 The runtime is an SKSE plugin in the player's Skyrim install. **It never sees
@@ -3224,7 +3287,9 @@ during a tutorial that has taken the player's controls away — which is exactly
 what Arktwend's monastery chargen does. The hook tests the switch and returns
 true without opening, claiming the activation either way so the speaker cannot
 fall through to Skyrim's own dialogue menu. OpenMW gates identically, in
-`ActionManager::activate()`.
+`ActionManager::activate()`. That gate belongs to the player's input, so a
+script's own `Activate` passes it
+([`ScriptActivationScope`](#onactivate-claims-the-activation)).
 
 ### Only `EnableRaceMenu` has an equivalent
 
