@@ -19,6 +19,7 @@
 - [Status after the 2026-08-17 fix pass](#status-after)
 - [PACK conversion: verified-correct behaviour](#pack-conversion-2)
 - [Verified correct — do NOT "fix" these](#section)
+- [Shop doors: Unlock Doors At Location becomes Unlock At Start](#shop-doors-unlock-at-location)
 
 ## PACK Conversion Plan (TES4 → TES5)
 <a id="pack-conversion-plan"></a>
@@ -809,3 +810,26 @@ Recorded so a later session does not re-litigate them.
 | Structural contract | `tools/esm/pack_validate.py output/Oblivion.esm/Oblivion.esm` → **clean, 7,209 records**. Every defect below is *semantic*, which is exactly why the structural validator passes. |
 
 ---
+
+## Shop doors: Unlock Doors At Location becomes Unlock At Start
+<a id="shop-doors-unlock-at-location"></a>
+
+Oblivion opens a shop through the owner's daytime package flag `0x100` Unlock
+Doors At Location; the door itself is authored locked (Edgar's Discount Spells:
+inside door `0002C243`, lock 50, owned by `EdgarVautrine`). His
+`aaaServicesEditorLoc8x12LockAtEnd` is a Travel to his editor location with flags
+`0x311`. TES5 bit 8 is Request Block Idles, so the bit was dropped, and the Travel
+template has no UnlockDoors procedure: the door stayed locked all day, and a
+player who got in anyway was a trespasser, so the owner asked them to leave
+instead of trading. Confirmed fixed in-game.
+
+The TES4 bit now maps to TES5 `0x40` Unlock Doors At Package Start, which is how
+vanilla writes shop hours (`MarkarthGeneralStoreVendor8x16xPackage` `0xC1`,
+`LucanValeriusTraderServices7x13` `0x251`; 35 of 5,961 vanilla packages set
+`0x40`). Oblivion.esm has 165 packages with `0x100`.
+
+Still dropped: TES4 Lock Doors At Package End (`0x10`, 92 packages) and At
+Location (`0x20`, 141). TES5 has no named flag for either (the vanilla bits
+`0x10`/`0x20` appear on 33/2 packages but are unnamed in xEdit and the CK).
+Relocking comes from the Sleep template's LockDoors procedure, so a shop whose
+owner sleeps elsewhere stays unlocked overnight.

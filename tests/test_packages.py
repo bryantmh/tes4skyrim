@@ -19,6 +19,7 @@ from tes5_import.packages.converter import (
     SPEED_RUN,
     T5_MUST_COMPLETE,
     T5_OFFERS_SERVICES,
+    T5_UNLOCK_DOORS_START,
     T5_WEAPON_DRAWN,
     build_psdt,
     convert_PACK,
@@ -160,6 +161,12 @@ def test_flags_are_remapped_not_copied():
 
     flags, _ = convert_flags(0x00000004, 6)      # must complete: same bit
     assert flags & T5_MUST_COMPLETE
+
+
+def test_unlock_doors_at_location_opens_the_shop():
+    """TES4 unlock-at-location (0x100) becomes TES5 unlock-at-start."""
+    flags, _ = convert_flags(0x311, 6)
+    assert flags == T5_OFFERS_SERVICES | T5_UNLOCK_DOORS_START | 0x200
 
 
 def test_always_run_becomes_preferred_speed_field():
