@@ -90,6 +90,27 @@ def _finish(g: HumanoidGraph, gb: GunGraphBuilder, top, replacements: dict,
     return gb.generators
 
 
+def _camera_on_upper(g: HumanoidGraph, gb: GunGraphBuilder, lower_bw, upper_bw) -> tuple:
+    """(lower, upper) bone weights for the fire and reload clips: the vanilla
+    pair, or in the first-person graph copies with the camera bone moved to
+    the upper body, so the clips' camera kick reaches the view.
+    See: docs/commentary/asset_convert_falloutnv.md#camera-kick
+    """
+    bone = gb.clips.camera_bone
+    if bone is None:
+        return lower_bw, upper_bw
+    out = []
+    for ref, weight in ((lower_bw, 0.0), (upper_bw, 1.0)):
+        values = param_text(g.obj(ref), 'boneWeights').split()
+        values += ['0.000000'] * (bone + 1 - len(values))
+        values[bone] = f'{weight:.6f}'
+        arr = gb.add('hkbBoneWeightArray')
+        arr.param('variableBindingSet', 'null')
+        arr.param_array('boneWeights', values)
+        out.append(arr.ref)
+    return tuple(out)
+
+
 def patch_1hm(g: HumanoidGraph, clips: GunClips, out_path: str) -> list:
     """The readied slot and the attack state, entered on TESRuntime's
     TES4GunFire: the engine's own attack actions are swallowed for a gun
@@ -102,12 +123,13 @@ def patch_1hm(g: HumanoidGraph, clips: GunClips, out_path: str) -> list:
                           for c in g.ref_list(blend, 'children')]
     ready = class_selector(gb, 'TES4Gun_Ready_MSG',
                            lambda c: ready_machine(gb, c, lower_bw, upper_bw))
+    fire_bw = _camera_on_upper(g, gb, lower_bw, upper_bw)
     attack = class_selector(
         gb, 'TES4Gun_Attack_MSG',
-        lambda c: attack_machine(gb, c, lower_bw, upper_bw))
+        lambda c: attack_machine(gb, c, *fire_bw))
     reload = class_selector(
         gb, 'TES4Gun_ReloadEntry_MSG',
-        lambda c: attack_machine(gb, c, lower_bw, upper_bw, True))
+        lambda c: attack_machine(gb, c, *fire_bw, True))
     g.splice(gb.render(ready))
     _gun_root_states(g, attack.ref, reload.ref)
     g.extend_type_slots(GUN_HAND_TYPE,

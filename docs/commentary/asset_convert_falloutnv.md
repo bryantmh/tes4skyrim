@@ -733,6 +733,22 @@ iron aim, then hip aim), as is a synthesized iron aim; the hip-only fill
 dropped `1hpattack3is`'s left forearm and hand (no tracks) 41 units below
 the camera. That clip's authored left upper arm still hangs, as in FNV.
 
+<a id="camera-kick"></a>**The fire clips move the camera.** Skyrim's
+first-person camera is the `Camera1st [Cam1]` node's world transform
+(`FirstPersonState` +0x58 is `GetObjectByName("Camera1st [Cam1]")`; its
+GetTranslation reads the node's world translation, GetRotation its world
+rotation plus the look pitch), as FO3's is (the camera code reads the
+`Camera1st` node's position and rotation, `fFirstPersonCameraMult` 1.0
+only blends toward `Camera3rd` while switching views). FNV's fire clips
+animate that bone (`2haattackloopis`: 3.4 units forward, 1.4 degrees per
+shot) and the retarget keeps it exactly, but the attack machine's
+upper/lower blend reuses the vanilla crossbow weights, which give
+`Camera1st` (with the root, look node and COM) to the standing pose: the
+camera never moved. The first-person fire and reload states now take
+copies of those weights with the camera bone on the fire clip
+(`_camera_on_upper`; the manifest records the rig's camera bone index,
+97). Confirmed in game on the 10mm pistol.
+
 ## <a id="gun-parts"></a>Gun parts: the magazine, slide and bolt
 
 **Code:** `asset_convert/nif/gun_parts_falloutnv.py`,

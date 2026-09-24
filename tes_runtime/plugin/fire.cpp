@@ -49,6 +49,7 @@ using EquipFn = void (*)(void* vm, std::uint32_t stack, void* actor, void* form,
 using CountFn = int (*)(void* vm, std::uint32_t stack, void* ref, void* form);
 using ActionFn = std::int64_t (*)(void* a, void* action, std::int64_t c, std::int64_t d);
 using ObjectByNameFn = void* (*)(void* root, void** name, bool recurse);
+using FiringNodeFn = void* (*)(void* process, void** holder);
 
 // A resolved gun: the rounds it loads, its no-ammo sound, its sight FOV,
 // its magazine size.
@@ -72,10 +73,12 @@ EquipFn        g_equip = nullptr;
 CountFn        g_count = nullptr;
 ActionFn       g_origAction = nullptr;
 ObjectByNameFn g_objectByName = nullptr;
+FiringNodeFn   g_origFiringNode = nullptr;
 ProcessEventFn g_origProcessEvent[2] = {nullptr, nullptr};
 void**         g_player = nullptr;
 std::unique_ptr<FixedString> g_shotTag, g_drawTag, g_equipTag, g_soundPlay, g_reloadEvent,
-    g_fireEvent, g_fireRelease, g_quiverNode, g_reloadEndTag, g_fireEndTag, g_attackEndTag;
+    g_fireEvent, g_fireRelease, g_quiverNode, g_reloadEndTag, g_fireEndTag, g_attackEndTag,
+    g_projectileNode;
 // Shots since each actor's last reload: the graph's iGunShots, the HUD magazine.
 std::unordered_map<void*, int> g_shots;
 
@@ -278,6 +281,17 @@ struct EquipCheckTask : TaskDelegate {
     void Dispose() override { delete this; }
 };
 
+// The engine's crossbow firing node ("NPC R MagicNode [RMag]"), except
+// under a gun: the gun mesh's ProjectileNode, so the shot, the muzzle flash
+// and the aim start at the barrel. No vanilla weapon mesh has that node.
+void* FiringNodeHook(void* process, void** holder) {
+    void* node = g_origFiringNode(process, holder);
+    void* loaded = (node && holder) ? *holder : nullptr;
+    void* root = loaded ? At<void*>(loaded, 8) : nullptr;
+    void* barrel = root ? g_objectByName(root, &g_projectileNode->ptr, true) : nullptr;
+    return barrel ? barrel : node;
+}
+
 int ProcessEventHook(int which, void* sink, void* evn, void* src) {
     if (evn && sink) {
         void* tag = At<void*>(evn, kEventTag);
@@ -391,6 +405,7 @@ bool InstallFire() {
     const std::uintptr_t count = Resolve("ObjectReference.GetItemCount", ids::kGetItemCountNative, nullptr);
     const std::uintptr_t action = Resolve("Actor::PerformAction", ids::kPerformAction, nullptr);
     const std::uintptr_t byName = Resolve("NiAVObject::GetObjectByName", ids::kObjectByName, nullptr);
+    const std::uintptr_t firingNode = Resolve("CrossbowFiringNode", ids::kCrossbowFiringNode, nullptr);
     g_player = reinterpret_cast<void**>(Resolve("PlayerCharacter singleton", ids::kPlayerSingleton, nullptr));
     if (!fire || !equipped || !equip || !count || !action || !byName || !g_player || !InstallZoom()) {
         Log("fire: an address is unresolved; guns will not fire");
@@ -420,6 +435,12 @@ bool InstallFire() {
         return false;
     }
     if (PatchAllCalls(action, reinterpret_cast<void*>(&ActionHook), "PerformAction") <= 0) return false;
+    g_projectileNode.reset(new FixedString("ProjectileNode"));
+    g_origFiringNode = reinterpret_cast<FiringNodeFn>(firingNode);
+    if (!firingNode ||
+        PatchAllCalls(firingNode, reinterpret_cast<void*>(&FiringNodeHook), "CrossbowFiringNode") <= 0) {
+        Log("fire: firing node not patched; shots start at the hand");
+    }
     Log("fire: HUD magazine counter disabled (hud.cpp kept, not installed)");
     if (!InstallParts()) Log("fire: gun part sequences not installed");
     auto* keys = new Keys{IniKey("ReloadKey", kDefaultReloadKey), IniKey("ZoomKey", kDefaultZoomKey)};

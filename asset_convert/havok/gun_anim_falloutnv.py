@@ -80,6 +80,8 @@ FIRST_PERSON_BONE_MAP = {
 FIRST_PERSON_TRANSLATED = ('NPC LookNode [Look]', 'NPC COM [COM ]',
                            'Camera1st [Cam1]')
 FIRST_PERSON_ANCHOR = ('Bip01 Looking', 'NPC LookNode [Look]')
+#: The source bone mapped onto the one Skyrim's first-person camera sits on (FirstPersonState +0x58).
+FIRST_PERSON_CAMERA = 'Camera1st'
 #: Arms whose hands reach FNV's camera-relative hand positions (IK).
 FIRST_PERSON_ARMS = tuple((f'Bip01 {s} UpperArm', f'Bip01 {s} Forearm',
                            f'Bip01 {s} Hand') for s in 'RL')
@@ -465,9 +467,12 @@ def _convert_view(bindings, chars_dir: str, out_meshes_dir: str, view,
     clips.sort(key=lambda c: c['stem'])
     log(f'  Gun clips: {len(clips)} written, {len(failures)} failed -> '
         f'{layout["anim_dir"]}')
+    rig = _rig(skeleton)
+    camera = rig['bone_map'].get(FIRST_PERSON_CAMERA)
     return {'anim_dir': layout['anim_dir'], 'clips': clips,
             'classes': {c['stem']: classify_stem(c['stem']) for c in clips},
-            'failures': failures}
+            'failures': failures,
+            'camera_bone': rig['dst'].index.get(camera) if rig['anchor'] else None}
 
 
 def convert_gun_clips(export_dir: str, out_meshes_dir: str, names=None,

@@ -80,7 +80,7 @@ Guns (FalloutNV):
 	G16 - Melee/bash key: FNV guns have their own bash (attackbash / 1hpattackbash clips); bind a key that sends a gun bash event instead of the dropped ActionLeftAttack
 	G17 - Holster/draw blend: equip and unequip clips cut to the aim pose with no crossfade
 	G18 - Shell casings: FNV ejects the WEAP's MOD2 casing model from ShellCasingNode on each shot; Skyrim has no equivalent (needs a casing projectile launched by the DLL)
-	G19 - Recoil: an SMG kicks far harder per shot than FNV. Something already applies a kick, probably the fire clip's camera track (FNV scales the Camera1st animation per weapon / fCameraAnim settings, the retarget plays it at full amplitude every shot) or the engine's bow/crossbow release kick firing on arrowRelease; find which, then apply FNV's WEAP DNAM recoil values and the ADS sway
+	G19 - Recoil on 1hp automatics (10mm SMG): base FNV ships no first-person 1hpattackloop (only the third-person pitched loops; GunRunnersArsenal adds the level clip), so the first-person graph falls back to another attack at weaponSpeedMult = shots/s (9x speed, violent); a still aim-pose loop is built but unstaged. Find what FNV plays in first person for that class
 	G20 - Third-person aiming pitch: the AimPitchCurrent pitch blend exists but the torso twist toward the crosshair is unverified
 	G21 - Weapon mods (WMOD) and scoped weapons: scope zoom uses a scope overlay in FNV, not iron sights; the sight FOV path shows the mesh instead
 	G22 - Gun sounds beyond dry fire: fire sound is the engine's arrow release path; check the WEAP SNAM/XNAM per-shot and reload sounds are the FNV ones

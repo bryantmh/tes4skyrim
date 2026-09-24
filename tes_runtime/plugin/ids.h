@@ -172,6 +172,12 @@ constexpr std::uint64_t kPerformAction = 39002;
 // (docs/commentary/tes_runtime_guns.md#quiver).
 constexpr std::uint64_t kObjectByName = 76207;
 
+// NiAVObject* CrossbowFiringNode(AIProcess*, holder** 3D) (0x70eb00): the
+// "NPC R MagicNode [RMag]" a crossbow-type weapon fires from; its 11
+// callers (Fire, aim, combat) are patched to a gun's ProjectileNode
+// (docs/commentary/tes_runtime_guns.md#firing-node).
+constexpr std::uint64_t kCrossbowFiringNode = 39834;
+
 // Gun parts, the way ObjectReference.PlayGamebryoAnimation (0x9cfdd0) plays
 // an in-mesh sequence: the NiControllerManager vtable (0x185c968) that the
 // weapon root's first controller must carry, the BSFixedString hash

@@ -130,6 +130,7 @@ class GunClips:
         self.entries = {c['stem']: c for c in manifest['clips']}
         self.anim_dir = manifest['anim_dir']
         self.classes = manifest['classes']
+        self.camera_bone = manifest.get('camera_bone')
         self.by_key = {}
         for stem, c in self.classes.items():
             if stem in self.entries:

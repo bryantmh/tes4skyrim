@@ -52,6 +52,25 @@ the `a:` key window; automatics fire once per loop pass at
 NPCs go through the same path: their combat AI sends the attack, the
 graph plays the class clip, the trigger fires the round.
 
+## <a id="firing-node"></a>The shot starts at the barrel: ProjectileNode
+
+The muzzle flash sat by the right hand, and so did the shot's origin.
+`TESObjectWEAP::Fire` (0x286c90, id 18102) never looks at the weapon mesh
+for an actor shooter: it asks the actor's process for a firing node,
+0x70eb00 (id 39834) for animation type 9 (crossbow, which every converted
+gun is) and 0x70e8c0 otherwise. 0x70eb00 is `GetObjectByName(3D root,
+FixedStrings+0x270)` = `NPC R MagicNode [RMag]`, the other path's string
+(+0xb0) is `Weapon`; the only lookup of `ProjectileNode` (the static-init
+string at 0x185d4) is the no-actor fallback 0x286b00. The projectile's
+muzzle flash (id 44056, 0x7e0b40) attaches its `NAM1` model to the node
+the shot was launched from. TESRuntime repoints all 11 calls to 0x70eb00
+(five in Fire, the rest aim and combat) to a hook that returns the
+`ProjectileNode` under the same 3D root when one exists, the engine's node
+otherwise. FNV gun meshes carry that node at the barrel tip (the 10mm SMG:
+22 units down the barrel, kept by the mesh conversion) and none of the 325
+vanilla weapon meshes has one, so bows and crossbows are unchanged.
+Confirmed in game: the flash sits at the muzzle.
+
 ## <a id="ammo-restriction"></a>Ammo restriction and reload key
 
 The gun sidecar carries each gun's ammo list (`NAM0` resolved through its
