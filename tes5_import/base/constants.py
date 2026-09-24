@@ -104,6 +104,9 @@ ENCH_CAST_TYPE_MAP = {
     3: 0,  # Apparel → Constant Effect
 }
 
+#: TES5 EFSH particle count per TES4 particle birth ratio; Bethesda's port of LifeDetected maps 1.0 to 300.
+EFSH_PARTICLES_PER_RATIO = 300.0
+
 # Map marker type mapping (TES4 → TES5).
 # TES4 enum (wbDefinitionsTES4.pas): 0 None, 1 Camp, 2 Cave, 3 City,
 #   4 Elven Ruin, 5 Fort Ruin, 6 Mine, 7 Landmark, 8 Tavern, 9 Settlement,

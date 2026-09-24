@@ -5575,7 +5575,7 @@ class TestMgefConversion:
         spell cannot cast, and otherwise keeps the engine's own path.
         """
         import struct as _s
-        from tes5_import.record_types import equipment, magic
+        from tes5_import.record_types import equipment, magic, magic_variants
 
         class _W:
             def __init__(self):
@@ -5621,8 +5621,8 @@ class TestMgefConversion:
         def _first_efid(record_bytes):
             return _s.unpack('<I', _find_subrecord(record_bytes, b'EFID'))[0]
 
-        armor_base = magic.get_mgef_formid('BAGR')
-        weapon_base = magic.get_mgef_formid('BWSW')
+        armor_base = magic_variants.get_mgef_formid('BAGR')
+        weapon_base = magic_variants.get_mgef_formid('BWSW')
 
         # A bound WEAPON on a castable spell keeps the engine's own archetype.
         w = _W()
@@ -5630,11 +5630,10 @@ class TestMgefConversion:
             equipment.convert_SPEL(_spell('BWSW', 0), writer=w)) == weapon_base
         assert w.recs == []
 
-        # A bound weapon on an ABILITY cannot cast, so it gets the script.
         w = _W()
         assert _first_efid(
             equipment.convert_SPEL(_spell('BWSW', 4), writer=w)) != weapon_base
-        assert len(w.recs) == 1
+        assert len(w.recs) == 2, 'the script clone, then its Constant/Self clone'
 
         # Bound ARMOR is scripted even on a perfectly castable spell — Skyrim
         # has no bound-armor implementation for it to fall back on.
@@ -5646,11 +5645,9 @@ class TestMgefConversion:
         sig, clone = w.recs[0]
         assert sig == 'MGEF'
         data = _find_subrecord(clone, b'DATA')
-        assert _s.unpack_from('<I', data, magic._O_ARCHETYPE)[0] == magic.A_SCRIPT
-        # Assoc. Item is "Unused" under archetype 1 — the item travels as the
-        # script's BoundItem property instead.
-        assert _s.unpack_from('<I', data, magic._O_ASSOC_ITEM)[0] == 0
-        assert magic.BOUND_ITEM_SCRIPT.encode() in clone
+        assert _s.unpack_from('<I', data, magic.O_ARCHETYPE)[0] == magic.A_SCRIPT
+        assert _s.unpack_from('<I', data, magic.O_ASSOC_ITEM)[0] == 0
+        assert magic_variants.BOUND_ITEM_SCRIPT.encode() in clone
         assert b'BoundItem' in clone
 
         # A lesser power is equally uncastable, and shares the cached clone.
@@ -5681,7 +5678,7 @@ class TestMgefConversion:
         MGEF, so a single converted DGAT could only ever damage one stat.
         """
         import struct as _s
-        from tes5_import.record_types import magic
+        from tes5_import.record_types import magic, magic_variants
 
         class _Writer:
             def __init__(self):
@@ -5714,10 +5711,10 @@ class TestMgefConversion:
             {'EffectCount': '1', 'Effect[0].EFID': 'DGAT',
              'Effect[0].ActorValue': '5'},    # Endurance
         ]
-        assert magic.build_av_variants(mgefs, effects, writer) == 2
+        assert magic_variants.build_av_variants(mgefs, effects, writer) == 2
 
-        strength = magic.get_mgef_formid('DGAT', 0)
-        endurance = magic.get_mgef_formid('DGAT', 5)
+        strength = magic_variants.get_mgef_formid('DGAT', 0)
+        endurance = magic_variants.get_mgef_formid('DGAT', 5)
         assert strength and endurance and strength != endurance
 
         avs = {}

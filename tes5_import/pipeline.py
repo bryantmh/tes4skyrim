@@ -42,6 +42,7 @@ from .navmesh.pool import collision_cache_chain
 from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         OverrideContext, detect_injected_records)
 from .actors.magic_effects import set_tes4_effect_names
+from .record_types import magic_art
 from .dialogue.converter import build_npc_to_vtyp_map
 from .base.adopted_records import adopt_master_special_records
 from .base.cell_family import set_cell_families
@@ -580,20 +581,22 @@ def _prescan_script_plans(by_type: dict, ctx, xref, fid_to_edid: dict, _step_don
     return _scpt_master_export
 
 
-def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict, _scpt_master_export, _step_done):
-    """Register MGEF ids, the AssocItem index, AV/script variants and ENCH.
+def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict,
+                           _scpt_master_export, _step_done, export_dir):
+    """Register MGEF ids and art, the AssocItem index, AV/script variants and ENCH.
 
     All of these must exist before any SPEL/ENCH/ALCH/INGR/SGST record
     converts.  A dependent plugin usually defines no MGEF at all, so the
-    effect table comes from the MASTER's export.
+    effect table comes from the MASTER's export; the art reads this plugin's
+    own source meshes and sounds.
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-magic-effect-prerequisites
     """
-    from .record_types.magic import (build_av_variants, build_seff_variants,
-                                     register_mgef_formids,
-                                     set_assoc_item_index)
+    from .record_types.magic import register_mgef_formids, set_assoc_item_index
+    from .record_types.magic_variants import build_av_variants, build_seff_variants
     from .base.object_scripts import build_magic_effect_script_plan
 
+    magic_art.begin(writer, assets_for(export_dir) / 'meshes', by_type.get('SOUN', []))
     _mgefs = _mgef_records_with_masters(by_type, ctx)
     register_mgef_formids(_mgefs)
     set_assoc_item_index(*_build_assoc_item_index(by_type, ctx))
@@ -1160,7 +1163,7 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
                                                 _step_done)
 
     _prescan_magic_effects(by_type, ctx, writer, xref, fid_to_edid,
-                           _scpt_master_export, _step_done)
+                           _scpt_master_export, _step_done, export_dir)
 
     _prescan_vendor_trainer(by_type, ctx, writer, export_dir, _step_done)
 

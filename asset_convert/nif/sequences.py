@@ -73,8 +73,10 @@ SCRIPT_DRIVEN_SEQUENCES = frozenset((
 AUTOPLAY_SEQUENCE = 'AutoPlay'
 AUTOLOOP_SEQUENCE = 'AutoLoop'
 
-#: nif.xml CycleType: 0 = LOOP, 1 = REVERSE, 2 = CLAMP.
-_CYCLE_CLAMP = 2
+#: nif.xml CycleType LOOP.
+CYCLE_LOOP = 0
+#: nif.xml CycleType CLAMP (1 is REVERSE).
+CYCLE_CLAMP = 2
 
 #: Oblivion names meaning "ambient, plays by itself"; script-driven names keep theirs.
 _AMBIENT_SEQUENCES = frozenset(('idle',))
@@ -751,7 +753,7 @@ def attach_seq_shader_controllers(root, stats=None):
     return attached
 
 
-def _clone_sequence_as(root, seq, new_name, cycle_type):
+def clone_sequence_as(root, seq, new_name, cycle_type):
     """Add a second NiControllerSequence named *new_name* beside *seq*.
 
     None when the manager cannot be reached -- a sequence with no manager is
@@ -802,7 +804,7 @@ def autoplay_ambient_sequences(root, stats=None):
         if name.lower() not in _AMBIENT_SEQUENCES:
             continue
         block.name = AUTOLOOP_SEQUENCE.encode('latin-1')
-        _clone_sequence_as(root, block, AUTOPLAY_SEQUENCE, _CYCLE_CLAMP)
+        clone_sequence_as(root, block, AUTOPLAY_SEQUENCE, CYCLE_CLAMP)
         renamed += 1
     if renamed and stats is not None:
         stats['autoplay_sequences'] = stats.get('autoplay_sequences', 0) + renamed

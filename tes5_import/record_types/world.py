@@ -6,6 +6,7 @@ import struct
 from core.worldspace_names import converted_worldspace_edid
 
 from ..base.constants import (
+    EFSH_PARTICLES_PER_RATIO,
     MAP_MARKER_TYPE_MAP,
     MATT_MAP,
     SKYRIM_MAP_MARKER_LCRT,
@@ -1519,8 +1520,8 @@ def convert_EFSH(rec: dict) -> bytes:
     put_f(112, 'DATA.PartBirthRampUp')
     put_f(116, 'DATA.PartFullBirthTime')
     put_f(120, 'DATA.PartBirthRampDown')
-    put_f(124, 'DATA.PartFullBirthRatio', 1.0)
-    put_f(128, 'DATA.PartPersistBirthRatio', 1.0)
+    for off, key in ((124, 'DATA.PartFullBirthRatio'), (128, 'DATA.PartPersistBirthRatio')):
+        struct.pack_into('<f', data, off, get_float(rec, key, 1.0) * EFSH_PARTICLES_PER_RATIO)
     put_f(132, 'DATA.PartLifetime', 1.0)
     put_f(136, 'DATA.PartLifetimeDelta')
     put_f(140, 'DATA.PartInitSpeedNormal')

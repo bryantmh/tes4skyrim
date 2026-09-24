@@ -28,7 +28,7 @@ from asset_convert.texture import landscape_normals
 from asset_convert.texture import image_transcode
 from asset_convert.texture import luminance_textures
 from asset_convert.collision import mesh_scan_fragments
-from asset_convert.nif import nif_batch
+from asset_convert.nif import magic_art, nif_batch
 from asset_convert.speedtree import spt_converter
 from asset_convert.texture import texture_prune
 from asset_convert.character.morrowind_armor import assemble_armor
@@ -259,6 +259,7 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
 
     if mesh_src.exists() and not textures_only:
         _profile_hair_and_grass(rec_dir, plugin_dir, stats)
+        _split_magic_art(rec_dir, mesh_src, plugin_dir / 'meshes' / ns, stats)
 
     # -----------------------------------------------------------------------
     # Copy Textures
@@ -285,6 +286,14 @@ def _profile_hair_and_grass(rec_dir, plugin_dir, stats):
         'processed': processed, 'modified': modified, 'missing': missing}
     print(f"  Grass models: {processed} placed under landscape\\grass"
           + (f", {missing} missing" if missing else ""))
+
+
+def _split_magic_art(rec_dir, mesh_src, mesh_dst, stats):
+    """Derive the per-phase magic-effect meshes beside the converted tree."""
+    stats['magic_art'] = magic_art.split_effect_meshes(rec_dir, mesh_src, mesh_dst)
+    print(f"  Magic effect phase meshes: {stats['magic_art']['written']} written "
+          f"from {stats['magic_art']['sources']} models "
+          f"({stats['magic_art']['missing']} not converted)")
 
 
 def _copy_and_fix_textures(asset_dir, plugin_dir, ns, stats, rec_dir):

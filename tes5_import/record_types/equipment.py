@@ -31,6 +31,11 @@ from ..base.equivalents import (
     WEAPON_ANIM_STAGGER,
     WEAPON_ANIM_VNAM,
 )
+from .magic_variants import (MGEF_CAST_FOR_OWNER, RANGE_DELIVERY,
+                             UNCASTABLE_SPELL_TYPES, bound_assoc_is_armor,
+                             bound_item_assoc, bound_script_variant,
+                             delivery_variant, get_mgef_formid,
+                             get_seff_variant, owner_delivery)
 from .equipment_falloutnv import ammo_flags, gun_speed
 from .equipment_falloutnv import refine_anim_type as refine_fallout_anim_type
 from .projectile_falloutnv import (ammo_projectile, gun_sheathe_sounds,
@@ -174,8 +179,6 @@ def _resolve_mgef(code: str, actor_value: int = -1, script_fid: str = '',
     records were not exported (an override plugin that redefines no effects),
     where there is no record of ours to point at.
     """
-    from .magic import get_mgef_formid, get_seff_variant
-
     if code == 'SEFF' and script_fid:
         fid = get_seff_variant(script_fid, effect_type)
         if fid:
@@ -214,8 +217,6 @@ def _bound_script_for(mgef_fid: int, writer, uncastable: bool) -> int:
     resolved to an output WEAP/ARMO by the MGEF pass — reusing it means the
     script and the native archetype always agree on what gets equipped.
     """
-    from .magic import bound_assoc_is_armor, bound_item_assoc, bound_script_variant
-
     assoc = bound_item_assoc(mgef_fid)
     if not assoc:
         return 0
@@ -247,8 +248,39 @@ def set_ench_index(ench_records) -> None:
 _FILLER_EFFECTS = (0x0003EB15, 0x0003EB17, 0x0003EB16, 0x0003EAF3)  # AlchRestore{Health,Magicka,Stamina}, AlchFortifyHealth
 
 
+#: Effect owner rule for potions, poisons and ingredients: Fire and Forget on Self, 803 of 803 vanilla slots.
+OWNER_CONSUMED = (1, 0)
+#: TES5 spell type -> (casting type, delivery): abilities Constant on Self, diseases Constant on Contact.
+SPELL_TYPE_CAST = {4: (0, 0), 1: (0, 1)}
+#: (TES4 SPIT flag, TES5 SPIT flag) pairs with one meaning in both games (xEdit SPIT definitions).
+SPELL_FLAG_MAP = ((0x01, 0x000001), (0x04, 0x020000), (0x10, 0x080000),
+                  (0x20, 0x100000), (0x40, 0x200000))
+
+
+def _slot_mgef(rec: dict, i: int, code: str, writer, uncastable: bool,
+               owner: tuple) -> int:
+    """The MGEF effect slot ``i`` references, 0 when its code has none.
+
+    ``owner`` is (the casting type the owner's effects carry, its fixed
+    delivery or None for each effect's own TES4 range); the effect is
+    re-pointed at a clone carrying that pair.
+    """
+    mgef_fid = _resolve_mgef(code, get_int(rec, f'Effect[{i}].ActorValue', -1),
+                             get_str(rec, f'ScriptEffect[{i}].FormID'),
+                             get_str(rec, f'Effect[{i}].Type'))
+    if not mgef_fid:
+        return 0
+    mgef_fid = _bound_script_for(mgef_fid, writer, uncastable) or mgef_fid
+    delivery = owner[1]
+    if delivery is None:
+        delivery = RANGE_DELIVERY.get(get_str(rec, f'Effect[{i}].Type'), 0)
+    return delivery_variant(mgef_fid, owner[0], delivery, writer,
+                            area=get_int(rec, f'Effect[{i}].Area') > 0)
+
+
 def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
-                  delivery: int = 0, writer=None, uncastable: bool = False) -> bytes:
+                  delivery: int = 0, writer=None, uncastable: bool = False,
+                  owner: tuple = OWNER_CONSUMED) -> bytes:
     """Pack EFID/EFIT pairs for all effects on a record.
 
     Effects with no TES5 equivalent are dropped — an EFID of 0 (null MGEF)
@@ -275,21 +307,10 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
         if pad_to and len(effects) >= pad_to:
             break
         code = get_str(rec, f'Effect[{i}].EFID')
-        av = get_int(rec, f'Effect[{i}].ActorValue', -1)
-        mgef_fid = _resolve_mgef(
-            code, av,
-            get_str(rec, f'ScriptEffect[{i}].FormID'),
-            get_str(rec, f'Effect[{i}].Type')) if code else 0
+        mgef_fid = _slot_mgef(rec, i, code, writer, uncastable, owner) if code else 0
         if not mgef_fid:
             dropped_dur = max(dropped_dur, get_int(rec, f'Effect[{i}].Duration'))
             continue
-        # Bound armor has no engine implementation at all, and any bound item
-        # on a never-cast spell is equally dead — either way the scripted
-        # stand-in takes over.  A bound weapon on a castable spell is left on
-        # the native archetype.
-        scripted = _bound_script_for(mgef_fid, writer, uncastable)
-        if scripted:
-            mgef_fid = scripted
         mag = get_int(rec, f'Effect[{i}].Magnitude')
         area = get_int(rec, f'Effect[{i}].Area')
         dur = get_int(rec, f'Effect[{i}].Duration')
@@ -938,13 +959,7 @@ def convert_ENCH(rec: dict, writer=None) -> bytes:
 
     tes5_type = ENCH_TYPE_MAP.get(tes4_type, 6)
     cast_type = ENCH_CAST_TYPE_MAP.get(tes4_type, 2)
-    # Target type from first effect
-    target_type = 0  # Self
-    first_effect_type = get_str(rec, 'Effect[0].Type')
-    if first_effect_type == 'Touch':
-        target_type = 1
-    elif first_effect_type == 'Target':
-        target_type = 2
+    target_type = 0 if cast_type == 0 else owner_delivery(rec)
 
     tes5_flags = 0
     if tes4_flags & 0x08:  # No Auto-Calc
@@ -962,8 +977,9 @@ def convert_ENCH(rec: dict, writer=None) -> bytes:
     # WornRestrictions at 32 = 0
     subs += pack_subrecord('ENIT', bytes(enit))
 
-    # Effects — TES5 uses EFID(FormID) + EFIT(Magnitude/Area/Duration)
-    subs += _pack_effects(rec, delivery=target_type, writer=writer)
+    subs += _pack_effects(rec, delivery=target_type, writer=writer,
+                          owner=(MGEF_CAST_FOR_OWNER.get(cast_type, 1),
+                                 0 if cast_type == 0 else None))
 
     return pack_record('ENCH', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
@@ -1000,46 +1016,33 @@ def convert_SPEL(rec: dict, writer=None) -> bytes:
     subs += pack_formid_subrecord(
         'ETYP', SPELL_TYPE_EQUIP_TYPE.get(tes5_type, SPELL_EQUIP_EITHER_HAND))
 
-    # Target from first effect
-    target_type = 0
-    first_effect_type = get_str(rec, 'Effect[0].Type')
-    if first_effect_type == 'Touch':
-        target_type = 1
-    elif first_effect_type == 'Target':
-        target_type = 2
+    cast_type, target_type = SPELL_TYPE_CAST.get(tes5_type, (1, None))
+    if target_type is None:
+        target_type = owner_delivery(rec)
 
     tes5_flags = 0
-    if tes4_flags & 0x10:
-        tes5_flags |= 0x80000    # No Absorb/Reflect
-    if tes4_flags & 0x20:
-        tes5_flags |= 0x100000   # No Dual Cast
-    if tes4_flags & 0x40:
-        tes5_flags |= 0x200000
+    for tes4_bit, tes5_bit in SPELL_FLAG_MAP:
+        if tes4_flags & tes4_bit:
+            tes5_flags |= tes5_bit
 
     spit = bytearray(36)
     struct.pack_into('<I', spit, 0, cost)          # Cost
     struct.pack_into('<I', spit, 4, tes5_flags)    # Flags
     struct.pack_into('<I', spit, 8, tes5_type)     # Type
     struct.pack_into('<f', spit, 12, 0.0)          # Charge Time
-    # Cast Type 1 = Fire and Forget (wbCastEnum; 2 would be Concentration —
-    # verified against vanilla Firebolt: SPIT.CastType=1).
-    struct.pack_into('<I', spit, 16, 1)
-    struct.pack_into('<I', spit, 20, target_type)  # Delivery
-    struct.pack_into('<f', spit, 24, 0.0)          # Cast Duration
-    struct.pack_into('<f', spit, 28, 0.0)          # Range
-    # Half-cost Perk FormID at 32 = 0
+    struct.pack_into('<I', spit, 16, cast_type)
+    struct.pack_into('<I', spit, 20, target_type)
     subs += pack_subrecord('SPIT', bytes(spit))
 
-    # Effects.  An Ability (4) or Lesser Power (3) is applied, never cast, so
-    # any bound-item effect it carries needs the scripted stand-in.
-    from .magic import UNCASTABLE_SPELL_TYPES
+    fixed = target_type if cast_type == 0 else None
     subs += _pack_effects(rec, delivery=target_type, writer=writer,
-                          uncastable=tes5_type in UNCASTABLE_SPELL_TYPES)
+                          uncastable=tes5_type in UNCASTABLE_SPELL_TYPES,
+                          owner=(cast_type, fixed))
 
     return pack_record('SPEL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
-def convert_ALCH(rec: dict) -> bytes:
+def convert_ALCH(rec: dict, writer=None) -> bytes:
     subs = _common_header_subs(rec, obnd_sig='ALCH')
 
     tes4_flags = get_int(rec, 'ENIT.Flags')
@@ -1071,13 +1074,12 @@ def convert_ALCH(rec: dict) -> bytes:
     enit = struct.pack('<IIIII', value, tes5_flags, 0, 0, 0)
     subs += pack_subrecord('ENIT', enit)
 
-    # Effects
-    subs += _pack_effects(rec)
+    subs += _pack_effects(rec, writer=writer)
 
     return pack_record('ALCH', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
-def convert_INGR(rec: dict) -> bytes:
+def convert_INGR(rec: dict, writer=None) -> bytes:
     subs = _common_header_subs(rec, obnd_sig='INGR')
 
     # KSIZ/KWDA — vendor keyword (TES4 food is sold by ingredient vendors)
@@ -1096,8 +1098,7 @@ def convert_INGR(rec: dict) -> bytes:
     enit_flags = get_int(rec, 'ENIT.Flags') & 0x03
     subs += pack_subrecord('ENIT', struct.pack('<iI', value, enit_flags))
 
-    # Effects (TES5 ingredients have exactly 4)
-    subs += _pack_effects(rec, pad_to=4)
+    subs += _pack_effects(rec, pad_to=4, writer=writer)
 
     return pack_record('INGR', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
@@ -1112,7 +1113,8 @@ def _build_scrl(rec: dict, effect_src: dict, cost: int = 0,
 
     ``rec`` supplies the item (name, model, value, weight); ``effect_src`` the
     magic payload.  They are the SAME record for a sigil stone but differ for
-    an enchanted book, whose effects live on the ENCH its ENAM names.
+    an enchanted book, whose effects live on the ENCH its ENAM names: SCRL
+    carries its effects directly, and one without any is a dead item.
     """
     subs = _common_header_subs(rec, obnd_sig='SCRL')
 
@@ -1136,22 +1138,11 @@ def _build_scrl(rec: dict, effect_src: dict, cost: int = 0,
     weight = get_float(rec, 'DATA.Weight')
     subs += pack_subrecord('DATA', struct.pack('<If', value, weight))
 
-    # SPIT — same 36-byte layout as SPEL. CastType 3 = Scroll (matches every
-    # vanilla SCRL); Delivery from the first effect like SPEL.
-    target_type = 0
-    first_effect_type = get_str(effect_src, 'Effect[0].Type')
-    if first_effect_type == 'Touch':
-        target_type = 1
-    elif first_effect_type == 'Target':
-        target_type = 2
+    target_type = owner_delivery(effect_src)
     spit = struct.pack('<IIIfIIff4x', cost, 0, 0, 0.0, 3, target_type, 0.0, 0.0)
     subs += pack_subrecord('SPIT', spit)
-
-    # A scroll carries its effects DIRECTLY — SCRL has no field for an object
-    # effect, so an enchanted book's ENCH payload is copied in here.  Without
-    # them the record is a dead item (CK: "Magic Item ... has no effects
-    # defined").
-    subs += _pack_effects(effect_src, delivery=target_type, writer=writer)
+    subs += _pack_effects(effect_src, delivery=target_type, writer=writer,
+                          owner=(1, None))
     return subs
 
 
