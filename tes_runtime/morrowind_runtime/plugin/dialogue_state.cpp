@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "log.h"
+#include "scope.h"
 #include "script_tables.h"
 #include "store.h"
 
@@ -21,15 +22,31 @@ constexpr int kNeutralDisposition = 50;
 constexpr int kTopRank = 9;
 
 // The co-save's first line; a save with another header is left alone.
-constexpr const char* kFormat = "MWSTATE\t1";
+//
+// 🛑 Version 1 keyed every id bare, so one plugin's state answered for any
+// sibling staging the same id. Version 2 keys each by its origin plugin
+// (StateKey), and a version 1 save is read through the merged view -- the one
+// it was written under -- so it loads to exactly the state it held.
+// See: docs/commentary/morrowind_runtime.md#load-order
+constexpr const char* kFormat = "MWSTATE\t2";
+constexpr const char* kFormatV1 = "MWSTATE\t1";
 
 // The global script the TES3 engine starts by name (OpenMW `addStartup`).
 constexpr const char* kMainScript = "Main";
 
-std::string Key(std::string id) {
+std::string Lower(std::string id) {
     std::transform(id.begin(), id.end(), id.begin(),
                    [](unsigned char c) { return static_cast<char>(::tolower(c)); });
     return id;
+}
+
+// The state key of a TES3 id, in the current layer's view.
+std::string Key(const std::string& id) { return StateKey(id); }
+
+// A global's key. The engine's own clock globals are one value for every
+// plugin, so they stay bare whichever layer reads or writes them.
+std::string GlobalKey(const std::string& name) {
+    return GlobalLayer(name) == kEveryLayer ? Lower(name) : StateKey(name);
 }
 
 // True when the journal topic `quest` authors an entry at `index`.
@@ -37,7 +54,7 @@ bool EntryExists(const std::string& quest, int index) {
     const Topic* topic = FindTopic(quest);
     if (!topic) return false;
     for (const Info& info : topic->infos) {
-        if (info.journalIndex == index) return true;
+        if (info.journalIndex == index && LayerVisible(info.layer)) return true;
     }
     return false;
 }
@@ -138,11 +155,11 @@ void DialogueState::SetActorRank(const std::string& actor, int rank) {
 }
 
 bool DialogueState::HasGlobal(const std::string& name) const {
-    return mGlobals.find(Key(name)) != mGlobals.end() || FindGlobal(name);
+    return mGlobals.find(GlobalKey(name)) != mGlobals.end() || FindGlobal(name);
 }
 
 float DialogueState::Global(const std::string& name) const {
-    const auto it = mGlobals.find(Key(name));
+    const auto it = mGlobals.find(GlobalKey(name));
     if (it != mGlobals.end()) return it->second;
     const GlobalDef* def = FindGlobal(name);
     return def ? def->value : 0.0f;
@@ -159,28 +176,32 @@ void DialogueState::SetGlobal(const std::string& name, float value) {
     // falls back to the GLOB's declared value, so the first write is a change
     // only when it differs from that.
     const bool changed = Global(name) != value;
-    mGlobals[Key(name)] = value;
+    mGlobals[GlobalKey(name)] = value;
     if (changed) LogVerbose("global: %s = %g", name.c_str(), value);
 }
 
 void DialogueState::SyncGlobal(const std::string& name, float value) {
-    mGlobals[Key(name)] = value;
+    mGlobals[GlobalKey(name)] = value;
 }
 
+// The ids, not the keys: a sibling plugin's globals are not this one's.
 std::vector<std::string> DialogueState::Globals() const {
     std::vector<std::string> out;
-    for (const auto& entry : mGlobals) out.push_back(entry.first);
+    for (const auto& entry : mGlobals) {
+        const auto [layer, id] = SplitStateKey(entry.first);
+        if (layer < 0 || LayerVisible(layer)) out.push_back(id);
+    }
     return out;
 }
 
 bool DialogueState::HasVar(const std::string& owner,
                            const std::string& name) const {
-    return mVars.count({Key(owner), Key(name)}) != 0;
+    return mVars.count({Key(owner), Lower(name)}) != 0;
 }
 
 float DialogueState::Var(const std::string& owner,
                          const std::string& name) const {
-    const auto it = mVars.find({Key(owner), Key(name)});
+    const auto it = mVars.find({Key(owner), Lower(name)});
     return it == mVars.end() ? 0.0f : it->second;
 }
 
@@ -188,7 +209,7 @@ float DialogueState::Var(const std::string& owner,
 // gives.
 void DialogueState::SetVar(const std::string& owner, const std::string& name,
                            float value) {
-    float& slot = mVars[{Key(owner), Key(name)}];
+    float& slot = mVars[{Key(owner), Lower(name)}];
     const bool changed = slot != value;
     slot = value;
     if (changed) {
@@ -303,9 +324,23 @@ bool DialogueState::ScriptRunning(const std::string& script) const {
     return mRunning.count(Key(script)) != 0;
 }
 
+// The layer a started script runs as: the starter's own when it is built on
+// the plugin supplying the body, so a master's script run for a dependent
+// sees that dependent's ids; the supplier's otherwise.
+int RunAsLayer(const std::string& script) {
+    const int supplier = ScriptSourceLayer(script);
+    const int current = CurrentLayer();
+    if (current == kEveryLayer) return supplier;
+    if (supplier < 0) return current;
+    return LayersRelated(current, supplier) &&
+                   LayerDepth(current) >= LayerDepth(supplier)
+               ? current
+               : supplier;
+}
+
 void DialogueState::StartScript(const std::string& script,
                                 const std::string& target) {
-    mRunning[Key(script)] = target;
+    mRunning[Key(script)] = {target, LayerName(RunAsLayer(script))};
     Log("script: %s started", script.c_str());
 }
 
@@ -314,20 +349,36 @@ void DialogueState::StopScript(const std::string& script) {
 }
 
 // 🛑 `Main` is started by NAME, not by an SSCR: Morrowind.esm carries no SSCR
-// at all, and `Main` is what launches `CharGen`.
+// at all, and `Main` is what launches `CharGen`. Each plugin starts the Main
+// its own view answers with; plugins sharing one Main's origin share the one
+// running copy, as TES3 has only one.
 // See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
 void DialogueState::StartStartupScripts() {
-    if (!ScriptSource(kMainScript).empty() && !ScriptRunning(kMainScript)) {
-        StartScript(kMainScript, std::string());
+    for (int layer = 0; layer < static_cast<int>(LayerCount()); ++layer) {
+        const LayerScope scope(layer);
+        if (ScriptSourceLayer(kMainScript) == layer &&
+            !ScriptRunning(kMainScript)) {
+            StartScript(kMainScript, std::string());
+        }
     }
-    for (const std::string& script : StartScripts()) {
+    for (const auto& [layer, script] : StartScripts()) {
+        const LayerScope scope(layer);
         if (!ScriptRunning(script)) StartScript(script, std::string());
     }
 }
 
-std::vector<std::pair<std::string, std::string>>
-DialogueState::RunningScripts() const {
-    return {mRunning.begin(), mRunning.end()};
+std::vector<RunningGlobal> DialogueState::RunningScripts() const {
+    std::vector<RunningGlobal> out;
+    for (const auto& entry : mRunning) {
+        RunningGlobal row;
+        row.key = entry.first;
+        row.script = SplitStateKey(entry.first).second;
+        row.target = entry.second.target;
+        row.layer = entry.second.runAs.empty() ? kEveryLayer
+                                               : LayerIndex(entry.second.runAs);
+        out.push_back(std::move(row));
+    }
+    return out;
 }
 
 // DialogueManager::updateOriginalDisposition: a script moved the base since
@@ -403,9 +454,8 @@ std::string DialogueState::Serialize() const {
             << e.second << '\n';
     }
     for (const auto& e : mRunning) {
-        out << "S\t" << e.first;
-        if (!e.second.empty()) out << '\t' << e.second;
-        out << '\n';
+        out << "S\t" << e.first << '\t' << e.second.target << '\t'
+            << e.second.runAs << '\n';
     }
     for (const std::string& topic : mKnownTopics) out << "K\t" << topic << '\n';
     for (const auto& e : mAiSettings) {
@@ -423,28 +473,45 @@ std::string DialogueState::Serialize() const {
     return out.str();
 }
 
+// A version 1 script row, `S script [target]`: keyed and run as the merged
+// view it was started under.
+DialogueState::Running MigrateRunning(const std::vector<std::string>& f) {
+    return {f.size() > 2 ? f[2] : std::string(),
+            LayerName(ScriptSourceLayer(f[1]))};
+}
+
 std::size_t DialogueState::Deserialize(const std::string& text) {
     Reset();
     std::istringstream in(text);
     std::string line;
-    if (!std::getline(in, line) || line != kFormat) return 0;
+    if (!std::getline(in, line)) return 0;
+    const bool v1 = line == kFormatV1;
+    if (!v1 && line != kFormat) return 0;
+    // A version 1 key is a bare id: the merged view resolves it to the origin
+    // it had then. A version 2 key is already one.
+    const LayerScope merged(kEveryLayer);
+    const auto key = [v1](const std::string& id) { return v1 ? Key(id) : id; };
+    const auto global = [v1](const std::string& id) {
+        return v1 ? GlobalKey(id) : id;
+    };
     std::size_t taken = 0;
     while (std::getline(in, line)) {
         const std::vector<std::string> f = Fields(line);
         const std::string& kind = f[0];
         const std::size_t n = f.size();
-        if (kind == "J" && n == 3) mJournal[f[1]] = Int(f[2]);
-        else if (kind == "E" && n == 3) mEntries.push_back({f[1], Int(f[2])});
-        else if (kind == "D" && n == 3) mDisposition[f[1]] = Int(f[2]);
-        else if (kind == "N" && n == 3) mActorRank[f[1]] = Int(f[2]);
-        else if (kind == "G" && n == 3) mGlobals[f[1]] = Float(f[2]);
-        else if (kind == "L" && n == 4) mVars[{f[1], f[2]}] = Float(f[3]);
-        else if (kind == "F" && n == 5) mFactions[f[1]] = {Int(f[2]), f[3] == "1", Int(f[4])};
-        else if (kind == "X" && n == 4) mReactions[{f[1], f[2]}] = Int(f[3]);
-        else if (kind == "S" && n >= 2) mRunning[f[1]] = n > 2 ? f[2] : "";
-        else if (kind == "K" && n == 2) mKnownTopics.insert(f[1]);
-        else if (kind == "A" && n == 4) mAiSettings[{f[1], Int(f[2])}] = Int(f[3]);
-        else if (kind == "M" && n == 3) mMovementFlags[{f[1], Int(f[2])}] = true;
+        if (kind == "J" && n == 3) mJournal[key(f[1])] = Int(f[2]);
+        else if (kind == "E" && n == 3) mEntries.push_back({key(f[1]), Int(f[2])});
+        else if (kind == "D" && n == 3) mDisposition[key(f[1])] = Int(f[2]);
+        else if (kind == "N" && n == 3) mActorRank[key(f[1])] = Int(f[2]);
+        else if (kind == "G" && n == 3) mGlobals[global(f[1])] = Float(f[2]);
+        else if (kind == "L" && n == 4) mVars[{key(f[1]), f[2]}] = Float(f[3]);
+        else if (kind == "F" && n == 5) mFactions[key(f[1])] = {Int(f[2]), f[3] == "1", Int(f[4])};
+        else if (kind == "X" && n == 4) mReactions[{key(f[1]), key(f[2])}] = Int(f[3]);
+        else if (kind == "S" && v1 && n >= 2) mRunning[key(f[1])] = MigrateRunning(f);
+        else if (kind == "S" && n == 4) mRunning[f[1]] = {f[2], f[3]};
+        else if (kind == "K" && n == 2) mKnownTopics.insert(key(f[1]));
+        else if (kind == "A" && n == 4) mAiSettings[{key(f[1]), Int(f[2])}] = Int(f[3]);
+        else if (kind == "M" && n == 3) mMovementFlags[{key(f[1]), Int(f[2])}] = true;
         else if (kind == "W" && n == 2 && Int(f[1]) >= 0 &&
                  Int(f[1]) < kControlSwitchCount) {
             mControls[Int(f[1])] = false;
@@ -455,8 +522,13 @@ std::size_t DialogueState::Deserialize(const std::string& text) {
         ++taken;
     }
     // A save made before the factions were pushed holds memberships the
-    // game never heard of.
-    for (const auto& e : mFactions) PushFaction(e.first, e.second);
+    // game never heard of. Each is pushed through its own plugin's view, which
+    // is what names its converted FACT.
+    for (const auto& e : mFactions) {
+        const auto [layer, faction] = SplitStateKey(e.first);
+        const LayerScope scope(layer);
+        PushFaction(faction, e.second);
+    }
     return taken;
 }
 

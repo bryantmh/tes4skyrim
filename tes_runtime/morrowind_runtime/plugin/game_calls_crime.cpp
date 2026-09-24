@@ -121,6 +121,7 @@ void DivertEngineDialogue() {
     Log("crime: %s opened Skyrim's dialogue -- diverting to the Morrowind menu",
         SpeakerId(baseId));
     CloseMenuNamed(ids::kVanillaDialogueMenu);
+    const LayerScope scope(SpeakerLayer(baseId));
     SetSpeakerRef(SpeakerId(baseId), speaker);
     BeginConversation(SpeakerId(baseId), DisplayName(base), PlayerName());
 }

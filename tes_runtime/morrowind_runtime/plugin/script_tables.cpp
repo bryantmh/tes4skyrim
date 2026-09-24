@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "scope.h"
 #include "store.h"
 
 namespace mwruntime {
@@ -22,10 +23,14 @@ constexpr const char* kFileActorScripts = "SCPT_objects.txt";
 constexpr const char* kFileScriptBodies = "SCPT_source.txt";
 constexpr const char* kFileInstances = "SCPT_instances.txt";
 
-std::unordered_map<std::string, GlobalDef> g_globals;
-std::unordered_map<std::string, ScriptLocals> g_locals;
-std::unordered_map<std::string, std::string> g_actorScripts;
-std::unordered_map<std::string, std::string> g_sources;
+LayeredTable<GlobalDef> g_globals;
+LayeredTable<ScriptLocals> g_locals;
+LayeredTable<std::string> g_actorScripts;
+LayeredTable<std::string> g_sources;
+
+// The bindings whose script reads `OnPCEquip`, built on first use.
+std::vector<EquipWatch> g_watchList;
+bool g_watchBuilt = false;
 // Keyed by InstanceKey; the row keeps the plugin and local id apart so the
 // load-order pass does not have to take them back out of the key.
 std::unordered_map<std::string, InstanceRow> g_instances;
@@ -36,31 +41,32 @@ std::unordered_map<std::uint32_t, const InstanceRow*> g_instanceByLocal;
 // The same rows in a stable ORDER, so the tick's discovery sweep can resume at
 // an index rather than copying the whole table every frame.
 std::vector<const InstanceRow*> g_instanceList;
-std::unordered_map<std::string, ActorDef> g_actors;
-std::unordered_map<std::string, FormRef> g_items;
-std::unordered_map<std::string, FormRef> g_quests;
-std::unordered_map<std::string, SayLineDef> g_sayLines;
-std::unordered_map<std::string, FormRef> g_refs;
-std::unordered_map<std::string, FormRef> g_bases;
-std::unordered_map<std::string, FormRef> g_cells;
+LayeredTable<ActorDef> g_actors;
+LayeredTable<FormRef> g_items;
+LayeredTable<FormRef> g_quests;
+LayeredTable<SayLineDef> g_sayLines{false};
+LayeredTable<FormRef> g_refs;
+LayeredTable<FormRef> g_bases;
+LayeredTable<FormRef> g_cells;
 
-// The AI package quest, and each of its aliases by name -> ALST index.
-FormRef g_aiQuest;
-bool g_haveAiQuest = false;
-std::unordered_map<std::string, int> g_aiAliases;
-std::vector<std::string> g_startScripts;
-std::unordered_map<std::string, std::vector<TravelDest>> g_travel;
-std::unordered_map<std::string, FormRef> g_aiPacks;
-std::unordered_map<std::string, FormRef> g_sounds;
-std::unordered_map<std::string, SpellDef> g_spells;
+// Each plugin's AI package quest, its aliases by name -> ALST index, and its
+// PACK per kind. One sidecar's rows answer all three in any one view, so the
+// quest and its packages always come from the same plugin.
+LayeredTable<FormRef> g_aiQuest{false};
+LayeredTable<int> g_aiAliases{false};
+LayeredTable<FormRef> g_aiPacks{false};
+std::vector<std::pair<int, std::string>> g_startScripts;
+LayeredTable<std::vector<TravelDest>> g_travel;
+LayeredTable<FormRef> g_sounds;
+LayeredTable<SpellDef> g_spells;
 
 // The effects by both keys the commands use: the name and the TES3 index.
-std::unordered_map<std::string, FormRef> g_effects;
-std::unordered_map<int, FormRef> g_effectsByIndex;
+LayeredTable<FormRef> g_effects{false};
+LayeredTable<FormRef> g_effectsByIndex{false};
 
 // The soul each creature carries, and the FILLED gems by `<gem>_Filled<n>`.
-std::unordered_map<std::string, int> g_souls;
-std::unordered_map<std::string, FormRef> g_filledGems;
+LayeredTable<int> g_souls;
+LayeredTable<FormRef> g_filledGems;
 
 constexpr const char* kFileActors = "NPC_.txt";
 constexpr const char* kFileItems = "items_formid.txt";
@@ -116,13 +122,16 @@ constexpr const char* kFilledSuffix = "_filled";
 constexpr const char* kFileFactionForms = "factions_formid.txt";
 constexpr const char* kFileStates = "state_formid.txt";
 constexpr const char* kFileCrime = "crime_formid.txt";
-std::unordered_map<std::string, FormRef> g_factionForms;
+LayeredTable<FormRef> g_factionForms;
 std::vector<StateRow> g_states;
-FormRef g_realmCrime;
+LayeredTable<FormRef> g_realmCrime{false};
 
-std::unordered_map<std::string, FactionDef> g_factions;
-std::unordered_map<std::string, GmstDef> g_gmsts;
-std::unordered_map<int, SkillDef> g_skills;
+// The one key the realm crime table holds.
+constexpr const char* kCrimeRow = "crime";
+
+LayeredTable<FactionDef> g_factions;
+LayeredTable<GmstDef> g_gmsts{false};
+LayeredTable<SkillDef> g_skills{false};
 
 std::vector<std::string> Split(const std::string& text, char sep) {
     std::vector<std::string> out;
@@ -348,7 +357,7 @@ void AddBuiltinGlobals() {
     for (const auto& builtin : kBuiltins) {
         GlobalDef def;
         def.type = builtin.type;
-        g_globals.emplace(builtin.name, def);
+        g_globals.Add(kEveryLayer, builtin.name, def);
     }
 }
 
@@ -373,6 +382,8 @@ char ScriptLocals::TypeOf(const std::string& name) const {
 }
 
 void ClearScriptTables() {
+    g_watchList.clear();
+    g_watchBuilt = false;
     g_globals.clear();
     g_locals.clear();
     g_actorScripts.clear();
@@ -397,11 +408,11 @@ void ClearScriptTables() {
     g_startScripts.clear();
     g_travel.clear();
     g_aiPacks.clear();
-    g_haveAiQuest = false;
+    g_aiQuest.clear();
     g_factions.clear();
     g_factionForms.clear();
     g_states.clear();
-    g_realmCrime = FormRef();
+    g_realmCrime.clear();
     g_gmsts.clear();
     g_skills.clear();
 }
@@ -417,18 +428,20 @@ std::string PluginOf(const std::string& pluginDir) {
     return slash == std::string::npos ? dir : dir.substr(slash + 1);
 }
 
-void LoadScriptTables(const std::string& pluginDir) {
-    const std::string plugin = PluginOf(pluginDir);
-    AddBuiltinGlobals();
+namespace {
+
+// The scripts: bodies, placements, globals, locals and who runs what.
+void LoadScriptRows(int layer, const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileScriptBodies,
-               [](const std::string& name, const std::string& value) {
-                   g_sources.emplace(Lower(name), Unescape(value));
+               [layer](const std::string& name, const std::string& value) {
+                   g_sources.Add(layer, Lower(name), Unescape(value));
                });
     ForEachRow(pluginDir + kFileInstances,
-               [](const std::string& formId, const std::string& value) {
+               [layer](const std::string& formId, const std::string& value) {
                    const std::vector<std::string> f = Split(value, '|');
                    if (f.size() < 3) return;
                    InstanceRow row;
+                   row.layer = layer;
                    row.plugin = f[0];
                    row.baseId = f[1];
                    row.script = f[2];
@@ -444,7 +457,7 @@ void LoadScriptTables(const std::string& pluginDir) {
                    }
                });
     ForEachRow(pluginDir + kFileGlobals,
-               [](const std::string& name, const std::string& value) {
+               [layer](const std::string& name, const std::string& value) {
                    GlobalDef def;
                    def.type = value.empty() ? 'f' : value[0];
                    const std::size_t comma = value.find(',');
@@ -457,30 +470,38 @@ void LoadScriptTables(const std::string& pluginDir) {
                    if (second != std::string::npos) {
                        def.form = ParseFormRef(value.substr(second + 1));
                    }
-                   g_globals.emplace(Lower(name), def);
+                   g_globals.Add(layer, Lower(name), def);
                });
     ForEachRow(pluginDir + kFileLocals,
-               [](const std::string& name, const std::string& value) {
-                   g_locals.emplace(Lower(name), ParseLocals(value));
+               [layer](const std::string& name, const std::string& value) {
+                   g_locals.Add(layer, Lower(name), ParseLocals(value));
                });
     ForEachRow(pluginDir + kFileActorScripts,
-               [](const std::string& actor, const std::string& script) {
-                   g_actorScripts.emplace(Lower(actor), script);
+               [layer](const std::string& actor, const std::string& script) {
+                   g_actorScripts.Add(layer, Lower(actor), script);
                });
+    ForEachRow(pluginDir + kFileStartScripts,
+               [layer](const std::string& script, const std::string&) {
+                   g_startScripts.emplace_back(layer, script);
+               });
+}
+
+// The records a script names: actors, items, journals, lines, places.
+void LoadRecordRows(int layer, const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileActors,
-               [](const std::string& actor, const std::string& value) {
-                   g_actors.emplace(Lower(actor), ParseActor(value));
+               [layer](const std::string& actor, const std::string& value) {
+                   g_actors.Add(layer, Lower(actor), ParseActor(value));
                });
     ForEachRow(pluginDir + kFileItems,
-               [](const std::string& item, const std::string& value) {
-                   g_items.emplace(Lower(item), ParseFormRef(value));
+               [layer](const std::string& item, const std::string& value) {
+                   g_items.Add(layer, Lower(item), ParseFormRef(value));
                });
     ForEachRow(pluginDir + kFileQuests,
-               [](const std::string& quest, const std::string& value) {
-                   g_quests.emplace(Lower(quest), ParseFormRef(value));
+               [layer](const std::string& quest, const std::string& value) {
+                   g_quests.Add(layer, Lower(quest), ParseFormRef(value));
                });
     ForEachRow(pluginDir + kFileSayLines,
-               [](const std::string& path, const std::string& value) {
+               [layer](const std::string& path, const std::string& value) {
                    const std::vector<std::string> f = Split(value, '|');
                    SayLineDef def;
                    def.topic = ParseFormRef(value);
@@ -488,14 +509,34 @@ void LoadScriptTables(const std::string& pluginDir) {
                        def.seconds = static_cast<float>(std::atof(f[2].c_str()));
                    }
                    if (f.size() > 3) def.sound = f[3];
-                   g_sayLines.emplace(Lower(path), def);
+                   g_sayLines.Add(layer, Lower(path), def);
                });
     ForEachRow(pluginDir + kFileSounds,
-               [](const std::string& id, const std::string& value) {
-                   g_sounds.emplace(Lower(id), ParseFormRef(value));
+               [layer](const std::string& id, const std::string& value) {
+                   g_sounds.Add(layer, Lower(id), ParseFormRef(value));
                });
+    ForEachRow(pluginDir + kFileRefs,
+               [layer](const std::string& id, const std::string& value) {
+                   g_refs.Add(layer, Lower(id), ParseFormRef(value));
+               });
+    ForEachRow(pluginDir + kFileBases,
+               [layer](const std::string& id, const std::string& value) {
+                   g_bases.Add(layer, Lower(id), ParseFormRef(value));
+               });
+    ForEachRow(pluginDir + kFileCells,
+               [layer](const std::string& name, const std::string& value) {
+                   g_cells.Add(layer, Lower(name), ParseFormRef(value));
+               });
+    ForEachRow(pluginDir + kFileTravel,
+               [layer](const std::string& actor, const std::string& value) {
+                   g_travel.Set(layer, Lower(actor), ParseTravel(value));
+               });
+}
+
+// Spells, their effects, and the soul gem tables.
+void LoadMagicRows(int layer, const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileSpells,
-               [](const std::string& id, const std::string& value) {
+               [layer](const std::string& id, const std::string& value) {
                    const std::vector<std::string> f = Split(value, '|');
                    SpellDef def;
                    def.form = ParseFormRef(value);
@@ -505,103 +546,96 @@ void LoadScriptTables(const std::string& pluginDir) {
                                std::atoi(n.c_str()));
                        }
                    }
-                   g_spells.emplace(Lower(id), def);
+                   g_spells.Add(layer, Lower(id), def);
                });
     ForEachRow(pluginDir + kFileEffects,
-               [](const std::string& index, const std::string& value) {
+               [layer](const std::string& index, const std::string& value) {
                    const std::vector<std::string> f = Split(value, '|');
                    if (f.size() < 3) return;
                    const FormRef form = ParseFormRef(value);
-                   g_effects.emplace(Lower(f[2]), form);
-                   g_effectsByIndex.emplace(std::atoi(index.c_str()), form);
+                   g_effects.Add(layer, Lower(f[2]), form);
+                   g_effectsByIndex.Add(layer,
+                                        std::to_string(std::atoi(index.c_str())),
+                                        form);
                });
     ForEachRow(pluginDir + kFileSouls,
-               [](const std::string& creature, const std::string& soul) {
-                   g_souls.emplace(Lower(creature), std::atoi(soul.c_str()));
+               [layer](const std::string& creature, const std::string& soul) {
+                   g_souls.Add(layer, Lower(creature), std::atoi(soul.c_str()));
                });
     ForEachRow(pluginDir + kFileSoulGems,
-               [](const std::string& id, const std::string& value) {
-                   g_filledGems.emplace(Lower(id), ParseFormRef(value));
+               [layer](const std::string& id, const std::string& value) {
+                   g_filledGems.Add(layer, Lower(id), ParseFormRef(value));
                });
-    ForEachRow(pluginDir + kFileRefs,
-               [](const std::string& id, const std::string& value) {
-                   g_refs.emplace(Lower(id), ParseFormRef(value));
-               });
-    ForEachRow(pluginDir + kFileBases,
-               [](const std::string& id, const std::string& value) {
-                   g_bases.emplace(Lower(id), ParseFormRef(value));
-               });
-    ForEachRow(pluginDir + kFileCells,
-               [](const std::string& name, const std::string& value) {
-                   g_cells.emplace(Lower(name), ParseFormRef(value));
-               });
+}
+
+// The AI package quest, factions, crime, published state, GMSTs and skills.
+void LoadWorldRows(int layer, const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileAiAliases,
-               [](const std::string& name, const std::string& value) {
+               [layer](const std::string& name, const std::string& value) {
                    const std::string key = Lower(name);
                    const std::string prefix(kAiPackPrefix);
                    if (key == kAiQuestRow) {
-                       g_aiQuest = ParseFormRef(value);
-                       g_haveAiQuest = true;
+                       g_aiQuest.Add(layer, key, ParseFormRef(value));
                    } else if (key.compare(0, prefix.size(), prefix) == 0) {
-                       g_aiPacks.emplace(key.substr(prefix.size()),
-                                         ParseFormRef(value));
+                       g_aiPacks.Add(layer, key.substr(prefix.size()),
+                                     ParseFormRef(value));
                    } else {
-                       g_aiAliases.emplace(key, std::atoi(value.c_str()));
+                       g_aiAliases.Add(layer, key, std::atoi(value.c_str()));
                    }
                });
-    ForEachRow(pluginDir + kFileTravel,
-               [](const std::string& actor, const std::string& value) {
-                   g_travel[Lower(actor)] = ParseTravel(value);
-               });
-    ForEachRow(pluginDir + kFileStartScripts,
-               [](const std::string& script, const std::string&) {
-                   g_startScripts.push_back(script);
-               });
     ForEachRow(pluginDir + kFileFactions,
-               [](const std::string& faction, const std::string& value) {
-                   g_factions.emplace(Lower(faction), ParseFaction(value));
+               [layer](const std::string& faction, const std::string& value) {
+                   g_factions.Add(layer, Lower(faction), ParseFaction(value));
                });
     ForEachRow(pluginDir + kFileFactionForms,
-               [](const std::string& faction, const std::string& value) {
-                   g_factionForms.emplace(Lower(faction), ParseFormRef(value));
+               [layer](const std::string& faction, const std::string& value) {
+                   g_factionForms.Add(layer, Lower(faction),
+                                      ParseFormRef(value));
                });
     ForEachRow(pluginDir + kFileStates,
-               [](const std::string& key, const std::string& value) {
-                   g_states.push_back({Lower(key), ParseFormRef(value)});
+               [layer](const std::string& key, const std::string& value) {
+                   g_states.push_back({Lower(key), ParseFormRef(value), layer});
                });
     ForEachRow(pluginDir + kFileCrime,
-               [](const std::string&, const std::string& value) {
-                   if (g_realmCrime.plugin.empty()) g_realmCrime = ParseFormRef(value);
+               [layer](const std::string&, const std::string& value) {
+                   g_realmCrime.Add(layer, kCrimeRow, ParseFormRef(value));
                });
     ForEachRow(pluginDir + kFileGmsts,
-               [](const std::string& name, const std::string& value) {
-                   g_gmsts.emplace(Lower(name), ParseGmst(value));
+               [layer](const std::string& name, const std::string& value) {
+                   g_gmsts.Add(layer, Lower(name), ParseGmst(value));
                });
     ForEachRow(pluginDir + kFileSkills,
-               [](const std::string& index, const std::string& value) {
-                   g_skills.emplace(std::atoi(index.c_str()), ParseSkill(value));
+               [layer](const std::string& index, const std::string& value) {
+                   g_skills.Add(layer, std::to_string(std::atoi(index.c_str())),
+                                ParseSkill(value));
                });
+}
+
+}  // namespace
+
+void LoadScriptTables(const std::string& pluginDir) {
+    const int layer = AddLayer(PluginOf(pluginDir));
+    AddBuiltinGlobals();
+    LoadScriptRows(layer, pluginDir);
+    LoadRecordRows(layer, pluginDir);
+    LoadMagicRows(layer, pluginDir);
+    LoadWorldRows(layer, pluginDir);
 }
 
 const FactionDef* FindFaction(const std::string& faction) {
-    const auto it = g_factions.find(Lower(faction));
-    return it == g_factions.end() ? nullptr : &it->second;
+    return g_factions.Find(Lower(faction));
 }
 
 const FormRef* FindFactionForm(const std::string& faction) {
-    const auto it = g_factionForms.find(Lower(faction));
-    return it == g_factionForms.end() ? nullptr : &it->second;
+    return g_factionForms.Find(Lower(faction));
 }
 
 const std::vector<StateRow>& StateRows() { return g_states; }
 
-const FormRef* RealmCrimeFaction() {
-    return g_realmCrime.plugin.empty() ? nullptr : &g_realmCrime;
-}
+const FormRef* RealmCrimeFaction() { return g_realmCrime.Find(kCrimeRow); }
 
 const GmstDef* FindGmst(const std::string& name) {
-    const auto it = g_gmsts.find(Lower(name));
-    return it == g_gmsts.end() ? nullptr : &it->second;
+    return g_gmsts.Find(Lower(name));
 }
 
 float GmstNumber(const std::string& name, float fallback) {
@@ -617,14 +651,13 @@ std::string GmstText(const std::string& name, const std::string& fallback) {
 std::size_t GmstCount() { return g_gmsts.size(); }
 
 const SkillDef* FindSkill(int index) {
-    const auto it = g_skills.find(index);
-    return it == g_skills.end() ? nullptr : &it->second;
+    return g_skills.Find(std::to_string(index));
 }
 
 std::size_t FactionCount() { return g_factions.size(); }
 
 void AddFactionForTest(const std::string& faction, const FactionDef& def) {
-    g_factions[Lower(faction)] = def;
+    g_factions.Set(kEveryLayer, Lower(faction), def);
 }
 
 const float* FindPlacement(const std::string& id) {
@@ -635,18 +668,15 @@ const float* FindPlacement(const std::string& id) {
 }
 
 const ActorDef* FindActor(const std::string& actor) {
-    const auto it = g_actors.find(Lower(actor));
-    return it == g_actors.end() ? nullptr : &it->second;
+    return g_actors.Find(Lower(actor));
 }
 
 const FormRef* FindItem(const std::string& item) {
-    const auto it = g_items.find(Lower(item));
-    return it == g_items.end() ? nullptr : &it->second;
+    return g_items.Find(Lower(item));
 }
 
 const FormRef* FindQuest(const std::string& quest) {
-    const auto it = g_quests.find(Lower(quest));
-    return it == g_quests.end() ? nullptr : &it->second;
+    return g_quests.Find(Lower(quest));
 }
 
 // The topic carrying one scripted `Say` line, by the path the script wrote.
@@ -658,13 +688,11 @@ const SayLineDef* FindSayLine(const std::string& file) {
     for (char& c : key) {
         if (c == '/') c = '\\';
     }
-    const auto it = g_sayLines.find(key);
-    return it == g_sayLines.end() ? nullptr : &it->second;
+    return g_sayLines.Find(key);
 }
 
 const FormRef* FindSound(const std::string& sound) {
-    const auto it = g_sounds.find(Lower(sound));
-    return it == g_sounds.end() ? nullptr : &it->second;
+    return g_sounds.Find(Lower(sound));
 }
 
 std::size_t SoundCount() { return g_sounds.size(); }
@@ -674,35 +702,33 @@ bool SpellDef::Has(int index) const {
 }
 
 const SpellDef* FindSpell(const std::string& spell) {
-    const auto it = g_spells.find(Lower(spell));
-    return it == g_spells.end() ? nullptr : &it->second;
+    return g_spells.Find(Lower(spell));
 }
 
 std::size_t SpellCount() { return g_spells.size(); }
 
 std::vector<std::string> SpellsWithEffect(int index) {
     std::vector<std::string> out;
-    for (const auto& entry : g_spells) {
-        if (entry.second.Has(index)) out.push_back(entry.first);
-    }
+    g_spells.ForEachVisible(
+        [&out, index](const std::string& id, const SpellDef& def, int) {
+            if (def.Has(index)) out.push_back(id);
+        });
     return out;
 }
 
 const FormRef* FindEffect(const std::string& name) {
-    const auto it = g_effects.find(Lower(name));
-    return it == g_effects.end() ? nullptr : &it->second;
+    return g_effects.Find(Lower(name));
 }
 
 const FormRef* FindEffectByIndex(int index) {
-    const auto it = g_effectsByIndex.find(index);
-    return it == g_effectsByIndex.end() ? nullptr : &it->second;
+    return g_effectsByIndex.Find(std::to_string(index));
 }
 
 std::size_t EffectCount() { return g_effects.size(); }
 
 int CreatureSoul(const std::string& creature) {
-    const auto it = g_souls.find(Lower(creature));
-    return it == g_souls.end() ? 0 : it->second;
+    const int* soul = g_souls.Find(Lower(creature));
+    return soul ? *soul : 0;
 }
 
 // `<gem id>_Filled<n>`, the id the export staged the filled variant under.
@@ -712,115 +738,144 @@ std::string FilledGemKey(const std::string& gem, int soul) {
 
 std::string FilledSoulGemId(const std::string& gem, int soul) {
     const std::string key = FilledGemKey(gem, soul);
-    return g_filledGems.count(key) ? key : std::string();
+    return g_filledGems.Find(key) ? key : std::string();
 }
 
 std::vector<std::string> FilledSoulGemIds(int soul) {
     const std::string suffix = std::string(kFilledSuffix) +
                                std::to_string(soul);
     std::vector<std::string> out;
-    for (const auto& entry : g_filledGems) {
-        if (entry.first.size() > suffix.size() &&
-            entry.first.compare(entry.first.size() - suffix.size(),
-                                suffix.size(), suffix) == 0) {
-            out.push_back(entry.first);
-        }
-    }
+    g_filledGems.ForEachVisible(
+        [&out, &suffix](const std::string& id, const FormRef&, int) {
+            if (id.size() > suffix.size() &&
+                id.compare(id.size() - suffix.size(), suffix.size(),
+                           suffix) == 0) {
+                out.push_back(id);
+            }
+        });
     return out;
 }
 
 std::size_t SoulGemCount() { return g_filledGems.size(); }
 
 const FormRef* FindRef(const std::string& id) {
-    const auto it = g_refs.find(Lower(id));
-    return it == g_refs.end() ? nullptr : &it->second;
+    return g_refs.Find(Lower(id));
 }
 
 std::size_t RefCount() { return g_refs.size(); }
 
 const FormRef* FindBase(const std::string& id) {
-    const auto it = g_bases.find(Lower(id));
-    return it == g_bases.end() ? nullptr : &it->second;
+    return g_bases.Find(Lower(id));
 }
 
 std::size_t BaseCount() { return g_bases.size(); }
 
 const FormRef* FindCell(const std::string& cell) {
-    const auto it = g_cells.find(Lower(cell));
-    return it == g_cells.end() ? nullptr : &it->second;
+    return g_cells.Find(Lower(cell));
 }
 
 std::size_t CellCount() { return g_cells.size(); }
 
-const FormRef* AiQuest() { return g_haveAiQuest ? &g_aiQuest : nullptr; }
+const FormRef* AiQuest() { return g_aiQuest.Find(kAiQuestRow); }
 
 int AiAliasIndex(const std::string& name) {
-    const auto it = g_aiAliases.find(Lower(name));
-    return it == g_aiAliases.end() ? -1 : it->second;
+    const int* index = g_aiAliases.Find(Lower(name));
+    return index ? *index : -1;
 }
 
 const FormRef* FindAiPack(const std::string& kind) {
-    const auto it = g_aiPacks.find(Lower(kind));
-    return it == g_aiPacks.end() ? nullptr : &it->second;
+    return g_aiPacks.Find(Lower(kind));
 }
 
 std::size_t ActorCount() { return g_actors.size(); }
 
 std::size_t QuestCount() { return g_quests.size(); }
 
-const std::unordered_map<std::string, GlobalDef>& GlobalDefs() {
-    return g_globals;
+void ForEachGlobalRow(
+    const std::function<void(const std::string&, const GlobalDef&, int)>& fn) {
+    g_globals.ForEachRow(fn);
 }
 
+void ForEachGlobalDef(const std::string& name,
+                      const std::function<void(const GlobalDef&, int)>& fn) {
+    g_globals.ForEachOf(Lower(name), fn);
+}
+
+std::size_t GlobalCount() { return g_globals.size(); }
+
 const GlobalDef* FindGlobal(const std::string& name) {
-    const auto it = g_globals.find(Lower(name));
-    return it == g_globals.end() ? nullptr : &it->second;
+    return g_globals.Find(Lower(name));
+}
+
+int GlobalLayer(const std::string& name) {
+    return g_globals.FindLayer(Lower(name));
+}
+
+std::vector<std::string> VisibleGlobalNames() {
+    std::vector<std::string> out;
+    g_globals.ForEachVisible(
+        [&out](const std::string& name, const GlobalDef&, int) {
+            out.push_back(name);
+        });
+    return out;
 }
 
 const ScriptLocals* FindScriptLocals(const std::string& script) {
-    const auto it = g_locals.find(Lower(script));
-    return it == g_locals.end() ? nullptr : &it->second;
+    return g_locals.Find(Lower(script));
 }
 
 const std::string& ScriptOf(const std::string& actor) {
     static const std::string kNone;
-    const auto it = g_actorScripts.find(Lower(actor));
-    return it == g_actorScripts.end() ? kNone : it->second;
+    const std::string* script = g_actorScripts.Find(Lower(actor));
+    return script ? *script : kNone;
 }
 
-const std::vector<std::pair<std::string, std::string>>& EquipWatchList() {
-    static std::vector<std::pair<std::string, std::string>> list;
-    static std::size_t builtFrom = 0;
-    if (builtFrom != g_actorScripts.size()) {
-        builtFrom = g_actorScripts.size();
-        list.clear();
-        for (const auto& entry : g_actorScripts) {
-            const ScriptLocals* locals = FindScriptLocals(entry.second);
+// 🛑 A binding is watched only from the layer whose own view it ANSWERS in: a
+// master's row that its dependent re-stages would otherwise be polled twice,
+// once from each side.
+const std::vector<EquipWatch>& EquipWatchList() {
+    if (g_watchBuilt) return g_watchList;
+    g_watchBuilt = true;
+    g_actorScripts.ForEachRow(
+        [](const std::string& item, const std::string& script, int layer) {
+            const LayerScope scope(layer);
+            if (g_actorScripts.FindLayer(item) != layer) return;
+            const ScriptLocals* locals = FindScriptLocals(script);
             if (locals && locals->TypeOf("onpcequip") != ' ') {
-                list.emplace_back(entry.first, entry.second);
+                g_watchList.push_back({item, script, layer});
             }
-        }
-    }
-    return list;
+        });
+    return g_watchList;
 }
 
 const std::string& ScriptSource(const std::string& script) {
     static const std::string kNone;
-    const auto it = g_sources.find(Lower(script));
-    return it == g_sources.end() ? kNone : it->second;
+    const std::string* source = g_sources.Find(Lower(script));
+    return source ? *source : kNone;
 }
 
-const std::vector<std::string>& StartScripts() { return g_startScripts; }
+int ScriptSourceLayer(const std::string& script) {
+    return g_sources.FindLayer(Lower(script));
+}
+
+const std::vector<std::pair<int, std::string>>& StartScripts() {
+    return g_startScripts;
+}
 
 const std::vector<TravelDest>* FindTravel(const std::string& actor) {
-    const auto it = g_travel.find(Lower(actor));
-    return it == g_travel.end() || it->second.empty() ? nullptr : &it->second;
+    const std::vector<TravelDest>* places = g_travel.Find(Lower(actor));
+    return places && !places->empty() ? places : nullptr;
 }
 
 std::size_t ScriptSourceCount() { return g_sources.size(); }
 
-const std::unordered_map<std::string, std::string>& ScriptSources() {
-    return g_sources;
+std::unordered_map<std::string, std::string> ScriptSources() {
+    std::unordered_map<std::string, std::string> out;
+    g_sources.ForEachVisible(
+        [&out](const std::string& name, const std::string& body, int) {
+            out.emplace(name, body);
+        });
+    return out;
 }
 
 const std::string& InstanceScript(const std::string& plugin,
@@ -828,6 +883,11 @@ const std::string& InstanceScript(const std::string& plugin,
     static const std::string kNone;
     const auto it = g_instances.find(InstanceKey(plugin, localFormId));
     return it == g_instances.end() ? kNone : it->second.script;
+}
+
+int InstanceLayer(const std::string& plugin, std::uint32_t localFormId) {
+    const auto it = g_instances.find(InstanceKey(plugin, localFormId));
+    return it == g_instances.end() ? kEveryLayer : it->second.layer;
 }
 
 std::size_t InstanceCount() { return g_instances.size(); }

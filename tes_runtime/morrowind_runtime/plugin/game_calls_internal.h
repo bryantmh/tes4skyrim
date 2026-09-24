@@ -11,6 +11,7 @@
 #include "activation.h"
 #include "addresses.h"
 #include "dialogue_state.h"
+#include "scope.h"
 #include "script_tables.h"
 
 namespace mwruntime {

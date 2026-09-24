@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "log.h"
+#include "scope.h"
 #include "script_tables.h"
 
 namespace mwruntime {
@@ -118,7 +119,26 @@ void SortInfos() {
     }
 }
 
-std::size_t LoadOne(const std::string& dir, const char* name,
+// A DIAL staged by several sidecars is ONE topic whose responses each keep
+// their own layer; the first sidecar's type stands.
+void AddTopic(int layer, const Record& rec, StoreStats& stats) {
+    const std::string id = Unescape(Get(rec, "EditorID"));
+    if (id.empty()) return;
+    const std::string key = Lower(id);
+    Topic& topic = g_topics[key];
+    if (topic.layers.empty()) {
+        topic.id = id;
+        topic.type = ParseDialType(Get(rec, "DialType"));
+    }
+    if (std::find(topic.layers.begin(), topic.layers.end(), layer) ==
+        topic.layers.end()) {
+        topic.layers.push_back(layer);
+    }
+    NoteId(layer, key);
+    ++stats.topics;
+}
+
+std::size_t LoadOne(int layer, const std::string& dir, const char* name,
                     StoreStats& stats) {
     const std::string text = ReadFile(dir + name);
     if (text.empty()) return 0;
@@ -126,14 +146,10 @@ std::size_t LoadOne(const std::string& dir, const char* name,
     for (const Record& rec : records) {
         const std::string sig = Get(rec, "Signature");
         if (sig == kSigTopic) {
-            Topic topic;
-            topic.id = Unescape(Get(rec, "EditorID"));
-            topic.type = ParseDialType(Get(rec, "DialType"));
-            if (topic.id.empty()) continue;
-            g_topics[Lower(topic.id)] = std::move(topic);
-            ++stats.topics;
+            AddTopic(layer, rec, stats);
         } else if (sig == kSigInfo) {
             Info info = MakeInfo(rec);
+            info.layer = layer;
             const auto it = g_topics.find(Lower(info.topic));
             if (it == g_topics.end()) continue;
             if (!info.resultScript.empty()) ++stats.scripts;
@@ -142,6 +158,19 @@ std::size_t LoadOne(const std::string& dir, const char* name,
         }
     }
     return records.size();
+}
+
+// `<Data>\SKSE\Plugins\MorrowindRuntime\` -> `<Data>\`, where the plugins
+// whose headers name each layer's masters sit.
+std::string DataDirOf(std::string root) {
+    for (int up = 0; up < 3; ++up) {
+        while (!root.empty() && (root.back() == '\\' || root.back() == '/')) {
+            root.pop_back();
+        }
+        const std::size_t slash = root.find_last_of("\\/");
+        root = slash == std::string::npos ? std::string() : root.substr(0, slash);
+    }
+    return root.empty() ? root : root + "\\";
 }
 
 }  // namespace
@@ -251,6 +280,7 @@ StoreStats LoadStore() { return LoadStoreFrom(SidecarDir()); }
 
 StoreStats LoadStoreFrom(const std::string& rootIn) {
     g_topics.clear();
+    ClearLayers();
     StoreStats stats;
     if (rootIn.empty()) {
         Log("store: no sidecar root -- GetModuleFileNameA gave nothing");
@@ -261,25 +291,27 @@ StoreStats LoadStoreFrom(const std::string& rootIn) {
     const std::vector<std::string> plugins = SidecarPlugins(root);
     Log("store: root '%s' -> %zu plugin folder(s)", root.c_str(),
         plugins.size());
+    for (const std::string& plugin : plugins) AddLayer(plugin);
+    FinishLayers(DataDirOf(root));
 
     // DIAL first for every plugin: an INFO is dropped unless its topic exists.
     for (const std::string& plugin : plugins) {
         const std::string dir = root + plugin + "\\";
-        const bool ok = LoadOne(dir, kFileTopics, stats);
+        const bool ok = LoadOne(LayerIndex(plugin), dir, kFileTopics, stats);
         Log("store:   %s/%s %s", plugin.c_str(), kFileTopics,
             ok ? "loaded" : "MISSING or empty");
         if (ok) ++stats.files;
     }
     ClearScriptTables();
     for (const std::string& plugin : plugins) {
-        LoadOne(root + plugin + "\\", kFileInfos, stats);
+        LoadOne(LayerIndex(plugin), root + plugin + "\\", kFileInfos, stats);
         LoadScriptTables(root + plugin + "\\");
     }
     SortInfos();
     Log("store: %zu actor(s), %zu journal quest(s), %zu global(s), %zu "
         "script(s) with locals, %zu scripted object(s)%s", ActorCount(),
-        QuestCount(), GlobalDefs().size(), ScriptCount(), ActorScriptCount(),
-        GlobalDefs().empty() ? " -- this sidecar predates the script tables; "
+        QuestCount(), GlobalCount(), ScriptCount(), ActorScriptCount(),
+        GlobalCount() == 0 ? " -- this sidecar predates the script tables; "
                                "restage it or result scripts that name a "
                                "global will not compile" : "");
     return stats;
@@ -287,9 +319,17 @@ StoreStats LoadStoreFrom(const std::string& rootIn) {
 
 const std::unordered_map<std::string, Topic>& Topics() { return g_topics; }
 
+bool TopicVisible(const Topic& topic) {
+    for (const int layer : topic.layers) {
+        if (LayerVisible(layer)) return true;
+    }
+    return false;
+}
+
 const Topic* FindTopic(const std::string& id) {
     const auto it = g_topics.find(Lower(id));
-    return it == g_topics.end() ? nullptr : &it->second;
+    return it == g_topics.end() || !TopicVisible(it->second) ? nullptr
+                                                             : &it->second;
 }
 
 }  // namespace mwruntime

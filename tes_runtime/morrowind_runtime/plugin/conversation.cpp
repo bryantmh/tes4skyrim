@@ -22,6 +22,7 @@
 #include "menu.h"
 #include "menu_layout.h"
 #include "persuasion.h"
+#include "scope.h"
 #include "script_context.h"
 #include "script_runner.h"
 #include "script_tables.h"
@@ -107,6 +108,9 @@ struct Line {
 
 std::unique_ptr<GameActor> g_actor;
 std::string g_speaker;
+// The layer (scope.h) the conversation runs in: the speaker's plugin. Every
+// menu callback re-enters it, since each arrives on its own.
+int g_layer = kEveryLayer;
 std::string g_speakerName;
 std::string g_playerName;
 std::string g_lastTopic;
@@ -898,13 +902,34 @@ void OnTick() {
 
 void InstallConversation() {
     MenuInput input;
-    input.hover = OnHover;
-    input.click = OnClick;
-    input.wheel = OnWheel;
-    input.cancel = OnCancel;
-    input.opened = OnOpened;
-    input.closed = OnClosed;
-    input.tick = OnTick;
+    input.hover = [](double x, double y) {
+        const LayerScope scope(g_layer);
+        OnHover(x, y);
+    };
+    input.click = [](double x, double y) {
+        const LayerScope scope(g_layer);
+        OnClick(x, y);
+    };
+    input.wheel = [](double x, double y, double delta) {
+        const LayerScope scope(g_layer);
+        OnWheel(x, y, delta);
+    };
+    input.cancel = []() {
+        const LayerScope scope(g_layer);
+        OnCancel();
+    };
+    input.opened = []() {
+        const LayerScope scope(g_layer);
+        OnOpened();
+    };
+    input.closed = []() {
+        const LayerScope scope(g_layer);
+        OnClosed();
+    };
+    input.tick = []() {
+        const LayerScope scope(g_layer);
+        OnTick();
+    };
     SetMenuInput(input);
 }
 
@@ -923,9 +948,15 @@ void SeedChargenTopics() {
         topics.size());
 }
 
+// Runs in the CALLER's layer, which is the speaker's; the conversation it
+// replaces is closed in its own.
 void BeginConversation(const char* speaker, const char* displayName,
                        const char* playerName) {
-    OnClosed();
+    {
+        const LayerScope previous(g_layer);
+        OnClosed();
+    }
+    g_layer = CurrentLayer();
     SeedChargenTopics();
     g_speaker = speaker ? speaker : "";
     State().BeginConversation(g_speaker);

@@ -12,6 +12,7 @@
 #include "log.h"
 #include "main_thread.h"
 #include "object_script.h"
+#include "scope.h"
 #include "script_tables.h"
 
 namespace mwruntime {
@@ -159,9 +160,10 @@ std::size_t RunCarriedScripts(bool cellChanged) {
     // one would miss the sibling actually worn; running per record would run
     // the body once per record.
     std::set<ObjectScript*> carried;
-    for (const auto& entry : EquipWatchList()) {
-        ObjectScript* instance = CarriedInstance(entry.first, entry.second);
-        if (instance && instance->PollEquipped(entry.first)) {
+    for (const EquipWatch& entry : EquipWatchList()) {
+        const LayerScope scope(entry.layer);
+        ObjectScript* instance = CarriedInstance(entry.item, entry.script);
+        if (instance && instance->PollEquipped(entry.item)) {
             carried.insert(instance);
         }
     }

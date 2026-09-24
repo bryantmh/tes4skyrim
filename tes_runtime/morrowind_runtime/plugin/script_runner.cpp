@@ -33,6 +33,7 @@
 #include "dialogue_state.h"
 #include "filter.h"
 #include "log.h"
+#include "scope.h"
 #include "script_ops.h"
 #include "script_tables.h"
 
@@ -949,15 +950,23 @@ bool CompileObject(Machine& machine, const std::string& source,
     }
 }
 
-Machine::ObjectProgram& ObjectProgramFor(const std::string& script,
+// A compiled body's cache key: the script qualified by the sidecar that
+// SUPPLIED the body in the current view, since two sibling plugins may each
+// stage their own body under one name.
+std::string ProgramKey(const std::string& script) {
+    return LayerName(ScriptSourceLayer(script)) + '\x1F' + script;
+}
+
+Machine::ObjectProgram& ObjectProgramFor(const std::string& name,
                                          const std::string& source) {
     Machine& machine = TheMachine();
+    const std::string script = ProgramKey(name);
     auto it = machine.objectPrograms.find(script);
     if (it != machine.objectPrograms.end()) return it->second;
     Machine::ObjectProgram built;
     if (!CompileObject(machine, source, &built)) {
         Log("script: object '%s' did NOT compile -- it will not run",
-            script.c_str());
+            name.c_str());
         built = Machine::ObjectProgram();
     }
     return machine.objectPrograms.emplace(script, std::move(built))
@@ -976,7 +985,7 @@ bool EnsureObjectScript(const std::string& script, const std::string& source) {
 
 const ScriptLocals* ObjectScriptLocals(const std::string& script) {
     Machine& machine = TheMachine();
-    const auto it = machine.objectPrograms.find(script);
+    const auto it = machine.objectPrograms.find(ProgramKey(script));
     return it == machine.objectPrograms.end() ? nullptr : &it->second.locals;
 }
 

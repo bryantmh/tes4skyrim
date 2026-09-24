@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "game_actor.h"
+#include "scope.h"
 #include "script_context.h"
 
 namespace mwruntime {
@@ -62,6 +63,11 @@ public:
     void SetBaseId(std::string baseId) { mBaseId = std::move(baseId); }
     std::uint32_t LocalFormId() const { return mLocalFormId; }
     const std::string& Plugin() const { return mPlugin; }
+
+    // The layer the body runs as (scope.h): the sidecar that staged the
+    // placement, bound the item, or started the global script.
+    int Layer() const { return mLayer; }
+    void SetLayer(int layer) { mLayer = layer; }
 
     ObjectEvents& Events() { return mEvents; }
 
@@ -112,6 +118,7 @@ private:
     std::string mBaseId;
     std::string mScript;
     std::string mKey;
+    int mLayer = kEveryLayer;
     ObjectEvents mEvents;
     // Whether the death has already been reported, so it is raised once, and
     // whether life has been sampled at all -- the first poll only establishes
@@ -193,8 +200,8 @@ void BindInstance(std::uint32_t runtimeFormId, const std::string& plugin,
 
 // Gives a reference CREATED at runtime the script its base record runs, keyed
 // by the FormID the engine just minted for it. Does nothing when the base runs
-// no script. `ScriptOf` answers which script that is.
-//
+// no script. `ScriptOf` answers which script that is, and the spawn runs as
+// the current layer -- the plugin whose script placed it.
 void BindSpawnedInstance(std::uint32_t runtimeFormId,
                          const std::string& baseId);
 
@@ -225,9 +232,10 @@ ObjectScript* InstanceFor(const std::string& plugin, std::uint32_t localFormId,
 ObjectScript* FindInstance(const std::string& plugin,
                            std::uint32_t localFormId);
 
-// The instance a CARRIED object runs, created on first use. Keyed by the base
-// id, because an inventory item has no placement to key on and every copy of
-// one base shares TES3's single set of locals.
+// The instance a CARRIED object runs, created on first use. Keyed by the
+// script's state key, because an inventory item has no placement to key on
+// and every copy of one base shares TES3's single set of locals. It runs as
+// the current layer.
 // See: docs/commentary/morrowind_runtime.md#engine-written-locals
 ObjectScript* CarriedInstance(const std::string& baseId,
                               const std::string& script);

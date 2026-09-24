@@ -90,6 +90,7 @@ ObjectScript::ObjectScript(std::string script, std::string target)
 // one-tick life, so a script that fails to compile must not leave `OnActivate`
 // latched for the next tick to see.
 bool ObjectScript::RunOnce() {
+    const LayerScope scope(mLayer);
     const std::string& source = ScriptSource(mScript);
     // Compiled FIRST: the engine-written locals below are named through the
     // layout the compiler builds, which does not exist until the body parses.
@@ -240,6 +241,7 @@ void BindSpawnedInstance(std::uint32_t runtimeFormId,
     const auto it = g_instances.emplace(
         key, ObjectScript(key, runtimeFormId, baseId, script));
     it.first->second.SetRuntimeFormId(runtimeFormId);
+    it.first->second.SetLayer(CurrentLayer());
     g_byRuntimeId[runtimeFormId] = &it.first->second;
     Log("object: spawned %08X runs '%s' (%s)", runtimeFormId, script.c_str(),
         baseId.c_str());
@@ -312,14 +314,16 @@ std::string ObjectContext::OwnerKey() const { return mInstance.Key(); }
 ObjectScript* CarriedInstance(const std::string& baseId,
                               const std::string& script) {
     if (baseId.empty() || script.empty()) return nullptr;
-    const std::string key = LowerId(script);
+    const std::string key = StateKey(script);
     const auto it = g_instances.find(key);
     if (it != g_instances.end()) {
         if (it->second.BaseId().empty()) it->second.SetBaseId(baseId);
         return &it->second;
     }
-    return &g_instances.emplace(key, ObjectScript(script, baseId))
-                .first->second;
+    ObjectScript& made =
+        g_instances.emplace(key, ObjectScript(script, baseId)).first->second;
+    made.SetLayer(CurrentLayer());
+    return &made;
 }
 
 ObjectScript* InstanceFor(const std::string& plugin,
@@ -338,9 +342,12 @@ ObjectScript* InstanceFor(const std::string& plugin,
     }
     const std::string& script = InstanceScript(plugin, localFormId);
     if (script.empty()) return nullptr;
-    return &g_instances
-                .emplace(key, ObjectScript(plugin, localFormId, baseId, script))
-                .first->second;
+    ObjectScript& made =
+        g_instances
+            .emplace(key, ObjectScript(plugin, localFormId, baseId, script))
+            .first->second;
+    made.SetLayer(InstanceLayer(plugin, localFormId));
+    return &made;
 }
 
 ObjectScript* FindInstance(const std::string& plugin,
@@ -355,15 +362,17 @@ std::size_t LiveInstanceCount() { return g_instances.size(); }
 // what the script acts on, while its locals are keyed by name and carry over.
 std::size_t RunGlobalScripts() {
     std::size_t ran = 0;
-    for (const auto& running : State().RunningScripts()) {
-        auto it = g_globalScripts.find(running.first);
+    for (const RunningGlobal& running : State().RunningScripts()) {
+        auto it = g_globalScripts.find(running.key);
         if (it == g_globalScripts.end() ||
-            it->second.BaseId() != running.second) {
+            it->second.BaseId() != running.target ||
+            it->second.Layer() != running.layer) {
             it = g_globalScripts
-                     .insert_or_assign(running.first,
-                                       ObjectScript(running.first,
-                                                    running.second))
+                     .insert_or_assign(running.key,
+                                       ObjectScript(running.script,
+                                                    running.target))
                      .first;
+            it->second.SetLayer(running.layer);
         }
         if (it->second.RunOnce()) ++ran;
     }

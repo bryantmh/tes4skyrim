@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include "filter.h"
+#include "scope.h"
 
 namespace mwruntime {
 
@@ -86,7 +87,7 @@ std::vector<TopicEntry> OfferedTopics(const ActorView& actor,
         // Only plain topics reach the list: greetings fire on their own,
         // journal entries are the quest log, and voice/persuasion are the
         // engine's own channels.
-        if (topic.type != DialType::Topic) continue;
+        if (topic.type != DialType::Topic || !TopicVisible(topic)) continue;
         if (SelectInfo(topic, actor, -1).info == nullptr) continue;
         TopicEntry row;
         row.id = topic.id;
@@ -107,7 +108,8 @@ Reply Greet(const ActorView& actor) {
     // interrupt the ordinary one.
     std::vector<const Topic*> greetings;
     for (const auto& entry : Topics()) {
-        if (entry.second.type == DialType::Greeting) {
+        if (entry.second.type == DialType::Greeting &&
+            TopicVisible(entry.second)) {
             greetings.push_back(&entry.second);
         }
     }
@@ -141,7 +143,7 @@ std::vector<std::string> ChargenTopics() {
     std::vector<std::string> out;
     for (const auto& entry : Topics()) {
         for (const Info& info : entry.second.infos) {
-            if (IEqual(info.actor, kChargenActor)) {
+            if (LayerVisible(info.layer) && IEqual(info.actor, kChargenActor)) {
                 CollectAddTopic(info.resultScript, &out);
             }
         }
@@ -157,7 +159,7 @@ std::vector<std::string> MentionedTopics(const std::string& text,
     std::vector<std::string> out;
     for (const auto& entry : Topics()) {
         const Topic& topic = entry.second;
-        if (topic.type != DialType::Topic) continue;
+        if (topic.type != DialType::Topic || !TopicVisible(topic)) continue;
         const std::string needle = Lower(topic.id);
         if (needle.empty() || needle.size() > haystack.size()) continue;
         const std::size_t pos = haystack.find(needle);

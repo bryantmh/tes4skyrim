@@ -37,6 +37,9 @@ struct Condition {
 // Morrowind.esm, so `id` alone is not unique.
 // See: docs/reference/morrowind_dialogue_format.md#info-identity
 struct Info {
+    // The sidecar that staged it: a sibling plugin's response is never
+    // offered. See scope.h.
+    int         layer = -1;
     std::string id;
     std::string topic;
     int         ordinal = 0;
@@ -66,7 +69,12 @@ struct Topic {
     std::string       id;
     DialType          type = DialType::Unknown;
     std::vector<Info> infos;
+    // Every sidecar that stages this DIAL.
+    std::vector<int>  layers;
 };
+
+// Whether any sidecar staging `topic` is visible to the current layer.
+bool TopicVisible(const Topic& topic);
 
 struct StoreStats {
     std::size_t files = 0;
@@ -80,13 +88,16 @@ struct StoreStats {
 StoreStats LoadStore();
 
 // The same, from a caller-named root, so the loader is testable with no game
-// install. `root` holds one subfolder per plugin.
+// install. `root` holds one subfolder per plugin, and sits in
+// `<Data>\SKSE\Plugins\`, whose plugins' headers say who sees whom.
 StoreStats LoadStoreFrom(const std::string& root);
 
-// The loaded topics, keyed by their lowercased id.
+// The loaded topics, keyed by their lowercased id -- every sidecar's, so a
+// caller listing them skips what TopicVisible rejects.
 const std::unordered_map<std::string, Topic>& Topics();
 
-// The topic with this id, or null. Case-insensitive, as TES3 ids are.
+// The topic with this id, or null when no visible sidecar stages it.
+// Case-insensitive, as TES3 ids are.
 const Topic* FindTopic(const std::string& id);
 
 // Reverses tes4_export's escaping: \\ \n \r \t.

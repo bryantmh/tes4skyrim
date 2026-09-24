@@ -26,6 +26,10 @@ bool IsMorrowindSpeaker(std::uint32_t formId);
 // The TES3 id for a FormID, or empty when it is not a Morrowind actor.
 const char* SpeakerId(std::uint32_t formId);
 
+// The layer (scope.h) of the sidecar that indexed that actor, which is the
+// view a conversation with them runs in; kEveryLayer when none did.
+int SpeakerLayer(std::uint32_t formId);
+
 // The name a TESNPC shows in game, or "" -- read straight off the form.
 const char* DisplayName(void* npc);
 
@@ -70,9 +74,10 @@ bool SidecarPluginLoaded(const std::string& root, const std::string& plugin);
 // How many actors are indexed.
 std::size_t SpeakerCount();
 
-// True when this TES3 id names an actor that was actually CONVERTED, so the
-// player can meet them. An id in the dialogue tables but not here belongs to
-// a master whose world this conversion does not include.
+// True when this TES3 id names an actor that was actually CONVERTED by a
+// plugin the current one can see, so the player can meet them. An id in the
+// dialogue tables but not here belongs to a master whose world this
+// conversion does not include.
 bool SpeakerExists(const std::string& id);
 
 // True once the routing table loaded. NOT yet a guarantee that activations

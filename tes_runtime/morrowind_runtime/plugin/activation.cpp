@@ -15,6 +15,7 @@
 #include "ids.h"
 #include "log.h"
 #include "object_script.h"
+#include "scope.h"
 #include "script_tables.h"
 #include "store.h"
 
@@ -29,8 +30,18 @@ constexpr const char* kFileActors = "NPC__index.txt";
 // rejects every vanilla and Oblivion-converted actor before any map lookup.
 std::bitset<256> g_pluginMask;
 
-// FormID -> TES3 id, which is what the dialogue filter matches on.
-std::unordered_map<std::uint32_t, std::string> g_speakers;
+// One indexed actor: its TES3 id, which is what the dialogue filter matches
+// on, the sidecar that indexed it, and that plugin's load-order slot now.
+struct Speaker {
+    std::string id;
+    int layer = -1;
+    std::uint8_t index = 0xFF;
+};
+
+// Local FormID -> every sidecar's actor with that local id. Two sibling
+// plugins mint the same local id for the same authored id, so the runtime
+// slot is what tells them apart.
+std::unordered_map<std::uint32_t, std::vector<Speaker>> g_speakers;
 
 bool g_installed = false;
 
@@ -74,13 +85,14 @@ inline std::uint8_t PluginIndex(std::uint32_t formId) {
 }
 
 
-// One `FormID=EditorID` line, keyed by the LOCAL id. False when it is blank
+// One `FormID=EditorID` line as (LOCAL id, TES3 id). False when it is blank
 // or malformed, which is skipped rather than fatal.
 //
 // 🛑 The index byte in the file is the one the plugin had at CONVERSION time
 // and is discarded here; the runtime one is resolved per plugin by
 // ResolveIndex. See docs/commentary/morrowind_runtime.md#load-order
-bool AddLine(const std::string& line) {
+bool ParseLine(const std::string& line,
+               std::pair<std::uint32_t, std::string>* out) {
     const std::size_t eq = line.find('=');
     if (eq == 0 || eq == std::string::npos) return false;
     const std::uint32_t formId = std::strtoul(line.substr(0, eq).c_str(),
@@ -91,8 +103,19 @@ bool AddLine(const std::string& line) {
         id.pop_back();
     }
     if (id.empty()) return false;
-    g_speakers[formId & kLocalMask] = id;
+    *out = {formId & kLocalMask, id};
     return true;
+}
+
+// The speaker a live FormID names: the sidecar whose plugin holds that slot,
+// else the first that indexed the local id.
+const Speaker* FindSpeaker(std::uint32_t formId) {
+    const auto it = g_speakers.find(formId & kLocalMask);
+    if (it == g_speakers.end() || it->second.empty()) return nullptr;
+    for (const Speaker& speaker : it->second) {
+        if (speaker.index == PluginIndex(formId)) return &speaker;
+    }
+    return &it->second.front();
 }
 
 // The Activate this form's type had before the swap, by the vtable the object
@@ -165,6 +188,7 @@ bool ActivateHook(void* base, void* ref, void* activator, std::uint8_t unk,
         }
         Log("activation: %08X is '%s' (\"%s\") -- opening the Morrowind menu",
             baseId, SpeakerId(baseId), DisplayName(base));
+        const LayerScope scope(SpeakerLayer(baseId));
         SetSpeakerRef(SpeakerId(baseId), ref);
         BeginConversation(SpeakerId(baseId), DisplayName(base), PlayerName());
         return true;
@@ -200,26 +224,22 @@ void ResolveNatives() {
         Resolve("Actor.IsDead", ids::kActorIsDead, nullptr));
 }
 
-// Reads one plugin's index. `sample` receives any of its FormIDs, which is
-// what ResolveIndex needs to ask the engine where the plugin now sits.
-std::size_t LoadOneIndex(const std::string& dir, std::uint32_t* sample) {
+// Reads one plugin's index as (local id, TES3 id) rows.
+std::vector<std::pair<std::uint32_t, std::string>> ReadOneIndex(
+    const std::string& dir) {
+    std::vector<std::pair<std::uint32_t, std::string>> rows;
     const std::string text = ReadFile(dir + kFileActors);
-    if (text.empty()) return 0;
-    std::size_t added = 0;
     std::size_t start = 0;
     while (start < text.size()) {
         std::size_t end = text.find('\n', start);
         if (end == std::string::npos) end = text.size();
-        const std::string line = text.substr(start, end - start);
-        if (AddLine(line)) {
-            if (!added) {
-                *sample = std::strtoul(line.c_str(), nullptr, 16) & kLocalMask;
-            }
-            ++added;
+        std::pair<std::uint32_t, std::string> row;
+        if (ParseLine(text.substr(start, end - start), &row)) {
+            rows.push_back(std::move(row));
         }
         start = end + 1;
     }
-    return added;
+    return rows;
 }
 
 }  // namespace
@@ -261,21 +281,33 @@ const char* PlayerName() {
 
 bool IsMorrowindSpeaker(std::uint32_t formId) {
     if (!g_pluginMask.test(PluginIndex(formId))) return false;
-    return g_speakers.find(formId & kLocalMask) != g_speakers.end();
+    return FindSpeaker(formId) != nullptr;
 }
 
 const char* SpeakerId(std::uint32_t formId) {
-    const auto it = g_speakers.find(formId & kLocalMask);
-    return it == g_speakers.end() ? "" : it->second.c_str();
+    const Speaker* speaker = FindSpeaker(formId);
+    return speaker ? speaker->id.c_str() : "";
 }
 
-std::size_t SpeakerCount() { return g_speakers.size(); }
+int SpeakerLayer(std::uint32_t formId) {
+    const Speaker* speaker = FindSpeaker(formId);
+    return speaker ? speaker->layer : kEveryLayer;
+}
+
+std::size_t SpeakerCount() {
+    std::size_t count = 0;
+    for (const auto& entry : g_speakers) count += entry.second.size();
+    return count;
+}
 
 bool SpeakerExists(const std::string& id) {
     for (const auto& entry : g_speakers) {
-        if (entry.second.size() == id.size() &&
-            _stricmp(entry.second.c_str(), id.c_str()) == 0) {
-            return true;
+        for (const Speaker& speaker : entry.second) {
+            if (!LayerVisible(speaker.layer)) continue;
+            if (speaker.id.size() == id.size() &&
+                _stricmp(speaker.id.c_str(), id.c_str()) == 0) {
+                return true;
+            }
         }
     }
     return false;
@@ -326,24 +358,27 @@ std::size_t LoadActorIndexFrom(const std::string& rootIn) {
     if (root.back() != '\\' && root.back() != '/') root.push_back('\\');
     std::size_t total = 0;
     for (const std::string& plugin : SidecarPlugins(root)) {
-        std::uint32_t sample = 0;
-        const std::size_t added = LoadOneIndex(root + plugin + "\\", &sample);
-        if (!added) {
+        const auto rows = ReadOneIndex(root + plugin + "\\");
+        if (rows.empty()) {
             Log("activation:   %s/%s -> 0 actor(s)", plugin.c_str(),
                 kFileActors);
             continue;
         }
-        const std::uint8_t index = ResolveIndex(plugin, sample);
+        const std::uint8_t index = ResolveIndex(plugin, rows.front().first);
+        const int layer = AddLayer(plugin);
+        for (const auto& row : rows) {
+            g_speakers[row.first].push_back({row.second, layer, index});
+        }
         if (index == 0xFF) {
             Log("activation:   %s -> %zu actor(s), but the plugin is NOT "
                 "loaded (or the VM was unavailable) -- none will route",
-                plugin.c_str(), added);
+                plugin.c_str(), rows.size());
             continue;
         }
         g_pluginMask.set(index);
         Log("activation:   %s -> %zu actor(s) at load-order index %02X",
-            plugin.c_str(), added, index);
-        total += added;
+            plugin.c_str(), rows.size(), index);
+        total += rows.size();
     }
     return total;
 }

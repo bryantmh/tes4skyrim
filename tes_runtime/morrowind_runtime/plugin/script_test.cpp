@@ -394,7 +394,7 @@ void GlobalScriptCases(DialogueContext& context) {
     State().Reset();
     State().Deserialize(saved);
     const auto running = State().RunningScripts();
-    Check(running.size() == 1 && running[0].second == "test_actor",
+    Check(running.size() == 1 && running[0].target == "test_actor",
           "a running script and its target survive a save");
     TickObjectScripts(TickDelta());
     Check(State().Var("TestCounterScript", "count") == 1.0f,

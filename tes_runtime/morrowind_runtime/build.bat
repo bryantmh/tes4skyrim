@@ -66,7 +66,7 @@ if /i "%~1"=="test" goto storetest
 REM Named rather than plugin\*.cpp: store_test.cpp carries a main() and is
 REM built only by `build.bat test`.
 echo [build] compiling plugin...
-cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
+cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\scope.cpp ^
    plugin\log.cpp plugin\addresses.cpp plugin\menu.cpp ^
    plugin\filter.cpp plugin\session.cpp plugin\activation.cpp ^
    plugin\game_actor.cpp plugin\conversation.cpp ^
@@ -109,7 +109,7 @@ REM reused from obj\, which holds the DLL's objects.
 :storetest
 if not exist objt mkdir objt
 echo [build] compiling tests...
-cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\log.cpp plugin\filter.cpp ^
+cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\scope.cpp plugin\log.cpp plugin\filter.cpp ^
    plugin\session.cpp plugin\store_test.cpp plugin\filter_test.cpp ^
    plugin\session_test.cpp plugin\game_actor.cpp ^
    plugin\dialogue_state.cpp plugin\script_context.cpp ^
@@ -128,20 +128,20 @@ if errorlevel 1 (
     echo [build] ERROR: test compilation failed
     exit /b 1
 )
-link /nologo /OUT:store_test.exe objt\store.obj objt\log.obj ^
+link /nologo /OUT:store_test.exe objt\store.obj objt\scope.obj objt\log.obj ^
      objt\script_tables.obj objt\store_test.obj kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
     echo [build] ERROR: store_test link failed
     exit /b 1
 )
-link /nologo /OUT:filter_test.exe objt\store.obj objt\log.obj ^
+link /nologo /OUT:filter_test.exe objt\store.obj objt\scope.obj objt\log.obj ^
      objt\script_tables.obj objt\filter.obj objt\filter_test.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
     echo [build] ERROR: filter_test link failed
     exit /b 1
 )
-link /nologo /OUT:session_test.exe objt\store.obj objt\log.obj ^
+link /nologo /OUT:session_test.exe objt\store.obj objt\scope.obj objt\log.obj ^
      objt\script_tables.obj objt\filter.obj objt\session.obj ^
      objt\session_test.obj objt\script_context.obj ^
      objt\dialogue_state.obj objt\game_actor.obj ^
@@ -158,7 +158,7 @@ if errorlevel 1 (
     echo [build] ERROR: session_test link failed
     exit /b 1
 )
-link /nologo /OUT:script_test.exe objt\store.obj objt\log.obj ^
+link /nologo /OUT:script_test.exe objt\store.obj objt\scope.obj objt\log.obj ^
      objt\game_actor.obj objt\dialogue_state.obj objt\script_context.obj ^
      objt\script_runner.obj objt\script_ops_world.obj ^
      objt\script_ops_events.obj objt\script_ops_sound.obj ^
@@ -177,7 +177,7 @@ if errorlevel 1 (
     exit /b 1
 )
 link /nologo /OUT:alchemy_test.exe objt\alchemy.obj objt\alchemy_test.obj ^
-     objt\store.obj objt\log.obj objt\script_tables.obj ^
+     objt\store.obj objt\scope.obj objt\log.obj objt\script_tables.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
     echo [build] ERROR: alchemy_test link failed

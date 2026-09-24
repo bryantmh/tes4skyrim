@@ -5,6 +5,8 @@
 #include <atomic>
 #include <utility>
 
+#include "scope.h"
+
 namespace mwruntime {
 
 namespace {
@@ -17,14 +19,19 @@ std::atomic<DWORD> g_mainThread{0};
 
 // Owns the callable until the game has run it. The game calls Dispose() on the
 // main thread once Run() returns, which is the only place this is freed.
+//
+// 🛑 It runs as the layer that POSTED it (scope.h): a call a script defers --
+// a spawn, a force-greet -- still resolves ids through that script's plugin.
 class Task : public TaskDelegate {
 public:
-    explicit Task(std::function<void()> fn) : fn_(std::move(fn)) {}
+    explicit Task(std::function<void()> fn)
+        : fn_(std::move(fn)), layer_(CurrentLayer()) {}
 
     void Run() override {
         // An exception escaping into the game's task pump would take the
         // process down; a dropped call is recoverable, a crash is not.
         g_mainThread = GetCurrentThreadId();
+        const LayerScope scope(layer_);
         try {
             if (fn_) fn_();
         } catch (...) {
@@ -35,6 +42,7 @@ public:
 
 private:
     std::function<void()> fn_;
+    int layer_;
 };
 
 }  // namespace

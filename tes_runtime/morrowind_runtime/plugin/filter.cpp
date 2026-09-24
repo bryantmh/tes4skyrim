@@ -4,6 +4,7 @@
 #include <cctype>
 #include <vector>
 
+#include "scope.h"
 #include "script_tables.h"
 
 namespace mwruntime {
@@ -264,6 +265,10 @@ FilterResult TestInfo(const Info& info, const ActorView& actor, int choice,
                       bool invertDisposition) {
     FilterResult out;
     out.info = &info;
+    if (!LayerVisible(info.layer)) {
+        out.why = Reject::Plugin;
+        return out;
+    }
     const bool isCreature = !actor.IsNpc();
 
     if (!info.actor.empty()) {

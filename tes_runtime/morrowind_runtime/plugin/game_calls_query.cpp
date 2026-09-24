@@ -84,28 +84,38 @@ constexpr struct {
 // See: docs/commentary/morrowind_runtime.md#vanilla-morrowind-chargen
 constexpr const char* kMirrored[] = {"chargenstate"};
 
-// The value each mirrored GLOB held when last read.
+// The value each mirrored GLOB held when last read, by the GLOB's own form.
 std::map<std::string, float> g_mirrorSeen;
+
+// One sidecar's GLOB for a mirrored global, written back through that
+// sidecar's view, so each game's own `CharGenState` starts only that game.
+void SyncMirror(const char* name, const GlobalDef& def, int layer) {
+    if (def.form.plugin.empty()) return;
+    const std::uint32_t local = def.form.formId & 0x00FFFFFF;
+    const auto* form = static_cast<const std::uint8_t*>(
+        FormFromFile(def.form.plugin.c_str(), local));
+    if (!form) return;
+    // 🛑 Only a CHANGE of the GLOB crosses over, and the first sight is
+    // never one. The scripts own the value from then on (`CharGen` sets
+    // it to 10) and the co-save owns it after a load, so copying a
+    // standing 1 would relaunch `CharGen` every tick and on every load.
+    const float value =
+        *reinterpret_cast<const float*>(form + ids::kOffGlobalValue);
+    const std::string seenKey = def.form.plugin + '|' + std::to_string(local);
+    const auto [seen, first] = g_mirrorSeen.try_emplace(seenKey, value);
+    if (first || seen->second == value) return;
+    seen->second = value;
+    Log("global: %s mirrored from its GLOB in %s = %g", name,
+        def.form.plugin.c_str(), value);
+    const LayerScope scope(layer);
+    State().SetGlobal(name, value);
+}
 
 void SyncMirroredGlobals() {
     for (const char* name : kMirrored) {
-        const GlobalDef* def = FindGlobal(name);
-        if (!def || def->form.plugin.empty()) continue;
-        const auto* form = static_cast<const std::uint8_t*>(
-            FormFromFile(def->form.plugin.c_str(),
-                         def->form.formId & 0x00FFFFFF));
-        if (!form) continue;
-        // 🛑 Only a CHANGE of the GLOB crosses over, and the first sight is
-        // never one. The scripts own the value from then on (`CharGen` sets
-        // it to 10) and the co-save owns it after a load, so copying a
-        // standing 1 would relaunch `CharGen` every tick and on every load.
-        const float value =
-            *reinterpret_cast<const float*>(form + ids::kOffGlobalValue);
-        const auto [seen, first] = g_mirrorSeen.try_emplace(name, value);
-        if (first || seen->second == value) continue;
-        seen->second = value;
-        Log("global: %s mirrored from its GLOB = %g", name, value);
-        State().SetGlobal(name, value);
+        ForEachGlobalDef(name, [name](const GlobalDef& def, int layer) {
+            SyncMirror(name, def, layer);
+        });
     }
 }
 

@@ -10,8 +10,10 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace mwruntime {
@@ -131,34 +133,59 @@ struct FactionDef {
 
 void ClearScriptTables();
 
-// Reads the three tables from one plugin's sidecar folder (trailing slash).
+// Reads one plugin's sidecar folder (trailing slash) into its own layer. Every
+// lookup below answers through the current layer's view (scope.h).
 void LoadScriptTables(const std::string& pluginDir);
 
-const std::unordered_map<std::string, GlobalDef>& GlobalDefs();
+// `fn(name, def, layer)` for every sidecar's row of every global, which is
+// what publishing each plugin's own mirror GLOB needs.
+void ForEachGlobalRow(
+    const std::function<void(const std::string&, const GlobalDef&, int)>& fn);
+// `fn(def, layer)` for every sidecar's row of the global `name`.
+void ForEachGlobalDef(const std::string& name,
+                      const std::function<void(const GlobalDef&, int)>& fn);
+std::size_t GlobalCount();
 const GlobalDef* FindGlobal(const std::string& name);
+// The layer whose row FindGlobal answers with: kEveryLayer for the engine's
+// own clock globals, and also when no visible sidecar declares the name.
+int GlobalLayer(const std::string& name);
+// The lowercased name of every global the current layer sees.
+std::vector<std::string> VisibleGlobalNames();
 const ScriptLocals* FindScriptLocals(const std::string& script);
 
 // The script an actor runs, or "" -- by the actor's TES3 id.
 const std::string& ScriptOf(const std::string& actor);
 
-// `(object id, script)` for every object whose script declares `OnPCEquip`.
+// One object whose script declares `OnPCEquip`, and the sidecar binding it.
+struct EquipWatch {
+    std::string item;
+    std::string script;
+    int layer = -1;
+};
+
+// Every object whose script declares `OnPCEquip`.
 //
 // 🛑 Precomputed because the alternative is asking the engine about all 1,547
 // scripted objects every tick. Only these can answer the question at all.
 // See: docs/commentary/morrowind_runtime.md#engine-written-locals
-const std::vector<std::pair<std::string, std::string>>& EquipWatchList();
+const std::vector<EquipWatch>& EquipWatchList();
 
 // One script's MWScript source, or "" -- SCPT_source.txt, by name. This is
 // what the object-script tick compiles; dialogue carries its own source.
 // See: docs/plans/morrowind_object_scripts.md#what-is-not-staged
 const std::string& ScriptSource(const std::string& script);
 
-// The global scripts TES3 starts by itself -- SSCR.txt, one per SSCR record.
-const std::vector<std::string>& StartScripts();
+// The sidecar whose body ScriptSource answers with, or -1.
+int ScriptSourceLayer(const std::string& script);
+
+// The global scripts TES3 starts by itself -- SSCR.txt, one per SSCR record --
+// with the sidecar that staged each.
+const std::vector<std::pair<int, std::string>>& StartScripts();
 std::size_t ScriptSourceCount();
 
-// Every staged body, for the corpus sweep that measures what compiles.
-const std::unordered_map<std::string, std::string>& ScriptSources();
+// Every body the current layer sees, for the corpus sweep that measures what
+// compiles.
+std::unordered_map<std::string, std::string> ScriptSources();
 
 // A placed reference's script instance: the script that PLACEMENT runs, by
 // the placement's plugin-local FormID, or "" -- SCPT_instances.txt.
@@ -169,11 +196,14 @@ const std::unordered_map<std::string, std::string>& ScriptSources();
 // See: docs/plans/morrowind_object_scripts.md#instances
 const std::string& InstanceScript(const std::string& plugin,
                                   std::uint32_t localFormId);
+// The sidecar that staged that placement, or kEveryLayer when none did.
+int InstanceLayer(const std::string& plugin, std::uint32_t localFormId);
 std::size_t InstanceCount();
 
-// One staged instance: which plugin placed it, that placement's plugin-local
-// FormID, and the script it runs.
+// One staged instance: the sidecar that staged it, which plugin placed it,
+// that placement's plugin-local FormID, and the script it runs.
 struct InstanceRow {
+    int layer = -1;
     std::string plugin;
     std::uint32_t localFormId = 0;
     // The TES3 id of the BASE it places, which a bare `Activate` acts on.
@@ -321,6 +351,8 @@ const FormRef* RealmCrimeFaction();
 struct StateRow {
     std::string key;
     FormRef form;
+    // The sidecar whose view the value is read through.
+    int layer = -1;
 };
 const std::vector<StateRow>& StateRows();
 

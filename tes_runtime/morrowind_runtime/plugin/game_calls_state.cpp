@@ -111,13 +111,19 @@ void ApplyPlayerFaction(const std::string& faction, int rank, bool expelled) {
 
 }  // namespace
 
+// 🛑 Every sidecar's own mirror GLOB, each read through its own plugin's
+// view: a sibling plugin's global of the same name is a different value.
 void PublishState() {
-    for (const auto& entry : GlobalDefs()) {
-        Publish(entry.second.form, State().Global(entry.first));
-    }
+    ForEachGlobalRow(
+        [](const std::string& name, const GlobalDef& def, int layer) {
+            if (def.form.plugin.empty()) return;
+            const LayerScope scope(layer);
+            Publish(def.form, State().Global(name));
+        });
     const std::string cell =
         Hooks().playerCell ? Hooks().playerCell() : std::string();
     for (const StateRow& row : StateRows()) {
+        const LayerScope scope(row.layer);
         Publish(row.form, StateValue(row.key, cell));
     }
 }

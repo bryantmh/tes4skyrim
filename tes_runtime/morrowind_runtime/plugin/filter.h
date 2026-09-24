@@ -21,6 +21,8 @@ namespace mwruntime {
 enum class Reject {
     None, Actor, Race, Class, Faction, Rank, Gender, PcFaction, PcRank,
     Cell, Disposition, Condition,
+    // Staged by a plugin the current one cannot see (scope.h).
+    Plugin,
 };
 
 struct FilterResult {

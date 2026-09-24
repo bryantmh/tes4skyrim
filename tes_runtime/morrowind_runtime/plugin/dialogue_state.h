@@ -20,6 +20,15 @@ namespace mwruntime {
 
 struct TravelDest;
 
+// A running global script as the tick runs it: its state key, its bare name,
+// the target its bare commands act on, and the layer it runs as (scope.h).
+struct RunningGlobal {
+    std::string key;
+    std::string script;
+    std::string target;
+    int layer = -1;
+};
+
 // One line a `Choice` command offers, and the index it answers with.
 struct ChoiceLine {
     std::string text;
@@ -436,8 +445,16 @@ public:
     // game AND on every load, so a start script that stopped itself runs
     // again after a reload.
     void StartStartupScripts();
-    // Every running global script and its target, as (script, target).
-    std::vector<std::pair<std::string, std::string>> RunningScripts() const;
+    // Every running global script.
+    std::vector<RunningGlobal> RunningScripts() const;
+
+    // One running global script: the explicit target its bare commands act
+    // on, and the plugin it runs as (scope.h), by NAME so a save survives a
+    // load order that moved it.
+    struct Running {
+        std::string target;
+        std::string runAs;
+    };
 
     // --- the conversation in progress --------------------------------------
     // Reset by BeginConversation; filled by result scripts as they run.
@@ -474,7 +491,7 @@ public:
 
     // --- the co-save ---------------------------------------------------------
     // One tab-separated record per line under a version header. A line this
-    // build does not know is skipped, so an older build reads a newer save.
+    // build does not know is skipped; a version 1 save is read and re-keyed.
     std::string Serialize() const;
     // Replaces everything persistent. Returns how many records were taken.
     std::size_t Deserialize(const std::string& text);
@@ -489,7 +506,7 @@ private:
     std::map<std::pair<std::string, std::string>, float> mVars;
     std::map<std::string, Membership> mFactions;
     std::map<std::pair<std::string, std::string>, int> mReactions;
-    std::map<std::string, std::string> mRunning;
+    std::map<std::string, Running> mRunning;
     std::set<std::string> mKnownTopics;
     std::map<std::pair<std::string, int>, int> mAiSettings;
     std::map<std::pair<std::string, int>, bool> mMovementFlags;
