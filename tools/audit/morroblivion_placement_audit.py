@@ -349,7 +349,8 @@ def _top(hist: Counter, fmt: str = '%s') -> str:
 
 def _write_rotation(fh, applied: list, held: list) -> None:
     """The rotation section: corrections to apply, then those held back."""
-    fh.write('ROTATION -- applied (>=%d refs, >=%d%% agreeing)\n'
+    fh.write('ROTATION -- passes the threshold (>=%d refs, >=%d%% agreeing; '
+             'ships only once pasted into AXIS_PITCH_DEG)\n'
              % (MIN_REFS, MIN_SHARE * 100))
     for rows, title in ((applied, None),
                         (held, 'ROTATION -- held (below the spike threshold)')):
@@ -362,7 +363,8 @@ def _write_rotation(fh, applied: list, held: list) -> None:
 
 def _write_reseat(fh, applied: list, held: list) -> None:
     """The Z re-seat section: offsets to apply, then those held back."""
-    fh.write('\n\nZ RE-SEAT -- applied, keyed on the base\n')
+    fh.write('\n\nZ RE-SEAT -- passes the threshold, keyed on the base '
+             '(ships only once pasted into Z_RESEAT)\n')
     for rows, title in ((applied, None),
                         (held, 'Z RE-SEAT -- held (no single offset fits)')):
         if title:

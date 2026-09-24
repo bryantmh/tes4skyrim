@@ -302,6 +302,32 @@ Kept — the replacement is the same object at a comparable size:
 `clutter/soulgemlesser01.nif`, `clutter/lowerclass/broomlower01.nif`,
 `clutter/bread01.nif`, `dungeons/misc/root08.nif`.
 
+### <a id="hovering-reseats"></a>Re-seated meshes are blacklisted, not offset
+
+An in-game report of Tamriel Rebuilt's `0lightUdeUcandleU01U64` hovering showed
+that the 2026-09-20 re-measure had never been pasted into `Z_RESEAT`: the file
+still held the first census, and its `0lightudecandleu24u64` key was misspelled
+(no `u` after `de`), so it never matched. The report's "applied" heading means
+"passes the threshold", not "shipped".
+
+Where Morroblivion lowered every base on a mesh by a large amount, the mesh is
+blacklisted rather than offset. A hand-placed re-seat scatters (±1–2 units,
+often under the 80% spike), and the Morrowind mesh at the Morrowind placement is
+exact:
+
+| Mesh | dZ | Refs |
+|---|---|---|
+| `dunmer/candle_01`, `_07`, `_09` | −16.8 … −19.2 | 136, 227, 131 (applied rows) |
+| `dunmer/candle_02`, `_04`, `_08` | −18.5 … −20.0 | 73, 51, 75 (held, one population) |
+| `common/candle_07` | −18.7 … −20.3 | 256 (held, one population) |
+| `dunmer/lamp_06` | −127 / −136 | 116 (held, two populations) |
+| `urns/clay_urn02`, `_05` | −8.5, −12.3 | 129, 230 |
+| `urns/clay_urn03` | +16.8 (sunk) | 307 |
+| `barrels/mwbarrel10` | −5 / −25 | ~200; replaces `0barrelu02umarshmerrow: -25` |
+
+Sub-unit rows (±0.5–0.6 on clutter) are left out: invisible, and within Havok
+settling.
+
 The three meshes present in neither Morroblivion, Oblivion nor Skyrim are the
 strongest entries: those bases currently render **nothing at all**.
 
