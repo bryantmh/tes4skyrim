@@ -1,8 +1,9 @@
 """Morph emulation: NiGeomMorpherController rebuilt as baked shape swaps.
 
 Skyrim has no morph-controller class, so each animated target is baked into a
-hidden sibling copy and the sequence gains NiVisController entries swapping
-base -> target as the weight curve crosses 0.5.  The block-cloning machinery
+sibling copy, every swapped shape gets its own wrapper NiNode, and the sequence
+gains NiVisController entries on those wrappers swapping base -> target as the
+weight curve crosses 0.5.  The block-cloning machinery
 that bake needs lives here too, as does the NiBlend*Interpolator header fixup
 that must run after every pass which synthesizes one.
 
@@ -161,12 +162,12 @@ def _palette_add(pal, obj):
     entry.av_object = obj
 
 
-def _vis_controller(geom):
-    """The shape's NiVisController, created on the vanilla pattern if absent.
+def _vis_controller(node):
+    """The node's NiVisController, created on the vanilla pattern if absent.
 
     See: docs/commentary/asset_convert_nif.md#morph-swap-block-mechanics
     """
-    ctrl = geom.controller
+    ctrl = node.controller
     while ctrl is not None:
         if isinstance(ctrl, NifFormat.NiVisController):
             return ctrl
@@ -181,9 +182,9 @@ def _vis_controller(geom):
     _init_blend_interpolator(blend)
     blend.bool_value = 2
     ctrl.interpolator = blend
-    ctrl.target = geom
-    ctrl.next_controller = geom.controller
-    geom.controller = ctrl
+    ctrl.target = node
+    ctrl.next_controller = node.controller
+    node.controller = ctrl
     return ctrl
 
 
@@ -210,13 +211,13 @@ def _bool_key_data(initially_on, toggles):
     return bd, values[0]
 
 
-def _add_vis_cb(seq, geom, initially_on, toggles):
-    """Append a NiVisController entry swapping `geom` on and off."""
+def _add_vis_cb(seq, node, initially_on, toggles):
+    """Append a NiVisController entry swapping wrapper `node` on and off."""
     bd, first = _bool_key_data(initially_on, toggles)
     ip = NifFormat.NiBoolInterpolator()
     ip.bool_value = bool(first)
     ip.data = bd
-    ctrl = _vis_controller(geom)
+    ctrl = _vis_controller(node)
     ctrl.stop_time = max(ctrl.stop_time, seq.stop_time)
     seq.num_controlled_blocks += 1
     seq.controlled_blocks.update_size()
@@ -225,7 +226,7 @@ def _add_vis_cb(seq, geom, initially_on, toggles):
     cb.controller = ctrl
     if hasattr(cb, 'priority'):
         cb.priority = 0
-    cb.node_name = bytes(geom.name)
+    cb.node_name = bytes(node.name)
     cb.property_type = b''
     cb.controller_type = b'NiVisController'
     cb.variable_1 = b''
@@ -250,8 +251,52 @@ def _morph_target_index(entry, morphs):
     return idx
 
 
-def _bake_morph_clone(geom, md, vectors, name, frame, idx, parents, pal):
-    """A hidden sibling shape carrying the morph target's vertex positions."""
+def _wrap_shape(geom, parent, pal):
+    """Put `geom` under its own identity NiNode "<shape> Swap" in `parent`.
+
+    Vanilla sequence-driven NiVisController entries target a NiNode in
+    1221/1221 cases and geometry in none, so the swap drives this wrapper.
+    See: docs/commentary/asset_convert_nif.md#morph-emulation
+    """
+    wrapper = NifFormat.NiNode()
+    wrapper.name = bytes(geom.name) + b' Swap'
+    wrapper.flags = 14
+    wrapper.rotation.set_identity()
+    wrapper.scale = 1.0
+    for i in range(parent.num_children):
+        if parent.children[i] is geom:
+            parent.children[i] = wrapper
+            break
+    else:
+        parent.add_child(wrapper)
+    wrapper.add_child(geom)
+    _palette_add(pal, wrapper)
+    return wrapper
+
+
+def _own_properties(clone):
+    """Replace the clone's shared shader/alpha property pointers with copies.
+
+    The engine keeps per-shape render state in the shader property, so a shape
+    shown mid-view through its twin's property stays semi-transparent until it
+    leaves the screen (measured live on ctrigtripwire01).
+    See: docs/commentary/asset_convert_animation.md#morph-emulation
+    """
+    for i, prop in enumerate(clone.bs_properties):
+        if prop is None:
+            continue
+        mine = prop.__class__()
+        _copy_block_fields(prop, mine)
+        mine.controller = None
+        tex = getattr(prop, 'texture_set', None)
+        if tex is not None:
+            mine.texture_set = tex.__class__()
+            _copy_block_fields(tex, mine.texture_set)
+        clone.bs_properties[i] = mine
+
+
+def _bake_morph_clone(geom, md, vectors, name, frame, idx):
+    """A sibling shape carrying the morph target's vertex positions."""
     gdata = geom.data
     clone = geom.__class__()
     _copy_block_fields(geom, clone)
@@ -276,11 +321,8 @@ def _bake_morph_clone(geom, md, vectors, name, frame, idx, parents, pal):
     clone.name = bytes(name) + b'Mrph' + suffix
     clone.controller = None
     clone.collision_object = None
-    clone.flags = int(geom.flags) | 0x01
-    parent = parents.get(id(geom))
-    if parent is not None:
-        parent.add_child(clone)
-    _palette_add(pal, clone)
+    clone.flags = int(geom.flags) & ~0x01
+    _own_properties(clone)
     return clone
 
 
@@ -361,7 +403,7 @@ def _collect_morph_swaps(root):
 def _emit_target_swaps(swaps, geoms, parents, pal):
     """Bake each morph target and add its show/hide entry.
 
-    ({(shape, index): clone}, {(sequence id, shape): [weight curve]}).
+    ({(shape, index): clone wrapper}, {(sequence id, shape): [weight curve]}).
     """
     made = {}
     base_toggles = {}
@@ -375,12 +417,13 @@ def _emit_target_swaps(swaps, geoms, parents, pal):
         if not on and not toggles:
             continue
         key = (entry['shape'], idx)
-        clone = made.get(key)
-        if clone is None:
+        wrapper = made.get(key)
+        if wrapper is None:
             clone = _bake_morph_clone(geom, md, vectors, entry['shape'],
-                                      entry['frame'], idx, parents, pal)
-            made[key] = clone
-        _add_vis_cb(entry['seq'], clone, on, toggles)
+                                      entry['frame'], idx)
+            wrapper = _wrap_shape(clone, parents[id(geom)], pal)
+            made[key] = wrapper
+        _add_vis_cb(entry['seq'], wrapper, on, toggles)
         base_toggles.setdefault((id(entry['seq']), entry['shape']),
                                 []).append(curve)
     return made, base_toggles
@@ -402,12 +445,15 @@ def emulate_morphs(root, stats=None):
     made, base_toggles = _emit_target_swaps(swaps, geoms, parents, pal)
 
     seq_by_id = {id(e['seq']): e['seq'] for e in swaps}
+    base_wrappers = {}
     for (sid, name), curves in base_toggles.items():
         geom = geoms.get(name)
         seq = seq_by_id.get(sid)
         if geom is None or seq is None:
             continue
+        if name not in base_wrappers:
+            base_wrappers[name] = _wrap_shape(geom, parents[id(geom)], pal)
         first, toggles = _base_visibility(curves)
-        _add_vis_cb(seq, geom, first, toggles)
+        _add_vis_cb(seq, base_wrappers[name], first, toggles)
     if stats is not None:
         stats['morph_swaps'] = stats.get('morph_swaps', 0) + len(made)

@@ -628,9 +628,12 @@ sentinel applies.
 
 ### <a id="morph-swap-block-mechanics"></a>How the swap is built
 
-The morph target is baked into a hidden sibling shape and the sequence gains
-`NiVisController` entries swapping base → target as the weight curve crosses 0.5.
-The base shape is visible exactly while NO target weight is at or above 0.5.
+The morph target is baked into a sibling shape, each swapped shape is wrapped in
+its own `"<shape> Swap"` NiNode, and the sequence gains `NiVisController` entries
+on those wrappers swapping base → target as the weight curve crosses 0.5. The
+base shape is visible exactly while NO target weight is at or above 0.5. Why the
+wrappers, and why the clone must own its shader: see
+[asset_convert_animation.md](asset_convert_animation.md#morph-emulation).
 
 **Bool keys MUST be CONST_KEY (5).** **3449/3449** vanilla and **1296/1296**
 Oblivion `NiBoolData` blocks store it, and LINEAR crashed the engine in
@@ -647,7 +650,9 @@ while the vertices live on `NiTriBasedGeomData` — so the MRO is walked base-fi
 and counts still precede their arrays. A single in-order pass with
 `update_size()` at each array therefore keeps dimensions valid. Reference-typed
 fields are copied as POINTERS (shared blocks); the caller overrides the ones the
-clone must own (data, controller, collision).
+clone must own (data, controller, collision, and its shader/alpha properties with
+their texture set — a shared shader property draws the newly shown shape
+semi-transparent until it leaves the screen).
 
 ### <a id="shared-property-fan-out"></a>A shared property drives several shapes
 
@@ -675,7 +680,7 @@ class for it and vanilla ships 0 — so the entry must go. But the morph IS the
 visible effect for a whole family of Oblivion meshes (`ctrigtripwire01`'s wire
 snap, `se01waitingroomwalls`, the forming Oblivion gate), so everything
 `emulate_morphs` needs to rebuild it as a baked target shape plus a
-wrapper-node scale swap is harvested first.
+wrapper-node visibility swap is harvested first.
 
 ## The controlled block is resolved BY STRING at activation
 <a id="controlled-block-id-strings"></a>

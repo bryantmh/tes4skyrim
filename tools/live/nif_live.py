@@ -34,7 +34,8 @@ Verified layouts (SSE 1.6.1170, read back and cross-checked against the NIF):
     TESObjectREFR +0x68 -> LOADED_REF_DATA, whose +0x68 -> root NiAVObject
     NiObjectNET   +0x10 name (BSFixedString char*), +0x18 first controller
     NiAVObject    +0x48 local rotate (3x3 row-major), +0x6C local translate,
-                  +0x78 local scale, +0x7C world rotate, +0xA0 world translate
+                  +0x78 local scale, +0x7C world rotate, +0xA0 world translate,
+                  +0xF4 flags (bit 0 APP_CULLED; NiNode::UpdateDownwardPass 0xd1dad0)
     NiNode        +0x110 children NiTArray (data +0x8, capacity/free/size u16)
     NiControllerManager (first controller on the root):
                   +0x48 sequences NiTArray (data +0x50, cap/free/size @+0x58)
@@ -123,6 +124,10 @@ class Live:
         tr = struct.unpack_from('<3f', d, 0x24)
         sc = struct.unpack_from('<f', d, 0x30)[0]
         return rot, tr, sc
+
+    def av_flags(self, node):
+        """NiAVObject flags (+0xF4); bit 0 is APP_CULLED (hidden)."""
+        return struct.unpack('<I', self.rd(node + 0xF4, 4))[0]
 
     def world_translate(self, node):
         return struct.unpack_from('<3f', self.rd(node + 0xA0, 12), 0)
@@ -215,8 +220,9 @@ def cmd_tree(a):
         root = L.root_3d(int(a.ref, 16), a.first_person)
         for node, nm, depth, _ in L.walk(root, max_depth=a.depth):
             rot, tr, sc = L.local(node)
+            flags = L.av_flags(node)
             print(f"{'  ' * depth}{nm!r} t=({tr[0]:.2f},{tr[1]:.2f},{tr[2]:.2f}) "
-                  f"{_fmt_rot(rot)} s={sc:.2f}")
+                  f"{_fmt_rot(rot)} s={sc:.2f} flags={flags:#x} hidden={flags & 1}")
     return 0
 
 
