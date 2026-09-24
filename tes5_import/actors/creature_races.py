@@ -37,6 +37,7 @@ import struct
 from ..base.writer import (pack_record, pack_subrecord, pack_string_subrecord,
                      pack_formid_subrecord, pack_obnd)
 from ..base.text_reader import get_float, get_formid, get_int, get_str
+from ..record_types.equipment import attack_spell
 from .creature_projects import (bodies_of, folder_of,
                                 folders_built_by_master, load_projects)
 
@@ -892,31 +893,20 @@ def _spell_is_offensive(fid: int) -> bool:
     return bool(_spell_effect_ranges(fid) - {_TES4_EFFECT_SELF})
 
 
-def creature_touch_attack_spell(recs: list) -> int:
-    """The spell to hang on the race's MELEE attacks as ATKD 'Attack Spell',
-    or 0.
+def creature_touch_attack_spell(recs: list, writer=None) -> int:
+    """The spell the race's MELEE attacks cast as ATKD 'Attack Spell', or 0.
 
-    This is the vanilla melee-caster idiom: the flame atronach's four
-    ordinary attackStart_* entries each name crAtronachFlameMeleeAttack /
-    ...PowerAttack — a fire spell applied by the swing (109 attack entries
-    across Skyrim.esm carry an Attack Spell). Its TES4 analogue is the
-    TOUCH-delivery offensive spell a creature cast in melee range, so
-    exactly those qualify: castable (SPIT.Type 0), at least one Touch
-    effect, and no Target effect (aimed spells go through the real cast
-    chain — the graph's FireForget states — instead).
-
-    First match in (record, slot) order so the result is deterministic; the
-    race is shared by every CREA with the same mesh + body set.
+    The first castable spell (SPIT.Type 0), in (record, slot) order, with a
+    Touch effect and no Target one; aimed spells go through the graph's cast
+    chain instead.  The attack names the spell's Contact copy (`attack_spell`).
+    See: docs/commentary/tes5_import_magic.md#creature-attack-spells
     """
     for rec in recs:
         for i in range(get_int(rec, 'SpellCount')):
             fid = get_formid(rec, f'Spell[{i}]')
-            if not fid:
-                continue
             ranges = _spell_effect_ranges(fid)
-            if _TES4_EFFECT_TOUCH in ranges and \
-                    _TES4_EFFECT_TARGET not in ranges:
-                return fid
+            if _TES4_EFFECT_TOUCH in ranges and _TES4_EFFECT_TARGET not in ranges:
+                return attack_spell(fid, _SPEL_REC.get(fid & 0x00FFFFFF), writer)
     return 0
 
 
@@ -971,12 +961,7 @@ def _build_race(writer, rec, folder: str, bodies: list, proj: dict,
     subs += pack_subrecord('PNAM', struct.pack('<f', 5.0))
     subs += pack_subrecord('UNAM', struct.pack('<f', 3.0))
 
-    # A TOUCH-delivery offensive spell rides the melee attacks as ATKD
-    # 'Attack Spell' — the vanilla melee-caster idiom (the flame atronach's
-    # four ordinary attack entries each name a fire spell; see
-    # creature_touch_attack_spell). Aimed/self spells are NOT attacks: they
-    # go through SPLO + the behavior graph's FireForget cast chain.
-    touch_spell = creature_touch_attack_spell(race_recs or [rec])
+    touch_spell = creature_touch_attack_spell(race_recs or [rec], writer)
     for event, _clip in proj.get('attacks', []):
         subs += pack_subrecord('ATKD', _atkd(spell=touch_spell))
         subs += pack_string_subrecord('ATKE', event)

@@ -8,7 +8,8 @@ name array and once as the index -> RefId array.  Both are read here and
 required to agree, because a table that silently disagreed with itself would
 mis-key every converted spell.
 
-Names only.  Which Skyrim archetype an effect becomes is judgement and lives in
+Names, plus the flags the engine ORs into each effect at load (harmful,
+no magnitude, ...), which no data file stores.  Which Skyrim archetype an effect becomes is judgement and lives in
 tes4_export/record_types/morrowind_magic.py.
 
     python tools/generators/gen_morrowind_mgef_table.py
@@ -50,6 +51,12 @@ def refid_names(text: str) -> list:
     return re.findall(r'MagicEffect::(\w+)', block)
 
 
+def hardcoded_flags(text: str) -> list:
+    """The index-ordered flags the engine adds to each effect at load."""
+    block = _array_block(text, 'HardcodedFlags[NumberOfHardcodedFlags]')
+    return [int(v, 16) for v in re.findall(r'0x[0-9a-fA-F]+', block)]
+
+
 def declared_length() -> int:
     """`MagicEffect::Length` as the header declares it."""
     with open(HDR, encoding='utf-8', errors='replace') as handle:
@@ -59,7 +66,7 @@ def declared_length() -> int:
     return int(found.group(1))
 
 
-def check(gmst: list, refids: list) -> None:
+def check(gmst: list, refids: list, flags: list) -> None:
     """Fail unless both arrays span the whole index range the header declares.
 
     LENGTH is the invariant, not spelling: the two arrays name 13 of the same
@@ -69,7 +76,8 @@ def check(gmst: list, refids: list) -> None:
     A LENGTH change is the thing that would renumber every converted spell.
     """
     length = declared_length()
-    for name, table in (('sGmstEffectIds', gmst), ('sMagicEffectIds', refids)):
+    for name, table in (('sGmstEffectIds', gmst), ('sMagicEffectIds', refids),
+                        ('HardcodedFlags', flags)):
         if len(table) != length:
             raise SystemExit(
                 f'{name} has {len(table)} entries, MagicEffect::Length is {length}')
@@ -78,7 +86,7 @@ def check(gmst: list, refids: list) -> None:
             f'MagicEffect::Length is {length}, this generator expects {EFFECT_COUNT}')
 
 
-def render(names: list) -> str:
+def render(names: list, flags: list) -> str:
     """The committed module's text."""
     lines = [
         '"""Morrowind magic effect index -> canonical name.',
@@ -94,8 +102,12 @@ def render(names: list) -> str:
     ]
     for index, name in enumerate(names):
         lines.append(f"    '{name}',".ljust(36) + f'# {index}')
-    lines.append(')')
-    lines.append('')
+    lines += [')', '',
+              '#: Index -> the MEDT flags the engine ORs in at load (OpenMW `HardcodedFlags`).',
+              'MW_HARDCODED_FLAGS = (']
+    for start in range(0, len(flags), 8):
+        lines.append('    ' + ' '.join(f'0x{v:05x},' for v in flags[start:start + 8]))
+    lines += [')', '']
     return '\n'.join(lines)
 
 
@@ -105,9 +117,10 @@ def main() -> int:
         text = handle.read()
     gmst = gmst_names(text)
     refids = refid_names(text)
-    check(gmst, refids)
+    flags = hardcoded_flags(text)
+    check(gmst, refids, flags)
     with open(OUT, 'w', encoding='utf-8') as handle:
-        handle.write(render(gmst))
+        handle.write(render(gmst, flags))
     print(f'wrote {len(gmst)} effect names to {OUT}')
     return 0
 

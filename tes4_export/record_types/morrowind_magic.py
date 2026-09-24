@@ -13,7 +13,7 @@ See: docs/commentary/tes4_export_morrowind.md#magic
 
 import struct
 
-from ..morrowind_mgef_names import MW_EFFECT_NAMES
+from ..morrowind_mgef_names import MW_EFFECT_NAMES, MW_HARDCODED_FLAGS
 from ..tes3_reader import Tes3Record, get_all_subrecords, get_string, get_subrecord
 from .common import escape_value
 from .morrowind import (MW_SKILL_TO_TES4, emit_common, emit_icon,
@@ -40,6 +40,13 @@ _ENCHANT_TYPES = {0: 0, 1: 2, 2: 1, 3: 3}
 #: ALDT autocalc bit; TES4 ENIT 0x01 means "no auto-calc", the inverse.
 _ALCH_AUTOCALC = 0x1
 
+#: SPDT PCStart: a spell character creation may give the player.
+_SPDT_PC_START = 0x2
+#: TES4 SPIT Manual Spell Cost: SPDT's cost is TES3's own, stored for autocalc spells too.
+_SPIT_MANUAL_COST = 0x1
+#: TES4 SPIT Player Start Spell.
+_SPIT_PLAYER_START = 0x4
+
 #: An INGR names four effects with no magnitude or duration of their own.
 _INGREDIENT_EFFECTS = 4
 
@@ -48,6 +55,7 @@ _IRDT = '<fi4i4i4i'
 
 #: ENAM range -> the TES3 MEDT cast flag standing for it.
 _RANGE_FLAGS = {0: 0x40, 1: 0x80, 2: 0x100}
+_CAST_RANGES = 0x40 | 0x80 | 0x100
 
 #: (export key, TES3 subrecord) naming the VFX record behind each of an effect's visuals.
 _VISUALS = (('MorrowindArt.Cast', 'CVFX'), ('MorrowindArt.Bolt', 'BVFX'),
@@ -178,7 +186,7 @@ def export_MGEF(rec: Tes3Record, ctx) -> list:
     if data:
         lines.append(f'DATA.School={data[0]}')
         lines.append(f'DATA.BaseCost={data[1]}')
-        lines.append(f'DATA.Flags={data[2] | _used_ranges(ctx, index[0])}')
+        lines.append(f'DATA.Flags={data[2] | _engine_flags(index[0]) | _used_ranges(ctx, index[0])}')
         lines.append(f'DATA.ProjectileSpeed={data[7]}')
         _emit_sounds(lines, rec, data[0], ctx)
     resist = _RESIST_AV.get(index[0])
@@ -228,6 +236,15 @@ def _emit_sounds(lines: list, rec: Tes3Record, school: int, ctx) -> None:
             lines.append(f'{key}={form_id}')
 
 
+def _engine_flags(index: int) -> int:
+    """The flags the engine adds at load, less the ranges spells decide.
+
+    See: docs/commentary/tes4_export_morrowind.md#engine-flags
+    """
+    known = 0 <= index < len(MW_HARDCODED_FLAGS)
+    return MW_HARDCODED_FLAGS[index] & ~_CAST_RANGES if known else 0
+
+
 def _used_ranges(ctx, index: int) -> int:
     """The range flags the plugin's own spells cast this effect at."""
     ranges = getattr(ctx, 'effect_ranges', None) if ctx else None
@@ -244,9 +261,17 @@ def export_SPEL(rec: Tes3Record, ctx) -> list:
     emit_str(lines, 'FULL', rec, 'FNAM')
     lines.append(f'SPIT.Type={_SPELL_TYPES.get(spell_type, 0)}')
     lines.append(f'SPIT.Cost={cost}')
-    lines.append(f'SPIT.Flags={flags}')
+    lines.append(f'SPIT.Flags={_spell_flags(flags)}')
     emit_effects(lines, rec)
     return lines
+
+
+def _spell_flags(flags: int) -> int:
+    """TES3 SPDT flags as TES4 SPIT flags.
+
+    See: docs/commentary/tes4_export_morrowind.md#spell-flags
+    """
+    return _SPIT_MANUAL_COST | (_SPIT_PLAYER_START if flags & _SPDT_PC_START else 0)
 
 
 def export_ENCH(rec: Tes3Record, ctx) -> list:
@@ -341,8 +366,7 @@ def synthesized_effects(authored: set, ranges: dict = None) -> list:
         lines = [f'EditorID={effect_editor_id(index)}',
                  f'MorrowindEffectIndex={index}',
                  f'FULL={escape_value(effect_name(index))}']
-        if ranges:
-            lines.append(f'DATA.Flags={ranges.get(index, 0)}')
+        lines.append(f'DATA.Flags={_engine_flags(index) | (ranges or {}).get(index, 0)}')
         resist = _RESIST_AV.get(index)
         if resist is not None:
             lines.append(f'DATA.ResistValue={resist}')

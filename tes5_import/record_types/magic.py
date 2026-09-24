@@ -628,21 +628,13 @@ def _power_affects(flags: int) -> int:
 
 
 def _delivery_and_cast(t4_flags: int) -> tuple:
-    """(casting type, delivery) from the TES4 Self/Touch/Target flags.
+    """Fire and Forget, and the farthest TES4 range: Target Aimed, Touch Target Actor.
 
-    wbCastEnum:     0 Constant Effect, 1 Fire and Forget, 2 Concentration, 3 Scroll
-    wbDeliveryEnum: 0 Self, 1 Contact (touch), 2 Aimed, 3 Target Actor, 4 Target Location
-
-    An Oblivion MGEF advertises *every* delivery it supports; the item that
-    carries it picks one.  Skyrim's MGEF commits to a single delivery, so the
-    most specific one the effect allows wins — Target beats Touch beats Self,
-    matching what the spells that use the effect overwhelmingly do.
+    See: docs/commentary/tes5_import_magic.md#owner-casting-type
     """
     if t4_flags & T4_TARGET:
-        return 1, 2       # Fire and Forget, Aimed
-    if t4_flags & T4_TOUCH:
-        return 1, 1       # Fire and Forget, Contact
-    return 1, 0           # Fire and Forget, Self
+        return 1, 2
+    return 1, 3 if t4_flags & T4_TOUCH else 0
 
 
 # --- Projectile resolution ------------------------------------------------
@@ -995,23 +987,28 @@ def convert_MGEF(rec: dict, writer=None) -> bytes:
 code_to_fid: dict = {}
 
 
-def register_mgef_formids(mgef_records: list) -> None:
-    """Index every source MGEF by code and FormID, and reset the per-plugin registries.
+def register_mgef_formids(mgef_records: list, master_index=None, own_records=()) -> None:
+    """Index every source MGEF by code and output FormID, and reset the per-plugin registries.
 
     Phase 1 converts types alphabetically, so ENCH and SPEL run before MGEF:
     every variant clone reads what is indexed here, never a side effect of
-    convert_MGEF.  magic_variants is imported here, not
-    at module scope, because it imports this module.
+    convert_MGEF.  A master's effect is found by EditorID in the master's
+    converted plugin; its export FormID counts the master's own masters.
+    magic_variants is imported here, not at module scope, because it imports
+    this module.
+    See: docs/commentary/tes5_import_magic.md#master-effects
     """
     from .magic_variants import reset
 
     reset()
     code_to_fid.clear()
     _mgef_sources.clear()
+    own = {get_str(r, 'EditorID') for r in own_records}
     for rec in mgef_records:
         code = get_str(rec, 'EditorID')
         if code:
-            fid = get_formid(rec, 'FormID')
+            master = master_index.find_by_edid(b'MGEF', code) if master_index and code not in own else 0
+            fid = master or get_formid(rec, 'FormID')
             code_to_fid[code] = fid
             _mgef_sources[fid] = rec
 

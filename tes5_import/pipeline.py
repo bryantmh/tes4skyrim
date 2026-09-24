@@ -594,7 +594,8 @@ def _prescan_effect_families(by_type: dict, ctx, writer) -> None:
     """
     from .record_types.magic import register_mgef_formids, settle_family_keywords
 
-    register_mgef_formids(_mgef_records_with_masters(by_type, ctx))
+    register_mgef_formids(_mgef_records_with_masters(by_type, ctx),
+                          getattr(ctx, 'master_index', None), by_type.get('MGEF', []))
     n_fam = settle_family_keywords(by_type.get('MGEF', []), writer,
                                    getattr(ctx, 'master_index', None))
     print(f"  Magic effect families: {n_fam} keywords written")

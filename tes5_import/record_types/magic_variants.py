@@ -36,8 +36,10 @@ _seff_variants: dict = {}
 _recs: dict = {}
 _lock = threading.RLock()
 
-#: TES4 effect range -> TES5 delivery (0 Self, 1 Contact, 2 Aimed).
-RANGE_DELIVERY = {'Self': 0, 'Touch': 1, 'Target': 2}
+#: TES4 effect range -> TES5 delivery (0 Self, 2 Aimed, 3 Target Actor); Contact works only from a weapon.
+RANGE_DELIVERY = {'Self': 0, 'Touch': 3, 'Target': 2}
+DELIVERY_CONTACT = 1
+DELIVERY_AIMED = 2
 #: Owner casting type -> the casting type its effects carry; a Scroll (3) casts Fire and Forget effects.
 MGEF_CAST_FOR_OWNER = {0: 0, 1: 1, 2: 2, 3: 1}
 _CAST_NAMES = ('Constant', 'FF', 'Conc')
@@ -122,15 +124,25 @@ def clone(src_fid: int, site: str, key, edid: str, patch, writer,
         return fid
 
 
+def written_once(site: str, key, writer, build) -> int:
+    """The FormID ``site`` derives for ``key``; ``build(fid)`` writes it on first use."""
+    with _lock:
+        fid = _clones.get((site, key))
+        if not fid:
+            fid = _clones[(site, key)] = writer.derive_formid(site, key)
+            build(fid)
+        return fid
+
+
 # ---------------------------------------------------------------------------
 # Casting type and delivery follow the owner
 # ---------------------------------------------------------------------------
 
 def owner_delivery(rec: dict) -> int:
-    """A spell's, scroll's or enchantment's delivery: its farthest range."""
-    ranges = [RANGE_DELIVERY.get(get_str(rec, f'Effect[{i}].Type'), 0)
-              for i in range(get_int(rec, 'EffectCount'))]
-    return max(ranges, default=0)
+    """An item's delivery: Aimed, else Target Actor, else Self."""
+    ranges = {RANGE_DELIVERY.get(get_str(rec, f'Effect[{i}].Type'), 0)
+              for i in range(get_int(rec, 'EffectCount'))}
+    return DELIVERY_AIMED if DELIVERY_AIMED in ranges else max(ranges, default=0)
 
 
 def menu_object(first_effect: int) -> int:

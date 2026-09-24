@@ -2249,6 +2249,39 @@ alone -- index 19 `DrainSpellpoints` vs `DrainMagicka`, 132 `Corpus` vs
 change would renumber every converted spell and must fail loudly; a spelling
 difference is cosmetic and must not.
 
+### <a id="engine-flags"></a>Most of an effect's flags live in the engine, not the file
+
+**Code:** `record_types/morrowind_magic.py` (`_engine_flags`), generated `morrowind_mgef_names.MW_HARDCODED_FLAGS`
+
+A MEDT flags field holds only what the construction set lets you tick
+(spellmaking, enchanting, negative light). The engine ORs a fixed 143-entry
+table into every effect as it loads (OpenMW `components/esm3/loadmgef.cpp`,
+`HardcodedFlags`): Harmful, NoDuration, NoMagnitude, TargetSkill,
+TargetAttribute, ContinuousVfx and the allowed ranges. Without it, Fire Damage
+converted with no Hostile or Detrimental bit (TES5 `0x00200000`, where
+Oblivion's and vanilla's damage effects carry `0x00201005`), so every damage
+effect was a friendly value modifier. The generator reads the table beside the
+names; the export ORs it in except the three range bits, which stay the ranges
+the plugin's own spells use (`_used_ranges`), since those pick each effect's
+Skyrim delivery.
+
+### <a id="spell-flags"></a>SPDT flags are not TES4's SPIT flags
+
+**Code:** `record_types/morrowind_magic.py` (`_spell_flags`)
+
+| Bit | TES3 SPDT (OpenMW `loadspel.hpp`) | TES4 SPIT (xEdit) |
+|---|---|---|
+| 0x1 | Autocalc | Manual Spell Cost |
+| 0x2 | PCStart | Immune to Silence |
+| 0x4 | Always Succeeds | Player Start Spell |
+
+Copied raw, every hand-authored cost was thrown away for Skyrim's autocalc, and
+every always-succeeds spell became a player start spell. OpenMW uses the stored
+cost unless Autocalc is set (`spellutil.cpp`, `calcSpellCost`), and the stored
+cost is TES3's own computed one: Morrowind.esm's 695 autocalc spells all store a
+non-zero cost. So the export always sets Manual Spell Cost, and PCStart becomes
+Player Start Spell. Always Succeeds has no counterpart; no Skyrim spell fails.
+
 ### <a id="bound-items"></a>A bound effect's item is named by a GMST
 
 **Code:** `record_types/morrowind_magic.py` (`_emit_bound_item`, `game_settings`)

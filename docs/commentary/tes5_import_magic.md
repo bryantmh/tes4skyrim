@@ -567,7 +567,8 @@ delivery match the owner on **2,138 of 2,146** slots.
 | Apparel enchantment | Constant / Self |
 | Potion, poison, ingredient | Fire and Forget / Self (803 of 803) |
 | Scroll (owner cast type 3) | Fire and Forget, the owner's delivery |
-| Spell, power, weapon, staff | the owner's casting type and delivery |
+| Weapon enchantment | Fire and Forget / Contact |
+| Spell, power, staff | the owner's casting type and delivery |
 
 **This was the "effects die after a few milliseconds" bug.** On the build
 before the fix, 3,097 of about 4,300 effect slots did not match their owner.
@@ -579,7 +580,33 @@ Each slot is re-pointed at a clone of its MGEF carrying the owner's pair.
 Otherwise it writes one clone per (source, casting type, delivery, burst),
 hashed at site `MGEF_DELIVERY`, so existing FormIDs are untouched. A spell
 whose effects have different ranges gives each effect its own TES4 range; the
-spell takes the farthest (`owner_delivery`).
+spell takes Aimed if any effect is, else Target Actor, else Self
+(`owner_delivery`).
+
+**Touch is Target Actor, not Contact.** The CK wiki's Magic Effect page:
+Contact "only works for Weapons". None of the 70 vanilla Contact spells is
+hand-cast by the player, so a converted Touch spell appeared in the menu but
+never cast. Skyrim's hand-cast touch spells (Heal Other, Soul Trap, Fade
+Other, the Daedra commands: 19 spells) are Target Actor with a 0 range. A
+weapon enchantment is fixed to Contact, the one owner that fires it. Changing
+this renumbered every Touch copy (the delivery is in the `MGEF_DELIVERY` key).
+The base MGEF follows (`_delivery_and_cast`).
+
+### <a id="creature-attack-spells"></a>A creature's touch spell rides its melee attacks, as Contact
+
+**Code:** `tes5_import/actors/creature_races.py` (`creature_touch_attack_spell`), `record_types/equipment.py` (`attack_spell`)
+
+Vanilla's melee casters name a spell as each attack's ATKD Attack Spell: the
+flame atronach's four ordinary `attackStart_*` entries name
+`crAtronachFlameMeleeAttack` (109 attack entries in Skyrim.esm carry one), and
+that spell is Contact (`SPIT` delivery 1). The TES4 analogue is a creature's
+castable Touch spell with no Target effect. The same spell can also be a
+player's (`StandardParalyze3Journeyman`, Morrowind's `frostbite`), which must
+be Target Actor. So the attack names a Contact copy, `<EditorID>Attack`,
+hashed at site `SPEL_ATTACK` on the spell's EditorID. Its effect copies carry
+the Contact key every Touch copy had before, so they keep their FormIDs.
+Measured on the built plugins: 9 such spells in Morrowind_ob, 24 in
+Tamriel_Data, 17 in TR_Mainland, 6 in Oblivion.esm.
 
 Measured on the rebuilt Oblivion.esm:
 
@@ -685,6 +712,17 @@ cannot be resolved from the child:
   could use Oblivion's effect directly (Frost Bolt → `FRDG`) showed Oblivion's
   art.
 - **FormIDs.** Its SOUNs are numbered in the master's own master list.
+
+The same goes for the effect's own FormID, so `register_mgef_formids` finds a
+master's effect by EditorID in the master's converted plugin
+(`find_by_edid`). Taking the export's FormID was correct only where the
+master's list happens to line up with the child's (Morrowind_ob over
+Oblivion.esm). Elsewhere it named a record that does not exist. Tamriel_Data's
+patch effects became Tamriel_Data's own index: 295 of 1,000 effect slots,
+238 spells. TR_Mainland's became Tamriel_Data's: 180 spells. Skyrim drops such
+a spell from the magic menu. Every slot whose delivery matched the master's
+effect pointed at the bad id, and the copies were keyed on it. The fix
+renumbered those copies.
 
 So a copy of a master's effect takes Assoc. Item, Casting Art, Hit Effect Art
 and Projectile from the master's converted MGEF (`find_by_edid`, then

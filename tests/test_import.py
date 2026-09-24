@@ -5491,7 +5491,7 @@ class TestMgefConversion:
         from tes5_import.record_types.magic_morrowind import mw_tes4_flags
 
         assert _delivery_and_cast(mw_tes4_flags(0x100)) == (1, 2)
-        assert _delivery_and_cast(mw_tes4_flags(0x080)) == (1, 1)
+        assert _delivery_and_cast(mw_tes4_flags(0x080)) == (1, 3)
         assert _delivery_and_cast(mw_tes4_flags(0x040)) == (1, 0)
 
     def test_data_is_a_full_152_byte_struct(self):

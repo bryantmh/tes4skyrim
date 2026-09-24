@@ -30,11 +30,12 @@ from ..base.equivalents import (
     WEAPON_ANIM_STAGGER,
     WEAPON_ANIM_VNAM,
 )
-from .magic_variants import (MGEF_CAST_FOR_OWNER, RANGE_DELIVERY,
+from .magic_variants import (DELIVERY_CONTACT, MGEF_CAST_FOR_OWNER, RANGE_DELIVERY,
                              UNCASTABLE_SPELL_TYPES, bound_assoc_is_armor,
                              bound_item_assoc, bound_script_variant,
                              delivery_variant, get_mgef_formid,
-                             get_seff_variant, menu_object, owner_delivery)
+                             get_seff_variant, menu_object, owner_delivery,
+                             written_once)
 from .equipment_falloutnv import ammo_flags, gun_speed
 from .equipment_falloutnv import refine_anim_type as refine_fallout_anim_type
 from .projectile_falloutnv import (ammo_projectile, gun_sheathe_sounds,
@@ -250,7 +251,9 @@ _FILLER_EFFECTS = (0x0003EB15, 0x0003EB17, 0x0003EB16, 0x0003EAF3)  # AlchRestor
 #: Effect owner rule for potions, poisons and ingredients: Fire and Forget on Self, 803 of 803 vanilla slots.
 OWNER_CONSUMED = (1, 0)
 #: TES5 spell type -> (casting type, delivery): abilities Constant on Self, diseases Constant on Contact.
-SPELL_TYPE_CAST = {4: (0, 0), 1: (0, 1)}
+SPELL_TYPE_CAST = {4: (0, 0), 1: (0, DELIVERY_CONTACT)}
+#: TES4 ENCH type -> the delivery its effects are fixed to: a weapon strikes (Contact), apparel is worn (Self).
+ENCH_FIXED_DELIVERY = {2: DELIVERY_CONTACT, 3: 0}
 #: The spell type both games number 1.
 SPELL_TYPE_DISEASE = 1
 #: A subrecord's type and size precede its data: 6 bytes.
@@ -944,7 +947,8 @@ def convert_ENCH(rec: dict, writer=None) -> bytes:
 
     tes5_type = ENCH_TYPE_MAP.get(tes4_type, 6)
     cast_type = ENCH_CAST_TYPE_MAP.get(tes4_type, 2)
-    target_type = 0 if cast_type == 0 else owner_delivery(rec)
+    fixed = ENCH_FIXED_DELIVERY.get(tes4_type, 0 if cast_type == 0 else None)
+    target_type = owner_delivery(rec) if fixed is None else fixed
 
     tes5_flags = 0
     if tes4_flags & 0x08:  # No Auto-Calc
@@ -963,27 +967,41 @@ def convert_ENCH(rec: dict, writer=None) -> bytes:
     subs += pack_subrecord('ENIT', bytes(enit))
 
     subs += _pack_effects(rec, delivery=target_type, writer=writer,
-                          owner=(MGEF_CAST_FOR_OWNER.get(cast_type, 1),
-                                 0 if cast_type == 0 else None))
+                          owner=(MGEF_CAST_FOR_OWNER.get(cast_type, 1), fixed))
 
     return pack_record('ENCH', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
 def convert_SPEL(rec: dict, writer=None) -> bytes:
-    """SPEL — Spell. SPIT restructured for TES5.
+    """SPEL — Spell, under its own FormID and EditorID."""
+    return pack_record('SPEL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'),
+                       _spell_subrecords(rec, get_str(rec, 'EditorID'), writer))
+
+
+def attack_spell(fid: int, rec: dict, writer) -> int:
+    """A creature's ATKD Attack Spell: a Contact copy of spell ``rec``, else ``fid``.
+
+    See: docs/commentary/tes5_import_magic.md#creature-attack-spells
+    """
+    edid = get_str(rec, 'EditorID') if rec else ''
+    if writer is None or not edid:
+        return fid
+    return written_once('SPEL_ATTACK', edid, writer, lambda new: writer.add_record(
+        'SPEL', pack_record('SPEL', new, 0, _spell_subrecords(
+            rec, f'{edid}Attack', writer, DELIVERY_CONTACT))))
+
+
+def _spell_subrecords(rec: dict, edid: str, writer, delivery: int = None) -> bytes:
+    """A SPEL's subrecords, SPIT restructured for TES5.
 
     TES5 order: EDID OBND FULL KWDA MDOB ETYP DESC SPIT EFID/EFIT*.  The
     spell types 0-4 mean the same in both games.  ETYP is mandatory: a spell
     without one never appears in the magic menu (827/827 vanilla carry it).  MDOB is the
     vanilla menu art the first effect calls for, on every type but Disease.
-    SPIT is Cost, Flags, Type, Charge Time, Cast Type, Target Type, then 12
-    unused bytes.
+    ``delivery`` fixes a castable spell's delivery, else its effects pick it.
     See: docs/commentary/tes5_import_magic.md#menu-display-object
     """
-    subs = b''
-    edid = get_str(rec, 'EditorID')
-    if edid:
-        subs += pack_string_subrecord('EDID', edid)
+    subs = pack_string_subrecord('EDID', edid) if edid else b''
     subs += pack_obnd()
     full = get_str(rec, 'FULL')
     if full:
@@ -994,10 +1012,10 @@ def convert_SPEL(rec: dict, writer=None) -> bytes:
     tes5_type = tes4_type if tes4_type <= 4 else 0
     cast_type, target_type = SPELL_TYPE_CAST.get(tes5_type, (1, None))
     if target_type is None:
-        target_type = owner_delivery(rec)
+        target_type = owner_delivery(rec) if delivery is None else delivery
     effects = _pack_effects(rec, delivery=target_type, writer=writer,
                             uncastable=tes5_type in UNCASTABLE_SPELL_TYPES,
-                            owner=(cast_type, target_type if cast_type == 0 else None))
+                            owner=(cast_type, target_type if cast_type == 0 else delivery))
 
     if tes5_type != SPELL_TYPE_DISEASE:
         first_effect = struct.unpack_from('<I', effects, _SUBRECORD_HEADER)[0]
@@ -1012,8 +1030,7 @@ def convert_SPEL(rec: dict, writer=None) -> bytes:
     subs += pack_subrecord('SPIT', struct.pack(
         '<IIIfII12x', get_int(rec, 'SPIT.Cost'), tes5_flags, tes5_type, 0.0,
         cast_type, target_type))
-    subs += effects
-    return pack_record('SPEL', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
+    return subs + effects
 
 
 def convert_ALCH(rec: dict, writer=None) -> bytes:
