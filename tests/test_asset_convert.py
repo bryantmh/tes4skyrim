@@ -3997,46 +3997,8 @@ class TestAnimationBlockLayout:
         # idempotent -- a second pass must find nothing left to fix
         assert normalize_blend_interpolators(root) == 0
 
-    @pytest.mark.skip(reason=
-        'The wrapper-node SCALE morph swap was REVERTED 2026-08-10: it hard-'
-        'freezes Skyrim on the ImperialDungeon05 tripwire (no crash, no log, '
-        'process alive but never renders again), while the SAME mesh works in '
-        'Vilverin.  morphs.emulate_morphs is back to the pre-90d04a3 '
-        'NiVisController version, so this test asserts a design that is no '
-        'longer shipped.  Re-enable it together with a real fix - see '
-        'docs/commentary/asset_convert_nif.md "NiGeomMorpherController does not exist '
-        'in Skyrim" for the bisection, the four failed fixes, the verified exe '
-        'field offsets, and the one unchased lead (the ref persistent flag).')
-    def test_morph_emulation_never_targets_geometry(self):
-        """The morph swap must not synthesize NiVisController entries: across
-        every vanilla Skyrim mesh, sequence-driven NiVisController entries
-        target only NiNode / NiBillboardNode / particle systems (1852/1852),
-        never a NiTriShape, and trishape-targeted vis swaps never produced a
-        visible swap in-game.  The swap is a wrapper-NODE scale animation
-        driven by NiTransformController -- the machinery confirmed working
-        in-game (CharacterGen secret wall)."""
-        from asset_convert.nif.morphs import BLEND_INTERP_FLAGS_ARRAYSIZE
-        import inspect
-        from asset_convert.nif import morphs
-        src = inspect.getsource(morphs.emulate_morphs)
-        assert 'NiVisController()' not in src, \
-            'morph emulation must not construct NiVisController blocks'
-        assert "b'NiVisController'" not in src, \
-            'morph emulation must not emit NiVisController sequence entries'
-        assert "controller_type = b'NiTransformController'" in src, \
-            'morph swap entries must be transform (scale) entries'
-        assert BLEND_INTERP_FLAGS_ARRAYSIZE == 0x0201
-
-    @pytest.mark.skip(reason=
-        'Same revert as test_morph_emulation_never_targets_geometry: the '
-        'SCALE swap freezes the game, so ctrigtripwire01 no longer ships '
-        'wrapper "<shape> Swap" nodes or inverse scale curves.  See '
-        'docs/commentary/asset_convert_nif.md before re-enabling.')
-    def test_tripwire_morph_ships_a_scale_swap(self):
-        """End-to-end on the mesh the bug was reported against: converting
-        ctrigtripwire01 must produce paired wrapper NiNodes whose scale curves
-        are INVERSE (base 1->0 as the snapped clone goes 0->1), with the clone
-        wrapper resting at 0 so the un-tripped wire looks intact."""
+    def _tripwire_root_and_vis(self):
+        """(converted ctrigtripwire01 root, its NiVisController entries); skips if unexported."""
         src = Path('export/Oblivion.esm/meshes/dungeons/caves/triggers/'
                    'ctrigtripwire01.nif')
         if not src.exists():
@@ -4048,74 +4010,58 @@ class TestAnimationBlockLayout:
             result = convert_nif(str(src), dst)
             if result.get('error'):
                 pytest.skip(f'Conversion failed: {result["error"]}')
-
             data = NF.Data()
             with open(dst, 'rb') as f:
-                data.inspect(f)
-                f.seek(0)
                 data.read(f)
-            root = data.roots[0]
+        root = data.roots[0]
+        vis = [cb for seq in root.controller.controller_sequences
+               for cb in seq.controlled_blocks
+               if bytes(cb.controller_type or b'') == b'NiVisController']
+        assert vis, 'the morph must still animate'
+        return root, vis
 
-            mgr = root.controller
-            assert isinstance(mgr, NF.NiControllerManager)
-            curves = {}
-            for seq in mgr.controller_sequences:
-                for cb in seq.controlled_blocks:
-                    name = bytes(cb.node_name).decode('latin-1')
-                    if not name.endswith(' Swap'):
-                        continue
-                    ctype = bytes(cb.controller_type or b'').decode('latin-1')
-                    assert ctype == 'NiTransformController', \
-                        f'{name} must swap via transform, got {ctype!r}'
-                    keys = cb.interpolator.data.scales.keys
-                    curves[name] = [(k.time, k.value) for k in keys]
+    def test_tripwire_morph_swaps_wrapper_nodes_with_own_shaders(self):
+        """ctrigtripwire01's morph must convert to NiVisController entries on
+        "<shape> Swap" NiNodes only, every baked shape must own its shader
+        property and texture set, and only the base wrapper may rest visible.
 
-            assert len(curves) == 2, f'expected a base/clone pair, got {curves}'
-            base = [c for n, c in curves.items() if 'Mrph' not in n][0]
-            clone = [c for n, c in curves.items() if 'Mrph' in n][0]
-            assert base[0][1] == 1.0 and base[-1][1] == 0.0, \
-                'the intact wire must start visible and scale away'
-            assert clone[0][1] == 0.0 and clone[-1][1] == 1.0, \
-                'the snapped wire must start hidden and scale in'
-            assert abs(base[-1][0] - clone[-1][0]) < 1e-3, \
-                'both halves of the cut must happen at the same instant'
+        See: docs/commentary/asset_convert_animation.md#morph-emulation
+        """
+        NF = self._nif()
+        root, vis = self._tripwire_root_and_vis()
+        nodes = {bytes(b.name): b for b in root.tree()
+                 if isinstance(b, NF.NiAVObject)}
+        for cb in vis:
+            node = nodes[bytes(cb.node_name)]
+            assert type(node) is NF.NiNode and node.name.endswith(b' Swap')
+            assert cb.controller.target is node
 
-            # Wrappers must exist as real nodes, rest at the right scale, and
-            # be reachable by the manager (extra_targets + object palette) --
-            # a CB naming a node the manager cannot resolve drives nothing.
-            wrappers = {}
-            stack = [root]
-            while stack:
-                blk = stack.pop()
-                nm = bytes(getattr(blk, 'name', b'') or b'').decode('latin-1')
-                if nm.endswith(' Swap'):
-                    wrappers[nm] = blk
-                stack.extend(getattr(blk, 'children', []) or [])
-            assert set(wrappers) == set(curves)
-            for nm, node in wrappers.items():
-                want = 0.0 if 'Mrph' in nm else 1.0
-                assert node.scale == want, \
-                    f'{nm} must rest at scale {want}, got {node.scale}'
-                assert not int(node.flags) & 0x01, f'{nm} must not be hidden'
+        ropes = [b for b in root.tree() if isinstance(b, NF.NiTriShape)
+                 and bytes(b.name).startswith(b'Rope')]
+        assert len(ropes) >= 2
+        shaders = [r.bs_properties[0] for r in ropes]
+        assert len({id(s) for s in shaders}) == len(ropes)
+        assert len({id(s.texture_set) for s in shaders}) == len(ropes)
 
-            mtc = mgr.next_controller
-            while mtc is not None and not isinstance(
-                    mtc, NF.NiMultiTargetTransformController):
-                mtc = mtc.next_controller
-            assert mtc is not None, 'scale CBs need an MTC to bind through'
-            targets = {bytes(t.name).decode('latin-1')
-                       for t in mtc.extra_targets if t is not None}
-            assert set(curves) <= targets, \
-                'every animated wrapper must be an MTC extra target'
-            palette = {bytes(o.name).decode('latin-1')
-                       for o in mgr.object_palette.objs}
-            assert set(curves) <= palette, \
-                'every animated wrapper must be in the object palette'
+        for name, node in nodes.items():
+            if name.endswith(b' Swap'):
+                assert bool(int(node.flags) & 1) == (b'Mrph' in name), name
 
-            # The failed approach must not creep back in via any other pass.
-            assert not any(isinstance(b, NF.NiVisController)
-                           for b in root.tree()), \
-                'no NiVisController may survive on a morph-swap mesh'
+    def test_tripwire_morph_is_a_30fps_flipbook(self):
+        """The snap bakes many poses, each shown for exactly one 1/30 s frame
+        except the last, which holds.
+
+        See: docs/commentary/asset_convert_animation.md#morph-emulation
+        """
+        _, vis = self._tripwire_root_and_vis()
+        poses = [cb for cb in vis if b'Mrph' in bytes(cb.node_name)]
+        assert len(poses) >= 10, 'the snap is a flipbook, not a single cut'
+        for cb in poses:
+            keys = [(k.time, k.value) for k in cb.interpolator.data.data.keys]
+            on = [t for t, v in keys if v]
+            off = [t for t, v in keys[1:] if not v]
+            if off:
+                assert abs(off[0] - on[0] - 1.0 / 30) < 1e-3, keys
 
 
 class TestVoiceFilePrune:

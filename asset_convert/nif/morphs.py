@@ -10,8 +10,10 @@ that must run after every pass which synthesizes one.
 See: docs/commentary/asset_convert_nif.md#morph-emulation
 """
 
+import numpy as np
 from pyffi.object_models.xml.array import Array as _Arr
 
+from asset_convert.lod.mesh_decimate import vertex_normals
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from pyffi.formats.nif import NifFormat
@@ -89,26 +91,11 @@ def _morph_weight_curve(interp):
     return [(k.time, k.value) for k in keys]
 
 
-def _vis_toggle_times(curve):
-    """Times at which a weight curve crosses 0.5, plus the initial state.
+#: Frames per second the morph flipbook samples each weight curve at.
+FLIPBOOK_FPS = 30
 
-    Returns (initially_on, [t0, t1, ...]) — each t toggles the state.
-    """
-    if not curve:
-        return False, []
-    on = curve[0][1] >= 0.5
-    times = []
-    state = on
-    for (t0, v0), (t1, v1) in zip(curve, curve[1:]):
-        nxt = v1 >= 0.5
-        if nxt != state:
-            if v1 != v0:
-                tc = t0 + (0.5 - v0) * (t1 - t0) / (v1 - v0)
-            else:
-                tc = t1
-            times.append(max(t0, min(tc, t1)))
-            state = nxt
-    return on, times
+#: A frame whose every vertex lies within this many game units of the shown shape reuses it.
+FLIPBOOK_TOLERANCE = 1.0
 
 
 #: unknown_short = Flags 0x01 | Array Size 0x02. See: docs/commentary/asset_convert_nif.md#blend-interp-flags
@@ -295,33 +282,51 @@ def _own_properties(clone):
         clone.bs_properties[i] = mine
 
 
-def _bake_morph_clone(geom, md, vectors, name, frame, idx):
-    """A sibling shape carrying the morph target's vertex positions."""
+def _xyz(vectors):
+    """An (n, 3) float64 array of a PyFFI vector list."""
+    return np.array([(v.x, v.y, v.z) for v in vectors], dtype=np.float64)
+
+
+def _set_xyz(vectors, arr):
+    """Write an (n, 3) array back into a PyFFI vector list."""
+    for v, (x, y, z) in zip(vectors, arr.tolist()):
+        v.x, v.y, v.z = x, y, z
+
+
+def _frame_normals(data, base, pos):
+    """The authored normals bent by how far the smooth normals moved base -> pos.
+
+    Adding the smooth-normal CHANGE keeps the authored hard edges and seams.
+    """
+    tris = np.array(data.get_triangles(), dtype=np.int64)
+    bent = (_xyz(data.normals) + vertex_normals(pos, tris)
+            - vertex_normals(base, tris))
+    length = np.linalg.norm(bent, axis=1, keepdims=True)
+    length[length < 1e-10] = 1.0
+    return bent / length
+
+
+def _bake_morph_clone(geom, base, pos, name):
+    """A sibling shape at vertex positions `pos`, normals and tangents rebuilt."""
     gdata = geom.data
     clone = geom.__class__()
     _copy_block_fields(geom, clone)
     cdata = gdata.__class__()
     _copy_block_fields(gdata, cdata)
-    relative = bool(getattr(md, 'relative_targets', 1))
-    for i in range(getattr(gdata, 'num_vertices', 0)):
-        v = cdata.vertices[i]
-        d = vectors[i]
-        if relative:
-            v.x += d.x
-            v.y += d.y
-            v.z += d.z
-        else:
-            v.x, v.y, v.z = d.x, d.y, d.z
+    _set_xyz(cdata.vertices, pos)
+    if cdata.has_normals:
+        _set_xyz(cdata.normals, _frame_normals(gdata, base, pos))
     try:
         cdata.update_center_radius()
     except Exception:
         pass
     clone.data = cdata
-    suffix = frame if frame else str(idx).encode('ascii')
-    clone.name = bytes(name) + b'Mrph' + suffix
+    clone.name = name
     clone.controller = None
     clone.collision_object = None
     clone.flags = int(geom.flags) & ~0x01
+    if cdata.has_normals and int(getattr(cdata, 'extra_vectors_flags', 0)) & 16:
+        clone.update_tangent_space(as_extra=False)
     _own_properties(clone)
     return clone
 
@@ -337,22 +342,57 @@ def _curve_value_at(curve, t):
     return None
 
 
-def _base_visibility(curves):
-    """(initial state, toggle times) for a base shape under `curves`.
+def _frame_times(seq):
+    """The sequence's span sampled at FLIPBOOK_FPS, both ends included."""
+    start, stop = float(seq.start_time), float(seq.stop_time)
+    count = max(1, int(round((stop - start) * FLIPBOOK_FPS)))
+    return [start + (stop - start) * k / count for k in range(count + 1)]
 
-    The base is visible exactly while NO target weight is >= 0.5.
+
+def _frame_positions(geom, md, targets, times):
+    """(base positions, [positions at each time]) blending every target's weight."""
+    base = _xyz(geom.data.vertices)
+    relative = bool(getattr(md, 'relative_targets', 1))
+    deltas = []
+    for vectors, curve in targets.values():
+        d = _xyz(vectors)
+        deltas.append((d if relative else d - base, curve))
+    frames = []
+    for t in times:
+        pos = base.copy()
+        for d, curve in deltas:
+            pos += (_curve_value_at(curve, t) or 0.0) * d
+        frames.append(pos)
+    return base, frames
+
+
+def _flipbook_states(base, frames):
+    """(kept shapes, shape index per frame); index 0 is the base shape.
+
+    A frame within FLIPBOOK_TOLERANCE of the shape on screen keeps showing it,
+    else reuses the closest kept shape within tolerance (a looping clip repeats
+    its poses), else becomes a new kept shape.
     """
-    cut = sorted({t for c in curves for t in _vis_toggle_times(c)[1]})
-    probes = [0.0] + cut
-    states = []
-    for i, t in enumerate(probes):
-        nxt = cut[i] if i < len(cut) else (t + 0.001)
-        mid = (t + nxt) / 2 if nxt > t else t
-        on = any((_curve_value_at(c, mid) or 0.0) >= 0.5 for c in curves)
-        states.append(not on)
-    toggles = [cut[i] for i in range(len(cut))
-               if states[i + 1] != states[i]]
-    return states[0], toggles
+    kept, states = [base], []
+    for pos in frames:
+        shown = states[-1] if states else 0
+        if np.abs(pos - kept[shown]).max() <= FLIPBOOK_TOLERANCE:
+            states.append(shown)
+            continue
+        errors = [np.abs(pos - shape).max() for shape in kept]
+        best = int(np.argmin(errors))
+        if errors[best] > FLIPBOOK_TOLERANCE:
+            kept.append(pos)
+            best = len(kept) - 1
+        states.append(best)
+    return kept, states
+
+
+def _state_toggles(states, times, index):
+    """(initially shown, toggle times) for shape `index` over the frames."""
+    shown = [s == index for s in states]
+    toggles = [times[k] for k in range(1, len(shown)) if shown[k] != shown[k - 1]]
+    return shown[0], toggles
 
 
 def _morph_geometry_index(root):
@@ -400,60 +440,59 @@ def _collect_morph_swaps(root):
     return swaps
 
 
-def _emit_target_swaps(swaps, geoms, parents, pal):
-    """Bake each morph target and add its show/hide entry.
-
-    ({(shape, index): clone wrapper}, {(sequence id, shape): [weight curve]}).
-    """
-    made = {}
-    base_toggles = {}
+def _group_targets(swaps, geoms):
+    """{(sequence id, shape): (sequence, geometry, morph data, {index: (vectors, curve)})}."""
+    groups = {}
     for entry in swaps:
         plan = _morph_swap_plan(entry, geoms)
-        if plan is None:
+        curve = _morph_weight_curve(entry['interp'])
+        if plan is None or not curve:
             continue
         geom, md, idx, vectors = plan
-        curve = _morph_weight_curve(entry['interp'])
-        on, toggles = _vis_toggle_times(curve)
-        if not on and not toggles:
-            continue
-        key = (entry['shape'], idx)
-        wrapper = made.get(key)
-        if wrapper is None:
-            clone = _bake_morph_clone(geom, md, vectors, entry['shape'],
-                                      entry['frame'], idx)
-            wrapper = _wrap_shape(clone, parents[id(geom)], pal)
-            made[key] = wrapper
-        _add_vis_cb(entry['seq'], wrapper, on, toggles)
-        base_toggles.setdefault((id(entry['seq']), entry['shape']),
-                                []).append(curve)
-    return made, base_toggles
+        group = groups.setdefault((id(entry['seq']), entry['shape']),
+                                  (entry['seq'], geom, md, {}))
+        group[3][idx] = (vectors, curve)
+    return groups
+
+
+def _emit_flipbook(group, parent, base_wrapper, pal):
+    """Bake one sequence's in-between shapes of one shape; how many were made.
+
+    See: docs/commentary/asset_convert_animation.md#morph-emulation
+    """
+    seq, geom, md, targets = group
+    times = _frame_times(seq)
+    base, frames = _frame_positions(geom, md, targets, times)
+    kept, states = _flipbook_states(base, frames)
+    seq_name = bytes(seq.name or b'')
+    for index in range(1, len(kept)):
+        name = bytes(geom.name) + b'Mrph' + seq_name + str(index).encode('ascii')
+        clone = _bake_morph_clone(geom, base, kept[index], name)
+        _add_vis_cb(seq, _wrap_shape(clone, parent, pal),
+                    *_state_toggles(states, times, index))
+    _add_vis_cb(seq, base_wrapper, *_state_toggles(states, times, 0))
+    return len(kept) - 1
 
 
 def emulate_morphs(root, stats=None):
-    """Rebuild dropped NiGeomMorpherController animation as shape swaps.
+    """Rebuild dropped NiGeomMorpherController animation as a shape flipbook.
 
     See: docs/commentary/asset_convert_nif.md#morph-emulation
     """
     swaps = _collect_morph_swaps(root)
     if not swaps:
         return
-
     geoms, parents = _morph_geometry_index(root)
     mgr = root.controller
     pal = (mgr.object_palette
            if isinstance(mgr, NifFormat.NiControllerManager) else None)
-    made, base_toggles = _emit_target_swaps(swaps, geoms, parents, pal)
-
-    seq_by_id = {id(e['seq']): e['seq'] for e in swaps}
     base_wrappers = {}
-    for (sid, name), curves in base_toggles.items():
-        geom = geoms.get(name)
-        seq = seq_by_id.get(sid)
-        if geom is None or seq is None:
-            continue
+    made = 0
+    for (_, name), group in _group_targets(swaps, geoms).items():
+        geom = group[1]
+        parent = parents[id(geom)]
         if name not in base_wrappers:
-            base_wrappers[name] = _wrap_shape(geom, parents[id(geom)], pal)
-        first, toggles = _base_visibility(curves)
-        _add_vis_cb(seq, base_wrappers[name], first, toggles)
+            base_wrappers[name] = _wrap_shape(geom, parent, pal)
+        made += _emit_flipbook(group, parent, base_wrappers[name], pal)
     if stats is not None:
-        stats['morph_swaps'] = stats.get('morph_swaps', 0) + len(made)
+        stats['morph_swaps'] = stats.get('morph_swaps', 0) + made

@@ -628,11 +628,11 @@ sentinel applies.
 
 ### <a id="morph-swap-block-mechanics"></a>How the swap is built
 
-The morph target is baked into a sibling shape, each swapped shape is wrapped in
-its own `"<shape> Swap"` NiNode, and the sequence gains `NiVisController` entries
-on those wrappers swapping base → target as the weight curve crosses 0.5. The
-base shape is visible exactly while NO target weight is at or above 0.5. Why the
-wrappers, and why the clone must own its shader: see
+Each distinct 30 fps pose of the morph is baked into a sibling shape, each shape
+is wrapped in its own `"<shape> Swap"` NiNode, and the sequence gains one
+`NiVisController` entry per wrapper, on for exactly the frames that show its
+pose; the base shape is on while the pose is the unmorphed one. Why the
+flipbook, the wrappers, and why each shape must own its shader: see
 [asset_convert_animation.md](asset_convert_animation.md#morph-emulation).
 
 **Bool keys MUST be CONST_KEY (5).** **3449/3449** vanilla and **1296/1296**

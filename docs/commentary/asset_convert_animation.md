@@ -244,17 +244,33 @@ citadeldeadralordscenterring 106, obeliskenergybox01 102, se01waitingroomwalls
 <a id="morph-emulation"></a>
 ### NiGeomMorpherController does not exist in Skyrim — emulate as a visibility swap on wrapper nodes (in-game confirmed 2026-09-24)
 
-**Code:** `emulate_morphs`, `_wrap_shape`, `_own_properties` in `asset_convert/nif/morphs.py`
+**Code:** `emulate_morphs`, `_emit_flipbook`, `_flipbook_states`, `_wrap_shape`, `_own_properties` in `asset_convert/nif/morphs.py`
 
 The SSE exe has NO `NiGeomMorpherController` RTTI class (only the orphaned
 `NiMorphData` remains) and vanilla ships 0 uses, so morph entries HAD to be
 dropped — but the morph IS the visible effect for 18 Oblivion meshes
 (ctrigtripwire01's wire snap, se01waitingroomwalls, obliviongate_forming,
 gnarlspawner…).  `emulate_morphs` (fed by a harvest at the drop site in
-`_process_controller_manager`) bakes each animated morph target into a sibling
-copy of the shape (relative_targets → base verts + deltas) and CUTS from base
-to copy where the weight curve crosses 0.5.  A smooth crossfade degrades to a
-cut.
+`_process_controller_manager`) replays the morph as a **30 fps flipbook** (in-game
+confirmed 2026-09-24): for each sequence and shape it samples every target's
+weight curve at `FLIPBOOK_FPS`, blends base + Σ weight × delta
+(relative_targets; absolute targets become target − base), bakes each distinct
+pose into a sibling shape, and shows exactly one shape per frame.  The first
+version baked only the full target and cut at weight 0.5 — Oblivion blends
+smoothly (the tripwire morphs taut → snapped over its whole 0.67 s `Forward`),
+so the wire visibly jumped.
+
+**Frame reuse keeps the size sane.**  A frame within `FLIPBOOK_TOLERANCE`
+(1.0 game unit, ~1.4 cm, max over vertices) of the shape on screen keeps it,
+else reuses the closest kept shape, else becomes a new shape.  Fast motion keeps
+every frame (the tripwire moves ~7 units a frame: 20 shapes, 91 KB → 838 KB);
+slow motion shares shapes.  At 0.25 units `sigillighttowerbase` (two targets on
+independent 56.7 s curves) baked 1,152 shapes; at 1.0 it bakes 375 (11 KB →
+716 KB).  The heaviest are genuine motion: `obgatemini01` 129 shapes
+(194 KB → 5.2 MB), `rootgatedementia01` 306 (205 KB → 3.4 MB).  Each baked
+shape gets its normals bent by the change in smooth normals between base and
+pose (keeps authored hard edges) and its tangents rebuilt, so a bent shape is
+lit as bent.
 
 **The shipped design, and why each part is there:**
 
