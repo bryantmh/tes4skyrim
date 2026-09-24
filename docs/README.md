@@ -102,6 +102,7 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [tes5_import_sound.md](commentary/tes5_import_sound.md) | tes5_import/record_types/sound.py - SOUN, SNDR and SOPM |
 | [tes5_import_world.md](commentary/tes5_import_world.md) | tes5_import/record_types/world.py - CELL, WRLD and placed references |
 | [tes5_import_weather.md](commentary/tes5_import_weather.md) | tes5_import/record_types/world.py - weather and climate |
+| [tes_runtime_crime.md](commentary/tes_runtime_crime.md) | tes_runtime/plugin/crime.cpp, tes5_import/record_types/crime.py - bounty realms, jails and the arrest |
 | [tes_runtime_guns.md](commentary/tes_runtime_guns.md) | tes_runtime/plugin/fire.cpp - the gun shot, reload key and ammo restriction in the SKSE plugin |
 | [version_upgrade_planning.md](commentary/version_upgrade_planning.md) | version.py - which steps a new release owes |
 

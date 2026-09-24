@@ -315,8 +315,52 @@ EndFunction
 ; Crime / Faction
 ; ==========================================================================
 
+; TES4 SetCrimeGold sets the WHOLE bounty; Skyrim splits it into a violent and
+; a non-violent part, so the violent part is cleared first.
 Function SetCrimeGold(Faction akFaction, Int aiGold) Global
-  akFaction.SetCrimeGold(aiGold)
+  If akFaction
+    akFaction.SetCrimeGoldViolent(0)
+    akFaction.SetCrimeGold(aiGold)
+  EndIf
+EndFunction
+
+; A bounty realm list holds the plugin's crime factions: the main realm, then
+; the realm behind a SetPlayerInSEWorld border (tes5_import/record_types/
+; crime.py). SetPlayerInSEWorld 1 marks the second realm active by adding the
+; list ITSELF: AddForm refuses a form already in the list, and GetAt returns
+; script-added forms before the authored ones (FormList.AddForm / GetAt,
+; SkyrimSE 1.6.1170 0x319e20 / 0x319bb0).
+Int Function CrimeRealm(FormList akRealms) Global
+  If akRealms && akRealms.HasForm(akRealms)
+    Return 1
+  EndIf
+  Return 0
+EndFunction
+
+; The crime faction of the realm the player is in.
+Faction Function CrimeFaction(FormList akRealms) Global
+  If !akRealms
+    Return None
+  EndIf
+  If CrimeRealm(akRealms) == 1
+    Faction second = akRealms.GetAt(2) as Faction
+    If second
+      Return second
+    EndIf
+    Return akRealms.GetAt(1) as Faction
+  EndIf
+  Return akRealms.GetAt(0) as Faction
+EndFunction
+
+; SetPlayerInSEWorld n: 1 activates the second realm, 0 the main one.
+Function SetCrimeRealm(FormList akRealms, Int aiRealm) Global
+  If !akRealms
+    Return
+  EndIf
+  akRealms.Revert()
+  If aiRealm > 0
+    akRealms.AddForm(akRealms)
+  EndIf
 EndFunction
 
 Int Function GetCrimeGold(Faction akFaction) Global

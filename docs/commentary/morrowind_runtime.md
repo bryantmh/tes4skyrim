@@ -3245,6 +3245,47 @@ report the family either way. Fixed by widening `_ARRAY` to the
 `inline constexpr` form, threading the header in beside `extensions0.cpp`, and
 letting a loop name carry an inline prefix and a trailing suffix.
 
+## <a id="crime-is-the-engines"></a>Crime is the engine's: bounty, fines, jail, arrest
+
+**Code:** `plugin/game_calls_crime.cpp`, `plugin/script_runner.cpp`
+(`OpSetPCCrimeLevel`, `OpPayFine`, `OpGoToJail`), `plugin/object_tick.cpp`.
+Not yet confirmed in game.
+
+PC Crime Level is the crime gold Skyrim keeps on a faction -- the speaker's
+crime faction (`Actor.GetCrimeFaction`), else the realm's from
+`crime_formid.txt` -- so a bounty the engine records for a witnessed crime is
+the one the guards' `Greeting 0` lines test. `SetPCCrimeLevel`/`ModPCCrimeLevel`
+write it (violent part cleared, the rest set). The `DialogueState` copy only
+stands in when no faction resolves.
+
+The fine and jail opcodes follow OpenMW (`miscextensions.cpp`): `PayFine`
+clears the bounty and confiscates stolen goods -- the dialogue has already
+taken the gold with `Player->RemoveItem Gold_001`, so `PlayerPayCrimeGold(true,
+false)` pays nothing and only confiscates -- `PayFineThief` only clears the
+bounty, and `GoToJail` is `SendPlayerToJail(false, true)`: TES3's jail keeps
+the player's inventory. The jail itself is TESRuntime's nearest one
+([tes_runtime_crime.md](tes_runtime_crime.md#nearest-jail)).
+
+| Native | id |
+|---|---:|
+| `Actor.GetCrimeFaction` | 54921 |
+| `Faction.GetCrimeGold` | 55794 |
+| `Faction.SetCrimeGold` | 55809 |
+| `Faction.SetCrimeGoldViolent` | 55810 |
+| `Faction.PlayerPayCrimeGold` | 55805 |
+| `Faction.SendPlayerToJail` | 55807 |
+
+### The arrest force-greet is diverted
+
+[The dialogue menu is the wrong hook](#why-not-the-menu) for activation, because
+a Morrowind NPC has no Skyrim dialogue. A pursuing guard is the exception: the
+import gives every Morrowind guard one blank ForceGreet (`PFGT`) line gated on
+`IsGuard`, so the engine does open "Dialogue Menu". The tick asks
+`MenuTopicManager::GetSpeaker` (id 35293, 1.6.1170 `0x5e1dd0`; it releases its
+own temporary handle and returns a raw pointer) and, when the speaker's base is
+a Morrowind speaker, closes Skyrim's menu and opens the Morrowind conversation
+with that guard, whose crime greeting now passes.
+
 ## <a id="journal-stage-text"></a>Journal stage text: a clicked objective shows its stage's text
 
 **Code:** `plugin/journal_objectives.cpp`, `plugin/journal_log.cpp`,

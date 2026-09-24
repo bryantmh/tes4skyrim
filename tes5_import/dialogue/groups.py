@@ -14,6 +14,7 @@ from ..base.text_reader import get_formid_index_offset, info_result_script
 from .quest import (bark_choice_gate_bytes, compute_quest_priorities,
                     has_quest_state_condition, quest_state_ctdas)
 from ..base.writer import pack_group
+from .arrest import force_greet_topic
 from .barks_morrowind import bark_voice_types
 from ..record_types.common import (get_formid, get_int, get_str,
                                    pack_record, pack_string_subrecord,
@@ -972,102 +973,79 @@ def _build_bark_pass(bark_dials, info_by_dial, writer,
     game."""
     groups, order, sge_extra = _group_bark_infos(
         bark_dials, info_by_dial, writer, bark_generic_quests, ctx)
-
-    # Assign FormIDs: each group tries to reuse the original FormID of its
-    # donor source DIAL, but a DIAL FormID can be claimed by only one group —
-    # and only when this plugin OWNS the donor. A dependent plugin's bark
-    # INFOs point at its MASTER's shared GREETING/HELLO record; reusing that
-    # fid here emits an OVERRIDE of the master's topic, re-keyed to this
-    # plugin's quest. Morrowind_ob shipped Oblivion's GREETING_0102466E
-    # re-keyed to its own chargen quest (twice), which clobbered the
-    # CharacterGen Emperor's greeting topic — his choices vanished and only
-    # 'Rumors' survived whenever Morrowind_ob was loaded.
     claimed = set()
     content = b''
     for key in order:
-        owner_qfid, subtype = key
-        g = groups[key]
-        src_fid = g['src_fid']
-        if src_fid not in claimed and \
-                (src_fid >> 24) == writer.own_index:
-            this_dial_fid = src_fid
-            claimed.add(src_fid)
-        else:
-            this_dial_fid = writer.derive_formid('BARK_DIAL', key)
-        this_edid = f"{g['edid']}_{owner_qfid:08X}" if g['edid'] else \
-            f"TES4Bark_{subtype}_{owner_qfid:08X}"
-        # Remember this quest's GREETING so a ForceGreet package can open it.
-        if (g['edid'] or '').upper() == 'GREETING':
-            GREET_TOPIC_BY_QUEST.setdefault(owner_qfid, this_dial_fid)
-        # (owner quest, subtype) -> output DIAL, so the NPC-conversation driver
-        # can Say a bark-grouped hop (a chain's GOODBYE line lives in its
-        # quest's GBYE group, not at the source GOODBYE DIAL's FormID).
-        ctx.setdefault('bark_topic_fids', {})[key] = this_dial_fid
-
-        # Per-group INFO context: voice types are pooled from THIS group's INFOs
-        # (a generic bark line inherits its siblings' voices). The voice-file
-        # prefix MUST use the EditorID actually written into the DIAL record
-        # (the split-suffixed one) — the engine builds the voice path from the
-        # record's own EditorID, so a voicemap keyed on the pre-split name would
-        # name every file something the game never looks for (= silent lines).
-        # Barks carry no identity/unlock/service gates. Ownership is the group's
-        # quest, so quest gates never fire (owner == info's own quest).
-        group_ctx = dict(ctx)
-        group_ctx['is_bark'] = True
-        group_ctx['topic_vtyps'] = _topic_voice_types(
-            g['infos'], ctx['npc_to_vtyp'], ctx['offset'])
-        group_ctx['topic_npc_fids'] = set()
-        group_ctx['service_gate_bytes'] = b''
-        group_ctx['unlock_gate_bytes'] = b''
-        group_ctx['bark_choice_gate_bytes'] = b''
-        group_ctx['service_kind'] = ''
-        group_ctx['edid'] = this_edid
-        # No fallback quest for quest-less INFOs: their owner IS the synthetic
-        # generic quest already, so leave info_qfid None -> no quest gate.
-        group_ctx['orig_quest_fid'] = None
-        # Audience the group's CONDITIONED siblings target, for conditionless
-        # lines to inherit — but only when the owning quest's own CTDAs don't
-        # already scope the audience (NQDBeggars does: GetInFaction(Beggars),
-        # so its conditionless beggar lines must stay quest-scoped, NOT be
-        # narrowed to whichever NPCs a sibling happens to name).
-        raw_q = get_formid(g['infos'][0], 'QSTI.Quest')
-        qctdas = ctx['quest_dialog_ctdas'].get(raw_q, b'')
-        if _ctdas_scope_audience(qctdas):
-            group_ctx['sibling_factions'] = set()
-            group_ctx['sibling_npcs'] = set()
-        else:
-            sib_f, sib_n = set(), set()
-            for ir in g['infos']:
-                sib_f |= read_func_param_fids(ir, FUNC_GET_IN_FACTION,
-                                              ctx['offset'])
-                sib_n |= read_getisid_fids(ir, offset=ctx['offset'],
-                                           positive_only=True)
-            group_ctx['sibling_factions'] = sib_f
-            group_ctx['sibling_npcs'] = sib_n
-
-        topic_children, child_count = _convert_topic_infos(
-            g['infos'], owner_qfid, group_ctx)
-        if not child_count:
-            continue
-        # PNAM stays at the vanilla 50.0 DEFAULT — quest arbitration rides on
-        # QUST.DNAM.Priority (see compute_quest_priorities), never here.
-        # Skyrim.esm leaves PNAM at 50.0 on 659 of 664 Misc/greeting topics and
-        # 5375 of 6535 player topics; greetings are NEVER ranked above the topic
-        # list. Writing the quest priority here instead put FGC01Rats' GREETING
-        # at PNAM 161 against its player topics' 50.0, and Pinarus lost every
-        # topic he owned (mountain-lion AND training) — two unrelated topics on
-        # one NPC, which no per-topic condition bug could explain.
-        dial_bytes = convert_DIAL(
-            g['src'], info_count=child_count, dlbr_fid=0,
-            quest_fid=owner_qfid, category=g['cat'], subtype=subtype,
-            snam=g['snam'], edid_override=this_edid,
-            formid_override=this_dial_fid)
-        content += dial_bytes
-        content += pack_group(7, struct.pack('<I', this_dial_fid),
-                              topic_children)
-        ctx['stats']['bark_topics'] = ctx['stats'].get('bark_topics', 0) + 1
-
+        content += _emit_bark_group(writer, key, groups[key], claimed, ctx)
     return content, sge_extra
+
+
+def _bark_topic_ids(writer, key, g, claimed: set, ctx) -> tuple:
+    """(DIAL FormID, EditorID) for one bark group; registers it for its readers.
+
+    See: docs/commentary/tes5_import_dialogue.md#bark-topic-ids
+    """
+    owner_qfid, subtype = key
+    src_fid = g['src_fid']
+    if src_fid not in claimed and (src_fid >> 24) == writer.own_index:
+        dial_fid = src_fid
+        claimed.add(src_fid)
+    else:
+        dial_fid = writer.derive_formid('BARK_DIAL', key)
+    edid = (f"{g['edid']}_{owner_qfid:08X}" if g['edid']
+            else f"TES4Bark_{subtype}_{owner_qfid:08X}")
+    if (g['edid'] or '').upper() == 'GREETING':
+        GREET_TOPIC_BY_QUEST.setdefault(owner_qfid, dial_fid)
+    ctx.setdefault('bark_topic_fids', {})[key] = dial_fid
+    return dial_fid, edid
+
+
+def _bark_group_ctx(ctx, g, edid: str) -> dict:
+    """The INFO context one bark group converts under.
+
+    See: docs/commentary/tes5_import_dialogue.md#bark-group-context
+    """
+    group_ctx = dict(ctx, is_bark=True, topic_npc_fids=set(),
+                     service_gate_bytes=b'', unlock_gate_bytes=b'',
+                     bark_choice_gate_bytes=b'', service_kind='', edid=edid,
+                     orig_quest_fid=None, sibling_factions=set(),
+                     sibling_npcs=set())
+    group_ctx['topic_vtyps'] = _topic_voice_types(
+        g['infos'], ctx['npc_to_vtyp'], ctx['offset'])
+    raw_q = get_formid(g['infos'][0], 'QSTI.Quest')
+    if not _ctdas_scope_audience(ctx['quest_dialog_ctdas'].get(raw_q, b'')):
+        for ir in g['infos']:
+            group_ctx['sibling_factions'] |= read_func_param_fids(
+                ir, FUNC_GET_IN_FACTION, ctx['offset'])
+            group_ctx['sibling_npcs'] |= read_getisid_fids(
+                ir, offset=ctx['offset'], positive_only=True)
+    return group_ctx
+
+
+def _emit_bark_group(writer, key, g, claimed: set, ctx) -> bytes:
+    """One bark group's DIAL and INFOs, plus a GREETING's arrest force-greet.
+
+    PNAM stays at the vanilla 50.0.
+    See: docs/commentary/tes5_import_dialogue.md#bark-pnam-stays-default
+    See: docs/commentary/tes5_import_dialogue.md#arrest-force-greet
+    """
+    owner_qfid, subtype = key
+    dial_fid, edid = _bark_topic_ids(writer, key, g, claimed, ctx)
+    children, count = _convert_topic_infos(
+        g['infos'], owner_qfid, _bark_group_ctx(ctx, g, edid))
+    if not count:
+        return b''
+    content = convert_DIAL(
+        g['src'], info_count=count, dlbr_fid=0, quest_fid=owner_qfid,
+        category=g['cat'], subtype=subtype, snam=g['snam'],
+        edid_override=edid, formid_override=dial_fid)
+    content += pack_group(7, struct.pack('<I', dial_fid), children)
+    ctx['stats']['bark_topics'] = ctx['stats'].get('bark_topics', 0) + 1
+    if (g['edid'] or '').upper() == 'GREETING':
+        content += force_greet_topic(
+            writer, g['src'], owner_qfid,
+            [(get_formid(r, 'FormID'), r) for r in g['infos']], children)
+    return content
 
 
 # Response text for the synthetic catch-all service INFOs (silent subtitle —

@@ -115,8 +115,10 @@ constexpr const char* kFilledSuffix = "_filled";
 // See: docs/commentary/morrowind_runtime.md#published-state
 constexpr const char* kFileFactionForms = "factions_formid.txt";
 constexpr const char* kFileStates = "state_formid.txt";
+constexpr const char* kFileCrime = "crime_formid.txt";
 std::unordered_map<std::string, FormRef> g_factionForms;
 std::vector<StateRow> g_states;
+FormRef g_realmCrime;
 
 std::unordered_map<std::string, FactionDef> g_factions;
 std::unordered_map<std::string, GmstDef> g_gmsts;
@@ -399,6 +401,7 @@ void ClearScriptTables() {
     g_factions.clear();
     g_factionForms.clear();
     g_states.clear();
+    g_realmCrime = FormRef();
     g_gmsts.clear();
     g_skills.clear();
 }
@@ -566,6 +569,10 @@ void LoadScriptTables(const std::string& pluginDir) {
                [](const std::string& key, const std::string& value) {
                    g_states.push_back({Lower(key), ParseFormRef(value)});
                });
+    ForEachRow(pluginDir + kFileCrime,
+               [](const std::string&, const std::string& value) {
+                   if (g_realmCrime.plugin.empty()) g_realmCrime = ParseFormRef(value);
+               });
     ForEachRow(pluginDir + kFileGmsts,
                [](const std::string& name, const std::string& value) {
                    g_gmsts.emplace(Lower(name), ParseGmst(value));
@@ -587,6 +594,10 @@ const FormRef* FindFactionForm(const std::string& faction) {
 }
 
 const std::vector<StateRow>& StateRows() { return g_states; }
+
+const FormRef* RealmCrimeFaction() {
+    return g_realmCrime.plugin.empty() ? nullptr : &g_realmCrime;
+}
 
 const GmstDef* FindGmst(const std::string& name) {
     const auto it = g_gmsts.find(Lower(name));

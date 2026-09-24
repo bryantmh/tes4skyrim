@@ -84,7 +84,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp ^
    plugin\game_calls.cpp plugin\game_calls_move.cpp plugin\game_calls_ai.cpp ^
    plugin\game_calls_query.cpp plugin\game_calls_spell.cpp ^
    plugin\game_calls_message.cpp plugin\game_calls_control.cpp ^
-   plugin\game_calls_state.cpp ^
+   plugin\game_calls_state.cpp plugin\game_calls_crime.cpp ^
    plugin\alchemy.cpp plugin\alchemy_hooks.cpp ^
    plugin\journal_log.cpp plugin\journal_objectives.cpp ^
    plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\

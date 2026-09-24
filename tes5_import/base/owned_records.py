@@ -32,13 +32,6 @@ _OWNED_GLOBALS = (
     ('TES4ControlsDisabled', 's'),
 )
 
-#: DATA flags on the stand-in crime faction: Can Be Owner | Track Crime.
-_CRIME_FACTION_FLAGS = 0x8000 | 0x0040
-
-#: CRVA crime values shared by all 14 real Skyrim crime factions.
-_CRIME_VALUES = (1, 1, 1000, 40, 5, 25, 0, 1.0, 100, 0)
-
-
 def _emit_global(writer: PluginWriter, edid: str, type_char: str) -> int:
     """Write one GlobalVariable, register it by name, and return its FormID."""
     fid = writer.derive_formid('GLOB', edid)
@@ -50,31 +43,13 @@ def _emit_global(writer: PluginWriter, edid: str, type_char: str) -> int:
     return fid
 
 
-def _emit_crime_faction(writer: PluginWriter) -> int:
-    """Write the stand-in Cyrodiil crime faction and return its FormID."""
-    edid = 'TES4CyrodiilCrimeFaction'
-    fid = writer.derive_formid('FACT', edid)
-    subs = pack_string_subrecord('EDID', edid)
-    subs += pack_string_subrecord('FULL', 'Cyrodiil Crime Faction')
-    subs += pack_subrecord('DATA', struct.pack('<I', _CRIME_FACTION_FLAGS))
-    subs += pack_subrecord('CRVA', struct.pack('<BBHHHHHfHH', *_CRIME_VALUES))
-    writer.add_record('FACT', pack_record('FACT', fid, 0, subs))
-    WELL_KNOWN_PROPERTIES[edid] = fid
-    return fid
-
-
 def create_tes4_special_records(writer: PluginWriter):
-    """Create the globals and crime faction converted Papyrus scripts need.
-
-    Each replaces Oblivion state Skyrim exposes no way to read. FormIDs land in
-    WELL_KNOWN_PROPERTIES so VMAD builders inject them as property values,
-    eliminating the "fill in CK" step.
+    """Create the globals converted Papyrus scripts need, bound by name.
 
     See: docs/commentary/tes5_import_dialogue.md#the-conversion-owned-globals
     """
     made = {edid: _emit_global(writer, edid, ch)
             for (edid, ch) in _OWNED_GLOBALS}
-    made['TES4CyrodiilCrimeFaction'] = _emit_crime_faction(writer)
     print('  Created TES4 special records: '
           + ', '.join(f'{k}={v:08X}' for k, v in made.items()))
 

@@ -222,7 +222,14 @@ condition drops.
 ### <a id="run-on-target"></a>Run On = Target under a script-driven topic
 
 TES4's run-on-target flag bit becomes TES5 Run On = 1 (Target) and the bit is
-cleared so it is not double-counted. In a Say-driven topic there is no
+cleared so it is not double-counted.
+
+The bounty tests are the exception (`_PLAYER_BOUNTY_FUNCS`). Oblivion's arrest
+greetings ask `GetCrimeGold` / `CanPayCrimeGold` of the TARGET, the player,
+whose bounty is global; Skyrim's versions answer "the player's bounty in the
+SUBJECT's crime faction", so run on the player -- who has none -- they are
+always 0 and no arrest line could pass. They run on the subject, as vanilla's
+`DialogueCrimeGuards` lines do. In a Say-driven topic there is no
 dialogue target, so a target-run condition can never pass. With a resolved,
 unique listener the condition is retargeted to Run On = Reference on that ref,
 EXCEPT for identity functions (`_NO_TARGET_RETARGET_FUNCS`): a GetIsID pinned

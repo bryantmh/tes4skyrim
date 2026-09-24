@@ -812,4 +812,18 @@ constexpr const char* kJournalFunctionsPath = "_root.MWRT_Runtime";
 constexpr std::uint32_t kGfxValueManaged = 0x40;
 constexpr std::uint32_t kGfxValueDisplayObject = 8;
 
+// Crime natives, each found at its registration in 1.6.1170 (the callback's
+// lea beside the name's): Actor.GetCrimeFaction, Faction.GetCrimeGold /
+// SetCrimeGold / SetCrimeGoldViolent / PlayerPayCrimeGold / SendPlayerToJail.
+// See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
+constexpr std::uint64_t kActorGetCrimeFaction = 54921;
+constexpr std::uint64_t kFactionGetCrimeGold = 55794;
+constexpr std::uint64_t kFactionSetCrimeGold = 55809;
+constexpr std::uint64_t kFactionSetCrimeGoldViolent = 55810;
+constexpr std::uint64_t kFactionPlayerPayCrimeGold = 55805;
+constexpr std::uint64_t kFactionSendPlayerToJail = 55807;
+
+// TESObjectREFR's base form, which TESObjectREFR::ActivateRef dispatches on.
+constexpr std::size_t kOffRefBase = 0x40;
+
 }  // namespace mwruntime::ids

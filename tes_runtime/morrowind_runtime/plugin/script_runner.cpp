@@ -366,7 +366,7 @@ class OpSameFaction : public Interpreter::Opcode0 {
 
 class OpGetPCCrimeLevel : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
-        runtime.push(State().crimeLevel);
+        runtime.push(PlayerCrimeLevelNow());
     }
 };
 
@@ -375,8 +375,26 @@ class OpSetPCCrimeLevel : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
         const float value = PopFloat(runtime);
         State().crimeLevel = std::max(
-            0.0f, (Relative ? State().crimeLevel : 0.0f) + value);
+            0.0f, (Relative ? PlayerCrimeLevelNow() : 0.0f) + value);
+        if (Hooks().setCrimeGold) Hooks().setCrimeGold(State().crimeLevel);
         Log("crime: level %g", State().crimeLevel);
+    }
+};
+
+template <bool Confiscate>
+class OpPayFine : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime&) override {
+        State().crimeLevel = 0.0f;
+        if (Hooks().payFine) Hooks().payFine(Confiscate);
+        Log("crime: fine paid%s", Confiscate ? ", stolen goods confiscated" : "");
+    }
+};
+
+class OpGoToJail : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime&) override {
+        State().crimeLevel = 0.0f;
+        if (Hooks().goToJail) Hooks().goToJail();
+        Log("crime: off to jail");
     }
 };
 
@@ -729,6 +747,10 @@ void Machine::InstallFactions() {
     Real<OpGetPCCrimeLevel>(S::opcodeGetPCCrimeLevel);
     Real<OpSetPCCrimeLevel<false>>(S::opcodeSetPCCrimeLevel);
     Real<OpSetPCCrimeLevel<true>>(S::opcodeModPCCrimeLevel);
+    namespace M = Compiler::Misc;
+    Real<OpPayFine<true>>(M::opcodePayFine);
+    Real<OpPayFine<false>>(M::opcodePayFineThief);
+    Real<OpGoToJail>(M::opcodeGoToJail);
 }
 
 void Machine::InstallItemsAndScripts() {

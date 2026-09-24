@@ -308,6 +308,11 @@ const FactionDef* FindFaction(const std::string& faction);
 // See: docs/commentary/morrowind_runtime.md#player-factions
 const FormRef* FindFactionForm(const std::string& faction);
 
+// The crime faction of the realm -- crime_formid.txt -- whose bounty PC Crime
+// Level reads when no speaker's own crime faction answers. Null when none.
+// See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
+const FormRef* RealmCrimeFaction();
+
 // One GLOB the export minted for a bark to test: `key` is `journal:<id>`,
 // `cell:<prefix>`, `reputation` or `weather`, and the runtime writes that
 // value into `form` -- state_formid.txt. Every plugin's rows are kept: two

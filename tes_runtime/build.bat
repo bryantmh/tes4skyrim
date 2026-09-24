@@ -28,7 +28,7 @@ if /i "%~1"=="cache-only" goto cacheonly
 echo [build] compiling plugin...
 cl /nologo /c /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG ^
    plugin.cpp addresses.cpp hook.cpp stream.cpp compose.cpp json.cpp log.cpp ^
-   engine.cpp guns.cpp fire.cpp hud.cpp parts.cpp zoom.cpp sever.cpp ^
+   engine.cpp guns.cpp fire.cpp hud.cpp parts.cpp zoom.cpp sever.cpp crime.cpp ^
    /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: compilation failed

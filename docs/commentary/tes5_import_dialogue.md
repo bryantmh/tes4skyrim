@@ -1245,16 +1245,18 @@ sequencing wrong. The converter owns both writers, so the state is shadowed:
 `Game.DisablePlayerControls()` and `Game.EnablePlayerControls()` each also
 write this global, and the read returns it.
 
-### TES4CyrodiilCrimeFaction
+### The crime factions (formerly TES4CyrodiilCrimeFaction)
 
-Stands in for Oblivion's single global crime faction, and receives most
-converted `GetPCExpelled` / `GotoJail` / crime calls, so it must be a REAL
+The single stand-in `TES4CyrodiilCrimeFaction` is gone: every bounty realm now
+has its own crime faction that NPCs really report to, and converted crime calls
+read the realm list `TES4CrimeFactions` -- see
+[tes_runtime_crime.md](tes_runtime_crime.md#bounty-realms). Each is a REAL
 crime faction: DATA sets **Can Be Owner (bit 15) + Track Crime (bit 6)**, and
 CRVA carries the vanilla crime values (murder 1000, assault 40, trespass 5,
 pickpocket 25, steal x1.0, escape 100) that all 14 real Skyrim crime factions
 share.
 
-**REVERTED:** it previously set CanBeOwner plus bits 7-11/13/16, which are
+**REVERTED:** the stand-in once set CanBeOwner plus bits 7-11/13/16, which are
 Skyrim's *Ignore* Crimes flags — the opposite of the intent; xEdit decodes the
 old `0x0001AF80` as "IgnoreKills". It also never set Track Crime, without which
 the engine accumulates no crime gold at all, and its CRVA used the wrong struct
@@ -1583,3 +1585,62 @@ player cannot answer).
 
 Choices into a zero-INFO topic are dropped as well. Those topics are never
 emitted (`EMPTY_DIAL_FIDS`) and Oblivion never showed them either.
+
+## <a id="bark-pass"></a>The bark pass: one topic per quest and subtype
+
+**Code:** `tes5_import/dialogue/groups.py:_build_bark_pass`
+
+### <a id="bark-topic-ids"></a>Which group keeps the source DIAL's FormID
+
+Each group tries to reuse the original FormID of its donor source DIAL, but a
+DIAL FormID can be claimed by only one group -- and only when this plugin OWNS
+the donor. A dependent plugin's bark INFOs point at its MASTER's shared
+GREETING/HELLO record; reusing that fid emits an OVERRIDE of the master's topic,
+re-keyed to this plugin's quest. Morrowind_ob shipped Oblivion's
+GREETING_0102466E re-keyed to its own chargen quest (twice), which clobbered the
+CharacterGen Emperor's greeting topic -- his choices vanished and only 'Rumors'
+survived whenever Morrowind_ob was loaded.
+
+A quest's GREETING topic is remembered so a ForceGreet package can open it, and
+every (owner quest, subtype) -> output DIAL is recorded so the NPC-conversation
+driver can Say a bark-grouped hop (a chain's GOODBYE line lives in its quest's
+GBYE group, not at the source GOODBYE DIAL's FormID).
+
+### <a id="bark-group-context"></a>Per-group INFO context
+
+Voice types are pooled from THIS group's INFOs (a generic bark line inherits its
+siblings' voices). The voice-file prefix MUST use the EditorID actually written
+into the DIAL record (the split-suffixed one) -- the engine builds the voice path
+from the record's own EditorID, so a voicemap keyed on the pre-split name would
+name every file something the game never looks for (= silent lines).
+
+Barks carry no identity/unlock/service gates. Ownership is the group's quest, so
+quest gates never fire (owner == info's own quest). There is no fallback quest
+for quest-less INFOs: their owner IS the synthetic generic quest already, so no
+quest gate is injected.
+
+Conditionless lines inherit the audience the group's CONDITIONED siblings
+target -- but only when the owning quest's own CTDAs do not already scope the
+audience (NQDBeggars does: GetInFaction(Beggars), so its conditionless beggar
+lines must stay quest-scoped, NOT be narrowed to whichever NPCs a sibling
+happens to name).
+
+### <a id="bark-pnam-stays-default"></a>PNAM stays at the vanilla 50.0
+
+Quest arbitration rides on QUST.DNAM.Priority (see `compute_quest_priorities`),
+never on the topic. Skyrim.esm leaves PNAM at 50.0 on 659 of 664 Misc/greeting
+topics and 5375 of 6535 player topics; greetings are NEVER ranked above the
+topic list. Writing the quest priority here instead put FGC01Rats' GREETING at
+PNAM 161 against its player topics' 50.0, and Pinarus lost every topic he owned
+(mountain-lion AND training) -- two unrelated topics on one NPC, which no
+per-topic condition bug could explain.
+
+### <a id="arrest-force-greet"></a>The arrest force-greet (PFGT)
+
+**Code:** `tes5_import/dialogue/arrest.py`
+
+A quest's guard-only GREETING INFOs (an AND-ed `IsGuard == 1`) are also offered
+under a ForceGreet-subtype topic, the channel Skyrim's pursuing guard opens
+(vanilla `DGCrimeForcegreetTopic`, SNAM `PFGT`). Each copy is a shared INFO
+(`DNAM` = the converted greeting): vanilla carries 3,411 DNAM INFOs and none of
+them has TRDT or NAM1. Copies carry no replay lockout.

@@ -73,6 +73,10 @@ defining its own crime faction gets the same treatment as vanilla's `0005D556`.
 SCTX arrives with `\r\n` still escaped; the regex only needs the function name
 and its first argument, so no unescaping is needed.
 
+These are the GUILD factions a script asks about. The bounty guards act on is
+a separate crime faction per realm, which every NPC reports to through `CRIF`;
+see [tes_runtime_crime.md](tes_runtime_crime.md#bounty-realms).
+
 ## <a id="faction-player-disposition"></a>Faction reactions and player disposition
 
 `_FACTION_PLAYER_DISP` maps a faction's low 24 bits to its Relation disposition

@@ -52,6 +52,12 @@ _OBSE_INPUT_NOTE = '{f} {a}  ;OBSE input command, no Papyrus equivalent'
 ACTOR, AV, SELF, OBJREF, RAW, MAP = ('ACTOR', 'AV', 'SELF', 'OBJREF',
                                     'RAW', 'MAP')
 
+#: The realm list property: the plugin's crime factions, main realm first.
+CRIME_REALMS = ('TES4CrimeFactions', 'FormList')
+
+#: The crime faction of the realm the player is in.
+CRIME_FACTION = 'TES4Polyfill.CrimeFaction(TES4CrimeFactions)'
+
 
 class Cmd:
     """One command's conversion, as data.
@@ -260,18 +266,18 @@ COMMAND_ROWS = {
     #: GetContainer: item.GetContainer -> item.GetContainer()
     'getcontainer': Cmd('{ref}.GetContainer()', SELF),
     #: Crime/fame/infamy writes: argument 0 cast to what the setter declares.
-    'setcrimegold': Cmd('TES4CyrodiilCrimeFaction.SetCrimeGold({i0})', self_type=('TES4CyrodiilCrimeFaction', 'Faction'), flags='actor_only'),
-    'modcrimegold': Cmd('TES4CyrodiilCrimeFaction.ModCrimeGold({c0}, false)', self_type=('TES4CyrodiilCrimeFaction', 'Faction'), flags='actor_only'),
+    'setcrimegold': Cmd(f'TES4Polyfill.SetCrimeGold({CRIME_FACTION}, {{i0}})', self_type=CRIME_REALMS, flags='actor_only'),
+    'modcrimegold': Cmd(f'{CRIME_FACTION}.ModCrimeGold({{c0}}, false)', self_type=CRIME_REALMS, flags='actor_only'),
     'modpcfame': Cmd('TES4Fame.Mod({f0})', self_type=('TES4Fame', 'GlobalVariable')),
     'modpcinfamy': Cmd('TES4Infamy.Mod({f0})', self_type=('TES4Infamy', 'GlobalVariable')),
     'setpcfame': Cmd('TES4Fame.SetValueInt({i0})', self_type=('TES4Fame', 'GlobalVariable')),
     'setpcinfamy': Cmd('TES4Infamy.SetValueInt({i0})', self_type=('TES4Infamy', 'GlobalVariable')),
-    #: GotoJail → faction.SendPlayerToJail()
-    'gotojail': Cmd('TES4CyrodiilCrimeFaction.SendPlayerToJail()', self_type=('TES4CyrodiilCrimeFaction', 'Faction')),
-    #: Crime gold functions → TES4CyrodiilCrimeFaction proxy
-    'getcrimegold': Cmd('TES4CyrodiilCrimeFaction.GetCrimeGold()', self_type=('TES4CyrodiilCrimeFaction', 'Faction'), flags='actor_only'),
-    'payfine': Cmd('TES4CyrodiilCrimeFaction.PlayerPayCrimeGold(false, false)', self_type=('TES4CyrodiilCrimeFaction', 'Faction')),
-    'payfinethief': Cmd('TES4CyrodiilCrimeFaction.PlayerPayCrimeGold(false, false)', self_type=('TES4CyrodiilCrimeFaction', 'Faction')),
+    #: Crime calls act on the realm the player is in; PayFine confiscates and releases.
+    'gotojail': Cmd(f'{CRIME_FACTION}.SendPlayerToJail()', self_type=CRIME_REALMS),
+    'getcrimegold': Cmd(f'{CRIME_FACTION}.GetCrimeGold()', self_type=CRIME_REALMS, flags='actor_only'),
+    'payfine': Cmd(f'{CRIME_FACTION}.PlayerPayCrimeGold(true, true)', self_type=CRIME_REALMS),
+    'payfinethief': Cmd(f'{CRIME_FACTION}.PlayerPayCrimeGold(false, false)', self_type=CRIME_REALMS),
+    'getplayerinseworld': Cmd('TES4Polyfill.CrimeRealm(TES4CrimeFactions)', self_type=CRIME_REALMS),
     #: Fame/Infamy → GlobalVariable
     'getpcfame': Cmd('TES4Fame.GetValueInt()', self_type=('TES4Fame', 'GlobalVariable')),
     'getpcinfamy': Cmd('TES4Infamy.GetValueInt()', self_type=('TES4Infamy', 'GlobalVariable')),
@@ -429,8 +435,8 @@ COMMAND_ROWS = {
     'setnoavoidance': Cmd(note='{f}'),
     'setnorumors': Cmd(note='{f}'),
     'setpackduration': Cmd(note='{f}'),
-    #: SetPlayerInSEWorld: no-op
-    'setplayerinseworld': Cmd(note='SetPlayerInSEWorld'),
+    #: SetPlayerInSEWorld: which realm's bounty the crime calls read and write.
+    'setplayerinseworld': Cmd('TES4Polyfill.SetCrimeRealm(TES4CrimeFactions, {i0})', self_type=CRIME_REALMS),
     'setpublic': Cmd(note='{f}'),
     'setquestobject': Cmd(note='{f}'),
     #: SetRigidBodyMass → no-op
@@ -851,15 +857,12 @@ COMMAND_ROWS = {
         self_type=('TES4GoldFenced', 'GlobalVariable')),
 
     #: See: docs/commentary/script_convert.md#equivalent-in-a-different-subsystem
-    'ispcamurderer': Cmd(
-        '(TES4CyrodiilCrimeFaction.GetCrimeGoldViolent() >= 1000)',
-        self_type=('TES4CyrodiilCrimeFaction', 'Faction')),
-    'ispcanmurderer': Cmd(
-        '(TES4CyrodiilCrimeFaction.GetCrimeGoldViolent() >= 1000)',
-        self_type=('TES4CyrodiilCrimeFaction', 'Faction')),
-    'getpcismurderer': Cmd(
-        '(TES4CyrodiilCrimeFaction.GetCrimeGoldViolent() >= 1000)',
-        self_type=('TES4CyrodiilCrimeFaction', 'Faction')),
+    'ispcamurderer': Cmd(f'({CRIME_FACTION}.GetCrimeGoldViolent() >= 1000)',
+                         self_type=CRIME_REALMS),
+    'ispcanmurderer': Cmd(f'({CRIME_FACTION}.GetCrimeGoldViolent() >= 1000)',
+                          self_type=CRIME_REALMS),
+    'getpcismurderer': Cmd(f'({CRIME_FACTION}.GetCrimeGoldViolent() >= 1000)',
+                           self_type=CRIME_REALMS),
 
     #: See: docs/commentary/script_convert.md#argument-that-looks-ignorable
     'setdoordefaultopen': Cmd('{ref}.SetOpen({b0})', defaults={0: '1'}),
@@ -1035,7 +1038,7 @@ HANDLED_COMMANDS = frozenset((
     'getownership', 'getpcfactionattack', 'getpcfactionattack',
     'getpcfactionmurder', 'getpcfactionsteal', 'getpcfactionsteal',
     'getpcisclass', 'getpcismurderer', 'getpcisrace', 'getpcissex',
-    'getplayerinseworld', 'getsecondspassed', 'getself', 'getspellcount',
+    'getsecondspassed', 'getself', 'getspellcount',
     'holdkey', 'isactionref', 'isactivator', 'isactor', 'isarmor', 'isbook',
     'isclothing', 'iscontainer', 'isdoor', 'isingredient', 'iskey', 'islight',
     'ismisc', 'isowner', 'ispcamurderer', 'ispcanmurderer', 'ispcrace',

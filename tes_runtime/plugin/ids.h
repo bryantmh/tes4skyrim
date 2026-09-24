@@ -223,4 +223,29 @@ constexpr std::uint64_t kActorBodyPartData = 37181;
 constexpr std::uint64_t kRttiCast = 15619;
 constexpr std::uint64_t kDismemberSkinRtti = 410521;
 
+// ---------------------------------------------------------------------------
+// Jails (docs/commentary/tes_runtime_crime.md#nearest-jail)
+// ---------------------------------------------------------------------------
+
+// Papyrus natives, each found at its registration in 1.6.1170: the lea of the
+// callback beside the lea of its name (ObjectReference ones store it at
+// [rsi+0x50] after the name). Game.GetPlayer is shared with the Morrowind
+// runtime's table.
+constexpr std::uint64_t kGetPlayer = 55469;
+constexpr std::uint64_t kRefGetParentCell = 56632;
+constexpr std::uint64_t kRefGetWorldSpace = 56636;
+constexpr std::uint64_t kRefGetPositionX = 56178;
+constexpr std::uint64_t kRefGetPositionY = 56179;
+constexpr std::uint64_t kRefIsDisabled = 56639;
+constexpr std::uint64_t kCellIsInterior = 56056;
+
+// TESFaction crime data: TESObjectREFR* jail marker, follower wait marker,
+// stolen-goods container and player-inventory container. TESFaction::Load
+// (0x3ac9c0) stores the JAIL/WAIT/STOL/PLCN FormIDs there and InitItem
+// (0x3ad2e0, vtable 0x17e1fc0 slot 19) resolves each to a reference.
+constexpr std::size_t kFactionJail = 0x60;
+constexpr std::size_t kFactionWait = 0x68;
+constexpr std::size_t kFactionStolen = 0x70;
+constexpr std::size_t kFactionInventory = 0x78;
+
 }  // namespace tesruntime::ids

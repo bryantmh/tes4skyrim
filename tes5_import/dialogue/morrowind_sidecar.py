@@ -71,6 +71,9 @@ FACTION_FORMS_TABLE = 'factions_formid.txt'
 #: The GLOBs the runtime publishes bark state into: `journal:<id>=Plugin.esm|FormID`.
 STATE_TABLE = 'state_formid.txt'
 
+#: The crime faction PC Crime Level and the fine and jail opcodes act on: `crime=Plugin.esm|FormID`.
+CRIME_TABLE = 'crime_formid.txt'
+
 #: Every GMST of the chain, `name=type,value`, and the SKIL rows persuasion credits skill use from.
 GMST_TABLE = 'GMST.txt'
 SKILLS_TABLE = 'SKIL.txt'
@@ -942,6 +945,12 @@ def stage_sound_table(export_dir: str, output_path: str, plugin_name: str,
     return len(rows)
 
 
+def _crime_lines() -> list:
+    """Realm crime rows; late import breaks crime->nested->actor_common->here."""
+    from ..record_types.crime import default_crime_rows
+    return default_crime_rows()
+
+
 def write_morrowind_sidecar(export_dir: str, output_path: str,
                             plugin_name: str, writer=None) -> int:
     """Stage this plugin's dialogue and tables into its SKSE sidecar folder,
@@ -970,6 +979,7 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
               + _write_lines(os.path.join(out_dir, SAY_TABLE),
                              say_rows(export_dir,
                                       os.path.basename(plugin_name)))
+              + _write_lines(os.path.join(out_dir, CRIME_TABLE), _crime_lines())
               + _journal_quests(writer, out_dir, plugin_name))
     index = _actor_index(export_dir)
     if not index:

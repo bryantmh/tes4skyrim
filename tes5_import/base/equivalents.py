@@ -691,6 +691,7 @@ TES4_MARKER_FORMID_TO_SKYRIM = {
     0x00000001: 0x0000003B,  # DoorMarker       → XMarker (invisible generic)
     0x00000002: 0x00000002,  # TravelMarker     → same FormID in Skyrim.esm (fast-travel dest)
     0x00000003: 0x00000003,  # NorthMarker      → same FormID in Skyrim.esm
+    0x00000004: 0x00000004,  # PrisonMarker     → same FormID in Skyrim.esm (a jail)
     0x00000005: 0x0000003B,  # DivineMarker     → XMarker (no Skyrim equivalent)
     0x00000006: 0x0000003B,  # TempleMarker     → XMarker (no Skyrim equivalent)
     # MapMarker → MapMarker.  Skyrim's STAT 0x10 *is* the map marker base object

@@ -2999,7 +2999,7 @@ class TestJailIsNotExpulsion:
 
     def test_does_not_register_a_crime_faction_property(self, converter):
         conv_expr(converter, 'IsPlayerInJail', 'Quest')
-        assert 'TES4CyrodiilCrimeFaction' not in converter.get_property_refs()
+        assert 'TES4CrimeFactions' not in converter.get_property_refs()
 
 
 class TestScriptAddTopicOpensTheGate:
@@ -3100,8 +3100,8 @@ class TestIsPCAMurdererIsNotZero:
         out = conv_line(converter, 'if IsPCAMurderer == 1', 'Quest')
         assert '0 == 1' not in out
         assert 'GetCrimeGoldViolent()' in out
-        assert converter.get_property_refs()['TES4CyrodiilCrimeFaction'] \
-            == 'Faction'
+        assert converter.get_property_refs()['TES4CrimeFactions'] \
+            == 'FormList'
 
     def test_uses_the_murder_band_not_any_violence(self, converter):
         """`> 0` is R4-1's ASSAULT test — it would make the player a murderer

@@ -89,7 +89,7 @@ int GameActor::PlayerLevel() const {
 int GameActor::PlayerHealthPercent() const { return Stub(kAlive); }
 
 int GameActor::PlayerCrimeLevel() const {
-    return static_cast<int>(State().crimeLevel);
+    return static_cast<int>(PlayerCrimeLevelNow());
 }
 
 // The PLAYER's stats, by TES3 index -- the same read the Get commands make.

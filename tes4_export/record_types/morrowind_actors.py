@@ -73,6 +73,10 @@ _FACTION_HIDDEN = 0x1
 #: CLDT: 2 attributes, specialization, 5 x 2 skills, playable, services.
 _CLDT_FORMAT = '<2ii10iii'
 
+#: The class id the TES3 engine treats as a guard, and TES4's CLAS Guard flag.
+_GUARD_CLASS_ID = 'guard'
+_CLASS_GUARD = 0x02
+
 #: SNDG type -> CSDT slot. See: docs/commentary/tes4_export_morrowind.md#creature-sound-generators
 _SOUND_GEN_SLOTS = {0: 0, 1: 1, 2: 2, 3: 3, 4: 5, 5: 6, 6: 7, 7: 8}
 
@@ -419,8 +423,9 @@ def export_CLAS(rec: Tes3Record, ctx) -> list:
     data = unpack(rec, 'CLDT', _CLDT_FORMAT)
     if data:
         specialization, playable, services = data[2], data[13], data[14]
+        guard = _CLASS_GUARD if rec.record_id.lower() == _GUARD_CLASS_ID else 0
         lines.extend([f'DATA.Specialization={specialization}',
-                      f'DATA.Flags={playable & 1}',
+                      f'DATA.Flags={(playable & 1) | guard}',
                       f'DATA.Services={services & _SERVICES_MASK}',
                       'DATA.Teaches=-1', 'DATA.MaxTraining=0'])
     return lines

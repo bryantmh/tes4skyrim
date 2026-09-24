@@ -25,6 +25,8 @@ using PlaceAtMeFn = void* (*)(void* vm, std::uint32_t stack, void* self,
 
 extern SetValueFn  g_setValue;
 extern PlaceAtMeFn g_placeAtMe;
+// The live reference the player is talking to (SetSpeakerRef), or null.
+extern void*       g_speakerRef;
 
 std::string Lower(std::string text);
 // Logs an id that does not resolve, once per id.
@@ -70,6 +72,9 @@ void InstallSpellCalls(GameHooks& hooks);
 // state barks test into their GLOBs. game_calls_state.cpp.
 // See: docs/commentary/morrowind_runtime.md#published-state
 void InstallStateCalls(GameHooks& hooks);
+// PC Crime Level on the engine's crime gold, and the fine and jail opcodes.
+// See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
+void InstallCrimeCalls(GameHooks& hooks);
 void PublishState();
 // The seven player-control switches and Game.ShowRaceMenu.
 // See: docs/commentary/morrowind_runtime.md#the-control-switches

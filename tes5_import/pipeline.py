@@ -42,6 +42,7 @@ from .navmesh.pool import collision_cache_chain
 from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         OverrideContext, detect_injected_records)
 from .record_types import magic_art
+from .record_types.crime import plan_crime
 from .dialogue.converter import build_npc_to_vtyp_map
 from .base.adopted_records import adopt_master_special_records
 from .base.cell_family import set_cell_families
@@ -1051,6 +1052,39 @@ def _new_plugin_writer(masters: list, is_esm: bool, export_dir: str):
     return writer
 
 
+def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
+                  export_dir: str, _step_done) -> None:
+    """Phase 0: every pre-scan, in order, filling `st` with what records read.
+
+    See: docs/commentary/tes5_import_pipeline.md#phase-0-ordering-constraints
+    """
+    by_type, ctx, writer = st.by_type, st.ctx, st.writer
+    _register_run_tables(by_type, ctx, writer)
+    _prescan_special_records(by_type, ctx, writer, export_dir, _step_done)
+    st.npc_to_vtyp = _prescan_npc_voice_map(by_type, ctx, writer,
+                                            num_new_masters, _step_done)
+    st.unlock_plan, st.unlock_globals, _SC = _prescan_unlock_plan(
+        by_type, writer, _step_done)
+    _prescan_menu_records(by_type, writer, _SC, _step_done)
+    st.fid_to_edid = _prescan_fid_to_edid(all_records, ctx, _step_done)
+    st.xref = _prescan_cross_ref_graph(all_records, ctx, export_dir,
+                                       _step_done)
+    _scpt_master_export = _prescan_script_plans(by_type, ctx, st.xref,
+                                                st.fid_to_edid, _step_done)
+    _prescan_magic_effects(by_type, ctx, writer, st.xref, st.fid_to_edid,
+                           _scpt_master_export, _step_done, export_dir)
+    _prescan_vendor_trainer(by_type, ctx, writer, export_dir, _step_done)
+    plan_crime(by_type, ctx, writer, export_dir, st.plugin_out_dir,
+               st.output_path, st.output_root)
+    _prescan_mesh_caches(export_dir, st.plugin_out_dir, _step_done)
+    _prescan_furniture_and_actors(by_type, ctx, writer, export_dir,
+                                  _step_done)
+    st.pack_plan, st.pack_ctx, st._script_vars = _prescan_package_plan(
+        by_type, ctx, writer, st.fid_to_edid, _step_done)
+    _prescan_leveled_actors(by_type, ctx, writer, _step_done)
+    _prescan_outfits_hair_skin(by_type, ctx, export_dir)
+
+
 def import_plugin(export_dir: str, output_path: str, masters: list = None,
                   is_esm: bool = True, skip_types: set = None,
                   output_root: str = None):
@@ -1138,67 +1172,15 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
             print(f"  Injected records: {len(injected)} moved out of the "
                   f"master's FormID space into ours")
 
-    _register_run_tables(by_type, ctx, writer)
-
-    _prescan_special_records(by_type, ctx, writer, export_dir,
-                             _step_done)
-
-    npc_to_vtyp = _prescan_npc_voice_map(by_type, ctx, writer,
-                                         num_new_masters, _step_done)
-
-    unlock_plan, unlock_globals, _SC = _prescan_unlock_plan(
-        by_type, writer, _step_done)
-
-    _prescan_menu_records(by_type, writer, _SC, _step_done)
-
-    fid_to_edid = _prescan_fid_to_edid(all_records, ctx, _step_done)
-
-    xref = _prescan_cross_ref_graph(all_records, ctx, export_dir,
-                                    _step_done)
-
-    _scpt_master_export = _prescan_script_plans(by_type, ctx, xref,
-                                                fid_to_edid,
-                                                _step_done)
-
-    _prescan_magic_effects(by_type, ctx, writer, xref, fid_to_edid,
-                           _scpt_master_export, _step_done, export_dir)
-
-    _prescan_vendor_trainer(by_type, ctx, writer, export_dir, _step_done)
-
-    _prescan_mesh_caches(export_dir, plugin_out_dir, _step_done)
-
-    _prescan_furniture_and_actors(by_type, ctx, writer, export_dir,
-                                  _step_done)
-
-    pack_plan, pack_ctx, _script_vars = _prescan_package_plan(
-        by_type, ctx, writer, fid_to_edid, _step_done)
-
-    _prescan_leveled_actors(by_type, ctx, writer, _step_done)
-
-    _prescan_outfits_hair_skin(by_type, ctx, export_dir)
-
+    st = ImportState(all_skip=all_skip, output_path=output_path,
+                     plugin_out_dir=plugin_out_dir,
+                     num_tes4_masters=num_tes4_masters, ctx=ctx,
+                     output_root=output_root, by_type=by_type, writer=writer)
+    _run_prescans(st, all_records, num_new_masters, export_dir, _step_done)
     _phase_done('pre-scans')
 
     _prescan_music_records(by_type, writer, export_dir,
                            plugin_out_dir, output_path)
-
-    st = ImportState(
-        all_skip=all_skip,
-        output_path=output_path,
-        plugin_out_dir=plugin_out_dir,
-        num_tes4_masters=num_tes4_masters,
-        ctx=ctx,
-        output_root=output_root,
-        by_type=by_type,
-        writer=writer,
-        npc_to_vtyp=npc_to_vtyp,
-        unlock_plan=unlock_plan,
-        unlock_globals=unlock_globals,
-        fid_to_edid=fid_to_edid,
-        xref=xref,
-        pack_plan=pack_plan,
-        pack_ctx=pack_ctx,
-        _script_vars=_script_vars)
     run_record_phases(st, export_dir, _phase_done, skip_types)
     return run_finalize_phases(st, export_dir, _phase_done, is_esm,
                                masters)

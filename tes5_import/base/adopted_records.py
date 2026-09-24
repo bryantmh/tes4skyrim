@@ -1,7 +1,7 @@
 """
 Adopting a converted master's synthesized support records.
 
-The `TES4*` globals, the crime faction and the voice types have no TES4 source
+The `TES4*` globals and the voice types have no TES4 source
 FormID, so the companion manifest cannot name them and a dependent plugin finds
 them in its masters by EditorID. A plugin whose masters supply none of them --
 a root master, or the Morroblivion patch, whose only master borrows them from a
@@ -21,7 +21,6 @@ _TES4_SPECIAL_RECORD_SIGS = {
     'TES4Infamy': b'GLOB',
     'TES4GoldFenced': b'GLOB',
     'TES4ControlsDisabled': b'GLOB',
-    'TES4CyrodiilCrimeFaction': b'FACT',
 }
 
 

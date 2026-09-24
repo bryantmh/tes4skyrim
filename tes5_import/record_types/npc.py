@@ -14,6 +14,7 @@ from ..actors.outfits import split_inventory
 from ..packages.actor_wiring import CSTY_DEFAULT, DPLT_NPC_LIST, npc_packages
 from ..base.equivalents import map_hair_color
 from .actor_common import (GOLD001_FID, NAM5_UNKNOWN, SOUND_LEVEL_NORMAL,
+                           attacks_player_on_sight,
                            build_aidt, build_outfit, origin_memberships,
                            get_trainer_class_fid, get_trainer_faction_fid,
                            get_vendor_faction_fids_for_actor, read_items,
@@ -31,6 +32,7 @@ from .common import (
     pack_uint32_subrecord,
     prefix_path,
 )
+from .crime import IS_GUARD_FACTION, crime_faction, is_guard_class
 from .npc_morrowind import (TES5_RACE_BASE_HEALTH, is_morrowind_npc,
                             morrowind_health_and_level)
 
@@ -169,6 +171,28 @@ def _npc_snams(rec: dict, vendor_fids: list, trainer_clas_fid: int) -> bytes:
         subs += _pack_snam(get_trainer_faction_fid())
     for origin_fid in origin_memberships():
         subs += _pack_snam(origin_fid)
+    return subs + _crime_snams(rec)
+
+
+def _crime_faction_of(rec: dict) -> int:
+    """The crime faction this NPC reports to, or 0 for one that hunts the player.
+
+    See: docs/commentary/tes5_import_actors.md#crime-factions-derived
+    """
+    if attacks_player_on_sight(rec) and \
+            not is_guard_class(get_formid(rec, 'CNAM.Class')):
+        return 0
+    return crime_faction(get_formid(rec, 'FormID'))
+
+
+def _crime_snams(rec: dict) -> bytes:
+    """Membership in the NPC's crime faction, and IsGuardFaction for a guard."""
+    subs = b''
+    crime = _crime_faction_of(rec)
+    if crime:
+        subs += _pack_snam(crime)
+    if is_guard_class(get_formid(rec, 'CNAM.Class')):
+        subs += _pack_snam(IS_GUARD_FACTION)
     return subs
 
 
@@ -317,6 +341,9 @@ def convert_NPC_(rec: dict, writer=None) -> bytes:
                                   outfit_fids, get_formid(rec, 'FormID')))
 
     subs += pack_formid_subrecord('DPLT', DPLT_NPC_LIST)
+    crime = _crime_faction_of(rec)
+    if crime:
+        subs += pack_formid_subrecord('CRIF', crime)
     subs += build_face_tail_subs(rec, race_edid, gender)
 
     return pack_record('NPC_', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)

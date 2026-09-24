@@ -465,4 +465,10 @@ DialogueState& State() {
     return state;
 }
 
+float PlayerCrimeLevelNow() {
+    float gold = 0.0f;
+    if (Hooks().crimeGold && Hooks().crimeGold(&gold)) return gold;
+    return State().crimeLevel;
+}
+
 }  // namespace mwruntime

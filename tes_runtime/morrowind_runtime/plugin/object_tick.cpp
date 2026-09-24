@@ -215,6 +215,7 @@ void RunOneTick() {
     ++g_ticks;
     const bool inWorld = SessionLive();
     if (inWorld && Hooks().pollJournal) Hooks().pollJournal();
+    if (inWorld && Hooks().divertDialogue) Hooks().divertDialogue();
     if (!inWorld || GameHeldByMenu()) {
         g_lastCount = 0;
         return;

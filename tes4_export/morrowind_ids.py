@@ -353,7 +353,7 @@ ENGINE_MARKERS = {
     'northmarker': 0x00000003,
     'divinemarker': 0x00000005,
     'templemarker': 0x00000006,
-    'prisonmarker': 0x0000003B,
+    'prisonmarker': 0x00000004,
 }
 
 

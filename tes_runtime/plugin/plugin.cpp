@@ -8,7 +8,9 @@
 //     (docs/reference/tes_runtime_fragments.md);
 //   * routes FO3/FNV guns to hand type 13 and the iGun* graph variables
 //     (guns.cpp), which the patched humanoid graphs branch on;
-//   * severs FO3/FNV limbs on killing blows and keeps them severed (sever.cpp).
+//   * severs FO3/FNV limbs on killing blows and keeps them severed (sever.cpp);
+//   * points every converted crime faction at the jail nearest the player
+//     (crime.cpp).
 //
 // Both parsers open their file through one shared helper; the hook replaces
 // that single call in each parser. Everything else is the engine's own code.
@@ -39,6 +41,7 @@
 #include "stream.h"
 
 #ifndef TESRUNTIME_CACHE_ONLY
+#include "crime.h"
 #include "engine.h"
 #include "fire.h"
 #include "guns.h"
@@ -62,6 +65,7 @@ bool        g_fragmentsLoaded = false;
 std::vector<Json> g_fragments;
 #ifndef TESRUNTIME_CACHE_ONLY
 bool        g_severingInstalled = false;
+bool        g_crimeInstalled = false;
 bool        g_gunsInstalled = false;
 #endif
 
@@ -189,6 +193,10 @@ void OnMessage(SKSEMessagingInterface::Message* msg) {
     if (msg->type == SKSEMessagingInterface::kMessage_DataLoaded) {
         if (g_gunsInstalled) ResolveGunForms();
         if (g_severingInstalled) ResolveSeverForms();
+        if (g_crimeInstalled) {
+            ResolveCrimeForms();
+            StartCrimeTick();
+        }
     } else if (msg->type == SKSEMessagingInterface::kMessage_PostLoadGame) {
         if (g_severingInstalled) SeverReapplyAll();
     }
@@ -273,6 +281,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
     if (ResolveEngine()) {
         g_gunsInstalled = InstallGuns();
         g_severingInstalled = InstallSevering();
+        g_crimeInstalled = LoadCrimeSidecars();
     }
     Log("hooks: gun routing %s, limb severing %s",
         g_gunsInstalled ? "installed" : "NOT installed",

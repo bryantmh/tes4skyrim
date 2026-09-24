@@ -857,7 +857,8 @@ Same failure mode as the engine-globals bug above — a property binding to
 a different code path.
 
 The converter mints properties for records that exist only in the OUTPUT:
-`TES4Fame`, `TES4Infamy`, `TES4GoldFenced`, `TES4CyrodiilCrimeFaction`, and the
+`TES4Fame`, `TES4Infamy`, `TES4GoldFenced`, the crime realm list
+`TES4CrimeFactions` (once `TES4CyrodiilCrimeFaction`), and the
 `TES4Unlock_*` topic gates. `object_scripts._resolve_props` binds properties
 through `resolve_property_formid()` → `xref.edid_to_formid`, which is built
 **from the TES4 export** and therefore can never contain a synthesized record.

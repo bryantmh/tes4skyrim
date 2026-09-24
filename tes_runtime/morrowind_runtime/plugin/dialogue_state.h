@@ -285,6 +285,20 @@ struct GameHooks {
     // See: docs/commentary/morrowind_runtime.md#player-factions
     void (*applyPlayerFaction)(const std::string& faction, int rank,
                                bool expelled) = nullptr;
+    // The player's bounty: the crime gold the engine keeps on the speaker's
+    // crime faction, else the realm's. `crimeGold` answers false when no
+    // faction resolves, and the DialogueState copy stands in.
+    // See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
+    bool (*crimeGold)(float* out) = nullptr;
+    void (*setCrimeGold)(float gold) = nullptr;
+    // PayFine (confiscates stolen goods) and PayFineThief (does not); both
+    // clear the bounty. GoToJail is the engine's own SendPlayerToJail.
+    void (*payFine)(bool confiscate) = nullptr;
+    void (*goToJail)() = nullptr;
+    // When Skyrim's own dialogue menu has opened on a Morrowind speaker -- a
+    // guard force-greeting to arrest -- closes it and opens the Morrowind
+    // conversation. Polled by the tick, on the main thread.
+    void (*divertDialogue)() = nullptr;
     // The spell commands. `spell` is a TES3 SPEL id, resolved through SPEL.txt
     // to the SPEL the import minted. AddSpell/RemoveSpell put it on the actor's
     // spell list; HasSpell is what `GetSpell` answers.
@@ -488,5 +502,9 @@ private:
 
 // The one state of this game session.
 DialogueState& State();
+
+// PC Crime Level: the bounty the engine keeps, else the state's copy.
+// See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
+float PlayerCrimeLevelNow();
 
 }  // namespace mwruntime

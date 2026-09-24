@@ -36,6 +36,7 @@ from collections import defaultdict
 
 from .overrides.manifest import write_manifest
 from .overrides.nested import (build_nested_overrides)
+from .dialogue.arrest import morrowind_arrest_topic
 from .dialogue.groups import build_dialog_groups
 from .base.owned_records import (
     WELL_KNOWN_PROPERTIES,
@@ -236,7 +237,8 @@ def run_finalize_phases(st, export_dir: str, phase_done,
     is read by an earlier phase.
     """
     voice_map = {}
-    st.sge_quest_fids |= _build_dialogue(st, voice_map)
+    st.sge_quest_fids |= _build_dialogue(st, voice_map) | morrowind_arrest_topic(
+        st.by_type, st.writer, st.ctx.master_index if st.ctx else None)
 
     _patch_late_bindings(st, export_dir)
 

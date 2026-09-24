@@ -216,6 +216,13 @@ def _aggression_tier(rec: dict, aggr: int, pers: int) -> int:
     return 1
 
 
+def attacks_player_on_sight(rec: dict) -> bool:
+    """Whether this TES4 actor attacks the player on sight: no victim of a crime."""
+    return (not is_fallout_source() and _aggression_tier(
+        rec, get_int(rec, 'AIDT.Aggression'),
+        get_int(rec, 'DATA.Personality', 50)) >= 2)
+
+
 def _confidence_tier(conf: int) -> int:
     """TES4 confidence 0-100 as a TES5 tier; only tier 4 never flees.
 
@@ -823,6 +830,9 @@ _TES4_SKILL_AV_BASE = 12
 _CLAS_FLAGS_DEFAULT = 0xFFFC0000
 _CLAS_BLEEDOUT_DEFAULT = 0.1
 
+#: TES4 CLAS DATA.Flags Guard; the engine's IsGuard reads TES5 DATA's last byte.
+_T4C_GUARD = 0x02
+
 #: TES4 class specialization -> the six TES5 skills it favours.
 _SPEC_SKILLS = {
     0: ('OneHanded', 'TwoHanded', 'Block', 'Smithing', 'HeavyArmor', 'Marksman'),
@@ -906,7 +916,8 @@ def convert_CLAS(rec: dict, *, override_fid: int = 0, override_edid: str = '',
     data += skill_weights
     data += struct.pack('<f', _CLAS_BLEEDOUT_DEFAULT)
     data += struct.pack('<I', 0)
-    data += struct.pack('<4B', 1, 1, 1, 0)
+    data += struct.pack('<4B', 1, 1, 1,
+                        int(bool(get_int(rec, 'DATA.Flags') & _T4C_GUARD)))
     subs += pack_subrecord('DATA', data)
 
     fid = override_fid or get_formid(rec, 'FormID')
