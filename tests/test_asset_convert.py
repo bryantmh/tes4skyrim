@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from asset_convert.nif.nif_batch import batch_convert
+from asset_convert.nif.nif_batch import _collect_nifs, batch_convert
 from asset_convert.nif.nif_converter import (
     OUTPUT_USER_VERSION as _SKY_UV,
     OUTPUT_USER_VERSION_2 as _SKY_UV2,
@@ -4984,4 +4984,28 @@ class TestMorrowindParticlesRender:
         mods = self._upgraded(legacy).modifiers
         colors = [m for m in mods if isinstance(m, NifFormat.NiPSysColorModifier)]
         assert len(colors) == 1 and colors[0].data is curve
+
+
+class TestMeshSubdirFilter:
+    """`--mesh-subdirs` entries are path prefixes: a root folder, a nested one or one mesh."""
+
+    def _tree(self, root):
+        """Four empty meshes across two root folders."""
+        for rel in ('tr/l/candle.nif', 'tr/f/bed.nif', 'pc/l/lamp.nif', 'td/vfx.nif'):
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'')
+
+    def _kept(self, root, subdirs):
+        """The meshes the filter keeps, as sorted posix paths under `root`."""
+        kept, _skipped = _collect_nifs(root, subdirs)
+        return sorted(p.relative_to(root).as_posix() for p in kept)
+
+    def test_root_folder_keeps_its_whole_tree(self, tmp_path):
+        self._tree(tmp_path)
+        assert self._kept(tmp_path, ['tr']) == ['tr/f/bed.nif', 'tr/l/candle.nif']
+
+    def test_nested_folder_and_single_mesh(self, tmp_path):
+        self._tree(tmp_path)
+        assert self._kept(tmp_path, ['TR\\l', 'td/vfx.nif']) == ['td/vfx.nif', 'tr/l/candle.nif']
 

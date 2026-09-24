@@ -22,7 +22,7 @@ from .magic import (
     fit_delivery, get_archetype, is_derived, known_sigs, menu_display_object,
     mgef_parts, mgef_tail, resolve_actor_value, source_record)
 from .common import pack_keywords
-from .magic_art import explosion, projectile, sound_set
+from .magic_art import explosion, master_signature, projectile, sound_set
 
 #: {output MGEF FormID: (EditorID, subrecords before DATA, DATA, subrecords after)} of every emitted MGEF.
 _parts: dict = {}
@@ -309,7 +309,8 @@ def bound_item_assoc(mgef_fid: int) -> int:
 
 def bound_assoc_is_armor(mgef_fid: int) -> bool:
     """True when a bound effect equips armor, which archetype 17 cannot."""
-    return known_sigs.get(bound_item_assoc(mgef_fid)) in ('ARMO', 'CLOT')
+    assoc = bound_item_assoc(mgef_fid)
+    return (master_signature(assoc) or known_sigs.get(assoc)) in ('ARMO', 'CLOT')
 
 
 def bound_script_variant(mgef_fid: int, assoc_item: int, writer) -> int:

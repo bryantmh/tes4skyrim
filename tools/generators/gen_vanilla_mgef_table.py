@@ -7,7 +7,8 @@ time.  End users running the converter do not have the references/ dump, so
 this tool bakes the DATA blobs for every vanilla MGEF the mapping tables can
 resolve to into a committed Python module.
 
-Rerun whenever MGEF_CODE_TO_SKYRIM / MGEF_AV_CODE_TO_SKYRIM gain new FormIDs:
+Rerun whenever MGEF_CODE_TO_SKYRIM / MGEF_AV_CODE_TO_SKYRIM or the Morrowind
+art donors (tes5_import/record_types/magic_art_morrowind.py) gain new FormIDs:
 
     python tools/generators/gen_vanilla_mgef_table.py
 """
@@ -20,10 +21,11 @@ from tes5_import.base.equivalents import (
     MGEF_AV_CODE_TO_SKYRIM,
     MGEF_CODE_TO_SKYRIM,
 )
+from tes5_import.record_types.magic_art_morrowind import DONORS
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DUMP = os.path.join(ROOT, 'references', 'Skyrim.esm', 'MGEF.txt')
-OUT = os.path.join(ROOT, 'tes5_import', 'vanilla_mgef_data.py')
+OUT = os.path.join(ROOT, 'tes5_import', 'generated', 'vanilla_mgef_data.py')
 
 # A TES5 MGEF DATA struct is exactly this long (xEdit wbMGEFData; verified
 # against every one of Skyrim.esm's 950 MGEF records).  Anything shorter means
@@ -33,7 +35,8 @@ MGEF_DATA_SIZE = 152
 
 
 def wanted_fids() -> set:
-    fids = set(MGEF_CODE_TO_SKYRIM.values())
+    """Every vanilla MGEF a mapping table resolves to, plus the Morrowind art donors."""
+    fids = set(MGEF_CODE_TO_SKYRIM.values()) | DONORS
     for per_av in MGEF_AV_CODE_TO_SKYRIM.values():
         fids.update(per_av.values())
     fids.discard(0)

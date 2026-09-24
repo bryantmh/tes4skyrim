@@ -48,7 +48,7 @@ from .morroblivion_pairs import (find_pairs, holder_overrides, left_half,
 from .morrowind_armor import body_models_from
 from .morrowind_ids import BASE_TYPES, IdIndex, load_index
 from .record_types.morrowind import as_dds, tes4_signature
-from .record_types.morrowind_magic import effect_ranges
+from .record_types.morrowind_magic import effect_ranges, game_settings
 from .tes3_reader import get_string, get_subrecord, read_file
 
 #: Morroblivion's EditorID separators: a leading '0' and '_' written 'U'.
@@ -223,15 +223,16 @@ def _info_identity(rec) -> str:
 
 
 def collect_magic_effects(sources) -> tuple:
-    """({effect index: TES3 MGEF}, {effect index: range bits}) over the vanilla masters.
+    """({effect index: TES3 MGEF}, {effect index: range bits}, {GMST: value}) over the vanilla masters.
 
     A TES3 MGEF has no record id, so `collect_gap_records` never sees one; the
     patch carries them so every Morroblivion-mode spell reads authored school,
     cost and flags instead of a stub. A later master's copy wins, and the
     ranges are every one vanilla casts the effect at, as a TES3 export adds.
+    The GMSTs name the items the bound effects conjure.
     See: docs/commentary/tes4_export_morrowind.md#effects-come-from-the-patch
     """
-    found, casters = {}, []
+    found, casters, settings = {}, [], []
     for path in sources:
         if not os.path.isfile(path):
             continue
@@ -239,10 +240,11 @@ def collect_magic_effects(sources) -> tuple:
             if rec.deleted:
                 continue
             casters += [rec] if rec.type in ('SPEL', 'ENCH', 'ALCH') else []
+            settings += [rec] if rec.type == 'GMST' else []
             index = get_subrecord(rec, 'INDX') if rec.type == 'MGEF' else None
             if index is not None and len(index.data) >= 4:
                 found[int.from_bytes(index.data[:4], 'little', signed=True)] = rec
-    return found, effect_ranges(casters)
+    return found, effect_ranges(casters), game_settings(settings)
 
 
 def collect_bark_records(sources) -> list:
@@ -587,7 +589,8 @@ def _write_records(gaps: dict, export_dir: str, progress,
 
 
 
-def _magic_effects(authored: dict, ranges: dict, records: list, ctx) -> list:
+def _magic_effects(authored: dict, ranges: dict, settings: dict, records: list,
+                   ctx) -> list:
     """`(form_id, lines)` for all 143 effects: vanilla's authored ones, then stubs for the rest.
 
     Imported inside the function to break the cycle with `export_morrowind`,
@@ -598,6 +601,7 @@ def _magic_effects(authored: dict, ranges: dict, records: list, ctx) -> list:
 
     for index, bits in ranges.items():
         ctx.effect_ranges[index] = ctx.effect_ranges.get(index, 0) | bits
+    ctx.game_settings.update(settings)
     out = []
     for index, rec in sorted(authored.items()):
         lines = export_record(rec, ctx)

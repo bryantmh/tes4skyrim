@@ -49,6 +49,28 @@ _IRDT = '<fi4i4i4i'
 #: ENAM range -> the TES3 MEDT cast flag standing for it.
 _RANGE_FLAGS = {0: 0x40, 1: 0x80, 2: 0x100}
 
+#: (export key, TES3 subrecord) naming the VFX record behind each of an effect's visuals.
+_VISUALS = (('MorrowindArt.Cast', 'CVFX'), ('MorrowindArt.Bolt', 'BVFX'),
+            ('MorrowindArt.Hit', 'HVFX'), ('MorrowindArt.Area', 'AVFX'))
+
+#: (export key, TES3 subrecord, suffix of the school's default sound) for an effect's four sounds.
+_SOUNDS = (('DATA.CastingSound', 'CSND', 'cast'), ('DATA.BoltSound', 'BSND', 'bolt'),
+           ('DATA.HitSound', 'HSND', 'hit'), ('DATA.AreaSound', 'ASND', 'area'))
+
+#: MEDT school index -> the name the engine builds a school's default sound ids from.
+_SCHOOL_SOUNDS = ('alteration', 'conjuration', 'destruction', 'illusion',
+                  'mysticism', 'restoration')
+
+#: Bound-item effect index -> (the GMST naming the item the engine conjures, that item's TES4 type).
+_BOUND_ITEMS = {
+    120: ('smagicbounddaggerid', 'WEAP'), 121: ('smagicboundlongswordid', 'WEAP'),
+    122: ('smagicboundmaceid', 'WEAP'), 123: ('smagicboundbattleaxeid', 'WEAP'),
+    124: ('smagicboundspearid', 'WEAP'), 125: ('smagicboundlongbowid', 'WEAP'),
+    127: ('smagicboundcuirassid', 'ARMO'), 128: ('smagicboundhelmid', 'ARMO'),
+    129: ('smagicboundbootsid', 'ARMO'), 130: ('smagicboundshieldid', 'ARMO'),
+    131: ('smagicboundrightgauntletid', 'ARMO'),
+}
+
 #: Effect index -> the TES4 resist AV, which picks the element's projectile.
 _RESIST_AV = {
     14: 61, 28: 61, 90: 61,                     # fire
@@ -158,10 +180,52 @@ def export_MGEF(rec: Tes3Record, ctx) -> list:
         lines.append(f'DATA.BaseCost={data[1]}')
         lines.append(f'DATA.Flags={data[2] | _used_ranges(ctx, index[0])}')
         lines.append(f'DATA.ProjectileSpeed={data[7]}')
+        _emit_sounds(lines, rec, data[0], ctx)
     resist = _RESIST_AV.get(index[0])
     if resist is not None:
         lines.append(f'DATA.ResistValue={resist}')
+    for key, sig in _VISUALS:
+        emit_str(lines, key, rec, sig)
+    _emit_bound_item(lines, index[0], ctx)
     return lines
+
+
+def _emit_bound_item(lines: list, index: int, ctx) -> None:
+    """The item a bound effect conjures: TES3 names it in a GMST, not on the effect.
+
+    See: docs/commentary/tes4_export_morrowind.md#bound-items
+    """
+    setting = _BOUND_ITEMS.get(index)
+    settings = getattr(ctx, 'game_settings', None) or {}
+    item = settings.get(setting[0], '') if setting else ''
+    form_id = ctx.resolve(item, setting[1]) if item else ''
+    if form_id:
+        lines.append(f'DATA.AssocItem={form_id}')
+
+
+def game_settings(records) -> dict:
+    """{GMST name, lowercase: its string value} over `records`; a later record wins."""
+    out = {}
+    for rec in records:
+        sub = get_subrecord(rec, 'STRV') if rec.type == 'GMST' and not rec.deleted else None
+        if sub is not None:
+            out[rec.record_id.lower()] = get_string(sub)
+    return out
+
+
+def _emit_sounds(lines: list, rec: Tes3Record, school: int, ctx) -> None:
+    """The effect's four sounds; an unset one is its school's default, which the engine plays.
+
+    See: docs/commentary/tes4_export_morrowind.md#magic
+    """
+    for key, sig, suffix in _SOUNDS:
+        sub = get_subrecord(rec, sig)
+        sound = get_string(sub) if sub else ''
+        if not sound and 0 <= school < len(_SCHOOL_SOUNDS):
+            sound = f'{_SCHOOL_SOUNDS[school]} {suffix}'
+        form_id = ctx.resolve(sound, 'SOUN') if ctx else ''
+        if form_id:
+            lines.append(f'{key}={form_id}')
 
 
 def _used_ranges(ctx, index: int) -> int:

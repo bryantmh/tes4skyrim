@@ -28,8 +28,9 @@ import struct
 
 from script_convert.constants import mgef_family_keyword_name
 
-from . import magic_art
+from . import magic_art, magic_art_morrowind
 from .common import pack_keywords
+from ..generated.vanilla_mgef_data import VANILLA_MGEF_DATA
 from ..base.owned_records import MGEF_FAMILY_KEYWORDS, WELL_KNOWN_PROPERTIES
 from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..base.writer import (
@@ -850,7 +851,7 @@ def _resolve_assoc_item(fid: int, archetype: int, t4_flags: int) -> int:
     if not kind or not fid:
         return 0
 
-    sig = known_sigs.get(fid)
+    sig = known_sigs.get(fid) or magic_art.master_signature(fid)
 
     if kind == 'NPC_':
         # Summons: a CREA converts to NPC_, an NPC_ stays one.  An LVLC becomes
@@ -883,6 +884,31 @@ def mgef_school(rec: dict, code: str) -> int:
         code, SCHOOL_TO_AV.get(get_int(rec, 'DATA.School', -1), AV_NONE))
 
 
+#: Borrowed-art role -> the DATA fields a Morrowind effect copies from its vanilla donor.
+_BORROWED_FIELDS = {'cast': (O_CASTING_ART, O_CASTING_LIGHT),
+                    'hit': (O_HIT_EFFECT_ART, O_HIT_SHADER)}
+
+#: DATA fields a master's effect takes from the master's own conversion, whatever the rebuild made.
+_INHERITED_FIELDS = (O_ASSOC_ITEM, O_CASTING_ART, O_HIT_EFFECT_ART, O_PROJECTILE)
+
+
+def _fill_art(data: bytearray, rec: dict) -> None:
+    """A master's effect takes its art and item from the master's conversion; a Morrowind one fills gaps from its donors.
+
+    The master's values replace the rebuilt ones: a FormID rebuilt from the
+    master's export is numbered in the master's own master list.
+    See: docs/commentary/tes5_import_magic.md#master-effects
+    """
+    master = magic_art.master_effect_data(rec)
+    for off in _INHERITED_FIELDS if master and len(master) >= MGEF_DATA_SIZE else ():
+        data[off:off + 4] = master[off:off + 4]
+    for role, donor in magic_art_morrowind.donors(rec):
+        src = bytes.fromhex(VANILLA_MGEF_DATA[donor][1])
+        for off in _BORROWED_FIELDS[role]:
+            if not struct.unpack_from('<I', data, off)[0]:
+                data[off:off + 4] = src[off:off + 4]
+
+
 def build_data(rec: dict, code: str, archetype: int, actor_value: int,
                 counter_count: int) -> bytes:
     """The 152-byte TES5 MGEF DATA for one effect.
@@ -912,6 +938,7 @@ def build_data(rec: dict, code: str, archetype: int, actor_value: int,
     struct.pack_into('<I', data, O_CASTING_LIGHT, get_formid(rec, 'DATA.Light'))
     struct.pack_into('<I', data, O_HIT_SHADER, get_formid(rec, 'DATA.EffectShader'))
     struct.pack_into('<I', data, O_ENCHANT_SHADER, get_formid(rec, 'DATA.EnchantEffect'))
+    _fill_art(data, rec)
     struct.pack_into('<f', data, O_SPELLMAKING_TIME, 0.5)
     struct.pack_into('<I', data, O_ARCHETYPE, archetype)
     struct.pack_into('<i', data, O_ACTOR_VALUE, actor_value)

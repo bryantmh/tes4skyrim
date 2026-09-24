@@ -669,6 +669,38 @@ Measured on Oblivion.esm, out of 703 emitted effects:
 | their own projectile | 182 |
 | an SNDD | 702 |
 
+## <a id="master-effects"></a>A master's effect keeps its master's art
+
+**Code:** `tes5_import/record_types/magic.py` (`_fill_art`), `magic_art.py` (`master_effect_data`, `_master_sound_set`)
+
+A dependent plugin rebuilds its copies of a master's effects (per delivery,
+per actor value) from the master's EXPORT record. Two parts of that record
+cannot be resolved from the child:
+
+- **Art.** `magic_art` finds an effect's phases by reading its source NIF
+  from the CURRENT plugin's mesh tree; the master's effect meshes are in the
+  master's. Measured on Morrowind_ob.esm: **all 535** of its copies of
+  Oblivion.esm's effects had no casting art, no hit art and no sound set, so
+  a Morroblivion spell that needed a copy showed nothing in the hand. One that
+  could use Oblivion's effect directly (Frost Bolt → `FRDG`) showed Oblivion's
+  art.
+- **FormIDs.** Its SOUNs are numbered in the master's own master list.
+
+So a copy of a master's effect takes Assoc. Item, Casting Art, Hit Effect Art
+and Projectile from the master's converted MGEF (`find_by_edid`, then
+`record`, which restates `DATA` 8/72/92/96 and `SNDD` in the child's ids), and
+its SNDD likewise. These REPLACE the rebuilt values rather than filling gaps: a
+rebuilt Assoc. Item is numbered in the master's own list, so in TR_Mainland it
+can name the wrong file's record. Routing a bound item to the script stand-in
+types the item the same way (`master_signature`), since `known_sigs` keys a
+master's records by the master's export ids. None of those fields is part of a
+variant key, but routing is: bound armor, and any bound effect on a never-cast
+spell, now becomes a `...Scripted` copy. Measured: 2 Tamriel_Data and 5
+TR_Mainland `...BoundXConstantSelf` copies, all with no item before, were
+replaced by scripted ones.
+The effect's area burst (Explosion) still comes only from the plugin's own
+meshes, because adding it would change the `MGEF_DELIVERY` key.
+
 ## <a id="effect-shader-particles"></a>Effect shader particle counts
 
 **Code:** `tes5_import/record_types/world.py` (`convert_EFSH`)
@@ -913,3 +945,58 @@ The 19 with no Skyrim mechanism carry `NATIVE_NONE`. They convert today as an
 inert Value Modifier -- present, addressable by a script, doing nothing -- which
 is where the MorrowindRuntime effect table attaches. Only Levitate and SlowFall
 genuinely need new engine addresses; the rest are state the DLL can hold.
+
+<a id="morrowind-borrowed-art"></a>
+### Art is borrowed from vanilla Skyrim
+
+**Code:** `tes5_import/record_types/magic_art_morrowind.py`, `magic.py` (`_borrow_art`), `tes4_export/record_types/morrowind_magic.py` (`_emit_sounds`)
+
+A TES3 effect names its visuals by the ID of a shared VFX record (`CVFX`
+cast, `BVFX` bolt, `HVFX` hit, `AVFX` area) and tints them per effect with a
+particle texture (`PTEX`). OpenMW swaps that texture in wherever the mesh
+uses its first root `NiTexturingProperty` (`nifloader.cpp`, `mwrender/util.cpp`).
+In Morrowind.esm's 137 effects:
+
+| Job | Distinct VFX records | Effects using one |
+|---|---|---|
+| Cast | 15 | 134 |
+| Bolt | 9 | 113 |
+| Hit | 17 | 105 |
+| Area | 11 | 116 |
+| Particle texture | 35 | 137 |
+
+Morrowind splits its art by school the way Skyrim does, so each cast and hit
+VFX ID maps to the vanilla effect that does the same job. The converted
+effect copies that effect's Casting Art and Casting Light (cast) or Hit
+Effect Art and Hit Shader (hit); vanilla fire, frost and shock burn their
+targets through the hit shader, not hit art. Fire, Shock and Frost Damage
+(engine indices 14 to 16) take their element's own vanilla effect instead:
+TES3 draws them through the generic destruction meshes, told apart only by
+the texture. The donors' DATA is baked into `vanilla_mgef_data.py`.
+
+- **Bolts** already come from the element/school projectile rule, which
+  splits the same way Morrowind's 9 bolt records do.
+- **Area explosions are not written yet.** An explosion is part of the
+  `MGEF_DELIVERY` variant key, so adding one renumbers existing variant
+  FormIDs ([FormID drift](../../CLAUDE.md#formid-drift)).
+- **What does not map:** Mysticism has no Skyrim school (Soul Trap's art
+  stands in); Levitate borrows Waterbreathing, Poison the Absorb Stamina hand
+  and the generic damage hit; the 35 per-effect tints are lost.
+
+**Sounds.** Only 14 of the 137 effects author `CSND`/`BSND`/`HSND`/`ASND`.
+An unset one plays the school's default, the SOUN `"<school> cast"` (and
+`bolt`, `hit`, `area`) (OpenMW `mwworld/store.cpp`, `spellcasting.cpp`), so
+the export writes that. In Morroblivion mode the effects live in the
+compatibility patch and their SOUNs in Morrowind_ob.esm, so `magic_art._sndr`
+resolves a master's SOUN through `master_sound_descriptor`, the same way the
+ACTI/CONT/DOOR/LIGH slots do.
+
+**A dependent plugin inherits a master effect's sounds from the master's
+conversion.** TR_Mainland and Tamriel_Data define no MGEF; their per-delivery
+copies are rebuilt from the patch's EXPORT record, whose SOUN FormIDs are
+numbered in the patch's own master list (`Oblivion, Morrowind_ob`) and mean
+nothing in the child's. `load_master_export` re-keys only each record's own id,
+not the ids inside it. So `sound_set` takes a master effect's SNDD from the
+master's converted MGEF (`find_by_edid`, then `record`, which restates it in
+the child's ids; `SNDD` is in `_FORMID_FIELDS_BY_SIG`). Before this, every copy
+shipped with no sound set at all: 0 of TR_Mainland's 404 MGEFs carried an SNDD.

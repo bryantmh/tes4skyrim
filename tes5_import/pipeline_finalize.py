@@ -105,37 +105,16 @@ def _patch_sounds(st, export_dir: str = '') -> None:
         print(f"  Actor sound entries bound/flattened: {n_snd} actors")
     _own_souns = {get_formid(r, 'FormID') & 0x00FFFFFF
                   for r in st.by_type.get('SOUN', [])}
-
-    def _master_sound_descriptor(soun_fid: int) -> int:
-        """MASTER-owned TES4 SOUN id -> the SNDR the master's conversion made.
-
-        Read out of the master's converted SOUN (whose SDSC names the
-        companion) rather than re-derived, which would mint an id in THIS
-        plugin's index space.  Required, not optional: Morrowind_ob's containers
-        and torches point at Oblivion.esm sounds it never overrides, so the
-        master manifest carries no entry for them and every one of those ~2,400
-        slots would otherwise be left wrong-typed.
-        """
-        if not st.ctx or not getattr(st.ctx, 'master_index', None):
-            return 0
-        blob = st.ctx.master_index.record(soun_fid)
-        if not blob or blob[:4] != b'SOUN':
-            return 0
-        pos = 24
-        while pos + 6 <= len(blob):
-            sig = blob[pos:pos + 4]
-            size = struct.unpack_from('<H', blob, pos + 4)[0]
-            if sig == b'SDSC' and size == 4:
-                return struct.unpack_from('<I', blob, pos + 6)[0]
-            pos += 6 + size
-        return 0
+    master_index = getattr(st.ctx, 'master_index', None) if st.ctx else None
 
     from .record_types.items import patch_sound_descriptor_slots
+    from .record_types.sound import master_sound_descriptor
     bound = []
     for _sig, _label in (('ACTI', 'activators'), ('CONT', 'containers'),
                          ('DOOR', 'doors'), ('LIGH', 'lights')):
         _n = patch_sound_descriptor_slots(
-            st.writer, _sig, _own_souns, _master_sound_descriptor)
+            st.writer, _sig, _own_souns,
+            lambda soun: master_sound_descriptor(master_index, soun))
         if _n:
             bound.append(f"{_n} {_label}")
     if bound:

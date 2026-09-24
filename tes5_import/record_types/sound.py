@@ -7,6 +7,7 @@ no dialogue at all.
 import os
 import struct
 
+from ..base.tes5_reader import REC_HDR, decompress, first_sub
 from .common import (
     prefix_path,
     get_formid,
@@ -112,6 +113,24 @@ def sndr_map() -> dict:
 def get_sndr_for_soun(soun_fid: int) -> int:
     """The SNDR FormID for a TES4 SOUN (low 24 bits keyed), or 0 if it has none."""
     return _SNDR_FOR_SOUN.get(soun_fid & 0x00FFFFFF, 0)
+
+
+def master_subrecord(master_index, fid: int, sig: bytes, tag: bytes):
+    """One subrecord of a master's converted `sig` record, in this plugin's ids; None if absent."""
+    blob = master_index.record(fid) if master_index else b''
+    if len(blob) < REC_HDR or blob[:4] != sig:
+        return None
+    flags = struct.unpack_from('<I', blob, 8)[0]
+    return first_sub(decompress(blob[REC_HDR:], flags), tag)
+
+
+def master_sound_descriptor(master_index, soun_fid: int) -> int:
+    """A master's SOUN -> the SNDR its SDSC names, 0 for none.
+
+    See: docs/commentary/tes5_import_pipeline.md#sound-slot-patching
+    """
+    sdsc = master_subrecord(master_index, soun_fid, b'SOUN', b'SDSC')
+    return struct.unpack('<I', sdsc)[0] if sdsc and len(sdsc) == 4 else 0
 
 
 #: TES4 SOUN id (low 24) -> (EditorID, FNAM); loaded up front (incl. the MASTER export) for the weather classifier.

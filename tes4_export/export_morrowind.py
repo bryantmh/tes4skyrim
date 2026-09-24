@@ -58,6 +58,7 @@ from .record_types.morrowind_magic import (MORROWIND_MAGIC_EXPORTERS,
                                            authored_indices,
                                            effect_editor_id,
                                            effect_ranges,
+                                           game_settings,
                                            synthesized_effects)
 from .record_types.morrowind_scripts import MORROWIND_SCRIPT_EXPORTERS
 from .tes3_reader import (file_type, get_subrecord, is_tes3, read_file,
@@ -156,6 +157,7 @@ class MorrowindContext:
         self.vtex_by_cell = {}
         self.master_dirs = []
         self.effect_ranges = {}
+        self.game_settings = {}
         self._init_groundcover()
         self._init_barks()
 
@@ -759,8 +761,9 @@ def map_marker_records(ctx: MorrowindContext) -> list:
 
 
 def register_magic_effects(records, ctx: MorrowindContext) -> None:
-    """Register all 143 effect indices and the ranges spells use them at."""
+    """Register all 143 effect indices, the ranges spells use them at and the GMSTs bound effects read."""
     ctx.effect_ranges = effect_ranges(records)
+    ctx.game_settings.update(game_settings(records))
     for index in range(_MAGIC_EFFECT_COUNT):
         ctx.register_own(effect_editor_id(index), 'MGEF')
 

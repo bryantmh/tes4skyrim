@@ -614,7 +614,8 @@ def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict,
     from .record_types.magic_variants import build_av_variants, build_seff_variants
     from .base.object_scripts import build_magic_effect_script_plan
 
-    magic_art.begin(writer, assets_for(export_dir) / 'meshes', by_type.get('SOUN', []))
+    magic_art.begin(writer, assets_for(export_dir) / 'meshes', by_type.get('SOUN', []),
+                    getattr(ctx, 'master_index', None), by_type.get('MGEF', []))
     _mgefs = _mgef_records_with_masters(by_type, ctx)
     set_assoc_item_index(*_build_assoc_item_index(by_type, ctx))
 

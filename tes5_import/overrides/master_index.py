@@ -230,6 +230,7 @@ _FORMID_FIELDS = {
 #: Per-signature FormID fields: WRLD CNAM is a CLMT, a CELL's is a colour.
 _FORMID_FIELDS_BY_SIG = {
     b'WRLD': {b'CNAM': None, b'NAM2': None},
+    b'MGEF': {b'SNDD': (4, 12, 20, 28, 36, 44), b'DATA': (8, 72, 92, 96)},
 }
 
 

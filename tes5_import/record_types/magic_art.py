@@ -19,6 +19,7 @@ from ..base.text_reader import get_float, get_formid, get_str
 from ..base.writer import (pack_obnd, pack_record, pack_string_subrecord,
                            pack_subrecord)
 from .common import prefix_path
+from .sound import master_subrecord, master_sound_descriptor
 
 #: ARTO DNAM art type: 0 Magic Casting, 1 Magic Hit Effect.
 ART_CASTING = 0
@@ -33,24 +34,30 @@ BOLT_RANGE = 10000.0
 SOUND_RELEASE = 3
 SOUND_ON_HIT = 5
 
-_state = {'writer': None, 'mesh_root': ''}
+_state = {'writer': None, 'mesh_root': '', 'master_index': None}
 #: {model path lowered: phases its source NIF authors}.
 _phases: dict = {}
 #: {(record type, key): output FormID} of every companion already written.
 _companions: dict = {}
 #: Output FormIDs of the SOUN records that carry a sound file, and so an SNDR.
 _sounding: set = set()
+#: EditorIDs of the MGEFs this plugin's own export defines.
+_own_effects: set = set()
 
 
-def begin(writer, mesh_root: str, soun_records) -> None:
-    """Start a plugin: where its source meshes live and which SOUNs get an SNDR."""
+def begin(writer, mesh_root: str, soun_records, master_index=None,
+          own_effects=()) -> None:
+    """Start a plugin: its source meshes, its SOUNs with an SNDR, its masters' records and its own MGEFs."""
     _state['writer'] = writer
     _state['mesh_root'] = str(mesh_root)
+    _state['master_index'] = master_index
     _phases.clear()
     _companions.clear()
     _sounding.clear()
     _sounding.update(get_formid(r, 'FormID') for r in soun_records
                      if get_str(r, 'FNAM.Filename'))
+    _own_effects.clear()
+    _own_effects.update(get_str(r, 'EditorID') for r in own_effects)
 
 
 def _model(rec: dict) -> str:
@@ -86,12 +93,14 @@ def _companion(sig: str, key, build) -> int:
 
 
 def _sndr(rec: dict, key: str) -> int:
-    """The SNDR of the SOUN a MGEF field names, 0 when that SOUN has none."""
+    """The SNDR of the SOUN a MGEF field names -- this plugin's or a master's -- 0 when it has none."""
     soun = get_formid(rec, key)
     writer = _state['writer']
-    if not soun or soun not in _sounding or writer is None:
+    if not soun or writer is None:
         return 0
-    return writer.derive_formid('SNDR', soun)
+    if soun in _sounding:
+        return writer.derive_formid('SNDR', soun)
+    return master_sound_descriptor(_state['master_index'], soun)
 
 
 def _edid(model: str, what: str) -> str:
@@ -181,8 +190,50 @@ def explosion(rec: dict) -> int:
     return _companion('EXPL', (model.lower(), sound), build)
 
 
+def _master_effect(rec: dict) -> int:
+    """This plugin's id for the master's converted MGEF `rec` names; 0 for one of its own.
+
+    A master's export names its SOUNs in the master's own FormID space and
+    its meshes live in the master's asset tree, so neither can be resolved
+    here; the master's converted record already has both.
+    See: docs/commentary/tes5_import_magic.md#master-effects
+    """
+    code = get_str(rec, 'EditorID')
+    index = _state['master_index']
+    if not index or not code or code in _own_effects:
+        return 0
+    return index.find_by_edid(b'MGEF', code)
+
+
+def master_signature(fid: int) -> str:
+    """The converted record type of a master's record, '' when no master holds `fid`."""
+    index = _state['master_index']
+    return index.signature(fid).decode('ascii', 'replace') if index and fid else ''
+
+
+def master_effect_data(rec: dict):
+    """A master effect's converted DATA in this plugin's ids; None if own."""
+    fid = _master_effect(rec)
+    return master_subrecord(_state['master_index'], fid, b'MGEF', b'DATA') if fid else None
+
+
+def _master_sound_set(rec: dict):
+    """The SNDD a master's conversion wrote for this effect; None when no master has it."""
+    fid = _master_effect(rec)
+    if not fid:
+        return None
+    sounds = master_subrecord(_state['master_index'], fid, b'MGEF', b'SNDD')
+    return pack_subrecord('SNDD', sounds) if sounds else b''
+
+
 def sound_set(rec: dict) -> bytes:
-    """The MGEF's SNDD, type-sorted: the cast sound on Release, the hit sound On Hit."""
+    """The MGEF's SNDD, type-sorted: the cast sound on Release, the hit sound On Hit.
+
+    A master's effect keeps the sound set the master's conversion wrote.
+    """
+    inherited = _master_sound_set(rec)
+    if inherited is not None:
+        return inherited
     entries = [struct.pack('<II', kind, sndr)
                for kind, key in ((SOUND_RELEASE, 'DATA.CastingSound'),
                                  (SOUND_ON_HIT, 'DATA.HitSound'))

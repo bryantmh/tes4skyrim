@@ -138,8 +138,8 @@ def _add_mesh_args(parser) -> None:
     renders wrong under vanilla SSE.
     """
     parser.add_argument("--mesh-subdirs", nargs="+", metavar="SUBDIR",
-                        help="Limit mesh conversion to these root subfolders "
-                             "(e.g. architecture clutter). Default: all.")
+                        help="Limit mesh conversion to these folders or meshes "
+                             "under meshes/ (e.g. architecture tr/l). Default: all.")
     winding = parser.add_mutually_exclusive_group()
     winding.add_argument("--collision-winding-fix", dest="collision_winding_fix",
                          action="store_true", default=None,

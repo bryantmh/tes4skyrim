@@ -2249,6 +2249,24 @@ alone -- index 19 `DrainSpellpoints` vs `DrainMagicka`, 132 `Corpus` vs
 change would renumber every converted spell and must fail loudly; a spelling
 difference is cosmetic and must not.
 
+### <a id="bound-items"></a>A bound effect's item is named by a GMST
+
+**Code:** `record_types/morrowind_magic.py` (`_emit_bound_item`, `game_settings`)
+
+A TES3 bound effect (indices 120-125 weapons, 127-131 armor) carries no item.
+The engine reads the item's ID from a GMST: `sMagicBoundDaggerID` through
+`sMagicBoundShieldID`, and `sMagicBoundRightGauntletID` /
+`sMagicBoundLeftGauntletID` for Bound Gloves (OpenMW
+`mwmechanics/spelleffects.cpp`). The export resolves that GMST's value
+(`bound_battle_axe`, ...) as the effect's `DATA.AssocItem`. Without it every
+bound effect converted as a Bound Weapon with a null item, and casting one
+crashed in `BoundItemEffect` (`cmp byte ptr [rcx+0x1A], 0x29`, the WEAP form
+type, on a null form). Bound Gloves takes the right gauntlet: both pieces land
+in Skyrim's one Hands slot, so only one can be worn.
+
+The patch reads the GMSTs from the vanilla masters in `collect_magic_effects`;
+an authored-masters export reads its own.
+
 ### <a id="effects-come-from-the-patch"></a>Effects come from the patch, with vanilla's authored data
 
 **Code:** `morrowind_patch.py:collect_magic_effects`, `export_morrowind.py:magic_effect_records`

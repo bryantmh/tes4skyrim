@@ -154,15 +154,20 @@ def _empty_batch_stats(total):
 
 
 def _collect_nifs(mesh_path, subdir_filter):
-    """(files to convert, how many the filters dropped)."""
-    allowed = ({s.lower() for s in subdir_filter}
+    """(files to convert, how many the filters dropped).
+
+    Each `subdir_filter` entry is a path prefix under the mesh root: a root
+    folder (`clutter`), a nested one (`tr/l`) or a single mesh.
+    """
+    allowed = ([tuple(s.lower().replace('\\', '/').strip('/').split('/'))
+                for s in subdir_filter]
                if subdir_filter is not None else None)
     keep, skipped = [], 0
     for nf in mesh_path.rglob('*.nif'):
-        parts = [p.lower() for p in nf.relative_to(mesh_path).parts]
+        parts = tuple(p.lower() for p in nf.relative_to(mesh_path).parts)
         if any(seg in parts for seg in SKIP_PATHS):
             skipped += 1
-        elif allowed is not None and parts and parts[0] not in allowed:
+        elif allowed is not None and not any(parts[:len(a)] == a for a in allowed):
             skipped += 1
         else:
             keep.append(nf)
