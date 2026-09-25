@@ -17,6 +17,7 @@ from asset_convert.nif.nif_converter import (
     rewrite_tex_path,
     convert_nif,
 )
+from asset_convert.nif.shaders import resolve_lowres
 from asset_convert.character import wearable_plan, wearable_plan_falloutnv
 from asset_convert.character.head_gear import remap_bone_names
 from asset_convert.collision import collision_falloutnv
@@ -68,6 +69,25 @@ class TestTexturePathRewriting:
     def test_data_prefix_with_forward_slashes(self):
         result = rewrite_tex_path(b'Data/Textures/dwarven/rock01.dds')
         assert result == 'Textures\\tes4\\dwarven\\rock01.dds'
+
+    def test_lowres_segment_is_kept(self):
+        """A mod may ship a _far texture ONLY under lowres\\."""
+        result = rewrite_tex_path(b'textures\\LowRes\\xullc\\Rockbeach05.dds')
+        assert result == 'Textures\\tes4\\LowRes\\xullc\\Rockbeach05.dds'
+
+    def test_lowres_falls_back_to_full_res_twin(self, tmp_path):
+        """A missing lowres copy resolves to the full-res texture instead."""
+        (tmp_path / 'meshes').mkdir()
+        full = tmp_path / 'textures' / 'rocks' / 'rock01.dds'
+        full.parent.mkdir(parents=True)
+        full.write_bytes(b'')
+        stats = {'_src_path': str(tmp_path / 'meshes' / 'rock_far.nif')}
+        tex = rewrite_tex_path(b'textures\\lowres\\rocks\\rock01.dds')
+        assert resolve_lowres(tex, stats) == 'Textures\\tes4\\rocks\\rock01.dds'
+        lowres = tmp_path / 'textures' / 'lowres' / 'rocks' / 'rock01.dds'
+        lowres.parent.mkdir(parents=True)
+        lowres.write_bytes(b'')
+        assert resolve_lowres(tex, stats) == tex
 
 
 class TestBoneMapping:

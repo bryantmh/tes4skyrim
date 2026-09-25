@@ -257,11 +257,31 @@ file, so testing only for `textures\` let a forward-slash
 `Textures\tes4\textures/lowres/foo.dds` — a path that resolves to nothing, and
 the LOD tiles then reference 100 textures that do not exist.
 
-**`textures\lowres\` is dropped.** It is an Oblivion `_far.nif` authoring
-convention for low-resolution LOD copies; pyffi ships a spell that writes exactly
-this prefix, documented "used mainly for making _far.nifs". We ship no lowres
-tree — the converted textures live at the normal path — so dropping the segment
-makes the reference resolve to the real texture.
+<a id="lowres-textures"></a>
+**`textures\lowres\` is kept, falling back to its full-res twin.** It is an
+Oblivion `_far.nif` authoring convention for low-resolution LOD copies; pyffi
+ships a spell that writes exactly this prefix, documented "used mainly for making
+_far.nifs". The texture copy ships the `lowres` tree like any other, and the BSA
+prune no longer cuts it.
+
+Neither "always drop" nor "always keep" is correct: both happen in real data.
+A census of every `lowres` reference in the source meshes, checked against the
+plugin's own texture tree plus Oblivion.esm's:
+
+| plugin | lowres refs | lowres file exists | only the full-res twin exists | neither |
+|---|---|---|---|---|
+| Unique Landscapes v2.2.0 | 21 | 16 | 5 | 0 |
+| Nehrim | 115 | 105 | 8 | 2 |
+| Oblivion, Knights, Elsweyr Anequina | 0 | — | — | — |
+
+A user's build of Unique Landscapes 0.663 hit the reverse case: `_far` meshes
+naming `LowRes\xullc\Rockbeach05.dds` and `LowRes\xulJerallGlacier\…`, which the
+mod ships ONLY under `lowres`. Dropping the segment pointed them at nothing.
+
+So the shape's diffuse and authored normal keep the authored `lowres` path when
+`resolve_source_texture` finds its source, and otherwise take the full-res twin
+(`resolve_lowres` in `shaders.py`); when neither exists the twin is kept. A
+derived `_n`/`_g` map for a `lowres` diffuse also tries the twin's.
 
 **A leading `data\` is stripped.** It is an authoring slip Oblivion tolerates (it
 resolves paths from the Data folder either way) and Skyrim does not. Measured

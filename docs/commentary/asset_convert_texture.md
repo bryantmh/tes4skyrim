@@ -910,8 +910,12 @@ named by any mesh:
 | `menus50` | 3,787 | 52.9 | 0 |
 | `landscapelod` | 264 | 213.1 | 0 |
 | `distantlod` | 0 | 0.0 | 0 |
-| `lowres` | 758 | 1.5 | 0 |
 | non-`.dds`/`.tga` | 150 | 1,120.3 | 0 |
+
+`lowres` (758 files, 1.5 MB) was once on this list. Its "0 false positives"
+held only because mesh conversion stripped the `lowres` segment from every
+path; `_far` meshes now name `lowres` textures that have no full-res twin, so
+the tree ships. See [lowres textures](asset_convert_shader.md#lowres-textures).
 
 `faces/` is FaceGen output keyed `<formid>_0.dds`, which Skyrim regenerates
 from NPC records; `landscapelod/` is superseded by our own bake into

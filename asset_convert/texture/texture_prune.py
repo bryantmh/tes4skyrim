@@ -25,7 +25,6 @@ _EXCLUDED_DIRS = frozenset({
     'menus50',
     'landscapelod',   # superseded by our own LOD bake into AutoConvertLOD
     'distantlod',
-    'lowres',         # Oblivion's low-res fallbacks; Skyrim uses mipmaps
 })
 
 #: The only extensions the engine loads from a textures archive.

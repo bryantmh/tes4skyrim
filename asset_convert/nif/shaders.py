@@ -20,7 +20,7 @@ from asset_convert.nif.nif_flags import (TT_SCALE_U, TT_SCALE_V,
                                          TT_TRANSLATE_V)
 from asset_convert.nif.sequences import (MATERIAL_COLOR_EMISSIVE,
                                          TEX_TRANSFORM_VARS)
-from asset_convert.nif.tex_paths import (bs_pp_texture_slots,
+from asset_convert.nif.tex_paths import (bs_pp_texture_slots, full_res_twin,
                                          rewrite_tex_path)
 from asset_convert.sources import base_plugins as _base_plugins
 from asset_convert.texture import landscape_normals, parallax, spec_mask
@@ -398,22 +398,33 @@ def _normal_exists(normal_rel, stats):
                                   stats.get('_tex_fallback', ())) is not None
 
 
+def resolve_lowres(tex, stats):
+    """The authored 'lowres' texture when its source exists, else its full-res twin.
+
+    See: docs/commentary/asset_convert_shader.md#lowres-textures
+    """
+    twin = full_res_twin(tex)
+    if twin is None or stats is None or _normal_exists(tex, stats):
+        return tex
+    return twin
+
+
 def _resolve_map_for(diffuse, suffix, stats):
     """The best real `<diffuse base><suffix>.dds` for a diffuse, or None.
 
     Generic in the suffix: Oblivion's base-name rule applies to every derived
-    map, glow included.
+    map, glow included. A 'lowres' diffuse also tries its full-res twin's maps.
     See: docs/commentary/asset_convert_shader.md#normal-base-name-fallback
     """
-    base = diffuse.rsplit('.', 1)[0] if '.' in diffuse else diffuse
-    own = base + suffix + '.dds'
-    if _normal_exists(own, stats):
-        return own
-    head, sep, _tail = base.rpartition('_')
-    if sep and head:
-        shared = head + suffix + '.dds'
-        if _normal_exists(shared, stats):
-            return shared
+    for tex in filter(None, (diffuse, full_res_twin(diffuse))):
+        base = tex.rsplit('.', 1)[0] if '.' in tex else tex
+        head, sep, _tail = base.rpartition('_')
+        candidates = [base + suffix + '.dds']
+        if sep and head:
+            candidates.append(head + suffix + '.dds')
+        for cand in candidates:
+            if _normal_exists(cand, stats):
+                return cand
     return None
 
 

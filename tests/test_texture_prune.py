@@ -29,9 +29,9 @@ class TestExcludedCategories:
         assert tp.is_excluded('tes4/landscapelod/generated/tamriel.32.0.0.dds')
         assert tp.is_excluded('tes4/distantlod/anything.dds')
 
-    def test_lowres_fallbacks_are_excluded(self):
-        """Oblivion's low-res copies; Skyrim uses mipmaps instead."""
-        assert tp.is_excluded('tes4/lowres/dungeons/fortruins/wall.dds')
+    def test_lowres_textures_are_packed(self):
+        """_far meshes name them, some with no full-res twin to fall back on."""
+        assert not tp.is_excluded('tes4/lowres/xullc/rockbeach05.dds')
 
     def test_only_the_second_segment_matches(self):
         """A blacklisted word deeper in the path is somebody's real asset."""

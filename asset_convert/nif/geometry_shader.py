@@ -24,7 +24,7 @@ from asset_convert.nif.shaders import (ALPHA_BLEND_ENABLED, ALPHA_DST_ONE,
                                        attach_tex_transform_ctrls,
                                        collect_shader_inputs, collect_uv_ctrls,
                                        has_spec_mask, plan_flipbook_atlas,
-                                       resolve_normal_for)
+                                       resolve_lowres, resolve_normal_for)
 from asset_convert.nif.nif_flags import NIF_FLAGS
 from asset_convert.nif.tex_paths import rewrite_tex_path
 from asset_convert.nif.tri_reconstruct import (UnreconstructibleGeometry,
@@ -218,7 +218,8 @@ def _normal_slot(diffuse, authored_normal, fix_textures, stats):
     """
     base = diffuse.rsplit('.', 1)[0] if '.' in diffuse else diffuse
     if authored_normal:
-        return (rewrite_tex_path(authored_normal) if fix_textures
+        return (resolve_lowres(rewrite_tex_path(authored_normal), stats)
+                if fix_textures
                 else authored_normal.decode('utf-8', errors='replace'))
     if stats is None:
         return base + '_n.dds'
@@ -247,7 +248,8 @@ def _fill_texture_slots(tex_set, diffuse_path, authored_normal,
             stats['untextured_diffuse_defaulted'] = (
                 stats.get('untextured_diffuse_defaulted', 0) + 1)
         return
-    diffuse = (rewrite_tex_path(diffuse_path) if fix_textures
+    diffuse = (resolve_lowres(rewrite_tex_path(diffuse_path), stats)
+               if fix_textures
                else diffuse_path.decode('utf-8', errors='replace'))
     tex_set.textures[0] = diffuse.encode('utf-8')
     tex_set.textures[1] = _normal_slot(
