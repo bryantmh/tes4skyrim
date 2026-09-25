@@ -198,6 +198,13 @@ class TestCTDAConversion:
         out = convert_ctda(_tes4_ctda(p1=0x14), offset=1)
         assert struct.unpack_from('<I', out, 12)[0] == 0x14
 
+    def test_engine_fixed_items_name_skyrim_records(self):
+        """GetItemCount(Gold001) counts the Skyrim gold the player carries."""
+        out = convert_ctda(_tes4_ctda(func=47, p1=0x0F), offset=1)
+        assert struct.unpack_from('<I', out, 12)[0] == 0x0000000F
+        out = convert_ctda(_tes4_ctda(func=47, p1=0x0B), offset=1)
+        assert struct.unpack_from('<I', out, 12)[0] == 0x0003A070
+
     def test_value_params_are_never_remapped(self):
         """A non-FormID param must survive the load-order shift untouched.
 

@@ -15,6 +15,33 @@ Parameter remapping and the crash rule are in
 - [Chargen-identity conditions become menu-choice globals](#chargen-identity-to-menu-globals)
 - [Speak-as topics drop the actor-interrogating conditions](#non-actor-speaker-drop)
 - [GetInCell names a prefix family, not a cell](#getincell-prefix-family)
+- [Engine-fixed FormID parameters](#engine-fixed-params)
+
+## <a id="engine-fixed-params"></a>Engine-fixed FormID parameters
+
+**Code:** `_remap_formid` in `tes5_import/base/conditions.py`
+
+A condition parameter is remapped like a record field (`text_reader.remap_formid`),
+with two exceptions for forms the engine owns.
+
+**Player forms and engine globals pass through unchanged.** Both games define
+the player base 0x07, PlayerRef 0x14 and the six clock globals (GameYear 0x35 ..
+TimeScale 0x3A) at the same ids, and a condition reads the runtime copy.
+Shifting the player rewrote `GetIsID(Player) [Target]` on 3,761 INFOs to
+0x01000007, which never passes: stage-gated reveal greetings died and NPCs kept
+only "Rumors" (Pinarus Inventius). Shifting the globals cost 119 CK warnings on
+`GetGlobalValue` against 0x01000038/0x01000037. The set is enumerated, not
+"everything below 0x100": Oblivion.esm defines 127 records of its own there
+(Tamriel WRLD 0x3C, 57 DIALs from 0xAA, 21 SKILs, 27 marker STATs), and passing
+those through would name an unrelated Skyrim form.
+
+**Engine-fixed items become the Skyrim record** (`TES4_ITEM_FORMID_TO_SKYRIM`:
+Gold001 0xF -> 0xF, lockpick 0xA -> 0xA, DASkeletonKey 0xB -> TG08SkeletonKey
+0x3A070). `get_formid` substitutes them for every item reference, so the gold
+and keys the player carries are Skyrim's. A condition that remapped them to our
+own copies asked `GetItemCount(0x0100000F)`, which is always 0: Penniless
+Olvus's "Have a coin, beggar." topic never showed, and the two MQ08 skeleton-key
+INFOs could never pass either.
 
 ## <a id="getincell-prefix-family"></a>GetInCell names a prefix family, not a cell
 

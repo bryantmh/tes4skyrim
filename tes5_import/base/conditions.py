@@ -21,6 +21,7 @@ import struct
 from .cell_family import expand_cell_families, or_groups
 from .constants import ENGINE_GLOBAL_FORMIDS
 from .ctda_bool import bool_outcomes
+from .equivalents import TES4_ITEM_FORMID_TO_SKYRIM
 from .conditions_falloutnv import (FALLOUT_CTDA_SIZE, fallout_function,
                                    fallout_run_on)
 from ..generated.ctda_param_types import CTDA_FORMID_PARAMS
@@ -327,42 +328,19 @@ _CONDITION_PASSTHROUGH_FIDS = frozenset(_ENGINE_FIXED_FORMIDS) | frozenset(
 
 
 def _remap_formid(fid: int, offset: int) -> int:
-    """Remap a TES4 FormID to the output plugin's load order.
+    """Remap a TES4 FormID parameter to the output plugin's load order.
 
-    Engine-fixed forms (index 0, object id < 0x100) pass through UNCHANGED:
-    Bethesda hardcodes the same ids in every game (Player NPC_ 0x7, PlayerRef
-    0x14, DoorMarker 0x1, ...), and a condition evaluates against the RUNTIME
-    form — the in-game player's base is vanilla Skyrim's 0x00000007, never our
-    converted copy of the TES4 Player record. Shifting them rewrote
-    `GetIsID(Player) [Target]` ("am I addressing the player?") on 3,761 INFOs
-    to GetIsID(0x01000007), which can never pass; every stage-gated reveal
-    greeting died, their unlock fragments never ran, and NPCs lost whole topic
-    lists (Pinarus Inventius kept only 'Rumors'). This passthrough existed
-    here before the override work unified condition remapping with
-    text_reader.remap_formid (whose record-field contract is the opposite:
-    references to the CONVERTED player copy 0x0100xxxx must keep shifting).
+    The player forms and the six engine globals pass through unchanged; the
+    engine-fixed items (Gold001, lockpick, skeleton key) become the Skyrim
+    records get_formid substitutes for every item reference; everything else
+    shifts like a record field via text_reader.remap_formid.
 
-    Everything else delegates to text_reader.remap_formid so conditions shift
-    identically to record fields — including overrides, which keep their
-    master's index.
-    The pass-through set is ENUMERATED, not "everything below 0x100":
-    Oblivion.esm defines 127 records of its own down there — Tamriel WRLD 0x3C,
-    gold 0xF, DASkeletonKey 0xB, 57 DIALs from 0xAA, 21 SKILs, 27 marker STATs
-    — and passing those through hands the condition a vanilla Skyrim form of an
-    unrelated type, or nothing at all. Measured: the two MQ08 Skeleton Key
-    INFOs asked GetItemCount(0x0000000B) instead of 0x0100000B and the CK
-    reported "Unable to find Function Info TESForm".
-
-    The set is the player forms PLUS the six engine GLOBALS (GameYear 0x35 ..
-    TimeScale 0x3A). Those six exist at IDENTICAL ids in both games —
-    Skyrim.esm carries GameHour at 0x38 exactly as Oblivion.esm does — and the
-    engine updates its own copies, so a condition must read Skyrim's clock and
-    not our inert converted duplicate. Narrowing the set to the player forms
-    alone and letting these remap cost 119 warnings on GetGlobalValue against
-    0x01000038/0x01000037, worse than the 2 it fixed.
+    See: docs/commentary/tes5_import_conditions.md#engine-fixed-params
     """
     if (fid >> 24) == 0 and (fid & 0x00FFFFFF) in _CONDITION_PASSTHROUGH_FIDS:
         return fid
+    if fid in TES4_ITEM_FORMID_TO_SKYRIM:
+        return TES4_ITEM_FORMID_TO_SKYRIM[fid]
     return remap_formid(fid, offset)
 
 
