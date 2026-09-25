@@ -27,9 +27,10 @@ from .builder import (RECONVERT_KEYS, apply_changes, join_subrecords,
                       split_subrecords)
 from .master_index import load_master_index
 from ..actors.outfits import split_inventory
-from ..record_types.actor_common import read_items
-from ..record_types.world import restamp_wrld_mnam
-from ..base.text_reader import parse_export_directory, remap_formid
+from ..dialogue.converter import convert_INFO
+from ..record_types.actor_common import origin_gate, read_items
+from ..record_types.world import convert_ACHR, convert_REFR, restamp_wrld_mnam
+from ..base.text_reader import get_formid, get_int, parse_export_directory, remap_formid
 from ..base.writer import (PluginWriter, RECORD_HEADER_SIZE, pack_group)
 
 # Types whose override CANNOT be expressed against the master's output because
@@ -920,6 +921,38 @@ def _attach_navmesh(rec: dict, ctx: OverrideContext, parent_out: int,
     return record_bytes, chain
 
 
+def _nested_land(rec: dict, ctx: OverrideContext, parent_out: int) -> tuple:
+    """(LAND bytes, group chain): the cell's type-9 group, reusing the master's LAND id.
+
+    See: docs/commentary/tes5_import_override.md#new-records-in-master-groups
+    """
+    record_bytes = _convert_land(rec, ctx)
+    land_of = getattr(ctx.master_index, 'land', None)
+    master_land = (land_of(parent_out) or 0) if callable(land_of) else 0
+    if master_land:
+        record_bytes = _restamp_formid(record_bytes, master_land)
+    label = struct.pack('<I', parent_out)
+    return record_bytes, ((6, label), (9, label))
+
+
+def _convert_nested(sig: str, rec: dict, ctx: OverrideContext, parent_out: int,
+                    parent_path: tuple, pending: list) -> tuple:
+    """(record bytes, group chain) of one NEW record under a master's parent; b'' skips it.
+
+    See: docs/commentary/tes5_import_override.md#new-records-in-master-groups
+    """
+    label = struct.pack('<I', parent_out)
+    if sig == 'INFO':
+        return convert_INFO(rec, injected_ctdas=origin_gate(rec)), ((7, label),)
+    if sig == 'LAND':
+        return _nested_land(rec, ctx, parent_out)
+    if sig == 'PGRD':
+        return _attach_navmesh(rec, ctx, parent_out, parent_path, pending)
+    conv = convert_ACHR if sig in ('ACHR', 'ACRE') else convert_REFR
+    gtype = 8 if get_int(rec, 'RecordFlags') & 0x400 else 9
+    return conv(rec), ((6, label), (gtype, label))
+
+
 def _attach_new_records(new_records: list, ctx: OverrideContext,
                         pending: list) -> tuple:
     """Convert NEW records that live inside a MASTER's GRUP tree.
@@ -937,9 +970,6 @@ def _attach_new_records(new_records: list, ctx: OverrideContext,
     whose parent is NOT the master's — those belong to this plugin's own
     hierarchy and must be built by the normal group builders instead.
     """
-    from ..record_types.world import convert_ACHR, convert_REFR
-    from ..base.text_reader import get_formid, get_int
-
     done = 0
     unattached = []
     for sig, rec in new_records:
@@ -979,51 +1009,13 @@ def _attach_new_records(new_records: list, ctx: OverrideContext,
             continue
 
         try:
-            if sig == 'INFO':
-                from ..dialogue.converter import convert_INFO
-                record_bytes = convert_INFO(rec)
-                chain = ((7, struct.pack('<I', parent_out)),)
-            elif sig == 'LAND':
-                # Terrain is never persistent: it goes in the type-9 temporary
-                # children group, and FIRST within it (emit_nested_overrides
-                # re-sorts every type-9 group so the LAND leads — vanilla
-                # Skyrim.esm does this in 15,564 of 15,564 such groups, and
-                # behind the references the engine does not draw it at all).
-                #
-                # A CELL OWNS AT MOST ONE LAND. When the master's cell already
-                # has terrain, this record REPLACES it and must carry that
-                # LAND's FormID — shipping our own new id instead puts two
-                # LAND records in one cell, which the engine cannot resolve
-                # while it parses the file (main-menu hang, no crash, no log).
-                # Measured on TWMP_ValenwoodImproved: 1,754 of its cells are
-                # Tamriel.esp cells that already have a LAND, and every one
-                # got a duplicate.
-                record_bytes = _convert_land(rec, ctx)
-                label = struct.pack('<I', parent_out)
-                chain = ((6, label), (9, label))
-                master_land = 0
-                _land_of = getattr(ctx.master_index, 'land', None)
-                if callable(_land_of):
-                    master_land = _land_of(parent_out) or 0
-                if master_land:
-                    record_bytes = _restamp_formid(record_bytes, master_land)
-            elif sig == 'PGRD':
-                record_bytes, chain = _attach_navmesh(rec, ctx, parent_out,
-                                                      parent_path, pending)
-                if not record_bytes:
-                    continue
-            else:
-                conv = convert_ACHR if sig in ('ACHR', 'ACRE') else convert_REFR
-                record_bytes = conv(rec)
-                # Persistent refs (flag 0x400) sit in the type-8 children
-                # group, temporary ones in type 9 — mirroring the master's
-                # own builders.
-                gtype = 8 if get_int(rec, 'RecordFlags') & 0x400 else 9
-                label = struct.pack('<I', parent_out)
-                chain = ((6, label), (gtype, label))
+            record_bytes, chain = _convert_nested(sig, rec, ctx, parent_out,
+                                                  parent_path, pending)
         except Exception as e:
             print(f"    SKIPPED new {sig} {rec.get('FormID', '?')}: "
                   f"conversion failed: {e}")
+            continue
+        if not record_bytes:
             continue
 
         # No anchor is added here: emit_nested_overrides pulls the owner of any

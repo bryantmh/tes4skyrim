@@ -1018,8 +1018,8 @@ def convert_REFR(rec: dict) -> bytes:
     xown = (stock_owner(get_formid(rec, 'FormID'))
             or get_formid(rec, 'XOWN.Owner'))
     if not xown and barrier_door:
-        from .actor_common import get_origin_faction_fid
-        xown = get_origin_faction_fid()
+        from .actor_common import get_origin_faction_fid, is_support_root
+        xown = get_origin_faction_fid() if is_support_root() else 0
     if xown:
         subs += pack_formid_subrecord('XOWN', xown)
 

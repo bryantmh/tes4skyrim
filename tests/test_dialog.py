@@ -1610,6 +1610,38 @@ class TestOriginGate:
                'Condition[1].Raw': self._ctda(72, comp=1.0)}
         assert not needs_origin_gate(rec)
 
+    def test_dependent_group_test_on_a_master_form_is_gated(self):
+        """A dependent's GetIsClass/GetInFaction on a MASTER's form reaches the
+        master's actors (Morroblivion's "invest in my shop" on Oblivion merchants)."""
+        for func in (68, 71, 73):
+            rec = {'FormID': '01F8E5C3',
+                   'Condition[0].Raw': self._ctda(func, param1=0x0000A082)}
+            assert needs_origin_gate(rec, own_index=1), f'func {func}'
+
+    def test_dependent_own_form_or_named_actor_scopes(self):
+        """Its own faction, or any actor it names outright, pins the speaker."""
+        own = {'FormID': '01F8E5C3',
+               'Condition[0].Raw': self._ctda(71, param1=0x0100A082)}
+        named = {'FormID': '01F8E5C3',
+                 'Condition[0].Raw': self._ctda(72, param1=0x0000A082)}
+        assert not needs_origin_gate(own, own_index=1)
+        assert not needs_origin_gate(named, own_index=1)
+
+    def test_or_group_pins_only_if_every_member_pins(self):
+        """GetIsClass(own) OR GetIsClass(master's) lets the master's class in."""
+        mixed = {'FormID': '0101BE90',
+                 'Condition[0].Raw': self._ctda(68, 0x01, param1=0x01240048),
+                 'Condition[1].Raw': self._ctda(68, param1=0x00023E6B)}
+        own = {'FormID': '0101BE90',
+               'Condition[0].Raw': self._ctda(68, 0x01, param1=0x01240048),
+               'Condition[1].Raw': self._ctda(68, param1=0x0124003B)}
+        assert needs_origin_gate(mixed, own_index=1)
+        assert not needs_origin_gate(own, own_index=1)
+
+    def test_override_of_a_master_info_keeps_its_audience(self):
+        """An edited master line is the master's line: never gated on the dependent."""
+        assert not needs_origin_gate({'FormID': '0000A0B1'}, own_index=1)
+
 
 class TestPluginAuthoredRaceConditionsSurvive:
     """A GetIsRace naming a race the PLUGIN adds must not be dropped.

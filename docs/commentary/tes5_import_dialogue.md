@@ -1428,8 +1428,18 @@ vanilla hostility idiom and works for ANY actors.
 
 `create_vtyp_records` never references Skyrim.esm VTYPs. Voice files live in
 `Sound/Voice/<plugin>/<EditorID>/` and must match the EditorIDs created here
-(`TES4Male*`, `TES4Female*`). DNAM bit 0 is AllowDefaultDialogue and bit 1 is
-Female, so male voices write DNAM=1 and female DNAM=3.
+(`TES4Male*`, `TES4Female*`). DNAM bit 0 is Allow Default Dialogue and bit 1 is
+Female; male voices write DNAM=0 and female DNAM=2.
+
+Allow Default Dialogue stays CLEAR. With it set, a voice type may say any line
+whose conditions don't exclude it (CK wiki, Voice_Type), and Skyrim.esm has 446
+non-scene lines in Start Game Enabled quests with no identity condition at all
+(155 CUST, 44 IDLE, 26 GBYE, 22 HELO, 110 combat barks), all of which converted
+NPCs could say. Clear, the engine only allows scene lines, linked lines, and
+lines naming the speaker (GetIsID, GetInFaction, GetIsVoiceType, ...). Every
+converted line carries one of those or the plugin-origin gate
+([origin faction](tes5_import_actors.md#origin-faction)). All 42 vanilla creature
+voice types clear it too.
 
 Two sources, in order:
 

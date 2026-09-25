@@ -783,6 +783,31 @@ The geometry itself is reused, not recomputed: `_navm_of` looks the cell up in
 the `_precompute_navmeshes` cache by `(ParentCELL, PGRD)` — the same key
 `_gather_navm_jobs` builds — so this costs no extra generation time.
 
+<a id="new-records-in-master-groups"></a>
+### New records inside a master's group
+
+**Code:** `_convert_nested` in `tes5_import/overrides/nested.py`
+
+A plugin can add its own records under a master's parent: a REFR in a master's
+cell, an INFO in a master's topic. Each one is converted normally, then placed
+in the master parent's children group:
+
+- **LAND** goes in the cell's type-9 group, first in it (see
+  [land-first-in-type-9](#land-first-in-type-9)). A cell owns at most one LAND,
+  so when the master's cell already has terrain, the new record takes that
+  LAND's FormID. Shipping its own id put two LANDs in one cell, which hangs the
+  main menu with no crash and no log. Measured on TWMP_ValenwoodImproved: 1,754
+  of its cells are Tamriel.esp cells that already have a LAND, and every one got
+  a duplicate.
+- **REFR/ACHR** go in type 8 when persistent (flag 0x400), else type 9, as the
+  master's own builders do.
+- **INFO** (non-bark; bark INFOs go back to the dialogue builder) carries the
+  plugin-origin gate when it names no speaker of its own
+  ([origin faction](tes5_import_actors.md#origin-faction)). Without it,
+  Morroblivion's "I would gladly let you invest in my shop!" under an
+  Oblivion.esm topic, gated only on Oblivion classes, played on Oblivion's
+  merchants.
+
 ROAD remains genuinely unmappable: it converts to nothing at all.
 
 ## Deleting a master's record: the three shapes

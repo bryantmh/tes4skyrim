@@ -954,7 +954,7 @@ _PLUGIN_SCOPED_AUDIENCE_FUNCS = frozenset({68, 71, 72, 73})
 
 
 def _condition_tests(rec: dict):
-    """Yield (func_idx, operator, comp_value, run_on_target) per TES4 condition."""
+    """Yield (func_idx, operator, comp_value, run_on_target, param1, or_next) per TES4 condition."""
     i = 0
     while True:
         raw_hex = rec.get(f'Condition[{i}].Raw')
@@ -968,7 +968,9 @@ def _condition_tests(rec: dict):
             yield (struct.unpack_from('<H', raw, 8)[0],   # function
                    raw[0] & 0xF0,                        # comparison operator
                    struct.unpack_from('<f', raw, 4)[0],  # compare value
-                   bool(raw[0] & CTDA_RUN_ON_TARGET))
+                   bool(raw[0] & CTDA_RUN_ON_TARGET),
+                   struct.unpack_from('<I', raw, 12)[0],
+                   bool(raw[0] & CTDA_OR))
         except (ValueError, struct.error):
             continue
 
@@ -984,33 +986,43 @@ def _asserts_membership(operator: int, comp_value: float) -> bool:
     return operator == 0x00 and comp_value == 1.0
 
 
-def needs_origin_gate(rec: dict) -> bool:
+def _pins_speaker(func: int, op: int, cv: float, run_on_target: bool,
+                  param1: int, own_index: int) -> bool:
+    """Whether one condition limits the SPEAKER to named actors or this plugin's own forms.
+
+    See: docs/commentary/tes5_import_actors.md#origin-faction
+    """
+    if func not in _PLUGIN_SCOPED_AUDIENCE_FUNCS or run_on_target:
+        return False
+    if not _asserts_membership(op, cv):
+        return False
+    return func == FUNC_GET_IS_ID or (param1 >> 24) == own_index
+
+
+def needs_origin_gate(rec: dict, own_index: int = 0) -> bool:
     """True if this INFO can be reached by an actor from a DIFFERENT plugin.
 
-    A line is safely scoped only by a condition that POSITIVELY names a form
-    this plugin owns AND evaluates against the SPEAKER. Three traps, each
-    measured against the real Oblivion/Nehrim exports:
+    `own_index` is the plugin's TES4 load-order index.  An override of a
+    master's INFO keeps the master's audience and is never gated.
 
-      * Race/cell gates look like an audience but don't resolve to a form this
-        plugin uniquely owns — GetIsRace's param is rewritten to a vanilla
-        Skyrim race every converted plugin shares. This is the measured cause
-        of Oblivion guard/crime/directions lines playing on Nehrim NPCs.
-      * A NEGATIVE membership test is an exclusion, not an audience. Oblivion's
-        Rumors channel (INFOGENERAL, 1854 lines) is built almost entirely from
-        `GetIsID(SomeNPC) == 0` — "any speaker other than X". Counting that as
-        pinned left 395 rumour lines (plus 77 with no conditions at all)
-        reaching Nehrim NPCs — the Oblivion Rumors topic seen in-game on a
-        Nehrim NPC.
-      * A RunOn=Target test is about the LISTENER, not the speaker.
-        `GetIsID(PlayerRef)[Target] == 1` means "the addressee is the player",
-        which every conversation satisfies and which says nothing about who is
-        talking. Counting it as a pin left 55 greeting/rumour/guard lines open
-        to any actor in the load order.
+    See: docs/commentary/tes5_import_actors.md#origin-faction
     """
-    return not any(f in _PLUGIN_SCOPED_AUDIENCE_FUNCS
-                   and _asserts_membership(op, cv)
-                   and not run_on_target
-                   for f, op, cv, run_on_target in _condition_tests(rec))
+    fid = rec.get('FormID')
+    if fid and int(fid, 16) >> 24 != own_index:
+        return False
+    return not any(all(_pins_speaker(*test[:5], own_index) for test in clause)
+                   for clause in _or_clauses(_condition_tests(rec)))
+
+
+def _or_clauses(tests) -> list:
+    """Condition tests grouped into AND-ed clauses of OR-ed members (the OR flag is last)."""
+    clauses, current = [], []
+    for test in tests:
+        current.append(test)
+        if not test[5]:
+            clauses.append(current)
+            current = []
+    return clauses + ([current] if current else [])
 
 
 # Condition functions that express a WORLD-STATE precondition for a topic

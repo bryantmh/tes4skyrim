@@ -258,16 +258,13 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
     from .record_types.actor_common import (create_origin_faction, reset_origin_faction)
     reset_origin_faction(getattr(ctx, 'master_index', None))
     build_race_factions(by_type, ctx, writer)
-    if not ctx or not adopt_master_special_records(
-            ctx, master_export_dirs(ctx)):
+    support_root = not ctx or not adopt_master_special_records(ctx, master_export_dirs(ctx))
+    if support_root:
         create_vtyp_records(writer, export_dir, by_type)
-
-        _origin_fact = create_origin_faction(writer)
-        print(f"  Plugin-origin faction: {_origin_fact:08X} "
-              f"(TES4PluginOriginFaction)")
-
+    _origin_fact = create_origin_faction(writer, support_root)
+    print(f"  Plugin-origin faction: {_origin_fact:08X} (TES4PluginOriginFaction)")
+    if support_root:
         create_tes4_special_records(writer)
-
         create_ambient_gmst_overrides(writer, by_type)
     _step_done('vtyp/special records')
 

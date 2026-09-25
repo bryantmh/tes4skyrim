@@ -33,7 +33,6 @@ from ..base.conditions import (
     get_speak_as_topics,
     has_any_conditions,
     has_audience_condition,
-    needs_origin_gate,
     read_func_param_fids,
     read_getisid_fids,
     shared_state_conditions,
@@ -1313,12 +1312,9 @@ def _build_injected_ctdas(info_rec, is_bark, npc_to_vtyp, topic_vtyps,
     if quest_gate_bytes:
         stats['quest_gated'] += 1
 
-    from ..record_types.actor_common import get_origin_faction_fid
-    origin_faction_fid = get_origin_faction_fid()
-    origin_bytes = b''
-    if origin_faction_fid and needs_origin_gate(info_rec):
-        origin_bytes = build_or_chain(FUNC_GET_IN_FACTION,
-                                      [origin_faction_fid])
+    from ..record_types.actor_common import origin_gate
+    origin_bytes = origin_gate(info_rec)
+    if origin_bytes:
         stats['origin_gated'] = stats.get('origin_gated', 0) + 1
 
     return (origin_bytes + quest_gate_bytes + unlock_gate_bytes + state_bytes

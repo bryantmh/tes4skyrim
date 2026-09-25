@@ -26,6 +26,9 @@ WELL_KNOWN_PROPERTIES: dict[str, int] = {}
 #: Output MGEF FormID -> the family KYWD it and every copy of it carry.
 MGEF_FAMILY_KEYWORDS: dict[int, int] = {}
 
+#: VTYP DNAM Female bit; Allow Default Dialogue (bit 0) stays clear so vanilla lines never reach converted NPCs.
+_VTYP_FEMALE = 0x02
+
 
 #: Conversion-owned globals: EditorID -> FNAM type char ('f' float, 's' short).
 _OWNED_GLOBALS = (
@@ -248,7 +251,7 @@ def create_vtyp_records(writer: PluginWriter, export_dir: str = None,
         if fid is not None:
             return fid
         fid = writer.derive_formid('VTYP', vtyp_edid)
-        dnam = 3 if gender == 'Female' else 1
+        dnam = _VTYP_FEMALE if gender == 'Female' else 0
         subs = pack_string_subrecord('EDID', vtyp_edid)
         subs += pack_subrecord('DNAM', struct.pack('<B', dnam))
         writer.add_record('VTYP', pack_record('VTYP', fid, 0, subs))

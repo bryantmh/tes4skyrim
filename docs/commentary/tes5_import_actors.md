@@ -340,17 +340,46 @@ NEGATIVE `GetIsID`), and conversion rewrites `GetIsRace` to a VANILLA Skyrim
 race every plugin shares, so Nehrim NPCs passed them. Race was Oblivion's
 plugin boundary only because Oblivion was the only file loaded.
 
-ONLY a root master (no TES4 masters of its own) creates one and gates its
-dialogue on it. A DLC/plugin's own dialogue stays ungated so it can extend and
-override its master's exactly as it does in Oblivion.
-
-A dependent's actors JOIN the origin faction of every converted master that
-has one (`origin_memberships`, found by EditorID through
-`ChainedMasterIndex.find_all_by_edid`). They used to join none, so a master's
-generic lines could never play on an actor a dependent ADDS: measured on
+EVERY converted plugin creates its own, root or dependent, and gates its own
+new lines on it. A plugin's actors join its own and every converted master's
+(`origin_memberships`, found by EditorID through
+`ChainedMasterIndex.find_all_by_edid`), so dialogue flows DOWN the master chain
+and never up or across: Oblivion's generic lines reach Morroblivion's actors,
+Morroblivion's never reach Oblivion's, and neither reaches Nehrim's or
+vanilla Skyrim's. Dependents' actors used to join nothing: measured on
 TR_Mainland, 0 of 9,264 NPCs carried the compatibility patch's origin faction
-while 4,322 of the patch's 4,647 voiced barks were gated on it — nearly every
+while 4,322 of the patch's 4,647 voiced barks were gated on it, so nearly every
 vanilla Morrowind bark was silent on every Tamriel Rebuilt actor.
+
+Dependents used to stay ungated, so a DLC could hand the master's NPCs new
+generic lines. Measured on the Morroblivion build before the change: 95 new
+lines were scoped only by an Oblivion.esm class or faction, 624 only by a voice
+type Morroblivion shares with Oblivion, and 14 non-scene lines by nothing at
+all, so vanilla Skyrim followers qualified too. A line that names a master's NPC
+with `GetIsID` is still ungated: naming an individual is deliberate. An
+OVERRIDE of a master's INFO keeps the master's audience and is never gated.
+
+A barrier door is owned by the origin faction only in the plugin that creates
+the support records (see below).
+
+#### What counts as naming the speaker
+
+`needs_origin_gate` looks for one condition that POSITIVELY tests the SPEAKER's
+membership: `GetIsID` on any actor, or `GetInFaction`/`GetFactionRank`/
+`GetIsClass` on a form at the plugin's OWN index. In an OR group every member
+must qualify: Morroblivion's skooma line is `GetIsClass(own) OR
+GetIsClass(Oblivion's)`, and the second half lets Oblivion's actors in. Three
+more traps, each measured against the Oblivion/Nehrim exports:
+
+- Race and cell look like an audience but name no plugin-owned form:
+  `GetIsRace` becomes a vanilla Skyrim race every converted plugin shares. This
+  was the cause of Oblivion guard/crime/directions lines on Nehrim NPCs.
+- A NEGATIVE test is an exclusion. Oblivion's Rumors channel (1,854 lines) is
+  built from `GetIsID(SomeNPC) == 0`; counting it as pinned let 395 rumour lines
+  (plus 77 with no conditions) reach Nehrim NPCs.
+- A Run On = Target test is about the LISTENER. `GetIsID(PlayerRef)[Target]`
+  holds in every conversation; counting it left 55 greeting/rumour/guard lines
+  open to any actor.
 
 It is a plain membership marker: no flags, no relations, no vendor data, so it
 can never affect crime, combat reaction, or the barter menu.
