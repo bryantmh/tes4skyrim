@@ -1,7 +1,5 @@
 Major Issues for V1:
 	1 - Iterate on quest and dialog conversion until everything is playable starting with Oblivion Main Quest
-		Arena: corpse of the previous combatant is not removed on re-entry (TES4 ResetInterior cleared it; Skyrim Cell.Reset() leaves non-respawning corpses)
-		Arena: second combatant not hostile after a completed match
 		Arena: speak-as subtitles (announcer, Daedric shrines) never clear - a scripted Say() on a non-actor never retires its subtitle; no verified fix, see docs/reference/dialogue_engine_contracts.md
 
 	2 - Havok feels off. Items don't move like they should. Specifically, there seems to be too much inertia on small items, like I'm dragging a heavy object when it is something as small as a cup, Animated signs will get stuck in a position after swinging a bit, defying gravicty

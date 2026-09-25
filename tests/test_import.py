@@ -5702,6 +5702,44 @@ class TestMgefConversion:
             equipment.convert_SPEL(_spell('BAGR', 3), writer=w2)) == scripted
         assert w2.recs == []
 
+    def test_an_ability_draws_only_the_hit_visuals_oblivion_drew(self):
+        """Oblivion draws an Ability's hit shader only for its six shield-like codes under magnitude 100.
+
+        Skyrim draws a Constant effect's shader for as long as it lasts, so a
+        straight copy set Agronak gro-Malog (two magnitude-0 Fire Damage
+        effects on AbArenaAgronak) permanently on fire; confirmed in-game.
+        See: docs/commentary/tes5_import_magic.md#ability-hit-visuals
+        """
+        import struct as _s
+        from tes5_import.record_types import equipment, magic, magic_variants
+
+        magic.register_mgef_formids([
+            {'FormID': '00001872', 'EditorID': 'FIDG', 'DATA.Flags': '553655413',
+             'DATA.School': '1', 'DATA.EffectShader': '000852FE'},
+            {'FormID': '00001893', 'EditorID': 'RSNW', 'DATA.Flags': '16778362',
+             'DATA.School': '1', 'DATA.EffectShader': '00062D0C'},
+        ])
+
+        def _hit_shader(spit_type, code, magnitude, **slot):
+            """The hit shader of the MGEF a one-effect spell's slot points at."""
+            magic_variants.reset()
+            w = _DerivingWriter()
+            rec = {'FormID': '000C425B', 'EditorID': 'Ab', 'SPIT.Type': str(spit_type),
+                   'EffectCount': '1', 'Effect[0].EFID': code,
+                   'Effect[0].Magnitude': str(magnitude), 'Effect[0].Type': 'Self',
+                   **{f'Effect[0].{k}': v for k, v in slot.items()}}
+            efid = _s.unpack('<I', _find_subrecord(
+                equipment.convert_SPEL(rec, writer=w), b'EFID'))[0]
+            data = {_s.unpack_from('<I', rec_bytes, 12)[0]: _find_subrecord(rec_bytes, b'DATA')
+                    for _, rec_bytes in w.records}[efid]
+            return _s.unpack_from('<I', data, magic.O_HIT_SHADER)[0]
+
+        assert _hit_shader(4, 'FIDG', 0) == 0
+        assert _hit_shader(4, 'RSNW', 20) != 0
+        assert _hit_shader(4, 'RSNW', 100) == 0
+        assert _hit_shader(0, 'FIDG', 0) != 0, 'a cast spell keeps its hit shader'
+        assert _hit_shader(4, 'FIDG', 0, MorrowindIndex='14') != 0, 'OpenMW draws ability effects'
+
     def test_counter_effect_count_matches_the_esce_array(self):
         """DATA offset 20 must equal the ESCE count or the CK reads garbage."""
         import struct as _s

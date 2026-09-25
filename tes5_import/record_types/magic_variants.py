@@ -18,7 +18,8 @@ from ..base.writer import (pack_formid_subrecord, pack_record,
 from ..generated.vanilla_mgef_data import VANILLA_MGEF_DATA
 from .magic import (
     A_BOUND_WEAPON, A_SCRIPT, AV_NONE, MENU_ART_GENERIC, O_ARCHETYPE, O_ASSOC_ITEM,
-    O_CASTING_TYPE, O_COUNTER_COUNT, O_EXPLOSION, build_data, code_to_fid,
+    O_CASTING_TYPE, O_COUNTER_COUNT, O_EXPLOSION, O_HIT_EFFECT_ART, O_HIT_SHADER,
+    build_data, code_to_fid,
     fit_delivery, get_archetype, is_derived, known_sigs, menu_display_object,
     mgef_parts, mgef_tail, resolve_actor_value, source_record)
 from .common import pack_keywords
@@ -179,6 +180,37 @@ def delivery_variant(fid: int, cast: int, delivery: int, writer,
             f'{_DELIVERY_NAMES[delivery]}{"Area" if burst else ""}')
     return clone(fid, 'MGEF_DELIVERY', (fid, cast, delivery, burst), edid,
                  patch, writer) or fid
+
+
+#: TES4 codes Oblivion still draws on an Ability (Oblivion.exe 0x41b950): shields, Reflect Damage, Resist Normal Weapons.
+ABILITY_SHOWN_CODES = frozenset({'FISH', 'FRSH', 'LISH', 'SHLD', 'REDG', 'RSNW'})
+#: An Ability effect at or above this magnitude draws nothing in Oblivion.
+ABILITY_SHOWN_MAX_MAGNITUDE = 100
+
+
+def ability_variant(fid: int, code: str, magnitude: int, writer) -> int:
+    """``fid`` without the hit visuals Oblivion never draws on an Ability.
+
+    Oblivion keeps only the hit shader, and only for ABILITY_SHOWN_CODES under
+    magnitude 100; Skyrim draws a Constant effect's hit shader and hit art for
+    as long as it lasts.  Returns ``fid`` itself when it carries nothing to drop.
+    See: docs/commentary/tes5_import_magic.md#ability-hit-visuals
+    """
+    src = _parts_of(fid)
+    if src is None:
+        return fid
+    keep_shader = code in ABILITY_SHOWN_CODES and magnitude < ABILITY_SHOWN_MAX_MAGNITUDE
+    dropped = (O_HIT_EFFECT_ART,) if keep_shader else (O_HIT_EFFECT_ART, O_HIT_SHADER)
+    if not any(struct.unpack_from('<I', src[2], off)[0] for off in dropped):
+        return fid
+
+    def patch(data):
+        """Clear the hit visuals Oblivion does not draw."""
+        for off in dropped:
+            struct.pack_into('<I', data, off, 0)
+
+    edid = f'TES4{src[0].removeprefix("TES4")}Ability{"Shader" if keep_shader else ""}'
+    return clone(fid, 'MGEF_ABILITY', (fid, keep_shader), edid, patch, writer) or fid
 
 
 # ---------------------------------------------------------------------------

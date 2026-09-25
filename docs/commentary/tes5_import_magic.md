@@ -8,6 +8,7 @@
 - [The four defects, in priority order](#four-defects-priority-order)
 - [Path to complete conversion](#path-complete-conversion)
 - [Casting type and delivery follow the owner](#owner-casting-type)
+- [An Ability draws almost no hit visuals](#ability-hit-visuals)
 - [Effect families: HasMagicEffect tests a keyword](#effect-families)
 - [Magic art](#magic-art)
 - [Effect shader particle counts](#effect-shader-particles)
@@ -591,6 +592,41 @@ Other, the Daedra commands: 19 spells) are Target Actor with a 0 range. A
 weapon enchantment is fixed to Contact, the one owner that fires it. Changing
 this renumbered every Touch copy (the delivery is in the `MGEF_DELIVERY` key).
 The base MGEF follows (`_delivery_and_cast`).
+
+### <a id="ability-hit-visuals"></a>An Ability draws almost no hit visuals
+
+**Code:** `tes5_import/record_types/magic_variants.py` (`ability_variant`), `record_types/equipment.py` (`_slot_mgef`)
+
+Skyrim draws a Constant effect's hit shader and hit art for as long as the
+effect lasts. Vanilla uses this on purpose: 47 of Skyrim.esm's 265 Constant
+MGEFs carry a hit shader (`AbOnFire`, `AbGhostFire`, `dunSaarthalFlameFX`).
+Oblivion does not, so a straight copy set Agronak gro-Malog permanently on
+fire: `AbArenaAgronak` holds two magnitude-0 Fire Damage effects. On the
+build before the fix, 86 of 150 Constant copies in Oblivion.esm carried a
+hit shader.
+
+**Oblivion.exe** (Nehrim install, VAs): `ActiveEffect::Update` (`0x68e670`)
+draws an effect's visuals on first apply unless:
+
+- the active effect's flag `0x1` (`+0x14`) is set;
+- the MGEF flag bit 27, "No hit effect", is set (already converted);
+- the owner's spell type (`+0x28`, from the item's vtable slot 6: a spell
+  returns its `SPIT.Type`, an enchantment always 6) is 4, Ability, and
+  either `0x41b950(effect code)` returns 0 or the magnitude is 100 or more.
+  `0x41b950` is nonzero only for `FISH`, `FRSH`, `LISH`, `SHLD`, `REDG`,
+  `RSNW`. Otherwise it sets flag `0x4`, which the visuals builder (`0x69d9f0`)
+  reads as "no hit model": only the shader plays.
+
+So an Ability slot points at a copy with hit art cleared, and its hit shader
+cleared too unless the code is one of the six under magnitude 100. The copies
+are hashed at site `MGEF_ABILITY` on (source, keeps shader). Enchantments and
+diseases are untouched: this gate does not reach them.
+
+**Not for Morrowind or Fallout.** OpenMW plays an Ability's effects, looping
+(`mwmechanics/spelleffects.cpp`, `playEffects`), so a slot carrying
+`MorrowindIndex` keeps its visuals. FO3/FNV's rule is unmeasured, so a
+Fallout source keeps them too. A filler we add to an empty Ability has no
+authored visuals anywhere, so it always loses them.
 
 ### <a id="creature-attack-spells"></a>A creature's touch spell rides its melee attacks, as Contact
 

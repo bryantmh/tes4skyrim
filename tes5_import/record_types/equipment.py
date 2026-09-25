@@ -31,11 +31,13 @@ from ..base.equivalents import (
     WEAPON_ANIM_VNAM,
 )
 from .magic_variants import (DELIVERY_CONTACT, MGEF_CAST_FOR_OWNER, RANGE_DELIVERY,
-                             UNCASTABLE_SPELL_TYPES, bound_assoc_is_armor,
+                             UNCASTABLE_SPELL_TYPES, ability_variant,
+                             bound_assoc_is_armor,
                              bound_item_assoc, bound_script_variant,
                              delivery_variant, get_mgef_formid,
                              get_seff_variant, menu_object, owner_delivery,
                              written_once)
+from .world_falloutnv import is_fallout_source
 from .equipment_falloutnv import ammo_flags, gun_speed
 from .equipment_falloutnv import refine_anim_type as refine_fallout_anim_type
 from .projectile_falloutnv import (ammo_projectile, gun_sheathe_sounds,
@@ -256,6 +258,8 @@ SPELL_TYPE_CAST = {4: (0, 0), 1: (0, DELIVERY_CONTACT)}
 ENCH_FIXED_DELIVERY = {2: DELIVERY_CONTACT, 3: 0}
 #: The spell type both games number 1.
 SPELL_TYPE_DISEASE = 1
+#: The spell type both games number 4.
+SPELL_TYPE_ABILITY = 4
 #: A subrecord's type and size precede its data: 6 bytes.
 _SUBRECORD_HEADER = 6
 #: (TES4 SPIT flag, TES5 SPIT flag) pairs with one meaning in both games (xEdit SPIT definitions).
@@ -263,55 +267,52 @@ SPELL_FLAG_MAP = ((0x01, 0x000001), (0x04, 0x020000), (0x10, 0x080000),
                   (0x20, 0x100000), (0x40, 0x200000))
 
 
-def _slot_mgef(rec: dict, i: int, code: str, writer, uncastable: bool,
+def _slot_mgef(rec: dict, i: int, code: str, writer, spell_type: int,
                owner: tuple) -> int:
     """The MGEF effect slot ``i`` references, 0 when its code has none.
 
     ``owner`` is (the casting type the owner's effects carry, its fixed
     delivery or None for each effect's own TES4 range); the effect is
-    re-pointed at a clone carrying that pair.
+    re-pointed at a clone carrying that pair.  ``spell_type`` is the owning
+    TES5 spell type, -1 for any other owner.  An Oblivion Ability's effect
+    drops the hit visuals Oblivion never drew (magic_variants.ability_variant).
     """
     mgef_fid = _resolve_mgef(code, get_int(rec, f'Effect[{i}].ActorValue', -1),
                              get_str(rec, f'ScriptEffect[{i}].FormID'),
                              get_str(rec, f'Effect[{i}].Type'))
     if not mgef_fid:
         return 0
-    mgef_fid = _bound_script_for(mgef_fid, writer, uncastable) or mgef_fid
+    mgef_fid = _bound_script_for(mgef_fid, writer,
+                                 spell_type in UNCASTABLE_SPELL_TYPES) or mgef_fid
     delivery = owner[1]
     if delivery is None:
         delivery = RANGE_DELIVERY.get(get_str(rec, f'Effect[{i}].Type'), 0)
-    return delivery_variant(mgef_fid, owner[0], delivery, writer,
-                            area=get_int(rec, f'Effect[{i}].Area') > 0)
+    mgef_fid = delivery_variant(mgef_fid, owner[0], delivery, writer,
+                                area=get_int(rec, f'Effect[{i}].Area') > 0)
+    if (spell_type != SPELL_TYPE_ABILITY or is_fallout_source()
+            or get_str(rec, f'Effect[{i}].MorrowindIndex')):
+        return mgef_fid
+    return ability_variant(mgef_fid, code, get_int(rec, f'Effect[{i}].Magnitude'), writer)
 
 
 def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
-                  delivery: int = 0, writer=None, uncastable: bool = False,
+                  delivery: int = 0, writer=None, spell_type: int = -1,
                   owner: tuple = OWNER_CONSUMED) -> bytes:
-    """Pack EFID/EFIT pairs for all effects on a record.
+    """EFID/EFIT pairs for every effect on a record that has a TES5 MGEF.
 
-    Effects with no TES5 equivalent are dropped — an EFID of 0 (null MGEF)
-    crashes the game as soon as the item's card is shown in a menu. If all
-    effects are dropped, or pad_to demands more (e.g. 4 for INGR), real
-    zero-magnitude filler effects are used.
-
-    Every slot, filler included, is fitted to ``owner`` (see _slot_mgef).
-    ``delivery`` is the owning record's own, which a filler takes when the
-    owner fixes none, so an aimed item always reaches a projectile.
+    A null EFID crashes the menu, so an empty list (or one short of
+    ``pad_to``) takes zero-magnitude fillers.  Every slot is fitted to
+    ``owner`` and ``spell_type`` (see _slot_mgef); a filler takes
+    ``delivery`` when the owner fixes none, and carries no hit visuals on an
+    Ability.
     See: docs/commentary/tes5_import_magic.md#aimed-ench-null-projectile
-
-    Bound-item effects are re-pointed at a scripted stand-in whenever the
-    engine's own archetype 17 cannot serve them — always for bound ARMOR
-    (Skyrim implements bound weapons only), and for any bound item on a
-    never-cast spell.  ``uncastable`` marks that second case: a spell the
-    engine APPLIES rather than casts (an Ability or Lesser Power).  See
-    _bound_script_for and magic.bound_script_variant.
     """
     effects = []
     for i in range(get_int(rec, count_key)):
         if pad_to and len(effects) >= pad_to:
             break
         code = get_str(rec, f'Effect[{i}].EFID')
-        mgef_fid = _slot_mgef(rec, i, code, writer, uncastable, owner) if code else 0
+        mgef_fid = _slot_mgef(rec, i, code, writer, spell_type, owner) if code else 0
         if mgef_fid:
             effects.append((mgef_fid, float(get_int(rec, f'Effect[{i}].Magnitude')),
                             get_int(rec, f'Effect[{i}].Area'),
@@ -321,9 +322,11 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
     fillers = iter(fid for fid in _FILLER_EFFECTS if fid not in used)
     filler_delivery = delivery if owner[1] is None else owner[1]
     while len(effects) < max(pad_to, 1):
-        filler = next(fillers, _FILLER_EFFECTS[0])
-        effects.append((delivery_variant(filler, owner[0], filler_delivery, writer),
-                        0.0, 0, 0))
+        filler = delivery_variant(next(fillers, _FILLER_EFFECTS[0]), owner[0],
+                                  filler_delivery, writer)
+        if spell_type == SPELL_TYPE_ABILITY:
+            filler = ability_variant(filler, '', 0, writer)
+        effects.append((filler, 0.0, 0, 0))
 
     subs = b''
     for mgef_fid, mag, area, dur in effects:
@@ -1014,7 +1017,7 @@ def _spell_subrecords(rec: dict, edid: str, writer, delivery: int = None) -> byt
     if target_type is None:
         target_type = owner_delivery(rec) if delivery is None else delivery
     effects = _pack_effects(rec, delivery=target_type, writer=writer,
-                            uncastable=tes5_type in UNCASTABLE_SPELL_TYPES,
+                            spell_type=tes5_type,
                             owner=(cast_type, target_type if cast_type == 0 else delivery))
 
     if tes5_type != SPELL_TYPE_DISEASE:
