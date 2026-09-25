@@ -5530,6 +5530,26 @@ class TestMgefConversion:
         assert _delivery_and_cast(mw_tes4_flags(0x080)) == (1, 3)
         assert _delivery_and_cast(mw_tes4_flags(0x040)) == (1, 0)
 
+    def test_resist_paralysis_grants_immunity_not_paralysis(self):
+        """RSPA carries ImmuneParalysis; a Paralysis effect honors it and resists nothing.
+
+        See: docs/commentary/tes5_import_magic.md#resist-paralysis
+        """
+        from tes5_import.record_types.magic import (
+            AV_PARALYSIS, KW_IMMUNE_PARALYSIS, O_ACTOR_VALUE, O_RESIST_VALUE,
+            PARALYSIS_CONDITIONS, convert_MGEF)
+        base = {'DATA.Flags': '0', 'DATA.School': '5', 'DATA.BaseCost': '1.0'}
+        rspa = convert_MGEF(dict(base, FormID='00001900', EditorID='RSPA',
+                                 **{'DATA.ResistValue': '4294967295'}))
+        assert struct.unpack('<I', _find_subrecord(rspa, b'KWDA'))[0] == KW_IMMUNE_PARALYSIS
+        assert struct.unpack_from('<i', _find_subrecord(rspa, b'DATA'),
+                                  O_ACTOR_VALUE)[0] != AV_PARALYSIS
+        para = convert_MGEF(dict(base, FormID='00001901', EditorID='PARA',
+                                 **{'DATA.ResistValue': '66'}))
+        assert para.endswith(PARALYSIS_CONDITIONS)
+        assert struct.unpack_from('<i', _find_subrecord(para, b'DATA'),
+                                  O_RESIST_VALUE)[0] == -1
+
     def test_data_is_a_full_152_byte_struct(self):
         from tes5_import.record_types.magic import MGEF_DATA_SIZE, convert_MGEF
         rec = {'FormID': '00001857', 'EditorID': 'BWSW', 'FULL': 'Bound Sword',

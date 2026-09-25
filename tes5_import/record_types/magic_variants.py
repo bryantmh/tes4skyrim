@@ -19,7 +19,7 @@ from ..generated.vanilla_mgef_data import VANILLA_MGEF_DATA
 from .magic import (
     A_BOUND_WEAPON, A_SCRIPT, AV_NONE, MENU_ART_GENERIC, O_ARCHETYPE, O_ASSOC_ITEM,
     O_CASTING_TYPE, O_COUNTER_COUNT, O_EXPLOSION, O_HIT_EFFECT_ART, O_HIT_SHADER,
-    build_data, code_to_fid,
+    build_data, code_to_fid, effect_keywords,
     fit_delivery, get_archetype, is_derived, known_sigs, menu_display_object,
     mgef_parts, mgef_tail, resolve_actor_value, source_record)
 from .common import pack_keywords
@@ -89,7 +89,8 @@ def _emit(writer, fid: int, edid: str, head: bytes, data: bytes,
     kw = MGEF_FAMILY_KEYWORDS.get(family)
     if kw:
         MGEF_FAMILY_KEYWORDS[fid] = kw
-    subs = pack_string_subrecord('EDID', edid) + head + pack_keywords([kw])
+    subs = pack_string_subrecord('EDID', edid) + head + (
+        effect_keywords(rec, kw) if rec is not None else pack_keywords([kw]))
     subs += pack_subrecord('DATA', data) + tail
     writer.add_record('MGEF', pack_record('MGEF', fid, 0, subs))
     _parts[fid] = (edid, head, data, tail)

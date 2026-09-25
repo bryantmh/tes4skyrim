@@ -69,6 +69,7 @@ FUNC_GET_GLOBAL_VALUE = 74     # GetGlobalValue(glob)
 FUNC_GET_IS_VOICE_TYPE = 426   # GetIsVoiceType(vtyp)  — TES5-only, no TES4 source
 FUNC_HAS_MAGIC_EFFECT = 214
 FUNC_HAS_MAGIC_EFFECT_KEYWORD = 699
+FUNC_HAS_KEYWORD = 560
 FUNC_GET_IS_RACE = 69
 
 #: Speaker-as-actor conditions. See: docs/commentary/tes5_import_conditions.md#non-actor-speaker-drop

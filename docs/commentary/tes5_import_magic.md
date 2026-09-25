@@ -977,6 +977,39 @@ the effect has one, else duration when it has one. The rest are authored
 one-offs -- perk abilities, diseases, fixed-strength armor spells -- that a
 converted effect has no field to express.
 
+## <a id="resist-paralysis"></a>Resist Paralysis is a keyword, never the Paralysis actor value
+
+**Code:** `tes5_import/record_types/magic.py` (`effect_keywords`, `PARALYSIS_CONDITIONS`)
+
+Skyrim's `Paralysis` actor value is not a resistance. Any value above 0 means
+the actor *is* paralyzed. The import used to map Oblivion's Resist Paralysis
+(RSPA, and Morrowind effect 99) to a Peak Value Modifier on it, so an ability
+authored as "Resist Paralysis 100%" paralyzed its owner for good. Measured
+live (2026-09-25) on the Shivering Isles Gatekeeper `SE02Gatekeeper6`, whose
+`SEAbGKMagicResistance6` carries RSPA 100: Paralysis 100, entirely a Temp
+modifier from `TES4RSPAConstantSelfAbility`. He lay stiff and never acted.
+Paralysis effects also named Paralysis as their resist value.
+
+Vanilla has no paralysis resistance at all, only immunity. Races and actors
+carry the `ImmuneParalysis` keyword (0xF23C5). All 19 Paralysis-archetype
+MGEFs in Skyrim.esm have ResistValue -1; 17 carry
+`HasKeyword(ImmuneParalysis) == 0` and 15 `HasKeyword(ActorTypeDragon) == 0`.
+No vanilla MGEF carries the keyword itself.
+The import now does the same:
+
+* RSPA and Morrowind 99 become a script-archetype effect with no script,
+  whose only job is to carry `ImmuneParalysis`. Every clone carries it too
+  (`magic_variants._emit`).
+* Every Paralysis-archetype effect gets vanilla's two conditions plus
+  `HasMagicEffectKeyword(ImmuneParalysis) == 0`, and no resist value.
+  `HasKeyword` checks only the actor's base record, so without the third
+  condition an ability-granted immunity would do nothing.
+
+Oblivion's partial resist (a percent chance to shrug a paralysis off) has no
+Skyrim equivalent, and any magnitude now grants full immunity. Every creature
+and quest ability in Oblivion.esm authors 100; the partial values (10-60%)
+are only on enchantments and ingredients.
+
 ## <a id="morrowind-effects"></a>Morrowind effects key on an index, not a code
 
 **Code:** `tes5_import/record_types/magic_morrowind.py`
