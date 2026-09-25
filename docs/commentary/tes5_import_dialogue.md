@@ -1586,6 +1586,18 @@ player cannot answer).
 Choices into a zero-INFO topic are dropped as well. Those topics are never
 emitted (`EMPTY_DIAL_FIDS`) and Oblivion never showed them either.
 
+**A bark keeps a choice only into a topic with no top-level branch**
+(`_menu_topic_fids` in `groups.py`). A Skyrim TCLT *replaces* the topic list:
+after a line that has one, MenuTopicManager (1.6.1170 0x5e1830, id 35287) shows
+only that line's choices. An Oblivion greeting's Choice only *adds* to the list.
+Oblivion ships the Shivering Isles generic greetings ("What?", "Hi.", "Yes?")
+with `Choice=INFOGENERAL`. Converted as TCLTs, 10 of Carahil's 13 passing
+greetings did it, so whenever the engine picked one of them at random she
+offered "Rumors" and nothing else. A target that already has a top-level branch
+(Rumors, or a greeting-reached response promoted with its inherited timing gate)
+is in the menu anyway, so the TCLT did nothing but hide the other topics. A
+target whose branch is Normal keeps the TCLT, because that is its only way in.
+
 ## <a id="bark-pass"></a>The bark pass: one topic per quest and subtype
 
 **Code:** `tes5_import/dialogue/groups.py:_build_bark_pass`

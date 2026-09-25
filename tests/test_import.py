@@ -2079,13 +2079,52 @@ class TestServiceConversion:
         assert b'TES4_TIF__00062116' in dial_group
         assert b'Take a look.' in dial_group
 
+    def test_greeting_choice_to_menu_topic_is_not_a_tclt(self):
+        """A generic greeting whose Choice is a menu topic (Oblivion's SE
+        greetings -> INFOGENERAL, which a script AddTopics) keeps no TCLT, so the
+        NPC's whole topic list survives; the topic stays top-level."""
+        from tes5_import.dialogue.groups import build_dialog_groups
+        from tes5_import.base.text_reader import set_formid_index_offset
+        set_formid_index_offset(0)
+        writer = PluginWriter(masters=['Skyrim.esm'])
+        qust = {'Signature': 'QUST', 'FormID': '00060952', 'EditorID': 'SEGreet',
+                'DATA.Flags': '1', 'DATA.Priority': '30', 'StageCount': '0'}
+        greeting = {'Signature': 'DIAL', 'FormID': '000000C8', 'EditorID': 'GREETING',
+                    'FULL': 'GREETING', 'DATA.Type': '0', 'QuestCount': '1',
+                    'Quest[0]': '00060952'}
+        rumors = {'Signature': 'DIAL', 'FormID': '000000D7', 'EditorID': 'INFOGENERAL',
+                  'FULL': 'Rumors', 'DATA.Type': '0', 'QuestCount': '1',
+                  'Quest[0]': '00060952'}
+        line = {'Signature': 'INFO', 'RecordFlags': '0', 'DATA.Flags': '0',
+                'QSTI.Quest': '00060952', 'ResponseCount': '1',
+                'Response[0].EmotionType': '0', 'Response[0].EmotionValue': '50',
+                'Response[0].ResponseNumber': '1'}
+        greet_info = dict(line, FormID='000617C3', ParentDIAL='000000C8',
+                          ChoiceCount='1', **{'Choice[0]': '000000D7',
+                                              'Response[0].ResponseText': 'Hi.'})
+        rumor_info = dict(line, FormID='000617D0', ParentDIAL='000000D7',
+                          **{'Response[0].ResponseText': 'Heard anything?'})
+        build_dialog_groups({'QUST': [qust], 'DIAL': [greeting, rumors],
+                             'INFO': [greet_info, rumor_info]},
+                            writer, npc_to_vtyp={},
+                            unlock_plan={'gated': {}, 'info_reveals': {},
+                                         'stage_reveals': {}, 'script_added': {0xD7}})
+        dial_group = b''.join(writer._top_groups.get('DIAL', []))
+        greet_rec = self._find_record(dial_group, b'INFO', 0x000617C3)
+        assert greet_rec is not None, 'greeting INFO missing'
+        assert not self._subrecords(greet_rec).get('TCLT'), \
+            'a greeting TCLT replaces the topic list with its choices'
+        branch = self._find_record(b''.join(writer._top_groups.get('DLBR', [])),
+                                   b'DLBR', None, snam=0x000000D7)
+        assert branch is not None and struct.unpack(
+            '<I', self._subrecords(branch)['DNAM'][0][:4])[0] == 1
+
     def test_greeting_choice_reaches_response_topic(self):
-        """A greeting bark whose INFO carries a Choice must keep that TCLT and
-        the response topic must get a TOP-LEVEL branch — otherwise the NPC
-        greets the player but the player cannot select the response (FGC01Rats:
-        Arvena asks what happened in the basement, player can't answer). Also
-        verifies a greeting Choice pointing at ANOTHER bark is dropped (it would
-        dangle after the bark pass splits/merges topics)."""
+        """A greeting Choice's response topic gets a gated TOP-LEVEL branch, so
+        the player can answer (FGC01Rats: Arvena asks what happened in the
+        basement). The greeting keeps no TCLT to it: a Skyrim TCLT replaces
+        the whole topic list, an Oblivion greeting Choice only adds to it. A
+        Choice pointing at ANOTHER bark is dropped too."""
         from tes5_import.dialogue.groups import build_dialog_groups
         from tes5_import.base.text_reader import set_formid_index_offset
         set_formid_index_offset(0)
@@ -2144,14 +2183,11 @@ class TestServiceConversion:
         dial_group = b''.join(writer._top_groups.get('DIAL', []))
         dlbr_group = b''.join(writer._top_groups.get('DLBR', []))
 
-        # The greeting INFO keeps its TCLT to the conversation response topic...
         greet_rec = self._find_record(dial_group, b'INFO', 0x00036622)
         assert greet_rec is not None, 'greeting INFO missing'
         tclts = {struct.unpack('<I', d[:4])[0]
                  for d in self._subrecords(greet_rec).get('TCLT', [])}
-        assert 0x00036613 in tclts, 'greeting lost its Choice to the response'
-        # ...but drops the Choice that points at another bark.
-        assert 0x000000C9 not in tclts, 'bark->bark choice should be dropped'
+        assert not tclts, 'a greeting TCLT would replace the whole topic list'
 
         # The response topic's branch is TOP-LEVEL (DNAM=1), so it is selectable.
         branch = self._find_record(dlbr_group, b'DLBR', None,

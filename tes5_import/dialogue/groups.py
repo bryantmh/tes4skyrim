@@ -129,28 +129,64 @@ def _quest_lookup_tables(by_type, dials, fid_to_edid, generic_quest_fid,
     return quest_edid_by_fid, quest_fid_by_edid, quest_dialog_ctdas
 
 
+def _is_script_topic(dial_rec, dial_fid) -> bool:
+    """A script-driven Conversation topic, kept off the menu (not CONV_KEEP_EDIDS)."""
+    return (get_int(dial_rec, 'DATA.Type') == DIAL_TYPE_CONVERSATION
+            and get_str(dial_rec, 'EditorID', '') not in CONV_KEEP_EDIDS
+            and (dial_fid & 0xFFFFFF) in SAY_TOPIC_DISPOSITIONS)
+
+
 def _branch_is_linked(dial_rec, dial_fid, tclt_targets, bark_choice_targets,
-                      unlock_plan, stats) -> bool:
+                      unlock_plan) -> bool:
     """True when this topic's DLBR must be a Normal (non-top-level) branch.
 
     A TCLT target never explicitly AddTopic'd stays off the menu; one reached
     from a bark/greeting choice does not.  Script-driven Conversation topics
-    are forced Normal, except CONV_KEEP_EDIDS.
+    are forced Normal.
 
     See: docs/commentary/tes5_import_dialogue.md#branches-views-topic-ownership
     """
-    is_linked = (dial_fid in tclt_targets
-                 and dial_fid not in bark_choice_targets
-                 and (dial_fid & 0xFFFFFF) not in unlock_plan['gated']
-                 and (dial_fid & 0xFFFFFF)
-                 not in unlock_plan.get('script_added', ()))
-    if (get_int(dial_rec, 'DATA.Type') == DIAL_TYPE_CONVERSATION
-            and get_str(dial_rec, 'EditorID', '') not in CONV_KEEP_EDIDS
-            and (dial_fid & 0xFFFFFF) in SAY_TOPIC_DISPOSITIONS):
-        is_linked = True
-        stats['script_topic_unlisted'] = \
-            stats.get('script_topic_unlisted', 0) + 1
-    return is_linked
+    return ((dial_fid in tclt_targets
+             and dial_fid not in bark_choice_targets
+             and (dial_fid & 0xFFFFFF) not in unlock_plan['gated']
+             and (dial_fid & 0xFFFFFF)
+             not in unlock_plan.get('script_added', ()))
+            or _is_script_topic(dial_rec, dial_fid))
+
+
+def _topic_branch(dial_rec, writer, owner_qfid, tclt_targets,
+                  bark_choice_targets, unlock_plan, stats) -> tuple:
+    """(DLBR FormID, DLBR bytes) for a conversation topic; top-level unless linked."""
+    dial_fid = get_formid(dial_rec, 'FormID')
+    edid = get_str(dial_rec, 'EditorID', '')
+    is_linked = _branch_is_linked(dial_rec, dial_fid, tclt_targets,
+                                  bark_choice_targets, unlock_plan)
+    if _is_script_topic(dial_rec, dial_fid):
+        stats['script_topic_unlisted'] += 1
+    dlbr_fid = writer.derive_formid('DLBR', dial_fid)
+    dlbr_edid = f'TES4_{edid}_Branch' if edid else f'TES4_DLBR_{dlbr_fid:08X}'
+    stats['branches'] += 1
+    return dlbr_fid, make_dlbr(dlbr_fid, dlbr_edid, owner_qfid, dial_fid,
+                               top_level=not is_linked)
+
+
+def _menu_topic_fids(dials, info_by_dial, tclt_targets, bark_choice_targets,
+                     unlock_plan) -> set:
+    """FormIDs of the conversation topics that get a top-level branch.
+
+    A bark's choice into one of these is dropped: see
+    docs/commentary/tes5_import_dialogue.md#info-tclt-choice-filter
+    """
+    out = set()
+    for d in dials:
+        fid = get_formid(d, 'FormID')
+        if should_skip_dial(d) or fid in EMPTY_DIAL_FIDS or not info_by_dial.get(fid):
+            continue
+        is_bark = classify_topic(get_str(d, 'EditorID', ''), get_int(d, 'DATA.Type'))[3]
+        if not is_bark and not _branch_is_linked(
+                d, fid, tclt_targets, bark_choice_targets, unlock_plan):
+            out.add(fid)
+    return out
 
 
 def _bark_dial_fids(dials) -> set:
@@ -465,7 +501,9 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         quest_edid_by_fid=quest_edid_by_fid, quest_priority=quest_priority,
         quest_fid_by_edid=quest_fid_by_edid,
         quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid,
-        bark_dial_fids=bark_dial_fids, stats=stats, script_vars=script_vars)
+        bark_dial_fids=bark_dial_fids, stats=stats, script_vars=script_vars,
+        menu_topic_fids=_menu_topic_fids(dials, info_by_dial, tclt_targets,
+                                         bark_choice_targets, unlock_plan))
     bark_content, bark_sge = _build_bark_pass(
         bark_dials, info_by_dial, writer,
         bark_generic_quests, bark_ctx)
@@ -689,19 +727,11 @@ def _build_one_topic(dial_rec, info_by_dial, writer, offset,
     else:
         owner_qfid = generic_quest_fid
 
-    # --- DLBR (conversation topics only; barks have no branch) ---
-    dlbr_fid = 0
-    dlbr_bytes = b''
+    dlbr_fid, dlbr_bytes = 0, b''
     if not is_bark and child_infos:
-        is_linked = _branch_is_linked(
-            dial_rec, dial_fid, tclt_targets, bark_choice_targets,
+        dlbr_fid, dlbr_bytes = _topic_branch(
+            dial_rec, writer, owner_qfid, tclt_targets, bark_choice_targets,
             unlock_plan, stats)
-        dlbr_fid = writer.derive_formid('DLBR', dial_fid)
-        dlbr_edid = (f'TES4_{edid}_Branch' if edid
-                     else f'TES4_DLBR_{dlbr_fid:08X}')
-        dlbr_bytes = make_dlbr(dlbr_fid, dlbr_edid, owner_qfid, dial_fid,
-                               top_level=not is_linked)
-        stats['branches'] += 1
 
     # --- Identity gating data for conversation topics ---
     # Service-menu topics must not inherit identity/voice gates: their generic
@@ -841,6 +871,7 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
                 reveal_props=reveal_props, service_menu=ctx['service_kind'],
                 bark_dial_fids=(ctx.get('bark_dial_fids')
                                 if ctx['is_bark'] else None),
+                menu_topic_fids=ctx.get('menu_topic_fids', ()),
                 script_vars=ctx.get('script_vars'))
             topic_children += info_bytes
             child_count += 1
