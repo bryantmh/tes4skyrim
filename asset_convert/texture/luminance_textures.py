@@ -103,7 +103,9 @@ def convert_file(path):
 
     L is replicated into R, G and B and alpha is set opaque, which is what
     Oblivion's own sampler did with the single channel.  Every mip level is
-    converted, so the texture stays complete at distance.
+    converted, so the texture stays complete at distance.  The bytes are
+    overwritten in the SAME file, never swapped in via a rename, so every
+    hard link to it (a deployed game copy) receives the fix.
     """
     path = str(path)
     if not is_luminance(path):
@@ -162,11 +164,9 @@ def convert_file(path):
         (DDSCAPS_COMPLEX | DDSCAPS_MIPMAP) if len(dims) > 1 else 0)
     struct.pack_into('<I', hdr, 108, caps)
 
-    tmp = path + '.tmp'
-    with open(tmp, 'wb') as fh:
+    with open(path, 'wb') as fh:
         fh.write(bytes(hdr))
         fh.write(bytes(out))
-    os.replace(tmp, path)
     return True
 
 

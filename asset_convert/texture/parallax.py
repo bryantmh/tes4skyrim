@@ -672,16 +672,10 @@ def strip_diffuse_alpha(tex_root, keep=()) -> 'tuple[int, int, int, int]':
             if blob is None:
                 skipped += 1
                 continue
-            tmp = f'{path}.{os.getpid()}.tmp'
             try:
-                with open(tmp, 'wb') as f:
+                with open(path, 'wb') as f:
                     f.write(blob)
-                os.replace(tmp, path)
             except OSError:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
                 continue
             saved += len(data) - len(blob)
             converted += 1

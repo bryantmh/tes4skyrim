@@ -86,6 +86,19 @@ markers. TR_Mainland sends 13 of its 16 markers to the jail's temporary door,
 so the import gives each one a persistent partner
 ([below](#return-marker)).
 
+## <a id="unloaded-plugin-skipped"></a>A crime file whose plugin is not loaded is skipped
+
+Each `<plugin>.crime.json` is kept whole until DataLoaded and asked once
+whether its own plugin is loaded: its first faction, jail marker or anchor cell
+naming that plugin's own file must resolve. Otherwise the whole file is
+skipped and logged (`crime: X is not loaded -- its crime file is skipped`).
+Before this, every row went to `GetFormFromFile`, and each miss is an engine
+error in the Papyrus log. Measured: 9,349 errors in one second from the
+Morrowind_ob and TR_Mainland files with neither plugin enabled. Worldspace roots
+are gathered from every loaded file before any file's anchors resolve, since an
+anchor's worldspace is often a master's. A file naming no form of its own
+resolves as before.
+
 ## <a id="serve-time"></a>Serving time keeps the stolen goods
 
 Both source games keep confiscated stolen goods in the evidence chest and hand

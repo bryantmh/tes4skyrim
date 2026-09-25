@@ -508,6 +508,17 @@ The log now prints the resolved index per plugin
 (`TR_Mainland -> 8522 actor(s) at load-order index 22`), so this class of
 failure names itself rather than presenting as silence.
 
+**A sidecar folder whose plugin is not loaded is skipped whole**
+(`SidecarPluginLoaded`, asked once per folder). The proof is one of the
+folder's own base records failing to resolve: an actor from `NPC__index.txt`,
+else the first row of the quest, base, item, faction, GLOB or apparatus tables
+that names the folder's OWN file. A row naming a master proves nothing and is
+passed over. The check once read the actor index alone, so a folder without one
+(an incomplete sidecar, a leftover Oblivion folder from an old release) counted
+as loaded. Its staged placements each then cost a failing `GetFormFromFile`,
+which the engine reports to the Papyrus log. A folder that names no record of
+its own still counts as loaded, since nothing can rule it out.
+
 ### The actor index, and why import writes it
 
 The runtime routes by **FormID** but filters dialogue by **TES3 id**, so
@@ -1987,6 +1998,38 @@ alias stays posted on purpose.
 The tick thread posts only while no posted tick is waiting. Alt-tabbing stops
 the task pump, and an unconditional post queued 30 ticks a second that all ran
 at once on return.
+
+### <a id="the-tick-sleeps-whole-milliseconds"></a>🛑 The tick thread sleeps in WHOLE milliseconds
+
+The thread used to wait with `sleep_for(duration<float>(1/30))`. MSVC's
+`_To_absolute_time` builds the deadline as `decltype(now + rel)`, and
+`nanoseconds + duration<float>` is `duration<float, nano>`: a float count of
+nanoseconds since boot. At 2^49 ns (about 156 hours of uptime, which Windows
+Fast Startup does not reset) a float's step is 67 ms, so `now + 33 ms` rounds
+back to `now` and the sleep returns at once. Computed with the STL's own
+types: 33.5 ms at 150 h, 0 ms at 157 h and every uptime after.
+
+The spinning thread then re-posted the next tick the moment the running one
+cleared `g_queued`, and SKSE drains a task posted mid-drain in the same sweep.
+The frame ended only when Windows happened to deschedule the thread. Frame time
+became one tick's cost times the ticks that slipped in:
+
+| State | Tick cost | Reported |
+|---|---|---|
+| A pausing menu, the console, chargen | a few µs (the tick is gated) | 60 fps |
+| Oblivion only, nothing staged | small | 30-50 fps, erratic |
+| Morrowind, Tribunal, Bloodmoon | the sweep, 40 carried polls, 7 globals | 1-3 fps |
+
+It was never the tick's own work. A headless bench over the real three
+sidecars (10,640 placements, the same 7 globals) measured 0.03 ms a tick with
+the engine stubbed and no C++ throws, and every engine call in it is a list walk
+or a hash lookup (`GetFormFromFile` 1.6.1170 `0xa0c7e0`, `GetItemCount`
+`0xa3e420`). The float sleep shipped in 0.658; a heavier 0.664 tick only made
+each spin cost more. Every spun tick also advanced the runtime clock 1/30 s, so
+Morrowind timers ran fast while it lasted.
+
+`kTickSleep` is `milliseconds(33)`, which holds at every uptime. TESRuntime's
+crime thread already slept in milliseconds.
 
 ### <a id="a-script-acts-on-its-own-reference"></a>🛑 A script's own id is the reference RUNNING it
 
