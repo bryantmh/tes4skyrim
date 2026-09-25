@@ -36,8 +36,8 @@ def test_morrowind_high_level_actor_is_not_killed():
         assert TES5_RACE_BASE_HEALTH + offset > 0
 
 
-def test_oblivion_npc_keeps_the_level_term():
-    """An NPC with no Morrowind marker converts exactly as before."""
-    rec = {'DATA.Health': '397', 'ACBS.Level': '100'}
+def test_auto_calc_npc_keeps_the_level_term():
+    """Only an Auto-calc-stats NPC has the engine's level term solved out."""
+    rec = {'DATA.Health': '397', 'ACBS.Level': '100', 'ACBS.Flags': '16'}
     level, offset = _decode(npc_acbs(rec))
     assert (level, offset) == (100, 397 - TES5_RACE_BASE_HEALTH - 99 * 5)

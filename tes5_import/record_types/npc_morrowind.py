@@ -13,12 +13,3 @@ def is_morrowind_npc(rec: dict) -> bool:
     See: docs/commentary/tes4_export_morrowind.md#actors-and-placements
     """
     return bool(rec.get('MorrowindRace'))
-
-
-def morrowind_health_and_level(health: int, level: int) -> tuple:
-    """TES3 authored health -> (ACBS.HealthOffset, ACBS.Level), no level term.
-
-    See: docs/commentary/tes5_import_actors.md#morrowind-health-is-absolute
-    """
-    offset = health - TES5_RACE_BASE_HEALTH
-    return max(-32768, min(offset, 32767)), max(1, min(level, 65535))

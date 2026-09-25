@@ -894,10 +894,11 @@ def convert_CLAS(rec: dict, *, override_fid: int = 0, override_edid: str = '',
                  override_teaches: int = -1, override_maxtrain: int = -1) -> bytes:
     """CLAS — TES5 DATA is 36 bytes with Skyblivion skill-weight algorithm.
 
-    The override_* parameters support Phase 0c trainer-class synthesis: Skyrim
-    reads a trainer's skill/cap from the NPC's CLASS, but Oblivion stores them
-    per-NPC in AIDT, so trainer NPCs get a clone of their own class with just
-    Teaches/MaxTraining replaced (override_teaches is a TES5_SKILL_ORDER index).
+    Health/Magicka/Stamina weights are zero: auto-calc level-ups add nothing past
+    the NPC's solved ACBS offsets. The override_* parameters clone a trainer's
+    class with Teaches (a TES5_SKILL_ORDER index) and MaxTraining replaced.
+
+    See: docs/commentary/tes5_import_actors.md#health-offset
     """
     subs = b''
     edid = override_edid or get_str(rec, 'EditorID')
@@ -930,7 +931,7 @@ def convert_CLAS(rec: dict, *, override_fid: int = 0, override_edid: str = '',
     data += skill_weights
     data += struct.pack('<f', _CLAS_BLEEDOUT_DEFAULT)
     data += struct.pack('<I', 0)
-    data += struct.pack('<4B', 1, 1, 1,
+    data += struct.pack('<4B', 0, 0, 0,
                         int(bool(get_int(rec, 'DATA.Flags') & _T4C_GUARD)))
     subs += pack_subrecord('DATA', data)
 

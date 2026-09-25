@@ -34,14 +34,16 @@ from .common import (
 )
 from .crime import IS_GUARD_FACTION, crime_faction, is_guard_class
 from .spell_tomes import tome_items
-from .npc_morrowind import (TES5_RACE_BASE_HEALTH, is_morrowind_npc,
-                            morrowind_health_and_level)
+from .npc_morrowind import TES5_RACE_BASE_HEALTH
 
 #: TES4 NPC_ ACBS bits that mean the same thing in TES5, Female included.
 _NPC_COMPATIBLE_FLAGS = 0x4C9B
 
 #: TES4 NPC_ ACBS bit 7, PC Level Offset.
 _T4N_PC_LEVEL_OFFSET = 0x80
+
+#: ACBS bit 4, Auto calc stats: the only NPCs the engine gives a per-level health bonus.
+_AUTO_CALC_STATS = 0x10
 
 
 # ---------------------------------------------------------------------------
@@ -87,24 +89,26 @@ def npc_skills_dnam(rec: dict) -> bytes:
     return bytes(dnam)
 
 
-def _health_and_level(tes4_health: int, tes4_level: int, is_pc_level_mult: bool
-                      ) -> tuple:
-    """TES4 final health pool -> (ACBS.HealthOffset, ACBS.Level) for an NPC.
+def _health_and_level(tes4_health: int, tes4_level: int, tes5_flags: int) -> tuple:
+    """Final health pool -> (ACBS.HealthOffset, ACBS.Level) for an NPC.
 
-    Chosen so the engine's own calculation reproduces the TES4 total exactly.
-    A pool past the int16 offset is spent through the Level term instead of
-    being clamped, which would make an intended-invulnerable actor killable.
-    A PC-Level-Mult actor keeps only the race-base subtraction, since its level
-    term tracks the player and is unknown at author time.
+    Chosen so the engine's own calculation reproduces the source total exactly.
+    Only an Auto-calc-stats actor gets a level term from the engine; a manual
+    one is race base plus offset. An auto-calc pool past the int16 offset is
+    spent through the Level term instead of being clamped. A PC-Level-Mult
+    actor keeps only the race-base subtraction, since its level term tracks the
+    player and is unknown at author time.
 
     See: docs/commentary/tes5_import_actors.md#health-offset
     """
-    if is_pc_level_mult:
-        offset = tes4_health - TES5_RACE_BASE_HEALTH
+    offset = tes4_health - TES5_RACE_BASE_HEALTH
+    if tes5_flags & _T4N_PC_LEVEL_OFFSET:
         return max(-32768, min(offset, 32767)), 1000
 
     level = max(1, min(tes4_level, 65535))
-    offset = tes4_health - TES5_RACE_BASE_HEALTH - (level - 1) * TES5_HEALTH_LEVEL_BONUS
+    if not tes5_flags & _AUTO_CALC_STATS:
+        return max(-32768, min(offset, 32767)), level
+    offset -= (level - 1) * TES5_HEALTH_LEVEL_BONUS
     if offset > 32767:
         need = tes4_health - TES5_RACE_BASE_HEALTH - 32767
         level = max(level, min(65535, -(-need // TES5_HEALTH_LEVEL_BONUS) + 1))
@@ -119,24 +123,17 @@ def npc_acbs(rec: dict) -> bytes:
     authored ACBS/attribute change patches the exact bytes conversion writes.
 
     Layout per xEdit wbDefinitionsTES5. Magicka and Stamina offsets are deltas
-    from the race base (SpellPoints, Fatigue). A Morrowind actor solves health
-    without TES4's level term.
+    from the race base (SpellPoints, Fatigue).
 
     See: docs/commentary/tes5_import_actors.md#health-offset
-    See: docs/commentary/tes5_import_actors.md#morrowind-health-is-absolute
     """
     tes4_flags = get_int(rec, 'ACBS.Flags')
-    level = get_int(rec, 'ACBS.Level', 1)
     calc_min = get_int(rec, 'ACBS.CalcMin', 1)
     calc_max = get_int(rec, 'ACBS.CalcMax', 100)
     tes5_acbs_flags = tes4_flags & _NPC_COMPATIBLE_FLAGS
-    is_pc_level = bool(tes4_flags & _T4N_PC_LEVEL_OFFSET)
-    if is_morrowind_npc(rec):
-        health_offset, tes5_level = morrowind_health_and_level(
-            get_int(rec, 'DATA.Health', 50), level)
-    else:
-        health_offset, tes5_level = _health_and_level(
-            get_int(rec, 'DATA.Health', 50), level, is_pc_level)
+    health_offset, tes5_level = _health_and_level(
+        get_int(rec, 'DATA.Health', 50), get_int(rec, 'ACBS.Level', 1),
+        tes5_acbs_flags)
     magicka_offset = max(-32768, min(
         get_int(rec, 'ACBS.SpellPoints', 0) - TES5_RACE_BASE_HEALTH, 32767))
     stamina_offset = max(-32768, min(
