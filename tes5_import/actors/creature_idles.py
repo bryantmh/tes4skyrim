@@ -50,6 +50,7 @@ _ACTIONS = {
     'ActionSwimStateChange': 0x00013003,
     'ActionKnockDown': 0x000D1FDC,
     'ActionRagdollInstant': 0x0009BB4E,
+    'ActionGetUp': 0x000D1FDD,
     'ActionIdle': 0x00013002,
     'ActionIdleWarn': 0x00098886,
     # magic / block action entry points (vanilla creature casters and
@@ -91,14 +92,11 @@ _LEAVES = [
     ('Knockdown', 'Ragdoll', 'ActionKnockDown', '000000630000'),
     ('RagdollInstant', 'RagdollInstant', 'ActionRagdollInstant',
      '000000740000'),
+    ('GetUp', 'GetUpBegin', 'ActionGetUp', '000000720000'),
 ]
 
-# Leaves whose graph event only exists inside the RAGDOLL wrapper states.
-# A ragdoll-less creature (ghost, wraith, spectre) has no such states, so
-# these events reach no transition; vanilla's ragdoll-less witchlight
-# ships `WitchlightRagdollInstant` with NO ENAM and no death IDLE at all,
-# leaving the corpse to the engine.  See build_creature_idles.
-_RAGDOLL_ONLY_LEAVES = {'Knockdown', 'RagdollInstant'}
+#: Leaves whose event only a ragdoll graph handles; written without ENAM otherwise (build_creature_idles).
+_RAGDOLL_ONLY_LEAVES = {'Knockdown', 'RagdollInstant', 'GetUp'}
 
 # IsSwimming == 1 condition, verbatim from vanilla DogSwimStart
 _SWIM_CTDA = bytes.fromhex(
