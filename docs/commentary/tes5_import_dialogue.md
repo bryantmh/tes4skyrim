@@ -147,7 +147,7 @@ game, see the `oblivion-dialog-system`, `skyrim-dialog-system`, and
 - **Quest running gating (QSTI restoration, 2026-07 design)**: In Oblivion, each INFO only shows while its OWN `QSTI.Quest` is running. Single-quest topics get this natively via quest ownership. For shared topics (owned by TES4DialogueGeneric), `_build_one_topic()` injects `GetQuestRunning(info's own QSTI.Quest)==1.0` as the FIRST CTDA on each INFO whose quest is non-SGE and ≠ the topic owner. **Gate by the INFO's OWN quest, never the DIAL's Quest[0]** — gating all of GREETING's children by one arbitrary Quest[0] blocks ALL greetings (a hard-won earlier lesson). SGE quests are exempt (running from new game via the .seq file).
 - **AddTopic unlock system (2026-07)**: Oblivion's CENTRAL visibility mechanic — a topic only appears once ADDED via an INFO's Add-Topics data list (export: `AddTopic[i]=` FormIDs, 1044 INFOs), an `AddTopic X` result-script command, a quest-stage script, or automatically when a spoken line's text mentions the topic's FULL name (Oblivion highlights + auto-adds mentioned names). Skyrim has no AddTopic → re-expressed via `tes5_import/dialogue/unlocks.py`: one GLOB `TES4Unlock_<topic>` per gated topic (206); every INFO of a gated topic gets `GetGlobalValue(GLOB)==1` (func 74, same both games); every reveal event sets the global from a Papyrus fragment (INFO fragments fire OnEnd; reveal-only INFOs get a generated TIF fragment with just the SetValue call). The plan is built identically by the importer (GLOBs, conditions, VMAD property bindings) and script_convert/pipeline (fragment .psc bodies) — keys are low-24 FormIDs so it's load-order-offset independent. Gating rules (each violation caused a real in-game bug):
   - Gate ONLY topics explicitly added somewhere; mention-only topics stay ungated (name-match miss = dead content).
-  - **Topics revealed by BARK lines (GREETING/HELLO) are NOT gated** — the bark fires on first contact, so in Oblivion they're effectively visible on first talk (Azzan's "Join the Fighters Guild" via his FG-ad greeting). Gating them makes topics go missing (fragment races the menu / a different greeting plays). 409 of 615 explicit targets are bark-revealed → 206 gated.
+  - **Topics revealed by BARK lines (GREETING/HELLO) are NOT gated when every speaker of the topic says a revealing bark** (see [the bark-ungating exception](#the-bark-ungating-exception)) — the bark fires on first contact, so in Oblivion they're effectively visible on first talk (Azzan's "Join the Fighters Guild" via his FG-ad greeting). Gating them makes topics go missing (fragment races the menu / a different greeting plays). 409 of 615 explicit targets are bark-revealed → 206 gated.
   - Gated TCLT targets keep the gate; their TCLT-parent INFOs are added as revealers.
   - Example that must stay gated: contract INFO (0003571C) lists AddTopic[0]=ratsTOPIC → TES4_TIF__0003571C sets TES4Unlock_ratsTOPIC OnEnd → "Rats" appears only after the contract line. Quest-running does NOT hide it — FGC01Rats starts at guild join (FGD00JoinFG stage 100 `StartQuest` → `.Start()` fragment).
 - **'AnswerStatus' and 'TRANSITION'** are Oblivion NPC-to-NPC conversation system topics — classify as barks (IDLE/88/cat 7) or they leak into player topic menus.
@@ -1668,6 +1668,23 @@ Azzan, `contract` stood or fell purely on its own INFO conditions while
 who did not click Contract lost every topic and was left with the generic
 INFOGENERAL pool ("Rumors"), which is exactly the reported symptom. Keeping the
 gate makes the reveal explicit and idempotent from BOTH revealer kinds.
+
+It also keeps the gate when the barks are spoken by the WRONG NPCs. "Visible on
+first talk" holds only for an NPC who says the revealing bark, so a topic is
+ungated only when every speaker of the topic (its INFOs' positive `GetIsID`s; a
+line with none means anyone) is covered by a revealing bark's speakers (a bark
+with no `GetIsID` covers everyone). Shivering Isles proved it: Sheogorath's
+greeting 00081B68 AddTopics `SE04GreymarchTopic`/`SE04JyggalagTopic`/
+`SE04ObelisksTopic`, but Haskill speaks them too, gated only by
+`GetIsID(SEHaskill)` under the start-game-enabled SE04Shell, so the ungated
+topics showed on Haskill from game start. Keeping the gate took Oblivion.esm
+from 473 to 537 gated topics, with every existing global name unchanged.
+Confirmed in-game.
+
+A mention reveal unlocks EVERY gated topic sharing the mentioned FULL name. SI
+has one "Greymarch" DIAL per main quest (SE03, SE04, SE06-SE10); the name map
+used to keep one global per name, so a mention opened only whichever topic was
+written last.
 
 ## <a id="info-fragment-emission"></a>INFO fragment emission: one decision function
 

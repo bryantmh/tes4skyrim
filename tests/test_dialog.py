@@ -1392,6 +1392,36 @@ class TestAddTopicUnlocks:
         for gs in plan['info_reveals'].values():
             assert 'TES4Unlock_stageTopic' not in gs
 
+    def test_bark_said_by_another_npc_keeps_the_gate(self):
+        """Sheogorath's greeting adds Haskill's 'Greymarch': the bark only
+        ungates a topic whose every speaker says that bark, or Haskill offers
+        the topic before the greeting ever plays."""
+        from tes5_import.dialogue.unlocks import build_unlock_plan
+        sheo = '000000000000803f48000000010d00000000000000000000'
+        bt = self._by_type()
+        bt['QUST'][0]['Stage[0].Log[0].ResultScript'] = ''
+        bt = self._with_greeting(bt, '000B0004')
+        bt['INFO'][-1].update({'ConditionCount': '1', 'Condition[0].Raw': sheo})
+        assert 0x0B0004 in build_unlock_plan(bt)['gated'], \
+            "a conditionless topic line is not covered by one NPC's bark"
+        stage_line = next(r for r in bt['INFO'] if r['FormID'] == '000C0002')
+        stage_line.update({'ConditionCount': '1', 'Condition[0].Raw': sheo})
+        assert 0x0B0004 not in build_unlock_plan(bt)['gated'], \
+            "topic spoken only by the greeting NPC is ungated"
+
+    def test_mention_reveals_every_topic_sharing_the_name(self):
+        """Several gated topics may share one FULL name (SE04..SE10
+        'Greymarch'); a line naming it reveals all of them."""
+        from tes5_import.dialogue.unlocks import build_unlock_plan
+        bt = self._by_type()
+        bt['DIAL'].append({'FormID': '000B0006', 'EditorID': 'ratsTOPIC2',
+                           'DATA.Type': '0', 'QuestCount': '1',
+                           'Quest[0]': '000A0001', 'FULL': 'Rats'})
+        bt['INFO'][0]['AddTopic[1]'] = '000B0006'
+        plan = build_unlock_plan(bt)
+        assert plan['info_reveals'][0x0C0002] == ['TES4Unlock_ratsTOPIC',
+                                                  'TES4Unlock_ratsTOPIC2']
+
     def test_topic_revealed_by_both_bark_and_conversation_stays_gated(self):
         """A greeting revealer belongs to whichever NPC that greeting is gated
         to, and says nothing about a DIFFERENT NPC whose reveal comes from a
