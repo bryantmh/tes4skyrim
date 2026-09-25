@@ -176,8 +176,8 @@ GLOBAL_ACTIONS = [
      "Build the ARMA slot-44 body patch for your Skyrim load order",
      "Body Slot Patch", 2),
     ("package_runtime_dll", "Package SKSE Mod",
-     "Zip the built TESRuntime.dll (the SKSE plugin that registers every "
-     "converted plugin's creature animations at load) into "
+     "Zip the built runtime DLLs (TESRuntime, CreatureRuntime, FalloutRuntime, "
+     "HavokWorldSize and MorrowindRuntime, from tes_runtime/dist) into "
      "output/Finished Mods, ready to install like any converted plugin",
      "Pack SKSE Mod", 2),
     ("convert_ui", "Convert Oblivion UI",

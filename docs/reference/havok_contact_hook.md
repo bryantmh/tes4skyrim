@@ -74,7 +74,7 @@ All at offset 0, so each ID names a function start exactly. Feed them to
 A **vtable swap** on slot 8 of ID 196246 beats patching the function: no
 prologue is stolen and nothing is relocated, so none of the hazards in
 `project_detour_relocatability` apply -- the same reasoning
-`tes_runtime/plugin/hook.h` records for its call-site patches. Only one object
+`tes_runtime/common/hook.h` records for its call-site patches. Only one object
 of this class is ever constructed, so one swap covers the whole world.
 
 **The callback is hot.** It fires per contact pair per step for every pair in

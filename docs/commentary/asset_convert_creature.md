@@ -179,7 +179,7 @@ The whole chain is implemented and wired as pipeline **Phase 4b: Creatures**
   behavior project (`hkx_behavior.generate_creature_project`) + skeleton.nif/
   body-NIF conversion (`nif_converter creature=True`) + animation cache
   registration (`animation_data.write_fragment`, composed at runtime by
-  `TESRuntime.dll` — see [runtime composition](#runtime-animation-cache-composition))
+  `CreatureRuntime.dll` — see [runtime composition](#runtime-animation-cache-composition))
   + the `export/<plugin>/creature_projects.json` contract for the importer.
   32/32 real Oblivion.esm creatures convert (boxtest/endgame excluded: test
   asset / KFM cinematic).
@@ -750,9 +750,9 @@ present under every experiment of that period.
 
 <a id="animdata-plugin-collision"></a>
 <a id="runtime-animation-cache-composition"></a>
-### Runtime animation-cache composition (TESRuntime.dll)
+### Runtime animation-cache composition (CreatureRuntime.dll)
 
-**Code:** `tes_runtime/plugin/`, `asset_convert/havok/animation_data.py`
+**Code:** `tes_runtime/creature/`, `asset_convert/havok/animation_data.py`
 (`write_fragment`, `compose_animationdata`, `compose_animationsetdata`).
 Fragment schema: [tes_runtime_fragments.md](../reference/tes_runtime_fragments.md).
 
@@ -776,7 +776,7 @@ file. That single-owner design failed in three measured ways:
   register a brand-new project.
 
 The converter now writes **only its own** projects to one fragment per
-plugin (`SKSE\Plugins\TESRuntime\animation\<plugin>.json`), and `TESRuntime.dll`
+plugin (`SKSE\Plugins\CreatureRuntime\animation\<plugin>.json`), and `CreatureRuntime.dll`
 composes `vanilla base + every fragment in Data` in memory at the moment the
 engine parses each file. Load order and install order stop mattering, and a
 Nemesis/Pandora-generated loose singlefile becomes the base the fragments are

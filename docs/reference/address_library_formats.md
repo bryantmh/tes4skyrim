@@ -1,7 +1,7 @@
 # Address Library database formats
 
-**Code:** `tes_runtime/morrowind_runtime/plugin/addresses.cpp`,
-`tes_runtime/plugin/addresses.cpp`, `game_bridge/plugin/addresses.cpp`,
+**Code:** `tes_runtime/morrowind/plugin/addresses.cpp`,
+`tes_runtime/common/addresses.cpp`, `game_bridge/plugin/addresses.cpp`,
 `tools/disasm/address_lib.py`.
 
 The Address Library maps SKSE **stable ids** to per-build RVAs, so one id table
@@ -97,7 +97,7 @@ Morrowind runtime calls.
 
 The VR ids that *do* exist share SE/AE numbering — 9,420 of 14,284 also appear
 in the AE database — so a lookup looks valid while resolving nothing we need.
-VR therefore resolves by **signature only**, as `TESRuntime`'s `ids.h` does with
+VR therefore resolves by **signature only**, as `CreatureRuntime`'s `ids.h` does with
 `|`-separated prologue alternates.
 
 ## <a id="two-id-generations"></a>There are TWO id generations

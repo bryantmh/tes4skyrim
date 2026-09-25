@@ -12,7 +12,7 @@ mod's output patches cleanly, but it carries the journal it was first built
 from: picking up a Quest Journal Overhaul or SkyUI update needs this mod
 disabled while it is rebuilt.
 
-See: docs/commentary/morrowind_runtime.md#journal-stage-text
+See: docs/commentary/tes_runtime_journal.md#journal-stage-text
 """
 
 import glob
@@ -33,7 +33,7 @@ TIP = ("Make quest objectives clickable in Skyrim's journal: clicking one shows 
        "the journal text its stage had, clicking it again the current text. "
        "Patches the journal your game loads (vanilla, SkyUI or Quest Journal "
        f"Overhaul) into output/Finished Mods/{MOD_NAME}.zip; install it after "
-       "that UI mod. Needs MorrowindRuntime.dll")
+       "that UI mod. Needs TESRuntime.dll")
 
 #: What happened to one movie, which picks the dialog's headline.
 PATCHED, SKIPPED, FAILED = 'patched', 'skipped', 'failed'
@@ -141,7 +141,7 @@ def _report_body(results: list, zip_path) -> str:
     return (body + f'\n\nWrote {zip_path}\n\nInstall it with your mod manager '
             'and load it after your UI mod (SkyUI or Quest Journal Overhaul). '
             'Clicking an objective then shows the journal text its stage had; '
-            'click it again for the current text. Needs MorrowindRuntime.dll, '
+            'click it again for the current text. Needs TESRuntime.dll, '
             'and works for objectives shown after it was installed.')
 
 

@@ -1299,7 +1299,7 @@ def _build_animobject_graph(data, stats, result, dst_path):
 
     Runs AFTER the conversion so stripped sequences cannot become dead states,
     and before the write so the BGED ships in the file. A gun's part
-    sequences never earn one: TESRuntime starts them itself.
+    sequences never earn one: FalloutRuntime starts them itself.
     See: docs/commentary/asset_convert_nif.md#animated-object-graphs
     """
     seq_names = collect_sequence_names(data)

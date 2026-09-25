@@ -49,7 +49,7 @@ What a format or contract IS. Stable; no dates, no status.
 | [tes4_record_definitions.md](reference/tes4_record_definitions.md) | TES4 (Oblivion) Complete Binary Record Definitions |
 | [tes5_import_architecture.md](reference/tes5_import_architecture.md) | `tes5_import/` architecture — read this BEFORE writing any code here |
 | [tes5_binary_format.md](reference/tes5_binary_format.md) | Skyrim SE (TES5/SSE) Binary File Format — Exact Layout |
-| [tes_runtime_fragments.md](reference/tes_runtime_fragments.md) | TESRuntime animation cache fragments — the schema any mod emits |
+| [tes_runtime_fragments.md](reference/tes_runtime_fragments.md) | CreatureRuntime animation cache fragments — the schema any mod emits |
 | [xedit_scripting.md](reference/xedit_scripting.md) | xEdit Scripting Reference (historical) |
 
 ## `commentary/`
@@ -81,7 +81,7 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [ck_warnings.md](commentary/ck_warnings.md) | tes5_import/ - what the CK complains about |
 | [core_run_log.md](commentary/core_run_log.md) | core/run_log.py - per-run logs and their profiling timestamps |
 | [ingame_testing.md](commentary/ingame_testing.md) | tools/dialog/ - in-game test methodology |
-| [morrowind_runtime.md](commentary/morrowind_runtime.md) | tes_runtime/morrowind_runtime/, external/openmw/ - Morrowind dialogue and MWScript in-engine |
+| [morrowind_runtime.md](commentary/morrowind_runtime.md) | tes_runtime/morrowind/, external/openmw/ - Morrowind dialogue and MWScript in-engine |
 | [performance.md](commentary/performance.md) | the whole pipeline - performance and parallelism |
 | [script_convert.md](commentary/script_convert.md) | script_convert/ - TES4 script to Papyrus |
 | [script_convert_morrowind.md](commentary/script_convert_morrowind.md) | script_convert/ - what TES3 scripts do differently |
@@ -102,8 +102,9 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [tes5_import_sound.md](commentary/tes5_import_sound.md) | tes5_import/record_types/sound.py - SOUN, SNDR and SOPM |
 | [tes5_import_world.md](commentary/tes5_import_world.md) | tes5_import/record_types/world.py - CELL, WRLD and placed references |
 | [tes5_import_weather.md](commentary/tes5_import_weather.md) | tes5_import/record_types/world.py - weather and climate |
-| [tes_runtime_crime.md](commentary/tes_runtime_crime.md) | tes_runtime/plugin/crime.cpp, tes5_import/record_types/crime.py - bounty realms, jails and the arrest |
-| [tes_runtime_guns.md](commentary/tes_runtime_guns.md) | tes_runtime/plugin/fire.cpp - the gun shot, reload key and ammo restriction in the SKSE plugin |
+| [tes_runtime_crime.md](commentary/tes_runtime_crime.md) | tes_runtime/tes/crime.cpp, tes5_import/record_types/crime.py - bounty realms, jails and the arrest |
+| [tes_runtime_guns.md](commentary/tes_runtime_guns.md) | tes_runtime/fallout/fire.cpp - the gun shot, reload key and ammo restriction in FalloutRuntime |
+| [tes_runtime_journal.md](commentary/tes_runtime_journal.md) | tes_runtime/tes/journal_objectives.cpp, asset_convert/ui/journal_patch.py - a clicked quest objective shows its stage's text |
 | [version_upgrade_planning.md](commentary/version_upgrade_planning.md) | version.py - which steps a new release owes |
 
 ## `plans/`

@@ -590,7 +590,7 @@ def _cmd_start_mod(app, out_dir: str) -> list:
 
 
 def _cmd_runtime_dll(app, out_dir: str) -> list:
-    """Zip the built TESRuntime.dll as its own SKSE mod."""
+    """Zip the built runtime DLLs as one SKSE mod."""
     return _with_out(_tool("tools", "release", "package_runtime_dll.py"),
                      out_dir)
 
@@ -772,7 +772,7 @@ def _stamp_start_mod(app) -> str:
 
 def _stamp_runtime_dll(app) -> str:
     """The built DLL alone, not the tree: obj/ churns on every compile."""
-    return _stat_part(REPO_ROOT / "tes_runtime" / "TESRuntime.dll",
+    return _stat_part(REPO_ROOT / "tes_runtime" / "dist" / "TESRuntime.dll",
                       "dll", "missing")
 
 

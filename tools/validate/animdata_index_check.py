@@ -11,7 +11,7 @@ FullyRagdollPose, the death-state pose source, was out of range in every
 creature project, so no corpse ever ragdolled no matter what the behavior
 graph did).
 
-The singlefile the engine parses is composed at load by TESRuntime.dll
+The singlefile the engine parses is composed at load by CreatureRuntime.dll
 from the plugin's fragment, so this tool composes it the same way
 (animcache_validate.compose_for_plugins) and then resolves each clip
 block's index against the character hkx on disk, reporting:

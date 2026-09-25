@@ -59,7 +59,7 @@ AE_EXE = '%s/SkyrimSE.%s.unpacked.exe' % (DEPOT, AE_VERSION)
 SE_EXE = '%s/SkyrimSE.%s.unpacked.exe' % (DEPOT, SE_VERSION)
 
 #: The header declaring AE ids, and the generated header beside it.
-PLUGIN = Path('tes_runtime/morrowind_runtime/plugin')
+PLUGIN = Path('tes_runtime/morrowind/plugin')
 HEADER = PLUGIN / 'ids.h'
 GENERATED = PLUGIN / 'ids_se.h'
 
@@ -248,7 +248,7 @@ def render(mapped: dict, ids: dict, unmapped: list) -> str:
         '',
         '#include <cstdint>',
         '',
-        'namespace mwruntime::ids {',
+        'namespace tesruntime::mw::ids {',
         '',
         '//: AE id -> the SE-era id naming the same function.',
         'struct SeId { std::uint64_t ae, se; };',
@@ -256,7 +256,7 @@ def render(mapped: dict, ids: dict, unmapped: list) -> str:
     ]
     for const, se_id in sorted(mapped.items(), key=lambda kv: ids[kv[0]]):
         lines.append('    {%d, %d},  // %s' % (ids[const], se_id, const))
-    lines += ['};', '', '}  // namespace mwruntime::ids', '']
+    lines += ['};', '', '}  // namespace tesruntime::mw::ids', '']
     return '\n'.join(lines)
 
 

@@ -53,7 +53,7 @@ literals, which put `Help` on top at 398. See
 those stages -- they are authored dead ends, or set by a mechanism TES3 itself
 does not expose as a `Journal` call.
 
-**Code it would change:** `tes_runtime/morrowind_runtime/plugin/`,
+**Code it would change:** `tes_runtime/morrowind/plugin/`,
 `tes5_import/dialogue/morrowind_sidecar.py`
 
 Dialogue result scripts already run on the vendored OpenMW compiler and

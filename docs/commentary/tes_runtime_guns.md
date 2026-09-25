@@ -1,6 +1,6 @@
-# TESRuntime: the gun shot
+# FalloutRuntime: the gun shot
 
-**Code:** `tes_runtime/plugin/fire.cpp`, `tes_runtime/plugin/guns.cpp`,
+**Code:** `tes_runtime/fallout/fire.cpp`, `tes_runtime/fallout/guns.cpp`,
 `asset_convert/havok/gun_graph_falloutnv.py` (`fire_triggers`,
 `fire_machine`), `asset_convert/havok/gun_patch_falloutnv.py` (`patch_1hm`),
 `tes5_import/record_types/equipment_falloutnv.py` (`gun_profile`).
@@ -63,7 +63,7 @@ FixedStrings+0x270)` = `NPC R MagicNode [RMag]`, the other path's string
 (+0xb0) is `Weapon`; the only lookup of `ProjectileNode` (the static-init
 string at 0x185d4) is the no-actor fallback 0x286b00. The projectile's
 muzzle flash (id 44056, 0x7e0b40) attaches its `NAM1` model to the node
-the shot was launched from. TESRuntime repoints all 11 calls to 0x70eb00
+the shot was launched from. FalloutRuntime repoints all 11 calls to 0x70eb00
 (five in Fire, the rest aim and combat) to a hook that returns the
 `ProjectileNode` under the same 3D root when one exists, the engine's node
 otherwise. FNV gun meshes carry that node at the barrel tip (the 10mm SMG:
@@ -80,7 +80,7 @@ resolves them at DataLoaded. A shot whose current ammo is not in the list
 the right round automatically is not done yet: it needs the
 `Actor.EquipItem` native, whose id has not been measured.
 
-The reload key is read from `SKSE\Plugins\TESRuntime\TESRuntime.ini`
+The reload key is read from `SKSE\Plugins\FalloutRuntime\FalloutRuntime.ini`
 (`[Guns] ReloadKey=<virtual-key code>`, default 0x52, R) and polled on a
 thread; a press posts a main-thread task that sends `TES4GunReloadRequest`
 to the player's graph through `IAnimationGraphManagerHolder::
@@ -163,7 +163,7 @@ stop.
 
 ## <a id="bow-drawn"></a>The button release: bBowDrawn (superseded)
 
-Traced live (`trace:` lines in TESRuntime.log): every engine-dispatched
+Traced live (`trace:` lines in FalloutRuntime.log): every engine-dispatched
 `crossbowAttackStart` was followed within the same click by an action
 `bowEnd`, and no fire-clip trigger (`arrowRelease`, `AttackWinStart`,
 `TES4GunFireEnd`) ever reached the sink, while the same event sent by

@@ -1,4 +1,4 @@
-"""animationdata / animationsetdata emission as TESRuntime cache fragments.
+"""animationdata / animationsetdata emission as CreatureRuntime cache fragments.
 
 The Skyrim engine loads a creature behavior project ONLY if it is registered
 in the two merged text databases shipped in ``Skyrim - Animations.bsa``:
@@ -8,8 +8,8 @@ in the two merged text databases shipped in ``Skyrim - Animations.bsa``:
                                          CRC list per project)
 
 Each is ONE global file, so the converter never writes it: every plugin
-emits one fragment (``SKSE/Plugins/TESRuntime/animation/<plugin>.json``)
-holding its own projects' already-formatted blocks, and the TESRuntime plugin
+emits one fragment (``SKSE/Plugins/CreatureRuntime/animation/<plugin>.json``)
+holding its own projects' already-formatted blocks, and the CreatureRuntime plugin
 composes ``vanilla base + every fragment`` in memory when the engine parses
 the files. ``compose_animationdata`` / ``compose_animationsetdata`` are the
 reference composition the DLL mirrors line for line.
@@ -54,7 +54,7 @@ VANILLA_SINGLEFILES = ('animationdatasinglefile.txt',
                        'animationsetdatasinglefile.txt')
 
 #: Mod-root-relative folder every fragment lives in; the DLL reads all *.json here.
-FRAGMENT_DIR = os.path.join('SKSE', 'Plugins', 'TESRuntime', 'animation')
+FRAGMENT_DIR = os.path.join('SKSE', 'Plugins', 'CreatureRuntime', 'animation')
 FRAGMENT_VERSION = 1
 
 
@@ -280,7 +280,7 @@ def write_fragment(manifests: list, out_meshes_dir: str,
                    plugin_out_dir: str = None) -> str:
     """Write the plugin's fragment from its OWN project manifests.
 
-    Goes in `plugin_out_dir`'s SKSE/Plugins/TESRuntime/animation (defaulting
+    Goes in `plugin_out_dir`'s SKSE/Plugins/CreatureRuntime/animation (defaulting
     to the parent of `out_meshes_dir`). Entries are ordered by project name
     so composition is deterministic; `appends` carries the entries that
     extend a VANILLA project. Returns the fragment path.

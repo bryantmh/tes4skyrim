@@ -23,7 +23,7 @@ EXPORT_ROOT = 'export'
 _W, _H = 240, 120
 
 #: Everything the generator writes into the shipped mod.
-_SHIPPED = 'tes_runtime/morrowind_runtime/interface'
+_SHIPPED = 'tes_runtime/morrowind/interface'
 
 
 def _have_install() -> bool:
@@ -46,7 +46,7 @@ def test_no_morrowind_art_is_committed():
     Runs without an install, because it is the one check that must never be
     skipped: a `.dds`, `.tex` or `.fnt` appearing here is art in the repo.
     """
-    for root, _dirs, files in os.walk('tes_runtime/morrowind_runtime'):
+    for root, _dirs, files in os.walk('tes_runtime/morrowind'):
         for name in files:
             assert not name.lower().endswith(('.dds', '.tex', '.fnt')), (
                 f'{os.path.join(root, name)} is Morrowind art -- it must be '

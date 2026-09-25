@@ -11,13 +11,13 @@ Nothing already in the movie is rewritten. One DoAction is appended to frame
 1, after every class definition, and it replaces the class methods by name --
 the lists dispatch clicks to `scope[callbackName]`, so a replaced method is
 what they call. The text comes from
-`_root.MWRT_Runtime.GetObjectiveLog(formID, instance, row)`, an object
-MorrowindRuntime gives every open movie carrying `_root.MWRT_Patched` -- NOT
+`_root.TESRT_Runtime.GetObjectiveLog(formID, instance, row)`, an object
+TESRuntime gives every open movie carrying `_root.TESRT_Patched` -- NOT
 SKSE's `skse.plugins`, which only movies the engine's own LoadMovie loaded
 get, and Quest Journal Overhaul loads its own. "" (or no runtime at all)
 leaves the journal behaving exactly as it did.
 
-See: docs/commentary/morrowind_runtime.md#journal-stage-text
+See: docs/commentary/tes_runtime_journal.md#journal-stage-text
 """
 
 from asset_convert.ui.avm1 import UNDEFINED, Register, assemble
@@ -28,10 +28,10 @@ from asset_convert.ui.swf import (TAG_DO_ACTION, TAG_DO_INIT_ACTION,
 MARKER = 'MorrowindRuntimeJournalPatch'
 
 #: Root flag asking the runtime for its functions (ids.h kJournalPatchMarker).
-PATCHED_FLAG = 'MWRT_Patched'
+PATCHED_FLAG = 'TESRT_Patched'
 
 #: Where the runtime puts them (ids.h kJournalFunctionsPath).
-RUNTIME = ('_root', 'MWRT_Runtime')
+RUNTIME = ('_root', 'TESRT_Runtime')
 
 #: Journal UI kinds, each keyed by the class-pool strings that identify it.
 KIND_QUESTS_PAGE = 'QuestsPage'
@@ -81,13 +81,13 @@ def _assign(name: str, value: list) -> list:
 
 
 def _objective_log(form_id: list, instance: list, row: list) -> list:
-    """`_root.MWRT_Runtime.GetObjectiveLog(form, instance, row)`."""
+    """`_root.TESRT_Runtime.GetObjectiveLog(form, instance, row)`."""
     return _call(RUNTIME, 'GetObjectiveLog',
                  [form_id + ['ToNumber'], instance + ['ToNumber'], row])
 
 
 def _trace(*values: list) -> list:
-    """`_root.MWRT_Runtime.JournalTrace(...)`, one runtime log line."""
+    """`_root.TESRT_Runtime.JournalTrace(...)`, one runtime log line."""
     return _call(RUNTIME, 'JournalTrace', list(values)) + ['Pop']
 
 
@@ -100,7 +100,7 @@ def _fetch_unless_shown(shown: list, row: list) -> list:
     """`var text = ""`, then fetch `row` of quest `q` unless `shown` -- what
     identifies the clicked row -- is the row already on screen."""
     return (_local('text', [('push', '')])
-            + _get('this', 'MWRT_Shown') + shown
+            + _get('this', 'TESRT_Shown') + shown
             + ['StrictEquals', ('if', 'fetched')]
             + _assign('text', _objective_log(_get('q', 'formID'),
                                              _get('q', 'instance'), row))
@@ -144,30 +144,30 @@ def _quests_page_select() -> list:
             + _get('text') + ['Not', ('if', 'restore')]
             + _local('d', _get('q', 'description'))
             + _set(('q',), 'description', _get('text'))
-            + _call(('this',), 'MWRT_SetDescription', []) + ['Pop']
+            + _call(('this',), 'TESRT_SetDescription', []) + ['Pop']
             + _set(('q',), 'description', _get('d'))
-            + _set(('this',), 'MWRT_Shown', _get('o'))
+            + _set(('this',), 'TESRT_Shown', _get('o'))
             + _return()
             + [('label', 'restore')]
-            + _get('this', 'MWRT_Shown') + [('push', UNDEFINED),
+            + _get('this', 'TESRT_Shown') + [('push', UNDEFINED),
                                              'StrictEquals', ('if', 'original')]
             + _call(('this',), 'SetDescriptionText', []) + ['Pop']
             + [('label', 'original')]
-            + _call(('this',), 'MWRT_Select', []) + ['Pop'])
+            + _call(('this',), 'TESRT_Select', []) + ['Pop'])
 
 
 def _quests_page_set_description() -> list:
     """SetDescriptionText: the original, and nothing is shown from a row."""
-    return (_set(('this',), 'MWRT_Shown', [('push', UNDEFINED)])
-            + _call(('this',), 'MWRT_SetDescription', []) + ['Pop'])
+    return (_set(('this',), 'TESRT_Shown', [('push', UNDEFINED)])
+            + _call(('this',), 'TESRT_SetDescription', []) + ['Pop'])
 
 
 def quests_page_program() -> list:
     """Replace QuestsPage's objective click and description setter."""
-    page = ('MWRT_QuestsPage',)
+    page = ('TESRT_QuestsPage',)
     return (_assign(page[0], _get('_global', 'QuestsPage', 'prototype'))
-            + _set(page, 'MWRT_Select', _get(*page, 'onObjectiveListSelect'))
-            + _set(page, 'MWRT_SetDescription',
+            + _set(page, 'TESRT_Select', _get(*page, 'onObjectiveListSelect'))
+            + _set(page, 'TESRT_SetDescription',
                    _get(*page, 'SetDescriptionText'))
             + _set(page, 'onObjectiveListSelect',
                    [('function', (), _quests_page_select())])
@@ -185,12 +185,12 @@ def _qjo_set_objectives() -> list:
     QJO names each row clip `"objective" + index` into `quest.objectives`, so
     the index is the row the runtime is asked for.
     """
-    return (_call(('this',), 'MWRT_SetObjectives', [_get('quest')]) + ['Pop']
+    return (_call(('this',), 'TESRT_SetObjectives', [_get('quest')]) + ['Pop']
             + _trace(_text('QuestJournal SetObjectives'),
                      _get('quest', 'formID'), _get('quest', 'instance'),
                      _get('quest', 'objectives', 'length'))
-            + _set(('this',), 'MWRT_Quest', _get('quest'))
-            + _set(('this',), 'MWRT_Shown', [('push', UNDEFINED)])
+            + _set(('this',), 'TESRT_Quest', _get('quest'))
+            + _set(('this',), 'TESRT_Shown', [('push', UNDEFINED)])
             + _local('list', _get('this', 'ObjectivesList_mc'))
             + _get('quest', 'objectives')
             + ['Enumerate2', ('label', 'next'), ('store', 0), ('push', None),
@@ -198,37 +198,37 @@ def _qjo_set_objectives() -> list:
             + _local('k', [('push', Register(0))])
             + _local('clip', _get('list') + [('push', 'objective')]
                      + _get('k') + ['Add2', 'GetMember'])
-            + _set(('clip',), 'MWRT_Row', _get('k') + ['ToNumber'])
-            + _set(('clip',), 'MWRT_Page', _get('this'))
-            + _set(('clip',), 'onPress', _get('this', 'MWRT_Press'))
+            + _set(('clip',), 'TESRT_Row', _get('k') + ['ToNumber'])
+            + _set(('clip',), 'TESRT_Page', _get('this'))
+            + _set(('clip',), 'onPress', _get('this', 'TESRT_Press'))
             + [('jump', 'next'), ('label', 'done')])
 
 
 def _qjo_show_row() -> list:
-    """MWRT_ShowRow(row): the row's text, or the quest's own on a second click."""
+    """TESRT_ShowRow(row): the row's text, or the quest's own on a second click."""
     description = ('this', 'QuestDescription', 'textField')
-    return (_local('q', _get('this', 'MWRT_Quest'))
+    return (_local('q', _get('this', 'TESRT_Quest'))
             + _trace(_text('QuestJournal click'), _get('row'),
                      _get('q', 'formID'), _get('q', 'instance'))
             + _fetch_unless_shown(_get('row'), _get('row'))
             + _get('text') + ['Not', ('if', 'restore')]
             + _set(description, 'text', _get('text'))
-            + _set(('this',), 'MWRT_Shown', _get('row'))
+            + _set(('this',), 'TESRT_Shown', _get('row'))
             + _return()
             + [('label', 'restore')]
             + _set(description, 'text', _get('q', 'description'))
-            + _set(('this',), 'MWRT_Shown', [('push', UNDEFINED)]))
+            + _set(('this',), 'TESRT_Shown', [('push', UNDEFINED)]))
 
 
 def qjo_program() -> list:
     """Give QuestJournal's objective rows a click that shows their text."""
-    page = ('MWRT_QuestJournal',)
-    press = (_call(('this', 'MWRT_Page'), 'MWRT_ShowRow',
-                   [_get('this', 'MWRT_Row')]) + ['Pop'])
+    page = ('TESRT_QuestJournal',)
+    press = (_call(('this', 'TESRT_Page'), 'TESRT_ShowRow',
+                   [_get('this', 'TESRT_Row')]) + ['Pop'])
     return (_assign(page[0], _get('_global', 'QuestJournal', 'prototype'))
-            + _set(page, 'MWRT_SetObjectives', _get(*page, 'SetObjectives'))
-            + _set(page, 'MWRT_Press', [('function', (), press)])
-            + _set(page, 'MWRT_ShowRow', [('function', ('row',), _qjo_show_row())])
+            + _set(page, 'TESRT_SetObjectives', _get(*page, 'SetObjectives'))
+            + _set(page, 'TESRT_Press', [('function', (), press)])
+            + _set(page, 'TESRT_ShowRow', [('function', ('row',), _qjo_show_row())])
             + _set(page, 'SetObjectives',
                    [('function', ('quest',), _qjo_set_objectives())]))
 

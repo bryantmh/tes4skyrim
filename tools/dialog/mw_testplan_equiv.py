@@ -40,7 +40,7 @@ VERBS = ('get', 'set', 'mod')
 
 def _plugin_dir(root):
     """Where the runtime's opcode sources live."""
-    return os.path.join(root, 'tes_runtime', 'morrowind_runtime', 'plugin')
+    return os.path.join(root, 'tes_runtime', 'morrowind', 'plugin')
 
 
 def _sources(root):

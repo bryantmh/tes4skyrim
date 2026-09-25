@@ -345,7 +345,7 @@ def _base_asd():
 
 
 class TestAnimCacheFragments:
-    """The converter writes fragments; TESRuntime.dll composes them onto
+    """The converter writes fragments; CreatureRuntime.dll composes them onto
     the vanilla singlefiles at load. compose_* here is the DLL's reference:
     the same rule (append, dedupe by name) the old build-time merge used.
     See docs/reference/tes_runtime_fragments.md."""
@@ -358,7 +358,7 @@ class TestAnimCacheFragments:
         path = write_fragment([_manifest('oblivion', 'scamp'),
                                _manifest('oblivion', 'dog')],
                               str(tmp_path / 'meshes'), 'Oblivion.esm')
-        assert path == str(tmp_path / 'SKSE' / 'Plugins' / 'TESRuntime'
+        assert path == str(tmp_path / 'SKSE' / 'Plugins' / 'CreatureRuntime'
                            / 'animation' / 'Oblivion.json')
         frag = json.load(open(path, encoding='utf-8'))
         assert frag['version'] == 1 and frag['source'] == 'Oblivion.esm'
@@ -423,23 +423,23 @@ class TestAnimCacheFragments:
         assert asd[-8:] == frag['animsetdata_append'][0]['block']
 
     def test_cpp_composer_matches_python(self, tmp_path):
-        """tes_runtime/compose_test.exe (the DLL's composer, built by
-        tes_runtime/build.bat) must produce byte-identical files to the
+        """tes_runtime/creature/compose_test.exe (the DLL's composer, built by
+        tes_runtime/creature/build.bat) must produce byte-identical files to the
         Python reference over the same base and fragments."""
         import json
         import subprocess
         from asset_convert.havok.animation_data import (
             compose_singlefiles, read_fragments, write_composed,
             write_fragment)
-        exe = os.path.join(REPO, 'tes_runtime', 'compose_test.exe')
+        exe = os.path.join(REPO, 'tes_runtime', 'creature', 'compose_test.exe')
         if not os.path.isfile(exe):
-            pytest.skip('tes_runtime/compose_test.exe not built')
+            pytest.skip('tes_runtime/creature/compose_test.exe not built')
         base_dir = tmp_path / 'base'
         base_dir.mkdir()
         base = {'animationdatasinglefile.txt': _base_ad(),
                 'animationsetdatasinglefile.txt': _base_asd()}
         write_composed(base, str(base_dir))
-        frag_dir = tmp_path / 'SKSE' / 'Plugins' / 'TESRuntime' / 'animation'
+        frag_dir = tmp_path / 'SKSE' / 'Plugins' / 'CreatureRuntime' / 'animation'
         write_fragment([_manifest('oblivion', 'scamp', 3),
                         _manifest('oblivion', 'dog')],
                        str(tmp_path / 'meshes'), 'Oblivion.esm')

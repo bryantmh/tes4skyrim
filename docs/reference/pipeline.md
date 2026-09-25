@@ -546,7 +546,8 @@ TESConversion/
     spt_parser.py spt_generator.py spt_converter.py   # SpeedTree
 
   native/                 # C++ extensions (grow.cpp -> _navgrow_native)
-  tes_runtime/            # TESRuntime.dll, the shipped SKSE plugin (animation cache + FNV guns/limbs)
+  tes_runtime/            # the shipped SKSE plugins, one folder each (tes, creature, fallout,
+                         #   havok_world_size, morrowind) + common/; built DLLs in dist/
   external/               # third-party binaries (see README license table)
   tests/ tools/ docs/ references/ temp/
   export/                 # cached exports (gitignored)
@@ -554,8 +555,9 @@ TESConversion/
     <Mod Label>/          #   an IMPORTED mod: one folder for the whole archive
   output/                 # WORKING area (gitignored)
     <plugin>/             #   one folder per converted plugin...
-      SKSE/Plugins/TESRuntime/           # <plugin>.bodyparts.json / .guns.json, loose (never in a BSA)
-      SKSE/Plugins/TESRuntime/animation/ #   the plugin's animation cache fragment
+      SKSE/Plugins/TESRuntime/           # <plugin>.crime.json, loose (never in a BSA)
+      SKSE/Plugins/FalloutRuntime/       # <plugin>.bodyparts.json / .guns.json, loose
+      SKSE/Plugins/CreatureRuntime/animation/ # the plugin's animation cache fragment
       meshes/actors/character/           # FO3/FNV only: patched humanoid behaviors + animations/<game>guns/
     <Mod Label>/          #   ...or one per imported mod (mirrors export/)
     AutoConvertLOD/       #   the baked LOD mod (tools/release/create_lod.py)

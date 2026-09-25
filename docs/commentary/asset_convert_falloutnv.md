@@ -336,7 +336,7 @@ walked through them. Census of 1,500 FNV world meshes: layer 1 x373, 4 x32,
 
 Skyrim's `GetHandAnimType` (Address Library id 14220) answers an anim type per
 equipped form, topping out at 12 for a crossbow. A gun is given a **new type,
-13**: TESRuntime patches every call site of that function and of the one
+13**: FalloutRuntime patches every call site of that function and of the one
 routine that writes the value into a graph
 (`BShkbAnimationGraph::SetVariableInt`, id 63609), so a WEAP listed in
 `<plugin>.guns.json` answers 13 and the write of `iRightHandType = 13` is
@@ -477,7 +477,7 @@ overwritten; the census over all 24 humanoid graphs found only these two. Per cl
 state runs fire (A/B alternation for automatics) → reload once the WEAP's clip
 size is spent → done, over a standing/moving lower body.
 
-The shot is TESRuntime's: each clip carries one `TES4GunShot` trigger at
+The shot is FalloutRuntime's: each clip carries one `TES4GunShot` trigger at
 the FNV `Hit` text key and the DLL fires the gun on it
 ([the shot](tes_runtime_guns.md#the-shot)); the bow event trio it used to
 raise went through the engine's attack state machine, one cycle per shot,
@@ -538,7 +538,7 @@ Done were both active for ~18 frames and every frame counted a shot ("two
 shots then reload"); with instant transitions (`instant=True`, a null
 transition) the count still ran past a 13-round clip after one shot, a
 reload clip playing straight after the fire clip's `TES4GunFireEnd`.
-TESRuntime already counts shots for the HUD, so it now writes
+FalloutRuntime already counts shots for the HUD, so it now writes
 `iGunShots` into every graph of the actor on each shot and resets it on
 `TES4GunReloadEnd` (`SetActorGraphInt`); the fire states carry only the
 automatic's loop-speed assignment. The transitions stay instant since the
@@ -773,7 +773,7 @@ NiControllerSequence named after the clip stem (transform interpolators
 sampled from the clip, `start`/`end` keys, a managed
 NiTransformController per node), and the actor clip raises the stem as a
 trigger at its first frame (the manifest records `parts` per clip; the
-patch registers those stems as graph events). TESRuntime starts the
+patch registers those stems as graph events). FalloutRuntime starts the
 sequence on that event (`parts.cpp`): the weapon root under the actor's
 `WEAPON` bone, its NiControllerManager, the name map and
 `NiControllerSequence::Activate`, the exact path of
@@ -790,11 +790,11 @@ so only the slide of an automatic can drift.
 ## <a id="dismemberment"></a>Limb dismemberment at runtime
 
 **Code:** `tes5_import/record_types/bodypart_falloutnv.py`,
-`tes_runtime/plugin/sever.cpp`.
+`tes_runtime/fallout/sever.cpp`.
 
 TES5's BPTD cannot hold FNV's limb data: the engine keys dismemberment on six
 part types, and FO3/FNV author many more. The import therefore writes a
-sidecar (`SKSE/Plugins/TESRuntime/<plugin>.bodyparts.json`) beside the plugin
+sidecar (`SKSE/Plugins/FalloutRuntime/<plugin>.bodyparts.json`) beside the plugin
 and mints one **MSTT per gore model** so a severed limb has a real form to
 place — `derive_formid('BPTD_LIMB', <model path>)`, keyed on the authored
 path.
@@ -819,7 +819,7 @@ Skyrim attaches an equipped AMMO's model to the actor at the node its NIF
 names in the `Prn` NiStringExtraData (Oblivion arrows carry `Quiver`,
 remapped to `QUIVER`); a NIF without one attaches at the skeleton root, so
 FNV's ammo boxes, which never hang on an actor in FNV and carry no `Prn`,
-appeared at the player's feet and outside the QUIVER node TESRuntime culls
+appeared at the player's feet and outside the QUIVER node FalloutRuntime culls
 for a gun holder. The wearable plan now flags every `AMMO` record's
 `Model.MODL` (`QUIVER`), and `convert_prn` gives such a root without an
 authored `Prn` the value `QUIVER` with no seating transform or inventory

@@ -36,15 +36,12 @@ from tools.disasm import address_lib
 from tools.disasm.skyrim_disasm import Binary
 from tools.script import papyrus_native_locate as locate
 
-#: Every runtime header that declares stable ids.
-DEFAULT_HEADERS = (
-    'tes_runtime/morrowind_runtime/plugin/ids.h',
-    'tes_runtime/plugin/ids.h',
-)
+#: Every runtime header that declares stable ids: each plugin's ids.h and common/engine_ids.h.
+DEFAULT_HEADERS = tuple(sorted(str(p) for p in Path('tes_runtime').rglob('*ids.h')))
 
 #: The sources whose `Native<>` calls pair a Papyrus name with an id.
 DEFAULT_SOURCES = tuple(
-    'tes_runtime/morrowind_runtime/plugin/game_calls%s.cpp' % part
+    'tes_runtime/morrowind/plugin/game_calls%s.cpp' % part
     for part in ('', '_move', '_ai', '_query'))
 
 #: The unpacked build the ids were found in, and its version.

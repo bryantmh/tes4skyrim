@@ -22,7 +22,7 @@ from asset_convert.sources.bsa_pack import LOOSE_ONLY_DIRS, _KNOWN_DIRS
 def _mod_tree(root: pathlib.Path) -> pathlib.Path:
     """A converted plugin's output folder: plugin, BSA and a fragment."""
     src = root / 'output' / 'Oblivion.esm'
-    frag = src / 'SKSE' / 'Plugins' / 'TESRuntime' / 'animation'
+    frag = src / 'SKSE' / 'Plugins' / 'CreatureRuntime' / 'animation'
     frag.mkdir(parents=True)
     (root / 'output' / 'Finished Mods').mkdir(parents=True)
     (src / 'Oblivion.esm').touch()
@@ -50,6 +50,6 @@ def test_zip_carries_the_fragment_loose(tmp_path):
     assert convert.phase_pack_zip('Oblivion.esm', {}, output_dir=out)
     names = zipfile.ZipFile(
         tmp_path / 'output' / 'Finished Mods' / 'Oblivion.esm.zip').namelist()
-    assert 'SKSE/Plugins/TESRuntime/animation/Oblivion.json' in names
+    assert 'SKSE/Plugins/CreatureRuntime/animation/Oblivion.json' in names
     assert {'Oblivion.esm', 'Oblivion.bsa'} <= set(names)
     assert src.is_dir()

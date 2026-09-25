@@ -1,9 +1,11 @@
 # Morrowind runtime
 
-**Code:** `tes_runtime/morrowind_runtime/`, `external/openmw/`, `tools/generators/vendor_openmw.py`
+**Code:** `tes_runtime/morrowind/`, `external/openmw/`, `tools/generators/vendor_openmw.py`
 
-A **submodule of TESRuntime**, beside `havok_world_size`: its own source folder
-and its own DLL, shipping in the same `TESRuntime.zip`.
+MorrowindRuntime: its own source folder and its own DLL, beside the other
+runtimes under `tes_runtime/`, shipping in the same `TESRuntime.zip`. Journal
+stage text, which used to live here, works on every quest and moved to
+TESRuntime: [tes_runtime_journal.md](tes_runtime_journal.md#journal-stage-text).
 
 Morrowind's dialogue, topics and journal run natively in Skyrim by porting
 OpenMW's own dialogue engine and MWScript VM into an SKSE plugin, rather than
@@ -87,7 +89,7 @@ open source file".
 
 ### <a id="phase-0-gate"></a>Phase 0 gate: it compiles standalone
 
-Verified — `tes_runtime\morrowind_runtime\build.bat openmw` compiles **34 translation
+Verified — `tes_runtime\morrowind\build.bat openmw` compiles **34 translation
 units** (the whole MWScript compiler and interpreter, plus the `RefId` and
 logging support they pull in) to 7.9 MB of objects with:
 
@@ -107,9 +109,9 @@ text parsing against no game memory, so `build.bat test` builds
 `store_test.exe`, which runs the same loader headless:
 
 ```bash
-tes_runtime\morrowind_runtime\build.bat test
-tes_runtime\morrowind_runtime\store_test.exe "export\Tamriel Rebuilt 25.08.12"   # one export dir
-tes_runtime\morrowind_runtime\store_test.exe --sidecar <staged root>             # the deployed layout
+tes_runtime\morrowind\build.bat test
+tes_runtime\morrowind\store_test.exe "export\Tamriel Rebuilt 25.08.12"   # one export dir
+tes_runtime\morrowind\store_test.exe --sidecar <staged root>             # the deployed layout
 ```
 
 Measured, with every count agreeing with an independent Python read of the
@@ -206,8 +208,8 @@ whole-word, longest first, restricted to topics the actor can actually answer.
 `session_test.exe` runs all of it headless against a real export:
 
 ```bash
-tes_runtime\morrowind_runtime\session_test.exe <sidecar root> TR_m4_Shei
-tes_runtime\morrowind_runtime\session_test.exe <sidecar root> TR_m7_Felms --faction Temple --rank 3
+tes_runtime\morrowind\session_test.exe <sidecar root> TR_m4_Shei
+tes_runtime\morrowind\session_test.exe <sidecar root> TR_m7_Felms --faction Temple --rank 3
 ```
 
 Measured on TR_Mainland: `TR_m4_Shei` offers 15 topics, all Thieves Guild
@@ -461,7 +463,7 @@ edges resample, along the one axis they run.
 
 ## <a id="activation"></a>Activation: which NPCs get this menu
 
-**Code:** `tes_runtime/morrowind_runtime/plugin/activation.cpp`,
+**Code:** `tes_runtime/morrowind/plugin/activation.cpp`,
 `tes5_import/dialogue/morrowind_sidecar.py`
 
 Routing is **one bit test on the FormID's load-order index byte**, the rule
@@ -2028,8 +2030,9 @@ or a hash lookup (`GetFormFromFile` 1.6.1170 `0xa0c7e0`, `GetItemCount`
 each spin cost more. Every spun tick also advanced the runtime clock 1/30 s, so
 Morrowind timers ran fast while it lasted.
 
-`kTickSleep` is `milliseconds(33)`, which holds at every uptime. TESRuntime's
-crime thread already slept in milliseconds.
+`kTickSleep` is `milliseconds(33)`, which holds at every uptime. The shared
+main-thread timer (`common/engine.cpp` `StartMainThreadTick`) sleeps in
+milliseconds too.
 
 ### <a id="a-script-acts-on-its-own-reference"></a>🛑 A script's own id is the reference RUNNING it
 
@@ -3155,7 +3158,7 @@ Tamriel Data, and OpenMW leaves the same spot a `// TODO play sound`.
 
 ## <a id="spell-commands"></a>The spell commands
 
-**Code:** `tes_runtime/morrowind_runtime/plugin/script_ops_spell.cpp`,
+**Code:** `tes_runtime/morrowind/plugin/script_ops_spell.cpp`,
 `game_calls_spell.cpp`, and `tes5_import/dialogue/morrowind_sidecar.py`.
 
 A TES3 script names a **SPEL id**; the record Skyrim casts is the SPEL the
@@ -3428,118 +3431,22 @@ own temporary handle and returns a raw pointer) and, when the speaker's base is
 a Morrowind speaker, closes Skyrim's menu and opens the Morrowind conversation
 with that guard, whose crime greeting now passes.
 
-## <a id="journal-stage-text"></a>Journal stage text: a clicked objective shows its stage's text
-
-**Code:** `plugin/journal_objectives.cpp`, `plugin/journal_log.cpp`,
-`asset_convert/ui/journal_patch.py`, `asset_convert/ui/avm1.py`,
-`core/gui/journal.py` (Build > Quest Journal Stage Text). **Confirmed in game with
-Quest Journal Overhaul**; the vanilla and SkyUI `QuestsPage` patch is not yet
-played.
-
-Skyrim's journal shows ONE description per quest. Clicking one of a quest's
-objectives now swaps it for the text the quest had when that objective first
-appeared; clicking it again brings back the current text. It works on any
-quest, not only converted ones.
-
-### What the engine keeps
-
-Read off the journal's objective builder (`0x98a6a0` on 1.6.1170, `0x92b5f0`
-on 1.6.659, same offsets in both):
-
-- The description is NOT stored text. Each quest instance's record (array at
-  `TESQuest+0x38`, count `+0x48`) holds a **(stage, log entry) pair** at
-  `+0x38`/`+0x3a`, overwritten at every stage that has a log entry.
-  `0x392ab0(record, quest, BSString*)` turns a pair into text: `0x3d1c70`
-  fetches that stage's entry, `0x392c80` fills in alias names. It reads only
-  the record's instance id, stage and entry, so the runtime calls it on a
-  zeroed 0x40-byte stand-in record for any pair it saved.
-- A stage number alone is not enough. In vanilla Skyrim.esm 700 stages have one
-  texted log entry and 26 stages in 18 quests (MQ102, DA16, MS13, CWObj ...)
-  have 2-9 condition-picked alternatives, so the pair is recorded whole.
-- Objectives come from the **player's** objective array (`PlayerCharacter+0x588`,
-  count `+0x598`, 16 bytes each: objective, instance, state), appended in
-  display order. The journal walks it **newest first** and makes one row per
-  entry that is: state 1, 3 or 5; for a Miscellaneous-type quest
-  (`TESQuest+0xdf == 6`) state 1 only; of the selected quest and instance; and
-  not flagged ORed (`objective+0x20 & 1`), whose text joins the next row.
-  `ObjectiveAtRow` is that rule, headless-tested in `journal_log_test.cpp`.
-- A row the movie receives carries formID, instance, status flags, target and
-  text -- **no objective number**. Row position is the only exact identity, so
-  the runtime rebuilds the same row list to map a clicked row back.
-
-### Recording
-
-The object tick polls the player's array every tick, **paused or not**
-(dialogue shows objectives with the game held), and does nothing unless the
-array's count or newest entry changed. A new (objective, instance) records the
-quest instance's current pair under (quest FormID, objective index, instance),
-saved in cosave record `MWJL` with FormIDs re-resolved on load.
-
-The first poll after a load or new game only **learns** the array: objectives
-already shown were shown under text nobody recorded, so they fall back to the
-current description. Two stages inside one 33 ms tick credit both objectives
-to the later stage's text.
-
-### The movies
-
-The journal lists dispatch clicks by NAME -- `addEventListener("itemPress",
-this, "onObjectiveListSelect")` -- so the patch rewrites no existing bytecode.
-It appends one DoAction to frame 1, after every class's DoInitAction, that
-replaces class methods on the prototype:
-
-| Movie | Class | Replaced |
-|---|---|---|
-| Vanilla / SkyUI `quest_journal.swf` | `QuestsPage` | `onObjectiveListSelect` (outside the Miscellaneous view it did nothing; the original still runs when there is no text, keeping Misc's set-active toggle), and `SetDescriptionText` so any movie-driven reset clears the shown row |
-| Quest Journal Overhaul `questjournal.swf` | `QuestJournal` | `SetObjectives`, which then gives each row clip `"objective" + index` an `onPress` (its rows took no clicks at all) |
-
-### <a id="journal-movies-reach-the-runtime"></a>🛑 How a movie reaches the runtime: NOT `skse.plugins`
-
-SKSE adds `_global.skse` (and `skse.plugins.<name>`) from a hook INSIDE the
-engine's `GFxLoader::LoadMovie`, at `+0x1dd` (`0xfb02ed` on 1.6.1170).
-Quest Journal Overhaul does not use that function: it loads `questjournal`
-through CommonLibSSE's `LoadMovieEx` (its DLL carries the `GFxMovieDef*`
-lambda in `QuestMenu`'s constructor), which reimplements the load, so its
-movie never gets `skse` at all. The first build called
-`skse.plugins.MorrowindRuntime.GetObjectiveLog`; in game every call was a
-silent no-op and nothing changed on screen.
-
-So the runtime equips movies itself. Each tick it walks MenuManager's open
-menus (`+0x110`, count `+0x120`, 8-byte `IMenu*`; view at `IMenu+0x10`) and
-gives any movie whose root carries `MWRT_Patched` an object at
-`_root.MWRT_Runtime` holding `GetObjectiveLog` and `JournalTrace`, whoever
-loaded it.
-
-Also measured: `LoadMovie` calls `CreateInstance` with `initFirstFrame = 1`
-(`0xfb02c8`) BEFORE that hook, so a movie's frame-1 actions run before any
-`skse` object exists even for engine-loaded movies. Frame-1 code may REPLACE
-methods, but must not call the runtime.
-
-QJO also ships a rebuilt SkyUI `quest_journal.swf` whose Quests tab closes the
-journal and opens QJO's own menu, so its `QuestsPage` is never seen; patching
-it too is harmless. The patcher recognises each class by its constant-pool
-strings, finds the copy the game loads (loose file, else the archive whose
-plugin loads last), and zips the result into `Finished Mods` as a mod that
-must load after the UI mod it patches. The game folder is never written, so
-uninstalling the mod is the undo. Patching replaces an earlier copy of the
-patch, so reading the mod's own deployed output still works, but it keeps the
-journal it was first built from: a QJO or SkyUI update needs the mod disabled
-while it is rebuilt. QJO's rows are mouse-only; its movie gives them no
-gamepad focus.
-
 ## <a id="licensing"></a>Licensing
 
 OpenMW is **GPL-3.0**, vendored from 0.52.0 (`b4b1c5ae`). This follows the
 pattern `external/pynifly_hkx/` already established: the project's own code is
 MIT, everything under `external/` carries its own license.
 
-It is a **submodule of TESRuntime, not part of its binary** — the same
-arrangement as `havok_world_size`: its own source folder, its own DLL, built by
-the parent's `build.bat` and shipped in the same `TESRuntime.zip`. That boundary
-is what keeps the license contained. `TESRuntime.dll` and `TESGameBridge.dll`
-never link OpenMW code, so they are unaffected; linking it into `TESRuntime.dll`
-instead would make that whole binary GPL-3.0, `fire.cpp`/`guns.cpp`/`sever.cpp`/
-`hud.cpp` included.
+MorrowindRuntime is **its own DLL**, like every runtime under `tes_runtime/`:
+its own source folder, built by `tes_runtime/build.bat` into `tes_runtime/dist/`
+and shipped in the same `TESRuntime.zip`. That boundary is what keeps the
+license contained. `TESRuntime.dll`, `CreatureRuntime.dll`,
+`FalloutRuntime.dll`, `HavokWorldSize.dll` and `TESGameBridge.dll` never link
+OpenMW code, so they stay MIT; linking OpenMW into any of them would make that
+whole binary GPL-3.0.
 
-A few hundred lines (`skse_abi.h`, `log.*`, `json.*`) are **copied** rather than
-shared with `tes_runtime/` for the same reason: a shared library linked into both
-would put MIT and GPL code in one dependency graph.
+The boundary runs one way only. MorrowindRuntime compiles the MIT sources in
+`tes_runtime/common/` (`skse_abi.h`, `addresses.*`, `log.*`, `paths.*`) like
+every other runtime: MIT code may be distributed inside a GPL binary, and those
+files stay MIT in the source tree. What must never happen is the reverse, a
+`common/` file including anything under `external/openmw/`.

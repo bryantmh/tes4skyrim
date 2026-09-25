@@ -2,13 +2,14 @@
 
 A DLL is not a plugin asset: one copy serves every converted mod, so they
 ship together rather than beside any plugin's meshes. Each converted mod
-contributes only its own data — the animation cache fragment under
-SKSE/Plugins/TESRuntime/animation, the FO3/FNV bodyparts/guns sidecars under
+contributes only its own data -- the animation cache fragment under
+SKSE/Plugins/CreatureRuntime/animation, the FO3/FNV guns/bodyparts sidecars
+under SKSE/Plugins/FalloutRuntime, the crime sidecar under
 SKSE/Plugins/TESRuntime, and a Morrowind plugin's dialogue under
-SKSE/Plugins/MorrowindRuntime — which these DLLs read at load.
+SKSE/Plugins/MorrowindRuntime -- which these DLLs read at load.
 
-The archive mirrors what `convert.py --pack-zip-only` produces — output/
-Finished Mods/<name>.zip, contents rooted as a Data folder — so a user
+The archive mirrors what `convert.py --pack-zip-only` produces -- output/
+Finished Mods/<name>.zip, contents rooted as a Data folder -- so a user
 installs it exactly like any converted plugin.
 
 Usage:
@@ -29,19 +30,22 @@ MOD_NAME = "TESRuntime"
 
 SRC_DIR = SCRIPT_DIR / "tes_runtime"
 
+#: Where tes_runtime/build.bat puts every finished DLL.
+DIST_DIR = SRC_DIR / "dist"
+
 PLUGINS = Path("SKSE") / "Plugins"
 
-#: Built by tes_runtime/build.bat; without this the archive has no reason to exist.
-REQUIRED = ((SRC_DIR / "TESRuntime.dll", PLUGINS / "TESRuntime.dll"),)
-#: The MorrowindRuntime submodule, beside havok_world_size under tes_runtime.
-MW_DIR = SRC_DIR / "morrowind_runtime"
+#: The one DLL every converted game needs; without it the archive has no reason to exist.
+REQUIRED = ((DIST_DIR / "TESRuntime.dll", PLUGINS / "TESRuntime.dll"),)
 
 OPTIONAL = (
-    (SRC_DIR / "HavokWorldSize.dll", PLUGINS / "HavokWorldSize.dll"),
+    (DIST_DIR / "CreatureRuntime.dll", PLUGINS / "CreatureRuntime.dll"),
+    (DIST_DIR / "FalloutRuntime.dll", PLUGINS / "FalloutRuntime.dll"),
+    (DIST_DIR / "HavokWorldSize.dll", PLUGINS / "HavokWorldSize.dll"),
     (SRC_DIR / "havok_world_size" / "HavokWorldSize.ini",
      PLUGINS / "HavokWorldSize.ini"),
-    (MW_DIR / "MorrowindRuntime.dll", PLUGINS / "MorrowindRuntime.dll"),
-    (MW_DIR / "interface" / "morrowind_dialogue.swf",
+    (DIST_DIR / "MorrowindRuntime.dll", PLUGINS / "MorrowindRuntime.dll"),
+    (SRC_DIR / "morrowind" / "interface" / "morrowind_dialogue.swf",
      Path("Interface") / "morrowind_dialogue.swf"),
 )
 
@@ -49,10 +53,9 @@ OPTIONAL = (
 def package(out_root: Path) -> int:
     """Zip the built DLLs into <out_root>/Finished Mods/TESRuntime.zip.
 
-    HavokWorldSize and MorrowindRuntime ship in the same archive but stay
-    SEPARATE DLLs: neither shares code with TESRuntime, so a fault in one must
-    not take the others down, and MorrowindRuntime links GPL-3.0 OpenMW that
-    must stay out of TESRuntime's binary. Missing optional files are skipped.
+    Every runtime is its own DLL, so a fault in one cannot take the others
+    down, and MorrowindRuntime links GPL-3.0 OpenMW that must stay out of the
+    others' binaries. Missing optional files are skipped.
     See: docs/commentary/morrowind_runtime.md#licensing
     """
     missing = [src for src, _ in REQUIRED if not src.is_file()]
@@ -66,7 +69,7 @@ def package(out_root: Path) -> int:
     print("=" * 54)
     print("  PACKAGE RUNTIME DLL")
     print("=" * 54)
-    print(f"  Source: {SRC_DIR}")
+    print(f"  Source: {DIST_DIR}")
     print(f"  Output: {zip_path}")
     print()
 
@@ -82,7 +85,7 @@ def package(out_root: Path) -> int:
     print()
     print(f"Packaged -> {zip_path} ({size:,} bytes)")
     print("Install it like any other converted mod: the archive root is the "
-          "Data folder. TESRuntime needs SKSE and the Address Library; "
+          "Data folder. The runtimes need SKSE and the Address Library; "
           "HavokWorldSize needs only SKSE.")
     return 0
 
@@ -90,7 +93,7 @@ def package(out_root: Path) -> int:
 def main() -> int:
     """CLI entry point."""
     ap = argparse.ArgumentParser(
-        description="Package TESRuntime.dll as a standalone SKSE mod.")
+        description="Package the runtime DLLs as one standalone SKSE mod.")
     ap.add_argument("--output-dir", metavar="PATH",
                     help="Output directory (default: output/ in project root)")
     args = ap.parse_args()

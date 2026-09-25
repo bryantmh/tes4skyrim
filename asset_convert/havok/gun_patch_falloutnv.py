@@ -112,7 +112,7 @@ def _camera_on_upper(g: HumanoidGraph, gb: GunGraphBuilder, lower_bw, upper_bw) 
 
 
 def patch_1hm(g: HumanoidGraph, clips: GunClips, out_path: str) -> list:
-    """The readied slot and the attack state, entered on TESRuntime's
+    """The readied slot and the attack state, entered on FalloutRuntime's
     TES4GunFire: the engine's own attack actions are swallowed for a gun
     holder, so nothing of the crossbow's attack path reaches the graph.
     See: docs/commentary/tes_runtime_guns.md#own-the-click

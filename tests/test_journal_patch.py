@@ -2,7 +2,7 @@
 
 Built against a synthetic movie whose class pool carries each journal's
 identifying strings, so nothing here needs a game install.
-See: docs/commentary/morrowind_runtime.md#journal-stage-text
+See: docs/commentary/tes_runtime_journal.md#journal-stage-text
 """
 
 import os
@@ -81,12 +81,12 @@ def test_qjo_recognised_by_content():
     patched, kinds = patch_movie(raw)
     assert kinds == [KIND_QJO]
     ours = [t for t in Swf.parse(patched).tags if t.code == TAG_DO_ACTION][0]
-    assert b'MWRT_ShowRow\0' in ours.data
+    assert b'TESRT_ShowRow\0' in ours.data
 
 
 def test_patch_never_reaches_for_skse():
     """QJO loads its movie itself, so SKSE never adds `skse` to it; the patch
-    must flag itself for the runtime and call only `_root.MWRT_Runtime`."""
+    must flag itself for the runtime and call only `_root.TESRT_Runtime`."""
     for raw in (_quests_page_movie(),
                 _movie('QuestJournal', 'SetObjectives', 'ObjectivesList_mc',
                        'QuestDescription')):
@@ -94,7 +94,7 @@ def test_patch_never_reaches_for_skse():
         ours = [t for t in Swf.parse(patched).tags
                 if t.code == TAG_DO_ACTION][0].data
         assert b'skse\0' not in ours
-        assert b'MWRT_Patched\0' in ours and b'MWRT_Runtime\0' in ours
+        assert b'TESRT_Patched\0' in ours and b'TESRT_Runtime\0' in ours
 
 
 def test_repatch_replaces_the_previous_patch():

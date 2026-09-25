@@ -80,7 +80,7 @@ def dry_fire_sound(rec: dict) -> str:
 
 
 def gun_profile(rec: dict, plugin: str = '') -> dict:
-    """The graph variables TESRuntime sets for a gun WEAP, the ammo it
+    """The graph variables FalloutRuntime sets for a gun WEAP, the ammo it
     loads (as (local id, file) pairs) and its dry-fire sound, or None.
 
     Indices follow gun_graph_falloutnv: class into GUN_CLASSES, reload into
@@ -110,7 +110,7 @@ DEFAULT_SIGHT_FOV = 65.0
 
 def write_gun_sidecar(records: list, plugin_out_dir: str,
                       plugin_name: str) -> str:
-    """Write every gun WEAP's profile for TESRuntime; the path ('' if none).
+    """Write every gun WEAP's profile for FalloutRuntime; the path ('' if none).
 
     Keyed by the plugin-local FormID with its owning file, resolved through
     the engine's load order at DataLoaded.

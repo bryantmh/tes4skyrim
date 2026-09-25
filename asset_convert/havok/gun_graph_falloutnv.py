@@ -1,13 +1,13 @@
 """The FO3/FNV gun state machines, as nodes for the SSE humanoid graphs.
 
-A gun is hand type 13 (TESRuntime writes it for a WEAP carried in a gun
+A gun is hand type 13 (FalloutRuntime writes it for a WEAP carried in a gun
 sidecar; the vanilla types stop at 12, the crossbow). Every machine here is
 keyed on the graph variables the DLL sets beside it: `iGunClass` (index into
 GUN_CLASSES), `iGunReload` (reload letter index), `iGunAttack` (index into
 ATTACK_ACTIONS), `iGunClipSize` and `iGunAuto`. Firing goes through the
 engine's own ranged-weapon events (arrowAttach, bowDrawn, BowRelease,
 arrowRelease, attackStop), so the shot, the ammo and the projectile are the
-engine's; TESRuntime counts the magazine into `iGunShots` (a shot adds one,
+engine's; FalloutRuntime counts the magazine into `iGunShots` (a shot adds one,
 the reload clip's end resets it), so the graph only reads it.
 
 Machines:
@@ -27,15 +27,15 @@ from asset_convert.havok.gun_vocabulary_falloutnv import (ATTACK_ACTIONS,
                                                           LOOP_ACTION,
                                                           RELOAD_LETTERS)
 
-#: The hand type TESRuntime writes for a gun (vanilla stops at 12, crossbow).
+#: The hand type FalloutRuntime writes for a gun (vanilla stops at 12, crossbow).
 GUN_HAND_TYPE = 13
 
 #: Variables the DLL sets per equipped gun, plus the graph's own counters.
 GUN_VARIABLES = ('iGunClass', 'iGunReload', 'iGunAttack', 'iGunClipSize',
                  'iGunAuto', 'iGunShots', 'iGunZoom')
-#: The zoom selector TESRuntime writes (0 hip, 1 iron sights) for the attack clips.
+#: The zoom selector FalloutRuntime writes (0 hip, 1 iron sights) for the attack clips.
 ZOOM_VAR = 'iGunZoom'
-#: REAL variable: the zoom blend TESRuntime ramps (0 hip .. 1 iron); every aim pose crossfades on it.
+#: REAL variable: the zoom blend FalloutRuntime ramps (0 hip .. 1 iron); every aim pose crossfades on it.
 ZOOM_BLEND_VAR = 'fGunZoom'
 #: hkbBlenderGenerator flags: sync + parametric, what every vanilla parametric blend carries.
 PARAMETRIC_BLEND = 17
@@ -45,18 +45,18 @@ LOOP_SPEED_VAR = 'fGunLoopSpeed'
 GUN_EVENTS = ('TES4GunFireEnd', 'TES4GunReloadStart', 'TES4GunReloadEnd',
               'TES4GunAttackEnd', 'TES4GunReloadRequest', 'reloadStart',
               'TES4GunFire', 'TES4GunFireRelease')
-#: The attack-button events TESRuntime sends (press, release); the engine's attack actions never reach a gun.
+#: The attack-button events FalloutRuntime sends (press, release); the engine's attack actions never reach a gun.
 FIRE_EVENT = 'TES4GunFire'
 FIRE_RELEASE = 'TES4GunFireRelease'
-#: The clip trigger TESRuntime fires the gun on (an engine event name, one per round).
+#: The clip trigger FalloutRuntime fires the gun on (an engine event name, one per round).
 SHOT_EVENT = 'arrowRelease'
-#: The event TESRuntime sends for the reload key.
+#: The event FalloutRuntime sends for the reload key.
 RELOAD_REQUEST = 'TES4GunReloadRequest'
 #: A reload only while the magazine is not full.
 RELOAD_ALLOWED = 'iGunShots > 0'
 #: The engine's own ammo-equipped event, which vanilla routes to the crossbow reload.
 ENGINE_RELOAD = 'reloadStart'
-#: The engine's crossbow attack event; a gun's root never takes it (TESRuntime owns the click).
+#: The engine's crossbow attack event; a gun's root never takes it (FalloutRuntime owns the click).
 CROSSBOW_ATTACK = 'crossbowAttackStart'
 #: Root transitions that must keep the crossbow's hand type only (no gun bash).
 BASH_EVENTS = ('bashStart', 'bashPowerStart')
@@ -521,7 +521,7 @@ def ready_machine(gb: GunGraphBuilder, cls, lower_bw, upper_bw):
 
 
 def fire_triggers(entry: dict) -> list:
-    """The shot trigger at the clip's fire frame (TESRuntime launches the
+    """The shot trigger at the clip's fire frame (FalloutRuntime launches the
     round on it), and the attack window opening at FNV's `a:` key.
     See: docs/commentary/tes_runtime_guns.md#the-shot
     """
@@ -635,7 +635,7 @@ def fire_machine(gb: GunGraphBuilder, cls, reload_entry=False):
     """Fire (A/B alternate for automatics) -> reload or done; `reload_entry`
     starts the machine at Reload (Done without a reload clip).
 
-    `iGunShots` is TESRuntime's; the transitions are instant since the fire
+    `iGunShots` is FalloutRuntime's; the transitions are instant since the fire
     clips end at the aim pose.
     See: docs/commentary/asset_convert_falloutnv.md#fire-transitions-are-instant
     """

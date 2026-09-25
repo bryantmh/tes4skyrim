@@ -223,18 +223,26 @@ cow tes4tamriel 20 20
 
 ### TESRuntime (SKSE plugin)
 
-`TESRuntime.dll` is the converter's own required SKSE plugin. It currently composes the animation cache singleton for converted creatures, so that multiple mods can edit it and add creatures as well as runs the fallout gun handling that Skyrim has no equivalent for. Its log is
-`Documents\My Games\Skyrim Special Edition\SKSE\TESRuntime.log`.
-See [tes_runtime/README.md](tes_runtime/README.md) for the details and for
-building it yourself.
+`TESRuntime.zip` holds the converter's own SKSE plugins, one DLL each:
 
-Two more plugins install alongside it from the same zip: **HavokWorldSize.dll** (below) and
-**MorrowindRuntime.dll**, which runs Morrowind's dialogue and scripts. Build the zip with the
-**Package SKSE Mod** button, or `python tools/release/package_runtime_dll.py`.
+- **TESRuntime.dll**, needed by every converted game: sends an arrested player to
+  the nearest jail as the source games do, and lets a clicked quest objective
+  show the journal text it came with.
+- **CreatureRuntime.dll**: registers converted creatures' animations, so several
+  mods can each add creatures without fighting over Skyrim's animation cache.
+- **FalloutRuntime.dll**: the Fallout 3 / New Vegas gun handling Skyrim has no
+  equivalent for.
+- **HavokWorldSize.dll** (below).
+- **MorrowindRuntime.dll**: runs Morrowind's dialogue and scripts.
+
+Each logs to `Documents\My Games\Skyrim Special Edition\SKSE\<name>.log`.
+See [tes_runtime/README.md](tes_runtime/README.md) for the details and for
+building them yourself. Build the zip with the **Package SKSE Mod** button, or
+`python tools/release/package_runtime_dll.py`.
 
 #### HavokWorldSize
 
-`HavokWorldSize.dll` installs alongside TESRuntime as a separate plugin. Skyrim's
+`HavokWorldSize.dll` stands on its own and is useful with any large worldspace. Skyrim's
 physics only works within 64 cells of the world center — past that, NPCs bounce
 in and out of the ground and you can't open doors or hit anything. Big
 worldspaces like Tamriel Rebuilt go well beyond that, so this widens the limit.
@@ -245,7 +253,7 @@ smallest that fits your worldspace).
 
 The reload key defaults to **mouse button 4** and the iron-sight (zoom) key to
 **right mouse**. To change either, create
-`Data\SKSE\Plugins\TESRuntime\TESRuntime.ini` and give it a `[Guns]`
+`Data\SKSE\Plugins\FalloutRuntime\FalloutRuntime.ini` and give it a `[Guns]`
 section with the [virtual-key code](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)
 of the key you want, in decimal:
 
@@ -365,7 +373,7 @@ everything you have converted:
 | **Pack LOD** | Zip `output/AutoConvertLOD/` into `output/Finished Mods/AutoConvertLOD.zip` for installation. |
 | **Body Slot Patch** | Build the ARMA slot-44 body patch for your whole Skyrim load order (*select plugins...* chooses which), as `output/Finished Mods/Body Slots Patch.zip`. |
 | **Start Mod** | Zip the prebuilt TESGameSelect starter mod (see *Starting a converted game*) to `output/Finished Mods/TESGameSelect.zip`. |
-| **Package SKSE Mod** | Zip the three runtime plugins (see *TESRuntime*) to `output/Finished Mods/TESRuntime.zip`. |
+| **Package SKSE Mod** | Zip the five runtime plugins (see *TESRuntime*) to `output/Finished Mods/TESRuntime.zip`. |
 | **Convert to Master** | Flag converted plugins as masters. A non-master plugin has every reference treated as always-active, and the engine hangs on the main menu past about a million of them. Applies to a whole master chain at once. |
 | **Convert Oblivion UI** | *(Build menu)* Build a standalone mod that reskins Skyrim's message boxes and cursor with Oblivion's artwork, read from your Oblivion install. |
 

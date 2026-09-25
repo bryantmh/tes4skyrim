@@ -365,7 +365,7 @@ it in the inventory viewer and on the ground. A gun clip never raises
 hand for 30 ms) is moot and the FNV box model (`ammo\9mmammo.nif`) is
 kept for the inventory and the world; the flying round is the PROJ's own
 model. The quiver attachment (which sat at a gun holder's feet) is
-culled by TESRuntime on every gun draw and ammo equip, and restored on a
+culled by FalloutRuntime on every gun draw and ammo equip, and restored on a
 non-gun draw (docs/commentary/tes_runtime_guns.md#quiver).
 
 ### <a id="impacts"></a>Impacts: the gun's own IPDS, not the arrow's

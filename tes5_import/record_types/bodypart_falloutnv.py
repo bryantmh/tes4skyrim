@@ -52,7 +52,7 @@ _BPND_FORMIDS = ((12, 'DEBR'), (16, 'EXPL'), (32, 'DEBR'), (36, 'EXPL'),
                  (68, 'IPDS'), (72, 'IPDS'))
 
 #: Where the SKSE plugin reads a plugin's limb data, under the plugin output.
-SIDECAR_DIR = os.path.join('SKSE', 'Plugins', 'TESRuntime')
+SIDECAR_DIR = os.path.join('SKSE', 'Plugins', 'FalloutRuntime')
 
 
 def translate_bpnd(raw: bytes, converted_types) -> bytes:
@@ -230,7 +230,7 @@ def write_sidecar(records: list, plugin_out_dir: str, plugin_name: str,
 
 
 def write_falloutnv_sidecars(by_type: dict, writer, output_path: str) -> None:
-    """FO3/FNV limb and gun data the TES5 records cannot hold, for TESRuntime.
+    """FO3/FNV limb and gun data the TES5 records cannot hold, for FalloutRuntime.
 
     Mints one MSTT per gore model so a severed limb has something to place.
     See: docs/commentary/asset_convert_falloutnv.md#dismemberment

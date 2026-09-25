@@ -1,17 +1,17 @@
-# TESRuntime animation cache fragments
+# CreatureRuntime animation cache fragments
 
 Skyrim registers every animation project in two global text databases,
 `meshes\animationdatasinglefile.txt` and `meshes\animationsetdatasinglefile.txt`,
 each parsed exactly once per process. A mod that adds projects cannot ship
 those files without racing every other mod for the same path. Instead it ships
-a **fragment**, and the `TESRuntime.dll` SKSE plugin composes
+a **fragment**, and the `CreatureRuntime.dll` SKSE plugin composes
 `vanilla base + every fragment` in memory at the moment the engine parses each
 file. Any mod can emit a fragment; nothing here is specific to this converter.
 
 ## Location
 
 ```
-Data\SKSE\Plugins\TESRuntime\animation\<anything>.json
+Data\SKSE\Plugins\CreatureRuntime\animation\<anything>.json
 ```
 
 Every `*.json` in that folder is read, sorted by filename (ordinal, case-
@@ -25,7 +25,7 @@ The DLL discovers fragments by listing the folder above with `FindFirstFileA`,
 which sees loose files only. A fragment packed into a BSA is therefore
 invisible, and the mod registers nothing: its creatures keep their meshes,
 skeletons and behavior graphs but have no clips, so they stand still. The
-symptom in `TESRuntime.log` is `compose: 0 fragment(s)`.
+symptom in `CreatureRuntime.log` is `compose: 0 fragment(s)`.
 
 Listing the directory is the only workable discovery method, because the whole
 point of a fragment is that any number of unknown mods can each ship one — so
@@ -34,7 +34,7 @@ layer resolves a path but cannot enumerate a directory, which rules out asking
 it instead.
 
 So `SKSE/` is excluded from BSA packing (`bsa_pack.LOOSE_ONLY_DIRS`) and stays
-loose in the packaged mod, next to `TESRuntime.dll` — which SKSE already
+loose in the packaged mod, next to `CreatureRuntime.dll` — which SKSE already
 requires to be loose for the same reason. Everything else a plugin converts is
 packed as usual.
 
@@ -123,7 +123,7 @@ removed once this was read; appending is correct.
 
 ## <a id="the-runtime-composer"></a>The runtime composer
 
-`tes_runtime/build.bat` builds `tes_runtime/TESRuntime.dll` (standalone MSVC,
+`tes_runtime/creature/build.bat` builds `tes_runtime/dist/CreatureRuntime.dll` (standalone MSVC,
 no SKSE source tree). One copy serves every converted mod, so it ships as its
 own SKSE mod (`tools/release/package_runtime_dll.py`) rather than per plugin;
 it is never packed into a BSA because SKSE loads DLLs from loose files only —
@@ -131,4 +131,4 @@ the same constraint that keeps fragments loose ([never packed](#never-packed)). 
 address through the Address Library (`versionlib-*.bin`) and refuses to hook
 when a stable ID is missing, so a game update degrades to "no TES4 projects
 registered" rather than a crash. Its log is
-`Documents\My Games\Skyrim Special Edition\SKSE\TESRuntime.log`.
+`Documents\My Games\Skyrim Special Edition\SKSE\CreatureRuntime.log`.

@@ -25,9 +25,9 @@ import sys
 REGISTRATIONS = 'external/openmw/components/compiler/extensions0.cpp'
 #: Declares the name arrays a loop registration sits too far from, `controls[]`.
 OPCODE_HEADER = 'external/openmw/components/compiler/opcodes.hpp'
-RUNNER = 'tes_runtime/morrowind_runtime/plugin/script_runner.cpp'
+RUNNER = 'tes_runtime/morrowind/plugin/script_runner.cpp'
 #: The other installers, by SHAPE so a new `script_ops_*.cpp` is never missed.
-RUNNER_PARTS_GLOB = 'tes_runtime/morrowind_runtime/plugin/script_ops_*.cpp'
+RUNNER_PARTS_GLOB = 'tes_runtime/morrowind/plugin/script_ops_*.cpp'
 SCRIPT_FIELD = 'ResultScript'
 
 #: The OTHER corpus: object scripts, whose body is SCPT's `SCTX`.

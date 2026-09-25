@@ -1,6 +1,6 @@
 # TESRuntime: jails and bounty realms
 
-**Code:** `tes_runtime/plugin/crime.cpp`, `tes5_import/record_types/crime.py`,
+**Code:** `tes_runtime/tes/crime.cpp`, `tes5_import/record_types/crime.py`,
 `tes5_import/dialogue/arrest.py`, `script_convert/static_scripts/TES4Polyfill.psc`
 (`CrimeFaction`, `CrimeRealm`, `SetCrimeRealm`).
 

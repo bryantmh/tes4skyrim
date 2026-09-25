@@ -210,7 +210,7 @@ struct SKSEPluginVersionData {
 // SKSEVR / SKSE 2.0.x discover a plugin through SKSEPlugin_Query; SE/AE prefer
 // the version struct above. Exporting BOTH is what makes one DLL load on every
 // runtime, and is what TESRuntime.dll does.
-// Layout mirrors tes_runtime/plugin/skse_abi.h.
+// Layout mirrors tes_runtime/common/skse_abi.h.
 struct PluginInfo {
     enum { kInfoVersion = 1 };
     uint32_t    infoVersion;

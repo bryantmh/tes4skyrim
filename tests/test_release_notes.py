@@ -120,10 +120,10 @@ def test_starter_mod_repackages_itself_only(path):
 
 
 @pytest.mark.parametrize("path", [
-    "tes_runtime/MorrowindRuntime.dll",
-    "tes_runtime/morrowind_runtime/plugin/game_calls.cpp",
-    "tes_runtime/morrowind_runtime/plugin/ids.h",
-    "tes_runtime/morrowind_runtime/build.bat",
+    "tes_runtime/dist/MorrowindRuntime.dll",
+    "tes_runtime/morrowind/plugin/game_calls.cpp",
+    "tes_runtime/morrowind/plugin/ids.h",
+    "tes_runtime/morrowind/build.bat",
 ])
 def test_skse_runtime_repackages_itself_only(path):
     """The committed SKSE plugin re-runs only its own packaging action."""

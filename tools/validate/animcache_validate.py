@@ -3,7 +3,7 @@ against the EXACT grammar from ck-cmd (references/ck-cmd-master/include/bs/*.h,
 the Arcane University reference implementation of the Skyrim animation cache).
 
 The converter no longer writes the singlefiles: each plugin ships a fragment
-under SKSE/Plugins/TESRuntime/animation that TESRuntime.dll composes onto the
+under SKSE/Plugins/CreatureRuntime/animation that CreatureRuntime.dll composes onto the
 vanilla base at load.  `--plugin` reproduces that composition offline (the same
 `compose_*` the DLL mirrors) and validates the RESULT, which is the file the
 engine will actually parse.
@@ -218,7 +218,7 @@ def main():
     ap.add_argument('meshes_dir', nargs='?',
                     help='dir holding the two singlefiles to validate')
     ap.add_argument('--plugin', action='append',
-                    help='compose output/<plugin>/SKSE/Plugins/TESRuntime/'
+                    help='compose output/<plugin>/SKSE/Plugins/CreatureRuntime/'
                          'animation/*.json onto the vanilla base and '
                          'validate the result')
     ap.add_argument('--base', help='dir with the vanilla singlefiles '
