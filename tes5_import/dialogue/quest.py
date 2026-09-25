@@ -195,19 +195,42 @@ _CTDA_OPS = {
 }
 
 
-def target_live_at_stage(raw_hexes: list, stage_idx: int) -> bool:
-    """Would Oblivion have shown this target's marker at `stage_idx`?
+def _stage_gate_value(raw: bytes, stage_idx: int, quest_fid: 'int | None'):
+    """True/False for a GetStage/GetStageDone on this quest at `stage_idx`, else None.
 
-    A target with no conditions is always live; a condition that
-    cannot be evaluated statically counts as passing.
+    `quest_fid` None treats every GetStage as this quest's.
+    """
+    func, param1, param2 = (struct.unpack_from('<H', raw, 8)[0],
+                            *struct.unpack_from('<II', raw, 12))
+    if func not in (_FUNC_GET_STAGE, _FUNC_GET_STAGE_DONE) or (
+            quest_fid is not None and param1 != quest_fid):
+        return None
+    op = _CTDA_OPS.get(raw[0] & 0xE0)
+    if op is None:
+        return True
+    value = (float(stage_idx) if func == _FUNC_GET_STAGE
+             else float(stage_idx >= param2))
+    return bool(op(value, struct.unpack_from('<f', raw, 4)[0]))
+
+
+def _or_chained(raws: list) -> list:
+    """`raws` as one OR group: OR flag on every entry but the last."""
+    return [(bytes([r[0] | CTDA_OR]) if k < len(raws) - 1
+             else bytes([r[0] & ~CTDA_OR])) + r[1:]
+            for k, r in enumerate(raws)]
+
+
+def target_runtime_conditions(raw_hexes: list, stage_idx: int,
+                              quest_fid: 'int | None' = None) -> 'list | None':
+    """The TES4 conditions this target still needs at runtime, or None if dead here.
+
+    The quest's own stage gates are settled against `stage_idx`: an OR group
+    one of them satisfies disappears, and a group left with nothing to test
+    kills the target. Every other condition survives as raw 24-byte CTDAs.
 
     See: docs/commentary/tes5_import_quest.md#resolving-target-markers-per-stage
     """
-    if not raw_hexes:
-        return True
-
-    groups = []
-    current = []
+    groups, current = [], []
     for raw_hex in raw_hexes:
         try:
             raw = bytes.fromhex(raw_hex)
@@ -215,29 +238,26 @@ def target_live_at_stage(raw_hexes: list, stage_idx: int) -> bool:
             continue
         if len(raw) < 20:
             continue
-        type_byte = raw[0]
-        comp = struct.unpack_from('<f', raw, 4)[0]
-        func = struct.unpack_from('<H', raw, 8)[0]
-
-        if func == _FUNC_GET_STAGE:
-            op = _CTDA_OPS.get(type_byte & 0xE0)
-            value = bool(op(float(stage_idx), comp)) if op else True
-        elif func == _FUNC_GET_STAGE_DONE:
-            target_stage = struct.unpack_from('<I', raw, 16)[0]
-            done = stage_idx >= target_stage
-            op = _CTDA_OPS.get(type_byte & 0xE0)
-            value = bool(op(1.0 if done else 0.0, comp)) if op else True
-        else:
-            value = True
-
-        current.append(value)
-        if not (type_byte & 0x01):
+        current.append((raw, _stage_gate_value(raw, stage_idx, quest_fid)))
+        if not raw[0] & CTDA_OR:
             groups.append(current)
             current = []
     if current:
         groups.append(current)
+    residue = []
+    for group in groups:
+        if any(value for _raw, value in group):
+            continue
+        runtime = [raw for raw, value in group if value is None]
+        if not runtime:
+            return None
+        residue += _or_chained(runtime)
+    return residue
 
-    return all(any(g) for g in groups)
+
+def target_live_at_stage(raw_hexes: list, stage_idx: int) -> bool:
+    """Could Oblivion have shown this target's marker at `stage_idx`?"""
+    return target_runtime_conditions(raw_hexes, stage_idx) is not None
 
 
 _QUEST_STATE_FUNCS = frozenset({56, 58, 59, 99})
@@ -662,7 +682,7 @@ def _quest_stages(rec: dict, stage_count: int,
     return subs
 
 
-def _quest_targets(rec: dict) -> tuple:
+def quest_targets(rec: dict) -> tuple:
     """(alias_by_fid, [(alias_id, tes4_flags, [raw ctda hex])]) from QSTA."""
     alias_by_fid, targets, t = {}, [], 0
     while f'Target[{t}].FormID' in rec:
@@ -679,15 +699,51 @@ def _quest_targets(rec: dict) -> tuple:
     return alias_by_fid, targets
 
 
-def _quest_objectives(rec: dict, stage_count: int, targets: list,
-                      script_vars: dict = None) -> bytes:
-    """One QOBJ per journal-bearing stage, carrying only its live targets.
+def _on_player(ctda: bytes) -> bytes:
+    """A subject-run CTDA retargeted onto PlayerRef."""
+    if struct.unpack_from('<I', ctda, 20)[0]:
+        return ctda
+    return ctda[:20] + struct.pack('<II', 2, _PLAYER_FORMID) + ctda[28:]
+
+
+def _target_ctdas(residue: list, script_vars: dict) -> bytes:
+    """CTDA [CIS2] run for one objective target's runtime conditions."""
+    cond = {f'Condition[{k}].Raw': raw.hex() for k, raw in enumerate(residue)}
+    subs = b''
+    for ctda, cis2 in convert_ctda_list_with_strings(cond, script_vars):
+        subs += pack_subrecord('CTDA', _on_player(ctda))
+        if cis2:
+            subs += pack_string_subrecord('CIS2', cis2)
+    return subs
+
+
+def _objective_targets(targets: list, stage_idx: int, quest_fid: int,
+                       script_vars: dict) -> bytes:
+    """QSTA [CTDA...] for every target live at `stage_idx`, once per distinct gate."""
+    subs = b''
+    seen, always = set(), set()
+    for alias_id, tflags, raws in targets:
+        residue = target_runtime_conditions(raws, stage_idx, quest_fid)
+        key = (alias_id, tuple(residue or ()))
+        if residue is None or alias_id in always or key in seen:
+            continue
+        seen.add(key)
+        if not residue:
+            always.add(alias_id)
+        subs += pack_subrecord('QSTA', struct.pack('<iB3x', alias_id, tflags))
+        subs += _target_ctdas(residue, script_vars)
+    return subs
+
+
+def quest_objectives(rec: dict, targets: list, script_vars: dict = None) -> bytes:
+    """One QOBJ per journal-bearing stage, carrying the targets live there.
 
     See: docs/commentary/tes5_import_quest.md#quest-targets-become-per-objective-aliases
     """
     subs = b''
     seen_stages = set()
-    for i in range(stage_count):
+    quest_fid = int(rec.get('FormID') or '0', 16)
+    for i in range(get_int(rec, 'StageCount')):
         stage_idx = get_int(rec, f'Stage[{i}].Index')
         if stage_idx in seen_stages:
             continue
@@ -698,14 +754,8 @@ def _quest_objectives(rec: dict, stage_count: int, targets: list,
         subs += pack_subrecord('QOBJ', struct.pack('<H', stage_idx))
         subs += pack_uint32_subrecord('FNAM', 0)
         subs += pack_string_subrecord('NNAM', short_objective(txt))
-        emitted = set()
-        for alias_id, tflags, raws in targets:
-            if alias_id in emitted or not target_live_at_stage(raws,
-                                                               stage_idx):
-                continue
-            emitted.add(alias_id)
-            subs += pack_subrecord('QSTA', struct.pack('<iB3x',
-                                                       alias_id, tflags))
+        subs += _objective_targets(targets, stage_idx, quest_fid,
+                                   script_vars or {})
     return subs
 
 
@@ -788,12 +838,11 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
 
     stage_count = get_int(rec, 'StageCount')
     subs += _quest_stages(rec, stage_count, script_vars)
-    alias_by_fid, targets = _quest_targets(rec)
+    alias_by_fid, targets = quest_targets(rec)
     subs += (authored_objectives(rec, alias_by_fid, script_vars or {},
                                  get_formid_index_offset())
              if has_authored_objectives(rec)
-             else _quest_objectives(rec, stage_count, targets,
-                                    script_vars))
+             else quest_objectives(rec, targets, script_vars))
 
     qfid = get_formid(rec, 'FormID')
     alias_packages = _quest_alias_packages(pack_plan, qfid, alias_by_fid)

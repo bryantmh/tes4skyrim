@@ -42,6 +42,8 @@ silent.
 import struct
 
 from ..base.text_reader import get_float, get_formid, get_int
+from ..base.tes5_reader import subrecords
+from ..dialogue.quest import quest_objectives, quest_targets
 from ..actors.outfits import split_inventory
 from .vmad_swap import SCRIPT_SWAP_KEY, SCRIPTED_TYPES, swap_vmad_script
 
@@ -824,113 +826,51 @@ def _rebuild_land_layers(plugin_rec, master_rec, old_subs):
     master's for unchanged layers.
     """
     from ..record_types.world import build_land_layers
-    blob = build_land_layers(plugin_rec)
-    out = []
-    off = 0
-    while off + 6 <= len(blob):
-        sig = blob[off:off + 4]
-        size = struct.unpack_from('<H', blob, off + 4)[0]
-        out.append((sig, blob[off + 6:off + 6 + size]))
-        off += 6 + size
-    return out
+    return subrecords(build_land_layers(plugin_rec))
 
 
 def _rebuild_qust_targets(plugin_rec, master_rec, old_subs):
-    """New QOBJ/FNAM/NNAM/QSTA run for an authored QUST Target[] change.
+    """New objective run for an authored QUST Target[] change, via convert_QUST's own writer.
 
-    Oblivion's QSTA conditions are GetStage gates saying WHEN a marker is live;
-    convert_QUST resolves them at build time and hangs each target on the
-    objectives where the gate holds (see target_live_at_stage). Changing a
-    target's conditions therefore changes which objective carries which
-    marker — nothing a byte patch can express.
-
-    The whole objective run is regenerated from the plugin's export, and it is
-    deterministic to do so: an alias id is just the ordinal of the target's
-    first appearance in the Target list, a pure function of the export, and the
-    journal text comes from the same Stage[] entries. The reference ALIASes
-    those ids point at are the master's, and this rebuild does not touch them —
-    only which objective references which alias.
+    Alias ids stay the MASTER's ordinals, whose ALIAS records this rebuild
+    leaves alone; a target the master lacks has no alias and is dropped.
+    See: docs/commentary/tes5_import_quest.md#quest-targets-become-per-objective-aliases
     """
-    from ..dialogue.quest import target_live_at_stage, stage_objective_text
-    from ..dialogue.objective_text import short_objective
+    master_alias, _ = quest_targets(master_rec)
+    plugin_alias, targets = quest_targets(plugin_rec)
+    fid_of = {aid: fid for fid, aid in plugin_alias.items()}
+    remapped = [(master_alias[fid_of[aid]], tflags, raws)
+                for aid, tflags, raws in targets
+                if fid_of[aid] in master_alias]
+    return subrecords(quest_objectives(plugin_rec, remapped))
 
-    alias_by_fid = {}
-    targets = []
-    t = 0
-    while f'Target[{t}].FormID' in plugin_rec:
-        tfid = get_formid(plugin_rec, f'Target[{t}].FormID')
-        if tfid:
-            alias_id = alias_by_fid.setdefault(tfid, len(alias_by_fid))
-            tflags = get_int(plugin_rec, f'Target[{t}].Flags') & 0x01
-            raws = []
-            k = 0
-            while True:
-                raw = plugin_rec.get(f'Target[{t}].Condition[{k}].Raw')
-                if raw is None:
-                    break
-                raws.append(raw)
-                k += 1
-            targets.append((alias_id, tflags, raws))
-        t += 1
 
-    # The master's alias ids must stay authoritative: this plugin's target list
-    # may order refs differently, and the ALIAS records it points at are the
-    # master's. Re-map through the MASTER's ordering wherever the ref is known.
-    master_alias = {}
-    t = 0
-    while f'Target[{t}].FormID' in master_rec:
-        tfid = get_formid(master_rec, f'Target[{t}].FormID')
-        if tfid:
-            master_alias.setdefault(tfid, len(master_alias))
-        t += 1
-    plugin_fids = {aid: fid for fid, aid in alias_by_fid.items()}
-    remapped = []
-    for alias_id, tflags, raws in targets:
-        fid = plugin_fids.get(alias_id)
-        mapped = master_alias.get(fid)
-        if mapped is None:
-            # A target the master does not have has no alias to point at;
-            # emitting an out-of-range index would dangle.
-            continue
-        remapped.append((mapped, tflags, raws))
+_OBJECTIVE_RUN_SIGS = frozenset(
+    (b'QOBJ', b'FNAM', b'NNAM', b'QSTA', b'CTDA', b'CIS2'))
 
-    out = []
-    seen_stages = set()
-    i = 0
-    while f'Stage[{i}].Index' in plugin_rec:
-        stage_idx = get_int(plugin_rec, f'Stage[{i}].Index')
-        if stage_idx in seen_stages:
-            i += 1
-            continue
-        txt = stage_objective_text(plugin_rec, i)
-        if not txt:
-            i += 1
-            continue
-        seen_stages.add(stage_idx)
-        out.append((b'QOBJ', struct.pack('<H', stage_idx)))
-        out.append((b'FNAM', struct.pack('<I', 0)))
-        # The HUD objective is the SHORT line, not the long log entry — the
-        # same swap convert_QUST and quest_objective_texts make. This is the
-        # THIRD site deriving NNAM from Stage[].Log[].Text; all three must
-        # agree or a translation plugin's objectives diverge from its master's.
-        out.append((b'NNAM', _encode_string(short_objective(txt))))
-        emitted = set()
-        for alias_id, tflags, raws in remapped:
-            if alias_id in emitted:
-                continue
-            if not target_live_at_stage(raws, stage_idx):
-                continue
-            emitted.add(alias_id)
-            out.append((b'QSTA', struct.pack('<iB3x', alias_id, tflags)))
-        i += 1
-    return out
+
+def _objective_run_span(out: list):
+    """(start, end) of the QUST objective run: first QOBJ up to the alias block."""
+    start = next((i for i, (s, _p) in enumerate(out) if s == b'QOBJ'), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start, len(out))
+                if out[i][0] not in _OBJECTIVE_RUN_SIGS), len(out))
+    return start, end
 
 
 class _RunRebuild:
-    def __init__(self, family: tuple, builder, anchors: tuple):
+    """A subrecord run rebuilt wholesale.
+
+    `span(out) -> (start, end) | None` locates the run by position, for a
+    family whose signatures also occur elsewhere in the record.
+    """
+
+    def __init__(self, family: tuple, builder, anchors: tuple, span=None):
         self.family = family        # sigs replaced as a unit
         self.builder = builder
         self.anchors = anchors
+        self.span = span
 
 
 _RUN_INVENTORY = _RunRebuild((b'COCT', b'CNTO'), _rebuild_inventory,
@@ -975,7 +915,7 @@ _RUN_LAND_LAYERS = _RunRebuild(
 # before the ALIAS block convert_QUST writes next.
 _RUN_QUST_TARGETS = _RunRebuild(
     (b'QOBJ', b'FNAM', b'NNAM', b'QSTA'), _rebuild_qust_targets,
-    (('after', b'CNAM'), ('after', b'DNAM')))
+    (('after', b'CNAM'), ('after', b'DNAM')), _objective_run_span)
 
 _RUN_REBUILDERS = {
     ('QUST', 'Target[]'): _RUN_QUST_TARGETS,
@@ -1254,6 +1194,19 @@ def _apply_patchers(out: list, buckets: _Buckets, plugin_export: dict,
         applied.add(key)
 
 
+def _cut_run(out: list, run: _RunRebuild) -> tuple:
+    """(insert index or None, `out` without the run, the run removed)."""
+    span = run.span(out) if run.span else None
+    if span:
+        start, end = span
+        return start, out[:start] + out[end:], out[start:end]
+    if run.span:
+        return None, out, []
+    idx = next((i for i, (s, _p) in enumerate(out) if s in run.family), None)
+    return (idx, [(s, p) for s, p in out if s not in run.family],
+            [(s, p) for s, p in out if s in run.family])
+
+
 def _apply_runs(out: list, buckets: _Buckets, plugin_export: dict,
                 master_export: dict) -> list:
     """Replace each whole subrecord family with its regenerated run.
@@ -1262,11 +1215,8 @@ def _apply_runs(out: list, buckets: _Buckets, plugin_export: dict,
     spec's anchor when the master carried none. Returns the new list.
     """
     for run in buckets.runs:
-        old_run = [(s, p) for s, p in out if s in run.family]
+        idx, out, old_run = _cut_run(out, run)
         new_run = run.builder(plugin_export, master_export, old_run)
-        idx = next((i for i, (s, _p) in enumerate(out)
-                    if s in run.family), None)
-        out = [(s, p) for s, p in out if s not in run.family]
         if new_run:
             if idx is not None:
                 out[idx:idx] = new_run

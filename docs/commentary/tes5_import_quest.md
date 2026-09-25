@@ -1839,19 +1839,17 @@ The CTDA operator is the top 3 bits of the type byte.
 
 ### Quest targets become per-objective aliases
 
-Oblivion `QSTA` is QUEST-level: one entry per (target ref, condition set), where
-the conditions are `GetStage` bounds saying WHEN that target's compass marker is
-live. Skyrim `QSTA` is per-OBJECTIVE and vanilla leaves it UNCONDITIONAL -- the
-objective being Displayed is what selects the marker. Checked across
-Skyrim.esm: objectives read `QOBJ FNAM NNAM QSTA [QSTA?]`, CTDAs are the rare
-exception, and the right target simply sits on the right objective.
+Oblivion `QSTA` is QUEST-level: one entry per (target ref, condition set), the
+conditions saying WHEN that target's compass marker is live. Skyrim `QSTA` is
+per-OBJECTIVE and carries its own CTDAs: "all of its targets that pass their
+conditions will be displayed" (CK wiki, Quest Objectives Tab). Skyrim.esm uses
+this at scale -- 711 of 1,808 QSTAs carry CTDAs, and 178 objectives hold several
+conditioned targets of which typically one passes (`CW01A` objective 1 has 25).
 
-So the faithful mapping RESOLVES Oblivion's `GetStage` gates at build time
-rather than replaying them at runtime: each objective (= stage) emits only the
-targets whose TES4 conditions hold AT THAT STAGE, with no CTDAs. Carrying every
-target on every objective -- the previous design -- makes the engine face a list
-whose leading entries are false, and it renders no marker at all: the objective
-shows in the journal while compass and map stay empty.
+Each objective (= stage) therefore carries every target that can be live at
+that stage, each with the conditions that remain to be tested at runtime (see
+below). The one QSTA-per-alias rule gives way only where the same ref has two
+different runtime gates; an unconditional entry makes later ones redundant.
 
 An objective with no live target keeps its journal text and marks nothing, the
 same as vanilla's marker-less objectives ("Return when you're ready"). If
@@ -2062,18 +2060,39 @@ omitted, never bound to zero.
 
 ### <a id="resolving-target-markers-per-stage"></a>Resolving target markers per stage
 
-Oblivion gates each `QSTA` with conditions -- overwhelmingly `GetStage <op> N` on
-the quest's own FormID, which is exactly "show this marker during this part of
-the quest". Skyrim has no equivalent, its objective targets being unconditional,
-so the gate is resolved at build time: evaluate the chain with
-`GetStage == stage_idx` and put the target only on the objectives where it holds.
+**Code:** `target_runtime_conditions` / `quest_objectives` in
+`tes5_import/dialogue/quest.py`; the override builder regenerates the same run.
 
-OR semantics follow the CTDA chain rule: bit 0 of the type byte ORs a condition
-with the NEXT one, so the chain is an AND of OR-groups. A condition that cannot
-be evaluated (any function other than `GetStage`/`GetStageDone` --
-`GetQuestVariable`, `GetDeadCount`, ...) is treated as PASSING: it is a runtime
-fact we cannot know, and dropping the target on a maybe would lose a marker
-Oblivion did show. A target with no conditions at all is always live.
+Oblivion gates each `QSTA` with conditions, mostly `GetStage <op> N` on the
+quest's own FormID -- "show this marker during this part of the quest". Those are
+settled at build time with `GetStage == stage_idx` (`GetStageDone N` as
+`stage_idx >= N`), since in Skyrim the displayed objective already stands for the
+stage. The chain is an AND of OR-groups (type-byte bit 0 ORs with the NEXT
+condition): a group one settled gate satisfies is dropped, a group left with
+nothing to test kills the target on that objective, and every other condition
+becomes a CTDA on the `QSTA`.
+
+Those runtime conditions are not rare: 433 of Oblivion.esm's 2,115 target
+conditions (`GetQuestVariable` 154, `GetDeadCount` 105, `GetInCellParam` 69,
+`GetInCell` 67, `GetScriptVariable` 16, others 22) and 35 of Nehrim.esm's 242.
+They are what picks one of SE02's eight Gatekeeper refs (quest variable 26) and
+switches the Jayred/Relmyna markers between the arrows and tears branches.
+Treating them as passing -- the previous design -- lit every candidate at once:
+twelve markers on SE02 objective 7, seven of them on disabled refs.
+
+`GetStage` on ANOTHER quest is a runtime fact too, and stays a CTDA.
+
+Oblivion evaluated target conditions on the player: SE11b's tree target, placed
+in `XPMilchar03`, is gated `GetInCell XPMilchar03 == 1`, which is only meaningful
+of the player. A Skyrim target condition's subject is the target itself, and
+vanilla writes player tests as Run On = Reference `PlayerRef` (GetInCell 131,
+GetItemCount 60, GetInWorldspace 30 of the Skyrim.esm QSTA CTDAs), so every
+converted Subject condition is retargeted there. Oblivion's own target
+conditions never set Run On Target (0 of 2,115; 0 of 242).
+
+Known gap: the override builder has no `script_vars`, so a translation plugin
+that changes a variable-gated target reads the variable through the
+unresolved-name sentinel (value 0).
 
 ### <a id="timing-ctdas-a-promoted-target-inherits"></a>Timing CTDAs a promoted target inherits
 

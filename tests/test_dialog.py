@@ -24,6 +24,7 @@ from tes5_import.base.conditions import (
     FUNC_GET_IS_ID,
     FUNC_GET_IS_VOICE_TYPE,
     FUNC_GET_QUEST_RUNNING,
+    GET_VM_QUEST_VARIABLE,
     build_ctda,
     build_or_chain,
     convert_ctda,
@@ -864,12 +865,9 @@ class TestQUST:
 
     def test_quest_targets_become_aliases_and_objective_targets(self):
         """TES4 quest-level targets (REFR + GetStage conditions) -> one
-        forced-ref alias per unique target, plus an UNCONDITIONAL QSTA(alias,
-        flags) on each objective whose stage the TES4 conditions admit.
-
-        Vanilla objective targets carry no CTDAs — the displayed objective is
-        what selects the marker — so Oblivion's GetStage gates are resolved at
-        build time instead of replayed at runtime.
+        forced-ref alias per unique target, plus a QSTA(alias, flags) on each
+        objective whose stage the TES4 conditions admit. The quest's own
+        GetStage gate is settled at build time, so no CTDA remains.
         """
         set_formid_index_offset(1)
         try:
@@ -902,17 +900,10 @@ class TestQUST:
         order = _sub_order(out)
         assert order.index('QOBJ') < order.index('QSTA') < order.index('ANAM') \
             < order.index('ALST') < order.index('ALED')
-        # Objective targets are unconditional, exactly like vanilla.
         assert not _find_all_subrecords(out, b'CTDA')
 
     def test_target_only_on_the_stages_its_conditions_admit(self):
-        """A target gated `GetStage == 20` marks only objective 20 — not 10.
-
-        Carrying every target onto every objective (with its conditions
-        replayed as CTDAs) leaves the engine with a list whose leading entries
-        are false, and it draws no marker at all: the objective shows in the
-        journal but the compass and map stay empty.
-        """
+        """A target gated `GetStage == 20` marks only objective 20 — not 10."""
         set_formid_index_offset(1)
         try:
             out = convert_QUST({
@@ -953,6 +944,45 @@ class TestQUST:
 
         assert marks == {10: [0], 20: [1]}, \
             "each objective must mark only the target Oblivion gated to it"
+
+    def test_variable_gated_targets_keep_runtime_conditions(self):
+        """Only the target whose quest variable matches may show a marker.
+
+        The own-quest GetStage is settled at build time; the quest-variable
+        test and another quest's GetStage become the target's CTDAs, run on
+        PlayerRef as Oblivion evaluated them.
+        """
+        own, other = 0x00010609, 0x00010700
+        gate = _tes4_ctda(type_byte=0x60, comp=0x40A00000, func=58, p1=own)
+        pick = [_tes4_ctda(comp=c, func=79, p1=own, p2=26)
+                for c in (0x3F800000, 0x40000000)]
+        foreign = _tes4_ctda(type_byte=0x60, comp=0x41200000, func=58, p1=other)
+        rec = {'FormID': f'{own:08X}', 'RecordFlags': '0', 'EditorID': 'QVar',
+               'DATA.Flags': '0', 'StageCount': '1',
+               'Stage[0].Index': '10', 'Stage[0].LogCount': '1',
+               'Stage[0].Log[0].Flags': '0',
+               'Stage[0].Log[0].Text': 'Kill the Gatekeeper.'}
+        for t, conds in enumerate(([gate, pick[0]], [gate, pick[1], foreign])):
+            rec[f'Target[{t}].FormID'] = f'{0x1656A + t:08X}'
+            rec[f'Target[{t}].Flags'] = '0'
+            for k, raw in enumerate(conds):
+                rec[f'Target[{t}].Condition[{k}].Raw'] = raw.hex()
+        set_formid_index_offset(1)
+        try:
+            out = convert_QUST(rec, script_vars={own: {26: 'Which'}})
+        finally:
+            set_formid_index_offset(0)
+
+        order = _sub_order(out)
+        start = order.index('QOBJ')
+        run = order[start:order.index('ANAM')]
+        assert run == ['QOBJ', 'FNAM', 'NNAM', 'QSTA', 'CTDA', 'CIS2',
+                       'QSTA', 'CTDA', 'CTDA', 'CIS2']
+        ctdas = _find_all_subrecords(out, b'CTDA')
+        by_func = {struct.unpack_from('<H', c, 8)[0]: c for c in ctdas}
+        assert sorted(by_func) == [58, GET_VM_QUEST_VARIABLE]
+        assert struct.unpack_from('<I', by_func[58], 12)[0] == 0x01010700
+        assert all(struct.unpack_from('<II', c, 20) == (2, 0x14) for c in ctdas)
 
     def test_duplicate_stage_objectives_deduped(self):
         """One objective per stage index — the engine keys objectives by
