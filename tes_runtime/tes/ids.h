@@ -145,6 +145,11 @@ constexpr std::uint32_t kGfxValueManaged = 0x40;
 constexpr const char* kJournalPatchMarker = "_root.TESRT_Patched";
 constexpr const char* kJournalFunctionsPath = "_root.TESRT_Runtime";
 
+// DEPRECATED, to be removed: the same pair in a movie patched before the
+// runtime split, when MorrowindRuntime served it.
+constexpr const char* kLegacyJournalPatchMarker = "_root.MWRT_Patched";
+constexpr const char* kLegacyJournalFunctionsPath = "_root.MWRT_Runtime";
+
 
 // ---------------------------------------------------------------------------
 // Alchemy apparatus and the crafting bench

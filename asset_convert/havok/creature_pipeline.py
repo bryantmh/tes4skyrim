@@ -24,7 +24,8 @@ override system. This pipeline is for everything CREA.
 from asset_convert.game_paths import current_namespace
 import json
 import os
-from asset_convert.havok.animation_data import fragment_path
+from asset_convert.havok.animation_data import (fragment_path,
+                                                remove_legacy_fragment)
 from asset_convert.havok.behavior_vocabulary import movement_type_names
 import re
 import shutil
@@ -618,6 +619,8 @@ def _remove_stale_fragment(plugin_out: str, log=print) -> None:
     if os.path.isfile(path):
         os.remove(path)
         log(f'  Removed stale {os.path.relpath(path, plugin_out)}')
+    if remove_legacy_fragment(plugin_out, os.path.basename(plugin_out)):
+        log('  Removed stale pre-split creature fragment')
 
 
 def convert_creatures(export_dir: str, out_meshes_dir: str,

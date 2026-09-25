@@ -764,10 +764,9 @@ runtime.
 
 `_open_import_run` notes when the import began; the end of
 `run_finalize_phases` deletes every sidecar of that plugin older than that,
-then any Morrowind folder left empty. Nothing is deleted up front: the user's
-deployment is hard-linked to `output/`, and a rewritten file is written in
-place so the link sees the new bytes. Deleting first and recreating would cut
-the link and leave the game on the old file. The Morrowind restage tool
+then any Morrowind folder left empty. Nothing is deleted up front, so an
+import that fails partway leaves the previous build's sidecars whole. The
+Morrowind restage tool
 (`tools/dialog/mw_sidecar.py`) does not sweep: it leaves the journal and sound
 tables alone by design.
 

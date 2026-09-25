@@ -81,6 +81,20 @@ bool RefPosition(void* ref, float* out);
 void ForEachSidecar(const char* suffix,
                     void (*visit)(const std::string& name, const class Json& doc));
 
+// The same, for any folder (trailing separator required). With `unlessIn`, a
+// file that folder also holds is skipped and each one read is logged as
+// deprecated.
+void ForEachSidecarIn(const std::string& dir, const char* suffix,
+                      void (*visit)(const std::string& name, const class Json& doc),
+                      const std::string& unlessIn = "");
+
+// DEPRECATED, to be removed: the same, under Data\SKSE\Plugins\<folder>\, where
+// a build from before the runtime split put it. A file the current folder
+// also holds is skipped; each one read is logged as deprecated.
+// See: docs/reference/tes_runtime_fragments.md#legacy-sidecar-paths
+void ForEachLegacySidecar(const char* folder, const char* suffix,
+                          void (*visit)(const std::string& name, const class Json& doc));
+
 // Releases a reference LookupReferenceByHandle handed out.
 void ReleaseRef(void* ref);
 

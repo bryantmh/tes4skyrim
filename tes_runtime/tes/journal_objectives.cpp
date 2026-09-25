@@ -331,22 +331,34 @@ bool Defined(void* view, const char* path) {
     return defined;
 }
 
-// Gives a patched journal movie `_root.TESRT_Runtime`, once.
-void InstallInto(void* view) {
-    if (!Defined(view, ids::kJournalPatchMarker) ||
-        Defined(view, ids::kJournalFunctionsPath)) {
-        return;
-    }
+// Gives a movie carrying `marker` the runtime's functions at `path`, once.
+void InstallInto(void* view, const char* marker, const char* path) {
+    if (!Defined(view, marker) || Defined(view, path)) return;
     GFxValue object;
     VCall<CreateObjectFn>(view, ids::kMovieViewCreateObjectSlot)(
         view, &object, nullptr, nullptr, 0);
     const bool ok = AddFunction(view, &object, kFunctionName, &g_function) &&
                     AddFunction(view, &object, kTraceName, &g_trace);
     VCall<SetVariableFn>(view, ids::kMovieViewSetVariableSlot)(
-        view, ids::kJournalFunctionsPath, &object, 0);
+        view, path, &object, 0);
     Release(&object);
-    Log("journal: %s added to a patched journal movie -- %s",
-        ids::kJournalFunctionsPath, ok ? "ok" : "SetMember FAILED");
+    Log("journal: %s added to a patched journal movie -- %s", path,
+        ok ? "ok" : "SetMember FAILED");
+}
+
+// The current patch's names, then (DEPRECATED, to be removed) the names a
+// movie patched before the runtime split calls: the same two functions under
+// MorrowindRuntime's old prefix.
+// See: docs/reference/tes_runtime_fragments.md#legacy-sidecar-paths
+void InstallInto(void* view) {
+    InstallInto(view, ids::kJournalPatchMarker, ids::kJournalFunctionsPath);
+    if (Defined(view, ids::kLegacyJournalPatchMarker) &&
+        !Defined(view, ids::kLegacyJournalFunctionsPath)) {
+        Log("journal: DEPRECATED -- a journal movie patched before the runtime "
+            "split; rebuild it with Build > Quest Journal Stage Text");
+    }
+    InstallInto(view, ids::kLegacyJournalPatchMarker,
+                ids::kLegacyJournalFunctionsPath);
 }
 
 // Every open menu's movie. The journal's movie is not always loaded by the

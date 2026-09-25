@@ -119,6 +119,31 @@ void TestRead() {
               Near(settings.inputs.luck, 40.0f), "player attributes read");
 }
 
+void TestLegacy() {
+    std::printf("pre-split MorrowindRuntime tables\n");
+    std::vector<ApparatusDef> rows;
+    AlchemySettings settings;
+    ReadLegacyApparatus(
+        "apparatus_a_mortar_01=Morrowind.esm|0000A001|0|0.5\r\n"
+        "broken=Morrowind.esm|0000A002|0\n"
+        "MortarPestle01=Oblivion.esm|000105E3|0|0.15\n",
+        "sNotifyMessage45=s,You need a\\tMortar\r\n"
+        "fPotionT1MagMult=f,2\n"
+        "sOther=s,ignored\n",
+        "todd=Dark Elf|Guard|1,2,3,4,5,6,7,8|9,9\n"
+        "player=Dark Elf|Acrobat||0|50|30,35,30,30,30,30,30,40|5,5,5\n",
+        &rows, &settings);
+    Check(rows.size() == 2 && rows[1].file == "Oblivion.esm" &&
+              rows[1].local == 0x0105E3 && Near(rows[1].quality, 0.15f),
+          "APPA.txt rows, malformed one skipped");
+    Check(settings.noMortar == "You need a\tMortar" &&
+              Near(settings.inputs.magnitudeMult, 2.0f) &&
+              Near(settings.inputs.strengthMult, 0.5f),
+          "GMST.txt settings, escapes undone, the rest default");
+    Check(Near(settings.inputs.intelligence, 35.0f) && Near(settings.inputs.luck, 40.0f),
+          "the player row's Intelligence and Luck, not another actor's");
+}
+
 }  // namespace
 
 int main() {
@@ -128,6 +153,7 @@ int main() {
     TestAlembic();
     TestCalcinator();
     TestRead();
+    TestLegacy();
     std::printf(g_failures ? "\nFAILED (%d)\n" : "\nOK\n", g_failures);
     return g_failures ? 1 : 0;
 }

@@ -310,6 +310,14 @@ Check theories against several of these before acting:
   it into a shared function.
 - Don't preserve backwards compatibility in code — delete what is no longer used.
   (Save-game compatibility is different: see [FormID drift](#formid-drift).)
+- <a id="end-user-state"></a>**Except what end users already have installed.**
+  This ships to users whose converted output, sidecars, patched UI movies,
+  inis and saves can come from ANY older build. When a runtime path, file or
+  name moves, the runtime keeps reading the old one (current wins, logged as
+  `DEPRECATED`, marked for removal) and the converter deletes the old copy on
+  its next rebuild. Cleaning up the developer's own `output/` by hand is a fine
+  one-off during development, but it never counts as the fix.
+  ([legacy paths](docs/reference/tes_runtime_fragments.md#legacy-sidecar-paths))
 - **Performance matters** — this must run quickly on a modest PC. If your change
   makes a step significantly slower, optimize: Python first, then native C++ if
   needed.

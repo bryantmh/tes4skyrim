@@ -21,6 +21,10 @@ const std::string& PluginName();
 // See: docs/commentary/morrowind_runtime.md#sidecar
 std::string SidecarDir();
 
+// Data\SKSE\Plugins\, with the trailing backslash: the folder this DLL is
+// loaded from, which holds every runtime's sidecar folder. "" when unknown.
+std::string PluginsDir();
+
 // The SKSE log folder with a trailing backslash, or "" when Documents is
 // unknown; every file a plugin writes for a human goes here.
 std::wstring LogDir();

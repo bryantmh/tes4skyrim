@@ -3,7 +3,8 @@
 // One job: composes meshes\animationdatasinglefile.txt and
 // meshes\animationsetdatasinglefile.txt in memory, at the moment the engine
 // parses them, from the vanilla base plus every fragment under
-// Data\SKSE\Plugins\CreatureRuntime\animation\*.json
+// Data\SKSE\Plugins\CreatureRuntime\animation\*.json, and, deprecated, the
+// older Data\SKSE\Plugins\TESRuntime\animation\*.json
 // (docs/reference/tes_runtime_fragments.md).
 //
 // Both parsers open their file through one shared helper; the hook replaces
@@ -14,9 +15,11 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <mutex>
+#include <set>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -61,11 +64,41 @@ Which Classify(const char* path) {
     return Which::None;
 }
 
+std::string SourceKey(const Json& fragment) {
+    std::string key = fragment["source"].asString();
+    for (auto& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return key;
+}
+
+// DEPRECATED, to be removed: Data\SKSE\Plugins\TESRuntime\animation, where
+// fragments went before CreatureRuntime was its own DLL. A plugin whose
+// fragment is also in the current folder takes the current one.
+// See: docs/reference/tes_runtime_fragments.md#legacy-sidecar-paths
+void AddLegacyFragments() {
+    if (PluginsDir().empty()) return;
+    const std::string dir = PluginsDir() + "TESRuntime\\animation";
+    std::set<std::string> have;
+    for (const Json& fragment : g_fragments) have.insert(SourceKey(fragment));
+    std::size_t added = 0;
+    for (Json& fragment : LoadFragments(dir)) {
+        if (!have.insert(SourceKey(fragment)).second) continue;
+        g_fragments.push_back(std::move(fragment));
+        ++added;
+    }
+    if (!added) return;
+    Log("compose: DEPRECATED -- %zu fragment(s) read from %s; rebuild those "
+        "plugins' creatures so they move to CreatureRuntime\\animation",
+        added, dir.c_str());
+    std::sort(g_fragments.begin(), g_fragments.end(),
+              [](const Json& a, const Json& b) { return SourceKey(a) < SourceKey(b); });
+}
+
 void EnsureFragments() {
     if (g_fragmentsLoaded) return;
     g_fragmentsLoaded = true;
     const std::string dir = SidecarDir() + "animation";
     g_fragments = LoadFragments(dir);
+    AddLegacyFragments();
     Log("compose: %zu fragment(s) under %s", g_fragments.size(), dir.c_str());
 }
 

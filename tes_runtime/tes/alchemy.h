@@ -81,6 +81,15 @@ float ApparatusScale(const Toolset& tools, const AlchemyInputs& inputs,
 void ReadApparatus(const Json& doc, std::vector<ApparatusDef>* rows,
                    AlchemySettings* settings);
 
+// DEPRECATED, to be removed: one pre-split MorrowindRuntime\<plugin>\ folder's
+// APPA.txt (`id=Plugin.esm|FormID|type|quality` lines), GMST.txt
+// (`name=type,value`) and NPC_.txt (whose `player=` line ends in its
+// comma-joined attributes, then its skills), read into the same shapes.
+// See: docs/reference/tes_runtime_fragments.md#legacy-sidecar-paths
+void ReadLegacyApparatus(const std::string& appa, const std::string& gmst,
+                         const std::string& npc, std::vector<ApparatusDef>* rows,
+                         AlchemySettings* settings);
+
 // Resolves the sidecars, swaps the inventory, crafting-menu and
 // potion-strength virtuals. Nothing is hooked when no plugin staged an
 // apparatus. Needs InstallCrafting first.

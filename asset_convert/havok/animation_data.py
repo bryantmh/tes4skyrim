@@ -55,6 +55,8 @@ VANILLA_SINGLEFILES = ('animationdatasinglefile.txt',
 
 #: Mod-root-relative folder every fragment lives in; the DLL reads all *.json here.
 FRAGMENT_DIR = os.path.join('SKSE', 'Plugins', 'CreatureRuntime', 'animation')
+#: Where a build from before the runtime split put it; CreatureRuntime still reads it (deprecated).
+LEGACY_FRAGMENT_DIR = os.path.join('SKSE', 'Plugins', 'TESRuntime', 'animation')
 FRAGMENT_VERSION = 1
 
 
@@ -275,6 +277,22 @@ def fragment_path(plugin_out_dir: str, plugin_name: str) -> str:
     return os.path.join(plugin_out_dir, FRAGMENT_DIR, f'{stem}.json')
 
 
+def remove_legacy_fragment(plugin_out_dir: str, plugin_name: str) -> bool:
+    """Delete the plugin's pre-split fragment, if any; whether one went.
+
+    See: docs/reference/tes_runtime_fragments.md#legacy-sidecar-paths
+    """
+    stem = os.path.splitext(os.path.basename(plugin_name))[0]
+    path = os.path.join(plugin_out_dir, LEGACY_FRAGMENT_DIR, f'{stem}.json')
+    if not os.path.isfile(path):
+        return False
+    os.remove(path)
+    folder = os.path.dirname(path)
+    if not os.listdir(folder):
+        os.rmdir(folder)
+    return True
+
+
 def write_fragment(manifests: list, out_meshes_dir: str,
                    plugin_name: str, appends: dict = None,
                    plugin_out_dir: str = None) -> str:
@@ -302,6 +320,7 @@ def write_fragment(manifests: list, out_meshes_dir: str,
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(frag, f)
+    remove_legacy_fragment(root, plugin_name)
     _write_project_sources(manifests, out_meshes_dir)
     _remove_stale_singlefiles(out_meshes_dir)
     return path

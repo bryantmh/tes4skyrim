@@ -76,11 +76,27 @@ bool RefPosition(void* ref, float* out) {
 
 void ForEachSidecar(const char* suffix,
                     void (*visit)(const std::string& name, const Json& doc)) {
-    const std::string dir = SidecarDir();
+    ForEachSidecarIn(SidecarDir(), suffix, visit);
+}
+
+void ForEachLegacySidecar(const char* folder, const char* suffix,
+                          void (*visit)(const std::string& name, const Json& doc)) {
+    ForEachSidecarIn(PluginsDir() + folder + "\\", suffix, visit, SidecarDir());
+}
+
+void ForEachSidecarIn(const std::string& dir, const char* suffix,
+                      void (*visit)(const std::string& name, const Json& doc),
+                      const std::string& unlessIn) {
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA((dir + "*." + suffix).c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return;
     do {
+        if (!unlessIn.empty()) {
+            const std::string current = unlessIn + fd.cFileName;
+            if (GetFileAttributesA(current.c_str()) != INVALID_FILE_ATTRIBUTES) continue;
+            Log("sidecar: DEPRECATED -- %s read from %s; rebuild that plugin to "
+                "move it to %s", fd.cFileName, dir.c_str(), unlessIn.c_str());
+        }
         std::ifstream f(dir + fd.cFileName, std::ios::binary);
         std::stringstream ss;
         ss << f.rdbuf();

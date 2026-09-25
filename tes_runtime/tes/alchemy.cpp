@@ -1,8 +1,88 @@
 #include "alchemy.h"
 
+#include <cstdlib>
+#include <sstream>
+
 namespace tesruntime {
 
 namespace {
+
+// Each line of `text`, without a trailing '\r'.
+std::vector<std::string> Lines(const std::string& text) {
+    std::vector<std::string> out;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        out.push_back(line);
+    }
+    return out;
+}
+
+std::vector<std::string> Split(const std::string& text, char at) {
+    std::vector<std::string> out;
+    std::istringstream in(text);
+    std::string field;
+    while (std::getline(in, field, at)) out.push_back(field);
+    return out;
+}
+
+// The sidecar export's escaping (\\ \n \r \t) undone.
+std::string Unescape(const std::string& text) {
+    std::string out;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '\\' || i + 1 == text.size()) {
+            out += text[i];
+            continue;
+        }
+        const char next = text[++i];
+        out += next == 'n' ? '\n' : next == 'r' ? '\r' : next == 't' ? '\t' : next;
+    }
+    return out;
+}
+
+void LegacyRow(const std::string& line, std::vector<ApparatusDef>* rows) {
+    const std::size_t eq = line.find('=');
+    const std::vector<std::string> fields =
+        eq == std::string::npos ? std::vector<std::string>{} : Split(line.substr(eq + 1), '|');
+    if (eq == 0 || fields.size() != 4) return;
+    ApparatusDef def;
+    def.id = line.substr(0, eq);
+    def.file = fields[0];
+    def.local = std::strtoul(fields[1].c_str(), nullptr, 16) & 0x00FFFFFF;
+    def.type = std::atoi(fields[2].c_str());
+    def.quality = std::strtof(fields[3].c_str(), nullptr);
+    if (def.local && !def.file.empty() && def.type >= 0 && def.type < kApparatusTypes) {
+        rows->push_back(def);
+    }
+}
+
+void LegacySetting(const std::string& line, AlchemySettings* settings) {
+    const std::size_t eq = line.find('=');
+    const std::size_t comma = line.find(',', eq);
+    if (eq == std::string::npos || comma == std::string::npos) return;
+    const std::string name = line.substr(0, eq);
+    const std::string value = line.substr(comma + 1);
+    const float number = std::strtof(value.c_str(), nullptr);
+    if (name == "fPotionStrengthMult") settings->inputs.strengthMult = number;
+    else if (name == "fPotionT1MagMult") settings->inputs.magnitudeMult = number;
+    else if (name == "fPotionT1DurMult") settings->inputs.durationMult = number;
+    else if (name == "sInventoryMessage3") settings->inCombat = Unescape(value);
+    else if (name == "sNotifyMessage45") settings->noMortar = Unescape(value);
+}
+
+// TES3's attribute order: Intelligence second, Luck last.
+constexpr std::size_t kIntelligence = 1;
+constexpr std::size_t kLuck = 7;
+
+void LegacyPlayer(const std::string& line, AlchemySettings* settings) {
+    const std::vector<std::string> fields = Split(line, '|');
+    if (fields.size() < 2) return;
+    const std::vector<std::string> attributes = Split(fields[fields.size() - 2], ',');
+    if (attributes.size() <= kLuck) return;
+    settings->inputs.intelligence = std::strtof(attributes[kIntelligence].c_str(), nullptr);
+    settings->inputs.luck = std::strtof(attributes[kLuck].c_str(), nullptr);
+}
 
 // OpenMW's Alchemy::applyTools, line for line, on `value`. The tool is the
 // retort for a helpful effect and the alembic for a harmful one; with a
@@ -107,6 +187,16 @@ void ReadApparatus(const Json& doc, std::vector<ApparatusDef>* rows,
     TakeText(gmst, "sNotifyMessage45", &settings->noMortar);
     TakeNumber(doc["player"], "intelligence", &settings->inputs.intelligence);
     TakeNumber(doc["player"], "luck", &settings->inputs.luck);
+}
+
+void ReadLegacyApparatus(const std::string& appa, const std::string& gmst,
+                         const std::string& npc, std::vector<ApparatusDef>* rows,
+                         AlchemySettings* settings) {
+    for (const std::string& line : Lines(appa)) LegacyRow(line, rows);
+    for (const std::string& line : Lines(gmst)) LegacySetting(line, settings);
+    for (const std::string& line : Lines(npc)) {
+        if (line.rfind("player=", 0) == 0) LegacyPlayer(line, settings);
+    }
 }
 
 }  // namespace tesruntime

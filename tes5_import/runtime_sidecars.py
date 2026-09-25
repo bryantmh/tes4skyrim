@@ -3,9 +3,8 @@ not rewrite is deleted once it has written everything.
 
 A plugin's sidecars are its `SKSE/Plugins/MorrowindRuntime/<plugin>/` folder
 and its `<plugin>.<kind>.json` files under `TESRuntime/` and
-`FalloutRuntime/`. They are never deleted up front: a rewritten file is
-written in place, which keeps a hard-linked deployment current, so only the
-files this run left untouched go.
+`FalloutRuntime/`. They are swept after the write rather than cleared first,
+so an import that fails partway deletes nothing.
 
 See: docs/commentary/tes5_import_pipeline.md#stale-runtime-sidecars
 """

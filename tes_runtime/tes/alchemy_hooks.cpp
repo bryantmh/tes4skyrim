@@ -9,8 +9,12 @@
 
 #include "alchemy.h"
 
+#include <windows.h>
+
 #include <cmath>
 #include <cstdint>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,6 +24,7 @@
 #include "engine.h"
 #include "ids.h"
 #include "log.h"
+#include "paths.h"
 #include "ui_message.h"
 
 namespace tesruntime {
@@ -244,6 +249,40 @@ void LoadSidecar(const std::string& name, const Json& doc) {
     Log("alchemy: %s -- %zu apparatus", name.c_str(), g_rows.size() - before);
 }
 
+std::string ReadText(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+// DEPRECATED, to be removed: each pre-split MorrowindRuntime\<plugin>\ folder
+// with an APPA.txt, when that plugin has no apparatus.json.
+// See: docs/reference/tes_runtime_fragments.md#legacy-sidecar-paths
+void LoadLegacySidecars() {
+    const std::string root = PluginsDir() + "MorrowindRuntime\\";
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA((root + "*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::string stem = fd.cFileName;
+        const std::string dir = root + stem + "\\";
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || stem[0] == '.' ||
+            GetFileAttributesA((dir + "APPA.txt").c_str()) == INVALID_FILE_ATTRIBUTES ||
+            GetFileAttributesA((SidecarDir() + stem + ".apparatus.json").c_str()) !=
+                INVALID_FILE_ATTRIBUTES) {
+            continue;
+        }
+        const std::size_t before = g_rows.size();
+        ReadLegacyApparatus(ReadText(dir + "APPA.txt"), ReadText(dir + "GMST.txt"),
+                            ReadText(dir + "NPC_.txt"), &g_rows, &g_settings);
+        Log("alchemy: DEPRECATED -- %zu apparatus read from %sAPPA.txt; rebuild "
+            "%s to move them to %s", g_rows.size() - before, dir.c_str(),
+            stem.c_str(), SidecarDir().c_str());
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+}
+
 std::size_t ResolveApparatus() {
     g_apparatus.clear();
     g_byFormId.clear();
@@ -329,6 +368,7 @@ bool InstallEffectiveness() {
 }  // namespace
 
 void InstallAlchemy() {
+    LoadLegacySidecars();
     ForEachSidecar("apparatus.json", LoadSidecar);
     if (!ResolveApparatus()) {
         Log("alchemy: no apparatus staged -- NOT hooked");

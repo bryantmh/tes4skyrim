@@ -132,3 +132,32 @@ address through the Address Library (`versionlib-*.bin`) and refuses to hook
 when a stable ID is missing, so a game update degrades to "no TES4 projects
 registered" rather than a crash. Its log is
 `Documents\My Games\Skyrim Special Edition\SKSE\CreatureRuntime.log`.
+
+It reads `Data\SKSE\Plugins\CreatureRuntime\animation\*.json`, and the
+pre-split folder ([below](#legacy-sidecar-paths)).
+
+## <a id="legacy-sidecar-paths"></a>Pre-split sidecar paths (deprecated, to be removed)
+
+Users install new runtime DLLs over converted output of any age, so every
+sidecar the runtime split moved is still read from where an older converter
+wrote it. The current location always wins; each fallback that is used logs a
+`DEPRECATED` line naming the file and what to rebuild. Remove these once no
+supported release writes the old layout.
+
+| Runtime | Current | Also read (deprecated) | Code |
+|---|---|---|---|
+| CreatureRuntime | `CreatureRuntime\animation\<plugin>.json` | `TESRuntime\animation\<plugin>.json`, when no current fragment has the same `source` | `creature/plugin.cpp` `AddLegacyFragments` |
+| FalloutRuntime | `FalloutRuntime\<plugin>.guns.json` | `TESRuntime\<plugin>.guns.json`, when the current folder lacks that file | `fallout/guns.cpp`, `common/engine.cpp` `ForEachLegacySidecar` |
+| FalloutRuntime | `FalloutRuntime\FalloutRuntime.ini` | `TESRuntime\TESRuntime.ini` (keys a player already set), when the current one is absent | `fallout/fire.cpp` `IniPath` |
+| TESRuntime | `TESRuntime\<plugin>.apparatus.json` | `MorrowindRuntime\<plugin>\APPA.txt`, with that folder's `GMST.txt` and `NPC_.txt` for the settings and the player's Intelligence and Luck, when the plugin has no `apparatus.json` | `tes/alchemy_hooks.cpp` `LoadLegacySidecars` |
+| TESRuntime | a patched journal movie's `_root.TESRT_Patched` / `_root.TESRT_Runtime` | `_root.MWRT_Patched` / `_root.MWRT_Runtime`, a movie patched before the split | `tes/journal_objectives.cpp` `InstallInto` |
+
+Body parts (`bodyparts.json`) moved too, but limb severing is dormant, so no
+fallback is read. The old journal co-save record (`MWJL` under `'MWRT'`) is not
+carried over: journal history from before the split is lost.
+
+Rebuilding a plugin removes its old copies: the import's
+[sidecar sweep](../commentary/tes5_import_pipeline.md#stale-runtime-sidecars)
+deletes `TESRuntime\<plugin>.guns.json` and `MorrowindRuntime\<plugin>\APPA.txt`
+once they are no longer written, and the creature stage deletes the old
+fragment when it writes or drops the current one.

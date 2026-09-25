@@ -27,7 +27,8 @@ def test_only_the_files_the_run_left_untouched_go(tmp_path):
     plugins = out / 'SKSE' / 'Plugins'
     old = [_file(str(plugins / 'TESRuntime' / 'Plugin.crime.json'), 600),
            _file(str(plugins / 'FalloutRuntime' / 'Plugin.guns.json'), 600),
-           _file(str(plugins / 'MorrowindRuntime' / 'Plugin' / 'SOUN.txt'), 600)]
+           _file(str(plugins / 'MorrowindRuntime' / 'Plugin' / 'SOUN.txt'), 600),
+           _file(str(plugins / 'TESRuntime' / 'Plugin.guns.json'), 600)]
     others = [_file(str(plugins / 'TESRuntime' / 'Other.crime.json'), 600),
               _file(str(plugins / 'TESRuntime' / 'Plugin.x.crime.json'), 600),
               _file(str(plugins / 'FalloutRuntime' / 'FalloutRuntime.ini'), 600)]

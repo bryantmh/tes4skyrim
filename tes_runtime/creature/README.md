@@ -37,6 +37,10 @@ call each parser makes to the shared resource-open helper; everything else is
 the engine's own code. It resolves three addresses and touches no form, native
 or co-save.
 
+**Deprecated, to be removed:** it also reads the pre-split
+`Data\SKSE\Plugins\TESRuntime\animation\` for any plugin with no fragment in
+the current folder, and logs `DEPRECATED` when it does.
+
 - Schema: [tes_runtime_fragments.md](../../docs/reference/tes_runtime_fragments.md)
 - Why: [asset_convert_creature.md](../../docs/commentary/asset_convert_creature.md#runtime-animation-cache-composition)
 

@@ -145,6 +145,7 @@ bool SetVarHook(void* graph, void* name, int value) {
 
 bool InstallGuns() {
     ForEachSidecar("guns.json", LoadSidecar);
+    ForEachLegacySidecar("TESRuntime", "guns.json", LoadSidecar);
     if (g_pending.empty()) {
         Log("guns: no gun sidecars; routing not installed");
         return false;

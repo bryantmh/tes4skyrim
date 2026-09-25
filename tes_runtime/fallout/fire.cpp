@@ -383,8 +383,21 @@ DWORD WINAPI KeyThread(LPVOID param) {
     }
 }
 
-int IniKey(const char* name, int fallback) {
+// FalloutRuntime.ini, else (DEPRECATED, to be removed) the pre-split
+// TESRuntime\TESRuntime.ini a player may already have set keys in.
+// See: docs/reference/tes_runtime_fragments.md#legacy-sidecar-paths
+std::string IniPath() {
     const std::string ini = SidecarDir() + "FalloutRuntime.ini";
+    const std::string legacy = PluginsDir() + "TESRuntime\\TESRuntime.ini";
+    if (GetFileAttributesA(ini.c_str()) != INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesA(legacy.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        return ini;
+    }
+    Log("fire: DEPRECATED -- keys read from %s; move it to %s", legacy.c_str(), ini.c_str());
+    return legacy;
+}
+
+int IniKey(const std::string& ini, const char* name, int fallback) {
     return static_cast<int>(GetPrivateProfileIntA("Guns", name, fallback, ini.c_str()));
 }
 
@@ -435,7 +448,9 @@ bool InstallFire() {
     }
     Log("fire: HUD magazine counter disabled (hud.cpp kept, not installed)");
     if (!InstallParts()) Log("fire: gun part sequences not installed");
-    auto* keys = new Keys{IniKey("ReloadKey", kDefaultReloadKey), IniKey("ZoomKey", kDefaultZoomKey)};
+    const std::string ini = IniPath();
+    auto* keys = new Keys{IniKey(ini, "ReloadKey", kDefaultReloadKey),
+                          IniKey(ini, "ZoomKey", kDefaultZoomKey)};
     CreateThread(nullptr, 0, KeyThread, keys, 0, nullptr);
     Log("fire: shot hook installed; reload key 0x%02x, zoom key 0x%02x", keys->reload, keys->zoom);
     return true;

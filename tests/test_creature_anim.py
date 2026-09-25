@@ -350,6 +350,18 @@ class TestAnimCacheFragments:
     the same rule (append, dedupe by name) the old build-time merge used.
     See docs/reference/tes_runtime_fragments.md."""
 
+    def test_writing_a_fragment_removes_its_pre_split_copy(self, tmp_path):
+        """A rebuild deletes the plugin's fragment from the old TESRuntime
+        folder, and only that plugin's."""
+        from asset_convert.havok.animation_data import write_fragment
+        legacy = tmp_path / 'SKSE' / 'Plugins' / 'TESRuntime' / 'animation'
+        legacy.mkdir(parents=True)
+        (legacy / 'Oblivion.json').write_text('{}', encoding='utf-8')
+        (legacy / 'Other.json').write_text('{}', encoding='utf-8')
+        write_fragment([_manifest('oblivion', 'dog')], str(tmp_path / 'meshes'),
+                       'Oblivion.esm')
+        assert sorted(p.name for p in legacy.iterdir()) == ['Other.json']
+
     def test_fragment_holds_only_own_projects(self, tmp_path):
         """A plugin's fragment lists its own projects, sorted, and no
         singlefile is written beside it."""
