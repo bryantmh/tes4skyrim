@@ -2270,6 +2270,29 @@ class TestSayTimerConversion:
         # nothing else Says the line
         assert result.count('.Say(') == 0
 
+    def test_speak_as_waits_for_its_line_only_in_a_poll(self, converter):
+        """A speak-as Say picks its INFO at the call only if the caller waits.
+
+        The Arena announcer sets CityAnnounced = 1 right after speaking, and the
+        welcome INFO requires it to be 0 (confirmed in game: without the wait
+        the scene picked the next line).  An engine callback must not block.
+        See: docs/commentary/tes5_import_dialogue.md#speaker-activator-construction
+        """
+        x = converter.xref
+        x.edid_to_formid.update(arenamouth='00046653', announcer='00046652')
+        x.record_type.update({'00046653': 'NPC_', '00046652': 'DIAL'})
+        say = 'ArenaMatchPlayerRef.Say Announcer 1 ArenaMouth 1\n'
+        poll = converter.convert_standalone(
+            'TestPoll', 'scn TestPoll\nbegin GameMode\n' + say + 'end\n',
+            'Quest', 'TestPoll')
+        assert ('TES4Polyfill.SpeakAs(Announcer, '
+                'TES4Scene_arenamatchplayerref_arenamouth_announcer, True)') in poll
+        callback = converter.convert_standalone(
+            'TestAct', 'scn TestAct\nbegin OnActivate\n' + say + 'end\n',
+            'ObjectReference', 'TestAct')
+        assert ('TES4Polyfill.SpeakAs(Announcer, '
+                'TES4Scene_arenamatchplayerref_arenamouth_announcer)') in callback
+
     def test_sayline_uses_the_topics_measured_maximum_as_fallback(self, converter):
         from script_convert.converter import ScriptConverter
         saved = ScriptConverter.say_durations

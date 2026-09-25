@@ -181,8 +181,7 @@ class ScriptConverter:
     _SAY_CALL_RE = re.compile(r'^\s*(?P<recv>.+?)\.Say\((?P<topic>[^()]*)\)\s*$')
     # The speak-as shape emitted by the Say handler (see _say_speak_as).
     _SPEAK_AS_CALL_RE = re.compile(
-        r'^\s*TES4Polyfill\.SpeakAs\((?P<speaker>[^,()]+),'
-        r'(?P<inhead>[^,()]+),(?P<topic>[^,()]+)\)\s*$')
+        r'^\s*TES4Polyfill\.SpeakAs\((?P<topic>[^,()]+),(?P<scene>[^,()]+)(?:,[^,()]+)?\)\s*$')
 
     # Events that run on the engine's own dispatch path, where a blocking
     # Say would stall the engine rather than just this script's tick.  A
@@ -229,9 +228,8 @@ class ScriptConverter:
             # returns the same measured length.
             pre = SAY_START_WAIT + 0.25
             fn = 'SpeakAsLine' if self._say_may_block() else 'SpeakAsLineNoWait'
-            call = (f'TES4Polyfill.{fn}({ms.group("speaker").strip()}, '
-                    f'{fallback:g}, {ms.group("inhead").strip()}, '
-                    f'{ms.group("topic").strip()})')
+            call = (f'TES4Polyfill.{fn}({fallback:g}, '
+                    f'{ms.group("topic").strip()}, {ms.group("scene").strip()})')
             if self.sc.var_types.get(target.lower().split('.')[-1]) == 'Int':
                 return (f'{target} = {int(pre + 0.999)}  ; TES4 Say: closed until the line is under way\n'
                         f'  {target} = Math.Ceiling({call}){delay}')
@@ -577,9 +575,6 @@ class ScriptConverter:
         body = _script.emit_body(self, tree.body, extends, 1)
         return [_script.fragment_local(self, v) for v in tree.variables] + body
 
-
-    _CONTROLS_WRITE_RE = re.compile(
-        r'^(\s*)Game\.(Disable|Enable)PlayerControls\(\)\s*(;.*)?$')
 
 
     def get_cell_family_helpers(self) -> list:
@@ -1163,71 +1158,33 @@ class ScriptConverter:
         """
         return dict(self.sc.property_refs)
 
-    # Where the speak-as identity sits in a TES4 Say/SayTo argument list:
-    #   Say   <topic> <force-subtitles> <speak-as> [<in-players-head>]
-    #   SayTo <target> <topic> <flag> <speak-as> <flag>
-
-    def _say_speak_as(self, ref_name, pparts: list, fname_low: str) -> tuple:
-        """(speaker property, in-head) for a speak-as call site.
+    def _say_speak_as(self, ref_name, pparts: list, fname_low: str) -> str:
+        """The scene property that speaks a speak-as call site, or ''.
 
         TES4's third `Say` argument is the identity the line belongs to; the
-        receiver only emits the sound.  Skyrim has no equivalent parameter and
-        keys voice lookup on the SPEAKER, so the emitting marker (a STAT, with
-        no voice type) resolves to no voice folder and the line is silent.
-        The importer places a TACT carrying that NPC's voice type at the
-        emitter's authored position and registers it under the speaker name --
-        see tes5_import/dialogue/speak_as.py, which derives the SAME name
-        from the same authored pair, so the two agree with no side-channel.
-
-        The fourth authored argument is TES4's "speak in the player's head",
-        which Skyrim exposes natively as `Say`'s third parameter
-        (abSpeakInPlayersHead) -- passed straight through by
-        TES4Polyfill.SpeakAs.  🛑 Never emulate it by moving the speaker.
-
-        Returns ('', False) when this is not a speak-as site.
+        receiver only emits the sound.  The importer places a TACT at the
+        emitter and a one-action scene per topic whose INFOs name that NPC as
+        their speaker, registered under the SAME name derived here from the same
+        authored tokens (tes5_import/dialogue/speak_as.py).
+        See: docs/commentary/tes5_import_dialogue.md#speaker-activator-construction
         """
-        none = ('', False)
-        if not ref_name:
-            return none
-        need = SAY_SPEAKAS_MIN_TOKENS.get(fname_low)
-        if need is None:
-            return none
-        tokens = []
-        for part in pparts:
-            tokens.extend(str(part).split())
-        if len(tokens) < need:
-            return none
-        # The identity is the first non-numeric token after the topic; the
-        # in-head flag is the numeric token after it.
-        rest = tokens[2:] if fname_low == 'sayto' else tokens[1:]
-        topic = tokens[1] if fname_low == 'sayto' else tokens[0]
-        voice = ''
-        in_head = False
-        for i, t in enumerate(rest):
-            if t and not t.lstrip('-').replace('.', '').isdigit():
-                voice = t
-                nxt = rest[i + 1] if i + 1 < len(rest) else ''
-                in_head = bool(nxt) and nxt.lstrip('-').isdigit() and int(nxt) != 0
-                break
-        if not voice or not re.fullmatch(r'\w+', voice):
-            return none
-        topic = topic.strip().strip('"')
-        if not re.fullmatch(r'\w+', topic):
-            return none
-        # Only an actor BASE is a speak-as identity; anything else in that slot
-        # is a flag or a stray token.  And only a real DIAL is a topic.
-        if self.xref:
-            fid = self.xref.edid_to_formid.get(voice.lower(), '')
-            if not fid or self.xref.record_type.get(fid, '') not in ('NPC_',
-                                                                     'CREA'):
-                return none
-            tfid = self.xref.edid_to_formid.get(topic.lower(), '')
-            if not tfid or self.xref.record_type.get(tfid, '') != 'DIAL':
-                return none
-        speaker = safe_property_name(
-            f'TES4Voice_{ref_name.lower()}_{voice.lower()}')
-        self.sc.property_refs[speaker] = 'ObjectReference'
-        return speaker, in_head
+        parsed = _speak_as_tokens(pparts, fname_low) if ref_name else None
+        if not parsed or not self._is_speak_as_identity(*parsed):
+            return ''
+        topic, voice = parsed
+        scene = safe_property_name(
+            f'TES4Scene_{ref_name.lower()}_{voice.lower()}_{topic.lower()}')
+        self.sc.property_refs[scene] = 'Scene'
+        return scene
+
+    def _is_speak_as_identity(self, topic: str, voice: str) -> bool:
+        """Only an actor BASE is a speak-as identity, and only a real DIAL a topic."""
+        if not self.xref:
+            return True
+        fid = self.xref.edid_to_formid.get(voice.lower(), '')
+        tfid = self.xref.edid_to_formid.get(topic.lower(), '')
+        return (self.xref.record_type.get(fid, '') in ('NPC_', 'CREA')
+                and self.xref.record_type.get(tfid, '') == 'DIAL')
 
     def _mark_topic_property(self, name: str) -> None:
         """Type `name` as a Topic, but only if it really names a DIAL.
@@ -2438,6 +2395,31 @@ def sctx_onactivate_consumes(sctx: str) -> bool:
     if not blocks:
         return False
     return ScriptConverter._onactivate_consumes(blocks)
+
+
+# ---------------------------------------------------------------------------
+# Say call sites
+# ---------------------------------------------------------------------------
+
+def _speak_as_tokens(pparts: list, fname_low: str):
+    """(topic, voice) from a TES4 Say/SayTo argument list, or None.
+
+    `Say <topic> <force-subtitles> <speak-as> [<voice-at-player>]`, and SayTo
+    names its target first: the identity is the first non-numeric token after
+    the topic.
+    """
+    need = SAY_SPEAKAS_MIN_TOKENS.get(fname_low)
+    tokens = [t for part in pparts for t in str(part).split()]
+    if need is None or len(tokens) < need:
+        return None
+    rest = tokens[2:] if fname_low == 'sayto' else tokens[1:]
+    topic = (tokens[1] if fname_low == 'sayto' else tokens[0]).strip().strip('"')
+    for t in rest:
+        if t and not t.lstrip('-').replace('.', '').isdigit():
+            if re.fullmatch(r'\w+', t) and re.fullmatch(r'\w+', topic):
+                return topic, t
+            return None
+    return None
 
 
 def _call_name(node) -> str:

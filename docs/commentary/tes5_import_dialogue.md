@@ -1085,14 +1085,94 @@ invention: it teleports the marker out of its authored position permanently
 (nothing moves it back) and costs the line its audio. Vanilla's one
 repositioning case (DA05, following a ghost's head) uses `SetPosition`.
 
-**Known open defect:** a scripted `Say()` on a NON-ACTOR does not retire its
-subtitle -- measured live, a direct `Say` on the announcer's TACT played its
-audio and left the subtitle onscreen indefinitely. The engine's countdown /
-`SubtitleManager::KillSubtitles` path is `TESObjectREFR` vtable slot 0x40
-(rva 0x2d9d80, SkyrimSE 1.6.1170), which nothing drives for a plain
-reference. **No verified fix exists**; the two attempts above cost the audio
-and were reverted. Audio is the higher-value behaviour, so the stuck subtitle
-stands until a fix is demonstrated in-game rather than reasoned about.
+**Superseded 2026-09-24 -- delivery is now a scene (confirmed in game
+2026-09-25: the Arena announcer speaks each line with audio and its subtitle
+clears).** A scripted `Say()` on a NON-ACTOR never retires its subtitle, and the
+cause is now measured in the running 1.6.1170 game, not reasoned about:
+
+* A non-actor's line lives in its say-topic extra (`ExtraDataList` type 0x71):
+  done flag +0x18, countdown +0x1c (-1 until the voice's length is known), the
+  voice's `BSSoundHandle` +0x28. `TESObjectREFR` vtable slot 0x40 (rva 0x2d9d80)
+  is its per-frame driver: once the voice loads it sets countdown =
+  duration_ms * 0.001 + 0.5, subtracts the frame time each call, and at 0 calls
+  `SubtitleManager::KillSubtitles` (rva 0x96cd00) and frees the extra.
+* Papyrus `Say` (rva 0xa2fb40) calls the driver ONCE. After an announcer line
+  the countdown sat at -1 with the voice finished (`BSSoundHandle::IsPlaying`, id 67621, -> 0 at
+  16.1s of a 16.5s line); calling the driver by hand from the bridge counted it
+  down and removed both stuck subtitles (subtitle count 2 -> 0).
+* The only engine code that calls the driver every frame for a non-actor is
+  `BGSSceneActionDialogue` slot 19 (rva 0x3a48d0: `formType == 0x3e` goes to the
+  actor path, everything else to slot 0x40); slot 17 (0x3a47f0) sets the done
+  flag at the action's end. Vanilla speaks through a TACT exactly that way: 19
+  scene dialogue actions in Skyrim.esm (Azura, Night Mother, Potema, Namira's
+  shrine, the Augur). All 7426 vanilla scene topics are category Scene
+  (SNAM `SCEN`) with no BNAM and no FULL, and every one of them belongs to
+  its scene's own quest (1706 scenes: the topic's `QNAM` equals the scene's
+  `PNAM` on all 7426 actions, none borrowed).
+
+So every speak-as call site gets a one-action SCEN in DA11NamiraScene's exact
+layout, owned by the start-game quest `TES4SpeakAs` (one forced-ref alias per
+speaker TACT), its topic becomes a Scene topic, and `TES4Polyfill.SpeakAs`
+`ForceStart`s it.
+
+**The INFO must name its speaker (measured 2026-09-24).** The first scene
+build played the line with NO audio and a 0.5s subtitle -- the same result the
+earlier "scene killed the audio" attempt reported. A scene starts a non-actor's
+line through `0x2da440` -> `0x2d99a0` with an empty sound handle and no speaker
+actor; the response constructor (`0x5de460`, which builds
+`Data\Sound\Voice\<plugin>\<voice type>\<quest>_<topic>_<INFO>_<n>`) then takes
+the voice type from the INFO's Speaker (`ANAM`) or else the speaker ref's base,
+and a scene gives it neither. Live, the line's sound had duration 0 and never
+played, with or without moving the TACT. Vanilla names the voice NPC on the
+INFO: every Night Mother and Augur scene line carries `ANAM` =
+`DBNightMotherVoiceNPC` / `MG04Augur` (no vanilla INFO names a TACT there).
+So every INFO of a speak-as topic gets `ANAM` = the NPC its own positive
+`GetIsID` names, else the call site's speak-as NPC -- TES4's third `Say`
+argument.
+
+TES4's fourth `Say` argument is `VoiceAudioPositionFlag` (CS wiki: the voice
+plays at the player's position), not "in the player's head". Vanilla's form of
+it is the INFO's Audio Output Override `ONAM` = `SOMDialogue2D` (Skyrim.esm
+000B5183, non-positional dialogue), as on Potema's mural lines; those INFOs
+get it and nothing is moved. Oblivion.esm: 61 call sites, 59 topics, 53 with
+the flag; 390 INFOs get a speaker, 350 the 2D output; no speak-as topic is
+also spoken by a plain `Say`.
+
+**The scene topic belongs to `TES4SpeakAs` (measured 2026-09-25, confirmed
+in game).** With `ANAM` in place the line was still silent with an
+instant subtitle. Live, the speaker lookup (`0x5de9b0`, a table keyed by INFO)
+returned ArenaMouth and its voice type `TES4MaleImperial`, but the Announcer
+topic's quest pointer (`TESTopic+0x40`, which the path builder `0x3e5fe0` reads
+for the `<quest>` part) was `TES4SpeakAs`, the scene's quest, although the
+DIAL's `QNAM` is ArenaAnnouncer. The engine asked for
+`tes4speakas_announcer_00046654_1` while the file on disk was
+`arenaannouncer_announcer_00046654_1`. Vanilla never meets this because a
+scene only speaks its own quest's topics. So a speak-as topic's owner (its
+`QNAM`, and so its voice-file prefix in the voice map) is `TES4SpeakAs`. Each
+INFO still keeps its `GetQuestRunning` gate on its TES4 quest. `TES4SpeakAs` is a
+start-game quest, so a speak-as line plays whenever its TES4 quest runs, as
+`Say` did. Whether `ANAM` alone was ever needed is untested: the earlier ANAM-less
+build had the same quest mismatch. The scene's `DATA` topic and the fallback
+`ANAM` NPC are written straight from `get_formid`, which already shifts the
+load-order index; they were once shifted twice (`0x02046652`) and resolved
+only because the plugin has a single master.
+
+**Two lines in a row (confirmed in game 2026-09-25).** `TES4Polyfill.SpeakAs`
+does two things `ForceStart` alone does not:
+
+* **Restart.** The announcer's second line comes 6.8s after a 6.6s first one,
+  while the same scene is still in the line's 0.5s tail. `ForceStart` on a
+  playing scene is ignored, so the second line was lost. `SpeakAs` stops a
+  playing scene first (waiting up to 1s for it to end), as a new TES4 `Say` cut
+  the old line off.
+* **Choose at the call.** TES4 `Say` chose its INFO at the call. The announcer
+  sets `CityAnnounced = 1` on the next line, and the welcome INFO requires 0,
+  while "fresh meat" requires 1. A scene chooses its line when its action starts,
+  so both calls spoke "fresh meat". In a poll (`_say_may_block`) the converter
+  emits `SpeakAs(topic, scene, True)`, which waits for the INFO's Begin fragment
+  (`LineBegan` -> the player's `Variable09`, capped at `SAY_START_WAIT`). Fragment
+  and engine-callback sites stay non-waiting: 134 waiting and 3 non-waiting on
+  Oblivion.esm.
 
 ### Speak-as INFOs silently lost their quest-inherited conditions (fixed 2026-08-25)
 

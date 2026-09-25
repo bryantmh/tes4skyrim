@@ -256,17 +256,15 @@ def udf_call(ctx, call) -> str:
 
 @command('say', 'sayto', 'saycustom')
 def say(ctx, call) -> str:
-    """Say / SayTo -- speak a topic.
+    """Say / SayTo -- speak a topic.  SayTo names the TARGET first, the topic second.
 
-    Say is declared on ObjectReference, NOT Actor.  A census of Oblivion.esm's
-    receivers found 144 calls on 21 NON-actor references -- Daedric shrines
-    (ACTI), Clavicus' dog statue (MISC), the XMarker (STAT) speakers the Arena
-    announcer talks through.  Promoting the receiver to Actor made those
-    declare an `Actor Property`, which the VM refuses to bind, so the property
-    read None and the first call on it aborted the function.
+    Say is declared on ObjectReference, so its receiver is never promoted to
+    Actor.  A speak-as site (`Say <topic> <flag> <NPC> <flag>`) speaks through
+    the importer's voiced TACT and its one-action scene; the topic rides along
+    for the length fallback unless a script local shadows its name.
+    See: docs/commentary/tes5_import_dialogue.md#speaker-activator-construction
     """
     parts = ctx.arg_srcs()
-    # SayTo names the TARGET first and the topic second.
     n = 1 if (call.name == 'sayto' and len(parts) >= 2) else 0
     topic = 'None'
     if len(parts) > n:
@@ -274,27 +272,14 @@ def say(ctx, call) -> str:
         ctx._mark_topic_property(parts[n].strip().split()[0])
 
     ref = ctx._resolve_objref_ref(call.ref, call.extends)
-
-    # TES4 `Say <topic> <flag> <speak-as NPC> <flag>` names WHO is speaking,
-    # separately from the reference that emits the sound.  Skyrim's Say has no
-    # such argument, and voice-file lookup is keyed on the SPEAKER's voice type
-    # -- an XMarker STAT has none, so the engine finds no folder, plays no
-    # audio, and (having no audio to time against) leaves the subtitle onscreen
-    # forever.  The importer mints the vanilla answer: a TACT carrying the
-    # speak-as NPC's voice type, placed at the emitter's own position.
-    speaker, in_head = ctx._say_speak_as(call.ref, parts, call.name)
-    if not speaker:
+    scene = ctx._say_speak_as(call.ref, parts, call.name)
+    if not scene:
         return f'{ref}.Say({topic})'
-    # The topic rides along for the polyfill and the fallback length lookup --
-    # unless a script LOCAL shadows the topic's name
-    # (DABoethiaCageOpenScript01 has `Short Salutation` next to
-    # `say Salutation`; TES4 resolved the argument as the topic, Papyrus would
-    # pass the Int).
     name = parts[n].strip().split()[0] if len(parts) > n else ''
     if name and ctx.sc.var_types.get(name.lower()):
         topic = 'None'
-    return (f'TES4Polyfill.SpeakAs({speaker}, '
-            f'{"True" if in_head else "False"}, {topic})')
+    wait = ', True' if ctx._say_may_block() else ''
+    return f'TES4Polyfill.SpeakAs({topic}, {scene}{wait})'
 
 
 @command('startconversation')

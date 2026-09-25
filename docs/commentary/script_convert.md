@@ -5050,6 +5050,11 @@ call it.
 
 ### Why not always — the stutter fix
 
+**Not confirmed to cure the stutter.** As of 2026-09-25 the user reports that
+no fix aimed at the stutter when a scripted line starts has ever worked; its
+cause is still unknown. The size and binding cost below are measured and
+worth keeping regardless.
+
 Every INFO used to get one, so the plugin shipped **19,278 per-INFO `.pex`
 files** against vanilla Skyrim's ~5,500 — 100% of INFOs carrying a fragment
 where vanilla carries one on **17.6%**, and **141 bytes of VMAD per INFO**

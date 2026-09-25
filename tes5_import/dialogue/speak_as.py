@@ -27,31 +27,29 @@ So, per (emitter reference, speak-as NPC) pair:
   * mint a TACT carrying that NPC's converted VTYP, and
   * place a REFR of it at the emitter's exact position/cell.
 
-Then the converted script speaks the line ON THAT REFERENCE:
-`TES4Polyfill.SpeakAs` issues `Say(topic, None, abInHead)`, where abInHead is
-TES4's fourth `Say` argument and Skyrim's own third one -- the voice comes
-from inside the player's head at full volume, as in Oblivion.
+THE LINE IS SPOKEN BY A SCENE, AS VANILLA DOES IT
+-------------------------------------------------
+A plain `Say()` on a non-actor plays its audio and then never retires its
+subtitle: the line's per-frame update (TESObjectREFR vtable slot 0x40) is
+driven by an actor's own update, or for a non-actor only by a scene's
+dialogue action (BGSSceneActionDialogue slot 19).  Vanilla speaks through a
+TACT exactly that way -- 19 scene dialogue actions in Skyrim.esm (Azura, the
+Night Mother, Potema, Namira's shrine, the Augur).
 
-🛑 **Two cleverer deliveries were tried and BOTH KILLED THE AUDIO** (worse
-than the defect they targeted), 2026-08-19:
+So each call site (emitter, voice, topic) gets a one-action SCEN in vanilla
+DA11NamiraScene's layout, owned by the start-game quest `TES4SpeakAs`, whose
+forced-reference aliases are the speakers; the topic becomes a Scene topic
+of that quest too, since the engine names a scene line's voice file after
+the scene's quest (every vanilla scene topic is its scene's quest's).
+`TES4Polyfill.SpeakAs` ForceStarts it.
 
-  * a one-action SCEN per call site, driven by `Scene.ForceStart()`;
-  * `Activate()` on the talking activator -- which IS vanilla's own idiom
-    (`DA08WhisperingDoorScript`, `DA05QuestingBeastGhostScript`, DA10's
-    `TalkingMace.GetRef().Activate(...)`, and no vanilla script calls `Say()`
-    on a TACT) -- but vanilla activates a TACT the PLAYER walked up to, which
-    is not what a polled announcer line is.
-
-🛑 **Never** emulate the in-head flag by `MoveTo`-ing the speaker onto the
-player: that teleports the marker out of its authored position permanently
-(nothing moves it back) and costs the line its audio.  Vanilla's one
-repositioning case (DA05, following a ghost's head) uses `SetPosition`.
-
-KNOWN OPEN DEFECT: a scripted `Say()` on a non-actor does not retire its
-subtitle (the engine's countdown/KillSubtitles path is TESObjectREFR vtable
-slot 0x40, which nothing drives for a plain reference).  No verified fix
-exists; audio is the higher-value behaviour.  See
-docs/reference/dialogue_engine_contracts.md.
+A scene starts a non-actor's line with no speaker actor, so the voice type
+comes from the INFO's own Speaker (ANAM) -- vanilla's Night Mother and Augur
+lines name their voice NPC there, and without it the line is silent and its
+subtitle lasts 0.5s.  That NPC is TES4's third `Say` argument.  TES4's fourth
+plays the voice at the player's position (CS wiki: VoiceAudioPositionFlag),
+which is vanilla's Audio Output Override (ONAM) `SOMDialogue2D`, as on
+Potema's lines.
 
 PER PAIR, NOT PER EMITTER
 -------------------------
@@ -72,7 +70,10 @@ import struct
 
 from ..base.text_reader import get_formid, get_str
 from ..base.writer import (pack_record, pack_subrecord, pack_string_subrecord,
-                     pack_formid_subrecord, pack_obnd)
+                     pack_formid_subrecord, pack_obnd, pack_float_subrecord,
+                     pack_uint16_subrecord, pack_uint32_subrecord)
+from .quest import quest_aliases
+from ..base.conditions import read_getisid_fids
 
 #: Marker mesh + MODT of vanilla's Night Mother TACT (Skyrim.esm 00022440).
 
@@ -164,20 +165,79 @@ _CLONE_DROP_PREFIXES = (
 #: (emitter EditorID lower, voice EditorID lower) -> speaker REFR FormID.
 _SPEAKER_REFS = {}
 
+#: (emitter, voice, topic) EditorIDs lower -> the SCEN that speaks it.
+_SCENES = {}
+
+#: The start-game quest that owns every speak-as scene, speaker alias and scene topic.
+SCENE_QUEST_EDID = 'TES4SpeakAs'
+
+#: The FormID of `SCENE_QUEST_EDID` once built this run (at most one entry).
+_SCENE_QUEST = []
+
+#: Speak-as topic (24-bit DIAL FormID) -> (voice NPC source FormIDs, voice at the player).
+_TOPIC_VOICES = {}
+
+#: Skyrim.esm SOMDialogue2D: dialogue heard at full volume wherever the player stands.
+_SOM_DIALOGUE_2D = 0x000B5183
+
 
 def reset() -> None:
     """Clear per-run state (the importer may build several plugins)."""
     _SPEAKER_REFS.clear()
+    _SCENES.clear()
+    _TOPIC_VOICES.clear()
+    _SCENE_QUEST.clear()
 
 
-def export_speaker_map() -> dict:
-    """(emitter_edid, voice_edid) -> speaker REFR FormID."""
-    return dict(_SPEAKER_REFS)
+def scene_quest_fid() -> int:
+    """FormID of the quest owning the speak-as scenes and scene topics, or 0."""
+    return _SCENE_QUEST[0] if _SCENE_QUEST else 0
 
 
-def speaker_property_name(emitter: str, voice: str) -> str:
-    """The Papyrus property name script_convert emits for a speaker REFR."""
-    return f'TES4Voice_{emitter.lower()}_{voice.lower()}'
+def export_scene_map() -> dict:
+    """(emitter_edid, voice_edid, topic_edid) -> SCEN FormID."""
+    return dict(_SCENES)
+
+
+def scene_property_name(emitter: str, voice: str, topic: str) -> str:
+    """The Papyrus property name script_convert emits for a speak-as scene."""
+    return f'TES4Scene_{emitter.lower()}_{voice.lower()}_{topic.lower()}'
+
+
+def speaker_subrecords(info_rec: dict, offset: int) -> bytes:
+    """ANAM Speaker (and ONAM `SOMDialogue2D`) for an INFO of a speak-as topic, else b''.
+
+    The speaker is the NPC the INFO's own GetIsID names -- which line belongs
+    to whom -- else the voice its call sites name.
+    See: docs/commentary/tes5_import_dialogue.md#speaker-activator-construction
+    """
+    entry = _TOPIC_VOICES.get(get_formid(info_rec, 'ParentDIAL') & 0x00FFFFFF)
+    if not entry:
+        return b''
+    voices, at_player = entry
+    own = read_getisid_fids(info_rec, offset=offset, positive_only=True)
+    speaker = min(own) if own else min(voices)
+    out = pack_formid_subrecord('ANAM', speaker)
+    if at_player:
+        out += pack_formid_subrecord('ONAM', _SOM_DIALOGUE_2D)
+    return out
+
+
+def _record_topic_voices(calls: list, npc_by_edid: dict, dial_fids: dict) -> None:
+    """Fill `_TOPIC_VOICES` from the call sites whose topic and voice both resolve."""
+    for _e, voice, topic, at_player in calls:
+        npc, dial = npc_by_edid.get(voice), dial_fids.get(topic)
+        if npc is None or not dial:
+            continue
+        voices, flag = _TOPIC_VOICES.get(dial & 0x00FFFFFF, (set(), False))
+        voices.add(get_formid(npc, 'FormID'))
+        _TOPIC_VOICES[dial & 0x00FFFFFF] = (voices, flag or at_player)
+
+
+def _dial_fids(by_type: dict) -> dict:
+    """DIAL EditorID (lower) -> source FormID."""
+    return {(get_str(d, 'EditorID') or '').lower(): get_formid(d, 'FormID')
+            for d in by_type.get('DIAL', [])}
 
 
 def _pack_tact(fid: int, edid: str, vtyp_fid: int, name: str) -> bytes:
@@ -204,7 +264,8 @@ def build_speaker_activators(by_type: dict, writer, npc_to_vtyp: dict,
 
     See: docs/commentary/tes5_import_dialogue.md#speaker-activator-construction
     """
-    pairs = sorted({(e, v) for e, v, _t, _h in scan_speak_as_calls(by_type)})
+    calls = scan_speak_as_calls(by_type)
+    pairs = sorted({(e, v) for e, v, _t, _h in calls})
     if not pairs:
         return 0
 
@@ -234,7 +295,75 @@ def build_speaker_activators(by_type: dict, writer, npc_to_vtyp: dict,
 
     if new_refrs:
         by_type.setdefault('REFR', []).extend(new_refrs)
+    _record_topic_voices(calls, npc_by_edid, _dial_fids(by_type))
+    _build_scenes(by_type, writer, calls)
     return len(new_refrs)
+
+
+def _build_scenes(by_type: dict, writer, calls: list) -> int:
+    """`TES4SpeakAs` and one scene per call site whose speaker was minted.
+
+    See: docs/commentary/tes5_import_dialogue.md#speaker-activator-construction
+    """
+    dial_fids = _dial_fids(by_type)
+    sites = sorted({(e, v, t) for e, v, t, _h in calls
+                    if (e, v) in _SPEAKER_REFS and t in dial_fids})
+    if not sites:
+        return 0
+    names = {fid: f'TES4VoiceRef_{e}_{v}' for (e, v), fid in _SPEAKER_REFS.items()}
+    speakers = sorted({_SPEAKER_REFS[(e, v)] for e, v, _t in sites})
+    alias_by_fid = {fid: i for i, fid in enumerate(speakers)}
+    quest_fid = writer.derive_formid('SYNTH_QUST', SCENE_QUEST_EDID)
+    _SCENE_QUEST[:] = [quest_fid]
+    writer.add_record('QUST', _pack_scene_quest(quest_fid, alias_by_fid, names))
+    for e, v, t in sites:
+        fid = writer.derive_formid('SPEAK_AS_SCEN', f'{e}|{v}|{t}')
+        writer.add_record('SCEN', _pack_scene(
+            fid, f'TES4SpeakAs_{e}_{v}_{t}', quest_fid,
+            alias_by_fid[_SPEAKER_REFS[(e, v)]], dial_fids[t]))
+        _SCENES[(e, v, t)] = fid
+    return len(sites)
+
+
+def _pack_scene_quest(fid: int, alias_by_fid: dict, names: dict) -> bytes:
+    """The start-game quest owning the scenes: one forced-reference alias per speaker."""
+    q = pack_string_subrecord('EDID', SCENE_QUEST_EDID)
+    q += pack_string_subrecord('FULL', 'TES4 Speak-As Scenes')
+    q += pack_subrecord('DNAM', struct.pack('<HBBII', 0x0011, 0, 0, 0, 0))
+    q += pack_subrecord('NEXT', b'')
+    q += pack_uint32_subrecord('ANAM', len(alias_by_fid))
+    q += quest_aliases(alias_by_fid, {}, names)
+    return pack_record('QUST', fid, 0, q)
+
+
+def _pack_scene(fid: int, edid: str, quest_fid: int, alias_id: int,
+                topic_fid: int) -> bytes:
+    """One scene in vanilla DA11NamiraScene's exact layout.
+
+    One phase, the speaker alias as its only actor, and one dialogue action
+    that speaks the topic.
+    """
+    phase = (pack_subrecord('HNAM', b'') + pack_string_subrecord('NAM0', '')
+             + pack_subrecord('NEXT', b'') + pack_subrecord('NEXT', b'')
+             + pack_uint32_subrecord('WNAM', 200) + pack_subrecord('HNAM', b''))
+    actor = (pack_uint32_subrecord('ALID', alias_id)
+             + pack_uint32_subrecord('LNAM', 0)
+             + pack_uint32_subrecord('DNAM', 0x1A))
+    action = (pack_uint16_subrecord('ANAM', 0) + pack_string_subrecord('NAM0', '')
+              + pack_uint32_subrecord('ALID', alias_id)
+              + pack_uint32_subrecord('INAM', 1)
+              + pack_uint32_subrecord('SNAM', 0) + pack_uint32_subrecord('ENAM', 0)
+              + pack_formid_subrecord('DATA', topic_fid)
+              + pack_subrecord('HTID', struct.pack('<i', -1))
+              + pack_float_subrecord('DMAX', 10.0)
+              + pack_float_subrecord('DMIN', 1.0)
+              + pack_uint32_subrecord('DEMO', 0) + pack_uint32_subrecord('DEVA', 0)
+              + pack_subrecord('ANAM', b''))
+    subs = (pack_string_subrecord('EDID', edid) + pack_uint32_subrecord('FNAM', 4)
+            + phase + actor + action + pack_formid_subrecord('PNAM', quest_fid)
+            + pack_uint32_subrecord('INAM', 1)
+            + pack_subrecord('VNAM', struct.pack('<4I', 3, 3, 3, 3)))
+    return pack_record('SCEN', fid, 0, subs)
 
 
 def _mint_speaker(writer, emitter: str, voice: str, src: dict, npc: dict,

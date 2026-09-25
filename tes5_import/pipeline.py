@@ -302,11 +302,11 @@ def _prescan_npc_voice_map(by_type: dict, ctx, writer, num_new_masters: int, _st
     _spk_reset()
     _n_spk = build_speaker_activators(by_type, writer, npc_to_vtyp,
                                       num_new_masters)
-    from .dialogue.speak_as import export_speaker_map, speaker_property_name
-    for (_em, _vo), _fid in export_speaker_map().items():
-        WELL_KNOWN_PROPERTIES[speaker_property_name(_em, _vo)] = _fid
-    print(f"  Speaker activators: {_n_spk} TACT+REFR pairs "
-          f"(voiced stand-ins for Say speak-as markers)")
+    from .dialogue.speak_as import export_scene_map, scene_property_name
+    for (_em, _vo, _to), _fid in export_scene_map().items():
+        WELL_KNOWN_PROPERTIES[scene_property_name(_em, _vo, _to)] = _fid
+    print(f"  Speaker activators: {_n_spk} TACT+REFR pairs, "
+          f"{len(export_scene_map())} speak-as scenes")
     from .dialogue.reset_interior import build_reset_movers
     _movers = build_reset_movers(by_type, writer, num_new_masters)
     WELL_KNOWN_PROPERTIES.update(_movers)

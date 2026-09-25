@@ -30,6 +30,7 @@ from ..base.conditions import (
     build_or_chain,
     convert_ctda,
     convert_ctda_list_with_strings,
+    get_speak_as_topics,
     has_any_conditions,
     has_audience_condition,
     needs_origin_gate,
@@ -42,11 +43,12 @@ from .converter import (DIAL_TYPE_CONVERSATION, SERVICE_MENU_SCRIPTS,
     SERVICE_MENU_TOPICS, CONV_KEEP_EDIDS,
     is_npc_to_npc_conversation, make_conversation_quest,
     make_generic_quest, register_conversation_chains,
-    classify_topic, collect_tclt_target_fids,
+    SCENE_TOPIC, classify_topic, collect_tclt_target_fids,
     convert_DIAL, convert_INFO, make_dlbr, make_dlvw, service_menu_kind,
     should_skip_dial, voice_file_prefix,
     GREET_TOPIC_BY_QUEST, EMPTY_DIAL_FIDS, lip_texts, startable_quests)
 from .say_topics import SAY_TOPIC_DISPOSITIONS, build_say_topic_dispositions
+from .speak_as import SCENE_QUEST_EDID, scene_quest_fid, speaker_subrecords
 
 
 def _scan_startable_quests(by_type: dict) -> set:
@@ -112,6 +114,8 @@ def _quest_lookup_tables(by_type, dials, fid_to_edid, generic_quest_fid,
             if edid:
                 quest_edid_by_fid[qfid] = edid
     quest_edid_by_fid[generic_quest_fid] = 'TES4DialogueGeneric'
+    if scene_quest_fid():
+        quest_edid_by_fid[scene_quest_fid()] = SCENE_QUEST_EDID
     quest_fid_by_edid = {e.lower(): f
                          for f, e in quest_edid_by_fid.items() if e}
 
@@ -663,6 +667,103 @@ def _record_voice_entry(info_rec, owner_qfid, ctx) -> None:
     ctx['voice_map'][info_fid & 0xFFFFFF] = prefix
 
 
+def _topic_shape(edid: str, dtype: int, dial_fid: int) -> tuple:
+    """(category, subtype, snam, is_bark, is_scene) of one topic.
+
+    A topic only speak-as sites speak is delivered by a scene, so it takes the
+    Scene shape every vanilla scene topic has, and no branch.
+    See: docs/commentary/tes5_import_dialogue.md#speaker-activator-construction
+    """
+    category, subtype, snam, is_bark = classify_topic(edid, dtype)
+    if (dial_fid & 0xFFFFFF) in get_speak_as_topics():
+        return (*SCENE_TOPIC, is_bark, True)
+    return category, subtype, snam, is_bark, False
+
+
+def _topic_owner(dial_rec, generic_quest_fid: int, is_scene: bool) -> tuple:
+    """(TES4 quest, owning quest) of a topic.
+
+    A single-quest topic keeps its own quest, so Skyrim evaluates its INFOs
+    only while that quest runs -- Oblivion's QSTI gating. A shared topic, or
+    one filed under a quest nothing can start (Oblivion never gated on QSTI;
+    Nehrim's MQ01Topic01 holds MQ00's completion stage), goes to the
+    always-running generic quest, and each INFO is gated on its own quest.
+    A scene topic belongs to its scenes' quest, which names its voice files.
+    See: docs/commentary/tes5_import_dialogue.md#speaker-activator-construction
+    """
+    orig = get_formid(dial_rec, 'Quest[0]')
+    if is_scene and scene_quest_fid():
+        return orig, scene_quest_fid()
+    if (orig and get_int(dial_rec, 'QuestCount') <= 1
+            and (not startable_quests or orig in startable_quests)):
+        return orig, orig
+    return orig, generic_quest_fid
+
+
+def _topic_audience(child_infos, conversation: bool, service_kind,
+                    orig_quest_fid: int, offset: int, quest_npc_fids: dict,
+                    npc_to_vtyp: dict) -> dict:
+    """The NPCs and voice types a conversation topic's generic lines reach.
+
+    A service topic inherits neither: its lines serve every vendor or trainer,
+    and the service-faction gate is its filter.
+    """
+    npcs = set()
+    if conversation:
+        npcs = read_getisid_fids_for_topic(child_infos)
+        for info_rec in child_infos:
+            npcs |= read_getisid_fids(info_rec, offset=offset)
+        if not npcs and orig_quest_fid:
+            npcs = quest_npc_fids.get(orig_quest_fid, set())
+    vtyps = (set() if service_kind
+             else _topic_voice_types(child_infos, npc_to_vtyp, offset))
+    return dict(topic_npc_fids=npcs, topic_vtyps=vtyps)
+
+
+def _unlock_gate(dial_fid: int, unlock_plan: dict, unlock_globals: dict) -> bytes:
+    """`GetGlobalValue(TES4Unlock_<topic>) == 1` for an AddTopic-gated topic.
+
+    AddTopic is Oblivion's central visibility mechanic; revealer fragments set
+    the global.
+    """
+    gname = unlock_plan['gated'].get(dial_fid & 0xFFFFFF)
+    gfid = unlock_globals.get(gname) if gname else None
+    if not gfid:
+        return b''
+    return pack_subrecord('CTDA', build_ctda(FUNC_GET_GLOBAL_VALUE, param1=gfid))
+
+
+def _shared_state_gate(child_infos, offset: int) -> bytes:
+    """The world-state gate every other line of a topic shares.
+
+    A conditionless line inherits it: Oblivion scoped the loose line through
+    the topic's AddTopic gate, and Skyrim has no such scoping, so the line
+    would keep the topic alive forever (see shared_state_conditions).
+    """
+    parts = []
+    for raw_hex in shared_state_conditions(child_infos):
+        try:
+            ctda = convert_ctda(bytes.fromhex(raw_hex), offset)
+        except (ValueError, struct.error):
+            continue
+        if ctda is not None:
+            parts.append(pack_subrecord('CTDA', ctda))
+    return b''.join(parts)
+
+
+def _chargen_fallback_box(writer):
+    """The chargen fail-open fallback id slots, shared across the import run.
+
+    Fixed slots in the reserved gap (base+0x60..0x7F), so adding one can never
+    shift an allocated id.
+    """
+    if not hasattr(writer, 'chargen_fallback_box'):
+        base = getattr(writer, 'chargen_fid_base', 0)
+        writer.chargen_fallback_box = ([base + 0x60, base + 0x80] if base
+                                       else None)
+    return writer.chargen_fallback_box
+
+
 def _build_one_topic(dial_rec, info_by_dial, writer, offset,
                      generic_quest_fid, tclt_targets, bark_choice_targets,
                      bark_choice_gate,
@@ -677,17 +778,6 @@ def _build_one_topic(dial_rec, info_by_dial, writer, offset,
     (dial_group_bytes, dlbr_bytes, owner_quest_fid, dial_fid, dlbr_fid)."""
     dial_fid = get_formid(dial_rec, 'FormID')
     edid = get_str(dial_rec, 'EditorID', '')
-    dtype = get_int(dial_rec, 'DATA.Type')
-
-    # Service-menu topics (Barter/Training): the Oblivion NPC lines become the
-    # responses of a player-selectable topic whose prompt is synthesized and
-    # whose INFOs open the Skyrim menu (fragment) — gated so the topic only
-    # shows on NPCs that actually offer the service. Gate: barter -> the
-    # merchant marker faction; training -> the trainer faction. ONE condition
-    # either way: a Barter gate that OR-chained every vendor faction put 25-30
-    # CTDAs on each INFO, past anything vanilla ships (max 22, max OR-run 20),
-    # and the engine silently dropped every gated line — merchants lost the
-    # topic while 1-condition Training kept working.
     service_kind = service_menu_kind(dial_rec)
     service_gate_bytes = b''
     if service_kind:
@@ -696,104 +786,30 @@ def _build_one_topic(dial_rec, info_by_dial, writer, offset,
             return b'', b'', 0, 0, 0
         dial_rec['FULL'] = SERVICE_MENU_TOPICS[edid][1]
 
-    child_infos = info_by_dial.get(dial_fid, [])
-    # Oblivion's arbitration: highest quest priority wins, then file order.
-    # Skyrim walks the topic's INFO list in physical order, so bake it in.
     child_infos = sorted(
-        child_infos,
+        info_by_dial.get(dial_fid, []),
         key=lambda r: -quest_priority.get(get_formid(r, 'QSTI.Quest'), 0))
-
-    category, subtype, snam, is_bark = classify_topic(edid, dtype)
-
-    # --- Owning quest. A single-quest topic is owned by its original quest
-    # (remapped): Skyrim then only evaluates its INFOs while that quest runs,
-    # which is exactly Oblivion's QSTI gating. A SHARED topic (multiple QSTI
-    # quests) has no single faithful owner — Skyrim would gate every INFO by
-    # whichever quest we picked — so it is owned by the always-running generic
-    # quest and each INFO is gated on its own quest below.
-    #
-    # ...but only when that quest can ever RUN.  Oblivion's QSTI is an
-    # organisational grouping the engine never gates on, so a topic filed under
-    # a quest nothing starts still worked there; Skyrim's QNAM is a hard
-    # runtime gate, so the same topic would be permanently dead.  Those fall
-    # back to the always-running generic quest, exactly like a shared topic.
-    # (Nehrim's MQ01Topic01 is filed under the vestigial MQ01, and its INFO
-    # holds the only `SetStage MQ00 65` — MQ00's completion stage.)
-    orig_quest_fid = get_formid(dial_rec, 'Quest[0]')
-    quest_count = get_int(dial_rec, 'QuestCount')
-    if (orig_quest_fid and quest_count <= 1
-            and (not startable_quests or orig_quest_fid in startable_quests)):
-        owner_qfid = orig_quest_fid
-    else:
-        owner_qfid = generic_quest_fid
+    category, subtype, snam, is_bark, is_scene = _topic_shape(
+        edid, get_int(dial_rec, 'DATA.Type'), dial_fid)
+    orig_quest_fid, owner_qfid = _topic_owner(dial_rec, generic_quest_fid, is_scene)
 
     dlbr_fid, dlbr_bytes = 0, b''
-    if not is_bark and child_infos:
+    if not is_bark and not is_scene and child_infos:
         dlbr_fid, dlbr_bytes = _topic_branch(
             dial_rec, writer, owner_qfid, tclt_targets, bark_choice_targets,
             unlock_plan, stats)
 
-    # --- Identity gating data for conversation topics ---
-    # Service-menu topics must not inherit identity/voice gates: their generic
-    # lines serve EVERY vendor/trainer, not just the NPCs named by sibling
-    # GetIsID lines — the service-faction gate below is the real filter.
-    topic_npc_fids = set()
-    if not is_bark and not service_kind:
-        topic_npc_fids = read_getisid_fids_for_topic(child_infos)
-        for info_rec in child_infos:
-            topic_npc_fids |= read_getisid_fids(info_rec, offset=offset)
-        if not topic_npc_fids and orig_quest_fid:
-            topic_npc_fids = quest_npc_fids.get(orig_quest_fid, set())
-
-    # Voice types named anywhere in the topic (for generic siblings/greetings).
-    topic_vtyps = (set() if service_kind
-                   else _topic_voice_types(child_infos, npc_to_vtyp, offset))
-
-    # AddTopic unlock gate: Oblivion's central visibility mechanic — this topic
-    # only appears once a revealing line/script fired. Re-expressed as
-    # GetGlobalValue(TES4Unlock_<topic>) == 1; revealer fragments set it.
-    unlock_gate_bytes = b''
-    gname = unlock_plan['gated'].get(dial_fid & 0xFFFFFF)
-    gfid = unlock_globals.get(gname) if gname else None
-    if gfid:
-        unlock_gate_bytes = pack_subrecord('CTDA', build_ctda(
-            FUNC_GET_GLOBAL_VALUE, param1=gfid))
-
-    bark_gate_bytes = bark_choice_gate_bytes(
-        bark_choice_gate.get(dial_fid, []))
-
-    # A conditionless line in a topic whose every other line shares a world-
-    # state gate inherits that gate. Oblivion could leave the line loose because
-    # the TOPIC was AddTopic-gated; Skyrim has no such implicit scoping, so the
-    # loose line would keep the topic alive forever (see shared_state_conditions).
-    shared_state_bytes = b''
-    if not is_bark and not service_kind:
-        parts = []
-        for raw_hex in shared_state_conditions(child_infos):
-            try:
-                ctda = convert_ctda(bytes.fromhex(raw_hex), offset)
-            except (ValueError, struct.error):
-                continue
-            if ctda is not None:
-                parts.append(pack_subrecord('CTDA', ctda))
-        shared_state_bytes = b''.join(parts)
-
-    # Chargen fail-open fallback ids: fixed slots in the reserved gap
-    # (base+0x60..0x7F), shared across every topic of this import run via
-    # the writer, so adding them can never shift an allocated id.
-    if not hasattr(writer, 'chargen_fallback_box'):
-        _cb = getattr(writer, 'chargen_fid_base', 0)
-        writer.chargen_fallback_box = ([_cb + 0x60, _cb + 0x80] if _cb
-                                       else None)
-
-    # Shared context passed to the per-INFO converter.
+    conversation = not is_bark and not service_kind
     info_ctx = dict(
-        chargen_fallback_fids=writer.chargen_fallback_box,
-        is_bark=is_bark, npc_to_vtyp=npc_to_vtyp, topic_vtyps=topic_vtyps,
-        topic_npc_fids=topic_npc_fids, service_gate_bytes=service_gate_bytes,
-        unlock_gate_bytes=unlock_gate_bytes,
-        shared_state_bytes=shared_state_bytes,
-        bark_choice_gate_bytes=bark_gate_bytes, service_kind=service_kind,
+        chargen_fallback_fids=_chargen_fallback_box(writer),
+        is_bark=is_bark, npc_to_vtyp=npc_to_vtyp,
+        service_gate_bytes=service_gate_bytes,
+        unlock_gate_bytes=_unlock_gate(dial_fid, unlock_plan, unlock_globals),
+        shared_state_bytes=(_shared_state_gate(child_infos, offset)
+                            if conversation else b''),
+        bark_choice_gate_bytes=bark_choice_gate_bytes(
+            bark_choice_gate.get(dial_fid, [])),
+        service_kind=service_kind,
         orig_quest_fid=orig_quest_fid, sge_quest_fids=sge_quest_fids,
         offset=offset, unlock_plan=unlock_plan,
         unlock_globals=unlock_globals, fid_to_edid=fid_to_edid,
@@ -801,7 +817,10 @@ def _build_one_topic(dial_rec, info_by_dial, writer, offset,
         quest_edid_by_fid=quest_edid_by_fid, edid=edid,
         quest_fid_by_edid=quest_fid_by_edid,
         quest_dialog_ctdas=quest_dialog_ctdas, vtyp_edid_by_fid=vtyp_edid_by_fid,
-        stats=stats, script_vars=script_vars)
+        stats=stats, script_vars=script_vars,
+        **_topic_audience(child_infos, conversation, service_kind,
+                          orig_quest_fid, offset, quest_npc_fids,
+                          npc_to_vtyp))
 
     # Bark topics are handled by the global bark pass (grouped by quest+subtype
     # across ALL bark DIALs), never here — see _build_bark_pass.
@@ -872,7 +891,8 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
                 bark_dial_fids=(ctx.get('bark_dial_fids')
                                 if ctx['is_bark'] else None),
                 menu_topic_fids=ctx.get('menu_topic_fids', ()),
-                script_vars=ctx.get('script_vars'))
+                script_vars=ctx.get('script_vars'),
+                speaker=speaker_subrecords(info_rec, ctx['offset']))
             topic_children += info_bytes
             child_count += 1
             ctx['stats']['infos'] += 1

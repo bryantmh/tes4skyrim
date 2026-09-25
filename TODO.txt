@@ -1,6 +1,5 @@
 Major Issues for V1:
 	1 - Iterate on quest and dialog conversion until everything is playable starting with Oblivion Main Quest
-		Arena: speak-as subtitles (announcer, Daedric shrines) never clear - a scripted Say() on a non-actor never retires its subtitle; no verified fix, see docs/reference/dialogue_engine_contracts.md
 
 	2 - Havok feels off. Items don't move like they should. Specifically, there seems to be too much inertia on small items, like I'm dragging a heavy object when it is something as small as a cup, Animated signs will get stuck in a position after swinging a bit, defying gravicty
 	

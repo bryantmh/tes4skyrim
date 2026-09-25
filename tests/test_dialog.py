@@ -2204,6 +2204,77 @@ class TestSaySpeakAsIdentityGate:
         assert scan_speak_as_topics(by_type) == set()
 
 
+class TestSpeakAsScenes:
+    """A speak-as line is a one-action scene of `TES4SpeakAs` on a voiced TACT.
+
+    The engine names a scene line's voice file after the SCENE's quest, so the
+    scene topic must be owned by `TES4SpeakAs` too (confirmed in game: the
+    announcer was silent until it was).
+    See: docs/commentary/tes5_import_dialogue.md#speaker-activator-construction
+    """
+
+    def _by_type(self):
+        return {
+            'DIAL': [{'FormID': '00046652', 'EditorID': 'Announcer'}],
+            'NPC_': [{'FormID': '00046653', 'EditorID': 'ArenaMouth',
+                      'FULL': 'Arena Mouth'}],
+            'REFR': [{'FormID': '0000A000', 'EditorID': 'ArenaMatchPlayerRef',
+                      'NAME': '0000003B'}],
+            'SCPT': [{'SCTX': 'ArenaMatchPlayerRef.Say Announcer 1 ArenaMouth 1'}],
+        }
+
+    def _build(self):
+        """(speak_as module, writer) after building the announcer's speaker and scene."""
+        from tes5_import.dialogue import speak_as
+        speak_as.reset()
+        writer = _FakeWriter()
+        by_type = self._by_type()
+        speak_as.build_speaker_activators(by_type, writer, {0x01046653: 0x01000777}, 1)
+        return speak_as, writer
+
+    def test_scene_speaks_the_topic_at_its_own_index(self):
+        """get_formid already shifts the index; the scene must not shift it again."""
+        from tes5_import.base import tes5_reader as R
+        set_formid_index_offset(1)
+        try:
+            speak_as, writer = self._build()
+            scen = [b for s, b in writer.records if s == 'SCEN']
+            assert len(scen) == 1
+            subs = R.subrecords(scen[0][24:])
+            topics = [struct.unpack('<I', d)[0] for s, d in subs if s == b'DATA']
+            quests = [struct.unpack('<I', d)[0] for s, d in subs if s == b'PNAM']
+            assert topics == [0x01046652]
+            assert quests == [speak_as.scene_quest_fid()] != [0]
+        finally:
+            set_formid_index_offset(0)
+
+    def test_scene_topic_is_owned_by_the_scene_quest(self):
+        """A scene topic's owner is TES4SpeakAs; any other keeps its own quest."""
+        from tes5_import.dialogue import groups
+        set_formid_index_offset(1)
+        try:
+            speak_as, _w = self._build()
+            dial = {'FormID': '00046652', 'Quest[0]': '0001E641', 'QuestCount': '1'}
+            orig, owner = groups._topic_owner(dial, 0x01F0FFFF, True)
+            assert (orig, owner) == (0x0101E641, speak_as.scene_quest_fid())
+            assert groups._topic_owner(dial, 0x01F0FFFF, False)[1] == 0x0101E641
+        finally:
+            set_formid_index_offset(0)
+
+    def test_info_names_its_speaker_and_2d_output(self):
+        """A speak-as INFO gets ANAM = the spoken-as NPC and ONAM = SOMDialogue2D."""
+        set_formid_index_offset(1)
+        try:
+            speak_as, _w = self._build()
+            out = speak_as.speaker_subrecords({'ParentDIAL': '00046652'}, 1)
+            assert out[:6] == b'ANAM\x04\x00'
+            assert struct.unpack('<I', out[6:10])[0] == 0x01046653
+            assert out[10:16] == b'ONAM\x04\x00'
+            assert speak_as.speaker_subrecords({'ParentDIAL': '000000C8'}, 1) == b''
+        finally:
+            set_formid_index_offset(0)
+
+
 class TestDropNonActorSpeakerCtdas:
     """_drop_non_actor_speaker_ctdas re-packs a raw condition BLOCK.
 

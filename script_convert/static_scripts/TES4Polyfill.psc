@@ -905,16 +905,17 @@ EndFunction
 
 ; NON-BLOCKING SayLine, for callers on the ENGINE'S DISPATCH PATH.
 ;
-; ð NEVER BLOCK A FRAGMENT OR AN ENGINE CALLBACK.  SayLine waits for the
+; ð DON'T BLOCK A FRAGMENT OR AN ENGINE CALLBACK.  SayLine waits for the
 ; engine's OnBegin fragment, which takes 0.18s median but up to SAY_START_WAIT
 ; (1.5s) when the line is refused.  In an OnUpdate poll that wait costs only
-; that script's own tick.  In a QUEST STAGE FRAGMENT, an INFO fragment, or an
+; that script's own tick.  In a quest stage fragment, an INFO fragment, or an
 ; OnPackageEnd / OnPackageStart / OnHit / OnCombatStateChanged callback it
-; stalls the engine's own dispatch -- the stage transition, the package swap
-; or the hit reaction cannot complete until the Say resolves.  That is the
-; "massive stutter as a new line starts" the user reported: it accompanies a
-; STAGE CHANGE (CharacterGen's Fragment_Stage_0016 / _0044 both blocked), not
-; an ordinary polled line, which is why only some lines stutter.
+; holds up the rest of that fragment or event, and the events queued behind it.
+;
+; UNCONFIRMED: this wait was once blamed for the "massive stutter as a new line
+; starts" the user reported (CharacterGen's Fragment_Stage_0016 / _0044 both
+; blocked).  Moving those sites to this form never fixed the stutter; its
+; cause is still unknown.
 ;
 ; So on those paths we fire the line and DO NOT WAIT.  The countdown gets the
 ; caller's authored fallback (the topic's measured longest response, supplied
@@ -1329,47 +1330,60 @@ EndFunction
 
 ; ============================================================= speak-as ==
 ;
-; TES4 `Say <topic> <force-subtitles> <speak-as NPC> [<in-head>]` -- a line
-; spoken THROUGH a marker, shrine or door AS some NPC.  Skyrim's Say has no
-; speak-as argument and keys voice lookup on the SPEAKER, and a bare XMarker
-; STAT has no voice type at all, so the engine finds no voice folder and
-; plays nothing.
+; TES4 `Say <topic> <force-subtitles> <speak-as NPC> [<voice-at-player>]` --
+; a line spoken THROUGH a marker, shrine or door AS some NPC.  Skyrim's Say
+; has no speak-as argument and keys voice lookup on the SPEAKER, and a bare
+; XMarker STAT has no voice type at all.
 ;
-; The importer gives each such call site a talking activator (TACT) carrying
-; that NPC's voice type, placed at the emitter's authored position
-; (tes5_import/speaker_activators.py).  Speaking on THAT reference is what
-; gives the line a real voice folder.
+; The importer gives each (emitter, NPC) pair a talking activator (TACT)
+; carrying that NPC's voice type, placed at the emitter, and each call site a
+; one-action scene in which that TACT speaks the topic
+; (tes5_import/dialogue/speak_as.py).  A SCENE, not Say(): a non-actor's line
+; only advances -- and so only retires its subtitle -- while a scene's
+; dialogue action drives it, which is how vanilla speaks through its TACTs
+; (Azura, the Night Mother, Potema).  A new TES4 Say cut the old line off:
+; ForceStart does that for another scene's line, but on the SAME scene while
+; it still plays it is ignored, so that scene is stopped first (the Arena
+; announcer's second line comes 6.8s after a 6.6s first one, inside the
+; line's 0.5s subtitle tail).
 ;
-; abInHead is TES4's fourth argument and Skyrim's own third one, native on
-; Say: the voice comes from inside the player's head, at full volume,
-; wherever the player stands -- as in Oblivion, where the Arena announcer,
-; the Daedric princes and Mankar Camoran were heard regardless of the
-; marker's position.
+; The voice comes from each INFO's Speaker (the NPC TES4 spoke as), and
+; TES4's voice-at-the-player flag is the INFO's 2D audio output -- both set by
+; the importer, so nothing here moves or names a speaker.  akTopic is the
+; caller's, for its length fallback; the scene names the line.
+;
+; TES4 Say chose its INFO AT THE CALL, and callers rely on it: the Arena
+; announcer sets CityAnnounced = 1 on the next line, and the welcome INFO
+; requires CityAnnounced == 0.  A scene chooses when its action starts, a
+; moment later, so abWait holds the caller until the INFO's Begin fragment
+; reports the line (LineBegan -> the player's Variable09), capped at
+; SAY_START_WAIT.  The converter passes it only where blocking is safe (a
+; poll, never a fragment or engine callback -- see SayLineNoWait).
 
-Function SpeakAs(ObjectReference akSpeaker, Bool abInHead = False, Topic akTopic = None) Global
-  ; TES4 `marker.Say <topic> 1 <speak-as NPC> <in-head>` -- a line spoken
-  ; THROUGH a marker/shrine/door AS some NPC.  The importer gives each such
-  ; call site a talking activator carrying that NPC's voice type
-  ; (tes5_import/speaker_activators.py); speaking on THAT reference is what
-  ; gives the line a real voice folder, which a bare XMarker STAT has not.
-  ;
-  ; 🛑 THIS IS A PLAIN Say().  Two cleverer deliveries were tried and both
-  ; KILLED THE AUDIO outright (worse than the defect they targeted):
-  ;   * a one-action SCEN per call site;
-  ;   * Activate() on the talking activator (vanilla's own idiom -- but
-  ;     vanilla activates a TACT the PLAYER walked up to, which is not what a
-  ;     polled announcer line is).
-  ; Say() on the voiced stand-in is the only form measured to produce audio.
-  ;
-  ; abInHead is TES4's fourth argument and Skyrim's own third one, native on
-  ; Say: the voice comes from inside the player's head, at full volume,
-  ; wherever they stand.  🛑 NEVER emulate it by MoveTo'ing the speaker onto
-  ; the player -- that teleports the marker out of its authored position
-  ; permanently and costs the line its audio.
-  If akSpeaker == None || akTopic == None
+Function SpeakAs(Topic akTopic = None, Scene akScene = None, Bool abWait = False) Global
+  If akScene == None
     Return
   EndIf
-  akSpeaker.Say(akTopic, None, abInHead)
+  Actor gp = Game.GetPlayer()
+  If abWait
+    gp.SetActorValue("Variable09", 0.0)
+  EndIf
+  If akScene.IsPlaying()
+    akScene.Stop()
+    Float t = 0.0
+    While t < 1.0 && akScene.IsPlaying()
+      Utility.Wait(0.05)
+      t += 0.05
+    EndWhile
+  EndIf
+  akScene.ForceStart()
+  If abWait
+    Float w = 0.0
+    While w < SAY_START_WAIT() && gp.GetActorValue("Variable09") == 0.0
+      Utility.Wait(0.05)
+      w += 0.05
+    EndWhile
+  EndIf
 EndFunction
 
 ; The measuring form: `set T to marker.Say topic 1 voice 1` -- returns the
@@ -1377,24 +1391,12 @@ EndFunction
 ; INFO's Begin fragment reports it through LineBegan, which for a non-actor
 ; speaker stashes it on the PLAYER (Variable09; the game-wide "a line is
 ; playing until" record in Variable07 is stamped as for any speaker).
-Float Function SpeakAsLine(ObjectReference akSpeaker, Float afFallbackLength, Bool abInHead = False, Topic akTopic = None) Global
-  ; The measuring form: TES4 `set T to marker.Say topic 1 voice 1` returned
-  ; the selected line's length and the caller counted it down.  Delivery is
-  ; the plain Say above (the only form measured to produce audio); the length
-  ; comes from the INFO's Begin fragment, which stashes it on the PLAYER for a
-  ; non-actor speaker (see LineBegan).
-  If akSpeaker == None || akTopic == None
+Float Function SpeakAsLine(Float afFallbackLength, Topic akTopic = None, Scene akScene = None) Global
+  If akScene == None
     Return afFallbackLength
   EndIf
-  Actor gp = Game.GetPlayer()
-  gp.SetActorValue("Variable09", 0.0)
-  SpeakAs(akSpeaker, abInHead, akTopic)
-  Float t = 0.0
-  While t < SAY_START_WAIT() && gp.GetActorValue("Variable09") == 0.0
-    Utility.Wait(0.05)
-    t += 0.05
-  EndWhile
-  Float len = gp.GetActorValue("Variable09")
+  SpeakAs(akTopic, akScene, True)
+  Float len = Game.GetPlayer().GetActorValue("Variable09")
   If len <= 0.0
     Return afFallbackLength      ; no length reported: fall back, never 0
   EndIf
@@ -1405,8 +1407,8 @@ Float Function SpeakAsLine(ObjectReference akSpeaker, Float afFallbackLength, Bo
 EndFunction
 
 ; The non-blocking form, for the engine's dispatch path (see SayLineNoWait).
-Float Function SpeakAsLineNoWait(ObjectReference akSpeaker, Float afFallbackLength, Bool abInHead = False, Topic akTopic = None) Global
-  SpeakAs(akSpeaker, abInHead, akTopic)
+Float Function SpeakAsLineNoWait(Float afFallbackLength, Topic akTopic = None, Scene akScene = None) Global
+  SpeakAs(akTopic, akScene)
   Return afFallbackLength
 EndFunction
 

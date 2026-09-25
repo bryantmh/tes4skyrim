@@ -1159,7 +1159,7 @@ class PluginWriter:
             # at MUST, for the same reason.
             'MUSC',
             'SMBN', 'SMQN', 'SMEN',
-            'DLBR', 'MUST', 'DLVW',
+            'DLBR', 'MUST', 'DLVW', 'SCEN',
             # Vanilla tail: …MATO MOVT HAZD SNDR DUAL SNCT SOPM COLL CLFM REVB.
             'MOVT',
             # CLFM holds the generated hair colors (one per distinct authored

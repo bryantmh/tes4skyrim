@@ -728,7 +728,7 @@ def _quest_alias_packages(pack_plan, qfid: int, alias_by_fid: dict) -> dict:
     return alias_packages
 
 
-def _quest_aliases(alias_by_fid: dict, alias_packages: dict,
+def quest_aliases(alias_by_fid: dict, alias_packages: dict,
                    fid_to_edid: dict) -> bytes:
     """Forced-reference aliases: ALST ALID FNAM ALFR [ALPC...] VTCK ALED.
 
@@ -798,7 +798,7 @@ def convert_QUST(rec: dict, fid_to_edid: dict = None,
     qfid = get_formid(rec, 'FormID')
     alias_packages = _quest_alias_packages(pack_plan, qfid, alias_by_fid)
     subs += pack_uint32_subrecord('ANAM', len(alias_by_fid))
-    subs += _quest_aliases(alias_by_fid, alias_packages, fid_to_edid)
+    subs += quest_aliases(alias_by_fid, alias_packages, fid_to_edid)
     return pack_record('QUST', qfid, get_int(rec, 'RecordFlags'), subs)
 
 

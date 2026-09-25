@@ -417,6 +417,10 @@ def should_skip_dial(rec: dict) -> bool:
     return False
 
 
+#: Category, subtype and SNAM of a topic only a scene speaks: 7426/7426 vanilla scene topics.
+SCENE_TOPIC = (2, 14, b'SCEN')
+
+
 def classify_topic(edid: str, dtype: int):
     """Return (category, subtype, snam_code, is_bark) for a DIAL topic.
 
@@ -593,14 +597,15 @@ def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
                  fid_to_edid: dict = None, well_known_props: dict = None,
                  xref=None, reveal_props: dict = None,
                  service_menu: str = '', bark_dial_fids: set = None,
-                 menu_topic_fids=(), script_vars: dict = None) -> bytes:
-    """INFO record: EDID [VMAD] ENAM CNAM [TCLT...] [TRDT NAM1 NAM2 NAM3]* CTDAs.
+                 menu_topic_fids=(), script_vars: dict = None,
+                 speaker: bytes = b'') -> bytes:
+    """INFO record: EDID [VMAD] ENAM CNAM [TCLT...] [TRDT NAM1 NAM2 NAM3]* CTDAs [ANAM ONAM].
 
     injected_ctdas: packed Skyrim-required gates. reveal_props
     ({global_name: GLOB formid}): AddTopic globals its End fragment sets.
     service_menu ('barter'/'training'): the menu its fragment opens.
     bark_dial_fids / menu_topic_fids (bark INFOs only): the TCLT filter's
-    inputs, see _info_tclt.
+    inputs, see _info_tclt.  speaker: a speak-as line's packed ANAM/ONAM.
 
     See: docs/commentary/tes5_import_dialogue.md#info-tclt-choice-filter
     """
@@ -615,6 +620,7 @@ def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
     subs += _info_tclt(rec, bark_dial_fids, menu_topic_fids)
     subs += _info_responses(rec)
     subs += _info_conditions(rec, injected_ctdas, script_vars)
+    subs += speaker
     return pack_record('INFO', get_formid(rec, 'FormID'),
                        get_int(rec, 'RecordFlags'), subs)
 
