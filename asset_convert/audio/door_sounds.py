@@ -10,8 +10,8 @@ filled in:
 Skyrim supports BOTH — the Gamebryo text-key handler at `0x1401db723` (GOG
 SkyrimSE.exe) matches the literal `"Sound: "` case-insensitively (`_strnicmp`,
 7 chars) and plays the rest of the key, so the converted mesh keeps its
-Oblivion keys verbatim (nif_converter._convert_sound_text_keys explains why
-they must NOT be rewritten).
+Oblivion keys verbatim: a door gets no behaviour graph, and only graph-driven
+meshes have their keys rewritten (nif_passes.graph_sound_text_keys).
 
 This module supplies the RECORD half as well, because that is what vanilla
 Skyrim relies on: all 90 sounded DOOR records in Skyrim.esm carry SNAM/ANAM,

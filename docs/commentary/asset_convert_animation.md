@@ -452,7 +452,22 @@ attaching one to an Open/Close door CTDs it on cell load — so the rewritten ke
 matched nothing and was dropped.  Creature/actor sounds still correctly use
 `SoundPlay.` because they DO go through a graph (`hkx_behavior.py`).
 
-`_convert_sound_text_keys` is therefore a documented no-op returning 0.
+Doors keep their keys verbatim.  Meshes that get an animated-object behaviour
+graph have `sound: X` rewritten to `SoundPlay.TES4_X_SNDR` by
+`nif_passes.graph_sound_text_keys` (confirmed in-game 2026-09-24 on the
+tripwire): a vanilla census found `SoundPlay.` on 36 graph-driven meshes and 1
+graphless one, and `Sound:` on 114 graphless meshes and **zero** graph-driven
+ones — and the graph-driven Oblivion tripwire was silent with its `sound:` key
+intact.
+
+**The rewrite alone is still silent: the graph must declare a bare `SoundPlay`
+event.**  Every vanilla object graph behind a `SoundPlay.` key declares it
+(SarcophagusTopOpen, FarmhouseWindMill, BeeHive, IdlePlayIdle, IdlePlayIdle3;
+all event flags 0) and none declares the per-sound names, so the key raises the
+`SoundPlay` event with the SNDR name as its payload.  `hkx_animobject.
+behavior_xml` appends `SOUND_EVENT` after the sequence events (their ids stay
+unchanged).  Vanilla's shared `GenericBehaviors\Autoplay.hkx` does NOT declare
+it, so meshes on that graph keep their `sound:` keys unrewritten.
 
 ### DOOR sound records: SNAM/ANAM must name an SNDR (2026-08-05)
 

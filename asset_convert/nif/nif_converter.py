@@ -68,7 +68,7 @@ from asset_convert.character.prn_skin import get_prn_bone
 from asset_convert.nif.nif_passes import (add_animobject_bged, wrap_root_transform,
                                           add_bsx_flags,
                                           collect_sequence_names,
-                                          convert_sound_text_keys,
+                                          graph_sound_text_keys,
                                           fade_above_rig_root,
                                           wrap_geometry_root,
                                           fix_controller_flags,
@@ -93,7 +93,8 @@ from asset_convert.nif.door_anim_morrowind import latch_source_hinge
 from asset_convert.nif.door_plan import latch_door_model
 from asset_convert.nif.fixture_plan import latch_fixture_model
 from asset_convert.character.body_wrap import morph_converted_to_weight1
-from asset_convert.havok.hkx_animobject import generate_animobject_project
+from asset_convert.havok.hkx_animobject import (VANILLA_AUTOPLAY_BGED,
+                                                generate_animobject_project)
 from asset_convert.nif.addon_nodes_falloutnv import remap_addon_nodes
 from asset_convert.nif.gun_parts_falloutnv import add_gun_part_sequences
 from asset_convert.nif.particles import (convert_particle_system,
@@ -723,7 +724,6 @@ def _run_source_fixups(data, stats=None):
     """
     _prune_orphan_roots(data)
     resolve_palette_strings(data)
-    convert_sound_text_keys(data)
     fix_controller_flags(data)
     sanitize_geometry_data(data)
     if is_morrowind(data):
@@ -1317,6 +1317,8 @@ def _build_animobject_graph(data, stats, result, dst_path):
         if bged and add_animobject_bged(data, bged):
             result['animobject_graph'] = bged
             stats['animobject_sequences'] = len(seq_names)
+            if bged != VANILLA_AUTOPLAY_BGED:
+                stats['graph_sound_keys'] = graph_sound_text_keys(data)
     except Exception as e:
         result['animobject_error'] = str(e)
 

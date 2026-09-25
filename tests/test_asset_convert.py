@@ -3912,6 +3912,42 @@ class TestAnimObjectBehaviorGraph:
                 assert transitions.strip() != 'null',                     (f'[{n} seq] state {name!r} has no transitions — it is a '
                      f'dead end and can never be re-entered')
 
+    def test_graph_declares_soundplay_after_sequences(self):
+        """A `SoundPlay.<SNDR>` key raises the bare `SoundPlay` event; a graph
+        without it stays silent.  Sequence event ids must stay first.
+
+        See: docs/commentary/asset_convert_animation.md#sound-text-keys-are-native
+        """
+        import re
+        from asset_convert.havok.hkx_animobject import SOUND_EVENT, behavior_xml
+
+        xml = behavior_xml('wire', ['Forward'])
+        names = re.search(r'<hkparam name="eventNames"[^>]*>(.*?)</hkparam>',
+                          xml, re.S).group(1)
+        assert re.findall(r'<hkcstring>(.*?)</hkcstring>', names) == [
+            'Forward', SOUND_EVENT]
+
+    def test_graph_sound_keys_become_soundplay(self):
+        """`sound: X` on a graph-driven mesh becomes `SoundPlay.TES4_X_SNDR`."""
+        import time
+        if not hasattr(time, 'clock'):
+            time.clock = time.perf_counter
+        from pyffi.formats.nif import NifFormat as NF
+        from asset_convert.nif.nif_passes import graph_sound_text_keys
+
+        tk = NF.NiTextKeyExtraData()
+        tk.num_text_keys = 2
+        tk.text_keys.update_size()
+        tk.text_keys[0].value = b'start'
+        tk.text_keys[1].value = b'sound: TRPTripwireSnap'
+        root = NF.NiNode()
+        root.add_extra_data(tk)
+        data = NF.Data()
+        data.roots = [root]
+        assert graph_sound_text_keys(data) == 1
+        assert [bytes(k.value) for k in tk.text_keys] == [
+            b'start', b'SoundPlay.TES4_TRPTripwireSnap_SNDR']
+
     def test_skeleton_has_one_pose_per_bone(self):
         """1 bone + 0 reference poses = null deref when a sequence binds.
 

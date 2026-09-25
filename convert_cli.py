@@ -140,6 +140,8 @@ def _add_mesh_args(parser) -> None:
     parser.add_argument("--mesh-subdirs", nargs="+", metavar="SUBDIR",
                         help="Limit mesh conversion to these folders or meshes "
                              "under meshes/ (e.g. architecture tr/l). Default: all.")
+    parser.add_argument("--skip-hair", action="store_true",
+                        help="Skip the hair baking pass after mesh conversion.")
     winding = parser.add_mutually_exclusive_group()
     winding.add_argument("--collision-winding-fix", dest="collision_winding_fix",
                          action="store_true", default=None,

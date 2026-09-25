@@ -302,7 +302,8 @@ python convert.py -f Oblivion.esm --mesh-bounds-only   # Rescan mesh bounds → 
 | `-f, --files FILE…` | Plugin(s) to process (default: all listed in the config) |
 | `--output-dir PATH` | Output directory (default: `output/`) |
 | `--config PATH` | Path to `conversion_config.json` |
-| `--mesh-subdirs SUB…` | Limit mesh conversion to specific root subfolders (e.g. `architecture clutter`) |
+| `--mesh-subdirs SUB…` | Limit mesh conversion to folders or single meshes under `meshes/` (e.g. `architecture dungeons/caves/triggers`) |
+| `--skip-hair` | Skip the hair baking pass after mesh conversion |
 
 ### Running individual tools directly
 

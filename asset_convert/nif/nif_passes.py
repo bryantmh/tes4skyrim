@@ -21,6 +21,7 @@ from asset_convert.nif.nif_flags import (BSX_FLAGS_ANIMATED,
                                          NIF_FLAGS)
 from asset_convert.nif.sequences import (AUTOLOOP_SEQUENCE, AUTOPLAY_SEQUENCE,
                                          SCRIPT_DRIVEN_SEQUENCES)
+from tes5_import.record_types.sound import sndr_editor_id
 
 
 # ---------------------------------------------------------------------------
@@ -222,13 +223,27 @@ _CTLR_COMPUTE_SCALED_TIME = 0x40
 _TES4_SOUND_KEY = re.compile(rb'^sound:\s*(\S+)\s*$', re.IGNORECASE)
 
 
-def convert_sound_text_keys(data):
-    """A no-op: Oblivion's `sound:` keys are NATIVE and must not be rewritten.
+def graph_sound_text_keys(data):
+    """Rewrite `sound: <SOUN>` keys to `SoundPlay.<its SNDR>`; how many changed.
 
+    ONLY for meshes that get a behaviour graph: a graph-driven sequence fires
+    `SoundPlay.` keys, a graphless one (doors) fires `sound:` natively.
     See: docs/commentary/asset_convert_animation.md#sound-text-keys-are-native
     """
-    del data
-    return 0
+    changed = 0
+    for root in data.roots:
+        if root is None:
+            continue
+        for block in root.tree():
+            if not isinstance(block, NifFormat.NiTextKeyExtraData):
+                continue
+            for key in block.text_keys:
+                m = _TES4_SOUND_KEY.match(bytes(key.value or b''))
+                if m:
+                    sndr = sndr_editor_id(m.group(1).decode('latin-1'), 0)
+                    key.value = b'SoundPlay.' + sndr.encode('latin-1')
+                    changed += 1
+    return changed
 
 
 def strip_empty_text_keys(data):

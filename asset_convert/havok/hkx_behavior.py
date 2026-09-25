@@ -694,9 +694,6 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
             # engine resolves that name at playback.  Keeping only the
             # timestamp emitted a bare 'SoundPlay' naming no descriptor,
             # which plays nothing.
-            # This channel is unrelated to plain NIF sequence text keys:
-            # those stay in Oblivion's 'sound: X' form, which the engine
-            # handles natively (nif_converter._convert_sound_text_keys).
             'sounds': events['sounds'],
             # Authored Oblivion footfall keys, already translated to the
             # engine's own footstep events (FSTP.ANAM match).

@@ -114,10 +114,8 @@ _BLEND_DURATION = 0.0   # objects snap between sequences; no cross-fade
 _AUTOPLAY_SEQUENCE = 'AutoPlay'
 _AUTOLOOP_SEQUENCE = 'AutoLoop'   # where the real ambient motion lives
 
-# Vanilla's shared self-playing graph -- the BGED value stored by all 63
-# vanilla AutoPlay meshes.  Backslashed and relative to meshes\ (the engine
-# prepends "Meshes\%s" itself).
-_VANILLA_AUTOPLAY_BGED = 'GenericBehaviors\\Autoplay.hkx'
+#: BGED of vanilla's shared self-playing graph (all 63 AutoPlay meshes); relative to meshes\, no SoundPlay event.
+VANILLA_AUTOPLAY_BGED = 'GenericBehaviors\\Autoplay.hkx'
 
 # Vanilla's fixed dummy bone name for single-bone animated objects
 # (clutter\beehive\characterassets\SingleBoneSkeleton.hkx uses exactly this).
@@ -126,6 +124,9 @@ _VANILLA_AUTOPLAY_BGED = 'GenericBehaviors\\Autoplay.hkx'
 # NIF.  Naming it after the model made the engine bind the graph's identity
 # bind pose onto the object and place it far from its authored position.
 DUMMY_BONE = 'x_SingleBone'
+
+#: Graph event a `SoundPlay.<SNDR>` NIF text key raises; every vanilla sounded object graph declares it.
+SOUND_EVENT = 'SoundPlay'
 
 
 def skeleton_xml(root_bone: str) -> str:
@@ -278,11 +279,12 @@ def behavior_xml(graph_name: str, sequences: list) -> str:
     """State machine with one BGSGamebryoSequenceGenerator per NIF sequence.
 
     `sequences` are the NiControllerSequence names from the converted NIF.
-    Each becomes a same-named event, so PlayAnimation("<seq>") selects it.
+    Each becomes a same-named event, so PlayAnimation("<seq>") selects it;
+    SOUND_EVENT follows them so the NIF's sound keys reach the engine.
     """
     pf = HkxPackfile(first_id=100)
 
-    events = list(sequences)
+    events = list(sequences) + [SOUND_EVENT]
     eid = {n: i for i, n in enumerate(events)}
 
     # Field set/order/values copied from the vanilla template's
@@ -545,7 +547,7 @@ def generate_animobject_project(out_root: str, model_rel: str,
     # project: the shared graph has no state for those events, so
     # PlayAnimation() would have nothing to transition to.
     if all(seq in (_AUTOPLAY_SEQUENCE, _AUTOLOOP_SEQUENCE) for seq in sequences):
-        return _VANILLA_AUTOPLAY_BGED
+        return VANILLA_AUTOPLAY_BGED
 
     rel_dir = os.path.dirname(model_rel).replace('\\', '/')
     stem = os.path.splitext(os.path.basename(model_rel))[0]

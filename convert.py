@@ -603,7 +603,7 @@ def _use_plugin_namespace(file_name: str) -> str:
 
 def phase_assets(file_name: str, config: dict, output_dir: str = None,
                  mesh_subdirs=None, winding_fix=None, parallax=False,
-                 textures_only=False):
+                 textures_only=False, skip_hair=False):
     """Convert extracted NIF assets and copy textures to output (meshes only).
 
     `winding_fix` tri-states the collision winding repair: True/False force it,
@@ -634,6 +634,7 @@ def phase_assets(file_name: str, config: dict, output_dir: str = None,
         mesh_subdirs=mesh_subdirs,
         parallax=parallax,
         textures_only=textures_only,
+        skip_hair=skip_hair,
     )
     total = sum(v for v in stats.values() if isinstance(v, int))
     print(f"[{file_name}] Meshes complete ({total} items processed)")
@@ -1112,7 +1113,7 @@ def _phase_runners(run) -> dict:
         'meshes': lambda fn: phase_assets(
             fn, cfg, output_dir=out, mesh_subdirs=a.mesh_subdirs,
             winding_fix=a.collision_winding_fix, parallax=a.parallax,
-            textures_only=a.textures_only),
+            textures_only=a.textures_only, skip_hair=a.skip_hair),
         'speedtrees': lambda fn: phase_speedtrees(fn, cfg, output_dir=out),
         'creatures': lambda fn: phase_creatures(fn, run.tes5_data, cfg,
                                                 output_dir=out),

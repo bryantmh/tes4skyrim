@@ -197,25 +197,15 @@ def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, export_root, plugin,
 
 
 def convert_meshes(source_file, extract_dir='export', output_dir='output',
-                   mesh_subdirs=None, parallax=False, textures_only=False):
+                   mesh_subdirs=None, parallax=False, textures_only=False,
+                   skip_hair=False):
     """Convert extracted NIFs and copy textures into `output_dir/<source_name>/`.
-    Assumes BSA extraction has already been run (extract_bsas).
 
-    Args:
-        source_file:  Plugin filename (e.g. 'Oblivion.esm').
-        extract_dir:  Root extraction directory (default: export).
-        output_dir:   Final output root (files placed under output_dir/<source_name>/).
-        mesh_subdirs: Optional list of root mesh subfolders to include (e.g.
-                      ['architecture', 'clutter']). None means all subfolders.
-        parallax:     Carry Oblivion's parallax across as Skyrim height maps.
-                      Off by default — see asset_convert/texture/parallax.py; the
-                      output needs Community Shaders or ENB.
-        textures_only: Read and analyse the meshes, ship none of them; only the
-                      textures (with their `_p` height maps) go to output.  For
-                      PGPatcher, which patches meshes across the player's whole
-                      load order — see nif_batch.batch_convert.
-
-    Returns a dict with keys: 'mesh_conversion', 'textures_copied', 'other_copied'.
+    Needs extract_bsas run first. `mesh_subdirs` limits conversion to those
+    folder or mesh prefixes under meshes/ (None: all); `parallax` ships height
+    maps; `textures_only` analyses meshes but ships only textures;
+    `skip_hair` leaves the hair pass out. Returns stats keyed
+    'mesh_conversion', 'textures_copied', 'other_copied'.
     """
     extract_dir = Path(extract_dir)
     output_dir = Path(output_dir)
@@ -259,7 +249,7 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
         stats['mesh_conversion'] = {'converted': 0, 'skipped': 0, 'errors': 0}
 
     if mesh_src.exists() and not textures_only:
-        _profile_hair_and_grass(rec_dir, plugin_dir, stats)
+        _profile_hair_and_grass(rec_dir, plugin_dir, stats, skip_hair)
         _split_magic_art(rec_dir, mesh_src, plugin_dir / 'meshes' / ns, stats)
 
     # -----------------------------------------------------------------------
@@ -278,9 +268,10 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
     return stats
 
 
-def _profile_hair_and_grass(rec_dir, plugin_dir, stats):
-    """Run the hair and grass post-passes over the converted mesh tree."""
-    stats['hair'] = hair_pipeline.run(rec_dir, plugin_dir / 'meshes')
+def _profile_hair_and_grass(rec_dir, plugin_dir, stats, skip_hair):
+    """Run the hair (unless `skip_hair`) and grass post-passes over the converted mesh tree."""
+    if not skip_hair:
+        stats['hair'] = hair_pipeline.run(rec_dir, plugin_dir / 'meshes')
     processed, modified, missing = grass_profile.run(
         rec_dir, plugin_dir / 'meshes')
     stats['grass_profile'] = {
