@@ -1,15 +1,19 @@
+// The crafting-bench hook every runtime shares; TESRuntime owns it and
+// exports it (common/crafting.h).
+// See: docs/commentary/tes_runtime_alchemy.md#crafting-bench
+
 #include "crafting.h"
 
 #include <cstddef>
 #include <cstdint>
 
-#include "activation.h"
 #include "addresses.h"
+#include "engine.h"
 #include "ids.h"
 #include "log.h"
-#include "menu.h"
+#include "ui_message.h"
 
-namespace tesruntime::mw {
+namespace tesruntime {
 
 namespace {
 
@@ -81,8 +85,8 @@ std::uint32_t CraftingProcessMessage(void* menu, char* message) {
     const std::uint32_t type =
         *reinterpret_cast<std::uint32_t*>(message + ids::kMessageTypeOffset);
     const std::uint32_t result = g_original(menu, message);
-    if (type == ids::kMessageClose) EndSession();
-    if (type != ids::kMessageOpen) return result;
+    if (type == kMessageClose) EndSession();
+    if (type != kMessageOpen) return result;
     BenchSpec* wanted = g_pending;
     const BenchSession session = g_pendingSession;
     g_pending = nullptr;
@@ -119,7 +123,7 @@ void InstallCrafting() {
     bool ready = g_allocator && g_help && g_delegateAdd;
     for (BenchSpec& bench : g_benches) {
         bench.ctor = Address<SubMenuCtorFn>(bench.name, bench.ctorId);
-        bench.furniture = FormFromFile(ids::kSkyrimMaster, bench.workbench);
+        bench.furniture = FormFromFile(bench.workbench, ids::kSkyrimMaster);
         ready = ready && bench.ctor && bench.furniture;
     }
     if (ready) {
@@ -136,4 +140,21 @@ void InstallCrafting() {
 
 bool CraftingInstalled() { return g_original != nullptr; }
 
-}  // namespace tesruntime::mw
+}  // namespace tesruntime
+
+extern "C" {
+
+__declspec(dllexport) bool TESRuntime_OpenBench(int bench, void (*opened)(),
+                                                void (*closed)()) {
+    if (bench < 0 || bench > static_cast<int>(tesruntime::Bench::kAlchemy)) {
+        return false;
+    }
+    return tesruntime::OpenBench(static_cast<tesruntime::Bench>(bench),
+                                 {opened, closed});
+}
+
+__declspec(dllexport) bool TESRuntime_BenchReady() {
+    return tesruntime::CraftingInstalled();
+}
+
+}  // extern "C"

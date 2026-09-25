@@ -24,6 +24,7 @@ override system. This pipeline is for everything CREA.
 from asset_convert.game_paths import current_namespace
 import json
 import os
+from asset_convert.havok.animation_data import fragment_path
 from asset_convert.havok.behavior_vocabulary import movement_type_names
 import re
 import shutil
@@ -610,6 +611,15 @@ def _project_summary(all_manifests) -> dict:
     } for name, m in all_manifests.items()}
 
 
+def _remove_stale_fragment(plugin_out: str, log=print) -> None:
+    """Delete the fragment an earlier build left for a plugin that now
+    registers nothing, so CreatureRuntime stops composing it."""
+    path = fragment_path(plugin_out, os.path.basename(plugin_out))
+    if os.path.isfile(path):
+        os.remove(path)
+        log(f'  Removed stale {os.path.relpath(path, plugin_out)}')
+
+
 def convert_creatures(export_dir: str, out_meshes_dir: str,
                       names: list = None, workers: int = None,
                       log=print) -> dict:
@@ -644,12 +654,14 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
             all_manifests.setdefault(m['name'], m)
     appends = {} if names else convert_guns(export_dir, out_meshes_dir,
                                             workers, log)
+    plugin_out = os.path.dirname(os.path.normpath(out_meshes_dir))
     if all_manifests or appends:
-        plugin_out = os.path.dirname(os.path.normpath(out_meshes_dir))
         path = write_fragment(list(all_manifests.values()), out_meshes_dir,
                               os.path.basename(plugin_out), appends, plugin_out)
         log(f'  Registered {len(all_manifests)} projects in '
             f'{os.path.relpath(path, plugin_out)}')
+    elif not names:
+        _remove_stale_fragment(plugin_out, log)
     write_artifact(os.path.join(export_dir, 'creature_projects.json'),
                    os.path.basename(os.path.normpath(export_dir)),
                    _project_summary(all_manifests))

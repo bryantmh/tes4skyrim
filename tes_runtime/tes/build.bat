@@ -1,6 +1,7 @@
 @echo off
-REM Build TESRuntime.dll into ..\dist, and journal_log_test.exe, the headless
-REM gate for the journal record store.
+REM Build TESRuntime.dll into ..\dist, and the headless gates:
+REM journal_log_test.exe (the journal record store) and alchemy_test.exe (the
+REM apparatus ratio and its sidecar reader).
 REM
 REM Standalone: no SKSE source tree, no CMake. Everything the plugin needs from
 REM the game resolves at runtime through the Address Library, so the only
@@ -18,9 +19,10 @@ del /q obj\*.obj 2>nul
 echo [build] compiling TESRuntime...
 cl /nologo /c /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG /I..\common ^
    plugin.cpp crime.cpp journal_objectives.cpp journal_log.cpp ^
+   crafting.cpp alchemy.cpp alchemy_hooks.cpp ^
    ..\common\addresses.cpp ..\common\engine.cpp ..\common\hook.cpp ^
    ..\common\json.cpp ..\common\log.cpp ..\common\paths.cpp ^
-   /Fo:obj\
+   ..\common\ui_message.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: TESRuntime compilation failed
     exit /b 1
@@ -41,5 +43,14 @@ if errorlevel 1 (
     exit /b 1
 )
 echo [build] OK -^> %~dp0journal_log_test.exe
+
+echo [build] compiling alchemy_test...
+cl /nologo /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG /I..\common ^
+   alchemy.cpp alchemy_test.cpp ..\common\json.cpp /Fo:objt\ /Fe:alchemy_test.exe
+if errorlevel 1 (
+    echo [build] ERROR: alchemy_test failed
+    exit /b 1
+)
+echo [build] OK -^> %~dp0alchemy_test.exe
 
 endlocal

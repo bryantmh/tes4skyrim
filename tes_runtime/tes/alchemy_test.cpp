@@ -1,13 +1,13 @@
-// Headless gate for the apparatus ratio and the APPA.txt parser: every
+// Headless gate for the apparatus ratio and the sidecar reader: every
 // expected number is OpenMW's Alchemy::applyTools worked by hand.
-// See: docs/commentary/morrowind_runtime.md#alchemy-apparatus
+// See: docs/commentary/tes_runtime_alchemy.md#alchemy-apparatus
 
 #include <cmath>
 #include <cstdio>
 
 #include "alchemy.h"
 
-using namespace tesruntime::mw;
+using namespace tesruntime;
 
 namespace {
 
@@ -91,19 +91,32 @@ void TestCalcinator() {
           "with a retort, one-sided effect adds 2/3(r + c) + 0.5");
 }
 
-void TestParse() {
-    std::printf("APPA.txt\n");
-    const auto rows = ParseApparatus(
-        "apparatus_a_mortar_01=Morrowind.esm|0000A001|0|0.5\r\n"
-        "\n"
-        "broken=Morrowind.esm|0000A002|0\n"
-        "badtype=Morrowind.esm|0000A003|7|1.0\n"
-        "MortarPestle01=Oblivion.esm|000105E3|0|0.15\n");
-    Check(rows.size() == 2, "two good rows, malformed ones skipped");
-    Check(rows.size() == 2 && rows[0].form.plugin == "Morrowind.esm" &&
-              rows[0].form.formId == 0xA001 && Near(rows[0].quality, 0.5f),
-          "plugin, FormID and quality read");
-    Check(rows.size() == 2 && rows[1].id == "MortarPestle01", "id kept");
+void TestRead() {
+    std::printf("apparatus.json\n");
+    std::vector<ApparatusDef> rows;
+    AlchemySettings settings;
+    ReadApparatus(Json::Parse(R"({"apparatus": [
+        {"id": "apparatus_a_mortar_01", "form": ["Morrowind.esm", 40961],
+         "type": 0, "quality": 0.5},
+        {"id": "no_form", "form": [], "type": 0, "quality": 1.0},
+        {"id": "badtype", "form": ["Morrowind.esm", 40963], "type": 7,
+         "quality": 1.0}]})"), &rows, &settings);
+    Check(rows.size() == 1, "one good row, malformed ones skipped");
+    Check(rows.size() == 1 && rows[0].file == "Morrowind.esm" &&
+              rows[0].local == 0xA001 && Near(rows[0].quality, 0.5f) &&
+              rows[0].id == "apparatus_a_mortar_01",
+          "id, plugin, local id and quality read");
+    Check(Near(settings.inputs.magnitudeMult, 1.5f) && settings.noMortar.empty(),
+          "a sidecar with no settings keeps the defaults");
+    ReadApparatus(Json::Parse(R"({"apparatus": [],
+        "settings": {"fPotionT1MagMult": 2.0, "sNotifyMessage45": "No mortar"},
+        "player": {"intelligence": 30, "luck": 40}})"), &rows, &settings);
+    Check(Near(settings.inputs.magnitudeMult, 2.0f) &&
+              Near(settings.inputs.strengthMult, 0.5f) &&
+              settings.noMortar == "No mortar" && settings.inCombat.empty(),
+          "settings it carries override, the rest stay");
+    Check(Near(settings.inputs.intelligence, 30.0f) &&
+              Near(settings.inputs.luck, 40.0f), "player attributes read");
 }
 
 }  // namespace
@@ -114,7 +127,7 @@ int main() {
     TestRetort();
     TestAlembic();
     TestCalcinator();
-    TestParse();
+    TestRead();
     std::printf(g_failures ? "\nFAILED (%d)\n" : "\nOK\n", g_failures);
     return g_failures ? 1 : 0;
 }

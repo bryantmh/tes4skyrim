@@ -1,18 +1,8 @@
 #include "alchemy.h"
 
-#include <cstdlib>
-#include <sstream>
-
-#include "store.h"
-
-namespace tesruntime::mw {
+namespace tesruntime {
 
 namespace {
-
-constexpr const char* kFileApparatus = "APPA.txt";
-
-// The four `|` fields after `id=`.
-constexpr std::size_t kApparatusFields = 4;
 
 // OpenMW's Alchemy::applyTools, line for line, on `value`. The tool is the
 // retort for a helpful effect and the alembic for a harmful one; with a
@@ -55,28 +45,13 @@ float ApplyTools(const Toolset& tools, std::uint32_t flags, float value) {
     return quality == 0 ? value : value / quality;
 }
 
-// Splits `text` at every `|`.
-std::vector<std::string> Fields(const std::string& text) {
-    std::vector<std::string> out;
-    std::string field;
-    std::istringstream in(text);
-    while (std::getline(in, field, '|')) out.push_back(field);
-    return out;
+// Overrides `*out` with the number `doc` holds at `key`, when it holds one.
+void TakeNumber(const Json& doc, const char* key, float* out) {
+    if (doc[key].isNumber()) *out = static_cast<float>(doc[key].asNumber());
 }
 
-// One APPA.txt line, or false when it is blank or malformed.
-bool ParseRow(const std::string& line, ApparatusDef* out) {
-    const std::size_t eq = line.find('=');
-    if (eq == 0 || eq == std::string::npos) return false;
-    const std::vector<std::string> fields = Fields(line.substr(eq + 1));
-    if (fields.size() != kApparatusFields) return false;
-    out->id = line.substr(0, eq);
-    out->form.plugin = fields[0];
-    out->form.formId = std::strtoul(fields[1].c_str(), nullptr, 16);
-    out->type = std::atoi(fields[2].c_str());
-    out->quality = std::strtof(fields[3].c_str(), nullptr);
-    return out->form.formId && !out->form.plugin.empty() &&
-           out->type >= 0 && out->type < kApparatusTypes;
+void TakeText(const Json& doc, const char* key, std::string* out) {
+    if (doc[key].isString()) *out = doc[key].asString();
 }
 
 }  // namespace
@@ -110,29 +85,28 @@ float ApparatusScale(const Toolset& tools, const AlchemyInputs& inputs,
     return ApplyTools(tools, flags, neutral * mortar) / neutral;
 }
 
-std::vector<ApparatusDef> ParseApparatus(const std::string& text) {
-    std::vector<ApparatusDef> rows;
-    std::istringstream in(text);
-    std::string line;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        ApparatusDef row;
-        if (ParseRow(line, &row)) rows.push_back(row);
+void ReadApparatus(const Json& doc, std::vector<ApparatusDef>* rows,
+                   AlchemySettings* settings) {
+    for (const Json& row : doc["apparatus"].items()) {
+        ApparatusDef def;
+        def.id = row["id"].asString();
+        def.file = row["form"].at(0).asString();
+        def.local = row["form"].at(1).asU32() & 0x00FFFFFF;
+        def.type = row["type"].asInt(-1);
+        def.quality = static_cast<float>(row["quality"].asNumber());
+        if (def.local && !def.file.empty() && def.type >= 0 &&
+            def.type < kApparatusTypes) {
+            rows->push_back(def);
+        }
     }
-    return rows;
+    const Json& gmst = doc["settings"];
+    TakeNumber(gmst, "fPotionStrengthMult", &settings->inputs.strengthMult);
+    TakeNumber(gmst, "fPotionT1MagMult", &settings->inputs.magnitudeMult);
+    TakeNumber(gmst, "fPotionT1DurMult", &settings->inputs.durationMult);
+    TakeText(gmst, "sInventoryMessage3", &settings->inCombat);
+    TakeText(gmst, "sNotifyMessage45", &settings->noMortar);
+    TakeNumber(doc["player"], "intelligence", &settings->inputs.intelligence);
+    TakeNumber(doc["player"], "luck", &settings->inputs.luck);
 }
 
-std::vector<ApparatusDef> LoadApparatusFrom(const std::string& rootIn) {
-    std::vector<ApparatusDef> rows;
-    if (rootIn.empty()) return rows;
-    std::string root = rootIn;
-    if (root.back() != '\\' && root.back() != '/') root.push_back('\\');
-    for (const std::string& plugin : SidecarPlugins(root)) {
-        const std::vector<ApparatusDef> own =
-            ParseApparatus(ReadFile(root + plugin + "\\" + kFileApparatus));
-        rows.insert(rows.end(), own.begin(), own.end());
-    }
-    return rows;
-}
-
-}  // namespace tesruntime::mw
+}  // namespace tesruntime

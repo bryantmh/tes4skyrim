@@ -76,8 +76,6 @@ void TestOwnForm() {
                "Some_Thing=Tribunal.esm|0200ABCD\r\n");
     WriteTable(root / "Tribunal", "GLOB.txt",
                "PlagueActivate=s,0,Tribunal.esm|013BFD92\r\n");
-    WriteTable(root / "Oblivion", "APPA.txt",
-               "SE38Item8=Oblivion.esm|00081E6F|0|0.5\r\n");
     WriteTable(root / "Stale", "items_formid.txt",
                "Gold_001=Morrowind.esm|003FC70C\r\n");
 
@@ -86,15 +84,12 @@ void TestOwnForm() {
     Check(FindOwnForm(base + "Tribunal\\", "Tribunal", &own) &&
               own.file == "Tribunal.esm" && own.formId == 0x0200ABCD,
           "skips a master's row for the folder's own");
-    Check(FindOwnForm(base + "Oblivion\\", "oblivion", &own) &&
-              own.file == "Oblivion.esm" && own.formId == 0x00081E6F,
-          "an apparatus row, matched case-blind");
     Check(!FindOwnForm(base + "Stale\\", "Stale", &own),
           "no row names the folder's plugin");
     WriteTable(root / "Globals", "GLOB.txt", "X=s,0,Globals.esp|00000D62\r\n");
-    Check(FindOwnForm(base + "Globals\\", "Globals", &own) &&
+    Check(FindOwnForm(base + "Globals\\", "globals", &own) &&
               own.file == "Globals.esp" && own.formId == 0xD62,
-          "a GLOB row's form after its type and value");
+          "a GLOB row's form after its type and value, matched case-blind");
     std::filesystem::remove_all(root);
 }
 

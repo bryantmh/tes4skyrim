@@ -749,3 +749,27 @@ Each exporter writes the real flag:
   exporter always wrote `Flags=1`, so any Morrowind `.esp` exported earlier must
   be re-exported to lose the flag.
 - The compatibility patch always writes `Flags=1`.
+
+## <a id="stale-runtime-sidecars"></a>Stale runtime sidecars are swept after the write, never cleared first
+
+**Code:** `tes5_import/runtime_sidecars.py`; the creature fragment in
+`asset_convert/havok/creature_pipeline.py` (`_remove_stale_fragment`).
+
+A plugin's runtime sidecars are its `SKSE/Plugins/MorrowindRuntime/<plugin>/`
+folder and its `<plugin>.<kind>.json` files under `TESRuntime/` and
+`FalloutRuntime/`. Several writers skip a table they have no rows for (guns,
+body parts, the sound table, copied dialogue), so a table an earlier build
+wrote would otherwise outlive the data it came from and keep driving the
+runtime.
+
+`_open_import_run` notes when the import began; the end of
+`run_finalize_phases` deletes every sidecar of that plugin older than that,
+then any Morrowind folder left empty. Nothing is deleted up front: the user's
+deployment is hard-linked to `output/`, and a rewritten file is written in
+place so the link sees the new bytes. Deleting first and recreating would cut
+the link and leave the game on the old file. The Morrowind restage tool
+(`tools/dialog/mw_sidecar.py`) does not sweep: it leaves the journal and sound
+tables alone by design.
+
+The creature stage owns `CreatureRuntime/animation/<plugin>.json`; a full run
+that registers nothing deletes it; a run limited to named creatures never does.

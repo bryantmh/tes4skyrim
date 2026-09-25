@@ -409,12 +409,12 @@ std::size_t BindInstances() {
 std::size_t LoadActorIndex() { return LoadActorIndexFrom(SidecarDir()); }
 
 // Whether the folder's own plugin answers for one of its base records: an
-// actor from the index, else any quest, object, item, faction, GLOB or
-// apparatus row naming the plugin's own file. True when the folder names no
+// actor from the index, else any quest, object, item, faction or GLOB
+// row naming the plugin's own file. True when the folder names no
 // such record, which leaves nothing to prove it absent.
 //
 // 🛑 Never the actor index ALONE. A folder without one -- an incomplete
-// sidecar, a TES4 plugin's apparatus table, a leftover from an old release --
+// sidecar, a leftover from an old release --
 // used to count as loaded unasked, and its staged placements then cost a
 // failing `GetFormFromFile` each, which the engine reports to the Papyrus log,
 // 256 a tick for as long as the sweep runs.

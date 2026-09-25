@@ -1,8 +1,32 @@
 # CreatureRuntime
 
-Registers converted creatures' animation projects with the game, so any mod can
-ship creatures without shipping (and fighting over) the two global animation
-databases.
+**Lets converted creatures actually move.** Goblins, scamps, cliff racers,
+deathclaws — every converted creature brings its own skeleton and animation
+set, and CreatureRuntime is what introduces them to Skyrim.
+
+## What it does for you
+
+Skyrim keeps a list of every creature type's animations in two shared files.
+Normally a mod that adds creatures has to ship its own copy of those files —
+and only one copy can win. Install two creature mods that do it and one
+mod's creatures stand frozen in a T-pose or slide around without animating.
+
+CreatureRuntime removes that fight. Each converted game ships only a small
+note listing its own creatures, and when Skyrim starts, CreatureRuntime adds
+every installed note to Skyrim's own list in memory. Oblivion, Nehrim,
+Morrowind and Fallout creatures, and any other mod's creatures, all work side
+by side, and no game file is ever overwritten.
+
+## Should I keep it enabled?
+
+Yes, if you play any converted game with creatures (all of them have some).
+Without it, converted creatures don't animate: they stand frozen, glide, or
+can't attack. It only reads files; it changes no records and nothing in your
+save.
+
+---
+
+## For developers
 
 The converter writes one fragment per plugin to
 `Data\SKSE\Plugins\CreatureRuntime\animation\<plugin>.json`. When the engine
@@ -17,8 +41,6 @@ or co-save.
 - Why: [asset_convert_creature.md](../../docs/commentary/asset_convert_creature.md#runtime-animation-cache-composition)
 
 Log: `CreatureRuntime.log`.
-
-## Building
 
 `build.bat` → `..\dist\CreatureRuntime.dll` and `compose_test.exe`:
 `compose_test.exe <base_dir> <fragment_dir> <out_dir>` runs the composer

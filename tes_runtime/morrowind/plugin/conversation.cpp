@@ -778,8 +778,8 @@ void Training() {
 }
 
 // DialogueWindow::onSelectListItem for sEnchanting: Skyrim's enchanting
-// menu, the player enchanting as at a table.
-// See: docs/commentary/morrowind_runtime.md#alchemy-apparatus
+// menu, the player enchanting as at a table, through TESRuntime's bench.
+// See: docs/commentary/tes_runtime_alchemy.md#crafting-bench
 void Enchanting() {
     if (Refused(kServiceEnchanting) || !CraftingInstalled()) return;
     Log("conversation: enchanting with '%s'", g_speaker.c_str());

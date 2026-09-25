@@ -134,8 +134,8 @@ struct OwnForm {
 };
 
 // The first base record in the folder `dir` (with a trailing separator) whose
-// row names `plugin`'s own file, from the quest, base, item, faction, GLOB and
-// apparatus tables. False when no row names it.
+// row names `plugin`'s own file, from the quest, base, item, faction and GLOB
+// tables. False when no row names it.
 bool FindOwnForm(const std::string& dir, const std::string& plugin,
                  OwnForm* out);
 

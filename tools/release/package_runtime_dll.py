@@ -54,8 +54,8 @@ def package(out_root: Path) -> int:
     """Zip the built DLLs into <out_root>/Finished Mods/TESRuntime.zip.
 
     Every runtime is its own DLL, so a fault in one cannot take the others
-    down, and MorrowindRuntime links GPL-3.0 OpenMW that must stay out of the
-    others' binaries. Missing optional files are skipped.
+    down; MorrowindRuntime links GPL-3.0 OpenMW, which stays out of the MIT
+    runtimes' binaries. Missing optional files are skipped.
     See: docs/commentary/morrowind_runtime.md#licensing
     """
     missing = [src for src, _ in REQUIRED if not src.is_file()]

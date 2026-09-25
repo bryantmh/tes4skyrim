@@ -331,7 +331,7 @@ bool Defined(void* view, const char* path) {
     return defined;
 }
 
-// Gives a patched journal movie `_global.MorrowindRuntime`, once.
+// Gives a patched journal movie `_root.TESRT_Runtime`, once.
 void InstallInto(void* view) {
     if (!Defined(view, ids::kJournalPatchMarker) ||
         Defined(view, ids::kJournalFunctionsPath)) {

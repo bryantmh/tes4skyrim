@@ -47,6 +47,7 @@ from .record_types.spell_tomes import create_spell_tomes
 from .record_types.spell_tomes_morrowind import chain_tables
 from .dialogue.converter import build_npc_to_vtyp_map
 from .dialogue.morrowind_sidecar import is_tes3_export
+from .runtime_sidecars import begin_sidecar_run
 from .base.adopted_records import adopt_master_special_records
 from .base.cell_family import set_cell_families
 from .base.owned_records import (
@@ -1030,12 +1031,11 @@ def _open_import_run(masters, skip_types, output_path: str,
     set_namespace(namespace_for(export_dir))
     if masters is None:
         masters = ['Skyrim.esm']
-    if skip_types is None:
-        skip_types = set()
-    all_skip = SKIP_TYPES | skip_types
+    all_skip = SKIP_TYPES | (skip_types or set())
     if os.path.isdir(output_path):
         output_path = os.path.join(
             output_path, os.path.basename(os.path.normpath(output_path)))
+    begin_sidecar_run(output_path)
     plugin_out_dir = os.path.dirname(output_path)
     from .base.artifact_schema import preflight_artifacts
     preflight_artifacts(export_dir)

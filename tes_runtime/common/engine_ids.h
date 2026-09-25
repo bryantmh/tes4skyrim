@@ -22,4 +22,13 @@ constexpr std::uint64_t kGetFormFromFile = 55465;
 // TESForm* LookupFormByID(uint32) (0x1a0b70), the body of Game.GetForm.
 constexpr std::uint64_t kLookupFormByID = 14617;
 
+// UIManager::AddMessage(this, BSFixedString* menu, u32 msgId, void* data)
+// (0x170730). Identified by its pool arithmetic: [rcx+0x378] is poolUsed,
+// compared against 0x40 = kPoolSize, and (poolUsed + 0x1c) << 5 lands on
+// messagePool at 0x380 with stride 32. Inverts to the RVA SKSE hardcodes.
+constexpr std::uint64_t kUIAddMessage = 13631;
+
+// The UIManager singleton POINTER (0x20f8950 on 1.6.1170), read, never called.
+constexpr std::uint64_t kUIManagerSingleton = 400445;
+
 }  // namespace tesruntime::ids

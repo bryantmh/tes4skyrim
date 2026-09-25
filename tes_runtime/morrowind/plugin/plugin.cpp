@@ -12,10 +12,8 @@
 
 #include "activation.h"
 #include "addresses.h"
-#include "alchemy.h"
 #include "conversation.h"
 #include "cosave.h"
-#include "crafting.h"
 #include "game_calls.h"
 #include "log.h"
 #include "main_thread.h"
@@ -62,10 +60,6 @@ void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
     InstallConversation();
     InstallGameCalls();
     InstallActivation();
-    // The bench opener first: the apparatus hooks refuse to go in without it.
-    InstallCrafting();
-    // After the game calls, whose player reference the census reads.
-    InstallAlchemy();
     StartObjectTick();
 }
 

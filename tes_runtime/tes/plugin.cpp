@@ -4,13 +4,19 @@
 //     (crime.cpp, docs/commentary/tes_runtime_crime.md#nearest-jail);
 //   * gives a clicked quest objective the journal text it was shown with
 //     (journal_objectives.cpp,
-//     docs/commentary/tes_runtime_journal.md#journal-stage-text).
+//     docs/commentary/tes_runtime_journal.md#journal-stage-text);
+//   * opens Skyrim's alchemy menu from a carried apparatus and scales the
+//     potion by the tools, and owns the crafting-bench hook the other
+//     runtimes share (alchemy_hooks.cpp, crafting.cpp,
+//     docs/commentary/tes_runtime_alchemy.md#alchemy-apparatus).
 
 #include <windows.h>
 
 #include <type_traits>
 
 #include "addresses.h"
+#include "alchemy.h"
+#include "crafting.h"
 #include "crime.h"
 #include "engine.h"
 #include "journal_objectives.h"
@@ -22,9 +28,10 @@ using namespace tesruntime;
 
 namespace {
 
-constexpr UInt32 kPluginVersion = 3;
+constexpr UInt32 kPluginVersion = 4;
 constexpr UInt32 kSerializationId = 'TES4';
 
+bool g_engineResolved = false;
 bool g_crimeInstalled = false;
 bool g_journalInstalled = false;
 
@@ -44,6 +51,12 @@ void OnMessage(SKSEMessagingInterface::Message* msg) {
             StartCrimeTick();
         }
         if (g_journalInstalled) StartJournalTick();
+        if (g_engineResolved) {
+            // The bench opener first: the apparatus hooks refuse to go in
+            // without it.
+            InstallCrafting();
+            InstallAlchemy();
+        }
     }
 }
 
@@ -113,7 +126,8 @@ __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
             g_versionDb.count());
     }
     QueryInterfaces(skse);
-    g_crimeInstalled = ResolveEngine() && LoadCrimeSidecars();
+    g_engineResolved = ResolveEngine();
+    g_crimeInstalled = g_engineResolved && LoadCrimeSidecars();
     g_journalInstalled = InstallJournal();
     Log("hooks: jails %s, journal stage text %s",
         g_crimeInstalled ? "installed" : "NOT installed",

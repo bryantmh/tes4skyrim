@@ -5,7 +5,7 @@
 // taken as a RATIO against a quality-1.0 mortar and no other tool. Skyrim's
 // formula, skill gain and potion value all stay; the apparatus only scales
 // the magnitude and duration Skyrim computed.
-// See: docs/commentary/morrowind_runtime.md#alchemy-apparatus
+// See: docs/commentary/tes_runtime_alchemy.md#alchemy-apparatus
 
 #pragma once
 
@@ -13,11 +13,11 @@
 #include <string>
 #include <vector>
 
-#include "script_tables.h"
+#include "json.h"
 
-namespace tesruntime::mw {
+namespace tesruntime {
 
-// ESM::Apparatus::AppaType, the order APPA.txt carries.
+// ESM::Apparatus::AppaType, the order the sidecar carries.
 enum ApparatusType {
     kMortarPestle = 0,
     kAlembic = 1,
@@ -32,11 +32,11 @@ constexpr std::uint32_t kEffectHostile = 0x1;
 constexpr std::uint32_t kEffectNoDuration = 0x200;
 constexpr std::uint32_t kEffectNoMagnitude = 0x400;
 
-// One row of APPA.txt: an apparatus a converted plugin owns, its quality on
-// Morrowind's scale.
+// One apparatus a converted plugin owns, its quality on Morrowind's scale.
 struct ApparatusDef {
     std::string id;
-    FormRef form;
+    std::string file;
+    std::uint32_t local = 0;
     int type = kMortarPestle;
     float quality = 0.0f;
 };
@@ -62,20 +62,28 @@ struct AlchemyInputs {
     float durationMult = 0.5f;   // fPotionT1DurMult
 };
 
+// What a Morrowind sidecar adds: its potion GMSTs, the `player` record's
+// Intelligence and Luck, and the two messages OpenMW shows.
+struct AlchemySettings {
+    AlchemyInputs inputs;
+    std::string inCombat;  // sInventoryMessage3
+    std::string noMortar;  // sNotifyMessage45
+};
+
 // What one effect's magnitude (`magnitude` true) or duration is multiplied
 // by: OpenMW's value with these tools over its value with a quality-1.0
 // mortar alone. `flags` are the effect's DATA.Flags, `baseCost` its cost.
 float ApparatusScale(const Toolset& tools, const AlchemyInputs& inputs,
                      std::uint32_t flags, float baseCost, bool magnitude);
 
-// APPA.txt text, one `id=Plugin.esm|FormID|type|quality` per line.
-std::vector<ApparatusDef> ParseApparatus(const std::string& text);
+// One `<plugin>.apparatus.json`: its rows are appended to `rows`, and any
+// setting it carries overrides the one in `settings`.
+void ReadApparatus(const Json& doc, std::vector<ApparatusDef>* rows,
+                   AlchemySettings* settings);
 
-// Every sidecar's APPA.txt under `root` (trailing separator optional).
-std::vector<ApparatusDef> LoadApparatusFrom(const std::string& root);
-
-// Resolves the table, swaps the inventory, crafting-menu and potion-strength
-// virtuals. Nothing is hooked when no plugin staged an apparatus.
+// Resolves the sidecars, swaps the inventory, crafting-menu and
+// potion-strength virtuals. Nothing is hooked when no plugin staged an
+// apparatus. Needs InstallCrafting first.
 void InstallAlchemy();
 
-}  // namespace tesruntime::mw
+}  // namespace tesruntime

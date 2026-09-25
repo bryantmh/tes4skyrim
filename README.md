@@ -436,7 +436,9 @@ covered by this project's MIT license.
 > `asset_convert/havok/hkx_anim.py`) and `external/openmw/` (linked into
 > `MorrowindRuntime.dll`) are both GPL-3.0. If you redistribute a build that includes
 > either, the GPL's terms apply to that distribution. `MorrowindRuntime.dll` is kept a
-> separate DLL for this reason.
+> separate DLL for this reason. `TESRuntime.dll` carries a line-for-line port of
+> OpenMW's alchemy apparatus formula (`tes_runtime/tes/alchemy.cpp`), so it is
+> GPL-3.0 as well.
 
 > **Note on LGPL (FFmpeg):** `external/ffmpeg/ffmpeg.exe` is built from **unmodified**
 > FFmpeg 7.1.2 sources under LGPL v2.1, with no GPL components (`--enable-gpl` and

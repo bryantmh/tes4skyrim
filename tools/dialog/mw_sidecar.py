@@ -39,7 +39,7 @@ def main() -> int:
     out_dir = os.path.join(os.path.dirname(output_path), SIDECAR_DIR,
                            plugin_stem(args.plugin))
     print(f'staged {staged} file(s) -> {out_dir}')
-    for name in sorted(os.listdir(out_dir)) if staged else []:
+    for name in sorted(os.listdir(out_dir)) if os.path.isdir(out_dir) else []:
         size = os.path.getsize(os.path.join(out_dir, name))
         print(f'  {name}  {size:,} bytes')
     return 0 if staged else 1

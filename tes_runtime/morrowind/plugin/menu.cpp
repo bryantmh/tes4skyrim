@@ -11,6 +11,7 @@
 #include "addresses.h"
 #include "ids.h"
 #include "log.h"
+#include "ui_message.h"
 
 namespace tesruntime::mw {
 
@@ -81,18 +82,12 @@ using RegisterFn = void (*)(void* manager, const char* name, void* creator);
 using LoadMovieFn = bool (*)(void* loader, void* menu, void** viewOut,
                              const char* name, int scaleMode, float bgAlpha);
 using AllocFn = void* (*)(void* allocator, std::size_t size, void* tag);
-using AddMessageFn = void (*)(void* uiManager, void* name,
-                              std::uint32_t message, void* data);
-using FixedStringFn = void* (*)(void* out, const char* text);
 
 void**         g_menuManager = nullptr;
 RegisterFn     g_register = nullptr;
 LoadMovieFn    g_loadMovie = nullptr;
 void**         g_gfxLoader = nullptr;
 void**         g_allocator = nullptr;
-void**         g_uiManager = nullptr;
-AddMessageFn   g_addMessage = nullptr;
-FixedStringFn  g_fixedString = nullptr;
 SetStringFn    g_setString = nullptr;
 bool           g_installed = false;
 MenuInput      g_input;
@@ -384,12 +379,6 @@ bool InstallMenu() {
         Resolve("GFxLoader singleton", ids::kGFxLoaderSingleton, nullptr));
     g_allocator = reinterpret_cast<void**>(
         Resolve("Scaleform allocator", ids::kScaleformAllocator, nullptr));
-    g_uiManager = reinterpret_cast<void**>(
-        Resolve("UIManager singleton", ids::kUIManagerSingleton, nullptr));
-    g_addMessage = reinterpret_cast<AddMessageFn>(
-        Resolve("UIManager::AddMessage", ids::kUIAddMessage, nullptr));
-    g_fixedString = reinterpret_cast<FixedStringFn>(
-        Resolve("BSFixedString ctor", ids::kBSFixedStringCtor, nullptr));
     g_setString = reinterpret_cast<SetStringFn>(
         Resolve("GFxValue::SetString", ids::kGfxSetString, nullptr));
     if (!g_setString) {
@@ -436,25 +425,6 @@ std::uint32_t PausingMenuCount() {
 }
 
 void SetMenuInput(const MenuInput& input) { g_input = input; }
-
-// A menu is opened by posting a UIMessage, which is what the console's
-// `showmenu` and every engine call site do. The name must be an INTERNED
-// BSFixedString: AddMessage compares by pointer, so a plain char* never
-// matches a registered menu.
-// See: docs/commentary/morrowind_runtime.md#opening-a-menu
-void PostMenuMessage(const char* name, std::uint32_t message) {
-    if (!g_addMessage || !g_uiManager || !*g_uiManager || !g_fixedString) {
-        Log("menu: cannot post '%s' -- UI entry points unresolved", name);
-        return;
-    }
-    void* interned = nullptr;
-    g_fixedString(&interned, name);
-    if (!interned) {
-        Log("menu: interning '%s' produced nothing", name);
-        return;
-    }
-    g_addMessage(*g_uiManager, &interned, message, nullptr);
-}
 
 // 🛑 Text set BEFORE the menu opens is held and replayed by MenuCreator. The
 // movie does not exist until the engine calls the creator, so a caller that
@@ -510,14 +480,6 @@ void OpenMenu() {
 void CloseMenu() {
     if (!g_installed) return;
     PostMenuMessage(kMenuName, ids::kMessageClose);
-}
-
-void CloseMenuNamed(const char* name) {
-    PostMenuMessage(name, ids::kMessageClose);
-}
-
-void OpenMenuNamed(const char* name) {
-    PostMenuMessage(name, ids::kMessageOpen);
 }
 
 const char* MenuName() { return kMenuName; }

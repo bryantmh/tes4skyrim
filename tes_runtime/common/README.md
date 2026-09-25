@@ -14,11 +14,13 @@ Everything is in namespace `tesruntime`; MorrowindRuntime's own code is in
 | `log.*` | `<name>.log`; `LogVerbose` only while `TESRUNTIME_VERBOSE` is set |
 | `json.*` | a small JSON reader for the sidecars |
 | `engine.*`, `engine_ids.h` | fixed strings, `FormFromFile`, sidecar walking, main-thread tasks and the shared main-thread timer (`StartMainThreadTick`) |
+| `ui_message.*` | opening and closing a registered menu by name |
+| `crafting.h`, `crafting_client.cpp` | the crafting-bench API; TESRuntime owns the hook (`tes/crafting.cpp`) and the client calls its exports |
 | `msvc.bat` | puts MSVC x64 on the environment; every `build.bat` calls it |
 
 A plugin calls `SetPluginName` first thing in `SKSEPlugin_Load`, then
 `OpenLog`; the log file and `SidecarDir()` both take that name.
 
-This code is MIT. MorrowindRuntime compiles it into its GPL-3.0 binary, which
-MIT allows; nothing here may ever include code from `external/openmw/`
+This code is MIT. MorrowindRuntime and TESRuntime compile it into GPL-3.0
+binaries, which MIT allows; nothing here may ever include code from `external/openmw/`
 ([licensing](../../docs/commentary/morrowind_runtime.md#licensing)).

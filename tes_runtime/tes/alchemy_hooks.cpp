@@ -5,7 +5,7 @@
 //   AlchemyMenu slot 5        -- the craft event is refused with no mortar.
 //   ModEffectivenessFunctor 1 -- after Skyrim sets an effect's magnitude and
 //                                duration, the carried tools scale them.
-// See: docs/commentary/morrowind_runtime.md#alchemy-apparatus
+// See: docs/commentary/tes_runtime_alchemy.md#alchemy-apparatus
 
 #include "alchemy.h"
 
@@ -15,19 +15,14 @@
 #include <unordered_map>
 #include <vector>
 
-#include "activation.h"
 #include "addresses.h"
 #include "crafting.h"
-#include "dialogue_state.h"
-#include "game_calls_internal.h"
+#include "engine.h"
 #include "ids.h"
 #include "log.h"
-#include "paths.h"
-#include "menu.h"
-#include "script_tables.h"
-#include "store.h"
+#include "ui_message.h"
 
-namespace tesruntime::mw {
+namespace tesruntime {
 
 namespace {
 
@@ -38,26 +33,15 @@ using SelectedItemFn = void* (*)(void* itemList);
 using CombatFn = bool (*)(void* vm, std::uint32_t stack, void* actor);
 using ItemCountFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* ref,
                                      void* item);
+using NotificationFn = void (*)(void* vm, std::uint32_t stack, void* tag,
+                                void* text);
+using ActorValueFn = float (*)(void* owner, int value);
 using EffectFn = bool (*)(void* functor, void* effect);
 using GetMagnitudeFn = float (*)(void* effect);
 using SetMagnitudeFn = bool (*)(void* effect, float value);
 using GetDurationFn = std::uint32_t (*)(void* effect);
 using SetDurationFn = bool (*)(void* effect, std::int32_t value);
 using UserEventFn = bool (*)(void* subMenu, void* event);
-
-// The id MWScript and the actor table use for the player.
-constexpr const char* kPlayerId = "player";
-
-// TES3's attribute order, which ActorDef::attributes keeps.
-constexpr int kIntelligence = 1;
-constexpr int kLuck = 7;
-
-// The GMST OpenMW's ActionAlchemy shows when the player is fighting, and the
-// one its AlchemyWindow shows for Result_NoMortarAndPestle.
-constexpr const char* kInCombatGmst = "sInventoryMessage3";
-constexpr const char* kNoMortarGmst = "sNotifyMessage45";
-
-constexpr std::uint32_t kLocalMask = 0x00FFFFFF;
 
 // One resolved apparatus.
 struct Apparatus {
@@ -68,7 +52,9 @@ struct Apparatus {
 
 std::vector<Apparatus> g_apparatus;
 std::unordered_map<std::uint32_t, std::size_t> g_byFormId;
+AlchemySettings g_settings;
 
+void**          g_playerSlot = nullptr;
 AcceptFn        g_acceptOriginal = nullptr;
 CallbackFn      g_itemSelect = nullptr;
 CallbackFn      g_closeTween = nullptr;
@@ -77,6 +63,7 @@ void**          g_userEvents = nullptr;
 SelectedItemFn  g_selectedItem = nullptr;
 CombatFn        g_isInCombat = nullptr;
 ItemCountFn     g_itemCount = nullptr;
+NotificationFn  g_notification = nullptr;
 EffectFn        g_effectOriginal = nullptr;
 GetMagnitudeFn  g_getMagnitude = nullptr;
 SetMagnitudeFn  g_setMagnitude = nullptr;
@@ -88,29 +75,37 @@ bool g_active = false;
 Toolset g_tools;
 AlchemyInputs g_inputs;
 
+void* Player() { return g_playerSlot ? *g_playerSlot : nullptr; }
+
+std::uint32_t FormIdOf(void* form) {
+    return form ? At<std::uint32_t>(form, kFormID) : 0;
+}
+
+// Debug.Notification; nothing for an empty text.
+void Notify(const std::string& text) {
+    if (text.empty() || !g_notification) return;
+    FixedString message(text.c_str());
+    g_notification(g_api.vm, 0, nullptr, &message.ptr);
+}
 
 // ------------------------------------------------------------ the session ----
 
 AlchemyInputs Inputs() {
-    AlchemyInputs in;
-    if (Hooks().actorValue) in.skill = Hooks().actorValue(kPlayerId, "Alchemy");
-    if (const ActorDef* player = FindActor(kPlayerId)) {
-        in.intelligence = static_cast<float>(player->attributes[kIntelligence]);
-        in.luck = static_cast<float>(player->attributes[kLuck]);
+    AlchemyInputs in = g_settings.inputs;
+    if (void* player = Player()) {
+        void* owner = static_cast<char*>(player) + kActorValueOwner;
+        in.skill = VCall<ActorValueFn>(owner, 1)(owner, ids::kActorValueAlchemy);
     }
-    in.strengthMult = GmstNumber("fPotionStrengthMult", in.strengthMult);
-    in.magnitudeMult = GmstNumber("fPotionT1MagMult", in.magnitudeMult);
-    in.durationMult = GmstNumber("fPotionT1DurMult", in.durationMult);
     return in;
 }
 
 // The best of each type in the player's inventory right now.
 Toolset Census() {
     Toolset tools;
-    void* player = gamecalls::PlayerRef();
+    void* player = Player();
     if (!player || !g_itemCount) return tools;
     for (const Apparatus& apparatus : g_apparatus) {
-        if (g_itemCount(PapyrusVm(), 0, player, apparatus.form) > 0) {
+        if (g_itemCount(g_api.vm, 0, player, apparatus.form) > 0) {
             tools.Offer(apparatus.type, apparatus.quality);
         }
     }
@@ -175,7 +170,7 @@ bool IsCraftEvent(void* event) {
 bool AlchemyUserEvent(void* subMenu, void* event) {
     if (g_active && !g_tools.has[kMortarPestle] && IsCraftEvent(event)) {
         Log("alchemy: brew refused -- no mortar and pestle carried");
-        gamecalls::Notify(GmstText(kNoMortarGmst, ""));
+        Notify(g_settings.noMortar);
         return true;
     }
     return g_userEventOriginal(subMenu, event);
@@ -187,10 +182,10 @@ bool AlchemyUserEvent(void* subMenu, void* event) {
 // The inventory leaves the way its own full exit does, through
 // CloseTweenMenu: the TweenMenu under it would otherwise stay open, hidden.
 void UseApparatus(void* args) {
-    void* player = gamecalls::PlayerRef();
-    if (player && g_isInCombat && g_isInCombat(PapyrusVm(), 0, player)) {
+    void* player = Player();
+    if (player && g_isInCombat && g_isInCombat(g_api.vm, 0, player)) {
         Log("alchemy: apparatus used in combat -- refused");
-        gamecalls::Notify(GmstText(kInCombatGmst, ""));
+        Notify(g_settings.inCombat);
         return;
     }
     g_closeTween(args);
@@ -241,18 +236,25 @@ void InventoryAccept(void* menu, void* processor) {
 
 // -------------------------------------------------------------- install ----
 
-std::size_t ResolveApparatus(const std::vector<ApparatusDef>& rows) {
+std::vector<ApparatusDef> g_rows;
+
+void LoadSidecar(const std::string& name, const Json& doc) {
+    const std::size_t before = g_rows.size();
+    ReadApparatus(doc, &g_rows, &g_settings);
+    Log("alchemy: %s -- %zu apparatus", name.c_str(), g_rows.size() - before);
+}
+
+std::size_t ResolveApparatus() {
     g_apparatus.clear();
     g_byFormId.clear();
-    for (const ApparatusDef& row : rows) {
-        void* form = FormFromFile(row.form.plugin.c_str(),
-                                  row.form.formId & kLocalMask);
+    for (const ApparatusDef& row : g_rows) {
+        void* form = FormFromFile(row.local, row.file);
         if (!form) continue;
         g_byFormId[FormIdOf(form)] = g_apparatus.size();
         g_apparatus.push_back({form, row.type, row.quality});
     }
     Log("alchemy: %zu of %zu staged apparatus resolved", g_apparatus.size(),
-        rows.size());
+        g_rows.size());
     return g_apparatus.size();
 }
 
@@ -262,6 +264,8 @@ Fn Address(const char* name, std::uint64_t id) {
 }
 
 void ResolveNatives() {
+    g_playerSlot = Address<void**>("PlayerCharacter singleton",
+                                   ids::kPlayerSingleton);
     g_itemSelect = Address<CallbackFn>("InventoryMenu ItemSelect",
                                        ids::kInventoryItemSelect);
     g_closeTween = Address<CallbackFn>("InventoryMenu CloseTweenMenu",
@@ -273,6 +277,8 @@ void ResolveNatives() {
     g_isInCombat = Address<CombatFn>("Actor.IsInCombat", ids::kActorIsInCombat);
     g_itemCount = Address<ItemCountFn>("ObjectReference.GetItemCount",
                                        ids::kRefGetItemCount);
+    g_notification = Address<NotificationFn>("Debug.Notification",
+                                             ids::kDebugNotification);
     g_getMagnitude = Address<GetMagnitudeFn>("Effect::GetMagnitude",
                                              ids::kEffectGetMagnitude);
     g_setMagnitude = Address<SetMagnitudeFn>("Effect::SetMagnitude",
@@ -323,7 +329,8 @@ bool InstallEffectiveness() {
 }  // namespace
 
 void InstallAlchemy() {
-    if (!ResolveApparatus(LoadApparatusFrom(SidecarDir()))) {
+    ForEachSidecar("apparatus.json", LoadSidecar);
+    if (!ResolveApparatus()) {
         Log("alchemy: no apparatus staged -- NOT hooked");
         return;
     }
@@ -334,4 +341,4 @@ void InstallAlchemy() {
         menus ? "hooked" : "NOT hooked", effects ? "hooked" : "NOT hooked");
 }
 
-}  // namespace tesruntime::mw
+}  // namespace tesruntime

@@ -26,9 +26,8 @@ from core.plugin_masters import (export_source, get_masters_from_binary,
                                  masters_from_export_header)
 from tes4_export.morrowind_ids import encode_editor_id, load_index
 from tes4_export.morrowind_patch import PATCH_NAME
-from tes4_export.tes3_reader import is_tes3
 
-from .morrowind_sidecar_source import (gather, plugin_chain, source_binary,
+from .morrowind_sidecar_source import (gather, plugin_chain,
                                        write_merged_dialogue)
 from .morrowind_travel import TRAVEL_TABLE, marker_index, travel_lines
 from .say_morrowind import SAY_TABLE, say_rows
@@ -105,17 +104,6 @@ SOULGEMS_TABLE = 'SLGM.txt'
 #: What AddSoulGem's creature argument needs: `creature id=soul size`.
 SOULS_TABLE = 'CREA_soul.txt'
 
-#: What the alchemy hooks scale by: `id=Plugin.esm|FormID|type|quality`, quality on TES3's scale.
-APPARATUS_TABLE = 'APPA.txt'
-
-#: The export the apparatus table is built from, and the fields it reads.
-_APPARATUS_EXPORT = 'APPA.txt'
-_APPARATUS_KEYS = ('EditorID', 'FormID', 'DATA.Type', 'DATA.Quality')
-
-#: `(TES4 quality, TES3 quality)` at each grade Morroblivion ported, paired by EditorID; (0, 0) anchors the bottom.
-_TES4_TO_TES3_QUALITY = ((0.0, 0.0), (10.0, 0.15), (25.0, 0.5), (50.0, 1.0),
-                         (75.0, 1.2), (100.0, 1.5), (150.0, 2.0))
-
 #: A TES5 record's body starts after its 24-byte header.
 _TES5_HEADER = slice(24, None)
 
@@ -171,60 +159,6 @@ _DECLARATION = re.compile(r'^\s*(short|long|float)\s+([A-Za-z_][A-Za-z0-9_]*)',
 
 #: Morroblivion's plugins: their SCPTs are TES4's language, never MWScript.
 _TES4_PLUGIN_PREFIX = 'morrowind_ob'
-
-
-def tes3_quality(quality: float) -> float:
-    """A TES4 apparatus quality on TES3's scale: straight-line between the
-    grades Morroblivion ported, and along the last grade's slope past it.
-
-    See: docs/commentary/morrowind_runtime.md#apparatus-quality-scale
-    """
-    grades = list(zip(_TES4_TO_TES3_QUALITY, _TES4_TO_TES3_QUALITY[1:]))
-    (low, low_tes3), (high, high_tes3) = next(
-        (pair for pair in grades if quality <= pair[1][0]), grades[-1])
-    return low_tes3 + (quality - low) * (high_tes3 - low_tes3) / (high - low)
-
-
-def _source_is_tes3(export_dir: str, plugin: str) -> bool:
-    """True when the plugin's binary is TES3; its export decides without one."""
-    binary = source_binary(export_root(export_dir), plugin)
-    if binary and os.path.isfile(binary):
-        return is_tes3(binary)
-    return is_tes3_export(export_dir)
-
-
-def _apparatus_lines(export_dir: str, plugin_name: str) -> list:
-    """`id=Plugin|FormID|type|quality` for each apparatus this plugin OWNS --
-    the index byte matching its master count -- quality on TES3's scale."""
-    plugin = os.path.basename(plugin_name)
-    own = f'{len(masters_from_export_header(export_dir)):02X}'
-    tes3 = _source_is_tes3(export_dir, plugin)
-    lines = []
-    for rec in export_records(os.path.join(export_dir, _APPARATUS_EXPORT),
-                              _APPARATUS_KEYS):
-        formid = rec.get('FormID', '')
-        if formid[:2].upper() != own or not rec.get('DATA.Type'):
-            continue
-        quality = float(rec.get('DATA.Quality') or 0.0)
-        if not tes3:
-            quality = tes3_quality(quality)
-        lines.append(f"{rec.get('EditorID') or formid}={plugin}|{formid}|"
-                     f"{rec['DATA.Type']}|{quality:g}")
-    return lines
-
-
-def stage_apparatus_table(export_dir: str, output_path: str,
-                          plugin_name: str) -> int:
-    """Write `APPA.txt` for a plugin owning any apparatus, TES3 or TES4 -- the
-    ONLY table a TES4-format plugin stages. Returns files written.
-
-    See: docs/commentary/morrowind_runtime.md#alchemy-apparatus
-    """
-    lines = _apparatus_lines(export_dir, plugin_name)
-    out_dir = sidecar_dir(output_path, plugin_name)
-    if lines:
-        os.makedirs(out_dir, exist_ok=True)
-    return _write_lines(os.path.join(out_dir, APPARATUS_TABLE), lines)
 
 
 def plugin_stem(plugin_name: str) -> str:
@@ -951,28 +885,36 @@ def _crime_lines() -> list:
     return default_crime_rows()
 
 
+def _apparatus(export_dir: str, output_path: str, plugin_name: str,
+               gathered=None) -> int:
+    """TESRuntime's apparatus sidecar, imported late: `record_types.apparatus`
+    reads this module's export helpers at import."""
+    from ..record_types.apparatus import write_apparatus_sidecar
+    return write_apparatus_sidecar(export_dir, output_path, plugin_name,
+                                   gathered)
+
+
 def write_morrowind_sidecar(export_dir: str, output_path: str,
                             plugin_name: str, writer=None) -> int:
     """Stage this plugin's dialogue and tables into its SKSE sidecar folder,
     and with a `writer`, add its journal quests to the plugin being written.
 
-    Returns files staged. A source that is not TES3 stages its apparatus table
-    alone. The compat patch holds no dialogue of its own yet stages anyway: it
+    Returns files staged. A source that is not TES3 stages only its
+    TESRuntime apparatus sidecar. The compat patch holds no dialogue of its own yet stages anyway: it
     alone carries vanilla's GLOBs, and a global no sidecar holds makes the
     condition testing it PASS.
     See: docs/commentary/tes4_export_morrowind.md#globals-are-always-filled
     """
-    apparatus = stage_apparatus_table(export_dir, output_path, plugin_name)
     if not (is_tes3_export(export_dir)
             or os.path.basename(plugin_name) == PATCH_NAME):
-        return apparatus
+        return _apparatus(export_dir, output_path, plugin_name)
     present = [name for name in _EXPORT_DIALOGUE
                if os.path.isfile(os.path.join(export_dir, name))]
     out_dir = sidecar_dir(output_path, plugin_name)
     os.makedirs(out_dir, exist_ok=True)
     chain = plugin_chain(export_root(export_dir), plugin_name)
     gathered = gather(chain) if chain else {}
-    staged = (apparatus
+    staged = (_apparatus(export_dir, output_path, plugin_name, gathered)
               + _stage_dialogue(export_dir, out_dir, present, chain, gathered)
               + write_script_tables(export_dir, out_dir, plugin_name,
                                     gathered)

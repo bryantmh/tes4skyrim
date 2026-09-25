@@ -38,6 +38,7 @@ from .overrides.manifest import write_manifest
 from .overrides.nested import (build_nested_overrides)
 from .dialogue.arrest import morrowind_arrest_topic
 from .dialogue.groups import build_dialog_groups
+from .runtime_sidecars import sweep_stale_sidecars
 from .base.owned_records import (
     WELL_KNOWN_PROPERTIES,
 )
@@ -254,6 +255,9 @@ def run_finalize_phases(st, export_dir: str, phase_done,
     print(f"Wrote {st.output_path} ({file_size:,} bytes)")
 
     _write_seq_file(st.output_path, st.sge_quest_fids)
+    stale = sweep_stale_sidecars(st.output_path)
+    if stale:
+        print(f"  Removed {stale} stale runtime sidecar file(s)")
 
     set_formid_index_offset(0)
 

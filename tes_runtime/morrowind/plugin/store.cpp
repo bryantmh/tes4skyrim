@@ -234,12 +234,12 @@ std::string ReadFile(const std::string& path) {
 namespace {
 
 // The staged tables whose rows name a BASE record as `...Plugin.esm|FormID...`
-// -- a quest, a base object, an item, a faction, a GLOB, an apparatus. A base
+// -- a quest, a base object, an item, a faction, a GLOB. A base
 // record resolves whenever its plugin is loaded; a placed reference does not
 // while its cell is unloaded, which is why SCPT_instances is not here.
 constexpr const char* kOwnFormTables[] = {
     "quests_formid.txt", "bases_formid.txt", "items_formid.txt",
-    "factions_formid.txt", "GLOB.txt", "APPA.txt"};
+    "factions_formid.txt", "GLOB.txt"};
 
 // `Plugin.esm|FormID` out of one row's value, when the file is `plugin`'s own.
 // The file is whatever follows the last ',' before the first '|' (GLOB rows

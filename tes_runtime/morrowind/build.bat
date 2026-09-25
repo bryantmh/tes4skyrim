@@ -1,11 +1,10 @@
 @echo off
 REM Build MorrowindRuntime.dll into ..\dist.
 REM
-REM Its own DLL, apart from the other runtimes, for two reasons: it links
-REM vendored GPL-3.0 OpenMW that must stay out of their binaries, and a fault
-REM in a script interpreter must not take the jails, guns or the animation
-REM cache down with it. It compiles the MIT sources in ..\common like every
-REM other runtime; MIT code may go into a GPL binary, never the reverse.
+REM Its own DLL, apart from the other runtimes: it links vendored GPL-3.0
+REM OpenMW, and a fault in a script interpreter must not take the jails,
+REM guns or the animation cache down with it. It compiles the MIT sources in
+REM ..\common like every other runtime; MIT code may go into a GPL binary.
 REM See docs/commentary/morrowind_runtime.md#licensing
 REM
 REM Standalone: no SKSE source tree, no CMake, no vcpkg. Everything from the
@@ -15,8 +14,8 @@ REM
 REM Usage:  build.bat            full plugin -> ..\dist\MorrowindRuntime.dll
 REM         build.bat openmw     compile the vendored OpenMW subset ONLY
 REM                              (the Phase 0 gate: does it build standalone?)
-REM         build.bat test       the headless gates: store, filter, session,
-REM                              script and alchemy
+REM         build.bat test       the headless gates: store, filter, session
+REM                              and script
 
 setlocal
 call "%~dp0..\common\msvc.bat"
@@ -65,6 +64,7 @@ REM built only by `build.bat test`.
 echo [build] compiling plugin...
 cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\scope.cpp ^
    "%COMMON%\log.cpp" "%COMMON%\paths.cpp" "%COMMON%\addresses.cpp" plugin\menu.cpp ^
+   "%COMMON%\ui_message.cpp" "%COMMON%\crafting_client.cpp" ^
    plugin\filter.cpp plugin\session.cpp plugin\activation.cpp ^
    plugin\game_actor.cpp plugin\conversation.cpp ^
    plugin\script_context.cpp plugin\dialogue_state.cpp ^
@@ -82,7 +82,6 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\scope.cpp ^
    plugin\game_calls_query.cpp plugin\game_calls_spell.cpp ^
    plugin\game_calls_message.cpp plugin\game_calls_control.cpp ^
    plugin\game_calls_state.cpp plugin\game_calls_crime.cpp ^
-   plugin\alchemy.cpp plugin\alchemy_hooks.cpp plugin\crafting.cpp ^
    plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
@@ -118,8 +117,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\scope.cpp plugin\filter.cpp ^
    plugin\object_script.cpp ^
    plugin\object_tick.cpp plugin\main_thread.cpp ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
-   plugin\travel.cpp plugin\script_test.cpp ^
-   plugin\alchemy.cpp plugin\alchemy_test.cpp /Fo:objt\
+   plugin\travel.cpp plugin\script_test.cpp /Fo:objt\
 if errorlevel 1 (
     echo [build] ERROR: test compilation failed
     exit /b 1
@@ -172,14 +170,7 @@ if errorlevel 1 (
     echo [build] ERROR: script_test link failed
     exit /b 1
 )
-link /nologo /OUT:alchemy_test.exe objt\alchemy.obj objt\alchemy_test.obj ^
-     objt\store.obj objt\scope.obj objt\log.obj objt\paths.obj objt\script_tables.obj ^
-     kernel32.lib user32.lib shell32.lib ole32.lib
-if errorlevel 1 (
-    echo [build] ERROR: alchemy_test link failed
-    exit /b 1
-)
-echo [build] OK -^> %~dp0store_test.exe, filter_test.exe, session_test.exe, script_test.exe, alchemy_test.exe
+echo [build] OK -^> %~dp0store_test.exe, filter_test.exe, session_test.exe, script_test.exe
 
 :done
 

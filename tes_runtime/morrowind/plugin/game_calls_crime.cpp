@@ -22,6 +22,7 @@
 #include "log.h"
 #include "main_thread.h"
 #include "menu.h"
+#include "ui_message.h"
 
 namespace tesruntime::mw {
 namespace gamecalls {

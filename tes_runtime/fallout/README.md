@@ -1,6 +1,48 @@
 # FalloutRuntime
 
-What a Fallout 3 / New Vegas conversion needs at runtime.
+**Makes Fallout 3 and New Vegas guns work like guns.** Skyrim only knows
+swords, bows and crossbows; FalloutRuntime teaches it pistols, rifles and
+automatic weapons.
+
+## What it does for you
+
+- **Guns are held and animated as guns.** Each converted weapon uses its own
+  Fallout stance and animations instead of being treated like a crossbow.
+- **Real gunfire.** Each shot fires when the gun's animation fires it, so an
+  automatic weapon sprays at its real rate instead of Skyrim's one-bolt pace.
+- **Magazines and reloading.** Guns fire until their magazine is empty, then
+  reload. Press the reload key (default **mouse button 4**) to reload early.
+- **The right ammo.** A gun only fires ammunition it accepts. If you're
+  holding the wrong kind, it swaps to one you carry; with none, you hear the
+  empty click.
+- **Iron sights.** Hold the zoom key (default **right mouse**) to raise the gun
+  and aim down its sights.
+- **Moving parts.** Slides, bolts and magazines move when the gun fires and
+  reloads.
+
+### Changing the keys
+
+Create `Data\SKSE\Plugins\FalloutRuntime\FalloutRuntime.ini` with the
+[virtual-key code](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)
+of the key you want, in decimal:
+
+```ini
+[Guns]
+ReloadKey=82
+ZoomKey=2
+```
+
+## Should I keep it enabled?
+
+Yes, if you play Fallout 3 or New Vegas. Without it, Fallout guns can't be
+fired properly. It does nothing in other games.
+
+**Still in progress:** the on-screen ammo counter and severed limbs are not
+switched on yet.
+
+---
+
+## For developers
 
 - **Gun routing** (`guns.cpp`): a WEAP listed in a `<plugin>.guns.json` sidecar
   gets hand type 13 and the `iGun*` graph variables the patched humanoid graphs
@@ -16,9 +58,6 @@ What a Fallout 3 / New Vegas conversion needs at runtime.
   [asset_convert_falloutnv.md](../../docs/commentary/asset_convert_falloutnv.md#dismemberment)
 
 Reads `Data\SKSE\Plugins\FalloutRuntime\*.guns.json` and the optional
-`FalloutRuntime.ini` there (`[Guns] ReloadKey=`, `ZoomKey=`, virtual-key codes).
-Log: `FalloutRuntime.log`.
-
-## Building
+`FalloutRuntime.ini` there. Log: `FalloutRuntime.log`.
 
 `build.bat` → `..\dist\FalloutRuntime.dll`.

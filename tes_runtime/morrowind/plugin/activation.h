@@ -69,7 +69,7 @@ std::size_t LoadActorIndexFrom(const std::string& root);
 
 // The engine-backed check `SetSidecarLoadedCheck` takes: false only when one
 // of the folder's own base records -- an indexed actor, else a staged quest,
-// object, item, faction, GLOB or apparatus -- proves its plugin is absent from
+// object, item, faction or GLOB -- proves its plugin is absent from
 // this load order.
 bool SidecarPluginLoaded(const std::string& root, const std::string& plugin);
 
