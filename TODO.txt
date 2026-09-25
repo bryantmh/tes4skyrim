@@ -35,7 +35,10 @@ Later Issues:
 		DLC ESPs: effects cloned from a master get no art (lookup reads only the plugin's own meshes)
 		Rebuild and test Nehrim (its own codes: BA01-BA10, DISE, DUMY)
 		Vanilla-effect clones and scripted bound-item clones have no name or menu art
-		Later: spell selling, spellmaking, enchanting altar
+		Later: spellmaking, enchanting altar (spell selling done: merchants sell spell tomes through barter)
+		Spell tomes: a dependent plugin's Spell[] override of a master's merchant does not update that merchant's tomes
+
+	17 - Weapon and armor degradation through TESRuntime, plus a Repair service for Oblivion and Morrowind merchants, always in a Skyrim-styled repair window
 
 	9 - Make horses rideable
 
@@ -94,3 +97,6 @@ Morrowind:
 	2) Water missing in interiors with it flagged
 	3) Magic effect visuals: remap from Skyrim; shields have the same cloak bug
 	4) 19 magic effects with no Skyrim mechanism await the MorrowindRuntime
+	6) Enchanting service: the NPC should enchant for a fee at the NPC's skill, not the player's (fee = enchantment cost x fEnchantmentValueMult, barter-adjusted; swap the player's Enchanting for the NPC's while the menu is open; no player skill gain)
+	7) Spellmaking service row (sSpellmakingMenuTitle) has no Skyrim menu yet
+	8) Repair service row (sRepair) waits on the degradation/repair work (Later Issues 17)

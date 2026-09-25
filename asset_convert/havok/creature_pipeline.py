@@ -29,7 +29,8 @@ import re
 import shutil
 
 from asset_convert.havok.creature_sounds import sound_data_by_folder
-from asset_convert.havok.creature_split_morrowind import split_creatures
+from asset_convert.havok.creature_split_morrowind import (source_dirs,
+                                                          split_creatures)
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
@@ -88,9 +89,11 @@ def _clear_stale_nifs(proj_dir):
 
 
 def _convert_parts(creature_dir, proj_dir, parts_dir, tex_fallback,
-                   converted, attachments, nif_failures):
+                   converted, attachments, nif_failures, named_parts):
     """Convert every source NIF: skeletons in place, parts into staging.
 
+    A `skeleton*` NIF is a skeleton unless a CREA names it in NIFZ
+    (`named_parts`): Morrowind's skeleton creature ships `skeleton_body.nif`.
     Attachment nodes are read from the SOURCE first, because convert_nif
     strips the `Prn` extra data the merge needs.
     """
@@ -101,7 +104,7 @@ def _convert_parts(creature_dir, proj_dir, parts_dir, tex_fallback,
         if not fn.lower().endswith('.nif'):
             continue
         src = os.path.join(creature_dir, fn)
-        if fn.lower().startswith('skeleton'):
+        if fn.lower().startswith('skeleton') and fn.lower() not in named_parts:
             dst = os.path.join(proj_dir, 'character assets', fn.lower())
             convert_nif(src, dst, creature=True, tex_fallback=tex_fallback)
             continue
@@ -206,7 +209,8 @@ def _convert_creature(creature_dir: str, name: str, out_meshes_dir: str,
             nif_failures.append((pile_name, f'{type(e).__name__}: {e}'))
     manifest['death_pile'] = death_pile
     _convert_parts(creature_dir, proj_dir, parts_dir, tex_fallback,
-                   converted, attachments, nif_failures)
+                   converted, attachments, nif_failures,
+                   {p for pset in part_sets or () for p in pset})
 
     # A single Oblivion creature folder holds several DISTINCT creatures (dog,
     # wolf, skeletal-hound) each with its own NIFZ part set.  Merge EACH set
@@ -485,10 +489,12 @@ def _creature_folders(export_dir: str, meshes_root: str, names, log) -> list:
 
     A creature is ANY folder holding a skeleton.nif plus .kf animations, at
     any depth: Morrowind_ob nests 67 such folders where Oblivion keeps them
-    flat, and a depth-1 scan found 16 of them.
+    flat, and a depth-1 scan found 16 of them. A folder of Morrowind source
+    models no CREA points at is skipped: its `skeleton.nif` is a model.
     See: docs/commentary/tes4_export_morrowind.md#creatures
     """
     referenced = _crea_model_dirs(export_dir)
+    sources = source_dirs(export_dir) - referenced
     wanted = {n.lower() for n in names} if names else None
     candidates = []
     for cdir, _subdirs, files in os.walk(meshes_root):
@@ -505,6 +511,8 @@ def _creature_folders(export_dir: str, meshes_root: str, names, log) -> list:
             log(f'  [skip] {name}: no animations')
             continue
         rel = os.path.relpath(cdir, meshes_root).lower().replace('/', '\\')
+        if rel in sources:
+            continue
         candidates.append((cdir, name, rel in referenced))
     return candidates
 

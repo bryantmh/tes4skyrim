@@ -1256,10 +1256,64 @@ creature was split this run.
 `creature_projects.json`, so nothing could load them. Deleting them under both
 `export/` and `output/` dropped the creature stage from 4 errors to 2 -- the
 `dremora` and `lordvivec` "no idle clip" failures were purely the orphans. The
-2 that remain (`skeleton`, `r`) are live records and a separate problem.
+2 that remained (`skeleton`, `r`) are covered under
+[bipedal creatures](#bipedal-creatures).
 
 Check with `_sources` rather than by eye: a folder whose name is a substring of
 other records (`guar`) still greps as referenced when it is not.
+
+### <a id="bipedal-creatures"></a>Bipedal creatures play the humanoid animation
+
+A creature with the Bipedal flag (TES4 `ACBS.Flags` bit 0x01, carried through
+unchanged) animates like an NPC: the engine loads `xbase_anim.kf` first and
+the creature's own `x<name>.kf` on top, own groups winning (OpenMW
+`creatureanimation.cpp`, `addAnimSource(mXbaseanim)` under `Bipedal`). The
+split read only the creature's own file, so on Morrowind.esm all four bipedal
+models (26 records) came out broken:
+
+| Model | Records | Own groups | Before |
+|---|---|---|---|
+| Skeleton | 14 | `walkforward1h` | "no idle clip" |
+| Dremora | 8 | `death1`..`death5` | deaths only |
+| Golden Saint | 3 | none (no `x` .kf) | no clips |
+| Lord Vivec | 1 | `idle2` | `idle2` only |
+
+With the layer the split writes 44 (Golden Saint) to 48 (Dremora) clips: idle, the full gait set, stance idles,
+recoil/stagger/death, equip + attacks for hand-to-hand, one-hand, two-hand and
+bow, the three cast deliveries, and block. From the base file only the groups a
+claim table reads are written; its other ~100 groups (`sneak*`, `*1h` gaits,
+`idle3`..`idle9`) would convert as unused clips.
+
+Weapon, spellcast and shield groups pack several actions on one span, with
+`<action> start`, `<action> hit` and so on as the group's events. Each action
+is cut into its own clip: an attack runs `<a> start`..`<a> large follow stop`
+(contiguous: the large follow-through starts one frame after `<a> hit`) with
+`hit` at `<a> hit`; a cast runs `<d> start`..`<d> stop` with `hit` at
+`<d> release`; the bow's `shoot` hits at `shoot release`. Stems follow the
+Oblivion stance prefixes (`onehandattackchop`, `twohandequip`,
+`handtohandidle`) so `attack_stance` gates each attack on the equipped weapon.
+`weapontwowide` shares the `twohand` prefix, so `weapontwohand` claims it
+first. `crossbow` and `throwweapon` have no Oblivion stance and are not cut.
+The guard is the pose at `block hit`, held for one frame.
+
+The same cutting fixes non-bipedal casters: the storm atronach's `spellcast`
+group has no plain `start`/`stop`, so it never produced a cast clip; it now
+yields `castself`, `casttarget` and `casttouch`.
+
+Two more defects surfaced here:
+
+- **The source folder was claimed as a creature.** The skeleton's source is
+  `r\Skeleton.NIF`, so `meshes\r\` holds a `skeleton.nif` and dozens of `.kf`
+  files. `_creature_folders` now skips a folder that holds a source model
+  (`source_dirs`) and that no CREA points at.
+- **The skeleton's body overwrote its bones.** The export names that body
+  `skeleton_body.nif` (`NIFZ[0]`), but the split wrote `<stem>.nif`, i.e.
+  `skeleton.nif`, over the bones-only file. The split now takes the body name
+  from the record's `NIFZ[0]`.
+- **Then the body was converted as a skeleton.** `_convert_parts` treats any
+  `skeleton*` NIF as a skeleton, deliberately: Morroblivion's horker ships
+  alternates like `skeleton_10d.nif`. A file a CREA names in NIFZ is a body
+  part whatever its name, so that authored list now overrides the prefix.
 
 ## <a id="scripts"></a>Scripts
 
