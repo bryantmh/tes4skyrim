@@ -129,4 +129,17 @@ void SetSidecarLoadedCheck(SidecarLoadedFn check);
 // A whole file as text, or "" when it cannot be read.
 std::string ReadFile(const std::string& path);
 
+// One base record a sidecar folder stages for its OWN plugin: the plugin's
+// file name as staged (`Tribunal.esm`) and the record's FormID.
+struct OwnForm {
+    std::string file;
+    std::uint32_t formId = 0;
+};
+
+// The first base record in the folder `dir` (with a trailing separator) whose
+// row names `plugin`'s own file, from the quest, base, item, faction, GLOB and
+// apparatus tables. False when no row names it.
+bool FindOwnForm(const std::string& dir, const std::string& plugin,
+                 OwnForm* out);
+
 }  // namespace mwruntime

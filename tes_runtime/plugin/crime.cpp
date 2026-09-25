@@ -67,11 +67,18 @@ struct Natives {
     RefBoolFn isInterior = nullptr;
 };
 
+// One <plugin>.crime.json, kept whole until DataLoaded: its rows resolve only
+// if its OWN plugin is loaded, which the engine cannot answer at plugin load.
+struct PendingFile {
+    std::string plugin;
+    std::vector<FileLocal> pools;
+    std::vector<PendingJail> jails;
+    std::vector<PendingAnchor> anchors;
+    std::vector<std::pair<FileLocal, FileLocal>> roots;
+};
+
 Natives g_n;
-std::vector<FileLocal> g_pendingPools;
-std::vector<PendingJail> g_pendingJails;
-std::vector<PendingAnchor> g_pendingAnchors;
-std::vector<std::pair<FileLocal, FileLocal>> g_pendingRoots;
+std::vector<PendingFile> g_pending;
 
 std::vector<void*> g_pools;
 std::vector<Jail> g_jails;
@@ -90,29 +97,61 @@ FileLocal ReadFileLocal(const Json& pair, std::size_t first = 0) {
 }
 
 void LoadSidecar(const std::string& name, const Json& doc) {
-    for (const Json& pool : doc["pools"].items()) g_pendingPools.push_back(ReadFileLocal(pool));
+    PendingFile file;
+    file.plugin = doc["plugin"].asString();
+    for (const Json& pool : doc["pools"].items()) file.pools.push_back(ReadFileLocal(pool));
     for (const Json& row : doc["world_roots"].items()) {
-        g_pendingRoots.emplace_back(ReadFileLocal(row, 0), ReadFileLocal(row, 2));
+        file.roots.emplace_back(ReadFileLocal(row, 0), ReadFileLocal(row, 2));
     }
     for (const Json& row : doc["anchors"].items()) {
         PendingAnchor a{ReadFileLocal(row, 0), ReadFileLocal(row, 2)};
         a.x = static_cast<float>(row.at(4).asNumber());
         a.y = static_cast<float>(row.at(5).asNumber());
-        g_pendingAnchors.push_back(a);
+        file.anchors.push_back(a);
     }
     for (const Json& j : doc["jails"].items()) {
         PendingJail p{ReadFileLocal(j["marker"]), ReadFileLocal(j["chest"]),
                       ReadFileLocal(j["world"])};
         p.x = static_cast<float>(j["x"].asNumber());
         p.y = static_cast<float>(j["y"].asNumber());
-        g_pendingJails.push_back(p);
+        file.jails.push_back(p);
     }
     Log("crime: %s -- %zu faction(s), %zu jail(s), %zu anchor(s)", name.c_str(),
         doc["pools"].size(), doc["jails"].size(), doc["anchors"].size());
+    g_pending.push_back(std::move(file));
 }
 
 void* ResolveForm(const FileLocal& ref) {
     return ref.file.empty() ? nullptr : FormFromFile(ref.local, ref.file);
+}
+
+// One form the file's OWN plugin defines and that exists whenever it is
+// loaded: a crime faction, a jail marker (the importer makes each persistent)
+// or an interior anchor cell. Empty when the file names none of its own.
+FileLocal OwnProbe(const PendingFile& file) {
+    for (const FileLocal& p : file.pools) {
+        if (p.file == file.plugin) return p;
+    }
+    for (const PendingJail& j : file.jails) {
+        if (j.marker.file == file.plugin) return j.marker;
+    }
+    for (const PendingAnchor& a : file.anchors) {
+        if (a.cell.file == file.plugin) return a.cell;
+    }
+    return {};
+}
+
+// 🛑 Asked ONCE per file, before any of its rows. Every row naming a plugin
+// that is not loaded is a failing GetFormFromFile, which the engine reports to
+// the Papyrus log with a stack -- measured, 9,349 errors in one second at
+// DataLoaded from the TR_Mainland and Morrowind_ob files with neither plugin
+// enabled. A file that names no form of its own cannot be ruled out, so it
+// resolves as before.
+bool OwnPluginLoaded(const PendingFile& file) {
+    const FileLocal probe = OwnProbe(file);
+    if (probe.file.empty() || ResolveForm(probe)) return true;
+    Log("crime: %s is not loaded -- its crime file is skipped", file.plugin.c_str());
+    return false;
 }
 
 std::uint32_t IdOf(void* form) { return form ? At<std::uint32_t>(form, kFormID) : 0; }
@@ -254,8 +293,36 @@ void TickThread() {
 
 bool LoadCrimeSidecars() {
     ForEachSidecar("crime.json", LoadSidecar);
-    return !g_pendingPools.empty() && !g_pendingJails.empty();
+    bool pools = false, jails = false;
+    for (const PendingFile& file : g_pending) {
+        pools |= !file.pools.empty();
+        jails |= !file.jails.empty();
+    }
+    return pools && jails;
 }
+
+namespace {
+
+// The faction, anchor and jail rows of one file whose plugin is loaded. Its
+// roots are already in, from every loaded file: an anchor's worldspace is often
+// a master's.
+std::size_t ResolveFile(const PendingFile& file) {
+    for (const FileLocal& p : file.pools) {
+        if (void* pool = ResolveForm(p)) g_pools.push_back(pool);
+    }
+    for (const PendingAnchor& a : file.anchors) {
+        const std::uint32_t cell = IdOf(ResolveForm(a.cell));
+        const std::uint32_t world = IdOf(ResolveForm(a.world));
+        if (cell && world) g_anchors[cell] = Anchor{RootOf(world), a.x, a.y};
+    }
+    for (const PendingJail& p : file.jails) {
+        Jail j{ResolveForm(p.marker), ResolveForm(p.chest), RootOf(IdOf(ResolveForm(p.world))), p.x, p.y};
+        if (j.marker && j.root) g_jails.push_back(j);
+    }
+    return file.jails.size();
+}
+
+}  // namespace
 
 void ResolveCrimeForms() {
     if (!BindNatives()) {
@@ -263,25 +330,21 @@ void ResolveCrimeForms() {
         g_pools.clear();
         return;
     }
-    for (const auto& row : g_pendingRoots) {
-        const std::uint32_t world = IdOf(ResolveForm(row.first));
-        const std::uint32_t root = IdOf(ResolveForm(row.second));
-        if (world && root) g_rootOf[world] = root;
+    std::vector<const PendingFile*> loaded;
+    for (const PendingFile& file : g_pending) {
+        if (OwnPluginLoaded(file)) loaded.push_back(&file);
     }
-    for (const FileLocal& p : g_pendingPools) {
-        if (void* pool = ResolveForm(p)) g_pools.push_back(pool);
+    for (const PendingFile* file : loaded) {
+        for (const auto& row : file->roots) {
+            const std::uint32_t world = IdOf(ResolveForm(row.first));
+            const std::uint32_t root = IdOf(ResolveForm(row.second));
+            if (world && root) g_rootOf[world] = root;
+        }
     }
-    for (const PendingAnchor& a : g_pendingAnchors) {
-        const std::uint32_t cell = IdOf(ResolveForm(a.cell));
-        const std::uint32_t world = IdOf(ResolveForm(a.world));
-        if (cell && world) g_anchors[cell] = Anchor{RootOf(world), a.x, a.y};
-    }
-    for (const PendingJail& p : g_pendingJails) {
-        Jail j{ResolveForm(p.marker), ResolveForm(p.chest), RootOf(IdOf(ResolveForm(p.world))), p.x, p.y};
-        if (j.marker && j.root) g_jails.push_back(j);
-    }
+    std::size_t staged = 0;
+    for (const PendingFile* file : loaded) staged += ResolveFile(*file);
     Log("crime: %zu faction(s), %zu of %zu jail(s), %zu anchor(s) resolved",
-        g_pools.size(), g_jails.size(), g_pendingJails.size(), g_anchors.size());
+        g_pools.size(), g_jails.size(), staged, g_anchors.size());
     if (!g_pools.empty() && !g_serveTime) {
         auto* vt = reinterpret_cast<void**>(Resolve("PlayerCharacter vtable", ids::kPlayerVtable, nullptr));
         g_serveTime = reinterpret_cast<ServeTimeFn>(PatchVtableSlot(

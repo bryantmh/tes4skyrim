@@ -407,18 +407,36 @@ std::size_t BindInstances() {
 
 std::size_t LoadActorIndex() { return LoadActorIndexFrom(SidecarDir()); }
 
+// Whether the folder's own plugin answers for one of its base records: an
+// actor from the index, else any quest, object, item, faction, GLOB or
+// apparatus row naming the plugin's own file. True when the folder names no
+// such record, which leaves nothing to prove it absent.
+//
+// 🛑 Never the actor index ALONE. A folder without one -- an incomplete
+// sidecar, a TES4 plugin's apparatus table, a leftover from an old release --
+// used to count as loaded unasked, and its staged placements then cost a
+// failing `GetFormFromFile` each, which the engine reports to the Papyrus log,
+// 256 a tick for as long as the sweep runs.
+// See: docs/commentary/morrowind_runtime.md#load-order
+bool ProvesLoaded(const std::string& dir, const std::string& plugin) {
+    const std::uint32_t sample =
+        std::strtoul(ReadFile(dir + kFileActors).c_str(), nullptr, 16);
+    if (sample) return ResolveIndex(plugin, sample) != 0xFF;
+    OwnForm own;
+    if (!FindOwnForm(dir, plugin, &own)) return true;
+    return FormFromFile(own.file.c_str(), own.formId & kLocalMask) != nullptr;
+}
+
 // Asked once per folder and remembered: the load order cannot change while
-// the game runs. A folder with no actors, or an engine that cannot be asked
-// yet, counts as loaded -- only a proven miss is dropped.
+// the game runs. An engine that cannot be asked yet counts as loaded -- only a
+// proven miss is dropped.
 bool SidecarPluginLoaded(const std::string& root, const std::string& plugin) {
     static std::unordered_map<std::string, bool> known;
     const auto it = known.find(plugin);
     if (it != known.end()) return it->second;
     if (!g_getFormFromFile) ResolveNatives();
     if (!g_vm || !g_getFormFromFile || !g_fixedString) return true;
-    const std::uint32_t sample = std::strtoul(
-        ReadFile(root + plugin + "\\" + kFileActors).c_str(), nullptr, 16);
-    const bool loaded = !sample || ResolveIndex(plugin, sample) != 0xFF;
+    const bool loaded = ProvesLoaded(root + plugin + "\\", plugin);
     if (!loaded) {
         Log("store:   %s is staged for a plugin NOT in this load order -- "
             "skipped", plugin.c_str());

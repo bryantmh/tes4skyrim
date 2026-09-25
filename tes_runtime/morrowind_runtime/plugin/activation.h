@@ -67,8 +67,10 @@ std::size_t BindInstances();
 // The same, from a caller-named root, so it is testable with no game install.
 std::size_t LoadActorIndexFrom(const std::string& root);
 
-// The engine-backed check `SetSidecarLoadedCheck` takes: false only when the
-// folder's own actors prove its plugin is absent from this load order.
+// The engine-backed check `SetSidecarLoadedCheck` takes: false only when one
+// of the folder's own base records -- an indexed actor, else a staged quest,
+// object, item, faction, GLOB or apparatus -- proves its plugin is absent from
+// this load order.
 bool SidecarPluginLoaded(const std::string& root, const std::string& plugin);
 
 // How many actors are indexed.

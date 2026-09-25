@@ -255,6 +255,56 @@ std::string ReadFile(const std::string& path) {
 }
 
 namespace {
+
+// The staged tables whose rows name a BASE record as `...Plugin.esm|FormID...`
+// -- a quest, a base object, an item, a faction, a GLOB, an apparatus. A base
+// record resolves whenever its plugin is loaded; a placed reference does not
+// while its cell is unloaded, which is why SCPT_instances is not here.
+constexpr const char* kOwnFormTables[] = {
+    "quests_formid.txt", "bases_formid.txt", "items_formid.txt",
+    "factions_formid.txt", "GLOB.txt", "APPA.txt"};
+
+// `Plugin.esm|FormID` out of one row's value, when the file is `plugin`'s own.
+// The file is whatever follows the last ',' before the first '|' (GLOB rows
+// carry `type,value,` ahead of it).
+bool OwnFormIn(const std::string& value, const std::string& plugin,
+               OwnForm* out) {
+    const std::size_t bar = value.find('|');
+    if (bar == std::string::npos) return false;
+    const std::size_t comma = value.rfind(',', bar);
+    const std::size_t start = comma == std::string::npos ? 0 : comma + 1;
+    const std::string file = value.substr(start, bar - start);
+    const std::size_t dot = file.rfind('.');
+    if (dot == std::string::npos || Lower(file.substr(0, dot)) != Lower(plugin)) {
+        return false;
+    }
+    const std::uint32_t formId = static_cast<std::uint32_t>(
+        std::strtoul(value.c_str() + bar + 1, nullptr, 16));
+    if (!(formId & 0x00FFFFFF)) return false;
+    out->file = file;
+    out->formId = formId;
+    return true;
+}
+
+}  // namespace
+
+bool FindOwnForm(const std::string& dir, const std::string& plugin,
+                 OwnForm* out) {
+    for (const char* table : kOwnFormTables) {
+        std::ifstream in(dir + table, std::ios::binary);
+        std::string line;
+        while (std::getline(in, line)) {
+            const std::size_t eq = line.find('=');
+            if (eq != std::string::npos &&
+                OwnFormIn(line.substr(eq + 1), plugin, out)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+namespace {
 SidecarLoadedFn g_sidecarLoaded = nullptr;
 }  // namespace
 

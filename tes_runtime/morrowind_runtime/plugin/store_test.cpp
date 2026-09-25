@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -55,6 +56,46 @@ void TestParse() {
     Check(recs.size() == 2, "two records");
     Check(recs[0].at("Signature") == "MWDI", "first is MWDI");
     Check(recs[1].at("EditorID") == "i1", "second id");
+}
+
+// Writes `text` to `dir/name`, creating `dir`.
+void WriteTable(const std::filesystem::path& dir, const char* name,
+                const char* text) {
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / name, std::ios::binary) << text;
+}
+
+// The load check's probe: a base record naming the folder's OWN plugin, found
+// past rows that name a master, and nothing at all for a folder naming none.
+void TestOwnForm() {
+    std::printf("own form\n");
+    const auto root = std::filesystem::temp_directory_path() / "mwrt_ownform";
+    std::filesystem::remove_all(root);
+    WriteTable(root / "Tribunal", "bases_formid.txt",
+               "Gold_001=Morrowind.esm|003FC70C\r\n"
+               "Some_Thing=Tribunal.esm|0200ABCD\r\n");
+    WriteTable(root / "Tribunal", "GLOB.txt",
+               "PlagueActivate=s,0,Tribunal.esm|013BFD92\r\n");
+    WriteTable(root / "Oblivion", "APPA.txt",
+               "SE38Item8=Oblivion.esm|00081E6F|0|0.5\r\n");
+    WriteTable(root / "Stale", "items_formid.txt",
+               "Gold_001=Morrowind.esm|003FC70C\r\n");
+
+    OwnForm own;
+    const std::string base = root.string() + "\\";
+    Check(FindOwnForm(base + "Tribunal\\", "Tribunal", &own) &&
+              own.file == "Tribunal.esm" && own.formId == 0x0200ABCD,
+          "skips a master's row for the folder's own");
+    Check(FindOwnForm(base + "Oblivion\\", "oblivion", &own) &&
+              own.file == "Oblivion.esm" && own.formId == 0x00081E6F,
+          "an apparatus row, matched case-blind");
+    Check(!FindOwnForm(base + "Stale\\", "Stale", &own),
+          "no row names the folder's plugin");
+    WriteTable(root / "Globals", "GLOB.txt", "X=s,0,Globals.esp|00000D62\r\n");
+    Check(FindOwnForm(base + "Globals\\", "Globals", &own) &&
+              own.file == "Globals.esp" && own.formId == 0xD62,
+          "a GLOB row's form after its type and value");
+    std::filesystem::remove_all(root);
 }
 
 struct Corpus {
@@ -135,6 +176,7 @@ int main(int argc, char** argv) {
     using namespace mwruntime;
     TestUnescape();
     TestParse();
+    TestOwnForm();
 
     if (argc > 2 && std::strcmp(argv[1], "--sidecar") == 0) {
         // The deployed layout: <root>/<plugin>/{DIAL,INFO}.txt, walked the way

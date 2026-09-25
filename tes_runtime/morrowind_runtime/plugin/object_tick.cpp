@@ -25,6 +25,16 @@ constexpr float kTickRate = 30.0f;
 //: The seconds one tick covers, which GetSecondsPassed answers with.
 constexpr float kTickDelta = 1.0f / kTickRate;
 
+// The tick thread's wait, in WHOLE milliseconds.
+//
+// 🛑 Never a float duration. `sleep_for` adds it to steady_clock's
+// nanoseconds since boot, so the deadline becomes a float; past ~156 hours of
+// uptime a float cannot hold 33 ms at that size, the sleep returns at once,
+// and the spinning thread re-posts every tick inside the SAME task drain --
+// measured as 1-3 fps on a player's PC while menus held 60.
+constexpr std::chrono::milliseconds kTickSleep{
+    static_cast<long long>(1000.0f / kTickRate)};
+
 // An elapsed span this long is a load screen or a stall; catching up on it
 // would run hundreds of ticks at once, so it is clamped instead.
 constexpr float kMaxCatchUp = 0.25f;
@@ -277,8 +287,7 @@ void RunOneTick() {
 // See: docs/plans/morrowind_object_scripts.md#tick-rate
 void TickThread() {
     while (g_running) {
-        std::this_thread::sleep_for(
-            std::chrono::duration<float>(kTickDelta));
+        std::this_thread::sleep_for(kTickSleep);
         if (!g_running) return;
         if (g_queued.exchange(true)) continue;
         PostToMainThread([]() {
