@@ -118,8 +118,10 @@ def stage(ctx, call) -> str:
     """SetStage / GetStage / GetStageDone.
 
     TES4 spells the quest as the first argument and the stage as the second;
-    Papyrus makes the quest the receiver.
+    Papyrus makes the quest the receiver. SetStage on a quest with a script is
+    its `TES4SetStage`, which keeps the variables the implied start would reset.
     See: docs/commentary/script_convert.md#quest-property-never-downgrades
+    See: docs/commentary/script_convert.md#setstage-start-keeps-variables
     """
     parts = ctx.arg_srcs()
     quest_src = parts[0].strip() if parts else (call.ref or '')
@@ -129,7 +131,11 @@ def stage(ctx, call) -> str:
     if not typed_already(ctx.sc.property_refs, prop):
         ctx.sc.property_refs[prop] = 'Quest'
     if call.name == 'setstage':
-        return f'{prop}.SetStage({call.arg(1, "0") if len(parts) > 1 else 0})'
+        stage_no = call.arg(1, "0") if len(parts) > 1 else 0
+        script = ctx.xref.get_quest_script_type(quest_src) if ctx.xref else 'Quest'
+        if script != 'Quest':
+            return f'{script}.TES4SetStage({prop} as {script}, {stage_no})'
+        return f'{prop}.SetStage({stage_no})'
     # GetStageDone asks whether a specific stage has run; GetStage reads the
     # current stage number, and TES4 writes it with no stage operand.
     if len(parts) > 1:
@@ -1315,7 +1321,6 @@ _AV_READ = frozenset({'getactorvalue', 'getav'})
 
 #: AVs the engine refuses to Force/Mod/Damage/Restore from Papyrus; only SetActorValue writes them.
 _AV_SET_ONLY = frozenset({'aggression', 'confidence', 'morality', 'mood', 'assistance'})
-
 
 
 @command(*sorted(ACTOR_VALUE_FUNCTIONS))

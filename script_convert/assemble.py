@@ -358,20 +358,29 @@ def properties(conv, tree) -> list:
 
 
 def quest_restart(conv, tree, extends: str, name: str) -> list:
-    """`TES4Start(quest)`: start a quest script's quest, keeping its TES4 variables.
+    """`TES4Start(quest)` and `TES4SetStage(quest, stage)`, keeping TES4 variables.
 
-    Skyrim's `Start()` on a stopped quest re-initialises its scripts; TES4 kept
-    every quest variable across StopQuest/StartQuest.  Global, so the saved
-    values live in the caller's frame rather than the instance Start replaces.
+    Skyrim's `Start()` on a stopped quest re-initialises its scripts, and so
+    does a `SetStage` that starts it; TES4 kept every quest variable across
+    both.  Global, so the saved values live in the caller's frame rather than
+    the instance Start replaces.
     See: docs/commentary/script_convert.md#stopquest-converts-stop-run-bit
+    See: docs/commentary/script_convert.md#setstage-start-keeps-variables
     """
     if extends != 'Quest':
         return []
     kept = variable_properties(conv, tree)
-    out = ['', f'Function TES4Start({papyrus_script_name(name)} akQuest) Global']
+    script = papyrus_script_name(name)
+    out = ['', f'Function TES4Start({script} akQuest) Global']
     out += [f'  {ptype} v{i} = akQuest.{prop}' for i, (prop, ptype) in enumerate(kept)]
     out.append('  akQuest.Start()')
     out += [f'  akQuest.{prop} = v{i}' for i, (prop, _t) in enumerate(kept)]
+    out += ['EndFunction', '',
+            f'Bool Function TES4SetStage({script} akQuest, Int aiStage) Global',
+            '  If !akQuest.IsRunning()',
+            '    TES4Start(akQuest)',
+            '  EndIf',
+            '  Return akQuest.SetStage(aiStage)']
     return out + ['EndFunction']
 
 

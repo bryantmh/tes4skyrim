@@ -2153,6 +2153,23 @@ REPEATING registration and `RegisterForUpdate(0)` shipped in 45 scripts as an
 every-frame storm, ended only by the engine stop that the reverted design
 removed. Measured on the shipped build: 0 repeating registrations.
 
+## A SetStage that starts a quest keeps its variables (2026-09-25, unconfirmed in game)
+<a id="setstage-start-keeps-variables"></a>
+
+`SetStage` on a stopped quest starts it, so it resets the quest script's `Auto`
+properties exactly as `Start()` does. TES4 authors write a quest's variables
+before its first stage: the Shivering Isles door (`SEDoorToShiveringIslesScript`)
+stores the leveled Gatekeeper in `SE02.GatekeeperRef`, and SE02 only starts
+later at `SetStage SE02 5` in the waiting room. The start wiped it, and
+`SE02OrcCaptainScript` logged `Cannot call IsEssential() on a None object` every
+tick. It never made the Gatekeeper invincible, never put him in
+`SE02SpecialCombatFaction`, and never started the staged fight.
+
+**Fix:** `SetStage` on a quest with a script converts to
+`TES4_<Script>.TES4SetStage(<quest> as TES4_<Script>, N)`. That Global sits beside
+`TES4Start`, routes a stopped quest through `TES4Start`, then calls `SetStage`.
+`conversation_sequence` recognizes both call shapes.
+
 ## ResetInterior sends moved-in references home (2026-09-24, confirmed in game)
 <a id="resetinterior-sends-moved-refs-home"></a>
 
