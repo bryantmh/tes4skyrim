@@ -4612,6 +4612,25 @@ class TestLuminanceGlowMapsBecomeRGB:
         assert len(blob) - 128 == total, (
             f'mip chain truncated: body {len(blob)-128} != expected {total}')
 
+    @pytest.mark.skipif(not Path(SRC).exists(),
+                        reason='Oblivion candle glow map not available')
+    def test_hard_linked_copy_receives_the_fix(self, tmp_path):
+        """A deployed hard link to the output file must see the grey glow map.
+
+        See: docs/commentary/asset_convert_texture.md#texture-repairs-write-in-place
+        """
+        import shutil as _sh
+        from asset_convert.texture import luminance_textures as lt
+
+        out = tmp_path / 'candle_g.dds'
+        deployed = tmp_path / 'deployed_candle_g.dds'
+        _sh.copy2(self.SRC, str(out))
+        os.link(str(out), str(deployed))
+        assert lt.convert_file(str(out)) is True
+        assert not lt.is_luminance(str(deployed)), (
+            'the deployed link still holds the L8 original -- it renders red')
+        assert os.stat(str(out)).st_nlink == 2, 'the conversion cut the link'
+
 
 class TestFallbackWhiteIsNotAFlame:
     r"""White-by-FALLBACK must still take the soft depth fade.

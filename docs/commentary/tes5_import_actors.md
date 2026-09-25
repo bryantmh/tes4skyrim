@@ -25,7 +25,7 @@ them does.
 - [FACT relations: Ally and Friend are not interchangeable](#faction-relations)
 - [Trainers](#trainers)
 - [Health is written as an OFFSET, not a pool](#health-offset)
-- [Morrowind health is absolute, so its level term is dropped](#morrowind-health-is-absolute)
+- [Morrowind health is absolute — the same manual-NPC rule](#morrowind-health-is-absolute)
 - [Hair color: a generated CLFM per authored RGB](#hair-color)
 - [NAM5/NAM6/NAM7/NAM8 are all required](#required-nam-subrecords)
 - [Head parts: RNAM decides who can see the hair](#hdpt-valid-races)
@@ -457,38 +457,73 @@ skill — which is why `create_trainer_records` mints one per trainer and
 
 ## <a id="health-offset"></a>Health is written as an OFFSET, not a pool
 
+**Code:** `tes5_import/record_types/npc.py` (`_health_and_level`),
+`actor_common.py` (`convert_CLAS`), audited by `tools/audit/actor_health_audit.py`.
+
 Every playable/Dremora RACE that `RACE_MAP` targets ships Starting Health 50.0
-(verified: all 11 target races in Skyrim.esm decode to 50.0/50.0/50.0), and the
-engine derives an actor's max health as
+(verified: all 11 target races in Skyrim.esm decode to 50.0/50.0/50.0). The
+engine's max health depends on ACBS bit 0x10, **Auto calc stats**
+(SkyrimSE 1.6.1170 disassembly):
 
-    StartingHealth + HealthOffset + (Level - 1) * fNPCHealthLevelBonus
+| NPC | Health | Where |
+|---|---|---|
+| manual (0x10 clear) | `StartingHealth + HealthOffset` — no level term | TESNPC ActorValueOwner getter `0x3c0130`, Health case → `0x3a9000` reads the ACBS offset |
+| auto-calc (0x10 set) | `StartingHealth + HealthOffset + (L-1)*fNPCHealthLevelBonus + (L-1)*iAVDhmsLevelUp*wH/(wH+wM+wS)` | `0x3bf630`, run only when vtable slot 62 (`0x3a8e10`: form type NPC_ and ACBS & 0x10) is true |
 
-with `fNPCHealthLevelBonus` = 5.0 (Skyrim.esm GMST). `ACBS.HealthOffset` (int16
-at byte 20) is the AUTHORED control; `DNAM.Health` is only a cache the engine
-recomputes — vanilla proves it is not a function of the record at all (52 groups
+`fNPCHealthLevelBonus` = 5.0, `iAVDhmsLevelUp` = 10 (Skyrim.esm GMSTs); `wH/wM/wS`
+are CLAS DATA bytes 32–34, the class's Health/Magicka/Stamina weights. The player
+(FormID 7) reads a different GMST at the same site. The auto-calc formula matches
+935 of 935 vanilla auto-calc, non-PCLM, untemplated NPCs (899 exact, 34 off by one
+from the distributor's rounding, and 2 corpses whose negative pool is stored as a
+wrapped uint16). The class share goes to magicka and stamina too; a total weight of
+0 skips the distribution entirely (checked at `0x3c516b`).
+
+`ACBS.HealthOffset` (int16 at byte 20) is the AUTHORED control; `DNAM.Health` is
+only a cache — vanilla proves it is not a function of the record at all (52 groups
 of NPCs with identical race/class/level/offset carry different DNAM.Health, e.g.
 55 / 51 / 0 / 20971), matching UESP's "otherwise seems to be random".
 
-TES4 `DATA.Health` is the actor's FINAL hit-point pool, already fully
-calculated. So a faithful conversion pins the engine's result to that exact
-number by solving for the offset rather than copying the pool into the cache.
+TES4 `DATA.Health` is the actor's FINAL hit-point pool: typed into the CS for a
+fixed-stat NPC, or the CS's calculated result for an auto-calc one (UESP
+Oblivion:NPCs#Health). So a faithful conversion solves for the offset:
 
-When the required offset overflows int16, Level is raised so its bonus absorbs
+- **manual**: `offset = pool − 50`, Level untouched.
+- **auto-calc**: `offset = pool − 50 − (L−1)*5`. Converted classes write zero HMS
+  weights, the same as creature classes, so no class share lands on top.
+- **PC Level Mult**: `offset = pool − 50`; the level term tracks the player.
+
+The old rule subtracted `(L−1)*5` from every NPC. A manual NPC got that much less
+health, and every one whose pool was below `50 + (L−1)*5` spawned dead: Oblivion
+had 9 (Thaurron, level 10, pool 40 → −5; Torbern; Tandilwe) and 299 more low, and
+Nehrim had 67 dead and 975 low. The 1/1/1 class weights meanwhile added
+`(L−1)*10/3` to each auto-calc NPC (Oblivion 397 of 440 too high, e.g. Umbra
+394 → 557). After the fix, `actor_health_audit.py` measures 1,410 of 1,413
+fixed-level Oblivion NPCs exact and 0 spawning dead.
+
+When an auto-calc offset overflows int16, Level is raised so its bonus absorbs
 the surplus and the offset is re-solved for the remainder, capped at the U16
 field limit. That division rounds UP: too few levels leaves the remainder above
-the int16 cap and the final clamp would silently lose it.
+the int16 cap and the final clamp would silently lose it. A manual NPC has no
+level term to spend, so its pool caps at `50 + 32767`; the three remaining
+Oblivion mismatches are the 100,000-health `TestStair`/`TestArena01`/`TestArena02`.
 
 DNAM offsets 36/38/40 are the engine's calculated Health/Magicka/Stamina cache,
 not authored stats. The TES4 totals are written there so the cache agrees with
 what the engine computes from the offsets (it recomputes on load regardless).
 Magicka is Oblivion's SpellPoints; stamina is Fatigue.
 
-## <a id="morrowind-health-is-absolute"></a>Morrowind health is absolute, so its level term is dropped
+## <a id="morrowind-health-is-absolute"></a>Morrowind health is absolute — the same manual-NPC rule
 
-**Code:** `tes5_import/record_types/npc_morrowind.py`
+**Code:** `tes5_import/record_types/npc.py` (`_health_and_level`, shared with TES4)
 
-The offset formula above solves `pool - base - (Level-1)*5` because TES4 derives
-an actor's pool from its level. TES3 does not. OpenMW's `MWClass::Npc::ensureCustomData`
+This section once justified a Morrowind-only function that dropped the level term.
+The real cause was the general one in [the offset section](#health-offset): the
+engine gives only an auto-calc NPC a level term, and TES3 flag 0x10 (autocalc)
+maps straight to ACBS 0x10. One rule keyed on the written flag now covers both
+games, and it also fixes Morrowind auto-calc NPCs, which the old function left
+with the engine's level bonus added on top. The TES3 evidence below still holds.
+
+OpenMW's `MWClass::Npc::ensureCustomData`
 (`apps/openmw/mwclass/npc.cpp`) takes the two NPDT layouts apart:
 
 | NPDT | branch | health |
@@ -515,10 +550,8 @@ on actors meant to be weak or already dead (`CurweDead`, `VeezaraDead`,
 −90, which only makes sense if the level term is not being relied on to add
 6,000 health back.
 
-So a Morrowind-sourced NPC_ keeps the race-base subtraction and passes its level
-through untouched. `is_morrowind_npc` gates this on the exporter's authored
-`MorrowindRace` key, which no TES4 export emits, leaving Oblivion conversion
-byte-identical.
+Derminus is a manual (52-byte NPDT) NPC, so he now converts to `397 − 50` with
+his level untouched, which is what the engine needs.
 
 ## <a id="hair-color"></a>Hair color: a generated CLFM per authored RGB
 

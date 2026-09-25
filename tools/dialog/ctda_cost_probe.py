@@ -15,20 +15,16 @@ So measure it where it happens: hook the condition evaluator and count.
 
 THE TARGET
 ----------
-`TESCondition::Run` -- Address Library id **21971** (offset 0), the function
-that evaluates one condition stack.  Identified statically, not guessed:
+`TESConditionItem::IsTrue` -- Address Library id **29924** (1.6.1170 rva
+0x4a05e0), called once per CTDA actually evaluated.  It is the one function
+that dispatches through the condition handler column (+0x40) of the script
+function table (1.6.1170 rva 0x1fdba10, stride 0x50); its only list-walking
+caller is `TESCondition::IsTrue` (id 29895).
 
-  * The CTDA function-info table is at rva 0x1e45a10 (1.6.659), stride 0x50,
-    indexed by CTDA function id.  Verified by decoding it: id 426 ->
-    "GetIsVoiceType", id 630 -> "GetVMScriptVariable", matching the function
-    numbers this project's converter emits.
-  * Exactly five sites reference that table.  0x303cd1 is the accessor
-    (`id*0x50 + base; ret`, id 21963).  0x305460 is the consumer that indexes
-    the table and dispatches on the entry -- the evaluator (id 21971).
-
-Identifying by the table it indexes is the proof of identity that
-project_find_engine_functions_via_rtti requires; nothing here rests on a
-plausible-looking prologue.
+The earlier target, id 21971, also indexes that table but is the script
+COMPILER ("Syntax Error.  Undefined function '%s'."), so every count it
+produced was meaningless.
+See: docs/commentary/tes5_import_conditions.md#engine-evaluation
 
 USE
 ---
@@ -52,9 +48,10 @@ Bridge must be up (game under skse64_loader.exe with TESGameBridge.dll).
 
 WHAT THE NUMBER MEANS
 ---------------------
-The converted plugin carries 110,634 CTDAs total, INFOGENERAL alone holding
-33,872 across 1,854 INFOs (measured from the built ESM by
-the removed dialog_selection_cost.py).  Vanilla Skyrim's mean is 3.7 per topic.
+The converted Oblivion.esm carries 311,739 INFO CTDAs (mean 18, max 753);
+vanilla Skyrim.esm carries 55,641 across 31,465 INFOs (mean 1.8).  The count
+is per CTDA evaluated, so short-circuiting (first failed AND, first passed OR)
+is already reflected in it.
 
   * ~thousands of evaluations per activation  -> the walk IS the stutter, and
     the fix is to cut the per-topic condition volume.
@@ -79,29 +76,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from tools.live.game_bridge import Bridge, BridgeError
 
-# TESCondition::Run -- see module docstring for how this was identified.
-CTDA_EVAL_ID = 21971
+#: TESConditionItem::IsTrue -- see the module docstring for how it was identified.
+CTDA_EVAL_ID = 29924
 LABEL = "ctda_eval"
 
 
 def _hits(b: Bridge, label: str = LABEL) -> int:
-    """Total recorded calls for our hook, 0 if not installed.
+    """Total recorded calls for our hook, 0 if not installed."""
+    entry = _entry(b, label)
+    return int(entry.get("hits", 0)) if entry else 0
 
-    🛑 The count comes from `hook` WITH NO ARGUMENTS (which returns
-    {"hooks": [...]}), NOT from `hookstats`.  CmdHookStats reports only the
-    built-in console/papyrus counters and says nothing whatever about generic
-    hooks -- reading it for a per-hook `hits` returns 0 unconditionally, which
-    is indistinguishable from "the function never ran".  That cost a whole
-    90-second measurement window reading a hardcoded zero.
-    """
+
+def _entry(b: Bridge, label: str = LABEL) -> dict | None:
+    """Our row in the generic-hook listing; `hookstats` never lists generic hooks."""
     try:
         listing = b.request("hook")
     except BridgeError:
-        return 0
+        return None
     for entry in (listing.get("hooks") or []):
         if entry.get("label") == label:
-            return int(entry.get("hits", 0))
-    return 0
+            return entry
+    return None
+
+
+def _unhook(b: Bridge) -> bool:
+    """Remove our hook if installed; True when one was removed."""
+    entry = _entry(b)
+    if entry is None:
+        return False
+    print(b.hook(remove=entry.get("index")))
+    return True
 
 
 def cmd_analyze(b: Bridge) -> int:
@@ -160,13 +164,9 @@ def cmd_bracket(b: Bridge, seconds: float) -> int:
 
 
 def cmd_remove(b: Bridge) -> int:
-    stats = b.hookstats()
-    for i, entry in enumerate(stats.get("hooks") or []):
-        if entry.get("label") == LABEL:
-            print(f"removing hook index {entry.get('index', i)}")
-            print(b.hook(remove=entry.get("index", i)))
-            return 0
-    print("no hook installed under this label")
+    """Remove the counter hook."""
+    if not _unhook(b):
+        print("no hook installed under this label")
     return 0
 
 
@@ -212,14 +212,7 @@ def cmd_measure(b: Bridge, window: float, samples: int) -> int:
               f"{samples*window:.0f}s")
         print(f"peak window rate: {peak/window:,.0f}/s")
     finally:
-        # ALWAYS unhook on the same connection, even on Ctrl-C: a counter hook
-        # left installed on a hot function is a permanent tax on the session.
-        stats = b.hookstats()
-        for i, entry in enumerate(stats.get("hooks") or []):
-            if entry.get("label") == LABEL:
-                b.hook(remove=entry.get("index", i))
-                print("hook removed")
-                break
+        print("hook removed" if _unhook(b) else "HOOK NOT FOUND -- run --remove")
     return 0
 
 

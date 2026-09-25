@@ -13,6 +13,7 @@
     - [...and the ROOT it resolves against is found by marker, not by `.parent`](#export-root-by-marker)
 - [Loose .tga/.bmp textures are transcoded, not just copied](#loose-tgabmp-textures)
 - [The blacklist prune](#the-blacklist-prune)
+- [Texture repairs write in place, never by rename](#texture-repairs-write-in-place)
 
 ## Oblivion parallax → Skyrim height maps (`asset_convert/texture/parallax.py`, opt-in, 2026-08-15)
 <a id="oblivion-parallax-skyrim-height-maps"></a>
@@ -983,3 +984,30 @@ a BC4 alpha block followed by an unmodified DXT1 color block, so
 codec. The only gap was the header: `dds_header` writes one side into both
 dimensions, and 44 of these textures are non-square, so the width word is
 patched after the fact rather than duplicating the 128-byte layout.
+
+<a id="texture-repairs-write-in-place"></a>
+## Texture repairs write in place, never by rename
+
+**Code:** `convert_file` in `asset_convert/texture/luminance_textures.py`, `strip_diffuse_alpha` in `asset_convert/texture/parallax.py`
+
+User report (2026-09-24): `lights\uppersilverplatecandles01.nif` and many other
+candles glowed red again. The L8 glow-map fix
+([asset_convert_nif.md](asset_convert_nif.md#nif-flamenode-grafted-converted-flame))
+was still in place, and `output/` held a correct grey BGRA `candle_g.dds`.
+The game did not read that file.
+
+The deployed game copy is a **hard link** into `output/`. A rebuild runs
+`_copy_tree` (`shutil.copy2`), which writes the L8 original INTO the existing
+file, so every link receives it. The repair then wrote a temp file and
+`os.replace`d it over the path. The rename gives `output/` a new file and cuts
+the link, so the deployed copy keeps the L8 bytes the copy just gave it.
+Measured over `output/Oblivion.esm/textures`: 20,436 files had link count 2 and
+479 had count 1. **469 of those 479 were `_g` glow maps**, exactly the L8 census
+count. `landscape_normals` already wrote with `open(path, 'wb')` and its
+normals stayed linked.
+
+Rule: a pass that repairs a file already in `output/` overwrites that file's
+bytes (`open(path, 'wb')`). It never renames a new file over it. Both passes
+read the whole file into memory first, so the in-place write is safe. A
+deployment cut off by the old behavior has to be re-linked once. Guarded by
+`test_hard_linked_copy_receives_the_fix`.

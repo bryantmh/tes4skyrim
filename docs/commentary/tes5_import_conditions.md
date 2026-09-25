@@ -15,6 +15,7 @@ Parameter remapping and the crash rule are in
 - [Chargen-identity conditions become menu-choice globals](#chargen-identity-to-menu-globals)
 - [Speak-as topics drop the actor-interrogating conditions](#non-actor-speaker-drop)
 - [GetInCell names a prefix family, not a cell](#getincell-prefix-family)
+- [How the engine evaluates conditions and builds the topic list](#engine-evaluation)
 - [Engine-fixed FormID parameters](#engine-fixed-params)
 
 ## <a id="engine-fixed-params"></a>Engine-fixed FormID parameters
@@ -42,6 +43,66 @@ and keys the player carries are Skyrim's. A condition that remapped them to our
 own copies asked `GetItemCount(0x0100000F)`, which is always 0: Penniless
 Olvus's "Have a coin, beggar." topic never showed, and the two MQ08 skeleton-key
 INFOs could never pass either.
+
+## <a id="engine-evaluation"></a>How the engine evaluates conditions and builds the topic list
+
+Read from SkyrimSE 1.6.1170 (unpacked). Stable ids are Address Library ids.
+
+| Function | id | rva 1.6.1170 |
+|---|---|---|
+| `TESConditionItem::IsTrue` (one CTDA; dispatches the handler at table row +0x40) | 29924 | 0x4a05e0 |
+| `TESCondition::IsTrue` (walks the list) | 29895 | 0x49fa70 |
+| Pick a topic's line (quest gate, then each INFO in order) | 25544 | 0x3e82f0 |
+| One INFO's check (deleted, said-once, then its conditions) | — | 0x3eba10 |
+| Add one topic to the dialogue menu | — | 0x5e28e0 |
+| Build the top-level topic list (two branch lists on MenuTopicManager) | 35276 | 0x5e0190 |
+
+The script-function table is at rva 0x1fdba10, stride 0x50; condition id N is
+row N. Id 21971 also indexes it but is the script compiler, not the evaluator.
+
+**The list walk is AND over OR groups, evaluated in order.** A failing AND stops
+the walk, and an OR group stops at its first passing member. There is no time
+budget and no retry. Beside the result it returns a "not settled" flag, but only
+nested walks set it. So condition order changes cost, never the result.
+
+**The line picker drops a quest's whole topic while `Quest.IsStarting` is
+true.** That is the running flag plus either flag 0x80 ("stage wait") or a
+pending start job (+0x248). The same test backs the Papyrus native
+(rva 0xa49a30). It skips every topic in that quest, so it cannot explain one
+topic vanishing while another from the same quest stays.
+
+**Four handlers keep an unlocked single-entry "last answer" cache in globals.**
+They can hold wrong answers in play (measured below). This is vanilla engine
+behavior and we leave it alone: bypassing all four in TESRuntime changed nothing
+visible in game.
+
+| Handler | rva | Cache (key → value) |
+|---|---|---|
+| `GetIsID` | 0x32d770 | 0x3137ec0 ref → 0x3137eb8 base |
+| `GetIsVoiceType` | 0x32d850 | 0x3137ed0 ref → 0x3137ec8 voice type |
+| `GetInFaction` | 0x32d390 | 0x3137ea8 ref, 0x3137ea0 faction → 0x3137eb0 rank |
+| `GetIsPlayableRace` | 0x32d2c0 | 0x3137ed8 ref → 0x3137eb4 result |
+
+On a miss each handler stores the key and the value as separate writes, and on
+a hit it returns the stored value without recomputing it. `GetIsRace` and
+`GetIsSex` keep no cache. Conditions run on more than one thread: the walker
+keeps its context in thread-local slots, and a crash during a dialogue open had
+the topic-list build (id 35276) on a `BSJobs::JobThread`.
+
+Measured live on 1.6.1170 by reading the caches from outside the process and
+recomputing each cached actor's answer the handler's way (`ExtraLeveledCreature`
+original base, else the reference's base): cached pairs that were wrong and
+still held on the next read, e.g. actor 130653B0 held with base 13C5457C
+(another actor's) and, in another window, 00000007 (the player's), where its
+own is 13464733. Any `GetIsID` on that actor answers wrongly until another
+actor overwrites the entry. This was NOT why NPCs showed only "Rumors"; that was
+a greeting choice link replacing the topic list
+([tes5_import_dialogue.md](tes5_import_dialogue.md#info-tclt-choice-filter)).
+
+A dialogue open cost 1.1 and 2.0 million CTDA evaluations (two opens, counted on
+id 29924), against about 40,000 for one pass over every converted INFO with her
+as the subject. The bridge's generic hook on id 35304 (the branch loop) crashed
+the game at +0x44 on the next dialogue open.
 
 ## <a id="getincell-prefix-family"></a>GetInCell names a prefix family, not a cell
 

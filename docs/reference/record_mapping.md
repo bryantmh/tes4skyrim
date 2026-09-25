@@ -608,10 +608,13 @@ Playable Oblivion races map directly to Skyrim equivalents by EditorID:
   real code in `_npc_acbs`; it doubled every NPC's level range and disagreed with
   the creature path, which never doubled.)
 - **Health / Magicka / Stamina — the authored control is `ACBS.*Offset`, not DNAM.**
-  The engine computes an actor's pool as
-  `RACE.StartingHealth + ACBS.HealthOffset + (Level-1) * fNPCHealthLevelBonus`,
-  with `fNPCHealthLevelBonus = 5.0` (Skyrim.esm GMST) and all 11 mapped playable
-  /Dremora races at `StartingHealth = 50.0`.
+  The engine computes a manual NPC's pool as
+  `RACE.StartingHealth + ACBS.HealthOffset`; only an Auto-calc-stats (ACBS 0x10)
+  NPC adds `(Level-1) * fNPCHealthLevelBonus` (5.0) plus a class-weighted share
+  of `(Level-1) * iAVDhmsLevelUp` (10). Converted classes write zero HMS weights,
+  so the share is 0. All 11 mapped playable/Dremora races have
+  `StartingHealth = 50.0`. Details:
+  [tes5_import_actors.md](../commentary/tes5_import_actors.md#health-offset).
   `DNAM.Health/Magicka/Stamina` (offsets 36/38/40) are only the engine's
   *calculated cache* — vanilla proves they are not a function of the record at
   all: 52 groups of NPCs with identical race/class/level/offset carry different
