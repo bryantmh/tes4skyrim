@@ -77,7 +77,8 @@ from asset_convert.nif.nif_passes import (add_animobject_bged, wrap_root_transfo
     zero_fallout_root_rotation)
 from asset_convert.nif.morphs import (emulate_morphs,
                                       normalize_blend_interpolators)
-from asset_convert.nif.sequences import (apply_rest_visibility,
+from asset_convert.nif.sequences import (apply_rest_emissive,
+                                         apply_rest_visibility,
                                          attach_seq_shader_controllers,
                                          autoplay_ambient_sequences,
                                          match_seq_shader_types,
@@ -489,7 +490,8 @@ def _run_animation_passes(root, stats):
     follows the walk and precedes rest visibility and sequence-name
     collection; the autoplay split precedes collect_sequence_names so the
     behaviour graph is built from the final names; shader controllers attach
-    after the type match; interpolator normalizing runs last.
+    after the type match, and the rest emissive follows every entry the morph
+    bake added; interpolator normalizing runs last.
     See: docs/commentary/asset_convert_nif.md#post-walk-animation-passes
     """
     match_seq_shader_types(root)
@@ -497,6 +499,7 @@ def _run_animation_passes(root, stats):
     autoplay_ambient_sequences(root, stats)
     apply_rest_visibility(root, stats)
     attach_seq_shader_controllers(root, stats)
+    apply_rest_emissive(root, stats)
     normalize_blend_interpolators(root, stats)
 
 

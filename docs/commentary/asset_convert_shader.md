@@ -197,6 +197,60 @@ The material alpha rides in the emissive ALPHA channel, because that is what the
 engine multiplies the sampled texel by. `emissive_multiple` is held at 1.0:
 vanilla's value on **852 of 1164** blended FX shapes.
 
+### <a id="rest-emissive"></a>A sequence-animated emissive rests at its time-0 value
+
+**Code:** `apply_rest_emissive` in `asset_convert/nif/sequences.py`
+
+Before a script plays a sequence, the engine draws the shader's STATIC color.
+The white fallback above then turned an Oblivion surface that is black
+(invisible, if additive) until its sequence runs into a fully lit one. On
+`se01waitingroomwalls` the three LightBeam shapes author emissive (0,0,0) plus
+a SELF_ILLUM curve 0 → 0.56 → 0 in `Forward`. They showed as static lit beams
+from cell load on. So the static color of every shader with a sequence emissive
+entry is that entry's value at t=0, the same rule `apply_rest_visibility`
+applies to visibility.
+
+The morph bake (`morphs._emit_flipbook`) gives each baked frame copy its own
+copy of every shader entry that drives the base shape. The copies own their
+shaders, so without that the fade stopped when the base shape swapped out, and
+the last frame stayed lit forever.
+
+### <a id="texture-transform"></a>The base map's texture transform
+
+**Code:** `asset_convert/nif/uv_transform.py`
+
+Oblivion's `TexDesc` carries a static transform, and `NiTextureTransformController`
+animates it. In the MAX method (nif.xml, OpenMW and NifSkope all agree) the
+scale pivots about the center: `uv' = S·(uv + T − C) + C`. Skyrim's shaders
+compute `uv·scale + offset`, so:
+
+- static: scale = S, offset = S·(T − C) + C;
+- an animated translate is remapped by `a = S, b = C·(1 − S)`;
+- an animated scale keeps its keys and gains a companion offset curve,
+  `a = T − C, b = C`.
+
+The channel that isn't animated holds its authored value. Rotation isn't
+carried. The authored clamp mode is carried too (the low byte of
+`texture_clamp_mode`). A squeezed map that Oblivion clamps would otherwise tile.
+
+Before this was carried, no static transform was read at all, and scales pivoted
+at the corner. In `se01waitingroomwalls` each butterfly particle system selects
+one butterfly from `SEButterflies01.dds` (V tiling 0.18–0.27 with a V offset).
+It flaps by animating U scale 0.88 → 3.7 about the center, with S clamped. The
+result was the whole sheet, tiled and sliding. A census of 1,595 Oblivion.esm
+meshes found **142** base-map transforms, all MAX, **21** of them
+non-identity: `magiceffects\shockshield` (2×2), `oblivion\gate\flashglow01`,
+the Citadel fire column, `se07ardensulalter`, `se09poollid`, and others.
+
+A freshly built QUADRATIC `NiFloatData` needs each key's `arg` set by hand, or
+pyffi writes it in the LINEAR layout and the file can't be read back.
+
+The always-running path (`attach_tex_transform_ctrls`) is handed the TexDesc by
+its caller. It can't read it off `controller.target`, because pyffi keeps that
+Ptr only as a WEAK reference. Once the geometry pass empties the shape's
+property list, the NiTexturingProperty is collected and the target reads `None`.
+The sequence path runs before that pass, so it can still use the target.
+
 ### <a id="flame-brightness-is-authored"></a>Flame brightness: the authored emissive, never the filename
 
 An earlier revision matched `fire`/`flame`/`torch` in the diffuse path (minus a

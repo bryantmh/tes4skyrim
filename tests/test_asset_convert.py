@@ -2994,6 +2994,55 @@ class TestTextureTransformControllerConversion:
         assert all(c.interpolator is not None and c.interpolator.data is not None
                    for c in ctrls), 'controller lost its curve'
 
+    def _centered_map(self, operation, keys, tiling, translation):
+        """A strip whose base map carries a MAX-method transform centered on (0.5, 0.5)."""
+        shape, NF = self._build_textured_strip(operation, keys)
+        texprop = shape.properties[0]
+        texprop.controller.target = texprop
+        bt = texprop.base_texture
+        bt.has_texture_transform = True
+        bt.transform_type = 1
+        bt.clamp_mode = 1
+        bt.tiling.u, bt.tiling.v = tiling
+        bt.translation.u, bt.translation.v = translation
+        bt.center_offset.u = bt.center_offset.v = 0.5
+        return shape, NF
+
+    @staticmethod
+    def _curves(shader):
+        """{controlled variable: [key values]} along the shader's controller chain."""
+        out = {}
+        c = shader.controller
+        while c is not None:
+            out[c.type_of_controlled_variable] = [
+                round(k.value, 3) for k in c.interpolator.data.data.keys]
+            c = c.next_controller
+        return out
+
+    def test_center_scaled_map_carries_static_uv_and_clamp(self):
+        """se01waitingroomwalls butterflies: one sprite is cropped from the sheet
+        by a static transform and the wing flap scales U about the center, so the
+        U offset must move with the scale.
+
+        See: docs/commentary/asset_convert_shader.md#texture-transform
+        """
+        shape, _ = self._centered_map(3, [(0.0, 0.876), (0.1, 3.7)],
+                                      (0.876, 0.27), (0.0, -1.3))
+        shader = self._convert(shape).bs_properties[0]
+        assert (round(shader.uv_scale.u, 3), round(shader.uv_scale.v, 3)) == (0.876, 0.27)
+        assert (round(shader.uv_offset.u, 3), round(shader.uv_offset.v, 3)) == (0.062, 0.014)
+        assert int(shader.texture_clamp_mode) & 0xFF == 1, 'authored clamp S must survive'
+        curves = self._curves(shader)
+        assert curves[21] == [0.876, 3.7], 'U scale keys change'
+        assert curves[20] == [0.062, -1.35], 'U offset must follow the centered scale'
+
+    def test_translate_scrolls_through_a_centered_scale(self):
+        """An animated translate under a static scale of 3 lands on offset 3*(t-0.5)+0.5."""
+        shape, _ = self._centered_map(1, [(0.0, -0.01), (1.0, 0.0)],
+                                      (1.0, 3.0), (0.0, -0.01))
+        curves = self._curves(self._convert(shape).bs_properties[0])
+        assert curves == {22: [-1.03, -1.0]}
+
 
 
 # ---------------------------------------------------------------------------
@@ -4118,6 +4167,35 @@ class TestAnimationBlockLayout:
             off = [t for t, v in keys[1:] if not v]
             if off:
                 assert abs(off[0] - on[0] - 1.0 / 30) < 1e-3, keys
+
+    def test_waiting_room_beams_rest_dark_and_every_frame_fades(self):
+        """se01waitingroomwalls' LightBeams author emissive black plus a fade
+        curve, so they must rest dark before Forward plays, and every baked
+        morph frame must carry the fade or the last frame stays lit forever.
+
+        See: docs/commentary/asset_convert_shader.md#rest-emissive
+        """
+        src = Path('export/Oblivion.esm/meshes/architecture/quests/'
+                   'se01waitingroomwalls.nif')
+        if not src.exists():
+            pytest.skip('waiting room source NIF not exported')
+        NF = self._nif()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dst = os.path.join(tmpdir, 'meshes', 'se01waitingroomwalls.nif')
+            os.makedirs(os.path.dirname(dst))
+            assert not convert_nif(str(src), dst).get('error')
+            data = NF.Data()
+            with open(dst, 'rb') as f:
+                data.read(f)
+        beams = [b for b in data.roots[0].tree() if isinstance(b, NF.NiTriShape)
+                 and bytes(b.name).startswith(b'LightBeam')]
+        assert len(beams) > 3, 'the beam morph must bake frames'
+        for beam in beams:
+            shader = beam.bs_properties[0]
+            e = shader.emissive_color
+            assert (e.r, e.g, e.b) == (0.0, 0.0, 0.0), beam.name
+            assert isinstance(shader.controller,
+                              NF.BSEffectShaderPropertyColorController), beam.name
 
 
 class TestVoiceFilePrune:

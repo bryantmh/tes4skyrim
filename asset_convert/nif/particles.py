@@ -22,6 +22,7 @@ from asset_convert.nif.shaders import (apply_fx_soft_effect,
                                        find_flip_controller)
 from asset_convert.nif.tex_paths import (bs_pp_texture_slots,
                                          rewrite_tex_path)
+from asset_convert.nif.uv_transform import apply_static_uv, base_map
 
 
 #: Vanilla modifier `order` bands. See: docs/commentary/asset_convert_nif.md#nif-particle-system-conversion
@@ -350,10 +351,6 @@ def _build_psys_shader(effective_path, emissive, alpha, curve_hue):
     See: docs/commentary/asset_convert_nif.md#psys-shader-values
     """
     shader = NifFormat.BSEffectShaderProperty()
-    shader.uv_offset.u = 0.0
-    shader.uv_offset.v = 0.0
-    shader.uv_scale.u = 1.0
-    shader.uv_scale.v = 1.0
     shader.shader_flags_1.slsf_1_z_buffer_test = 1
     sf2 = shader.shader_flags_2
     sf2.slsf_2_z_buffer_write = 0
@@ -397,6 +394,7 @@ def convert_particle_system(node, fix_textures):
     """
     psys_curve_hue = _color_curve_carries_hue(node)
     tex_transforms = collect_tex_transform_ctrls(node.properties)
+    tex_map = base_map(node.properties)
     (diffuse_path, flip_ctrl, alpha_prop,
      psys_emissive, psys_alpha) = _collect_psys_properties(node)
 
@@ -410,8 +408,9 @@ def convert_particle_system(node, fix_textures):
     shader = _build_psys_shader(
         _effective_psys_texture(flip_ctrl, diffuse_path, fix_textures),
         psys_emissive, psys_alpha, psys_curve_hue)
+    apply_static_uv(shader, tex_map)
     node.bs_properties[0] = shader
-    attach_tex_transform_ctrls(shader, tex_transforms)
+    attach_tex_transform_ctrls(shader, tex_transforms, tex_map)
 
     alpha_prop = _own_alpha_property(alpha_prop)
     node.bs_properties[1] = alpha_prop
