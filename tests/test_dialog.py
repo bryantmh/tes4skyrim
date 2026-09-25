@@ -2248,6 +2248,38 @@ class TestSaySpeakAsIdentityGate:
         assert scan_speak_as_topics(by_type) == set()
 
 
+class TestSeqListsEveryOwnStartGameQuest:
+    """The .seq lists every start-game QUST this file writes, synthesized ones included.
+
+    A start-game quest missing from it gets no dialogue loaded in a new game:
+    `TES4SpeakAs` was left out and every speak-as scene was silent until a
+    save was loaded (confirmed in game).
+    See: docs/commentary/tes5_import_dialogue.md#speak-as-quest-in-the-seq
+    """
+
+    def test_scans_written_quests(self):
+        """Own-index quests with DNAM bit 0 are listed, compressed ones too."""
+        import zlib
+        from tes5_import.base.writer import pack_record, pack_subrecord
+        from tes5_import.pipeline_finalize import _own_sge_quests
+
+        def quest(fid, dnam_flags, compress=False):
+            """One packed QUST carrying only a DNAM with `dnam_flags`."""
+            body = pack_subrecord('DNAM', struct.pack('<HBBII', dnam_flags, 0, 0, 0, 0))
+            if not compress:
+                return pack_record('QUST', fid, 0, body)
+            packed = struct.pack('<I', len(body)) + zlib.compress(body)
+            return (b'QUST' + struct.pack('<III', len(packed), 0x40000, fid)
+                    + b'\0' * 8 + packed)
+
+        w = _FakeWriter()
+        w._top_groups = {'QUST': [quest(0x0129CBF5, 0x0011),
+                                  quest(0x01000010, 0x0000),
+                                  quest(0x01000020, 0x0011, compress=True),
+                                  quest(0x00000030, 0x0011)]}
+        assert _own_sge_quests(w) == {0x0129CBF5, 0x01000020}
+
+
 class TestSpeakAsScenes:
     """A speak-as line is a one-action scene of `TES4SpeakAs` on a voiced TACT.
 

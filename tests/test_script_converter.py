@@ -2293,6 +2293,27 @@ class TestSayTimerConversion:
         assert ('TES4Polyfill.SpeakAs(Announcer, '
                 'TES4Scene_arenamatchplayerref_arenamouth_announcer)') in callback
 
+    def test_startconversation_player_joins_its_force_greet_pool(self, converter):
+        """`StartConversation Player <topic>` fills a slot of that topic's pool.
+
+        See: docs/commentary/tes5_import_dialogue.md#startconversation-player-force-greet
+        """
+        from tes5_import.dialogue.say_topics import build_force_greet_slots
+        by_type = {'SCPT': [{'SCTX': 'begin GameMode\nGaiusRef.StartConversation Player'
+                                     ' SE01GaiusForceGreet\nFooRef.StartConversation '
+                                     'player\nBarRef.StartConversation Baz Topic\nend'}]}
+        slots = build_force_greet_slots(by_type)
+        assert slots == {'': (0, 1), 'se01gaiusforcegreet': (1, 1)}
+        saved = ScriptConverter.force_greet_slots
+        ScriptConverter.force_greet_slots = slots
+        try:
+            converter._property_refs['GaiusRef'] = 'Actor'
+            result = conv_lines(converter,
+                'GaiusRef.StartConversation Player SE01GaiusForceGreet', 'Quest')
+        finally:
+            ScriptConverter.force_greet_slots = saved
+        assert 'TES4Polyfill.ForceGreet(TES4ForceGreets, 1, 1, GaiusRef)' in result
+
     def test_sayline_uses_the_topics_measured_maximum_as_fallback(self, converter):
         from script_convert.converter import ScriptConverter
         saved = ScriptConverter.say_durations

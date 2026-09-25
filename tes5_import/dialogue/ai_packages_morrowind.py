@@ -19,8 +19,9 @@ See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
 import os
 import struct
 
-from ..packages.converter import (build_alias_location, build_alias_target,
-                                  build_pkdt, DEFAULT_INTERRUPT, Inputs,
+from ..packages.converter import (ANY_TIME_PSDT, build_alias_location,
+                                  build_alias_target, build_pkdt,
+                                  DEFAULT_INTERRUPT, Inputs, package_markers,
                                   SPEED_WALK, T5_MUST_COMPLETE)
 from ..packages.interrupt_morrowind import interrupt_for_kind
 from ..packages.templates import ACTIVATE, ESCORT, FOLLOW, SANDBOX, TRAVEL
@@ -144,11 +145,6 @@ def _inputs(kind: str, slot: str, template) -> Inputs:
     return inputs
 
 
-def _any_time() -> bytes:
-    """PSDT for any month, day and hour with no duration."""
-    return struct.pack('<bbBbb3xi', -1, -1, 0, -1, -1, 0)
-
-
 def pack_record_for(kind: str, slot: str, template, formid: int,
                     quest_fid: int) -> bytes:
     """One PACK instance for one slot of a package kind, at exactly `formid`.
@@ -162,16 +158,13 @@ def pack_record_for(kind: str, slot: str, template, formid: int,
         T5_MUST_COMPLETE, SPEED_WALK,
         interrupt_for_kind(_TES4_TYPE[kind], _POOLED_HELLO,
                            DEFAULT_INTERRUPT)))
-    subs += pack_subrecord('PSDT', _any_time())
+    subs += pack_subrecord('PSDT', ANY_TIME_PSDT)
     subs += pack_formid_subrecord('QNAM', quest_fid)
     subs += pack_subrecord('PKCU', struct.pack('<III', len(template.inputs),
                                                template.formid,
                                                template.version))
     subs += _inputs(kind, slot, template).emit()
-    for marker in ('POBA', 'POEA', 'POCA'):
-        subs += pack_subrecord(marker, b'')
-        subs += pack_formid_subrecord('INAM', 0)
-        subs += pack_subrecord('PDTO', struct.pack('<II', 0, 0))
+    subs += package_markers()
     return pack_record('PACK', formid, 0, subs)
 
 

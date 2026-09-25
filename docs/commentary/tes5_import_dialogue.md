@@ -1174,6 +1174,61 @@ does two things `ForceStart` alone does not:
   and engine-callback sites stay non-waiting: 134 waiting and 3 non-waiting on
   Oblivion.esm.
 
+### <a id="speak-as-quest-in-the-seq"></a>`TES4SpeakAs` must be in the `.seq` (measured 2026-09-25)
+
+In a new game every speak-as scene ended 0.1s after `ForceStart` with no line,
+while a save+reload made all of them play. Live on 1.6.1170: the scene topics
+had **0 INFOs in memory** (`TESTopic+0x50`), Gaius's topics had theirs, and
+`TES4SpeakAs` was running with no pending promote task (`TESQuest+0x248` = 0).
+
+A quest's topic INFOs are loaded by one of two routines:
+
+* `0x3d3310`, run when the quest's `QueuedPromoteQuestTask` finishes. It returns
+  at once when the quest's in-memory flag `0x10` is set, and every Start Game
+  Enabled quest has it (DNAM `0x0011`, as on 256 vanilla quests).
+* `0x3d2e90`, which loads every listed quest's topics. Its only caller (via
+  `0x533a80`) is on the save-load path, so a reload filled the topics in.
+
+`TES4SpeakAs` was missing from `Oblivion.seq` (211 entries, `SE01Door` and
+`TES4ForceGreets` among them). `SE01Door`, which is listed, had its topics
+loaded in the same new game. That is the CK's purpose for the `.seq`: it lists
+start-game quests with dialogue. A synthesized quest had to be added to the list
+by hand, and this one never was. The `.seq` is now built from the written QUST
+records (`_own_sge_quests`): every quest this file defines whose DNAM has
+bit 0 set.
+
+Related engine facts: the scene system treats a quest as running only when flag
+bit 0 is set, bit 7 (Stage Wait) is clear, and `+0x248` is null. Line pick
+(`0x3e82f0`), `Scene.ForceStart` (logs "cannot force start scene because its
+parent quest was not running") and the per-frame scene update (`0x3a05f0`) all
+apply this rule. `sqv`'s "State: Running" reads only the flag.
+
+### <a id="startconversation-player-force-greet"></a>`StartConversation Player` is a real force greet (confirmed in game 2026-09-25)
+
+Papyrus cannot open the dialogue menu, so `X.StartConversation Player [topic]`
+used to become `Say(topic)`. SE01's `SE01GaiusForceGreet` then showed up as a
+plain topic in Gaius's menu instead of greeting the player. Vanilla's mechanism
+is a ForceGreet package (template `0003C1C4`). The importer writes one start-game
+quest, `TES4ForceGreets` (`tes5_import/dialogue/force_greets.py`), with a pool of
+optional reference aliases per topic:
+
+* `build_force_greet_slots` counts the `StartConversation Player` sites per
+  topic (at most 8 slots each) and assigns contiguous alias ids in sorted topic
+  order. The importer and the script converter compute the same plan from the
+  same export.
+* Each alias carries a ForceGreet package whose Topic input is the DIAL, a bark
+  topic's subtype, or `HELO` for the no-topic form. The package's OnEnd
+  fragment (`TES4_ForceGreetDone`, in the pattern of vanilla
+  `WITavernServerGreetPlayer`) clears the alias, so the actor goes back to
+  their own AI.
+* The call converts to `TES4Polyfill.ForceGreet(TES4ForceGreets, first, count,
+  actor)`. It reuses the alias already holding that actor, otherwise takes the
+  first free slot, then calls `ForceRefTo` and `EvaluatePackage`.
+* A forced topic that nothing else adds stops being a top-level topic, so it no
+  longer shows in the menu on its own.
+
+Any other `StartConversation` target still takes the `Say` path.
+
 ### Speak-as INFOs silently lost their quest-inherited conditions (fixed 2026-08-25)
 
 A speak-as INFO whose owning QUST carries conditions runs its inherited

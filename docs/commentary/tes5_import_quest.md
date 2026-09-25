@@ -1659,7 +1659,9 @@ be "fixed". Split out of the audit so they are not read as stale.
   fires.
 * **`StartConversation` → `Say(topic)`** is a deliberate, documented decision
   with recorded history (discarding the topic silenced every scripted NPC-NPC
-  conversation). Not a defect.
+  conversation). Not a defect. The one exception is a Player target, which is a
+  force greet
+  ([tes5_import_dialogue.md](tes5_import_dialogue.md#startconversation-player-force-greet)).
 
 ## Verified-correct behaviours from round 1 (do NOT "fix" these)
 <a id="section-2-2-2-2-2-2-2-2"></a>

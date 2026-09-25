@@ -45,8 +45,11 @@ from .record_types import magic_art
 from .record_types.crime import plan_crime
 from .record_types.spell_tomes import create_spell_tomes
 from .record_types.spell_tomes_morrowind import chain_tables
+from script_convert.constants import FORCE_GREET_QUEST
 from .dialogue.converter import build_npc_to_vtyp_map
+from .dialogue.force_greets import dial_index, write_force_greet_quest
 from .dialogue.morrowind_sidecar import is_tes3_export
+from .dialogue.say_topics import FORCE_GREET_SLOTS, build_force_greet_slots
 from .runtime_sidecars import begin_sidecar_run
 from .base.adopted_records import adopt_master_special_records
 from .base.cell_family import set_cell_families
@@ -344,6 +347,23 @@ def _prescan_unlock_plan(by_type: dict, writer, _step_done):
           f"{len(_SC.topic_unlock_globals)} topic->global names for scripts")
     _step_done('addtopic unlock plan')
     return (unlock_plan, unlock_globals, _SC)
+
+
+def _prescan_force_greets(by_type: dict, ctx, writer, _SC) -> None:
+    """Mint the StartConversation force-greet quest and share its alias pools.
+
+    Before any script VMAD, so the converted call's Quest property binds.
+    """
+    slots = build_force_greet_slots(by_type)
+    FORCE_GREET_SLOTS.clear()
+    FORCE_GREET_SLOTS.update(slots)
+    _SC.force_greet_slots = slots
+    quest_fid = write_force_greet_quest(
+        writer, slots, dial_index(by_type, ctx.master_export if ctx else None))
+    if quest_fid:
+        WELL_KNOWN_PROPERTIES[FORCE_GREET_QUEST] = quest_fid
+    print(f"  StartConversation force greets: {len(slots)} topics, "
+          f"{sum(n for _f, n in slots.values())} alias slots")
 
 
 def _prescan_menu_records(by_type: dict, writer, _SC, _step_done):
@@ -1092,6 +1112,7 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
                                             num_new_masters, _step_done)
     st.unlock_plan, st.unlock_globals, _SC = _prescan_unlock_plan(
         by_type, writer, _step_done)
+    _prescan_force_greets(by_type, ctx, writer, _SC)
     _prescan_menu_records(by_type, writer, _SC, _step_done)
     st.fid_to_edid = _prescan_fid_to_edid(all_records, ctx, _step_done)
     st.xref = _prescan_cross_ref_graph(all_records, ctx, export_dir,

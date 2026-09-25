@@ -104,6 +104,9 @@ class ScriptConverter:
     #: DIAL EditorID (lower) -> chain line count, from build_script_chain_map.
     conversation_chains: dict = {}
 
+    #: StartConversation topic (lower, '' = none) -> (first alias, count), from build_force_greet_slots.
+    force_greet_slots: dict = {}
+
     # script EditorID (lower) -> [(mesg_edid, text, buttons)], from
     # script_convert.message_menus.build_message_plan. Populated once per run
     # by the pipeline AND the importer from the same analysis, so the Message

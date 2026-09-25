@@ -600,6 +600,9 @@ SELF_NAMES = ('self', 'myself', 'getself')
 #: Export signatures of a PLACED reference (as opposed to its base record).
 PLACED_REF_SIGS = ('ACHR', 'ACRE', 'REFR')
 
+#: The importer's force-greet alias quest, which StartConversation's Quest property names.
+FORCE_GREET_QUEST = 'TES4ForceGreets'
+
 
 # ===========================================================================
 # Magic school and service-menu vocabulary

@@ -471,6 +471,39 @@ Function EvaluatePackage(Actor akActor) Global
   akActor.EvaluatePackage()
 EndFunction
 
+; TES4 `StartConversation Player [topic]`.  Papyrus cannot open dialogue, so the
+; actor joins one alias of the topic's pool (aiFirst .. aiFirst+aiCount-1) on the
+; importer's TES4ForceGreets quest; that alias's ForceGreet package walks over
+; and opens the topic, and its OnEnd fragment (TES4_ForceGreetDone) empties the
+; alias again.  An actor already holding a slot is only re-evaluated; with every
+; slot busy, the first is taken over.
+Function ForceGreet(Quest akPool, Int aiFirst, Int aiCount, Actor akActor) Global
+  If !akPool || !akActor
+    Return
+  EndIf
+  If !akPool.IsRunning()
+    akPool.Start()
+  EndIf
+  ReferenceAlias freeSlot = None
+  Int i = 0
+  While i < aiCount
+    ReferenceAlias slot = akPool.GetAlias(aiFirst + i) as ReferenceAlias
+    ObjectReference held = slot.GetReference()
+    If held == akActor
+      akActor.EvaluatePackage()
+      Return
+    ElseIf !held && !freeSlot
+      freeSlot = slot
+    EndIf
+    i += 1
+  EndWhile
+  If !freeSlot
+    freeSlot = akPool.GetAlias(aiFirst) as ReferenceAlias
+  EndIf
+  freeSlot.ForceRefTo(akActor)
+  akActor.EvaluatePackage()
+EndFunction
+
 ; ==========================================================================
 ; Container
 ; ==========================================================================

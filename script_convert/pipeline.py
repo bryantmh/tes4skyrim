@@ -44,6 +44,7 @@ from tes5_import.dialogue.conversations import (build_conversation_plan,
                                                 generate_driver_psc)
 from tes5_import.dialogue.converter import (DIAL_TYPE_SERVICE,
                                             SERVICE_MENU_TOPICS)
+from tes5_import.dialogue.say_topics import build_force_greet_slots
 from tes5_import.dialogue.unlocks import build_unlock_plan
 
 
@@ -127,7 +128,7 @@ def _script_worker_init(xref, output_dir, info_reveals, service_topics,
                         chargen_menus=None, say_topics=None,
                         music_cues=None, namespace=None,
                         quest_delays=None, quest_objectives=None,
-                        conversation_chains=None):
+                        conversation_chains=None, force_greet_slots=None):
     """Seed one worker with the parent state that spawning does not carry.
 
     `namespace` is installed FIRST: the generated-script prefix derives from
@@ -168,6 +169,7 @@ def _script_worker_init(xref, output_dir, info_reveals, service_topics,
     # gate the INFO/QUST fragments do.
     ScriptConverter.topic_unlock_globals = topic_unlock_globals or {}
     ScriptConverter.conversation_chains = conversation_chains or {}
+    ScriptConverter.force_greet_slots = force_greet_slots or {}
     # script EditorID -> button-MessageBox MESG plan; the importer writes the
     # records this makes the converter reference (message_menus.py).
     ScriptConverter.message_menus = message_menus or {}
@@ -264,7 +266,8 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
                 _load_music_cues(output_dir), current_namespace(),
                 quest_script_delays(by_type),
                 quest_objective_indices(by_type),
-                build_script_chain_map(by_type))
+                build_script_chain_map(by_type),
+                build_force_greet_slots(by_type))
     return {'initargs': initargs, 'scpt_work': scpt_work,
             'info_work': info_work, 'qust_work': qust_work, 'stats': stats}
 
@@ -1050,6 +1053,19 @@ def build_vmad_info_fragment(info_formid: str, property_values: dict = None,
     buf += _pack_wstring('Fragment_0') # FragmentName
 
     return bytes(buf)
+
+
+def build_vmad_package_fragment(script_name: str,
+                                value_props: dict = None) -> bytes:
+    """VMAD attaching `script_name` to a PACK, whose `Fragment_0` runs OnEnd.
+
+    xEdit wbVMADFragmentedPACK: the script block, then bind version 2, flags
+    (bit1 = OnEnd), FileName, and one entry per set flag bit.
+    """
+    buf = build_vmad_object_script(script_name, value_props=value_props)
+    buf += struct.pack('<bB', 2, 0x02) + _pack_wstring(script_name)
+    buf += struct.pack('<B', 1) + _pack_wstring(script_name)
+    return buf + _pack_wstring('Fragment_0')
 
 
 # Papyrus property object-type codes for the VMAD property record (objectFormat 2).

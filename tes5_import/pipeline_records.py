@@ -257,7 +257,7 @@ def _convert_soun(st, export_dir: str, phase_done, skip_types) -> None:
 
 
 def _convert_qust(st, export_dir: str, phase_done, skip_types) -> None:
-    """Phase 3b: QUST, tracking StartGameEnabled ids for the .seq file."""
+    """Phase 3b: QUST."""
     qust_records = st.by_type.get('QUST', [])
     if qust_records and 'QUST' not in st.all_skip:
         print(f"  Converting {len(qust_records)} QUST records...")
@@ -278,10 +278,6 @@ def _convert_qust(st, export_dir: str, phase_done, skip_types) -> None:
                                           script_vars=st._script_vars)
                 st.writer.add_record('QUST', qust_bytes)
                 st.converted += 1
-                fid = get_formid(rec, 'FormID')
-                flags = get_int(rec, 'DATA.Flags')
-                if flags & 0x01:
-                    st.sge_quest_fids.add(fid)
             except Exception as e:
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
                 st.errors += 1

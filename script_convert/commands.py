@@ -19,7 +19,8 @@ argument text -- so those are properties of the CALL and live on it.
 from script_convert import resolve_name as _resolve_name
 from script_convert.constants import (
     ACTOR_VALUE_MAP, ANIM_GROUP_EVENTS, ATTRIBUTE_STUB_VALUE, CASTABLE,
-    PLACED_REF_SIGS, TES4_ASSAULT_BOUNTY, TES4_ATTRIBUTES, TES4_MURDER_BOUNTY,
+    FORCE_GREET_QUEST, PLACED_REF_SIGS, TES4_ASSAULT_BOUNTY, TES4_ATTRIBUTES,
+    TES4_MURDER_BOUNTY,
     TES4_STEAL_BOUNTY, is_generated_script_type, mgef_family_keyword_name,
     safe_property_name, papyrus_script_name
 )
@@ -32,6 +33,7 @@ from script_convert.commands_falloutnv import FALLOUT_HANDLERS
 from script_convert.message_menus import PAGE_OPTIONS
 from script_convert.constants import typed_already
 from script_convert.constants_falloutnv import FALLOUT_COMMAND_ALIASES
+from tes5_import.dialogue.say_topics import PLAYER_TOKENS
 
 #: TES4 command name (lowercase) -> handler `(ctx, call) -> str | None`.
 REGISTRY: dict = dict(FALLOUT_HANDLERS)
@@ -295,6 +297,9 @@ def start_conversation(ctx, call) -> str:
     """
     ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)
     parts = ctx.arg_srcs()
+    greet = _force_greet(ctx, ref, parts)
+    if greet:
+        return greet
     if len(parts) >= 2 and parts[1].strip():
         topic = parts[1].strip().split()[0]
         ctx._mark_topic_property(topic)
@@ -304,6 +309,25 @@ def start_conversation(ctx, call) -> str:
         return f'{ref}.Say({call.arg(1)})'
     ctx.sc.property_refs['GREETING'] = 'Topic'
     return f'{ref}.Say(GREETING)'
+
+
+def _force_greet(ctx, ref: str, parts: list) -> str:
+    """`StartConversation Player [<topic>]`: fill an alias of the topic's force-greet pool.
+
+    Papyrus cannot open dialogue, so the actor joins a ForceGreet package that
+    walks over and opens the topic; '' when the target is not the player or
+    the importer planned no pool for this topic.
+    """
+    if not parts or parts[0].strip().lower() not in PLAYER_TOKENS:
+        return ''
+    named = len(parts) >= 2 and parts[1].strip()
+    topic = parts[1].strip().split()[0].lower() if named else ''
+    slot = ctx.force_greet_slots.get(topic)
+    if not slot:
+        return ''
+    ctx.sc.property_refs[FORCE_GREET_QUEST] = 'Quest'
+    return (f'TES4Polyfill.ForceGreet({FORCE_GREET_QUEST}, {slot[0]}, '
+            f'{slot[1]}, {ref})')
 
 
 #: SayLine's assumed length for an unmeasured line, and the beat between them.

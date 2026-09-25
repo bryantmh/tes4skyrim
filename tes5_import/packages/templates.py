@@ -40,8 +40,7 @@ T_OBJECTLIST = 'ObjectList'      # payload subrecord: CNAM (u32 formid, 0 = none
 T_BOOL = 'Bool'                  # payload subrecord: CNAM (1 byte)
 T_INT = 'Int'                    # payload subrecord: CNAM (u32)
 T_FLOAT = 'Float'                # payload subrecord: CNAM (f32)
-# payload subrecord: PDTO (u32 type, u32 formid); type 0 = a DIAL topic.
-# This is what makes a ForceGreet package OPEN DIALOGUE — see FORCE_GREET.
+#: PDTO (u32 type, u32 value): 0 = a DIAL FormID, 1 = a subtype code (b'HELO'); opens a ForceGreet's dialogue.
 T_TOPIC = 'Topic'
 
 # PKDT.Type
