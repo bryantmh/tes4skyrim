@@ -740,46 +740,25 @@ def convert_ctda_list_with_strings(rec: dict, script_vars: dict = None,
     if out and (out[-1][0][0] & CTDA_OR):
         fixed = bytes([out[-1][0][0] & ~CTDA_OR]) + out[-1][0][1:]
         out[-1] = (fixed, out[-1][1])
-    return sort_vm_conditions_last(expand_cell_families(out))
+    return order_condition_groups(expand_cell_families(out))
 
 
-def sort_vm_conditions_last(pairs: list) -> list:
-    """Stable-partition (CTDA, CIS2) pairs so VM-variable reads evaluate LAST.
+def _group_cost(group: list) -> tuple:
+    """(reads a Papyrus variable, condition count) of one OR group."""
+    vm = any(struct.unpack_from('<H', ctda, 8)[0] in (
+        GET_VM_SCRIPT_VARIABLE, GET_VM_QUEST_VARIABLE) for ctda, _ in group)
+    return vm, len(group)
 
-    GetVMQuestVariable(629)/GetVMScriptVariable(630) are not ordinary
-    conditions: each evaluation crosses from the main thread into the Papyrus
-    VM (lock + script-object variable lookup by mangled name), where every
-    engine-native condition is a plain field read.  The engine walks a
-    topic's INFOs evaluating each one's conditions IN ORDER until the first
-    failure, so a VM read placed before the cheap identity gates runs for
-    every candidate INFO on every Say — CharGenMain carries 59 INFOs whose
-    convCount VM read preceded its GetIsID, and all four escort speakers
-    share one voice type, so nothing upstream filtered: every Say paid ~59
-    VM round-trips on the main thread.  That is the visible hitch each time
-    a converted NPC speaks.
 
-    AND-joined conditions are order-independent (all must pass), so moving
-    whole condition units is semantics-preserving.  The unit is the OR-GROUP:
-    a run of conditions chained by the Or flag (bit 0) forms one boolean
-    unit and must never be split or interleaved.  Groups keep their relative
-    order within each class (stable), cheap classes first.
+def order_condition_groups(pairs: list) -> list:
+    """(CTDA, CIS2) pairs, whole OR groups reordered cheapest first.
+
+    See: docs/commentary/tes5_import_conditions.md#condition-order
     """
-    if len(pairs) < 2:
-        return pairs
     groups = or_groups(pairs)
-
-    def _has_vm_read(group):
-        for ctda, _cis2 in group:
-            if struct.unpack_from('<H', ctda, 8)[0] in (
-                    GET_VM_SCRIPT_VARIABLE, GET_VM_QUEST_VARIABLE):
-                return True
-        return False
-
-    cheap = [g for g in groups if not _has_vm_read(g)]
-    vm = [g for g in groups if _has_vm_read(g)]
-    if not cheap or not vm:
+    if len(groups) < 2:
         return pairs
-    return [p for g in cheap + vm for p in g]
+    return [p for g in sorted(groups, key=_group_cost) for p in g]
 
 
 def convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int,

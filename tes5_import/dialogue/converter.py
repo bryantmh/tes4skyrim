@@ -60,7 +60,9 @@ from ..record_types.common import (
     pack_uint8_subrecord,
     pack_uint32_subrecord,
 )
-from ..base.conditions import convert_ctda_list_with_strings
+from ..base.conditions import (convert_ctda_list_with_strings,
+                               order_condition_groups)
+from ..base.tes5_reader import subrecords
 
 _PLAYER_FORMID = 0x14
 _PLAYER_BASE_FID = 0x07     # NPC_ Player — see text_reader.PLAYER_BASE_FID
@@ -733,26 +735,39 @@ def _info_responses(rec: dict) -> bytes:
 
 def _info_conditions(rec: dict, injected_ctdas: bytes,
                      script_vars) -> bytes:
-    """injected_ctdas first, then the translated TES4 CTDAs (each + any CIS2).
+    """The injected gates plus the translated TES4 CTDAs, cheapest OR group first.
 
-    The strings variant turns legacy GetScriptVariable/GetQuestVariable reads
-    into GetVMScriptVariable/GetVMQuestVariable, whose variable NAME travels in
-    a CIS2 right after the CTDA — what makes script-variable-gated dialogue
-    evaluate in Skyrim. A Say-driven parent topic retargets or drops its
-    RunOn=Target conditions per SAY_TOPIC_DISPOSITIONS.
+    Each CTDA keeps its CIS2 (the Papyrus variable name of a converted
+    GetScriptVariable/GetQuestVariable read).  A Say-driven parent topic
+    retargets or drops its RunOn=Target conditions per SAY_TOPIC_DISPOSITIONS.
+
+    See: docs/commentary/tes5_import_conditions.md#condition-order
     """
-    out = injected_ctdas
     say_disp = SAY_TOPIC_DISPOSITIONS.get(
         get_formid(rec, 'ParentDIAL') & 0xFFFFFF)
     say_ref = say_disp[1] if say_disp and say_disp[0] == 'ref' else None
     say_drop = bool(say_disp) and say_disp[0] == 'drop'
+    pairs = _packed_condition_pairs(injected_ctdas)
     for ctda, cis2 in convert_ctda_list_with_strings(
             rec, script_vars,
             run_on_target_ref=say_ref, drop_run_on_target=say_drop):
-        out += pack_subrecord('CTDA', ctda)
-        if cis2:
-            out += pack_string_subrecord('CIS2', cis2)
-    return out
+        pairs.append((ctda, pack_string_subrecord('CIS2', cis2) if cis2
+                      else b''))
+    return b''.join(pack_subrecord('CTDA', ctda) + extra
+                    for ctda, extra in order_condition_groups(pairs))
+
+
+def _packed_condition_pairs(packed: bytes) -> list:
+    """[(CTDA data, the packed subrecords that follow it)] from packed CTDAs."""
+    pairs = []
+    for tag, data in subrecords(packed):
+        if tag == b'CTDA':
+            pairs.append((data, b''))
+        elif pairs:
+            ctda, extra = pairs[-1]
+            pairs[-1] = (ctda, extra + pack_subrecord(tag.decode('ascii'),
+                                                      data))
+    return pairs
 
 
 # ===========================================================================

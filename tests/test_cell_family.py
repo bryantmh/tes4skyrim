@@ -78,11 +78,11 @@ def test_family_is_case_insensitive_prefix():
 
 
 def test_positive_family_becomes_or_chain_of_interiors():
-    """GetInCell Anvil == 1 -> in any Anvil* interior, AND the next condition."""
+    """GetInCell Anvil == 1 -> in any Anvil* interior, AND-ed after the smaller gate."""
     out = _convert(_raw(67, ANVIL), _raw(72, GUARD))
-    assert [(f, p) for _t, f, p in out] == [(67, ANVIL), (67, ARMS),
-                                            (72, GUARD)]
-    assert [t & CTDA_OR for t, _f, _p in out] == [1, 0, 0]
+    assert [(f, p) for _t, f, p in out] == [(72, GUARD), (67, ANVIL),
+                                            (67, ARMS)]
+    assert [t & CTDA_OR for t, _f, _p in out] == [0, 1, 0]
 
 
 def test_exterior_members_are_tested_by_location_keyword():

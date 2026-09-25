@@ -15,6 +15,7 @@ Parameter remapping and the crash rule are in
 - [Chargen-identity conditions become menu-choice globals](#chargen-identity-to-menu-globals)
 - [Speak-as topics drop the actor-interrogating conditions](#non-actor-speaker-drop)
 - [GetInCell names a prefix family, not a cell](#getincell-prefix-family)
+- [Condition order: cheapest OR group first](#condition-order)
 - [How the engine evaluates conditions and builds the topic list](#engine-evaluation)
 - [Engine-fixed FormID parameters](#engine-fixed-params)
 
@@ -103,6 +104,40 @@ A dialogue open cost 1.1 and 2.0 million CTDA evaluations (two opens, counted on
 id 29924), against about 40,000 for one pass over every converted INFO with her
 as the subject. The bridge's generic hook on id 35304 (the branch loop) crashed
 the game at +0x44 on the next dialogue open.
+
+## <a id="condition-order"></a>Condition order: cheapest OR group first
+
+**Code:** `order_condition_groups` in `tes5_import/base/conditions.py`, applied
+to every INFO's full list in `dialogue/converter.py:_info_conditions`.
+
+Skyrim evaluates a record's conditions in order and stops at the first
+failure. It also walks a topic's INFOs this way every time it builds the topic
+list or picks a `Say` line.
+
+The unit that can move is the **OR group**: a run of conditions chained by the
+Or flag (bit 0). Groups are AND-joined, so their order never changes which lines
+pass. Within a group nothing moves. The ordering is stable and sorts groups by:
+
+1. **Groups that read a Papyrus variable go last.** Every
+   `GetVMQuestVariable`(629) or `GetVMScriptVariable`(630) evaluation crosses
+   from the main thread into the Papyrus VM (lock plus a lookup by mangled
+   name); every other condition is a plain field read. CharGenMain had 59 INFOs
+   whose `convCount` VM read came before their `GetIsID`, and its four escort
+   speakers share one voice type, so every `Say` paid about 59 VM round-trips.
+2. **Then smallest group first.** The prefix-family rewrite
+   ([above](#getincell-prefix-family)) produces OR groups of up to about 360
+   `GetInCell` checks (IC). The gates injected by the dialogue builder (the
+   speaker's `GetIsID`, `GetIsVoiceType`, the AddTopic unlock global) are small
+   and reject most speakers. Placed first, they reject a wrong speaker in a
+   couple of checks instead of after the whole chain.
+
+On the build before this ordering, Oblivion.esm's INFOs carried 311,739
+conditions (mean 18, max 753), 204,470 of them in family chains. Vanilla
+Skyrim.esm carries 55,641 over 31,465 INFOs (mean 1.8, max 22).
+
+The injected gates arrive as packed bytes, so `_info_conditions` unpacks them
+into (CTDA, CIS2) pairs and orders the combined list once. The list must not
+end on an Or flag; both builders clear a trailing one.
 
 ## <a id="getincell-prefix-family"></a>GetInCell names a prefix family, not a cell
 

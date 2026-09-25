@@ -21,6 +21,7 @@ import pytest
 
 from tes5_import.base.conditions import (
     CTDA_OR,
+    FUNC_GET_IS_ID,
     FUNC_GET_IS_VOICE_TYPE,
     FUNC_GET_QUEST_RUNNING,
     build_ctda,
@@ -29,6 +30,7 @@ from tes5_import.base.conditions import (
     convert_ctda_list,
     has_positive_getisid,
     needs_origin_gate,
+    order_condition_groups,
     read_getisid_fids,
 )
 from tes5_import.dialogue.converter import DIAL_TYPE_COMBAT, DIAL_TYPE_CONVERSATION, DIAL_TYPE_DETECTION, DIAL_TYPE_MISC, DIAL_TYPE_PERSUASION, DIAL_TYPE_SERVICE, DIAL_TYPE_TOPIC, _EDID_SUBTYPE, classify_topic, convert_DIAL, convert_INFO, make_dlbr, make_dlvw, should_skip_dial
@@ -657,6 +659,51 @@ class TestINFO:
         assert len(ctdas) == 2
         assert struct.unpack_from('<H', ctdas[0], 8)[0] == FUNC_GET_IS_VOICE_TYPE
         assert struct.unpack_from('<H', ctdas[1], 8)[0] == 72
+
+    def test_small_injected_gate_precedes_long_converted_or_chain(self):
+        """A 3-way OR group of TES4 GetInCell sorts after the 1-condition gate."""
+        from tes5_import.record_types.common import pack_subrecord
+        injected = pack_subrecord('CTDA', build_ctda(FUNC_GET_IS_ID,
+                                                     param1=0x01000AAA))
+        conds = {'Condition[%d].Raw' % i: _tes4_ctda(
+            type_byte=CTDA_OR if i < 2 else 0, func=67, p1=0x100 + i).hex()
+            for i in range(3)}
+        out = convert_INFO(self._rec(ConditionCount='3', **conds),
+                           injected_ctdas=injected)
+        ctdas = _find_all_subrecords(out, b'CTDA')
+        assert [struct.unpack_from('<H', c, 8)[0] for c in ctdas] == \
+            [FUNC_GET_IS_ID, 67, 67, 67]
+        assert [c[0] & CTDA_OR for c in ctdas] == [0, 1, 1, 0]
+
+
+class TestConditionOrder:
+    """order_condition_groups: whole OR groups, VM reads last, then smallest."""
+
+    @staticmethod
+    def _pair(func, is_or=False, cis2=None):
+        return build_ctda(func, param1=func, is_or=is_or), cis2
+
+    @staticmethod
+    def _funcs(pairs):
+        return [struct.unpack_from('<H', c, 8)[0] for c, _ in pairs]
+
+    def test_groups_sort_by_size_and_vm_reads_go_last(self):
+        """Singles first, the 3-way OR group next, the VM read (with its CIS2) last."""
+        pairs = [self._pair(629, cis2='::convCount_var'),
+                 self._pair(67, is_or=True), self._pair(68, is_or=True),
+                 self._pair(69),
+                 self._pair(72)]
+        out = order_condition_groups(pairs)
+        assert self._funcs(out) == [72, 67, 68, 69, 629]
+        assert out[-1][1] == '::convCount_var'
+
+    def test_or_group_is_never_split_and_order_is_stable(self):
+        """Equal-size groups keep their order; the 2-way OR group moves whole."""
+        pairs = [self._pair(74), self._pair(72, is_or=True), self._pair(426),
+                 self._pair(58)]
+        out = order_condition_groups(pairs)
+        assert self._funcs(out) == [74, 58, 72, 426]
+        assert [c[0] & CTDA_OR for c, _ in out] == [0, 0, 1, 0]
 
 
 # ---------------------------------------------------------------------------
