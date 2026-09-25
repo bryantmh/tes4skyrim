@@ -25,6 +25,10 @@ from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as N
 
 
+# ---------------------------------------------------------------------------
+# Assembly order
+# ---------------------------------------------------------------------------
+
 def build(conv, name: str, source: str, extends: str, editor_id: str) -> str:
     """Convert one standalone SCPT record to a full `.psc` file."""
     tree = _prepare(conv, name, source, extends, editor_id)
@@ -47,12 +51,17 @@ def build(conv, name: str, source: str, extends: str, editor_id: str) -> str:
     body += helpers(conv)
     body += chargen_latch(conv)
     body += stage_latches(conv)
+    body += quest_restart(conv, tree, extends, name)
 
     out = list(header(conv, name, extends, editor_id))
     out += properties(conv, tree)
     out += body
     return '\n'.join(out)
 
+
+# ---------------------------------------------------------------------------
+# Loading: symbols and facts
+# ---------------------------------------------------------------------------
 
 def _prepare(conv, name: str, source: str, extends: str, editor_id: str):
     """Parse the script and load the context: symbols, then facts."""
@@ -273,6 +282,10 @@ def _reads_sleep_state(body) -> bool:
                for e in N.walk_exprs_in(body) if e.called)
 
 
+# ---------------------------------------------------------------------------
+# Declarations
+# ---------------------------------------------------------------------------
+
 def header(conv, name: str, extends: str, editor_id: str) -> list:
     """The ScriptName line and the conversion docstring.
 
@@ -291,21 +304,26 @@ def header(conv, name: str, extends: str, editor_id: str) -> list:
             '']
 
 
-def properties(conv, tree) -> list:
-    """The script's variables, as auto-properties.
-
-    An OBSE `begin Function{a, b}` declares its parameters as ordinary script
-    variables.  They become the Papyrus Function's parameters, so they must NOT
-    also be auto-properties: the parameter would shadow the property inside the
-    body while callers write neither, leaving the body reading a permanent 0.
-    """
+def _udf_param_names(tree) -> set:
+    """Lowercased names an OBSE `begin Function{a, b}` takes as parameters."""
     params = set()
     for block in (tree.blocks if tree else ()):
         if block.btype.lower() == 'function':
             for name in _udf_params(block.filter):
                 params.add(name.lower())
                 params.add(safe_property_name(name).lower())
+    return params
 
+
+def variable_properties(conv, tree) -> list:
+    """(property, Papyrus type) of every TES4 variable, as its script declares it.
+
+    A UDF's parameters are not properties: the parameter would shadow the
+    property while callers write neither.  Of the two type tables the MORE
+    SPECIFIC wins -- `_resolve_self_ref` upgrades the property, the pre-pass
+    the variable, and either can be the one that knows.
+    """
+    params = _udf_param_names(tree)
     out, seen = [], set()
     for var in (tree.variables if tree else ()):
         safe = safe_property_name(var.name)
@@ -313,31 +331,48 @@ def properties(conv, tree) -> list:
         if low in seen or low in params:
             continue
         seen.add(low)
-        # The MORE SPECIFIC of the two tables wins.  Converting the body is
-        # what discovers a variable's real type, and each table learns it by a
-        # different route: `_resolve_self_ref` upgrades the PROPERTY when a
-        # call resolves its receiver as an actor, while the pre-pass upgrades
-        # the VARIABLE from the parse tree.  Either can be the one that knows,
-        # so preferring a fixed one left `ObjectReference Property replacement`
-        # under a `replacement.IsDead()` the compiler rejected.
-        ptype = _specific(conv.sc.property_refs.get(safe),
-                          conv.sc.var_types.get(low, 'Int'))
-        out.append(_declare(safe, ptype))
+        out.append((safe, _specific(conv.sc.property_refs.get(safe),
+                                    conv.sc.var_types.get(low, 'Int'))))
+    return out
 
-    # Every EXTERNAL record the body named -- a quest, a faction, a sound -- is
-    # reached through a property too, and those are discovered WHILE the body
-    # converts rather than from the declarations.  Missing them left the
-    # emitted name undefined and failed the whole script to compile.
+
+def properties(conv, tree) -> list:
+    """The script's variables, then every external record the body named, as auto-properties.
+
+    The external ones -- a quest, a faction, a sound -- are discovered WHILE
+    the body converts rather than from the declarations; missing them left the
+    emitted name undefined and failed the whole script to compile.
+    """
+    kept = variable_properties(conv, tree)
+    out = [_declare(name, ptype) for name, ptype in kept]
+    seen = {name.lower() for name, _t in kept} | _udf_param_names(tree)
     for prop, ptype in sorted(conv.sc.property_refs.items()):
         low = prop.lower()
-        if low in seen or low in params or not prop.isidentifier():
+        if low in seen or not prop.isidentifier():
             continue
         seen.add(low)
         out.append(_declare(prop, ptype))
-
     if out:
         out.append('')
     return out
+
+
+def quest_restart(conv, tree, extends: str, name: str) -> list:
+    """`TES4Start(quest)`: start a quest script's quest, keeping its TES4 variables.
+
+    Skyrim's `Start()` on a stopped quest re-initialises its scripts; TES4 kept
+    every quest variable across StopQuest/StartQuest.  Global, so the saved
+    values live in the caller's frame rather than the instance Start replaces.
+    See: docs/commentary/script_convert.md#stopquest-converts-stop-run-bit
+    """
+    if extends != 'Quest':
+        return []
+    kept = variable_properties(conv, tree)
+    out = ['', f'Function TES4Start({papyrus_script_name(name)} akQuest) Global']
+    out += [f'  {ptype} v{i} = akQuest.{prop}' for i, (prop, ptype) in enumerate(kept)]
+    out.append('  akQuest.Start()')
+    out += [f'  akQuest.{prop} = v{i}' for i, (prop, _t) in enumerate(kept)]
+    return out + ['EndFunction']
 
 
 def _declare(name: str, ptype: str) -> str:
@@ -355,6 +390,10 @@ def _declare(name: str, ptype: str) -> str:
     init = ' = 0.0' if ptype == 'Float' else ''
     return f'{ptype} Property {name}{init} Auto{flag}'
 
+
+# ---------------------------------------------------------------------------
+# Blocks
+# ---------------------------------------------------------------------------
 
 def udf(conv, tree, extends: str) -> list:
     """The `TES4Call` function an OBSE `begin Function{a, b}` script exposes.

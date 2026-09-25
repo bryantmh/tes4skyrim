@@ -42,6 +42,9 @@ caching, skipped record types, the export text format, and the directory layout.
   - proceeding is unsafe or destructive (deleting data, force-pushing,
     [FormID drift](#formid-drift));
   - you want to use the `Agent` tool (always ask first, including `Explore`);
+  - a fix would make a feature need a runtime DLL (`tes_runtime/`) when it
+    didn't before. A DLL is the last resort: first find the engine's own
+    mechanism (records, Papyrus, what vanilla does);
   - you need the user to do something only they can do (leave the game running,
     play a build). Anything you could do yourself, do.
 

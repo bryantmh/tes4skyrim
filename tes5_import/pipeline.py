@@ -307,6 +307,10 @@ def _prescan_npc_voice_map(by_type: dict, ctx, writer, num_new_masters: int, _st
         WELL_KNOWN_PROPERTIES[speaker_property_name(_em, _vo)] = _fid
     print(f"  Speaker activators: {_n_spk} TACT+REFR pairs "
           f"(voiced stand-ins for Say speak-as markers)")
+    from .dialogue.reset_interior import build_reset_movers
+    _movers = build_reset_movers(by_type, writer, num_new_masters)
+    WELL_KNOWN_PROPERTIES.update(_movers)
+    print(f"  ResetInterior mover lists: {len(_movers)}")
     _step_done('npc voice map')
     return npc_to_vtyp
 

@@ -1300,6 +1300,33 @@ Float Function _GameDays(Float afSeconds) Global
   Return afSeconds * scale / 86400.0
 EndFunction
 
+; ======================================================== reset interior ==
+;
+; TES4 `ResetInterior <cell>`.  Oblivion's cell cleanup also returned the
+; references scripts had moved into the cell (the Arena's combatants live in a
+; holding cell and die in the match cell); Skyrim's Cell.Reset() resets only
+; references whose editor location is that cell.  The importer lists the
+; moved-in references per cell (tes5_import/dialogue/reset_interior.py), and
+; each one still in the cell goes back to its editor location.
+
+Function ResetInterior(Cell akCell, FormList akMovers) Global
+  If akCell == None
+    Return
+  EndIf
+  Int i = 0
+  If akMovers
+    i = akMovers.GetSize()
+  EndIf
+  While i > 0
+    i -= 1
+    ObjectReference r = akMovers.GetAt(i) as ObjectReference
+    If r && r.GetParentCell() == akCell
+      r.MoveToMyEditorLocation()
+    EndIf
+  EndWhile
+  akCell.Reset()
+EndFunction
+
 ; ============================================================= speak-as ==
 ;
 ; TES4 `Say <topic> <force-subtitles> <speak-as NPC> [<in-head>]` -- a line

@@ -2251,3 +2251,39 @@ class TestDropNonActorSpeakerCtdas:
         blob = pack_subrecord('CTDA',
                               self._ctda(sorted(NON_ACTOR_SPEAKER_DROP)[0]))
         assert _drop_non_actor_speaker_ctdas(blob) == b''
+
+
+class TestResetInteriorMovers:
+    """ResetInterior sends home what scripts moved into the reset cell.
+
+    See: docs/commentary/script_convert.md#resetinterior-sends-moved-refs-home
+    """
+
+    def _by_type(self, result):
+        """An Arena in miniature: a holding cell, a match cell, one combatant."""
+        return {
+            'CELL': [{'FormID': '0018AE56', 'EditorID': 'Holding'},
+                     {'FormID': '00091B46', 'EditorID': 'ArenaMatchCell'}],
+            'REFR': [{'FormID': '00091B7B', 'EditorID': 'OpponentMarkerRef',
+                      'ParentCELL': '00091B46'},
+                     {'FormID': '00091B7C', 'EditorID': 'LocalRef',
+                      'ParentCELL': '00091B46'}],
+            'ACHR': [{'FormID': '0018AE5B', 'EditorID': 'Combatant0ARef',
+                      'ParentCELL': '0018AE56'}],
+            'INFO': [{'ResultScript': result}],
+        }
+
+    def test_moved_in_combatant_is_listed(self):
+        """A ref moved to a marker in a reset cell is that cell's mover."""
+        from tes5_import.dialogue.reset_interior import scan_reset_movers
+        movers = scan_reset_movers(self._by_type(
+            'Combatant0ARef.MoveTo OpponentMarkerRef\r\n'
+            'LocalRef.MoveTo OpponentMarkerRef\r\nResetInterior ArenaMatchCell'))
+        assert movers == {'arenamatchcell': {0x0018AE5B}}
+
+    def test_unreset_cell_has_no_movers(self):
+        """Without a ResetInterior on the cell nothing is listed."""
+        from tes5_import.dialogue.reset_interior import scan_reset_movers
+        movers = scan_reset_movers(self._by_type(
+            'Combatant0ARef.MoveTo OpponentMarkerRef'))
+        assert not movers

@@ -943,10 +943,6 @@ COMMAND_ROWS = {
     'setforcerun': Cmd('{ref}.SetActorValue("SpeedMult", {?01})', ACTOR,
                        defaults={0: '0'}, arms=('150.0', '100.0'), flags='actor_only branch_only'),
 
-    #: ResetInterior -> Cell.Reset().
-    'resetinterior': Cmd('{p0}.Reset()', RAW, types={0: 'Cell'},
-                         defaults={0: 'Self'}),
-
     #: IsPCRace / GetPCIsRace -> the player's race compared to the argument.
     'ispcrace': Cmd('Game.GetPlayer().GetRace() == {a0}',
                     defaults={0: 'None'}, types={0: 'Race'}),

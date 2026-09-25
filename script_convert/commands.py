@@ -140,9 +140,9 @@ def stage(ctx, call) -> str:
 def quest_state(ctx, call) -> str:
     """Quest lifecycle.
 
-    StopQuest is `Stop()` -- a run-bit global was tried and REVERTED (see
-    docs/commentary/script_convert.md); the fix is the Start() hoist and nothing
-    more.
+    StopQuest is `Stop()` -- a run-bit global was tried and REVERTED.  StartQuest
+    on a quest with a script is its `TES4Start`, which keeps the variables
+    Skyrim's Start() would reset.
     See: docs/commentary/script_convert.md#quest-property-never-downgrades
     """
     parts = ctx.arg_srcs()
@@ -160,11 +160,33 @@ def quest_state(ctx, call) -> str:
     prop = safe_property_name(quest_src)
     if not typed_already(ctx.sc.property_refs, prop):
         ctx.sc.property_refs[prop] = 'Quest'
+    script = ctx.xref.get_quest_script_type(quest_src) if ctx.xref else 'Quest'
+    if call.name == 'startquest' and script != 'Quest':
+        return f'{script}.TES4Start({prop} as {script})'
     papyrus = {'startquest': 'Start', 'stopquest': 'Stop',
                'getquestrunning': 'IsRunning',
                'completequest': 'CompleteQuest',
                'isquestcompleted': 'IsCompleted'}[call.name]
     return f'{prop}.{papyrus}()'
+
+
+@command('resetinterior')
+def reset_interior(ctx, call) -> str:
+    """ResetInterior -- reset the cell and send home the references moved into it.
+
+    The importer lists those references per cell (`TES4Movers_<cell>`).
+    See: docs/commentary/script_convert.md#resetinterior-sends-moved-refs-home
+    """
+    parts = ctx.arg_srcs()
+    cell_src = parts[0].strip() if parts else ''
+    if not cell_src:
+        return None
+    cell = safe_property_name(cell_src)
+    movers = safe_property_name(f'TES4Movers_{cell_src.lower()}')
+    if not typed_already(ctx.sc.property_refs, cell):
+        ctx.sc.property_refs[cell] = 'Cell'
+    ctx.sc.property_refs[movers] = 'FormList'
+    return f'TES4Polyfill.ResetInterior({cell}, {movers})'
 
 
 @command('getglobalvalue', 'setglobalvalue')

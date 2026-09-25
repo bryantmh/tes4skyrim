@@ -6,8 +6,6 @@ Major Issues for V1:
 
 	2 - Havok feels off. Items don't move like they should. Specifically, there seems to be too much inertia on small items, like I'm dragging a heavy object when it is something as small as a cup, Animated signs will get stuck in a position after swinging a bit, defying gravicty
 	
-	7 - Crime system
-
 	10 - Imperials get all fallback race lines (like reiklings)
 
 	11 - All-in-one installer that people can just click and expect to work

@@ -4354,6 +4354,57 @@ class TestQuestStartDoesNotClobberSeededWrites:
         body = ['  If Arena.ReadyMatch == 1', '  Arena.Start()']
         assert self._hoist(converter, body) == body
 
+    def test_quest_script_restarts_keeping_its_variables(self, converter):
+        """TES4 kept quest variables across StopQuest/StartQuest; Skyrim's
+        Start() resets them, so the Arena re-armed its first, dead opponent."""
+        out = converter.convert_standalone(
+            'ArenaScript', 'scn ArenaScript\nshort CombatantsKilled\n'
+            'float OpenTimer\nbegin gamemode\nend', 'Quest', 'ArenaScript')
+        body = out[out.index('Function TES4Start(TES4_ArenaScript akQuest) Global'):]
+        assert body.index('Int v0 = akQuest.CombatantsKilled') \
+            < body.index('akQuest.Start()') \
+            < body.index('akQuest.CombatantsKilled = v0')
+        assert 'Float v1 = akQuest.OpenTimer' in body
+
+    def test_object_script_has_no_restart(self, converter):
+        """Only a quest script is restarted, so only it carries TES4Start."""
+        out = converter.convert_standalone(
+            'DoorScript', 'scn DoorScript\nshort open\nbegin onactivate\nend',
+            'ObjectReference', 'DoorScript')
+        assert 'TES4Start' not in out
+
+    def test_startquest_calls_the_quest_scripts_restart(self, xref):
+        """StartQuest on a quest with a script goes through its TES4Start."""
+        xref.edid_to_formid['arena'] = '0002991F'
+        xref.record_scri['0002991F'] = '0002991E'
+        xref.script_formid_to_edid['0002991E'] = 'ArenaScript'
+        result = conv_line(ScriptConverter(xref), 'StartQuest Arena', 'Quest')
+        assert 'TES4_ArenaScript.TES4Start(Arena as TES4_ArenaScript)' in result
+
+    def test_resetinterior_sends_moved_refs_home(self, converter):
+        """ResetInterior passes the cell's moved-in references to the polyfill."""
+        result = conv_line(converter, 'ResetInterior ArenaMatchCell', 'Quest')
+        assert ('TES4Polyfill.ResetInterior(ArenaMatchCell, '
+                'TES4Movers_arenamatchcell)') in result
+
+    def test_global_call_on_a_generated_script_survives(self):
+        """`TES4_X.TES4Start(...)` names a script, not an undeclared property."""
+        from script_convert.pipeline import _comment_dangling
+        text = ('Quest Property Arena Auto\n'
+                'Function Fragment_0()\n'
+                '  TES4_ArenaScript.TES4Start(Arena as TES4_ArenaScript)\n'
+                '  fbmwMissing.follownow = 1\n'
+                'EndFunction')
+        out = _comment_dangling(text).split('\n')
+        assert out[2] == '  TES4_ArenaScript.TES4Start(Arena as TES4_ArenaScript)'
+        assert out[3].lstrip().startswith(';')
+
+    def test_converted_fragment_is_hoisted(self, converter):
+        """The emitter itself applies the hoist, not just the function."""
+        out = [ln.strip() for ln in converter.convert_fragment(
+            'set Arena.ReadyMatch to 1\nStartQuest Arena', 'Quest')]
+        assert out.index('Arena.Start()') < out.index('Arena.ReadyMatch = 1')
+
 
 # ===========================================================================
 # TES4 lexer  (script_convert/tes4/lexer.py)

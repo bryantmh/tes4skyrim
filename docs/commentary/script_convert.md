@@ -2068,8 +2068,29 @@ RESETS it: every `Auto` property back to its default, stage back to 0.
 Oblivion's `StopQuest` clears a run bit and touches nothing, so the authored
 idiom "seed the variables, then StartQuest" is safe there and destructive here.
 
-**That is handled by `_hoist_quest_start_above_writes`** — move `Start()` ABOVE
-the writes it would clobber. Nothing else is needed, and nothing else works.
+**The hoist alone was not enough (2026-09-24, confirmed in game).**
+`hoist_quest_start_above_writes` moves `Start()` above the writes it would
+clobber, which saves values seeded in the SAME fragment. It cannot save state
+that must outlive a stop/start: `ArenaAggressionScript` picks which combatant
+attacks by `Arena.CombatantsKilled`, every match restarts the stopped `Arena`,
+and the reset put the counter back to 0 — so from the second match on it armed
+`Combatant0ARef` (the first, already dead opponent) and the real opponent was
+never told to fight ("second combatant not hostile").
+
+**Fix:** every converted quest script gets a Global
+`TES4Start(<script> akQuest)` (`assemble.quest_restart`) that copies each TES4
+variable into a typed local, calls `Start()`, and writes them back; a
+converted `StartQuest Q` on a quest with a script calls it. The quest script is
+the only place that knows each property's final Papyrus type. Global, so the
+saved values live in the caller's frame rather than in the instance the restart
+replaces. Stop/Start still happen, so stages behave as below. The hoist does
+not match this shape and is now inert for scripted quests.
+
+**Also:** the hoist had silently stopped running. The AST rewrite deleted
+`_postprocess_lines`, its only call site outside `state_writes_before_setstage`,
+so every fragment without a `SetStage` wrote its seeds before `Start()` again —
+the announcer-and-gates softlock returned. `emit/script.emit_body` now applies
+it to every body.
 
 🛑 **A converter-owned run bit was built and REVERTED (2026-08-19).** The idea:
 keep the TES4 run bit in a GLOB `TES4Stopped_<Quest>`, never engine-stop the
@@ -2101,6 +2122,25 @@ also matches a renamed call shape, and `set X.fQuestDelayTime to N` emits
 REPEATING registration and `RegisterForUpdate(0)` shipped in 45 scripts as an
 every-frame storm, ended only by the engine stop that the reverted design
 removed. Measured on the shipped build: 0 repeating registrations.
+
+## ResetInterior sends moved-in references home (2026-09-24, confirmed in game)
+<a id="resetinterior-sends-moved-refs-home"></a>
+
+**Symptom:** the previous Arena opponent's corpse still lies in the arena on
+the next match.
+
+**Cause:** the 26 combatants are authored in `ArenaCombatantsHolding` and a
+match INFO `MoveTo`s one into `ArenaMatchCell`; the reward INFO's
+`ResetInterior ArenaMatchCell` cleared the corpse in Oblivion. Skyrim's
+`Cell.Reset()` resets only references whose editor location is that cell, so
+a moved-in corpse stays.
+
+**Fix:** the authored indicator of "can be in cell C without belonging to it"
+is a script's `X.MoveTo M` with the marker M placed in C and X placed
+elsewhere. `tes5_import/dialogue/reset_interior.py` writes one FormList
+`TES4Movers_<cell>` per cell any script resets, and `ResetInterior C` becomes
+`TES4Polyfill.ResetInterior(C, TES4Movers_c)`: each listed reference still in
+C goes back via `MoveToMyEditorLocation()`, then `C.Reset()`.
 
 ### Renaming a converted call can silently disable a post-pass (2026-08-19)
 

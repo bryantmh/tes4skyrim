@@ -22,6 +22,7 @@ from script_convert.constants import safe_property_name
 from script_convert.stage_latch import guard_stage_timer
 from script_convert.emit import stmt as S
 from script_convert.tes4 import nodes as N
+from script_convert.tes5.blocks import hoist_quest_start_above_writes
 
 #: Papyrus indents with two spaces per level, matching the emitted events.
 INDENT = '  '
@@ -46,7 +47,9 @@ def emit_body(conv, body, extends: str, depth: int = 0) -> list[str]:
 
     Recurses through `If`/`While` rather than tracking a running depth counter,
     so a body cannot come out unbalanced and a `Return` cannot strand the lines
-    that follow it inside the wrong block.
+    that follow it inside the wrong block.  Every body is returned with each
+    `Q.Start()` above the writes to `Q` it would reset.
+    See: docs/commentary/script_convert.md#stopquest-converts-stop-run-bit
     """
     body = _drop_duplicate_say(conv, body)
     animated = _animated_targets(body)
@@ -75,7 +78,7 @@ def emit_body(conv, body, extends: str, depth: int = 0) -> list[str]:
         out.append(INDENT * depth + 'EndWhile')
         conv.sc.refwalk_labels = set()
     conv.sc.refwalk_var = open_walk
-    return out
+    return hoist_quest_start_above_writes(out)
 
 
 def emit_stmt(conv, st: N.Stmt, extends: str, depth: int) -> list[str]:

@@ -35,7 +35,7 @@ def build_say_topic_dispositions(by_type: dict) -> dict:
     as does a Morrowind `Say` topic, which has no target at all.
     See: docs/commentary/tes5_import_dialogue.md#script-driven-type-1-topics
     """
-    votes = _scan_say_votes(_collect_script_texts(by_type),
+    votes = _scan_say_votes(collect_script_texts(by_type),
                             *_index_say_targets(by_type))
     out = dict.fromkeys(say_topic_fids(by_type), ('drop', None))
     for dfid, tgts in votes.items():
@@ -47,7 +47,7 @@ def build_say_topic_dispositions(by_type: dict) -> dict:
     return out
 
 
-def _collect_script_texts(by_type: dict) -> list:
+def collect_script_texts(by_type: dict) -> list:
     """Every script body that can hold a call site: SCPT sources, INFO result
     scripts, and each QUST stage log's result script, in that order."""
     texts = [get_str(r, 'SCTX') or '' for r in by_type.get('SCPT', [])]

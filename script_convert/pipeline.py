@@ -12,7 +12,7 @@ from asset_convert.game_paths import (current_namespace,
                                       set_namespace)
 from script_convert.constants import (sanitize_name, papyrus_script_name,
                                      SERVICE_MENU_CALL, UDF_WIDE_TYPES,
-                                     script_prefix)
+                                     is_generated_script_type, script_prefix)
 from script_convert.conversation_sequence import (
     sequence_gate,
     split_counter_step,
@@ -373,8 +373,9 @@ def _comment_dangling(text: str) -> str:
     """Comment out statements whose SUBJECT was never declared in `text`.
 
     Only a statement whose leading `Owner.` is neither a declared property, a
-    local, nor a Papyrus built-in is touched, so a legitimate call is never
-    suppressed.  Mirrors ScriptConverter._dangling_cross_script_target, which
+    local, a Papyrus built-in, nor a script this pipeline generated (a Global
+    call such as `TES4_ArenaScript.TES4Start(...)`) is touched, so a legitimate
+    call is never suppressed.  Mirrors ScriptConverter._dangling_cross_script_target, which
     handles the case where the owner DOES resolve but the variable does not.
     """
     lines = text.split('\n')
@@ -400,7 +401,8 @@ def _comment_dangling(text: str) -> str:
         if not stripped or stripped.startswith(';'):
             continue
         m = _MEMBER_STMT_RE.match(line)
-        if m and m.group(2).lower() not in known:
+        if (m and m.group(2).lower() not in known
+                and not is_generated_script_type(m.group(2))):
             lines[i] = (f'{m.group(1)};{stripped}  ;NE: {m.group(2)} is not '
                         f'declared anywhere (dangling in the original mod)')
     return '\n'.join(lines)
