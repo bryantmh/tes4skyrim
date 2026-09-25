@@ -1232,6 +1232,28 @@ graph-less mesh with fewer dead keys loses nothing.
 A missing or failing hkxcmd never loses the mesh. The object still converts and
 renders; it just stays unanimated, and the error is recorded in the result.
 
+### <a id="specialidle-is-the-load-state"></a>SpecialIdle is the state an object loads into
+
+**Code:** `_start_state_id`, `_LOAD_SEQUENCES` in `asset_convert/havok/hkx_animobject.py`
+
+The generated graph starts on a do-nothing `Rest` state so a door or wall does
+not play `Forward` by itself — unless the mesh carries a sequence the object plays
+from load: `AutoLoop`, `AutoPlay`, or Oblivion's `SpecialIdle`.
+
+Oblivion plays an object's `SpecialIdle` at load when it has no `Idle`. Census of
+Oblivion.esm: **130** meshes carry `Idle`, **28** carry `SpecialIdle`, and **no
+mesh carries both**. Every `SpecialIdle` is the object's resting state — either a
+`CYCLE_LOOP` (the SE01Metronome tick, 1.53 s; the Oblivion gate swirls, 5 s) or
+a one-frame hold pose (`se11sheopooffx`, `se09poollid`, `lorgrenskeleton01`).
+Scripts treat it the same way: `SE01DoorScript` only stops the metronome
+(`playgroup forward 4`), and the gate scripts replay `specialidle` only when
+`IsAnimPlaying == 0`, to return to it after a one-shot `Forward`.
+
+Starting on `Rest` left the metronome frozen: nothing ever sent `SpecialIdle`.
+Starting on it is vanilla's own mechanism — `GenericBehaviors\Autoplay.hkx` sets
+`startStateId` to a state whose generator plays `AutoPlay`, and looping comes
+from the sequence's cycle type. Confirmed in-game on SE01Metronome.
+
 ### <a id="bged-clears-bsx-bit-80"></a>A BGED forces BSXFlags bit 0x80 CLEAR
 
 Attaching the graph also rewrites the root's BSXFlags: the Animated bit goes ON

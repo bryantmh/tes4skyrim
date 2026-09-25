@@ -3981,6 +3981,19 @@ class TestAnimObjectBehaviorGraph:
                 assert transitions.strip() != 'null',                     (f'[{n} seq] state {name!r} has no transitions — it is a '
                      f'dead end and can never be re-entered')
 
+    def test_starts_on_specialidle_when_present(self):
+        """An object with SpecialIdle loads playing it; one without starts at Rest.
+
+        See: docs/commentary/asset_convert_nif.md#specialidle-is-the-load-state
+        """
+        from asset_convert.havok.hkx_animobject import behavior_xml
+
+        cases = [(['SpecialIdle', 'Forward'], 0), (['Left', 'SpecialIdle'], 1),
+                 (['Forward', 'Backward'], 2)]
+        for seqs, start in cases:
+            xml = behavior_xml('obj', seqs)
+            assert f'<hkparam name="startStateId">{start}</hkparam>' in xml, seqs
+
     def test_graph_declares_soundplay_after_sequences(self):
         """A `SoundPlay.<SNDR>` key raises the bare `SoundPlay` event; a graph
         without it stays silent.  Sequence event ids must stay first.
