@@ -61,6 +61,7 @@ from .base.owned_records import (
     create_vtyp_records,
 )
 from .base.equivalents import VTYP_EDID_BY_FID
+from .base.race_factions import build_race_factions
 from .record_types.world import (
     set_cloud_bank_output,
 )
@@ -256,6 +257,7 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
     _step_t = time.time()
     from .record_types.actor_common import (create_origin_faction, reset_origin_faction)
     reset_origin_faction(getattr(ctx, 'master_index', None))
+    build_race_factions(by_type, ctx, writer)
     if not ctx or not adopt_master_special_records(
             ctx, master_export_dirs(ctx)):
         create_vtyp_records(writer, export_dir, by_type)

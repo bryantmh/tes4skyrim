@@ -13,6 +13,7 @@ from ..actors.npc_face_mapper import build_face_tail_subs, build_pnam_subs
 from ..actors.outfits import split_inventory
 from ..packages.actor_wiring import CSTY_DEFAULT, DPLT_NPC_LIST, npc_packages
 from ..base.equivalents import map_hair_color
+from ..base.race_factions import race_faction
 from .actor_common import (GOLD001_FID, NAM5_UNKNOWN, SOUND_LEVEL_NORMAL,
                            attacks_player_on_sight,
                            build_aidt, build_outfit, origin_memberships,
@@ -169,6 +170,9 @@ def _npc_snams(rec: dict, vendor_fids: list, trainer_clas_fid: int) -> bytes:
         subs += _pack_snam(get_trainer_faction_fid())
     for origin_fid in origin_memberships():
         subs += _pack_snam(origin_fid)
+    race_fact = race_faction(get_formid(rec, 'RNAM.Race'))
+    if race_fact:
+        subs += _pack_snam(race_fact)
     return subs + _crime_snams(rec)
 
 

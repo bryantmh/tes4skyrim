@@ -18,6 +18,7 @@ Parameter remapping and the crash rule are in
 - [Condition order: cheapest OR group first](#condition-order)
 - [How the engine evaluates conditions and builds the topic list](#engine-evaluation)
 - [Engine-fixed FormID parameters](#engine-fixed-params)
+- [GetIsRace on a plugin-authored race becomes a faction test](#plugin-authored-races)
 
 ## <a id="engine-fixed-params"></a>Engine-fixed FormID parameters
 
@@ -339,8 +340,39 @@ dialogue menu on every NPC. `CTDA_FORMID_PARAMS` is keyed by the POST-remap
 parameters are a raw index into each game's own table, which do not align:
 attributes have no Skyrim equivalent and drop (fail open); skills and shared
 derived values translate through `_TES4_AV_TO_TES5`. Race parameters translate
-to the Skyrim race the converted NPCs actually use (`_map_race_param`), or the
-condition drops.
+to the Skyrim race the converted NPCs actually use (`_map_race_param`), except
+a plugin-authored race in `GetIsRace` (below).
+
+### <a id="plugin-authored-races"></a>GetIsRace on a plugin-authored race becomes a faction test
+
+**Code:** `tes5_import/base/race_factions.py`, `_authored_race_faction` in
+`conditions.py`, `_npc_snams` in `record_types/npc.py`
+
+`TES4_RACE_FID_TO_EDID` knows only the 15 vanilla Oblivion races. An NPC of any
+other race (Morroblivion's `mwBMRieklingRace`, Nehrim's `Aeterna1`) converts
+onto a stand-in vanilla Skyrim race, so no race test can pick out that race
+again: whatever vanilla race the condition names, every actor of that race
+passes too. Measured on the Morroblivion build before this fix: Rieklings
+converted as Imperials, while `_map_race_param` sent `GetIsRace(Riekling)` to
+`DEFAULT_RACE` (Nord). So `mwGenericRieklingGreeting` ("What is it, human?")
+greeted as every Nord (Ergnir) and never as a Riekling. Pointing both at the
+same race would have handed the lines to every Imperial instead.
+
+Dropping the condition is no better: a dropped condition fails OPEN, and the
+Riekling greetings then outranked `fbmwMSGreetings` for every actor in the
+plugin (Fargoth lost his "ring" topic that way).
+
+Instead each plugin-authored race in reach (the plugin's own plus its masters')
+gets a bare marker FACT, `TES4RaceFaction_<race EditorID>`. Every NPC of that
+race joins it, and `GetIsRace(race)` is written as `GetInFaction(fact)`, which
+compares the same 1/0 value, so operator, comparison value and OR flag carry
+over unchanged. A dependent plugin adopts its master's FACT by EditorID.
+`GetPCIsRace` keeps the race fallback, since the player's race is always a
+Skyrim one.
+
+Counted in the exports: Morroblivion has 1 such quest condition (Riekling) and
+2 INFO conditions (ash ghoul races), Nehrim 8 INFO conditions (`Aeterna1`), and
+Oblivion none.
 
 ### <a id="run-on-target"></a>Run On = Target under a script-driven topic
 

@@ -26,6 +26,7 @@ from .conditions_falloutnv import (FALLOUT_CTDA_SIZE, fallout_function,
                                    fallout_run_on)
 from ..generated.ctda_param_types import CTDA_FORMID_PARAMS
 from .owned_records import MGEF_FAMILY_KEYWORDS
+from .race_factions import race_faction
 from .text_reader import (_ENGINE_FIXED_FORMIDS, get_formid_index_offset,
                           remap_formid)
 
@@ -68,6 +69,7 @@ FUNC_GET_GLOBAL_VALUE = 74     # GetGlobalValue(glob)
 FUNC_GET_IS_VOICE_TYPE = 426   # GetIsVoiceType(vtyp)  — TES5-only, no TES4 source
 FUNC_HAS_MAGIC_EFFECT = 214
 FUNC_HAS_MAGIC_EFFECT_KEYWORD = 699
+FUNC_GET_IS_RACE = 69
 
 #: Speaker-as-actor conditions. See: docs/commentary/tes5_import_conditions.md#non-actor-speaker-drop
 NON_ACTOR_SPEAKER_DROP = frozenset({
@@ -289,25 +291,13 @@ _AV_PARAM_FUNCS = frozenset({
 
 
 def _map_race_param(fid: int) -> 'int | None':
-    """The Skyrim race a `GetIsRace` param must name to keep matching.
+    """The Skyrim race a race param must name to keep matching.
 
-    This MUST resolve exactly as `_resolve_npc_race` does, including its
-    fallback: an actor whose RACE is plugin-authored (Morroblivion adds
-    mwBMRieklingRace, and TES4_RACE_FID_TO_EDID holds only the 15 vanilla
-    Oblivion races) is converted with DEFAULT_RACE, so a condition naming that
-    race must name DEFAULT_RACE too or it can never match the actors it was
-    written for.
+    Never None: a dropped condition fails OPEN.  A plugin-authored race falls
+    back to DEFAULT_RACE; `GetIsRace` on one is replaced by
+    `_authored_race_faction` before it is written.
 
-    Returning None here instead DROPPED the condition, and a dropped condition
-    does not fail closed -- it fails OPEN.  mwGenericRieklingGreeting's three
-    greetings ("What is it, human?", "What?", "Speak!") carry no INFO
-    conditions of their own; the quest-level `GetIsRace(mwBMRieklingRace)` was
-    the only thing keeping them on Rieklings.  With it deleted they became
-    unconditioned greetings in a priority-47 quest, which outranks
-    fbmwMSGreetings (44) -- so they won the greeting for EVERY actor in the
-    plugin, including Fargoth, a Wood Elf.  That also cost him his "ring"
-    topic: the topic is unlocked only by his own greeting's fragment, which
-    never got to play.
+    See: docs/commentary/tes5_import_conditions.md#plugin-authored-races
     """
     from .constants import DEFAULT_RACE
     from .equivalents import RACE_MAP, TES4_RACE_FID_TO_EDID
@@ -545,6 +535,16 @@ def _effect_family(func_idx: int, param1: int) -> tuple:
     return (FUNC_HAS_MAGIC_EFFECT_KEYWORD, kw) if kw else (func_idx, param1)
 
 
+def _authored_race_faction(func_idx: int, param1: int, offset: int) -> 'tuple | None':
+    """GetIsRace on a plugin-authored race -> GetInFaction on its marker FACT.
+
+    See: docs/commentary/tes5_import_conditions.md#plugin-authored-races
+    """
+    is_race = func_idx == FUNC_GET_IS_RACE
+    fact = race_faction(remap_formid(param1, offset)) if is_race else 0
+    return (FUNC_GET_IN_FACTION, fact) if fact else None
+
+
 def _target_run_on(func_idx: int, run_on_target_ref: 'int | None',
                    drop_run_on_target: bool) -> 'tuple | None':
     """(run_on, reference) for a run-on-target condition, or None to drop it.
@@ -640,7 +640,8 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
                             run_on_target_ref, drop_run_on_target)
     if params is None or fields is None:
         return None
-    func_idx, param1 = _effect_family(func_idx, params[0])
+    func_idx, param1 = (_authored_race_faction(func_idx, param1, offset)
+                        or _effect_family(func_idx, params[0]))
     param2 = params[1]
     type_byte, run_on, reference = fields
 

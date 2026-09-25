@@ -1658,6 +1658,18 @@ class TestPluginAuthoredRaceConditionsSurvive:
         assert got == [RACE_MAP['WoodElf']]
         assert got != [DEFAULT_RACE]
 
+    def test_authored_race_becomes_its_marker_faction(self, monkeypatch):
+        """With a marker FACT registered, GetIsRace(Riekling) is GetInFaction on
+        it -- never a vanilla race, which every Imperial (or Nord) would pass."""
+        import struct
+        from tes5_import.base import race_factions
+        from tes5_import.base.conditions import convert_ctda_list_with_strings
+        monkeypatch.setitem(race_factions._faction_by_race, 0x02A804D3, 0x01ABC123)
+        rec = {'FormID': '010628F9', 'ConditionCount': '1',
+               'Condition[0].Raw': self._race_ctda(0x01A804D3)}
+        (ctda, _s), = convert_ctda_list_with_strings(rec, {}, 1)
+        assert struct.unpack_from('<HxxI', ctda, 8) == (71, 0x01ABC123)
+
 
 class TestVmConditionsEvaluateLast:
     """GetVMQuestVariable(629)/GetVMScriptVariable(630) cross into the Papyrus
