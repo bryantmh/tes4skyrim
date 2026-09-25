@@ -92,17 +92,20 @@ void AppendAnimData(const Lines& names, Lines& body, const std::vector<const Jso
     }
 }
 
+// body[pos] as a count; 0 past the end, so a malformed copy cannot read out of range.
+int CountAt(const Lines& body, size_t pos) { return pos < body.size() ? ToInt(body[pos]) : 0; }
+
 size_t V3BlockEnd(const Lines& body, size_t pos) {
-    pos += 1;                                            // 'V3'
-    pos += 1 + static_cast<size_t>(ToInt(body[pos]));    // swap events
-    pos += 1 + 3 * static_cast<size_t>(ToInt(body[pos])); // hand variables
-    const int nAttacks = ToInt(body[pos]);
+    pos += 1;                                                    // 'V3'
+    pos += 1 + static_cast<size_t>(CountAt(body, pos));          // swap events
+    pos += 1 + 3 * static_cast<size_t>(CountAt(body, pos));      // hand variables
+    const int nAttacks = CountAt(body, pos);
     pos += 1;
-    for (int i = 0; i < nAttacks; ++i) {
-        pos += 2;                                        // event, mirrored
-        pos += 1 + static_cast<size_t>(ToInt(body[pos])); // clip names
+    for (int i = 0; i < nAttacks && pos < body.size(); ++i) {
+        pos += 2;                                                // event, mirrored
+        pos += 1 + static_cast<size_t>(CountAt(body, pos));      // clip names
     }
-    pos += 1 + 3 * static_cast<size_t>(ToInt(body[pos])); // crc triples
+    pos += 1 + 3 * static_cast<size_t>(CountAt(body, pos));      // crc triples
     return pos;
 }
 
@@ -142,28 +145,124 @@ void AppendAnimSetData(const Lines& names, Lines& body, const std::vector<const 
     }
 }
 
-}  // namespace
-
-std::vector<Json> LoadFragments(const std::string& dir) {
-    std::vector<std::string> files;
+// Names matching `pattern` under `dir` (directories or files), sorted case-insensitively.
+std::vector<std::string> ListDir(const std::string& dir, const char* pattern, bool dirs) {
+    std::vector<std::string> names;
     WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((dir + "\\*.json").c_str(), &fd);
+    HANDLE h = FindFirstFileA((dir + "\\" + pattern).c_str(), &fd);
     if (h != INVALID_HANDLE_VALUE) {
         do {
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) files.emplace_back(fd.cFileName);
+            const bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            const std::string name = fd.cFileName;
+            if (isDir == dirs && name != "." && name != "..") names.push_back(name);
         } while (FindNextFileA(h, &fd));
         FindClose(h);
     }
-    std::sort(files.begin(), files.end(),
+    std::sort(names.begin(), names.end(),
               [](const std::string& a, const std::string& b) { return Lower(a) < Lower(b); });
+    return names;
+}
 
+bool ReadFile(const std::string& path, std::string& text) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::stringstream ss;
+    ss << f.rdbuf();
+    text = ss.str();
+    return true;
+}
+
+Json LineArray(const Lines& lines, size_t from, size_t to) {
+    Json arr = Json::Array();
+    for (size_t i = from; i < to; ++i) arr.push(lines[i]);
+    return arr;
+}
+
+bool ValidRegistry(const Lines& file) {
+    const int n = file.empty() ? -1 : ToInt(file[0]);
+    return n >= 0 && static_cast<size_t>(n) < file.size();
+}
+
+// `name`'s span, if it is ordered and inside the body.
+const Span* Checked(const std::map<std::string, Span>& spans, const std::string& name, size_t size) {
+    auto it = spans.find(Lower(name));
+    if (it == spans.end()) return nullptr;
+    const Span& s = it->second;
+    return s.start < s.mid && s.mid <= s.end && s.end <= size ? &s : nullptr;
+}
+
+bool CopyAnimData(const Lines& file, Json& out) {
+    if (!ValidRegistry(file)) return false;
+    Lines names, body;
+    SplitRegistry(file, names, body);
+    const auto spans = ProjectSpans(names, body);
+    for (const auto& name : names) {
+        const Span* s = Checked(spans, name, body.size());
+        if (!s) return false;
+        Json e = Json::Object();
+        e.set("project", name);
+        e.set("clip_block", LineArray(body, s->start + 1, s->mid));
+        if (s->end > s->mid) e.set("motion_block", LineArray(body, s->mid + 1, s->end));
+        out.push(std::move(e));
+    }
+    return true;
+}
+
+bool CopyAnimSetData(const Lines& file, Json& out) {
+    if (!ValidRegistry(file)) return false;
+    Lines names, body;
+    SplitRegistry(file, names, body);
+    const auto spans = SetDataSpans(names, body);
+    for (const auto& name : names) {
+        const Span* s = Checked(spans, name, body.size());
+        if (!s) return false;
+        Json e = Json::Object();
+        e.set("entry", name);
+        e.set("block", LineArray(body, s->start, s->end));
+        out.push(std::move(e));
+    }
+    return true;
+}
+
+// One folder of a mod's full singlefile copies as a fragment; null when it holds
+// neither file or either is malformed.
+// See: docs/reference/tes_runtime_fragments.md#singlefile-copies
+Json LoadSinglefileCopy(const std::string& dir, const std::string& name) {
+    Json animdata = Json::Array(), animsetdata = Json::Array();
+    std::string text;
+    bool any = false, ok = true;
+    if (ReadFile(dir + "\\" + name + "\\animationdatasinglefile.txt", text)) {
+        any = true;
+        ok = CopyAnimData(SplitLines(text), animdata);
+    }
+    if (ok && ReadFile(dir + "\\" + name + "\\animationsetdatasinglefile.txt", text)) {
+        any = true;
+        ok = CopyAnimSetData(SplitLines(text), animsetdata);
+    }
+    if (!any) return Json();
+    if (!ok) {
+        Log("copy %s: malformed singlefile, skipped", name.c_str());
+        return Json();
+    }
+    Log("copy %s: %zu animdata, %zu animsetdata projects", name.c_str(),
+        animdata.size(), animsetdata.size());
+    Json frag = Json::Object();
+    frag.set("version", 1);
+    frag.set("source", name);
+    frag.set("animdata", std::move(animdata));
+    frag.set("animsetdata", std::move(animsetdata));
+    return frag;
+}
+
+}  // namespace
+
+std::vector<Json> LoadFragments(const std::string& dir) {
     std::vector<Json> out;
-    for (const auto& fn : files) {
-        std::ifstream f(dir + "\\" + fn, std::ios::binary);
-        std::stringstream ss;
-        ss << f.rdbuf();
+    for (const auto& fn : ListDir(dir, "*.json", false)) {
+        std::string text;
+        ReadFile(dir + "\\" + fn, text);
         std::string err;
-        Json j = Json::Parse(ss.str(), &err);
+        Json j = Json::Parse(text, &err);
         if (!j.isObject()) {
             Log("fragment %s: unreadable (%s)", fn.c_str(), err.c_str());
             continue;
@@ -177,6 +276,10 @@ std::vector<Json> LoadFragments(const std::string& dir) {
             j["animdata_append"].size(), j["animsetdata_append"].size(),
             j["source"].asString().c_str());
         out.push_back(std::move(j));
+    }
+    for (const auto& sub : ListDir(dir, "*", true)) {
+        Json copy = LoadSinglefileCopy(dir, sub);
+        if (copy.isObject()) out.push_back(std::move(copy));
     }
     return out;
 }

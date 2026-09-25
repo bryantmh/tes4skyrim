@@ -434,6 +434,23 @@ class TestAnimCacheFragments:
         assert asd[2] == '2' and asd[3:5] == ['FullCharacter.txt', '_gun.txt']
         assert asd[-8:] == frag['animsetdata_append'][0]['block']
 
+    def test_singlefile_copy_adds_only_new_projects(self, tmp_path):
+        """A mod's full singlefile copies, moved into a folder of their own,
+        register the projects the base lacks and skip the ones it has, so
+        base + copy reproduces the copy exactly."""
+        from asset_convert.havok.animation_data import (
+            compose_singlefiles, manifest_fragment, read_fragments,
+            write_composed)
+        ad, asd = manifest_fragment(_manifest('nehrim', 'dog'))
+        base = {'animationdatasinglefile.txt': _base_ad(),
+                'animationsetdatasinglefile.txt': _base_asd()}
+        copy = compose_singlefiles(base, [{'animdata': [ad],
+                                           'animsetdata': [asd]}])
+        write_composed(copy, str(tmp_path / 'SomeMod'))
+        (tmp_path / 'Broken').mkdir()
+        (tmp_path / 'Broken' / 'animationdatasinglefile.txt').write_text('5\n')
+        assert compose_singlefiles(base, read_fragments(str(tmp_path))) == copy
+
     def test_cpp_composer_matches_python(self, tmp_path):
         """tes_runtime/creature/compose_test.exe (the DLL's composer, built by
         tes_runtime/creature/build.bat) must produce byte-identical files to the
@@ -441,9 +458,9 @@ class TestAnimCacheFragments:
         import json
         import subprocess
         from asset_convert.havok.animation_data import (
-            compose_singlefiles, read_fragments, write_composed,
-            write_fragment)
-        exe = os.path.join(REPO, 'tes_runtime', 'creature', 'compose_test.exe')
+            compose_singlefiles, manifest_fragment, read_fragments,
+            write_composed, write_fragment)
+        exe =os.path.join(REPO, 'tes_runtime', 'creature', 'compose_test.exe')
         if not os.path.isfile(exe):
             pytest.skip('tes_runtime/creature/compose_test.exe not built')
         base_dir = tmp_path / 'base'
@@ -467,6 +484,10 @@ class TestAnimCacheFragments:
                 'set_file': '_gun.txt',
                 'block': ['V3', '0', '1', 'iRightHandType', '10', '10',
                           '0', '0']}]}))
+        ad, asd = manifest_fragment(_manifest('nehrim', 'wolf'))
+        write_composed(compose_singlefiles(base, [{'animdata': [ad],
+                                                   'animsetdata': [asd]}]),
+                       str(frag_dir / 'SomeMod'))
         py_dir, cpp_dir = tmp_path / 'py', tmp_path / 'cpp'
         py_dir.mkdir()
         cpp_dir.mkdir()

@@ -19,6 +19,31 @@ insensitive), so composition is deterministic. One fragment per contributing
 mod is the convention; the converter names it after the plugin
 (`Oblivion.esm.json` → `Oblivion.json`).
 
+## <a id="singlefile-copies"></a>Full singlefile copies
+
+```
+Data\SKSE\Plugins\CreatureRuntime\animation\<ModName>\animationdatasinglefile.txt
+Data\SKSE\Plugins\CreatureRuntime\animation\<ModName>\animationsetdatasinglefile.txt
+```
+
+A mod that ships its own complete copies of the two singlefiles at
+`meshes\` only wins if nothing else overrides that path, and the losing copies
+are hidden (MO2) or overwritten (Vortex), so the DLL can never find them. A
+user who moves a mod's copies into a subfolder of their own gets them read as
+one more fragment, after every `*.json`, subfolders sorted like the files.
+Either file may be present alone.
+
+Every project in the copy becomes an `animdata` / `animsetdata` entry, and
+composition rule 3 then drops each one the base (or an earlier fragment)
+already registers. So a copy contributes its **new** projects only; its
+edits to a project the base already has (extra draugr attacks, added
+character set files) are ignored, never merged. A copy whose name list and
+blocks do not line up is skipped whole and logged
+(`copy <folder>: malformed singlefile, skipped`).
+
+Reference: `animation_data.singlefile_fragment` (read by `read_fragments`);
+DLL: `LoadSinglefileCopy` in `tes_runtime/creature/compose.cpp`.
+
 ## <a id="never-packed"></a>Fragments ship LOOSE, never in a BSA
 
 The DLL discovers fragments by listing the folder above with `FindFirstFileA`,
@@ -133,7 +158,8 @@ when a stable ID is missing, so a game update degrades to "no TES4 projects
 registered" rather than a crash. Its log is
 `Documents\My Games\Skyrim Special Edition\SKSE\CreatureRuntime.log`.
 
-It reads `Data\SKSE\Plugins\CreatureRuntime\animation\*.json`, and the
+It reads `Data\SKSE\Plugins\CreatureRuntime\animation\*.json`, the
+[singlefile copies](#singlefile-copies) in that folder's subfolders, and the
 pre-split folder ([below](#legacy-sidecar-paths)).
 
 ## <a id="legacy-sidecar-paths"></a>Pre-split sidecar paths (deprecated, to be removed)

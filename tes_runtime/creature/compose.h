@@ -16,8 +16,9 @@ namespace tesruntime {
 
 using Lines = std::vector<std::string>;
 
-// Every *.json under `dir`, sorted by filename (case-insensitive). Files that
-// fail to parse or carry an unknown version are logged and skipped.
+// Every *.json under `dir`, sorted by filename (case-insensitive), then one
+// fragment per subfolder holding full singlefile copies, sorted by folder.
+// Files that fail to parse or carry an unknown version are logged and skipped.
 std::vector<Json> LoadFragments(const std::string& dir);
 
 // Splits on '\n', dropping a trailing '\r' per line and a final empty line.
