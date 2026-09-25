@@ -1313,6 +1313,10 @@ _AV_SET = frozenset({'setactorvalue', 'setav', 'forceactorvalue', 'forceav',
 #: Reads, for which Encumbrance means the CURRENT carried weight.
 _AV_READ = frozenset({'getactorvalue', 'getav'})
 
+#: AVs the engine refuses to Force/Mod/Damage/Restore from Papyrus; only SetActorValue writes them.
+_AV_SET_ONLY = frozenset({'aggression', 'confidence', 'morality', 'mood', 'assistance'})
+
+
 
 @command(*sorted(ACTOR_VALUE_FUNCTIONS))
 def actor_value(ctx, call) -> str:
@@ -1364,6 +1368,8 @@ def actor_value(ctx, call) -> str:
     papyrus = (_AV_PAPYRUS.get(call.name)
                or getattr(COMMAND_ROWS.get(call.name), 'emit', '')
                or 'GetActorValue')
+    if papyrus == 'ForceActorValue' and av.lower() in _AV_SET_ONLY:
+        papyrus = 'SetActorValue'
     if call.name in _AV_PLAYER_ONLY:
         return f'Game.GetPlayer().{papyrus}({", ".join(args)})'
     ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)

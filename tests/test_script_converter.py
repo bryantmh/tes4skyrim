@@ -3525,7 +3525,7 @@ class TestResetFallDamageTimerIsPaired:
         lines = [ln.strip() for ln in out.splitlines()]
         start = lines.index('Event OnEffectFinish(Actor akTarget, Actor akCaster)')
         end = lines.index('EndEvent', start)
-        assert any('TES4Polyfill.RestoreFallDamage(akTarget)' in ln
+        assert any('TES4Polyfill.RestoreFallDamage(akTarget, TES4NoFallDamage)' in ln
                    for ln in lines[start:end])
 
     def test_restore_is_synthesized_when_there_is_no_teardown_block(self, converter):
@@ -3533,7 +3533,14 @@ class TestResetFallDamageTimerIsPaired:
             'T', 'scn T\nbegin scripteffectupdate\n  ResetFallDamageTimer\nend\n',
             'ActiveMagicEffect', 'T')
         assert 'Event OnEffectFinish(' in out
-        assert 'TES4Polyfill.RestoreFallDamage(akTarget)' in out
+        assert 'TES4Polyfill.RestoreFallDamage(akTarget, TES4NoFallDamage)' in out
+
+    def test_an_actor_script_suppresses_its_own_fall(self, converter):
+        """A GameMode caller names Self and the spell, never a defaulted player."""
+        out = converter.convert_standalone(
+            'G', 'scn G\nbegin gamemode\n  ResetFallDamageTimer\nend\n', 'Actor', 'G')
+        assert 'TES4Polyfill.SuppressFallDamage(Self, TES4NoFallDamage)' in out
+        assert 'Spell Property TES4NoFallDamage Auto' in out
 
     def test_the_flag_does_not_leak_between_scripts(self, converter):
         """The converter instance is reused across every SCPT in a job."""

@@ -428,7 +428,9 @@ Two script-side gaps had to be closed for these to be more than inert records
   `OnEffectFinish` when the script has none), so the resistance cannot outlive
   the effect. `SetGhost`/`SetInvulnerable` were rejected: they suppress ALL
   damage, so a levitation scroll would grant temporary immortality — a worse
-  defect than the one being fixed.
+  defect than the one being fixed. The suppression is now a falling-damage
+  perk window, not DamageResist
+  ([fall damage is a perk](script_convert.md#fall-damage-is-a-perk)).
 
 <a id="bound-items"></a>
 ### Bound items — DONE 2026-08-07 (user-confirmed in-game)

@@ -573,48 +573,23 @@ Function SetActorRefraction(Actor akActor, Float afValue) Global
   EndIf
 EndFunction
 
-; TES4 (OBSE) ResetFallDamageTimer cleared the accumulated fall distance so the
-; next landing did no damage.
-;
-; Skyrim has NO vanilla-Papyrus route to this.  The console command survives
-; (opcode 4404) but is not bound to Papyrus; the GMST the fall-damage formula
-; reads (fJumpFallHeightMin) has readers but no vanilla writer — SKSE's
-; Game.SetGameSettingFloat does not compile against the vanilla headers this
-; pipeline builds with, verified against the compiler; and the blunt
-; alternatives (SetGhost, SetInvulnerable) suppress ALL damage, which would
-; make a levitation scroll grant temporary immortality — a far worse defect
-; than the one being fixed.
-;
-; So this keeps the ONE effect that is both faithful and scoped: heal the
-; actor back up by the fall's cost.  DamageResist is applied for the window
-; instead of invulnerability, so ordinary combat damage still lands.
-;
-; Callers are per-frame effect updates that stop when the effect ends, so the
-; resistance is (re)applied on each call and RestoreFallDamage removes it —
-; the paired on/off contract in docs/papyrus_conversion_notes.md.  The
-; modifier is tracked so repeated calls cannot stack it without bound.
-Function SuppressFallDamage(Actor akActor = None) Global
-  If akActor == None
-    akActor = Game.GetPlayer()
+; TES4 (OBSE) ResetFallDamageTimer: the fall in progress does no damage.
+; Skyrim's falling damage is reachable only through perk entry point Mod
+; Falling Damage, so the importer's TES4NoFallDamage spell carries a perk
+; multiplying it by 0 for a short window; a caller that polls every tick keeps
+; renewing it.  Other damage is untouched.
+; See docs/commentary/script_convert.md#fall-damage-is-a-perk
+Function SuppressFallDamage(Actor akActor, Spell akFallSpell) Global
+  If akActor && akFallSpell
+    akFallSpell.Cast(akActor, akActor)
   EndIf
-  If akActor == None
-    Return
-  EndIf
-  ; ForceActorValue, not Mod: this runs every update tick, and a modifier
-  ; would otherwise accumulate for as long as the effect lasts.
-  akActor.ForceActorValue("DamageResist", 10000.0)
 EndFunction
 
-; Undo SuppressFallDamage.  Emitted by the effect-finish path of any script
-; that called it; also safe to call blind.
-Function RestoreFallDamage(Actor akActor = None) Global
-  If akActor == None
-    akActor = Game.GetPlayer()
+; End a SuppressFallDamage window early: a magic effect's teardown.
+Function RestoreFallDamage(Actor akActor, Spell akFallSpell) Global
+  If akActor && akFallSpell
+    akActor.DispelSpell(akFallSpell)
   EndIf
-  If akActor == None
-    Return
-  EndIf
-  akActor.ForceActorValue("DamageResist", 0.0)
 EndFunction
 
 ; ==========================================================================

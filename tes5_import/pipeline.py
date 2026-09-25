@@ -46,6 +46,7 @@ from .record_types.crime import plan_crime
 from .record_types.spell_tomes import create_spell_tomes
 from .record_types.spell_tomes_morrowind import chain_tables
 from script_convert.constants import FORCE_GREET_QUEST
+from script_convert.cross_ref import index_record_details
 from .dialogue.converter import build_npc_to_vtyp_map
 from .dialogue.force_greets import dial_index, write_force_greet_quest
 from .dialogue.morrowind_sidecar import is_tes3_export
@@ -58,6 +59,7 @@ from .base.owned_records import (
     create_ambient_gmst_overrides,
     create_chargen_menu_records,
     create_destroyed_formlist,
+    create_fall_damage_spell,
     create_force_combat_factions,
     create_message_menu_records,
     create_tes4_special_records,
@@ -269,6 +271,8 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
     if support_root:
         create_tes4_special_records(writer)
         create_ambient_gmst_overrides(writer, by_type)
+    WELL_KNOWN_PROPERTIES.update(create_fall_damage_spell(
+        writer, getattr(ctx, 'master_index', None)))
     _step_done('vtyp/special records')
 
 
@@ -458,6 +462,8 @@ def _index_xref_record(xref, fid_str: str, rec: dict, rekey) -> None:
         if sig == 'QUST':
             xref.quest_edids.add(edid_low)
     xref.record_type[fid_str] = sig
+    index_record_details(vars(xref), sig, fid_str, edid_str, rec,
+                         lambda v: rekey(v, own_raw, own_key))
     if sig == 'SCPT':
         _index_xref_script(xref, fid_str, rec, edid_str)
     scri = rekey(rec.get('SCRI', ''), own_raw, own_key)
@@ -1118,6 +1124,8 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
     st.xref = _prescan_cross_ref_graph(all_records, ctx, export_dir,
                                        _step_done)
     _prescan_effect_families(by_type, ctx, writer)
+    plan_crime(by_type, ctx, writer, export_dir, st.plugin_out_dir,
+               st.output_path, st.output_root)
     _scpt_master_export = _prescan_script_plans(by_type, ctx, st.xref,
                                                 st.fid_to_edid, export_dir,
                                                 _step_done)
@@ -1125,8 +1133,6 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
                            _scpt_master_export, _step_done, export_dir)
     _prescan_vendor_trainer(by_type, ctx, writer, export_dir,
                             os.path.basename(st.output_path), _step_done)
-    plan_crime(by_type, ctx, writer, export_dir, st.plugin_out_dir,
-               st.output_path, st.output_root)
     _prescan_mesh_caches(export_dir, st.plugin_out_dir, _step_done)
     _prescan_furniture_and_actors(by_type, ctx, writer, export_dir,
                                   _step_done)

@@ -7,7 +7,7 @@ from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as _tes4_nodes
 from script_convert.blocks import BLOCK_FILTER_PARAM
 from script_convert.constants import (
-    KNOWN_GLOBALS, LOOSE_OPS, PAPYRUS_BOOL_FUNCTIONS, PLACED_REF_SIGS,
+    FALL_DAMAGE_SPELL, KNOWN_GLOBALS, LOOSE_OPS, PAPYRUS_BOOL_FUNCTIONS, PLACED_REF_SIGS,
     PLAYER_ALIAS_EXTENDS, RETURN_TYPES, SELF_NAMES, TYPE_MAP, _REF_TYPES,
     _canonical_global, digit_stripped_formid, _record_type_to_base_papyrus,
     generated_script_stem, is_generated_script_type, safe_property_name, papyrus_script_name,
@@ -1374,42 +1374,26 @@ class ScriptConverter:
                 return param
         return 'Game.GetPlayer()'
 
-    _FALL_RESTORE = 'TES4Polyfill.RestoreFallDamage()'
-
     def _append_fall_damage_restore(self, out: list, extends: str) -> list:
-        """Pair every SuppressFallDamage() with a restore when the effect ends.
+        """End a magic effect's fall-damage window when the effect itself ends.
 
-        `TES4Polyfill.SuppressFallDamage()` (the ResetFallDamageTimer
-        conversion) writes fJumpFallHeightMin, a GLOBAL game setting.  Oblivion
-        needed no teardown because ResetFallDamageTimer only cleared a
-        per-actor accumulator; leaving the Skyrim equivalent set would disable
-        fall damage permanently.
-
-        The restore goes in whichever teardown event the script already has —
-        OnEffectFinish for a magic-effect script, otherwise OnUpdate's exit —
-        and a fresh OnEffectFinish is synthesized when the script has none.
+        The restore dispels the spell from the teardown event's own target (the
+        actor the suppression was cast on); an ActiveMagicEffect with no
+        OnEffectFinish gets one synthesized.  Other callers need no teardown:
+        each call only opens a short window.
+        See: docs/commentary/script_convert.md#fall-damage-is-a-perk
         """
+        restore = 'TES4Polyfill.RestoreFallDamage({}, ' + FALL_DAMAGE_SPELL + ')'
         idx = next((i for i, line in enumerate(out)
                     if line.startswith('Event OnEffectFinish(')), None)
-
-        if idx is not None:
-            # Restore the SAME actor the suppression applied to, which is the
-            # teardown event's own target parameter.
+        end = None if idx is None else next(
+            (i for i in range(idx + 1, len(out)) if out[i] == 'EndEvent'), None)
+        if end is not None:
             m = re.search(r'\bActor\s+(ak\w+)', out[idx])
-            actor = m.group(1) if m else ''
-            end = next((i for i in range(idx + 1, len(out))
-                        if out[i] == 'EndEvent'), None)
-            if end is not None:
-                out.insert(end, f'  TES4Polyfill.RestoreFallDamage({actor})')
-                return out
-
-        # No teardown event at all: an ActiveMagicEffect always gets one, so
-        # synthesize it rather than leaving the suppression permanent.
-        if extends == 'ActiveMagicEffect':
-            out.append('Event OnEffectFinish(Actor akTarget, Actor akCaster)')
-            out.append('  TES4Polyfill.RestoreFallDamage(akTarget)')
-            out.append('EndEvent')
-            out.append('')
+            out.insert(end, '  ' + restore.format(m.group(1) if m else 'None'))
+        elif extends == 'ActiveMagicEffect':
+            out += ['Event OnEffectFinish(Actor akTarget, Actor akCaster)',
+                    '  ' + restore.format('akTarget'), 'EndEvent', '']
         return out
 
 

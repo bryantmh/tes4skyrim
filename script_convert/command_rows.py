@@ -1005,9 +1005,10 @@ COMMAND_ROWS = {
     'enablecontrol': Cmd(note=_OBSE_INPUT_NOTE, flags='bare_no_equiv'),
     'tapcontrol': Cmd(note=_OBSE_INPUT_NOTE, flags='bare_no_equiv'),
 
-    #: GMST substitute. See: docs/commentary/script_convert.md#equivalent-in-a-different-subsystem
+    #: A falling-damage perk window. See: docs/commentary/script_convert.md#fall-damage-is-a-perk
     'resetfalldamagetimer': Cmd(
-        'TES4Polyfill.SuppressFallDamage({event_actor})', flags='zero_arg'),
+        'TES4Polyfill.SuppressFallDamage({ref}, TES4NoFallDamage)', ACTOR,
+        self_type=('TES4NoFallDamage', 'Spell'), flags='zero_arg'),
 
 }
 

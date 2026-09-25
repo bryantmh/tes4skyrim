@@ -146,7 +146,37 @@ the original state. Audit the partner call before accepting either.
   order its blocks and the teardown event must already be in the output for the
   restore to land inside it. `SetGhost`/`SetInvulnerable` were rejected as the
   mechanism: both suppress ALL damage, so the scroll would grant temporary
-  immortality — a worse defect than the one being fixed.
+  immortality — a worse defect than the one being fixed. The suppression itself
+  is now a falling-damage perk, not DamageResist:
+  [fall damage is a perk](#fall-damage-is-a-perk).
+
+## ResetFallDamageTimer is a falling-damage perk window (2026-09-25, unconfirmed in game)
+<a id="fall-damage-is-a-perk"></a>
+
+**The old mechanism did nothing to falls.** `SuppressFallDamage` forced
+`DamageResist` to 10000. Skyrim's falling damage is
+`((height - fJumpFallHeightMin) * fJumpFallHeightMult) ^ fJumpFallHeightExponent * modifiers`,
+where the only modifiers are perk entry points (UESP Skyrim:Damage). There is no
+armor term, so the forced resistance left falls untouched and handed out an 80%
+physical damage cut instead. The call also had no subject outside a magic
+effect, so `SE02GatekeeperScript`'s every-tick `ResetFallDamageTimer` forced the
+PLAYER's resistance. `TG11FallingExit`'s one-shot `Player.ResetFallDamageTimer`
+did the same, permanently, because neither script has a teardown.
+
+**The engine's own mechanism** is perk entry point 58, Mod Falling Damage. Vanilla
+Cushioned uses it at ×0.5. Papyrus `AddPerk` works only on the player, and a
+magic effect's PerkToApply is how any actor holds a perk. Vanilla does both:
+`NN01PerkEffect` (constant) and `ghostExtraDamageEffect` (fire-and-forget).
+
+**Fix:** the importer writes `TES4NoFallDamagePerk` (entry point 58, Multiply
+Value ×0, unconditioned like `TGSkeletonKeyPerk`), `TES4NoFallDamageEffect`
+(Value Modifier Health at magnitude 0, PerkToApply, hidden in the UI), and the
+spell `TES4NoFallDamage`: fire-and-forget, Self, 10 s. A dependent plugin adopts
+its master's copy by EditorID. `ResetFallDamageTimer` converts to
+`TES4Polyfill.SuppressFallDamage(<actor>, TES4NoFallDamage)`, which casts the
+spell on the calling actor. A caller that polls every tick keeps renewing the
+window, and a one-shot caller gets one fall's worth. A magic effect's teardown
+still dispels the spell early through `RestoreFallDamage`.
 
 ## Skyrim has GMST readers but no GMST writer (2026-07-31)
 <a id="skyrim-has-gmst-readers-but"></a>

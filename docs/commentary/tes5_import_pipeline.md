@@ -94,6 +94,7 @@ constraint. Each of these must run **before** the phase named:
 | 0g package plan | alias indices | **both** QUST and PACK | A quest-owned package must hang off a QUST reference alias (ALPC) to outrank the actor's standing schedule, so the alias indices must be decided before either record is written — both read this one plan. |
 | 0h leveled actors | shell NPC_ per placed LVLC | the CELL/WRLD builders | Skyrim only spawns actors from ACHR→NPC_, so each placed LVLC becomes an ACHR aimed at a generated shell NPC_ whose TPLT points at the LVLN. Needs the generated creature races from 0f, and the builders read `by_type['REFR']`/`['ACHR']`. |
 | effect families | the MGEF index and one `TES4FX_*` KYWD per effect | the object/quest script plans | A converted `HasMagicEffect` binds the effect's family keyword through `WELL_KNOWN_PROPERTIES`; a script plan built first leaves the property unbound ([effect families](tes5_import_magic.md#effect-families)). |
+| crime realms | one crime FACT per realm and the `TES4CrimeFactions` FLST | the object/quest script plans | Every converted bounty/`SetPlayerInSEWorld` call reads the realm list through `WELL_KNOWN_PROPERTIES`. Planned after the scripts, the Dark Brotherhood quest's `TES4CrimeFactions` stayed unbound and `GetCrimeGoldViolent` threw every tick. |
 | 0i item index | record type + biped slot per item | Phase 1 actors | A TES4 actor equips out of one mixed CNTO inventory; TES5 needs wearables moved to a DOFT outfit and the rest left in CNTO. **A dependent plugin dresses its actors out of its MASTER's wardrobe**, so the master's item records must be in the index too, or every master-owned wearable classifies as non-wearable and the actor gets no outfit at all. |
 
 Phase 0h indexes **every LVLC reachable from here — this plugin's and its
@@ -221,6 +222,14 @@ inside the import than it did when the `.psc` was written — and the VMAD ends 
 missing exactly the properties the compiled script reads. `AIPackage` lists and
 `PKDT.Type` back the reconstruction of TES4's `GetCurrentAIPackage == <type>`
 (`cross_ref.pack_type`).
+
+The field-derived tables (`record_model`, `mgef_shaders`, `spell_effects`,
+`global_types`, `global_values`, `enchanted_books`) are filled by ONE function,
+`cross_ref.index_record_details`, which both the CLI scan and this graph call.
+Until 2026-09-25 this graph skipped all six. `IsSpellTarget VampDisease` then
+found no effects at import time and planned no property, while the scripts stage
+declared `TES4FX_drfa`. The Vampire quest's keyword stayed unbound, and
+`HasMagicEffectWithKeyword` rejected the None keyword every tick.
 
 **A master record's id FIELDS must be re-keyed too**, not just the outer key.
 The graph chains them: `record_scri[fid] -> script_formid_to_edid[scri]`,

@@ -11,10 +11,12 @@ these call nothing else in that file, and only import_plugin calls them.
 import struct
 
 from .constants import AMBIENT_GMST_OVERRIDES
-from .equivalents import CUSTOM_VTYP_EDIDS, VTYP_EDID_BY_FID, set_voice_type
+from .equivalents import (CUSTOM_VTYP_EDIDS, SPELL_EQUIP_EITHER_HAND,
+                          VTYP_EDID_BY_FID, set_voice_type)
 from .text_reader import get_str
 from .writer import (
     PluginWriter,
+    pack_obnd,
     pack_record,
     pack_string_subrecord,
     pack_subrecord,
@@ -152,6 +154,85 @@ def create_destroyed_formlist(writer: PluginWriter) -> dict:
     subs = pack_string_subrecord('EDID', 'TES4DestroyedRefs')
     writer.add_record('FLST', pack_record('FLST', fid, 0, subs))
     return {'TES4DestroyedRefs': fid}
+
+
+#: Seconds one ResetFallDamageTimer protects for; a caller polling every tick keeps renewing it.
+_FALL_WINDOW_SECONDS = 10
+
+#: PERK entry point 58 Mod Falling Damage, function 3 Multiply Value, 1 condition tab (vanilla Cushioned).
+_FALL_ENTRY_POINT = bytes((58, 3, 1))
+
+#: MGEF DATA flags: No Magnitude | Hide in UI.
+_MGEF_FALL_FLAGS = 0x400 | 0x8000
+
+#: MGEF archetype 0 Value Modifier on actor value 24 Health, at magnitude 0 (vanilla NN01PerkEffect).
+_MGEF_ARCHETYPE_VALUE_MOD, _AV_HEALTH = 0, 24
+
+#: Casting type 1 Fire and Forget, delivery 0 Self.
+_FIRE_AND_FORGET, _DELIVERY_SELF = 1, 0
+
+
+def _fall_damage_perk(fid: int, edid: str) -> bytes:
+    """Hidden, unconditioned PERK multiplying the owner's falling damage by 0."""
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_string_subrecord('DESC', '')
+    subs += pack_subrecord('DATA', bytes((0, 0, 1, 0, 1)))
+    subs += pack_subrecord('PRKE', bytes((2, 0, 0)))
+    subs += pack_subrecord('DATA', _FALL_ENTRY_POINT)
+    subs += pack_subrecord('EPFT', bytes((1,)))
+    subs += pack_subrecord('EPFD', struct.pack('<f', 0.0))
+    subs += pack_subrecord('PRKF', b'')
+    return pack_record('PERK', fid, 0, subs)
+
+
+def _fall_damage_effect(fid: int, edid: str, perk: int) -> bytes:
+    """MGEF whose only job is PerkToApply, the way an NPC receives a perk."""
+    data = bytearray(152)
+    struct.pack_into('<I', data, 0, _MGEF_FALL_FLAGS)
+    struct.pack_into('<ii', data, 12, -1, -1)
+    struct.pack_into('<Ii', data, 64, _MGEF_ARCHETYPE_VALUE_MOD, _AV_HEALTH)
+    struct.pack_into('<II', data, 80, _FIRE_AND_FORGET, _DELIVERY_SELF)
+    struct.pack_into('<i', data, 88, -1)
+    struct.pack_into('<f', data, 104, 1.0)
+    struct.pack_into('<I', data, 136, perk)
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_subrecord('DATA', bytes(data))
+    return pack_record('MGEF', fid, 0, subs)
+
+
+def _fall_damage_spell(fid: int, edid: str, effect: int) -> bytes:
+    """Fire-and-forget self SPEL (type 0) holding the effect for the protection window."""
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_obnd()
+    subs += pack_subrecord('ETYP', struct.pack('<I', SPELL_EQUIP_EITHER_HAND))
+    subs += pack_subrecord('SPIT', struct.pack(
+        '<IIIfII12x', 0, 0, 0, 0.0, _FIRE_AND_FORGET, _DELIVERY_SELF))
+    subs += pack_subrecord('EFID', struct.pack('<I', effect))
+    subs += pack_subrecord('EFIT', struct.pack('<fII', 0.0, 0, _FALL_WINDOW_SECONDS))
+    return pack_record('SPEL', fid, 0, subs)
+
+
+def create_fall_damage_spell(writer: PluginWriter, master_index=None) -> dict:
+    """`TES4NoFallDamage`, the spell converted ResetFallDamageTimer casts; a master's is adopted.
+
+    Skyrim reaches falling damage only through perk entry point Mod Falling
+    Damage, and a magic effect's PerkToApply is how an NPC holds a perk.
+    The name is imported here, not at module scope, to break the cycle
+    owned_records -> script_convert (package __init__) -> tes5_import.dialogue
+    -> base.conditions -> owned_records.
+    See: docs/commentary/script_convert.md#fall-damage-is-a-perk
+    """
+    from script_convert.constants import FALL_DAMAGE_SPELL as name
+    spel = (master_index.find_by_edid(b'SPEL', name)
+            if master_index is not None else 0)
+    if not spel:
+        perk = writer.derive_formid('PERK', name + 'Perk')
+        mgef = writer.derive_formid('MGEF', name + 'Effect')
+        spel = writer.derive_formid('SPEL', name)
+        writer.add_record('PERK', _fall_damage_perk(perk, name + 'Perk'))
+        writer.add_record('MGEF', _fall_damage_effect(mgef, name + 'Effect', perk))
+        writer.add_record('SPEL', _fall_damage_spell(spel, name, mgef))
+    return {name: spel}
 
 
 def create_ambient_gmst_overrides(writer: PluginWriter, by_type: dict):

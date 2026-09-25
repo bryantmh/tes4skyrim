@@ -97,22 +97,79 @@ def _new_scan_out() -> dict:
     }
 
 
+#: Signatures whose whole field set feeds index_record_details.
+_DETAIL_SIGS = frozenset({'MGEF', 'SPEL', 'GLOB', 'BOOK'})
+
+_EFFECT_FIELD_RE = re.compile(r'Effect\[(\d+)\]\.(EFID|ActorValue)$')
+
+
+def _int_or(text, default: int) -> int:
+    """`text` as an int, or `default` when it is absent or not a number."""
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return default
+
+
+def _spell_effect_list(rec: dict) -> list:
+    """[(effect code, actor value int), ...] in Effect[n] order."""
+    effects: list[tuple[str, int]] = []
+    for key, val in rec.items():
+        m = _EFFECT_FIELD_RE.match(key)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        while len(effects) <= idx:
+            effects.append(('', -1))
+        code, av = effects[idx]
+        effects[idx] = ((val, av) if m.group(2) == 'EFID'
+                        else (code, _int_or(val, av)))
+    return effects
+
+
+def index_record_details(tables: dict, sig: str, formid: str, edid: str,
+                         rec: dict, rekey=lambda v: v) -> None:
+    """Fill the tables a record's own fields feed: model, MGEF shader, SPEL effects, GLOB, enchanted BOOK.
+
+    `tables` maps table name -> dict/set (a scan result, or a graph's `vars()`), so the
+    CLI scan and the importer's hand-built graph index these identically; `rekey`
+    corrects a master record's id fields.
+    See: docs/commentary/tes5_import_pipeline.md#phase-0-xref-mirrors-cli-scan
+    """
+    model = rec.get('Model.MODL')
+    if model:
+        tables['record_model'][formid] = model
+    low = edid.lower() if edid else ''
+    if sig == 'MGEF' and low:
+        tables['mgef_shaders'][low] = (
+            rekey(rec.get('DATA.EffectShader') or ''),
+            rekey(rec.get('DATA.EnchantEffect') or ''),
+            _int_or(rec.get('DATA.School'), -1))
+    elif sig == 'SPEL' and low:
+        effects = _spell_effect_list(rec)
+        if effects:
+            tables['spell_effects'][low] = effects
+    elif sig == 'GLOB' and low:
+        if rec.get('FNAM.Type'):
+            tables['global_types'][low] = rec['FNAM.Type'].strip()
+        try:
+            tables['global_values'][low] = float(rec.get('FLTV.Value'))
+        except (TypeError, ValueError):
+            pass
+    elif sig == 'BOOK' and (rec.get('ENAM') or '').strip().strip('0'):
+        tables['enchanted_books'].add(formid)
+
+
 def _scan_record_lines(sig: str, lines: list, out: dict):
     """Scan one record's KEY=VALUE lines into the partial result dicts."""
     formid = edid = scri = name_fid = None
-    model = None
+    details: dict = {}
     schr_type = None
-    glob_type = None
-    glob_value = None
-    mgef_shader = mgef_ench = None
-    mgef_school = -1
-    spel_effects: list[tuple[str, int]] = []
     pkdt_type = None
     ai_packages: list[str] = []
     cell_flags = None
     cell_wrld = None
     cell_x = cell_y = None
-    book_enam = None
 
     for line in lines:
         line = line.rstrip()
@@ -124,31 +181,14 @@ def _scan_record_lines(sig: str, lines: list, out: dict):
             scri = line[5:]
         elif line.startswith('NAME='):
             name_fid = line[5:]
-        elif line.startswith('Model.MODL='):
-            model = line[11:]
+        elif sig in _DETAIL_SIGS or line.startswith('Model.MODL='):
+            key, _eq, val = line.partition('=')
+            details[key] = val
         elif line.startswith('SCHR.Type='):
             try:
                 schr_type = int(line[10:])
             except ValueError:
                 pass
-        elif sig == 'GLOB' and line.startswith('FNAM.Type='):
-            glob_type = line[10:].strip()
-        elif sig == 'GLOB' and line.startswith('FLTV.Value='):
-            try:
-                glob_value = float(line[11:])
-            except ValueError:
-                pass
-        elif sig == 'MGEF' and line.startswith('DATA.EffectShader='):
-            mgef_shader = line[18:]
-        elif sig == 'MGEF' and line.startswith('DATA.EnchantEffect='):
-            mgef_ench = line[19:]
-        elif sig == 'MGEF' and line.startswith('DATA.School='):
-            try:
-                mgef_school = int(line[12:])
-            except ValueError:
-                pass
-        elif sig == 'BOOK' and line.startswith('ENAM='):
-            book_enam = line[5:].strip()
         elif sig == 'CELL' and line.startswith('DATA.Flags='):
             try:
                 cell_flags = int(line[11:].split()[0], 0)
@@ -175,21 +215,6 @@ def _scan_record_lines(sig: str, lines: list, out: dict):
             m = re.match(r'AIPackage\[\d+\]=(\w+)', line)
             if m:
                 ai_packages.append(m.group(1))
-        elif sig == 'SPEL' and line.startswith('Effect['):
-            m = re.match(r'Effect\[(\d+)\]\.(EFID|ActorValue)=(.*)', line)
-            if m:
-                idx, key, val = int(m.group(1)), m.group(2), m.group(3)
-                while len(spel_effects) <= idx:
-                    spel_effects.append(('', -1))
-                code, av = spel_effects[idx]
-                if key == 'EFID':
-                    code = val
-                else:
-                    try:
-                        av = int(val)
-                    except ValueError:
-                        pass
-                spel_effects[idx] = (code, av)
 
     if not formid:
         return
@@ -204,19 +229,12 @@ def _scan_record_lines(sig: str, lines: list, out: dict):
     if sig == 'CELL' and cell_flags is not None:
         out['cell_geom'][formid] = (bool(cell_flags & 1), cell_wrld or '',
                                     cell_x, cell_y)
-    if sig == 'BOOK' and book_enam and book_enam.strip('0'):
-        out['enchanted_books'].add(formid)
+    index_record_details(out, sig, formid, edid, details)
     if scri:
         out['record_scri'][formid] = scri
     if name_fid and sig in PLACED_REF_SIGS:
         out['record_base'][formid] = name_fid
     out['record_type'][formid] = sig
-    if model:
-        out['record_model'][formid] = model
-    if sig == 'GLOB' and edid and glob_type:
-        out['global_types'][edid.lower()] = glob_type
-    if sig == 'GLOB' and edid and glob_value is not None:
-        out['global_values'][edid.lower()] = glob_value
     if sig == 'QUST' and edid:
         out['quest_edids'].add(edid.lower())
     if sig in ('NPC_', 'CREA'):
@@ -225,11 +243,6 @@ def _scan_record_lines(sig: str, lines: list, out: dict):
             out['actor_packages'][formid] = ai_packages
     if sig == 'PACK' and pkdt_type is not None:
         out['pack_type'][formid] = pkdt_type
-    if sig == 'MGEF' and edid:
-        out['mgef_shaders'][edid.lower()] = (
-            mgef_shader or '', mgef_ench or '', mgef_school)
-    if sig == 'SPEL' and edid and spel_effects:
-        out['spell_effects'][edid.lower()] = spel_effects
 
 
 def _scan_range(args: tuple) -> dict:
