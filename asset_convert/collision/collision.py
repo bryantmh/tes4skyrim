@@ -12,6 +12,7 @@ apply_patches()
 from pyffi.formats.nif import NifFormat
 
 from asset_convert.collision.cms_builder import build_cms_collision
+from asset_convert.collision.collision_anim import clip_moves_node, mesh_has_sequence
 from asset_convert.collision.collision_falloutnv import fo3_layer, is_fallout_source
 from asset_convert.collision.collision_hulls import decompose_clutter_hull
 from asset_convert.collision.collision_material import (
@@ -999,43 +1000,44 @@ def _node_is_animated(node, actual_root):
     return _name_of(node) in names
 
 
-# Oblivion collision layer 10 = OL_PROPS, the DYNAMIC clutter layer (barrels,
-# cups -- everything Havok simulates and lets fall).  It is the authored
-# indicator that separates a piece meant to break off and drop from one whose
-# animation performs the whole motion: the artist picks the layer in the
-# exporter, so this is a statement of intent, not a measurement.
-#
-# Census of every ms=6 + animated + mass>0 body across both plugins (44 meshes):
-#   layer 10 OL_PROPS   -> falls: mwallplankbreakaway01, idcrumblewall01,
-#                          cpbrick01-15, cpgenericbrick01-03, cplog01/02,
-#                          artrapbridgecrumble, roperock01, rfpitbridgetrap
-#   layer 2/3           -> self-actuating, MUST stay keyframed: prisoncellgate01,
-#                          cgprisoncellgate01, icbastioncellgate01, argate01,
-#                          rfwportcullis01(+door), arpitstairs01/03,
-#                          arenclosedcircle01, dreamstairs01
-#   layer 14 OL_TRAP    -> swinging traps, keyframed: ctrapcavein01,
-#                          ctraplogs01, cprollingrock01, artrapchannelspikes01
-# Gates swing and portcullises slide precisely because they are NOT on the
-# props layer; nothing on layer 10 is expected to hold a pose against gravity.
+#: Oblivion OL_PROPS: dynamic clutter, the layer of breakaway planks and bricks.
 _OL_PROPS = 10
+#: Oblivion OL_TRAP: trap parts, held (cave-in rocks) or clip-driven (spikes).
+_OL_TRAP = 14
 
 
 def _node_is_breakaway(node, actual_root, rb):
-    """True if this animated node is a piece that breaks off and falls.
+    """True if this body is a loose piece held until a script releases it.
 
-    Oblivion authors breakaway props (mwallplankbreakaway01's planks,
-    IDCrumbleWall01's bricks) as ms=6 bodies with real mass on OL_PROPS: the
-    sequence only creaks them off their mounting and Havok does the rest.
-    Converting them to keyframed/mass-0 pins them in the half-broken pose
-    forever.  Gates and portcullises are also ms=6 with mass, but they sit on
-    the anim-static/clutter layers and must keep following their clip exactly.
+    In a mesh with a clip, an OL_PROPS body (breakaway planks, crumble-wall
+    bricks) or an OL_TRAP body no clip moves (cave-in rocks, trap logs) is
+    held rigid and only falls once released.  An OL_TRAP body its clip moves
+    is a self-actuating trap and stays keyframed; gates and portcullises sit
+    on the anim-static layers and never qualify.
+    See: docs/commentary/asset_convert_collision.md#held-bodies
     """
-    if not _node_is_animated(node, actual_root):
+    root = actual_root if actual_root is not None else node
+    if not mesh_has_sequence(root):
         return False
-    for attr in ('havok_col_filter', 'havok_col_filter_copy'):
-        hf = getattr(rb, attr, None)
-        if hf is not None and int(getattr(hf, 'layer', -1)) == _OL_PROPS:
+    layers = {int(getattr(hf, 'layer', -1))
+              for hf in (getattr(rb, 'havok_col_filter', None),
+                         getattr(rb, 'havok_col_filter_copy', None))
+              if hf is not None}
+    if _OL_PROPS in layers:
+        return True
+    return _OL_TRAP in layers and not clip_moves_node(root, node)
+
+
+def mesh_has_held_body(root) -> bool:
+    """True if any Oblivion-format body in `root`'s tree is held (see _body_is_held)."""
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        body = getattr(getattr(node, 'collision_object', None), 'body', None)
+        if hasattr(body, 'motion_system') and _body_is_held(node, root, body):
             return True
+        stack.extend(c for c in (getattr(node, 'children', None) or [])
+                     if c is not None)
     return False
 
 
@@ -1043,10 +1045,9 @@ def _node_is_held_trap(node, actual_root, rb):
     """True if this body is part of a trap island Oblivion holds until scripted.
 
     Oblivion authors a whole swinging trap (ctrapswingmacelong01's chain links
-    + mace head, ctraplogs01's logs) as ms=6 KEYFRAMED bodies with real mass
+    + mace head, ctrapswingloglong01) as ms=6 KEYFRAMED bodies with real mass
     and `Unyielding = 1`, wired together by constraints.  ITS engine keeps the
-    island rigid until the trap script runs `playgroup` -- the script header
-    says so outright: "On activation havok will turn on and logs will roll".
+    island rigid until the trap script runs `playgroup`.
 
     Shipping them dynamic (the old "mass>0 and owns a constraint" rule) made
     every trap swing freely on cell load.  Shipping them mass-0 keyframed
@@ -1067,6 +1068,13 @@ def _node_is_held_trap(node, actual_root, rb):
         if body is not None and getattr(body, 'num_constraints', 0) > 0:
             return True
     return False
+
+
+def _body_is_held(node, actual_root, rb):
+    """True for an ms=6 body with mass held keyframed until a script releases it."""
+    return (rb.motion_system == 6 and rb.mass > 0
+            and (_node_is_breakaway(node, actual_root, rb)
+                 or _node_is_held_trap(node, actual_root, rb)))
 
 
 def _convert_blend_collision(node, coll_obj):
@@ -1241,59 +1249,7 @@ def _convert_collision(node, actual_root=None, keep_blend=False):
     # Unscaled it lets contacts sink an entire chain-link deep.
     rb.penetration_depth *= _HAVOK_SCALE
 
-    # Oblivion MO_SYS_KEYFRAMED (6) semantics are context-dependent.  Three
-    # cases, discriminated per body (vanilla Skyrim census):
-    #  1. Node driven by animation (gate leaves targeted by Open/Close
-    #     sequences, animated display-case lids) → Skyrim KEYFRAMED, like
-    #     vanilla farmhouseanimdoor01.  Keyframed is ONLY valid for animated
-    #     nodes: a keyframed body with anim flags (137/142) on a non-animated
-    #     object flips the engine into the baked/anim-static path and the
-    #     whole compound acts welded solid.
-    #  2. mass>0 AND owns a constraint (mace-trap chain links: Oblivion holds
-    #     whole traps keyframed until the trap script enables havok) →
-    #     DYNAMIC, like vanilla trapmace01's links (ms=3, quality 4).
-    #  3. Everything else (constrained-island anchors: cellchain01 root,
-    #     cellChainMiddle, mass=100 "Unyielding"; unyielding props) →
-    #     STATIC with mass 0.  Vanilla chain/noose/trap anchors are ALWAYS
-    #     static mass-0 bodies (NooseRopePiece01 root, trapmace Base01),
-    #     never keyframed.
-    #  4. BREAKAWAY pieces (mwallplankbreakaway01's 8 planks, IDCrumbleWall01's
-    #     bricks): ms=6 bodies with real mass whose clip only creaks them off
-    #     their mounting -- 15.19 deg and ZERO translation keys for the planks
-    #     -- because the visible break is HAVOK taking over and letting the
-    #     pieces detach and FALL.  Forcing those onto the plain keyframed path
-    #     (which also zeroes the mass) pinned them forever: the clip played, the
-    #     planks tilted, and then hung in the half-broken pose as a solid wall.
-    #     Gates/portcullises are also ms=6 with mass but sit on the anim-static
-    #     layers, so the authored OL_PROPS layer separates the two.
-    #
-    #     A breakaway piece still ships KEYFRAMED, exactly like Oblivion's
-    #     `Unyielding = 1` (all 8 planks; the root is Unyielding 0 / mass 0):
-    #     the body is HELD, following the clip, and only becomes dynamic when
-    #     the animation ends.  Shipping it dynamic instead made the planks drop
-    #     the instant the cell loaded, before the clip ever played.  What the
-    #     breakaway flag changes is that the piece KEEPS ITS MASS, so the
-    #     script-side release (ObjectReference.SetMotionType(Motion_Dynamic))
-    #     hands Havok a body that can actually fall -- a mass-0 body would just
-    #     hang there.  See script_convert PlayGroup handling.
-    #  5. HELD TRAP islands (ctrapswingmacelong01's chain + mace,
-    #     ctraplogs01's logs, cprollingrock01): ms=6 bodies with real mass
-    #     that belong to a CONSTRAINED island.  Case 2 shipped these DYNAMIC,
-    #     which is what made every swinging trap swing freely the moment the
-    #     cell loaded, before anything tripped it.  Oblivion's own trap script
-    #     states the contract in its header comment -- "On activation havok
-    #     will turn on and logs will roll" (CTrapLogs01SCRIPT) -- and authors
-    #     the whole island `Unyielding = 1`: the trap is HELD rigid until the
-    #     trap script fires, exactly like a breakaway piece.
-    #
-    #     So a constrained trap island is a breakaway: ship it KEYFRAMED (held,
-    #     not simulating) but KEEP the authored mass, and let the script-side
-    #     SetMotionType(Motion_Dynamic) release start the swing.  Skyrim's own
-    #     trapmace01 ships its links dynamic because a Skyrim trap has no
-    #     script-held phase; ours must reproduce Oblivion's held phase instead.
-    breakaway_body = (rb.motion_system == 6 and rb.mass > 0
-                      and (_node_is_breakaway(node, actual_root, rb)
-                           or _node_is_held_trap(node, actual_root, rb)))
+    breakaway_body = _body_is_held(node, actual_root, rb)
     keyframed_body = (rb.motion_system == 6
                       and (_node_is_animated(node, actual_root)
                            or breakaway_body))

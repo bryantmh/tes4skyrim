@@ -279,6 +279,15 @@ parses cleanly and reads as all-zeroes for that field — which is how Nehrim
 served flag-less entries for every mesh long after the HELD bit shipped, leaving
 breakaway planks and traps unreleased.
 
+**A current cache still takes the mesh stage's pending fragments.** The mesh
+stage records each mesh it writes as a fragment, and only this function merges
+them. It used to return as soon as both caches were current, so a scoped
+`--meshes-only --mesh-subdirs` rebuild never reached the caches: the new
+ctrapcavein01/ctraplogs01 HELD bits stayed invisible to `--scripts-only`, and
+their scripts never gained `ReleaseBreakaway`. With both caches current, the
+fragments are now folded over them (`fold_mesh_entries`: no NIF parse, and
+meshes no longer on disk drop out).
+
 **Being current includes being READABLE, not just carrying the right magic.**
 `collision_cache_is_current` originally compared only the 8 magic bytes. A local
 `collision_cache.bin` written at a superseded header layout — magic, then a

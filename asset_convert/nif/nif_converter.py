@@ -144,6 +144,7 @@ from asset_convert.nif.mesh_scan_emit import (record_scan_alias,
                                               record_scan_entry,
                                               record_scan_removal)
 from asset_convert.collision.collision import (hoist_collision,
+                                               mesh_has_held_body,
                                                remove_empty_collision_nodes)
 from asset_convert.collision.collision_anim import node_transform_is_animated
 from asset_convert.collision.collision_falloutnv import (
@@ -718,11 +719,13 @@ def _hoist_root_collision(data, root, wrapped, has_constraints, creature):
 
     Skipped for a wrapped root (the wrap path already absorbs the transform),
     when the COLLISION NODE is really moved by animation, for constrained NIFs
-    (the constraint IS the spatial relationship), and for creatures (ragdoll
-    collision lives on the bones).  A keyless stub is not animation.
+    (the constraint IS the spatial relationship), for creatures (ragdoll
+    collision lives on the bones), and for a mesh of held pieces a script
+    releases (each piece must fall on its own).  A keyless stub is not
+    animation.
     See: docs/commentary/asset_convert_collision.md#keyless-transform-stubs
     """
-    if wrapped or has_constraints or creature:
+    if wrapped or has_constraints or creature or mesh_has_held_body(root):
         return
     if not hasattr(root, 'collision_object') or root.collision_object is not None:
         return

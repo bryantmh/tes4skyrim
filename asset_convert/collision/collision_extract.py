@@ -867,11 +867,15 @@ def _serialize(results: Dict[str, dict]) -> bytes:
         buf += struct.pack('<H', len(kb))
         buf += kb
         buf += struct.pack('<II', len(w) // 9, len(b) // 9)
-        if w:
-            buf += struct.pack('<%df' % len(w), *w)
-        if b:
-            buf += struct.pack('<%df' % len(b), *b)
+        buf += _f32_bytes(w) + _f32_bytes(b)
     return zlib.compress(bytes(buf), 6)
+
+
+def _f32_bytes(values) -> bytes:
+    """Little-endian float32 bytes of a float list or a loaded numpy array."""
+    if hasattr(values, 'astype'):
+        return values.astype('<f4').tobytes()
+    return struct.pack('<%df' % len(values), *values)
 
 
 def _deserialize(raw: bytes) -> Dict[str, dict]:
@@ -979,6 +983,27 @@ def scan_mesh_data(mesh_dir: str, collision_cache: str, bounds_cache: str,
     _write_mesh_caches(col_results, bnd_results, collision_cache,
                        bounds_cache, len(nif_files))
     return len(col_results), len(bnd_results)
+
+
+def fold_mesh_entries(mesh_dir: str, collision_cache: str, bounds_cache: str,
+                      seed_bounds, seed_collision) -> None:
+    """Layer producer entries over both CURRENT caches, parsing no NIF.
+
+    Keeps only meshes still on disk, so a removed file drops out as it would
+    from a full scan.
+    See: docs/commentary/tes5_import_pipeline.md#producer-emitted-mesh-entries
+    """
+    on_disk = {key for _path, key in _list_nifs(os.path.normpath(mesh_dir))}
+    with open(bounds_cache, encoding='utf-8') as fh:
+        bounds = {k: tuple(v) for k, v in json.load(fh).items()
+                  if k != _BOUNDS_SCHEMA_KEY}
+    with open(collision_cache, 'rb') as fh:
+        collision = _deserialize(fh.read())
+    bounds.update(seed_bounds)
+    collision.update(seed_collision)
+    _write_mesh_caches({k: v for k, v in collision.items() if k in on_disk},
+                       {k: v for k, v in bounds.items() if k in on_disk},
+                       collision_cache, bounds_cache, len(on_disk))
 
 
 def _write_mesh_caches(col_results, bnd_results, collision_cache,

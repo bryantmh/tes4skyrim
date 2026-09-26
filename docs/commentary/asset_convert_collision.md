@@ -17,6 +17,7 @@
 - [Activation pick region (HUD rollover "too big" on clutter) — SOLVED 2026-07](#activation-pick-region)
 - [NIF bhkMultiSphereShape (dead in Skyrim, fixed 2026-07-05)](#nif-bhkmultisphereshape)
 - [Stepped stairs need the stairs material on their treads](#stairs-material)
+- [Held bodies: pieces a script releases to fall](#held-bodies)
 
 ## NIF bhkRigidBody field mapping (PyFFI ↔ newer nif.xml)
 <a id="nif-bhkrigidbody-field-mapping"></a>
@@ -1173,3 +1174,69 @@ Morrowind.esm carry the stairs material. The misses are two-step pieces (one
 inner tread, the same shape as a bed) and the Telvanni pod stair, whose 4u
 rises make it a ramp. The Anvil interiors (76 NIFs) tag only their
 built-in staircases, at 0.00-0.02 s per mesh.
+
+## <a id="held-bodies"></a>Held bodies: pieces a script releases to fall
+
+Oblivion authors a piece that breaks off and falls as an MO_SYS_KEYFRAMED (6)
+body with real mass. It stays rigid until the object's script runs
+`playgroup`, then Havok drops it. We ship it keyframed but KEEP its mass (and its
+authored layer); the converted script's `TES4Polyfill.ReleaseBreakaway` then
+switches it to `Motion_Dynamic`. A mass-0 body switched to dynamic just hangs
+there, and a body shipped as a fixed static can never be released at all.
+
+The authored indicator is the collision LAYER plus whether a clip really moves
+the body. The artist picks the layer in the exporter, so it is a statement of
+intent. Census of every ms=6 + mass>0 body in the 293 Oblivion and 322 Nehrim
+meshes that have both a clip and a rigid body ("moved" = a clip's keys change
+the transform; "pinned" = keys hold one pose; "undriven" = in no clip):
+
+| Layer | Clip | Meshes | Ship as |
+|---|---|---|---|
+| 10 OL_PROPS | moved, pinned or undriven | mwallplankbreakaway01, idcrumblewall01, cpbrick01-15, cpgenericbrick01-03, cplog01/02, artrapbridgecrumble (1 pinned + 6 undriven), obeliskbarrier01, roperock01 | held |
+| 14 OL_TRAP | pinned or undriven | ctrapcavein01 (22 pinned + 2 undriven rocks), ctraplogs01 (1 + 5 logs), statuedagoncrumble01 (1 + 17), arcrumblewallmalada01 (7), siegecrawlerdeath / deidricseigecrawleractivator debris | held |
+| 14 OL_TRAP | moved | ruinshallnxceilingtrapa, ruinsroomceilingtrapa/b, ruinsroomcolmatrap, ruinshallwcolumna03trap, spiketrap, cprollingrock01, artrapbridgeblade01 | keyframed, mass 0 |
+| 2 / 3 anim-static | any | gates, portcullises, arpitstairs, dreamstairs, arenclosedcircle01 | keyframed, mass 0 |
+
+Gates swing and portcullises slide precisely because they are NOT on the props
+or trap layer. The old rule required layer 10 AND an animated node, or a
+constraint island. ctrapcavein01 and ctraplogs01 have zero constraints and sit
+on layer 14, so their rocks and logs shipped mass-0 keyframed (clip members) or
+fixed static (the rest). The Schattenruf mine cave-ins and log trap played
+their sound, and nothing fell.
+
+Held bodies are also never hoisted onto the root: `hoist_collision` takes the
+first child collision, which for ctraplogs01 was one loose log. Released, it
+would have carried the reference's root node with it.
+
+Constrained trap islands (ctrapswingmacelong01, ctrapswingloglong01) are
+the other held case, keyed on the constraints (`_node_is_held_trap`).
+
+### <a id="motion-system-cases"></a>How an Oblivion MO_SYS_KEYFRAMED (6) body converts
+
+Oblivion's ms=6 means different things depending on context; `_convert_collision`
+decides per body:
+
+1. **Driven by animation** (gate leaves in Open/Close sequences, animated
+   display-case lids): Skyrim KEYFRAMED, mass 0, layer 2, like vanilla
+   farmhouseanimdoor01. Keyframed is only valid on animated nodes: a keyframed
+   body with anim flags (137/142) on a non-animated object flips the engine into
+   the baked/anim-static path and the whole compound acts welded solid.
+2. **Anchors** (constrained-island anchors: cellchain01 root, cellChainMiddle,
+   mass=100 "Unyielding"; unyielding props): STATIC, mass 0. Vanilla
+   chain/noose/trap anchors are always static mass-0 bodies (NooseRopePiece01
+   root, trapmace Base01), never keyframed.
+3. **Breakaway pieces** ([held bodies](#held-bodies)): mwallplankbreakaway01's 8
+   planks, whose clip only creaks them off their mounting (15.19 deg, zero
+   translation keys). The visible break is Havok letting them fall. Forced onto
+   the plain keyframed path (mass zeroed), the planks tilted and then hung in the
+   half-broken pose as a solid wall. Shipped dynamic instead, they dropped the
+   instant the cell loaded. They ship KEYFRAMED, like Oblivion's
+   `Unyielding = 1`, but keep their mass, so the script-side
+   `SetMotionType(Motion_Dynamic)` hands Havok a body that can fall.
+4. **Held trap islands** (ctrapswingmacelong01's chain + mace,
+   ctrapswingloglong01): ms=6 bodies with mass in a CONSTRAINED island. The old
+   "mass>0 and owns a constraint → dynamic" rule made every swinging trap swing
+   freely on cell load. Oblivion authors the whole island `Unyielding = 1`: held
+   rigid until the trap script fires, exactly like a breakaway piece. Skyrim's
+   trapmace01 ships its links dynamic (ms=3, quality 4) because a Skyrim trap has
+   no script-held phase; ours reproduces Oblivion's held phase instead.

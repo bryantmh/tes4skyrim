@@ -686,30 +686,39 @@ def _prescan_vendor_trainer(by_type: dict, ctx, writer, export_dir: str,
 
 
 def _rescan_mesh_caches(export_dir, mesh_dir: str) -> bool:
-    """Rebuild one export's bounds+collision caches if either is stale.
+    """Rebuild one export's bounds+collision caches if stale or behind the mesh stage.
 
-    True when a scan ran.  One scan fills both, since they share the expensive
-    NIF parse.  A bounds cache predating the current entry schema counts as
-    missing: it would parse cleanly and read as all-zeroes for the new field.
+    True when either cache was rewritten.  A stale cache (older entry schema)
+    is rescanned in full; a current one still takes the entries a later mesh
+    run left as fragments (a scoped `--mesh-subdirs` rebuild), or the script
+    stage keeps reading old physics flags.
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-stale-bounds-cache
     """
     from asset_convert.collision.collision_extract import (
-        scan_mesh_data, bounds_cache_is_current, collision_cache_is_current)
+        fold_mesh_entries, scan_mesh_data, bounds_cache_is_current,
+        collision_cache_is_current)
     from asset_convert.collision.mesh_scan_fragments import (clear_fragments,
                                                              merge_fragments)
     assets_dir = assets_for(export_dir)
     cache_path = str(assets_dir / 'mesh_bounds_cache.json')
     col_path = str(assets_dir / 'collision_cache.bin')
-    if (bounds_cache_is_current(cache_path)
-            and collision_cache_is_current(col_path)) \
-            or not os.path.isdir(mesh_dir):
+    if not os.path.isdir(mesh_dir):
         return False
-    print(f"  Mesh bounds/collision cache missing or stale, "
-          f"scanning {mesh_dir}...")
     seed_b, seed_c = merge_fragments(assets_dir)
-    scan_mesh_data(mesh_dir, col_path, cache_path,
-                   seed_bounds=seed_b, seed_collision=seed_c)
+    current = (bounds_cache_is_current(cache_path)
+               and collision_cache_is_current(col_path))
+    if current and not (seed_b or seed_c):
+        return False
+    if current:
+        print(f"  Mesh bounds/collision: folding "
+              f"{len(set(seed_b) | set(seed_c))} rebuilt meshes into the caches")
+        fold_mesh_entries(mesh_dir, col_path, cache_path, seed_b, seed_c)
+    else:
+        print(f"  Mesh bounds/collision cache missing or stale, "
+              f"scanning {mesh_dir}...")
+        scan_mesh_data(mesh_dir, col_path, cache_path,
+                       seed_bounds=seed_b, seed_collision=seed_c)
     clear_fragments(assets_dir)
     return True
 
