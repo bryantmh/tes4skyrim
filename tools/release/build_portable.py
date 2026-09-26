@@ -123,6 +123,17 @@ def copy_app(dest: Path) -> int:
     return len(files)
 
 
+def release_version() -> str:
+    """The exact release tag HEAD sits on, else `version.current_version()`.
+
+    See: docs/commentary/tools_portable_build.md#version-stamp
+    """
+    out = subprocess.run(["git", "describe", "--tags", "--exact-match", "HEAD"],
+                         cwd=SCRIPT_DIR, capture_output=True, text=True, **POPEN_FLAGS)
+    tag = out.stdout.strip()
+    return tag if out.returncode == 0 and tag else current_version()
+
+
 def zip_tree(stage: Path, zip_path: Path) -> None:
     """Zip `stage` so the archive holds one top-level folder named after it."""
     zip_path.unlink(missing_ok=True)
@@ -145,7 +156,7 @@ def build(prefix: Path, make_zip: bool) -> Path:
     python_exe = copy_interpreter(prefix, stage / "python")
     install_requirements(python_exe)
     print(f"App files:   {copy_app(stage)}")
-    version = current_version()
+    version = release_version()
     (stage / "VERSION").write_text(version + "\n", encoding="utf-8")
     print(f"Version:     {version}")
     if is_dev_version(version):

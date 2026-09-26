@@ -7,6 +7,7 @@
 - [Design](#design)
 - [The ABI decides the Python version](#abi)
 - [Why the embeddable distribution is not used](#why-not-embeddable)
+- [The version stamp](#version-stamp)
 
 The package lets a user run the converter without installing Python, running
 pip, or typing commands: unzip, double-click `TES Auto-Convert.cmd`.
@@ -30,14 +31,8 @@ TESAutoConvert/
 - **App files are `git ls-files`,** minus `tests/`, `.github/`, `.claude/` and
   `.vscode/`. Untracked working data (`export/`, `output/`, `references/`,
   `conversion_config.json`) is therefore never shipped.
-- **`VERSION` is stamped** with `version.current_version()`. In a checkout
-  the file holds git's unexpanded `$Format:...$` placeholder, and the package
-  has no `.git` to fall back on, so without the stamp the app would call
-  itself `0.0-dev` and its Upgrade check would lose track of what changed.
-  `version.py` accepts only a bare release tag from `VERSION`, so a package
-  built between tags (stamped e.g. `0.665+g4667310`) still reports `0.0-dev`,
-  exactly like GitHub's zip of an untagged commit. Release packages must be
-  built from a tagged commit; the build prints a note when it is not.
+- **`VERSION` is stamped** with the release tag HEAD sits on; see
+  [the version stamp](#version-stamp).
 - **The launcher is a `.cmd`** that `start`s `pythonw.exe gui.py` and exits, so
   its console closes at once. `gui.py` only relaunches itself under pythonw when
   started by `python.exe`, so under pythonw it opens the window directly.
@@ -62,3 +57,25 @@ python.org's embeddable zip would be the obvious base, but it ships without
 tkinter and Tcl/Tk, and the converter's GUI is tkinter. Grafting them in from
 another install is exactly as dependent on a local CPython as copying one, and
 more fragile, so the build copies a full install and strips it instead.
+
+## <a id="version-stamp"></a>The version stamp
+
+In a checkout, `VERSION` holds git's unexpanded `$Format:...$` placeholder, and
+the package has no `.git` to fall back on. Without a stamp the app would call
+itself `0.0-dev` and its Upgrade check would lose track of what changed.
+`version.py` accepts only a bare release tag from `VERSION`, so the stamp must
+be exactly that tag.
+
+The build asks git (`git describe --tags --exact-match HEAD`) rather than
+`version.current_version()`. `version.py` reads `.git` without spawning git,
+and it can only confirm HEAD is ON a release by opening the annotated tag
+object, which it reads only when stored loose. A fresh clone, such as a CI
+checkout, packs its objects, so there `current_version()` answers
+`<tag>+g<sha>` even for a tagged commit (measured: `0.665+g4667310` for the
+commit tagged `0.665`). Stamped into `VERSION`, that would make the package
+report `0.0-dev`. The builder is not the GUI, so spawning git costs nothing.
+
+When HEAD is not on a tag, the build falls back to `current_version()`,
+stamps its describe form, and prints a note: the package then reports
+`0.0-dev`, exactly like GitHub's zip of an untagged commit. Release packages
+must be built from a tagged commit.
