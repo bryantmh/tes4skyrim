@@ -945,6 +945,43 @@ completely healthy collision cache.
 Persistent (dummy) cells are excluded: their refs are scattered worldwide and
 their `XCLC` says nothing about placement, so they are not overhangs.
 
+#### <a id="child-worldspaces-walk-the-parents-land"></a>A child worldspace walks on its PARENT's land
+
+**Code:** `navmesh/pool.py::navmesh_land_at`. A job's land used to be
+`land_by_cell[cell_fid]` — the LAND under that exact CELL. But a child
+worldspace (WNAM set) whose PNAM does not clear bit 0 (Use Land Data) draws the
+**parent's** land; every TES4 child qualifies, because TES4 authors no PNAM and
+the engine's WNAM default is "use everything"
+([child worldspace PNAM default](tes4_export_falloutnv.md#child-worldspaces)).
+The child's own LAND is never drawn, so the navmesh was built on the wrong
+terrain, or on none at all.
+
+The job's land now resolves through the WNAM chain to the worldspace whose land
+is drawn, at the same grid square, masters included. The child's own LAND is
+only a fallback where the parent has none. Authored FO3/FNV PNAMs without bit 0
+keep the child's own land.
+
+Found through Jayred Ice-Veins, who stopped leading the player in SE02 ("Through
+the Fringe of Madness"). SETheFringe is a child of SEWorld (`00009F18`):
+
+| Fringe square | Own LAND | What the navmesh did |
+|---|---|---|
+| (−12, 0), the Garden courtyard gate | none in Oblivion.esm | built as landless: no cell clip (`corridor.py` clips only when `land_rec` is set), vertices spilled to x −49,452…−44,867, **0** edges on the x −49,152 seam, **0** links to (−13, 0) |
+| (−13, 0) | `00018EC9`, VHGT base 73 (×8 units) | built on terrain the game never draws; the parent's `0000D4EC` has base 253 |
+
+The escort destination (`XSE02JayredFindBones`) was unreachable from Jayred and
+from his house (`tools/navmesh/reach.py`). The escort procedure then ran with
+no route (`GetCurrentAIProcedure` = −1), and neither `evp` nor `ResetAI`
+revived it. After the fix, (−12, 0) is clipped to its square, has 3 seam edges
+and 3 links to (−13, 0) and 19 links in total, and both routes are reachable.
+NAVM FormIDs did not move (8,239 before and after).
+
+Oblivion.esm has 1,765 exterior cells with no LAND of their own (93 in
+SETheFringe). Any of them with a pathgrid got the same unclipped mesh.
+`pool.py` is outside the cache tag, and each cell's land VHGT is in its
+`geom_hash`, so only cells whose resolved land changed rebuild.
+`tools/navmesh/audit.py` and `cell_check.py` still read the cell's own LAND.
+
 #### <a id="speedtree-model-keys"></a>A TREE base names a `.spt`, not a NIF
 
 **Code:** `navmesh/pool.py::_model_key`. TREE bases carry a SpeedTree path —
@@ -4412,6 +4449,29 @@ unpinned cell's hash is byte-identical to what it was before pins existed.
 > same as making the converter skip the others. Regenerating only the cells
 > whose pins moved is separate, unbuilt behavior.
 
+
+### <a id="cut-pins"></a>Cut pins: floor a human declared NOT walkable
+
+**Code:** `navmesh_pins.cuts_for` / `apply_cuts`, applied in
+`from_pgrd._cell_geometry` right after the build and before the geometry cache
+stores it. A pin protects floor and a weld joins it; neither can remove floor
+the generator should not have made, so a cut is the third entry kind:
+`"cuts": {"<cell key>": [[zmin, zmax, x1, y1, x2, y2, x3, y3, ...]]}` — a
+world-XY polygon plus a height band. Every generated triangle whose centroid
+lies inside the polygon and band is removed, unused vertices are compacted,
+and ledge links naming a removed triangle go with it. Like pins, a cut is a
+position, so it survives any retriangulation, and it enters the cell's
+`digest()` so only a cut cell's cache entry goes stale.
+
+First use, `XPGardensExterior` (SETheFringe −13, 0): Oblivion's own pathgrid
+runs through the solid wall-walk structure around `ExRuinWalkWallStairs01`
+(REFR `00042B78`) at ground level — node 46 sits on the ground inside it, joined
+to the walkway top (node 45, Z 1586) and edges 1→0→3 cross it at Z 1422 — and
+the pathgrid band is unconditional, so once the correct parent-worldspace land
+put the ground at Z 1408 the band pulled a floor into the structure's interior.
+The cut `[1300, 1500, −51225..−50185 × 1745..2575]` removes the 155 ground
+triangles inside the walls; the walkway (Z ≈ 1590) and the stair ramp
+(centroid Z 1529) are above the band and stay.
 
 ### <a id="weld-pins"></a>Weld pins: the crack a position pin cannot express
 

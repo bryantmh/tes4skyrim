@@ -136,9 +136,12 @@ def build_index(img, cache_dir):
     return result
 
 
-# ---------------------------------------------------------------- settings
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
 
-SETTING_STRIDE = 0x18   # {const char* name; void* vtable; union value;}
+#: Setting layout {void* vtable; union value; const char* name;}: the name pointer sits at +0x10.
+SETTING_STRIDE = 0x18
 
 
 def find_settings(img, pattern):
@@ -155,21 +158,20 @@ def find_settings(img, pattern):
         sva = img.base + srva
         ptr = struct.pack('<Q', sva)
         for pm in re.finditer(re.escape(ptr), img.data):
-            orva = img.off_to_rva(pm.start())
-            if orva is None:
+            name_rva = img.off_to_rva(pm.start())
+            if name_rva is None or name_rva < 0x10:
                 continue
-            name = img.cstr_at_va(sva)
+            orva = name_rva - 0x10
             blk = img.read(orva, SETTING_STRIDE)
             if len(blk) < SETTING_STRIDE:
                 continue
-            nm, vt, val = struct.unpack('<QQQ', blk)
             hits.append({
-                'name': name,
+                'name': img.cstr_at_va(sva),
                 'obj_rva': orva,
-                'value_rva': orva + 0x10,
-                'raw': val,
-                'f32': struct.unpack('<f', blk[0x10:0x14])[0],
-                'u32': struct.unpack('<I', blk[0x10:0x14])[0],
+                'value_rva': orva + 0x08,
+                'raw': struct.unpack('<Q', blk[0x08:0x10])[0],
+                'f32': struct.unpack('<f', blk[0x08:0x0C])[0],
+                'u32': struct.unpack('<I', blk[0x08:0x0C])[0],
             })
     return hits
 
