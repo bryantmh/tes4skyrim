@@ -13,6 +13,7 @@ typing a command, copying files by hand, or fighting their mod manager.
 - [The pieces](#pieces)
 - [Suggested order](#order)
 - [Constraints every piece follows](#constraints)
+- [Related, not in this plan: a world picker on the main menu](#main-menu-picker)
 - [Open questions for the maintainer](#open-questions)
 
 ## <a id="where-it-stands"></a>Where the GUI stands
@@ -44,7 +45,7 @@ typing a command, copying files by hand, or fighting their mod manager.
 | A | Dependency "fix it" buttons | `core/gui/dependencies.py` | nothing |
 | B | Read the load order from an MO2 profile | `core/mo2.py` | nothing |
 | C | Install output straight into MO2 | `core/mo2.py` | B |
-| D | Generate one MO2 profile per world | `core/mo2.py` | C |
+| D | Generate MO2 profiles: one per world, and/or one with every world | `core/mo2.py` | C |
 | E | Source mods and their order from a source-game MO2 instance | `core/mo2.py` | B |
 | F | First-run setup screen | `core/gui/setup_wizard.py` | A, B |
 | G | Worlds tab with Play buttons | `core/gui/worlds.py` | D or H |
@@ -82,13 +83,32 @@ imports by hand. Re-converting updates the same folder. MO2 must be closed
 while these files are written, because it rewrites its lists on exit; refuse
 and say so when it is running.
 
-### D. One MO2 profile per world
+### D. MO2 profiles: per world, and all worlds together
 
-For each converted world, write a profile (for example `Cyrodiil`) with its mod
-list, plugin list, and per-profile saves and INIs enabled. A world profile
-loads only `Skyrim.esm` plus that world's plugins and the runtime DLLs, so
-other worlds' start-game quests never run, saves stay separate, and per-world
-rules, UI and visual mods become possible.
+Two profile shapes, offered side by side; the user picks one or both.
+
+- **One profile per world** (for example `Cyrodiil`), with its mod list, plugin
+  list, and per-profile saves and INIs enabled. It loads only `Skyrim.esm` plus
+  that world's plugins and the runtime DLLs, so other worlds' start-game quests
+  never run, saves stay separate, and per-world rules, UI and visual mods
+  become possible.
+- **One profile with every installed world**, which keeps today's setup: all
+  converted games load together, TESGameSelect picks where a new game starts,
+  and one character can move between worlds, for example from Skyrim to
+  Cyrodiil. Today that crossing is the console (`cow tes4tamriel 20 20`, as the
+  README shows); an in-game way to travel is a separate idea, not part of this
+  plan.
+
+The trade-off belongs to the user, so neither shape replaces the other:
+
+| | Per-world profile | All-worlds profile |
+|---|---|---|
+| Travel between worlds with one character | No | Yes |
+| Other worlds' always-running quests | Not loaded | All run, whichever world you are in |
+| Memory and load time | One world | Every installed world |
+| Saves | Separate per world | One shared list |
+| World-specific rules, UI and visuals | Yes | Only what every world can share |
+| Skyrim alt-start mods | Kept in a Skyrim-only profile | Conflict with TESGameSelect's `MQ101` override ([below](#main-menu-picker)) |
 
 ### E. Source mods from a source-game MO2 instance
 
@@ -111,7 +131,8 @@ dependency check from A.
 ### G. Worlds tab
 
 One row per converted world: converted, installed, profile ready, and a **Play**
-button that launches the world's MO2 profile (D) or the standalone launcher (H).
+button that launches the world's MO2 profile (D) or the standalone launcher (H),
+plus an **All worlds** row for the shared profile.
 
 ### H. Standalone launcher, no mod manager
 
@@ -143,9 +164,46 @@ the menu when only one converted world is loaded.
 - **New modules, not growth** of `runner.py` or `app.py`.
 - **`gui` stays importable headless**; tkinter is imported inside functions
   (`tests/test_gui_startup.py` asserts it).
-- **No new runtime DLL.** A world picker on Skyrim's main menu would need one
-  and is deliberately left out; it would be its own proposal.
+- **No new runtime DLL work.** A world picker on Skyrim's main menu would need
+  it and is deliberately left out ([below](#main-menu-picker)).
 - **No writes into a mod manager's files while it is running.**
+
+## <a id="main-menu-picker"></a>Related, not in this plan: a world picker on the main menu
+
+Recorded here because the all-worlds profile (D) is where it matters; it would
+be its own proposal.
+
+**The problem it solves.** TESGameSelect starts a converted world by overriding
+Skyrim's opening quest, `MQ101`. Alt-start mods (Live Another Life, Skyrim
+Unbound, Alternate Perspective) override the same record, and only the one
+loaded last wins, so the README says to use one at a time. Per-world profiles
+avoid the clash by keeping alt-start mods in a Skyrim-only profile; an
+all-worlds profile cannot.
+
+**The idea.** Choose the world before the game starts instead of after:
+
+1. **Patch `StartMenu.swf`** so **New** opens a world list. The converter
+   already rewrites Skyrim's Flash menus (`asset_convert/ui/`, e.g. the journal
+   patch).
+2. **Record the choice in `TESRuntime.dll`.** The patched journal already calls
+   into it from Flash (`_root.TESRT_Runtime`).
+3. **Start the chosen world.** Choosing Skyrim changes nothing, so the vanilla
+   opening or any alt-start mod runs untouched and `MQ101` needs no override.
+   Choosing another world stops Skyrim's opening and hands off to that world's
+   start, as TESGameSelect's handoff does today.
+
+**Why it is not in this plan.**
+
+- It is new DLL functionality, which the project treats as a last resort
+  needing sign-off. (`TESRuntime.dll` is already required, so it extends an
+  existing DLL rather than adding one.)
+- The engine's new-game path must first be located by disassembly and
+  confirmed in game.
+- UI mods that ship their own `StartMenu.swf` would clash; the fallback is a
+  menu drawn by the DLL when **New** is clicked, with no Flash patch.
+- It only chooses where to start: every plugin in the load order is loaded
+  before the main menu appears, so it cannot give the isolation per-world
+  profiles do.
 
 ## <a id="open-questions"></a>Open questions for the maintainer
 
