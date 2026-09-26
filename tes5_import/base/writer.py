@@ -784,6 +784,9 @@ class PluginWriter:
         w.write('output.esm')
     """
 
+    #: A child plugin's overrides.adoption.MasterAdoption, else None.
+    adoption = None
+
     def __init__(self, masters: list = None, is_esm: bool = True,
                  author: str = "TES4-to-TES5 Converter",
                  description: str = ""):
@@ -984,6 +987,22 @@ class PluginWriter:
                 self._top_groups[group_sig] = []
             self._top_groups[group_sig].append(record_bytes)
             self._record_count += 1
+
+    def top_records(self):
+        """Yield every top-level record's bytes, never a pre-built GRUP."""
+        for blobs in self._top_groups.values():
+            yield from (b for b in blobs if b[:4] != b'GRUP')
+
+    def remove_records(self, unwanted) -> int:
+        """Remove each top-level record for which `unwanted(bytes)` holds; returns the count."""
+        removed = 0
+        with self._lock:
+            for blobs in self._top_groups.values():
+                kept = [b for b in blobs if b[:4] == b'GRUP' or not unwanted(b)]
+                removed += len(blobs) - len(kept)
+                blobs[:] = kept
+            self._record_count -= removed
+        return removed
 
     def add_raw_group(self, group_sig: str, group_bytes: bytes):
         """Add pre-built group bytes (for CELL/WRLD/DIAL hierarchies)."""

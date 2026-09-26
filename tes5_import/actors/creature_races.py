@@ -37,6 +37,7 @@ import struct
 from ..base.writer import (pack_record, pack_subrecord, pack_string_subrecord,
                      pack_formid_subrecord, pack_obnd)
 from ..base.text_reader import get_float, get_formid, get_int, get_str
+from ..overrides.adoption import generated_formid
 from ..record_types.equipment import attack_spell
 from .creature_projects import (bodies_of, folder_of,
                                 folders_built_by_master, load_projects)
@@ -344,9 +345,9 @@ def build_creature_death_piles(writer) -> int:
         pile = proj.get('death_pile')
         if not pile:
             continue
-        fid = writer.derive_formid('CREA_PILE', folder)
-        subs = pack_string_subrecord(
-            'EDID', f'TES4Cr{folder.capitalize()}DeathPile')
+        edid = f'TES4Cr{folder.capitalize()}DeathPile'
+        fid = generated_formid(writer, 'ACTI', edid, 'CREA_PILE', folder)
+        subs = pack_string_subrecord('EDID', edid)
         bounds = _pile_mesh_bounds(proj, pile)
         if bounds is None:
             subs += pack_obnd(-24, -24, -4, 24, 24, 16)
@@ -401,9 +402,9 @@ def build_creature_voice_types(writer) -> int:
     """
     _CREA_VOICE_MAP.clear()
     for folder in sorted(set(_CREA_FOLDER_MAP.values())):
-        fid = writer.derive_formid('CREA_VTYP', folder)
-        subs = pack_string_subrecord(
-            'EDID', f'TES4Cr{folder.capitalize()}Voice')
+        edid = f'TES4Cr{folder.capitalize()}Voice'
+        fid = generated_formid(writer, 'VTYP', edid, 'CREA_VTYP', folder)
+        subs = pack_string_subrecord('EDID', edid)
         subs += pack_subrecord('DNAM', struct.pack('<B', _CREATURE_VTYP_DNAM))
         writer.add_record('VTYP', pack_record('VTYP', fid, 0, subs))
         _CREA_VOICE_MAP[folder] = fid
@@ -479,9 +480,9 @@ def build_creature_body_parts(writer) -> int:
             s += pack_subrecord('NAM5', b'')
             return s
 
-        fid = writer.derive_formid('CREA_BPTD', folder)
-        subs = pack_string_subrecord(
-            'EDID', f'TES4{folder.capitalize()}BodyPartData')
+        edid = f'TES4{folder.capitalize()}BodyPartData'
+        fid = generated_formid(writer, 'BPTD', edid, 'CREA_BPTD', folder)
+        subs = pack_string_subrecord('EDID', edid)
         subs += pack_string_subrecord('MODL', skel)
         subs += pack_subrecord('MODT', _BPTD_MODT)
         # vanilla dog order: Head part first, Torso second
@@ -1062,10 +1063,12 @@ def _build_skin(writer, folder: str, bodies: list, race_fid: int,
     body = bodies[0]
     # `bodies` are the source CREA's TES4 NIFZ model paths (authored), not
     # our merged output name, so this key survives changes to mesh merging.
-    arma_fid = writer.derive_formid('CREA_ARMA', (folder, tuple(bodies)))
     stem = os.path.splitext(body)[0]
+    arma_edid = f'TES4{edid_base}{stem}AA'
+    arma_fid = generated_formid(writer, 'ARMA', arma_edid, 'CREA_ARMA',
+                                (folder, tuple(bodies)))
     subs = b''
-    subs += pack_string_subrecord('EDID', f'TES4{edid_base}{stem}AA')
+    subs += pack_string_subrecord('EDID', arma_edid)
     subs += pack_subrecord('BOD2', struct.pack('<II', 0x4, 2))
     subs += pack_formid_subrecord('RNAM', race_fid)
     subs += pack_subrecord('DNAM', _ARMA_DNAM)
@@ -1091,8 +1094,19 @@ def _build_skin(writer, folder: str, bodies: list, race_fid: int,
     writer.add_record('ARMO', pack_record('ARMO', skin_fid, 4, subs))
 
 
-def _race_groups(by_type: dict) -> dict:
-    """(folder, bodies) -> every CREA sharing it, in by_type order.
+def _shared_creatures(by_type: dict, master_export: dict) -> list:
+    """Every CREA a generated race is shared with: the masters' (as overridden here), then ours.
+
+    See: docs/commentary/tes5_import_override.md#generated-records-reuse-the-masters
+    """
+    own = {(rec.get('FormID') or '').upper(): rec for rec in by_type.get('CREA', [])}
+    shared = [own.pop(fid.upper(), rec) for fid, rec in (master_export or {}).items()
+              if rec.get('Signature') == 'CREA']
+    return shared + list(own.values())
+
+
+def _race_groups(creatures: list) -> dict:
+    """(folder, bodies) -> every CREA sharing it, in `creatures` order.
 
     A generated race is SHARED by every CREA with the same folder and body set,
     so its equipment flags must be the union over all of them — computed in this
@@ -1100,7 +1114,7 @@ def _race_groups(by_type: dict) -> dict:
     rest of the group has been walked.
     """
     race_recs = {}
-    for rec in by_type.get('CREA', []):
+    for rec in creatures:
         folder = folder_of(rec)
         proj = _PROJECTS.get(folder)
         if proj is None:
@@ -1128,14 +1142,17 @@ def _build_race_chain(writer, rec, folder: str, bodies: list, proj: dict,
     ``(race FormID, {reach: variant race FormID}, VNAM equipment flags)``.
     See: docs/commentary/tes5_import_actors.md#reach-variant-races
     """
-    race_fid = writer.derive_formid('CREA_RACE', key)
-    skin_fid = writer.derive_formid('CREA_SKIN', key)
     edid = get_str(rec, 'EditorID') or folder
     edid_base = ''.join(c for c in edid if c.isalnum()) or folder
+    race_fid = generated_formid(writer, 'RACE', f'TES4{edid_base}Race',
+                                'CREA_RACE', key)
+    skin_fid = generated_formid(writer, 'ARMO', f'TES4Skin{edid_base}',
+                                'CREA_SKIN', key)
     full = get_str(rec, 'FULL') or edid
     recs = race_recs.get(key, [rec])
     vnam = _creature_equip_flags(recs)
-    variants = {r: writer.derive_formid('CREA_RACE_REACH', (key, r))
+    variants = {r: generated_formid(writer, 'RACE', f'TES4{edid_base}RaceReach{r}',
+                                    'CREA_RACE_REACH', (key, r))
                 for r in sorted({_attack_reach(x) for x in recs})
                 if r != _attack_reach(rec)}
     for reach, fid in [(None, race_fid)] + sorted(variants.items()):
@@ -1188,7 +1205,7 @@ def build_creature_races(by_type: dict, writer, export_dir: str,
               'run the creatures step); CREA falls back to race aliasing')
         return
 
-    race_recs = _race_groups(by_type)
+    race_recs = _race_groups(_shared_creatures(by_type, master_export))
 
     made = {}
     movt_folders = folders_built_by_master(master_export, _PROJECTS,
@@ -1212,8 +1229,8 @@ def build_creature_races(by_type: dict, writer, export_dir: str,
 
         key = (folder, tuple(bodies))
         if key not in made:
-            made[key] = _build_race_chain(writer, rec, folder, bodies,
-                                          proj, key, race_recs)
+            made[key] = _build_race_chain(writer, race_recs[key][0], folder,
+                                          bodies, proj, key, race_recs)
         race_fid, variants, _vnam = made[key]
         _CREA_RACE_MAP[fid] = (variants.get(_attack_reach(rec), race_fid),
                                folder)

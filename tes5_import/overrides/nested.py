@@ -29,9 +29,12 @@ from .master_index import load_master_index
 from ..actors.outfits import split_inventory
 from ..dialogue.converter import convert_INFO
 from ..record_types.actor_common import origin_gate, read_items
+from ..record_types.magic_variants import copy_editor_ids
 from ..record_types.world import convert_ACHR, convert_REFR, restamp_wrld_mnam
-from ..base.text_reader import get_formid, get_int, parse_export_directory, remap_formid
-from ..base.writer import (PluginWriter, RECORD_HEADER_SIZE, pack_group)
+from ..base.text_reader import (get_formid, get_int, get_str,
+                                parse_export_directory, remap_formid)
+from ..base.writer import (PluginWriter, RECORD_HEADER_SIZE, pack_group,
+                           pack_string_subrecord)
 
 # Types whose override CANNOT be expressed against the master's output because
 # conversion does not produce a corresponding record to substitute into
@@ -171,6 +174,7 @@ def load_master_export(export_dir: str) -> dict:
 _ALSO_ACCEPTED = {
     'REFR': (b'ACHR',),
     'BOOK': (b'SCRL',),
+    'STAT': (b'MSTT',),
 }
 
 
@@ -476,6 +480,39 @@ class OverrideContext:
                     (sig, struct.pack(f'<{len(worn)}I', *worn) if sig == b'INAM' else payload)
                     for sig, payload in split_subrecords(base)])
         return b''
+
+    def renamed_copies(self, rec: dict) -> list:
+        """The master's generated copies of `rec`, renamed, when the author changed its FULL.
+
+        A copy carries the master's FULL verbatim: a manifest companion (hair
+        variants) or, for an MGEF, a delivery or ability clone found by EditorID.
+        See: docs/commentary/tes5_import_override.md#generated-copies-follow-a-rename
+        """
+        master_rec = self.master_record(rec)
+        old = get_str(master_rec, 'FULL') if master_rec else ''
+        new = get_str(rec, 'FULL')
+        if not old or not new or old == new:
+            return []
+        old_full = pack_string_subrecord('FULL', old)[6:]
+        new_full = pack_string_subrecord('FULL', new)[6:]
+        out = []
+        for fid in self._copy_formids(rec, master_rec):
+            base = self.master_index.record(fid)
+            subs = split_subrecords(base)
+            if (b'FULL', old_full) in subs:
+                out.append(join_subrecords(base, [
+                    (sig, new_full if (sig, payload) == (b'FULL', old_full) else payload)
+                    for sig, payload in subs]))
+        self.stats['renamed-copies'] += len(out)
+        return out
+
+    def _copy_formids(self, rec: dict, master_rec: dict) -> list:
+        """FormIDs of the master records generated as copies of `rec`, sorted."""
+        fids = set(self.master_manifest.companions((rec.get('FormID') or '').upper()))
+        if rec.get('Signature') == 'MGEF':
+            fids.update(self.master_index.find_by_edid(b'MGEF', edid) for edid
+                        in copy_editor_ids(get_str(master_rec, 'EditorID')))
+        return sorted(fids - {0})
 
     def report(self):
         print(f"  Overrides: {self.stats['emitted']} emitted, "

@@ -257,6 +257,13 @@ def _build_mnam(rec):
     return build_wrld_mnam(rec)
 
 
+def _build_xcmo(rec):
+    """CELL XCMO for an authored music type; KEEP when no MUSC resolves for it."""
+    from ..record_types.world import cell_music
+    packed = cell_music(rec)
+    return packed[6:] if packed else KEEP
+
+
 def _build_xown(rec):
     owner = get_formid(rec, 'XOWN.Owner')
     if not owner:
@@ -344,6 +351,10 @@ _RB_XCLL = _Rebuild(b'XCLL', _build_xcll, (('before', b'LTMP'),))
 _RB_XCLW = _Rebuild(b'XCLW', _build_xclw,
                     (('after', b'XOWN'), ('after', b'LTMP')))
 _RB_XOWN = _Rebuild(b'XOWN', _build_xown, (('after', b'LTMP'),))
+_RB_XCMO = _Rebuild(b'XCMO', _build_xcmo,
+                    (('before', b'XCCM'), ('after', b'XCWT'), ('after', b'XEZN'),
+                     ('after', b'XLCN'), ('after', b'XCLR'), ('after', b'XNAM'),
+                     ('after', b'XCLW'), ('after', b'XOWN'), ('after', b'LTMP')))
 _RB_REFR_XOWN = _Rebuild(b'XOWN', _build_xown, (('after', b'XESP'),))
 _RB_MNAM = _Rebuild(b'MNAM', _build_mnam, (('after', b'DNAM'),))
 # WRLD world-object bounds. A plugin that ADDS land outside the master's
@@ -430,6 +441,7 @@ _reg('CLOT', ('BMDT.GeneralFlags', 'BMDT.BipedFlags'), _RB_BOD2)
 _reg('CELL', _XCLL_KEYS, _RB_XCLL)
 _reg('CELL', 'XCLW.WaterHeight', _RB_XCLW)
 _reg('CELL', 'XOWN.Owner', _RB_XOWN)
+_reg('CELL', 'XCMT.MusicType', _RB_XCMO)
 _reg('REFR', 'XOWN.Owner', _RB_REFR_XOWN)
 _reg('ACHR', 'XOWN.Owner', _RB_REFR_XOWN)
 _reg('ACRE', 'XOWN.Owner', _RB_REFR_XOWN)

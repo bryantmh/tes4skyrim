@@ -14,6 +14,7 @@ from tes4_export.morrowind_ids import encode_editor_id
 
 from ..base.text_reader import remap_formid
 from ..dialogue.morrowind_sidecar import is_tes3_export
+from ..overrides.adoption import generated_formid
 from .common import (VENDOR_KYWD, get_float, get_formid, get_int, get_str,
                      pack_formid_subrecord, pack_keywords, pack_obnd,
                      pack_record, pack_string_subrecord, pack_subrecord)
@@ -146,15 +147,12 @@ def _tome_subs(edid: str, spell: dict, spell_fid: int, price: int,
     return subs
 
 
-def _tome(writer, sale: tuple, spell: dict, prefix: str, master_index) -> int:
-    """The tome teaching `spell`: a master's, adopted by EditorID, else a new BOOK."""
+def _tome(writer, sale: tuple, spell: dict, prefix: str) -> int:
+    """The tome teaching `spell`, at the master's FormID when a master already sells it."""
     key, price, school = sale
     edid = prefix + get_str(spell, 'EditorID')
-    adopted = (master_index.find_by_edid(b'BOOK', edid)
-               if master_index is not None else 0)
-    if adopted:
-        return adopted
-    fid = writer.derive_formid('SPELL_TOME', get_str(spell, 'EditorID'))
+    fid = generated_formid(writer, 'BOOK', edid, 'SPELL_TOME',
+                           get_str(spell, 'EditorID'))
     subs = _tome_subs(edid, spell, remap_formid(int(key, 16)), price, school)
     writer.add_record('BOOK', pack_record('BOOK', fid, 0, subs))
     return fid
@@ -180,13 +178,12 @@ def create_spell_tomes(by_type: dict, writer, ctx, export_dir: str,
                    for rec in indexes['MGEF'].values()}
         sales = _oblivion_sales(by_type, spells, _gold_mult(indexes['GMST']),
                                 effects)
-    master_index = getattr(ctx, 'master_index', None)
     tomes = {}
     for actor_fid, offered in sales.items():
         for sale in offered:
             if sale[0] not in tomes:
                 tomes[sale[0]] = _tome(writer, sale, spells[sale[0]],
-                                       _TOME_EDID[tes3], master_index)
+                                       _TOME_EDID[tes3])
         _tomes_by_actor[actor_fid] = [tomes[sale[0]] for sale in offered]
     if tomes:
         print(f"  Spell tomes: {len(tomes)} for {len(sales)} spell merchants")

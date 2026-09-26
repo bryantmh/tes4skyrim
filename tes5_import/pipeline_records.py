@@ -88,12 +88,14 @@ _LAND_CHUNK = 24
 WORLD_EXTENT_CACHE = 'world_extents.json'
 
 def _emit_override(st, ov, rec: dict) -> None:
-    """Write an override's record and the master outfit it changes, when either exists."""
+    """Write an override's record and the master outfit it changes; queue its renamed copies."""
     for record_bytes in (ov.record_bytes, st.ctx.build_outfit_companion(rec)):
         if record_bytes:
             st.writer.add_record(record_bytes[:4].decode('ascii', 'replace'),
                                  record_bytes)
             st.converted += 1
+    for copy in st.ctx.renamed_copies(rec):
+        st.writer.adoption.queue_copy(copy)
 
 
 def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:

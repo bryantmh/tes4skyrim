@@ -39,6 +39,7 @@ from core.worldspace_names import set_worldspace_plugins
 from asset_convert.game_paths import namespace_for, set_namespace
 from .registry import IMPORT_DISPATCH, RUNTIME_ONLY_TYPES, SKIP_TYPES
 from .navmesh.pool import collision_cache_chain
+from .overrides.adoption import MasterAdoption
 from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         OverrideContext, detect_injected_records)
 from .record_types import magic_art
@@ -247,7 +248,9 @@ def _reconcile_masters(masters: list, tes4_master_names: list) -> list:
 
 
 def _register_run_tables(by_type: dict, ctx, writer) -> None:
-    """Register the name tables record conversion reads: cell families."""
+    """Register the tables record conversion reads: cell families, adoptable master records."""
+    if ctx:
+        writer.adoption = MasterAdoption(ctx.master_index)
     set_cell_families(by_type, ctx.master_export if ctx else None, writer,
                       getattr(ctx, 'master_index', None))
 
@@ -963,7 +966,8 @@ def _prescan_music_records(by_type: dict, writer, export_dir: str, plugin_out_di
     """
     try:
         from .record_types.music import (build_music_records,
-                                         load_music_manifest)
+                                         load_music_manifest,
+                                         master_music_types)
         from .record_types.common import (register_music_types,
                                           register_world_music)
         from .base.text_reader import get_formid as _gf, get_int as _gi
@@ -975,6 +979,7 @@ def _prescan_music_records(by_type: dict, writer, export_dir: str, plugin_out_di
             plugin_out_dir,
             export_dir=os.path.dirname(os.path.normpath(export_dir)),
             plugin=os.path.basename(output_path))
+        _by_enum = master_music_types(writer)
         if _music_manifest.get('tracks'):
             _plugin_name = _music_manifest.get('plugin') or os.path.basename(
                 os.path.normpath(plugin_out_dir))
@@ -983,12 +988,13 @@ def _prescan_music_records(by_type: dict, writer, export_dir: str, plugin_out_di
                 writer.add_record('MUST', _b)
             for _fid, _b in _music['musc']:
                 writer.add_record('MUSC', _b)
-            register_music_types(_music['by_enum'])
+            _by_enum.update(_music['by_enum'])
             if _music.get('battle'):
                 _apply_dobj_battle_override(_music['battle'], writer)
             print(f"  Music: {len(_music['must'])} MUST + "
                   f"{len(_music['musc'])} MUSC records "
                   f"({len(_music['by_enum'])} enum categories)")
+        register_music_types(_by_enum)
     except Exception as e:
         print(f"  ERROR building music records: {e}")
 

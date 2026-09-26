@@ -10,6 +10,7 @@ these call nothing else in that file, and only import_plugin calls them.
 
 import struct
 
+from ..overrides.adoption import adopted_formid, generated_formid
 from ..packages.escort_when_near import (ESCORT_WHEN_NEAR_EDID,
                                          escort_root_record,
                                          set_escort_template_fid)
@@ -87,7 +88,7 @@ def create_message_menu_records(writer: PluginWriter, plan: dict) -> dict:
         for name, text, buttons in plan[edid_low]:
             if text is None:
                 continue
-            fid = writer.derive_formid('SCRIPT_MESG', name)
+            fid = generated_formid(writer, 'MESG', name, 'SCRIPT_MESG', name)
             subs = pack_string_subrecord('EDID', name)
             subs += pack_string_subrecord('DESC', text)
             subs += pack_subrecord('INAM', struct.pack('<I', 0))
@@ -103,7 +104,8 @@ def create_chargen_menu_records(writer: PluginWriter, plan: dict) -> dict:
     """MESG pages for the TES4 chargen menus (ShowBirthsignMenu/ShowClassMenu).
 
     Allocates FIXED ids from a reserved window, not derive_formid(): the pages
-    are a contiguous, order-significant block.
+    are a contiguous, order-significant block.  A page or global a master
+    already defines keeps the master's FormID.
 
     See: docs/commentary/tes5_import_dialogue.md#synthesized-menus-factions-and-formlists
     """
@@ -111,7 +113,7 @@ def create_chargen_menu_records(writer: PluginWriter, plan: dict) -> dict:
     k = 0
     for key in sorted(plan):
         for name, title, buttons in plan[key]['pages']:
-            fid = writer.chargen_fid_base + k
+            fid = adopted_formid(writer, 'MESG', name) or writer.chargen_fid_base + k
             k += 1
             subs = pack_string_subrecord('EDID', name)
             subs += pack_string_subrecord('DESC', title)
@@ -128,7 +130,7 @@ def create_chargen_menu_records(writer: PluginWriter, plan: dict) -> dict:
         if not menu:
             continue
         gname = menu['choice_global']
-        fid = writer.chargen_fid_base + slot
+        fid = adopted_formid(writer, 'GLOB', gname) or writer.chargen_fid_base + slot
         subs = pack_string_subrecord('EDID', gname)
         subs += pack_subrecord('FNAM', struct.pack('<B', ord('s')))
         subs += pack_subrecord('FLTV', struct.pack('<f', 0.0))

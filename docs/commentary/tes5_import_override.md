@@ -13,6 +13,8 @@
 - [A PGRD is never an override: it converts to a NEW NAVM](#pgrd-never-override-converts-new)
 - [Deleting a master's record: the three shapes](#deleting-masters-record-three-shapes)
 - [A quest-owned package must never be in an NPC's PKID list](#quest-owned-package-must-never)
+- [Generated records reuse the master's](#generated-records-reuse-the-masters)
+- [Generated copies follow a rename](#generated-copies-follow-a-rename)
 - [The nested-override emission passes](#nested-override-emission-passes)
 
 Linked from [CLAUDE.md](../../CLAUDE.md).
@@ -600,7 +602,8 @@ that is the same unchecked assumption this function exists to remove.
     enchanted BOOK (ENAM set) becomes a SCRL. A mismatch sends the override to
     "no-base", and no-base overrides are dropped, not converted. Without
     `'BOOK': (b'SCRL',)` all 62 of Translation.esp's scroll overrides were
-    dropped, so every Nehrim scroll kept its German name in game.
+    dropped, so every Nehrim scroll kept its German name in game. A
+    constrained-havok STAT becomes an MSTT the same way (`'STAT': (b'MSTT',)`).
 - <a id="interleaved-subrecords"></a>**INTERLEAVED SUBRECORD FAMILIES MUST KEEP
   THEIR PAIRING.** `_apply_generic` replaces each signature as a unit at the
   position of its first occurrence — correct for a repeating single-signature
@@ -888,6 +891,64 @@ variables. Identical values across both means wedged, not slow — that is what
 pinned `0x02002D7C`. But the record's *identity* is only the start; xEdit's
 error on that record is what names the rule being broken, and is far cheaper
 than reverse-engineering the engine's resolution path.
+
+## <a id="generated-records-reuse-the-masters"></a>Generated records reuse the master's
+
+**Code:** `tes5_import/overrides/adoption.py`
+
+An override only edits the master's record at the SAME FormID. Everything the
+master's run GENERATED from a source record — an MGEF's delivery/ability/
+actor-value clones, a script's message boxes, the chargen pages, spell tomes,
+unlock globals, creature races with their skins, armatures, unarmed abilities,
+voice types, body-part data and ash piles — lives at other FormIDs, so a
+child's authored change never reached it. Worse, the child's own run minted
+its own copies at its own ids, and nothing pointed at them. Measured on
+Translation.esp before the fix:
+
+- 122 English MESGs unreferenced; the Eisklinge weapon's VMAD still named
+  Nehrim's German `0198D9D2`. The chargen birthsign page too.
+- 139 English MGEFs, 130 unreferenced; spells kept Nehrim's German clones.
+- Spell tomes adopted by EditorID and never rewritten: "Spell Tome: Feuerbiss".
+- An island of 270 RACE, 217 ARMO, 217 ARMA, 55 BPTD and ~177 SPEL referring
+  only to each other, plus 81 unlock GLOBs nothing used.
+- 557 creature overrides repointed at duplicate VTYPs: `patch_creature_voices`
+  keys on the low 24 bits, so it rewrote the master's creatures too.
+
+**The rule:** a generator names its record with a deterministic EditorID. When
+a master already defines a record of that signature and EditorID, it IS the
+same record: `generated_formid` hands back the master's FormID (via
+`MasterIndex.find_by_edid`, the way spell tomes and MGEF family keywords
+already adopted), so the child's copy ships as an override. `MasterAdoption.
+finalize` ships it as the MASTER's record with only its text runs (FULL, DESC,
+ITXT) taken from the child's, and drops it when the text agrees. Shipping the
+child's regeneration whole was measured wrong: 182 creature ARMAs lost their
+footstep SNDD (a child builds no footstep sets), races differed in DATA/ATKD/
+GNAM/VTCK and 72 actor-value MGEFs in DATA. The voice-type repointing then
+resolves to the master's own VTYP ids.
+
+Creature races are shared per (folder, body set) and take their EditorID, name,
+equipment flags and base unarmed damage from the whole group, founded by its
+first member. A child grouping only its own CREA picked a different founder and
+a subset, so `_shared_creatures` groups over the masters' creatures (the
+child's version substituted in place, master order), then the child's own.
+
+**A child's music** resolves each TES4 music enum it has no track for to its
+masters' category MUSC (`master_music_types`, by `musc_editor_id`), so CELL
+XCMO and the `XCMT.MusicType` override rebuild have something to point at.
+
+## <a id="generated-copies-follow-a-rename"></a>Generated copies follow a rename
+
+**Code:** `OverrideContext.renamed_copies`
+
+A master's copy the child does NOT regenerate — the delivery clone a master's
+scroll uses, a hair's per-race and per-length HDPTs — still carries the
+master's FULL. When an override changes a record's FULL, every master copy
+whose FULL equals the old one is overridden with the new: the manifest
+companions of the source (hair variants are recorded there) and, for an MGEF,
+the clone EditorIDs `copy_editor_ids` lists. Before the fix Nehrim had 221
+per-delivery MGEF copies and Translation.esp overrode 8, so the Blessing
+scroll's effect read "Lebensenergie wiederherstellen". A copy some other path
+already wrote wins over the queued rename.
 
 ## Cross-plugin FormID identity
 <a id="cross-plugin-formid-identity"></a>

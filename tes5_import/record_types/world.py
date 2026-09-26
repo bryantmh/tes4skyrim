@@ -1285,7 +1285,7 @@ def _cell_location(rec: dict) -> bytes:
     return pack_formid_subrecord('XLCN', lctn_fid) if lctn_fid else b''
 
 
-def _cell_music(rec: dict) -> bytes:
+def cell_music(rec: dict) -> bytes:
     """CELL XCMO: an FO3/FNV MUSC, else TES4's 3-value XCMT enum resolved.
 
     An interior with no authored XCMT takes the engine default; exteriors are
@@ -1323,7 +1323,7 @@ def _cell_pointers(rec: dict) -> bytes:
     xcwt = get_formid(rec, 'XCWT.Water')
     if xcwt:
         subs += pack_formid_subrecord('XCWT', xcwt)
-    subs += _cell_music(rec)
+    subs += cell_music(rec)
     xccm = get_formid(rec, 'XCCM.Climate')
     if xccm and region_was_emitted(xccm):
         subs += pack_formid_subrecord('XCCM', xccm)

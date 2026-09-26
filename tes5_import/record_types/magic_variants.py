@@ -16,6 +16,7 @@ from ..base.text_reader import get_int, get_str
 from ..base.writer import (pack_formid_subrecord, pack_record,
                            pack_string_subrecord, pack_subrecord)
 from ..generated.vanilla_mgef_data import VANILLA_MGEF_DATA
+from ..overrides.adoption import generated_formid
 from .magic import (
     A_BOUND_WEAPON, A_SCRIPT, AV_NONE, MENU_ART_GENERIC, O_ARCHETYPE, O_ASSOC_ITEM,
     O_CASTING_TYPE, O_COUNTER_COUNT, O_EXPLOSION, O_HIT_EFFECT_ART, O_HIT_SHADER,
@@ -125,7 +126,7 @@ def clone(src_fid: int, site: str, key, edid: str, patch, writer,
         data = bytearray(src_data)
         struct.pack_into('<H', data, O_COUNTER_COUNT, 0)
         patch(data)
-        fid = writer.derive_formid(site, key)
+        fid = generated_formid(writer, 'MGEF', edid, site, key)
         _emit(writer, fid, edid, src_head if head is None else head, bytes(data),
               tail, _source_rec(src_fid), src_fid)
         _clones[(site, key)] = fid
@@ -199,6 +200,13 @@ def delivery_editor_ids(edid: str) -> list:
     return [edid] + [_delivery_editor_id(edid, cast, delivery, area)
                      for cast in _CAST_NAMES for delivery in _DELIVERY_NAMES
                      for area in ('', 'Area')]
+
+
+def copy_editor_ids(edid: str) -> list:
+    """Every EditorID a delivery or ability clone of the MGEF named `edid` may carry."""
+    names = delivery_editor_ids(edid)
+    return names[1:] + [f'TES4{name.removeprefix("TES4")}Ability{shader}'
+                        for name in names for shader in ('', 'Shader')]
 
 
 #: TES4 codes Oblivion still draws on an Ability (Oblivion.exe 0x41b950): shields, Reflect Damage, Resist Normal Weapons.
@@ -279,12 +287,13 @@ def build_av_variants(mgef_records: list, effect_records: list, writer) -> int:
         name = _ATTR_NAMES.get(av) or _SKILL_NAMES.get(av)
         if tes5_av == AV_NONE or not name:
             continue
-        fid = writer.derive_formid('MGEF_AV', (code, av))
+        edid = f'TES4{code}{name}'
+        fid = generated_formid(writer, 'MGEF', edid, 'MGEF_AV', (code, av))
         full = get_str(src, 'FULL')
         head = pack_string_subrecord('FULL', _variant_name(full, name)) if full else b''
         data = build_data(src, code, get_archetype(code, src), tes5_av, 0)
         head += pack_formid_subrecord('MDOB', menu_display_object(data))
-        _emit(writer, fid, f'TES4{code}{name}', head, data, mgef_tail(src), src,
+        _emit(writer, fid, edid, head, data, mgef_tail(src), src,
               code_to_fid.get(code, 0))
         _av_variants[(code, av)] = fid
         written += 1
@@ -336,11 +345,11 @@ def build_seff_variants(mgef_records: list, effect_records: list, writer,
             continue
         data = bytearray(build_data(seff, 'SEFF', A_SCRIPT, AV_NONE, 0))
         fit_delivery(data, 1, RANGE_DELIVERY.get(etype, 0))
-        fid = writer.derive_formid('MGEF_SEFF', (scpt, etype))
+        edid = f'TES4SEFF{fid_to_edid.get(scpt, scpt)}{etype or "Self"}'
+        fid = generated_formid(writer, 'MGEF', edid, 'MGEF_SEFF', (scpt, etype))
         head = vmad + (pack_string_subrecord('FULL', full) if full else b'')
         head += pack_formid_subrecord('MDOB', menu_display_object(data))
-        name = fid_to_edid.get(scpt, scpt)
-        _emit(writer, fid, f'TES4SEFF{name}{etype or "Self"}', head, bytes(data),
+        _emit(writer, fid, edid, head, bytes(data),
               sound_set(seff), seff, code_to_fid.get('SEFF', 0))
         _seff_variants[(scpt, etype)] = fid
         written += 1

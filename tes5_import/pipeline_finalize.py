@@ -212,6 +212,17 @@ def _patch_creature_chains(st, export_dir: str) -> None:
               f"{n_bpp} races bound")
 
 
+def _finalize_adoption(writer) -> None:
+    """Ship adopted master records carrying this plugin's text; add the renamed copies.
+
+    See: docs/commentary/tes5_import_override.md#generated-records-reuse-the-masters
+    """
+    kept, added = writer.adoption.finalize(writer)
+    print(f"  Generated records shared with the masters: "
+          f"{len(writer.adoption.adopted)} adopted, {kept} with new text, "
+          f"{added} renamed copies")
+
+
 def run_finalize_phases(st, export_dir: str, phase_done,
                         is_esm: bool, masters: list) -> tuple:
     """Phase 5 onward: dialogue, side files, and the write.
@@ -232,6 +243,7 @@ def run_finalize_phases(st, export_dir: str, phase_done,
 
     if st.ctx:
         st.ctx.report()
+        _finalize_adoption(st.writer)
 
     t3 = time.time()
     print(f"\nConverted {st.converted} records ({st.errors} errors) in {t3-st.t2:.2f}s")

@@ -13,6 +13,7 @@ import struct
 from ..base.text_reader import get_formid, get_int
 from ..base.writer import (pack_formid_subrecord, pack_obnd, pack_record,
                            pack_string_subrecord, pack_subrecord)
+from ..overrides.adoption import generated_formid
 
 #: Skyrim.esm AbFortifyUnarmedDamage: PeakValueModifier on UnarmedDamage, the effect crDragonUnarmedDamage05 uses.
 _MGEF_FORTIFY_UNARMED = 0x000424E2
@@ -65,9 +66,11 @@ def build_unarmed_abilities(writer, race_key, recs: list, edid_base: str) -> int
         if damage <= base:
             continue
         if damage not in made:
-            fid = writer.derive_formid('CREA_UNARMED', (race_key, damage))
+            edid = f'{edid_base}UnarmedDamage{damage}'
+            fid = generated_formid(writer, 'SPEL', edid, 'CREA_UNARMED',
+                                   (race_key, damage))
             writer.add_record('SPEL', pack_record('SPEL', fid, 0, _ability_subs(
-                f'{edid_base}UnarmedDamage{damage}', damage - base)))
+                edid, damage - base)))
             made[damage] = fid
         _CREA_ABILITY[get_formid(rec, 'FormID') & 0x00FFFFFF] = made[damage]
     return len(made)
