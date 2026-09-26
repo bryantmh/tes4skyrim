@@ -1822,6 +1822,28 @@ One converter runs for all stages: `convert_fragment` deliberately accumulates
 `_property_refs` across calls, which is how the QF_ generator collects the union
 of every fragment's references.
 
+### <a id="global-default-overrides"></a>Global default overrides
+
+**Code:** `tes5_import/record_types/common.py` `_GLOBAL_DEFAULTS`
+
+Nehrim's `VarDistantBlur` (default 1) turns on a fake depth-of-field effect.
+`DistantBlurSphereQuestScript` moves `NDistantBlur.nif`, an inward-facing
+`refractF` sphere with a 5,700-unit radius (0.4 scale indoors), onto the player
+every tick. Converted to Skyrim refraction (fire bit, strength 0.25, one 512²
+normal map stretched over the whole sphere), it draws as a vertical band that
+slides everything behind it right to left. Skyrim's weather imagespaces already
+carry vanilla depth of field, so the global ships as -1, Nehrim's own "off"
+value: the quest does nothing and `DistantBlurSphereScript` disables the sphere.
+The diary item (`GlobaltagebuchScript`) can still switch it back on.
+
+Census of the ~100 `refractF` shapes in the Oblivion, Nehrim and Morroblivion
+exports: this sphere is the only one with every normal inward (others 0.00–0.75)
+and the largest by far (next is the 722-unit Oblivion gate). That geometry test
+was the non-hardcoded alternative considered.
+
+The override changes only the record's default. A save that already stored the
+global keeps its value.
+
 ### Quest-state conditions
 
 TES4 CTDA functions expressing quest TIMING (56 `GetQuestRunning`, 58

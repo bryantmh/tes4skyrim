@@ -905,6 +905,13 @@ class TestConverters:
                'EditorID': 'GameHour', 'FNAM.Type': 'f', 'FLTV.Value': '12.0'}
         assert convert_GLOB(rec) == b''
 
+    def test_glob_distant_blur_ships_off(self):
+        """Nehrim's VarDistantBlur ships as its own "off" value -1."""
+        rec = {'Signature': 'GLOB', 'FormID': '0020A12C', 'RecordFlags': '0',
+               'EditorID': 'VarDistantBlur', 'FNAM.Type': 's', 'FLTV.Value': '1.0'}
+        fltv = self._get_subrecord_data(convert_GLOB(rec), 'FLTV')
+        assert struct.unpack('<f', fltv)[0] == -1.0
+
     def test_lvli(self):
         rec = {'Signature': 'LVLI', 'FormID': '00004000', 'RecordFlags': '0',
                'EditorID': 'TestLvlList', 'LVLD.ChanceNone': '0', 'LVLF.Flags': '1',
