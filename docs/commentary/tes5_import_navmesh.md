@@ -4469,9 +4469,25 @@ runs through the solid wall-walk structure around `ExRuinWalkWallStairs01`
 to the walkway top (node 45, Z 1586) and edges 1→0→3 cross it at Z 1422 — and
 the pathgrid band is unconditional, so once the correct parent-worldspace land
 put the ground at Z 1408 the band pulled a floor into the structure's interior.
-The cut `[1300, 1500, −51225..−50185 × 1745..2575]` removes the 155 ground
-triangles inside the walls; the walkway (Z ≈ 1590) and the stair ramp
-(centroid Z 1529) are above the band and stay.
+The cut `[1300, 1500, −51225..−50185 × 1745..2583]` removes the ground inside
+the walls; the walkway (Z ≈ 1590) and the stair ramp (centroid Z 1529) are
+above the band and stay. A second row, `[1300, 1415, −51000..−50400 ×
+1590..1745]`, removes 7 ground triangles under the bottom of the stairs, where
+the stair collision sits only 4–62u overhead (less than `AGENT_HEIGHT`); its
+1415 ceiling keeps the two triangles beside pathgrid node 42 (Z 1430) that
+join the ramp to the courtyard. Courtyard → walkway (node 41 → node 45) stays
+reachable.
+
+Second use, `DMushroomTree01` (REFR `000524C6`, SETheFringe −11, −1): the
+ground navmesh ran over its stem and root arms where they lie flush with the
+terrain. The cut is the object's own footprint at walking height — the union
+of its collision triangles crossing land … land+128, padded 24u and
+simplified to three polygons — over its whole height band (Z −603..3196), so
+the open ground between the root arms stays. The footprint reaches three
+cells, so the same rows are keyed under `SEPassWallExterior02`,
+`wrld:011F7B -11 0` and `wrld:011F7B -12 -1`; they removed 48, 17 and 1
+triangles. Adding both cuts changed 10 of 8,239 navmeshes (the 4 cut cells and
+6 seam neighbours whose edge links name renumbered triangles).
 
 ### <a id="weld-pins"></a>Weld pins: the crack a position pin cannot express
 
