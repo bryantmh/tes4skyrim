@@ -109,6 +109,29 @@ def test_a_broken_tkdnd_runtime_also_falls_back(display, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Relaunch under pythonw
+# ---------------------------------------------------------------------------
+
+
+def test_importing_the_gui_creates_no_job():
+    """`python gui.py` relaunches itself under pythonw and exits.
+
+    A Job Object created while importing would be inherited by that pythonw
+    child and kill it the moment the launcher exits, so the window never
+    appears. Run in a fresh interpreter: this test process may already own one.
+    """
+    import subprocess
+
+    probe = ("import gui, version\n"
+             "from core import process_job\n"
+             "print(process_job._JOB_HANDLE is None)\n")
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True,
+                         text=True, cwd=os.path.join(os.path.dirname(__file__), ".."),
+                         timeout=60, check=True)
+    assert out.stdout.strip() == "True"
+
+
+# ---------------------------------------------------------------------------
 # Output log autoscroll
 # ---------------------------------------------------------------------------
 
