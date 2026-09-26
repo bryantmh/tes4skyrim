@@ -56,6 +56,7 @@ import time
 from pathlib import Path
 
 import version as version_info
+from asset_convert.sources import source_registry
 from core import run_log
 from core.gui.config import (
     CLR,
@@ -771,9 +772,12 @@ def _stamp_start_mod(app) -> str:
 
 
 def _stamp_runtime_dll(app) -> str:
-    """The built DLL alone, not the tree: obj/ churns on every compile."""
-    return _stat_part(REPO_ROOT / "tes_runtime" / "dist" / "TESRuntime.dll",
-                      "dll", "missing")
+    """The built DLL, not the tree (obj/ churns on every compile), and
+    whether a Morrowind install is registered, since packaging composes the
+    Morrowind menu from it."""
+    morrowind = bool(source_registry.directory_for(EXPORT_DIR, "Morrowind.esm"))
+    return (_stat_part(REPO_ROOT / "tes_runtime" / "dist" / "TESRuntime.dll",
+                       "dll", "missing") + f"|morrowind:{int(morrowind)}")
 
 
 def _convert_ui_wanted(ui, cur, ob_dir, sk_dir) -> list:

@@ -12,6 +12,11 @@ The archive mirrors what `convert.py --pack-zip-only` produces -- output/
 Finished Mods/<name>.zip, contents rooted as a Data folder -- so a user
 installs it exactly like any converted plugin.
 
+MorrowindRuntime's dialogue menu is composed here, from the Morrowind install
+registered on this machine, and goes straight into the archive: its art is
+Bethesda's, so the repo never holds a built copy. Without a registered install
+the menu is skipped and the rest still packages.
+
 Usage:
   python tools/release/package_runtime_dll.py   # -> output/Finished Mods/TESRuntime.zip
   python tools/release/package_runtime_dll.py --output-dir PATH
@@ -26,11 +31,19 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+from asset_convert.ui.morrowind_menu_art import MissingArtError
 from output_layout import finished_dir, write_mod_zip
+from tools.generators.gen_morrowind_menu_swf import dialogue_window
 
 MOD_NAME = "TESRuntime"
 
 SRC_DIR = SCRIPT_DIR / "tes_runtime"
+
+#: Where the pipeline's exports and the source registry live.
+EXPORT_ROOT = SCRIPT_DIR / "export"
+
+#: MorrowindRuntime's dialogue menu, as the game loads it.
+MENU_ARC = Path("Interface") / "morrowind_dialogue.swf"
 
 #: Where tes_runtime/build.bat puts every finished DLL.
 DIST_DIR = SRC_DIR / "dist"
@@ -52,21 +65,34 @@ MODS = {
         (*CREATURE_RUNTIME,
          (DIST_DIR / "FalloutRuntime.dll", PLUGINS / "FalloutRuntime.dll"),
          *HAVOK_WORLD_SIZE,
-         (DIST_DIR / "MorrowindRuntime.dll", PLUGINS / "MorrowindRuntime.dll"),
-         (SRC_DIR / "morrowind" / "interface" / "morrowind_dialogue.swf",
-          Path("Interface") / "morrowind_dialogue.swf")),
+         (DIST_DIR / "MorrowindRuntime.dll", PLUGINS / "MorrowindRuntime.dll")),
     ),
     "CreatureRuntime": (CREATURE_RUNTIME, ()),
     "HavokWorldSize": (HAVOK_WORLD_SIZE, ()),
 }
 
 
-def package(out_root: Path, mod_name: str = MOD_NAME) -> int:
+def morrowind_menu(export_root: Path) -> "bytes | None":
+    """The dialogue menu movie, composed from the registered Morrowind install.
+
+    None when no install is registered (or it lacks the menu art), so the
+    caller skips the menu instead of failing.
+    See: docs/commentary/morrowind_runtime.md#the-real-menu
+    """
+    try:
+        return dialogue_window(str(export_root)).serialize(compress=True)
+    except MissingArtError:
+        return None
+
+
+def package(out_root: Path, mod_name: str = MOD_NAME,
+            export_root: Path = EXPORT_ROOT) -> int:
     """Zip `mod_name`'s files into <out_root>/Finished Mods/<mod_name>.zip.
 
     Every runtime is its own DLL, so a fault in one cannot take the others
     down; MorrowindRuntime links GPL-3.0 OpenMW, which stays out of the MIT
-    runtimes' binaries. Missing optional files are skipped.
+    runtimes' binaries. Missing optional files are skipped, and so is the
+    Morrowind menu when `export_root` registers no Morrowind install.
     See: docs/commentary/morrowind_runtime.md#licensing
     """
     required, optional = MODS[mod_name]
@@ -91,6 +117,12 @@ def package(out_root: Path, mod_name: str = MOD_NAME) -> int:
             members.append((str(arc), src))
         else:
             print(f"  - {arc} (not built, skipped)")
+    if mod_name == MOD_NAME:
+        menu = morrowind_menu(export_root)
+        if menu is None:
+            print(f"  - {MENU_ARC} (no Morrowind install registered, skipped)")
+        else:
+            members.append((str(MENU_ARC), menu))
     write_mod_zip(zip_path, members, lambda _i, arc: print(f"  + {arc}"))
 
     size = zip_path.stat().st_size
@@ -109,10 +141,13 @@ def main() -> int:
                     help="Output directory (default: output/ in project root)")
     ap.add_argument("--mod", choices=sorted(MODS), default=MOD_NAME,
                     help=f"Which archive to build (default: {MOD_NAME})")
+    ap.add_argument("--export-root", metavar="PATH", default=str(EXPORT_ROOT),
+                    help="Where the Morrowind install is registered "
+                         "(default: export/ in project root)")
     args = ap.parse_args()
     out_root = (Path(args.output_dir) if args.output_dir
                 else SCRIPT_DIR / "output")
-    return package(out_root, args.mod)
+    return package(out_root, args.mod, Path(args.export_root))
 
 
 if __name__ == "__main__":

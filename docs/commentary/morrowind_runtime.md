@@ -371,6 +371,16 @@ registered Morrowind install at build time and composed into the generated
 `.swf`, which is itself a build artifact. The repo carries the LAYOUT — which
 texture goes where, at what size — and never the art.
 
+That includes the built movie: it embeds the composed art, so it is never
+committed either. `tools/release/package_runtime_dll.py` composes it from the
+player's own install when `TESRuntime.zip` is packaged and writes it straight
+into the archive (no install, no menu); the generator's default output folder,
+`tes_runtime/morrowind/interface/`, is git-ignored.
+`tests/test_morrowind_menu_art.py` checks git tracks nothing there, because a
+file-type check cannot see art inside a `.swf` (a built copy was once committed
+that way, 9 embedded bitmaps). The GUI's Package SKSE Mod stamp includes
+whether a Morrowind install is registered, so registering one re-arms it.
+
 Art is taken **as shipped**, from the archives, ignoring loose replacers, for
 the same reason `find_archived_mesh` does: a user's texture pack must not change
 what the converter builds, or two installs produce different menus from one

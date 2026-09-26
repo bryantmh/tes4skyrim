@@ -7,6 +7,9 @@ See: docs/commentary/morrowind_runtime.md#the-real-menu
 """
 
 import os
+import subprocess
+import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +18,7 @@ from asset_convert.ui.morrowind_menu_art import (BORDER, BOX_BORDER,
                                                  HEAD_HEIGHT, compose_bar,
                                                  compose_box, compose_button,
                                                  compose_frame, compose_head)
+from tools.release import package_runtime_dll as pkg
 
 #: Where the pipeline keeps its exports, and so the source registry.
 EXPORT_ROOT = 'export'
@@ -22,8 +26,10 @@ EXPORT_ROOT = 'export'
 #: A panel big enough that its edges are longer than one corner.
 _W, _H = 240, 120
 
-#: Everything the generator writes into the shipped mod.
+#: Where the generator writes the built movie by default.
 _SHIPPED = 'tes_runtime/morrowind/interface'
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _have_install() -> bool:
@@ -45,19 +51,66 @@ def test_no_morrowind_art_is_committed():
 
     Runs without an install, because it is the one check that must never be
     skipped: a `.dds`, `.tex` or `.fnt` appearing here is art in the repo.
+    The built movie is left out of the walk: it holds the art, and is
+    ignored rather than committed (see the next test).
     """
     for root, _dirs, files in os.walk('tes_runtime/morrowind'):
+        if Path(root).as_posix().startswith(_SHIPPED):
+            continue
         for name in files:
             assert not name.lower().endswith(('.dds', '.tex', '.fnt')), (
                 f'{os.path.join(root, name)} is Morrowind art -- it must be '
                 f'read from the install at build time, never committed')
 
 
-def test_only_the_swf_ships():
-    """The interface folder carries the built movie and nothing else."""
+def test_the_built_menu_is_never_tracked():
+    """🛑 The movie embeds the composed art, so git must not carry it.
+
+    A file-type check cannot see art inside a `.swf`; asking git what it
+    tracks under the build folder can. Skips outside a git checkout.
+    """
+    got = subprocess.run(['git', 'ls-files', '--', _SHIPPED], cwd=ROOT,
+                         capture_output=True, text=True)
+    if got.returncode != 0:
+        pytest.skip('not a git checkout')
+    assert got.stdout.split() == [], (
+        f'{got.stdout.split()} is tracked -- the menu is composed from the '
+        f'player\'s own install when TESRuntime.zip is packaged')
+
+
+def test_the_build_folder_holds_only_the_movie():
+    """The generator writes the movie and nothing else there."""
     if not os.path.isdir(_SHIPPED):
         pytest.skip('menu not built yet')
-    assert sorted(os.listdir(_SHIPPED)) == ['morrowind_dialogue.swf']
+    assert set(os.listdir(_SHIPPED)) <= {'morrowind_dialogue.swf'}
+
+
+# ---------------------------------------------------------------------------
+# Packaging composes the menu from the player's install
+# ---------------------------------------------------------------------------
+
+
+def _packaged(tmp_path) -> list:
+    """Package TESRuntime into `tmp_path` and list the archive's members."""
+    assert pkg.package(tmp_path, export_root=tmp_path / 'export') == 0
+    with zipfile.ZipFile(tmp_path / 'Finished Mods' / 'TESRuntime.zip') as zf:
+        return zf.namelist()
+
+
+def test_packaging_skips_the_menu_without_an_install(tmp_path):
+    """No registered Morrowind install: everything else still packages."""
+    names = _packaged(tmp_path)
+    assert 'SKSE/Plugins/TESRuntime.dll' in names
+    assert pkg.MENU_ARC.as_posix() not in names
+
+
+def test_packaging_adds_the_composed_menu(tmp_path, monkeypatch):
+    """With an install, the movie goes straight into the archive."""
+    monkeypatch.setattr(pkg, 'morrowind_menu', lambda _root: b'FWS-menu')
+    names = _packaged(tmp_path)
+    assert pkg.MENU_ARC.as_posix() in names
+    with zipfile.ZipFile(tmp_path / 'Finished Mods' / 'TESRuntime.zip') as zf:
+        assert zf.read(pkg.MENU_ARC.as_posix()) == b'FWS-menu'
 
 
 @needs_install

@@ -64,6 +64,9 @@ Address Library id against every installed build with
 ### Packaging
 
 `python tools/release/package_runtime_dll.py` (GUI: Build > Package SKSE Mod)
-zips every DLL in `dist/`, `havok_world_size/HavokWorldSize.ini` and
-`morrowind/interface/morrowind_dialogue.swf` into one
-`output/Finished Mods/TESRuntime.zip`, rooted at the Data folder.
+zips every DLL in `dist/` and `havok_world_size/HavokWorldSize.ini` into one
+`output/Finished Mods/TESRuntime.zip`, rooted at the Data folder. It also
+composes MorrowindRuntime's dialogue menu (`Interface/morrowind_dialogue.swf`)
+from the Morrowind install registered on this machine and adds it to the
+archive; the menu holds Bethesda's art, so the repo never carries a built copy,
+and without a registered install it is skipped.
