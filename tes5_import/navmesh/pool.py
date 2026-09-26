@@ -24,6 +24,7 @@ from . import cache_audit as navm_verify, worker as navm_worker
 from .world import base_fid
 from ..overrides.nested import DELETED_FLAG
 from ..record_types.navm_falloutnv import precompute_fallout_navmeshes
+from ..record_types.world_falloutnv import parent_use_flags
 from ..base.text_reader import (get_float, get_formid, get_formid_index_offset,
                            get_injected_formids, get_int, get_str)
 
@@ -35,6 +36,9 @@ _CELL_SIZE = 4096.0
 
 #: RecordFlags bit marking a worldspace's persistent (dummy) cell.
 _PERSISTENT_FLAG = 0x400
+
+#: TES5 WRLD PNAM bit: the child worldspace draws its parent's land.
+_PNAM_USE_LAND = 0x01
 
 #: Jobs pickled and queued at once, as a multiple of workers * chunksize.
 _BUFFER_FACTOR = 4
@@ -359,10 +363,64 @@ def _emit_jobs(jobs, cell_rec, land_rec, refr_by_cell, pgrd_by_cell,
         })
 
 
+def _uses_parent_land(wrld_rec: dict) -> bool:
+    """Does this child draw its parent's land?  No PNAM (TES4) means yes."""
+    flags = parent_use_flags(wrld_rec)
+    return flags is None or bool(flags & _PNAM_USE_LAND)
+
+
+def _land_world_of(worlds: dict) -> dict:
+    """Map WRLD FormID -> the worldspace whose LAND the engine draws in it."""
+    out = {}
+    for fid in worlds:
+        cur, seen = fid, {fid}
+        parent = get_formid(worlds[cur], 'WNAM.Parent')
+        while parent in worlds and parent not in seen \
+                and _uses_parent_land(worlds[cur]):
+            cur = parent
+            seen.add(cur)
+            parent = get_formid(worlds[cur], 'WNAM.Parent')
+        out[fid] = cur
+    return out
+
+
+def _land_by_grid(cells, land_by_cell) -> dict:
+    """Map (wrld, gx, gy) -> the LAND of that worldspace's exterior cell there."""
+    out = {}
+    for cell in cells:
+        wrld = get_formid(cell, 'ParentWRLD')
+        lands = land_by_cell.get(get_formid(cell, 'FormID'))
+        if wrld and lands and not get_int(cell, 'RecordFlags') & _PERSISTENT_FLAG:
+            out[(wrld, get_int(cell, 'XCLC.X'), get_int(cell, 'XCLC.Y'))] = lands[0]
+    return out
+
+
+def navmesh_land_at(by_type: dict, master_export: dict = None):
+    """(wrld, gx, gy) -> the LAND the game walks on at that square, else None.
+
+    A child worldspace that borrows its parent's land resolves to the
+    PARENT's LAND (what the engine draws); its own LAND is only the fallback
+    where the parent has none.  Masters are included.
+    """
+    worlds = {get_formid(w, 'FormID'): w for w in
+              _merge_master_cell_records(by_type, master_export, 'WRLD')}
+    land_world = _land_world_of(worlds)
+    grid = _land_by_grid(
+        _merge_master_cell_records(by_type, master_export, 'CELL'),
+        _by_parent_cell(_merge_master_cell_records(by_type, master_export,
+                                                   'LAND')))
+
+    def land_at(square):
+        wrld, gx, gy = square
+        return (grid.get((land_world.get(wrld, wrld), gx, gy))
+                or grid.get(square))
+    return land_at
+
+
 def _gather_exteriors(jobs, by_type, cells, indexes, pers_doors,
                       overhang=None) -> None:
     """Append exterior jobs, per worldspace, in _build_world_groups order."""
-    refr_by_cell, land_by_cell, pgrd_by_cell = indexes
+    refr_by_cell, land_at, pgrd_by_cell = indexes
     overhang = overhang or {}
     ext_by_wrld = defaultdict(list)
     for cell in cells:
@@ -385,10 +443,9 @@ def _gather_exteriors(jobs, by_type, cells, indexes, pers_doors,
                         blocks[block][sub],
                         key=lambda c: (get_int(c, 'XCLC.Y'),
                                        get_int(c, 'XCLC.X'))):
-                    lands = land_by_cell.get(get_formid(cell_rec, 'FormID'), [])
                     square = (wrld_fid, get_int(cell_rec, 'XCLC.X'),
                               get_int(cell_rec, 'XCLC.Y'))
-                    _emit_jobs(jobs, cell_rec, lands[0] if lands else None,
+                    _emit_jobs(jobs, cell_rec, land_at(square),
                                refr_by_cell, pgrd_by_cell,
                                pers_doors.get(square, []),
                                overhang.get(square, []))
@@ -430,10 +487,9 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
     cells = by_type.get('CELL', [])
     refr_by_cell = _by_parent_cell(
         _merge_master_cell_records(by_type, master_export, 'REFR'))
-    land_by_cell = _by_parent_cell(
-        _merge_master_cell_records(by_type, master_export, 'LAND'))
     pgrd_by_cell = _by_parent_cell(by_type.get('PGRD', []))
-    indexes = (refr_by_cell, land_by_cell, pgrd_by_cell)
+    indexes = (refr_by_cell, navmesh_land_at(by_type, master_export),
+               pgrd_by_cell)
     pers_doors = _persistent_doors_by_grid(cells, refr_by_cell,
                                            door_fids or set())
     overhang = _overhang_index(
