@@ -57,19 +57,7 @@ def emit_body(conv, body, extends: str, depth: int = 0) -> list[str]:
     open_walk = conv.sc.refwalk_var
     conv.sc.refwalk_var = ''
     for st in body:
-        lines = emit_stmt(conv, st, extends, depth)
-        # An OBSE `forEach <it> <- <container> ... loop` body is INERT: Papyrus
-        # has no equivalent of OBSE's dynamic containers, the iterator carries
-        # no value, and the body reads it element-by-element.  The opener
-        # converts to a `;TODO:` and everything up to the `loop` follows it
-        # into a comment rather than running against an unassigned iterator.
-        if conv.sc.in_foreach:
-            lines = [_comment(l) for l in lines]
-        if _opens_foreach(st):
-            conv.sc.in_foreach += 1
-        elif conv.sc.in_foreach and _closes_foreach(st):
-            conv.sc.in_foreach -= 1
-        out += _deferred_destroy(lines, animated)
+        out += _deferred_destroy(emit_stmt(conv, st, extends, depth), animated)
     # An OBSE ref-walk's `While` is opened by a `Label` mid-body and its `Goto`
     # cannot close it in place (the Goto sits inside the loop's own `if` nest,
     # and `EndWhile` there would cross those blocks).  The walk therefore ends
@@ -90,6 +78,8 @@ def emit_stmt(conv, st: N.Stmt, extends: str, depth: int) -> list[str]:
         return ([pad + _text(conv, st, extends)]
                 + emit_body(conv, st.body, extends, depth + 1)
                 + [pad + 'EndWhile'])
+    if isinstance(st, N.ForEach):
+        return _foreach(conv, st, extends, depth)
     conv.sc.block_depth = depth
     text = _text(conv, st, extends)
     if not text:
@@ -168,14 +158,16 @@ def _comment(line: str) -> str:
     return line[:len(line) - len(stripped)] + ';' + stripped
 
 
-def _opens_foreach(st) -> bool:
-    """Does this statement open an OBSE `forEach` block?"""
-    return isinstance(st, N.ExprStmt) and st.expr.called == 'foreach'
+def _foreach(conv, st: N.ForEach, extends: str, depth: int) -> list[str]:
+    """An OBSE `forEach ... loop` block, kept whole but commented out.
 
-
-def _closes_foreach(st) -> bool:
-    """Does this statement close one with `loop`?"""
-    return isinstance(st, N.ExprStmt) and st.expr.called == 'loop'
+    Papyrus has no OBSE container iterator, so the body cannot run; commenting
+    the BLOCK (not a running span) leaves every statement after it live.
+    """
+    pad = INDENT * depth
+    lines = ([pad + _text(conv, st, extends)]
+             + emit_body(conv, st.body, extends, depth + 1) + [pad + 'loop'])
+    return [_comment(line) for line in lines]
 
 
 # ---------------------------------------------------------------------------

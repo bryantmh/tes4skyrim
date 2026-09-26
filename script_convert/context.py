@@ -47,6 +47,8 @@ class ScriptContext:
     uses_timer: bool = False
     uses_say: bool = False
     uses_say_timer: bool = False
+    #: An event without an action ref read the last activator; OnActivate records it.
+    uses_last_activator: bool = False
     #: Authored quest-script delay in seconds (FO3/FNV DATA.Delay); 0 = none.
     quest_delay: float = 0.0
 
@@ -66,13 +68,15 @@ class ScriptContext:
     #: script-managed flag rather than the engine's sleep state.
     in_sleep_menumode: bool = False
 
-    in_foreach: int = 0
     refwalk_var: str = ''
     refwalk_labels: set = field(default_factory=set)
     block_depth: int = 0
 
     udf_returns: bool = False
-    udf_return_value: str = ''
+    #: Set while a user function's body converts: its `Self` is the calling reference.
+    in_udf: bool = False
+    #: Papyrus type of the first `SetFunctionValue`, the UDF's return type.
+    udf_return_type: str = 'Int'
     #: Parameter types of this script's OBSE user function, in order; None
     #: when it declares no TES4Call at all.
     udf_signature: list = None

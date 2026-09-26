@@ -165,8 +165,7 @@ class _Args(dict):
         if kind == 'p':
             return safe_property_name(self._c.arg_src(n, default))
         if kind == 'b':
-            return ('true' if self._c.arg_src(n, default).lower()
-                    in ('1', 'true') else 'false')
+            return self._bool(n, default)
         arg = self._c.arg_expr(n, self._e, default)
         if kind == 'i':
             # Cast only a Float: the branches this replaced left an Int alone.
@@ -177,6 +176,17 @@ class _Args(dict):
         if kind == 'f':
             return self._c._cast(arg, 'Float')
         return arg
+
+    def _bool(self, n: int, default: str) -> str:
+        """Argument n under TES4's truth test: any nonzero value is true.
+
+        A literal folds to `true`/`false` (`SetIgnoreFriendlyHits 3` is on); a
+        variable is cast, which Papyrus also reads as nonzero-is-true.
+        """
+        try:
+            return 'true' if float(self._c.arg_src(n, default) or 0) else 'false'
+        except ValueError:
+            return self._c._cast(self._c.arg_expr(n, self._e, default), 'Bool')
 
 
 def emit_row(conv, row, ref_name, func_name, args_str, extends):

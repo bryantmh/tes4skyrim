@@ -400,9 +400,11 @@ refactoring.
 
 ### Scripts
 
-Before writing any `script_convert/` code, run the decision procedure in
+When restructuring `script_convert/` (new modules, moving logic between layers),
+run the decision procedure in
 [script_convert_architecture.md](docs/reference/script_convert_architecture.md) §3
-and score the change with `python tools/script/arch_fitness.py --fail-on-regression`.
+and score it with `python tools/script/arch_fitness.py --fail-on-regression`. For
+ordinary fixes the edit gate is enough.
 
 ## Assets and references
 

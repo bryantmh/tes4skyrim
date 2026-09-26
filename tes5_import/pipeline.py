@@ -46,7 +46,7 @@ from .record_types.crime import plan_crime
 from .record_types.spell_tomes import create_spell_tomes
 from .record_types.spell_tomes_morrowind import chain_tables
 from script_convert.constants import FORCE_GREET_QUEST
-from script_convert.cross_ref import index_record_details
+from script_convert.cross_ref import hosted_script_type, index_record_details
 from .dialogue.converter import build_npc_to_vtyp_map
 from .dialogue.force_greets import dial_index, write_force_greet_quest
 from .dialogue.morrowind_sidecar import is_tes3_export
@@ -531,7 +531,8 @@ def _index_xref_script(xref, fid_str: str, rec: dict, edid_str: str) -> None:
     schr_type = rec.get('SCHR.Type')
     if schr_type is not None:
         try:
-            xref.script_formid_to_type[fid_str] = int(schr_type)
+            xref.script_formid_to_type[fid_str] = hosted_script_type(
+                int(schr_type), rec.get('SCTX', ''))
         except ValueError:
             pass
 

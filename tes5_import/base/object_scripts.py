@@ -20,16 +20,21 @@ converters then splice the VMAD in right after EDID (Skyrim order: EDID VMAD OBN
 """
 
 import re
+import struct
 
 from script_convert.converter import ScriptConverter, sctx_onactivate_consumes
 from script_convert.constants import (safe_property_name, papyrus_script_name,
                                       resolve_property_formid,
                                       wants_placed_reference,
                                       PLAYER_ALIAS_EXTENDS)
+from script_convert.cross_ref import is_function_script
 from script_convert.pipeline import (append_vmad_object_script,
-                                     build_vmad_object_script)
+                                     build_vmad_object_script,
+                                     build_vmad_quest_fragments)
 from .text_reader import (get_formid_index_offset,
                           remap_formid, unescape_value)
+from .writer import (pack_record, pack_string_subrecord, pack_subrecord,
+                     pack_uint32_subrecord)
 from .constants import ENGINE_GLOBAL_FORMIDS
 from .equivalents import (DEFAULT_RACE, RACE_MAP,
                                TES4_ITEM_FORMID_TO_SKYRIM,
@@ -77,6 +82,9 @@ _OBJECT_VMAD: dict[int, bytes] = {}
 # build_quest_script_plan(); consumed by dialog_converter.convert_QUST, which
 # splices the script into the quest's VMAD alongside the QF fragment script.
 _QUEST_SCRIPT: dict[int, tuple] = {}
+
+#: Host QUST FormID (the function script's own, output space) -> (EditorID, script_name, props).
+_UDF_HOSTS: dict[int, tuple] = {}
 
 # [(script_name, {prop: formid}), ...] for TES4 scripts attached to the PLAYER
 # BASE record (NPC_ 0x00000007).  Filled by build_player_alias_plan(); consumed
@@ -263,15 +271,48 @@ def build_quest_script_plan(by_type: dict, xref, fid_to_edid: dict,
             rec_fid = _remap(int(rec_fid_str, 16), offset)
         except ValueError:
             continue
-        edid, sctx, extends = scpt_by_fid[scri]
-        script_name = papyrus_script_name(edid or f'Script_{scri}')
-        try:
-            props = _resolve_props(sctx, edid, extends, xref, fid_to_edid, offset)
-        except Exception:
-            props = {}
-        _QUEST_SCRIPT[rec_fid] = (script_name, props)
+        _QUEST_SCRIPT[rec_fid] = _script_plan(scri, scpt_by_fid, xref,
+                                              fid_to_edid, offset)
+
+    _UDF_HOSTS.clear()
+    for rec in by_type.get('SCPT', []):
+        fid = rec.get('FormID', '')
+        if fid in scpt_by_fid and is_function_script(rec.get('SCTX', '')):
+            _UDF_HOSTS[_remap(int(fid, 16), offset)] = (
+                scpt_by_fid[fid][0],
+                *_script_plan(fid, scpt_by_fid, xref, fid_to_edid, offset))
 
     return len(_QUEST_SCRIPT)
+
+
+def _script_plan(scpt_fid: str, scpt_by_fid: dict, xref, fid_to_edid: dict,
+                 offset: int) -> tuple:
+    """(script_name, bound props) for one indexed SCPT."""
+    edid, sctx, extends = scpt_by_fid[scpt_fid]
+    try:
+        props = _resolve_props(sctx, edid, extends, xref, fid_to_edid, offset)
+    except Exception:
+        props = {}
+    return papyrus_script_name(edid or f'Script_{scpt_fid}'), props
+
+
+def write_udf_host_quests(writer) -> int:
+    """One never-started QUST per OBSE function script, at that script's own FormID.
+
+    Every caller's property already names the SCPT's FormID, so the host
+    quest makes those bindings resolve. Returns how many were written.
+
+    See: docs/commentary/script_convert.md#udf-host-quest
+    """
+    for fid, (edid, script_name, props) in sorted(_UDF_HOSTS.items()):
+        q = pack_string_subrecord('EDID', edid)
+        q += pack_subrecord('VMAD', build_vmad_quest_fragments(
+            edid, [], attached_script=(script_name, props)))
+        q += pack_subrecord('DNAM', struct.pack('<HBBII', 0, 0, 0, 0, 0))
+        q += pack_subrecord('NEXT', b'')
+        q += pack_uint32_subrecord('ANAM', 0)
+        writer.add_record('QUST', pack_record('QUST', fid, 0, q))
+    return len(_UDF_HOSTS)
 
 
 # TES4 SCPT FormID (raw hex string) -> packed VMAD for a Script-archetype MGEF.

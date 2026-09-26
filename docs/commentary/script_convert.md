@@ -281,10 +281,10 @@ wrong in the dangerous direction:
 | `if <unknown> == 1` | `If (0 == 1)` | always false — body dead, **safe** |
 | `if <unknown> == 0` | `If 0 == 0` | always TRUE — **guard gone** |
 
-Nehrim's `Nexusplanet01SCN` is the clear case: `if GetIgnoreFriendlyHits == 0`
-means "friendly hits are not ignored, so retaliate". `GetIgnoreFriendlyHits`
-has only a Papyrus setter, so the read is inert and the guard became
-unconditional — the NPC force-combats the player every time.
+Nehrim's `Nexusplanet01SCN` was the clear case: `if GetIgnoreFriendlyHits == 0`
+means "friendly hits are not ignored, so retaliate". The read was then
+(wrongly) inert, so the guard became unconditional — the NPC force-combats the
+player every time. It now maps to `IsIgnoringFriendlyHits()`.
 
 The comparison therefore folds to the literal `false` when its operand went
 inert, which keeps the `If` intact (no paren swallowing), keeps the `;NE:` note
@@ -1833,6 +1833,18 @@ Oblivion ignored it; Papyrus fails the whole file, so it is commented out.
 - `Activate` conversions: bare `Activate` → `(akActionRef/self, true)`. Passing
   `Game.GetPlayer()` produced door/lockpick/teleport storms.
 
+### The last activator outside OnActivate
+<a id="last-activator"></a>
+
+A bare `Activate` (or `GetActionRef`) in a GameMode block means the object's
+LAST activator: Nehrim's mining rocks and dig sites (`WerkzeugSteinSchuerfenScript`,
+`WerkzeugSchatzErdhaufenScript`) play the swing in OnActivate, then a second
+later `Activate` opens the container for the player. OnUpdate has no action-ref
+parameter, so this emitted `Activate(None, true)` — a container opened by
+nobody. A script with an OnActivate block now records `TES4_LastActivator =
+akActionRef` first thing in OnActivate, and every event without an action-ref
+parameter reads that variable. Scripts without OnActivate keep `None`/`Self`.
+
 ## OBSE constructs (Nehrim depends on these heavily)
 <a id="obse-constructs"></a>
 
@@ -1848,8 +1860,98 @@ Oblivion ignored it; Papyrus fails the whole file, so it is commented out.
     first, then read `_property_refs`), else `Form`. Typing it
     `ObjectReference` — the literal translation — rejected all 170 call sites
     that pass a Spell.
-  - `SetFunctionValue X` + `return` → `Return X`, and the function needs a return
-    type plus a trailing `Return 0` for fall-through paths.
+  - `SetFunctionValue X` sets the result and does NOT end the function; see
+    [below](#set-function-value).
+
+### SetFunctionValue keeps running
+<a id="set-function-value"></a>
+
+OBSE's `SetFunctionValue X` stores the result; the function continues to its
+`return` or its end. The converter assumed a `return` always followed and
+dropped the value otherwise — `HMSfromFloat24h` ends `SetFunctionValue sTime`,
+`sv_destruct sTime`, `end`, so Nehrim's wait menu got no time string. It also
+typed every result `Int`. Now `SetFunctionValue X` → `TES4_Result = X`, every
+`return` → `Return TES4_Result`, a trailing `Return TES4_Result` closes the
+function, and the first value's type is the return type (`String` here).
+
+### A function script is hosted on its own quest
+<a id="udf-host-quest"></a>
+
+Converting the function was only half of it: the callee property must be FILLED
+with a record carrying the script. The fill resolves the script's EditorID to
+the SCPT's own FormID, and no Skyrim record lived there, so every property read
+`None` — Nehrim's 474 calls (244 of them `GlobalScriptExpGained`, the XP
+awards) all logged `Cannot call TES4Call() on a None object`, while every
+script still compiled. The July OBSE audit had marked `Call` "handled" from
+compilation alone.
+
+- A script with a `begin Function` block is HOSTED as a quest script
+  (`cross_ref.hosted_script_type`), so it `extends Quest`. The detector must
+  match both SCTX spellings: the CLI scan sees export-escaped `\n`, the
+  importer's parsed records carry real CRLF — matching only the first made the
+  scripts `extends Quest` while no host quest was written.
+- Two of the 25 Morroblivion functions DO use `Self` (`fbmwMoveToFunct` calls a
+  bare `MoveTo`, `JDLevitate` plays a sound on it), which the next section covers.
+- The importer writes one never-started QUST per function script at the SCPT's
+  own FormID (`object_scripts.write_udf_host_quests`), so the fills callers
+  already carry resolve. No FormID moves: source SCPT ids are reserved against
+  derived ids and nothing else occupied them.
+- A never-started quest still works: the CK wiki's OnInit page says quest
+  scripts initialise at game startup, before and independent of the quest
+  starting.
+- Script variables are properties, and that is RIGHT: xOBSE
+  (`FunctionScripts.cpp`, `FunctionContext`) reuses the function's one
+  persistent event list unless the call is recursive, so values carry over
+  between calls.
+- `vmad_property_typecheck.py --cross-master` checks script-typed properties for
+  existence; it reports this defect as `<no such record>`.
+
+### A user function's `Self` is its calling reference
+<a id="udf-calling-reference"></a>
+
+OBSE runs `Player.Call fbmwMoveToFunct marker` with Player as the function's
+implicit reference, and a bare `Call` with the caller's own. Hosted on a quest,
+the function has no reference of its own, so `TES4Call` takes the calling
+reference as its FIRST parameter (`akCallingRef`) and the body's `Self` is
+rewritten to it. Every call site passes one — the receiver, the caller's own
+reference, or `None` from a quest script. It is uniform because a caller is
+converted without seeing the callee's body. Two Morroblivion functions used
+`Self` and failed to compile until this.
+
+### A nested command no longer erases its caller's arguments
+<a id="nested-call-arguments"></a>
+
+The current call's argument nodes live in one converter field,
+`_arg_nodes`. Converting an argument that itself holds a command replaced that
+field with the INNER call's arguments, so every later argument of the outer
+call read as absent: `Call GlobalScriptExpGained 30 * (getPCMiscStat 8 - l), 1,
+1, -1` emitted `TES4Call(30 * (...), , , )`. `dispatch.emit_command` now
+restores the caller's arguments when a command finishes.
+
+### `forEach` is a block
+<a id="foreach-is-a-block"></a>
+
+`forEach <it> <- <container> ... loop` parses as a `ForEach` node owning its body,
+and the emitter comments out exactly that block. Papyrus has no OBSE container
+iterator, so the body cannot run. Before, the parser read the `loop` as an
+unmatched closer, the emitter's "inside a forEach" counter never came down, and
+EVERY statement after the first forEach in the event was commented out —
+Nehrim's `AAGeneralUpdateQuest` lost its lock-picking and discovery XP awards,
+its music check and more.
+
+### GetPCMiscStat names the stat
+<a id="pc-misc-stat-names"></a>
+
+TES4 numbers its misc stats (xEdit `wbMiscStatEnum`, 34 entries); Skyrim's
+`Game.QueryStat` / `IncrementStat` take the stat's NAME (CK wiki
+`ListOfTrackedStats`). The old row passed the number as the name —
+`QueryStat("8")` — which the game rejects (`Misc stat "3" is not a stat` in the
+Papyrus log) and reads as 0. `TES4_MISC_STAT_NAMES` maps each index to the
+Skyrim stat with the same meaning (Places Discovered → Locations Discovered,
+Potions Made → Potions Mixed, People Fed On → Necks Bitten, Days In Prison →
+Days Jailed, Hours Waited → Hours Waiting). Picks Broken, Oblivion Gates Shut,
+Artifacts Found, Last Day As Vampire and Jokes Told have no Skyrim stat and
+read as 0 with a note.
 - `eval <expr>` is a pure pass-through wrapper (Nehrim uses it only around
   `Call`) — drop it. Beware over-broad stripping: an earlier pass ate a variable
   named `Eval`.
@@ -1868,8 +1970,10 @@ Oblivion ignored it; Papyrus fails the whole file, so it is commented out.
   the rest of `sv_*`, `forEach`), path-based music (`StreamMusic` and Nehrim's bundled `emc*`
   plugin; Skyrim music is MusicType-based), `GetPlayerHasLastRiddenHorse`,
   `HasFlames`/`AddFlames`/`RemoveFlames`, `PositionCell` (Papyrus `MoveTo` takes
-  a reference, not cell coordinates), `GetIgnoreFriendlyHits` (Skyrim exposes
-  only the setter).
+  a reference, not cell coordinates).
+- `Set/GetIgnoreFriendlyHits` map to `IgnoreFriendlyHits(bool)` /
+  `IsIgnoringFriendlyHits()`. Dropping the setter made scripted allies (Nehrim's
+  Celebro in the intro) turn on the player at the first stray hit.
 
 ## Scripts on placed references
 <a id="scripts-placed-references"></a>
@@ -3969,7 +4073,6 @@ Checked against `Actor.psc`, `ObjectReference.psc`, `Form.psc`, `Game.psc` and
 
 | TES4 read | Why there is no target |
 |---|---|
-| `GetIgnoreFriendlyHits` | `IgnoreFriendlyHits` is a SETTER only |
 | `GetObjectType`, `IsDoor`/`IsActivator`/`IsContainer` | Skyrim's form-type numbering differs entirely; `GetType` is SKSE |
 | `GetDisplayName` / `SetName` | no name accessor on any vanilla script |
 | `GetGodMode` | third-party SKSE plugins only |

@@ -7,7 +7,7 @@ from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as _tes4_nodes
 from script_convert.blocks import BLOCK_FILTER_PARAM
 from script_convert.constants import (
-    FALL_DAMAGE_SPELL, KNOWN_GLOBALS, LOOSE_OPS, PAPYRUS_BOOL_FUNCTIONS, PLACED_REF_SIGS,
+    FALL_DAMAGE_SPELL, KNOWN_GLOBALS, LAST_ACTIVATOR_VAR, LOOSE_OPS, UDF_RESULT_VAR, PAPYRUS_BOOL_FUNCTIONS, PLACED_REF_SIGS,
     PLAYER_ALIAS_EXTENDS, RETURN_TYPES, SELF_NAMES, TYPE_MAP, _REF_TYPES,
     _canonical_global, digit_stripped_formid, _record_type_to_base_papyrus,
     generated_script_stem, is_generated_script_type, safe_property_name, papyrus_script_name,
@@ -941,23 +941,23 @@ class ScriptConverter:
         return _dispatch.as_statement(self, _expr.emit(self, expr, extends))
 
     def emit_return(self, stmt, extends: str) -> str:
-        """TES4 `return` ends the block; a UDF carries its value out here."""
+        """TES4 `return` ends the block; a UDF carries its result out here."""
         if self.sc.udf_returns:
-            return f'Return {self.sc.udf_return_value or "0"}'
+            return f'Return {UDF_RESULT_VAR}'
         return f'{self.sc.poll_return_prefix}Return' if self.sc.poll_return_prefix \
             else 'Return'
 
     def emit_set_function_value(self, stmt, extends: str) -> str:
-        """OBSE `SetFunctionValue <expr>` -- record a user function's result.
+        """OBSE `SetFunctionValue <expr>` -- set a user function's result and keep running.
 
-        Emits nothing itself: TES4 always pairs it with a `return`, which is
-        what carries the value out.  Emitting a `Return` here as well gave the
-        pair two, and the second was unreachable.
+        The first value's type becomes the function's return type.
+        See: docs/commentary/script_convert.md#set-function-value
         """
+        value = _expr.emit(self, stmt.value, extends) if stmt.value else '0'
+        if not self.sc.udf_returns:
+            self.sc.udf_return_type = self.type_of(value) or 'Int'
         self.sc.udf_returns = True
-        self.sc.udf_return_value = (_expr.emit(self, stmt.value, extends)
-                                    if stmt.value else '0')
-        return ''
+        return f'{UDF_RESULT_VAR} = {value}'
 
     def emit_jump(self, stmt, extends: str) -> str:
         """OBSE `Label <n>` / `Goto <n>` -- the head and tail of a ref-walk.
@@ -1851,10 +1851,12 @@ class ScriptConverter:
         return 'TES4DestroyedRefs'
 
     def _get_action_ref_param(self) -> str:
-        """Return the correct event parameter for GetActionRef/IsActionRef.
-        
-        TES4 GetActionRef is available in every block. Papyrus scopes event params.
-        Map to the appropriate parameter based on the current event being converted.
+        """The Papyrus name for TES4's action ref (GetActionRef, bare Activate) in the current event.
+
+        An event without an action-ref parameter reads the object's last
+        activator when the script has an OnActivate block, else None/Self.
+
+        See: docs/commentary/script_convert.md#last-activator
         """
         ev = self._current_event.lower()
         if 'onactivate' in ev or 'ontrigger' in ev:
@@ -1869,13 +1871,12 @@ class ScriptConverter:
             return 'akNewContainer'
         if 'oncombatstate' in ev:
             return 'akTarget'
-        # OnUpdate/OnInit/other events have no action ref - use None as fallback
+        if any(b.btype.lower() == 'onactivate'
+               for b in (self._tree.blocks if self._tree else ())):
+            self.sc.uses_last_activator = True
+            return LAST_ACTIVATOR_VAR
         if 'onupdate' in ev or 'oninit' in ev:
             return 'None'
-        # Every other event -- OnUpdate, OnInit, OnLoad, OnDeath's siblings --
-        # declares NO action ref, and naming one there is an undefined
-        # identifier that fails the whole script.  TES4 answered GetActionRef
-        # outside an activation block with the script's own subject.
         return 'Self'
 
     # Papyrus locals/parameters that are already actors — calling an actor-only

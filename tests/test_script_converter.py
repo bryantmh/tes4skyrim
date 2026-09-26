@@ -1842,6 +1842,123 @@ class TestSetAlert:
         assert '(Self as Actor).SetAlert(true)' in result
 
 
+class TestIgnoreFriendlyHits:
+    """Set/GetIgnoreFriendlyHits map to Skyrim's native pair.
+
+    Dropping the setter made Nehrim's Celebro turn on the player at the first
+    stray hit in the intro's troll fights (`CelebroRef.SetIgnoreFriendlyHits 3`).
+    """
+
+    def test_nonzero_flag_is_true(self, converter):
+        result = conv_line(converter, 'CelebroRef.SetIgnoreFriendlyHits 3', 'Quest')
+        assert 'CelebroRef.IgnoreFriendlyHits(true)' in result
+
+    def test_zero_flag_is_false(self, converter):
+        result = conv_line(converter, 'CelebroRef.sifh 0', 'Quest')
+        assert 'CelebroRef.IgnoreFriendlyHits(false)' in result
+
+    def test_getter_reads_the_flag(self, converter):
+        """The guard reads the real flag instead of folding to `false`."""
+        result = conv_line(converter, 'if Target.GetIgnoreFriendlyHits == 0', 'ObjectReference')
+        assert 'IsIgnoringFriendlyHits()' in result
+        assert ';NE:' not in result
+
+
+class TestLastActivator:
+    """A bare Activate in a timer block reuses the object's last activator.
+
+    Nehrim's mining rock opens itself for the player a second after the swing;
+    `Activate(None, true)` opened it for nobody.
+    """
+
+    SOURCE = ('scn Rock\nshort DoOnce\n'
+              'Begin OnActivate Player\n set DoOnce to 1\nEnd\n'
+              'Begin GameMode\n if DoOnce == 1\n  set DoOnce to 0\n  Activate\n endif\nEnd\n')
+
+    def test_timer_activate_uses_recorded_activator(self, converter):
+        """The poll activates with the variable OnActivate filled."""
+        out = converter.convert_standalone('Rock', self.SOURCE, 'ObjectReference', 'Rock')
+        assert 'Activate(TES4_LastActivator, true)' in out
+        assert 'ObjectReference TES4_LastActivator' in out
+        assert 'TES4_LastActivator = akActionRef' in out
+        assert 'Activate(None' not in out
+
+    def test_script_without_onactivate_is_untouched(self, converter):
+        """No OnActivate block means no recorded activator."""
+        source = 'scn Plain\nBegin GameMode\n Activate\nEnd\n'
+        out = converter.convert_standalone('Plain', source, 'ObjectReference', 'Plain')
+        assert 'TES4_LastActivator' not in out
+
+
+class TestObseBlockAndCallFixes:
+    """Nehrim's AAGeneralUpdateQuest: a forEach, a nested Call argument, misc stats."""
+
+    @staticmethod
+    def _poll(converter, body: str) -> str:
+        """The OnUpdate body converted from a GameMode block holding `body`."""
+        source = f'scn T\nshort n\nshort x\narray_var it\nref r\nbegin gameMode\n{body}\nend\n'
+        out = converter.convert_standalone('T', source, 'Quest', 'T')
+        return out.split('Event OnUpdate()', 1)[1].split('EndEvent', 1)[0]
+
+    def test_foreach_comments_only_its_own_block(self, converter):
+        """Statements after `loop` stay live."""
+        body = self._poll(converter, 'forEach it <- r.getItems\n set n to 1\nloop\nset x to 2')
+        assert ';n = 1' in body
+        assert '\n  x = 2' in body
+
+    def test_nested_call_keeps_outer_arguments(self, converter):
+        """A command inside one argument does not erase the ones after it."""
+        body = self._poll(converter, 'Call G 30 * ( getPCMiscStat 8 - x ), 1, 1, -1')
+        assert 'Locks Picked") - x), 1, 1, -1)' in body
+
+    def test_misc_stat_by_name(self, converter):
+        """The TES4 index becomes Skyrim's stat name; an untracked one reads 0."""
+        assert 'Game.QueryStat("Locations Discovered")' in self._poll(converter, 'set n to getPCMiscStat 7')
+        assert 'Game.IncrementStat("Murders", 2)' in self._poll(converter, 'ModPCMiscStat 32 2')
+        assert 'QueryStat' not in self._poll(converter, 'set n to getPCMiscStat 13')
+
+
+class TestSetFunctionValue:
+    """SetFunctionValue sets the result and the function keeps running (HMSfromFloat24h)."""
+
+    def test_result_survives_to_the_end(self, converter):
+        """No `return` after it: the value still comes back, typed as set."""
+        source = ('scn HMS\nstring_var s\nbegin Function {v}\n let s := "x"\n'
+                  ' SetFunctionValue s\n sv_destruct s\nend\n')
+        out = converter.convert_standalone('HMS', source, 'Quest', 'HMS')
+        assert 'String Function TES4Call(' in out
+        assert 'TES4_Result = s' in out
+        assert out.count('Return TES4_Result') == 1
+
+
+class TestUdfCallingReference:
+    """`Player.Call F x` runs F on Player; the function's `Self` is that reference."""
+
+    def test_body_self_is_the_calling_reference(self, converter):
+        """`MoveTo` in the body acts on the caller's reference."""
+        source = 'scn F\nref t\nbegin Function {t}\n MoveTo t\nend\n'
+        out = converter.convert_standalone('F', source, 'Quest', 'F')
+        assert 'Function TES4Call(ObjectReference akCallingRef, ' in out
+        assert 'akCallingRef.MoveTo(' in out
+
+    def test_call_passes_the_receiver(self, converter):
+        """An explicit receiver is passed first; a quest script passes None."""
+        assert 'TES4Call(Game.GetPlayer(), ' in conv_line(converter, 'Player.Call F Marker', 'ObjectReference')
+        assert 'TES4Call(None, ' in conv_line(converter, 'Call F Marker', 'Quest')
+
+
+class TestFunctionScriptHosting:
+    """An OBSE function script is hosted on its own quest, so it extends Quest."""
+
+    def test_function_script_is_quest_hosted(self):
+        """The export-escaped `begin Function` header marks a quest-hosted script."""
+        from script_convert.cross_ref import hosted_script_type
+        sctx = r'scn F\r\nshort x\r\n\r\nBegin Function{ a, b }\r\n\tset x to a\r\nEnd'
+        assert hosted_script_type(0, sctx) == 1
+        assert hosted_script_type(0, r'scn F\nBegin GameMode\nEnd') == 0
+        assert hosted_script_type(0, 'scn F\r\n\r\nBegin Function{ a }\r\nEnd') == 1
+
+
 class TestSingletonFixes:
     def test_getiscreature_polyfill(self, converter):
         result = conv_line(converter, 'if GetIsCreature == 0', 'ActiveMagicEffect')
@@ -2824,7 +2941,7 @@ End
         """`Return <value>` belongs to an OBSE user function, not a GameMode
         early-out, and must not have a poll re-arm spliced in front of it."""
         converter.sc.udf_returns = True
-        assert conv_line(converter, 'return', 'Quest') == 'Return 0'
+        assert conv_line(converter, 'return', 'Quest') == 'Return TES4_Result'
 
 
 class TestNoPollFreeze:

@@ -10,10 +10,12 @@ A phase reads the `ScriptContext` and returns lines; it never reaches into a
 later phase's state.
 """
 
+import re
+
 from script_convert.blocks import (BLOCK_MAP, COMBAT_STATE_GUARDS,
                                    block_filter_guard)
 from script_convert.constants import (
-    MENU_ID_NAMES,
+    LAST_ACTIVATOR_VAR, MENU_ID_NAMES, UDF_CALLER_PARAM, UDF_RESULT_VAR,
     POLL_BLOCKS, REF_SPECIFICITY, TYPE_MAP, is_generated_script_type,
     safe_property_name, papyrus_script_name
 )
@@ -425,6 +427,7 @@ def udf(conv, tree, extends: str) -> list:
         return []
     params = _udf_params(block.filter)
     conv.sc.udf_params = {p.lower() for p in params}
+    conv.sc.in_udf = True
     _script.emit_body(conv, block.body, extends, 1)
     # Record each parameter's final type BEFORE rendering the body's casts:
     # the widening to `Form` happens here, and a `type_of` that still answered
@@ -433,13 +436,32 @@ def udf(conv, tree, extends: str) -> list:
     for name, ptype in zip(params, types):
         for spelling in (name.lower(), safe_property_name(name).lower()):
             conv.sc.var_types[spelling] = ptype
-    lines = _script.emit_body(conv, block.body, extends, 1)
-    sig = ', '.join('%s %s' % (ptype, safe_property_name(name))
-                    for name, ptype in zip(params, types))
-    conv.sc.udf_signature = types
-    rtype = 'Int ' if conv.sc.udf_returns else ''
-    return ['%sFunction TES4Call(%s)' % (rtype, sig)] + lines + ['EndFunction',
-                                                                 '']
+    lines = [_SELF_RE.sub(UDF_CALLER_PARAM, line)
+             for line in _script.emit_body(conv, block.body, extends, 1)]
+    conv.sc.in_udf = False
+    sig = ', '.join([f'ObjectReference {UDF_CALLER_PARAM}']
+                    + ['%s %s' % (ptype, safe_property_name(name))
+                       for name, ptype in zip(params, types)])
+    conv.sc.udf_signature = ['ObjectReference'] + types
+    if not conv.sc.udf_returns:
+        return ['Function TES4Call(%s)' % sig] + lines + ['EndFunction', '']
+    return _returning_udf(conv.sc.udf_return_type, sig, lines)
+
+
+#: `Self` as a whole word, which in a user function's body is its calling reference.
+_SELF_RE = re.compile(r'\bSelf\b')
+
+
+def _returning_udf(rtype: str, sig: str, lines: list) -> list:
+    """`TES4Call` returning the `SetFunctionValue` result, at its end and every `return`.
+
+    See: docs/commentary/script_convert.md#set-function-value
+    """
+    init = {'Int': '0', 'Float': '0.0', 'String': '""', 'Bool': 'False'}.get(rtype, 'None')
+    tail = [] if lines and lines[-1].strip().startswith('Return') \
+        else [f'  Return {UDF_RESULT_VAR}']
+    return ([f'{rtype} Function TES4Call({sig})', f'  {rtype} {UDF_RESULT_VAR} = {init}']
+            + lines + tail + ['EndFunction', ''])
 
 
 def _param_type(conv, name: str) -> str:
@@ -515,7 +537,7 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
             order.append(header)
         merged[header] += body
 
-    out = []
+    out = _record_last_activator(conv, merged, order)
     for header in order:
         opener, closer = header
         out.append(opener)
@@ -539,6 +561,22 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
                     'EndEvent',
                     '']
     return out
+
+
+def _record_last_activator(conv, merged: dict, order: list) -> list:
+    """Declare the last-activator variable and record it first thing in OnActivate.
+
+    Only when another event read it (`sc.uses_last_activator`).
+    See: docs/commentary/script_convert.md#last-activator
+    """
+    if not conv.sc.uses_last_activator:
+        return []
+    header = BLOCK_MAP['onactivate']
+    if header not in merged:
+        merged[header] = []
+        order.append(header)
+    merged[header][:0] = [f'  {LAST_ACTIVATOR_VAR} = akActionRef']
+    return [f'ObjectReference {LAST_ACTIVATOR_VAR}', '']
 
 
 def helpers(conv) -> list:

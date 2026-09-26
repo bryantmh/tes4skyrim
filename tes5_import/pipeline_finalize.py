@@ -36,6 +36,7 @@ import zlib
 from collections import defaultdict
 
 from .base.tes5_reader import subrecords
+from .base.object_scripts import write_udf_host_quests
 from .overrides.manifest import write_manifest
 from .overrides.nested import (build_nested_overrides)
 from .dialogue.arrest import morrowind_arrest_topic
@@ -163,6 +164,9 @@ def _patch_late_bindings(st, export_dir: str) -> None:
     from .dialogue.converter import make_player_script_quest
     make_player_script_quest(
         st.writer, master_index=(st.ctx.master_index if st.ctx else None))
+    n_udf = write_udf_host_quests(st.writer)
+    if n_udf:
+        print(f"  OBSE function scripts hosted on quests: {n_udf}")
     from .packages.converter import patch_forcegreet_topics
     n_fg = patch_forcegreet_topics(st.writer)
     if n_fg:

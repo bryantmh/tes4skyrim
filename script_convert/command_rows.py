@@ -335,8 +335,7 @@ COMMAND_ROWS = {
     'getfullgoldvalue': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
     #: Bare literal, operand position. See: docs/commentary/script_convert.md#reads-skyrim-cannot-answer
     'getgamerestarted': Cmd(note='{f} has no Papyrus equivalent (read as 0)'),
-    #: IgnoreFriendlyHits is a SETTER only; Papyrus cannot read it back.
-    'getignorefriendlyhits': Cmd(note='GetIgnoreFriendlyHits — Skyrim exposes only the setter', flags='bare_bool zero_arg'),
+    'getignorefriendlyhits': Cmd('{ref}.IsIgnoringFriendlyHits()', OBJREF, flags='bare_bool cmp_bool zero_arg'),
     'getisalerted': Cmd(note='{f}', flags='zero_arg'),
     #: The CK wiki names IsAlarmed as GetAlarmed's own Papyrus version.
     'getalarmed': Cmd('{ref}.IsAlarmed()', ACTOR,
@@ -423,7 +422,7 @@ COMMAND_ROWS = {
     'setdoordisabletakeoff': Cmd(note='{f}'),
     #: SetForceSneaking
     'setforcesneak': Cmd(note='SetForceSneak', flags='actor_only'),
-    'setignorefriendlyhits': Cmd(note='{f}'),
+    'setignorefriendlyhits': Cmd('{ref}.IgnoreFriendlyHits({b0})', OBJREF, defaults={0: '1'}),
     #: SetInCharGen: no-op
     'setinchargen': Cmd(note='SetInCharGen'),
     'setinvestmentgold': Cmd(note='{f}'),
@@ -473,7 +472,7 @@ COMMAND_ROWS = {
     #: getfirstref/getnextref are NOT here. See: docs/commentary/script_convert.md#equivalent-in-a-different-subsystem
     'getformfrommod': Cmd(note='{f} - no Papyrus equivalent ({f} {a})'),
     'getaltcontrol2': Cmd(note='{f} - no Papyrus equivalent ({f} {a})'),
-    'sifh': Cmd(note='{f} - no Papyrus equivalent ({f} {a})'),
+    'sifh': Cmd('{ref}.IgnoreFriendlyHits({b0})', OBJREF, defaults={0: '1'}),
     'equipme': Cmd(note='{f} - no Papyrus equivalent ({f} {a})'),
     'modavmod': Cmd(note='{f} - no Papyrus equivalent ({f} {a})'),
     'getvelocity': Cmd(note='{f} - no Papyrus equivalent ({f} {a})'),
@@ -781,7 +780,6 @@ COMMAND_ROWS = {
 
     #: --- Player Skill/Misc ---
     'modpcskill': Cmd('Game.AdvanceSkill', MAP, bare=True, flags='av'),
-    'modpcmiscstat': Cmd('Game.IncrementStat', MAP, bare=True),
 
     #: --- Trap/Custom functions that are quest-specific ---
 
@@ -869,10 +867,6 @@ COMMAND_ROWS = {
 
     #: SetScale / SetSize.
     'setsize': Cmd('{ref}.SetScale({a0})', defaults={0: '1.0'}),
-
-    #: GetPCMiscStat reads one of the game's own tracked statistics.
-    'getpcmiscstat': Cmd('Game.QueryStat("{s0}")',
-                         defaults={0: 'Items Stolen'}),
 
     #: Not promoted. See: docs/commentary/script_convert.md#commands-that-must-not-promote
     'getinsamecell': Cmd('({ref}.GetParentCell() == {a0}.GetParentCell())',

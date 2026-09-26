@@ -20,7 +20,7 @@ from script_convert import resolve_name as _resolve_name
 from script_convert.constants import (
     ACTOR_VALUE_MAP, ANIM_GROUP_EVENTS, ATTRIBUTE_STUB_VALUE, CASTABLE,
     FORCE_GREET_QUEST, PLACED_REF_SIGS, TES4_ASSAULT_BOUNTY, TES4_ATTRIBUTES,
-    TES4_MURDER_BOUNTY,
+    TES4_MISC_STAT_NAMES, TES4_MURDER_BOUNTY,
     TES4_STEAL_BOUNTY, is_generated_script_type, mgef_family_keyword_name,
     safe_property_name, papyrus_script_name
 )
@@ -232,19 +232,30 @@ def get_first_ref(ctx, call) -> str:
                     f'actors only', value='None')
 
 
+@command('getpcmiscstat', 'modpcmiscstat')
+def pc_misc_stat(ctx, call) -> str:
+    """Get/ModPCMiscStat <index> [amount] -- Skyrim names the stat instead of numbering it.
+
+    See: docs/commentary/script_convert.md#pc-misc-stat-names
+    """
+    src = call.source(0).strip()
+    idx = int(src) if src.isdigit() else -1
+    name = TES4_MISC_STAT_NAMES[idx] if 0 <= idx < len(TES4_MISC_STAT_NAMES) else ''
+    if not name:
+        return ctx.note(f'{call.raw_name} {src} - Skyrim tracks no such stat')
+    if call.name == 'modpcmiscstat':
+        return f'Game.IncrementStat("{name}", {call.arg(1, "1")})'
+    return f'Game.QueryStat("{name}")'
+
+
 @command('call')
 def udf_call(ctx, call) -> str:
-    """OBSE `Call <ScriptName> arg...` -- invoke a user-defined function.
+    """OBSE `[ref.]Call <ScriptName> arg...` -- `<prop>.TES4Call(<calling ref>, args)`.
 
-    The callee is a script, so it is reached through a property typed as that
-    script.  The property is keyed on the CANONICAL EditorID, not the spelling
-    this call happened to use: TES4 name lookup is case-insensitive, so
-    `Call fbmwbmWerewolfManageControlPC` and the record's own
-    `fbmwBMWerewolfManageControlPC` are the same script -- but keying on the
-    local spelling created a SECOND property differing only in case, and since
-    Papyrus is case-insensitive the two declarations collided, the generic
-    ObjectReference typing won, and `.TES4Call()` became "undefined function"
-    on a property that has it.
+    The property is typed as the callee script and keyed on its CANONICAL
+    EditorID, so two spellings of one script never declare two properties.
+    The calling reference is the function's `Self`; a quest script has none.
+    See: docs/commentary/script_convert.md#udf-calling-reference
     """
     target = call.source(0).strip().rstrip(',')
     if not target:
@@ -253,7 +264,10 @@ def udf_call(ctx, call) -> str:
     canon = ctx.xref.formid_to_edid.get(fid, target) if fid else target
     prop = safe_property_name(canon)
     ctx.sc.property_refs[prop] = papyrus_script_name(canon)
-    args = [call.arg(i) for i in range(1, len(call))]
+    caller = ctx._resolve_objref_ref(call.ref, call.extends)
+    if caller == 'Self' and call.extends == 'Quest' and not ctx.sc.in_udf:
+        caller = 'None'
+    args = [caller] + [call.arg(i) for i in range(1, len(call))]
     ctx.sc.udf_calls.append((prop, tuple(args)))
     return f'{prop}.TES4Call({", ".join(args)})'
 

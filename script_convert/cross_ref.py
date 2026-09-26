@@ -97,9 +97,6 @@ def _new_scan_out() -> dict:
     }
 
 
-#: Signatures whose whole field set feeds index_record_details.
-_DETAIL_SIGS = frozenset({'MGEF', 'SPEL', 'GLOB', 'BOOK'})
-
 _EFFECT_FIELD_RE = re.compile(r'Effect\[(\d+)\]\.(EFID|ActorValue)$')
 
 
@@ -160,89 +157,103 @@ def index_record_details(tables: dict, sig: str, formid: str, edid: str,
         tables['enchanted_books'].add(formid)
 
 
+#: An OBSE `begin Function` header at a line start, in raw or export-escaped (`\n`) SCTX text.
+_UDF_BLOCK_RE = re.compile(r'(?:^|\\n)(?:\s|\\t)*begin\s+function\b', re.I | re.M)
+
+#: SCHR.Type of a quest script.
+QUEST_SCRIPT_TYPE = 1
+
+
+def is_function_script(sctx: str) -> bool:
+    """True for an OBSE user-function script (raw or export-escaped SCTX)."""
+    return bool(_UDF_BLOCK_RE.search(sctx or ''))
+
+
+def hosted_script_type(schr_type: int, sctx: str) -> int:
+    """SCHR type a script is HOSTED as; an OBSE function script is a quest's.
+
+    See: docs/commentary/script_convert.md#udf-host-quest
+    """
+    return QUEST_SCRIPT_TYPE if is_function_script(sctx) else schr_type
+
+
+def _record_fields(lines: list) -> dict:
+    """A record's KEY=VALUE lines as a dict; a repeated key keeps its last value."""
+    return dict(line.rstrip().partition('=')[::2] for line in lines if '=' in line)
+
+
+def _int_field(rec: dict, key: str, base: int = 10):
+    """The field's leading number, or None when it is absent or not a number."""
+    try:
+        return int(rec[key].split()[0], base)
+    except (KeyError, ValueError, IndexError):
+        return None
+
+
+def _scan_scpt(rec: dict, formid: str, edid: str, out: dict) -> None:
+    """A script's EditorID and hosting type."""
+    if edid:
+        out['script_formid_to_edid'][formid] = edid
+    schr_type = _int_field(rec, 'SCHR.Type')
+    if schr_type is not None:
+        out['script_formid_to_type'][formid] = hosted_script_type(
+            schr_type, rec.get('SCTX', ''))
+
+
+def _scan_cell(rec: dict, formid: str, _edid: str, out: dict) -> None:
+    """A cell's interior flag, worldspace and grid position, for GetInCell."""
+    flags = _int_field(rec, 'DATA.Flags', 0)
+    if flags is not None:
+        out['cell_geom'][formid] = (bool(flags & 1), rec.get('ParentWRLD') or '',
+                                    _int_field(rec, 'XCLC.X'), _int_field(rec, 'XCLC.Y'))
+
+
+def _scan_actor(rec: dict, formid: str, _edid: str, out: dict) -> None:
+    """An NPC_/CREA and its AI package list."""
+    out['npc_formids'].add(formid)
+    packs = [m.group(0) for k, v in rec.items() if k.startswith('AIPackage[')
+             for m in [re.match(r'\w+', v)] if m]
+    if packs:
+        out['actor_packages'][formid] = packs
+
+
+def _scan_pack(rec: dict, formid: str, _edid: str, out: dict) -> None:
+    """A package's procedure type."""
+    pkdt_type = _int_field(rec, 'PKDT.Type')
+    if pkdt_type is not None:
+        out['pack_type'][formid] = pkdt_type
+
+
+def _scan_qust(_rec: dict, _formid: str, edid: str, out: dict) -> None:
+    """A quest's EditorID."""
+    if edid:
+        out['quest_edids'].add(edid.lower())
+
+
+#: Signature -> the indexer for the fields only that record type carries.
+_SIG_SCANNERS = {'SCPT': _scan_scpt, 'CELL': _scan_cell, 'NPC_': _scan_actor,
+                 'CREA': _scan_actor, 'PACK': _scan_pack, 'QUST': _scan_qust}
+
+
 def _scan_record_lines(sig: str, lines: list, out: dict):
     """Scan one record's KEY=VALUE lines into the partial result dicts."""
-    formid = edid = scri = name_fid = None
-    details: dict = {}
-    schr_type = None
-    pkdt_type = None
-    ai_packages: list[str] = []
-    cell_flags = None
-    cell_wrld = None
-    cell_x = cell_y = None
-
-    for line in lines:
-        line = line.rstrip()
-        if line.startswith('FormID='):
-            formid = line[7:]
-        elif line.startswith('EditorID='):
-            edid = line[9:]
-        elif line.startswith('SCRI='):
-            scri = line[5:]
-        elif line.startswith('NAME='):
-            name_fid = line[5:]
-        elif sig in _DETAIL_SIGS or line.startswith('Model.MODL='):
-            key, _eq, val = line.partition('=')
-            details[key] = val
-        elif line.startswith('SCHR.Type='):
-            try:
-                schr_type = int(line[10:])
-            except ValueError:
-                pass
-        elif sig == 'CELL' and line.startswith('DATA.Flags='):
-            try:
-                cell_flags = int(line[11:].split()[0], 0)
-            except ValueError:
-                pass
-        elif sig == 'CELL' and line.startswith('ParentWRLD='):
-            cell_wrld = line[11:]
-        elif sig == 'CELL' and line.startswith('XCLC.X='):
-            try:
-                cell_x = int(line[7:])
-            except ValueError:
-                pass
-        elif sig == 'CELL' and line.startswith('XCLC.Y='):
-            try:
-                cell_y = int(line[7:])
-            except ValueError:
-                pass
-        elif sig == 'PACK' and line.startswith('PKDT.Type='):
-            try:
-                pkdt_type = int(line[10:])
-            except ValueError:
-                pass
-        elif sig in ('NPC_', 'CREA') and line.startswith('AIPackage['):
-            m = re.match(r'AIPackage\[\d+\]=(\w+)', line)
-            if m:
-                ai_packages.append(m.group(1))
-
+    rec = _record_fields(lines)
+    formid = rec.get('FormID')
     if not formid:
         return
+    edid = rec.get('EditorID')
     if edid:
         out['formid_to_edid'][formid] = edid
         out['edid_to_formid'][edid.lower()] = formid
-    if sig == 'SCPT':
-        if edid:
-            out['script_formid_to_edid'][formid] = edid
-        if schr_type is not None:
-            out['script_formid_to_type'][formid] = schr_type
-    if sig == 'CELL' and cell_flags is not None:
-        out['cell_geom'][formid] = (bool(cell_flags & 1), cell_wrld or '',
-                                    cell_x, cell_y)
-    index_record_details(out, sig, formid, edid, details)
-    if scri:
-        out['record_scri'][formid] = scri
-    if name_fid and sig in PLACED_REF_SIGS:
-        out['record_base'][formid] = name_fid
+    scanner = _SIG_SCANNERS.get(sig)
+    if scanner:
+        scanner(rec, formid, edid, out)
+    index_record_details(out, sig, formid, edid, rec)
+    if rec.get('SCRI'):
+        out['record_scri'][formid] = rec['SCRI']
+    if rec.get('NAME') and sig in PLACED_REF_SIGS:
+        out['record_base'][formid] = rec['NAME']
     out['record_type'][formid] = sig
-    if sig == 'QUST' and edid:
-        out['quest_edids'].add(edid.lower())
-    if sig in ('NPC_', 'CREA'):
-        out['npc_formids'].add(formid)
-        if ai_packages:
-            out['actor_packages'][formid] = ai_packages
-    if sig == 'PACK' and pkdt_type is not None:
-        out['pack_type'][formid] = pkdt_type
 
 
 def _scan_range(args: tuple) -> dict:
