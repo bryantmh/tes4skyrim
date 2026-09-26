@@ -269,9 +269,14 @@ EndFunction
 ; The memberships persist until death or an explicit stopcombat, matching
 ; TES4 StartCombat (fight until someone dies or a script stands them down).
 ; Cross-pair contamination (attacker A hostile to victim B forced in a
-; different scene) is accepted: forced attackers are overwhelmingly scene
-; actors that die in their scene, and TES4's own disposition damage from
-; StartCombat leaked comparably.
+; different scene) is accepted between NPCs, but NEVER for the player: the
+; Nehrim intro forces trolls onto the player and Celebro onto the trolls, so
+; a player in Victims made the ally Celebro (an Attacker) turn on them.  A
+; fight involving the player instead puts the other actor in vanilla's
+; WIPlayerEnemyFaction (Skyrim.esm 0x06E02D, Hidden, sole relation Enemy of
+; PlayerFaction -- the faction vanilla WI scripts add an actor to before
+; StartCombat on the player), and the player is taken back out of the pair
+; (saves made before this fix already hold that membership).
 ;
 ; TES4 StartCombat also RETARGETS an actor already fighting someone else
 ; (SE02's Gatekeeper is steered onto one orc at a time while all four are
@@ -284,7 +289,19 @@ Function ForceCombat(Actor akAttacker, Actor akTarget, Faction akAttackers, Fact
   If akAttacker == None || akTarget == None
     Return
   EndIf
+  Actor player = Game.GetPlayer()
   If akAttackers != None && akVictims != None
+    player.RemoveFromFaction(akAttackers)
+    player.RemoveFromFaction(akVictims)
+  EndIf
+  If akTarget == player || akAttacker == player
+    Faction hatesPlayer = Game.GetFormFromFile(0x06E02D, "Skyrim.esm") as Faction
+    If akTarget == player
+      akAttacker.AddToFaction(hatesPlayer)
+    Else
+      akTarget.AddToFaction(hatesPlayer)
+    EndIf
+  ElseIf akAttackers != None && akVictims != None
     akAttacker.AddToFaction(akAttackers)
     akTarget.AddToFaction(akVictims)
   EndIf

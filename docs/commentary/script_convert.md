@@ -2153,6 +2153,27 @@ REPEATING registration and `RegisterForUpdate(0)` shipped in 45 scripts as an
 every-frame storm, ended only by the engine stop that the reverted design
 removed. Measured on the shipped build: 0 repeating registrations.
 
+## ForceCombat keeps the player out of the shared faction pair (2026-09-25, confirmed in game)
+<a id="forcecombat-player-faction"></a>
+
+**Symptom:** in the Nehrim intro, Celebro turns hostile around the elevator room
+without the player ever hitting him.
+
+**Cause:** `StartCelleAufzugRaumTrigZoneScript` runs `troll.StartCombat Player`,
+`troll.StartCombat CelebroRef`, then `CelebroRef.StartCombat troll`. ForceCombat
+put the player in `TES4ForceCombatVictims` and Celebro in
+`TES4ForceCombatAttackers`. The pair is Enemy both ways, so Celebro (Aggression
+1, which attacks Enemies) attacked the player. The memberships are permanent, so
+every later forced attacker in the game would also have turned on the player.
+
+**Fix:** when either side is the player, ForceCombat adds the other actor to
+vanilla `WIPlayerEnemyFaction` (Skyrim.esm 0x06E02D: Hidden, with one relation,
+Enemy of PlayerFaction), which vanilla WI scripts join before `StartCombat` on the
+player. Skyrim.esm has 60 such one-purpose player-enemy factions. ForceCombat also
+removes the player from both pair factions, which repairs saves made after the old
+behavior. The 4-argument signature is unchanged, so already-compiled callers from
+other plugins keep working.
+
 ## A SetStage that starts a quest keeps its variables (2026-09-25, unconfirmed in game)
 <a id="setstage-start-keeps-variables"></a>
 

@@ -3044,6 +3044,19 @@ class TestStartCombatIsForced:
         out = converter.convert_standalone('T', src, 'Quest', 'T')
         assert 'TES4Polyfill.ForceCombat(' in out
 
+    def test_forcecombat_never_puts_the_player_in_the_shared_pair(self):
+        """A player in TES4ForceCombatVictims makes every forced Attacker (Nehrim's
+        ally Celebro, set on the elevator trolls) hostile to them; a fight with
+        the player goes through vanilla WIPlayerEnemyFaction instead.
+        See: docs/commentary/script_convert.md#forcecombat-player-faction"""
+        src = open('script_convert/static_scripts/TES4Polyfill.psc',
+                   encoding='utf-8').read()
+        body = src[src.index('Function ForceCombat('):]
+        body = body[:body.index('EndFunction')]
+        assert 'GetFormFromFile(0x06E02D, "Skyrim.esm")' in body
+        assert 'player.RemoveFromFaction(akVictims)' in body
+        assert body.index('akTarget == player') < body.index('akTarget.AddToFaction(akVictims)')
+
 
 class TestJailIsNotExpulsion:
     """`IsPlayerInJail` (TES4 opcode 0x10AB) means "is the player serving a jail
