@@ -1140,6 +1140,26 @@ to the stairs variant of their material, using TES4's own enum pairing
   riser at all. Tagging treads alone made `anvilhousemcinterior02`'s lower
   flight easier but the player still caught on the steps in-game; tagging the
   risers as well cured it (confirmed in-game).
+- the two ENDS of a flight are tagged too. Tagging only what lies between two
+  treads of one mesh left the first and last step hard to climb, worst for
+  NPCs (fixed, confirmed in-game):
+  - the first riser climbs from a floor another mesh owns, so no step band
+    covered it (`arstairs01` -1→19, `stackstairsmid01` -63→-52,
+    `bravilintstair01` -111→-91). Faces up to 48u below any tread and within
+    8u of it are now tagged. Vanilla pure stair pieces tag the same faces
+    (`whintstairs01`, `rifrmsmsecondfloorstair01`: floor→first tread riser is
+    stairs);
+  - the landing above the top tread is left plain by the twice-the-median
+    rule, so the edge a climber steps over last was plain. Landing triangles
+    within 8u plus the rise of the top tread are now tagged. Vanilla puts a
+    stairs strip on the landing edge (`rtdockstairsturn01`: ~2,350u² of
+    stairs on otherwise plain landings) or tags the whole landing
+    (`whintstairs01`, 27,525u²). Tagging is per triangle, so a landing made of
+    a few big triangles is tagged whole (`stackstairsmid01`: 162,452u²).
+
+  Why a plain face there matters: the CK's `bhkCharacterController::IsStep`
+  returns true at once when the contacted triangle's material is stairs, and
+  otherwise falls back to its raycast step test, the path that stutters.
 
 Measured on converted output: every flight in `castlestairs01`,
 `bravilintstair01`, `stackstairsmid01`, `kvatchspiralstair01`, `arstairs01`,
