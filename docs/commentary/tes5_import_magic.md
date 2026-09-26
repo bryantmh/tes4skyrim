@@ -16,6 +16,7 @@
 - [Menu display object](#menu-display-object)
 - [Rules for working in this area](#rules-working-this-area)
 - [Enchantment charge (ANAM to EAMT)](#enchantment-charge-eamt)
+- [No Magnitude makes a value modifier apply 1.0](#no-magnitude-forces-one)
 
 Status as of 2026-07-31. Measured with `python tools/audit/magic_audit.py export/<Plugin>`
 (written alongside this doc; re-run it after every change in this area).
@@ -978,6 +979,41 @@ Duration (87 of 94). Both at once is 4 records. So the rule is magnitude when
 the effect has one, else duration when it has one. The rest are authored
 one-offs -- perk abilities, diseases, fixed-strength armor spells -- that a
 converted effect has no field to express.
+
+## <a id="no-magnitude-forces-one"></a>No Magnitude makes a value modifier apply 1.0
+
+**Code:** `tes5_import/record_types/magic.py` (`magnitude_flag_allowed`), `tes5_import/base/owned_records.py` (`_MGEF_FALL_FLAGS`)
+
+**The engine ignores the authored magnitude of a No Magnitude value modifier.**
+The `ValueModifierEffect` constructor (1.6.1170 `0x5d8210`) tests MGEF flag
+`0x400` and, when set, stores `1.0` as the effect's magnitude. It also forces an
+actor value outside 0..0xA4 to Health (0x18). `PeakValueModifierEffect`
+(`0x5cb2d0`) and `DualValueModifierEffect` (`0x5b7ce0`) both call it.
+`GetMagnitude` (`0x5ac570`) returns that stored value, and the per-frame update
+(`0x5d8780`) adds magnitude × frame time to the actor value.
+
+**Vanilla uses the flag on value modifiers only for on/off actor values.** Of
+Skyrim.esm's 461 value-modifier MGEFs, 19 carry No Magnitude: 10
+Invisibility, 6 Water Breathing / Water Walking, and three one-offs
+(`NN01PerkEffect`, `ArmorFFSelf100`, `VoiceDragonrendEffectScript`). Every
+Oblivion and Nehrim spell authors magnitude 0 on its no-magnitude effects, so
+1.0 is right exactly where 1 means "on".
+
+**The rule:** a value-modifier archetype keeps No Magnitude only on Paralysis,
+Invisibility, Night Eye, Water Breathing or Water Walking; anywhere else the flag
+is dropped and the authored magnitude applies.
+
+**Found through the Shivering Isles Gatekeeper.** Its script calls
+`ResetFallDamageTimer` every frame, which casts `TES4NoFallDamage` on every poll
+(about every 0.37 s). That effect was a No Magnitude value modifier on Health,
+so each 10 s cast healed 1 HP/s. About 27 copies overlapped, for roughly
+28 HP/s of extra healing, measured in game. The bone arrows' weakness (Damage
+Health 8/s, paired with his Regeneration 8/s on every level) could never catch
+up.
+
+**Still open:** Silence (`SLNC`, Peak Magicka) and Stunted Magicka (`STMA`, Peak
+MagickaRate) have no authored amount. They now apply 0 instead of the engine's
+1, and neither works until each gets a real Skyrim mechanism.
 
 ## <a id="resist-paralysis"></a>Resist Paralysis is a keyword, never the Paralysis actor value
 

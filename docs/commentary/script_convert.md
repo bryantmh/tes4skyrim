@@ -178,6 +178,11 @@ spell on the calling actor. A caller that polls every tick keeps renewing the
 window, and a one-shot caller gets one fall's worth. A magic effect's teardown
 still dispels the spell early through `RestoreFallDamage`.
 
+The effect must NOT carry No Magnitude. The engine turns that into magnitude
+1.0, so every cast healed 1 HP/s for 10 s, and an every-tick caller stacked
+about 27 of them
+([no-magnitude-forces-one](tes5_import_magic.md#no-magnitude-forces-one)).
+
 ## Skyrim has GMST readers but no GMST writer (2026-07-31)
 <a id="skyrim-has-gmst-readers-but"></a>
 
@@ -380,6 +385,17 @@ guard, so the property is normally already bound at its own narrow type.
 Genuinely incomparable (bound as Faction/GlobalVariable, say) returns None: an
 unguarded body is WRONG for every event the filter excluded, so the caller keeps
 the body but does not execute it.
+
+<a id="onhitwith-ammo"></a>
+**`OnHitWith <ammo>` is read off the shooter, not `akSource`.** For an arrow,
+Skyrim's `OnHit` passes the BOW as `akSource` (CK wiki: "the Weapon, Spell,
+Explosion, Ingredient, Potion, or Enchantment"), and `akProjectile` is None when
+the target is an actor. So `akSource == SomeArrow` can never be true. An AMMO
+filter instead becomes `TES4Polyfill.HitWithAmmo(akAggressor, SomeArrow)`: the
+attacker is an actor with that ammo equipped (`Actor.IsEquipped`) and a bow (7)
+or crossbow (12) in either hand (`GetEquippedItemType`). Both are vanilla
+natives, so no SKSE is needed. The Shivering Isles Gatekeeper's eight
+`OnHitWith SE02GKBoneArrowN` blocks never fired before this.
 
 ## Unknown commands must be inert
 <a id="unknown-commands-must-be-inert"></a>

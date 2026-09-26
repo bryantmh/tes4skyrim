@@ -472,6 +472,21 @@ SCHOOL_OVERRIDES = {
 # player see them in the magic menu shows junk entries.
 _MARKER_CODES = frozenset({'POSN', 'DISE', 'DUMY', 'VAMP', 'DARK'})
 
+#: Archetypes whose engine constructor forces magnitude 1.0 under No Magnitude (1.6.1170 0x5d8210).
+VALUE_MODIFIER_ARCHETYPES = frozenset({A_VALUE_MODIFIER, A_DUAL_VALUE_MODIFIER, A_PEAK_VALUE_MODIFIER})
+
+#: On/off actor values, where that forced 1.0 is the intended "on".
+SWITCH_ACTOR_VALUES = frozenset({AV_PARALYSIS, AV_INVISIBILITY, AV_NIGHT_EYE,
+                                 AV_WATER_BREATHING, AV_WATER_WALKING})
+
+
+def magnitude_flag_allowed(archetype: int, actor_value: int) -> bool:
+    """True unless No Magnitude would make the engine apply a value of 1.
+
+    See: docs/commentary/tes5_import_magic.md#no-magnitude-forces-one
+    """
+    return archetype not in VALUE_MODIFIER_ARCHETYPES or actor_value in SWITCH_ACTOR_VALUES
+
 
 def is_derived(code: str, rec: dict) -> bool:
     """Whether this effect takes its actor value from the spell carrying it.
@@ -573,7 +588,7 @@ def is_known_code(code: str) -> bool:
     return code in EFFECT_ARCHETYPES
 
 
-def _convert_flags(t4: int, code: str, archetype: int) -> int:
+def _convert_flags(t4: int, code: str, archetype: int, actor_value: int) -> int:
     """TES4 MGEF DATA.Flags → TES5 MGEF DATA.Flags.
 
     The bit meanings diverge from bit 3 onward (TES4 0x8 is Magnitude Is
@@ -615,6 +630,8 @@ def _convert_flags(t4: int, code: str, archetype: int) -> int:
     if code in _MARKER_CODES:
         out |= F_HIDE_IN_UI
 
+    if not magnitude_flag_allowed(archetype, actor_value):
+        out &= ~F_NO_MAGNITUDE
     return out | _power_affects(out)
 
 
@@ -916,7 +933,8 @@ def build_data(rec: dict, code: str, archetype: int, actor_value: int,
     cast_type, delivery = _delivery_and_cast(t4_flags)
 
     data = bytearray(MGEF_DATA_SIZE)
-    struct.pack_into('<I', data, O_FLAGS, _convert_flags(t4_flags, code, archetype))
+    struct.pack_into('<I', data, O_FLAGS,
+                     _convert_flags(t4_flags, code, archetype, actor_value))
     struct.pack_into('<f', data, O_BASE_COST, get_float(rec, 'DATA.BaseCost'))
     struct.pack_into('<I', data, O_ASSOC_ITEM,
                      _resolve_assoc_item(get_formid(rec, 'DATA.AssocItem'),

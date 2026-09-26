@@ -2691,6 +2691,29 @@ class TestFilterGuardTes4Type:
         assert guard == 'akAggressor == CGAssassin01Ref'
 
 
+class TestOnHitWithAmmo:
+    """OnHit's akSource is the bow, never the arrow: an AMMO filter reads the shooter.
+
+    See: docs/commentary/script_convert.md#onhitwith-ammo
+    """
+
+    def test_ammo_filter_tests_the_shooters_equipped_ammo(self, xref):
+        """An AMMO filter becomes HitWithAmmo on the aggressor, bound as an Ammo property."""
+        xref.edid_to_formid['se02gkbonearrow1'] = '0007E0BF'
+        xref.record_type['0007E0BF'] = 'AMMO'
+        conv = ScriptConverter(xref)
+        guard = block_filter_guard(conv, 'onhitwith', 'SE02GKBoneArrow1')
+        assert guard == 'TES4Polyfill.HitWithAmmo(akAggressor, SE02GKBoneArrow1)'
+        assert conv.sc.property_refs['SE02GKBoneArrow1'] == 'Ammo'
+
+    def test_weapon_filter_still_tests_the_source(self, xref):
+        """A WEAP filter is still the weapon OnHit passes as akSource."""
+        xref.edid_to_formid['ironsword'] = '00001234'
+        xref.record_type['00001234'] = 'WEAP'
+        conv = ScriptConverter(xref)
+        assert block_filter_guard(conv, 'onhitwith', 'IronSword') == 'akSource == IronSword'
+
+
 class TestGameHourFractional:
     """GameHour is a FLOAT global in Skyrim (FormID 0x38, FNAM=102).
 

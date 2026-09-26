@@ -174,8 +174,8 @@ _FALL_WINDOW_SECONDS = 10
 #: PERK entry point 58 Mod Falling Damage, function 3 Multiply Value, 1 condition tab (vanilla Cushioned).
 _FALL_ENTRY_POINT = bytes((58, 3, 1))
 
-#: MGEF DATA flags: No Magnitude | Hide in UI.
-_MGEF_FALL_FLAGS = 0x400 | 0x8000
+#: MGEF DATA flags: Hide in UI only; No Magnitude would make a Value Modifier heal 1 HP/s per cast.
+_MGEF_FALL_FLAGS = 0x8000
 
 #: MGEF archetype 0 Value Modifier on actor value 24 Health, at magnitude 0 (vanilla NN01PerkEffect).
 _MGEF_ARCHETYPE_VALUE_MOD, _AV_HEALTH = 0, 24
