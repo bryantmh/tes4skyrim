@@ -7,8 +7,9 @@ export/
 output/
 logs/
 temp/
-# Portable package staging and zips (tools/release/build_portable.py).
-dist/
+# Portable package staging and zips (tools/release/build_portable.py). Anchored:
+# native/dist/ and tes_runtime/dist/ hold committed builds.
+/dist/
 /references/
 
 *_log.txt
