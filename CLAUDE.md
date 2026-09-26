@@ -273,6 +273,13 @@ Check theories against several of these before acting:
   | LOD | `tools/release/create_lod.py --worldspaces <EDID>` |
   | BSA packing | `--pack-only` |
 
+  🛑 <a id="static-scripts-rebuild-all"></a>**A change to
+  `script_convert/static_scripts/` rebuilds `--scripts-only` for EVERY
+  masterless plugin with an `output/` folder (Oblivion.esm, Nehrim.esm,
+  FalloutNV.esm), then their dependents (Morrowind_ob.esm, Translation.esp).**
+  Each ships the same-named `TES4Polyfill.pex`; installed together, one game's
+  copy overrides the other's, so a stale copy breaks every game's newer calls.
+
   Several areas means several stages. Other flags: `--creatures-only`,
   `--extract-only`, `--prune-textures-only`, `--pack-zip-only`. Report what you
   built and any failures verbatim; if a stage can't be run, say which and why.

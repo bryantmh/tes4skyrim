@@ -133,27 +133,6 @@ void PlaceNear(const std::string& near, const std::string& base, int count) {
     });
 }
 
-// Puts `ref` at a spot inside `place`, a CELL or a WORLDSPACE form; false when
-// it is neither. Game thread only.
-//
-// 🛑 An interior is named by its CELL and an exterior by its WORLDSPACE, where
-// the position picks the cell -- an unloaded exterior CELL is not a live form.
-bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot) {
-    if (!g_moveToCell || !ref || !place) return false;
-    const std::uint8_t type =
-        static_cast<const std::uint8_t*>(place)[ids::kOffFormType];
-    if (type != ids::kFormTypeCell && type != ids::kFormTypeWorld) return false;
-    const bool interior = type == ids::kFormTypeCell;
-    const std::uint32_t noTarget = 0;
-    const float position[kAxisCount] = {x, y, z};
-    const float rotation[kAxisCount] = {
-        RefAngle(ref, 0) / kDegreesPerRadian,
-        RefAngle(ref, 1) / kDegreesPerRadian, zRot / kDegreesPerRadian};
-    g_moveToCell(ref, &noTarget, interior ? place : nullptr,
-                 interior ? nullptr : place, position, rotation);
-    return true;
-}
-
 // `PositionCell x y z zRot "cell"`.
 void MoveRefToCell(const std::string& id, const std::string& cell, float x,
                    float y, float z, float zRot) {
@@ -357,6 +336,24 @@ void PlaceAt(void* ref, float x, float y, float z, float zRot) {
     const float ax = RefAngle(ref, 0);
     const float ay = RefAngle(ref, 1);
     g_setAngle(PapyrusVm(), 0, ref, ax, ay, zRot);
+}
+
+// 🛑 An interior is named by its CELL and an exterior by its WORLDSPACE, where
+// the position picks the cell -- an unloaded exterior CELL is not a live form.
+bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot) {
+    if (!g_moveToCell || !ref || !place) return false;
+    const std::uint8_t type =
+        static_cast<const std::uint8_t*>(place)[ids::kOffFormType];
+    if (type != ids::kFormTypeCell && type != ids::kFormTypeWorld) return false;
+    const bool interior = type == ids::kFormTypeCell;
+    const std::uint32_t noTarget = 0;
+    const float position[kAxisCount] = {x, y, z};
+    const float rotation[kAxisCount] = {
+        RefAngle(ref, 0) / kDegreesPerRadian,
+        RefAngle(ref, 1) / kDegreesPerRadian, zRot / kDegreesPerRadian};
+    g_moveToCell(ref, &noTarget, interior ? place : nullptr,
+                 interior ? nullptr : place, position, rotation);
+    return true;
 }
 
 void SendToCell(const std::vector<void*>& refs, const std::string& cell,

@@ -469,6 +469,13 @@ std::string DialogueState::Serialize() const {
     for (int i = 0; i < kControlSwitchCount; ++i) {
         if (!mControls[i]) out << "W\t" << i << '\n';
     }
+    if (!teleporting) out << "T\n";
+    if (mark.place) {
+        const std::streamsize was = out.precision(9);
+        out << "P\t" << mark.place << '\t' << mark.x << '\t' << mark.y << '\t'
+            << mark.z << '\t' << mark.zRot << '\n';
+        out.precision(was);
+    }
     out << "R\t" << reputation << '\n' << "C\t" << crimeLevel << '\n';
     return out.str();
 }
@@ -515,6 +522,11 @@ std::size_t DialogueState::Deserialize(const std::string& text) {
         else if (kind == "W" && n == 2 && Int(f[1]) >= 0 &&
                  Int(f[1]) < kControlSwitchCount) {
             mControls[Int(f[1])] = false;
+        }
+        else if (kind == "T" && n == 1) teleporting = false;
+        else if (kind == "P" && n == 6) {
+            mark = {static_cast<std::uint32_t>(std::strtoul(f[1].c_str(), nullptr, 10)),
+                    Float(f[2]), Float(f[3]), Float(f[4]), Float(f[5])};
         }
         else if (kind == "R" && n == 2) reputation = Int(f[1]);
         else if (kind == "C" && n == 2) crimeLevel = Float(f[1]);

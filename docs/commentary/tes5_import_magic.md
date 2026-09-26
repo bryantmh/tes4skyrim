@@ -1050,10 +1050,11 @@ the drain, as `DisDamageHealthVampire` (archetype 34 on Health), and that is
 what Vampirism and Corprus map to. Attaching the full vampire quest chain is
 runtime work, not record work.
 
-The 19 with no Skyrim mechanism carry `NATIVE_NONE`. They convert today as an
-inert Value Modifier -- present, addressable by a script, doing nothing -- which
-is where the MorrowindRuntime effect table attaches. Only Levitate and SlowFall
-genuinely need new engine addresses; the rest are state the DLL can hold.
+The 14 with no Skyrim mechanism carry `NATIVE_NONE`. Mark, Recall and the two
+Interventions convert as a script-less Script effect, which MorrowindRuntime
+acts on ([teleport effects](morrowind_runtime.md#teleport-effects)). The other
+ten still convert as an inert Value Modifier: present, addressable by a script,
+doing nothing.
 
 <a id="morrowind-borrowed-art"></a>
 ### Art is borrowed from vanilla Skyrim

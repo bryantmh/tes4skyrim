@@ -18,6 +18,9 @@
 // Of the chargen menus only EnableRaceMenu has a Skyrim equivalent
 // (Game.ShowRaceMenu). Name, class, birthsign and the stat review have none,
 // so they stay stubs that say so.
+//
+// `EnableTeleporting` / `DisableTeleporting` flip a switch of the runtime's
+// own, which the teleport effects read.
 
 #include <components/compiler/opcodes.hpp>
 #include <components/interpreter/context.hpp>
@@ -59,6 +62,21 @@ private:
     int mWhich;
 };
 
+// `EnableTeleporting` / `DisableTeleporting`: whether Mark, Recall and the
+// Interventions work. No Skyrim flag gates them, so the runtime's own does.
+// See: docs/commentary/morrowind_runtime.md#teleport-effects
+class OpSetTeleporting : public Interpreter::Opcode0 {
+public:
+    explicit OpSetTeleporting(bool on) : mOn(on) {}
+
+    void execute(Interpreter::Runtime&) override {
+        State().teleporting = mOn;
+    }
+
+private:
+    bool mOn;
+};
+
 // `EnableRaceMenu`: Skyrim's own race/sex menu.
 class OpShowRaceMenu : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime&) override {
@@ -79,6 +97,9 @@ void InstallControlOps(OpcodeInstaller& into) {
         into.Real<OpGetControlDisabled>(C::opcodeGetDisabled + i, i);
     }
     into.Real<OpShowRaceMenu>(Compiler::Gui::opcodeEnableRaceMenu);
+    into.Real<OpSetTeleporting>(Compiler::Misc::opcodeEnableTeleporting, true);
+    into.Real<OpSetTeleporting>(Compiler::Misc::opcodeDisableTeleporting,
+                                false);
 }
 
 }  // namespace tesruntime::mw

@@ -48,6 +48,10 @@ LayeredTable<SayLineDef> g_sayLines{false};
 LayeredTable<FormRef> g_refs;
 LayeredTable<FormRef> g_bases;
 LayeredTable<FormRef> g_cells;
+LayeredTable<TeleportMarker> g_markers{false};
+LayeredTable<CellAnchor> g_anchors{false};
+LayeredTable<int> g_teleports{false};
+LayeredTable<FormRef> g_worldParents{false};
 
 // Each plugin's AI package quest, its aliases by name -> ALST index, and its
 // PACK per kind. One sidecar's rows answer all three in any one view, so the
@@ -81,6 +85,14 @@ constexpr const char* kFileBases = "bases_formid.txt";
 
 // The CELL of each named interior and the WORLDSPACE of each named exterior.
 constexpr const char* kFileCells = "cells_formid.txt";
+
+// The Divine and Temple markers, and where each interior opens onto the world.
+// See: docs/commentary/morrowind_runtime.md#teleport-effects
+constexpr const char* kFileMarkers = "markers_formid.txt";
+constexpr const char* kFileAnchors = "anchors_formid.txt";
+// Every MGEF Mark, Recall or an Intervention lands as, Morroblivion's included.
+constexpr const char* kFileTeleports = "teleports_formid.txt";
+constexpr const char* kFileWorlds = "worlds_formid.txt";
 
 // The AI package quest and its alias indices, which the AI commands fill.
 // See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages
@@ -292,6 +304,37 @@ std::vector<TravelDest> ParseTravel(const std::string& value) {
     return out;
 }
 
+float Number(const std::string& text) {
+    return static_cast<float>(std::atof(text.c_str()));
+}
+
+// `kind|Plugin|place|x|y|z|zRot`; a short row keeps nothing, as a marker with
+// no place would send the player nowhere.
+TeleportMarker ParseMarker(const std::string& value) {
+    const std::vector<std::string> f = Split(value, '|');
+    TeleportMarker out;
+    if (f.size() < 7) return out;
+    out.kind = f[0];
+    out.place = ParseFormRef(f[1] + "|" + f[2]);
+    out.x = Number(f[3]);
+    out.y = Number(f[4]);
+    out.z = Number(f[5]);
+    out.zRot = Number(f[6]);
+    return out;
+}
+
+// `Plugin|cell` = `Plugin|world|x|y`.
+CellAnchor ParseAnchor(const std::string& cell, const std::string& value) {
+    const std::vector<std::string> f = Split(value, '|');
+    CellAnchor out;
+    if (f.size() < 4) return out;
+    out.cell = ParseFormRef(cell);
+    out.world = ParseFormRef(value);
+    out.x = Number(f[2]);
+    out.y = Number(f[3]);
+    return out;
+}
+
 std::string Lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char c) { return static_cast<char>(::tolower(c)); });
@@ -404,6 +447,10 @@ void ClearScriptTables() {
     g_refs.clear();
     g_bases.clear();
     g_cells.clear();
+    g_markers.clear();
+    g_anchors.clear();
+    g_teleports.clear();
+    g_worldParents.clear();
     g_aiAliases.clear();
     g_startScripts.clear();
     g_travel.clear();
@@ -530,6 +577,22 @@ void LoadRecordRows(int layer, const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileTravel,
                [layer](const std::string& actor, const std::string& value) {
                    g_travel.Set(layer, Lower(actor), ParseTravel(value));
+               });
+    ForEachRow(pluginDir + kFileMarkers,
+               [layer](const std::string& marker, const std::string& value) {
+                   g_markers.Add(layer, Lower(marker), ParseMarker(value));
+               });
+    ForEachRow(pluginDir + kFileAnchors,
+               [layer](const std::string& cell, const std::string& value) {
+                   g_anchors.Add(layer, Lower(cell), ParseAnchor(cell, value));
+               });
+    ForEachRow(pluginDir + kFileTeleports,
+               [layer](const std::string& effect, const std::string& index) {
+                   g_teleports.Add(layer, effect, std::atoi(index.c_str()));
+               });
+    ForEachRow(pluginDir + kFileWorlds,
+               [layer](const std::string& child, const std::string& parent) {
+                   g_worldParents.Add(layer, child, ParseFormRef(parent));
                });
 }
 
@@ -775,6 +838,30 @@ const FormRef* FindCell(const std::string& cell) {
 }
 
 std::size_t CellCount() { return g_cells.size(); }
+
+void ForEachTeleportMarker(const std::function<void(const TeleportMarker&)>& fn) {
+    g_markers.ForEachRow(
+        [&fn](const std::string&, const TeleportMarker& row, int) { fn(row); });
+}
+
+void ForEachCellAnchor(const std::function<void(const CellAnchor&)>& fn) {
+    g_anchors.ForEachRow(
+        [&fn](const std::string&, const CellAnchor& row, int) { fn(row); });
+}
+
+void ForEachTeleportEffect(const std::function<void(const FormRef&, int)>& fn) {
+    g_teleports.ForEachRow([&fn](const std::string& effect, int index, int) {
+        fn(ParseFormRef(effect), index);
+    });
+}
+
+void ForEachWorldParent(
+    const std::function<void(const FormRef&, const FormRef&)>& fn) {
+    g_worldParents.ForEachRow(
+        [&fn](const std::string& child, const FormRef& parent, int) {
+            fn(ParseFormRef(child), parent);
+        });
+}
 
 const FormRef* AiQuest() { return g_aiQuest.Find(kAiQuestRow); }
 

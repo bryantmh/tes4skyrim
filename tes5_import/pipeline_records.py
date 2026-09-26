@@ -160,9 +160,10 @@ def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
             print(f"  ERROR converting {sig} '{edid}': {e}")
             st.errors += 1
     write_falloutnv_sidecars(st.by_type, st.writer, st.output_path)
-    staged = write_morrowind_sidecar(export_dir, st.output_path,
-                                     os.path.basename(st.output_path),
-                                     writer=st.writer)
+    staged = write_morrowind_sidecar(
+        export_dir, st.output_path, os.path.basename(st.output_path),
+        writer=st.writer,
+        master_index=getattr(st.ctx, 'master_index', None) if st.ctx else None)
     if staged:
         print(f'  Staged {staged} runtime sidecar file(s)')
     phase_done(f'simple records ({len(work_items)})')

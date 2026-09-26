@@ -421,6 +421,29 @@ constexpr std::uint8_t kFormTypeWorld = 0x47;
 constexpr std::uint64_t kRefGetScale = 56633;
 constexpr std::uint64_t kRefSetScale = 56240;
 
+// WorldSpace ObjectReference.GetWorldSpace() (0xa44ba0 on 1.6.1170): the code
+// `lea` beside the "GetWorldSpace" registration under ObjectReference, found
+// by papyrus_native_locate.py. Where Mark stands when it is outdoors.
+constexpr std::uint64_t kRefGetWorldSpace = 56636;
+
+// SkyrimVM's BSTEventSink<TESMagicEffectApplyEvent> vtable: 0x19127c8 on
+// 1.6.1170, 0x17bc0d0 on 1.6.659, the subobject at +0xA8 by its RTTI complete
+// object locator. Slot 1 (byte 0x8) is its ProcessEvent (0x9c5910), which
+// loads the 'OnMagicEffectApply' string: every effect applied to anything
+// passes through it, script-less Script effects included.
+// See: docs/commentary/morrowind_runtime.md#teleport-effects
+constexpr std::uint64_t kVmMagicEffectApplySink = 217097;
+constexpr std::uint64_t kVmMagicEffectApplyProcess = 53978;
+constexpr std::size_t kProcessEventSlot = 0x8;
+
+// TESMagicEffectApplyEvent: the target and caster (NiPointers' raw pointers)
+// and the MGEF's runtime FormID. The VM's argument functor (vtable 0x1912ba8,
+// slot 1) reads the caster at +0x8 and looks the +0x10 id up expecting form
+// type 0x12.
+constexpr std::size_t kOffApplyTarget = 0x0;
+constexpr std::size_t kOffApplyCaster = 0x8;
+constexpr std::size_t kOffApplyEffect = 0x10;
+
 // The alias plumbing the AI packages run on, each found at its registration
 // and present in all 12 shipped versionlibs:
 //   Alias  Quest.GetAlias(int aliasId)              0x9ea980

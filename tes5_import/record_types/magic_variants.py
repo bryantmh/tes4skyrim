@@ -58,6 +58,12 @@ def reset() -> None:
             table.clear()
 
 
+def known_effects() -> dict:
+    """{MGEF FormID: EditorID} of each effect this conversion emitted or read."""
+    with _lock:
+        return {fid: parts[0] for fid, parts in _parts.items()}
+
+
 def _parts_of(fid: int):
     """The parts of an MGEF a clone can start from, built on first use.
 
@@ -177,10 +183,22 @@ def delivery_variant(fid: int, cast: int, delivery: int, writer,
         fit_delivery(data, cast, delivery, projectile(rec) if own_art else 0)
         struct.pack_into('<I', data, O_EXPLOSION, burst)
 
-    edid = (f'TES4{src[0].removeprefix("TES4")}{_CAST_NAMES[cast]}'
-            f'{_DELIVERY_NAMES[delivery]}{"Area" if burst else ""}')
+    edid = _delivery_editor_id(src[0], _CAST_NAMES[cast],
+                               _DELIVERY_NAMES[delivery], 'Area' if burst else '')
     return clone(fid, 'MGEF_DELIVERY', (fid, cast, delivery, burst), edid,
                  patch, writer) or fid
+
+
+def _delivery_editor_id(edid: str, cast: str, delivery: str, area: str) -> str:
+    """The EditorID of one delivery clone of the MGEF named `edid`."""
+    return f'TES4{edid.removeprefix("TES4")}{cast}{delivery}{area}'
+
+
+def delivery_editor_ids(edid: str) -> list:
+    """`edid` and every EditorID `delivery_variant` may give a clone of it."""
+    return [edid] + [_delivery_editor_id(edid, cast, delivery, area)
+                     for cast in _CAST_NAMES for delivery in _DELIVERY_NAMES
+                     for area in ('', 'Area')]
 
 
 #: TES4 codes Oblivion still draws on an Ability (Oblivion.exe 0x41b950): shields, Reflect Damage, Resist Normal Weapons.
