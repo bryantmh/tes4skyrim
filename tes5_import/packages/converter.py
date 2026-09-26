@@ -27,9 +27,9 @@ map exactly, which degrade, and why).
 
 import struct
 
+from .escort_when_near import escort_template
 from .templates import (
     ACQUIRE,
-    ESCORT,
     EAT,
     FLEE_TO,
     FOLLOW,
@@ -1035,7 +1035,7 @@ def _pick_follow(p: _Pick) -> Inputs:
     navmesh route.
     """
     if _follow_destination_reachable(p):
-        i = Inputs(ESCORT)
+        i = Inputs(escort_template())
         i.set('target', p.tgt)
         i.set('location', p.loc)
         if p.use_horse:
@@ -1051,8 +1051,8 @@ def _pick_follow(p: _Pick) -> Inputs:
 
 
 def _pick_escort(p: _Pick) -> Inputs:
-    """Escort: exact."""
-    i = Inputs(ESCORT)
+    """Escort: exact, restarting whenever the escorted target returns in range."""
+    i = Inputs(escort_template())
     i.set('target', p.tgt)
     i.set('location', p.loc)
     if p.use_horse:

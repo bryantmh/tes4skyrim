@@ -10,6 +10,9 @@ these call nothing else in that file, and only import_plugin calls them.
 
 import struct
 
+from ..packages.escort_when_near import (ESCORT_WHEN_NEAR_EDID,
+                                         escort_root_record,
+                                         set_escort_template_fid)
 from .constants import AMBIENT_GMST_OVERRIDES
 from .equivalents import (CUSTOM_VTYP_EDIDS, SPELL_EQUIP_EITHER_HAND,
                           VTYP_EDID_BY_FID, set_voice_type)
@@ -51,13 +54,22 @@ def _emit_global(writer: PluginWriter, edid: str, type_char: str) -> int:
     return fid
 
 
+def _emit_escort_template(writer: PluginWriter) -> int:
+    """Write the converter's escort template root and point converted escorts at it."""
+    fid = writer.derive_formid('PACK_TEMPLATE', ESCORT_WHEN_NEAR_EDID)
+    writer.add_record('PACK', escort_root_record(fid))
+    set_escort_template_fid(fid)
+    return fid
+
+
 def create_tes4_special_records(writer: PluginWriter):
-    """Create the globals converted Papyrus scripts need, bound by name.
+    """Create the globals converted Papyrus scripts need, bound by name, and the escort root.
 
     See: docs/commentary/tes5_import_dialogue.md#the-conversion-owned-globals
     """
     made = {edid: _emit_global(writer, edid, ch)
             for (edid, ch) in _OWNED_GLOBALS}
+    made[ESCORT_WHEN_NEAR_EDID] = _emit_escort_template(writer)
     print('  Created TES4 special records: '
           + ', '.join(f'{k}={v:08X}' for k, v in made.items()))
 

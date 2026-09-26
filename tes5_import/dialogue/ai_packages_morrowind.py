@@ -24,7 +24,8 @@ from ..packages.converter import (ANY_TIME_PSDT, build_alias_location,
                                   DEFAULT_INTERRUPT, Inputs, package_markers,
                                   SPEED_WALK, T5_MUST_COMPLETE)
 from ..packages.interrupt_morrowind import interrupt_for_kind
-from ..packages.templates import ACTIVATE, ESCORT, FOLLOW, SANDBOX, TRAVEL
+from ..packages.escort_when_near import escort_template
+from ..packages.templates import ACTIVATE, FOLLOW, SANDBOX, TRAVEL
 from ..record_types.common import (pack_formid_subrecord, pack_record,
                                    pack_string_subrecord, pack_subrecord,
                                    pack_uint32_subrecord)
@@ -59,12 +60,12 @@ _TES4_TYPE = {'travel': 6, 'wander': 5, 'follow': 1, 'escort': 2,
 #: A pooled slot serves any actor, so it takes the Hello 2,278 of 2,673 Morrowind.esm NPCs ship.
 _POOLED_HELLO = 30
 
-#: Each package kind and the vanilla template it instances.
+#: Each package kind and the template it instances; None is the plugin's escort root (escort_template).
 _KINDS = (
     ('travel', TRAVEL),
     ('wander', SANDBOX),
     ('follow', FOLLOW),
-    ('escort', ESCORT),
+    ('escort', None),
     ('activate', ACTIVATE),
 )
 
@@ -178,7 +179,8 @@ def write_ai_packages(writer, side_dir: str, plugin_name: str) -> int:
         for n in range(_SLOTS):
             slot = f'{kind}{n}'
             writer.add_record('PACK', pack_record_for(
-                kind, slot, template, pack_ids[slot], quest_fid))
+                kind, slot, template or escort_template(), pack_ids[slot],
+                quest_fid))
     writer.add_record('QUST', quest_record(quest_fid, pack_ids))
     lines = [f'quest={plugin_name}|{quest_fid:08X}', f'slots={_SLOTS}']
     lines += [f'pack.{slot}={plugin_name}|{pack_ids[slot]:08X}'
