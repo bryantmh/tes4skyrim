@@ -14,8 +14,10 @@ how the work went. The running job is never replaced.
 See: docs/commentary/performance.md#one-heavy-job-at-a-time
 """
 
+import atexit
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -26,8 +28,11 @@ MUTEX_NAME = "Local\\TESConversionHeavyJob"
 #: Set once held, so a child the holder spawns never waits on its own parent.
 HELD_ENV_VAR = "TESCONV_HEAVY_LOCK_HELD"
 
-#: Who holds the lock, written by the holder for the waiting message only.
+#: Who holds the lock, `{pid, label, started}`; the holder deletes it on exit.
 HOLDER_FILE = Path(__file__).resolve().parent.parent / "logs" / "heavy_job.txt"
+
+#: The holder line the first lock version wrote, before the file became JSON.
+_TEXT_HOLDER = re.compile(r"^(.*) \(pid (\d+), since (\d\d:\d\d:\d\d)\)$")
 
 #: One `<pid>.json` ticket per waiting job: its label, work, and who replaced it.
 QUEUE_DIR = HOLDER_FILE.parent / "heavy_queue"
@@ -148,10 +153,42 @@ def _follow(k32, pid: int, log) -> None:
 
 def _holder() -> str:
     """What the holder wrote about itself, or a placeholder."""
+    holder = _read(HOLDER_FILE)
+    return f"{holder['label']} (pid {holder['pid']})" if holder else "another job"
+
+
+def snapshot() -> tuple:
+    """(running job or None, [queued jobs] in arrival order), live processes only.
+
+    The running job is the holder file's `{pid, label, started}`; each queued
+    job is its ticket, `{pid, label, work, queued, replaced_by?}`.
+    """
+    alive = (lambda pid: bool(pid) and _exit_code(_kernel32(), pid, False) == _STILL_ACTIVE
+             ) if sys.platform == "win32" else bool
+    holder = _read(HOLDER_FILE) or _text_holder()
+    queued = [dict({"queued": path.stat().st_mtime}, **_read(path))
+              for path in QUEUE_DIR.glob("*.json")] if QUEUE_DIR.is_dir() else []
+    return ((holder if alive(holder.get("pid")) else None),
+            sorted((t for t in queued if alive(t.get("pid"))), key=lambda t: t["queued"]))
+
+
+def _text_holder() -> dict:
+    """The holder file as the first lock version wrote it, `label (pid N, since HH:MM:SS)`."""
     try:
-        return HOLDER_FILE.read_text(encoding="utf-8").strip()
+        match = _TEXT_HOLDER.match(HOLDER_FILE.read_text(encoding="utf-8").strip())
     except OSError:
-        return "another job"
+        return {}
+    if not match:
+        return {}
+    started = time.mktime(time.strptime(time.strftime("%Y-%m-%d ") + match[3], "%Y-%m-%d %H:%M:%S"))
+    return {"label": match[1], "pid": int(match[2]),
+            "started": started - 86400 if started > time.time() else started}
+
+
+def _forget_holder() -> None:
+    """Delete the holder file at exit, when it still names this process."""
+    if _read(HOLDER_FILE).get("pid") == os.getpid():
+        HOLDER_FILE.unlink(missing_ok=True)
 
 
 def _queue(k32, handle, label: str, work, log) -> int:
@@ -165,8 +202,8 @@ def _queue(k32, handle, label: str, work, log) -> int:
         _replace_covered(k32, work, log)
     QUEUE_DIR.mkdir(parents=True, exist_ok=True)
     ticket = QUEUE_DIR / f"{os.getpid()}.json"
-    ticket.write_text(json.dumps({"pid": os.getpid(), "label": label, "work": work}),
-                      encoding="utf-8")
+    ticket.write_text(json.dumps({"pid": os.getpid(), "label": label, "work": work,
+                                  "queued": time.time()}), encoding="utf-8")
     started, reported = time.monotonic(), None
     try:
         while True:
@@ -213,8 +250,9 @@ def hold_heavy_lock(label: str, work: dict = None, log=print) -> bool:
     os.environ[HELD_ENV_VAR] = str(os.getpid())
     try:
         HOLDER_FILE.parent.mkdir(parents=True, exist_ok=True)
-        HOLDER_FILE.write_text(f"{label} (pid {os.getpid()}, since "
-                               f"{time.strftime('%H:%M:%S')})\n", encoding="utf-8")
+        HOLDER_FILE.write_text(json.dumps({"pid": os.getpid(), "label": label,
+                                           "started": time.time()}), encoding="utf-8")
+        atexit.register(_forget_holder)
     except OSError:
         pass
     return True

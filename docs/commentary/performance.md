@@ -722,7 +722,9 @@ launching blind, so the check is now mechanical.
 `hold_heavy_lock` takes the named mutex `Local\TESConversionHeavyJob` for the
 rest of the process. A second `convert.py` or LOD bake WAITS instead of
 failing. It prints the holder, recorded in `logs/heavy_job.txt`, at once and
-again every 5 minutes.
+again every 5 minutes. The holder writes that file as `{pid, label, started}` and
+deletes it on exit. `python -m tools.misc.build_queue` shows the running build
+and the whole queue live.
 
 - **No work queued twice.** A waiting job leaves a ticket in
   `logs/heavy_queue/<pid>.json` naming its work: plugins, steps, `--only` and
