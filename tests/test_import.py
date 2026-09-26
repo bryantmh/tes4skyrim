@@ -698,6 +698,38 @@ class TestConverters:
         finally:
             cr.load_creature_item_index({})
 
+    def test_passive_spells_do_not_make_a_caster_race(self):
+        """A Disease or Ability is never equipped, so only a castable spell
+        (SPIT.Type 0, here through a leveled list) sets the race's VNAM Spell
+        bit; Nehrim's nightmare-troll race had it from a troll disease."""
+        from tes5_import.actors import creature_races as cr
+        cr.load_creature_item_index({
+            'SPEL': [
+                {'Signature': 'SPEL', 'FormID': '0001D5A1',
+                 'SPIT.Type': '1', 'EffectCount': '1',
+                 'Effect[0].Type': 'Touch'},
+                {'Signature': 'SPEL', 'FormID': '0002B543',
+                 'SPIT.Type': '4', 'EffectCount': '1',
+                 'Effect[0].Type': 'Self'},
+                {'Signature': 'SPEL', 'FormID': '000A97DF',
+                 'SPIT.Type': '0', 'EffectCount': '1',
+                 'Effect[0].Type': 'Target'},
+            ],
+            'LVSP': [
+                {'Signature': 'LVSP', 'FormID': '0005D4A2',
+                 'EntryCount': '1', 'Entry[0].FormID': '000A97DF'},
+            ],
+        })
+        try:
+            troll = {'Signature': 'CREA', 'SpellCount': '2',
+                     'Spell[0]': '0001D5A1', 'Spell[1]': '0002B543'}
+            caster = {'Signature': 'CREA', 'SpellCount': '1',
+                      'Spell[0]': '0005D4A2'}
+            assert not cr._creature_equip_flags([troll]) & cr._VNAM_SPELL
+            assert cr._creature_equip_flags([troll, caster]) & cr._VNAM_SPELL
+        finally:
+            cr.load_creature_item_index({})
+
     def test_atkd_carries_the_attack_spell(self):
         """ATKD field 3 is 'Attack Spell' (xEdit: [SPEL, SHOU, NULL]) — the
         vanilla melee-caster idiom (109 vanilla attack entries; the flame

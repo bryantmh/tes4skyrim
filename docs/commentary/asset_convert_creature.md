@@ -2945,6 +2945,28 @@ stop event on exit, so the engine's combat/stagger controllers see completion.
 holds its last pose (dead on the ground). Ragdoll death is handled by the outer
 wrapper state machine.
 
+#### <a id="hit-window-attacks-only"></a>Only an attack clip carries a hit window
+
+**Code:** `_ClipSet._meta` in `asset_convert/havok/hkx_behavior.py`.
+
+Oblivion's recoil and stagger kfs can carry a `Hit` text key, and the
+`weaponSwing`/`preHitFrame`/`HitFrame` triple used to be derived for every clip
+that had one. The engine binds those events to its swing handlers per actor
+(`weaponSwing -> WeaponRightSwingHandler`, `HitFrame`, `preHitFrame ->
+AnticipateAttackHandler`), whatever state the graph is in, and only `attackStop`
+clears the attack. A recoil or stagger state exits with `recoilStop`/`staggerStop`,
+so after the first recoil the actor stayed "mid-attack" for good: it moved and
+chased but never started another attack. Vanilla never does this: of 155 recoil
+and 299 stagger clips in the LE `animationdatasinglefile.txt`, none carries any of
+the three.
+
+Found on Nehrim's intro black troll (`SchattenrufAlptraumTroll01`): Celebro blocks
+its first swing (contact, no damage), the engine sends the troll `recoilStart`, and
+its `recoil` clip fired `weaponSwing@0.2`/`HitFrame@0.5`. The earlier trolls
+fight the player, who rarely blocks. Casts, recoils, staggers and every other
+non-attack clip now get no hit window; a keyless attack still gets one 40% in.
+Confirmed in game: the troll attacks repeatedly.
+
 ### <a id="equip-clips"></a>Weapon draw and sheathe
 
 The engine moves a weapon from its sheath node (`Prn=WeaponMace` etc.) into the

@@ -729,6 +729,22 @@ class TestSkyrimLEReferenceValidation:
         assert errors == [], f"Structural errors in reference: {errors}"
 
 
+NIGHTMARE_TROLL_NIF = Path('export/Nehrim.esm/meshes/ptcreatures/nightmaretroll/nightmaretroll.nif')
+
+
+class TestSharedShapeConvertsOnce:
+    """A shape listed under two parents keeps its texture (Nehrim's black troll)."""
+
+    @pytest.mark.skipif(not NIGHTMARE_TROLL_NIF.exists(), reason='Nehrim export not available')
+    def test_doubly_listed_body_keeps_its_diffuse(self, tmp_path):
+        """The body the root lists twice still names troll.dds, never white.dds."""
+        dst = tmp_path / 'out.nif'
+        assert convert_nif(str(NIGHTMARE_TROLL_NIF), str(dst))['converted']
+        raw = dst.read_bytes().lower()
+        assert b'troll.dds' in raw
+        assert b'white.dds' not in raw
+
+
 class TestConvertedNifStructure:
     """Validate that converted Oblivion meshes produce structurally valid Skyrim NIFs."""
 

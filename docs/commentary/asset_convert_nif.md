@@ -420,6 +420,18 @@ PyFFI reports **every unreferenced block** as a root, not just scene-graph roots
 - **Files whose ONLY root is a non-node** are standalone animation files (`creatures/*/idleanims/*.nif` → a lone `NiControllerSequence`). There is no geometry to convert; `convert_nif` returns `error='NOGEO'` and skips instead of crashing.
 - Related trap: **never trust `num_vertices`/`has_normals` over the actual array length.** `leyawiinhouselower01_far.nif` has a shape with `num_vertices=16` but an empty `vertices` array (stale count, `has_vertices` unset), which made `np.array([...])` a `(0,)` array and blew up the matmul in `inv_marker._gather_area_normals`. Guard with `len(gd.vertices)` and `len(gd.normals) == len(gd.vertices)`.
 
+## A shape listed under two parents converts once
+<a id="shared-shapes-convert-once"></a>
+A NIF may reference one `NiTriShape` block from two child slots — Nehrim's
+`ptcreatures\nightmaretroll\nightmaretroll.nif` lists its body `Troll01:0` twice
+under the root. The walk visited it twice. The first `process_geometry` pass built
+the `troll.dds` shader and cleared the Oblivion properties; the second pass found no
+`NiTexturingProperty`, so it replaced that shader with the `Textures\white.dds`
+fallback. Every creature on that mesh rendered its body untextured.
+`_walk_geometry` now memoizes by block identity (`stats['_converted_shapes']`),
+so a later visit returns the first result, and both slots keep pointing at the
+same converted block, as authored.
+
 ## NIF NiDefaultAVObjectPalette fixup
 <a id="nif-nidefaultavobjectpalette-fixup"></a>
 - After converting NiTriStrips→NiTriShape, NiDefaultAVObjectPalette entries still reference old blocks. Must update `av_object` references using a block_map (old id → new block). Without this fix, PyFFI writes "NiTriStrips block is missing from the nif tree" warnings and the animation palette has stale references.

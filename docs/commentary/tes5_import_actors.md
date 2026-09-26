@@ -30,6 +30,7 @@ them does.
 - [Hair color: a generated CLFM per authored RGB](#hair-color)
 - [NAM5/NAM6/NAM7/NAM8 are all required](#required-nam-subrecords)
 - [Head parts: RNAM decides who can see the hair](#hdpt-valid-races)
+- [A creature race is a caster only for a castable spell](#caster-race-needs-a-castable-spell)
 - [Voice type resolution](#voice-resolution)
 
 ## <a id="acbs-flag-collision"></a>ACBS flags: the same bit means three different things
@@ -825,6 +826,33 @@ whatever the behavior graph offered them.
 
 Order is RNAM → SPCT → SPLO[] → COCT → CNTO, verified against both the xEdit
 TES5 definition (`wbDefinitionsTES5.pas`) and a real Skyrim.esm dump.
+
+## <a id="caster-race-needs-a-castable-spell"></a>A creature race is a caster only for a castable spell
+
+**Code:** `tes5_import/actors/creature_races.py` `_creature_equip_flags`.
+
+A generated creature race is shared by every CREA with the same mesh folder and
+body set, so its VNAM equipment flags are the union over all of them: goblin
+berserkers, warlords and shamans share one skeleton but carry blades, bows and
+staffs. Hand-to-hand is always set, the one bit even DogRace carries. A census of
+99 Skyrim.esm races: 60 set the Spell bit, 31 are exactly `FFFFE001` with neither
+spells nor weapons.
+
+The Spell bit (and with it the LeftHand QNAM slot a caster needs) used to follow
+`SpellCount > 0`. That counts Oblivion Diseases (SPIT.Type 1) and Abilities
+(Type 4), which are passive and never equipped. Nehrim's nightmare-troll race
+turned into a caster because two of its ten creatures carry
+`KrankheitTrollpest` (Disease), `MobGhostEffectGreenNoAlpha` and
+`MobEigenschaftWaffenresistenz100` (Abilities), although no creature on it knows
+a castable spell and its graph has no cast states. The bit now requires a
+castable spell (Type 0, resolved through leveled spell lists by
+`_spell_effect_ranges`), so that race is fists-only with the RightHand slot, like
+the plain troll race.
+
+This was found while chasing the intro black troll (`SchattenrufAlptraumTroll01`)
+that swung once and never again, but it was NOT that bug's cause: the troll still
+refused after this change. The cause was a hit window on its recoil clip
+([asset_convert_creature.md](asset_convert_creature.md#hit-window-attacks-only)).
 
 ## <a id="creature-class-and-package"></a>A creature needs a CLASS and a PACKAGE
 

@@ -749,25 +749,16 @@ def _item_vnam_bits(fid: int, depth: int = 0, path=()) -> int:
 
 
 def _creature_equip_flags(recs: list) -> int:
-    """VNAM 'Equipment Flags' for a generated race, from what its creatures
-    actually carry.
+    """VNAM 'Equipment Flags' for a generated race: the union over every CREA
+    sharing it of the weapon classes they carry, plus hand-to-hand always, plus
+    Spell only when one of them knows a castable spell (SPIT.Type 0).
 
-    A generated race is SHARED by every CREA with the same mesh folder and body
-    set, so the flags are the union over all of them — a race must permit
-    whatever any of its creatures was authored to wield (goblin berserkers,
-    warlords and shamans share one skeleton but carry blades, bows and staffs
-    respectively).
-
-    Hand-to-hand is always allowed — every creature can attack unarmed, and
-    that is the one bit even DogRace sets.  Spell is added only when a creature
-    sharing the race actually knows one: TES4 grants spells through SPLO rather
-    than an inventory item, so the inventory alone never reveals it.  Vanilla
-    splits the same way (census of 99 Skyrim.esm races: 60 set the Spell bit,
-    31 are exactly FFFFE001 with neither spells nor weapons).
+    See: docs/commentary/tes5_import_actors.md#caster-race-needs-a-castable-spell
     """
     bits = _VNAM_HAND_TO_HAND
     for rec in recs:
-        if get_int(rec, 'SpellCount'):
+        if any(_spell_effect_ranges(get_formid(rec, f'Spell[{i}]') or 0)
+               for i in range(get_int(rec, 'SpellCount'))):
             bits |= _VNAM_SPELL
         for i in range(get_int(rec, 'ItemCount')):
             try:

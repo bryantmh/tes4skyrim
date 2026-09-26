@@ -631,14 +631,16 @@ class _ClipSet:
               is_attack: bool) -> dict:
         """One clip_meta row carrying the clip's translated Oblivion events.
 
-        A cast is not a melee swing, so it has no hit window; a keyless attack
-        gets one 40% in so the damage contract still fires.  The sound entries
-        keep the SOUN EditorID, which is what `SoundPlay.<SNDR>` resolves.
+        Only a melee attack has a hit window: a cast, recoil or stagger keeps
+        none even when its kf has a Hit key, and a keyless attack gets one 40%
+        in so the damage contract still fires.  The sound entries keep the SOUN
+        EditorID, which is what `SoundPlay.<SNDR>` resolves.
+        See: docs/commentary/asset_convert_creature.md#hit-window-attacks-only
         """
         events = parse_kf_events(clip.text_keys, self.enum_map)
-        if st_name in self.cast_stem_map:
+        if st_name in self.cast_stem_map or not is_attack:
             events['hits'] = []
-        if is_attack and not events['hits']:
+        elif not events['hits']:
             events['hits'] = [float(clip.duration) * 0.4]
         return {'name': st_name, 'stem': stem,
                 'anim': 'Animations\\' + stem + '.hkx',

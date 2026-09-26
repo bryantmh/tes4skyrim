@@ -393,7 +393,20 @@ def _is_stripped_node(node):
 
 
 def _walk_geometry(node, fix_textures, stats):
-    """Convert one shape, or None when it has no usable topology."""
+    """Convert one shape, or None when it has no usable topology.
+
+    A shape two parents share converts once; later visits reuse that result,
+    since a second pass would read the already-stripped properties.
+    See: docs/commentary/asset_convert_nif.md#shared-shapes-convert-once
+    """
+    done = stats.setdefault('_converted_shapes', {})
+    if id(node) not in done:
+        done[id(node)] = _convert_shape(node, fix_textures, stats)
+    return done[id(node)]
+
+
+def _convert_shape(node, fix_textures, stats):
+    """Run `process_geometry` on one shape, or None when it has no topology."""
     try:
         ts = process_geometry(node, fix_textures, stats,
                               sky_type=(stats or {}).get('_sky_type'),
