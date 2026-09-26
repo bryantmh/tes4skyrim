@@ -346,7 +346,9 @@ def main() -> int:
     if args.dry_run:
         print("Dry run - nothing generated.")
         return 0
-    hold_heavy_lock("create_lod.py " + " ".join(sys.argv[1:]))
+    hold_heavy_lock("create_lod.py " + " ".join(sys.argv[1:]),
+                    {'plugins': plugins, 'steps': ['lod'],
+                     'scope': {'worldspaces': wanted}, 'same': [str(out_root)]})
 
     ctx = {
         'lod_dir': lod_dir, 'out_root': out_root, 'export_root': export_root,

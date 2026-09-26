@@ -709,7 +709,8 @@ randomised `hash()` never reaches an id.
 ## One heavy job at a time
 <a id="one-heavy-job-at-a-time"></a>
 
-**Code:** `core/heavy_lock.py`, called from `convert.py:main` and `tools/release/create_lod.py:main`.
+**Code:** `core/heavy_lock.py`, called from `convert.py:_run_steps` (and the patch
+build) and `tools/release/create_lod.py:main`.
 
 Two pooled stages at once exhaust RAM on a 32 GB box. On 2026-09-26 a
 Morrowind_ob navmesh pool (29 workers) died as `BrokenProcessPool` beside
@@ -723,6 +724,14 @@ rest of the process. A second `convert.py` or LOD bake WAITS instead of
 failing. It prints the holder, recorded in `logs/heavy_job.txt`, at once and
 again every 5 minutes.
 
+- **No work queued twice.** A waiting job leaves a ticket in
+  `logs/heavy_queue/<pid>.json` naming its work: plugins, steps, `--only` and
+  `--mesh-subdirs` scopes, and the settings that change output. A newer job whose
+  work covers a queued ticket's (`covers`) marks it replaced. The replaced job
+  stops waiting, follows its replacement, and exits with that job's exit code,
+  so its launcher still learns the result. The newer job runs the newer code.
+  A job replaced in the instant it gets the lock hands the lock on. The running
+  job is never replaced. Dead waiters' tickets are swept by the next arrival.
 - **No stale locks.** The kernel releases a mutex whose owner dies, however it
   dies; the next waiter gets `WAIT_ABANDONED`, which counts as acquired.
 - **No self-deadlock.** The holder sets `TESCONV_HEAVY_LOCK_HELD`, so a child
@@ -731,7 +740,8 @@ again every 5 minutes.
 - **Not in `create_pool_job`.** The GUI calls that at import, and would hold
   the lock for its whole life. The GUI's per-step `convert.py` processes each
   take it instead.
-- Informational runs (`--help`, `--list-mods`) and `--dry-run` never wait.
+- Only runs that convert take it. `--help`, `--list-mods`, the mod commands and
+  `--dry-run` never wait.
 - It is a courtesy, never a failure: off Windows, or if the mutex cannot be
   made, the run proceeds unlocked.
 

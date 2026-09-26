@@ -428,6 +428,10 @@ def _build_morrowind_patch(data_dir: str, export_dir: str,
     from tes4_export.morrowind_patch import build_patch
 
     exports = morroblivion_exports(export_dir)
+    hold_heavy_lock(" ".join(["convert.py"] + sys.argv[1:]),
+                    {'plugins': ['Morrowind-Morroblivion-Compatibility.esp'],
+                     'steps': ['build_patch'], 'scope': {},
+                     'same': [data_dir, export_dir, output_dir]})
     print("Building the Morroblivion compatibility patch")
     print(f"  Source : {data_dir}")
     if exports:
@@ -1155,12 +1159,28 @@ def _phase_targets(scope, order, asset_only) -> list:
     return list(order)
 
 
+def _work(steps, order, run) -> dict:
+    """What this run will do, as the heavy-job queue compares it (`heavy_lock.covers`).
+
+    See: docs/commentary/performance.md#one-heavy-job-at-a-time
+    """
+    a = run.args
+    return {'plugins': list(order), 'steps': list(steps),
+            'scope': {'only': a.only, 'mesh_subdirs': a.mesh_subdirs},
+            'same': [run.output_dir, run.tes4_data, a.config, a.textures_only,
+                     a.parallax, a.skip_hair, a.collision_winding_fix,
+                     a.no_engine_branches, a.patch_plugins]}
+
+
 def _run_steps(steps, order, run) -> tuple:
-    """Run each step over its plugins: ({record key: {plugin: ok}}, all succeeded).
+    """Run each step over its plugins: ({record key: {plugin: ok}}, all succeeded),
+    once any other heavy job on the machine has finished.
 
     A filtered mesh run converts only some subfolders, so it never certifies
     the Meshes step as rebuilt at this version.
     """
+    hold_heavy_lock(" ".join(["convert.py"] + sys.argv[1:]),
+                    _work(steps, order, run))
     asset_only = {fn for fn in order if is_asset_only(fn, run.export_dir)}
     if asset_only:
         print(f"  Asset-only (no plugin): {', '.join(sorted(asset_only))}")
@@ -1257,8 +1277,7 @@ def _print_run_banner(tes4_data, tes5_data, output_dir) -> None:
 
 
 def main():
-    """Own the run log for a standalone CLI run, wait for any other heavy job
-    on the machine to finish, then run the pipeline.
+    """Own the run log for a standalone CLI run, then run the pipeline.
 
     Only a run's OWNER opens a log.  When the GUI launched us it has already
     opened one for the whole run (several convert.py invocations, one per step)
@@ -1278,8 +1297,6 @@ def main():
            else run_log.start_cli_run(SCRIPT_DIR / "logs", config, header))
     code = 1
     try:
-        if not _is_informational_argv():
-            hold_heavy_lock(header["Command"])
         code = _run_pipeline()
         return code
     except SystemExit as exc:
