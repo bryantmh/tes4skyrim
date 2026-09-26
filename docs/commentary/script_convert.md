@@ -1796,7 +1796,7 @@ New native equivalents found (always check before declaring one absent):
 | `ForceFlee` / `Flee` | `SetActorValue("Confidence", 0)` + `EvaluatePackage()` | Skyrim drives fleeing off Confidence — the engine's own mechanism. |
 | `GetAttacked` | `Actor.IsAlarmed() as Int` | |
 | `IsInAir` | `Actor.IsFlying() as Int` | |
-| `con_Save` | `Game.RequestSave()` | |
+| `con_Save` | dropped | See [console saves are dropped](#console-saves-are-dropped). |
 | `DispelSpell` | `Actor.DispelSpell(Spell)` | Actor-only — must NOT sit in `_OBJREF_SHARED_FUNCTIONS`. |
 | `$var` (OBSE) | `(var as String)` | `$` is not even a legal Papyrus character. |
 | `string_var` / `array_var` | `String` | Missing from `TYPE_MAP`, so the variable got **no declaration at all**. |
@@ -3465,8 +3465,20 @@ cleanly while being wrong.
   the quotes and `_safe_property_name` turned each into an underscore, declaring
   a second, never-bindable `Sound Property _X_` beside the real one — 75 dead
   properties across 23 files.
-- **`con_Save` / `Autosave` / `con_SaveGame`** take a save-slot NAME, which
-  Papyrus does not accept, so it is dropped and the engine picks the slot.
+- **`Autosave`** takes a save-slot NAME, which Papyrus does not accept, so it
+  is dropped and the engine picks the slot.
+- <a id="console-saves-are-dropped"></a>**`con_Save` / `con_SaveGame` /
+  `SaveGame` are dropped entirely (2026-09-25).** Across
+  every export there are 8 calls, in 2 scripts. Seven of those calls are in Nehrim's
+  `AutoSaveQuestScript`, a save manager: at startup it turns off Oblivion's own
+  save on wait/travel/rest and the `Autosave` command. It then saves every
+  2 minutes and on every cell change, rotating through seven named slots. The
+  eighth is Morroblivion's `fbmwBMWerewolfPC`, which saves once per night the
+  player turns into a werewolf. `Game.RequestSave()` writes a NEW save file
+  every call, so the conversion piled up a new save file every few minutes.
+  Skyrim's own autosaves (load doors, rest/wait/travel, the player's
+  settings) do the job these scripts did for Oblivion. The story checkpoints
+  all use `Autosave` (45 calls), which stays `Game.RequestAutoSave()`.
 
 ### FO3/FNV commands that reach the compiler unrouted
 <a id="fnv-unrouted-commands"></a>

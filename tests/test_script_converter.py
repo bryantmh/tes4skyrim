@@ -5280,3 +5280,22 @@ class TestFalloutCastAliases:
         line = conv_line(converter, 'player.CastImmediateOnSelf TestSpell',
                          'Quest')
         assert line == 'TestSpell.Cast(Game.GetPlayer(), Game.GetPlayer())'
+
+
+class TestConsoleSavesAreDropped:
+    """A save manager's console saves write nothing; `Autosave` still saves.
+
+    See docs/commentary/script_convert.md#console-saves-are-dropped.
+    """
+
+    @pytest.mark.parametrize('src', ['con_Save Autosave1', 'SaveGame foo',
+                                     'con_SaveGame bar'])
+    def test_console_save_is_a_note(self, converter, src):
+        """The line is a comment, with no RequestSave call."""
+        line = conv_line(converter, src, 'Quest')
+        assert line.lstrip().startswith(';')
+        assert 'RequestSave' not in line
+
+    def test_autosave_still_saves(self, converter):
+        """`Autosave` stays the engine's rotating autosave."""
+        assert conv_line(converter, 'Autosave', 'Quest') == 'Game.RequestAutoSave()'

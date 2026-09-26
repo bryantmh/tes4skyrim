@@ -293,9 +293,6 @@ COMMAND_ROWS = {
 
     #: See: docs/commentary/script_convert.md#advancepclevel-level-actor-value
     'advancepclevel': Cmd('Game.GetPlayer().ModActorValue("Level", 1)'),
-    #: Slot name dropped. See: docs/commentary/script_convert.md#argument-that-looks-ignorable
-    'con_save': Cmd('Game.RequestSave()'),
-    'con_savegame': Cmd('Game.RequestSave()'),
     'getdisposition': Cmd('50'),
     #: GetIsPlayableRace
     'getisplayablerace': Cmd('true', flags='zero_arg'),
@@ -309,7 +306,6 @@ COMMAND_ROWS = {
     'isplayerinprison': Cmd('Game.GetPlayer().IsArrested()'),
     'isthirdperson': Cmd('False'),
     'releaseweatheroverride': Cmd('Weather.ReleaseOverride()'),
-    'savegame': Cmd('Game.RequestSave()'),
     'senttojail': Cmd('Game.GetPlayer().IsArrested()'),
     'triggerhitshader': Cmd('Game.TriggerScreenBlood(3)'),
 
@@ -340,6 +336,10 @@ COMMAND_ROWS = {
     #: The CK wiki names IsAlarmed as GetAlarmed's own Papyrus version.
     'getalarmed': Cmd('{ref}.IsAlarmed()', ACTOR,
                       flags='actor_only zero_arg cmp_bool'),
+    #: Save managers' console saves. See: docs/commentary/script_convert.md#console-saves-are-dropped
+    'con_save': Cmd(note='{f}'),
+    'con_savegame': Cmd(note='{f}'),
+    'savegame': Cmd(note='{f}'),
     'getdisease': Cmd(note='{f} has no Papyrus equivalent (read as 0)',
                       flags='zero_arg'),
     'getfriendhit': Cmd(note='{f} has no Papyrus equivalent (read as 0)',
