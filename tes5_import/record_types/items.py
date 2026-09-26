@@ -610,6 +610,15 @@ _TREE_CNAM = struct.pack('<12f', 1.0, 1.0, 0.04, 0.03, 0.04, 0.034,
                          0.5, 0.5, 0.4, 1.0, 2.0, 1.0)
 
 
+def tree_nif_stem(rec: dict) -> str:
+    """Lowercase stem of the NIF the speedtree stage writes for a TREE: its EditorID, else its .spt name."""
+    edid = get_str(rec, 'EditorID')
+    if edid:
+        return edid.lower()
+    model = get_str(rec, 'Model.MODL').replace('\\', '/').lstrip('/')
+    return os.path.splitext(os.path.basename(model))[0].lower()
+
+
 def convert_TREE(rec: dict) -> bytes:
     r"""TREE — Tree.
 
@@ -631,17 +640,10 @@ def convert_TREE(rec: dict) -> bytes:
     else:
         bounds = _resolve_obnd(rec, 'TREE')
     subs += pack_obnd(*bounds)
-    model = get_str(rec, 'Model.MODL')
-    if model and edid:
+    if get_str(rec, 'Model.MODL'):
         subs += pack_string_subrecord(
             'MODL',
-            f'{current_namespace()}\\speedtrees\\{edid.lower()}.nif')
-    elif model:
-        import os
-        stem = os.path.splitext(os.path.basename(model.replace('\\', '/').lstrip('/')))[0]
-        subs += pack_string_subrecord(
-            'MODL',
-            f'{current_namespace()}\\speedtrees\\{stem.lower()}.nif')
+            f'{current_namespace()}\\speedtrees\\{tree_nif_stem(rec)}.nif')
     subs += pack_subrecord('PFPC', struct.pack('<I', 0))
     subs += pack_subrecord('CNAM', _TREE_CNAM)
     # Same size-derived LOD flags as STAT: trees flow through the standard

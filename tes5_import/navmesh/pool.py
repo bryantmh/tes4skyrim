@@ -24,12 +24,13 @@ from . import cache_audit as navm_verify, worker as navm_worker
 from .world import base_fid
 from ..overrides.nested import DELETED_FLAG
 from ..record_types.navm_falloutnv import precompute_fallout_navmeshes
+from ..record_types.items import tree_nif_stem
 from ..record_types.world_falloutnv import parent_use_flags
 from ..base.text_reader import (get_float, get_formid, get_formid_index_offset,
                            get_injected_formids, get_int, get_str)
 
 #: Base record types whose placed footprint carves holes in a navmesh.
-_BLOCKING_BASE_TYPES = frozenset({'STAT', 'CONT', 'FURN', 'ACTI', 'TREE'})
+_BLOCKING_BASE_TYPES = frozenset({'STAT', 'CONT', 'FURN', 'ACTI', 'TREE', 'FLOR'})
 
 #: Side of one exterior cell, in game units.
 _CELL_SIZE = 4096.0
@@ -82,19 +83,28 @@ def model_key(model: str) -> str:
 
     Lowercase, forward slashes, game-namespace prefix (always), '.nif' suffix --
     e.g. 'Furniture\\ChairNoble01.NIF' -> 'tes4/furniture/chairnoble01.nif'.
-    A TREE's '.spt' resolves to '<ns>/speedtrees/<name>.nif', the path the
-    speedtree stage writes.
-    See: docs/commentary/tes5_import_navmesh.md#speedtree-model-keys
     """
     p = model.lower().replace('\\', '/').lstrip('/')
     if p.startswith('textures/'):
         p = p[len('textures/'):]
-    ns = current_namespace() + '/'
-    if p.endswith('.spt'):
-        return '%sspeedtrees/%s.nif' % (ns, os.path.basename(p)[:-4])
     if not p.endswith('.nif'):
         p += '.nif'
-    return ns + p
+    return current_namespace() + '/' + p
+
+
+def base_model_key(rec: dict):
+    """A base record's collision-cache key, or None when it has no model.
+
+    A TREE resolves to the NIF the speedtree stage writes for THAT record
+    (`tree_nif_stem`), never to its shared `.spt`.
+    See: docs/commentary/tes5_import_navmesh.md#speedtree-model-keys
+    """
+    model = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
+    if not model:
+        return None
+    if rec.get('Signature') == 'TREE':
+        return '%s/speedtrees/%s.nif' % (current_namespace(), tree_nif_stem(rec))
+    return model_key(model)
 
 
 def _records_of(by_type: dict, master_export: dict, sigs) -> list:
@@ -143,9 +153,9 @@ def build_base_model_index(by_type: dict, master_export: dict = None) -> dict:
     """
     index = {}
     for fid, rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
-        model = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
-        if model:
-            index[fid] = model_key(model)
+        key = base_model_key(rec)
+        if key:
+            index[fid] = key
     return index
 
 
