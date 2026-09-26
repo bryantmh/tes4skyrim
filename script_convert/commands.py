@@ -475,18 +475,21 @@ def _needs_havok_release(ctx, call) -> bool:
 def set_pos(ctx, call) -> str:
     """SetPos / SetAngle -- one axis, written through the three-axis native.
 
-    Papyrus has no per-axis setter, so the other two axes are read back from
-    the reference.  TES4 separates arguments with whitespace, a comma or both,
-    so `SetPos Z, PlacePosZ` is as legal as `SetPos Z PlacePosZ` -- splitting
-    on whitespace alone left the axis as `Z,`, which failed the X/Y/Z test and
-    silently fell back to X, writing the Z coordinate into the X slot (27 sites
-    in 10 scripts, including Morroblivion's levitation and rotation fixes).
+    The other two axes are read back from the reference.  The axis may be
+    followed by a comma (`SetPos Z, PlacePosZ`).  Inside a poll body the step
+    is a `GlideAxis` glide instead, since the native fades the 3D back in.
+
+    See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
     """
     axis = call.source(0, 'X').strip().strip(',').upper()
     if axis not in ('X', 'Y', 'Z'):
         axis = 'X'
     value = call.arg(1, '0')
     ref = ctx._resolve_objref_ref(call.ref, call.extends)
+    if ctx.sc.glide_secs:
+        slot = 'XYZ'.index(axis) + (3 if call.name == 'setangle' else 0)
+        return (f'TES4Polyfill.GlideAxis({ref}, {slot}, {value}, '
+                f'TES4_GlideRefs, TES4_GlideGoals, {ctx.sc.glide_secs})')
     verb = 'Position' if call.name == 'setpos' else 'Angle'
     coords = [value if a == axis else f'{ref}.Get{verb}{a}()'
               for a in ('X', 'Y', 'Z')]

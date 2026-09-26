@@ -328,14 +328,8 @@ def _effective_psys_texture(flip_ctrl, diffuse_path, fix_textures):
     See: docs/commentary/asset_convert_nif.md#psys-shader-values
     """
     if flip_ctrl is not None:
-        for src_tex in flip_ctrl.sources:
-            if src_tex is not None and src_tex.file_name:
-                pth = src_tex.file_name
-                pth = (rewrite_tex_path(pth) if fix_textures
-                       else pth.decode('utf-8', errors='replace'))
-                src_tex.file_name = pth.encode('utf-8')
         srcs = [s for s in flip_ctrl.sources if s is not None and s.file_name]
-        return srcs[0].file_name if srcs else b''
+        diffuse_path = srcs[0].file_name if srcs else b''
     if not diffuse_path:
         return b''
     ep = (rewrite_tex_path(diffuse_path) if fix_textures

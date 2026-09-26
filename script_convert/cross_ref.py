@@ -12,6 +12,7 @@ from script_convert.constants import (
 from script_convert.command_rows import (
     ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
 )
+from tes5_import.base.mesh_bounds import get_mesh_physics_flags
 from tes5_import.base.text_reader import parse_export_file
 from asset_convert.game_paths import current_namespace
 from core.worker_budget import worker_count
@@ -293,6 +294,14 @@ def _scan_range(args: tuple) -> dict:
         finally:
             mm.close()
     return out
+
+
+def _model_is_held(model: str) -> bool:
+    """Does the converted NIF of this AUTHORED model path hold a keyframed body (physics bit 1)?"""
+    if not model:
+        return False
+    key = model.replace('\\\\', '/').replace('\\', '/').lower().lstrip('/')
+    return bool(get_mesh_physics_flags(current_namespace() + '/' + key) & 2)
 
 
 class CrossRefGraph:
@@ -733,19 +742,11 @@ class CrossRefGraph:
         Resolves through a placed reference to its base record, like
         get_base_signature, so `CTrapLogs01Ref.playgroup` works.
         """
-        from tes5_import.base.mesh_bounds import get_mesh_physics_flags
-
         fid = self.edid_to_formid.get(name.lower(), '')
         if not fid:
             return False
-        model = self.record_model.get(self.record_base.get(fid, '') or fid, '')
-        if not model:
-            return False
-        key = model.replace('\\\\', '/').replace('\\', '/').lower().lstrip('/')
-        ns = current_namespace() + '/'
-        if not key.startswith(ns):
-            key = ns + key
-        return bool(get_mesh_physics_flags(key) & 2)
+        return _model_is_held(
+            self.record_model.get(self.record_base.get(fid, '') or fid, ''))
 
     def script_owner_needs_havok_release(self, script_edid: str) -> bool:
         """needs_havok_release for a BARE (self) `playgroup`.
@@ -755,8 +756,6 @@ class CrossRefGraph:
         shared between a held trap and something else still has to release the
         trap, and the release is inert on anything that is not held.
         """
-        from tes5_import.base.mesh_bounds import get_mesh_physics_flags
-
         want = (script_edid or '').lower()
         if not want:
             return False
@@ -767,19 +766,9 @@ class CrossRefGraph:
                 break
         if not script_fid:
             return False
-        for rec_fid, scri in self.record_scri.items():
-            if scri != script_fid:
-                continue
-            model = self.record_model.get(rec_fid, '')
-            if not model:
-                continue
-            key = model.replace('\\\\', '/').replace('\\', '/').lower().lstrip('/')
-            ns = current_namespace() + '/'
-            if not key.startswith(ns):
-                key = ns + key
-            if get_mesh_physics_flags(key) & 2:
-                return True
-        return False
+        return any(_model_is_held(self.record_model.get(rec_fid, ''))
+                   for rec_fid, scri in self.record_scri.items()
+                   if scri == script_fid)
 
     def get_record_script_type(self, name: str) -> str:
         """Get the Papyrus script class name for any record with an attached script.

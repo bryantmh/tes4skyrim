@@ -238,18 +238,7 @@ def _load_facts(conv, tree) -> None:
     btypes = {b.btype.lower() for b in tree.blocks} if tree else set()
 
     sc.suppressed_fall_damage = 'resetfalldamagetimer' in called
-    sc.uses_getsecondspassed = 'getsecondspassed' in called
-    sc.gsp_realtime = bool(
-        (called & {'getsecondspassed', 'scripteffectelapsedseconds'})
-        and (btypes & {'gamemode', 'scripteffectupdate'}))
-    if sc.gsp_realtime:
-        # The synthesised elapsed-time variable must be TYPED for the
-        # Float->Int coercion: TES4 `short` timers decremented by
-        # getSecondsPassed (`damage = -50 * TES4_SecondsPassed`) need the
-        # `as Int` cast the old float literal got via its own path.
-        sc.var_types['tes4_secondspassed'] = 'Float'
-        sc.var_types['tes4_lasttick'] = 'Float'
-
+    _load_time_facts(sc, tree, called, btypes)
     sc.uses_timer = 'timer' in names
     sc.uses_say = bool(called & {'say', 'sayto'})
     sc.uses_say_timer = any(
@@ -275,6 +264,26 @@ def _load_facts(conv, tree) -> None:
     sc.has_menumode = any(b.btype.lower() == 'menumode' for b in blocks)
     sc.has_scripteffectupdate = any(
         b.btype.lower() == 'scripteffectupdate' for b in blocks)
+
+
+def _load_time_facts(sc, tree, called: set, btypes: set) -> None:
+    """Does the poll measure real elapsed time, and does it move references?
+
+    A poll that moves glides each step over the MEASURED gap between passes,
+    so it measures one too.  The elapsed variable is typed so a TES4 `short`
+    timer decremented by it gets its `as Int` cast.
+    """
+    sc.uses_getsecondspassed = 'getsecondspassed' in called
+    sc.moves_in_poll = any(
+        e.called in ('setpos', 'setangle')
+        for b in (tree.blocks if tree else ()) if b.btype.lower() in POLL_BLOCKS
+        for e in N.walk_exprs_in(b.body))
+    sc.gsp_realtime = sc.moves_in_poll or bool(
+        (called & {'getsecondspassed', 'scripteffectelapsedseconds'})
+        and (btypes & {'gamemode', 'scripteffectupdate'}))
+    if sc.gsp_realtime:
+        sc.var_types['tes4_secondspassed'] = 'Float'
+        sc.var_types['tes4_lasttick'] = 'Float'
 
 
 def _reads_sleep_state(body) -> bool:
@@ -650,6 +659,7 @@ def poll(conv, tree, extends: str) -> list:
 
     out += _dialogue_gate(conv, extends, load_gated)
     out += _elapsed_prologue(conv, interval)
+    out += _glide_prologue(sc)
 
     for block in (tree.blocks if tree else ()):
         btype = block.btype.lower()
@@ -666,6 +676,7 @@ def poll(conv, tree, extends: str) -> list:
         out.append(f'  {var} = {quest}.GetStage()')
 
     sc.poll_return_prefix = ''
+    sc.glide_secs = ''
     out += _arm(conv, interval, load_gated)
     out += ['EndEvent', '']
     return out
@@ -696,6 +707,21 @@ def _dialogue_gate(conv, extends: str, load_gated: bool) -> list:
              '; TES4 GameMode did not run while a menu was open']
             + _arm(conv, '0.5', load_gated, indent='    ')
             + ['    Return', '  EndIf'])
+
+
+def _glide_prologue(sc) -> list:
+    """This pass's SetPos/SetAngle glide goals, and `sc.glide_secs` armed so the body emits glides.
+
+    A glide lasts the measured gap since the last pass, so it ends as the next
+    one starts however late the VM delivers it.
+
+    See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
+    """
+    if not sc.moves_in_poll:
+        return []
+    sc.glide_secs = 'TES4_SecondsPassed'
+    return ['  ObjectReference[] TES4_GlideRefs = new ObjectReference[8]',
+            '  Float[] TES4_GlideGoals = new Float[96]']
 
 
 def _elapsed_prologue(conv, interval: str) -> list:

@@ -26,7 +26,7 @@ from ..base.writer import (
 
 
 def prefix_path(path: str) -> str:
-    """Prefix an asset path with the ACTIVE game namespace.
+    """Prefix an AUTHORED asset path with the ACTIVE game namespace, always.
 
     Strips a leading 'textures\\' since Skyrim auto-prefixes it. MUST agree
     with asset_convert's rewrite_tex_path: if the record side and the asset
@@ -35,14 +35,10 @@ def prefix_path(path: str) -> str:
     """
     if not path:
         return path
-    ns = current_namespace()
     p = path
     if p.lower().startswith('textures\\') or p.lower().startswith('textures/'):
         p = p[9:]
-    low = p.lower()
-    if not low.startswith(ns + '\\') and not low.startswith(ns + '/'):
-        return ns + '\\' + p
-    return p
+    return current_namespace() + '\\' + p
 
 
 def landscape_texture_path(icon_path: str) -> str:

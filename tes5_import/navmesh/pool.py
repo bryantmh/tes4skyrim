@@ -78,9 +78,9 @@ def ensure_cell_grid(cell: dict) -> None:
 
 
 def model_key(model: str) -> str:
-    """Normalize a TES4 model path to the mesh_bounds cache key.
+    """Normalize an AUTHORED TES4 model path to the mesh_bounds cache key.
 
-    Lowercase, forward slashes, game-namespace prefix, '.nif' suffix --
+    Lowercase, forward slashes, game-namespace prefix (always), '.nif' suffix --
     e.g. 'Furniture\\ChairNoble01.NIF' -> 'tes4/furniture/chairnoble01.nif'.
     A TREE's '.spt' resolves to '<ns>/speedtrees/<name>.nif', the path the
     speedtree stage writes.
@@ -92,11 +92,9 @@ def model_key(model: str) -> str:
     ns = current_namespace() + '/'
     if p.endswith('.spt'):
         return '%sspeedtrees/%s.nif' % (ns, os.path.basename(p)[:-4])
-    if not p.startswith(ns):
-        p = ns + p
     if not p.endswith('.nif'):
         p += '.nif'
-    return p
+    return ns + p
 
 
 def _records_of(by_type: dict, master_export: dict, sigs) -> list:

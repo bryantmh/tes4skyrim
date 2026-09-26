@@ -90,7 +90,7 @@ The `-ExtractAssets` flag triggers BSA extraction and mesh conversion:
 2. **Mesh Conversion** — Uses PyFFI-based NIFConverter (from external/NIFConverter/) to convert Oblivion NIF 20.0.0.4/5 → Skyrim NIF 20.2.0.7
 3. **Texture Copy** — DXT textures from Oblivion are compatible with Skyrim; copied as-is under `tes4\` namespace
    - **Path rewriting (`rewrite_tex_path`) must normalize separators FIRST** (fixed 2026-07-27). Oblivion NIFs mix `/` and `\`, sometimes in one file. Testing only for a backslash `'textures\'` prefix let `textures/lowres/foo.dds` fall through and come out as `Textures\tes4\textures/lowres/foo.dds` — a path resolving to nothing, so the mesh renders untextured and the LOD tiles built from it reference 100 nonexistent textures. 96 Morrowind_ob source NIFs hit this; **zero Oblivion.esm ones**, which is why it stayed hidden.
-   - `textures\lowres\` is an Oblivion **_far.nif authoring convention** for low-res LOD copies (pyffi ships a `modify_texturepathlowres` spell writing exactly this prefix, documented "used mainly for making _far.nifs"). The segment is **kept** when its source file exists and falls back to the full-res twin otherwise — see [lowres textures](asset_convert_shader.md#lowres-textures). The rewrite is idempotent on already-correct `Textures\tes4\…` paths.
+   - `textures\lowres\` is an Oblivion **_far.nif authoring convention** for low-res LOD copies (pyffi ships a `modify_texturepathlowres` spell writing exactly this prefix, documented "used mainly for making _far.nifs"). The segment is **kept** when its source file exists and falls back to the full-res twin otherwise — see [lowres textures](asset_convert_shader.md#lowres-textures). The rewrite always prefixes, even a path whose first folder already spells the namespace: Nehrim authors a `Nehrim\` folder, and the asset copy writes it under `nehrim\nehrim\` (see [per-game asset namespace](asset_convert_texture.md#per-game-asset-namespace)).
 4. **BSA Repacking** — Not yet automated. Use BSArch.exe or Skyrim CK Archive tool.
 
 ### Prerequisites for mesh conversion
@@ -102,6 +102,24 @@ The `-ExtractAssets` flag triggers BSA extraction and mesh conversion:
 - `Oblivion - Meshes.bsa`, `Oblivion - Textures - Compressed.bsa`
 - `DLCShiveringIsles - Meshes.bsa`, `DLCShiveringIsles - Textures.bsa`
 - `Knights.bsa` (single BSA for smaller DLCs)
+
+### <a id="skip-paths-fixtures"></a>Skipped folders still convert what a placed record names
+
+**Code:** `SKIP_PATHS` and `_collect_nifs` in `asset_convert/nif/nif_batch.py`
+
+The batch skips every mesh under `menus`, `creatures` or `characters`: creatures
+and characters have their own stages, which convert only what CREA, NPC_, RACE
+and HAIR use and write it under `actors\` or the hair folder. A static or
+activator can name one of those meshes as its OWN model, and then nothing wrote
+the path its record points at, so it was invisible. Measured on the exports:
+Nehrim 15 ACTI + 23 STAT, Oblivion 6 ACTI + 23 STAT -- the Endgame effect meshes
+(`Creatures\Endgame\Spawn.NIF`, `Transformation.NIF`, `Destruction.NIF` ...) that
+Nehrim's MQ14/MQ34 explosions reuse, `LucienLachanceDead.NIF`, hanging chickens,
+`Characters\RaceTextures*.NIF`.
+
+A skipped-folder mesh now converts when a placed-fixture record
+(`fixture_plan.FIXTURE_TYPES`: STAT, ACTI, LIGH, CONT, DOOR) names it, into the
+normal `meshes\<ns>\creatures\...` path the record already carries.
 
 ## DOOR conversion notes
 <a id="door-conversion-notes"></a>

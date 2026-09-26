@@ -235,6 +235,86 @@ Function SetAngle(ObjectReference akRef, String axis, Float afValue) Global
   akRef.SetAngle(x, y, z)
 EndFunction
 
+; A SetPos/SetAngle inside a converted GameMode poll.  TES4 moved objects by
+; calling them every frame; Skyrim's SetPosition/SetAngle reload the 3D, which
+; fades back in, so called every poll the object never finishes fading.  Each
+; step is a TranslateTo glide arriving as the next poll starts instead -- the
+; MorrowindRuntime GlideTo, confirmed smooth in game.
+; akRefs/afGoals are this pass's poses, twelve floats per slot: the goal
+; (position X Y Z, angle X Y Z) then where the reference stood when the pass
+; first touched it.  A second axis set in the same pass chains from the first
+; rather than reading back a glide that has only just started, and no pose is
+; read from the engine twice.
+; aiAxis: 0-2 position, 3-5 angle.  afSeconds is the measured gap since the
+; last pass, so the glide ends as the next one begins even when the VM is late;
+; a near-zero gap (two passes armed at once) floors at half the fastest poll.
+; See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
+Function GlideAxis(ObjectReference akRef, Int aiAxis, Float afValue, ObjectReference[] akRefs, Float[] afGoals, Float afSeconds) Global
+  If akRef == None
+    Return
+  EndIf
+  Int slot = akRefs.Find(akRef)
+  If slot < 0
+    slot = akRefs.Find(None)
+    If slot < 0
+      slot = akRefs.Length - 1
+    EndIf
+    akRefs[slot] = akRef
+    Int i = slot * 12
+    afGoals[i] = akRef.GetPositionX()
+    afGoals[i + 1] = akRef.GetPositionY()
+    afGoals[i + 2] = akRef.GetPositionZ()
+    afGoals[i + 3] = akRef.GetAngleX()
+    afGoals[i + 4] = akRef.GetAngleY()
+    afGoals[i + 5] = akRef.GetAngleZ()
+    While i < slot * 12 + 6
+      afGoals[i + 6] = afGoals[i]
+      i += 1
+    EndWhile
+  EndIf
+  Int b = slot * 12
+  afGoals[b + aiAxis] = afValue
+  Float x = afGoals[b]
+  Float y = afGoals[b + 1]
+  Float z = afGoals[b + 2]
+  If !akRef.Is3DLoaded()
+    akRef.SetPosition(x, y, z)
+    akRef.SetAngle(afGoals[b + 3], afGoals[b + 4], afGoals[b + 5])
+    Return
+  EndIf
+  If afSeconds < 0.05
+    afSeconds = 0.05
+  EndIf
+  Float dx = x - afGoals[b + 6]
+  Float dy = y - afGoals[b + 7]
+  Float dz = z - afGoals[b + 8]
+  Float distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+  ; A rotation ends when the position arrives, so a pure rotation glides over
+  ; a 0.01-unit Z nudge, alternating up and down so it never drifts.
+  If distance < 0.005
+    If Math.Floor(z * 100.0 + 0.5) % 2 == 0
+      z += 0.01
+    Else
+      z -= 0.01
+    EndIf
+    distance = 0.01
+  EndIf
+  akRef.TranslateTo(x, y, z, NearAngle(afGoals[b + 9], afGoals[b + 3]), NearAngle(afGoals[b + 10], afGoals[b + 4]), NearAngle(afGoals[b + 11], afGoals[b + 5]), distance / afSeconds, 0.0)
+EndFunction
+
+; afTo moved by whole turns to lie within 180 degrees of afFrom, so a glide
+; takes the short way round.
+Float Function NearAngle(Float afFrom, Float afTo) Global
+  Float d = afTo - afFrom
+  While d > 180.0
+    d -= 360.0
+  EndWhile
+  While d < -180.0
+    d += 360.0
+  EndWhile
+  Return afFrom + d
+EndFunction
+
 ; ==========================================================================
 ; Combat
 ; ==========================================================================

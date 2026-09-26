@@ -49,6 +49,8 @@ class ScriptContext:
     uses_say_timer: bool = False
     #: An event without an action ref read the last activator; OnActivate records it.
     uses_last_activator: bool = False
+    #: A poll block calls SetPos/SetAngle: TES4 per-frame motion.
+    moves_in_poll: bool = False
     #: Authored quest-script delay in seconds (FO3/FNV DATA.Delay); 0 = none.
     quest_delay: float = 0.0
 
@@ -58,6 +60,8 @@ class ScriptContext:
     stage_latches: dict = field(default_factory=dict)
     #: The arm a TES4 `return` must emit before `Return` inside a poll body.
     poll_return_prefix: str = ''
+    #: Glide duration expression while a moving poll body is emitted; SetPos/SetAngle there glide over it.
+    glide_secs: str = ''
     #: GetInCell family helpers this script needs.
     cell_families: dict = field(default_factory=dict)
     #: SCRO alias map, scoped to ONE fragment.

@@ -771,6 +771,17 @@ namespace into MODL paths; if the asset copy and the record writer disagree,
 every converted record points at a path no BSA provides. That is total purple,
 far worse than the handful of missing textures this fixes.
 
+🛑 **Every path is prefixed exactly once, with no "already prefixed" test.**
+`prefix_path`, `rewrite_tex_path`, navmesh `model_key` and `cross_ref`'s mesh key
+take AUTHORED paths only. They used to skip a path that already started with the
+namespace, a harmless test while the namespace was a fixed `tes4` no mod
+authors. Now that it is the root plugin's name, Nehrim's own `Nehrim\` folder
+matched it: 398 of Nehrim's 10,055 distinct model paths start with `Nehrim\`,
+and those records named `meshes\Nehrim\x.nif` while the copy wrote
+`meshes\nehrim\nehrim\x.nif`, so the meshes did not draw (the intro gear
+`ZahnradGrobLoch01.nif`) and their OBND fell back to the type default. Textures
+authored under `Textures\Nehrim\` (578 files) broke the same way.
+
 ### A master is resolved by `record_dir`, never by joining its name
 <a id="master-resolved-by-record-dir"></a>
 

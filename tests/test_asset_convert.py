@@ -40,9 +40,10 @@ class TestTexturePathRewriting:
         result = rewrite_tex_path(b'textures\\armor\\iron\\cuirass.dds')
         assert result == 'Textures\\tes4\\armor\\iron\\cuirass.dds'
 
-    def test_already_prefixed_unchanged(self):
+    def test_folder_named_like_namespace_is_prefixed(self):
+        """Nehrim authors a `Nehrim\\` folder; the asset copy always prefixes it."""
         result = rewrite_tex_path(b'textures\\tes4\\armor\\iron\\cuirass.dds')
-        assert result == 'Textures\\tes4\\armor\\iron\\cuirass.dds'
+        assert result == 'Textures\\tes4\\tes4\\armor\\iron\\cuirass.dds'
 
     def test_empty_path_gets_prefix(self):
         assert rewrite_tex_path(b'') == 'Textures\\tes4\\'
