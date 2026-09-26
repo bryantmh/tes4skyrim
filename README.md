@@ -94,7 +94,7 @@ python convert.py --build-morrowind-patch "C:\path\to\Morrowind\Data Files"
 
 A decent PC. More cores make it faster, but each core also uses more RAM. Tested on a 7950X3D with 32 GB of RAM (converting Oblivion.esm peaks at about 16 GB).
 
-**The easy way: the portable package.** Download `TESAutoConvert-<version>-win64.zip`, unzip it anywhere you can write to (not `Program Files`), and double-click `TES Auto-Convert.cmd`. It carries its own Python with every package installed, so steps 1 and 2 below are already done. You still need steps 3 and 4.
+**The easy way: the portable package.** Download `TESAutoConvert-<version>-win64.zip` from the latest [release](https://github.com/bryantmh/tes4skyrim/releases), unzip it anywhere you can write to (not `Program Files`), and double-click `TES Auto-Convert.cmd`. It carries its own Python with every package installed, so steps 1 and 2 below are already done. You still need steps 3 and 4.
 
 Running from a source checkout instead, you need four things:
 

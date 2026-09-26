@@ -8,6 +8,7 @@
 - [The ABI decides the Python version](#abi)
 - [Why the embeddable distribution is not used](#why-not-embeddable)
 - [The version stamp](#version-stamp)
+- [Built on every release](#release-job)
 
 The package lets a user run the converter without installing Python, running
 pip, or typing commands: unzip, double-click `TES Auto-Convert.cmd`.
@@ -79,3 +80,29 @@ When HEAD is not on a tag, the build falls back to `current_version()`,
 stamps its describe form, and prints a note: the package then reports
 `0.0-dev`, exactly like GitHub's zip of an untagged commit. Release packages
 must be built from a tagged commit.
+
+## <a id="release-job"></a>Built on every release
+
+**Code:** `.github/workflows/portable-package.yml`, `.github/workflows/tag-on-push.yml`
+
+`tag-on-push.yml` tags every push to master and creates its GitHub Release; its
+last job then calls `portable-package.yml` with the new tag. That workflow
+checks out the tag on `windows-latest` with full history (so
+`git describe --exact-match` finds it), sets up Python 3.14 to match
+`native/dist`'s ABI, runs this builder, and uploads
+`TESAutoConvert-<tag>-win64.zip` to the release with `gh release upload
+--clobber`.
+
+- **A reusable workflow, not `on: release`.** A release created with the
+  workflow's own `GITHUB_TOKEN` does not start other workflows, so the release
+  job must call the package job itself.
+- **A separate job.** A failed build never undoes the tag or the release, which
+  are all the app's upgrade check needs. The release body is untouched; the
+  package is an asset beside it.
+- **The upload doubles as a check.** The builder names the zip after the
+  version it stamped, so if HEAD were not exactly on the tag the file name
+  would differ and the upload would fail instead of shipping a package that
+  reports `0.0-dev`.
+- **Manual runs** (Actions > Portable package > Run workflow, with a tag) build
+  a package for an existing release or retry a failed one. GitHub offers that
+  button only for workflows on the default branch.
