@@ -120,9 +120,9 @@ These protect things that are hard or impossible to get back.
 - **A user report is about their build, not yours.** Diagnose from the log they
   gave plus the source (`tes_runtime/`, `tes5_import/`, `external/`) — "absent
   from my `export/`/`output/`" says nothing about their bug.
-- **On a hang, ask early for the game to be left running** with the bug onscreen
-  so you can [attach](#attach-to-the-live-game). It's nearly free for the user and
-  pins the exact faulting state.
+- **Never ask the user to leave the game running, reproduce a bug, or replay
+  something.** Their game time is the [last resort](#attach-to-the-live-game). If
+  they offer the game with the bug already onscreen, use it right away.
 - **Report honestly.** Say what is untested or skipped and why. Never describe an
   unverified change as working.
 - **Reply in plain, ordinary words** — "I keep my own list", not "the queue is
@@ -199,48 +199,70 @@ reading `script_convert/` diffs and running `--scripts-only`.
 
 ## <a id="verifying-your-work"></a>Verifying your work
 
-Check theories against several of these before acting:
+Work down this list and confirm every finding against a second source. The order
+comes from what actually solved 46 recent bugs
+([diagnosis_sources.md](docs/audits/diagnosis_sources.md)).
 
-1. **Unpacked Skyrim exes** in
-   `C:\Program Files (x86)\Steam\steamapps\content\app_489830\depot_489833`:
-   `SkyrimSE.<version>.unpacked.exe` (1.5.97, 1.6.659, 1.6.1170, 1.7.104) and
-   `SkyrimVR.exe.unpacked.exe` (1.4.15). All disassemble statically (a retail
-   Steam copy is encrypted); crash logs map across via the Address Library.
-   Disassembly is a first resort, not a last one. **Start with 1.6.1170 — the
-   build the user plays**; use the others to confirm. See
-   [address_library_formats.md](docs/reference/address_library_formats.md#two-id-generations).
-2. <a id="ck-is-a-source"></a>**`CreationKit.exe` (Steam)** — not DRM-packed, and
-   the best source for why a record is rejected. Asserts carry file+line; it keeps
-   1,114 Bethesda source paths, 17k diagnostic strings, and 433 record editor
-   dialogs the game strips. Tools: `tools/disasm/ck_srcpaths.py`, `ck_strref.py`,
-   `skyrim_disasm.py --exe <ck>`. Runtime behavior still comes from item 1 — the
-   CK can disagree with the game
-   ([ck_vs_game_missing_objects.md](docs/commentary/ck_vs_game_missing_objects.md)).
-   Details: [ck_exe_disassembly.md](docs/commentary/ck_exe_disassembly.md).
-3. The Oblivion/Nehrim install at `D:\Other Games\Nehrim At Fate's Edge\Data`.
-4. xEdit source at `references/xEdit` — `Core/` documents every record type's
-   binary structure; first stop for any format question. For meshes, the NifSkope
-   source at `references/Nifskope`.
-5. The Skyrim.esm dump at `references/Skyrim.esm`, the real Skyrim.esm, and
-   `references/Skyrim Meshes`. **Verify binary layout against both the xEdit
-   definition and a real Skyrim.esm dump.**
-6. UESP / CK wiki via `python tools/misc/uesp_lookup.py` — never WebSearch or
-   WebFetch them (they 403). An empty result means fix the query.
-7. A web search for other authoritative sources.
-8. Papyrus logs from the last in-game run, to diagnose a runtime symptom.
-9. <a id="attach-to-the-live-game"></a>**The live game process.** For a hang with
-   no crash log, this beats everything above: the live Steam process disassembles
-   (decrypted in memory) with RVAs matching the running build. Recipe:
-   `project_refr_angle_normalize_hang`.
-10. Failing all the above, add logging for the user's next run. Each round trip
-    costs them a full build-and-play cycle, so do it rarely and thoroughly.
+1. **The authored data against ours.** Read the source record, script or mesh in
+   `export/`, what we wrote in `output/`, and the code between them. Put a
+   working case beside the broken one and diff them: another creature, mesh or
+   record of the same kind that works, or vanilla's version of the feature. This
+   solved more bugs than any other source.
+2. **The user's logs and words.** Papyrus, crash and runtime logs from their run,
+   and what they saw; their observations cracked as many bugs as disassembly.
+   For "this used to work", [read the commits](#regression-read-the-commits).
+3. **Code that has already done the work.**
+   - `references/skse64-master`: engine class layouts and addresses.
+   - `references/openmw`: how Morrowind behaves.
+   - `references/xOBSE-master`: what an Oblivion or OBSE function really does.
+   - `references/xEdit`: `Core/` has every record type's binary layout, so it's
+     the first stop for a layout lookup.
+   - For meshes: `references/nif*.xml` and the NifSkope source.
+   - For behavior graphs: Haviour, Pandora and `skyrim-behavior-modding-guide.txt`.
+4. **Disassembly, for why an engine does something.** A theory from disassembly
+   is still a theory; confirm it against data before building on it.
+   - **Unpacked Skyrim exes** in
+     `C:\Program Files (x86)\Steam\steamapps\content\app_489830\depot_489833`:
+     `SkyrimSE.<version>.unpacked.exe` (1.5.97, 1.6.659, 1.6.1170, 1.7.104) and
+     `SkyrimVR.exe.unpacked.exe` (1.4.15). All disassemble statically (a retail
+     Steam copy is encrypted); crash logs map across via the Address Library.
+     **Start with 1.6.1170, the build the user plays**; use the others to
+     confirm. See
+     [address_library_formats.md](docs/reference/address_library_formats.md#two-id-generations).
+   - **`Oblivion.exe`** in the Nehrim install, for how the source game really
+     behaved.
+   - <a id="ck-is-a-source"></a>**`CreationKit.exe` (Steam)**: not DRM-packed, and
+     the best source for why a record is rejected. Asserts carry file+line; it
+     keeps 1,114 Bethesda source paths, 17k diagnostic strings, and 433 record
+     editor dialogs the game strips. Tools: `tools/disasm/ck_srcpaths.py`,
+     `ck_strref.py`, `skyrim_disasm.py --exe <ck>`. Runtime behavior still comes
+     from the game exe; the CK can disagree with the game
+     ([ck_vs_game_missing_objects.md](docs/commentary/ck_vs_game_missing_objects.md)).
+     Details: [ck_exe_disassembly.md](docs/commentary/ck_exe_disassembly.md).
+5. **A vanilla census** of the Skyrim.esm dump at `references/Skyrim.esm`, the
+   real Skyrim.esm, and `references/Skyrim Meshes`. It picks the value or pattern
+   to write; it shows what, not why. **Verify binary layout against both the
+   xEdit definition and a real Skyrim.esm dump.**
+6. The Oblivion/Nehrim install at `D:\Other Games\Nehrim At Fate's Edge\Data`.
+7. **Wikis, then the web.** The offline CK wiki (`references/SkyrimCKWiki_210522`)
+   and CS wiki (`references/cs_wiki`), then UESP via
+   `python tools/misc/uesp_lookup.py`. Never WebSearch or WebFetch UESP or the CK
+   wiki (they 403); an empty result means fix the query. Wikis describe; they are
+   sometimes wrong. Last, a web search for other authoritative sources.
+8. **Project docs and memory are leads, not evidence.** In the census they were
+   wrong about twice as often as they helped. Check a claim against code or data
+   before repeating it, and fix the doc when it's wrong.
+9. <a id="attach-to-the-live-game"></a>**Last resort, only in extreme need: the
+   live game or added logging.** Both spend the user's own time. Use the live
+   game only when the user offers it with the bug already onscreen. The live
+   Steam process disassembles (decrypted in memory) with RVAs matching the
+   running build; recipe: `project_refr_angle_normalize_hang`. Added logging
+   costs the user a full build-and-play cycle, so do it rarely and thoroughly.
 
 - Never blame a bug on LE-vs-SSE mesh format differences — verify engine theories
   externally first.
 - **A clean audit is not an alibi.** If every check passes and the symptom is
   real, suspect a value the engine chokes on, not a structure it rejects.
-- Docs can be wrong — some describe fixes that were never implemented. Grep the
-  source before claiming a mechanism exists, and fix the doc.
 
 ## Testing and building
 

@@ -8,6 +8,7 @@
 
 #include "addresses.h"
 #include "engine.h"
+#include "engine_ids.h"
 #include "hook.h"
 #include "ids.h"
 #include "json.h"

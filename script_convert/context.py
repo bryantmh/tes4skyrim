@@ -51,6 +51,8 @@ class ScriptContext:
     uses_last_activator: bool = False
     #: A poll block calls SetPos/SetAngle: TES4 per-frame motion.
     moves_in_poll: bool = False
+    #: Poll SetPos/SetAngle calls stepping from their own axis read -> (axis, step, sign) (poll_motion.relative_sets).
+    relative_sets: dict = field(default_factory=dict)
     #: Authored quest-script delay in seconds (FO3/FNV DATA.Delay); 0 = none.
     quest_delay: float = 0.0
 

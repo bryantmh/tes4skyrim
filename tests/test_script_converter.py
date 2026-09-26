@@ -5322,3 +5322,51 @@ class TestConsoleSavesAreDropped:
     def test_autosave_still_saves(self, converter):
         """`Autosave` stays the engine's rotating autosave."""
         assert conv_line(converter, 'Autosave', 'Quest') == 'Game.RequestAutoSave()'
+
+
+class TestGameModeStepsAreRates:
+    """A GameMode SetPos/SetAngle stepping from the object's own read is a rate for TESRuntime.
+
+    See docs/commentary/script_convert.md#gamemode-steps-are-rates.
+    """
+
+    WHEEL = ('scn W\nshort a\nshort b\nbegin GameMode\nset a to GetAngle Z\n'
+             'set b to a - 2\nSetAngle Z b\nend\n')
+
+    def test_per_frame_step_spins_at_thirty_frames(self, converter):
+        """Two degrees a frame is -(2) * 30.0 degrees a second."""
+        out = converter.convert_standalone('W', self.WHEEL, 'ObjectReference', 'W')
+        assert 'TES4Polyfill.SpinAxis(Self, 5, b, -(2) * 30.0,' in out
+
+    def test_base_read_once_is_not_a_step(self, converter):
+        """A base read behind a DoOnce is not this pass's pose: the lift stays a glide."""
+        src = ('scn L\nfloat base\nfloat t\nfloat p\nshort once\nbegin GameMode\n'
+               'if once == 0\n  set base to GetPos Z\n  set once to 1\nendif\n'
+               'set t to t + GetSecondsPassed\nset p to base + t * 62\n'
+               'SetPos Z p\nend\n')
+        out = converter.convert_standalone('L', src, 'ObjectReference', 'L')
+        assert 'TES4Polyfill.GlideAxis(Self, 2, p,' in out
+        assert 'SpinAxis' not in out
+
+    def test_seconds_passed_step_is_per_pass(self, converter):
+        """A step scaled by GetSecondsPassed is divided back into a rate."""
+        src = ('scn G\nbegin GameMode\n'
+               'SetAngle Z (GetAngle Z + 40 * GetSecondsPassed)\nend\n')
+        out = converter.convert_standalone('G', src, 'ObjectReference', 'G')
+        assert '/ TES4_SecondsPassed, TES4_GlideRefs' in out
+
+    def test_rotate_in_gamemode_spins_at_its_rate(self, converter):
+        """TES4 `Rotate z 10` is ten degrees a SECOND, handed over as that rate."""
+        src = 'scn R\nbegin GameMode\nRotate z, -20\nend\n'
+        out = converter.convert_standalone('R', src, 'ObjectReference', 'R')
+        assert ('TES4Polyfill.SpinAxis(Self, 5, Self.GetAngleZ() + (-20) * '
+                'TES4_SecondsPassed, -20,') in out
+
+    def test_absolute_glide_hands_its_target_to_tesruntime(self):
+        """GlideAxis sends a non-actor's target to TESRuntime's tick when it can."""
+        src = open('script_convert/static_scripts/TES4Polyfill.psc',
+                   encoding='utf-8').read()
+        body = src[src.index('Function GlideAxis('):]
+        body = body[:body.index('EndFunction')]
+        assert 'akRef.SendModEvent("TES4Track", aiAxis as String, afValue)' in body
+        assert '!(akRef as Actor)' in body

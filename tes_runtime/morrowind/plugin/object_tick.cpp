@@ -1,16 +1,14 @@
 #include "object_tick.h"
 
-#include <atomic>
-#include <chrono>
 #include <map>
 #include <set>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "dialogue_state.h"
 #include "log.h"
 #include "main_thread.h"
+#include "main_tick.h"
 #include "object_script.h"
 #include "scope.h"
 #include "script_tables.h"
@@ -25,15 +23,8 @@ constexpr float kTickRate = 30.0f;
 //: The seconds one tick covers, which GetSecondsPassed answers with.
 constexpr float kTickDelta = 1.0f / kTickRate;
 
-// The tick thread's wait, in WHOLE milliseconds.
-//
-// 🛑 Never a float duration. `sleep_for` adds it to steady_clock's
-// nanoseconds since boot, so the deadline becomes a float; past ~156 hours of
-// uptime a float cannot hold 33 ms at that size, the sleep returns at once,
-// and the spinning thread re-posts every tick inside the SAME task drain --
-// measured as 1-3 fps on a player's PC while menus held 60.
-constexpr std::chrono::milliseconds kTickSleep{
-    static_cast<long long>(1000.0f / kTickRate)};
+// The tick's wait, in WHOLE milliseconds (main_tick.h says why).
+constexpr int kTickMs = static_cast<int>(1000.0f / kTickRate);
 
 // An elapsed span this long is a load screen or a stall; catching up on it
 // would run hundreds of ticks at once, so it is clamped instead.
@@ -44,12 +35,7 @@ float g_accumulated = 0.0f;
 double g_gameSeconds = 0.0;
 std::size_t g_lastCount = 0;
 std::size_t g_ticks = 0;
-// Read by the tick thread and written by the game thread, so it is atomic.
-std::atomic<bool> g_running{false};
-
-// Set while a posted tick has not run yet, so a stalled task pump holds ONE
-// tick rather than a backlog that bursts when it resumes.
-std::atomic<bool> g_queued{false};
+bool g_started = false;
 
 // The player's cell as of the last tick, for CellChanged, and whether one has
 // been sampled at all -- an unnamed exterior is "" and is still a cell.
@@ -279,23 +265,6 @@ void RunOneTick() {
     g_lastCount = ran + RunGlobalScripts() + RunCarriedScripts(cellChanged);
 }
 
-// 🛑 The wait SLEEPS OFF the game thread and only the tick itself is posted.
-// A task that re-posts itself drains in the SAME pump sweep, so no frame ever
-// passes and the game hangs at the main menu -- measured 2026-09-18, and the
-// identical hazard `game_calls.cpp`'s objective wait already documents.
-// See: docs/plans/morrowind_object_scripts.md#tick-rate
-void TickThread() {
-    while (g_running) {
-        std::this_thread::sleep_for(kTickSleep);
-        if (!g_running) return;
-        if (g_queued.exchange(true)) continue;
-        PostToMainThread([]() {
-            g_queued = false;
-            RunOneTick();
-        });
-    }
-}
-
 }  // namespace
 
 float TickDelta() { return kTickDelta; }
@@ -317,18 +286,19 @@ void TickObjectScripts(float frameSeconds) {
     }
 }
 
+// 🛑 Posted through PostToMainThread, not the task interface directly: its
+// task records the game thread's id, which RunOnGameThread needs to run a
+// script's calls inline during the tick instead of a frame later.
+// See: docs/plans/morrowind_object_scripts.md#tick-rate
 void StartObjectTick() {
-    if (g_running) return;
-    if (!CanPostToMainThread()) {
+    if (g_started) return;
+    if (!CanPostToMainThread() || !StartTick(PostToMainThread, kTickMs, RunOneTick)) {
         Log("object: no task interface -- object scripts will NOT tick");
         return;
     }
-    g_running = true;
-    std::thread(TickThread).detach();
+    g_started = true;
     Log("object: tick started at %g Hz", kTickRate);
 }
-
-void StopObjectTick() { g_running = false; }
 
 void ResetTickState() {
     g_discoverAt = 0;

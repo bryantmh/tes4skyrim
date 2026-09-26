@@ -1477,6 +1477,58 @@ is deliberate — `tes5_import/dialogue/unlocks.py` re-expresses topic visibilit
 an inert comment. `ModDisposition` (414) is a genuine engine removal, with the
 `<= -100` hostility case already converting to `StartCombat`.
 
+## GameMode steps are rates (2026-09-26, confirmed in game)
+<a id="gamemode-steps-are-rates"></a>
+
+**Code:** `script_convert/poll_motion.py`, `commands.py:set_pos`/`rotate`,
+`TES4Polyfill.SpinAxis`/`GlideAxis`, `tes_runtime/tes/spin.cpp`.
+
+TES4 ran GameMode every frame, so `set a to GetAngle Z` / `set b to a - 2` /
+`SetAngle Z b` turns two degrees per FRAME. Nehrim's wheels, gears, platforms
+and trains all move this way (171 sets in 105 scripts). A converted poll runs
+every 0.1 s at best, and late whenever the VM is busy, so every motion paced by
+it was wrong in game. Three versions failed:
+
+1. **One glide per pass, one step each:** slow (about 20°/s where TES4 at 30 fps
+   gave 60°/s) and choppy, because a late pass left the wheel standing still.
+2. **The step scaled by the frames the pass stood for, with the glide kept
+   between passes and aimed half a step ahead:** the wheel flickered. Each late
+   or early pass re-aimed a wheel that was not where the chain expected it.
+3. **The same glide sent to TESRuntime through a mod event:** still paced by
+   Papyrus, so no better.
+
+What works is MorrowindRuntime's model: a native tick at a steady 30 Hz re-aims
+the object one tick ahead every tick. The converter finds each SetPos/SetAngle
+whose value is the SAME object's axis read in the SAME pass, plus or minus a
+step, and hands the step to `SpinAxis` as a rate per second: × 30 for a
+per-frame step, ÷ `TES4_SecondsPassed` when the step itself holds
+`GetSecondsPassed`. TESRuntime moves the object from then on, and stops an
+axis no pass has renewed for 2.5 pass gaps (never under 0.5 s).
+
+- **Same pass only.** A read inside an `if` counts only for statements after it
+  in that branch. Nehrim's intro lift reads its base height once behind a
+  DoOnce, and treating that base as a step gave the lift a nonsense rate.
+- **Actors keep the Papyrus glide.** The cutscenes turn the player's view with
+  per-frame SetAngle, and TranslateTo fights an actor's own movement.
+- **The driver keeps its target within two ticks of the 3D,** so a paused game
+  cannot bank a jump.
+- **Without TESRuntime 5 or later,** `SpinAxis` falls back to `GlideAxis`.
+
+**Absolute moves go to the same tick.** A SetPos that computes the position
+itself (Nehrim's intro lift: a base height read once, plus elapsed time × speed)
+has no step to call a rate. With TESRuntime 6 or later, `GlideAxis` sends each
+target as a `TES4Track` event. TESRuntime moves the object from where it is
+headed to the new target over 1.5 pass gaps, re-aimed every tick, so a late
+pass never leaves it standing, and it lands exactly on the script's last target
+when the script stops. A reference with no 3D is placed at once, as SetPosition
+did.
+
+**TES4 `Rotate <axis> <degrees per second>` is the same rate.** It was a
+comment before, so every object it turned stood still (Nehrim 64 calls,
+Morroblivion 29, Oblivion 9, including MQ09's bridge and the SEXedPuzStatue
+puzzle). Inside a GameMode poll it is now `SpinAxis` at its authored rate; the
+Papyrus fallback turns one pass's worth.
+
 ## Event / timer conversion
 <a id="event-timer-conversion"></a>
 

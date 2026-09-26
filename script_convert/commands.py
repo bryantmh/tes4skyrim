@@ -31,6 +31,8 @@ from script_convert.command_rows import (
 from script_convert.emit.commands import emit_row
 from script_convert.commands_falloutnv import FALLOUT_HANDLERS
 from script_convert.message_menus import PAGE_OPTIONS
+from script_convert.poll_motion import axis_key, rate_scale
+from script_convert.emit import expr as _expr
 from script_convert.constants import typed_already
 from script_convert.constants_falloutnv import FALLOUT_COMMAND_ALIASES
 from tes5_import.dialogue.say_topics import PLAYER_TOKENS
@@ -477,7 +479,9 @@ def set_pos(ctx, call) -> str:
 
     The other two axes are read back from the reference.  The axis may be
     followed by a comma (`SetPos Z, PlacePosZ`).  Inside a poll body the step
-    is a `GlideAxis` glide instead, since the native fades the 3D back in.
+    is a `GlideAxis` glide instead, since the native fades the 3D back in; a
+    step taken from the object's own pose is a per-frame rate, which
+    `SpinAxis` hands to TESRuntime as a rate per second.
 
     See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
     """
@@ -488,12 +492,48 @@ def set_pos(ctx, call) -> str:
     ref = ctx._resolve_objref_ref(call.ref, call.extends)
     if ctx.sc.glide_secs:
         slot = 'XYZ'.index(axis) + (3 if call.name == 'setangle' else 0)
-        return (f'TES4Polyfill.GlideAxis({ref}, {slot}, {value}, '
-                f'TES4_GlideRefs, TES4_GlideGoals, {ctx.sc.glide_secs})')
+        glide = (f'TES4_GlideRefs, TES4_GlideGoals, {ctx.sc.glide_secs})')
+        rate = _step_rate(ctx, call)
+        if rate:
+            return f'TES4Polyfill.SpinAxis({ref}, {slot}, {value}, {rate}, {glide}'
+        return f'TES4Polyfill.GlideAxis({ref}, {slot}, {value}, {glide}'
     verb = 'Position' if call.name == 'setpos' else 'Angle'
     coords = [value if a == axis else f'{ref}.Get{verb}{a}()'
               for a in ('X', 'Y', 'Z')]
     return f'{ref}.Set{verb}({", ".join(coords)})'
+
+
+@command('rotate')
+def rotate(ctx, call):
+    """Rotate <axis> <degrees per second> inside a poll: a `SpinAxis` turn at that rate.
+
+    Without TESRuntime the glide falls back to one pass's worth of turning.
+    Declines outside a poll, so the command row notes it.
+
+    See: docs/commentary/script_convert.md#gamemode-steps-are-rates
+    """
+    if not ctx.sc.glide_secs or len(call.args) < 2:
+        return None
+    axis = call.source(0, 'Z').strip().strip(',').upper()
+    if axis not in ('X', 'Y', 'Z'):
+        return None
+    ref = ctx._resolve_objref_ref(call.ref, call.extends)
+    rate = call.arg(1, '0')
+    value = f'{ref}.GetAngle{axis}() + ({rate}) * {ctx.sc.glide_secs}'
+    return (f'TES4Polyfill.SpinAxis({ref}, {3 + "XYZ".index(axis)}, {value}, {rate}, '
+            f'TES4_GlideRefs, TES4_GlideGoals, {ctx.sc.glide_secs})')
+
+
+def _step_rate(ctx, call) -> str:
+    """The rate per second of a SetPos/SetAngle that steps from its own axis read, else ''."""
+    if len(call.args) < 2:
+        return ''
+    key = axis_key(call.name, call.args[0], call.ref or '')
+    step = ctx.sc.relative_sets.get((call.args[1].line, key))
+    if not step:
+        return ''
+    sign = '-' if step[2] < 0 else ''
+    return f'{sign}({_expr.emit(ctx, step[1], call.extends)}){rate_scale(step[1])}'
 
 
 @command('positionworld')

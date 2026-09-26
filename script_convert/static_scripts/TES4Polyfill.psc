@@ -248,9 +248,15 @@ EndFunction
 ; aiAxis: 0-2 position, 3-5 angle.  afSeconds is the measured gap since the
 ; last pass, so the glide ends as the next one begins even when the VM is late;
 ; a near-zero gap (two passes armed at once) floors at half the fastest poll.
-; See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
+; With TESRuntime 6 or later a non-actor's target goes to its 30 Hz tick
+; instead ("TES4Track"), which reaches it over 1.5 pass gaps.
+; See: docs/commentary/script_convert.md#gamemode-steps-are-rates
 Function GlideAxis(ObjectReference akRef, Int aiAxis, Float afValue, ObjectReference[] akRefs, Float[] afGoals, Float afSeconds) Global
   If akRef == None
+    Return
+  EndIf
+  If !(akRef as Actor) && SKSE.GetPluginVersion("TESRuntime") >= 6
+    akRef.SendModEvent("TES4Track", aiAxis as String, afValue)
     Return
   EndIf
   Int slot = akRefs.Find(akRef)
@@ -313,6 +319,25 @@ Float Function NearAngle(Float afFrom, Float afTo) Global
     d += 360.0
   EndWhile
   Return afFrom + d
+EndFunction
+
+; A SetPos/SetAngle that steps from the object's own pose, inside a converted
+; GameMode poll: TES4 turned or moved it that much every frame.  afRate is the
+; step as a rate per second.  TESRuntime turns it at that rate on its own 30 Hz
+; tick, re-aimed each tick like MorrowindRuntime's Rotate, so the motion does
+; not wait on the next Papyrus pass; each pass renews the rate and TESRuntime
+; stops the object once passes stop.  An actor (the player's view in a
+; cutscene) and a game without TESRuntime take a GlideAxis glide instead.
+; See: docs/commentary/script_convert.md#gamemode-steps-are-rates
+Function SpinAxis(ObjectReference akRef, Int aiAxis, Float afValue, Float afRate, ObjectReference[] akRefs, Float[] afGoals, Float afSeconds) Global
+  If akRef == None
+    Return
+  EndIf
+  If !(akRef as Actor) && SKSE.GetPluginVersion("TESRuntime") >= 5
+    akRef.SendModEvent("TES4Spin", aiAxis as String, afRate)
+  Else
+    GlideAxis(akRef, aiAxis, afValue, akRefs, afGoals, afSeconds)
+  EndIf
 EndFunction
 
 ; ==========================================================================

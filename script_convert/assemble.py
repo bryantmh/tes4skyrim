@@ -23,6 +23,7 @@ from script_convert.command_rows import (
     COMMAND_ROWS, ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
 )
 from script_convert import symbols as _symbols
+from script_convert.poll_motion import relative_sets
 from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as N
 
@@ -274,10 +275,11 @@ def _load_time_facts(sc, tree, called: set, btypes: set) -> None:
     timer decremented by it gets its `as Int` cast.
     """
     sc.uses_getsecondspassed = 'getsecondspassed' in called
-    sc.moves_in_poll = any(
-        e.called in ('setpos', 'setangle')
-        for b in (tree.blocks if tree else ()) if b.btype.lower() in POLL_BLOCKS
-        for e in N.walk_exprs_in(b.body))
+    polls = [b for b in (tree.blocks if tree else ())
+             if b.btype.lower() in POLL_BLOCKS]
+    sc.moves_in_poll = any(e.called in ('setpos', 'setangle', 'rotate')
+                           for b in polls for e in N.walk_exprs_in(b.body))
+    sc.relative_sets = relative_sets(polls) if sc.moves_in_poll else {}
     sc.gsp_realtime = sc.moves_in_poll or bool(
         (called & {'getsecondspassed', 'scripteffectelapsedseconds'})
         and (btypes & {'gamemode', 'scripteffectupdate'}))
