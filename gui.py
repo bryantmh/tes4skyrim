@@ -34,6 +34,7 @@ from core.gui.config import (
     scan_plugins,
     winding_enabled_for,
 )
+from core.process_job import create_pool_job
 from core.subprocess_flags import POPEN_FLAGS as _POPEN_FLAGS
 
 #: Re-exported for callers that import `gui` directly.
@@ -46,12 +47,17 @@ __all__ = [
 
 
 def gui_main():
-    """Build the converter window and run it; returns an exit code."""
+    """Build the converter window and run it; returns an exit code.
+
+    The window's process owns the Job Object that ties convert.py and its
+    workers to it, so it is created here rather than when a module is imported.
+    """
     if importlib.util.find_spec("tkinter") is None:
         print("ERROR: tkinter not available")
         return 1
     from core.gui.app import build_window
 
+    create_pool_job()
     build_window().mainloop()
     return 0
 
