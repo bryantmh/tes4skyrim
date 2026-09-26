@@ -18,6 +18,7 @@ Parameter remapping and the crash rule are in
 - [Condition order: cheapest OR group first](#condition-order)
 - [How the engine evaluates conditions and builds the topic list](#engine-evaluation)
 - [Engine-fixed FormID parameters](#engine-fixed-params)
+- [GameDaysPassed reads a whole-day copy](#whole-days)
 - [GetIsRace on a plugin-authored race becomes a faction test](#plugin-authored-races)
 
 ## <a id="engine-fixed-params"></a>Engine-fixed FormID parameters
@@ -45,6 +46,35 @@ and keys the player carries are Skyrim's. A condition that remapped them to our
 own copies asked `GetItemCount(0x0100000F)`, which is always 0: Penniless
 Olvus's "Have a coin, beggar." topic never showed, and the two MQ08 skeleton-key
 INFOs could never pass either.
+
+## <a id="whole-days"></a>GameDaysPassed reads a whole-day copy
+
+**Code:** `_remap_global` in `tes5_import/base/conditions.py`,
+`create_day_clock` in `tes5_import/base/owned_records.py`,
+`script_convert/static_scripts/TES4_DayClock.psc`
+
+The one engine global that does NOT pass through. Oblivion declares
+`GameDaysPassed` Short (`GLOB 00000039`, `FNAM.Type=s`) and counts whole days;
+Skyrim declares it Float (`FNAM=102`) and carries the fraction of the current
+day. Converted scripts store the day as `GameDaysPassed.GetValue() as Int`
+(see [tes5_import_quest.md](tes5_import_quest.md#section-2-2-2-2-2-2-2-2)), so a
+condition comparing that stored day against Skyrim's global passes at once:
+Jayred Ice-Veins (SE02) gated "The arrows are ready" (INFO 00012063) on
+`ArrowMakingFinishHour < GameHour OR ArrowMakingStartDay < GameDaysPassed`, and
+at day 12.4 the stored 12 was already less, so he handed over the bone arrows
+instead of making the player wait.
+
+A condition cannot floor a global, so the converter owns one that is already
+floored: `TES4GameDaysPassed`, held at the whole part of Skyrim's by the
+start-game quest `TES4DayClock`, whose `TES4_DayClock` script sets it on start
+and re-registers `RegisterForSingleUpdateGameTime` for just past each midnight.
+Every Use Global comparison value and every `GetGlobalValue` parameter naming
+0x39 reads it instead. In Oblivion.esm that is 16 INFO and 3 PACK conditions.
+
+The authored indicator is the source's own declaration: the clock is built only
+when the plugin or a master exports `GameDaysPassed` as Short. FalloutNV.esm
+declares it Float (`FNAM.Type=f`), so FO3/FNV conditions keep reading Skyrim's.
+A dependent plugin adopts its master's global by EditorID.
 
 ## <a id="engine-evaluation"></a>How the engine evaluates conditions and builds the topic list
 

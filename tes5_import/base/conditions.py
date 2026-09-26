@@ -59,6 +59,27 @@ def get_speak_as_topics() -> frozenset:
     return _SPEAK_AS_TOPICS
 
 
+#: The run's whole-day GameDaysPassed global (owned_records.create_day_clock); 0 reads Skyrim's own.
+_WHOLE_DAY_GLOBAL = 0
+
+
+def set_whole_day_global(fid: int) -> None:
+    """Register the global that conditions read in place of GameDaysPassed.
+
+    See: docs/commentary/tes5_import_conditions.md#whole-days
+    """
+    global _WHOLE_DAY_GLOBAL
+    _WHOLE_DAY_GLOBAL = fid
+
+
+def _remap_global(fid: int, offset: int) -> int:
+    """A GLOB FormID remapped, with GameDaysPassed read in whole days as Oblivion kept it."""
+    fid = _remap_formid(fid, offset)
+    if fid == ENGINE_GLOBAL_FORMIDS['gamedayspassed'] and _WHOLE_DAY_GLOBAL:
+        return _WHOLE_DAY_GLOBAL
+    return fid
+
+
 FUNC_GET_IN_FACTION = 71       # GetInFaction(fact)
 #: GetOffersServicesNow(): true only while the actor is actively vending/training.
 FUNC_GET_OFFERS_SERVICES_NOW = 255
@@ -523,6 +544,8 @@ def _convert_params(func_idx: int, param1: int, param2: int,
         param1 = _map_race_param(param1)
         if param1 is None:
             return None
+    elif func_idx == FUNC_GET_GLOBAL_VALUE:
+        param1 = _remap_global(param1, offset)
     elif 1 in fid_slots:
         param1 = _remap_formid(param1, offset)
     if 2 in fid_slots:
@@ -635,7 +658,7 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
         return head
     type_byte, comp_raw, func_idx, param1, param2, run_on, reference = head
     if type_byte & CTDA_USE_GLOBAL:
-        comp_raw = _remap_formid(comp_raw, offset)
+        comp_raw = _remap_global(comp_raw, offset)
     params = _convert_params(func_idx, param1, param2, offset)
     fields = _run_on_fields(type_byte, func_idx, run_on, reference,
                             run_on_target_ref, drop_run_on_target)
@@ -798,7 +821,7 @@ def convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int,
         cis2 = _UNRESOLVED_VAR_SENTINEL
 
     if type_byte & CTDA_USE_GLOBAL:
-        comp_raw = _remap_formid(comp_raw, offset)
+        comp_raw = _remap_global(comp_raw, offset)
     run_on = 0
     reference = 0
     if type_byte & CTDA_RUN_ON_TARGET:

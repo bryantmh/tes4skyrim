@@ -54,10 +54,12 @@ from .dialogue.say_topics import FORCE_GREET_SLOTS, build_force_greet_slots
 from .runtime_sidecars import begin_sidecar_run
 from .base.adopted_records import adopt_master_special_records
 from .base.cell_family import set_cell_families
+from .base.conditions import set_whole_day_global
 from .base.owned_records import (
     WELL_KNOWN_PROPERTIES,
     create_ambient_gmst_overrides,
     create_chargen_menu_records,
+    create_day_clock,
     create_destroyed_formlist,
     create_fall_damage_spell,
     create_force_combat_factions,
@@ -273,6 +275,7 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
         create_ambient_gmst_overrides(writer, by_type)
     WELL_KNOWN_PROPERTIES.update(create_fall_damage_spell(
         writer, getattr(ctx, 'master_index', None)))
+    set_whole_day_global(create_day_clock(writer, by_type, ctx))
     _step_done('vtyp/special records')
 
 

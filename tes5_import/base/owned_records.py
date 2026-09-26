@@ -13,7 +13,7 @@ import struct
 from ..packages.escort_when_near import (ESCORT_WHEN_NEAR_EDID,
                                          escort_root_record,
                                          set_escort_template_fid)
-from .constants import AMBIENT_GMST_OVERRIDES
+from .constants import AMBIENT_GMST_OVERRIDES, ENGINE_GLOBAL_FORMIDS
 from .equivalents import (CUSTOM_VTYP_EDIDS, SPELL_EQUIP_EITHER_HAND,
                           VTYP_EDID_BY_FID, set_voice_type)
 from .text_reader import get_str
@@ -245,6 +245,54 @@ def create_fall_damage_spell(writer: PluginWriter, master_index=None) -> dict:
         writer.add_record('MGEF', _fall_damage_effect(mgef, name + 'Effect', perk))
         writer.add_record('SPEL', _fall_damage_spell(spel, name, mgef))
     return {name: spel}
+
+
+#: The whole-day GameDaysPassed global and the start-game quest whose script keeps it current.
+DAY_CLOCK_GLOBAL, DAY_CLOCK_QUEST, DAY_CLOCK_SCRIPT = (
+    'TES4GameDaysPassed', 'TES4DayClock', 'TES4_DayClock')
+
+
+def _source_counts_whole_days(by_type: dict, ctx) -> bool:
+    """True when the source game declares GameDaysPassed Short (Oblivion), not Float (FO3/FNV)."""
+    records = list(by_type.get('GLOB', []))
+    records += [r for r in (getattr(ctx, 'master_export', None) or {}).values()
+                if r.get('Signature') == 'GLOB']
+    return any(get_str(r, 'EditorID', '').lower() == 'gamedayspassed'
+               and get_str(r, 'FNAM.Type') == 's' for r in records)
+
+
+def create_day_clock(writer: PluginWriter, by_type: dict, ctx=None) -> int:
+    """The TES4GameDaysPassed global plus its TES4DayClock quest; a master's are adopted.
+
+    Returns the global's FormID, 0 when the source's GameDaysPassed is already
+    fractional. The TES4_DayClock script holds the global at the whole part of
+    Skyrim's. The script-pipeline import is function-scoped to break the cycle
+    owned_records -> script_convert (package __init__) -> tes5_import.dialogue
+    -> base.conditions -> owned_records.
+    See: docs/commentary/tes5_import_conditions.md#whole-days
+    """
+    from script_convert.pipeline import build_vmad_quest_fragments
+    if not _source_counts_whole_days(by_type, ctx):
+        return 0
+    master_index = getattr(ctx, 'master_index', None)
+    glob = (master_index.find_by_edid(b'GLOB', DAY_CLOCK_GLOBAL)
+            if master_index is not None else 0)
+    if glob:
+        return glob
+    glob = _emit_global(writer, DAY_CLOCK_GLOBAL, 's')
+    quest = writer.derive_formid('SYNTH_QUST', DAY_CLOCK_QUEST)
+    props = {'GameDaysPassed': ENGINE_GLOBAL_FORMIDS['gamedayspassed'],
+             DAY_CLOCK_GLOBAL: glob}
+    subs = pack_string_subrecord('EDID', DAY_CLOCK_QUEST)
+    subs += pack_subrecord('VMAD', build_vmad_quest_fragments(
+        DAY_CLOCK_QUEST, [], None,
+        attached_script=(DAY_CLOCK_SCRIPT, props), quest_fid=quest))
+    subs += pack_string_subrecord('FULL', 'TES4 Day Clock')
+    subs += pack_subrecord('DNAM', struct.pack('<HBBII', 0x0011, 0, 0, 0, 0))
+    subs += pack_subrecord('NEXT', b'')
+    subs += pack_subrecord('ANAM', struct.pack('<I', 0))
+    writer.add_record('QUST', pack_record('QUST', quest, 0, subs))
+    return glob
 
 
 def create_ambient_gmst_overrides(writer: PluginWriter, by_type: dict):

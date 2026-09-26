@@ -33,7 +33,9 @@ from tes5_import.base.conditions import (
     needs_origin_gate,
     order_condition_groups,
     read_getisid_fids,
+    set_whole_day_global,
 )
+from tes5_import.base.owned_records import _source_counts_whole_days
 from tes5_import.dialogue.converter import DIAL_TYPE_COMBAT, DIAL_TYPE_CONVERSATION, DIAL_TYPE_DETECTION, DIAL_TYPE_MISC, DIAL_TYPE_PERSUASION, DIAL_TYPE_SERVICE, DIAL_TYPE_TOPIC, _EDID_SUBTYPE, classify_topic, convert_DIAL, convert_INFO, make_dlbr, make_dlvw, should_skip_dial
 from tes5_import.dialogue.groups import build_dialog_groups
 from tes5_import.dialogue.quest import (convert_QUST,
@@ -183,6 +185,35 @@ class TestCTDAConversion:
         out = convert_ctda(_tes4_ctda(type_byte=0x04, comp=0x00001234, func=58,
                                       p1=0x5678), offset=1)
         assert struct.unpack_from('<I', out, 4)[0] == 0x01001234
+
+    @pytest.mark.parametrize('type_byte, func, slot', [
+        (0x84, 58, 4),     # `< GameDaysPassed` as the compared global
+        (0x00, 74, 12),    # GetGlobalValue(GameDaysPassed)
+    ])
+    def test_game_days_passed_reads_the_whole_day_global(self, type_byte,
+                                                          func, slot):
+        """Oblivion's GameDaysPassed counts whole days, Skyrim's carries the
+        day's fraction: `StartDay < GameDaysPassed` passed the moment Jayred
+        Ice-Veins stored the day, handing over the bone arrows at once."""
+        raw = _tes4_ctda(type_byte=type_byte, comp=0x39, func=func, p1=0x39)
+        try:
+            set_whole_day_global(0x01ABCDEF)
+            assert struct.unpack_from(
+                '<I', convert_ctda(raw, offset=1), slot)[0] == 0x01ABCDEF
+            set_whole_day_global(0)
+            assert struct.unpack_from(
+                '<I', convert_ctda(raw, offset=1), slot)[0] == 0x39
+        finally:
+            set_whole_day_global(0)
+
+    @pytest.mark.parametrize('fnam, whole', [('s', True), ('f', False)])
+    def test_whole_day_clock_follows_the_authored_global_type(self, fnam,
+                                                              whole):
+        """Oblivion declares GameDaysPassed Short; FO3/FNV declare it Float
+        and already count fractions like Skyrim, so they get no day clock."""
+        glob = {'Signature': 'GLOB', 'EditorID': 'GameDaysPassed',
+                'FNAM.Type': fnam}
+        assert _source_counts_whole_days({'GLOB': [glob]}, None) is whole
 
     def test_notequal_operator_not_treated_as_use_global(self):
         out = convert_ctda(_tes4_ctda(type_byte=0x20, comp=0x3F800000), offset=1)
