@@ -48,6 +48,9 @@ _TES4_DEFAULT_LAND_HEIGHT = -2048.0
 #: TES4 sea level: the default water plane for any worldspace with no DNAM.
 _TES4_DEFAULT_WATER_HEIGHT = 0.0
 
+#: XACT Use Default | Open | Open by Default: all 354 vanilla ONAM refs write it.
+_REFR_ACTION_OPEN_BY_DEFAULT = 0x0D
+
 
 # ---------------------------------------------------------------------------
 # WRLD water and fallback planes
@@ -940,10 +943,20 @@ def shifted_position(rec: dict, scale) -> tuple:
     return px - shift * s * wx, py - shift * s * wy, pz - shift * s * wz
 
 
+def _refr_open_by_default(rec: dict) -> bool:
+    """True if the ref authored ONAM "Open by Default" and has no lock.
+
+    See: docs/commentary/tes5_import_actors.md#open-by-default
+    """
+    return (get_str(rec, 'ONAM.OpenByDefault') == '1'
+            and get_int(rec, 'XLOC.Level', -1) < 0)
+
+
 def _refr_data(rec: dict, scale) -> bytes:
-    """The DATA position/rotation subrecord, with furniture-origin shift."""
+    """[ONAM] then the DATA position/rotation subrecord, with furniture-origin shift."""
     px, py, pz = shifted_position(rec, scale)
-    return pack_subrecord('DATA', struct.pack(
+    onam = pack_subrecord('ONAM', b'') if _refr_open_by_default(rec) else b''
+    return onam + pack_subrecord('DATA', struct.pack(
         '<ffffff', px, py, pz,
         _safe_angle(get_float(rec, 'RotX')),
         _safe_angle(get_float(rec, 'RotY')),
@@ -951,7 +964,7 @@ def _refr_data(rec: dict, scale) -> bytes:
 
 
 def _refr_head(rec: dict) -> bytes:
-    """EDID, NAME and the XPRM primitive of a REFR.
+    """EDID, NAME, the open-by-default XACT and the XPRM primitive of a REFR.
 
     An invisible-marker base is substituted with its Skyrim.esm equivalent so
     the ref points into index 0.  Oblivion.esm ships 6 refs on the MapMarker
@@ -971,6 +984,9 @@ def _refr_head(rec: dict) -> bytes:
         name_fid = 0x0000003B
     if name_fid:
         subs += pack_formid_subrecord('NAME', name_fid)
+    if _refr_open_by_default(rec):
+        subs += pack_subrecord('XACT', struct.pack(
+            '<I', get_int(rec, 'XACT.ActionFlag', _REFR_ACTION_OPEN_BY_DEFAULT)))
     primitive = get_str(rec, 'XPRM.Raw')
     if primitive:
         subs += pack_subrecord('XPRM', bytes.fromhex(primitive))
@@ -985,7 +1001,7 @@ def convert_REFR(rec: dict) -> bytes:
     ... XSCL ... XMRK/FNAM/FULL/TNAM ... XLRT ... DATA
 
     A keyless barrier door with no authored owner is owned to the
-    plugin-origin faction; TES4 XACT/ONAM is deliberately not transferred.
+    plugin-origin faction.
 
     See: docs/commentary/tes5_import_actors.md#barrier-door-ownership
 

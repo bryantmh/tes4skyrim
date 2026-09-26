@@ -22,6 +22,7 @@ them does.
 - [Spell merchants sell tomes](#spell-tomes)
 - [The plugin-origin marker faction](#origin-faction)
 - [It also unlocks AI barrier doors](#barrier-door-ownership)
+- [Open by Default: unlocked refs only](#open-by-default)
 - [FACT relations: Ally and Friend are not interchangeable](#faction-relations)
 - [Trainers](#trainers)
 - [Health is written as an OFFSET, not a pool](#health-offset)
@@ -403,12 +404,24 @@ because the faction carries no crime data. The player is not a member, so the
 lock still reads Requires Key and activation stays blocked; the OnActivate
 preamble restores the lock after each AI passage.
 
-TES4 `XACT`/`ONAM` ("Open by Default") is deliberately NOT transferred by
-`convert_REFR`. In Skyrim those make the door SPAWN open, but Oblivion doors
-carrying them still spawn closed — verified in-game, where every CharacterGen
-portcullis stood open at load once they were passed through. Oblivion opens
-such doors through the AI bypass instead, which is what the consume-door
-handling at `XLOC` reproduces.
+### <a id="open-by-default"></a>Open by Default: unlocked refs only
+
+**Code:** `tes5_import/record_types/world.py` `_refr_open_by_default`
+
+TES4 `ONAM` ("Open by Default") is written as vanilla writes it: `XACT` = 13
+right after `NAME`, an empty `ONAM` right before `DATA` (all 354 vanilla ONAM
+refs). Both engines load it the same way, as bit 8 of the ref's action extra
+data, and pose the door open when its 3D loads (1.6.1170: the REFR loader's
+ONAM case at `0x2d8436`; Oblivion.exe: `0x4d9f94`, pose at `0x4df54a`).
+
+A LOCKED ref is written closed. Confirmed in-game: CharacterGen's
+`CGAmbushCBackGate` portcullis (level 100, `ONAM`) must start closed and
+stood open when ONAM was passed through; the party passes it through the
+barrier-door ownership above. No vanilla ONAM ref carries `XLOC` (0 of 354).
+Unlocked refs need it: Nehrim's `SchattenrufGitterTuer01Ref` trap gate
+(`SchattenrufGitterTuerScript`) only acts while `GetOpenState == 1`, so a
+closed start left it permanently shut. Counts: 106 ONAM refs in Oblivion.esm
+(4 locked), 45 in Nehrim.esm (3 locked).
 
 ## <a id="faction-relations"></a>FACT relations: Ally and Friend are not interchangeable
 

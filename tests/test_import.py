@@ -931,6 +931,26 @@ class TestConverters:
         data = self._get_subrecord_data(result, 'DATA')
         assert len(data) == 24  # 6 floats
 
+    def test_refr_open_by_default_only_when_unlocked(self):
+        """An unlocked ONAM ref is written open as vanilla does (XACT after NAME,
+        ONAM before DATA); a locked one starts closed.
+
+        See: docs/commentary/tes5_import_actors.md#open-by-default
+        """
+        rec = {'Signature': 'REFR', 'FormID': '00001000', 'RecordFlags': '1024',
+               'NAME': '00012345', 'XACT.ActionFlag': '13',
+               'ONAM.OpenByDefault': '1', 'PosX': '0.0', 'PosY': '0.0',
+               'PosZ': '0.0', 'RotX': '0.0', 'RotY': '0.0', 'RotZ': '0.0'}
+        result = convert_REFR(rec)
+        assert self._get_subrecord_data(result, 'XACT') == struct.pack('<I', 13)
+        assert self._get_subrecord_data(result, 'ONAM') == b''
+        assert (result.index(b'NAME') < result.index(b'XACT')
+                < result.index(b'ONAM') < result.index(b'DATA'))
+        locked = convert_REFR({**rec, 'XLOC.Level': '100', 'XLOC.Key': '00000000',
+                               'XLOC.Flags': '0'})
+        assert not self._has_subrecord(locked, 'ONAM')
+        assert not self._has_subrecord(locked, 'XACT')
+
     def test_tes3_refr_ships_dont_havok_settle(self):
         """A Morrowind placement is an unsettled pose; only TES3 sets the flag.
 
