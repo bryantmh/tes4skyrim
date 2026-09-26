@@ -549,10 +549,10 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
     out = _record_last_activator(conv, merged, order)
     for header in order:
         opener, closer = header
-        out.append(opener)
-        out += merged[header]
-        out.append(closer)
-        out.append('')
+        if opener == BLOCK_MAP['ontrigger'][0]:
+            out += _one_trigger_at_a_time(opener, closer, merged[header])
+        else:
+            out += [opener] + merged[header] + [closer, '']
         # TES4's `begin OnTrigger` runs EVERY FRAME an object is inside the
         # volume.  Skyrim splits that: OnTriggerEnter is the entry frame and
         # OnTrigger the repeat, so a converted OnTrigger body alone never runs
@@ -570,6 +570,25 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
                     'EndEvent',
                     '']
     return out
+
+
+def _one_trigger_at_a_time(opener: str, closer: str, body: list) -> list:
+    """OnTrigger that skips an event while the previous one still runs.
+
+    TES4 finished each frame's OnTrigger before the next began.  Papyrus runs
+    every event on its own thread, and a thread waiting on a game call lets
+    the next one in, so a one-time block that sets its flag at the end ran
+    once per overlapping event.  The body is a function so a TES4 `return`
+    inside it still clears the busy flag.
+
+    See: docs/commentary/script_convert.md#one-trigger-at-a-time
+    """
+    return (['Bool TES4_TriggerBusy = False', '', opener,
+             '  If TES4_TriggerBusy', '    Return', '  EndIf',
+             '  TES4_TriggerBusy = True', '  TES4_OnTriggerBody(akActionRef)',
+             '  TES4_TriggerBusy = False', closer, '',
+             'Function TES4_OnTriggerBody(ObjectReference akActionRef)']
+            + body + ['EndFunction', ''])
 
 
 def _record_last_activator(conv, merged: dict, order: list) -> list:

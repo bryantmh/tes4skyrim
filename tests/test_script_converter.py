@@ -3906,7 +3906,9 @@ end
 
     def test_body_stays_on_the_repeating_event(self, converter):
         out = converter.convert_standalone('T', self.SRC, 'ObjectReference', 'T')
-        body = out.split('Event OnTrigger(')[1].split('EndEvent')[0]
+        event = out.split('Event OnTrigger(')[1].split('EndEvent')[0]
+        assert 'TES4_OnTriggerBody(akActionRef)' in event
+        body = out.split('Function TES4_OnTriggerBody(')[1].split('EndFunction')[0]
         assert 'triggered = 1' in body
 
     def test_entry_event_is_emitted_and_delegates(self, converter):
@@ -3920,7 +3922,7 @@ end
         inherits it rather than running unfiltered."""
         src = "scn T\nshort x\nbegin onTrigger player\n  set x to 1\nend\n"
         out = converter.convert_standalone('T', src, 'ObjectReference', 'T')
-        body = out.split('Event OnTrigger(')[1].split('EndEvent')[0]
+        body = out.split('Function TES4_OnTriggerBody(')[1].split('EndFunction')[0]
         assert 'Game.GetPlayer()' in body
 
     def test_actor_and_mob_variants_also_get_entry(self, converter):

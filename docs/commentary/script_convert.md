@@ -760,6 +760,19 @@ EndEvent
   `OnTriggerEnter` alone re-freezes the per-frame counters above; leaving it on
   `OnTrigger` alone means trap triggers never fire. Both are required.
 
+<a id="one-trigger-at-a-time"></a>**One OnTrigger at a time (2026-09-25, confirmed
+in game).** TES4 finished each frame's `OnTrigger` before the next frame's began.
+Papyrus gives every event its own thread, and a thread waiting on a game call
+lets the next event in. So a one-time block whose `set doOnce to 1` comes after
+a slow call ran once for EVERY overlapping event. Nehrim's
+`StartCelleAufzugTriggerZone01Script` (the intro lift) hit this: its
+`Autosave` + `DoOnce` block made about 7 saves in 2 seconds (counted from
+TESRuntime's `journal: saved` line, which logs once per game save). The result
+was a multi-second stutter as the lift started. The body now lives in
+`Function TES4_OnTriggerBody`, and the event skips while a `TES4_TriggerBusy`
+flag is set. It is a function so that a TES4 `return` inside the body still
+clears the flag. After the fix, the same run made one autosave.
+
 ### Physical-trap damage: TES4's ENGINE read the script's variables (2026-08-09, in-game confirmed)
 
 A converted swinging mace, swinging log, falling log or cave-in fired, swung
