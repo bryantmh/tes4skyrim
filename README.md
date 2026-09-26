@@ -176,7 +176,11 @@ Everything you install ends up in **`output/Finished Mods/`**. Install these wit
 your mod manager:
 
 - One `.zip` per converted game or mod
-- `TESRuntime.zip`, required (see [TESRuntime](#tesruntime-skse-plugin))
+- `TESRuntime.zip`, required (see [TESRuntime](#tesruntime-skse-plugin)). It needs
+  [SKSE](https://skse.silverlock.org/) and the
+  [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444)
+  installed, and the game launched through SKSE (`skse64_loader.exe`, or your mod
+  manager's SKSE entry). Without them the runtime DLLs never load.
 - `TESGameSelect.zip`, the new-game menu (see [Starting a converted game](#starting-a-converted-game))
 - `AutoConvertLOD.zip`, the distant-view LOD. Install it after the mods it covers.
 - `Slot44 Patch.esp`
@@ -223,7 +227,10 @@ cow tes4tamriel 20 20
 
 ### TESRuntime (SKSE plugin)
 
-`TESRuntime.zip` holds the converter's own SKSE plugins, one DLL each:
+`TESRuntime.zip` holds the converter's own SKSE plugins, one DLL each. They need
+[SKSE](https://skse.silverlock.org/) and the
+[Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444);
+HavokWorldSize alone needs only SKSE.
 
 - **TESRuntime.dll**, needed by every converted game: sends an arrested player to
   the nearest jail as the source games do, and lets a clicked quest objective
