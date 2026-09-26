@@ -19,6 +19,7 @@ from .world_falloutnv import (marker_substitute, parent_use_flags,
 from .world_morrowind import is_tes3_source, lock_is_exit_only, tes3_refr_flags
 from .vendor_stock_morrowind import stock_owner
 from .items import get_base_origin_shift
+from ..actors.starts_dead import STARTS_DEAD_FLAG, starts_dead
 from ..base.text_reader import remap_formid
 from .common import (
     TES4_DEFAULT_MUSIC_ENUM,
@@ -1101,6 +1102,8 @@ def convert_ACHR(rec: dict) -> bytes:
     subs += pack_subrecord('DATA', struct.pack('<ffffff', px, py, pz, rx, ry, rz))
 
     flags = get_int(rec, 'RecordFlags')
+    if starts_dead(get_str(rec, 'FormID')):
+        flags |= STARTS_DEAD_FLAG
     return pack_record('ACHR', get_formid(rec, 'FormID'), flags, subs)
 
 

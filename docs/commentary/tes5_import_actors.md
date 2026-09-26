@@ -26,6 +26,7 @@ them does.
 - [Trainers](#trainers)
 - [Health is written as an OFFSET, not a pool](#health-offset)
 - [Morrowind health is absolute — the same manual-NPC rule](#morrowind-health-is-absolute)
+- [Corpses carry Starts Dead, not just 0 health](#corpses-start-dead)
 - [Hair color: a generated CLFM per authored RGB](#hair-color)
 - [NAM5/NAM6/NAM7/NAM8 are all required](#required-nam-subrecords)
 - [Head parts: RNAM decides who can see the hair](#hdpt-valid-races)
@@ -581,6 +582,38 @@ on actors meant to be weak or already dead (`CurweDead`, `VeezaraDead`,
 
 Derminus is a manual (52-byte NPDT) NPC, so he now converts to `397 − 50` with
 his level untouched, which is what the engine needs.
+
+## <a id="corpses-start-dead"></a>Corpses carry Starts Dead, not just 0 health
+
+**Code:** `tes5_import/actors/starts_dead.py`, `record_types/world.py` (`convert_ACHR`)
+
+TES4 authors a corpse prop as an actor whose base has `DATA.Health=0`. The
+health offset reproduces that pool exactly, so the actor loads with 0 health —
+but alive: it dies on its first update and never equips its outfit, so it lay
+naked (Nehrim `Leiche01Startcelle`, ref `xx1A9288`). The outfit record itself
+was correct throughout.
+
+Bethesda's own CK tutorial (`Bethesda_Tutorial_Clutter`) states that "simply
+setting the health of an actor doesn't actually cause it to be dead at game
+time"; a corpse needs the reference's **Starts Dead** flag, ACHR record flag
+`0x200`. Vanilla agrees: ~1,140 of Skyrim.esm's 10,504 ACHRs carry it, and no
+vanilla NPC starts at 0 health (the lowest offset is −49). No TES4 ACHR uses
+`0x200`, so setting it collides with nothing. Counts: 905 refs in Nehrim, out
+of 915 that place a 0-health base (212 bases); 787 such refs in Oblivion.
+
+**A corpse a script resurrects keeps the health path.** The Papyrus
+`Resurrect` native (1.6.1170 rva `0x9e99f0`) calls a check at `0x2dd710` —
+form type `0x3E` (ACHR) and record flag bit 9 — and on a hit logs "is dead from
+the editor and cannot be resurrected" and returns. So a ref named in any
+`X.Resurrect` call site (by ref or base EditorID), or placing a base whose own
+script calls a bare `Resurrect`, is left unflagged. Nehrim has 10 such refs
+(Daromith, the Bestiarium minotaur, the Schattenruf Verbranntes Wesen …); they
+still lie unclothed until raised. A resurrect through a ref variable cannot be
+resolved statically.
+
+FO3/FNV author the flag themselves on the reference, so their refs are left as
+exported. Creatures share the rule: `creature_health_offset` pins a 0 pool at
+−32768, and their refs get the same flag.
 
 ## <a id="hair-color"></a>Hair color: a generated CLFM per authored RGB
 
