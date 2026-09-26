@@ -97,13 +97,14 @@ A decent PC. More cores make it faster, but each core also uses more RAM. Tested
 You need four things:
 
 1. **Python 3.14.** Use exactly 3.14. Other versions need you to compile the navmesh module yourself (see `native/dist/README.md`).
-2. **The Python packages.** Open PowerShell and paste:
+2. **The Python packages.** Open PowerShell in this folder and paste:
 
    ```bash
-   pip install PyFFI numpy scipy shapely Pillow lz4 mapbox_earcut setuptools
+   pip install -r requirements.txt
    ```
 
-   Optionally add `tkinterdnd2` to drag mod archives onto the GUI.
+   It installs the tested versions, including the optional `tkinterdnd2` for
+   dragging mod archives onto the GUI.
 3. **The Skyrim SE Creation Kit**, free on Steam. It provides lip sync and the files scripts are compiled against.
 4. **xWMAEncode.exe**, for voice files. See the note below.
 
