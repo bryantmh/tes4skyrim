@@ -18,6 +18,7 @@
 - [NIF bhkMultiSphereShape (dead in Skyrim, fixed 2026-07-05)](#nif-bhkmultisphereshape)
 - [Stepped stairs need the stairs material on their treads](#stairs-material)
 - [Held bodies: pieces a script releases to fall](#held-bodies)
+- [A STAT with a simulated body ships as MSTT](#stat-simulated-mstt)
 
 ## NIF bhkRigidBody field mapping (PyFFI ↔ newer nif.xml)
 <a id="nif-bhkrigidbody-field-mapping"></a>
@@ -1240,3 +1241,38 @@ decides per body:
    rigid until the trap script fires, exactly like a breakaway piece. Skyrim's
    trapmace01 ships its links dynamic (ms=3, quality 4) because a Skyrim trap has
    no script-held phase; ours reproduces Oblivion's held phase instead.
+
+## <a id="stat-simulated-mstt"></a>A STAT with a simulated body ships as MSTT
+
+Oblivion simulates a dynamic body even on a STAT reference: the log trap in
+Nehrim's Schattenruf mine knocks the loose `MiddleChestBrokenTop03` lid (a STAT,
+one free 10 kg body on OL_CLUTTER) off its chest. Skyrim never simulates a
+body on a STAT, only on MSTT/ACTI. Skyrim.esm census: 122 of 671 readable MSTT
+models carry a free dynamic body (`NorHavoKDebris01-04`, the bloody bones,
+`WagonWheel`, the oil barrels); the 208 STATs that do are things meant to stay
+frozen (load-screen art, first-person weapons, `RuinsPot05StaticIce`, a STAT
+twin of a havok pot).
+
+`physics_flags_from_data` bit 0 marks such a mesh and `items.convert_STAT`
+writes the base as MSTT (FormID unchanged, so placed REFRs keep resolving).
+Vanilla routes all such content through MSTT (every swinging inn sign, e.g.
+SignBraidwoodInn01, MSTT DATA=0) or ACTI (TrapBoneAlarmHavok01). Bit 0 originally covered only
+constrained islands (PrisonCellChains01, the root/chain dolls); free bodies were
+added as bounds schema 4. Measured before the change: 73 Nehrim STAT bases
+(993 refs, 23 persistent) and 41 Oblivion bases (2,109 refs, 28 persistent)
+carry a simulated body, the constrained ones among them already MSTT.
+
+Never widen it to "the mesh has an animation graph". That was tried on
+2026-08-18 and reverted: promoting every BGED-bearing STAT moved 107 Oblivion
+bases / 4,568 placed refs and crashed on save load with a null TESObjectREFR in
+the ExtraPromotedRef / QueuedPromoteQuestTask path (SKChamberSecretDoor,
+NightMotherBaseRef). The premise was wrong anyway: 94 vanilla STATs carry a
+BGED, including self-animating scenery (WRJovaskrBanner02 → IdleRandomized.hkx,
+PowShrine01, SFarmhouseMill), so the record type is not what stops an animation.
+
+**Retyping a STAT to MSTT does NOT by itself crash a save load.** The
+simulated-body widening retyped 73 Nehrim bases (993 refs, 23 persistent) and an
+existing save loaded cleanly in-game (2026-09-26). So the 2026-08-18 crash came
+from something specific to that BGED set (its quest-referenced refs such as
+NightMotherBaseRef, or the animation graphs themselves), not from the record
+type change. Its cause is still unisolated.

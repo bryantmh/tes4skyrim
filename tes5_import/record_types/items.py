@@ -33,24 +33,11 @@ from .common import (
 def convert_STAT(rec: dict) -> bytes:
     """Convert STAT record, deriving LOD/world-map flags from mesh bounding box size.
 
-    A STAT whose converted mesh is a constrained dynamic havok island
-    (swinging chains, hanging cages) is written as MSTT instead: Skyrim never
-    simulates constrained bodies on a STAT reference, so PrisonCellChains01
-    hung completely rigid.  Vanilla routes ALL such content through MSTT
-    (every swinging inn sign, e.g. SignBraidwoodInn01, MSTT DATA=0) or ACTI
-    (TrapBoneAlarmHavok01).  The FormID is unchanged, so placed REFRs keep
-    resolving.
-
-    Do NOT extend this to "the mesh has an animation graph".  That was tried on
-    2026-08-18 and reverted: promoting every BGED-bearing STAT moved 107
-    Oblivion bases / 4,568 placed refs and crashed the game on save load with a
-    null TESObjectREFR in the ExtraPromotedRef / QueuedPromoteQuestTask path
-    (SKChamberSecretDoor, NightMotherBaseRef).
-
-    The premise was wrong anyway: 94 vanilla STATs DO carry a BGED, including
-    self-animating scenery (WRJovaskrBanner02 -> IdleRandomized.hkx,
-    PowShrine01, SFarmhouseMill).  A STAT can host an animation graph, so the
-    record type is not what stops an animation from playing.
+    A STAT whose converted mesh has a simulated body (a free dynamic piece or
+    a constrained island) is written as MSTT with the same FormID: Skyrim
+    never simulates a body on a STAT reference.  Never widen this to "the
+    mesh has an animation graph" -- that set crashed on save load.
+    See: docs/commentary/asset_convert_collision.md#stat-simulated-mstt
     """
     flags = get_int(rec, 'RecordFlags')
     # Resolve OBND from converted mesh bounds (or type default as fallback).

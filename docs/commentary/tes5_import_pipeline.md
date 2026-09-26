@@ -279,6 +279,16 @@ parses cleanly and reads as all-zeroes for that field — which is how Nehrim
 served flag-less entries for every mesh long after the HELD bit shipped, leaving
 breakaway planks and traps unreleased.
 
+`BOUNDS_SCHEMA_VERSION` (`collision_extract.py`) is bumped whenever an entry
+gains a field or a field changes meaning; a cache below it is regenerated, never
+trusted. The hole it closes: the HELD bit (bit 1) shipped 2026-08-05, but the scan
+then ran only when the cache file was ABSENT, so Nehrim kept its 2026-08-02 cache
+and 0 of its 11,946 meshes carried the bit. `needs_havok_release` answered False
+for every one and mwallplankbreakaway01's planks hung in mid-air. Oblivion's
+cache happened to be rebuilt an hour after that commit, so the bug looked
+Nehrim-only. Version 4 widened bit 0 from "constrained island" to "any simulated
+body" ([STAT → MSTT](asset_convert_collision.md#stat-simulated-mstt)).
+
 **A current cache still takes the mesh stage's pending fragments.** The mesh
 stage records each mesh it writes as a fragment, and only this function merges
 them. It used to return as soon as both caches were current, so a scoped

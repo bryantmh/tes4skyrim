@@ -593,8 +593,10 @@ before rebuilding):
    transform). Live: Bip01 → identity, NonAccum → (−0.34,−1.64,~64) at 82.5°,
    crowd at the authored pose, looping.
 
-Ruled out along the way, do not retry: STAT→MSTT promotion (crashed on save
-load — 94 vanilla STATs carry a BGED, the record type is not the gate);
+Ruled out along the way, do not retry: promoting every BGED-bearing STAT to
+MSTT (crashed on save load, and 94 vanilla STATs carry a BGED, so the record
+type is not the animation gate; retyping itself is save-safe, see
+[STAT → MSTT](asset_convert_collision.md#stat-simulated-mstt));
 `selfTransitionMode` FORCE_TRANSITION_TO_START_STATE (looping is the
 sequence's); a generated per-mesh graph instead of the shared one (works, but
 the shared one is what vanilla ships and what is verified live).

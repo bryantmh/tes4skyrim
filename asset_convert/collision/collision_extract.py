@@ -299,23 +299,8 @@ def bounds_from_data(data):
     )
 
 
-# Schema version of mesh_bounds_cache.json, stored under _BOUNDS_SCHEMA_KEY.
-#
-# Bump this whenever an entry gains a field or a field changes meaning.  Any
-# cache written before versioning, or at a lower version, is REGENERATED rather
-# than trusted: entries are plain lists, so a missing trailing field is
-# indistinguishable from a computed zero and the reader cannot tell a stale
-# cache from a complete one.
-#
-# That exact hole cost a shipped bug.  `physics_flags_from_data` gained the
-# HELD bit (bit 1) on 2026-08-05, but the scan only ran when the cache file was
-# ABSENT, so Nehrim kept its 2026-08-02 cache forever: 0 of its 11,946 meshes
-# carried the bit, `needs_havok_release` answered False for every one, and no
-# converted `playgroup` ever emitted TES4Polyfill.ReleaseBreakaway.
-# mwallplankbreakaway01's planks hung in mid-air.  Oblivion's cache happened to
-# be rebuilt an hour after that commit, so the same meshes worked there — which
-# is why this looked like a Nehrim-only mesh bug rather than a stale cache.
-BOUNDS_SCHEMA_VERSION = 3
+#: Bounds-cache entry schema; bump on any field change (docs/commentary/tes5_import_pipeline.md).
+BOUNDS_SCHEMA_VERSION = 4
 _BOUNDS_SCHEMA_KEY = '__schema__'
 
 #: Bumped when a door axis entry gains a field or a field changes meaning.
@@ -360,15 +345,14 @@ def bounds_cache_is_current(bounds_cache: str) -> bool:
 def physics_flags_from_data(data) -> int:
     """Physics facts the IMPORTER needs about a converted mesh, as bit flags.
 
-    bit 0 — constrained dynamic island: the mesh contains at least one
-    simulated (mass > 0) rigid body AND at least one bhk constraint block.
-    Skyrim only simulates such content on MSTT/ACTI references — a STAT
-    reference leaves the whole compound frozen (Oblivion's PrisonCellChains01
-    is a STAT; every vanilla swinging sign is MSTT, the bone-alarm is ACTI).
-    The constraint is checked file-wide, not per-body, because chain links
-    routinely carry mass with ncons=0 and hang off an anchor's constraint
-    (vanilla trapbonealarmhavok01 stores its bhkBallSocketConstraintChain on
-    the static peg, not on the swinging bones).
+    bit 0 — simulated content: a free dynamic body (mass > 0, a simulated
+    motion type), or a constrained island (a body with mass plus a bhk
+    constraint block).  Skyrim only simulates either on MSTT/ACTI references
+    — a STAT reference leaves it frozen, while Oblivion simulated it on a
+    STAT (PrisonCellChains01, the broken-chest pieces the log trap knocks
+    apart).  The constraint is checked file-wide, not per-body, because chain
+    links routinely carry mass with ncons=0 and hang off an anchor's
+    constraint.  See: docs/commentary/asset_convert_collision.md#stat-simulated-mstt
 
     bit 1 — HELD body: the mesh ships at least one KEYFRAMED body that kept a
     non-zero mass.  `_convert_collision` writes that combination for exactly
@@ -397,18 +381,31 @@ def physics_flags_from_data(data) -> int:
     for block in data.blocks:
         cls = type(block).__name__
         if cls in ('bhkRigidBody', 'bhkRigidBodyT'):
-            if getattr(block, 'mass', 0) > 0:
-                has_dynamic = True
-                # MO_SYS_KEYFRAMED (4) with mass retained == held-until-scripted.
-                if getattr(block, 'motion_system', 0) == 4:
-                    flags |= 2
-            if getattr(block, 'num_constraints', 0) > 0:
-                has_constraint = True
+            flags |= _body_physics_flags(block)
+            has_dynamic = has_dynamic or getattr(block, 'mass', 0) > 0
+            has_constraint = (has_constraint
+                              or getattr(block, 'num_constraints', 0) > 0)
         elif cls.startswith('bhk') and 'Constraint' in cls:
             has_constraint = True
     if has_dynamic and has_constraint:
         flags |= 1
     return flags
+
+
+#: Skyrim hkpMotion types Havok simulates: dynamic, sphere/box inertia, thin box.
+_MOTION_SIMULATED = frozenset({1, 2, 3, 6})
+#: Skyrim MO_SYS_KEYFRAMED; with mass kept it is a held-until-scripted body.
+_MOTION_KEYFRAMED = 4
+
+
+def _body_physics_flags(body) -> int:
+    """Bit 1 for a held body (keyframed, mass kept), bit 0 for a free simulated one."""
+    if getattr(body, 'mass', 0) <= 0:
+        return 0
+    motion = getattr(body, 'motion_system', 0)
+    if motion == _MOTION_KEYFRAMED:
+        return 2
+    return 1 if motion in _MOTION_SIMULATED else 0
 
 
 def _tri_shape_points(shape):
