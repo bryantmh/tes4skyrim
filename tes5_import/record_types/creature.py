@@ -9,6 +9,7 @@ import struct
 
 from ..base.constants import TES5_SKILL_ORDER
 from ..actors.creature_races import creature_capped_level, creature_health_offset
+from ..actors.creature_unarmed import creature_unarmed_ability
 from ..actors.outfits import split_inventory
 from ..packages.actor_wiring import (CLAS_CREATURE_CASTER, CLAS_CREATURE_PREDATOR,
                         CSTY_ANIMAL, CSTY_DEFAULT, DPLT_CREATURE_LIST,
@@ -357,12 +358,14 @@ def _crea_spell_subs(rec: dict) -> bytes:
     """SPCT + SPLO for a creature's spells.
 
     The target may be a SPEL, SHOU or LVSP -- xEdit types SPLO as all three --
-    so a TES4 leveled spell is referenced directly rather than unrolled.
+    so a TES4 leveled spell is referenced directly rather than unrolled.  The
+    creature's unarmed-damage ability, when its race's base is lower, is last.
 
     See: docs/commentary/tes5_import_actors.md#crea-spells
     """
     fids = [get_formid(rec, f'Spell[{i}]')
             for i in range(get_int(rec, 'SpellCount'))]
+    fids.append(creature_unarmed_ability(get_formid(rec, 'FormID') & 0x00FFFFFF))
     fids = [f for f in fids if f]
     if not fids:
         return b''

@@ -272,6 +272,14 @@ EndFunction
 ; different scene) is accepted: forced attackers are overwhelmingly scene
 ; actors that die in their scene, and TES4's own disposition damage from
 ; StartCombat leaked comparably.
+;
+; TES4 StartCombat also RETARGETS an actor already fighting someone else
+; (SE02's Gatekeeper is steered onto one orc at a time while all four are
+; hitting him).  Skyrim's does not: its queued task (1.6.1170 0x657e1f) does
+; nothing when the target is already in the actor's combat group, and
+; StopCombat (0x9eb250) only flags the controller to stop on its next
+; update.  So an attacker busy with another target is stood down, the
+; function waits for combat to actually end, and then starts it afresh.
 Function ForceCombat(Actor akAttacker, Actor akTarget, Faction akAttackers, Faction akVictims) Global
   If akAttacker == None || akTarget == None
     Return
@@ -282,6 +290,14 @@ Function ForceCombat(Actor akAttacker, Actor akTarget, Faction akAttackers, Fact
   EndIf
   If akAttacker.GetActorValue("Aggression") < 1.0
     akAttacker.SetActorValue("Aggression", 1)
+  EndIf
+  If akAttacker.IsInCombat() && akAttacker.GetCombatTarget() != akTarget
+    akAttacker.StopCombat()
+    Int waited = 0
+    While akAttacker.IsInCombat() && waited < 20
+      Utility.Wait(0.05)
+      waited += 1
+    EndWhile
   EndIf
   akAttacker.StartCombat(akTarget)
 EndFunction

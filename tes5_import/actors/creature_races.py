@@ -40,6 +40,8 @@ from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..record_types.equipment import attack_spell
 from .creature_projects import (bodies_of, folder_of,
                                 folders_built_by_master, load_projects)
+from .creature_unarmed import build_unarmed_abilities, race_unarmed_damage
+from .creature_unarmed import reset as reset_unarmed_abilities
 
 # GMST fNPCHealthLevelBonus (Skyrim.esm) — health the engine grants per level
 # above 1. Defined here rather than imported from record_types.actors because
@@ -836,8 +838,7 @@ def _race_data(rec: dict, race_recs: list = None) -> bytes:
     struct.pack_into('<f', data, 88, _MAGICKA_RETURN['fMagickaReturnBase']
                      + _MAGICKA_RETURN['fMagickaReturnMult']
                      * get_int(rec, 'DATA.Willpower', 50))
-    struct.pack_into('<f', data, 96,
-                     float(max(1, get_int(rec, 'DATA.AttackDamage', 5))))
+    struct.pack_into('<f', data, 96, race_unarmed_damage(race_recs or [rec]))
     reach = get_int(rec, 'RNAM.AttackReach', 64) or 64
     struct.pack_into('<f', data, 100, float(reach))
     return bytes(data)
@@ -1128,11 +1129,12 @@ def _build_race_chain(writer, rec, folder: str, bodies: list, proj: dict,
     edid = get_str(rec, 'EditorID') or folder
     edid_base = ''.join(c for c in edid if c.isalnum()) or folder
     full = get_str(rec, 'FULL') or edid
-    vnam = _creature_equip_flags(race_recs.get(key, [rec]))
+    recs = race_recs.get(key, [rec])
+    vnam = _creature_equip_flags(recs)
     _build_race(writer, rec, folder, bodies, proj,
                 race_fid, skin_fid, f'TES4{edid_base}Race', full,
-                vnam_flags=vnam,
-                race_recs=race_recs.get(key, [rec]))
+                vnam_flags=vnam, race_recs=recs)
+    build_unarmed_abilities(writer, key, recs, f'TES4{edid_base}')
     _build_skin(writer, folder, bodies, race_fid, skin_fid,
                 edid_base, proj['body_dir'])
     return race_fid, vnam
@@ -1152,15 +1154,21 @@ def _index_crea_folders(by_type: dict) -> None:
             _CREA_FOLDER_MAP[get_formid(rec, 'FormID') & 0x00FFFFFF] = folder
 
 
+def _reset_tables() -> None:
+    """Forget the previous plugin's creature race, folder, ARMA and ability tables."""
+    _CREA_RACE_MAP.clear()
+    _CREA_FOLDER_MAP.clear()
+    _CREA_ARMA_FOLDER.clear()
+    reset_unarmed_abilities()
+
+
 def build_creature_races(by_type: dict, writer, export_dir: str,
                          master_export: dict = None) -> None:
     """Phase 0f: one generated RACE + skin ARMO/ARMA per unique
     (creature folder, body-part set) among CREA records with a converted
     project. Populates the crea→race map used by convert_CREA."""
     global _PROJECTS
-    _CREA_RACE_MAP.clear()
-    _CREA_FOLDER_MAP.clear()
-    _CREA_ARMA_FOLDER.clear()
+    _reset_tables()
     load_creature_item_index(by_type, master_export)
     _load_magicka_return(by_type, master_export)
     _index_crea_folders(by_type)
