@@ -170,6 +170,7 @@ def load_master_export(export_dir: str) -> dict:
 # converted record for a source REFR can be either. Keyed by source signature.
 _ALSO_ACCEPTED = {
     'REFR': (b'ACHR',),
+    'BOOK': (b'SCRL',),
 }
 
 

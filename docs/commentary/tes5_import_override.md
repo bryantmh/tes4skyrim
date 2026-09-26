@@ -595,6 +595,12 @@ that is the same unchecked assumption this function exists to remove.
   signature (CREA→NPC_, CLOT→ARMO, ACRE→ACHR … are legal renames) and treats a
   mismatch as "no master record", so the caller converts it as a new record.
   Guarded by `tests/test_override_type_guard.py`.
+  - **Per-record retargets need an `_ALSO_ACCEPTED` entry.** `TYPE_MAP` is
+    per signature, but some converters pick the output type per record: an
+    enchanted BOOK (ENAM set) becomes a SCRL. A mismatch sends the override to
+    "no-base", and no-base overrides are dropped, not converted. Without
+    `'BOOK': (b'SCRL',)` all 62 of Translation.esp's scroll overrides were
+    dropped, so every Nehrim scroll kept its German name in game.
 - <a id="interleaved-subrecords"></a>**INTERLEAVED SUBRECORD FAMILIES MUST KEEP
   THEIR PAIRING.** `_apply_generic` replaces each signature as a unit at the
   position of its first occurrence — correct for a repeating single-signature
