@@ -110,6 +110,19 @@ The trade-off belongs to the user, so neither shape replaces the other:
 | World-specific rules, UI and visuals | Yes | Only what every world can share |
 | Skyrim alt-start mods | Kept in a Skyrim-only profile | Conflict with TESGameSelect's `MQ101` override ([below](#main-menu-picker)) |
 
+What a per-world profile has to get right:
+
+- **Keep the world's masters.** `Morrowind_ob.esm` and Oblivion's add-on ESPs
+  need `Oblivion.esm`, so those profiles load Cyrodiil too.
+- **One Body Slots Patch per profile.** `tools/creature/patch_body_slots.py`
+  merges every input plugin into one patch and lists each as a master, so a
+  patch built for every world makes Skyrim crash on startup, from a missing
+  master, in any profile that leaves a world out. D builds one patch per
+  profile from that profile's plugins and enables it only there.
+- **Leave shared pieces on:** `TESRuntime.zip`, `TESGameSelect.esp` (it
+  masters only `Skyrim.esm` and finds worlds at runtime) and `AutoConvertLOD`
+  (loose files named per worldspace, no plugin).
+
 ### E. Source mods from a source-game MO2 instance
 
 When Oblivion, Morrowind or FNV is itself managed in MO2, that instance's mod
