@@ -31,6 +31,7 @@ them does.
 - [NAM5/NAM6/NAM7/NAM8 are all required](#required-nam-subrecords)
 - [Head parts: RNAM decides who can see the hair](#hdpt-valid-races)
 - [A creature race is a caster only for a castable spell](#caster-race-needs-a-castable-spell)
+- [Attack reach is per creature: reach-variant races](#reach-variant-races)
 - [Voice type resolution](#voice-resolution)
 
 ## <a id="acbs-flag-collision"></a>ACBS flags: the same bit means three different things
@@ -853,6 +854,40 @@ This was found while chasing the intro black troll (`SchattenrufAlptraumTroll01`
 that swung once and never again, but it was NOT that bug's cause: the troll still
 refused after this change. The cause was a hit window on its recoil clip
 ([asset_convert_creature.md](asset_convert_creature.md#hit-window-attacks-only)).
+
+## <a id="reach-variant-races"></a>Attack reach is per creature: reach-variant races
+
+**Code:** `tes5_import/actors/creature_races.py` `_build_race_chain`.
+
+Skyrim has unarmed reach only on the RACE (DATA +100, `handReach` at
+`TESRace+0x14C` in 1.6.1170), but TES4 authors `RNAM.AttackReach` per CREA. A
+generated race is shared by every CREA with the same mesh folder and body set, so
+it used to take the founding record's reach and every other creature lost its own.
+Now the race keeps the founder's reach (and its FormID), and each other authored
+reach among its creatures gets a variant race `TES4<Edid>RaceReach<n>`, identical
+but for DATA +100, derived from `('CREA_RACE_REACH', (key, reach))`. Variants share
+the skin: the body ARMA lists them as Additional Races (`MODL`, before the `SNDD`
+that `patch_creature_footsteps` appends). Nehrim: 75 variants. Its nightmare-troll
+race carries 32 from `DaromithTroll02`, while the intro black troll authors 42,
+`38Troll` 164, `42Helmut` and `NQ15W02Enemy01` 255. Confirmed in game: the black
+troll lands far more of its swings on Celebro.
+
+Both engines measure reach the same way, so the TES4 value copies across
+unscaled (disassembly, measured):
+- **Skyrim** (`0x851520`, used by the target picker `0x5c0b80`): the gap is the 2D
+  center distance minus both actors' radii (`0x8518c0`; radius = bound max.y ×
+  scale, `0x694fb0`, cached on the process). It is compared against
+  `handReach × ref scale × NPC height` (`0x6749d0` × `0x2e09c0`).
+- **Oblivion** (`0x625220`, Creature vtable slot `0x26c`): the raw RNAM byte, ×
+  `fCombatGiantCreatureReachMult` (2.2) for creature type 5 only. NPCs use
+  `fHandReachMult × fCombatDistance` = 0.6 × 128 = 76.8. The caller (`0x699500`)
+  multiplies by the actor's scale and compares against `0x612f50`: center distance
+  minus both bound half-extents × scale.
+
+Bethesda's own values differ between the games with no fixed ratio (Oblivion →
+Skyrim race: troll 100→128, skeleton 36→96, mudcrab 32→120, deer 32→96, rat
+96→64, NPC 76.8→96), so no rescale is applied. Not yet traced: whether
+`0x5c0b80` is the HitFrame hit test itself or the combat AI's approach check.
 
 ## <a id="creature-class-and-package"></a>A creature needs a CLASS and a PACKAGE
 

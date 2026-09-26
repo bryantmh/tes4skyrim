@@ -730,6 +730,30 @@ class TestConverters:
         finally:
             cr.load_creature_item_index({})
 
+    def test_shared_race_keeps_each_creatures_attack_reach(self):
+        """A race shared by creatures of different authored reach keeps the
+        founder's; each other reach gets a variant race (same skin, listed as
+        an ARMA Additional Race).  Nehrim's intro black troll (42) shared a
+        race with 32-reach trolls and missed most of its swings."""
+        from tes5_import.actors import creature_races as cr
+        founder = {'FormID': '0012CAF1', 'EditorID': 'DaromithTroll02', 'RNAM.AttackReach': '32'}
+        black = {'FormID': '001AB064', 'EditorID': 'Black', 'RNAM.AttackReach': '42'}
+        twin = {'FormID': '001AB065', 'EditorID': 'Twin', 'RNAM.AttackReach': '32'}
+        key = ('nightmaretroll', ('nightmaretroll.nif',))
+        proj = {'skeleton_nif': 's.nif', 'project_hkx': 'p.hkx', 'body_dir': 'b', 'attacks': []}
+        writer = _DerivingWriter()
+        cr.load_creature_item_index({})
+        race, variants, _vnam = cr._build_race_chain(
+            writer, founder, key[0], list(key[1]), proj, key, {key: [founder, black, twin]})
+        assert list(variants) == [42] and variants[42] != race
+        reach = {struct.unpack('<I', d[12:16])[0]:
+                 struct.unpack_from('<f', self._get_subrecord_data(d, 'DATA'), 100)[0]
+                 for t, d in writer.records if t == 'RACE'}
+        assert reach == {race: 32.0, variants[42]: 42.0}
+        arma = next(d for t, d in writer.records if t == 'ARMA')
+        extra = [struct.unpack('<I', v)[0] for s, v in self._iter_subrecords(arma) if s == 'MODL']
+        assert extra == [variants[42]]
+
     def test_atkd_carries_the_attack_spell(self):
         """ATKD field 3 is 'Attack Spell' (xEdit: [SPEL, SHOU, NULL]) — the
         vanilla melee-caster idiom (109 vanilla attack entries; the flame
