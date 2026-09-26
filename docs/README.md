@@ -128,6 +128,7 @@ A dated sweep over a corpus, with counts. Frozen once written; a re-audit is a N
 |---|---|
 | [aggression_faction.md](audits/aggression_faction.md) | Aggression / Ally / Enemy Conversion Audit |
 | [ck_warnings.md](audits/ck_warnings.md) | CK Warnings Audit — Oblivion.esm |
+| [edit_gate_refusals.md](audits/edit_gate_refusals.md) | What agents hit at the code-rules and shell gates, the four shell holes closed, and a replay of the fix |
 | [diagnosis_sources.md](audits/diagnosis_sources.md) | Which sources actually solved bugs, from 46 fixes across 35 sessions — the evidence for CLAUDE.md's source order |
 | [fallout_nv_mesh_conversion.md](audits/fallout_nv_mesh_conversion.md) | Fallout NV / FO3 mesh conversion — what already works, and the particle-NIF defect |
 | [morroblivion_mesh_axis_rotation.md](audits/morroblivion_mesh_axis_rotation.md) | Morroblivion's hand-authored pitch and Z re-seat fixes, and which a dependent plugin must re-apply |

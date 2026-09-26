@@ -217,8 +217,8 @@ def gate_bash(payload):
     sys.stderr.write(
         'Every part of a shell command runs through the wrapper, which gates '
         'what it writes -- here %s.\n\n    python %s <program> [args...]\n'
-        '    python %s -c "<chain, pipe, loop or builtin>"\n\nOnly %s may sit '
-        'beside it.\n' % (why, WRAPPER, WRAPPER,
+        '    python %s -c "<chain, pipe, loop or builtin>"\n\nOnly %s may run '
+        'outside it, alone or beside it.\n' % (why, WRAPPER, WRAPPER,
                           ', '.join(sorted(shell_route.READ_ONLY))))
     return 2
 

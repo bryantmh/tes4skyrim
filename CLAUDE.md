@@ -56,9 +56,11 @@ These protect things that are hard or impossible to get back.
   `python tools/validate/safe_run.py <command>`.** It streams output, returns the
   child's exit code, and gates the `.py` files the command wrote. The hook refuses
   bare commands, because a heredoc can write a `.py` no gate ever sees. Arguments
-  pass through verbatim. Beside the wrapper only read-only helpers (`cd`, `echo`,
-  `tail`, `grep`, …) may run; any other chain, loop or builtin goes inside
-  `safe_run.py -c '<command>'`.
+  pass through verbatim. Read-only helpers (`cd`, `ls`, `cat`, `grep`, `tail`, …)
+  may run alone or beside the wrapper; any other program (`git`, `sed`, `find`,
+  a second `python`), chain, loop or builtin goes inside
+  `safe_run.py -c '<command>'`. An unquoted `(` or `{` is refused anywhere on
+  the line, so quote PowerShell sub-expressions and script blocks inside `-c`.
 - 🛑 **Unlink every junction before removing a worktree.** Linking live
   `export/`/`output/` into a worktree is fine; `git worktree remove --force` and
   `rmtree` both follow junctions and delete the real tree, and both dirs are
@@ -399,6 +401,9 @@ refactoring.
 - **When the hook fires on old debt, fix it properly** — examine the whole file,
   no line golf. If a file needs splitting, pull out the right thing, not
   necessarily the thing you're working on.
+- **Check before you edit a big function.** Run `code_rules.py --gate-file
+  <path>` first: a function already over a limit, or a comment above the lines
+  you change, is charged to your edit. Plan the split as part of the change.
 - `oversized-files` is a ratchet: it fires only when your edit raises the count.
   It counts code lines, so trimming comments can't clear it — remove or relocate
   code.
@@ -408,6 +413,10 @@ refactoring.
   `# ----` heading. A docstring states the contract, never the story; rationale
   and measurements go in `docs/`, cited by `See: docs/<file>.md#anchor` (the gate
   checks path and anchor — always include the anchor).
+- **Docstring budget:** at most 480 chars, and at most **80** when the body is
+  one or two code lines; a `See:` line doesn't count. Every function over two
+  statements needs one, tests included. These two rules were named in 126 of 222
+  edit refusals.
 - A comment is prose wherever it sits — the scanner tokenizes, so end-of-line
   placement hides nothing, and `# noqa`/`# pragma`/`# type:` count too. An inline
   comment means the code can't state its intent — fix the code.
@@ -416,7 +425,9 @@ refactoring.
 - **No dead code:** no unused import or variable, no undefined name, nothing
   unreachable. `code_rules.py --dead-code` is the whole-program sweep.
 - **Imports go at module scope.** Keep one inside a function only to break a real
-  import cycle, and name the cycle in the docstring.
+  import cycle, and name the cycle in the docstring. Never import another
+  module's `_name`; drop the underscore to make it public.
+- **A file with `# ----` section headings keeps every `def` under one.**
 - When compressing text, keep every measured count, script name and mechanism;
   drop the narration and dates.
 
