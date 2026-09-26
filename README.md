@@ -94,16 +94,19 @@ python convert.py --build-morrowind-patch "C:\path\to\Morrowind\Data Files"
 
 A decent PC. More cores make it faster, but each core also uses more RAM. Tested on a 7950X3D with 32 GB of RAM (converting Oblivion.esm peaks at about 16 GB).
 
-You need four things:
+**The easy way: the portable package.** Download `TESAutoConvert-<version>-win64.zip`, unzip it anywhere you can write to (not `Program Files`), and double-click `TES Auto-Convert.cmd`. It carries its own Python with every package installed, so steps 1 and 2 below are already done. You still need steps 3 and 4.
+
+Running from a source checkout instead, you need four things:
 
 1. **Python 3.14.** Use exactly 3.14. Other versions need you to compile the navmesh module yourself (see `native/dist/README.md`).
-2. **The Python packages.** Open PowerShell and paste:
+2. **The Python packages.** Open PowerShell in this folder and paste:
 
    ```bash
-   pip install PyFFI numpy scipy shapely Pillow lz4 mapbox_earcut setuptools
+   pip install -r requirements.txt
    ```
 
-   Optionally add `tkinterdnd2` to drag mod archives onto the GUI.
+   It installs the tested versions, including the optional `tkinterdnd2` for
+   dragging mod archives onto the GUI.
 3. **The Skyrim SE Creation Kit**, free on Steam. It provides lip sync and the files scripts are compiled against.
 4. **xWMAEncode.exe**, for voice files. See the note below.
 
@@ -118,7 +121,7 @@ Run `python preflight.py` to check without starting a conversion.
 
 ## Quick start
 
-The easiest way to run a conversion is the GUI. Either double click gui.pyw or in the terminal:
+The easiest way to run a conversion is the GUI. In the portable package, double-click `TES Auto-Convert.cmd`. From a source checkout, double-click gui.pyw or, in the terminal:
 
 ```bash
 python gui.py

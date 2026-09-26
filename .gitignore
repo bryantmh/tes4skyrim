@@ -7,6 +7,8 @@ export/
 output/
 logs/
 temp/
+# Portable package staging and zips (tools/release/build_portable.py).
+dist/
 /references/
 
 *_log.txt
