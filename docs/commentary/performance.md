@@ -7,6 +7,7 @@
 - [Low-core machines: where the time actually goes (measured 2026-08-09)](#low-core-machines-where-time)
 - [Parallelism rules (learned 2026-07-16)](#parallelism-rules)
 - [FormID determinism — the save-game contract (rewritten 2026-08-17)](#formid-determinism-save-game-contract)
+- [One heavy job at a time](#one-heavy-job-at-a-time)
 - [Process containment — orphaned workers (learned 2026-07-29)](#process-containment-orphaned-workers)
 - [Navmesh generation (learned 2026-07-25)](#navmesh-generation)
 - [Measured throughput](#measured-throughput)
@@ -704,6 +705,35 @@ writers, independence from allocation order, non-collision with authored ids,
 and — via a subprocess at three `PYTHONHASHSEED` values — that Python's
 randomised `hash()` never reaches an id.
 
+
+## One heavy job at a time
+<a id="one-heavy-job-at-a-time"></a>
+
+**Code:** `core/heavy_lock.py`, called from `convert.py:main` and `tools/release/create_lod.py:main`.
+
+Two pooled stages at once exhaust RAM on a 32 GB box. On 2026-09-26 a
+Morrowind_ob navmesh pool (29 workers) died as `BrokenProcessPool` beside
+another session's Nehrim import. A TR_Mainland import then lost 33 ENCH
+records to bare `MemoryError`s (an empty message in the log) and its pool died
+the same way. The written rule ("check load first") did not stop agents from
+launching blind, so the check is now mechanical.
+
+`hold_heavy_lock` takes the named mutex `Local\TESConversionHeavyJob` for the
+rest of the process. A second `convert.py` or LOD bake WAITS instead of
+failing. It prints the holder, recorded in `logs/heavy_job.txt`, at once and
+again every 5 minutes.
+
+- **No stale locks.** The kernel releases a mutex whose owner dies, however it
+  dies; the next waiter gets `WAIT_ABANDONED`, which counts as acquired.
+- **No self-deadlock.** The holder sets `TESCONV_HEAVY_LOCK_HELD`, so a child
+  it spawns, such as a nested `convert.py`, skips the wait. Pool workers never
+  run `main`.
+- **Not in `create_pool_job`.** The GUI calls that at import, and would hold
+  the lock for its whole life. The GUI's per-step `convert.py` processes each
+  take it instead.
+- Informational runs (`--help`, `--list-mods`) and `--dry-run` never wait.
+- It is a courtesy, never a failure: off Windows, or if the mutex cannot be
+  made, the run proceeds unlocked.
 
 ## Process containment — orphaned workers (learned 2026-07-29)
 <a id="process-containment-orphaned-workers"></a>

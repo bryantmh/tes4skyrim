@@ -78,6 +78,7 @@ import core.run_log as run_log
 from core.subprocess_flags import (POPEN_FLAGS as _POPEN_FLAGS,
                               configure_multiprocessing)
 from core.process_job import create_pool_job, describe_limit
+from core.heavy_lock import hold_heavy_lock
 from core.collision_options import WINDING_FIX_ENV_VAR, default_for_plugin
 
 # multiprocessing.Pool workers (nif/lod conversion) must also inherit a hidden
@@ -95,7 +96,8 @@ create_pool_job()
 from source_paths import (get_paths, is_asset_only,
                           load_config, resolve_plugin_path)
 from asset_convert.sources import source_registry
-from convert_cli import build_parser, selected_steps
+from convert_cli import (SCOPED_STEPS, build_parser, selected_steps,
+                         unscoped_steps)
 import preflight
 import version as _version
 
@@ -699,10 +701,11 @@ def phase_speedtrees(file_name: str, config: dict, output_dir: str = None):
 # ===========================================================================
 
 def phase_creatures(file_name: str, tes5_data: str, config: dict,
-                    output_dir: str = None):
+                    output_dir: str = None, only: list = None):
     """Convert creatures: generated behavior projects (skeleton.hkx,
     animations, behavior graph), skeleton/body NIF conversion, and
-    registration in the merged animation singlefiles.
+    registration in the merged animation singlefiles. `only` names the
+    creature folders to rebuild; the rest stay registered as they are.
 
     Must run BEFORE import: Phase 0f of the importer reads
     export/<name>/creature_projects.json to generate RACE/ARMA/ARMO chains.
@@ -720,8 +723,9 @@ def phase_creatures(file_name: str, tes5_data: str, config: dict,
     out_meshes = str(plugin_out_root(out_root, file_name, export_root)
                      / "meshes")
 
-    print(f"[{file_name}] Converting creatures (behavior projects + meshes)...")
-    res = convert_creatures(export_subdir, out_meshes)
+    scope = f" (only {', '.join(only)})" if only else ""
+    print(f"[{file_name}] Converting creatures (behavior projects + meshes){scope}...")
+    res = convert_creatures(export_subdir, out_meshes, names=only)
     print(f"[{file_name}] Creatures complete "
           f"({len(res['projects'])} projects, {len(res['errors'])} errors)")
     return not res['errors']
@@ -1040,7 +1044,7 @@ def _run_pipeline():
         return 0
     _announce(order, export_dir)
     steps = selected_steps(args)
-    missing = _preflight(steps)
+    missing = _refused(args, steps)
     if missing is not None:
         return missing
     run = SimpleNamespace(args=args, config=config, tes4_data=tes4_data,
@@ -1049,6 +1053,17 @@ def _run_pipeline():
     step_ok, success = _run_steps(steps, order, run)
     _record_versions(step_ok, tes4_data)
     return _report(step_ok, success)
+
+
+def _refused(args, steps) -> int | None:
+    """The exit code refusing this run, or None: `--only` on a step that
+    cannot narrow, then whatever `_preflight` finds missing."""
+    unscoped = unscoped_steps(args, steps)
+    if unscoped:
+        print(f"ERROR: --only scopes only {', '.join(sorted(SCOPED_STEPS))}; "
+              f"these steps would rebuild everything: {', '.join(unscoped)}")
+        return 2
+    return _preflight(steps)
 
 
 def _announce(order, export_dir) -> None:
@@ -1116,7 +1131,8 @@ def _phase_runners(run) -> dict:
             textures_only=a.textures_only, skip_hair=a.skip_hair),
         'speedtrees': lambda fn: phase_speedtrees(fn, cfg, output_dir=out),
         'creatures': lambda fn: phase_creatures(fn, run.tes5_data, cfg,
-                                                output_dir=out),
+                                                output_dir=out,
+                                                only=run.args.only),
         'import': lambda fn: phase_import(fn, run.tes4_data, run.tes5_data,
                                           run.export_dir, cfg, output_dir=out),
         'sounds': lambda fn: phase_sounds(fn, cfg, output_dir=out),
@@ -1241,7 +1257,8 @@ def _print_run_banner(tes4_data, tes5_data, output_dir) -> None:
 
 
 def main():
-    """Own the run log for a standalone CLI run, then run the pipeline.
+    """Own the run log for a standalone CLI run, wait for any other heavy job
+    on the machine to finish, then run the pipeline.
 
     Only a run's OWNER opens a log.  When the GUI launched us it has already
     opened one for the whole run (several convert.py invocations, one per step)
@@ -1261,6 +1278,8 @@ def main():
            else run_log.start_cli_run(SCRIPT_DIR / "logs", config, header))
     code = 1
     try:
+        if not _is_informational_argv():
+            hold_heavy_lock(header["Command"])
         code = _run_pipeline()
         return code
     except SystemExit as exc:

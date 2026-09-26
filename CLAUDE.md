@@ -251,10 +251,12 @@ Check theories against several of these before acting:
   down, say so. Test scripts print as they go and write each result as computed;
   on timeout, use what was written — never re-run the same sweep smaller. This
   limit does not apply to real pipeline runs.
-- **Never run two CPU-saturating jobs at once.** Targeted tests first, then
-  builds, one at a time. While one runs, wait for its completion notification —
-  don't start pytest, a mesh sweep, or a second build, and don't fill the wait
-  with busywork.
+- **Builds queue themselves; launch them without checking the load.** `convert.py`
+  and `create_lod.py` take a machine-wide lock
+  ([heavy_lock](docs/commentary/performance.md#one-heavy-job-at-a-time)), so a
+  build that prints "Waiting for the running heavy job" is queued, not hung.
+  Targeted tests first, then builds. While yours runs, wait for its completion
+  notification and don't fill the wait with busywork.
 - **Don't start a build until you're sure the fix is correct:** edits finished,
   targeted tests passed, your own diff re-read.
 - <a id="build-every-file"></a>**Build every stage your changes touch before
@@ -285,7 +287,9 @@ Check theories against several of these before acting:
   `--list-mods` shows them.
 - **A `--*-only` flag is a stage, not a scope** — `--lod-only` bakes every
   qualifying worldspace, masters' included. Confirm the target from the first
-  output lines; a banner is not progress.
+  output lines; a banner is not progress. Scope with `--only <names>` where a
+  stage honors it (today: `--creatures-only --only rat`); for a stage that
+  doesn't, add the scope before running the whole stage for one unit.
 - **LOD builds only via `create_lod.py --worldspaces <EDID>`, never
   `--lod-only`.** A worldspace bakes once from its owner plus every plugin as an
   overlay. Run `--dry-run` first; the plan names owner and overlays.

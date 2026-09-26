@@ -612,6 +612,22 @@ def _project_summary(all_manifests) -> dict:
     } for name, m in all_manifests.items()}
 
 
+#: A fragment's own keys; every other key is an append a full run registered.
+_FRAGMENT_OWN_KEYS = frozenset({'version', 'source', 'animdata', 'animsetdata'})
+
+
+def _kept_appends(plugin_out: str) -> dict:
+    """The vanilla-project appends (guns) the plugin's fragment already holds,
+    so a run scoped to some creatures keeps them without rebuilding them."""
+    try:
+        with open(fragment_path(plugin_out, os.path.basename(plugin_out)),
+                  encoding='utf-8') as handle:
+            frag = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return {key: value for key, value in frag.items() if key not in _FRAGMENT_OWN_KEYS}
+
+
 def _remove_stale_fragment(plugin_out: str, log=print) -> None:
     """Delete the fragment an earlier build left for a plugin that now
     registers nothing, so CreatureRuntime stops composing it."""
@@ -629,7 +645,8 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
     """Convert every creature folder; {'projects': {name: manifest}, 'errors': {name: str}}.
 
     Writes the projects, meshes, the animation cache fragment (from ALL
-    projects on disk, so a subset run keeps the rest registered) and
+    projects on disk, so a subset run keeps the rest registered, and the
+    gun appends it already holds, which only a full run rebuilds) and
     <export_dir>/creature_projects.json. Morrowind creatures are split first,
     which creates the tree for a plugin that ships no meshes.
     See: docs/reference/tes_runtime_fragments.md#the-runtime-composer
@@ -655,9 +672,9 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
     for m in manifests_under(out_meshes_dir).values():
         if m.get('namespace') == namespace:
             all_manifests.setdefault(m['name'], m)
-    appends = {} if names else convert_guns(export_dir, out_meshes_dir,
-                                            workers, log)
     plugin_out = os.path.dirname(os.path.normpath(out_meshes_dir))
+    appends = (_kept_appends(plugin_out) if names
+               else convert_guns(export_dir, out_meshes_dir, workers, log))
     if all_manifests or appends:
         path = write_fragment(list(all_manifests.values()), out_meshes_dir,
                               os.path.basename(plugin_out), appends, plugin_out)
