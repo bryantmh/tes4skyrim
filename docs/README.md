@@ -118,6 +118,7 @@ Designed, NOT yet built. Opens with `Status: PLAN`. Becomes commentary when buil
 | [morrowind_object_scripts.md](plans/morrowind_object_scripts.md) | Move TES3 object scripts off the lossy Papyrus path onto the vendored interpreter |
 | [in_app_update.md](plans/in_app_update.md) | In-app update: download only what changed — design plan |
 | [vanilla_creature_swap.md](plans/vanilla_creature_swap.md) | Plan — "Vanilla Creature Swap" ESP generator + GUI |
+| [gui_overhaul.md](plans/gui_overhaul.md) | GUI overhaul: setup, MO2 integration and per-world launching |
 | [vanilla_item_swap.md](plans/vanilla_item_swap.md) | Plan — "Vanilla Item Swap" (ingredients, food, clutter) + preview renderer |
 
 ## `audits/`
