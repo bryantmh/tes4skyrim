@@ -502,6 +502,7 @@ def _scpt_batch(records: list, output_dir: str, xref: CrossRefGraph, stats: dict
                 sctx, scro_list(rec), xref))
             conv.sc.quest_delay = _WORKER_CTX.get('quest_delays', {}).get(
                 formid.upper(), 0.0)
+            conv.sc.on_book = xref.attached_signatures(formid) == {'BOOK'}
             name = sanitize_name(edid or f'Script_{formid}')
             papyrus = conv.convert_standalone(name, sctx, extends, edid)
 

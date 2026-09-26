@@ -596,6 +596,12 @@ End
         assert 'EndEvent' in result
 
     def test_gamemode_to_onupdate(self, converter):
+        """An object GameMode poll starts on OnCellAttach, re-arms first
+        through SafeGameModeGate (never a bare Is3DLoaded(), which throws on a
+        held item), and never unregisters on detach.
+
+        See: docs/commentary/script_convert.md#poll-lifecycle
+        """
         source = """ScriptName UpdateScript
 
 Begin GameMode
@@ -605,25 +611,10 @@ End
         result = converter.convert_standalone('UpdateScript', source, 'ObjectReference', 'UpdateScript')
         assert 'Event OnUpdate()' in result
         assert 'RegisterForSingleUpdate' in result
-        # Object/actor GameMode loops are gated on load state (OnCellAttach
-        # start) so that not every scripted object in the game begins ticking
-        # the moment the save loads.
         assert 'Event OnCellAttach()' in result
-        # The OnUpdate re-registration only continues while still loaded.
-        # Routed through SafeGameModeGate, NOT a bare Is3DLoaded(): that call
-        # throws on a reference held in a container (no native object bound)
-        # and the throw aborts the event before it can re-arm, killing the
-        # poll permanently.  See TES4Polyfill.SafeGameModeGate.
-        assert 'If (TES4Polyfill.SafeGameModeGate(Self))' in result
+        assert 'If (TES4Polyfill.SafeGameModeGate(Self)' in result
         assert 'If (Is3DLoaded())' not in result
-        # NO OnCellDetach unregister: cell-transition events have no
-        # guaranteed order, so the old cell's detach could land after
-        # OnLoad/OnCellAttach re-armed the poll for the new cell and kill a
-        # loaded actor's loop mid-scene (CharacterGen escorts going mute).
-        # The Is3DLoaded() arm gate winds the loop down by itself.
         assert 'UnregisterForUpdate()' not in result
-        # Arm-first: the re-register must be the FIRST thing OnUpdate does,
-        # so a runtime abort anywhere in the body cannot kill the poll.
         body = result.split('Event OnUpdate()', 1)[1].split('EndEvent', 1)[0]
         assert body.index('RegisterForSingleUpdate') < body.index('x = 1')
 
@@ -656,7 +647,7 @@ End
         assert 'Event OnInit()' in result, \
             'a GameMode poll must also start for an already-loaded reference'
         init = result.split('Event OnInit()', 1)[1].split('EndEvent', 1)[0]
-        assert 'If (TES4Polyfill.SafeGameModeGate(Self))' in init, \
+        assert 'If (TES4Polyfill.SafeGameModeGate(Self)' in init, \
             'OnInit registration must stay gated (anti-storm)'
         assert 'RegisterForSingleUpdate' in init
 
@@ -691,7 +682,7 @@ End
         result = converter.convert_standalone('EnableScript', source,
                                               'ObjectReference', 'EnableScript')
         init = result.split('Event OnInit()', 1)[1].split('EndEvent', 1)[0]
-        assert 'If (TES4Polyfill.SafeGameModeGate(Self))' in init
+        assert 'If (TES4Polyfill.SafeGameModeGate(Self)' in init
         assert 'Is3DLoaded()' not in result, \
             'the gate must go through the polyfill, never a bare 3D test'
 
@@ -703,6 +694,69 @@ End
         assert 'IsAttached()' in body, \
             'SafeGameModeGate fell back to a 3D-only test — see the ' \
             'self-disable deadlock (Nehrim MQ00, controls never re-enabled)'
+
+    def test_carried_item_poll_follows_its_holder(self, converter):
+        """A GameMode item keeps polling while carried: OnContainerChanged
+        records the holder and the gate also accepts a loaded holder.
+
+        See: docs/commentary/script_convert.md#carried-items-and-read-books
+        """
+        source = """ScriptName ItemScript
+Begin GameMode
+  set x to 1
+End
+"""
+        result = converter.convert_standalone('ItemScript', source,
+                                              'ObjectReference', 'ItemScript')
+        changed = result.split('Event OnContainerChanged(', 1)[1].split(
+            'EndEvent', 1)[0]
+        assert 'TES4_Holder = akNewContainer' in changed
+        assert 'RegisterForSingleUpdate' in changed
+        assert ('TES4Polyfill.SafeGameModeGate(Self) || '
+                'TES4Polyfill.SafeGameModeGate(TES4_Holder)') in result
+
+    def test_book_read_while_carried_runs_the_read_hook(self, converter):
+        """A book's opening OnActivate also runs from OnRead for a carried
+        read: the opening Activate is dropped, a flag skips the read the
+        world activation raised, and the poll runs once after the menu.
+
+        See: docs/commentary/script_convert.md#carried-items-and-read-books
+        """
+        source = """ScriptName NoteScript
+short lesen
+Begin OnActivate
+if ( lesen == 0 )
+  Activate
+  set lesen to 1
+endif
+End
+Begin GameMode
+if ( lesen == 1 )
+  set lesen to 2
+endif
+End
+"""
+        converter.sc.on_book = True
+        result = converter.convert_standalone('NoteScript', source,
+                                              'ObjectReference', 'NoteScript')
+        activate = result.split('Event OnActivate(', 1)[1].split(
+            'EndEvent', 1)[0]
+        read = result.split('Event OnRead()', 1)[1].split('EndEvent', 1)[0]
+        assert 'TES4_ReadByActivate = akActionRef == Game.GetPlayer()' in activate
+        assert 'lesen = 1' in read
+        assert 'Activate(' not in read
+        assert read.index('Utility.Wait(0.001)') < read.index('OnUpdate()')
+
+    def test_non_book_gets_no_read_hook(self, converter):
+        """Only scripts on BOOK records turn OnActivate into a read hook."""
+        source = """ScriptName LeverScript
+Begin OnActivate
+  Activate
+End
+"""
+        result = converter.convert_standalone('LeverScript', source,
+                                              'ObjectReference', 'LeverScript')
+        assert 'Event OnRead()' not in result
 
     def test_gamemode_oninit_not_duplicated(self, converter):
         """A script with its own OnInit must not get a second one."""
@@ -2956,7 +3010,7 @@ End
         body = out.split('Event OnUpdate()')[1].split('EndEvent')[0]
         idx = body.index('Return')
         before = body[:idx]
-        assert before.count('If (TES4Polyfill.SafeGameModeGate(Self))') == 2
+        assert before.count('If (TES4Polyfill.SafeGameModeGate(Self)') == 2
         assert 'RegisterForSingleUpdate(5.0)' in before
         assert 'RegisterForSingleUpdate(0.5)' in before
 

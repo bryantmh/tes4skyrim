@@ -2108,6 +2108,65 @@ reference event, so it stayed on the base NPC_ (bug 1), and its poll was
 3D-gated, so it could not have run anyway (bug 2). Both had to be fixed for him
 to spawn.
 
+### <a id="poll-lifecycle"></a>What starts and stops a reference's poll
+
+`assemble.lifecycle` arms an object or actor poll from three events:
+
+- **OnCellAttach** fires each time the reference streams into an active cell,
+  which confines the loop to when the object is present, like TES4 GameMode.
+- **OnLoad** covers a reference already standing in an attached cell when the
+  script binds (new game, or the player is already there). OnCellAttach only
+  fires when a cell *becomes* attached, so without OnLoad the poll never
+  started. That kept Arielle (MG04Restore) standing still: her package waits on
+  `startconv == 1`, which only her GameMode body sets.
+- **OnInit**, behind the poll gate. OnInit alone is not enough on a placed
+  reference because it runs before the 3D exists (that silenced Valen Dreth).
+  The gate keeps the anti-storm property: an unconditional OnInit register made
+  every scripted object in the game start ticking at load.
+
+**Nothing unregisters on OnCellDetach.** Cell-transition events arrive in no
+guaranteed order, so the detach for the old cell could land after
+OnLoad/OnCellAttach had re-armed the poll for the new one and kill a loaded
+actor's loop mid-scene (the CharacterGen escort NPCs went mute this way). The
+gate in OnUpdate stops the loop itself one tick after the reference leaves.
+
+### <a id="carried-items-and-read-books"></a>Carried items and books read from an inventory (2026-09-26, confirmed in game)
+
+**Code:** `assemble._track_holder`, `assemble._carried_read`, `cross_ref.attached_signatures`.
+
+TES4 runs an item's GameMode block while it sits in a container, and a book's
+`OnActivate` is its "the player read this" hook. Skyrim breaks both:
+
+- **The poll died on pickup.** The gate refused any reference without a parent
+  cell, so a GameMode body that finishes after pickup never ran. Nehrim's torn
+  note (`SchattenrufNotizScript`) sets MQ00 stage 27 (the torch journal entry)
+  from GameMode once its MenuMode block has marked it read. Now
+  `OnContainerChanged` and `OnEquipped` record the holder in `TES4_Holder` and
+  re-arm, and the gate also passes while the holder is loaded.
+- **`OnActivate` misses carried reads.** A read from the inventory, or a take
+  by a perk-based "take books" mod, never raises it. For scripts attached only
+  to BOOK records whose `OnActivate` contains a bare `Activate` (51 in Nehrim,
+  23 in Oblivion), the same body also runs from `OnRead` with the opening
+  `Activate` dropped. `OnActivate` sets `TES4_ReadByActivate`, so the read its
+  own book-open raises is skipped and the body runs once per read.
+- **Nothing ticked after the read.** An in-game trace showed `OnEquipped` and
+  `OnRead` arrive during the book menu and `OnRead` set `lesen = 1`, but the
+  note's poll never ticked again. `OnRead` now calls `Utility.Wait(0.001)`
+  (the CK wiki's idiom for waiting out an open menu) and runs one `OnUpdate()`
+  pass, as TES4 GameMode ran on the first frame after the menu.
+
+Measured along the way (save `save_papyrus_dump`, Papyrus log, one trace):
+
+- `GetParentCell()` is **not** a carried-item test. The first `OnRead` guard
+  `If !GetParentCell()` skipped the body silently for a taken note.
+- A mod's perk take bypasses `OnActivate` entirely. The note's `lesen` stayed 0.
+- Books whose `OnActivate` never opens them (Oghma Infinium, Nehrim's
+  Jagdbuch books) keep `OnActivate` only; their activation replaces reading.
+
+Known gap: when a player activation of a book is consumed without opening it
+(a "not yet readable" gate), the flag stays set and the next carried read is
+skipped once.
+
 ### A bare GameMode block also forces relocation (2026-08-02)
 
 The two triggers above still missed a whole class: an actor script that is

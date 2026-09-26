@@ -11,6 +11,7 @@ later phase's state.
 """
 
 import re
+from dataclasses import replace
 
 from script_convert.blocks import (BLOCK_MAP, COMBAT_STATE_GUARDS,
                                    block_filter_guard)
@@ -548,7 +549,9 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
             order.append(header)
         merged[header] += body
 
-    out = _record_last_activator(conv, merged, order)
+    out = (_carried_read(conv, tree, extends, merged, order)
+           + _record_last_activator(conv, merged, order)
+           + _track_holder(conv, merged, order))
     for header in order:
         opener, closer = header
         if opener == BLOCK_MAP['ontrigger'][0]:
@@ -607,6 +610,101 @@ def _record_last_activator(conv, merged: dict, order: list) -> list:
         order.append(header)
     merged[header][:0] = [f'  {LAST_ACTIVATOR_VAR} = akActionRef']
     return [f'ObjectReference {LAST_ACTIVATOR_VAR}', '']
+
+
+#: Container holding a carried object, None while it lies in the world.
+_HOLDER_VAR = 'TES4_Holder'
+
+#: Skyrim's "this book was opened" event, wherever the book is.
+_ON_READ = ('Event OnRead()', 'EndEvent')
+
+#: Set by OnActivate, consumed by the OnRead that activation's own book-open raises.
+_READ_BY_ACTIVATE_VAR = 'TES4_ReadByActivate'
+
+#: Events that reach a carried object, each with the lines recording its holder.
+_HOLDER_EVENTS = (
+    (BLOCK_MAP['onadd'], (f'  {_HOLDER_VAR} = akNewContainer',)),
+    (BLOCK_MAP['onequip'], (f'  {_HOLDER_VAR} = akActor',)),
+)
+
+
+def is_self_activate(stmt) -> bool:
+    """Is this statement a bare `Activate` -- the object activating itself?"""
+    return (isinstance(stmt, N.ExprStmt) and stmt.expr.called == 'activate'
+            and stmt.expr.receiver is None)
+
+
+def _without_self_activate(stmts: list) -> list:
+    """`stmts` with every bare `Activate` removed, nested bodies included."""
+    out = []
+    for st in stmts:
+        if is_self_activate(st):
+            continue
+        if isinstance(st, N.If):
+            st = replace(st, body=_without_self_activate(st.body),
+                         elifs=[(c, _without_self_activate(b), ln)
+                                for c, b, ln in st.elifs],
+                         orelse=_without_self_activate(st.orelse))
+        elif isinstance(st, N.While):
+            st = replace(st, body=_without_self_activate(st.body))
+        out.append(st)
+    return out
+
+
+def _carried_read(conv, tree, extends: str, merged: dict, order: list) -> list:
+    """Run a book's reading OnActivate from OnRead when no world activation opened it.
+
+    A book OnActivate with a bare `Activate` means "the player read this" but
+    misses an inventory read or perk take; OnRead sees every read.  A flag
+    skips the read OnActivate's own book-open raises.  The opening `Activate`
+    is dropped; a polling script then waits out the menu and runs one poll
+    pass, as TES4 GameMode ran on the first frame after it.
+    """
+    blocks = [b for b in (tree.blocks if tree else ())
+              if b.btype.lower() == 'onactivate'
+              and any(is_self_activate(st) for st in N.walk_stmts(b.body))]
+    if not conv.sc.on_book or not blocks:
+        return []
+    body = []
+    conv._current_event = _ON_READ[0]
+    for block in blocks:
+        body += _guarded(conv, block, _script.emit_body(
+            conv, _without_self_activate(block.body), extends, 1))
+    conv._current_event = ''
+    merged[BLOCK_MAP['onactivate']][:0] = [
+        f'  {_READ_BY_ACTIVATE_VAR} = akActionRef == Game.GetPlayer()']
+    held, after = [], []
+    if _carried(conv):
+        held = [f'    {_HOLDER_VAR} = Game.GetPlayer()']
+        after = ['    Utility.Wait(0.001)', '    OnUpdate()']
+    merged[_ON_READ] = ([f'  If {_READ_BY_ACTIVATE_VAR}',
+                         f'    {_READ_BY_ACTIVATE_VAR} = False', '  Else']
+                        + held
+                        + ['    ObjectReference akActionRef = Game.GetPlayer()']
+                        + [f'  {line}' for line in body] + after + ['  EndIf'])
+    order.append(_ON_READ)
+    return [f'Bool {_READ_BY_ACTIVATE_VAR}', '']
+
+
+def _track_holder(conv, merged: dict, order: list) -> list:
+    """Declare the holder variable; every `_HOLDER_EVENTS` event records it and re-arms the poll.
+
+    TES4 ran a carried item's GameMode block from the holder's inventory, so a
+    body that finishes only after pickup (read, then take) still runs, and a
+    poll that died while carried restarts on the next equip (a read: see
+    `_carried_read`).
+
+    See: docs/commentary/script_convert.md#carried-items-and-read-books
+    """
+    if not _carried(conv):
+        return []
+    arm = _arm(conv, conv._get_update_interval(), True)
+    for header, holder in _HOLDER_EVENTS:
+        if header not in merged:
+            merged[header] = []
+            order.append(header)
+        merged[header][:0] = list(holder) + arm
+    return [f'ObjectReference {_HOLDER_VAR}', '']
 
 
 def helpers(conv) -> list:
@@ -703,11 +801,24 @@ def poll(conv, tree, extends: str) -> list:
     return out
 
 
+def _carried(conv) -> bool:
+    """Can this script's object be picked up while its GameMode poll runs?"""
+    return conv._script_extends == 'ObjectReference' and conv.sc.has_gamemode
+
+
+def _gate(conv) -> str:
+    """The poll gate: the reference is live, or a carried one's holder is."""
+    if not _carried(conv):
+        return conv._GAMEMODE_GATE
+    return (f'{conv._GAMEMODE_GATE} || '
+            f'TES4Polyfill.SafeGameModeGate({_HOLDER_VAR})')
+
+
 def _arm(conv, secs: str, load_gated: bool, indent: str = '  ') -> list:
     """Re-arm the poll, gated on the script's reference being live."""
     if not load_gated:
         return [f'{indent}RegisterForSingleUpdate({secs})']
-    return [f'{indent}If ({conv._GAMEMODE_GATE})',
+    return [f'{indent}If ({_gate(conv)})',
             f'{indent}  RegisterForSingleUpdate({secs})',
             f'{indent}EndIf']
 
@@ -771,10 +882,12 @@ def lifecycle(conv, tree, extends: str) -> list:
     """The events that START the poll loop, the sleep listener and the menu
     listeners.
 
-    Four events arm them -- OnCellAttach, OnLoad and two OnInit shapes -- and
-    they arm identically, so `start` is one definition rather than four copies
-    that can drift apart. `OnMenuClose` is inert until its menu is registered
-    for, so a script with only menu blocks still needs this.
+    All arm identically from one `start`.  An object or actor arms on
+    OnCellAttach and OnLoad unconditionally and on OnInit behind the poll
+    gate; nothing unregisters on OnCellDetach.  A script with only menu blocks
+    still needs this, since `OnMenuClose` is inert until registered for.
+
+    See: docs/commentary/script_convert.md#poll-lifecycle
     """
     sc = conv.sc
     sleeps = any(b.btype.lower() == 'menumode' and _menumode_kind(b) == 'sleep'
@@ -786,8 +899,6 @@ def lifecycle(conv, tree, extends: str) -> list:
         return []
     interval = conv._get_update_interval()
     declared = {b.btype.lower() for b in (tree.blocks if tree else ())}
-    # The sleep listener shares the poll's lifecycle: TES4 MenuMode also ran
-    # only while the script's owner was loaded / its quest instantiated.
     start = ([f'  RegisterForSingleUpdate({interval})']
              if (sc.has_gamemode or sc.has_scripteffectupdate) else [])
     if sleeps:
@@ -798,45 +909,14 @@ def lifecycle(conv, tree, extends: str) -> list:
         return [] if 'oninit' in declared else (
             ['Event OnInit()'] + start + ['EndEvent', ''])
 
-    # Object/actor: run only while loaded.  OnCellAttach fires each time the
-    # reference streams into an active cell, which confines the loop to when
-    # the object is actually present, exactly like TES4 GameMode.
-    #
-    # NO UnregisterForUpdate on OnCellDetach.  Cell-transition events arrive in
-    # no guaranteed order, so the detach for the OLD cell could land after
-    # OnLoad/OnCellAttach had already re-armed the poll for the NEW one and
-    # silently kill a loaded actor's loop mid-scene (the CharacterGen escort
-    # NPCs went mute this way -- "sometimes they talk, sometimes nothing").
-    # The arm-first gate in OnUpdate stops the loop by itself one tick after
-    # the 3D goes away, so the unregister bought nothing but the race.
     out = ['Event OnCellAttach()'] + start + ['EndEvent', '']
     if sleeps:
         out += ['Event OnCellDetach()', '  UnregisterForSleep()',
                 'EndEvent', '']
-
-    # OnCellAttach only fires when a cell BECOMES attached.  A persistent actor
-    # standing in an already-attached cell when the script is first bound (new
-    # game, or the player is simply already there) never gets that event, so
-    # the poll would never start and a GameMode variable the rest of the quest
-    # depends on stays 0 forever.  That kept Arielle (MG04Restore) standing
-    # still: her package waits on `startconv == 1`, which only her GameMode
-    # body ever sets.
-    #
-    # OnInit ALONE is not enough once the script lives on the placed reference
-    # (which reference events like OnPackageEnd require): on a reference OnInit
-    # runs at load BEFORE the 3D exists, so the gate is false and the poll
-    # never starts -- that is what silenced Valen Dreth.  OnLoad means "this
-    # object is completely loaded ... fired every time this object is loaded"
-    # (vanilla ObjectReference.psc), so it starts the loop for an actor already
-    # standing in the player's current cell, which OnCellAttach cannot do.
     if 'onload' not in declared:
         out += ['Event OnLoad()'] + start + ['EndEvent', '']
     if 'oninit' not in declared:
-        # Gating keeps the anti-storm property: the gate is true ONLY for
-        # references that are actually loaded, so this cannot re-create the
-        # "every scripted object in the game starts ticking at load" failure
-        # an unconditional OnInit register caused.
-        out += (['Event OnInit()', f'  If ({conv._GAMEMODE_GATE})']
+        out += (['Event OnInit()', f'  If ({_gate(conv)})']
                 + [f'  {line}' for line in start]
                 + ['  EndIf', 'EndEvent', ''])
     return out

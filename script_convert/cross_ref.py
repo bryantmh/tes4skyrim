@@ -476,9 +476,8 @@ class CrossRefGraph:
         if schr_type == 256:
             return 'ActiveMagicEffect'
 
-        attached = [rec_fid for rec_fid, scri_fid in self.record_scri.items()
-                    if scri_fid == script_formid]
-        sigs = {self.record_type.get(rec_fid, '') for rec_fid in attached}
+        attached = self.attached_records(script_formid)
+        sigs = self.attached_signatures(script_formid)
         if 'QUST' in sigs:
             return 'Quest'
 
@@ -489,6 +488,21 @@ class CrossRefGraph:
             return 'Actor'
 
         return 'ObjectReference'
+
+    def attached_records(self, script_formid: str) -> list:
+        """Every record whose SCRI names `script_formid`; the index is built on first use."""
+        index = getattr(self, '_attached_index', None)
+        if index is None:
+            index = {}
+            for rec_fid, scri_fid in self.record_scri.items():
+                index.setdefault(scri_fid, []).append(rec_fid)
+            self._attached_index = index
+        return index.get(script_formid, [])
+
+    def attached_signatures(self, script_formid: str) -> set:
+        """Record signatures of every record the script is attached to."""
+        return {self.record_type.get(rec_fid, '')
+                for rec_fid in self.attached_records(script_formid)}
 
     @staticmethod
     def _is_player_base(rec_fid: str) -> bool:

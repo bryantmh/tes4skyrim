@@ -531,7 +531,8 @@ class ScriptConverter:
         prev = self.sc
         self.sc = ScriptContext(property_refs=dict(prev.property_refs),
                                 scro_aliases=dict(prev.scro_aliases),
-                                quest_delay=prev.quest_delay)
+                                quest_delay=prev.quest_delay,
+                                on_book=prev.on_book)
         return _assemble.build(self, name, source, extends, editor_id)
 
     def convert_fragment(self, source: str, extends: str = 'Quest') -> list[str]:
@@ -1417,11 +1418,8 @@ class ScriptConverter:
         for btype, _bf, body in blocks:
             if btype != 'onactivate':
                 continue
-            top_level_activate = any(
-                isinstance(st, _tes4_nodes.ExprStmt)
-                and st.expr.called == 'activate'
-                and st.expr.receiver is None
-                for st in body or ())
+            top_level_activate = any(_assemble.is_self_activate(st)
+                                     for st in body or ())
             if not top_level_activate:
                 consumes = True
         return consumes
@@ -1859,7 +1857,7 @@ class ScriptConverter:
         See: docs/commentary/script_convert.md#last-activator
         """
         ev = self._current_event.lower()
-        if 'onactivate' in ev or 'ontrigger' in ev:
+        if 'onactivate' in ev or 'ontrigger' in ev or 'onread' in ev:
             return 'akActionRef'
         if 'onequipped' in ev or 'onunequipped' in ev:
             return 'akActor'
