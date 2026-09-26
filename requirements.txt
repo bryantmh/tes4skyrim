@@ -1,5 +1,6 @@
 # Runtime dependencies, pinned to the versions the conversion is tested with.
-# Install with: pip install -r requirements.txt
+# Install with: pip install -r requirements.txt. The portable package
+# (tools/release/build_portable.py) installs exactly this list.
 PyFFI==2.2.3
 numpy==2.5.3
 scipy==1.18.1
