@@ -78,7 +78,7 @@ import core.run_log as run_log
 from core.subprocess_flags import (POPEN_FLAGS as _POPEN_FLAGS,
                               configure_multiprocessing)
 from core.process_job import create_pool_job, describe_limit
-from core.heavy_lock import hold_heavy_lock
+from core.heavy_lock import SUPERVISED_ENV_VAR, hold_heavy_lock
 from core.collision_options import WINDING_FIX_ENV_VAR, default_for_plugin
 
 # multiprocessing.Pool workers (nif/lod conversion) must also inherit a hidden
@@ -1283,7 +1283,8 @@ def main():
     opened one for the whole run (several convert.py invocations, one per step)
     and set TESCONV_RUN_LOG, so `start_cli_run` returns None here and we
     neither prune nor write -- otherwise a 7-step run would leave seven logs
-    holding one step each.
+    holding one step each.  The heavy lock's supervised child likewise leaves
+    the log to the holder, which prints its output.
     """
     try:
         config = load_config(_config_path_from_argv())
@@ -1293,7 +1294,7 @@ def main():
         "Version": _version_string(),
         "Command": " ".join(["convert.py"] + sys.argv[1:]),
     }
-    log = (None if _is_informational_argv()
+    log = (None if _is_informational_argv() or os.environ.get(SUPERVISED_ENV_VAR)
            else run_log.start_cli_run(SCRIPT_DIR / "logs", config, header))
     code = 1
     try:

@@ -35,7 +35,9 @@ def render() -> Table:
     table.add_column("PID", justify="right", no_wrap=True)
     table.add_column("Command")
     if running:
-        table.add_row("", "[bold green]running", _since(running.get("started")),
+        replaced = running.get("replaced_by")
+        state = f"[yellow]replaced by {replaced}" if replaced else "[bold green]running"
+        table.add_row("", state, _since(running.get("started")),
                       str(running["pid"]), running.get("label", "?"))
     else:
         table.add_row("", "[dim]idle", "", "", "[dim]nothing running")

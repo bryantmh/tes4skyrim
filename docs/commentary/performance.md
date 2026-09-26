@@ -722,18 +722,43 @@ launching blind, so the check is now mechanical.
 `hold_heavy_lock` takes the named mutex `Local\TESConversionHeavyJob` for the
 rest of the process. A second `convert.py` or LOD bake WAITS instead of
 failing. It prints the holder, recorded in `logs/heavy_job.txt`, at once and
-again every 5 minutes. The holder writes that file as `{pid, label, started}` and
-deletes it on exit. `python -m tools.misc.build_queue` shows the running build
-and the whole queue live.
+again every 5 minutes. The holder writes that file as
+`{pid, label, work, queued, started}` and deletes it on exit.
+`python -m tools.misc.build_queue` shows the running build and the whole queue
+live.
 
-- **No work queued twice.** A waiting job leaves a ticket in
-  `logs/heavy_queue/<pid>.json` naming its work: plugins, steps, `--only` and
-  `--mesh-subdirs` scopes, and the settings that change output. A newer job whose
-  work covers a queued ticket's (`covers`) marks it replaced. The replaced job
-  stops waiting, follows its replacement, and exits with that job's exit code,
-  so its launcher still learns the result. The newer job runs the newer code.
-  A job replaced in the instant it gets the lock hands the lock on. The running
-  job is never replaced. Dead waiters' tickets are swept by the next arrival.
+- **Strict arrival order.** Every job leaves a ticket in
+  `logs/heavy_queue/<pid>.json` naming its work (plugins, steps, `--only` and
+  `--mesh-subdirs` scopes, the settings that change output) and its place in
+  line, `queued`. Only the earliest live, unreplaced ticket may take the mutex;
+  the rest poll. Agents queue dependent builds back to back (Nehrim import,
+  then its scripts), so letting the kernel pick a waiter would run them out of
+  order.
+- **No work queued twice.** A newer job whose work covers a queued or running
+  job's (`covers`) marks that job replaced and takes the EARLIEST place among
+  the jobs it replaces, so it still runs before anything queued after them.
+  It never moves ahead of a job it `needs`: pipeline order (`STEP_FLAGS`)
+  decides, so a new import may jump queued scripts, but new scripts replace
+  only the scripts queued behind the last import, and an unknown step (the
+  Morroblivion patch build) is needed by and needs everything. A job that was
+  first in line when a replacement took an earlier place hands the lock back
+  if it gets it.
+  A replaced queued job stops waiting, follows its replacement, and exits with
+  that job's exit code, so its launcher still learns the result. A job
+  replaced in the instant it gets the lock hands the lock on. Dead tickets are
+  swept by the next arrival.
+- **The holder works in a child, so it can be replaced too.** A job with work
+  reruns its own command (`sys.orig_argv`) as a child with
+  `TESCONV_HEAVY_LOCK_SUPERVISED` set, via the GUI's `run_process`, and
+  forwards the child's output. The child prints a marker on reaching the lock;
+  the holder drops everything before it, which repeats its own banner and plan
+  (unless the child exits first). `convert.py` opens no run log in the child;
+  the holder's log records the forwarded lines. When the holder file is marked
+  replaced, the holder kills the child's tree with `kill_process_tree` (the
+  GUI's Cancel), releases the mutex, follows the replacement, and exits with its
+  code. A killed import leaves nothing half-written that a later run trusts:
+  the ESM and navmesh cells are temp-then-rename, the collision/bounds caches
+  fail their decode and rescan, and sidecars are rewritten.
 - **No stale locks.** The kernel releases a mutex whose owner dies, however it
   dies; the next waiter gets `WAIT_ABANDONED`, which counts as acquired.
 - **No self-deadlock.** The holder sets `TESCONV_HEAVY_LOCK_HELD`, so a child
@@ -755,8 +780,8 @@ one mechanism:
 
 - `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — when the parent dies the kernel kills
   every process in the job. This covers the cases no Python cleanup can: a
-  crash, Task Manager "End task", the console window closed. The GUI's
-  `_kill_process_tree` only ever covered the deliberate Cancel button.
+  crash, Task Manager "End task", the console window closed.
+  `kill_process_tree` only covers a deliberate kill (Cancel, a replaced build).
 - `JobMemoryLimit` — a committed-memory ceiling across the whole job.
   **OFF by default**; opt in with `TESCONV_JOB_MEM_GB=<gb>`. See the measured
   trap below before enabling it.
