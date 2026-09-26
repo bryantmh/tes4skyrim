@@ -780,6 +780,26 @@ multiplier (1000 = 1.0x). A raw TES4 offset (0..5) read as a multiplier is
 0.000x..0.005x, which the CK clamps to the 0.10 minimum, so a PC-levelled actor
 defaults to 1.0x instead.
 
+### <a id="creature-unarmed-damage"></a>Unarmed damage: race base plus a per-creature ability
+
+**Code:** `tes5_import/actors/creature_unarmed.py`
+
+Unarmed damage has no per-NPC field, and the shared race used to take its
+DATA unarmed damage from whichever creature founded it. The eight SE02
+Gatekeepers share one race and are authored 10/15/20/25/31/40/49/58; all
+eight shipped hitting for 40 (Gatekeeper 6's).
+
+Vanilla splits it the same way it splits dragons, vampires and werewolves: the
+race carries a base and each stronger NPC lists an Ability of
+`AbFortifyUnarmedDamage` (Skyrim.esm 0x000424E2, PeakValueModifier on
+UnarmedDamage) for the rest — `crDragonUnarmedDamage02..05` are +25/+75/+125/+175.
+So the race now carries the WEAKEST authored `DATA.AttackDamage` of the
+creatures sharing it, and every stronger creature gets
+`TES4<race founder>UnarmedDamage<N>` (+N − base) appended to its SPLO. The
+FormID is keyed on the race key and the authored damage, so creatures of one
+race that hit equally hard share an ability. Oblivion.esm: 202 abilities,
+0 existing FormIDs moved. Confirmed in game (SE02 Gatekeeper scene).
+
 ## <a id="crea-vtck-always"></a>A creature's VTCK is ALWAYS emitted
 
 Even when the humanoid chain yields nothing — the normal case for a creature,

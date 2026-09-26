@@ -344,6 +344,21 @@ EndFunction
 ; Combat
 ; ==========================================================================
 
+; TES4 `begin OnHitWith <ammo>`.  Skyrim's OnHit passes the BOW as akSource and
+; no projectile for an actor target, so the arrow is read off the shooter: the
+; ammo is equipped and a bow (7) or crossbow (12) is in hand.
+Bool Function HitWithAmmo(ObjectReference akAggressor, Ammo akAmmo) Global
+  Actor shooter = akAggressor as Actor
+  If shooter == None || !shooter.IsEquipped(akAmmo)
+    Return False
+  EndIf
+  Int weaponType = shooter.GetEquippedItemType(1)
+  If weaponType != 7 && weaponType != 12
+    weaponType = shooter.GetEquippedItemType(0)
+  EndIf
+  Return weaponType == 7 || weaponType == 12
+EndFunction
+
 ; TES4 StartCombat FORCES the fight: the actor attacks the target regardless
 ; of aggression, disposition or faction relations.  CharacterGen's finale
 ; depends on that -- the final assassin has base aggression 0, his only
@@ -421,21 +436,6 @@ Function ForceCombat(Actor akAttacker, Actor akTarget, Faction akAttackers, Fact
       waited += 1
     EndWhile
   EndIf
-; TES4 `begin OnHitWith <ammo>`.  Skyrim's OnHit passes the BOW as akSource and
-; no projectile for an actor target, so the arrow is read off the shooter: the
-; ammo is equipped and a bow (7) or crossbow (12) is in hand.
-Bool Function HitWithAmmo(ObjectReference akAggressor, Ammo akAmmo) Global
-  Actor shooter = akAggressor as Actor
-  If shooter == None || !shooter.IsEquipped(akAmmo)
-    Return False
-  EndIf
-  Int weaponType = shooter.GetEquippedItemType(1)
-  If weaponType != 7 && weaponType != 12
-    weaponType = shooter.GetEquippedItemType(0)
-  EndIf
-  Return weaponType == 7 || weaponType == 12
-EndFunction
-
   akAttacker.StartCombat(akTarget)
 EndFunction
 

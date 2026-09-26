@@ -3184,6 +3184,21 @@ class TestStartCombatIsForced:
         out = converter.convert_standalone('T', src, 'Quest', 'T')
         assert 'TES4Polyfill.ForceCombat(' in out
 
+    def test_forcecombat_retargets_an_actor_already_fighting(self):
+        """TES4 StartCombat steers an actor already in combat onto the new
+        target (SE02's Gatekeeper, one orc at a time); Skyrim's is a no-op once
+        the target is in the combat group and StopCombat only takes effect on
+        the controller's next update, so ForceCombat stops, waits for combat to
+        end, then starts.
+        See: docs/commentary/script_convert.md#startcombat-retargets"""
+        src = open('script_convert/static_scripts/TES4Polyfill.psc',
+                   encoding='utf-8').read()
+        body = src[src.index('Function ForceCombat('):]
+        body = body[:body.index('EndFunction')]
+        assert 'GetCombatTarget() != akTarget' in body
+        assert (body.index('StopCombat()') < body.index('While akAttacker.IsInCombat()')
+                < body.index('StartCombat(akTarget)'))
+
     def test_forcecombat_never_puts_the_player_in_the_shared_pair(self):
         """A player in TES4ForceCombatVictims makes every forced Attacker (Nehrim's
         ally Celebro, set on the elevator trolls) hostile to them; a fight with

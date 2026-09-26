@@ -2338,6 +2338,33 @@ REPEATING registration and `RegisterForUpdate(0)` shipped in 45 scripts as an
 every-frame storm, ended only by the engine stop that the reverted design
 removed. Measured on the shipped build: 0 repeating registrations.
 
+## StartCombat retargets an actor already in combat (2026-09-25, confirmed in game)
+<a id="startcombat-retargets"></a>
+
+**Symptom:** at the start of "Through the Fringe of Madness" the Gatekeeper
+fights the four orc adventurers for a very long time instead of killing them one
+by one.
+
+**Cause:** `SE02OrcCaptainScript` keeps every orc invincible until its turn,
+then calls `GatekeeperRef.startCombat SE02OrcAdventurerNRef` every frame; that
+orc dies on the next Gatekeeper hit (`OnHit SE02GatekeeperNRef → kill`). The
+authored code only works because TES4 StartCombat switches an actor that is
+already fighting. Skyrim's does not (1.6.1170):
+
+- the `StartCombat` native (0x9eae60) queues task 0x2a; its handler (0x657e1f)
+  skips the whole start when the actor's combat controller (`actor+0x160`)
+  already lists the target in its group (0x803df0 scans the group's target
+  array). All four orcs are hitting him, so every call was a no-op and he kept
+  swinging at whichever invincible orc his AI preferred.
+- `StopCombat` (0x9eb250) only sets the controller's stop flag (`+0x40`);
+  combat ends on its next update, so StopCombat + StartCombat in one call still
+  hits the no-op.
+
+**Fix:** `TES4Polyfill.ForceCombat` — when the attacker is in combat with a
+different target it calls `StopCombat`, waits (0.05 s steps, 1 s cap) until
+`IsInCombat()` is false, then calls `StartCombat`. Generic: every converted
+`StartCombat` now retargets as TES4's did.
+
 ## ForceCombat keeps the player out of the shared faction pair (2026-09-25, confirmed in game)
 <a id="forcecombat-player-faction"></a>
 

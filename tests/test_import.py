@@ -731,6 +731,35 @@ class TestConverters:
             if after in order:
                 assert order.index('SPLO') < order.index(after)
 
+    def test_shared_race_keeps_each_creatures_unarmed_damage(self):
+        """Creatures sharing a generated race keep their own AttackDamage: the
+        race carries the weakest, the rest get an AbFortifyUnarmedDamage
+        ability for the difference (SE02 Gatekeepers 10..58 all hit for 40)."""
+        from tes5_import.actors import creature_unarmed as cu
+        weak = {'FormID': '000435A4', 'DATA.AttackDamage': '10'}
+        strong = {'FormID': '000435A3', 'DATA.AttackDamage': '58'}
+        writer = _DerivingWriter()
+        cu.reset()
+        try:
+            assert cu.race_unarmed_damage([strong, weak]) == 10.0
+            assert cu.build_unarmed_abilities(
+                writer, ('gatekeeper', ('a.nif',)), [strong, weak], 'TES4GK') == 1
+            assert cu.creature_unarmed_ability(0x0435A4) == 0
+            spel = cu.creature_unarmed_ability(0x0435A3)
+            assert spel and [t for t, _d in writer.records] == ['SPEL']
+            data = writer.records[0][1]
+            assert self._get_subrecord_data(data, 'EFID') == struct.pack('<I', 0x000424E2)
+            assert struct.unpack('<fII', self._get_subrecord_data(data, 'EFIT')) == (48.0, 0, 0)
+            rec = {'Signature': 'CREA', 'FormID': '000435A3', 'RecordFlags': '0',
+                   'EditorID': 'SE02Gatekeeper8', 'SpellCount': '0',
+                   'ACBS.Flags': '0', 'ACBS.Level': '33', 'FactionCount': '0',
+                   'ItemCount': '0', 'AIPackageCount': '0'}
+            splos = [struct.unpack('<I', d)[0]
+                     for s, d in self._iter_subrecords(convert_CREA(rec)) if s == 'SPLO']
+            assert splos == [spel]
+        finally:
+            cu.reset()
+
     def test_crea_null_spell_ids_are_dropped(self):
         """A null FormID must never reach SPLO, and SPCT must match what was
         actually written."""
