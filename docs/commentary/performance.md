@@ -596,6 +596,20 @@ properly parallel. Two findings:
   `b''.join` at wrap points (CELL/WRLD builders).
 - **Pool tools can exhaust memory**: some load the ~2.1 GB export index PER
   WORKER. Cap `--workers` or run single-process for those.
+- <a id="blas-threads-commit"></a>**One BLAS thread per process (WinError 1450).**
+  numpy's and scipy's OpenBLAS each reserve per-thread buffers at import,
+  sized by core count: on a 32-thread machine one process importing
+  `tes5_import.overrides.nested` commits 1,607 MB before doing any work, and
+  128 MB with `OPENBLAS_NUM_THREADS=1`. With 29 pool workers, that is about 46 GB
+  of commit (RAM plus page file) reserved and never touched. ElsweyrPelletine's
+  import, whose parent also holds four masters' exports, drove available commit
+  to 0 within 2 s of `parse_export_directory` starting its pool, while physical
+  RAM peaked at 90%. The failure surfaced as `OSError: [WinError 1450]
+  Insufficient system resources` from a worker's result `WriteFile` (six runs in
+  a row). Cutting the parse slice from 16 MB to 2 MB changed nothing.
+  `configure_multiprocessing()` therefore defaults `OPENBLAS_NUM_THREADS` to 1
+  before anything imports numpy. The pool gives the parallelism, and 29
+  processes × 32 BLAS threads would only oversubscribe the cores anyway.
 
 ## FormID determinism — the save-game contract (rewritten 2026-08-17)
 <a id="formid-determinism-save-game-contract"></a>
