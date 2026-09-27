@@ -27,6 +27,7 @@ from asset_convert.nif.shaders import (ALPHA_BLEND_ENABLED, ALPHA_DST_ONE,
                                        resolve_lowres, resolve_normal_for)
 from asset_convert.nif.nif_flags import NIF_FLAGS
 from asset_convert.nif.tex_paths import rewrite_tex_path
+from asset_convert.nif.uv_transform import apply_static_uv
 from asset_convert.nif.tri_reconstruct import (UnreconstructibleGeometry,
                                                clear_match_groups,
                                                fix_missing_triangles)
@@ -343,6 +344,7 @@ def _atlas_controller(eff_shader, flip_ctrl, atlas):
     atlas_path, n_pad, n_real = atlas
     eff_shader.source_texture = atlas_path.encode('utf-8')
     eff_shader.uv_scale.u = 1.0 / n_pad
+    eff_shader.uv_offset.u = 0.0
     delta = float(getattr(flip_ctrl, 'delta', 0.0) or 0.0)
     if delta <= 0.0:
         span = float(flip_ctrl.stop_time) - float(flip_ctrl.start_time)
@@ -411,10 +413,6 @@ def _build_effect_shader(ts, tex_set, si, flip_ctrl, diffuse_path,
         effective_path = tex_set.textures[0] if diffuse_path else b''
 
     eff_shader = NifFormat.BSEffectShaderProperty()
-    eff_shader.uv_offset.u = 0.0
-    eff_shader.uv_offset.v = 0.0
-    eff_shader.uv_scale.u = 1.0
-    eff_shader.uv_scale.v = 1.0
     esf1 = eff_shader.shader_flags_1
     esf1.slsf_1_own_emit = 1
     esf1.slsf_1_z_buffer_test = 1
@@ -427,6 +425,7 @@ def _build_effect_shader(ts, tex_set, si, flip_ctrl, diffuse_path,
         esf1.slsf_1_vertex_alpha = 1
     eff_shader.source_texture = effective_path
     eff_shader.texture_clamp_mode = 3
+    apply_static_uv(eff_shader, si.base_map)
 
     authored = _effect_emissive(eff_shader, si)
     if apply_fx_soft_effect(eff_shader, si.alpha_prop,
@@ -509,8 +508,7 @@ def _build_lighting_shader(ts, tex_set, si, has_double_sided):
         _make_refractive(shader, sf1)
 
     shader.texture_clamp_mode = 3
-    shader.uv_scale.u = 1.0
-    shader.uv_scale.v = 1.0
+    apply_static_uv(shader, si.base_map)
     shader.texture_set = tex_set
 
     _set_emissive(shader, sf1, si.emissive_r, si.emissive_g, si.emissive_b,
@@ -618,7 +616,8 @@ def process_geometry(strips_or_shape, fix_textures, stats=None, sky_type=None,
     if norm_tex_ref is not None:
         _record_overlay(tex_set, si.tex_apply_mode, stats, norm_tex_ref)
     _carry_alpha(ts, tex_set, si, stats)
-    attach_tex_transform_ctrls(ts.bs_properties[0], si.tex_transforms)
+    attach_tex_transform_ctrls(ts.bs_properties[0], si.tex_transforms,
+                               si.base_map)
     _mark_skinned(ts)
 
     if hasattr(ts, 'data') and ts.data is not None:

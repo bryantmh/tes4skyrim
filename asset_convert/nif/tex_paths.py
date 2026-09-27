@@ -33,31 +33,20 @@ IMAGE_EXTS = ('tga', 'bmp')
 
 
 def rewrite_tex_path(raw_bytes):
-    """Prepend the game's namespace to a texture path that lacks it.
+    """Prepend the game's namespace to an AUTHORED texture path, always.
 
     Separators are normalized FIRST; a leading 'data\\' is dropped and a
     .tga/.bmp name becomes .dds. A 'lowres\\' segment is KEPT; see
-    `full_res_twin` for when it falls back. The idempotence
-    check keys on the ACTIVE namespace, so a path already carrying ANOTHER
-    game's prefix is still namespaced rather than passed through unchanged.
+    `full_res_twin` for when it falls back.
     See: docs/commentary/asset_convert_shader.md#rewrite-tex-path
     See: docs/commentary/asset_convert_texture.md#per-game-asset-namespace
     """
-    ns = current_namespace()
     path = raw_bytes.decode('utf-8', errors='replace').replace('/', '\\')
     if path.lower().startswith('data\\'):
         path = path[len('data\\'):]
-    low = path.lower()
-
-    if low.startswith('textures\\'):
-        rest = path[len('textures\\'):]
-    else:
-        rest = path
-    rest = as_dds(rest)
-
-    if rest.lower().startswith(ns + '\\'):
-        return 'Textures\\' + rest
-    return 'Textures\\' + ns + '\\' + rest
+    if path.lower().startswith('textures\\'):
+        path = path[len('textures\\'):]
+    return 'Textures\\' + current_namespace() + '\\' + as_dds(path)
 
 
 def full_res_twin(tex):

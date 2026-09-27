@@ -11,6 +11,7 @@ pose and the ragdoll handover collapses.
 See: docs/commentary/asset_convert_creature.md#ragdoll-bone-subsets
 """
 
+from asset_convert.havok.behavior_getup import GETUP_MATCHERS, landing_time
 from asset_convert.havok.behavior_nodes import (
     F_WILD,
     TRANSITION_TMPL,
@@ -150,11 +151,12 @@ def _modifier_generator(gb, name, list_name, modifier_refs, generator_ref):
     return mg
 
 
-def _fully_ragdoll(gb, ragdoll, pose_clip):
+def _fully_ragdoll(gb, ragdoll, pose_ref, getup):
     """State 2's generator: the limp powered ragdoll over the pose.
 
     Vanilla #0092 'FullRagdoll' — active by default and released by
-    GetUpBegin (inert for a corpse, kept for structural parity).
+    GetUpBegin, which instead switches on #0088 (the matching ragdoll plus
+    the timer that starts the getup) when the creature can get up.
     """
     edm = gb.event_driven_modifier(
         'FullRagdoll',
@@ -162,9 +164,164 @@ def _fully_ragdoll(gb, ragdoll, pose_clip):
                          'WORLD_FROM_MODEL_MODE_RAGDOLL',
                          ragdoll['pose_bones']).ref,
         -1, gb.eid['GetUpBegin'], True)
+    mods = [edm.ref]
+    if getup:
+        mods.append(_match_and_send_getup(gb, ragdoll).ref)
     return _modifier_generator(gb, 'Fully Ragdoll Mod Gen',
-                               'Fully Ragdoll Mod List', [edm.ref],
-                               pose_clip.ref)
+                               'Fully Ragdoll Mod List', mods, pose_ref)
+
+
+# ---------------------------------------------------------------------------
+# Getting up
+# ---------------------------------------------------------------------------
+
+#: Vanilla #0083 GetUpTimerMod: seconds of pose matching between GetUpBegin and GetUpStart.
+GETUP_MATCH_SECONDS = 0.5
+
+#: Vanilla #0139 hkbGetUpModifier: ragdoll-to-clip blend and ground-align seconds.
+GETUP_BLEND_SECONDS, GETUP_ALIGN_SECONDS = 1.0, 0.25
+
+#: Root state id of GetUpFromRagdoll, after Root 0 and the two death states.
+GETUP_STATE_ID = 3
+
+
+def _match_and_send_getup(gb, ragdoll):
+    """Vanilla #0088: on GetUpBegin, pose-match the ragdoll and start the getup 0.5s later."""
+    timer = gb.add('hkbTimerModifier')
+    timer.param('variableBindingSet', 'null')
+    timer.param('userData', 0)
+    timer.param('name', 'GetUpTimerMod')
+    timer.param('enable', True)
+    timer.param('alarmTimeSeconds', f'{GETUP_MATCH_SECONDS:.6f}')
+    timer.param_raw('alarmEvent', (
+        '<hkobject>\n'
+        f'\t<hkparam name="id">{gb.eid["GetUpStart"]}</hkparam>\n'
+        '\t<hkparam name="payload">null</hkparam>\n'
+        '</hkobject>'))
+    matching = _powered_ragdoll(gb, 'PoweredRagdollMatching', 200.0,
+                                'WORLD_FROM_MODEL_MODE_COMPUTE',
+                                ragdoll['pose_bones'])
+    ml = gb.add('hkbModifierList')
+    ml.param('variableBindingSet', 'null')
+    ml.param('userData', 1)
+    ml.param('name', 'MatchAndSendGetup')
+    ml.param('enable', True)
+    ml.param_array('modifiers', [matching.ref, timer.ref])
+    return gb.event_driven_modifier('TurnOnMatchingRagdoll', ml.ref,
+                                    gb.eid['GetUpBegin'], -1, False)
+
+
+def _getup_clip(gb, name, entry, event):
+    """One single-play getup clip raising `event` and the controller at landing."""
+    t = landing_time(entry)
+    items = [TRIGGER_TMPL.format(time=0.0, event_id=gb.eid['GetUpEnd'],
+                                 rel='true')]
+    items += [TRIGGER_TMPL.format(time=t, event_id=gb.eid[e], rel='false')
+              for e in (event, 'AddCharacterControllerToWorld')]
+    trig = gb.add('hkbClipTriggerArray')
+    trig.param_raw('triggers', '\n'.join(items), numelements=len(items))
+    return gb.clip(name, None, False, triggers_ref=trig.ref,
+                   anim=entry['stem'])
+
+
+def _pose_matcher(gb, name, ragdoll, children):
+    """Vanilla #0096: picks the child clip closest to the ragdoll's pose."""
+    kids = []
+    for gen_ref in children:
+        ch = gb.add('hkbBlenderGeneratorChild')
+        ch.param('variableBindingSet', 'null')
+        ch.param('generator', gen_ref)
+        ch.param('boneWeights', 'null')
+        ch.param('weight', '1.000000')
+        ch.param('worldFromModelWeight', '1.000000')
+        kids.append(ch.ref)
+    pb0, pb1, pb2 = ragdoll['pose_bones']
+    pm = gb.add('hkbPoseMatchingGenerator')
+    for key, val in (
+            ('variableBindingSet', 'null'), ('userData', 0), ('name', name),
+            ('referencePoseWeightThreshold', '0.000000'),
+            ('blendParameter', '0.000000'),
+            ('minCyclicBlendParameter', '0.000000'),
+            ('maxCyclicBlendParameter', '1.000000'),
+            ('indexOfSyncMasterChild', -1), ('flags', 0),
+            ('subtractLastChild', False)):
+        pm.param(key, val)
+    pm.param_array('children', kids)
+    for key, val in (
+            ('worldFromModelRotation', '(0.000000 0.000000 0.000000 1.000000)'),
+            ('blendSpeed', '1.000000'), ('minSpeedToSwitch', '0.200000'),
+            ('minSwitchTimeNoError', '0.200000'),
+            ('minSwitchTimeFullError', '0.000000'),
+            ('startPlayingEventId', gb.eid['GetUpStart']),
+            ('startMatchingEventId', gb.eid['Ragdoll']),
+            ('rootBoneIndex', pb0), ('otherBoneIndex', pb1),
+            ('anotherBoneIndex', pb2), ('pelvisIndex', pb0),
+            ('mode', 'MODE_MATCH')):
+        pm.param(key, val)
+    return pm
+
+
+def _getup_selector(gb, ragdoll, plan):
+    """Vanilla #0095: the Reanimate / GetUp matchers, chosen by iGetUpType."""
+    matchers = []
+    for prefix, event in GETUP_MATCHERS:
+        clips = [_getup_clip(gb, prefix + e['role'], e, event).ref
+                 for e in plan]
+        matchers.append(_pose_matcher(gb, f'{prefix} Pose Matcher', ragdoll,
+                                      clips).ref)
+    msg = gb.add('hkbManualSelectorGenerator')
+    msg.param('variableBindingSet',
+              gb.binding_set([('selectedGeneratorIndex', 'iGetUpType')]).ref)
+    msg.param('userData', 0)
+    msg.param('name', 'PoseMatching MSG')
+    msg.param_array('generators', matchers)
+    msg.param('selectedGeneratorIndex', 0)
+    msg.param('currentGeneratorIndex', 0)
+    return msg
+
+
+def _getup_modifier(gb, ragdoll):
+    """Vanilla #0139: blends the ragdoll into the clip and aligns it with the ground."""
+    pb0, pb1, pb2 = ragdoll['pose_bones']
+    mod = gb.add('hkbGetUpModifier')
+    for key, val in (
+            ('variableBindingSet', 'null'), ('userData', 0),
+            ('name', 'Get Up Modifier'), ('enable', True),
+            ('groundNormal', '(0.000000 0.000000 1.000000 0.000000)'),
+            ('duration', f'{GETUP_BLEND_SECONDS:.6f}'),
+            ('alignWithGroundDuration', f'{GETUP_ALIGN_SECONDS:.6f}'),
+            ('rootBoneIndex', pb0), ('otherBoneIndex', pb1),
+            ('anotherBoneIndex', pb2)):
+        mod.param(key, val)
+    return mod
+
+
+def _animation_driven(gb):
+    """Vanilla #0138: holds bAnimationDriven true while the getup plays."""
+    mod = gb.add('BSIsActiveModifier')
+    mod.param('variableBindingSet',
+              gb.binding_set([('bIsActive0', 'bAnimationDriven')]).ref)
+    mod.param('userData', 2)
+    mod.param('name', 'BSIsActiveModifier_AnimDriven')
+    mod.param('enable', True)
+    for i in range(5):
+        mod.param(f'bIsActive{i}', False)
+        mod.param(f'bInvertActive{i}', False)
+    return mod
+
+
+def _getup_state(gb, ragdoll, selector, rag_fx):
+    """Vanilla state 5 'GetUpFromRagdoll', returning to Root on GetUpEnd."""
+    mods = [_getup_modifier(gb, ragdoll).ref] + live_tracking(gb, ragdoll)
+    mods.append(_animation_driven(gb).ref)
+    gen = _modifier_generator(gb, 'GetUp Mod Gen', 'GetUp Mod List', mods,
+                              selector.ref)
+    trans = gb.add('hkbStateMachineTransitionInfoArray')
+    trans.param_raw('transitions', TRANSITION_TMPL.format(
+        effect=rag_fx.ref, event_id=gb.eid['GetUpEnd'], to_state=0,
+        flags='FLAG_DISABLE_CONDITION'), numelements=1)
+    return gb.root_state(GETUP_STATE_ID, 'GetUpFromRagdoll', gen.ref,
+                         transitions_ref=trans.ref)
 
 
 def _contact_listener(gb, ragdoll):
@@ -206,22 +363,24 @@ def _ragdoll_blend(gb):
                            'SELF_TRANSITION_MODE_BLEND', 0)
 
 
-def death_states(gb, ragdoll, clips):
-    """The two death states and the root wildcard entering them.
+def death_states(gb, ragdoll, clips, getup_plan=None):
+    """The two death states, the getup state, and the root wildcard entering them.
 
     Returns `(states, wildcard_ref)`; `([], 'null')` without a ragdoll.
-    State 1 'AnimateToRagdoll' raises `AddRagdollToWorld` from its
-    enterNotifyEvents — the ONLY thing in the pipeline that ever does —
-    and state 2 'Fully Ragdoll' notifies
-    RemoveCharacterControllerFromWorld.  Both are required: without state 1
-    the corpse has no ragdoll and, since state 2 still removes the
-    character controller, no collision at all.
+    State 1 raises `AddRagdollToWorld` (nothing else does) and state 2
+    removes the character controller; both are required.  With a
+    `getup_plan` state 2 plays the pose-matching selector, as vanilla
+    state 4 does, and GetUpStart leads to state 3.
+    See: docs/commentary/asset_convert_creature.md#the-death-pose-source
+    See: docs/commentary/asset_convert_creature.md#getup-from-ragdoll
     """
     if not (ragdoll and clips['idle']):
         return [], 'null'
     eid = gb.eid
     pose_clip = _pose_clip(gb, clips)
-    full_rag = _fully_ragdoll(gb, ragdoll, pose_clip)
+    selector = _getup_selector(gb, ragdoll, getup_plan) if getup_plan else None
+    full_rag = _fully_ragdoll(gb, ragdoll,
+                              (selector or pose_clip).ref, bool(selector))
     rag_fx = _ragdoll_blend(gb)
     a2r_gen = _animate_to_ragdoll(gb, ragdoll, pose_clip)
 
@@ -229,13 +388,23 @@ def death_states(gb, ragdoll, clips):
     a2r_trans.param_raw('transitions', TRANSITION_TMPL.format(
         effect=rag_fx.ref, event_id=eid['Ragdoll'], to_state=2,
         flags='FLAG_DISABLE_CONDITION'), numelements=1)
+    rag_trans = 'null'
+    if selector:
+        arr = gb.add('hkbStateMachineTransitionInfoArray')
+        arr.param_raw('transitions', TRANSITION_TMPL.format(
+            effect='null', event_id=eid['GetUpStart'],
+            to_state=GETUP_STATE_ID, flags='FLAG_DISABLE_CONDITION'),
+            numelements=1)
+        rag_trans = arr.ref
 
     states = [
         gb.root_state(1, 'AnimateToRagdoll', a2r_gen.ref,
                       'AddRagdollToWorld', a2r_trans.ref),
         gb.root_state(2, 'Fully Ragdoll', full_rag.ref,
-                      'RemoveCharacterControllerFromWorld'),
+                      'RemoveCharacterControllerFromWorld', rag_trans),
     ]
+    if selector:
+        states.append(_getup_state(gb, ragdoll, selector, rag_fx))
     root_wild = gb.add('hkbStateMachineTransitionInfoArray')
     root_wild.param_raw('transitions', '\n'.join(
         TRANSITION_TMPL.format(effect=e, event_id=ev, to_state=s,

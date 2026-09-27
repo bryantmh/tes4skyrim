@@ -53,6 +53,23 @@ def test_risers_of_a_flight_are_stairs_and_a_full_height_side_wall_is_not():
     assert out[len(treads) + len(risers):] == [STONE] * len(wall)
 
 
+def test_first_riser_up_from_a_floor_outside_the_mesh_is_stairs():
+    """The riser under the lowest tread climbs from a floor another mesh owns."""
+    treads = [t for i in range(1, 6) for t in _quad(0, 20 * (i - 1), 100, 20 * i, 16 * i)]
+    first = _riser(0, 0, 16)
+    assert _run(treads + first) == [STAIRS_STONE] * (len(treads) + len(first))
+
+
+def test_landing_edge_above_a_flight_is_stairs_and_its_far_side_is_not():
+    """The landing strip beside the top tread takes the stairs material; the rest of the landing keeps its own."""
+    flight = [t for i in range(6) for t in _quad(0, 20 * i, 100, 20 * i + 20, 16 * i)]
+    lip = _quad(0, 120, 100, 150, 96)
+    far = _quad(0, 150, 100, 800, 96)
+    out = _run(flight + lip + far)
+    assert out[:len(flight) + len(lip)] == [STAIRS_STONE] * (len(flight) + len(lip))
+    assert out[len(flight) + len(lip):] == [STONE] * len(far)
+
+
 def test_floor_at_the_foot_of_a_flight_stays_plain():
     """A room floor one step below the flight is not a tread."""
     floor = _quad(-400, -400, 400, 0, 0)

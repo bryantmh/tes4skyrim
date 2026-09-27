@@ -10,10 +10,13 @@ A phase reads the `ScriptContext` and returns lines; it never reaches into a
 later phase's state.
 """
 
+import re
+from dataclasses import replace
+
 from script_convert.blocks import (BLOCK_MAP, COMBAT_STATE_GUARDS,
                                    block_filter_guard)
 from script_convert.constants import (
-    MENU_ID_NAMES,
+    LAST_ACTIVATOR_VAR, MENU_ID_NAMES, UDF_CALLER_PARAM, UDF_RESULT_VAR,
     POLL_BLOCKS, REF_SPECIFICITY, TYPE_MAP, is_generated_script_type,
     safe_property_name, papyrus_script_name
 )
@@ -21,6 +24,7 @@ from script_convert.command_rows import (
     COMMAND_ROWS, ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
 )
 from script_convert import symbols as _symbols
+from script_convert.poll_motion import relative_sets
 from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as N
 
@@ -236,18 +240,7 @@ def _load_facts(conv, tree) -> None:
     btypes = {b.btype.lower() for b in tree.blocks} if tree else set()
 
     sc.suppressed_fall_damage = 'resetfalldamagetimer' in called
-    sc.uses_getsecondspassed = 'getsecondspassed' in called
-    sc.gsp_realtime = bool(
-        (called & {'getsecondspassed', 'scripteffectelapsedseconds'})
-        and (btypes & {'gamemode', 'scripteffectupdate'}))
-    if sc.gsp_realtime:
-        # The synthesised elapsed-time variable must be TYPED for the
-        # Float->Int coercion: TES4 `short` timers decremented by
-        # getSecondsPassed (`damage = -50 * TES4_SecondsPassed`) need the
-        # `as Int` cast the old float literal got via its own path.
-        sc.var_types['tes4_secondspassed'] = 'Float'
-        sc.var_types['tes4_lasttick'] = 'Float'
-
+    _load_time_facts(sc, tree, called, btypes)
     sc.uses_timer = 'timer' in names
     sc.uses_say = bool(called & {'say', 'sayto'})
     sc.uses_say_timer = any(
@@ -273,6 +266,27 @@ def _load_facts(conv, tree) -> None:
     sc.has_menumode = any(b.btype.lower() == 'menumode' for b in blocks)
     sc.has_scripteffectupdate = any(
         b.btype.lower() == 'scripteffectupdate' for b in blocks)
+
+
+def _load_time_facts(sc, tree, called: set, btypes: set) -> None:
+    """Does the poll measure real elapsed time, and does it move references?
+
+    A poll that moves glides each step over the MEASURED gap between passes,
+    so it measures one too.  The elapsed variable is typed so a TES4 `short`
+    timer decremented by it gets its `as Int` cast.
+    """
+    sc.uses_getsecondspassed = 'getsecondspassed' in called
+    polls = [b for b in (tree.blocks if tree else ())
+             if b.btype.lower() in POLL_BLOCKS]
+    sc.moves_in_poll = any(e.called in ('setpos', 'setangle', 'rotate')
+                           for b in polls for e in N.walk_exprs_in(b.body))
+    sc.relative_sets = relative_sets(polls) if sc.moves_in_poll else {}
+    sc.gsp_realtime = sc.moves_in_poll or bool(
+        (called & {'getsecondspassed', 'scripteffectelapsedseconds'})
+        and (btypes & {'gamemode', 'scripteffectupdate'}))
+    if sc.gsp_realtime:
+        sc.var_types['tes4_secondspassed'] = 'Float'
+        sc.var_types['tes4_lasttick'] = 'Float'
 
 
 def _reads_sleep_state(body) -> bool:
@@ -358,20 +372,29 @@ def properties(conv, tree) -> list:
 
 
 def quest_restart(conv, tree, extends: str, name: str) -> list:
-    """`TES4Start(quest)`: start a quest script's quest, keeping its TES4 variables.
+    """`TES4Start(quest)` and `TES4SetStage(quest, stage)`, keeping TES4 variables.
 
-    Skyrim's `Start()` on a stopped quest re-initialises its scripts; TES4 kept
-    every quest variable across StopQuest/StartQuest.  Global, so the saved
-    values live in the caller's frame rather than the instance Start replaces.
+    Skyrim's `Start()` on a stopped quest re-initialises its scripts, and so
+    does a `SetStage` that starts it; TES4 kept every quest variable across
+    both.  Global, so the saved values live in the caller's frame rather than
+    the instance Start replaces.
     See: docs/commentary/script_convert.md#stopquest-converts-stop-run-bit
+    See: docs/commentary/script_convert.md#setstage-start-keeps-variables
     """
     if extends != 'Quest':
         return []
     kept = variable_properties(conv, tree)
-    out = ['', f'Function TES4Start({papyrus_script_name(name)} akQuest) Global']
+    script = papyrus_script_name(name)
+    out = ['', f'Function TES4Start({script} akQuest) Global']
     out += [f'  {ptype} v{i} = akQuest.{prop}' for i, (prop, ptype) in enumerate(kept)]
     out.append('  akQuest.Start()')
     out += [f'  akQuest.{prop} = v{i}' for i, (prop, _t) in enumerate(kept)]
+    out += ['EndFunction', '',
+            f'Bool Function TES4SetStage({script} akQuest, Int aiStage) Global',
+            '  If !akQuest.IsRunning()',
+            '    TES4Start(akQuest)',
+            '  EndIf',
+            '  Return akQuest.SetStage(aiStage)']
     return out + ['EndFunction']
 
 
@@ -416,6 +439,7 @@ def udf(conv, tree, extends: str) -> list:
         return []
     params = _udf_params(block.filter)
     conv.sc.udf_params = {p.lower() for p in params}
+    conv.sc.in_udf = True
     _script.emit_body(conv, block.body, extends, 1)
     # Record each parameter's final type BEFORE rendering the body's casts:
     # the widening to `Form` happens here, and a `type_of` that still answered
@@ -424,13 +448,32 @@ def udf(conv, tree, extends: str) -> list:
     for name, ptype in zip(params, types):
         for spelling in (name.lower(), safe_property_name(name).lower()):
             conv.sc.var_types[spelling] = ptype
-    lines = _script.emit_body(conv, block.body, extends, 1)
-    sig = ', '.join('%s %s' % (ptype, safe_property_name(name))
-                    for name, ptype in zip(params, types))
-    conv.sc.udf_signature = types
-    rtype = 'Int ' if conv.sc.udf_returns else ''
-    return ['%sFunction TES4Call(%s)' % (rtype, sig)] + lines + ['EndFunction',
-                                                                 '']
+    lines = [_SELF_RE.sub(UDF_CALLER_PARAM, line)
+             for line in _script.emit_body(conv, block.body, extends, 1)]
+    conv.sc.in_udf = False
+    sig = ', '.join([f'ObjectReference {UDF_CALLER_PARAM}']
+                    + ['%s %s' % (ptype, safe_property_name(name))
+                       for name, ptype in zip(params, types)])
+    conv.sc.udf_signature = ['ObjectReference'] + types
+    if not conv.sc.udf_returns:
+        return ['Function TES4Call(%s)' % sig] + lines + ['EndFunction', '']
+    return _returning_udf(conv.sc.udf_return_type, sig, lines)
+
+
+#: `Self` as a whole word, which in a user function's body is its calling reference.
+_SELF_RE = re.compile(r'\bSelf\b')
+
+
+def _returning_udf(rtype: str, sig: str, lines: list) -> list:
+    """`TES4Call` returning the `SetFunctionValue` result, at its end and every `return`.
+
+    See: docs/commentary/script_convert.md#set-function-value
+    """
+    init = {'Int': '0', 'Float': '0.0', 'String': '""', 'Bool': 'False'}.get(rtype, 'None')
+    tail = [] if lines and lines[-1].strip().startswith('Return') \
+        else [f'  Return {UDF_RESULT_VAR}']
+    return ([f'{rtype} Function TES4Call({sig})', f'  {rtype} {UDF_RESULT_VAR} = {init}']
+            + lines + tail + ['EndFunction', ''])
 
 
 def _param_type(conv, name: str) -> str:
@@ -506,13 +549,15 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
             order.append(header)
         merged[header] += body
 
-    out = []
+    out = (_carried_read(conv, tree, extends, merged, order)
+           + _record_last_activator(conv, merged, order)
+           + _track_holder(conv, merged, order))
     for header in order:
         opener, closer = header
-        out.append(opener)
-        out += merged[header]
-        out.append(closer)
-        out.append('')
+        if opener == BLOCK_MAP['ontrigger'][0]:
+            out += _one_trigger_at_a_time(opener, closer, merged[header])
+        else:
+            out += [opener] + merged[header] + [closer, '']
         # TES4's `begin OnTrigger` runs EVERY FRAME an object is inside the
         # volume.  Skyrim splits that: OnTriggerEnter is the entry frame and
         # OnTrigger the repeat, so a converted OnTrigger body alone never runs
@@ -530,6 +575,136 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
                     'EndEvent',
                     '']
     return out
+
+
+def _one_trigger_at_a_time(opener: str, closer: str, body: list) -> list:
+    """OnTrigger that skips an event while the previous one still runs.
+
+    TES4 finished each frame's OnTrigger before the next began.  Papyrus runs
+    every event on its own thread, and a thread waiting on a game call lets
+    the next one in, so a one-time block that sets its flag at the end ran
+    once per overlapping event.  The body is a function so a TES4 `return`
+    inside it still clears the busy flag.
+
+    See: docs/commentary/script_convert.md#one-trigger-at-a-time
+    """
+    return (['Bool TES4_TriggerBusy = False', '', opener,
+             '  If TES4_TriggerBusy', '    Return', '  EndIf',
+             '  TES4_TriggerBusy = True', '  TES4_OnTriggerBody(akActionRef)',
+             '  TES4_TriggerBusy = False', closer, '',
+             'Function TES4_OnTriggerBody(ObjectReference akActionRef)']
+            + body + ['EndFunction', ''])
+
+
+def _record_last_activator(conv, merged: dict, order: list) -> list:
+    """Declare the last-activator variable and record it first thing in OnActivate.
+
+    Only when another event read it (`sc.uses_last_activator`).
+    See: docs/commentary/script_convert.md#last-activator
+    """
+    if not conv.sc.uses_last_activator:
+        return []
+    header = BLOCK_MAP['onactivate']
+    if header not in merged:
+        merged[header] = []
+        order.append(header)
+    merged[header][:0] = [f'  {LAST_ACTIVATOR_VAR} = akActionRef']
+    return [f'ObjectReference {LAST_ACTIVATOR_VAR}', '']
+
+
+#: Container holding a carried object, None while it lies in the world.
+_HOLDER_VAR = 'TES4_Holder'
+
+#: Skyrim's "this book was opened" event, wherever the book is.
+_ON_READ = ('Event OnRead()', 'EndEvent')
+
+#: Set by OnActivate, consumed by the OnRead that activation's own book-open raises.
+_READ_BY_ACTIVATE_VAR = 'TES4_ReadByActivate'
+
+#: Events that reach a carried object, each with the lines recording its holder.
+_HOLDER_EVENTS = (
+    (BLOCK_MAP['onadd'], (f'  {_HOLDER_VAR} = akNewContainer',)),
+    (BLOCK_MAP['onequip'], (f'  {_HOLDER_VAR} = akActor',)),
+)
+
+
+def is_self_activate(stmt) -> bool:
+    """Is this statement a bare `Activate` -- the object activating itself?"""
+    return (isinstance(stmt, N.ExprStmt) and stmt.expr.called == 'activate'
+            and stmt.expr.receiver is None)
+
+
+def _without_self_activate(stmts: list) -> list:
+    """`stmts` with every bare `Activate` removed, nested bodies included."""
+    out = []
+    for st in stmts:
+        if is_self_activate(st):
+            continue
+        if isinstance(st, N.If):
+            st = replace(st, body=_without_self_activate(st.body),
+                         elifs=[(c, _without_self_activate(b), ln)
+                                for c, b, ln in st.elifs],
+                         orelse=_without_self_activate(st.orelse))
+        elif isinstance(st, N.While):
+            st = replace(st, body=_without_self_activate(st.body))
+        out.append(st)
+    return out
+
+
+def _carried_read(conv, tree, extends: str, merged: dict, order: list) -> list:
+    """Run a book's reading OnActivate from OnRead when no world activation opened it.
+
+    A book OnActivate with a bare `Activate` means "the player read this" but
+    misses an inventory read or perk take; OnRead sees every read.  A flag
+    skips the read OnActivate's own book-open raises.  The opening `Activate`
+    is dropped; a polling script then waits out the menu and runs one poll
+    pass, as TES4 GameMode ran on the first frame after it.
+    """
+    blocks = [b for b in (tree.blocks if tree else ())
+              if b.btype.lower() == 'onactivate'
+              and any(is_self_activate(st) for st in N.walk_stmts(b.body))]
+    if not conv.sc.on_book or not blocks:
+        return []
+    body = []
+    conv._current_event = _ON_READ[0]
+    for block in blocks:
+        body += _guarded(conv, block, _script.emit_body(
+            conv, _without_self_activate(block.body), extends, 1))
+    conv._current_event = ''
+    merged[BLOCK_MAP['onactivate']][:0] = [
+        f'  {_READ_BY_ACTIVATE_VAR} = akActionRef == Game.GetPlayer()']
+    held, after = [], []
+    if _carried(conv):
+        held = [f'    {_HOLDER_VAR} = Game.GetPlayer()']
+        after = ['    Utility.Wait(0.001)', '    OnUpdate()']
+    merged[_ON_READ] = ([f'  If {_READ_BY_ACTIVATE_VAR}',
+                         f'    {_READ_BY_ACTIVATE_VAR} = False', '  Else']
+                        + held
+                        + ['    ObjectReference akActionRef = Game.GetPlayer()']
+                        + [f'  {line}' for line in body] + after + ['  EndIf'])
+    order.append(_ON_READ)
+    return [f'Bool {_READ_BY_ACTIVATE_VAR}', '']
+
+
+def _track_holder(conv, merged: dict, order: list) -> list:
+    """Declare the holder variable; every `_HOLDER_EVENTS` event records it and re-arms the poll.
+
+    TES4 ran a carried item's GameMode block from the holder's inventory, so a
+    body that finishes only after pickup (read, then take) still runs, and a
+    poll that died while carried restarts on the next equip (a read: see
+    `_carried_read`).
+
+    See: docs/commentary/script_convert.md#carried-items-and-read-books
+    """
+    if not _carried(conv):
+        return []
+    arm = _arm(conv, conv._get_update_interval(), True)
+    for header, holder in _HOLDER_EVENTS:
+        if header not in merged:
+            merged[header] = []
+            order.append(header)
+        merged[header][:0] = list(holder) + arm
+    return [f'ObjectReference {_HOLDER_VAR}', '']
 
 
 def helpers(conv) -> list:
@@ -603,6 +778,7 @@ def poll(conv, tree, extends: str) -> list:
 
     out += _dialogue_gate(conv, extends, load_gated)
     out += _elapsed_prologue(conv, interval)
+    out += _glide_prologue(sc)
 
     for block in (tree.blocks if tree else ()):
         btype = block.btype.lower()
@@ -619,16 +795,30 @@ def poll(conv, tree, extends: str) -> list:
         out.append(f'  {var} = {quest}.GetStage()')
 
     sc.poll_return_prefix = ''
+    sc.glide_secs = ''
     out += _arm(conv, interval, load_gated)
     out += ['EndEvent', '']
     return out
+
+
+def _carried(conv) -> bool:
+    """Can this script's object be picked up while its GameMode poll runs?"""
+    return conv._script_extends == 'ObjectReference' and conv.sc.has_gamemode
+
+
+def _gate(conv) -> str:
+    """The poll gate: the reference is live, or a carried one's holder is."""
+    if not _carried(conv):
+        return conv._GAMEMODE_GATE
+    return (f'{conv._GAMEMODE_GATE} || '
+            f'TES4Polyfill.SafeGameModeGate({_HOLDER_VAR})')
 
 
 def _arm(conv, secs: str, load_gated: bool, indent: str = '  ') -> list:
     """Re-arm the poll, gated on the script's reference being live."""
     if not load_gated:
         return [f'{indent}RegisterForSingleUpdate({secs})']
-    return [f'{indent}If ({conv._GAMEMODE_GATE})',
+    return [f'{indent}If ({_gate(conv)})',
             f'{indent}  RegisterForSingleUpdate({secs})',
             f'{indent}EndIf']
 
@@ -649,6 +839,21 @@ def _dialogue_gate(conv, extends: str, load_gated: bool) -> list:
              '; TES4 GameMode did not run while a menu was open']
             + _arm(conv, '0.5', load_gated, indent='    ')
             + ['    Return', '  EndIf'])
+
+
+def _glide_prologue(sc) -> list:
+    """This pass's SetPos/SetAngle glide goals, and `sc.glide_secs` armed so the body emits glides.
+
+    A glide lasts the measured gap since the last pass, so it ends as the next
+    one starts however late the VM delivers it.
+
+    See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
+    """
+    if not sc.moves_in_poll:
+        return []
+    sc.glide_secs = 'TES4_SecondsPassed'
+    return ['  ObjectReference[] TES4_GlideRefs = new ObjectReference[8]',
+            '  Float[] TES4_GlideGoals = new Float[96]']
 
 
 def _elapsed_prologue(conv, interval: str) -> list:
@@ -677,10 +882,12 @@ def lifecycle(conv, tree, extends: str) -> list:
     """The events that START the poll loop, the sleep listener and the menu
     listeners.
 
-    Four events arm them -- OnCellAttach, OnLoad and two OnInit shapes -- and
-    they arm identically, so `start` is one definition rather than four copies
-    that can drift apart. `OnMenuClose` is inert until its menu is registered
-    for, so a script with only menu blocks still needs this.
+    All arm identically from one `start`.  An object or actor arms on
+    OnCellAttach and OnLoad unconditionally and on OnInit behind the poll
+    gate; nothing unregisters on OnCellDetach.  A script with only menu blocks
+    still needs this, since `OnMenuClose` is inert until registered for.
+
+    See: docs/commentary/script_convert.md#poll-lifecycle
     """
     sc = conv.sc
     sleeps = any(b.btype.lower() == 'menumode' and _menumode_kind(b) == 'sleep'
@@ -692,8 +899,6 @@ def lifecycle(conv, tree, extends: str) -> list:
         return []
     interval = conv._get_update_interval()
     declared = {b.btype.lower() for b in (tree.blocks if tree else ())}
-    # The sleep listener shares the poll's lifecycle: TES4 MenuMode also ran
-    # only while the script's owner was loaded / its quest instantiated.
     start = ([f'  RegisterForSingleUpdate({interval})']
              if (sc.has_gamemode or sc.has_scripteffectupdate) else [])
     if sleeps:
@@ -704,45 +909,14 @@ def lifecycle(conv, tree, extends: str) -> list:
         return [] if 'oninit' in declared else (
             ['Event OnInit()'] + start + ['EndEvent', ''])
 
-    # Object/actor: run only while loaded.  OnCellAttach fires each time the
-    # reference streams into an active cell, which confines the loop to when
-    # the object is actually present, exactly like TES4 GameMode.
-    #
-    # NO UnregisterForUpdate on OnCellDetach.  Cell-transition events arrive in
-    # no guaranteed order, so the detach for the OLD cell could land after
-    # OnLoad/OnCellAttach had already re-armed the poll for the NEW one and
-    # silently kill a loaded actor's loop mid-scene (the CharacterGen escort
-    # NPCs went mute this way -- "sometimes they talk, sometimes nothing").
-    # The arm-first gate in OnUpdate stops the loop by itself one tick after
-    # the 3D goes away, so the unregister bought nothing but the race.
     out = ['Event OnCellAttach()'] + start + ['EndEvent', '']
     if sleeps:
         out += ['Event OnCellDetach()', '  UnregisterForSleep()',
                 'EndEvent', '']
-
-    # OnCellAttach only fires when a cell BECOMES attached.  A persistent actor
-    # standing in an already-attached cell when the script is first bound (new
-    # game, or the player is simply already there) never gets that event, so
-    # the poll would never start and a GameMode variable the rest of the quest
-    # depends on stays 0 forever.  That kept Arielle (MG04Restore) standing
-    # still: her package waits on `startconv == 1`, which only her GameMode
-    # body ever sets.
-    #
-    # OnInit ALONE is not enough once the script lives on the placed reference
-    # (which reference events like OnPackageEnd require): on a reference OnInit
-    # runs at load BEFORE the 3D exists, so the gate is false and the poll
-    # never starts -- that is what silenced Valen Dreth.  OnLoad means "this
-    # object is completely loaded ... fired every time this object is loaded"
-    # (vanilla ObjectReference.psc), so it starts the loop for an actor already
-    # standing in the player's current cell, which OnCellAttach cannot do.
     if 'onload' not in declared:
         out += ['Event OnLoad()'] + start + ['EndEvent', '']
     if 'oninit' not in declared:
-        # Gating keeps the anti-storm property: the gate is true ONLY for
-        # references that are actually loaded, so this cannot re-create the
-        # "every scripted object in the game starts ticking at load" failure
-        # an unconditional OnInit register caused.
-        out += (['Event OnInit()', f'  If ({conv._GAMEMODE_GATE})']
+        out += (['Event OnInit()', f'  If ({_gate(conv)})']
                 + [f'  {line}' for line in start]
                 + ['  EndIf', 'EndEvent', ''])
     return out

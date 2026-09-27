@@ -10,11 +10,17 @@ these call nothing else in that file, and only import_plugin calls them.
 
 import struct
 
-from .constants import AMBIENT_GMST_OVERRIDES
-from .equivalents import CUSTOM_VTYP_EDIDS, VTYP_EDID_BY_FID, set_voice_type
+from ..overrides.adoption import adopted_formid, generated_formid
+from ..packages.escort_when_near import (ESCORT_WHEN_NEAR_EDID,
+                                         escort_root_record,
+                                         set_escort_template_fid)
+from .constants import AMBIENT_GMST_OVERRIDES, ENGINE_GLOBAL_FORMIDS
+from .equivalents import (CUSTOM_VTYP_EDIDS, SPELL_EQUIP_EITHER_HAND,
+                          VTYP_EDID_BY_FID, set_voice_type)
 from .text_reader import get_str
 from .writer import (
     PluginWriter,
+    pack_obnd,
     pack_record,
     pack_string_subrecord,
     pack_subrecord,
@@ -25,6 +31,9 @@ WELL_KNOWN_PROPERTIES: dict[str, int] = {}
 
 #: Output MGEF FormID -> the family KYWD it and every copy of it carry.
 MGEF_FAMILY_KEYWORDS: dict[int, int] = {}
+
+#: VTYP DNAM Female bit; Allow Default Dialogue (bit 0) stays clear so vanilla lines never reach converted NPCs.
+_VTYP_FEMALE = 0x02
 
 
 #: Conversion-owned globals: EditorID -> FNAM type char ('f' float, 's' short).
@@ -46,13 +55,22 @@ def _emit_global(writer: PluginWriter, edid: str, type_char: str) -> int:
     return fid
 
 
+def _emit_escort_template(writer: PluginWriter) -> int:
+    """Write the converter's escort template root and point converted escorts at it."""
+    fid = writer.derive_formid('PACK_TEMPLATE', ESCORT_WHEN_NEAR_EDID)
+    writer.add_record('PACK', escort_root_record(fid))
+    set_escort_template_fid(fid)
+    return fid
+
+
 def create_tes4_special_records(writer: PluginWriter):
-    """Create the globals converted Papyrus scripts need, bound by name.
+    """Create the globals converted Papyrus scripts need, bound by name, and the escort root.
 
     See: docs/commentary/tes5_import_dialogue.md#the-conversion-owned-globals
     """
     made = {edid: _emit_global(writer, edid, ch)
             for (edid, ch) in _OWNED_GLOBALS}
+    made[ESCORT_WHEN_NEAR_EDID] = _emit_escort_template(writer)
     print('  Created TES4 special records: '
           + ', '.join(f'{k}={v:08X}' for k, v in made.items()))
 
@@ -70,7 +88,7 @@ def create_message_menu_records(writer: PluginWriter, plan: dict) -> dict:
         for name, text, buttons in plan[edid_low]:
             if text is None:
                 continue
-            fid = writer.derive_formid('SCRIPT_MESG', name)
+            fid = generated_formid(writer, 'MESG', name, 'SCRIPT_MESG', name)
             subs = pack_string_subrecord('EDID', name)
             subs += pack_string_subrecord('DESC', text)
             subs += pack_subrecord('INAM', struct.pack('<I', 0))
@@ -86,7 +104,8 @@ def create_chargen_menu_records(writer: PluginWriter, plan: dict) -> dict:
     """MESG pages for the TES4 chargen menus (ShowBirthsignMenu/ShowClassMenu).
 
     Allocates FIXED ids from a reserved window, not derive_formid(): the pages
-    are a contiguous, order-significant block.
+    are a contiguous, order-significant block.  A page or global a master
+    already defines keeps the master's FormID.
 
     See: docs/commentary/tes5_import_dialogue.md#synthesized-menus-factions-and-formlists
     """
@@ -94,7 +113,7 @@ def create_chargen_menu_records(writer: PluginWriter, plan: dict) -> dict:
     k = 0
     for key in sorted(plan):
         for name, title, buttons in plan[key]['pages']:
-            fid = writer.chargen_fid_base + k
+            fid = adopted_formid(writer, 'MESG', name) or writer.chargen_fid_base + k
             k += 1
             subs = pack_string_subrecord('EDID', name)
             subs += pack_string_subrecord('DESC', title)
@@ -111,7 +130,7 @@ def create_chargen_menu_records(writer: PluginWriter, plan: dict) -> dict:
         if not menu:
             continue
         gname = menu['choice_global']
-        fid = writer.chargen_fid_base + slot
+        fid = adopted_formid(writer, 'GLOB', gname) or writer.chargen_fid_base + slot
         subs = pack_string_subrecord('EDID', gname)
         subs += pack_subrecord('FNAM', struct.pack('<B', ord('s')))
         subs += pack_subrecord('FLTV', struct.pack('<f', 0.0))
@@ -149,6 +168,133 @@ def create_destroyed_formlist(writer: PluginWriter) -> dict:
     subs = pack_string_subrecord('EDID', 'TES4DestroyedRefs')
     writer.add_record('FLST', pack_record('FLST', fid, 0, subs))
     return {'TES4DestroyedRefs': fid}
+
+
+#: Seconds one ResetFallDamageTimer protects for; a caller polling every tick keeps renewing it.
+_FALL_WINDOW_SECONDS = 10
+
+#: PERK entry point 58 Mod Falling Damage, function 3 Multiply Value, 1 condition tab (vanilla Cushioned).
+_FALL_ENTRY_POINT = bytes((58, 3, 1))
+
+#: MGEF DATA flags: Hide in UI only; No Magnitude would make a Value Modifier heal 1 HP/s per cast.
+_MGEF_FALL_FLAGS = 0x8000
+
+#: MGEF archetype 0 Value Modifier on actor value 24 Health, at magnitude 0 (vanilla NN01PerkEffect).
+_MGEF_ARCHETYPE_VALUE_MOD, _AV_HEALTH = 0, 24
+
+#: Casting type 1 Fire and Forget, delivery 0 Self.
+_FIRE_AND_FORGET, _DELIVERY_SELF = 1, 0
+
+
+def _fall_damage_perk(fid: int, edid: str) -> bytes:
+    """Hidden, unconditioned PERK multiplying the owner's falling damage by 0."""
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_string_subrecord('DESC', '')
+    subs += pack_subrecord('DATA', bytes((0, 0, 1, 0, 1)))
+    subs += pack_subrecord('PRKE', bytes((2, 0, 0)))
+    subs += pack_subrecord('DATA', _FALL_ENTRY_POINT)
+    subs += pack_subrecord('EPFT', bytes((1,)))
+    subs += pack_subrecord('EPFD', struct.pack('<f', 0.0))
+    subs += pack_subrecord('PRKF', b'')
+    return pack_record('PERK', fid, 0, subs)
+
+
+def _fall_damage_effect(fid: int, edid: str, perk: int) -> bytes:
+    """MGEF whose only job is PerkToApply, the way an NPC receives a perk."""
+    data = bytearray(152)
+    struct.pack_into('<I', data, 0, _MGEF_FALL_FLAGS)
+    struct.pack_into('<ii', data, 12, -1, -1)
+    struct.pack_into('<Ii', data, 64, _MGEF_ARCHETYPE_VALUE_MOD, _AV_HEALTH)
+    struct.pack_into('<II', data, 80, _FIRE_AND_FORGET, _DELIVERY_SELF)
+    struct.pack_into('<i', data, 88, -1)
+    struct.pack_into('<f', data, 104, 1.0)
+    struct.pack_into('<I', data, 136, perk)
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_subrecord('DATA', bytes(data))
+    return pack_record('MGEF', fid, 0, subs)
+
+
+def _fall_damage_spell(fid: int, edid: str, effect: int) -> bytes:
+    """Fire-and-forget self SPEL (type 0) holding the effect for the protection window."""
+    subs = pack_string_subrecord('EDID', edid)
+    subs += pack_obnd()
+    subs += pack_subrecord('ETYP', struct.pack('<I', SPELL_EQUIP_EITHER_HAND))
+    subs += pack_subrecord('SPIT', struct.pack(
+        '<IIIfII12x', 0, 0, 0, 0.0, _FIRE_AND_FORGET, _DELIVERY_SELF))
+    subs += pack_subrecord('EFID', struct.pack('<I', effect))
+    subs += pack_subrecord('EFIT', struct.pack('<fII', 0.0, 0, _FALL_WINDOW_SECONDS))
+    return pack_record('SPEL', fid, 0, subs)
+
+
+def create_fall_damage_spell(writer: PluginWriter, master_index=None) -> dict:
+    """`TES4NoFallDamage`, the spell converted ResetFallDamageTimer casts; a master's is adopted.
+
+    Skyrim reaches falling damage only through perk entry point Mod Falling
+    Damage, and a magic effect's PerkToApply is how an NPC holds a perk.
+    The name is imported here, not at module scope, to break the cycle
+    owned_records -> script_convert (package __init__) -> tes5_import.dialogue
+    -> base.conditions -> owned_records.
+    See: docs/commentary/script_convert.md#fall-damage-is-a-perk
+    """
+    from script_convert.constants import FALL_DAMAGE_SPELL as name
+    spel = (master_index.find_by_edid(b'SPEL', name)
+            if master_index is not None else 0)
+    if not spel:
+        perk = writer.derive_formid('PERK', name + 'Perk')
+        mgef = writer.derive_formid('MGEF', name + 'Effect')
+        spel = writer.derive_formid('SPEL', name)
+        writer.add_record('PERK', _fall_damage_perk(perk, name + 'Perk'))
+        writer.add_record('MGEF', _fall_damage_effect(mgef, name + 'Effect', perk))
+        writer.add_record('SPEL', _fall_damage_spell(spel, name, mgef))
+    return {name: spel}
+
+
+#: The whole-day GameDaysPassed global and the start-game quest whose script keeps it current.
+DAY_CLOCK_GLOBAL, DAY_CLOCK_QUEST, DAY_CLOCK_SCRIPT = (
+    'TES4GameDaysPassed', 'TES4DayClock', 'TES4_DayClock')
+
+
+def _source_counts_whole_days(by_type: dict, ctx) -> bool:
+    """True when the source game declares GameDaysPassed Short (Oblivion), not Float (FO3/FNV)."""
+    records = list(by_type.get('GLOB', []))
+    records += [r for r in (getattr(ctx, 'master_export', None) or {}).values()
+                if r.get('Signature') == 'GLOB']
+    return any(get_str(r, 'EditorID', '').lower() == 'gamedayspassed'
+               and get_str(r, 'FNAM.Type') == 's' for r in records)
+
+
+def create_day_clock(writer: PluginWriter, by_type: dict, ctx=None) -> int:
+    """The TES4GameDaysPassed global plus its TES4DayClock quest; a master's are adopted.
+
+    Returns the global's FormID, 0 when the source's GameDaysPassed is already
+    fractional. The TES4_DayClock script holds the global at the whole part of
+    Skyrim's. The script-pipeline import is function-scoped to break the cycle
+    owned_records -> script_convert (package __init__) -> tes5_import.dialogue
+    -> base.conditions -> owned_records.
+    See: docs/commentary/tes5_import_conditions.md#whole-days
+    """
+    from script_convert.pipeline import build_vmad_quest_fragments
+    if not _source_counts_whole_days(by_type, ctx):
+        return 0
+    master_index = getattr(ctx, 'master_index', None)
+    glob = (master_index.find_by_edid(b'GLOB', DAY_CLOCK_GLOBAL)
+            if master_index is not None else 0)
+    if glob:
+        return glob
+    glob = _emit_global(writer, DAY_CLOCK_GLOBAL, 's')
+    quest = writer.derive_formid('SYNTH_QUST', DAY_CLOCK_QUEST)
+    props = {'GameDaysPassed': ENGINE_GLOBAL_FORMIDS['gamedayspassed'],
+             DAY_CLOCK_GLOBAL: glob}
+    subs = pack_string_subrecord('EDID', DAY_CLOCK_QUEST)
+    subs += pack_subrecord('VMAD', build_vmad_quest_fragments(
+        DAY_CLOCK_QUEST, [], None,
+        attached_script=(DAY_CLOCK_SCRIPT, props), quest_fid=quest))
+    subs += pack_string_subrecord('FULL', 'TES4 Day Clock')
+    subs += pack_subrecord('DNAM', struct.pack('<HBBII', 0x0011, 0, 0, 0, 0))
+    subs += pack_subrecord('NEXT', b'')
+    subs += pack_subrecord('ANAM', struct.pack('<I', 0))
+    writer.add_record('QUST', pack_record('QUST', quest, 0, subs))
+    return glob
 
 
 def create_ambient_gmst_overrides(writer: PluginWriter, by_type: dict):
@@ -248,7 +394,7 @@ def create_vtyp_records(writer: PluginWriter, export_dir: str = None,
         if fid is not None:
             return fid
         fid = writer.derive_formid('VTYP', vtyp_edid)
-        dnam = 3 if gender == 'Female' else 1
+        dnam = _VTYP_FEMALE if gender == 'Female' else 0
         subs = pack_string_subrecord('EDID', vtyp_edid)
         subs += pack_subrecord('DNAM', struct.pack('<B', dnam))
         writer.add_record('VTYP', pack_record('VTYP', fid, 0, subs))

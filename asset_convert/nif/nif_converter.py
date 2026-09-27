@@ -77,7 +77,8 @@ from asset_convert.nif.nif_passes import (add_animobject_bged, wrap_root_transfo
     zero_fallout_root_rotation)
 from asset_convert.nif.morphs import (emulate_morphs,
                                       normalize_blend_interpolators)
-from asset_convert.nif.sequences import (apply_rest_visibility,
+from asset_convert.nif.sequences import (apply_rest_emissive,
+                                         apply_rest_visibility,
                                          attach_seq_shader_controllers,
                                          autoplay_ambient_sequences,
                                          match_seq_shader_types,
@@ -143,6 +144,7 @@ from asset_convert.nif.mesh_scan_emit import (record_scan_alias,
                                               record_scan_entry,
                                               record_scan_removal)
 from asset_convert.collision.collision import (hoist_collision,
+                                               mesh_has_held_body,
                                                remove_empty_collision_nodes)
 from asset_convert.collision.collision_anim import node_transform_is_animated
 from asset_convert.collision.collision_falloutnv import (
@@ -392,7 +394,20 @@ def _is_stripped_node(node):
 
 
 def _walk_geometry(node, fix_textures, stats):
-    """Convert one shape, or None when it has no usable topology."""
+    """Convert one shape, or None when it has no usable topology.
+
+    A shape two parents share converts once; later visits reuse that result,
+    since a second pass would read the already-stripped properties.
+    See: docs/commentary/asset_convert_nif.md#shared-shapes-convert-once
+    """
+    done = stats.setdefault('_converted_shapes', {})
+    if id(node) not in done:
+        done[id(node)] = _convert_shape(node, fix_textures, stats)
+    return done[id(node)]
+
+
+def _convert_shape(node, fix_textures, stats):
+    """Run `process_geometry` on one shape, or None when it has no topology."""
     try:
         ts = process_geometry(node, fix_textures, stats,
                               sky_type=(stats or {}).get('_sky_type'),
@@ -489,7 +504,8 @@ def _run_animation_passes(root, stats):
     follows the walk and precedes rest visibility and sequence-name
     collection; the autoplay split precedes collect_sequence_names so the
     behaviour graph is built from the final names; shader controllers attach
-    after the type match; interpolator normalizing runs last.
+    after the type match, and the rest emissive follows every entry the morph
+    bake added; interpolator normalizing runs last.
     See: docs/commentary/asset_convert_nif.md#post-walk-animation-passes
     """
     match_seq_shader_types(root)
@@ -497,6 +513,7 @@ def _run_animation_passes(root, stats):
     autoplay_ambient_sequences(root, stats)
     apply_rest_visibility(root, stats)
     attach_seq_shader_controllers(root, stats)
+    apply_rest_emissive(root, stats)
     normalize_blend_interpolators(root, stats)
 
 
@@ -702,11 +719,13 @@ def _hoist_root_collision(data, root, wrapped, has_constraints, creature):
 
     Skipped for a wrapped root (the wrap path already absorbs the transform),
     when the COLLISION NODE is really moved by animation, for constrained NIFs
-    (the constraint IS the spatial relationship), and for creatures (ragdoll
-    collision lives on the bones).  A keyless stub is not animation.
+    (the constraint IS the spatial relationship), for creatures (ragdoll
+    collision lives on the bones), and for a mesh of held pieces a script
+    releases (each piece must fall on its own).  A keyless stub is not
+    animation.
     See: docs/commentary/asset_convert_collision.md#keyless-transform-stubs
     """
-    if wrapped or has_constraints or creature:
+    if wrapped or has_constraints or creature or mesh_has_held_body(root):
         return
     if not hasattr(root, 'collision_object') or root.collision_object is not None:
         return

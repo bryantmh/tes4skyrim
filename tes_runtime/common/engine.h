@@ -22,6 +22,7 @@ namespace tesruntime {
 constexpr std::size_t kFormID = 0x14;
 constexpr std::size_t kFormType = 0x1a;
 constexpr std::uint8_t kFormTypeWeapon = 0x29;
+constexpr std::uint8_t kFormTypeReference = 0x3d;
 constexpr std::uint8_t kFormTypeActor = 0x3e;
 
 // TESObjectREFR / Actor layout the plugins read.
@@ -101,10 +102,9 @@ void ReleaseRef(void* ref);
 // Drops a heap TaskDelegate onto the game's main-thread task queue.
 void RunOnMainThread(TaskDelegate* task);
 
-// Runs `fn` on the game's main thread every `ms` milliseconds, paused or not.
-// The wait sleeps on its own thread and only the call is posted; a call still
-// queued is not posted again, so a stalled task pump holds one call rather
-// than a backlog. False, and nothing started, without a task interface.
+// Runs `fn` on the game's main thread every `ms` milliseconds, paused or not,
+// through g_api.task (main_tick.h). False, and nothing started, without a task
+// interface.
 bool StartMainThreadTick(int ms, void (*fn)());
 
 }  // namespace tesruntime

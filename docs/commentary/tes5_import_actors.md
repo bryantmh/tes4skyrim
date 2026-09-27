@@ -22,13 +22,17 @@ them does.
 - [Spell merchants sell tomes](#spell-tomes)
 - [The plugin-origin marker faction](#origin-faction)
 - [It also unlocks AI barrier doors](#barrier-door-ownership)
+- [Open by Default: unlocked refs only](#open-by-default)
 - [FACT relations: Ally and Friend are not interchangeable](#faction-relations)
 - [Trainers](#trainers)
 - [Health is written as an OFFSET, not a pool](#health-offset)
 - [Morrowind health is absolute — the same manual-NPC rule](#morrowind-health-is-absolute)
+- [Corpses carry Starts Dead, not just 0 health](#corpses-start-dead)
 - [Hair color: a generated CLFM per authored RGB](#hair-color)
 - [NAM5/NAM6/NAM7/NAM8 are all required](#required-nam-subrecords)
 - [Head parts: RNAM decides who can see the hair](#hdpt-valid-races)
+- [A creature race is a caster only for a castable spell](#caster-race-needs-a-castable-spell)
+- [Attack reach is per creature: reach-variant races](#reach-variant-races)
 - [Voice type resolution](#voice-resolution)
 
 ## <a id="acbs-flag-collision"></a>ACBS flags: the same bit means three different things
@@ -340,17 +344,46 @@ NEGATIVE `GetIsID`), and conversion rewrites `GetIsRace` to a VANILLA Skyrim
 race every plugin shares, so Nehrim NPCs passed them. Race was Oblivion's
 plugin boundary only because Oblivion was the only file loaded.
 
-ONLY a root master (no TES4 masters of its own) creates one and gates its
-dialogue on it. A DLC/plugin's own dialogue stays ungated so it can extend and
-override its master's exactly as it does in Oblivion.
-
-A dependent's actors JOIN the origin faction of every converted master that
-has one (`origin_memberships`, found by EditorID through
-`ChainedMasterIndex.find_all_by_edid`). They used to join none, so a master's
-generic lines could never play on an actor a dependent ADDS: measured on
+EVERY converted plugin creates its own, root or dependent, and gates its own
+new lines on it. A plugin's actors join its own and every converted master's
+(`origin_memberships`, found by EditorID through
+`ChainedMasterIndex.find_all_by_edid`), so dialogue flows DOWN the master chain
+and never up or across: Oblivion's generic lines reach Morroblivion's actors,
+Morroblivion's never reach Oblivion's, and neither reaches Nehrim's or
+vanilla Skyrim's. Dependents' actors used to join nothing: measured on
 TR_Mainland, 0 of 9,264 NPCs carried the compatibility patch's origin faction
-while 4,322 of the patch's 4,647 voiced barks were gated on it — nearly every
+while 4,322 of the patch's 4,647 voiced barks were gated on it, so nearly every
 vanilla Morrowind bark was silent on every Tamriel Rebuilt actor.
+
+Dependents used to stay ungated, so a DLC could hand the master's NPCs new
+generic lines. Measured on the Morroblivion build before the change: 95 new
+lines were scoped only by an Oblivion.esm class or faction, 624 only by a voice
+type Morroblivion shares with Oblivion, and 14 non-scene lines by nothing at
+all, so vanilla Skyrim followers qualified too. A line that names a master's NPC
+with `GetIsID` is still ungated: naming an individual is deliberate. An
+OVERRIDE of a master's INFO keeps the master's audience and is never gated.
+
+A barrier door is owned by the origin faction only in the plugin that creates
+the support records (see below).
+
+#### What counts as naming the speaker
+
+`needs_origin_gate` looks for one condition that POSITIVELY tests the SPEAKER's
+membership: `GetIsID` on any actor, or `GetInFaction`/`GetFactionRank`/
+`GetIsClass` on a form at the plugin's OWN index. In an OR group every member
+must qualify: Morroblivion's skooma line is `GetIsClass(own) OR
+GetIsClass(Oblivion's)`, and the second half lets Oblivion's actors in. Three
+more traps, each measured against the Oblivion/Nehrim exports:
+
+- Race and cell look like an audience but name no plugin-owned form:
+  `GetIsRace` becomes a vanilla Skyrim race every converted plugin shares. This
+  was the cause of Oblivion guard/crime/directions lines on Nehrim NPCs.
+- A NEGATIVE test is an exclusion. Oblivion's Rumors channel (1,854 lines) is
+  built from `GetIsID(SomeNPC) == 0`; counting it as pinned let 395 rumour lines
+  (plus 77 with no conditions) reach Nehrim NPCs.
+- A Run On = Target test is about the LISTENER. `GetIsID(PlayerRef)[Target]`
+  holds in every conversation; counting it left 55 greeting/rumour/guard lines
+  open to any actor.
 
 It is a plain membership marker: no flags, no relations, no vendor data, so it
 can never affect crime, combat reaction, or the barter menu.
@@ -371,12 +404,24 @@ because the faction carries no crime data. The player is not a member, so the
 lock still reads Requires Key and activation stays blocked; the OnActivate
 preamble restores the lock after each AI passage.
 
-TES4 `XACT`/`ONAM` ("Open by Default") is deliberately NOT transferred by
-`convert_REFR`. In Skyrim those make the door SPAWN open, but Oblivion doors
-carrying them still spawn closed — verified in-game, where every CharacterGen
-portcullis stood open at load once they were passed through. Oblivion opens
-such doors through the AI bypass instead, which is what the consume-door
-handling at `XLOC` reproduces.
+### <a id="open-by-default"></a>Open by Default: unlocked refs only
+
+**Code:** `tes5_import/record_types/world.py` `_refr_open_by_default`
+
+TES4 `ONAM` ("Open by Default") is written as vanilla writes it: `XACT` = 13
+right after `NAME`, an empty `ONAM` right before `DATA` (all 354 vanilla ONAM
+refs). Both engines load it the same way, as bit 8 of the ref's action extra
+data, and pose the door open when its 3D loads (1.6.1170: the REFR loader's
+ONAM case at `0x2d8436`; Oblivion.exe: `0x4d9f94`, pose at `0x4df54a`).
+
+A LOCKED ref is written closed. Confirmed in-game: CharacterGen's
+`CGAmbushCBackGate` portcullis (level 100, `ONAM`) must start closed and
+stood open when ONAM was passed through; the party passes it through the
+barrier-door ownership above. No vanilla ONAM ref carries `XLOC` (0 of 354).
+Unlocked refs need it: Nehrim's `SchattenrufGitterTuer01Ref` trap gate
+(`SchattenrufGitterTuerScript`) only acts while `GetOpenState == 1`, so a
+closed start left it permanently shut. Counts: 106 ONAM refs in Oblivion.esm
+(4 locked), 45 in Nehrim.esm (3 locked).
 
 ## <a id="faction-relations"></a>FACT relations: Ally and Friend are not interchangeable
 
@@ -553,6 +598,38 @@ on actors meant to be weak or already dead (`CurweDead`, `VeezaraDead`,
 Derminus is a manual (52-byte NPDT) NPC, so he now converts to `397 − 50` with
 his level untouched, which is what the engine needs.
 
+## <a id="corpses-start-dead"></a>Corpses carry Starts Dead, not just 0 health
+
+**Code:** `tes5_import/actors/starts_dead.py`, `record_types/world.py` (`convert_ACHR`)
+
+TES4 authors a corpse prop as an actor whose base has `DATA.Health=0`. The
+health offset reproduces that pool exactly, so the actor loads with 0 health —
+but alive: it dies on its first update and never equips its outfit, so it lay
+naked (Nehrim `Leiche01Startcelle`, ref `xx1A9288`). The outfit record itself
+was correct throughout.
+
+Bethesda's own CK tutorial (`Bethesda_Tutorial_Clutter`) states that "simply
+setting the health of an actor doesn't actually cause it to be dead at game
+time"; a corpse needs the reference's **Starts Dead** flag, ACHR record flag
+`0x200`. Vanilla agrees: ~1,140 of Skyrim.esm's 10,504 ACHRs carry it, and no
+vanilla NPC starts at 0 health (the lowest offset is −49). No TES4 ACHR uses
+`0x200`, so setting it collides with nothing. Counts: 905 refs in Nehrim, out
+of 915 that place a 0-health base (212 bases); 787 such refs in Oblivion.
+
+**A corpse a script resurrects keeps the health path.** The Papyrus
+`Resurrect` native (1.6.1170 rva `0x9e99f0`) calls a check at `0x2dd710` —
+form type `0x3E` (ACHR) and record flag bit 9 — and on a hit logs "is dead from
+the editor and cannot be resurrected" and returns. So a ref named in any
+`X.Resurrect` call site (by ref or base EditorID), or placing a base whose own
+script calls a bare `Resurrect`, is left unflagged. Nehrim has 10 such refs
+(Daromith, the Bestiarium minotaur, the Schattenruf Verbranntes Wesen …); they
+still lie unclothed until raised. A resurrect through a ref variable cannot be
+resolved statically.
+
+FO3/FNV author the flag themselves on the reference, so their refs are left as
+exported. Creatures share the rule: `creature_health_offset` pins a 0 pool at
+−32768, and their refs get the same flag.
+
 ## <a id="hair-color"></a>Hair color: a generated CLFM per authored RGB
 
 Oblivion authors a FREE RGB per NPC (2,482 actors, 571 distinct colors spanning
@@ -718,6 +795,26 @@ multiplier (1000 = 1.0x). A raw TES4 offset (0..5) read as a multiplier is
 0.000x..0.005x, which the CK clamps to the 0.10 minimum, so a PC-levelled actor
 defaults to 1.0x instead.
 
+### <a id="creature-unarmed-damage"></a>Unarmed damage: race base plus a per-creature ability
+
+**Code:** `tes5_import/actors/creature_unarmed.py`
+
+Unarmed damage has no per-NPC field, and the shared race used to take its
+DATA unarmed damage from whichever creature founded it. The eight SE02
+Gatekeepers share one race and are authored 10/15/20/25/31/40/49/58; all
+eight shipped hitting for 40 (Gatekeeper 6's).
+
+Vanilla splits it the same way it splits dragons, vampires and werewolves: the
+race carries a base and each stronger NPC lists an Ability of
+`AbFortifyUnarmedDamage` (Skyrim.esm 0x000424E2, PeakValueModifier on
+UnarmedDamage) for the rest — `crDragonUnarmedDamage02..05` are +25/+75/+125/+175.
+So the race now carries the WEAKEST authored `DATA.AttackDamage` of the
+creatures sharing it, and every stronger creature gets
+`TES4<race founder>UnarmedDamage<N>` (+N − base) appended to its SPLO. The
+FormID is keyed on the race key and the authored damage, so creatures of one
+race that hit equally hard share an ability. Oblivion.esm: 202 abilities,
+0 existing FormIDs moved. Confirmed in game (SE02 Gatekeeper scene).
+
 ## <a id="crea-vtck-always"></a>A creature's VTCK is ALWAYS emitted
 
 Even when the humanoid chain yields nothing — the normal case for a creature,
@@ -743,6 +840,67 @@ whatever the behavior graph offered them.
 
 Order is RNAM → SPCT → SPLO[] → COCT → CNTO, verified against both the xEdit
 TES5 definition (`wbDefinitionsTES5.pas`) and a real Skyrim.esm dump.
+
+## <a id="caster-race-needs-a-castable-spell"></a>A creature race is a caster only for a castable spell
+
+**Code:** `tes5_import/actors/creature_races.py` `_creature_equip_flags`.
+
+A generated creature race is shared by every CREA with the same mesh folder and
+body set, so its VNAM equipment flags are the union over all of them: goblin
+berserkers, warlords and shamans share one skeleton but carry blades, bows and
+staffs. Hand-to-hand is always set, the one bit even DogRace carries. A census of
+99 Skyrim.esm races: 60 set the Spell bit, 31 are exactly `FFFFE001` with neither
+spells nor weapons.
+
+The Spell bit (and with it the LeftHand QNAM slot a caster needs) used to follow
+`SpellCount > 0`. That counts Oblivion Diseases (SPIT.Type 1) and Abilities
+(Type 4), which are passive and never equipped. Nehrim's nightmare-troll race
+turned into a caster because two of its ten creatures carry
+`KrankheitTrollpest` (Disease), `MobGhostEffectGreenNoAlpha` and
+`MobEigenschaftWaffenresistenz100` (Abilities), although no creature on it knows
+a castable spell and its graph has no cast states. The bit now requires a
+castable spell (Type 0, resolved through leveled spell lists by
+`_spell_effect_ranges`), so that race is fists-only with the RightHand slot, like
+the plain troll race.
+
+This was found while chasing the intro black troll (`SchattenrufAlptraumTroll01`)
+that swung once and never again, but it was NOT that bug's cause: the troll still
+refused after this change. The cause was a hit window on its recoil clip
+([asset_convert_creature.md](asset_convert_creature.md#hit-window-attacks-only)).
+
+## <a id="reach-variant-races"></a>Attack reach is per creature: reach-variant races
+
+**Code:** `tes5_import/actors/creature_races.py` `_build_race_chain`.
+
+Skyrim has unarmed reach only on the RACE (DATA +100, `handReach` at
+`TESRace+0x14C` in 1.6.1170), but TES4 authors `RNAM.AttackReach` per CREA. A
+generated race is shared by every CREA with the same mesh folder and body set, so
+it used to take the founding record's reach and every other creature lost its own.
+Now the race keeps the founder's reach (and its FormID), and each other authored
+reach among its creatures gets a variant race `TES4<Edid>RaceReach<n>`, identical
+but for DATA +100, derived from `('CREA_RACE_REACH', (key, reach))`. Variants share
+the skin: the body ARMA lists them as Additional Races (`MODL`, before the `SNDD`
+that `patch_creature_footsteps` appends). Nehrim: 75 variants. Its nightmare-troll
+race carries 32 from `DaromithTroll02`, while the intro black troll authors 42,
+`38Troll` 164, `42Helmut` and `NQ15W02Enemy01` 255. Confirmed in game: the black
+troll lands far more of its swings on Celebro.
+
+Both engines measure reach the same way, so the TES4 value copies across
+unscaled (disassembly, measured):
+- **Skyrim** (`0x851520`, used by the target picker `0x5c0b80`): the gap is the 2D
+  center distance minus both actors' radii (`0x8518c0`; radius = bound max.y ×
+  scale, `0x694fb0`, cached on the process). It is compared against
+  `handReach × ref scale × NPC height` (`0x6749d0` × `0x2e09c0`).
+- **Oblivion** (`0x625220`, Creature vtable slot `0x26c`): the raw RNAM byte, ×
+  `fCombatGiantCreatureReachMult` (2.2) for creature type 5 only. NPCs use
+  `fHandReachMult × fCombatDistance` = 0.6 × 128 = 76.8. The caller (`0x699500`)
+  multiplies by the actor's scale and compares against `0x612f50`: center distance
+  minus both bound half-extents × scale.
+
+Bethesda's own values differ between the games with no fixed ratio (Oblivion →
+Skyrim race: troll 100→128, skeleton 36→96, mudcrab 32→120, deer 32→96, rat
+96→64, NPC 76.8→96), so no rescale is applied. Not yet traced: whether
+`0x5c0b80` is the HitFrame hit test itself or the combat AI's approach check.
 
 ## <a id="creature-class-and-package"></a>A creature needs a CLASS and a PACKAGE
 

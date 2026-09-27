@@ -116,6 +116,20 @@ def musc_editor_id(plugin: str, category: str) -> str:
     return 'MUS%s%s' % (stem, category.capitalize())
 
 
+def master_music_types(writer) -> dict:
+    """{TES4 music enum: a master's category MUSC FormID}, later masters winning."""
+    adoption = getattr(writer, 'adoption', None)
+    if adoption is None:
+        return {}
+    out = {}
+    for name in writer.masters:
+        for enum_val, cat in MUSIC_ENUM_CATEGORY.items():
+            fid = adoption.master_index.find_by_edid(b'MUSC', musc_editor_id(name, cat))
+            if fid:
+                out[enum_val] = fid
+    return out
+
+
 def musc_cue_editor_id(plugin: str, source_rel: str) -> str:
     """EditorID of the per-cue MUSC built for one `Special/` track.
 

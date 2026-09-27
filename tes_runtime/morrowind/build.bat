@@ -65,6 +65,7 @@ echo [build] compiling plugin...
 cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\scope.cpp ^
    "%COMMON%\log.cpp" "%COMMON%\paths.cpp" "%COMMON%\addresses.cpp" plugin\menu.cpp ^
    "%COMMON%\ui_message.cpp" "%COMMON%\crafting_client.cpp" ^
+   "%COMMON%\glide.cpp" "%COMMON%\main_tick.cpp" ^
    plugin\filter.cpp plugin\session.cpp plugin\activation.cpp ^
    plugin\game_actor.cpp plugin\conversation.cpp ^
    plugin\script_context.cpp plugin\dialogue_state.cpp ^
@@ -82,6 +83,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\scope.cpp ^
    plugin\game_calls_query.cpp plugin\game_calls_spell.cpp ^
    plugin\game_calls_message.cpp plugin\game_calls_control.cpp ^
    plugin\game_calls_state.cpp plugin\game_calls_crime.cpp ^
+   plugin\game_calls_teleport.cpp ^
    plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: plugin compilation failed
@@ -115,7 +117,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\scope.cpp plugin\filter.cpp ^
    plugin\script_ops_query.cpp plugin\script_ops_stats.cpp ^
    plugin\script_ops_spell.cpp plugin\script_ops_control.cpp ^
    plugin\object_script.cpp ^
-   plugin\object_tick.cpp plugin\main_thread.cpp ^
+   plugin\object_tick.cpp plugin\main_thread.cpp "%COMMON%\main_tick.cpp" ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
    plugin\travel.cpp plugin\script_test.cpp /Fo:objt\
 if errorlevel 1 (
@@ -145,7 +147,7 @@ link /nologo /OUT:session_test.exe objt\store.obj objt\scope.obj objt\log.obj ob
      objt\script_ops_query.obj objt\script_ops_stats.obj ^
      objt\script_ops_spell.obj objt\script_ops_control.obj ^
      objt\object_script.obj ^
-     objt\object_tick.obj objt\main_thread.obj ^
+     objt\object_tick.obj objt\main_thread.obj objt\main_tick.obj ^
      objt\persuasion.obj obj\mw\*.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
@@ -160,7 +162,7 @@ link /nologo /OUT:script_test.exe objt\store.obj objt\scope.obj objt\log.obj obj
      objt\script_ops_query.obj objt\script_ops_stats.obj ^
      objt\script_ops_spell.obj objt\script_ops_control.obj ^
      objt\object_script.obj ^
-     objt\object_tick.obj objt\main_thread.obj ^
+     objt\object_tick.obj objt\main_thread.obj objt\main_tick.obj ^
      objt\script_tables.obj objt\persuasion.obj objt\travel.obj ^
      objt\script_test.obj ^
      objt\filter.obj ^

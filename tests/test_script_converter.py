@@ -596,6 +596,12 @@ End
         assert 'EndEvent' in result
 
     def test_gamemode_to_onupdate(self, converter):
+        """An object GameMode poll starts on OnCellAttach, re-arms first
+        through SafeGameModeGate (never a bare Is3DLoaded(), which throws on a
+        held item), and never unregisters on detach.
+
+        See: docs/commentary/script_convert.md#poll-lifecycle
+        """
         source = """ScriptName UpdateScript
 
 Begin GameMode
@@ -605,25 +611,10 @@ End
         result = converter.convert_standalone('UpdateScript', source, 'ObjectReference', 'UpdateScript')
         assert 'Event OnUpdate()' in result
         assert 'RegisterForSingleUpdate' in result
-        # Object/actor GameMode loops are gated on load state (OnCellAttach
-        # start) so that not every scripted object in the game begins ticking
-        # the moment the save loads.
         assert 'Event OnCellAttach()' in result
-        # The OnUpdate re-registration only continues while still loaded.
-        # Routed through SafeGameModeGate, NOT a bare Is3DLoaded(): that call
-        # throws on a reference held in a container (no native object bound)
-        # and the throw aborts the event before it can re-arm, killing the
-        # poll permanently.  See TES4Polyfill.SafeGameModeGate.
-        assert 'If (TES4Polyfill.SafeGameModeGate(Self))' in result
+        assert 'If (TES4Polyfill.SafeGameModeGate(Self)' in result
         assert 'If (Is3DLoaded())' not in result
-        # NO OnCellDetach unregister: cell-transition events have no
-        # guaranteed order, so the old cell's detach could land after
-        # OnLoad/OnCellAttach re-armed the poll for the new cell and kill a
-        # loaded actor's loop mid-scene (CharacterGen escorts going mute).
-        # The Is3DLoaded() arm gate winds the loop down by itself.
         assert 'UnregisterForUpdate()' not in result
-        # Arm-first: the re-register must be the FIRST thing OnUpdate does,
-        # so a runtime abort anywhere in the body cannot kill the poll.
         body = result.split('Event OnUpdate()', 1)[1].split('EndEvent', 1)[0]
         assert body.index('RegisterForSingleUpdate') < body.index('x = 1')
 
@@ -656,7 +647,7 @@ End
         assert 'Event OnInit()' in result, \
             'a GameMode poll must also start for an already-loaded reference'
         init = result.split('Event OnInit()', 1)[1].split('EndEvent', 1)[0]
-        assert 'If (TES4Polyfill.SafeGameModeGate(Self))' in init, \
+        assert 'If (TES4Polyfill.SafeGameModeGate(Self)' in init, \
             'OnInit registration must stay gated (anti-storm)'
         assert 'RegisterForSingleUpdate' in init
 
@@ -691,7 +682,7 @@ End
         result = converter.convert_standalone('EnableScript', source,
                                               'ObjectReference', 'EnableScript')
         init = result.split('Event OnInit()', 1)[1].split('EndEvent', 1)[0]
-        assert 'If (TES4Polyfill.SafeGameModeGate(Self))' in init
+        assert 'If (TES4Polyfill.SafeGameModeGate(Self)' in init
         assert 'Is3DLoaded()' not in result, \
             'the gate must go through the polyfill, never a bare 3D test'
 
@@ -703,6 +694,69 @@ End
         assert 'IsAttached()' in body, \
             'SafeGameModeGate fell back to a 3D-only test — see the ' \
             'self-disable deadlock (Nehrim MQ00, controls never re-enabled)'
+
+    def test_carried_item_poll_follows_its_holder(self, converter):
+        """A GameMode item keeps polling while carried: OnContainerChanged
+        records the holder and the gate also accepts a loaded holder.
+
+        See: docs/commentary/script_convert.md#carried-items-and-read-books
+        """
+        source = """ScriptName ItemScript
+Begin GameMode
+  set x to 1
+End
+"""
+        result = converter.convert_standalone('ItemScript', source,
+                                              'ObjectReference', 'ItemScript')
+        changed = result.split('Event OnContainerChanged(', 1)[1].split(
+            'EndEvent', 1)[0]
+        assert 'TES4_Holder = akNewContainer' in changed
+        assert 'RegisterForSingleUpdate' in changed
+        assert ('TES4Polyfill.SafeGameModeGate(Self) || '
+                'TES4Polyfill.SafeGameModeGate(TES4_Holder)') in result
+
+    def test_book_read_while_carried_runs_the_read_hook(self, converter):
+        """A book's opening OnActivate also runs from OnRead for a carried
+        read: the opening Activate is dropped, a flag skips the read the
+        world activation raised, and the poll runs once after the menu.
+
+        See: docs/commentary/script_convert.md#carried-items-and-read-books
+        """
+        source = """ScriptName NoteScript
+short lesen
+Begin OnActivate
+if ( lesen == 0 )
+  Activate
+  set lesen to 1
+endif
+End
+Begin GameMode
+if ( lesen == 1 )
+  set lesen to 2
+endif
+End
+"""
+        converter.sc.on_book = True
+        result = converter.convert_standalone('NoteScript', source,
+                                              'ObjectReference', 'NoteScript')
+        activate = result.split('Event OnActivate(', 1)[1].split(
+            'EndEvent', 1)[0]
+        read = result.split('Event OnRead()', 1)[1].split('EndEvent', 1)[0]
+        assert 'TES4_ReadByActivate = akActionRef == Game.GetPlayer()' in activate
+        assert 'lesen = 1' in read
+        assert 'Activate(' not in read
+        assert read.index('Utility.Wait(0.001)') < read.index('OnUpdate()')
+
+    def test_non_book_gets_no_read_hook(self, converter):
+        """Only scripts on BOOK records turn OnActivate into a read hook."""
+        source = """ScriptName LeverScript
+Begin OnActivate
+  Activate
+End
+"""
+        result = converter.convert_standalone('LeverScript', source,
+                                              'ObjectReference', 'LeverScript')
+        assert 'Event OnRead()' not in result
 
     def test_gamemode_oninit_not_duplicated(self, converter):
         """A script with its own OnInit must not get a second one."""
@@ -1842,6 +1896,123 @@ class TestSetAlert:
         assert '(Self as Actor).SetAlert(true)' in result
 
 
+class TestIgnoreFriendlyHits:
+    """Set/GetIgnoreFriendlyHits map to Skyrim's native pair.
+
+    Dropping the setter made Nehrim's Celebro turn on the player at the first
+    stray hit in the intro's troll fights (`CelebroRef.SetIgnoreFriendlyHits 3`).
+    """
+
+    def test_nonzero_flag_is_true(self, converter):
+        result = conv_line(converter, 'CelebroRef.SetIgnoreFriendlyHits 3', 'Quest')
+        assert 'CelebroRef.IgnoreFriendlyHits(true)' in result
+
+    def test_zero_flag_is_false(self, converter):
+        result = conv_line(converter, 'CelebroRef.sifh 0', 'Quest')
+        assert 'CelebroRef.IgnoreFriendlyHits(false)' in result
+
+    def test_getter_reads_the_flag(self, converter):
+        """The guard reads the real flag instead of folding to `false`."""
+        result = conv_line(converter, 'if Target.GetIgnoreFriendlyHits == 0', 'ObjectReference')
+        assert 'IsIgnoringFriendlyHits()' in result
+        assert ';NE:' not in result
+
+
+class TestLastActivator:
+    """A bare Activate in a timer block reuses the object's last activator.
+
+    Nehrim's mining rock opens itself for the player a second after the swing;
+    `Activate(None, true)` opened it for nobody.
+    """
+
+    SOURCE = ('scn Rock\nshort DoOnce\n'
+              'Begin OnActivate Player\n set DoOnce to 1\nEnd\n'
+              'Begin GameMode\n if DoOnce == 1\n  set DoOnce to 0\n  Activate\n endif\nEnd\n')
+
+    def test_timer_activate_uses_recorded_activator(self, converter):
+        """The poll activates with the variable OnActivate filled."""
+        out = converter.convert_standalone('Rock', self.SOURCE, 'ObjectReference', 'Rock')
+        assert 'Activate(TES4_LastActivator, true)' in out
+        assert 'ObjectReference TES4_LastActivator' in out
+        assert 'TES4_LastActivator = akActionRef' in out
+        assert 'Activate(None' not in out
+
+    def test_script_without_onactivate_is_untouched(self, converter):
+        """No OnActivate block means no recorded activator."""
+        source = 'scn Plain\nBegin GameMode\n Activate\nEnd\n'
+        out = converter.convert_standalone('Plain', source, 'ObjectReference', 'Plain')
+        assert 'TES4_LastActivator' not in out
+
+
+class TestObseBlockAndCallFixes:
+    """Nehrim's AAGeneralUpdateQuest: a forEach, a nested Call argument, misc stats."""
+
+    @staticmethod
+    def _poll(converter, body: str) -> str:
+        """The OnUpdate body converted from a GameMode block holding `body`."""
+        source = f'scn T\nshort n\nshort x\narray_var it\nref r\nbegin gameMode\n{body}\nend\n'
+        out = converter.convert_standalone('T', source, 'Quest', 'T')
+        return out.split('Event OnUpdate()', 1)[1].split('EndEvent', 1)[0]
+
+    def test_foreach_comments_only_its_own_block(self, converter):
+        """Statements after `loop` stay live."""
+        body = self._poll(converter, 'forEach it <- r.getItems\n set n to 1\nloop\nset x to 2')
+        assert ';n = 1' in body
+        assert '\n  x = 2' in body
+
+    def test_nested_call_keeps_outer_arguments(self, converter):
+        """A command inside one argument does not erase the ones after it."""
+        body = self._poll(converter, 'Call G 30 * ( getPCMiscStat 8 - x ), 1, 1, -1')
+        assert 'Locks Picked") - x), 1, 1, -1)' in body
+
+    def test_misc_stat_by_name(self, converter):
+        """The TES4 index becomes Skyrim's stat name; an untracked one reads 0."""
+        assert 'Game.QueryStat("Locations Discovered")' in self._poll(converter, 'set n to getPCMiscStat 7')
+        assert 'Game.IncrementStat("Murders", 2)' in self._poll(converter, 'ModPCMiscStat 32 2')
+        assert 'QueryStat' not in self._poll(converter, 'set n to getPCMiscStat 13')
+
+
+class TestSetFunctionValue:
+    """SetFunctionValue sets the result and the function keeps running (HMSfromFloat24h)."""
+
+    def test_result_survives_to_the_end(self, converter):
+        """No `return` after it: the value still comes back, typed as set."""
+        source = ('scn HMS\nstring_var s\nbegin Function {v}\n let s := "x"\n'
+                  ' SetFunctionValue s\n sv_destruct s\nend\n')
+        out = converter.convert_standalone('HMS', source, 'Quest', 'HMS')
+        assert 'String Function TES4Call(' in out
+        assert 'TES4_Result = s' in out
+        assert out.count('Return TES4_Result') == 1
+
+
+class TestUdfCallingReference:
+    """`Player.Call F x` runs F on Player; the function's `Self` is that reference."""
+
+    def test_body_self_is_the_calling_reference(self, converter):
+        """`MoveTo` in the body acts on the caller's reference."""
+        source = 'scn F\nref t\nbegin Function {t}\n MoveTo t\nend\n'
+        out = converter.convert_standalone('F', source, 'Quest', 'F')
+        assert 'Function TES4Call(ObjectReference akCallingRef, ' in out
+        assert 'akCallingRef.MoveTo(' in out
+
+    def test_call_passes_the_receiver(self, converter):
+        """An explicit receiver is passed first; a quest script passes None."""
+        assert 'TES4Call(Game.GetPlayer(), ' in conv_line(converter, 'Player.Call F Marker', 'ObjectReference')
+        assert 'TES4Call(None, ' in conv_line(converter, 'Call F Marker', 'Quest')
+
+
+class TestFunctionScriptHosting:
+    """An OBSE function script is hosted on its own quest, so it extends Quest."""
+
+    def test_function_script_is_quest_hosted(self):
+        """The export-escaped `begin Function` header marks a quest-hosted script."""
+        from script_convert.cross_ref import hosted_script_type
+        sctx = r'scn F\r\nshort x\r\n\r\nBegin Function{ a, b }\r\n\tset x to a\r\nEnd'
+        assert hosted_script_type(0, sctx) == 1
+        assert hosted_script_type(0, r'scn F\nBegin GameMode\nEnd') == 0
+        assert hosted_script_type(0, 'scn F\r\n\r\nBegin Function{ a }\r\nEnd') == 1
+
+
 class TestSingletonFixes:
     def test_getiscreature_polyfill(self, converter):
         result = conv_line(converter, 'if GetIsCreature == 0', 'ActiveMagicEffect')
@@ -2293,6 +2464,27 @@ class TestSayTimerConversion:
         assert ('TES4Polyfill.SpeakAs(Announcer, '
                 'TES4Scene_arenamatchplayerref_arenamouth_announcer)') in callback
 
+    def test_startconversation_player_joins_its_force_greet_pool(self, converter):
+        """`StartConversation Player <topic>` fills a slot of that topic's pool.
+
+        See: docs/commentary/tes5_import_dialogue.md#startconversation-player-force-greet
+        """
+        from tes5_import.dialogue.say_topics import build_force_greet_slots
+        by_type = {'SCPT': [{'SCTX': 'begin GameMode\nGaiusRef.StartConversation Player'
+                                     ' SE01GaiusForceGreet\nFooRef.StartConversation '
+                                     'player\nBarRef.StartConversation Baz Topic\nend'}]}
+        slots = build_force_greet_slots(by_type)
+        assert slots == {'': (0, 1), 'se01gaiusforcegreet': (1, 1)}
+        saved = ScriptConverter.force_greet_slots
+        ScriptConverter.force_greet_slots = slots
+        try:
+            converter._property_refs['GaiusRef'] = 'Actor'
+            result = conv_lines(converter,
+                'GaiusRef.StartConversation Player SE01GaiusForceGreet', 'Quest')
+        finally:
+            ScriptConverter.force_greet_slots = saved
+        assert 'TES4Polyfill.ForceGreet(TES4ForceGreets, 1, 1, GaiusRef)' in result
+
     def test_sayline_uses_the_topics_measured_maximum_as_fallback(self, converter):
         from script_convert.converter import ScriptConverter
         saved = ScriptConverter.say_durations
@@ -2553,6 +2745,29 @@ class TestFilterGuardTes4Type:
         assert guard == 'akAggressor == CGAssassin01Ref'
 
 
+class TestOnHitWithAmmo:
+    """OnHit's akSource is the bow, never the arrow: an AMMO filter reads the shooter.
+
+    See: docs/commentary/script_convert.md#onhitwith-ammo
+    """
+
+    def test_ammo_filter_tests_the_shooters_equipped_ammo(self, xref):
+        """An AMMO filter becomes HitWithAmmo on the aggressor, bound as an Ammo property."""
+        xref.edid_to_formid['se02gkbonearrow1'] = '0007E0BF'
+        xref.record_type['0007E0BF'] = 'AMMO'
+        conv = ScriptConverter(xref)
+        guard = block_filter_guard(conv, 'onhitwith', 'SE02GKBoneArrow1')
+        assert guard == 'TES4Polyfill.HitWithAmmo(akAggressor, SE02GKBoneArrow1)'
+        assert conv.sc.property_refs['SE02GKBoneArrow1'] == 'Ammo'
+
+    def test_weapon_filter_still_tests_the_source(self, xref):
+        """A WEAP filter is still the weapon OnHit passes as akSource."""
+        xref.edid_to_formid['ironsword'] = '00001234'
+        xref.record_type['00001234'] = 'WEAP'
+        conv = ScriptConverter(xref)
+        assert block_filter_guard(conv, 'onhitwith', 'IronSword') == 'akSource == IronSword'
+
+
 class TestGameHourFractional:
     """GameHour is a FLOAT global in Skyrim (FormID 0x38, FNAM=102).
 
@@ -2795,7 +3010,7 @@ End
         body = out.split('Event OnUpdate()')[1].split('EndEvent')[0]
         idx = body.index('Return')
         before = body[:idx]
-        assert before.count('If (TES4Polyfill.SafeGameModeGate(Self))') == 2
+        assert before.count('If (TES4Polyfill.SafeGameModeGate(Self)') == 2
         assert 'RegisterForSingleUpdate(5.0)' in before
         assert 'RegisterForSingleUpdate(0.5)' in before
 
@@ -2803,7 +3018,7 @@ End
         """`Return <value>` belongs to an OBSE user function, not a GameMode
         early-out, and must not have a poll re-arm spliced in front of it."""
         converter.sc.udf_returns = True
-        assert conv_line(converter, 'return', 'Quest') == 'Return 0'
+        assert conv_line(converter, 'return', 'Quest') == 'Return TES4_Result'
 
 
 class TestNoPollFreeze:
@@ -3022,6 +3237,34 @@ class TestStartCombatIsForced:
                '\tUngolimRef.ModDisposition player -100\nend\n')
         out = converter.convert_standalone('T', src, 'Quest', 'T')
         assert 'TES4Polyfill.ForceCombat(' in out
+
+    def test_forcecombat_retargets_an_actor_already_fighting(self):
+        """TES4 StartCombat steers an actor already in combat onto the new
+        target (SE02's Gatekeeper, one orc at a time); Skyrim's is a no-op once
+        the target is in the combat group and StopCombat only takes effect on
+        the controller's next update, so ForceCombat stops, waits for combat to
+        end, then starts.
+        See: docs/commentary/script_convert.md#startcombat-retargets"""
+        src = open('script_convert/static_scripts/TES4Polyfill.psc',
+                   encoding='utf-8').read()
+        body = src[src.index('Function ForceCombat('):]
+        body = body[:body.index('EndFunction')]
+        assert 'GetCombatTarget() != akTarget' in body
+        assert (body.index('StopCombat()') < body.index('While akAttacker.IsInCombat()')
+                < body.index('StartCombat(akTarget)'))
+
+    def test_forcecombat_never_puts_the_player_in_the_shared_pair(self):
+        """A player in TES4ForceCombatVictims makes every forced Attacker (Nehrim's
+        ally Celebro, set on the elevator trolls) hostile to them; a fight with
+        the player goes through vanilla WIPlayerEnemyFaction instead.
+        See: docs/commentary/script_convert.md#forcecombat-player-faction"""
+        src = open('script_convert/static_scripts/TES4Polyfill.psc',
+                   encoding='utf-8').read()
+        body = src[src.index('Function ForceCombat('):]
+        body = body[:body.index('EndFunction')]
+        assert 'GetFormFromFile(0x06E02D, "Skyrim.esm")' in body
+        assert 'player.RemoveFromFaction(akVictims)' in body
+        assert body.index('akTarget == player') < body.index('akTarget.AddToFaction(akVictims)')
 
 
 class TestJailIsNotExpulsion:
@@ -3504,7 +3747,7 @@ class TestResetFallDamageTimerIsPaired:
         lines = [ln.strip() for ln in out.splitlines()]
         start = lines.index('Event OnEffectFinish(Actor akTarget, Actor akCaster)')
         end = lines.index('EndEvent', start)
-        assert any('TES4Polyfill.RestoreFallDamage(akTarget)' in ln
+        assert any('TES4Polyfill.RestoreFallDamage(akTarget, TES4NoFallDamage)' in ln
                    for ln in lines[start:end])
 
     def test_restore_is_synthesized_when_there_is_no_teardown_block(self, converter):
@@ -3512,7 +3755,14 @@ class TestResetFallDamageTimerIsPaired:
             'T', 'scn T\nbegin scripteffectupdate\n  ResetFallDamageTimer\nend\n',
             'ActiveMagicEffect', 'T')
         assert 'Event OnEffectFinish(' in out
-        assert 'TES4Polyfill.RestoreFallDamage(akTarget)' in out
+        assert 'TES4Polyfill.RestoreFallDamage(akTarget, TES4NoFallDamage)' in out
+
+    def test_an_actor_script_suppresses_its_own_fall(self, converter):
+        """A GameMode caller names Self and the spell, never a defaulted player."""
+        out = converter.convert_standalone(
+            'G', 'scn G\nbegin gamemode\n  ResetFallDamageTimer\nend\n', 'Actor', 'G')
+        assert 'TES4Polyfill.SuppressFallDamage(Self, TES4NoFallDamage)' in out
+        assert 'Spell Property TES4NoFallDamage Auto' in out
 
     def test_the_flag_does_not_leak_between_scripts(self, converter):
         """The converter instance is reused across every SCPT in a job."""
@@ -3748,7 +3998,9 @@ end
 
     def test_body_stays_on_the_repeating_event(self, converter):
         out = converter.convert_standalone('T', self.SRC, 'ObjectReference', 'T')
-        body = out.split('Event OnTrigger(')[1].split('EndEvent')[0]
+        event = out.split('Event OnTrigger(')[1].split('EndEvent')[0]
+        assert 'TES4_OnTriggerBody(akActionRef)' in event
+        body = out.split('Function TES4_OnTriggerBody(')[1].split('EndFunction')[0]
         assert 'triggered = 1' in body
 
     def test_entry_event_is_emitted_and_delegates(self, converter):
@@ -3762,7 +4014,7 @@ end
         inherits it rather than running unfiltered."""
         src = "scn T\nshort x\nbegin onTrigger player\n  set x to 1\nend\n"
         out = converter.convert_standalone('T', src, 'ObjectReference', 'T')
-        body = out.split('Event OnTrigger(')[1].split('EndEvent')[0]
+        body = out.split('Function TES4_OnTriggerBody(')[1].split('EndFunction')[0]
         assert 'Game.GetPlayer()' in body
 
     def test_actor_and_mob_variants_also_get_entry(self, converter):
@@ -5120,3 +5372,70 @@ class TestFalloutCastAliases:
         line = conv_line(converter, 'player.CastImmediateOnSelf TestSpell',
                          'Quest')
         assert line == 'TestSpell.Cast(Game.GetPlayer(), Game.GetPlayer())'
+
+
+class TestConsoleSavesAreDropped:
+    """A save manager's console saves write nothing; `Autosave` still saves.
+
+    See docs/commentary/script_convert.md#console-saves-are-dropped.
+    """
+
+    @pytest.mark.parametrize('src', ['con_Save Autosave1', 'SaveGame foo',
+                                     'con_SaveGame bar'])
+    def test_console_save_is_a_note(self, converter, src):
+        """The line is a comment, with no RequestSave call."""
+        line = conv_line(converter, src, 'Quest')
+        assert line.lstrip().startswith(';')
+        assert 'RequestSave' not in line
+
+    def test_autosave_still_saves(self, converter):
+        """`Autosave` stays the engine's rotating autosave."""
+        assert conv_line(converter, 'Autosave', 'Quest') == 'Game.RequestAutoSave()'
+
+
+class TestGameModeStepsAreRates:
+    """A GameMode SetPos/SetAngle stepping from the object's own read is a rate for TESRuntime.
+
+    See docs/commentary/script_convert.md#gamemode-steps-are-rates.
+    """
+
+    WHEEL = ('scn W\nshort a\nshort b\nbegin GameMode\nset a to GetAngle Z\n'
+             'set b to a - 2\nSetAngle Z b\nend\n')
+
+    def test_per_frame_step_spins_at_thirty_frames(self, converter):
+        """Two degrees a frame is -(2) * 30.0 degrees a second."""
+        out = converter.convert_standalone('W', self.WHEEL, 'ObjectReference', 'W')
+        assert 'TES4Polyfill.SpinAxis(Self, 5, b, -(2) * 30.0,' in out
+
+    def test_base_read_once_is_not_a_step(self, converter):
+        """A base read behind a DoOnce is not this pass's pose: the lift stays a glide."""
+        src = ('scn L\nfloat base\nfloat t\nfloat p\nshort once\nbegin GameMode\n'
+               'if once == 0\n  set base to GetPos Z\n  set once to 1\nendif\n'
+               'set t to t + GetSecondsPassed\nset p to base + t * 62\n'
+               'SetPos Z p\nend\n')
+        out = converter.convert_standalone('L', src, 'ObjectReference', 'L')
+        assert 'TES4Polyfill.GlideAxis(Self, 2, p,' in out
+        assert 'SpinAxis' not in out
+
+    def test_seconds_passed_step_is_per_pass(self, converter):
+        """A step scaled by GetSecondsPassed is divided back into a rate."""
+        src = ('scn G\nbegin GameMode\n'
+               'SetAngle Z (GetAngle Z + 40 * GetSecondsPassed)\nend\n')
+        out = converter.convert_standalone('G', src, 'ObjectReference', 'G')
+        assert '/ TES4_SecondsPassed, TES4_GlideRefs' in out
+
+    def test_rotate_in_gamemode_spins_at_its_rate(self, converter):
+        """TES4 `Rotate z 10` is ten degrees a SECOND, handed over as that rate."""
+        src = 'scn R\nbegin GameMode\nRotate z, -20\nend\n'
+        out = converter.convert_standalone('R', src, 'ObjectReference', 'R')
+        assert ('TES4Polyfill.SpinAxis(Self, 5, Self.GetAngleZ() + (-20) * '
+                'TES4_SecondsPassed, -20,') in out
+
+    def test_absolute_glide_hands_its_target_to_tesruntime(self):
+        """GlideAxis sends a non-actor's target to TESRuntime's tick when it can."""
+        src = open('script_convert/static_scripts/TES4Polyfill.psc',
+                   encoding='utf-8').read()
+        body = src[src.index('Function GlideAxis('):]
+        body = body[:body.index('EndFunction')]
+        assert 'akRef.SendModEvent("TES4Track", aiAxis as String, afValue)' in body
+        assert '!(akRef as Actor)' in body

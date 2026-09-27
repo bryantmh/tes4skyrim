@@ -19,6 +19,7 @@ from .world_falloutnv import (marker_substitute, parent_use_flags,
 from .world_morrowind import is_tes3_source, lock_is_exit_only, tes3_refr_flags
 from .vendor_stock_morrowind import stock_owner
 from .items import get_base_origin_shift
+from ..actors.starts_dead import STARTS_DEAD_FLAG, starts_dead
 from ..base.text_reader import remap_formid
 from .common import (
     TES4_DEFAULT_MUSIC_ENUM,
@@ -46,6 +47,9 @@ _TES4_DEFAULT_LAND_HEIGHT = -2048.0
 
 #: TES4 sea level: the default water plane for any worldspace with no DNAM.
 _TES4_DEFAULT_WATER_HEIGHT = 0.0
+
+#: XACT Use Default | Open | Open by Default: all 354 vanilla ONAM refs write it.
+_REFR_ACTION_OPEN_BY_DEFAULT = 0x0D
 
 
 # ---------------------------------------------------------------------------
@@ -939,10 +943,20 @@ def shifted_position(rec: dict, scale) -> tuple:
     return px - shift * s * wx, py - shift * s * wy, pz - shift * s * wz
 
 
+def _refr_open_by_default(rec: dict) -> bool:
+    """True if the ref authored ONAM "Open by Default" and has no lock.
+
+    See: docs/commentary/tes5_import_actors.md#open-by-default
+    """
+    return (get_str(rec, 'ONAM.OpenByDefault') == '1'
+            and get_int(rec, 'XLOC.Level', -1) < 0)
+
+
 def _refr_data(rec: dict, scale) -> bytes:
-    """The DATA position/rotation subrecord, with furniture-origin shift."""
+    """[ONAM] then the DATA position/rotation subrecord, with furniture-origin shift."""
     px, py, pz = shifted_position(rec, scale)
-    return pack_subrecord('DATA', struct.pack(
+    onam = pack_subrecord('ONAM', b'') if _refr_open_by_default(rec) else b''
+    return onam + pack_subrecord('DATA', struct.pack(
         '<ffffff', px, py, pz,
         _safe_angle(get_float(rec, 'RotX')),
         _safe_angle(get_float(rec, 'RotY')),
@@ -950,7 +964,7 @@ def _refr_data(rec: dict, scale) -> bytes:
 
 
 def _refr_head(rec: dict) -> bytes:
-    """EDID, NAME and the XPRM primitive of a REFR.
+    """EDID, NAME, the open-by-default XACT and the XPRM primitive of a REFR.
 
     An invisible-marker base is substituted with its Skyrim.esm equivalent so
     the ref points into index 0.  Oblivion.esm ships 6 refs on the MapMarker
@@ -970,6 +984,9 @@ def _refr_head(rec: dict) -> bytes:
         name_fid = 0x0000003B
     if name_fid:
         subs += pack_formid_subrecord('NAME', name_fid)
+    if _refr_open_by_default(rec):
+        subs += pack_subrecord('XACT', struct.pack(
+            '<I', get_int(rec, 'XACT.ActionFlag', _REFR_ACTION_OPEN_BY_DEFAULT)))
     primitive = get_str(rec, 'XPRM.Raw')
     if primitive:
         subs += pack_subrecord('XPRM', bytes.fromhex(primitive))
@@ -984,7 +1001,7 @@ def convert_REFR(rec: dict) -> bytes:
     ... XSCL ... XMRK/FNAM/FULL/TNAM ... XLRT ... DATA
 
     A keyless barrier door with no authored owner is owned to the
-    plugin-origin faction; TES4 XACT/ONAM is deliberately not transferred.
+    plugin-origin faction.
 
     See: docs/commentary/tes5_import_actors.md#barrier-door-ownership
 
@@ -1018,8 +1035,8 @@ def convert_REFR(rec: dict) -> bytes:
     xown = (stock_owner(get_formid(rec, 'FormID'))
             or get_formid(rec, 'XOWN.Owner'))
     if not xown and barrier_door:
-        from .actor_common import get_origin_faction_fid
-        xown = get_origin_faction_fid()
+        from .actor_common import get_origin_faction_fid, is_support_root
+        xown = get_origin_faction_fid() if is_support_root() else 0
     if xown:
         subs += pack_formid_subrecord('XOWN', xown)
 
@@ -1101,6 +1118,8 @@ def convert_ACHR(rec: dict) -> bytes:
     subs += pack_subrecord('DATA', struct.pack('<ffffff', px, py, pz, rx, ry, rz))
 
     flags = get_int(rec, 'RecordFlags')
+    if starts_dead(get_str(rec, 'FormID')):
+        flags |= STARTS_DEAD_FLAG
     return pack_record('ACHR', get_formid(rec, 'FormID'), flags, subs)
 
 
@@ -1282,7 +1301,7 @@ def _cell_location(rec: dict) -> bytes:
     return pack_formid_subrecord('XLCN', lctn_fid) if lctn_fid else b''
 
 
-def _cell_music(rec: dict) -> bytes:
+def cell_music(rec: dict) -> bytes:
     """CELL XCMO: an FO3/FNV MUSC, else TES4's 3-value XCMT enum resolved.
 
     An interior with no authored XCMT takes the engine default; exteriors are
@@ -1320,7 +1339,7 @@ def _cell_pointers(rec: dict) -> bytes:
     xcwt = get_formid(rec, 'XCWT.Water')
     if xcwt:
         subs += pack_formid_subrecord('XCWT', xcwt)
-    subs += _cell_music(rec)
+    subs += cell_music(rec)
     xccm = get_formid(rec, 'XCCM.Climate')
     if xccm and region_was_emitted(xccm):
         subs += pack_formid_subrecord('XCCM', xccm)

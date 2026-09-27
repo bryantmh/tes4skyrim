@@ -35,6 +35,7 @@ from script_convert.tes4.nodes import (
     Comment,
     Expr,
     ExprStmt,
+    ForEach,
     Goto,
     Ident,
     If,
@@ -443,93 +444,78 @@ class Parser:
         self.skip_newlines()
         if self.at_end():
             return None
-
         tok = self.cur
         low = tok.text.lower() if tok.kind is T.IDENT else ''
         if low and low in terminators:
             return None
-
-        line = tok.line
-        start = self.i
-
         if tok.kind is T.COMMENT:
             self.advance()
             self.take_line_end()
-            return Comment(text=tok.text, line=line)
+            return Comment(text=tok.text, line=tok.line)
+        if self._at_separator_rule():
+            return self._separator_rule(tok.line)
+        stmt = self._keyword_stmt(tok, low) if low else None
+        return stmt or self._command_stmt(tok, low)
 
-        # A separator rule the author wrote WITHOUT a `;` --
-        # `-----------------`, `== == == ==`, `:= == == ==`.  Oblivion tolerated it; parsed
-        # as an expression it becomes a chain of unary minuses that Papyrus
-        # rejects ("invalid right operand in prefix expression").  It is
-        # decoration, so it survives as one.
-        if tok.kind is T.OP and self.toks[self.i + 1].kind is T.OP                 and tok.text in ('-', '=', ':=', '==', '*', '+')                 and self.toks[self.i + 1].text in ('-', '=', ':=', '==',
-                                                   '*', '+'):
-            while self.cur.kind not in (T.NEWLINE, T.EOF):
-                self.advance()
-            return Comment(text=';' + '-' * 20, line=line,
+    def _at_separator_rule(self) -> bool:
+        """A `;`-less separator rule (`-----`, `== ==`, `:= ==`) that Oblivion tolerated as decoration."""
+        rule = ('-', '=', ':=', '==', '*', '+')
+        nxt = self.toks[self.i + 1]
+        return (self.cur.kind is T.OP and nxt.kind is T.OP
+                and self.cur.text in rule and nxt.text in rule)
+
+    def _separator_rule(self, line: int) -> Stmt:
+        """The rule as a comment; parsed, Papyrus rejects its unary minuses."""
+        while self.cur.kind not in (T.NEWLINE, T.EOF):
+            self.advance()
+        return Comment(text=';' + '-' * 20, line=line, comment=self.take_line_end())
+
+    def _keyword_stmt(self, tok, low: str) -> Stmt | None:
+        """A declaration or keyword statement, or None when `low` opens neither."""
+        if low in VAR_TYPES and self.toks[self.i + 1].kind is T.IDENT:
+            self.advance()
+            name = self.advance()
+            return VarDecl(vtype=low, name=name.text, line=tok.line,
                            comment=self.take_line_end())
+        handler = _KEYWORD_PARSERS.get(low)
+        return handler(self, tok, tok.line, self.i) if handler else None
 
-        if tok.kind is T.IDENT:
-            # An UNMATCHED closer or branch keyword -- `endif` with no open
-            # `if`, an `else` after its `if` already closed.  Authored scripts really do carry these (Oblivion's
-            # MGMageConversationFollowScript has a spare `endif`, and the
-            # engine ignored it), and the block parser that owns a real closer
-            # has already consumed it via `terminators`.  Reaching here means
-            # nothing opened it, so it is dropped: emitting it as a statement
-            # produced `endif()`, an undefined call that failed the script.
-            if low in ('endif', 'endwhile', 'loop', 'else', 'elseif'):
-                self.advance()
-                return Comment(text=';%s  ;unmatched closer, dropped' % tok.text,
-                               line=line, comment=self.take_line_end())
-            if low in VAR_TYPES and self.toks[self.i + 1].kind is T.IDENT:
-                self.advance()
-                name = self.advance()
-                return VarDecl(vtype=low, name=name.text, line=line,
-                               comment=self.take_line_end())
-            if low == 'set':
-                return self._parse_set(line, start)
-            if low == 'let':
-                return self._parse_let(line, start)
-            if low in ('if', 'elseif'):
-                return self._parse_if(line)
-            if low == 'while':
-                return self._parse_while(line)
-            if low == 'return':
-                self.advance()
-                return Return(line=line, comment=self.take_line_end())
-            if low == 'setfunctionvalue':
-                self.advance()
-                value = (self.parse_expression()
-                         if self.cur.kind not in (T.NEWLINE, T.EOF, T.COMMENT)
-                         else None)
-                return SetFunctionValue(value=value, line=line,
-                                        comment=self.take_line_end())
-            if low == 'label' and self.toks[self.i + 1].kind is T.NUMBER:
-                self.advance()
-                num = self.advance()
-                return Label(number=num.text, line=line,
-                             comment=self.take_line_end())
-            if low == 'goto' and self.toks[self.i + 1].kind is T.NUMBER:
-                self.advance()
-                num = self.advance()
-                return Goto(number=num.text, line=line,
-                            comment=self.take_line_end())
+    def _unmatched_closer(self, tok, line: int) -> Stmt:
+        """A closer nothing opened, dropped (the engine ignored it)."""
+        self.advance()
+        return Comment(text=';%s  ;unmatched closer, dropped' % tok.text,
+                       line=line, comment=self.take_line_end())
 
+    def _parse_return(self, line: int) -> Stmt:
+        """`return`."""
+        self.advance()
+        return Return(line=line, comment=self.take_line_end())
+
+    def _parse_set_function_value(self, line: int) -> Stmt:
+        """OBSE `SetFunctionValue [<expr>]`."""
+        self.advance()
+        value = (self.parse_expression()
+                 if self.cur.kind not in (T.NEWLINE, T.EOF, T.COMMENT) else None)
+        return SetFunctionValue(value=value, line=line, comment=self.take_line_end())
+
+    def _parse_jump(self, line: int, node_cls) -> Stmt | None:
+        """OBSE `Label <n>` / `Goto <n>`, or None when no number follows."""
+        if self.toks[self.i + 1].kind is not T.NUMBER:
+            return None
+        self.advance()
+        num = self.advance()
+        return node_cls(number=num.text, line=line, comment=self.take_line_end())
+
+    def _command_stmt(self, tok, low: str) -> Stmt:
+        """A command call -- also with a quoted receiver, `"Ref".AddItem` -- else the raw line."""
+        line, start = tok.line, self.i
+        if tok.kind is T.IDENT or (tok.kind is T.STRING
+                                   and self.toks[self.i + 1].is_op('.')):
             call = self._parse_command_stmt(start)
+            if call is not None and low == 'foreach':
+                return self._parse_foreach(call, line)
             if call is not None:
-                return ExprStmt(expr=call, line=line,
-                                comment=self.take_line_end())
-
-        # A statement can also OPEN with a quoted EditorID receiver:
-        # `"NQ15W02TresorRef".AddItem "NQ15W02Gold001", 100` (Nehrim, 890
-        # statements).  The quotes are Oblivion's optional form, so this is a
-        # command call like any other.
-        if tok.kind is T.STRING and self.toks[self.i + 1].is_op('.'):
-            call = self._parse_command_stmt(start)
-            if call is not None:
-                return ExprStmt(expr=call, line=line,
-                                comment=self.take_line_end())
-
+                return ExprStmt(expr=call, line=line, comment=self.take_line_end())
         return self._raw_stmt(start, line)
 
     def _parse_set(self, line: int, start: int) -> Stmt:
@@ -626,6 +612,24 @@ class Parser:
             self.take_line_end()
         return node
 
+    def _parse_foreach(self, header: Expr, line: int) -> Stmt:
+        """OBSE `forEach <it> <- <container>` through its closing `loop`, as one block."""
+        node = ForEach(expr=header, line=line, comment=self.take_line_end())
+        node.body = self._parse_body(_WHILE_TERMINATORS)
+        if self.cur.is_ident('loop'):
+            self.advance()
+            self.take_line_end()
+        return node
+
+    def _parse_foreach(self, header: Expr, line: int) -> Stmt:
+        """OBSE `forEach <it> <- <container>` through its closing `loop`, as one block."""
+        node = ForEach(expr=header, line=line, comment=self.take_line_end())
+        node.body = self._parse_body(_WHILE_TERMINATORS)
+        if self.cur.is_ident('loop'):
+            self.advance()
+            self.take_line_end()
+        return node
+
     def _parse_body(self, terminators: frozenset) -> list:
         """Statements until a terminator keyword or EOF, minus unreachable ones.
 
@@ -670,6 +674,20 @@ class Parser:
             self.take_line_end()
         return node
 
+
+#: Statement keyword -> its parser, called as (parser, token, line, token index).
+_KEYWORD_PARSERS = {
+    **dict.fromkeys(('endif', 'endwhile', 'loop', 'else', 'elseif'),
+                    lambda p, tok, line, _i: p._unmatched_closer(tok, line)),
+    'set': lambda p, _tok, line, i: p._parse_set(line, i),
+    'let': lambda p, _tok, line, i: p._parse_let(line, i),
+    'if': lambda p, _tok, line, _i: p._parse_if(line),
+    'while': lambda p, _tok, line, _i: p._parse_while(line),
+    'return': lambda p, _tok, line, _i: p._parse_return(line),
+    'setfunctionvalue': lambda p, _tok, line, _i: p._parse_set_function_value(line),
+    'label': lambda p, _tok, line, _i: p._parse_jump(line, Label),
+    'goto': lambda p, _tok, line, _i: p._parse_jump(line, Goto),
+}
 
 _IF_TERMINATORS = frozenset({'elseif', 'else', 'endif', 'end'})
 _WHILE_TERMINATORS = frozenset({'loop', 'endwhile', 'end'})

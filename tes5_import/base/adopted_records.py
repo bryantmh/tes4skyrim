@@ -12,6 +12,8 @@ See: docs/commentary/tes5_import_pipeline.md#phase-0-dependent-skips-support-rec
 
 from asset_convert.audio.voice_races import load_race_voices, vtyp_edid
 
+from ..packages.escort_when_near import (ESCORT_WHEN_NEAR_EDID,
+                                         set_escort_template_fid)
 from .equivalents import CUSTOM_VTYP_EDIDS, set_voice_type
 from .owned_records import WELL_KNOWN_PROPERTIES
 
@@ -68,6 +70,7 @@ def adopt_master_special_records(ctx, master_dirs) -> int:
     if index is None:
         return 0
     found = _adopt_well_known(index)
+    set_escort_template_fid(index.find_by_edid(b'PACK', ESCORT_WHEN_NEAR_EDID))
     if found:
         print(f"  Adopted {found} synthesized master records "
               f"(TES4ControlsDisabled, TES4Fame, ...)")

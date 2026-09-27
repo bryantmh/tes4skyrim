@@ -32,8 +32,11 @@ import os
 import struct
 import sys
 import time
+import zlib
 from collections import defaultdict
 
+from .base.tes5_reader import subrecords
+from .base.object_scripts import write_udf_host_quests
 from .overrides.manifest import write_manifest
 from .overrides.nested import (build_nested_overrides)
 from .dialogue.arrest import morrowind_arrest_topic
@@ -159,11 +162,11 @@ def _patch_late_bindings(st, export_dir: str) -> None:
     See: docs/commentary/tes5_import_pipeline.md#patch-pass-runs-last
     """
     from .dialogue.converter import make_player_script_quest
-    player_quest_fid = make_player_script_quest(
+    make_player_script_quest(
         st.writer, master_index=(st.ctx.master_index if st.ctx else None))
-    if player_quest_fid and not (st.ctx and st.ctx.master_index is not None
-                                 and player_quest_fid in st.ctx.master_index):
-        st.sge_quest_fids.add(player_quest_fid)
+    n_udf = write_udf_host_quests(st.writer)
+    if n_udf:
+        print(f"  OBSE function scripts hosted on quests: {n_udf}")
     from .packages.converter import patch_forcegreet_topics
     n_fg = patch_forcegreet_topics(st.writer)
     if n_fg:
@@ -209,6 +212,17 @@ def _patch_creature_chains(st, export_dir: str) -> None:
               f"{n_bpp} races bound")
 
 
+def _finalize_adoption(writer) -> None:
+    """Ship adopted master records carrying this plugin's text; add the renamed copies.
+
+    See: docs/commentary/tes5_import_override.md#generated-records-reuse-the-masters
+    """
+    kept, added = writer.adoption.finalize(writer)
+    print(f"  Generated records shared with the masters: "
+          f"{len(writer.adoption.adopted)} adopted, {kept} with new text, "
+          f"{added} renamed copies")
+
+
 def run_finalize_phases(st, export_dir: str, phase_done,
                         is_esm: bool, masters: list) -> tuple:
     """Phase 5 onward: dialogue, side files, and the write.
@@ -229,6 +243,7 @@ def run_finalize_phases(st, export_dir: str, phase_done,
 
     if st.ctx:
         st.ctx.report()
+        _finalize_adoption(st.writer)
 
     t3 = time.time()
     print(f"\nConverted {st.converted} records ({st.errors} errors) in {t3-st.t2:.2f}s")
@@ -254,7 +269,7 @@ def run_finalize_phases(st, export_dir: str, phase_done,
     file_size = os.path.getsize(st.output_path)
     print(f"Wrote {st.output_path} ({file_size:,} bytes)")
 
-    _write_seq_file(st.output_path, st.sge_quest_fids)
+    _write_seq_file(st.output_path, st.sge_quest_fids | _own_sge_quests(st.writer))
     stale = sweep_stale_sidecars(st.output_path)
     if stale:
         print(f"  Removed {stale} stale runtime sidecar file(s)")
@@ -307,6 +322,28 @@ def _write_lip_text(output_path: str, lip_texts: dict):
                     .replace('\r', '\\r').replace('\t', '\\t'))
             f.write(f'{fid:06X}_{num}={text}\n')
     print(f"  Wrote {map_path} ({len(lip_texts)} response transcripts)")
+
+
+def _own_sge_quests(writer) -> set:
+    """FormIDs of every QUST this file defines whose written DNAM is Start Game Enabled.
+
+    A start-game quest missing from the .seq gets no dialogue loaded in a new
+    game, so its scene topics stay empty until a save is loaded.
+
+    See: docs/commentary/tes5_import_dialogue.md#speak-as-quest-in-the-seq
+    """
+    out = set()
+    for raw in writer._top_groups.get('QUST') or []:
+        flags, fid = struct.unpack_from('<II', raw, 8)
+        if fid >> 24 != writer.own_index:
+            continue
+        body = raw[24:]
+        if flags & 0x40000:
+            body = zlib.decompress(body[4:])
+        dnam = next((v for k, v in subrecords(body) if k == b'DNAM'), b'')
+        if dnam and dnam[0] & 0x01:
+            out.add(fid)
+    return out
 
 
 def _write_seq_file(output_path: str, sge_quest_fids: set):

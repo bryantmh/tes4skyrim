@@ -698,6 +698,62 @@ class TestConverters:
         finally:
             cr.load_creature_item_index({})
 
+    def test_passive_spells_do_not_make_a_caster_race(self):
+        """A Disease or Ability is never equipped, so only a castable spell
+        (SPIT.Type 0, here through a leveled list) sets the race's VNAM Spell
+        bit; Nehrim's nightmare-troll race had it from a troll disease."""
+        from tes5_import.actors import creature_races as cr
+        cr.load_creature_item_index({
+            'SPEL': [
+                {'Signature': 'SPEL', 'FormID': '0001D5A1',
+                 'SPIT.Type': '1', 'EffectCount': '1',
+                 'Effect[0].Type': 'Touch'},
+                {'Signature': 'SPEL', 'FormID': '0002B543',
+                 'SPIT.Type': '4', 'EffectCount': '1',
+                 'Effect[0].Type': 'Self'},
+                {'Signature': 'SPEL', 'FormID': '000A97DF',
+                 'SPIT.Type': '0', 'EffectCount': '1',
+                 'Effect[0].Type': 'Target'},
+            ],
+            'LVSP': [
+                {'Signature': 'LVSP', 'FormID': '0005D4A2',
+                 'EntryCount': '1', 'Entry[0].FormID': '000A97DF'},
+            ],
+        })
+        try:
+            troll = {'Signature': 'CREA', 'SpellCount': '2',
+                     'Spell[0]': '0001D5A1', 'Spell[1]': '0002B543'}
+            caster = {'Signature': 'CREA', 'SpellCount': '1',
+                      'Spell[0]': '0005D4A2'}
+            assert not cr._creature_equip_flags([troll]) & cr._VNAM_SPELL
+            assert cr._creature_equip_flags([troll, caster]) & cr._VNAM_SPELL
+        finally:
+            cr.load_creature_item_index({})
+
+    def test_shared_race_keeps_each_creatures_attack_reach(self):
+        """A race shared by creatures of different authored reach keeps the
+        founder's; each other reach gets a variant race (same skin, listed as
+        an ARMA Additional Race).  Nehrim's intro black troll (42) shared a
+        race with 32-reach trolls and missed most of its swings."""
+        from tes5_import.actors import creature_races as cr
+        founder = {'FormID': '0012CAF1', 'EditorID': 'DaromithTroll02', 'RNAM.AttackReach': '32'}
+        black = {'FormID': '001AB064', 'EditorID': 'Black', 'RNAM.AttackReach': '42'}
+        twin = {'FormID': '001AB065', 'EditorID': 'Twin', 'RNAM.AttackReach': '32'}
+        key = ('nightmaretroll', ('nightmaretroll.nif',))
+        proj = {'skeleton_nif': 's.nif', 'project_hkx': 'p.hkx', 'body_dir': 'b', 'attacks': []}
+        writer = _DerivingWriter()
+        cr.load_creature_item_index({})
+        race, variants, _vnam = cr._build_race_chain(
+            writer, founder, key[0], list(key[1]), proj, key, {key: [founder, black, twin]})
+        assert list(variants) == [42] and variants[42] != race
+        reach = {struct.unpack('<I', d[12:16])[0]:
+                 struct.unpack_from('<f', self._get_subrecord_data(d, 'DATA'), 100)[0]
+                 for t, d in writer.records if t == 'RACE'}
+        assert reach == {race: 32.0, variants[42]: 42.0}
+        arma = next(d for t, d in writer.records if t == 'ARMA')
+        extra = [struct.unpack('<I', v)[0] for s, v in self._iter_subrecords(arma) if s == 'MODL']
+        assert extra == [variants[42]]
+
     def test_atkd_carries_the_attack_spell(self):
         """ATKD field 3 is 'Attack Spell' (xEdit: [SPEL, SHOU, NULL]) — the
         vanilla melee-caster idiom (109 vanilla attack entries; the flame
@@ -730,6 +786,35 @@ class TestConverters:
         for after in ('AIDT', 'PKID'):
             if after in order:
                 assert order.index('SPLO') < order.index(after)
+
+    def test_shared_race_keeps_each_creatures_unarmed_damage(self):
+        """Creatures sharing a generated race keep their own AttackDamage: the
+        race carries the weakest, the rest get an AbFortifyUnarmedDamage
+        ability for the difference (SE02 Gatekeepers 10..58 all hit for 40)."""
+        from tes5_import.actors import creature_unarmed as cu
+        weak = {'FormID': '000435A4', 'DATA.AttackDamage': '10'}
+        strong = {'FormID': '000435A3', 'DATA.AttackDamage': '58'}
+        writer = _DerivingWriter()
+        cu.reset()
+        try:
+            assert cu.race_unarmed_damage([strong, weak]) == 10.0
+            assert cu.build_unarmed_abilities(
+                writer, ('gatekeeper', ('a.nif',)), [strong, weak], 'TES4GK') == 1
+            assert cu.creature_unarmed_ability(0x0435A4) == 0
+            spel = cu.creature_unarmed_ability(0x0435A3)
+            assert spel and [t for t, _d in writer.records] == ['SPEL']
+            data = writer.records[0][1]
+            assert self._get_subrecord_data(data, 'EFID') == struct.pack('<I', 0x000424E2)
+            assert struct.unpack('<fII', self._get_subrecord_data(data, 'EFIT')) == (48.0, 0, 0)
+            rec = {'Signature': 'CREA', 'FormID': '000435A3', 'RecordFlags': '0',
+                   'EditorID': 'SE02Gatekeeper8', 'SpellCount': '0',
+                   'ACBS.Flags': '0', 'ACBS.Level': '33', 'FactionCount': '0',
+                   'ItemCount': '0', 'AIPackageCount': '0'}
+            splos = [struct.unpack('<I', d)[0]
+                     for s, d in self._iter_subrecords(convert_CREA(rec)) if s == 'SPLO']
+            assert splos == [spel]
+        finally:
+            cu.reset()
 
     def test_crea_null_spell_ids_are_dropped(self):
         """A null FormID must never reach SPLO, and SPCT must match what was
@@ -846,6 +931,26 @@ class TestConverters:
         data = self._get_subrecord_data(result, 'DATA')
         assert len(data) == 24  # 6 floats
 
+    def test_refr_open_by_default_only_when_unlocked(self):
+        """An unlocked ONAM ref is written open as vanilla does (XACT after NAME,
+        ONAM before DATA); a locked one starts closed.
+
+        See: docs/commentary/tes5_import_actors.md#open-by-default
+        """
+        rec = {'Signature': 'REFR', 'FormID': '00001000', 'RecordFlags': '1024',
+               'NAME': '00012345', 'XACT.ActionFlag': '13',
+               'ONAM.OpenByDefault': '1', 'PosX': '0.0', 'PosY': '0.0',
+               'PosZ': '0.0', 'RotX': '0.0', 'RotY': '0.0', 'RotZ': '0.0'}
+        result = convert_REFR(rec)
+        assert self._get_subrecord_data(result, 'XACT') == struct.pack('<I', 13)
+        assert self._get_subrecord_data(result, 'ONAM') == b''
+        assert (result.index(b'NAME') < result.index(b'XACT')
+                < result.index(b'ONAM') < result.index(b'DATA'))
+        locked = convert_REFR({**rec, 'XLOC.Level': '100', 'XLOC.Key': '00000000',
+                               'XLOC.Flags': '0'})
+        assert not self._has_subrecord(locked, 'ONAM')
+        assert not self._has_subrecord(locked, 'XACT')
+
     def test_tes3_refr_ships_dont_havok_settle(self):
         """A Morrowind placement is an unsettled pose; only TES3 sets the flag.
 
@@ -904,6 +1009,13 @@ class TestConverters:
         rec = {'Signature': 'GLOB', 'FormID': '00003000', 'RecordFlags': '0',
                'EditorID': 'GameHour', 'FNAM.Type': 'f', 'FLTV.Value': '12.0'}
         assert convert_GLOB(rec) == b''
+
+    def test_glob_distant_blur_ships_off(self):
+        """Nehrim's VarDistantBlur ships as its own "off" value -1."""
+        rec = {'Signature': 'GLOB', 'FormID': '0020A12C', 'RecordFlags': '0',
+               'EditorID': 'VarDistantBlur', 'FNAM.Type': 's', 'FLTV.Value': '1.0'}
+        fltv = self._get_subrecord_data(convert_GLOB(rec), 'FLTV')
+        assert struct.unpack('<f', fltv)[0] == -1.0
 
     def test_lvli(self):
         rec = {'Signature': 'LVLI', 'FormID': '00004000', 'RecordFlags': '0',
@@ -5529,6 +5641,26 @@ class TestMgefConversion:
         assert _delivery_and_cast(mw_tes4_flags(0x100)) == (1, 2)
         assert _delivery_and_cast(mw_tes4_flags(0x080)) == (1, 3)
         assert _delivery_and_cast(mw_tes4_flags(0x040)) == (1, 0)
+
+    def test_resist_paralysis_grants_immunity_not_paralysis(self):
+        """RSPA carries ImmuneParalysis; a Paralysis effect honors it and resists nothing.
+
+        See: docs/commentary/tes5_import_magic.md#resist-paralysis
+        """
+        from tes5_import.record_types.magic import (
+            AV_PARALYSIS, KW_IMMUNE_PARALYSIS, O_ACTOR_VALUE, O_RESIST_VALUE,
+            PARALYSIS_CONDITIONS, convert_MGEF)
+        base = {'DATA.Flags': '0', 'DATA.School': '5', 'DATA.BaseCost': '1.0'}
+        rspa = convert_MGEF(dict(base, FormID='00001900', EditorID='RSPA',
+                                 **{'DATA.ResistValue': '4294967295'}))
+        assert struct.unpack('<I', _find_subrecord(rspa, b'KWDA'))[0] == KW_IMMUNE_PARALYSIS
+        assert struct.unpack_from('<i', _find_subrecord(rspa, b'DATA'),
+                                  O_ACTOR_VALUE)[0] != AV_PARALYSIS
+        para = convert_MGEF(dict(base, FormID='00001901', EditorID='PARA',
+                                 **{'DATA.ResistValue': '66'}))
+        assert para.endswith(PARALYSIS_CONDITIONS)
+        assert struct.unpack_from('<i', _find_subrecord(para, b'DATA'),
+                                  O_RESIST_VALUE)[0] == -1
 
     def test_data_is_a_full_152_byte_struct(self):
         from tes5_import.record_types.magic import MGEF_DATA_SIZE, convert_MGEF

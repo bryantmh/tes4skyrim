@@ -196,25 +196,46 @@ def _flight_treads(tread_area, steps):
     return {t for t in flight if tread_area[t] <= limit.get(_find(flight, t), -1.0)}
 
 
-def _risers(tris, flat, parent, treads, steps, scale):
-    """Indices of non-level triangles spanning one step of a flight, including
-    the step from an end tread onto the floor or landing beside it: their
-    height lies within the step's rise (± _MIN_RISE), they come within _GAP
-    of one of its treads and within _GAP plus the rise of the other (a
-    chamfered step leaves its riser a rise away from the lower tread)."""
-    steps = [(a, b) for a, b in steps if a in treads or b in treads]
+def _step_ends(tris, flat, parent, steps, scale):
+    """(members, tread_z, xy, grid) of the treads at either end of `steps`:
+    each one's flat triangles and mean height, those triangles in XY, and a
+    grid over them padded by _REACH."""
     ends = {r for step in steps for r in step}
     members = defaultdict(list)
     for i in flat:
         if (root := _find(parent, i)) in ends:
             members[root].append(i)
     tread_z = {r: sum(v[2] for i in m for v in tris[i]) * scale / (3 * len(m)) for r, m in members.items()}
-    bands = [(tread_z[a], tread_z[b], a, b) for a, b in steps]
     xy = {i: _xy(tris[i], scale) for m in members.values() for i in m}
     grid = defaultdict(list)
     for i, p in xy.items():
         for cell in _cells(_bbox(p), _REACH):
             grid[cell].append(i)
+    return members, tread_z, xy, grid
+
+
+def _landing_lips(steps, treads, members, tread_z, xy):
+    """Triangles of a landing one step above a flight's top tread that come
+    within _GAP plus the rise of that tread: the edge a climber steps over."""
+    out = []
+    for a, b in steps:
+        if a in treads and b not in treads:
+            reach = _GAP + tread_z[b] - tread_z[a]
+            out += [i for i in members[b] if min(_contact(xy[i], xy[k])[0] for k in members[a]) <= reach]
+    return out
+
+
+def _risers(tris, parent, treads, steps, ends, scale):
+    """Indices of non-level triangles spanning one step of a flight, including
+    the step from an end tread onto the floor or landing beside it: their
+    height lies within the step's rise (± _MIN_RISE), they come within _GAP
+    of one of its treads and within _GAP plus the rise of the other (a
+    chamfered step leaves its riser a rise away from the lower tread).  Faces
+    within _MAX_RISE below a tread and _GAP of it count too (the first riser's
+    floor is not in the mesh)."""
+    _, tread_z, xy, grid = ends
+    bands = [(tread_z[a], tread_z[b], a, b) for a, b in steps]
+    bands += [(tread_z[t] - _MAX_RISE, tread_z[t], t, t) for t in treads]
     out = []
     for j, t in enumerate(tris):
         tilt = _tilt(t)
@@ -253,7 +274,10 @@ def stairs_materials(tris, materials, scale):
     parent, tread_area, steps = _treads_and_steps(flat, tris, scale)
     treads = _flight_treads(tread_area, steps)
     tread_tris = [i for i in flat if _find(parent, i) in treads]
+    steps = [(a, b) for a, b in steps if a in treads or b in treads]
+    ends = _step_ends(tris, flat, parent, steps, scale)
+    lips = _landing_lips(steps, treads, *ends[:3])
     out = list(materials)
-    for i in tread_tris + _risers(tris, flat, parent, treads, steps, scale):
+    for i in tread_tris + lips + _risers(tris, parent, treads, steps, ends, scale):
         out[i] = STAIRS_OF.get(out[i], out[i])
     return out

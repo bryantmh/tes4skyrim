@@ -2,15 +2,15 @@
 
 #include <windows.h>
 
-#include <atomic>
-#include <chrono>
 #include <fstream>
+#include <functional>
 #include <sstream>
-#include <thread>
+#include <utility>
 
 #include "engine_ids.h"
 #include "json.h"
 #include "log.h"
+#include "main_tick.h"
 #include "paths.h"
 
 namespace tesruntime {
@@ -29,24 +29,21 @@ bool Bind(T& slot, const char* name, std::uint64_t id) {
     return a != 0;
 }
 
-struct Ticker {
-    int ms = 0;
-    void (*fn)() = nullptr;
-    std::atomic<bool> queued{false};
-};
-
-class TickTask : public TaskDelegate {
+class FunctionTask : public TaskDelegate {
 public:
-    explicit TickTask(Ticker* ticker) : ticker_(ticker) {}
-    void Run() override {
-        ticker_->queued = false;
-        ticker_->fn();
-    }
+    explicit FunctionTask(std::function<void()> fn) : fn_(std::move(fn)) {}
+    void Run() override { fn_(); }
     void Dispose() override { delete this; }
 
 private:
-    Ticker* ticker_;
+    std::function<void()> fn_;
 };
+
+bool PostToTaskInterface(std::function<void()> fn) {
+    if (!g_api.task || !fn) return false;
+    g_api.task->AddTask(new FunctionTask(std::move(fn)));
+    return true;
+}
 
 }  // namespace
 
@@ -131,17 +128,7 @@ void RunOnMainThread(TaskDelegate* task) {
 }
 
 bool StartMainThreadTick(int ms, void (*fn)()) {
-    if (!g_api.task || !fn) return false;
-    auto* ticker = new Ticker();
-    ticker->ms = ms;
-    ticker->fn = fn;
-    std::thread([ticker]() {
-        for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(ticker->ms));
-            if (!ticker->queued.exchange(true)) g_api.task->AddTask(new TickTask(ticker));
-        }
-    }).detach();
-    return true;
+    return g_api.task && StartTick(PostToTaskInterface, ms, fn);
 }
 
 }  // namespace tesruntime

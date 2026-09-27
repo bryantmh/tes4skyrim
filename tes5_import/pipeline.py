@@ -39,28 +39,37 @@ from core.worldspace_names import set_worldspace_plugins
 from asset_convert.game_paths import namespace_for, set_namespace
 from .registry import IMPORT_DISPATCH, RUNTIME_ONLY_TYPES, SKIP_TYPES
 from .navmesh.pool import collision_cache_chain
+from .overrides.adoption import MasterAdoption
 from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         OverrideContext, detect_injected_records)
 from .record_types import magic_art
 from .record_types.crime import plan_crime
 from .record_types.spell_tomes import create_spell_tomes
 from .record_types.spell_tomes_morrowind import chain_tables
+from script_convert.constants import FORCE_GREET_QUEST
+from script_convert.cross_ref import hosted_script_type, index_record_details
 from .dialogue.converter import build_npc_to_vtyp_map
+from .dialogue.force_greets import dial_index, write_force_greet_quest
 from .dialogue.morrowind_sidecar import is_tes3_export
+from .dialogue.say_topics import FORCE_GREET_SLOTS, build_force_greet_slots
 from .runtime_sidecars import begin_sidecar_run
 from .base.adopted_records import adopt_master_special_records
 from .base.cell_family import set_cell_families
+from .base.conditions import set_whole_day_global
 from .base.owned_records import (
     WELL_KNOWN_PROPERTIES,
     create_ambient_gmst_overrides,
     create_chargen_menu_records,
+    create_day_clock,
     create_destroyed_formlist,
+    create_fall_damage_spell,
     create_force_combat_factions,
     create_message_menu_records,
     create_tes4_special_records,
     create_vtyp_records,
 )
 from .base.equivalents import VTYP_EDID_BY_FID
+from .base.race_factions import build_race_factions
 from .record_types.world import (
     set_cloud_bank_output,
 )
@@ -239,7 +248,9 @@ def _reconcile_masters(masters: list, tes4_master_names: list) -> list:
 
 
 def _register_run_tables(by_type: dict, ctx, writer) -> None:
-    """Register the name tables record conversion reads: cell families."""
+    """Register the tables record conversion reads: cell families, adoptable master records."""
+    if ctx:
+        writer.adoption = MasterAdoption(ctx.master_index)
     set_cell_families(by_type, ctx.master_export if ctx else None, writer,
                       getattr(ctx, 'master_index', None))
 
@@ -256,17 +267,18 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
     _step_t = time.time()
     from .record_types.actor_common import (create_origin_faction, reset_origin_faction)
     reset_origin_faction(getattr(ctx, 'master_index', None))
-    if not ctx or not adopt_master_special_records(
-            ctx, master_export_dirs(ctx)):
+    build_race_factions(by_type, ctx, writer)
+    support_root = not ctx or not adopt_master_special_records(ctx, master_export_dirs(ctx))
+    if support_root:
         create_vtyp_records(writer, export_dir, by_type)
-
-        _origin_fact = create_origin_faction(writer)
-        print(f"  Plugin-origin faction: {_origin_fact:08X} "
-              f"(TES4PluginOriginFaction)")
-
+    _origin_fact = create_origin_faction(writer, support_root)
+    print(f"  Plugin-origin faction: {_origin_fact:08X} (TES4PluginOriginFaction)")
+    if support_root:
         create_tes4_special_records(writer)
-
         create_ambient_gmst_overrides(writer, by_type)
+    WELL_KNOWN_PROPERTIES.update(create_fall_damage_spell(
+        writer, getattr(ctx, 'master_index', None)))
+    set_whole_day_global(create_day_clock(writer, by_type, ctx))
     _step_done('vtyp/special records')
 
 
@@ -345,6 +357,23 @@ def _prescan_unlock_plan(by_type: dict, writer, _step_done):
           f"{len(_SC.topic_unlock_globals)} topic->global names for scripts")
     _step_done('addtopic unlock plan')
     return (unlock_plan, unlock_globals, _SC)
+
+
+def _prescan_force_greets(by_type: dict, ctx, writer, _SC) -> None:
+    """Mint the StartConversation force-greet quest and share its alias pools.
+
+    Before any script VMAD, so the converted call's Quest property binds.
+    """
+    slots = build_force_greet_slots(by_type)
+    FORCE_GREET_SLOTS.clear()
+    FORCE_GREET_SLOTS.update(slots)
+    _SC.force_greet_slots = slots
+    quest_fid = write_force_greet_quest(
+        writer, slots, dial_index(by_type, ctx.master_export if ctx else None))
+    if quest_fid:
+        WELL_KNOWN_PROPERTIES[FORCE_GREET_QUEST] = quest_fid
+    print(f"  StartConversation force greets: {len(slots)} topics, "
+          f"{sum(n for _f, n in slots.values())} alias slots")
 
 
 def _prescan_menu_records(by_type: dict, writer, _SC, _step_done):
@@ -439,6 +468,8 @@ def _index_xref_record(xref, fid_str: str, rec: dict, rekey) -> None:
         if sig == 'QUST':
             xref.quest_edids.add(edid_low)
     xref.record_type[fid_str] = sig
+    index_record_details(vars(xref), sig, fid_str, edid_str, rec,
+                         lambda v: rekey(v, own_raw, own_key))
     if sig == 'SCPT':
         _index_xref_script(xref, fid_str, rec, edid_str)
     scri = rekey(rec.get('SCRI', ''), own_raw, own_key)
@@ -506,7 +537,8 @@ def _index_xref_script(xref, fid_str: str, rec: dict, edid_str: str) -> None:
     schr_type = rec.get('SCHR.Type')
     if schr_type is not None:
         try:
-            xref.script_formid_to_type[fid_str] = int(schr_type)
+            xref.script_formid_to_type[fid_str] = hosted_script_type(
+                int(schr_type), rec.get('SCTX', ''))
         except ValueError:
             pass
 
@@ -657,30 +689,39 @@ def _prescan_vendor_trainer(by_type: dict, ctx, writer, export_dir: str,
 
 
 def _rescan_mesh_caches(export_dir, mesh_dir: str) -> bool:
-    """Rebuild one export's bounds+collision caches if either is stale.
+    """Rebuild one export's bounds+collision caches if stale or behind the mesh stage.
 
-    True when a scan ran.  One scan fills both, since they share the expensive
-    NIF parse.  A bounds cache predating the current entry schema counts as
-    missing: it would parse cleanly and read as all-zeroes for the new field.
+    True when either cache was rewritten.  A stale cache (older entry schema)
+    is rescanned in full; a current one still takes the entries a later mesh
+    run left as fragments (a scoped `--mesh-subdirs` rebuild), or the script
+    stage keeps reading old physics flags.
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-stale-bounds-cache
     """
     from asset_convert.collision.collision_extract import (
-        scan_mesh_data, bounds_cache_is_current, collision_cache_is_current)
+        fold_mesh_entries, scan_mesh_data, bounds_cache_is_current,
+        collision_cache_is_current)
     from asset_convert.collision.mesh_scan_fragments import (clear_fragments,
                                                              merge_fragments)
     assets_dir = assets_for(export_dir)
     cache_path = str(assets_dir / 'mesh_bounds_cache.json')
     col_path = str(assets_dir / 'collision_cache.bin')
-    if (bounds_cache_is_current(cache_path)
-            and collision_cache_is_current(col_path)) \
-            or not os.path.isdir(mesh_dir):
+    if not os.path.isdir(mesh_dir):
         return False
-    print(f"  Mesh bounds/collision cache missing or stale, "
-          f"scanning {mesh_dir}...")
     seed_b, seed_c = merge_fragments(assets_dir)
-    scan_mesh_data(mesh_dir, col_path, cache_path,
-                   seed_bounds=seed_b, seed_collision=seed_c)
+    current = (bounds_cache_is_current(cache_path)
+               and collision_cache_is_current(col_path))
+    if current and not (seed_b or seed_c):
+        return False
+    if current:
+        print(f"  Mesh bounds/collision: folding "
+              f"{len(set(seed_b) | set(seed_c))} rebuilt meshes into the caches")
+        fold_mesh_entries(mesh_dir, col_path, cache_path, seed_b, seed_c)
+    else:
+        print(f"  Mesh bounds/collision cache missing or stale, "
+              f"scanning {mesh_dir}...")
+        scan_mesh_data(mesh_dir, col_path, cache_path,
+                       seed_bounds=seed_b, seed_collision=seed_c)
     clear_fragments(assets_dir)
     return True
 
@@ -925,7 +966,8 @@ def _prescan_music_records(by_type: dict, writer, export_dir: str, plugin_out_di
     """
     try:
         from .record_types.music import (build_music_records,
-                                         load_music_manifest)
+                                         load_music_manifest,
+                                         master_music_types)
         from .record_types.common import (register_music_types,
                                           register_world_music)
         from .base.text_reader import get_formid as _gf, get_int as _gi
@@ -937,6 +979,7 @@ def _prescan_music_records(by_type: dict, writer, export_dir: str, plugin_out_di
             plugin_out_dir,
             export_dir=os.path.dirname(os.path.normpath(export_dir)),
             plugin=os.path.basename(output_path))
+        _by_enum = master_music_types(writer)
         if _music_manifest.get('tracks'):
             _plugin_name = _music_manifest.get('plugin') or os.path.basename(
                 os.path.normpath(plugin_out_dir))
@@ -945,12 +988,13 @@ def _prescan_music_records(by_type: dict, writer, export_dir: str, plugin_out_di
                 writer.add_record('MUST', _b)
             for _fid, _b in _music['musc']:
                 writer.add_record('MUSC', _b)
-            register_music_types(_music['by_enum'])
+            _by_enum.update(_music['by_enum'])
             if _music.get('battle'):
                 _apply_dobj_battle_override(_music['battle'], writer)
             print(f"  Music: {len(_music['must'])} MUST + "
                   f"{len(_music['musc'])} MUSC records "
                   f"({len(_music['by_enum'])} enum categories)")
+        register_music_types(_by_enum)
     except Exception as e:
         print(f"  ERROR building music records: {e}")
 
@@ -1093,11 +1137,14 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
                                             num_new_masters, _step_done)
     st.unlock_plan, st.unlock_globals, _SC = _prescan_unlock_plan(
         by_type, writer, _step_done)
+    _prescan_force_greets(by_type, ctx, writer, _SC)
     _prescan_menu_records(by_type, writer, _SC, _step_done)
     st.fid_to_edid = _prescan_fid_to_edid(all_records, ctx, _step_done)
     st.xref = _prescan_cross_ref_graph(all_records, ctx, export_dir,
                                        _step_done)
     _prescan_effect_families(by_type, ctx, writer)
+    plan_crime(by_type, ctx, writer, export_dir, st.plugin_out_dir,
+               st.output_path, st.output_root)
     _scpt_master_export = _prescan_script_plans(by_type, ctx, st.xref,
                                                 st.fid_to_edid, export_dir,
                                                 _step_done)
@@ -1105,8 +1152,6 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
                            _scpt_master_export, _step_done, export_dir)
     _prescan_vendor_trainer(by_type, ctx, writer, export_dir,
                             os.path.basename(st.output_path), _step_done)
-    plan_crime(by_type, ctx, writer, export_dir, st.plugin_out_dir,
-               st.output_path, st.output_root)
     _prescan_mesh_caches(export_dir, st.plugin_out_dir, _step_done)
     _prescan_furniture_and_actors(by_type, ctx, writer, export_dir,
                                   _step_done)

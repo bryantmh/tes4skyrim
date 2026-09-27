@@ -31,6 +31,8 @@ from script_convert.constants import mgef_family_keyword_name
 from . import magic_art, magic_art_morrowind
 from .common import pack_keywords
 from ..generated.vanilla_mgef_data import VANILLA_MGEF_DATA
+from ..base.conditions import (FUNC_HAS_KEYWORD, FUNC_HAS_MAGIC_EFFECT_KEYWORD,
+                               build_ctda)
 from ..base.owned_records import MGEF_FAMILY_KEYWORDS, WELL_KNOWN_PROPERTIES
 from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..base.writer import (
@@ -282,7 +284,6 @@ TES4_RESIST_AV_TO_TES5 = {
     62: AV_RESIST_FROST,     # ResistFrost
     63: AV_RESIST_DISEASE,   # ResistDisease
     64: AV_RESIST_MAGIC,     # ResistMagic
-    66: AV_PARALYSIS,        # ResistParalysis → Paralysis AV
     67: AV_POISON_RESIST,    # ResistPoison
     68: AV_RESIST_SHOCK,     # ResistShock
 }
@@ -435,7 +436,7 @@ EFFECT_ARCHETYPES = {
     'RSPO': (A_PEAK_VALUE_MODIFIER, AV_POISON_RESIST),
     'RSDI': (A_PEAK_VALUE_MODIFIER, AV_RESIST_DISEASE),
     'RSNW': (A_PEAK_VALUE_MODIFIER, AV_DAMAGE_RESIST),
-    'RSPA': (A_PEAK_VALUE_MODIFIER, AV_PARALYSIS),
+    'RSPA': (A_SCRIPT, AV_NONE),
     'RSWD': (A_PEAK_VALUE_MODIFIER, AV_RESIST_MAGIC),
     'CUDI': (A_CURE_DISEASE, AV_NONE),
     'CUPO': (A_CURE_POISON, AV_NONE),
@@ -470,6 +471,21 @@ SCHOOL_OVERRIDES = {
 # information markers on items (no Self/Touch/Target flag set), and letting the
 # player see them in the magic menu shows junk entries.
 _MARKER_CODES = frozenset({'POSN', 'DISE', 'DUMY', 'VAMP', 'DARK'})
+
+#: Archetypes whose engine constructor forces magnitude 1.0 under No Magnitude (1.6.1170 0x5d8210).
+VALUE_MODIFIER_ARCHETYPES = frozenset({A_VALUE_MODIFIER, A_DUAL_VALUE_MODIFIER, A_PEAK_VALUE_MODIFIER})
+
+#: On/off actor values, where that forced 1.0 is the intended "on".
+SWITCH_ACTOR_VALUES = frozenset({AV_PARALYSIS, AV_INVISIBILITY, AV_NIGHT_EYE,
+                                 AV_WATER_BREATHING, AV_WATER_WALKING})
+
+
+def magnitude_flag_allowed(archetype: int, actor_value: int) -> bool:
+    """True unless No Magnitude would make the engine apply a value of 1.
+
+    See: docs/commentary/tes5_import_magic.md#no-magnitude-forces-one
+    """
+    return archetype not in VALUE_MODIFIER_ARCHETYPES or actor_value in SWITCH_ACTOR_VALUES
 
 
 def is_derived(code: str, rec: dict) -> bool:
@@ -572,7 +588,7 @@ def is_known_code(code: str) -> bool:
     return code in EFFECT_ARCHETYPES
 
 
-def _convert_flags(t4: int, code: str, archetype: int) -> int:
+def _convert_flags(t4: int, code: str, archetype: int, actor_value: int) -> int:
     """TES4 MGEF DATA.Flags → TES5 MGEF DATA.Flags.
 
     The bit meanings diverge from bit 3 onward (TES4 0x8 is Magnitude Is
@@ -614,6 +630,8 @@ def _convert_flags(t4: int, code: str, archetype: int) -> int:
     if code in _MARKER_CODES:
         out |= F_HIDE_IN_UI
 
+    if not magnitude_flag_allowed(archetype, actor_value):
+        out &= ~F_NO_MAGNITUDE
     return out | _power_affects(out)
 
 
@@ -915,7 +933,8 @@ def build_data(rec: dict, code: str, archetype: int, actor_value: int,
     cast_type, delivery = _delivery_and_cast(t4_flags)
 
     data = bytearray(MGEF_DATA_SIZE)
-    struct.pack_into('<I', data, O_FLAGS, _convert_flags(t4_flags, code, archetype))
+    struct.pack_into('<I', data, O_FLAGS,
+                     _convert_flags(t4_flags, code, archetype, actor_value))
     struct.pack_into('<f', data, O_BASE_COST, get_float(rec, 'DATA.BaseCost'))
     struct.pack_into('<I', data, O_ASSOC_ITEM,
                      _resolve_assoc_item(get_formid(rec, 'DATA.AssocItem'),
@@ -965,9 +984,37 @@ def mgef_parts(rec: dict) -> tuple:
 
 
 def mgef_tail(rec: dict) -> bytes:
-    """The subrecords after ESCE: the sound set, then the description."""
+    """The subrecords after ESCE: the sound set, the description, then a Paralysis effect's conditions."""
     desc = get_str(rec, 'DESC')
-    return magic_art.sound_set(rec) + (pack_string_subrecord('DNAM', desc) if desc else b'')
+    tail = magic_art.sound_set(rec) + (pack_string_subrecord('DNAM', desc) if desc else b'')
+    if get_archetype(get_str(rec, 'EditorID'), rec) == A_PARALYSIS:
+        tail += PARALYSIS_CONDITIONS
+    return tail
+
+
+#: Skyrim.esm KYWD ImmuneParalysis: what a Resist Paralysis effect grants instead of an actor value.
+KW_IMMUNE_PARALYSIS = 0x000F23C5
+#: Skyrim.esm KYWD ActorTypeDragon, which vanilla Paralysis effects skip.
+KW_ACTOR_TYPE_DRAGON = 0x00035D59
+#: Morrowind's Resist Paralysis effect index.
+MW_RESIST_PARALYSIS = 99
+
+#: Vanilla's two Paralysis-effect conditions, plus the one an immunity ability's keyword needs.
+PARALYSIS_CONDITIONS = b''.join(
+    pack_subrecord('CTDA', build_ctda(func, param1=kw, comp_value=0.0))
+    for func, kw in ((FUNC_HAS_KEYWORD, KW_ACTOR_TYPE_DRAGON),
+                     (FUNC_HAS_KEYWORD, KW_IMMUNE_PARALYSIS),
+                     (FUNC_HAS_MAGIC_EFFECT_KEYWORD, KW_IMMUNE_PARALYSIS)))
+
+
+def effect_keywords(rec: dict, family: int = 0) -> bytes:
+    """KSIZ/KWDA: the family keyword, plus ImmuneParalysis on Resist Paralysis.
+
+    See: docs/commentary/tes5_import_magic.md#resist-paralysis
+    """
+    resists = (get_str(rec, 'EditorID') == 'RSPA'
+               or morrowind_index(rec) == MW_RESIST_PARALYSIS)
+    return pack_keywords([family, KW_IMMUNE_PARALYSIS if resists else 0])
 
 
 def convert_MGEF(rec: dict, writer=None) -> bytes:
@@ -975,7 +1022,7 @@ def convert_MGEF(rec: dict, writer=None) -> bytes:
     code, head, data, tail = mgef_parts(rec)
     fid = get_formid(rec, 'FormID')
     subs = pack_string_subrecord('EDID', code) if code else b''
-    subs += head + pack_keywords([MGEF_FAMILY_KEYWORDS.get(fid)])
+    subs += head + effect_keywords(rec, MGEF_FAMILY_KEYWORDS.get(fid))
     subs += pack_subrecord('DATA', data)
     for counter in _counter_effect_fids(rec):
         subs += pack_formid_subrecord('ESCE', counter)

@@ -202,6 +202,12 @@ class While(Stmt):
 
 
 @dataclass
+class ForEach(ExprStmt):
+    """OBSE `forEach <it> <- <container> ... loop`; `expr` is the header command."""
+    body: list = field(default_factory=list)
+
+
+@dataclass
 class Label(Stmt):
     """OBSE `Label <n>` -- the head of a Goto loop."""
     number: str = ''

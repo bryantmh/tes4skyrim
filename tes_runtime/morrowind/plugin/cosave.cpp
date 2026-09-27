@@ -36,6 +36,20 @@ void OnSave(SKSESerializationInterface* intfc) {
         ok ? "ok" : "WRITE FAILED");
 }
 
+// Mark's cell or worldspace is saved as a runtime FormID, so it follows its
+// plugin to wherever the load order put it now, or is forgotten with it.
+void ResolveMark(SKSESerializationInterface* intfc) {
+    DialogueState::MarkedPlace& mark = State().mark;
+    UInt32 now = 0;
+    if (!mark.place || intfc->ResolveFormId(mark.place, &now)) {
+        mark.place = now;
+        return;
+    }
+    Log("cosave: the marked place %08X is gone -- Recall has nowhere to go",
+        mark.place);
+    mark.place = 0;
+}
+
 void OnLoad(SKSESerializationInterface* intfc) {
     UInt32 type = 0, version = 0, length = 0;
     bool found = false;
@@ -47,6 +61,7 @@ void OnLoad(SKSESerializationInterface* intfc) {
         }
         const std::string text = ReadRecord(intfc, length);
         const std::size_t taken = State().Deserialize(text);
+        ResolveMark(intfc);
         Log("cosave: loaded %zu byte(s), %zu record(s) of state", text.size(),
             taken);
         found = true;

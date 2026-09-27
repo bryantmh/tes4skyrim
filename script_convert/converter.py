@@ -7,7 +7,7 @@ from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as _tes4_nodes
 from script_convert.blocks import BLOCK_FILTER_PARAM
 from script_convert.constants import (
-    KNOWN_GLOBALS, LOOSE_OPS, PAPYRUS_BOOL_FUNCTIONS, PLACED_REF_SIGS,
+    FALL_DAMAGE_SPELL, KNOWN_GLOBALS, LAST_ACTIVATOR_VAR, LOOSE_OPS, UDF_RESULT_VAR, PAPYRUS_BOOL_FUNCTIONS, PLACED_REF_SIGS,
     PLAYER_ALIAS_EXTENDS, RETURN_TYPES, SELF_NAMES, TYPE_MAP, _REF_TYPES,
     _canonical_global, digit_stripped_formid, _record_type_to_base_papyrus,
     generated_script_stem, is_generated_script_type, safe_property_name, papyrus_script_name,
@@ -103,6 +103,9 @@ class ScriptConverter:
 
     #: DIAL EditorID (lower) -> chain line count, from build_script_chain_map.
     conversation_chains: dict = {}
+
+    #: StartConversation topic (lower, '' = none) -> (first alias, count), from build_force_greet_slots.
+    force_greet_slots: dict = {}
 
     # script EditorID (lower) -> [(mesg_edid, text, buttons)], from
     # script_convert.message_menus.build_message_plan. Populated once per run
@@ -528,7 +531,8 @@ class ScriptConverter:
         prev = self.sc
         self.sc = ScriptContext(property_refs=dict(prev.property_refs),
                                 scro_aliases=dict(prev.scro_aliases),
-                                quest_delay=prev.quest_delay)
+                                quest_delay=prev.quest_delay,
+                                on_book=prev.on_book)
         return _assemble.build(self, name, source, extends, editor_id)
 
     def convert_fragment(self, source: str, extends: str = 'Quest') -> list[str]:
@@ -938,23 +942,23 @@ class ScriptConverter:
         return _dispatch.as_statement(self, _expr.emit(self, expr, extends))
 
     def emit_return(self, stmt, extends: str) -> str:
-        """TES4 `return` ends the block; a UDF carries its value out here."""
+        """TES4 `return` ends the block; a UDF carries its result out here."""
         if self.sc.udf_returns:
-            return f'Return {self.sc.udf_return_value or "0"}'
+            return f'Return {UDF_RESULT_VAR}'
         return f'{self.sc.poll_return_prefix}Return' if self.sc.poll_return_prefix \
             else 'Return'
 
     def emit_set_function_value(self, stmt, extends: str) -> str:
-        """OBSE `SetFunctionValue <expr>` -- record a user function's result.
+        """OBSE `SetFunctionValue <expr>` -- set a user function's result and keep running.
 
-        Emits nothing itself: TES4 always pairs it with a `return`, which is
-        what carries the value out.  Emitting a `Return` here as well gave the
-        pair two, and the second was unreachable.
+        The first value's type becomes the function's return type.
+        See: docs/commentary/script_convert.md#set-function-value
         """
+        value = _expr.emit(self, stmt.value, extends) if stmt.value else '0'
+        if not self.sc.udf_returns:
+            self.sc.udf_return_type = self.type_of(value) or 'Int'
         self.sc.udf_returns = True
-        self.sc.udf_return_value = (_expr.emit(self, stmt.value, extends)
-                                    if stmt.value else '0')
-        return ''
+        return f'{UDF_RESULT_VAR} = {value}'
 
     def emit_jump(self, stmt, extends: str) -> str:
         """OBSE `Label <n>` / `Goto <n>` -- the head and tail of a ref-walk.
@@ -1371,42 +1375,26 @@ class ScriptConverter:
                 return param
         return 'Game.GetPlayer()'
 
-    _FALL_RESTORE = 'TES4Polyfill.RestoreFallDamage()'
-
     def _append_fall_damage_restore(self, out: list, extends: str) -> list:
-        """Pair every SuppressFallDamage() with a restore when the effect ends.
+        """End a magic effect's fall-damage window when the effect itself ends.
 
-        `TES4Polyfill.SuppressFallDamage()` (the ResetFallDamageTimer
-        conversion) writes fJumpFallHeightMin, a GLOBAL game setting.  Oblivion
-        needed no teardown because ResetFallDamageTimer only cleared a
-        per-actor accumulator; leaving the Skyrim equivalent set would disable
-        fall damage permanently.
-
-        The restore goes in whichever teardown event the script already has —
-        OnEffectFinish for a magic-effect script, otherwise OnUpdate's exit —
-        and a fresh OnEffectFinish is synthesized when the script has none.
+        The restore dispels the spell from the teardown event's own target (the
+        actor the suppression was cast on); an ActiveMagicEffect with no
+        OnEffectFinish gets one synthesized.  Other callers need no teardown:
+        each call only opens a short window.
+        See: docs/commentary/script_convert.md#fall-damage-is-a-perk
         """
+        restore = 'TES4Polyfill.RestoreFallDamage({}, ' + FALL_DAMAGE_SPELL + ')'
         idx = next((i for i, line in enumerate(out)
                     if line.startswith('Event OnEffectFinish(')), None)
-
-        if idx is not None:
-            # Restore the SAME actor the suppression applied to, which is the
-            # teardown event's own target parameter.
+        end = None if idx is None else next(
+            (i for i in range(idx + 1, len(out)) if out[i] == 'EndEvent'), None)
+        if end is not None:
             m = re.search(r'\bActor\s+(ak\w+)', out[idx])
-            actor = m.group(1) if m else ''
-            end = next((i for i in range(idx + 1, len(out))
-                        if out[i] == 'EndEvent'), None)
-            if end is not None:
-                out.insert(end, f'  TES4Polyfill.RestoreFallDamage({actor})')
-                return out
-
-        # No teardown event at all: an ActiveMagicEffect always gets one, so
-        # synthesize it rather than leaving the suppression permanent.
-        if extends == 'ActiveMagicEffect':
-            out.append('Event OnEffectFinish(Actor akTarget, Actor akCaster)')
-            out.append('  TES4Polyfill.RestoreFallDamage(akTarget)')
-            out.append('EndEvent')
-            out.append('')
+            out.insert(end, '  ' + restore.format(m.group(1) if m else 'None'))
+        elif extends == 'ActiveMagicEffect':
+            out += ['Event OnEffectFinish(Actor akTarget, Actor akCaster)',
+                    '  ' + restore.format('akTarget'), 'EndEvent', '']
         return out
 
 
@@ -1430,11 +1418,8 @@ class ScriptConverter:
         for btype, _bf, body in blocks:
             if btype != 'onactivate':
                 continue
-            top_level_activate = any(
-                isinstance(st, _tes4_nodes.ExprStmt)
-                and st.expr.called == 'activate'
-                and st.expr.receiver is None
-                for st in body or ())
+            top_level_activate = any(_assemble.is_self_activate(st)
+                                     for st in body or ())
             if not top_level_activate:
                 consumes = True
         return consumes
@@ -1864,13 +1849,15 @@ class ScriptConverter:
         return 'TES4DestroyedRefs'
 
     def _get_action_ref_param(self) -> str:
-        """Return the correct event parameter for GetActionRef/IsActionRef.
-        
-        TES4 GetActionRef is available in every block. Papyrus scopes event params.
-        Map to the appropriate parameter based on the current event being converted.
+        """The Papyrus name for TES4's action ref (GetActionRef, bare Activate) in the current event.
+
+        An event without an action-ref parameter reads the object's last
+        activator when the script has an OnActivate block, else None/Self.
+
+        See: docs/commentary/script_convert.md#last-activator
         """
         ev = self._current_event.lower()
-        if 'onactivate' in ev or 'ontrigger' in ev:
+        if 'onactivate' in ev or 'ontrigger' in ev or 'onread' in ev:
             return 'akActionRef'
         if 'onequipped' in ev or 'onunequipped' in ev:
             return 'akActor'
@@ -1882,13 +1869,12 @@ class ScriptConverter:
             return 'akNewContainer'
         if 'oncombatstate' in ev:
             return 'akTarget'
-        # OnUpdate/OnInit/other events have no action ref - use None as fallback
+        if any(b.btype.lower() == 'onactivate'
+               for b in (self._tree.blocks if self._tree else ())):
+            self.sc.uses_last_activator = True
+            return LAST_ACTIVATOR_VAR
         if 'onupdate' in ev or 'oninit' in ev:
             return 'None'
-        # Every other event -- OnUpdate, OnInit, OnLoad, OnDeath's siblings --
-        # declares NO action ref, and naming one there is an undefined
-        # identifier that fails the whole script.  TES4 answered GetActionRef
-        # outside an activation block with the script's own subject.
         return 'Self'
 
     # Papyrus locals/parameters that are already actors — calling an actor-only

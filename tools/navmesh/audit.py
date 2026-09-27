@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from asset_convert.collision import collision_extract as ce
 from asset_convert.game_paths import namespace_for, set_namespace
 from tes5_import.navmesh import build, params
-from tes5_import.navmesh.pool import model_key
+from tes5_import.navmesh.pool import base_model_key, model_key
 from tes5_import.navmesh.from_pgrd import (collect_doors,
                                       load_door_centroids)
 from tools.navmesh import cell_index as cell_index_mod
@@ -308,9 +308,9 @@ def _parse_tables(export):
     for t in _BASES:
         for rec in by_type.get(t, []):
             f = get_formid(rec, 'FormID')
-            m = get_str(rec, 'Model.MODL') or get_str(rec, 'MODL')
-            if f and m:
-                base_model[f] = model_key(m)
+            key = base_model_key(rec)
+            if f and key:
+                base_model[f] = key
     refr_by_cell = {}
     for r in by_type.get('REFR', []):
         refr_by_cell.setdefault((r.get('ParentCELL') or '').upper(), []).append(r)

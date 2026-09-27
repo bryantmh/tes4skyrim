@@ -26,6 +26,23 @@ Each stage has a `--<step>-only` flag. The steps are: `export`, `import`,
 `modify-body-meshes`, `pack`, `pack-zip`. Read `convert.py`'s module docstring
 for the authoritative list — it changes more often than this doc.
 
+### <a id="scoping-a-stage"></a>Scoping a stage: `--only`
+
+`--only <name> ...` narrows a stage to the named units instead of rebuilding all
+of them. Only the stages in `convert_cli.SCOPED_STEPS` honor it; with any other
+selected step the run refuses instead of silently rebuilding everything.
+
+| Stage | `--only` names | Shared output a scoped run keeps |
+|---|---|---|
+| `--creatures-only` | creature folder names (`rat`, `mudcrab`) | every other project in the animation fragment, and its gun appends |
+
+```bash
+python convert.py -f Oblivion.esm --creatures-only --only rat
+```
+
+The Morrowind creature split still runs over the whole plugin first. That is
+cheap, because it keeps every folder that is newer than its inputs.
+
 ### 🛑 LOD is NOT built with `convert.py --lod-only`
 
 **`tools/release/create_lod.py` is the entry point for all LOD generation.** A

@@ -1885,8 +1885,11 @@ creature is fully proven.
   0009BB4E → RagdollInstant); build_behavior_xml adds the two wrapper states
   (hkbPoweredRagdollControlsModifier maxForce 200 COMPUTE / 0 RAGDOLL, pose-matching
   bones picked from ragdoll part depths, idle-clip pose holders) gated on
-  `hkx_ragdoll.ragdoll_info()`. No getup states yet (Oblivion creatures lack getup
-  clips) — a knocked-down-but-alive actor stays down; death is unaffected.
+  `hkx_ragdoll.ragdoll_info()`. No getup states yet, so a knocked-down-but-alive
+  actor stays down; death is unaffected. The clips DO exist, contrary to an earlier
+  note here: 35 of Oblivion.esm's 44 creature folders ship
+  `idleanims/getupfaceup.kf` + `getupfacedown.kf` (a few also `getupleft`/`getupright`),
+  the Gatekeeper's included (counted 2026-09-25).
 - **Blend-collision body rot/trans = the body's BIND-POSE WORLD transform, not a
   bone-local offset (2026-07-16, the mangled-ragdoll root cause)**: on every Oblivion
   creature skeleton, a ragdoll bhkRigidBody's translation×7 equals its bone's world
@@ -2076,7 +2079,8 @@ creature is fully proven.
   is dropped (anchors must increase, MOVT run falls back to walk).
   iState/iState_*Default/iState_*Run use the vanilla 30/31 tag values.
 - Remaining refinements: specialidle/random-idle IDLE wiring (DogIdleRoot/DogIdles
-  pattern), foot IK/look-at, getup-after-knockdown (needs getup clips Oblivion lacks —
+  pattern), foot IK/look-at, getup-after-knockdown (the `idleanims/getupface*.kf`
+  clips exist for 35 of 44 creature types but no getup state is generated yet —
   knocked-down live actors stay down; death unaffected), canned 90/180° turns
   (impossible from Oblivion data: turnleft/turnright.kf are looping shuffles with NO
   root-motion rotation — vanilla canned turns are authored root-motion clips; looping
@@ -2941,6 +2945,28 @@ stop event on exit, so the engine's combat/stagger controllers see completion.
 holds its last pose (dead on the ground). Ragdoll death is handled by the outer
 wrapper state machine.
 
+#### <a id="hit-window-attacks-only"></a>Only an attack clip carries a hit window
+
+**Code:** `_ClipSet._meta` in `asset_convert/havok/hkx_behavior.py`.
+
+Oblivion's recoil and stagger kfs can carry a `Hit` text key, and the
+`weaponSwing`/`preHitFrame`/`HitFrame` triple used to be derived for every clip
+that had one. The engine binds those events to its swing handlers per actor
+(`weaponSwing -> WeaponRightSwingHandler`, `HitFrame`, `preHitFrame ->
+AnticipateAttackHandler`), whatever state the graph is in, and only `attackStop`
+clears the attack. A recoil or stagger state exits with `recoilStop`/`staggerStop`,
+so after the first recoil the actor stayed "mid-attack" for good: it moved and
+chased but never started another attack. Vanilla never does this: of 155 recoil
+and 299 stagger clips in the LE `animationdatasinglefile.txt`, none carries any of
+the three.
+
+Found on Nehrim's intro black troll (`SchattenrufAlptraumTroll01`): Celebro blocks
+its first swing (contact, no damage), the engine sends the troll `recoilStart`, and
+its `recoil` clip fired `weaponSwing@0.2`/`HitFrame@0.5`. The earlier trolls
+fight the player, who rarely blocks. Casts, recoils, staggers and every other
+non-attack clip now get no hit window; a keyless attack still gets one 40% in.
+Confirmed in game: the troll attacks repeatedly.
+
 ### <a id="equip-clips"></a>Weapon draw and sheathe
 
 The engine moves a weapon from its sheath node (`Prn=WeaponMace` etc.) into the
@@ -3395,6 +3421,19 @@ records, exactly like vanilla WolfIdleHowl / WolfIdleWarn. Embedding the sound
 in the looping Idle/CombatStance clips instead made it fire every cycle, in
 life and in the ragdoll wrapper states after death.
 
+Only the **Aware (CSDT 5)** slot is delivered, through the `AwareVocal` state
+entered by ActionIdleWarn. The **Idle (CSDT 4)** slot is delivered nowhere for
+now, because both candidate channels are disqualified:
+
+* an annotation on the looping base idle fires every cycle (the confirmed
+  squeak-spam bug; vanilla does this only for cow/goat cud-chewing, and
+  predators' mt_idle carries no SoundPlay at all);
+* an IDLE record under ActionIdle sent the actor into an engine-tracked dynamic
+  idle over and over (authored chance 75+ per idle poll), and creatures stopped
+  walking and floated in their idle. Vanilla routes ActionIdle through deep
+  per-creature NonCombatIdle chains whose lifecycle our minimal graph does not
+  implement. Restoring idle chatter needs that full chain first.
+
 `IdleStop` is LOCAL to these states and **never a root wildcard**. Vanilla
 routes idleStop only out of its idle states (atronach CombatIdleSpecial →
 CombatIdle, MT_Idle specials → MT_Idle; sabrecat and draugr likewise). A cast
@@ -3404,6 +3443,53 @@ wildcard killed every FireForget/Attack state the moment the AI wanted to
 move: the actor snapped back to Default while the engine stayed in its casting
 state waiting for a SpellFire / Spell_Stop that could no longer come (the
 2026-08-23 "IsCasting=1, graph in DefaultState, never casts" readback).
+
+### <a id="getup-from-ragdoll"></a>Getting up from a knockdown (2026-09-25, unconfirmed in game)
+
+**The clips exist.** 35 of Oblivion.esm's 44 creature folders ship
+`idleanims/getupfaceup.kf` + `getupfacedown.kf` (some `getupleft`/`getupright`,
+spelled with or without an underscore). An earlier note here said they did not.
+`behavior_clips.getup_clips` claims them. The folders without any are boar, dog,
+the floaters (ghost, wraith, will-o'-the-wisp), slaughterfish, and three
+scripted/test folders.
+
+**Keep NonAccum, reset only Bip01.** Across every getup clip measured, `Bip01`
+carries a horizontal slide (16-58 units) and `Bip01 NonAccum` carries the RISE
+from lying to standing (Gatekeeper z 15→80, idle 82; rat 11.5→23.9, idle 22.3;
+skeleton 7→60, idle 67). `split_root_motion` flattens whichever accum bone
+moves most, which for the Gatekeeper is NonAccum, so a normally decoded getup
+stands the creature up at ground height. Getup clips decode with
+`extract_motion=False` plus `kf_decode.reset_accum_roots` (bone 0 stays
+identity). Like vanilla's GetUp clips (absent from `anims_dogproject.txt`),
+they register no bound motion.
+
+**The graph is vanilla dogbehavior states 4 and 5.** State 2 'Fully Ragdoll'
+plays the `PoseMatching MSG` selector (bound to `iGetUpType`) instead of the
+frozen idle, exactly as vanilla state 4 does. Its two
+`hkbPoseMatchingGenerator`s, Reanimate and GetUp, each hold every getup clip.
+They start matching on `Ragdoll` and start playing on `GetUpStart`, so the clip
+closest to the landed pose wins. The engine never sends `GetUpBegin` by name
+(the string is absent from every exe): it fires `ActionGetUp` (AACT 0xD1FDD),
+and a per-graph IDLE under it supplies the event, vanilla `DogGetup` (ENAM
+`GetUpBegin`, DATA `000000720000`), mirrored by `creature_idles` as
+`TES4<folder>GetUp`. Without that IDLE the creature stays down for good (the
+first build did not have it). `GetUpBegin` switches the limp
+ragdoll off and `TurnOnMatchingRagdoll` on: a 200-force COMPUTE powered ragdoll
+plus a 0.5 s `hkbTimerModifier` that raises `GetUpStart`. That enters state 3
+'GetUpFromRagdoll': `hkbGetUpModifier` (1.0 s blend, 0.25 s ground align),
+the live keyframe/drive pair, and `BSIsActiveModifier` holding
+`bAnimationDriven`. `GetUpEnd` (clip end) blends back to Root.
+
+**When the controller comes back.** Vanilla fires `Getup`/`Reanimated` and
+`AddCharacterControllerToWorld` at the clip's first footfall (`GetUpLeft`
+`FootFront:0.4`, `GetUpRight` `FootBack:0.866667`). Oblivion's getup clips
+author their footfalls (`Enum: Left/Right/BackLeft`), so the same moment is
+`behavior_getup.landing_time`: the first footfall, else the clip end. Graph
+triggers and animationdata blocks come from one `getup_clip_meta` row.
+
+**A ragdolling creature with no getup clip** (boar, dog) rises through its
+annotation-free `ragdollpose` idle copy under the same selector, so it
+blend-stands over the modifier's 1.0 s instead of lying there for good.
 
 ### <a id="the-death-pose-source"></a>The death pose source
 

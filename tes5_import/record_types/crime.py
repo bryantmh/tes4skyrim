@@ -114,6 +114,21 @@ def read_sidecar(name: str, output_root: str) -> dict:
         return {}
 
 
+def anchor_rows(plugins: list, output_root: str) -> list:
+    """`cell plugin|cell=world plugin|world|x|y` from each plugin's crime sidecar.
+
+    Where an interior opens onto the world, which MorrowindRuntime's
+    Intervention reads as TESRuntime's jail search does.
+    See: docs/commentary/morrowind_runtime.md#teleport-effects
+    """
+    rows = []
+    for name in plugins:
+        for row in read_sidecar(name, output_root).get('anchors', []):
+            cell_file, cell, world_file, world, x, y = row
+            rows.append(f'{cell_file}|{cell:06X}={world_file}|{world:06X}|{x:g}|{y:g}')
+    return rows
+
+
 class _Masters:
     """The masters' export records and crime sidecars, in this plugin's raw space."""
 

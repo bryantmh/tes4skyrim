@@ -24,6 +24,7 @@ from tes5_import.base.conditions import (
     FUNC_GET_IS_ID,
     FUNC_GET_IS_VOICE_TYPE,
     FUNC_GET_QUEST_RUNNING,
+    GET_VM_QUEST_VARIABLE,
     build_ctda,
     build_or_chain,
     convert_ctda,
@@ -32,7 +33,9 @@ from tes5_import.base.conditions import (
     needs_origin_gate,
     order_condition_groups,
     read_getisid_fids,
+    set_whole_day_global,
 )
+from tes5_import.base.owned_records import _source_counts_whole_days
 from tes5_import.dialogue.converter import DIAL_TYPE_COMBAT, DIAL_TYPE_CONVERSATION, DIAL_TYPE_DETECTION, DIAL_TYPE_MISC, DIAL_TYPE_PERSUASION, DIAL_TYPE_SERVICE, DIAL_TYPE_TOPIC, _EDID_SUBTYPE, classify_topic, convert_DIAL, convert_INFO, make_dlbr, make_dlvw, should_skip_dial
 from tes5_import.dialogue.groups import build_dialog_groups
 from tes5_import.dialogue.quest import (convert_QUST,
@@ -182,6 +185,35 @@ class TestCTDAConversion:
         out = convert_ctda(_tes4_ctda(type_byte=0x04, comp=0x00001234, func=58,
                                       p1=0x5678), offset=1)
         assert struct.unpack_from('<I', out, 4)[0] == 0x01001234
+
+    @pytest.mark.parametrize('type_byte, func, slot', [
+        (0x84, 58, 4),     # `< GameDaysPassed` as the compared global
+        (0x00, 74, 12),    # GetGlobalValue(GameDaysPassed)
+    ])
+    def test_game_days_passed_reads_the_whole_day_global(self, type_byte,
+                                                          func, slot):
+        """Oblivion's GameDaysPassed counts whole days, Skyrim's carries the
+        day's fraction: `StartDay < GameDaysPassed` passed the moment Jayred
+        Ice-Veins stored the day, handing over the bone arrows at once."""
+        raw = _tes4_ctda(type_byte=type_byte, comp=0x39, func=func, p1=0x39)
+        try:
+            set_whole_day_global(0x01ABCDEF)
+            assert struct.unpack_from(
+                '<I', convert_ctda(raw, offset=1), slot)[0] == 0x01ABCDEF
+            set_whole_day_global(0)
+            assert struct.unpack_from(
+                '<I', convert_ctda(raw, offset=1), slot)[0] == 0x39
+        finally:
+            set_whole_day_global(0)
+
+    @pytest.mark.parametrize('fnam, whole', [('s', True), ('f', False)])
+    def test_whole_day_clock_follows_the_authored_global_type(self, fnam,
+                                                              whole):
+        """Oblivion declares GameDaysPassed Short; FO3/FNV declare it Float
+        and already count fractions like Skyrim, so they get no day clock."""
+        glob = {'Signature': 'GLOB', 'EditorID': 'GameDaysPassed',
+                'FNAM.Type': fnam}
+        assert _source_counts_whole_days({'GLOB': [glob]}, None) is whole
 
     def test_notequal_operator_not_treated_as_use_global(self):
         out = convert_ctda(_tes4_ctda(type_byte=0x20, comp=0x3F800000), offset=1)
@@ -864,12 +896,9 @@ class TestQUST:
 
     def test_quest_targets_become_aliases_and_objective_targets(self):
         """TES4 quest-level targets (REFR + GetStage conditions) -> one
-        forced-ref alias per unique target, plus an UNCONDITIONAL QSTA(alias,
-        flags) on each objective whose stage the TES4 conditions admit.
-
-        Vanilla objective targets carry no CTDAs — the displayed objective is
-        what selects the marker — so Oblivion's GetStage gates are resolved at
-        build time instead of replayed at runtime.
+        forced-ref alias per unique target, plus a QSTA(alias, flags) on each
+        objective whose stage the TES4 conditions admit. The quest's own
+        GetStage gate is settled at build time, so no CTDA remains.
         """
         set_formid_index_offset(1)
         try:
@@ -902,17 +931,10 @@ class TestQUST:
         order = _sub_order(out)
         assert order.index('QOBJ') < order.index('QSTA') < order.index('ANAM') \
             < order.index('ALST') < order.index('ALED')
-        # Objective targets are unconditional, exactly like vanilla.
         assert not _find_all_subrecords(out, b'CTDA')
 
     def test_target_only_on_the_stages_its_conditions_admit(self):
-        """A target gated `GetStage == 20` marks only objective 20 — not 10.
-
-        Carrying every target onto every objective (with its conditions
-        replayed as CTDAs) leaves the engine with a list whose leading entries
-        are false, and it draws no marker at all: the objective shows in the
-        journal but the compass and map stay empty.
-        """
+        """A target gated `GetStage == 20` marks only objective 20 — not 10."""
         set_formid_index_offset(1)
         try:
             out = convert_QUST({
@@ -953,6 +975,45 @@ class TestQUST:
 
         assert marks == {10: [0], 20: [1]}, \
             "each objective must mark only the target Oblivion gated to it"
+
+    def test_variable_gated_targets_keep_runtime_conditions(self):
+        """Only the target whose quest variable matches may show a marker.
+
+        The own-quest GetStage is settled at build time; the quest-variable
+        test and another quest's GetStage become the target's CTDAs, run on
+        PlayerRef as Oblivion evaluated them.
+        """
+        own, other = 0x00010609, 0x00010700
+        gate = _tes4_ctda(type_byte=0x60, comp=0x40A00000, func=58, p1=own)
+        pick = [_tes4_ctda(comp=c, func=79, p1=own, p2=26)
+                for c in (0x3F800000, 0x40000000)]
+        foreign = _tes4_ctda(type_byte=0x60, comp=0x41200000, func=58, p1=other)
+        rec = {'FormID': f'{own:08X}', 'RecordFlags': '0', 'EditorID': 'QVar',
+               'DATA.Flags': '0', 'StageCount': '1',
+               'Stage[0].Index': '10', 'Stage[0].LogCount': '1',
+               'Stage[0].Log[0].Flags': '0',
+               'Stage[0].Log[0].Text': 'Kill the Gatekeeper.'}
+        for t, conds in enumerate(([gate, pick[0]], [gate, pick[1], foreign])):
+            rec[f'Target[{t}].FormID'] = f'{0x1656A + t:08X}'
+            rec[f'Target[{t}].Flags'] = '0'
+            for k, raw in enumerate(conds):
+                rec[f'Target[{t}].Condition[{k}].Raw'] = raw.hex()
+        set_formid_index_offset(1)
+        try:
+            out = convert_QUST(rec, script_vars={own: {26: 'Which'}})
+        finally:
+            set_formid_index_offset(0)
+
+        order = _sub_order(out)
+        start = order.index('QOBJ')
+        run = order[start:order.index('ANAM')]
+        assert run == ['QOBJ', 'FNAM', 'NNAM', 'QSTA', 'CTDA', 'CIS2',
+                       'QSTA', 'CTDA', 'CTDA', 'CIS2']
+        ctdas = _find_all_subrecords(out, b'CTDA')
+        by_func = {struct.unpack_from('<H', c, 8)[0]: c for c in ctdas}
+        assert sorted(by_func) == [58, GET_VM_QUEST_VARIABLE]
+        assert struct.unpack_from('<I', by_func[58], 12)[0] == 0x01010700
+        assert all(struct.unpack_from('<II', c, 20) == (2, 0x14) for c in ctdas)
 
     def test_duplicate_stage_objectives_deduped(self):
         """One objective per stage index — the engine keys objectives by
@@ -1392,6 +1453,36 @@ class TestAddTopicUnlocks:
         for gs in plan['info_reveals'].values():
             assert 'TES4Unlock_stageTopic' not in gs
 
+    def test_bark_said_by_another_npc_keeps_the_gate(self):
+        """Sheogorath's greeting adds Haskill's 'Greymarch': the bark only
+        ungates a topic whose every speaker says that bark, or Haskill offers
+        the topic before the greeting ever plays."""
+        from tes5_import.dialogue.unlocks import build_unlock_plan
+        sheo = '000000000000803f48000000010d00000000000000000000'
+        bt = self._by_type()
+        bt['QUST'][0]['Stage[0].Log[0].ResultScript'] = ''
+        bt = self._with_greeting(bt, '000B0004')
+        bt['INFO'][-1].update({'ConditionCount': '1', 'Condition[0].Raw': sheo})
+        assert 0x0B0004 in build_unlock_plan(bt)['gated'], \
+            "a conditionless topic line is not covered by one NPC's bark"
+        stage_line = next(r for r in bt['INFO'] if r['FormID'] == '000C0002')
+        stage_line.update({'ConditionCount': '1', 'Condition[0].Raw': sheo})
+        assert 0x0B0004 not in build_unlock_plan(bt)['gated'], \
+            "topic spoken only by the greeting NPC is ungated"
+
+    def test_mention_reveals_every_topic_sharing_the_name(self):
+        """Several gated topics may share one FULL name (SE04..SE10
+        'Greymarch'); a line naming it reveals all of them."""
+        from tes5_import.dialogue.unlocks import build_unlock_plan
+        bt = self._by_type()
+        bt['DIAL'].append({'FormID': '000B0006', 'EditorID': 'ratsTOPIC2',
+                           'DATA.Type': '0', 'QuestCount': '1',
+                           'Quest[0]': '000A0001', 'FULL': 'Rats'})
+        bt['INFO'][0]['AddTopic[1]'] = '000B0006'
+        plan = build_unlock_plan(bt)
+        assert plan['info_reveals'][0x0C0002] == ['TES4Unlock_ratsTOPIC',
+                                                  'TES4Unlock_ratsTOPIC2']
+
     def test_topic_revealed_by_both_bark_and_conversation_stays_gated(self):
         """A greeting revealer belongs to whichever NPC that greeting is gated
         to, and says nothing about a DIFFERENT NPC whose reveal comes from a
@@ -1610,6 +1701,38 @@ class TestOriginGate:
                'Condition[1].Raw': self._ctda(72, comp=1.0)}
         assert not needs_origin_gate(rec)
 
+    def test_dependent_group_test_on_a_master_form_is_gated(self):
+        """A dependent's GetIsClass/GetInFaction on a MASTER's form reaches the
+        master's actors (Morroblivion's "invest in my shop" on Oblivion merchants)."""
+        for func in (68, 71, 73):
+            rec = {'FormID': '01F8E5C3',
+                   'Condition[0].Raw': self._ctda(func, param1=0x0000A082)}
+            assert needs_origin_gate(rec, own_index=1), f'func {func}'
+
+    def test_dependent_own_form_or_named_actor_scopes(self):
+        """Its own faction, or any actor it names outright, pins the speaker."""
+        own = {'FormID': '01F8E5C3',
+               'Condition[0].Raw': self._ctda(71, param1=0x0100A082)}
+        named = {'FormID': '01F8E5C3',
+                 'Condition[0].Raw': self._ctda(72, param1=0x0000A082)}
+        assert not needs_origin_gate(own, own_index=1)
+        assert not needs_origin_gate(named, own_index=1)
+
+    def test_or_group_pins_only_if_every_member_pins(self):
+        """GetIsClass(own) OR GetIsClass(master's) lets the master's class in."""
+        mixed = {'FormID': '0101BE90',
+                 'Condition[0].Raw': self._ctda(68, 0x01, param1=0x01240048),
+                 'Condition[1].Raw': self._ctda(68, param1=0x00023E6B)}
+        own = {'FormID': '0101BE90',
+               'Condition[0].Raw': self._ctda(68, 0x01, param1=0x01240048),
+               'Condition[1].Raw': self._ctda(68, param1=0x0124003B)}
+        assert needs_origin_gate(mixed, own_index=1)
+        assert not needs_origin_gate(own, own_index=1)
+
+    def test_override_of_a_master_info_keeps_its_audience(self):
+        """An edited master line is the master's line: never gated on the dependent."""
+        assert not needs_origin_gate({'FormID': '0000A0B1'}, own_index=1)
+
 
 class TestPluginAuthoredRaceConditionsSurvive:
     """A GetIsRace naming a race the PLUGIN adds must not be dropped.
@@ -1657,6 +1780,18 @@ class TestPluginAuthoredRaceConditionsSurvive:
         got = self._params(0x000223C8)           # WoodElf
         assert got == [RACE_MAP['WoodElf']]
         assert got != [DEFAULT_RACE]
+
+    def test_authored_race_becomes_its_marker_faction(self, monkeypatch):
+        """With a marker FACT registered, GetIsRace(Riekling) is GetInFaction on
+        it -- never a vanilla race, which every Imperial (or Nord) would pass."""
+        import struct
+        from tes5_import.base import race_factions
+        from tes5_import.base.conditions import convert_ctda_list_with_strings
+        monkeypatch.setitem(race_factions._faction_by_race, 0x02A804D3, 0x01ABC123)
+        rec = {'FormID': '010628F9', 'ConditionCount': '1',
+               'Condition[0].Raw': self._race_ctda(0x01A804D3)}
+        (ctda, _s), = convert_ctda_list_with_strings(rec, {}, 1)
+        assert struct.unpack_from('<HxxI', ctda, 8) == (71, 0x01ABC123)
 
 
 class TestVmConditionsEvaluateLast:
@@ -2202,6 +2337,38 @@ class TestSaySpeakAsIdentityGate:
             'SCPT': [{'SCTX': 'SomeRef.Say GREETING'}],
         }
         assert scan_speak_as_topics(by_type) == set()
+
+
+class TestSeqListsEveryOwnStartGameQuest:
+    """The .seq lists every start-game QUST this file writes, synthesized ones included.
+
+    A start-game quest missing from it gets no dialogue loaded in a new game:
+    `TES4SpeakAs` was left out and every speak-as scene was silent until a
+    save was loaded (confirmed in game).
+    See: docs/commentary/tes5_import_dialogue.md#speak-as-quest-in-the-seq
+    """
+
+    def test_scans_written_quests(self):
+        """Own-index quests with DNAM bit 0 are listed, compressed ones too."""
+        import zlib
+        from tes5_import.base.writer import pack_record, pack_subrecord
+        from tes5_import.pipeline_finalize import _own_sge_quests
+
+        def quest(fid, dnam_flags, compress=False):
+            """One packed QUST carrying only a DNAM with `dnam_flags`."""
+            body = pack_subrecord('DNAM', struct.pack('<HBBII', dnam_flags, 0, 0, 0, 0))
+            if not compress:
+                return pack_record('QUST', fid, 0, body)
+            packed = struct.pack('<I', len(body)) + zlib.compress(body)
+            return (b'QUST' + struct.pack('<III', len(packed), 0x40000, fid)
+                    + b'\0' * 8 + packed)
+
+        w = _FakeWriter()
+        w._top_groups = {'QUST': [quest(0x0129CBF5, 0x0011),
+                                  quest(0x01000010, 0x0000),
+                                  quest(0x01000020, 0x0011, compress=True),
+                                  quest(0x00000030, 0x0011)]}
+        assert _own_sge_quests(w) == {0x0129CBF5, 0x01000020}
 
 
 class TestSpeakAsScenes:

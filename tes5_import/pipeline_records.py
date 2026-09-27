@@ -88,12 +88,14 @@ _LAND_CHUNK = 24
 WORLD_EXTENT_CACHE = 'world_extents.json'
 
 def _emit_override(st, ov, rec: dict) -> None:
-    """Write an override's record and the master outfit it changes, when either exists."""
+    """Write an override's record and the master outfit it changes; queue its renamed copies."""
     for record_bytes in (ov.record_bytes, st.ctx.build_outfit_companion(rec)):
         if record_bytes:
             st.writer.add_record(record_bytes[:4].decode('ascii', 'replace'),
                                  record_bytes)
             st.converted += 1
+    for copy in st.ctx.renamed_copies(rec):
+        st.writer.adoption.queue_copy(copy)
 
 
 def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
@@ -160,9 +162,10 @@ def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
             print(f"  ERROR converting {sig} '{edid}': {e}")
             st.errors += 1
     write_falloutnv_sidecars(st.by_type, st.writer, st.output_path)
-    staged = write_morrowind_sidecar(export_dir, st.output_path,
-                                     os.path.basename(st.output_path),
-                                     writer=st.writer)
+    staged = write_morrowind_sidecar(
+        export_dir, st.output_path, os.path.basename(st.output_path),
+        writer=st.writer,
+        master_index=getattr(st.ctx, 'master_index', None) if st.ctx else None)
     if staged:
         print(f'  Staged {staged} runtime sidecar file(s)')
     phase_done(f'simple records ({len(work_items)})')
@@ -257,7 +260,7 @@ def _convert_soun(st, export_dir: str, phase_done, skip_types) -> None:
 
 
 def _convert_qust(st, export_dir: str, phase_done, skip_types) -> None:
-    """Phase 3b: QUST, tracking StartGameEnabled ids for the .seq file."""
+    """Phase 3b: QUST."""
     qust_records = st.by_type.get('QUST', [])
     if qust_records and 'QUST' not in st.all_skip:
         print(f"  Converting {len(qust_records)} QUST records...")
@@ -278,10 +281,6 @@ def _convert_qust(st, export_dir: str, phase_done, skip_types) -> None:
                                           script_vars=st._script_vars)
                 st.writer.add_record('QUST', qust_bytes)
                 st.converted += 1
-                fid = get_formid(rec, 'FormID')
-                flags = get_int(rec, 'DATA.Flags')
-                if flags & 0x01:
-                    st.sge_quest_fids.add(fid)
             except Exception as e:
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
                 st.errors += 1

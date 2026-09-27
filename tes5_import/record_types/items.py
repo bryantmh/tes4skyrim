@@ -33,24 +33,11 @@ from .common import (
 def convert_STAT(rec: dict) -> bytes:
     """Convert STAT record, deriving LOD/world-map flags from mesh bounding box size.
 
-    A STAT whose converted mesh is a constrained dynamic havok island
-    (swinging chains, hanging cages) is written as MSTT instead: Skyrim never
-    simulates constrained bodies on a STAT reference, so PrisonCellChains01
-    hung completely rigid.  Vanilla routes ALL such content through MSTT
-    (every swinging inn sign, e.g. SignBraidwoodInn01, MSTT DATA=0) or ACTI
-    (TrapBoneAlarmHavok01).  The FormID is unchanged, so placed REFRs keep
-    resolving.
-
-    Do NOT extend this to "the mesh has an animation graph".  That was tried on
-    2026-08-18 and reverted: promoting every BGED-bearing STAT moved 107
-    Oblivion bases / 4,568 placed refs and crashed the game on save load with a
-    null TESObjectREFR in the ExtraPromotedRef / QueuedPromoteQuestTask path
-    (SKChamberSecretDoor, NightMotherBaseRef).
-
-    The premise was wrong anyway: 94 vanilla STATs DO carry a BGED, including
-    self-animating scenery (WRJovaskrBanner02 -> IdleRandomized.hkx,
-    PowShrine01, SFarmhouseMill).  A STAT can host an animation graph, so the
-    record type is not what stops an animation from playing.
+    A STAT whose converted mesh has a simulated body (a free dynamic piece or
+    a constrained island) is written as MSTT with the same FormID: Skyrim
+    never simulates a body on a STAT reference.  Never widen this to "the
+    mesh has an animation graph" -- that set crashed on save load.
+    See: docs/commentary/asset_convert_collision.md#stat-simulated-mstt
     """
     flags = get_int(rec, 'RecordFlags')
     # Resolve OBND from converted mesh bounds (or type default as fallback).
@@ -610,6 +597,15 @@ _TREE_CNAM = struct.pack('<12f', 1.0, 1.0, 0.04, 0.03, 0.04, 0.034,
                          0.5, 0.5, 0.4, 1.0, 2.0, 1.0)
 
 
+def tree_nif_stem(rec: dict) -> str:
+    """Lowercase stem of the NIF the speedtree stage writes for a TREE: its EditorID, else its .spt name."""
+    edid = get_str(rec, 'EditorID')
+    if edid:
+        return edid.lower()
+    model = get_str(rec, 'Model.MODL').replace('\\', '/').lstrip('/')
+    return os.path.splitext(os.path.basename(model))[0].lower()
+
+
 def convert_TREE(rec: dict) -> bytes:
     r"""TREE — Tree.
 
@@ -631,17 +627,10 @@ def convert_TREE(rec: dict) -> bytes:
     else:
         bounds = _resolve_obnd(rec, 'TREE')
     subs += pack_obnd(*bounds)
-    model = get_str(rec, 'Model.MODL')
-    if model and edid:
+    if get_str(rec, 'Model.MODL'):
         subs += pack_string_subrecord(
             'MODL',
-            f'{current_namespace()}\\speedtrees\\{edid.lower()}.nif')
-    elif model:
-        import os
-        stem = os.path.splitext(os.path.basename(model.replace('\\', '/').lstrip('/')))[0]
-        subs += pack_string_subrecord(
-            'MODL',
-            f'{current_namespace()}\\speedtrees\\{stem.lower()}.nif')
+            f'{current_namespace()}\\speedtrees\\{tree_nif_stem(rec)}.nif')
     subs += pack_subrecord('PFPC', struct.pack('<I', 0))
     subs += pack_subrecord('CNAM', _TREE_CNAM)
     # Same size-derived LOD flags as STAT: trees flow through the standard

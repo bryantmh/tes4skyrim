@@ -42,6 +42,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from core.subprocess_flags import configure_multiprocessing
 from core.process_job import create_pool_job
+from core.heavy_lock import hold_heavy_lock
 from output_layout import assets_for
 
 configure_multiprocessing()
@@ -294,7 +295,7 @@ def main() -> int:
     """Bake every selected worldspace's LOD into the AutoConvertLOD mod.
 
     Returns 0 when every job succeeded or there was nothing to do, 1 when any
-    bake reported an error.
+    bake reported an error. A real bake first waits for any other heavy job.
     See: docs/commentary/asset_convert_terrain.md#create-lod-run-planning
     """
     args = _parse_args()
@@ -317,31 +318,16 @@ def main() -> int:
     export_root = SCRIPT_DIR / "export"
     lod_dir = out_root / LOD_DIR_NAME
 
-    print("=" * 54)
-    print("  CREATE LOD")
-    print("=" * 54)
-    print(f"  Output dir: {out_root}")
-    print(f"  LOD mod:    {lod_dir}")
-
-    swept = drop_staged_meshes(lod_dir)
-    if swept:
-        print(f"  Swept {swept} stale staged mesh file(s) from the LOD mod")
-
+    _print_header(out_root, lod_dir, drop_staged_meshes(lod_dir))
     plugins = _select_plugins(args, converted_plugins(out_root), export_root,
                               create_lod_order)
     if not plugins:
         print("  No converted plugin to generate LOD for.")
         return 0
 
-    print(f"  Plugins ({len(plugins)}, lowest priority first):")
-    for i, name in enumerate(plugins, 1):
-        win = "  <- wins contested references" if i == len(plugins) else ""
-        print(f"    {i}. {name}{win}")
-
     wanted = (list(args.worldspaces) if args.worldspaces
               else lod_worldspaces(plugins, export_root, out_root))
-    print(f"  Worldspaces ({len(wanted)}): {', '.join(wanted) or '(none)'}")
-    print()
+    _print_scope(plugins, wanted)
 
     touched = _touched_worldspaces(plugins, out_root, export_root, _out_root,
                                    touched_worldspace_fids)
@@ -356,16 +342,13 @@ def main() -> int:
         print("Nothing to generate.")
         return 0
 
-    print("  Plan:")
-    for edid, owner, _esm, overlays, contributors, _suppliers in jobs:
-        print(f"    {edid}: records from {owner}, "
-              f"{len(overlays)} overlay(s) on top"
-              + (f" ({', '.join(contributors)})" if contributors else ""))
-    print()
-
+    _print_plan(jobs)
     if args.dry_run:
         print("Dry run - nothing generated.")
         return 0
+    hold_heavy_lock("create_lod.py " + " ".join(sys.argv[1:]),
+                    {'plugins': plugins, 'steps': ['lod'],
+                     'scope': {'worldspaces': wanted}, 'same': [str(out_root)]})
 
     ctx = {
         'lod_dir': lod_dir, 'out_root': out_root, 'export_root': export_root,
@@ -378,10 +361,42 @@ def main() -> int:
         'supplier_overlay_dirs': lambda names: _supplier_overlay_dirs(
             names, out_root, export_root, _out_root, record_dir),
     }
-    ok_all = True
-    for job in jobs:
-        ok_all = _bake_worldspace(job, ctx) and ok_all
+    return _report(all([_bake_worldspace(job, ctx) for job in jobs]), lod_dir)
 
+
+def _print_header(out_root, lod_dir, swept: int) -> None:
+    """The run's banner, and how many stale staged meshes were swept."""
+    print("=" * 54)
+    print("  CREATE LOD")
+    print("=" * 54)
+    print(f"  Output dir: {out_root}")
+    print(f"  LOD mod:    {lod_dir}")
+    if swept:
+        print(f"  Swept {swept} stale staged mesh file(s) from the LOD mod")
+
+
+def _print_scope(plugins: list, wanted: list) -> None:
+    """The plugins in priority order, then the worldspaces to bake."""
+    print(f"  Plugins ({len(plugins)}, lowest priority first):")
+    for i, name in enumerate(plugins, 1):
+        win = "  <- wins contested references" if i == len(plugins) else ""
+        print(f"    {i}. {name}{win}")
+    print(f"  Worldspaces ({len(wanted)}): {', '.join(wanted) or '(none)'}")
+    print()
+
+
+def _print_plan(jobs: list) -> None:
+    """Each worldspace's owner and the overlays baked on top of it."""
+    print("  Plan:")
+    for edid, owner, _esm, overlays, contributors, _suppliers in jobs:
+        print(f"    {edid}: records from {owner}, "
+              f"{len(overlays)} overlay(s) on top"
+              + (f" ({', '.join(contributors)})" if contributors else ""))
+    print()
+
+
+def _report(ok_all: bool, lod_dir) -> int:
+    """Print how the bake ended; 0 when every job succeeded, else 1."""
     print("-" * 54)
     if ok_all:
         print(f"LOD written to {lod_dir}")

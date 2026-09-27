@@ -27,9 +27,9 @@ map exactly, which degrade, and why).
 
 import struct
 
+from .escort_when_near import escort_template
 from .templates import (
     ACQUIRE,
-    ESCORT,
     EAT,
     FLEE_TO,
     FOLLOW,
@@ -207,6 +207,12 @@ SPEED_WALK, SPEED_JOG, SPEED_RUN, SPEED_FASTWALK = 0, 1, 2, 3
 # authorisation.
 DEFAULT_INTERRUPT = 0x0044  # observe combat 0x04 | aggro radius 0x40
 
+#: A force greet's interrupt flags, measured from vanilla MS05InductionForcegreet.
+FORCEGREET_INTERRUPT = 0xFEFF
+
+#: PSDT for any month, day and hour with no duration.
+ANY_TIME_PSDT = struct.pack('<bbBbb3xi', -1, -1, 0, -1, -1, 0)
+
 # TES4 record signatures a package target's BASE can carry, by what the actor
 # does with one.  ('CHAI'/'BED ' used to be listed here, but those are TES5
 # wbObjectTypeEnum names, never TES4 signatures — only FURN can match.)
@@ -305,10 +311,9 @@ class Inputs:
                 out += pack_subrecord('PTDA', v if isinstance(v, bytes)
                                       else _null_target())
             elif atype == T_TOPIC:
-                # PDTO: (u32 type, u32 formid); type 0 names a DIAL record.
-                # This input is what opens dialogue for a ForceGreet package.
-                out += pack_subrecord('PDTO', struct.pack('<II', 0,
-                                                          int(v or 0)))
+                ptype, pval = v if isinstance(v, tuple) else (0, v)
+                out += pack_subrecord('PDTO', struct.pack('<II', ptype,
+                                                          int(pval or 0)))
             elif atype == T_BOOL:
                 # Bool CNAM is a single byte (verified against vanilla).
                 out += pack_subrecord('CNAM', bytes([1 if v else 0]))
@@ -585,6 +590,16 @@ def build_pkdt(flags: int, speed: int,
     pad u8, InterruptFlags u16, pad u16  (12 bytes)."""
     return struct.pack('<IBBBBHH', flags, PKDT_TYPE_PACKAGE, 0, speed, 0,
                        interrupt, 0)
+
+
+def package_markers() -> bytes:
+    """The empty POBA/POEA/POCA begin/end/change blocks 943/944 vanilla packages carry."""
+    out = b''
+    for marker in ('POBA', 'POEA', 'POCA'):
+        out += pack_subrecord(marker, b'')
+        out += pack_formid_subrecord('INAM', 0)
+        out += pack_subrecord('PDTO', struct.pack('<II', 0, 0))
+    return out
 
 
 def build_psdt(rec: dict) -> bytes:
@@ -1020,7 +1035,7 @@ def _pick_follow(p: _Pick) -> Inputs:
     navmesh route.
     """
     if _follow_destination_reachable(p):
-        i = Inputs(ESCORT)
+        i = Inputs(escort_template())
         i.set('target', p.tgt)
         i.set('location', p.loc)
         if p.use_horse:
@@ -1036,8 +1051,8 @@ def _pick_follow(p: _Pick) -> Inputs:
 
 
 def _pick_escort(p: _Pick) -> Inputs:
-    """Escort: exact."""
-    i = Inputs(ESCORT)
+    """Escort: exact, restarting whenever the escorted target returns in range."""
+    i = Inputs(escort_template())
     i.set('target', p.tgt)
     i.set('location', p.loc)
     if p.use_horse:
@@ -1052,16 +1067,17 @@ def _pick_flee(p: _Pick) -> Inputs:
     return i
 
 
-def _force_greet(p: _Pick, radius: float) -> Inputs:
-    """A ForceGreet on the player, anchored on the player at `radius`.
+def force_greet_inputs(topic, radius: float = 0) -> Inputs:
+    """A ForceGreet on the player opening `topic`, anchored on the player at `radius`.
 
-    The forcegreet distance MUST be a type-0 location on ref 0x14: a
-    type-2/type-3 location is not relative to the player, so the actor walks
-    to a world spot instead of talking.
+    `topic` is a DIAL FormID or a (PDTO type, value) pair.  The forcegreet
+    distance MUST be a type-0 location on ref 0x14: a type-2/type-3 location
+    is not relative to the player, so the actor walks to a world spot instead
+    of talking.
     """
     i = Inputs(FORCE_GREET)
     i.set('target', _target(0, PLAYER_FID, 0))
-    i.set('topic', p.greet_topic or 0)
+    i.set('topic', topic)
     if radius > 0:
         i.set('forcegreet_distance', _location(0, PLAYER_FID, int(radius)))
     return i
@@ -1086,7 +1102,7 @@ def _pick_ambush(p: _Pick) -> Inputs:
         return i
     radius = _pldt_radius_f(p.rec)
     if _targets_player(p.rec):
-        return _force_greet(p, radius)
+        return force_greet_inputs(p.greet_topic or 0, radius)
     reach = float(get_int(p.rec, 'PTDT.Count', 0) or 0) or radius
     i = Inputs(FOLLOW)
     i.set('target', p.tgt)
@@ -1203,7 +1219,7 @@ def _pick_find(p: _Pick) -> Inputs:
     One TES4 type covering five idioms; the target decides which.
     """
     if _targets_player(p.rec):
-        return _force_greet(p, _pldt_radius_f(p.rec))
+        return force_greet_inputs(p.greet_topic or 0, _pldt_radius_f(p.rec))
     if _operate_target(p.rec, p.ctx):
         i = Inputs(ACTIVATE)
         i.set('target', p.tgt)
@@ -1300,7 +1316,8 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     is_activate = _operate_target(rec, ctx)
     if is_forcegreet:
         subs += pack_subrecord('PKDT', build_pkdt(_forcegreet_flags(rec, flags),
-                                                  SPEED_RUN, interrupt=0xFEFF))
+                                                  SPEED_RUN,
+                                                  FORCEGREET_INTERRUPT))
     elif is_activate:
         # Keep the TES4 flags (Must Complete / Once Per Day are real), but take
         # vanilla's speed and interrupts.
@@ -1330,12 +1347,7 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     subs += pack_subrecord('PKCU', struct.pack('<III', len(t.inputs),
                                                t.formid, t.version))
     subs += inputs.emit()
-
-    # All three markers are mandatory (943/944 vanilla packages carry them).
-    for marker in (b'POBA', b'POEA', b'POCA'):
-        subs += pack_subrecord(marker.decode(), b'')
-        subs += pack_formid_subrecord('INAM', 0)
-        subs += pack_subrecord('PDTO', struct.pack('<II', 0, 0))
+    subs += package_markers()
 
     if inputs.t is FORCE_GREET:
         # The greeting topic does not exist yet (Phase 5); remember which quest
@@ -1465,10 +1477,7 @@ def _seek_record(rec: dict, ctx: PackContext, src_fid: int, seek_fid: int,
     subs += pack_subrecord('PKCU', struct.pack('<III', len(t.inputs),
                                                t.formid, t.version))
     subs += inputs.emit()
-    for marker in (b'POBA', b'POEA', b'POCA'):
-        subs += pack_subrecord(marker.decode(), b'')
-        subs += pack_formid_subrecord('INAM', 0)
-        subs += pack_subrecord('PDTO', struct.pack('<II', 0, 0))
+    subs += package_markers()
     return pack_record('PACK', seek_fid, get_int(rec, 'RecordFlags'), subs)
 
 

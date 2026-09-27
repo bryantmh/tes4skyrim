@@ -19,8 +19,9 @@ del /q obj\*.obj 2>nul
 echo [build] compiling TESRuntime...
 cl /nologo /c /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG /I..\common ^
    plugin.cpp crime.cpp journal_objectives.cpp journal_log.cpp ^
-   crafting.cpp alchemy.cpp alchemy_hooks.cpp ^
-   ..\common\addresses.cpp ..\common\engine.cpp ..\common\hook.cpp ^
+   crafting.cpp alchemy.cpp alchemy_hooks.cpp spin.cpp ^
+   ..\common\addresses.cpp ..\common\engine.cpp ..\common\glide.cpp ^
+   ..\common\hook.cpp ..\common\main_tick.cpp ^
    ..\common\json.cpp ..\common\log.cpp ..\common\paths.cpp ^
    ..\common\ui_message.cpp /Fo:obj\
 if errorlevel 1 (

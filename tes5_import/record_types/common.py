@@ -26,7 +26,7 @@ from ..base.writer import (
 
 
 def prefix_path(path: str) -> str:
-    """Prefix an asset path with the ACTIVE game namespace.
+    """Prefix an AUTHORED asset path with the ACTIVE game namespace, always.
 
     Strips a leading 'textures\\' since Skyrim auto-prefixes it. MUST agree
     with asset_convert's rewrite_tex_path: if the record side and the asset
@@ -35,14 +35,10 @@ def prefix_path(path: str) -> str:
     """
     if not path:
         return path
-    ns = current_namespace()
     p = path
     if p.lower().startswith('textures\\') or p.lower().startswith('textures/'):
         p = p[9:]
-    low = p.lower()
-    if not low.startswith(ns + '\\') and not low.startswith(ns + '/'):
-        return ns + '\\' + p
-    return p
+    return current_namespace() + '\\' + p
 
 
 def landscape_texture_path(icon_path: str) -> str:
@@ -290,6 +286,9 @@ def region_was_emitted(fid) -> bool:
 _ENGINE_GLOBALS = {'gamehour', 'gamedayspassed', 'gameday', 'gamemonth',
                    'gameyear', 'timescale'}
 
+#: Globals whose authored default is replaced. See: docs/commentary/tes5_import_quest.md#global-default-overrides
+_GLOBAL_DEFAULTS = {'vardistantblur': -1.0}
+
 
 def convert_GLOB(rec: dict) -> bytes:
     """GLOB → GLOB, dropping the globals Skyrim's engine already defines.
@@ -304,7 +303,7 @@ def convert_GLOB(rec: dict) -> bytes:
         subs += pack_string_subrecord('EDID', edid)
     type_char = get_str(rec, 'FNAM.Type', 'f')
     subs += pack_uint8_subrecord('FNAM', ord(type_char[0]) if type_char else ord('f'))
-    value = get_float(rec, 'FLTV.Value')
+    value = _GLOBAL_DEFAULTS.get((edid or '').lower(), get_float(rec, 'FLTV.Value'))
     subs += pack_float_subrecord('FLTV', value)
     return pack_record('GLOB', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 

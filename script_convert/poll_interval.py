@@ -14,7 +14,7 @@ def update_interval(sc) -> str:
     """The RegisterForSingleUpdate literal for one script's poll."""
     if sc.quest_delay > 0:
         return float_literal(max(sc.quest_delay, MIN_INTERVAL))
-    if sc.uses_getsecondspassed:
+    if sc.uses_getsecondspassed or sc.moves_in_poll:
         return '0.1'
     if sc.uses_say_timer:
         return '0.15'

@@ -3,27 +3,25 @@ Major Issues for V1:
 
 	2 - Havok feels off. Items don't move like they should. Specifically, there seems to be too much inertia on small items, like I'm dragging a heavy object when it is something as small as a cup, Animated signs will get stuck in a position after swinging a bit, defying gravicty
 	
-	10 - Imperials get all fallback race lines (like reiklings)
+	4 - All-in-one installer that people can just click and expect to work
 
-	11 - All-in-one installer that people can just click and expect to work
+	5 - Weather particle conversion (snow, rain) SPGD
 
-	13 - Weather particle conversion (snow, rain) SPGD
-
-	14 - AutoUpdater
+	6 - AutoUpdater
 
 Later Issues:
 	1 - Bound items like dagger not removed from inventory, only hands
 	
-	3 - Ajust zip step to pack loose files if bsas are out of date or not generated
+	2 - Ajust zip step to pack loose files if bsas are out of date or not generated
 		Also zip should work on mod without plugin
 
-	5 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting (maybe just scale them?)
+	3 - Arrows are held at an invisible location behind the arrow when nocking, and can't be picked up after shooting (maybe just scale them?)
 
-	7 - Restore Oblivion's remaining NPC-to-NPC conversations (see docs/commentary/tes5_import_dialogue.md)
+	4 - Restore Oblivion's remaining NPC-to-NPC conversations (see docs/commentary/tes5_import_dialogue.md)
 		DONE 2026-08-07: the 15 QUEST-ADVANCING chains are replayed by a generated driver quest
 		REMAINING: the ~240 pure-flavor chatter families are still dropped; they need SCEN synthesis with invented actor pairing.
 
-	8 - Magic and Spell Conversion
+	5 - Magic and Spell Conversion
 		Mixed-range spells: check the Self half of a Target+Self spell lands on the caster
 		pme (PlayMagicEffectVisuals) plays only the effect shader, not the hit art
 		Creature casters have no magic/hand nodes, so casting art cannot attach
@@ -33,33 +31,28 @@ Later Issues:
 		Later: spellmaking, enchanting altar (spell selling done: merchants sell spell tomes through barter)
 		Spell tomes: a dependent plugin's Spell[] override of a master's merchant does not update that merchant's tomes
 
-	17 - Weapon and armor degradation through TESRuntime, plus a Repair service for Oblivion and Morrowind merchants, always in a Skyrim-styled repair window
+	6 - Weapon and armor degradation through TESRuntime, plus a Repair service for Oblivion and Morrowind merchants, always in a Skyrim-styled repair window
 
-	9 - Make horses rideable
+	7 - Make horses rideable
 
-	11 - Potential remapping of low level formids like how player (07) or gold (f) already do
+	8 - Add progress bar for navmesh step
 
-	12 - Add progress bar for navmesh step
+	9 - Add optional skyrim weather remapping
 
-	13 - Add optional skyrim weather remapping
+	10 - Add optional skyrim creature remapping
 
-	14 - Add optional skyrim creature remapping
+	11 - Refine armor conversion: rings don't properly attach
 
-	15 - Refine armor conversion: rings don't properly attach
-
-	16 - Creatures with geometry baked into skeleton.nif (no body-part NIFs, no NIFZ) get no generated race and alias to a vanilla one: scrib (28 records, Morroblivion), willothewisp (5, Oblivion)
+	12 - Creatures with geometry baked into skeleton.nif (no body-part NIFs, no NIFZ) get no generated race and alias to a vanilla one: scrib (28 records, Morroblivion), willothewisp (5, Oblivion)
 
 Minor Issues:
-
 	2 - Improve landscape layer blending
 	
-	3 - Replace Prison marker with the skyrim equivalent as we are doing with the other markers
-
 	4 - Harvested plants don't make a sound. Intentional?
 
 	7 - Flame atronach animated section not properly converted
 	
-	16 - Tripwire doesn't visibly break. and Log trap doesn't visibly roll
+	16 - Log trap doesn't visibly roll
 
 	19 - Leaving a force-greet conversation can soft-lock
 
@@ -89,9 +82,7 @@ Guns (FalloutNV):
 	G24 - Strafe snap: strafing in first person shifts the whole skeleton and gun ~22 units toward the strafe direction against the render camera, almost at once (vanilla may do it slower). Not the direction blend: the clips' root/look/camera bones are static, and BSCyclicBlendTransitionGenerator never eases Direction (its duration runs only on CyclicCrossBlend). Next: record a vanilla sword vs the pistol strafing, weapon against the render camera (the WorldRoot Camera under PlayerCamera+0x20) with Direction
 
 Morrowind:
-	2) Water missing in interiors with it flagged
-	3) Magic effect visuals: remap from Skyrim; shields have the same cloak bug
-	4) 19 magic effects with no Skyrim mechanism await the MorrowindRuntime
-	6) Enchanting service: the NPC should enchant for a fee at the NPC's skill, not the player's (fee = enchantment cost x fEnchantmentValueMult, barter-adjusted; swap the player's Enchanting for the NPC's while the menu is open; no player skill gain)
-	7) Spellmaking service row (sSpellmakingMenuTitle) has no Skyrim menu yet
-	8) Repair service row (sRepair) waits on the degradation/repair work (Later Issues 17)
+	1 - Water missing in interiors with it flagged
+	2 - Magic effects with no Skyrim mechanism await the MorrowindRuntime
+	3 - Enchanting service: the NPC should enchant for a fee at the NPC's skill, not the player's (fee = enchantment cost x fEnchantmentValueMult, barter-adjusted; swap the player's Enchanting for the NPC's while the menu is open; no player skill gain)
+	4 - Spellmaking service row (sSpellmakingMenuTitle) has no Skyrim menu yet

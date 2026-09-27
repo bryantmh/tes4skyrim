@@ -930,6 +930,11 @@ _CTDA_RUNON_NAMES = {
 }
 
 
+def ctda_func_name(idx: int) -> str:
+    """The TES5 condition function name for a CTDA function index."""
+    return _CTDA_FUNC_NAMES.get(idx, f'Func{idx}')
+
+
 # ---------------------------------------------------------------------------
 # Dialog / Quest / Condition decoders
 # ---------------------------------------------------------------------------

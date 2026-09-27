@@ -25,10 +25,14 @@ from asset_convert.sources import source_registry
 from core.plugin_masters import (export_source, get_masters_from_binary,
                                  masters_from_export_header)
 from tes4_export.morrowind_ids import encode_editor_id, load_index
-from tes4_export.morrowind_patch import PATCH_NAME
+from tes4_export.morrowind_patch import PATCH_NAME, START_SCRIPTS_SIG
 
 from .morrowind_sidecar_source import (gather, plugin_chain,
                                        write_merged_dialogue)
+from .morrowind_temples import skyrim_rows
+from .morrowind_teleport import (ANCHORS_TABLE, MARKERS_TABLE, TELEPORTS_TABLE,
+                                 WORLDS_TABLE, marker_lines, target_lines,
+                                 teleport_lines, world_lines)
 from .morrowind_travel import TRAVEL_TABLE, marker_index, travel_lines
 from .say_morrowind import SAY_TABLE, say_rows
 
@@ -760,7 +764,11 @@ def _stage_dialogue(export_dir: str, out_dir: str, present: list,
             staged_as = DIALOGUE_FILES[_EXPORT_DIALOGUE.index(name)]
             shutil.copyfile(os.path.join(export_dir, name),
                             os.path.join(out_dir, staged_as))
-        return len(present)
+        starts = [f"{rec['EditorID']}=1" for rec in export_records(
+            os.path.join(export_dir, f'{START_SCRIPTS_SIG}.txt'), ('EditorID',))
+                  if rec.get('EditorID')]
+        return len(present) + _write_lines(
+            os.path.join(out_dir, START_SCRIPTS_TABLE), starts)
     topics, infos = write_merged_dialogue(gathered, out_dir)
     folders = [(folder, plugin) for folder, plugin, _own in _loaded_dirs(
         export_root(export_dir), export_dir, chain[-1][0])]
@@ -885,6 +893,51 @@ def _crime_lines() -> list:
     return default_crime_rows()
 
 
+def _stages_base_game(loaded: list) -> bool:
+    """Whether no loaded master is a TES3 plugin or the patch, staging Skyrim's."""
+    return not any(is_tes3_export(folder) or plugin == PATCH_NAME
+                   for folder, plugin, _own in loaded[1:])
+
+
+def _markers(loaded: list, writer, master_index) -> tuple:
+    """(marker rows, world rows): the chain's own, each restored Intervention's
+    destinations, and Skyrim's when this plugin stages them."""
+    markers = marker_lines(loaded, export_records)
+    worlds = world_lines(loaded, export_records)
+    if master_index is not None:
+        markers += target_lines(loaded[0][0], export_records, master_index,
+                                writer.masters)
+    if _stages_base_game(loaded):
+        temples, parents = skyrim_rows()
+        markers += temples
+        worlds += parents
+    return markers, worlds
+
+
+def _teleport_tables(export_dir: str, output_path: str, plugin_name: str,
+                     out_dir: str, writer, master_index) -> int:
+    """The teleport effects, Intervention markers, worlds and interior anchors
+    over the loaded chain; `crime` is imported late for the reason
+    `_crime_lines` gives. A restage with no `writer` leaves all but the
+    anchors alone, as only an import knows the effects and destinations.
+    See: docs/commentary/morrowind_runtime.md#teleport-effects
+    """
+    from ..record_types.crime import anchor_rows
+    loaded = _loaded_dirs(export_root(export_dir), export_dir, plugin_name)
+    output_root = os.path.dirname(os.path.dirname(output_path))
+    staged = _write_lines(os.path.join(out_dir, ANCHORS_TABLE),
+                          anchor_rows([plugin for _dir, plugin, _own in loaded],
+                                      output_root))
+    if writer is None:
+        return staged
+    markers, worlds = _markers(loaded, writer, master_index)
+    return (staged + _write_lines(os.path.join(out_dir, MARKERS_TABLE), markers)
+            + _write_lines(os.path.join(out_dir, WORLDS_TABLE), worlds)
+            + _write_lines(os.path.join(out_dir, TELEPORTS_TABLE),
+                           teleport_lines(_effect_lines(loaded), plugin_name,
+                                          len(writer.masters))))
+
+
 def _apparatus(export_dir: str, output_path: str, plugin_name: str,
                gathered=None) -> int:
     """TESRuntime's apparatus sidecar, imported late: `record_types.apparatus`
@@ -895,9 +948,11 @@ def _apparatus(export_dir: str, output_path: str, plugin_name: str,
 
 
 def write_morrowind_sidecar(export_dir: str, output_path: str,
-                            plugin_name: str, writer=None) -> int:
+                            plugin_name: str, writer=None,
+                            master_index=None) -> int:
     """Stage this plugin's dialogue and tables into its SKSE sidecar folder,
     and with a `writer`, add its journal quests to the plugin being written.
+    `master_index` is the converted masters', which the teleport table reads.
 
     Returns files staged. A source that is not TES3 stages only its
     TESRuntime apparatus sidecar. The compat patch holds no dialogue of its own yet stages anyway: it
@@ -922,6 +977,8 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
                              say_rows(export_dir,
                                       os.path.basename(plugin_name)))
               + _write_lines(os.path.join(out_dir, CRIME_TABLE), _crime_lines())
+              + _teleport_tables(export_dir, output_path, plugin_name, out_dir,
+                                 writer, master_index)
               + _journal_quests(writer, out_dir, plugin_name))
     index = _actor_index(export_dir)
     if not index:

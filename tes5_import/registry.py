@@ -18,7 +18,7 @@ TYPE_MAP = {}
 SKIP_TYPES = set()
 
 #: NOT records: runtime data keyed by TES3 string id, never read by the importer.
-RUNTIME_ONLY_TYPES = frozenset({'MWDI', 'MWIN'})
+RUNTIME_ONLY_TYPES = frozenset({'MWDI', 'MWIN', 'MWSS'})
 
 def _init_dispatch() -> None:
     """Populate the three tables from the converter modules.

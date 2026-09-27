@@ -146,7 +146,42 @@ the original state. Audit the partner call before accepting either.
   order its blocks and the teardown event must already be in the output for the
   restore to land inside it. `SetGhost`/`SetInvulnerable` were rejected as the
   mechanism: both suppress ALL damage, so the scroll would grant temporary
-  immortality — a worse defect than the one being fixed.
+  immortality — a worse defect than the one being fixed. The suppression itself
+  is now a falling-damage perk, not DamageResist:
+  [fall damage is a perk](#fall-damage-is-a-perk).
+
+## ResetFallDamageTimer is a falling-damage perk window (2026-09-25, unconfirmed in game)
+<a id="fall-damage-is-a-perk"></a>
+
+**The old mechanism did nothing to falls.** `SuppressFallDamage` forced
+`DamageResist` to 10000. Skyrim's falling damage is
+`((height - fJumpFallHeightMin) * fJumpFallHeightMult) ^ fJumpFallHeightExponent * modifiers`,
+where the only modifiers are perk entry points (UESP Skyrim:Damage). There is no
+armor term, so the forced resistance left falls untouched and handed out an 80%
+physical damage cut instead. The call also had no subject outside a magic
+effect, so `SE02GatekeeperScript`'s every-tick `ResetFallDamageTimer` forced the
+PLAYER's resistance. `TG11FallingExit`'s one-shot `Player.ResetFallDamageTimer`
+did the same, permanently, because neither script has a teardown.
+
+**The engine's own mechanism** is perk entry point 58, Mod Falling Damage. Vanilla
+Cushioned uses it at ×0.5. Papyrus `AddPerk` works only on the player, and a
+magic effect's PerkToApply is how any actor holds a perk. Vanilla does both:
+`NN01PerkEffect` (constant) and `ghostExtraDamageEffect` (fire-and-forget).
+
+**Fix:** the importer writes `TES4NoFallDamagePerk` (entry point 58, Multiply
+Value ×0, unconditioned like `TGSkeletonKeyPerk`), `TES4NoFallDamageEffect`
+(Value Modifier Health at magnitude 0, PerkToApply, hidden in the UI), and the
+spell `TES4NoFallDamage`: fire-and-forget, Self, 10 s. A dependent plugin adopts
+its master's copy by EditorID. `ResetFallDamageTimer` converts to
+`TES4Polyfill.SuppressFallDamage(<actor>, TES4NoFallDamage)`, which casts the
+spell on the calling actor. A caller that polls every tick keeps renewing the
+window, and a one-shot caller gets one fall's worth. A magic effect's teardown
+still dispels the spell early through `RestoreFallDamage`.
+
+The effect must NOT carry No Magnitude. The engine turns that into magnitude
+1.0, so every cast healed 1 HP/s for 10 s, and an every-tick caller stacked
+about 27 of them
+([no-magnitude-forces-one](tes5_import_magic.md#no-magnitude-forces-one)).
 
 ## Skyrim has GMST readers but no GMST writer (2026-07-31)
 <a id="skyrim-has-gmst-readers-but"></a>
@@ -251,10 +286,10 @@ wrong in the dangerous direction:
 | `if <unknown> == 1` | `If (0 == 1)` | always false — body dead, **safe** |
 | `if <unknown> == 0` | `If 0 == 0` | always TRUE — **guard gone** |
 
-Nehrim's `Nexusplanet01SCN` is the clear case: `if GetIgnoreFriendlyHits == 0`
-means "friendly hits are not ignored, so retaliate". `GetIgnoreFriendlyHits`
-has only a Papyrus setter, so the read is inert and the guard became
-unconditional — the NPC force-combats the player every time.
+Nehrim's `Nexusplanet01SCN` was the clear case: `if GetIgnoreFriendlyHits == 0`
+means "friendly hits are not ignored, so retaliate". The read was then
+(wrongly) inert, so the guard became unconditional — the NPC force-combats the
+player every time. It now maps to `IsIgnoringFriendlyHits()`.
 
 The comparison therefore folds to the literal `false` when its operand went
 inert, which keeps the `If` intact (no paren swallowing), keeps the `;NE:` note
@@ -350,6 +385,17 @@ guard, so the property is normally already bound at its own narrow type.
 Genuinely incomparable (bound as Faction/GlobalVariable, say) returns None: an
 unguarded body is WRONG for every event the filter excluded, so the caller keeps
 the body but does not execute it.
+
+<a id="onhitwith-ammo"></a>
+**`OnHitWith <ammo>` is read off the shooter, not `akSource`.** For an arrow,
+Skyrim's `OnHit` passes the BOW as `akSource` (CK wiki: "the Weapon, Spell,
+Explosion, Ingredient, Potion, or Enchantment"), and `akProjectile` is None when
+the target is an actor. So `akSource == SomeArrow` can never be true. An AMMO
+filter instead becomes `TES4Polyfill.HitWithAmmo(akAggressor, SomeArrow)`: the
+attacker is an actor with that ammo equipped (`Actor.IsEquipped`) and a bow (7)
+or crossbow (12) in either hand (`GetEquippedItemType`). Both are vanilla
+natives, so no SKSE is needed. The Shivering Isles Gatekeeper's eight
+`OnHitWith SE02GKBoneArrowN` blocks never fired before this.
 
 ## Unknown commands must be inert
 <a id="unknown-commands-must-be-inert"></a>
@@ -729,6 +775,19 @@ EndEvent
 - **Do not "simplify" this back to a single event.** Remapping to
   `OnTriggerEnter` alone re-freezes the per-frame counters above; leaving it on
   `OnTrigger` alone means trap triggers never fire. Both are required.
+
+<a id="one-trigger-at-a-time"></a>**One OnTrigger at a time (2026-09-25, confirmed
+in game).** TES4 finished each frame's `OnTrigger` before the next frame's began.
+Papyrus gives every event its own thread, and a thread waiting on a game call
+lets the next event in. So a one-time block whose `set doOnce to 1` comes after
+a slow call ran once for EVERY overlapping event. Nehrim's
+`StartCelleAufzugTriggerZone01Script` (the intro lift) hit this: its
+`Autosave` + `DoOnce` block made about 7 saves in 2 seconds (counted from
+TESRuntime's `journal: saved` line, which logs once per game save). The result
+was a multi-second stutter as the lift started. The body now lives in
+`Function TES4_OnTriggerBody`, and the event skips while a `TES4_TriggerBusy`
+flag is set. It is a function so that a TES4 `return` inside the body still
+clears the flag. After the fix, the same run made one autosave.
 
 ### Physical-trap damage: TES4's ENGINE read the script's variables (2026-08-09, in-game confirmed)
 
@@ -1418,6 +1477,58 @@ is deliberate — `tes5_import/dialogue/unlocks.py` re-expresses topic visibilit
 an inert comment. `ModDisposition` (414) is a genuine engine removal, with the
 `<= -100` hostility case already converting to `StartCombat`.
 
+## GameMode steps are rates (2026-09-26, confirmed in game)
+<a id="gamemode-steps-are-rates"></a>
+
+**Code:** `script_convert/poll_motion.py`, `commands.py:set_pos`/`rotate`,
+`TES4Polyfill.SpinAxis`/`GlideAxis`, `tes_runtime/tes/spin.cpp`.
+
+TES4 ran GameMode every frame, so `set a to GetAngle Z` / `set b to a - 2` /
+`SetAngle Z b` turns two degrees per FRAME. Nehrim's wheels, gears, platforms
+and trains all move this way (171 sets in 105 scripts). A converted poll runs
+every 0.1 s at best, and late whenever the VM is busy, so every motion paced by
+it was wrong in game. Three versions failed:
+
+1. **One glide per pass, one step each:** slow (about 20°/s where TES4 at 30 fps
+   gave 60°/s) and choppy, because a late pass left the wheel standing still.
+2. **The step scaled by the frames the pass stood for, with the glide kept
+   between passes and aimed half a step ahead:** the wheel flickered. Each late
+   or early pass re-aimed a wheel that was not where the chain expected it.
+3. **The same glide sent to TESRuntime through a mod event:** still paced by
+   Papyrus, so no better.
+
+What works is MorrowindRuntime's model: a native tick at a steady 30 Hz re-aims
+the object one tick ahead every tick. The converter finds each SetPos/SetAngle
+whose value is the SAME object's axis read in the SAME pass, plus or minus a
+step, and hands the step to `SpinAxis` as a rate per second: × 30 for a
+per-frame step, ÷ `TES4_SecondsPassed` when the step itself holds
+`GetSecondsPassed`. TESRuntime moves the object from then on, and stops an
+axis no pass has renewed for 2.5 pass gaps (never under 0.5 s).
+
+- **Same pass only.** A read inside an `if` counts only for statements after it
+  in that branch. Nehrim's intro lift reads its base height once behind a
+  DoOnce, and treating that base as a step gave the lift a nonsense rate.
+- **Actors keep the Papyrus glide.** The cutscenes turn the player's view with
+  per-frame SetAngle, and TranslateTo fights an actor's own movement.
+- **The driver keeps its target within two ticks of the 3D,** so a paused game
+  cannot bank a jump.
+- **Without TESRuntime 5 or later,** `SpinAxis` falls back to `GlideAxis`.
+
+**Absolute moves go to the same tick.** A SetPos that computes the position
+itself (Nehrim's intro lift: a base height read once, plus elapsed time × speed)
+has no step to call a rate. With TESRuntime 6 or later, `GlideAxis` sends each
+target as a `TES4Track` event. TESRuntime moves the object from where it is
+headed to the new target over 1.5 pass gaps, re-aimed every tick, so a late
+pass never leaves it standing, and it lands exactly on the script's last target
+when the script stops. A reference with no 3D is placed at once, as SetPosition
+did.
+
+**TES4 `Rotate <axis> <degrees per second>` is the same rate.** It was a
+comment before, so every object it turned stood still (Nehrim 64 calls,
+Morroblivion 29, Oblivion 9, including MQ09's bridge and the SEXedPuzStatue
+puzzle). Inside a GameMode poll it is now `SpinAxis` at its authored rate; the
+Papyrus fallback turns one pass's worth.
+
 ## Event / timer conversion
 <a id="event-timer-conversion"></a>
 
@@ -1753,7 +1864,7 @@ New native equivalents found (always check before declaring one absent):
 | `ForceFlee` / `Flee` | `SetActorValue("Confidence", 0)` + `EvaluatePackage()` | Skyrim drives fleeing off Confidence — the engine's own mechanism. |
 | `GetAttacked` | `Actor.IsAlarmed() as Int` | |
 | `IsInAir` | `Actor.IsFlying() as Int` | |
-| `con_Save` | `Game.RequestSave()` | |
+| `con_Save` | dropped | See [console saves are dropped](#console-saves-are-dropped). |
 | `DispelSpell` | `Actor.DispelSpell(Spell)` | Actor-only — must NOT sit in `_OBJREF_SHARED_FUNCTIONS`. |
 | `$var` (OBSE) | `(var as String)` | `$` is not even a legal Papyrus character. |
 | `string_var` / `array_var` | `String` | Missing from `TYPE_MAP`, so the variable got **no declaration at all**. |
@@ -1803,6 +1914,18 @@ Oblivion ignored it; Papyrus fails the whole file, so it is commented out.
 - `Activate` conversions: bare `Activate` → `(akActionRef/self, true)`. Passing
   `Game.GetPlayer()` produced door/lockpick/teleport storms.
 
+### The last activator outside OnActivate
+<a id="last-activator"></a>
+
+A bare `Activate` (or `GetActionRef`) in a GameMode block means the object's
+LAST activator: Nehrim's mining rocks and dig sites (`WerkzeugSteinSchuerfenScript`,
+`WerkzeugSchatzErdhaufenScript`) play the swing in OnActivate, then a second
+later `Activate` opens the container for the player. OnUpdate has no action-ref
+parameter, so this emitted `Activate(None, true)` — a container opened by
+nobody. A script with an OnActivate block now records `TES4_LastActivator =
+akActionRef` first thing in OnActivate, and every event without an action-ref
+parameter reads that variable. Scripts without OnActivate keep `None`/`Self`.
+
 ## OBSE constructs (Nehrim depends on these heavily)
 <a id="obse-constructs"></a>
 
@@ -1818,8 +1941,98 @@ Oblivion ignored it; Papyrus fails the whole file, so it is commented out.
     first, then read `_property_refs`), else `Form`. Typing it
     `ObjectReference` — the literal translation — rejected all 170 call sites
     that pass a Spell.
-  - `SetFunctionValue X` + `return` → `Return X`, and the function needs a return
-    type plus a trailing `Return 0` for fall-through paths.
+  - `SetFunctionValue X` sets the result and does NOT end the function; see
+    [below](#set-function-value).
+
+### SetFunctionValue keeps running
+<a id="set-function-value"></a>
+
+OBSE's `SetFunctionValue X` stores the result; the function continues to its
+`return` or its end. The converter assumed a `return` always followed and
+dropped the value otherwise — `HMSfromFloat24h` ends `SetFunctionValue sTime`,
+`sv_destruct sTime`, `end`, so Nehrim's wait menu got no time string. It also
+typed every result `Int`. Now `SetFunctionValue X` → `TES4_Result = X`, every
+`return` → `Return TES4_Result`, a trailing `Return TES4_Result` closes the
+function, and the first value's type is the return type (`String` here).
+
+### A function script is hosted on its own quest
+<a id="udf-host-quest"></a>
+
+Converting the function was only half of it: the callee property must be FILLED
+with a record carrying the script. The fill resolves the script's EditorID to
+the SCPT's own FormID, and no Skyrim record lived there, so every property read
+`None` — Nehrim's 474 calls (244 of them `GlobalScriptExpGained`, the XP
+awards) all logged `Cannot call TES4Call() on a None object`, while every
+script still compiled. The July OBSE audit had marked `Call` "handled" from
+compilation alone.
+
+- A script with a `begin Function` block is HOSTED as a quest script
+  (`cross_ref.hosted_script_type`), so it `extends Quest`. The detector must
+  match both SCTX spellings: the CLI scan sees export-escaped `\n`, the
+  importer's parsed records carry real CRLF — matching only the first made the
+  scripts `extends Quest` while no host quest was written.
+- Two of the 25 Morroblivion functions DO use `Self` (`fbmwMoveToFunct` calls a
+  bare `MoveTo`, `JDLevitate` plays a sound on it), which the next section covers.
+- The importer writes one never-started QUST per function script at the SCPT's
+  own FormID (`object_scripts.write_udf_host_quests`), so the fills callers
+  already carry resolve. No FormID moves: source SCPT ids are reserved against
+  derived ids and nothing else occupied them.
+- A never-started quest still works: the CK wiki's OnInit page says quest
+  scripts initialise at game startup, before and independent of the quest
+  starting.
+- Script variables are properties, and that is RIGHT: xOBSE
+  (`FunctionScripts.cpp`, `FunctionContext`) reuses the function's one
+  persistent event list unless the call is recursive, so values carry over
+  between calls.
+- `vmad_property_typecheck.py --cross-master` checks script-typed properties for
+  existence; it reports this defect as `<no such record>`.
+
+### A user function's `Self` is its calling reference
+<a id="udf-calling-reference"></a>
+
+OBSE runs `Player.Call fbmwMoveToFunct marker` with Player as the function's
+implicit reference, and a bare `Call` with the caller's own. Hosted on a quest,
+the function has no reference of its own, so `TES4Call` takes the calling
+reference as its FIRST parameter (`akCallingRef`) and the body's `Self` is
+rewritten to it. Every call site passes one — the receiver, the caller's own
+reference, or `None` from a quest script. It is uniform because a caller is
+converted without seeing the callee's body. Two Morroblivion functions used
+`Self` and failed to compile until this.
+
+### A nested command no longer erases its caller's arguments
+<a id="nested-call-arguments"></a>
+
+The current call's argument nodes live in one converter field,
+`_arg_nodes`. Converting an argument that itself holds a command replaced that
+field with the INNER call's arguments, so every later argument of the outer
+call read as absent: `Call GlobalScriptExpGained 30 * (getPCMiscStat 8 - l), 1,
+1, -1` emitted `TES4Call(30 * (...), , , )`. `dispatch.emit_command` now
+restores the caller's arguments when a command finishes.
+
+### `forEach` is a block
+<a id="foreach-is-a-block"></a>
+
+`forEach <it> <- <container> ... loop` parses as a `ForEach` node owning its body,
+and the emitter comments out exactly that block. Papyrus has no OBSE container
+iterator, so the body cannot run. Before, the parser read the `loop` as an
+unmatched closer, the emitter's "inside a forEach" counter never came down, and
+EVERY statement after the first forEach in the event was commented out —
+Nehrim's `AAGeneralUpdateQuest` lost its lock-picking and discovery XP awards,
+its music check and more.
+
+### GetPCMiscStat names the stat
+<a id="pc-misc-stat-names"></a>
+
+TES4 numbers its misc stats (xEdit `wbMiscStatEnum`, 34 entries); Skyrim's
+`Game.QueryStat` / `IncrementStat` take the stat's NAME (CK wiki
+`ListOfTrackedStats`). The old row passed the number as the name —
+`QueryStat("8")` — which the game rejects (`Misc stat "3" is not a stat` in the
+Papyrus log) and reads as 0. `TES4_MISC_STAT_NAMES` maps each index to the
+Skyrim stat with the same meaning (Places Discovered → Locations Discovered,
+Potions Made → Potions Mixed, People Fed On → Necks Bitten, Days In Prison →
+Days Jailed, Hours Waited → Hours Waiting). Picks Broken, Oblivion Gates Shut,
+Artifacts Found, Last Day As Vampire and Jokes Told have no Skyrim stat and
+read as 0 with a note.
 - `eval <expr>` is a pure pass-through wrapper (Nehrim uses it only around
   `Call`) — drop it. Beware over-broad stripping: an earlier pass ate a variable
   named `Eval`.
@@ -1838,8 +2051,10 @@ Oblivion ignored it; Papyrus fails the whole file, so it is commented out.
   the rest of `sv_*`, `forEach`), path-based music (`StreamMusic` and Nehrim's bundled `emc*`
   plugin; Skyrim music is MusicType-based), `GetPlayerHasLastRiddenHorse`,
   `HasFlames`/`AddFlames`/`RemoveFlames`, `PositionCell` (Papyrus `MoveTo` takes
-  a reference, not cell coordinates), `GetIgnoreFriendlyHits` (Skyrim exposes
-  only the setter).
+  a reference, not cell coordinates).
+- `Set/GetIgnoreFriendlyHits` map to `IgnoreFriendlyHits(bool)` /
+  `IsIgnoringFriendlyHits()`. Dropping the setter made scripted allies (Nehrim's
+  Celebro in the intro) turn on the player at the first stray hit.
 
 ## Scripts on placed references
 <a id="scripts-placed-references"></a>
@@ -1892,6 +2107,65 @@ troll and then talk to the player, never appeared in the start cell
 reference event, so it stayed on the base NPC_ (bug 1), and its poll was
 3D-gated, so it could not have run anyway (bug 2). Both had to be fixed for him
 to spawn.
+
+### <a id="poll-lifecycle"></a>What starts and stops a reference's poll
+
+`assemble.lifecycle` arms an object or actor poll from three events:
+
+- **OnCellAttach** fires each time the reference streams into an active cell,
+  which confines the loop to when the object is present, like TES4 GameMode.
+- **OnLoad** covers a reference already standing in an attached cell when the
+  script binds (new game, or the player is already there). OnCellAttach only
+  fires when a cell *becomes* attached, so without OnLoad the poll never
+  started. That kept Arielle (MG04Restore) standing still: her package waits on
+  `startconv == 1`, which only her GameMode body sets.
+- **OnInit**, behind the poll gate. OnInit alone is not enough on a placed
+  reference because it runs before the 3D exists (that silenced Valen Dreth).
+  The gate keeps the anti-storm property: an unconditional OnInit register made
+  every scripted object in the game start ticking at load.
+
+**Nothing unregisters on OnCellDetach.** Cell-transition events arrive in no
+guaranteed order, so the detach for the old cell could land after
+OnLoad/OnCellAttach had re-armed the poll for the new one and kill a loaded
+actor's loop mid-scene (the CharacterGen escort NPCs went mute this way). The
+gate in OnUpdate stops the loop itself one tick after the reference leaves.
+
+### <a id="carried-items-and-read-books"></a>Carried items and books read from an inventory (2026-09-26, confirmed in game)
+
+**Code:** `assemble._track_holder`, `assemble._carried_read`, `cross_ref.attached_signatures`.
+
+TES4 runs an item's GameMode block while it sits in a container, and a book's
+`OnActivate` is its "the player read this" hook. Skyrim breaks both:
+
+- **The poll died on pickup.** The gate refused any reference without a parent
+  cell, so a GameMode body that finishes after pickup never ran. Nehrim's torn
+  note (`SchattenrufNotizScript`) sets MQ00 stage 27 (the torch journal entry)
+  from GameMode once its MenuMode block has marked it read. Now
+  `OnContainerChanged` and `OnEquipped` record the holder in `TES4_Holder` and
+  re-arm, and the gate also passes while the holder is loaded.
+- **`OnActivate` misses carried reads.** A read from the inventory, or a take
+  by a perk-based "take books" mod, never raises it. For scripts attached only
+  to BOOK records whose `OnActivate` contains a bare `Activate` (51 in Nehrim,
+  23 in Oblivion), the same body also runs from `OnRead` with the opening
+  `Activate` dropped. `OnActivate` sets `TES4_ReadByActivate`, so the read its
+  own book-open raises is skipped and the body runs once per read.
+- **Nothing ticked after the read.** An in-game trace showed `OnEquipped` and
+  `OnRead` arrive during the book menu and `OnRead` set `lesen = 1`, but the
+  note's poll never ticked again. `OnRead` now calls `Utility.Wait(0.001)`
+  (the CK wiki's idiom for waiting out an open menu) and runs one `OnUpdate()`
+  pass, as TES4 GameMode ran on the first frame after the menu.
+
+Measured along the way (save `save_papyrus_dump`, Papyrus log, one trace):
+
+- `GetParentCell()` is **not** a carried-item test. The first `OnRead` guard
+  `If !GetParentCell()` skipped the body silently for a taken note.
+- A mod's perk take bypasses `OnActivate` entirely. The note's `lesen` stayed 0.
+- Books whose `OnActivate` never opens them (Oghma Infinium, Nehrim's
+  Jagdbuch books) keep `OnActivate` only; their activation replaces reading.
+
+Known gap: when a player activation of a book is consumed without opening it
+(a "not yet readable" gate), the flag stays set and the next carried read is
+skipped once.
 
 ### A bare GameMode block also forces relocation (2026-08-02)
 
@@ -2122,6 +2396,71 @@ also matches a renamed call shape, and `set X.fQuestDelayTime to N` emits
 REPEATING registration and `RegisterForUpdate(0)` shipped in 45 scripts as an
 every-frame storm, ended only by the engine stop that the reverted design
 removed. Measured on the shipped build: 0 repeating registrations.
+
+## StartCombat retargets an actor already in combat (2026-09-25, confirmed in game)
+<a id="startcombat-retargets"></a>
+
+**Symptom:** at the start of "Through the Fringe of Madness" the Gatekeeper
+fights the four orc adventurers for a very long time instead of killing them one
+by one.
+
+**Cause:** `SE02OrcCaptainScript` keeps every orc invincible until its turn,
+then calls `GatekeeperRef.startCombat SE02OrcAdventurerNRef` every frame; that
+orc dies on the next Gatekeeper hit (`OnHit SE02GatekeeperNRef → kill`). The
+authored code only works because TES4 StartCombat switches an actor that is
+already fighting. Skyrim's does not (1.6.1170):
+
+- the `StartCombat` native (0x9eae60) queues task 0x2a; its handler (0x657e1f)
+  skips the whole start when the actor's combat controller (`actor+0x160`)
+  already lists the target in its group (0x803df0 scans the group's target
+  array). All four orcs are hitting him, so every call was a no-op and he kept
+  swinging at whichever invincible orc his AI preferred.
+- `StopCombat` (0x9eb250) only sets the controller's stop flag (`+0x40`);
+  combat ends on its next update, so StopCombat + StartCombat in one call still
+  hits the no-op.
+
+**Fix:** `TES4Polyfill.ForceCombat` — when the attacker is in combat with a
+different target it calls `StopCombat`, waits (0.05 s steps, 1 s cap) until
+`IsInCombat()` is false, then calls `StartCombat`. Generic: every converted
+`StartCombat` now retargets as TES4's did.
+
+## ForceCombat keeps the player out of the shared faction pair (2026-09-25, confirmed in game)
+<a id="forcecombat-player-faction"></a>
+
+**Symptom:** in the Nehrim intro, Celebro turns hostile around the elevator room
+without the player ever hitting him.
+
+**Cause:** `StartCelleAufzugRaumTrigZoneScript` runs `troll.StartCombat Player`,
+`troll.StartCombat CelebroRef`, then `CelebroRef.StartCombat troll`. ForceCombat
+put the player in `TES4ForceCombatVictims` and Celebro in
+`TES4ForceCombatAttackers`. The pair is Enemy both ways, so Celebro (Aggression
+1, which attacks Enemies) attacked the player. The memberships are permanent, so
+every later forced attacker in the game would also have turned on the player.
+
+**Fix:** when either side is the player, ForceCombat adds the other actor to
+vanilla `WIPlayerEnemyFaction` (Skyrim.esm 0x06E02D: Hidden, with one relation,
+Enemy of PlayerFaction), which vanilla WI scripts join before `StartCombat` on the
+player. Skyrim.esm has 60 such one-purpose player-enemy factions. ForceCombat also
+removes the player from both pair factions, which repairs saves made after the old
+behavior. The 4-argument signature is unchanged, so already-compiled callers from
+other plugins keep working.
+
+## A SetStage that starts a quest keeps its variables (2026-09-25, unconfirmed in game)
+<a id="setstage-start-keeps-variables"></a>
+
+`SetStage` on a stopped quest starts it, so it resets the quest script's `Auto`
+properties exactly as `Start()` does. TES4 authors write a quest's variables
+before its first stage: the Shivering Isles door (`SEDoorToShiveringIslesScript`)
+stores the leveled Gatekeeper in `SE02.GatekeeperRef`, and SE02 only starts
+later at `SetStage SE02 5` in the waiting room. The start wiped it, and
+`SE02OrcCaptainScript` logged `Cannot call IsEssential() on a None object` every
+tick. It never made the Gatekeeper invincible, never put him in
+`SE02SpecialCombatFaction`, and never started the staged fight.
+
+**Fix:** `SetStage` on a quest with a script converts to
+`TES4_<Script>.TES4SetStage(<quest> as TES4_<Script>, N)`. That Global sits beside
+`TES4Start`, routes a stopped quest through `TES4Start`, then calls `SetStage`.
+`conversation_sequence` recognizes both call shapes.
 
 ## ResetInterior sends moved-in references home (2026-09-24, confirmed in game)
 <a id="resetinterior-sends-moved-refs-home"></a>
@@ -3280,8 +3619,20 @@ cleanly while being wrong.
   the quotes and `_safe_property_name` turned each into an underscore, declaring
   a second, never-bindable `Sound Property _X_` beside the real one — 75 dead
   properties across 23 files.
-- **`con_Save` / `Autosave` / `con_SaveGame`** take a save-slot NAME, which
-  Papyrus does not accept, so it is dropped and the engine picks the slot.
+- **`Autosave`** takes a save-slot NAME, which Papyrus does not accept, so it
+  is dropped and the engine picks the slot.
+- <a id="console-saves-are-dropped"></a>**`con_Save` / `con_SaveGame` /
+  `SaveGame` are dropped entirely (2026-09-25).** Across
+  every export there are 8 calls, in 2 scripts. Seven of those calls are in Nehrim's
+  `AutoSaveQuestScript`, a save manager: at startup it turns off Oblivion's own
+  save on wait/travel/rest and the `Autosave` command. It then saves every
+  2 minutes and on every cell change, rotating through seven named slots. The
+  eighth is Morroblivion's `fbmwBMWerewolfPC`, which saves once per night the
+  player turns into a werewolf. `Game.RequestSave()` writes a NEW save file
+  every call, so the conversion piled up a new save file every few minutes.
+  Skyrim's own autosaves (load doors, rest/wait/travel, the player's
+  settings) do the job these scripts did for Oblivion. The story checkpoints
+  all use `Autosave` (45 calls), which stays `Game.RequestAutoSave()`.
 
 ### FO3/FNV commands that reach the compiler unrouted
 <a id="fnv-unrouted-commands"></a>
@@ -3901,7 +4252,6 @@ Checked against `Actor.psc`, `ObjectReference.psc`, `Form.psc`, `Game.psc` and
 
 | TES4 read | Why there is no target |
 |---|---|
-| `GetIgnoreFriendlyHits` | `IgnoreFriendlyHits` is a SETTER only |
 | `GetObjectType`, `IsDoor`/`IsActivator`/`IsContainer` | Skyrim's form-type numbering differs entirely; `GetType` is SKSE |
 | `GetDisplayName` / `SetName` | no name accessor on any vanilla script |
 | `GetGodMode` | third-party SKSE plugins only |

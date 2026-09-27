@@ -41,7 +41,7 @@ def _read(plugin):
     A malformed or absent file answers empty: a pin is an optimisation of
     human intent, never a thing whose absence may abort a conversion.
     """
-    out = {'cells': {}, 'welds': {}}
+    out = {'cells': {}, 'welds': {}, 'cuts': {}}
     try:
         with open(pins_path(plugin), encoding='utf-8') as fh:
             got = json.load(fh)
@@ -49,7 +49,7 @@ def _read(plugin):
         return out
     if not isinstance(got, dict):
         return out
-    for part in ('cells', 'welds'):
+    for part in ('cells', 'welds', 'cuts'):
         section = got.get(part)
         if isinstance(section, dict):
             out[part] = {k: v for k, v in section.items()
@@ -127,15 +127,71 @@ def welds_for(plugin, key):
     return out
 
 
+def cuts_for(plugin, key):
+    """`[(zmin, zmax, [(x, y), ...]), ...]` regions to strip from one cell's navmesh.
+
+    A row is `[zmin, zmax, x1, y1, x2, y2, x3, y3, ...]`: a polygon of at
+    least three corners in world XY plus the height band it applies to.
+    See: docs/commentary/tes5_import_navmesh.md#cut-pins
+    """
+    out = []
+    for row in _section(plugin, 'cuts', key):
+        if len(row) >= 8 and len(row) % 2 == 0:
+            vals = [float(c) for c in row]
+            out.append((vals[0], vals[1], list(zip(vals[2::2], vals[3::2]))))
+    return out
+
+
+def _inside(x, y, poly):
+    """True when (x, y) lies inside the polygon (even-odd rule)."""
+    hit = False
+    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            hit = not hit
+    return hit
+
+
+def _is_cut(verts, tri, cuts):
+    """True when the triangle's centroid falls inside any cut region and band."""
+    cx, cy, cz = (sum(verts[i][k] for i in tri[:3]) / 3.0 for k in range(3))
+    return any(zmin <= cz <= zmax and _inside(cx, cy, poly)
+               for zmin, zmax, poly in cuts)
+
+
+def apply_cuts(verts, tris, ledges, cuts):
+    """(verts, tris, ledges) with every cut triangle removed and indices compacted.
+
+    Ledge links naming a removed triangle are dropped with it.
+    See: docs/commentary/tes5_import_navmesh.md#cut-pins
+    """
+    if not cuts or not tris:
+        return verts, tris, ledges
+    keep = [i for i, t in enumerate(tris) if not _is_cut(verts, t, cuts)]
+    if len(keep) == len(tris):
+        return verts, tris, ledges
+    tri_map = {old: new for new, old in enumerate(keep)}
+    used = sorted({v for i in keep for v in tris[i][:3]})
+    vert_map = {old: new for new, old in enumerate(used)}
+    new_tris = [tuple(vert_map[v] for v in tris[i][:3]) + tuple(tris[i][3:])
+                for i in keep]
+    new_ledges = [(tri_map[u], tri_map[l]) + tuple(rest)
+                  for (u, l, *rest) in ledges or ()
+                  if u in tri_map and l in tri_map]
+    return [verts[v] for v in used], new_tris, new_ledges
+
+
 def digest(plugin, key):
     """A stable string for `geom_hash`, so pinning one cell restages only it.
 
-    Empty when the cell has neither pins nor welds, which keeps every
+    Empty when the cell has no pins, welds or cuts, which keeps every
     unpinned cell's hash exactly what it was before pins existed.
     """
     parts = ['%.2f,%.2f,%.2f' % p for p in pins_for(plugin, key)]
     parts += ['W%.2f,%.2f,%.2f>%.2f,%.2f,%.2f' % (a + b)
               for (a, b) in welds_for(plugin, key)]
+    parts += ['C%.2f,%.2f:' % (zmin, zmax)
+              + ';'.join('%.2f,%.2f' % p for p in poly)
+              for (zmin, zmax, poly) in cuts_for(plugin, key)]
     return '|'.join(parts)
 
 
@@ -164,7 +220,8 @@ def save(plugin, key, points, welds=()):
     path = pins_path(plugin)
     with open(path, 'w', encoding='utf-8') as fh:
         json.dump({'plugin': plugin, 'cells': doc['cells'],
-                   'welds': doc['welds']}, fh, indent=1, sort_keys=True)
+                   'welds': doc['welds'], 'cuts': doc['cuts']},
+                  fh, indent=1, sort_keys=True)
         fh.write('\n')
     _CACHE.pop(plugin, None)
     return path, len(doc['cells'].get(key, ())), len(doc['welds'].get(key, ()))

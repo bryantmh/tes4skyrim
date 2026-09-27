@@ -94,6 +94,7 @@ constraint. Each of these must run **before** the phase named:
 | 0g package plan | alias indices | **both** QUST and PACK | A quest-owned package must hang off a QUST reference alias (ALPC) to outrank the actor's standing schedule, so the alias indices must be decided before either record is written — both read this one plan. |
 | 0h leveled actors | shell NPC_ per placed LVLC | the CELL/WRLD builders | Skyrim only spawns actors from ACHR→NPC_, so each placed LVLC becomes an ACHR aimed at a generated shell NPC_ whose TPLT points at the LVLN. Needs the generated creature races from 0f, and the builders read `by_type['REFR']`/`['ACHR']`. |
 | effect families | the MGEF index and one `TES4FX_*` KYWD per effect | the object/quest script plans | A converted `HasMagicEffect` binds the effect's family keyword through `WELL_KNOWN_PROPERTIES`; a script plan built first leaves the property unbound ([effect families](tes5_import_magic.md#effect-families)). |
+| crime realms | one crime FACT per realm and the `TES4CrimeFactions` FLST | the object/quest script plans | Every converted bounty/`SetPlayerInSEWorld` call reads the realm list through `WELL_KNOWN_PROPERTIES`. Planned after the scripts, the Dark Brotherhood quest's `TES4CrimeFactions` stayed unbound and `GetCrimeGoldViolent` threw every tick. |
 | 0i item index | record type + biped slot per item | Phase 1 actors | A TES4 actor equips out of one mixed CNTO inventory; TES5 needs wearables moved to a DOFT outfit and the rest left in CNTO. **A dependent plugin dresses its actors out of its MASTER's wardrobe**, so the master's item records must be in the index too, or every master-owned wearable classifies as non-wearable and the actor gets no outfit at all. |
 
 Phase 0h indexes **every LVLC reachable from here — this plugin's and its
@@ -222,6 +223,14 @@ missing exactly the properties the compiled script reads. `AIPackage` lists and
 `PKDT.Type` back the reconstruction of TES4's `GetCurrentAIPackage == <type>`
 (`cross_ref.pack_type`).
 
+The field-derived tables (`record_model`, `mgef_shaders`, `spell_effects`,
+`global_types`, `global_values`, `enchanted_books`) are filled by ONE function,
+`cross_ref.index_record_details`, which both the CLI scan and this graph call.
+Until 2026-09-25 this graph skipped all six. `IsSpellTarget VampDisease` then
+found no effects at import time and planned no property, while the scripts stage
+declared `TES4FX_drfa`. The Vampire quest's keyword stayed unbound, and
+`HasMagicEffectWithKeyword` rejected the None keyword every tick.
+
 **A master record's id FIELDS must be re-keyed too**, not just the outer key.
 The graph chains them: `record_scri[fid] -> script_formid_to_edid[scri]`,
 `record_base[fid] -> the base's own entry`. Re-keying only the outer key would
@@ -269,6 +278,25 @@ missing.** Entries are plain lists, so a cache written before a field was added
 parses cleanly and reads as all-zeroes for that field — which is how Nehrim
 served flag-less entries for every mesh long after the HELD bit shipped, leaving
 breakaway planks and traps unreleased.
+
+`BOUNDS_SCHEMA_VERSION` (`collision_extract.py`) is bumped whenever an entry
+gains a field or a field changes meaning; a cache below it is regenerated, never
+trusted. The hole it closes: the HELD bit (bit 1) shipped 2026-08-05, but the scan
+then ran only when the cache file was ABSENT, so Nehrim kept its 2026-08-02 cache
+and 0 of its 11,946 meshes carried the bit. `needs_havok_release` answered False
+for every one and mwallplankbreakaway01's planks hung in mid-air. Oblivion's
+cache happened to be rebuilt an hour after that commit, so the bug looked
+Nehrim-only. Version 4 widened bit 0 from "constrained island" to "any simulated
+body" ([STAT → MSTT](asset_convert_collision.md#stat-simulated-mstt)).
+
+**A current cache still takes the mesh stage's pending fragments.** The mesh
+stage records each mesh it writes as a fragment, and only this function merges
+them. It used to return as soon as both caches were current, so a scoped
+`--meshes-only --mesh-subdirs` rebuild never reached the caches: the new
+ctrapcavein01/ctraplogs01 HELD bits stayed invisible to `--scripts-only`, and
+their scripts never gained `ReleaseBreakaway`. With both caches current, the
+fragments are now folded over them (`fold_mesh_entries`: no NIF parse, and
+meshes no longer on disk drop out).
 
 **Being current includes being READABLE, not just carrying the right magic.**
 `collision_cache_is_current` originally compared only the 8 magic bytes. A local
