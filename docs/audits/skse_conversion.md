@@ -37,7 +37,7 @@ Counts are occurrences / distinct SCPT scripts. "Verdict" is the faithful-conver
 
 | OBSE function | occ | scripts | Faithful conversion | Verdict |
 |---|---:|---:|---|---|
-| `Call` (UDF invoke) | 771 | 383 | `TES4Call` method (converter mechanism) | **VANILLA** — already handled, no SKSE |
+| `Call` (UDF invoke) | 771 | 383 | `TES4Call` method (converter mechanism) | **VANILLA**, no SKSE — but "handled" was judged from compilation: every call ran on an unfilled property until the function scripts got host quests ([udf-host-quest](../commentary/script_convert.md#udf-host-quest)) |
 | `eval` | 174 | 174 | pass-through wrapper, dropped | **VANILLA** — already handled |
 | `Let` | 156 | 5 | `x = x op y` rewrite | **VANILLA** — already handled |
 | `loop` | 17 | 5 | `While`/`EndWhile` | **VANILLA** — already handled |

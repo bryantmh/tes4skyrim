@@ -26,6 +26,9 @@ STEP_FLAGS = (
 #: Steps the default run (no `--*-only`) leaves out.
 NOT_DEFAULT = frozenset({'pack_zip'})
 
+#: Steps that honor `--only`; any other step with it would silently rebuild everything.
+SCOPED_STEPS = frozenset({'creatures'})
+
 #: (flag, help) for every `--*-only` step flag.
 _ONLY_FLAGS = (
     ("--export-only", "Parse TES4 binary -> key/value text cache"),
@@ -48,6 +51,11 @@ def selected_steps(args) -> list:
     """The steps this run executes, in run order."""
     only = [step for step, flag in STEP_FLAGS if getattr(args, flag)]
     return only or [step for step, _flag in STEP_FLAGS if step not in NOT_DEFAULT]
+
+
+def unscoped_steps(args, steps: list) -> list:
+    """The selected steps `--only` cannot narrow; empty when it was not given."""
+    return [step for step in steps if step not in SCOPED_STEPS] if args.only else []
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,6 +94,11 @@ def _add_run_args(parser) -> None:
                              "the DEFAULT and already fall back to Python per "
                              "tree when no Oblivion.exe is configured or the "
                              "native harness is missing.")
+    parser.add_argument("--only", nargs="+", metavar="NAME",
+                        help="Scope the stage to these units instead of "
+                             "rebuilding all of them. Honored by "
+                             "--creatures-only: creature folder names "
+                             "(e.g. rat mudcrab). Any other stage refuses it.")
     parser.add_argument("--patch-plugins", nargs="+", metavar="PLUGIN",
                         help="Skyrim plugin filenames to generate a slot-44 "
                              "patch for (e.g. Skyrim.esm Dawnguard.esm). "

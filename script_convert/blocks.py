@@ -133,6 +133,16 @@ def _filter_record_type(conv, name: str) -> str:
     return record_type_to_papyrus(conv.xref.record_type.get(fid, ''))
 
 
+def _ammo_hit_guard(conv, name: str) -> str:
+    """The OnHit guard for `begin OnHitWith <ammo>`, read off the shooter.
+
+    See: docs/commentary/script_convert.md#onhitwith-ammo
+    """
+    safe = safe_property_name(name)
+    conv.sc.property_refs[safe] = 'Ammo'
+    return f'TES4Polyfill.HitWithAmmo(akAggressor, {safe})'
+
+
 def block_filter_guard(conv, block_type: str,
                        block_filter: str) -> 'str | None':
     """Compile a TES4 block filter into a Papyrus condition, or '' if none.
@@ -155,6 +165,8 @@ def block_filter_guard(conv, block_type: str,
     rtype = _filter_record_type(conv, name)
     if not rtype:
         return ''
+    if block_type == 'onhitwith' and rtype == 'Ammo':
+        return _ammo_hit_guard(conv, name)
     ptype = _filter_property_type(param_type, rtype)
     if ptype is None:
         return ''

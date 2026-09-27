@@ -235,9 +235,129 @@ Function SetAngle(ObjectReference akRef, String axis, Float afValue) Global
   akRef.SetAngle(x, y, z)
 EndFunction
 
+; A SetPos/SetAngle inside a converted GameMode poll.  TES4 moved objects by
+; calling them every frame; Skyrim's SetPosition/SetAngle reload the 3D, which
+; fades back in, so called every poll the object never finishes fading.  Each
+; step is a TranslateTo glide arriving as the next poll starts instead -- the
+; MorrowindRuntime GlideTo, confirmed smooth in game.
+; akRefs/afGoals are this pass's poses, twelve floats per slot: the goal
+; (position X Y Z, angle X Y Z) then where the reference stood when the pass
+; first touched it.  A second axis set in the same pass chains from the first
+; rather than reading back a glide that has only just started, and no pose is
+; read from the engine twice.
+; aiAxis: 0-2 position, 3-5 angle.  afSeconds is the measured gap since the
+; last pass, so the glide ends as the next one begins even when the VM is late;
+; a near-zero gap (two passes armed at once) floors at half the fastest poll.
+; With TESRuntime 6 or later a non-actor's target goes to its 30 Hz tick
+; instead ("TES4Track"), which reaches it over 1.5 pass gaps.
+; See: docs/commentary/script_convert.md#gamemode-steps-are-rates
+Function GlideAxis(ObjectReference akRef, Int aiAxis, Float afValue, ObjectReference[] akRefs, Float[] afGoals, Float afSeconds) Global
+  If akRef == None
+    Return
+  EndIf
+  If !(akRef as Actor) && SKSE.GetPluginVersion("TESRuntime") >= 6
+    akRef.SendModEvent("TES4Track", aiAxis as String, afValue)
+    Return
+  EndIf
+  Int slot = akRefs.Find(akRef)
+  If slot < 0
+    slot = akRefs.Find(None)
+    If slot < 0
+      slot = akRefs.Length - 1
+    EndIf
+    akRefs[slot] = akRef
+    Int i = slot * 12
+    afGoals[i] = akRef.GetPositionX()
+    afGoals[i + 1] = akRef.GetPositionY()
+    afGoals[i + 2] = akRef.GetPositionZ()
+    afGoals[i + 3] = akRef.GetAngleX()
+    afGoals[i + 4] = akRef.GetAngleY()
+    afGoals[i + 5] = akRef.GetAngleZ()
+    While i < slot * 12 + 6
+      afGoals[i + 6] = afGoals[i]
+      i += 1
+    EndWhile
+  EndIf
+  Int b = slot * 12
+  afGoals[b + aiAxis] = afValue
+  Float x = afGoals[b]
+  Float y = afGoals[b + 1]
+  Float z = afGoals[b + 2]
+  If !akRef.Is3DLoaded()
+    akRef.SetPosition(x, y, z)
+    akRef.SetAngle(afGoals[b + 3], afGoals[b + 4], afGoals[b + 5])
+    Return
+  EndIf
+  If afSeconds < 0.05
+    afSeconds = 0.05
+  EndIf
+  Float dx = x - afGoals[b + 6]
+  Float dy = y - afGoals[b + 7]
+  Float dz = z - afGoals[b + 8]
+  Float distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+  ; A rotation ends when the position arrives, so a pure rotation glides over
+  ; a 0.01-unit Z nudge, alternating up and down so it never drifts.
+  If distance < 0.005
+    If Math.Floor(z * 100.0 + 0.5) % 2 == 0
+      z += 0.01
+    Else
+      z -= 0.01
+    EndIf
+    distance = 0.01
+  EndIf
+  akRef.TranslateTo(x, y, z, NearAngle(afGoals[b + 9], afGoals[b + 3]), NearAngle(afGoals[b + 10], afGoals[b + 4]), NearAngle(afGoals[b + 11], afGoals[b + 5]), distance / afSeconds, 0.0)
+EndFunction
+
+; afTo moved by whole turns to lie within 180 degrees of afFrom, so a glide
+; takes the short way round.
+Float Function NearAngle(Float afFrom, Float afTo) Global
+  Float d = afTo - afFrom
+  While d > 180.0
+    d -= 360.0
+  EndWhile
+  While d < -180.0
+    d += 360.0
+  EndWhile
+  Return afFrom + d
+EndFunction
+
+; A SetPos/SetAngle that steps from the object's own pose, inside a converted
+; GameMode poll: TES4 turned or moved it that much every frame.  afRate is the
+; step as a rate per second.  TESRuntime turns it at that rate on its own 30 Hz
+; tick, re-aimed each tick like MorrowindRuntime's Rotate, so the motion does
+; not wait on the next Papyrus pass; each pass renews the rate and TESRuntime
+; stops the object once passes stop.  An actor (the player's view in a
+; cutscene) and a game without TESRuntime take a GlideAxis glide instead.
+; See: docs/commentary/script_convert.md#gamemode-steps-are-rates
+Function SpinAxis(ObjectReference akRef, Int aiAxis, Float afValue, Float afRate, ObjectReference[] akRefs, Float[] afGoals, Float afSeconds) Global
+  If akRef == None
+    Return
+  EndIf
+  If !(akRef as Actor) && SKSE.GetPluginVersion("TESRuntime") >= 5
+    akRef.SendModEvent("TES4Spin", aiAxis as String, afRate)
+  Else
+    GlideAxis(akRef, aiAxis, afValue, akRefs, afGoals, afSeconds)
+  EndIf
+EndFunction
+
 ; ==========================================================================
 ; Combat
 ; ==========================================================================
+
+; TES4 `begin OnHitWith <ammo>`.  Skyrim's OnHit passes the BOW as akSource and
+; no projectile for an actor target, so the arrow is read off the shooter: the
+; ammo is equipped and a bow (7) or crossbow (12) is in hand.
+Bool Function HitWithAmmo(ObjectReference akAggressor, Ammo akAmmo) Global
+  Actor shooter = akAggressor as Actor
+  If shooter == None || !shooter.IsEquipped(akAmmo)
+    Return False
+  EndIf
+  Int weaponType = shooter.GetEquippedItemType(1)
+  If weaponType != 7 && weaponType != 12
+    weaponType = shooter.GetEquippedItemType(0)
+  EndIf
+  Return weaponType == 7 || weaponType == 12
+EndFunction
 
 ; TES4 StartCombat FORCES the fight: the actor attacks the target regardless
 ; of aggression, disposition or faction relations.  CharacterGen's finale
@@ -269,19 +389,52 @@ EndFunction
 ; The memberships persist until death or an explicit stopcombat, matching
 ; TES4 StartCombat (fight until someone dies or a script stands them down).
 ; Cross-pair contamination (attacker A hostile to victim B forced in a
-; different scene) is accepted: forced attackers are overwhelmingly scene
-; actors that die in their scene, and TES4's own disposition damage from
-; StartCombat leaked comparably.
+; different scene) is accepted between NPCs, but NEVER for the player: the
+; Nehrim intro forces trolls onto the player and Celebro onto the trolls, so
+; a player in Victims made the ally Celebro (an Attacker) turn on them.  A
+; fight involving the player instead puts the other actor in vanilla's
+; WIPlayerEnemyFaction (Skyrim.esm 0x06E02D, Hidden, sole relation Enemy of
+; PlayerFaction -- the faction vanilla WI scripts add an actor to before
+; StartCombat on the player), and the player is taken back out of the pair
+; (saves made before this fix already hold that membership).
+;
+; TES4 StartCombat also RETARGETS an actor already fighting someone else
+; (SE02's Gatekeeper is steered onto one orc at a time while all four are
+; hitting him).  Skyrim's does not: its queued task (1.6.1170 0x657e1f) does
+; nothing when the target is already in the actor's combat group, and
+; StopCombat (0x9eb250) only flags the controller to stop on its next
+; update.  So an attacker busy with another target is stood down, the
+; function waits for combat to actually end, and then starts it afresh.
 Function ForceCombat(Actor akAttacker, Actor akTarget, Faction akAttackers, Faction akVictims) Global
   If akAttacker == None || akTarget == None
     Return
   EndIf
+  Actor player = Game.GetPlayer()
   If akAttackers != None && akVictims != None
+    player.RemoveFromFaction(akAttackers)
+    player.RemoveFromFaction(akVictims)
+  EndIf
+  If akTarget == player || akAttacker == player
+    Faction hatesPlayer = Game.GetFormFromFile(0x06E02D, "Skyrim.esm") as Faction
+    If akTarget == player
+      akAttacker.AddToFaction(hatesPlayer)
+    Else
+      akTarget.AddToFaction(hatesPlayer)
+    EndIf
+  ElseIf akAttackers != None && akVictims != None
     akAttacker.AddToFaction(akAttackers)
     akTarget.AddToFaction(akVictims)
   EndIf
   If akAttacker.GetActorValue("Aggression") < 1.0
     akAttacker.SetActorValue("Aggression", 1)
+  EndIf
+  If akAttacker.IsInCombat() && akAttacker.GetCombatTarget() != akTarget
+    akAttacker.StopCombat()
+    Int waited = 0
+    While akAttacker.IsInCombat() && waited < 20
+      Utility.Wait(0.05)
+      waited += 1
+    EndWhile
   EndIf
   akAttacker.StartCombat(akTarget)
 EndFunction
@@ -471,6 +624,39 @@ Function EvaluatePackage(Actor akActor) Global
   akActor.EvaluatePackage()
 EndFunction
 
+; TES4 `StartConversation Player [topic]`.  Papyrus cannot open dialogue, so the
+; actor joins one alias of the topic's pool (aiFirst .. aiFirst+aiCount-1) on the
+; importer's TES4ForceGreets quest; that alias's ForceGreet package walks over
+; and opens the topic, and its OnEnd fragment (TES4_ForceGreetDone) empties the
+; alias again.  An actor already holding a slot is only re-evaluated; with every
+; slot busy, the first is taken over.
+Function ForceGreet(Quest akPool, Int aiFirst, Int aiCount, Actor akActor) Global
+  If !akPool || !akActor
+    Return
+  EndIf
+  If !akPool.IsRunning()
+    akPool.Start()
+  EndIf
+  ReferenceAlias freeSlot = None
+  Int i = 0
+  While i < aiCount
+    ReferenceAlias slot = akPool.GetAlias(aiFirst + i) as ReferenceAlias
+    ObjectReference held = slot.GetReference()
+    If held == akActor
+      akActor.EvaluatePackage()
+      Return
+    ElseIf !held && !freeSlot
+      freeSlot = slot
+    EndIf
+    i += 1
+  EndWhile
+  If !freeSlot
+    freeSlot = akPool.GetAlias(aiFirst) as ReferenceAlias
+  EndIf
+  freeSlot.ForceRefTo(akActor)
+  akActor.EvaluatePackage()
+EndFunction
+
 ; ==========================================================================
 ; Container
 ; ==========================================================================
@@ -540,48 +726,23 @@ Function SetActorRefraction(Actor akActor, Float afValue) Global
   EndIf
 EndFunction
 
-; TES4 (OBSE) ResetFallDamageTimer cleared the accumulated fall distance so the
-; next landing did no damage.
-;
-; Skyrim has NO vanilla-Papyrus route to this.  The console command survives
-; (opcode 4404) but is not bound to Papyrus; the GMST the fall-damage formula
-; reads (fJumpFallHeightMin) has readers but no vanilla writer — SKSE's
-; Game.SetGameSettingFloat does not compile against the vanilla headers this
-; pipeline builds with, verified against the compiler; and the blunt
-; alternatives (SetGhost, SetInvulnerable) suppress ALL damage, which would
-; make a levitation scroll grant temporary immortality — a far worse defect
-; than the one being fixed.
-;
-; So this keeps the ONE effect that is both faithful and scoped: heal the
-; actor back up by the fall's cost.  DamageResist is applied for the window
-; instead of invulnerability, so ordinary combat damage still lands.
-;
-; Callers are per-frame effect updates that stop when the effect ends, so the
-; resistance is (re)applied on each call and RestoreFallDamage removes it —
-; the paired on/off contract in docs/papyrus_conversion_notes.md.  The
-; modifier is tracked so repeated calls cannot stack it without bound.
-Function SuppressFallDamage(Actor akActor = None) Global
-  If akActor == None
-    akActor = Game.GetPlayer()
+; TES4 (OBSE) ResetFallDamageTimer: the fall in progress does no damage.
+; Skyrim's falling damage is reachable only through perk entry point Mod
+; Falling Damage, so the importer's TES4NoFallDamage spell carries a perk
+; multiplying it by 0 for a short window; a caller that polls every tick keeps
+; renewing it.  Other damage is untouched.
+; See docs/commentary/script_convert.md#fall-damage-is-a-perk
+Function SuppressFallDamage(Actor akActor, Spell akFallSpell) Global
+  If akActor && akFallSpell
+    akFallSpell.Cast(akActor, akActor)
   EndIf
-  If akActor == None
-    Return
-  EndIf
-  ; ForceActorValue, not Mod: this runs every update tick, and a modifier
-  ; would otherwise accumulate for as long as the effect lasts.
-  akActor.ForceActorValue("DamageResist", 10000.0)
 EndFunction
 
-; Undo SuppressFallDamage.  Emitted by the effect-finish path of any script
-; that called it; also safe to call blind.
-Function RestoreFallDamage(Actor akActor = None) Global
-  If akActor == None
-    akActor = Game.GetPlayer()
+; End a SuppressFallDamage window early: a magic effect's teardown.
+Function RestoreFallDamage(Actor akActor, Spell akFallSpell) Global
+  If akActor && akFallSpell
+    akActor.DispelSpell(akFallSpell)
   EndIf
-  If akActor == None
-    Return
-  EndIf
-  akActor.ForceActorValue("DamageResist", 0.0)
 EndFunction
 
 ; ==========================================================================

@@ -8,7 +8,10 @@
 //   * opens Skyrim's alchemy menu from a carried apparatus and scales the
 //     potion by the tools, and owns the crafting-bench hook the other
 //     runtimes share (alchemy_hooks.cpp, crafting.cpp,
-//     docs/commentary/tes_runtime_alchemy.md#alchemy-apparatus).
+//     docs/commentary/tes_runtime_alchemy.md#alchemy-apparatus);
+//   * turns and moves what a converted TES4 GameMode block steps every frame,
+//     at a steady 30 Hz (spin.cpp,
+//     docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates).
 
 #include <windows.h>
 
@@ -23,17 +26,19 @@
 #include "log.h"
 #include "paths.h"
 #include "skse_abi.h"
+#include "spin.h"
 
 using namespace tesruntime;
 
 namespace {
 
-constexpr UInt32 kPluginVersion = 4;
+constexpr UInt32 kPluginVersion = 6;
 constexpr UInt32 kSerializationId = 'TES4';
 
 bool g_engineResolved = false;
 bool g_crimeInstalled = false;
 bool g_journalInstalled = false;
+SKSEMessagingInterface* g_messaging = nullptr;
 
 bool CaptureVm(void* vm) {
     g_api.vm = vm;
@@ -64,6 +69,7 @@ void QueryInterfaces(const SKSEInterface* skse) {
     const PluginHandle handle = skse->GetPluginHandle();
     auto* msg = static_cast<SKSEMessagingInterface*>(skse->QueryInterface(kInterface_Messaging));
     if (msg) msg->RegisterListener(handle, "SKSE", OnMessage);
+    g_messaging = msg;
     auto* papyrus = static_cast<SKSEPapyrusInterface*>(skse->QueryInterface(kInterface_Papyrus));
     if (papyrus) papyrus->Register(CaptureVm);
     g_api.task = static_cast<SKSETaskInterface*>(skse->QueryInterface(kInterface_Task));
@@ -129,9 +135,11 @@ __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
     g_engineResolved = ResolveEngine();
     g_crimeInstalled = g_engineResolved && LoadCrimeSidecars();
     g_journalInstalled = InstallJournal();
-    Log("hooks: jails %s, journal stage text %s",
+    const bool spin = g_engineResolved && InstallSpin(g_messaging);
+    Log("hooks: jails %s, journal stage text %s, GameMode spin %s",
         g_crimeInstalled ? "installed" : "NOT installed",
-        g_journalInstalled ? "installed" : "NOT installed");
+        g_journalInstalled ? "installed" : "NOT installed",
+        spin ? "installed" : "NOT installed");
     return true;
 }
 

@@ -22,6 +22,7 @@ from asset_convert.nif.sequences import (MATERIAL_COLOR_EMISSIVE,
                                          TEX_TRANSFORM_VARS)
 from asset_convert.nif.tex_paths import (bs_pp_texture_slots, full_res_twin,
                                          rewrite_tex_path)
+from asset_convert.nif.uv_transform import base_map, expand_harvested
 from asset_convert.sources import base_plugins as _base_plugins
 from asset_convert.texture import landscape_normals, parallax, spec_mask
 
@@ -257,8 +258,8 @@ def collect_uv_ctrls(geom):
     return out
 
 
-def _build_float_ctrl(ctrl_type, src_ctrl, fdata, shader, is_effect):
-    """One BS*ShaderPropertyFloatController re-emitting a source UV curve."""
+def _build_float_ctrl(ctrl_type, op, src_ctrl, fdata, shader, is_effect):
+    """One BS*ShaderPropertyFloatController re-emitting a source UV curve as `op`."""
     new = ctrl_type()
     new.flags = _CTRL_FLAGS_ACTIVE_SCALED | (
         int(getattr(src_ctrl, 'flags', 0)) & _CTRL_FLAGS_CYCLE_MASK)
@@ -268,7 +269,7 @@ def _build_float_ctrl(ctrl_type, src_ctrl, fdata, shader, is_effect):
     new.stop_time = src_ctrl.stop_time
     new.target = shader
     new.type_of_controlled_variable = \
-        TEX_TRANSFORM_VARS[src_ctrl.operation][1 if is_effect else 0]
+        TEX_TRANSFORM_VARS[op][1 if is_effect else 0]
 
     interp = NifFormat.NiFloatInterpolator()
     interp.float_value = _USE_DATA_SENTINEL
@@ -277,10 +278,11 @@ def _build_float_ctrl(ctrl_type, src_ctrl, fdata, shader, is_effect):
     return new
 
 
-def attach_tex_transform_ctrls(shader, harvested):
+def attach_tex_transform_ctrls(shader, harvested, desc):
     """Re-emit harvested texture transforms as a Skyrim shader controller chain.
 
-    Anything already on the shader is kept at the end of the chain.
+    `desc` is the base TexDesc the transforms animate, or None.  Anything
+    already on the shader is kept at the end of the chain.
     See: docs/commentary/asset_convert_shader.md#shader-float-controller-flags
     """
     if not harvested:
@@ -291,8 +293,8 @@ def attach_tex_transform_ctrls(shader, harvested):
 
     head = None
     tail = None
-    for src_ctrl, fdata in harvested:
-        new = _build_float_ctrl(ctrl_type, src_ctrl, fdata, shader, is_effect)
+    for op, src_ctrl, fdata in expand_harvested(harvested, desc):
+        new = _build_float_ctrl(ctrl_type, op, src_ctrl, fdata, shader, is_effect)
         if head is None:
             head = new
         else:
@@ -640,7 +642,7 @@ class _ShaderInputs:
                  'alpha_prop', 'tex_apply_mode', 'emissive_r', 'emissive_g',
                  'emissive_b', 'material_alpha', 'emissive_animated',
                  'vertex_lighting_mode', 'flip_ctrl', 'tex_transforms',
-                 'shader_declared_unlit', 'is_refraction')
+                 'shader_declared_unlit', 'is_refraction', 'base_map')
 
     def __init__(self, tex_transforms):
         """Start from the no-properties defaults, carrying the UV transforms in."""
@@ -660,6 +662,7 @@ class _ShaderInputs:
         self.tex_transforms = tex_transforms
         self.shader_declared_unlit = False
         self.is_refraction = False
+        self.base_map = None
 
 
 def _harvest_texturing(prop, out):
@@ -668,6 +671,7 @@ def _harvest_texturing(prop, out):
     out.glow_path = _glow_texture_path(prop) or out.glow_path
     out.tex_apply_mode = int(prop.apply_mode)
     out.flip_ctrl = find_flip_controller(prop) or out.flip_ctrl
+    out.base_map = base_map([prop]) or out.base_map
 
 
 #: Bethesda's material name on every TES4 refraction surface.

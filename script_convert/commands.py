@@ -19,7 +19,8 @@ argument text -- so those are properties of the CALL and live on it.
 from script_convert import resolve_name as _resolve_name
 from script_convert.constants import (
     ACTOR_VALUE_MAP, ANIM_GROUP_EVENTS, ATTRIBUTE_STUB_VALUE, CASTABLE,
-    PLACED_REF_SIGS, TES4_ASSAULT_BOUNTY, TES4_ATTRIBUTES, TES4_MURDER_BOUNTY,
+    FORCE_GREET_QUEST, PLACED_REF_SIGS, TES4_ASSAULT_BOUNTY, TES4_ATTRIBUTES,
+    TES4_MISC_STAT_NAMES, TES4_MURDER_BOUNTY,
     TES4_STEAL_BOUNTY, is_generated_script_type, mgef_family_keyword_name,
     safe_property_name, papyrus_script_name
 )
@@ -30,8 +31,11 @@ from script_convert.command_rows import (
 from script_convert.emit.commands import emit_row
 from script_convert.commands_falloutnv import FALLOUT_HANDLERS
 from script_convert.message_menus import PAGE_OPTIONS
+from script_convert.poll_motion import axis_key, rate_scale
+from script_convert.emit import expr as _expr
 from script_convert.constants import typed_already
 from script_convert.constants_falloutnv import FALLOUT_COMMAND_ALIASES
+from tes5_import.dialogue.say_topics import PLAYER_TOKENS
 
 #: TES4 command name (lowercase) -> handler `(ctx, call) -> str | None`.
 REGISTRY: dict = dict(FALLOUT_HANDLERS)
@@ -116,8 +120,10 @@ def stage(ctx, call) -> str:
     """SetStage / GetStage / GetStageDone.
 
     TES4 spells the quest as the first argument and the stage as the second;
-    Papyrus makes the quest the receiver.
+    Papyrus makes the quest the receiver. SetStage on a quest with a script is
+    its `TES4SetStage`, which keeps the variables the implied start would reset.
     See: docs/commentary/script_convert.md#quest-property-never-downgrades
+    See: docs/commentary/script_convert.md#setstage-start-keeps-variables
     """
     parts = ctx.arg_srcs()
     quest_src = parts[0].strip() if parts else (call.ref or '')
@@ -127,7 +133,11 @@ def stage(ctx, call) -> str:
     if not typed_already(ctx.sc.property_refs, prop):
         ctx.sc.property_refs[prop] = 'Quest'
     if call.name == 'setstage':
-        return f'{prop}.SetStage({call.arg(1, "0") if len(parts) > 1 else 0})'
+        stage_no = call.arg(1, "0") if len(parts) > 1 else 0
+        script = ctx.xref.get_quest_script_type(quest_src) if ctx.xref else 'Quest'
+        if script != 'Quest':
+            return f'{script}.TES4SetStage({prop} as {script}, {stage_no})'
+        return f'{prop}.SetStage({stage_no})'
     # GetStageDone asks whether a specific stage has run; GetStage reads the
     # current stage number, and TES4 writes it with no stage operand.
     if len(parts) > 1:
@@ -224,19 +234,30 @@ def get_first_ref(ctx, call) -> str:
                     f'actors only', value='None')
 
 
+@command('getpcmiscstat', 'modpcmiscstat')
+def pc_misc_stat(ctx, call) -> str:
+    """Get/ModPCMiscStat <index> [amount] -- Skyrim names the stat instead of numbering it.
+
+    See: docs/commentary/script_convert.md#pc-misc-stat-names
+    """
+    src = call.source(0).strip()
+    idx = int(src) if src.isdigit() else -1
+    name = TES4_MISC_STAT_NAMES[idx] if 0 <= idx < len(TES4_MISC_STAT_NAMES) else ''
+    if not name:
+        return ctx.note(f'{call.raw_name} {src} - Skyrim tracks no such stat')
+    if call.name == 'modpcmiscstat':
+        return f'Game.IncrementStat("{name}", {call.arg(1, "1")})'
+    return f'Game.QueryStat("{name}")'
+
+
 @command('call')
 def udf_call(ctx, call) -> str:
-    """OBSE `Call <ScriptName> arg...` -- invoke a user-defined function.
+    """OBSE `[ref.]Call <ScriptName> arg...` -- `<prop>.TES4Call(<calling ref>, args)`.
 
-    The callee is a script, so it is reached through a property typed as that
-    script.  The property is keyed on the CANONICAL EditorID, not the spelling
-    this call happened to use: TES4 name lookup is case-insensitive, so
-    `Call fbmwbmWerewolfManageControlPC` and the record's own
-    `fbmwBMWerewolfManageControlPC` are the same script -- but keying on the
-    local spelling created a SECOND property differing only in case, and since
-    Papyrus is case-insensitive the two declarations collided, the generic
-    ObjectReference typing won, and `.TES4Call()` became "undefined function"
-    on a property that has it.
+    The property is typed as the callee script and keyed on its CANONICAL
+    EditorID, so two spellings of one script never declare two properties.
+    The calling reference is the function's `Self`; a quest script has none.
+    See: docs/commentary/script_convert.md#udf-calling-reference
     """
     target = call.source(0).strip().rstrip(',')
     if not target:
@@ -245,7 +266,10 @@ def udf_call(ctx, call) -> str:
     canon = ctx.xref.formid_to_edid.get(fid, target) if fid else target
     prop = safe_property_name(canon)
     ctx.sc.property_refs[prop] = papyrus_script_name(canon)
-    args = [call.arg(i) for i in range(1, len(call))]
+    caller = ctx._resolve_objref_ref(call.ref, call.extends)
+    if caller == 'Self' and call.extends == 'Quest' and not ctx.sc.in_udf:
+        caller = 'None'
+    args = [caller] + [call.arg(i) for i in range(1, len(call))]
     ctx.sc.udf_calls.append((prop, tuple(args)))
     return f'{prop}.TES4Call({", ".join(args)})'
 
@@ -295,6 +319,9 @@ def start_conversation(ctx, call) -> str:
     """
     ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)
     parts = ctx.arg_srcs()
+    greet = _force_greet(ctx, ref, parts)
+    if greet:
+        return greet
     if len(parts) >= 2 and parts[1].strip():
         topic = parts[1].strip().split()[0]
         ctx._mark_topic_property(topic)
@@ -304,6 +331,25 @@ def start_conversation(ctx, call) -> str:
         return f'{ref}.Say({call.arg(1)})'
     ctx.sc.property_refs['GREETING'] = 'Topic'
     return f'{ref}.Say(GREETING)'
+
+
+def _force_greet(ctx, ref: str, parts: list) -> str:
+    """`StartConversation Player [<topic>]`: fill an alias of the topic's force-greet pool.
+
+    Papyrus cannot open dialogue, so the actor joins a ForceGreet package that
+    walks over and opens the topic; '' when the target is not the player or
+    the importer planned no pool for this topic.
+    """
+    if not parts or parts[0].strip().lower() not in PLAYER_TOKENS:
+        return ''
+    named = len(parts) >= 2 and parts[1].strip()
+    topic = parts[1].strip().split()[0].lower() if named else ''
+    slot = ctx.force_greet_slots.get(topic)
+    if not slot:
+        return ''
+    ctx.sc.property_refs[FORCE_GREET_QUEST] = 'Quest'
+    return (f'TES4Polyfill.ForceGreet({FORCE_GREET_QUEST}, {slot[0]}, '
+            f'{slot[1]}, {ref})')
 
 
 #: SayLine's assumed length for an unmeasured line, and the beat between them.
@@ -431,22 +477,63 @@ def _needs_havok_release(ctx, call) -> bool:
 def set_pos(ctx, call) -> str:
     """SetPos / SetAngle -- one axis, written through the three-axis native.
 
-    Papyrus has no per-axis setter, so the other two axes are read back from
-    the reference.  TES4 separates arguments with whitespace, a comma or both,
-    so `SetPos Z, PlacePosZ` is as legal as `SetPos Z PlacePosZ` -- splitting
-    on whitespace alone left the axis as `Z,`, which failed the X/Y/Z test and
-    silently fell back to X, writing the Z coordinate into the X slot (27 sites
-    in 10 scripts, including Morroblivion's levitation and rotation fixes).
+    The other two axes are read back from the reference.  The axis may be
+    followed by a comma (`SetPos Z, PlacePosZ`).  Inside a poll body the step
+    is a `GlideAxis` glide instead, since the native fades the 3D back in; a
+    step taken from the object's own pose is a per-frame rate, which
+    `SpinAxis` hands to TESRuntime as a rate per second.
+
+    See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
     """
     axis = call.source(0, 'X').strip().strip(',').upper()
     if axis not in ('X', 'Y', 'Z'):
         axis = 'X'
     value = call.arg(1, '0')
     ref = ctx._resolve_objref_ref(call.ref, call.extends)
+    if ctx.sc.glide_secs:
+        slot = 'XYZ'.index(axis) + (3 if call.name == 'setangle' else 0)
+        glide = (f'TES4_GlideRefs, TES4_GlideGoals, {ctx.sc.glide_secs})')
+        rate = _step_rate(ctx, call)
+        if rate:
+            return f'TES4Polyfill.SpinAxis({ref}, {slot}, {value}, {rate}, {glide}'
+        return f'TES4Polyfill.GlideAxis({ref}, {slot}, {value}, {glide}'
     verb = 'Position' if call.name == 'setpos' else 'Angle'
     coords = [value if a == axis else f'{ref}.Get{verb}{a}()'
               for a in ('X', 'Y', 'Z')]
     return f'{ref}.Set{verb}({", ".join(coords)})'
+
+
+@command('rotate')
+def rotate(ctx, call):
+    """Rotate <axis> <degrees per second> inside a poll: a `SpinAxis` turn at that rate.
+
+    Without TESRuntime the glide falls back to one pass's worth of turning.
+    Declines outside a poll, so the command row notes it.
+
+    See: docs/commentary/script_convert.md#gamemode-steps-are-rates
+    """
+    if not ctx.sc.glide_secs or len(call.args) < 2:
+        return None
+    axis = call.source(0, 'Z').strip().strip(',').upper()
+    if axis not in ('X', 'Y', 'Z'):
+        return None
+    ref = ctx._resolve_objref_ref(call.ref, call.extends)
+    rate = call.arg(1, '0')
+    value = f'{ref}.GetAngle{axis}() + ({rate}) * {ctx.sc.glide_secs}'
+    return (f'TES4Polyfill.SpinAxis({ref}, {3 + "XYZ".index(axis)}, {value}, {rate}, '
+            f'TES4_GlideRefs, TES4_GlideGoals, {ctx.sc.glide_secs})')
+
+
+def _step_rate(ctx, call) -> str:
+    """The rate per second of a SetPos/SetAngle that steps from its own axis read, else ''."""
+    if len(call.args) < 2:
+        return ''
+    key = axis_key(call.name, call.args[0], call.ref or '')
+    step = ctx.sc.relative_sets.get((call.args[1].line, key))
+    if not step:
+        return ''
+    sign = '-' if step[2] < 0 else ''
+    return f'{sign}({_expr.emit(ctx, step[1], call.extends)}){rate_scale(step[1])}'
 
 
 @command('positionworld')
@@ -1289,6 +1376,9 @@ _AV_SET = frozenset({'setactorvalue', 'setav', 'forceactorvalue', 'forceav',
 #: Reads, for which Encumbrance means the CURRENT carried weight.
 _AV_READ = frozenset({'getactorvalue', 'getav'})
 
+#: AVs the engine refuses to Force/Mod/Damage/Restore from Papyrus; only SetActorValue writes them.
+_AV_SET_ONLY = frozenset({'aggression', 'confidence', 'morality', 'mood', 'assistance'})
+
 
 @command(*sorted(ACTOR_VALUE_FUNCTIONS))
 def actor_value(ctx, call) -> str:
@@ -1340,6 +1430,8 @@ def actor_value(ctx, call) -> str:
     papyrus = (_AV_PAPYRUS.get(call.name)
                or getattr(COMMAND_ROWS.get(call.name), 'emit', '')
                or 'GetActorValue')
+    if papyrus == 'ForceActorValue' and av.lower() in _AV_SET_ONLY:
+        papyrus = 'SetActorValue'
     if call.name in _AV_PLAYER_ONLY:
         return f'Game.GetPlayer().{papyrus}({", ".join(args)})'
     ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)

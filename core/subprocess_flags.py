@@ -62,14 +62,18 @@ def configure_multiprocessing() -> None:
 
     ``multiprocessing`` re-launches the interpreter for each worker. Point it at
     ``pythonw.exe`` (the console-less interpreter) so spawned workers do not each
-    pop a console window. Idempotent; no-op off Windows.
+    pop a console window. Also defaults ``OPENBLAS_NUM_THREADS`` to 1 so each
+    process's BLAS does not reserve per-core buffers. Idempotent; the
+    interpreter swap is Windows-only.
+
+    See: docs/commentary/performance.md#blas-threads-commit
     """
     global _mp_configured
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     if _mp_configured or sys.platform != "win32":
         return
 
     import multiprocessing
-    import os
 
     # Prefer pythonw.exe next to the current interpreter so workers have no
     # console. Fall back silently if it is missing (unusual embedded installs).

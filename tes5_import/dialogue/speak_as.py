@@ -159,7 +159,7 @@ _TACT_MODT = bytes.fromhex('020000000000000000000000')
 _CLONE_DROP_PREFIXES = (
     'XTEL', 'XOWN', 'XLOC', 'XESP', 'XPRM', 'XLIB', 'XLKR', 'XSCL',
     'XRDS', 'XEMI', 'XMBR', 'XCNT', 'XRNK', 'XACT', 'XTRG', 'XSED',
-    'XCHG', 'XHLT', 'XPPA', 'XATO', 'XLRT', 'XLRL',
+    'XCHG', 'XHLT', 'XPPA', 'XATO', 'XLRT', 'XLRL', 'ONAM',
 )
 
 #: (emitter EditorID lower, voice EditorID lower) -> speaker REFR FormID.

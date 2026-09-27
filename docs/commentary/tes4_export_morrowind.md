@@ -2372,6 +2372,60 @@ synthesizes an effect only when no master supplies it: a stub loaded after the
 patch hides the authored record. An effect a plugin itself authors is still
 exported as its override.
 
+### <a id="restored-magic"></a>Morroblivion's scripted magic is restored to vanilla's effects
+
+**Code:** `morroblivion_magic.py`. **Status: built, NOT yet confirmed in game.**
+
+Morroblivion stood a script effect (SEFF) in for each Morrowind effect Oblivion
+lacked. The patch overrides a Morroblivion SPEL, ENCH or ALCH with its vanilla
+original's effects, keeping Morroblivion's FormID and EditorID, when four
+conditions hold:
+
+1. The record pairs to vanilla by escaped id and type (`mark` ↔ `0mark`).
+2. It carries a script effect.
+3. Every vanilla effect converts (`mw_converts`). That means a Skyrim archetype,
+   with an actor value where one is needed, or an effect the runtime carries.
+4. Each dropped script EITHER does nothing, OR the runtime carries every
+   vanilla effect and nothing left behind depends on the script. "Does nothing"
+   means no script at all, or only blocks, locals and `return`.
+
+   Nothing depends on a script when it stages, starts or stops no quest, and
+   when each global, quest variable or reference it writes is either read
+   nowhere else or written somewhere else too. A read counts by name in any
+   script or result script, and by FormID in a raw `CTDA`.
+
+Measured over Morrowind_ob: 52 vanilla records pair to a Morroblivion record
+with a script effect, and **21 are restored**. They are the Mark, Recall and
+Intervention spells, scrolls and potions, plus records whose script effect had
+no script (`rilm's gift`, `corprus`, `panacea`) or a placeholder
+(`mwElothEffectPlaceholderScript`).
+
+Kept as Morroblivion's, and why:
+
+- **Levitation and Slowfall:** the runtime does not carry them yet. Adding an
+  index to `MW_RUNTIME_EFFECTS` flips them with no patch code
+  ([how](morrowind_runtime.md#adding-a-runtime-effect)).
+- **The blight cures:** `mwSpellBlightCure` stages `fbmwILGnisisBlight`.
+- **The blight resistances:** they write `mwPlayerBlightResistance`, which the
+  blight scripts read and nothing else writes.
+- **Icarian Flight, the ghost ability, Fenrick's Doorjam and the summons:** each
+  script does something, and the vanilla effect's Skyrim mapping is only a
+  stand-in. Fortify Acrobatics lands on Stamina and Chameleon on Invisibility.
+
+`PlayerInMorrowind`, which Recall sets, passes: `mwMorroDefaultQuestScript`
+writes it every frame from the worldspace. The Mark marker and the
+Intervention marker pass too: `mwTeleportManagerQuestScript` moves both.
+
+A restored Intervention also carries `InterventionKind` and
+`InterventionTargets`, the `Player.MoveTo` destinations of its replaced script
+([the runtime's markers](morrowind_runtime.md#divine-intervention-in-any-world)).
+
+`start_scripts` writes `MWSS.txt`, never imported: each vanilla SSCR whose
+source names no record but itself. Comments, keywords and GetPCCell's cell
+name are not names. Only `TribunalMain` qualifies. `MarkTRStartScript`,
+`TribFabAttackCheck` and `BMStartUpScript` start quest content Morroblivion
+runs under its own names.
+
 ### Magnitude is the mean of the authored range
 
 A TES3 effect authors `magnMin` and `magnMax`; a TES5 EFIT holds one number.

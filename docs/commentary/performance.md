@@ -7,6 +7,7 @@
 - [Low-core machines: where the time actually goes (measured 2026-08-09)](#low-core-machines-where-time)
 - [Parallelism rules (learned 2026-07-16)](#parallelism-rules)
 - [FormID determinism — the save-game contract (rewritten 2026-08-17)](#formid-determinism-save-game-contract)
+- [One heavy job at a time](#one-heavy-job-at-a-time)
 - [Process containment — orphaned workers (learned 2026-07-29)](#process-containment-orphaned-workers)
 - [Navmesh generation (learned 2026-07-25)](#navmesh-generation)
 - [Measured throughput](#measured-throughput)
@@ -595,6 +596,20 @@ properly parallel. Two findings:
   `b''.join` at wrap points (CELL/WRLD builders).
 - **Pool tools can exhaust memory**: some load the ~2.1 GB export index PER
   WORKER. Cap `--workers` or run single-process for those.
+- <a id="blas-threads-commit"></a>**One BLAS thread per process (WinError 1450).**
+  numpy's and scipy's OpenBLAS each reserve per-thread buffers at import,
+  sized by core count: on a 32-thread machine one process importing
+  `tes5_import.overrides.nested` commits 1,607 MB before doing any work, and
+  128 MB with `OPENBLAS_NUM_THREADS=1`. With 29 pool workers, that is about 46 GB
+  of commit (RAM plus page file) reserved and never touched. ElsweyrPelletine's
+  import, whose parent also holds four masters' exports, drove available commit
+  to 0 within 2 s of `parse_export_directory` starting its pool, while physical
+  RAM peaked at 90%. The failure surfaced as `OSError: [WinError 1450]
+  Insufficient system resources` from a worker's result `WriteFile` (six runs in
+  a row). Cutting the parse slice from 16 MB to 2 MB changed nothing.
+  `configure_multiprocessing()` therefore defaults `OPENBLAS_NUM_THREADS` to 1
+  before anything imports numpy. The pool gives the parallelism, and 29
+  processes × 32 BLAS threads would only oversubscribe the cores anyway.
 
 ## FormID determinism — the save-game contract (rewritten 2026-08-17)
 <a id="formid-determinism-save-game-contract"></a>
@@ -705,6 +720,72 @@ and — via a subprocess at three `PYTHONHASHSEED` values — that Python's
 randomised `hash()` never reaches an id.
 
 
+## One heavy job at a time
+<a id="one-heavy-job-at-a-time"></a>
+
+**Code:** `core/heavy_lock.py`, called from `convert.py:_run_steps` (and the patch
+build) and `tools/release/create_lod.py:main`.
+
+Two pooled stages at once exhaust RAM on a 32 GB box. On 2026-09-26 a
+Morrowind_ob navmesh pool (29 workers) died as `BrokenProcessPool` beside
+another session's Nehrim import. A TR_Mainland import then lost 33 ENCH
+records to bare `MemoryError`s (an empty message in the log) and its pool died
+the same way. The written rule ("check load first") did not stop agents from
+launching blind, so the check is now mechanical.
+
+`hold_heavy_lock` takes the named mutex `Local\TESConversionHeavyJob` for the
+rest of the process. A second `convert.py` or LOD bake WAITS instead of
+failing. It prints the holder, recorded in `logs/heavy_job.txt`, at once and
+again every 5 minutes. The holder writes that file as
+`{pid, label, work, queued, started}` and deletes it on exit.
+`python -m tools.misc.build_queue` shows the running build and the whole queue
+live.
+
+- **Strict arrival order.** Every job leaves a ticket in
+  `logs/heavy_queue/<pid>.json` naming its work (plugins, steps, `--only` and
+  `--mesh-subdirs` scopes, the settings that change output) and its place in
+  line, `queued`. Only the earliest live, unreplaced ticket may take the mutex;
+  the rest poll. Agents queue dependent builds back to back (Nehrim import,
+  then its scripts), so letting the kernel pick a waiter would run them out of
+  order.
+- **No work queued twice.** A newer job whose work covers a queued or running
+  job's (`covers`) marks that job replaced and takes the EARLIEST place among
+  the jobs it replaces, so it still runs before anything queued after them.
+  It never moves ahead of a job it `needs`: pipeline order (`STEP_FLAGS`)
+  decides, so a new import may jump queued scripts, but new scripts replace
+  only the scripts queued behind the last import, and an unknown step (the
+  Morroblivion patch build) is needed by and needs everything. A job that was
+  first in line when a replacement took an earlier place hands the lock back
+  if it gets it.
+  A replaced queued job stops waiting, follows its replacement, and exits with
+  that job's exit code, so its launcher still learns the result. A job
+  replaced in the instant it gets the lock hands the lock on. Dead tickets are
+  swept by the next arrival.
+- **The holder works in a child, so it can be replaced too.** A job with work
+  reruns its own command (`sys.orig_argv`) as a child with
+  `TESCONV_HEAVY_LOCK_SUPERVISED` set, via the GUI's `run_process`, and
+  forwards the child's output. The child prints a marker on reaching the lock;
+  the holder drops everything before it, which repeats its own banner and plan
+  (unless the child exits first). `convert.py` opens no run log in the child;
+  the holder's log records the forwarded lines. When the holder file is marked
+  replaced, the holder kills the child's tree with `kill_process_tree` (the
+  GUI's Cancel), releases the mutex, follows the replacement, and exits with its
+  code. A killed import leaves nothing half-written that a later run trusts:
+  the ESM and navmesh cells are temp-then-rename, the collision/bounds caches
+  fail their decode and rescan, and sidecars are rewritten.
+- **No stale locks.** The kernel releases a mutex whose owner dies, however it
+  dies; the next waiter gets `WAIT_ABANDONED`, which counts as acquired.
+- **No self-deadlock.** The holder sets `TESCONV_HEAVY_LOCK_HELD`, so a child
+  it spawns, such as a nested `convert.py`, skips the wait. Pool workers never
+  run `main`.
+- **Not in `create_pool_job`.** The GUI calls that at import, and would hold
+  the lock for its whole life. The GUI's per-step `convert.py` processes each
+  take it instead.
+- Only runs that convert take it. `--help`, `--list-mods`, the mod commands and
+  `--dry-run` never wait.
+- It is a courtesy, never a failure: off Windows, or if the mutex cannot be
+  made, the run proceeds unlocked.
+
 ## Process containment — orphaned workers (learned 2026-07-29)
 <a id="process-containment-orphaned-workers"></a>
 
@@ -713,8 +794,8 @@ one mechanism:
 
 - `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — when the parent dies the kernel kills
   every process in the job. This covers the cases no Python cleanup can: a
-  crash, Task Manager "End task", the console window closed. The GUI's
-  `_kill_process_tree` only ever covered the deliberate Cancel button.
+  crash, Task Manager "End task", the console window closed.
+  `kill_process_tree` only covers a deliberate kill (Cancel, a replaced build).
 - `JobMemoryLimit` — a committed-memory ceiling across the whole job.
   **OFF by default**; opt in with `TESCONV_JOB_MEM_GB=<gb>`. See the measured
   trap below before enabling it.

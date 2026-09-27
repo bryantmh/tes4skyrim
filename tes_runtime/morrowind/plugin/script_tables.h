@@ -110,6 +110,26 @@ struct TravelDest {
     FormRef marker;
 };
 
+// One Divine or Temple marker an Intervention can land on: markers_formid.txt.
+// See: docs/commentary/morrowind_runtime.md#teleport-effects
+struct TeleportMarker {
+    // "divine" or "temple".
+    std::string kind;
+    // The WORLDSPACE of an exterior marker, the CELL of an interior one.
+    FormRef place;
+    float x = 0, y = 0, z = 0;
+    // Degrees about Z, as the move hooks take it.
+    float zRot = 0;
+};
+
+// Where an interior opens onto the world, as the crime pass walked its doors:
+// anchors_formid.txt. The point stands in `world`.
+struct CellAnchor {
+    FormRef cell;
+    FormRef world;
+    float x = 0, y = 0;
+};
+
 // One row of FACT's rank table: what the player must reach to hold this rank.
 struct RankReq {
     int attribute1 = 0;
@@ -320,6 +340,18 @@ std::size_t BaseCount();
 // when the chain staged no such cell.
 const FormRef* FindCell(const std::string& cell);
 std::size_t CellCount();
+
+// Every staged Intervention marker and interior anchor, once per sidecar that
+// staged it: a dependent re-stages its masters' rows, which repeat harmlessly.
+void ForEachTeleportMarker(const std::function<void(const TeleportMarker&)>& fn);
+void ForEachCellAnchor(const std::function<void(const CellAnchor&)>& fn);
+// Every MGEF a teleport lands as, with its TES3 effect index (60..63):
+// teleports_formid.txt, each delivery clone included.
+void ForEachTeleportEffect(const std::function<void(const FormRef&, int)>& fn);
+// Each child worldspace and its parent: worlds_formid.txt. A walled city
+// shares its parent's coordinates, so an Intervention searches both as one.
+void ForEachWorldParent(
+    const std::function<void(const FormRef&, const FormRef&)>& fn);
 
 // The quest that owns the AI package aliases, or null when none is staged.
 // See: docs/commentary/morrowind_runtime.md#ai-packages-are-real-packages

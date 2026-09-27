@@ -504,6 +504,14 @@ ESCAPES = [
     RUN + " python - <<'PY'\nx = 1\nPY\npython evil.py",
     'for f in a b; do ' + RUN + ' true; done',
     RUN + ' true | tee a.py',
+    'sort -o a.py notes.txt; ' + RUN + ' true',
+    'sort -ro a.py notes.txt',
+    'uniq notes.txt a.py; ' + RUN + ' true',
+    'cat <(python evil.py); ' + RUN + ' true',
+    'ls (Set-Content a.py 1); ' + RUN + ' true',
+    RUN + ' true (Set-Content a.py 1)',
+    "'x' | ls -Path { Set-Content a.py 1 }",
+    'echo x > a.py',
 ]
 
 #: Commands that stay inside it, including every shape this session used.
@@ -518,11 +526,15 @@ CONTAINED = [
     RUN + ' a; ' + RUN + ' b',
     'cd C:/tmp && python C:/repo/tools/validate/safe_run.py -c "pwd"',
     'python "C:\\repo\\tools\\validate\\safe_run.py" ls C:/x',
+    'ls docs; grep -n -E "a|(b)" x.md | head -30',
+    'cat a.txt | sort -u | uniq -c',
+    'uniq -f 2 a.txt',
+    'echo ${HOME} 2>&1',
 ]
 
 
 def test_every_escape_is_refused():
-    """Code after `&&`, in a subshell, or in `$(...)` never saw the gate."""
+    """Code after `&&`, in a subshell, `$(...)`, `<(...)` or a script block never saw the gate."""
     sys.path.insert(0, str(ROOT / '.claude' / 'hooks'))
     try:
         import shell_route

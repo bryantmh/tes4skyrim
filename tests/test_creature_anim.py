@@ -1832,6 +1832,27 @@ class TestSpeedBakeFrameFloor:
         assert natural * factor == pytest.approx(formula, rel=0.01)
         assert int(round(dur / factor * 30)) + 1 >= MIN_BAKED_FRAMES
 
+    def test_only_attacks_get_a_hit_window(self):
+        """A recoil or stagger kf may carry a Hit key, but the engine's swing
+        handlers act on weaponSwing/HitFrame in any state and only attackStop
+        clears them; a hit window on a recoil left the intro's black troll
+        stuck mid-attack for good.  No vanilla recoil/stagger clip has one."""
+        from asset_convert.havok.hkx_behavior import _ClipSet
+
+        class _Clip:
+            duration = 1.0
+
+            def __init__(self, keys):
+                self.text_keys = keys
+
+        cs = object.__new__(_ClipSet)
+        cs.enum_map, cs.cast_stem_map = None, {}
+        hit = _Clip([(0.5, 'Hit')])
+        assert cs._meta('Recoil', 'recoil', hit, False, None, False)['hits'] == []
+        assert cs._meta('Attack_a', 'a', hit, False, None, True)['hits'] == [0.5]
+        keyless = _Clip([])
+        assert cs._meta('Attack_b', 'b', keyless, False, None, True)['hits'] == [0.4]
+
     def test_floor_never_lowers_the_old_cap(self):
         """A clip too short to keep the floor must still get the old cap."""
         from asset_convert.havok.hkx_anim import speed_bake_factor

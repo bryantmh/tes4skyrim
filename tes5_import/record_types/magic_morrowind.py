@@ -6,9 +6,9 @@ code the Oblivion tables use, so the mapping lives here rather than in
 Oblivion path: `magic.convert_MGEF` consults it only for a record carrying
 `MorrowindEffectIndex`.
 
-114 of the 143 land on a native Skyrim archetype.  The rest carry NATIVE_NONE,
-which converts them as an inert Value Modifier today and is where the
-MorrowindRuntime effect table will attach.
+114 of the 143 land on a native Skyrim archetype.  The rest carry NATIVE_NONE:
+the four teleports are script-less Script effects MorrowindRuntime acts on,
+and the others convert as an inert Value Modifier until the runtime carries them.
 
 See: docs/commentary/tes5_import_magic.md#morrowind-effects
 """
@@ -17,7 +17,7 @@ from .magic import (A_ABSORB, A_BOUND_WEAPON, A_CALM, A_CLOAK,
                     A_COMMAND_SUMMONED, A_CURE_DISEASE, A_CURE_PARALYSIS,
                     A_CURE_POISON, A_DEMORALIZE, A_DETECT_LIFE, A_DISPEL,
                     A_FRENZY, A_LIGHT, A_LOCK, A_OPEN, A_PARALYSIS,
-                    A_PEAK_VALUE_MODIFIER, A_RALLY, A_SOUL_TRAP,
+                    A_PEAK_VALUE_MODIFIER, A_RALLY, A_SCRIPT, A_SOUL_TRAP,
                     A_SUMMON_CREATURE, A_TELEKINESIS, A_TURN_UNDEAD,
                     A_VALUE_MODIFIER, AV_CARRY_WEIGHT,
                     AV_DAMAGE_RESIST,
@@ -116,10 +116,6 @@ MW_EFFECT_ARCHETYPES = {
     57: (A_DISPEL, AV_NONE),
     58: (A_SOUL_TRAP, AV_NONE),
     59: (A_TELEKINESIS, AV_NONE),
-    60: (A_VALUE_MODIFIER, NATIVE_NONE),          # Mark
-    61: (A_VALUE_MODIFIER, NATIVE_NONE),          # Recall
-    62: (A_VALUE_MODIFIER, NATIVE_NONE),          # DivineIntervention
-    63: (A_VALUE_MODIFIER, NATIVE_NONE),          # AlmsiviIntervention
     64: (A_DETECT_LIFE, AV_DETECT_LIFE_RANGE),
     65: (A_VALUE_MODIFIER, NATIVE_NONE),          # DetectEnchantment
     66: (A_VALUE_MODIFIER, NATIVE_NONE),          # DetectKey
@@ -155,7 +151,7 @@ MW_EFFECT_ARCHETYPES = {
     96: (A_PEAK_VALUE_MODIFIER, AV_RESIST_DISEASE),
     97: (A_PEAK_VALUE_MODIFIER, AV_POISON_RESIST),
     98: (A_PEAK_VALUE_MODIFIER, AV_DAMAGE_RESIST),
-    99: (A_PEAK_VALUE_MODIFIER, AV_PARALYSIS),
+    99: (A_SCRIPT, AV_NONE),
     100: (A_DISPEL, AV_NONE),                     # RemoveCurse
     101: (A_TURN_UNDEAD, AV_NONE),
     117: (A_PEAK_VALUE_MODIFIER, AV_MELEE_DAMAGE),
@@ -177,6 +173,14 @@ MW_BOUND_WEAPONS = tuple(range(120, 126))
 #: Bound armor indices; Skyrim has none, so these need the scripted stand-in.
 MW_BOUND_ARMOR = tuple(range(127, 132))
 
+#: Mark, Recall, Divine and Almsivi Intervention: script-less Script effects MorrowindRuntime acts on.
+MW_TELEPORTS = (60, 61, 62, 63)
+
+#: Every NATIVE_NONE effect MorrowindRuntime carries: add one via morrowind_runtime.md#adding-a-runtime-effect.
+MW_RUNTIME_EFFECTS = frozenset(MW_TELEPORTS)
+
+MW_EFFECT_ARCHETYPES.update(
+    {index: (A_SCRIPT, NATIVE_NONE) for index in MW_TELEPORTS})
 MW_EFFECT_ARCHETYPES.update(
     {index: (A_SUMMON_CREATURE, AV_NONE) for index in MW_SUMMONS})
 MW_EFFECT_ARCHETYPES.update(
@@ -217,6 +221,17 @@ def mw_actor_value(index: int, effect_av: int) -> int:
     if effect_av >= 12:
         return SKILL_TO_AV.get(effect_av, AV_NONE)
     return ATTRIBUTE_TO_AV.get(effect_av, AV_NONE)
+
+
+def mw_converts(index: int, effect_av: int) -> bool:
+    """Whether one effect instance lands on a working effect: a Skyrim archetype
+    with an actor value where it needs one, or one MorrowindRuntime acts on."""
+    entry = MW_EFFECT_ARCHETYPES.get(index)
+    if entry is None:
+        return False
+    if entry[1] == NATIVE_NONE:
+        return index in MW_RUNTIME_EFFECTS
+    return entry[1] != DERIVE_AV or mw_actor_value(index, effect_av) != AV_NONE
 
 
 def mw_needs_runtime(index: int) -> bool:

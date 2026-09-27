@@ -13,6 +13,7 @@ See: docs/commentary/tes5_import_falloutnv_actors.md
 from output_layout import assets_for
 
 from .creature_races import build_creature_death_piles, build_creature_races
+from .starts_dead import index_starts_dead
 from ..record_types.actors_falloutnv import flatten_actor_templates
 from ..record_types.common import reset_emitted_regions
 from ..record_types.items import load_door_model_sounds
@@ -63,6 +64,10 @@ def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
     if n_tplt:
         print(f'  FO3/FNV actor templates: {n_tplt} stub(s) took their '
               f'model, name or AI data from TPLT')
+
+    n_dead = index_starts_dead(by_type, master_export)
+    if n_dead:
+        print(f'  Starts Dead: {n_dead} placed corpse(s) with a 0 health pool')
 
     build_creature_races(by_type, writer, export_dir, master_export)
     n_piles = build_creature_death_piles(writer)

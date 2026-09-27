@@ -3210,6 +3210,160 @@ the rest are among the 79 meshes `MORROBLIVION_CREATURES` pairs to vanilla
 Oblivion creatures, so the gap patch deliberately supplies no CREA record for
 them and they have no `DATA.Soul` anywhere. A `HasSoulGem` on one answers 0.
 
+## <a id="teleport-effects"></a>Mark, Recall and the Interventions
+
+**Code:** `plugin/game_calls_teleport.cpp`, `tes5_import/dialogue/morrowind_teleport.py`,
+`record_types/crime.py:anchor_rows`, `record_types/magic_morrowind.py:MW_TELEPORTS`.
+
+**Status: built, NOT yet confirmed in game.**
+
+TES3 effects 60–63 have no Skyrim archetype. Each converts as a **Script
+effect with no VMAD**, which is vanilla's own inert effect: Skyrim.esm has 57
+Script MGEFs with no script and **0** Value Modifiers whose actor value is -1.
+The runtime does the work, following OpenMW's `spelleffects.cpp`: only when the
+player is the TARGET, and only while `isTeleportingEnabled`. Otherwise the caster,
+if it is the player, sees `sTeleportDisabled`.
+
+**Seeing the effect land: the VM's own OnMagicEffectApply sink.** `SkyrimVM`
+is a `BSTEventSink<TESMagicEffectApplyEvent>`. Its subobject sits at +0xA8,
+with the vtable at id 217097 (`0x19127c8` on 1.6.1170, `0x17bc0d0` on
+1.6.659), found by matching each SkyrimVM vtable's RTTI locator offset to that
+base class. Slot 1 is `ProcessEvent` (id 53978), which loads the
+`OnMagicEffectApply` string. The event layout comes from the VM's argument
+functor (vtable `0x1912ba8`, slot 1): the target is at +0, the caster at +8, and
+the MGEF's runtime FormID at +0x10, which the functor looks up and checks for
+form type 0x12. The runtime swaps slot 1, forwards every event, and posts a
+teleport that lands on the player to the next frame. 🛑 A `HasMagicEffect` poll
+cannot replace this: all four effects are NoDuration and are gone before a
+tick sees them.
+
+**Mark and Recall.** Mark stores the runtime FormID of the interior's CELL or
+the exterior's WORLDSPACE, plus the position and Z angle. It is saved as a
+`P` co-save line and re-resolved through SKSE's `ResolveFormId` on load.
+Recall is one `MoveTo_Impl` into that place
+([why a cell or worldspace](#positioncell-moves-into-the-cell)).
+`DisableTeleporting` and `EnableTeleporting` set `DialogueState::teleporting`,
+saved as a `T` line.
+
+**The Interventions are `World::getClosestMarker`.**
+
+- Outdoors, OpenMW takes the Divine or Temple markers in the player's
+  worldspace on the smallest square ring of 8192-unit cells around the player.
+  A marker in the player's own cell wins at once. Otherwise ties go to the
+  first marker met walking the ring's edge SW → SE → NE → NW.
+- Indoors, a marker in the player's own cell wins. Otherwise the search starts
+  from where the interior opens onto the world. That is the crime pass's door
+  walk, the same `anchors` TESRuntime's jail search reads, staged as
+  `anchors_formid.txt`.
+- Two differences from OpenMW remain. OpenMW's breadth-first search also finds
+  a marker in an INTERMEDIATE interior before reaching a door outside. And the
+  anchor walk starts from every exterior door at once, so the hop count is the
+  same but a tie can resolve to a different door.
+
+**No marker has to be persistent.** The move goes into the WORLDSPACE at the
+marker's authored position, so the reference itself is never resolved. That
+matters, because none of them is persistent. Measured:
+
+- Morrowind.esm places 11 markers, 6 Divine and 5 Temple, all exterior and
+  all non-persistent.
+- The TR chain places 37: TR's own 23 plus Morrowind_ob's 14. Two of
+  Morrowind_ob's markers stand in other worldspaces.
+
+`markers_formid.txt` is `plugin|ref=kind|place plugin|place|x|y|z|zRot`.
+
+**The runtime knows only Morrowind's own four effects.** `teleports_formid.txt`
+(`plugin|MGEF=index`) lists the chain's `MW060`–`MW063` and every delivery
+clone a plugin's conversion made of them (`TES4MW060MarkFFSelf` and kin).
+Morroblivion's scripted stand-ins are not recognized. The compat patch
+overrides Morroblivion's spells, enchantments and potions with vanilla's
+effects instead
+([restored magic](tes4_export_morrowind.md#restored-magic)).
+
+**The refusal is vanilla's own.** `TribunalMain` is Tribunal's start script. It
+calls `DisableTeleporting` in "Sotha Sil," cells and names no record, so the
+patch stages it as a start script. That covers what Morroblivion's scripts
+refused by hand: the `SothaSSil` cell, and `fbmwTRSothaSil` stage 100. Stage
+100 is Almalexia's death, which happens inside those same cells.
+`BloodmoonMain` (Mortrag Glacier) is started by Hircine's quest script, not an
+SSCR, so Morroblivion's own quest would have to start it.
+
+### <a id="divine-intervention-in-any-world"></a>Divine Intervention in any world
+
+`markers_formid.txt` gathers four sources:
+
+- the chain's own Divine and Temple markers;
+- the places a restored Intervention's replaced script sent the player. The
+  patch writes them on the override as `InterventionTargets`. Morroblivion's
+  Divine Intervention names 8 Cyrodiil chapels and 8 shrines, and its Almsivi
+  Intervention names 6 temples. They resolve by EditorID in the converted
+  masters;
+- Skyrim.esm's temples (`morrowind_temples.py`). A temple is an `LCTN` tagged
+  `LocTypeTemple`: 10 locations, 11 door exits. The landing spot is each door's
+  own `XTEL` arrival point, in the worldspace of the door it leads to. Only
+  plugins whose loaded masters include no TES3 plugin and not the patch stage
+  these rows, so they appear once per load order;
+- `worlds_formid.txt` (`plugin|child=plugin|parent`, 34 child worldspaces in
+  Skyrim.esm, plus each export's `WNAM.Parent`). A walled city shares its
+  parent's coordinates, so the search compares ROOT worldspaces. A cast in
+  Tamriel can land in Whiterun's temple, and a cast in Anvil can land in
+  Anvil's chapel.
+
+Almsivi Intervention stays Temple markers only, so outside Morrowind it does
+nothing, as in vanilla.
+
+### <a id="adding-a-runtime-effect"></a>Adding a runtime effect (the remaining missing ones)
+
+Still inert: the `NATIVE_NONE` entries of `MW_EFFECT_ARCHETYPES`. Those are
+SwiftSwim 1, Levitate 10, SlowFall 11, Disintegrate Weapon/Armor 37/38,
+Sanctuary 42, Detect Enchantment/Key 65/66 and ExtraSpell 126. Each converts
+as an inert Value Modifier (the teleports as a script-less Script effect), and
+every effect record it lands as already reaches the runtime's apply sink.
+Adding one takes these steps, in this order:
+
+1. **Runtime.** Handle the index in `game_calls_teleport.cpp:OnTeleportEffect`,
+   following OpenMW's `spelleffects.cpp` for that effect. It runs on the game
+   thread, posted from the `OnMagicEffectApply` sink, for an effect landing on
+   the PLAYER only; widen the `target == PlayerRef()` test if OpenMW applies it
+   to actors too. 🛑 The sink fires when the effect STARTS. A duration effect
+   (Levitate, SlowFall, SwiftSwim, Sanctuary) also needs its end, and no end
+   signal has been found yet. Find one, e.g. the active-effect list or the
+   effect's finish event, in the exe before building on a poll: a poll cannot
+   see the four NoDuration teleports either.
+2. **Import.** Add the index to `MW_RUNTIME_EFFECTS` in
+   `tes5_import/record_types/magic_morrowind.py`. That one set drives
+   everything downstream:
+   - `teleports_formid.txt` (`teleport_lines`) lists the effect's MGEF and each
+     delivery clone, so the runtime recognizes it. The file keeps its old name.
+   - `mw_converts` now counts the effect as working, so a record carrying it
+     can be restored.
+3. **Morroblivion mode needs no new code.** `morroblivion_magic.restored_magic`
+   overrides each Morroblivion record whose vanilla effects the runtime now
+   carries, as long as its stand-in script passes the dependency check.
+   Candidates from the census:
+   - for Levitate, 6 SPEL and 5 ALCH on `JDLevitation*Script`;
+   - for SlowFall, `slowfall` on `mwSpellSlowfallEffectScript`;
+   - the Drain Attribute + SlowFall potions and the three Levitate
+     enchantments whose script effect has no script. These flip as soon as
+     their effects convert.
+
+   Rebuild in this order: `--build-morrowind-patch`, then `--import-only` for
+   Morrowind_ob.esm, TR_Mainland.esm and Morrowind.esm.
+4. **Check what flipped.** `restored_magic` returns only the records it
+   overrides, so compare that list with the census in
+   [restored magic](tes4_export_morrowind.md#restored-magic). If a record you
+   expected stays, read its script before loosening the check: a stand-in that
+   advances a quest, or keeps a global other scripts read, must stay.
+
+A refusal the effect needs (Levitation in Mournhold and Sotha Sil) is already
+authored: `TribunalMain` calls `DisableLevitation`, which today runs as a
+logged no-op stub. Port that opcode with the effect.
+
+🛑 **Every TES3 plugin stages its whole loaded chain's markers and anchors.**
+Morrowind_ob.esm is a TES4 plugin and stages no Morrowind sidecar, so its
+markers reach the runtime only through a dependent. Rows repeated across
+sidecars are harmless. Measured anchors: 1,128 for Morrowind.esm and 4,623
+over the TR chain.
+
 ## <a id="the-control-switches"></a>The player-control switches
 
 **Code:** `plugin/script_ops_control.cpp`, `plugin/game_calls_control.cpp`,

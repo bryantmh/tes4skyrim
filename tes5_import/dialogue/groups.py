@@ -33,7 +33,6 @@ from ..base.conditions import (
     get_speak_as_topics,
     has_any_conditions,
     has_audience_condition,
-    needs_origin_gate,
     read_func_param_fids,
     read_getisid_fids,
     shared_state_conditions,
@@ -47,7 +46,8 @@ from .converter import (DIAL_TYPE_CONVERSATION, SERVICE_MENU_SCRIPTS,
     convert_DIAL, convert_INFO, make_dlbr, make_dlvw, service_menu_kind,
     should_skip_dial, voice_file_prefix,
     GREET_TOPIC_BY_QUEST, EMPTY_DIAL_FIDS, lip_texts, startable_quests)
-from .say_topics import SAY_TOPIC_DISPOSITIONS, build_say_topic_dispositions
+from .say_topics import (FORCE_GREET_SLOTS, SAY_TOPIC_DISPOSITIONS,
+                         build_say_topic_dispositions)
 from .speak_as import SCENE_QUEST_EDID, scene_quest_fid, speaker_subrecords
 
 
@@ -144,17 +144,18 @@ def _branch_is_linked(dial_rec, dial_fid, tclt_targets, bark_choice_targets,
                       unlock_plan) -> bool:
     """True when this topic's DLBR must be a Normal (non-top-level) branch.
 
-    A TCLT target never explicitly AddTopic'd stays off the menu; one reached
-    from a bark/greeting choice does not.  Script-driven Conversation topics
-    are forced Normal.
+    A TCLT target or a StartConversation force-greet topic never explicitly
+    AddTopic'd stays off the menu; a TCLT target reached from a bark/greeting
+    choice does not.  Script-driven Conversation topics are forced Normal.
 
     See: docs/commentary/tes5_import_dialogue.md#branches-views-topic-ownership
     """
-    return ((dial_fid in tclt_targets
-             and dial_fid not in bark_choice_targets
-             and (dial_fid & 0xFFFFFF) not in unlock_plan['gated']
-             and (dial_fid & 0xFFFFFF)
-             not in unlock_plan.get('script_added', ()))
+    fid24 = dial_fid & 0xFFFFFF
+    never_added = (fid24 not in unlock_plan['gated']
+                   and fid24 not in unlock_plan.get('script_added', ()))
+    forced = get_str(dial_rec, 'EditorID', '').lower() in FORCE_GREET_SLOTS
+    return ((never_added and (forced or (dial_fid in tclt_targets
+                                         and dial_fid not in bark_choice_targets)))
             or _is_script_topic(dial_rec, dial_fid))
 
 
@@ -1313,12 +1314,9 @@ def _build_injected_ctdas(info_rec, is_bark, npc_to_vtyp, topic_vtyps,
     if quest_gate_bytes:
         stats['quest_gated'] += 1
 
-    from ..record_types.actor_common import get_origin_faction_fid
-    origin_faction_fid = get_origin_faction_fid()
-    origin_bytes = b''
-    if origin_faction_fid and needs_origin_gate(info_rec):
-        origin_bytes = build_or_chain(FUNC_GET_IN_FACTION,
-                                      [origin_faction_fid])
+    from ..record_types.actor_common import origin_gate
+    origin_bytes = origin_gate(info_rec)
+    if origin_bytes:
         stats['origin_gated'] = stats.get('origin_gated', 0) + 1
 
     return (origin_bytes + quest_gate_bytes + unlock_gate_bytes + state_bytes

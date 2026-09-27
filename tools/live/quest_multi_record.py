@@ -13,8 +13,14 @@ ArenaAnnouncer + ArenaDialogue).
 
 Only CHANGES are written, so a long idle stretch costs a line, not a file.
 Prints as it goes so a truncated run is still readable.
+
+`--commands` polls extra console commands (a condition function on a ref, a
+full `sqv` for alias fills) and logs each output line that appears or goes.
+Creating `<out>.stacks` while recording runs `dumpstacks` once on this same
+connection (the pipe takes one client) and deletes the file.
 """
 import argparse
+import os
 import re
 import sys
 import time
@@ -45,10 +51,63 @@ def snapshot(bridge, quest: str) -> dict:
     return out
 
 
+def command_lines(bridge, command: str) -> list:
+    """The non-empty output lines of one console command; a bridge error is one line.
+
+    `@<refid> <command>` runs the command on that reference.
+    """
+    ref = None
+    if command.startswith('@'):
+        ref, command = command[1:].split(' ', 1)
+    try:
+        r = bridge.console(command, ref=ref)
+    except Exception as exc:
+        return [f'error: {exc}']
+    text = r if isinstance(r, str) else (r.get('output') or r.get('text') or '')
+    return [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+
+def poll_commands(bridge, commands: list, prev: dict, emit) -> None:
+    """Log each command's output lines that appeared or vanished since the last poll."""
+    for c in commands:
+        cur = command_lines(bridge, c)
+        old = prev.get(c)
+        if old is None:
+            emit(f'[{c}] BASELINE ' + ' | '.join(cur))
+        else:
+            gone = [ln for ln in old if ln not in cur]
+            new = [ln for ln in cur if ln not in old]
+            if gone or new:
+                emit(f'[{c}] -{gone} +{new}')
+        prev[c] = cur
+
+
+def poll_quests(bridge, prev: dict, emit) -> None:
+    """Log every quest variable that changed since the last poll."""
+    for q, old in prev.items():
+        cur = snapshot(bridge, q)
+        if not cur:
+            continue
+        for k in sorted(set(cur) | set(old)):
+            a, b = old.get(k), cur.get(k)
+            if a != b:
+                emit(f'{q}.{k}: {a} -> {b}')
+        prev[q] = cur
+
+
+def dump_stacks_if_asked(bridge, trigger: str, emit) -> None:
+    """Run `dumppapyrusstacks` once when the trigger file exists, then remove it."""
+    if os.path.exists(trigger):
+        os.remove(trigger)
+        command_lines(bridge, 'dumppapyrusstacks')
+        emit('dumpstacks written to the Papyrus log')
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description='Record several quests from one bridge connection.')
     ap.add_argument('--quests', nargs='+', required=True)
+    ap.add_argument('--commands', nargs='*', default=[])
     ap.add_argument('--seconds', type=float, default=1800)
     ap.add_argument('--interval', type=float, default=1.0)
     ap.add_argument('--out', required=True)
@@ -56,6 +115,7 @@ def main() -> int:
 
     bridge = Bridge()
     prev = {q: {} for q in args.quests}
+    prev_cmd = {}
     start = time.time()
     fh = open(args.out, 'w', encoding='utf-8')
 
@@ -68,23 +128,16 @@ def main() -> int:
     emit(f'recording {", ".join(args.quests)} '
          f'for {args.seconds:.0f}s @ {args.interval}s')
     for q in args.quests:
-        cur = snapshot(bridge, q)
-        prev[q] = cur
-        emit(f'{q} BASELINE stage={cur.get("_stage")} '
-             f'state={cur.get("_state")} vars={len(cur)}')
+        prev[q] = snapshot(bridge, q)
+        emit(f'{q} BASELINE stage={prev[q].get("_stage")} '
+             f'state={prev[q].get("_state")} vars={len(prev[q])}')
+    poll_commands(bridge, args.commands, prev_cmd, emit)
 
     while time.time() - start < args.seconds:
         time.sleep(args.interval)
-        for q in args.quests:
-            cur = snapshot(bridge, q)
-            if not cur:
-                continue
-            old = prev[q]
-            for k in sorted(set(cur) | set(old)):
-                a, b = old.get(k), cur.get(k)
-                if a != b:
-                    emit(f'{q}.{k}: {a} -> {b}')
-            prev[q] = cur
+        poll_quests(bridge, prev, emit)
+        poll_commands(bridge, args.commands, prev_cmd, emit)
+        dump_stacks_if_asked(bridge, args.out + '.stacks', emit)
     emit('done')
     fh.close()
     return 0

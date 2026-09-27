@@ -18,7 +18,8 @@ from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from pyffi.formats.nif import NifFormat
 
-from asset_convert.nif.sequences import CB_OFFSETS
+from asset_convert.nif.sequences import (CB_OFFSETS, append_sibling_entry,
+                                         palette_bytes, palette_lookup)
 
 
 def _all_attr_names(cls):
@@ -455,9 +456,26 @@ def _group_targets(swaps, geoms):
     return groups
 
 
+def _shader_entries(seq, name):
+    """The sequence's shader-controller entries driving shape `name`."""
+    raw = palette_bytes(getattr(seq, 'string_palette', None))
+    out = []
+    for cb in seq.controlled_blocks:
+        ctrl = cb.controller
+        if ctrl is None or 'ShaderProperty' not in ctrl.__class__.__name__:
+            continue
+        own = (bytes(getattr(cb, 'node_name', b'') or b'')
+               or palette_lookup(raw, getattr(cb, 'node_name_offset', None)))
+        if own == name:
+            out.append(cb)
+    return out
+
+
 def _emit_flipbook(group, parent, base_wrapper, pal):
     """Bake one sequence's in-between shapes of one shape; how many were made.
 
+    Each baked shape owns its shader, so it gets its own copy of every shader
+    entry animating the base shape (an emissive fade, a UV scroll).
     See: docs/commentary/asset_convert_animation.md#morph-emulation
     """
     seq, geom, md, targets = group
@@ -465,11 +483,14 @@ def _emit_flipbook(group, parent, base_wrapper, pal):
     base, frames = _frame_positions(geom, md, targets, times)
     kept, states = _flipbook_states(base, frames)
     seq_name = bytes(seq.name or b'')
+    entries = _shader_entries(seq, bytes(geom.name))
     for index in range(1, len(kept)):
         name = bytes(geom.name) + b'Mrph' + seq_name + str(index).encode('ascii')
         clone = _bake_morph_clone(geom, base, kept[index], name)
         _add_vis_cb(seq, _wrap_shape(clone, parent, pal),
                     *_state_toggles(states, times, index))
+        for cb in entries:
+            append_sibling_entry(seq, cb, name)
     _add_vis_cb(seq, base_wrapper, *_state_toggles(states, times, 0))
     return len(kept) - 1
 

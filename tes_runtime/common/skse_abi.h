@@ -85,6 +85,11 @@ struct SKSEMessagingInterface {
         kMessage_NewGame,
         kMessage_DataLoaded,
     };
+    // GetEventDispatcher ids: SKSE's own dispatchers, a sink added through
+    // BSTEventSource::AddEventSink.
+    enum {
+        kDispatcher_ModEvent = 0,
+    };
 
     UInt32 interfaceVersion;
     bool (*RegisterListener)(PluginHandle listener, const char* sender, EventCallback handler);

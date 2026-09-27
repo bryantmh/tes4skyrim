@@ -47,8 +47,16 @@ class ScriptContext:
     uses_timer: bool = False
     uses_say: bool = False
     uses_say_timer: bool = False
+    #: An event without an action ref read the last activator; OnActivate records it.
+    uses_last_activator: bool = False
+    #: A poll block calls SetPos/SetAngle: TES4 per-frame motion.
+    moves_in_poll: bool = False
+    #: Poll SetPos/SetAngle calls stepping from their own axis read -> (axis, step, sign) (poll_motion.relative_sets).
+    relative_sets: dict = field(default_factory=dict)
     #: Authored quest-script delay in seconds (FO3/FNV DATA.Delay); 0 = none.
     quest_delay: float = 0.0
+    #: Every record the script is attached to is a BOOK, so its OnActivate means "read".
+    on_book: bool = False
 
     # --- Emission bookkeeping ----------------------------------------------
     #: Quest -> latch variable, for stage timers.  Per-script: a latch
@@ -56,6 +64,8 @@ class ScriptContext:
     stage_latches: dict = field(default_factory=dict)
     #: The arm a TES4 `return` must emit before `Return` inside a poll body.
     poll_return_prefix: str = ''
+    #: Glide duration expression while a moving poll body is emitted; SetPos/SetAngle there glide over it.
+    glide_secs: str = ''
     #: GetInCell family helpers this script needs.
     cell_families: dict = field(default_factory=dict)
     #: SCRO alias map, scoped to ONE fragment.
@@ -66,13 +76,15 @@ class ScriptContext:
     #: script-managed flag rather than the engine's sleep state.
     in_sleep_menumode: bool = False
 
-    in_foreach: int = 0
     refwalk_var: str = ''
     refwalk_labels: set = field(default_factory=set)
     block_depth: int = 0
 
     udf_returns: bool = False
-    udf_return_value: str = ''
+    #: Set while a user function's body converts: its `Self` is the calling reference.
+    in_udf: bool = False
+    #: Papyrus type of the first `SetFunctionValue`, the UDF's return type.
+    udf_return_type: str = 'Int'
     #: Parameter types of this script's OBSE user function, in order; None
     #: when it declares no TES4Call at all.
     udf_signature: list = None

@@ -27,6 +27,8 @@ import os
 import struct
 from collections import Counter
 
+import lz4.block
+
 
 def _u8(d, o):
     return d[o], o + 1
@@ -45,65 +47,63 @@ def _wstring(d, o):
     return d[o:o + n].decode('utf-8', 'replace'), o + n
 
 
-def read_save(path):
-    """Parse a .ess far enough to return (plugins, formid_array).
+def _screenshot_end(d):
+    """(saveVersion, offset just past the header and screenshot) of raw save bytes `d`."""
+    header_size, hs = _u32(d, 13)
+    save_version, h = _u32(d, hs)
+    _player_name, h = _wstring(d, h + 4)
+    _location, h = _wstring(d, h + 4)
+    _game_date, h = _wstring(d, h)
+    _race, h = _wstring(d, h)
+    h += 2 + 4 + 4 + 8
+    shot_w, h = _u32(d, h)
+    shot_h, h = _u32(d, h)
+    bpp = 4 if save_version >= 12 else 3
+    return save_version, hs + header_size + shot_w * shot_h * bpp
+
+
+def read_body(path):
+    """(body, shot_end): the decompressed save body, and the prefix its table offsets count.
 
     SSE saves (saveVersion >= 12) LZ4-compress everything after the screenshot.
     The file location table's offsets are relative to the WHOLE uncompressed
-    file, so the header+screenshot prefix is subtracted after decompressing.
+    file, so subtract `shot_end` from them to index `body`.
     """
     with open(path, 'rb') as f:
         d = f.read()
-
     if d[:13] != b'TESV_SAVEGAME':
         raise ValueError(f'not a Skyrim save: {path}')
+    save_version, shot_end = _screenshot_end(d)
+    if save_version < 12:
+        return d[shot_end:], 0
+    uncompressed_size, o = _u32(d, shot_end)
+    compressed_size, o = _u32(d, o)
+    return (lz4.block.decompress(d[o:o + compressed_size],
+                                 uncompressed_size=uncompressed_size),
+            shot_end)
 
-    o = 13
-    header_size, o = _u32(d, o)
-    hs = o
 
-    h = hs
-    save_version, h = _u32(d, h)
-    _save_number, h = _u32(d, h)
-    _player_name, h = _wstring(d, h)
-    _level, h = _u32(d, h)
-    _location, h = _wstring(d, h)
-    _game_date, h = _wstring(d, h)
-    _race, h = _wstring(d, h)
-    h += 2 + 4 + 4 + 8          # sex, curExp, lvlUpExp, filetime
-    shot_w, h = _u32(d, h)
-    shot_h, h = _u32(d, h)
+def location_table(body):
+    """The 12 u32 file-location-table fields, just past the plugin info."""
+    plugin_info_size = struct.unpack_from('<I', body, 1)[0]
+    return struct.unpack_from('<12I', body, 5 + plugin_info_size)
 
-    bpp = 4 if save_version >= 12 else 3
-    shot_end = hs + header_size + shot_w * shot_h * bpp
 
-    o = shot_end
-    if save_version >= 12:
-        uncompressed_size, o = _u32(d, o)
-        compressed_size, o = _u32(d, o)
-        import lz4.block
-        body = lz4.block.decompress(d[o:o + compressed_size],
-                                    uncompressed_size=uncompressed_size)
-    else:
-        body = d[o:]
-        shot_end = 0
+def formid_array(body, shot_end):
+    """The save's FormID array: what a type-0 RefID indexes (value - 1)."""
+    n, fo = _u32(body, location_table(body)[0] - shot_end)
+    return list(struct.unpack_from('<%dI' % n, body, fo))
 
-    b = 0
-    _form_version, b = _u8(body, b)
-    plugin_info_size, b = _u32(body, b)
-    table_at = b + plugin_info_size
-    count, b = _u8(body, b)
+
+def read_save(path):
+    """Parse a .ess far enough to return (plugins, formid_array)."""
+    body, shot_end = read_body(path)
+    count, b = _u8(body, 5)
     plugins = []
     for _ in range(count):
         name, b = _wstring(body, b)
         plugins.append(name)
-
-    # File location table sits immediately after the plugin-info block.
-    t = struct.unpack_from('<12I', body, table_at)
-    fo = t[0] - shot_end
-    n, fo = _u32(body, fo)
-    ids = list(struct.unpack_from('<%dI' % n, body, fo))
-    return plugins, ids
+    return plugins, formid_array(body, shot_end)
 
 
 def scan(path, plugin_index=None, quiet=False):

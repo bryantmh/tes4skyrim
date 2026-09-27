@@ -547,14 +547,20 @@ def split_root_motion(clip: DecodedClip,
         motion['rotations'] = np.array(
             [_quat_mul(conj, q) for q in best.rotations])
         best.rotations = np.tile(q0, (n, 1))
-    for tr in candidates:
+    reset_accum_roots(clip)
+    return motion
+
+
+def reset_accum_roots(clip: DecodedClip) -> None:
+    """Play the engine-owned accum roots (ACCUM_ROOT_BONES, bone 0) as identity, in place."""
+    n = len(clip.times)
+    for tr in clip.tracks:
         if tr.bone not in ACCUM_ROOT_BONES:
             continue
         if tr.translations is not None:
             tr.translations = np.zeros((n, 3))
         if tr.rotations is not None:
             tr.rotations = np.tile((1.0, 0.0, 0.0, 0.0), (n, 1))
-    return motion
 
 
 def _quat_mul(a, b):

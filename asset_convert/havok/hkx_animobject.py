@@ -117,6 +117,15 @@ _AUTOLOOP_SEQUENCE = 'AutoLoop'   # where the real ambient motion lives
 #: BGED of vanilla's shared self-playing graph (all 63 AutoPlay meshes); relative to meshes\, no SoundPlay event.
 VANILLA_AUTOPLAY_BGED = 'GenericBehaviors\\Autoplay.hkx'
 
+#: Sequences an object plays from load, most preferred first; SpecialIdle is Oblivion's rest group when no Idle exists.
+_LOAD_SEQUENCES = (_AUTOLOOP_SEQUENCE, _AUTOPLAY_SEQUENCE, 'SpecialIdle')
+
+
+def _start_state_id(sequences: list, rest_id: int) -> int:
+    """Start state: the first `_LOAD_SEQUENCES` name present, else `rest_id`."""
+    return next((sequences.index(s) for s in _LOAD_SEQUENCES if s in sequences),
+                rest_id)
+
 # Vanilla's fixed dummy bone name for single-bone animated objects
 # (clutter\beehive\characterassets\SingleBoneSkeleton.hkx uses exactly this).
 # The rig is a placeholder — the real motion lives in the NIF's
@@ -437,22 +446,7 @@ def behavior_xml(graph_name: str, sequences: list) -> str:
         '<hkobject>\n\t<hkparam name="id">-1</hkparam>\n'
         '\t<hkparam name="payload">null</hkparam>\n</hkobject>'))
     sm.param('startStateChooser', 'null')
-    # Start on the Rest state, never on a motion sequence (see above) -- UNLESS
-    # the mesh carries an ambient sequence.  AutoPlay/AutoLoop is vanilla's
-    # name for animation that plays by itself with no script behind it, so
-    # for those the graph MUST start on it or the effect sits frozen on its
-    # first frame -- which is precisely the Rest-state behaviour the doors
-    # need.  A mesh mixing ambient and script-driven sequences reaches this
-    # generated graph (the shared vanilla one has no states for the scripted
-    # names); AutoLoop is the authored loop and AutoPlay only its CLAMP intro
-    # (nif_converter._autoplay_ambient_sequences), so start on AutoLoop when
-    # both exist -- this graph has no End -> AutoLoop hand-off.
-    _autoplay_id = next(
-        (i for i, s in enumerate(sequences) if s == _AUTOLOOP_SEQUENCE),
-        next((i for i, s in enumerate(sequences) if s == _AUTOPLAY_SEQUENCE),
-             None))
-    sm.param('startStateId',
-             rest_id if _autoplay_id is None else _autoplay_id)
+    sm.param('startStateId', _start_state_id(sequences, rest_id))
     sm.param('returnToPreviousStateEventId', -1)
     sm.param('randomTransitionEventId', -1)
     sm.param('transitionToNextHigherStateEventId', -1)

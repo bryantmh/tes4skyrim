@@ -76,6 +76,20 @@ from asset_convert.havok.behavior_ragdoll import (
     death_states,
     live_tracking,
 )
+from asset_convert.havok.behavior_getup import getup_clip_meta, plan_getup
+from asset_convert.havok.creature_pipeline import foot_enum_map
+from asset_convert.havok.hkx_anim import (
+    decode_clip,
+    event_annotations,
+    parse_kf_events,
+    speed_bake_factor,
+    speed_bake_targets,
+    split_cast_clip,
+    timescale_clip,
+    write_clip_hkx,
+)
+from asset_convert.havok.hkx_ragdoll import ragdoll_info
+from asset_convert.havok.hkx_skeleton import generate_skeleton_hkx
 from asset_convert.havok.behavior_nodes import F_GLOBAL, GraphBuilder
 from asset_convert.havok.behavior_root import behavior_graph, graph_data
 from asset_convert.havok.behavior_root import root_generator
@@ -233,7 +247,8 @@ def build_behavior_xml(behavior_name: str, clips: dict,
                        speeds: dict = None,
                        ragdoll: dict = None,
                        sound_events: list = None,
-                       vocal_states: list = None) -> str:
+                       vocal_states: list = None,
+                       getup_plan: list = None) -> str:
     """The generated v1 state machine (see module docstring).
 
     hit_times: {state_name: [seconds]} — Oblivion 'Hit' text-key times for
@@ -274,7 +289,8 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     hit_times = hit_times or {}
     movement_types = movement_types or []
     speeds = speeds or {}
-    events = graph_events(clips, vocal_states, sound_events)
+    events = graph_events(clips, vocal_states, sound_events,
+                          getup=bool(getup_plan))
     cast_defs = cast_phase_defs(clips)
     eid = {n: i for i, n in enumerate(events)}
     if not clips['idle']:
@@ -320,7 +336,7 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     mod_gen = root_generator(gb, sm, live_tracking(gb, ragdoll),
                              [equip_eem, cast_eem, swim_eem, gait_eem])
     root_states = [gb.root_state(0, 'Root', mod_gen.ref)]
-    death, root_wild_ref = death_states(gb, ragdoll, clips)
+    death, root_wild_ref = death_states(gb, ragdoll, clips, getup_plan)
     return behavior_graph(gb, behavior_name, root_states + death,
                           root_wild_ref, gdata)
 
@@ -557,383 +573,316 @@ def detect_dissolve(decoded):
             'reveals': reveals, 'offsets': offsets}
 
 
-def generate_creature_project(creature_dir: str, name: str, out_root: str,
-                              fps: float = 30.0, sound_slots: dict = None,
-                              sound_chances: dict = None,
-                              attr_speed: int = 0,
-                              namespace: str = '') -> dict:
-    """Full project generation for one creature.
+class _ClipSet:
+    """Every clip one creature project converts, built up phase by phase.
 
-    Writes the hkx project tree plus `project_manifest.json` — the manifest
-    is the contract consumed by asset_convert/havok/animation_data.py (singlefile
-    registration) and tes5_import (RACE ATKE/behavior-graph paths).
-
-    namespace: the owning plugin's tag — see project_layout().
-
-    sound_slots: {CSDT type: SOUN EditorID} for this creature's folder. Skyrim
-    voices creatures through animation annotations rather than the actor
-    record, so these become `SoundPlay.<SNDR>` clip triggers — see
-    creature_pipeline._CSDT_TO_CLIP — except the Idle/Aware slots, which
-    become dedicated single-play vocal states so they cannot fire per loop.
-    sound_chances: {CSDT type: authored CSDC chance 0-100}, carried into the
-    manifest's vocal_events for the import-side IDLE record conditions.
-
-    attr_speed: the folder's MAX TES4 DATA.Speed attribute. Oblivion moved a
-    creature at the GMST formula speed (walk = fMoveCreatureWalkMin +
-    (Max−Min)×Speed/100, run = walk×fMoveRunMult; 5.0/300.0/3.0 from the
-    export) regardless of the animation's root motion — the clips just slid.
-    Skyrim ties commanded speed to the animation, so the speed-up is BAKED
-    into the walk/run clips here (timescale_clip, capped ×1.4 walk / ×2.0
-    run) and everything downstream — root-motion `speeds`, blend anchors,
-    MOVT SPED — is derived from the baked files and agrees at rate 1.0,
-    exactly like every vanilla creature (chaurus: MOVT run == blend top
-    anchor == clip natural speed).
+    Holds the decoded clips (stem -> (clip, motion)), the clip_meta rows the
+    graph and animationdata both read, root motions, and failures.  The
+    phases run in generate_creature_project's order; each extends what the
+    previous ones built.
+    See: docs/commentary/asset_convert_creature.md#runtime-animation-cache-composition
     """
-    from asset_convert.havok.creature_pipeline import foot_enum_map
-    from asset_convert.havok.hkx_anim import (decode_clip, event_annotations,
-                                        parse_kf_events, speed_bake_factor,
-                                        speed_bake_targets, timescale_clip,
-                                        write_clip_hkx)
-    from asset_convert.havok.hkx_ragdoll import ragdoll_info
-    from asset_convert.havok.hkx_skeleton import generate_skeleton_hkx
 
-    skeleton_nif = os.path.join(creature_dir, 'skeleton.nif')
-    lname = name.lower()
-    layout = project_layout(name, namespace)
-    proj_dir = os.path.join(out_root, layout['fs_dir'])
-    clips = classify_clips(creature_dir)
+    def __init__(self, clips: dict, fps: float, sound_slots: dict,
+                 attr_speed: int):
+        """Seed the phase state for one creature folder's classified clips."""
+        self.clips, self.fps = clips, fps
+        self.enum_map = foot_enum_map(sound_slots)
+        self.bake = speed_bake_targets(clips, attr_speed)
+        self.decoded, self.decode_failed = {}, {}
+        self.clip_meta, self.motions, self.failures = [], {}, []
+        self.cast_stem_map = cast_anim_stems(clips)
+        self.cast_release_offset = None
 
-    bones = generate_skeleton_hkx(
-        skeleton_nif, os.path.join(proj_dir, 'character assets',
-                                   'skeleton.hkx'))
-    ragdoll = ragdoll_info(skeleton_nif, bones)
+    def _convert_list(self) -> list:
+        """Every state's (name, kf, looping, enter, end) row plus the run gait clips."""
+        rows = list(state_defs(self.clips))
+        if self.clips.get('run'):
+            rows.append(('MoveForwardRun', self.clips['run'], True, None, None))
+        if self.clips.get('run_back'):
+            rows.append(('MoveBackwardRun', self.clips['run_back'], True,
+                         None, None))
+        return rows
 
-    # convert every clip the graph uses, collecting per-clip metadata
-    # (the run gait clip is not a state — it feeds the MoveForward
-    # parametric speed blend — but still needs conversion + registration)
-    convert_list = list(state_defs(clips))
-    if clips.get('run'):
-        convert_list.append(('MoveForwardRun', clips['run'], True, None,
-                             None))
-    if clips.get('run_back'):
-        convert_list.append(('MoveBackwardRun', clips['run_back'], True,
-                             None, None))
-    attack_kfs = set(clips['attacks'])
-    enum_map = foot_enum_map(sound_slots)
+    def _decode_source(self, src_stem: str, kf: str) -> None:
+        """Decode `kf` once under `src_stem`, baking in the gait speed-up."""
+        if src_stem in self.decoded or src_stem in self.decode_failed:
+            return
+        try:
+            d_clip, d_motion = decode_clip(kf, self.fps)
+            factor = speed_bake_factor(self.bake.get(src_stem), d_clip,
+                                       d_motion, self.fps)
+            if factor > 1.0:
+                d_clip, d_motion = timescale_clip(d_clip, d_motion, factor)
+            self.decoded[src_stem] = (d_clip, d_motion)
+        except Exception as e:
+            self.decode_failed[src_stem] = f'{type(e).__name__}: {e}'
 
-    _bake = speed_bake_targets(clips, attr_speed)
+    def _split_cast(self, clip) -> None:
+        """Decode the cast In/Loop/Out slices under their own stems, without root motion."""
+        in_c, loop_c, out_c, rel_off = split_cast_clip(clip)
+        self.cast_release_offset = rel_off
+        for ph, part in zip(CAST_PHASES, (in_c, loop_c, out_c)):
+            ph_stem = self.cast_stem_map.get(f'Mag_FF_{ph}')
+            if ph_stem:
+                self.decoded[ph_stem] = (part, None)
 
-    def _bake_factor(stem, clip, motion):
-        return speed_bake_factor(_bake.get(stem), clip, motion, fps)
+    def _meta(self, st_name: str, stem: str, clip, looping: bool, end_evt,
+              is_attack: bool) -> dict:
+        """One clip_meta row carrying the clip's translated Oblivion events.
 
-    # Phase 1 — DECODE every clip and collect its translated events
-    # (parse_kf_events: 'Sound: X' → SoundPlay descriptor names, authored
-    # 'Enum: Left/...' footfalls → engine foot events, 'Hit' → hit times).
-    # Compilation waits until _apply_sound_slots has folded the CREA CSDT
-    # slots in, because the events must be EMBEDDED in the animation hkx as
-    # annotations — the channel the engine dispatches at runtime (vanilla:
-    # 58/74 wolf animations carry SoundPlay./FootFront/FootBack annotations
-    # inside the .hkx; animationdata triggers alone stayed silent in game).
-    decoded, decode_failed = {}, {}         # stem -> (clip, motion) / error
-    clip_meta, motions, failures = [], {}, []
-    cast_stem_map = cast_anim_stems(clips)
-    cast_release_offset = None
-    for st_name, kf, looping, _enter, end_evt in convert_list:
-        src_stem = clip_state_name(kf)
-        # A cast state plays a SLICE of its source clip, not the whole thing
-        # (In/Loop/Out — see hkx_anim.split_cast_clip), so it decodes under
-        # its own per-phase stem.
-        stem = cast_stem_map.get(st_name, src_stem)
-        if src_stem not in decoded and src_stem not in decode_failed:
-            try:
-                d_clip, d_motion = decode_clip(kf, fps)
-                factor = _bake_factor(src_stem, d_clip, d_motion)
-                if factor > 1.0:
-                    d_clip, d_motion = timescale_clip(d_clip, d_motion,
-                                                      factor)
-                decoded[src_stem] = (d_clip, d_motion)
-            except Exception as e:  # keep going; report at the end
-                decode_failed[src_stem] = f'{type(e).__name__}: {e}'
-        if src_stem in decode_failed:
-            failures.append((kf, decode_failed[src_stem]))
-            if st_name == 'MoveForwardRun':
-                clips['run'] = None     # blender must not reference it
-            continue
-        clip, motion = decoded[src_stem]
-        if st_name in cast_stem_map and stem not in decoded:
-            from asset_convert.havok.hkx_anim import split_cast_clip
-            in_c, loop_c, out_c, rel_off = split_cast_clip(clip)
-            cast_release_offset = rel_off
-            # no root motion for the slices: a cast is an in-place gesture,
-            # and the full clip's motion curve would outrun the slice anyway
-            for ph, part in zip(CAST_PHASES, (in_c, loop_c, out_c)):
-                ph_stem = cast_stem_map.get(f'Mag_FF_{ph}')
-                if ph_stem:
-                    decoded[ph_stem] = (part, None)
-        if stem in decoded:
-            clip, motion = decoded[stem]
-        events = parse_kf_events(clip.text_keys, enum_map)
-        if st_name in cast_stem_map:
-            # a cast is not a melee swing: no weaponSwing/HitFrame damage
-            # window; the release is the Out clip's SpellFire trigger
+        Only a melee attack has a hit window: a cast, recoil or stagger keeps
+        none even when its kf has a Hit key, and a keyless attack gets one 40%
+        in so the damage contract still fires.  The sound entries keep the SOUN
+        EditorID, which is what `SoundPlay.<SNDR>` resolves.
+        See: docs/commentary/asset_convert_creature.md#hit-window-attacks-only
+        """
+        events = parse_kf_events(clip.text_keys, self.enum_map)
+        if st_name in self.cast_stem_map or not is_attack:
             events['hits'] = []
-        if kf in attack_kfs and not events['hits']:
-            # Keyless attack: the damage contract (weaponSwing/preHitFrame/
-            # HitFrame, fired by the graph's clip triggers) still needs a hit
-            # moment. ~40% in is where vanilla one-shot attacks put it.
+        elif not events['hits']:
             events['hits'] = [float(clip.duration) * 0.4]
-        clip_meta.append({
-            'name': st_name,
-            'stem': stem,
-            'anim': 'Animations\\' + stem + '.hkx',
-            'duration': float(clip.duration),
-            'looping': looping,
-            'end_event': end_evt,
-            # The SOUN EDID must survive: both the hkx annotation and the
-            # animationdata trigger are 'SoundPlay.<SNDR EDID>' and the
-            # engine resolves that name at playback.  Keeping only the
-            # timestamp emitted a bare 'SoundPlay' naming no descriptor,
-            # which plays nothing.
-            'sounds': events['sounds'],
-            # Authored Oblivion footfall keys, already translated to the
-            # engine's own footstep events (FSTP.ANAM match).
-            'feet': events['feet'],
-            # Oblivion 'Hit' text keys → HitFrame triggers (damage contract)
-            'hits': events['hits'],
-        })
-        if motion and stem not in motions:
-            motions[stem] = {
-                'bone': motion['bone'],
-                'duration': float(clip.duration),
-                'times': motion['times'].tolist(),
-                'translations': (motion['translations'].tolist()
-                                 if motion['translations'] is not None
-                                 else None),
-                'rotations': (motion['rotations'].tolist()
-                              if motion['rotations'] is not None else None),
-            }
+        return {'name': st_name, 'stem': stem,
+                'anim': 'Animations\\' + stem + '.hkx',
+                'duration': float(clip.duration), 'looping': looping,
+                'end_event': end_evt, 'sounds': events['sounds'],
+                'feet': events['feet'], 'hits': events['hits']}
 
-    # The cast Out's release trigger, mirrored into animationdata exactly as
-    # vanilla ships it (atronachflame.txt: `MLh_SpellFire_Event:0.233334` +
-    # `Spell_Stop:<end>` on Mag_FF_RH_Out). The graph fires the same pair
-    # from its clip trigger array — both channels must agree.
-    if cast_release_offset is not None:
-        for c in clip_meta:
-            if c['name'] == 'Mag_FF_Out':
-                c['events'] = [(cast_release_offset, 'MLh_SpellFire_Event'),
-                               (cast_release_offset, 'MRh_SpellFire_Event')]
+    def _keep_motion(self, stem: str, clip, motion) -> None:
+        """Record `stem`'s root motion once, as JSON-ready lists."""
+        if not motion or stem in self.motions:
+            return
+        self.motions[stem] = {
+            'bone': motion['bone'], 'duration': float(clip.duration),
+            'times': motion['times'].tolist(),
+            'translations': (motion['translations'].tolist()
+                             if motion['translations'] is not None else None),
+            'rotations': (motion['rotations'].tolist()
+                          if motion['rotations'] is not None else None),
+        }
 
-    # CREA CSDT sound slots → SoundPlay/footstep events on the right clips,
-    # BEFORE compiling, so they land inside the animation hkx too.
-    _apply_sound_slots(clip_meta, clips, sound_slots)
+    def decode_states(self) -> None:
+        """Phase 1: decode every state's clip; record its metadata and root motion.
 
-    # Vocal state for the CSDT Aware(5) slot. It CANNOT be an annotation on
-    # the looping Idle/CombatStance clips — an annotation fires every loop
-    # cycle, so the creature squeaked non-stop, and kept squeaking after
-    # death because the ragdoll wrapper states loop the idle clip as their
-    # pose source. Instead it is a single-play state playing its OWN copy of
-    # the idle animation with the sound annotation, entered through the
-    # engine's ActionIdleWarn IDLE record — the exact vanilla WolfIdleWarn
-    # layout (leaf under the action, ENAM, aggroWarning lifecycle), and it
-    # only ever fires during an aggro warning.
-    #
-    # The Idle(4) slot is DELIVERED NOWHERE for now — both candidate
-    # channels are disqualified:
-    #   * an annotation on the looping base idle fires every cycle (the
-    #     confirmed squeak-spam bug; vanilla only does this for cow/goat
-    #     cud-chewing — predators' mt_idle carries no SoundPlay at all);
-    #   * an IDLE record under ActionIdle sent the actor into an
-    #     engine-tracked dynamic idle over and over (authored chance 75+ per
-    #     idle poll), and creatures stopped walking and floated in their
-    #     idle — vanilla routes ActionIdle through deep per-creature
-    #     NonCombatIdle chains whose lifecycle our minimal graph does not
-    #     implement. Restoring idle chatter needs that full chain first.
-    idle_stem = clip_state_name(clips['idle']) if clips['idle'] else None
-    vocal_states, vocal_events = [], []
-    if idle_stem and idle_stem in decoded:
-        idle_clip, _m = decoded[idle_stem]
+        A cast state plays a SLICE of its source clip, so it decodes under its
+        own per-phase stem.  The cast Out's release trigger is mirrored into
+        animationdata the way vanilla atronachflame.txt ships it.
+        """
+        attack_kfs = set(self.clips['attacks'])
+        for st_name, kf, looping, _enter, end_evt in self._convert_list():
+            src_stem = clip_state_name(kf)
+            stem = self.cast_stem_map.get(st_name, src_stem)
+            self._decode_source(src_stem, kf)
+            if src_stem in self.decode_failed:
+                self.failures.append((kf, self.decode_failed[src_stem]))
+                if st_name == 'MoveForwardRun':
+                    self.clips['run'] = None
+                continue
+            clip, motion = self.decoded[src_stem]
+            if st_name in self.cast_stem_map and stem not in self.decoded:
+                self._split_cast(clip)
+            if stem in self.decoded:
+                clip, motion = self.decoded[stem]
+            self.clip_meta.append(self._meta(st_name, stem, clip, looping,
+                                             end_evt, kf in attack_kfs))
+            self._keep_motion(stem, clip, motion)
+        if self.cast_release_offset is not None:
+            for c in self.clip_meta:
+                if c['name'] == 'Mag_FF_Out':
+                    c['events'] = [
+                        (self.cast_release_offset, 'MLh_SpellFire_Event'),
+                        (self.cast_release_offset, 'MRh_SpellFire_Event')]
+
+    def add_vocal_and_pose(self, sound_slots: dict, sound_chances: dict,
+                           has_ragdoll: bool) -> tuple:
+        """The Aware vocal state and the ragdoll pose source, both copies of the idle.
+
+        Returns (vocal_states, vocal_events).  The vocal copy carries the
+        CSDT Aware sound once per entry; `ragdollpose` is annotation-free and
+        MUST have its clip_meta row, which registers it in animationdata.
+        See: docs/commentary/asset_convert_creature.md#idlestop-is-local
+        See: docs/commentary/asset_convert_creature.md#the-death-pose-source
+        """
+        idle_stem = (clip_state_name(self.clips['idle'])
+                     if self.clips['idle'] else None)
+        if not idle_stem or idle_stem not in self.decoded:
+            return [], []
+        idle_clip = self.decoded[idle_stem][0]
         d = float(idle_clip.duration)
+        states, events = [], []
         edid = (sound_slots or {}).get(5)
         if edid:
-            st_name, evt, stem = 'AwareVocal', 'awareVocalStart', 'awarevocal'
-            decoded[stem] = decoded[idle_stem]
-            clip_meta.append({
-                'name': st_name, 'stem': stem,
-                'anim': 'Animations\\' + stem + '.hkx',
-                'duration': d, 'looping': False,
-                'end_event': 'returnToDefault',
-                'sounds': [(min(0.25, d * 0.25), edid)],
-                'feet': [], 'hits': [],
-            })
-            vocal_states.append((st_name, evt, stem))
-            vocal_events.append({
-                'state': st_name, 'event': evt, 'slot': 5,
-                'chance': (sound_chances or {}).get(5, 100),
-            })
-        # The ragdoll death state needs an annotation-free pose source (an
-        # annotation in a looping corpse clip voices the corpse forever —
-        # the squeaking-dead-rat bug), so 'ragdollpose' is a clean COPY of
-        # the converted idle.  It must be the REAL converted clip, NOT a
-        # synthesized frozen frame: the 2026-08-07 static_pose_clip
-        # experiment shipped a hand-built 2-frame clip and the corpse
-        # teleported on death (user-confirmed regression; the synthesized
-        # root placement did not match the pipeline-converted clips).
-        #
-        # The clip_meta entry is REQUIRED, not bookkeeping: it is what
-        # registers the 'FullyRagdollPose' clip generator in animationdata
-        # and puts ragdollpose.hkx in the animationsetdata CRC preload list.
-        # The engine binds creature clips exclusively through that cache —
-        # every OTHER generator in the graph is registered (vanilla
-        # registers its death/getup clips the same way: dogproject.txt
-        # carries DeathPose, GetUpLeft, ...), and this one was not, so the
-        # death state ran with a pose source that could never bind and the
-        # entire ragdoll handoff died with it (2026-08-07 static-corpse /
-        # sideways-teleport / misaligned-hitbox report).  No sounds/feet ->
-        # its hkx annotation union stays empty, so corpses stay silent.
-        if ragdoll:
-            decoded['ragdollpose'] = (idle_clip, None)
-            # rate 1.0 single-play, matching the graph clip (vanilla
-            # death-clip semantics; the cache and graph playback speeds
-            # must agree).  The `Ragdoll` event trigger is the release
-            # into the limp ragdoll — see the pose_clip comment in
-            # build_behavior_xml; it must be in BOTH the graph and here.
-            clip_meta.append({
+            self.decoded['awarevocal'] = self.decoded[idle_stem]
+            self.clip_meta.append({
+                'name': 'AwareVocal', 'stem': 'awarevocal',
+                'anim': 'Animations\\awarevocal.hkx', 'duration': d,
+                'looping': False, 'end_event': 'returnToDefault',
+                'sounds': [(min(0.25, d * 0.25), edid)], 'feet': [],
+                'hits': []})
+            states.append(('AwareVocal', 'awareVocalStart', 'awarevocal'))
+            events.append({'state': 'AwareVocal', 'event': 'awareVocalStart',
+                           'slot': 5,
+                           'chance': (sound_chances or {}).get(5, 100)})
+        if has_ragdoll:
+            self.decoded['ragdollpose'] = (idle_clip, None)
+            self.clip_meta.append({
                 'name': 'FullyRagdollPose', 'stem': 'ragdollpose',
                 'anim': 'Animations\\ragdollpose.hkx', 'rate': 1.0,
                 'duration': d, 'looping': False, 'end_event': None,
                 'sounds': [], 'feet': [], 'hits': [],
-                'events': [(RAGDOLL_RELEASE_T, 'Ragdoll')],
-            })
+                'events': [(RAGDOLL_RELEASE_T, 'Ragdoll')]})
+        return states, events
 
-    # Phase 2 — COMPILE, embedding each animation FILE's full event union as
-    # annotations (states sharing one file share its annotations; blend
-    # children reuse base files, whose annotation times are file-local, so
-    # only rate-1 entries contribute). Hits stay OUT of the annotations: the
-    # graph already fires weaponSwing/preHitFrame/HitFrame through its
-    # hkbClipTriggerArray and double-firing would double the damage window.
-    # 'ragdollpose' has no clip_meta entry, so it compiles annotation-free.
-    ann_by_stem = {}
-    for c in clip_meta:
-        ann = ann_by_stem.setdefault(c['stem'], set())
-        ann.update(event_annotations(
-            {'sounds': c['sounds'], 'feet': c.get('feet', [])},
-            include_hits=False))
-    # A cast source clip is only ever played as its In/Loop/Out slices, so
-    # the uncut original is never referenced — don't ship it.
-    referenced = {c['stem'] for c in clip_meta}
-    for stem in sorted(decoded):
-        if stem not in referenced:
-            continue
-        clip, _motion = decoded[stem]
+    def add_getup(self) -> list:
+        """The getup plan and its clip rows; empty for a creature without a ragdoll pose.
+
+        See: docs/commentary/asset_convert_creature.md#getup-from-ragdoll
+        """
+        if 'ragdollpose' not in self.decoded:
+            return []
+        plan = plan_getup(self.clips, self.decoded, self.enum_map, self.fps,
+                          self.failures)
+        self.clip_meta += getup_clip_meta(plan)
+        return plan
+
+    def compile(self, bones: list, proj_dir: str) -> None:
+        """Phase 2: write every referenced animation with its file's annotation union.
+
+        Hits stay out of the annotations (the graph's trigger arrays fire
+        them; both would double the damage window).  A file that fails to
+        write drops every state that used it.
+        """
+        ann_by_stem = {}
+        for c in self.clip_meta:
+            ann_by_stem.setdefault(c['stem'], set()).update(event_annotations(
+                {'sounds': c['sounds'], 'feet': c.get('feet', [])},
+                include_hits=False))
+        referenced = {c['stem'] for c in self.clip_meta}
+        for stem in sorted(self.decoded):
+            if stem in referenced:
+                self._write_clip(stem, bones, proj_dir,
+                                 sorted(ann_by_stem.get(stem, ())))
+
+    def _write_clip(self, stem: str, bones: list, proj_dir: str,
+                    annotations: list) -> None:
+        """Compile one animation file, dropping its states if that fails."""
+        clip, _motion = self.decoded[stem]
         out_hkx = os.path.join(proj_dir, 'animations', stem + '.hkx')
         try:
-            write_clip_hkx(clip, bones, out_hkx,
-                           sorted(ann_by_stem.get(stem, ())))
-        except Exception as e:  # drop every state that used this file
-            failures.append((stem + '.hkx', f'{type(e).__name__}: {e}'))
-            dropped = {c['name'] for c in clip_meta if c['stem'] == stem}
-            clip_meta = [c for c in clip_meta if c['stem'] != stem]
-            motions.pop(stem, None)
+            write_clip_hkx(clip, bones, out_hkx, annotations)
+        except Exception as e:
+            self.failures.append((stem + '.hkx', f'{type(e).__name__}: {e}'))
+            dropped = {c['name'] for c in self.clip_meta if c['stem'] == stem}
+            self.clip_meta = [c for c in self.clip_meta if c['stem'] != stem]
+            self.motions.pop(stem, None)
             if 'MoveForwardRun' in dropped:
-                clips['run'] = None
+                self.clips['run'] = None
 
-    # natural clip speeds (game units/sec) from root-motion endpoints —
-    # ck-cmd calculateMOVTs: forwardWalk = |end translation| / duration.
-    # These anchor both the MOVT SPED columns (tes5_import) and the
-    # MoveForward parametric blend, so commanded speed == animation speed.
-    def _speed_of(kf_path):
-        if not kf_path:
+    def register_blend_children(self, speeds: dict) -> None:
+        """Register the parametric-blend children (same files, scaled rates) in animationdata.
+
+        Every clip generator name in the graph needs a cache entry with its
+        playback rate; trigger times are playback-local, as in vanilla
+        dogproject.txt.
+        See: docs/commentary/asset_convert_creature.md#forward-blend-layout
+        """
+        base_of = {c['name']: c for c in self.clip_meta}
+        for plan in (speed_blend_plan(self.clips, speeds) or [],
+                     run_blend_plan(self.clips, speeds) or [],
+                     backward_blend_plan(self.clips, speeds) or [],
+                     swim_blend_plan(self.clips, speeds) or []):
+            for cnm, kf, rate, _anchor in plan:
+                entry = None if cnm in base_of else self._blend_child(cnm, kf,
+                                                                      rate)
+                if entry:
+                    self.clip_meta.append(entry)
+                    base_of[cnm] = entry
+
+    def _blend_child(self, cnm: str, kf: str, rate: float):
+        """The clip_meta row for blend child `cnm`, or None when its base file is gone."""
+        stem = clip_state_name(kf)
+        base = next((c for c in self.clip_meta if c['stem'] == stem
+                     and c.get('rate', 1) == 1), None)
+        if base is None:
             return None
-        m = motions.get(clip_state_name(kf_path))
-        if not m or not m['translations'] or not m['duration']:
-            return None
-        end = m['translations'][-1]
-        v = (end[0] ** 2 + end[1] ** 2) ** 0.5 / m['duration']
-        return round(v, 3) if v > 1.0 else None
-
-    speeds = {
-        'walk': _speed_of(clips['locomotion'].get('MoveForward')),
-        'run': _speed_of(clips.get('run')),
-        'back': _speed_of(clips['locomotion'].get('MoveBackward')),
-        # Strafes: the MOVT left/right columns must carry the strafe clips'
-        # own root-motion speed for the same reason forward/back do --
-        # commanded speed != animation speed makes the actor slide.
-        'left': _speed_of(clips['locomotion'].get('StrafeLeft')),
-        'right': _speed_of(clips['locomotion'].get('StrafeRight')),
-        'swim': _speed_of(clips.get('swim', {}).get('forward')),
-        'swimfast': _speed_of(clips.get('swim', {}).get('fast')),
-        'swimback': _speed_of(clips.get('swim', {}).get('backward')),
-    }
-    # a "run" clip that isn't actually faster than the walk (wraith:
-    # runforward has LESS root motion than forward) breaks the parametric
-    # blend's increasing-anchor contract and the MOVT columns — treat the
-    # run gait as absent (MOVT run falls back to walk).
-    if (speeds['run'] and speeds['walk']
-            and speeds['run'] <= speeds['walk'] * 1.05):
-        speeds['run'] = None
-        clips['run'] = None
-
-    # register the parametric-blend children (same clips at scaled
-    # playbackSpeeds — see speed_blend_plan) in the animationdata cache:
-    # every hkbClipGenerator name in the graph needs a cache entry with its
-    # playback rate, trigger times in playback-local time (vanilla
-    # dogproject.txt convention).
-    base_of = {c['name']: c for c in clip_meta}
-    for plan in (speed_blend_plan(clips, speeds) or [],
-                 run_blend_plan(clips, speeds) or [],
-                 backward_blend_plan(clips, speeds) or [],
-                 swim_blend_plan(clips, speeds) or []):
-        for cnm, kf, rate, _anchor in plan:
-            if cnm in base_of:
-                continue
-            stem = clip_state_name(kf)
-            base = next((c for c in clip_meta if c['stem'] == stem
-                         and c.get('rate', 1) == 1), None)
-            if base is None:
-                continue
-            entry = {
-                'name': cnm, 'stem': stem, 'anim': base['anim'],
+        return {'name': cnm, 'stem': stem, 'anim': base['anim'],
                 'duration': base['duration'], 'looping': True,
                 'end_event': None, 'rate': rate,
                 'sounds': [(t / rate, s) for t, s in base['sounds']],
                 'feet': [(t / rate, n) for t, n in base.get('feet', [])],
-                'hits': [],
-            }
-            clip_meta.append(entry)
-            base_of[cnm] = entry
+                'hits': []}
 
+
+def _speed_of(motions: dict, kf_path) -> float:
+    """Natural root-motion speed (units/s) of `kf_path`'s clip; None below 1 u/s."""
+    if not kf_path:
+        return None
+    m = motions.get(clip_state_name(kf_path))
+    if not m or not m['translations'] or not m['duration']:
+        return None
+    end = m['translations'][-1]
+    v = (end[0] ** 2 + end[1] ** 2) ** 0.5 / m['duration']
+    return round(v, 3) if v > 1.0 else None
+
+
+def clip_speeds(motions: dict, clips: dict) -> dict:
+    """Root-motion speeds anchoring the MOVT columns and the gait blends.
+
+    ck-cmd calculateMOVTs: |end translation| / duration.  A run no faster
+    than the walk (wraith) breaks the increasing-anchor contract, so it is
+    treated as absent.
+    See: docs/commentary/asset_convert_creature.md#8-ground-speed-baked-not
+    """
+    loco, swim = clips['locomotion'], clips.get('swim', {})
+    speeds = {
+        'walk': _speed_of(motions, loco.get('MoveForward')),
+        'run': _speed_of(motions, clips.get('run')),
+        'back': _speed_of(motions, loco.get('MoveBackward')),
+        'left': _speed_of(motions, loco.get('StrafeLeft')),
+        'right': _speed_of(motions, loco.get('StrafeRight')),
+        'swim': _speed_of(motions, swim.get('forward')),
+        'swimfast': _speed_of(motions, swim.get('fast')),
+        'swimback': _speed_of(motions, swim.get('backward')),
+    }
+    if (speeds['run'] and speeds['walk']
+            and speeds['run'] <= speeds['walk'] * 1.05):
+        speeds['run'] = None
+        clips['run'] = None
+    return speeds
+
+
+def _write_project_files(layout: dict, proj_dir: str, cs: _ClipSet,
+                         bones: list, speeds: dict, ragdoll,
+                         vocal_states: list, getup_plan: list) -> list:
+    """Compile the behavior, character and project hkx; returns the movement types.
+
+    The graph declares every qualified sound event its clips trigger, since
+    the engine dispatches annotations through that table by name.  A state
+    whose animation failed to compile never reaches the graph.
+    """
+    clips = cs.clips
     behavior_name = behavior_graph_name(layout)
     move_types = movement_type_names(
         layout['stem'],
         has_swim=bool(clips.get('swim', {}).get('forward')
                       and speeds.get('swim')))
-    # The graph must declare every qualified sound event its clips trigger,
-    # exactly as animation_data.project_block_lines writes it — the engine
-    # dispatches annotations through this table by name.
     sound_events = sorted({f'SoundPlay.TES4_{edid}_SNDR'
-                           for c in clip_meta
+                           for c in cs.clip_meta
                            for _t, edid in c.get('sounds', []) if edid})
-    # A vocal state whose animation failed to compile must not reach the
-    # graph (its clip would reference a missing file).
-    surviving = {c['name'] for c in clip_meta}
-    vocal_states = [v for v in vocal_states if v[0] in surviving]
-    vocal_events = [v for v in vocal_events if v['state'] in surviving]
-    graph_hit_times = {c['name']: c['hits'] for c in clip_meta if c['hits']}
-    if cast_release_offset is not None:
-        # the Out state's SpellFire trigger moment (not a damage HitFrame —
-        # cast states keep 'hits' empty; see the decode loop)
-        graph_hit_times['Mag_FF_Out'] = [cast_release_offset]
+    surviving = {c['name'] for c in cs.clip_meta}
+    hit_times = {c['name']: c['hits'] for c in cs.clip_meta if c['hits']}
+    if cs.cast_release_offset is not None:
+        hit_times['Mag_FF_Out'] = [cs.cast_release_offset]
     _write_and_compile(
-        build_behavior_xml(behavior_name, clips,
-                           hit_times=graph_hit_times,
-                           movement_types=move_types,
-                           speeds=speeds, ragdoll=ragdoll,
-                           sound_events=sound_events,
-                           vocal_states=vocal_states),
+        build_behavior_xml(behavior_name, clips, hit_times=hit_times,
+                           movement_types=move_types, speeds=speeds,
+                           ragdoll=ragdoll, sound_events=sound_events,
+                           vocal_states=[v for v in vocal_states
+                                         if v[0] in surviving],
+                           getup_plan=[g for g in getup_plan
+                                       if 'GetUp' + g['role'] in surviving]),
         os.path.join(proj_dir, 'behaviors', behavior_name.lower() + '.hkx'))
-    # dedupe: states can share one animation file (Idle + CombatStance);
-    # ragdollpose.hkx arrives through its FullyRagdollPose clip_meta entry
-    anim_files = list(dict.fromkeys(c['anim'] for c in clip_meta))
+    anim_files = list(dict.fromkeys(c['anim'] for c in cs.clip_meta))
     _write_and_compile(
         build_character_xml(
             f'{current_namespace()}{layout["stem"]}character', anim_files,
@@ -943,65 +892,88 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
     _write_and_compile(
         build_project_xml(layout['character_file']),
         os.path.join(proj_dir, os.path.basename(layout['project_hkx'])))
+    return move_types
 
+
+def _manifest(name: str, namespace: str, layout: dict, cs: _ClipSet,
+              speeds: dict, ragdoll, vocal_events: list, move_types: list,
+              bones: list) -> dict:
+    """The project_manifest.json contract read by animation_data and tes5_import.
+
+    `behavior_hkx` is the path the idle manager matches IDLE DNAMs against;
+    `dissolves_on_death` / `death_reveals` / `death_offsets` come from the
+    death ANIMATION, never a name; `ragdoll_bones` must name nodes of this
+    skeleton for the generated BPTD.
+    See: docs/commentary/asset_convert_creature.md#ghost-dissolve
+    """
+    clips = cs.clips
     attack_states = [(evt, f'Attack_{clip_state_name(kf)}')
                      for kf, evt in zip(clips['attacks'],
                                         build_attack_events(clips))]
-    converted = {c['name'] for c in clip_meta}
-    dissolve_info = detect_dissolve(decoded)
-    manifest = {
-        'name': lname,
-        'namespace': namespace,
-        'dir': layout['fs_dir'],
+    converted = {c['name'] for c in cs.clip_meta}
+    dissolve = detect_dissolve(cs.decoded)
+    return {
+        'name': name.lower(), 'namespace': namespace, 'dir': layout['fs_dir'],
         'project_hkx': layout['project_hkx'],
         'project_txt': layout['project_txt'],
-        # the root behavior path the engine's idle manager matches IDLE
-        # DNAMs against (creature_idles)
         'behavior_hkx': layout['behavior_hkx'],
-        'body_dir': layout['body_dir'],
-        'skeleton_nif': layout['skeleton_nif'],
-        'project_files': [layout['behavior_file'],
-                          layout['character_file'],
+        'body_dir': layout['body_dir'], 'skeleton_nif': layout['skeleton_nif'],
+        'project_files': [layout['behavior_file'], layout['character_file'],
                           'Character Assets\\skeleton.HKX'],
-        'anim_dir': layout['anim_dir'],
-        'clips': clip_meta,
+        'anim_dir': layout['anim_dir'], 'clips': cs.clip_meta,
         'attacks': [[e, s] for e, s in attack_states if s in converted],
-        # whether the graph carries the FireForget cast chain (records side:
-        # SPLO spells + the touch-spell melee ATKDs are independent of this)
         'has_cast': 'Mag_FF_Out' in converted,
-        # whether the graph carries the block states (drives the block IDLE
-        # action routing in tes5_import/creature_idles)
         'has_block': 'Block' in converted,
-        'movement_types': move_types,
-        'speeds': speeds,
+        'movement_types': move_types, 'speeds': speeds,
         'has_ragdoll': bool(ragdoll),
-        # Authored DISSOLVE: the death clip hides the actor's own skin
-        # holder via NiVisController instead of dropping the body (an
-        # Oblivion ghost/wraith -- `Bip01 NonAccum` never leaves standing
-        # height).  Those channels cannot survive into a Havok clip, so
-        # tes5_import attaches TES4_GhostDissolve, which reproduces the
-        # effect with Skyrim's native Actor.AttachAshPile + a faded
-        # Disable.  Detected from the ANIMATION, never from a name.
-        'dissolves_on_death': dissolve_info['dissolves'],
-        'death_duration': dissolve_info['duration'],
-        # nodes the death clip REVEALS, and how far it moves them
-        # by the last frame -- the authored ectoplasm pile lives
-        # under one of these and has to be baked where the clip
-        # leaves it (on the ground, not at body height)
-        'death_reveals': dissolve_info['reveals'],
-        'death_offsets': dissolve_info['offsets'],
-        # ragdoll part bone names -> the race's generated BPTD (body part
-        # data); node names must exist in THIS skeleton or the engine's
-        # ragdoll/hit binding has nothing to attach to
+        'dissolves_on_death': dissolve['dissolves'],
+        'death_duration': dissolve['duration'],
+        'death_reveals': dissolve['reveals'],
+        'death_offsets': dissolve['offsets'],
         'ragdoll_bones': (ragdoll or {}).get('part_bones', []),
-        # Vocal idle states: tes5_import/creature_idles generates the
-        # ActionIdle/ActionIdleWarn IDLE records that let the engine enter
-        # them (event = the IDLE's ENAM; chance = authored TES4 CSDC).
-        'vocal_events': vocal_events,
-        'motions': motions,
-        'bones': len(bones),
-        'failures': failures,
+        'vocal_events': [v for v in vocal_events if v['state'] in converted],
+        'motions': cs.motions, 'bones': len(bones), 'failures': cs.failures,
     }
+
+
+def generate_creature_project(creature_dir: str, name: str, out_root: str,
+                              fps: float = 30.0, sound_slots: dict = None,
+                              sound_chances: dict = None,
+                              attr_speed: int = 0,
+                              namespace: str = '') -> dict:
+    """Full project generation for one creature; returns and writes its manifest.
+
+    The manifest (`project_manifest.json`) is the contract consumed by
+    animation_data (singlefile registration) and tes5_import (RACE ATKE and
+    behavior-graph paths).  `namespace` is the owning plugin's tag (see
+    project_layout).  `sound_slots` {CSDT type: SOUN EditorID} become clip
+    SoundPlay triggers (_apply_sound_slots) or the Aware vocal state;
+    `sound_chances` carries the authored CSDC chances for the IDLE records.
+    `attr_speed` is the folder's max TES4 Speed attribute, baked into the
+    walk/run clips so commanded speed matches animation speed.
+    See: docs/commentary/asset_convert_creature.md#8-ground-speed-baked-not
+    """
+    layout = project_layout(name, namespace)
+    proj_dir = os.path.join(out_root, layout['fs_dir'])
+    clips = classify_clips(creature_dir)
+    skeleton_nif = os.path.join(creature_dir, 'skeleton.nif')
+    bones = generate_skeleton_hkx(
+        skeleton_nif, os.path.join(proj_dir, 'character assets',
+                                   'skeleton.hkx'))
+    ragdoll = ragdoll_info(skeleton_nif, bones)
+    cs = _ClipSet(clips, fps, sound_slots, attr_speed)
+    cs.decode_states()
+    _apply_sound_slots(cs.clip_meta, clips, sound_slots)
+    vocal_states, vocal_events = cs.add_vocal_and_pose(
+        sound_slots, sound_chances, bool(ragdoll))
+    getup_plan = cs.add_getup()
+    cs.compile(bones, proj_dir)
+    speeds = clip_speeds(cs.motions, clips)
+    cs.register_blend_children(speeds)
+    move_types = _write_project_files(layout, proj_dir, cs, bones, speeds,
+                                      ragdoll, vocal_states, getup_plan)
+    manifest = _manifest(name, namespace, layout, cs, speeds, ragdoll,
+                         vocal_events, move_types, bones)
     with open(os.path.join(proj_dir, 'project_manifest.json'), 'w',
               encoding='utf-8') as f:
         json.dump(manifest, f)

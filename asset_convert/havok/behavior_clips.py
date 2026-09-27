@@ -349,6 +349,35 @@ def _claim_tables(out: dict, kfs: dict, used: set) -> None:
                     break
 
 
+#: Knockdown-recovery kf stems under idleanims/, every authored spelling -> the role naming its clips.
+GETUP_ROLES = (
+    (('getupfaceup', 'getup_faceup'), 'FaceUp'),
+    (('getupfacedown', 'getup_facedown'), 'FaceDown'),
+    (('getupleft', 'getup_left'), 'Left'),
+    (('getupright', 'getup_right'), 'Right'),
+)
+
+
+def getup_clips(creature_dir: str) -> list:
+    """[(role, kf path)] for the getup clips Oblivion keeps in the folder's idleanims/.
+
+    See: docs/commentary/asset_convert_creature.md#getup-from-ragdoll
+    """
+    sub = next((os.path.join(creature_dir, d) for d in os.listdir(creature_dir)
+                if d.lower() == 'idleanims'
+                and os.path.isdir(os.path.join(creature_dir, d))), None)
+    if not sub:
+        return []
+    kfs = {os.path.splitext(f)[0].lower(): os.path.join(sub, f)
+           for f in os.listdir(sub) if f.lower().endswith('.kf')}
+    out = []
+    for names, role in GETUP_ROLES:
+        kf = next((kfs[n] for n in names if n in kfs), None)
+        if kf:
+            out.append((role, kf))
+    return out
+
+
 def classify_clips(creature_dir: str) -> dict:
     """Scan an Oblivion creature folder into the v1 graph's clip roles.
 
@@ -389,6 +418,7 @@ def classify_clips(creature_dir: str) -> dict:
         else:
             out['extra'].append(path)
     out['attacks'].sort()
+    out['getup'] = getup_clips(creature_dir)
     _promote_water_native(out, kfs)
     out['attack_stance'] = {p: attack_stance(p) for p in out['attacks']}
     return out

@@ -32,17 +32,10 @@ namespace tesruntime::mw {
 // Call once per frame from the game thread.
 void TickObjectScripts(float frameSeconds);
 
-// Starts the tick, once at load: a detached thread that SLEEPS one delta and
-// posts one tick's work to the game thread.
-//
-// 🛑 The sleep is off the game thread and only the work is posted. A task that
-// re-posts itself drains in the SAME pump sweep, so no frame ever passes and
-// the game hangs at the main menu -- measured 2026-09-18, and the same hazard
-// `game_calls.cpp`'s objective wait documents.
+// Starts the tick, once at load, on the shared fixed-rate call (main_tick.h):
+// a detached thread SLEEPS one delta and posts one tick's work to the game
+// thread. The game hang it avoids was measured 2026-09-18.
 void StartObjectTick();
-
-// Stops it. The thread is detached, so this is how it is asked to end.
-void StopObjectTick();
 
 // The seconds ONE tick covers, which is what GetSecondsPassed answers.
 float TickDelta();

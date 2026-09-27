@@ -627,12 +627,22 @@ The hook used to pass any command whose text contained the wrapper's path, so in
 and its writes were never gated. `.claude/hooks/shell_route.py` now splits the
 line on `&&`, `||`, `;`, `|`, `&` and newlines. Every piece must be a wrapper
 call or a `READ_ONLY` helper (`cd`, `echo`, `tail`, `grep`, `Select-Object`
-and a few more) that cannot write code. It also refuses:
+and a few more) that cannot write code. A line of helpers alone passes: a no-op
+wrapper call appended to it always passed, so demanding one closed nothing and
+cost about 90 refusals in three days. It also refuses:
 
 - `$(...)` and backticks outside single quotes, which run before the wrapper
   starts, so their writes land before its first hash;
-- subshells and loops (`(`, `for`, `while`), which are not helpers;
-- a helper redirecting into a `.py` (`echo x > a.py`).
+- any unquoted `(` or `{` (except `${`): a subshell, process substitution
+  (`cat <(python evil.py)`), a PowerShell sub-expression (`ls (Set-Content …)`,
+  even as a wrapper argument) or a delay-bind script block;
+- loops (`for`, `while`), which are not helpers;
+- a helper that writes a file: a redirect into a `.py` (`echo x > a.py`),
+  `sort -o`, or `uniq IN OUT`, whose second operand is its output.
+
+The grouping check and the `sort`/`uniq` cases close routes that once passed
+beside a no-op wrapper call
+([gate refusal census](../audits/edit_gate_refusals.md#holes-closed)).
 
 Heredoc bodies are skipped as data. A redirect on the wrapper call itself is
 fine, since the shell truncates the file before the wrapper's first hash and the

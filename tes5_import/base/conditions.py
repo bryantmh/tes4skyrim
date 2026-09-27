@@ -26,6 +26,7 @@ from .conditions_falloutnv import (FALLOUT_CTDA_SIZE, fallout_function,
                                    fallout_run_on)
 from ..generated.ctda_param_types import CTDA_FORMID_PARAMS
 from .owned_records import MGEF_FAMILY_KEYWORDS
+from .race_factions import race_faction
 from .text_reader import (_ENGINE_FIXED_FORMIDS, get_formid_index_offset,
                           remap_formid)
 
@@ -58,6 +59,27 @@ def get_speak_as_topics() -> frozenset:
     return _SPEAK_AS_TOPICS
 
 
+#: The run's whole-day GameDaysPassed global (owned_records.create_day_clock); 0 reads Skyrim's own.
+_WHOLE_DAY_GLOBAL = 0
+
+
+def set_whole_day_global(fid: int) -> None:
+    """Register the global that conditions read in place of GameDaysPassed.
+
+    See: docs/commentary/tes5_import_conditions.md#whole-days
+    """
+    global _WHOLE_DAY_GLOBAL
+    _WHOLE_DAY_GLOBAL = fid
+
+
+def _remap_global(fid: int, offset: int) -> int:
+    """A GLOB FormID remapped, with GameDaysPassed read in whole days as Oblivion kept it."""
+    fid = _remap_formid(fid, offset)
+    if fid == ENGINE_GLOBAL_FORMIDS['gamedayspassed'] and _WHOLE_DAY_GLOBAL:
+        return _WHOLE_DAY_GLOBAL
+    return fid
+
+
 FUNC_GET_IN_FACTION = 71       # GetInFaction(fact)
 #: GetOffersServicesNow(): true only while the actor is actively vending/training.
 FUNC_GET_OFFERS_SERVICES_NOW = 255
@@ -68,6 +90,8 @@ FUNC_GET_GLOBAL_VALUE = 74     # GetGlobalValue(glob)
 FUNC_GET_IS_VOICE_TYPE = 426   # GetIsVoiceType(vtyp)  — TES5-only, no TES4 source
 FUNC_HAS_MAGIC_EFFECT = 214
 FUNC_HAS_MAGIC_EFFECT_KEYWORD = 699
+FUNC_HAS_KEYWORD = 560
+FUNC_GET_IS_RACE = 69
 
 #: Speaker-as-actor conditions. See: docs/commentary/tes5_import_conditions.md#non-actor-speaker-drop
 NON_ACTOR_SPEAKER_DROP = frozenset({
@@ -289,25 +313,13 @@ _AV_PARAM_FUNCS = frozenset({
 
 
 def _map_race_param(fid: int) -> 'int | None':
-    """The Skyrim race a `GetIsRace` param must name to keep matching.
+    """The Skyrim race a race param must name to keep matching.
 
-    This MUST resolve exactly as `_resolve_npc_race` does, including its
-    fallback: an actor whose RACE is plugin-authored (Morroblivion adds
-    mwBMRieklingRace, and TES4_RACE_FID_TO_EDID holds only the 15 vanilla
-    Oblivion races) is converted with DEFAULT_RACE, so a condition naming that
-    race must name DEFAULT_RACE too or it can never match the actors it was
-    written for.
+    Never None: a dropped condition fails OPEN.  A plugin-authored race falls
+    back to DEFAULT_RACE; `GetIsRace` on one is replaced by
+    `_authored_race_faction` before it is written.
 
-    Returning None here instead DROPPED the condition, and a dropped condition
-    does not fail closed -- it fails OPEN.  mwGenericRieklingGreeting's three
-    greetings ("What is it, human?", "What?", "Speak!") carry no INFO
-    conditions of their own; the quest-level `GetIsRace(mwBMRieklingRace)` was
-    the only thing keeping them on Rieklings.  With it deleted they became
-    unconditioned greetings in a priority-47 quest, which outranks
-    fbmwMSGreetings (44) -- so they won the greeting for EVERY actor in the
-    plugin, including Fargoth, a Wood Elf.  That also cost him his "ring"
-    topic: the topic is unlocked only by his own greeting's fragment, which
-    never got to play.
+    See: docs/commentary/tes5_import_conditions.md#plugin-authored-races
     """
     from .constants import DEFAULT_RACE
     from .equivalents import RACE_MAP, TES4_RACE_FID_TO_EDID
@@ -532,6 +544,8 @@ def _convert_params(func_idx: int, param1: int, param2: int,
         param1 = _map_race_param(param1)
         if param1 is None:
             return None
+    elif func_idx == FUNC_GET_GLOBAL_VALUE:
+        param1 = _remap_global(param1, offset)
     elif 1 in fid_slots:
         param1 = _remap_formid(param1, offset)
     if 2 in fid_slots:
@@ -543,6 +557,16 @@ def _effect_family(func_idx: int, param1: int) -> tuple:
     """HasMagicEffect X -> HasMagicEffectKeyword on X's family keyword."""
     kw = MGEF_FAMILY_KEYWORDS.get(param1) if func_idx == FUNC_HAS_MAGIC_EFFECT else 0
     return (FUNC_HAS_MAGIC_EFFECT_KEYWORD, kw) if kw else (func_idx, param1)
+
+
+def _authored_race_faction(func_idx: int, param1: int, offset: int) -> 'tuple | None':
+    """GetIsRace on a plugin-authored race -> GetInFaction on its marker FACT.
+
+    See: docs/commentary/tes5_import_conditions.md#plugin-authored-races
+    """
+    is_race = func_idx == FUNC_GET_IS_RACE
+    fact = race_faction(remap_formid(param1, offset)) if is_race else 0
+    return (FUNC_GET_IN_FACTION, fact) if fact else None
 
 
 def _target_run_on(func_idx: int, run_on_target_ref: 'int | None',
@@ -634,13 +658,14 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
         return head
     type_byte, comp_raw, func_idx, param1, param2, run_on, reference = head
     if type_byte & CTDA_USE_GLOBAL:
-        comp_raw = _remap_formid(comp_raw, offset)
+        comp_raw = _remap_global(comp_raw, offset)
     params = _convert_params(func_idx, param1, param2, offset)
     fields = _run_on_fields(type_byte, func_idx, run_on, reference,
                             run_on_target_ref, drop_run_on_target)
     if params is None or fields is None:
         return None
-    func_idx, param1 = _effect_family(func_idx, params[0])
+    func_idx, param1 = (_authored_race_faction(func_idx, param1, offset)
+                        or _effect_family(func_idx, params[0]))
     param2 = params[1]
     type_byte, run_on, reference = fields
 
@@ -796,7 +821,7 @@ def convert_script_var_ctda(raw: bytes, script_vars: dict, offset: int,
         cis2 = _UNRESOLVED_VAR_SENTINEL
 
     if type_byte & CTDA_USE_GLOBAL:
-        comp_raw = _remap_formid(comp_raw, offset)
+        comp_raw = _remap_global(comp_raw, offset)
     run_on = 0
     reference = 0
     if type_byte & CTDA_RUN_ON_TARGET:
@@ -953,7 +978,7 @@ _PLUGIN_SCOPED_AUDIENCE_FUNCS = frozenset({68, 71, 72, 73})
 
 
 def _condition_tests(rec: dict):
-    """Yield (func_idx, operator, comp_value, run_on_target) per TES4 condition."""
+    """Yield (func_idx, operator, comp_value, run_on_target, param1, or_next) per TES4 condition."""
     i = 0
     while True:
         raw_hex = rec.get(f'Condition[{i}].Raw')
@@ -967,7 +992,9 @@ def _condition_tests(rec: dict):
             yield (struct.unpack_from('<H', raw, 8)[0],   # function
                    raw[0] & 0xF0,                        # comparison operator
                    struct.unpack_from('<f', raw, 4)[0],  # compare value
-                   bool(raw[0] & CTDA_RUN_ON_TARGET))
+                   bool(raw[0] & CTDA_RUN_ON_TARGET),
+                   struct.unpack_from('<I', raw, 12)[0],
+                   bool(raw[0] & CTDA_OR))
         except (ValueError, struct.error):
             continue
 
@@ -983,33 +1010,43 @@ def _asserts_membership(operator: int, comp_value: float) -> bool:
     return operator == 0x00 and comp_value == 1.0
 
 
-def needs_origin_gate(rec: dict) -> bool:
+def _pins_speaker(func: int, op: int, cv: float, run_on_target: bool,
+                  param1: int, own_index: int) -> bool:
+    """Whether one condition limits the SPEAKER to named actors or this plugin's own forms.
+
+    See: docs/commentary/tes5_import_actors.md#origin-faction
+    """
+    if func not in _PLUGIN_SCOPED_AUDIENCE_FUNCS or run_on_target:
+        return False
+    if not _asserts_membership(op, cv):
+        return False
+    return func == FUNC_GET_IS_ID or (param1 >> 24) == own_index
+
+
+def needs_origin_gate(rec: dict, own_index: int = 0) -> bool:
     """True if this INFO can be reached by an actor from a DIFFERENT plugin.
 
-    A line is safely scoped only by a condition that POSITIVELY names a form
-    this plugin owns AND evaluates against the SPEAKER. Three traps, each
-    measured against the real Oblivion/Nehrim exports:
+    `own_index` is the plugin's TES4 load-order index.  An override of a
+    master's INFO keeps the master's audience and is never gated.
 
-      * Race/cell gates look like an audience but don't resolve to a form this
-        plugin uniquely owns — GetIsRace's param is rewritten to a vanilla
-        Skyrim race every converted plugin shares. This is the measured cause
-        of Oblivion guard/crime/directions lines playing on Nehrim NPCs.
-      * A NEGATIVE membership test is an exclusion, not an audience. Oblivion's
-        Rumors channel (INFOGENERAL, 1854 lines) is built almost entirely from
-        `GetIsID(SomeNPC) == 0` — "any speaker other than X". Counting that as
-        pinned left 395 rumour lines (plus 77 with no conditions at all)
-        reaching Nehrim NPCs — the Oblivion Rumors topic seen in-game on a
-        Nehrim NPC.
-      * A RunOn=Target test is about the LISTENER, not the speaker.
-        `GetIsID(PlayerRef)[Target] == 1` means "the addressee is the player",
-        which every conversation satisfies and which says nothing about who is
-        talking. Counting it as a pin left 55 greeting/rumour/guard lines open
-        to any actor in the load order.
+    See: docs/commentary/tes5_import_actors.md#origin-faction
     """
-    return not any(f in _PLUGIN_SCOPED_AUDIENCE_FUNCS
-                   and _asserts_membership(op, cv)
-                   and not run_on_target
-                   for f, op, cv, run_on_target in _condition_tests(rec))
+    fid = rec.get('FormID')
+    if fid and int(fid, 16) >> 24 != own_index:
+        return False
+    return not any(all(_pins_speaker(*test[:5], own_index) for test in clause)
+                   for clause in _or_clauses(_condition_tests(rec)))
+
+
+def _or_clauses(tests) -> list:
+    """Condition tests grouped into AND-ed clauses of OR-ed members (the OR flag is last)."""
+    clauses, current = [], []
+    for test in tests:
+        current.append(test)
+        if not test[5]:
+            clauses.append(current)
+            current = []
+    return clauses + ([current] if current else [])
 
 
 # Condition functions that express a WORLD-STATE precondition for a topic

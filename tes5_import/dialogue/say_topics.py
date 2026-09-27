@@ -18,8 +18,17 @@ from .say_morrowind import say_topic_fids
 #: The player reference, which a `player` target token names.
 _PLAYER_FORMID = 0x14
 
+#: The script tokens that name the player as a call's target.
+PLAYER_TOKENS = ('player', 'playerref')
+
+#: Most actors one force-greet topic can greet at once (one alias each).
+_MAX_FORCE_GREET_SLOTS = 8
+
 #: Say-driven topics: raw24 DIAL fid -> ('ref', fid) or ('drop', None) for RunOn=Target.
 SAY_TOPIC_DISPOSITIONS: dict = {}
+
+#: build_force_greet_slots' answer for the plugin being imported.
+FORCE_GREET_SLOTS: dict = {}
 
 _SAYTO_RE = re.compile(r'\bsayto[\s,]+(\w+)[\s,]+(\w+)', re.IGNORECASE)
 _SAY_RE = re.compile(r'\bsay[\s,]+(\w+)', re.IGNORECASE)
@@ -95,21 +104,43 @@ def _scan_say_votes(texts: list, dial_by_edid: dict,
     def target_fid(token: str):
         """The ref FormID a target token names, or None when unresolvable."""
         t = token.lower()
-        if t in ('player', 'playerref'):
+        if t in PLAYER_TOKENS:
             return _PLAYER_FORMID
         return ref_by_edid.get(t)
 
     votes = defaultdict(set)
-    for text in texts:
-        if not text:
-            continue
-        for raw in text.replace('\\r\\n', '\n').splitlines():
-            line = raw.split(';', 1)[0]
-            low = line.lower()
-            if 'say' not in low and 'startconversation' not in low:
-                continue
+    for line in _script_lines(texts):
+        low = line.lower()
+        if 'say' in low or 'startconversation' in low:
             _scan_say_line(line, votes, dial_by_edid, target_fid)
     return votes
+
+
+def _script_lines(texts: list):
+    """Every script line of `texts` with its `;` comment stripped."""
+    for text in texts:
+        for raw in (text or '').replace('\\r\\n', '\n').splitlines():
+            yield raw.split(';', 1)[0]
+
+
+def build_force_greet_slots(by_type: dict) -> dict:
+    """Force-greet pool per `StartConversation Player [<topic>]` topic.
+
+    Returns {lowercased topic token, '' when none: (first alias id, slot
+    count)}, keys in sorted order and ids contiguous, so the importer's alias
+    quest and every converted call site agree from the same export.
+    """
+    counts = defaultdict(int)
+    for line in _script_lines(collect_script_texts(by_type)):
+        for m in _STARTCONV_RE.finditer(line):
+            if m.group(1).lower() in PLAYER_TOKENS:
+                counts[(m.group(2) or '').lower()] += 1
+    slots, first = {}, 0
+    for key in sorted(counts):
+        n = min(counts[key], _MAX_FORCE_GREET_SLOTS)
+        slots[key] = (first, n)
+        first += n
+    return slots
 
 
 def _scan_say_line(line: str, votes: dict, dial_by_edid: dict,

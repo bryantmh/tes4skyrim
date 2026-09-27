@@ -16,6 +16,7 @@
 - [Menu display object](#menu-display-object)
 - [Rules for working in this area](#rules-working-this-area)
 - [Enchantment charge (ANAM to EAMT)](#enchantment-charge-eamt)
+- [No Magnitude makes a value modifier apply 1.0](#no-magnitude-forces-one)
 
 Status as of 2026-07-31. Measured with `python tools/audit/magic_audit.py export/<Plugin>`
 (written alongside this doc; re-run it after every change in this area).
@@ -428,7 +429,9 @@ Two script-side gaps had to be closed for these to be more than inert records
   `OnEffectFinish` when the script has none), so the resistance cannot outlive
   the effect. `SetGhost`/`SetInvulnerable` were rejected: they suppress ALL
   damage, so a levitation scroll would grant temporary immortality — a worse
-  defect than the one being fixed.
+  defect than the one being fixed. The suppression is now a falling-damage
+  perk window, not DamageResist
+  ([fall damage is a perk](script_convert.md#fall-damage-is-a-perk)).
 
 <a id="bound-items"></a>
 ### Bound items — DONE 2026-08-07 (user-confirmed in-game)
@@ -977,6 +980,74 @@ the effect has one, else duration when it has one. The rest are authored
 one-offs -- perk abilities, diseases, fixed-strength armor spells -- that a
 converted effect has no field to express.
 
+## <a id="no-magnitude-forces-one"></a>No Magnitude makes a value modifier apply 1.0
+
+**Code:** `tes5_import/record_types/magic.py` (`magnitude_flag_allowed`), `tes5_import/base/owned_records.py` (`_MGEF_FALL_FLAGS`)
+
+**The engine ignores the authored magnitude of a No Magnitude value modifier.**
+The `ValueModifierEffect` constructor (1.6.1170 `0x5d8210`) tests MGEF flag
+`0x400` and, when set, stores `1.0` as the effect's magnitude. It also forces an
+actor value outside 0..0xA4 to Health (0x18). `PeakValueModifierEffect`
+(`0x5cb2d0`) and `DualValueModifierEffect` (`0x5b7ce0`) both call it.
+`GetMagnitude` (`0x5ac570`) returns that stored value, and the per-frame update
+(`0x5d8780`) adds magnitude × frame time to the actor value.
+
+**Vanilla uses the flag on value modifiers only for on/off actor values.** Of
+Skyrim.esm's 461 value-modifier MGEFs, 19 carry No Magnitude: 10
+Invisibility, 6 Water Breathing / Water Walking, and three one-offs
+(`NN01PerkEffect`, `ArmorFFSelf100`, `VoiceDragonrendEffectScript`). Every
+Oblivion and Nehrim spell authors magnitude 0 on its no-magnitude effects, so
+1.0 is right exactly where 1 means "on".
+
+**The rule:** a value-modifier archetype keeps No Magnitude only on Paralysis,
+Invisibility, Night Eye, Water Breathing or Water Walking; anywhere else the flag
+is dropped and the authored magnitude applies.
+
+**Found through the Shivering Isles Gatekeeper.** Its script calls
+`ResetFallDamageTimer` every frame, which casts `TES4NoFallDamage` on every poll
+(about every 0.37 s). That effect was a No Magnitude value modifier on Health,
+so each 10 s cast healed 1 HP/s. About 27 copies overlapped, for roughly
+28 HP/s of extra healing, measured in game. The bone arrows' weakness (Damage
+Health 8/s, paired with his Regeneration 8/s on every level) could never catch
+up.
+
+**Still open:** Silence (`SLNC`, Peak Magicka) and Stunted Magicka (`STMA`, Peak
+MagickaRate) have no authored amount. They now apply 0 instead of the engine's
+1, and neither works until each gets a real Skyrim mechanism.
+
+## <a id="resist-paralysis"></a>Resist Paralysis is a keyword, never the Paralysis actor value
+
+**Code:** `tes5_import/record_types/magic.py` (`effect_keywords`, `PARALYSIS_CONDITIONS`)
+
+Skyrim's `Paralysis` actor value is not a resistance. Any value above 0 means
+the actor *is* paralyzed. The import used to map Oblivion's Resist Paralysis
+(RSPA, and Morrowind effect 99) to a Peak Value Modifier on it, so an ability
+authored as "Resist Paralysis 100%" paralyzed its owner for good. Measured
+live (2026-09-25) on the Shivering Isles Gatekeeper `SE02Gatekeeper6`, whose
+`SEAbGKMagicResistance6` carries RSPA 100: Paralysis 100, entirely a Temp
+modifier from `TES4RSPAConstantSelfAbility`. He lay stiff and never acted.
+Paralysis effects also named Paralysis as their resist value.
+
+Vanilla has no paralysis resistance at all, only immunity. Races and actors
+carry the `ImmuneParalysis` keyword (0xF23C5). All 19 Paralysis-archetype
+MGEFs in Skyrim.esm have ResistValue -1; 17 carry
+`HasKeyword(ImmuneParalysis) == 0` and 15 `HasKeyword(ActorTypeDragon) == 0`.
+No vanilla MGEF carries the keyword itself.
+The import now does the same:
+
+* RSPA and Morrowind 99 become a script-archetype effect with no script,
+  whose only job is to carry `ImmuneParalysis`. Every clone carries it too
+  (`magic_variants._emit`).
+* Every Paralysis-archetype effect gets vanilla's two conditions plus
+  `HasMagicEffectKeyword(ImmuneParalysis) == 0`, and no resist value.
+  `HasKeyword` checks only the actor's base record, so without the third
+  condition an ability-granted immunity would do nothing.
+
+Oblivion's partial resist (a percent chance to shrug a paralysis off) has no
+Skyrim equivalent, and any magnitude now grants full immunity. Every creature
+and quest ability in Oblivion.esm authors 100; the partial values (10-60%)
+are only on enchantments and ingredients.
+
 ## <a id="morrowind-effects"></a>Morrowind effects key on an index, not a code
 
 **Code:** `tes5_import/record_types/magic_morrowind.py`
@@ -1015,10 +1086,11 @@ the drain, as `DisDamageHealthVampire` (archetype 34 on Health), and that is
 what Vampirism and Corprus map to. Attaching the full vampire quest chain is
 runtime work, not record work.
 
-The 19 with no Skyrim mechanism carry `NATIVE_NONE`. They convert today as an
-inert Value Modifier -- present, addressable by a script, doing nothing -- which
-is where the MorrowindRuntime effect table attaches. Only Levitate and SlowFall
-genuinely need new engine addresses; the rest are state the DLL can hold.
+The 14 with no Skyrim mechanism carry `NATIVE_NONE`. Mark, Recall and the two
+Interventions convert as a script-less Script effect, which MorrowindRuntime
+acts on ([teleport effects](morrowind_runtime.md#teleport-effects)). The other
+ten still convert as an inert Value Modifier: present, addressable by a script,
+doing nothing.
 
 <a id="morrowind-borrowed-art"></a>
 ### Art is borrowed from vanilla Skyrim

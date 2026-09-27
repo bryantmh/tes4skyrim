@@ -73,10 +73,9 @@ FALLOUT_COMMAND_ROWS = {
     'hasbeeneaten': dict(
         emit='0', note='{f} - Skyrim has no cannibalism flag (read as 0)',
         flags='bare_bool cmp_bool zero_arg'),
-    #: FNV's abbreviation for GetIgnoreFriendlyHits; the shared row is a note.
-    'gifh': dict(
-        note='GetIgnoreFriendlyHits - Skyrim exposes only the setter',
-        flags='bare_bool zero_arg'),
+    #: FNV's abbreviation for GetIgnoreFriendlyHits.
+    'gifh': dict(emit='{ref}.IsIgnoringFriendlyHits()', subj='OBJREF',
+                 flags='bare_bool cmp_bool zero_arg'),
     'getfurnituremarkerid': dict(
         emit='0', note='{f} - Skyrim has no furniture marker id (read as 0)',
         flags='zero_arg'),

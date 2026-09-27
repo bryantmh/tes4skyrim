@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 
 from asset_convert.collision.mesh_scan_fragments import set_fragment_dir
+from asset_convert.nif.fixture_plan import FIXTURE_KEY
 from asset_convert.nif.nif_converter import convert_nif
 from asset_convert.game_paths import current_namespace, set_namespace
 from asset_convert.nif.shaders import (default_normal_texture, SPEC_STRENGTH,
@@ -153,11 +154,14 @@ def _empty_batch_stats(total):
     }
 
 
-def _collect_nifs(mesh_path, subdir_filter):
+def _collect_nifs(mesh_path, subdir_filter, fixtures=()):
     """(files to convert, how many the filters dropped).
 
     Each `subdir_filter` entry is a path prefix under the mesh root: a root
-    folder (`clutter`), a nested one (`tr/l`) or a single mesh.
+    folder (`clutter`), a nested one (`tr/l`) or a single mesh.  A SKIP_PATHS
+    mesh still converts when a placed-fixture record names it (`fixtures`,
+    mesh-relative keys): no creature or character stage writes it there.
+    See: docs/commentary/asset_convert_nif.md#skip-paths-fixtures
     """
     allowed = ([tuple(s.lower().replace('\\', '/').strip('/').split('/'))
                 for s in subdir_filter]
@@ -165,7 +169,8 @@ def _collect_nifs(mesh_path, subdir_filter):
     keep, skipped = [], 0
     for nf in mesh_path.rglob('*.nif'):
         parts = tuple(p.lower() for p in nf.relative_to(mesh_path).parts)
-        if any(seg in parts for seg in SKIP_PATHS):
+        if (any(seg in parts for seg in SKIP_PATHS)
+                and '/'.join(parts) not in fixtures):
             skipped += 1
         elif allowed is not None and not any(parts[:len(a)] == a for a in allowed):
             skipped += 1
@@ -352,7 +357,8 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
     """
     mesh_path = Path(mesh_dir)
     out_base = Path(output_dir)
-    nif_files, skipped_by_path = _collect_nifs(mesh_path, subdir_filter)
+    nif_files, skipped_by_path = _collect_nifs(
+        mesh_path, subdir_filter, (wearable_plan or {}).get(FIXTURE_KEY, ()))
     total = len(nif_files)
     stats = _empty_batch_stats(total)
     skipped_list = []

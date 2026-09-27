@@ -1363,19 +1363,22 @@ def test_prepare_is_a_noop_without_a_cache():
 
 
 def test_speedtree_models_key_to_the_converted_nif():
-    """A TREE's '.spt' must resolve to <ns>/speedtrees/<name>.nif.
+    """A TREE keys to <ns>/speedtrees/<EditorID>.nif, the NIF convert_TREE names.
 
-    Appending '.nif' to the authored path yields
-    'tes4/shrubseabuckthornsu.spt.nif', which matches no cache entry, so every
-    TREE in the game carved nothing.
+    The speedtree stage writes one NIF per TREE record, so the shared `.spt`
+    name (DementiaTree01L -> \\DTree01Leaves.spt) matches no cache entry and
+    the tree carves nothing.
     See: docs/commentary/tes5_import_navmesh.md#speedtree-model-keys
     """
-    assert (navm_pool.model_key('\\ShrubSeabuckthornSU.spt')
-            == 'tes4/speedtrees/shrubseabuckthornsu.nif')
-    assert (navm_pool.model_key('Trees\\Mania\\ManiaTree01.spt')
+    tree = {'Signature': 'TREE', 'EditorID': 'DementiaTree01L',
+            'Model.MODL': '\\DTree01Leaves.spt'}
+    assert (navm_pool.base_model_key(tree)
+            == 'tes4/speedtrees/dementiatree01l.nif')
+    nameless = {'Signature': 'TREE', 'Model.MODL': 'Trees\\Mania\\ManiaTree01.spt'}
+    assert (navm_pool.base_model_key(nameless)
             == 'tes4/speedtrees/maniatree01.nif')
-    assert (navm_pool.model_key('Furniture\\ChairNoble01.NIF')
-            == 'tes4/furniture/chairnoble01.nif')
+    chair = {'Signature': 'FURN', 'Model.MODL': 'Furniture\\ChairNoble01.NIF'}
+    assert navm_pool.base_model_key(chair) == 'tes4/furniture/chairnoble01.nif'
 
 
 def test_a_ref_reaching_past_its_cell_is_indexed_in_the_neighbour():

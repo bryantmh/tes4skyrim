@@ -171,6 +171,37 @@ reproduced all three on the pre-fix output and passes on vanilla.
 **This is not the hang** — CK logs these and keeps going — but it silently cost
 1,852 placed objects in every build so far.
 
+### <a id="group-slot-reasons"></a>Why each pinned slot sits where it does
+
+- **IMGS before WTHR**: a weather's IMSP points at the imagespaces that carry
+  its HDR tone mapping, and CLMT/REGN then point at WTHR.
+- **CELL, WRLD, DIAL before QUST**: references that quests resolve must exist
+  before QUST loads.
+- **LCTN after CELL/WRLD** (vanilla: `… ECZN LCTN … DLBR DLVW` at the very
+  end). The CK resolves each Location's LCEC worldspace and MNAM marker ref when
+  the LCTN group loads. With LCTN first, every location logged "Could not find
+  worldspace (0100003C) in load": 512 warnings and markers that could never be
+  discovered.
+- **WATR, FLST, PERK after CELL**: vanilla's order after CELL is
+  `…ANIO WATR EFSH … IMAD FLST PERK … ECZN LCTN MESG…`. Nothing resolves them at
+  parse time; pinning keeps the layout independent of the order groups were
+  added in. PERK carries the generated `TES4NoFallDamagePerk`
+  ([fall damage](script_convert.md#fall-damage-is-a-perk)) and FNV's perks.
+- **MESG just after LCTN**: nothing in our MESGs is order-sensitive (they carry
+  no conditions), but it keeps the canonical slot rather than appending after
+  DLVW.
+- **DOBJ between MESG and MUSC** (vanilla `…LCTN MESG RGDL DOBJ LGTM MUSC…`):
+  ours overrides the master's default-object table to repoint BTMS at our
+  Battle music, so the form it names must already be in the file.
+- **MUSC/MUST after CELL**, measured on the real Skyrim.esm (CELL 57, WRLD 58,
+  LCTN 86, MUSC 91, DLBR 97, MUST 98). A cell's XCMO is not resolved when the
+  CELL group parses (vanilla's 701 XCMO cells load with the music groups 34
+  slots later), so the base-object rule does not apply. MUSC precedes MUST even
+  though MUSC.TNAM points at MUST, for the same reason.
+- **MOVT, then CLFM** at the vanilla tail (`…MATO MOVT HAZD SNDR DUAL SNCT SOPM
+  COLL CLFM REVB`). CLFM holds the generated hair colors (one per distinct
+  authored Oblivion HCLR); nothing resolves it at parse time.
+
 ### <a id="lgtm-eczn-slots"></a>LGTM and ECZN sit after CELL
 
 The FO3/FNV reference-only types take vanilla's own slots: `…MESG RGDL DOBJ

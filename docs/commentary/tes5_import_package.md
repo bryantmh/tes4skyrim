@@ -208,7 +208,7 @@ every field we need (`PKDT.Flags/Type/Format`, `PSDT.*`, `PLDT.Type/Location/Rad
 | 4 Sleep | 725 | `Sleep` | **exact** — dedicated tree w/ bed-find + LockDoors |
 | 1 Follow | 208 | `Follow` | **exact** |
 | 9 Ambush | 80 | `HoldPosition` + Weapon Drawn / No Combat Alert | **close** |
-| **2 Escort** | **75** | `EscortPlayerWhenNear` | **exact** ← *fgc01rats* |
+| **2 Escort** | **75** | `TES4EscortWhenNear` (converter-owned root) | **exact** ← *fgc01rats*; see [§ escort restarts](#escort-restarts-when-the-target-returns) |
 | 7 Accompany | 40 | `Follow` w/ `Accompany?=1` | **exact** — Skyrim models Accompany as a Follow input |
 | 10 FleeNotCombat | 11 | `FleeTo` | **exact** |
 | 11 CastMagic | 5 | `UseMagicRepeat` | **close** |
@@ -358,8 +358,9 @@ tutorial rats never turned hostile no matter how long the player waited.
 - **Follow (1)** → `Follow`, `PTDA` = target, `Accompany?=0`.
 - **Accompany (7)** → `Follow`, `Accompany?=1` — Skyrim models Accompany as a
   Follow input, so this is exact, not an approximation.
-- **Escort (2)** → `EscortPlayerWhenNear`. `PTDT` → *Target to Escort*,
-  `PLDT` → *Destination*.
+- **Escort (2)** → `TES4EscortWhenNear`, the converter's own root
+  ([§ escort restarts](#escort-restarts-when-the-target-returns)). `PTDT` →
+  *Target to Escort*, `PLDT` → *Destination*.
 - **FleeNotCombat (10)** → `FleeTo`. `PLDT` → *Flee To Location*, `PTDT` →
   *Flee From Target*.
 - **Ambush (9)** → `HoldPosition` at `PLDT` + `Weapon Drawn` + `No Combat Alert`.
@@ -833,3 +834,57 @@ Location (`0x20`, 141). TES5 has no named flag for either (the vanilla bits
 `0x10`/`0x20` appear on 33/2 packages but are unnamed in xEdit and the CK).
 Relocking comes from the Sleep template's LockDoors procedure, so a shop whose
 owner sleeps elsewhere stays unlocked overnight.
+
+---
+
+## Escorts restart when the target returns
+<a id="escort-restarts-when-the-target-returns"></a>
+
+**Code:** `packages/escort_when_near.py`; created in
+`base/owned_records.py::create_tes4_special_records`, adopted by dependent
+plugins in `base/adopted_records.py`. Confirmed in-game (SE02).
+
+Symptom: Jayred Ice-Veins (SE02 "Through the Fringe of Madness") led the player,
+but once the player got far enough away he froze for good, even with the player
+standing next to him. His "Follow me" line (`set LeadToGardens to 1` + `evp`) did
+nothing; "Wait, let's do this later" then "Lead on" revived him.
+
+Cause, from the 1.6.1170 exe and the live game:
+
+- The escort package stayed current (`GetIsCurrentPackage` 1) while its
+  procedure was dead (`GetCurrentAIProcedure` −1). `EvaluatePackage` re-picks
+  the same package and does **not** restart it, so `evp` cannot revive it. The
+  toggle works because the package genuinely changes (conditions go false,
+  then true), which starts a fresh `BGSProcedureEscortExecState`.
+- `BGSProcedureEscort`'s per-frame update (RVA `0x45E360`) keeps a waiting
+  byte and path state that only a fresh start resets. The follower check
+  (`0x6ED6D0`) waits once the follower is past the package's *Distance to Wait*
+  (or `fAIEscortWaitDistanceInterior` 512 / exterior 2.0 × max(200, …) when the
+  package has none) and resumes inside 2/3 of it (factor 0.444 = (2/3)² at
+  `0x18A39C8`), with `fAIEscortHysteresisWidth` 50. Oblivion ships the same two
+  wait defaults (2.0 and 512).
+- `ResetAI` from the console also revives it; Papyrus has no equivalent.
+
+Vanilla's answer is `EscortPlayerWhenNear` (`00069665`): a Stacked tree whose
+Escort branch is gated on `GetWithinDistance(input 11, input 15) == 1` (CTDA
+flag 0x08, both parameters package inputs), falling through to Travel. When the
+player leaves the radius the Escort procedure ends; when they return it starts
+fresh. Its Travel walks the escorter to the goal alone, which Oblivion never
+did (Jayred would reach the gardens and fire FindBones without the player).
+
+`TES4EscortWhenNear` is that root byte for byte except:
+
+| | EscortPlayerWhenNear | TES4EscortWhenNear |
+|---|---|---|
+| fallback | Travel (inputs 3, 13, 17), FNAM 1 | **Wait** (inputs 20 ActualSeconds = 0, 21 StopMovement = 1), **FNAM 0** — vanilla `StayAtCurrentLocation`'s stay-put Wait |
+| inputs / XNAM | 10 / 20 | 12 / 22 |
+| defaults | wait 300, radius 500, preferred path 1 | wait 512, radius **1500**, preferred path 0 (the converter's existing Escort values) |
+
+FNAM bit 0 is "success completes the package": the Escort keeps it (arriving
+ends the package) and the Wait must not. The 1500 radius is MQ102
+Hadvar/Ralof's (open-terrain player escorts; vanilla spans 300–5000). Every
+converted escort uses it — TES4 Escort, a TES4 Follow rerouted to Escort, and
+Morrowind `AIEscort` — and falls back to vanilla `Escort` only when no root is
+installed (a master built before this change). Adding the root moved no
+FormID (1,187,406 records before, the same plus one after). Test:
+`tests/test_escort_when_near.py`.

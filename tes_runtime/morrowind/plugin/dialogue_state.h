@@ -431,6 +431,20 @@ public:
     bool ControlEnabled(int which) const;
     void SetControlEnabled(int which, bool on);
 
+    // --- Mark, and whether teleport magic works -----------------------------
+    // Where Mark last stood: the CELL of an interior or the WORLDSPACE of an
+    // exterior as a runtime FormID (0 when never marked), and the spot in it
+    // with its Z rotation in degrees. The co-save re-resolves the FormID
+    // after a load-order change.
+    struct MarkedPlace {
+        std::uint32_t place = 0;
+        float x = 0.0f, y = 0.0f, z = 0.0f, zRot = 0.0f;
+    };
+    MarkedPlace mark;
+    // `DisableTeleporting` / `EnableTeleporting`: gates Mark, Recall and both
+    // Interventions, as OpenMW's isTeleportingEnabled does.
+    bool teleporting = true;
+
     // --- reputation, crime, faction reactions, running scripts -------------
     int   reputation = 0;
     float crimeLevel = 0.0f;

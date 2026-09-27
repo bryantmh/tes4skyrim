@@ -237,41 +237,8 @@ constexpr std::uint64_t kRefEnable = 56158;
 constexpr std::uint64_t kRefDisable = 56155;
 constexpr std::uint64_t kRefIsDisabled = 56639;
 
-// ObjectReference.GetPositionX/Y/Z (0x9ce600/610/620) and GetAngleX/Y/Z
-// (0x9ce0c0/0e0/100), one instruction each: `movss xmm0,[r8+off]`, the angle
-// getters then multiplying by 180/pi. They never touch rcx, so the VM pointer
-// is irrelevant to them.
-//
-// 🛑 The ANGLE getters return DEGREES while the field holds radians, and
-// SetAngle takes degrees back -- so a get/set round trip needs no conversion,
-// but reading the field directly does.
-constexpr std::uint64_t kRefGetPositionX = 56178;
-constexpr std::uint64_t kRefGetPositionY = 56179;
-constexpr std::uint64_t kRefGetPositionZ = 56180;
-
-// 🛑 THE ANGLE GETTERS HAVE NO STABLE ID ON A CURRENT BUILD. Ids 56162-56164
-// exist on 1.6.659 and are GONE on 1.6.1170 -- measured against both
-// versionlibs, and the live log showed all three UNRESOLVED, which silently
-// broke every rotation (Rotate, RotateWorld, PositionCell's zRot, Face).
-// Each is a 3-instruction leaf the Address Library stopped covering, so the
-// field is read directly instead: rotation x/y/z are floats at these offsets
-// on TESObjectREFR, immediately before the position triple at +0x54.
-// See: docs/commentary/morrowind_runtime.md#the-angle-getters-have-no-id
-constexpr std::size_t kOffRefRotX = 0x48;
-constexpr std::size_t kOffRefRotY = 0x4c;
-constexpr std::size_t kOffRefRotZ = 0x50;
-
-// ObjectReference.SetPosition(float x, y, z) (0x9d1c60) and SetAngle (0x9d12d0)
-// take ALL THREE axes, so a one-axis MWScript `SetPos` reads the other two
-// back first. Unlike the getters these DO use rcx, to report "Cannot move the
-// player because they are dead", so they need the real VM.
-constexpr std::uint64_t kRefSetPosition = 56234;
-constexpr std::uint64_t kRefSetAngle = 56224;
-
-// ObjectReference.TranslateTo(x, y, z, ax, ay, az, speed, maxRotSpeed)
-// (0x9d1f70, the latent native registered beside the "TranslateTo" string at
-// 0x9d760d). Angles in degrees; it glides the loaded 3D without reloading it.
-constexpr std::uint64_t kRefTranslateTo = 56237;
+// The position, angle and TranslateTo natives are shared: common/engine_ids.h,
+// used through common/glide.h.
 
 // The world natives the result-script commands reach through, each the r9
 // argument of its registration helper beside the name string on 1.6.659:
@@ -420,6 +387,29 @@ constexpr std::uint8_t kFormTypeCell = 0x3C;
 constexpr std::uint8_t kFormTypeWorld = 0x47;
 constexpr std::uint64_t kRefGetScale = 56633;
 constexpr std::uint64_t kRefSetScale = 56240;
+
+// WorldSpace ObjectReference.GetWorldSpace() (0xa44ba0 on 1.6.1170): the code
+// `lea` beside the "GetWorldSpace" registration under ObjectReference, found
+// by papyrus_native_locate.py. Where Mark stands when it is outdoors.
+constexpr std::uint64_t kRefGetWorldSpace = 56636;
+
+// SkyrimVM's BSTEventSink<TESMagicEffectApplyEvent> vtable: 0x19127c8 on
+// 1.6.1170, 0x17bc0d0 on 1.6.659, the subobject at +0xA8 by its RTTI complete
+// object locator. Slot 1 (byte 0x8) is its ProcessEvent (0x9c5910), which
+// loads the 'OnMagicEffectApply' string: every effect applied to anything
+// passes through it, script-less Script effects included.
+// See: docs/commentary/morrowind_runtime.md#teleport-effects
+constexpr std::uint64_t kVmMagicEffectApplySink = 217097;
+constexpr std::uint64_t kVmMagicEffectApplyProcess = 53978;
+constexpr std::size_t kProcessEventSlot = 0x8;
+
+// TESMagicEffectApplyEvent: the target and caster (NiPointers' raw pointers)
+// and the MGEF's runtime FormID. The VM's argument functor (vtable 0x1912ba8,
+// slot 1) reads the caster at +0x8 and looks the +0x10 id up expecting form
+// type 0x12.
+constexpr std::size_t kOffApplyTarget = 0x0;
+constexpr std::size_t kOffApplyCaster = 0x8;
+constexpr std::size_t kOffApplyEffect = 0x10;
 
 // The alias plumbing the AI packages run on, each found at its registration
 // and present in all 12 shipped versionlibs:

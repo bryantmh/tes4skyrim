@@ -90,7 +90,7 @@ The `-ExtractAssets` flag triggers BSA extraction and mesh conversion:
 2. **Mesh Conversion** — Uses PyFFI-based NIFConverter (from external/NIFConverter/) to convert Oblivion NIF 20.0.0.4/5 → Skyrim NIF 20.2.0.7
 3. **Texture Copy** — DXT textures from Oblivion are compatible with Skyrim; copied as-is under `tes4\` namespace
    - **Path rewriting (`rewrite_tex_path`) must normalize separators FIRST** (fixed 2026-07-27). Oblivion NIFs mix `/` and `\`, sometimes in one file. Testing only for a backslash `'textures\'` prefix let `textures/lowres/foo.dds` fall through and come out as `Textures\tes4\textures/lowres/foo.dds` — a path resolving to nothing, so the mesh renders untextured and the LOD tiles built from it reference 100 nonexistent textures. 96 Morrowind_ob source NIFs hit this; **zero Oblivion.esm ones**, which is why it stayed hidden.
-   - `textures\lowres\` is an Oblivion **_far.nif authoring convention** for low-res LOD copies (pyffi ships a `modify_texturepathlowres` spell writing exactly this prefix, documented "used mainly for making _far.nifs"). The segment is **kept** when its source file exists and falls back to the full-res twin otherwise — see [lowres textures](asset_convert_shader.md#lowres-textures). The rewrite is idempotent on already-correct `Textures\tes4\…` paths.
+   - `textures\lowres\` is an Oblivion **_far.nif authoring convention** for low-res LOD copies (pyffi ships a `modify_texturepathlowres` spell writing exactly this prefix, documented "used mainly for making _far.nifs"). The segment is **kept** when its source file exists and falls back to the full-res twin otherwise — see [lowres textures](asset_convert_shader.md#lowres-textures). The rewrite always prefixes, even a path whose first folder already spells the namespace: Nehrim authors a `Nehrim\` folder, and the asset copy writes it under `nehrim\nehrim\` (see [per-game asset namespace](asset_convert_texture.md#per-game-asset-namespace)).
 4. **BSA Repacking** — Not yet automated. Use BSArch.exe or Skyrim CK Archive tool.
 
 ### Prerequisites for mesh conversion
@@ -102,6 +102,24 @@ The `-ExtractAssets` flag triggers BSA extraction and mesh conversion:
 - `Oblivion - Meshes.bsa`, `Oblivion - Textures - Compressed.bsa`
 - `DLCShiveringIsles - Meshes.bsa`, `DLCShiveringIsles - Textures.bsa`
 - `Knights.bsa` (single BSA for smaller DLCs)
+
+### <a id="skip-paths-fixtures"></a>Skipped folders still convert what a placed record names
+
+**Code:** `SKIP_PATHS` and `_collect_nifs` in `asset_convert/nif/nif_batch.py`
+
+The batch skips every mesh under `menus`, `creatures` or `characters`: creatures
+and characters have their own stages, which convert only what CREA, NPC_, RACE
+and HAIR use and write it under `actors\` or the hair folder. A static or
+activator can name one of those meshes as its OWN model, and then nothing wrote
+the path its record points at, so it was invisible. Measured on the exports:
+Nehrim 15 ACTI + 23 STAT, Oblivion 6 ACTI + 23 STAT -- the Endgame effect meshes
+(`Creatures\Endgame\Spawn.NIF`, `Transformation.NIF`, `Destruction.NIF` ...) that
+Nehrim's MQ14/MQ34 explosions reuse, `LucienLachanceDead.NIF`, hanging chickens,
+`Characters\RaceTextures*.NIF`.
+
+A skipped-folder mesh now converts when a placed-fixture record
+(`fixture_plan.FIXTURE_TYPES`: STAT, ACTI, LIGH, CONT, DOOR) names it, into the
+normal `meshes\<ns>\creatures\...` path the record already carries.
 
 ## DOOR conversion notes
 <a id="door-conversion-notes"></a>
@@ -401,6 +419,18 @@ PyFFI reports **every unreferenced block** as a root, not just scene-graph roots
 - The orphans are unreachable from the real root — dead weight, so dropping them also shrinks output. PyFFI's "block is missing from the nif tree: omitting reference" notice on write is the expected, benign confirmation.
 - **Files whose ONLY root is a non-node** are standalone animation files (`creatures/*/idleanims/*.nif` → a lone `NiControllerSequence`). There is no geometry to convert; `convert_nif` returns `error='NOGEO'` and skips instead of crashing.
 - Related trap: **never trust `num_vertices`/`has_normals` over the actual array length.** `leyawiinhouselower01_far.nif` has a shape with `num_vertices=16` but an empty `vertices` array (stale count, `has_vertices` unset), which made `np.array([...])` a `(0,)` array and blew up the matmul in `inv_marker._gather_area_normals`. Guard with `len(gd.vertices)` and `len(gd.normals) == len(gd.vertices)`.
+
+## A shape listed under two parents converts once
+<a id="shared-shapes-convert-once"></a>
+A NIF may reference one `NiTriShape` block from two child slots — Nehrim's
+`ptcreatures\nightmaretroll\nightmaretroll.nif` lists its body `Troll01:0` twice
+under the root. The walk visited it twice. The first `process_geometry` pass built
+the `troll.dds` shader and cleared the Oblivion properties; the second pass found no
+`NiTexturingProperty`, so it replaced that shader with the `Textures\white.dds`
+fallback. Every creature on that mesh rendered its body untextured.
+`_walk_geometry` now memoizes by block identity (`stats['_converted_shapes']`),
+so a later visit returns the first result, and both slots keep pointing at the
+same converted block, as authored.
 
 ## NIF NiDefaultAVObjectPalette fixup
 <a id="nif-nidefaultavobjectpalette-fixup"></a>
@@ -1231,6 +1261,28 @@ graph-less mesh with fewer dead keys loses nothing.
 
 A missing or failing hkxcmd never loses the mesh. The object still converts and
 renders; it just stays unanimated, and the error is recorded in the result.
+
+### <a id="specialidle-is-the-load-state"></a>SpecialIdle is the state an object loads into
+
+**Code:** `_start_state_id`, `_LOAD_SEQUENCES` in `asset_convert/havok/hkx_animobject.py`
+
+The generated graph starts on a do-nothing `Rest` state so a door or wall does
+not play `Forward` by itself — unless the mesh carries a sequence the object plays
+from load: `AutoLoop`, `AutoPlay`, or Oblivion's `SpecialIdle`.
+
+Oblivion plays an object's `SpecialIdle` at load when it has no `Idle`. Census of
+Oblivion.esm: **130** meshes carry `Idle`, **28** carry `SpecialIdle`, and **no
+mesh carries both**. Every `SpecialIdle` is the object's resting state — either a
+`CYCLE_LOOP` (the SE01Metronome tick, 1.53 s; the Oblivion gate swirls, 5 s) or
+a one-frame hold pose (`se11sheopooffx`, `se09poollid`, `lorgrenskeleton01`).
+Scripts treat it the same way: `SE01DoorScript` only stops the metronome
+(`playgroup forward 4`), and the gate scripts replay `specialidle` only when
+`IsAnimPlaying == 0`, to return to it after a one-shot `Forward`.
+
+Starting on `Rest` left the metronome frozen: nothing ever sent `SpecialIdle`.
+Starting on it is vanilla's own mechanism — `GenericBehaviors\Autoplay.hkx` sets
+`startStateId` to a state whose generator plays `AutoPlay`, and looping comes
+from the sequence's cycle type. Confirmed in-game on SE01Metronome.
 
 ### <a id="bged-clears-bsx-bit-80"></a>A BGED forces BSXFlags bit 0x80 CLEAR
 

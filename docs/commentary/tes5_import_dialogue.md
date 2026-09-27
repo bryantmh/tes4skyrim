@@ -102,8 +102,8 @@ game, see the `oblivion-dialog-system`, `skyrim-dialog-system`, and
 - **🔴 QUST VMAD MUST end with the alias-script array count — THE cause of "no quest markers" (2026-07-11)**. Per xEdit `wbVMADFragmentedQUST`, a QUST's VMAD is `Version, ObjectFormat, Scripts, ScriptFragmentsQuest, **Aliases**`, where Aliases is an array with an **S16 count prefix**. Our builder stopped after the fragments and never wrote that count. **The engine parses VMAD strictly: running off the end of the buffer where it expects the count makes it abandon the record's entire script/alias binding.** Result: EVERY quest alias fills as `NONE` *and* every QF script property comes back `None` — so an objective's QSTA points at an empty alias and no marker can ever be drawn, while the journal objective (which needs no alias) displays perfectly.
   - **Diagnosis that finally cracked it**: in-game console `sqv <questID>` showed **all four aliases NONE** with the quest running at the right stage and the target ref alive and selectable — and the QF script's object properties were `None` too. Two independent systems failing identically ⇒ one shared cause upstream of both ⇒ VMAD. Verified against Skyrim.esm: vanilla `DBSideContract03`'s 643-byte QUST VMAD only parses to 643/643 once the trailing S16 is read. `tests/test_script_converter.py::test_vmad_quest_parses_to_exactly_its_length` now round-trips the VMAD and requires every byte be consumed — a truncated tail is invisible to every other check.
   - **Lesson**: when a record's scripts AND its aliases are both empty at runtime but the record looks perfect field-by-field, suspect a **truncated/misparsed binary tail**, not the individual fields. And `sqv` is the fastest way to find it — it prints alias fill state directly.
-- **Quest markers (targets)**: TES4 QSTA is QUEST-level (REFR + flags + GetStage conditions saying *when* that target's marker is live). TES5 QSTA is per-OBJECTIVE — and **vanilla leaves it UNCONDITIONAL**: across Skyrim.esm, objectives read `QOBJ FNAM NNAM QSTA [QSTA…]` with CTDAs a rare exception; the right target simply sits on the right objective, and the objective being *Displayed* is what selects the marker.
-  - So resolve Oblivion's gates at BUILD time rather than replaying them: `_target_live_at_stage()` (tes5_import/dialogue/converter.py) evaluates each target's TES4 condition chain (AND of OR-groups; GetStage/GetStageDone understood, any other function treated as passing so a maybe never loses a marker) with GetStage == the objective's stage, and each objective emits only its live targets, with no CTDAs. FGC01Rats then walks Arvena→basement door→Arvena→Pinarus→…→Quill-Weave exactly as Oblivion did. (Carrying every target on every objective was a genuine defect, but it was NOT what suppressed the markers — the VMAD truncation above was.)
+- **Quest markers (targets)**: TES4 QSTA is QUEST-level (REFR + flags + conditions saying *when* that target's marker is live). TES5 QSTA is per-OBJECTIVE and takes its own CTDAs; the engine shows every target of a displayed objective whose conditions pass.
+  - The quest's own GetStage/GetStageDone gates are settled at BUILD time against the objective's stage; every other condition rides on the QSTA as a runtime CTDA. See [tes5_import_quest.md](tes5_import_quest.md#resolving-target-markers-per-stage). FGC01Rats walks Arvena→basement door→Arvena→Pinarus→…→Quill-Weave exactly as Oblivion did. (What once suppressed every marker was the VMAD truncation above, not target CTDAs.)
   - **Aliases** (one forced-ref per unique target): `ALST, ALID, FNAM, ALFR, VTCK, ALED` — **VTCK is present on 2687/2687 vanilla forced-ref aliases and on all 255 vanilla objective+forced-ref quests; a 100% invariant we were omitting.** FNAM=0x0292 (Optional 0x0002 — a fill failure must not block quest start — + AllowDead + AllowDisabled + AllowReserved), an attested vanilla combination; the old 0x109A appears nowhere in vanilla. ANAM = alias count. Objectives: ONE per stage index (engine keys by index; index = stage so the generated `SetObjectiveDisplayed(stage)` matches). Layout: stages, objectives, ANAM, aliases.
 - **Known remaining gap — city map markers live in CHILD worldspaces**: Oblivion puts each city's map markers *inside* its city worldspace (AnvilWorld, ChorrolWorld, the IC districts — 37 markers total), and its map drew them. Skyrim's world map only renders markers in the root map worldspace (vanilla: 296/~300 marker-Locations anchor a marker in Tamriel 0x3C). So a converted Location whose MNAM marker sits in a child worldspace has nothing the *map* can draw (the compass, which works off the target ref's world position, is unaffected). Child worldspaces share Tamriel's coordinate space (AnvilWorld NAM0/NAM9 lie inside Tamriel's, grids match), so the fix is to anchor those Locations to a root-worldspace marker. Not yet implemented.
   - **Per-target QSTA conditions — export bug fixed 2026-07-11**: the QSTA→marker gating depends on the CTDAs that FOLLOW each QSTA in the TES4 stream (xEdit `wbDefinitionsTES4` QUST: `wbRArray('Targets', QSTA + wbCTDAs)`). The exporter previously used a flat `get_all_subrecords(rec,'CTDA')`, which (a) lost every per-target condition — so imported objectives carried all target aliases with NO gate and markers never advanced with the objective — and (b) mislabeled per-log-entry result-script CTDAs as quest-level `Condition[]`. `export_QUST` now walks the subrecord stream positionally, bucketing CTDAs into quest-level / per-log-entry / per-target and emitting `Target[i].Condition[k].Raw`. The importer's `convert_ctda_list(rec, prefix='Target[t].')` was already wired for this; it just had no data. Verified end-to-end on SE46 (funcs 58 GetStage / 79 GetQuestVariable / 84 GetDeadCount, quest FormID param remapped to output load order).
@@ -147,7 +147,7 @@ game, see the `oblivion-dialog-system`, `skyrim-dialog-system`, and
 - **Quest running gating (QSTI restoration, 2026-07 design)**: In Oblivion, each INFO only shows while its OWN `QSTI.Quest` is running. Single-quest topics get this natively via quest ownership. For shared topics (owned by TES4DialogueGeneric), `_build_one_topic()` injects `GetQuestRunning(info's own QSTI.Quest)==1.0` as the FIRST CTDA on each INFO whose quest is non-SGE and ≠ the topic owner. **Gate by the INFO's OWN quest, never the DIAL's Quest[0]** — gating all of GREETING's children by one arbitrary Quest[0] blocks ALL greetings (a hard-won earlier lesson). SGE quests are exempt (running from new game via the .seq file).
 - **AddTopic unlock system (2026-07)**: Oblivion's CENTRAL visibility mechanic — a topic only appears once ADDED via an INFO's Add-Topics data list (export: `AddTopic[i]=` FormIDs, 1044 INFOs), an `AddTopic X` result-script command, a quest-stage script, or automatically when a spoken line's text mentions the topic's FULL name (Oblivion highlights + auto-adds mentioned names). Skyrim has no AddTopic → re-expressed via `tes5_import/dialogue/unlocks.py`: one GLOB `TES4Unlock_<topic>` per gated topic (206); every INFO of a gated topic gets `GetGlobalValue(GLOB)==1` (func 74, same both games); every reveal event sets the global from a Papyrus fragment (INFO fragments fire OnEnd; reveal-only INFOs get a generated TIF fragment with just the SetValue call). The plan is built identically by the importer (GLOBs, conditions, VMAD property bindings) and script_convert/pipeline (fragment .psc bodies) — keys are low-24 FormIDs so it's load-order-offset independent. Gating rules (each violation caused a real in-game bug):
   - Gate ONLY topics explicitly added somewhere; mention-only topics stay ungated (name-match miss = dead content).
-  - **Topics revealed by BARK lines (GREETING/HELLO) are NOT gated** — the bark fires on first contact, so in Oblivion they're effectively visible on first talk (Azzan's "Join the Fighters Guild" via his FG-ad greeting). Gating them makes topics go missing (fragment races the menu / a different greeting plays). 409 of 615 explicit targets are bark-revealed → 206 gated.
+  - **Topics revealed by BARK lines (GREETING/HELLO) are NOT gated when every speaker of the topic says a revealing bark** (see [the bark-ungating exception](#the-bark-ungating-exception)) — the bark fires on first contact, so in Oblivion they're effectively visible on first talk (Azzan's "Join the Fighters Guild" via his FG-ad greeting). Gating them makes topics go missing (fragment races the menu / a different greeting plays). 409 of 615 explicit targets are bark-revealed → 206 gated.
   - Gated TCLT targets keep the gate; their TCLT-parent INFOs are added as revealers.
   - Example that must stay gated: contract INFO (0003571C) lists AddTopic[0]=ratsTOPIC → TES4_TIF__0003571C sets TES4Unlock_ratsTOPIC OnEnd → "Rats" appears only after the contract line. Quest-running does NOT hide it — FGC01Rats starts at guild join (FGD00JoinFG stage 100 `StartQuest` → `.Start()` fragment).
 - **'AnswerStatus' and 'TRANSITION'** are Oblivion NPC-to-NPC conversation system topics — classify as barks (IDLE/88/cat 7) or they leak into player topic menus.
@@ -1174,6 +1174,61 @@ does two things `ForceStart` alone does not:
   and engine-callback sites stay non-waiting: 134 waiting and 3 non-waiting on
   Oblivion.esm.
 
+### <a id="speak-as-quest-in-the-seq"></a>`TES4SpeakAs` must be in the `.seq` (measured 2026-09-25)
+
+In a new game every speak-as scene ended 0.1s after `ForceStart` with no line,
+while a save+reload made all of them play. Live on 1.6.1170: the scene topics
+had **0 INFOs in memory** (`TESTopic+0x50`), Gaius's topics had theirs, and
+`TES4SpeakAs` was running with no pending promote task (`TESQuest+0x248` = 0).
+
+A quest's topic INFOs are loaded by one of two routines:
+
+* `0x3d3310`, run when the quest's `QueuedPromoteQuestTask` finishes. It returns
+  at once when the quest's in-memory flag `0x10` is set, and every Start Game
+  Enabled quest has it (DNAM `0x0011`, as on 256 vanilla quests).
+* `0x3d2e90`, which loads every listed quest's topics. Its only caller (via
+  `0x533a80`) is on the save-load path, so a reload filled the topics in.
+
+`TES4SpeakAs` was missing from `Oblivion.seq` (211 entries, `SE01Door` and
+`TES4ForceGreets` among them). `SE01Door`, which is listed, had its topics
+loaded in the same new game. That is the CK's purpose for the `.seq`: it lists
+start-game quests with dialogue. A synthesized quest had to be added to the list
+by hand, and this one never was. The `.seq` is now built from the written QUST
+records (`_own_sge_quests`): every quest this file defines whose DNAM has
+bit 0 set.
+
+Related engine facts: the scene system treats a quest as running only when flag
+bit 0 is set, bit 7 (Stage Wait) is clear, and `+0x248` is null. Line pick
+(`0x3e82f0`), `Scene.ForceStart` (logs "cannot force start scene because its
+parent quest was not running") and the per-frame scene update (`0x3a05f0`) all
+apply this rule. `sqv`'s "State: Running" reads only the flag.
+
+### <a id="startconversation-player-force-greet"></a>`StartConversation Player` is a real force greet (confirmed in game 2026-09-25)
+
+Papyrus cannot open the dialogue menu, so `X.StartConversation Player [topic]`
+used to become `Say(topic)`. SE01's `SE01GaiusForceGreet` then showed up as a
+plain topic in Gaius's menu instead of greeting the player. Vanilla's mechanism
+is a ForceGreet package (template `0003C1C4`). The importer writes one start-game
+quest, `TES4ForceGreets` (`tes5_import/dialogue/force_greets.py`), with a pool of
+optional reference aliases per topic:
+
+* `build_force_greet_slots` counts the `StartConversation Player` sites per
+  topic (at most 8 slots each) and assigns contiguous alias ids in sorted topic
+  order. The importer and the script converter compute the same plan from the
+  same export.
+* Each alias carries a ForceGreet package whose Topic input is the DIAL, a bark
+  topic's subtype, or `HELO` for the no-topic form. The package's OnEnd
+  fragment (`TES4_ForceGreetDone`, in the pattern of vanilla
+  `WITavernServerGreetPlayer`) clears the alias, so the actor goes back to
+  their own AI.
+* The call converts to `TES4Polyfill.ForceGreet(TES4ForceGreets, first, count,
+  actor)`. It reuses the alias already holding that actor, otherwise takes the
+  first free slot, then calls `ForceRefTo` and `EvaluatePackage`.
+* A forced topic that nothing else adds stops being a top-level topic, so it no
+  longer shows in the menu on its own.
+
+Any other `StartConversation` target still takes the `Say` path.
+
 ### Speak-as INFOs silently lost their quest-inherited conditions (fixed 2026-08-25)
 
 A speak-as INFO whose owning QUST carries conditions runs its inherited
@@ -1428,8 +1483,18 @@ vanilla hostility idiom and works for ANY actors.
 
 `create_vtyp_records` never references Skyrim.esm VTYPs. Voice files live in
 `Sound/Voice/<plugin>/<EditorID>/` and must match the EditorIDs created here
-(`TES4Male*`, `TES4Female*`). DNAM bit 0 is AllowDefaultDialogue and bit 1 is
-Female, so male voices write DNAM=1 and female DNAM=3.
+(`TES4Male*`, `TES4Female*`). DNAM bit 0 is Allow Default Dialogue and bit 1 is
+Female; male voices write DNAM=0 and female DNAM=2.
+
+Allow Default Dialogue stays CLEAR. With it set, a voice type may say any line
+whose conditions don't exclude it (CK wiki, Voice_Type), and Skyrim.esm has 446
+non-scene lines in Start Game Enabled quests with no identity condition at all
+(155 CUST, 44 IDLE, 26 GBYE, 22 HELO, 110 combat barks), all of which converted
+NPCs could say. Clear, the engine only allows scene lines, linked lines, and
+lines naming the speaker (GetIsID, GetInFaction, GetIsVoiceType, ...). Every
+converted line carries one of those or the plugin-origin gate
+([origin faction](tes5_import_actors.md#origin-faction)). All 42 vanilla creature
+voice types clear it too.
 
 Two sources, in order:
 
@@ -1603,6 +1668,23 @@ Azzan, `contract` stood or fell purely on its own INFO conditions while
 who did not click Contract lost every topic and was left with the generic
 INFOGENERAL pool ("Rumors"), which is exactly the reported symptom. Keeping the
 gate makes the reveal explicit and idempotent from BOTH revealer kinds.
+
+It also keeps the gate when the barks are spoken by the WRONG NPCs. "Visible on
+first talk" holds only for an NPC who says the revealing bark, so a topic is
+ungated only when every speaker of the topic (its INFOs' positive `GetIsID`s; a
+line with none means anyone) is covered by a revealing bark's speakers (a bark
+with no `GetIsID` covers everyone). Shivering Isles proved it: Sheogorath's
+greeting 00081B68 AddTopics `SE04GreymarchTopic`/`SE04JyggalagTopic`/
+`SE04ObelisksTopic`, but Haskill speaks them too, gated only by
+`GetIsID(SEHaskill)` under the start-game-enabled SE04Shell, so the ungated
+topics showed on Haskill from game start. Keeping the gate took Oblivion.esm
+from 473 to 537 gated topics, with every existing global name unchanged.
+Confirmed in-game.
+
+A mention reveal unlocks EVERY gated topic sharing the mentioned FULL name. SI
+has one "Greymarch" DIAL per main quest (SE03, SE04, SE06-SE10); the name map
+used to keep one global per name, so a mention opened only whichever topic was
+written last.
 
 ## <a id="info-fragment-emission"></a>INFO fragment emission: one decision function
 

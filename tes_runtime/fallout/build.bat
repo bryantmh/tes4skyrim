@@ -18,6 +18,7 @@ echo [build] compiling FalloutRuntime...
 cl /nologo /c /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG /I..\common ^
    plugin.cpp guns.cpp fire.cpp hud.cpp parts.cpp zoom.cpp sever.cpp ^
    ..\common\addresses.cpp ..\common\engine.cpp ..\common\hook.cpp ^
+   ..\common\main_tick.cpp ^
    ..\common\json.cpp ..\common\log.cpp ..\common\paths.cpp ^
    /Fo:obj\
 if errorlevel 1 (

@@ -21,12 +21,10 @@ namespace tesruntime::ids {
 // Papyrus natives, each found at its registration in 1.6.1170: the lea of the
 // callback beside the lea of its name (ObjectReference ones store it at
 // [rsi+0x50] after the name). Game.GetPlayer is shared with the Morrowind
-// runtime's table.
+// runtime's table. GetPositionX/Y are shared: common/engine_ids.h.
 constexpr std::uint64_t kGetPlayer = 55469;
 constexpr std::uint64_t kRefGetParentCell = 56632;
 constexpr std::uint64_t kRefGetWorldSpace = 56636;
-constexpr std::uint64_t kRefGetPositionX = 56178;
-constexpr std::uint64_t kRefGetPositionY = 56179;
 constexpr std::uint64_t kRefIsDisabled = 56639;
 constexpr std::uint64_t kCellIsInterior = 56056;
 

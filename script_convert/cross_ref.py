@@ -12,6 +12,7 @@ from script_convert.constants import (
 from script_convert.command_rows import (
     ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
 )
+from tes5_import.base.mesh_bounds import get_mesh_physics_flags
 from tes5_import.base.text_reader import parse_export_file
 from asset_convert.game_paths import current_namespace
 from core.worker_budget import worker_count
@@ -97,139 +98,163 @@ def _new_scan_out() -> dict:
     }
 
 
+_EFFECT_FIELD_RE = re.compile(r'Effect\[(\d+)\]\.(EFID|ActorValue)$')
+
+
+def _int_or(text, default: int) -> int:
+    """`text` as an int, or `default` when it is absent or not a number."""
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return default
+
+
+def _spell_effect_list(rec: dict) -> list:
+    """[(effect code, actor value int), ...] in Effect[n] order."""
+    effects: list[tuple[str, int]] = []
+    for key, val in rec.items():
+        m = _EFFECT_FIELD_RE.match(key)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        while len(effects) <= idx:
+            effects.append(('', -1))
+        code, av = effects[idx]
+        effects[idx] = ((val, av) if m.group(2) == 'EFID'
+                        else (code, _int_or(val, av)))
+    return effects
+
+
+def index_record_details(tables: dict, sig: str, formid: str, edid: str,
+                         rec: dict, rekey=lambda v: v) -> None:
+    """Fill the tables a record's own fields feed: model, MGEF shader, SPEL effects, GLOB, enchanted BOOK.
+
+    `tables` maps table name -> dict/set (a scan result, or a graph's `vars()`), so the
+    CLI scan and the importer's hand-built graph index these identically; `rekey`
+    corrects a master record's id fields.
+    See: docs/commentary/tes5_import_pipeline.md#phase-0-xref-mirrors-cli-scan
+    """
+    model = rec.get('Model.MODL')
+    if model:
+        tables['record_model'][formid] = model
+    low = edid.lower() if edid else ''
+    if sig == 'MGEF' and low:
+        tables['mgef_shaders'][low] = (
+            rekey(rec.get('DATA.EffectShader') or ''),
+            rekey(rec.get('DATA.EnchantEffect') or ''),
+            _int_or(rec.get('DATA.School'), -1))
+    elif sig == 'SPEL' and low:
+        effects = _spell_effect_list(rec)
+        if effects:
+            tables['spell_effects'][low] = effects
+    elif sig == 'GLOB' and low:
+        if rec.get('FNAM.Type'):
+            tables['global_types'][low] = rec['FNAM.Type'].strip()
+        try:
+            tables['global_values'][low] = float(rec.get('FLTV.Value'))
+        except (TypeError, ValueError):
+            pass
+    elif sig == 'BOOK' and (rec.get('ENAM') or '').strip().strip('0'):
+        tables['enchanted_books'].add(formid)
+
+
+#: An OBSE `begin Function` header at a line start, in raw or export-escaped (`\n`) SCTX text.
+_UDF_BLOCK_RE = re.compile(r'(?:^|\\n)(?:\s|\\t)*begin\s+function\b', re.I | re.M)
+
+#: SCHR.Type of a quest script.
+QUEST_SCRIPT_TYPE = 1
+
+
+def is_function_script(sctx: str) -> bool:
+    """True for an OBSE user-function script (raw or export-escaped SCTX)."""
+    return bool(_UDF_BLOCK_RE.search(sctx or ''))
+
+
+def hosted_script_type(schr_type: int, sctx: str) -> int:
+    """SCHR type a script is HOSTED as; an OBSE function script is a quest's.
+
+    See: docs/commentary/script_convert.md#udf-host-quest
+    """
+    return QUEST_SCRIPT_TYPE if is_function_script(sctx) else schr_type
+
+
+def _record_fields(lines: list) -> dict:
+    """A record's KEY=VALUE lines as a dict; a repeated key keeps its last value."""
+    return dict(line.rstrip().partition('=')[::2] for line in lines if '=' in line)
+
+
+def _int_field(rec: dict, key: str, base: int = 10):
+    """The field's leading number, or None when it is absent or not a number."""
+    try:
+        return int(rec[key].split()[0], base)
+    except (KeyError, ValueError, IndexError):
+        return None
+
+
+def _scan_scpt(rec: dict, formid: str, edid: str, out: dict) -> None:
+    """A script's EditorID and hosting type."""
+    if edid:
+        out['script_formid_to_edid'][formid] = edid
+    schr_type = _int_field(rec, 'SCHR.Type')
+    if schr_type is not None:
+        out['script_formid_to_type'][formid] = hosted_script_type(
+            schr_type, rec.get('SCTX', ''))
+
+
+def _scan_cell(rec: dict, formid: str, _edid: str, out: dict) -> None:
+    """A cell's interior flag, worldspace and grid position, for GetInCell."""
+    flags = _int_field(rec, 'DATA.Flags', 0)
+    if flags is not None:
+        out['cell_geom'][formid] = (bool(flags & 1), rec.get('ParentWRLD') or '',
+                                    _int_field(rec, 'XCLC.X'), _int_field(rec, 'XCLC.Y'))
+
+
+def _scan_actor(rec: dict, formid: str, _edid: str, out: dict) -> None:
+    """An NPC_/CREA and its AI package list."""
+    out['npc_formids'].add(formid)
+    packs = [m.group(0) for k, v in rec.items() if k.startswith('AIPackage[')
+             for m in [re.match(r'\w+', v)] if m]
+    if packs:
+        out['actor_packages'][formid] = packs
+
+
+def _scan_pack(rec: dict, formid: str, _edid: str, out: dict) -> None:
+    """A package's procedure type."""
+    pkdt_type = _int_field(rec, 'PKDT.Type')
+    if pkdt_type is not None:
+        out['pack_type'][formid] = pkdt_type
+
+
+def _scan_qust(_rec: dict, _formid: str, edid: str, out: dict) -> None:
+    """A quest's EditorID."""
+    if edid:
+        out['quest_edids'].add(edid.lower())
+
+
+#: Signature -> the indexer for the fields only that record type carries.
+_SIG_SCANNERS = {'SCPT': _scan_scpt, 'CELL': _scan_cell, 'NPC_': _scan_actor,
+                 'CREA': _scan_actor, 'PACK': _scan_pack, 'QUST': _scan_qust}
+
+
 def _scan_record_lines(sig: str, lines: list, out: dict):
     """Scan one record's KEY=VALUE lines into the partial result dicts."""
-    formid = edid = scri = name_fid = None
-    model = None
-    schr_type = None
-    glob_type = None
-    glob_value = None
-    mgef_shader = mgef_ench = None
-    mgef_school = -1
-    spel_effects: list[tuple[str, int]] = []
-    pkdt_type = None
-    ai_packages: list[str] = []
-    cell_flags = None
-    cell_wrld = None
-    cell_x = cell_y = None
-    book_enam = None
-
-    for line in lines:
-        line = line.rstrip()
-        if line.startswith('FormID='):
-            formid = line[7:]
-        elif line.startswith('EditorID='):
-            edid = line[9:]
-        elif line.startswith('SCRI='):
-            scri = line[5:]
-        elif line.startswith('NAME='):
-            name_fid = line[5:]
-        elif line.startswith('Model.MODL='):
-            model = line[11:]
-        elif line.startswith('SCHR.Type='):
-            try:
-                schr_type = int(line[10:])
-            except ValueError:
-                pass
-        elif sig == 'GLOB' and line.startswith('FNAM.Type='):
-            glob_type = line[10:].strip()
-        elif sig == 'GLOB' and line.startswith('FLTV.Value='):
-            try:
-                glob_value = float(line[11:])
-            except ValueError:
-                pass
-        elif sig == 'MGEF' and line.startswith('DATA.EffectShader='):
-            mgef_shader = line[18:]
-        elif sig == 'MGEF' and line.startswith('DATA.EnchantEffect='):
-            mgef_ench = line[19:]
-        elif sig == 'MGEF' and line.startswith('DATA.School='):
-            try:
-                mgef_school = int(line[12:])
-            except ValueError:
-                pass
-        elif sig == 'BOOK' and line.startswith('ENAM='):
-            book_enam = line[5:].strip()
-        elif sig == 'CELL' and line.startswith('DATA.Flags='):
-            try:
-                cell_flags = int(line[11:].split()[0], 0)
-            except ValueError:
-                pass
-        elif sig == 'CELL' and line.startswith('ParentWRLD='):
-            cell_wrld = line[11:]
-        elif sig == 'CELL' and line.startswith('XCLC.X='):
-            try:
-                cell_x = int(line[7:])
-            except ValueError:
-                pass
-        elif sig == 'CELL' and line.startswith('XCLC.Y='):
-            try:
-                cell_y = int(line[7:])
-            except ValueError:
-                pass
-        elif sig == 'PACK' and line.startswith('PKDT.Type='):
-            try:
-                pkdt_type = int(line[10:])
-            except ValueError:
-                pass
-        elif sig in ('NPC_', 'CREA') and line.startswith('AIPackage['):
-            m = re.match(r'AIPackage\[\d+\]=(\w+)', line)
-            if m:
-                ai_packages.append(m.group(1))
-        elif sig == 'SPEL' and line.startswith('Effect['):
-            m = re.match(r'Effect\[(\d+)\]\.(EFID|ActorValue)=(.*)', line)
-            if m:
-                idx, key, val = int(m.group(1)), m.group(2), m.group(3)
-                while len(spel_effects) <= idx:
-                    spel_effects.append(('', -1))
-                code, av = spel_effects[idx]
-                if key == 'EFID':
-                    code = val
-                else:
-                    try:
-                        av = int(val)
-                    except ValueError:
-                        pass
-                spel_effects[idx] = (code, av)
-
+    rec = _record_fields(lines)
+    formid = rec.get('FormID')
     if not formid:
         return
+    edid = rec.get('EditorID')
     if edid:
         out['formid_to_edid'][formid] = edid
         out['edid_to_formid'][edid.lower()] = formid
-    if sig == 'SCPT':
-        if edid:
-            out['script_formid_to_edid'][formid] = edid
-        if schr_type is not None:
-            out['script_formid_to_type'][formid] = schr_type
-    if sig == 'CELL' and cell_flags is not None:
-        out['cell_geom'][formid] = (bool(cell_flags & 1), cell_wrld or '',
-                                    cell_x, cell_y)
-    if sig == 'BOOK' and book_enam and book_enam.strip('0'):
-        out['enchanted_books'].add(formid)
-    if scri:
-        out['record_scri'][formid] = scri
-    if name_fid and sig in PLACED_REF_SIGS:
-        out['record_base'][formid] = name_fid
+    scanner = _SIG_SCANNERS.get(sig)
+    if scanner:
+        scanner(rec, formid, edid, out)
+    index_record_details(out, sig, formid, edid, rec)
+    if rec.get('SCRI'):
+        out['record_scri'][formid] = rec['SCRI']
+    if rec.get('NAME') and sig in PLACED_REF_SIGS:
+        out['record_base'][formid] = rec['NAME']
     out['record_type'][formid] = sig
-    if model:
-        out['record_model'][formid] = model
-    if sig == 'GLOB' and edid and glob_type:
-        out['global_types'][edid.lower()] = glob_type
-    if sig == 'GLOB' and edid and glob_value is not None:
-        out['global_values'][edid.lower()] = glob_value
-    if sig == 'QUST' and edid:
-        out['quest_edids'].add(edid.lower())
-    if sig in ('NPC_', 'CREA'):
-        out['npc_formids'].add(formid)
-        if ai_packages:
-            out['actor_packages'][formid] = ai_packages
-    if sig == 'PACK' and pkdt_type is not None:
-        out['pack_type'][formid] = pkdt_type
-    if sig == 'MGEF' and edid:
-        out['mgef_shaders'][edid.lower()] = (
-            mgef_shader or '', mgef_ench or '', mgef_school)
-    if sig == 'SPEL' and edid and spel_effects:
-        out['spell_effects'][edid.lower()] = spel_effects
 
 
 def _scan_range(args: tuple) -> dict:
@@ -269,6 +294,14 @@ def _scan_range(args: tuple) -> dict:
         finally:
             mm.close()
     return out
+
+
+def _model_is_held(model: str) -> bool:
+    """Does the converted NIF of this AUTHORED model path hold a keyframed body (physics bit 1)?"""
+    if not model:
+        return False
+    key = model.replace('\\\\', '/').replace('\\', '/').lower().lstrip('/')
+    return bool(get_mesh_physics_flags(current_namespace() + '/' + key) & 2)
 
 
 class CrossRefGraph:
@@ -443,9 +476,8 @@ class CrossRefGraph:
         if schr_type == 256:
             return 'ActiveMagicEffect'
 
-        attached = [rec_fid for rec_fid, scri_fid in self.record_scri.items()
-                    if scri_fid == script_formid]
-        sigs = {self.record_type.get(rec_fid, '') for rec_fid in attached}
+        attached = self.attached_records(script_formid)
+        sigs = self.attached_signatures(script_formid)
         if 'QUST' in sigs:
             return 'Quest'
 
@@ -456,6 +488,21 @@ class CrossRefGraph:
             return 'Actor'
 
         return 'ObjectReference'
+
+    def attached_records(self, script_formid: str) -> list:
+        """Every record whose SCRI names `script_formid`; the index is built on first use."""
+        index = getattr(self, '_attached_index', None)
+        if index is None:
+            index = {}
+            for rec_fid, scri_fid in self.record_scri.items():
+                index.setdefault(scri_fid, []).append(rec_fid)
+            self._attached_index = index
+        return index.get(script_formid, [])
+
+    def attached_signatures(self, script_formid: str) -> set:
+        """Record signatures of every record the script is attached to."""
+        return {self.record_type.get(rec_fid, '')
+                for rec_fid in self.attached_records(script_formid)}
 
     @staticmethod
     def _is_player_base(rec_fid: str) -> bool:
@@ -709,19 +756,11 @@ class CrossRefGraph:
         Resolves through a placed reference to its base record, like
         get_base_signature, so `CTrapLogs01Ref.playgroup` works.
         """
-        from tes5_import.base.mesh_bounds import get_mesh_physics_flags
-
         fid = self.edid_to_formid.get(name.lower(), '')
         if not fid:
             return False
-        model = self.record_model.get(self.record_base.get(fid, '') or fid, '')
-        if not model:
-            return False
-        key = model.replace('\\\\', '/').replace('\\', '/').lower().lstrip('/')
-        ns = current_namespace() + '/'
-        if not key.startswith(ns):
-            key = ns + key
-        return bool(get_mesh_physics_flags(key) & 2)
+        return _model_is_held(
+            self.record_model.get(self.record_base.get(fid, '') or fid, ''))
 
     def script_owner_needs_havok_release(self, script_edid: str) -> bool:
         """needs_havok_release for a BARE (self) `playgroup`.
@@ -731,8 +770,6 @@ class CrossRefGraph:
         shared between a held trap and something else still has to release the
         trap, and the release is inert on anything that is not held.
         """
-        from tes5_import.base.mesh_bounds import get_mesh_physics_flags
-
         want = (script_edid or '').lower()
         if not want:
             return False
@@ -743,19 +780,9 @@ class CrossRefGraph:
                 break
         if not script_fid:
             return False
-        for rec_fid, scri in self.record_scri.items():
-            if scri != script_fid:
-                continue
-            model = self.record_model.get(rec_fid, '')
-            if not model:
-                continue
-            key = model.replace('\\\\', '/').replace('\\', '/').lower().lstrip('/')
-            ns = current_namespace() + '/'
-            if not key.startswith(ns):
-                key = ns + key
-            if get_mesh_physics_flags(key) & 2:
-                return True
-        return False
+        return any(_model_is_held(self.record_model.get(rec_fid, ''))
+                   for rec_fid, scri in self.record_scri.items()
+                   if scri == script_fid)
 
     def get_record_script_type(self, name: str) -> str:
         """Get the Papyrus script class name for any record with an attached script.

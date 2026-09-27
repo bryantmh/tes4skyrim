@@ -42,6 +42,7 @@ from tes5_import.base.text_reader import parse_export_file
 from .morroblivion import (MORROBLIVION_CREATURES, MorroblivionModels,
                            archive_path)
 from .morroblivion_axis import SUBSTITUTION_BLACKLIST
+from .morroblivion_magic import restored_magic, start_scripts
 from .morroblivion_pair_scripts import pair_scripts, swap_lines
 from .morroblivion_pairs import (find_pairs, holder_overrides, left_half,
                                  restored_placements, right_half, split_pairs)
@@ -74,6 +75,9 @@ ALWAYS_FILLED = frozenset({'GLOB'})
 
 #: What a voiced bark needs -- its topic stream and who may speak it -- plus the creature sound generators.
 BARK_TYPES = frozenset({'DIAL', 'INFO', 'NPC_', 'CREA', 'SNDG'})
+
+#: The vanilla start scripts the runtime runs, one `EditorID` record each; never imported.
+START_SCRIPTS_SIG = 'MWSS'
 
 #: TES3 allocates this many magic effect indices.
 _MAGIC_EFFECT_COUNT = 143
@@ -578,6 +582,9 @@ def _write_records(gaps: dict, export_dir: str, progress,
     scripts = _add_pair_halves(
         out, pairs, esms, ctx,
         {p.left.record_id.lower(): ids[key] for key, p in halves.items()})
+    for sig, fid, lines in restored_magic(esms, ctx, export_record):
+        out.setdefault(sig, []).append((fid, lines))
+    out[START_SCRIPTS_SIG] = [(name, [f'EditorID={name}']) for name in start_scripts(esms)]
     ctx.taken.update(fid for rows in out.values() for fid, _lines in rows)
     _add_barks(out, ctx, barks, progress)
     out_dir = patch_dir(export_dir)

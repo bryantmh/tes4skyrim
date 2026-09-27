@@ -32,6 +32,20 @@ _GLOBAL_CALL_RE = re.compile(r'^(?:Game|Utility|Debug|Math)\.')
 
 
 def emit_command(conv, ref_name, func_name: str, extends: str, args=()) -> str:
+    """Convert one TES4 command invocation, leaving the caller's arguments in place.
+
+    A nested command (`Call F 30 * (getPCMiscStat 8 - x), 1, 1`) replaces
+    `conv._arg_nodes` while it converts; restoring it keeps the outer call's
+    later arguments. See: docs/commentary/script_convert.md#nested-call-arguments
+    """
+    outer = conv._arg_nodes
+    try:
+        return _emit_command(conv, ref_name, func_name, extends, args)
+    finally:
+        conv._arg_nodes = outer
+
+
+def _emit_command(conv, ref_name, func_name: str, extends: str, args=()) -> str:
     """Convert one TES4 command invocation.
 
     A name with no row, handler or prefix family -- and a handler-only command

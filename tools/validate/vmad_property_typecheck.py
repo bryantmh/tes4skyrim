@@ -247,18 +247,8 @@ def _vmad_property_formids(path):
     return out
 
 
-def _report_cross_master(plugin, src, limit, verbose):
-    """Resolve each bound property's real FormID through the MAST list.
-
-    A mis-routed index byte points the property at an unrelated record, which
-    the name-based pass cannot see because the intended record is not in this
-    plugin at all.
-    """
-    out_dir = os.path.join(ROOT, 'output')
-    esm = str(paths(plugin, out_root=out_dir).esm)
-    masters = _masters(esm)
-
-    # Declared Papyrus type per (script, property), for the compatibility test.
+def _declared_types(src):
+    """(script lower, property) -> declared Papyrus type, from the converted sources."""
     decl = re.compile(r'^\s*([A-Za-z_]\w*)\s+Property\s+(\w+)', re.M)
     declared = {}
     for fn in sorted(os.listdir(src)):
@@ -268,59 +258,97 @@ def _report_cross_master(plugin, src, limit, verbose):
                     errors='replace').read()
         for m in decl.finditer(text):
             declared[(fn[:-4].lower(), m.group(2))] = m.group(1)
+    return declared
 
-    cache = {}
 
-    def index_for(name):
-        """Record index of a master, read from ITS OWN converted output."""
-        if name not in cache:
-            path = str(paths(name, out_root=out_dir).esm)
-            cache[name] = _record_index(path) if os.path.exists(path) else None
-        return cache[name]
+def _accepted(ptype, script_types):
+    """Signatures a property of `ptype` binds; () for a script type (any record); None to skip.
 
-    own = _record_index(esm)
+    A property typed as a converted script binds any record carrying that
+    script, so only the record's existence is checked (an OBSE function's host quest).
+    """
+    if ptype is None or ptype in _PERMISSIVE:
+        return None
+    if ptype.lower() in script_types:
+        return ()
+    return _ACCEPTS.get(ptype)
+
+
+class _MasterTables:
+    """Record indexes of this plugin and its masters, each read from its OWN converted output."""
+
+    def __init__(self, plugin, esm, out_dir):
+        """Index this plugin now; masters load on first use."""
+        self.plugin, self.out_dir = plugin, out_dir
+        self.masters = _masters(esm)
+        self.own = _record_index(esm)
+        self.cache = {}
+
+    def table_for(self, idx):
+        """(file name, record index or None) for an index byte; (None, None) past the MAST list.
+
+        Index == len(masters) is this file itself: its records sit right after its masters.
+        """
+        if idx == len(self.masters):
+            return self.plugin, self.own
+        if idx > len(self.masters):
+            return None, None
+        name = self.masters[idx]
+        if name not in self.cache:
+            path = str(paths(name, out_root=self.out_dir).esm)
+            self.cache[name] = _record_index(path) if os.path.exists(path) else None
+        return name, self.cache[name]
+
+
+def _binding_problem(hits, accepts):
+    """(signature, EditorID) describing why the id cannot bind, or None when ANY hit fits."""
+    if not hits:
+        return '<no such record>', None
+    if not accepts or any(sig in accepts for sig, _ in hits):
+        return None
+    sig, edid = hits[0]
+    if len(hits) > 1:
+        sig = '/'.join(sorted({s for s, _ in hits}))
+    return sig, edid
+
+
+def _report_cross_master(plugin, src, limit, verbose):
+    """Resolve each bound property's real FormID through the MAST list.
+
+    A mis-routed index byte points the property at an unrelated record, which
+    the name-based pass cannot see because the intended record is not in this
+    plugin at all.
+    """
+    out_dir = os.path.join(ROOT, 'output')
+    esm = str(paths(plugin, out_root=out_dir).esm)
+    tables = _MasterTables(plugin, esm, out_dir)
+    declared = _declared_types(src)
+    script_types = {s for s, _p in declared}
     checked = 0
     bad = []
     unresolved = Counter()
     for sname, pname, fid in _vmad_property_formids(esm):
-        if fid == 0:
-            continue
-        idx, local = fid >> 24, fid & 0xFFFFFF
         ptype = declared.get((sname.lower(), pname))
-        if ptype is None or ptype in _PERMISSIVE or ptype.startswith('TES4_'):
+        accepts = _accepted(ptype, script_types)
+        if fid == 0 or accepts is None:
             continue
-        accepts = _ACCEPTS.get(ptype)
-        if accepts is None:
-            continue
-        # A plugin's own records sit immediately AFTER its masters, so index
-        # == len(masters) is this file itself, not a master. Treating that as
-        # a master index reports every self-reference as mis-routed.
-        if idx == len(masters):
-            src_name, table = plugin, own
-        elif idx < len(masters):
-            src_name, table = masters[idx], index_for(masters[idx])
-            if table is None:
-                unresolved[masters[idx]] += 1
-                continue
-        else:
-            # Beyond the MAST list and not this file: nothing can resolve it.
+        src_name, table = tables.table_for(fid >> 24)
+        if src_name is None:
             bad.append((sname, pname, ptype, f'{fid:08X}',
-                        f'<index {idx:02X} out of range>', '<unresolvable>',
-                        None))
+                        f'<index {fid >> 24:02X} out of range>', '<unresolvable>', None))
             continue
-        hits = table.get(local)
+        if table is None:
+            unresolved[src_name] += 1
+            continue
         checked += 1
-        if not hits:
-            bad.append((sname, pname, ptype, f'{fid:08X}', src_name,
-                        '<no such record>', None))
-            continue
-        # The id binds if ANY record answering to it has a compatible type.
-        if not any(sig in accepts for sig, _ in hits):
-            sig, edid = hits[0]
-            if len(hits) > 1:
-                sig = '/'.join(sorted({s for s, _ in hits}))
-            bad.append((sname, pname, ptype, f'{fid:08X}', src_name, sig, edid))
+        problem = _binding_problem(table.get(fid & 0xFFFFFF), accepts)
+        if problem:
+            bad.append((sname, pname, ptype, f'{fid:08X}', src_name, *problem))
+    _print_cross_master(checked, bad, unresolved, limit, verbose)
 
+
+def _print_cross_master(checked, bad, unresolved, limit, verbose):
+    """The cross-master report: counts, unbuilt masters, then each bad property."""
     print()
     print(f'cross-master: object properties resolved: {checked}')
     print(f'cross-master: mis-routed / unbindable:    {len(bad)}')

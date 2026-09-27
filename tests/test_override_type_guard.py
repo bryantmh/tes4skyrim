@@ -72,6 +72,15 @@ class TestGuardLogic:
         """
         assert not _signature_mismatch('REFR', b'ACHR')
 
+    def test_enchanted_book_becomes_a_scroll(self):
+        """A BOOK with ENAM converts to SCRL, so its override must be accepted."""
+        assert not _signature_mismatch('BOOK', b'SCRL')
+        assert _signature_mismatch('BOOK', b'NPC_')
+
+    def test_havok_static_becomes_a_moveable_static(self):
+        """convert_STAT retypes a constrained-havok static to MSTT."""
+        assert not _signature_mismatch('STAT', b'MSTT')
+
     def test_refr_still_rejects_an_unrelated_type(self):
         assert _signature_mismatch('REFR', b'LAND')
         assert _signature_mismatch('REFR', b'CELL')

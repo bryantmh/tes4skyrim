@@ -62,7 +62,6 @@ from core.gui.config import (
     CLR,
     EXPORT_DIR,
     GLOBAL_ACTIONS,
-    RC_CANCELLED,
     REPO_ROOT,
     STEPS,
     default_on_steps,
@@ -71,6 +70,7 @@ from core.gui.config import (
     step_names,
 )
 from core.gui.selection import runnable
+from core.process_job import RC_CANCELLED
 from output_layout import BODY_SLOTS_PATCH
 
 # ---------------------------------------------------------------------------

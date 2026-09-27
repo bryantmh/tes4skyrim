@@ -46,6 +46,12 @@ float DistanceBetween(void* from, void* to);
 bool StartQuest(void* form, bool* justStarted);
 // Puts `ref` at a position with a Z rotation in degrees. game_calls_move.cpp.
 void PlaceAt(void* ref, float x, float y, float z, float zRot);
+// Puts `ref` at a spot inside `place`, a CELL or a WORLDSPACE form, in ONE
+// engine move; false when `place` is neither. Game thread only.
+bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot);
+// The cell the player stands in, or null before a game is loaded.
+void* PlayerCell();
+bool PlayerInInterior();
 
 template <typename Fn>
 Fn Native(const char* name, std::uint64_t id) {
@@ -77,6 +83,9 @@ void InstallStateCalls(GameHooks& hooks);
 // See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
 void InstallCrimeCalls(GameHooks& hooks);
 void PublishState();
+// Mark, Recall and the two Interventions, on the VM's OnMagicEffectApply sink.
+// See: docs/commentary/morrowind_runtime.md#teleport-effects
+void InstallTeleportCalls();
 // The seven player-control switches and Game.ShowRaceMenu.
 // See: docs/commentary/morrowind_runtime.md#the-control-switches
 void InstallControlCalls(GameHooks& hooks);

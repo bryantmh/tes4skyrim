@@ -12,6 +12,28 @@ from asset_convert.game_paths import current_namespace
 #: TES4 player-base script rides a QUST alias. See: docs/commentary/script_convert.md#player-base-script-needs-quest-alias
 PLAYER_ALIAS_EXTENDS = 'ReferenceAlias'
 
+#: The object's last activator, recorded by OnActivate. See: docs/commentary/script_convert.md#last-activator
+LAST_ACTIVATOR_VAR = 'TES4_LastActivator'
+
+#: An OBSE user function's result, set by SetFunctionValue. See: docs/commentary/script_convert.md#set-function-value
+UDF_RESULT_VAR = 'TES4_Result'
+
+#: A user function's calling reference, its implicit `Self`. See: docs/commentary/script_convert.md#udf-calling-reference
+UDF_CALLER_PARAM = 'akCallingRef'
+
+#: TES4 misc-stat index (xEdit wbMiscStatEnum) -> Skyrim QueryStat name; '' = Skyrim tracks none.
+TES4_MISC_STAT_NAMES = (
+    'Days Jailed', 'Days Passed', 'Skill Increases', 'Training Sessions',
+    'Largest Bounty', 'Creatures Killed', 'People Killed', 'Locations Discovered',
+    'Locks Picked', '', 'Souls Trapped', 'Ingredients Eaten',
+    'Potions Mixed', '', 'Horses Owned', 'Houses Owned',
+    'Stores Invested In', 'Books Read', 'Skill Books Read', '',
+    'Hours Slept', 'Hours Waiting', 'Days as a Vampire', '',
+    'Necks Bitten', '', 'Diseases Contracted', 'Nirnroots Found',
+    'Items Stolen', 'Items Pickpocketed', 'Trespasses', 'Assaults',
+    'Murders', 'Horses Stolen',
+)
+
 from script_convert.reserved_names import papyrus_reserved
 
 
@@ -599,6 +621,12 @@ SELF_NAMES = ('self', 'myself', 'getself')
 
 #: Export signatures of a PLACED reference (as opposed to its base record).
 PLACED_REF_SIGS = ('ACHR', 'ACRE', 'REFR')
+
+#: The importer's force-greet alias quest, which StartConversation's Quest property names.
+FORCE_GREET_QUEST = 'TES4ForceGreets'
+
+#: The importer's fall-damage spell, which ResetFallDamageTimer's Spell property names.
+FALL_DAMAGE_SPELL = 'TES4NoFallDamage'
 
 
 # ===========================================================================

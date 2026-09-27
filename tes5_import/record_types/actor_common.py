@@ -16,6 +16,8 @@ from ..base.constants import (DEFAULT_RACE, RACE_MAP, TES4_SKILL_TO_TES5,
                          TES5_SKILL_ORDER)
 from ..base.equivalents import (ATTRIBUTE_SKILL_MAP, TES4_RACE_FID_TO_EDID,
                                 VOICE_TYPE_MAP)
+from ..base.conditions import FUNC_GET_IN_FACTION, build_or_chain, needs_origin_gate
+from ..base.text_reader import get_formid_index_offset
 from ..dialogue.morrowind_sidecar import is_tes3_export
 from .actors_falloutnv import aidt_tiers
 from .common import (
@@ -308,8 +310,14 @@ _MERCHANT_MARKER_EDID = 'TES4MerchantFaction'
 #: (remapped) actor FormID -> its own merchant FACT (VENC chest or In Cell stock).
 _merchant_faction_by_npc: dict[int, int] = {}
 
-#: "Belongs to this converted plugin" marker FACT; root masters only.
+#: "Belongs to this converted plugin" marker FACT.
 _origin_faction_fid = 0
+
+#: This plugin's own load-order index in TES4 FormID space.
+_origin_tes4_index = 0
+
+#: Whether THIS import created the support records (no master supplies them).
+_support_root = False
 
 
 #: The converted masters' origin FACTs, which a dependent's actors join.
@@ -320,8 +328,18 @@ _ORIGIN_EDID = 'TES4PluginOriginFaction'
 
 
 def get_origin_faction_fid() -> int:
-    """The plugin-origin marker FACT, or 0 when this file isn't gated."""
+    """This plugin's own plugin-origin marker FACT, or 0 before it is created."""
     return _origin_faction_fid
+
+
+def origin_gate(info_rec: dict) -> bytes:
+    """The packed GetInFaction(origin) gate a new INFO needs, else b''.
+
+    See: docs/commentary/tes5_import_actors.md#origin-faction
+    """
+    if not _origin_faction_fid or not needs_origin_gate(info_rec, _origin_tes4_index):
+        return b''
+    return build_or_chain(FUNC_GET_IN_FACTION, [_origin_faction_fid])
 
 
 def is_support_root() -> bool:
@@ -329,25 +347,26 @@ def is_support_root() -> bool:
 
     See: docs/commentary/tes5_import_pipeline.md#phase-0-dependent-skips-support-records
     """
-    return bool(_origin_faction_fid)
+    return _support_root
 
 
 def origin_memberships() -> list:
-    """Every plugin-origin FACT this file's actors join: its own, else its masters'.
+    """Every plugin-origin FACT this file's actors join: its own and its masters'.
 
     See: docs/commentary/tes5_import_actors.md#origin-faction
     """
-    return ([_origin_faction_fid] if _origin_faction_fid
-            else list(_master_origin_fids))
+    return [f for f in [_origin_faction_fid] + _master_origin_fids if f]
 
 
-def create_origin_faction(writer) -> int:
-    """Create the plugin-origin marker faction. Root masters only.
+def create_origin_faction(writer, support_root: bool) -> int:
+    """Create this plugin's origin marker faction; `support_root` if no master supplies one.
 
     See: docs/commentary/tes5_import_actors.md#origin-faction
     """
-    global _origin_faction_fid
+    global _origin_faction_fid, _origin_tes4_index, _support_root
     _origin_faction_fid = writer.derive_formid('FACT', _ORIGIN_EDID)
+    _origin_tes4_index = writer.own_index - get_formid_index_offset()
+    _support_root = support_root
     subs = pack_string_subrecord('EDID', _ORIGIN_EDID)
     subs += pack_subrecord('DATA', struct.pack('<I', 0))
     writer.add_record('FACT', pack_record('FACT', _origin_faction_fid, 0, subs))
@@ -359,8 +378,9 @@ def reset_origin_faction(master_index=None) -> None:
 
     See: docs/commentary/tes5_import_actors.md#origin-faction
     """
-    global _origin_faction_fid
-    _origin_faction_fid = 0
+    global _origin_faction_fid, _origin_tes4_index, _support_root
+    _origin_faction_fid = _origin_tes4_index = 0
+    _support_root = False
     _master_origin_fids[:] = (
         master_index.find_all_by_edid(b'FACT', _ORIGIN_EDID)
         if master_index is not None else [])

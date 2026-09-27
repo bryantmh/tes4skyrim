@@ -24,17 +24,19 @@ from script_convert.tes5.blocks import (
 #: TES4 condition function index; its param2 is the script-local var index.
 _GET_QUEST_VARIABLE = 79
 
-#: Statement opening a SetStage call, which runs that fragment INLINE.
-_SETSTAGE_RE = re.compile(r'^\s*\w[\w.]*\.SetStage\s*\(', re.IGNORECASE)
+#: Statement opening a SetStage call (or its TES4SetStage wrapper), which runs that fragment INLINE.
+_SETSTAGE_RE = re.compile(r'^\s*\w[\w.]*\.(?:TES4)?SetStage\s*\(', re.IGNORECASE)
 
 #: A bare literal assignment, or a counter step on the counter ITSELF.
 _STATE_WRITE_RE = re.compile(
     r'^\s*(?P<lhs>\w[\w.]*)\s*=\s*'
     r'(?:[-+]?[\d.]+|(?P<base>\w[\w.]*)\s*[-+]\s*[\d.]+)\s*(;.*)?$')
 
-#: A top-level `<quest>.SetStage(<literal>)`, the advance that must survive.
+#: A top-level `<quest>.SetStage(<literal>)` or its TES4SetStage form, the advance that must survive.
 _STAGE_ADVANCE_RE = re.compile(
-    r'^(\s*)([A-Za-z_]\w*)\.SetStage\((\d+)\)\s*(;.*)?$', re.IGNORECASE)
+    r'^(\s*)(?P<call>(?:(?P<quest>[A-Za-z_]\w*)\.SetStage\('
+    r'|\w+\.TES4SetStage\((?P<wrapped>[A-Za-z_]\w*) as \w+, )(?P<stage>\d+)\))'
+    r'\s*(?P<comment>;.*)?$', re.IGNORECASE)
 
 #: A literal write to a field whose name selects the next talker.
 _HANDOFF_WRITE_RE = re.compile(
@@ -180,10 +182,11 @@ def split_stage_advances(body: list) -> tuple:
         if not m:
             gated.append(ln.text)
             continue
-        indent, quest, stage, comment = m.groups()
-        advances.append(f'{indent}If {quest}.GetStage() < {stage}'
+        indent, comment = m.group(1), m.group('comment')
+        quest = m.group('quest') or m.group('wrapped')
+        advances.append(f'{indent}If {quest}.GetStage() < {m.group("stage")}'
                         '  ; advance survives a rejected turn')
-        advances.append(f'{indent}  {quest}.SetStage({stage})'
+        advances.append(f'{indent}  {m.group("call")}'
                         + (f'  {comment}' if comment else ''))
         advances.append(f'{indent}EndIf')
     return gated, advances

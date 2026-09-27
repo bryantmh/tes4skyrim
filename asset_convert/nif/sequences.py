@@ -16,6 +16,10 @@ from pyffi.formats.nif import NifFormat
 from asset_convert.nif.nif_flags import (TT_SCALE_U, TT_SCALE_V,
                                          TT_TRANSLATE_U,
                                          TT_TRANSLATE_V)
+from asset_convert.nif.uv_transform import (OFFSET_OP_OF_SCALE,
+                                            affine_interpolator,
+                                            scale_offset_affine, target_map,
+                                            translate_affine)
 
 #: Types vanilla ships in a controlled block. See: docs/commentary/asset_convert_nif.md#sequence-controller-retargeting
 _VANILLA_SEQ_CONTROLLERS = frozenset({
@@ -281,8 +285,8 @@ def _clone_sibling_controller(src_ctrl):
     return c2
 
 
-def _append_sibling_entry(seq, src_cb, sib):
-    """Append one controlled block driving `sib` the way `src_cb` drives its own."""
+def append_sibling_entry(seq, src_cb, sib):
+    """Append and return a controlled block driving `sib` the way `src_cb` drives its own."""
     seq.num_controlled_blocks += 1
     seq.controlled_blocks.update_size()
     cb = seq.controlled_blocks[seq.num_controlled_blocks - 1]
@@ -301,6 +305,31 @@ def _append_sibling_entry(seq, src_cb, sib):
         c2.interpolator = i2
         cb.interpolator = i2
     cb.controller = c2
+    return cb
+
+
+def _append_uv_companions(seq, ctx):
+    """Give each center-scaled UV scale entry the offset entry its scale moves.
+
+    Shapes sharing the source entry's property get the companion as well; an
+    axis whose translate is animated too keeps that curve alone.
+    See: docs/commentary/asset_convert_shader.md#texture-transform
+    """
+    animated = {(ctx['resolve'](cb, seq, 'node_name'),
+                 getattr(cb.controller, '_tt_operation', None))
+                for cb in seq.controlled_blocks}
+    for src_cb, name in ctx['uv_companions']:
+        op = OFFSET_OP_OF_SCALE[src_cb.controller._tt_operation]
+        if (name, op) in animated:
+            continue
+        cb = append_sibling_entry(seq, src_cb, name)
+        ctrl = cb.controller
+        ctrl._tt_operation = op
+        ctrl.type_of_controlled_variable = TEX_TRANSFORM_VARS[op][0]
+        ctrl.interpolator = cb.interpolator = affine_interpolator(
+            src_cb.interpolator, *src_cb.controller._uv_offset_affine)
+        ctx['shared_extras'] += [(cb, sib) for src, sib in ctx['shared_extras']
+                                 if src is src_cb]
 
 
 def _fan_out_shared_entries(seq, extras):
@@ -320,7 +349,7 @@ def _fan_out_shared_entries(seq, extras):
         if sig in have:
             continue
         have.add(sig)
-        _append_sibling_entry(seq, src_cb, sib)
+        append_sibling_entry(seq, src_cb, sib)
         added += 1
     return added
 
@@ -502,15 +531,25 @@ def _convert_tex_transform(blk):
 
     Vanilla ships ZERO of these, and the engine instantiates a controlled
     block's type by NAME, so leaving one rejects the whole NIF.  TT_ROTATE has
-    no Skyrim equivalent.
-    See: docs/commentary/asset_convert_nif.md#sequence-controller-retargeting
+    no Skyrim equivalent.  A translate's keys move onto the Skyrim offset; a
+    scale records the offset curve its companion entry will carry.
+    See: docs/commentary/asset_convert_shader.md#texture-transform
     """
     src = blk.controller
     op = getattr(src, 'operation', None)
     if op not in TEX_TRANSFORM_VARS:
         return False
+    desc = target_map(src)
+    if op in OFFSET_OP_OF_SCALE:
+        offset_ab = scale_offset_affine(desc, op)
+    else:
+        offset_ab = None
+        ab = translate_affine(desc, op)
+        if ab is not None:
+            blk.interpolator = affine_interpolator(blk.interpolator, *ab)
     new = _shader_float_ctrl(src, blk.interpolator, TEX_TRANSFORM_VARS[op][0])
     new._tt_operation = op
+    new._uv_offset_affine = offset_ab
     blk.controller = new
     blk.controller_type = b'BSLightingShaderPropertyFloatController'
     return True
@@ -573,6 +612,8 @@ def _handle_block(ctx, seq, key):
             src_ctrl = blk.controller
             if not convert(blk):
                 return False
+            if getattr(blk.controller, '_uv_offset_affine', None) is not None:
+                ctx['uv_companions'].append((blk, node_name))
             if ctx['prop_index'] is None:
                 ctx['prop_index'] = _property_ctrl_index(node)
             for sib in _shapes_sharing_property_ctrl(ctx['prop_index'],
@@ -608,12 +649,14 @@ def process_controller_manager(node, palette):
         ctx['accum_name'] = bytes(accum_name)
         ctx['accum_mode'] = _accum_root_mode(seq, node, resolve)
         ctx['shared_extras'] = []
+        ctx['uv_companions'] = []
         key = 0
         while key < seq.num_controlled_blocks:
             if _handle_block(ctx, seq, key):
                 key += 1
             else:
                 _drop_block(seq, key)
+        _append_uv_companions(seq, ctx)
         _fan_out_shared_entries(seq, ctx['shared_extras'])
 
     if pending_bake is not None:
@@ -703,6 +746,58 @@ def apply_rest_visibility(root, stats=None):
 
 #: The two Skyrim shader property classes a sequence entry can drive.
 _SHADER_CLASSES = ('BSLightingShaderProperty', 'BSEffectShaderProperty')
+
+#: Below this a NiPoint3Interpolator pose is the "use the key data" sentinel.
+_POSE_SENTINEL_LIMIT = -1e30
+
+
+def _rest_emissive(cb):
+    """(r, g, b) an emissive color entry holds at time 0, or None."""
+    ctrl = cb.controller
+    effect = isinstance(ctrl, NifFormat.BSEffectShaderPropertyColorController)
+    if not (effect or isinstance(ctrl, NifFormat.BSLightingShaderPropertyColorController)):
+        return None
+    if ctrl.type_of_controlled_color != _SHADER_COLOR_EMISSIVE[1 if effect else 0]:
+        return None
+    interp = cb.interpolator
+    data = getattr(interp, 'data', None)
+    keys = getattr(data, 'data', None) if data is not None else None
+    if keys is not None and keys.num_keys:
+        value = min(keys.keys, key=lambda k: k.time).value
+    else:
+        value = getattr(interp, 'point_3_value', None)
+        if value is None or value.x < _POSE_SENTINEL_LIMIT:
+            return None
+    return tuple(max(0.0, c) for c in (value.x, value.y, value.z))
+
+
+def apply_rest_emissive(root, stats=None):
+    """Give each sequence-animated emissive its time-0 value as the resting color.
+
+    Before a sequence plays the engine draws the shader's static color, which
+    an effect shader holds at white when Oblivion authored black.
+    See: docs/commentary/asset_convert_shader.md#rest-emissive
+    """
+    shaders = _shader_by_node_name(root)
+    done = set()
+    for block in root.tree():
+        if (not isinstance(block, NifFormat.NiControllerSequence)
+                or _plays_from_cell_load(block)):
+            continue
+        raw = palette_bytes(getattr(block, 'string_palette', None))
+        for cb in block.controlled_blocks:
+            rgb = _rest_emissive(cb)
+            name = (bytes(getattr(cb, 'node_name', b'') or b'')
+                    or palette_lookup(raw, getattr(cb, 'node_name_offset', None)))
+            shader = shaders.get(name)
+            if rgb is None or shader is None or name in done:
+                continue
+            done.add(name)
+            color = shader.emissive_color
+            color.r, color.g, color.b = rgb
+    if done and stats is not None:
+        stats['rest_emissive'] = stats.get('rest_emissive', 0) + len(done)
+    return len(done)
 
 
 def _shader_by_node_name(root):
