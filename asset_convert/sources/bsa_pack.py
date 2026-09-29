@@ -48,7 +48,7 @@ from pathlib import Path
 
 from core.subprocess_flags import POPEN_FLAGS, windows_cmd, to_wine_path
 from tes5_import.base.writer import pack_tes4_header
-from asset_convert import paths
+from asset_convert import case_paths, paths
 from asset_convert.texture import texture_prune
 
 # ---------------------------------------------------------------------------
@@ -100,37 +100,76 @@ def _link_or_copy(src: Path, dst: Path) -> None:
 
 def _collect_files(plugin_dir: Path, subdir_names: 'list[str]'
                    ) -> 'list[tuple[Path, Path, int]]':
-    """Enumerate every file under plugin_dir/<subdir>/ for packing.
+    """(source, archive path, size) for every file under plugin_dir/<subdir>/, sorted.
 
-    Returns a list of (absolute_source, archive_relative_path, size_bytes),
-    sorted by archive path so binning is deterministic across runs.
-
-    Anything under textures/ that `texture_prune.is_excluded` rejects is left
-    out of the archive.  This is the ONLY place the prune applies — it filters
-    what gets packed and never deletes from output/, so loose-file testing
-    keeps the full tree and re-running the pack is idempotent.
+    Every case spelling of a top folder (`Textures/` beside `textures/`) is
+    collected under its lowercase name.  Anything under textures/ that
+    `texture_prune.is_excluded` rejects is left out.  This is the ONLY place
+    the prune applies: it filters what gets packed and never deletes from
+    output/, so re-running the pack is idempotent.
+    See: docs/commentary/asset_convert_paths.md#pack-gate
     """
     out: 'list[tuple[Path, Path, int]]' = []
-    for name in subdir_names:
-        src = plugin_dir / name
-        if not src.is_dir():
-            continue
-        is_textures = name.lower() == 'textures'
-        for f in src.rglob('*'):
-            if not f.is_file() or f.name.lower() in OS_JUNK_NAMES:
-                continue
-            if is_textures and texture_prune.is_excluded(
-                    f.relative_to(src).as_posix().lower()):
-                continue
-            # Archive path keeps the top-level dir (meshes/..., textures/...)
-            rel = Path(name) / f.relative_to(src)
-            try:
-                size = f.stat().st_size
-            except OSError:
-                continue
-            out.append((f, rel, size))
+    for name in sorted({n.lower() for n in subdir_names}):
+        for src in _top_variants(plugin_dir, name):
+            out += _collect_tree(src, name)
     out.sort(key=lambda t: str(t[1]).lower())
     return out
+
+
+def _top_variants(plugin_dir: Path, name: str) -> 'list[Path]':
+    """Every folder directly in `plugin_dir` spelling `name` in any case, sorted."""
+    try:
+        found = [d for d in plugin_dir.iterdir()
+                 if d.name.lower() == name and d.is_dir()]
+    except OSError:
+        return []
+    return sorted(found)
+
+
+def _collect_tree(src: Path, name: str) -> 'list[tuple[Path, Path, int]]':
+    """(file, `name`/relative archive path, size) for every packable file under `src`."""
+    out = []
+    is_textures = name == 'textures'
+    for f in src.rglob('*'):
+        if not f.is_file() or f.name.lower() in OS_JUNK_NAMES:
+            continue
+        if is_textures and texture_prune.is_excluded(
+                f.relative_to(src).as_posix().lower()):
+            continue
+        try:
+            size = f.stat().st_size
+        except OSError:
+            continue
+        out.append((f, Path(name) / f.relative_to(src), size))
+    return out
+
+
+def case_gate(plugin_dir: Path, collected, results: dict) -> bool:
+    """False, with an error in `results`, when two packed files share one archive path.
+
+    `collected` holds `_collect_files` lists, so collisions are judged on
+    what would be packed (after the texture prune).  Folder twins only warn:
+    BSArch lowercases every name, so they merge in the archive.
+    See: docs/commentary/asset_convert_paths.md#pack-gate
+    """
+    entries = [e for files in collected for e in files]
+    keyed = {}
+    for src, rel, _size in entries:
+        keyed.setdefault(rel.as_posix().lower(), []).append(str(src))
+    clashes = case_paths.collisions(keyed)
+    found = case_paths.census(plugin_dir, sorted({e[1].parts[0] for e in entries}))
+    print('  ' + case_paths.census_line(
+        plugin_dir.name, found._replace(file_collisions=clashes)))
+    if not clashes:
+        return True
+    msg = (f"{len(clashes)} archive path(s) are held by two files that differ "
+           f"only by case; nothing packed until one of each is removed")
+    print(f"  ERROR {msg}")
+    for group in clashes[:20]:
+        print('        ' + '  |  '.join(group))
+    results['errors'].append(msg)
+    return False
 
 
 def bin_files(
@@ -325,6 +364,42 @@ def _run_bsarch(
 _DEFAULT_EXPORT = paths.EXPORT
 
 
+def _misc_dirs(plugin_dir: Path) -> 'list[str]':
+    """Lowercase names of the non-empty folders no explicit spec packs, one per case spelling."""
+    return sorted({
+        d.name.lower() for d in plugin_dir.iterdir()
+        if d.is_dir()
+        and d.name.lower() not in _KNOWN_DIRS
+        and not d.name.startswith('_bsa_staging_')
+        and any(d.rglob('*'))
+    })
+
+
+def _remove_stale_overflow(plugin_dir: Path, stem: str, results: dict) -> None:
+    """Delete overflow archives and loaders a previous, larger run left behind.
+
+    A later run needing the loader slot again would otherwise re-create
+    `<stem>_loader.esl` over a stale `<stem>_loader.bsa` and serve the old
+    conversion's assets.  Pre-rename `oblivion_loader*` files are swept too,
+    and the stem is glob-escaped so a `[` in it cannot hide the files.
+    """
+    written = {Path(p).name.lower() for p in results['packed']}
+    loaders = {Path(p).name for p in results['loaders']}
+    stale_candidates = sorted(
+        set(plugin_dir.glob(f'{_glob.escape(stem)}_loader*'))
+        | set(plugin_dir.glob('oblivion_loader*'))
+    )
+    for stale in stale_candidates:
+        suffix = stale.suffix.lower()
+        if suffix not in ('.bsa', '.esl'):
+            continue
+        keep = (stale.name in loaders if suffix == '.esl'
+                else stale.name.lower() in written)
+        if not keep:
+            stale.unlink()
+            print(f"  CLEAN {stale.name}  (no longer needed)")
+
+
 def _out_root(output_dir, plugin: str, export_root=None):
     """The plugin's output folder (its MOD's folder for an imported mod).
 
@@ -419,14 +494,7 @@ def pack_bsas(
 
     stem = Path(source_name).stem   # 'Oblivion'
 
-    # Build the misc spec: any non-empty dirs not covered by the known specs
-    misc_dirs = sorted(
-        d.name for d in plugin_dir.iterdir()
-        if d.is_dir()
-        and d.name.lower() not in _KNOWN_DIRS
-        and not d.name.startswith('_bsa_staging_')
-        and any(d.rglob('*'))  # non-empty
-    )
+    misc_dirs = _misc_dirs(plugin_dir)
 
     specs = list(_BSA_SPECS)
     # Override compress for textures if requested
@@ -446,10 +514,13 @@ def pack_bsas(
     # its own overflow counter and they share the loader plugins by index.
     loaders_needed = 0
 
-    for subdir_names, bsa_suffix, compress in specs:
+    collected = [_collect_files(plugin_dir, spec[0]) for spec in specs]
+    if not case_gate(plugin_dir, collected, results):
+        return results
+
+    for (subdir_names, bsa_suffix, compress), files in zip(specs, collected):
         base_name = f"{stem} - {bsa_suffix}.bsa" if bsa_suffix else f"{stem}.bsa"
 
-        files = _collect_files(plugin_dir, subdir_names)
         if not files:
             print(f"  SKIP  {base_name} (no source content)")
             results['skipped'].append(base_name)
@@ -517,31 +588,7 @@ def pack_bsas(
             print(f"  ERROR {err_msg}")
             results['errors'].append(err_msg)
 
-    # Remove stale overflow archives and loaders left by a previous, larger run.
-    # This matters beyond tidiness: a later run that needs the loader slot again
-    # would otherwise re-create <stem>_loader.esl on top of a stale
-    # <stem>_loader.bsa, silently serving assets from the old conversion.
-    # 'oblivion_loader*' is swept too: loaders used to be named that regardless
-    # of the plugin, so an output folder built before the rename still holds
-    # them and nothing else would ever clear them.
-    # glob.escape: a plugin stem is arbitrary text and may hold '[' or '?',
-    # which would make the pattern match nothing and silently strand the very
-    # files this sweep exists to remove.
-    written = {Path(p).name.lower() for p in results['packed']}
-    stale_candidates = sorted(
-        set(plugin_dir.glob(f'{_glob.escape(stem)}_loader*'))
-        | set(plugin_dir.glob('oblivion_loader*'))
-    )
-    for stale in stale_candidates:
-        if stale.suffix.lower() not in ('.bsa', '.esl'):
-            continue
-        if stale.suffix.lower() == '.esl':
-            keep = stale.name in {Path(p).name for p in results['loaders']}
-        else:
-            keep = stale.name.lower() in written
-        if not keep:
-            stale.unlink()
-            print(f"  CLEAN {stale.name}  (no longer needed)")
+    _remove_stale_overflow(plugin_dir, stem, results)
 
     if loaders_needed:
         print(f"\n  NOTE: {loaders_needed} loader plugin(s) generated. "

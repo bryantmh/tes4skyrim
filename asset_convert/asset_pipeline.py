@@ -19,6 +19,7 @@ import os
 import shutil
 from pathlib import Path
 
+from asset_convert import case_paths
 from asset_convert.game_paths import (namespace_for, owns_namespace,
                                        set_namespace)
 from asset_convert.sources import bsa_extract
@@ -265,7 +266,18 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
     stats['ltex_normals_written'] = written
     print(f"  LTEX normals: {checked} land textures, {written} flat normals "
           f"written for textures shipping none")
+    _report_case_paths(plugin_dir)
     return stats
+
+
+def _report_case_paths(plugin_dir) -> None:
+    """Print the output folder's case census and the per-site case-path counts.
+
+    See: docs/commentary/asset_convert_paths.md#pack-gate
+    """
+    found = case_paths.census(plugin_dir, ['textures', 'meshes'])
+    print('  ' + case_paths.census_line(plugin_dir.name, found))
+    case_paths.report()
 
 
 def _profile_hair_and_grass(rec_dir, plugin_dir, stats, skip_hair):

@@ -7,6 +7,7 @@
 - [The case resolver](#case-resolver)
 - [The write rule](#write-rule)
 - [The case census](#census)
+- [The pack gate](#pack-gate)
 
 ## The case resolver
 <a id="case-resolver"></a>
@@ -78,3 +79,31 @@ copy of `TerrainHDOblivionEvilSymbol01_n.dds`, so they are never deleted). A
 file collision is a failure: one of the two files is silently lost. With
 `subdirs`, every spelling of each top folder is walked as the one tree the
 packer merges it into, so `Textures/` beside `textures/` is not itself a twin.
+
+## The pack gate
+<a id="pack-gate"></a>
+
+**Code:** `_collect_files`, `case_gate` in `asset_convert/sources/bsa_pack.py`;
+`phase_pack_zip`, `_run_steps` in `convert.py`; the census line at the end of
+`convert_meshes` in `asset_convert/asset_pipeline.py`
+
+- **Every case spelling of a top folder is packed.** The packer used to read
+  only `plugin_dir/textures` and `plugin_dir/meshes`, and the misc-folder scan
+  excluded any spelling of those names, so a `Textures/` beside `textures/`
+  (a mod's own casing, or a writer that joined a record path as-is) never
+  reached the BSA. Now each spelling is collected under the lowercase archive
+  top, and misc folders are deduplicated by case the same way.
+- **The gate fails only on file collisions**, measured on the lowercase
+  archive path AFTER `texture_prune`, i.e. on exactly what would be packed:
+  two files there means BSArch keeps one and silently drops the other. The
+  plugin is then not packed at all and the collision groups are printed.
+  Folder twins print a `WARN` census line and pack normally.
+- **The zip refuses a failed pack.** `convert._run_steps` runs every step
+  whatever an earlier one returned, so a gated (or otherwise failed) BSA pack
+  used to be followed by a zip of whatever `.bsa` files were on disk: stale
+  archives from an earlier run, shipped as the finished mod. `phase_pack_zip`
+  now refuses when this run's `pack_bsa` failed for that plugin, and says so;
+  an existing zip from an earlier run is left in place and named.
+- `convert_meshes` ends with a census line for the plugin's output folder and
+  the per-site `Case paths:` counts, so a case problem shows up at conversion
+  time rather than at pack time.
