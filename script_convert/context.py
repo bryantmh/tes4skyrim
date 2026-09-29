@@ -55,6 +55,8 @@ class ScriptContext:
     relative_sets: dict = field(default_factory=dict)
     #: Authored quest-script delay in seconds (FO3/FNV DATA.Delay); 0 = none.
     quest_delay: float = 0.0
+    #: The script declares TES4's `fQuestDelayTime`, its own poll cadence.
+    declares_quest_delay: bool = False
     #: Every record the script is attached to is a BOOK, so its OnActivate means "read".
     on_book: bool = False
 

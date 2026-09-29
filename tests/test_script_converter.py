@@ -3113,8 +3113,11 @@ class TestEarlyReturnKeepsPolling:
     concurrent TES4_MQ01Script.OnUpdate stacks, the whole VM starved).
     """
 
+    # fQuestDelayTime makes the quest's real interval TES4_QuestDelay(), so
+    # the 5 s insurance arm is distinguishable from it.
     SRC = """Scriptname TestEarlyReturn
 short foo
+float fQuestDelayTime
 begin gamemode
 if ( foo == 0 )
     return
@@ -3141,9 +3144,9 @@ End
         ret = body.index('Return', body.index('foo == 0'))
         # the statement immediately before the authored Return is the arm
         before = body[:ret].rstrip().splitlines()[-1].strip()
-        assert before == 'RegisterForSingleUpdate(0.5)'
+        assert before == 'RegisterForSingleUpdate(TES4_QuestDelay())'
         # and the bottom arm is still there
-        assert body.rstrip().endswith('RegisterForSingleUpdate(0.5)')
+        assert body.rstrip().endswith('RegisterForSingleUpdate(TES4_QuestDelay())')
 
     def test_object_script_uses_the_load_gated_form(self, converter):
         """An object/actor script's poll is MEANT to stop on unload, so both
@@ -5339,9 +5342,54 @@ class TestAuthoredQuestDelay:
         """0.01 s authored polls at 0.1 s; a faster registration is every frame anyway."""
         assert 'RegisterForSingleUpdate(0.1)' in self._convert(converter, 0.01)
 
-    def test_no_delay_keeps_the_half_second_default(self, converter):
-        """A TES4 quest script (delay 0) still polls at 0.5 s."""
-        assert 'RegisterForSingleUpdate(0.5)' in self._convert(converter, 0.0)
+    def test_no_delay_takes_the_quest_default(self, converter):
+        """No authored delay: a quest script polls at TES4's 5 s default."""
+        out = self._convert(converter, 0.0)
+        assert out.count('RegisterForSingleUpdate(5.0)') >= 2
+        assert 'RegisterForSingleUpdate(0.5)' not in out
+
+
+class TestQuestCadence:
+    """TES4 ran a quest script every fQuestDelayTime seconds, 5 s while 0.
+
+    The body-derived 0.1-0.5 s polls ran Oblivion's 89 start-game quest
+    scripts at about 258 passes/s against Oblivion's 17.8.
+    """
+
+    BODY = "begin gamemode\nset x to 1\nend\n"
+
+    def _out(self, converter, src, extends='Quest'):
+        return converter.convert_standalone('Q', 'scn Q\nshort x\n' + src,
+                                            extends, 'Q')
+
+    def test_quest_script_polls_at_its_own_delay(self, converter):
+        out = self._out(converter, 'float fQuestDelayTime\n' + self.BODY)
+        assert 'Float Function TES4_QuestDelay()' in out
+        assert 'RegisterForSingleUpdate(TES4_QuestDelay())' in out
+        assert 'RegisterForSingleUpdate(0.5)' not in out
+
+    def test_the_helper_maps_zero_to_five_and_floors_fast_delays(self, converter):
+        out = self._out(converter, 'float fQuestDelayTime\n' + self.BODY)
+        helper = out.split('Float Function TES4_QuestDelay()')[1].split('EndFunction')[0]
+        assert 'If fQuestDelayTime <= 0.0\n    Return 5.0' in helper
+        assert 'ElseIf fQuestDelayTime < 0.1\n    Return 0.1' in helper
+
+    def test_quest_script_without_the_variable_polls_every_five_seconds(self, converter):
+        out = self._out(converter, self.BODY)
+        assert 'TES4_QuestDelay' not in out
+        assert 'RegisterForSingleUpdate(5.0)' in out.split('EndEvent')[0].split('Event OnUpdate()')[1].rstrip().splitlines()[-1]
+
+    def test_object_scripts_keep_the_body_derived_interval(self, converter):
+        out = self._out(converter, 'float fQuestDelayTime\n' + self.BODY,
+                        'ObjectReference')
+        assert 'TES4_QuestDelay' not in out
+        assert 'RegisterForSingleUpdate(0.5)' in out
+
+    def test_measured_elapsed_time_is_not_clipped_at_the_quest_cadence(self, converter):
+        src = 'float fQuestDelayTime\nfloat t\nbegin gamemode\nset t to t + GetSecondsPassed\nend\n'
+        out = self._out(converter, src)
+        assert 'Float TES4_SecondsPassed = 5.0' in out
+        assert 'TES4_SecondsPassed > 2.0 * TES4_QuestDelay()' in out
 
     def test_quest_script_delays_keys_the_script_by_scri(self):
         """Only quests writing a non-zero delay and a SCRI contribute."""

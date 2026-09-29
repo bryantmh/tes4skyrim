@@ -851,17 +851,23 @@ class ScriptConverter:
         # -- and it shipped in 45 scripts.  A single update is the TES4
         # semantics anyway: the converted OnUpdate re-arms itself, and per the
         # TES4 CS a delay of 0 means "revert to the DEFAULT 5s cadence".
+        #
+        # The owning script's poll re-arms from its OWN fQuestDelayTime, so
+        # the new cadence persists only if the variable is written too; that
+        # needs the quest property typed as its script (remote_type_of).
         if target.endswith('.fQuestDelayTime'):
             quest_ref = target.rsplit('.', 1)[0]
+            store = (f'{target} = {value.strip()}\n'
+                     if self.remote_type_of(target) else '')
             try:
                 fval = float(value.strip())
             except ValueError:
-                return (f'{quest_ref}.RegisterForSingleUpdate({value.strip()})'
+                return (f'{store}{quest_ref}.RegisterForSingleUpdate({value.strip()})'
                         f'  ;fQuestDelayTime')
             if fval <= 0:
-                return (f'{quest_ref}.RegisterForSingleUpdate(5.0)'
+                return (f'{store}{quest_ref}.RegisterForSingleUpdate(5.0)'
                         f'  ;fQuestDelayTime = 0 (TES4 default cadence)')
-            return (f'{quest_ref}.RegisterForSingleUpdate({fval:g})'
+            return (f'{store}{quest_ref}.RegisterForSingleUpdate({fval:g})'
                     f'  ;fQuestDelayTime')
 
         return self._typed_assign(target, value, value_node, extends)
@@ -1294,7 +1300,7 @@ class ScriptConverter:
     _GAMEMODE_GATE = 'TES4Polyfill.SafeGameModeGate(Self)'
 
     def _get_update_interval(self) -> str:
-        return update_interval(self.sc)
+        return update_interval(self.sc, getattr(self, '_script_extends', ''))
 
 
     def _parse_source(self, source: str):

@@ -25,6 +25,8 @@ from script_convert.command_rows import (
     COMMAND_ROWS, ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
 )
 from script_convert import symbols as _symbols
+from script_convert.poll_interval import (QUEST_DELAY_CALL, interval_literal,
+                                          quest_delay_helper)
 from script_convert.poll_motion import relative_sets
 from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as N
@@ -241,6 +243,7 @@ def _load_facts(conv, tree) -> None:
     btypes = {b.btype.lower() for b in tree.blocks} if tree else set()
 
     sc.suppressed_fall_damage = 'resetfalldamagetimer' in called
+    sc.declares_quest_delay = 'fquestdelaytime' in declared
     _load_time_facts(sc, tree, called, btypes)
     sc.uses_timer = 'timer' in names
     sc.uses_say = bool(called & {'say', 'sayto'})
@@ -738,11 +741,13 @@ def poll(conv, tree, extends: str) -> list:
     load_gated = extends in ('ObjectReference', 'Actor')
 
     out = []
+    if interval == QUEST_DELAY_CALL:
+        out += quest_delay_helper()
     if sc.gsp_realtime:
         # Backing state for TES4_SecondsPassed: plain script variables, not
         # properties -- nothing outside this script reads them and they must
         # not appear in the VMAD.
-        out += [f'Float TES4_SecondsPassed = {interval}',
+        out += [f'Float TES4_SecondsPassed = {interval_literal(interval)}',
                 'Float TES4_LastTick = 0.0', '']
     out.append('Event OnUpdate()')
 
@@ -871,9 +876,12 @@ def _elapsed_prologue(conv, interval: str) -> list:
     """
     if not conv.sc.gsp_realtime:
         return []
+    # A 5 s quest cadence measures real 5 s gaps; clamp relative to it.
+    limit = ('2.0' if getattr(conv, '_script_extends', '') != 'Quest'
+             else f'2.0 * {interval}')
     return ['  Float TES4_Now = Utility.GetCurrentRealTime()',
             '  TES4_SecondsPassed = TES4_Now - TES4_LastTick',
-            '  If TES4_SecondsPassed < 0.0 || TES4_SecondsPassed > 2.0',
+            f'  If TES4_SecondsPassed < 0.0 || TES4_SecondsPassed > {limit}',
             f'    TES4_SecondsPassed = {interval}',
             '  EndIf',
             '  TES4_LastTick = TES4_Now']
