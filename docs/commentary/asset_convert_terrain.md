@@ -187,6 +187,16 @@ is what confirms it rather than merely being self-consistent. Vanilla also
 confirms SW is REAL, not centered, and that `maxLOD` is not always 32. Guarded by
 `tests/test_asset_convert.py::TestLODSettingsCoversTheTerrain`.
 
+The cells are not the whole terrain. Oblivion's own distant LOD
+(`meshes\landscape\lod\<decimal fid>.<x>.<y>.<level>.nif`) reaches past the last
+LAND cell: TES4Tamriel's cells span x -64..69, its shipped tiles x -96..95. The
+terrain rebuilt from those tiles needs grid nodes there, so `generate_lod` also
+unions the box the SOURCE tiles cover (`source_lod_extents`, reading the owner's
+and suppliers' export record dirs that `create_lod` passes as
+`source_record_dirs`, tile names found case-blind). TES4Tamriel goes from
+(-64,-96,256) to (-96,-96,256), vanilla Tamriel's own SW; the object-LOD
+`CellSW` follows, and no tile name moves (tiles are named by absolute cell).
+
 ### Terrain LOD (SSELodGen) — data chain
 - LAND BTXT/ATXT subrecords contain direct LTEX FormIDs (NOT indices into VTEX array)
 - SSELodGen uses: BTXT.Texture(LTEX) → LTEX.TNAM(TXST) → TXST.TX00(path) → Data\Textures\{path}

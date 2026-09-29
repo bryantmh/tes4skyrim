@@ -189,6 +189,7 @@ def _bake_worldspace(job, ctx) -> bool:
         only_cells=None,
         far_nif_dirs=asset_dirs,
         overlay_manifest_dirs=overlay_dirs,
+        source_record_dirs=ctx['record_dirs']([owner] + suppliers),
     )
 
     print("  Generating terrain LOD...")
@@ -362,6 +363,8 @@ def main() -> int:
             names, out_root, export_root, _out_root),
         'supplier_overlay_dirs': lambda names: _supplier_overlay_dirs(
             names, out_root, export_root, _out_root, record_dir),
+        'record_dirs': lambda names: [record_dir(export_root, n)
+                                      for n in names],
     }
     return _report(all([_bake_worldspace(job, ctx) for job in jobs]), lod_dir)
 

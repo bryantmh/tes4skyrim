@@ -1219,7 +1219,8 @@ def generate_lod(esm_path: Path, output_dir: Path,
                  master_dirs=None, master_texture_dirs=None,
                  master_mesh_dirs=None,
                  overlay_paths=None, only_cells=None,
-                 far_nif_dirs=None, overlay_manifest_dirs=None) -> bool:
+                 far_nif_dirs=None, overlay_manifest_dirs=None,
+                 source_record_dirs=None) -> bool:
     """
     Full LOD generation pipeline:
       1. Write LODSettings/<worldspace>.lod
@@ -1344,34 +1345,9 @@ def generate_lod(esm_path: Path, output_dir: Path,
 
     edid = wrld_info['edid']
 
-    # Measure the extents from the CELLS this worldspace actually contains.
-    # WRLD.MNAM is the wrong source on its own: 57 of 84 TES4 worldspaces leave
-    # it zeroed, which collapsed the LOD grid to 1x1 and CTD'd on entry (see
-    # write_lod_settings).  Cells always carry XCLC, so this is the reliable
-    # measure; MNAM is only consulted when it is populated AND wider, so a
-    # worldspace whose authored map area exceeds its cells keeps that area.
-    grid_xs, grid_ys = [], []
-    for c in cells.values():
-        if c.get('parent_wrld') != wrld_fid:
-            continue
-        if c.get('grid_x') is None:
-            continue
-        grid_xs.append(c['grid_x'])
-        grid_ys.append(c['grid_y'])
-    if grid_xs:
-        # +1: NE is exclusive, a cell at x occupies [x, x+1).
-        sw_x, sw_y = min(grid_xs), min(grid_ys)
-        ne_x, ne_y = max(grid_xs) + 1, max(grid_ys) + 1
-        if wrld_info['ne_x'] > wrld_info['sw_x']:   # MNAM authored — union it
-            sw_x = min(sw_x, wrld_info['sw_x'])
-            sw_y = min(sw_y, wrld_info['sw_y'])
-            ne_x = max(ne_x, wrld_info['ne_x'])
-            ne_y = max(ne_y, wrld_info['ne_y'])
-        print(f"  LOD extents from {len(grid_xs)} cells: "
-              f"SW=({sw_x},{sw_y}) NE=({ne_x},{ne_y})")
-    else:
-        sw_x, sw_y = wrld_info['sw_x'], wrld_info['sw_y']
-        ne_x, ne_y = wrld_info['ne_x'], wrld_info['ne_y']
+    sw_x, sw_y, ne_x, ne_y = _lod_extents(
+        cells, wrld_fid, wrld_info,
+        source_lod_extents(source_record_dirs or (), edid))
 
     _, eff_sw_x, eff_sw_y = write_lod_settings(
         edid, sw_x, sw_y, ne_x, ne_y, output_dir,
@@ -1498,6 +1474,85 @@ def generate_lod(esm_path: Path, output_dir: Path,
     else:
         print(f"[LOD] LOD generation finished with warnings.")
     return ok
+
+
+def _cell_extents(cells, wrld_fid):
+    """(sw_x, sw_y, ne_x, ne_y) of the worldspace's CELL grid (NE exclusive), else None."""
+    grid = [(c['grid_x'], c['grid_y']) for c in cells.values()
+            if c.get('parent_wrld') == wrld_fid and c.get('grid_x') is not None]
+    if not grid:
+        return None
+    xs, ys = zip(*grid)
+    return min(xs), min(ys), max(xs) + 1, max(ys) + 1
+
+
+def _union(a, b):
+    """The smallest (sw_x, sw_y, ne_x, ne_y) box holding both; None is empty."""
+    if a is None or b is None:
+        return a or b
+    return min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])
+
+
+def _lod_extents(cells, wrld_fid, wrld_info, source_tiles=None) -> tuple:
+    """The cell box `LODSettings/<WRLD>.lod` must cover.
+
+    The CELLS (MNAM is zeroed in 57 of 84 TES4 worldspaces), widened by an
+    authored MNAM and by the source's own LOD tiles, which reach past the
+    last LAND cell; MNAM alone when there are no cells.
+    See: docs/commentary/asset_convert_terrain.md#lodsettings-must-cover-the-terrain
+    """
+    mnam = (wrld_info['sw_x'], wrld_info['sw_y'],
+            wrld_info['ne_x'], wrld_info['ne_y'])
+    box = _cell_extents(cells, wrld_fid)
+    if box is None:
+        return mnam
+    print(f"  LOD extents from cells: SW=({box[0]},{box[1]}) "
+          f"NE=({box[2]},{box[3]})")
+    if mnam[2] > mnam[0]:
+        box = _union(box, mnam)
+    if source_tiles is not None:
+        print(f"  Source LOD tiles cover SW=({source_tiles[0]},"
+              f"{source_tiles[1]}) NE=({source_tiles[2]},{source_tiles[3]})")
+    box = _union(box, source_tiles)
+    print(f"  LOD extents: SW=({box[0]},{box[1]}) NE=({box[2]},{box[3]})")
+    return box
+
+
+def _tile_box(name: str, prefix: str):
+    """(x, y, x + level, y + level) of a `<fid>.<x>.<y>.<level>.nif` tile, else None."""
+    parts = name[len(prefix):].split('.')
+    try:
+        x, y, level = int(parts[0]), int(parts[1]), int(parts[2])
+    except (ValueError, IndexError):
+        return None
+    return x, y, x + level, y + level
+
+
+def source_lod_extents(record_dirs, edid: str):
+    """The cell box the SOURCE game's own LOD tiles for `edid` cover, else None.
+
+    Oblivion ships `meshes\\landscape\\lod\\<decimal fid>.<x>.<y>.<level>.nif`
+    past its last LAND cell (TES4Tamriel reaches x = -96). Listed case-blind;
+    the fid is named through the export's WRLD.txt, Tamriel as TES4Tamriel.
+    See: docs/commentary/asset_convert_terrain.md#lodsettings-must-cover-the-terrain
+    """
+    from asset_convert.lod.terrain_lod import worldspace_edids
+    from output_layout import assets_for
+    box = None
+    for rd in record_dirs:
+        fids = [f for f, e in worldspace_edids(rd).items()
+                if _converted_edid(e).lower() == edid.lower()]
+        for fid in fids:
+            prefix = f'{fid}.'
+            for tile in case_paths.list_prefix(assets_for(rd),
+                                               'meshes/landscape/lod', prefix):
+                box = _union(box, _tile_box(tile.name, prefix))
+    return box
+
+
+def _converted_edid(name: str) -> str:
+    """The importer renames Oblivion's `Tamriel` to `TES4Tamriel`."""
+    return 'TES4Tamriel' if name == 'Tamriel' else name
 
 
 def _prune_unaffected_tiles(tile_dir: Path, suffix: str, only_cells) -> int:
