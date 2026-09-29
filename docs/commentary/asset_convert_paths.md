@@ -56,11 +56,23 @@ terrain LOD, generic spell art, missing FR door axes and sounds. The LOD probe
 parallax height maps)
 
 A converter-written file goes to `write_path(root, rel)`: each segment reuses
-the one spelling already on disk (a live listing, never the cache), is created
-lowercase when none exists, and takes the lowercase spelling (logging a
-collision) when several do. New names are lowercase, which is what BSArch
-stores (every folder name in the shipped archives is lowercase), and no write
+the one spelling already on disk, is created lowercase when none exists, and
+takes the lowercase spelling (logging a collision) when several do. No write
 opens a second spelling of a folder that already exists.
+
+**Lowercasing new names is intended, not a side effect.** A caller's `rel`
+carries whatever case the record or NIF authored, so honouring it would let
+two records spelling one folder differently open twins on a case-sensitive
+filesystem. Lowercase is also what BSArch stores (every folder name in the
+shipped archives is lowercase), and the game looks paths up case-blind, so the
+spelling of a new file never changes what loads.
+
+The listings are the resolver's cache. The cached listing answers first; only
+a miss re-reads the folder (the stale check above), so an unchanged ancestor
+is listed once per process rather than once per write, which matters on
+Windows, where listing a large folder is slow. A folder that gains a new entry
+through `write_path` is dropped from the cache; an overwrite leaves it cached.
+`root` is normalised, so `out/` and `out` are one cache key.
 
 Mirror copiers (`nif_batch` destination, `asset_pipeline._copy_tree`,
 `mod_ingest._place_payload`) keep the SOURCE case on purpose: lowercasing them

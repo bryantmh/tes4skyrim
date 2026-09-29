@@ -67,6 +67,11 @@ def _stale(path, entry) -> bool:
     return mtime != entry[0] or entry[1] - mtime < _RACY_NS
 
 
+def _norm(root) -> str:
+    """`root` as the listing cache keys it: one spelling per folder."""
+    return os.path.normpath(os.fspath(root))
+
+
 def _listing(path, fresh=False) -> dict:
     """`{lower: [names]}` for `path`; `fresh` re-reads it when it may have changed."""
     entry = _LISTINGS.get(path, False)
@@ -81,7 +86,7 @@ def _matches(root, parts, fresh=False) -> list:
     Branches into every case-variant folder, so an empty `Dementia/` beside
     `dementia/x.dds` cannot hide the file.
     """
-    found = [str(root)]
+    found = [_norm(root)]
     for seg in parts:
         key = seg.lower()
         found = [os.path.join(d, n) for d in found
@@ -111,7 +116,7 @@ def invalidate(root=None) -> None:
     if root is None:
         _LISTINGS.clear()
         return
-    top = str(root)
+    top = _norm(root)
     for key in [k for k in _LISTINGS if k == top or k.startswith(top + os.sep)]:
         del _LISTINGS[key]
 
@@ -203,37 +208,48 @@ def list_prefix(root, rel_dir, prefix) -> list:
 # ---------------------------------------------------------------------------
 
 
-def _spelling(parent, seg, want_dir) -> str:
-    """The existing spelling of `seg` in `parent`, else lowercase; two or more collide."""
-    try:
-        names = [n for n in os.listdir(parent) if n.lower() == seg.lower()
-                 and os.path.isdir(os.path.join(parent, n)) == want_dir]
-    except OSError:
-        names = []
+def _kind(parent, names, want_dir) -> list:
+    """The `names` in `parent` that are folders (`want_dir`) or not."""
+    return [n for n in names if os.path.isdir(os.path.join(parent, n)) == want_dir]
+
+
+def _spelling(parent, seg, want_dir) -> tuple:
+    """(the existing spelling of `seg` in `parent`, else lowercase; True when new).
+
+    The cached listing answers first; only a miss re-reads the folder, so an
+    unchanged ancestor is never listed twice. Two or more spellings collide.
+    """
+    key = seg.lower()
+    names = (_kind(parent, _listing(parent).get(key, ()), want_dir)
+             or _kind(parent, _listing(parent, fresh=True).get(key, ()), want_dir))
     if len(names) == 1:
-        return names[0]
+        return names[0], False
     if not names:
-        return seg.lower()
+        return key, True
     ranked = _ranked([os.path.join(parent, n) for n in names], parent)
     _collided('write_path', parent, seg, ranked)
-    return os.path.basename(ranked[0])
+    return os.path.basename(ranked[0]), False
 
 
 def write_path(root, rel) -> Path:
     """Where to write `rel` under `root`, creating its parent folders.
 
-    Each segment reuses the one spelling already on disk (read live), is
-    lowercase when none exists, and takes the lowercase one when several do.
+    Each segment reuses the one spelling already on disk, is lowercase when
+    none exists, and takes the lowercase one when several do. Listings are
+    cached; a folder that gains a new entry here is dropped from the cache.
     See: docs/commentary/asset_convert_paths.md#write-rule
     """
     parts = split_rel(rel)
-    path = str(root)
+    path, grown = _norm(root), []
     for i, seg in enumerate(parts):
-        path = os.path.join(path, _spelling(path, seg, i < len(parts) - 1))
+        name, new = _spelling(path, seg, i < len(parts) - 1)
+        if new:
+            grown.append(path)
+        path = os.path.join(path, name)
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    for folder in out.parents[:len(parts)]:
-        _LISTINGS.pop(str(folder), None)
+    for folder in grown:
+        _LISTINGS.pop(folder, None)
     return out
 
 

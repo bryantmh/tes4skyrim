@@ -207,6 +207,67 @@ def test_write_path_takes_the_lowercase_twin(tmp_path, capsys):
     assert 'CASE COLLISION' in capsys.readouterr().out
 
 
+def _aged(root):
+    """Backdate every folder under `root` past the racy window, as a settled tree is."""
+    old = os.stat(root).st_mtime - 60
+    for base, dirs, _files in os.walk(root):
+        for d in dirs:
+            os.utime(os.path.join(base, d), (old, old))
+    os.utime(root, (old, old))
+
+
+def _count_listdir(monkeypatch):
+    """Count os.listdir calls made by case_paths."""
+    calls = []
+    real = os.listdir
+
+    def _listdir(path):
+        calls.append(str(path))
+        return real(path)
+
+    monkeypatch.setattr(case_paths.os, 'listdir', _listdir)
+    return calls
+
+
+def test_write_path_lists_an_unchanged_folder_once(tmp_path, monkeypatch):
+    """Overwriting siblings reuses the cached listings (Windows lists slowly)."""
+    for n in ('A.dds', 'B.dds'):
+        _put(tmp_path / 'Textures' / 'Effects' / n)
+    _aged(tmp_path)
+    calls = _count_listdir(monkeypatch)
+
+    first = case_paths.write_path(tmp_path, 'textures\\effects\\a.dds')
+    listed = len(calls)
+    second = case_paths.write_path(tmp_path, 'textures\\effects\\b.dds')
+
+    assert first.name == 'A.dds' and second.name == 'B.dds'
+    assert listed == 3 and len(calls) == listed, calls
+
+
+def test_write_path_drops_the_listing_of_a_folder_it_grows(tmp_path):
+    """A new file or folder invalidates its parent's cached listing only."""
+    _put(tmp_path / 'textures' / 'old.dds')
+    _aged(tmp_path)
+    case_paths.variants(tmp_path, 'textures\\old.dds')
+
+    case_paths.write_path(tmp_path, 'textures\\new.dds')
+
+    assert str(tmp_path) in case_paths._LISTINGS
+    assert str(tmp_path / 'textures') not in case_paths._LISTINGS
+
+
+def test_a_trailing_separator_root_invalidates_the_same_key(tmp_path):
+    """`root/` and `root` are one folder: its stale listing must not survive."""
+    root = str(tmp_path) + os.sep
+    case_paths.variants(root, 'fire')
+
+    case_paths.write_path(root, 'Fire\\a.dds')
+
+    assert root not in case_paths._LISTINGS
+    assert str(tmp_path) not in case_paths._LISTINGS
+    assert case_paths.variants(root, 'FIRE') == [str(tmp_path / 'fire')]
+
+
 # ---------------------------------------------------------------------------
 # The census
 # ---------------------------------------------------------------------------
