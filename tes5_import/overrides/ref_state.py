@@ -3,12 +3,17 @@
 An override keeps the master's converted bytes, but a reference's Persistent,
 Initially Disabled and Visible When Distant bits are authored header state, so
 the bits the plugin's author changed are taken from the plugin's export.
+The Full-LOD rule here is shared with the master world-group builder.
 
 See: docs/commentary/tes5_import_override.md#override-reference-state
-See: docs/commentary/tes5_import_override.md#full-lod-whitelist
+See: docs/commentary/tes5_import_override.md#full-lod-refs
 """
 
 import struct
+
+from asset_convert.lod.effect_mesh import is_effect_mesh
+
+from ..base.text_reader import get_int
 
 #: TES4 signatures of placed references.
 REF_SIGS = frozenset({'REFR', 'ACHR', 'ACRE'})
@@ -22,14 +27,10 @@ LIGHT_CASTS_SHADOWS = 0x200
 #: TES5 REFR "Is Full LOD": drawn at full detail at any distance, never baked into object LOD.
 FULL_LOD = 0x10000
 
-_TAKEN = PERSISTENT | INITIALLY_DISABLED | VISIBLE_WHEN_DISTANT
+#: The player's FormID, index byte included: an enable parent that is always enabled.
+PLAYER_REF = 0x00000014
 
-#: {plugin: low 24 bits of its OWN FormIDs} shipped as Full LOD; the whitelist doc is cited above.
-FULL_LOD_REFS = {
-    'dlcfrostcragreborn.esp': frozenset({
-        0x01624E, 0x016238, 0x047EFD, 0x047F2E, 0x05104B, 0x051051,
-        0x051056, 0x051059, 0x01B3AC, 0x01B3AF, 0x008CD0, 0x01BD59}),
-}
+_TAKEN = PERSISTENT | INITIALLY_DISABLED | VISIBLE_WHEN_DISTANT
 
 
 def take_mask(out_sig: bytes, base_is_light: bool) -> int:
@@ -91,15 +92,58 @@ def placement_fault(path: tuple) -> str:
     return ''
 
 
-def is_full_lod_ref(plugin: str, formid: str, own_index) -> bool:
-    """True when `formid` (TES4 export hex) is one of `plugin`'s whitelisted Full-LOD refs."""
-    refs = FULL_LOD_REFS.get((plugin or '').lower())
-    if not refs or own_index is None or not formid:
+def full_lod_bases(stats, master_export=None) -> dict:
+    """{STAT FormID (TES4 export hex, this plugin's space): model} for the Full-LOD rule.
+
+    `stats` are this plugin's own STAT export records; `master_export` is the
+    masters' export keyed in this plugin's space. The plugin's own copy wins.
+    """
+    out = {key.upper(): rec.get('Model.MODL') or ''
+           for key, rec in (master_export or {}).items()
+           if rec.get('Signature') == 'STAT'}
+    for rec in stats or ():
+        out[(rec.get('FormID') or '').upper()] = rec.get('Model.MODL') or ''
+    return out
+
+
+def _formid(value) -> int:
+    """A TES4 export hex FormID as an int; 0 when absent or malformed."""
+    try:
+        return int((value or '').strip(), 16)
+    except ValueError:
+        return 0
+
+
+def is_full_lod_ref(sig: str, rec: dict, bases: dict) -> bool:
+    """True when a TES4 reference qualifies to ship as Full LOD.
+
+    An exterior REFR of a STAT, Visible When Distant in its source, enabled by
+    a parent that is not the player (the FULL id is compared, so a plugin's
+    own 0x14 is not the player), with a model outside the effect folders.
+    `bases` is `full_lod_bases`.
+    """
+    if sig != 'REFR' or not _formid(rec.get('ParentWRLD')):
         return False
-    raw = int(formid, 16)
-    return (raw >> 24) == own_index and (raw & 0x00FFFFFF) in refs
+    if not get_int(rec, 'RecordFlags') & VISIBLE_WHEN_DISTANT:
+        return False
+    if _formid(rec.get('XESP.Reference')) in (0, PLAYER_REF):
+        return False
+    model = (bases or {}).get((rec.get('NAME') or '').upper())
+    return model is not None and not is_effect_mesh(model)
 
 
 def full_lod_flags(flags: int) -> int:
     """Header flags of a Full-LOD reference: persistent, Is Full LOD, no VWD."""
     return (flags | FULL_LOD | PERSISTENT) & ~VISIBLE_WHEN_DISTANT
+
+
+def report_full_lod(where: str, fids, unresolved=()) -> None:
+    """Print the Full-LOD count and every ref, and WARN for refs left unplaced."""
+    listed = ', '.join(sorted(fids))
+    print(f"  Full LOD ({where}): {len(fids)} ref(s) persistent + Is Full LOD, "
+          f"VWD cleared, in the world's persistent cell"
+          + (f": {listed}" if listed else ''))
+    if unresolved:
+        print(f"  WARNING: Full LOD ({where}): {len(unresolved)} qualifying "
+              f"ref(s) have no persistent cell and were left unchanged: "
+              + ', '.join(sorted(unresolved)))

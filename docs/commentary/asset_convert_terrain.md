@@ -425,7 +425,8 @@ stored in `LODSettings/<WRLD>.lod`.
 ### <a id="object-lod-selection"></a>Which references get object LOD
 
 **Code:** `asset_convert/lod/esm_scan.py` (`_read_xesp`),
-`asset_convert/lod/lod_gen.py` (`_lod_exclusion`)
+`asset_convert/lod/lod_gen.py` (`_lod_exclusion`),
+`asset_convert/lod/effect_mesh.py` (`is_effect_mesh`)
 
 A base qualifies by its distant-LOD flag (0x8000, set at import for any
 object at least `LOD_SIZE_THRESHOLD` units across). Each REFERENCE is then
@@ -451,6 +452,8 @@ Static LOD cannot follow enable state, so it shows the state at GAME START.
 - **effects** -- the ref is not VWD and its model sits in an `effects` or `fx`
   folder: a cloud deck or ground mist, not an object (NDCloudLayer is
   persistent, not disabled and has no parent, so nothing else catches it).
+  The import's Full-LOD rule shares the same test (`is_effect_mesh`; see
+  [Full-LOD references](tes5_import_override.md#full-lod-refs)).
 
 This mirrors xEdit's `wbGenerateLODTES5` (`wbLOD.pas`), which skips Initially
 Disabled refs, non-VWD refs with an enable parent, and persistent Full-LOD

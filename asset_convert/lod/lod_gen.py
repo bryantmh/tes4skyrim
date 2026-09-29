@@ -21,6 +21,7 @@ from pathlib import Path
 
 from asset_convert import case_paths
 from asset_convert.game_paths import win_join
+from asset_convert.lod.effect_mesh import is_effect_mesh
 from asset_convert.lod.esm_scan import (FLAG_DISTANT_LOD, parse_esm,
                                         parse_esm_cached)
 
@@ -696,8 +697,6 @@ FLAG_FULL_LOD = 0x00010000
 #: The player's local FormID: an enable parent that is always enabled.
 _PLAYER_REF = 0x000014
 
-#: Model folders holding effect meshes (cloud decks, ground mist), not objects.
-_EFFECT_DIRS = frozenset({'effects', 'fx'})
 
 #: Per-reference exclusions, with their log labels; see `_state_exclusion`.
 _STATE_RULES = {
@@ -769,14 +768,9 @@ def _state_exclusion(ref, stat, scope):
     flags = ref['flags']
     if flags & FLAG_PERSISTENT and flags & FLAG_FULL_LOD:
         return 'full-lod'
-    if not flags & FLAG_DISTANT_LOD and _is_effect_mesh(stat['model']):
+    if not flags & FLAG_DISTANT_LOD and is_effect_mesh(stat['model']):
         return 'effects'
     return None
-
-
-def _is_effect_mesh(model: str) -> bool:
-    """True when the model sits in an `effects` or `fx` folder."""
-    return bool(_EFFECT_DIRS & set(_meshes_rel(model).split('\\')[:-1]))
 
 
 def _initially_enabled(fid, scope):

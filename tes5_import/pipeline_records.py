@@ -41,6 +41,9 @@ from concurrent.futures import ProcessPoolExecutor
 from .registry import IMPORT_DISPATCH, TYPE_MAP
 from .overrides.builder import replace_vmad, split_subrecords
 from .overrides.nested import (build_nested_overrides)
+from .overrides.ref_state import (full_lod_bases, full_lod_flags,
+                                  is_full_lod_ref, record_flags,
+                                  report_full_lod, set_flags)
 from .dialogue.quest import compute_quest_priorities, convert_QUST
 from .dialogue.morrowind_sidecar import write_morrowind_sidecar
 from .record_types.bodypart_falloutnv import write_falloutnv_sidecars
@@ -487,7 +490,8 @@ def run_record_phases(st, export_dir: str, phase_done,
                                st.door_fids, st.navm_cache, land_cache)
             phase_done('own CELL groups')
             _build_world_groups(own, st.writer, st.navm_metas, st.base_model_by_fid,
-                                st.door_fids, st.navm_cache, land_cache, ctx=st.ctx)
+                                st.door_fids, st.navm_cache, land_cache, ctx=st.ctx,
+                                lod_bases=getattr(st.ctx, 'full_lod_bases', None))
             phase_done('own WRLD groups')
     else:
         _build_cell_groups(st.by_type, st.writer, st.navm_metas, st.base_model_by_fid,
@@ -526,13 +530,30 @@ def _index_by_parent_cell(records) -> dict:
     return by_cell
 
 
+def _ships_persistent(rec, full_lod) -> bool:
+    """True when a REFR goes in the type-8 group: persistent, or Full LOD."""
+    return _is_persistent(rec) or get_formid(rec, 'FormID') in full_lod
+
+
+def _refr_bytes(rec, full_lod) -> bytes:
+    """A converted REFR; a Full-LOD one gets 0x10400 set and VWD cleared.
+
+    See: docs/commentary/tes5_import_override.md#full-lod-refs
+    """
+    out = convert_REFR(rec)
+    if get_formid(rec, 'FormID') in full_lod:
+        out = set_flags(out, full_lod_flags(record_flags(out)))
+    return out
+
+
 def _pack_cell_children(cell_fid, refr_by_cell, achr_by_cell,
-                        leading=(), trailing=()):
+                        leading=(), trailing=(), full_lod=frozenset()):
     """Pack one cell's children as (group 6 payload, records converted).
 
-    Persistent REFR/ACHR go in a type-8 group, everything else in a type-9
-    group.  The type-9 order is fixed and load-bearing: `leading` (LAND) comes
-    first, then the non-persistent refs, then `trailing` (lava, navmeshes).
+    Persistent REFR/ACHR (and the `full_lod` REFR FormIDs) go in a type-8
+    group, everything else in a type-9 group.  The type-9 order is fixed and
+    load-bearing: `leading` (LAND) comes first, then the non-persistent refs,
+    then `trailing` (lava, navmeshes).
 
     See: docs/commentary/tes5_import_pipeline.md#cell-world-group-builders
     """
@@ -540,8 +561,8 @@ def _pack_cell_children(cell_fid, refr_by_cell, achr_by_cell,
     children_parts = []
     persistent = []
     for refr_rec in refr_by_cell.get(cell_fid, []):
-        if _is_persistent(refr_rec):
-            persistent.append(convert_REFR(refr_rec))
+        if _ships_persistent(refr_rec, full_lod):
+            persistent.append(_refr_bytes(refr_rec, full_lod))
             converted += 1
     for achr_rec in achr_by_cell.get(cell_fid, []):
         if _is_persistent(achr_rec):
@@ -554,7 +575,7 @@ def _pack_cell_children(cell_fid, refr_by_cell, achr_by_cell,
     temporary = list(leading)
     converted += len(temporary)
     for refr_rec in refr_by_cell.get(cell_fid, []):
-        if not _is_persistent(refr_rec):
+        if not _ships_persistent(refr_rec, full_lod):
             temporary.append(convert_REFR(refr_rec))
             converted += 1
     for achr_rec in achr_by_cell.get(cell_fid, []):
@@ -835,7 +856,8 @@ def _build_one_world(wrld_fid, wrld_rec, anchor_wrld, ctx):
         pcell_fid = get_formid(persistent_cell, 'FormID')
         wrld_children.append(convert_CELL(persistent_cell))
         pcell_bytes, n = _pack_cell_children(
-            pcell_fid, ctx['refr_by_cell'], ctx['achr_by_cell'])
+            pcell_fid, ctx['refr_by_cell'], ctx['achr_by_cell'],
+            full_lod=ctx['full_lod'])
         converted += n
         if pcell_bytes:
             wrld_children.append(pcell_bytes)
@@ -857,11 +879,70 @@ def _build_one_world(wrld_fid, wrld_rec, anchor_wrld, ctx):
     return parts, converted + 1
 
 
+def _grid_index(cells) -> tuple:
+    """(cell_grid, grid_cell, grid_cell_raw) over the gridded, non-persistent cells.
+
+    `cell_grid` maps an output-space cell FormID to (wrld, gx, gy);
+    `grid_cell` maps (wrld, gx, gy) back to the first such cell, and
+    `grid_cell_raw` to that cell's raw (TES4-space) FormID string.
+    """
+    grid_cell, grid_cell_raw, cell_grid = {}, {}, {}
+    for cell in cells:
+        if get_int(cell, 'RecordFlags') & 0x400:
+            continue
+        if not get_str(cell, 'XCLC.X'):
+            continue
+        key = (get_formid(cell, 'ParentWRLD'),
+               get_int(cell, 'XCLC.X'), get_int(cell, 'XCLC.Y'))
+        fid = get_formid(cell, 'FormID')
+        grid_cell.setdefault(key, fid)
+        grid_cell_raw.setdefault(key, cell.get('FormID'))
+        cell_grid[fid] = key
+    return cell_grid, grid_cell, grid_cell_raw
+
+
+def _place_full_lod(refr_by_cell, ext_cells_by_wrld, bases) -> frozenset:
+    """Move each Full-LOD REFR into its world's persistent cell; their FormIDs.
+
+    Only the build index moves: the export record keeps its ParentCELL, which
+    the navmesh pool buckets by.  A world with no persistent cell of this
+    plugin's leaves the ref unchanged, WARNED.
+
+    See: docs/commentary/tes5_import_override.md#full-lod-refs
+    """
+    pcell = {}
+    for wrld_fid, wrld_cells in ext_cells_by_wrld.items():
+        for cell in wrld_cells:
+            if _is_persistent(cell):
+                pcell.setdefault(wrld_fid, get_formid(cell, 'FormID'))
+    placed, moves, unresolved = [], [], []
+    for cell_fid, recs in refr_by_cell.items():
+        for rec in recs:
+            if not is_full_lod_ref('REFR', rec, bases):
+                continue
+            target = pcell.get(get_formid(rec, 'ParentWRLD'))
+            (placed if target else unresolved).append(rec)
+            if target and target != cell_fid:
+                moves.append((cell_fid, target, rec))
+    for cell_fid, target, rec in moves:
+        refr_by_cell[cell_fid] = [r for r in refr_by_cell[cell_fid]
+                                  if r is not rec]
+        refr_by_cell[target].append(rec)
+    report_full_lod("this plugin's own cells",
+                    [r.get('FormID') or '?' for r in placed],
+                    [r.get('FormID') or '?' for r in unresolved])
+    return frozenset(get_formid(r, 'FormID') for r in placed)
+
+
 def _build_world_groups(by_type: dict, writer: PluginWriter,
                         navm_metas: list = None, base_model_by_fid: dict = None,
                         door_fids: set = None, navm_cache: dict = None,
-                        land_cache: dict = None, ctx=None):
-    """Build WRLD group hierarchy (worldspaces + exterior cells)."""
+                        land_cache: dict = None, ctx=None, lod_bases=None):
+    """Build WRLD group hierarchy (worldspaces + exterior cells).
+
+    `lod_bases` is `full_lod_bases` over the whole plugin; without it the
+    STATs in `by_type` and the masters' export on `ctx` are used.
+    """
     if navm_metas is None:
         navm_metas = []
     if base_model_by_fid is None:
@@ -894,24 +975,14 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
     refr_by_cell = _index_by_parent_cell(refrs)
     achr_by_cell = _index_by_parent_cell(achrs)
 
-    grid_cell = {}       # (wrld, gx, gy) -> output-space cell FormID
-    grid_cell_raw = {}   # (wrld, gx, gy) -> cell's raw (TES4-space) FormID string
-    cell_grid = {}       # output-space cell FormID -> (wrld, gx, gy)
-    for cell in cells:
-        if get_int(cell, 'RecordFlags') & 0x400:
-            continue
-        if not get_str(cell, 'XCLC.X'):
-            continue
-        key = (get_formid(cell, 'ParentWRLD'),
-               get_int(cell, 'XCLC.X'), get_int(cell, 'XCLC.Y'))
-        fid = get_formid(cell, 'FormID')
-        grid_cell.setdefault(key, fid)
-        grid_cell_raw.setdefault(key, cell.get('FormID'))
-        cell_grid[fid] = key
     rehomed = _rehome_misplaced_refs(
-        (refr_by_cell, achr_by_cell), cell_grid, grid_cell, grid_cell_raw)
+        (refr_by_cell, achr_by_cell), *_grid_index(cells))
     if rehomed:
         print(f"  Re-homed {rehomed} misplaced exterior refs to their position's cell")
+    if lod_bases is None:
+        lod_bases = full_lod_bases(by_type.get('STAT', ()),
+                                   getattr(ctx, 'master_export', None))
+    full_lod = _place_full_lod(refr_by_cell, ext_cells_by_wrld, lod_bases)
 
     land_by_cell = _index_by_parent_cell(lands)
     pgrd_by_cell = _index_by_parent_cell(pgrds)
@@ -936,7 +1007,7 @@ def _build_world_groups(by_type: dict, writer: PluginWriter,
         'land_by_cell': land_by_cell, 'pgrd_by_cell': pgrd_by_cell,
         'navm_cache': navm_cache, 'navm_metas': navm_metas,
         'refr_by_cell': refr_by_cell, 'achr_by_cell': achr_by_cell,
-        'ext_cells_by_wrld': ext_cells_by_wrld,
+        'ext_cells_by_wrld': ext_cells_by_wrld, 'full_lod': full_lod,
     }
     for wrld_fid, wrld_rec in sorted(_wrld_jobs, key=lambda j: j[0]):
         try:

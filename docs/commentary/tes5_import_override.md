@@ -13,7 +13,7 @@
 - [A PGRD is never an override: it converts to a NEW NAVM](#pgrd-never-override-converts-new)
 - [Override build statuses](#override-build-statuses)
 - [Override reference state](#override-reference-state)
-- [Full-LOD whitelist](#full-lod-whitelist)
+- [Full-LOD references](#full-lod-refs)
 - [Undeleting a master's record](#undeleting-a-masters-record)
 - [Deleting a master's record: the three shapes](#deleting-masters-record-three-shapes)
 - [A quest-owned package must never be in an NPC's PKID list](#quest-owned-package-must-never)
@@ -933,46 +933,67 @@ the ND quest stages) were absent from its output.
   From Local Map" there; the normal path passes the TES4 bit through. Not
   handled here.
 
-## Full-LOD whitelist
-<a id="full-lod-whitelist"></a>
+## Full-LOD references
+<a id="full-lod-refs"></a>
 
-**Code:** `FULL_LOD_REFS`, `is_full_lod_ref`, `full_lod_flags` in `tes5_import/overrides/ref_state.py`; `_nested_parent_out`, `_nested_ref` in `nested.py`; `persistent_cell` in `master_index.py`
+**Code:** `full_lod_bases`, `is_full_lod_ref`, `full_lod_flags`, `report_full_lod` in `tes5_import/overrides/ref_state.py`; `_full_lod`, `_nested_parent_out`, `_nested_ref` in `nested.py`; `persistent_cell` in `master_index.py`; `_place_full_lod`, `_refr_bytes` in `tes5_import/pipeline_records.py`; `is_effect_mesh` in `asset_convert/lod/effect_mesh.py`
 
-Frostcrag Reborn's tower extensions are quest-toggled: 188 refs under the
-enable parent FROSTAGTOWEREXTENSION2REF and 14 under Extension 1 appear when
-frostcragAddonsQuest reaches stage 9. Object LOD is baked once, so any state
-it bakes is wrong in the other: before the fix, LOD drew the restored-state
-railings, bridges and torches around the tower that was not there.
+Object LOD is baked once, so a quest-toggled piece of distant architecture is
+wrong in one of its states: baked, it stands at distance before the quest
+enables it; left out, it vanishes at distance after. Frostcrag Reborn's tower
+extensions show both halves (railings and bridges baked around a tower that
+was not there yet).
 
 TES5 REFR bit 16 is "Is Full LOD" (xEdit `wbDefinitionsTES5.pas`; on a LIGH it
 means Never Fades), and `wbLOD.pas` leaves a ref out of object LOD when it is
 persistent AND has 0x10000. A Full-LOD ref is drawn at full detail at any
-distance and follows its enable parent, so the towers pop in with the quest
-instead of being baked. Vanilla uses it on 894 cloud STATs and 11 fog/FX
-statics, every one persistent and 0 of 905 with Visible When Distant; there
-is no vanilla Full-LOD architecture, so using it for buildings is inference.
-The worst case is the towers popping in at cell load, no worse than today,
-and a rebuild reverts it.
+distance and follows its enable parent. Vanilla uses it on 894 cloud STATs and
+11 fog/FX statics, every one persistent and 0 of 905 with Visible When
+Distant; there is no vanilla Full-LOD architecture, so using it for buildings
+is inference. The worst case is the piece popping in at cell load, no worse
+than leaving it out, and a rebuild reverts it.
 
-The rule "exterior STAT + source VWD + non-player enable parent" also matched 6
-unwanted Oblivion/SI refs (Kvatch gate trees, SI smoke FX), so it is an
-explicit whitelist of FR's 12 refs, keyed by the low 24 bits of FR's OWN
-FormIDs (index byte 03 in its export, 04 in the output): the two extension
-towers 0401624E and 04016238, frostcragArc bridges 04047EFD and 04047F2E,
-SkingradBridgeArc01 0405104B/51/56/59, scallops 0401B3AC/AF, bridgeRef2
-04008CD0 and StatueMartyn 0401BD59 (10 under Extension 2, 2 under Extension 1).
-This is per-plugin data, against the repo's generic-fix rule, by decision of
-the Phase 2 pressure test; there is no per-plugin fix table to put it in.
+**The rule** (`is_full_lod_ref`), from the source data alone, no per-plugin
+list: a reference qualifies when it is
 
-They are NEW refs in master cells, so they go through `_attach_new_records`,
-not `_build_world_groups`: the parent becomes the world's persistent cell
-(`persistent_cell`: the CELL sitting directly in the WRLD's type-1 group;
-Tamriel's is 01023777, where 04008CD0 already sits), and the header gets
-`|= 0x10400`, `&= ~0x8000`. The chain is `ref_chain`, so they share the type-8
-group with the spire 02002B0E that the reference-state re-nest moves there.
-The flags are set after conversion, so no XLCN is added. A world with no
-master persistent cell leaves the ref where it was, without Full LOD, and
-counts `full-lod-unresolved`.
+- a REFR (never ACHR/ACRE),
+- exterior (it names a ParentWRLD),
+- of a STAT base (TREE and ACTI do not qualify; vanilla has no ACTI Full-LOD
+  ref), looked up in the plugin's own STATs, then its masters' export,
+- Visible When Distant (0x8000) in its source: the author showed it at
+  distance,
+- enable-parented (XESP) by anything but the player, compared on the FULL
+  FormID `0x00000014` (a plugin's own `xx000014` is not the player),
+- with a model outside an `effects` or `fx` folder, the same test object-LOD
+  selection uses (see
+  [Which references get object LOD](asset_convert_terrain.md#object-lod-selection)).
+
+A qualifying ref ships with `|= 0x10400` and `&= ~0x8000`, in the world's
+persistent cell (as vanilla's Full-LOD refs sit in Tamriel's 0xD74). The flags
+are set after conversion, so no XLCN is added.
+
+Both paths share the rule:
+
+- **Refs the plugin owns in its own cells** (`_build_world_groups` ->
+  `_place_full_lod`): the ref moves into the persistent CELL this plugin
+  defines for that world; only the build index moves, so the export record's
+  ParentCELL, which the navmesh pool buckets by, is untouched. No persistent
+  cell of this plugin's in that world: the ref ships unchanged and is WARNED.
+- **New refs in a master's cells** (`_attach_new_records`): the parent becomes
+  the master's persistent cell (`persistent_cell`: the CELL directly in the
+  WRLD's type-1 group, e.g. Tamriel's 01023777), sharing the type-8 group with
+  refs the reference-state re-nest moves there. No master persistent cell: the
+  ref stays where it was without Full LOD and counts `full-lod-unresolved`.
+
+Each path logs its count and every FormID (`report_full_lod`), so a change in
+what the rule selects shows in the import log.
+
+Measured on the source exports (09-29): Frostcrag Reborn 12 (its two
+extension towers, 2 frostcragArc and 4 SkingradBridgeArc01 bridges, 2
+scallops, bridgeRef2 and StatueMartyn; 10 under Extension 2 and 2 under
+Extension 1), Oblivion.esm 5 (4 Kvatch gate-site trees and stumps and one
+ExPassWallTower01; its SEFXSmokeBig smoke is an effect mesh and stays out),
+DLCFrostcrag.esp and Knights.esp 0.
 
 ## Undeleting a master's record
 <a id="undeleting-a-masters-record"></a>

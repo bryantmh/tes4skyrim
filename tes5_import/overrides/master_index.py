@@ -619,7 +619,7 @@ class ChainedMasterIndex:
     def persistent_cell(self, wrld_formid: int) -> int:
         """A worldspace's persistent CELL from the newest file holding it, in the child's space.
 
-        See: docs/commentary/tes5_import_override.md#full-lod-whitelist
+        See: docs/commentary/tes5_import_override.md#full-lod-refs
         """
         for idx, own in self._candidates(wrld_formid):
             fid = idx.persistent_cell(own)

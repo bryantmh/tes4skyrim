@@ -26,10 +26,10 @@ from .builder import (RECONVERT_KEYS, apply_changes, join_subrecords,
                       rebuild_sndr_override, soun_companion_changes,
                       split_subrecords)
 from .master_index import load_master_index
-from .ref_state import (PERSISTENT, REF_SIGS, full_lod_flags,
-                        is_full_lod_ref, merge_flags, placement_fault,
-                        record_flags, ref_chain, ref_path, set_flags,
-                        take_mask)
+from .ref_state import (PERSISTENT, REF_SIGS, full_lod_bases,
+                        full_lod_flags, is_full_lod_ref, merge_flags,
+                        placement_fault, record_flags, ref_chain, ref_path,
+                        report_full_lod, set_flags, take_mask)
 from ..actors.outfits import split_inventory
 from ..dialogue.converter import convert_INFO
 from ..record_types.actor_common import origin_gate, read_items
@@ -341,9 +341,10 @@ class OverrideContext:
             masters, num_tes4_masters, output_root,
             export_root=export_root(export_dir))
         self.shadowed = {}
-        self.num_tes4_masters = num_tes4_masters
         self.master_export = load_master_export(export_dir, self.shadowed)
         self.stats = Counter()
+        self.full_lod_refs = []
+        self.full_lod_unresolved = []
         self.unmapped_keys = Counter()
         # WRLD overrides this plugin emitted, {out FormID -> record bytes}.
         # A plugin that adds cells to a MASTER's worldspace needs the WRLD
@@ -550,6 +551,8 @@ class OverrideContext:
                      or k == 'undelete-no-live')
         line = ', '.join(f'{k}={self.stats[k]}' for k in _REF_COUNTERS)
         print(f"  {'WARNING: ' if faults else ''}Reference overrides: {line}")
+        report_full_lod('new refs in master cells', self.full_lod_refs,
+                        self.full_lod_unresolved)
 
     def build_soun_companion(self, rec: dict, writer) -> bytes:
         """Override of the master's SNDR when a SOUN's volume/falloff changed.
@@ -910,6 +913,9 @@ def build_nested_overrides(by_type: dict, sigs: tuple, ctx: OverrideContext,
     pending = []
     new_records = []
     dropped = 0
+    if 'REFR' in sigs:
+        ctx.full_lod_bases = full_lod_bases(
+            by_type.get('STAT', ()), getattr(ctx, 'master_export', None))
     for sig in sigs:
         for rec in by_type.get(sig, []):
             ov = ctx.build(rec, sig)
@@ -1114,10 +1120,10 @@ def _nested_ref(sig: str, rec: dict, ctx, parent_out: int,
                 parent_path: tuple) -> tuple:
     """(record bytes, group chain) of one NEW reference under a master's cell.
 
-    A whitelisted Full-LOD reference placed under its world's persistent cell
-    ships persistent with Is Full LOD and without Visible When Distant.
+    A Full-LOD reference placed under its world's persistent cell ships
+    persistent with Is Full LOD and without Visible When Distant.
 
-    See: docs/commentary/tes5_import_override.md#full-lod-whitelist
+    See: docs/commentary/tes5_import_override.md#full-lod-refs
     """
     conv = convert_ACHR if sig in ('ACHR', 'ACRE') else convert_REFR
     record_bytes = conv(rec)
@@ -1127,24 +1133,30 @@ def _nested_ref(sig: str, rec: dict, ctx, parent_out: int,
                                  full_lod_flags(record_flags(record_bytes)))
         persistent = PERSISTENT
         _note(ctx, 'full-lod')
+        _full_lod_list(ctx, 'full_lod_refs').append(rec.get('FormID') or '?')
     chain = ref_chain(parent_out, persistent)
     _note(ctx, placement_fault(parent_path + chain))
     return record_bytes, chain
 
 
 def _full_lod(sig: str, rec: dict, ctx) -> bool:
-    """True for a NEW REFR on this plugin's Full-LOD whitelist."""
-    return sig == 'REFR' and is_full_lod_ref(
-        os.path.basename(os.path.normpath(getattr(ctx, 'export_dir', '') or '')),
-        rec.get('FormID') or '', getattr(ctx, 'num_tes4_masters', None))
+    """True for a NEW reference the shared Full-LOD rule selects."""
+    return is_full_lod_ref(sig, rec, getattr(ctx, 'full_lod_bases', None))
+
+
+def _full_lod_list(ctx, name: str) -> list:
+    """`ctx`'s Full-LOD FormID list `name`, created on a context that lacks it."""
+    if not isinstance(getattr(ctx, name, None), list):
+        setattr(ctx, name, [])
+    return getattr(ctx, name)
 
 
 def _nested_parent_out(sig: str, rec: dict, parent_key: str, ctx) -> int:
     """The master parent a NEW record nests under; 0 when it names none.
 
-    A Full-LOD whitelisted reference nests under its world's persistent cell.
+    A Full-LOD reference nests under its world's persistent cell.
 
-    See: docs/commentary/tes5_import_override.md#full-lod-whitelist
+    See: docs/commentary/tes5_import_override.md#full-lod-refs
     """
     if not parent_key:
         return 0
@@ -1158,8 +1170,8 @@ def _nested_parent_out(sig: str, rec: dict, parent_key: str, ctx) -> int:
     cell = find(wrld) if callable(find) and wrld else 0
     if not cell:
         _note(ctx, 'full-lod-unresolved')
-        print(f"    WARNING: Full-LOD ref {rec.get('FormID')} has no master "
-              f"persistent cell; left in its own cell without Full LOD")
+        _full_lod_list(ctx, 'full_lod_unresolved').append(
+            rec.get('FormID') or '?')
     return cell or parent_out
 
 
