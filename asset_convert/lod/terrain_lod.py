@@ -18,6 +18,7 @@ Heights are in Skyrim units (1 unit ≈ 1.4 cm).  Cell size = 4096 units.
 
 import mmap
 import struct
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -1151,11 +1152,17 @@ def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
     _worker_default_wh = default_wh
 
 
+def _worker_stats() -> dict:
+    """This worker's counters since the last call, keyed by kind, then reset."""
+    from asset_convert.lod.terrain_lod_textures import texture_stats
+    return {'textures': texture_stats()}
+
+
 def _process_tile(args):
     """Worker task for one tile.  lands/dirs come from the process global.
 
     args: (tile_x, tile_y, level, worldspace_edid)
-    Returns (tag, ok, error_msg).
+    Returns (tag, ok, error_msg, stats delta for `_collect`).
     """
     tile_x, tile_y, level, worldspace_edid = args
     tag = f'{worldspace_edid}.{level}.{tile_x}.{tile_y}'
@@ -1172,7 +1179,7 @@ def _process_tile(args):
                                       water_quads=water_quads,
                                       solid_mask=solid)
         if nif_bytes is None:
-            return tag, True, None
+            return tag, True, None, _worker_stats()
         (_worker_mesh_dir / f'{tag}.btr').write_bytes(nif_bytes)
 
         tex_size = TEX_SIZE_BY_LEVEL.get(level, TEX_SIZE)
@@ -1190,10 +1197,11 @@ def _process_tile(args):
         normal_rgb = _heightmap_normal_rgb(heights, normal_size)
         write_normal_dds(normal_rgb, _worker_tex_dir / f'{tag}_n.dds')
 
-        return tag, True, None
+        return tag, True, None, _worker_stats()
     except Exception as e:
         import traceback
-        return tag, False, f"{e}\n{traceback.format_exc()}"
+        return (tag, False, f"{e}\n{traceback.format_exc()}",
+                _worker_stats())
 
 
 # ---------------------------------------------------------------------------
@@ -1234,48 +1242,21 @@ def _queue_tiles(lands, bounds, worldspace_edid, only_cells):
     return work
 
 
-def generate_terrain_lod(esm_path: Path, output_dir: Path,
-                         worldspace_edid: str = 'TES4Tamriel',
-                         overlay_paths=None,
-                         only_cells=None,
-                         extra_texture_roots=None) -> bool:
-    """Generate terrain LOD (.btr + .dds) for all cells in the worldspace.
-
-    Tile generation is parallelised across (cpu_count - 2) processes.
-
-    Args:
-        esm_path:        Path to the converted ESM.
-        output_dir:      Per-plugin output directory (output/Oblivion.esm/).
-        worldspace_edid: EditorID of the worldspace.
-        overlay_paths:   Plugins applied on top of `esm_path` in load order.
-                         An override plugin's own LAND records must be here or
-                         its regraded terrain never reaches LOD.
-        extra_texture_roots: Additional textures/ roots searched when a
-                         landscape texture is not in this plugin's own output.
-                         Every converted tree belongs here, not only the
-                         masters': a masterless patch ships the textures TR's
-                         terrain names, and a miss composites flat grey.
-                         See: docs/commentary/asset_convert_terrain.md#terrain-lod-texture-lookup
-        only_cells:      Restrict output to tiles COVERING these (x, y) cells.
-                         An override plugin regenerates just the tiles its
-                         edits touch; every other tile the master already
-                         built is still correct, so re-baking (and shipping) a
-                         whole worldspace of identical tiles is waste. The
-                         heightmap is still parsed worldspace-wide, because a
-                         tile at the edit's edge composites neighbouring cells.
-
-    Returns True on success.
-    """
+def _deps_ok() -> bool:
+    """True when Pillow and pyffi are importable; says which is missing."""
     try:
         __import__('PIL')
     except ImportError:
         print("  ERROR: Pillow not installed — pip install Pillow")
         return False
-
     if not PYFFI_AVAILABLE:
         print("  ERROR: pyffi not available")
         return False
+    return True
 
+
+def _parse_world(esm_path: Path, worldspace_edid: str, overlay_paths):
+    """{'lands', 'cell_water', 'default_wh'} for one worldspace, or None with no LAND."""
     srcs = ', '.join([esm_path.name] + [Path(p).name
                                         for p in (overlay_paths or [])])
     print(f"\n[TerrainLOD] Parsing LAND records from {srcs}...")
@@ -1283,26 +1264,38 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
         esm_path, worldspace_edid, overlay_paths)
     if not lands:
         print("  No LAND records found.")
-        return False
+        return None
     n_water = sum(1 for hw, _ in cell_water.values() if hw)
     print(f"  Found {len(lands)} LAND records; {n_water} water cells "
           f"(default water height {default_wh}).")
+    return {'lands': lands, 'cell_water': cell_water,
+            'default_wh': default_wh}
 
-    # Determine cell bounds
+
+def _cell_bounds(lands) -> tuple:
+    """(min_x, min_y, max_x, max_y) over the cells of `lands`, printed."""
     all_x = [k[0] for k in lands]
     all_y = [k[1] for k in lands]
-    min_x, max_x = min(all_x), max(all_x)
-    min_y, max_y = min(all_y), max(all_y)
-    print(f"  Cell range: X=[{min_x},{max_x}] Y=[{min_y},{max_y}]")
+    print(f"  Cell range: X=[{min(all_x)},{max(all_x)}] "
+          f"Y=[{min(all_y)},{max(all_y)}]")
+    return min(all_x), min(all_y), max(all_x), max(all_y)
 
+
+def _tile_dirs(output_dir: Path, worldspace_edid: str) -> tuple:
+    """(mesh dir, texture dir) for this worldspace's tiles, created."""
     mesh_dir = output_dir / 'meshes' / 'terrain' / worldspace_edid
-    tex_dir  = output_dir / 'textures' / 'terrain' / worldspace_edid
+    tex_dir = output_dir / 'textures' / 'terrain' / worldspace_edid
     mesh_dir.mkdir(parents=True, exist_ok=True)
     tex_dir.mkdir(parents=True, exist_ok=True)
+    return mesh_dir, tex_dir
 
-    # Resolve LTEX FormID -> landscape diffuse/normal .dds for the compositor.
-    # Overlays are merged on top so an LTEX the PLUGIN adds or re-points wins
-    # over the master's, exactly like the LAND records above.
+
+def _texture_setup(esm_path, overlay_paths, output_dir, extra_texture_roots):
+    """(LTEX -> texture map, ordered textures/ roots) for the compositor.
+
+    Overlays merge on top so an LTEX the plugin adds or re-points wins.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-texture-lookup
+    """
     from asset_convert.lod.terrain_lod_textures import build_ltex_texture_map
     ltex_map = build_ltex_texture_map(
         [esm_path] + [Path(ov) for ov in (overlay_paths or [])])
@@ -1310,87 +1303,126 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     tex_roots += [Path(r) for r in (extra_texture_roots or [])]
     print(f"  Resolved {len(ltex_map)} LTEX landscape textures "
           f"across {len(tex_roots)} texture root(s).")
+    return ltex_map, tex_roots
 
+
+def _share_lands(lands, n_workers: int) -> tuple:
+    """(worker `lands` argument, SharedMemory or None).
+
+    With more than one worker the cells are written ONCE, straight into a
+    shared block sized in advance, instead of pickled into every worker.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-shared-lands
+    """
+    if n_workers <= 1:
+        return lands, None
+    from multiprocessing import shared_memory
+    size, plan = lands_layout(lands)
+    shm = shared_memory.SharedMemory(create=True, size=max(size, 1))
+    index = write_lands(lands, plan, memoryview(shm.buf)[:size])
+    print(f"  Shared {size/1e6:.0f} MB of LAND data across "
+          f"{n_workers} worker(s) (one copy, not {n_workers}).")
+    return (shm.name, size, index), shm
+
+
+def _release(shm) -> None:
+    """Unmap and free a shared block; both are needed or the segment leaks."""
+    if shm is None:
+        return
+    shm.close()
+    try:
+        shm.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _collect(results, work) -> tuple:
+    """(per-level ok counts, failures, merged worker stats) from tile results."""
+    per_level_ok, failed, stats = {}, 0, {}
+    for (tag, ok, err, delta), item in zip(results, work):
+        for kind, counts in delta.items():
+            stats.setdefault(kind, Counter()).update(counts)
+        if ok:
+            per_level_ok[item[2]] = per_level_ok.get(item[2], 0) + 1
+        else:
+            failed += 1
+            print(f"  WARNING: {tag}: {err}")
+    return per_level_ok, failed, stats
+
+
+def _bake_tiles(world: dict, work, init: tuple) -> tuple:
+    """Bake `work` in a pool; (per-level ok counts, failures, merged stats).
+
+    Takes `world['lands']` out of the dict so no parent reference outlives
+    the copy published to the workers. chunksize=1 because tiles differ ~20x
+    in cost and arrive sorted most expensive first.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-shared-lands
+    """
     n_workers = worker_count()
     print(f"  Using {n_workers} worker process(es).")
+    lands = world.pop('lands')
+    shm = None
+    try:
+        lands_arg, shm = _share_lands(lands, n_workers)
+        del lands
+        with ProcessPoolExecutor(max_workers=n_workers,
+                                 initializer=_worker_init,
+                                 initargs=(lands_arg,) + init) as pool:
+            return _collect(pool.map(_process_tile, work, chunksize=1), work)
+    finally:
+        _release(shm)
 
-    work = _queue_tiles(lands, (min_x, min_y, max_x, max_y),
-                        worldspace_edid, only_cells)
 
+def _report_bake(per_level_ok: dict, failed: int, stats: dict) -> bool:
+    """Print the bake summary; False when no landscape texture was found.
+
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-texture-counts
+    """
+    from asset_convert.lod.terrain_lod_textures import texture_report
+    for level in LOD_LEVELS:
+        print(f"  LOD {level}: {per_level_ok.get(level, 0)} tiles generated")
+    if failed:
+        print(f"  {failed} tiles failed")
+    lines, ok = texture_report(stats.get('textures', Counter()))
+    print('\n'.join(lines))
+    if not ok:
+        print("  ERROR: not one landscape texture was found on disk; every "
+              "tile is flat grey")
+        return False
+    print(f"[TerrainLOD] Done — {sum(per_level_ok.values())} tiles generated.")
+    return True
+
+
+def generate_terrain_lod(esm_path: Path, output_dir: Path,
+                         worldspace_edid: str = 'TES4Tamriel',
+                         overlay_paths=None,
+                         only_cells=None,
+                         extra_texture_roots=None) -> bool:
+    """Generate terrain LOD (.btr + .dds) for every tile of one worldspace.
+
+    `overlay_paths` apply on top of `esm_path` in load order; `only_cells`
+    restricts output to tiles covering those cells (heights are still parsed
+    worldspace-wide); `extra_texture_roots` are further textures/ roots for
+    the compositor. Returns True on success.
+    See: docs/commentary/asset_convert_terrain.md#generate-terrain-lod-arguments
+    """
+    if not _deps_ok():
+        return False
+    world = _parse_world(esm_path, worldspace_edid, overlay_paths)
+    if world is None:
+        return False
+    bounds = _cell_bounds(world['lands'])
+    mesh_dir, tex_dir = _tile_dirs(output_dir, worldspace_edid)
+    ltex_map, tex_roots = _texture_setup(esm_path, overlay_paths, output_dir,
+                                         extra_texture_roots)
+    work = _queue_tiles(world['lands'], bounds, worldspace_edid, only_cells)
     if not work:
         print("  No tiles to generate.")
         return False
-
-    # Descending level = descending cost.
     work.sort(key=lambda w: -w[2])
-
-    # Every scan of this plugin is finished; the cached file buffer is hundreds
-    # of MB and must not be resident while the shared block is filled and the
-    # workers spawn. The next worldspace simply re-reads (one read, then hits).
     _drop_plugin_bytes()
-
-    # Publish `lands` ONCE into shared memory instead of pickling a private
-    # copy into every worker. See the SharedLands comment: the old
-    # `initargs=(lands, ...)` cost ~0.36 GB per worker on Tamriel, so a full
-    # pool held ~10 GB of identical data and the machine swapped.
-    per_level_ok = {}
-    warn_count = 0
-    _shm = None
-    try:
-        if n_workers > 1:
-            from multiprocessing import shared_memory
-            # Size the block first, then fill it DIRECTLY. Packing into a
-            # bytearray and copying would hold a second full copy in the parent
-            # (1.2 GB on Tamriel-with-overlays) exactly while 29 workers spawn.
-            _size, _plan = lands_layout(lands)
-            _shm = shared_memory.SharedMemory(create=True, size=max(_size, 1))
-            _index = write_lands(lands, _plan, memoryview(_shm.buf)[:_size])
-            del _plan
-            print(f"  Shared {_size/1e6:.0f} MB of LAND data across "
-                  f"{n_workers} worker(s) (one copy, not {n_workers}).")
-            lands_arg = (_shm.name, _size, _index)
-            # The parent's own copy is dead once it is in shared memory, and
-            # holding it doubles the footprint for the whole bake. `lands` is
-            # not read again below — the workers go through the shared block.
-            lands = None
-        else:
-            lands_arg = lands
-
-        with ProcessPoolExecutor(
-            max_workers=n_workers,
-            initializer=_worker_init,
-            initargs=(lands_arg, str(mesh_dir), str(tex_dir), ltex_map,
-                      [str(r) for r in tex_roots], cell_water, default_wh),
-        ) as pool:
-            # chunksize=1: tiles differ in cost by ~20x, so batching would hand
-            # one worker a run of expensive tiles and undo the ordering above.
-            for (tag, ok, err), item in zip(
-                    pool.map(_process_tile, work, chunksize=1), work):
-                if ok:
-                    per_level_ok[item[2]] = per_level_ok.get(item[2], 0) + 1
-                else:
-                    warn_count += 1
-                    print(f"  WARNING: {tag}: {err}")
-    finally:
-        # Workers are gone by here (the `with` joined them), so the block can be
-        # released. Both calls are needed: close() unmaps this process's view,
-        # unlink() frees the OS-level segment — without it the shared memory
-        # would leak for the lifetime of the run, once per worldspace.
-        if _shm is not None:
-            _shm.close()
-            try:
-                _shm.unlink()
-            except FileNotFoundError:
-                pass
-
-    total_tiles = sum(per_level_ok.values())
-    for level in LOD_LEVELS:
-        print(f"  LOD {level}: {per_level_ok.get(level, 0)} tiles generated")
-    if warn_count:
-        print(f"  {warn_count} tiles failed")
-
-    print(f"[TerrainLOD] Done — {total_tiles} tiles generated.")
-    return True
+    init = (str(mesh_dir), str(tex_dir), ltex_map, [str(r) for r in tex_roots],
+            world['cell_water'], world['default_wh'])
+    return _report_bake(*_bake_tiles(world, work, init))
 
 
 # ---------------------------------------------------------------------------

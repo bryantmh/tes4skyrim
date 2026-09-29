@@ -29,11 +29,12 @@ The result is downsampled per LOD level into the tile diffuse atlas.
 
 from asset_convert.game_paths import current_namespace
 import struct
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
-from asset_convert.game_paths import win_join
+from asset_convert.case_paths import resolve, split_rel
 from output_layout import plugin_out_root
 from tes5_import.base.tes5_reader import masters, records
 
@@ -237,48 +238,102 @@ def decode_land_layers(body: bytes, remap=None) -> dict:
 
 _TEX_CACHE = {}
 
+#: (lowercase texture path, outcome) -> lookups in this process, cache hits included.
+_TEX_USES = Counter()
+
+#: Case-paths site name for landscape texture lookups.
+_TEX_SITE = 'terrain_lod_texture'
+
+
+def _texture_rel(rel_path: str) -> str:
+    """`rel_path` relative to a textures/ root, backslash form."""
+    rp = (rel_path or '').replace('/', '\\').lstrip('\\')
+    if rp.lower().startswith('textures\\'):
+        rp = rp[len('textures\\'):]
+    return rp
+
+
+def _find_texture(rp: str, roots) -> tuple:
+    """(path, 'exact'|'resolved') for `rp`, roots searched in order; (None, 'missing')."""
+    hit = resolve(roots, rp, site=_TEX_SITE)
+    if hit is None:
+        return None, 'missing'
+    parts = split_rel(rp)
+    exact = any(hit == Path(r).joinpath(*parts) for r in roots)
+    return hit, 'exact' if exact else 'resolved'
+
+
+def _decode_rgb(fpath, size: int):
+    """`fpath` as a (size,size,3) uint8 array, or None when it cannot be decoded."""
+    try:
+        from PIL import Image
+        im = Image.open(fpath).convert('RGB').resize((size, size), Image.LANCZOS)
+        return np.asarray(im, dtype=np.uint8)
+    except Exception:
+        return None
+
+
+def _load_uncached(rel_path: str, roots, size: int) -> tuple:
+    """(RGB tile, outcome, lowercase path); a miss or bad file is neutral grey."""
+    rp = _texture_rel(rel_path)
+    if not rp:
+        return np.full((size, size, 3), 128, dtype=np.uint8), None, ''
+    fpath, outcome = _find_texture(rp, roots)
+    img = _decode_rgb(fpath, size) if fpath is not None else None
+    if img is None:
+        outcome = 'decode_error' if fpath is not None else outcome
+        img = np.full((size, size, 3), 128, dtype=np.uint8)
+    return img, outcome, rp.lower()
+
 
 def load_texture_rgb(rel_path: str, tex_root, size: int = 64):
     """Load a landscape .dds as an (size,size,3) uint8 RGB tile, cached.
 
-    `tex_root` is a directory OR a sequence of directories searched in order.
-    An override plugin converts none of the master's landscape textures into
-    its own output, so its roots are (own, master...) — searching only its own
-    made every lookup miss, and the neutral-grey result below painted whole
-    tiles flat instead of the real landscape.
-
-    Returns a neutral grey tile if the texture can't be found/decoded.
+    `tex_root` is a directory OR a sequence searched in order (an override's
+    own output, then its masters'). Lookup is case-blind, exact first, and
+    every call -- cache hits included -- is counted for `texture_stats`. A
+    texture that cannot be found or decoded is neutral grey, never silently:
+    the count says so.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-texture-counts
     """
     roots = ([tex_root] if isinstance(tex_root, (str, Path))
              else list(tex_root))
     key = (rel_path.lower(), size, tuple(str(r) for r in roots))
-    if key in _TEX_CACHE:
-        return _TEX_CACHE[key]
-
-    img = None
-    if rel_path:
-        rp = rel_path.replace('/', '\\').lstrip('\\')
-        if rp.lower().startswith('textures\\'):
-            rp = rp[len('textures\\'):]
-        for root in roots:
-            # rp is backslash-form (it comes from the TXST record's TX00/TX01),
-            # so it needs an explicit split -- see asset_convert/game_paths.py.
-            fpath = win_join(root, rp)
-            if not fpath.exists():
-                continue
-            try:
-                from PIL import Image
-                im = Image.open(fpath).convert('RGB').resize((size, size), Image.LANCZOS)
-                img = np.asarray(im, dtype=np.uint8)
-                break
-            except Exception:
-                img = None
-
-    if img is None:
-        img = np.full((size, size, 3), 128, dtype=np.uint8)
-
-    _TEX_CACHE[key] = img
+    hit = _TEX_CACHE.get(key)
+    if hit is None:
+        hit = _TEX_CACHE[key] = _load_uncached(rel_path, roots, size)
+    img, outcome, name = hit
+    if name:
+        _TEX_USES[(name, outcome)] += 1
     return img
+
+
+def texture_stats() -> Counter:
+    """This process's {(path, outcome): uses}, then reset (a worker returns these)."""
+    out = Counter(_TEX_USES)
+    _TEX_USES.clear()
+    return out
+
+
+def texture_report(stats) -> tuple:
+    """(log lines, ok) for merged `texture_stats`; ok is False when nothing was found.
+
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-texture-counts
+    """
+    paths = {o: sorted({p for (p, oc) in stats if oc == o})
+             for o in ('exact', 'resolved', 'missing', 'decode_error')}
+    uses = sum(stats.values())
+    wanted = sum(len(v) for v in paths.values())
+    lines = ['  Terrain-LOD textures: %d requested (%d lookups) -- %d exact, '
+             '%d case-resolved, %d missing, %d unreadable'
+             % (wanted, uses, len(paths['exact']), len(paths['resolved']),
+                len(paths['missing']), len(paths['decode_error']))]
+    for kind in ('missing', 'decode_error'):
+        lines += ['    %s: %s (%d lookups)' % (kind, p, sum(
+            n for (q, oc), n in stats.items() if q == p and oc == kind))
+            for p in paths[kind]]
+    found = len(paths['exact']) + len(paths['resolved'])
+    return lines, not (wanted and not found)
 
 
 # ---------------------------------------------------------------------------

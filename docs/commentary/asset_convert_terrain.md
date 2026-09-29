@@ -12,6 +12,7 @@
 - [Prescreening the LODGen input](#prescreening-the-lodgen-input)
 - [`write_lodgen_input`: master modes and `only_cells`](#write-lodgen-input-master-modes)
 - [Terrain LOD invents ground over cells that own no LAND](#lod-invents-terrain-over-cells-with-no-land)
+- [Terrain LOD: arguments, shared cells, texture counts](#generate-terrain-lod-arguments)
 - [GENERATED `_far.nif` belong to the LOD mod](#generated-far-nif-belong-to-the-lod-mod)
   - [Why one LOD folder, not one per plugin](#one-lod-folder-not-one-per-plugin)
 
@@ -1719,3 +1720,62 @@ vertically disjointed terrain seen in-game. `WrldMorrowind.4.28.-64.btr` is
 `fill_missing` is right for a hole INSIDE the landmass, where a Z=0 crater
 between real cells would be worse. It is wrong past the coastline, where absent
 LAND means "no ground here". The two cases are not distinguished today.
+
+## <a id="generate-terrain-lod-arguments"></a>Terrain LOD: arguments, shared cells, texture counts
+
+**Code:** `generate_terrain_lod` and its phase helpers in
+`asset_convert/lod/terrain_lod.py`; `load_texture_rgb`, `texture_stats`,
+`texture_report` in `asset_convert/lod/terrain_lod_textures.py`.
+
+`generate_terrain_lod(esm_path, output_dir, worldspace_edid, overlay_paths,
+only_cells, extra_texture_roots)`:
+
+- `overlay_paths` are plugins applied on top of `esm_path` in load order. An
+  override plugin's own LAND records must be here or its regraded terrain never
+  reaches LOD.
+- `only_cells` restricts output to tiles COVERING those cells. An override
+  regenerates just the tiles its edits touch; the heightmap is still parsed
+  worldspace-wide, because a tile at the edit's edge composites neighbouring
+  cells.
+- `extra_texture_roots` are further `textures/` roots searched when a landscape
+  texture is not in the plugin's own output. Every converted tree belongs here,
+  not only the masters' (see [the texture lookup note](#terrain-lod-texture-lookup)).
+
+The body runs as named phases: parse, bounds, tile dirs, texture setup, queue,
+bake, report.
+
+### <a id="terrain-lod-shared-lands"></a>The cells are published once, in shared memory
+
+`_share_lands` sizes the block with `lands_layout` and fills it directly with
+`write_lands`; building a bytearray first held a second full copy in the parent
+(1.2 GB on Tamriel-with-overlays) at the moment the workers spawn, and the old
+`initargs=(lands, ...)` pickled ~0.36 GB into every worker. `_bake_tiles` pops
+`lands` out of the parse result so no parent reference outlives the published
+copy, and `_release` both closes and unlinks the block (without unlink the
+segment leaks once per worldspace).
+
+### <a id="terrain-lod-texture-counts"></a>Every texture lookup is counted, and a bake that finds none fails
+
+Records name landscape textures in the author's case (`tes4\Landscape\...`);
+converted trees are lowercase. The old loader joined the name verbatim and
+tested `exists()`, which on Linux missed 166 of 166 real textures and returned
+its neutral-grey fallback, so the whole terrain LOD was grey composited under
+VCLR -- the brown distant land. It now calls `case_paths.resolve` (each root
+exact first, then case-blind, before the next root).
+
+Grey stays the fallback VALUE, but never silently: each lookup, cache hits
+included, is counted per worker as `(path, outcome)` with outcome `exact`,
+`resolved`, `missing` or `decode_error`; `_process_tile` returns the delta and
+the parent prints
+
+    Terrain-LOD textures: N requested (U lookups) -- E exact, R case-resolved, M missing, D unreadable
+
+plus every missing/unreadable path. When textures were requested and not one
+was found (`exact + resolved == 0`), `generate_terrain_lod` returns False: that
+run's tiles are all grey and must not ship as a success. A partial miss is
+reported, not fatal. Measured over Oblivion.esm's 166 distinct LTEX diffuses:
+0 exact, 163 case-resolved, 3 missing (`default.dds` exact as the control). The
+3 exist at no named path in any tree: `terrainanvilgrass01.dds` and
+`oblivion\terrainhdoblivionevilsymbol01.dds` nowhere (only the latter's `_n`),
+`chrock01.dds` only under `tes4\rocks\`, not `landscape\`.
+
