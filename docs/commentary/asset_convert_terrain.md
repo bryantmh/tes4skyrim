@@ -2004,8 +2004,11 @@ mountains -- and for quadrants no layer paints.
   `meshes\Landscape\LOD\60.*.NIF` and Frostcrag Reborn `meshes\landscape\LOD\`,
   which an exact-case listing never sees. A plugin's worldspace FormIDs come
   from its export's (and masters') WRLD.txt, matched on the source or converted
-  EditorID. Textures: the last plugin wins a tile. Meshes: every plugin's copy
-  is kept, in order.
+  EditorID. The converted name comes from THAT plugin's rename chain (its
+  own name plus its `_HEADER.txt` masters, `export_renames`), not from the
+  chain the process last set: a LOD run only renames Tamriel, so Arktwend's
+  WrldMorrowind -> WrldArktwend was missed. Textures: the last plugin wins a
+  tile. Meshes: every plugin's copy is kept, in order.
 - **Rasterise in WORLD space.** Vertices go through every node transform, then
   the tile origin is subtracted and triangles are clipped to the tile, one
   sample per LAND vertex (128 units, 1025^2 per tile), NaN where uncovered.

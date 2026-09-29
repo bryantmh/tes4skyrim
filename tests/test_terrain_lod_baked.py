@@ -141,3 +141,30 @@ def test_cell_crop_reads_the_south_up_tile_in_both_axes():
         crop = tb.cell_crop(tile, cx, cy, 16)
         assert crop.shape == (16, 16, 3)
         assert (crop == (cx * 8, cy * 8, 99)).all(), (cx, cy)
+
+
+def test_a_renamed_worldspace_is_found_under_its_plugin_chain_s_name(tmp_path):
+    """Arktwend's WrldMorrowind converts to WrldArktwend: by plugin name or by header master.
+
+    The lookup must use the export's own chain, not the process's active one
+    (which, in a LOD run, only renames Tamriel).
+    """
+    own = tmp_path / 'Arktwend_English.esm'
+    own.mkdir()
+    (own / 'WRLD.txt').write_text('FormID=0000003C\nEditorID=WrldMorrowind\n',
+                                  encoding='utf-8')
+    patch = tmp_path / 'SomePatch.esp'
+    patch.mkdir()
+    (patch / 'WRLD.txt').write_text('FormID=0000003C\nEditorID=WrldMorrowind\n',
+                                    encoding='utf-8')
+    (patch / '_HEADER.txt').write_text('Master[0]=Arktwend_English.esm\n',
+                                       encoding='utf-8')
+    other = tmp_path / 'Morrowind.esm'
+    other.mkdir()
+    (other / 'WRLD.txt').write_text('FormID=0000003C\nEditorID=WrldMorrowind\n',
+                                    encoding='utf-8')
+
+    assert tb.worldspace_fids(own, 'WrldArktwend') == {0x3C}
+    assert tb.worldspace_fids(patch, 'WrldArktwend') == {0x3C}
+    assert tb.worldspace_fids(own, 'WrldMorrowind') == {0x3C}, 'source name too'
+    assert tb.worldspace_fids(other, 'WrldArktwend') == set(), 'not renamed there'
