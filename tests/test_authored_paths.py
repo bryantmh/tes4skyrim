@@ -87,6 +87,20 @@ def test_anchor_is_a_parameter():
 
 
 # ---------------------------------------------------------------------------
+# A data segment roots the cut
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('raw, want', [
+    (r'd:\oblivion\data\textures\armor\textures\x.dds', r'armor\textures\x.dds'),
+    (r'data\textures\mod\textures\x.dds', r'mod\textures\x.dds'),
+    (r'c:\textures\old\data\textures\new\x.dds', r'new\x.dds'),
+])
+def test_data_root_cut_uses_the_first_anchor_after_it(raw, want):
+    """A `data` segment is the data root: the cut is at the first anchor past it."""
+    assert authored_rel(raw)[0] == want
+
+
+# ---------------------------------------------------------------------------
 # The record side and the sibling readers share the normaliser
 # ---------------------------------------------------------------------------
 

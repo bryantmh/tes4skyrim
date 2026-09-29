@@ -364,6 +364,9 @@ The rule, in order:
 2. The path is cut after its **last** anchor folder (`textures`, or the caller's
    `meshes`/`sound`) **only** when the prefix is authoring-shaped: a drive, a
    rooted/UNC path, a `data` segment or a `..` segment.
+   - A `data` segment marks the data root, so the cut is at the **first**
+     anchor after it: `d:\oblivion\data\textures\armor\textures\x.dds` is
+     `armor\textures\x.dds`, not `x.dds`.
    - A relative path is never cut. `textures\mod\textures\x.dds` keeps its inner
      folder and loses only the leading `textures\`, which is the old behavior.
      The census found no string with two anchor segments, so choosing the

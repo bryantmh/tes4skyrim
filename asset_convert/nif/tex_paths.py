@@ -49,10 +49,11 @@ def authored_rel(path: str, anchor: str = 'textures') -> tuple:
     """(path relative to the `anchor` folder, repairs made) for an AUTHORED path.
 
     Separators become `\\`; a drive letter and leading separators go. The path
-    is cut after its LAST `anchor` folder only when that prefix is absolute
-    (drive, rooted, UNC) or holds a `data` or `..` segment; otherwise one
-    leading `data\\` then `anchor\\` is dropped. `name..ext` becomes
-    `name.ext`. A clean path comes back unchanged with no repairs.
+    is cut after the first `anchor` folder past a `data` segment, else after
+    its LAST `anchor` folder when that prefix is absolute (drive, rooted, UNC)
+    or holds a `..` segment; otherwise one leading `data\\` then `anchor\\` is
+    dropped. `name..ext` becomes `name.ext`. A clean path comes back
+    unchanged with no repairs.
     See: docs/commentary/asset_convert_shader.md#authored-rel
     """
     s = (path or '').replace('/', '\\')
@@ -102,7 +103,10 @@ def _drop_prefix(segs, anchor, absolute):
     hits = [i for i, x in enumerate(low[:-1]) if x == anchor]
     if hits:
         prefix = low[:hits[-1]]
-        if absolute or 'data' in prefix or '..' in prefix:
+        if 'data' in prefix:
+            root = low.index('data')
+            return segs[min(i for i in hits if i > root) + 1:], True
+        if absolute or '..' in prefix:
             return segs[hits[-1] + 1:], True
     data = low[:1] == ['data']
     if data:
