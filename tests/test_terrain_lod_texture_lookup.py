@@ -2,7 +2,7 @@
 
 Records spell textures in the author's case (`tes4\\Landscape\\...`) while the
 converted tree is lowercase, so a verbatim join missed every real texture on
-Linux and the compositor painted neutral grey. The loader now resolves
+a case-sensitive filesystem and the compositor painted neutral grey. The loader now resolves
 case-blind (exact first), and each lookup -- cache hits included -- is counted
 so a run that found nothing fails instead of shipping grey tiles.
 

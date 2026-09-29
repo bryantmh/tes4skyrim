@@ -19,10 +19,11 @@
 TES4 records and NIFs keep their author's mixed case (`Textures\Landscape\
 Dirt02.DDS`, `MagicEffects\Fireball.NIF`), BSArch extraction writes lowercase,
 and a mod's loose files keep whatever case it shipped. Windows resolves all of
-them; a case-sensitive filesystem (the Linux/Wine build) resolves none, and
-each site that joined a record path onto a root silently fell back: grey
-terrain LOD, generic spell art, missing FR door axes and sounds. The LOD probe
-(`port-test/reports-20260928/probe_lod/`) counted about 20 live sites.
+them; a case-sensitive filesystem (Linux, or a case-sensitive folder on
+macOS or Windows) resolves none, and each site that joined a record path onto
+a root silently fell back: grey terrain LOD, generic spell art, missing
+Frostcrag Reborn door axes and sounds. A sweep of the converter counted about
+20 such sites.
 
 `resolve(roots, rel, site)` is the one lookup every site uses:
 
@@ -81,7 +82,8 @@ through `write_path` is dropped from the cache; an overwrite leaves it cached.
 
 Mirror copiers (`nif_batch` destination, `asset_pipeline._copy_tree`,
 `mod_ingest._place_payload`) keep the SOURCE case on purpose: lowercasing them
-against today's output would create about 930 FR twins. Tripwire: before
+against an existing Frostcrag Reborn output would create about 930 case
+twins. Tripwire: before
 lowercasing mirror writers, require a clean output tree and a census of 0.
 
 ## The case census

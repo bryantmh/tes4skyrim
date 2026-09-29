@@ -1811,9 +1811,9 @@ segment leaks once per worldspace).
 
 Records name landscape textures in the author's case (`tes4\Landscape\...`);
 converted trees are lowercase. The old loader joined the name verbatim and
-tested `exists()`, which on Linux missed 166 of 166 real textures and returned
-its neutral-grey fallback, so the whole terrain LOD was grey composited under
-VCLR -- the brown distant land. It now calls `case_paths.resolve` (each root
+tested `exists()`, which on a case-sensitive filesystem missed 166 of 166
+real textures and returned its neutral-grey fallback, so the whole terrain LOD
+was grey composited under VCLR -- the brown distant land. It now calls `case_paths.resolve` (each root
 exact first, then case-blind, before the next root).
 
 Grey stays the fallback VALUE, but never silently: each lookup, cache hits

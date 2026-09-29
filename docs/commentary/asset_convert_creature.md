@@ -1045,8 +1045,8 @@ are symmetric there and carry the real Z range. Only when the mesh cannot be
 read does the record fall back to the `(-24,-24,-4)→(24,24,16)` box. The
 project's `body_dir` is a record path (`Actors\tes4\oblivion\ghost`), so the
 mesh is found through `case_paths.resolve` across the output plugin folders;
-joined with `os.path.join` it matched nothing on Linux and both piles
-(ghost, wraith) shipped the fallback box.
+joined with `os.path.join` it matched nothing on a case-sensitive filesystem
+and both piles (ghost, wraith) shipped the fallback box.
 
 The other two required fields follow `DefaultAshPileGhost` (0x00101048)
 verbatim: `PNAM` is the marker color, which xEdit marks `SetRequired`, and
