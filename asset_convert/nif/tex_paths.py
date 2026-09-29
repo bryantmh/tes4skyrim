@@ -3,6 +3,8 @@
 Both are pure string/slot readers with no NIF state, so they sit below every
 module that needs them.
 """
+import re
+
 from asset_convert.game_paths import current_namespace
 
 
@@ -32,21 +34,69 @@ def bs_pp_texture_slots(prop):
 IMAGE_EXTS = ('tga', 'bmp')
 
 
-def rewrite_tex_path(raw_bytes):
-    """Prepend the game's namespace to an AUTHORED texture path, always.
+#: A leading drive letter: `f:\...`, `F:/...` or drive-relative `f:...`.
+_DRIVE = re.compile(r'^[A-Za-z]:')
 
-    Separators are normalized FIRST; a leading 'data\\' is dropped and a
-    .tga/.bmp name becomes .dds. A 'lowres\\' segment is KEPT; see
-    `full_res_twin` for when it falls back.
-    See: docs/commentary/asset_convert_shader.md#rewrite-tex-path
-    See: docs/commentary/asset_convert_texture.md#per-game-asset-namespace
+#: A doubled dot before the extension, `name..dds`.
+_DOUBLE_DOT_EXT = re.compile(r'\.\.([A-Za-z0-9]+)$')
+
+
+def authored_rel(path: str, anchor: str = 'textures') -> tuple:
+    """(path relative to the `anchor` folder, repairs made) for an AUTHORED path.
+
+    Separators become `\\`; a drive letter and leading separators go. The path
+    is cut after its LAST `anchor` folder only when that prefix is absolute
+    (drive, rooted, UNC) or holds a `data` or `..` segment; otherwise one
+    leading `data\\` then `anchor\\` is dropped. `name..ext` becomes
+    `name.ext`. A clean path comes back unchanged with no repairs.
+    See: docs/commentary/asset_convert_shader.md#authored-rel
     """
-    path = raw_bytes.decode('utf-8', errors='replace').replace('/', '\\')
-    if path.lower().startswith('data\\'):
-        path = path[len('data\\'):]
-    if path.lower().startswith('textures\\'):
-        path = path[len('textures\\'):]
-    return 'Textures\\' + current_namespace() + '\\' + as_dds(path)
+    s = (path or '').replace('/', '\\')
+    fixes = []
+    drive = _DRIVE.match(s)
+    if drive:
+        s = s[drive.end():].lstrip('\\')
+        fixes.append('drive')
+    elif s.startswith('\\'):
+        fixes.append('rooted')
+    if '\\\\' in s.strip('\\'):
+        fixes.append('separator')
+    segs, cut = _drop_prefix([x for x in s.split('\\') if x], anchor,
+                             'drive' in fixes or 'rooted' in fixes)
+    if cut:
+        fixes.append('authoring_prefix')
+    rel, dots = _DOUBLE_DOT_EXT.subn(r'.\1', '\\'.join(segs))
+    if dots:
+        fixes.append('double_dot')
+    return rel, tuple(fixes)
+
+
+def _drop_prefix(segs, anchor, absolute):
+    """(`segs` below the anchor folder, whether an authoring prefix was cut).
+
+    See: docs/commentary/asset_convert_shader.md#authored-rel
+    """
+    low = [x.lower() for x in segs]
+    hits = [i for i, x in enumerate(low[:-1]) if x == anchor]
+    if hits:
+        prefix = low[:hits[-1]]
+        if absolute or 'data' in prefix or '..' in prefix:
+            return segs[hits[-1] + 1:], True
+    data = low[:1] == ['data']
+    if data:
+        segs, low = segs[1:], low[1:]
+    if low[:1] == [anchor]:
+        segs = segs[1:]
+    return segs, data
+
+
+def rewrite_tex_path(raw_bytes):
+    """The namespaced `authored_rel` of an AUTHORED texture path, as DDS.
+
+    See: docs/commentary/asset_convert_shader.md#rewrite-tex-path
+    """
+    rel, _fixes = authored_rel(raw_bytes.decode('utf-8', errors='replace'))
+    return 'Textures\\' + current_namespace() + '\\' + as_dds(rel)
 
 
 def full_res_twin(tex):

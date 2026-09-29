@@ -344,6 +344,38 @@ among them `dwarven\rock02.dds` in **7**. Left in, the reference came out as
 `Textures\tes4\data\textures\…` — nothing there, AND the prune then deleted the
 real texture, because the manifest key never matched the shipped path.
 
+<a id="authored-rel"></a>
+**One normaliser for every authored path: `authored_rel`.**
+
+**Code:** `authored_rel` in `asset_convert/nif/tex_paths.py`
+
+An authored path can carry the author's own machine: `f:\gogames\oblivion\data\textures\…`,
+`e:\…\my mod 3.0\textures\…`, a leading `\textures\…`, or `name..dds`.
+Oblivion's resolver tolerated these, but Skyrim does not, and the old rewrite
+prefixed them verbatim: `Textures\tes4\f:\gogames\…` and `Textures\tes4\\textures\…`.
+Across 11,849 source NIFs there are 48,766 texture strings. Of those, 47 carry a
+drive letter, 12 a leading separator and 3 a `..dds` ending. In the G2 dry run
+they cost 21 missing keys (plus 2 `..dds`), and every one of those keys was
+already shipped under its clean name.
+
+The rule, in order:
+1. `/` becomes `\`. A drive letter goes along with the separators after it. A
+   rooted or UNC path loses its leading separators.
+2. The path is cut after its **last** anchor folder (`textures`, or the caller's
+   `meshes`/`sound`) **only** when the prefix is authoring-shaped: a drive, a
+   rooted/UNC path, a `data` segment or a `..` segment.
+   - A relative path is never cut. `textures\mod\textures\x.dds` keeps its inner
+     folder and loses only the leading `textures\`, which is the old behavior.
+     The census found no string with two anchor segments, so choosing the
+     "last" one is inference.
+3. `name..ext` becomes `name.ext`. Both occurrences (`KvatchDunWall01/02..dds`)
+   have single-dot twins in Oblivion's archive, and no legitimate name ends
+   in `..ext`.
+
+Every repair is returned by name (`drive`, `rooted`, `separator`,
+`authoring_prefix`, `double_dot`), so the caller can count it. A clean path
+comes back byte-identical, with no repairs.
+
 ## Resolving a source texture through the master's tree
 <a id="texture-fallback-roots"></a>
 
