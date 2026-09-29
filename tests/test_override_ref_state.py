@@ -268,3 +268,21 @@ def test_temporary_override_drops_the_masters_xlcn(monkeypatch):
     ov = ctx.build(_refr(fid, 0), 'REFR')
     assert _flags(ov.record_bytes) == 0
     assert _sigs(ov.record_bytes) == [b'NAME', b'DATA']
+
+
+def test_moved_full_lod_ref_stays_in_the_persistent_cell(monkeypatch):
+    """A child moving a master's Full-LOD ref keeps it in the world's persistent cell."""
+    from tes5_import.overrides.ref_state import FULL_LOD, PERSISTENT
+    fid, pers = 0x01001250, 0x01023777
+    world = ((0, b'WRLD'), (1, _cell_label(0x0100003C)))
+    block = world + ((4, b'\x00\x00\x00\x00'), (5, b'\x00\x00\x00\x00'))
+    base_path = world + ((6, _cell_label(pers)), (8, _cell_label(pers)))
+    base = _record(b'REFR', fid, FULL_LOD | PERSISTENT,
+                   [(b'NAME', struct.pack('<I', 0x0100BBBB)), (b'DATA', _data())])
+    ctx = _ctx(monkeypatch, {fid: base}, {fid: base_path, OTHER: block},
+               {'%08X' % fid: _refr(fid, 0x8000)})
+    ov = ctx.build(_refr(fid, 0x8000, ParentCELL='%08X' % OTHER, PosX='9.0'),
+                   'REFR')
+    assert ov.status == 'emitted'
+    assert ov.path == base_path
+    assert ctx.stats['renest-pers-in-block'] == 0

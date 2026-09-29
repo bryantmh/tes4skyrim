@@ -993,6 +993,12 @@ Both paths share the rule:
   WRLD's type-1 group, e.g. Tamriel's 01023777), sharing the type-8 group with
   refs the reference-state re-nest moves there. No master persistent cell: the
   ref stays where it was without Full LOD and counts `full-lod-unresolved`.
+- **A dependent's override of a master's Full-LOD ref** (`_ref_path`): the
+  author's source ParentCELL is an exterior cell, but the master's ref ships
+  in the world's persistent cell. A persistent Full-LOD ref therefore keeps
+  the master's path even when the author moved it to another cell, rather
+  than re-nesting into that cell's persistent group inside an exterior block
+  (`renest-pers-in-block`).
 
 Each path logs its count and every FormID (`report_full_lod`), so a change in
 what the rule selects shows in the import log.

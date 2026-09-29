@@ -26,7 +26,7 @@ from .builder import (RECONVERT_KEYS, apply_changes, join_subrecords,
                       rebuild_sndr_override, soun_companion_changes,
                       split_subrecords)
 from .master_index import load_master_index
-from .ref_state import (PERSISTENT, REF_SIGS, full_lod_bases,
+from .ref_state import (FULL_LOD, PERSISTENT, REF_SIGS, full_lod_bases,
                         full_lod_flags, is_full_lod_ref, merge_flags,
                         placement_fault, record_flags, ref_chain, ref_path,
                         report_full_lod, set_flags, take_mask)
@@ -514,12 +514,17 @@ class OverrideContext:
     def _ref_path(self, rec: dict, base, record_bytes: bytes) -> tuple:
         """The master's GRUP path, unless the author moved or re-flagged the reference.
 
+        A persistent Full-LOD reference keeps the master's path, its world's
+        persistent cell, wherever it is moved.
+
         See: docs/commentary/tes5_import_override.md#override-reference-state
         """
         if not _is_reference(rec, record_bytes) or not base.path:
             return base.path
         cell = (rec.get('ParentCELL') or '').upper()
         persistent = record_flags(record_bytes) & PERSISTENT
+        if persistent and record_flags(record_bytes) & FULL_LOD:
+            return base.path
         if (cell == (base.master_rec.get('ParentCELL') or '').upper()
                 and persistent == record_flags(base.record) & PERSISTENT):
             return base.path
