@@ -181,9 +181,10 @@ def _fixed_reading(conv, low: str, extends: str):
     if low in ('getpcissleeping', 'ispcsleeping', 'isplayersleeping'):
         # Inside a sleep-idiom MenuMode body the read means "is this a sleep
         # frame" -- the script-managed flag.  Elsewhere Oblivion never ran
-        # while sleeping, so a raw GetSleepState() read keeps the same truth.
+        # while sleeping; GetSleepState() is an enum (0 awake, 2 about to
+        # sleep, 3 asleep, 4 waking), so a source `== 1` needs it as 0/1.
         return ('TES4_PCSleeping' if conv.sc.in_sleep_menumode
-                else 'Game.GetPlayer().GetSleepState()')
+                else '(Game.GetPlayer().GetSleepState() == 3) as Int')
     if low == 'isininterior':
         return f'{_self_ref(extends)}.GetParentCell().IsInterior()'
     if low in ('getdisabled', 'isdisabled'):

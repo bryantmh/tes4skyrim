@@ -2285,6 +2285,14 @@ End
         assert 'If TES4_PCSleeping == 1' in result
         assert 'NOT executed' not in result
 
+    def test_sleep_read_outside_a_sleep_body_is_zero_or_one(self, converter):
+        """GetSleepState() is an enum with no 1, so `== 1` was never true."""
+        src = ('Scriptname TestAwake\n\nshort x\n\n'
+               'begin gamemode\nif isPCSleeping == 1\nset x to 1\nendif\nend\n')
+        result = converter.convert_standalone('TestAwake', src, 'Quest',
+                                              'TestAwake')
+        assert '(Game.GetPlayer().GetSleepState() == 3) as Int == 1' in result
+
     def test_sleep_wait_menu_without_sleep_read_stays_commented(self, converter):
         """A 1012 body that never reads isPCSleeping may be wait-only."""
         src = ('Scriptname TestWaitOnly\n\nshort x\n\n'
