@@ -1275,6 +1275,19 @@ def _output_root(dst_path):
     return dstn[:i] + os.sep, dstn[:i + len(key)], dstn[i + len(key):]
 
 
+def _texture_out_path(out_root, rel):
+    """Where a texture pass writes `rel` (a `Textures\\...` path) under out_root.
+
+    The texture copy writes the lowercase `textures` folder and the packer reads
+    only that, so a shader path's `Textures` root must not open a second
+    folder on a case-sensitive filesystem.
+    """
+    parts = rel.replace('\\', os.sep).replace('/', os.sep).split(os.sep)
+    if parts and parts[0].lower() == 'textures':
+        parts[0] = 'textures'
+    return out_root + os.sep.join(parts)
+
+
 def _build_flip_atlases(stats, dst_path):
     """Compose the frame-strip atlases process_geometry planned."""
     jobs = stats.pop('_flipbook_atlases', {})
@@ -1285,7 +1298,7 @@ def _build_flip_atlases(stats, dst_path):
         return
     from asset_convert.nif import flipbook
     for job in jobs.values():
-        out = out_root + job['atlas_rel'].replace('\\', os.sep)
+        out = _texture_out_path(out_root, job['atlas_rel'])
         if os.path.isfile(out):
             continue
         try:
@@ -1308,7 +1321,7 @@ def _build_height_maps(stats, dst_path):
         return
     from asset_convert.texture import parallax
     for job in jobs.values():
-        out = out_root + job['height_rel'].replace('\\', os.sep)
+        out = _texture_out_path(out_root, job['height_rel'])
         if not os.path.isfile(out):
             parallax.build_height_map(job['src'], out)
 
