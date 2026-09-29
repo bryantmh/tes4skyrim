@@ -4,6 +4,7 @@ Both are pure string/slot readers with no NIF state, so they sit below every
 module that needs them.
 """
 import re
+from collections import Counter
 
 from asset_convert.game_paths import current_namespace
 
@@ -39,6 +40,9 @@ _DRIVE = re.compile(r'^[A-Za-z]:')
 
 #: A doubled dot before the extension, `name..dds`.
 _DOUBLE_DOT_EXT = re.compile(r'\.\.([A-Za-z0-9]+)$')
+
+#: Repairs `rewrite_tex_path` made in this process, by kind; drained by `snapshot_repairs`.
+_REPAIRS = Counter()
 
 
 def authored_rel(path: str, anchor: str = 'textures') -> tuple:
@@ -113,8 +117,16 @@ def rewrite_tex_path(raw_bytes):
 
     See: docs/commentary/asset_convert_shader.md#rewrite-tex-path
     """
-    rel, _fixes = authored_rel(raw_bytes.decode('utf-8', errors='replace'))
+    rel, fixes = authored_rel(raw_bytes.decode('utf-8', errors='replace'))
+    _REPAIRS.update(fixes)
     return 'Textures\\' + current_namespace() + '\\' + as_dds(rel)
+
+
+def snapshot_repairs() -> dict:
+    """This process's `rewrite_tex_path` repair counts, then reset them."""
+    out = dict(_REPAIRS)
+    _REPAIRS.clear()
+    return out
 
 
 def full_res_twin(tex):

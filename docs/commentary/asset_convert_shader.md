@@ -401,8 +401,16 @@ string stays byte-identical:
   to name `tes4\meshes\clutter\…`, which no tree ships. It now names the
   converted master mesh `tes4\clutter\metalsmith\anvil01.nif`.
 
-These record-side repairs are not counted anywhere. Only the NIF batch reports
-its counts.
+**The NIF batch counts and prints its repairs.** `rewrite_tex_path` tallies
+each repair kind in its process. Each worker drains the tally
+(`snapshot_repairs`), `nif_batch._merge_result` sums the tallies, and the
+end-of-run report prints `Authored texture paths repaired: <kind> <n>, …`.
+
+The counts are per rewrite call, not per distinct string: one slot rewritten
+twice counts twice.
+
+The record-side repairs are not counted anywhere. The 143 measured record-side
+changes are pinned by the fixtures in `tests/test_authored_paths.py`.
 
 ## Resolving a source texture through the master's tree
 <a id="texture-fallback-roots"></a>

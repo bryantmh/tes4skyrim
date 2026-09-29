@@ -20,6 +20,7 @@ from asset_convert import case_paths
 from asset_convert.collision.mesh_scan_fragments import set_fragment_dir
 from asset_convert.nif.fixture_plan import FIXTURE_KEY
 from asset_convert.nif.nif_converter import convert_nif
+from asset_convert.nif.tex_paths import snapshot_repairs
 from asset_convert.game_paths import current_namespace, set_namespace
 from asset_convert.nif.shaders import (default_normal_texture, SPEC_STRENGTH,
                                        master_texture_roots)
@@ -152,6 +153,8 @@ def _empty_batch_stats(total):
         'alpha_opacity_diffuse': set(),
         #: Of those, the APPLY_HILIGHT2 overlays: alpha is a blend weight.
         'overlay_diffuses': set(),
+        #: Authored texture paths `rewrite_tex_path` repaired, by kind.
+        'tex_repairs': _collections.Counter(),
     }
 
 
@@ -190,6 +193,7 @@ def _merge_result(stats, skipped_list, mesh_path, nif_str, r):
     stats['alpha_opacity_diffuse'].update(r.get('alpha_opacity_diffuse') or ())
     stats['overlay_diffuses'].update(r.get('overlay_diffuses', ()))
     case_paths.merge_counts(r.get('case_counts'))
+    stats['tex_repairs'].update(r.get('tex_repairs') or {})
     rel = str(Path(nif_str).relative_to(mesh_path))
     if r.get('error'):
         stats['errors'] += 1
@@ -253,8 +257,20 @@ def _run_batch(work_args, stats, skipped_list, mesh_path, workers,
         handle(done, status, nif_str, payload, 200)
 
 
+def _report_repairs(stats):
+    """Print the authored texture-path repairs, one count per kind.
+
+    See: docs/commentary/asset_convert_shader.md#authored-rel
+    """
+    fixes = stats['tex_repairs']
+    if fixes:
+        kinds = ', '.join(f'{k} {v}' for k, v in sorted(fixes.items()))
+        print(f'\nAuthored texture paths repaired: {kinds}')
+
+
 def _report_warnings(stats):
-    """Summarise the pyffi warnings the capture handler swallowed."""
+    """Print the texture-path repairs, then the pyffi warnings the capture swallowed."""
+    _report_repairs(stats)
     if not stats['warn_counts']:
         return
     total_suppressed = sum(stats['warn_counts'].values())
@@ -408,6 +424,7 @@ def _batch_worker(args):
                         tex_fallback=tex_fallback)
         r['warn_counts'] = _categorize_pyffi_warnings(worker_warn_log)
         r['case_counts'] = case_paths.snapshot_counts()
+        r['tex_repairs'] = snapshot_repairs()
         return ('ok', nif_str, r)
     except Exception as e:
         return ('error', nif_str, str(e))

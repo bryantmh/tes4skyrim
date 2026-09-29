@@ -7,6 +7,7 @@ import pytest
 from PIL import Image
 
 from asset_convert.lod import terrain_lod_textures, tree_billboard
+from asset_convert.nif import nif_batch, tex_paths
 from asset_convert.nif.tex_paths import authored_rel, rewrite_tex_path
 from asset_convert.ui import book_inam
 from tes5_import.record_types.common import landscape_texture_path, prefix_path
@@ -161,3 +162,34 @@ def test_terrain_texture_resolves_through_a_drive_path(tmp_path):
     _img, outcome, key = terrain_lod_textures._load_uncached(
         'f:\\game\\data\\textures\\landscape\\grass.dds', [tmp_path], 4)
     assert (outcome, key) == ('exact', 'landscape\\grass.dds')
+
+
+# ---------------------------------------------------------------------------
+# Repairs are counted and reported by the mesh batch
+# ---------------------------------------------------------------------------
+
+
+def test_batch_reports_the_repairs_its_workers_made(monkeypatch, tmp_path,
+                                                    capsys):
+    """A worker's repairs reach the run totals and the end-of-run report."""
+    def fake_convert(*_a, **_k):
+        """Rewrite one drive path and one clean path, as a mesh would."""
+        rewrite_tex_path(rb'f:\game\data\textures\a.dds')
+        rewrite_tex_path(rb'textures\b.dds')
+        return {'converted': True, 'strips_fixed': False,
+                'properties_converted': False, 'root_converted': False,
+                'root_rotation_baked': False}
+
+    monkeypatch.setattr(nif_batch, 'convert_nif', fake_convert)
+    tex_paths.snapshot_repairs()
+    nif = str(tmp_path / 'm.nif')
+    status, _path, r = nif_batch._batch_worker(
+        (nif, nif, True, None, str(tmp_path), None, False, False, ()))
+    assert status == 'ok'
+    assert r['tex_repairs'] == {'drive': 1, 'authoring_prefix': 1}
+    stats = nif_batch._empty_batch_stats(1)
+    nif_batch._merge_result(stats, [], tmp_path, nif, r)
+    nif_batch._merge_result(stats, [], tmp_path, nif, r)
+    nif_batch._report_warnings(stats)
+    assert ('Authored texture paths repaired: authoring_prefix 2, drive 2'
+            in capsys.readouterr().out)
