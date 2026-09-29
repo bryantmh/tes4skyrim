@@ -92,6 +92,8 @@ from ..base.equivalents import (
 from asset_convert.character.hair_plan import variant_edid, variant_tag
 from . import hair_variants
 from ..base.text_reader import get_formid, get_str
+from asset_convert import case_paths
+from output_layout import assets_for
 from ..base.writer import pack_formid_subrecord, pack_subrecord
 
 # ---------------------------------------------------------------------------
@@ -163,6 +165,10 @@ _SKIN_FALLBACK_RGB: dict[str, tuple] = {
 # color flat and reads noticeably darker than the source.
 _SKIN_TINV = 80
 
+# ---------------------------------------------------------------------------
+# Race skin tones
+# ---------------------------------------------------------------------------
+
 #: race EditorID -> {gender: (r, g, b)}, filled by load_race_skin_tones().
 RACE_SKIN_RGB: dict[str, dict] = {}
 
@@ -193,17 +199,12 @@ def load_race_skin_tones(by_type: dict, export_dirs=None) -> None:
     except ImportError:
         return
 
-    roots = [d for d in (export_dirs or []) if d]
+    roots = [assets_for(d) / sub for d in (export_dirs or []) if d
+             for sub in ('textures', 'meshes')]
 
     def _asset(rel):
-        """Resolve a TES4 asset path against the export trees."""
-        rel = rel.replace('/', os.sep).replace('\\', os.sep).lstrip(os.sep)
-        for root in roots:
-            for sub in ('textures', 'meshes'):
-                cand = os.path.join(root, sub, rel)
-                if os.path.isfile(cand):
-                    return cand
-        return None
+        """A TES4 asset path found under the export asset trees, any case, or None."""
+        return case_paths.resolve(roots, rel, 'race_skin_tones')
 
     for rec in races:
         edid = _first(rec, 'EditorID')

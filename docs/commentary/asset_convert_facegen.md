@@ -197,6 +197,14 @@ part/FGTS fields, or a custom race whose assets cannot be resolved.
 Imperial went from luma **66** (old, 72% of the time) to **129**. Redguard is
 the darkest human race, Nord the palest, High Elf reads gold, Dark Elf grey.
 
+<a id="finding-race-textures"></a>**Finding the textures.** A race's body
+texture and head `.egt` are record paths in the author's case. They resolve
+through `case_paths.resolve` under each export's ASSET tree (`assets_for`, so a
+nested mod's `<Mod>/textures/` is searched, not its record folder). Before
+that, a case-sensitive filesystem resolved 0 of Oblivion.esm's 15 races and
+every NPC took the `_SKIN_FALLBACK_RGB` color; now 15 of 15 (38 of 38 lookups),
+and Frostcrag Reborn with its masters 17 of 17.
+
 ## Guarded by
 <a id="guarded"></a>
 
