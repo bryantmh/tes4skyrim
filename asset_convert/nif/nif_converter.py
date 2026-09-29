@@ -702,23 +702,24 @@ def _hide_helper_geometry(root, stats):
     _hide_uvless_lit_shapes(root, stats)
 
 
-def _collision_owner(root):
-    """The descendant owning a collision object, or None when none does."""
+def _collision_owners(root):
+    """Every descendant owning a collision object."""
+    owners = []
     stack = [c for c in (getattr(root, 'children', None) or []) if c is not None]
     while stack:
         node = stack.pop()
         if getattr(node, 'collision_object', None) is not None:
-            return node
+            owners.append(node)
         stack.extend(c for c in (getattr(node, 'children', None) or [])
                      if c is not None)
-    return None
+    return owners
 
 
 def _hoist_root_collision(data, root, wrapped, has_constraints, creature):
     """Move a child's collision onto the root, where Skyrim wants it.
 
     Skipped for a wrapped root (the wrap path already absorbs the transform),
-    when the COLLISION NODE is really moved by animation, for constrained NIFs
+    when ANY collision node is really moved by animation, for constrained NIFs
     (the constraint IS the spatial relationship), for creatures (ragdoll
     collision lives on the bones), and for a mesh of held pieces a script
     releases (each piece must fall on its own).  A keyless stub is not
@@ -729,8 +730,7 @@ def _hoist_root_collision(data, root, wrapped, has_constraints, creature):
         return
     if not hasattr(root, 'collision_object') or root.collision_object is not None:
         return
-    owner = _collision_owner(root)
-    if owner is not None and node_transform_is_animated(data, owner):
+    if any(node_transform_is_animated(data, owner) for owner in _collision_owners(root)):
         return
     if (is_fallout_source() and merge_static_parts(root)) or hoist_collision(root):
         remove_empty_collision_nodes(root)

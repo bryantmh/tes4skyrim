@@ -13,7 +13,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pytest
+
 from asset_convert.collision import collision_anim
+from asset_convert.nif.nif_converter import convert_nif
+from pyffi.formats.nif import NifFormat
 
 
 class _Node(object):
@@ -127,3 +131,25 @@ def test_non_transform_controller_does_not_count(monkeypatch):
                                       b'NiMaterialColorController',
                                       _Interp(_TransformData(rot=8)))])
     assert not collision_anim.node_transform_is_animated(_Data([seq]), node)
+
+
+GATE = os.path.join('export', 'FalloutNV.esm', 'meshes', 'clutter', 'fence', 'nv_fencepickburntgate01.nif')
+
+
+def test_a_moving_part_keeps_its_collision_beside_a_still_one(tmp_path):
+    """The gate swings; its posts do not. Neither collision may be merged onto the root.
+
+    The hoist gate once checked only the first collision owner it found (the
+    posts), while the hoist took the gate's, so the gate's collision stayed
+    shut while its mesh swung open.
+    """
+    if not os.path.exists(GATE):
+        pytest.skip('FalloutNV.esm meshes not exported')
+    out = str(tmp_path / 'gate.nif')
+    convert_nif(GATE, out, fix_textures=False)
+    data = NifFormat.Data()
+    with open(out, 'rb') as f:
+        data.read(f)
+    root = data.roots[0]
+    held = {n.name: n.collision_object is not None for n in root.tree() if isinstance(n, NifFormat.NiNode)}
+    assert root.collision_object is None and held[b'BGate'] and held[b'BPosts']

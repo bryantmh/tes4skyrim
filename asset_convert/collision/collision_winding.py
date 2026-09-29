@@ -171,6 +171,36 @@ def _wrong_side_of_slab(tri, n, rtri):
     return n[2] < 0 and dz > _SLAB_EPS
 
 
+def _covers_xy(tri, x, y):
+    """Whether the triangle's XY projection contains the point."""
+    (ax, ay, _az), (bx, by, _bz), (cx, cy, _cz) = tri
+    d1 = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
+    d2 = (cx - bx) * (y - by) - (cy - by) * (x - bx)
+    d3 = (ax - cx) * (y - cy) - (ay - cy) * (x - cx)
+    return not ((d1 < 0 or d2 < 0 or d3 < 0) and (d1 > 0 or d2 > 0 or d3 > 0))
+
+
+def _floor_says_inverted(tri, n, faces):
+    """Whether a flat face under a walkable skin points down; None without one.
+
+    An up-facing render face over the face's centre, at or within a plank's
+    thickness above it, is a floor stood on from above; collision is
+    one-sided, so the face must face up. Nearest-skin cannot say so: its slab
+    gate never lets a skin above decide a down-facing face.
+    See: docs/commentary/asset_convert_collision.md#round-4d-a-face-under-a-floor-faces-up
+    """
+    if abs(n[2]) < 0.5:
+        return None
+    x, y, z = (sum(p[i] for p in tri) / 3.0 for i in range(3))
+    for rtri, rn in faces:
+        dz = sum(p[2] for p in rtri) / 3.0 - z
+        if rn[2] < _PARALLEL or not -_SLAB_EPS <= dz <= _MAX_SLAB_DZ:
+            continue
+        if _covers_xy(rtri, x, y):
+            return n[2] < 0
+    return None
+
+
 def _nearest_says_inverted(tri, n, faces):
     """Whether the closest coincident render surface is opposed.
 
@@ -232,6 +262,8 @@ def _render_flips(tris, faces):
         if not (n[0] or n[1] or n[2]):
             continue
         verdict = _twin_says_inverted(t, n, twins)
+        if verdict is None:
+            verdict = _floor_says_inverted(t, n, faces)
         if verdict is None:
             verdict = _nearest_says_inverted(t, n, faces)
         if verdict:

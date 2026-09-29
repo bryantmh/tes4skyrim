@@ -703,6 +703,78 @@ before/after were not comparable between runs — the "before" itself drifted
 815 -> 728 -> 630. The standable-cell raycast in `walk2.py` shares no code
 with the repair and is the metric that matched the user's in-game report.
 
+### <a id="round-4d-a-face-under-a-floor-faces-up"></a>Round 4d — a face under a floor faces up
+
+User report: at the Prospector Saloon in Goodsprings, "the porch floor lets
+you fall through, so you have a lip that you have to jump over".
+
+The porch deck is two collision triangles at z 8384. Triangle 262 faces up and
+263 faces down, in the FNV source and in our output alike; FNV collides both
+sides, so it never mattered there. The render plank has its top skin at 8387
+facing up and its underside at 8382 facing down. The slab gate lets each skin
+decide only the faces on its own side, so a down-facing face finds the
+underside 2 units below it and is judged correct. Inside a plank, nearest-skin
+accepts either winding, so this face could never be flipped.
+
+The rule is `_floor_says_inverted`, run after the twin match and before
+nearest-skin. A flat face (|n.z| ≥ 0.5) faces up when an up-facing render face
+covers its centroid in XY, anywhere from `_SLAB_EPS` below it to
+`_MAX_SLAB_DZ` above. That surface is stood on from above, and Skyrim
+collides one side only. An underside skin is not required. A down-facing skin
+alone (a ceiling) decides nothing here, and neither does a skin further away
+than a plank's thickness.
+
+**Centroid coverage, not any overlap.** Mere overlap flipped the whole of a
+large face that a small skin touched at one corner. In `barracks02int`, a face
+at z 144 turned up over 64 cells where the only render floor is at 59. Over
+the barracks and Goodsprings meshes, overlap scored 30,164 cells gained and
+64 lost; centroid scored 29,869 gained and 0 lost.
+
+Measured with the real converter and a standable-cell raycast. The raycast
+counts cells whose highest up-facing collision face lies within 16 units of
+the highest up-facing render face. It ignores down-facing faces and shares no
+code with the repair.
+
+| Goodsprings (33 meshes) | before | after |
+|---|---|---|
+| mixed up/down edge pairs (`collision_winding.py --converted`) | 71 in 12 meshes | 36 in 7 |
+| down-facing flat collision area | 4,510,359 | 1,048,973 |
+| standable cells (of 175,965) | 158,169 | 165,198 (lost 0) |
+
+`barracks01` is the mesh the round-4c notes left at net −117. It goes from
+4,640 standable cells to 17,907 of 18,028. `barracks02` goes from 16,257 to
+25,830, and the barracks set as a whole loses 0 cells.
+
+Wider sample: novac (39 meshes) plus the first 60 of noso, megaton and
+wasteland. Of 2,002,287 cells, 1,384,349 were standable before and 1,463,777
+after: 79,710 gained, 282 "lost".
+
+The losses are a limit of the probe, not holes. In the three worst meshes
+(`firingrangeawning01` 87, `novachouse02shell` 69, `novac_motel` 23), the
+floor's up-facing face is still under every lost cell. What changed is a roof
+or awning face overhead, now facing up; the probe scores only the highest
+up-facing face, so those cells count as lost. The overhead face sits 200+
+units above the floor, over head height.
+
+**Open: it may help Oblivion too (unmeasured).** The rule lives in the
+render-mesh repair, which runs only for FO3/FNV and `morrowind_ob`. Oblivion,
+Nehrim and native Morrowind get step 0 alone, which reads the authored
+per-triangle normal. That covers most of it: Oblivion architecture measured
+1.16% inverted, and step 0 took Nehrim dungeons 2,710 → 14.
+
+Vanilla Oblivion is not clean, though:
+
+- `seisland.nif` has 553 mixed pairs;
+- 14.5% of the decidable floor faces in `meshes/rocks` are genuinely inverted.
+
+A face whose winding AND stored normal both point down passes step 0
+unchanged, and this rule would catch it when a walkable render skin covers
+it. To decide, run the same before/after standable-cell raycast on Oblivion
+`rocks`, `architecture` and `dungeons` with `TESCONV_COLLISION_WINDING_FIX=1`.
+Add Oblivion to `WINDING_FIX_DEFAULT_PLUGINS` only if it gains cells and loses
+none. The scratch harness (convert a folder with the real converter; score two
+trees by downward raycast, ignoring down-facing faces) is described above.
+
 ### <a id="welding-is-per-group"></a>Welding is scoped PER GROUP
 
 The packed triangle list stores each triangle's corners independently, so
@@ -1000,6 +1072,21 @@ unhoisted through the separate `has_constraints` gate, not this one.
 
 This was found while chasing the Bosmora Temple doorway CTD but did NOT cause
 it; the cause is [float32-collinear triangles](#float32-collinear-triangles).
+
+<a id="every-collision-owner"></a>**The gate checks every collision owner,
+not one.** A door can keep a still frame and a moving leaf, each with its own
+collision. New Vegas's picket gate (`nv_fencepickburntgate01`) has `BPosts`
+(fixed) and `BGate` (keyframed, swung by `Open`/`Close`). The gate used to
+check only the first owner its search met, the posts, and found them still.
+`hoist_collision` searches in a different order and moved `BGate`'s collision
+onto the root. The mesh then swung open while its collision stayed shut
+("the animation plays but you can't walk through"). Now any animated owner
+leaves every collision where the source put it. Over the New Vegas export,
+42 meshes had a still owner found first and a moving one elsewhere: vault
+sliding doors, office doors, road gates, the junk door, the Protectron pod,
+windmills. Oblivion has 54 of 9,459: the Oblivion bridge ruin gates, tower
+switches and gate latches, the torture cages, the big turret, the siege
+crawler.
 
 ## <a id="float32-collinear-triangles"></a>A triangle collinear at float32 precision crashes the crosshair pick
 

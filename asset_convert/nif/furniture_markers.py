@@ -71,7 +71,11 @@ import math
 REF_HEADING = {
     1: -math.pi / 2, 2: math.pi / 2, 3: -math.pi / 2, 4: 0.0,  # bed (sleep)
     11: -math.pi / 2, 12: math.pi / 2, 13: 0.0, 14: math.pi,   # chair (sit)
+    15: 0.0,
 }
+
+#: FO3/FNV's stool entry: the seat lies this far ahead of it and to its left, the sitter facing ahead.
+STOOL_REF, STOOL_FORWARD, STOOL_LEFT = 15, 41.0, 20.5
 SIT_SIDE_DIST = 51.5    # entry-to-seat travel, side sit entries (11/12)
 SIT_FRONT_DIST = 55.0   # entry-to-seat travel, front/behind sit entries (13/14)
 SIT_HEIGHT = 34.0       # vanilla commonchair01 marker z (floor-relative)
@@ -145,6 +149,16 @@ def geometry_center_xy(root):
     return (lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0
 
 
+def stool_seat(entry):
+    """The seat a FO3/FNV stool entry leads to: ahead of it and to its left.
+
+    See: docs/commentary/asset_convert_falloutnv.md#stool-entries
+    """
+    fx, fy = entry['d']
+    x, y = entry['p'][0], entry['p'][1]
+    return x + STOOL_FORWARD * fx - STOOL_LEFT * fy, y + STOOL_FORWARD * fy + STOOL_LEFT * fx
+
+
 def _entry_flag(entry, seat_x, seat_y, heading):
     """Which side of the seat this entry point lies on, relative to the
     occupant's facing direction."""
@@ -190,6 +204,8 @@ def cluster_seats(entries, center_fn):
             # Seat: fixed travel distance along the approach direction
             t = SIT_SIDE_DIST if e['ref'] in (11, 12) else SIT_FRONT_DIST
         e['seat'] = (e['p'][0] + t * e['d'][0], e['p'][1] + t * e['d'][1])
+        if e['ref'] == STOOL_REF:
+            e['seat'] = stool_seat(e)
 
     clusters = []
     for e in entries:

@@ -328,6 +328,28 @@ walked through them. Census of 1,500 FNV world meshes: layer 1 x373, 4 x32,
 3 x23, 10 x13, 13 x13, 2 x12, 19 x12, 26 x9, 5 x4, 15 x2, 6/9/14 x1.
 `fo3_layer()` passes 0-28 through and renumbers 29+.
 
+## <a id="stool-entries"></a>Stool entries (furniture ref 15)
+
+**Code:** `asset_convert/nif/furniture_markers.py` (`stool_seat`)
+
+FO3/FNV add a sit entry Oblivion never used: `position_ref` 15, a stool's.
+Across `furniture/` it appears 6 times: `stool01.nif`'s one entry and the
+blackjack table's four gambler seats (New Vegas's markers use refs 14 ×71,
+11 and 12 ×31, beds 1 and 2, use-markers 22). The Oblivion rule walks 55
+units straight ahead from a front entry. `stool01` is 30 units wide, centered
+at (0, 0), and its entry stands at (20.5, −41.0), so that put the seat at
+(20.5, 14): half off the stool (user report, a settler on the saloon's
+`Stool01L`).
+
+A stool entry's seat is 41 ahead of it and 20.5 to its left. That offset
+lands `stool01` exactly on its center. Turned by each marker's own
+orientation, it lands the blackjack table's four seats within 2 to 6 units of
+the stool centers clustered from the table's `Stool01:0` shape: (−75.3,
+−37.3) against (−70.5, −36.0), and the like. Every other rule gives a seat
+beside the stool. The sitter faces the way it walked in, heading offset 0: the
+gamblers approach toward the table, and the Oblivion default (+π, the ref-14
+turn) would seat them facing away from it.
+
 ## <a id="gun-graph"></a>Guns are hand type 13, not crossbows
 
 **Code:** `asset_convert/havok/gun_anim_falloutnv.py`,
