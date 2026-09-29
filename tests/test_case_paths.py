@@ -196,6 +196,7 @@ def test_write_path_reuses_the_one_existing_spelling(tmp_path):
     assert sorted(os.listdir(tmp_path)) == ['Oblivion']
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_write_path_creates_lowercase_and_reuses_a_file_spelling(tmp_path):
     """New segments are lowercase; an existing file keeps its spelling."""
     out = case_paths.write_path(tmp_path, 'Textures\\Fire\\A.dds')
