@@ -1164,84 +1164,80 @@ def convert_LAND(rec: dict) -> bytes:
     return pack_record('LAND', get_formid(rec, 'FormID'), flags, subs)
 
 
-def build_land_layers(rec: dict) -> bytes:
-    """The LAND texture-layer run: BTXT/ATXT/VTXT, in TES5 order.
+#: Alpha layers kept per quadrant: the landscape shader has six colour slots, base + 5.
+_MAX_ALPHA_LAYERS = 5
 
-    Split out of convert_LAND so the override path can rebuild the whole run
-    from the PLUGIN's export when an author changes Layer[] (override_builder
-    _RUN_LAND_LAYERS). The merge/sort/cap below is lossy and order-dependent,
-    so an override MUST reuse this function rather than reimplement it — two
-    implementations would disagree and the terrain would re-texture itself on
-    every unrelated edit.
+
+def _land_layer_vtxt(rec: dict, pfx: str) -> dict:
+    """{vertex position: opacity} of one exported ALPHA layer."""
+    return {get_int(rec, f'{pfx}.VT[{vi}].Pos'):
+            get_float(rec, f'{pfx}.VT[{vi}].Opacity')
+            for vi in range(get_int(rec, f'{pfx}.VTXTCount'))}
+
+
+def _merge_alpha(layers: list, tex: int, vtxt: dict) -> None:
+    """Add an alpha layer to a quadrant, folding a repeated texture in by max opacity."""
+    existing = next((e for e in layers if e[0] == tex), None)
+    if existing is None:
+        layers.append([tex, vtxt])
+        return
+    for pos, op in vtxt.items():
+        if op > existing[1].get(pos, 0.0):
+            existing[1][pos] = op
+
+
+def _collect_land_layers(rec: dict) -> tuple:
+    """({quad: base texture}, {quad: [[texture, {pos: opacity}], ...]}) from Layer[].
+
+    The first BASE per quadrant wins; alpha layers keep source order, a
+    repeated texture merged into its first appearance.
     """
-    subs = b''
-
-    # Layers (BTXT/ATXT/VTXT)
-    # TES5 limit: max 6 alpha layers per quadrant (indices 0–5).
-    # Strategy: two-pass approach.
-    #   Pass 1: collect all alpha layers per quadrant; merge same-texture layers
-    #           by taking the max opacity per vertex position.
-    #   Pass 2: sort by coverage score (sum of opacities) descending, keep top 6,
-    #           write in coverage order so the most visually significant layers survive.
-    _MAX_ALPHA_LAYERS = 6
-    layer_count = get_int(rec, 'LayerCount')
-
-    # Pass 1: collect layers
-    # base_layers: quad -> (tex, order_index) — we keep first BASE seen per quad
-    base_layers: dict = {}
-    # alpha_layers: quad -> list of [tex, {pos: opacity}]
-    alpha_layers: dict = {}
-
-    for i in range(layer_count):
+    base, alpha = {}, {}
+    for i in range(get_int(rec, 'LayerCount')):
         pfx = f'Layer[{i}]'
         ltype = get_str(rec, f'{pfx}.Type')
         if ltype == 'BASE':
-            tex = get_formid(rec, f'{pfx}.BTXT.Texture')
-            quad = get_int(rec, f'{pfx}.BTXT.Quadrant')
-            if quad not in base_layers:
-                base_layers[quad] = tex
+            base.setdefault(get_int(rec, f'{pfx}.BTXT.Quadrant'),
+                            get_formid(rec, f'{pfx}.BTXT.Texture'))
         elif ltype == 'ALPHA':
             tex = get_formid(rec, f'{pfx}.ATXT.Texture')
-            quad = get_int(rec, f'{pfx}.ATXT.Quadrant')
-            if tex == 0:
-                continue
-            # Collect vtxt as pos->opacity dict
-            vtxt_count = get_int(rec, f'{pfx}.VTXTCount')
-            vtxt: dict = {}
-            for vi in range(vtxt_count):
-                vpos = get_int(rec, f'{pfx}.VT[{vi}].Pos')
-                opacity = get_float(rec, f'{pfx}.VT[{vi}].Opacity')
-                vtxt[vpos] = opacity
-            # Merge duplicate textures in the same quadrant: keep max opacity per vertex
-            if quad not in alpha_layers:
-                alpha_layers[quad] = []
-            existing = next((e for e in alpha_layers[quad] if e[0] == tex), None)
-            if existing is not None:
-                for pos, op in vtxt.items():
-                    if op > existing[1].get(pos, 0.0):
-                        existing[1][pos] = op
-            else:
-                alpha_layers[quad].append([tex, vtxt])
+            if tex:
+                _merge_alpha(alpha.setdefault(
+                    get_int(rec, f'{pfx}.ATXT.Quadrant'), []),
+                    tex, _land_layer_vtxt(rec, pfx))
+    return base, alpha
 
-    # Pass 2: emit base layers first, then sorted alpha layers
-    for quad in sorted(base_layers):
-        tex = base_layers[quad]
-        btxt = struct.pack('<IBBxx', tex, quad, 0)
-        subs += pack_subrecord('BTXT', btxt)
 
-        layers_for_quad = alpha_layers.get(quad, [])
-        # Sort by coverage score descending (sum of opacity values), keep top 6
-        layers_for_quad.sort(key=lambda e: sum(e[1].values()), reverse=True)
-        for alpha_idx, (tex, vtxt) in enumerate(layers_for_quad[:_MAX_ALPHA_LAYERS]):
-            atxt = struct.pack('<IBBH', tex, quad, 0, alpha_idx)
-            subs += pack_subrecord('ATXT', atxt)
-            if vtxt:
-                vtxt_data = bytearray()
-                for vpos, opacity in sorted(vtxt.items()):
-                    vtxt_data += struct.pack('<HHf', vpos, 0, opacity)
-                subs += pack_subrecord('VTXT', bytes(vtxt_data))
-
+def _emit_quad(quad: int, base, layers: list) -> bytes:
+    """One quadrant's BTXT (`base` None: none) and its top alpha layers by coverage."""
+    subs = b''
+    if base is not None:
+        subs += pack_subrecord('BTXT', struct.pack('<IBBxx', base, quad, 0))
+    kept = sorted(layers, key=lambda e: sum(e[1].values()),
+                  reverse=True)[:_MAX_ALPHA_LAYERS]
+    for idx, (tex, vtxt) in enumerate(kept):
+        subs += pack_subrecord('ATXT', struct.pack('<IBBH', tex, quad, 0, idx))
+        if vtxt:
+            subs += pack_subrecord('VTXT', b''.join(
+                struct.pack('<HHf', pos, 0, op)
+                for pos, op in sorted(vtxt.items())))
     return subs
+
+
+def build_land_layers(rec: dict) -> bytes:
+    """The LAND texture-layer run: BTXT/ATXT/VTXT, quadrants ascending.
+
+    A quadrant with alpha layers but no BASE is kept (ATXT-only, as vanilla
+    ships 4,237 of them). Same-texture layers merge; the top 5 by coverage
+    survive. Shared with the override path (override_builder
+    _RUN_LAND_LAYERS): a second implementation would disagree and re-texture
+    terrain on every unrelated edit.
+    See: docs/commentary/asset_convert_terrain.md#land-layer-run
+    """
+    base, alpha = _collect_land_layers(rec)
+    quads = sorted(set(base) | set(alpha))
+    runs = [_emit_quad(q, base.get(q), alpha.get(q, [])) for q in quads]
+    return b''.join(runs)
 
 
 # ---------------------------------------------------------------------------

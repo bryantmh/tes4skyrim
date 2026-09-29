@@ -13,6 +13,7 @@
 - [`write_lodgen_input`: master modes and `only_cells`](#write-lodgen-input-master-modes)
 - [Terrain LOD invents ground over cells that own no LAND](#lod-invents-terrain-over-cells-with-no-land)
 - [Terrain LOD: arguments, shared cells, texture counts](#generate-terrain-lod-arguments)
+- [The LAND texture-layer run](#land-layer-run)
 - [GENERATED `_far.nif` belong to the LOD mod](#generated-far-nif-belong-to-the-lod-mod)
   - [Why one LOD folder, not one per plugin](#one-lod-folder-not-one-per-plugin)
 
@@ -1802,4 +1803,31 @@ chroma 0.097), so the tint is subtle.
 Tripwire: a player without Community Shaders gets vanilla's `/255` VCLR near
 terrain, ~9-12% darker than this LOD; revisit before a non-CS release, and if
 CS linear lighting is enabled.
+
+## <a id="land-layer-run"></a>The LAND texture-layer run
+
+**Code:** `build_land_layers` and helpers in `tes5_import/record_types/world.py`
+(shared by the override path, `_rebuild_land_layers` in
+`tes5_import/overrides/builder.py`).
+
+Vanilla's shape, measured over Skyrim.esm's 15,564 LAND: quadrants ascending;
+BTXT first in its quadrant; every ATXT followed by its VTXT; 4,237 quadrants
+carry alpha layers and NO BTXT, with layer indices 0..n-1.
+
+- **ATXT-only quadrants are kept.** The builder emitted alpha layers only under
+  a BTXT, so a quadrant Oblivion painted with alpha layers alone lost all its
+  paint: 1,463 in Tamriel, 2,417 over Oblivion.esm, now all emitted (with-BTXT
+  quadrants unchanged at 82,749). The LOD decoder already composites them over
+  the default base, and LTEX grass now also grows on them.
+- **At most 5 alpha layers.** The landscape shader declares exactly six colour
+  slots (Community Shaders `Lighting.hlsl:398-403`, base + 5, weights
+  normalised at :1177-1182). Our cap of 6 alpha layers made 29,939 quadrants
+  carry 7 textures, and the engine dropped one it chose; the top 5 by coverage
+  are now kept here.
+- Same-texture layers in a quadrant merge by max opacity per vertex.
+
+Tripwires, not built: dropped layers are not merged into a kept one (0.54% of
+opacity mass, but 7,543 quadrants lose a layer peaking above 0.5; needs texture
+colours at import) -- revisit if small wrong-texture patches show in game.
+Vanilla's BTXT layer field is 0xFFFF; we write 0.
 
