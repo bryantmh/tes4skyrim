@@ -275,6 +275,46 @@ class TestCrossRefGraph:
         assert xref.global_types['sharedglobal'] == 'f'
         assert xref.global_values['sharedglobal'] == 7.0
 
+    @staticmethod
+    def _rec(sig, fid, edid, **fields):
+        extra = ''.join(f'{k}={v}\n' for k, v in fields.items())
+        return (f'---RECORD_BEGIN---\nSignature={sig}\nFormID={fid}\n'
+                f'EditorID={edid}\n{extra}---RECORD_END---\n')
+
+    def test_masters_ids_are_rekeyed_into_the_plugins_order(self, tmp_path):
+        """Two non-ESM masters both number their own records 01xxxxxx.
+
+        Frostcrag Reborn masters Oblivion, DLCFrostcrag and Knights. Merged
+        raw, Knights' 01000D50 (ND05BookChestStatueScript) overwrote
+        DLCFrostcrag's 01000D50 (FrostcragSpireKey), so FR's stage 10 gave
+        the player a Knights script instead of the Spire key.
+        """
+        (tmp_path / 'Oblivion.esm').mkdir()
+        (tmp_path / 'Oblivion.esm' / 'SCPT.txt').write_text(
+            self._rec('SCPT', '00012345', 'ObScript', **{'SCHR.Type': 0}))
+        for name, edid, scri in (('DLCFrostcrag.esp', 'FrostcragSpireKey', ''),
+                                 ('Knights.esp', 'ND05BookChestStatueScript',
+                                  '01000AAA')):
+            d = tmp_path / name
+            d.mkdir()
+            (d / '_HEADER.txt').write_text('Master[0]=Oblivion.esm\n')
+            fields = {'SCRI': scri} if scri else {}
+            (d / 'MISC.txt').write_text(self._rec('MISC', '01000D50', edid, **fields))
+        plugin = tmp_path / 'Plugin.esp'
+        plugin.mkdir()
+        (plugin / '_HEADER.txt').write_text(
+            'Master[0]=Oblivion.esm\nMaster[1]=DLCFrostcrag.esp\n'
+            'Master[2]=Knights.esp\n')
+
+        xref = CrossRefGraph()
+        xref.load_from_export(str(plugin))
+        assert xref.formid_to_edid['01000D50'] == 'FrostcragSpireKey'
+        assert xref.formid_to_edid['02000D50'] == 'ND05BookChestStatueScript'
+        assert xref.edid_to_formid['nd05bookcheststatuescript'] == '02000D50'
+        assert xref.record_scri['02000D50'] == '02000AAA'
+        # the ESM master's own index is 00 in both spaces
+        assert xref.formid_to_edid['00012345'] == 'ObScript'
+
 
 # ===========================================================================
 # Expression conversion tests

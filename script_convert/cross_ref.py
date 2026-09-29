@@ -242,12 +242,57 @@ _SIG_SCANNERS = {'SCPT': _scan_scpt, 'CELL': _scan_cell, 'NPC_': _scan_actor,
                  'CREA': _scan_actor, 'PACK': _scan_pack, 'QUST': _scan_qust}
 
 
-def _scan_record_lines(sig: str, lines: list, out: dict):
+#: Id fields the scan reads, re-keyed with the record's own FormID.
+_ID_FIELDS = ('SCRI', 'NAME', 'ParentWRLD', 'DATA.EffectShader',
+              'DATA.EnchantEffect')
+
+
+def _index_remap(root_dir: str, export_dir: str):
+    """{`export_dir`'s load-order index -> the root plugin's}, or None for the root.
+
+    Each master's export numbers ids in ITS OWN master order: DLCFrostcrag's
+    and Knights' own records are both `01xxxxxx`, while a plugin mastering
+    both names Knights' as `02xxxxxx`. Merged raw, the later master
+    overwrote the earlier one's ids.
+    """
+    if os.path.normcase(os.path.abspath(export_dir)) == \
+            os.path.normcase(os.path.abspath(root_dir)):
+        return None
+    slot_of = {n.lower(): i for i, n in enumerate(master_names(root_dir))}
+    own = master_names(export_dir)
+    remap = {k: slot_of[n.lower()] for k, n in enumerate(own)
+             if n.lower() in slot_of}
+    self_slot = slot_of.get(os.path.basename(os.path.normpath(export_dir)).lower())
+    if self_slot is not None:
+        remap[len(own)] = self_slot
+    return remap
+
+
+def _rekey(value: str, remap: dict, keep_unmapped: bool = True):
+    """`value` (a hex FormID, maybe followed by text) in the root's index space."""
+    m = re.match(r'[0-9A-Fa-f]{8}', value or '')
+    if not m:
+        return value
+    raw = int(m.group(0), 16)
+    slot = remap.get(raw >> 24)
+    if slot is None:
+        return value if keep_unmapped else None
+    return '%08X' % (slot << 24 | raw & 0xFFFFFF) + value[8:]
+
+
+def _scan_record_lines(sig: str, lines: list, out: dict, remap: dict = None):
     """Scan one record's KEY=VALUE lines into the partial result dicts."""
     rec = _record_fields(lines)
     formid = rec.get('FormID')
     if not formid:
         return
+    if remap is not None:
+        formid = _rekey(formid, remap, keep_unmapped=False)
+        if formid is None:
+            return          # names a file the root plugin does not load
+        for key in [k for k in rec if k in _ID_FIELDS
+                    or k.startswith('AIPackage[')]:
+            rec[key] = _rekey(rec[key], remap)
     edid = rec.get('EditorID')
     if edid:
         out['formid_to_edid'][formid] = edid
@@ -266,14 +311,14 @@ def _scan_record_lines(sig: str, lines: list, out: dict):
 def _scan_range(args: tuple) -> dict:
     """Scan the records whose BEGIN delimiter starts in [start, end).
 
-    args = (fpath, sig, start, end). Module-level so it is picklable for
+    args = (fpath, sig, start, end, remap). Module-level so it is picklable for
     ProcessPoolExecutor; boundary rule matches text_reader.parse_file_range.
     """
 
     from tes5_import.base.text_reader import (DELIM_BEGIN, DELIM_END,
                                               find_delim_line)
 
-    fpath, sig, start, end = args
+    fpath, sig, start, end, remap = args
     out = _new_scan_out()
     try:
         f = open(fpath, 'rb')
@@ -294,7 +339,7 @@ def _scan_range(args: tuple) -> dict:
                 if rec_end < 0:
                     break
                 block = mm[nl + 1:rec_end].decode('utf-8', errors='replace')
-                _scan_record_lines(sig, block.split('\n'), out)
+                _scan_record_lines(sig, block.split('\n'), out, remap)
                 begin = find_delim_line(mm, DELIM_BEGIN,
                                          rec_end + len(DELIM_END))
         finally:
@@ -413,6 +458,7 @@ class CrossRefGraph:
         jobs = []
         dirs, self.worldspace_renames = _scan_chain(export_dir)
         for d in dirs:
+            remap = _index_remap(export_dir, d)
             for fname in sorted(os.listdir(d)):
                 if not fname.endswith('.txt'):
                     continue
@@ -425,8 +471,8 @@ class CrossRefGraph:
                 except OSError:
                     continue
                 for start in range(0, size, _SCAN_CHUNK_BYTES):
-                    jobs.append((fpath, sig,
-                                 start, min(start + _SCAN_CHUNK_BYTES, size)))
+                    jobs.append((fpath, sig, start,
+                                 min(start + _SCAN_CHUNK_BYTES, size), remap))
 
         if workers is None:
             workers = worker_count()
