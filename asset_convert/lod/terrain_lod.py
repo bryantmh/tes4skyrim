@@ -908,11 +908,13 @@ def _composite_tile_diffuse(lands, tile_x, tile_y, level, ltex_map, tex_root,
 
 
 def _heightmap_normal_rgb(heights: np.ndarray, out_px: int) -> np.ndarray:
-    """Derive a tangent-space normal map (RGB uint8) from a height grid.
+    """Derive a model-space terrain-LOD normal map (RGB uint8) from a height grid.
 
-    Skyrim terrain-LOD normal maps encode the surface normal so distant terrain
-    is lit; a flat normal leaves the LOD looking unlit.  heights is in game
-    units; we resize to out_px and take the gradient.
+    The .btr has no vertex normals, so distant terrain is lit ONLY by this
+    map.  Vanilla's layout is R = east, G = up, B = north: measured by
+    correlating Skyrim.esm's LAND slopes for tile tamriel.4.0.0 against its
+    vanilla _n.dds (r = 0.96 / 0.93 / 0.95; image row 0 = north).  heights is
+    in game units; we resize to out_px and take the gradient.
     """
     from PIL import Image
     # heights row 0 = SOUTH (LAND convention); the diffuse tile is written with
@@ -930,7 +932,7 @@ def _heightmap_normal_rgb(heights: np.ndarray, out_px: int) -> np.ndarray:
     nx, ny, nzz = -gx, -gy, nz
     norm = np.sqrt(nx*nx + ny*ny + nzz*nzz) + 1e-6
     nx, ny, nzz = nx/norm, ny/norm, nzz/norm
-    rgb = np.stack([(nx*0.5+0.5), (ny*0.5+0.5), (nzz*0.5+0.5)], axis=-1)
+    rgb = np.stack([(nx*0.5+0.5), (nzz*0.5+0.5), (ny*0.5+0.5)], axis=-1)
     return np.clip(rgb*255, 0, 255).astype(np.uint8)
 
 

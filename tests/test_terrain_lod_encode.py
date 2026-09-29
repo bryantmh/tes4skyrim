@@ -205,3 +205,39 @@ class TestFillMissing:
         c[:, :, 0] = np.arange(8, dtype=np.uint8)[None, :]
         fill_missing(h, c)
         assert (h[:, 3] == 2.0).all()          # column 2, not 4
+
+
+class TestTerrainLodNormalLayout:
+    """Vanilla terrain-LOD normals are R = east, G = up, B = north.
+
+    Measured on tamriel.4.0.0: Skyrim.esm LAND slopes against the vanilla
+    _n.dds. The .btr has no vertex normals, so a map missing its up axis lit
+    every hill like a wall.
+    """
+
+    def _rgb(self, heights):
+        from asset_convert.lod.terrain_lod import _heightmap_normal_rgb
+        return _heightmap_normal_rgb(heights.astype(np.float32), 64).astype(int)
+
+    def test_flat_ground_points_up_in_green(self):
+        rgb = self._rgb(np.zeros((33, 33)))
+        assert (rgb[..., 1] >= 254).all()
+        assert (abs(rgb[..., 0] - 128) <= 1).all() and (abs(rgb[..., 2] - 128) <= 1).all()
+
+    def test_ground_rising_east_tilts_red_down(self):
+        east = np.tile(np.arange(33) * 64.0, (33, 1))     # LAND: column = east
+        r, g, b = self._rgb(east)[16, 16]
+        assert r < 110 and g > 200 and abs(b - 128) <= 2
+
+    def test_ground_rising_north_tilts_blue_down(self):
+        north = np.tile((np.arange(33) * 64.0)[:, None], (1, 33))   # row 0 = south
+        r, g, b = self._rgb(north)[16, 16]
+        assert b < 110 and g > 200 and abs(r - 128) <= 2
+
+    def test_the_map_keeps_all_three_channels(self, tmp_path):
+        from asset_convert.texture.dds_codec import write_normal_dds
+        from PIL import Image
+        out = tmp_path / 'n.dds'
+        write_normal_dds(self._rgb(np.zeros((33, 33))).astype(np.uint8), out)
+        assert out.read_bytes()[84:88] == b'DXT1'
+        assert np.asarray(Image.open(out).convert('RGB'))[..., 1].min() > 240

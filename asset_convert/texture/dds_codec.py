@@ -112,14 +112,6 @@ def blocks_4x4(a: np.ndarray) -> np.ndarray:
              .reshape(-1, 16, *tail))
 
 
-def _pad_to_block(chan, size):
-    """A single channel padded up to a multiple of 4 in both axes."""
-    p = (size + 3) & ~3
-    out = np.zeros((p, p), np.uint8)
-    out[:size, :size] = chan
-    return out
-
-
 def _nearest_palette_codes(blocks, palette):
     """The nearest palette index for every pixel, as (N,16) uint8.
 
@@ -275,30 +267,12 @@ def encode_bc4_channel(chan: np.ndarray) -> np.ndarray:
 
 
 def write_normal_dds(normal_rgb: np.ndarray, path: Path):
-    """Write a BC5/ATI2 normal map from an RGB normal image.
+    """Write a terrain-LOD normal map as full-RGB DXT1, with mips.
 
-    BC5 stores R (normal X) and G (normal Y) as two BC4 channels interleaved
-    per block; Skyrim's landscape LOD shader reconstructs Z.
+    The landscape LOD shader reads all three channels (up is G, see
+    terrain_lod._heightmap_normal_rgb); BC5 kept only R and G and threw the
+    third axis away.  Vanilla ships DXT5 with a constant opaque alpha, which
+    carries the same colour block as DXT1.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    img = Image.fromarray(normal_rgb, 'RGB')
-    size = img.size[0]
-
-    mip_data = bytearray()
-    mip_count = 0
-    s = size
-    cur = img
-    while s >= 1:
-        arr = np.asarray(cur.resize((s, s), Image.LANCZOS) if cur.size[0] != s else cur,
-                         dtype=np.uint8)
-        rb = encode_bc4_channel(_pad_to_block(arr[:, :, 0], s))
-        gb = encode_bc4_channel(_pad_to_block(arr[:, :, 1], s))
-        mip_data += np.stack([rb, gb], axis=1).reshape(-1).tobytes()
-        mip_count += 1
-        if s == 1:
-            break
-        s //= 2
-
-    hdr = make_bc5_dds_header(size, mip_count)
-    path.write_bytes(hdr + bytes(mip_data))
+    write_dds_dxt1(normal_rgb, path, size=normal_rgb.shape[0])
 
