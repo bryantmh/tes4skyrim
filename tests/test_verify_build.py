@@ -43,6 +43,7 @@ def _ctx(tmp_path, log_body='', **kw):
         mode='pre', sections=sections, start=dt.datetime(2026, 9, 2),
         output=out, export=tmp_path / 'export', lod=out / 'AutoConvertLOD',
         plugins=vb.plugins_in(sections), skyrim_data=None, source_esm=None,
+        worldspaces=['TES4Tamriel'],
         deploy=[], zips=[], min_bto={'TES4Tamriel': 2}, cache={})
     for k, v in kw.items():
         setattr(ctx, k, v)
@@ -70,6 +71,51 @@ class TestLog:
         assert ctx.plugins == ['Oblivion.esm', 'Knights.esp']
         assert vb.final_section(ctx.sections, 'create_lod').label == \
             'create_lod'
+
+
+class TestSourceAgnostic:
+
+    def test_na_never_fails_the_gate(self):
+        """N/A is a status of its own and, like INFO, never blocks."""
+        na = vb.not_applicable('G12', 'no scripts')
+        assert na['status'] == vb.NA
+        assert vb.verdict([na, vb.result('G1', vb.PASS, '1', '')]) == vb.PASS
+        assert vb.verdict([na, vb.result('G1', vb.FAIL, '1', '')]) == vb.FAIL
+
+    def test_worldspaces_come_from_the_final_bake(self, tmp_path):
+        """Only the last create_lod step's LODGen inputs name worldspaces."""
+        body = ('  LODGen input: C:\\x\\LODGen SEWorld.txt (5 references)\n'
+                '  LODGen input: /x/LODGen My World.txt (2 references)')
+        ctx = _ctx(tmp_path, body)
+        ctx.sections[1].lines.append(
+            '  LODGen input: /x/LODGen Early.txt (1 references)')
+        assert vb.worldspaces_in(ctx.sections) == ['SEWorld', 'My World']
+
+    def test_since_starts_the_run_later(self, tmp_path):
+        """--since drops sections stamped earlier; the run starts after it."""
+        log = tmp_path / 'rebuild.out'
+        log.write_text(LOG.format(body=''), encoding='utf-8')
+        since = dt.datetime(2026, 9, 29, 10, 20)
+        sections = vb.read_log(log, since)
+        assert vb.run_start(sections) == since
+        assert vb.plugins_in(sections) == ['Knights.esp']
+
+    def test_default_output_is_the_configured_one(self, monkeypatch):
+        """The output root follows the install config's outputDir."""
+        import source_paths
+        from output_layout import REPO_ROOT
+        monkeypatch.setattr(source_paths, 'load_config',
+                            lambda *a: {'outputDir': 'elsewhere'})
+        assert vb.default_roots()[0] == REPO_ROOT / 'elsewhere'
+
+    def test_tree_alpha_reads_every_worldspace(self, tmp_path):
+        """G8 counts billboard tiles in each listed worldspace."""
+        ctx = _ctx(tmp_path, worldspaces=['A', 'B'])
+        for ws in ('A', 'B'):
+            objs = ctx.lod / 'meshes' / 'terrain' / ws / 'Objects'
+            objs.mkdir(parents=True)
+            (objs / f'{ws}.4.0.0.bto').write_bytes(b'trees\\billboards\\x')
+        assert vb.check_tree_alpha(ctx)['denominator'].startswith('2 tiles')
 
 
 class TestLogChecks:

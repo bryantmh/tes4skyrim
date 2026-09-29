@@ -8,7 +8,9 @@
 Reads the rebuild's own log (never a fixed path), the output and export trees,
 and writes `gate_<stamp>.json` beside the log. Exit 0 only when no check
 FAILs or REFUSEs; a check whose denominator is 0 REFUSES, since it inspected
-nothing.
+nothing, and a check the build gives nothing to judge is N/A (not a failure).
+Plugins and worldspaces come from the log; `--baseline` is the previous
+run's gate JSON, which a check may not regress against.
 See: docs/commentary/tools_release_gate.md
 """
 
@@ -28,8 +30,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from asset_convert import case_paths
+from output_layout import FINISHED_DIR_NAME
 
 PASS, INFO, WARN, FAIL, REFUSE = 'PASS', 'INFO', 'WARN', 'FAIL', 'REFUSE'
+
+#: The build holds nothing this check judges (no scripts, no baked LOD...).
+NA = 'N/A'
 
 #: Statuses that fail the gate.
 BLOCKING = (FAIL, REFUSE)
@@ -38,6 +44,9 @@ BLOCKING = (FAIL, REFUSE)
 Section = namedtuple('Section', 'label start lines')
 
 _STAMP = re.compile(r'^=== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (.*)$')
+
+#: `LODGen input: <file> (<n> references)`, one per worldspace a bake wrote.
+_LOD_INPUT = re.compile(r'LODGen input: (.+) \((\d+) references\)')
 
 #: What each check is called in the report.
 NAMES = {
@@ -60,6 +69,11 @@ MODES = {
 # ---------------------------------------------------------------------------
 
 
+def not_applicable(cid, why: str, **data) -> dict:
+    """A check this build gives nothing to judge; never fails the gate."""
+    return result(cid, NA, '0 applicable', why, **data)
+
+
 def result(cid, status, denominator, detail, **data) -> dict:
     """One check's outcome; `denominator` says what it inspected."""
     return {'id': cid, 'name': NAMES.get(cid, cid), 'status': status,
@@ -76,7 +90,7 @@ def ratio(cid, good: int, total: int, unit: str, detail='', **data) -> dict:
 
 
 def verdict(results) -> str:
-    """PASS unless a check FAILed or REFUSEd."""
+    """PASS unless a check FAILed or REFUSEd; WARN, INFO and N/A never fail."""
     return FAIL if any(r['status'] in BLOCKING for r in results) else PASS
 
 
@@ -91,8 +105,13 @@ def print_result(r) -> None:
 # ---------------------------------------------------------------------------
 
 
-def read_log(path) -> list:
-    """The log split at each `=== <time> <step>` stamp; text before it is 'preamble'."""
+def read_log(path, since=None) -> list:
+    """The log split at each `=== <time> <step>` stamp; text before it is 'preamble'.
+
+    With `since`, every section stamped before it is dropped (a log that
+    several runs appended to): the run then starts at the first later stamp.
+    See: docs/commentary/tools_release_gate.md#stamps
+    """
     sections = [Section('preamble', None, [])]
     with open(path, encoding='utf-8', errors='replace') as fh:
         for line in fh:
@@ -102,7 +121,10 @@ def read_log(path) -> list:
                 sections.append(Section(m.group(2).strip(), start, []))
             else:
                 sections[-1].lines.append(line.rstrip('\n'))
-    return sections
+    if since is None:
+        return sections
+    return [Section('preamble', None, [])] + [
+        s for s in sections if s.start is not None and s.start >= since]
 
 
 def run_start(sections):
@@ -119,6 +141,25 @@ def final_section(sections, prefix: str):
 def all_lines(sections):
     """Every line of the log, sections in order."""
     return [line for s in sections for line in s.lines]
+
+
+def worldspaces_in(sections) -> list:
+    """Worldspaces the final `create_lod` step baked, from its `LODGen input` lines."""
+    sec = final_section(sections, 'create_lod')
+    out = []
+    for line in sec.lines if sec else ():
+        m = _LOD_INPUT.search(line)
+        name = m and lodgen_worldspace(m.group(1))
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def lodgen_worldspace(path: str) -> str:
+    """`.../LODGen TES4Tamriel.txt` -> 'TES4Tamriel' (either separator)."""
+    stem = re.split(r'[\\/]', path.strip())[-1]
+    stem = stem[:-4] if stem.lower().endswith('.txt') else stem
+    return stem[len('LODGen '):] if stem.startswith('LODGen ') else ''
 
 
 def plugins_in(sections) -> list:
@@ -194,7 +235,6 @@ def check_compile(ctx) -> dict:
                  rows={p: list(v) for p, v in rows.items()})
 
 
-_LOD_INPUT = re.compile(r'LODGen input: (.+) \((\d+) references\)')
 _SELECTION = re.compile(r'Object-LOD selection: (\d+) reference')
 _RETRY = re.compile(r'Re-running without (.+) \(attempt \d+\)')
 
@@ -309,7 +349,7 @@ def check_census(ctx) -> dict:
 def census_trees(ctx) -> list:
     """(label, folder) for every output tree, plus the deploy folders after a deploy."""
     out = [(d.name, d) for d in sorted(ctx.output.iterdir())
-           if d.is_dir() and d.name != 'Finished Mods']
+           if d.is_dir() and d.name != FINISHED_DIR_NAME]
     return out + [(f'deployed:{Path(d).name}', Path(d))
                   for _z, d in ctx.deploy]
 
@@ -366,15 +406,20 @@ def _newer(path: Path, start) -> bool:
 
 
 def check_tree_alpha(ctx) -> dict:
-    """G8 (informational): tiles with billboard shapes vs tiles carrying an alpha property."""
-    ws = ctx.lod / 'meshes' / 'terrain' / 'TES4Tamriel' / 'Objects'
+    """G8 (informational): tiles with billboard shapes vs tiles carrying an alpha property.
+
+    Over every worldspace the final bake listed.
+    """
     cards = alpha = 0
-    for bto in ws.glob('*.bto'):
-        blob = bto.read_bytes().lower()
-        if b'trees\\billboards' in blob or b'trees/billboards' in blob:
-            cards += 1
-            alpha += b'nialphaproperty' in blob
-    return result('G8', INFO, f'{cards} tiles with billboards',
+    for ws in ctx.worldspaces:
+        for bto in (ctx.lod / 'meshes' / 'terrain' / ws / 'Objects').glob(
+                '*.bto'):
+            blob = bto.read_bytes().lower()
+            if b'trees\\billboards' in blob or b'trees/billboards' in blob:
+                cards += 1
+                alpha += b'nialphaproperty' in blob
+    return result('G8', INFO, f'{cards} tiles with billboards in '
+                  f'{len(ctx.worldspaces)} worldspaces',
                   f'{alpha} of them carry NiAlphaProperty (vanilla: 0)')
 
 
@@ -469,7 +514,7 @@ def texture_key(name: str) -> str:
 def our_bsas(ctx) -> list:
     """Every BSA in the output plugin trees."""
     return sorted(p for d in ctx.output.iterdir()
-                  if d.is_dir() and d.name != 'Finished Mods'
+                  if d.is_dir() and d.name != FINISHED_DIR_NAME
                   for p in d.glob('*.bsa'))
 
 
@@ -553,8 +598,10 @@ def _parse_args(argv=None):
     mode.add_argument('--pre-deploy', action='store_true')
     mode.add_argument('--post-deploy', action='store_true')
     ap.add_argument('--log', required=True, help="the rebuild's own .out")
-    ap.add_argument('--output', default=str(ROOT / 'output'))
-    ap.add_argument('--export', default=str(ROOT / 'export'))
+    ap.add_argument('--since', type=_stamp_time, metavar="'YYYY-MM-DD HH:MM:SS'",
+                    help='ignore log sections stamped before this')
+    ap.add_argument('--output', help="default: the config's outputDir")
+    ap.add_argument('--export', help='default: the install export folder')
     ap.add_argument('--plugins', nargs='+', help='default: from the log')
     ap.add_argument('--skyrim-data', help='default: the configured Data')
     ap.add_argument('--source-esm', help='TES4 Oblivion.esm (G6)')
@@ -567,18 +614,36 @@ def _parse_args(argv=None):
     return ap.parse_args(argv)
 
 
+def _stamp_time(text: str):
+    """`2026-09-28 20:26:29` (the log stamp's own format) -> datetime."""
+    return _dt.datetime.strptime(text.strip(), '%Y-%m-%d %H:%M:%S')
+
+
+def default_roots():
+    """(output, export) as a convert run with this install's config would use."""
+    from output_layout import DEFAULT_EXPORT, configured_output
+    from source_paths import load_config
+    return configured_output(load_config().get('outputDir')), DEFAULT_EXPORT
+
+
 def build_context(args):
     """Everything the checks read, resolved once from the command line."""
+    from asset_convert.lod.sibling_lod import LOD_DIR_NAME
     from asset_convert.sources.skyrim_assets import find_skyrim_data
-    sections = read_log(args.log)
-    output = Path(args.output)
-    finished = output / 'Finished Mods'
+    from core.worldspace_names import set_worldspace_plugins
+    sections = read_log(args.log, args.since)
+    out_default, export_default = default_roots()
+    output = Path(args.output or out_default)
+    finished = output / FINISHED_DIR_NAME
     deploy = [tuple(pair.split('=', 1)) for pair in args.deploy]
+    plugins = args.plugins or plugins_in(sections)
+    set_worldspace_plugins(plugins)
     ctx = argparse.Namespace(
         mode='post' if args.post_deploy else 'pre',
         sections=sections, start=run_start(sections), output=output,
-        export=Path(args.export), lod=output / 'AutoConvertLOD',
-        plugins=args.plugins or plugins_in(sections),
+        export=Path(args.export or export_default),
+        lod=output / LOD_DIR_NAME, plugins=plugins,
+        worldspaces=worldspaces_in(sections),
         skyrim_data=args.skyrim_data or find_skyrim_data(),
         source_esm=args.source_esm, deploy=deploy,
         zips=sorted(finished.glob('*.zip')) if finished.is_dir() else [],
@@ -601,13 +666,16 @@ def main(argv=None) -> int:
     if args.only:
         ids = [i for i in ids if i in args.only.split(',')]
     print(f"Release gate ({ctx.mode}-deploy), log {args.log}, run started "
-          f"{ctx.start}")
+          f"{ctx.start}\n  output {ctx.output}; plugins {ctx.plugins}; "
+          f"{len(ctx.worldspaces)} worldspaces")
     results = run_checks(ctx, ids)
     final = verdict(results)
     stamp = _dt.datetime.now().strftime('%Y%m%d-%H%M%S')
     out = Path(args.json or Path(args.log).parent / f'gate_{stamp}.json')
     out.write_text(json.dumps({'mode': ctx.mode, 'log': str(args.log),
                                'run_start': str(ctx.start), 'verdict': final,
+                               'plugins': ctx.plugins,
+                               'worldspaces': ctx.worldspaces,
                                'checks': results}, indent=1, default=str),
                    encoding='utf-8')
     print(f"VERDICT: {final}  ({out})")

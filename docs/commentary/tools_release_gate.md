@@ -5,6 +5,8 @@
 ## Contents
 
 - [What the gate is for](#purpose)
+- [The log stamp contract](#stamps)
+- [What the gate reads, and from where](#sources)
 - [Denominators, and why a zero refuses](#denominators)
 - [The two modes](#modes)
 - [The checks](#checks)
@@ -26,6 +28,41 @@ never a fixed path, and splits it at the script's `=== <time> <step>` stamps:
 the first stamp is the run start, and the LOD checks read only the LAST
 `create_lod` step, because a default convert also bakes LOD (four times, each
 before its dependents exist) and those earlier bakes are not what ships.
+
+## The log stamp contract
+<a id="stamps"></a>
+
+The gate reads any log that marks each step with one line of exactly this
+form, at the start of the line:
+
+    === YYYY-MM-DD HH:MM:SS <step>
+
+- The time is local wall-clock time, the same clock the files' mtimes use.
+- `<step>` is free text; the gate reads `convert <plugin>` (the plugins, in
+  load order), `create_lod` (the bake whose output ships: the LAST one) and
+  nothing else by name.
+- Everything after a stamp up to the next stamp belongs to that step, so a
+  step's window is its stamp to the next stamp (or the end of the log).
+- The first stamp is the run start. `--since 'YYYY-MM-DD HH:MM:SS'` drops
+  every section stamped earlier, for a log that several runs appended to.
+
+A rebuild script that tees `convert.py` output under such stamps is all the
+gate needs; nothing about the machine or the log's location is assumed.
+
+## What the gate reads, and from where
+<a id="sources"></a>
+
+- **Plugins**: the `convert <plugin>` stamps (or `--plugins`).
+- **Worldspaces**: the `LODGen input: <file> (<n> references)` lines of the
+  final `create_lod` step; the worldspace is the file name after `LODGen `.
+  Source-side names go through `core.worldspace_names` (the converted
+  Tamriel is `TES4Tamriel`), with the log's plugins as the active chain.
+- **Output root**: `--output`, else the install config's `outputDir`
+  (`output_layout.configured_output`), which is what `convert.py` writes to.
+  **Export root**: `--export`, else the install's `export/`.
+- **Per-plugin paths** come from `output_layout` (`plugin_esm`,
+  `record_dir`, `assets_for`), so an imported mod's grouped folders resolve
+  the same way the converter wrote them.
 
 ## Denominators, and why a zero refuses
 <a id="denominators"></a>
@@ -61,7 +98,7 @@ on PASS.
 | G5 | each plugin's `door_panel_axis_cache.json` | exists; FR's is written by this run and holds at least 37 doors |
 | G6 | ATXT-only land quadrants (see below) | all keep an alpha layer |
 | G7 | terrain-LOD colour (see below) | MAE within bound, control worse, not grey |
-| G8 | tree-card tiles vs tiles carrying NiAlphaProperty | informational: vanilla carries none |
+| G8 | tree-card tiles vs tiles carrying NiAlphaProperty, over every baked worldspace | informational: vanilla carries none |
 | G9 | each worldspace's LODGen input: rows on disk vs the printed `LODGen input` count vs the `Object-LOD selection` line | all equal; a mismatch after a NullReference retry (which rewrites the file) warns; a file older than the run fails |
 | G10 | CRC-32 of every zip member vs the deployed file | all equal |
 | G11 | final `create_lod` step: `NullReferenceException`, empty bakes; `.bto` per worldspace | none; at least `--min-bto` (TES4Tamriel 997) |
@@ -93,6 +130,10 @@ against the TES4 source.
 ## Reading the result
 <a id="result"></a>
 
-Statuses: PASS, WARN (does not fail), INFO (never fails), FAIL, REFUSE.
+Statuses: PASS, WARN (does not fail), INFO (never fails), N/A (the build has
+nothing this check judges, e.g. no plugin has scripts; never fails), FAIL,
+REFUSE. N/A is not REFUSE: REFUSE means the check could not see what it
+should have seen (a missing log line, an empty glob), N/A means the build
+itself holds nothing of that kind.
 The JSON repeats each line with its data (per-tree file counts, missing
 textures, per-worldspace row counts), so a failure names what to look at.
