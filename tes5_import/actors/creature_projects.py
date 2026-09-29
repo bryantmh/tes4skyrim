@@ -22,10 +22,10 @@ def load_projects(export_dir: str) -> tuple:
     MASTERS' merged in underneath, and the master slot each INHERITED folder
     came from (own folders are absent from `owner_slot`).
 
-    Own projects win on conflict, EXCEPT an own project that ships no body
-    mesh, which never shadows a master's usable one.  The master's generated
-    behavior project, skeleton and body NIFs are loaded by path at runtime, so
-    pointing this plugin's RACE chain at them is correct.
+    Own projects win, then the nearest master's (the LAST in `_HEADER.txt`);
+    a project with no body mesh never shadows a usable one. The master's
+    behavior project, skeleton and bodies load by path at runtime, so this
+    plugin's RACE chain may point at them.
 
     See: docs/commentary/tes5_import_mod_merge.md#master-export-resolution
     """
@@ -37,21 +37,21 @@ def load_projects(export_dir: str) -> tuple:
 
     names = export_master_names(export_dir)
     root = export_root(export_dir)
-    merged, owner_slot, rescued = {}, {}, []
-    for slot, name in enumerate(names):
+    merged, owner_slot = {}, {}
+    for slot, name in reversed(list(enumerate(names))):
         mpath = os.path.join(master_export_dir(root, name),
                              'creature_projects.json')
         if not os.path.exists(mpath):
             continue
         for folder, proj in read_artifact(mpath, name).items():
-            if folder in merged:
+            held = merged.get(folder)
+            if held is not None and (_usable(held) or not _usable(proj)):
                 continue
             if folder in own and _usable(own[folder]):
                 continue
-            if folder in own and _usable(proj):
-                rescued.append(folder)
             merged[folder] = proj
             owner_slot[folder] = slot
+    rescued = [f for f in merged if f in own and _usable(merged[f])]
     if merged:
         print(f'  Creature projects: inherited {len(merged)} from master(s) '
               f'{", ".join(names)} (own: {len(own)})')

@@ -389,8 +389,9 @@ def lod_capable_worldspaces(export_dir: Path, out_root: Path = None,
 def worldspace_edids(export_dir):
     """{FormID: EditorID} from this export's WRLD.txt and every master's.
 
-    Masters are scanned too, and resolved through the registry rather than as
-    sibling directories.
+    Masters are scanned too, resolved through the registry rather than as
+    sibling directories. The first scan wins, so they go nearest first: a
+    later master's worldspace overrides an earlier one's in load order.
 
     See: docs/commentary/asset_convert_terrain.md#why-the-wrld-scan-includes-masters
     """
@@ -413,7 +414,7 @@ def worldspace_edids(export_dir):
                 edid_by_fid.setdefault(cur_fid, line[9:].strip())
 
     _scan(export_dir)
-    for master in master_names(export_dir):
+    for master in reversed(master_names(export_dir)):
         _scan(_master_record_dir(export_dir, master))
     return edid_by_fid
 

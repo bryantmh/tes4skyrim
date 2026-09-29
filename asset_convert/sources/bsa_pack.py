@@ -480,9 +480,9 @@ def _pruned_keep(plugin_dir, export_dir, manifest_dir, results: dict):
 def _carry_from_masters(keep, textures, export_dir, output_dir, export_root):
     """(entries, found-nowhere keys) for `keep` textures the plugin's own tree lacks.
 
-    Each is looked up case-blind in its masters' output textures trees, the
-    LAST master in header order first, as load order lets it win; the
-    dependent ships the texture it references.
+    Each is looked up case-blind in its masters' output textures trees,
+    nearest first (`base_plugins.names_for`: the LAST header master first, as
+    load order lets it win); the dependent ships the texture it references.
     See: docs/commentary/asset_convert_texture.md#pruned-dir-references
     """
     have = {e[1].relative_to('textures').as_posix().lower() for e in textures}
@@ -490,7 +490,7 @@ def _carry_from_masters(keep, textures, export_dir, output_dir, export_root):
     if not missing:
         return [], []
     out = Path(output_dir).resolve()
-    roots = [top for m in reversed(base_plugins.names_for(export_dir))
+    roots = [top for m in base_plugins.names_for(export_dir)
              for top in _top_variants(_out_root(out, m, export_root), 'textures')]
     entries, nowhere = [], []
     for key in missing:

@@ -270,16 +270,17 @@ class _Compiler:
 def _master_chain(file_name: str, export_root: str) -> list:
     """Every plugin `file_name` inherits from, nearest master first.
 
-    The walk is transitive and cycle-safe. A master is resolved through
-    `record_dir`, never by joining its name onto the export root: plugins
-    imported from one mod archive share a folder named for the MOD, so a
-    plain join misses them.
+    A header lists masters in load order, so each level is walked from its
+    LAST master back. The walk is transitive and cycle-safe. A master is
+    resolved through `record_dir`, never by joining its name onto the export
+    root: plugins imported from one mod archive share a folder named for the
+    MOD, so a plain join misses them.
     See: docs/commentary/script_convert.md#vanilla-headers
     """
     from script_convert.cross_ref import master_names
     ordered, seen, queue = [], {file_name.lower()}, [file_name]
     while queue:
-        for name in master_names(record_dir(export_root, queue.pop(0))):
+        for name in reversed(master_names(record_dir(export_root, queue.pop(0)))):
             if not name or name.lower() in seen:
                 continue
             seen.add(name.lower())

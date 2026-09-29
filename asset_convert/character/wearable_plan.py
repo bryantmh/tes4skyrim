@@ -278,6 +278,12 @@ def _inherit(plan: dict, inherited: dict) -> None:
             plan[k] = v
 
 
+def _bases_farthest_first(export_dir) -> list:
+    """The bases farthest first, so `_inherit` lets a later master win."""
+    from asset_convert.sources import base_plugins
+    return base_plugins.export_dirs(export_dir)[::-1]
+
+
 def build_plan(export_dir, _seen=None) -> dict:
     """Map mesh-relative NIF path -> bitmask of the variants the plugin uses.
 
@@ -298,14 +304,13 @@ def build_plan(export_dir, _seen=None) -> dict:
     export_dir = Path(export_dir)
     plan: dict = {}
 
-    from asset_convert.sources import base_plugins
     # `_seen` closes a base CYCLE.  A chain is user-authored (`--base` at
     # one end, `_HEADER.txt` masters at the other), so nothing stops it
     # looping; comparing against export_dir alone catches only A->A, and
     # A->B->A recursed until the interpreter died.
     _seen = set(_seen or ())
     _seen.add(Path(export_dir).resolve())
-    for base in base_plugins.export_dirs(export_dir):
+    for base in _bases_farthest_first(export_dir):
         if Path(base).resolve() in _seen:
             continue
         _inherit(plan, build_plan(base, _seen))

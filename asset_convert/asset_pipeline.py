@@ -359,6 +359,24 @@ def _copy_and_fix_textures(asset_dir, plugin_dir, ns, stats, rec_dir):
               + (f", {_skip} already stripped" if _skip else ""))
 
 
+def _master_tree_dirs(extract_dir, source_name) -> list:
+    """The masters' existing `trees/` dirs, nearest first.
+
+    A dependent plugin authors TREE records for art its MASTER ships, and the
+    chain differs per plugin (Valenwood: Oblivion, Tamriel, Anequina), so it
+    is read from the export header. The borrow takes the first dir holding a
+    file, so the LAST header master comes first, as load order lets it win.
+    """
+    header = record_dir(extract_dir, source_name) / '_HEADER.txt'
+    if not header.is_file():
+        return []
+    with open(header, encoding='utf-8', errors='replace') as fh:
+        names = [line.partition('=')[2].strip() for line in fh
+                 if line.startswith('Master[')]
+    dirs = [_asset_root(extract_dir, n) / 'trees' for n in reversed(names) if n]
+    return [d for d in dirs if d.is_dir()]
+
+
 def convert_speedtrees(source_file, extract_dir='export', output_dir='output',
                        use_engine=True):
     """Convert SpeedTree `.spt` files into NIFs and place them under
@@ -377,19 +395,7 @@ def convert_speedtrees(source_file, extract_dir='export', output_dir='output',
 
     spt_stats = {'spt_conversion': {'ok': 0, 'fail': 0, 'skip': 0}}
     spt_src = _asset_root(extract_dir, source_name) / 'trees'
-    # A dependent plugin authors TREE records for art its MASTER ships, so the
-    # masters' trees/ dirs are searched for any .spt this export lacks. Read
-    # from the export header rather than a fixed list -- the chain differs per
-    # plugin (Valenwood: Oblivion, Tamriel, Anequina).
-    master_tree_dirs = []
-    header = record_dir(extract_dir, source_name) / '_HEADER.txt'
-    if header.is_file():
-        for line in open(header, encoding='utf-8', errors='replace'):
-            if line.startswith('Master['):
-                name = line.partition('=')[2].strip()
-                d = _asset_root(extract_dir, name) / 'trees'
-                if d.is_dir():
-                    master_tree_dirs.append(d)
+    master_tree_dirs = _master_tree_dirs(extract_dir, source_name)
     if spt_src.exists():
         ns = _activate_namespace(record_dir(extract_dir, source_name))
         spt_dst = plugin_dir / 'meshes' / ns / 'speedtrees'

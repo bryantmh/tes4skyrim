@@ -5250,7 +5250,10 @@ Morrowind-specific — any plugin two or more levels from the masterless root
 hit it.
 
 Order is **nearest master first, then its masters**, so a nearer plugin's
-override of a script still wins the `-h` search ahead of the root's copy.
+override of a script still wins the `-h` search ahead of the root's copy. A
+header lists masters root first, so each level is walked from its LAST
+`Master[i]` back; the walk once took them in header order and put the root
+ahead of the patch that overrides it.
 Each master is resolved through `record_dir`, never by joining its name onto
 the export root: plugins imported from one mod archive share a folder named
 for the MOD, so a plain join misses them.

@@ -427,7 +427,10 @@ MASTER's export tree, which deriving the texture root from the mesh path can
 never reach. Measured on the author's parallax mod: of the **3357** distinct
 texture paths its **8665** meshes reference, **1464** were in the mod and **1602**
 ONLY in `Nehrim.esm`. Unreachable means no height map and no specular verdict, so
-the resolver falls back through the master roots in order.
+the resolver falls back through the master roots
+[nearest first](tes5_import_mod_merge.md#base-order-nearest-first): the last
+`_HEADER.txt` master's tree before the root's, so an unofficial patch's copy of a
+texture beats the base game's.
 
 ## Material defaults come from vanilla, not from Oblivion
 <a id="shader-material-defaults"></a>

@@ -46,9 +46,13 @@ def _adopt_voice(index, voice_edid: str, race_edid: str, gender: str) -> bool:
 
 
 def _adopt_race_voices(index, master_dirs) -> int:
-    """Adopt the VTYP of every race the masters' own RACE records define."""
+    """Adopt the VTYP of every race the masters' own RACE records define.
+
+    `master_dirs` is nearest first; `set_voice_type` is last-writer-wins, so
+    they are applied farthest first and a later master's race voice wins.
+    """
     adopted = 0
-    for folder in master_dirs:
+    for folder in reversed(master_dirs):
         try:
             races = load_race_voices(folder)
         except OSError:
@@ -63,8 +67,8 @@ def _adopt_race_voices(index, master_dirs) -> int:
 def adopt_master_special_records(ctx, master_dirs) -> int:
     """Adopt the masters' support records; how many, 0 when they supply none.
 
-    `master_dirs` are the masters' export folders, whose RACE records name the
-    voice types to look for.
+    `master_dirs` are the masters' export folders, nearest first, whose RACE
+    records name the voice types to look for.
     """
     index = getattr(ctx, 'master_index', None)
     if index is None:

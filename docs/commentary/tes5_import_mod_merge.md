@@ -108,6 +108,8 @@ Two carriers, because a mod declares its base two different ways:
 * an **asset-only** mod has no plugin and no header, so the base is recorded at
   import time — `--base Nehrim.esm`, into `_source/.base_plugins`.
 
+Both are returned [nearest first](#base-order-nearest-first).
+
 Four consumers, all previously blind:
 
 | consumer | symptom when blind | measured |
@@ -120,6 +122,35 @@ Four consumers, all previously blind:
 🔴 `build_plan` returns a nested `BIPED_FLAGS_KEY` map. Inheriting it with a
 plain `dict.update()` **replaces** the base's flags instead of merging them —
 merge per entry, own flags winning.
+
+### Bases are listed nearest first
+<a id="base-order-nearest-first"></a>
+
+**Code:** `names_for`, `export_dirs`, `subdirs` in
+`asset_convert/sources/base_plugins.py`; `master_export_dirs` in
+`tes5_import/pipeline.py`
+
+`_HEADER.txt` numbers masters in LOAD ORDER, root first (`Master[0]=Oblivion.esm`,
+`Master[1]=SomePatch.esp`), and a later master overrides an earlier one. Both
+lists therefore return that order REVERSED: nearest first. Almost every consumer
+takes the first root that holds a file, so a root-first list let the base game's
+copy of a texture, mesh, `.spt` or creature project beat an unofficial patch's —
+silently, because both copies exist and nothing warns. The recorded
+`_source/.base_plugins` names (`--base A B`) are read in load order too — the
+same later-wins convention as an ordered merge's source list — after the header
+masters, and reversed with them.
+
+A consumer picks its direction by its merge shape, never by accident:
+
+| shape | consumers | direction |
+|---|---|---|
+| first match wins | `master_texture_roots`, `book_inam`, `morrowind_armor`, `creature_split_morrowind`, `morroblivion_pairs`, `bsa_pack._carry_from_masters`, `load_race_skin_tones`, `book_roots`, `master_mesh_dirs` (furniture seats, door sounds), the `.spt` borrow, `creature_projects`, `worldspace_edids`, `papyrus_compile._master_chain` | nearest first |
+| last writer wins | `wearable_plan.build_plan` (`_inherit`), `_adopt_race_voices` (`set_voice_type`) | the list reversed, so the nearest is applied last |
+| union | `grass_profile`, `book_inam`'s `master_books` | order-free |
+
+Lists read by FormID index byte (`export_master_names`, `manifest.master_names`,
+`cross_ref.master_names`, `terrain_lod.master_names`) stay in header order: slot
+`k` must mean `Master[k]`, and their merges already run masters first, own last.
 
 ## Part 3 — what is still missing
 <a id="part-3-what-still-missing"></a>

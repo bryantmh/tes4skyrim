@@ -44,9 +44,9 @@ def master_names(export_dir: Path):
 
 
 def build_tex_index(export_dir: Path, export_root: Path) -> dict:
-    """Texture index for this plugin, then its masters' (same as the converter)."""
+    """Texture index for this plugin, then its masters' nearest first (as the converter)."""
     idx = tex_index(assets_for(export_dir) / 'textures' / 'trees')
-    for m in master_names(export_dir):
+    for m in reversed(master_names(export_dir)):
         mtex = paths(m, export_root=export_root).assets / 'textures' / 'trees'
         if mtex.is_dir():
             for stem, sub in tex_index(mtex).items():

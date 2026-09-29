@@ -981,7 +981,8 @@ manifest references:
 1. **Own tree.** Every manifest key under an excluded folder (`pruned_refs`)
    escapes the folder rule. It never escapes the texture-extension rule.
 2. **Master-carried.** A referenced key missing from the plugin's own output
-   tree is looked up case-blind in its masters' output `textures` trees, the
+   tree is looked up case-blind in its masters' output `textures` trees,
+   [nearest first](tes5_import_mod_merge.md#base-order-nearest-first) — the
    last `_HEADER.txt` master first (a later master overrides an earlier one in
    load order, so an unofficial patch's copy beats the base game's), and
    packed into the dependent's archive. FR references

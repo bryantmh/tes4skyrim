@@ -351,7 +351,7 @@ def get_base_origin_shift(base_fid: str) -> float:
 
 
 def master_mesh_dirs(ctx) -> list:
-    """Each TES4 master's source mesh tree, in _HEADER.txt order."""
+    """Each TES4 master's source mesh tree, nearest first (`master_export_dirs`)."""
     from ..pipeline import master_export_dirs
     return [str(assets_for(d) / 'meshes') for d in master_export_dirs(ctx)]
 

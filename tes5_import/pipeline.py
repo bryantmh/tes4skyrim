@@ -204,12 +204,13 @@ def _build_assoc_item_index(by_type: dict, ctx=None) -> tuple:
 
 
 def master_export_dirs(ctx) -> list:
-    """The export directory of each TES4 master, in _HEADER.txt order.
+    """The export directory of each TES4 master, nearest first.
 
-    `load_master_export` resolves masters exactly this way (sibling directories
-    of the plugin's own export, named after the master file). Both the master's
-    VTYP creation and this plugin's adoption of it must read the SAME RACE.txt,
-    so the derivation is shared rather than reproduced.
+    `_HEADER.txt` order reversed: a later master overrides an earlier one, so
+    a first-match consumer meets the patch before the base game.
+    `load_master_export` resolves masters exactly this way; the master's VTYP
+    creation and this plugin's adoption of it must read the SAME RACE.txt.
+    See: docs/commentary/tes5_import_mod_merge.md#base-order-nearest-first
     """
     export_dir = getattr(ctx, 'export_dir', None)
     if not export_dir:
@@ -225,7 +226,7 @@ def master_export_dirs(ctx) -> list:
                      if line.startswith('Master[')]
     except OSError:
         return []
-    dirs = [master_export_dir(root, n) for n in names]
+    dirs = [master_export_dir(root, n) for n in reversed(names)]
     return [d for d in dirs if os.path.isdir(d)]
 
 

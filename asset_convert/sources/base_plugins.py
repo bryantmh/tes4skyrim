@@ -20,31 +20,36 @@ FILE_NAME = '.base_plugins'
 
 
 def names_for(own_dir):
-    """Base plugin names for the export tree at `own_dir`, nearest first."""
+    """Base plugin names for the export tree at `own_dir`, nearest first.
+
+    Load order reversed: the header's `Master[i]` lines, then the recorded
+    bases (`--base` is load order too), last first -- a later master
+    overrides an earlier one, so a first-match lookup must meet it first.
+    See: docs/commentary/tes5_import_mod_merge.md#base-order-nearest-first
+    """
     own_dir = str(own_dir)
+    header = [line.partition('=')[2].strip()
+              for line in _lines(os.path.join(own_dir, '_HEADER.txt'))
+              if line.startswith('Master[')]
+    recorded = [line.strip()
+                for line in _lines(os.path.join(own_dir, '_source', FILE_NAME))]
     names = []
+    for n in header + recorded:
+        if n and n not in names:
+            names.append(n)
+    return names[::-1]
 
-    header = os.path.join(own_dir, '_HEADER.txt')
-    if os.path.isfile(header):
-        with open(header, encoding='utf-8', errors='replace') as fh:
-            for line in fh:
-                if line.startswith('Master['):
-                    n = line.partition('=')[2].strip()
-                    if n and n not in names:
-                        names.append(n)
 
-    recorded = os.path.join(own_dir, '_source', FILE_NAME)
-    if os.path.isfile(recorded):
-        with open(recorded, encoding='utf-8', errors='replace') as fh:
-            for line in fh:
-                n = line.strip()
-                if n and n not in names:
-                    names.append(n)
-    return names
+def _lines(path):
+    """The lines of text file `path`; [] when it does not exist."""
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding='utf-8', errors='replace') as fh:
+        return fh.readlines()
 
 
 def export_dirs(own_dir):
-    """Sibling export trees for the bases of `own_dir`, that exist.
+    """Sibling export trees for the bases of `own_dir` that exist, nearest first.
 
     Resolved through `record_dir`: an imported mod's plugins share ONE folder
     named for the MOD, so joining the master's own name onto the export root
