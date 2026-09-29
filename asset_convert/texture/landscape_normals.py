@@ -209,11 +209,16 @@ def ensure_ltex_normals(rec_dir, textures_root, output_dir,
     """
     output_dir = Path(output_dir)
     trees = [p / 'textures' for p in output_dir.iterdir() if p.is_dir()]
+    # Record paths keep TES4's mixed case while files on disk may not; match
+    # case-insensitively so a case-sensitive filesystem finds the real normal.
+    existing = {str(Path(r, f).relative_to(tree)).lower()
+                for tree in trees if tree.is_dir()
+                for r, _, fs in os.walk(tree) for f in fs}
     written = 0
     rels = _ltex_texture_rels(rec_dir)
     for rel in sorted(rels):
         parts = (rel.rsplit('.', 1)[0] + '_n.dds').split('\\')
-        if any(tree.joinpath(*parts).is_file() for tree in trees):
+        if '/'.join(parts).lower() in existing:
             continue
         dest = Path(textures_root).joinpath(*parts)
         dest.parent.mkdir(parents=True, exist_ok=True)
