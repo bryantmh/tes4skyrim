@@ -144,6 +144,7 @@ def _persist_mesh_manifests(mesh_stats, manifest_dir, partial: bool) -> None:
     invocation. `partial` (a --mesh-subdirs run) MERGES rather than replaces:
     that run saw only part of the tree, and overwriting would tell the prune
     nothing outside those folders uses a texture, so it would delete the rest.
+    Runs with no source meshes/ too; the pack needs the (empty) manifest.
 
     See: docs/commentary/asset_convert_shader.md#detail-overlay-diffuses
     """
@@ -243,11 +244,11 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
             source_name, mesh_subdirs, parallax, textures_only)
         if parallax:
             _write_parallax_notice(plugin_dir)
-        _persist_mesh_manifests(stats['mesh_conversion'], mesh_manifest_dir,
-                                bool(mesh_subdirs))
     else:
         print(f"  No meshes found at {mesh_src}")
         stats['mesh_conversion'] = {'converted': 0, 'skipped': 0, 'errors': 0}
+    _persist_mesh_manifests(stats['mesh_conversion'], mesh_manifest_dir,
+                            bool(mesh_subdirs))
 
     if mesh_src.exists() and not textures_only:
         _profile_hair_and_grass(rec_dir, plugin_dir, stats, skip_hair)

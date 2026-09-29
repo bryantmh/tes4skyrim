@@ -996,8 +996,10 @@ in the record dir. `phase_pack` therefore passes `manifest_dir` explicitly,
 separate from `export_dir` (the record dir, which names the masters).
 
 The pack REFUSES loudly when an `export_dir` is given and the plugin has
-converted meshes, but no manifest is found. A mesh-less plugin never writes a
-manifest and packs without one.
+converted meshes, but no manifest is found. A mesh-less plugin packs without
+one. The mesh stage writes the manifest even when the plugin has no source
+`meshes/`, because the SpeedTree stage still puts meshes in the output; the
+manifest is then empty, which is true, since no source NIF references anything.
 
 `textures_used.txt` had no reader in the build before this; the exemption is
 its reader.

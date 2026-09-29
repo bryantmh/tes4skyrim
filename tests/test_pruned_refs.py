@@ -125,3 +125,25 @@ def test_phase_pack_passes_the_asset_dir_as_the_manifest_dir():
     """The manifest sits beside the shared assets, not in the record dir."""
     src = inspect.getsource(convert.phase_pack)
     assert 'manifest_dir=str(asset_root(export_root, file_name))' in src
+
+
+def test_mesh_stage_without_source_meshes_writes_an_empty_manifest(
+        tmp_path, monkeypatch):
+    """No source meshes/ still leaves a manifest, so tree-only output packs."""
+    from asset_convert import asset_pipeline
+    exp, out, exe = _nested_mod(tmp_path, manifest=False)
+    for name in ('assemble_armor', '_copy_and_fix_textures',
+                 '_report_case_paths'):
+        monkeypatch.setattr(asset_pipeline, name, lambda *a, **k: None)
+    monkeypatch.setattr(asset_pipeline.landscape_normals, 'ensure_ltex_normals',
+                        lambda *a, **k: (0, 0))
+    assert not (asset_root(exp, 'A.esp') / 'meshes').exists()
+    asset_pipeline.convert_meshes('A.esp', extract_dir=str(exp),
+                                  output_dir=str(out))
+    manifest = asset_root(exp, 'A.esp') / texture_prune.MANIFEST_NAME
+    assert manifest.is_file() and manifest.read_text(encoding='utf-8') == ''
+    staged = {}
+    _fake_bsarch(monkeypatch, staged)
+    r = _pack(exp, out, exe, str(asset_root(exp, 'A.esp')))
+    assert r['errors'] == []
+    assert 'A.bsa' in staged
