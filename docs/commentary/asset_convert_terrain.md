@@ -2131,3 +2131,10 @@ detail next to a seam is damped by at most about a quarter). Fit: 2,112
 painted cells in 2.9 s; worldspace shift (7.7, 2.7, -0.2). Tiles with filler
 composite ~20% slower (the ring).
 
+The feather works IN PLACE, one float32 quadrant at a time, clipped back into
+the uint8 canvas. It used to copy the whole ring canvas to float32 and clip
+that (8 bytes per canvas byte): on four real Tamriel LOD32 tiles (13 to 2,327
+filler quadrants) `feather_filler` peaked at 113.6 MB over a 14.2 MB canvas
+and the whole tile composite at 146-160 MB (tracemalloc). Now it is
+0.1-0.2 MB and 45-59 MB, with byte-identical atlases.
+

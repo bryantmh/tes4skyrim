@@ -68,18 +68,43 @@ def test_feather_meets_the_painted_edge_and_keeps_the_filler_detail():
     stripes = np.where(np.arange(h) % 2 == 0, 10.0, -10.0)[:, None, None]
     canvas[:, h:] = 160.0 + stripes
     state = np.array([[1, 0]], dtype=np.int8)
+    before = canvas.copy()
 
     out = tb.feather_filler(canvas, state, h)
 
-    assert np.array_equal(out[:, :h], canvas[:, :h]), 'painted pixels untouched'
+    assert np.array_equal(out[:, :h], before[:, :h]), 'painted pixels untouched'
     assert abs(out[:, h].mean() - 100.0) < 2.0
     assert abs(out[:, -1].mean() - 160.0) < 2.0
     detail = out[:, h:] - out[:, h:].mean(0, keepdims=True)
-    want = (canvas[:, h:] - 160.0)
+    want = (before[:, h:] - 160.0)
     assert np.allclose(detail[:, -1], want[:, -1], atol=1.0), 'far edge exact'
     inner = slice(2, h - 2)
     assert (np.abs(detail[inner]) >= 0.75 * np.abs(want[inner])).all(), (
         'at most a quarter of the detail is absorbed, at the seam')
+
+
+def test_the_feather_works_in_place_one_block_at_a_time():
+    """A LOD32-sized uint8 canvas is changed in place, never copied whole to float32.
+
+    The whole-canvas float32 copy (plus its clip) peaked at ~114 MB per LOD32
+    tile in every worker.
+    """
+    import tracemalloc
+    h = 32
+    canvas = np.full((64 * h, 64 * h, 3), 100, dtype=np.uint8)
+    state = np.ones((64, 64), dtype=np.int8)
+    state[10, 10] = 0
+    canvas[10 * h:11 * h, 10 * h:11 * h] = 160
+    tracemalloc.start()
+    try:
+        out = tb.feather_filler(canvas, state, h)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert out is canvas and out.dtype == np.uint8
+    assert abs(int(canvas[10 * h + 16, 10 * h, 0]) - 100) <= 2, 'edge met in place'
+    assert peak < canvas.nbytes // 8, f'peak {peak} vs canvas {canvas.nbytes}'
 
 
 def _solid(path, rgb, size):

@@ -965,7 +965,7 @@ def _composite_tile_diffuse(lands, tile_x, tile_y, level, ltex_map, tex_root,
     if (state == 0).any():
         _margin_ring(canvas, state, lands, (tile_x, tile_y), level,
                      (cell_water, default_wh), ctx)
-        canvas = feather_filler(canvas, state, px // 2).astype(np.uint8)
+        feather_filler(canvas, state, px // 2)
     return canvas[px:(level + 1) * px, px:(level + 1) * px].copy(), level * px
 
 

@@ -612,22 +612,23 @@ _SIDES = (('w', 0, -1), ('e', 0, 1), ('n', -1, 0), ('s', 1, 0))
 
 
 def feather_filler(canvas: np.ndarray, state: np.ndarray, h: int) -> np.ndarray:
-    """`canvas` (north-up, quad blocks of h px) with each filler block feathered.
+    """Feather each filler block of `canvas` (north-up, quad blocks of h px) IN PLACE.
 
     `state` holds one entry per block: 1 painted, 0 filler, -1 unknown. A
     filler block is bent, side by side, to meet each painted neighbour's
     edge colour, the correction fading to 0 across the block; painted
-    pixels never change.
+    pixels never change. Works on one float32 block at a time, clipped back
+    into `canvas`'s own dtype; returns `canvas`.
     See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler-match
     """
-    out = canvas.astype(np.float32)
     rows, cols = state.shape
     for r, c in zip(*np.nonzero(state == 0)):
-        block = out[r * h:(r + 1) * h, c * h:(c + 1) * h]
+        view = canvas[r * h:(r + 1) * h, c * h:(c + 1) * h]
+        block = view.astype(np.float32)
         for side, dr, dc in _SIDES:
             nr, nc = r + dr, c + dc
             if 0 <= nr < rows and 0 <= nc < cols and state[nr, nc] == 1:
-                nb = out[nr * h:(nr + 1) * h, nc * h:(nc + 1) * h]
-                _feather_side(block, block.copy(), side, nb, h)
-    return np.clip(out, 0, 255)
-
+                nb = canvas[nr * h:(nr + 1) * h, nc * h:(nc + 1) * h]
+                _feather_side(block, block.copy(), side, nb.astype(np.float32), h)
+        view[...] = np.clip(block, 0, 255)
+    return canvas
