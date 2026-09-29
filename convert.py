@@ -936,7 +936,8 @@ def phase_pack(file_name: str, config: dict, output_dir: str = None):
 
     Three roots, never interchangeable: the RECORD dir names the masters, the
     ASSET dir holds the texture manifest, and the export ROOT resolves which
-    output folder this plugin converted into.
+    output folder this plugin converted into. A failure marker is written first
+    and removed only on success, so a failed pack blocks any later zip.
     See: docs/commentary/asset_convert_bsa.md#pack-bsas
     """
     from asset_convert.sources.bsa_pack import pack_bsas
@@ -945,6 +946,11 @@ def phase_pack(file_name: str, config: dict, output_dir: str = None):
     bsarch  = config.get("bsarchPath") or None
     export_root = str(SCRIPT_DIR / "export")
     export_dir = record_dir(export_root, file_name)
+    marker = _pack_marker(out_dir, file_name)
+    if marker.parent.is_dir():
+        marker.write_text("The BSA pack for this plugin failed or did not "
+                          "finish; the zip step refuses until it succeeds.\n",
+                          encoding="utf-8")
 
     print(f"[{file_name}] Packing BSAs...")
     results = pack_bsas(
@@ -959,21 +965,32 @@ def phase_pack(file_name: str, config: dict, output_dir: str = None):
     skipped = len(results['skipped'])
     errors  = len(results['errors'])
     print(f"[{file_name}] BSA pack complete: {packed} packed, {skipped} skipped, {errors} errors")
+    if errors == 0:
+        marker.unlink(missing_ok=True)
     return errors == 0
+
+
+#: Suffix of the marker a failed BSA pack leaves beside its plugin; never packed or zipped.
+PACK_FAILED_SUFFIX = ".pack-failed"
+
+
+def _pack_marker(out_dir, file_name: str) -> Path:
+    """The pack-failure marker for `file_name` in its output folder."""
+    return (plugin_out_root(Path(out_dir), file_name, str(SCRIPT_DIR / "export"))
+            / (file_name + PACK_FAILED_SUFFIX))
 
 
 # ===========================================================================
 # Phase 12: PACK ZIP ARCHIVES
 # ===========================================================================
 
-def phase_pack_zip(file_name: str, config: dict, output_dir: str = None,
-                   bsa_ok: bool = True):
+def phase_pack_zip(file_name: str, config: dict, output_dir: str = None):
     """Zip the converted plugin (.esm/.esl/.esp), .bsa and loose-only files.
 
     The zip lands in output_dir/"Finished Mods"/ and is named
     "<mod folder>.zip"; `bsa_pack.LOOSE_ONLY_DIRS` ride loose at their paths
-    under the mod root.  `bsa_ok` False (this run's BSA pack failed for the
-    plugin) refuses, so stale archives never ship as the finished mod.
+    under the mod root.  A pack-failure marker from ANY plugin in the folder,
+    from this run or an earlier one, refuses, so stale archives never ship.
     See: docs/reference/tes_runtime_fragments.md#never-packed
     See: docs/commentary/asset_convert_paths.md#pack-gate
     """
@@ -1003,8 +1020,9 @@ def phase_pack_zip(file_name: str, config: dict, output_dir: str = None,
     # happened to be the -f argument produced three identical archives under
     # three different names for a three-plugin pack.
     zip_path = finished_dir(out_root) / f"{src_root.name}.zip"
-    if not bsa_ok:
-        return _refuse_zip(file_name, zip_path)
+    failed = sorted(src_root.glob("*" + PACK_FAILED_SUFFIX))
+    if failed:
+        return _refuse_zip(file_name, zip_path, failed)
 
     members = [(src.name, src)
                for ext in ("*.esm", "*.esl", "*.esp", "*.bsa")
@@ -1021,10 +1039,12 @@ def phase_pack_zip(file_name: str, config: dict, output_dir: str = None,
     return True
 
 
-def _refuse_zip(file_name: str, zip_path: Path) -> bool:
-    """Say loudly that a failed BSA pack blocks the zip; always False."""
-    print(f"[{file_name}] ERROR: the BSA pack failed in this run, so no zip "
-          f"is written: its archives would be stale or partial.")
+def _refuse_zip(file_name: str, zip_path: Path, markers) -> bool:
+    """Say loudly which failed BSA pack blocks the zip; always False."""
+    names = ", ".join(m.name[:-len(PACK_FAILED_SUFFIX)] for m in markers)
+    print(f"[{file_name}] ERROR: the BSA pack failed for {names}, so no zip "
+          f"is written: its archives would be stale or partial. Re-run the "
+          f"pack step; its marker is {markers[0]}.")
     if zip_path.exists():
         print(f"[{file_name}]        {zip_path} is from an EARLIER run.")
     return False
@@ -1160,9 +1180,7 @@ def _phase_runners(run) -> dict:
         'skyrim_patch': lambda _fn: phase_modify_body_meshes(
             run.tes5_data, plugins=a.patch_plugins, output_dir=out),
         'pack_bsa': lambda fn: phase_pack(fn, cfg, output_dir=out),
-        'pack_zip': lambda fn: phase_pack_zip(
-            fn, cfg, output_dir=out,
-            bsa_ok=run.step_ok.get('pack', {}).get(fn, True)),
+        'pack_zip': lambda fn: phase_pack_zip(fn, cfg, output_dir=out),
     }
 
 
@@ -1204,7 +1222,6 @@ def _run_steps(steps, order, run) -> tuple:
         print()
     runners = _phase_runners(run)
     step_ok, success = {}, True
-    run.step_ok = step_ok
     for step in steps:
         title, key, scope = _PHASE_INFO[step]
         targets = _phase_targets(scope, order, asset_only)

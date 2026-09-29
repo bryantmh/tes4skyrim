@@ -107,8 +107,8 @@ packer merges it into, so `Textures/` beside `textures/` is not itself a twin.
 <a id="pack-gate"></a>
 
 **Code:** `_collect_files`, `case_gate` in `asset_convert/sources/bsa_pack.py`;
-`phase_pack_zip`, `_run_steps` in `convert.py`; the census line at the end of
-`convert_meshes` in `asset_convert/asset_pipeline.py`
+`phase_pack`, `phase_pack_zip`, `_pack_marker` in `convert.py`; the census line
+at the end of `convert_meshes` in `asset_convert/asset_pipeline.py`
 
 - **Every case spelling of a top folder is packed.** The packer used to read
   only `plugin_dir/textures` and `plugin_dir/meshes`, and the misc-folder scan
@@ -124,9 +124,15 @@ packer merges it into, so `Textures/` beside `textures/` is not itself a twin.
 - **The zip refuses a failed pack.** `convert._run_steps` runs every step
   whatever an earlier one returned, so a gated (or otherwise failed) BSA pack
   used to be followed by a zip of whatever `.bsa` files were on disk: stale
-  archives from an earlier run, shipped as the finished mod. `phase_pack_zip`
-  now refuses when this run's `pack_bsa` failed for that plugin, and says so;
-  an existing zip from an earlier run is left in place and named.
+  archives from an earlier run, shipped as the finished mod. `phase_pack`
+  writes `<plugin>.pack-failed` in the plugin's output folder before packing
+  and removes it only on success, so a failed or killed pack leaves it behind.
+  `phase_pack_zip` refuses while ANY such marker sits in the folder it zips,
+  and names the plugin; an existing zip from an earlier run is left in place
+  and named. A marker on disk, not this process's step results, is what makes
+  the refusal hold for a mod folder with two plugins (B's zip carries A's
+  archives) and for a separate `--pack-zip-only` run. The marker sits at the
+  folder root, which the packer never stages and the zip never globs.
 - `convert_meshes` ends with a census line for the plugin's output folder and
   the per-site `Case paths:` counts, so a case problem shows up at conversion
   time rather than at pack time.

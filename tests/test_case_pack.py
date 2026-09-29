@@ -154,3 +154,58 @@ def test_zip_only_run_still_zips(tmp_path, monkeypatch):
     _plugin(tmp_path, ['textures/tes4/a.dds'])
     step_ok, success = _run(tmp_path, monkeypatch, ['pack_zip'])
     assert success and tmp_path.joinpath(*_ZIP).is_file()
+
+
+# ---------------------------------------------------------------------------
+# The pack-failure marker: the refusal outlives the process
+# ---------------------------------------------------------------------------
+
+
+def _marker(tmp_path):
+    return tmp_path / 'output' / 'Oblivion.esm' / ('Oblivion.esm' + convert.PACK_FAILED_SUFFIX)
+
+
+def test_a_later_zip_only_run_still_refuses_a_failed_pack(tmp_path, monkeypatch,
+                                                          capsys):
+    """`--pack-zip-only` after a failed pack: old code zipped the stale BSA."""
+    _plugin(tmp_path, ['textures/tes4/a.dds'])
+    _fake_bsarch(monkeypatch, {}, ok=False)
+    _run(tmp_path, monkeypatch, ['pack_bsa'])
+
+    step_ok, success = _run(tmp_path, monkeypatch, ['pack_zip'])
+
+    assert _marker(tmp_path).is_file()
+    assert not success and not tmp_path.joinpath(*_ZIP).exists()
+    assert 'BSA pack failed for Oblivion.esm' in capsys.readouterr().out
+
+
+def test_a_sibling_plugins_failed_pack_blocks_the_mods_zip(tmp_path, monkeypatch,
+                                                           capsys):
+    """Two plugins share one mod folder: B's zip must not carry A's stale BSA."""
+    root = _plugin(tmp_path, ['textures/tes4/a.dds'])
+    _put(root / 'Patch.esp', b'TES4')
+    _fake_bsarch(monkeypatch, {}, ok=False)
+    _run(tmp_path, monkeypatch, ['pack_bsa'])
+    monkeypatch.setattr(convert, 'plugin_out_root', lambda *_a: root)
+
+    ok = convert.phase_pack_zip('Patch.esp', {}, output_dir=str(tmp_path / 'output'))
+
+    assert not ok and not list((tmp_path / 'output' / 'Finished Mods').iterdir())
+    assert 'BSA pack failed for Oblivion.esm' in capsys.readouterr().out
+
+
+def test_a_successful_pack_clears_the_marker_and_never_ships_it(tmp_path,
+                                                                monkeypatch):
+    """A re-pack that succeeds removes the marker; neither the BSA nor the zip holds it."""
+    import zipfile
+    _plugin(tmp_path, ['textures/tes4/a.dds'])
+    _marker(tmp_path).write_text('earlier failure')
+    staged = {}
+    _fake_bsarch(monkeypatch, staged)
+
+    step_ok, success = _run(tmp_path, monkeypatch, ['pack_bsa', 'pack_zip'])
+
+    assert success and not _marker(tmp_path).exists()
+    assert not any('pack-failed' in f for files in staged.values() for f in files)
+    names = zipfile.ZipFile(tmp_path.joinpath(*_ZIP)).namelist()
+    assert names and not any('pack-failed' in n for n in names)
