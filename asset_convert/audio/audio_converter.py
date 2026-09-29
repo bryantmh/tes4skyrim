@@ -875,6 +875,12 @@ def organize_voice_files(
     # insensitive filesystem never surfaced this); bsa_extract.py preserves
     # that casing verbatim, so the extracted folder is 'voice', not 'Voice'.
     voice_root = source_dir / 'sound' / 'voice'
+    # A mod's LOOSE files keep their author's casing ('Voice'), so on a
+    # case-sensitive filesystem match the folder name case-insensitively.
+    if not voice_root.exists() and (source_dir / 'sound').is_dir():
+        voice_root = next((d for d in (source_dir / 'sound').iterdir()
+                           if d.is_dir() and d.name.lower() == 'voice'),
+                          voice_root)
     if not voice_root.exists():
         print(f'  Voice directory not found: {voice_root}')
         return {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0,
