@@ -537,6 +537,23 @@ separate plugin, and stem-matching correctly excludes it.
 A derived `_far.nif` is a bake-time intermediate, not a shipped asset, so it is
 written into `output/AutoConvertLOD/meshes/` rather than the plugin's tree.
 
+### <a id="authored-far-from-any-plugin"></a>An authored `_far.nif` from ANY later plugin beats a derived one
+
+**Code:** `_authored_far_dirs`, `_stage_authored_far`, `_derive_far_meshes` in
+`asset_convert/lod/lod_gen.py`
+
+A plugin can ship a hand-made `_far.nif` for a model it does not ship: FR
+carries `tes4\Architecture\skingrad\skbridgesmall_far.nif` for Oblivion's
+bridge. Routing derivation by the owner of the FULL model alone looked for
+authored LOD only in that owner's tree, so FR's mesh was ignored and a
+decimated one generated. Every source tree is now searched (case-blind); the
+last one shipping an authored LOD mesh wins, but never one EARLIER in load
+order than the tree whose full model is placed, because that LOD was made from
+geometry that is no longer drawn. Staging an authored mesh first deletes a
+generated one (and its `_far8`/`_far16` tiers) left at the same path by an
+earlier run; otherwise "already there" would keep the stale derived file.
+Logged as `Authored LOD meshes staged: N of M`.
+
 ### Why one LOD folder, not one per plugin
 <a id="one-lod-folder-not-one-per-plugin"></a>
 

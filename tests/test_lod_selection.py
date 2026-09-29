@@ -47,6 +47,7 @@ def _stat(model, flags=LOD, edid='Rock01', sig='STAT'):
 
 
 def _ref(fid, base, flags=0, x=100.0, y=100.0, **extra):
+    """A placed reference in cell (0, 0) of the test worldspace."""
     ref = {'form_id': fid, 'flags': flags, 'base_fid': base,
            'parent_wrld': WRLD, 'parent_cell': CELL,
            'x': x, 'y': y, 'z': 0.0, 'rx': 0.0, 'ry': 0.0, 'rz': 0.0,
@@ -56,6 +57,7 @@ def _ref(fid, base, flags=0, x=100.0, y=100.0, **extra):
 
 
 def _parsed(stats, refs):
+    """A `parse_esm`-shaped tuple: one worldspace, one cell."""
     worldspaces = {WRLD: {'edid': 'TES4Tamriel', 'sw_x': -2, 'sw_y': -2,
                           'ne_x': 2, 'ne_y': 2}}
     cells = {CELL: {'parent_wrld': WRLD, 'grid_x': 0, 'grid_y': 0}}
@@ -106,6 +108,115 @@ class TestInputShape:
         assert Path(txt).parent == tmp_path / 'lodgen'
 
     def test_nothing_listed_returns_none(self, gen, tmp_path):
+        """No listable reference -> no file, None."""
         out = tmp_path / 'AutoConvertLOD'
         stats = {0x11: _stat('tes4\\rocks\\rock01.nif', flags=0)}
         assert _write(gen, out, stats, [_ref(0xA2, 0x11)]) is None
+
+
+class TestCaseBlindLookups:
+    """Mixed-case source files (FR ships `X.NIF`, `Architecture\\`) are found."""
+
+    def test_mesh_exists_ignores_case(self, gen, tmp_path):
+        _mesh(tmp_path, 'tes4\\FR\\FRSkBridgeSmall.NIF')
+        assert gen._mesh_exists('meshes\\tes4\\fr\\frskbridgesmall.nif',
+                                tmp_path / 'meshes')
+
+    def test_mixed_case_master_model_is_listed_with_its_authored_far(
+            self, gen, tmp_path):
+        """Old: model not found in the master tree -> base dropped silently."""
+        out = tmp_path / 'AutoConvertLOD'
+        (out / 'meshes').mkdir(parents=True)
+        fr = tmp_path / 'FR'
+        _mesh(fr, 'tes4\\FR\\FRSkBridgeSmall.NIF')
+        _mesh(fr, 'tes4\\FR\\FRSkBridgeSmall_far.NIF')
+        stats = {0x20: _stat('tes4\\FR\\FRSkBridgeSmall.NIF', edid='FRBridge')}
+        txt = _write(gen, out, stats, [_ref(0xB1, 0x20)],
+                     master_mesh_dirs=[fr])
+        assert txt is not None
+        row = _rows(txt)[0xB1]
+        assert row[13] == 'meshes\\tes4\\fr\\frskbridgesmall_far.nif'
+        assert (out / 'meshes/tes4/fr/frskbridgesmall_far.nif').is_file()
+        gen._drop_staged_master_meshes()
+
+    def test_authored_far_in_any_case_is_not_regenerated(self, tmp_path):
+        """FR's `X_far.NIF` counts as authored for a lowercase `_far` path."""
+        from asset_convert.lod import lod_far_gen
+        _mesh(tmp_path, 'tes4\\FR\\FRSkBridgeSmall_far.NIF')
+        assert lod_far_gen.has_authored_lod(
+            tmp_path / 'meshes', 'tes4\\fr\\frskbridgesmall_far.nif')
+
+    def test_find_texture_ignores_case(self, tmp_path):
+        """A billboard shipped as `Trees\\Billboards\\Oak.DDS` is found."""
+        from asset_convert.lod import lod_far_gen
+        p = tmp_path / 'tex' / 'tes4' / 'Trees' / 'Billboards' / 'Oak.DDS'
+        p.parent.mkdir(parents=True)
+        p.write_bytes(b'DDS ')
+        assert lod_far_gen.find_texture(
+            [tmp_path / 'lod', tmp_path / 'tex'],
+            'tes4\\trees\\billboards\\oak.dds') == p
+
+    def test_no_flat_normal_over_a_masters_mixed_case_normal(self, gen,
+                                                             tmp_path, capsys):
+        """D1 #10: a lowercase .bto ref to FR's `Architecture\\X_n.dds`.
+
+        Old: the master copy was missed, so a flat normal was written into the
+        LOD mod at the same archive path, shadowing FR's real one.
+        """
+        bto_dir = tmp_path / 'bto'
+        bto_dir.mkdir()
+        (bto_dir / 'W.4.0.0.bto').write_bytes(
+            b'\x00textures\\tes4\\architecture\\frwall01_n.dds\x00')
+        master = tmp_path / 'FR' / 'textures'
+        real = master / 'tes4' / 'Architecture' / 'FRWall01_n.dds'
+        real.parent.mkdir(parents=True)
+        real.write_bytes(b'DDS real')
+        lod_tex = tmp_path / 'AutoConvertLOD' / 'textures'
+        lod_tex.mkdir(parents=True)
+        gen._fill_missing_lod_textures(bto_dir, lod_tex,
+                                       master_tex_roots=[master])
+        assert [p for p in lod_tex.rglob('*') if p.is_file()] == []
+        assert 'Synthesized' not in capsys.readouterr().out
+
+
+class TestAuthoredFarFromAnyPlugin:
+    """A later plugin's hand-made `_far` beats deriving one from the owner's model."""
+
+    def _derive(self, gen, monkeypatch, tmp_path, dirs, model):
+        """Run `_derive_far_meshes`, recording what it asked to generate."""
+        from asset_convert.lod import lod_far_gen
+        asked = []
+        monkeypatch.setattr(lod_far_gen, 'generate_missing_far_nifs',
+                            lambda stats, d, referenced_models, **k:
+                            asked.extend(referenced_models) or 0)
+        out = tmp_path / 'AutoConvertLOD'
+        (out / 'meshes').mkdir(parents=True, exist_ok=True)
+        gen._derive_far_meshes({}, out, {model}, dirs)
+        return out, asked
+
+    def test_later_plugins_authored_far_is_staged_not_derived(
+            self, gen, monkeypatch, tmp_path):
+        """Old: owner Oblivion derived it; FR's `_far.nif` was never looked at."""
+        obl, fr = tmp_path / 'Oblivion.esm', tmp_path / 'FR'
+        model = 'tes4\\architecture\\skingrad\\skbridgesmall.nif'
+        _mesh(obl, model)
+        _mesh(fr, 'tes4\\Architecture\\skingrad\\skbridgesmall_far.nif')
+        out = tmp_path / 'AutoConvertLOD'
+        stale = _mesh(out, 'tes4\\architecture\\skingrad\\skbridgesmall_far.nif')
+        stale.with_suffix('.nif.generated').write_text('generated\n')
+        out, asked = self._derive(gen, monkeypatch, tmp_path, [obl, fr], model)
+        assert asked == []
+        assert not stale.with_suffix('.nif.generated').exists()
+        assert stale.is_file()
+        gen._drop_staged_master_meshes()
+
+    def test_an_earlier_plugins_authored_far_does_not_beat_a_later_model(
+            self, gen, monkeypatch, tmp_path):
+        """FR overrides the full model: Oblivion's authored `_far` is stale."""
+        obl, fr = tmp_path / 'Oblivion.esm', tmp_path / 'FR'
+        model = 'tes4\\rocks\\rock01.nif'
+        _mesh(obl, model)
+        _mesh(obl, 'tes4\\rocks\\rock01_far.nif')
+        _mesh(fr, model)
+        _out, asked = self._derive(gen, monkeypatch, tmp_path, [obl, fr], model)
+        assert asked == [model]

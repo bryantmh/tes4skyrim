@@ -19,6 +19,7 @@ import sys
 from collections import namedtuple
 from pathlib import Path
 
+from asset_convert import case_paths
 from asset_convert.game_paths import win_join
 from asset_convert.lod.esm_scan import (FLAG_DISTANT_LOD, parse_esm,
                                         parse_esm_cached)
@@ -134,15 +135,22 @@ def _normalize(path: str) -> str:
     return p
 
 
-def _mesh_exists(path: str, output_meshes_dir: Path) -> bool:
-    """Return True if a mesh file exists in the tes4 output meshes directory."""
-    if not path:
-        return False
-    # Strip leading 'meshes\\' if present — output_meshes_dir IS the meshes root
-    rel = path.lower().replace('/', '\\').lstrip('\\')
+def _meshes_rel(path: str) -> str:
+    """`path` lowercased, backslashed, relative to a meshes root."""
+    rel = (path or '').lower().replace('/', '\\').lstrip('\\')
     if rel.startswith('meshes\\'):
         rel = rel[len('meshes\\'):]
-    return _win_join(output_meshes_dir, rel).exists()
+    return rel
+
+
+def _mesh_exists(path: str, output_meshes_dir: Path) -> bool:
+    """True when the mesh exists under `output_meshes_dir`, in any case.
+
+    See: docs/commentary/asset_convert_paths.md#case-resolver
+    """
+    if not path:
+        return False
+    return case_paths.exists([output_meshes_dir], _meshes_rel(path), 'lod_mesh')
 
 
 # LODGenx64 casts every LOD mesh's root block to NiNode without checking. A
@@ -162,11 +170,10 @@ _MISSING = object()
 
 
 def _mesh_screen_path(path: str, output_meshes_dir: Path) -> Path:
-    """Absolute path `_lod_mesh_is_safe` screens for a listed model path."""
-    rel = path.lower().replace('/', '\\').lstrip('\\')
-    if rel.startswith('meshes\\'):
-        rel = rel[len('meshes\\'):]
-    return _win_join(output_meshes_dir, rel)
+    """The mesh `_lod_mesh_is_safe` reads (any case), else its lowercase path."""
+    rel = _meshes_rel(path)
+    return (case_paths.resolve([output_meshes_dir], rel, 'lod_screen')
+            or _win_join(output_meshes_dir, rel))
 
 
 def _lod_mesh_is_safe(path: str, output_meshes_dir: Path) -> bool:
@@ -272,20 +279,11 @@ def _prescreen_meshes(paths, output_meshes_dir: Path, workers: int = 16,
         if key in _NIF_ROOT_SAFE_CACHE or key in seen:
             continue
         seen.add(key)
-        read_from = full
-        if not full.exists():
-            rel = p.lower().replace('/', '\\').lstrip('\\')
-            if rel.startswith('meshes\\'):
-                rel = rel[len('meshes\\'):]
-            read_from = None
-            for mdir in (source_meshes or []):
-                cand = _win_join(Path(mdir), rel)
-                if cand.exists():
-                    read_from = cand
-                    break
-            if read_from is None:
-                continue          # nowhere yet — let the serial path decide
-        todo.append((key, read_from))
+        read_from = full if full.exists() else case_paths.resolve(
+            [Path(m) for m in (source_meshes or [])], _meshes_rel(p),
+            'lod_screen')
+        if read_from is not None:
+            todo.append((key, read_from))
     if len(todo) < 2:
         return
     from concurrent.futures import ThreadPoolExecutor
@@ -446,9 +444,7 @@ def _register_if_staged_scratch(rel: str, output_meshes_dir: Path,
     required: the marker test alone would sweep a hand-placed mesh, and the
     master test alone would sweep a legitimately derived one.
     """
-    r = rel.lower().replace('/', '\\').lstrip('\\')
-    if r.startswith('meshes\\'):
-        r = r[len('meshes\\'):]
+    r = _meshes_rel(rel)
     dst = _win_join(output_meshes_dir, r)
     if not dst.exists() or str(dst) in _STAGED_MASTER_MESHES:
         return
@@ -456,8 +452,8 @@ def _register_if_staged_scratch(rel: str, output_meshes_dir: Path,
     if dst.with_suffix('.nif.generated').exists():
         return
     for mdir in (master_meshes or []):
-        src = _win_join(Path(mdir), r)
-        if src.exists() and src.stat().st_size == dst.stat().st_size:
+        src = case_paths.resolve([Path(mdir)], r, 'lod_stage')
+        if src is not None and src.stat().st_size == dst.stat().st_size:
             _STAGED_MASTER_MESHES.add(str(dst))
             return
 
@@ -496,23 +492,28 @@ def _import_master_mesh(rel: str, output_meshes_dir: Path,
         # and re-registering it lets this run finish the previous one's cleanup.
         _register_if_staged_scratch(rel, output_meshes_dir, master_meshes)
         return True
-    r = rel.lower().replace('/', '\\').lstrip('\\')
-    if r.startswith('meshes\\'):
-        r = r[len('meshes\\'):]
-    for mdir in (master_meshes or []):
-        src = _win_join(Path(mdir), r)
-        if not src.exists():
-            continue
-        dst = _win_join(output_meshes_dir, r)
-        try:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            # Only a file WE created is scratch; never a pre-existing one.
-            _STAGED_MASTER_MESHES.add(str(dst))
-            return True
-        except OSError:
-            return False
-    return False
+    return _stage_master_mesh(_meshes_rel(rel), output_meshes_dir,
+                              master_meshes)
+
+
+def _stage_master_mesh(r: str, output_meshes_dir: Path, master_meshes) -> bool:
+    """Copy the first master's `r` (any case) to its LOWERCASE path here.
+
+    Only a file this copies is registered as scratch, never a pre-existing one.
+    See: docs/commentary/asset_convert_paths.md#case-resolver
+    """
+    src = case_paths.resolve([Path(m) for m in (master_meshes or [])], r,
+                             'lod_stage')
+    if src is None:
+        return False
+    dst = _win_join(output_meshes_dir, r)
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    except OSError:
+        return False
+    _STAGED_MASTER_MESHES.add(str(dst))
+    return True
 
 
 def _file_digest(p: Path) -> bytes:
@@ -535,17 +536,13 @@ def _overrides_master_model(model: str, own_meshes_root: Path,
     Byte-identical is not an override — that is the ordinary duplicate case,
     where reuse is exactly what we want.
     """
-    rel = (model or '').lower().replace('/', '\\').lstrip('\\')
-    if not rel:
-        return False
-    if rel.startswith('meshes\\'):
-        rel = rel[len('meshes\\'):]
-    own = _win_join(own_meshes_root, rel)
-    if not own.is_file():
+    rel = _meshes_rel(model)
+    own = case_paths.resolve([own_meshes_root], rel, 'lod_mesh') if rel else None
+    if own is None:
         return False
     for mm in master_meshes:
-        src = _win_join(Path(mm), rel)
-        if not src.is_file():
+        src = case_paths.resolve([Path(mm)], rel, 'lod_mesh')
+        if src is None:
             continue
         if own.stat().st_size != src.stat().st_size:
             return True
@@ -1052,16 +1049,51 @@ def _overlays_by_asset_dir(far_nif_dirs, overlay_manifest_dirs) -> dict:
     return out
 
 
+def _authored_far_dirs(referenced_models, far_nif_dirs) -> dict:
+    """{model: (dir, far path)} for a hand-made LOD mesh at or after its owner.
+
+    The last dir shipping an authored `_far`/`_lod` wins, as for the full
+    model, but never one earlier than the dir whose full model is placed:
+    that LOD was made from different geometry.
+    See: docs/commentary/asset_convert_terrain.md#authored-far-from-any-plugin
+    """
+    from asset_convert.lod.lod_far_gen import has_authored_lod
+    out = {}
+    for model in referenced_models:
+        owner = authored = None
+        for i, d in enumerate(Path(x) for x in far_nif_dirs):
+            far_rel = far_nif_path(model, d / 'meshes')
+            if _mesh_exists(model, d / 'meshes'):
+                owner = i
+            if has_authored_lod(d / 'meshes', far_rel):
+                authored = (i, d, far_rel)
+        if authored and (owner is None or authored[0] >= owner):
+            out[model] = authored[1:]
+    return out
+
+
+def _stage_authored_far(far_rel: str, src_meshes: Path, out_meshes: Path) -> bool:
+    """Stage an authored LOD mesh, first removing a generated one and its tiers."""
+    from asset_convert.lod.lod_far_gen import tier_path, TIER8, TIER16
+    dst = _win_join(out_meshes, _meshes_rel(far_rel))
+    if dst.with_suffix('.nif.generated').exists():
+        for p in (dst, tier_path(dst, TIER8['suffix']),
+                  tier_path(dst, TIER16['suffix'])):
+            p.unlink(missing_ok=True)
+            p.with_suffix('.nif.generated').unlink(missing_ok=True)
+    return _import_master_mesh(far_rel, out_meshes, [src_meshes])
+
+
 def _derive_far_meshes(stats, output_dir, referenced_models, far_nif_dirs,
                        overlay_manifest_dirs=None):
     """Derive every referenced model's LOD mesh into the bake tree.
 
-    Generated files are written straight to `output_dir`; only a plugin's
-    AUTHORED _far/_lod has to be staged in, and is removed after the bake.
+    Generated files are written straight to `output_dir`; a plugin's AUTHORED
+    _far/_lod (`_authored_far_dirs`) is staged in instead, and removed after
+    the bake.
     See: docs/commentary/asset_convert_terrain.md#generated-far-nif-belong-to-the-lod-mod
     """
-    from asset_convert.lod.lod_far_gen import (generate_missing_far_nifs,
-                                               has_authored_lod)
+    from asset_convert.lod.lod_far_gen import generate_missing_far_nifs
     if not far_nif_dirs:
         generate_missing_far_nifs(stats, output_dir / 'meshes',
                                   referenced_models=referenced_models,
@@ -1069,7 +1101,9 @@ def _derive_far_meshes(stats, output_dir, referenced_models, far_nif_dirs,
                                   tex_roots=(output_dir / 'textures',))
         return
     overlays = _overlays_by_asset_dir(far_nif_dirs, overlay_manifest_dirs)
-    by_dir = _far_owner_dirs(referenced_models, far_nif_dirs)
+    authored = _authored_far_dirs(referenced_models, far_nif_dirs)
+    by_dir = _far_owner_dirs(set(referenced_models) - set(authored),
+                             far_nif_dirs)
     made = 0
     for d, models in by_dir.items():
         made += generate_missing_far_nifs(
@@ -1078,13 +1112,11 @@ def _derive_far_meshes(stats, output_dir, referenced_models, far_nif_dirs,
             tex_roots=(output_dir / 'textures', d / 'textures'),
             gen_meshes_dir=output_dir / 'meshes',
             overlay_diffuses=overlays.get(Path(d)))
-        for model in models:
-            far_rel = far_nif_path(model, d / 'meshes')
-            if has_authored_lod(d / 'meshes', far_rel):
-                _import_master_mesh(far_rel, output_dir / 'meshes',
-                                    [d / 'meshes'])
+    staged = sum(_stage_authored_far(far_rel, d / 'meshes', output_dir / 'meshes')
+                 for d, far_rel in authored.values())
     if made:
         print(f"  Derived {made} _far.nif mesh(es) into the LOD tree")
+    print(f"  Authored LOD meshes staged: {staged} of {len(authored)}")
 
 
 # ---------------------------------------------------------------------------
@@ -1479,34 +1511,28 @@ def _copy_lod_destem(rel: str, dest: Path, tex_root: Path,
     base = _destem_lod_texture(rel)
     if not base:
         return False
-    for root in [tex_root] + [Path(m) for m in (master_tex_roots or [])]:
-        src = _win_join(root, base)
-        if not src.exists():
-            continue
-        try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
-            return True
-        except OSError:
-            return False
-    return False
+    src = case_paths.resolve(_tex_roots(tex_root, master_tex_roots), base,
+                             'lod_texture')
+    if src is None:
+        return False
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+    except OSError:
+        return False
+    return True
+
+
+def _tex_roots(tex_root, master_tex_roots) -> list:
+    """This plugin's textures root, then each master's, in order."""
+    return [Path(tex_root)] + [Path(m) for m in (master_tex_roots or [])]
 
 
 def _find_lod_texture(name, tex_root, master_tex_roots):
-    """This plugin's copy of `name`, else a master's, else the local path.
-
-    A master's model baked into our LOD keeps its textures in the master's
-    output, and its real normal beats falling back to a flat one. Callers
-    test `.exists()` on the result.
-    """
-    p = _win_join(tex_root, name)
-    if p.exists():
-        return p
-    for mr in (master_tex_roots or []):
-        q = _win_join(mr, name)
-        if q.exists():
-            return q
-    return p
+    """`name` (any case) here, else in a master, else this plugin's own path."""
+    hit = case_paths.resolve(_tex_roots(tex_root, master_tex_roots), name,
+                             'lod_texture')
+    return hit if hit is not None else _win_join(tex_root, name)
 
 
 def _synth_lod_normal(rel: str, dest: Path, tex_root: Path,
@@ -1547,18 +1573,16 @@ def _fill_missing_lod_textures(bto_dir: Path, tex_root: Path,
     ElsweyrAnequina) to gain nothing, so a texture a master already ships is
     left to the master and only genuinely absent ones are handled here.
     """
-    def _in_master(rel):
-        return any(_win_join(mr, rel).exists() for mr in (master_tex_roots or []))
-
+    roots = _tex_roots(tex_root, master_tex_roots)
     missing = sorted(r for r in _bto_texture_refs(bto_dir)
-                     if not _win_join(tex_root, r).exists() and not _in_master(r))
+                     if case_paths.resolve(roots, r, 'lod_texture') is None)
     if not missing:
         return
 
     synth = 0
     unresolved = []
     for rel in missing:
-        dest = _win_join(tex_root, rel)
+        dest = case_paths.write_path(tex_root, rel)
         if not rel.endswith('_n.dds'):
             if _copy_lod_destem(rel, dest, tex_root, master_tex_roots):
                 synth += 1

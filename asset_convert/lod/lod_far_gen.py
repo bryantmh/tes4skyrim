@@ -44,6 +44,7 @@ import numpy as np
 
 from core.worker_budget import worker_count
 
+from asset_convert import case_paths
 from asset_convert.game_paths import (current_namespace,
                                       set_namespace, win_join)
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
@@ -74,15 +75,8 @@ def billboard_tex_dir() -> str:
 
 
 def find_texture(tex_roots, rel) -> 'Path | None':
-    """`rel` under the first of `tex_roots` holding it, else None.
-
-    `tex_roots[0]` is the LOD mod's textures dir, the ONLY one the bake writes.
-    """
-    for root in tex_roots:
-        p = win_join(root, rel)
-        if p.exists():
-            return p
-    return None
+    """`rel` (any case) in the first of `tex_roots` holding it; [0] is the LOD mod."""
+    return case_paths.resolve(list(tex_roots or ()), rel, 'lod_far_texture')
 
 
 _SKYRIM_VER = 0x14020007
@@ -868,9 +862,9 @@ def is_tree_model(stat: dict) -> bool:
 
 
 def has_authored_lod(src_meshes_dir, far_rel) -> bool:
-    """True when the source tree ships a hand-made _far/_lod here."""
-    authored = win_join(src_meshes_dir, far_rel)
-    return authored.exists() and not _is_generated(authored)
+    """True when the source tree ships a hand-made _far/_lod here, in any case."""
+    authored = case_paths.resolve([src_meshes_dir], far_rel, 'lod_far')
+    return authored is not None and not _is_generated(authored)
 
 
 def _plan_far_tasks(stats, src_meshes_dir, gen_meshes_dir, referenced_models,
@@ -897,7 +891,8 @@ def _plan_far_tasks(stats, src_meshes_dir, gen_meshes_dir, referenced_models,
         rel = model.lower().replace('/', '\\').lstrip('\\')
         if rel.startswith('meshes\\'):
             rel = rel[len('meshes\\'):]
-        src = win_join(src_meshes_dir, rel)
+        src = (case_paths.resolve([src_meshes_dir], rel, 'lod_far')
+               or win_join(src_meshes_dir, rel))
 
         far_rel = far_nif_path(rel.replace('\\', '/'),
                                src_meshes_dir).replace('/', '\\')
