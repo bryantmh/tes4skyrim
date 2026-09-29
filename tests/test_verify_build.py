@@ -43,7 +43,8 @@ def _ctx(tmp_path, log_body='', **kw):
     ctx = argparse.Namespace(
         mode='pre', sections=sections, start=dt.datetime(2026, 9, 2), log=log,
         output=out, export=tmp_path / 'export', lod=out / 'AutoConvertLOD',
-        plugins=vb.plugins_in(sections), skyrim_data=None, source_esm=None,
+        plugins=vb.plugins_in(sections), skyrim_data=None, sources={},
+        mae_bound=None,
         worldspaces=['TES4Tamriel'], allow_missing=frozenset(),
         baseline={}, allow_compile_fail=[],
         deploy=[], zips=[], min_bto={'TES4Tamriel': 2}, cache={})
@@ -493,10 +494,15 @@ def _grup(label, gtype, payload):
             + payload)
 
 
+def _wrld(fid, edid):
+    """One TES4 WRLD record carrying an EDID."""
+    return _rec(b'WRLD', _sub(b'EDID', edid + b'\0'), fid)
+
+
 class TestTerrainChecks:
 
-    def test_source_atxt_only_quadrants(self):
-        """G6 source side: ATXT without BTXT in the right worldspace only."""
+    def test_source_land_quads_every_worldspace(self):
+        """G6 source side: ATXT without BTXT, keyed by the worldspace's EDID."""
         vtxt = struct.pack('<HHf', 0, 0, 0.5)
         land = _rec(b'LAND', _sub(b'BTXT', struct.pack('<IBBh', 1, 0, 0, 0))
                     + _sub(b'ATXT', struct.pack('<IBBh', 2, 1, 0, 0))
@@ -504,41 +510,111 @@ class TestTerrainChecks:
                     + _sub(b'ATXT', struct.pack('<IBBh', 3, 0, 0, 0))
                     + _sub(b'VTXT', vtxt))
         cell = _rec(b'CELL', _sub(b'XCLC', struct.pack('<ii', 5, -3)))
-        world = _grup(0x3C, 1, cell + _grup(0, 6, land))
-        other = _grup(0x99, 1, cell + _grup(0, 6, land))
-        assert gt.source_atxt_only(world + other) == {((5, -3), 1)}
+        plain = _rec(b'LAND', _sub(b'BTXT', struct.pack('<IBBh', 1, 2, 0, 0)))
+        cell2 = _rec(b'CELL', _sub(b'XCLC', struct.pack('<ii', 0, 0)))
+        worlds = _wrld(0x3C, b'Tamriel') + _wrld(0x99, b'SEWorld')
+        raw = (_grup(0x444C5257, 0, worlds)
+               + _grup(0x3C, 1, cell + _grup(0, 6, land))
+               + _grup(0x99, 1, cell2 + _grup(0, 6, plain)))
+        assert gt.source_land_quads(raw) == {
+            ('Tamriel', (5, -3)): {1}, ('SEWorld', (0, 0)): set()}
 
-    def test_land_layers_ratio(self, monkeypatch, tmp_path):
-        """G6: kept quadrants over source ATXT-only quadrants."""
-        src = tmp_path / 'Oblivion.esm'
-        src.write_bytes(b'')
-        monkeypatch.setattr(gt, 'source_atxt_only',
-                            lambda raw: {((0, 0), 1), ((0, 0), 2)})
-        lands = {(0, 0): {'layers': {'base': {}, 'alpha': {1: [1]}}}}
-        ctx = _ctx(tmp_path, source_esm=str(src))
-        ctx.cache['lands'] = (lands, {}, 0.0)
-        r = gt.check_land_layers(ctx)
+    def _layers(self, tmp_path, monkeypatch, per_file, lands):
+        """check_land_layers over stubbed source quads and converted lands."""
+        srcs = {}
+        for name in per_file:
+            srcs[name] = tmp_path / name
+            srcs[name].write_bytes(name.encode())
+        monkeypatch.setattr(gt, 'source_esms', lambda ctx: srcs)
+        monkeypatch.setattr(gt, 'source_land_quads',
+                            lambda raw: per_file[raw.decode()])
+        ctx = _ctx(tmp_path, plugins=list(per_file))
+        for ws, table in lands.items():
+            ctx.cache[('lands', ws.lower())] = (table, {}, 0.0)
+        return gt.check_land_layers(ctx)
+
+    def test_land_layers_merge_plugins_in_load_order(self, monkeypatch,
+                                                     tmp_path):
+        """G6: a later plugin's LAND replaces a cell; every worldspace counts."""
+        keep = {'layers': {'base': {}, 'alpha': {1: [1]}}}
+        per_file = {
+            'A.esm': {('Tamriel', (0, 0)): {2}, ('Tamriel', (1, 0)): {1}},
+            'B.esp': {('Tamriel', (0, 0)): set(), ('MyWorld', (7, 7)): {1, 3}}}
+        r = self._layers(tmp_path, monkeypatch, per_file, {
+            'TES4Tamriel': {(1, 0): keep}, 'MyWorld': {(7, 7): keep}})
         assert (r['status'], r['denominator']) == (
-            vb.FAIL, '1/2 ATXT-only quadrants')
+            vb.FAIL, '2/3 ATXT-only quadrants')
+        assert r['data']['worldspaces'] == {'TES4Tamriel': [1, 1],
+                                            'MyWorld': [1, 2]}
 
-    def test_terrain_colour_orientation(self, monkeypatch, tmp_path):
-        """G7: ours == flipped source passes; the unflipped control is worse."""
+    def test_land_layers_refuse_without_source_na_without_quads(
+            self, monkeypatch, tmp_path):
+        """No source file -> REFUSE; sources with no ATXT-only quadrant -> N/A."""
+        monkeypatch.setattr(gt, 'source_esms', lambda ctx: {'A.esm': None})
+        assert gt.check_land_layers(_ctx(tmp_path))['status'] == vb.REFUSE
+        r = self._layers(tmp_path, monkeypatch,
+                         {'A.esm': {('Tamriel', (0, 0)): set()}}, {})
+        assert r['status'] == vb.NA
+
+    def test_tile_pairs_find_baked_tiles_through_the_export(self, tmp_path):
+        """G7 pairs our LOD32 tile with the export's baked tile via the WRLD FormID."""
+        ctx = _ctx(tmp_path, plugins=['A.esm'])
+        rec = ctx.export / 'A.esm'
+        gen = rec / 'textures' / 'landscapelod' / 'generated'
+        gen.mkdir(parents=True)
+        (rec / 'WRLD.txt').write_text('FormID=0000003C\nEditorID=Tamriel\n')
+        (gen / '60.0.-32.32.dds').write_bytes(b'x')
+        ours = ctx.lod / 'textures' / 'terrain' / 'TES4Tamriel'
+        ours.mkdir(parents=True)
+        for n in ('TES4Tamriel.32.0.-32.dds', 'TES4Tamriel.32.0.-32_n.dds',
+                  'TES4Tamriel.32.32.0.dds'):
+            (ours / n).write_bytes(b'x')
+        pairs = gt.tile_pairs(ctx, 'TES4Tamriel')
+        assert [(tx, ty, p.name) for tx, ty, p, _b in pairs] == [
+            (0, -32, 'TES4Tamriel.32.0.-32.dds')]
+        assert gt.tile_pairs(ctx, 'SEWorld') is None
+
+    def _colour(self, tmp_path, monkeypatch, offset=3, **kw):
+        """G7 over one synthetic tile: ours = flipped source + `offset`."""
         from PIL import Image
         rng = np.random.default_rng(1)
-        src = rng.integers(0, 255, (32, 32, 3)).astype(np.uint8)
+        src = rng.integers(10, 240, (32, 32, 3)).astype(np.uint8)
         src = np.kron(src, np.ones((4, 4, 1), np.uint8))
         ours = tmp_path / 'o.png'
         theirs = tmp_path / 't.png'
-        Image.fromarray(np.flipud(src).copy()).save(ours)
+        Image.fromarray((np.flipud(src) + offset).astype(np.uint8)).save(ours)
         Image.fromarray(src).save(theirs)
-        monkeypatch.setattr(gt, 'tile_pairs', lambda ctx: [(0, 0, ours, theirs)])
+        monkeypatch.setattr(gt, 'tile_pairs',
+                            lambda ctx, ws: [(0, 0, ours, theirs)])
         monkeypatch.setattr(gt, 'tile_mask',
                             lambda *a: np.ones((32, 32), bool))
-        ctx = _ctx(tmp_path)
-        ctx.cache['lands'] = ({}, {}, 0.0)
-        r = gt.check_terrain_colour(ctx)
+        ctx = _ctx(tmp_path, **kw)
+        ctx.cache[('lands', 'tes4tamriel')] = ({}, {}, 0.0)
+        return gt.check_terrain_colour(ctx)
+
+    def test_terrain_colour_orientation(self, monkeypatch, tmp_path):
+        """G7: ours == flipped source passes; the unflipped control is worse."""
+        r = self._colour(tmp_path, monkeypatch, offset=0)
         assert r['status'] == vb.PASS and r['data']['mae'] == 0
-        assert r['data']['control'] > 0
+        assert r['data']['worldspaces']['TES4Tamriel']['control'] > 0
+
+    def test_terrain_colour_bound_from_baseline_or_flag(self, monkeypatch,
+                                                        tmp_path):
+        """No baseline: intrinsic only. A baseline MAE + tolerance, or --mae-bound, bounds it."""
+        assert self._colour(tmp_path, monkeypatch)['status'] == vb.PASS
+        worse = {'G7': {'worldspaces': {'TES4Tamriel': {'mae': 1.5}}}}
+        r = self._colour(tmp_path, monkeypatch, baseline=worse)
+        assert r['status'] == vb.FAIL and 'MAE above 2.5' in r['detail']
+        same = {'G7': {'worldspaces': {'TES4Tamriel': {'mae': 3.0}}}}
+        assert self._colour(tmp_path, monkeypatch, baseline=same)[
+            'status'] == vb.PASS
+        assert self._colour(tmp_path, monkeypatch, mae_bound=2.0)[
+            'status'] == vb.FAIL
+
+    def test_terrain_colour_na_without_baked_lod(self, monkeypatch, tmp_path):
+        """No worldspace with baked source tiles -> N/A."""
+        monkeypatch.setattr(gt, 'tile_pairs', lambda ctx, ws: None)
+        assert gt.check_terrain_colour(_ctx(tmp_path))['status'] == vb.NA
 
 
 class TestMain:

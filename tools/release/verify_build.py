@@ -831,7 +831,11 @@ def _parse_args(argv=None):
     ap.add_argument('--export', help='default: the install export folder')
     ap.add_argument('--plugins', nargs='+', help='default: from the log')
     ap.add_argument('--skyrim-data', help='default: the configured Data')
-    ap.add_argument('--source-esm', help='TES4 Oblivion.esm (G6)')
+    ap.add_argument('--source', action='append', default=[],
+                    metavar='PLUGIN=PATH',
+                    help="G6: a plugin's TES4 file; default: the registry's")
+    ap.add_argument('--mae-bound', type=float,
+                    help='G7 MAE bound; default: the baseline + tolerance')
     ap.add_argument('--deploy', action='append', default=[],
                     metavar='ZIP=MODDIR', help='post-deploy pairs (G10)')
     ap.add_argument('--min-bto', action='append', default=[],
@@ -892,7 +896,8 @@ def build_context(args):
         baseline=read_baseline(args.baseline),
         allow_compile_fail=args.allow_compile_fail,
         skyrim_data=args.skyrim_data or find_skyrim_data(),
-        source_esm=args.source_esm, deploy=deploy,
+        sources=dict(v.split('=', 1) for v in args.source),
+        mae_bound=args.mae_bound, deploy=deploy,
         zips=sorted(finished.glob('*.zip')) if finished.is_dir() else [],
         min_bto=dict(_min_bto(v) for v in args.min_bto),
         cache={})

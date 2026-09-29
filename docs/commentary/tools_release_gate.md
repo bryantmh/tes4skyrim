@@ -80,7 +80,7 @@ FAIL does. A check that raises is a FAIL naming the exception.
 The gate carries no number measured on one machine's build. A check that
 needs a threshold takes it, in this order, from:
 
-1. an explicit CLI override (`--min-bto WRLD=N`,
+1. an explicit CLI override (`--min-bto WRLD=N`, `--mae-bound X`,
    `--allow-compile-fail PLUGIN:SCRIPT`, `--allow-missing FILE`);
 2. `--baseline PREVIOUS_GATE.json`, the gate JSON of the last run that was
    accepted: this run may not regress against the values measured there,
@@ -91,6 +91,7 @@ needs a threshold takes it, in this order, from:
 | check | baseline value (JSON `data` key) | tolerance |
 |---|---|---|
 | G2 | `absent`: texture keys no table held | no new key |
+| G7 | `worldspaces.<ws>.mae`: terrain-LOD colour error | gain at most `MAE_TOLERANCE` (1 colour level) per worldspace |
 | G11 | `tiles`: `.bto` count per worldspace | lose at most `TILE_TOLERANCE` (1%) per worldspace |
 | G12 | `failed`: failing script files per plugin | no new (plugin, script) |
 
@@ -122,8 +123,8 @@ on PASS.
 | G3 | `Magic effect phase meshes` lines, per `convert <plugin>` section; ARTO/EXPL records in that plugin's converted file | every model converted, both record types present, in each plugin that had models; none anywhere is N/A, no line at all refuses |
 | G4 | `Race skin tones: N races resolved`, one line per plugin | every N > 0 |
 | G5 | each plugin's `door_panel_axis_cache.json`, for plugins with DOOR models that resolve and classify (see below) | current schema, holding every such model; plugins with none are N/A |
-| G6 | ATXT-only land quadrants (see below) | all keep an alpha layer |
-| G7 | terrain-LOD colour (see below) | MAE within bound, control worse, not grey |
+| G6 | ATXT-only land quadrants, every plugin and worldspace (see below) | all keep an alpha layer |
+| G7 | terrain-LOD colour, every worldspace with baked source LOD (see below) | control worse, not grey, MAE within the baseline or `--mae-bound` |
 | G8 | tree-card tiles vs tiles carrying NiAlphaProperty, over every baked worldspace | informational: vanilla carries none |
 | G9 | each worldspace's LODGen input: rows on disk vs the printed `LODGen input` count vs the `Object-LOD selection` line | all equal; a mismatch after a NullReference retry (which rewrites the file) warns; a file not written inside the final `create_lod` step's window (its stamp to the next stamp, or to the log's last write, plus one second for whole-second stamps) fails: older is another run's, newer is a LATER run's |
 | G10 | CRC-32 of every zip member vs the deployed file | all equal |
@@ -198,18 +199,35 @@ when every plugin is, the check is N/A.
 Both are ported from the LOD probe's adversary scripts and both compare
 against the TES4 source.
 
-- **G6** walks the SOURCE Oblivion.esm (`--source-esm`, else the home in
-  `export/sources.json`) for Tamriel quadrants painted by an ATXT layer (any
-  VTXT opacity above 0.01) with no BTXT, and counts how many of them carry an
-  alpha layer in the converted TES4Tamriel. The importer used to drop alpha
-  on such quadrants; the expected count for Tamriel is 1,463 of 1,463.
-- **G7** compares per-cell mean colour of our level-32 terrain diffuse with
-  Oblivion's own baked tile (`landscapelod/generated/60.<x>.<y>.32.dds`) over
-  cells that have LAND, are fully painted and are dry. Oblivion's image is
-  stored south-up, so it is flipped first; the unflipped image is the control
-  and must score worse, which proves the orientation rather than assuming it.
-  Passes at a cell-weighted MAE of 18 or less with a mean channel spread of at
-  least 2 (grey terrain has none).
+Neither names a worldspace, plugin or FormID; both run over whatever the
+build holds.
+
+- **G6** walks each converted plugin's TES4 SOURCE (`--source PLUGIN=PATH`,
+  else `source_paths.resolve_plugin_path`: an imported mod's retained
+  binary, else the registered Data folder holding it) for quadrants painted
+  by an ATXT layer (any VTXT opacity above 0.01) with no BTXT, in every
+  worldspace, keyed by the worldspace's EDID. Plugins are merged in load
+  order (a later plugin's LAND replaces a cell), and each worldspace is
+  compared with the converted LAND of the same name
+  (`core.worldspace_names`), itself merged the same way: the first plugin
+  that knows the worldspace, then every later one on top. It counts how many
+  of those quadrants keep an alpha layer. The importer used to drop alpha on
+  such quadrants; for Oblivion's Tamriel the count is 1,463 of 1,463. A
+  plugin whose source cannot be found makes the check REFUSE; no such
+  quadrant anywhere makes it N/A.
+- **G7** compares, per baked worldspace, the per-cell mean colour of our
+  level-32 terrain diffuse with the source's own baked tile
+  (`landscapelod/generated/<decimal WRLD FormID>.<x>.<y>.32.dds`, found
+  through `terrain_lod_baked.baked_textures` over every plugin's export, the
+  last in load order winning), over cells that have LAND, are fully painted
+  and are dry. The source image is stored south-up, so it is flipped first;
+  the unflipped image is the control and must score worse, which proves the
+  orientation rather than assuming it. The mean channel spread must be at
+  least 2 (grey terrain has none). The MAE bound is `--mae-bound`, else the
+  baseline run's MAE for that worldspace plus `MAE_TOLERANCE` (1 colour
+  level); with neither, only the orientation and grey conditions apply. A
+  tile contributes only with at least 30 comparable cells. No worldspace
+  with baked source LOD makes the check N/A.
 
 ## Reading the result
 <a id="result"></a>

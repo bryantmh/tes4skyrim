@@ -2,28 +2,25 @@
 
 Ported from the LOD probe's adversary scripts (`quadloss.py`, `vclr.py`) so
 the rebuild can run them; both compare against the TES4 SOURCE, never
-against the converter's own output alone.
+against the converter's own output alone. Both run over every plugin and
+worldspace the build has: no worldspace, plugin or FormID is named here.
 See: docs/commentary/tools_release_gate.md#terrain-checks
 """
 
-import json
 import struct
 import zlib
 from pathlib import Path
 
 import numpy as np
 
-from tools.release.verify_build import FAIL, PASS, REFUSE, ratio, result
-
-#: Oblivion's Tamriel WRLD FormID, and the converted worldspace it becomes.
-SOURCE_WRLD = 0x0000003C
-CONVERTED_WRLD = 'TES4Tamriel'
+from tools.release.verify_build import (FAIL, PASS, REFUSE, baseline,
+                                        not_applicable, ratio, result)
 
 #: Opacity below which a VTXT point does not count as painted.
 PAINTED = 0.01
 
-#: Cell-weighted MAE bound for terrain-LOD colour (Stream 3's bound).
-MAE_BOUND = 18.0
+#: G7: MAE (0-255 colour levels) a worldspace may gain over the baseline run.
+MAE_TOLERANCE = 1.0
 
 #: Cells a tile must contribute to count; fewer is noise.
 MIN_CELLS = 30
@@ -37,24 +34,43 @@ MIN_SPREAD = 2.0
 # ---------------------------------------------------------------------------
 
 
-def converted_lands(ctx):
-    """(lands, cell_water, default water height) of the converted Tamriel, memoised."""
-    if 'lands' not in ctx.cache:
+def converted_lands(ctx, ws: str):
+    """(lands, cell_water, default water height) of converted worldspace `ws`, memoised.
+
+    The first plugin in load order that knows `ws` defines it; every later
+    converted plugin is laid on top, as the LOD bake does.
+    """
+    key = ('lands', ws.lower())
+    if key not in ctx.cache:
         from asset_convert.lod.terrain_lod import parse_land_records
-        esm = ctx.output / 'Oblivion.esm' / 'Oblivion.esm'
-        ctx.cache['lands'] = parse_land_records(esm, CONVERTED_WRLD)
-    return ctx.cache['lands']
+        esms = land_stack(ctx, ws)
+        ctx.cache[key] = (parse_land_records(esms[0], ws, esms[1:])
+                          if esms else ({}, {}, 0.0))
+    return ctx.cache[key]
 
 
-def source_esm(ctx):
-    """The TES4 Oblivion.esm: `--source-esm`, else export/sources.json's home."""
-    if ctx.source_esm:
-        return Path(ctx.source_esm)
-    try:
-        reg = json.loads((ctx.export / 'sources.json').read_text('utf-8'))
-        return Path(reg['homes']['oblivion.esm']) / 'Oblivion.esm'
-    except (OSError, ValueError, KeyError):
-        return None
+def land_stack(ctx, ws: str) -> list:
+    """Converted plugin files for `ws`: its defining plugin, then every later one."""
+    from asset_convert.lod.terrain_lod_baked import worldspace_fids
+    from output_layout import plugin_esm, record_dir
+    out = []
+    for plugin in ctx.plugins:
+        esm = plugin_esm(ctx.output, plugin, ctx.export)
+        if esm.is_file() and (out or worldspace_fids(
+                record_dir(ctx.export, plugin), ws)):
+            out.append(esm)
+    return out
+
+
+def source_esms(ctx) -> dict:
+    """{plugin: TES4 source file or None}: `--source PLUGIN=PATH`, else the registry's."""
+    from source_paths import resolve_plugin_path
+    out = {}
+    for plugin in ctx.plugins:
+        given = ctx.sources.get(plugin)
+        path = Path(given or resolve_plugin_path(plugin, None, str(ctx.export)))
+        out[plugin] = path if path.is_absolute() and path.is_file() else None
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -91,55 +107,94 @@ def _land_quads(body: bytes):
     return base, alpha
 
 
-def source_atxt_only(raw: bytes, wrld: int = SOURCE_WRLD) -> set:
-    """{((x, y), quadrant)} painted by ATXT with no BTXT, in TES4 worldspace `wrld`.
+def _body(raw: bytes, pos: int, size: int, flags: int) -> bytes:
+    """A TES4 record body, decompressed when flagged."""
+    body = raw[pos + 20:pos + 20 + size]
+    return zlib.decompress(body[4:]) if flags & 0x40000 else body
 
-    A flat walk: a type-1 GRUP names its worldspace, each CELL's XCLC names
-    the grid cell the following LAND belongs to.
+
+def source_land_quads(raw: bytes) -> dict:
+    """{(worldspace EDID, (x, y)): ATXT-only quadrants} for every LAND in a TES4 file.
+
+    A flat walk: each WRLD record names its FormID's EDID, a type-1 GRUP
+    names the worldspace it holds, each CELL's XCLC names the grid cell the
+    following LAND belongs to. A LAND with no such quadrant maps to an empty
+    set, so a later plugin's LAND can replace an earlier one's.
     """
-    out, pos, cell, inside = set(), 0, None, None
-    ends = []
+    out, names, pos, cell, inside, ends = {}, {}, 0, None, None, []
     while pos < len(raw):
         while ends and pos >= ends[-1][0]:
             inside = ends.pop()[1]
         sig = raw[pos:pos + 4]
-        size, flags = struct.unpack_from('<II', raw, pos + 4)
+        size, label, kind = struct.unpack_from('<IIi', raw, pos + 4)
         if sig == b'GRUP':
             ends.append((pos + size, inside))
-            if struct.unpack_from('<i', raw, pos + 12)[0] == 1:
-                inside = struct.unpack_from('<I', raw, pos + 8)[0]
+            inside = names.get(label) if kind == 1 else inside
             pos += 20
             continue
-        body = raw[pos + 20:pos + 20 + size]
-        pos += 20 + size
-        if inside != wrld or sig not in (b'CELL', b'LAND'):
-            continue
-        if flags & 0x40000:
-            body = zlib.decompress(body[4:])
-        if sig == b'CELL':
-            xclc = dict(_subs(body)).get(b'XCLC')
-            cell = struct.unpack('<ii', xclc[:8]) if xclc else None
-        elif cell is not None:
-            base, alpha = _land_quads(body)
-            out |= {(cell, q) for q in alpha - base}
+        rec_pos, pos = pos, pos + 20 + size
+        if sig in (b'WRLD', b'CELL', b'LAND'):
+            body = _body(raw, rec_pos, size, label)
+            cell = _source_record(sig, body, kind & 0xFFFFFFFF, names, cell,
+                                  inside, out)
     return out
+
+
+def _source_record(sig, body, fid, names, cell, inside, out):
+    """Fold one WRLD/CELL/LAND body into the walk's state; return the current cell."""
+    if sig == b'WRLD':
+        edid = dict(_subs(body)).get(b'EDID', b'')
+        names[fid] = edid.rstrip(b'\0').decode('latin-1')
+    elif sig == b'CELL':
+        xclc = dict(_subs(body)).get(b'XCLC')
+        return struct.unpack('<ii', xclc[:8]) if xclc else None
+    elif cell is not None and inside:
+        base, alpha = _land_quads(body)
+        out[(inside, cell)] = alpha - base
+    return cell
+
+
+def merged_source_quads(ctx):
+    """({converted worldspace: {cell: quadrants}}, plugins without a source) in load order."""
+    from core.worldspace_names import converted_worldspace_edid
+    merged, missing = {}, []
+    for plugin, src in source_esms(ctx).items():
+        if src is None:
+            missing.append(plugin)
+            continue
+        for (edid, cell), quads in source_land_quads(src.read_bytes()).items():
+            merged.setdefault(converted_worldspace_edid(edid), {})[cell] = quads
+    return merged, missing
 
 
 def check_land_layers(ctx) -> dict:
     """G6: every source quadrant painted only by ATXT keeps an alpha layer.
 
-    The converter used to drop alpha on a quadrant with no BTXT, painting it
-    the default texture; denominator = such quadrants in the source.
+    Over every worldspace of every converted plugin, merged in load order
+    on both sides. The converter used to drop alpha on a quadrant with no
+    BTXT, painting it the default texture; denominator = such quadrants.
     """
-    src = source_esm(ctx)
-    if src is None or not src.is_file():
-        return result('G6', REFUSE, '0 quadrants', f'no source ESM ({src})')
-    quads = source_atxt_only(src.read_bytes())
-    lands = converted_lands(ctx)[0]
-    kept = sum(1 for cell, q in quads
-               if lands.get(cell) and lands[cell]['layers']['alpha'].get(q))
-    return ratio('G6', kept, len(quads), 'ATXT-only quadrants',
-                 f'{CONVERTED_WRLD} vs {src.name}')
+    merged, missing = merged_source_quads(ctx)
+    if missing:
+        return result('G6', REFUSE, '0 quadrants',
+                      f'no TES4 source found for {missing}')
+    kept = total = 0
+    per = {}
+    for ws, cells in merged.items():
+        quads = [(c, q) for c, qs in cells.items() for q in qs]
+        if not quads:
+            continue
+        lands = converted_lands(ctx, ws)[0]
+        n = sum(1 for c, q in quads
+                if lands.get(c) and lands[c]['layers']['alpha'].get(q))
+        per[ws] = [n, len(quads)]
+        kept, total = kept + n, total + len(quads)
+    if not total:
+        return not_applicable('G6', 'no source quadrant is painted by ATXT '
+                              'alone')
+    return ratio('G6', kept, total, 'ATXT-only quadrants',
+                 ', '.join(f'{w} {k}/{t}' for w, (k, t) in per.items()),
+                 worldspaces=per)
 
 
 # ---------------------------------------------------------------------------
@@ -184,31 +239,36 @@ def water_height(cell_water, key, default_wh):
     return height if height is not None else default_wh
 
 
-def tile_pairs(ctx) -> list:
-    """(tx, ty, our LOD32 diffuse, Oblivion's baked tile) present on both sides."""
-    ours = ctx.lod / 'textures' / 'terrain' / CONVERTED_WRLD
-    theirs = ctx.export / 'Oblivion.esm' / 'textures' / 'landscapelod' / \
-        'generated'
+def tile_pairs(ctx, ws: str) -> list:
+    """(tx, ty, our LOD32 diffuse, the source's baked tile) present on both sides.
+
+    The baked tiles come from every converted plugin's export, the last in
+    load order winning (`terrain_lod_baked.baked_textures`).
+    """
+    from asset_convert.lod.terrain_lod_baked import baked_textures
+    from output_layout import record_dir
+    baked = baked_textures([record_dir(ctx.export, p) for p in ctx.plugins], ws)
+    if not baked:
+        return None
     out = []
-    for p in sorted(ours.glob(f'{CONVERTED_WRLD}.32.*.dds')):
-        parts = p.name.split('.')
-        if len(parts) != 5 or p.name.endswith('_n.dds'):
+    ours = ctx.lod / 'textures' / 'terrain' / ws
+    for p in sorted(ours.glob(f'{ws}.32.*.dds')):
+        parts = p.name[len(ws) + 1:].split('.')
+        if len(parts) != 4 or p.name.endswith('_n.dds'):
             continue
-        tx, ty = int(parts[2]), int(parts[3])
-        src = theirs / f'{SOURCE_WRLD}.{tx:02d}.{ty:02d}.32.dds'
-        if src.is_file():
-            out.append((tx, ty, p, src))
+        tx, ty = int(parts[1]), int(parts[2])
+        if (tx, ty) in baked:
+            out.append((tx, ty, p, baked[(tx, ty)]))
     return out
 
 
-def _tile_errors(ctx, tx, ty, ours, theirs):
+def _tile_errors(land, tx, ty, ours, theirs):
     """(cells, abs error sum, flipped-control error sum, spread sum) for one tile.
 
     Oblivion's image is stored south-up, so it is flipped to compare; the
     unflipped image is the control, which must score worse.
     """
-    lands, water, dwh = converted_lands(ctx)
-    mask = tile_mask(lands, water, dwh, tx, ty)
+    mask = tile_mask(*land, tx, ty)
     n = int(mask.sum())
     if n < MIN_CELLS:
         return 0, 0.0, 0.0, 0.0
@@ -220,24 +280,71 @@ def _tile_errors(ctx, tx, ty, ours, theirs):
     return n, float(good), float(control), float(spread)
 
 
-def check_terrain_colour(ctx) -> dict:
-    """G7: cell-weighted MAE <= MAE_BOUND, flipped control worse, not grey.
-
-    Per-cell mean colour of our level-32 terrain diffuse vs Oblivion's baked
-    tile, over cells with LAND that are fully painted and dry.
-    """
-    cells = err = ctrl = spread = 0.0
+def worldspace_colour(ctx, ws: str):
+    """{'cells', 'tiles', 'mae', 'control', 'spread'} for `ws`, or None without baked LOD."""
+    pairs = tile_pairs(ctx, ws)
+    if pairs is None:
+        return None
+    sums = np.zeros(4)
     tiles = 0
-    for tx, ty, ours, theirs in tile_pairs(ctx):
-        n, e, c, s = _tile_errors(ctx, tx, ty, ours, theirs)
-        tiles += n > 0
-        cells, err, ctrl, spread = cells + n, err + e, ctrl + c, spread + s
+    for tx, ty, ours, theirs in pairs:
+        got = _tile_errors(converted_lands(ctx, ws), tx, ty, ours, theirs)
+        tiles += got[0] > 0
+        sums += got
+    cells = int(sums[0])
+    row = {'cells': cells, 'tiles': tiles}
+    if cells:
+        row.update(mae=sums[1] / cells, control=sums[2] / cells,
+                   spread=sums[3] / cells)
+    return row
+
+
+def colour_bound(ctx, ws: str):
+    """The highest MAE `ws` may score: `--mae-bound`, else the baseline's + MAE_TOLERANCE, else None."""
+    if ctx.mae_bound is not None:
+        return ctx.mae_bound
+    base = baseline(ctx, 'G7', 'worldspaces', {}).get(ws, {}).get('mae')
+    return None if base is None else base + MAE_TOLERANCE
+
+
+def _colour_fails(row, bound) -> list:
+    """Why one worldspace's colour fails; [] when it passes."""
+    why = []
+    if row['control'] <= row['mae']:
+        why.append('flipped control not worse')
+    if row['spread'] < MIN_SPREAD:
+        why.append('grey')
+    if bound is not None and row['mae'] > bound:
+        why.append(f'MAE above {bound:.1f}')
+    return why
+
+
+def check_terrain_colour(ctx) -> dict:
+    """G7: per worldspace with baked source LOD: flipped control worse, not grey, MAE within bound.
+
+    Per-cell mean colour of our level-32 terrain diffuse vs the source's
+    baked tile, over cells with LAND that are fully painted and dry. The
+    MAE bound is `--mae-bound`, else the baseline run's MAE plus
+    MAE_TOLERANCE; with neither, only the intrinsic conditions apply.
+    See: docs/commentary/tools_release_gate.md#terrain-checks
+    """
+    rows = {ws: worldspace_colour(ctx, ws) for ws in ctx.worldspaces}
+    rows = {ws: r for ws, r in rows.items() if r is not None}
+    if not rows:
+        return not_applicable('G7', 'no worldspace has baked source LOD')
+    judged = {ws: r for ws, r in rows.items() if r['cells']}
+    cells = sum(r['cells'] for r in judged.values())
     if not cells:
-        return result('G7', REFUSE, '0 cells', 'no comparable tile')
-    mae, cmae, spr = err / cells, ctrl / cells, spread / cells
-    ok = mae <= MAE_BOUND and cmae > mae and spr >= MIN_SPREAD
-    return result('G7', PASS if ok else FAIL,
-                  f'{int(cells)} cells in {tiles} tiles',
-                  f'MAE {mae:.1f} (bound {MAE_BOUND}), flipped control '
-                  f'{cmae:.1f}, channel spread {spr:.1f}',
-                  mae=mae, control=cmae, spread=spr)
+        return result('G7', REFUSE, '0 cells', 'no comparable tile',
+                      worldspaces=rows)
+    fails = {ws: _colour_fails(r, colour_bound(ctx, ws))
+             for ws, r in judged.items()}
+    mae = sum(r['mae'] * r['cells'] for r in judged.values()) / cells
+    return result('G7', FAIL if any(fails.values()) else PASS,
+                  f'{cells} cells in {sum(r["tiles"] for r in judged.values())}'
+                  f' tiles, {len(judged)} worldspaces',
+                  '; '.join(f"{ws} MAE {r['mae']:.1f} control "
+                            f"{r['control']:.1f} spread {r['spread']:.1f}"
+                            + (f" FAIL {fails[ws]}" if fails[ws] else '')
+                            for ws, r in judged.items()),
+                  mae=mae, worldspaces=rows)
