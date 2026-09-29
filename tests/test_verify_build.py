@@ -53,6 +53,17 @@ def _ctx(tmp_path, log_body='', **kw):
     return ctx
 
 
+def _case_sensitive(tmp_path) -> bool:
+    """True when `tmp_path` holds `a` and `A` as two entries."""
+    probe = tmp_path / 'case_probe'
+    probe.mkdir()
+    (probe / 'a').write_bytes(b'')
+    sensitive = not (probe / 'A').exists()
+    (probe / 'a').unlink()
+    probe.rmdir()
+    return sensitive
+
+
 def _lodgen_file(tmp_path, rows: int) -> Path:
     """A LODGen input with a 5-line header and `rows` 13-field rows."""
     p = tmp_path / 'LODGen TES4Tamriel.txt'
@@ -279,6 +290,8 @@ class TestFileChecks:
 
     def test_census_fails_on_file_collision_only(self, tmp_path):
         """G1: twin folders warn, two files on one archive path fail."""
+        if not _case_sensitive(tmp_path):
+            pytest.skip('needs a case-sensitive filesystem for case twins')
         ctx = _ctx(tmp_path)
         tree = ctx.output / 'Plugin.esp'
         (tree / 'textures' / 'a').mkdir(parents=True)
