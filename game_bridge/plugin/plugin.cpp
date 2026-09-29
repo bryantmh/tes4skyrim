@@ -22,6 +22,7 @@
 #include "log.h"
 #include "main_thread.h"
 #include "pipe_server.h"
+#include "recorder.h"
 #include "skse_abi.h"
 
 namespace bridge {
@@ -63,6 +64,9 @@ void StartBridge() {
     // ConsoleExecute's arg1 requires -- without it, commands compile but never
     // run. See game.h.
     InstallExecContextCapture(g_addr.compileAndRun);
+    // The flight recorder: script events to a JSONL file while the game is
+    // played. Independent of the pipe -- it records with no client attached.
+    InstallRecorder();
 
     g_taskPumpLive = true;
 
@@ -83,15 +87,22 @@ void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
         case SKSEMessagingInterface::kMessage_PostLoadGame:
             g_gameLoaded = (msg->data != nullptr);
             Log("bridge: post-load game (loaded=%d)", g_gameLoaded ? 1 : 0);
+            RecorderMessage(g_gameLoaded ? "loaded" : "load_failed", nullptr);
             break;
         case SKSEMessagingInterface::kMessage_NewGame:
             g_gameLoaded = true;
             Log("bridge: new game");
+            RecorderMessage("new_game", nullptr);
             break;
         case SKSEMessagingInterface::kMessage_PreLoadGame:
             // A load screen is starting; main-thread tasks stop being pumped
             // promptly, so mark the game unloaded to fail fast rather than hang.
             g_gameLoaded = false;
+            // SKSE passes the save's name here and with kMessage_SaveGame.
+            RecorderMessage("loading", static_cast<const char*>(msg->data));
+            break;
+        case SKSEMessagingInterface::kMessage_SaveGame:
+            RecorderMessage("saved", static_cast<const char*>(msg->data));
             break;
         default:
             break;
