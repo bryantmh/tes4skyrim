@@ -261,15 +261,50 @@ def _declared_types(src):
     return declared
 
 
-def _accepted(ptype, script_types):
-    """Signatures a property of `ptype` binds; () for a script type (any record); None to skip.
+#: Script parent classes whose instances are PLACED references, so a property
+#: typed as such a script must bind a REFR/ACHR/ACRE -- never a base record.
+_REFERENCE_PARENTS = frozenset({'ObjectReference', 'Actor'})
+_PLACED_SIGS = frozenset({'REFR', 'ACHR', 'ACRE'})
 
-    A property typed as a converted script binds any record carrying that
-    script, so only the record's existence is checked (an OBSE function's host quest).
+
+def _script_parents(src):
+    """script name (lower) -> its `extends` class, from the converted .psc headers.
+
+    Only a script that extends ObjectReference/Actor demands a placed reference;
+    one extending Quest/ActiveMagicEffect/TopicInfo/Package binds its own base
+    record and is not part of the base-vs-reference class.
+    """
+    hdr = re.compile(r'^\s*ScriptName\s+([A-Za-z_]\w*)\s+extends\s+([A-Za-z_]\w*)',
+                     re.I | re.M)
+    parents = {}
+    for fn in sorted(os.listdir(src)):
+        if not fn.endswith('.psc'):
+            continue
+        try:
+            text = open(os.path.join(src, fn), encoding='utf-8',
+                        errors='replace').read(4096)
+        except OSError:
+            continue
+        m = hdr.search(text)
+        if m:
+            parents[m.group(1).lower()] = m.group(2)
+    return parents
+
+
+def _accepted(ptype, script_types, parents=None):
+    """Signatures a property of `ptype` binds; () = any record; None = skip.
+
+    A property typed as a converted script that extends ObjectReference/Actor
+    MUST bind a placed reference (REFR/ACHR/ACRE): the VM refuses a base record
+    (item base or actor BASE) into it and the property reads None -- the whole
+    quest property-binding class this guard exists to catch. A script extending
+    Quest/ActiveMagicEffect/etc. binds its own base, so only existence matters.
     """
     if ptype is None or ptype in _PERMISSIVE:
         return None
     if ptype.lower() in script_types:
+        if parents and parents.get(ptype.lower()) in _REFERENCE_PARENTS:
+            return _PLACED_SIGS
         return ()
     return _ACCEPTS.get(ptype)
 
@@ -324,12 +359,13 @@ def _report_cross_master(plugin, src, limit, verbose):
     tables = _MasterTables(plugin, esm, out_dir)
     declared = _declared_types(src)
     script_types = {s for s, _p in declared}
+    parents = _script_parents(src)
     checked = 0
     bad = []
     unresolved = Counter()
     for sname, pname, fid in _vmad_property_formids(esm):
         ptype = declared.get((sname.lower(), pname))
-        accepts = _accepted(ptype, script_types)
+        accepts = _accepted(ptype, script_types, parents)
         if fid == 0 or accepts is None:
             continue
         src_name, table = tables.table_for(fid >> 24)
