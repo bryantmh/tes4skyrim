@@ -46,7 +46,7 @@ from pathlib import Path
 import numpy as np
 
 from core.subprocess_flags import POPEN_FLAGS, windows_cmd
-from source_paths import find_game_path
+from source_paths import find_game_path, load_config
 
 from asset_convert.speedtree.spt_generator import (TreeGeometry, WORLD_SCALE, COLLISION_MIN_RADIUS,
                             build_tree)
@@ -120,7 +120,7 @@ def find_oblivion_exe(tes4_data: str | os.PathLike | None = None) -> str:
 
     Returns '' when no configured install has an Oblivion.exe.
     """
-    data = str(tes4_data or '') or find_game_path('oblivion')
+    data = str(tes4_data or '') or find_game_path('oblivion', load_config())
     if not data:
         return ''
     exe = Path(os.path.dirname(os.path.normpath(str(data)))) / 'Oblivion.exe'
