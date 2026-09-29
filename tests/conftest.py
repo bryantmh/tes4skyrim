@@ -20,3 +20,27 @@ def _restore_process_selection():
     if env is None:
         os.environ.pop(NAMESPACE_ENV, None)
     select_directory(selected)
+
+
+def fs_is_case_sensitive(directory) -> bool:
+    """True when `directory`'s filesystem keeps `a` and `A` apart."""
+    probe = os.path.join(directory, '.case_probe')
+    open(probe, 'wb').close()
+    try:
+        return not os.path.exists(os.path.join(directory, '.CASE_PROBE'))
+    finally:
+        os.remove(probe)
+
+
+def require_case_twins(directory) -> None:
+    """Skip the running test unless `directory` can hold names differing only by case."""
+    if not fs_is_case_sensitive(directory):
+        pytest.skip('case twins need a case-sensitive filesystem (Windows and '
+                    'macOS default volumes fold case)')
+
+
+@pytest.fixture
+def case_twins(tmp_path):
+    """`tmp_path` for a case-twin test; skipped where the filesystem folds case."""
+    require_case_twins(tmp_path)
+    return tmp_path

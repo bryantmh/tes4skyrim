@@ -41,6 +41,7 @@ def _tex(path, rgb):
     Image.new('RGB', (8, 8), rgb).save(path, format='PNG')
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_mixed_case_name_finds_the_file_past_an_empty_case_twin(tmp_path):
     """An empty `Dementia/` listed before `dementia/x.dds` must not hide it."""
     (tmp_path / 'tes4' / 'landscape' / 'Dementia').mkdir(parents=True)
@@ -54,6 +55,7 @@ def test_mixed_case_name_finds_the_file_past_an_empty_case_twin(tmp_path):
         {('tes4\\landscape\\dementia\\x.dds', 'resolved'): 1})
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_exact_spelling_wins_over_a_case_variant(tmp_path):
     """Two spellings on disk: the one the record names exactly is used."""
     _tex(tmp_path / 'tes4' / 'A' / 'b.dds', RED)

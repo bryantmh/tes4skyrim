@@ -47,6 +47,11 @@ terrain LOD, generic spell art, missing FR door axes and sounds. The LOD probe
   process; a mesh worker returns `snapshot_counts()` with each result and the
   parent merges them, so `report()` covers the pool.
 
+A test that builds case twins takes the `case_twins` fixture
+(`tests/conftest.py`): it probes the tmp filesystem and skips where names
+fold case (Windows, a default macOS volume), since there the second spelling
+lands in the first and the setup itself is impossible.
+
 ## The write rule
 <a id="write-rule"></a>
 

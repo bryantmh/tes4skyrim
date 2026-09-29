@@ -34,6 +34,7 @@ def test_lowercase_master_name_finds_its_record_folder(tmp_path):
         tmp_path / 'out' / 'Oblivion.esm' / 'Oblivion.esm')
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_exact_spelling_wins_and_twins_raise(tmp_path):
     """An exact folder is kept; two folders differing only by case are refused."""
     root = _export(tmp_path, ('Knights.esp', []), ('knights.esp', []))

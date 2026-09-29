@@ -60,6 +60,7 @@ def _twin_tree(tmp_path, top):
 
 
 @pytest.mark.parametrize('capital_first', [True, False])
+@pytest.mark.usefixtures('case_twins')
 def test_shader_texture_found_past_an_empty_twin_folder(tmp_path, monkeypatch,
                                                         capital_first):
     """The empty `Dementia/` twin cannot hide `dementia/x.dds`."""
@@ -71,6 +72,7 @@ def test_shader_texture_found_past_an_empty_twin_folder(tmp_path, monkeypatch,
 
 
 @pytest.mark.parametrize('capital_first', [True, False])
+@pytest.mark.usefixtures('case_twins')
 def test_book_mesh_found_past_an_empty_twin_folder(tmp_path, monkeypatch,
                                                    capital_first):
     """BOOK MODL lookups branch into every case-variant folder."""
@@ -83,6 +85,7 @@ def test_book_mesh_found_past_an_empty_twin_folder(tmp_path, monkeypatch,
 
 
 @pytest.mark.parametrize('capital_first', [True, False])
+@pytest.mark.usefixtures('case_twins')
 def test_resolve_branches_into_every_variant(tmp_path, monkeypatch, capital_first):
     """resolve itself is order-independent over twin folders."""
     plugin = _twin_tree(tmp_path, 'textures')
@@ -96,6 +99,7 @@ def test_resolve_branches_into_every_variant(tmp_path, monkeypatch, capital_firs
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_exact_path_wins_over_a_case_variant(tmp_path):
     """An exact hit is taken even when a lowercase spelling also exists."""
     exact = _put(tmp_path / 'Tex' / 'Stone.dds')
@@ -131,6 +135,7 @@ def test_deleted_file_is_not_returned(tmp_path):
     assert case_paths.resolve([tmp_path], 'TEX\\Stone.dds', 't') is None
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_collision_resolves_to_the_lowercase_spelling_and_logs_once(tmp_path, capsys):
     """Two spellings of one file: the all-lowercase one, logged and counted once."""
     _put(tmp_path / 'Tex' / 'STONE.dds')
@@ -143,6 +148,7 @@ def test_collision_resolves_to_the_lowercase_spelling_and_logs_once(tmp_path, ca
         'exact': 0, 'resolved': 2, 'missed': 0, 'collisions': 1}
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_collision_without_a_lowercase_spelling_takes_the_smallest_path(tmp_path):
     """With no all-lowercase spelling the answer is the smallest path string."""
     _put(tmp_path / 'tex' / 'A.dds')
@@ -150,6 +156,7 @@ def test_collision_without_a_lowercase_spelling_takes_the_smallest_path(tmp_path
     assert case_paths.resolve([tmp_path], 'TEX\\a.dds', 't') == smallest
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_list_prefix_and_rglob_ignore_case(tmp_path):
     """Listing and globbing see every spelling."""
     _put(tmp_path / 'Lod' / 'Tamriel.4.0.0.DDS')
@@ -198,6 +205,7 @@ def test_write_path_creates_lowercase_and_reuses_a_file_spelling(tmp_path):
     assert case_paths.write_path(tmp_path, 'textures\\fire\\b.dds').name == 'B.DDS'
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_write_path_takes_the_lowercase_twin(tmp_path, capsys):
     """With two spellings on disk the lowercase one is used and logged."""
     (tmp_path / 'Oblivion').mkdir()
@@ -285,6 +293,7 @@ def _census_tree(tmp_path):
     return plugin
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_census_warns_on_twin_folders_without_a_collision(tmp_path):
     """Folder twins alone are a warning: no file collides."""
     plugin = _census_tree(tmp_path)
@@ -293,6 +302,7 @@ def test_census_warns_on_twin_folders_without_a_collision(tmp_path):
     assert 'WARN' in case_paths.census_line('t', c)
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_census_fails_on_a_file_collision_across_merged_tops(tmp_path):
     """Merged top folders are not twins, but a file under both collides."""
     plugin = _census_tree(tmp_path)

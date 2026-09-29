@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
@@ -78,6 +80,7 @@ _ZIP = ('output', 'Finished Mods', 'Oblivion.esm.zip')
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_every_case_spelling_of_textures_is_collected(tmp_path):
     """4 of 4 files from Textures/ and textures/, under the lowercase top."""
     root = _plugin(tmp_path, ['Textures/tes4/a.dds', 'Textures/tes4/b.dds',
@@ -88,6 +91,7 @@ def test_every_case_spelling_of_textures_is_collected(tmp_path):
         'textures/tes4/c.dds', 'textures/tes4/d.dds']
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_pack_stages_all_spellings_of_textures_and_a_misc_dir(tmp_path, monkeypatch):
     """The archives hold every file, and a misc dir spelled twice packs once."""
     _plugin(tmp_path, ['Textures/tes4/a.dds', 'textures/tes4/b.dds',
@@ -110,6 +114,7 @@ def test_pack_stages_all_spellings_of_textures_and_a_misc_dir(tmp_path, monkeypa
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_file_collision_blocks_the_pack_and_the_zip(tmp_path, monkeypatch, capsys):
     """Two files on one archive path: nothing packed, no zip written."""
     _plugin(tmp_path, ['Textures/tes4/Stone.dds', 'textures/tes4/stone.dds'])
@@ -123,6 +128,7 @@ def test_file_collision_blocks_the_pack_and_the_zip(tmp_path, monkeypatch, capsy
     assert 'differ only by case' in out and 'no zip is written' in out
 
 
+@pytest.mark.usefixtures('case_twins')
 def test_folder_twins_alone_only_warn(tmp_path, monkeypatch, capsys):
     """Twin folders with distinct files pack, and the zip is written."""
     _plugin(tmp_path, ['textures/tes4/Dementia/a.dds', 'textures/tes4/dementia/b.dds'])
