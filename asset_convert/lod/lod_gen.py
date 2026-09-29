@@ -16,7 +16,7 @@ import re as _re
 import shutil
 import struct
 import sys
-from collections import namedtuple
+from collections import Counter, namedtuple
 from pathlib import Path
 
 from asset_convert import case_paths
@@ -204,8 +204,7 @@ def _lod_mesh_is_safe(path: str, output_meshes_dir: Path) -> bool:
     return safe
 
 
-def _screenable_mesh_paths(refs, stats, cell_wrld, wrld_fid, keep_cells,
-                           search_roots=()):
+def _screenable_mesh_paths(refs, stats, scope, search_roots=()):
     """Unique mesh paths the LODGen-input loop will screen, for prefetching.
 
     Filters with the loop's own `_lod_exclusion`, so the prefetch reads the
@@ -213,7 +212,6 @@ def _screenable_mesh_paths(refs, stats, cell_wrld, wrld_fid, keep_cells,
     via `_lod_meshes_for` (it stages master meshes as a side effect).
     See: docs/commentary/asset_convert_terrain.md#prescreening-the-lodgen-input
     """
-    scope = _Scope(cell_wrld, wrld_fid, keep_cells)
     out = []
     seen_base = set()
     for ref in refs:
@@ -685,8 +683,34 @@ def _kept_tile_cells_by_level(only_cells, levels=_OBJ_LOD_LEVELS) -> dict:
     return by_level
 
 
-#: What decides whether a reference is in scope for one worldspace's input.
-_Scope = namedtuple('_Scope', 'cell_wrld wrld_fid keep_cells')
+#: What decides whether a reference is in scope; `state` memoises `_initially_enabled`.
+_Scope = namedtuple('_Scope', 'cell_wrld wrld_fid keep_cells ref_index state')
+
+#: REFR header flags the selection reads (TES5 values).
+FLAG_PERSISTENT = 0x00000400
+FLAG_INITIALLY_DISABLED = 0x00000800
+
+#: "Is Full LOD" on a REFR; the engine draws a persistent one itself.
+FLAG_FULL_LOD = 0x00010000
+
+#: The player's local FormID: an enable parent that is always enabled.
+_PLAYER_REF = 0x000014
+
+#: Longest enable-parent chain walked before the state counts as unknown.
+_MAX_XESP_DEPTH = 16
+
+#: Model folders holding effect meshes (cloud decks, ground mist), not objects.
+_EFFECT_DIRS = frozenset({'effects', 'fx'})
+
+#: Per-reference exclusions, with their log labels; see `_state_exclusion`.
+_STATE_RULES = {
+    'disabled': 'disabled at game start (enable-parent chain)',
+    'full-lod': 'persistent + Is Full LOD (drawn by the engine)',
+    'effects': 'not VWD and an effect mesh',
+}
+
+#: Kept references whose enable parent is not a scanned REFR (an actor).
+_UNKNOWN_PARENT = 'enable parent not scanned (kept)'
 
 #: Where a base's meshes are checked, sourced and staged; see `_resolve_base_entry`.
 _BaseRoots = namedtuple('_BaseRoots',
@@ -734,7 +758,53 @@ def _lod_exclusion(ref, stats, scope):
         return 'no-model'
     if not (stat.get('flags', 0) & FLAG_DISTANT_LOD):
         return 'not-lod'
+    return _state_exclusion(ref, stat, scope)
+
+
+def _state_exclusion(ref, stat, scope):
+    """The per-reference rule dropping `ref` (a `_STATE_RULES` key), or None.
+
+    Static LOD cannot follow enable state, so it shows the game-start state.
+    See: docs/commentary/asset_convert_terrain.md#object-lod-selection
+    """
+    if _initially_enabled(ref['form_id'], scope) is False:
+        return 'disabled'
+    flags = ref['flags']
+    if flags & FLAG_PERSISTENT and flags & FLAG_FULL_LOD:
+        return 'full-lod'
+    if not flags & FLAG_DISTANT_LOD and _is_effect_mesh(stat['model']):
+        return 'effects'
     return None
+
+
+def _is_effect_mesh(model: str) -> bool:
+    """True when the model sits in an `effects` or `fx` folder."""
+    return bool(_EFFECT_DIRS & set(_meshes_rel(model).split('\\')[:-1]))
+
+
+def _initially_enabled(fid, scope, depth=0):
+    """True/False: is `fid` enabled at game start; None when it cannot be known.
+
+    A ref with an enable parent takes the parent's state, inverted by the
+    XESP opposite bit, and ignores its own Initially Disabled flag; the
+    player is always enabled; an unscanned parent or an over-long chain is
+    unknown.
+    See: docs/commentary/asset_convert_terrain.md#object-lod-selection
+    """
+    if fid in scope.state:
+        return scope.state[fid]
+    ref = scope.ref_index.get(fid)
+    if fid & 0x00FFFFFF == _PLAYER_REF:
+        state = True
+    elif ref is None or depth > _MAX_XESP_DEPTH:
+        state = None
+    elif ref.get('xesp'):
+        parent = _initially_enabled(ref['xesp'][0], scope, depth + 1)
+        state = None if parent is None else parent != bool(ref['xesp'][1] & 1)
+    else:
+        state = not ref['flags'] & FLAG_INITIALLY_DISABLED
+    scope.state[fid] = state
+    return state
 
 
 def _owned_by_master(model: str, roots) -> bool:
@@ -779,13 +849,20 @@ def _ref_line(ref, base_entry: str) -> str:
 
 
 def _reference_lines(refs, stats, scope, roots):
-    """(rows, unsafe mesh paths) for every listed reference, bases memoised.
+    """(rows, unsafe mesh paths, {rule: Counter(model)}), bases memoised.
 
+    The third item counts each `_STATE_RULES` drop and each `_UNKNOWN_PARENT` keep.
     See: docs/commentary/asset_convert_terrain.md#lodgen-input-shape
     """
     lines, skipped_unsafe, base_cache = [], set(), {}
+    selection = {k: Counter() for k in (*_STATE_RULES, _UNKNOWN_PARENT)}
     for ref in refs:
-        if _lod_exclusion(ref, stats, scope) is not None:
+        reason = _lod_exclusion(ref, stats, scope)
+        if reason is None and _initially_enabled(ref['form_id'], scope) is None:
+            selection[_UNKNOWN_PARENT][stats[ref['base_fid']]['model']] += 1
+        if reason in selection:
+            selection[reason][stats[ref['base_fid']]['model']] += 1
+        if reason is not None:
             continue
         base_fid = ref['base_fid']
         entry = base_cache.get(base_fid, _MISSING)
@@ -794,7 +871,18 @@ def _reference_lines(refs, stats, scope, roots):
                 base_fid, stats[base_fid], roots, skipped_unsafe)
         if entry is not None:
             lines.append(_ref_line(ref, entry))
-    return lines, skipped_unsafe
+    return lines, skipped_unsafe, selection
+
+
+def _log_selection(selection, listed: int) -> None:
+    """Print each per-reference rule's count and its five commonest models."""
+    dropped = sum(sum(selection[k].values()) for k in _STATE_RULES)
+    print(f"  Object-LOD selection: {listed} reference(s) listed, "
+          f"{dropped} dropped by per-reference rules")
+    for key, models in selection.items():
+        top = ', '.join(f"{m} x{n}" for m, n in models.most_common(5))
+        print(f"    {_STATE_RULES.get(key, key)}: {sum(models.values())}"
+              + (f" -- {top}" if top else ''))
 
 
 def _warn_unsafe(skipped_unsafe) -> None:
@@ -868,13 +956,16 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
                        master_meshes, replace_tiles)
     keep_cells = _kept_tile_cells(only_cells) if only_cells else None
     scope = _Scope({fid: c['parent_wrld'] for fid, c in cells.items()},
-                   wrld_fid, keep_cells)
+                   wrld_fid, keep_cells,
+                   {r['form_id']: r for r in refs if r is not None}, {})
     _prescreen_meshes(_screenable_mesh_paths(
-                          refs, stats, scope.cell_wrld, wrld_fid, keep_cells,
+                          refs, stats, scope,
                           (output_meshes_dir, *master_meshes)),
                       output_meshes_dir, source_meshes=master_meshes)
-    lines, skipped_unsafe = _reference_lines(refs, stats, scope, roots)
+    lines, skipped_unsafe, selection = _reference_lines(refs, stats, scope,
+                                                        roots)
     _warn_unsafe(skipped_unsafe)
+    _log_selection(selection, len(lines))
     if not lines:
         print(f"  No LOD references found for worldspace '{edid}'")
         return None

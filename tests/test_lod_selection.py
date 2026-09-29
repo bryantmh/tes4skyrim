@@ -220,3 +220,76 @@ class TestAuthoredFarFromAnyPlugin:
         _mesh(fr, model)
         _out, asked = self._derive(gen, monkeypatch, tmp_path, [obl, fr], model)
         assert asked == [model]
+
+
+PLAYER = 0x00000014
+PARENT_ON, PARENT_OFF = 0xC1, 0xC2
+
+
+class TestSelectionRules:
+    """Effective initial state through XESP, persistent Full LOD, effect meshes."""
+
+    def _listed(self, gen, tmp_path, refs, models=('tes4\\rocks\\rock01.nif',)):
+        """FormIDs `write_lodgen_input` lists; parents are non-LOD markers."""
+        out = tmp_path / 'AutoConvertLOD'
+        stats = {0x10 + i: _stat(m, edid='B%d' % i) for i, m in enumerate(models)}
+        stats[0x30] = _stat('marker.nif', flags=0)
+        for m in models:
+            _mesh(out, m)
+            _mesh(out, m[:-4] + '_far.nif')
+        parents = [_ref(PARENT_ON, 0x30), _ref(PARENT_OFF, 0x30, flags=0x800)]
+        txt = _write(gen, out, stats, parents + refs)
+        return set(_rows(txt)) if txt else set()
+
+    def test_game_start_state_decides(self, gen, tmp_path):
+        """Old: every LOD-flagged ref was listed, whatever its enable state."""
+        refs = [_ref(0xD1, 0x10),
+                _ref(0xD2, 0x10, flags=0x800),
+                _ref(0xD3, 0x10, xesp=(PARENT_ON, 0)),
+                _ref(0xD4, 0x10, xesp=(PARENT_ON, 1)),
+                _ref(0xD5, 0x10, xesp=(PARENT_OFF, 1)),
+                _ref(0xD6, 0x10, xesp=(PARENT_OFF, 0)),
+                _ref(0xD7, 0x10, flags=0x8800, xesp=(PARENT_OFF, 0)),
+                _ref(0xD8, 0x10, flags=0x800, xesp=(PARENT_ON, 0)),
+                _ref(0xD9, 0x10, xesp=(PLAYER, 0)),
+                _ref(0xDA, 0x10, xesp=(0xEE, 0)),
+                _ref(0xDB, 0x10, xesp=(0xD5, 0))]
+        assert self._listed(gen, tmp_path, refs) == {
+            0xD1, 0xD3, 0xD5, 0xD8, 0xD9, 0xDA, 0xDB}
+
+    def test_persistent_full_lod_is_left_to_the_engine(self, gen, tmp_path):
+        """R4: persistent + Is Full LOD dropped; either flag alone kept."""
+        refs = [_ref(0xE1, 0x10, flags=0x10400),
+                _ref(0xE2, 0x10, flags=0x10000),
+                _ref(0xE3, 0x10, flags=0x400)]
+        assert self._listed(gen, tmp_path, refs) == {0xE2, 0xE3}
+
+    def test_non_vwd_effect_mesh_is_dropped(self, gen, tmp_path):
+        """R3': NDCloudLayer-style effect meshes, unless the ref is VWD."""
+        models = ('tes4\\effects\\ndcloudlayer.nif',
+                  'tes4\\dungeons\\misc\\fx\\fxmist01.nif',
+                  'tes4\\rocks\\effectsrock.nif')
+        refs = [_ref(0xF1, 0x10, flags=0x400), _ref(0xF2, 0x11),
+                _ref(0xF3, 0x10, flags=0x8000), _ref(0xF4, 0x12)]
+        assert self._listed(gen, tmp_path, refs, models) == {0xF3, 0xF4}
+
+    def test_counts_and_top_models_are_logged(self, gen, tmp_path, capsys):
+        """No silent drop: each rule prints its count and models."""
+        self._listed(gen, tmp_path, [_ref(0xD2, 0x10, flags=0x800),
+                                     _ref(0xDA, 0x10, xesp=(0xEE, 0))])
+        log = capsys.readouterr().out
+        assert '1 dropped by per-reference rules' in log
+        assert 'disabled at game start' in log
+        assert 'tes4\\rocks\\rock01.nif x1' in log
+        assert 'enable parent not scanned (kept): 1' in log
+
+    def test_prefetch_skips_a_base_whose_only_ref_is_dropped(self, gen):
+        """`_screenable_mesh_paths` filters with the same rules."""
+        stats = {0x10: _stat('tes4\\rocks\\rock01.nif'),
+                 0x11: _stat('tes4\\rocks\\rock02.nif')}
+        refs = [_ref(0xD2, 0x10, flags=0x800), _ref(0xD1, 0x11)]
+        scope = gen._Scope({CELL: WRLD}, WRLD, None,
+                           {r['form_id']: r for r in refs}, {})
+        paths = gen._screenable_mesh_paths(refs, stats, scope)
+        assert 'tes4\\rocks\\rock02.nif' in paths
+        assert 'tes4\\rocks\\rock01.nif' not in paths

@@ -421,6 +421,37 @@ REFR's XESP as `(parent, flags)`, the parent normalized into the same global
 FormID space as `form_id` so a chain can cross plugins; flags bit 0 is "Set
 Enable State to Opposite of Parent".
 
+Static LOD cannot follow enable state, so it shows the state at GAME START.
+`_state_exclusion` drops a LOD-flagged reference when:
+
+- **disabled** -- its effective initial state is OFF (`_initially_enabled`). A
+  ref with an enable parent takes the parent's state, inverted when its opposite
+  bit is set, and its own Initially Disabled flag does not count; a ref without
+  one is OFF when Initially Disabled. The player (local id 0x14) is always ON.
+  A parent that is not a scanned REFR (an actor) or a chain deeper than 16 is
+  UNKNOWN, and the ref is KEPT (today's behaviour) and counted as `enable parent
+  not scanned (kept)`.
+- **full-lod** -- it is persistent (0x400) AND "Is Full LOD" (0x10000): the
+  engine draws it itself at any distance, so baking it too draws it twice.
+- **effects** -- the ref is not VWD and its model sits in an `effects` or `fx`
+  folder: a cloud deck or ground mist, not an object (NDCloudLayer is
+  persistent, not disabled and has no parent, so nothing else catches it).
+
+This mirrors xEdit's `wbGenerateLODTES5` (`wbLOD.pas`), which skips Initially
+Disabled refs, non-VWD refs with an enable parent, and persistent Full-LOD
+refs, with one deliberate difference: a non-VWD ref whose parent chain leaves
+it ON at game start is KEPT. Dropping every parented ref removed 530
+initially visible rocks and scaffolding (Oblivion-gate sites, Cropsford).
+The counts are taken over LOD-flagged references in scope, before a base's
+meshes are resolved, and logged with each rule's five commonest models.
+
+Deferred, with tripwires:
+- The full R3 (non-VWD, no collision, alpha-blended or effect-shaded model):
+  69 rows (cobwebs, rugs, rising Ayleid pieces). Re-open if those are seen
+  floating at distance.
+- Tree billboards: vanilla ships no NiAlphaProperty on object-LOD shapes yet
+  cuts them out, so no alpha is injected. Re-open if trees show as squares.
+
 ## <a id="prescreening-the-lodgen-input"></a>Prescreening the LODGen input
 
 **Code:** `asset_convert/lod/lod_gen.py` (`_prescreen_meshes`,
