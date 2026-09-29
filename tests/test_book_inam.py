@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from asset_convert.ui import book_inam
 from asset_convert.ui.book_inam import (
     CANVAS,
     Island,
@@ -185,3 +186,14 @@ def test_template_calibration():
         read_shapes(os.path.join(REFS, *BOOK_TEMPLATE.split('\\'))))
     assert book.spine is not None
     assert book.pages_islands, 'page-edge strips must be found'
+
+
+def test_mixed_case_book_texture_and_its_normal_are_found(tmp_path):
+    """A mod's `Clutter/Books/Book01.DDS` and `Book01_N.DDS` answer lowercase lookups."""
+    folder = tmp_path / 'textures' / 'Clutter' / 'Books'
+    folder.mkdir(parents=True)
+    (folder / 'Book01.DDS').write_bytes(b'dds')
+    (folder / 'Book01_N.DDS').write_bytes(b'dds')
+    tex = book_inam._find_source_texture([tmp_path], 'Clutter\\Books\\Book01.dds')
+    assert tex == str(folder / 'Book01.DDS')
+    assert book_inam._normal_sibling(tex) == str(folder / 'Book01_N.DDS')

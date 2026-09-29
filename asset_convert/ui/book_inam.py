@@ -674,12 +674,11 @@ def _find_source_texture(extract_roots, tex_rel):
     rel = tex_rel.lower().replace('/', '\\')
     if not rel.startswith('textures\\'):
         rel = 'textures\\' + rel
-    roots = list(_as_roots(extract_roots))
+    roots = _as_roots(extract_roots)
     for candidate in _texture_names(rel):
-        for root in roots:
-            p = os.path.join(root, *candidate.split('\\'))
-            if os.path.isfile(p):
-                return p
+        found = case_paths.resolve(roots, candidate, 'book_inam.texture')
+        if found:
+            return str(found)
     return None
 
 
@@ -712,11 +711,13 @@ def find_source_mesh(extract_roots, model):
 
 
 def _normal_sibling(tex_path):
+    """The `<stem>_n<ext>` file beside `tex_path`, in any case, or None."""
     if not tex_path:
         return None
-    root, ext = os.path.splitext(tex_path)
-    p = root + '_n' + ext
-    return p if os.path.isfile(p) else None
+    stem, ext = os.path.splitext(os.path.basename(tex_path))
+    found = case_paths.resolve([os.path.dirname(tex_path)], stem + '_n' + ext,
+                               'book_inam.normal')
+    return str(found) if found else None
 
 
 def load_book_template(templates_dir=None, skyrim_data=None):
