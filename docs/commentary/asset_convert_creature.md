@@ -1042,7 +1042,11 @@ and no single fixed size can serve both piles: the ghost's is ~21 units
 across, the wraith's ~92. `_pile_mesh_bounds` reads the emitted NIF;
 `extract_death_pile` centers the mesh on its own origin in X/Y, so the bounds
 are symmetric there and carry the real Z range. Only when the mesh cannot be
-read does the record fall back to the `(-24,-24,-4)→(24,24,16)` box.
+read does the record fall back to the `(-24,-24,-4)→(24,24,16)` box. The
+project's `body_dir` is a record path (`Actors\tes4\oblivion\ghost`), so the
+mesh is found through `case_paths.resolve` across the output plugin folders;
+joined with `os.path.join` it matched nothing on Linux and both piles
+(ghost, wraith) shipped the fallback box.
 
 The other two required fields follow `DefaultAshPileGhost` (0x00101048)
 verbatim: `PNAM` is the marker color, which xEdit marks `SetRequired`, and

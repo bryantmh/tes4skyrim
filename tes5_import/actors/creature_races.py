@@ -30,9 +30,12 @@ the Oblivion skeleton — hits still register, dismember targeting is off),
 and ARMA has no footstep SNDD yet.
 """
 
+from asset_convert import case_paths
 from asset_convert.havok.behavior_vocabulary import movement_type_names
 import os
 import struct
+
+from output_layout import DEFAULT_OUTPUT
 
 from ..base.writer import (pack_record, pack_subrecord, pack_string_subrecord,
                      pack_formid_subrecord, pack_obnd)
@@ -264,16 +267,9 @@ def _pile_mesh_bounds(proj, pile_name):
     4x in size, and the activation target the engine builds from OBND has to
     cover the geometry the player is looking at.
     """
-    import os
-
-    rel = os.path.join('meshes', proj.get('body_dir', ''), pile_name)
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    candidates = []
-    out = os.path.join(root, 'output')
-    if os.path.isdir(out):
-        for plugin in sorted(os.listdir(out)):
-            candidates.append(os.path.join(out, plugin, rel))
-    path = next((p for p in candidates if os.path.exists(p)), None)
+    plugins = sorted(DEFAULT_OUTPUT.iterdir()) if DEFAULT_OUTPUT.is_dir() else []
+    rel = '\\'.join(('meshes', proj.get('body_dir', ''), pile_name))
+    path = case_paths.resolve(plugins, rel, 'death_pile')
     if path is None:
         return None
     try:
