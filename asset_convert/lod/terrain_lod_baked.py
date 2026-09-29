@@ -314,3 +314,124 @@ def load_tile_rgb(path: str) -> np.ndarray:
     with Image.open(path) as img:
         return np.asarray(img.convert('RGB'), dtype=np.uint8)
 
+
+# ---------------------------------------------------------------------------
+# Matching the filler to the painted composite
+# ---------------------------------------------------------------------------
+
+#: Gaussian spread (cells) and window radius of the per-cell offset field.
+OFFSET_SIGMA = 1.5
+OFFSET_RADIUS = 4
+
+#: Weight of the worldspace-wide offset in every cell's estimate.
+OFFSET_PRIOR_WEIGHT = 0.05
+
+#: Largest per-channel offset applied, so one bad fit cannot repaint a region.
+OFFSET_CLAMP = 60.0
+
+#: Box width (px) smoothing an edge's colour profile before it is feathered in.
+FEATHER_SMOOTH = 5
+
+
+def cell_offset(ours: np.ndarray, crop: np.ndarray, quads, blocks) -> np.ndarray:
+    """Mean per-channel (composite - bake) over a cell's painted `quads`."""
+    return np.mean([ours[blocks[q]].reshape(-1, 3).mean(0)
+                    - crop[blocks[q]].reshape(-1, 3).mean(0) for q in quads], 0)
+
+
+def window(key, radius):
+    """(neighbour key, squared distance) over the square window around `key`."""
+    x, y = key
+    return [((x + dx, y + dy), dx * dx + dy * dy)
+            for dx in range(-radius, radius + 1)
+            for dy in range(-radius, radius + 1)]
+
+
+def smooth_offsets(fitted: dict, targets) -> dict:
+    """{'prior': rgb, 'cells': {key: rgb}}: Gaussian-weighted `fitted` offsets per target.
+
+    Each estimate is pulled toward the worldspace-wide mean with a small
+    weight, so a cell far from any painted cell takes that mean and the
+    field stays smooth where fitted cells run out. Clamped.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler-match
+    """
+    prior = (np.mean(list(fitted.values()), 0) if fitted else np.zeros(3))
+    prior = np.clip(prior, -OFFSET_CLAMP, OFFSET_CLAMP)
+    cells = {}
+    for key in targets:
+        acc, weight = OFFSET_PRIOR_WEIGHT * prior, OFFSET_PRIOR_WEIGHT
+        for nb, r2 in window(key, OFFSET_RADIUS):
+            if nb in fitted:
+                w = np.exp(-r2 / (2.0 * OFFSET_SIGMA ** 2))
+                acc, weight = acc + w * fitted[nb], weight + w
+        cells[key] = np.clip(acc / weight, -OFFSET_CLAMP, OFFSET_CLAMP)
+    return {'prior': prior, 'cells': cells}
+
+
+def offset_image(offsets: dict, key, px: int) -> np.ndarray:
+    """The cell's offset as a (px,px,3) field, north-up, bilinear between its corners.
+
+    A corner is the mean of the four cells meeting there, so neighbouring
+    filler cells meet without a step.
+    """
+    x, y = key
+    get = offsets['cells'].get
+    prior = offsets['prior']
+    corner = np.array([[np.mean([get((x - 1 + i + a, y - 1 + j + b), prior)
+                                 for a in (0, 1) for b in (0, 1)], 0)
+                        for i in (0, 1)] for j in (1, 0)])
+    t = (np.arange(px) + 0.5) / px
+    top = corner[0, 0][None] * (1 - t)[:, None] + corner[0, 1][None] * t[:, None]
+    bot = corner[1, 0][None] * (1 - t)[:, None] + corner[1, 1][None] * t[:, None]
+    return top[None] * (1 - t)[:, None, None] + bot[None] * t[:, None, None]
+
+
+def _smooth(profile: np.ndarray) -> np.ndarray:
+    """`profile` (n,3) box-filtered along n with edge padding."""
+    k = FEATHER_SMOOTH
+    pad = np.pad(profile, ((k // 2, k // 2), (0, 0)), mode='edge')
+    ker = np.ones(k) / k
+    return np.stack([np.convolve(pad[:, c], ker, mode='valid')
+                     for c in range(3)], -1)
+
+
+def _feather_side(img, quad, side, nb, h) -> None:
+    """Fade the colour step between filler block `quad` and painted `nb` across `quad`."""
+    fade = np.linspace(1.0, 0.0, h)
+    if side in ('w', 'e'):
+        own = quad[:, :2] if side == 'w' else quad[:, -2:]
+        other = nb[:, -2:] if side == 'w' else nb[:, :2]
+        delta = _smooth(other.mean(1) - own.mean(1))
+        ramp = fade if side == 'w' else fade[::-1]
+        img += delta[:, None, :] * ramp[None, :, None]
+        return
+    own = quad[:2] if side == 'n' else quad[-2:]
+    other = nb[-2:] if side == 'n' else nb[:2]
+    delta = _smooth(other.mean(0) - own.mean(0))
+    ramp = fade if side == 'n' else fade[::-1]
+    img += delta[None, :, :] * ramp[:, None, None]
+
+
+_SIDES = (('w', 0, -1), ('e', 0, 1), ('n', -1, 0), ('s', 1, 0))
+
+
+def feather_filler(canvas: np.ndarray, state: np.ndarray, h: int) -> np.ndarray:
+    """`canvas` (north-up, quad blocks of h px) with each filler block feathered.
+
+    `state` holds one entry per block: 1 painted, 0 filler, -1 unknown. A
+    filler block is bent, side by side, to meet each painted neighbour's
+    edge colour, the correction fading to 0 across the block; painted
+    pixels never change.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler-match
+    """
+    out = canvas.astype(np.float32)
+    rows, cols = state.shape
+    for r, c in zip(*np.nonzero(state == 0)):
+        block = out[r * h:(r + 1) * h, c * h:(c + 1) * h]
+        for side, dr, dc in _SIDES:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols and state[nr, nc] == 1:
+                nb = out[nr * h:(nr + 1) * h, nc * h:(nc + 1) * h]
+                _feather_side(block, block.copy(), side, nb, h)
+    return np.clip(out, 0, 255)
+

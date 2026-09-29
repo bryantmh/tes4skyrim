@@ -389,7 +389,7 @@ def unpainted_quad(layers: dict, quad: int) -> bool:
     return quad not in layers['base'] and not layers['alpha'].get(quad)
 
 
-def _quad_blocks(cell_px: int) -> dict:
+def quad_blocks(cell_px: int) -> dict:
     """{quad: (row slice, col slice)} in the north-up cell image: TL(2) TR(3) / BL(0) BR(1)."""
     h = cell_px // 2
     top, bottom = slice(0, h), slice(h, cell_px)
@@ -456,7 +456,7 @@ def composite_cell(layers: dict, colors: np.ndarray, ltex_map: dict,
     us, vs = _cell_uvs(cell_gx, cell_gy, cell_px)
     out = np.zeros((cell_px, cell_px, 3), dtype=np.float32)
     filler = np.zeros((cell_px, cell_px, 1), dtype=bool)
-    for quad, (rs, cs) in _quad_blocks(cell_px).items():
+    for quad, (rs, cs) in quad_blocks(cell_px).items():
         empty = unpainted_quad(layers, quad)
         if empty and baked is not None:
             out[rs, cs] = baked[rs, cs]

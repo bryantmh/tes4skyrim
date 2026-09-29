@@ -1947,8 +1947,45 @@ default.dds there: 8.9); across a cell edge 37.1 (50 edges; default.dds 17.0);
 painted|painted control 3.8 / 3.2. Cause: over the same painted quadrants
 Oblivion's bake averages (94.8, 99.9, 90.0) where our composite averages
 (92.8, 91.0, 73.8) -- bluer and with the bake's own lighting -- and the filler
-matches the bake. Tripwire: if these seams are visible in game, add a per-tile
-colour transfer (bake to composite, fitted on painted cells) or feather the
-filler; the near terrain of an unpainted quadrant still shows default.dds
-(engine), out of scope.
+matches the bake. That step is now removed ([below](#terrain-lod-filler-match));
+the near terrain of an unpainted quadrant still shows default.dds (engine),
+out of scope.
+
+### <a id="terrain-lod-filler-match"></a>The filler is colour-matched and feathered
+
+A per-TILE colour transfer cannot remove that step: fitted per baked tile over
+painted dry quadrants it only brings it from 34.7 to 24-28 (offset, mean/std
+and least-squares gain+offset all tried), because the bake's lighting differs
+LOCALLY. Two local steps do:
+
+1. **Offset field** (`_filler_offsets`, parent, before the pool). For every
+   dry cell with a painted quadrant within `OFFSET_RADIUS` (4) of a filler
+   cell, the mean (composite - bake) over its painted quadrants, at 16 px.
+   `smooth_offsets` Gaussian-weights those (sigma 1.5 cells) for every filler
+   cell and its neighbours, pulled toward the worldspace-wide mean with weight
+   0.05 (so far regions and horizon cells take that mean), clamped to +-60.
+   `offset_image` spreads each cell's offset bilinearly between its corners
+   (a corner = mean of the four cells meeting there), so filler meets filler
+   without a step. Offsets only: gains were no better per tile.
+2. **Edge feather** (`feather_filler`, per tile). When a tile has filler, the
+   one-cell ring around it is composited too, and each filler quadrant is bent
+   side by side to meet each painted neighbour's 2-px edge colour (profile
+   box-smoothed over 5 px), the correction fading linearly across the
+   quadrant. Painted pixels never change; the ring makes the result the same
+   whichever tile a cell sits in.
+
+Measured through `_composite_tile_diffuse` on all 36 Tamriel LOD32 tiles (dry
+edges; 2-px strip step, then per-pixel difference across the seam line, the
+second being a check the feather does not target directly):
+
+| edge | before | offsets only | both | painted/painted control |
+|---|---|---|---|---|
+| filler/painted in a cell (526) | 34.7 / 37.3 | 17.3 / 23.6 | 1.7 / 9.4 | 3.8 / 12.3 |
+| filler/painted across cells (407) | 37.3 / 40.4 | 19.2 / 26.9 | 2.8 / 11.6 | 4.3 / 12.6 |
+
+The bake's detail survives: over 337 fully-filler cells the high-pass of the
+result correlates 0.996 with the raw bake, std ratio 1.000 (a quadrant's
+detail next to a seam is damped by at most about a quarter). Fit: 2,112
+painted cells in 2.9 s; worldspace shift (7.7, 2.7, -0.2). Tiles with filler
+composite ~20% slower (the ring).
 

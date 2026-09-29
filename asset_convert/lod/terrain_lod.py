@@ -835,31 +835,44 @@ _CELL_IMG_CACHE = {}
 _CELL_IMG_CACHE_MAX = 16384
 
 
-def _baked_crop(baked_tiles, key, layers):
+def _bake_tile(baked_tiles, key):
+    """The path of the baked tile holding cell `key`, or None."""
+    from asset_convert.lod import terrain_lod_baked as tb
+    if not baked_tiles:
+        return None
+    return baked_tiles.get(tuple((c // tb.TILE_CELLS) * tb.TILE_CELLS
+                                 for c in key))
+
+
+def _baked_crop(baked_tiles, key, layers, offsets=None):
     """The game's own LOD image of cell `key` when a quadrant is unpainted, else None.
 
-    `baked_tiles` is {(tile x, tile y): path} of 32-cell south-up tiles.
+    `baked_tiles` is {(tile x, tile y): path} of 32-cell south-up tiles;
+    `offsets` (from `_filler_offsets`) shift it toward the painted composite.
     See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler
     """
     from asset_convert.lod import terrain_lod_baked as tb
     from asset_convert.lod.terrain_lod_textures import unpainted_quad
-    if not baked_tiles or not any(unpainted_quad(layers, q) for q in range(4)):
+    path = _bake_tile(baked_tiles, key)
+    if path is None or not any(unpainted_quad(layers, q) for q in range(4)):
         return None
     tile = tuple((c // tb.TILE_CELLS) * tb.TILE_CELLS for c in key)
-    path = baked_tiles.get(tile)
-    if path is None:
-        return None
-    return tb.cell_crop(tb.load_tile_rgb(str(path)), key[0] - tile[0],
+    crop = tb.cell_crop(tb.load_tile_rgb(str(path)), key[0] - tile[0],
                         key[1] - tile[1], CELL_DIFFUSE_PX)
+    if not offsets:
+        return crop
+    shift = tb.offset_image(offsets, key, CELL_DIFFUSE_PX)
+    return np.clip(crop + shift, 0, 255).astype(np.uint8)
 
 
-def _cell_image(lands, key, ltex_map, tex_root, h33, wh, baked_tiles):
+def _cell_image(lands, key, ctx, h33, wh):
     """One cell's composited diffuse, cached per (cell, water, height patch).
 
-    A cell recurs in one tile per LOD level; the key carries the only
-    per-tile inputs, so an edge-filled patch that differs recomputes.
+    `ctx` is (ltex_map, tex_root, baked_tiles, offsets). A cell recurs in one
+    tile per LOD level; the key carries the only per-tile inputs.
     """
     from asset_convert.lod.terrain_lod_textures import composite_cell
+    ltex_map, tex_root, baked_tiles, offsets = ctx
     ck = (key, wh, h33.tobytes())
     img = _CELL_IMG_CACHE.get(ck)
     if img is not None:
@@ -870,36 +883,85 @@ def _cell_image(lands, key, ltex_map, tex_root, h33, wh, baked_tiles):
     img = composite_cell(layers, colors, ltex_map, tex_root, key[0], key[1],
                          cell_px=CELL_DIFFUSE_PX, tex_size=128, heights=h33,
                          water_height=wh,
-                         baked=_baked_crop(baked_tiles, key, layers))
+                         baked=_baked_crop(baked_tiles, key, layers, offsets))
     if len(_CELL_IMG_CACHE) >= _CELL_IMG_CACHE_MAX:
         _CELL_IMG_CACHE.clear()
     _CELL_IMG_CACHE[ck] = img
     return img
 
 
+def _quad_states(land, baked_tiles, key) -> np.ndarray:
+    """[[TL, TR], [BL, BR]] of cell `key`: 1 painted, 0 baked filler, -1 neither."""
+    from asset_convert.lod.terrain_lod_textures import unpainted_quad
+    layers = land['layers'] if land is not None else _EMPTY_LAYERS
+    baked = _bake_tile(baked_tiles, key) is not None
+
+    def one(q):
+        """The state of quadrant `q`."""
+        if not unpainted_quad(layers, q):
+            return 1
+        return 0 if baked else -1
+    return np.array([[one(2), one(3)], [one(0), one(1)]], dtype=np.int8)
+
+
+def _place(canvas, state, at, img, quads) -> None:
+    """Write a cell image and its 2x2 quadrant states at canvas cell (row, col) `at`."""
+    r, c = at
+    px = CELL_DIFFUSE_PX
+    canvas[r * px:(r + 1) * px, c * px:(c + 1) * px] = img
+    state[2 * r:2 * r + 2, 2 * c:2 * c + 2] = quads
+
+
+def _margin_ring(canvas, state, lands, tile, level, water, ctx) -> None:
+    """Composite the cells around the tile into the canvas's one-cell border.
+
+    A border cell with no entry in `lands` stays unknown; the others use their
+    own heights, which equal what their own tile assembles.
+    """
+    cell_water, default_wh = water
+    for cy in range(-1, level + 1):
+        for cx in range(-1, level + 1):
+            if 0 <= cx < level and 0 <= cy < level:
+                continue
+            key = (tile[0] + cx, tile[1] + cy)
+            land = lands.get(key)
+            if land is None:
+                continue
+            wh = _cell_water_height(cell_water, key, default_wh)
+            _place(canvas, state, (level - cy, cx + 1),
+                   _cell_image(lands, key, ctx, land['heights'], wh),
+                   _quad_states(land, ctx[2], key))
+
+
 def _composite_tile_diffuse(lands, tile_x, tile_y, level, ltex_map, tex_root,
                             tile_heights, cell_water, default_wh,
-                            baked_tiles=None):
+                            baked_tiles=None, offsets=None):
     """Composite a level-N tile diffuse from its cells' real landscape textures.
 
-    tile_heights is the FILLED tile height grid from _assemble_tile (row 0 =
-    south), for the underwater murk. Unpainted quadrants, and cells with no
-    LAND, take the game's own baked LOD image when `baked_tiles` has it.
-    Returns (atlas RGB ndarray, side_px), image row 0 = north (+Y).
+    tile_heights is the FILLED tile grid from _assemble_tile (row 0 = south),
+    for the murk. Unpainted quadrants take the colour-matched bake; when any
+    does, a one-cell ring is composited and the filler feathered into the
+    painted neighbours. Returns (atlas RGB, side_px), row 0 = north.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler-match
     """
-    side = level * CELL_DIFFUSE_PX
-    atlas = np.empty((side, side, 3), dtype=np.uint8)
+    from asset_convert.lod.terrain_lod_baked import feather_filler
+    px = CELL_DIFFUSE_PX
+    ctx = (ltex_map, tex_root, baked_tiles, offsets)
+    canvas = np.zeros(((level + 2) * px, (level + 2) * px, 3), dtype=np.uint8)
+    state = np.full((2 * (level + 2),) * 2, -1, dtype=np.int8)
     for cy in range(level):
         for cx in range(level):
             key = (tile_x + cx, tile_y + cy)
             h33 = tile_heights[cy*32:cy*32+33, cx*32:cx*32+33]
             wh = _cell_water_height(cell_water, key, default_wh)
-            row0 = (level - 1 - cy) * CELL_DIFFUSE_PX
-            col0 = cx * CELL_DIFFUSE_PX
-            atlas[row0:row0+CELL_DIFFUSE_PX, col0:col0+CELL_DIFFUSE_PX] = (
-                _cell_image(lands, key, ltex_map, tex_root, h33, wh,
-                            baked_tiles))
-    return atlas, side
+            _place(canvas, state, (level - cy, cx + 1),
+                   _cell_image(lands, key, ctx, h33, wh),
+                   _quad_states(lands.get(key), baked_tiles, key))
+    if (state == 0).any():
+        _margin_ring(canvas, state, lands, (tile_x, tile_y), level,
+                     (cell_water, default_wh), ctx)
+        canvas = feather_filler(canvas, state, px // 2).astype(np.uint8)
+    return canvas[px:(level + 1) * px, px:(level + 1) * px].copy(), level * px
 
 
 def _heightmap_normal_rgb(heights: np.ndarray, out_px: int) -> np.ndarray:
@@ -1113,11 +1175,12 @@ _worker_cell_water = None
 _worker_default_wh = 0.0
 _worker_baked      = None
 _worker_synthetic  = frozenset()
+_worker_offsets    = None
 
 
 def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
                  cell_water, default_wh, baked_tiles=None,
-                 synthetic=frozenset()):
+                 synthetic=frozenset(), offsets=None):
     """Called once per worker process to stash shared read-only data.
 
     `lands` is either a plain dict (single-process fallback) or the tuple
@@ -1127,7 +1190,7 @@ def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
     global _worker_lands, _worker_mesh_dir, _worker_tex_dir
     global _worker_ltex_map, _worker_tex_root
     global _worker_cell_water, _worker_default_wh, _worker_shm, _worker_baked
-    global _worker_synthetic
+    global _worker_synthetic, _worker_offsets
     if isinstance(lands, tuple):
         from multiprocessing import shared_memory
         shm_name, nbytes, index = lands
@@ -1150,6 +1213,7 @@ def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
     _worker_default_wh = default_wh
     _worker_baked      = baked_tiles
     _worker_synthetic  = synthetic
+    _worker_offsets    = offsets
 
 
 def _worker_stats() -> dict:
@@ -1190,7 +1254,8 @@ def _process_tile(args):
         atlas, _side = _composite_tile_diffuse(
             _worker_lands, tile_x, tile_y, level,
             _worker_ltex_map, _worker_tex_root,
-            heights, _worker_cell_water, _worker_default_wh, _worker_baked)
+            heights, _worker_cell_water, _worker_default_wh, _worker_baked,
+            _worker_offsets)
         write_dds_dxt1(atlas, _worker_tex_dir / f'{tag}.dds', size=tex_size)
 
         # Normal map: derive from the tile heightmap so distant terrain is lit.
@@ -1406,6 +1471,62 @@ def _baked_sources(lod_source_dirs, worldspace_edid: str) -> dict:
     return {k: str(v) for k, v in tiles.items()}
 
 
+#: Cell image size (px) the filler colour match is fitted at; means barely depend on it.
+_FIT_PX = 16
+
+
+def _dry(world: dict, key) -> bool:
+    """True when LAND cell `key` lies wholly above its water (or has none)."""
+    wh = _cell_water_height(world['cell_water'], key, world['default_wh'])
+    return wh is None or float(world['lands'][key]['heights'].min()) > wh
+
+
+def _fit_cell(world, key, textures, baked):
+    """(composite - bake) over `key`'s painted quadrants, or None when it has none."""
+    from asset_convert.lod import terrain_lod_baked as tb
+    from asset_convert.lod import terrain_lod_textures as tlt
+    land = world['lands'][key]
+    quads = [q for q in range(4) if not tlt.unpainted_quad(land['layers'], q)]
+    path = _bake_tile(baked, key)
+    if not quads or path is None or not _dry(world, key):
+        return None
+    tile = tuple((c // tb.TILE_CELLS) * tb.TILE_CELLS for c in key)
+    crop = tb.cell_crop(tb.load_tile_rgb(path), key[0] - tile[0],
+                        key[1] - tile[1], _FIT_PX).astype(np.float64)
+    ours = tlt.composite_cell(land['layers'], land['colors'], textures[0],
+                              textures[1], key[0], key[1], cell_px=_FIT_PX)
+    return tb.cell_offset(ours.astype(np.float64), crop, quads,
+                          tlt.quad_blocks(_FIT_PX))
+
+
+def _filler_offsets(world: dict, textures, baked) -> dict:
+    """The per-cell colour shift from the bake to our composite, or {} with no bake.
+
+    Fitted on painted dry cells near a filler cell, smoothed over every filler
+    cell and its neighbours. `textures` is (ltex_map, texture roots).
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler-match
+    """
+    from asset_convert.lod import terrain_lod_baked as tb
+    from asset_convert.lod import terrain_lod_textures as tlt
+    lands = world['lands']
+    core = [k for k, land in lands.items() if _bake_tile(baked, k) and any(
+        tlt.unpainted_quad(land['layers'], q) for q in range(4))]
+    if not core:
+        return {}
+    near = {nb for k in core for nb, _r in tb.window(k, tb.OFFSET_RADIUS)
+            if nb in lands}
+    fitted = {k: v for k in near
+              if (v := _fit_cell(world, k, textures, baked)) is not None}
+    targets = {nb for k in core for nb, _r in tb.window(k, 1)}
+    offsets = tb.smooth_offsets(fitted, targets)
+    tlt.texture_stats()
+    tlt.filler_stats()
+    print(f"  Filler colour match: {len(fitted)} painted cells fitted, "
+          f"{len(core)} filler cells; worldspace shift "
+          f"{tuple(round(float(v), 1) for v in offsets['prior'])}")
+    return offsets
+
+
 def _report_bake(per_level_ok: dict, failed: int, stats: dict) -> bool:
     """Print the bake summary; False when no landscape texture was found.
 
@@ -1462,9 +1583,10 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
         return False
     work.sort(key=lambda w: -w[2])
     _drop_plugin_bytes()
+    baked = _baked_sources(lod_source_dirs, worldspace_edid)
     init = (str(mesh_dir), str(tex_dir), ltex_map, [str(r) for r in tex_roots],
-            world['cell_water'], world['default_wh'],
-            _baked_sources(lod_source_dirs, worldspace_edid), synthetic)
+            world['cell_water'], world['default_wh'], baked, synthetic,
+            _filler_offsets(world, (ltex_map, tex_roots), baked))
     return _report_bake(*_bake_tiles(world, work, init))
 
 

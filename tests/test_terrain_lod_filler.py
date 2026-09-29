@@ -48,7 +48,7 @@ def _south_up_tile(path):
 def _quads(colours):
     """A north-up PX image whose quadrants are {quad: rgb}."""
     img = np.zeros((PX, PX, 3), dtype=np.uint8)
-    for quad, (rs, cs) in tlt._quad_blocks(PX).items():
+    for quad, (rs, cs) in tlt.quad_blocks(PX).items():
         img[rs, cs] = colours[quad]
     return img
 
@@ -66,9 +66,9 @@ def test_unpainted_quadrant_takes_the_baked_crop_untinted(tmp_path):
     img = tlt.composite_cell(layers, red, ltex, tmp_path, 0, 0, cell_px=PX,
                              baked=baked)
 
-    rs, cs = tlt._quad_blocks(PX)[2]
+    rs, cs = tlt.quad_blocks(PX)[2]
     assert (img[rs, cs] == (10, 200, 30)).all(), 'baked, and not VCLR-tinted'
-    rs, cs = tlt._quad_blocks(PX)[1]
+    rs, cs = tlt.quad_blocks(PX)[1]
     assert (img[rs, cs] == (100, 0, 0)).all(), 'painted quads keep the tint'
     assert tlt.filler_stats() == {'baked': 1}
 
