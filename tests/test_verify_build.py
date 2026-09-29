@@ -683,3 +683,34 @@ class TestMagicArt:
                                     'from 0 models (21 not converted)')
         r = vb.check_magic_art(ctx)
         assert (r['status'], r['denominator']) == (vb.FAIL, '0/21 models')
+
+
+class TestPackMarkers:
+
+    def test_a_marker_convert_leaves_fails_pre_deploy(self, tmp_path):
+        """G13: the marker phase_pack writes blocks the gate, and is named."""
+        import convert
+        ctx = _ctx(tmp_path)
+        (ctx.output / 'Knights.esp').mkdir()
+        marker = convert._pack_marker(ctx.output, 'Oblivion.esm')
+        marker.parent.mkdir(parents=True)
+        marker.write_text('failed\n', encoding='utf-8')
+        assert 'G13' in vb.MODES['pre']
+        r = vb.run_checks(ctx, ['G13'])[0]
+        assert r['status'] == vb.FAIL
+        assert r['denominator'] == '1/2 plugin folders'
+        assert r['data']['markers'] == [
+            'Oblivion.esm/Oblivion.esm' + convert.PACK_FAILED_SUFFIX]
+        assert vb.verdict([r]) == vb.FAIL
+
+    def test_clean_folders_pass_and_side_folders_do_not_count(self, tmp_path):
+        """G13: no marker passes; Finished Mods and the LOD mod are left out."""
+        ctx = _ctx(tmp_path)
+        for name in ('Oblivion.esm', vb.FINISHED_DIR_NAME, ctx.lod.name):
+            (ctx.output / name).mkdir()
+        r = vb.check_pack_markers(ctx)
+        assert (r['status'], r['denominator']) == (vb.PASS, '1/1 plugin folders')
+
+    def test_no_plugin_folder_refuses(self, tmp_path):
+        """G13: an output with no plugin folder inspected nothing."""
+        assert vb.check_pack_markers(_ctx(tmp_path))['status'] == vb.REFUSE

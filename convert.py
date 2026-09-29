@@ -61,9 +61,9 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
 
-from output_layout import (BODY_SLOTS_PATCH, asset_root, configured_output,
-                           finished_dir, plugin_out_root, record_dir,
-                           tree_members, write_mod_zip)
+from output_layout import (BODY_SLOTS_PATCH, PACK_FAILED_SUFFIX, asset_root,
+                           configured_output, finished_dir, plugin_out_root,
+                           record_dir, tree_members, write_mod_zip)
 from papyrus_compile import phase_compile
 from tes4_export.tes3_reader import is_tes3
 from core.plugin_masters import (get_masters_from_binary, is_master_export,
@@ -968,10 +968,6 @@ def phase_pack(file_name: str, config: dict, output_dir: str = None):
     if errors == 0:
         marker.unlink(missing_ok=True)
     return errors == 0
-
-
-#: Suffix of the marker a failed BSA pack leaves beside its plugin; never packed or zipped.
-PACK_FAILED_SUFFIX = ".pack-failed"
 
 
 def _pack_marker(out_dir, file_name: str) -> Path:

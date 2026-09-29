@@ -30,7 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from asset_convert import case_paths
-from output_layout import FINISHED_DIR_NAME
+from output_layout import FINISHED_DIR_NAME, PACK_FAILED_SUFFIX
 
 PASS, INFO, WARN, FAIL, REFUSE = 'PASS', 'INFO', 'WARN', 'FAIL', 'REFUSE'
 
@@ -54,12 +54,13 @@ NAMES = {
     'G4': 'race skin tones', 'G5': 'door axes', 'G6': 'land layers',
     'G7': 'terrain LOD colour', 'G8': 'tree-card alpha', 'G9': 'LOD rows',
     'G10': 'deployed bytes', 'G11': 'LODGen bake', 'G12': 'script compile',
+    'G13': 'BSA pack markers',
 }
 
 #: Checks each mode runs.
 MODES = {
     'pre': ('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9', 'G11',
-            'G12'),
+            'G12', 'G13'),
     'post': ('G1', 'G10'),
 }
 
@@ -648,6 +649,21 @@ def check_deploy(ctx) -> dict:
                  f'differ or absent: {missing[:5]}' if missing else '')
 
 
+def check_pack_markers(ctx) -> dict:
+    """G13: no output plugin folder holds a failed-pack marker (its BSAs are stale).
+
+    See: docs/commentary/tools_release_gate.md#g13
+    """
+    dirs = [d for d in sorted(ctx.output.iterdir())
+            if d.is_dir() and d.name != FINISHED_DIR_NAME and d != ctx.lod]
+    marked = [m.relative_to(ctx.output).as_posix() for d in dirs
+              for m in sorted(d.glob('*' + PACK_FAILED_SUFFIX))]
+    bad = {m.split('/', 1)[0] for m in marked}
+    return ratio('G13', len(dirs) - len(bad), len(dirs), 'plugin folders',
+                 f'failed or unfinished packs: {marked}' if marked else '',
+                 markers=marked)
+
+
 def file_crc(path: Path) -> int:
     """CRC-32 of a file, streamed."""
     crc = 0
@@ -804,7 +820,7 @@ CHECKS = {
     'G1': check_census, 'G2': check_textures, 'G3': check_magic_art,
     'G4': check_races, 'G5': check_door_axes, 'G8': check_tree_alpha,
     'G9': check_lod_rows, 'G10': check_deploy, 'G11': check_lodgen,
-    'G12': check_compile,
+    'G12': check_compile, 'G13': check_pack_markers,
 }
 
 

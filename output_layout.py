@@ -32,6 +32,9 @@ from pathlib import Path
 
 FINISHED_DIR_NAME = "Finished Mods"
 
+#: Suffix of the marker a failed BSA pack leaves beside its plugin; never packed or zipped.
+PACK_FAILED_SUFFIX = ".pack-failed"
+
 #: The Skyrim body-slot patch: its plugin, and the zip shipping it with the split skin meshes.
 BODY_SLOTS_PATCH = "Body Slots Patch"
 

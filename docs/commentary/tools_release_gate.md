@@ -104,7 +104,7 @@ build and make it the new reference, pass its gate JSON as the next run's
 <a id="modes"></a>
 
 - `--pre-deploy` (after the rebuild, before anything is copied): G1-G9, G11,
-  G12.
+  G12, G13.
 - `--post-deploy` (after the zips are unpacked into the mod folders): G1 over
   the deploy folders as well, and G10. `--deploy ZIP=MODDIR` names each pair.
 
@@ -130,6 +130,7 @@ on PASS.
 | G10 | CRC-32 of every zip member vs the deployed file | all equal |
 | G11 | final `create_lod` step: `NullReferenceException`, empty bakes; `.bto` per baked worldspace | none; each worldspace at its minimum (see [baselines](#baseline)) |
 | G12 | `[plugin] Compilation: ok/total succeeded, N failed` plus the plugin's `scripts/compile_errors.log` | every plugin with scripts has the line, and every failing script file is allowed (see below) |
+| G13 | `<plugin>.pack-failed` markers in every output plugin folder (see below) | none |
 
 <a id="g2"></a>
 G2 reads mesh bytes and scans for `.dds` paths with its own pattern
@@ -196,6 +197,15 @@ compile step and deleted when nothing fails):
 A count-only baseline is not enough: a different script failing in the same
 slot would pass. A plugin that printed `No .psc scripts found` is left out;
 when every plugin is, the check is N/A.
+
+<a id="g13"></a>
+G13 reads the marker `phase_pack` writes before it packs a plugin and
+removes only when the pack succeeds (`PACK_FAILED_SUFFIX` in
+`output_layout.py`). A marker left behind means that folder's BSAs are stale
+or partial, and G2 would otherwise read them as this build's. The zip step
+refuses such a folder too, but a gate that PASSes over stale archives would
+let a deploy script copy an earlier run's zip. The denominator is the output
+plugin folders (`Finished Mods` and the LOD mod left out); none REFUSES.
 
 ## The terrain checks
 <a id="terrain-checks"></a>
