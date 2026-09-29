@@ -72,11 +72,13 @@ DELETED_FLAG = 0x20
 Override = namedtuple('Override', ['status', 'out_fid', 'record_bytes', 'path'],
                       defaults=(None,))
 
-#: The master record an override splices onto: output id, bytes, export baseline, GRUP path.
-_Base = namedtuple('_Base', ['out_fid', 'record', 'master_rec', 'path'])
+#: An override's base: output id, bytes, export baseline, GRUP path, and an undelete's stub.
+_Base = namedtuple('_Base', ['out_fid', 'record', 'master_rec', 'path',
+                             'deleted'], defaults=(None,))
 
 #: Reference-state counters the run reports; the placement faults are expected to read 0.
-_REF_COUNTERS = ('ref-flags', 'renested', 'renest-unresolved',
+_REF_COUNTERS = ('ref-flags', 'renested', 'undeleted', 'undelete-no-live',
+                 'renest-unresolved',
                  'renest-pers-in-block', 'renest-temp-in-persistent-cell')
 
 
@@ -142,17 +144,13 @@ def master_export_dir(root: str, name: str) -> str:
     return os.path.join(root, name)
 
 
-def load_master_export(export_dir: str) -> dict:
+def load_master_export(export_dir: str, shadowed: dict = None) -> dict:
     """The masters' export records, keyed by the TES4 FormID THIS PLUGIN uses.
 
-    This is the baseline for deciding what a plugin's author actually changed.
-    Diffing against the master's EXPORT (rather than against a second
-    conversion) is what makes the override path deterministic: a field neither
-    export touches is never rewritten, so it cannot drift.
-
-    Each master's ids are re-keyed into THIS plugin's index space, and
-    `remap` carries that mapping for everything a master can name: its own
-    records, plus each of ITS masters by name.
+    The baseline for what the author changed: a field neither export touches
+    is never rewritten. Each master's ids are re-keyed into THIS plugin's
+    index space (its own records, plus each of ITS masters by name). A later
+    master wins; when its copy is DELETED, `shadowed` keeps the last live one.
 
     See: docs/commentary/tes5_import_override.md#re-keying-the-masters-ids
     """
@@ -187,8 +185,22 @@ def load_master_export(export_dir: str) -> dict:
             if mapped is None:
                 # Names a file this plugin does not load: unreachable from here.
                 continue
-            out['%08X' % ((mapped << 24) | (raw & 0x00FFFFFF))] = rec
+            key = '%08X' % ((mapped << 24) | (raw & 0x00FFFFFF))
+            _keep_shadowed(shadowed, out.get(key), key, rec)
+            out[key] = rec
     return out
+
+
+def _is_deleted(rec: dict) -> bool:
+    """True for an export record carrying the Deleted flag."""
+    return bool(int(rec.get('RecordFlags') or 0) & DELETED_FLAG)
+
+
+def _keep_shadowed(shadowed, prev, key: str, rec: dict) -> None:
+    """Record `prev` in `shadowed` when `rec`, a later master's copy, deletes it."""
+    if shadowed is not None and prev is not None and _is_deleted(rec) \
+            and not _is_deleted(prev):
+        shadowed[key] = prev
 
 
 # A converted record may legitimately carry a signature the plugin's source
@@ -315,13 +327,19 @@ class OverrideContext:
 
     def __init__(self, export_dir: str, masters: list, num_tes4_masters: int,
                  output_root: str):
+        """Index the converted masters and load their exports for diffing.
+
+        `shadowed` maps a plugin-space FormID to the last live master export
+        record under a later master's deleted copy.
+        """
         self.export_dir = export_dir
         self.master_index = load_master_index(
             masters, num_tes4_masters, output_root)
         self.master_manifest = load_master_manifests(
             masters, num_tes4_masters, output_root,
             export_root=export_root(export_dir))
-        self.master_export = load_master_export(export_dir)
+        self.shadowed = {}
+        self.master_export = load_master_export(export_dir, self.shadowed)
         self.stats = Counter()
         self.unmapped_keys = Counter()
         # WRLD overrides this plugin emitted, {out FormID -> record bytes}.
@@ -404,8 +422,30 @@ class OverrideContext:
         if _signature_mismatch(sig or rec.get('Signature') or '', base[:4]):
             self.stats['no-base'] += 1
             return Override('no-base', 0, b'')
+        if _is_deleted(master_rec) and not _is_deleted(rec):
+            return self._undelete_base(src_fid, out_fid, base)
         return _Base(out_fid, base, master_rec,
                      self.master_index.group_path(out_fid))
+
+    def _undelete_base(self, src_fid: str, out_fid: int, stub: bytes):
+        """The last LIVE master copy of a record a later master deleted.
+
+        `record` is the live copy and `path` its nesting; the deleted `stub`
+        is what the result must differ from, so it rides along as `deleted`.
+
+        See: docs/commentary/tes5_import_override.md#undeleting-a-masters-record
+        """
+        shadow = self.shadowed.get(src_fid)
+        live = getattr(self.master_index, 'live', None)
+        record, path = live(out_fid) if (shadow and callable(live)) else (b'', ())
+        if not record:
+            self.stats['no-base'] += 1
+            self.stats['undelete-no-live'] += 1
+            print(f"    WARNING: {src_fid} restores a deleted master record "
+                  f"with no live master copy; dropped")
+            return Override('no-base', out_fid, b'')
+        self.stats['undeleted'] += 1
+        return _Base(out_fid, record, shadow, path, stub)
 
     def _apply(self, rec: dict, sig: str, base):
         """The Override for the author's changes spliced onto `base`.
@@ -413,7 +453,7 @@ class OverrideContext:
         See: docs/commentary/tes5_import_override.md#override-build-statuses
         """
         changes = diff_records(base.master_rec, rec)
-        if not changes:
+        if not changes and base.deleted is None:
             self.stats['unchanged'] += 1
             return Override('unchanged', base.out_fid, b'')
         if any((sig or rec.get('Signature'), key) in RECONVERT_KEYS
@@ -426,7 +466,8 @@ class OverrideContext:
             self.unmapped_keys[key] += 1
         record_bytes = self._ref_flags(rec, base, record_bytes)
         path = self._ref_path(rec, base, record_bytes)
-        if record_bytes == base.record and path == base.path:
+        if (base.deleted is None and record_bytes == base.record
+                and path == base.path):
             self.stats['unchanged'] += 1
             return Override('unchanged', base.out_fid, b'')
         self.stats['emitted'] += 1
@@ -485,7 +526,8 @@ class OverrideContext:
 
         See: docs/commentary/tes5_import_override.md#override-reference-state
         """
-        faults = sum(self.stats[k] for k in _REF_COUNTERS if 'renest-' in k)
+        faults = sum(self.stats[k] for k in _REF_COUNTERS
+                     if k.startswith('renest-') or k == 'undelete-no-live')
         line = ', '.join(f'{k}={self.stats[k]}' for k in _REF_COUNTERS)
         print(f"  {'WARNING: ' if faults else ''}Reference overrides: {line}")
 

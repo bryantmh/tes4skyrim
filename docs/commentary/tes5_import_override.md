@@ -13,6 +13,7 @@
 - [A PGRD is never an override: it converts to a NEW NAVM](#pgrd-never-override-converts-new)
 - [Override build statuses](#override-build-statuses)
 - [Override reference state](#override-reference-state)
+- [Undeleting a master's record](#undeleting-a-masters-record)
 - [Deleting a master's record: the three shapes](#deleting-masters-record-three-shapes)
 - [A quest-owned package must never be in an NPC's PKID list](#quest-owned-package-must-never)
 - [Generated records reuse the master's](#generated-records-reuse-the-masters)
@@ -477,6 +478,16 @@ that is the same unchecked assumption this function exists to remove.
     actually move may be rewritten — remap per byte, matching the master's own
     masters BY NAME against the child's list. A uniform +1 turned every
     Oblivion.esm reference into a Tamriel.esp one.
+  - **Later masters win, but only a GENUINE override counts.**
+    `ChainedMasterIndex._candidates` yields the files defining an id, newest
+    first and the owner last. A later file counts only when it lists the owner
+    among ITS masters (so the id means the same record in both) and the record
+    carries the owner's signature: Tamriel.esp and ElsweyrAnequina.esp both
+    number their own records `02xxxxxx`, and believing ANQ's WRLD `0202E438`
+    overrode Tamriel's CELL emitted that worldspace twice. Content comes from
+    the winner; identity questions (which slot an answer belongs in) stay the
+    owner's, which is why `record`, `group_path` and `live` restate through
+    `_index_maps` and `land` guards on `own_index`.
 - <a id="exterior-block-order"></a>**🔴 EXTERIOR BLOCKS ASCEND BY UNSIGNED
   (X, Y), X MAJOR — AND THE TWO PASSES MUST MERGE INTO ONE RUN.**
   (found 2026-08-12, confirmed in-game)
@@ -907,6 +918,34 @@ the ND quest stages) were absent from its output.
 - **Tripwire: TES4 0x200 on STAT/TREE/ACTI refs.** TES5 bit 9 means "Hidden
   From Local Map" there; the normal path passes the TES4 bit through. Not
   handled here.
+
+## Undeleting a master's record
+<a id="undeleting-a-masters-record"></a>
+
+**Code:** `load_master_export(shadowed=)`, `OverrideContext._undelete_base` in `tes5_import/overrides/nested.py`; `ChainedMasterIndex.live` in `master_index.py`
+
+A plugin can restore a record a LATER master deleted. Frostcrag Reborn does it
+93 times: refs Oblivion.esm defines and DLCFrostcrag.esp deletes (82 -DEL+ID,
+6 -DEL+ID with a move, 3 -DEL with a move - the rocks 001334FC, 001334FD,
+00133EA6 - and 2 -DEL-PERS+ID). The winning master copy is DLCFrostcrag's
+deleted stub (NAME only, 0x20), so splicing onto it shipped the rocks as
+`0x20 [NAME, XSCL]` with no DATA, and 010180AB as `[XOWN, NAME, XESP]`.
+
+The base is the LAST LIVE master copy, the same model as every override:
+
+- `load_master_export(..., shadowed)` keeps the previous non-deleted export
+  record when a later master's copy is deleted; that is the diff baseline.
+- `live(formid)` walks the same candidates as `_route`, newest first, skips a
+  copy with 0x20, and restates the bytes and GRUP labels through that file's
+  `_index_maps` (an older master can sit at a different slot in the child).
+- An undelete always emits: it is compared against the deleted stub, never
+  against the live copy. No live copy counts `no-base` and
+  `undelete-no-live` (0 measured; all 93 have a live Oblivion.esm export and
+  output record, e.g. 010180AB `NAME XTEL XOWN XNDP DATA`).
+
+Rejected: reconverting with `convert_REFR`. The plugin run lacks master-run
+state (XNDP door links, leveled-actor shells), which the live master copy
+already carries.
 
 ## Deleting a master's record: the three shapes
 <a id="deleting-masters-record-three-shapes"></a>

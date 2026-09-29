@@ -172,11 +172,21 @@ class MasterIndex:
         return table
 
 
+    def live(self, formid: int) -> tuple:
+        """(record, GRUP path) when this file's copy is not deleted, else (b'', ())."""
+        rec = self.record(formid)
+        if not rec or struct.unpack_from('<I', rec, 8)[0] & _DELETED_FLAG:
+            return b'', ()
+        return rec, self.group_path(formid)
+
     def find_all_by_edid(self, signature: bytes, edid: str) -> list:
         """`find_by_edid` as a list, the shape `ChainedMasterIndex` answers in."""
         fid = self.find_by_edid(signature, edid)
         return [fid] if fid else []
 
+
+#: Record header bit 5, Deleted, in both games.
+_DELETED_FLAG = 0x20
 
 # GRUP types whose 4-byte label is a FormID (the owning record), not a
 # block/sub-block coordinate pair. xEdit wbImplementation: 1=World Children,
@@ -460,29 +470,18 @@ class ChainedMasterIndex:
         no crash and no log, and deleting the WRLD record in xEdit made it
         load again.
         """
+        return next(self._candidates(formid), (None, 0))
+
+    def _candidates(self, formid: int):
+        """Each (index, id in it) defining `formid`, winning override first, owner last.
+
+        See: docs/commentary/tes5_import_override.md#master-index-routing
+        """
         owner_slot = (formid >> 24) & 0xFF
         owner = self._by_slot.get(owner_slot)
         if owner is None:
-            return None, 0
+            return
         own_id = (owner.own_index << 24) | (formid & 0x00FFFFFF)
-
-        # Later masters win, exactly as load order resolves it -- but ONLY a
-        # genuine override counts. Two masters routinely use the SAME index
-        # byte for their own records (Tamriel.esp and ElsweyrAnequina.esp are
-        # both the 2nd file in their own load order), so "this later file
-        # happens to contain the same integer" is NOT evidence of an override:
-        # 0202E438 is a CELL in Tamriel.esp and the WRLD ANQVerkarthHillsWorld
-        # in ElsweyrAnequina.esp. Believing the latter emitted that worldspace
-        # TWICE and anchored a Tamriel cell's children group under it.
-        #
-        # A real override satisfies both tests:
-        #   * the overriding file lists the owner among ITS masters, so the id
-        #     means the same record in both files, and
-        #   * the record carries the owner's signature.
-        # Only the record CONTENT comes from the winning override; identity
-        # questions -- which slot an answer belongs in -- stay the OWNER's.
-        # `record()` and `group_path()` restate ids through `_index_maps`, and
-        # `land()` guards its answer on `idx.own_index` for exactly this.
         owner_name = _plugin_name(owner.path)
         want_sig = owner.signature(own_id)
         for slot in sorted(self._by_slot, reverse=True):
@@ -493,8 +492,8 @@ class ChainedMasterIndex:
                 continue
             if formid in idx and (not want_sig
                                   or idx.signature(formid) == want_sig):
-                return idx, formid
-        return owner, own_id
+                yield idx, formid
+        yield owner, own_id
 
     def _to_child(self, idx, formid: int) -> int:
         """Translate one of `idx`'s own-space ids back into the child's space."""
@@ -537,9 +536,22 @@ class ChainedMasterIndex:
         this stayed invisible until a plugin declared a SECOND TES4 master.
         """
         idx, own = self._route(formid)
-        if idx is None:
-            return b''
-        rec = idx.record(own)
+        return self._restate(idx, idx.record(own)) if idx is not None else b''
+
+    def live(self, formid: int) -> tuple:
+        """(record, GRUP path) of the newest NON-deleted copy, restated; (b'', ()) if none.
+
+        See: docs/commentary/tes5_import_override.md#undeleting-a-masters-record
+        """
+        for idx, own in self._candidates(formid):
+            rec = idx.record(own)
+            if rec and not struct.unpack_from('<I', rec, 8)[0] & _DELETED_FLAG:
+                return (self._restate(idx, rec),
+                        self._restate_path(idx, idx.group_path(own)))
+        return b'', ()
+
+    def _restate(self, idx, rec: bytes) -> bytes:
+        """`idx`'s record bytes restated in the child's id space."""
         imap = self._index_maps.get(id(idx))
         return _shift_record_formids(rec, imap) if (rec and imap) else rec
 
@@ -551,9 +563,10 @@ class ChainedMasterIndex:
         group the child resolves to a different record.
         """
         idx, own = self._route(formid)
-        if idx is None:
-            return ()
-        path = idx.group_path(own)
+        return self._restate_path(idx, idx.group_path(own)) if idx is not None else ()
+
+    def _restate_path(self, idx, path: tuple) -> tuple:
+        """`idx`'s GRUP path with its FormID labels restated for the child."""
         imap = self._index_maps.get(id(idx))
         if not imap or not path:
             return path
