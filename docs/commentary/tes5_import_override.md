@@ -628,6 +628,14 @@ that is the same unchecked assumption this function exists to remove.
   "unexpected (or out of order) subrecord RPLD"). Such families are listed in
   `_INTERLEAVED_FAMILIES` and substituted one occurrence at a time, in place.
   Guarded by `tests/test_interleaved_subrecords.py`.
+  - **The plugin's surplus entries append in struct order, paired.** A family
+    is a tuple in its xEdit struct order (`RPLI, RPLD`), and entries past the
+    master's count append as `A B A B`. The earlier loop walked
+    `interleaved & set(substitutions)`, a set whose order follows the hash
+    seed, so FR's REGN 02014E9F ended `RPLD RPLI` in one run of six seeds.
+    That loop also appended a family the master lacked twice (the final
+    append pass did not know it was done). Guarded by
+    `tests/test_interleaved_determinism.py` under PYTHONHASHSEED 0..7.
 - <a id="achr-base-must-be-an-actor"></a>🛑 **AN ACHR'S BASE MUST BE AN NPC_,
   NEVER A LEVELLED LIST — THIS CRASHES THE GAME ON STARTUP.** A TES4 REFR that
   places an LVLC becomes `ACHR → shell NPC_ → LVLN` (see `leveled_actors`), and

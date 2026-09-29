@@ -40,6 +40,7 @@ silent.
 """
 
 import struct
+from itertools import zip_longest
 
 from ..base.text_reader import get_float, get_formid, get_int
 from ..base.tes5_reader import subrecords
@@ -1339,8 +1340,22 @@ def apply_changes(master_record: bytes, changes: dict,
 # Sourced from the xEdit definitions (wbDefinitionsCommon wbRegionAreas:
 # wbRArray of wbRStruct[RPLI, RPLD]).
 _INTERLEAVED_FAMILIES = (
-    frozenset({b'RPLI', b'RPLD'}),      # REGN Region Areas
+    (b'RPLI', b'RPLD'),
 )
+
+
+def _append_interleaved_surplus(result: list, substitutions: dict,
+                                interleaved: tuple, taken: dict,
+                                claimed: set) -> None:
+    """Append the plugin's entries past the master's count, paired A B A B in struct order.
+
+    See: docs/commentary/tes5_import_override.md#interleaved-subrecords
+    """
+    runs = [[(sig, p) for p in substitutions[sig][taken.get(sig, 0):]]
+            for sig in interleaved
+            if sig in substitutions and sig not in claimed]
+    for row in zip_longest(*runs):
+        result.extend(item for item in row if item is not None)
 
 
 def _apply_generic(out: list, substitutions: dict, claimed: set) -> list:
@@ -1355,11 +1370,11 @@ def _apply_generic(out: list, substitutions: dict, claimed: set) -> list:
     are substituted one occurrence at a time, in place, so the A B A B pairing
     the engine reads the record by is preserved.
     """
-    interleaved = set()
+    interleaved = ()
     for family in _INTERLEAVED_FAMILIES:
-        present = family & set(substitutions)
-        if len(present) > 1 or (present and len(family & {s for s, _ in out}) > 1):
-            interleaved |= family
+        present = set(family) & set(substitutions)
+        if len(present) > 1 or (present and len(set(family) & {s for s, _ in out}) > 1):
+            interleaved += family
 
     result = []
     done = set()
@@ -1382,12 +1397,9 @@ def _apply_generic(out: list, substitutions: dict, claimed: set) -> list:
             continue          # folded into the run written at first occurrence
         done.add(sig)
         result.extend((sig, p) for p in substitutions[sig])
-    # Interleaved members the master had fewer of than the plugin: append the
-    # remainder so no authored entry is silently lost.
-    for sig in interleaved & set(substitutions):
-        extra = substitutions[sig][taken.get(sig, 0):]
-        if extra and sig not in claimed:
-            result.extend((sig, p) for p in extra)
+    _append_interleaved_surplus(result, substitutions, interleaved, taken,
+                                claimed)
+    done.update(interleaved)
     for sig, payloads in substitutions.items():
         if sig not in done and sig not in claimed:
             result.extend((sig, p) for p in payloads)
