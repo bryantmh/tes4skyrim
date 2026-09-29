@@ -1937,8 +1937,41 @@ mountains -- and for quadrants no layer paints.
   tile logs which plugin supplied how many cells. This is not cosmetic:
   Oblivion.esm's own 60.00.-64 is off from LAND by mean |dz| 3,423, UOP's
   replacement by 59. With Oblivion.esm + UOP + Frostcrag Reborn, UOP supplies
-  most southern and central tiles, FR all of 0.32, Oblivion.esm the northern
-  row.
+  most southern and central tiles, FR most of 0.32, Oblivion.esm the northern
+  row. The one exception is the no-LAND fill ([below](#baked-lod-fill)).
+
+### <a id="baked-lod-fill"></a>A later plugin's no-LAND fill never beats earlier relief
+
+**Code:** `fill_height`, `flat_areas`, `tile_cells` and `_pick` in
+`asset_convert/lod/terrain_lod_baked.py`.
+
+The editor bakes a cell with no LAND as a flat plane at the worldspace's
+default land height. Frostcrag Reborn regenerated 60.00.32 where the horizon
+cells north of y=60 had no LAND: 96 cells are perfectly flat at -512 and the
+32 of row y=60 ramp from the LAND edge down to it (~965 of 1,089 vertices at
+-512), where Oblivion.esm's mesh has 12k-46k of mountains. "Last source wins"
+flooded them, and the y=64 tile seam stepped 44,416 units.
+
+- **The fill height is measured, not assumed.** `fill_height` takes the height
+  holding the most flat-triangle plan area (all three vertices within
+  `FLAT_EPSILON`, 1 unit, below LAND's 8-unit height step) over every source
+  mesh of the worldspace. Oblivion.esm's own meshes carry that plane as the sea
+  floor and the ring past the map, so it dominates. Oblivion Tamriel: -512
+  (with or without UOP, whose own flat sea floor sits at -2048 / -9000 / -9001
+  and loses on area). Oblivion WRLD records carry no default-land-height field
+  in the export, so the meshes are the only source.
+- **A block is fill** when more than `FILL_SHARE` (half) of its vertices sit at
+  the fill height, which catches the ramp cells as well as the flat ones.
+- **A cell takes the last covering source whose block is not fill**, else the
+  last covering source. A flat block at another height (UOP's -9000 sea floor)
+  is authored and still wins.
+
+Measured (Oblivion.esm + DLCFrostcrag + Knights + Frostcrag Reborn meshes,
+Tamriel): tile 0.32 goes from FR 1,024 cells to FR 896 + Oblivion.esm 128; its
+128 synthetic cells go from 96 flat at -512 (min -512) to 0 flat (min 12,320);
+the raw y=64 seam step over x 0..31 falls from max 44,416 / median 18,584 to
+432 / 112. With UOP in
+the sources the same 128 cells change and no other cell does.
 
 Measured (Oblivion.esm meshes vs Oblivion.esm LAND, cell-mean |dz|): tile 0.0
 161, tile 0.32 172; the same rasters flipped north-south 6,685 / 6,724. A tile

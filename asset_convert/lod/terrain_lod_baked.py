@@ -169,15 +169,20 @@ def raster_world(verts, tris, tile_x: int, tile_y: int) -> np.ndarray:
     return grid
 
 
-def raster_lod_mesh(path, tile_x: int, tile_y: int) -> np.ndarray:
-    """`raster_world` of the LOD mesh at `path`, whatever frame it was authored in."""
+def mesh_triangles(path) -> tuple:
+    """(world-space vertices, triangles) of the LOD mesh at `path`, any frame."""
     from asset_convert.nif.pyffi_monkey_patch import apply_patches
     apply_patches()
     from pyffi.formats.nif import NifFormat
     data = NifFormat.Data()
     with open(path, 'rb') as fh:
         data.read(fh)
-    return raster_world(*_world_triangles(data), tile_x, tile_y)
+    return _world_triangles(data)
+
+
+def raster_lod_mesh(path, tile_x: int, tile_y: int) -> np.ndarray:
+    """`raster_world` of the LOD mesh at `path`, whatever frame it was authored in."""
+    return raster_world(*mesh_triangles(path), tile_x, tile_y)
 
 
 # ---------------------------------------------------------------------------
@@ -191,34 +196,94 @@ def cell_block(grid: np.ndarray, cx: int, cy: int) -> np.ndarray:
     return grid[cy * step:cy * step + CELL_VERTS, cx * step:cx * step + CELL_VERTS]
 
 
-def tile_cells(tile, grids) -> tuple:
+#: Heights closer than this (units) are equal; under LAND's 8-unit step, over float noise. See #baked-lod-fill.
+FLAT_EPSILON = 1.0
+
+#: A block is no-LAND fill when over this share of its vertices sit at the fill height (flat 1.0, a ramp ~0.9).
+FILL_SHARE = 0.5
+
+
+def flat_areas(verts, tris) -> dict:
+    """{height: plan area} of the triangles whose three vertices share one height."""
+    if not len(tris):
+        return {}
+    p = np.asarray(verts, dtype=np.float64)[np.asarray(tris)]
+    z = p[:, :, 2]
+    flat = (z.max(1) - z.min(1)) < FLAT_EPSILON
+    a, b, c = p[flat, 0, :2], p[flat, 1, :2], p[flat, 2, :2]
+    area = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
+                        - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1]))
+    out = {}
+    for h, ar in zip(np.round(z[flat, 0]).tolist(), area.tolist()):
+        out[h] = out.get(h, 0.0) + ar
+    return out
+
+
+def fill_height(meshes) -> float:
+    """The worldspace's no-LAND fill height, or None: the height the most flat
+    mesh area sits at, over every source mesh (`meshes`: [(verts, tris)]).
+
+    The editor bakes cells with no LAND as a flat plane at the worldspace's
+    default land height; that plane dominates the flat area of the source
+    game's own meshes (sea floor, past-the-map ring), so no height is assumed.
+    See: docs/commentary/asset_convert_terrain.md#baked-lod-fill
+    """
+    total = {}
+    for verts, tris in meshes:
+        for h, area in flat_areas(verts, tris).items():
+            total[h] = total.get(h, 0.0) + area
+    return max(total, key=total.get) if total else None
+
+
+def _is_fill(block: np.ndarray, fill) -> bool:
+    """True when most of `block` sits at the fill height `fill`."""
+    if fill is None:
+        return False
+    return float((np.abs(block - fill) < FLAT_EPSILON).mean()) > FILL_SHARE
+
+
+def _pick(covering, fill):
+    """The last (label, block) in `covering` that is not fill, else the last."""
+    relief = [c for c in covering if not _is_fill(c[1], fill)]
+    return (relief or covering)[-1]
+
+
+def tile_cells(tile, grids, fill=None) -> tuple:
     """({(x, y): 33x33 heights}, {plugin label: cells}) for one tile.
 
     `grids` are [(plugin label, raster)] in load order; each cell takes the
-    LAST source covering all its vertices.
+    LAST source covering all its vertices whose block is not the no-LAND fill
+    at height `fill` (`fill_height`), else the last covering source.
+    See: docs/commentary/asset_convert_terrain.md#baked-lod-fill
     """
     cells, used = {}, {}
     for cy in range(TILE_CELLS):
         for cx in range(TILE_CELLS):
-            hit = next(((label, cell_block(g, cx, cy)) for label, g in reversed(grids)
-                        if not np.isnan(cell_block(g, cx, cy)).any()), None)
-            if hit is None:
+            covering = [(label, cell_block(g, cx, cy)) for label, g in grids
+                        if not np.isnan(cell_block(g, cx, cy)).any()]
+            if not covering:
                 continue
-            cells[(tile[0] + cx, tile[1] + cy)] = hit[1].copy()
-            used[hit[0]] = used.get(hit[0], 0) + 1
+            label, block = _pick(covering, fill)
+            cells[(tile[0] + cx, tile[1] + cy)] = block.copy()
+            used[label] = used.get(label, 0) + 1
     return cells, used
 
 
 def baked_heights(meshes: dict, log=print) -> dict:
     """{(x, y): 33x33 heights} over every tile in `meshes` (from `lod_meshes`).
 
-    Logs, per tile, which plugin supplied how many cells.
+    Every mesh is read first so the fill height comes from all of them; logs
+    it and, per tile, which plugin supplied how many cells.
     See: docs/commentary/asset_convert_terrain.md#baked-lod-sources
     """
+    loaded = {tile: [(label, mesh_triangles(p)) for label, p in meshes[tile]]
+              for tile in sorted(meshes)}
+    fill = fill_height([m for srcs in loaded.values() for _l, m in srcs])
+    log('  Baked LOD no-LAND fill height: %s' % fill)
     out = {}
-    for tile in sorted(meshes):
-        grids = [(label, raster_lod_mesh(p, *tile)) for label, p in meshes[tile]]
-        cells, used = tile_cells(tile, grids)
+    for tile, srcs in loaded.items():
+        grids = [(label, raster_world(*m, *tile)) for label, m in srcs]
+        cells, used = tile_cells(tile, grids, fill)
         out.update(cells)
         log('  Baked LOD %d.%d: %s' % (tile[0], tile[1], ', '.join(
             '%s %d cells' % kv for kv in used.items()) or 'no coverage'))
