@@ -1343,6 +1343,10 @@ _INTERLEAVED_FAMILIES = (
     (b'RPLI', b'RPLD'),
 )
 
+_INTERLEAVED_SUCCESSORS = {
+    (b'RPLI', b'RPLD'): (b'RDAT',),
+}
+
 
 def _append_interleaved_surplus(result: list, substitutions: dict,
                                 interleaved: tuple, taken: dict,
@@ -1350,7 +1354,8 @@ def _append_interleaved_surplus(result: list, substitutions: dict,
     """Insert the plugin's entries past the master's count, paired A B A B in struct order.
 
     Each family's go right after its last entry in `result`, so the run
-    stays contiguous; a family `result` lacks is appended at the end.
+    stays contiguous; a family `result` lacks goes at its schema position,
+    before the first of its `_INTERLEAVED_SUCCESSORS` (else at the end).
 
     See: docs/commentary/tes5_import_override.md#interleaved-subrecords
     """
@@ -1363,7 +1368,10 @@ def _append_interleaved_surplus(result: list, substitutions: dict,
         surplus = [item for row in zip_longest(*runs) for item in row
                    if item is not None]
         last = [i for i, (sig, _p) in enumerate(result) if sig in family]
-        at = last[-1] + 1 if last else len(result)
+        after = _INTERLEAVED_SUCCESSORS.get(family, ())
+        slot = next((i for i, (sig, _p) in enumerate(result) if sig in after),
+                    len(result))
+        at = last[-1] + 1 if last else slot
         result[at:at] = surplus
 
 

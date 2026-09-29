@@ -639,8 +639,12 @@ that is the same unchecked assumption this function exists to remove.
   - **The surplus goes right after the family's last entry, not at the end
     of the record.** Appending at the end left FR's REGN 02014E9F as `EDID
     RCLR WNAM RPLI RPLD RDAT RDAT RDMO RDWT RPLI RPLD`, a split run that
-    none of Oblivion.esm's 133 REGNs has. Only a family the master lacks is
-    appended at the end.
+    none of Oblivion.esm's 133 REGNs has.
+  - **A family the master lacks goes at its schema position.** It is
+    inserted before the first signature `_INTERLEAVED_SUCCESSORS` lists for
+    it (RDAT for the Region Areas, per the xEdit REGN definition), so a
+    master REGN with no areas gets `... WNAM RPLI RPLD RDAT ...`, not the
+    areas after the region data. With no successor present it is appended.
 - <a id="achr-base-must-be-an-actor"></a>🛑 **AN ACHR'S BASE MUST BE AN NPC_,
   NEVER A LEVELLED LIST — THIS CRASHES THE GAME ON STARTUP.** A TES4 REFR that
   places an LVLC becomes `ACHR → shell NPC_ → LVLN` (see `leveled_actors`), and

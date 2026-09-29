@@ -61,3 +61,15 @@ def test_surplus_goes_after_the_family_not_at_the_end():
             [sys.executable, '-c', _PROBE_TAIL, str(ROOT)], env=env,
             capture_output=True, text=True, check=True).stdout)
     assert outputs == {repr(want) + '\n'}, outputs
+
+
+def test_family_the_master_lacks_goes_before_the_region_data():
+    """A master REGN with no areas gets the plugin's RPLI/RPLD before RDAT, paired."""
+    from tes5_import.overrides.builder import _apply_generic
+    master = [(b'EDID', b'R\x00'), (b'RCLR', b'c'), (b'WNAM', b'w'),
+              (b'RDAT', b'1'), (b'RDOT', b'o')]
+    subs = {b'RPLI': [b'a', b'b'], b'RPLD': [b'A', b'B']}
+    got = [s.decode() + ':' + p.decode()
+           for s, p in _apply_generic(master, subs, set())]
+    assert got == ['EDID:R\x00', 'RCLR:c', 'WNAM:w', 'RPLI:a', 'RPLD:A',
+                   'RPLI:b', 'RPLD:B', 'RDAT:1', 'RDOT:o']
