@@ -167,7 +167,9 @@ def _collect_nifs(mesh_path, subdir_filter, fixtures=()):
                 for s in subdir_filter]
                if subdir_filter is not None else None)
     keep, skipped = [], 0
-    for nf in mesh_path.rglob('*.nif'):
+    # A mod's loose files keep their author's casing ('Tower.NIF'); match the
+    # extension case-insensitively or a case-sensitive filesystem skips them.
+    for nf in mesh_path.rglob('*.nif', case_sensitive=False):
         parts = tuple(p.lower() for p in nf.relative_to(mesh_path).parts)
         if (any(seg in parts for seg in SKIP_PATHS)
                 and '/'.join(parts) not in fixtures):
