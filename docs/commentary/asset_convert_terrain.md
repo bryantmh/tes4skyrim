@@ -379,6 +379,35 @@ and kept 127; DLCBattlehornCastle kept 8.** The refs are still needed
 (`replace_tiles` means rebuilt tiles must carry the master's objects), just only
 within the surviving tiles' footprint.
 
+### <a id="lodgen-input-shape"></a>The input file's shape, and the per-base memo
+
+**Code:** `asset_convert/lod/lod_gen.py` (`write_lodgen_input`,
+`_lod_exclusion`, `_resolve_base_entry`, `_reference_lines`,
+`_write_input_file`)
+
+A row is the 9 REFR fields (FormID, flags, X/Y/Z, rotation in DEGREES --
+the ESM stores radians -- and scale) followed by the base half
+(`_resolve_base_entry`: EditorID, flags, blank, model, lod4, lod8, lod16).
+`_drop_lodgen_refs` depends on the EditorID sitting at field 9.
+
+`_lod_exclusion` decides per REFERENCE and returns the reason it drops one
+(or None). The worldspace test accepts either the REFR's own WRLD or its
+parent CELL's. The footprint test uses the REFR's position, not its parent
+CELL: an override plugin's refs merge from two files and a ref's own CELL
+record is not always present, while X/Y always place it on the grid (4096
+units a cell, floor division for negatives). `_screenable_mesh_paths` calls the
+same function, so the prefetch can never screen a different set.
+
+The base half is memoised per BASE: Tamriel lists about 180,000 references
+over roughly 900 bases, and resolving a base stats several files and screens
+its meshes. Per reference that loop appeared to hang.
+
+Header: `PathData` and `PathOutput` are absolute, because LODGen runs with its
+own folder as the working directory (a relative PathData fails its Data-folder
+check, a relative PathOutput writes under `tools\`), and `PathData` ends in a
+backslash or LODGen joins without a separator. `CellSW` must equal the SW
+stored in `LODSettings/<WRLD>.lod`.
+
 
 ## <a id="prescreening-the-lodgen-input"></a>Prescreening the LODGen input
 
