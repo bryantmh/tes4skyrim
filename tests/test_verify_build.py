@@ -504,6 +504,11 @@ def _grup(label, gtype, payload):
             + payload)
 
 
+def _cells(per_cell) -> np.ndarray:
+    """A (128, 128, 3) float image: each of 32 x 32 cells a flat 4 x 4 colour."""
+    return np.kron(np.asarray(per_cell, np.float32), np.ones((4, 4, 1)))
+
+
 def _wrld(fid, edid):
     """One TES4 WRLD record carrying an EDID."""
     return _rec(b'WRLD', _sub(b'EDID', edid + b'\0'), fid)
@@ -540,7 +545,7 @@ class TestTerrainChecks:
                             lambda raw: per_file[raw.decode()])
         ctx = _ctx(tmp_path, plugins=list(per_file))
         for ws, table in lands.items():
-            ctx.cache[('lands', ws.lower())] = (table, {}, 0.0)
+            ctx.cache[('all lands', ws.lower())] = (table, {}, 0.0)
         return gt.check_land_layers(ctx)
 
     def test_land_layers_merge_plugins_in_load_order(self, monkeypatch,
@@ -556,6 +561,33 @@ class TestTerrainChecks:
             vb.FAIL, '2/3 ATXT-only quadrants')
         assert r['data']['worldspaces'] == {'TES4Tamriel': [1, 1],
                                             'MyWorld': [1, 2]}
+
+    def test_land_layers_count_a_land_without_heights(self, monkeypatch,
+                                                      tmp_path):
+        """G6: a converted LAND with no VHGT still keeps its ATXT quadrant."""
+        def rec(sig, fid, body):
+            return sig + struct.pack('<IIIII', len(body), 0, fid, 0, 0) + body
+
+        def grup(label, gtype, payload):
+            return (b'GRUP' + struct.pack('<II', 24 + len(payload), label)
+                    + struct.pack('<III', gtype, 0, 0) + payload)
+        land = rec(b'LAND', 0x20, _sub(b'ATXT', struct.pack('<IBBH', 9, 1, 0, 0))
+                   + _sub(b'VTXT', struct.pack('<HHf', 0, 0, 0.5)))
+        cell = rec(b'CELL', 0x10, _sub(b'XCLC', struct.pack('<ii', 2, -4)))
+        world = (rec(b'WRLD', 0x3C, _sub(b'EDID', b'TES4Tamriel\0'))
+                 + grup(0x3C, 1, cell + grup(0x10, 6, land)))
+        esm = tmp_path / 'A.esm'
+        esm.write_bytes(rec(b'TES4', 0, b'')
+                        + grup(0x444C5257, 0, world))
+        src = tmp_path / 'src.esm'
+        src.write_bytes(b'x')
+        monkeypatch.setattr(gt, 'source_esms', lambda ctx: {'A.esm': src})
+        monkeypatch.setattr(gt, 'source_land_quads',
+                            lambda raw: {('Tamriel', (2, -4)): {1}})
+        monkeypatch.setattr(gt, 'land_stack', lambda ctx, ws: [esm])
+        r = gt.check_land_layers(_ctx(tmp_path, plugins=['A.esm']))
+        assert (r['status'], r['denominator']) == (
+            vb.PASS, '1/1 ATXT-only quadrants')
 
     def test_land_layers_refuse_without_source_na_without_quads(
             self, monkeypatch, tmp_path):
@@ -584,29 +616,44 @@ class TestTerrainChecks:
             (0, -32, 'TES4Tamriel.32.0.-32.dds')]
         assert gt.tile_pairs(ctx, 'SEWorld') is None
 
-    def _colour(self, tmp_path, monkeypatch, offset=3, **kw):
-        """G7 over one synthetic tile: ours = flipped source + `offset`."""
+    def _colour(self, tmp_path, monkeypatch, offset=3, ours=None, src=None,
+                tint='multiply', vclr=None, preds=None, **kw):
+        """G7 over one synthetic tile: ours = flipped source + `offset`.
+
+        `src` is the baked image (south-up), `ours` our north-up image, `vclr`
+        a (32, 32, 3) per-cell VCLR (row 0 = south), `tint` the bake's log
+        line (None: no line), `preds` what `source_predictions` returns.
+        """
         from PIL import Image
-        rng = np.random.default_rng(1)
-        src = rng.integers(10, 240, (32, 32, 3)).astype(np.uint8)
-        src = np.kron(src, np.ones((4, 4, 1), np.uint8))
-        ours = tmp_path / 'o.png'
-        theirs = tmp_path / 't.png'
-        Image.fromarray((np.flipud(src) + offset).astype(np.uint8)).save(ours)
-        Image.fromarray(src).save(theirs)
+        if src is None:
+            src = _cells(np.random.default_rng(1).integers(10, 240, (32, 32, 3)))
+        if ours is None:
+            ours = np.flipud(src) + offset
+        paths = tmp_path / 'o.png', tmp_path / 't.png'
+        Image.fromarray(np.clip(ours, 0, 255).astype(np.uint8)).save(paths[0])
+        Image.fromarray(src.astype(np.uint8)).save(paths[1])
         monkeypatch.setattr(gt, 'tile_pairs',
-                            lambda ctx, ws: [(0, 0, ours, theirs)])
+                            lambda ctx, ws: [(0, 0, *paths)])
         monkeypatch.setattr(gt, 'tile_mask',
                             lambda *a: np.ones((32, 32), bool))
-        ctx = _ctx(tmp_path, **kw)
-        ctx.cache[('lands', 'tes4tamriel')] = ({}, {}, 0.0)
+        monkeypatch.setattr(gt, 'source_predictions',
+                            lambda ctx, wanted: (preds or {}, 'stub'),
+                            raising=False)
+        body = '  LODGen input: /x/LODGen TES4Tamriel.txt (5 references)'
+        body += f'\n  VCLR tint: {tint}' if tint else ''
+        ctx = _ctx(tmp_path, log_body=body, **kw)
+        vclr = np.full((32, 32, 3), 255, np.uint8) if vclr is None else vclr
+        lands = {(x, y): {'colors': np.full((33, 33, 3), vclr[y, x], np.uint8)}
+                 for x in range(32) for y in range(32)}
+        ctx.cache[('lands', 'tes4tamriel')] = (lands, {}, 0.0)
         return gt.check_terrain_colour(ctx)
 
     def test_terrain_colour_orientation(self, monkeypatch, tmp_path):
         """G7: ours == flipped source passes; the unflipped control is worse."""
         r = self._colour(tmp_path, monkeypatch, offset=0)
+        row = r['data']['worldspaces']['TES4Tamriel']
         assert r['status'] == vb.PASS and r['data']['mae'] == 0
-        assert r['data']['worldspaces']['TES4Tamriel']['control'] > 0
+        assert row['control'] > 0 and row['orientation'] == 'ok'
 
     def test_terrain_colour_bound_from_baseline_or_flag(self, monkeypatch,
                                                         tmp_path):
@@ -620,6 +667,113 @@ class TestTerrainChecks:
             'status'] == vb.PASS
         assert self._colour(tmp_path, monkeypatch, mae_bound=2.0)[
             'status'] == vb.FAIL
+
+    def _hue_tile(self):
+        """(ours baked with the 'hue' tint, Oblivion's multiply tile, per-cell VCLR).
+
+        A flat VCLR per cell makes the shade that colour / 255 and its peak
+        the largest channel, so the tile is built without the bake's code.
+        """
+        rng = np.random.default_rng(2)
+        tex = rng.integers(60, 240, (32, 32, 3)).astype(np.float32)
+        vclr = rng.integers(40, 200, (32, 32, 3)).astype(np.uint8)
+        shade = np.flipud(vclr).astype(np.float32) / 255.0
+        multiply = _cells(tex * shade)
+        hue = multiply / _cells(shade.max(-1, keepdims=True))
+        return hue, np.flipud(multiply), vclr
+
+    def test_terrain_colour_undoes_the_hue_tint(self, monkeypatch, tmp_path):
+        """G7: under a logged 'hue' tint, ours x the VCLR peak is Oblivion's multiply."""
+        ours, src, vclr = self._hue_tile()
+        r = self._colour(tmp_path, monkeypatch, ours=ours, src=src, vclr=vclr,
+                         tint='hue', mae_bound=2.0)
+        row = r['data']['worldspaces']['TES4Tamriel']
+        assert r['status'] == vb.PASS and row['mae'] < 1.0
+        assert (row['tint'], row['tint_from']) == ('hue', 'log')
+        raw = self._colour(tmp_path, monkeypatch, ours=ours, src=src,
+                           vclr=vclr, tint='multiply', mae_bound=2.0)
+        assert raw['status'] == vb.FAIL
+
+    def test_terrain_colour_tint_not_in_log_says_so(self, monkeypatch,
+                                                    tmp_path):
+        """G7: no `VCLR tint:` line falls back to the configured tint, and the row says so."""
+        from asset_convert.lod import terrain_lod_textures as T
+        monkeypatch.setattr(T, 'configured_vclr_tint', lambda: 'multiply')
+        row = self._colour(tmp_path, monkeypatch, tint=None)['data'][
+            'worldspaces']['TES4Tamriel']
+        assert row['tint'] == 'multiply' and row['tint_from'].startswith(
+            'config')
+
+    def test_orientation_paired_test(self):
+        """G7: t > 3 ok, t < -3 flipped, between untestable."""
+        rng = np.random.default_rng(3)
+        ref = rng.uniform(0, 255, (200, 3))
+        other = rng.uniform(0, 255, (200, 3))
+        assert gt.orientation(ref, ref, other)[0] == 'ok'
+        assert gt.orientation(other, ref, other)[0] == 'flipped'
+        verdict, t = gt.orientation(other, ref, ref)
+        assert verdict == 'untestable' and t == 0.0
+
+    def test_terrain_colour_fails_when_the_unflipped_fits(self, monkeypatch,
+                                                          tmp_path):
+        """G7: ours matching the UNflipped source is a FAIL naming the flip."""
+        src = _cells(np.random.default_rng(4).integers(10, 240, (32, 32, 3)))
+        r = self._colour(tmp_path, monkeypatch, ours=src, src=src)
+        assert r['status'] == vb.FAIL and 'unflipped' in r['detail']
+
+    def test_terrain_colour_refuses_when_nothing_decides_orientation(
+            self, monkeypatch, tmp_path):
+        """G7: a reference symmetric under the flip decides nothing -> REFUSE, not PASS."""
+        half = np.random.default_rng(5).integers(10, 240, (16, 32, 3))
+        src = _cells(np.concatenate([half, half[::-1]]))
+        r = self._colour(tmp_path, monkeypatch, src=src)
+        assert r['status'] == vb.REFUSE
+        assert r['data']['worldspaces']['TES4Tamriel'][
+            'orientation'] == 'untestable'
+
+    def test_terrain_colour_judges_against_the_prediction(self, monkeypatch,
+                                                          tmp_path):
+        """G7: a reference missing its own source prediction is replaced by it, and decides no orientation."""
+        src = _cells(np.random.default_rng(6).integers(10, 240, (32, 32, 3)))
+        good = np.flipud(src).astype(np.float32)
+        preds = {'TES4Tamriel': {(x, y): gt.cell_means(good)[31 - y, x]
+                                 for x in range(32) for y in range(32)}}
+        ours = np.flipud(src) + 3
+        dark = src * 0.4
+        r = self._colour(tmp_path, monkeypatch, ours=ours, src=dark,
+                         preds=preds, mae_bound=10.0)
+        row = r['data']['worldspaces']['TES4Tamriel']
+        assert r['status'] == vb.REFUSE and not row['fails'] and row['mae'] < 4
+        assert row['judged_against'] == 'prediction' and row['ref_vs_pred'] > 10
+        assert row['orientation'] == 'untestable'
+        same = self._colour(tmp_path, monkeypatch, ours=ours, src=src,
+                            preds=preds, mae_bound=10.0)
+        assert same['status'] == vb.PASS and same['data']['worldspaces'][
+            'TES4Tamriel']['judged_against'] == 'reference'
+
+    def test_source_prediction_reads_only_the_tes4_source(self, monkeypatch,
+                                                         tmp_path):
+        """G7 prediction: source LAND layers x source texture means x VCLR / 255; id 0 is the default."""
+        from PIL import Image
+        tex = tmp_path / 'Data' / 'Textures' / 'Landscape'
+        tex.mkdir(parents=True)
+        Image.new('RGB', (8, 8), (200, 100, 50)).save(tex / 'Rock.dds', 'PNG')
+        Image.new('RGB', (8, 8), (40, 40, 40)).save(tex / 'default.dds', 'PNG')
+        btxt = b''.join(_sub(b'BTXT', struct.pack('<IBBh', fid, q, 0, 0))
+                        for q, fid in ((0, 7), (1, 7), (2, 7), (3, 0)))
+        land = _rec(b'LAND', btxt + _sub(b'VCLR', bytes([128]) * 33 * 33 * 3))
+        cell = _rec(b'CELL', _sub(b'XCLC', struct.pack('<ii', 3, 4)))
+        raw = (_grup(0x5845544C, 0, _rec(b'LTEX', _sub(b'ICON', b'Rock.dds\0'), 7))
+               + _grup(0x444C5257, 0, _wrld(0x3C, b'Tamriel')
+                       + _grup(0x3C, 1, cell + _grup(0, 6, land))))
+        esm = tmp_path / 'Data' / 'A.esm'
+        esm.write_bytes(_rec(b'TES4', b'', 0) + raw)
+        monkeypatch.setattr(gt, 'source_esms', lambda ctx: {'A.esm': esm})
+        preds, note = gt.source_predictions(
+            _ctx(tmp_path, plugins=['A.esm']), {'TES4Tamriel': {(3, 4)}})
+        want = (np.array([200, 100, 50]) * 3 + 40) / 4 * 128 / 255
+        assert np.allclose(preds['TES4Tamriel'][(3, 4)], want)
+        assert note.startswith('1 cells predicted, 0 with')
 
     def test_terrain_colour_na_without_baked_lod(self, monkeypatch, tmp_path):
         """No worldspace with baked source tiles -> N/A."""

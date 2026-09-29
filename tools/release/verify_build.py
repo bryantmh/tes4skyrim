@@ -158,13 +158,18 @@ def section_window(sections, sec, log_path) -> tuple:
 
 def worldspaces_in(sections) -> list:
     """Worldspaces the final `create_lod` step baked, from its `LODGen input` lines."""
+    return list(worldspace_blocks(sections))
+
+
+def worldspace_blocks(sections) -> dict:
+    """{worldspace: its lines} of the final `create_lod` step, each from its `LODGen input` line to the next."""
     sec = final_section(sections, 'create_lod')
-    out = []
+    out, name = {}, ''
     for line in sec.lines if sec else ():
         m = _LOD_INPUT.search(line)
-        name = m and lodgen_worldspace(m.group(1))
-        if name and name not in out:
-            out.append(name)
+        name = lodgen_worldspace(m.group(1)) if m else name
+        if name:
+            out.setdefault(name, []).append(line)
     return out
 
 

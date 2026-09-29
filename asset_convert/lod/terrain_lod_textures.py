@@ -400,14 +400,23 @@ def _apply_vclr_shading(out: np.ndarray, colors: np.ndarray,
     unchanged; 'multiply' darkens by VCLR as vanilla's shader does.
     See: docs/commentary/asset_convert_terrain.md#terrain-lod-vclr-hue
     """
+    shade, peak = vclr_shade(colors, cell_px)
+    if mode == 'multiply':
+        return np.clip(out * shade, 0, 255)
+    return np.clip(out * (shade / peak), 0, 255)
+
+
+def vclr_shade(colors: np.ndarray, cell_px: int) -> tuple:
+    """(shade, peak) of a 33x33 VCLR (row 0 = south) over a north-up cell_px image.
+
+    shade is (cell_px, cell_px, 3) in 0-1, bilinear; peak is its largest
+    channel per pixel (floored at 1e-3), which 'hue' divides out.
+    """
     from PIL import Image
     shade = Image.fromarray(np.flipud(colors).copy(), 'RGB').resize(
         (cell_px, cell_px), Image.BILINEAR)
     shade = np.asarray(shade, dtype=np.float32) / 255.0
-    if mode == 'multiply':
-        return np.clip(out * shade, 0, 255)
-    peak = np.maximum(shade.max(axis=2, keepdims=True), 1e-3)
-    return np.clip(out * (shade / peak), 0, 255)
+    return shade, np.maximum(shade.max(axis=2, keepdims=True), 1e-3)
 
 
 #: Unpainted-quadrant composites by source: 'baked' (the game's own LOD) or 'default'.

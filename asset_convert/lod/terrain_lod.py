@@ -469,7 +469,7 @@ def export_worldspace_renames(export_dir) -> dict:
 
 
 def parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel',
-                        overlay_paths=None, deleted=None):
+                        overlay_paths=None, deleted=None, decode=None):
     """Parse LAND + CELL water data for one worldspace from the output ESM.
 
     `overlay_paths` are plugins to apply ON TOP, in load order; everything is
@@ -507,7 +507,8 @@ def parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel',
         scan_land_file(Path(_path), worldspace_edid, lands, cell_water,
                         wrld_water, cell_coords,
                         allow_unscoped=(_i == 0),
-                        known_wrld_fid=base_wrld_fid, deleted=deleted)
+                        known_wrld_fid=base_wrld_fid, deleted=deleted,
+                        decode=decode)
     default_wh = (wrld_water['default']
                   if wrld_water['default'] is not None else 0.0)
     return lands, cell_water, default_wh
@@ -517,7 +518,7 @@ def scan_land_file(esm_path: Path, worldspace_edid: str,
                     lands: dict, cell_water: dict, wrld_water: dict,
                     cell_coords: dict, count_only: bool = False,
                     allow_unscoped: bool = True, known_wrld_fid=None,
-                    deleted=None):
+                    deleted=None, decode=None):
     """Scan one plugin's LAND/CELL/WRLD data into the shared accumulators.
 
     `known_wrld_fid` scopes the scan to a worldspace an override edits without
@@ -579,7 +580,7 @@ def scan_land_file(esm_path: Path, worldspace_edid: str,
             coords = cell_coords.get(None if cell is None else g(cell))
             if coords is not None:
                 _take_land(rec, coords, lands, count_only, allow_unscoped, g,
-                           deleted)
+                           deleted, decode)
 
 
 def _take_cell(rec, fid: int, cell_coords: dict, cell_water) -> None:
@@ -615,26 +616,36 @@ def _take_cell(rec, fid: int, cell_coords: dict, cell_water) -> None:
 
 
 def _take_land(rec, coords, lands: dict, count_only: bool,
-               allow_unscoped: bool, remap, deleted=None) -> None:
+               allow_unscoped: bool, remap, deleted=None,
+               decode=None) -> None:
     """Decode one LAND into `lands`, or erase the cell it deletes.
 
     An OVERLAY's LAND with no VHGT is the author DELETING that cell's terrain
     (overlays only); it is erased and added to `deleted`, so no baked LOD
     refills it. `count_only` stores presence as a real parse would; `remap`
-    re-stamps the layer LTEX ids into load-order space.
+    re-stamps the layer LTEX ids into load-order space; `decode` replaces
+    `_decode_land`.
     See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
     """
     if count_only:
         if rec.sub(b'VHGT') is not None:
             lands[coords] = True
         return
-    land = _decode_land(rec.body, lambda b, t: rec.sub(t.encode()), remap)
+    land = (decode or _decode_land)(rec.body, lambda b, t: rec.sub(t.encode()),
+                                    remap)
     if land is not None:
         lands[coords] = land
     elif not allow_unscoped:
         lands.pop(coords, None)
         if deleted is not None:
             deleted.add(coords)
+
+
+def decode_any_land(body, _sub, remap=None) -> dict:
+    """`_decode_land`, or a VHGT-less LAND's layers alone; never None."""
+    from asset_convert.lod.terrain_lod_textures import decode_land_layers
+    return (_decode_land(body, _sub, remap)
+            or {'layers': decode_land_layers(body, remap)})
 
 
 def _decode_land(body, _sub, remap=None):

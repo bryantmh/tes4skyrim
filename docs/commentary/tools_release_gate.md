@@ -86,7 +86,7 @@ needs a threshold takes it, in this order, from:
    accepted: this run may not regress against the values measured there,
    within the tolerance below;
 3. with neither, the check's intrinsic condition (a complete ratio, a
-   non-empty denominator, an orientation control that must score worse).
+   non-empty denominator, a paired orientation test that must decide).
 
 | check | baseline value (JSON `data` key) | tolerance |
 |---|---|---|
@@ -96,7 +96,10 @@ needs a threshold takes it, in this order, from:
 | G12 | `failed`: failing script files per plugin | no new (plugin, script) |
 
 A baseline JSON missing a key (an older gate version) simply gives that
-check no baseline, so it falls back to its intrinsic condition. To accept a
+check no baseline, so it falls back to its intrinsic condition. A G7
+baseline written before 2026-09-29 holds MAEs measured without the tint
+step (see [the terrain checks](#terrain-checks)); under the 'hue' tint they
+are higher than today's, so re-baseline once rather than compare to them. To accept a
 build and make it the new reference, pass its gate JSON as the next run's
 `--baseline`; the JSON records which baseline it was measured against.
 
@@ -229,19 +232,71 @@ build holds.
   such quadrants; for Oblivion's Tamriel the count is 1,463 of 1,463. A
   plugin whose source cannot be found makes the check REFUSE; no such
   quadrant anywhere makes it N/A.
+  The converted side keeps every LAND, with or without VHGT
+  (`converted_land_records`, `terrain_lod.decode_any_land`). The LOD bake's
+  own `_decode_land` drops a height-less LAND, which is right for baking
+  heights but made G6 count every ATXT-only quadrant on such a LAND as lost:
+  Oblivion.esm has 1,034 LANDs without VHGT, and the 2026-09-29 rebuild
+  scored 2,334 of 2,411 although all 2,411 were written. With the walk that
+  ignores VHGT it scores 2,411 of 2,411; the build before the ATXT fix
+  scores 0 of 2,411 (the positive control).
 - **G7** compares, per baked worldspace, the per-cell mean colour of our
   level-32 terrain diffuse with the source's own baked tile
   (`landscapelod/generated/<decimal WRLD FormID>.<x>.<y>.32.dds`, found
   through `terrain_lod_baked.baked_textures` over every plugin's export, the
   last in load order winning), over cells that have LAND, are fully painted
-  and are dry. The source image is stored south-up, so it is flipped first;
-  the unflipped image is the control and must score worse, which proves the
-  orientation rather than assuming it. The mean channel spread must be at
-  least 2 (grey terrain has none). The MAE bound is `--mae-bound`, else the
-  baseline run's MAE for that worldspace plus `MAE_TOLERANCE` (1 colour
-  level); with neither, only the orientation and grey conditions apply. A
-  tile contributes only with at least 30 comparable cells. No worldspace
-  with baked source LOD makes the check N/A.
+  and are dry. The source image is stored south-up, so it is flipped first.
+  The mean channel spread must be at least 2 (grey terrain has none). The
+  MAE bound is `--mae-bound`, else the baseline run's MAE for that
+  worldspace plus `MAE_TOLERANCE` (1 colour level); with neither, only the
+  orientation and grey conditions apply. A tile contributes only with at
+  least 30 comparable cells. No worldspace with baked source LOD makes the
+  check N/A. Three steps make the comparison fair and the orientation real:
+  - **Tint.** Oblivion bakes VCLR as a plain multiply; our bake may use the
+    'hue' tint (`terrainLodVclrTint`), which divides each colour by the
+    VCLR's largest channel. When the worldspace's `LODGen input` block of
+    the final `create_lod` step says `VCLR tint: hue`, ours is multiplied
+    per pixel by that same peak (`terrain_lod_textures.vclr_shade`) before
+    the cell means, so the decided hue/multiply difference is not scored.
+    A block with no tint line (or two different ones) falls back to the
+    configured tint, and the row's `tint_from` says so.
+  - **Orientation**, a paired test over the judged cells:
+    d_i = |ours - unflipped| - |ours - reference| (channel mean), t = mean(d)
+    over its standard error. t > 3 decides the flip is right, t < -3 FAILs
+    (the unflipped image fits better), anything between is INFO
+    "untestable": the reference carries too little orientation signal (a
+    near-symmetric realm). If no worldspace decides, G7 REFUSES. The old
+    rule, "the unflipped control must score worse", FAILed such realms
+    (differences of 0.0-0.2 levels) while telling nothing.
+  - **Reference self-check.** Each judged cell gets a prediction from the
+    TES4 SOURCE alone (`source_predictions`): its source LAND's layers
+    (base under each ATXT at its mean opacity; no layer, or id 0, is
+    `textures\landscape\default.dds`) painted with the mean colour of each
+    source texture, read loose or from the plugins' own BSAs
+    (`bsa_extract.read_bsa_files`), times the mean VCLR / 255. No converter
+    output is read. When the reference misses that prediction by more than
+    the MAE bound, it does not describe its own terrain: the row says
+    "reference inconsistent with its terrain", ours is judged against the
+    prediction under the same bound, and the reference decides no
+    orientation (with ours far from it, d_i is only the reference's own
+    asymmetry: the flipped-tile control still scored t = +3.0 there).
+    On the 2026-09-29 rebuild only MS13CheydinhalOblivionWorld trips it
+    (the reference misses the prediction by 26.2; ours misses it by 2.7);
+    the other worldspaces' references miss by 4.0-14.1.
+
+  Measured on that rebuild (`--mae-bound 18`): Tamriel 14.0 (16.5 before
+  the tint step), PalePassWorld 12.3 (24.0), SEWorld 4.1. Positive controls
+  through the same code, over every judged tile: grey, half brightness, an
+  R/B swap and a flipped tile all FAIL (flipped Tamriel t = -15.2).
+  **Known hole:** a flipped SEWorld tile is not caught: t stays +10.3 and
+  its MAE (10.6) is inside the bound. The pre-tint gate missed it as well
+  (its control only had to be worse, and was). Only Tamriel, PalePassWorld
+  and DABoethiaRealm catch a flip.
+  **Tripwire:** a build whose SEWorld (or any worldspace's) LOD looks
+  mirrored in game while G7 PASSes means this hole was hit; decide the flip
+  per tile against the source prediction, which is in our own orientation.
+  G7 costs about 5 s more than before (11.6 s vs 6.5 s alone on that
+  rebuild; the whole pre-deploy gate takes about 137 s).
 
 ## Reading the result
 <a id="result"></a>
