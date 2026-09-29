@@ -77,8 +77,8 @@ _Base = namedtuple('_Base', ['out_fid', 'record', 'master_rec', 'path',
                              'deleted'], defaults=(None,))
 
 #: Reference-state counters the run reports; the placement faults are expected to read 0.
-_REF_COUNTERS = ('ref-flags', 'renested', 'undeleted', 'undelete-no-live',
-                 'renest-unresolved',
+_REF_COUNTERS = ('ref-flags', 'renested', 'undeleted', 'xlcn-stripped',
+                 'undelete-no-live', 'renest-unresolved',
                  'renest-pers-in-block', 'renest-temp-in-persistent-cell')
 
 
@@ -464,7 +464,8 @@ class OverrideContext:
             base.record, changes, rec, base.master_rec)
         for key in unmapped:
             self.unmapped_keys[key] += 1
-        record_bytes = self._ref_flags(rec, base, record_bytes)
+        record_bytes = self._strip_xlcn(
+            rec, self._ref_flags(rec, base, record_bytes))
         path = self._ref_path(rec, base, record_bytes)
         if (base.deleted is None and record_bytes == base.record
                 and path == base.path):
@@ -490,6 +491,21 @@ class OverrideContext:
             return record_bytes
         self.stats['ref-flags'] += 1
         return set_flags(record_bytes, flags)
+
+    def _strip_xlcn(self, rec: dict, record_bytes: bytes) -> bytes:
+        """A temporary reference without XLCN, which only persistent references carry.
+
+        See: docs/commentary/tes5_import_override.md#override-reference-state
+        """
+        if (not _is_reference(rec, record_bytes)
+                or record_flags(record_bytes) & PERSISTENT):
+            return record_bytes
+        subs = split_subrecords(record_bytes)
+        kept = [(s, p) for s, p in subs if s != b'XLCN']
+        if len(kept) == len(subs):
+            return record_bytes
+        self.stats['xlcn-stripped'] += 1
+        return join_subrecords(record_bytes, kept)
 
     def _ref_path(self, rec: dict, base, record_bytes: bytes) -> tuple:
         """The master's GRUP path, unless the author moved or re-flagged the reference.

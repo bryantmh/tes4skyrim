@@ -890,6 +890,11 @@ the ND quest stages) were absent from its output.
   being ignored, so a persistence flip gains or loses XLCN exactly as a full
   conversion would. Non-reference types still ignore both (the only two
   measured, an ACTI +0x400 and a PACK +0x20, are a TES5 no-op and a deletion).
+  A temporary output never keeps XLCN (`_strip_xlcn`, counted
+  `xlcn-stripped`): the generic diff only drops it when the plugin run can
+  resolve the location itself, and a plugin run without its own cells never
+  registers the cell/location maps (`pipeline_records._phase4a_navmesh`), so the
+  master's XLCN would otherwise survive a persistent-to-temporary flip.
 - **Re-nesting only on an authored change.** An override stays at the
   master's GRUP path unless the author changed `ParentCELL` (against the
   effective master export) or the output's persistence differs from the base's.

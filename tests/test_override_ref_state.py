@@ -254,3 +254,17 @@ def test_placement_faults():
     assert placement_fault(world + ((6, pers), (9, pers))) == 'renest-temp-in-persistent-cell'
     assert placement_fault(world + ((6, pers), (8, pers))) == ''
     assert placement_fault(block + ((6, grid), (9, grid))) == ''
+
+
+def test_temporary_override_drops_the_masters_xlcn(monkeypatch):
+    """persistent -> temporary strips XLCN even when the plugin run cannot locate the cell."""
+    fid = 0x01001245
+    base = _record(b'REFR', fid, 0x400,
+                   [(b'NAME', struct.pack('<I', 0x0100BBBB)),
+                    (b'XLCN', struct.pack('<I', LCTN)), (b'DATA', _data())])
+    ctx = _ctx(monkeypatch, {fid: base},
+               {fid: CELL_PATH + ((6, _cell_label(CELL)), (8, _cell_label(CELL))),
+                CELL: CELL_PATH}, {'%08X' % fid: _refr(fid, 0x400)})
+    ov = ctx.build(_refr(fid, 0), 'REFR')
+    assert _flags(ov.record_bytes) == 0
+    assert _sigs(ov.record_bytes) == [b'NAME', b'DATA']
