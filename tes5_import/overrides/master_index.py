@@ -47,6 +47,7 @@ class MasterIndex:
         self._paths = {}        # formid -> ((grup_type, label), ...)
         self._land_by_cell = {}  # cell formid -> LAND formid
         self._navm_by_cell = {}
+        self._persistent_cells = {}
         self._edid_tables = {}
         self.masters = []
         self.own_index = 0
@@ -78,6 +79,18 @@ class MasterIndex:
             elif rec.sig == b'NAVM' and stack.cell is not None:
                 self._navm_by_cell.setdefault(stack.cell, []).append(
                     rec.form_id)
+            elif rec.sig == b'CELL':
+                self._note_persistent_cell(rec.form_id)
+
+    def _note_persistent_cell(self, cell: int) -> None:
+        """Remember `cell` when it sits directly in a worldspace's children group."""
+        path = self._paths[cell]
+        if len(path) == 2 and path[1][0] == 1 and len(path[1][1]) == 4:
+            self._persistent_cells[struct.unpack('<I', path[1][1])[0]] = cell
+
+    def persistent_cell(self, wrld_formid: int) -> int:
+        """FormID of a worldspace's persistent CELL in this file, or 0."""
+        return self._persistent_cells.get(wrld_formid, 0)
 
     def group_path(self, formid: int) -> tuple:
         """The GRUP nesting a record sits in, as ((type, label), ...).
@@ -602,6 +615,18 @@ class ChainedMasterIndex:
         # Defined further down the chain: the byte already matches the child's
         # numbering when that master occupies the same slot in both lists.
         return fid
+
+    def persistent_cell(self, wrld_formid: int) -> int:
+        """A worldspace's persistent CELL from the newest file holding it, in the child's space.
+
+        See: docs/commentary/tes5_import_override.md#full-lod-whitelist
+        """
+        for idx, own in self._candidates(wrld_formid):
+            fid = idx.persistent_cell(own)
+            if fid:
+                return (self._to_child(idx, fid)
+                        if (fid >> 24) == idx.own_index else fid)
+        return 0
 
     def navms(self, cell_formid: int) -> list:
         """The navmeshes inside a cell, answered by the file that WINS it.

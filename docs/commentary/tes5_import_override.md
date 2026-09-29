@@ -13,6 +13,7 @@
 - [A PGRD is never an override: it converts to a NEW NAVM](#pgrd-never-override-converts-new)
 - [Override build statuses](#override-build-statuses)
 - [Override reference state](#override-reference-state)
+- [Full-LOD whitelist](#full-lod-whitelist)
 - [Undeleting a master's record](#undeleting-a-masters-record)
 - [Deleting a master's record: the three shapes](#deleting-masters-record-three-shapes)
 - [A quest-owned package must never be in an NPC's PKID list](#quest-owned-package-must-never)
@@ -923,6 +924,47 @@ the ND quest stages) were absent from its output.
 - **Tripwire: TES4 0x200 on STAT/TREE/ACTI refs.** TES5 bit 9 means "Hidden
   From Local Map" there; the normal path passes the TES4 bit through. Not
   handled here.
+
+## Full-LOD whitelist
+<a id="full-lod-whitelist"></a>
+
+**Code:** `FULL_LOD_REFS`, `is_full_lod_ref`, `full_lod_flags` in `tes5_import/overrides/ref_state.py`; `_nested_parent_out`, `_nested_ref` in `nested.py`; `persistent_cell` in `master_index.py`
+
+Frostcrag Reborn's tower extensions are quest-toggled: 188 refs under the
+enable parent FROSTAGTOWEREXTENSION2REF and 14 under Extension 1 appear when
+frostcragAddonsQuest reaches stage 9. Object LOD is baked once, so any state
+it bakes is wrong in the other: before the fix, LOD drew the restored-state
+railings, bridges and torches around the tower that was not there.
+
+TES5 REFR bit 16 is "Is Full LOD" (xEdit `wbDefinitionsTES5.pas`; on a LIGH it
+means Never Fades), and `wbLOD.pas` leaves a ref out of object LOD when it is
+persistent AND has 0x10000. A Full-LOD ref is drawn at full detail at any
+distance and follows its enable parent, so the towers pop in with the quest
+instead of being baked. Vanilla uses it on 894 cloud STATs and 11 fog/FX
+statics, every one persistent and 0 of 905 with Visible When Distant; there
+is no vanilla Full-LOD architecture, so using it for buildings is inference.
+The worst case is the towers popping in at cell load, no worse than today,
+and a rebuild reverts it.
+
+The rule "exterior STAT + source VWD + non-player enable parent" also matched 6
+unwanted Oblivion/SI refs (Kvatch gate trees, SI smoke FX), so it is an
+explicit whitelist of FR's 12 refs, keyed by the low 24 bits of FR's OWN
+FormIDs (index byte 03 in its export, 04 in the output): the two extension
+towers 0401624E and 04016238, frostcragArc bridges 04047EFD and 04047F2E,
+SkingradBridgeArc01 0405104B/51/56/59, scallops 0401B3AC/AF, bridgeRef2
+04008CD0 and StatueMartyn 0401BD59 (10 under Extension 2, 2 under Extension 1).
+This is per-plugin data, against the repo's generic-fix rule, by decision of
+the Phase 2 pressure test; there is no per-plugin fix table to put it in.
+
+They are NEW refs in master cells, so they go through `_attach_new_records`,
+not `_build_world_groups`: the parent becomes the world's persistent cell
+(`persistent_cell`: the CELL sitting directly in the WRLD's type-1 group;
+Tamriel's is 01023777, where 04008CD0 already sits), and the header gets
+`|= 0x10400`, `&= ~0x8000`. The chain is `ref_chain`, so they share the type-8
+group with the spire 02002B0E that the reference-state re-nest moves there.
+The flags are set after conversion, so no XLCN is added. A world with no
+master persistent cell leaves the ref where it was, without Full LOD, and
+counts `full-lod-unresolved`.
 
 ## Undeleting a master's record
 <a id="undeleting-a-masters-record"></a>

@@ -26,7 +26,8 @@ from .builder import (RECONVERT_KEYS, apply_changes, join_subrecords,
                       rebuild_sndr_override, soun_companion_changes,
                       split_subrecords)
 from .master_index import load_master_index
-from .ref_state import (PERSISTENT, REF_SIGS, merge_flags, placement_fault,
+from .ref_state import (PERSISTENT, REF_SIGS, full_lod_flags,
+                        is_full_lod_ref, merge_flags, placement_fault,
                         record_flags, ref_chain, ref_path, set_flags,
                         take_mask)
 from ..actors.outfits import split_inventory
@@ -78,7 +79,8 @@ _Base = namedtuple('_Base', ['out_fid', 'record', 'master_rec', 'path',
 
 #: Reference-state counters the run reports; the placement faults are expected to read 0.
 _REF_COUNTERS = ('ref-flags', 'renested', 'undeleted', 'xlcn-stripped',
-                 'undelete-no-live', 'renest-unresolved',
+                 'full-lod', 'full-lod-unresolved', 'undelete-no-live',
+                 'renest-unresolved',
                  'renest-pers-in-block', 'renest-temp-in-persistent-cell')
 
 
@@ -339,6 +341,7 @@ class OverrideContext:
             masters, num_tes4_masters, output_root,
             export_root=export_root(export_dir))
         self.shadowed = {}
+        self.num_tes4_masters = num_tes4_masters
         self.master_export = load_master_export(export_dir, self.shadowed)
         self.stats = Counter()
         self.unmapped_keys = Counter()
@@ -543,7 +546,8 @@ class OverrideContext:
         See: docs/commentary/tes5_import_override.md#override-reference-state
         """
         faults = sum(self.stats[k] for k in _REF_COUNTERS
-                     if k.startswith('renest-') or k == 'undelete-no-live')
+                     if k.startswith('renest-') or k.endswith('-unresolved')
+                     or k == 'undelete-no-live')
         line = ', '.join(f'{k}={self.stats[k]}' for k in _REF_COUNTERS)
         print(f"  {'WARNING: ' if faults else ''}Reference overrides: {line}")
 
@@ -1103,11 +1107,60 @@ def _convert_nested(sig: str, rec: dict, ctx: OverrideContext, parent_out: int,
         return _nested_land(rec, ctx, parent_out)
     if sig == 'PGRD':
         return _attach_navmesh(rec, ctx, parent_out, parent_path, pending)
+    return _nested_ref(sig, rec, ctx, parent_out, parent_path)
+
+
+def _nested_ref(sig: str, rec: dict, ctx, parent_out: int,
+                parent_path: tuple) -> tuple:
+    """(record bytes, group chain) of one NEW reference under a master's cell.
+
+    A whitelisted Full-LOD reference placed under its world's persistent cell
+    ships persistent with Is Full LOD and without Visible When Distant.
+
+    See: docs/commentary/tes5_import_override.md#full-lod-whitelist
+    """
     conv = convert_ACHR if sig in ('ACHR', 'ACRE') else convert_REFR
     record_bytes = conv(rec)
-    chain = ref_chain(parent_out, get_int(rec, 'RecordFlags') & PERSISTENT)
+    persistent = get_int(rec, 'RecordFlags') & PERSISTENT
+    if parent_path and parent_path[-1][0] == 1 and _full_lod(sig, rec, ctx):
+        record_bytes = set_flags(record_bytes,
+                                 full_lod_flags(record_flags(record_bytes)))
+        persistent = PERSISTENT
+        _note(ctx, 'full-lod')
+    chain = ref_chain(parent_out, persistent)
     _note(ctx, placement_fault(parent_path + chain))
     return record_bytes, chain
+
+
+def _full_lod(sig: str, rec: dict, ctx) -> bool:
+    """True for a NEW REFR on this plugin's Full-LOD whitelist."""
+    return sig == 'REFR' and is_full_lod_ref(
+        os.path.basename(os.path.normpath(getattr(ctx, 'export_dir', '') or '')),
+        rec.get('FormID') or '', getattr(ctx, 'num_tes4_masters', None))
+
+
+def _nested_parent_out(sig: str, rec: dict, parent_key: str, ctx) -> int:
+    """The master parent a NEW record nests under; 0 when it names none.
+
+    A Full-LOD whitelisted reference nests under its world's persistent cell.
+
+    See: docs/commentary/tes5_import_override.md#full-lod-whitelist
+    """
+    if not parent_key:
+        return 0
+    parent_out = master_output_formid((rec.get(parent_key) or '').upper(),
+                                      ctx.master_manifest)
+    if not _full_lod(sig, rec, ctx):
+        return parent_out
+    find = getattr(ctx.master_index, 'persistent_cell', None)
+    wrld = master_output_formid((rec.get('ParentWRLD') or '').upper(),
+                                ctx.master_manifest)
+    cell = find(wrld) if callable(find) and wrld else 0
+    if not cell:
+        _note(ctx, 'full-lod-unresolved')
+        print(f"    WARNING: Full-LOD ref {rec.get('FormID')} has no master "
+              f"persistent cell; left in its own cell without Full LOD")
+    return cell or parent_out
 
 
 def _attach_new_records(new_records: list, ctx: OverrideContext,
@@ -1131,7 +1184,6 @@ def _attach_new_records(new_records: list, ctx: OverrideContext,
     unattached = []
     for sig, rec in new_records:
         parent_key = _NEW_NESTED_PARENT.get(sig)
-        parent_src = (rec.get(parent_key) or '') if parent_key else ''
         # A NEW INFO under a master BARK topic must NOT be nested here.
         # GREETING/HELLO are shared, engine-named topics every plugin fills, so
         # every one of this plugin's own greetings resolves to the master's
@@ -1151,9 +1203,7 @@ def _attach_new_records(new_records: list, ctx: OverrideContext,
         if sig == 'INFO' and _is_bark_parent(rec, ctx):
             unattached.append((sig, rec))
             continue
-        parent_out = (master_output_formid(parent_src.upper(),
-                                           ctx.master_manifest)
-                      if parent_key else 0)
+        parent_out = _nested_parent_out(sig, rec, parent_key, ctx)
         parent_path = (ctx.master_index.group_path(parent_out)
                        if parent_out else ())
         if not parent_key or not parent_path:

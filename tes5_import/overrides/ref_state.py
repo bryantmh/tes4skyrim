@@ -1,10 +1,11 @@
-"""Header flags of an override REFERENCE (REFR/ACHR/ACRE).
+"""Header flags and GRUP placement of a REFERENCE (REFR/ACHR/ACRE) in a master's cell.
 
 An override keeps the master's converted bytes, but a reference's Persistent,
 Initially Disabled and Visible When Distant bits are authored header state, so
 the bits the plugin's author changed are taken from the plugin's export.
 
 See: docs/commentary/tes5_import_override.md#override-reference-state
+See: docs/commentary/tes5_import_override.md#full-lod-whitelist
 """
 
 import struct
@@ -18,7 +19,17 @@ VISIBLE_WHEN_DISTANT = 0x8000
 #: LIGH-ref "Casts Shadows"; on an ACHR the same bit is Starts Dead, which the master run owns.
 LIGHT_CASTS_SHADOWS = 0x200
 
+#: TES5 REFR "Is Full LOD": drawn at full detail at any distance, never baked into object LOD.
+FULL_LOD = 0x10000
+
 _TAKEN = PERSISTENT | INITIALLY_DISABLED | VISIBLE_WHEN_DISTANT
+
+#: {plugin: low 24 bits of its OWN FormIDs} shipped as Full LOD; the whitelist doc is cited above.
+FULL_LOD_REFS = {
+    'dlcfrostcragreborn.esp': frozenset({
+        0x01624E, 0x016238, 0x047EFD, 0x047F2E, 0x05104B, 0x051051,
+        0x051056, 0x051059, 0x01B3AC, 0x01B3AF, 0x008CD0, 0x01BD59}),
+}
 
 
 def take_mask(out_sig: bytes, base_is_light: bool) -> int:
@@ -78,3 +89,17 @@ def placement_fault(path: tuple) -> str:
     if gtype == 9 and parent[-1][0] == 1:
         return 'renest-temp-in-persistent-cell'
     return ''
+
+
+def is_full_lod_ref(plugin: str, formid: str, own_index) -> bool:
+    """True when `formid` (TES4 export hex) is one of `plugin`'s whitelisted Full-LOD refs."""
+    refs = FULL_LOD_REFS.get((plugin or '').lower())
+    if not refs or own_index is None or not formid:
+        return False
+    raw = int(formid, 16)
+    return (raw >> 24) == own_index and (raw & 0x00FFFFFF) in refs
+
+
+def full_lod_flags(flags: int) -> int:
+    """Header flags of a Full-LOD reference: persistent, Is Full LOD, no VWD."""
+    return (flags | FULL_LOD | PERSISTENT) & ~VISIBLE_WHEN_DISTANT
