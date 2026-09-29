@@ -2005,7 +2005,7 @@ mountains -- and for quadrants no layer paints.
   which an exact-case listing never sees. A plugin's worldspace FormIDs come
   from its export's (and masters') WRLD.txt, matched on the source or converted
   EditorID. The converted name comes from THAT plugin's rename chain (its
-  own name plus its `_HEADER.txt` masters, `export_renames`), not from the
+  own name plus its `_HEADER.txt` masters, `terrain_lod.export_worldspace_renames`), not from the
   chain the process last set: a LOD run only renames Tamriel, so Arktwend's
   WrldMorrowind -> WrldArktwend was missed. Textures: the last plugin wins a
   tile. Meshes: every plugin's copy is kept, in order.

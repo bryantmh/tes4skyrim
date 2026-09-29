@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from asset_convert import case_paths
-from core.worldspace_names import converted_worldspace_edid, renames_for
+from core.worldspace_names import converted_worldspace_edid
 from output_layout import assets_for
 
 #: Cells per side of one shipped LOD tile.
@@ -51,13 +51,6 @@ _TEX_DIR = 'textures/landscapelod/generated'
 # ---------------------------------------------------------------------------
 
 
-def export_renames(record_dir) -> dict:
-    """Worldspace renames for `record_dir`'s plugin and its header masters."""
-    from asset_convert.lod.terrain_lod import master_names
-    record_dir = Path(record_dir)
-    return renames_for([record_dir.name] + master_names(record_dir))
-
-
 def worldspace_fids(record_dir, edid: str) -> set:
     """The raw FormIDs `record_dir`'s export (or a master's) gives worldspace `edid`.
 
@@ -65,8 +58,9 @@ def worldspace_fids(record_dir, edid: str) -> set:
     that plugin's own chain (not whatever chain this process last set).
     See: docs/commentary/asset_convert_terrain.md#baked-lod-sources
     """
-    from asset_convert.lod.terrain_lod import worldspace_edids
-    want, renames = edid.lower(), export_renames(record_dir)
+    from asset_convert.lod.terrain_lod import (export_worldspace_renames,
+                                               worldspace_edids)
+    want, renames = edid.lower(), export_worldspace_renames(record_dir)
     return {fid for fid, name in worldspace_edids(Path(record_dir)).items()
             if want in (name.lower(),
                         converted_worldspace_edid(name, renames).lower())}
