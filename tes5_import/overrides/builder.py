@@ -46,6 +46,7 @@ from ..base.tes5_reader import subrecords
 from ..dialogue.quest import quest_objectives, quest_targets
 from ..actors.outfits import split_inventory
 from .vmad_swap import SCRIPT_SWAP_KEY, SCRIPTED_TYPES, swap_vmad_script
+from .ref_state import REF_SIGS
 
 from ..base.writer import RECORD_HEADER_SIZE
 _COMPRESSED_FLAG = 0x00040000
@@ -130,8 +131,11 @@ _IGNORED_CHANGES = frozenset({
     'ParentDIAL',           # grouping metadata, not a field on the record
     'ParentCELL',
     'ParentWRLD',
-    'RecordFlags',          # the master's flags are authoritative for an override
+    'RecordFlags',
 })
+
+#: Ignored keys a REFERENCE override does express: its header flags and parent cell.
+_REF_STATE_KEYS = frozenset({'RecordFlags', 'ParentCELL'})
 
 # (sig, key) — or ('*', key) for any signature — whose TES4 field the
 # converter PROVABLY DROPS: TES5 has no counterpart and no derived subrecord
@@ -1061,9 +1065,14 @@ def _classify_nested(key, sig_name, plugin_export, nested, buckets,
 def _preapplied(key, sig_name) -> bool:
     """True for a key that needs no edit here: ignored, inexpressible, or a
     SOUN field applied to the master's SNDR companion instead of this record
-    (see OverrideContext.build_soun_companion).
+    (see OverrideContext.build_soun_companion). A reference's flags and cell
+    go to the generic diff, which re-derives XLCN; the header is set by
+    OverrideContext.
+
+    See: docs/commentary/tes5_import_override.md#override-reference-state
     """
-    return (key in _IGNORED_CHANGES
+    ref_state = sig_name in REF_SIGS and key in _REF_STATE_KEYS
+    return ((key in _IGNORED_CHANGES and not ref_state)
             or (sig_name, key) in _INEXPRESSIBLE
             or ('*', key) in _INEXPRESSIBLE
             or (sig_name == 'SOUN' and key in _SOUN_COMPANION_KEYS))

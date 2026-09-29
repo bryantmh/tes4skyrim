@@ -1,6 +1,6 @@
 # tes5_import/overrides/nested.py - plugins with masters
 
-**Code:** `tes5_import/overrides/diff.py`, `tes5_import/overrides/manifest.py`, `tes5_import/overrides/builder.py`, `tes5_import/overrides/master_index.py`
+**Code:** `tes5_import/overrides/diff.py`, `tes5_import/overrides/manifest.py`, `tes5_import/overrides/builder.py`, `tes5_import/overrides/master_index.py`, `tes5_import/overrides/ref_state.py`
 
 ## Contents
 
@@ -11,6 +11,8 @@
 - [Scripts: the masters' export is part of the identifier namespace](#scripts-masters-export-part-identifier)
 - [One TES4 field can feed TWO output subrecord runs](#one-tes4-field-can-feed)
 - [A PGRD is never an override: it converts to a NEW NAVM](#pgrd-never-override-converts-new)
+- [Override build statuses](#override-build-statuses)
+- [Override reference state](#override-reference-state)
 - [Deleting a master's record: the three shapes](#deleting-masters-record-three-shapes)
 - [A quest-owned package must never be in an NPC's PKID list](#quest-owned-package-must-never)
 - [Generated records reuse the master's](#generated-records-reuse-the-masters)
@@ -818,6 +820,73 @@ in the master parent's children group:
   merchants.
 
 ROAD remains genuinely unmappable: it converts to nothing at all.
+
+## Override build statuses
+<a id="override-build-statuses"></a>
+
+**Code:** `OverrideContext.build`, `_base_for` and `_apply` in `tes5_import/overrides/nested.py`
+
+`build` returns one Override per plugin record that overrides a master record:
+
+- **None** for a PGRD: it converts to a NEW NAVM with its own FormID, so there is
+  nothing of the master's to patch
+  ([pgrd-never-override](#pgrd-never-override-converts-new)).
+- **no-base** when the master's conversion dropped the record (emitting it would
+  leave a record the engine cannot resolve against the master), or when the id
+  resolves to a record of a different type
+  ([override-type-guard](#override-type-guard)).
+- **deleted** when the author deleted it: the header flag, not the field diff,
+  says so ([three shapes](#deleting-masters-record-three-shapes)).
+- **reconvert** when an authored change mints companion records (an effect-list
+  change clones aimed MGEFs); the caller reconverts from the plugin's export and
+  the FormID still lands on the master's.
+- **unchanged** when the exports agree, or when every authored change was
+  unmappable so the spliced record comes back byte-identical to the master's.
+  Measured on Knights.esp: 43 PACK overrides byte-identical to Oblivion.esm's,
+  all from 42 unmappable `Condition[]` changes. The master already says it.
+- **emitted** otherwise.
+
+## Override reference state
+<a id="override-reference-state"></a>
+
+**Code:** `tes5_import/overrides/ref_state.py`, `OverrideContext._ref_flags`, `builder._preapplied`
+
+A reference override (REFR/ACHR/ACRE) carries authored state in its HEADER and
+in its GRUP placement, which the subrecord splice never sees. Upstream 7edbda5
+put `RecordFlags` and `ParentCELL` in `_IGNORED_CHANGES` ("the master's flags
+are authoritative"), and a flags-only override then came back byte-identical
+and was dropped as unchanged. Measured on the Frostcrag Reborn chain
+(DLCFrostcragReborn.esp over Oblivion.esm, DLCFrostcrag.esp, Knights.esp): 755
+of FR's 1,168 REFR overrides differ from the master in flags, 754 of them by
++0x800 Initially Disabled. The visible ones: FrostcragSpireTelepad shipped
+enabled in AnvilMagesGuild, the spire 02002B0E lost Persistent + Visible When
+Distant, and Knights.esp's 8 +Persistent quest targets (altars 0006C3FC/FD for
+the ND quest stages) were absent from its output.
+
+- **Delta rule.** `authored = (master_export ^ plugin_export) & TAKE` and
+  `out = (base & ~authored) | (plugin_export & authored)`. Only bits the author
+  changed move, so bits the master RUN derived survive (the forced 0x400 on a map
+  marker, a TES3 source's settle bit). A map marker never loses 0x400.
+- **TAKE.** REFR: 0x400 Persistent, 0x800 Initially Disabled, 0x8000 Visible
+  When Distant, plus 0x200 only when the base is a LIGH ("Casts Shadows";
+  xEdit `wbDefinitionsTES5.pas` LIGH list). ACHR/ACRE: 0x400, 0x800, 0x8000;
+  bit 9 is Starts Dead there, which the master run sets. 0x10000 is not taken
+  (TES5 Is Full LOD; 0 real diffs). The meanings of 0x800/0x8000 are the same in
+  both games. The LIGH test reads the base from the masters' exports; a plugin
+  that retargets a ref at its OWN light does not take 0x200.
+- **XLCN follows persistence.** For reference types `RecordFlags` and
+  `ParentCELL` route to the generic convert-both-and-diff bucket instead of
+  being ignored, so a persistence flip gains or loses XLCN exactly as a full
+  conversion would. Non-reference types still ignore both (the only two
+  measured, an ACTI +0x400 and a PACK +0x20, are a TES5 no-op and a deletion).
+- **Tripwire: subrecord order.** `_apply_generic` appends a signature the
+  master lacked after DATA. xEdit declares REFR and ACHR `.SetUnordered`
+  (`wbDefinitionsTES5.pas` ACHR :3204, REFR :9879), so this is legal for
+  references and is not reordered. If a non-reference type ever reaches the
+  generic bucket with an appended signature, check its definition for order.
+- **Tripwire: TES4 0x200 on STAT/TREE/ACTI refs.** TES5 bit 9 means "Hidden
+  From Local Map" there; the normal path passes the TES4 bit through. Not
+  handled here.
 
 ## Deleting a master's record: the three shapes
 <a id="deleting-masters-record-three-shapes"></a>

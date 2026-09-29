@@ -26,6 +26,8 @@ from .builder import (RECONVERT_KEYS, apply_changes, join_subrecords,
                       rebuild_sndr_override, soun_companion_changes,
                       split_subrecords)
 from .master_index import load_master_index
+from .ref_state import (REF_SIGS, merge_flags, record_flags, set_flags,
+                        take_mask)
 from ..actors.outfits import split_inventory
 from ..dialogue.converter import convert_INFO
 from ..record_types.actor_common import origin_gate, read_items
@@ -67,6 +69,9 @@ DELETED_FLAG = 0x20
 
 #: status is 'emitted'|'deleted'|'unchanged'|'no-base'|'no-path'|'reconvert'.
 Override = namedtuple('Override', ['status', 'out_fid', 'record_bytes'])
+
+#: The master record an override splices onto: output id, bytes, export baseline.
+_Base = namedtuple('_Base', ['out_fid', 'record', 'master_rec'])
 
 
 def export_master_names(export_dir: str) -> list:
@@ -341,106 +346,94 @@ class OverrideContext:
     def build(self, rec: dict, sig: str = None):
         """Build the override for one plugin record.
 
-        Returns None when the record is NOT an override (a new record — the
-        caller converts it normally), else an Override whose `record_bytes` is
-        set only for status 'emitted':
+        None means NOT an override: a new record, or a PGRD (it converts to a
+        new NAVM). Else an Override whose `record_bytes` is set for 'emitted'
+        (the master's bytes plus the author's changes) and 'deleted'; the
+        other statuses drop it: 'unchanged', 'no-base' (no converted master
+        record of the right type), 'no-path', 'reconvert'.
 
-          emitted    the master's bytes with the author's changes applied
-          unchanged  authorially identical to the master — pure bloat, drop
-          no-base    the master's conversion has no record to override
-          no-path    the type's conversion output has no record to patch
+        See: docs/commentary/tes5_import_override.md#override-build-statuses
         """
-        # A PGRD is never an override in OUTPUT space, even when this plugin
-        # edits the master's pathgrid: it converts to a NAVM carrying a NEW
-        # FormID, so there is nothing of the master's to patch. Route it as a
-        # new record ALWAYS — `_attach_new_records` nests the generated navmesh
-        # under the master's cell. Returning an Override here instead marked it
-        # inexpressible and dropped it, which is why every master cell a plugin
-        # touched lost its navmesh (863 Tamriel cells in ElsweyrAnequina).
-        # The author's edited pathgrid is the one that converts, so the
-        # navmesh reflects their changes rather than the master's original.
         if sig == 'PGRD':
             return None
-
         master_rec = self.master_record(rec)
         if master_rec is None:
             return None
-
-        src_fid = (rec.get('FormID') or '').upper()
         if sig in OVERRIDE_UNMAPPABLE_TYPES:
             self.stats['no-path'] += 1
             return Override('no-path', 0, b'')
+        base = self._base_for(rec, sig, master_rec)
+        if isinstance(base, Override):
+            return base
+        if int(rec.get('RecordFlags') or 0) & DELETED_FLAG:
+            self.stats['deleted'] += 1
+            return Override('deleted', base.out_fid,
+                            make_deleted_record(base.record))
+        return self._apply(rec, sig, base)
 
+    def _base_for(self, rec: dict, sig: str, master_rec: dict):
+        """The _Base this override splices onto, or the 'no-base' Override.
+
+        See: docs/commentary/tes5_import_override.md#override-type-guard
+        """
+        src_fid = (rec.get('FormID') or '').upper()
         out_fid = master_output_formid(src_fid, self.master_manifest)
         base = self.master_index.record(out_fid) if out_fid else b''
         if not base:
-            # The master's conversion dropped this record, so there is nothing
-            # to override. Emitting it would leave a record the engine cannot
-            # resolve against the master.
             self.stats['no-base'] += 1
             return Override('no-base', out_fid, b'')
-
-        # The id must resolve to a record of the SAME TYPE. A plugin's source
-        # id can land on an unrelated master record — Elsweyr Anequina's NPC_
-        # 0100110C converts to 0200110C, which in Oblivion.esm's own space is
-        # a REFR — and adopting that record's bytes and nesting shipped the
-        # NPC_ as a "REFR" inside a bogus top-level GRUP (xEdit: "File contains
-        # top level group without known sort order: GRUP Top 'REFR'"). Treat a
-        # type mismatch as "no master record", so the caller converts it as the
-        # new record it actually is.
         if _signature_mismatch(sig or rec.get('Signature') or '', base[:4]):
             self.stats['no-base'] += 1
             return Override('no-base', 0, b'')
+        return _Base(out_fid, base, master_rec)
 
-        if int(rec.get('RecordFlags') or 0) & DELETED_FLAG:
-            # The author DELETED this record. Deletion is expressed by the
-            # header flag, not by the field diff — the plugin's record is an
-            # empty stub, so diffing it against the master reports every
-            # subrecord the master has as an unmappable "change" and the
-            # record ships alive. Emit the master's header with the flag set
-            # and NO body, which is exactly what the deleting plugin itself
-            # ships and what the engine reads as "remove this reference".
-            self.stats['deleted'] += 1
-            return Override('deleted', out_fid,
-                            make_deleted_record(base))
+    def _apply(self, rec: dict, sig: str, base):
+        """The Override for the author's changes spliced onto `base`.
 
-        changes = diff_records(master_rec, rec)
+        See: docs/commentary/tes5_import_override.md#override-build-statuses
+        """
+        changes = diff_records(base.master_rec, rec)
         if not changes:
-            # An override that changes nothing is pure bloat.
             self.stats['unchanged'] += 1
-            return Override('unchanged', out_fid, b'')
-
+            return Override('unchanged', base.out_fid, b'')
         if any((sig or rec.get('Signature'), key) in RECONVERT_KEYS
                for key in changes):
-            # The authored change rewrites content whose conversion mints
-            # companion records (spell effect lists -> aimed-MGEF clones).
-            # That cannot be spliced into the master's bytes, so the caller
-            # reconverts the record from the plugin's export instead — its
-            # FormID still lands on the master's, keeping it an override.
             self.stats['reconverted'] += 1
-            return Override('reconvert', out_fid, b'')
-
+            return Override('reconvert', base.out_fid, b'')
         record_bytes, _applied, unmapped = apply_changes(
-            base, changes, rec, master_rec)
+            base.record, changes, rec, base.master_rec)
         for key in unmapped:
             self.unmapped_keys[key] += 1
-
-        # An override whose every authored change was UNMAPPABLE comes back
-        # byte-identical to the master.  diff_records saw a difference, so the
-        # earlier `not changes` drop did not fire, but apply_changes expressed
-        # none of it — shipping the result adds a record that overrides the
-        # master with the master's own bytes.
-        #
-        # Measured on Knights.esp: 43 PACK overrides, every one byte-identical
-        # to Oblivion.esm's, all from 42 unmappable Condition[] changes.
-        #
-        # Drop it: the master already says exactly this.
-        if record_bytes == base:
+        record_bytes = self._ref_flags(rec, base, record_bytes)
+        if record_bytes == base.record:
             self.stats['unchanged'] += 1
-            return Override('unchanged', out_fid, b'')
-
+            return Override('unchanged', base.out_fid, b'')
         self.stats['emitted'] += 1
-        return Override('emitted', out_fid, record_bytes)
+        return Override('emitted', base.out_fid, record_bytes)
+
+    def _ref_flags(self, rec: dict, base, record_bytes: bytes) -> bytes:
+        """`record_bytes` with the reference header bits the author changed.
+
+        See: docs/commentary/tes5_import_override.md#override-reference-state
+        """
+        if (rec.get('Signature') not in REF_SIGS
+                or record_bytes[:4] not in (b'REFR', b'ACHR')):
+            return record_bytes
+        head = record_flags(record_bytes)
+        take = take_mask(record_bytes[:4], self._places_light(rec))
+        map_marker = any(s == b'XMRK' for s, _p in
+                         split_subrecords(record_bytes))
+        flags = merge_flags(head, int(base.master_rec.get('RecordFlags') or 0),
+                            int(rec.get('RecordFlags') or 0), take, map_marker)
+        if flags == head:
+            return record_bytes
+        self.stats['ref-flags'] += 1
+        return set_flags(record_bytes, flags)
+
+    def _places_light(self, rec: dict) -> bool:
+        """True when this reference's base object is a master's LIGH."""
+        base_obj = self.master_export.get((rec.get('NAME') or '').upper())
+        return bool(base_obj) and base_obj.get('Signature') == 'LIGH'
 
     def build_soun_companion(self, rec: dict, writer) -> bytes:
         """Override of the master's SNDR when a SOUN's volume/falloff changed.
