@@ -14,15 +14,16 @@ on:
 permissions:
   contents: write
 
-# A second push while the first run is still tagging would compute the same
-# "next" tag and fail on the push.  Serialise instead.
-concurrency:
-  group: tag-on-push
-  cancel-in-progress: false
-
 jobs:
   tag:
     runs-on: ubuntu-latest
+    # A second push while the first run is still tagging would compute the same
+    # "next" tag and fail on the push.  Serialise the tag job only: at workflow
+    # level the group stayed held through the Windows package build, and a
+    # burst of merges lost the tag runs in between.
+    concurrency:
+      group: tag-on-push
+      cancel-in-progress: false
     outputs:
       # The tag this run created, or empty when HEAD was already tagged.
       created: ${{ steps.tag.outputs.created }}

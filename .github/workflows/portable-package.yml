@@ -38,6 +38,9 @@ jobs:
           ref: refs/tags/${{ inputs.tag }}
           # Full history and tags, so the builder can match HEAD to its tag.
           fetch-depth: 0
+          # The build pip-installs third-party packages; keep the write token
+          # out of .git/config.  The upload step gets it from GH_TOKEN.
+          persist-credentials: false
           fetch-tags: true
 
       - name: Set up Python
