@@ -15,6 +15,7 @@ See: docs/commentary/asset_convert_terrain.md#baked-lod-sources
 """
 
 import re
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -242,3 +243,12 @@ def cell_crop(tile_rgb: np.ndarray, cx: int, cy: int, px: int) -> np.ndarray:
     block = np.ascontiguousarray(north_up[r0:r0 + n, cx * n:(cx + 1) * n])
     img = Image.fromarray(block, 'RGB').resize((px, px), Image.BILINEAR)
     return np.asarray(img, dtype=np.uint8)
+
+
+@lru_cache(maxsize=4)
+def load_tile_rgb(path: str) -> np.ndarray:
+    """A baked tile as a south-up RGB array; the last few stay decoded per process."""
+    from PIL import Image
+    with Image.open(path) as img:
+        return np.asarray(img.convert('RGB'), dtype=np.uint8)
+

@@ -860,51 +860,70 @@ _CELL_IMG_CACHE = {}
 _CELL_IMG_CACHE_MAX = 16384
 
 
+def _baked_crop(baked_tiles, key, layers):
+    """The game's own LOD image of cell `key` when a quadrant is unpainted, else None.
+
+    `baked_tiles` is {(tile x, tile y): path} of 32-cell south-up tiles.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler
+    """
+    from asset_convert.lod import terrain_lod_baked as tb
+    from asset_convert.lod.terrain_lod_textures import unpainted_quad
+    if not baked_tiles or not any(unpainted_quad(layers, q) for q in range(4)):
+        return None
+    tile = tuple((c // tb.TILE_CELLS) * tb.TILE_CELLS for c in key)
+    path = baked_tiles.get(tile)
+    if path is None:
+        return None
+    return tb.cell_crop(tb.load_tile_rgb(str(path)), key[0] - tile[0],
+                        key[1] - tile[1], CELL_DIFFUSE_PX)
+
+
+def _cell_image(lands, key, ltex_map, tex_root, h33, wh, baked_tiles):
+    """One cell's composited diffuse, cached per (cell, water, height patch).
+
+    A cell recurs in one tile per LOD level; the key carries the only
+    per-tile inputs, so an edge-filled patch that differs recomputes.
+    """
+    from asset_convert.lod.terrain_lod_textures import composite_cell
+    ck = (key, wh, h33.tobytes())
+    img = _CELL_IMG_CACHE.get(ck)
+    if img is not None:
+        return img
+    land = lands.get(key)
+    layers = land['layers'] if land is not None else _EMPTY_LAYERS
+    colors = land.get('colors') if land is not None else None
+    img = composite_cell(layers, colors, ltex_map, tex_root, key[0], key[1],
+                         cell_px=CELL_DIFFUSE_PX, tex_size=128, heights=h33,
+                         water_height=wh,
+                         baked=_baked_crop(baked_tiles, key, layers))
+    if len(_CELL_IMG_CACHE) >= _CELL_IMG_CACHE_MAX:
+        _CELL_IMG_CACHE.clear()
+    _CELL_IMG_CACHE[ck] = img
+    return img
+
+
 def _composite_tile_diffuse(lands, tile_x, tile_y, level, ltex_map, tex_root,
-                            tile_heights, cell_water, default_wh):
+                            tile_heights, cell_water, default_wh,
+                            baked_tiles=None):
     """Composite a level-N tile diffuse from its cells' real landscape textures.
 
     tile_heights is the FILLED tile height grid from _assemble_tile (row 0 =
-    south), used to bake the underwater murk.  Cells with no LAND record get
-    the engine default texture + murk instead of a flat fill color.
-
-    Returns (atlas RGB ndarray, side_px) with image row 0 = north (+Y), so it
-    matches the DDS orientation vanilla terrain LOD uses.
+    south), for the underwater murk. Unpainted quadrants, and cells with no
+    LAND, take the game's own baked LOD image when `baked_tiles` has it.
+    Returns (atlas RGB ndarray, side_px), image row 0 = north (+Y).
     """
-    from asset_convert.lod.terrain_lod_textures import composite_cell
     side = level * CELL_DIFFUSE_PX
     atlas = np.empty((side, side, 3), dtype=np.uint8)
     for cy in range(level):
         for cx in range(level):
             key = (tile_x + cx, tile_y + cy)
-            land = lands.get(key)
-            layers = land['layers'] if land is not None else _EMPTY_LAYERS
-            colors = land.get('colors') if land is not None else None
-            # 33x33 height patch for this cell from the filled tile grid
             h33 = tile_heights[cy*32:cy*32+33, cx*32:cx*32+33]
             wh = _cell_water_height(cell_water, key, default_wh)
-
-            # Every cell is composited once per LOD level even though the
-            # result is identical each time — 14,686 Tamriel cells produce
-            # ~70,000 composites, 4.8x more work than needed.  Cache per cell.
-            # The key includes the height patch and water height (the only
-            # per-tile inputs) so a cell whose edge-filled heights DID depend
-            # on the tile extent still recomputes rather than reusing a
-            # mismatched image.
-            ck = (key, wh, h33.tobytes())
-            img = _CELL_IMG_CACHE.get(ck)
-            if img is None:
-                img = composite_cell(layers, colors,
-                                     ltex_map, tex_root, tile_x + cx, tile_y + cy,
-                                     cell_px=CELL_DIFFUSE_PX, tex_size=128,
-                                     heights=h33, water_height=wh)
-                if len(_CELL_IMG_CACHE) >= _CELL_IMG_CACHE_MAX:
-                    _CELL_IMG_CACHE.clear()
-                _CELL_IMG_CACHE[ck] = img
-            col0 = cx * CELL_DIFFUSE_PX
-            # north (+Y, higher cy) at the TOP of the image
             row0 = (level - 1 - cy) * CELL_DIFFUSE_PX
-            atlas[row0:row0+CELL_DIFFUSE_PX, col0:col0+CELL_DIFFUSE_PX] = img
+            col0 = cx * CELL_DIFFUSE_PX
+            atlas[row0:row0+CELL_DIFFUSE_PX, col0:col0+CELL_DIFFUSE_PX] = (
+                _cell_image(lands, key, ltex_map, tex_root, h33, wh,
+                            baked_tiles))
     return atlas, side
 
 
@@ -1117,10 +1136,11 @@ _worker_ltex_map   = None
 _worker_tex_root   = None
 _worker_cell_water = None
 _worker_default_wh = 0.0
+_worker_baked      = None
 
 
 def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
-                 cell_water, default_wh):
+                 cell_water, default_wh, baked_tiles=None):
     """Called once per worker process to stash shared read-only data.
 
     `lands` is either a plain dict (single-process fallback) or the tuple
@@ -1129,7 +1149,7 @@ def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
     """
     global _worker_lands, _worker_mesh_dir, _worker_tex_dir
     global _worker_ltex_map, _worker_tex_root
-    global _worker_cell_water, _worker_default_wh, _worker_shm
+    global _worker_cell_water, _worker_default_wh, _worker_shm, _worker_baked
     if isinstance(lands, tuple):
         from multiprocessing import shared_memory
         shm_name, nbytes, index = lands
@@ -1150,12 +1170,14 @@ def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
                           else Path(tex_root_s))
     _worker_cell_water = cell_water
     _worker_default_wh = default_wh
+    _worker_baked      = baked_tiles
 
 
 def _worker_stats() -> dict:
     """This worker's counters since the last call, keyed by kind, then reset."""
-    from asset_convert.lod.terrain_lod_textures import texture_stats
-    return {'textures': texture_stats()}
+    from asset_convert.lod.terrain_lod_textures import (filler_stats,
+                                                         texture_stats)
+    return {'textures': texture_stats(), 'filler': filler_stats()}
 
 
 def _process_tile(args):
@@ -1188,7 +1210,7 @@ def _process_tile(args):
         atlas, _side = _composite_tile_diffuse(
             _worker_lands, tile_x, tile_y, level,
             _worker_ltex_map, _worker_tex_root,
-            heights, _worker_cell_water, _worker_default_wh)
+            heights, _worker_cell_water, _worker_default_wh, _worker_baked)
         write_dds_dxt1(atlas, _worker_tex_dir / f'{tag}.dds', size=tex_size)
 
         # Normal map: derive from the tile heightmap so distant terrain is lit.
@@ -1372,6 +1394,18 @@ def _bake_tiles(world: dict, work, init: tuple) -> tuple:
         _release(shm)
 
 
+def _baked_sources(lod_source_dirs, worldspace_edid: str) -> dict:
+    """{(tile x, tile y): baked diffuse path} from the owner's and suppliers' exports.
+
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler
+    """
+    from asset_convert.lod.terrain_lod_baked import baked_textures
+    tiles = baked_textures(lod_source_dirs, worldspace_edid)
+    print(f"  Baked LOD tiles for unpainted ground: {len(tiles)} "
+          f"(from {len(lod_source_dirs or [])} export dir(s)).")
+    return {k: str(v) for k, v in tiles.items()}
+
+
 def _report_bake(per_level_ok: dict, failed: int, stats: dict) -> bool:
     """Print the bake summary; False when no landscape texture was found.
 
@@ -1383,6 +1417,9 @@ def _report_bake(per_level_ok: dict, failed: int, stats: dict) -> bool:
     if failed:
         print(f"  {failed} tiles failed")
     lines, ok = texture_report(stats.get('textures', Counter()))
+    filler = stats.get('filler', Counter())
+    lines.append(f"  Terrain-LOD filler: {filler['baked']} baked, "
+                 f"{filler['default']} default (no source) unpainted quadrants")
     print('\n'.join(lines))
     if not ok:
         print("  ERROR: not one landscape texture was found on disk; every "
@@ -1396,13 +1433,16 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
                          worldspace_edid: str = 'TES4Tamriel',
                          overlay_paths=None,
                          only_cells=None,
-                         extra_texture_roots=None) -> bool:
+                         extra_texture_roots=None,
+                         lod_source_dirs=None) -> bool:
     """Generate terrain LOD (.btr + .dds) for every tile of one worldspace.
 
     `overlay_paths` apply on top of `esm_path` in load order; `only_cells`
     restricts output to tiles covering those cells (heights are still parsed
     worldspace-wide); `extra_texture_roots` are further textures/ roots for
-    the compositor. Returns True on success.
+    the compositor; `lod_source_dirs` are the owner's and suppliers' export
+    record dirs, in load order, whose shipped LOD fills unpainted ground.
+    Returns True on success.
     See: docs/commentary/asset_convert_terrain.md#generate-terrain-lod-arguments
     """
     if not _deps_ok():
@@ -1421,7 +1461,8 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     work.sort(key=lambda w: -w[2])
     _drop_plugin_bytes()
     init = (str(mesh_dir), str(tex_dir), ltex_map, [str(r) for r in tex_roots],
-            world['cell_water'], world['default_wh'])
+            world['cell_water'], world['default_wh'],
+            _baked_sources(lod_source_dirs, worldspace_edid))
     return _report_bake(*_bake_tiles(world, work, init))
 
 

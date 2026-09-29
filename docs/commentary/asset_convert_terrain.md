@@ -1882,3 +1882,32 @@ rows (31-cy)*n and columns cx*n, and resize that crop ONCE to the target size
 (slicing first and resizing each quadrant separately blurs across the quadrant
 seams).
 
+### <a id="terrain-lod-filler"></a>Unpainted quadrants take the game's own baked LOD
+
+A quadrant with no BTXT and no ATXT composited the engine's `default.dds`, a
+flat brown-grey. `composite_cell(baked=...)` now fills it from the source
+game's baked LOD tile ([sources](#baked-lod-sources)): `_baked_crop` finds the
+32-cell tile holding the cell (floor to 32, negatives included), crops the
+cell north-up and resizes it ONCE to the cell image, and only when some
+quadrant needs it. VCLR does not tint those pixels (the bake is already
+shaded); the underwater murk still applies. Cells with no LAND inside a queued
+tile fill the same way. Workers count `baked` vs `default` (no tile) quadrant
+composites and the parent logs `Terrain-LOD filler: B baked, D default`.
+`generate_terrain_lod(lod_source_dirs=...)` takes the owner's and suppliers'
+export record dirs (create_lod's `supplier_record_dirs`).
+
+Measured on Oblivion.esm Tamriel with layers rebuilt by the current builder:
+11,829 of 58,744 LAND quadrants are unpainted (8,111 dry), in 318 mixed cells
+and 2,794 fully unpainted ones (1,892 dry), mostly contiguous regions.
+
+The colour step at the boundary is LARGER than predicted (2-px strips either
+side, mean over channels): filler|painted inside a cell 34.7 (526 edges;
+default.dds there: 8.9); across a cell edge 37.1 (50 edges; default.dds 17.0);
+painted|painted control 3.8 / 3.2. Cause: over the same painted quadrants
+Oblivion's bake averages (94.8, 99.9, 90.0) where our composite averages
+(92.8, 91.0, 73.8) -- bluer and with the bake's own lighting -- and the filler
+matches the bake. Tripwire: if these seams are visible in game, add a per-tile
+colour transfer (bake to composite, fitted on painted cells) or feather the
+filler; the near terrain of an unpainted quadrant still shows default.dds
+(engine), out of scope.
+

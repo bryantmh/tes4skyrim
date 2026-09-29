@@ -373,81 +373,101 @@ def _apply_vclr_shading(out: np.ndarray, colors: np.ndarray,
     return np.clip(out * (shade / peak), 0, 255)
 
 
+#: Unpainted-quadrant composites by source: 'baked' (the game's own LOD) or 'default'.
+_FILLER = Counter()
+
+
+def filler_stats() -> Counter:
+    """This process's unpainted-quadrant counts by source, then reset."""
+    out = Counter(_FILLER)
+    _FILLER.clear()
+    return out
+
+
+def unpainted_quad(layers: dict, quad: int) -> bool:
+    """True when no BTXT and no ATXT paints `quad`."""
+    return quad not in layers['base'] and not layers['alpha'].get(quad)
+
+
+def _quad_blocks(cell_px: int) -> dict:
+    """{quad: (row slice, col slice)} in the north-up cell image: TL(2) TR(3) / BL(0) BR(1)."""
+    h = cell_px // 2
+    top, bottom = slice(0, h), slice(h, cell_px)
+    left, right = slice(0, h), slice(h, cell_px)
+    return {0: (bottom, left), 1: (bottom, right), 2: (top, left), 3: (top, right)}
+
+
+def _cell_uvs(cell_gx: int, cell_gy: int, cell_px: int) -> tuple:
+    """(u per column, v per row) in world UV for a cell's north-up image.
+
+    Origins come from world cell coords so neighbours line up; v DECREASES
+    down the rows because row 0 is the north edge (ascending v mirrored every
+    quadrant and banded at quadrant seams).
+    """
+    uv_cell = 1.0 / TILE_REPEAT_CELLS
+    us = (cell_gx + (np.arange(cell_px) + 0.5) / cell_px) * uv_cell
+    vs = (cell_gy + 1.0 - (np.arange(cell_px) + 0.5) / cell_px) * uv_cell
+    return us, vs
+
+
+def _composite_quad(layers: dict, quad: int, ltex_map: dict, tex_root,
+                    tex_size: int, q_us, q_vs) -> np.ndarray:
+    """One quadrant: its base (default texture when none), then its alpha layers in order."""
+    base_fid = layers['base'].get(quad)
+    diff = ltex_map.get(base_fid, {}).get('diffuse', '') if base_fid else ''
+    btile = load_texture_rgb(diff or default_land_texture(), tex_root, tex_size)
+    img = _sample_tiled(btile, q_us, q_vs).astype(np.float32)
+    for lfid, grid17 in layers['alpha'].get(quad, []):
+        diff = ltex_map.get(lfid, {}).get('diffuse', '')
+        if not diff:
+            continue
+        atex = _sample_tiled(load_texture_rgb(diff, tex_root, tex_size),
+                             q_us, q_vs).astype(np.float32)
+        op = _upsample_opacity(grid17, len(q_us))[:, :, None]
+        img = img * (1.0 - op) + atex * op
+    return img
+
+
+def _bake_murk(out, heights, water_height, cell_px) -> np.ndarray:
+    """Blend submerged pixels toward MURK_COLOR by depth below `water_height`."""
+    from PIL import Image
+    himg = Image.fromarray(np.flipud(np.nan_to_num(
+        heights.astype(np.float32)))).resize((cell_px, cell_px), Image.BILINEAR)
+    depth = float(water_height) - np.asarray(himg, dtype=np.float32)
+    a = np.clip(depth / MURK_FULL_DEPTH, 0.0, 1.0)[:, :, None] * MURK_MAX
+    return out * (1.0 - a) + MURK_COLOR[None, None, :] * a
+
+
 def composite_cell(layers: dict, colors: np.ndarray, ltex_map: dict,
                    tex_root: Path, cell_gx: int, cell_gy: int,
                    cell_px: int = CELL_PX, tex_size: int = 128,
                    heights: np.ndarray = None,
-                   water_height: float = None) -> np.ndarray:
-    """Composite one LAND cell into an (cell_px, cell_px, 3) uint8 RGB image.
+                   water_height: float = None,
+                   baked: np.ndarray = None) -> np.ndarray:
+    """Composite one LAND cell into an (cell_px, cell_px, 3) uint8 RGB image, row 0 north.
 
-    Quadrant layout in the image (row 0 = top = +Y = north):
-      TL(2) TR(3)
-      BL(0) BR(1)
-    layers: from decode_land_layers.  colors: (33,33,3) uint8 VCLR shading
-    (row 0 = south).  heights: (33,33) float32 cell heights (row 0 = south),
-    used with water_height to bake the underwater murk.
+    layers: from decode_land_layers; colors: (33,33,3) VCLR, row 0 south;
+    heights + water_height bake the underwater murk. `baked`, the game's own
+    LOD image of this cell (north-up, cell_px square), fills every quadrant no
+    layer paints and skips the VCLR tint there (it is already shaded); with
+    none, such a quadrant is the default texture.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler
     """
-    base = layers['base']
-    alpha = layers['alpha']
-    quad_px = cell_px // 2
+    us, vs = _cell_uvs(cell_gx, cell_gy, cell_px)
     out = np.zeros((cell_px, cell_px, 3), dtype=np.float32)
-
-    # World-UV sample grids for the whole cell image.  The cell spans
-    # 1/TILE_REPEAT_CELLS of the texture; origins from world cell coords so
-    # neighbouring cells line up seamlessly.  Image row 0 is the cell's NORTH
-    # edge, so v must DECREASE as the row index grows — sampling with
-    # ascending v mirrored every quadrant vertically and broke texture
-    # continuity at each quadrant boundary (the horizontal banding bug).
-    uv_cell = 1.0 / TILE_REPEAT_CELLS
-    us = (cell_gx + (np.arange(cell_px) + 0.5) / cell_px) * uv_cell
-    vs = (cell_gy + 1.0 - (np.arange(cell_px) + 0.5) / cell_px) * uv_cell
-
-    # image (row,col) block for each quad: (row_slice, col_slice)
-    # top row = TL,TR ; bottom row = BL,BR
-    quad_blocks = {
-        2: (slice(0, quad_px),          slice(0, quad_px)),           # TL
-        3: (slice(0, quad_px),          slice(quad_px, cell_px)),     # TR
-        0: (slice(quad_px, cell_px),    slice(0, quad_px)),           # BL
-        1: (slice(quad_px, cell_px),    slice(quad_px, cell_px)),     # BR
-    }
-
-    for quad in range(4):
-        rs, cs = quad_blocks[quad]
-        q_us = us[cs]
-        q_vs = vs[rs]
-
-        # base layer; quadrants with no BTXT use the engine default texture
-        base_fid = base.get(quad)
-        diff = ltex_map.get(base_fid, {}).get('diffuse', '') if base_fid else ''
-        btile = load_texture_rgb(diff or default_land_texture(),
-                                 tex_root, tex_size)
-        quad_img = _sample_tiled(btile, q_us, q_vs).astype(np.float32)
-
-        # alpha layers, in ATXT layer order
-        for (lfid, grid17) in alpha.get(quad, []):
-            diff = ltex_map.get(lfid, {}).get('diffuse', '')
-            if not diff:
-                continue
-            atile = load_texture_rgb(diff, tex_root, tex_size)
-            atex = _sample_tiled(atile, q_us, q_vs).astype(np.float32)
-            op = _upsample_opacity(grid17, quad_px)[:, :, None]
-            quad_img = quad_img * (1.0 - op) + atex * op
-
-        out[rs, cs] = quad_img
-
+    filler = np.zeros((cell_px, cell_px, 1), dtype=bool)
+    for quad, (rs, cs) in _quad_blocks(cell_px).items():
+        empty = unpainted_quad(layers, quad)
+        if empty and baked is not None:
+            out[rs, cs] = baked[rs, cs]
+            filler[rs, cs] = True
+        else:
+            out[rs, cs] = _composite_quad(layers, quad, ltex_map, tex_root,
+                                          tex_size, us[cs], vs[rs])
+        if empty:
+            _FILLER['baked' if baked is not None else 'default'] += 1
     if colors is not None:
-        out = _apply_vclr_shading(out, colors, cell_px)
-
-    # Bake the underwater murk: blend submerged pixels toward a flat murky
-    # color by depth, like vanilla LOD diffuse (the LOD water sheet alone is
-    # too translucent to hide raw seafloor texture at distance).
+        out = np.where(filler, out, _apply_vclr_shading(out, colors, cell_px))
     if water_height is not None and heights is not None:
-        from PIL import Image
-        himg = Image.fromarray(np.flipud(np.nan_to_num(
-            heights.astype(np.float32)))).resize((cell_px, cell_px), Image.BILINEAR)
-        depth = float(water_height) - np.asarray(himg, dtype=np.float32)
-        a = np.clip(depth / MURK_FULL_DEPTH, 0.0, 1.0)[:, :, None] * MURK_MAX
-        out = out * (1.0 - a) + MURK_COLOR[None, None, :] * a
-
-    # Note: image row 0 is +Y (north); callers assemble tiles top-down.
+        out = _bake_murk(out, heights, water_height, cell_px)
     return np.clip(out, 0, 255).astype(np.uint8)

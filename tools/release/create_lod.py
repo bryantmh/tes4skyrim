@@ -201,6 +201,7 @@ def _bake_worldspace(job, ctx) -> bool:
         only_cells=None,
         extra_texture_roots=[ctx['lod_textures_root'](Path(d))
                              for d in texture_dirs],
+        lod_source_dirs=ctx['supplier_record_dirs']([owner] + suppliers),
     )
     print()
     return bool(ok and ok_terrain)
@@ -365,6 +366,9 @@ def main() -> int:
             names, out_root, export_root, _out_root, record_dir),
         'record_dirs': lambda names: [record_dir(export_root, n)
                                       for n in names],
+        'supplier_record_dirs': lambda names: [
+            record_dir(export_root, n) for n in names
+            if _out_root(out_root, n, export_root).is_dir()],
     }
     return _report(all([_bake_worldspace(job, ctx) for job in jobs]), lod_dir)
 
