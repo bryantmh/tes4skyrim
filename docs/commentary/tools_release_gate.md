@@ -8,6 +8,7 @@
 - [The log stamp contract](#stamps)
 - [What the gate reads, and from where](#sources)
 - [Denominators, and why a zero refuses](#denominators)
+- [Baselines instead of build-tuned numbers](#baseline)
 - [The two modes](#modes)
 - [The checks](#checks)
 - [The terrain checks](#terrain-checks)
@@ -73,6 +74,31 @@ nothing, so its silence is not evidence (a log that was never written, a
 glob that matched nothing, a renamed log line). REFUSE fails the gate like
 FAIL does. A check that raises is a FAIL naming the exception.
 
+## Baselines instead of build-tuned numbers
+<a id="baseline"></a>
+
+The gate carries no number measured on one machine's build. A check that
+needs a threshold takes it, in this order, from:
+
+1. an explicit CLI override (`--min-bto WRLD=N`,
+   `--allow-compile-fail PLUGIN:SCRIPT`, `--allow-missing FILE`);
+2. `--baseline PREVIOUS_GATE.json`, the gate JSON of the last run that was
+   accepted: this run may not regress against the values measured there,
+   within the tolerance below;
+3. with neither, the check's intrinsic condition (a complete ratio, a
+   non-empty denominator, an orientation control that must score worse).
+
+| check | baseline value (JSON `data` key) | tolerance |
+|---|---|---|
+| G2 | `absent`: texture keys no table held | no new key |
+| G11 | `tiles`: `.bto` count per worldspace | lose at most `TILE_TOLERANCE` (1%) per worldspace |
+| G12 | `failed`: failing script files per plugin | no new (plugin, script) |
+
+A baseline JSON missing a key (an older gate version) simply gives that
+check no baseline, so it falls back to its intrinsic condition. To accept a
+build and make it the new reference, pass its gate JSON as the next run's
+`--baseline`; the JSON records which baseline it was measured against.
+
 ## The two modes
 <a id="modes"></a>
 
@@ -101,7 +127,7 @@ on PASS.
 | G8 | tree-card tiles vs tiles carrying NiAlphaProperty, over every baked worldspace | informational: vanilla carries none |
 | G9 | each worldspace's LODGen input: rows on disk vs the printed `LODGen input` count vs the `Object-LOD selection` line | all equal; a mismatch after a NullReference retry (which rewrites the file) warns; a file not written inside the final `create_lod` step's window (its stamp to the next stamp, or to the log's last write, plus one second for whole-second stamps) fails: older is another run's, newer is a LATER run's |
 | G10 | CRC-32 of every zip member vs the deployed file | all equal |
-| G11 | final `create_lod` step: `NullReferenceException`, empty bakes; `.bto` per worldspace | none; at least `--min-bto` (TES4Tamriel 997) |
+| G11 | final `create_lod` step: `NullReferenceException`, empty bakes; `.bto` per baked worldspace | none; each worldspace at its minimum (see [baselines](#baseline)) |
 | G12 | `[plugin] Compilation: ok/total succeeded, N failed` plus the plugin's `scripts/compile_errors.log` | every plugin with scripts has the line, and every failing script file is allowed (see below) |
 
 <a id="g2"></a>

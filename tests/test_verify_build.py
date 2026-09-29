@@ -218,6 +218,20 @@ class TestLogChecks:
         (objs / 'TES4Tamriel.4.1.0.bto').unlink()
         assert vb.check_lodgen(_ctx(tmp_path))['status'] == vb.FAIL
 
+    def test_lodgen_minimum_comes_from_the_baseline(self, tmp_path):
+        """G11 with no --min-bto: 1 tile passes alone; vs a baseline, losing more than 1% fails."""
+        objs = tmp_path / 'output/AutoConvertLOD/meshes/terrain/TES4Tamriel/Objects'
+        objs.mkdir(parents=True)
+        (objs / 'TES4Tamriel.4.0.0.bto').write_bytes(b'x')
+        assert vb.check_lodgen(_ctx(tmp_path, min_bto={}))['status'] == vb.PASS
+        base = {'G11': {'tiles': {'TES4Tamriel': 3}}}
+        r = vb.check_lodgen(_ctx(tmp_path, min_bto={}, baseline=base))
+        assert r['status'] == vb.FAIL and r['data']['minimum'] == {
+            'TES4Tamriel': 2}
+        (objs / 'TES4Tamriel.4.1.0.bto').write_bytes(b'x')
+        assert vb.check_lodgen(_ctx(tmp_path, min_bto={}, baseline=base))[
+            'status'] == vb.PASS
+
     def test_lod_rows_two_instruments(self, tmp_path):
         """G9: recount == printed passes; drift fails; after a retry it warns."""
         f = _lodgen_file(tmp_path, 3)
@@ -403,6 +417,21 @@ class TestTextures:
                       allow={'tes4\\x\\black.dds'})
         assert r['status'] == vb.FAIL
         assert r['data']['stale_allow'] == ['tes4\\x\\black.dds']
+
+    def test_baseline_absences_pass_new_ones_fail(self, monkeypatch, tmp_path):
+        """G2 vs --baseline: a key the previous run also lacked is not a regression."""
+        base = {'G2': {'absent': ['tes4\\old.dds']}}
+        monkeypatch.setattr(vb, 'mesh_texture_refs', lambda ctx: (
+            {'tes4\\a.dds': 5, 'tes4\\old.dds': 1}, 7))
+        monkeypatch.setattr(vb, 'texture_table', lambda ctx: {'tes4\\a.dds'})
+        r = vb.check_textures(_ctx(tmp_path, baseline=base))
+        assert r['status'] == vb.PASS and r['data']['absent'] == [
+            'tes4\\old.dds']
+        monkeypatch.setattr(vb, 'mesh_texture_refs', lambda ctx: (
+            {'tes4\\a.dds': 5, 'tes4\\old.dds': 1, 'tes4\\new.dds': 1}, 7))
+        r = vb.check_textures(_ctx(tmp_path, baseline=base))
+        assert r['status'] == vb.FAIL and r['data']['missing'] == [
+            'tes4\\new.dds']
 
     def test_allow_file_reads_full_keys(self, tmp_path):
         """One key per line, comments and blank lines ignored, / folded to \\."""

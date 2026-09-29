@@ -384,8 +384,17 @@ def count_lodgen_rows(path: Path):
         return None
 
 
+#: G11: a worldspace may lose this fraction of the baseline run's tiles.
+TILE_TOLERANCE = 0.01
+
+
 def check_lodgen(ctx) -> dict:
-    """G11: the final bake did not die, and each worldspace has its minimum tiles."""
+    """G11: the final bake did not die, and each baked worldspace has its minimum tiles.
+
+    The minimum is `--min-bto WRLD=N` when given, else the baseline run's
+    count less TILE_TOLERANCE, else 1 (a baked worldspace with no tile).
+    See: docs/commentary/tools_release_gate.md#baseline
+    """
     sec = final_section(ctx.sections, 'create_lod')
     if sec is None:
         return result('G11', REFUSE, '0 tiles', 'no create_lod step')
@@ -393,15 +402,27 @@ def check_lodgen(ctx) -> dict:
     empty = sum('LODGen produced no .bto tiles' in line for line in sec.lines)
     tiles = {ws: len(list((ctx.lod / 'meshes' / 'terrain' / ws / 'Objects')
                           .glob('*.bto')))
-             for ws in ctx.min_bto}
-    short = {ws: n for ws, n in tiles.items() if n < ctx.min_bto[ws]}
+             for ws in ctx.worldspaces}
+    need = {ws: min_tiles(ctx, ws) for ws in tiles}
+    short = {ws: f'{n} < {need[ws]}' for ws, n in tiles.items()
+             if n < need[ws]}
     total = sum(tiles.values())
     if total == 0:
         return result('G11', REFUSE, '0 tiles', 'no .bto found', tiles=tiles)
     ok = not died and not empty and not short
-    return result('G11', PASS if ok else FAIL, f'{total} tiles',
+    return result('G11', PASS if ok else FAIL,
+                  f'{total} tiles in {len(tiles)} worldspaces',
                   f'NullReference x{died}, empty bakes x{empty}, '
-                  f'below minimum: {short or "none"}', tiles=tiles)
+                  f'below minimum: {short or "none"}', tiles=tiles,
+                  minimum=need)
+
+
+def min_tiles(ctx, ws: str) -> int:
+    """The fewest `.bto` tiles worldspace `ws` may have (see check_lodgen)."""
+    if ws in ctx.min_bto:
+        return ctx.min_bto[ws]
+    base = baseline(ctx, 'G11', 'tiles', {}).get(ws)
+    return max(1, int(base * (1 - TILE_TOLERANCE))) if base else 1
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +646,8 @@ def check_textures(ctx) -> dict:
     """G2: texture paths in the packed meshes and LOD tiles vs every archive's table.
 
     Tables: our BSAs, the LOD mod's loose textures and the vanilla Skyrim
-    BSAs. Keys listed in `--allow-missing` (full keys) are allowed. The
+    BSAs. Keys listed in `--allow-missing` (full keys), or already absent
+    in the `--baseline` run, are allowed: only a NEW absence fails. The
     control is the texture the most meshes name: it must be found, or the
     lookup itself is blind.
     """
@@ -635,8 +657,9 @@ def check_textures(ctx) -> dict:
         return result('G2', REFUSE, f'{meshes} meshes',
                       f'{len(tables)} table entries')
     absent = sorted(r for r in refs if r not in tables)
-    allowed = [r for r in absent if r in ctx.allow_missing]
-    missing = [r for r in absent if r not in ctx.allow_missing]
+    known = ctx.allow_missing | set(baseline(ctx, 'G2', 'absent', []))
+    allowed = [r for r in absent if r in known]
+    missing = [r for r in absent if r not in known]
     control = max(sorted(refs), key=refs.get) if refs else None
     blind = control is None or control not in tables
     stale = sorted(ctx.allow_missing - set(absent))
@@ -648,7 +671,7 @@ def check_textures(ctx) -> dict:
                   f'{len(allowed)} (stale allow entries {len(stale)}); '
                   f'missing: {missing[:8]}',
                   missing=missing, allowed=allowed, stale_allow=stale,
-                  control=control)
+                  control=control, absent=absent)
 
 
 def read_allow_missing(path) -> frozenset:
@@ -787,7 +810,8 @@ def _parse_args(argv=None):
     ap.add_argument('--deploy', action='append', default=[],
                     metavar='ZIP=MODDIR', help='post-deploy pairs (G10)')
     ap.add_argument('--min-bto', action='append', default=[],
-                    metavar='WRLD=N', help='default TES4Tamriel=997')
+                    metavar='WRLD=N',
+                    help='G11 minimum tiles; default: the baseline less 1%%')
     ap.add_argument('--allow-missing', metavar='FILE',
                     help='G2: full texture keys known absent upstream')
     ap.add_argument('--baseline', metavar='GATE.json',
@@ -845,7 +869,7 @@ def build_context(args):
         skyrim_data=args.skyrim_data or find_skyrim_data(),
         source_esm=args.source_esm, deploy=deploy,
         zips=sorted(finished.glob('*.zip')) if finished.is_dir() else [],
-        min_bto=dict(_min_bto(v) for v in args.min_bto) or {'TES4Tamriel': 997},
+        min_bto=dict(_min_bto(v) for v in args.min_bto),
         cache={})
     return ctx
 
