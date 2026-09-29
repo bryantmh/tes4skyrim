@@ -134,6 +134,18 @@ def test_landscape_icon_uses_the_normaliser(icon, want):
     assert landscape_texture_path(icon) == want
 
 
+@pytest.mark.parametrize('icon', [
+    'textures\\textures\\grass.dds',
+    'Data\\Textures\\landscape\\textures\\grass.dds',
+    'textures\\landscape\\grass..dds',
+    'textures\\tx_ash_01.dds',
+])
+def test_landscape_icon_naming_textures_agrees_with_the_asset_copy(icon):
+    """An ICON naming its Textures folder is normalised once, like the NIF side."""
+    assert ('Textures\\' + landscape_texture_path(icon)
+            == rewrite_tex_path(icon.encode()))
+
+
 def _png(path):
     """A 2x2 image at `path` (PIL reads it whatever the extension says)."""
     path.parent.mkdir(parents=True, exist_ok=True)
