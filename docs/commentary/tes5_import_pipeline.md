@@ -289,6 +289,15 @@ cache happened to be rebuilt an hour after that commit, so the bug looked
 Nehrim-only. Version 4 widened bit 0 from "constrained island" to "any simulated
 body" ([STAT → MSTT](asset_convert_collision.md#stat-simulated-mstt)).
 
+**The door-axis cache follows the same rule, and its version also moves when
+the scan's coverage does.** `_door_axis_jobs` joined each DOOR model's
+lowercased path onto the mesh tree, so a mod shipping mixed-case folders
+matched nothing on a case-sensitive filesystem: Frostcrag Reborn scanned 0 of
+its 37 door meshes and wrote no cache. It now finds them through
+`case_paths.resolve`; `DOOR_AXIS_SCHEMA_VERSION` 2 makes a cache written by
+the old, partial scan count as stale. Oblivion.esm (255 jobs, 229 classified),
+Knights.esp (4) and DLCFrostcrag.esp (1) rescan to identical entries.
+
 **A current cache still takes the mesh stage's pending fragments.** The mesh
 stage records each mesh it writes as a fragment, and only this function merges
 them. It used to return as soon as both caches were current, so a scoped

@@ -61,6 +61,7 @@ Cache: two-phase, mirroring mesh_bounds.
     load_collision(cache_path)             — in each navmesh worker
 """
 
+from asset_convert import case_paths
 from asset_convert.game_paths import current_namespace
 from output_layout import assets_for
 import hashlib
@@ -303,8 +304,8 @@ def bounds_from_data(data):
 BOUNDS_SCHEMA_VERSION = 4
 _BOUNDS_SCHEMA_KEY = '__schema__'
 
-#: Bumped when a door axis entry gains a field or a field changes meaning.
-DOOR_AXIS_SCHEMA_VERSION = 1
+#: Bumped when an entry gains or changes a field, or the scan finds models an older one missed.
+DOOR_AXIS_SCHEMA_VERSION = 2
 
 
 def door_axis_cache_is_current(axis_cache: str) -> bool:
@@ -1071,9 +1072,9 @@ def _door_axis_jobs(export_plugin_dir: str) -> list:
         return []
     jobs = []
     for mdl in sorted(_door_model_paths(door_txt)):
-        path = os.path.join(root, *mdl.split('/'))
-        if os.path.exists(path):
-            jobs.append((path, current_namespace() + '/' + mdl))
+        path = case_paths.resolve([root], mdl, 'door_axes')
+        if path:
+            jobs.append((str(path), current_namespace() + '/' + mdl))
     return jobs
 
 
