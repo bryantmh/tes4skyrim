@@ -141,7 +141,7 @@ would be asked for:
   holds node NAMES such as `CPStone01.dds.b:0`, which a bare `*.dds` pattern
   reads as a texture; no texture slot holds a separator-free name.
 - `:` is allowed, so an authoring path left in a mesh
-  (`Textures\tes4\f:\gogames\...\x.dds`) is reported whole, as the key the
+  (`Textures\tes4\d:\games\...\x.dds`) is reported whole, as the key the
   engine would look up, not cut at the colon.
 - There is no trailing lookahead: the next sized string's length byte often
   follows `.dds` directly, and requiring a non-word byte there drops real
