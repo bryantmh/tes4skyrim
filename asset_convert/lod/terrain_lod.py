@@ -438,6 +438,7 @@ def shipped_lod_worldspaces(export_dir: Path):
     them back to EditorIDs via the export's WRLD.txt, and returns
         [(edid, tes4_formid), ...]  sorted by descending shipped-tile count.
     """
+    from core.worldspace_names import converted_worldspace_edid
     export_dir = Path(export_dir)
 
     # 1. Collect decimal FormID prefixes from shipped LOD assets.
@@ -457,18 +458,22 @@ def shipped_lod_worldspaces(export_dir: Path):
 
     edid_by_fid = worldspace_edids(export_dir)
 
-    # The importer renames Oblivion's 'Tamriel' worldspace to 'TES4Tamriel'
-    # (tes5_import/record_types/world.py) so it doesn't override Skyrim's
-    # Tamriel. LOD generation looks worldspaces up by EDID in the CONVERTED
-    # ESM, so return the post-rename name to match.
+    renames = export_worldspace_renames(export_dir)
+
     def _converted_edid(name):
-        return 'TES4Tamriel' if name == 'Tamriel' else name
+        return converted_worldspace_edid(name, renames)
 
     result = [(_converted_edid(edid_by_fid.get(fid, f'{fid:08X}')), fid)
               for fid in counts]
     result.sort(key=lambda t: -counts[t[1]])
     return result + resolve_edid_keyed(by_edid, edid_by_fid, _converted_edid,
                                         {fid for _e, fid in result})
+
+
+def export_worldspace_renames(export_dir) -> dict:
+    """Worldspace renames for `export_dir`'s plugin and its header's masters."""
+    from core.worldspace_names import renames_for
+    return renames_for([Path(export_dir).name, *master_names(export_dir)])
 
 
 def parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel',

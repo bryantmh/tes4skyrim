@@ -1533,26 +1533,24 @@ def source_lod_extents(record_dirs, edid: str):
 
     Oblivion ships `meshes\\landscape\\lod\\<decimal fid>.<x>.<y>.<level>.nif`
     past its last LAND cell (TES4Tamriel reaches x = -96). Listed case-blind;
-    the fid is named through the export's WRLD.txt, Tamriel as TES4Tamriel.
+    the fid is named through the export's WRLD.txt under its converted name.
     See: docs/commentary/asset_convert_terrain.md#lodsettings-must-cover-the-terrain
     """
-    from asset_convert.lod.terrain_lod import worldspace_edids
+    from asset_convert.lod.terrain_lod import (export_worldspace_renames,
+                                               worldspace_edids)
+    from core.worldspace_names import converted_worldspace_edid
     from output_layout import assets_for
     box = None
     for rd in record_dirs:
+        renames = export_worldspace_renames(rd)
         fids = [f for f, e in worldspace_edids(rd).items()
-                if _converted_edid(e).lower() == edid.lower()]
+                if converted_worldspace_edid(e, renames).lower() == edid.lower()]
         for fid in fids:
             prefix = f'{fid}.'
             for tile in case_paths.list_prefix(assets_for(rd),
                                                'meshes/landscape/lod', prefix):
                 box = _union(box, _tile_box(tile.name, prefix))
     return box
-
-
-def _converted_edid(name: str) -> str:
-    """The importer renames Oblivion's `Tamriel` to `TES4Tamriel`."""
-    return 'TES4Tamriel' if name == 'Tamriel' else name
 
 
 def _prune_unaffected_tiles(tile_dir: Path, suffix: str, only_cells) -> int:
