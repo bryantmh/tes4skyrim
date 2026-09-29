@@ -22,15 +22,21 @@ def edid_keyed_lod_tiles(export_dir) -> Counter:
     Empty for an Oblivion-style tree, whose LOD roots hold files rather than
     per-worldspace directories.
     """
-    export_dir = Path(export_dir)
+    from output_layout import assets_for
+    from asset_convert import case_paths
+    # Read from the shared asset tree (a nested mod keeps records below assets)
+    # and match each LOD root case-blind, so an imported FO3/FNV mod's shipped
+    # LOD is not missed for a record-dir/case mismatch (see shipped_lod_worldspaces).
+    asset_dir = assets_for(Path(export_dir))
     counts = Counter()
     for sub in _LOD_ROOTS:
-        root = export_dir / sub
-        if not root.is_dir():
-            continue
-        for entry in root.iterdir():
-            if entry.is_dir():
-                counts[entry.name.lower()] += _count_tiles(entry)
+        for spelling in case_paths.variants(asset_dir, sub):
+            root = Path(spelling)
+            if not root.is_dir():
+                continue
+            for entry in root.iterdir():
+                if entry.is_dir():
+                    counts[entry.name.lower()] += _count_tiles(entry)
     return counts
 
 

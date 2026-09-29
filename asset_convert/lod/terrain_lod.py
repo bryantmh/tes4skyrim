@@ -33,6 +33,7 @@ from asset_convert.lod.terrain_lod_falloutnv import edid_keyed_lod_tiles, resolv
 from asset_convert.lod.terrain_nif import (CELL_SIZE, PYFFI_AVAILABLE,
                                            build_terrain_nif, tile_solid_mask)
 from output_layout import assets_for
+from asset_convert import case_paths
 from asset_convert.texture.dds_codec import (
     TEX_SIZE,
     write_dds_dxt1,
@@ -365,9 +366,9 @@ def lod_capable_worldspaces(export_dir: Path, out_root: Path = None,
     # assets that would have told us were deleted", because the two look
     # identical from here and only one of them is the user's problem.
     _assets = assets_for(export_dir)
-    lod_dirs = [_assets / 'meshes' / 'landscape' / 'lod',
-                _assets / 'textures' / 'landscapelod' / 'generated']
-    if not any(d.is_dir() for d in lod_dirs):
+    lod_subs = ('meshes/landscape/lod', 'textures/landscapelod/generated')
+    if not any(Path(v).is_dir() for sub in lod_subs
+               for v in case_paths.variants(_assets, sub)):
         return [], (f"{name}: the export has no landscape-LOD folders. If you "
                     f"deleted them, re-run the Extract stage "
                     f"(convert.py -f {name} --extract-only); otherwise this "
@@ -433,17 +434,24 @@ def shipped_lod_worldspaces(export_dir: Path):
     from core.worldspace_names import converted_worldspace_edid
     export_dir = Path(export_dir)
 
-    # 1. Collect decimal FormID prefixes from shipped LOD assets.
+    # 1. Collect decimal FormID prefixes from shipped LOD assets. The assets
+    #    live in the SHARED asset tree, which for a nested (imported) mod sits
+    #    one level above the record dir, and each LOD folder keeps its SOURCE
+    #    spelling -- Frostcrag Reborn ships meshes/landscape/LOD (upper-case).
+    #    So resolve the record dir to its asset dir and match case-blind, or a
+    #    nested mod's shipped LOD is missed and it looks like it ships none.
     from collections import Counter
+    asset_dir = assets_for(export_dir)
     counts = Counter()
     for sub in ('meshes/landscape/lod', 'textures/landscapelod/generated'):
-        d = export_dir / sub
-        if not d.is_dir():
-            continue
-        for f in d.iterdir():
-            head = f.name.split('.', 1)[0]
-            if head.isdigit():
-                counts[int(head)] += 1
+        for spelling in case_paths.variants(asset_dir, sub):
+            d = Path(spelling)
+            if not d.is_dir():
+                continue
+            for f in d.iterdir():
+                head = f.name.split('.', 1)[0]
+                if head.isdigit():
+                    counts[int(head)] += 1
     by_edid = edid_keyed_lod_tiles(export_dir)
     if not counts and not by_edid:
         return []
