@@ -946,17 +946,30 @@ and clamps NaN or anything outside int32 to int32's lowest. `_global_value`
 matches that, so the sidecar writes `WearingOrdinatorUni=s,0`. Writing the raw
 float instead would leave the global nonzero at load.
 
-### 🛑 The root comes from THIS MODULE, not the host process
+### <a id="sidecar-root"></a>🛑 The root comes from the GAME, not from this DLL
 
-`SidecarDir()` resolves `GetModuleHandleEx(FROM_ADDRESS)` on one of its own
-functions and appends `MorrowindRuntime\`. An SKSE plugin is always loaded from
-`Data\SKSE\Plugins\`, which is exactly the folder holding the sidecars, so this
-needs no assumption at all.
+`PluginsDir()` (`common/paths.cpp`) is the game's folder plus
+`Data\SKSE\Plugins\`, and `SidecarDir()` appends the runtime's own name
+(`MorrowindRuntime\`, `TESRuntime\`). Every runtime DLL and the Address Library
+loader share it.
 
-Deriving it from `GetModuleFileNameA(nullptr)` and appending
-`Data\SKSE\Plugins\...` assumes the host process sits beside the Data folder
-this plugin was loaded from. That has no upside over asking the module itself,
-and when it is wrong the failure is silent: `0 sidecar(s)`, no dialogue, and
+It used to come from the DLL's own path, on the theory that an SKSE plugin is
+always loaded from the folder holding the sidecars. Under Mod Organizer 2 that
+is false: MO2 merges every mod into `Data\` only for paths opened through the
+game's folder, and a DLL's own path is its real mod folder. Measured in
+`CreatureRuntime.log`: `compose: 0 fragment(s) under
+C:\Modlists\...\mods\TESRuntime\SKSE\Plugins\CreatureRuntime\animation`, while
+`Oblivion.json` sat in the Oblivion mod. `TESRuntime.log` said `no character
+data staged` and `jails NOT installed` for the same reason. Every sidecar
+feature was silently off for every MO2 user, whose converted plugins are never
+in the same mod as the DLLs.
+
+The game's folder is right by construction: SKSE itself loads plugins only from
+`<game>\Data\SKSE\Plugins\` (its log prints that `plugin directory`), and the
+Address Library file, which always ships as a mod of its own, loaded from it
+under MO2 all along.
+
+When the root is wrong the failure is silent: `0 sidecar(s)`, no dialogue, and
 every activation falling through to vanilla.
 
 The loader logs the resolved root and a per-file result, so a miss names the

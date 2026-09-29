@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "log.h"
+#include "paths.h"
 
 namespace tesruntime {
 
@@ -83,18 +84,6 @@ std::uint64_t ReadKind(Reader& r, std::uint8_t kind, std::uint64_t prev) {
     }
 }
 
-std::string DataPluginsDir() {
-    wchar_t buf[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    std::wstring w(buf);
-    auto slash = w.find_last_of(L"\\/");
-    std::wstring dir = (slash == std::wstring::npos) ? L"." : w.substr(0, slash);
-    dir += L"\\Data\\SKSE\\Plugins\\";
-    std::string out;
-    for (wchar_t c : dir) out.push_back(static_cast<char>(c));
-    return out;
-}
-
 using AddressMap = std::unordered_map<std::uint64_t, std::uint64_t>;
 
 // Formats 1 and 2: one control byte per entry, both halves delta-coded.
@@ -154,10 +143,10 @@ bool VersionDb::Load(std::uint32_t runtimeVersion) {
     char name[128];
     if (sub != 0) {
         std::snprintf(name, sizeof(name), "versionlib-%u-%u-%u-%u.bin", maj, min, build, sub);
-        if (LoadFile(DataPluginsDir() + name)) return true;
+        if (LoadFile(PluginsDir() + name)) return true;
     }
     std::snprintf(name, sizeof(name), "versionlib-%u-%u-%u-0.bin", maj, min, build);
-    return LoadFile(DataPluginsDir() + name);
+    return LoadFile(PluginsDir() + name);
 }
 
 bool VersionDb::LoadFile(const std::string& path) {

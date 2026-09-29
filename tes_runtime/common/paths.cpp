@@ -14,18 +14,12 @@ void SetPluginName(const char* name) { g_pluginName = name; }
 const std::string& PluginName() { return g_pluginName; }
 
 std::string PluginsDir() {
-    HMODULE self = nullptr;
-    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            reinterpret_cast<LPCSTR>(&PluginsDir), &self)) {
-        return "";
-    }
-    char dll[MAX_PATH] = {0};
-    if (!GetModuleFileNameA(self, dll, MAX_PATH)) return "";
-    std::string path(dll);
+    char exe[MAX_PATH] = {0};
+    if (!GetModuleFileNameA(nullptr, exe, MAX_PATH)) return "";
+    std::string path(exe);
     const std::size_t slash = path.find_last_of("\\/");
     if (slash == std::string::npos) return "";
-    return path.substr(0, slash + 1);
+    return path.substr(0, slash + 1) + "Data\\SKSE\\Plugins\\";
 }
 
 std::string SidecarDir() {
